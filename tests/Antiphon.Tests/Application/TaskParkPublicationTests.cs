@@ -299,7 +299,6 @@ public sealed class TaskParkPublicationTests
         public Func<TaskParkPublicationEvidence, Task>? BeforeReceiptSave { get; set; }
         public IWorkspaceReservationJournal Reservations { get; private set; } = null!;
         public WorkspaceReservationKey Key => WorkspaceReservationKey.For(LocalPath, FullRef, Repository);
-        private string? _remoteIdentity;
 
         public static async Task<PublicationWorld> CreateAsync(WorkspaceMode mode = WorkspaceMode.Worktree, bool remote = false,
             bool sourceLanding = false)
@@ -340,7 +339,6 @@ public sealed class TaskParkPublicationTests
                         ParkGit.Isolate(start);
                         return Process.Start(start);
                     }));
-                    w._remoteIdentity = RunnerWorkspaceParkService.RepositoryIdentity(await w.Git.CommonDirectoryAsync(repo, default));
                 }
                 await using (var db = w.Fixture.Db())
                 {
@@ -372,7 +370,7 @@ public sealed class TaskParkPublicationTests
             Reservations, TimeProvider.System, Options.Create(Fixture.Options))
             { BeforeReceiptSaveAsync = BeforeReceiptSave is null ? null : (proof, _) => BeforeReceiptSave(proof) };
         public async Task<TaskParkPublicationResult> PrepareAsync()
-        { await using var db = Fixture.Db(); return await Service(db).PrepareAsync(ParkId, _remoteIdentity, default); }
+        { await using var db = Fixture.Db(); return await Service(db).PrepareAsync(ParkId, default); }
         public async Task<TaskParkPublicationResult> VerifyAsync()
         { await using var db = Fixture.Db(); return await Service(db).VerifyAsync(ParkId, default); }
         public async Task<bool> AcceptAsync(TaskParkPublicationEvidence proof)

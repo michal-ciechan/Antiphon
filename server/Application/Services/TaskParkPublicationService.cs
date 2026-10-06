@@ -22,58 +22,98 @@ public sealed class TaskParkPublicationService(AppDbContext db, LocalTaskParkPub
 {
     // Pause only at the real receipt persistence boundary; never substitutes eligibility or I/O.
     internal Func<TaskParkPublicationEvidence, CancellationToken, Task>? BeforeReceiptSaveAsync { get; init; }
-    /// <param name="remoteRepositoryIdentity">The bound runner's canonical common-directory
-    /// identity, captured by its workspace owner. Never substitute the desktop common directory.
-    /// Missing identity holds. S5 owns caller composition; this service has no automatic caller.</param>
-    public async Task<TaskParkPublicationResult> PrepareAsync(Guid parkId, string? remoteRepositoryIdentity,
-        CancellationToken ct)
+    /// <summary>Read source identity from the bound runner and persist the Requested intent.
+    /// No publication or release occurs here, and no database lock spans the runner read.</summary>
+    public async Task<TaskParkSourceIdentityResult> CaptureSourceIdentityAsync(Guid parkId, CancellationToken ct)
+    {
+        if (!options.Value.Enabled || !CanOwnTransaction()) return new(TaskParkSourceIdentityOutcome.Held, "park_disabled_or_busy");
+        var candidate = await LoadAsync(parkId, ct);
+        if (candidate is null) return new(TaskParkSourceIdentityOutcome.Held, "park_episode_changed");
+        var (task, park, baseline) = candidate;
+        async Task<TaskParkSourceIdentityResult> RefuseAsync(string reason, bool unknown = false)
+        {
+            await HoldAsync(park, reason, ct);
+            return new(unknown ? TaskParkSourceIdentityOutcome.Unknown : TaskParkSourceIdentityOutcome.Held, reason);
+        }
+        if (await RefusalAsync(task, park, baseline, ct) is { } refusal) return await RefuseAsync(refusal);
+        var binding = await runners.GetBindingAsync(park.SessionId!.Value, ct);
+        if (BindingRefusal(task, park, binding) is { } ownerRefusal) return await RefuseAsync(ownerRefusal);
+        string identity;
+        string endpoint;
+        if (binding is SessionRunnerBinding.Remote)
+        {
+            WorkspaceRepositoryIdentityResult read;
+            try
+            {
+                if (!WorkspaceRepositoryIdentityRequest.Supported((await runners.DescribeAsync(park.RunnerId, ct))?.Capabilities))
+                    return await RefuseAsync("park_identity_unsupported");
+                read = await runners.Resolve(park.RunnerId).ReadWorkspaceRepositoryIdentityAsync(
+                    new(park.SessionId.Value, park.RemoteWorktreePath!, park.RunnerStoreId!.Value,
+                        park.AcceptedStartedAt!.Value), ct);
+            }
+            catch (Exception ex) when (!ct.IsCancellationRequested && ex is IOException or HttpRequestException
+                or OperationCanceledException or NotSupportedException
+                or Antiphon.Server.Application.Exceptions.ServiceUnavailableException)
+            { return await RefuseAsync("park_identity_unavailable", unknown: true); }
+            ct.ThrowIfCancellationRequested();
+            if (read.Outcome != WorkspaceRepositoryIdentityOutcome.Read || read.Identity is not { } observed)
+                return await RefuseAsync(read.Reason == "identity_unsupported" ? "park_identity_unsupported" : "park_identity_unavailable",
+                    read.Outcome == WorkspaceRepositoryIdentityOutcome.Unknown);
+            if (observed.RunnerStoreId != park.RunnerStoreId || observed.AcceptedStartedAt != park.AcceptedStartedAt)
+                return await RefuseAsync("park_runner_changed");
+            if (!IsDigest(observed.RepositoryIdentity) || !IsDigest(observed.EndpointFingerprint)
+                || !Antiphon.Server.Domain.GitObjectId.IsFull(observed.HeadSha) || observed.FullRef != park.FullRef)
+                return await RefuseAsync("park_identity_unavailable", unknown: true);
+            if (await local.AdmitRunnerEndpointAsync(baseline, observed.EndpointRepository, ct) is { } endpointRefusal)
+                return await RefuseAsync(endpointRefusal, endpointRefusal == "park_inspection_unavailable");
+            identity = observed.RepositoryIdentity;
+            endpoint = observed.EndpointFingerprint;
+        }
+        else
+        {
+            identity = LocalTaskParkPublisher.Identity(baseline.CanonicalCommonDirectory);
+            if (string.IsNullOrWhiteSpace(baseline.Remote.EndpointFingerprint) && task.Workspace != WorkspaceMode.ReadOnly)
+                return await RefuseAsync("park_endpoint_unknown");
+            endpoint = baseline.Remote.EndpointFingerprint ?? "no_remote_required";
+        }
+        // A reconnect or reassignment during read/admission cannot stamp the old response.
+        if (await runners.GetBindingAsync(park.SessionId.Value, ct) != binding)
+            return await RefuseAsync("park_runner_changed");
+        if (park.RepositoryIdentity is not null && (park.RepositoryIdentity != identity || park.EndpointFingerprint != endpoint))
+            return await RefuseAsync("park_source_intent_changed");
+        var failed = await PersistIntentAsync(candidate, identity, endpoint, ct);
+        return failed is null ? new(TaskParkSourceIdentityOutcome.Captured, "park_source_identity_captured")
+            : new(TaskParkSourceIdentityOutcome.Held, failed);
+    }
+
+    public async Task<TaskParkPublicationResult> PrepareAsync(Guid parkId, CancellationToken ct)
     {
         if (!options.Value.Enabled || !CanOwnTransaction()) return Held("park_disabled_or_busy");
         var candidate = await LoadAsync(parkId, ct);
         if (candidate is null) return Held("park_episode_changed");
+        if (candidate.Park.RepositoryIdentity is null || candidate.Park.EndpointFingerprint is null)
+        {
+            var capture = await CaptureSourceIdentityAsync(parkId, ct);
+            if (!capture.Captured) return new(capture.Outcome == TaskParkSourceIdentityOutcome.Unknown
+                ? TaskParkPublicationOutcome.Unknown : TaskParkPublicationOutcome.Held, capture.Reason);
+            candidate = await LoadAsync(parkId, ct);
+            if (candidate is null) return Held("park_episode_changed");
+        }
         var (task, park, baseline) = candidate;
         if (await RefusalAsync(task, park, baseline, ct) is { } refusal) return await HoldAsync(park, refusal, ct);
         var binding = await runners.GetBindingAsync(park.SessionId!.Value, ct);
         var remote = binding is SessionRunnerBinding.Remote;
-        if (binding is SessionRunnerBinding.Missing) return await HoldAsync(park, "park_runner_unknown", ct);
-        if (!remote && !string.IsNullOrEmpty(park.RemoteWorktreePath))
-            return await HoldAsync(park, "park_runner_changed", ct);
-        if (remote && (task.Workspace != WorkspaceMode.Worktree
-            || binding is not SessionRunnerBinding.Remote r || r.Owner.RunnerId != park.RunnerId
-            || r.Owner.RunnerStoreId != park.RunnerStoreId || r.Owner.RunnerCwd != park.RemoteWorktreePath))
-            return await HoldAsync(park, "park_runner_changed", ct);
-        var identity = remote ? remoteRepositoryIdentity : LocalTaskParkPublisher.Identity(baseline.CanonicalCommonDirectory);
+        if (BindingRefusal(task, park, binding) is { } ownerRefusal) return await HoldAsync(park, ownerRefusal, ct);
+        var identity = remote ? park.RepositoryIdentity : LocalTaskParkPublisher.Identity(baseline.CanonicalCommonDirectory);
         if (string.IsNullOrWhiteSpace(identity)) return await HoldAsync(park, "park_repository_unknown", ct);
-        var endpoint = baseline.Remote.EndpointFingerprint;
+        var endpoint = remote ? park.EndpointFingerprint : baseline.Remote.EndpointFingerprint;
         if (string.IsNullOrWhiteSpace(endpoint) && task.Workspace != WorkspaceMode.ReadOnly)
             return await HoldAsync(park, "park_endpoint_unknown", ct);
         endpoint ??= "no_remote_required";
         if (park.RepositoryIdentity is not null && (park.RepositoryIdentity != identity || park.EndpointFingerprint != endpoint))
             return await HoldAsync(park, "park_source_intent_changed", ct);
 
-        // This durable intent precedes the first Git or wire mutation, and survives lost ACKs.
-        await using (var tx = await db.Database.BeginTransactionAsync(ct))
-        {
-            var current = await LockAndLoadAsync(parkId, ct);
-            if (current is null || current.Park.Revision != park.Revision || !SameEpisode(current.Task, current.Park))
-                return Held("park_episode_changed");
-            if (current.Task.ProgressBaselineJson != task.ProgressBaselineJson
-                || await RefusalAsync(current.Task, current.Park, current.Baseline, ct) is not null)
-                return Held("park_policy_changed");
-            if (current.Park.State == AgentTaskParkState.Published)
-                return Held("park_already_published");
-            if (current.Park.State is not (AgentTaskParkState.Requested or AgentTaskParkState.Held)
-                || current.Park.PublicationReceiptId is not null) return Held("park_state_changed");
-            var changed = await db.AgentTaskParks.Where(p => p.Id == parkId && p.Revision == park.Revision)
-                .ExecuteUpdateAsync(s => s.SetProperty(p => p.RepositoryIdentity, identity)
-                    .SetProperty(p => p.EndpointFingerprint, endpoint)
-                    .SetProperty(p => p.State, AgentTaskParkState.Requested)
-                    .SetProperty(p => p.HeldFromState, (AgentTaskParkState?)null)
-                    .SetProperty(p => p.ReasonCode, "park_publication_requested")
-                    .SetProperty(p => p.Revision, p => p.Revision + 1), ct);
-            if (changed != 1) return Held("park_episode_changed");
-            await tx.CommitAsync(ct);
-        }
+        if (await PersistIntentAsync(candidate, identity, endpoint, ct) is { } failed) return Held(failed);
         park.RepositoryIdentity = identity;
         park.EndpointFingerprint = endpoint;
         park.Revision++;
@@ -174,7 +214,8 @@ public sealed class TaskParkPublicationService(AppDbContext db, LocalTaskParkPub
         catch (Exception ex) when (ex is IOException or HttpRequestException or OperationCanceledException
             or Antiphon.Server.Application.Exceptions.ServiceUnavailableException)
         { return new(TaskParkPublicationOutcome.Unknown, "park_inspection_unavailable"); }
-        return result.Outcome == WorkspaceParkOutcome.Published && result.Receipt is { } receipt
+        return result.Outcome == WorkspaceParkOutcome.Published && result.Receipt is { HasConsistentSourceMode: true,
+                SourceMode: WorkspaceParkSourceMode.Published } receipt
             ? new(TaskParkPublicationOutcome.Published, "park_published", TaskParkPublicationEvidence.From(receipt))
             : new(result.Outcome == WorkspaceParkOutcome.Unknown ? TaskParkPublicationOutcome.Unknown : TaskParkPublicationOutcome.Held,
                 "park_runner_refused");
@@ -209,6 +250,50 @@ public sealed class TaskParkPublicationService(AppDbContext db, LocalTaskParkPub
     }
 
     private sealed record Candidate(AgentTask Task, AgentTaskPark Park, ProgressSourceBaseline Baseline);
+
+    private static bool IsDigest(string? value) => value is { Length: 64 } && value.All(Uri.IsHexDigit);
+
+    private static string? BindingRefusal(AgentTask task, AgentTaskPark park, SessionRunnerBinding binding) => binding switch
+    {
+        SessionRunnerBinding.Missing => "park_runner_unknown",
+        SessionRunnerBinding.Remote r when task.Workspace == WorkspaceMode.Worktree
+            && r.Owner.RunnerId == park.RunnerId && r.Owner.RunnerStoreId == park.RunnerStoreId
+            && r.Owner.RunnerCwd == park.RemoteWorktreePath => null,
+        SessionRunnerBinding.Local when string.IsNullOrEmpty(park.RemoteWorktreePath) => null,
+        _ => "park_runner_changed"
+    };
+
+    // This durable intent precedes the first Git/wire mutation, and survives lost ACKs.
+    private async Task<string?> PersistIntentAsync(Candidate candidate, string identity, string endpoint, CancellationToken ct)
+    {
+        var (task, park, _) = candidate;
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        var current = await LockAndLoadAsync(park.Id, ct);
+        if (current is null || current.Park.Revision != park.Revision || !SameEpisode(current.Task, current.Park))
+            return "park_episode_changed";
+        if (current.Task.ProgressBaselineJson != task.ProgressBaselineJson
+            || await RefusalAsync(current.Task, current.Park, current.Baseline, ct) is not null)
+            return "park_policy_changed";
+        if (current.Park.State == AgentTaskParkState.Published) return "park_already_published";
+        if (current.Park.State is not (AgentTaskParkState.Requested or AgentTaskParkState.Held)
+            || current.Park.PublicationReceiptId is not null) return "park_state_changed";
+        if (current.Park.RepositoryIdentity is not null
+            && (current.Park.RepositoryIdentity != identity || current.Park.EndpointFingerprint != endpoint))
+            return "park_source_intent_changed";
+        var now = clock.GetUtcNow().UtcDateTime;
+        var changed = await db.AgentTaskParks.Where(p => p.Id == park.Id && p.Revision == park.Revision)
+            .ExecuteUpdateAsync(s => s.SetProperty(p => p.RepositoryIdentity, identity)
+                .SetProperty(p => p.EndpointFingerprint, endpoint)
+                .SetProperty(p => p.State, AgentTaskParkState.Requested)
+                .SetProperty(p => p.HeldFromState, (AgentTaskParkState?)null)
+                .SetProperty(p => p.ReasonCode, "park_publication_requested")
+                .SetProperty(p => p.UpdatedAt, now)
+                .SetProperty(p => p.Revision, p => p.Revision + 1), ct);
+        if (changed != 1) return "park_episode_changed";
+        await tx.CommitAsync(ct);
+        return null;
+    }
+
     private async Task<Candidate?> LoadAsync(Guid id, CancellationToken ct)
     {
         var park = await db.AgentTaskParks.AsNoTracking().SingleOrDefaultAsync(p => p.Id == id, ct);
@@ -221,7 +306,9 @@ public sealed class TaskParkPublicationService(AppDbContext db, LocalTaskParkPub
         var block = await db.AgentTaskEvents.AsNoTracking().Where(e => e.AgentTaskId == park.TaskId && e.Type == AgentTaskEventType.Blocked)
             .OrderByDescending(e => e.At).ThenByDescending(e => e.Id).Select(e => e.Id).FirstOrDefaultAsync(ct);
         return session is not null && session.RunnerId == park.RunnerId && session.RunnerStoreId == park.RunnerStoreId
-            && session.StartedAt == park.AcceptedStartedAt && block == park.BlockEventId && SameEpisode(task, park)
+            && session.StartedAt == park.AcceptedStartedAt
+            && (park.RemoteWorktreePath is null || session.RunnerCwd == park.RemoteWorktreePath)
+            && block == park.BlockEventId && SameEpisode(task, park)
             ? new(task, park, baseline.Primary) : null;
     }
 

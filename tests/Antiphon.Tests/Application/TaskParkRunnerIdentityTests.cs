@@ -140,9 +140,12 @@ public sealed class TaskParkRunnerIdentityTests
             else proof.RemoteSha.ShouldBe(await w.RemoteShaAsync());
             TaskParkPublicationEvidence.From(proof).ShouldBe(evidence, "G-224 round-trip source evidence");
 
-            var request = new TerminalSeatReleaseRequest(proof.Request.Binding.ActionId,
-                new(proof.Request.Binding.RunnerStoreId, proof.Request.Binding.AcceptedStartedAt, "binding", 1),
-                "qualification", proof, ParkVersion: 2);
+            var request = evidence.ToRunnerReleaseRequest(
+                new(proof.Request.Binding.RunnerStoreId, proof.Request.Binding.AcceptedStartedAt, "binding", 1), "qualification");
+            request.ParkVersion.ShouldBe(2, "G-224 typed proofs require version 2");
+            request.Publication.ShouldBe(proof);
+            var invalid = evidence with { RemoteSha = mode == WorkspaceMode.ReadOnly ? evidence.SourceSha : null };
+            Should.Throw<InvalidOperationException>(() => invalid.ToRunnerReceipt(), "G-224 inconsistent mode/SHA is refused");
             ISessionRunnerClient defaultClient = new FakeSessionRunnerClient();
             (await defaultClient.ReleaseTerminalSeatAsync(w.Fixture.SessionId, request, default)).Outcome
                 .ShouldBe(TerminalSeatReleaseOutcome.Unsupported, "G-225 default client");
@@ -168,16 +171,9 @@ public sealed class TaskParkRunnerIdentityTests
         }
     }
 
-    // Reflection keeps the red-first test compilable against S4, which has no capture entry point.
-    // Replaced with a typed call when S4c implements it.
-    private static async Task<(bool Captured, string Reason)> CaptureAsync(PublicationWorld w, CancellationToken ct = default)
+    private static async Task<TaskParkSourceIdentityResult> CaptureAsync(PublicationWorld w, CancellationToken ct = default)
     {
         await using var db = w.Fixture.Db();
-        var method = typeof(TaskParkPublicationService).GetMethod("CaptureSourceIdentityAsync");
-        method.ShouldNotBeNull("G-219 authoritative capture must exist before publication");
-        var pending = (Task)method.Invoke(w.Service(db), [w.ParkId, ct])!;
-        await pending;
-        var value = pending.GetType().GetProperty("Result")!.GetValue(pending)!;
-        return ((bool)value.GetType().GetProperty("Captured")!.GetValue(value)!, (string)value.GetType().GetProperty("Reason")!.GetValue(value)!);
+        return await w.Service(db).CaptureSourceIdentityAsync(w.ParkId, ct);
     }
 }

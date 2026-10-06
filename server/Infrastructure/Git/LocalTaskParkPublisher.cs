@@ -10,6 +10,31 @@ namespace Antiphon.Server.Infrastructure.Git;
 /// <summary>Strict local source proof using the normal owned Git children and repository lease.</summary>
 public sealed class LocalTaskParkPublisher(ITaskProgressGit git, IRepositoryMutationLease leases)
 {
+    /// <summary>Admit the runner's credential-free repository identity against the captured
+    /// desktop origin. This reads configuration only; neither URL nor stderr leaves this boundary.</summary>
+    internal async Task<string?> AdmitRunnerEndpointAsync(ProgressSourceBaseline baseline, string runnerRepository, CancellationToken ct)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(baseline.Remote.EndpointFingerprint)) return "park_endpoint_unknown";
+            var endpoint = await EndpointAsync(baseline.RegisteredCheckout ?? baseline.CanonicalRepository,
+                baseline.Remote.EndpointFingerprint, ct);
+            if (endpoint.Failure is not null) return endpoint.Failure.Reason;
+            if (!RepositoryCloneSource.TryNormalize(endpoint.Url, out var desktop)
+                || !RepositoryCloneSource.TryNormalize(runnerRepository, out var runner))
+                return "park_endpoint_unadmitted";
+            // TryNormalize deliberately retains local URL spelling. A file URI and its absolute
+            // path can name the same test/local repository while retaining different fingerprints.
+            if (Uri.TryCreate(desktop, UriKind.Absolute, out var desktopUri) && desktopUri.IsFile
+                && Uri.TryCreate(runner, UriKind.Absolute, out var runnerUri) && runnerUri.IsFile)
+                return LandingGit.PathsEqual(desktopUri.LocalPath, runnerUri.LocalPath) ? null : "park_endpoint_unadmitted";
+            return string.Equals(desktop, runner, StringComparison.Ordinal) ? null : "park_endpoint_unadmitted";
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested && ex is IOException or UnauthorizedAccessException
+            or ArgumentException or OperationCanceledException or InvalidOperationException)
+        { return "park_inspection_unavailable"; }
+    }
+
     public async Task<TaskParkPublicationResult> InspectAsync(WorkspaceParkRequest request,
         WorkspaceMode mode, string repository, TaskParkPublicationEvidence? previous, CancellationToken ct)
     {
