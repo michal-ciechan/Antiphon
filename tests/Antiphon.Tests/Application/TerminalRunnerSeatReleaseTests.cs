@@ -533,12 +533,14 @@ public class TerminalRunnerSeatReleaseTests
             f.Wire.ConditionalCommands.ShouldBe(0, "legacy recovery cannot send a new release");
 
             f.Directory.Available = true;
-            f.Directory.Inventory = () => Task.FromResult<RunnerInventory>(new RunnerInventory.Available([]));
+            f.Directory.Inventory = () => Task.FromResult<RunnerInventory>(new RunnerInventory.Available(
+                hold == "replacement" ? [seat with { AcceptedStartedAt = f.Observation.ExpectedAcceptedStartedAt }] : []));
             if (hold == "working") await f.IngestAsync(TranscriptKinds.TurnEnd, null, f.Now);
             await f.RecoverAttentionAsync();
             var recovered = await db.RunnerSeatReleases.AsNoTracking().SingleAsync();
             recovered.State.ShouldBe(RunnerSeatReleaseState.Confirmed, $"{hold}: fresh absence recovers the historical action");
-            recovered.OutcomeCode.ShouldBe(nameof(TerminalSeatReleaseOutcome.AlreadyAbsent));
+            recovered.OutcomeCode.ShouldBe(hold == "replacement"
+                ? nameof(TerminalSeatReleaseOutcome.AlreadyExited) : nameof(TerminalSeatReleaseOutcome.AlreadyAbsent));
             f.Wire.ConditionalCommands.ShouldBe(0);
             f.RecordedStops.Killed.ShouldBeEmpty();
             (await db.AgentTaskParks.CountAsync()).ShouldBe(0);
