@@ -272,7 +272,7 @@ rebases nothing (the branch is fast-forward-only).
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
-| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1076-a/` | lease-journal | `/*/*/(RepositoryMutationLeaseTests*)\|(RepositoryMutationLeaseDescribeTests*)\|(RepositoryChildJournalInspectorTests*)\|(RepositoryFenceObserverTests*)/*` | V-3, V-4, R-2, R-8 | exact 31 results (18 + 4 V-3, 1, 6 + 1 V-4, 1), 0 failed/skipped | 31 | 12 | true |
+| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1076-a/` | lease-journal | `/*/*/(RepositoryMutationLeaseTests*)\|(RepositoryMutationLeaseDescribeTests*)\|(RepositoryChildJournalInspectorTests*)\|(RepositoryFenceObserverTests*)/*` | V-3, V-4, R-2, R-8 | 29 linux / 31 windows executed (18 lease + 4 V-3, 1 describe, 6 + 1 V-4, 1 fence). Linux skips the two pre-existing Windows-only lease tests; 0 failed | 29 linux / 31 windows | 12 | true |
 | CP-2 | S1 | CP-1 | landing-git | `/*/*/LandingGitTests/*` | V-1, V-2, R-3 | exact 57 results (55 existing + 2 C1076_*), 0 failed/skipped | 57 | 8 | true |
 | CP-3 | all | `tests/Antiphon.Tests -> bin-c1076-b/` | remote-prep | `/*/*/(RemoteWorkspacePreparerTests*)\|(DispatcherRemotePrepStarvationTests*)\|(PhoneHomeTaskDispatchProjectionTests*)/*` | V-5, V-6, V-7, R-1, R-7, R-10 | exact 35 results (19 existing + 2 C1076_* + 2 new C672 arms, 4, 8), 0 failed/skipped | 35 | 15 | true |
 | CP-4 | all | CP-3 | predicates-settings-docs | `/*/*/(AgentTaskDispatcherPredicateTests*)\|(DispatchHoldLedgerTests*)\|(DelegationLeaseSettingsTests*)\|(RunnerBranchContractDocumentationTests*)/*` | V-8, V-12, V-13, V-15, R-5, R-6, R-11, R-12 | exact 55 results (8 + 9, 22 + 1, 8 + 3, 3 + 1), 0 failed/skipped | 55 | 5 | true |
@@ -304,6 +304,7 @@ rebases nothing (the branch is fast-forward-only).
   without calling `DescribeUnavailableAsync`; this card removes the live push as a cause but
   does not touch `HoldOnBusyLeaseAsync`. CARD-0648 (dead journal, no auto-recovery) also
   remains; a dead tagged push record fences until the recovery script runs, by design here.
+- **CP-1 on Linux.** `C448_V28_ExitedRootKeepsItsJournalWhileADescendantOwnsOutput` and `C448_V13_WindowsJunctionAndOtherProcessShareTheLease` throw `SkipTestException` off Windows, so the row's executed floor is 29 on Linux and 31 on Windows. The skips are pre-existing; S1 does not remove them.
 - **Operator note for the docs slice.** When the pipeline shows `remotePrep` with a holder for
   many minutes, the first task's push is the upload to watch; do not run
   `recover-repository-children.ps1` against it (its record is live and retained) and do not
