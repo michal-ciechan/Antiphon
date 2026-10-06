@@ -140,9 +140,16 @@ public sealed class TaskParkPublicationTests
         await File.WriteAllTextAsync(Path.Combine(w.Path, "do-not-autosave.txt"), "retained uncommitted source");
         await w.ChangeTaskAsync(t => t.CommitOnSettle = CommitOnSettlePolicy.Never);
         (await w.PrepareAsync()).Reason.ShouldBe("park_no_commit", "G-74");
-        await w.ChangeTaskAsync(t => { t.CommitOnSettle = null; t.SourceLandingOperationId = Guid.NewGuid(); });
-        (await w.PrepareAsync()).Reason.ShouldBe("park_source_landing", "G-73");
-        await w.ChangeTaskAsync(t => t.SourceLandingOperationId = null);
+        await w.ChangeTaskAsync(t => t.CommitOnSettle = null);
+        await using (var sourceLanding = await PublicationWorld.CreateAsync(sourceLanding: true))
+        {
+            var sourceHead = await sourceLanding.GitTextAsync(sourceLanding.Path, "rev-parse", "HEAD");
+            await File.WriteAllTextAsync(Path.Combine(sourceLanding.Path, "retained-source.txt"), "do not autosave");
+            (await sourceLanding.PrepareAsync()).Reason.ShouldBe("park_source_landing", "G-73");
+            (await sourceLanding.GitTextAsync(sourceLanding.Path, "rev-parse", "HEAD")).ShouldBe(sourceHead);
+            (await sourceLanding.GitTextAsync(sourceLanding.Path, "status", "--porcelain")).ShouldContain("retained-source.txt");
+            sourceLanding.Directory.Client.Calls.ShouldBe(0);
+        }
         await using (var db = w.Fixture.Db())
         {
             db.AgentTaskEvents.Add(new AgentTaskEvent { Id = Guid.NewGuid(), AgentTaskId = w.Fixture.TaskId,
@@ -294,13 +301,14 @@ public sealed class TaskParkPublicationTests
         public WorkspaceReservationKey Key => WorkspaceReservationKey.For(LocalPath, FullRef, Repository);
         private string? _remoteIdentity;
 
-        public static async Task<PublicationWorld> CreateAsync(WorkspaceMode mode = WorkspaceMode.Worktree, bool remote = false)
+        public static async Task<PublicationWorld> CreateAsync(WorkspaceMode mode = WorkspaceMode.Worktree, bool remote = false,
+            bool sourceLanding = false)
         {
             var w = new PublicationWorld();
             try
             {
                 System.IO.Directory.CreateDirectory(w.Root);
-                w.Fixture = await BlockedTaskParkFixture.CreateAsync();
+                w.Fixture = await BlockedTaskParkFixture.CreateAsync(sourceLanding: sourceLanding);
                 w.Fixture.Options.Enabled = true;
                 w.Leases = new(w.Git);
                 w.Reservations = new WorkspaceReservationJournal(w.Fixture.Services.GetRequiredService<IServiceScopeFactory>(), TimeProvider.System);
