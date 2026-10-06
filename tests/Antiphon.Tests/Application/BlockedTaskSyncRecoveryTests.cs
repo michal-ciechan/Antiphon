@@ -159,7 +159,7 @@ public sealed class BlockedTaskSyncRecoveryTests
                 after.SourceReadyAt.ShouldNotBeNull();
                 (await w.GitTextAsync(w.LocalPath, "rev-parse", "HEAD")).ShouldBe(sha);
                 bus.ReadyObserved.ShouldBe(1, "state commits before invalidation");
-                await w.Fixture.RestartAsync();
+                await w.RestartAsync();
                 (await RecoverAsync(w, clock, bus)).ShouldBe(0, "SourceReady changes once");
                 (await w.RowAsync()).SourceReadyAt.ShouldBe(after.SourceReadyAt);
                 var dto = await GetAsync(w.Fixture.Services, w.Fixture.TaskId);
@@ -207,7 +207,7 @@ public sealed class BlockedTaskSyncRecoveryTests
                 var attempt = 0;
                 foreach (var minutes in new[] { 1, 2, 4, 5, 5 })
                 {
-                    await w.Fixture.RestartAsync();
+                    await w.RestartAsync();
                     (await RecoverAsync(w, clock, bus)).ShouldBe(1);
                     var row = await w.RowAsync();
                     row.SyncAttempts.ShouldBe(++attempt);
@@ -234,7 +234,7 @@ public sealed class BlockedTaskSyncRecoveryTests
             { if (boundary == cut) { fired = true; throw new IOException("simulated crash"); } return Task.CompletedTask; });
             fired.ShouldBeTrue(cut);
             bus.ReadyObserved.ShouldBe(0, "invalidation was not reached");
-            await w.Fixture.RestartAsync();
+            await w.RestartAsync();
             clock.Advance(TimeSpan.FromMinutes(1));
             await RecoverAsync(w, clock, bus);
             var after = await w.RowAsync();
