@@ -929,6 +929,173 @@ public sealed class RemoteScriptContractTests
         }
     }
 
+    // CARD-1105 V-2. The running roster is the previous generation; the replacement must carry the new bind.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1105_Redeploy_accepts_previous_generation_and_requires_new_bind()
+    {
+        C1008HostFixture.RequireNativeLinux();
+        using (var accepted = new C1008HostFixture())
+        {
+            var run = await accepted.Run(extra: C1105DeployTail(accepted, previousReplacement: false));
+            run.Exit.ShouldBe(0, "c1105-redeploy: previous containers are reclaimed and the new bind is required; " + run.Output);
+            accepted.Removed.ShouldBe(new[] { "antiphon-runner_work", "antiphon-runner_runner-tmp", "antiphon-runner_dind-data" });
+            run.Output.ShouldContain("C1008_GENERATION project=antiphon-runner previous=" + C1008HostFixture.PreviousSha
+                + " target=" + new string('a', 40) + " previousMounts=10 targetMounts=11");
+            var journal = JsonNode.Parse(File.ReadAllText(Path.Combine(accepted.Root,
+                "server/recycle/c100800000000000000000000000000000001.json")))!;
+            journal["previousSha"]!.GetValue<string>().ShouldBe(C1008HostFixture.PreviousSha);
+            var previousDigest = journal["previousComposeDigest"]!.GetValue<string>();
+            previousDigest.Length.ShouldBe(64);
+            previousDigest.ShouldNotBe(journal["composeDigest"]!.GetValue<string>());
+            var token = journal["recreated"]!["owned"]![0]!["Topology"]!["mounts"]!.AsArray()
+                .Single(m => m!["target"]!.GetValue<string>() == "/run/antiphon/github-token");
+            token["kind"]!.GetValue<string>().ShouldBe("bind");
+            token["rw"]!.GetValue<bool>().ShouldBeFalse();
+        }
+        using var rejected = new C1008HostFixture();
+        var refusal = await rejected.Run(extra: C1105DeployTail(rejected, previousReplacement: true));
+        refusal.Exit.ShouldBe(2, "c1105-redeploy: a previous-generation replacement is not the target roster; " + refusal.Output);
+        refusal.Output.ShouldContain("RecycleContainerStateUnknown");
+        var saved = JsonNode.Parse(File.ReadAllText(Path.Combine(rejected.Root,
+            "server/recycle/c100800000000000000000000000000000001.json")))!;
+        saved["phase"]!.GetValue<string>().ShouldNotBe("verified");
+        rejected.ReloadDocker();
+        var resumed = await rejected.Run(extra: "C1008_RESUME=1");
+        resumed.Exit.ShouldBe(2, "c1105-redeploy: resume of the refused replacement removes nothing more; " + resumed.Output);
+        resumed.Output.ShouldContain("RecycleResumeMismatch");
+        rejected.Removed.Length.ShouldBe(3);
+    }
+
+    // CARD-1105 V-4. Preview renders the generation change and still mutates nothing.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1105_Dry_run_previews_a_generation_change_without_moving_the_checkout()
+    {
+        C1008HostFixture.RequireNativeLinux();
+        using var f = new C1008HostFixture();
+        var run = await f.Run(dryRun: true);
+        run.Exit.ShouldBe(0, "c1105-preview: " + run.Output);
+        run.Output.ShouldContain("C1008_GENERATION project=antiphon-runner previous=" + C1008HostFixture.PreviousSha
+            + " target=" + new string('a', 40) + " previousMounts=10 targetMounts=11");
+        run.Output.ShouldContain("C1008_PREVIEW");
+        run.Output.ShouldNotContain("MUTATION");
+        f.Removed.ShouldBeEmpty();
+        f.Trace.Any(a => new[] { "stop", "rm", "create", "start", "run" }.Contains(a[0])
+            || a.Take(2).SequenceEqual(new[] { "volume", "rm" })).ShouldBeFalse();
+        f.Statuses["server2"]!["sessions"] = 1;
+        var apply = await f.Run();
+        apply.Exit.ShouldBe(2, "c1105-preview: apply rechecks changed facts; " + apply.Output);
+        apply.Output.ShouldContain("RunnerBusy");
+        f.Removed.ShouldBeEmpty();
+    }
+
+    // CARD-1105 V-5. Apply orders checkout and boot files first; the preview stays read-only.
+    [Test]
+    public void C1105_Deploy_parent_orders_checkout_and_boot_files_before_recycle()
+    {
+        var text = Remote();
+        var deploy = Block(text, "case_deploy_parent");
+        Order(deploy, "ensure_checkout", "c1008_recycle").ShouldBeTrue();
+        Order(deploy, "ensure_runner_boot_files", "c1008_recycle").ShouldBeTrue();
+        Order(deploy, "cmp -s", "compose_host up -d").ShouldBeTrue();
+        var marker = "# Preview intercepts before generic checkout, recursive ownership or boot setup.";
+        var start = text.IndexOf(marker, StringComparison.Ordinal);
+        start.ShouldBeGreaterThanOrEqualTo(0);
+        var end = text.IndexOf("\ncase \"$CASE\" in", start, StringComparison.Ordinal);
+        text[start..end].ShouldNotContain("ensure_checkout");
+        foreach (var row in new[] {
+            "/run/antiphon/claude-oauth-token true", "/run/antiphon/gitconfig true", "/run/antiphon/github-token false",
+            "/state/codex false", "/codex-home false", "/state/grok false" })
+            text.ShouldContain(row + "\n");
+        Block(text, "c1008_compose_model").ShouldContain("bind($token;\"/run/antiphon/github-token\";false;false)");
+        foreach (var name in new[] { "compose_host", "compose_temp" })
+        {
+            var body = Block(text, name);
+            body.ShouldContain("${C1008_COMPOSE_DIR:-$CHECKOUT}");
+            body.ShouldContain("--project-directory \"$CHECKOUT\"");
+        }
+    }
+
+    private static string C1105DeployTail(C1008HostFixture fixture, bool previousReplacement)
+    {
+        var restore = new JsonObject();
+        foreach (var name in new[] { "antiphon-runner_work", "antiphon-runner_runner-tmp", "antiphon-runner_dind-data" })
+            restore[name] = fixture.Docker["volumes"]![name]!.DeepClone();
+        File.WriteAllText(Path.Combine(fixture.Root, "restore-volumes.json"), restore.ToJsonString());
+        File.WriteAllText(Path.Combine(fixture.Root, "replacement.json"), fixture.Container('9', "antiphon-runner", "session-runner", true,
+            previousGeneration: previousReplacement, "work", "runner-tmp", "dind-data", "runner-state",
+            "cache-nuget-packages", "cache-nuget-scratch", "cache-npm-content").ToJsonString());
+        File.WriteAllText(Path.Combine(fixture.Root, "c1105-up.mjs"), """
+            import fs from 'node:fs';
+            const root = process.env.C1008_FIXTURE_ROOT;
+            const state = JSON.parse(fs.readFileSync(root + '/docker.json', 'utf8'));
+            Object.assign(state.volumes, JSON.parse(fs.readFileSync(root + '/restore-volumes.json', 'utf8')));
+            state.containers.push(JSON.parse(fs.readFileSync(root + '/replacement.json', 'utf8')));
+            fs.writeFileSync(root + '/docker.json', JSON.stringify(state));
+            """);
+        File.WriteAllText(Path.Combine(fixture.Root, "c1105-status.mjs"), """
+            import fs from 'node:fs';
+            const root = process.env.C1008_FIXTURE_ROOT;
+            const status = JSON.parse(fs.readFileSync(root + '/statuses.json', 'utf8'));
+            status.server2.buildVersion = process.argv[2];
+            fs.writeFileSync(root + '/statuses.json', JSON.stringify(status));
+            """);
+        var fake = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/fixtures/c1008-fake-docker.sh");
+        var compose = Path.Combine(DelegateScriptRunner.RepoRoot, "docker-compose.server2-runner.yml");
+        return $$"""
+            C849_KIND=cold
+            SERVER2_COMPOSE='{{compose}}'
+            c1008_compose_source() { mkdir -p -- "$2" || return 2; cp -f -- "$SERVER2_COMPOSE" "$2/docker-compose.server2-runner.yml" || return 2; cp -f -- "$SERVER2_COMPOSE" "$2/docker-compose.server2-runner.temp.yml" || return 2; }
+            build_server2_images() { node "$C1008_FIXTURE_ROOT/c1105-status.mjs" "$SHA"; }
+            c849_prepare() { :; }
+            c849_require_ready() { :; }
+            c849_budget_gate() { :; }
+            ensure_build_slots_broker() { :; }
+            seed_runner_checkout() { :; }
+            verify_runner_git_identity() { :; }
+            verify_runner_checkout() { :; }
+            c849_assert_mounts() { :; }
+            c849_smoke() { :; }
+            retire_superseded_server2_images() { :; }
+            sleep() { :; }
+            runner_container() { printf '%s\n' '9999999999999999999999999999999999999999999999999999999999999999'; }
+            curl() { return 7; }
+            compose_host() {
+                case "$1" in
+                    up) node "$C1008_FIXTURE_ROOT/c1105-up.mjs" ;;
+                    logs) ;;
+                    ps) printf 'session-runner\n' ;;
+                    *) docker compose -p "$HOST_PROJECT" "$@" ;;
+                esac
+            }
+            docker() {
+                if [ "$1" = image ]; then bash '{{fake}}' "$@"; return; fi
+                if [ "$1" = inspect ] && [ "$2" = -f ]; then
+                    case "$3" in
+                        *RestartPolicy*) printf 'unless-stopped\n' ;;
+                        *Privileged*) printf 'true\n' ;;
+                        *Mounts*) printf '/srv /work\n' ;;
+                        *) bash '{{fake}}' "$@" ;;
+                    esac
+                    return
+                fi
+                if [ "$1" = exec ]; then
+                    case "$*" in
+                        *'stat -c %a /tmp'*) printf '1777\n' ;;
+                        *printenv*) printf '/run/secrets/phone-home\n' ;;
+                        *'docker info'*) printf 'fixture\n' ;;
+                        *hostname*) printf 'fixture\n' ;;
+                        *) return 0 ;;
+                    esac
+                    return
+                fi
+                if [ "$1" = logs ] || [ "$1" = images ]; then return 0; fi
+                bash '{{fake}}' "$@"
+            }
+            """;
+    }
+
     private static async Task C1008GitGraph(C1008HostFixture fixture, string fault = "")
     {
         var root = fixture.Root;

@@ -107,7 +107,7 @@ write_result() {
         "$([ "$accepted" = "true" ] && printf 'true' || printf 'false')" \
         "$(json_escape "$diagnosis")" \
         "$code" > "$CASE_DIR/c590-result.json"
-    printf 'DIAGNOSIS=%s\n' "$diagnosis"
+    printf 'DIAGNOSIS=%s\n' "$diagnosis" >&"${C1008_DIAG_FD:-1}"
     exit "$code"
 }
 
@@ -3847,7 +3847,8 @@ C1008_BIND_KINDS='/run/antiphon/claude-oauth-token true
 /run/antiphon/github-token false
 /state/codex false
 /codex-home false
-/state/grok false'
+/state/grok false
+'
 
 c1008_bind_kind() {
     local target="$1" path kind
@@ -4691,6 +4692,87 @@ c1008_reconcile_owned() {
     c1008_save || c1008_refuse RecycleReceiptUnavailable
 }
 
+# Session-runner volume and bind rows only. Secrets and tmpfs are not generation mounts.
+c1008_session_mount_count() {
+    printf '%s' "$1" | jq -er '[.c994Topology.services["session-runner"][]? | select(.kind=="volume" or .kind=="bind")] | length'
+}
+
+c1008_stack_revision() {
+    local envfile="$SERVER2_ENV"
+    if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then envfile="$SERVER2_TEMP_ENV"; fi
+    if [ -L "$envfile" ] || [ ! -f "$envfile" ]; then printf ''; return 0; fi
+    sed -n 's/^SOURCE_REVISION=//p' "$envfile" | head -n 1 | tr -d '[:space:]'
+}
+
+# Keep a refusing helper in this shell: JSON goes to the file, DIAGNOSIS stays on stdout.
+c1008_capture_json() {
+    local out="$1"
+    shift
+    exec 3>&1
+    C1008_DIAG_FD=3
+    "$@" >"$out"
+    C1008_DIAG_FD=1
+}
+
+# CARD-1105 D-5. Resolve the running generation before preview, removal, or resume reconciliation.
+c1008_bind_generation() {
+    local model="$1" gen_owned saved_sha saved_digest stack digest_now mounts target_mounts label
+    gen_owned="$(printf '%s' "$C1008_CENSUS" | jq -c --arg project "$C1008_PROJECT" \
+        '[.[]|select(.Config.Labels["com.docker.compose.project"]==$project and .Config.Labels["com.docker.compose.service"]!="build-slots")]')" \
+        || c1008_refuse RecycleGenerationUnknown
+    if [ "${C1008_RESUME:-0}" = 1 ]; then
+        printf '%s' "$C1008_RECORD" | jq -e 'has("previousSha") and has("previousComposeDigest") and has("generation") and
+            ((.previousSha==null and .previousComposeDigest==null) or
+             ((.previousSha|type)=="string" and (.previousSha|test("^[0-9a-f]{40}$")) and
+              (.previousComposeDigest|type)=="string" and (.previousComposeDigest|test("^[0-9a-f]{64}$")))) and
+            (.generation|type)=="object"' >/dev/null || c1008_refuse RecycleResumeMismatch
+        saved_sha="$(printf '%s' "$C1008_RECORD" | jq -r 'if .previousSha==null then "" else .previousSha end')"
+        saved_digest="$(printf '%s' "$C1008_RECORD" | jq -r 'if .previousComposeDigest==null then "" else .previousComposeDigest end')"
+        if printf '%s' "$C1008_RECORD" | jq -e '.ownedRemoved==true' >/dev/null; then
+            stack="$(c1008_stack_revision)"
+            [ "$stack" = "$saved_sha" ] || [ "$stack" = "$SHA" ] || c1008_refuse RecycleResumeMismatch
+            C1008_PREVIOUS_SHA="$saved_sha"
+        else
+            c1008_capture_json "$CASE_DIR/generation.json" c1008_previous_generation "$C1008_PROJECT" "$gen_owned"
+            [ "${C1008_PREVIOUS_SHA:-}" = "$saved_sha" ] || c1008_refuse RecycleResumeMismatch
+        fi
+    else
+        c1008_capture_json "$CASE_DIR/generation.json" c1008_previous_generation "$C1008_PROJECT" "$gen_owned"
+    fi
+    if [ -n "${C1008_PREVIOUS_SHA:-}" ]; then
+        c1008_capture_json "$CASE_DIR/previous-model.json" c1008_previous_model "$C1008_PREVIOUS_SHA"
+        C1008_PREVIOUS_MODEL="$(cat "$CASE_DIR/previous-model.json")"
+        digest_now="$(printf '%s' "$C1008_PREVIOUS_MODEL" | sha256sum | cut -d' ' -f1)"
+        [[ "$digest_now" =~ ^[0-9a-f]{64}$ ]] || c1008_refuse RecycleGenerationUnknown
+        if [ "${C1008_RESUME:-0}" = 1 ]; then
+            [ "$digest_now" = "$saved_digest" ] || c1008_refuse RecycleResumeMismatch
+        else
+            C1008_RECORD="$(printf '%s' "$C1008_RECORD" | jq -c --arg sha "$C1008_PREVIOUS_SHA" --arg digest "$digest_now" \
+                --slurpfile gen "$CASE_DIR/generation.json" \
+                '.previousSha=$sha|.previousComposeDigest=$digest|.generation=$gen[0]')" || c1008_refuse RecycleGenerationUnknown
+        fi
+        mounts="$(c1008_session_mount_count "$C1008_PREVIOUS_MODEL")" || c1008_refuse RecycleGenerationUnknown
+        label="$C1008_PREVIOUS_SHA"
+    else
+        C1008_PREVIOUS_MODEL="$model"
+        if [ "${C1008_RESUME:-0}" != 1 ]; then
+            C1008_RECORD="$(printf '%s' "$C1008_RECORD" | jq -c --slurpfile gen "$CASE_DIR/generation.json" \
+                '.previousSha=null|.previousComposeDigest=null|.generation=$gen[0]')" || c1008_refuse RecycleGenerationUnknown
+        fi
+        mounts=0
+        label=none
+    fi
+    [[ "$mounts" =~ ^[0-9]+$ ]] || c1008_refuse RecycleGenerationUnknown
+    target_mounts="$(c1008_session_mount_count "$model")" || c1008_refuse RecycleGenerationUnknown
+    [[ "$target_mounts" =~ ^[0-9]+$ ]] || c1008_refuse RecycleGenerationUnknown
+    printf 'C1008_GENERATION project=%s previous=%s target=%s previousMounts=%s targetMounts=%s\n' \
+        "$C1008_PROJECT" "$label" "$SHA" "$mounts" "$target_mounts"
+    if [ "${C1008_RESUME:-0}" = 1 ]; then
+        c1008_lock
+        c1008_reconcile_owned "$C1008_PREVIOUS_MODEL"
+    fi
+}
+
 c1008_recycle() {
     C1008_PROJECT="$1"; C1008_RUNNER=server2
     if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then C1008_RUNNER=server2-temp; fi
@@ -4716,14 +4798,13 @@ c1008_recycle() {
             || c1008_refuse RecycleResumeMismatch
         C1008_RECORD="$current"
         printf '%s' "$current" | jq -e 'all(.owned[]?; .Topology.version==1)' >/dev/null || c1008_refuse RecycleResumeMismatch
-        c1008_lock
-        c1008_reconcile_owned "$model"
     elif [ -e "$C1008_JOURNAL" ]; then c1008_refuse RecycleResumeMismatch; fi
     c1008_status_proof
     if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ] && [ "${C1008_RESUME:-0}" = 0 ]; then
         C994_STAMP="$C1008_RETIRED_AT"; C994_PROJECT_ID="$C1008_PROJECT_ID"
         c994_lookup_image "${C1008_CLEANUP_OPERATION:-}" || c1008_refuse RecycleGitAuditUnknown
     elif [ -n "${C1008_CLEANUP_OPERATION:-}" ]; then c1008_refuse RecycleContextInvalid; fi
+    c1008_bind_generation "$model"
     if [ "${C1008_DRY_RUN:-0}" = 1 ]; then
         for name in "${C1008_TARGETS[@]}"; do printf 'C1008_PREVIEW remove=%s\n' "$name"; done
         printf 'C1008_PREVIEW preserve=%s_runner-state,antiphon-runner-cache-nuget-packages,antiphon-runner-cache-nuget-scratch,antiphon-runner-cache-npm-content auditPending=true\n' "$HOST_PROJECT"
@@ -4784,7 +4865,7 @@ c1008_recycle() {
         ([.[]|select(.Config.Labels["com.docker.compose.service"]=="session-runner")]|length)<=1' >/dev/null || c1008_refuse RecycleContainerStateUnknown
     current="$originals"
     if [ "${C1008_RESUME:-0}" = 1 ]; then current="$(printf '%s' "$C1008_RECORD" | jq -c .volumes)"; fi
-    c1008_owned_mounts "$owned" "$model" "$(printf '%s' "$current" | jq -c --argjson preserved "$preserved" '. + $preserved')"
+    c1008_owned_mounts "$owned" "$C1008_PREVIOUS_MODEL" "$(printf '%s' "$current" | jq -c --argjson preserved "$preserved" '. + $preserved')"
     owned="$C1008_OWNED"
     if [ "${C1008_RESUME:-0}" = 0 ]; then
         image="$(printf '%s' "$owned" | jq -r '[.[]|select(.Config.Labels["com.docker.compose.service"]=="session-runner")][0].Image // empty')"
@@ -4878,12 +4959,12 @@ c1008_recycle() {
 
 case_deploy_parent() {
     require_lane host
+    ensure_checkout
+    ensure_runner_boot_files
     if [ "${C1008_CONTEXT:-}" = default ]; then
         c1008_recycle "$HOST_PROJECT"
         c849_budget_gate
     fi
-    ensure_checkout
-    ensure_runner_boot_files
 
     retire_c590_leftovers
 
@@ -4918,6 +4999,11 @@ EOF
     c1008_record_recreated
 
     local up_code=0
+    if [ "${C1008_ACTIVE:-0}" = 1 ]; then
+        if ! cmp -s -- "$CASE_DIR/compose/${SHA:0:12}/docker-compose.server2-runner.yml" "$SERVER2_COMPOSE"; then
+            write_result false RecycleComposeMismatch 2
+        fi
+    fi
     compose_host up -d --no-build >> "$CASE_DIR/command.log" 2>&1 || up_code=$?
     c1008_record_recreated
     if [ "$up_code" != 0 ]; then

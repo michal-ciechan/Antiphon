@@ -126,12 +126,16 @@ public sealed class RetiredTempContainerHostTests
             actual.Count.ShouldBe(vectors.Count,"c994-host-work: complete matrix");foreach(var v in vectors)actual[v!["key"]!.GetValue<string>()].ShouldBe(v["accepted"]!.GetValue<bool>(),"c994-host-work: "+v["key"]);
             NoMutation(batch,"c994-host-work");
         }
-        foreach(var status in new[]{"Queued","Dispatched","Working","Blocked","Failed","Succeeded"}) {
+        foreach(var status in new[]{"Queued","Dispatched","Working","Blocked","Failed","Canceled","Succeeded"}) {
             using var f=Fixture("session-runner");
+            // CARD-1087: a terminal Failed or Canceled row is not bound work. Succeeded stays bound here because landRequestedAt is set.
+            var terminal=status is "Failed" or "Canceled";
             f.TaskScopes.Select(x=>x.Value).Single()!["items"]!.AsArray().Add(new JsonObject { ["id"]="22222222-2222-2222-2222-222222222222",["status"]=status,
                 ["runnerId"]="server2-temp",["projectId"]="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1",["scopeSource"]="Task",
                 ["landRequestedAt"]=status=="Succeeded"?"2026-10-04T00:00:00Z":null,["landStartedAt"]=null });
-            var run=await Cleanup(f);run.Exit.ShouldBe(2,"c994-host-work: "+status);NoMutation(f,"c994-host-work");
+            var run=await Cleanup(f);
+            if(terminal) run.Exit.ShouldBe(0,"c994-host-work: "+status+" is not bound; "+run.Output);
+            else { run.Exit.ShouldBe(2,"c994-host-work: "+status); NoMutation(f,"c994-host-work"); }
         }
         using var unknown=Fixture("session-runner"); unknown.TaskScopes.Clear();
         (await Cleanup(unknown)).Exit.ShouldBe(2,"c994-host-work: unknown");NoMutation(unknown,"c994-host-work");

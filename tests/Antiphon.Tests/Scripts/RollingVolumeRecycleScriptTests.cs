@@ -778,6 +778,9 @@ internal sealed class C1008WrapperFixture : IDisposable
 
 internal sealed class C1008HostFixture : IDisposable
 {
+    internal const string PreviousSha = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    internal const string PreviousSha12 = "bbbbbbbbbbbb";
+
     internal static void RequireNativeLinux()
     {
         if (!OperatingSystem.IsLinux())
@@ -855,7 +858,24 @@ internal sealed class C1008HostFixture : IDisposable
                 if (!ordered.ContainsKey(key)) ordered[key] = value?.DeepClone();
             resolved["volumes"] = ordered;
             models[project] = resolved;
-
+            var previousPsi = new ProcessStartInfo("node") { UseShellExecute = false, RedirectStandardOutput = true,
+                RedirectStandardError = true, WorkingDirectory = DelegateScriptRunner.RepoRoot };
+            foreach (var arg in new[] { "scripts/fixtures/c994-production-compose-model.mjs", Root, project,
+                project == "antiphon-runner-temp" ? "true" : "false", "previous" }) previousPsi.ArgumentList.Add(arg);
+            using var previous = Process.Start(previousPsi)!;
+            var previousOut = previous.StandardOutput.ReadToEndAsync(); var previousErr = previous.StandardError.ReadToEndAsync();
+            if (!previous.WaitForExit(30000)) { previous.Kill(true); previous.WaitForExit(); throw new InvalidOperationException("Previous compose config timeout"); }
+            if (previous.ExitCode != 0) throw new InvalidOperationException("Previous compose config: " + previousErr.GetAwaiter().GetResult());
+            var previousResolved = JsonNode.Parse(previousOut.GetAwaiter().GetResult())!["model"]!.DeepClone().AsObject();
+            var previousDeclarations = previousResolved["volumes"]!.AsObject();
+            var previousOrdered = new JsonObject();
+            foreach (var role in new[] { "work", "runner-tmp", "dind-data", "runner-state" })
+                previousOrdered[role] = previousDeclarations[role]!.DeepClone();
+            foreach (var (key, value) in previousDeclarations)
+                if (!previousOrdered.ContainsKey(key)) previousOrdered[key] = value?.DeepClone();
+            previousResolved["volumes"] = previousOrdered;
+            // Keyed by the previous SHA only. The target proof must keep falling back to models[project].
+            models[project + "@" + PreviousSha12] = previousResolved;
         }
         foreach (var name in new[] { "antiphon-runner_work-extra", "schoolrevision-staging", "openclaw-state" })
             volumes[name] = Volume(name, new JsonObject());
@@ -864,15 +884,18 @@ internal sealed class C1008HostFixture : IDisposable
         var containers = Docker["containers"]!.AsArray();
         if (main)
         {
-            containers.Add(Container('1', "antiphon-runner", "session-runner", true, "work", "runner-tmp", "dind-data", "runner-state",
+            containers.Add(Container('1', "antiphon-runner", "session-runner", true, previousGeneration: true, "work", "runner-tmp", "dind-data", "runner-state",
                 "cache-nuget-packages", "cache-nuget-scratch", "cache-npm-content"));
-            containers.Add(Container('2', "antiphon-runner", "state-init", false, "work", "runner-state"));
+            containers.Add(Container('2', "antiphon-runner", "state-init", false, previousGeneration: true, "work", "runner-state"));
+            Statuses["server2"]!["buildVersion"] = PreviousSha;
         }
+        else Statuses["server2-temp"]!["buildVersion"] = PreviousSha;
         containers.Add(Container('3', "antiphon-runner", "build-slots", true));
 
         Directory.CreateDirectory(Path.Combine(Root, "work"));
         Directory.CreateDirectory(Path.Combine(Root, "server/cache"));
-        File.WriteAllText(Path.Combine(Root, "temp.env"), "RUNNER_GROK_STORE_DIR=" + Root + "/grok\n");
+        File.WriteAllText(Path.Combine(Root, "main.env"), "SOURCE_REVISION=" + PreviousSha + "\n");
+        File.WriteAllText(Path.Combine(Root, "temp.env"), "RUNNER_GROK_STORE_DIR=" + Root + "/grok\nSOURCE_REVISION=" + PreviousSha + "\n");
     }
 
     private JsonObject Volume(string name, JsonObject labels)
@@ -893,12 +916,15 @@ internal sealed class C1008HostFixture : IDisposable
         "cache-npm-content" => "/home/app/.npm/_cacache", _ => "/unknown"
     };
     internal JsonObject Container(char id, string project, string service, bool running, params string[] roles)
+        => Container(id, project, service, running, false, roles);
+
+    internal JsonObject Container(char id, string project, string service, bool running, bool previousGeneration, params string[] roles)
     {
         var mounts = new JsonArray();
         var hostConfig = new JsonObject { ["Tmpfs"] = new JsonObject(), ["Mounts"] = new JsonArray() };
         if (service is "state-init" or "session-runner")
         {
-            var model = Docker["models"]![project]!;
+            var model = Docker["models"]![previousGeneration ? project + "@" + PreviousSha12 : project]!;
             foreach (var m in model["services"]![service]!["volumes"]!.AsArray())
             {
                 var volume = m!["type"]!.GetValue<string>() == "volume";
