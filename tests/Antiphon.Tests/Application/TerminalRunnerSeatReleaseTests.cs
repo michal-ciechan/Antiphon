@@ -78,7 +78,8 @@ public class TerminalRunnerSeatReleaseTests
     {
         foreach (var status in new[] { AgentTaskStatus.Failed, AgentTaskStatus.Succeeded, AgentTaskStatus.Blocked })
         {
-            await using var f = await RunnerSeatReleaseFixture.CreateAsync(status);
+            await using var f = await RunnerSeatReleaseFixture.CreateAsync(status, parking: status == AgentTaskStatus.Blocked);
+            if (status == AgentTaskStatus.Blocked) await f.PreparePublishedBlockedSourceAsync();
             await f.IngestAsync(TranscriptKinds.UserPrompt, "still working", f.Now);
             await f.ReleaseFromSettlementAsync();
             f.RecordedStops.Killed.ShouldBeEmpty("PC-14: the settlement hook cannot use the ordinary stopper");
@@ -352,11 +353,11 @@ public class TerminalRunnerSeatReleaseTests
     {
         foreach (var length in new[] { 3999, 4000, 4001, 12000 })
         {
-        await using var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked);
+        await using var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked, parking: true);
         var answer = length == 12000
             ? string.Concat(Enumerable.Repeat("retain λ 日本語 😀\r\n", 650)) + "FINAL-ANSWER-CANARY"
             : new string('x', length - "FINAL-ANSWER-CANARY".Length) + "FINAL-ANSWER-CANARY";
-        await f.PrepareContinuationAsync();
+        await f.PreparePublishedBlockedSourceAsync();
         await f.ReleaseAsync();
         (await f.TryAnswerAsync(answer)).ShouldBeNull("the complete Unicode answer must be accepted without a bounded-detail database error");
         var accepted = await f.TaskAsync();
@@ -389,9 +390,9 @@ public class TerminalRunnerSeatReleaseTests
                      "queue-before", "queue-after", "delivery-stamp", "verdict-before", "complete-before", "release-ambiguous", "idle" })
         {
             var cut = new DeliverySaveCut { Boundary = boundary };
-            await using var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked,
+            await using var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked, parking: true,
                 configureDb: options => options.AddInterceptors(cut, new DeliveryCommitCut(cut)));
-            await f.PrepareContinuationAsync();
+            await f.PreparePublishedBlockedSourceAsync();
             f.Wire.DropReply = boundary == "release-ambiguous";
             await f.ReleaseAsync();
             if (boundary == "release-ambiguous")
@@ -464,8 +465,8 @@ public class TerminalRunnerSeatReleaseTests
     {
         foreach (var shape in new[] { "ack", "wrong", "partial", "stale", "wrong-session", "queued", "assistant", "generation" })
         {
-            await using var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked);
-            await f.PrepareContinuationAsync(); await f.ReleaseAsync(); await f.AnswerAsync("receipt canary");
+            await using var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked, parking: true);
+            await f.PreparePublishedBlockedSourceAsync(); await f.ReleaseAsync(); await f.AnswerAsync("receipt canary");
             f.Launches.OnLaunch = id => f.AttachRecipientAsync(id, busy: true).GetAwaiter().GetResult();
             await f.DispatchAsync();
             var row = (await f.AnswerQueueAsync())!;
@@ -552,7 +553,8 @@ public class TerminalRunnerSeatReleaseTests
     [Test]
     public async Task Answer_racing_release_preserves_one_owner()
     {
-        await using var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked);
+        await using var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked, parking: true);
+        await f.PreparePublishedBlockedSourceAsync();
         var recipientGate = f.Harness.Queue.GetLock(f.SessionId);
         await recipientGate.WaitAsync();
         try
@@ -584,7 +586,8 @@ public class TerminalRunnerSeatReleaseTests
         await using var db = f.Db();
         (await db.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == f.SessionId)).ShouldBe(0);
 
-        await using var uncertain = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked);
+        await using var uncertain = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked, parking: true);
+        await uncertain.PreparePublishedBlockedSourceAsync();
         uncertain.Wire.DropReply = true;
         await uncertain.ReleaseAsync();
         await uncertain.TryAnswerAsync("persist through an ambiguous release");
@@ -598,7 +601,8 @@ public class TerminalRunnerSeatReleaseTests
         await using var heldDb = uncertain.Db();
         (await heldDb.SessionQueuedMessages.CountAsync()).ShouldBe(0, "no input to an uncertain corpse");
 
-        await using var early = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked);
+        await using var early = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked, parking: true);
+        await early.PreparePublishedBlockedSourceAsync();
         var reserved = await early.RunAsync();
         await early.IngestAsync(TranscriptKinds.UserPrompt, "still busy", early.Now);
         await early.AnswerAsync("answer before dispatch");
@@ -613,8 +617,9 @@ public class TerminalRunnerSeatReleaseTests
     public async Task Answer_recovery_preserves_round_and_admission_guards()
     {
         var cut = new AnswerSaveCut();
-        await using var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked,
+        await using var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked, parking: true,
             configureDb: options => options.AddInterceptors(cut));
+        await f.PreparePublishedBlockedSourceAsync();
         await f.ReleaseAsync();
         var before = await f.TaskAsync();
         (await f.TryAnswerAsync("stale", round: 2)).ShouldBeOfType<ConflictException>();
@@ -636,7 +641,8 @@ public class TerminalRunnerSeatReleaseTests
     {
         foreach (var shape in new[] { "confirmed", "missing-session", "wrong-attempt", "wrong-store", "wrong-generation" })
         {
-            await using var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked);
+            await using var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked, parking: true);
+            await f.PreparePublishedBlockedSourceAsync();
             if (shape != "missing-session") await f.ReleaseAsync();
             await using var db = f.Db();
             if (shape == "missing-session") await db.AgentSessions.Where(s => s.Id == f.SessionId).ExecuteDeleteAsync();
@@ -658,8 +664,8 @@ public class TerminalRunnerSeatReleaseTests
     {
         foreach (var guard in new[] { "quota", "availability", "commit", "capacity", "workspace", "preference" })
         {
-            await using var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked);
-            await f.PrepareContinuationAsync();
+            await using var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked, parking: true);
+            await f.PreparePublishedBlockedSourceAsync();
             await f.ReleaseAsync();
             await using var db = f.Db();
             var before = await f.TaskAsync();
@@ -727,7 +733,8 @@ public class TerminalRunnerSeatReleaseTests
     [Test]
     public async Task Answer_fields_do_not_leak_into_a_later_attempt()
     {
-        await using var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked);
+        await using var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked, parking: true);
+        await f.PreparePublishedBlockedSourceAsync();
         await f.ReleaseAsync(); await f.TryAnswerAsync("answer-only-canary");
         var accepted = await f.TaskAsync();
         DelegationReportFormatter.BuildBrief(accepted, new DelegationSettings()).ShouldContain("answer-only-canary");
@@ -743,9 +750,10 @@ public class TerminalRunnerSeatReleaseTests
     [Test]
     public async Task Answer_keeps_workspace_and_report_context()
     {
-        await using var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked);
+        await using var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked, parking: true);
         await f.EditAsync((t, _) => { t.WorktreePath = f.Harness.TempRoot; t.WorktreeBranch = "feat/retained";
             t.WorktreeBaseRef = "master"; t.Result = "retained report"; t.ResultFilePath = "report.md"; });
+        await f.PreparePublishedBlockedSourceAsync();
         var before = await f.TaskAsync();
         await f.ReleaseAsync();
         f.Harness.Provider.GetRequiredService<IOptions<TerminalRunnerSeatReleaseOptions>>().Value.AutomaticEnabled = false;
@@ -808,7 +816,8 @@ public class TerminalRunnerSeatReleaseTests
     [Arguments(AgentTaskStatus.Blocked)]
     public async Task Completed_attempt_registers_release_debt(AgentTaskStatus status)
     {
-        await using var f = await RunnerSeatReleaseFixture.CreateAsync(status);
+        await using var f = await RunnerSeatReleaseFixture.CreateAsync(status, parking: status == AgentTaskStatus.Blocked);
+        if (status == AgentTaskStatus.Blocked) await f.PreparePublishedBlockedSourceAsync();
         await f.RunAsync();
         await f.RunAsync();
         await using var db = f.Db();

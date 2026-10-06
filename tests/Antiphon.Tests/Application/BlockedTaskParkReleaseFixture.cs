@@ -12,6 +12,24 @@ namespace Antiphon.Tests.Application;
 
 internal sealed partial class RunnerSeatReleaseFixture
 {
+    // CARD-1065 replaces the legacy publication-free Blocked release fixture.
+    // Seed real clean/pushed source and prepare its receipt, leaving reservation and
+    // the conditional command to the calling test (including its crash/race hooks).
+    public async Task PreparePublishedBlockedSourceAsync()
+    {
+        await CreateSourceAsync();
+        using var scope = Harness.Provider.CreateScope();
+        var task = await TaskAsync();
+        await using var db = Db();
+        var block = await db.AgentTaskEvents.Where(e => e.AgentTaskId == TaskId && e.Type == AgentTaskEventType.Blocked)
+            .OrderByDescending(e => e.At).Select(e => e.Id).FirstAsync();
+        var id = (await scope.ServiceProvider.GetRequiredService<BlockedTaskParkingService>()
+            .RegisterAsync(TaskId, task.Attempt, block, task.ConcurrencyToken, default)).ShouldNotBeNull();
+        (await scope.ServiceProvider.GetRequiredService<TaskParkPublicationService>()
+            .PrepareAsync(id, default)).Evidence.ShouldNotBeNull("legacy Blocked release requires real publication");
+        Wire.ConditionalCommands.ShouldBe(0, "publication setup cannot release the seat");
+    }
+
     public string SourcePath { get; private set; } = "";
     public string SourceOrigin { get; private set; } = "";
     public TaskParkPublicationTests.ParkGit SourceGit =>
