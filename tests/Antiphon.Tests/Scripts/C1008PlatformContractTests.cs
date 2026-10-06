@@ -100,6 +100,7 @@ public sealed class C1008PlatformContractTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1050_Windows_remote_outcomes_are_exact(CancellationToken cancellationToken)
     {
+        if (!OperatingSystem.IsWindows()) throw new SkipTestException("CARD-1050 and CARD-1110: this audit needs Windows placement");
         OperatingSystem.IsWindows().ShouldBeTrue("c1050-native-windows: audit requires Windows placement");
         await RunWindowsAuditAsync(RemoteFilter, RemoteHosts, RemotePortable, cancellationToken);
     }
@@ -108,6 +109,7 @@ public sealed class C1008PlatformContractTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1050_Windows_rolling_outcomes_are_exact(CancellationToken cancellationToken)
     {
+        if (!OperatingSystem.IsWindows()) throw new SkipTestException("CARD-1050 and CARD-1110: this audit needs Windows placement");
         OperatingSystem.IsWindows().ShouldBeTrue("c1050-native-windows: audit requires Windows placement");
         await RunWindowsAuditAsync(RollingFilter, RollingHosts, RollingPortable, cancellationToken);
     }
