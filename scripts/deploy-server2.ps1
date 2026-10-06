@@ -553,11 +553,14 @@ function Get-RecycleProjectId {
 
 function Assert-RecycleTaskCensus {
     param([string]$RunnerId, [string]$ProjectId)
-    # Two complete closures are compared. No status/since window, invented paging,
-    # or preview is allowed to hide another project's pending landing request.
+    # Open work and pending lands each form a complete, server-filtered closure.
+    # No time window: an old terminal task can still have a pending land.
+    # Compare both closures twice; filtered excluded counts must reconcile independently.
     try {
     $previous = $null
     for ($pass = 0; $pass -lt 2; $pass++) {
+        $closures = [ordered]@{}
+        foreach ($kind in @('open','land')) {
         $pending = [System.Collections.Generic.Queue[string]]::new()
         $pending.Enqueue($ProjectId)
         $scopes = [System.Collections.Generic.HashSet[string]]::new()
@@ -569,7 +572,8 @@ function Assert-RecycleTaskCensus {
             $scope = $pending.Dequeue()
             if (-not $scopes.Add($scope)) { continue }
             if ($scopes.Count -gt 1000) { throw "RecycleTaskCensusUnknown cause=ScopeLimit scopes=$($scopes.Count)" }
-            $path = '/api/agent-tasks?projectId=' + $scope + '&unscoped=include&includeChecks=true'
+            $filter = if ($kind -eq 'open') { '&status=Queued,Dispatched,Working,Blocked' } else { '&landPending=true' }
+            $path = '/api/agent-tasks?projectId=' + $scope + '&unscoped=include&includeChecks=true' + $filter
             $envelope = Invoke-RecycleRead -Path $path
             if ($null -eq $envelope -or $envelope -isnot [pscustomobject]) { Stop-RecycleMalformed 'envelope' $path }
             if ($envelope.items -isnot [array]) { Stop-RecycleMalformed 'items' $path }
@@ -619,8 +623,16 @@ function Assert-RecycleTaskCensus {
                 if ($rows.ContainsKey($id) -and $rows[$id] -cne $facts) { Stop-RecycleMalformed 'id' $path }
                 $rows[$id] = $facts
                 if ($null -ne $script:recycleReceipt) { $script:recycleReceiptTasks[$id] = $reduced }
+                if (($kind -eq 'open' -and $task.status -cnotin @('Queued','Dispatched','Working','Blocked')) -or
+                    ($kind -eq 'land' -and $null -eq $task.landRequestedAt -and $null -eq $task.landStartedAt)) {
+                    if ($null -ne $script:recycleReceipt) { $script:recycleReceipt.reads[-1].outcome = 'UnfilteredRow' }
+                    throw "RecycleTaskCensusUnknown cause=UnfilteredRow id=$id status=$($task.status) path=$path"
+                }
                 if ($null -ne $task.landRequestedAt -or $null -ne $task.landStartedAt) { throw "RecycleLandInFlight $id" }
-                if ([string]$task.runnerId -eq $RunnerId -and [string]$task.status -in @('Queued','Dispatched','Working','Blocked','Failed')) { throw "RecycleBoundTasks $id" }
+                if ($kind -eq 'open' -and [string]$task.runnerId -eq $RunnerId -and $task.status -cin @('Queued','Dispatched','Working','Blocked')) {
+                    throw "RecycleBoundTasks $id status=$($task.status) runner=$RunnerId"
+                }
+                if ($kind -eq 'land') { continue }
                 $detail = Invoke-RecycleRead -Path ('/api/agent-tasks/' + $id)
                 if ($detail.PSObject.Properties.Name -notcontains 'landRequest' -or [string]$detail.summary.id -ne $id) { throw 'RecycleLandUnknown' }
                 foreach ($key in @('id','status','runnerId','projectId','scopeSource','landRequestedAt','landStartedAt')) {
@@ -644,8 +656,15 @@ function Assert-RecycleTaskCensus {
             $actual = @($rows.Values | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object projectId -eq $scopeId).Count
             if ($actual -ne $scopeCounts[$scopeId]) { Stop-RecycleMalformed 'excluded.byProject.count' $path }
         }
-        $snapshot = (@($observations.Keys | Sort-Object | ForEach-Object { $_ + '=' + $observations[$_] }) +
-            @($rows.Keys | Sort-Object | ForEach-Object { $rows[$_] + '|' + $landEvidence[$_] })) -join "`n"
+        $scopeSnapshot = [ordered]@{}; $taskSnapshot = [ordered]@{}; $landSnapshot = [ordered]@{}
+        foreach ($key in @($observations.Keys | Sort-Object)) { $scopeSnapshot[$key] = $observations[$key] }
+        foreach ($key in @($rows.Keys | Sort-Object)) { $taskSnapshot[$key] = $rows[$key] | ConvertFrom-Json }
+        foreach ($key in @($landEvidence.Keys | Sort-Object)) { $landSnapshot[$key] = $landEvidence[$key] | ConvertFrom-Json }
+        $closures[$kind] = [ordered]@{ scopes=$scopeSnapshot; tasks=$taskSnapshot }
+        if ($kind -eq 'open') { $closures[$kind]['land'] = $landSnapshot }
+        }
+        $snapshot = $closures | ConvertTo-Json -Depth 20 -Compress
+        if ($null -ne $script:recycleReceipt) { $script:recycleReceipt['snapshot'] = $closures }
         if ($pass -eq 1 -and $snapshot -cne $previous) { throw 'RecycleTaskCensusUnknown cause=Unstable' }
         $previous = $snapshot
     }
