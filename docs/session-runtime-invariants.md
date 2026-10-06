@@ -66,6 +66,52 @@ With parking disabled, a known local session stays Owned without an idle observa
 the enabled park path still requires every identity and publication fence. S7/S8 own
 new-park answer continuation; this slice does not enable it.
 
+CARD-1065 S7 through S10 keep that path dormant and describe the code that shipped.
+A Blocked session keeps its runner seat until parking releases it.
+BlockedTaskParking:Enabled defaults to false. ReclaimExisting defaults to false.
+TerminalRunnerSeatRelease:AutomaticEnabled defaults to false.
+New publication and Blocked release require Enabled plus automatic release.
+Legacy discovery additionally requires ReclaimExisting.
+Disabling does not delete a publication receipt, does not abandon an accepted answer, and does not stop release reconciliation or sync-debt recovery.
+Parking never stops a Working session.
+With Enabled and ReclaimExisting set, physical release still requires AutomaticEnabled.
+
+OccupiesCapacity is true for any non-empty runner status other than Exited or Failed.
+OpenTaskId is set only for Dispatched or Working, so a live Blocked or Queued owner remains orphan=true.
+A warm pool delegate is excluded from that orphan flag.
+The slot DTO does not carry park state, so a bound Blocked or Queued owner is still reported as an orphan.
+An unavailable runner inventory records inventoryState unavailable and does not zero desktop in-flight sessions.
+A confirmed Exited or Failed status, or absence from a listed catalogue, drops that seat.
+Task detail exposes parkSync when the sync state is not NotRequired.
+Attention SessionDisagreement keyed runner-seat-release:{releaseId} carries the park id, sync state, source SHA and reason, and omits report and answer text.
+
+Resume reads the desktop checkout, not runner operation 37.
+park_resume_refused is written on each refused dispatch tick with no dedupe.
+The inspection lease ends before the dispatch claim.
+A missing mirror is recreated with worktree add only when the branch tip equals the parked SHA, and HEAD is never reset.
+git worktree prune prunes the whole repository.
+It clears stale worktree registrations for that repository and does not delete checkout contents.
+Refusals stay park_source_missing, park_ref_changed, park_dirty, park_source_changed, and park_endpoint_changed.
+A reply that arrives before reserve holds the unreleased park as park_reply_before_reserve.
+
+The 422 follow_up_remote_pool_unsupported fires before the Blocked branch, so a confirmed park on a remote pool agent does not hear Reply.
+HasConfirmedPublishedParkAsync is not scoped to the current attempt and accepts Resumed.
+A live Blocked session refuses a follow-up with 409 follow_up_agent_blocked and names Reply or cancel.
+A confirmed published park whose session is not live uses that 409 and says the published seat was released.
+A dead session with no confirmed park names cancel and re-send.
+Continue requires question classification plus standing authority, then the accepted-answer path.
+Only an explicit Reply after confirmed prerequisite publication continues a parked prerequisite.
+Report prose and a card moving to Done start nothing.
+An old session TurnEnd cannot settle the new attempt.
+The caller UserPrompt receipt is proven on the inline path only. The fixture sets completionSingleWriteBytes to 86400 while production PtySingleChunkBytes stays 1024, so a spilled completion note's transcript line is the pointer.
+
+ReclaimLegacyAsync(32, 3) runs from the dispatcher pool-release sweep and from RunnerSlotReconcileJob.
+The reclaim cursor is the singleton BlockedTaskParkReclaimCursors row Id 1 and advances after every visit, including failure.
+A short tail wraps, a call makes at most three visits, and there is no discovery gate.
+The reconcile job's released total includes those visit counts.
+FreshLegacyWindow mixes the runner observation clock with park.CreatedAt. An old CompletedAt is not the idle window.
+Known limits stay on CARD-1097, CARD-1103, CARD-1104, and CARD-1108.
+
 CARD-0519 S10: a terminal session status alone does not close outbound recovery
 windows. The optional transcript snapshot `TerminalComplete` is reader-owned EOF
 evidence after the existing child-exit grace, with no pending partial line,

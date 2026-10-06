@@ -8,4 +8,6 @@ A `## Verification design` section is required when the brief says the test-desi
 
 next: test-design when verification is a separate stage; code only when the verification section is already in the plan so Build can execute it; decide when the plan is written under stated defaults (enumerate them as D-n in a ## Decisions section); investigate when the card's premise is wrong (say what to measure).
 
+Checklist: what releases a session that waits for input, and after how long?
+
 Platform: read GET /api/runner-defaults and GET /api/session-runners. Do not embed a fleet location. Omit -Runner unless pinning one host. Omit -Platform unless OS needed; -Platform Any unpins. A plan's checkpoints name the lane.

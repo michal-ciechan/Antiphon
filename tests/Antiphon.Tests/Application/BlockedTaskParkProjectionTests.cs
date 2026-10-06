@@ -38,7 +38,7 @@ public sealed class BlockedTaskParkProjectionTests
         Require(lifecycle, "runner-seat-release:", "c1065-lifecycle-attention-key");
 
         Require(Read("server/Application/Services/SeatDesktopJoin.cs"),
-            "OpenTaskId is set only for Dispatched", "c1065-join-open-task");
+            "<see cref=\"OpenTaskId\"/> is set only for Dispatched", "c1065-join-open-task");
         Require(Read("server/Application/Services/RunnerSlotService.cs"),
             "OccupiesCapacity", "c1065-slot-occupies");
     }

@@ -785,7 +785,9 @@ Code holds at that cap and resumes below it. Alternate one complex/UI card with 
 card, and prefer GitHub-linked cards. Feed depth and alternation are advisory. CARD-0147's
 create-time gate is the hard stop: `MaxOpenTasks` defaults to 6 per project scope across all
 runners, counting Queued, Dispatched and Working non-specialist tasks but not Blocked ones. Its
-live value is exposed only in a 409 `concurrency_limit` response, `axis: absolute`. The role gate
+live value is exposed only in a 409 `concurrency_limit` response, `axis: absolute`.
+Blocked is outside MaxOpenTasks and still occupies a runner seat. A Blocked session keeps its runner seat until parking releases it. At capacity, read GET /api/session-runners/{id}/slots and count orphan=true.
+The role gate
 uses `Delegation:RolePolicy:<role>:RecommendedInFlight`, also reported as `axis: role` on 409.
 The code defaults in `DelegationSettings.cs` are Code 2, Review 2 and other named roles 1.
 These role settings load at startup and have no runtime settings API. Read their effective values
@@ -960,7 +962,7 @@ the normal `[task … done]` note. A raw session message to a child is for steer
 dispatched, never for handing over work — no completion note will ever arrive for it. A follow-up
 behind a Working task waits visibly (`Held` naming the agent and task; `HeldAged` at 300/900 s;
 `DispatchHeld` on the attention feed). A follow-up onto an agent parked on a Blocked task is refused
-409 `follow_up_agent_blocked` — reply with `-Reply` or cancel the Blocked task, then re-send. A retired
+409 `follow_up_agent_blocked` — reply with `-Reply` or cancel the Blocked task, then re-send. A live Blocked session is that 409 and names Reply or cancel. A confirmed published park whose session is not live is the same 409 and says the published seat was released; reply and do not cancel. A dead session with no confirmed park names cancel and re-send. The 422 follow_up_remote_pool_unsupported fires before the Blocked branch, so a confirmed park on a remote pool agent does not hear Reply. HasConfirmedPublishedParkAsync is not scoped to the current attempt and accepts Resumed. A retired
 Worktree follow-up continues that task's committed tip: Antiphon freezes the local branch SHA and
 cuts a new `feat/card-task-<id>` worktree there. It does not reuse the old directory, reset the old
 branch, or fall back to master. If that tip cannot be proven, create refuses

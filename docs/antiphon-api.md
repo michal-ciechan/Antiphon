@@ -582,6 +582,18 @@ only summary, a fixed token). The exception text stays in the server log.
 `SlotOrphan` (59) are omitted). Seat rows are phone-home hosts only. Nothing on
 this route stops, kills, releases or dispatches.
 
+Task detail includes `parkSync` when the current attempt's sync state is not
+`NotRequired`. `GET /api/attention` adds `SessionDisagreement` keyed
+`runner-seat-release:{releaseId}` for an open runner-seat release or pending or held
+sync. The evidence line carries the park id, sync state, source SHA and reason, and
+omits report and answer text. `BlockedTaskParking:Enabled` defaults to false.
+`ReclaimExisting` defaults to false. `TerminalRunnerSeatRelease:AutomaticEnabled`
+defaults to false. New publication and a Blocked release require both Enabled and
+automatic release. Legacy discovery also requires ReclaimExisting. Turning the
+switches off does not delete a publication receipt, abandon an accepted answer, or
+stop release reconciliation and sync-debt recovery. Parking never stops a Working
+session.
+
 Host budgets are separate from the sampled host stats. A local budget overrides
 `Delegation:MaxConcurrentTasks`; a runner's effective limit is the minimum of its configured
 budget and declared capacity. A null budget uses the setting or declaration. A zero budget
