@@ -17,7 +17,8 @@ internal static class BlockedContextBuilder
         IReadOnlyList<AgentTask> family,
         IReadOnlyList<AgentTaskEventDto> events,
         DelegateCheckProbe? probe,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool confirmedPark = false)
     {
         if (task.Status != AgentTaskStatus.Blocked)
             return null;
@@ -26,9 +27,24 @@ internal static class BlockedContextBuilder
         var round = CurrentRound(events);
         var blockedAt = LatestBlockAt(events) ?? task.CompletedAt ?? task.DispatchedAt ?? task.CreatedAt;
         var (question, context) = QuestionAndContext(kind, task);
+        if (confirmedPark && kind == BlockedKind.Question)
+        {
+            const string released =
+                "The published seat was released. Reply to continue this task (delegate.ps1 -Reply); do not cancel it to start a follow-up.";
+            context = string.IsNullOrWhiteSpace(context) ? released : context + "\n" + released;
+        }
+
         var prior = PriorRounds(events);
         var progress = await ProgressAsync(task, events, probe, ct);
         var (canAnswer, cannotAnswer) = Answerability(kind, task);
+        // A confirmed park can still be answered after the old session is gone. Cost, routing
+        // and quota refusals stay refusals.
+        if (confirmedPark && cannotAnswer == "The delegate's session is no longer available.")
+        {
+            canAnswer = true;
+            cannotAnswer = null;
+        }
+
         var mergeTaskId = kind == BlockedKind.MergeConflict
             ? family
                 .Where(t => t.ParentTaskId == task.Id && t.Role == AgentTaskRole.Merge

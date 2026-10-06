@@ -4531,20 +4531,23 @@ public sealed class AgentTaskDispatcher
     {
         string? parkedSha = null;
         string? parkedRef = null;
+        Guid? parkedTranscript = null;
         if (task.ReleasedSeatAnswerReleaseId is Guid releaseId)
         {
             var parked = await _db.AgentTaskParks.AsNoTracking()
                 .Where(p => p.TaskId == task.Id && p.Attempt == task.Attempt - 1
                     && p.RunnerSeatReleaseId == releaseId && p.PublicationReceiptId != null
                     && p.SourceSha != null && p.FullRef != null)
-                .Select(p => new { p.SourceSha, p.FullRef })
+                .Select(p => new { p.SourceSha, p.FullRef, p.SessionId })
                 .FirstOrDefaultAsync(ct);
             parkedSha = parked?.SourceSha;
             parkedRef = parked?.FullRef;
+            parkedTranscript = parked?.SessionId;
         }
 
         await _queue.EnqueueAsync(session.Id,
-            FitBriefForSession(task, session, parkedSourceSha: parkedSha, parkedFullRef: parkedRef),
+            FitBriefForSession(task, session, parkedSourceSha: parkedSha, parkedFullRef: parkedRef,
+                parkedTranscriptSessionId: parkedTranscript),
             MessageSendMode.WhenIdle, ct,
             QueuedMessageOrigin.Delegation, conversationKey: $"released-seat-answer:{task.ReleasedSeatAnswerId:D}",
             sourceTaskId: task.Id, contentDigest: ReleasedAnswerDeliveryKey(task, session),
@@ -5762,12 +5765,14 @@ public sealed class AgentTaskDispatcher
         string? runnerCwd = null,
         Action<PhoneHomeInputSpill>? stageRemoteSpill = null,
         string? parkedSourceSha = null,
-        string? parkedFullRef = null)
+        string? parkedFullRef = null,
+        Guid? parkedTranscriptSessionId = null)
     {
         var limits = (ceilings ?? settings.CeilingsFor(PtyBackend.InboxConhost, "no pty profile — assuming the default backend"))
             .ForAgentKind(agentKind);
         var brief = DelegationReportFormatter.BuildBrief(
-            task, settings, limits.ReplyInlineMaxChars, refocus, parkedSourceSha, parkedFullRef);
+            task, settings, limits.ReplyInlineMaxChars, refocus, parkedSourceSha, parkedFullRef,
+            parkedTranscriptSessionId);
         if (SpecialistInputPolicy.Read(task.SpecialistInputPolicyJson) is { } inputPolicy)
         {
             if (!AgentTaskRoles.CarriesFullInlineInput(task.Role) || inputPolicy.TaskId != task.Id || refocus)
@@ -5850,7 +5855,7 @@ public sealed class AgentTaskDispatcher
                 "runner-bound session is delivered under the inbox single-write ceiling; the desktop pty is not this session");
 
     private string FitBriefForSession(AgentTask task, AgentSession session, bool refocus = false,
-        string? parkedSourceSha = null, string? parkedFullRef = null) =>
+        string? parkedSourceSha = null, string? parkedFullRef = null, Guid? parkedTranscriptSessionId = null) =>
         FitBriefForTyping(
             task, _settings, CeilingsForBrief(_ptyProfile?.Ceilings, session.RunnerCwd, _settings),
             _logger, session.AgentKind, refocus,
@@ -5859,7 +5864,8 @@ public sealed class AgentTaskDispatcher
                 ? null
                 : spill => _queue.StageRemoteSpill(session.Id, session.RunnerCwd, spill),
             parkedSourceSha: parkedSourceSha,
-            parkedFullRef: parkedFullRef);
+            parkedFullRef: parkedFullRef,
+            parkedTranscriptSessionId: parkedTranscriptSessionId);
 
     /// <summary>
     /// Which program a cold launch will start (CARD-0140 S2). For a pinned standing agent with a
