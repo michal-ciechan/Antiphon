@@ -245,8 +245,9 @@ public partial class DispatchBaseNotificationTests
     }
 
     /// <summary>
-    /// V-23 / G-67: an after-save fault inside the claim transaction leaves no final dispatch
-    /// event, session or intent. PC-67 commits before SaveChanges so the fault would persist them.
+    /// CARD-0442: the kept sibling is the base, so the claim records CardCurrent and no warning
+    /// drafts. The commit-fault interceptor therefore does not fire. Rollback of a real draft
+    /// is <see cref="C508_VanishedDefaultClaimRollsBack"/>.
     /// </summary>
     [Test]
     [Timeout(90_000)]
@@ -257,7 +258,7 @@ public partial class DispatchBaseNotificationTests
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var db = CreateContext(schema);
         var card = await SeedCardAsync(db, "CARD-0508");
-        await SeedKeptSiblingAsync(db, repo, card.Id, "divergent sibling work");
+        var sibling = await SeedKeptSiblingAsync(db, repo, card.Id, "divergent sibling work");
         var parent = Guid.NewGuid();
         await SeedParentSessionAsync(db, parent);
         var task = await SeedQueuedWorktreeTaskAsync(db, repo.Path, card.Id, parent);
@@ -267,24 +268,26 @@ public partial class DispatchBaseNotificationTests
         await using var provider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot, "master",
             interceptor: interceptor);
         await using var scope = provider.CreateAsyncScope();
-        try { await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(ct); }
-        catch (DbUpdateException) { /* Inspect persisted custody after the failed claim. */ }
-        catch (IOException) { }
-        interceptor.Fired.ShouldBeTrue();
+        await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(ct);
+        interceptor.Fired.ShouldBeFalse();
 
+        var siblingTip = (await repo.GitReadAsync("rev-parse", sibling.WorktreeBranch!)).Trim();
         await using var check = CreateContext(schema);
         (await check.AgentTaskDispatchWarningIntents.CountAsync(i => i.TaskId == task.Id, ct)).ShouldBe(0);
-        (await check.AgentTaskEvents.CountAsync(
-            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Dispatched
-                && e.Detail.StartsWith("Dispatched to agent"), ct)).ShouldBe(0);
-        (await check.AgentSessions.CountAsync(ct)).ShouldBe(1, "only the original caller remains");
-        var row = await check.AgentTasks.SingleAsync(t => t.Id == task.Id, ct);
-        row.AgentSessionId.ShouldBeNull();
+        var row = await check.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id, ct);
+        row.Status.ShouldBe(AgentTaskStatus.Dispatched);
+        row.WorktreeBaseSource.ShouldBe(WorktreeBaseSource.CardCurrent);
+        row.WorktreeBaseTaskId.ShouldBe(sibling.Id);
+        row.WorktreeBaseBranch.ShouldBe(sibling.WorktreeBranch);
+        row.WorktreeBaseRef.ShouldBe(siblingTip);
+        row.WorktreeBaseSha.ShouldBe(siblingTip);
+        row.AgentSessionId.ShouldNotBeNull();
+        row.ParentSessionId.ShouldBe(parent);
     }
 
     /// <summary>
-    /// V-24 / G-71: Capture reads the locked claim's parent, not the outer tick snapshot.
-    /// PC-71 passes the pre-claim route and would keep destination A.
+    /// CARD-0442: the kept sibling is the base. A parent rebound under the lease is what the
+    /// claim persists, and the claim captures no warning intent.
     /// </summary>
     [Test]
     [Timeout(90_000)]
@@ -295,7 +298,7 @@ public partial class DispatchBaseNotificationTests
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var db = CreateContext(schema);
         var card = await SeedCardAsync(db, "CARD-0508");
-        await SeedKeptSiblingAsync(db, repo, card.Id, "divergent sibling work");
+        var sibling = await SeedKeptSiblingAsync(db, repo, card.Id, "divergent sibling work");
         var destinationA = Guid.NewGuid();
         var destinationB = Guid.NewGuid();
         await SeedParentSessionAsync(db, destinationA);
@@ -314,18 +317,137 @@ public partial class DispatchBaseNotificationTests
         await using var scope = provider.CreateAsyncScope();
         await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(ct);
 
+        var siblingTip = (await repo.GitReadAsync("rev-parse", sibling.WorktreeBranch!)).Trim();
         await using var verify = CreateContext(schema);
+        var row = await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id, ct);
+        row.Status.ShouldBe(AgentTaskStatus.Dispatched);
+        row.WorktreeBaseSource.ShouldBe(WorktreeBaseSource.CardCurrent);
+        row.WorktreeBaseTaskId.ShouldBe(sibling.Id);
+        row.WorktreeBaseBranch.ShouldBe(sibling.WorktreeBranch);
+        row.WorktreeBaseRef.ShouldBe(siblingTip);
+        row.WorktreeBaseSha.ShouldBe(siblingTip);
+        row.ParentSessionId.ShouldBe(destinationB);
+        (await verify.AgentTaskDispatchWarningIntents.CountAsync(i => i.TaskId == task.Id, ct)).ShouldBe(0);
+    }
+
+    /// <summary>
+    /// No eligible sibling, and the configured default disappears under the lease after the
+    /// pre-lease observation. The claim falls back to HEAD and still captures the stale-observation
+    /// and unresolved-default warnings, bound to the parent the lease rebound.
+    /// </summary>
+    [Test]
+    [Timeout(120_000)]
+    public async Task C508_VanishedDefaultStillCapturesWarning(CancellationToken ct)
+    {
+        using var repo = new ScratchGitRepo("c508-vanished-default");
+        await repo.CommitFileAsync("README.md", "base\n");
+        await repo.GitAsync("branch", "trunk", "master");
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        var card = await SeedCardAsync(db, "CARD-0508");
+        var destinationA = Guid.NewGuid();
+        var destinationB = Guid.NewGuid();
+        await SeedParentSessionAsync(db, destinationA);
+        await SeedParentSessionAsync(db, destinationB);
+        var task = await SeedQueuedWorktreeTaskAsync(db, repo.Path, card.Id, destinationA);
+        await db.SaveChangesAsync(ct);
+
+        var connection = schema.ConnectionString;
+        await using var provider = CreateProvider(connection, repo.WorktreeRoot, "trunk",
+            onLeaseAcquired: async () =>
+            {
+                (await ScratchGitRepo.GitInAsync(repo.Path, "branch", "-D", "trunk")).Ok.ShouldBeTrue();
+                await using var edit = new AppDbContext(TestDbFixture.CreateDbContextOptions(connection));
+                await edit.AgentTasks.Where(t => t.Id == task.Id)
+                    .ExecuteUpdateAsync(s => s.SetProperty(t => t.ParentSessionId, destinationB), ct);
+            });
+        await using var scope = provider.CreateAsyncScope();
+        await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(ct);
+
+        await using var verify = CreateContext(schema);
+        var dispatched = await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id, ct);
+        dispatched.Status.ShouldBe(AgentTaskStatus.Dispatched);
+        dispatched.WorktreeBaseSource.ShouldBe(WorktreeBaseSource.RepoHead);
+        dispatched.WorktreeBaseRef.ShouldBe("HEAD");
+        dispatched.ParentSessionId.ShouldBe(destinationB);
+        var finalDispatch = await verify.AgentTaskEvents.AsNoTracking()
+            .Where(e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Dispatched
+                && e.Detail.StartsWith("Dispatched to agent"))
+            .SingleAsync(ct);
         var intents = await verify.AgentTaskDispatchWarningIntents.AsNoTracking()
             .Where(i => i.TaskId == task.Id).ToListAsync(ct);
-        intents.ShouldNotBeEmpty();
+        intents.Count.ShouldBe(2);
+        intents.ShouldAllBe(i => i.DispatchEventId == finalDispatch.Id);
         intents.ShouldAllBe(i => i.ParentSessionId == destinationB);
+        intents.ShouldAllBe(i => i.ReplyTo == AgentTaskReplyTo.Session);
+        intents.ShouldNotContain(i => i.WarningKey.StartsWith(
+            DispatchBaseNotificationPayload.SiblingKeyPrefix, StringComparison.Ordinal));
+        var mismatch = intents.Single(i => i.WarningKey == DispatchBaseNotificationPayload.MismatchKey);
+        mismatch.Detail.ShouldContain("trunk");
+        mismatch.Detail.ShouldContain("HEAD");
+        intents.Single(i => i.WarningKey == DispatchBaseNotificationPayload.DefaultUnresolvedKey)
+            .Detail.ShouldContain("trunk");
         foreach (var intent in intents)
         {
             intent.ContentDigest.ShouldBe(DispatchBaseNotificationPayload.Digest(
                 AgentTaskReplyTo.Session, destinationB, intent.Body));
             intent.ContentDigest.ShouldNotBe(DispatchBaseNotificationPayload.Digest(
                 AgentTaskReplyTo.Session, destinationA, intent.Body));
+            var warning = await verify.AgentTaskEvents.AsNoTracking().SingleAsync(e => e.Id == intent.Id, ct);
+            warning.Type.ShouldBe(AgentTaskEventType.Warning);
+            warning.AgentTaskId.ShouldBe(task.Id);
+            warning.Detail.ShouldBe(intent.Detail);
+            var note = await verify.AgentTaskLandNotifications.AsNoTracking()
+                .SingleAsync(n => n.Id == intent.NotificationId, ct);
+            note.SourceEventId.ShouldBe(intent.Id);
+            note.Kind.ShouldBe(LandNotificationKind.DispatchBase);
+            note.RequestId.ShouldBeNull();
+            note.ParentSessionId.ShouldBe(destinationB);
+            intent.MaterializedAt.ShouldNotBeNull();
+            intent.LastErrorCode.ShouldBeNull();
         }
+    }
+
+    /// <summary>
+    /// The same vanished default produces warning drafts, so an after-save fault inside the claim
+    /// transaction leaves no final dispatch event, session, or intent.
+    /// </summary>
+    [Test]
+    [Timeout(120_000)]
+    public async Task C508_VanishedDefaultClaimRollsBack(CancellationToken ct)
+    {
+        using var repo = new ScratchGitRepo("c508-vanished-rollback");
+        await repo.CommitFileAsync("README.md", "base\n");
+        await repo.GitAsync("branch", "trunk", "master");
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        var card = await SeedCardAsync(db, "CARD-0508");
+        var parent = Guid.NewGuid();
+        await SeedParentSessionAsync(db, parent);
+        var task = await SeedQueuedWorktreeTaskAsync(db, repo.Path, card.Id, parent);
+        await db.SaveChangesAsync(ct);
+
+        var interceptor = new ClaimCommitFailure(task.Id);
+        await using var provider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot, "trunk",
+            onLeaseAcquired: async () =>
+            {
+                (await ScratchGitRepo.GitInAsync(repo.Path, "branch", "-D", "trunk")).Ok.ShouldBeTrue();
+            },
+            interceptor: interceptor);
+        await using var scope = provider.CreateAsyncScope();
+        try { await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(ct); }
+        catch (DbUpdateException) { }
+        catch (IOException) { }
+        interceptor.Fired.ShouldBeTrue();
+
+        await using var check = CreateContext(schema);
+        (await check.AgentTaskDispatchWarningIntents.CountAsync(i => i.TaskId == task.Id, ct)).ShouldBe(0);
+        (await check.AgentTaskEvents.CountAsync(
+            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Dispatched
+                && e.Detail.StartsWith("Dispatched to agent"), ct)).ShouldBe(0);
+        (await check.AgentSessions.CountAsync(ct)).ShouldBe(1, "only the original caller remains");
+        var row = await check.AgentTasks.SingleAsync(t => t.Id == task.Id, ct);
+        row.AgentSessionId.ShouldBeNull();
     }
 
     /// <summary>
@@ -536,7 +658,11 @@ public partial class DispatchBaseNotificationTests
         var parent = Guid.NewGuid();
         await SeedParentSessionAsync(db, parent);
         var task = await SeedQueuedWorktreeTaskAsync(db, repo.Path, card.Id, parent);
-        if (reason == "sibling-hold") sibling.LandRequestedAt = DateTime.UtcNow.AddMinutes(-1);
+        if (reason == "sibling-hold")
+        {
+            sibling.LandRequestedAt = DateTime.UtcNow.AddMinutes(-1);
+            await AgentTaskDispatchBaseGuardTests.SeedPendingSiblingLandAsync(db, repo, sibling);
+        }
         if (reason == "invalid-ref") task.WorktreeBaseRequestedRef = "no-such-c508-ref";
         if (reason == "optional-expiry")
         {
