@@ -52,6 +52,20 @@ warm-pool fields null. The still-Blocked attempt reserves that identity against 
 reuse and retirement. Neither parking nor terminal automatic release is enabled by
 default; Working, unknown evidence and independent standing owners retain custody.
 
+CARD-1065 S6 persists desktop sync debt with the runner publication receipt and its
+exact source SHA. The dispatcher recovers at most 32 due items per pass, one attempt
+per item, with persisted 1/2/4/5-minute capped backoff. Busy repository leases return
+immediately on this recovery path; ordinary settlement's existing budget is unchanged.
+Recovery uses the captured desktop endpoint and checkout guards, refuses an advanced
+remote tip, and only fast-forwards to the published SHA. It never republishes a mirror,
+resets a checkout, promotes the task verdict, or creates approval/completion evidence.
+Accepted debt survives disabling new parking. Task detail exposes `parkSync`; the
+existing release attention row retains pending/held sync debt after physical release.
+Readiness commits before invalidation and remains visible after a missed event.
+With parking disabled, a known local session stays Owned without an idle observation;
+the enabled park path still requires every identity and publication fence. S7/S8 own
+new-park answer continuation; this slice does not enable it.
+
 CARD-0519 S10: a terminal session status alone does not close outbound recovery
 windows. The optional transcript snapshot `TerminalComplete` is reader-owned EOF
 evidence after the existing child-exit grace, with no pending partial line,
