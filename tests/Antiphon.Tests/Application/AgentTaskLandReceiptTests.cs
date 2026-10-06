@@ -18,7 +18,7 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 [Category("Integration")]
-public sealed class AgentTaskLandReceiptTests
+public sealed partial class AgentTaskLandReceiptTests
 {
     [Test]
     [Arguments("catch-up")]
