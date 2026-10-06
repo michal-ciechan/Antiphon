@@ -7,8 +7,28 @@ $trace = [ordered]@{ kind = 'http'; method = $Method; runnerId = $RunnerId; suff
 Add-Content -LiteralPath $env:C727_TEST_TRACE -Value ($trace | ConvertTo-Json -Compress -Depth 5)
 
 if ($Path) {
+    foreach ($fault in @($state.readFaults.PSObject.Properties)) {
+        if ($Path.Contains($fault.Name, [StringComparison]::Ordinal)) {
+            switch ([string]$fault.Value) {
+                'timeout' { Write-Output '__TIMEOUT__'; exit 0 }
+                { $_ -in @('503', '400', '401') } { Write-Output "__$($_)__"; exit 0 }
+                'transport' { [Console]::Error.WriteLine('SENTINEL_C1087_TRANSPORT'); exit 2 }
+                'empty' { exit 0 }
+                'malformed' { Write-Output '{SENTINEL_C1087_BODY'; exit 0 }
+                default { exit 2 }
+            }
+        }
+    }
     if ($Path -eq '/api/projects?includeArchived=true') {
-        Write-Output '[{"id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1","gitRepositoryUrl":"https://github.com/michal-ciechan/Antiphon.git"}]'
+        if ($state.PSObject.Properties.Name -contains 'projects') { ConvertTo-Json -InputObject $state.projects -Compress -Depth 20 }
+        else { Write-Output '[{"id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1","name":"Antiphon","gitRepositoryUrl":"https://github.com/michal-ciechan/Antiphon.git","localRepositoryPath":null,"archivedAt":null}]' }
+        exit 0
+    }
+    if ($Path.StartsWith('/api/projects/', [StringComparison]::Ordinal)) {
+        $id = $Path.Substring('/api/projects/'.Length)
+        if ($state.projectDetail -and $state.projectDetail.PSObject.Properties.Name -contains $id) {
+            ConvertTo-Json -InputObject $state.projectDetail.$id -Compress -Depth 20
+        } else { Write-Output '__404__' }
         exit 0
     }
     if ($state.taskError) { [Console]::Error.WriteLine([string]$state.taskError); exit 2 }

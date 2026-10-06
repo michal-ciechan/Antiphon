@@ -16,6 +16,53 @@ namespace Antiphon.Tests.Application;
 public class AgentTaskScopedListEndpointTests
 {
     [Test]
+    public async Task Land_pending_filter_selects_pending_rows()
+    {
+        await using var host = await BootSeededAsync();
+        var requested = Guid.NewGuid();
+        var started = Guid.NewGuid();
+        var settled = Guid.NewGuid();
+        var excluded = Guid.NewGuid();
+        var specialist = Guid.NewGuid();
+        var old = ScopedAgentTaskListFixture.T.AddDays(-30);
+        using (var scope = host.Factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            foreach (var id in new[] { requested, started, settled, excluded, specialist })
+            {
+                var row = ScopedAgentTaskListFixture.TaskRow(id,
+                    id == excluded ? ScopedAgentTaskListFixture.ProjectY : ScopedAgentTaskListFixture.ProjectX,
+                    null, ScopedAgentTaskListFixture.XPath, ScopedAgentTaskListFixture.XPath,
+                    old, id, AgentTaskStatus.Succeeded, completedAt: old.AddDays(1),
+                    role: id == specialist ? AgentTaskRole.Check : AgentTaskRole.Code);
+                if (id == started) row.LandStartedAt = ScopedAgentTaskListFixture.T;
+                else if (id != settled) row.LandRequestedAt = ScopedAgentTaskListFixture.T;
+                db.Add(row);
+            }
+            await db.SaveChangesAsync();
+        }
+        var query = $"/api/agent-tasks?projectId={ScopedAgentTaskListFixture.ProjectX:D}&unscoped=include";
+        using var pending = await GetAsync(host.Client, query + "&landPending=true");
+        Ids(pending).Order().ShouldBe(new[] { requested, started }.Order());
+        AssertExcluded(pending, total: 1, unscoped: 0);
+        ByProject(pending).ShouldBe(new Dictionary<Guid, int> { [ScopedAgentTaskListFixture.ProjectY] = 1 });
+        using var working = await GetAsync(host.Client, query + "&landPending=true&status=Working");
+        Ids(working).ShouldBeEmpty();
+        AssertExcluded(working, total: 0, unscoped: 0);
+        using var checks = await GetAsync(host.Client, query + "&landPending=true&includeChecks=true");
+        Ids(checks).Order().ShouldBe(new[] { requested, started, specialist }.Order());
+        using var recent = await GetAsync(host.Client, query + "&landPending=true&since=" + ScopedAgentTaskListFixture.T.ToString("O"));
+        Ids(recent).ShouldBeEmpty();
+        using var omitted = await GetAsync(host.Client, query);
+        using var disabled = await GetAsync(host.Client, query + "&landPending=false");
+        Ids(disabled).ShouldBe(Ids(omitted));
+        Ids(disabled).ShouldContain(settled);
+        Ids(disabled).ShouldContain(ScopedAgentTaskListFixture.X1);
+        using var malformed = await host.Client.GetAsync(query + "&landPending=maybe");
+        malformed.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
+    }
+
+    [Test]
     public async Task Unscoped_list_always_returns_envelope()
     {
         await using var host = await BootSeededAsync();

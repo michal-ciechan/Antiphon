@@ -13,6 +13,176 @@ public sealed class RollingVolumeRecycleScriptTests
 {
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1087_Read_failures_name_their_cause()
+    {
+        const string project = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1";
+        const string task = "11111111-1111-1111-1111-111111111111";
+        var listPath = $"/api/agent-tasks?projectId={project}&unscoped=include&includeChecks=true";
+        foreach (var path in new[] { "/api/projects?includeArchived=true", listPath, $"/api/agent-tasks/{task}" })
+        foreach (var (fault, cause) in new[] { ("timeout", "Timeout"), ("503", "Http"), ("400", "Http"),
+                     ("401", "Http"), ("transport", "Transport"), ("empty", "Empty"), ("malformed", "Malformed") })
+        {
+            using var f = new C1008WrapperFixture();
+            f.State["tasks"]!["items"]!.AsArray().Add(C1087TaskRow(task, project));
+            f.State["readFaults"] = new JsonObject { [path] = fault };
+            var run = await f.Run("retire-temp");
+            run.Exit.ShouldBe(2, path + " " + fault + "; " + run.Output);
+            run.Output.ShouldContain("RecycleTaskCensusUnknown cause=" + cause);
+            run.Output.ShouldContain("path=" + path);
+            if (cause == "Http") run.Output.ShouldContain("status=" + fault);
+            if (cause == "Malformed") run.Output.ShouldContain("field=body");
+            run.Trace.Any(x => x["kind"]?.GetValue<string>() == "case").ShouldBeFalse();
+            var receipt = C1087Receipt(run.Trace);
+            var read = receipt["reads"]!.AsArray().Last()!;
+            read["path"]!.GetValue<string>().ShouldBe(path);
+            read["outcome"]!.GetValue<string>().ShouldBe(cause);
+            read["elapsedMs"]!.GetValue<long>().ShouldBeGreaterThanOrEqualTo(0);
+            if (cause == "Http") read["status"]!.GetValue<int>().ShouldBe(int.Parse(fault));
+            foreach (var text in new[] { run.Output, receipt.ToJsonString() })
+            {
+                text.ShouldNotContain("SENTINEL");
+                text.ShouldNotContain("http://127.0.0.1:1");
+            }
+        }
+
+        foreach (var field in new[] { "items", "excluded.total", "excluded.byProject", "scope.projectId", "status", "runnerId" })
+        {
+            using var f = new C1008WrapperFixture();
+            var row = C1087TaskRow(task, project);
+            f.State["tasks"]!["items"]!.AsArray().Add(row);
+            switch (field)
+            {
+                case "items": f.State["tasks"]!["items"] = "SENTINEL_SHAPE"; break;
+                case "excluded.total": f.State["tasks"]!["excluded"]!["total"] = "SENTINEL_SHAPE"; break;
+                case "excluded.byProject": f.State["tasks"]!["excluded"]!["byProject"] = null; break;
+                case "scope.projectId": f.State["tasks"]!["scope"]!["projectId"] = "SENTINEL_SHAPE"; break;
+                default: row[field] = new JsonObject { ["SENTINEL_SHAPE"] = true }; break;
+            }
+            var run = await f.Run("retire-temp");
+            run.Exit.ShouldBe(2, run.Output);
+            run.Output.ShouldContain($"RecycleTaskCensusUnknown cause=Malformed field={field} path={listPath}");
+            run.Trace.Any(x => x["kind"]?.GetValue<string>() == "case").ShouldBeFalse();
+            var receipt = C1087Receipt(run.Trace);
+            receipt["reads"]!.AsArray().Last()!["outcome"]!.GetValue<string>().ShouldBe("Malformed");
+            (run.Output + receipt.ToJsonString()).ShouldNotContain("SENTINEL");
+        }
+
+        using var good = new C1008WrapperFixture();
+        var safeRow = C1087TaskRow(task, project);
+        good.State["tasks"]!["items"]!.AsArray().Add(safeRow);
+        good.State["details"] = new JsonObject { [task] = new JsonObject {
+            ["summary"] = safeRow.DeepClone(), ["goal"] = "SENTINEL_DETAIL",
+            ["landRequest"] = new JsonObject { ["state"] = "Completed", ["terminalEventId"] = task,
+                ["result"] = "SENTINEL_LAND" } } };
+        var accepted = await good.Run("retire-temp");
+        accepted.Exit.ShouldBe(0, accepted.Output);
+        var success = C1087Receipt(accepted.Trace);
+        success["reads"]!.AsArray().All(r => r!["outcome"]!.GetValue<string>() == "ok").ShouldBeTrue();
+        success["reads"]!.AsArray().Where(r => r!["path"]!.GetValue<string>() == listPath)
+            .All(r => r!["items"]!.GetValue<int>() == 1 && r["excludedTotal"]!.GetValue<int>() == 0).ShouldBeTrue();
+        var snapshot = success["tasks"]!.AsArray().Single()!;
+        snapshot["id"]!.GetValue<string>().ShouldBe(task);
+        snapshot["landRequest"]!["state"]!.GetValue<string>().ShouldBe("Completed");
+        snapshot["landRequest"]!["terminalEventId"]!.GetValue<string>().ShouldBe(task);
+        success.ToJsonString().ShouldNotContain("SENTINEL");
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1087_Project_resolves_by_repository_identity()
+    {
+        const string id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1";
+        const string other = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbb2";
+        const string url = "https://github.com/michal-ciechan/Antiphon.git";
+        var root = DelegateScriptRunner.RepoRoot;
+        var normalizedPath = Path.Combine(root, "scripts", "..") + Path.DirectorySeparatorChar;
+        if (OperatingSystem.IsWindows()) normalizedPath = normalizedPath.Replace('\\', '/').ToUpperInvariant();
+        foreach (var (git, path, resolvedBy) in new[] {
+                     ("", normalizedPath, "path"), (url, "", "url"), (url, root, "both"),
+                     (" https://GITHUB.COM/michal-ciechan/Antiphon ", "", "url"),
+                     ("git@github.com:michal-ciechan/Antiphon.git", "", "url") })
+        {
+            using var f = new C1008WrapperFixture();
+            f.State["projects"] = new JsonArray(C1087Project(id, git, path));
+            var run = await f.Run("retire-temp");
+            run.Exit.ShouldBe(0, resolvedBy + "; " + run.Output);
+            var project = C1087Receipt(run.Trace)["project"]!;
+            project["id"]!.GetValue<string>().ShouldBe(id);
+            project["resolvedBy"]!.GetValue<string>().ShouldBe(resolvedBy);
+            run.Trace.Any(x => x["method"]?.GetValue<string>() == "PUT").ShouldBeFalse();
+        }
+        foreach (var vector in new[] { "no-match", "ambiguous", "archived", "malformed-id", "missing-archivedAt",
+                     "missing-gitRepositoryUrl", "bad-path", "explicit", "not-found", "explicit-archived", "invalid-id", "upper-id", "empty-id" })
+        {
+            using var f = new C1008WrapperFixture();
+            var project = C1087Project(id, url, "");
+            f.State["projects"] = new JsonArray(project);
+            var args = Array.Empty<string>();
+            string expected;
+            switch (vector)
+            {
+                case "no-match": project["gitRepositoryUrl"] = "https://github.com/other/repo.git";
+                    project["localRepositoryPath"] = root + "-sibling";
+                    expected = "cause=NoMatch candidates=1 urlMatches=0 pathMatches=0"; break;
+                case "ambiguous": f.State["projects"]!.AsArray().Add(C1087Project(other, "", root));
+                    expected = "cause=Ambiguous candidates=2 matches=2"; break;
+                case "archived": project["archivedAt"] = "2026-10-03T09:00:00Z"; expected = "cause=Archived id=" + id; break;
+                case "malformed-id": project["id"] = "SENTINEL_BAD_ID"; expected = "cause=Malformed field=id"; break;
+                case "missing-archivedAt": project.Remove("archivedAt"); expected = "cause=Malformed field=archivedAt"; break;
+                case "missing-gitRepositoryUrl": project.Remove("gitRepositoryUrl"); expected = "cause=Malformed field=gitRepositoryUrl"; break;
+                case "bad-path": project["localRepositoryPath"] = "bad\0path"; expected = "cause=Malformed field=localRepositoryPath"; break;
+                case "invalid-id": case "upper-id": case "empty-id":
+                    args = ["-ProjectId", vector == "empty-id" ? "" : vector == "upper-id" ? id.ToUpperInvariant() : "SENTINEL_BAD_ID"];
+                    expected = "cause=InvalidId"; break;
+                default:
+                    args = ["-ProjectId", id];
+                    project["gitRepositoryUrl"] = "";
+                    if (vector == "explicit-archived") project["archivedAt"] = "2026-10-03T09:00:00Z";
+                    f.State["projectDetail"] = vector == "not-found" ? new JsonObject() : new JsonObject { [id] = project.DeepClone() };
+                    expected = vector == "not-found" ? "cause=NotFound id=" + id : "cause=Archived id=" + id;
+                    break;
+            }
+            var run = await f.Run("retire-temp", args);
+            run.Exit.ShouldBe(vector == "explicit" ? 0 : 2, vector + "; " + run.Output);
+            if (vector == "explicit")
+            {
+                var receipt = C1087Receipt(run.Trace)["project"]!;
+                receipt["resolvedBy"]!.GetValue<string>().ShouldBe("explicit");
+                receipt["name"]!.GetValue<string>().ShouldBe("Antiphon");
+                run.Trace.Any(x => x["path"]?.GetValue<string>() == "/api/projects?includeArchived=true").ShouldBeFalse();
+            }
+            else
+            {
+                run.Output.ShouldContain("RecycleProjectUnresolved " + expected);
+                run.Trace.Any(x => x["kind"]?.GetValue<string>() == "case").ShouldBeFalse();
+                run.Output.ShouldNotContain("SENTINEL");
+            }
+        }
+    }
+
+    private static JsonObject C1087Project(string id, string url, string path) => new()
+    {
+        ["id"] = id, ["name"] = "Antiphon", ["gitRepositoryUrl"] = url,
+        ["localRepositoryPath"] = path, ["archivedAt"] = null
+    };
+
+    private static JsonObject C1087TaskRow(string id, string project) => new()
+    {
+        ["id"] = id, ["status"] = "Succeeded", ["runnerId"] = "other", ["projectId"] = project,
+        ["scopeSource"] = "Task", ["landRequestedAt"] = null, ["landStartedAt"] = null,
+        ["title"] = "SENTINEL_TITLE", ["goal"] = "SENTINEL_GOAL", ["result"] = "SENTINEL_RESULT"
+    };
+
+    private static JsonObject C1087Receipt(JsonObject[] trace)
+    {
+        var root = trace.First(t => t["kind"]?.GetValue<string>() == "prerequisite")["evidenceRoot"]!.GetValue<string>();
+        var file = Path.Combine(root, "census-retire-temp-server2-temp.json");
+        File.Exists(file).ShouldBeTrue("partial and successful census receipts must be persisted: " + file);
+        return JsonNode.Parse(File.ReadAllText(file))!.AsObject();
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1008_Present_or_unknown_temp_keeps_null_refusal()
     {
         using (var good = new C1008WrapperFixture())
