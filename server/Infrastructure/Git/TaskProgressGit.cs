@@ -125,16 +125,21 @@ public class TaskProgressGit : LandingGit, ITaskProgressGit
             if (local.Succeeded)
                 return new(ProgressRemoteState.Present, advertised, fingerprint);
 
+            // CARD-1082 D-3. ls-remote already read the full tip. A busy lease still refuses the
+            // fetch; the answer keeps that tip so settlement can name what the server observed.
+            ProgressRemoteObservation LeaseBusy() =>
+                new(ProgressRemoteState.Unavailable, advertised, fingerprint, "repository_lease_busy");
+
             if (_leases is null)
-                return new(ProgressRemoteState.Unavailable, EndpointFingerprint: fingerprint, Reason: "repository_lease_busy");
+                return LeaseBusy();
 
             await using var acquiredLease = heldLease is null
                 ? await _leases.TryAcquireAsync(repository, ct) : null;
             if (heldLease is not null
                 && !_leases.Owns(heldLease, await CommonDirectoryAsync(repository, ct)))
-                return new(ProgressRemoteState.Unavailable, EndpointFingerprint: fingerprint, Reason: "repository_lease_busy");
+                return LeaseBusy();
             if (heldLease is null && acquiredLease is null)
-                return new(ProgressRemoteState.Unavailable, EndpointFingerprint: fingerprint, Reason: "repository_lease_busy");
+                return LeaseBusy();
 
             var pin = $"{ProgressRefPrefix}{taskId:N}/observe-{ShaSuffix(fullRef)}";
             var check = await RunAsync(repository, ["check-ref-format", pin], ct);
