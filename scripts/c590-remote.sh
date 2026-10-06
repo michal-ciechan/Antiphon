@@ -952,7 +952,9 @@ compose_host() {
     BUILD_SLOTS_SHA12="$(broker_sha12)" \
     SOURCE_REVISION="$SHA" \
     COMPOSE_PROJECT_NAME="$HOST_PROJECT" \
-    docker compose -p "$HOST_PROJECT" -f "$SERVER2_COMPOSE" "$@"
+    docker compose -p "$HOST_PROJECT" \
+        -f "${C1008_COMPOSE_DIR:-$CHECKOUT}/docker-compose.server2-runner.yml" \
+        --project-directory "$CHECKOUT" "$@"
 }
 
 broker_sha12() {
@@ -973,7 +975,10 @@ compose_temp() {
     SOURCE_REVISION="$SHA" \
     BUILD_SLOTS_SHA12="$(broker_sha12)" \
     RUNNER_GROK_STORE_DIR="${RUNNER_GROK_STORE_DIR:-}" \
-    docker compose -p "$TEMP_PROJECT" -f "$SERVER2_COMPOSE" -f "$SERVER2_TEMP_COMPOSE" \
+    docker compose -p "$TEMP_PROJECT" \
+        -f "${C1008_COMPOSE_DIR:-$CHECKOUT}/docker-compose.server2-runner.yml" \
+        -f "${C1008_COMPOSE_DIR:-$CHECKOUT}/docker-compose.server2-runner.temp.yml" \
+        --project-directory "$CHECKOUT" \
         --env-file "$SERVER2_TEMP_ENV" "$@"
 }
 
@@ -3836,11 +3841,174 @@ c1008_volume() {
          else error("identity") end' || return 2
 }
 
+# CARD-1105 D-3: every bind target this script has shipped. A removed mount keeps its row.
+C1008_BIND_KINDS='/run/antiphon/claude-oauth-token true
+/run/antiphon/gitconfig true
+/run/antiphon/github-token false
+/state/codex false
+/codex-home false
+/state/grok false'
+
+c1008_bind_kind() {
+    local target="$1" path kind
+    while read -r path kind; do
+        [ "$path" = "$target" ] || continue
+        printf '%s\n' "$kind"
+        return 0
+    done <<< "$C1008_BIND_KINDS"
+    return 2
+}
+
+# Materialise both Compose files from Git objects. Callers choose the refusal token.
+c1008_compose_source() {
+    local sha="$1" dir="$2" name tmp fetched=0
+    [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || return 2
+    if [ -L "$dir" ]; then return 2; fi
+    mkdir -p -- "$dir" || return 2
+    if [ ! -d "$dir" ] || [ -L "$dir" ]; then return 2; fi
+    for name in docker-compose.server2-runner.yml docker-compose.server2-runner.temp.yml; do
+        tmp="$dir/$name.tmp.$$"
+        if ! GIT_TERMINAL_PROMPT=0 git -C "$CHECKOUT" show "$sha:$name" >"$tmp" 2>/dev/null; then
+            rm -f -- "$tmp"
+            if [ "$fetched" != 0 ]; then return 2; fi
+            fetched=1
+            GIT_TERMINAL_PROMPT=0 git -C "$CHECKOUT" fetch --filter=blob:none origin "$sha" >/dev/null 2>&1 || true
+            if ! GIT_TERMINAL_PROMPT=0 git -C "$CHECKOUT" show "$sha:$name" >"$tmp" 2>/dev/null; then
+                rm -f -- "$tmp"
+                return 2
+            fi
+        fi
+        if [ ! -s "$tmp" ]; then rm -f -- "$tmp"; return 2; fi
+        mv -f -- "$tmp" "$dir/$name" || return 2
+    done
+}
+
+# Previous generation is the deployed stack SHA when it agrees with registration and the image.
+c1008_previous_generation() {
+    local project="$1" owned="$2" envfile sha status_sha tag image_id container_image owned_count image_count
+    owned_count="$(printf '%s' "$owned" | jq -e 'if type!="array" then error("owned") else
+        [.[] | select(.Config.Labels["com.docker.compose.service"]=="session-runner" or
+          .Config.Labels["com.docker.compose.service"]=="state-init")] | length end')" \
+        || c1008_refuse RecycleGenerationUnknown
+    if [ "$owned_count" = 0 ]; then
+        C1008_PREVIOUS_SHA=''
+        printf '%s\n' '{"statusBuildVersion":null,"imageTag":null,"imageId":null}'
+        return 0
+    fi
+    if [ "$project" = "$TEMP_PROJECT" ]; then envfile="$SERVER2_TEMP_ENV"; else envfile="$SERVER2_ENV"; fi
+    if [ -L "$envfile" ] || [ ! -f "$envfile" ]; then c1008_refuse RecycleGenerationUnknown; fi
+    sha="$(sed -n 's/^SOURCE_REVISION=//p' "$envfile" | head -n 1 | tr -d '[:space:]')" \
+        || c1008_refuse RecycleGenerationUnknown
+    [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || c1008_refuse RecycleGenerationUnknown
+    if ! status_sha="$(printf '%s' "${C1008_STATUS:-null}" | jq -r \
+        'if type=="object" and (.buildVersion|type)=="string" then .buildVersion else "" end')"; then
+        c1008_refuse RecycleGenerationUnknown
+    fi
+    [ "$status_sha" = "$sha" ] || c1008_refuse RecycleGenerationMismatch
+    image_count="$(printf '%s' "$owned" | jq -er '[.[] | select(.Config.Labels["com.docker.compose.service"]=="session-runner") | .Image] | unique | length')" \
+        || c1008_refuse RecycleGenerationUnknown
+    [ "$image_count" = 1 ] || c1008_refuse RecycleGenerationUnknown
+    container_image="$(printf '%s' "$owned" | jq -er '[.[] | select(.Config.Labels["com.docker.compose.service"]=="session-runner") | .Image] | unique | .[0]')" \
+        || c1008_refuse RecycleGenerationUnknown
+    [[ "$container_image" =~ ^sha256:[0-9a-f]{64}$ ]] || c1008_refuse RecycleGenerationUnknown
+    tag="antiphon-server2/session-testing:${sha:0:12}"
+    image_id="$(docker image inspect -f '{{.Id}}' "$tag" 2>/dev/null)" || c1008_refuse RecycleGenerationUnknown
+    image_id="${image_id//[[:space:]]/}"
+    [[ "$image_id" =~ ^sha256:[0-9a-f]{64}$ ]] || c1008_refuse RecycleGenerationUnknown
+    [ "$image_id" = "$container_image" ] || c1008_refuse RecycleGenerationMismatch
+    C1008_PREVIOUS_SHA="$sha"
+    jq -nc --arg sha "$sha" --arg tag "$tag" --arg id "$image_id" \
+        '{statusBuildVersion:$sha,imageTag:$tag,imageId:$id}'
+}
+
+# Previous roster is this render, not the shipped target contract.
+c1008_previous_model() {
+    local sha="${1:-}" model source_dir role key expected kinds
+    [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || c1008_refuse RecycleGenerationUnknown
+    source_dir="$CASE_DIR/compose/${sha:0:12}"
+    c1008_compose_source "$sha" "$source_dir" || c1008_refuse RecycleGenerationUnknown
+    if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then
+        model="$(C1008_COMPOSE_DIR="$source_dir" compose_temp config --format json 2>/dev/null)" || c1008_refuse RecycleGenerationUnknown
+    else
+        model="$(C1008_COMPOSE_DIR="$source_dir" compose_host config --format json 2>/dev/null)" || c1008_refuse RecycleGenerationUnknown
+    fi
+    [ -n "$model" ] || c1008_refuse RecycleGenerationUnknown
+    kinds="$(printf '%s\n' "$C1008_BIND_KINDS" | jq -Rsc 'split("\n") | map(select(length>0) | split(" ") | {(.[0]): (.[1]=="true")}) | add')" \
+        || c1008_refuse RecycleGenerationUnknown
+    model="$(printf '%s' "$model" | jq -ce --argjson kinds "$kinds" '
+      def boolfield($k): (has($k)|not) or (.[$k]|type)=="boolean";
+      def allowed($approved): (keys - $approved | length)==0;
+      . as $model |
+      if (($model.services["state-init"]|type)!="object") or (($model.services["session-runner"]|type)!="object") or
+         ((($model.configs // {})|length)!=0) then error("services") else . end |
+      (reduce ["state-init","session-runner"][] as $service ({};
+        ($model.services[$service]) as $svc |
+        if ($svc.volumes|type)!="array" or
+           (($svc.volumes|map(.target)|unique|length)!=($svc.volumes|length)) or
+           (($svc.configs // [])|length)!=0 then error("mount set") else . end |
+        [ $svc.volumes[] | . as $m |
+          if ($m|type)!="object" or (($m|allowed(["type","source","target","read_only","volume","bind"]))|not) or
+             (($m|boolfield("read_only"))|not) or ($m.target|type)!="string" or ($m.source|type)!="string"
+          then error("mount contract")
+          elif $m.type=="volume" then
+            if (($model.volumes[$m.source]|type)!="object") or (($model.volumes[$m.source].name|type)!="string") or
+               (($m.volume // {})|type)!="object" or ((($m.volume // {})|allowed(["nocopy"]))|not) or
+               ((($m.volume // {})|boolfield("nocopy"))|not) or ($m|has("bind"))
+            then error("undeclared volume")
+            else {kind:"volume",role:$m.source,source:$model.volumes[$m.source].name,target:$m.target,
+              rw:(($m.read_only // false)|not),nocopy:($m.volume.nocopy // false)} end
+          elif $m.type=="bind" then
+            if (($m.source|startswith("/"))|not) then error("relative bind")
+            elif ($kinds|has($m.target)|not) then error("unknown bind")
+            elif (($m.bind // {})|type)!="object" or ((($m.bind // {})|allowed(["create_host_path"]))|not) or
+                 ((($m.bind // {})|boolfield("create_host_path"))|not) or ($m|has("volume"))
+            then error("mount contract")
+            else {kind:"bind",source:$m.source,target:$m.target,rw:(($m.read_only // false)|not),file:$kinds[$m.target]} end
+          else error("mount contract") end ] as $mounts |
+        (if $service=="session-runner" then
+           if ($svc.tmpfs|type)!="array" or ($svc.secrets|type)!="array" or
+              any($svc.tmpfs[]; (type!="string") or (startswith("/")|not)) then error("ephemeral") else . end |
+           [$svc.secrets[] | . as $secret |
+             (if (.target|type)=="string" and (.target|startswith("/")) then .target
+              else "/run/secrets/"+(.source // "") end) as $target |
+             if ($secret|type)!="object" or (($secret|allowed(["source","target"]))|not) or
+                ($secret.source|type)!="string" or ($model.secrets[$secret.source]|type)!="object" or
+                (($model.secrets[$secret.source]|allowed(["file","name"]))|not) or
+                ($model.secrets[$secret.source].file|type)!="string" or
+                (($model.secrets[$secret.source].file|startswith("/"))|not) or
+                $target!=("/run/secrets/"+$secret.source) then error("secret")
+             else {kind:"secret",source:$model.secrets[$secret.source].file,target:$target,rw:false,file:true} end] +
+           [$svc.tmpfs[] | {kind:"tmpfs",source:"",target:.,rw:true}]
+         else if (($svc.secrets // [])|length)!=0 or (($svc.tmpfs // [])|length)!=0 then error("init ephemeral")
+              else [] end end) as $extra |
+        if ([($mounts+$extra)[].target]|unique|length)!=(($mounts+$extra)|length) then error("duplicate target") else . end |
+        .[$service]=(($mounts+$extra)|sort_by(.target)))) as $topology |
+      $model + {c994Topology:{version:1,services:$topology}}')" || c1008_refuse RecycleGenerationUnknown
+    for role in work runner-tmp dind-data runner-state; do
+        expected="${C1008_PROJECT}_$role"
+        printf '%s' "$model" | jq -e --arg role "$role" --arg name "$expected" \
+            '.volumes[$role].name==$name and ((.volumes[$role].external // false)==false)' >/dev/null \
+            || c1008_refuse RecycleGenerationUnknown
+    done
+    for role in nuget-packages nuget-scratch npm-content; do
+        key="runner-$role"; expected="antiphon-runner-cache-$role"
+        printf '%s' "$model" | jq -e --arg key "$key" --arg name "$expected" \
+            '.volumes[$key].name==$name and .volumes[$key].external==true' >/dev/null \
+            || c1008_refuse RecycleGenerationUnknown
+    done
+    printf '%s' "$model" | jq -Sc . || c1008_refuse RecycleGenerationUnknown
+}
+
 # Service topology is authorized by the shipped Compose contract, not inspect labels.
 c1008_compose_model() {
-    local model role key expected grok="${RUNNER_GROK_STORE_DIR:-}"
-    if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then model="$(compose_temp config --format json 2>/dev/null)"
-    else model="$(compose_host config --format json 2>/dev/null)"; fi || c1008_refuse RecycleComposeMismatch
+    local model role key expected grok="${RUNNER_GROK_STORE_DIR:-}" sha="${1:-$SHA}" source_dir
+    source_dir="$CASE_DIR/compose/${sha:0:12}"
+    c1008_compose_source "$sha" "$source_dir" || c1008_refuse RecycleComposeMismatch
+    if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then
+        model="$(C1008_COMPOSE_DIR="$source_dir" compose_temp config --format json 2>/dev/null)" || c1008_refuse RecycleComposeMismatch
+    else
+        model="$(C1008_COMPOSE_DIR="$source_dir" compose_host config --format json 2>/dev/null)" || c1008_refuse RecycleComposeMismatch
+    fi
     model="$(printf '%s' "$model" | jq -ce --arg claude "$CLAUDE_OAUTH_TOKEN_PATH" --arg git "$GIT_IDENTITY_PATH" \
         --arg codex "$CODEX_HOME_PATH" --arg token "$GITHUB_TOKEN_DIR_PATH" --arg grok "$grok" --arg key "$DEPLOY_KEY" --arg phone "$PHONE_HOME_SECRET" \
         --argjson temp "$([ "$C1008_PROJECT" = "$TEMP_PROJECT" ] && echo true || echo false)" '

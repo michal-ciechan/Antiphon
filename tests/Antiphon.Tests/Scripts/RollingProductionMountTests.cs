@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json.Nodes;
 using Antiphon.Tests.Application;
 using Antiphon.Tests.TestHelpers;
@@ -21,9 +22,14 @@ public sealed class RollingProductionMountTests
     {
         using var f = new C1008HostFixture();
         var vectors = new JsonArray(); var expected = new Dictionary<string, bool>(StringComparer.Ordinal);
+        var expectedDiagnosis = new Dictionary<string, string>(StringComparer.Ordinal);
         void Add(string key, bool accepted, JsonObject input) {
             expected.Add(key, accepted);
-            vectors.Add(new JsonObject { ["key"] = key, ["input"] = input.DeepClone() });
+            if (input["expectDiagnosis"] is JsonValue diagnosis)
+                expectedDiagnosis.Add(key, diagnosis.GetValue<string>());
+            var copy = input.DeepClone().AsObject();
+            copy.Remove("expectDiagnosis");
+            vectors.Add(new JsonObject { ["key"] = key, ["input"] = copy });
         }
         foreach (var project in new[] { "antiphon-runner", "antiphon-runner-temp" }) {
             var good = Observation(f, project); Add(project + ":valid", true, good);
@@ -48,25 +54,42 @@ public sealed class RollingProductionMountTests
                     if [ -n "$metadataFault" ];then sudo(){ [ "$1" = -n ] && shift;[ "$1" != "$metadataFault" ] || return 2;command "$@"; };fi
                     compose_host() { printf '%s' "$C994_FIXTURE_COMPOSE_JSON"; }
                     compose_temp() { printf '%s' "$C994_FIXTURE_COMPOSE_JSON"; }
-                    c1008_refuse() { exit 2; }
-                    model="$(c1008_compose_model)" || exit 2
+                    c1008_compose_source() { :; }
+                    C1008_PREVIOUS_SHA="$(printf '%s' "$input" | jq -r '.previousSha // "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"')"
+                    c1008_previous_generation() {
+                        C1008_PREVIOUS_SHA="$(printf '%s' "$input" | jq -r '.previousSha // "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"')"
+                        printf '%s\n' '{"statusBuildVersion":null,"imageTag":null,"imageId":null}'
+                    }
+                    c1008_refuse() { printf 'DIAGNOSIS=%s\n' "$1"; exit 2; }
+                    generation="$(printf '%s' "$input" | jq -r '.generation // "target"')"
+                    model_code=0
+                    if [ "$generation" = previous ]; then
+                        model="$(c1008_previous_model "$C1008_PREVIOUS_SHA")" || model_code=$?
+                    else
+                        model="$(c1008_compose_model)" || model_code=$?
+                    fi
+                    if [ "$model_code" != 0 ]; then printf '%s\n' "$model"; exit "$model_code"; fi
                     for role in work runner-state runner-tmp dind-data; do
                         name="${C1008_PROJECT}_$role"
                         c1008_private_identity "$(printf '%s' "$volumes" | jq -c --arg n "$name" '.[$n]')" "$name" "$C1008_PROJECT" "$role" || exit 2
                     done
                     c1008_owned_mounts "$owned" "$model" "$volumes"
                     printf '%s' "$C1008_OWNED" | jq -e 'all(.[]; .Topology.version==1)' >/dev/null
-                ) >/dev/null 2>&1 && code=0 || code=$?
-                printf 'MOUNT_CASE %s %s\n' "$key" "$code"
+                ) >"$C1008_FIXTURE_ROOT/mount-case.log" 2>&1 && code=0 || code=$?
+                diagnosis="$(sed -n 's/^DIAGNOSIS=//p' "$C1008_FIXTURE_ROOT/mount-case.log" | tail -n 1)"
+                printf 'MOUNT_CASE %s %s %s\n' "$key" "$code" "$diagnosis"
             done < <(jq -c '.[]' "$C1008_FIXTURE_ROOT/mount-vectors.json")
             write_result true '' 0
             """;
         var run = await f.Run(extra: command);
         run.Exit.ShouldBe(0, label + ": child; " + run.Output);
         var actual = run.Output.Split('\n').Where(x => x.StartsWith("MOUNT_CASE ", StringComparison.Ordinal))
-            .Select(x => x.Split(' ')).ToDictionary(x => x[1], x => x[2] == "0", StringComparer.Ordinal);
+            .Select(x => x.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+            .ToDictionary(x => x[1], x => (Ok: x[2] == "0", Diagnosis: x.Length > 3 ? x[3] : ""), StringComparer.Ordinal);
         actual.Keys.Order().ShouldBe(expected.Keys.Order(), label + ": exact case roster");
-        foreach (var (key, value) in expected) actual[key].ShouldBe(value, label + ": " + key);
+        foreach (var (key, value) in expected) actual[key].Ok.ShouldBe(value, label + ": " + key + " diagnosis=" + actual[key].Diagnosis);
+        foreach (var (key, diagnosis) in expectedDiagnosis)
+            actual[key].Diagnosis.ShouldBe(diagnosis, label + ": " + key);
     }
 
     [Test, ParallelLimiter<ProcessSpawnLimit>]
@@ -209,4 +232,217 @@ public sealed class RollingProductionMountTests
             add(variant, variant is "running" or "inspected" or "mount-encoding", bad);
         }
     });
+
+    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1105_Previous_generation_roster_is_derived_from_its_compose()
+    {
+        C1008HostFixture.RequireNativeLinux();
+        await Prove("c1105-previous-roster", (f, good, add) => {
+            var project = good["project"]!.GetValue<string>();
+            var previousModel = MaterializePrevious(f.Root, project, project.EndsWith("-temp", StringComparison.Ordinal));
+            var previousOwned = OwnedFrom(f, project, previousModel);
+            var previous = good.DeepClone().AsObject();
+            previous["model"] = previousModel.DeepClone();
+            previous["owned"] = previousOwned;
+            previous["generation"] = "previous";
+            add("previous-accepts", true, previous);
+
+            var targetRefuses = good.DeepClone().AsObject();
+            targetRefuses["owned"] = previousOwned.DeepClone();
+            targetRefuses["expectDiagnosis"] = "RecycleContainerStateUnknown";
+            add("target-refuses-previous-container", false, targetRefuses);
+
+            var eleventh = previous.DeepClone().AsObject();
+            eleventh["owned"] = good["owned"]!.DeepClone();
+            eleventh["expectDiagnosis"] = "RecycleContainerStateUnknown";
+            add("eleventh-against-previous", false, eleventh);
+
+            foreach (var generation in new[] { "previous", "target" }) {
+                var foreign = (generation == "previous" ? previous : good).DeepClone().AsObject();
+                if (generation == "previous") foreign["generation"] = "previous";
+                foreign["owned"]![0]!["Mounts"]!.AsArray().Add(new JsonObject {
+                    ["Type"] = "bind", ["Source"] = f.Root, ["Destination"] = "/foreign", ["RW"] = true });
+                foreign["expectDiagnosis"] = "RecycleContainerStateUnknown";
+                add("foreign-" + generation, false, foreign);
+            }
+
+            var unknown = previous.DeepClone().AsObject();
+            unknown["model"]!["services"]!["session-runner"]!["volumes"]!.AsArray().Add(new JsonObject {
+                ["type"] = "bind", ["source"] = f.Root, ["target"] = "/foreign", ["read_only"] = true,
+                ["bind"] = new JsonObject { ["create_host_path"] = true } });
+            unknown["expectDiagnosis"] = "RecycleGenerationUnknown";
+            add("unknown-bind", false, unknown);
+
+            var duplicate = previous.DeepClone().AsObject();
+            var mounts = duplicate["model"]!["services"]!["session-runner"]!["volumes"]!.AsArray();
+            mounts[1]!["target"] = mounts[0]!["target"]!.DeepClone();
+            duplicate["expectDiagnosis"] = "RecycleGenerationUnknown";
+            add("duplicate-target", false, duplicate);
+
+            var relative = previous.DeepClone().AsObject();
+            relative["model"]!["services"]!["session-runner"]!["volumes"]!.AsArray()
+                .First(x => x!["type"]!.GetValue<string>() == "bind")!["source"] = "relative/path";
+            relative["expectDiagnosis"] = "RecycleGenerationUnknown";
+            add("relative-bind", false, relative);
+
+            var undeclared = previous.DeepClone().AsObject();
+            undeclared["model"]!["services"]!["session-runner"]!["volumes"]!.AsArray()
+                .First(x => x!["source"]!.GetValue<string>() == "work")!["source"] = "missing-role";
+            undeclared["expectDiagnosis"] = "RecycleGenerationUnknown";
+            add("undeclared-volume", false, undeclared);
+
+            var missing = previous.DeepClone().AsObject();
+            missing["model"]!["volumes"]!.AsObject().Remove("work");
+            foreach (var service in new[] { "session-runner", "state-init" }) {
+                var serviceMounts = missing["model"]!["services"]![service]!["volumes"]!.AsArray();
+                for (var i = serviceMounts.Count - 1; i >= 0; i--)
+                    if (serviceMounts[i]!["source"]!.GetValue<string>() == "work") serviceMounts.RemoveAt(i);
+            }
+            missing["expectDiagnosis"] = "RecycleGenerationUnknown";
+            add("missing-recycle-volume", false, missing);
+        });
+        await ProveGenerationIdentity();
+    }
+
+    private static JsonArray OwnedFrom(C1008HostFixture f, string project, JsonObject model)
+    {
+        var saved = f.Docker["models"]![project]!.DeepClone();
+        f.Docker["models"]![project] = model.DeepClone();
+        var owned = new JsonArray(f.Container('1', project, "session-runner", false), f.Container('2', project, "state-init", false));
+        f.Docker["models"]![project] = saved;
+        return owned;
+    }
+
+    private static JsonObject MaterializePrevious(string root, string project, bool temp)
+    {
+        var psi = new ProcessStartInfo("node") { UseShellExecute = false, RedirectStandardOutput = true,
+            RedirectStandardError = true, WorkingDirectory = DelegateScriptRunner.RepoRoot };
+        foreach (var arg in new[] { "scripts/fixtures/c994-production-compose-model.mjs", root, project,
+                     temp ? "true" : "false", "previous" }) psi.ArgumentList.Add(arg);
+        using var process = Process.Start(psi)!;
+        var stdout = process.StandardOutput.ReadToEndAsync(); var stderr = process.StandardError.ReadToEndAsync();
+        if (!process.WaitForExit(30000)) { process.Kill(true); process.WaitForExit(); throw new InvalidOperationException("Previous compose timeout"); }
+        if (process.ExitCode != 0) throw new InvalidOperationException("Previous compose: " + stderr.GetAwaiter().GetResult());
+        var model = JsonNode.Parse(stdout.GetAwaiter().GetResult())!["model"]!.AsObject();
+        model["services"]!["session-runner"]!["volumes"]!.AsArray()
+            .Any(x => x!["target"]!.GetValue<string>() == "/run/antiphon/github-token")
+            .ShouldBeFalse("previous render still carries the token bind");
+        return model;
+    }
+
+    // Real identity function, not the roster stub: each new refusal exits before any destructive docker call.
+    private static async Task ProveGenerationIdentity()
+    {
+        using var f = new C1008HostFixture();
+        var sha = new string('b', 40);
+        var other = new string('c', 40);
+        var command = """
+            LANE=host
+            C1008_PROJECT="$HOST_PROJECT"
+            if [ -n "${C1008_COMPOSE_SOURCE_BODY:-}" ]; then eval "$C1008_COMPOSE_SOURCE_BODY"; fi
+            owned="$(jq -c '[.containers[] | select(.Config.Labels["com.docker.compose.service"]=="session-runner" or .Config.Labels["com.docker.compose.service"]=="state-init")]' "$C1008_FIXTURE_ROOT/docker.json")"
+            none="$(jq -c '[.containers[] | select(.Config.Labels["com.docker.compose.service"]=="build-slots")]' "$C1008_FIXTURE_ROOT/docker.json")"
+            journal="$SERVER2_ROOT/recycle"
+            sha=__SHA__
+            other=__OTHER__
+            show_generation() {
+                c1008_previous_generation "$@" >"$C1008_FIXTURE_ROOT/generation.out"
+                gen="$(cat "$C1008_FIXTURE_ROOT/generation.out")"
+                if [ -z "${C1008_PREVIOUS_SHA-}" ]; then printf 'PREV_SHA=empty\n'
+                else printf 'PREV_SHA=%s\n' "$C1008_PREVIOUS_SHA"; fi
+                printf 'GENERATION=%s\n' "$gen"
+            }
+            source_missing() {
+                CHECKOUT="$C1008_FIXTURE_ROOT/empty-git"
+                c1008_previous_model "$sha"
+            }
+            check_bind_kinds() {
+                [ "$(c1008_bind_kind /run/antiphon/claude-oauth-token)" = true ]
+                [ "$(c1008_bind_kind /run/antiphon/gitconfig)" = true ]
+                [ "$(c1008_bind_kind /run/antiphon/github-token)" = false ]
+                [ "$(c1008_bind_kind /state/codex)" = false ]
+                [ "$(c1008_bind_kind /codex-home)" = false ]
+                [ "$(c1008_bind_kind /state/grok)" = false ]
+                kind_code=0
+                c1008_bind_kind /not-a-shipped-target || kind_code=$?
+                [ "$kind_code" = 2 ]
+            }
+            check_keyed() {
+                got="$(C1008_COMPOSE_DIR="$C1008_FIXTURE_ROOT/compose/bbbbbbbbbbbb" docker compose -p antiphon-runner config --format json)"
+                printf '%s' "$got" | jq -e '.marker==true' >/dev/null
+            }
+            run_case() {
+                key="$1"; shift
+                (
+                    "$@"
+                ) >"$C1008_FIXTURE_ROOT/identity.log" 2>&1 && code=0 || code=$?
+                diagnosis="$(sed -n 's/^DIAGNOSIS=//p' "$C1008_FIXTURE_ROOT/identity.log" | tail -n 1)"
+                sha_out="$(sed -n 's/^PREV_SHA=//p' "$C1008_FIXTURE_ROOT/identity.log" | tail -n 1)"
+                gen="$(sed -n 's/^GENERATION=//p' "$C1008_FIXTURE_ROOT/identity.log" | tail -n 1)"
+                journal_present=0
+                [ -e "$journal" ] && journal_present=1
+                if [ -f "$C1008_FIXTURE_ROOT/docker-trace.jsonl" ]; then
+                    stop="$(jq -s '[.[] | select(.[0]=="stop" or .[0]=="rm" or (.[0]=="volume" and .[1]=="rm"))] | length' "$C1008_FIXTURE_ROOT/docker-trace.jsonl")"
+                else stop=0; fi
+                printf 'IDENTITY %s %s %s %s %s %s\n' "$key" "$code" "${diagnosis:-none}" "$journal_present" "$stop" "${sha_out:-none}"
+                printf 'IDENTITY_GEN %s %s\n' "$key" "${gen:-none}"
+            }
+            run_case none-owned show_generation "$HOST_PROJECT" "$none"
+            rm -f -- "$SERVER2_ENV"
+            run_case missing-stack c1008_previous_generation "$HOST_PROJECT" "$owned"
+            printf 'SOURCE_REVISION=old\n' > "$SERVER2_ENV"
+            run_case stack-not-hex c1008_previous_generation "$HOST_PROJECT" "$owned"
+            printf 'SOURCE_REVISION=%s\n' "$sha" > "$SERVER2_ENV"
+            C1008_STATUS="$(jq -cn --arg s "$other" '{buildVersion:$s}')"
+            run_case status-mismatch c1008_previous_generation "$HOST_PROJECT" "$owned"
+            printf 'SOURCE_REVISION=%s\n' "$sha" > "$SERVER2_ENV"
+            printf 'SOURCE_REVISION=%s\n' "$other" > "$SERVER2_TEMP_ENV"
+            C1008_STATUS="$(jq -cn --arg s "$sha" '{buildVersion:$s}')"
+            run_case temp-env-mismatch c1008_previous_generation "$TEMP_PROJECT" "$owned"
+            jq '.fault="image-inspect-wrong"' "$C1008_FIXTURE_ROOT/docker.json" > "$C1008_FIXTURE_ROOT/docker.json.new"
+            mv -f -- "$C1008_FIXTURE_ROOT/docker.json.new" "$C1008_FIXTURE_ROOT/docker.json"
+            printf 'SOURCE_REVISION=%s\n' "$sha" > "$SERVER2_ENV"
+            C1008_STATUS="$(jq -cn --arg s "$sha" '{buildVersion:$s}')"
+            run_case image-mismatch c1008_previous_generation "$HOST_PROJECT" "$owned"
+            jq '.fault=""' "$C1008_FIXTURE_ROOT/docker.json" > "$C1008_FIXTURE_ROOT/docker.json.new"
+            mv -f -- "$C1008_FIXTURE_ROOT/docker.json.new" "$C1008_FIXTURE_ROOT/docker.json"
+            run_case matched show_generation "$HOST_PROJECT" "$owned"
+            git init -q "$C1008_FIXTURE_ROOT/empty-git"
+            run_case source-missing source_missing
+            run_case bind-kinds check_bind_kinds
+            jq '.models["antiphon-runner@bbbbbbbbbbbb"]={"marker":true}' "$C1008_FIXTURE_ROOT/docker.json" > "$C1008_FIXTURE_ROOT/docker.json.new"
+            mv -f -- "$C1008_FIXTURE_ROOT/docker.json.new" "$C1008_FIXTURE_ROOT/docker.json"
+            run_case keyed-model check_keyed
+            write_result true '' 0
+            """.Replace("__SHA__", sha, StringComparison.Ordinal).Replace("__OTHER__", other, StringComparison.Ordinal);
+        var run = await f.Run(extra: command);
+        run.Exit.ShouldBe(0, "c1105-generation-identity: " + run.Output);
+        var rows = run.Output.Split('\n').Where(x => x.StartsWith("IDENTITY ", StringComparison.Ordinal))
+            .Select(x => x.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+            .ToDictionary(x => x[1], x => x, StringComparer.Ordinal);
+        void Refused(string key, string diagnosis) {
+            rows[key][2].ShouldBe("2", key);
+            rows[key][3].ShouldBe(diagnosis, key);
+            rows[key][4].ShouldBe("0", key + " journal");
+            rows[key][5].ShouldBe("0", key + " destructive docker");
+        }
+        Refused("missing-stack", "RecycleGenerationUnknown");
+        Refused("stack-not-hex", "RecycleGenerationUnknown");
+        Refused("status-mismatch", "RecycleGenerationMismatch");
+        Refused("temp-env-mismatch", "RecycleGenerationMismatch");
+        Refused("image-mismatch", "RecycleGenerationMismatch");
+        Refused("source-missing", "RecycleGenerationUnknown");
+        rows["none-owned"][2].ShouldBe("0", "none-owned");
+        rows["none-owned"][6].ShouldBe("empty", "none-owned previous sha");
+        rows["matched"][2].ShouldBe("0", "matched");
+        rows["matched"][6].ShouldBe(sha, "matched previous sha");
+        rows["bind-kinds"][2].ShouldBe("0", "bind-kinds");
+        rows["keyed-model"][2].ShouldBe("0", "keyed-model");
+        var matched = run.Output.Split('\n').Single(x => x.StartsWith("IDENTITY_GEN matched ", StringComparison.Ordinal))["IDENTITY_GEN matched ".Length..];
+        var generation = JsonNode.Parse(matched)!.AsObject();
+        generation["statusBuildVersion"]!.GetValue<string>().ShouldBe(sha);
+        generation["imageTag"]!.GetValue<string>().ShouldBe("antiphon-server2/session-testing:" + sha[..12]);
+        generation["imageId"]!.GetValue<string>().ShouldBe("sha256:" + new string('a', 64));
+        f.Trace.Any(a => a[0] is "stop" or "rm" || (a.Length > 1 && a[0] == "volume" && a[1] == "rm")).ShouldBeFalse("identity proof is read-only");
+    }
 }

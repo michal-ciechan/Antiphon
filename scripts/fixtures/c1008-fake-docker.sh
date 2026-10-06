@@ -93,7 +93,10 @@ else if(args[0]==='volume'&&args[1]==='inspect') {
  if(!state.volumes[name])fail();delete state.volumes[name];state.removed.push(name);save();out(name+'\n');
 } else if(args[0]==='compose') {
  const project=args[args.indexOf('-p')+1];
- if(args.includes('config'))out(state.models[project]);
+ const composeDir=process.env.C1008_COMPOSE_DIR||'';
+ const keyed=composeDir?project+'@'+path.basename(composeDir):'';
+ const model=keyed&&Object.prototype.hasOwnProperty.call(state.models,keyed)?state.models[keyed]:state.models[project];
+ if(args.includes('config')){if(model===undefined)fail();out(model);}
  else if(args.includes('down')) {
   if(!args.includes('-v'))fail();
   state.containers=state.containers.filter(c=>c.Config.Labels['com.docker.compose.project']!==project);
