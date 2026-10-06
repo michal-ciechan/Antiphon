@@ -515,7 +515,7 @@ public class TerminalRunnerSeatReleaseTests
             await f.AnswerAsync("retain historical answer");
             f.Harness.Provider.GetRequiredService<IOptions<TerminalRunnerSeatReleaseOptions>>().Value.AutomaticEnabled = false;
             var seat = new SessionRunnerSessionDto(f.SessionId, 123, f.Observation.ExpectedAcceptedStartedAt,
-                hold == "replacement" ? "Exited" : "Running", null, "", 12,
+                hold == "replacement" ? "Exited" : "Running", null, AgentExitReason.Unknown, 12,
                 AcceptedStartedAt: hold == "replacement" ? f.Now : f.Observation.ExpectedAcceptedStartedAt);
             f.Directory.Inventory = () => Task.FromResult<RunnerInventory>(hold switch
             {
