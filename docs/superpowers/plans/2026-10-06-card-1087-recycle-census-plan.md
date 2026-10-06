@@ -60,7 +60,7 @@ nothing was written.
 Routing facts read for lane selection (`GET /api/runner-defaults`, `GET /api/session-runners`):
 global default `server2`, which is draining with `redirectTo=server2-temp`; `server2-temp`
 (linux) accepts at `d985af05`, capacity 10, occupied 4; `desktop` (windows) accepts,
-capacity 2. The Code task needs native Linux for the host-lane rows (CP-5, CP-7 call
+capacity 2. The Code task needs native Linux for the host-lane rows (CP-5, CP-5b, CP-7 call
 `C1008HostFixture.RequireNativeLinux()`), so dispatch with `-Platform Linux` and no
 `-Runner`; the drain redirect places it on temp today and on main after the rollout.
 
@@ -291,16 +291,16 @@ Mutation runs after land under the SourceLanding rules (external evidence, no co
 
 ### Cost
 
-Ordinary Code floor is the `EstimatedMinutes` sum, 58 minutes of checkpoint time, plus
+Ordinary Code floor is the `EstimatedMinutes` sum, 72 minutes of checkpoint time, plus
 authoring: S1-S3 roughly 90-150 minutes, S4-S6 roughly 120-180 minutes. One checkpoint
-run per committed group (`--rows CP-1,CP-2` after S1-S3; `--rows CP-3,CP-4,CP-5,CP-6,CP-7`
+run per committed group (`--rows CP-1,CP-2` after S1-S3; `--rows CP-3,CP-4,CP-5,CP-5b,CP-6,CP-7`
 after S6), each through `scripts/build-slot.ps1`, each with the exact committed SHA:
 
 ```powershell
 $planPath = 'docs/superpowers/plans/2026-10-06-card-1087-recycle-census-plan.md'
 $candidateSha = git rev-parse HEAD
 pwsh -NoProfile -File scripts/build-slot.ps1 -Label c1087-cp1-2 -- dotnet run --project tools/Antiphon.Checkpoints --property:OutputPath=bin-c1087-tool/ -- run --plan $planPath --rows CP-1,CP-2 --expected-source-sha $candidateSha --row-timeout 15m --total-timeout 40m
-pwsh -NoProfile -File scripts/build-slot.ps1 -Label c1087-cp3-7 -- dotnet run --project tools/Antiphon.Checkpoints --property:OutputPath=bin-c1087-tool/ -- run --plan $planPath --rows CP-3,CP-4,CP-5,CP-6,CP-7 --expected-source-sha $candidateSha --row-timeout 20m --total-timeout 70m
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label c1087-cp3-7 -- dotnet run --project tools/Antiphon.Checkpoints --property:OutputPath=bin-c1087-tool/ -- run --plan $planPath --rows CP-3,CP-4,CP-5,CP-5b,CP-6,CP-7 --expected-source-sha $candidateSha --row-timeout 20m --total-timeout 70m
 ```
 
 Delete every `bin-c1087-*` directory before finishing. The tool bootstrap build is the
@@ -316,9 +316,16 @@ red row is fixed and rerun as the same row.
 | CP-2 | S1-S3 | CP-1 | server-land-pending | `/*/*/AgentTaskScopedListEndpointTests/*` | V-3, R-2 | exact 11 methods (10 existing + Land_pending_filter_selects_pending_rows), 0 failed/skipped | 11 | 6 | true |
 | CP-3 | all | `tests/Antiphon.Tests -> bin-c1087-b/` | wrapper-census | `/*/*/RollingVolumeRecycleScriptTests/*` | V-1, V-2, V-4, V-7, R-1 | exact 16 methods (12 existing + 4 C1087_*), 0 failed/skipped | 16 | 14 | true |
 | CP-4 | all | CP-3 | wrapper-vectors | `/*/*/RetiredTempContainerScriptTests/C994_*` | V-5, R-3 | exact 13 existing methods, 0 failed/skipped | 13 | 6 | true |
-| CP-5 | all | CP-3 | host-census | `/*/*/RemoteScriptContractTests/(C1008_*)\|(C1087_*)` | V-6, R-4 | exact 12 methods (11 existing + C1087_Host_census_filters_and_names_cause), 0 failed/skipped, native Linux | 12 | 9 | true |
+| CP-5 | all | CP-3 | host-census | `/*/*/RemoteScriptContractTests/(C1008_Recycle_resume_requires_matching_receipt*)\|(C1008_Recycle_receipt_records_disk_and_partial_failure*)\|(C1008_Recycle_refuses_references_and_unknown_census*)` | R-4 | exact 3 methods, 0 failed/skipped, native Linux | 3 | 14 | true |
+| CP-5b | all | CP-3 | host-census-rest | `/*/*/RemoteScriptContractTests/(C1008_Recycle_exact_default_volumes*)\|(C1008_Recycle_refuses_uninspectable_git*)\|(C1008_Recycle_refuses_unpublished_and_dirty_work*)\|(C1008_Retire_temp_rechecks_absence_and_retirement*)\|(C1087_Host_census_filters_and_names_cause*)\|(C1008_Recycle_preserves_tmp_copyup*)\|(C1008_Retire_temp_reclaims_below_cache_disk_gate*)\|(C1008_Recycle_audits_work_as_1654*)\|(C1008_Recycle_dry_run_never_mutates*)` | V-6, R-4 | exact 9 methods (8 existing C1008_* + C1087_Host_census_filters_and_names_cause), 0 failed/skipped, native Linux | 9 | 9 | true |
 | CP-6 | all | CP-3 | docs-pins | `/*/*/DockerStackDocumentationTests/*` | R-5 | exact 13 methods (12 existing + Recycle_census_preflight_is_documented), 0 failed/skipped | 13 | 1 | true |
 | CP-7 | all | CP-3 | real-docker | `/*/*/RollingVolumeRecycleDockerTests/C1008_Real_docker_comparison*` | R-6 | 1 result; all RD outcomes as recorded by the fixture, 0 failed/skipped, owned residue=0 | 1 | 12 | true |
+
+CP-5 and CP-5b are the same twelve host methods. Isolated TUnit durations at
+`9c0fa80459cfc60e8c78a069d1d4e987f008ec41` sum to 1327 seconds, past the unchanged
+20-minute row cap (the combined row was killed at 1200 seconds with no TRX). CP-5 is
+the three longest methods (measured 812 seconds). CP-5b is the other nine (measured
+515 seconds) and carries V-6. Neither row's timeout is raised.
 
 ## Risks and notes for Code and Review
 
