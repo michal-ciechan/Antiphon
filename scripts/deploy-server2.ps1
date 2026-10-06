@@ -363,8 +363,53 @@ function Assert-RecycleContext {
         ($Context.dryRun -and $Context.resume)) { throw 'RecycleContextInvalid' }
 }
 
+function Start-RecycleReceipt {
+    param([string]$ExecutingPhase, [string]$RunnerId)
+    $script:recycleReceiptPath = Join-Path $evidenceRoot ("census-$ExecutingPhase-$RunnerId.json")
+    $script:recycleReceipt = [ordered]@{ schema=1; phase=$ExecutingPhase; runnerId=$RunnerId;
+        project=$null; reads=[System.Collections.Generic.List[object]]::new(); tasks=@() }
+    $script:recycleReceiptTasks = @{}
+    Write-RecycleReceipt
+}
+
+function Write-RecycleReceipt {
+    # Persist approved fields only, including a partial census on refusal. Never
+    # retain response bodies, exception messages, credentials or task prose.
+    if ($null -eq $script:recycleReceipt) { return }
+    $script:recycleReceipt.tasks = @($script:recycleReceiptTasks.Keys | Sort-Object | ForEach-Object { $script:recycleReceiptTasks[$_] })
+    try {
+        $script:recycleReceipt | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $script:recycleReceiptPath -Encoding utf8
+    } catch { throw 'RecycleTaskCensusUnknown cause=Transport field=receipt' }
+}
+
+function Stop-RecycleMalformed {
+    param([string]$Field, [string]$Path)
+    if ($null -ne $script:recycleReceipt) {
+        $read = @($script:recycleReceipt.reads | Where-Object path -CEQ $Path | Select-Object -Last 1)
+        if ($read.Count -eq 1) { $read[0].outcome = 'Malformed'; $read[0]['field'] = $Field }
+    }
+    throw "RecycleTaskCensusUnknown cause=Malformed field=$Field path=$Path"
+}
+
+function Test-RecycleGuid {
+    param($Value)
+    return ($Value -is [string] -and $Value -cmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
+}
+
+function Test-RecycleTimestamp {
+    param($Value)
+    if ($null -eq $Value -or $Value -is [datetime] -or $Value -is [datetimeoffset]) { return $true }
+    $parsed = [datetimeoffset]::MinValue
+    return ($Value -is [string] -and $Value -cmatch '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,7})?(Z|[+-]\d{2}:\d{2})$' -and
+        [datetimeoffset]::TryParse($Value, [ref]$parsed))
+}
+
 function Invoke-RecycleRead {
     param([string]$Path)
+    $timer = [Diagnostics.Stopwatch]::StartNew()
+    $read = [ordered]@{ path=$Path; elapsedMs=0L; outcome='ok'; items=$null; excludedTotal=$null }
+    if ($null -ne $script:recycleReceipt) { $script:recycleReceipt.reads.Add($read) }
+    $cause = $null
     try {
         if ($env:C727_TEST_HTTP_STUB) {
             # Script-scope calls share Console.Error; preserve the subprocess
@@ -374,15 +419,45 @@ function Invoke-RecycleRead {
                 [Console]::SetError([System.IO.TextWriter]::Null)
                 $raw = & $env:C727_TEST_HTTP_STUB -Method GET -Path $Path 2>$null
             } finally { [Console]::SetError($stderr) }
-            if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace([string]$raw)) { throw 'read failed' }
-            return ([string]$raw | ConvertFrom-Json)
+            if ($LASTEXITCODE -ne 0) { $cause = 'Transport'; throw 'read' }
+            $raw = [string]$raw
+            if ($raw -ceq '__TIMEOUT__') { $cause = 'Timeout'; throw 'read' }
+            if ($raw -cmatch '^__(\d{3})__$') { $read['status'] = [int]$Matches[1]; $cause = 'Http'; throw 'read' }
+        } else {
+            # Read raw content so an empty success is distinguishable from malformed
+            # JSON; non-success content is never parsed or persisted.
+            $response = Invoke-WebRequest -Method GET -Uri ($api + $Path) -Headers $headers -TimeoutSec 60 -SkipHttpErrorCheck
+            if ([int]$response.StatusCode -lt 200 -or [int]$response.StatusCode -ge 300) {
+                $read['status'] = [int]$response.StatusCode; $cause = 'Http'; throw 'read'
+            }
+            $raw = [string]$response.Content
         }
-        return Invoke-RestMethod -Method GET -Uri ($api + $Path) -Headers $headers -TimeoutSec 15
-    } catch { throw 'RecycleTaskCensusUnknown' }
+        if ([string]::IsNullOrWhiteSpace($raw)) { $cause = 'Empty'; throw 'read' }
+        try { $value = ConvertFrom-Json -InputObject $raw -NoEnumerate }
+        catch { $cause = 'Malformed'; $read['field'] = 'body'; throw 'read' }
+        if ($value -is [array]) { $read.items = $value.Count }
+        elseif ($value.items -is [array]) { $read.items = $value.items.Count }
+        if ($value.excluded.total -is [int] -or $value.excluded.total -is [long]) { $read.excludedTotal = $value.excluded.total }
+        return ,$value
+    } catch {
+        if ($null -eq $cause) {
+            $cause = 'Transport'
+            for ($errorValue = $_.Exception; $null -ne $errorValue; $errorValue = $errorValue.InnerException) {
+                if ($errorValue -is [OperationCanceledException] -or $errorValue -is [TimeoutException] -or
+                    ($errorValue -is [Net.WebException] -and $errorValue.Status -eq [Net.WebExceptionStatus]::Timeout)) { $cause = 'Timeout'; break }
+            }
+        }
+        $read.outcome = $cause
+        $suffix = if ($cause -eq 'Http') { ' status=' + $read.status } elseif ($cause -eq 'Malformed') { ' field=body' } else { '' }
+        throw "RecycleTaskCensusUnknown cause=$cause$suffix path=$Path elapsedMs=$($timer.ElapsedMilliseconds)"
+    } finally {
+        $timer.Stop(); $read.elapsedMs = $timer.ElapsedMilliseconds
+        Write-RecycleReceipt
+    }
 }
 
 function Get-RecycleProjectId {
-    $projects = @(Invoke-RecycleRead -Path '/api/projects?includeArchived=true')
+    $projects = Invoke-RecycleRead -Path '/api/projects?includeArchived=true'
     $projectMatches = @($projects | Where-Object { $_.gitRepositoryUrl -eq 'https://github.com/michal-ciechan/Antiphon.git' })
     if ($projectMatches.Count -ne 1 -or [string]$projectMatches[0].id -cnotmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$') { throw 'RecycleTaskCensusUnknown' }
     return [string]$projectMatches[0].id
@@ -392,6 +467,7 @@ function Assert-RecycleTaskCensus {
     param([string]$RunnerId, [string]$ProjectId)
     # Two complete closures are compared. No status/since window, invented paging,
     # or preview is allowed to hide another project's pending landing request.
+    try {
     $previous = $null
     for ($pass = 0; $pass -lt 2; $pass++) {
         $pending = [System.Collections.Generic.Queue[string]]::new()
@@ -404,48 +480,57 @@ function Assert-RecycleTaskCensus {
         while ($pending.Count -gt 0) {
             $scope = $pending.Dequeue()
             if (-not $scopes.Add($scope)) { continue }
-            if ($scopes.Count -gt 1000) { throw 'RecycleTaskCensusUnknown' }
-            $envelope = Invoke-RecycleRead -Path ('/api/agent-tasks?projectId=' + $scope + '&unscoped=include&includeChecks=true')
-            if ($null -eq $envelope -or $envelope.items -isnot [array] -or
-                $null -eq $envelope.excluded -or $envelope.excluded.byProject -isnot [array] -or
-                [string]$envelope.scope.projectId -ne $scope -or [string]$envelope.scope.unscoped -ne 'include') {
-                throw 'RecycleTaskCensusUnknown'
-            }
+            if ($scopes.Count -gt 1000) { throw "RecycleTaskCensusUnknown cause=ScopeLimit scopes=$($scopes.Count)" }
+            $path = '/api/agent-tasks?projectId=' + $scope + '&unscoped=include&includeChecks=true'
+            $envelope = Invoke-RecycleRead -Path $path
+            if ($null -eq $envelope -or $envelope -isnot [pscustomobject]) { Stop-RecycleMalformed 'envelope' $path }
+            if ($envelope.items -isnot [array]) { Stop-RecycleMalformed 'items' $path }
+            if ($null -eq $envelope.excluded -or $envelope.excluded -isnot [pscustomobject]) { Stop-RecycleMalformed 'excluded' $path }
+            if ($envelope.excluded.byProject -isnot [array]) { Stop-RecycleMalformed 'excluded.byProject' $path }
+            if ($envelope.scope.projectId -isnot [string] -or $envelope.scope.projectId -cne $scope) { Stop-RecycleMalformed 'scope.projectId' $path }
+            if ($envelope.scope.unscoped -isnot [string] -or $envelope.scope.unscoped -cne 'include') { Stop-RecycleMalformed 'scope.unscoped' $path }
             foreach ($key in @('total','unscoped')) {
                 if (($envelope.excluded.$key -isnot [int] -and $envelope.excluded.$key -isnot [long]) -or
-                    $envelope.excluded.$key -lt 0) { throw 'RecycleTaskCensusUnknown' }
+                    $envelope.excluded.$key -lt 0) { Stop-RecycleMalformed "excluded.$key" $path }
             }
-            if ($envelope.excluded.unscoped -ne 0) { throw 'RecycleTaskCensusUnknown' }
+            if ($envelope.excluded.unscoped -ne 0) { Stop-RecycleMalformed 'excluded.unscoped' $path }
             $withheldCount = 0
             $excludedScopes = [System.Collections.Generic.HashSet[string]]::new()
             $observations[$scope] = @($envelope.items | ForEach-Object id | Sort-Object) -join ','
             foreach ($excluded in $envelope.excluded.byProject) {
                 $excludedId = [string]$excluded.projectId
-                if ($excludedId -cnotmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' -or $excludedId -eq $scope -or
-                    -not $excludedScopes.Add($excludedId) -or
-                    ($excluded.count -isnot [int] -and $excluded.count -isnot [long]) -or $excluded.count -le 0) { throw 'RecycleTaskCensusUnknown' }
+                if (-not (Test-RecycleGuid $excluded.projectId) -or $excludedId -eq $scope -or
+                    -not $excludedScopes.Add($excludedId)) { Stop-RecycleMalformed 'excluded.byProject.projectId' $path }
+                if (($excluded.count -isnot [int] -and $excluded.count -isnot [long]) -or $excluded.count -le 0) { Stop-RecycleMalformed 'excluded.byProject.count' $path }
                 $withheldCount += $excluded.count
-                if ($scopeCounts.ContainsKey($excludedId) -and $scopeCounts[$excludedId] -ne $excluded.count) { throw 'RecycleTaskCensusUnknown' }
+                if ($scopeCounts.ContainsKey($excludedId) -and $scopeCounts[$excludedId] -ne $excluded.count) { Stop-RecycleMalformed 'excluded.byProject.count' $path }
                 $scopeCounts[$excludedId] = $excluded.count
                 $pending.Enqueue([string]$excluded.projectId)
                 $observations[$scope] += '|' + [string]$excluded.projectId + ':' + [string]$excluded.count
             }
-            if ($withheldCount -ne $envelope.excluded.total) { throw 'RecycleTaskCensusUnknown' }
+            if ($withheldCount -ne $envelope.excluded.total) { Stop-RecycleMalformed 'excluded.total' $path }
             foreach ($task in $envelope.items) {
                 foreach ($key in @('id', 'status', 'runnerId', 'projectId', 'scopeSource', 'landRequestedAt', 'landStartedAt')) {
-                    if ($task.PSObject.Properties.Name -notcontains $key) { throw 'RecycleTaskCensusUnknown' }
+                    if ($task.PSObject.Properties.Name -notcontains $key) { Stop-RecycleMalformed $key $path }
                 }
                 $id = [string]$task.id
-                if ($id -cnotmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' -or
-                    [string]$task.status -cnotin @('Queued','Dispatched','Working','Blocked','Succeeded','Failed','Canceled') -or
-                    [string]$task.scopeSource -cnotin @('Task','Card','None') -or
+                if (-not (Test-RecycleGuid $task.id)) { Stop-RecycleMalformed 'id' $path }
+                if ($task.status -isnot [string] -or $task.status -cnotin @('Queued','Dispatched','Working','Blocked','Succeeded','Failed','Canceled')) { Stop-RecycleMalformed 'status' $path }
+                if ($null -ne $task.runnerId -and $task.runnerId -isnot [string]) { Stop-RecycleMalformed 'runnerId' $path }
+                if ($task.scopeSource -isnot [string] -or $task.scopeSource -cnotin @('Task','Card','None')) { Stop-RecycleMalformed 'scopeSource' $path }
+                if (($null -ne $task.projectId -and -not (Test-RecycleGuid $task.projectId)) -or
                     ($task.scopeSource -eq 'None' -and $null -ne $task.projectId) -or
-                    ($task.scopeSource -ne 'None' -and [string]$task.projectId -cne $scope)) { throw 'RecycleTaskCensusUnknown' }
-                $facts = [ordered]@{ id = $id; status = [string]$task.status; runnerId = $task.runnerId;
+                    ($task.scopeSource -ne 'None' -and [string]$task.projectId -cne $scope)) { Stop-RecycleMalformed 'projectId' $path }
+                foreach ($key in @('landRequestedAt','landStartedAt')) {
+                    if (-not (Test-RecycleTimestamp $task.$key)) { Stop-RecycleMalformed $key $path }
+                }
+                $reduced = [ordered]@{ id = $id; status = [string]$task.status; runnerId = $task.runnerId;
                     projectId = $task.projectId; scopeSource = $task.scopeSource;
-                    landRequestedAt = $task.landRequestedAt; landStartedAt = $task.landStartedAt } | ConvertTo-Json -Compress
-                if ($rows.ContainsKey($id) -and $rows[$id] -cne $facts) { throw 'RecycleTaskCensusUnknown' }
+                    landRequestedAt = $task.landRequestedAt; landStartedAt = $task.landStartedAt }
+                $facts = $reduced | ConvertTo-Json -Compress
+                if ($rows.ContainsKey($id) -and $rows[$id] -cne $facts) { Stop-RecycleMalformed 'id' $path }
                 $rows[$id] = $facts
+                if ($null -ne $script:recycleReceipt) { $script:recycleReceiptTasks[$id] = $reduced }
                 if ($null -ne $task.landRequestedAt -or $null -ne $task.landStartedAt) { throw "RecycleLandInFlight $id" }
                 if ([string]$task.runnerId -eq $RunnerId -and [string]$task.status -in @('Queued','Dispatched','Working','Blocked','Failed')) { throw "RecycleBoundTasks $id" }
                 $detail = Invoke-RecycleRead -Path ('/api/agent-tasks/' + $id)
@@ -464,18 +549,20 @@ function Assert-RecycleTaskCensus {
                 }
                 if ($landEvidence.ContainsKey($id) -and $landEvidence[$id] -cne $proof) { throw 'RecycleLandUnknown' }
                 $landEvidence[$id] = $proof
+                if ($null -ne $script:recycleReceipt) { $reduced['landRequest'] = $proof | ConvertFrom-Json }
             }
         }
         foreach ($scopeId in $scopeCounts.Keys) {
             $actual = @($rows.Values | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object projectId -eq $scopeId).Count
-            if ($actual -ne $scopeCounts[$scopeId]) { throw 'RecycleTaskCensusUnknown' }
+            if ($actual -ne $scopeCounts[$scopeId]) { Stop-RecycleMalformed 'excluded.byProject.count' $path }
         }
         $snapshot = (@($observations.Keys | Sort-Object | ForEach-Object { $_ + '=' + $observations[$_] }) +
             @($rows.Keys | Sort-Object | ForEach-Object { $rows[$_] + '|' + $landEvidence[$_] })) -join "`n"
-        if ($pass -eq 1 -and $snapshot -cne $previous) { throw 'RecycleTaskCensusUnknown' }
+        if ($pass -eq 1 -and $snapshot -cne $previous) { throw 'RecycleTaskCensusUnknown cause=Unstable' }
         $previous = $snapshot
     }
     return $previous
+    } finally { Write-RecycleReceipt }
 }
 
 function Assert-RetiredTempCounters {
@@ -725,6 +812,10 @@ function Assert-TempProjectAbsent {
 function Invoke-Phase {
     param([string]$Name)
     Invoke-HostJq -Mode check -ExecutingPhase $Name
+    if ($Name -in @('redeploy-old', 'drain-temp', 'retire-temp')) {
+        $censusRunner = if ($Name -eq 'redeploy-old') { 'server2' } else { 'server2-temp' }
+        Start-RecycleReceipt -ExecutingPhase $Name -RunnerId $censusRunner
+    }
     switch ($Name) {
         'deploy-temp' {
             if ($SavedDonor) { throw 'TempSavedDonorRequiresMaintenance' }
