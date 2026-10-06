@@ -19,7 +19,7 @@ public sealed class BlockedTaskParkingService(
     AppDbContext db, TimeProvider clock, IOptions<BlockedTaskParkingOptions> options)
 {
     public async Task<Guid?> RegisterAsync(Guid taskId, int attempt, Guid blockEventId,
-        Guid taskConcurrencyToken, CancellationToken ct)
+        Guid taskConcurrencyToken, CancellationToken ct, bool legacy = false)
     {
         if (!options.Value.Enabled || !CanOwnTransaction()) return null;
         await using var tx = await db.Database.BeginTransactionAsync(ct);
@@ -55,7 +55,8 @@ public sealed class BlockedTaskParkingService(
             BaselineSha = task.WorktreeBaseSha ?? baseline?.LocalSha, ReportReference = task.ResultFilePath,
             ReportDigest = await HandoffDigestAsync(db, task, floor, ct),
             TranscriptSequence = floor, BlockedAt = block.At, CompletedAt = task.CompletedAt,
-            State = AgentTaskParkState.Requested, CreatedAt = now, UpdatedAt = now
+            State = AgentTaskParkState.Requested, CreatedAt = now, UpdatedAt = now,
+            LegacyDiscovery = legacy, ReasonCode = legacy ? "park_legacy" : "park_requested"
         };
         db.AgentTaskParks.Add(park);
         await db.SaveChangesAsync(ct);
@@ -107,6 +108,55 @@ public sealed class BlockedTaskParkingService(
                 .SetProperty(p => p.ResumedAt, p => next == AgentTaskParkState.Resumed ? now : p.ResumedAt), ct);
         await tx.CommitAsync(ct);
         return changed == 1;
+    }
+
+    /// <summary>
+    /// Insert the legacy episode for one current Blocked task. An existing episode is reused
+    /// unchanged, including a fast-path row that was never marked legacy.
+    /// </summary>
+    public async Task<Guid?> RegisterLegacyAsync(Guid taskId, CancellationToken ct)
+    {
+        if (!options.Value.Enabled || !options.Value.ReclaimExisting || !CanOwnTransaction()) return null;
+        var task = await db.AgentTasks.AsNoTracking().SingleOrDefaultAsync(t => t.Id == taskId, ct);
+        if (task is null || task.Status != AgentTaskStatus.Blocked) return null;
+        var block = await LatestBlockAsync(taskId, ct);
+        if (block is null) return null;
+        return await RegisterAsync(taskId, task.Attempt, block.Id, task.ConcurrencyToken, ct, legacy: true);
+    }
+
+    /// <summary>One fair page after the persisted cursor, wrapping once the tail is short.</summary>
+    internal async Task<IReadOnlyList<Guid>> NextLegacyPageAsync(int pageSize, CancellationToken ct)
+    {
+        var after = await db.BlockedTaskParkReclaimCursors.AsNoTracking()
+            .Where(c => c.Id == 1).Select(c => c.AfterTaskId).FirstOrDefaultAsync(ct) ?? Guid.Empty;
+        var page = await db.AgentTasks.AsNoTracking()
+            .Where(t => t.Status == AgentTaskStatus.Blocked && t.Id > after)
+            .OrderBy(t => t.Id).Select(t => t.Id).Take(pageSize).ToListAsync(ct);
+        if (page.Count >= pageSize || after == Guid.Empty) return page;
+        var more = await db.AgentTasks.AsNoTracking()
+            .Where(t => t.Status == AgentTaskStatus.Blocked && t.Id <= after)
+            .OrderBy(t => t.Id).Select(t => t.Id).Take(pageSize - page.Count).ToListAsync(ct);
+        page.AddRange(more);
+        return page;
+    }
+
+    internal async Task CommitLegacyCursorAsync(Guid taskId, CancellationToken ct)
+    {
+        db.ChangeTracker.Clear();
+        if (!CanOwnTransaction()) return;
+        var now = clock.GetUtcNow().UtcDateTime;
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        var updated = await db.BlockedTaskParkReclaimCursors.Where(c => c.Id == 1)
+            .ExecuteUpdateAsync(s => s.SetProperty(c => c.AfterTaskId, taskId).SetProperty(c => c.UpdatedAt, now), ct);
+        if (updated == 0)
+        {
+            db.BlockedTaskParkReclaimCursors.Add(new BlockedTaskParkReclaimCursor
+            {
+                Id = 1, AfterTaskId = taskId, UpdatedAt = now
+            });
+            await db.SaveChangesAsync(ct);
+        }
+        await tx.CommitAsync(ct);
     }
 
     private bool CanOwnTransaction() => db.Database.CurrentTransaction is null

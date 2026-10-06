@@ -1,4 +1,6 @@
 # CARD-0110 S6 / CARD-0475 S6 / CARD-0487: Slow classes in Antiphon.Tests.
+# CARD-1065 S9: legacy reclaim pages real Git and isolated PostgreSQL, including restart and cold resume.
+Antiphon.Tests.Application.BlockedTaskParkReclaimTests
 # CARD-1065 S5: real Git, isolated PostgreSQL, caller delivery persistence cuts and runner release.
 Antiphon.Tests.Application.BlockedTaskParkReleaseTests
 # CARD-1065 S7: real Git resume, isolated PostgreSQL, admission holds and exact-SHA mirror recreate.

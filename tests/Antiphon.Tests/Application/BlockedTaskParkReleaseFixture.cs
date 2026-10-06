@@ -109,6 +109,53 @@ internal sealed partial class RunnerSeatReleaseFixture
         }
     }
 
+    /// <summary>
+    /// A second owned checkout for one legacy row. Does not retarget the fixture task,
+    /// its session cwd, or the single-path release verifier.
+    /// </summary>
+    public async Task<string> CreateReclaimSourceAsync(Guid taskId, Guid sessionId, bool dirty = false)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "c1065-reclaim-" + Guid.NewGuid().ToString("N"));
+        _roots.Add(root);
+        System.IO.Directory.CreateDirectory(root);
+        var origin = Path.Combine(root, "origin.git");
+        var repository = Path.Combine(root, "repo");
+        var checkout = Path.Combine(root, "task");
+        await GitAsync(root, "init", "--bare", "-b", "master", origin);
+        await GitAsync(root, "init", "-b", "master", repository);
+        await GitAsync(repository, "config", "user.name", "park test");
+        await GitAsync(repository, "config", "user.email", "park@example.invalid");
+        await GitAsync(repository, "config", "commit.gpgsign", "false");
+        await File.WriteAllTextAsync(Path.Combine(repository, "source.txt"), "retained source");
+        await GitAsync(repository, "add", "source.txt");
+        await GitAsync(repository, "commit", "-m", "retained baseline");
+        await GitAsync(repository, "remote", "add", "origin", origin);
+        await GitAsync(repository, "push", "origin", "master");
+        var sha = await GitAsync(repository, "rev-parse", "HEAD");
+        var branch = RemoteWorkspaceService.OwnedBranch(taskId);
+        await GitAsync(repository, "worktree", "add", "-b", branch, checkout, sha);
+        if (dirty)
+            await File.WriteAllTextAsync(Path.Combine(checkout, "dirty.txt"), "uncommitted");
+        var source = new ProgressSourceBaseline(repository, await SourceGit.CommonDirectoryAsync(repository, default),
+            taskId, checkout, "refs/heads/" + branch, sha,
+            new(ProgressRemoteState.Missing, EndpointFingerprint: BlockedTaskParkingService.Digest(origin)));
+        await using var db = Db();
+        var task = await db.AgentTasks.SingleAsync(t => t.Id == taskId);
+        task.Workspace = WorkspaceMode.Worktree;
+        task.RepoPath = repository;
+        task.WorktreePath = checkout;
+        task.WorktreeBranch = branch;
+        task.WorktreeBaseSha = sha;
+        task.RemoteWorktreePath = null;
+        task.ProgressBaselineJson = TaskProgressJson.SerializeBaseline(new(1, Now, Now, source, null));
+        var session = await db.AgentSessions.SingleAsync(s => s.Id == sessionId);
+        session.Cwd = checkout;
+        session.RunnerCwd = checkout;
+        await db.SaveChangesAsync();
+        Directory.LocalBinding = true;
+        return checkout;
+    }
+
     public async Task<string> GitAsync(string path, params string[] arguments)
     {
         var result = await SourceGit.RunAsync(path, arguments, default);

@@ -44,6 +44,7 @@ public sealed class RunnerSlotReconcileJob
             // attention recovery gain authority to force a conditional release.
             await _terminalSeats.ReconcileAttentionAsync(cancellationToken);
             released = await _terminalSeats.DiscoverScheduledAsync(cancellationToken);
+            released += await _terminalSeats.ReclaimLegacyAsync(32, 3, cancellationToken);
         }
         return finished.Count + released;
     }

@@ -70,6 +70,20 @@ public sealed class TerminalRunnerSeatReleaseService(
                 if (parkId is null || task.AgentSessionId is null) return true;
                 var park = await db.AgentTaskParks.AsNoTracking().SingleAsync(p => p.Id == parkId, ct);
                 if (park.State == AgentTaskParkState.Parked) return true;
+                if (park.ReportDigest is null)
+                {
+                    if (park.State is AgentTaskParkState.Requested or AgentTaskParkState.Published)
+                        await parks.PersistStateAsync(park.Id, park.Revision, park.State, AgentTaskParkState.Held,
+                            "park_binding_missing", ct);
+                    return true;
+                }
+                if (await AmbiguousOwnershipAsync(task, ct))
+                {
+                    if (park.State is AgentTaskParkState.Requested or AgentTaskParkState.Published)
+                        await parks.PersistStateAsync(park.Id, park.Revision, park.State, AgentTaskParkState.Held,
+                            "park_ownership_ambiguous", ct);
+                    return true;
+                }
                 if (park.PublicationReceiptId is null && (await publication.PrepareAsync(park.Id, ct)).Evidence is null) return true;
             }
             if (task.AgentSessionId is not Guid sessionId) return true;
@@ -83,6 +97,19 @@ public sealed class TerminalRunnerSeatReleaseService(
             logger.LogWarning("Terminal runner seat release remains pending for task {TaskId}", taskId);
         }
         return true;
+    }
+
+    /// <summary>
+    /// Pages current Blocked tasks that never took the post-commit fast path. Enabled and
+    /// ReclaimExisting are both required. Each attempt commits the cursor after it finishes,
+    /// including a caught failure, so one poison row cannot pin the page or skip its neighbor.
+    /// </summary>
+    public Task<int> ReclaimLegacyAsync(int pageSize, int passBudget, CancellationToken ct)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(pageSize);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(passBudget);
+        ct.ThrowIfCancellationRequested();
+        return Task.FromResult(0);
     }
 
     public async Task<int> DiscoverScheduledAsync(CancellationToken ct)
@@ -493,6 +520,13 @@ public sealed class TerminalRunnerSeatReleaseService(
             var source = await ReleaseSourceAsync(release, verify: true, ct);
             if (await RequiresPublicationAsync(release, recoveryOnly: false, ct) && source is null) return;
             if (BoundaryAsync is not null) await BoundaryAsync("BeforeDispatch", ct);
+            // The pre-boundary read cannot see a source change made at this cut.
+            source = await ReleaseSourceAsync(release, verify: true, ct);
+            if (await RequiresPublicationAsync(release, recoveryOnly: false, ct) && source is null)
+            {
+                await PendingAsync(release, nameof(TerminalRunnerSeatDecision.PublicationRequired), ct);
+                return;
+            }
             if (!await RunnerReadyAsync(release, ct))
             {
                 await PendingAsync(release, "Unknown", ct);
@@ -960,7 +994,20 @@ public sealed class TerminalRunnerSeatReleaseService(
                 || observed.Transcript.Verdict != TerminalTranscriptVerdict.Idle
                 || string.IsNullOrWhiteSpace(observed.Token))
                 return await HoldAsync(release, TerminalRunnerSeatDecision.Unknown, ct);
+            if (task.Status == AgentTaskStatus.Blocked)
+            {
+                var window = await CurrentParkAsync(task, ct);
+                if (window is not null && !FreshLegacyWindow(window, observed))
+                    return await HoldAsync(release, TerminalRunnerSeatDecision.Waiting, ct);
+            }
             if (BoundaryAsync is not null) await BoundaryAsync("BeforeReservation", ct);
+            if (task.Status == AgentTaskStatus.Blocked && publication is not null)
+            {
+                var latest = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id, ct);
+                var current = await CurrentParkAsync(latest, ct);
+                if (current is null || (await publication.VerifyAsync(current.Id, ct)).Evidence is null)
+                    return await HoldAsync(release, TerminalRunnerSeatDecision.PublicationRequired, ct);
+            }
             var changed = await TryReserveAsync(release, task, observed, ct);
             return new(release.Id, changed == 1 ? TerminalRunnerSeatDecision.Reserved : TerminalRunnerSeatDecision.StaleAttempt);
         }
@@ -1011,7 +1058,8 @@ public sealed class TerminalRunnerSeatReleaseService(
         {
             park = await CurrentParkAsync(current, ct);
             if (!ParkingEnabled || park is null || publication is null || park.State != AgentTaskParkState.Published
-                || await publication.ReadEvidenceAsync(park.Id, ct) is null) return 0;
+                || await publication.ReadEvidenceAsync(park.Id, ct) is null
+                || !FreshLegacyWindow(park, observed)) return 0;
         }
         var actionId = park?.Id ?? Guid.NewGuid();
         // Revision is the sole ledger compare-and-swap fence. Two readers of the same existing
@@ -1041,6 +1089,34 @@ public sealed class TerminalRunnerSeatReleaseService(
         }
         await tx.CommitAsync(ct);
         return changed;
+    }
+
+    private async Task<bool> AmbiguousOwnershipAsync(AgentTask task, CancellationToken ct)
+    {
+        var path = task.WorktreePath;
+        var remote = task.RemoteWorktreePath;
+        if (string.IsNullOrWhiteSpace(path) && string.IsNullOrWhiteSpace(remote)) return false;
+        return await db.AgentTasks.AsNoTracking().AnyAsync(t => t.Id != task.Id
+            && (t.Status == AgentTaskStatus.Queued || t.Status == AgentTaskStatus.Dispatched
+                || t.Status == AgentTaskStatus.Working || t.Status == AgentTaskStatus.Blocked)
+            && ((path != null && path != "" && (t.WorktreePath == path || t.RemoteWorktreePath == path))
+                || (remote != null && remote != "" && (t.WorktreePath == remote || t.RemoteWorktreePath == remote))), ct);
+    }
+
+    /// <summary>
+    /// Legacy discovery must not treat an old CompletedAt or a long silence as the idle window.
+    /// The qualifying instant is the runner's first observation plus its stable duration, and
+    /// that instant has to land at least 120 seconds after this episode was created.
+    /// </summary>
+    private static bool FreshLegacyWindow(AgentTaskPark park, TerminalSeatObservation observed)
+    {
+        if (!park.LegacyDiscovery) return true;
+        if (observed.FirstObservedAt is not DateTimeOffset first) return false;
+        if (observed.StableFor < TimeSpan.FromSeconds(120)) return false;
+        var opened = park.CreatedAt.Kind == DateTimeKind.Local
+            ? park.CreatedAt.ToUniversalTime()
+            : DateTime.SpecifyKind(park.CreatedAt, DateTimeKind.Utc);
+        return first.UtcDateTime + observed.StableFor >= opened.AddSeconds(120);
     }
 
     private async Task<AgentTaskPark?> CurrentParkAsync(AgentTask task, CancellationToken ct)

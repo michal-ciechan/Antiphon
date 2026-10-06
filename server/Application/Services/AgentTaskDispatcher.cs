@@ -7364,7 +7364,10 @@ public sealed class AgentTaskDispatcher
     internal async Task<int> ReleaseUnownedPoolDelegatesAsync(CancellationToken ct)
     {
         if (_terminalSeatRelease is not null)
+        {
             await _terminalSeatRelease.DiscoverScheduledAsync(ct);
+            await _terminalSeatRelease.ReclaimLegacyAsync(32, 3, ct);
+        }
         if (_settings.PoolReleaseGraceSeconds <= 0)
             return 0;
 
