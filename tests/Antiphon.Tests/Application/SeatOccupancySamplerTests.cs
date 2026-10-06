@@ -168,6 +168,14 @@ public sealed class SeatOccupancySamplerTests
             NullLogger<SeatOccupancyHostedService>.Instance);
 
         await hosted.StartAsync(cancellationToken);
+        // CARD-1094: StartAsync queues ExecuteAsync and returns before that delegate runs.
+        // StopAsync then cancels the tick before a sample is written, so the empty table
+        // below stays green when SeatWatchEnabled is ignored. The disabled path has to
+        // finish on its own. An ignored flag stays on the 60s sample timer and this wait fails.
+        var execute = hosted.ExecuteTask;
+        execute.ShouldNotBeNull();
+        await execute.WaitAsync(TimeSpan.FromSeconds(5));
+        execute.IsCompletedSuccessfully.ShouldBeTrue();
         await hosted.StopAsync(cancellationToken);
 
         rig.Client.Lists.ShouldBe(0);
