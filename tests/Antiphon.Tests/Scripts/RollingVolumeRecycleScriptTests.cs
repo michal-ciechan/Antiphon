@@ -780,6 +780,9 @@ internal sealed class C1008HostFixture : IDisposable
 {
     internal const string PreviousSha = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
     internal const string PreviousSha12 = "bbbbbbbbbbbb";
+    // generation.imageId is the session-runner image. state-init runs the server image.
+    internal static readonly string SessionImage = "sha256:" + new string('a', 64);
+    internal static readonly string ServerImage = "sha256:" + new string('c', 64);
 
     internal static void RequireNativeLinux()
     {
@@ -944,7 +947,8 @@ internal sealed class C1008HostFixture : IDisposable
         }
         else foreach (var role in roles) mounts.Add(new JsonObject { ["Type"] = "volume", ["Name"] = VolumeName(project, role),
             ["Source"] = Path.Combine(Root, "volumes", VolumeName(project, role), "_data"), ["Destination"] = Destination(role), ["RW"] = true });
-        return new JsonObject { ["Id"] = new string(id, 64), ["Image"] = "sha256:" + new string('a', 64),
+        var image = service == "state-init" ? ServerImage : SessionImage;
+        return new JsonObject { ["Id"] = new string(id, 64), ["Image"] = image,
             ["State"] = new JsonObject { ["Running"] = running, ["Status"] = running ? "running" : "exited" },
             ["Config"] = new JsonObject { ["Labels"] = new JsonObject { ["com.docker.compose.project"] = project,
                 ["com.docker.compose.service"] = service } }, ["Mounts"] = mounts, ["HostConfig"] = hostConfig };
@@ -956,6 +960,8 @@ internal sealed class C1008HostFixture : IDisposable
         File.WriteAllText(Path.Combine(Root, "statuses.json"), Statuses.ToJsonString());
         File.WriteAllText(Path.Combine(Root, "tasks.json"), new JsonObject
             { ["scopes"] = TaskScopes.DeepClone(), ["details"] = TaskDetails.DeepClone(), ["faults"] = HttpFaults.DeepClone() }.ToJsonString());
+        var runnerCompose = Path.Combine(DelegateScriptRunner.RepoRoot, "docker-compose.server2-runner.yml");
+        var tempCompose = Path.Combine(DelegateScriptRunner.RepoRoot, "docker-compose.server2-runner.temp.yml");
         var source = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c590-remote.sh"));
         var injection = $$"""
             C1008_FIXTURE_ROOT='{{Root}}'; export C1008_FIXTURE_ROOT
@@ -970,8 +976,12 @@ internal sealed class C1008HostFixture : IDisposable
             C994_PROJECT_ID=aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1; C994_RETIRED_AT=2026-10-03T09:30:00Z; C994_DRY_RUN={{(dryRun ? "1" : "0")}}
             C1008_DRY_RUN={{(dryRun && hostCase != "retire-temp-containers" ? "1" : "0")}}; C590_TEMP_RETIRED_AT=2026-10-03T09:30:00Z
             docker() { bash '{{DelegateScriptRunner.RepoRoot}}/scripts/fixtures/c1008-fake-docker.sh' "$@"; }
+            SERVER2_COMPOSE='{{Root}}/target-compose.yml'
+            SERVER2_TEMP_COMPOSE='{{Root}}/target-compose.temp.yml'
+            cp -f -- '{{runnerCompose}}' "$SERVER2_COMPOSE"
+            cp -f -- '{{tempCompose}}' "$SERVER2_TEMP_COMPOSE"
             C1008_COMPOSE_SOURCE_BODY="$(declare -f c1008_compose_source 2>/dev/null || true)"
-            c1008_compose_source() { :; }
+            c1008_compose_source() { mkdir -p -- "$2" || return 2; cp -f -- "$SERVER2_COMPOSE" "$2/docker-compose.server2-runner.yml" || return 2; cp -f -- "$SERVER2_TEMP_COMPOSE" "$2/docker-compose.server2-runner.temp.yml" || return 2; }
             compose_host() { docker compose -p "$HOST_PROJECT" "$@"; }
             compose_temp() { docker compose -p "$TEMP_PROJECT" "$@"; }
             detect_lane() { LANE=host; }
