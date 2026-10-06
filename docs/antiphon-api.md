@@ -566,17 +566,26 @@ It is read-only: there is no write route. An unknown host is 404 through the sam
 host budget lookup as `PUT /api/hosts/{hostId}/budget`. The default window is the
 last 24 hours (`from` defaults to `to` minus 24 hours, `to` defaults to now, both
 UTC). `limit` defaults to 500 and is clamped to 2000; the applied value is the
-response `limit`. A `limit` below 1 is 400 `{ "error": "limit_invalid" }`. A `to`
+response `limit`. `limit=1` and `limit=2000` are applied as given. A `limit`
+below 1 is 400 `{ "error": "limit_invalid" }`. A non-numeric or overflowing
+`limit` fails model binding and `ExceptionMiddleware` returns 400 problem
+details, not a 500 and not `limit_invalid` (CARD-1111). A `to`
 within 24 hours of `DateTime.MinValue` with `from` omitted is 400
 `{ "error": "window_invalid" }` (CARD-1101): the default window would otherwise
-underflow `AddHours(-24)` into a sanitized 500. A reversed window returns no rows.
+underflow `AddHours(-24)` into a sanitized 500. A reversed window (`from`
+after `to`) is 200 with `samples: []` and the requested bounds.
 Rows are newest first and carry the stored counters (`inFlight`,
 `dispatchedWorking`, `sessions`, `pendingLaunch`, `inFlightMirrors`, `idleSeats`,
 `pooledWarmSeats`, `orphanSlots`, `effectiveLimit`, `declaredCapacity`,
-`oldestIdleSince`, `inventoryState`, `inventoryReason`). `inventoryReason` is a
-stable sampler category, never a raw exception message: `unavailable`, `timeout`,
-or `error`. A runner that is not connected uses `unavailable: phone-home` (the
-only summary, a fixed token). The exception text stays in the server log.
+`oldestIdleSince`, `inventoryState`, `inventoryReason`). `inventoryReason` on
+the wire is null or one of four exact categories: `unavailable`, `timeout`,
+`error`, or `unavailable: phone-home`. The sampler stores those categories
+and never a raw exception message. A runner that is not connected stores
+`unavailable: phone-home` (the directory's fixed `phone-home runner unavailable`
+token, not the exception text). The route publishes a stored reason only when
+it is exactly one of those four; any other stored text, including a legacy
+exception message still inside the retention window, is returned as `error`
+and is not echoed (CARD-1111). The exception text stays in the server log.
 `Attention:SeatWatchEnabled` defaults true; setting it false is the rollback
 (the sampler writes nothing and `SeatIdle` (57), `OccupancyDivergence` (58) and
 `SlotOrphan` (59) are omitted). Seat rows are phone-home hosts only. Nothing on
