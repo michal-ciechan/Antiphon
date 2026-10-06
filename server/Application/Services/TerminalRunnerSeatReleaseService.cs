@@ -104,12 +104,34 @@ public sealed class TerminalRunnerSeatReleaseService(
     /// ReclaimExisting are both required. Each attempt commits the cursor after it finishes,
     /// including a caught failure, so one poison row cannot pin the page or skip its neighbor.
     /// </summary>
-    public Task<int> ReclaimLegacyAsync(int pageSize, int passBudget, CancellationToken ct)
+    public async Task<int> ReclaimLegacyAsync(int pageSize, int passBudget, CancellationToken ct)
     {
+        if (!ParkingEnabled || parkingOptions?.Value.ReclaimExisting != true || parks is null) return 0;
+        if (db.Database.CurrentTransaction is not null || System.Transactions.Transaction.Current is not null) return 0;
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(pageSize);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(passBudget);
-        ct.ThrowIfCancellationRequested();
-        return Task.FromResult(0);
+        var visited = 0;
+        for (var pass = 0; pass < passBudget; pass++)
+        {
+            var page = await parks.NextLegacyPageAsync(pageSize, ct);
+            if (page.Count == 0) break;
+            foreach (var taskId in page)
+            {
+                try
+                {
+                    if (BoundaryAsync is not null) await BoundaryAsync("ReclaimList:" + taskId.ToString("D"), ct);
+                    await parks.RegisterLegacyAsync(taskId, ct);
+                    await TryHandleTaskAsync(taskId, ct);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+                {
+                    logger.LogWarning(ex, "Legacy park reclaim remains pending for task {TaskId}", taskId);
+                }
+                await parks.CommitLegacyCursorAsync(taskId, ct);
+                visited++;
+            }
+        }
+        return visited;
     }
 
     public async Task<int> DiscoverScheduledAsync(CancellationToken ct)
