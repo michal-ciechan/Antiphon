@@ -41,6 +41,17 @@ capability, read and persistence failures grant no publication or release author
 Typed server evidence maps NoSourceChanges to a null remote SHA and release version
 2; HTTP and phone-home clients refuse peers missing workspaceParkSourceModesV1.
 
+CARD-1065 S5 composes the dormant server parking path. A Blocked report commits its
+caller completion obligation before park registration; nonreport blocks bind their
+existing transcript checkpoint without inventing Result or CompletedAt. Every
+Blocked coordinator entry requires current source proof, reserves with the park's
+action ID, and sends the typed version-2 receipt. Ambiguous release recovery checks
+source again, including the runner's retained checkout before confirming absence.
+Confirmed parking stops the exact session and retains the stopped agent, with both
+warm-pool fields null. The still-Blocked attempt reserves that identity against pool
+reuse and retirement. Neither parking nor terminal automatic release is enabled by
+default; Working, unknown evidence and independent standing owners retain custody.
+
 CARD-0519 S10: a terminal session status alone does not close outbound recovery
 windows. The optional transcript snapshot `TerminalComplete` is reader-owned EOF
 evidence after the existing child-exit grace, with no pending partial line,

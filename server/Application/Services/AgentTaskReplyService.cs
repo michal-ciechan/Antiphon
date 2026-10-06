@@ -1103,7 +1103,8 @@ public sealed class AgentTaskReplyService
         // Added before any helper below can flush this tracker (the zero-progress incident saves),
         // so a terminal task/outcome can never commit without it. CARD-0657: a runner-sync block is a
         // decide repair handoff, not a question, and owes the same obligation.
-        var owesCompletion = remoteBlock is not null
+        var owesCompletion = remoteBlock is not null || task.Status == AgentTaskStatus.Blocked
+                && services.GetService<IOptions<BlockedTaskParkingOptions>>()?.Value.Enabled == true
             ? TaskCompletionNotification.AppliesToRunnerSyncBlock(task)
             : TaskCompletionNotification.Applies(task);
         var completion = owesCompletion
@@ -2183,11 +2184,13 @@ public sealed class AgentTaskReplyService
         // to this tracker (TaskCompletionNotification.Applies) supersedes this legacy mint.
         var durableCompletion = completion is null
             && task.SourceLandingOperationId is null
-            && task.Workspace == WorkspaceMode.Shared
-            && (commitOutcome || task.Role == AgentTaskRole.Commit || git is not null
+            && (task.Status == AgentTaskStatus.Blocked
+                    && services.GetService<IOptions<BlockedTaskParkingOptions>>()?.Value.Enabled == true
+                || task.Workspace == WorkspaceMode.Shared
+                    && (commitOutcome || task.Role == AgentTaskRole.Commit || git is not null
                 && (git.StartsWith("committed:", StringComparison.Ordinal)
                     || git.StartsWith("commit refused:", StringComparison.Ordinal)
-                    || git.Contains("commit task", StringComparison.Ordinal)))
+                    || git.Contains("commit task", StringComparison.Ordinal))))
             && task.ReplyTo == AgentTaskReplyTo.Session && task.ParentSessionId is not null;
         Guid? completionNotificationId = null;
         if (durableCompletion)

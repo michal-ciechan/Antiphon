@@ -145,7 +145,8 @@ public sealed class TaskParkPublicationService(AppDbContext db, LocalTaskParkPub
         var evidence = await ReadEvidenceAsync(parkId, ct);
         if (evidence is null) return Held("park_receipt_missing");
         return await AcceptAsync(parkId, evidence, ct)
-            ? new(evidence.Outcome, "park_source_verified", evidence) : Held("park_receipt_changed");
+            ? new(evidence.Outcome, evidence.Outcome == TaskParkPublicationOutcome.Published
+                ? "park_published" : "park_no_source_changes", evidence) : Held("park_receipt_changed");
     }
 
     // Database-only binding check for the short reservation/send transaction. The caller
@@ -153,7 +154,7 @@ public sealed class TaskParkPublicationService(AppDbContext db, LocalTaskParkPub
     internal async Task<TaskParkPublicationEvidence?> ReadEvidenceAsync(Guid parkId, CancellationToken ct)
     {
         var c = await LoadAsync(parkId, ct);
-        if (c is null || c.Park.PublicationReceiptId is null
+        if (c is null || c.Park.PublicationReceiptId is null || await RefusalAsync(c.Task, c.Park, c.Baseline, ct) is not null
             || c.Park.State is not (AgentTaskParkState.Published or AgentTaskParkState.ReleasePending or AgentTaskParkState.Parked)) return null;
         var remote = !string.IsNullOrEmpty(c.Park.RemoteWorktreePath);
         var kind = c.Park.VerifiedRemoteSha is null ? TaskParkPublicationOutcome.NoSourceChanges : TaskParkPublicationOutcome.Published;
@@ -231,6 +232,11 @@ public sealed class TaskParkPublicationService(AppDbContext db, LocalTaskParkPub
     private async Task<string?> RefusalAsync(AgentTask task, AgentTaskPark park, ProgressSourceBaseline baseline, CancellationToken ct)
     {
         if (!SameEpisode(task, park)) return "park_episode_changed";
+        if (task.Result is not null && task.ReplyTo == AgentTaskReplyTo.Session && task.ParentSessionId is not null
+            && !await db.AgentTaskLandNotifications.AnyAsync(n => n.TaskId == task.Id
+                && n.SourceEventId == park.BlockEventId && n.Kind == LandNotificationKind.TaskCompletion
+                && n.ParentSessionId == task.ParentSessionId && n.ContentDigest == DelegationNoteDigest.Compute(task.Result), ct))
+            return "park_handoff_missing";
         if (task.SourceLandingOperationId is not null || task.Role == AgentTaskRole.Mutation) return "park_source_landing";
         if (task.CommitOnSettle == CommitOnSettlePolicy.Never) return "park_no_commit";
         if (await CommitRecoveryObligations.LoadUnresolvedAsync(db, task.Id, ct) is { Count: > 0 }) return "park_commit_recovery";

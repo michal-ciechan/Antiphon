@@ -32,8 +32,8 @@ public sealed record TerminalRunnerSeatEvidence(
 
 /// <summary>
 /// Only committed attempts can register debt. A durable send intent precedes runner I/O;
-/// interrupted sends reconcile authoritative inventory before any further mutation. No production
-/// hooks use fresh scopes; automatic release ships disabled.
+/// interrupted sends reconcile authoritative inventory and the bound source proof before any
+/// further mutation. Production hooks use fresh scopes; automatic release ships disabled.
 /// </summary>
 public sealed class TerminalRunnerSeatReleaseService(
     AppDbContext db, TerminalRunnerSeatReleasePolicy policy, SessionMessageQueueService queue,
@@ -201,7 +201,8 @@ public sealed class TerminalRunnerSeatReleaseService(
             || await CapturedPeerHoldAsync(runnerId, storeId, ct) is not null)
             return new(runnerId, seat.SessionId, null, "Unknown");
         var session = await db.AgentSessions.AsNoTracking().SingleOrDefaultAsync(s => s.Id == seat.SessionId, ct);
-        // Local conversations remain with their existing owner, including completed Blocked.
+        // Local nonpark conversations retain their existing owner. A Blocked park still
+        // needs the same source, generation and input fences as a remote one.
         if (session is not null && (session.RunnerId != runnerId || session.RunnerStoreId != storeId
             || session.StartedAt != generation)) return new(runnerId, seat.SessionId, null, "IdentityUnknown");
         var task = await db.AgentTasks.AsNoTracking().Where(t => t.AgentSessionId == seat.SessionId)

@@ -85,4 +85,13 @@ internal sealed partial class RunnerSeatReleaseFixture
         return await db.AgentTaskParks.AsNoTracking().Where(p => p.TaskId == TaskId)
             .OrderByDescending(p => p.CreatedAt).FirstAsync();
     }
+
+    public async Task<string> ParkDiagnosticAsync()
+    {
+        await using var db = Db();
+        var release = await db.RunnerSeatReleases.AsNoTracking().FirstOrDefaultAsync(r => r.TaskId == TaskId);
+        return $"ledger={release?.State}/{release?.ReasonCode}/{release?.OutcomeCode}; "
+            + string.Join("\n", AttentionLogs.Entries.Where(e => e.Level >= Microsoft.Extensions.Logging.LogLevel.Warning)
+                .Select(e => e.Message + " " + e.Exception));
+    }
 }
