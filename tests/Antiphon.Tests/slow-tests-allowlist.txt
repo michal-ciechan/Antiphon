@@ -266,3 +266,5 @@ Antiphon.Tests.Application.TaskParkPublicationTests
 Antiphon.Tests.Application.TaskParkRunnerIdentityTests
 # CARD-1065 S6: real Git, repository lease contention, durable PostgreSQL sync and release recovery.
 Antiphon.Tests.Application.BlockedTaskSyncRecoveryTests
+# CARD-1082 S4b: real Git fast-forward, lease backoff and isolated PostgreSQL debt recovery.
+Antiphon.Tests.Application.SettlementSyncRecoveryTests
