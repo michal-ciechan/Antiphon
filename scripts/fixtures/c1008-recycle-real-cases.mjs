@@ -41,6 +41,7 @@ for (const name of ['antiphon-runner','antiphon-runner-temp','antiphon-runner_wo
 }
 const runDocker = (...args) => {commands.push(args); return docker(...args);};
 const image = guard(prefix + ':fixture');
+const serverImage = guard(prefix + ':server');
 const hash = text => crypto.createHash('sha256').update(text).digest('hex');
 const volumeFacts = name => JSON.parse(runDocker('volume','inspect',guard(name)))[0];
 const allVolumes = () => runDocker('volume','ls','-q').split('\n').filter(Boolean);
@@ -106,7 +107,7 @@ function createContainer(f, service, running, names, project=f.main, overrideNam
     for(const secret of model.services[service].secrets||[])args.push('--mount','type=bind,source='+model.secrets[secret.source].file+',target='+secret.target+',readonly');
     for(const tmpfs of model.services[service].tmpfs||[])args.push('--tmpfs',tmpfs);
   } else names.forEach((name,i)=>args.push('--mount','type=volume,source='+guard(name)+',target='+mounts[i]));
-  const id=runDocker(...args,image,'sleep','infinity'); objects.containers.add(id);
+  const id=runDocker(...args,service==='state-init'?serverImage:image,'sleep','infinity'); objects.containers.add(id);
   if (!running) runDocker('stop','--time','1','--',id);
   return id;
 }
@@ -148,7 +149,7 @@ function fixture(mainReplacement=true) {
     delete model.services['build-slots'];
     for(const [name,service] of Object.entries(model.services)) {
       for(const key of ['build','healthcheck','environment','depends_on','privileged','stop_grace_period','restart','user','entrypoint'])delete service[key];
-      Object.assign(service,{image,init:true,command:name==='state-init'?['true']:['sleep','infinity'],labels:{[label]:prefix},networks:{default:null}});
+      Object.assign(service,{image:name==='state-init'?serverImage:image,init:true,command:name==='state-init'?['true']:['sleep','infinity'],labels:{[label]:prefix},networks:{default:null}});
     }
     model.networks={default:{name:project+'_default',labels:{[label]:prefix}}};
     fs.writeFileSync(f.root+'/'+project+'.json',JSON.stringify(model));
@@ -407,7 +408,9 @@ async function c994Cases() {
 
 try {
   fs.writeFileSync(root+'/Dockerfile','FROM debian:trixie-slim\nLABEL '+label+'='+prefix+'\nRUN apt-get update && apt-get install -y --no-install-recommends bash git coreutils findutils util-linux ca-certificates && rm -r /var/lib/apt/lists/* && mkdir -p /tmp/antiphon-pty-hosts && chmod 1777 /tmp && printf image-asset > /tmp/antiphon-pty-hosts/fixture\n');
-  objects.images.add(image); runDocker('build','-t',image,root);
+  objects.images.add(serverImage); objects.images.add(image); runDocker('build','-t',image,root);
+  fs.writeFileSync(root+'/Dockerfile.server','FROM '+image+'\nLABEL '+label+'='+prefix+'\nLABEL io.antiphon.role=server\n');
+  runDocker('build','-f',root+'/Dockerfile.server','-t',serverImage,root);
   helper=runDocker('run','-d','--privileged','--pid','host','--network','none','--name',guard(prefix+'-root'),'--label',label+'='+prefix,image,'sleep','infinity'); objects.containers.add(helper);
   shellRoot('test','-d',root);
   realDf=shellRoot('df','-Pk',docker('info','--format','{{.DockerRootDir}}'));

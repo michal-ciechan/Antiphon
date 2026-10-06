@@ -999,6 +999,11 @@ public sealed class RemoteScriptContractTests
         Order(deploy, "ensure_checkout", "c1008_recycle").ShouldBeTrue();
         Order(deploy, "ensure_runner_boot_files", "c1008_recycle").ShouldBeTrue();
         Order(deploy, "cmp -s", "compose_host up -d").ShouldBeTrue();
+        var recycle = Block(text, "c1008_recycle");
+        Order(recycle, "cmp -s", "c1008_lock").ShouldBeTrue("the target compose is compared before the rollout lock");
+        Order(recycle, "cmp -s", "docker stop").ShouldBeTrue("the target compose is compared before removal");
+        var late = deploy.IndexOf("cmp -s", StringComparison.Ordinal);
+        deploy[late..].ShouldContain("c1008_refuse RecycleComposeMismatch");
         var marker = "# Preview intercepts before generic checkout, recursive ownership or boot setup.";
         var start = text.IndexOf(marker, StringComparison.Ordinal);
         start.ShouldBeGreaterThanOrEqualTo(0);
@@ -1014,6 +1019,151 @@ public sealed class RemoteScriptContractTests
             var body = Block(text, name);
             body.ShouldContain("${C1008_COMPOSE_DIR:-$CHECKOUT}");
             body.ShouldContain("--project-directory \"$CHECKOUT\"");
+        }
+    }
+
+    // CARD-1116. A target compose that differs from the checkout refuses before any removal.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1105_Compose_cmp_refuses_before_removal()
+    {
+        C1008HostFixture.RequireNativeLinux();
+        using var f = new C1008HostFixture();
+        File.WriteAllText(Path.Combine(f.Root, "foreign-compose.yml"), "mismatch\n");
+        var run = await f.Run(extra: """
+            c1008_compose_source() {
+              mkdir -p -- "$2" || return 2
+              cp -f -- "$C1008_FIXTURE_ROOT/foreign-compose.yml" "$2/docker-compose.server2-runner.yml" || return 2
+              cp -f -- "$SERVER2_COMPOSE" "$2/docker-compose.server2-runner.temp.yml" || return 2
+            }
+            """);
+        run.Exit.ShouldBe(2, "c1105-compose-cmp: " + run.Output);
+        run.Output.ShouldContain("RecycleComposeMismatch");
+        f.Removed.ShouldBeEmpty("c1105-compose-cmp: mismatch removes nothing");
+        C1105DockerMutations(f).ShouldBe(0, "c1105-compose-cmp: no stop, rm, or volume rm");
+        File.Exists(C1105Journal(f)).ShouldBeFalse("c1105-compose-cmp: refusal is before the journal");
+    }
+
+    // CARD-1117. S2 resume refusals in c1008_bind_generation. The runners=0 image leg
+    // compares session-runner leftovers only; a state-init server image is not a mismatch.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1105_Resume_identity_refusals()
+    {
+        C1008HostFixture.RequireNativeLinux();
+        using (var shape = await C1105Interrupt("(.stopReceipts|length)>0"))
+        {
+            var record = JsonNode.Parse(File.ReadAllText(C1105Journal(shape)))!.AsObject();
+            record.Remove("previousSha");
+            record.Remove("previousComposeDigest");
+            record.Remove("generation");
+            File.WriteAllText(C1105Journal(shape), record.ToJsonString());
+            await C1105AssertResumeRefuses(shape, "RecycleResumeMismatch");
+        }
+        using (var owned = await C1105Interrupt("(.stopReceipts|length)>0"))
+        {
+            var record = JsonNode.Parse(File.ReadAllText(C1105Journal(owned)))!.AsObject();
+            record["ownedRemoved"] = true;
+            File.WriteAllText(C1105Journal(owned), record.ToJsonString());
+            File.WriteAllText(Path.Combine(owned.Root, "main.env"), "SOURCE_REVISION=" + new string('d', 40) + "\n");
+            await C1105AssertResumeRefuses(owned, "RecycleResumeMismatch");
+        }
+        using (var partial = await C1105Interrupt("(.removeReceipts|length)>0"))
+        {
+            File.WriteAllText(Path.Combine(partial.Root, "main.env"), "SOURCE_REVISION=" + new string('d', 40) + "\n");
+            await C1105AssertResumeRefuses(partial, "RecycleResumeMismatch");
+        }
+        using (var derived = await C1105Interrupt("(.stopReceipts|length)>0"))
+        {
+            var drifted = new string('c', 40);
+            derived.Statuses["server2"]!["buildVersion"] = drifted;
+            File.WriteAllText(Path.Combine(derived.Root, "main.env"), "SOURCE_REVISION=" + drifted + "\n");
+            await C1105AssertResumeRefuses(derived, "RecycleResumeMismatch");
+        }
+        using (var digest = await C1105Interrupt("(.stopReceipts|length)>0"))
+        {
+            var record = JsonNode.Parse(File.ReadAllText(C1105Journal(digest)))!.AsObject();
+            record["previousComposeDigest"] = new string('e', 64);
+            File.WriteAllText(C1105Journal(digest), record.ToJsonString());
+            await C1105AssertResumeRefuses(digest, "RecycleResumeMismatch");
+        }
+        using (var runner = await C1105Interrupt("(.stopReceipts|length)>0"))
+        {
+            C1105SetImage(runner, "session-runner", "sha256:" + new string('d', 64));
+            await C1105AssertResumeRefuses(runner, "RecycleGenerationMismatch");
+        }
+    }
+
+    // CARD-1105. A state-init server image is pinned by the journal, not generation.imageId.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1105_Resume_state_init_image_follows_the_journal()
+    {
+        C1008HostFixture.RequireNativeLinux();
+        using var journalImage = await C1105Interrupt("(.removeReceipts|length)>0");
+        C1105SetImage(journalImage, "state-init", "sha256:" + new string('d', 64));
+        await C1105AssertResumeRefuses(journalImage, "RecycleResumeMismatch");
+    }
+
+    // CARD-1117. A non-roster leftover is a container-state refusal. The runners=0 image
+    // leg must not treat it as a generation mismatch before the service allowlist.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1105_Resume_foreign_leftover_is_not_an_image_mismatch()
+    {
+        C1008HostFixture.RequireNativeLinux();
+        using var foreign = await C1105Interrupt("(.removeReceipts|length)>0");
+        foreign.Docker["containers"]!.AsArray().Add(foreign.Container('4', "antiphon-runner", "foreign", false));
+        await C1105AssertResumeRefuses(foreign, "RecycleContainerStateUnknown", freezeJournal: false);
+    }
+
+    private static string C1105Journal(C1008HostFixture fixture) =>
+        Path.Combine(fixture.Root, "server/recycle/c100800000000000000000000000000000001.json");
+
+    private static int C1105DockerMutations(C1008HostFixture fixture) =>
+        fixture.Trace.Count(a => a.Length > 0 && (a[0] is "stop" or "rm"
+            || (a.Length > 1 && a[0] == "volume" && a[1] == "rm")));
+
+    private static async Task<C1008HostFixture> C1105Interrupt(string predicate)
+    {
+        var fixture = new C1008HostFixture();
+        var failed = await fixture.Run(extra: "mv() { if printf '%s' \"$C1008_RECORD\" | jq -e '" + predicate
+            + "' >/dev/null; then return 77; fi; command mv \"$@\"; }");
+        failed.Exit.ShouldBe(2, "c1105-resume-refusal: interrupt " + predicate + "; " + failed.Output);
+        failed.Output.ShouldContain("RecycleReceiptUnavailable");
+        fixture.ReloadDocker();
+        return fixture;
+    }
+
+    private static void C1105SetImage(C1008HostFixture fixture, string service, string image)
+    {
+        var container = fixture.Docker["containers"]!.AsArray().Single(node =>
+            node!["Config"]!["Labels"]!["com.docker.compose.service"]!.GetValue<string>() == service);
+        container["Image"] = image;
+    }
+
+    private static async Task C1105AssertResumeRefuses(C1008HostFixture fixture, string token, bool freezeJournal = true)
+    {
+        var journal = C1105Journal(fixture);
+        var before = File.ReadAllText(journal);
+        var mutations = C1105DockerMutations(fixture);
+        var removed = fixture.Removed.Length;
+        var resumed = await fixture.Run(extra: "C1008_RESUME=1");
+        resumed.Exit.ShouldBe(2, "c1105-resume-refusal: " + token + "; " + resumed.Output);
+        resumed.Output.ShouldContain(token);
+        fixture.Removed.Length.ShouldBe(removed, token + " removes no further volume");
+        C1105DockerMutations(fixture).ShouldBe(mutations, token + " adds no stop, rm, or volume rm");
+        if (freezeJournal)
+            File.ReadAllText(journal).ShouldBe(before, token + " leaves the journal unchanged");
+        else
+        {
+            // Reconcile re-saves the stopped journal before the service allowlist refuses.
+            var saved = JsonNode.Parse(File.ReadAllText(journal))!;
+            saved["ownedRemoved"]!.GetValue<bool>().ShouldBeFalse(token + " does not record removal");
+            saved["removeReceipts"]!.AsArray().Count.ShouldBe(
+                JsonNode.Parse(before)!["removeReceipts"]!.AsArray().Count, token + " adds no remove receipt");
+            var phase = saved["phase"]!.GetValue<string>();
+            (phase is "preflight" or "stopped").ShouldBeTrue(token + " stays before container removal; phase=" + phase);
         }
     }
 
