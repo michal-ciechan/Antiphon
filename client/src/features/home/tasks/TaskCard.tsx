@@ -30,7 +30,7 @@ import type { AttentionItemDto } from '../../../api/attention'
 import { useSpawnCard, type CardStatus } from '../../../api/boards'
 import { getApiErrorMessage } from '../../../api/client'
 import type { HomeTaskItemDto } from '../../../api/homeTasks'
-import { ATTENTION_VISUALS } from '../../attention/attentionVisuals'
+import { visualOf } from '../../attention/attentionVisuals'
 import { importanceBadgeColor, stateLabel, urgencyBadgeColor } from '../../board/boardVisuals'
 import { PlacementBadge } from '../../delegations/placement'
 import { TierBadge } from '../../delegations/TaskChip'
@@ -532,7 +532,7 @@ function WorkerLine({
 }
 
 function LivenessBadge({ item }: { item: AttentionItemDto }) {
-  const visual = ATTENTION_VISUALS[item.kind]
+  const visual = visualOf(item.kind)
   const Icon = visual.icon
   return (
     <Tooltip label={visual.hint} multiline w={280}>

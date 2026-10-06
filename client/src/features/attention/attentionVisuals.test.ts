@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { TbClockPause, TbHourglassHigh, TbUserOff } from 'react-icons/tb'
 import type { AttentionItemDto, AttentionKind } from '../../api/attention'
 import {
   ATTENTION_GROUPS,
@@ -76,6 +77,9 @@ const ALL_KINDS: AttentionKind[] = [
   'WorktreeCleanupBacklog',
   'CardClosedWhileWorking',
   'TaskInputUnreadable',
+  'SeatIdle',
+  'OccupancyDivergence',
+  'SlotOrphan',
 ]
 
 function item(overrides: Partial<AttentionItemDto> & { kind: AttentionKind }): AttentionItemDto {
@@ -359,5 +363,25 @@ describe('attentionVisuals', () => {
     expect(targetOf(item({ kind: 'CapacityRecoveryExhausted', severity: 'Error', agentId: 'agent-1' }))).toBe(
       '/agents?agent=agent-1',
     )
+  })
+
+  it('CARD-1079 seat kinds are drawable and grouped by severity', () => {
+    const drawn = [
+      ['SeatIdle', 'Idle seat', TbClockPause, 'Reply'],
+      ['OccupancyDivergence', 'Seats above Working', TbHourglassHigh, 'drawer'],
+      ['SlotOrphan', 'Orphan slot', TbUserOff, 'Reply'],
+    ] as const
+    for (const [kind, label, icon, verb] of drawn) {
+      const visual = ATTENTION_VISUALS[kind as AttentionKind]
+      expect(visual.label, kind).toBe(label)
+      expect(visual.color, kind).toBe('warning')
+      expect(visual.icon, kind).toBe(icon)
+      expect(visual.hint.toLowerCase(), kind).toContain('detection only')
+      expect(visual.hint, kind).toContain(verb)
+      expect(ALL_KINDS, kind).toContain(kind)
+    }
+    expect(homeBucketOf(item({ kind: 'SeatIdle' as AttentionKind, severity: 'Warning' }))).toBe('review')
+    expect(homeBucketOf(item({ kind: 'SlotOrphan' as AttentionKind, severity: 'Warning' }))).toBe('review')
+    expect(homeBucketOf(item({ kind: 'OccupancyDivergence' as AttentionKind, severity: 'Error' }))).toBe('broken')
   })
 })

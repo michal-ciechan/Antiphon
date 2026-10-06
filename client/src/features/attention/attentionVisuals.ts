@@ -25,9 +25,9 @@ import type { AttentionItemDto, AttentionKind } from '../../api/attention'
 
 /**
  * Kind → how the row reads, and severity → which group it lands in. Pure and total: every
- * `AttentionKind` has an entry, enforced by the `Record` type and pinned by a test, because a kind
- * the server adds and the client cannot draw would render as a blank row on the one screen whose
- * whole job is to be legible in a hurry.
+ * `AttentionKind` has an entry, enforced by the `Record` type and pinned by a test. A kind the
+ * server sends before this client knows it is drawn by `visualOf` as a generic badge, so one new
+ * kind cannot throw and blank the panel.
  */
 export interface AttentionVisual {
   /** Two or three words. The badge, not the sentence — the headline carries the sentence. */
@@ -329,6 +329,39 @@ export const ATTENTION_VISUALS: Record<AttentionKind, AttentionVisual> = {
     icon: TbClockExclamation,
     hint: 'An AlwaysOn Check seat stopped after a silent automatic compaction. Open the agent incident history. A new Check is allowed only after resume; the row clears on a whole caller receipt or an operator supersession.',
   },
+  SeatIdle: {
+    label: 'Idle seat',
+    color: 'warning',
+    icon: TbClockPause,
+    hint: 'A runner seat still occupies capacity while its task is not working. Detection only - Reply, Cancel, or open the drawer. Nothing is stopped or released.',
+  },
+  OccupancyDivergence: {
+    label: 'Seats above Working',
+    color: 'warning',
+    icon: TbHourglassHigh,
+    hint: 'This host counts more in-flight work than Dispatched or Working tasks, and a seat is idle. Detection only - open the drawer. Nothing is reclaimed.',
+  },
+  SlotOrphan: {
+    label: 'Orphan slot',
+    color: 'warning',
+    icon: TbUserOff,
+    hint: 'An occupying slot is an orphan. Detection only - Reply, Cancel, or open the drawer. Nothing is released.',
+  },
+}
+
+/** Drawn when the server sends a kind this build does not know. Never throw on a missing entry. */
+const UNKNOWN_ATTENTION_VISUAL: AttentionVisual = {
+  label: 'Unknown kind',
+  color: 'gray',
+  icon: TbHelpCircle,
+  hint: 'The server sent an attention kind this client does not draw yet. Detection only - the row stays listed; open its evidence.',
+}
+
+export function visualOf(kind: string): AttentionVisual {
+  if (Object.prototype.hasOwnProperty.call(ATTENTION_VISUALS, kind)) {
+    return ATTENTION_VISUALS[kind as AttentionKind]
+  }
+  return UNKNOWN_ATTENTION_VISUAL
 }
 
 export type AttentionGroupKey = 'now' | 'broken' | 'suspect' | 'failures'

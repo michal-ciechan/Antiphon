@@ -42,11 +42,11 @@ import { BlockedReplyRow } from './BlockedReplyRow'
 import { AttentionInspectionDrawer } from './AttentionInspectionDrawer'
 import {
   ATTENTION_GROUPS,
-  ATTENTION_VISUALS,
   ageSeconds,
   groupOf,
   keyOf,
   targetOf,
+  visualOf,
   type AttentionGroupKey,
 } from './attentionVisuals'
 
@@ -222,7 +222,7 @@ function AttentionRow({
   item: AttentionItemDto
   onOpen: (target: string) => void
 }) {
-  const visual = ATTENTION_VISUALS[item.kind]
+  const visual = visualOf(item.kind)
   const Icon = visual.icon
   const target = targetOf(item)
   const seconds = ageSeconds(item)

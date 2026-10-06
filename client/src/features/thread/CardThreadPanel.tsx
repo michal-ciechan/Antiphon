@@ -35,7 +35,7 @@ import {
 import { getApiErrorMessage } from '../../api/client'
 import { displayIdentifier } from '../../shared/cardIdentifier'
 import { BlockedReplyRow } from '../attention/BlockedReplyRow'
-import { ATTENTION_VISUALS } from '../attention/attentionVisuals'
+import { visualOf } from '../attention/attentionVisuals'
 import { CardAxisBadges } from '../board/CardAxisBadges'
 import { legalMoveTargets } from '../board/boardShapeModel'
 import { DelegateModal, type DelegatePrefill } from '../delegations/DelegateModal'
@@ -530,20 +530,23 @@ function ThreadTaskRow({
         </Box>
       </Group>
 
-      {attention.map((item) => (
-        <Group
-          key={`${item.kind}|${item.sinceUtc}`}
-          gap={6}
-          mt={6}
-          wrap="nowrap"
-          data-testid={`thread-task-attention-${task.id}`}
-        >
-          <Badge size="xs" color={ATTENTION_VISUALS[item.kind].color} variant="filled" style={{ flexShrink: 0 }}>
-            {ATTENTION_VISUALS[item.kind].label}
-          </Badge>
-          <Text size="xs" c="dimmed" lineClamp={2}>{item.headline}</Text>
-        </Group>
-      ))}
+      {attention.map((item) => {
+        const visual = visualOf(item.kind)
+        return (
+          <Group
+            key={`${item.kind}|${item.sinceUtc}`}
+            gap={6}
+            mt={6}
+            wrap="nowrap"
+            data-testid={`thread-task-attention-${task.id}`}
+          >
+            <Badge size="xs" color={visual.color} variant="filled" style={{ flexShrink: 0 }}>
+              {visual.label}
+            </Badge>
+            <Text size="xs" c="dimmed" lineClamp={2}>{item.headline}</Text>
+          </Group>
+        )
+      })}
 
       {task.latestCheck && (
         <Box
