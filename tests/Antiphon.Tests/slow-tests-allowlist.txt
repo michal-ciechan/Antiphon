@@ -254,3 +254,5 @@ Antiphon.Tests.Application.ChannelOutboundUnifiedCrashTests
 Antiphon.Tests.Application.ChannelOutboundUnifiedTransportTests
 # CARD-1065: real Git publication, isolated PostgreSQL and local/remote park custody boundaries.
 Antiphon.Tests.Application.TaskParkPublicationTests
+# CARD-1065 S4c: isolated PostgreSQL, owned Git children and loopback HTTP/WebSocket proof transport.
+Antiphon.Tests.Application.TaskParkRunnerIdentityTests

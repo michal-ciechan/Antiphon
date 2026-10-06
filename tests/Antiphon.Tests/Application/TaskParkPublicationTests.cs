@@ -281,7 +281,7 @@ public sealed class TaskParkPublicationTests
         (await verify.RunnerSeatReleases.CountAsync()).ShouldBe(0);
     }
 
-    private sealed class PublicationWorld : IAsyncDisposable
+    internal sealed class PublicationWorld : IAsyncDisposable
     {
         public BlockedTaskParkFixture Fixture { get; private set; } = null!;
         public string Root { get; } = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "c1065-publication-" + Guid.NewGuid().ToString("N"));
@@ -368,7 +368,7 @@ public sealed class TaskParkPublicationTests
             catch { await w.DisposeAsync(); throw; }
         }
 
-        private TaskParkPublicationService Service(AppDbContext db) => new(db, new(Git, Leases), Directory,
+        internal TaskParkPublicationService Service(AppDbContext db) => new(db, new(Git, Leases), Directory,
             Reservations, TimeProvider.System, Options.Create(Fixture.Options))
             { BeforeReceiptSaveAsync = BeforeReceiptSave is null ? null : (proof, _) => BeforeReceiptSave(proof) };
         public async Task<TaskParkPublicationResult> PrepareAsync()
@@ -411,7 +411,7 @@ public sealed class TaskParkPublicationTests
         }
     }
 
-    private sealed class ParkGit : TaskProgressGit
+    internal sealed class ParkGit : TaskProgressGit
     {
         public List<string[]> Commands { get; } = [];
         public Func<IReadOnlyList<string>, Task>? Before { get; set; }
@@ -430,30 +430,45 @@ public sealed class TaskParkPublicationTests
         }
     }
 
-    private sealed class ParkDirectory(ParkClient client, SessionRunnerOwner? owner) : ISessionRunnerDirectory
+    internal sealed class ParkDirectory(ParkClient client, SessionRunnerOwner? owner) : ISessionRunnerDirectory
     {
+        public SessionRunnerOwner? Owner { get; set; } = owner;
+        public bool IdentityCapability { get; set; } = true;
+        public List<string?> Resolved { get; } = [];
         public ParkClient Client => client;
         public ISessionRunnerClient Local => client;
         public IReadOnlyList<string> KnownRunnerIds => owner is null ? [] : [owner.RunnerId];
-        public ISessionRunnerClient Resolve(string? runnerId) => client;
+        public ISessionRunnerClient Resolve(string? runnerId) { Resolved.Add(runnerId); return client; }
         public Guid? GetLiveStoreId(string? runnerId) => owner?.RunnerStoreId;
         public Task<SessionRunnerOwner?> GetOwnerAsync(Guid sessionId, CancellationToken ct) => Task.FromResult(owner);
         public Task<SessionRunnerBinding> GetBindingAsync(Guid sessionId, CancellationToken ct) => Task.FromResult<SessionRunnerBinding>(
-            owner is null ? SessionRunnerBinding.Local.Instance : new SessionRunnerBinding.Remote(owner));
+            Owner is null ? SessionRunnerBinding.Local.Instance : new SessionRunnerBinding.Remote(Owner));
         public Task<RunnerInventory> GetInventoryAsync(string? runnerId, CancellationToken ct) => throw new NotSupportedException();
         public Task<RunnerDescriptor?> DescribeAsync(string? runnerId, CancellationToken ct) => Task.FromResult<RunnerDescriptor?>(new(
             runnerId!, "fixture", null, null, true, true, false, null,
-            new("fixture", "fixture", "fixture", false, Features: [RunnerCapabilityFeatures.WorkspaceParkV1, RunnerCapabilityFeatures.TerminalSeatReleaseV1])));
+            new("fixture", "fixture", "fixture", false, Features: IdentityCapability
+                ? [RunnerCapabilityFeatures.WorkspaceParkV1, RunnerCapabilityFeatures.TerminalSeatReleaseV1, RunnerCapabilityFeatures.WorkspaceRepositoryIdentityV1]
+                : [RunnerCapabilityFeatures.WorkspaceParkV1, RunnerCapabilityFeatures.TerminalSeatReleaseV1])));
     }
 
-    private sealed class ParkClient(RunnerWorkspaceParkService? runtime) : ISessionRunnerClient
+    internal sealed class ParkClient(RunnerWorkspaceParkService? runtime) : ISessionRunnerClient
     {
         public int Calls { get; private set; }
+        public List<WorkspaceRepositoryIdentityRequest> IdentityCalls { get; } = [];
+        public Func<WorkspaceRepositoryIdentityResult, Task<WorkspaceRepositoryIdentityResult>>? AfterIdentity { get; set; }
+        public Func<WorkspaceParkCommand, Task>? BeforePublication { get; set; }
+        public async Task<WorkspaceRepositoryIdentityResult> ReadWorkspaceRepositoryIdentityAsync(WorkspaceRepositoryIdentityRequest request, CancellationToken ct)
+        {
+            IdentityCalls.Add(request);
+            var result = await runtime!.ReadIdentityAsync(request, request.Path, ct);
+            return AfterIdentity is null ? result : await AfterIdentity(result);
+        }
         public IAsyncEnumerable<SessionRunnerEvent> StreamEventsAsync(CancellationToken ct) => throw new NotSupportedException();
-        public Task<WorkspaceParkResult> ParkWorkspaceAsync(WorkspaceParkCommand request, CancellationToken ct)
+        public async Task<WorkspaceParkResult> ParkWorkspaceAsync(WorkspaceParkCommand request, CancellationToken ct)
         {
             Calls++;
-            return request.Prepare is { } prepare ? runtime!.PrepareAsync(prepare, ct) : runtime!.VerifyAsync(request.Verify!, ct);
+            if (BeforePublication is not null) await BeforePublication(request);
+            return request.Prepare is { } prepare ? await runtime!.PrepareAsync(prepare, ct) : await runtime!.VerifyAsync(request.Verify!, ct);
         }
         public Task<SessionRunnerSessionDto> StartAsync(Guid sessionId, AgentLaunchSpec spec, CancellationToken ct) => throw new NotSupportedException();
         public Task<IReadOnlyList<SessionRunnerSessionDto>> ListAsync(CancellationToken ct) => throw new NotSupportedException();
