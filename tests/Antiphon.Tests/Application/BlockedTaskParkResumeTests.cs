@@ -62,9 +62,9 @@ public sealed class BlockedTaskParkResumeTests
             (await db.Agents.AnyAsync(a => a.Id == f.AgentId)).ShouldBeTrue("G-130");
             (await db.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == f.SessionId)).ShouldBe(0, "G-132");
             var brief = await BriefAsync(f, sessionId);
-            brief.ShouldContain($"Parked source SHA: {tip}; full ref: {resumed.FullRef}.", "G-135");
-            brief.ShouldNotContain($"Parked source SHA: {queued.WorktreeBaseSha}", "G-135");
-            brief.ShouldContain(Answer, "G-138");
+            brief.ShouldContain($"Parked source SHA: {tip}; full ref: {resumed.FullRef}.", Case.Sensitive, "G-135");
+            brief.ShouldNotContain($"Parked source SHA: {queued.WorktreeBaseSha}", Case.Sensitive, "G-135");
+            brief.ShouldContain(Answer, Case.Sensitive, "G-138");
             await f.TryAnswerAsync(Answer);
             (await f.TaskAsync()).Attempt.ShouldBe(2, "G-131");
         }
@@ -85,7 +85,7 @@ public sealed class BlockedTaskParkResumeTests
             (await f.TaskAsync()).AgentId.ShouldBe(f.AgentId, "G-130");
             f.Launches.Calls.Count.ShouldBe(1, "G-135");
             var brief = await BriefAsync(f, (await f.TaskAsync()).AgentSessionId!.Value);
-            brief.ShouldContain($"Parked source SHA: {tip}; full ref: {fullRef}.", "G-135");
+            brief.ShouldContain($"Parked source SHA: {tip}; full ref: {fullRef}.", Case.Sensitive, "G-135");
         }
 
         foreach (var boundary in new[] { "accept-before", "attempt-before" })
@@ -169,7 +169,7 @@ public sealed class BlockedTaskParkResumeTests
             park.ReasonCode.ShouldBe("park_reply_before_reserve", "G-136");
             await using var db = f.Db();
             (await db.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == session)).ShouldBe(1, "G-136");
-            (await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == session)).Body.ShouldContain(Answer, "G-136");
+            (await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == session)).Body.ShouldContain(Answer, Case.Sensitive, "G-136");
             await f.ReleaseAsync();
             f.Wire.ConditionalCommands.ShouldBe(0, "G-136");
             (await f.TaskAsync()).Attempt.ShouldBe(1, "G-136");
@@ -453,7 +453,7 @@ public sealed class BlockedTaskParkResumeTests
                 (await f.GitAsync(f.SourcePath, "symbolic-ref", "-q", "HEAD")).ShouldBe("refs/heads/c1065-other", "G-142");
             }
             else if (shape == "changed-endpoint")
-                (await f.GitAsync(f.SourcePath, "remote", "get-url", "--push", "origin")).ShouldEndWith("-moved", "G-143");
+                (await f.GitAsync(f.SourcePath, "remote", "get-url", "--push", "origin")).ShouldEndWith("-moved", Case.Sensitive, "G-143");
             else if (shape == "missing-object")
             {
                 Directory.Exists(f.SourcePath).ShouldBeTrue("G-140");
