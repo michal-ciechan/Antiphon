@@ -72,7 +72,7 @@ public sealed class BlockedTaskParkProjectionTests
         Require(runtime, "The park bound is this release path (CARD-1083).", "c1065-park-bound");
         Require(runtime, "A short tail wraps. One call runs at most three passes of up to 32 rows (at most 96 row visits), and after wrap-around the same row at most three times. There is no discovery gate.", "c1065-reclaim-page");
         Require(runtime, "The reconcile job's released total includes those visit counts.", "c1065-reclaim-count");
-        Require(runtime, "FreshLegacyWindow mixes the runner observation clock with park.CreatedAt. An old CompletedAt is not the idle window.", "c1065-fresh-window");
+        Require(runtime, "FreshLegacyWindow uses StableFor only as a duration and requires the server-clock interval since park.CreatedAt to reach 120 seconds; the runner's FirstObservedAt is ignored. An old CompletedAt is not the idle window.", "c1065-fresh-window");
         Require(runtime, "With Enabled and ReclaimExisting set, physical release still requires AutomaticEnabled.", "c1065-automatic-still-required");
 
         var loop = Read("docs/orchestration-loop.md");
