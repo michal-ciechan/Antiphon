@@ -170,7 +170,8 @@ public sealed class RetiredTempContainerScriptTests
         using var host=new C1008HostFixture();
         var proof=await host.Run(extra:"""
             LANE=host;C1008_PROJECT="$HOST_PROJECT"
-            model="$(c1008_compose_model)" || exit 2
+            # Live containers are the running generation. Resume reconciles that roster.
+            model="$(c1008_previous_model "$(sed -n 's/^SOURCE_REVISION=//p' "$SERVER2_ENV")")" || exit 2
             volumes="$(jq -c .volumes "$C1008_FIXTURE_ROOT/docker.json")"
             fresh="$(c1008_container_census | jq -c '[.[]|select(.Config.Labels["com.docker.compose.service"]!="build-slots")]')"
             c1008_owned_mounts "$fresh" "$model" "$volumes";saved="$C1008_OWNED"
