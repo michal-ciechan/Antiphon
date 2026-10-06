@@ -31,8 +31,9 @@ internal readonly record struct SeatDesktopRow(
 
 /// <summary>
 /// CARD-1079: the one desktop join shared by the slots route and the occupancy sampler.
-/// A seat is owned only by a Dispatched or Working task. One query per table, and the card
-/// query reads the board id only.
+/// A seat is owned only by a Dispatched or Working task. The task table is the latest row
+/// per session (CARD-1090), not that session's whole history. The card query reads the
+/// board id only.
 /// </summary>
 internal static class SeatDesktopJoin
 {
@@ -47,30 +48,12 @@ internal static class SeatDesktopJoin
             .Where(s => sessionIds.Contains(s.Id))
             .Select(s => new { s.Id, s.Status })
             .ToListAsync(ct);
-        var tasks = await db.AgentTasks.AsNoTracking()
-            .Where(t => t.AgentSessionId != null && sessionIds.Contains(t.AgentSessionId.Value))
-            .Select(t => new TaskSlice(
-                t.Id,
-                t.AgentSessionId!.Value,
-                t.Status,
-                t.Attempt,
-                t.Role,
-                t.CardId,
-                t.AgentId,
-                t.CompletedAt,
-                t.CreatedAt))
-            .ToListAsync(ct);
-
-        var latestBySession = new Dictionary<Guid, TaskSlice>();
-        var openBySession = new Dictionary<Guid, TaskSlice>();
-        foreach (var task in tasks)
-        {
-            if (!latestBySession.TryGetValue(task.SessionId, out var current) || Newer(task, current))
-                latestBySession[task.SessionId] = task;
-            if (task.Status is AgentTaskStatus.Dispatched or AgentTaskStatus.Working
-                && (!openBySession.TryGetValue(task.SessionId, out var open) || Newer(task, open)))
-                openBySession[task.SessionId] = task;
-        }
+        var scoped = db.AgentTasks.AsNoTracking()
+            .Where(t => t.AgentSessionId != null && sessionIds.Contains(t.AgentSessionId.Value));
+        var latestBySession = await LatestPerSessionAsync(scoped, ct);
+        var openBySession = await LatestPerSessionAsync(
+            scoped.Where(t => t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working),
+            ct);
 
         var latestIds = latestBySession.Values.Select(t => t.Id).ToArray();
         var blockedAt = new Dictionary<Guid, DateTime>();
@@ -163,6 +146,53 @@ internal static class SeatDesktopJoin
         }
 
         return rows;
+    }
+
+    private static async Task<Dictionary<Guid, TaskSlice>> LatestPerSessionAsync(
+        IQueryable<AgentTask> tasks, CancellationToken ct)
+    {
+        var peaks = await tasks
+            .GroupBy(t => t.AgentSessionId)
+            .Select(g => new { SessionId = g.Key, CreatedAt = g.Max(t => t.CreatedAt) })
+            .ToListAsync(ct);
+        var wanted = new Dictionary<Guid, DateTime>();
+        foreach (var peak in peaks)
+        {
+            if (peak.SessionId is Guid sessionId)
+                wanted[sessionId] = peak.CreatedAt;
+        }
+
+        if (wanted.Count == 0)
+            return new Dictionary<Guid, TaskSlice>();
+
+        var ids = wanted.Keys.ToArray();
+        var stamps = wanted.Values.Distinct().ToArray();
+        var candidates = await tasks
+            .Where(t => t.AgentSessionId != null
+                && ids.Contains(t.AgentSessionId.Value)
+                && stamps.Contains(t.CreatedAt))
+            .Select(t => new TaskSlice(
+                t.Id,
+                t.AgentSessionId!.Value,
+                t.Status,
+                t.Attempt,
+                t.Role,
+                t.CardId,
+                t.AgentId,
+                t.CompletedAt,
+                t.CreatedAt))
+            .ToListAsync(ct);
+
+        var latest = new Dictionary<Guid, TaskSlice>();
+        foreach (var task in candidates)
+        {
+            if (!wanted.TryGetValue(task.SessionId, out var createdAt) || task.CreatedAt != createdAt)
+                continue;
+            if (!latest.TryGetValue(task.SessionId, out var current) || Newer(task, current))
+                latest[task.SessionId] = task;
+        }
+
+        return latest;
     }
 
     private static bool Newer(TaskSlice candidate, TaskSlice current) =>
