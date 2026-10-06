@@ -223,6 +223,7 @@ public sealed class RemoteScriptContractTests
                 Shape(field, e => { var bad = row.DeepClone(); bad[field] = false; e["items"]!.AsArray().Add(bad); });
             File.WriteAllText(Path.Combine(shapes.Root, "shape-vectors.json"), vectors.ToJsonString());
             var shapeRun = await shapes.Run(extra: """
+                C1008_RUNNER=server2
                 while IFS= read -r vector; do
                     printf '%s' "$vector" | jq '.input' > "$C1008_FIXTURE_ROOT/tasks.json"
                     code=0; c1008_tasks >/dev/null || code=$?
