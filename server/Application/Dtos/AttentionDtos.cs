@@ -339,6 +339,28 @@ public enum AttentionKind
 
     /// <summary>CARD-0826: eligible inventory-only worktrees sustained over complete daily reports.</summary>
     WorktreeCleanupBacklog = 56,
+
+    /// <summary>
+    /// A phone-home seat that occupies capacity while its task is not Dispatched or Working.
+    /// Warning at <c>Attention:SeatIdleWarningMinutes</c> (30), Error at
+    /// <c>Attention:SeatIdleErrorMinutes</c> (180). Key <c>seat-idle:{runnerId}:{sessionId:N}</c>.
+    /// The local host is out of scope (D-4). Detection only.
+    /// </summary>
+    SeatIdle = 57,
+
+    /// <summary>
+    /// Phone-home <c>inFlight</c> minus Dispatched/Working, when at least one idle seat is
+    /// behind that gap, on the same warning and error ages. Key <c>occupancy-divergence:{hostId}</c>.
+    /// The local host is samples only (D-4). Detection only.
+    /// </summary>
+    OccupancyDivergence = 58,
+
+    /// <summary>
+    /// An occupying phone-home slot with <c>orphan=true</c>. Warning immediately.
+    /// Key <c>slot-orphan:{runnerId}:{sessionId:N}</c>. Exited slots and the local host are
+    /// out of scope (D-4, D-6). Detection only.
+    /// </summary>
+    SlotOrphan = 59,
 }
 
 /// <summary>

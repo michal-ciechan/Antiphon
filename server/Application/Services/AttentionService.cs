@@ -126,6 +126,8 @@ public sealed partial class AttentionService
     private readonly ZombieCensusState? _censusState;
     private readonly ISessionRunnerDirectory? _runnerDirectory;
     private readonly RunnerAlarmState? _alarms;
+    private readonly SeatOccupancyState? _seats;
+    private readonly AttentionSettings _attention;
 
     public AttentionService(
         AppDbContext db,
@@ -142,7 +144,9 @@ public sealed partial class AttentionService
         IOptions<ScheduleSettings>? schedules = null,
         ZombieCensusState? censusState = null,
         ISessionRunnerDirectory? runnerDirectory = null,
-        RunnerAlarmState? alarms = null)
+        RunnerAlarmState? alarms = null,
+        SeatOccupancyState? seats = null,
+        IOptions<AttentionSettings>? attention = null)
     {
         _db = db;
         _runnerClient = runnerClient;
@@ -156,6 +160,8 @@ public sealed partial class AttentionService
         _censusState = censusState;
         _runnerDirectory = runnerDirectory;
         _alarms = alarms;
+        _seats = seats;
+        _attention = attention?.Value ?? new AttentionSettings();
     }
 
     public async Task<AttentionDto> GetAsync(CancellationToken ct, bool includeProgressProbe = true)
@@ -239,6 +245,13 @@ public sealed partial class AttentionService
         var alarmSnapshot = _alarms?.Current;
         items.AddRange(BuildRunnerUnavailableItems(alarmSnapshot));
         items.AddRange(BuildJournalStaleItems(alarmSnapshot));
+        if (_attention.SeatWatchEnabled)
+        {
+            var occupancy = _seats?.Current;
+            items.AddRange(BuildSeatIdleItems(occupancy, now));
+            items.AddRange(BuildOccupancyDivergenceItems(occupancy, now));
+            items.AddRange(BuildSlotOrphanItems(occupancy, now));
+        }
         items.AddRange(await BuildModelAvailabilityHoldItemsAsync(now, ct));
         items.AddRange(await BuildCapacityRecoveryExhaustedItemsAsync(now, ct));
         items.AddRange(await BuildCompactionContinuationItemsAsync(ct));
