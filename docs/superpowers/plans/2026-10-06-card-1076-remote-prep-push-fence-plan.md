@@ -217,7 +217,7 @@ schemas and the phone-home test host; predicate, ledger, settings and docs-pin c
 | R-1 | `RemoteWorkspacePreparerTests.*` (19 existing results) | CARD-0633/0672 preparer and lease-crossing behaviour unchanged, including `C672_three_queued_runner_tasks_cross_the_lease_once_and_launch_behind_the_next_land`. |
 | R-2 | `RepositoryMutationLeaseTests.*` (18 existing) | `C448_C24_StandingJournalFencesAdmissionByStartIdentity` (an untagged live record still fences), `C448_C24_UnreadableJournalStateCannotAdmitAWriter`, `C661_*`, `C666_*`. |
 | R-3 | `LandingGitTests.*` (55 existing) | Push destinations, stderr suppression, scope caching unchanged by the overload split. |
-| R-4 | `AgentTaskPipelineStatusTests.*` (62 existing across its three partial files) | Existing reasons and precedence; `queued_work_is_awaiting_dispatch_unless_a_live_lease_holds_it` (a stale free-text Held stays `awaitingDispatch`). |
+| R-4 | `AgentTaskPipelineStatusTests.*` (58 existing across its three partial files) | Existing reasons and precedence; `queued_work_is_awaiting_dispatch_unless_a_live_lease_holds_it` (a stale free-text Held stays `awaitingDispatch`). The four `AgentTaskPipelineEndpointTests` in the same file are a different class. |
 | R-5 | `AgentTaskDispatcherPredicateTests.C672_LaunchesPreparedMirror` (8) | The mirror-launch predicate is untouched. |
 | R-6 | `DispatchHoldLedgerTests.*` (22 existing results) | `ClassOf` mapping and ledger sums unchanged. |
 | R-7 | `DispatcherRemotePrepStarvationTests.*` (4) | Silent remote tasks still do not delay a local recipient with the push gate in place. |
@@ -276,7 +276,7 @@ rebases nothing (the branch is fast-forward-only).
 | CP-2 | S1 | CP-1 | landing-git | `/*/*/LandingGitTests/*` | V-1, V-2, R-3 | exact 57 results (55 existing + 2 C1076_*), 0 failed/skipped | 57 | 8 | true |
 | CP-3 | all | `tests/Antiphon.Tests -> bin-c1076-b/` | remote-prep | `/*/*/(RemoteWorkspacePreparerTests*)\|(DispatcherRemotePrepStarvationTests*)\|(PhoneHomeTaskDispatchProjectionTests*)/*` | V-5, V-6, V-7, R-1, R-7, R-10 | exact 35 results (19 existing + 2 C1076_* + 2 new C672 arms, 4, 8), 0 failed/skipped | 35 | 15 | true |
 | CP-4 | all | CP-3 | predicates-settings-docs | `/*/*/(AgentTaskDispatcherPredicateTests*)\|(DispatchHoldLedgerTests*)\|(DelegationLeaseSettingsTests*)\|(RunnerBranchContractDocumentationTests*)/*` | V-8, V-12, V-13, V-15, R-5, R-6, R-11, R-12 | exact 55 results (8 + 9, 22 + 1, 8 + 3, 3 + 1), 0 failed/skipped | 55 | 5 | true |
-| CP-5 | all | CP-3 | pipeline-reasons | `/*/*/AgentTaskPipelineStatusTests/*` | V-9, V-10, V-11, R-4 | exact 70 results (62 existing across the partial class + 4 + 3 + 1), 0 failed/skipped | 70 | 7 | true |
+| CP-5 | all | CP-3 | pipeline-reasons | `/*/*/AgentTaskPipelineStatusTests/*` | V-9, V-10, V-11, R-4 | exact 66 results (58 existing across the three partials + 4 + 3 + 1), 0 failed/skipped | 66 | 7 | true |
 | CP-6 | all | CP-3 | hold-visibility-lease | `/*/*/DispatchHoldVisibilityTests/(lease_hold_traces_once_per_holder_and_names_the_running_land*)\|(lease_fence_is_named_from_the_provider*)\|(unknown_lease_holder_is_stable_text*)\|(C672_lease_hold_registers_a_waiter_and_dispatch_clears_it*)\|(C672_held_aged_carries_the_per_class_wait_ledger*)` | R-9 | exact 5 methods, 0 failed/skipped | 5 | 4 | true |
 | CP-7 | all | n/a | client-vitest | `pwsh -File scripts/test-client.ps1 pipelineStageModel homeTasksModel TaskCard` | V-14 | the three files run with the new cases, 0 failed | n/a | 5 | |
 
