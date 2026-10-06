@@ -34,10 +34,9 @@ namespace Antiphon.Tests.Application;
 public partial class DispatchBaseNotificationTests
 {
     /// <summary>
-    /// V-23 / G-66, G-67: one successful claim commits its final dispatch event, the session and
-    /// EVERY warning it owes, in one transaction. All three producers fire at once here: a
-    /// divergent sibling, a base observed before the default disappeared, and the newly used
-    /// unresolved default.
+    /// CARD-0442: a succeeded kept sibling with unmerged commits is the worktree base. The claim
+    /// records CardCurrent and clears the pre-lease sibling observation, so deleting the configured
+    /// default during the lease still commits no warning drafts.
     /// </summary>
     [Test]
     [Timeout(90_000)]
@@ -55,8 +54,8 @@ public partial class DispatchBaseNotificationTests
         var task = await SeedQueuedWorktreeTaskAsync(db, repo.Path, card.Id, parentSessionId);
         await db.SaveChangesAsync(ct);
 
-        // Observed under the guard: trunk. Deleted before the claim resolves, so the claim falls
-        // to HEAD and owes BOTH a stale-observation warning and an unresolved-default warning.
+        // Trunk disappears under the lease. A regression that ignores the kept sibling falls back
+        // to HEAD and owes warning drafts; CardCurrent must still win.
         await using var provider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot, "trunk",
             onLeaseAcquired: async () =>
             {
@@ -66,51 +65,21 @@ public partial class DispatchBaseNotificationTests
         await using var scope = provider.CreateAsyncScope();
         await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(ct);
 
+        var siblingTip = (await repo.GitReadAsync("rev-parse", sibling.WorktreeBranch!)).Trim();
         db.ChangeTracker.Clear();
         var dispatched = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id, ct);
         dispatched.Status.ShouldBe(AgentTaskStatus.Dispatched);
-        dispatched.WorktreeBaseSource.ShouldBe(WorktreeBaseSource.RepoHead);
+        dispatched.WorktreeBaseSource.ShouldBe(WorktreeBaseSource.CardCurrent);
+        dispatched.WorktreeBaseTaskId.ShouldBe(sibling.Id);
+        dispatched.WorktreeBaseBranch.ShouldBe(sibling.WorktreeBranch);
+        dispatched.WorktreeBaseRef.ShouldBe(siblingTip);
+        dispatched.WorktreeBaseSha.ShouldBe(siblingTip);
         dispatched.AgentSessionId.ShouldNotBeNull();
-
-        var finalDispatch = await db.AgentTaskEvents.AsNoTracking()
-            .Where(e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Dispatched
-                && e.Detail.StartsWith("Dispatched to agent"))
-            .SingleAsync(ct);
-        var intents = await db.AgentTaskDispatchWarningIntents.AsNoTracking()
-            .Where(i => i.TaskId == task.Id).ToListAsync(ct);
-        intents.Count.ShouldBe(3);
-        intents.ShouldAllBe(i => i.DispatchEventId == finalDispatch.Id);
-        intents.ShouldAllBe(i => i.CreatedAt == finalDispatch.At);
-        intents.ShouldAllBe(i => i.ParentSessionId == parentSessionId);
-        intents.ShouldAllBe(i => i.ReplyTo == AgentTaskReplyTo.Session);
-        intents.ShouldContain(i => i.WarningKey == DispatchBaseNotificationPayload.SiblingKey(sibling.Id));
-        intents.ShouldContain(i => i.WarningKey == DispatchBaseNotificationPayload.MismatchKey);
-        intents.ShouldContain(i => i.WarningKey == DispatchBaseNotificationPayload.DefaultUnresolvedKey);
-        intents.Select(i => i.Id).Distinct().Count().ShouldBe(3);
-        intents.Select(i => i.NotificationId).Distinct().Count().ShouldBe(3);
-        // The dispatcher's post-commit fast path materializes what the claim captured, so each
-        // intent already owns its pair — under the ids the claim preallocated, not new ones.
-        foreach (var intent in intents)
-        {
-            var warning = await db.AgentTaskEvents.AsNoTracking().SingleAsync(e => e.Id == intent.Id, ct);
-            warning.Type.ShouldBe(AgentTaskEventType.Warning);
-            warning.AgentTaskId.ShouldBe(task.Id);
-            warning.Detail.ShouldBe(intent.Detail);
-            var note = await db.AgentTaskLandNotifications.AsNoTracking()
-                .SingleAsync(n => n.Id == intent.NotificationId, ct);
-            note.SourceEventId.ShouldBe(intent.Id);
-            note.Kind.ShouldBe(LandNotificationKind.DispatchBase);
-            note.RequestId.ShouldBeNull();
-            note.ParentSessionId.ShouldBe(parentSessionId);
-            intent.MaterializedAt.ShouldNotBeNull();
-            intent.LastErrorCode.ShouldBeNull();
-        }
-
-        var mismatch = intents.Single(i => i.WarningKey == DispatchBaseNotificationPayload.MismatchKey);
-        mismatch.Detail.ShouldContain("trunk");
-        mismatch.Detail.ShouldContain("HEAD");
-        intents.Single(i => i.WarningKey == DispatchBaseNotificationPayload.DefaultUnresolvedKey)
-            .Detail.ShouldContain("trunk");
+        dispatched.ParentSessionId.ShouldBe(parentSessionId);
+        (await db.AgentTaskDispatchWarningIntents.CountAsync(i => i.TaskId == task.Id, ct)).ShouldBe(0);
+        (await db.AgentTaskEvents.AsNoTracking().CountAsync(
+            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Dispatched
+                && e.Detail.StartsWith("Dispatched to agent"), ct)).ShouldBe(1);
     }
 
     /// <summary>
