@@ -44,6 +44,9 @@ public sealed class TaskParkPublicationTests
             await File.WriteAllTextAsync(Path.Combine(w.Path, "untracked.cs"), "uncommitted source");
             (await w.PrepareAsync()).Reason.ShouldBe("park_dirty");
             (await w.RemoteShaAsync()).ShouldBe(tip);
+            File.Delete(Path.Combine(w.Path, "untracked.cs"));
+            await w.GitTextAsync(w.Path, "remote", "remove", "origin");
+            (await w.PrepareAsync()).Outcome.ShouldBe(TaskParkPublicationOutcome.Unknown, "unavailable endpoint read");
         }
         await using (var w = await PublicationWorld.CreateAsync(remote: true))
         {
@@ -74,6 +77,16 @@ public sealed class TaskParkPublicationTests
                 Guid.NewGuid(), Guid.NewGuid()), default);
             (await w.PrepareAsync()).Reason.ShouldBe("park_other_writer", "G-70");
             await w.Reservations.ReleaseConsumerAsync(reservation.Snapshot!.Id, reservation.Snapshot.Generation, default);
+            var otherId = Guid.NewGuid();
+            await using (var db = w.Fixture.Db())
+            {
+                db.AgentTasks.Add(new AgentTask { Id = otherId, RootTaskId = otherId, Goal = "Other writer",
+                    Status = AgentTaskStatus.Working, Workspace = WorkspaceMode.Shared, AgentSessionId = w.Fixture.SessionId,
+                    WorkingDirectory = w.LocalPath, CreatedAt = DateTime.UtcNow });
+                await db.SaveChangesAsync();
+            }
+            (await w.PrepareAsync()).Reason.ShouldBe("park_other_writer", "G-70 current task owner");
+            await using (var db = w.Fixture.Db()) await db.AgentTasks.Where(t => t.Id == otherId).ExecuteDeleteAsync();
             await w.ChangeTaskAsync(t => t.ProgressBaselineJson = TaskProgressJson.SerializeBaseline(
                 TaskProgressJson.TryReadBaseline(t.ProgressBaselineJson)! with { Primary = w.Source with { FullRef = "refs/heads/master" } }));
             (await w.PrepareAsync()).Reason.ShouldBe("park_ownership_unknown", "G-69");
@@ -107,6 +120,7 @@ public sealed class TaskParkPublicationTests
         {
             task.Workspace = mode;
             task.CommitOnSettle = CommitOnSettlePolicy.Never;
+            task.RunnerId = "fixture";
             task.RemoteWorktreePath = "/unreachable/owned-mirror";
             task.WorktreeBranch = RemoteWorkspaceService.OwnedBranch(task.Id);
             var excluded = DelegationReportFormatter.BuildBrief(task, new DelegationSettings());
@@ -123,6 +137,7 @@ public sealed class TaskParkPublicationTests
 
         await using var w = await PublicationWorld.CreateAsync();
         var originalHead = await w.GitTextAsync(w.Path, "rev-parse", "HEAD");
+        await File.WriteAllTextAsync(Path.Combine(w.Path, "do-not-autosave.txt"), "retained uncommitted source");
         await w.ChangeTaskAsync(t => t.CommitOnSettle = CommitOnSettlePolicy.Never);
         (await w.PrepareAsync()).Reason.ShouldBe("park_no_commit", "G-74");
         await w.ChangeTaskAsync(t => { t.CommitOnSettle = null; t.SourceLandingOperationId = Guid.NewGuid(); });
@@ -144,6 +159,7 @@ public sealed class TaskParkPublicationTests
         await w.ChangeTaskAsync(t => t.ProgressBaselineJson = null);
         (await w.PrepareAsync()).Outcome.ShouldBe(TaskParkPublicationOutcome.Held, "uncertain owner");
         (await w.GitTextAsync(w.Path, "rev-parse", "HEAD")).ShouldBe(originalHead);
+        (await w.GitTextAsync(w.Path, "status", "--porcelain")).ShouldContain("do-not-autosave.txt");
         w.Directory.Client.Calls.ShouldBe(0);
     }
 
@@ -238,6 +254,20 @@ public sealed class TaskParkPublicationTests
         (await w.AcceptAsync(proof with { ReceiptId = Guid.NewGuid() })).ShouldBeFalse("immutable receipt id");
         (await w.RowAsync()).SourceSha.ShouldBe(proof.SourceSha);
         (await w.RowAsync()).RunnerSeatReleaseId.ShouldBeNull("publication never reserves release");
+        var changedAtIo = false;
+        w.Git.Before = async args =>
+        {
+            if (args[0] != "status" || changedAtIo) return;
+            changedAtIo = true;
+            await using var db = w.Fixture.Db();
+            await db.AgentTaskParks.Where(p => p.Id == w.ParkId)
+                .ExecuteUpdateAsync(s => s.SetProperty(p => p.EndpointFingerprint, new string('F', 64)));
+        };
+        (await w.AcceptAsync(proof)).ShouldBeFalse("intent changed during the fresh source read");
+        w.Git.Before = null;
+        await using (var db = w.Fixture.Db())
+            await db.AgentTaskParks.Where(p => p.Id == w.ParkId)
+                .ExecuteUpdateAsync(s => s.SetProperty(p => p.EndpointFingerprint, proof.Request.Binding.EndpointFingerprint));
         await w.ChangeTaskAsync(t => t.Result += " changed");
         (await w.AcceptAsync(proof)).ShouldBeFalse("G-92 fresh DB report changed");
         await using var verify = w.Fixture.Db();
@@ -411,6 +441,7 @@ public sealed class TaskParkPublicationTests
     private sealed class ParkClient(RunnerWorkspaceParkService? runtime) : ISessionRunnerClient
     {
         public int Calls { get; private set; }
+        public IAsyncEnumerable<SessionRunnerEvent> StreamEventsAsync(CancellationToken ct) => throw new NotSupportedException();
         public Task<WorkspaceParkResult> ParkWorkspaceAsync(WorkspaceParkCommand request, CancellationToken ct)
         {
             Calls++;

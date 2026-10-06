@@ -135,6 +135,7 @@ public sealed class TaskParkPublicationService(AppDbContext db, LocalTaskParkPub
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         var current = await LockAndLoadAsync(parkId, ct);
         if (current is null || current.Park.Revision != c.Park.Revision || !SameEpisode(current.Task, current.Park)
+            || Request(current.Park, remote) != evidence.Request
             || current.Task.ProgressBaselineJson != c.Task.ProgressBaselineJson
             || current.Task.CommitOnSettle != c.Task.CommitOnSettle || current.Task.SourceLandingOperationId is not null
             || await RefusalAsync(current.Task, current.Park, current.Baseline, ct) is not null) return false;
@@ -164,8 +165,15 @@ public sealed class TaskParkPublicationService(AppDbContext db, LocalTaskParkPub
             || r.Owner.RunnerStoreId != park.RunnerStoreId || r.Owner.RunnerCwd != park.RemoteWorktreePath
             || !WorkspaceParkCommand.Supported((await runners.DescribeAsync(park.RunnerId, ct))?.Capabilities))
             return Held("park_runner_changed");
-        var result = await runners.Resolve(park.RunnerId).ParkWorkspaceAsync(previous is null
-            ? new(park.SessionId.Value, Prepare: request) : new(park.SessionId.Value, Verify: previous.ToRunnerReceipt()), ct);
+        WorkspaceParkResult result;
+        try
+        {
+            result = await runners.Resolve(park.RunnerId).ParkWorkspaceAsync(previous is null
+                ? new(park.SessionId.Value, Prepare: request) : new(park.SessionId.Value, Verify: previous.ToRunnerReceipt()), ct);
+        }
+        catch (Exception ex) when (ex is IOException or HttpRequestException or OperationCanceledException
+            or Antiphon.Server.Application.Exceptions.ServiceUnavailableException)
+        { return new(TaskParkPublicationOutcome.Unknown, "park_inspection_unavailable"); }
         return result.Outcome == WorkspaceParkOutcome.Published && result.Receipt is { } receipt
             ? new(TaskParkPublicationOutcome.Published, "park_published", TaskParkPublicationEvidence.From(receipt))
             : new(result.Outcome == WorkspaceParkOutcome.Unknown ? TaskParkPublicationOutcome.Unknown : TaskParkPublicationOutcome.Held,

@@ -55,8 +55,9 @@ public sealed class LocalTaskParkPublisher(ITaskProgressGit git, IRepositoryMuta
             {
                 if (previous is not null && (previous.Outcome != kind || previous.RemoteSha != sha))
                     return Held("park_source_changed");
-                var endpoint = await EndpointAsync(path, b.EndpointFingerprint, ct);
-                if (endpoint is null) return Held("park_endpoint_changed");
+                var endpointRead = await EndpointAsync(path, b.EndpointFingerprint, ct);
+                if (endpointRead.Failure is not null) return endpointRead.Failure;
+                var endpoint = endpointRead.Url!;
                 var observed = await RemoteAsync(path, endpoint, b.FullRef, ct);
                 if (!observed.Known) return Unknown();
                 if (observed.Sha != sha)
@@ -75,8 +76,8 @@ public sealed class LocalTaskParkPublisher(ITaskProgressGit git, IRepositoryMuta
                         "--", endpoint, sha + ":" + b.FullRef], budget.Token);
                     if (!push.Succeeded) return Held("park_push_rejected");
                 }
-                if (await EndpointAsync(path, b.EndpointFingerprint, ct) != endpoint)
-                    return Held("park_endpoint_changed");
+                var finalEndpoint = await EndpointAsync(path, b.EndpointFingerprint, ct);
+                if (finalEndpoint.Failure is not null) return finalEndpoint.Failure;
                 var final = await RemoteAsync(path, endpoint, b.FullRef, ct);
                 if (!final.Known) return Unknown();
                 if (final.Sha != sha) return Held("park_publish_unconfirmed");
@@ -88,8 +89,11 @@ public sealed class LocalTaskParkPublisher(ITaskProgressGit git, IRepositoryMuta
             if (after.Sha != sha || !LandingGit.PathsEqual(path, await git.CanonicalDirectoryAsync(request.Path, ct))
                 || !LandingGit.PathsEqual(common, await git.CommonDirectoryAsync(path, ct)))
                 return Held("park_source_changed");
-            if (mode != WorkspaceMode.ReadOnly && await EndpointAsync(path, b.EndpointFingerprint, ct) is null)
-                return Held("park_endpoint_changed");
+            if (mode != WorkspaceMode.ReadOnly)
+            {
+                var lastEndpoint = await EndpointAsync(path, b.EndpointFingerprint, ct);
+                if (lastEndpoint.Failure is not null) return lastEndpoint.Failure;
+            }
             return new(kind, kind == TaskParkPublicationOutcome.Published ? "park_published" : "park_no_source_changes",
                 previous ?? new(Guid.NewGuid(), request, sha, remote, true, true, kind));
         }
@@ -124,12 +128,13 @@ public sealed class LocalTaskParkPublisher(ITaskProgressGit git, IRepositoryMuta
         return (head.Output.Trim(), null);
     }
 
-    private async Task<string?> EndpointAsync(string path, string fingerprint, CancellationToken ct)
+    private async Task<(string? Url, TaskParkPublicationResult? Failure)> EndpointAsync(string path, string fingerprint, CancellationToken ct)
     {
         var result = await git.RunAsync(path, ["remote", "get-url", "--push", "--all", "origin"], ct);
         var lines = result.Output.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
-        return result.Succeeded && lines.Length == 1 && !lines[0].StartsWith('-')
-            && BlockedTaskParkingService.Digest(lines[0]) == fingerprint ? lines[0] : null;
+        if (!result.Succeeded || lines.Length != 1 || lines[0].StartsWith('-')) return (null, Unknown());
+        return BlockedTaskParkingService.Digest(lines[0]) == fingerprint
+            ? (lines[0], null) : (null, Held("park_endpoint_changed"));
     }
 
     private async Task<(bool Known, string? Sha)> RemoteAsync(string path, string endpoint, string fullRef, CancellationToken ct)
