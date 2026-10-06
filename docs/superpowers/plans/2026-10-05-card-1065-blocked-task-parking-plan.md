@@ -7,6 +7,19 @@ Status: Plan complete; **next: TestDesign**. Test design was not folded into thi
 The checkpoint and PC inventory below is a concrete proposal for that stage to qualify,
 not a claim that the proposed tests exist or that implementation is ready to run.
 
+Amendment 2026-10-06 (Plan task `444809ee-a385-461d-ad83-ccfb749ec98a`, branch
+`feat/card-task-444809ee`, inspected source `a1d014fc0ede59f21ddb573fb369e6abce85a700`,
+equal to `origin/master` with S1-S4 landed): S5 Code task `d180d288` (branch
+`feat/card-task-d180d288`, tip `14849e9bb5097c0e818a987fce091187ac775aca`, evidence
+`docs/investigations/2026-10-06-card-1065-s5-code-blocker.md` on that branch) is blocked
+because the landed S3/S4 contracts provide neither an authoritative runner
+repository-identity read nor final runner verification for proofs produced on the local
+lane. Prerequisite slices **S4b** (runner contract, runtime and wire) and **S4c** (server
+capture and typed proof) are inserted additively: D-10-D-12, V-28-V-31, G-201-G-226,
+PC-201-PC-226 and checkpoint rows CP-4b/CP-4c. S5 is re-scoped to depend on them and keeps
+CP-5 (V-12-V-14). S1-S4 and their rows are not renumbered. Amendment status: plan and
+verification design complete under the stated defaults; **next: land**, then Code S4b.
+
 ## Outcome and scope
 
 A successfully parked ordinary delegated task remains Blocked and answerable, retains
@@ -64,6 +77,31 @@ The host lifetime/input sections of `docs/adr/0002-modern-conpty-backend.md` and
 the resume source-of-truth sections of `docs/agent-kinds.md` were also checked;
 `ProviderContractCatalog` still records Codex native resume as Unknown/unprobed.
 These anchors describe the inspected SHA, not deployed binary identity.
+
+### Amendment ground truth (2026-10-06, source a1d014fc0)
+
+Read, not inferred: `RunnerWorkspaceParkService.cs`; `RunnerWorkspaceService.MirrorAsync`,
+`OwningRepositoryAsync`, `IsOwnedCommonDirectory`; the `SessionRunnerRuntime` constructor,
+`ParkWorkspaceAsync`, `VerifyTerminalParkPublicationAsync` and `ReleaseTerminalSeatAsync`;
+`PhoneHomeCommandDispatcher`, `PhoneHomeRuntimeAdapter` and runner `Program.cs` routes and
+capability composition; `PhoneHomeContracts.cs`, `TerminalSeatRelease.cs`, `WorkspacePark.cs`,
+`RepositoryCloneSource.cs`; server `TaskParkPublicationService.cs`, `LocalTaskParkPublisher.cs`,
+`TaskParkPublicationDtos.cs`, `BlockedTaskParkingService.cs`, `RemoteWorkspaceService.MirrorAsync`,
+`RemoteWorkspacePreparer`, `TerminalRunnerSeatReleaseService.TryReserveAsync`/`AdvanceAsync`,
+`ISessionRunnerClient` and its four implementations; the S3/S4 evidence files; S5 branch
+commits `9d72aea30`/`14849e9bb`; `tools/Antiphon.Checkpoints` `PlanTableImporter`/`AfterSelector`.
+
+| S5 / plan assumption | Code at `a1d014fc0` | Consequence |
+|---|---|---|
+| The server can hand `TaskParkPublicationService.PrepareAsync` the bound runner's repository identity. | No wire operation returns it. `PhoneHomeWorkspaceMirrorResponse` carries only `Path`; `WorkspaceParkCommand` Prepare and Verify both require `Binding.RepositoryIdentity`, and the runner holds `park_repository_changed` when `RepositoryIdentity(common)` differs. `PrepareAsync` holds `park_repository_unknown` when the caller passes null. | D-10: a session-bound, generation-fenced, read-only identity operation (S4b) and a server capture step that persists the runner-observed intent before publication (S4c). |
+| The desktop baseline endpoint fingerprint identifies the runner's publication endpoint. | `PrepareAsync` uses `baseline.Remote.EndpointFingerprint` (the desktop `TaskProgressGit.ReadEndpointAsync` digest) for remote episodes; the runner compares it with its own `remote get-url --push --all origin`. On the Linux runner the mirror push URL is the SSH deploy-key form while the desktop origin is the HTTPS clone source, so the runner would hold `park_endpoint_changed` in production. V-9 passed because both sides shared one local bare path. | D-10: the identity read also returns the runner-observed endpoint fingerprint; S4c persists it as the park intent for remote episodes after checking that it normalizes (`RepositoryCloneSource.TryNormalize`) to the same admitted repository as the desktop origin. |
+| The final runner conditional command verifies clean HEAD for every workspace mode and both lanes (D-3). | `VerifyTerminalParkPublicationAsync` calls `RunnerWorkspaceParkService.VerifyAsync`, which requires a path under the runner worktree root named `task-<8hex>`, the owned task ref and `RemoteSha == SourceSha`. The runtime builds that verifier only when `PhoneHome:Enabled`; the desktop HTTP runner has none and returns `Unsupported` for any `Publication`. `TaskParkPublicationEvidence.ToRunnerReceipt()` writes `RemoteSha!`, which is null for `NoSourceChanges`. | D-11: typed source modes (`ParkVersion` 2, `workspaceParkSourceModesV1`), a session-checkout-bound local verifier on the non-phone-home runtime, and a mapping that never fabricates a remote SHA. |
+| Remote Shared/ReadOnly proofs exist. | `PrepareAsync` holds `park_runner_changed` for a remote binding whose task is not Worktree; Shared and ReadOnly evidence is produced only by `LocalTaskParkPublisher` for sessions bound to the local runner. | The local-lane verifier covers Worktree (verify-only), Shared and ReadOnly local proofs; the remote lane keeps the existing strict mirror verification. |
+| The local runner advertises conditional seat release. | Runner `Program.cs` advertises `terminalSeatReleaseV1` and `terminalSeatDeliveryEvidenceV1` unconditionally and `workspaceParkV1` only with a verifier; `GET /api/session-runners` on 2026-10-06 showed the deployed Windows lane advertising neither seat-release feature (older build). | Rollout step 1 already requires the upgraded desktop build; S4b adds the two new features to that gate. |
+| The runtime knows each session's checkout. | `RunnerSession` has no cwd member; the launch `request.Cwd` is persisted in the transcript sidecar and the pty-host manifest (`manifest.Cwd ?? sidecar.Cwd` on adoption). | S4b retains the launch/adopted cwd on the session record (additive, internal) and binds both new operations to it. |
+| S5 reserves with the persisted publication action identity. | `TerminalRunnerSeatReleaseService.TryReserveAsync` mints `Guid.NewGuid()`; the runtime refuses a release whose `Publication.Request.Binding.ActionId != request.ActionId`; `TaskParkPublicationService.Request` sets `ActionId = park.Id`. | Unchanged S5 scope: reserve with the park identity, as the S4 evidence already records. |
+| Nonreport blocks can register and publish. | `BlockedTaskParkingService.RegisterAsync` stores a null `ReportDigest` for a null `Result`; `TaskParkPublicationService.LoadAsync` returns null when `ReportDigest is null`, so `PrepareAsync` holds `park_episode_changed`. | Unchanged S5 scope (blocker item 3): bind existing authorized transcript/checkpoint evidence as the episode digest without inventing a report or `CompletedAt`. |
+| Checkpoint rows can be inserted before CP-5 without renumbering. | `AfterSelector` expands only `S<n>-S<m>` numeric ranges; `S4b` is a literal token selectable by `--after S4b` or `--rows CP-4b`. `PlanTableImporter` reads the first `### Checkpoints` heading, does not interpret row-id numbering, and derives `Expect` from `(Class*)` tokens. | CP-4b/CP-4c carry `After` = `S4b`/`S4c`; numeric ranges such as `--after S1-S5` do not select them, so Code runs them by name. |
 
 ## Decisions
 
@@ -319,6 +357,86 @@ but Blocked physical release must require D-2 when activated. No rollout from th
 plan task is authorized or performed. These are settled implementation defaults,
 not unresolved operator choices; TestDesign is the next stage.
 
+### D-10. Authoritative runner source-identity read, bound to the session's own checkout
+
+Add `PhoneHomeOperation.WorkspaceRepositoryIdentity = 37` and the HTTP route
+`POST /sessions/{id}/workspace-repository-identity`, gated by a new capability token
+`workspaceRepositoryIdentityV1` beside `terminalSeatReleaseV1`. The typed request binds
+session, path, expected runner store and accepted-start generation plus a version; the
+result is `Read`, `Held` or `Unknown` with a bounded reason code and, only for `Read`, the
+runner-computed `RepositoryIdentity` (SHA-256 of the canonical common directory, the same
+function the park service already uses), the runner-observed push `EndpointFingerprint`
+(SHA-256 of the single `remote get-url --push --all origin` value), `HeadSha`, the symbolic
+`FullRef`, and the runner store/generation it answered for. The runtime serves it under the
+session's launch gate: the session must exist and match the expected generation before and
+after the Git reads; the path must equal that session's retained launch/adopted checkout;
+the common directory must be runner-owned; only read-only Git runs. A missing session,
+other path, foreign repository or generation drift is `Held`; an unreadable Git answer is
+`Unknown` with no identity. Nothing is pushed, fetched or written, and no identity is ever
+derived from the request.
+
+The server consumes it in S4c: for a remote episode the park service calls the bound runner
+through the routing/scoped clients, requires the answer to name the park's runner store and
+generation, checks that the runner endpoint normalizes to the same admitted repository as the
+desktop origin, and persists both runner-observed values as the existing Requested intent
+before any Git or wire mutation. A local episode never calls the runner and keeps the
+desktop common-directory identity. The runner still re-verifies the persisted identity and
+endpoint on Prepare and Verify, so the capture is intent, never trust.
+
+Rejected: an identity field on the mirror response alone (created before any session
+generation exists and stale after re-mirroring); deriving the identity from the desktop
+common directory or a guessed runner path; reusing the desktop endpoint fingerprint for a
+runner whose push URL legitimately differs; a server-only trust path without runner
+re-verification; a general "run Git on this path" operation.
+
+### D-11. Typed source modes and a session-checkout-bound local verifier at release
+
+Extend the park receipt additively with `WorkspaceParkSourceMode { Published, NoSourceChanges }`
+(default `Published`, so every landed S2/S3 receipt keeps its meaning) and make `RemoteSha`
+nullable only for `NoSourceChanges`. A release carrying a typed receipt uses `ParkVersion = 2`
+and requires the new capability `workspaceParkSourceModesV1` on the runner; the existing
+`ParkVersion != 1 -> Unsupported` refusals on old runners stay in place, and no client may
+downgrade to version 1 or drop the publication to get through. A `Published` receipt with a
+null remote SHA, or a `NoSourceChanges` receipt with one, is refused before any Git read:
+a no-source-change proof is never rewritten as a fictitious publication.
+
+Verification stays inside `ReleaseTerminalSeatAsync` under the input/generation gate, on
+the live, exited and absent branches alike. On a phone-home runtime the existing strict
+mirror verifier applies unchanged. On a runtime without phone-home repository policy
+(the desktop lane) S4b constructs a session-checkout verifier that advertises
+`workspaceParkSourceModesV1` only when it exists: the receipt path must equal the session's
+retained checkout; `Published` requires a clean tracked tree, no sequencer, HEAD on the
+receipt's full ref, HEAD = `SourceSha`, baseline ancestry, the captured endpoint and a fresh
+exact remote ref equal to `SourceSha`, and never pushes; `NoSourceChanges` requires the same
+clean source with HEAD = `SourceSha` = `BaselineSha` and reads no endpoint. Any mismatch is
+`StaleObservation` with the seat, manifest and custody retained. Shared and ReadOnly proofs
+are local-lane only, as the landed S4 policy already decides.
+
+Rejected: server-only attestation at send time (it leaves the final HEAD check outside the
+runner gate that D-3 requires); a desktop root/repository configuration block for the HTTP
+runner (unnecessary once the path is bound to the session's own checkout); loosening the
+remote lane's lexical rule; emitting a `Published` receipt for ReadOnly; dropping
+`Publication` when the runner lacks the capability.
+
+### D-12. Prerequisite slices S4b and S4c; S5 depends on both and keeps CP-5
+
+S4b owns the runner contract pieces: contracts, runtime, dispatcher/adapter/route mapping,
+capability tokens, the session-checkout verifier, and the compile-level server client
+plumbing for the identity operation and `ParkVersion` 2 (as S3 did). Its row CP-4b runs the
+new runner class together with the landed `BlockedParkWireTests` methods (V-6-V-8) as
+named regressions. S4c owns the server consumption: the capture step, the typed evidence
+mapping and the client capability gate, with CP-4c running the new server class together
+with the landed `TaskParkPublicationTests` methods (V-9-V-11). S5 is re-scoped to depend on
+both, starts by cherry-picking the test-only S5 commit `9d72aea30` (V-12-V-14 red witnesses
+and the `RunnerSeatReleaseFixture` `parking` flag) from `feat/card-task-d180d288`, composes
+capture -> Prepare -> reserve with the park action identity -> `ParkVersion` 2 release, and
+keeps its CP-5 row unchanged. Landed S1-S4 and their rows are not renumbered; the two new
+rows carry the literal `After` tokens `S4b` and `S4c`.
+
+Rejected: folding the runner contract work into S5 (its brief is CP-5 only and its matrix is
+already the largest); one combined slice (two assemblies and two checkpoint builds exceed the
+30-60 minute slice rule this plan sets); renumbering S5-S11 or CP-5-CP-13.
+
 ## Dependency and implementation order
 
 1. Refresh source and live collision inventory before Code. CARD-0667 and CARD-1043
@@ -334,6 +452,10 @@ not unresolved operator choices; TestDesign is the next stage.
    No CARD-1065 edit to landing approval or generic evidence rebinding is implied.
 5. Keep new actions default-off through ordinary Code, Review, publication and
    post-land verification. Activate as described below, then reclaim legacy debt.
+6. Amendment 2026-10-06: land S4b, then S4c, before S5 Code. S5 begins by
+   cherry-picking `9d72aea30c1f0b2ac8ccab1af2076fd2eaff436e` (test-only) from
+   `feat/card-task-d180d288`; its documentation commit `14849e9bb` is not cherry-picked.
+   Serialize S4b/S4c with any CARD-0667 runner/client Code in flight.
 
 Read-only inventory on 2026-10-05: authenticated GET `/api/runner-defaults` returned
 revision 2 and no per-kind overrides; GET `/api/session-runners` returned eligible
@@ -343,6 +465,14 @@ non-atomic counts are not release evidence. No fleet hostname/path is a routing
 constant in this plan. At dispatch re-read defaults/catalogue and current task/host
 limits; omit `-Runner` unless deliberately pinning a host, omit `-Platform` unless
 the lane requires an OS, and use `-Platform Any` to remove an inherited OS pin.
+
+Read-only inventory on 2026-10-06 (this amendment): `/api/runner-defaults` revision 2,
+operator-set global default runner, no per-kind overrides; `/api/session-runners` returned
+a Windows desktop lane (delegated-task accounting, two seats, no seat-release feature
+advertised), a draining Linux lane and an eligible Linux lane advertising
+`terminalSeatReleaseV1`, `workspaceRepositoryV1` and `workspacePublishV1` but not yet
+`workspaceParkV1`. These counts are not release evidence and no fleet location is a
+constant here; re-read at dispatch.
 
 ## Implementation slices
 
@@ -359,7 +489,9 @@ Names marked new are proposed; CARD-0667 names refer to its required landed work
 | S2 | New `src/Antiphon.SessionRunner.Contracts/WorkspacePark.cs`, new `src/Antiphon.SessionRunner/RunnerWorkspaceParkService.cs`; reuse internal guards in `RunnerWorkspaceService.cs`. Strict inspection/push/fresh exact-ref/receipt; no wire caller. | New `tests/Antiphon.SessionRunner.Tests/WorkspaceParkPublicationTests.cs`; B03-B05, CP-2. 42 + 7 = 49 min. |
 | S3 | `src/Antiphon.SessionRunner/{PhoneHomeCommandDispatcher,PhoneHomeRuntimeAdapter,Program,SessionRunnerRuntime}.cs`, contracts `{PhoneHomeContracts,SessionRunnerContracts,TerminalSeatRelease}.cs`; server `Application/Interfaces/ISessionRunnerClient.cs`, `Infrastructure/Agents/SessionRunner/{PhoneHomeRunnerClient,SessionRunnerHttpClient,RoutingSessionRunnerClient,RunnerScopedSessionRunnerClient}.cs`. Append capability/operation, publication binding and final release check under existing input/generation gate. | New `tests/Antiphon.SessionRunner.Tests/BlockedParkWireTests.cs`; B06-B08, CP-3. 45 + 7 = 52 min. |
 | S4 | `BlockedTaskParkingService.cs`, new `server/Application/Services/TaskParkPublicationService.cs`, `PhoneHomeRunnerMirrorPublisher.cs` only for shared transport plumbing; local Git/lease adapter, workspace-mode/no-commit policy. `DelegationReportFormatter.cs` adds scoped WIP-before-block instruction. | New `tests/Antiphon.Tests/Application/TaskParkPublicationTests.cs`; B09-B11, CP-4. 43 + 7 = 50 min. |
-| S5 | `AgentTaskReplyService.cs`, `BlockedTaskParkingService.cs`, CARD-0667 `TerminalRunnerSeatRelease{Service,Policy}.cs`, `AgentTaskDispatcher.cs`, `PoolDelegateRelease.cs` and `AgentTaskService.cs`. Post-commit park registration; source-before-release gate; stopped retained identity; pool/retirement reservation. | New `tests/Antiphon.Tests/Application/BlockedTaskParkReleaseTests.cs`; B12-B14, CP-5. 44 + 8 = 52 min. |
+| S4b | Runner contract pieces (amendment, D-10/D-11). Contracts `src/Antiphon.SessionRunner.Contracts/{PhoneHomeContracts,SessionRunnerContracts,TerminalSeatRelease,WorkspacePark}.cs`: operation 37, `WorkspaceRepositoryIdentityRequest`/`Result`, `WorkspaceParkSourceMode`, nullable `RemoteSha`, `ParkVersion` 2, features `workspaceRepositoryIdentityV1` and `workspaceParkSourceModesV1`. Runner `src/Antiphon.SessionRunner/{SessionRunnerRuntime,RunnerWorkspaceParkService,PhoneHomeCommandDispatcher,PhoneHomeRuntimeAdapter,Program}.cs`: retained session checkout, gated identity read, session-checkout verifier and mode-aware final verification on the live, exited and absent branches, capability advertisement. Server compile-level plumbing only: `ISessionRunnerClient.cs` and `{PhoneHomeRunnerClient,SessionRunnerHttpClient,RoutingSessionRunnerClient,RunnerScopedSessionRunnerClient}.cs` gain the identity call and the version-2 capability gate. No server caller, no migration, default-off. | New `tests/Antiphon.SessionRunner.Tests/WorkspaceSourceVerificationWireTests.cs`; V-28, V-29 plus landed V-6-V-8 as regressions; CP-4b. 44 author + 10 check = 54 min. |
+| S4c | Server consumption (amendment, D-10/D-11). `server/Application/Services/TaskParkPublicationService.cs` adds `CaptureSourceIdentityAsync(parkId)` (remote: bound-runner read through `ISessionRunnerDirectory`, store/generation match, endpoint admission through `RepositoryCloneSource`, persisted as the Requested intent; local: desktop identity, zero runner calls) and makes `PrepareAsync` use the persisted runner endpoint for remote episodes. `server/Application/Dtos/TaskParkPublicationDtos.cs` maps evidence to the typed version-2 receipt without fabricating `RemoteSha`. `ISessionRunnerClient.cs` default plus the four clients refuse version 2 without `workspaceParkSourceModesV1`. No coordinator, reply or dispatcher change; default-off. | New `tests/Antiphon.Tests/Application/TaskParkRunnerIdentityTests.cs`; V-30, V-31 plus landed V-9-V-11 as regressions; CP-4c. 40 author + 10 check = 50 min. |
+| S5 | Depends on landed S4b and S4c. `AgentTaskReplyService.cs`, `BlockedTaskParkingService.cs`, `TaskParkPublicationService.cs` (nonreport episode digest from existing authorized transcript/checkpoint evidence; no invented Result or CompletedAt), CARD-0667 `TerminalRunnerSeatRelease{Service,Policy}.cs`, `AgentTaskDispatcher.cs`, `PoolDelegateRelease.cs` and `AgentTaskService.cs`. Post-commit park registration; capture -> Prepare -> reserve with the persisted park action identity -> `ParkVersion` 2 release carrying the typed receipt; source checks preserved during ambiguous-release reconciliation; stopped retained identity; pool/retirement reservation. Start by cherry-picking test commit `9d72aea30` from `feat/card-task-d180d288`. | New `tests/Antiphon.Tests/Application/BlockedTaskParkReleaseTests.cs` (its three initial red witnesses exist on that commit); V-12-V-14, CP-5 unchanged. 44 + 8 = 52 min. |
 | S6 | New `server/Application/Services/BlockedTaskSyncRecoveryService.cs`, `RemoteWorkspaceService.cs`, `BlockedTaskParkingService.cs`, `AgentTaskDispatcher.cs`, `server/Program.cs`. Persist/source-pin sync debt and bounded recovery; no evidence promotion. | New `tests/Antiphon.Tests/Application/BlockedTaskSyncRecoveryTests.cs`; B15-B16, CP-6. 40 + 8 = 48 min. |
 | S7 | `AgentTaskReplyService.cs`, `AgentTaskService.cs`, `AgentTaskDispatcher.cs`, `DelegationReportFormatter.cs`, `RemoteWorkspaceService.cs`; consume CARD-0667's existing accepted-answer fields on `AgentTask.cs` and S1's episode fields. No later amendment of the landed S1 migration. Preserve agent, exact branch and input across cold dispatch. | New `tests/Antiphon.Tests/Application/BlockedTaskParkResumeTests.cs`; B17-B19, CP-7. 45 + 9 = 54 min. |
 | S8 | Same reply/dispatch/formatter paths; `BlockedContextBuilder.cs`; adjust follow-up guidance without bypassing pinned/remote policy. Real queue continuation and prerequisite-confirmed caller reply; stale-turn isolation. | New `tests/Antiphon.Tests/Application/BlockedTaskParkDeliveryTests.cs`; B20-B22, CP-8. 44 + 9 = 53 min. |
@@ -501,6 +633,9 @@ are planning estimates, not measured execution evidence or permission to omit wo
    runner capability/build identity directly. Absence of either conditional release
    or workspacePark capability must hold, never downgrade. Windows and Linux protocol
    qualification is required before including their respective runners.
+   Amendment 2026-10-06: both runners must also advertise `workspaceRepositoryIdentityV1`
+   and `workspaceParkSourceModesV1` (S4b) before S5 activation; the Windows lane needs the
+   upgraded HTTP runner build, which on 2026-10-06 advertised no seat-release feature.
 2. Publish additive server schema and dormant code through ordinary Review and land.
    Coordinate CARD-0667 activation so Blocked cannot bypass publication. Update the
    canonical main checkout before any restart, use the owning restart/rolling runbook,
@@ -535,6 +670,12 @@ wire compatibility. Refresh the partially landed CARD-0667 API and preserve its
 Working/input/custody controls. No operator decision is needed to write that design;
 Code admission and activation remain ordered by the explicit dependencies above.
 
+Amendment handoff (2026-10-06): land this amendment, then dispatch Code for S4b with
+`checkpoints: <this plan>@<landed sha> section "### Checkpoints"` row CP-4b, then S4c
+(CP-4c), then re-dispatch S5 (CP-5) from the landed master with the cherry-pick named in
+D-12. No human decision is required; D-10-D-12 are stated defaults the orchestrator may
+override before S4b Code starts.
+
 
 ## Verification design
 
@@ -568,6 +709,7 @@ inferred from names. New CARD-1065 test classes do not exist yet.
 | `ReviewEvidenceResettlementTests`: Incident/Block/Answer/Rows/Replacement/Report helpers and `C1043_ConfirmedNoPushBinds`, `C1043_FinalReportWins`, `C1043_AppendPreservesHistory`, `C1043_HeaderSnapshotAndGetAgree` | Landed CARD-1043 automatic re-settlement and immutable predecessor/notification -> V-16/V-27, R-4. Those tests use a live old session, so a separate parked continuation capstone is necessary. |
 | `RunnerSlotEndpointTests.Release_stops_the_desktop_row_and_records_the_reason`, PhoneHome host setup; PlanTableImporter.ExtractSection/SplitRow and testing/build coverage/checkpoint rules | Nearest endpoint/slot fixture -> V-25/V-26. Its peer-generated Exited DTO is a transport substitute, not process exit proof. |
 | Owners: project-context, lifecycle, orchestration-loop stage/delegate rules, session-runtime-invariants delivery/source/occupancy rules, testing-and-build; CARD-0667 and CARD-1043 plans | Layer/receipt/admission and dormant activation boundaries -> all V/R. No card-state, deployment or Working-stop policy change. |
+| Amendment 2026-10-06: `RunnerWorkspaceParkService` whole file; `SessionRunnerRuntime` constructor, `ParkWorkspaceAsync`, `VerifyTerminalParkPublicationAsync`, `ReleaseTerminalSeatAsync`; `RunnerWorkspaceService.MirrorAsync`, `OwningRepositoryAsync`, `IsOwnedCommonDirectory`; runner `Program.cs` capability and release routes; `PhoneHomeCommandDispatcher` park/release cases; `PhoneHomeContracts`, `TerminalSeatRelease`, `WorkspacePark`, `RepositoryCloneSource`; server `TaskParkPublicationService`, `LocalTaskParkPublisher`, `TaskParkPublicationDtos`, `BlockedTaskParkingService`, `RemoteWorkspaceService.MirrorAsync`, `TerminalRunnerSeatReleaseService.TryReserveAsync`/`AdvanceAsync`, the four runner clients; `BlockedParkWireTests` World/SeatWire, `TaskParkPublicationTests` PublicationWorld/ParkClient, `RunnerSeatReleaseFixture`; S5 commit `9d72aea30` | Identity producer gap, endpoint fingerprint mismatch, local-lane verifier gap and nullable remote SHA -> V-28-V-31, G-201-G-226. Session cwd lives in the sidecar/manifest, not `RunnerSession` -> S4b retains it. |
 
 #### Landed API and dependency gate
 
@@ -588,13 +730,29 @@ Its action cache is process-local, not the planned server durable ledger.
 | CARD-0667 S2b -> S2c, **not landed** | Shared input/release gate with attempted-input fencing, then actual HTTP/phone-home mapper/capabilities/wrappers. | Required before CARD-1065 S3. Do not expose S2a directly. |
 | CARD-0667 S3a -> S3d -> S3b -> S3c -> S3e -> S4a -> S4b, **not landed** | One durable RunnerSeatRelease ledger plus answer journal, exact receipt requeue, recovery, discovery, attention and dormant writer integration. | Required before CARD-1065 S1-S10 under the landed fix plan's ordering. In particular S1 schema builds on S3a, S5 on S3d/S4b, S7-S8 on S3b/S3c, S9-S10 on S3e/S4a/S4b. No duplicate ledger or invented current service signature. |
 | CARD-1043 automatic binding/re-settlement, present in this branch | Real `ReviewEvidenceBindingService`, `ReviewEvidenceResettlementTests` and runner Review fixture. Independent recovery/delivery slices may continue separately. | S6 preserves evidence; S8 V-27 and S11 R-4 consume the automatic path at the integrated candidate SHA. No dependency on an unlanded recovery CLI. |
-| CARD-1065 S1 -> S2 -> S3 -> S4 -> S5 -> S6 -> S7 -> S8 -> S9 -> S10 -> S11 | All new action switches stay false in default DI. | Serialize shared reply/dispatcher/runner files with CARD-0667 and CARD-1043 Code. CARD-0667 S4c must not activate Blocked release until this barrier exists. |
+| CARD-1065 S1 -> S2 -> S3 -> S4 -> S4b -> S4c -> S5 -> S6 -> S7 -> S8 -> S9 -> S10 -> S11 | All new action switches stay false in default DI. | Serialize shared reply/dispatcher/runner files with CARD-0667 and CARD-1043 Code. CARD-0667 S4c must not activate Blocked release until this barrier exists. |
 
 Code admission must use a checkout containing those predecessor commits. This branch
 need not absorb them to publish a design. Resolve future coordinator calls from the
 landed implementation at admission; the behavioral method identities below are fixed.
 A missing planned predecessor is a scheduling dependency, not authorization to fake a
 ledger. A changed/unreachable boundary returns to Plan before the dependent slice.
+
+Amendment 2026-10-06, landed S1-S4 API at `a1d014fc0` (read, not inferred): runner
+`RunnerWorkspaceParkService.PrepareAsync(WorkspaceParkRequest)` and `VerifyAsync(WorkspaceParkReceipt)`
+with `ValidateLexicalTarget`, `InspectRepositoryAsync`, `InspectSourceAsync`, `ReadEndpointAsync`
+and `ReadExactRefAsync`; `SessionRunnerRuntime.ParkWorkspaceAsync(WorkspaceParkCommand)` under
+the launch gate with `ParkGenerationMatches`; `VerifyTerminalParkPublicationAsync` on the
+live, exited and absent branches of `ReleaseTerminalSeatAsync`; `TerminalSeatReleaseRequest
+(ActionId, Observation, Token, Publication, ParkVersion)`; `WorkspaceParkCommand.Supported`
+requiring `workspaceParkV1` and `terminalSeatReleaseV1`. Server `ISessionRunnerClient.ParkWorkspaceAsync`
+and `ReleaseTerminalSeatAsync` with HTTP, phone-home, routing and scoped implementations;
+`TaskParkPublicationService.PrepareAsync(parkId, remoteRepositoryIdentity)`, `VerifyAsync(parkId)`,
+internal `AcceptAsync`; `LocalTaskParkPublisher.InspectAsync(request, mode, repository, previous)`;
+`TaskParkPublicationEvidence.From` and `ToRunnerReceipt`; `BlockedTaskParkingService.RegisterAsync`
+and internal `PersistStateAsync`; `TerminalRunnerSeatReleaseService.RegisterAndReserveAsync`,
+`TryReserveAsync` and `AdvanceAsync` (today sends `new(ActionId, observation, token)` with no
+publication). S4b and S4c build on exactly these names; S5 composes them.
 
 #### Missing setup assigned to bounded slices
 
@@ -618,6 +776,16 @@ ledger. A changed/unreachable boundary returns to Plan before the dependent slic
   not a made-up Parked result. Record sequence-numbered boundary observations, checking
   a fresh DB context at the instant of wire entry. A second DB connection must obtain
   the task row lock while Git/idle wait is paused: no long transaction across either.
+- S4b/S4c (amendment): the runner class owns a private world following the inspected
+  `World`/`SeatWorld` pattern with one bare origin reachable through two different URL
+  strings (plain path and `file://` form), a mirror under the runner root for the remote
+  lane and a plain checkout used as the session's launch cwd for the local lane; both
+  transports (HTTP mapper and phone-home dispatcher) run against the real runtime through
+  `MapRunnerCapabilitiesRoute`/`MapTerminalSeatReleaseRoutes` and `PhoneHomeCommandDispatcher`.
+  The server class reuses `BlockedTaskParkFixture` and the S4 `PublicationWorld` shape with
+  a real in-process `RunnerWorkspaceParkService` behind the `ISessionRunnerDirectory` fake
+  plus a recording client whose runner store/generation answers can be varied. No
+  successful receipt is seeded; the runtime's own refusal counters prove zero force/kill.
 - S7-S8: attach the real queue to the newly dispatcher-created session/agent via
   BridgeQueueHarness's AttachSessionId/AttachAgentId, PreserveDatabaseOnDispose and
   connection options. The fake adapter accepts actual LF/bracketed paste/separate CR;
@@ -652,6 +820,7 @@ attempt floor/generation. No lookup may substitute just AgentId, short task ID o
 | New Review turn -> CARD-1043 re-settlement -> caller | New S/U report and final event -> append-only successor evidence -> new N/Q, preserving predecessor and old N. | V-27: sync-only phase has no new evidence; explicit Reply, full new-session receipt and final report produce a successor on the Code subject SHA. New caller UserPrompt contains the new evidence ID. Run both caller states and H cuts. |
 | Sync worker -> task/attention HTTP reader | P + fixed published SHA + persisted retry/due/state; SourceReady commits before invalidation. | V-15/V-16/V-25: restart before/after sync, save, invalidation; authenticated fresh GET agrees with DB and original P. No provider turn or new approval/settlement. |
 | Legacy sweep -> task/attention HTTP reader | Durable cursor + P uniqueness, same release ledger; no age-based shortcut. | V-23-V-25: fail callback, page-save and state-save; new claim/reply wins. Fresh GET reconstructs each linked hold/release after restart. |
+| Park capture -> publication intent (amendment) | Runner-observed identity and endpoint persist in the Requested intent (P + S + runner store/generation) before any Git or wire mutation; a stale read is never reused across a generation. | V-30: a cut between the read and the intent save leaves no publication and re-reads on retry; mismatched runner store/generation or an unadmitted endpoint holds with zero publication. |
 
 H0 = before producer commit (no accepted result; retry original request). H1 = after
 commit before enqueue/admission wake. H2 = queue insert throws/rolls back. H3 = queue
@@ -719,6 +888,10 @@ mocked eligibility is acceptable.
 | V-25 | `BlockedTaskParkProjectionTests.C1065_OccupancyTracksProcessesNotBlockedStatus` | Real slot/task/attention GET: Starting/Running/Stopping and stale/unknown catalogue count occupied through pending/held publication; only authoritative exit/absence frees seat. Blocked and Queued logical owners are not orphans. IDs/reasons survive rollback/missed invalidation/restart, no raw paths/secrets or report/answer payloads leak. |
 | V-26 | `BlockedTaskParkProjectionTests.C1065_DefaultOffRetainsRecoveryOfAcceptedAnswers` | Default DI Enabled=false/ReclaimExisting=false; all four flag combinations separately gate new park and legacy discovery. Disable after accepted answer, sent release and pending sync: receipt reconciliation, answer delivery and sync debt still recover. No receipt/debt deletion. |
 | V-27 | `BlockedTaskParkDeliveryTests.C1065_ParkedReviewReplyBindsFreshEvidence` | CARD-1043 integrated capstone: Review blocked by held real lease, published idle seat released, debt later SourceReady with original unbound outcome unchanged. Explicit Reply cold-starts same Review task/agent; whole new-session prompt then final Clean/Full report binds fresh Code-subject SHA, supersedes old evidence once and yields one whole caller receipt naming new ID. Missing/dirty/wrong-subject evidence refuses; old prompt/report never becomes approval. |
+| V-28 | `WorkspaceSourceVerificationWireTests.C1065_RepositoryIdentityReadIsBoundToSessionCheckout` | Operation 37 over both HTTP and phone-home against the real runtime: the all-valid read returns the runner's common-directory identity, push-endpoint digest, HEAD and full ref for the session's own mirror; missing either capability, unknown version, absent session, other path (including a second owned mirror), foreign common directory, and store/generation mismatch before or after the read hold with no identity; Git failure is Unknown; the read runs under the launch gate (a paused Prepare blocks it) and issues only read-only Git. An old-runner surface answers unsupported with zero fallback. |
+| V-29 | `WorkspaceSourceVerificationWireTests.C1065_LocalSourceModesVerifyFreshAtRelease` | Version-2 release on a non-phone-home runtime with a session-checkout verifier: Published (verify-only) and NoSourceChanges controls release once each on the live, exited and absent branches; dirty, sequencer, wrong ref, advanced HEAD, endpoint change, remote moved, baseline mismatch and a path that is not the session checkout refuse with retained seat, manifest and custody; mode/SHA inconsistency is refused before Git; no push command is ever issued; a runtime without the verifier advertises no `workspaceParkSourceModesV1` and answers Unsupported with zero force/generation kills. |
+| V-30 | `TaskParkRunnerIdentityTests.C1065_RemoteIdentityCaptureBindsEpisodeBeforePublication` | Real isolated PostgreSQL and a real in-process runner park service: remote capture calls only the bound runner, persists the runner-observed identity and endpoint as the Requested intent before Git/wire, and Prepare then publishes against a runner whose push URL string differs from the desktop origin; owner/store/generation mismatch, unadmitted endpoint, Unknown read and a cut before the intent save hold with zero publication and no persisted identity; local capture makes zero runner calls. |
+| V-31 | `TaskParkRunnerIdentityTests.C1065_LocalEvidenceMapsToTypedRunnerProofWithoutFiction` | Typed mapping and client gate: Published and NoSourceChanges evidence map to version-2 receipts with the exact mode and a null remote SHA only for NoSourceChanges; every client (default, HTTP, phone-home, routing, scoped) refuses version 2 without `workspaceParkSourceModesV1` as Unsupported with zero wire requests and never downgrades or drops the publication; the real HTTP route and phone-home dispatcher round-trip the mode and null remote SHA to the runtime unchanged. |
 
 ### Guards the regression
 
@@ -734,6 +907,9 @@ is asserted separately by V-12-V-20 and V-27.
 - R-6: Legacy publisher compatibility | `RunnerWorkspaceServiceTests.Publish_pushes_only_own_fast_forward_branch`, `RunnerWorkspaceServiceTests.Publish_equal_tip_is_not_pushed_and_reports_dirty_tree`, `RunnerWorkspaceServiceTests.Publish_refuses_an_active_sequencer_before_push` | original nonforced own-ref arguments, permissive equal dirty reporting and sequencer refusal remain unchanged; three results, CP-12/CP-13.
 
 
+Amendment 2026-10-06: CP-4b re-runs V-6-V-8 and CP-4c re-runs V-9-V-11 as the named
+regression controls for the changed runtime and service. They remain V controls with the
+method identities above, so the R roster below is unchanged.
 Exact regression method roster for lint and TRX comparison (37 methods, 39 results;
 R-5 Fresh_tail_reads_each_provider contributes three results):
 
@@ -989,6 +1165,32 @@ the same method also executes its real end-to-end refusal and an all-valid contr
 | G-198 | D-3: Release response applies only to expected task attempt. | PC-198 |
 | G-199 | D-3: Release response applies only to exact action identity. | PC-199 |
 | G-200 | D-2: Repository lease serializes publication. | PC-200 |
+| G-201 | D-10: Identity read requires `workspaceRepositoryIdentityV1`, `terminalSeatReleaseV1` and version 1. | PC-201 |
+| G-202 | D-10: Identity read is generation-fenced after the Git read. | PC-202 |
+| G-203 | D-10: Identity read path must equal the session's retained checkout. | PC-203 |
+| G-204 | D-10: Identity read requires a runner-owned common directory. | PC-204 |
+| G-205 | D-10: Identity read runs under the session launch gate. | PC-205 |
+| G-206 | D-10: Unreadable Git never yields an identity. | PC-206 |
+| G-207 | D-10: Endpoint fingerprint is runner-observed, never request-supplied. | PC-207 |
+| G-208 | D-10: Absent session holds the identity read. | PC-208 |
+| G-209 | D-11: Version-2 release requires `workspaceParkSourceModesV1`. | PC-209 |
+| G-210 | D-11: Mode and remote SHA must agree before any Git read. | PC-210 |
+| G-211 | D-11: Local verification path must equal the session's retained checkout. | PC-211 |
+| G-212 | D-11: Local verification never pushes. | PC-212 |
+| G-213 | D-11: NoSourceChanges requires HEAD equal to the baseline. | PC-213 |
+| G-214 | D-11: Local Published requires a fresh exact remote ref equal to HEAD. | PC-214 |
+| G-215 | D-11: Local modes keep the clean/sequencer/ref source inspection. | PC-215 |
+| G-216 | D-11: Exited and absent confirmations verify local modes. | PC-216 |
+| G-217 | D-11: `workspaceParkSourceModesV1` is advertised only with a verifier. | PC-217 |
+| G-218 | D-10: Remote capture calls only the bound runner owner. | PC-218 |
+| G-219 | D-10: Remote Prepare uses the runner-observed endpoint fingerprint. | PC-219 |
+| G-220 | D-10: Runner endpoint must normalize to the admitted desktop repository. | PC-220 |
+| G-221 | D-10: Unknown read persists no identity and publishes nothing. | PC-221 |
+| G-222 | D-10: Captured identity must name the park's runner store and generation. | PC-222 |
+| G-223 | D-10: Local capture makes zero runner calls. | PC-223 |
+| G-224 | D-11: Typed mapping never fabricates a remote SHA. | PC-224 |
+| G-225 | D-11: Clients refuse version 2 without capability and never downgrade. | PC-225 |
+| G-226 | D-11: Both transports round-trip mode and null remote SHA exactly. | PC-226 |
 
 ### Positive controls
 
@@ -1213,6 +1415,32 @@ land; absent future files are disclosed above, not counted as current test evide
 | PC-198 | G-198: omit task attempt check when applying confirmed result. | `/*/*/BlockedTaskParkReleaseTests/C1065_ReportPublicationPrecedesPhysicalRelease` | `G-198`: new task attempt and owner remain unchanged after stale response. |
 | PC-199 | G-199: omit response ActionId equality before audit. | `/*/*/BlockedTaskParkReleaseTests/C1065_ReportPublicationPrecedesPhysicalRelease` | `G-199`: wrong-action result leaves pending release and no Parked transition. |
 | PC-200 | G-200: omit park publication repository lease acquisition. | `/*/*/WorkspaceParkPublicationTests/C1065_CleanCommittedTipIsPublishedExactly` | `G-200`: second publisher cannot enter Git mutation during first reserved operation. |
+| PC-201 | G-201: skip the capability/version check in the identity route and dispatcher. | `/*/*/WorkspaceSourceVerificationWireTests/C1065_RepositoryIdentityReadIsBoundToSessionCheckout` | `G-201`: missing capability or version 2 yields `identity_unsupported` with zero runtime calls. |
+| PC-202 | G-202: omit the post-read generation/object recheck. | `/*/*/WorkspaceSourceVerificationWireTests/C1065_RepositoryIdentityReadIsBoundToSessionCheckout` | `G-202`: generation replaced during the paused Git read yields `identity_generation_changed` and no identity. |
+| PC-203 | G-203: accept any path under the runner root. | `/*/*/WorkspaceSourceVerificationWireTests/C1065_RepositoryIdentityReadIsBoundToSessionCheckout` | `G-203`: a second owned mirror path yields `identity_path_unowned`. |
+| PC-204 | G-204: skip the owned-common-directory check. | `/*/*/WorkspaceSourceVerificationWireTests/C1065_RepositoryIdentityReadIsBoundToSessionCheckout` | `G-204`: checkout of a foreign repository yields `identity_repository_unowned`. |
+| PC-205 | G-205: run the identity read outside the launch gate. | `/*/*/WorkspaceSourceVerificationWireTests/C1065_RepositoryIdentityReadIsBoundToSessionCheckout` | `G-205`: read completes only after the paused Prepare releases the gate. |
+| PC-206 | G-206: compute the identity from the request path when Git fails. | `/*/*/WorkspaceSourceVerificationWireTests/C1065_RepositoryIdentityReadIsBoundToSessionCheckout` | `G-206`: failing Git child yields Unknown with null identity. |
+| PC-207 | G-207: echo a request-supplied fingerprint instead of reading origin. | `/*/*/WorkspaceSourceVerificationWireTests/C1065_RepositoryIdentityReadIsBoundToSessionCheckout` | `G-207`: result fingerprint equals the digest of the runner's actual push URL. |
+| PC-208 | G-208: answer from the durable manifest when the session is untracked. | `/*/*/WorkspaceSourceVerificationWireTests/C1065_RepositoryIdentityReadIsBoundToSessionCheckout` | `G-208`: untracked session yields `identity_session_unknown`. |
+| PC-209 | G-209: accept version 2 without `workspaceParkSourceModesV1`. | `/*/*/WorkspaceSourceVerificationWireTests/C1065_LocalSourceModesVerifyFreshAtRelease` | `G-209`: version-2 release on the unadvertised runtime is Unsupported with zero force/generation kills. |
+| PC-210 | G-210: omit the mode/remote-SHA consistency fence. | `/*/*/WorkspaceSourceVerificationWireTests/C1065_LocalSourceModesVerifyFreshAtRelease` | `G-210`: NoSourceChanges with a remote SHA is StaleObservation before any Git command. |
+| PC-211 | G-211: verify the server-supplied path instead of the session checkout. | `/*/*/WorkspaceSourceVerificationWireTests/C1065_LocalSourceModesVerifyFreshAtRelease` | `G-211`: receipt for another clean checkout is StaleObservation with retained seat. |
+| PC-212 | G-212: push when the exact remote ref is behind HEAD. | `/*/*/WorkspaceSourceVerificationWireTests/C1065_LocalSourceModesVerifyFreshAtRelease` | `G-212`: behind remote is StaleObservation and the command log has zero push. |
+| PC-213 | G-213: omit HEAD equal to baseline for NoSourceChanges. | `/*/*/WorkspaceSourceVerificationWireTests/C1065_LocalSourceModesVerifyFreshAtRelease` | `G-213`: clean advanced ReadOnly HEAD is StaleObservation. |
+| PC-214 | G-214: skip the fresh exact-ref read for local Published. | `/*/*/WorkspaceSourceVerificationWireTests/C1065_LocalSourceModesVerifyFreshAtRelease` | `G-214`: remote moved after the receipt is StaleObservation. |
+| PC-215 | G-215: skip source inspection for local modes. | `/*/*/WorkspaceSourceVerificationWireTests/C1065_LocalSourceModesVerifyFreshAtRelease` | `G-215`: dirty checkout is StaleObservation with manifest retained. |
+| PC-216 | G-216: skip local verification on the exited branch. | `/*/*/WorkspaceSourceVerificationWireTests/C1065_LocalSourceModesVerifyFreshAtRelease` | `G-216`: exited child with advanced HEAD is StaleObservation and metadata is retained. |
+| PC-217 | G-217: advertise `workspaceParkSourceModesV1` unconditionally. | `/*/*/WorkspaceSourceVerificationWireTests/C1065_LocalSourceModesVerifyFreshAtRelease` | `G-217`: runtime without a verifier does not list the feature. |
+| PC-218 | G-218: omit the owner/store/cwd equality before the identity read. | `/*/*/TaskParkRunnerIdentityTests/C1065_RemoteIdentityCaptureBindsEpisodeBeforePublication` | `G-218`: changed owner holds `park_runner_changed` with zero runner calls. |
+| PC-219 | G-219: keep the desktop baseline fingerprint for remote Prepare. | `/*/*/TaskParkRunnerIdentityTests/C1065_RemoteIdentityCaptureBindsEpisodeBeforePublication` | `G-219`: runner with a different push URL string publishes with a Published receipt. |
+| PC-220 | G-220: omit endpoint normalization equality. | `/*/*/TaskParkRunnerIdentityTests/C1065_RemoteIdentityCaptureBindsEpisodeBeforePublication` | `G-220`: runner endpoint naming another repository holds `park_endpoint_unadmitted`. |
+| PC-221 | G-221: persist a partial identity on an Unknown read. | `/*/*/TaskParkRunnerIdentityTests/C1065_RemoteIdentityCaptureBindsEpisodeBeforePublication` | `G-221`: Unknown read leaves `RepositoryIdentity` null and no receipt. |
+| PC-222 | G-222: omit the store/generation comparison on the read result. | `/*/*/TaskParkRunnerIdentityTests/C1065_RemoteIdentityCaptureBindsEpisodeBeforePublication` | `G-222`: answer for another generation holds with no persisted identity. |
+| PC-223 | G-223: call the runner for a local binding. | `/*/*/TaskParkRunnerIdentityTests/C1065_RemoteIdentityCaptureBindsEpisodeBeforePublication` | `G-223`: local capture records zero runner calls. |
+| PC-224 | G-224: fill the remote SHA with the source SHA for NoSourceChanges. | `/*/*/TaskParkRunnerIdentityTests/C1065_LocalEvidenceMapsToTypedRunnerProofWithoutFiction` | `G-224`: mapped NoSourceChanges receipt has null remote SHA. |
+| PC-225 | G-225: downgrade to version 1 without publication when the capability is missing. | `/*/*/TaskParkRunnerIdentityTests/C1065_LocalEvidenceMapsToTypedRunnerProofWithoutFiction` | `G-225`: each client returns Unsupported with zero wire requests. |
+| PC-226 | G-226: drop the mode from the HTTP wire DTO. | `/*/*/TaskParkRunnerIdentityTests/C1065_LocalEvidenceMapsToTypedRunnerProofWithoutFiction` | `G-226`: runtime-received receipt equals the sent mode and null remote SHA. |
 
 ### Out of scope
 
@@ -1237,11 +1465,11 @@ land; absent future files are disclosed above, not counted as current test evide
 
 ### Checkpoints
 
-Exactly one isolated build and one filter per row. S1-S10 consume their own row once;
+Exactly one isolated build and one filter per row. S1-S10, S4b and S4c consume their own row once;
 S11 runs CP-11/12 on Linux and CP-13 on Windows at the identical committed candidate
 SHA. Each new method returns one result, including internal scenario loops. Final
-server roster is 21 new + 10 existing = 31; final runner roster is 6 new + 26
-CARD-0667 + 3 publisher = 35. New tests may not add parameter expansion without
+server roster is 23 new + 10 existing = 33; final runner roster is 8 new + 26
+CARD-0667 + 3 publisher = 37 (amended 2026-10-06). New tests may not add parameter expansion without
 updating this manifest. CP-12/13 deliberately require all S2b/S2c results. Confirm
 actual TRX names equal the selected roster, not merely at least Min.
 
@@ -1251,15 +1479,17 @@ actual TRX names equal the selected roster, not merely at least Min.
 | CP-2 | S2 | `tests/Antiphon.SessionRunner.Tests -> bin-c1065-cp2/` | publication | `/*/*/WorkspaceParkPublicationTests/C1065_*` | V-3-V-5 | all 3 listed, 0 failed/skipped | 3 | 8 |
 | CP-3 | S3 | `tests/Antiphon.SessionRunner.Tests -> bin-c1065-cp3/` | park-wire | `/*/*/BlockedParkWireTests/C1065_*` | V-6-V-8 | all 3 listed, 0 failed/skipped | 3 | 9 |
 | CP-4 | S4 | `tests/Antiphon.Tests -> bin-c1065-cp4/` | source-policy | `/*/*/TaskParkPublicationTests/C1065_*` | V-9-V-11 | all 3 listed, 0 failed/skipped | 3 | 8 |
+| CP-4b | S4b | `tests/Antiphon.SessionRunner.Tests -> bin-c1065-cp4b/` | source-wire | `/*/*/(WorkspaceSourceVerificationWireTests*)\|(BlockedParkWireTests*)/C1065_*` | V-28,V-29,V-6-V-8 | all 5 listed, 0 failed/skipped | 5 | 10 |
+| CP-4c | S4c | `tests/Antiphon.Tests -> bin-c1065-cp4c/` | source-identity | `/*/*/(TaskParkRunnerIdentityTests*)\|(TaskParkPublicationTests*)/C1065_*` | V-30,V-31,V-9-V-11 | all 5 listed, 0 failed/skipped | 5 | 10 |
 | CP-5 | S5 | `tests/Antiphon.Tests -> bin-c1065-cp5/` | park-release | `/*/*/BlockedTaskParkReleaseTests/C1065_*` | V-12-V-14 | all 3 listed, 0 failed/skipped | 3 | 9 |
 | CP-6 | S6 | `tests/Antiphon.Tests -> bin-c1065-cp6/` | sync-debt | `/*/*/BlockedTaskSyncRecoveryTests/C1065_*` | V-15,V-16 | all 2 listed, 0 failed/skipped | 2 | 9 |
 | CP-7 | S7 | `tests/Antiphon.Tests -> bin-c1065-cp7/` | resume | `/*/*/BlockedTaskParkResumeTests/C1065_*` | V-17-V-19 | all 3 listed, 0 failed/skipped | 3 | 10 |
 | CP-8 | S8 | `tests/Antiphon.Tests -> bin-c1065-cp8/` | delivery | `/*/*/BlockedTaskParkDeliveryTests/C1065_*` | V-20-V-22,V-27 | all 4 listed, 0 failed/skipped | 4 | 12 |
 | CP-9 | S9 | `tests/Antiphon.Tests -> bin-c1065-cp9/` | reclaim | `/*/*/BlockedTaskParkReclaimTests/C1065_*` | V-23,V-24 | all 2 listed, 0 failed/skipped | 2 | 9 |
 | CP-10 | S10 | `tests/Antiphon.Tests -> bin-c1065-cp10/` | projection | `/*/*/BlockedTaskParkProjectionTests/C1065_*` | V-25,V-26 | all 2 listed, 0 failed/skipped | 2 | 9 |
-| CP-11 | S11 | `tests/Antiphon.Tests -> bin-c1065-cp11/` | final-server | `/*/*/(BlockedTaskPark*)\|(BlockedTaskSyncRecoveryTests*)\|(TaskParkPublicationTests*)\|(RunnerTaskSettlementTests*)\|(AgentTaskSettlementRaceTests*)\|(RemotePoolFollowUpAdmissionTests*)\|(ReviewEvidenceResettlementTests*)/(C1065_*)\|(Runner_sync_block_commits_the_completion_obligation*)\|(Sync_uncertainty_blocks_and_reply_retries*)\|(Refused_sync_never_autosaves_or_releases_workspace*)\|(an_answered_blocked_task_is_not_re_blocked_by_the_stale_boundary*)\|(the_answer_turn_settles_the_task_and_delivers_one_done_note*)\|(Remote_pool_follow_up_refuses_before_insert*)\|(C1043_ConfirmedNoPushBinds*)\|(C1043_FinalReportWins*)\|(C1043_AppendPreservesHistory*)\|(C1043_HeaderSnapshotAndGetAgree*)` | V-1,V-2,V-9-V-27,R-1-R-4 | all 31 listed, 0 failed/skipped | 31 | 18 |
-| CP-12 | S11 | `tests/Antiphon.SessionRunner.Tests -> bin-c1065-cp12/` | final-runner | `/*/*/(WorkspaceParkPublicationTests*)\|(BlockedParkWireTests*)\|(TerminalSeatReleaseTests*)\|(RunnerWorkspaceServiceTests*)/(C1065_*)\|(Replacement_generation_is_never_released*)\|(Token_for_another_session_is_refused*)\|(Restart_invalidates_volatile_observation_tokens*)\|(Fresh_tail_reads_each_provider*)\|(Unknown_or_partial_tail_never_authorizes_release*)\|(Binding_changes_during_read_refuse_qualification*)\|(Old_turn_end_does_not_qualify_a_new_generation*)\|(Working_remains_protected_after_arbitrary_silence*)\|(Two_observations_require_the_full_safety_margin*)\|(Activity_resets_the_qualification_window*)\|(Unavailable_observation_discards_qualification*)\|(Unknown_backend_custody_refuses_release*)\|(Input_winning_the_gate_invalidates_release*)\|(Conditional_input_invalidates_release*)\|(Release_winning_the_gate_refuses_later_input*)\|(Tail_growth_at_final_check_refuses_signal*)\|(Output_growth_at_signal_boundary_refuses_release*)\|(Kill_failure_retains_manifest_and_capacity*)\|(Duplicate_action_is_idempotent*)\|(Confirmed_exit_forgets_only_the_expected_generation*)\|(Unsupported_capability_never_falls_back_to_force*)\|(Http_and_phone_home_share_conditional_semantics*)\|(Fresh_observation_does_not_publish_duplicate_entries*)\|(Explicit_operator_release_keeps_its_contract*)\|(Publish_pushes_only_own_fast_forward_branch*)\|(Publish_equal_tip_is_not_pushed_and_reports_dirty_tree*)\|(Publish_refuses_an_active_sequencer_before_push*)` | V-3-V-8,R-5,R-6 | all 35 listed, 0 failed/skipped | 35 | 10 |
-| CP-13 | S11 | `tests/Antiphon.SessionRunner.Tests -> bin-c1065-cp13/` | windows-runner | `/*/*/(WorkspaceParkPublicationTests*)\|(BlockedParkWireTests*)\|(TerminalSeatReleaseTests*)\|(RunnerWorkspaceServiceTests*)/(C1065_*)\|(Replacement_generation_is_never_released*)\|(Token_for_another_session_is_refused*)\|(Restart_invalidates_volatile_observation_tokens*)\|(Fresh_tail_reads_each_provider*)\|(Unknown_or_partial_tail_never_authorizes_release*)\|(Binding_changes_during_read_refuse_qualification*)\|(Old_turn_end_does_not_qualify_a_new_generation*)\|(Working_remains_protected_after_arbitrary_silence*)\|(Two_observations_require_the_full_safety_margin*)\|(Activity_resets_the_qualification_window*)\|(Unavailable_observation_discards_qualification*)\|(Unknown_backend_custody_refuses_release*)\|(Input_winning_the_gate_invalidates_release*)\|(Conditional_input_invalidates_release*)\|(Release_winning_the_gate_refuses_later_input*)\|(Tail_growth_at_final_check_refuses_signal*)\|(Output_growth_at_signal_boundary_refuses_release*)\|(Kill_failure_retains_manifest_and_capacity*)\|(Duplicate_action_is_idempotent*)\|(Confirmed_exit_forgets_only_the_expected_generation*)\|(Unsupported_capability_never_falls_back_to_force*)\|(Http_and_phone_home_share_conditional_semantics*)\|(Fresh_observation_does_not_publish_duplicate_entries*)\|(Explicit_operator_release_keeps_its_contract*)\|(Publish_pushes_only_own_fast_forward_branch*)\|(Publish_equal_tip_is_not_pushed_and_reports_dirty_tree*)\|(Publish_refuses_an_active_sequencer_before_push*)` | V-3-V-8,R-5,R-6 | all 35 listed, 0 failed/skipped | 35 | 18 |
+| CP-11 | S11 | `tests/Antiphon.Tests -> bin-c1065-cp11/` | final-server | `/*/*/(BlockedTaskPark*)\|(BlockedTaskSyncRecoveryTests*)\|(TaskParkPublicationTests*)\|(TaskParkRunnerIdentityTests*)\|(RunnerTaskSettlementTests*)\|(AgentTaskSettlementRaceTests*)\|(RemotePoolFollowUpAdmissionTests*)\|(ReviewEvidenceResettlementTests*)/(C1065_*)\|(Runner_sync_block_commits_the_completion_obligation*)\|(Sync_uncertainty_blocks_and_reply_retries*)\|(Refused_sync_never_autosaves_or_releases_workspace*)\|(an_answered_blocked_task_is_not_re_blocked_by_the_stale_boundary*)\|(the_answer_turn_settles_the_task_and_delivers_one_done_note*)\|(Remote_pool_follow_up_refuses_before_insert*)\|(C1043_ConfirmedNoPushBinds*)\|(C1043_FinalReportWins*)\|(C1043_AppendPreservesHistory*)\|(C1043_HeaderSnapshotAndGetAgree*)` | V-1,V-2,V-9-V-27,V-30,V-31,R-1-R-4 | all 33 listed, 0 failed/skipped | 33 | 18 |
+| CP-12 | S11 | `tests/Antiphon.SessionRunner.Tests -> bin-c1065-cp12/` | final-runner | `/*/*/(WorkspaceParkPublicationTests*)\|(BlockedParkWireTests*)\|(WorkspaceSourceVerificationWireTests*)\|(TerminalSeatReleaseTests*)\|(RunnerWorkspaceServiceTests*)/(C1065_*)\|(Replacement_generation_is_never_released*)\|(Token_for_another_session_is_refused*)\|(Restart_invalidates_volatile_observation_tokens*)\|(Fresh_tail_reads_each_provider*)\|(Unknown_or_partial_tail_never_authorizes_release*)\|(Binding_changes_during_read_refuse_qualification*)\|(Old_turn_end_does_not_qualify_a_new_generation*)\|(Working_remains_protected_after_arbitrary_silence*)\|(Two_observations_require_the_full_safety_margin*)\|(Activity_resets_the_qualification_window*)\|(Unavailable_observation_discards_qualification*)\|(Unknown_backend_custody_refuses_release*)\|(Input_winning_the_gate_invalidates_release*)\|(Conditional_input_invalidates_release*)\|(Release_winning_the_gate_refuses_later_input*)\|(Tail_growth_at_final_check_refuses_signal*)\|(Output_growth_at_signal_boundary_refuses_release*)\|(Kill_failure_retains_manifest_and_capacity*)\|(Duplicate_action_is_idempotent*)\|(Confirmed_exit_forgets_only_the_expected_generation*)\|(Unsupported_capability_never_falls_back_to_force*)\|(Http_and_phone_home_share_conditional_semantics*)\|(Fresh_observation_does_not_publish_duplicate_entries*)\|(Explicit_operator_release_keeps_its_contract*)\|(Publish_pushes_only_own_fast_forward_branch*)\|(Publish_equal_tip_is_not_pushed_and_reports_dirty_tree*)\|(Publish_refuses_an_active_sequencer_before_push*)` | V-3-V-8,V-28,V-29,R-5,R-6 | all 37 listed, 0 failed/skipped | 37 | 10 |
+| CP-13 | S11 | `tests/Antiphon.SessionRunner.Tests -> bin-c1065-cp13/` | windows-runner | `/*/*/(WorkspaceParkPublicationTests*)\|(BlockedParkWireTests*)\|(WorkspaceSourceVerificationWireTests*)\|(TerminalSeatReleaseTests*)\|(RunnerWorkspaceServiceTests*)/(C1065_*)\|(Replacement_generation_is_never_released*)\|(Token_for_another_session_is_refused*)\|(Restart_invalidates_volatile_observation_tokens*)\|(Fresh_tail_reads_each_provider*)\|(Unknown_or_partial_tail_never_authorizes_release*)\|(Binding_changes_during_read_refuse_qualification*)\|(Old_turn_end_does_not_qualify_a_new_generation*)\|(Working_remains_protected_after_arbitrary_silence*)\|(Two_observations_require_the_full_safety_margin*)\|(Activity_resets_the_qualification_window*)\|(Unavailable_observation_discards_qualification*)\|(Unknown_backend_custody_refuses_release*)\|(Input_winning_the_gate_invalidates_release*)\|(Conditional_input_invalidates_release*)\|(Release_winning_the_gate_refuses_later_input*)\|(Tail_growth_at_final_check_refuses_signal*)\|(Output_growth_at_signal_boundary_refuses_release*)\|(Kill_failure_retains_manifest_and_capacity*)\|(Duplicate_action_is_idempotent*)\|(Confirmed_exit_forgets_only_the_expected_generation*)\|(Unsupported_capability_never_falls_back_to_force*)\|(Http_and_phone_home_share_conditional_semantics*)\|(Fresh_observation_does_not_publish_duplicate_entries*)\|(Explicit_operator_release_keeps_its_contract*)\|(Publish_pushes_only_own_fast_forward_branch*)\|(Publish_equal_tip_is_not_pushed_and_reports_dirty_tree*)\|(Publish_refuses_an_active_sequencer_before_push*)` | V-3-V-8,V-28,V-29,R-5,R-6 | all 37 listed, 0 failed/skipped | 37 | 18 |
 
 Bootstrap the checkpoint tool through the build-slot gate, then let its row runner
 take the build/test slots. For example, for the S1 committed slice:
@@ -1278,6 +1508,11 @@ and source/build provenance. No unlisted build/test loop or whole-Unit run. Repo
 any necessary failure-driven rerun with its reason and source commit. Code/Review run
 check-evidence-diff.ps1 over the full task range. Cleanup only producer-owned
 bin-c1065 outputs through checkpoint cleanup; evidence stays ignored.
+
+Amendment rows: after the S4b commit run `--after S4b` (or `--rows CP-4b`); after the S4c
+commit run `--after S4c` (or `--rows CP-4c`). `S4b` and `S4c` are literal After tokens that a
+numeric range such as `--after S1-S5` does not select. CP-11/CP-12/CP-13 now include the
+two new classes; their estimates are unchanged.
 
 ### Cost
 
@@ -1353,3 +1588,33 @@ dotnet tools/Antiphon.Checkpoints/bin-c1065-driver/Antiphon.Checkpoints.dll cove
 Keep generated import/lint receipts under ignored evidence storage. Next is Code,
 commissioned in the dependency order above; S2b through S4b of CARD-0667 must land
 before this card's dependent production slices. No human policy decision remains.
+
+#### Amendment validation and cost (2026-10-06, task 444809ee)
+
+Rows CP-4b and CP-4c add **20 estimated minutes** (10 + 10) to the ordinary Code floor and
+CP-11/CP-12/CP-13 each grow by two executions at an unchanged estimate, so the ordinary
+Code floor becomes **156 minutes** (136 + 20) with isolated row builds now **45 minutes**
+(15 rows at 3) and **111 minutes** filtered V/R. Slices: S4b 44 author + 10 check = 54;
+S4c 40 + 10 = 50; total author/evidence **532 minutes**; Code floor with bootstrap
+**693 minutes**. Mutation adds 17 runner controls (PC-201-PC-217) at 6 minutes =
+**102 minutes** and 9 server controls (PC-218-PC-226) at 8 minutes = **72 minutes**:
+**226 method-scoped cycles**, PC red/restore/green floor **1654 minutes**, Mutation
+**1684 minutes** with the 30-minute audit, combined Code+Mutation floor **2377 minutes**.
+Design audit after the amendment: guards=226, mapped=226, missing=0, duplicate PC maps=0;
+V-28-V-31 add four one-result methods (server roster 23 new + 10 existing = 33; runner
+roster 8 new + 26 + 3 = 37). All new controls are executable once S4b/S4c land; their
+absent test files are disclosed, not counted as current evidence.
+
+Importer validation (tool-only, no tests): the checkpoint tool was built through
+`scripts/build-slot.ps1` (lease granted, waited 0s, MSBuild 5.57s, 0 errors, the one
+pre-existing CS8602 warning in `TaskOwnerGuard.cs`) to the isolated output
+`bin-c1065-plan-driver/`, which was removed afterwards. `import --plan <this plan>` exited 0
+with `imported 15 rows`; CP-4b and CP-4c import with `after: [S4b]`/`[S4c]`, builds
+`bin-c1065-cp4b`/`bin-c1065-cp4c`, expect tokens `WorkspaceSourceVerificationWireTests` +
+`BlockedParkWireTests` and `TaskParkRunnerIdentityTests` + `TaskParkPublicationTests`,
+`minExecuted: 5`; CP-11 imports with `minExecuted: 33` and CP-12/CP-13 with `37`. The only
+warnings are the pre-existing CP-11/CP-13 54-minute derived-timeout advisories at their
+unchanged 18-minute estimates. The read-only `coverage --plan` lint exited 2 with
+`unresolved selected class`, exactly as the S3/S4 evidence recorded for absent future
+classes; it launched no build or test driver. This amendment ran zero V/R tests and zero
+mutation cycles. Checkpoint tool source did not change.
