@@ -25,7 +25,7 @@ public sealed class SeatOccupancySampler(
     ILogger<SeatOccupancySampler> logger,
     RemoteWorkspacePreparer? preparer = null)
 {
-    private const int ReasonMaxLength = 256;
+    private const int LoggedDetailMaxLength = 2000;
 
     public async Task SampleOnceAsync(CancellationToken ct)
     {
@@ -95,7 +95,7 @@ public sealed class SeatOccupancySampler(
         {
             var unavailable = (RunnerInventory.Unavailable)inventory;
             inventoryState = "unavailable";
-            inventoryReason = BoundReason(unavailable.Reason);
+            inventoryReason = RenderInventoryReason(hostId, unavailable.Reason);
         }
 
         var desktop = await SeatDesktopJoin.LoadAsync(db, ids.ToArray(), ct);
@@ -166,15 +166,15 @@ public sealed class SeatOccupancySampler(
         {
             return await directory.GetInventoryAsync(hostId, linked.Token);
         }
-        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        catch (OperationCanceledException ex) when (!ct.IsCancellationRequested)
         {
-            logger.LogWarning("Seat occupancy inventory timed out for {HostId}", hostId);
-            return new RunnerInventory.Unavailable("inventory timed out");
+            logger.LogWarning(ex, "Seat occupancy inventory timed out for {HostId}", hostId);
+            return new RunnerInventory.Unavailable("timeout");
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             logger.LogWarning(ex, "Seat occupancy inventory failed for {HostId}", hostId);
-            return new RunnerInventory.Unavailable(ex.Message);
+            return new RunnerInventory.Unavailable("error");
         }
     }
 
@@ -188,12 +188,31 @@ public sealed class SeatOccupancySampler(
         return SeatOccupancyProjection.IdleSince(seatClass, row.BlockedAt, row.LatestTask?.CompletedAt, started);
     }
 
-    private static string BoundReason(string? reason)
+    /// <summary>
+    /// Audit category only. Raw exception text stays in the log and never in the stored reason.
+    /// </summary>
+    private string RenderInventoryReason(string hostId, string? reason)
     {
         if (string.IsNullOrWhiteSpace(reason))
             return "unavailable";
+
         var trimmed = reason.Trim();
-        return trimmed.Length <= ReasonMaxLength ? trimmed : trimmed[..ReasonMaxLength];
+        var rendered = trimmed switch
+        {
+            "timeout" or "inventory timed out" => "timeout",
+            "unavailable" => "unavailable",
+            "phone-home runner unavailable" => "unavailable: phone-home",
+            "error" => "error",
+            _ => null,
+        };
+        if (rendered is not null)
+            return rendered;
+
+        var detail = trimmed.Length <= LoggedDetailMaxLength ? trimmed : trimmed[..LoggedDetailMaxLength];
+        logger.LogWarning(
+            "Seat occupancy inventory failed for {HostId}; audit category is error. Detail: {Detail}",
+            hostId, detail);
+        return "error";
     }
 
     private static HostOccupancySample ToRow(HostOccupancyObservation observation, DateTime sampledAt) => new()

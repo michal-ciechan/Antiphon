@@ -49,7 +49,13 @@ public static class HostEndpoints
 
         var applied = Math.Min(limit ?? DefaultOccupancySampleLimit, MaxOccupancySampleLimit);
         var windowTo = to is { } rawTo ? AsUtc(rawTo) : clock.GetUtcNow().UtcDateTime;
-        var windowFrom = from is { } rawFrom ? AsUtc(rawFrom) : windowTo.AddHours(-24);
+        DateTime windowFrom;
+        if (from is { } rawFrom)
+            windowFrom = AsUtc(rawFrom);
+        else if (windowTo < DateTime.MinValue.AddHours(24))
+            return Results.BadRequest(new { error = "window_invalid" });
+        else
+            windowFrom = windowTo.AddHours(-24);
         if (windowFrom > windowTo)
             return Results.Ok(new HostOccupancySamplesResponse(applied, windowFrom, windowTo, []));
 

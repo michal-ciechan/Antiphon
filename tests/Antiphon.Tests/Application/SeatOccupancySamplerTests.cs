@@ -119,6 +119,45 @@ public sealed class SeatOccupancySamplerTests
     }
 
     [Test]
+    public async Task C1101_Unavailable_inventory_reason_is_error_without_the_exception_text()
+    {
+        const string leaked = "runner down: token=super-secret-value";
+        await using var rig = await Rig.SeedRemoteAsync(listThrows: false);
+        rig.Client.ListError = new InvalidOperationException(leaked);
+        await rig.SampleAsync();
+
+        await using var db = new AppDbContext(rig.DbOptions);
+        var server2 = await db.HostOccupancySamples.AsNoTracking().SingleAsync(r => r.HostId == "server2");
+        server2.InventoryState.ShouldBe("unavailable");
+        server2.InventoryReason.ShouldBe("error");
+        server2.InventoryReason!.ShouldNotContain("super-secret");
+        server2.InventoryReason.ShouldNotContain("runner down");
+
+        var observed = rig.State.Current.Hosts.Single(h => h.HostId == "server2");
+        observed.InventoryReason.ShouldBe("error");
+        observed.InventoryReason!.ShouldNotContain("super-secret");
+    }
+
+    [Test]
+    public async Task C1101_Inventory_timeout_reason_is_timeout_without_the_exception_text()
+    {
+        const string leaked = "timed out talking to secret-host.internal";
+        await using var rig = await Rig.SeedRemoteAsync(listThrows: false);
+        rig.Client.ListError = new OperationCanceledException(leaked);
+        await rig.SampleAsync();
+
+        await using var db = new AppDbContext(rig.DbOptions);
+        var server2 = await db.HostOccupancySamples.AsNoTracking().SingleAsync(r => r.HostId == "server2");
+        server2.InventoryState.ShouldBe("unavailable");
+        server2.InventoryReason.ShouldBe("timeout");
+        server2.InventoryReason!.ShouldNotContain("secret-host");
+
+        var observed = rig.State.Current.Hosts.Single(h => h.HostId == "server2");
+        observed.InventoryReason.ShouldBe("timeout");
+        observed.InventoryReason!.ShouldNotContain("secret-host");
+    }
+
+    [Test]
     public async Task C1079_Prune_removes_samples_older_than_retention()
     {
         await using var rig = await Rig.EmptyAsync();

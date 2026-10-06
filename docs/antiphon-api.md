@@ -566,15 +566,21 @@ It is read-only: there is no write route. An unknown host is 404 through the sam
 host budget lookup as `PUT /api/hosts/{hostId}/budget`. The default window is the
 last 24 hours (`from` defaults to `to` minus 24 hours, `to` defaults to now, both
 UTC). `limit` defaults to 500 and is clamped to 2000; the applied value is the
-response `limit`. A `limit` below 1 is 400 `limit_invalid`. A reversed window
-returns no rows. Rows are newest first and carry the stored counters (`inFlight`,
+response `limit`. A `limit` below 1 is 400 `{ "error": "limit_invalid" }`. A `to`
+within 24 hours of `DateTime.MinValue` with `from` omitted is 400
+`{ "error": "window_invalid" }` (CARD-1101): the default window would otherwise
+underflow `AddHours(-24)` into a sanitized 500. A reversed window returns no rows.
+Rows are newest first and carry the stored counters (`inFlight`,
 `dispatchedWorking`, `sessions`, `pendingLaunch`, `inFlightMirrors`, `idleSeats`,
 `pooledWarmSeats`, `orphanSlots`, `effectiveLimit`, `declaredCapacity`,
-`oldestIdleSince`, `inventoryState`, `inventoryReason`). `Attention:SeatWatchEnabled`
-defaults true; setting it false is the rollback (the sampler writes nothing and
-`SeatIdle` (57), `OccupancyDivergence` (58) and `SlotOrphan` (59) are omitted).
-Seat rows are phone-home hosts only. Nothing on this route stops, kills, releases
-or dispatches.
+`oldestIdleSince`, `inventoryState`, `inventoryReason`). `inventoryReason` is a
+stable sampler category, never a raw exception message: `unavailable`, `timeout`,
+or `error`. A runner that is not connected uses `unavailable: phone-home` (the
+only summary, a fixed token). The exception text stays in the server log.
+`Attention:SeatWatchEnabled` defaults true; setting it false is the rollback
+(the sampler writes nothing and `SeatIdle` (57), `OccupancyDivergence` (58) and
+`SlotOrphan` (59) are omitted). Seat rows are phone-home hosts only. Nothing on
+this route stops, kills, releases or dispatches.
 
 Host budgets are separate from the sampled host stats. A local budget overrides
 `Delegation:MaxConcurrentTasks`; a runner's effective limit is the minimum of its configured
