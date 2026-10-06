@@ -31,6 +31,16 @@ the runner store and accepted generation in `SessionLogPath/released-checkouts/`
 an absent version-2 release after restart requires that record. Missing legacy
 records fail closed. These contracts add no automatic parking caller or enablement.
 
+CARD-1065 S4c captures source identity through the session's bound runner before
+publication. The server admits the runner's normalized endpoint repository against
+the captured desktop origin, then persists the runner's common-directory identity
+and exact push-endpoint fingerprint as the Requested intent. Prepare uses those
+persisted values; it no longer accepts a caller-supplied remote identity. Local
+capture uses the desktop identity without a runner call. Owner/store/generation,
+capability, read and persistence failures grant no publication or release authority.
+Typed server evidence maps NoSourceChanges to a null remote SHA and release version
+2; HTTP and phone-home clients refuse peers missing workspaceParkSourceModesV1.
+
 CARD-0519 S10: a terminal session status alone does not close outbound recovery
 windows. The optional transcript snapshot `TerminalComplete` is reader-owned EOF
 evidence after the existing child-exit grace, with no pending partial line,
