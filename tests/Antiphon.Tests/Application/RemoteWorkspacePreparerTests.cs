@@ -298,6 +298,8 @@ public sealed class RemoteWorkspacePreparerTests
     [Arguments("repair-source")]
     [Arguments("snapshot")]
     [Arguments("interim")]
+    [Arguments("rearm")]
+    [Arguments("rearm-no-baseline")]
     public async Task C672_prepared_task_launches_while_a_land_holds_the_lease(string arm)
     {
         await using var rig = await Rig.StartAsync();
@@ -307,15 +309,19 @@ public sealed class RemoteWorkspacePreparerTests
         Guid? snapshotOperation = arm == "snapshot" ? await rig.SeedLandingAsync(await rig.SeedOwnerAsync()) : null;
         var taskId = await rig.SeedAsync(t =>
         {
-            t.RemoteWorktreePath = arm == "unprepared" ? null : mirror;
+            t.RemoteWorktreePath = arm is "unprepared" or "rearm" or "rearm-no-baseline" ? null : mirror;
             t.RepairSourceTaskId = repairOwner;
             t.SourceLandingOperationId = snapshotOperation;
             if (arm == "interim")
                 t.VerificationRound = VerificationRound.Interim;
+            if (arm == "rearm")
+                t.ProgressBaselineJson = "{\"schemaVersion\":1}";
+            if (arm == "rearm-no-baseline")
+                t.ProgressBaselineJson = null;
         });
         rig.Lease.Held = true;
 
-        await rig.TickAsync().WaitAsync(TickBound);
+        var tick = await rig.TickAsync().WaitAsync(TickBound);
 
         var task = await rig.ReadTaskAsync(taskId);
         var held = await rig.EventsAsync(taskId, AgentTaskEventType.Held);
@@ -326,8 +332,22 @@ public sealed class RemoteWorkspacePreparerTests
             held.ShouldNotContain(e => e.Detail.Contains("repository mutation lease", StringComparison.Ordinal));
             rig.Waiters.IsEmpty.ShouldBeTrue();
         }
+        else if (arm == "rearm")
+        {
+            // Captured baseline: the claim runs no git, so a land's lease does not queue the re-arm.
+            tick.HeldOnLease.ShouldBe(0);
+            task.Status.ShouldBe(AgentTaskStatus.Queued);
+            held.Last().Detail.ShouldStartWith(DispatchHoldDetails.RemoteMirrorRequestedPrefix);
+            held.ShouldNotContain(e => e.Detail.Contains("repository mutation lease", StringComparison.Ordinal));
+            rig.Waiters.IsEmpty.ShouldBeTrue();
+            var request = await rig.WaitForRequestsAsync(PhoneHomeOperation.WorkspaceMirror, 1);
+            rig.Peer.RequestCount(PhoneHomeOperation.WorkspaceMirror).ShouldBe(1);
+            await rig.Peer.EmitAsync(MirrorResult(request, mirror));
+            await rig.Preparer.WhenIdleAsync().WaitAsync(TickBound);
+        }
         else
         {
+            tick.HeldOnLease.ShouldBe(1);
             task.Status.ShouldBe(AgentTaskStatus.Queued);
             held.ShouldHaveSingleItem().Detail.ShouldBe(DispatchHoldDetails.LeaseHeldByOwner(
                 rig.Lease.HolderTaskId, RepositoryLeasePurposes.Land, rig.Lease.AcquiredAt));

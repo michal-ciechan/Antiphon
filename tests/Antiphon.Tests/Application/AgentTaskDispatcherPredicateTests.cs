@@ -48,4 +48,46 @@ public sealed class AgentTaskDispatcherPredicateTests
 
         AgentTaskDispatcher.LaunchesPreparedMirror(task).ShouldBe(expected);
     }
+
+    /// <summary>
+    /// CARD-1076 D-5. A re-arm skips the lease only when the worktree is cut, the mirror is not
+    /// recorded, and the baseline is already captured. Every other arm still takes the lease.
+    /// </summary>
+    [Test]
+    [Arguments("rearm", true)]
+    [Arguments("mirror-recorded", false)]
+    [Arguments("no-baseline", false)]
+    [Arguments("local", false)]
+    [Arguments("no-worktree", false)]
+    [Arguments("repair-source", false)]
+    [Arguments("snapshot", false)]
+    [Arguments("interim", false)]
+    [Arguments("shared", false)]
+    public void C1076_RearmsPreparedWorktree(string arm, bool expected)
+    {
+        var task = new AgentTask
+        {
+            Id = Guid.NewGuid(),
+            Workspace = WorkspaceMode.Worktree,
+            RepoPath = Path.Combine(Path.GetTempPath(), "repo"),
+            RunnerId = "server2",
+            WorktreePath = Path.Combine(Path.GetTempPath(), "repo-wt"),
+            RemoteWorktreePath = null,
+            ProgressBaselineJson = "{\"schemaVersion\":1}",
+            VerificationRound = VerificationRound.Final,
+        };
+        switch (arm)
+        {
+            case "mirror-recorded": task.RemoteWorktreePath = "/work/worktrees/task-1"; break;
+            case "no-baseline": task.ProgressBaselineJson = null; break;
+            case "local": task.RunnerId = null; break;
+            case "no-worktree": task.WorktreePath = null; break;
+            case "repair-source": task.RepairSourceTaskId = Guid.NewGuid(); break;
+            case "snapshot": task.SourceLandingOperationId = Guid.NewGuid(); break;
+            case "interim": task.VerificationRound = VerificationRound.Interim; break;
+            case "shared": task.Workspace = WorkspaceMode.Shared; break;
+        }
+
+        AgentTaskDispatcher.RearmsPreparedWorktree(task).ShouldBe(expected);
+    }
 }
