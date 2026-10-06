@@ -7,6 +7,12 @@ workspace and question remain. Answering a confirmed released attempt queues a n
 with retained context; it does not promise native provider conversation resume. Local and
 deliberately warm Shared replies retain their existing same-session behavior.
 
+Blocked stays open for the card and for the concurrency gate, and it still occupies a
+runner seat. A Blocked session keeps its runner seat until parking releases it. The
+operator-visible rows are SeatIdle, SlotOrphan, and attention key runner-seat-release:.
+Parking is dormant: BlockedTaskParking:Enabled defaults to false and does not by itself
+free the seat.
+
 An attributable provider usage-limit API error blocks its delegated task with
 `SubscriptionQuotaExceeded` (CARD-0719). It keeps the session and worktree and leaves
 `CompletedAt` null. The failure reason names the parsed reset and padded hold deadline

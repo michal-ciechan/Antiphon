@@ -21,6 +21,8 @@ work itself: each one is here because ignoring it has already cost a real task.
   This instruction IS the explicit request: commit/push is part of the task,
   never a "next step" to offer; uncommitted deliverables are flagged at settlement.
 
+- Commit and push all assigned work before reporting blocked. That push is required unless this task is SourceLanding, ReadOnly, or CommitOnSettle Never. A parked session may be released and resumed from that pushed branch. Parking will not autosave your changes or launch a Commit delegate.
+
 - Generated evidence stays gitignored: TRX, JSON receipts, logs, archives and checkpoint outputs
   are excluded from the generic commit requirement. Optional Markdown up to 1048576 bytes,
   outside checkpoint directories, may be committed as individual report paths; never force-add

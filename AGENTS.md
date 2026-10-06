@@ -70,6 +70,7 @@ concurrency token by default.
 
 - Treat transcript-confirmed UserPrompt evidence as the delivery verdict; screen redraws, sidecar guesses, and Herdr events are not proof. Pull a transcript before acting on its absence.
 - A process release must leave it killed, pooled warm, or owned by a standing agent; the dispatcher's pool-release sweep enforces it for pool delegates, and no terminal writer may rely on being the only release. A stall is a detection/decision state, never an automatic kill.
+- A release has a bound: no session waits for input while holding a seat beyond the park rule. BlockedTaskParking:Enabled defaults to false. Parking never stops a Working session.
 - CARD-0079 is the only automatic stop of a Working session: an AlwaysOn Claude Check seat whose explicit `(auto)` CompactBoundary and synthetic continuation have been silent for `Delegation:CheckCompactionContinuationWaitMinutes` (default 10, zero disables). It uses the conditional runner stop and a strict same-conversation resume, then waits for a new useful Check and a whole caller receipt. It does not change the stall rule for any other turn.
 - Preserve the session delivery contract: LF plus bracketed paste plus a separate Enter for multi-line input. Read the session and Pty owners before changing transcript, terminal, launch, compaction, reconciliation, or remote-control behaviour.
 
