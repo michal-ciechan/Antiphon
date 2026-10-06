@@ -318,7 +318,7 @@ red row is fixed and rerun as the same row.
 | CP-4 | all | CP-3 | wrapper-vectors | `/*/*/RetiredTempContainerScriptTests/C994_*` | V-5, R-3 | exact 13 existing methods, 0 failed/skipped | 13 | 6 | true |
 | CP-5 | all | CP-3 | host-census | `/*/*/RemoteScriptContractTests/(C1008_*)\|(C1087_*)` | V-6, R-4 | exact 12 methods (11 existing + C1087_Host_census_filters_and_names_cause), 0 failed/skipped, native Linux | 12 | 9 | true |
 | CP-6 | all | CP-3 | docs-pins | `/*/*/DockerStackDocumentationTests/*` | R-5 | exact 13 methods (12 existing + Recycle_census_preflight_is_documented), 0 failed/skipped | 13 | 1 | true |
-| CP-7 | all | CP-3 | real-docker | `/*/*/RollingVolumeRecycleDockerTests/C1008_Real_docker_comparison` | R-6 | 1 result; all RD outcomes as recorded by the fixture, 0 failed/skipped, owned residue=0 | 1 | 12 | true |
+| CP-7 | all | CP-3 | real-docker | `/*/*/RollingVolumeRecycleDockerTests/C1008_Real_docker_comparison*` | R-6 | 1 result; all RD outcomes as recorded by the fixture, 0 failed/skipped, owned residue=0 | 1 | 12 | true |
 
 ## Risks and notes for Code and Review
 
