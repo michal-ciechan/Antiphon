@@ -161,7 +161,7 @@ public sealed class BlockedTaskParkReclaimTests
             parked.SourceSha.ShouldBe(tip, "V-23");
             var fullRef = parked.FullRef.ShouldNotBeNull("V-23");
             await StampAsync(f);
-            await f.AnswerAsync("continue from the parked tip");
+            await DriveAsync(f, f.AnswerAsync("continue from the parked tip"));
             Directory.Delete(f.SourcePath, recursive: true);
             await f.DispatchAsync();
             Directory.Exists(f.SourcePath).ShouldBeTrue("V-23");
@@ -205,9 +205,9 @@ public sealed class BlockedTaskParkReclaimTests
     [Test]
     public async Task C1065_ClaimAndReplyInvalidateLegacyCandidate()
     {
-        await InvalidateAsync("G-175", (f, _) => f.AnswerAsync("reply invalidates the legacy candidate"), list: true);
-        await InvalidateAsync("G-175", (f, _) => f.Harness.Provider.GetRequiredService<AgentTaskService>()
-            .CancelAsync(f.TaskId, CancellationToken.None), list: true, cancel: true);
+        await InvalidateAsync("G-175", (f, _) => DriveAsync(f, f.AnswerAsync("reply invalidates the legacy candidate")), list: true);
+        await InvalidateAsync("G-175", (f, _) => DriveAsync(f, f.Harness.Provider.GetRequiredService<AgentTaskService>()
+            .CancelAsync(f.TaskId, CancellationToken.None)), list: true, cancel: true);
         await InvalidateAsync("G-175", (f, _) => SetStatusAsync(f, AgentTaskStatus.Working), reserve: true);
         await InvalidateAsync("G-175", (f, _) => SetStatusAsync(f, AgentTaskStatus.Working), send: true);
         await InvalidateAsync("G-176", (f, _) => BumpAttemptAsync(f), reserve: true);
@@ -260,6 +260,18 @@ public sealed class BlockedTaskParkReclaimTests
             f.RecordedStops.Killed.ShouldContain(f.SessionId, label);
         if (label == "G-175" && list && !cancel)
             (await f.ParkAsync()).ReasonCode.ShouldBe("park_reply_before_reserve", label);
+    }
+
+    // Reply and cancel deliver through the session queue, which settles on the fixture clock.
+    // Advance that clock while the call is in flight; a plain await never wakes the delay.
+    private static async Task DriveAsync(RunnerSeatReleaseFixture f, Task work)
+    {
+        while (!work.IsCompleted)
+        {
+            await Task.WhenAny(work, Task.Delay(10));
+            f.Clock.Advance(TimeSpan.FromMilliseconds(20));
+        }
+        await work;
     }
 
     private static async Task<Row> SeedBlockedAsync(RunnerSeatReleaseFixture f, string name,
