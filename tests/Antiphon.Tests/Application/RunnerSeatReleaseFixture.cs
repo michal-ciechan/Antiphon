@@ -404,6 +404,33 @@ internal sealed partial class RunnerSeatReleaseFixture : IAsyncDisposable
         t.RemoteWorktreePath = "/fixture/retained";
     });
 
+    // Historical CARD-0667 data, created before CARD-1065 required a park. New
+    // Blocked releases must never use this setup as authority to send a command.
+    // Keep legacy answer recovery independent of the S7/S8 parked continuation.
+    public async Task SeedLegacyBlockedReleaseAsync(bool unresolved = false)
+    {
+        Harness.Provider.GetRequiredService<IOptions<BlockedTaskParkingOptions>>().Value.Enabled.ShouldBeFalse();
+        await PrepareContinuationAsync();
+        await using var db = Db();
+        (await db.AgentTaskParks.CountAsync()).ShouldBe(0);
+        var task = await db.AgentTasks.SingleAsync(t => t.Id == TaskId);
+        var session = await db.AgentSessions.SingleAsync(s => s.Id == SessionId);
+        var block = await db.AgentTaskEvents.SingleAsync(e => e.AgentTaskId == TaskId && e.Type == AgentTaskEventType.Blocked);
+        db.RunnerSeatReleases.Add(new RunnerSeatRelease
+        {
+            Id = Guid.NewGuid(), RunnerId = task.RunnerId!, RunnerStoreId = session.RunnerStoreId!.Value,
+            SessionId = SessionId, AcceptedStartedAt = session.StartedAt, TaskId = TaskId,
+            Attempt = task.Attempt, AgentId = task.AgentId, SettlementEventId = block.Id,
+            SettlementRevision = task.ConcurrencyToken, SettledAt = task.CompletedAt,
+            State = unresolved ? RunnerSeatReleaseState.Unresolved : RunnerSeatReleaseState.Confirmed,
+            Revision = 2, ActionId = Guid.NewGuid(), ReasonCode = "Reserved:Blocked",
+            OutcomeCode = unresolved ? "TransportUnknown" : nameof(TerminalSeatReleaseOutcome.Released),
+            ConfirmedAt = unresolved ? null : Now, CreatedAt = Now, UpdatedAt = Now
+        });
+        if (!unresolved) { session.Status = SessionStatus.Stopped; session.EndedAt = Now; }
+        await db.SaveChangesAsync();
+    }
+
     public RecordingSessionStopper RecordedStops => (RecordingSessionStopper)Harness.Provider.GetRequiredService<IDelegateSessionStopper>();
 
     internal sealed class LaunchRecorder : IAgentTaskLaunchSink

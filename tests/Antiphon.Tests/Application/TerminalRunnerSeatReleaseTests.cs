@@ -353,12 +353,11 @@ public class TerminalRunnerSeatReleaseTests
     {
         foreach (var length in new[] { 3999, 4000, 4001, 12000 })
         {
-        await using var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked, parking: true);
+        await using var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked);
         var answer = length == 12000
             ? string.Concat(Enumerable.Repeat("retain λ 日本語 😀\r\n", 650)) + "FINAL-ANSWER-CANARY"
             : new string('x', length - "FINAL-ANSWER-CANARY".Length) + "FINAL-ANSWER-CANARY";
-        await f.PreparePublishedBlockedSourceAsync();
-        await f.ReleaseAsync();
+        await f.SeedLegacyBlockedReleaseAsync();
         (await f.TryAnswerAsync(answer)).ShouldBeNull("the complete Unicode answer must be accepted without a bounded-detail database error");
         var accepted = await f.TaskAsync();
         f.Launches.OnLaunch = id => f.AttachRecipientAsync(id, busy: true).GetAwaiter().GetResult();
@@ -390,11 +389,9 @@ public class TerminalRunnerSeatReleaseTests
                      "queue-before", "queue-after", "delivery-stamp", "verdict-before", "complete-before", "release-ambiguous", "idle" })
         {
             var cut = new DeliverySaveCut { Boundary = boundary };
-            await using var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked, parking: true,
+            await using var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked,
                 configureDb: options => options.AddInterceptors(cut, new DeliveryCommitCut(cut)));
-            await f.PreparePublishedBlockedSourceAsync();
-            f.Wire.DropReply = boundary == "release-ambiguous";
-            await f.ReleaseAsync();
+            await f.SeedLegacyBlockedReleaseAsync(unresolved: boundary == "release-ambiguous");
             if (boundary == "release-ambiguous")
                 f.Directory.Inventory = () => Task.FromResult<RunnerInventory>(new RunnerInventory.Available([]));
             f.Wire.AutomaticEnabled = false;
@@ -454,7 +451,7 @@ public class TerminalRunnerSeatReleaseTests
             (await db.SessionQueuedMessages.CountAsync(m => m.ExecutionTaskId == f.TaskId)).ShouldBe(1, boundary);
             (await db.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == f.SessionId
                 && m.ExecutionTaskId == f.TaskId)).ShouldBe(0, "no delivery to the released seat");
-            f.Wire.ConditionalCommands.ShouldBe(1, "answer recovery sends no new release commands while disabled");
+            f.Wire.ConditionalCommands.ShouldBe(0, "historical answer recovery sends no release commands while disabled");
             (await f.TaskAsync()).ReleasedSeatAnswerId.ShouldBeNull();
             (await f.TaskAsync()).ReleasedSeatAnswerTargetAttempt.ShouldBeNull();
         }
@@ -465,8 +462,8 @@ public class TerminalRunnerSeatReleaseTests
     {
         foreach (var shape in new[] { "ack", "wrong", "partial", "stale", "wrong-session", "queued", "assistant", "generation" })
         {
-            await using var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked, parking: true);
-            await f.PreparePublishedBlockedSourceAsync(); await f.ReleaseAsync(); await f.AnswerAsync("receipt canary");
+            await using var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked);
+            await f.SeedLegacyBlockedReleaseAsync(); await f.AnswerAsync("receipt canary");
             f.Launches.OnLaunch = id => f.AttachRecipientAsync(id, busy: true).GetAwaiter().GetResult();
             await f.DispatchAsync();
             var row = (await f.AnswerQueueAsync())!;
@@ -505,6 +502,46 @@ public class TerminalRunnerSeatReleaseTests
             await f.FlushAsync(row.AgentSessionId);
             await f.DispatchAsync();
             (await f.TaskAsync()).ReleasedSeatAnswer.ShouldBeNull($"{shape}: real complete receipt finishes recovery");
+        }
+    }
+
+    [Test]
+    public async Task Legacy_ambiguous_answer_requires_fresh_absence_without_another_release()
+    {
+        foreach (var hold in new[] { "live", "unknown", "replacement", "unavailable", "working" })
+        {
+            await using var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked);
+            await f.SeedLegacyBlockedReleaseAsync(unresolved: true);
+            await f.AnswerAsync("retain historical answer");
+            f.Harness.Provider.GetRequiredService<IOptions<TerminalRunnerSeatReleaseOptions>>().Value.AutomaticEnabled = false;
+            var seat = new RunnerSessionDto(f.SessionId, 123, f.Observation.ExpectedAcceptedStartedAt,
+                hold == "replacement" ? "Exited" : "Running", null, "", 12,
+                AcceptedStartedAt: hold == "replacement" ? f.Now : f.Observation.ExpectedAcceptedStartedAt);
+            f.Directory.Inventory = () => Task.FromResult<RunnerInventory>(hold switch
+            {
+                "unknown" => new RunnerInventory.Unavailable("fixture inventory unavailable"),
+                "live" or "replacement" => new RunnerInventory.Available([seat]),
+                _ => new RunnerInventory.Available([])
+            });
+            if (hold == "unavailable") f.Directory.Available = false;
+            if (hold == "working") await f.IngestAsync(TranscriptKinds.UserPrompt, "still working", f.Now);
+            await f.RecoverAttentionAsync();
+            await using var db = f.Db();
+            (await db.RunnerSeatReleases.SingleAsync()).State.ShouldBe(RunnerSeatReleaseState.Unresolved, hold);
+            (await f.TaskAsync()).ReleasedSeatAnswer.ShouldBe("retain historical answer", hold);
+            f.Launches.Calls.ShouldBeEmpty();
+            f.Wire.ConditionalCommands.ShouldBe(0, "legacy recovery cannot send a new release");
+
+            f.Directory.Available = true;
+            f.Directory.Inventory = () => Task.FromResult<RunnerInventory>(new RunnerInventory.Available([]));
+            if (hold == "working") await f.IngestAsync(TranscriptKinds.TurnEnd, null, f.Now);
+            await f.RecoverAttentionAsync();
+            var recovered = await db.RunnerSeatReleases.AsNoTracking().SingleAsync();
+            recovered.State.ShouldBe(RunnerSeatReleaseState.Confirmed, $"{hold}: fresh absence recovers the historical action");
+            recovered.OutcomeCode.ShouldBe(nameof(TerminalSeatReleaseOutcome.AlreadyAbsent));
+            f.Wire.ConditionalCommands.ShouldBe(0);
+            f.RecordedStops.Killed.ShouldBeEmpty();
+            (await db.AgentTaskParks.CountAsync()).ShouldBe(0);
         }
     }
 
@@ -664,9 +701,8 @@ public class TerminalRunnerSeatReleaseTests
     {
         foreach (var guard in new[] { "quota", "availability", "commit", "capacity", "workspace", "preference" })
         {
-            await using var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked, parking: true);
-            await f.PreparePublishedBlockedSourceAsync();
-            await f.ReleaseAsync();
+            await using var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked);
+            await f.SeedLegacyBlockedReleaseAsync();
             await using var db = f.Db();
             var before = await f.TaskAsync();
             if (guard == "availability")
@@ -865,7 +901,10 @@ public class TerminalRunnerSeatReleaseTests
         f.Wire.ConditionalCommands.ShouldBe(0);
         await using var db = f.Db(); (await db.RunnerSeatReleases.CountAsync()).ShouldBe(0);
         await f.EditAsync((t, _) => { t.Result = "runner-sync blocked report"; t.ReportEvidence = AgentTaskReportEvidence.Marked; });
-        (await f.RunAsync()).Decision.ShouldBe(TerminalRunnerSeatDecision.Reserved, "completed marked Blocked remains eligible");
+        (await f.RunAsync()).Decision.ShouldBe(TerminalRunnerSeatDecision.PublicationRequired,
+            "CARD-1065 D-3: a completed marked Blocked report cannot authorize release without a published park, even with parking off");
+        f.Wire.ConditionalCommands.ShouldBe(0);
+        (await db.RunnerSeatReleases.CountAsync()).ShouldBe(0);
     }
 
     [Test]
