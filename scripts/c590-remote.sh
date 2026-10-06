@@ -3948,23 +3948,76 @@ c1008_zero() {
 }
 
 c1008_http() {
-    local path="$1" response code
-    response="$(curl -sS --max-time 15 -w '\n%{http_code}' "${C604_SERVER_ORIGIN:?}$path" 2>/dev/null)" || return 2
-    code="${response##*$'\n'}"; [ "$code" = 200 ] || return 2
-    printf '%s' "${response%$'\n'*}" | jq -ce . || return 2
+    # Keep cause and body in this shell; command substitution would lose the cause.
+    local path="$1" response code curl_code=0 started elapsed outcome=ok status=null items=null excluded=null
+    started="$(date +%s%3N)"
+    response="$(curl -sS --max-time 60 -w '\n%{http_code}' "${C604_SERVER_ORIGIN:?}$path" 2>/dev/null)" || curl_code=$?
+    elapsed=$(( $(date +%s%3N) - started ))
+    C1008_HTTP_BODY=''
+    if [ "$curl_code" != 0 ]; then
+        if [ "$curl_code" = 28 ]; then outcome=Timeout; else outcome=Transport; fi
+    else
+        code="${response##*$'\n'}"
+        if [[ "$code" =~ ^[0-9]{3}$ ]]; then status="$((10#$code))"; else outcome=Transport; fi
+        if [ "$outcome" = ok ]; then
+            if [ "$status" -lt 200 ] || [ "$status" -ge 300 ]; then outcome=Http
+            else
+                response="${response%$'\n'*}"
+                if [[ "$response" =~ ^[[:space:]]*$ ]]; then outcome=Empty
+                elif ! C1008_HTTP_BODY="$(printf '%s' "$response" | jq -cs 'if length==1 then .[0] else error("body") end' 2>/dev/null)"; then outcome=Malformed
+                else
+                    items="$(printf '%s' "$C1008_HTTP_BODY" | jq -c 'if type=="object" and (.items|type)=="array" then .items|length else null end')"
+                    excluded="$(printf '%s' "$C1008_HTTP_BODY" | jq -c 'if type=="object" and (.excluded.total|type)=="number" then .excluded.total else null end')"
+                fi
+            fi
+        fi
+    fi
+    C1008_CENSUS_READS="$(printf '%s' "$C1008_CENSUS_READS" | jq -c --arg path "$path" --arg outcome "$outcome" \
+        --argjson elapsed "$elapsed" --argjson status "$status" --argjson items "$items" --argjson excluded "$excluded" \
+        '. + [{path:$path,elapsedMs:$elapsed,outcome:$outcome,items:$items,excludedTotal:$excluded} + (if $status==null then {} else {status:$status} end)]')" || return 2
+    if [ "$outcome" != ok ]; then
+        C1008_TASK_ERROR="RecycleTaskCensusUnknown cause=$outcome"
+        [ "$outcome" != Http ] || C1008_TASK_ERROR+=" status=$status"
+        [ "$outcome" != Malformed ] || C1008_TASK_ERROR+=' field=body'
+        C1008_TASK_ERROR+=" path=$path elapsedMs=$elapsed"
+        return 2
+    fi
 }
 
 c1008_tasks() {
-    local pass scope envelope excluded id row detail previous='' snapshot scopes rows pending counts land
+    local code=0 receipt
+    C1008_TASK_ERROR=''; C1008_CENSUS_READS='[]'; C1008_TASKS='{}'; C1008_CENSUS_TASKS='{}'
+    c1008_tasks_collect || code=$?
+    # Approved census facts only, including reads/rows obtained before a refusal.
+    receipt="${CASE_DIR:?}/census-${CASE:?}-${C1008_RUNNER}.json"
+    if ! jq -n --arg runner "$C1008_RUNNER" --arg phase "$CASE" --arg refusal "$C1008_TASK_ERROR" \
+        --argjson reads "$C1008_CENSUS_READS" --argjson tasks "$C1008_CENSUS_TASKS" --argjson snapshot "$C1008_TASKS" \
+        '{schema:1,phase:$phase,runnerId:$runner,reads:$reads,tasks:$tasks,snapshot:$snapshot,refusal:$refusal}' > "$receipt"; then
+        C1008_TASK_ERROR='RecycleTaskCensusUnknown cause=Transport field=receipt'; return 2
+    fi
+    [ "$code" != 0 ] || printf '%s' "$C1008_TASKS"
+    return "$code"
+}
+
+c1008_tasks_collect() {
+    local pass kind path scope envelope excluded id row detail previous='' snapshot scopes rows pending counts land closures status
     for pass in 1 2; do
+        closures='{}'
+        for kind in open land; do
         scopes='[]'; rows='{}'; pending="$C1008_PROJECT_ID"; snapshot='{}'; counts='{}'; land='{}'
         while [ -n "$pending" ]; do
             scope="${pending%%$'\n'*}"; pending="${pending#"$scope"}"; pending="${pending#$'\n'}"
             printf '%s' "$scopes" | jq -e --arg scope "$scope" 'index($scope)!=null' >/dev/null && continue
             [[ "$scope" =~ ^[0-9a-f-]{36}$ ]] || return 2
             scopes="$(printf '%s' "$scopes" | jq -c --arg scope "$scope" '. + [$scope]')"
-            [ "$(printf '%s' "$scopes" | jq length)" -le 1000 ] || return 2
-            envelope="$(c1008_http "/api/agent-tasks?projectId=$scope&unscoped=include&includeChecks=true")" || return 2
+            [ "$(printf '%s' "$scopes" | jq length)" -le 1000 ] || {
+                C1008_TASK_ERROR="RecycleTaskCensusUnknown cause=ScopeLimit scopes=$(printf '%s' "$scopes" | jq length)"; return 2;
+            }
+            path="/api/agent-tasks?projectId=$scope&unscoped=include&includeChecks=true"
+            if [ "$kind" = open ]; then path+='&status=Queued,Dispatched,Working,Blocked'; else path+='&landPending=true'; fi
+            c1008_http "$path" || return 2
+            envelope="$C1008_HTTP_BODY"
+            C1008_TASK_ERROR="RecycleTaskCensusUnknown cause=Malformed field=envelope path=$path"
             printf '%s' "$envelope" | jq -e --arg scope "$scope" '
                 (.items|type)=="array" and (.excluded.byProject|type)=="array" and
                 .scope.projectId==$scope and .scope.unscoped=="include" and
@@ -3977,7 +4030,8 @@ c1008_tasks() {
                 ([.excluded.byProject[].count]|add // 0)==.excluded.total' >/dev/null || return 2
             while IFS= read -r row; do
                 id="$(printf '%s' "$row" | jq -r .projectId)"
-                printf '%s' "$counts" | jq -e --arg id "$id" --argjson row "$row" 'has($id) and .[$id]!=$row.count' >/dev/null && return 2
+                C1008_TASK_ERROR="RecycleTaskCensusUnknown cause=Malformed field=excluded.byProject.count path=$path"
+        printf '%s' "$counts" | jq -e --arg id "$id" --argjson row "$row" 'has($id) and .[$id]!=$row.count' >/dev/null && return 2
                 counts="$(printf '%s' "$counts" | jq -c --arg id "$id" --argjson row "$row" '.[$id]=$row.count')" || return 2
             done < <(printf '%s' "$envelope" | jq -c '.excluded.byProject[]')
             snapshot="$(printf '%s' "$snapshot" | jq -c --arg scope "$scope" --argjson envelope "$envelope" \
@@ -3986,26 +4040,46 @@ c1008_tasks() {
             if [ -n "$excluded" ]; then pending="${pending:+$pending$'\n'}$excluded"; fi
             while IFS= read -r row; do
                 [ -n "$row" ] || continue
+                C1008_TASK_ERROR="RecycleTaskCensusUnknown cause=Malformed field=task path=$path"
                 printf '%s' "$row" | jq -e --arg scope "$scope" '
+                    def stamp: .==null or (type=="string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,7})?(Z|[+-][0-9]{2}:[0-9]{2})$"));
+                    (.runnerId==null or (.runnerId|type)=="string") and
+                    (.landRequestedAt|stamp) and (.landStartedAt|stamp) and
                     has("id") and has("status") and has("runnerId") and has("projectId") and has("scopeSource") and
                     has("landRequestedAt") and has("landStartedAt") and (.id|type)=="string" and
                     (.status as $s | ["Queued","Dispatched","Working","Blocked","Succeeded","Failed","Canceled"]|index($s)!=null) and
                     (.scopeSource as $s | ["Task","Card","None"]|index($s)!=null) and
                     (if .scopeSource=="None" then .projectId==null else .projectId==$scope end)' >/dev/null || return 2
-                id="$(printf '%s' "$row" | jq -r .id)"; [[ "$id" =~ ^[0-9a-f-]{36}$ ]] || return 2
+                id="$(printf '%s' "$row" | jq -r .id)"; [[ "$id" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || return 2
                 row="$(printf '%s' "$row" | jq -c '{id,status,runnerId,projectId,scopeSource,landRequestedAt,landStartedAt}')"
                 printf '%s' "$rows" | jq -e --arg id "$id" --argjson row "$row" \
                     'has($id) and .[$id]!=$row' >/dev/null && return 2
                 rows="$(printf '%s' "$rows" | jq -c --arg id "$id" --argjson row "$row" '.[$id]=$row')"
-                printf '%s' "$row" | jq -e '.landRequestedAt!=null or .landStartedAt!=null' >/dev/null && return 3
-                printf '%s' "$row" | jq -e --arg runner "$C1008_RUNNER" \
-                    '.runnerId==$runner and (.status as $s | ["Queued","Dispatched","Working","Blocked","Failed"] | index($s)!=null)' >/dev/null && return 4
-                detail="$(c1008_http "/api/agent-tasks/$id")" || return 2
+                C1008_CENSUS_TASKS="$(printf '%s' "$C1008_CENSUS_TASKS" | jq -c --arg id "$id" --argjson row "$row" '.[$id]=$row')" || return 2
+                status="$(printf '%s' "$row" | jq -r .status)"
+                if ! printf '%s' "$row" | jq -e --arg kind "$kind" '
+                    if $kind=="open" then (.status as $s | ["Queued","Dispatched","Working","Blocked"]|index($s)!=null)
+                    else .landRequestedAt!=null or .landStartedAt!=null end' >/dev/null; then
+                    C1008_TASK_ERROR="RecycleTaskCensusUnknown cause=UnfilteredRow id=$id status=$status path=$path"; return 2
+                fi
+                if printf '%s' "$row" | jq -e '.landRequestedAt!=null or .landStartedAt!=null' >/dev/null; then
+                    C1008_TASK_ERROR="RecycleLandInFlight $id"; return 3
+                fi
+                if printf '%s' "$row" | jq -e --arg runner "$C1008_RUNNER" \
+                    '.runnerId==$runner and (.status as $s | ["Queued","Dispatched","Working","Blocked"] | index($s)!=null)' >/dev/null; then
+                    C1008_TASK_ERROR="RecycleBoundTasks $id status=$status runner=$C1008_RUNNER"; return 4
+                fi
+                [ "$kind" = open ] || continue
+                c1008_http "/api/agent-tasks/$id" || return 2
+                detail="$C1008_HTTP_BODY"
+                C1008_TASK_ERROR=RecycleLandUnknown
                 printf '%s' "$detail" | jq -e --argjson row "$row" 'has("landRequest") and
                   (.summary|{id,status,runnerId,projectId,scopeSource,landRequestedAt,landStartedAt})==$row and
                   (.summary|has("id") and has("status") and has("runnerId") and has("projectId") and
                     has("scopeSource") and has("landRequestedAt") and has("landStartedAt"))' >/dev/null || return 2
-                printf '%s' "$detail" | jq -e '.landRequest!=null and (.landRequest.state as $s | ["Queued","Held","Running","NeedsResolution"] | index($s)!=null)' >/dev/null && return 3
+                if printf '%s' "$detail" | jq -e '.landRequest!=null and (.landRequest.state as $s | ["Queued","Held","Running","NeedsResolution"] | index($s)!=null)' >/dev/null; then
+                    C1008_TASK_ERROR="RecycleLandInFlight $id"; return 3
+                fi
                 printf '%s' "$detail" | jq -e '.landRequest==null or
                   ((.landRequest.state as $s | ["Completed","Superseded","Canceled"]|index($s)!=null) and
                     (.landRequest.terminalEventId|type)=="string" and
@@ -4013,14 +4087,21 @@ c1008_tasks() {
                 detail="$(printf '%s' "$detail" | jq -c 'if .landRequest==null then null else .landRequest|{state,terminalEventId} end')" || return 2
                 printf '%s' "$land" | jq -e --arg id "$id" --argjson detail "$detail" 'has($id) and .[$id]!=$detail' >/dev/null && return 2
                 land="$(printf '%s' "$land" | jq -c --arg id "$id" --argjson detail "$detail" '.[$id]=$detail')" || return 2
+                C1008_CENSUS_TASKS="$(printf '%s' "$C1008_CENSUS_TASKS" | jq -c --arg id "$id" --argjson detail "$detail" '.[$id].landRequest=$detail')" || return 2
             done < <(printf '%s' "$envelope" | jq -c '.items[]')
         done
+        C1008_TASK_ERROR="RecycleTaskCensusUnknown cause=Malformed field=excluded.byProject.count path=$path"
         printf '%s' "$counts" | jq -e --argjson rows "$rows" 'to_entries|all(.[]; .key as $id | .value==([$rows[]|select(.projectId==$id)]|length))' >/dev/null || return 2
-        snapshot="$(printf '%s' "$snapshot" | jq -Sc --argjson rows "$rows" --argjson land "$land" '{scopes:.,tasks:$rows,land:$land}')" || return 2
-        if [ "$pass" = 2 ] && [ "$snapshot" != "$previous" ]; then return 2; fi
+        snapshot="$(printf '%s' "$snapshot" | jq -Sc --arg kind "$kind" --argjson rows "$rows" --argjson land "$land" \
+            '{scopes:.,tasks:$rows} + (if $kind=="open" then {land:$land} else {} end)')" || return 2
+        closures="$(printf '%s' "$closures" | jq -Sc --arg kind "$kind" --argjson snapshot "$snapshot" '.[$kind]=$snapshot')" || return 2
+        C1008_TASKS="$closures"
+        done
+        snapshot="$closures"
+        if [ "$pass" = 2 ] && [ "$snapshot" != "$previous" ]; then C1008_TASK_ERROR='RecycleTaskCensusUnknown cause=Unstable'; return 2; fi
         previous="$snapshot"
     done
-    printf '%s' "$snapshot"
+    C1008_TASK_ERROR=''
 }
 
 c1008_status_proof() {
@@ -4088,10 +4169,11 @@ c1008_status_proof() {
     fi
     printf '%s' "$counterpart" | jq -e '.acceptingNewWork==true and .available==true and .dispatchEligible==true and .draining==false and .retiredAt==null' >/dev/null \
         || c1008_refuse RecycleRoutingActive
-    code=0; tasks="$(c1008_tasks)" || code=$?
-    case "$code" in 0) ;; 3) c1008_refuse RecycleLandInFlight ;; 4) c1008_refuse RecycleBoundTasks ;; *) c1008_refuse RecycleTaskCensusUnknown ;; esac
+    code=0; c1008_tasks >/dev/null || code=$?
+    [ "$code" = 0 ] || c1008_refuse "$C1008_TASK_ERROR"
+    tasks="$C1008_TASKS"
     if [ "${C1008_ACTIVE:-0}" = 1 ] || [ "${C1008_RESUME:-0}" = 1 ]; then
-        [ "$(printf '%s' "$tasks" | jq -Sc .)" = "$(printf '%s' "$C1008_RECORD" | jq -Sc .tasks)" ] || c1008_refuse RecycleTaskCensusUnknown
+        [ "$(printf '%s' "$tasks" | jq -Sc .)" = "$(printf '%s' "$C1008_RECORD" | jq -Sc .tasks)" ] || c1008_refuse "RecycleTaskCensusUnknown cause=Unstable"
     fi
     C1008_STATUS="$(printf '%s' "$body" | jq -c '{runnerId,runnerStoreId,epoch,available,dispatchEligible,acceptingNewWork,
         draining,redirectTo,retireWhenIdle,retiredAt,sessions,runnerSessions,queuedTasks,buildVersion}')"
@@ -4957,10 +5039,11 @@ c994_status_proof() {
     printf '%s' "$main" | jq -e '.available==true and .dispatchEligible==true and .acceptingNewWork==true and
       .draining==false and has("retiredAt") and .retiredAt==null' >/dev/null || c994_refuse OldRunnerNotAcceptingNewWork
     C1008_PROJECT_ID="$C994_PROJECT_ID"; C1008_RUNNER=server2-temp
-    tasks="$(c1008_tasks)" || code=$?
-    case "$code" in 0) ;; 3) c994_refuse RecycleLandInFlight ;; 4) c994_refuse RecycleBoundTasks ;; *) c994_refuse RecycleTaskCensusUnknown ;; esac
+    c1008_tasks >/dev/null || code=$?
+    [ "$code" = 0 ] || c994_refuse "$C1008_TASK_ERROR"
+    tasks="$C1008_TASKS"
     if [ "${C994_ACTIVE:-0}" = 1 ]; then
-        [ "$(printf '%s' "$tasks" | jq -Sc .)" = "$(printf '%s' "$C994_RECORD" | jq -Sc .tasks)" ] || c994_refuse RecycleTaskCensusUnknown
+        [ "$(printf '%s' "$tasks" | jq -Sc .)" = "$(printf '%s' "$C994_RECORD" | jq -Sc .tasks)" ] || c994_refuse "RecycleTaskCensusUnknown cause=Unstable"
     fi
     C994_TASKS="$tasks"; C994_STAMP="$stamp"
     C994_TEMP="$(printf '%s' "$temp" | jq -c '{available,dispatchEligible,acceptingNewWork,draining,retireWhenIdle,redirectTo,retiredAt,sessions,queuedTasks,runnerSessions}')"

@@ -8,7 +8,7 @@ curl() {
         shift
     done
     printf '%s\n' "$budget" >> "$C1008_FIXTURE_ROOT/http-budgets"
-    fault="$(jq -r --arg path "$path" '[.faults // {} | to_entries[] | select($path|contains(.key))][0].value // empty' "$C1008_FIXTURE_ROOT/tasks.json")"
+    fault="$(jq -r --arg path "$path" '[.faults // {} | to_entries[] | select(.key as $key | $path|contains($key))][0].value // empty' "$C1008_FIXTURE_ROOT/tasks.json")"
     case "$fault" in
       timeout) return 28 ;;
       transport) return 7 ;;

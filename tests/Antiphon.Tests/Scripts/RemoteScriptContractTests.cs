@@ -234,7 +234,37 @@ public sealed class RemoteScriptContractTests
                 if (vector == "http") run.Output.ShouldContain("status=503");
             }
             run.Output.ShouldNotContain("SENTINEL");
+            var receipt = JsonNode.Parse(File.ReadAllText(Path.Combine(f.Root, "evidence", "deploy-parent", "census-deploy-parent-server2.json")))!;
+            receipt["reads"]!.AsArray().Count.ShouldBeGreaterThan(0);
+            receipt.ToJsonString().ShouldNotContain("SENTINEL");
         }
+        using (var batch = new C1008HostFixture())
+        {
+            var vectors = C994TaskVectors.Build(batch.Vectors["emptyTasks"]!.AsObject());
+            File.WriteAllText(Path.Combine(batch.Root, "task-vectors.json"), vectors.ToJsonString());
+            var run = await batch.Run(extra: """
+                C1008_RUNNER=server2-temp
+                while IFS= read -r vector; do
+                    printf '%s' "$vector" | jq '.input' > "$C1008_FIXTURE_ROOT/tasks.json"
+                    code=0; c1008_tasks >/dev/null || code=$?
+                    expected="$(printf '%s' "$vector" | jq -r .accepted)"
+                    if { [ "$expected" = true ] && [ "$code" != 0 ]; } || { [ "$expected" = false ] && [ "$code" = 0 ]; }; then
+                        printf 'vector=%s error=%s\n' "$(printf '%s' "$vector" | jq -r .key)" "$C1008_TASK_ERROR"
+                        exit 3
+                    fi
+                done < <(jq -c '.[]' "$C1008_FIXTURE_ROOT/task-vectors.json")
+                write_result true '' 0
+                """);
+            run.Exit.ShouldBe(0, "host closure/detail matrix: " + run.Output);
+            batch.Removed.ShouldBeEmpty();
+        }
+        // The second host caller must preserve the same typed cause and stop before cleanup.
+        using var retired = new C1008HostFixture(main: false);
+        retired.HttpFaults["/api/agent-tasks?"] = "timeout";
+        var cleanup = await retired.Run("retire-temp-containers");
+        cleanup.Exit.ShouldBe(2, cleanup.Output);
+        cleanup.Output.ShouldContain("RecycleTaskCensusUnknown cause=Timeout path=/api/agent-tasks?");
+        retired.Removed.ShouldBeEmpty();
     }
 
     [Test]

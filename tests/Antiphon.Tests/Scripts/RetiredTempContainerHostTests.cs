@@ -105,7 +105,16 @@ public sealed class RetiredTempContainerHostTests
                 while IFS= read -r vector; do
                     input="$(printf '%s' "$vector"|jq -c .input)"
                     (
-                        c1008_http() { local key="$1"; if [[ "$key" == *projectId=* ]]; then key="${key#*projectId=}";key="${key%%&*}";printf '%s' "$input"|jq -ec --arg key "$key" '.scopes[$key]';else printf '%s' "$input"|jq -ec --arg key "${key##*/}" '.details[$key]';fi; }
+                        c1008_http() {
+                            local key="$1" kind
+                            if [[ "$key" == *projectId=* ]]; then
+                                if [[ "$key" == *'&landPending=true' ]]; then kind=land
+                                elif [[ "$key" == *'&status=Queued,Dispatched,Working,Blocked' ]]; then kind=open
+                                else return 2; fi
+                                key="${key#*projectId=}";key="${key%%&*}"
+                                C1008_HTTP_BODY="$(printf '%s' "$input"|jq -ec --arg key "$key" --arg kind "$kind" '.scopes[$key][$kind]')" || return 2
+                            else C1008_HTTP_BODY="$(printf '%s' "$input"|jq -ec --arg key "${key##*/}" '.details[$key]')" || return 2; fi
+                        }
                         c1008_tasks >/dev/null
                     ) && code=0 || code=$?
                     printf 'TASK_CASE %s %s\n' "$(printf '%s' "$vector"|jq -r .key)" "$code"
