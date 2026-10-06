@@ -246,8 +246,11 @@ Antiphon.Tests.Application.ReviewEvidenceRecoveryEndpointTests
 Antiphon.Tests.Application.ChannelReplyAttachmentReaderWindowsTests
 # CARD-1061: native NTFS junction lifecycle and bounded child process/pipe cleanup.
 Antiphon.Tests.TestHelpers.DirectoryLinkFixtureWindowsTests
+# CARD-1029: isolated PostgreSQL and local/remote provider readiness, queue and complete-receipt matrices.
 Antiphon.Tests.Application.CodexCliObservationGapTests
 # CARD-0519 S12: owned crash children, isolated broker and durable gateway receipts.
 Antiphon.Tests.Application.ChannelOutboundUnifiedCrashTests
 # CARD-0519 S12: real queue, isolated broker, converter launch and gateway handoff matrices.
 Antiphon.Tests.Application.ChannelOutboundUnifiedTransportTests
+# CARD-1065: real Git publication, isolated PostgreSQL and local/remote park custody boundaries.
+Antiphon.Tests.Application.TaskParkPublicationTests
