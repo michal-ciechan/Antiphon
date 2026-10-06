@@ -409,10 +409,6 @@ public class AgentBundleAttachmentTests
         basics.ShouldContain("A parked session may be released and resumed from that pushed branch.", customMessage: "c1065-resume-branch");
         basics.ShouldContain("Parking will not autosave", customMessage: "c1065-no-autosave");
 
-        var orchestrator = InstructionBundles.TextOf(InstructionBundles.Orchestrator);
-        orchestrator.ShouldContain("A Blocked child holds its seat until it is answered or cancelled.", customMessage: "c1065-blocked-child");
-        orchestrator.ShouldContain("count orphan=true", customMessage: "c1065-orphan-count");
-
         InstructionBundles.TextOf(InstructionBundles.StagePlan).ShouldContain(
             "what releases a session that waits for input, and after how long",
             customMessage: "c1065-release-question");

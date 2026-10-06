@@ -79,8 +79,6 @@ status and failure fields remain historical. The separate `-StartRef` route abov
 uses `-FromTask` and a Review of that separate source; an actual `-RepairSource`
 task cannot be used with `-FromTask`.
 
-A Blocked child holds its seat until it is answered or cancelled. Answer or cancel it within the session; do not leave one overnight. When a host reads at capacity, read GET /api/session-runners/{id}/slots and count orphan=true before concluding the host is busy. BlockedTaskParking:Enabled defaults to false, so that seat stays until an operator enables parking and automatic seat release. Parking never stops a Working session.
-
 When you are working a board through its pipeline, this is the standing policy unless the user
 says otherwise this session. Read effective concurrency limits and occupancy before dispatch:
 GET /api/agent-tasks/pipeline (stage/host counts and limits), GET /api/session-runners
