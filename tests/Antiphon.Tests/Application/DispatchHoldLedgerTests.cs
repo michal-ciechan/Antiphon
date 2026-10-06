@@ -110,4 +110,27 @@ public sealed class DispatchHoldLedgerTests
         empty.Dominant.ShouldBeNull();
         empty.Describe().ShouldEndWith("class=none");
     }
+
+    /// <summary>
+    /// CARD-1076 D-6. The parser is anchored on the owner sentence. A 32-hex run in any
+    /// other hold, including a fenced journal that names a task, is not an owner.
+    /// </summary>
+    [Test]
+    public void C1076_LeaseOwnerTaskId_parses_only_the_owner_sentence()
+    {
+        var owner = Guid.NewGuid();
+        var when = new DateTimeOffset(2026, 10, 6, 12, 0, 0, TimeSpan.Zero);
+        DispatchHoldDetails.LeaseOwnerTaskId(DispatchHoldDetails.LeaseHeldByOwner(owner, "land", when))
+            .ShouldBe(owner);
+        DispatchHoldDetails.LeaseOwnerTaskId(
+            DispatchHoldDetails.LeaseHeldByLand("abcd1234", "a land", "ef012345", when.UtcDateTime))
+            .ShouldBeNull();
+        DispatchHoldDetails.LeaseOwnerTaskId(DispatchHoldDetails.LeaseOccupiedUnknown).ShouldBeNull();
+        DispatchHoldDetails.LeaseOwnerTaskId(
+            DispatchHoldDetails.LeaseUnknownAdmissionWriter("abcd1234", "writer", "ef012345"))
+            .ShouldBeNull();
+        DispatchHoldDetails.LeaseOwnerTaskId(
+            DispatchHoldDetails.LeaseFenced("journal of task " + Guid.NewGuid().ToString("N")))
+            .ShouldBeNull();
+    }
 }

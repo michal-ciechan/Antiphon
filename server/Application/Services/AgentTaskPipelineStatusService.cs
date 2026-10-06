@@ -31,6 +31,15 @@ public sealed class AgentTaskPipelineStatusService
     /// </summary>
     internal const string QueueReasonConcurrencyCap = "concurrencyCap";
     internal const string QueueReasonHostBudget = "hostBudget";
+    /// <summary>
+    /// CARD-1076 D-6: the latest current-stint Held row is a repository-lease sentence.
+    /// Read from that row. This projection does not contact Git.
+    /// </summary>
+    internal const string QueueReasonRepositoryLease = "repositoryLease";
+    /// <summary>
+    /// CARD-1076 D-6: the latest current-stint Held row is remote preparation.
+    /// </summary>
+    internal const string QueueReasonRemotePrep = "remotePrep";
     internal const string PlanDeliverablePrefix = "docs/superpowers/plans/";
 
     private static readonly AgentTaskRole[] VisibleRoles = Enum.GetValues<AgentTaskRole>()
@@ -183,6 +192,7 @@ public sealed class AgentTaskPipelineStatusService
         var queued = open.Where(t => t.Status == AgentTaskStatus.Queued).ToList();
         var blocked = open.Where(t => t.Status == AgentTaskStatus.Blocked).ToList();
         var siblingLands = await LoadSiblingLandHoldersAsync(queued, ct);
+        var dispatchHolds = await LoadQueuedDispatchHoldsAsync(queued, ct);
 
         var stages = new List<AgentTaskPipelineStageDto>(VisibleRoles.Length);
         foreach (var role in VisibleRoles)
@@ -197,7 +207,7 @@ public sealed class AgentTaskPipelineStatusService
                 .Where(t => t.Role == role)
                 .OrderBy(t => t.CreatedAt).ThenBy(t => t.Id)
                 .Select(t => ToQueued(t, cards, holders, stagePins, cardPins, asOf,
-                    localInFlight, localLimit, limits, remoteOccupancy, siblingLands))
+                    localInFlight, localLimit, limits, remoteOccupancy, siblingLands, dispatchHolds))
                 .ToList();
             var roleBlocked = blocked
                 .Where(t => t.Role == role)
@@ -382,7 +392,8 @@ public sealed class AgentTaskPipelineStatusService
         int localLimit,
         IReadOnlyDictionary<string, HostLimit> limits,
         IReadOnlyDictionary<string, int> remoteOccupancy,
-        Dictionary<Guid, SiblingLandRow> siblingLands)
+        Dictionary<Guid, SiblingLandRow> siblingLands,
+        QueuedDispatchHolds dispatchHolds)
     {
         IReadOnlyList<AgentTaskPipelineHolderDto> heldBy = [];
         var queueReason = QueueReasonAwaitingDispatch;
@@ -406,7 +417,8 @@ public sealed class AgentTaskPipelineStatusService
             }
         }
 
-        // CARD-0301 / CARD-0146 S4: lease → sibling land → pin → cap. The dispatcher holds a
+        // CARD-0301 / CARD-0146 S4: shared checkout → sibling land → pin → repository lease →
+        // remote prep → host budget / concurrency cap. The dispatcher holds a
         // card-bound Worktree task (any IsStage pair, and helpers for the same git reason)
         // while a same-card sibling's LandRequestedAt is set (CARD-0331); name that hold here
         // without the Git probes the dispatcher adds.
@@ -432,9 +444,30 @@ public sealed class AgentTaskPipelineStatusService
             queueReason = QueueReasonRoutingPinNotBefore;
         }
 
-        // Lease → sibling land → pin → cap, the reasons the rail can name. The dispatcher itself
-        // checks the cap first and continues, but a task that is also behind a checkout still
-        // reports the checkout.
+        // CARD-1076 D-6. The latest Held row after the task's last Dispatched event, the same
+        // floor as the dispatcher's LoadQueuedHoldIndexAsync. No Git. A live shared-checkout
+        // holder, a sibling land, and a dated pin already outrank this row.
+        if (queueReason == QueueReasonAwaitingDispatch
+            && dispatchHolds.CurrentStintHeld.TryGetValue(task.Id, out var heldDetail))
+        {
+            switch (DispatchHoldDetails.ClassOf(heldDetail))
+            {
+                case DispatchHoldClass.Lease:
+                    queueReason = QueueReasonRepositoryLease;
+                    heldBy = LeaseHolders(task, heldDetail, dispatchHolds);
+                    break;
+                case DispatchHoldClass.RemotePrep:
+                    queueReason = QueueReasonRemotePrep;
+                    // BehindTaskId is the snapshot taken when this task entered the push gate
+                    // (CARD-1093). With three or more waiters it can name a pusher that has
+                    // already finished, or be null. It is not the exact current holder.
+                    heldBy = OneHolder(_remotePrep?.Progress(task.Id)?.BehindTaskId, dispatchHolds.Titles);
+                    break;
+            }
+        }
+
+        // Host budget and the local concurrency cap are last. The dispatcher checks the cap
+        // first and continues, but a task that is also behind a checkout still reports the checkout.
         if (queueReason == QueueReasonAwaitingDispatch
             && task.RunnerId is { Length: > 0 } runnerId
             && limits.GetValueOrDefault(runnerId)?.Effective is int runnerLimit
@@ -460,6 +493,28 @@ public sealed class AgentTaskPipelineStatusService
             task.AgentKind,
             task.ModelLevel,
             task.Workspace);
+    }
+
+    private static IReadOnlyList<AgentTaskPipelineHolderDto> LeaseHolders(
+        TaskRow task, string heldDetail, QueuedDispatchHolds holds)
+    {
+        var owner = DispatchHoldDetails.LeaseOwnerTaskId(DispatchHoldDetails.Reason(heldDetail));
+        if (owner is Guid ownerId)
+            return OneHolder(ownerId, holds.Titles);
+        var key = ScopeResolver.KeyFor(task.RepoPath, task.WorkingDirectory);
+        return holds.RunningLands.TryGetValue(key, out var land)
+            ? OneHolder(land.TaskId, holds.Titles)
+            : [];
+    }
+
+    private static IReadOnlyList<AgentTaskPipelineHolderDto> OneHolder(
+        Guid? id, IReadOnlyDictionary<Guid, string> titles)
+    {
+        if (id is not Guid holder)
+            return [];
+        titles.TryGetValue(holder, out var title);
+        return [new AgentTaskPipelineHolderDto(
+            holder, DelegationReportFormatter.Short(holder), title ?? "")];
     }
 
     private static AgentTaskPipelineInFlightDto ToInFlight(
@@ -510,6 +565,90 @@ public sealed class AgentTaskPipelineStatusService
         cardId is Guid id && cards.TryGetValue(id, out var card)
             ? new AgentTaskPipelineCardRefDto(card.Id, card.Identifier, card.Title)
             : null;
+
+    /// <summary>
+    /// CARD-1076 D-6. One Held/Dispatched query for the current stint, one running-land query,
+    /// and one title lookup. The stint floor is the last Dispatched event, matching
+    /// <c>AgentTaskDispatcher.LoadQueuedHoldIndexAsync</c> (<c>At &gt; floor</c>).
+    /// </summary>
+    private async Task<QueuedDispatchHolds> LoadQueuedDispatchHoldsAsync(
+        List<TaskRow> queued, CancellationToken ct)
+    {
+        if (queued.Count == 0)
+            return QueuedDispatchHolds.Empty;
+
+        var ids = queued.Select(t => t.Id).ToList();
+        var rows = await _db.AgentTaskEvents.AsNoTracking()
+            .Where(e => ids.Contains(e.AgentTaskId)
+                && (e.Type == AgentTaskEventType.Held || e.Type == AgentTaskEventType.Dispatched))
+            .Select(e => new { e.AgentTaskId, e.At, e.Id, e.Type, e.Detail })
+            .ToListAsync(ct);
+
+        var currentHeld = new Dictionary<Guid, string>();
+        foreach (var group in rows.GroupBy(e => e.AgentTaskId))
+        {
+            var floor = DateTime.MinValue;
+            foreach (var row in group)
+            {
+                if (row.Type == AgentTaskEventType.Dispatched && row.At > floor)
+                    floor = row.At;
+            }
+
+            var latest = group
+                .Where(e => e.Type == AgentTaskEventType.Held && e.At > floor && e.Detail != null)
+                .OrderByDescending(e => e.At)
+                .ThenByDescending(e => e.Id)
+                .FirstOrDefault();
+            if (latest?.Detail is not null)
+                currentHeld[group.Key] = latest.Detail;
+        }
+
+        var landRows = await (
+            from request in _db.AgentTaskLandRequests.AsNoTracking()
+            where request.IsPending && request.State == LandRequestState.Running
+            join task in _db.AgentTasks.AsNoTracking() on request.TaskId equals task.Id
+            select new { task.Id, task.RepoPath, task.WorkingDirectory, request.StartedAt })
+            .ToListAsync(ct);
+        var runningLands = landRows
+            .Select(r => new RunningLandHolder(r.Id, r.RepoPath, r.WorkingDirectory, r.StartedAt))
+            .GroupBy(r => ScopeResolver.KeyFor(r.RepoPath, r.WorkingDirectory), StringComparer.Ordinal)
+            .ToDictionary(
+                g => g.Key,
+                g => g.OrderBy(r => r.StartedAt ?? DateTime.MaxValue).ThenBy(r => r.TaskId).First(),
+                StringComparer.Ordinal);
+
+        var holderIds = new List<Guid>();
+        foreach (var task in queued)
+        {
+            if (!currentHeld.TryGetValue(task.Id, out var detail))
+                continue;
+            switch (DispatchHoldDetails.ClassOf(detail))
+            {
+                case DispatchHoldClass.Lease:
+                    var owner = DispatchHoldDetails.LeaseOwnerTaskId(DispatchHoldDetails.Reason(detail));
+                    if (owner is Guid ownerId)
+                        holderIds.Add(ownerId);
+                    else if (runningLands.TryGetValue(
+                        ScopeResolver.KeyFor(task.RepoPath, task.WorkingDirectory), out var land))
+                        holderIds.Add(land.TaskId);
+                    break;
+                case DispatchHoldClass.RemotePrep:
+                    if (_remotePrep?.Progress(task.Id)?.BehindTaskId is Guid behind)
+                        holderIds.Add(behind);
+                    break;
+            }
+        }
+
+        var distinct = holderIds.Distinct().ToList();
+        var titles = distinct.Count == 0
+            ? new Dictionary<Guid, string>()
+            : await _db.AgentTasks.AsNoTracking()
+                .Where(t => distinct.Contains(t.Id))
+                .Select(t => new { t.Id, t.Title })
+                .ToDictionaryAsync(t => t.Id, t => t.Title, ct);
+
+        return new QueuedDispatchHolds(currentHeld, runningLands, titles);
+    }
 
     /// <summary>
     /// CARD-0331: pending lands are <c>LandRequestedAt != null</c> on Succeeded/Blocked Worktree
@@ -610,6 +749,20 @@ public sealed class AgentTaskPipelineStatusService
         bool CapacityWaitRetained = false);
 
     private sealed record SiblingLandRow(Guid Id, string Title, Guid CardId, DateTime LandRequestedAt);
+
+    private sealed record RunningLandHolder(
+        Guid TaskId, string? RepoPath, string WorkingDirectory, DateTime? StartedAt);
+
+    private sealed record QueuedDispatchHolds(
+        Dictionary<Guid, string> CurrentStintHeld,
+        Dictionary<string, RunningLandHolder> RunningLands,
+        Dictionary<Guid, string> Titles)
+    {
+        public static QueuedDispatchHolds Empty { get; } = new(
+            new Dictionary<Guid, string>(),
+            new Dictionary<string, RunningLandHolder>(StringComparer.Ordinal),
+            new Dictionary<Guid, string>());
+    }
 
     private sealed record CardRow(
         Guid Id, Guid BoardId, string Identifier, string Title, CardStatus Status,

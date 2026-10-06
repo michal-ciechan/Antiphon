@@ -135,7 +135,12 @@ public sealed class RemoteWorkspacePreparer : IAsyncDisposable
         return false;
     }
 
-    /// <summary>CARD-1076 D-4. Null when <paramref name="taskId"/> has no preparation in flight.</summary>
+    /// <summary>
+    /// CARD-1076 D-4. Null when <paramref name="taskId"/> has no preparation in flight.
+    /// <see cref="RemotePrepProgress.BehindTaskId"/> is the enqueue-time snapshot (CARD-1093):
+    /// with three or more tasks waiting on one repository it can name a pusher that has already
+    /// finished, or be null. It is not the exact current holder.
+    /// </summary>
     public RemotePrepProgress? Progress(Guid taskId)
     {
         if (!_inFlight.TryGetValue(taskId, out var entry))
