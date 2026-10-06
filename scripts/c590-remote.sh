@@ -4733,8 +4733,23 @@ c1008_bind_generation() {
             [ "$stack" = "$saved_sha" ] || [ "$stack" = "$SHA" ] || c1008_refuse RecycleResumeMismatch
             C1008_PREVIOUS_SHA="$saved_sha"
         else
-            c1008_capture_json "$CASE_DIR/generation.json" c1008_previous_generation "$C1008_PROJECT" "$gen_owned"
-            [ "${C1008_PREVIOUS_SHA:-}" = "$saved_sha" ] || c1008_refuse RecycleResumeMismatch
+            # A crashed removal can resume after the session-runner is already gone.
+            # Its image identity was journaled before docker rm; re-derive only while it remains.
+            runners="$(printf '%s' "$gen_owned" | jq -er '[.[] | select(.Config.Labels["com.docker.compose.service"]=="session-runner")] | length')" \
+                || c1008_refuse RecycleGenerationUnknown
+            if [ "$runners" = 0 ]; then
+                if [ -n "$saved_sha" ]; then
+                    stack="$(c1008_stack_revision)"
+                    [ "$stack" = "$saved_sha" ] || c1008_refuse RecycleResumeMismatch
+                    printf '%s' "$gen_owned" | jq -e --argjson saved "$C1008_RECORD" \
+                        'all(.[]; .Image==$saved.generation.imageId)' >/dev/null \
+                        || c1008_refuse RecycleGenerationMismatch
+                fi
+                C1008_PREVIOUS_SHA="$saved_sha"
+            else
+                c1008_capture_json "$CASE_DIR/generation.json" c1008_previous_generation "$C1008_PROJECT" "$gen_owned"
+                [ "${C1008_PREVIOUS_SHA:-}" = "$saved_sha" ] || c1008_refuse RecycleResumeMismatch
+            fi
         fi
     else
         c1008_capture_json "$CASE_DIR/generation.json" c1008_previous_generation "$C1008_PROJECT" "$gen_owned"
