@@ -244,8 +244,7 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
                     note.Kind, row.LastDeliveryBaselineSequence, row.LastDeliveryStartedAt,
                     (supervision?.Value ?? new SupervisionSettings()).DeliveryVerification.UnobservableBaselineConfirmClockToleranceSeconds);
                 if (prompts is null) return;
-                var evidence = (await prompts.OrderBy(p => p.Sequence).ToListAsync(ct))
-                    .FirstOrDefault(p => LandNoteReceipt.IsReceipt(expected, p.Text!));
+                var evidence = await LandNoteReceipt.FirstReceiptAsync(prompts, expected, ct);
                 // A pointer prompt proves receipt of the pointer only; the referenced file must still
                 // hold exactly the content that was spilled behind it.
                 if (evidence is not null && rendering?.SpillPath is { } spillPath
@@ -255,11 +254,11 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
                     note.LastErrorAt = now;
                     evidence = null;
                 }
-                if (evidence is not null)
+                if (evidence is { } hit)
                 {
                     if (boundary is not null) await boundary.ReachedAsync("receipt-before-save", note.TaskId, note.Id, ct);
                     note.ConfirmedAt = now;
-                    note.ConfirmingPromptSequence = evidence.Sequence;
+                    note.ConfirmingPromptSequence = hit.Sequence;
                     note.State = LandNotificationState.Confirmed;
                     note.LastErrorCode = null;
                 }

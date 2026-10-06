@@ -1,6 +1,7 @@
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.SessionRunner.Contracts;
+using Microsoft.EntityFrameworkCore;
 
 namespace Antiphon.Server.Application.Services;
 
@@ -50,8 +51,31 @@ internal static class LandNoteReceipt
         return null;
     }
 
+    /// <summary>
+    /// CARD-1073. Same rows as <see cref="Prompts"/>, in sequence order, projecting sequence and
+    /// text only and stopping at the first <see cref="IsReceipt"/> match.
+    /// </summary>
+    public static async Task<ReceiptPrompt?> FirstReceiptAsync(
+        IQueryable<TranscriptEntry> prompts, string expected, CancellationToken ct)
+    {
+        await foreach (var row in prompts
+            .OrderBy(p => p.Sequence)
+            .Select(p => new { p.Sequence, p.Text })
+            .AsAsyncEnumerable()
+            .WithCancellation(ct))
+        {
+            if (row.Text is not null && IsReceipt(expected, row.Text))
+                return new ReceiptPrompt(row.Sequence, row.Text);
+        }
+
+        return null;
+    }
+
     /// <summary>Identity (head window) and completeness (whole expected text), CARD-0055/CARD-0024.</summary>
     public static bool IsReceipt(string expected, string promptText) =>
         PromptSubmissionMatch.IsConfirmedBy(expected, promptText)
         && PromptSubmissionMatch.IsCompleteIn(expected, promptText);
 }
+
+/// <summary>CARD-1073. Sequence and text of one candidate prompt. Not a tracked entity.</summary>
+internal readonly record struct ReceiptPrompt(long Sequence, string Text);
