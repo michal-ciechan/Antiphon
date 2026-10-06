@@ -894,6 +894,10 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
     builder.Services.AddHostedService<PhoneHomeRecoveryPump>();
     builder.Services.AddHostedService<RunnerAlarmHostedService>();
     builder.Services.AddHostedService<HostStatsPollService>();
+    // CARD-1079: occupancy samples. Detection only; the sampler never stops or releases a session.
+    builder.Services.AddSingleton<SeatOccupancyState>();
+    builder.Services.AddScoped<SeatOccupancySampler>();
+    builder.Services.AddHostedService<SeatOccupancyHostedService>();
 
     // CARD-0298: Hangfire storage is always registered (dashboard + job serialization). The worker
     // is the dangerous bit — it must not WMI-scan or call the runner from a test Program boot.

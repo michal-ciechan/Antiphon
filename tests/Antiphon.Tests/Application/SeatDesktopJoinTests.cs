@@ -3,6 +3,7 @@ using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Tests.TestHelpers;
+using Microsoft.EntityFrameworkCore;
 using Shouldly;
 using TUnit.Core;
 
@@ -250,6 +251,42 @@ public sealed class SeatDesktopJoinTests
         rows[mixedSession].LatestTask.Id.ShouldBe(mixedSucceeded);
         rows[emptySession].OpenTaskId.ShouldBeNull();
         rows[emptySession].LatestTask.ShouldBeNull();
+    }
+
+    [Test]
+    public async Task C1079_Join_latest_task_query_is_grouped_per_session()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var plain = TestDbFixture.CreateDbContextOptions(schema.ConnectionString);
+        var session = Guid.NewGuid();
+        var older = Guid.NewGuid();
+        var newer = Guid.NewGuid();
+        await using (var db = new AppDbContext(plain))
+        {
+            db.AgentSessions.Add(Session(session, SessionStatus.Running));
+            db.AgentTasks.AddRange(
+                TaskRow(older, session, AgentTaskStatus.Succeeded, Now, completedAt: Now.AddMinutes(1)),
+                TaskRow(newer, session, AgentTaskStatus.Blocked, Now.AddMinutes(10)));
+            await db.SaveChangesAsync();
+        }
+
+        var capture = new CountingCommandInterceptor();
+        var options = new DbContextOptionsBuilder<AppDbContext>()
+            .UseNpgsql(schema.ConnectionString, npgsql =>
+            {
+                npgsql.MigrationsAssembly("Antiphon.Server");
+                npgsql.SetPostgresVersion(16, 0);
+            })
+            .AddInterceptors(capture)
+            .Options;
+        await using var read = new AppDbContext(options);
+        var rows = await SeatDesktopJoin.LoadAsync(read, [session], CancellationToken.None);
+        rows[session].LatestTask.ShouldNotBeNull();
+        rows[session].LatestTask!.Id.ShouldBe(newer);
+        capture.Commands.Any(sql =>
+            sql.Contains("GROUP BY", StringComparison.OrdinalIgnoreCase)
+            && sql.Contains("MAX(", StringComparison.OrdinalIgnoreCase)).ShouldBeTrue(
+            string.Join("\n---\n", capture.Commands));
     }
 
     private static AgentSession Session(Guid id, SessionStatus status) => new()
