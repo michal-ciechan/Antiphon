@@ -132,7 +132,8 @@ internal sealed partial class RunnerSeatReleaseFixture : IAsyncDisposable
         bool productionDefaults = false, bool parking = false, bool syncRecovery = false,
         bool reclaim = false,
         int? completionSingleWriteBytes = null,
-        bool syncDebt = true)
+        bool syncDebt = true,
+        int reclaimIntervalSeconds = 120)
     {
         var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 5, 0, 0, 0, TimeSpan.Zero));
@@ -171,7 +172,8 @@ internal sealed partial class RunnerSeatReleaseFixture : IAsyncDisposable
                     services.AddScoped<TerminalRunnerSeatReleaseService>();
                     services.AddSingleton(Options.Create(new BlockedTaskParkingOptions
                     {
-                        Enabled = parking || reclaim, ReclaimExisting = reclaim
+                        Enabled = parking || reclaim, ReclaimExisting = reclaim,
+                        ReclaimIntervalSeconds = reclaimIntervalSeconds
                     }));
                     services.AddScoped<BlockedTaskParkingService>();
                     services.AddSingleton<ITaskProgressGit, TaskParkPublicationTests.ParkGit>();
@@ -329,12 +331,28 @@ internal sealed partial class RunnerSeatReleaseFixture : IAsyncDisposable
 
     public async Task<int> ReclaimAsync(int pageSize = 2, int passBudget = 3,
         Func<string, CancellationToken, Task>? boundary = null)
+        => (await ReclaimResultAsync(pageSize, passBudget, boundary)).Visited;
+
+    public async Task<LegacyReclaimResult> ReclaimResultAsync(int pageSize = 2, int passBudget = 3,
+        Func<string, CancellationToken, Task>? boundary = null)
     {
         using var scope = Harness.Provider.CreateScope();
         var service = scope.ServiceProvider.GetRequiredService<TerminalRunnerSeatReleaseService>();
         service.BoundaryAsync = boundary;
         return await service.ReclaimLegacyAsync(pageSize, passBudget, default);
     }
+
+    public async Task<LegacyReclaimResult> ReclaimScheduledAsync(
+        Func<string, CancellationToken, Task>? boundary = null)
+    {
+        using var scope = Harness.Provider.CreateScope();
+        var service = scope.ServiceProvider.GetRequiredService<TerminalRunnerSeatReleaseService>();
+        service.BoundaryAsync = boundary;
+        return await service.ReclaimScheduledAsync(default);
+    }
+
+    public TerminalRunnerSeatDiscoveryState State =>
+        Harness.Provider.GetRequiredService<TerminalRunnerSeatDiscoveryState>();
 
     public async Task<Guid> AddParentAsync(bool busy)
     {

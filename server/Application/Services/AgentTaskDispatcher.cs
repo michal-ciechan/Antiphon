@@ -7450,7 +7450,7 @@ public sealed class AgentTaskDispatcher
         if (_terminalSeatRelease is not null)
         {
             await _terminalSeatRelease.DiscoverScheduledAsync(ct);
-            await _terminalSeatRelease.ReclaimLegacyAsync(32, 3, ct);
+            await _terminalSeatRelease.ReclaimScheduledAsync(ct);
         }
         if (_settings.PoolReleaseGraceSeconds <= 0)
             return 0;

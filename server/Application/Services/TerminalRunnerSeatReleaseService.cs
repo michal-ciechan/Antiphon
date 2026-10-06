@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Settings;
@@ -20,7 +21,17 @@ public sealed class TerminalRunnerSeatReleaseOptions
 public sealed class TerminalRunnerSeatDiscoveryState
 {
     internal SemaphoreSlim Gate { get; } = new(1, 1);
+    internal SemaphoreSlim LegacyGate { get; } = new(1, 1);
     internal RunnerSeatDiscoveryCursor? Continuation { get; set; }
+    internal DateTimeOffset? NextLegacySweepAt { get; set; }
+    internal DateTimeOffset? LegacySweptAt { get; set; }
+    internal LegacyReclaimResult? LastLegacyReclaim { get; set; }
+}
+
+public sealed record LegacyReclaimResult(
+    int Visited, int Registered, int Released, int Eligible, int Cap, TimeSpan Elapsed)
+{
+    public static LegacyReclaimResult None { get; } = new(0, 0, 0, 0, 0, TimeSpan.Zero);
 }
 
 public sealed record TerminalRunnerSeatReservation(Guid? ReleaseId, TerminalRunnerSeatDecision Decision);
@@ -103,25 +114,40 @@ public sealed class TerminalRunnerSeatReleaseService(
     /// Pages current Blocked tasks that never took the post-commit fast path. Enabled and
     /// ReclaimExisting are both required. Each attempt commits the cursor after it finishes,
     /// including a caught failure, so one poison row cannot pin the page or skip its neighbor.
+    /// One run visits each eligible row at most once and stops at the smaller of the eligible
+    /// count and <paramref name="pageSize"/> times <paramref name="passBudget"/>. The cursor
+    /// still wraps, so the next run continues fairly.
     /// </summary>
-    public async Task<int> ReclaimLegacyAsync(int pageSize, int passBudget, CancellationToken ct)
+    public async Task<LegacyReclaimResult> ReclaimLegacyAsync(int pageSize, int passBudget, CancellationToken ct)
     {
-        if (!ParkingEnabled || parkingOptions?.Value.ReclaimExisting != true || parks is null) return 0;
-        if (db.Database.CurrentTransaction is not null || System.Transactions.Transaction.Current is not null) return 0;
+        if (!ParkingEnabled || parkingOptions?.Value.ReclaimExisting != true || parks is null)
+            return LegacyReclaimResult.None;
+        if (db.Database.CurrentTransaction is not null || System.Transactions.Transaction.Current is not null)
+            return LegacyReclaimResult.None;
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(pageSize);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(passBudget);
+        var started = Stopwatch.StartNew();
+        var eligible = await db.AgentTasks.AsNoTracking()
+            .CountAsync(t => t.Status == AgentTaskStatus.Blocked, ct);
+        var cap = (int)Math.Min(eligible, (long)pageSize * passBudget);
         var visited = 0;
-        for (var pass = 0; pass < passBudget; pass++)
+        var registered = 0;
+        var released = 0;
+        for (var pass = 0; pass < passBudget && visited < cap; pass++)
         {
             var page = await parks.NextLegacyPageAsync(pageSize, ct);
             if (page.Count == 0) break;
             foreach (var taskId in page)
             {
+                if (visited >= cap) break;
                 try
                 {
                     if (BoundaryAsync is not null) await BoundaryAsync("ReclaimList:" + taskId.ToString("D"), ct);
-                    await parks.RegisterLegacyAsync(taskId, ct);
+                    if (await parks.RegisterLegacyAsync(taskId, ct) is not null) registered++;
                     await TryHandleTaskAsync(taskId, ct);
+                    var task = await db.AgentTasks.AsNoTracking().SingleOrDefaultAsync(t => t.Id == taskId, ct);
+                    if (task is not null && IsConfirmed(await FindAttemptReleaseAsync(db, task, ct)))
+                        released++;
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
                 {
@@ -131,7 +157,46 @@ public sealed class TerminalRunnerSeatReleaseService(
                 visited++;
             }
         }
-        return visited;
+        var result = new LegacyReclaimResult(visited, registered, released, eligible, cap, started.Elapsed);
+        logger.LogInformation(
+            "Legacy reclaim visited {Visited}, registered {Registered}, released {Released}, eligible {Eligible}, cap {Cap}, elapsed {ElapsedMs} ms",
+            result.Visited, result.Registered, result.Released, result.Eligible, result.Cap,
+            (long)result.Elapsed.TotalMilliseconds);
+        return result;
+    }
+
+    /// <summary>
+    /// Dispatcher hook and reconcile job. A disabled sweep returns before the gate and before
+    /// any query. Overlap, or an interval that has not elapsed, returns a zero record.
+    /// <see cref="BlockedTaskParkingOptions.ReclaimIntervalSeconds"/> 0 sweeps on every call;
+    /// a negative value is treated as 0. <see cref="ReclaimLegacyAsync"/> stays ungated.
+    /// </summary>
+    public async Task<LegacyReclaimResult> ReclaimScheduledAsync(CancellationToken ct)
+    {
+        var parking = parkingOptions?.Value;
+        if (parking is not { Enabled: true, ReclaimExisting: true } || parks is null)
+            return LegacyReclaimResult.None;
+        if (!await discovery.LegacyGate.WaitAsync(0, ct))
+            return LegacyReclaimResult.None;
+        try
+        {
+            var now = clock.GetUtcNow();
+            if (discovery.NextLegacySweepAt is { } due && now < due)
+                return LegacyReclaimResult.None;
+            var interval = Math.Max(0, parking.ReclaimIntervalSeconds);
+            try
+            {
+                var result = await ReclaimLegacyAsync(32, 3, ct);
+                discovery.LastLegacyReclaim = result;
+                return result;
+            }
+            finally
+            {
+                discovery.NextLegacySweepAt = now.AddSeconds(interval);
+                discovery.LegacySweptAt = now;
+            }
+        }
+        finally { discovery.LegacyGate.Release(); }
     }
 
     public async Task<int> DiscoverScheduledAsync(CancellationToken ct)

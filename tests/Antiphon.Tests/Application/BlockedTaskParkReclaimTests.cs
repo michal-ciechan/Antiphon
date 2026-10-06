@@ -137,7 +137,14 @@ public sealed class BlockedTaskParkReclaimTests
             f.Wire.BySession[missing.SessionId] = Idle(TimeSpan.FromMilliseconds(120_001), AsUtc((await ParkOfAsync(f, missing.TaskId)).CreatedAt));
             f.Wire.BySession[ambiguous.SessionId] = Idle(TimeSpan.FromMilliseconds(120_001), AsUtc((await ParkOfAsync(f, ambiguous.TaskId)).CreatedAt));
             f.Wire.BySession[poison.SessionId] = Idle(TimeSpan.FromMilliseconds(120_001), AsUtc((await ParkOfAsync(f, poison.TaskId)).CreatedAt));
-            await f.ReclaimAsync(32, 1);
+            var releasing = await f.ReclaimResultAsync(32, 1);
+            await using (var ledger = f.Db())
+            {
+                var confirmed = (await ledger.RunnerSeatReleases.AsNoTracking().ToListAsync())
+                    .Count(TerminalRunnerSeatReleaseService.IsConfirmed);
+                releasing.Released.ShouldBe(confirmed, "G-7");
+                releasing.Released.ShouldBe(2, "V-23");
+            }
 
             f.Wire.Requests.Count(r => r.ParkVersion == 2).ShouldBe(2, "V-23");
             Released(f, f.SessionId).ShouldBeTrue("V-23");
@@ -266,6 +273,183 @@ public sealed class BlockedTaskParkReclaimTests
         await SessionRunningAsync(f, second.SessionId, "V-1");
         f.Wire.Requests.Count(r => r.ParkVersion == 2).ShouldBe(1, "V-1");
         f.Wire.ForceCommands.ShouldBe(0, "V-1");
+    }
+
+    [Test]
+    public async Task C1108_ScheduledSweepIsGatedAndBoundedPerRun()
+    {
+        await using (var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked, parking: true, reclaim: true))
+        {
+            f.Wire.Qualified = Idle(TimeSpan.Zero, null);
+            var extra = new Row[4];
+            for (var i = 0; i < extra.Length; i++)
+                extra[i] = await SeedBlockedAsync(f, "gate-" + i);
+            var blocked = new[] { f.TaskId, extra[0].TaskId, extra[1].TaskId, extra[2].TaskId, extra[3].TaskId };
+            var working = await SeedBlockedAsync(f, "working-seat", status: AgentTaskStatus.Working, completed: false);
+
+            var first = await f.ReclaimScheduledAsync();
+            first.Visited.ShouldBe(5, "G-4");
+            first.Eligible.ShouldBe(5, "G-4");
+            first.Cap.ShouldBe(5, "G-4");
+            first.Registered.ShouldBe(5, "V-2");
+            first.Released.ShouldBe(0, "G-7");
+            foreach (var id in blocked)
+                (await ParkCountAsync(f, id)).ShouldBe(1, "V-2");
+            (await ParkCountAsync(f, working.TaskId)).ShouldBe(0, "V-2");
+            await SessionRunningAsync(f, working.SessionId, "V-2");
+            await using (var db = f.Db())
+                (await db.AgentTasks.SingleAsync(t => t.Id == working.TaskId)).Status
+                    .ShouldBe(AgentTaskStatus.Working, "V-2");
+
+            var cursor = await CursorAsync(f);
+            cursor.ShouldNotBeNull("G-3");
+            var marked = cursor.AfterTaskId;
+            var second = await f.ReclaimScheduledAsync();
+            second.ShouldBe(LegacyReclaimResult.None, "G-3");
+            (await CursorAsync(f))!.AfterTaskId.ShouldBe(marked, "G-3");
+            foreach (var id in blocked)
+                (await ParkCountAsync(f, id)).ShouldBe(1, "G-3");
+
+            f.Clock.Advance(TimeSpan.FromSeconds(120));
+            var third = await f.ReclaimScheduledAsync();
+            third.Visited.ShouldBe(5, "V-2");
+            third.Eligible.ShouldBe(5, "V-2");
+            foreach (var id in blocked)
+                (await ParkCountAsync(f, id)).ShouldBe(1, "V-2");
+
+            var beforeHold = (await CursorAsync(f))!.AfterTaskId;
+            (await f.State.LegacyGate.WaitAsync(0)).ShouldBeTrue("G-3");
+            try
+            {
+                var held = await f.ReclaimScheduledAsync();
+                held.ShouldBe(LegacyReclaimResult.None, "G-3");
+                (await CursorAsync(f))!.AfterTaskId.ShouldBe(beforeHold, "G-3");
+            }
+            finally { f.State.LegacyGate.Release(); }
+        }
+
+        await using (var rapid = await RunnerSeatReleaseFixture.CreateAsync(
+            AgentTaskStatus.Blocked, parking: true, reclaim: true, reclaimIntervalSeconds: 0))
+        {
+            rapid.Wire.Qualified = Idle(TimeSpan.Zero, null);
+            for (var i = 0; i < 4; i++)
+                await SeedBlockedAsync(rapid, "rapid-" + i);
+            var opened = await rapid.ReclaimScheduledAsync();
+            var again = await rapid.ReclaimScheduledAsync();
+            opened.Visited.ShouldBe(5, "V-2");
+            again.Visited.ShouldBe(5, "V-2");
+            again.Released.ShouldBe(0, "G-7");
+        }
+
+        await using (var ungated = await RunnerSeatReleaseFixture.CreateAsync(
+            AgentTaskStatus.Blocked, parking: true, reclaim: true))
+        {
+            ungated.Wire.Qualified = Idle(TimeSpan.Zero, null);
+            for (var i = 0; i < 7; i++)
+                await SeedBlockedAsync(ungated, "budget-" + i);
+            var budget = await ungated.ReclaimResultAsync(2, 3);
+            budget.Visited.ShouldBe(6, "V-23");
+            budget.Eligible.ShouldBe(8, "V-23");
+            budget.Cap.ShouldBe(6, "V-23");
+        }
+
+        await using (var crash = await RunnerSeatReleaseFixture.CreateAsync(
+            AgentTaskStatus.Blocked, parking: true, reclaim: true))
+        {
+            crash.Wire.Qualified = Idle(TimeSpan.Zero, null);
+            var extras = new Row[4];
+            for (var i = 0; i < extras.Length; i++)
+                extras[i] = await SeedBlockedAsync(crash, "crash-" + i);
+            var poisoned = false;
+            var first = await crash.ReclaimScheduledAsync((name, _) =>
+            {
+                if (name != "ReclaimList:" + crash.TaskId.ToString("D") || poisoned)
+                    return Task.CompletedTask;
+                poisoned = true;
+                throw new InvalidOperationException("injected reclaim failure");
+            });
+            poisoned.ShouldBeTrue("G-174");
+            first.Visited.ShouldBe(5, "G-174");
+            first.Released.ShouldBe(0, "G-174");
+            (await ParkCountAsync(crash, crash.TaskId)).ShouldBe(0, "G-174");
+            foreach (var row in extras)
+                (await ParkCountAsync(crash, row.TaskId)).ShouldBe(1, "G-174");
+            (await CursorAsync(crash)).ShouldNotBeNull("G-174");
+            await SessionRunningAsync(crash, crash.SessionId, "G-174");
+
+            crash.Clock.Advance(TimeSpan.FromSeconds(120));
+            var recovered = await crash.ReclaimScheduledAsync();
+            recovered.Visited.ShouldBe(5, "G-174");
+            (await ParkCountAsync(crash, crash.TaskId)).ShouldBe(1, "G-174");
+        }
+    }
+
+    [Test]
+    public async Task C1108_ReconcileJobCountsOnlyReleases()
+    {
+        await using var job = await RunnerSeatReleaseFixture.CreateAsync(
+            AgentTaskStatus.Blocked, parking: true, reclaim: true);
+        job.Wire.Qualified = Idle(TimeSpan.Zero, null);
+        var returned = await job.JobAsync();
+        returned.ShouldBe(0, "G-6");
+        var record = job.State.LastLegacyReclaim.ShouldNotBeNull("V-3");
+        record.Visited.ShouldBe(1, "V-3");
+        record.Released.ShouldBe(0, "G-7");
+        var parks = await ParksAsync(job);
+        parks.Count.ShouldBe(1, "V-3");
+        parks.Single().LegacyDiscovery.ShouldBeTrue("V-3");
+        await using var db = job.Db();
+        (await db.RunnerSeatReleases.AsNoTracking().ToListAsync())
+            .Count(TerminalRunnerSeatReleaseService.IsConfirmed).ShouldBe(0, "G-7");
+    }
+
+    [Test]
+    public async Task C1108_DispatcherHookRunsTheGatedSweep()
+    {
+        await using (var f = await RunnerSeatReleaseFixture.CreateAsync(
+            AgentTaskStatus.Blocked, parking: true, reclaim: true))
+        {
+            f.Wire.Qualified = Idle(TimeSpan.Zero, null);
+            var now = f.Clock.GetUtcNow();
+            await f.SweepAsync();
+            var parks = await ParksAsync(f);
+            parks.Count.ShouldBe(1, "V-4");
+            parks.Single().LegacyDiscovery.ShouldBeTrue("V-4");
+            f.State.LegacySweptAt.ShouldBe(now, "V-4");
+            var recorded = f.State.LastLegacyReclaim.ShouldNotBeNull("V-4");
+            recorded.Visited.ShouldBe(1, "V-4");
+            recorded.Registered.ShouldBe(1, "V-4");
+            recorded.Released.ShouldBe(0, "G-7");
+
+            await f.SweepAsync();
+            (await ParksAsync(f)).Count.ShouldBe(1, "G-3");
+            f.State.LegacySweptAt.ShouldBe(now, "G-3");
+            f.State.LastLegacyReclaim.ShouldBe(recorded, "G-3");
+        }
+
+        await using (var reclaimOff = await RunnerSeatReleaseFixture.CreateAsync(
+            AgentTaskStatus.Blocked, parking: true, reclaim: false))
+        {
+            reclaimOff.Wire.Qualified = Idle(TimeSpan.Zero, null);
+            await reclaimOff.SweepAsync();
+            (await ParksAsync(reclaimOff)).Count.ShouldBe(0, "G-5");
+            reclaimOff.State.LegacySweptAt.ShouldBeNull("G-5");
+            reclaimOff.State.NextLegacySweepAt.ShouldBeNull("G-5");
+            reclaimOff.State.LastLegacyReclaim.ShouldBeNull("G-5");
+            (await CursorAsync(reclaimOff)).ShouldBeNull("G-5");
+        }
+
+        await using (var disabled = await RunnerSeatReleaseFixture.CreateAsync(
+            AgentTaskStatus.Blocked, parking: false, reclaim: false))
+        {
+            disabled.Wire.Qualified = Idle(TimeSpan.Zero, null);
+            await disabled.SweepAsync();
+            (await ParksAsync(disabled)).Count.ShouldBe(0, "G-5");
+            disabled.State.LegacySweptAt.ShouldBeNull("G-5");
+            disabled.State.NextLegacySweepAt.ShouldBeNull("G-5");
+            disabled.State.LastLegacyReclaim.ShouldBeNull("G-5");
+            (await CursorAsync(disabled)).ShouldBeNull("G-5");
+        }
     }
 
     [Test]
