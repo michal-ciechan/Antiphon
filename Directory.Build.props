@@ -25,6 +25,21 @@
   </PropertyGroup>
 
   <!--
+    CARD-0795: an isolated build (OutputPath=bin-<name>/, the shape every delegate build,
+    scripts/run-checkpoint.ps1, the checkpoint tool and build-slot.ps1 callers use) compiles each
+    project in its own short-lived csc child of its MSBuild node instead of the one per-user shared
+    VBCSCompiler, so concurrent builds stop sharing one unattributable compiler process and each
+    compile dies with its build. bin/ builds (the daemons, restart-apphost.ps1), artifacts-path
+    builds (the land verifier) and operator shells keep the SDK default. An explicit
+    UseSharedCompilation (command line or environment) wins; deleting this group is the rollback.
+    Owner: docs/testing-and-build.md "Build slots (CARD-0589)".
+  -->
+  <PropertyGroup>
+    <AntiphonIsolatedOutput Condition="'$(AntiphonIsolatedOutput)' == '' and $([System.String]::Copy('$(OutputPath)').StartsWith('bin-'))">true</AntiphonIsolatedOutput>
+    <UseSharedCompilation Condition="'$(UseSharedCompilation)' == '' and '$(AntiphonIsolatedOutput)' == 'true'">false</UseSharedCompilation>
+  </PropertyGroup>
+
+  <!--
     Runs before the SDK's empty InitializeSourceControlInformation target. WorkingDirectory
     is this file's directory (the repo root), not the project folder, so nested projects
     still stamp the same commit.
