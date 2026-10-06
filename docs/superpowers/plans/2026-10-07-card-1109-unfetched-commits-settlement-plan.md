@@ -371,7 +371,10 @@ N `[Arguments]` rows contributes N. Rosters counted at `3687e07bc`: `RunnerSettl
 `SettlementSyncDebtPolicyTests`, 1 to `SettlementSyncRecoveryTests` and 1 to
 `RunnerBranchContractDocumentationTests`, S7 adds 1 to `ReviewEvidenceResettlementTests`; a row whose
 count depends on one of those says so, and the Code report states which had landed at its base SHA.
-Confirm the TRX roster equals the expected set, not merely at least `Min`.
+Confirm the TRX roster equals the expected set, not merely at least `Min`. The table below was
+validated at planning time with the checkpoint importer (`import --plan`, tool built through
+`scripts/build-slot.ps1` to `bin-c1109-driver/`, then deleted): 12 rows, exit 0, no advisory
+warnings; every derived row timeout is at or under 45 minutes (CP-6 is exactly 45).
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
