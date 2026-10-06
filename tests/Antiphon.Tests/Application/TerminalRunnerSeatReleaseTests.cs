@@ -124,7 +124,7 @@ public class TerminalRunnerSeatReleaseTests
     }
 
     [Test]
-    public async Task Blocked_report_with_running_runner_frees_the_seat()
+    public async Task Blocked_report_with_running_runner_requires_a_published_park()
     {
         foreach (var syncBlock in new[] { false, true })
         {
@@ -152,11 +152,16 @@ public class TerminalRunnerSeatReleaseTests
             await f.JobAsync();
             f.Live.Clock.Advance(TimeSpan.FromSeconds(120));
             await f.JobAsync();
-            f.Live.Child.Kills.ShouldBe(1); f.Live.Runtime.LiveSessionCount.ShouldBe(0);
+            // CARD-1065 D-3 supersedes the publication-free CARD-0667 expectation.
+            // Parking is off in this legacy fixture: a report and idle runner alone
+            // cannot authorize releasing a Blocked task's unpublished source.
+            f.Live.Child.Kills.ShouldBe(0); f.Live.Runtime.LiveSessionCount.ShouldBe(1);
+            f.Live.ConditionalCommands.ShouldBe(0);
             f.RecordedStops.Killed.ShouldBeEmpty();
             await using var db = f.Db();
             var row = await db.AgentSessions.SingleAsync(s => s.Id == f.SessionId);
-            row.Status.ShouldBe(SessionStatus.Stopped); row.TerminationSource.ShouldBe(SessionTerminationSource.SystemRequest);
+            row.Status.ShouldBe(SessionStatus.Running);
+            (await db.AgentTaskParks.CountAsync()).ShouldBe(0, "parking remains default-off");
             var task = await f.TaskAsync();
             task.Status.ShouldBe(AgentTaskStatus.Blocked); task.Result.ShouldContain("Complete seat report canary.");
             task.WorktreeBranch.ShouldBe("feat/retained"); Directory.Exists(task.WorktreePath).ShouldBeTrue();

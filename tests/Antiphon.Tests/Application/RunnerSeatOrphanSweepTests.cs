@@ -28,6 +28,19 @@ public class RunnerSeatOrphanSweepTests
             await f.JobAsync();
             f.Live.Clock.Advance(TimeSpan.FromSeconds(120));
             await f.SweepAsync();
+            if (status == AgentTaskStatus.Blocked)
+            {
+                // CARD-1065 D-3: discovery may not bypass publication or enable
+                // parking. This legacy fixture deliberately leaves parking off.
+                f.Live.Child.Kills.ShouldBe(0);
+                f.Live.ConditionalCommands.ShouldBe(0); f.Live.ForceCommands.ShouldBe(0);
+                f.Live.Runtime.LiveSessionCount.ShouldBe(1);
+                await using var held = f.Db();
+                (await held.AgentSessions.SingleAsync(s => s.Id == f.SessionId)).Status.ShouldBe(SessionStatus.Running);
+                (await held.RunnerSeatReleases.AnyAsync(r => r.State == RunnerSeatReleaseState.Confirmed)).ShouldBeFalse();
+                (await held.AgentTaskParks.CountAsync()).ShouldBe(0, "parking remains default-off");
+                continue;
+            }
             f.Live.Child.Kills.ShouldBe(1, status.ToString());
             f.Live.ConditionalCommands.ShouldBe(1); f.Live.ForceCommands.ShouldBe(0);
             await using var db = f.Db();
