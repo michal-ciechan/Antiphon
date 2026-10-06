@@ -4000,7 +4000,7 @@ c1008_tasks() {
 }
 
 c1008_tasks_collect() {
-    local pass kind path scope envelope excluded id row detail previous='' snapshot scopes rows pending counts land closures status
+    local pass kind path scope envelope excluded id row detail previous='' snapshot scopes rows pending counts land closures status field
     for pass in 1 2; do
         closures='{}'
         for kind in open land; do
@@ -4017,21 +4017,35 @@ c1008_tasks_collect() {
             if [ "$kind" = open ]; then path+='&status=Queued,Dispatched,Working,Blocked'; else path+='&landPending=true'; fi
             c1008_http "$path" || return 2
             envelope="$C1008_HTTP_BODY"
-            C1008_TASK_ERROR="RecycleTaskCensusUnknown cause=Malformed field=envelope path=$path"
-            printf '%s' "$envelope" | jq -e --arg scope "$scope" '
-                (.items|type)=="array" and (.excluded.byProject|type)=="array" and
-                .scope.projectId==$scope and .scope.unscoped=="include" and
-                (.excluded.total|type)=="number" and .excluded.total>=0 and (.excluded.total|floor)==.excluded.total and
-                .excluded.unscoped==0 and (.excluded.unscoped|type)=="number" and
-                all(.excluded.byProject[]; (.projectId|type)=="string" and
-                  (.projectId|test("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")) and
-                  .projectId!=$scope and (.count|type)=="number" and .count>0 and (.count|floor)==.count) and
-                ([.excluded.byProject[].projectId]|length)==([.excluded.byProject[].projectId]|unique|length) and
-                ([.excluded.byProject[].count]|add // 0)==.excluded.total' >/dev/null || return 2
+            field="$(printf '%s' "$envelope" | jq -r --arg scope "$scope" '
+                def guid: if type=="string" then test("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$") else false end;
+                def count: if type=="number" then .>=0 and floor==. else false end;
+                if type!="object" then "envelope"
+                elif (.items|type)!="array" then "items"
+                elif (.scope|type)!="object" then "scope"
+                elif (.excluded|type)!="object" then "excluded"
+                elif (.excluded.byProject|type)!="array" then "excluded.byProject"
+                elif .scope.projectId!=$scope then "scope.projectId"
+                elif .scope.unscoped!="include" then "scope.unscoped"
+                elif (.excluded.total|count|not) then "excluded.total"
+                elif .excluded.unscoped!=0 or (.excluded.unscoped|type)!="number" then "excluded.unscoped"
+                else
+                    ([.excluded.byProject[] |
+                        if type!="object" then "excluded.byProject.projectId"
+                        elif (.projectId|guid|not) or .projectId==$scope then "excluded.byProject.projectId"
+                        elif (.count|count|not) or .count==0 then "excluded.byProject.count"
+                        else empty end] | first) as $bad |
+                    if $bad!=null then $bad
+                    elif ([.excluded.byProject[].projectId]|length)!=([.excluded.byProject[].projectId]|unique|length) then "excluded.byProject.projectId"
+                    elif ([.excluded.byProject[].count]|add // 0)!=.excluded.total then "excluded.total"
+                    else "" end
+                end' 2>/dev/null)" || field=envelope
+            C1008_TASK_ERROR="RecycleTaskCensusUnknown cause=Malformed field=$field path=$path"
+            [ -z "$field" ] || return 2
             while IFS= read -r row; do
                 id="$(printf '%s' "$row" | jq -r .projectId)"
                 C1008_TASK_ERROR="RecycleTaskCensusUnknown cause=Malformed field=excluded.byProject.count path=$path"
-        printf '%s' "$counts" | jq -e --arg id "$id" --argjson row "$row" 'has($id) and .[$id]!=$row.count' >/dev/null && return 2
+                printf '%s' "$counts" | jq -e --arg id "$id" --argjson row "$row" 'has($id) and .[$id]!=$row.count' >/dev/null && return 2
                 counts="$(printf '%s' "$counts" | jq -c --arg id "$id" --argjson row "$row" '.[$id]=$row.count')" || return 2
             done < <(printf '%s' "$envelope" | jq -c '.excluded.byProject[]')
             snapshot="$(printf '%s' "$snapshot" | jq -c --arg scope "$scope" --argjson envelope "$envelope" \
@@ -4040,18 +4054,26 @@ c1008_tasks_collect() {
             if [ -n "$excluded" ]; then pending="${pending:+$pending$'\n'}$excluded"; fi
             while IFS= read -r row; do
                 [ -n "$row" ] || continue
-                C1008_TASK_ERROR="RecycleTaskCensusUnknown cause=Malformed field=task path=$path"
-                printf '%s' "$row" | jq -e --arg scope "$scope" '
+                field="$(printf '%s' "$row" | jq -r --arg scope "$scope" '
+                    def guid: if type=="string" then test("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$") else false end;
                     def stamp: .==null or (type=="string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,7})?(Z|[+-][0-9]{2}:[0-9]{2})$"));
-                    (.runnerId==null or (.runnerId|type)=="string") and
-                    (.landRequestedAt|stamp) and (.landStartedAt|stamp) and
-                    has("id") and has("status") and has("runnerId") and has("projectId") and has("scopeSource") and
-                    has("landRequestedAt") and has("landStartedAt") and (.id|type)=="string" and
-                    (.status as $s | ["Queued","Dispatched","Working","Blocked","Succeeded","Failed","Canceled"]|index($s)!=null) and
-                    (.scopeSource as $s | ["Task","Card","None"]|index($s)!=null) and
-                    (if .scopeSource=="None" then .projectId==null else .projectId==$scope end)' >/dev/null || return 2
-                id="$(printf '%s' "$row" | jq -r .id)"; [[ "$id" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || return 2
+                    if type!="object" then "task"
+                    else (["id","status","runnerId","projectId","scopeSource","landRequestedAt","landStartedAt"] - keys_unsorted | first) as $missing |
+                        if $missing!=null then $missing
+                        elif (.id|guid|not) then "id"
+                        elif (.status as $s | ["Queued","Dispatched","Working","Blocked","Succeeded","Failed","Canceled"]|index($s)==null) then "status"
+                        elif .runnerId!=null and (.runnerId|type)!="string" then "runnerId"
+                        elif (.scopeSource as $s | ["Task","Card","None"]|index($s)==null) then "scopeSource"
+                        elif (if .scopeSource=="None" then .projectId!=null else .projectId!=$scope end) then "projectId"
+                        elif (.landRequestedAt|stamp|not) then "landRequestedAt"
+                        elif (.landStartedAt|stamp|not) then "landStartedAt"
+                        else "" end
+                    end' 2>/dev/null)" || field=task
+                C1008_TASK_ERROR="RecycleTaskCensusUnknown cause=Malformed field=$field path=$path"
+                [ -z "$field" ] || return 2
+                id="$(printf '%s' "$row" | jq -r .id)"
                 row="$(printf '%s' "$row" | jq -c '{id,status,runnerId,projectId,scopeSource,landRequestedAt,landStartedAt}')"
+                C1008_TASK_ERROR="RecycleTaskCensusUnknown cause=Malformed field=id path=$path"
                 printf '%s' "$rows" | jq -e --arg id "$id" --argjson row "$row" \
                     'has($id) and .[$id]!=$row' >/dev/null && return 2
                 rows="$(printf '%s' "$rows" | jq -c --arg id "$id" --argjson row "$row" '.[$id]=$row')"
