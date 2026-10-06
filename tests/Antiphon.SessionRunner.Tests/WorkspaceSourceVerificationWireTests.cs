@@ -145,7 +145,7 @@ public sealed class WorkspaceSourceVerificationWireTests
             world.AssertReleased(expectedKills: branch == "exited" ? 0 : 1);
             AssertNoPush(world, "G-212 valid proof");
             if (mode == WorkspaceParkSourceMode.NoSourceChanges)
-                world.Source.Commands.ShouldNotContain(c => c[0] is "remote" or "ls-remote", "NoSourceChanges reads no endpoint");
+                world.Source.Commands.ShouldNotContain(c => c[0] == "remote" || c[0] == "ls-remote", "NoSourceChanges reads no endpoint");
         }
 
         foreach (var mode in new[] { WorkspaceParkSourceMode.Published, WorkspaceParkSourceMode.NoSourceChanges })
@@ -181,7 +181,7 @@ public sealed class WorkspaceSourceVerificationWireTests
                 case "path":
                     // Another clean checkout in the SAME common directory is still not this session.
                     var other = Path.Combine(world.Source.Root, "other-checkout");
-                    await world.Source.GitAsync(world.Source.Repo, "worktree", "add", "--detach", other, world.Source.BaseSha);
+                    await world.Source.GitAsync(world.Source.Repo, "worktree", "add", "--force", other, World.Branch);
                     receipt = receipt with { Request = receipt.Request with { Path = other } };
                     break;
                 case "mode": receipt = receipt with { RemoteSha = mode == WorkspaceParkSourceMode.Published ? null : receipt.SourceSha }; break;
@@ -204,6 +204,21 @@ public sealed class WorkspaceSourceVerificationWireTests
             if (branch == "exited") world.HasManifest.ShouldBeTrue("G-216 exited verification retains metadata");
             if (defect is "mode" or "path") world.Source.Commands.Count.ShouldBe(0, guard + " before Git");
             AssertNoPush(world, "G-212 refusal");
+        }
+
+        // Shared/ReadOnly checkouts have no runner mirror name or task-owned branch. Both
+        // modes still use the exact session checkout and inspect its real main branch.
+        foreach (var mode in new[] { WorkspaceParkSourceMode.Published, WorkspaceParkSourceMode.NoSourceChanges })
+        {
+            await using var shared = new SeatWorld("Codex", localLane: true);
+            var release = Typed(await shared.QualifyAsync(), mode);
+            shared.Session.RetainCheckout(shared.Source.Repo);
+            var receipt = release.Publication!;
+            release = release with { Publication = receipt with { Request = receipt.Request with
+            { Path = shared.Source.Repo, Binding = receipt.Request.Binding with { FullRef = "refs/heads/main" } } } };
+            shared.Child.Kill = _ => { shared.Child.Exit(); return Task.FromResult(true); };
+            (await shared.ReleaseAsync(release)).Outcome.ShouldBe(TerminalSeatReleaseOutcome.Released, "local Shared/ReadOnly control");
+            shared.AssertReleased();
         }
 
         // A clean unpublished local commit is held, not repaired by a push during release.
