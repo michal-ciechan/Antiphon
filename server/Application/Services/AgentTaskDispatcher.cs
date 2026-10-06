@@ -4399,6 +4399,22 @@ public sealed class AgentTaskDispatcher
         && task.SourceLandingOperationId is null
         && task.VerificationRound != VerificationRound.Interim;
 
+    /// <summary>
+    /// CARD-1076 D-5: re-arming remote preparation when the desktop worktree is already cut and
+    /// the progress baseline is already captured. That claim runs no git — the push and mirror
+    /// happen off the tick — so it takes no repository lease. A missing baseline still captures
+    /// one, and that capture stays leased. <see cref="LaunchesPreparedMirror"/> is the launch.
+    /// </summary>
+    internal static bool RearmsPreparedWorktree(AgentTask task) =>
+        !string.IsNullOrEmpty(task.RunnerId)
+        && task.Workspace == WorkspaceMode.Worktree
+        && !string.IsNullOrEmpty(task.WorktreePath)
+        && string.IsNullOrEmpty(task.RemoteWorktreePath)
+        && !string.IsNullOrEmpty(task.ProgressBaselineJson)
+        && task.RepairSourceTaskId is null
+        && task.SourceLandingOperationId is null
+        && task.VerificationRound != VerificationRound.Interim;
+
     private static string ReleasedAnswerDeliveryKey(AgentTask task, AgentSession session) =>
         $"released-seat-answer:{task.ReleasedSeatAnswerId:D}:{task.Attempt}:{session.Id:D}:{SessionGeneration.Normalize(session.StartedAt):O}";
 
@@ -4547,8 +4563,11 @@ public sealed class AgentTaskDispatcher
         // worktree already cut, its mirror already recorded - mutates nothing a land relies on and
         // takes no lease. Every crossing that runs git (the worktree cut, a repair source, a
         // SourceLanding snapshot, an Interim recheck) still does.
+        // CARD-1076 D-5: a re-arm whose worktree is already cut and whose baseline is already
+        // captured also takes no lease. Anything else, including a re-arm that still has to
+        // capture the baseline, still does.
         var needsLease = task.Workspace != WorkspaceMode.ReadOnly && !AgentTaskRoles.IsSpecialist(task.Role)
-            && task.RepoPath is not null && !LaunchesPreparedMirror(task);
+            && task.RepoPath is not null && !LaunchesPreparedMirror(task) && !RearmsPreparedWorktree(task);
         await using var repositoryLease = needsLease && _repositoryLeases is not null
             ? await _repositoryLeases.TryAcquireAsync(
                 task.RepoPath!, new RepositoryLeaseOwnerTag(task.Id, RepositoryLeasePurposes.Dispatch), ct)
