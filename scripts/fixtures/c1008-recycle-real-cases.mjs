@@ -52,8 +52,13 @@ const endpoint = http.createServer(async (req,res) => {
   let body;
   if(u.pathname==='/fixture/register') {let raw='';for await(const chunk of req)raw+=chunk;Object.assign(active.statuses['server2-temp'],JSON.parse(raw));body={};}
   else if(u.pathname==='/fixture/exit-next'){active.exitNext=true;body={};}
-  else if(u.pathname==='/api/projects')body=[{id:'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1',gitRepositoryUrl:'https://github.com/michal-ciechan/Antiphon.git'}];
-  else if (u.pathname === '/api/agent-tasks') body={...vectors.emptyTasks,scope:{projectId:u.searchParams.get('projectId'),unscoped:'include'}};
+  else if(u.pathname==='/api/projects')body=[{id:'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1',name:'Antiphon',archivedAt:null,localRepositoryPath:null,gitRepositoryUrl:'https://github.com/michal-ciechan/Antiphon.git'}];
+  else if (u.pathname === '/api/agent-tasks') {
+    // Historical B/D consumers request all rows; C uses the two closures.
+    const kind=u.searchParams.get('landPending')==='true'?'land':u.searchParams.get('status')==='Queued,Dispatched,Working,Blocked'?'open':'all';
+    active.censusReads??=[];active.censusReads.push({path:req.url,kind});
+    body=active.taskScopes?.[u.searchParams.get('projectId')]?.[kind]??{...vectors.emptyTasks,scope:{projectId:u.searchParams.get('projectId'),unscoped:'include'}};
+  }
   else if (u.pathname.startsWith('/api/session-runners/')) {
     const runner=u.pathname.split('/')[3];
     if(req.method==='POST') {

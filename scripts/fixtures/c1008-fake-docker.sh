@@ -57,7 +57,7 @@ else if (args[0] === 'ps') {
  if(fault!=='stop-stays-running')c.State={Running:false,Status:'exited'};
  if(fault==='late-busy') { const p=path.join(root,'statuses.json'),s=JSON.parse(fs.readFileSync(p));s.server2.sessions=1;fs.writeFileSync(p,JSON.stringify(s)); }
  if(fault==='late-routing') { const p=path.join(root,'statuses.json'),s=JSON.parse(fs.readFileSync(p));s.server2.acceptingNewWork=true;fs.writeFileSync(p,JSON.stringify(s)); }
- if(fault==='late-land') { const p=path.join(root,'tasks.json'),s=JSON.parse(fs.readFileSync(p));s.scopes[Object.keys(s.scopes)[0]].items.push({id:'22222222-2222-2222-2222-222222222222',status:'Succeeded',runnerId:'server2',projectId:'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1',scopeSource:'Task',landRequestedAt:'2026-10-03T09:00:00Z',landStartedAt:null});fs.writeFileSync(p,JSON.stringify(s)); }
+ if(fault==='late-land') { const p=path.join(root,'tasks.json'),s=JSON.parse(fs.readFileSync(p));(s.scopes[Object.keys(s.scopes)[0]].land||s.scopes[Object.keys(s.scopes)[0]]).items.push({id:'22222222-2222-2222-2222-222222222222',status:'Succeeded',runnerId:'server2',projectId:'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1',scopeSource:'Task',landRequestedAt:'2026-10-03T09:00:00Z',landStartedAt:null});fs.writeFileSync(p,JSON.stringify(s)); }
  if(fault==='audit-drift') fs.writeFileSync(path.join(root,'work/repo/new-work'), 'retained');
  save();out(name+'\n');
 } else if(args[0]==='rm') {
@@ -74,8 +74,8 @@ else if (args[0] === 'ps') {
  if(next&&fault==='c994-late-id')next.Id='e'.repeat(64);
  if(fault==='c994-late-main'||fault==='c994-late-stamp') {const p=path.join(root,'statuses.json'),v=JSON.parse(fs.readFileSync(p));
   if(fault==='c994-late-main')v.server2.acceptingNewWork=false;else v['server2-temp'].retiredAt='2026-10-03T10:30:00Z';fs.writeFileSync(p,JSON.stringify(v));}
- if(fault==='c994-late-land'){const p=path.join(root,'tasks.json'),v=JSON.parse(fs.readFileSync(p));v.scopes[Object.keys(v.scopes)[0]].excluded.total=1;fs.writeFileSync(p,JSON.stringify(v));}
- if(fault==='c994-late-task'){const p=path.join(root,'tasks.json'),v=JSON.parse(fs.readFileSync(p));v.scopes[Object.keys(v.scopes)[0]].items.push({id:'22222222-2222-2222-2222-222222222222',status:'Working',runnerId:'server2-temp',projectId:'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1',scopeSource:'Task',landRequestedAt:null,landStartedAt:null});fs.writeFileSync(p,JSON.stringify(v));}
+ if(fault==='c994-late-land'){const p=path.join(root,'tasks.json'),v=JSON.parse(fs.readFileSync(p));(v.scopes[Object.keys(v.scopes)[0]].land||v.scopes[Object.keys(v.scopes)[0]]).items.push({id:'22222222-2222-2222-2222-222222222222',status:'Succeeded',runnerId:'server2-temp',projectId:'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1',scopeSource:'Task',landRequestedAt:'2020-01-01T00:00:00Z',landStartedAt:null});fs.writeFileSync(p,JSON.stringify(v));}
+ if(fault==='c994-late-task'){const p=path.join(root,'tasks.json'),v=JSON.parse(fs.readFileSync(p));(v.scopes[Object.keys(v.scopes)[0]].open||v.scopes[Object.keys(v.scopes)[0]]).items.push({id:'22222222-2222-2222-2222-222222222222',status:'Working',runnerId:'server2-temp',projectId:'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1',scopeSource:'Task',landRequestedAt:null,landStartedAt:null});fs.writeFileSync(p,JSON.stringify(v));}
  if(fault==='c994-final-replacement') {const replacement=structuredClone(c);replacement.Id='e'.repeat(64);state.containers.push(replacement);}
  save();out(name+'\n');
 } else if(args[0]==='volume'&&args[1]==='ls')out(Object.keys(state.volumes).join('\n')+'\n');
