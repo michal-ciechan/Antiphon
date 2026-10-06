@@ -316,6 +316,63 @@ describe('CardThreadPanel', () => {
     expect(screen.queryByText('Session gone.')).not.toBeInTheDocument()
   })
 
+  it('CARD-1079 draws seat and unknown kinds on the task without dropping the known badge', async () => {
+    seed(thread(), [
+      {
+        kind: 'BlockedQuestion',
+        severity: 'Critical',
+        taskId: 't1',
+        sessionId: null,
+        agentId: null,
+        messageId: null,
+        title: 'CARD-0067 - reply durability - slice 4',
+        headline: 'Waiting 22m for an answer.',
+        evidence: 'Should negatives be accepted?',
+        sinceUtc: '2026-08-17T11:38:00Z',
+        subtreeCostUsd: 1.25,
+        actions: ['Reply'],
+      },
+      {
+        kind: 'SeatIdle',
+        severity: 'Warning',
+        taskId: 't1',
+        sessionId: null,
+        agentId: null,
+        messageId: null,
+        title: 'Idle seat',
+        headline: 'idle 40m',
+        evidence: '',
+        sinceUtc: '2026-08-17T11:00:00Z',
+        subtreeCostUsd: null,
+        actions: ['Reply', 'Cancel', 'OpenDrawer'],
+      },
+      {
+        kind: 'FutureKind',
+        severity: 'Warning',
+        taskId: 't1',
+        sessionId: null,
+        agentId: null,
+        messageId: null,
+        title: 'Future kind row',
+        headline: 'server sent a new kind',
+        evidence: '',
+        sinceUtc: '2026-08-17T11:10:00Z',
+        subtreeCostUsd: null,
+        actions: [],
+      },
+    ])
+    renderWithProviders(<CardThreadPanel identifier="CARD-0067" />)
+
+    const badges = await screen.findAllByTestId('thread-task-attention-t1')
+    const text = badges.map((badge) => badge.textContent ?? '').join('\n')
+    expect(text).toContain('Blocked')
+    expect(text).toContain('Waiting 22m for an answer.')
+    expect(text).toContain('Idle seat')
+    expect(text).toContain('idle 40m')
+    expect(text).toContain('Unknown kind')
+    expect(text).toContain('server sent a new kind')
+  })
+
   it('a check reading and a digest tail are labelled as different claims', async () => {
     seed(
       thread({

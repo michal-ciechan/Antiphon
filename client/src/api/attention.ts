@@ -182,6 +182,20 @@ export type AttentionKind =
    * Warning while the episode is open, Error when it needs a decision.
    */
   | 'CompactionContinuationStalled'
+  /**
+   * CARD-1079: a phone-home runner seat occupies capacity while its bound task is
+   * not Dispatched or Working. Warning at 30 minutes, Error at 180. Detection only.
+   */
+  | 'SeatIdle'
+  /**
+   * CARD-1079: a host's in-flight count exceeds Dispatched/Working and at least one
+   * seat is idle. Warning at 30 minutes, Error at 180. Detection only.
+   */
+  | 'OccupancyDivergence'
+  /**
+   * CARD-1079: an occupying slot is an orphan. Warning immediately. Detection only.
+   */
+  | 'SlotOrphan'
 
 /** Verbs the server already serves. The row names them so the client never infers them from kind. */
 export type AttentionAction =

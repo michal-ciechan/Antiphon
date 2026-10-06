@@ -621,4 +621,39 @@ describe('AttentionPanel', () => {
     expect(await screen.findByText(/STALLED — three commits/)).toBeInTheDocument()
     expect(screen.getByText(/The last check read it as:/)).toBeInTheDocument()
   })
+
+  it('CARD-1079 draws the seat kinds and keeps a known row', async () => {
+    serve({
+      items: [
+        item({ kind: 'ChecksSpent', title: 'Known row stays', headline: 'budget spent' }),
+        item({ kind: 'SeatIdle' as AttentionKind, title: 'Idle on server2', headline: 'idle 40m' }),
+        item({ kind: 'OccupancyDivergence' as AttentionKind, title: 'server2 divergence', headline: '10 in flight, 2 working' }),
+        item({ kind: 'SlotOrphan' as AttentionKind, title: 'orphan seat', headline: 'occupying orphan' }),
+      ],
+    })
+    renderWithProviders(<AttentionPanel />)
+    expect(await screen.findByTestId('attention-row-ChecksSpent')).toHaveTextContent('Known row stays')
+    expect(screen.getByTestId('attention-row-SeatIdle')).toHaveTextContent('Idle seat')
+    expect(screen.getByTestId('attention-row-OccupancyDivergence')).toHaveTextContent('Seats above Working')
+    expect(screen.getByTestId('attention-row-SlotOrphan')).toHaveTextContent('Orphan slot')
+  })
+
+  it('CARD-1079 draws an unknown future kind without dropping a known row', async () => {
+    serve({
+      items: [
+        item({ kind: 'ChecksSpent', title: 'Known row stays' }),
+        item({
+          kind: 'FutureKind' as AttentionKind,
+          title: 'Future kind row',
+          headline: 'server sent a new kind',
+        }),
+      ],
+    })
+    renderWithProviders(<AttentionPanel />)
+    expect(await screen.findByTestId('attention-row-ChecksSpent')).toHaveTextContent('Known row stays')
+    const future = screen.getByTestId('attention-row-FutureKind')
+    expect(future).toHaveTextContent('Unknown kind')
+    expect(future).toHaveTextContent('Future kind row')
+    expect(future).toHaveTextContent('server sent a new kind')
+  })
 })

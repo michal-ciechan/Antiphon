@@ -486,6 +486,37 @@ describe('TaskCard', () => {
     expect(screen.getByTestId('task-liveness-Overdue')).toHaveTextContent('Overdue')
   })
 
+  it('CARD-1079 draws a seat-idle liveness label', () => {
+    renderWithProviders(
+      <TaskCard
+        item={item({ worker: worker({ status: 'Dispatched' }) })}
+        liveness={attention({ kind: 'SeatIdle' as AttentionItemDto['kind'] })}
+        now={NOW}
+        onOpen={() => {}}
+      />,
+    )
+    expect(screen.getByText('Dispatched')).toBeInTheDocument()
+    expect(screen.getByTestId('task-liveness-SeatIdle')).toHaveTextContent('Idle seat')
+  })
+
+  it('CARD-1079 draws an unknown future liveness kind without blanking the card', () => {
+    renderWithProviders(
+      <TaskCard
+        item={item({ worker: worker({ status: 'Dispatched' }) })}
+        liveness={attention({
+          kind: 'FutureKind' as AttentionItemDto['kind'],
+          headline: 'future liveness',
+        })}
+        now={NOW}
+        onOpen={() => {}}
+      />,
+    )
+    expect(screen.getByText('Dispatched')).toBeInTheDocument()
+    const badge = screen.getByTestId('task-liveness-FutureKind')
+    expect(badge).toHaveTextContent('Unknown kind')
+    expect(badge).not.toHaveTextContent('FutureKind')
+  })
+
   it('prints elapsed on a Running card with a Dispatched worker and on a Running delegation, not Up next or Done', () => {
     const { rerender } = renderWithProviders(
       <TaskCard
