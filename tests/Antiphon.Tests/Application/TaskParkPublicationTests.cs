@@ -20,19 +20,20 @@ public sealed class TaskParkPublicationTests
         var task = new AgentTask { Id = Guid.NewGuid(), Workspace = WorkspaceMode.Shared,
             Role = AgentTaskRole.Code, Goal = "Inspect landed source", SourceLandingOperationId = Guid.NewGuid() };
         DelegationReportFormatter.BuildBrief(task, new DelegationSettings())
-            .ShouldNotContain(DelegationReportFormatter.SharedWriteCommitLine,
-                "G-73: SourceLanding custody overrides generic writable instructions");
+            .Contains(DelegationReportFormatter.SharedWriteCommitLine, StringComparison.Ordinal)
+            .ShouldBeFalse("G-73: SourceLanding custody overrides generic writable instructions");
         return Task.CompletedTask;
     }
 
     [Test]
-    public async Task C1065_CommitInstructionsAndRefusalsRespectOverrides()
+    public Task C1065_CommitInstructionsAndRefusalsRespectOverrides()
     {
         var task = new AgentTask { Id = Guid.NewGuid(), Workspace = WorkspaceMode.Worktree,
             Role = AgentTaskRole.Code, Goal = "Implement the assigned change" };
         var brief = DelegationReportFormatter.BuildBrief(task, new DelegationSettings());
-        brief.ShouldContain("Before reporting blocked", "G-76: ordinary writable brief must require publication before block");
-        brief.ShouldContain("truthful WIP commit", "G-76");
+        brief.Contains("Before reporting blocked", StringComparison.Ordinal).ShouldBeTrue("G-76: ordinary writable brief must require publication before block");
+        brief.Contains("truthful WIP commit", StringComparison.Ordinal).ShouldBeTrue("G-76");
+        return Task.CompletedTask;
     }
 
     [Test]
