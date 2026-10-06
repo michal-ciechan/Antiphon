@@ -258,3 +258,5 @@ Antiphon.Tests.Application.ChannelOutboundUnifiedTransportTests
 Antiphon.Tests.Application.TaskParkPublicationTests
 # CARD-1065 S4c: isolated PostgreSQL, owned Git children and loopback HTTP/WebSocket proof transport.
 Antiphon.Tests.Application.TaskParkRunnerIdentityTests
+# CARD-1065 S6: real Git, repository lease contention, durable PostgreSQL sync and release recovery.
+Antiphon.Tests.Application.BlockedTaskSyncRecoveryTests
