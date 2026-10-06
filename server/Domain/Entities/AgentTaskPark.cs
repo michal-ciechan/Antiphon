@@ -43,6 +43,12 @@ public sealed class AgentTaskPark
     public AgentTaskParkState State { get; set; }
     public AgentTaskParkState? HeldFromState { get; set; }
     public string ReasonCode { get; set; } = "park_requested";
+    /// <summary>
+    /// True only for an episode the legacy sweep inserted. Publication overwrites
+    /// <see cref="ReasonCode"/>, so the fresh idle window cannot key off that text.
+    /// Fast-path registration leaves this false and keeps the existing stable-for gate.
+    /// </summary>
+    public bool LegacyDiscovery { get; set; }
     public long Revision { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }

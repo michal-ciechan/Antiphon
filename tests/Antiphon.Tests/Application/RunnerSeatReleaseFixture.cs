@@ -130,6 +130,7 @@ internal sealed partial class RunnerSeatReleaseFixture : IAsyncDisposable
         Action<DbContextOptionsBuilder>? configureDb = null,
         string? provider = null, bool phoneHome = false, bool rowless = false,
         bool productionDefaults = false, bool parking = false, bool syncRecovery = false,
+        bool reclaim = false,
         int? completionSingleWriteBytes = null)
     {
         var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
@@ -166,7 +167,10 @@ internal sealed partial class RunnerSeatReleaseFixture : IAsyncDisposable
                     services.AddSingleton<TerminalRunnerSeatReleasePolicy>();
                     services.AddSingleton<TerminalRunnerSeatDiscoveryState>();
                     services.AddScoped<TerminalRunnerSeatReleaseService>();
-                    services.AddSingleton(Options.Create(new BlockedTaskParkingOptions { Enabled = parking }));
+                    services.AddSingleton(Options.Create(new BlockedTaskParkingOptions
+                    {
+                        Enabled = parking || reclaim, ReclaimExisting = reclaim
+                    }));
                     services.AddScoped<BlockedTaskParkingService>();
                     services.AddSingleton<ITaskProgressGit, TaskParkPublicationTests.ParkGit>();
                     services.AddSingleton<IRepositoryMutationLease>(sp => new RepositoryMutationLease(
@@ -319,6 +323,15 @@ internal sealed partial class RunnerSeatReleaseFixture : IAsyncDisposable
         return await new RunnerSlotReconcileJob(directory, scope.ServiceProvider.GetRequiredService<AppDbContext>(),
             NullLogger<RunnerSlotReconcileJob>.Instance,
             scope.ServiceProvider.GetRequiredService<TerminalRunnerSeatReleaseService>()).ExecuteAsync(default);
+    }
+
+    public async Task<int> ReclaimAsync(int pageSize = 2, int passBudget = 3,
+        Func<string, CancellationToken, Task>? boundary = null)
+    {
+        using var scope = Harness.Provider.CreateScope();
+        var service = scope.ServiceProvider.GetRequiredService<TerminalRunnerSeatReleaseService>();
+        service.BoundaryAsync = boundary;
+        return await service.ReclaimLegacyAsync(pageSize, passBudget, default);
     }
 
     public async Task<Guid> AddParentAsync(bool busy)
@@ -866,6 +879,8 @@ internal sealed partial class RunnerSeatReleaseFixture : IAsyncDisposable
         public Action? LeaseBusyObserved { get; set; }
         public List<TerminalSeatReleaseRequest> Requests { get; } = [];
         public List<string> Calls { get; } = [];
+        public Dictionary<Guid, TerminalSeatObservation> BySession { get; } = [];
+        public RunnerSessionDto[]? SessionsList { get; set; }
         public int ConditionalCommands => Calls.Count(p => p.EndsWith("/release-terminal-seat"));
         public int ForceCommands => Calls.Count(p => p.EndsWith("/kill") || p.EndsWith("/kill-generation") || p.EndsWith("/release"));
         public TerminalSeatObservation Qualified { get; set; } = new(TerminalSeatQualificationStatus.Qualified,
@@ -876,6 +891,9 @@ internal sealed partial class RunnerSeatReleaseFixture : IAsyncDisposable
         {
             if (ForbidFixedEvidence) throw new InvalidOperationException("Real-runtime mode reached fixed evidence wire.");
             Calls.Add(request.RequestUri!.AbsolutePath);
+            if (SessionsList is not null && request.Method == HttpMethod.Get
+                && request.RequestUri.AbsolutePath.Trim('/') == "sessions")
+                return new HttpResponseMessage(HttpStatusCode.OK) { Content = JsonContent.Create(SessionsList) };
             // An old transport rejects both observation and release. Do not synthesize a
             // successful release receipt before applying the configured unsupported response.
             if (Unsupported) return new HttpResponseMessage(UnsupportedStatusCode);
@@ -912,6 +930,13 @@ internal sealed partial class RunnerSeatReleaseFixture : IAsyncDisposable
                 var result = new TerminalSeatReleaseResult(sessionId, command.ActionId, sourceValid ? Outcome : TerminalSeatReleaseOutcome.Unknown,
                     command.Observation.ExpectedAcceptedStartedAt);
                 return new(HttpStatusCode.OK) { Content = JsonContent.Create(RewriteReply?.Invoke(result) ?? result) };
+            }
+            if (request.RequestUri.AbsolutePath.EndsWith("/terminal-seat-observation", StringComparison.Ordinal))
+            {
+                var segments = request.RequestUri.AbsolutePath.Split('/');
+                if (segments.Length >= 3 && Guid.TryParse(segments[2], out var sessionId)
+                    && BySession.TryGetValue(sessionId, out var specific))
+                    return new HttpResponseMessage(HttpStatusCode.OK) { Content = JsonContent.Create(specific) };
             }
             return new HttpResponseMessage(HttpStatusCode.OK) { Content = JsonContent.Create(Qualified) };
         }

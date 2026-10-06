@@ -124,6 +124,7 @@ public class AppDbContext : DbContext
     public DbSet<SessionRunnerState> SessionRunnerStates => Set<SessionRunnerState>();
     public DbSet<RunnerSeatRelease> RunnerSeatReleases => Set<RunnerSeatRelease>();
     public DbSet<AgentTaskPark> AgentTaskParks => Set<AgentTaskPark>();
+    public DbSet<BlockedTaskParkReclaimCursor> BlockedTaskParkReclaimCursors => Set<BlockedTaskParkReclaimCursor>();
     public DbSet<HostOccupancySample> HostOccupancySamples => Set<HostOccupancySample>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -152,6 +153,13 @@ public class AppDbContext : DbContext
             entity.HasIndex(p => p.AgentId);
             entity.HasIndex(p => p.RunnerSeatReleaseId);
             entity.HasIndex(p => p.PublicationReceiptId).IsUnique();
+            entity.Property(p => p.LegacyDiscovery).HasDefaultValue(false);
+        });
+
+        modelBuilder.Entity<BlockedTaskParkReclaimCursor>(entity =>
+        {
+            entity.HasKey(c => c.Id);
+            entity.Property(c => c.Id).ValueGeneratedNever();
         });
 
         modelBuilder.Entity<HostOccupancySample>(entity =>
