@@ -117,7 +117,29 @@ public sealed partial class AgentTaskLandReceiptTests
             NullLogger<DataRetentionService>.Instance, new AuditService(db, audit));
         await retention.PruneQueuedMessagesAsync(CancellationToken.None);
         (await db.SessionQueuedMessages.AnyAsync(m => m.Id == control)).ShouldBeFalse();
-        (await db.SessionQueuedMessages.AnyAsync(m => m.Id == row.Id)).ShouldBe(state != "confirmed");
+        if (state == "confirmed")
+        {
+            // CARD-0519 keeps a confirmed Delegation land note while reply discovery is open.
+            var open = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == row.Id);
+            open.Status.ShouldBe(QueuedMessageStatus.Sent);
+            open.Origin.ShouldBe(QueuedMessageOrigin.Delegation);
+            open.ChannelOutboundDeliveryId.ShouldBeNull();
+            open.ChannelReplySettledAt.ShouldBeNull();
+            open.ChannelReplyDiscoveryClosedAt.ShouldBeNull();
+            var closed = await db.SessionQueuedMessages.Where(m => m.Id == row.Id
+                    && m.ChannelOutboundDeliveryId == null
+                    && m.ChannelReplySettledAt == null
+                    && m.ChannelReplyDiscoveryClosedAt == null)
+                .ExecuteUpdateAsync(s => s.SetProperty(m => m.ChannelReplyDiscoveryClosedAt, DateTime.UtcNow));
+            closed.ShouldBe(1);
+            db.ChangeTracker.Clear();
+            await retention.PruneQueuedMessagesAsync(CancellationToken.None);
+            (await db.SessionQueuedMessages.AnyAsync(m => m.Id == row.Id)).ShouldBeFalse();
+        }
+        else
+        {
+            (await db.SessionQueuedMessages.AnyAsync(m => m.Id == row.Id)).ShouldBeTrue();
+        }
         await db.AgentSessions.Where(s => s.Id == h.SessionId).ExecuteDeleteAsync();
         (await db.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n => n.Id == note.Id)).ConfirmedAt.HasValue.ShouldBe(state == "confirmed");
         h.Adapter.Inputs.ShouldBeEmpty();
