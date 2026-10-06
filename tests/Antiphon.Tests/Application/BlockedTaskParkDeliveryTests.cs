@@ -680,7 +680,10 @@ public sealed class BlockedTaskParkDeliveryTests
                 {
                     Id = sessionId, DefinitionName = "ClaudeCode", AgentKind = AgentKind.ClaudeCode,
                     Status = SessionStatus.Stopped, Cwd = scratch, Cols = 120, Rows = 30,
-                    RunnerId = remote ? "server2" : null, StartedAt = now.AddMinutes(-10),
+                    RunnerId = remote ? "server2" : null,
+                    RunnerStoreId = remote ? Guid.NewGuid() : null,
+                    RunnerCwd = remote ? scratch : null,
+                    StartedAt = now.AddMinutes(-10),
                     CreatedAt = now.AddMinutes(-10), LastSeenAt = now.AddMinutes(-1),
                 });
                 db.Agents.Add(new Agent
