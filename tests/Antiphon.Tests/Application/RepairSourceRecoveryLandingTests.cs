@@ -121,8 +121,17 @@ public sealed class RepairSourceRecoveryLandingTests
         {
             "plain" => "conflict",
             "missing-review" => "recovery_review_required",
-            _ => "review_evidence_subject_mismatch",
+            "repair-subject" => "review_evidence_subject_mismatch",
+            _ => throw new InvalidOperationException("unexpected recovery scenario: " + scenario),
         }, $"{scenario}: admission boundary");
+        if (scenario == "repair-subject")
+        {
+            // Clean is checked before subject. This review is clean and names the repair, so admission
+            // must reach subject identity and refuse the owner with that repair recorded as the subject.
+            error.Message.ShouldContain("subject differs", Case.Sensitive, "clean repair review reaches subject identity");
+            error.Message.ShouldContain(repair.Id.ToString("N")[..8], Case.Sensitive, "recorded subject is the repair");
+            error.Message.ShouldContain(world.Owner.Id.ToString("N")[..8], Case.Sensitive, "required subject is the recovery owner");
+        }
         error.StatusCode.ShouldBe(409);
         await using var db = world.CreateContext();
         (await db.AgentTaskLandRequests.CountAsync()).ShouldBe(0);
@@ -200,7 +209,7 @@ public sealed class RepairSourceRecoveryLandingTests
         {
             Id = id, Stage = OrchestrationStage.Review, Outcome = StageOutcomeKind.Clean,
             Source = StageOutcomeSource.Delegate, StageTaskId = Guid.NewGuid(), SubjectTaskId = subjectId,
-            ReviewedSourceSha = sha, ReviewedSourceRef = world.OwnerRef,
+            ReviewedSourceSha = sha, ReviewedSourceClean = true, ReviewedSourceRef = world.OwnerRef,
             ReviewedRepositoryPath = world.Owner.RepoPath, CommissionedRound = VerificationRound.Final,
             OrdinaryScopeCompleted = VerificationScope.Full, RecordedAt = DateTime.UtcNow,
         });

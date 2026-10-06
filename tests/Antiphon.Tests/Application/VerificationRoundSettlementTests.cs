@@ -364,7 +364,7 @@ public sealed class VerificationRoundSettlementTests
         (await world.TaskAsync(taskId)).Status.ShouldBe(AgentTaskStatus.Succeeded, "settled " + taskId);
     }
 
-    /// <summary>Cuts the settlement save: before SaveChanges, at the implicit commit, or after the commit acknowledged.</summary>
+    /// <summary>Cuts settlement before SaveChanges, before CommitAsync, or from TransactionCommitted after that commit.</summary>
     private sealed class SettlementFault(string cut) : SaveChangesInterceptor, IDbTransactionInterceptor
     {
         public Guid TaskId { get; set; }
@@ -387,17 +387,6 @@ public sealed class VerificationRoundSettlementTests
             return ValueTask.FromResult(result);
         }
 
-        public override ValueTask<int> SavedChangesAsync(SaveChangesCompletedEventData data, int result, CancellationToken ct = default)
-        {
-            if (cut == "after-commit" && Throws == 0 && TaskId != Guid.Empty
-                && data.Context!.ChangeTracker.Entries<StageOutcome>().Any(e => e.Entity.StageTaskId == TaskId))
-            {
-                Throws++;
-                throw new IOException("c544 settlement cut after commit");
-            }
-            return ValueTask.FromResult(result);
-        }
-
         public ValueTask<InterceptionResult> TransactionCommittingAsync(DbTransaction transaction, TransactionEventData eventData,
             InterceptionResult result, CancellationToken cancellationToken = default)
         {
@@ -408,6 +397,20 @@ public sealed class VerificationRoundSettlementTests
                 throw new IOException("c544 settlement cut before commit");
             }
             return ValueTask.FromResult(result);
+        }
+
+        public Task TransactionCommittedAsync(DbTransaction transaction, TransactionEndEventData eventData,
+            CancellationToken cancellationToken = default)
+        {
+            // Review settlement saves inside an explicit transaction. SavedChanges runs before
+            // CommitAsync, so an after-commit fault has to wait until the commit is acknowledged.
+            if (cut == "after-commit" && Throws == 0 && TaskId != Guid.Empty
+                && eventData.Context?.ChangeTracker.Entries<StageOutcome>().Any(e => e.Entity.StageTaskId == TaskId) == true)
+            {
+                Throws++;
+                throw new IOException("c544 settlement cut after commit");
+            }
+            return Task.CompletedTask;
         }
     }
 
