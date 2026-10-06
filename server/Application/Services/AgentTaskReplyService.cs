@@ -2366,6 +2366,13 @@ public sealed class AgentTaskReplyService
         IServiceProvider services, AppDbContext db, AgentTask task, DateTime now, CancellationToken ct,
         bool killSession = true)
     {
+        if (task.Status == AgentTaskStatus.Blocked)
+        {
+            await using var parkScope = _scopeFactory.CreateAsyncScope();
+            var parking = parkScope.ServiceProvider.GetService<TerminalRunnerSeatReleaseService>();
+            if (parking is not null) await parking.TryHandleTaskAsync(task.Id, ct);
+            return;
+        }
         if (task.AgentId is not Guid agentId)
             return;
 

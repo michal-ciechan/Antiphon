@@ -402,6 +402,8 @@ try
     builder.Services.Configure<BlockedTaskParkingOptions>(
         builder.Configuration.GetSection(BlockedTaskParkingOptions.SectionName));
     builder.Services.AddScoped<BlockedTaskParkingService>();
+    builder.Services.AddScoped<LocalTaskParkPublisher>();
+    builder.Services.AddScoped<TaskParkPublicationService>();
     builder.Services.AddScoped<AgentTaskInputService>();
     builder.Services.AddScoped<AgentTaskDecisionQuestionService>();
     builder.Services.AddScoped<SourceLandingAdmission>();

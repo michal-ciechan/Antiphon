@@ -8,14 +8,15 @@ public enum TerminalRunnerSeatDecision
     Disabled, IncompleteAttempt, IncompleteReport, IdentityUnknown, Owned, StandingOwner,
     AlwaysOnOwner, BoardOwner, SpecialistOwner, WarmPool, VerificationOwner,
     SettlementTooYoung, PendingDelivery, Working, Unknown, Unsupported, Waiting,
-    Reserved, AlreadyReserved, StaleAttempt
+    Reserved, AlreadyReserved, StaleAttempt, PublicationRequired
 }
 
 /// <summary>Pure decisions shared by the coordinator and its individual guard witnesses.</summary>
 public sealed class TerminalRunnerSeatReleasePolicy
 {
-    public TerminalRunnerSeatDecision? TerminalAttempt(AgentTask? task)
+    public TerminalRunnerSeatDecision? TerminalAttempt(AgentTask? task, bool parking = false)
     {
+        if (parking && task?.Status == AgentTaskStatus.Blocked) return null;
         if (task?.CompletedAt is null || task.Status is not (AgentTaskStatus.Succeeded
             or AgentTaskStatus.Failed or AgentTaskStatus.Canceled or AgentTaskStatus.Blocked))
             return TerminalRunnerSeatDecision.IncompleteAttempt;

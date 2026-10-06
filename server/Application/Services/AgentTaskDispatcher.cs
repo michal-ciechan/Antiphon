@@ -6738,6 +6738,9 @@ public sealed class AgentTaskDispatcher
             if (pinned is null)
                 return ReuseOutcome.SpawnFresh;
 
+            if (await PoolDelegateRelease.Reservations(_db).AnyAsync(p => p.AgentId == pinnedId, ct))
+                return ReuseOutcome.WaitForAgent;
+
             // A STANDING agent (a user's own, or a supervised specialist) is not pool furniture and
             // has its own rules — see PlaceOnStandingAgentAsync.
             if (!pinned.IsPoolDelegate)
@@ -6802,6 +6805,7 @@ public sealed class AgentTaskDispatcher
                 .Where(a => a.IsPoolDelegate
                     && a.Status == AgentStatus.Idle
                     && a.PoolIdleSince != null
+                    && !PoolDelegateRelease.Reservations(_db).Any(p => p.AgentId == a.Id)
                     && a.ModelLevel == claimed.ModelLevel
                     // A warm process retains its launch environment. Scope equality includes
                     // null == null: global-only delegates may serve global-only tasks, never a
@@ -7389,6 +7393,7 @@ public sealed class AgentTaskDispatcher
     {
         var pool = await _db.Agents
             .Where(a => a.IsPoolDelegate && !a.AlwaysOn && a.BoardId == null
+                    && !PoolDelegateRelease.Reservations(_db).Any(p => p.AgentId == a.Id)
                     && a.StandingSpecialistRole == null && a.StandingSpecialistOwnerId == null
                     && a.Status != AgentStatus.Stopped)
             .ToListAsync(ct);

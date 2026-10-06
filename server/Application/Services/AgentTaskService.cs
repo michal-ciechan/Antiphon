@@ -3400,6 +3400,8 @@ public sealed class AgentTaskService
         if (agent is null || !PoolDelegateRelease.CanRelease(agent))
             return;
 
+        if (await PoolDelegateRelease.Reservations(_db).AnyAsync(p => p.AgentId == id, ct)) return;
+
         if (task.AgentSessionId is null)
         {
             _logger.LogInformation(
