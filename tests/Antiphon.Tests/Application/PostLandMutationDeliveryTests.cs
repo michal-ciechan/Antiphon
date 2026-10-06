@@ -225,10 +225,18 @@ public sealed partial class PostLandMutationDeliveryTests
             queued.CreatedAt = DateTime.UtcNow.AddDays(-40);
             queued.DeliveryAttempts = Math.Max(1, queued.DeliveryAttempts);
             await db.SaveChangesAsync();
+            queued.Origin.ShouldBe(QueuedMessageOrigin.Delegation);
+            queued.ChannelOutboundDeliveryId.ShouldBeNull();
+            queued.ChannelReplySettledAt.ShouldBeNull();
+            queued.ChannelReplyDiscoveryClosedAt.ShouldBeNull();
             var audit = Options.Create(new AuditSettings());
-            await new DataRetentionService(db, Options.Create(new RetentionSettings()), audit, TimeProvider.System,
-                NullLogger<DataRetentionService>.Instance, new AuditService(db, audit))
-                .PruneQueuedMessagesAsync(CancellationToken.None);
+            var retention = new DataRetentionService(db, Options.Create(new RetentionSettings()), audit, TimeProvider.System,
+                NullLogger<DataRetentionService>.Instance, new AuditService(db, audit));
+            await retention.PruneQueuedMessagesAsync(CancellationToken.None);
+            (await db.SessionQueuedMessages.CountAsync(m => m.SourceTaskId == settled.World.TaskId)).ShouldBe(1);
+            await StampDiscoveryClosedAsync(db, queued.Id);
+            db.ChangeTracker.Clear();
+            await retention.PruneQueuedMessagesAsync(CancellationToken.None);
         }
 
         await using (var observer = settled.World.Host.CreateContext())
@@ -298,10 +306,22 @@ public sealed partial class PostLandMutationDeliveryTests
             sent.CreatedAt = DateTime.UtcNow.AddDays(-40);
             sent.DeliveryAttempts = Math.Max(1, sent.DeliveryAttempts);
             await db.SaveChangesAsync();
+            sent.Origin.ShouldBe(QueuedMessageOrigin.Delegation);
+            sent.ChannelOutboundDeliveryId.ShouldBeNull();
+            sent.ChannelReplySettledAt.ShouldBeNull();
+            sent.ChannelReplyDiscoveryClosedAt.ShouldBeNull();
             var audit = Options.Create(new AuditSettings());
-            await new DataRetentionService(db, Options.Create(new RetentionSettings()), audit, TimeProvider.System,
-                NullLogger<DataRetentionService>.Instance, new AuditService(db, audit))
-                .PruneQueuedMessagesAsync(CancellationToken.None);
+            var retention = new DataRetentionService(db, Options.Create(new RetentionSettings()), audit, TimeProvider.System,
+                NullLogger<DataRetentionService>.Instance, new AuditService(db, audit));
+            await retention.PruneQueuedMessagesAsync(CancellationToken.None);
+            db.ChangeTracker.Clear();
+            (await db.SessionQueuedMessages.AsNoTracking().CountAsync(m => m.SourceTaskId == settled.World.TaskId)).ShouldBe(1);
+            var repaired = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == settled.World.TaskId);
+            repaired.CompletionNoteQueuedAt.ShouldNotBeNull();
+            repaired.CompletionNoteDigest.ShouldBe(DelegationNoteDigest.Compute(repaired.Result!));
+            await StampDiscoveryClosedAsync(db, sent.Id);
+            db.ChangeTracker.Clear();
+            await retention.PruneQueuedMessagesAsync(CancellationToken.None);
         }
 
         await using (var observer = settled.World.Host.CreateContext())
@@ -1576,6 +1596,16 @@ public sealed partial class PostLandMutationDeliveryTests
             NullLogger<CompletionNoteWorkHostedService>.Instance);
         await hosted.StartAsync(CancellationToken.None);
         return hosted;
+    }
+
+    private static async Task StampDiscoveryClosedAsync(AppDbContext db, Guid rowId)
+    {
+        var updated = await db.SessionQueuedMessages.Where(m => m.Id == rowId
+                && m.ChannelOutboundDeliveryId == null
+                && m.ChannelReplySettledAt == null
+                && m.ChannelReplyDiscoveryClosedAt == null)
+            .ExecuteUpdateAsync(s => s.SetProperty(m => m.ChannelReplyDiscoveryClosedAt, DateTime.UtcNow));
+        updated.ShouldBe(1);
     }
 
     private static async Task UntilAsync(Func<Task<bool>> condition, string because, int seconds = 20)
