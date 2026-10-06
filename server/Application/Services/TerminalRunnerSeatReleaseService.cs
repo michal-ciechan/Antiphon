@@ -971,6 +971,8 @@ public sealed class TerminalRunnerSeatReleaseService(
                     return await HoldAsync(release, TerminalRunnerSeatDecision.Working, ct);
             }
 
+            // Server clock before the observation RPC. Latency can only make the legacy window stricter.
+            var observedAt = clock.GetUtcNow();
             TerminalSeatObservation observed;
             try
             {
@@ -1019,7 +1021,7 @@ public sealed class TerminalRunnerSeatReleaseService(
             if (task.Status == AgentTaskStatus.Blocked)
             {
                 var window = await CurrentParkAsync(task, ct);
-                if (window is not null && !FreshLegacyWindow(window, observed))
+                if (window is not null && !FreshLegacyWindow(window, observed, observedAt))
                     return await HoldAsync(release, TerminalRunnerSeatDecision.Waiting, ct);
             }
             if (BoundaryAsync is not null) await BoundaryAsync("BeforeReservation", ct);
@@ -1030,7 +1032,7 @@ public sealed class TerminalRunnerSeatReleaseService(
                 if (current is null || (await publication.VerifyAsync(current.Id, ct)).Evidence is null)
                     return await HoldAsync(release, TerminalRunnerSeatDecision.PublicationRequired, ct);
             }
-            var changed = await TryReserveAsync(release, task, observed, ct);
+            var changed = await TryReserveAsync(release, task, observed, ct, observedAt);
             return new(release.Id, changed == 1 ? TerminalRunnerSeatDecision.Reserved : TerminalRunnerSeatDecision.StaleAttempt);
         }
         finally { gate.Release(); }
@@ -1063,7 +1065,7 @@ public sealed class TerminalRunnerSeatReleaseService(
     }
 
     internal async Task<int> TryReserveAsync(RunnerSeatRelease expected, AgentTask task,
-        TerminalSeatObservation observed, CancellationToken ct)
+        TerminalSeatObservation observed, CancellationToken ct, DateTimeOffset? observedAt = null)
     {
         if (!options.Value.AutomaticEnabled || expected.State != RunnerSeatReleaseState.Observing
             || expected.ActionId is not null || observed.Status != TerminalSeatQualificationStatus.Qualified
@@ -1081,7 +1083,7 @@ public sealed class TerminalRunnerSeatReleaseService(
             park = await CurrentParkAsync(current, ct);
             if (!ParkingEnabled || park is null || publication is null || park.State != AgentTaskParkState.Published
                 || await publication.ReadEvidenceAsync(park.Id, ct) is null
-                || !FreshLegacyWindow(park, observed)) return 0;
+                || !FreshLegacyWindow(park, observed, observedAt ?? clock.GetUtcNow())) return 0;
         }
         var actionId = park?.Id ?? Guid.NewGuid();
         // Revision is the sole ledger compare-and-swap fence. Two readers of the same existing
@@ -1127,18 +1129,18 @@ public sealed class TerminalRunnerSeatReleaseService(
 
     /// <summary>
     /// Legacy discovery must not treat an old CompletedAt or a long silence as the idle window.
-    /// The qualifying instant is the runner's first observation plus its stable duration, and
-    /// that instant has to land at least 120 seconds after this episode was created.
+    /// StableFor is only a runner-measured duration. The server clock read before the observation
+    /// must be at least 120 seconds after this episode was created. FirstObservedAt is ignored,
+    /// so a skewed runner clock cannot shorten or open the window.
     /// </summary>
-    private static bool FreshLegacyWindow(AgentTaskPark park, TerminalSeatObservation observed)
+    private static bool FreshLegacyWindow(AgentTaskPark park, TerminalSeatObservation observed, DateTimeOffset observedAt)
     {
         if (!park.LegacyDiscovery) return true;
-        if (observed.FirstObservedAt is not DateTimeOffset first) return false;
         if (observed.StableFor < TimeSpan.FromSeconds(120)) return false;
         var opened = park.CreatedAt.Kind == DateTimeKind.Local
             ? park.CreatedAt.ToUniversalTime()
             : DateTime.SpecifyKind(park.CreatedAt, DateTimeKind.Utc);
-        return first.UtcDateTime + observed.StableFor >= opened.AddSeconds(120);
+        return observedAt.UtcDateTime - opened >= TimeSpan.FromSeconds(120);
     }
 
     private async Task<AgentTaskPark?> CurrentParkAsync(AgentTask task, CancellationToken ct)

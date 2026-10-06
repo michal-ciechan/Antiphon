@@ -116,13 +116,17 @@ public sealed class BlockedTaskParkReclaimTests
             await SessionRunningAsync(f, f.SessionId, "G-171");
 
             var unpushedPark = await ParkOfAsync(f, unpushed.TaskId);
-            f.Wire.BySession[f.SessionId] = Idle(TimeSpan.FromMilliseconds(119_999), AsUtc(ancientPark.CreatedAt));
-            f.Wire.BySession[unpushed.SessionId] = Idle(TimeSpan.FromMilliseconds(119_999), AsUtc(unpushedPark.CreatedAt));
+            var windowAnchor = ancientPark.CreatedAt >= unpushedPark.CreatedAt
+                ? ancientPark.CreatedAt : unpushedPark.CreatedAt;
+            AdvanceTo(f, windowAnchor, TimeSpan.FromMilliseconds(119_999));
+            f.Wire.BySession[f.SessionId] = Idle(TimeSpan.FromMilliseconds(120_001), AsUtc(ancientPark.CreatedAt));
+            f.Wire.BySession[unpushed.SessionId] = Idle(TimeSpan.FromMilliseconds(120_001), AsUtc(unpushedPark.CreatedAt));
             await f.ReclaimAsync(32, 1);
             Released(f, f.SessionId).ShouldBeFalse("G-171");
             Released(f, unpushed.SessionId).ShouldBeFalse("G-171");
             await SessionRunningAsync(f, f.SessionId, "G-171");
 
+            AdvanceTo(f, windowAnchor, TimeSpan.FromMilliseconds(120_001));
             f.Wire.BySession[f.SessionId] = Idle(TimeSpan.FromMilliseconds(120_001), AsUtc(ancientPark.CreatedAt));
             f.Wire.BySession[unpushed.SessionId] = Idle(TimeSpan.FromMilliseconds(120_001), AsUtc(unpushedPark.CreatedAt));
             f.Wire.BySession[dirty.SessionId] = Idle(TimeSpan.FromMilliseconds(120_001), AsUtc((await ParkOfAsync(f, dirty.TaskId)).CreatedAt));
@@ -203,6 +207,68 @@ public sealed class BlockedTaskParkReclaimTests
     }
 
     [Test]
+    public async Task C1108_LegacyWindowIsServerAnchored()
+    {
+        await using var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked, parking: true, reclaim: true);
+        f.Wire.Qualified = Idle(TimeSpan.Zero, null);
+        await f.EditAsync((task, _) => task.Role = AgentTaskRole.Code);
+        await f.CreateSourceAsync();
+        await CommitTipAsync(f);
+        var ancientAt = f.Now.AddHours(-30);
+        await using (var db = f.Db())
+        {
+            await db.AgentTasks.Where(t => t.Id == f.TaskId).ExecuteUpdateAsync(s => s
+                .SetProperty(t => t.CompletedAt, ancientAt));
+            await db.AgentTaskEvents.Where(e => e.AgentTaskId == f.TaskId && e.Type == AgentTaskEventType.Blocked)
+                .ExecuteUpdateAsync(s => s.SetProperty(e => e.At, ancientAt));
+        }
+
+        var second = await SeedBlockedAsync(f, "duration");
+        await f.CreateReclaimSourceAsync(second.TaskId, second.SessionId);
+        var verifier = new RunnerWorkspaceParkService();
+        f.Wire.VerifySource = async command => command is { ParkVersion: 2, Publication: { } receipt }
+            && (await verifier.VerifySessionCheckoutAsync(receipt, receipt.Request.Path, default)).Receipt is not null;
+
+        (await f.ReclaimAsync(32, 1)).ShouldBeGreaterThan(0, "V-1");
+        var park = await ParkOfAsync(f, f.TaskId);
+        park.LegacyDiscovery.ShouldBeTrue("V-1");
+        var secondPark = await ParkOfAsync(f, second.TaskId);
+        secondPark.LegacyDiscovery.ShouldBeTrue("V-1");
+
+        f.Wire.BySession[f.SessionId] = Idle(TimeSpan.FromHours(30), AsUtc(ancientAt));
+        await f.ReclaimAsync(32, 1);
+        Released(f, f.SessionId).ShouldBeFalse("G-1");
+        await SessionRunningAsync(f, f.SessionId, "G-1");
+
+        AdvanceTo(f, park.CreatedAt, TimeSpan.FromSeconds(60));
+        f.Wire.BySession[f.SessionId] = Idle(TimeSpan.FromMilliseconds(120_001), AsUtc(park.CreatedAt).AddHours(10));
+        await f.ReclaimAsync(32, 1);
+        Released(f, f.SessionId).ShouldBeFalse("G-2");
+        await SessionRunningAsync(f, f.SessionId, "G-2");
+
+        AdvanceTo(f, park.CreatedAt, TimeSpan.FromMilliseconds(119_999));
+        f.Wire.BySession[f.SessionId] = Idle(TimeSpan.FromMilliseconds(120_001), AsUtc(park.CreatedAt).AddHours(-10));
+        await f.ReclaimAsync(32, 1);
+        Released(f, f.SessionId).ShouldBeFalse("G-1");
+        await SessionRunningAsync(f, f.SessionId, "G-1");
+
+        AdvanceTo(f, park.CreatedAt, TimeSpan.FromMilliseconds(120_001));
+        await f.ReclaimAsync(32, 1);
+        Released(f, f.SessionId).ShouldBeTrue("G-2");
+        f.Wire.Requests.Count(r => r.ParkVersion == 2).ShouldBe(1, "V-1");
+        f.Wire.ForceCommands.ShouldBe(0, "V-1");
+
+        (f.Clock.GetUtcNow() - AsUtc(secondPark.CreatedAt)).ShouldBeGreaterThanOrEqualTo(TimeSpan.FromSeconds(120), "V-1");
+        (await ParkOfAsync(f, second.TaskId)).State.ShouldBe(AgentTaskParkState.Published, "V-1");
+        f.Wire.BySession[second.SessionId] = Idle(TimeSpan.FromMilliseconds(119_999), AsUtc(secondPark.CreatedAt).AddHours(-10));
+        await f.ReclaimAsync(32, 1);
+        Released(f, second.SessionId).ShouldBeFalse("V-1");
+        await SessionRunningAsync(f, second.SessionId, "V-1");
+        f.Wire.Requests.Count(r => r.ParkVersion == 2).ShouldBe(1, "V-1");
+        f.Wire.ForceCommands.ShouldBe(0, "V-1");
+    }
+
+    [Test]
     public async Task C1065_ClaimAndReplyInvalidateLegacyCandidate()
     {
         await InvalidateAsync("G-175", (f, _) => DriveAsync(f, f.AnswerAsync("reply invalidates the legacy candidate")), list: true);
@@ -234,6 +300,7 @@ public sealed class BlockedTaskParkReclaimTests
         var park = await f.ParkAsync();
         park.LegacyDiscovery.ShouldBeTrue(label);
         park.State.ShouldNotBe(AgentTaskParkState.Parked, label);
+        AdvanceTo(f, park.CreatedAt, TimeSpan.FromMilliseconds(120_001));
         f.Wire.BySession[f.SessionId] = Idle(TimeSpan.FromMilliseconds(120_001), AsUtc(park.CreatedAt));
         Exception? error = null;
         var hit = 0;
@@ -410,6 +477,13 @@ public sealed class BlockedTaskParkReclaimTests
         "issued-token", stable, first);
 
     private static DateTimeOffset AsUtc(DateTime value) => new(DateTime.SpecifyKind(value, DateTimeKind.Utc), TimeSpan.Zero);
+
+    private static void AdvanceTo(RunnerSeatReleaseFixture f, DateTime createdAt, TimeSpan elapsed)
+    {
+        var delta = AsUtc(createdAt) + elapsed - f.Clock.GetUtcNow();
+        if (delta > TimeSpan.Zero)
+            f.Clock.Advance(delta);
+    }
 
     private static bool Released(RunnerSeatReleaseFixture f, Guid sessionId) =>
         f.Wire.Calls.Any(path => path.Contains(sessionId.ToString("D"), StringComparison.Ordinal)

@@ -70,7 +70,7 @@ public sealed class BlockedTaskParkProjectionTests
         Require(runtime, "The reclaim cursor is the singleton BlockedTaskParkReclaimCursors row Id 1 and advances after every visit, including failure.", "c1065-reclaim-cursor");
         Require(runtime, "A short tail wraps, a call makes at most three visits, and there is no discovery gate.", "c1065-reclaim-page");
         Require(runtime, "The reconcile job's released total includes those visit counts.", "c1065-reclaim-count");
-        Require(runtime, "FreshLegacyWindow mixes the runner observation clock with park.CreatedAt. An old CompletedAt is not the idle window.", "c1065-fresh-window");
+        Require(runtime, "FreshLegacyWindow uses StableFor only as a duration and requires the server-clock interval since park.CreatedAt to reach 120 seconds; the runner's FirstObservedAt is ignored. An old CompletedAt is not the idle window.", "c1065-fresh-window");
         Require(runtime, "With Enabled and ReclaimExisting set, physical release still requires AutomaticEnabled.", "c1065-automatic-still-required");
 
         var loop = Read("docs/orchestration-loop.md");
