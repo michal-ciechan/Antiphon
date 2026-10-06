@@ -197,7 +197,7 @@ public sealed class RemoteScriptContractTests
         foreach (var vector in new[] { "Failed", "Canceled", "Succeeded", "Queued", "Dispatched", "Working", "Blocked",
                      "pending", "unfiltered-open", "unfiltered-land", "timeout", "http", "transport", "empty", "malformed" })
         {
-            using var f = new C1008HostFixture();
+            using var f = new C1008HostFixture { ExerciseHttpClassifier = true };
             var envelope = f.TaskScopes[project]!;
             var bound = vector is "Queued" or "Dispatched" or "Working" or "Blocked";
             var accepted = vector is "Failed" or "Canceled" or "Succeeded";
@@ -241,6 +241,7 @@ public sealed class RemoteScriptContractTests
         using (var batch = new C1008HostFixture())
         {
             var vectors = C994TaskVectors.Build(batch.Vectors["emptyTasks"]!.AsObject());
+            vectors.Last()!["input"]!["scopes"]![project]!["open"]!["excluded"]!["byProject"]![0]!["name"] = "SENTINEL_EXCLUDED_NAME";
             File.WriteAllText(Path.Combine(batch.Root, "task-vectors.json"), vectors.ToJsonString());
             var run = await batch.Run(extra: """
                 C1008_RUNNER=server2-temp
@@ -257,9 +258,11 @@ public sealed class RemoteScriptContractTests
                 """);
             run.Exit.ShouldBe(0, "host closure/detail matrix: " + run.Output);
             batch.Removed.ShouldBeEmpty();
+            File.ReadAllText(Path.Combine(batch.Root, "evidence", "deploy-parent", "census-deploy-parent-server2-temp.json"))
+                .ShouldNotContain("SENTINEL", customMessage: "only project IDs and counts may enter scope snapshots");
         }
         // The second host caller must preserve the same typed cause and stop before cleanup.
-        using var retired = new C1008HostFixture(main: false);
+        using var retired = new C1008HostFixture(main: false) { ExerciseHttpClassifier = true };
         retired.HttpFaults["/api/agent-tasks?"] = "timeout";
         var cleanup = await retired.Run("retire-temp-containers");
         cleanup.Exit.ShouldBe(2, cleanup.Output);

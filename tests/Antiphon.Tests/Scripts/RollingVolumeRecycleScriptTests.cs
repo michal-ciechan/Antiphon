@@ -352,18 +352,20 @@ public sealed class RollingVolumeRecycleScriptTests
             var id = "22222222-2222-2222-2222-222222222222";
             var first = scoped.State["tasks"]!.DeepClone();
             var second = first.DeepClone(); second["scope"]!["projectId"] = other;
-            var row = new JsonObject { ["id"] = id, ["status"] = vector is "active-excluded" or "unscoped" ? "Queued" : "Succeeded",
-                ["runnerId"] = "server2-temp", ["projectId"] = vector == "unscoped" ? null : other,
+            var row = new JsonObject { ["id"] = id, ["status"] = vector is "active-excluded" or "unscoped" ? "Queued" : "Blocked",
+                ["runnerId"] = vector is "active-excluded" or "unscoped" ? "server2-temp" : "other", ["projectId"] = vector == "unscoped" ? null : other,
                 ["scopeSource"] = vector == "unscoped" ? "None" : "Task", ["landRequestedAt"] = null, ["landStartedAt"] = null };
             if (vector == "unscoped") first["items"]!.AsArray().Add(row.DeepClone());
             else {
                 first["excluded"]!["total"] = vector == "wrong-count" ? 2 : 1;
                 first["excluded"]!["byProject"]!.AsArray().Add(new JsonObject { ["projectId"] = other, ["count"] = 1 });
                 if (vector != "withheld") second["items"]!.AsArray().Add(row.DeepClone());
-                if (vector == "inconsistent") first["items"]!.AsArray().Add(new JsonObject { ["id"] = id, ["status"] = "Succeeded",
+                if (vector == "inconsistent") first["items"]!.AsArray().Add(new JsonObject { ["id"] = id, ["status"] = "Blocked",
                     ["runnerId"] = "other", ["projectId"] = null, ["scopeSource"] = "None", ["landRequestedAt"] = null, ["landStartedAt"] = null });
             }
-            scoped.State["taskScopes"] = new JsonObject { [root] = first, [other] = second };
+            scoped.State["taskQueries"] = new JsonObject {
+                [C1087ListPath(root, "open")] = first, [C1087ListPath(other, "open")] = second,
+                [C1087ListPath(root, "land")] = scoped.State["tasks"]!.DeepClone() };
             scoped.State["details"] = new JsonObject { [id] = new JsonObject {
                 ["summary"] = vector == "inconsistent" ? first["items"]![0]!.DeepClone() : row.DeepClone(), ["landRequest"] = null } };
             var result = await scoped.Run("retire-temp");
@@ -428,7 +430,7 @@ public sealed class RollingVolumeRecycleScriptTests
         foreach (var state in new[] { "Queued", "Held", "Running", "NeedsResolution", "Unknown", "omitted", "started" })
         {
             using var invalid = new C1008WrapperFixture();
-            var row = new JsonObject { ["id"] = "11111111-1111-1111-1111-111111111111", ["status"] = "Succeeded", ["runnerId"] = "other",
+            var row = new JsonObject { ["id"] = "11111111-1111-1111-1111-111111111111", ["status"] = state == "started" ? "Succeeded" : "Blocked", ["runnerId"] = "other",
                 ["projectId"] = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1", ["scopeSource"] = "Task", ["landRequestedAt"] = null,
                 ["landStartedAt"] = state == "started" ? "2026-10-03T09:00:00Z" : null };
             invalid.State["tasks"]!["items"]!.AsArray().Add(row);
@@ -436,7 +438,7 @@ public sealed class RollingVolumeRecycleScriptTests
             if (state != "omitted") detail["landRequest"] = state == "started" ? null : new JsonObject { ["state"] = state };
             invalid.State["details"] = new JsonObject { [row["id"]!.GetValue<string>()] = detail };
             var refused = await invalid.Run("retire-temp");
-            refused.Trace.Any(x => x["kind"]?.GetValue<string>() == "case").ShouldBeFalse("recycle-work-gates: succeeded pending land " + state);
+            refused.Trace.Any(x => x["kind"]?.GetValue<string>() == "case").ShouldBeFalse("recycle-work-gates: open detail or terminal pending land " + state);
             refused.Exit.ShouldBe(2);
         }
     }
@@ -802,6 +804,7 @@ internal sealed class C1008HostFixture : IDisposable
     internal JsonObject TaskScopes { get; } = new();
     internal JsonObject TaskDetails { get; } = new();
     internal JsonObject HttpFaults { get; } = new();
+    internal bool ExerciseHttpClassifier { get; set; }
 
     internal C1008HostFixture(bool main = true)
     {
@@ -953,6 +956,7 @@ internal sealed class C1008HostFixture : IDisposable
             c849_lock() { :; }
             c849_budget_gate() { :; }
             c849_status_body() { jq -ec --arg runner "$1" '.[$runner]' '{{Root}}/statuses.json'; }
+            C1087_REAL_HTTP={{(ExerciseHttpClassifier ? "1" : "0")}}
             source '{{DelegateScriptRunner.RepoRoot}}/scripts/fixtures/c1087-host-http.sh'
             sudo() { [ "$1" = -n ] && shift; if [ "$1" = install ]; then mkdir -p "${@: -1}"; elif [ "$1" = df ]; then printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\nfixture 99999999 1 25000000 1%% /fixture\n'; else "$@"; fi; }
             {{extra}}
