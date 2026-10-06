@@ -129,7 +129,8 @@ internal sealed partial class RunnerSeatReleaseFixture : IAsyncDisposable
         AgentTaskStatus status = AgentTaskStatus.Succeeded, bool sourced = false,
         Action<DbContextOptionsBuilder>? configureDb = null,
         string? provider = null, bool phoneHome = false, bool rowless = false,
-        bool productionDefaults = false, bool parking = false, bool syncRecovery = false)
+        bool productionDefaults = false, bool parking = false, bool syncRecovery = false,
+        int? completionSingleWriteBytes = null)
     {
         var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 5, 0, 0, 0, TimeSpan.Zero));
@@ -145,6 +146,11 @@ internal sealed partial class RunnerSeatReleaseFixture : IAsyncDisposable
             {
                 ConnectionString = schema.ConnectionString, TimeProvider = clock,
                 AlwaysOn = false, PreserveDatabaseOnDispose = true,
+                // Inbox fallback spills a normal completion batch into a pointer. The caller
+                // receipt names the evidence only when that batch is typed whole.
+                Delegation = completionSingleWriteBytes is int writeBytes
+                    ? new DelegationSettings { PtySingleChunkBytes = writeBytes }
+                    : null,
                 ConfigureDbContext = configureDb,
                 ConfigureServices = services =>
                 {
