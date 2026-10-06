@@ -406,6 +406,105 @@ public sealed class RemoteWorkspacePreparerTests
     }
 
     /// <summary>
+    /// CARD-1076 D-2. The production push uses the options overload with the configured minutes
+    /// and the task tag, and does not set the desktop upstream.
+    /// </summary>
+    [Test]
+    public async Task C1076_prep_push_carries_the_task_tag_and_the_configured_budget()
+    {
+        await using var rig = await Rig.StartAsync(s => s.RemotePrepPushBudgetMinutes = 7);
+        rig.Peer.SilentFor(PhoneHomeOperation.WorkspaceMirror);
+        var taskId = await rig.SeedAsync();
+        var mirror = "/work/worktrees/" + RemoteWorkspaceService.MirrorName(taskId);
+
+        await rig.TickAsync().WaitAsync(TickBound);
+        var git = (PushOnlyGit)rig.Provider.GetRequiredService<ILandingGit>();
+        var seen = DateTime.UtcNow + TickBound;
+        while (git.Pushes.Count == 0 && DateTime.UtcNow < seen)
+            await Task.Delay(20);
+        var push = git.Pushes.ShouldHaveSingleItem();
+        push.Options.Budget.ShouldBe(TimeSpan.FromMinutes(7));
+        push.Options.Child.ShouldBe(new RepositoryChildTag(taskId, RepositoryChildPurposes.RemotePrepPush));
+        push.Arguments.ShouldBe(new[] { "push", "origin", "feat/test-remote-prep" });
+
+        var request = await rig.WaitForRequestsAsync(PhoneHomeOperation.WorkspaceMirror, 1);
+        await rig.Peer.EmitAsync(MirrorResult(request, mirror));
+        await rig.Preparer.WhenIdleAsync().WaitAsync(TickBound);
+        (await rig.ReadTaskAsync(taskId)).RemoteWorktreePath.ShouldBe(mirror);
+    }
+
+    /// <summary>
+    /// CARD-1076 D-4. One push at a time per repository. The waiter names the pusher, then both
+    /// mirrors complete with no warning.
+    /// </summary>
+    [Test]
+    public async Task C1076_pushes_on_one_repository_run_one_at_a_time_and_the_waiter_names_the_pusher()
+    {
+        await using var rig = await Rig.StartAsync(capacity: 3);
+        rig.Peer.SilentFor(PhoneHomeOperation.WorkspaceMirror);
+        var git = (PushOnlyGit)rig.Provider.GetRequiredService<ILandingGit>();
+        git.HoldFirstPush = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var ids = new List<Guid>();
+        for (var i = 0; i < 2; i++)
+        {
+            var worktree = Directory.CreateDirectory(Path.Combine(rig.WorkspacePath, $"wt-{i}")).FullName;
+            ids.Add(await rig.SeedAsync(t =>
+            {
+                t.WorktreePath = worktree;
+                t.WorktreeBranch = $"feat/test-remote-prep-{i}";
+            }));
+        }
+
+        await rig.TickAsync().WaitAsync(TickBound);
+        foreach (var id in ids)
+        {
+            (await rig.EventsAsync(id, AgentTaskEventType.Held)).Last().Detail
+                .ShouldStartWith(DispatchHoldDetails.RemoteMirrorRequestedPrefix);
+        }
+
+        var deadline = DateTime.UtcNow + TickBound;
+        Guid pusher = Guid.Empty;
+        RemotePrepProgress? waiting = null;
+        while (DateTime.UtcNow < deadline)
+        {
+            var rows = ids.Select(id => (id, progress: rig.Preparer.Progress(id))).ToArray();
+            var pushing = rows.Where(row => row.progress?.Phase == RemotePrepPhase.Pushing).ToArray();
+            var queued = rows.Where(row => row.progress?.Phase == RemotePrepPhase.WaitingForPushTurn).ToArray();
+            if (pushing.Length == 1 && queued.Length == 1
+                && queued[0].progress!.Value.BehindTaskId == pushing[0].id
+                && git.MaxConcurrentPushes == 1 && git.Pushes.Count == 1)
+            {
+                pusher = pushing[0].id;
+                waiting = queued[0].progress;
+                break;
+            }
+
+            await Task.Delay(20);
+        }
+
+        waiting.ShouldNotBeNull();
+        waiting!.Value.Phase.ShouldBe(RemotePrepPhase.WaitingForPushTurn);
+        waiting.Value.BehindTaskId.ShouldBe(pusher);
+        git.MaxConcurrentPushes.ShouldBe(1);
+
+        git.HoldFirstPush.TrySetResult();
+        for (var n = 1; n <= 2; n++)
+        {
+            var request = await rig.WaitForRequestsAsync(PhoneHomeOperation.WorkspaceMirror, n);
+            await rig.Peer.EmitAsync(MirrorResult(request, "/work/worktrees/c1076-mirror-" + n));
+        }
+
+        await rig.Preparer.WhenIdleAsync().WaitAsync(TickBound);
+        git.MaxConcurrentPushes.ShouldBe(1);
+        git.Pushes.Count.ShouldBe(2);
+        foreach (var id in ids)
+        {
+            (await rig.ReadTaskAsync(id)).RemoteWorktreePath.ShouldNotBeNull();
+            (await rig.EventsAsync(id, AgentTaskEventType.Warning)).ShouldBeEmpty();
+        }
+    }
+
+    /// <summary>
     /// Review 3488192e (2): V-1 and V-12 carried to the recipient. The card's timeline for one
     /// runner task - refused at crossing 1 while a land holds the lease, mirrored in the gap, then
     /// launched lease-free while the NEXT land holds it - through the real launch queue and the
@@ -984,14 +1083,58 @@ public sealed class RemoteWorkspacePreparerTests
 
     private sealed class PushOnlyGit : ILandingGit
     {
-        public Task<LandingGitResult> RunAsync(string repository, IReadOnlyList<string> arguments, CancellationToken ct) =>
-            Task.FromResult(arguments[0] switch
+        private readonly object _sync = new();
+        private int _inPush;
+        private int _maxConcurrent;
+        private int _pushOrdinal;
+
+        public TaskCompletionSource? HoldFirstPush { get; set; }
+        public int MaxConcurrentPushes { get { lock (_sync) return _maxConcurrent; } }
+        public List<RecordedPush> Pushes { get; } = [];
+
+        public sealed record RecordedPush(IReadOnlyList<string> Arguments, LandingGitRunOptions Options);
+
+        public Task<LandingGitResult> RunAsync(string repository, IReadOnlyList<string> arguments, CancellationToken ct)
+        {
+            if (arguments[0] == "push")
+                throw new NotSupportedException("push must carry run options");
+            return Task.FromResult(arguments[0] switch
             {
                 "rev-parse" => new LandingGitResult(0, new string('1', 40), ""),
                 "remote" => new LandingGitResult(0, "https://github.com/michal-ciechan/Antiphon.git", ""),
-                "push" => new LandingGitResult(0, "", ""),
                 _ => throw new NotSupportedException(arguments[0]),
             });
+        }
+
+        public async Task<LandingGitResult> RunAsync(
+            string repository, IReadOnlyList<string> arguments, LandingGitRunOptions options, CancellationToken ct)
+        {
+            if (arguments[0] != "push")
+                return await RunAsync(repository, arguments, ct);
+
+            int ordinal;
+            lock (_sync)
+            {
+                Pushes.Add(new RecordedPush(arguments.ToArray(), options));
+                _inPush++;
+                if (_inPush > _maxConcurrent)
+                    _maxConcurrent = _inPush;
+                ordinal = _pushOrdinal++;
+            }
+
+            try
+            {
+                if (HoldFirstPush is not null && ordinal == 0)
+                    await HoldFirstPush.Task.WaitAsync(ct);
+            }
+            finally
+            {
+                lock (_sync)
+                    _inPush--;
+            }
+
+            return new LandingGitResult(0, "", "");
+        }
         public Task<LandingGitResult> RunOwnedAsync(string repository, IReadOnlyList<string> arguments, Func<int, long, CancellationToken, Task> started, CancellationToken ct) => throw new NotSupportedException();
         public Task<bool?> IsProcessAliveAsync(int processId, long startTicks, CancellationToken ct) => throw new NotSupportedException();
         public Task<string> CanonicalDirectoryAsync(string path, CancellationToken ct) => throw new NotSupportedException();

@@ -626,6 +626,12 @@ public sealed class DelegationSettings
     public int RemotePrepBackoffMaxSeconds { get; set; } = 900;
 
     /// <summary>
+    /// CARD-1076 D-2: the remote-prep <c>git push</c> budget, in minutes. Every other
+    /// <c>LandingGit</c> command keeps its five-minute budget. Default 20, floor 1.
+    /// </summary>
+    public int RemotePrepPushBudgetMinutes { get; set; } = 20;
+
+    /// <summary>
     /// CARD-0657 D-3: the whole runner settlement sync attempt's budget, in seconds. A busy
     /// repository lease is retried inside it; when it runs out the task blocks (lease-busy or
     /// timeout) with its report retained. Default 120, floor 1.
@@ -1188,6 +1194,8 @@ public sealed class DelegationSettingsValidator : IValidateOptions<DelegationSet
         if (options.RemotePrepBackoffBaseSeconds < 1
             || options.RemotePrepBackoffMaxSeconds < options.RemotePrepBackoffBaseSeconds)
             failures.Add("Delegation:RemotePrepBackoffBaseSeconds must be at least 1 and Delegation:RemotePrepBackoffMaxSeconds at least the base.");
+        if (options.RemotePrepPushBudgetMinutes < 1)
+            failures.Add("Delegation:RemotePrepPushBudgetMinutes must be at least 1.");
         if (options.RunnerSyncBudgetSeconds < 1)
             failures.Add("Delegation:RunnerSyncBudgetSeconds must be at least 1.");
         if (options.LandYieldToDispatchMaxSeconds is < 0 or > 600)

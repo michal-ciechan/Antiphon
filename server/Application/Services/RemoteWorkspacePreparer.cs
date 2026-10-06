@@ -11,6 +11,17 @@ using Microsoft.Extensions.Options;
 
 namespace Antiphon.Server.Application.Services;
 
+/// <summary>CARD-1076 D-4. Where one remote-prep operation is, for the pipeline's heldBy.</summary>
+public enum RemotePrepPhase
+{
+    WaitingForPushTurn,
+    Pushing,
+    Mirroring,
+}
+
+/// <summary>CARD-1076 D-4. In-flight remote preparation as the preparer sees it.</summary>
+public readonly record struct RemotePrepProgress(DateTime Since, RemotePrepPhase Phase, Guid? BehindTaskId);
+
 /// <summary>
 /// CARD-0633 D-4. Prepares a runner-bound task's remote workspace (branch push to origin, then the
 /// runner's mirror of it) as an owned background operation, OFF the dispatcher's serial tick and
@@ -32,8 +43,35 @@ public sealed class RemoteWorkspacePreparer : IAsyncDisposable
     private readonly ILogger<RemoteWorkspacePreparer> _logger;
     private readonly CancellationTokenSource _stopping;
     private readonly ConcurrentDictionary<Guid, InFlight> _inFlight = new();
+    private readonly ConcurrentDictionary<string, PushGate> _pushGates = new(RepoPathComparer);
 
-    private sealed record InFlight(string? RunnerId, DateTime Since, TaskCompletionSource Done);
+    private static readonly StringComparer RepoPathComparer = OperatingSystem.IsWindows()
+        ? StringComparer.OrdinalIgnoreCase
+        : StringComparer.Ordinal;
+
+    private sealed class InFlight
+    {
+        public InFlight(string? runnerId, DateTime since, TaskCompletionSource done)
+        {
+            RunnerId = runnerId;
+            Since = since;
+            Done = done;
+        }
+
+        public string? RunnerId { get; }
+        public DateTime Since { get; }
+        public TaskCompletionSource Done { get; }
+        public RemotePrepPhase Phase { get; set; } = RemotePrepPhase.Pushing;
+        public Guid? BehindTaskId { get; set; }
+    }
+
+    /// <summary>One push at a time for a repository. The wait is not part of the push budget.</summary>
+    private sealed class PushGate
+    {
+        public readonly object Sync = new();
+        public readonly SemaphoreSlim Turn = new(1, 1);
+        public Guid Holder;
+    }
 
     public RemoteWorkspacePreparer(
         IServiceScopeFactory scopes,
@@ -97,6 +135,14 @@ public sealed class RemoteWorkspacePreparer : IAsyncDisposable
         return false;
     }
 
+    /// <summary>CARD-1076 D-4. Null when <paramref name="taskId"/> has no preparation in flight.</summary>
+    public RemotePrepProgress? Progress(Guid taskId)
+    {
+        if (!_inFlight.TryGetValue(taskId, out var entry))
+            return null;
+        return new RemotePrepProgress(entry.Since, entry.Phase, entry.BehindTaskId);
+    }
+
     /// <summary>Test seam: completes once no operation is in flight.</summary>
     public async Task WhenIdleAsync(CancellationToken ct = default)
     {
@@ -124,13 +170,30 @@ public sealed class RemoteWorkspacePreparer : IAsyncDisposable
             string? failure;
             try
             {
-                var push = await remote.PushBranchAsync(task, ct);
+                var gateKey = PushGateKey(task.RepoPath);
+                var gate = gateKey is null ? null : _pushGates.GetOrAdd(gateKey, static _ => new PushGate());
+                if (gate is not null)
+                    await EnterPushTurnAsync(gate, entry, taskId, ct);
+
+                RemotePushResult push;
+                try
+                {
+                    push = await remote.PushBranchAsync(task, ct);
+                }
+                finally
+                {
+                    if (gate is not null)
+                        ExitPushTurn(gate, taskId);
+                }
+
                 if (!push.Pushed || push.Sha is null)
                 {
                     failure = $"The task branch could not be pushed to origin ({push.Warning}); the task stays Queued.";
                 }
                 else
                 {
+                    entry.Phase = RemotePrepPhase.Mirroring;
+                    entry.BehindTaskId = null;
                     var path = await remote.MirrorAsync(task, push.Sha, push.Repository!, ct);
                     // D-8: keyed by id, not by status, so a mirror that succeeds after a cancel is
                     // still known to retirement and removed rather than left as runner residue.
@@ -200,6 +263,52 @@ public sealed class RemoteWorkspacePreparer : IAsyncDisposable
         {
             _inFlight.TryRemove(new KeyValuePair<Guid, InFlight>(taskId, entry));
             entry.Done.TrySetResult();
+        }
+    }
+
+    private static string? PushGateKey(string? repoPath)
+    {
+        if (string.IsNullOrWhiteSpace(repoPath))
+            return null;
+        return Path.TrimEndingDirectorySeparator(Path.GetFullPath(repoPath));
+    }
+
+    /// <summary>
+    /// CARD-1076 D-4. Waits for this repository's push turn. The wait honours
+    /// <paramref name="ct"/> and is outside the push budget. Returns holding the turn.
+    /// </summary>
+    private async Task EnterPushTurnAsync(PushGate gate, InFlight entry, Guid taskId, CancellationToken ct)
+    {
+        lock (gate.Sync)
+        {
+            if (gate.Holder == Guid.Empty && gate.Turn.CurrentCount > 0 && gate.Turn.Wait(0))
+            {
+                gate.Holder = taskId;
+                entry.Phase = RemotePrepPhase.Pushing;
+                entry.BehindTaskId = null;
+                return;
+            }
+
+            entry.Phase = RemotePrepPhase.WaitingForPushTurn;
+            entry.BehindTaskId = gate.Holder == Guid.Empty ? null : gate.Holder;
+        }
+
+        await gate.Turn.WaitAsync(ct);
+        lock (gate.Sync)
+        {
+            gate.Holder = taskId;
+            entry.Phase = RemotePrepPhase.Pushing;
+            entry.BehindTaskId = null;
+        }
+    }
+
+    private static void ExitPushTurn(PushGate gate, Guid taskId)
+    {
+        lock (gate.Sync)
+        {
+            if (gate.Holder == taskId)
+                gate.Holder = Guid.Empty;
+            gate.Turn.Release();
         }
     }
 

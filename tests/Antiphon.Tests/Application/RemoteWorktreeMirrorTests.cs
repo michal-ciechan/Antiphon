@@ -130,7 +130,13 @@ public sealed class RemoteWorktreeMirrorTests
         var result = await Service(git).PushBranchAsync(Task(), CancellationToken.None);
         result.Pushed.ShouldBeTrue();
         result.Sha.ShouldBe(Sha);
-        git.Commands.ShouldContain(c => c.StartsWith("push -u origin feat/card-task-deadbeef", StringComparison.Ordinal));
+        // CARD-1076 / CARD-1091: the prep push does not set upstream. -u writes .git/config
+        // with no lock retry, and the runner mirror never reads the desktop upstream.
+        git.Commands.ShouldContain("push origin feat/card-task-deadbeef");
+        git.LastPushOptions.ShouldNotBeNull();
+        git.LastPushOptions!.Budget.ShouldBe(TimeSpan.FromMinutes(20));
+        git.LastPushOptions.Child.ShouldBe(new RepositoryChildTag(
+            Guid.Parse("deadbeef-0000-0000-0000-000000000000"), RepositoryChildPurposes.RemotePrepPush));
     }
 
     [Test]
@@ -180,6 +186,16 @@ public sealed class RemoteWorktreeMirrorTests
         public string Head { get; set; } = head;
 
         public void On(string verb, int code, string output, Action? after = null) => _answers[verb] = (code, output, after);
+
+        public LandingGitRunOptions? LastPushOptions { get; private set; }
+
+        public Task<LandingGitResult> RunAsync(
+            string repository, IReadOnlyList<string> arguments, LandingGitRunOptions options, CancellationToken ct)
+        {
+            if (arguments.Count > 0 && arguments[0] == "push")
+                LastPushOptions = options;
+            return RunAsync(repository, arguments, ct);
+        }
 
         public Task<LandingGitResult> RunAsync(string repository, IReadOnlyList<string> arguments, CancellationToken ct)
         {

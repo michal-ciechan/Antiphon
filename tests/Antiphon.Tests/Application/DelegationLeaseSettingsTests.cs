@@ -42,4 +42,25 @@ public sealed class DelegationLeaseSettingsTests
     {
         new DelegationSettings().LandYieldToDispatchMaxSeconds.ShouldBe(90);
     }
+
+    /// <summary>CARD-1076 D-2. The remote-prep push budget defaults to 20 minutes and rejects 0.</summary>
+    [Test]
+    [Arguments(0, false)]
+    [Arguments(1, true)]
+    [Arguments(20, true)]
+    public void C1076_RemotePrepPushBudgetMinutes_defaults_to_20_and_rejects_below_1(int minutes, bool valid)
+    {
+        new DelegationSettings().RemotePrepPushBudgetMinutes.ShouldBe(20);
+        var result = new DelegationSettingsValidator().Validate(
+            null, new DelegationSettings { RemotePrepPushBudgetMinutes = minutes });
+        if (valid)
+        {
+            result.Succeeded.ShouldBeTrue(string.Join("; ", result.Failures ?? []));
+            return;
+        }
+
+        result.Succeeded.ShouldBeFalse();
+        result.Failures.ShouldNotBeNull()
+            .ShouldContain("Delegation:RemotePrepPushBudgetMinutes must be at least 1.");
+    }
 }

@@ -36,6 +36,7 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
     private readonly IRepositoryMutationLease? _leases;
     private readonly IWorkspaceReservationJournal? _reservations;
     private readonly IRunnerMirrorPublisher _mirrorPublisher;
+    private readonly int _remotePrepPushBudgetMinutes;
 
     public RemoteWorkspaceService(
         ISessionRunnerDirectory runners,
@@ -54,8 +55,9 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
         _leases = leases;
         _reservations = reservations;
         _mirrorPublisher = mirrorPublisher ?? new PhoneHomeRunnerMirrorPublisher(runners);
-        SyncBudget = TimeSpan.FromSeconds(
-            settings?.Value.RunnerSyncBudgetSeconds ?? new DelegationSettings().RunnerSyncBudgetSeconds);
+        var configured = settings?.Value ?? new DelegationSettings();
+        SyncBudget = TimeSpan.FromSeconds(configured.RunnerSyncBudgetSeconds);
+        _remotePrepPushBudgetMinutes = configured.RemotePrepPushBudgetMinutes;
     }
 
     /// <summary>
@@ -110,7 +112,12 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
             return new RemotePushResult(false, sha, "the desktop worktree origin could not be read");
 
         var push = await _git.RunAsync(
-            task.WorktreePath, ["push", "-u", "origin", task.WorktreeBranch], ct);
+            task.WorktreePath,
+            ["push", "origin", task.WorktreeBranch],
+            new LandingGitRunOptions(
+                TimeSpan.FromMinutes(_remotePrepPushBudgetMinutes),
+                new RepositoryChildTag(task.Id, RepositoryChildPurposes.RemotePrepPush)),
+            ct);
         if (push.ExitCode != 0)
             return new RemotePushResult(false, sha, "git push failed: " + Tail(push.Diagnostic));
         return new RemotePushResult(true, sha, null, repository);
