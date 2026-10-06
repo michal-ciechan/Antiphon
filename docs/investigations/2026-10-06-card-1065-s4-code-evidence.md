@@ -1,13 +1,12 @@
-# CARD-1065 S4 Code evidence — implementation pushed, V-10 fixture repair pending
+# CARD-1065 S4 Code evidence — CP-4 green, ready for Review
 
-S4 source-policy is implemented and pushed, but ordinary verification is incomplete.
-Latest CP-4: **3 executed, 2 passed, 1 failed, 0 skipped**. V-9 and V-11 passed;
-V-10 failed in fixture setup because it changes the immutable SourceLandingOperationId
-after the task has been inserted. This is our fixture defect, not inherited red.
-The brief's two-repair cap has been reached, conservatively counting the initial
-regression assertion-overload correction and the subsequent test-client completion.
-One further fixture-only repair and CP-4 rerun needs caller authorization. No further
-source edit was made after that failure. This branch is not ready for Review or landing.
+S4 source-policy is implemented, pushed and ready for ordinary Review. Latest CP-4:
+**3 executed, 3 passed, 0 failed, 0 skipped**, covering V-9, V-10 and V-11.
+The caller explicitly authorized one additional fixture-only repair after the original
+two-repair cap: insert SourceLanding custody coordinates with a valid referenced landing
+row at insertion, then rerun CP-4 only. That repair is complete. No production code,
+timeout or assertion was loosened in this additional round. PCs remain pending post-land
+SourceLanding Mutation; this Code task does not authorize activation.
 
 ## Ownership and source
 
@@ -16,11 +15,13 @@ source edit was made after that failure. This branch is not ready for Review or 
 - Worktree: `/work/worktrees/task-101f3188`.
 - Desktop companion, not reachable here: `C:\Antiphon\worktrees\card-task-101f3188`.
 - Full task base: `9b3f207d78176239adf14f1179ea19dc47589dc8`.
-- Actual latest tested source: `109a567b909649b59191d83c1957dd3f878ee710`.
+- Actual latest tested source / authorized fixture repair: `5f7ef95ba0986ef5154bbbb088ee62aa3f94597b`.
+- Previous production implementation: `109a567b909649b59191d83c1957dd3f878ee710`.
 - Initial implementation: `eab5380082c9fdb59b77040e572a829951edad14`.
 - Executed red-first regression source: `309050073547edadc4d4b2d5cba7346b015213f1`.
 - Earlier pushed commits: `538118bc743828552086b3665e0438367dccec5f`,
-  `35d443bdc7fd2017f7d87880f992a299a72d8c9c`, `42838d355ffa5974d02057773eb4a7f8cbcfc7ff`.
+  `35d443bdc7fd2017f7d87880f992a299a72d8c9c`, `42838d355ffa5974d02057773eb4a7f8cbcfc7ff`,
+  `ee32b9d241f37c24b35abb02482cd31410211aa4` (previous blocked report).
 - The final caller report supplies the subsequently pushed documentation SHA.
 - Plan: `docs/superpowers/plans/2026-10-05-card-1065-blocked-task-parking-plan.md`.
 - Predecessor evidence: `docs/investigations/2026-10-05-card-1065-s3-code-evidence.md`.
@@ -64,7 +65,7 @@ planned S5 composition. Shared/ReadOnly require a captured, task-owned baseline;
 ownership is held. Runtime release, idle waiting, transport routing integration and live
 activation are not claimed by S4's source tests.
 
-## Executed verification and remaining repair
+## Executed verification and authorized repair
 
 The caller explicitly resumed with CP-4 only, narrow filters, no whole-Unit. That scope
 wins over the generic Final-profile boilerplate appended to the brief. Only
@@ -74,27 +75,29 @@ other checkpoint row, deliberate mutant or unchanged-proof repetition was run.
 | ID | Exact method | Latest outcome |
 |---|---|---|
 | V-9 | TaskParkPublicationTests.C1065_WorkspaceModesPreservePublicationAuthority | Passed, 1: local/remote actual publication, fresh replay, dirty source, unavailable endpoint, Shared already-published/no-push/unpublished/foreign reservation/task owner/unauthorized ref, ReadOnly clean/dirty/advanced base |
-| V-10 | TaskParkPublicationTests.C1065_CommitInstructionsAndRefusalsRespectOverrides | Failed, 1: formatter and NoCommit checks execute; fixture fails while changing immutable SourceLandingOperationId; later SourceLanding/recovery/uncertain-owner/no-Commit-child assertions are not established |
+| V-10 | TaskParkPublicationTests.C1065_CommitInstructionsAndRefusalsRespectOverrides | Passed, 1: ordinary writable/NoCommit/ReadOnly/SourceLanding brief policy, actual NoCommit and SourceLanding refusals with uncommitted source preserved, commit recovery and uncertain-owner holds, no automatic Commit child |
 | V-11 | TaskParkPublicationTests.C1065_PublicationReceiptCannotAuthorizeChangedAttempt | Passed, 1: changed stored report; independent altered receipt fields before first acceptance; valid real-source acceptance/replay; final intent race; second DB connection takes task row lock during paused Git; no release reservation |
 
 The fresh TRX was inspected for all three exact class/method identities and nonzero counts.
-Latest build: 0 errors / 620 warnings, 117.1624322s checkpoint build; row host 67.6401766s;
-overall 3m06s. Source stayed frozen at the committed expected SHA throughout every run.
-SourceState=clean and buildSource=verified describe provenance, not a passing certificate.
-Receipt validation exited 2:
+Latest build: 0 errors / 619 warnings, 108.7032122s checkpoint build; row host 59.9377267s;
+overall 2m50s. Source stayed frozen at the committed expected SHA throughout every run.
+SourceState=clean, buildSource=verified, and the matching SHA-validated receipt is green.
+Receipt validation exited 0:
 
 ```text
-CHECKPOINT SOURCE INVALID reason=row_failed
+CHECKPOINT SOURCE VALID source=5f7ef95ba0986ef5154bbbb088ee62aa3f94597b rows=1
 ```
 
-V-10 diagnosis: EF sets SourceLandingOperationId and SourceLandingSha to
-PropertySaveBehavior.Throw after save, with a foreign key to AgentTaskLanding.
-Do not bypass this guard. Proposed bounded repair: extend the test factory to insert a
-separate source owner and a referenced landing operation, then set SourceLandingOperationId
-when inserting the excluded task. Use a separate SourceLanding PublicationWorld; keep the
-ordinary NoCommit/recovery world ordinary. No production change, timeout increase, retry or
-assertion relaxation is needed. The referenced landing row need not claim successful
-publication: this tests unconditional custody exclusion, not landing success.
+The previous V-10 failure was our fixture defect, not inherited red: EF correctly sets
+SourceLandingOperationId and SourceLandingSha to PropertySaveBehavior.Throw after save,
+with a foreign key to AgentTaskLanding. The authorized repair extends the fixture factory
+to insert a separate source owner and referenced landing operation, then sets both immutable
+coordinates when inserting the excluded task. V-10 uses a separate SourceLanding
+PublicationWorld, preserves uncommitted source and asserts no runner operation. The ordinary
+NoCommit/recovery world stays ordinary. The referenced landing row remains Inspected and
+Unconfirmed: it establishes a schema-valid custody reference, not a seeded successful
+publication receipt. No EF guard was bypassed. No production change, timeout increase,
+retry or assertion relaxation was made.
 
 The two completed correction groups were:
 1. Initial tests used unsupported Shouldly string-message overloads. Corrected the call
@@ -102,6 +105,9 @@ The two completed correction groups were:
 2. The expanded fake client omitted StreamEventsAsync. Completed the required member;
    also fenced final stored intent and distinguished unavailable endpoint reads, with
    matching ordinary scenarios. The next run passed V-9/V-11 and exposed the V-10 setup bug.
+
+The caller then authorized the additional fixture-only repair above. CP-4 passed on its
+first rerun at the new source. No unchanged repetition after green was performed.
 
 The red-first run at 309050073 failed all three intended assertions: contradictory
 SourceLanding Shared commit text (G-73), absent WIP-before-block text (G-76), and acceptance
@@ -115,6 +121,7 @@ CHECKPOINT CP-4 commit=42838d355ffa5974d02057773eb4a7f8cbcfc7ff build=failed fil
 CHECKPOINT CP-4 commit=309050073547edadc4d4b2d5cba7346b015213f1 build=ok filter=/*/*/TaskParkPublicationTests/C1065_* executed=3 passed=0 failed=3 skipped=0 trx=/work/worktrees/task-101f3188/.antiphon/checkpoints/20261006-005234-3919/rows/CP-4/run.trx slot=granted waited=0s dirty=0 source=309050073547edadc4d4b2d5cba7346b015213f1 sourceState=clean buildSource=verified
 CHECKPOINT CP-4 commit=eab5380082c9fdb59b77040e572a829951edad14 build=failed filter=/*/*/TaskParkPublicationTests/C1065_* executed=n/a passed=n/a failed=n/a skipped=n/a trx=n/a slot=skipped waited=0s dirty=0 source=eab5380082c9fdb59b77040e572a829951edad14 sourceState=clean buildSource=unknown
 CHECKPOINT CP-4 commit=109a567b909649b59191d83c1957dd3f878ee710 build=ok filter=/*/*/TaskParkPublicationTests/C1065_* executed=3 passed=2 failed=1 skipped=0 trx=/work/worktrees/task-101f3188/.antiphon/checkpoints/20261006-010645-6c3c/rows/CP-4/run.trx slot=granted waited=0s dirty=0 source=109a567b909649b59191d83c1957dd3f878ee710 sourceState=clean buildSource=verified
+CHECKPOINT CP-4 commit=5f7ef95ba0986ef5154bbbb088ee62aa3f94597b build=ok filter=/*/*/TaskParkPublicationTests/C1065_* executed=3 passed=3 failed=0 skipped=0 trx=/work/worktrees/task-101f3188/.antiphon/checkpoints/20261006-011555-892d/rows/CP-4/run.trx slot=granted waited=0s dirty=0 source=5f7ef95ba0986ef5154bbbb088ee62aa3f94597b sourceState=clean buildSource=verified
 ```
 
 Generated evidence remains ignored in `.antiphon/checkpoints/`:
@@ -125,7 +132,8 @@ Generated evidence remains ignored in `.antiphon/checkpoints/`:
 | 20261006-004903-5b86 | Resume: build failed, 5 assertion-overload compile errors, zero tests | granted; waited=0s; build 98.4244332s |
 | 20261006-005234-3919 | Intended red-first: 0 pass / 3 fail | granted; waited=0s; build 99.9283217s |
 | 20261006-010329-678c | Initial implementation: build failed, missing interface member, zero tests | granted; waited=0s; build 68.3631227s |
-| 20261006-010645-6c3c | Current implementation: 2 pass / 1 fixture fail | granted; waited=0s; build 117.1624322s |
+| 20261006-010645-6c3c | Previous implementation: 2 pass / 1 fixture fail | granted; waited=0s; build 117.1624322s |
+| 20261006-011555-892d | Authorized fixture repair: 3 pass / 0 fail / 0 skipped | granted; waited=0s; build 108.7032122s |
 
 For build failures, row slot=skipped means the test row never started; the actual build
 slot above was granted. The first attempt's row waited=0s does not describe its preceding
@@ -137,6 +145,9 @@ Only unlisted builds were required checkpoint-tool bootstraps through the host s
   slot=granted waited=330s, lease=1830da34-7ddd-49a9-8071-379d0fc96035, held=6s.
 - Resume: `.antiphon/c1065-s4-resume-driver.log`, 0 errors / 1 warning, MSBuild 2.62s;
   slot=granted waited=0s, lease=53cb6442-505b-4456-a39d-92e666df97e4, held=3s.
+- Authorized fixture repair: `.antiphon/c1065-s4-authorized-repair-driver.log`, 0 errors /
+  1 warning, MSBuild 3.85s; slot=granted waited=0s,
+  lease=deb7a7b7-4785-4824-abf2-748e19bedb29, held=5s.
 No unleased driver, timeout widening or other owner's process stop was used.
 
 ## Coverage and deferred obligations
@@ -154,7 +165,7 @@ The reported path is the last source enumerated, not a defect in that file. Reru
 on the integrated candidate.
 
 - V-1, V-2, V-3, V-4, V-5, V-6, V-7, V-8: predecessors; not rerun or claimed passed here.
-- V-10: unresolved here; V-9/V-11 have the passing results above, CP-4 overall remains red.
+- V-9, V-10, V-11: passed here; CP-4 is green.
 - V-12, V-13, V-14: S5; V-15, V-16: S6; V-17, V-18, V-19: S7;
   V-20, V-21, V-22, V-27: S8; V-23, V-24: S9; V-25, V-26: S10 — all deferred.
 - R-1, R-2, R-3, R-4, R-5, R-6: S11, none run or passed here.
@@ -175,19 +186,19 @@ Code task landing; no PC is discharged by these runs.
 Full task-range guard at tested HEAD succeeded:
 
 ```text
-EVIDENCE range base=9b3f207d78176239adf14f1179ea19dc47589dc8 head=109a567b909649b59191d83c1957dd3f878ee710
-EVIDENCE result commits=6 entries=0 violations=0 base=9b3f207d78176239adf14f1179ea19dc47589dc8 head=109a567b909649b59191d83c1957dd3f878ee710
+EVIDENCE range base=9b3f207d78176239adf14f1179ea19dc47589dc8 head=5f7ef95ba0986ef5154bbbb088ee62aa3f94597b
+EVIDENCE result commits=8 entries=0 violations=0 base=9b3f207d78176239adf14f1179ea19dc47589dc8 head=5f7ef95ba0986ef5154bbbb088ee62aa3f94597b
 ```
 
 Rerun the guard after this documentation commit; the final caller report records its outcome.
 Generated JSON/TRX/logs remain ignored; this Markdown preserves essential receipts without
-moving generated payloads into source. The checkpoint tool cleaned all 28 producer-owned
-CP-4 output directories; its dead executor copies had already been removed by wait.
+moving generated payloads into source. The checkpoint tool cleaned its producer-owned
+CP-4 output directories after the green run; its dead executor copy was removed by wait.
 The isolated bootstrap output was removed as well. No bin-c1065-* directory or owned
 build/test/checkpoint run remains active. Final remote-SHA verification is in the caller report.
 
-Next is Code, after authorization for the one additional fixture repair described above.
-Rebootstrap the checkpoint tool through scripts/build-slot.ps1 to bin-c1065-s4-driver/.
-Then commit/push and run CP-4 with committed HEAD as expected source; inspect the fresh TRX,
-rerun the evidence guard, and send to Review only after all three pass. No whole-Unit run.
+Next is ordinary Review of S4. Caller lands the original Code task after Review, then
+commissions SourceLanding Mutation. S5 integration follows the source-identity and
+action-binding requirements documented above. No whole-Unit run was authorized or needed
+for this explicit CP-4-only dispatch.
 Restart: **none**. Future activation owner: caller/orchestrator after integrated qualification.
