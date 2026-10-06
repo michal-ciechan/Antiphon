@@ -13,6 +13,30 @@ Docker replacement. The only timed stop exception is step 5 below.
 Before starting, verify no land is pending, the checkout has no half-reset worktree, and the
 running server's `/health` and `GET /api/version` SHA match the canonical source-root `HEAD`
 (see [the autonomy policy](orchestration-loop.md#orchestrator-operational-autonomy-restart-rollout)).
+Before host qualification or gate 1, check project identity and both filtered task
+closures without changing runner state:
+
+```powershell
+pwsh -NoProfile -File scripts/deploy-server2.ps1 -Rolling -Sha <sha> -Phase check-census
+```
+
+Expect `RECYCLE_PROJECT id=<guid> name=<name> resolvedBy=url|path|both|explicit` and
+two `RECYCLE_CENSUS runner=<id> open=<n> boundOpen=<n> landPending=<n> scopes=<n> elapsedMs=<n>`
+lines, for `server2` and `server2-temp`. This phase uses GET only, performs no SSH or
+host jq check, and reports bound work and pending lands as counts. It authorizes no
+recycling. Resolution, read, malformed-data or unstable-census failures still refuse;
+retain the redacted `census-check-census-<runner>.json` receipts under the printed
+`.antiphon/rolling-server2/<run-id>/` path, including partial receipts on refusal.
+
+`RecycleProjectUnresolved cause=NoMatch` means neither canonical Git URL nor this
+checkout's path matches the project row. Set either identity through project settings
+(a full-row update), or pass `-ProjectId <lowercase-guid>` to this check and every later
+phase and record it in the rollout receipt. Never use a partial project PUT. Multiple
+matches (`cause=Ambiguous`), an archived row (`cause=Archived`), an absent explicit id
+(`cause=NotFound`) or invalid id (`cause=InvalidId`) require correcting the identity.
+`cause=Http status=400` can mean the server predates the `landPending` filter: land
+the reviewed server change and restart AppHost, then verify `/api/version` against HEAD.
+
 Before cache preparation or gate 1, qualify **outer-host jq** in the non-login SSH
 deployment shell. The runner image's jq does not satisfy this prerequisite.
 Use the reviewed, landed canonical checkout at `<sha>`:
@@ -177,7 +201,7 @@ without confirmed absence still stops cleanup. Do not clear the hold to abandon 
 
 ### Volume recycling and disk reclaim (CARD-1008)
 
-Every rolling phase freshly checks outer-host jq and persists its
+Every mutating rolling phase freshly checks outer-host jq and persists its
 `host-jq-<phase>.json` receipt **before** status, POST, cache seed, deploy, stop or
 removal. This includes same-SHA retries, `-DryRun`, `-ResumeRecycle` and each entry
 of `all`; none installs jq implicitly. Follow the explicit check/provision sequence
@@ -185,6 +209,23 @@ above before starting, and stop on any prerequisite refusal. Runner-image jq is
 separate. Direct host recycling retains its final `RecycleToolsMissing` refusal
 if jq disappears after preflight or the wrapper is bypassed; a previous receipt
 never authorizes a later phase.
+
+The wrapper and host census each walk two server-filtered closures, following
+`excluded.byProject` with the same filter and reconciling counts. Open work is
+`Queued/Dispatched/Working/Blocked`; a parked task is still Blocked. Any such row
+bound to the target refuses `RecycleBoundTasks <id> status=<status> runner=<runner>`.
+The independent `landPending=true` closure refuses `RecycleLandInFlight <id>` even
+for an old Succeeded task. Failed/Canceled/Succeeded rows without a pending land
+are not bound work; their worktrees remain protected by the publication audit below.
+No time window hides an older pending land. Both closures must agree across two passes.
+
+Every read has a 60-second budget. `RecycleTaskCensusUnknown` keeps its stable first
+token and appends `cause=Timeout|Http|Transport|Empty|Malformed|UnfilteredRow|Unstable|ScopeLimit`,
+with safe `path=`, `status=`, `field=` or `scopes=` details where applicable. Detail/summary
+disagreement or invalid land proof remains `RecycleLandUnknown`. Project resolution
+uses `RecycleProjectUnresolved` and its cause. Each census retains approved read
+timings/counts and reduced task/land facts; no task prose, credentials or response body
+is retained. A refusal stops the phase before destructive work, including on resume.
 
 Always retire `server2-temp` once scheduling has moved back to the verified, accepting
 main runner. After drain and the checks below, temp is disposable: `compose_temp down -v`

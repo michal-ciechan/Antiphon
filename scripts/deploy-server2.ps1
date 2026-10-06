@@ -5,7 +5,7 @@
 param(
     [Parameter(Mandatory = $true)][switch]$Rolling,
     [Parameter(Mandatory = $true)][ValidatePattern('^[0-9a-fA-F]{40}$')][string]$Sha,
-    [ValidateSet('all', 'deploy-temp', 'drain-old', 'redeploy-old', 'drain-temp', 'retire-temp', 'check-host-jq', 'provision-host-jq')]
+    [ValidateSet('all', 'deploy-temp', 'drain-old', 'redeploy-old', 'drain-temp', 'retire-temp', 'check-census', 'check-host-jq', 'provision-host-jq')]
     [string]$Phase = 'all',
     [string]$SavedDonor = '',
     [string]$ProjectId,
@@ -34,7 +34,7 @@ if (-not [string]::IsNullOrWhiteSpace($env:ANTIPHON_TASK_TOKEN)) {
     $headers['X-Antiphon-Task-Token'] = $env:ANTIPHON_TASK_TOKEN
 }
 # Resolve before a case runs. Never print this value, headers, or an exception request object.
-try { $headers['X-Antiphon-Operator-Token'] = Get-RunnerOperatorToken }
+try { if ($Phase -ne 'check-census') { $headers['X-Antiphon-Operator-Token'] = Get-RunnerOperatorToken } }
 catch { [Console]::Error.WriteLine('OperatorTokenMissing: the owner-only token file is absent or empty.'); exit 2 }
 
 $Sha = $Sha.ToLowerInvariant()
@@ -552,14 +552,18 @@ function Get-RecycleProjectId {
 }
 
 function Assert-RecycleTaskCensus {
-    param([string]$RunnerId, [string]$ProjectId)
+    param([string]$RunnerId, [string]$ProjectId, [switch]$Report)
     # Open work and pending lands each form a complete, server-filtered closure.
     # No time window: an old terminal task can still have a pending land.
     # Compare both closures twice; filtered excluded counts must reconcile independently.
     try {
     $previous = $null
+    $timer = [Diagnostics.Stopwatch]::StartNew()
     for ($pass = 0; $pass -lt 2; $pass++) {
         $closures = [ordered]@{}
+        $pendingLands = [System.Collections.Generic.HashSet[string]]::new()
+        $allScopes = [System.Collections.Generic.HashSet[string]]::new()
+        $openCount = 0; $boundCount = 0
         foreach ($kind in @('open','land')) {
         $pending = [System.Collections.Generic.Queue[string]]::new()
         $pending.Enqueue($ProjectId)
@@ -571,6 +575,7 @@ function Assert-RecycleTaskCensus {
         while ($pending.Count -gt 0) {
             $scope = $pending.Dequeue()
             if (-not $scopes.Add($scope)) { continue }
+            [void]$allScopes.Add($scope)
             if ($scopes.Count -gt 1000) { throw "RecycleTaskCensusUnknown cause=ScopeLimit scopes=$($scopes.Count)" }
             $filter = if ($kind -eq 'open') { '&status=Queued,Dispatched,Working,Blocked' } else { '&landPending=true' }
             $path = '/api/agent-tasks?projectId=' + $scope + '&unscoped=include&includeChecks=true' + $filter
@@ -622,15 +627,20 @@ function Assert-RecycleTaskCensus {
                 $facts = $reduced | ConvertTo-Json -Compress
                 if ($rows.ContainsKey($id) -and $rows[$id] -cne $facts) { Stop-RecycleMalformed 'id' $path }
                 $rows[$id] = $facts
-                if ($null -ne $script:recycleReceipt) { $script:recycleReceiptTasks[$id] = $reduced }
+                if ($null -ne $script:recycleReceipt -and ($kind -eq 'open' -or -not $script:recycleReceiptTasks.ContainsKey($id))) {
+                    $script:recycleReceiptTasks[$id] = $reduced
+                }
                 if (($kind -eq 'open' -and $task.status -cnotin @('Queued','Dispatched','Working','Blocked')) -or
                     ($kind -eq 'land' -and $null -eq $task.landRequestedAt -and $null -eq $task.landStartedAt)) {
                     if ($null -ne $script:recycleReceipt) { $script:recycleReceipt.reads[-1].outcome = 'UnfilteredRow' }
                     throw "RecycleTaskCensusUnknown cause=UnfilteredRow id=$id status=$($task.status) path=$path"
                 }
-                if ($null -ne $task.landRequestedAt -or $null -ne $task.landStartedAt) { throw "RecycleLandInFlight $id" }
+                if ($null -ne $task.landRequestedAt -or $null -ne $task.landStartedAt) {
+                    [void]$pendingLands.Add($id)
+                    if (-not $Report) { throw "RecycleLandInFlight $id" }
+                }
                 if ($kind -eq 'open' -and [string]$task.runnerId -eq $RunnerId -and $task.status -cin @('Queued','Dispatched','Working','Blocked')) {
-                    throw "RecycleBoundTasks $id status=$($task.status) runner=$RunnerId"
+                    if (-not $Report) { throw "RecycleBoundTasks $id status=$($task.status) runner=$RunnerId" }
                 }
                 if ($kind -eq 'land') { continue }
                 $detail = Invoke-RecycleRead -Path ('/api/agent-tasks/' + $id)
@@ -640,8 +650,10 @@ function Assert-RecycleTaskCensus {
                         ($detail.summary.$key | ConvertTo-Json -Compress) -cne ($task.$key | ConvertTo-Json -Compress)) { throw 'RecycleLandUnknown' }
                 }
                 if ($null -ne $detail.landRequest) {
-                    if ([string]$detail.landRequest.state -cin @('Queued','Held','Running','NeedsResolution')) { throw "RecycleLandInFlight $id" }
-                    if ([string]$detail.landRequest.state -cnotin @('Completed','Superseded','Canceled') -or
+                    if ([string]$detail.landRequest.state -cin @('Queued','Held','Running','NeedsResolution')) {
+                        [void]$pendingLands.Add($id)
+                        if (-not $Report) { throw "RecycleLandInFlight $id" }
+                    } elseif ([string]$detail.landRequest.state -cnotin @('Completed','Superseded','Canceled') -or
                         [string]$detail.landRequest.terminalEventId -cnotmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$') { throw 'RecycleLandUnknown' }
                 }
                 $proof = if ($null -eq $detail.landRequest) { 'null' } else {
@@ -661,12 +673,20 @@ function Assert-RecycleTaskCensus {
         foreach ($key in @($rows.Keys | Sort-Object)) { $taskSnapshot[$key] = $rows[$key] | ConvertFrom-Json }
         foreach ($key in @($landEvidence.Keys | Sort-Object)) { $landSnapshot[$key] = $landEvidence[$key] | ConvertFrom-Json }
         $closures[$kind] = [ordered]@{ scopes=$scopeSnapshot; tasks=$taskSnapshot }
-        if ($kind -eq 'open') { $closures[$kind]['land'] = $landSnapshot }
+        if ($kind -eq 'open') {
+            $closures[$kind]['land'] = $landSnapshot
+            $openCount = $rows.Count
+            $boundCount = @($taskSnapshot.Values | Where-Object runnerId -EQ $RunnerId).Count
+        }
         }
         $snapshot = $closures | ConvertTo-Json -Depth 20 -Compress
         if ($null -ne $script:recycleReceipt) { $script:recycleReceipt['snapshot'] = $closures }
         if ($pass -eq 1 -and $snapshot -cne $previous) { throw 'RecycleTaskCensusUnknown cause=Unstable' }
         $previous = $snapshot
+    }
+    if ($Report) {
+        return [pscustomobject]@{ open=$openCount; boundOpen=$boundCount; landPending=$pendingLands.Count;
+            scopes=$allScopes.Count; elapsedMs=$timer.ElapsedMilliseconds }
     }
     return $previous
     } finally { Write-RecycleReceipt }
@@ -1085,6 +1105,25 @@ function Invoke-Phase {
 }
 
 try {
+    if ($Phase -eq 'check-census') {
+        # Read-only: no host jq, rollout lock, SSH, verify, POST or host case.
+        $resolvedProject = $null
+        foreach ($runner in @('server2','server2-temp')) {
+            Start-RecycleReceipt -ExecutingPhase $Phase -RunnerId $runner
+            if ($null -eq $resolvedProject) {
+                $entryProjectId = Get-RecycleProjectId
+                $resolvedProject = $script:recycleReceipt.project
+                Write-Output "RECYCLE_PROJECT id=$entryProjectId name=$($resolvedProject.name) resolvedBy=$($resolvedProject.resolvedBy)"
+            } else {
+                $script:recycleReceipt.project = $resolvedProject
+                $script:resolvedRecycleProjectId = $entryProjectId
+            }
+            $census = Assert-RecycleTaskCensus -RunnerId $runner -ProjectId $entryProjectId -Report
+            Write-Output "RECYCLE_CENSUS runner=$runner open=$($census.open) boundOpen=$($census.boundOpen) landPending=$($census.landPending) scopes=$($census.scopes) elapsedMs=$($census.elapsedMs)"
+        }
+        Write-Output "Census check complete: $evidenceRoot"
+        exit 0
+    }
     if ($script:recycleProjectIdWasProvided -and -not (Test-RecycleGuid $script:requestedRecycleProjectId)) {
         throw 'RecycleProjectUnresolved cause=InvalidId'
     }
