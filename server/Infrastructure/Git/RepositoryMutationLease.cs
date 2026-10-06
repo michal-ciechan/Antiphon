@@ -77,12 +77,15 @@ public sealed class RepositoryMutationLease(ILandingGit git, IRepositoryFenceObs
     public async Task<string?> DescribeUnavailableAsync(string repository, CancellationToken ct)
     {
         var common = await git.CommonDirectoryAsync(repository, ct);
-        if (!await RepositoryChildJournal.HasUnfinishedAsync(common, git, ct))
+        var fence = await RepositoryChildJournal.FirstFencingAsync(common, git, ct);
+        if (fence is null)
             return null;
         NotifyFenced(common);
-        return "unfinished repository child journal under "
-            + Path.Combine(common, "antiphon", "children")
-            + "; run scripts/recover-repository-children.ps1";
+        var sentence = "unfinished repository child journal under "
+            + Path.Combine(common, "antiphon", "children");
+        if (fence.Purpose is not null || fence.TaskId is not null)
+            sentence += " (purpose=" + (fence.Purpose ?? "") + " task=" + (fence.TaskId?.ToString("N") ?? "") + ")";
+        return sentence + "; run scripts/recover-repository-children.ps1";
     }
 
     private void ReleaseOwner(string common, Guid acquisitionId)

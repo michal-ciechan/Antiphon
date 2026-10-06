@@ -165,6 +165,31 @@ public sealed class RepositoryChildJournalInspectorTests
         inspection.StaleCount.ShouldBe(0);
     }
 
+    // CARD-1076 V-4. Inspector findings carry the journal tag, and an untagged record reads null.
+    [Test]
+    [Timeout(30_000)]
+    public async Task C1076_a_tagged_record_reports_its_purpose_and_task(CancellationToken ct)
+    {
+        using var repo = new ScratchGitRepo("c1076-inspect");
+        var git = new LandingGit();
+        var common = await git.CommonDirectoryAsync(repo.Path, ct);
+        var now = DateTimeOffset.UtcNow;
+        var ticks = Process.GetCurrentProcess().StartTime.ToUniversalTime().Ticks;
+        var taskId = Guid.NewGuid();
+        await PlantAsync(common, new RepositoryChildJournal.ChildRecord(
+            1, common, Environment.ProcessId, ticks, Purpose: RepositoryChildPurposes.RemotePrepPush, TaskId: taskId), now, ct);
+        await PlantAsync(common, new RepositoryChildJournal.ChildRecord(1, common, Environment.ProcessId, ticks + 1), now, ct);
+
+        var findings = (await new RepositoryChildJournalInspector(git)
+            .InspectAsync(repo.Path, TimeSpan.FromMinutes(5), now, ct)).Findings;
+        findings.Count.ShouldBe(2);
+        var tagged = findings.Single(finding => finding.Purpose is not null);
+        tagged.Purpose.ShouldBe(RepositoryChildPurposes.RemotePrepPush);
+        tagged.TaskId.ShouldBe(taskId);
+        var untagged = findings.Single(finding => finding.Purpose is null);
+        untagged.TaskId.ShouldBeNull();
+    }
+
     private static async Task<string> PlantAsync(
         string common, RepositoryChildJournal.ChildRecord record, DateTimeOffset written, CancellationToken ct)
     {

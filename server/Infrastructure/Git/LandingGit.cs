@@ -12,6 +12,9 @@ namespace Antiphon.Server.Infrastructure.Git;
 
 public class LandingGit : ILandingGit
 {
+    /// <summary>Budget for every git command that does not pass <see cref="LandingGitRunOptions.Budget"/>.</summary>
+    public static readonly TimeSpan DefaultBudget = TimeSpan.FromMinutes(5);
+
     private readonly CardFileBoardLookup? _cardFiles;
 
     public LandingGit(CardFileBoardLookup? cardFiles = null) => _cardFiles = cardFiles;
@@ -27,11 +30,15 @@ public class LandingGit : ILandingGit
     protected virtual Process? StartProcess(ProcessStartInfo start) => Process.Start(start);
 
     public virtual async Task<LandingGitResult> RunAsync(string repository, IReadOnlyList<string> arguments, CancellationToken ct)
-        => await ExecuteAsync(repository, arguments, null, ct);
+        => await ExecuteAsync(repository, arguments, null, new LandingGitRunOptions(), ct);
+
+    public virtual async Task<LandingGitResult> RunAsync(string repository, IReadOnlyList<string> arguments,
+        LandingGitRunOptions options, CancellationToken ct)
+        => await ExecuteAsync(repository, arguments, null, options, ct);
 
     public virtual async Task<LandingGitResult> RunOwnedAsync(string repository, IReadOnlyList<string> arguments,
         Func<int, long, CancellationToken, Task> started, CancellationToken ct)
-        => await ExecuteAsync(repository, arguments, started, ct);
+        => await ExecuteAsync(repository, arguments, started, new LandingGitRunOptions(), ct);
 
     public Task<bool?> IsProcessAliveAsync(int processId, long startTicks, CancellationToken ct)
     {
@@ -47,22 +54,22 @@ public class LandingGit : ILandingGit
     }
 
     private async Task<LandingGitResult> ExecuteAsync(string repository, IReadOnlyList<string> arguments,
-        Func<int, long, CancellationToken, Task>? started, CancellationToken ct)
+        Func<int, long, CancellationToken, Task>? started, LandingGitRunOptions options, CancellationToken ct)
     {
         var scope = Scope;
-        if (scope is null) return await ExecuteProcessAsync(repository, arguments, started, ct);
+        if (scope is null) return await ExecuteProcessAsync(repository, arguments, started, options, ct);
         // Before the process starts, so a failed or cancelled mutation still forces a re-list.
         if (ChangesRegistrations(arguments, out var topology)) scope.Invalidate(topology);
         var clock = Stopwatch.StartNew();
-        try { return await ExecuteProcessAsync(repository, arguments, started, ct); }
+        try { return await ExecuteProcessAsync(repository, arguments, started, options, ct); }
         finally { scope.Profile.Record(arguments, clock.Elapsed); }
     }
 
     private async Task<LandingGitResult> ExecuteProcessAsync(string repository, IReadOnlyList<string> arguments,
-        Func<int, long, CancellationToken, Task>? started, CancellationToken ct)
+        Func<int, long, CancellationToken, Task>? started, LandingGitRunOptions options, CancellationToken ct)
     {
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        budget.CancelAfter(TimeSpan.FromMinutes(5));
+        budget.CancelAfter(options.Budget ?? DefaultBudget);
         var start = new ProcessStartInfo("git")
         {
             WorkingDirectory = repository, UseShellExecute = false, CreateNoWindow = true,
@@ -75,7 +82,7 @@ public class LandingGit : ILandingGit
         foreach (var argument in arguments) start.ArgumentList.Add(argument);
         var mutating = arguments.Any(a => a is "rebase" or "merge" or "push" or "fetch" or "update-ref"
             or "add" or "remove" or "commit" or "checkout" or "checkout-index" or "restore" or "reset");
-        var journal = mutating ? await RepositoryChildJournal.BeginAsync(repository, ct) : null;
+        var journal = mutating ? await RepositoryChildJournal.BeginAsync(repository, options.Child, ct) : null;
         Process? child;
         try { child = StartProcess(start); }
         catch (Exception ex) when (journal is not null && CreatedNoChild(ex))
@@ -122,7 +129,7 @@ public class LandingGit : ILandingGit
         string? rebaseHead = null;
         if (process.ExitCode == 0 && arguments.Contains("rebase") && !arguments.Contains("--abort"))
         {
-            var head = await ExecuteAsync(repository, ["rev-parse", "--verify", "HEAD^{commit}"], null, ct);
+            var head = await ExecuteAsync(repository, ["rev-parse", "--verify", "HEAD^{commit}"], null, new LandingGitRunOptions(), ct);
             if (head.Succeeded) rebaseHead = head.Output.Trim();
         }
         return new(process.ExitCode, await output,

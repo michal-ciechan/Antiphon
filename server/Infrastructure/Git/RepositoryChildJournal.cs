@@ -15,13 +15,17 @@ internal sealed class RepositoryChildJournal
 
     private RepositoryChildJournal(string path, ChildRecord record) { _path = path; _record = record; }
 
-    public static async Task<RepositoryChildJournal> BeginAsync(string repository, CancellationToken ct)
+    public static Task<RepositoryChildJournal> BeginAsync(string repository, CancellationToken ct)
+        => BeginAsync(repository, tag: null, ct);
+
+    /// <summary>CARD-1076: <paramref name="tag"/> is stored on the record. A null tag is the untagged journal.</summary>
+    internal static async Task<RepositoryChildJournal> BeginAsync(string repository, RepositoryChildTag? tag, CancellationToken ct)
     {
         var common = await new LandingGit().CommonDirectoryAsync(repository, ct);
         var directory = Path.Combine(common, "antiphon", "children");
         Directory.CreateDirectory(directory);
         var journal = new RepositoryChildJournal(Path.Combine(directory, Guid.NewGuid().ToString("N") + ".json"),
-            new ChildRecord(1, common, null, null));
+            new ChildRecord(1, common, null, null, Purpose: tag?.Purpose, TaskId: tag?.TaskId));
         await journal.SaveAsync(ct); // Unknown/start intent is durable before Process.Start.
         return journal;
     }
@@ -101,41 +105,61 @@ internal sealed class RepositoryChildJournal
         File.Move(temporary, _path, true);
     }
 
+    /// <summary>Reader-side purposes that do not fence while the recorded process is alive.</summary>
+    internal static readonly IReadOnlySet<string> LiveNonFencingPurposes = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "remote-prep-push",
+    };
+
     public static async Task<bool> HasUnfinishedAsync(string common, ILandingGit git, CancellationToken ct)
+        => await FirstFencingAsync(common, git, ct) is not null;
+
+    /// <summary>The first record that still fences, or null when every record is a live non-fencing push.</summary>
+    internal static async Task<FencingRecord?> FirstFencingAsync(string common, ILandingGit git, CancellationToken ct)
     {
         var directory = Path.Combine(common, "antiphon", "children");
         try
         {
             try
             {
-                if ((File.GetAttributes(directory) & FileAttributes.Directory) == 0) return true;
+                if ((File.GetAttributes(directory) & FileAttributes.Directory) == 0) return FencingRecord.Untagged;
             }
-            catch (FileNotFoundException) { return false; }
-            catch (DirectoryNotFoundException) { return false; }
+            catch (FileNotFoundException) { return null; }
+            catch (DirectoryNotFoundException) { return null; }
             foreach (var path in Directory.EnumerateFiles(directory))
             {
                 // A torn/unacknowledged start or PID save is ambiguous and fences admission too.
                 // So does a Completed record (CARD-0661): its root exited, but a crash before the
                 // streams drained leaves descendants unproven. There is no startup auto-clear; the
                 // explicit script recovers it after descendant inspection, as for a dead root.
-                if (!path.EndsWith(".json", StringComparison.Ordinal)) return true;
+                // CARD-1076: a well-formed live remote-prep-push does not fence. Dead, reused,
+                // unknown and unreadable records still do.
+                if (!path.EndsWith(".json", StringComparison.Ordinal)) return FencingRecord.Untagged;
                 using var stream = File.OpenRead(path);
                 var record = await JsonSerializer.DeserializeAsync<ChildRecord>(stream, cancellationToken: ct);
-                if (record is not { SchemaVersion: 1, ProcessId: not null, StartTicks: not null }
-                    || !LandingGit.PathsEqual(record.CommonDirectory, common)
-                    || await git.IsProcessAliveAsync(record.ProcessId.Value, record.StartTicks.Value, ct) != false)
-                    return true;
+                if (record is { SchemaVersion: 1, ProcessId: int processId, StartTicks: long startTicks }
+                    && LandingGit.PathsEqual(record.CommonDirectory, common))
+                {
+                    var alive = await git.IsProcessAliveAsync(processId, startTicks, ct);
+                    if (alive == true && record.Purpose is string purpose && LiveNonFencingPurposes.Contains(purpose))
+                        continue;
+                }
                 // A dead/reused root PID is not an acknowledged exit of its process tree.
                 // Only the owning invocation removes its journal after awaiting its child.
                 // recover-repository-children.ps1 provides explicit recovery after descendant inspection.
-                return true;
+                return new FencingRecord(record?.Purpose, record?.TaskId);
             }
-            return false;
+            return null;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
-        { return true; }
+        { return FencingRecord.Untagged; }
+    }
+
+    internal sealed record FencingRecord(string? Purpose, Guid? TaskId)
+    {
+        public static readonly FencingRecord Untagged = new(null, null);
     }
 
     internal sealed record ChildRecord(int SchemaVersion, string CommonDirectory, int? ProcessId, long? StartTicks,
-        bool Completed = false);
+        bool Completed = false, string? Purpose = null, Guid? TaskId = null);
 }

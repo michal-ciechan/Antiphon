@@ -1,4 +1,7 @@
+using System.Diagnostics;
+using System.Text.Json;
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Infrastructure.Git;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
@@ -543,6 +546,83 @@ public sealed class LandingGitTests
         await fixture.RequiredAsync(fixture.Remote, "update-ref", "-d", fixture.SourceRef);
         (await ((Antiphon.Server.Application.Interfaces.ILandingGit)fixture.Git).RecheckSourceRemoteAsync(fixture.Repository, fixture.SourceRef, fixture.SeedSha,
             fingerprint, CancellationToken.None)).Reason.ShouldBe("source_remote_missing");
+    }
+
+    // CARD-1076 V-1. A caller budget kills a push stalled in pre-push; the three-argument overload keeps the five-minute default.
+    [Test]
+    [Timeout(60_000)]
+    public async Task C1076_RunOptionsBudgetKillsASlowPushAndClearsItsJournal(CancellationToken ct)
+    {
+        LandingGit.DefaultBudget.ShouldBe(TimeSpan.FromMinutes(5));
+        using var repo = new ScratchGitRepo("c1076-budget");
+        await repo.CommitFileAsync("README.md", "seed\n");
+        await repo.AddBareOriginAsync();
+        await repo.CommitFileAsync("more.md", "more\n");
+        var hook = await InstallExecutableHookAsync(repo.Path, "pre-push", "#!/bin/sh\nsleep 30\nexit 0\n", ct);
+        var git = new LandingGit();
+
+        var watch = Stopwatch.StartNew();
+        var thrown = await Should.ThrowAsync<TimeoutException>(async () => await git.RunAsync(repo.Path,
+            ["push", "origin", "master"], new LandingGitRunOptions(Budget: TimeSpan.FromSeconds(2)), ct));
+        watch.Stop();
+
+        thrown.Message.ShouldBe("git_timeout");
+        watch.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(15));
+        var common = await git.CommonDirectoryAsync(repo.Path, ct);
+        Directory.EnumerateFiles(Path.Combine(common, "antiphon", "children")).ShouldBeEmpty();
+        File.Delete(hook);
+        (await git.RunAsync(repo.Path, ["push", "origin", "master"], ct)).Succeeded.ShouldBeTrue();
+    }
+
+    // CARD-1076 V-2. The live push journal names the task and purpose, then the owner deletes it on exit.
+    [Test]
+    [Timeout(30_000)]
+    public async Task C1076_TaggedPushJournalNamesTaskAndPurposeWhileAlive(CancellationToken ct)
+    {
+        using var repo = new ScratchGitRepo("c1076-tag");
+        await repo.CommitFileAsync("README.md", "seed\n");
+        await repo.AddBareOriginAsync();
+        await repo.CommitFileAsync("more.md", "more\n");
+        await InstallExecutableHookAsync(repo.Path, "pre-push", "#!/bin/sh\nsleep 8\nexit 0\n", ct);
+        var git = new LandingGit();
+        var common = await git.CommonDirectoryAsync(repo.Path, ct);
+        var children = Path.Combine(common, "antiphon", "children");
+        var taskId = Guid.NewGuid();
+        var pushing = git.RunAsync(repo.Path, ["push", "origin", "master"],
+            new LandingGitRunOptions(Child: new RepositoryChildTag(taskId, RepositoryChildPurposes.RemotePrepPush)), ct);
+
+        string? path = null;
+        using (var poll = CancellationTokenSource.CreateLinkedTokenSource(ct))
+        {
+            poll.CancelAfter(TimeSpan.FromSeconds(8));
+            while (path is null)
+            {
+                if (Directory.Exists(children))
+                    path = Directory.EnumerateFiles(children, "*.json").FirstOrDefault();
+                if (path is not null) break;
+                if (pushing.IsCompleted) await pushing;
+                await Task.Delay(50, poll.Token);
+            }
+        }
+
+        var record = JsonSerializer.Deserialize<RepositoryChildJournal.ChildRecord>(await File.ReadAllTextAsync(path!, ct));
+        record.ShouldNotBeNull();
+        record.Purpose.ShouldBe(RepositoryChildPurposes.RemotePrepPush);
+        record.TaskId.ShouldBe(taskId);
+        (await pushing).Succeeded.ShouldBeTrue();
+        File.Exists(path).ShouldBeFalse();
+    }
+
+    private static async Task<string> InstallExecutableHookAsync(string repository, string name, string body, CancellationToken ct)
+    {
+        var hooks = Path.Combine(repository, ".git", "hooks");
+        Directory.CreateDirectory(hooks);
+        var hook = Path.Combine(hooks, name);
+        await File.WriteAllTextAsync(hook, body, ct);
+        if (!OperatingSystem.IsWindows())
+            File.SetUnixFileMode(hook, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute
+                | UnixFileMode.GroupRead | UnixFileMode.GroupExecute | UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
+        return hook;
     }
 
     private sealed class MarkerHomeGit(string home, Guid taskId, string configPath) : LandingGitFixture.FixtureGit(home, taskId)
