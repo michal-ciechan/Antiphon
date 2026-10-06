@@ -526,6 +526,129 @@ public sealed class RunnerSettlementSyncTests
             .ShouldAllBe(c => c.EndsWith(" " + s, StringComparison.Ordinal));
     }
 
+    /// <summary>
+    /// CARD-1082 V-6 / G-10 companion at the sync boundary. S is already local and descends from
+    /// the baseline, so the busy lease is the acquire. The result carries that tip and the
+    /// pre-lease ancestry; the desktop checkout is not moved.
+    /// </summary>
+    [Test]
+    public async Task C1082_AcquireLeaseBusyCarriesObservedTipAndAncestry()
+    {
+        await using var world = await SyncWorld.CreateAsync();
+        var s = await world.RunnerPushAsync("work.txt", "runner");
+        await world.RunAsync(world.Desktop, "fetch", "--no-tags", "origin", world.FullRef);
+        (await world.HasObjectAsync(s)).ShouldBeTrue();
+        (await world.HeadAsync()).ShouldBe(world.Baseline);
+        await using var held = await world.Leases.TryAcquireAsync(world.Desktop, CancellationToken.None);
+        held.ShouldNotBeNull();
+        world.Git.Clear();
+        var clock = new FakeTimeProvider();
+        var busy = new LeaseBusySignal();
+        var service = world.Service(clock, leaseBusy: busy.Observe);
+
+        var sync = service.SyncAsync(world.Task, CancellationToken.None);
+        (await System.Threading.Tasks.Task.WhenAny(busy.First, sync)).ShouldBe(busy.First,
+            "a descending local tip still waits to acquire the lease");
+        clock.Advance(service.SyncBudget);
+        var result = await sync;
+
+        result.State.ShouldBe(RemoteSettlementSyncState.Unavailable);
+        result.Reason.ShouldBe(RemoteSettlementSyncReasons.LeaseBusy);
+        result.RemoteSha.ShouldBe(s);
+        result.DesktopBeforeSha.ShouldBe(world.Baseline);
+        result.DesktopAfterSha.ShouldBeNull();
+        result.SourceDescends.ShouldBe(true);
+        result.Confirmed.ShouldBeFalse();
+        result.EndpointFingerprint.ShouldNotBeNullOrWhiteSpace();
+        world.Git.Commands.ShouldContain(c => c.StartsWith("merge-base --is-ancestor ", StringComparison.Ordinal));
+        world.Git.Commands.ShouldNotContain(c => c.StartsWith("fetch", StringComparison.Ordinal)
+            || c.Contains("merge --ff-only", StringComparison.Ordinal)
+            || c.StartsWith("update-ref", StringComparison.Ordinal));
+        (await world.HeadAsync()).ShouldBe(world.Baseline);
+    }
+
+    /// <summary>
+    /// CARD-1082 V-7 / G-6. The objects are not local, so the busy answer is the observation.
+    /// It carries the advertised tip and does not claim ancestry.
+    /// </summary>
+    [Test]
+    public async Task C1082_ObservationLeaseBusyCarriesAdvertisedTipWithoutAncestry()
+    {
+        await using var world = await SyncWorld.CreateAsync();
+        var s = await world.RunnerPushAsync("work.txt", "runner");
+        (await world.HasObjectAsync(s)).ShouldBeFalse();
+        await using var held = await world.Leases.TryAcquireAsync(world.Desktop, CancellationToken.None);
+        held.ShouldNotBeNull();
+        world.Git.Clear();
+        var clock = new FakeTimeProvider();
+        var busy = new LeaseBusySignal();
+        var service = world.Service(clock, leaseBusy: busy.Observe);
+
+        var sync = service.SyncAsync(world.Task, CancellationToken.None);
+        (await System.Threading.Tasks.Task.WhenAny(busy.First, sync)).ShouldBe(busy.First);
+        clock.Advance(service.SyncBudget);
+        var result = await sync;
+
+        result.State.ShouldBe(RemoteSettlementSyncState.Unavailable);
+        result.Reason.ShouldBe(RemoteSettlementSyncReasons.LeaseBusy);
+        result.RemoteSha.ShouldBe(s);
+        result.SourceDescends.ShouldBeNull();
+        result.Confirmed.ShouldBeFalse();
+        result.DesktopAfterSha.ShouldBeNull();
+        world.Git.Commands.ShouldNotContain(c => c.StartsWith("merge-base", StringComparison.Ordinal)
+            || c.StartsWith("fetch", StringComparison.Ordinal)
+            || c.StartsWith("update-ref", StringComparison.Ordinal));
+        (await world.HasObjectAsync(s)).ShouldBeFalse();
+        (await world.HeadAsync()).ShouldBe(world.Baseline);
+    }
+
+    /// <summary>
+    /// CARD-1082 V-8 / G-5. The pushed tip does not descend from the baseline, and its objects
+    /// are already local. The refusal is <c>runner_sync_diverged</c> while another holder has
+    /// the lease; skipping the pre-lease read would wait and return lease-busy instead.
+    /// </summary>
+    [Test]
+    public async Task C1082_DivergedTipRefusesBeforeTheLease()
+    {
+        await using var world = await SyncWorld.CreateAsync();
+        await world.EnsureRunnerAsync();
+        await world.RunAsync(world.Runner, "checkout", "--orphan", "unrelated-base");
+        File.WriteAllText(Path.Combine(world.Runner, "unrelated.txt"), "new root\n");
+        await world.RunAsync(world.Runner, "add", "unrelated.txt");
+        await world.RunAsync(world.Runner, "commit", "-m", "unrelated root");
+        var s = await world.RunAsync(world.Runner, "rev-parse", "HEAD");
+        await world.RunAsync(world.Runner, "push", "--force", "origin", s + ":refs/heads/" + world.Branch);
+        await world.RunAsync(world.Desktop, "fetch", "--no-tags", "origin", world.FullRef);
+        (await world.HasObjectAsync(s)).ShouldBeTrue();
+        var head = await world.HeadAsync();
+        head.ShouldBe(world.Baseline);
+        await using var held = await world.Leases.TryAcquireAsync(world.Desktop, CancellationToken.None);
+        held.ShouldNotBeNull();
+        world.Git.Clear();
+        var clock = new FakeTimeProvider();
+        var busy = new LeaseBusySignal();
+        var service = world.Service(clock, leaseBusy: busy.Observe);
+
+        var sync = service.SyncAsync(world.Task, CancellationToken.None);
+        var finished = await System.Threading.Tasks.Task.WhenAny(busy.First, sync);
+        if (finished != sync)
+            clock.Advance(service.SyncBudget);
+        var result = await sync.WaitAsync(SliceReturnGuard);
+
+        result.State.ShouldBe(RemoteSettlementSyncState.Refused);
+        result.Reason.ShouldBe(RemoteSettlementSyncReasons.Diverged);
+        result.RemoteSha.ShouldBe(s);
+        result.DesktopBeforeSha.ShouldBe(head);
+        result.SourceDescends.ShouldBeNull();
+        result.Confirmed.ShouldBeFalse();
+        busy.Count.ShouldBe(0);
+        world.Git.Commands.ShouldContain(c => c.StartsWith("merge-base --is-ancestor ", StringComparison.Ordinal));
+        world.Git.Commands.ShouldNotContain(c => c.StartsWith("fetch", StringComparison.Ordinal)
+            || c.Contains("merge --ff-only", StringComparison.Ordinal)
+            || c.StartsWith("update-ref", StringComparison.Ordinal));
+        (await world.HeadAsync()).ShouldBe(head);
+    }
+
     [Test]
     public async Task Lease_contention_never_mutates()
     {

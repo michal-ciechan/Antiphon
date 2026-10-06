@@ -342,13 +342,30 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
                     () => _progressGit!.ObserveExactRefAsync(repo, fullRef, fingerprint, task.Id, ct),
                     o => o.State == ProgressRemoteState.Unavailable && o.Reason == "repository_lease_busy",
                     ct, caller, singleAttempt);
-                if (afterPublish.State != ProgressRemoteState.Present
+                // CARD-1082 D-3. The re-observation already read the tip. The same SHA continues
+                // without a fetch; a different SHA is still a change during validation.
+                var observationBusy = afterPublish.State == ProgressRemoteState.Unavailable
+                    && afterPublish.Reason == "repository_lease_busy";
+                if (observationBusy)
+                {
+                    if (!string.Equals(afterPublish.Sha, mirror.Tip, StringComparison.Ordinal))
+                        return new(RemoteSettlementSyncState.Unavailable,
+                            RemoteSettlementSyncReasons.ChangedDuringValidation,
+                            fullRef, b, afterPublish.Sha, l0, MirrorSha: mirror.Tip,
+                            MirrorRelation: mirror.Relation, MirrorDirty: mirror.Dirty, MirrorPushed: true);
+                    observed = afterPublish;
+                    observeSpent = spent;
+                }
+                else if (afterPublish.State != ProgressRemoteState.Present
                     || !string.Equals(afterPublish.Sha, mirror.Tip, StringComparison.Ordinal))
+                {
                     return new(RemoteSettlementSyncState.Unavailable,
                         spent ? RemoteSettlementSyncReasons.LeaseBusy : RemoteSettlementSyncReasons.ChangedDuringValidation,
                         fullRef, b, afterPublish.Sha, l0, MirrorSha: mirror.Tip,
                         MirrorRelation: mirror.Relation, MirrorDirty: mirror.Dirty, MirrorPushed: true);
-                observed = afterPublish;
+                }
+                else
+                    observed = afterPublish;
             }
         }
 
@@ -374,8 +391,8 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
                         RemoteSettlementSyncReasons.EndpointChanged, fullRef, b),
                     "source_remote_endpoint_ambiguous" => Outcome(RemoteSettlementSyncState.Refused,
                         RemoteSettlementSyncReasons.EndpointAmbiguous, fullRef, b),
-                    "repository_lease_busy" => Outcome(RemoteSettlementSyncState.Unavailable,
-                        LeaseReason(observeSpent), fullRef, b),
+                    "repository_lease_busy" => WithMirror(Outcome(RemoteSettlementSyncState.Unavailable,
+                        LeaseReason(observeSpent), fullRef, b, observed.Sha) with { SourceDescends = null }),
                     _ => Outcome(RemoteSettlementSyncState.Unavailable,
                         RemoteSettlementSyncReasons.FetchUnavailable, fullRef, b),
                 };
@@ -392,6 +409,29 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
             return Outcome(RemoteSettlementSyncState.Refused, RemoteSettlementSyncReasons.TipNotReported,
                 fullRef, b, s, l0, fingerprint: fingerprint);
 
+        // CARD-1082 D-3. merge-base is a read. A rewritten tip refuses here, whatever the lease
+        // state. The same check under the lease stays below.
+        if (!string.Equals(s, b, StringComparison.Ordinal))
+        {
+            var descends = await _progressGit.IsAncestorAsync(repo, b, s!, ct);
+            if (descends is null)
+                return WithMirror(Outcome(RemoteSettlementSyncState.Unavailable,
+                    RemoteSettlementSyncReasons.InspectionUnavailable, fullRef, b, s, l0,
+                    observationRef: observed.ObservationRef, fingerprint: observed.EndpointFingerprint ?? fingerprint));
+            if (descends == false)
+            {
+                var rewound = await _progressGit.IsAncestorAsync(repo, s!, b, ct);
+                if (rewound is null)
+                    return WithMirror(Outcome(RemoteSettlementSyncState.Unavailable,
+                        RemoteSettlementSyncReasons.InspectionUnavailable, fullRef, b, s, l0,
+                        observationRef: observed.ObservationRef, fingerprint: observed.EndpointFingerprint ?? fingerprint));
+                return WithMirror(Outcome(RemoteSettlementSyncState.Refused,
+                    rewound == true ? RemoteSettlementSyncReasons.Rewound : RemoteSettlementSyncReasons.Diverged,
+                    fullRef, b, s, l0, observationRef: observed.ObservationRef,
+                    fingerprint: observed.EndpointFingerprint ?? fingerprint));
+            }
+        }
+
         var (acquired, acquireSpent) = await WhileLeaseBusyAsync(
             task.Id,
             () => _leases!.TryAcquireAsync(
@@ -400,7 +440,9 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
             ct, caller, singleAttempt);
         await using var lease = acquired;
         if (lease is null)
-            return Outcome(RemoteSettlementSyncState.Unavailable, LeaseReason(acquireSpent), fullRef, b, s);
+            return WithMirror(Outcome(RemoteSettlementSyncState.Unavailable, LeaseReason(acquireSpent),
+                fullRef, b, s, l0, observationRef: observed.ObservationRef,
+                fingerprint: observed.EndpointFingerprint ?? fingerprint) with { SourceDescends = true });
 
         var under = await ValidateCheckoutAsync(task, baseline, fullRef, ct);
         if (under.Refusal is { } refusedUnder)

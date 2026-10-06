@@ -112,6 +112,42 @@ public class TaskProgressGitTests
     }
 
     /// <summary>
+    /// CARD-1082 D-3 / V-7. <c>ls-remote</c> already read the full tip. A busy lease still
+    /// refuses the fetch, and the answer keeps that tip. Dropping it is the defect.
+    /// </summary>
+    [Test]
+    public async Task C1082_LeaseBusyObservationReportsAdvertisedTip()
+    {
+        using var repo = new ScratchGitRepo("c1082-observe");
+        await repo.CommitFileAsync("README.md", "base\n");
+        var remote = Path.Combine(repo.WorktreeRoot, "remote.git");
+        Directory.CreateDirectory(remote);
+        (await ScratchGitRepo.GitInAsync(remote, "init", "--bare")).Ok.ShouldBeTrue();
+        await repo.GitAsync("remote", "add", "origin", remote);
+        await repo.GitAsync("branch", "feat/x");
+        await repo.GitAsync("push", "origin", "feat/x");
+        var leases = new RepositoryMutationLease(new LandingGit());
+        await using var held = await leases.TryAcquireAsync(repo.Path, default);
+        held.ShouldNotBeNull();
+        var git = new ControlledTaskProgressGit(leases);
+        var clone = Path.Combine(repo.WorktreeRoot, "c");
+        (await ScratchGitRepo.GitInAsync(repo.WorktreeRoot, "clone", "--branch", "feat/x", remote, clone)).Ok.ShouldBeTrue();
+        await File.WriteAllTextAsync(Path.Combine(clone, "n.md"), "n\n");
+        (await ScratchGitRepo.GitInAsync(clone, "add", "n.md")).Ok.ShouldBeTrue();
+        (await ScratchGitRepo.GitInAsync(clone, "commit", "-m", "n")).Ok.ShouldBeTrue();
+        (await ScratchGitRepo.GitInAsync(clone, "push", "origin", "HEAD")).Ok.ShouldBeTrue();
+        var advertised = (await ScratchGitRepo.GitInAsync(remote, "rev-parse", "refs/heads/feat/x")).StdOut.Trim();
+
+        var observed = await git.ObserveExactRefAsync(repo.Path, "refs/heads/feat/x", null, Guid.NewGuid(), default);
+
+        observed.State.ShouldBe(ProgressRemoteState.Unavailable);
+        observed.Reason.ShouldBe("repository_lease_busy");
+        observed.Sha.ShouldBe(advertised);
+        git.Trace.Any(a => a.Length > 0 && a[0] == "fetch").ShouldBeFalse();
+        git.Trace.Any(a => a.Length > 0 && a[0] == "update-ref").ShouldBeFalse();
+    }
+
+    /// <summary>
     /// CARD-0613 V-3. The committer timestamp of ONE exact object, against real git. The author
     /// date is deliberately different: a fallback that read the author date could be backdated by
     /// anyone rebasing. Every unreadable shape is unavailable, never a usable time.
