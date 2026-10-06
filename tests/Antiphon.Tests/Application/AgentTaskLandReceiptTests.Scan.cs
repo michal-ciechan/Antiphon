@@ -326,7 +326,7 @@ public sealed partial class AgentTaskLandReceiptTests
         public override bool IsDBNull(int ordinal) => inner.IsDBNull(ordinal);
         public override bool NextResult() => inner.NextResult();
         public override T GetFieldValue<T>(int ordinal) => inner.GetFieldValue<T>(ordinal);
-        public override ValueTask<T> GetFieldValueAsync<T>(int ordinal, CancellationToken cancellationToken = default) =>
+        public override Task<T> GetFieldValueAsync<T>(int ordinal, CancellationToken cancellationToken = default) =>
             inner.GetFieldValueAsync<T>(ordinal, cancellationToken);
         public override Task<bool> IsDBNullAsync(int ordinal, CancellationToken cancellationToken = default) =>
             inner.IsDBNullAsync(ordinal, cancellationToken);
