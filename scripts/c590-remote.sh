@@ -4734,7 +4734,7 @@ c1008_bind_generation() {
             C1008_PREVIOUS_SHA="$saved_sha"
         else
             # A crashed removal can resume after the session-runner is already gone.
-            # Its image identity was journaled before docker rm; re-derive only while it remains.
+            # generation.imageId is that image. Other leftovers are pinned by reconcile.
             runners="$(printf '%s' "$gen_owned" | jq -er '[.[] | select(.Config.Labels["com.docker.compose.service"]=="session-runner")] | length')" \
                 || c1008_refuse RecycleGenerationUnknown
             if [ "$runners" = 0 ]; then
@@ -4742,7 +4742,7 @@ c1008_bind_generation() {
                     stack="$(c1008_stack_revision)"
                     [ "$stack" = "$saved_sha" ] || c1008_refuse RecycleResumeMismatch
                     printf '%s' "$gen_owned" | jq -e --argjson saved "$C1008_RECORD" \
-                        'all(.[]; .Image==$saved.generation.imageId)' >/dev/null \
+                        'all(.[]; .Config.Labels["com.docker.compose.service"]!="session-runner" or .Image==$saved.generation.imageId)' >/dev/null \
                         || c1008_refuse RecycleGenerationMismatch
                 fi
                 C1008_PREVIOUS_SHA="$saved_sha"
@@ -4801,6 +4801,12 @@ c1008_recycle() {
     if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then C1008_TARGETS+=("${C1008_PROJECT}_runner-state"); fi
     local model digest owned image id service facts name audit after code=0 current journal_root mount originals='{}' preserved='{}'
     model="$(c1008_compose_model)" || write_result false RecycleComposeMismatch 2
+    # CARD-1116. The target file is already materialized. Refuse before the lock or any removal.
+    if [ "$C1008_PROJECT" = "$HOST_PROJECT" ] && [ "${C1008_DRY_RUN:-0}" = 0 ]; then
+        if ! cmp -s -- "$CASE_DIR/compose/${SHA:0:12}/docker-compose.server2-runner.yml" "$SERVER2_COMPOSE"; then
+            c1008_refuse RecycleComposeMismatch
+        fi
+    fi
     digest="$(printf '%s' "$model" | sha256sum | cut -d' ' -f1)"
     C1008_JOURNAL="$SERVER2_ROOT/recycle/$C1008_OPERATION.json"
     C1008_RECORD="$(jq -cn --arg sha "$SHA" --arg op "$C1008_OPERATION" --arg project "$C1008_PROJECT" --arg digest "$digest" \
@@ -5016,7 +5022,7 @@ EOF
     local up_code=0
     if [ "${C1008_ACTIVE:-0}" = 1 ]; then
         if ! cmp -s -- "$CASE_DIR/compose/${SHA:0:12}/docker-compose.server2-runner.yml" "$SERVER2_COMPOSE"; then
-            write_result false RecycleComposeMismatch 2
+            c1008_refuse RecycleComposeMismatch
         fi
     fi
     compose_host up -d --no-build >> "$CASE_DIR/command.log" 2>&1 || up_code=$?

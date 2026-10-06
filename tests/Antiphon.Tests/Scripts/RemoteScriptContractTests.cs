@@ -1157,13 +1157,15 @@ public sealed class RemoteScriptContractTests
             File.ReadAllText(journal).ShouldBe(before, token + " leaves the journal unchanged");
         else
         {
-            // Reconcile re-saves the stopped journal before the service allowlist refuses.
+            // Reconcile records a receipt for a container already removed, then the allowlist refuses.
             var saved = JsonNode.Parse(File.ReadAllText(journal))!;
-            saved["ownedRemoved"]!.GetValue<bool>().ShouldBeFalse(token + " does not record removal");
-            saved["removeReceipts"]!.AsArray().Count.ShouldBe(
-                JsonNode.Parse(before)!["removeReceipts"]!.AsArray().Count, token + " adds no remove receipt");
+            var prior = JsonNode.Parse(before)!;
+            saved["ownedRemoved"]!.GetValue<bool>().ShouldBeFalse(token + " does not finish removal");
             var phase = saved["phase"]!.GetValue<string>();
-            (phase is "preflight" or "stopped").ShouldBeTrue(token + " stays before container removal; phase=" + phase);
+            (phase is "preflight" or "stopped").ShouldBeTrue(token + " stays before volume removal; phase=" + phase);
+            var intents = prior["removeIntents"]!.AsArray().Select(item => item!.GetValue<string>()).ToArray();
+            foreach (var receipt in saved["removeReceipts"]!.AsArray())
+                intents.ShouldContain(receipt!.GetValue<string>(), token + " receipt was not an intent");
         }
     }
 
