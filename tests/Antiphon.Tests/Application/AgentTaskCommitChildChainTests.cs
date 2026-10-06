@@ -155,11 +155,28 @@ public sealed partial class AgentTaskCommitEndpointTests
                 var prompt = await db.TranscriptEntries.SingleAsync(p => p.AgentSessionId == childSession
                     && p.Kind == TranscriptKinds.UserPrompt && p.Sequence > brief.LastDeliveryBaselineSequence);
                 prompt.Text.ShouldBe(brief.Body);
-                prompt.Text.ShouldContain(child.Goal);
-                prompt.Text.ShouldContain("explicitly authorized to commit");
-                prompt.Text.ShouldContain("scripts/task-commit.ps1");
-                prompt.Text.ShouldContain("Do NOT push");
-                prompt.Text.ShouldNotContain(DelegationReportFormatter.DoNotCommitLine);
+                // CARD-1096: UnixPty (and every non-ModernConPty backend) types a pointer once the
+                // brief exceeds the 900-byte inbox ceiling. ModernConPty still inlines this brief.
+                // The goal and the commit authorization must be on whichever carrier holds it.
+                var typed = prompt.Text ?? "";
+                var spillName = $"task-{DelegationReportFormatter.Short(child.Id)}-brief.md";
+                var spillPath = Path.Combine(child.WorkingDirectory!, ".antiphon", spillName);
+                var isPointer = typed.Contains("YOUR BRIEF IS NOT IN THIS MESSAGE", StringComparison.Ordinal)
+                    || typed.Contains("Read the complete task brief at ", StringComparison.Ordinal);
+                var carrier = typed;
+                if (isPointer)
+                {
+                    typed.ShouldContain(spillPath);
+                    File.Exists(spillPath).ShouldBeTrue(
+                        $"the spill pointer must name the brief written at {spillPath}");
+                    carrier = await File.ReadAllTextAsync(spillPath);
+                }
+
+                carrier.ShouldContain(child.Goal);
+                carrier.ShouldContain("explicitly authorized to commit");
+                carrier.ShouldContain("scripts/task-commit.ps1");
+                carrier.ShouldContain("Do NOT push");
+                carrier.ShouldNotContain(DelegationReportFormatter.DoNotCommitLine);
                 childAdapter.SubmittedBodies.Count.ShouldBe(1);
             }
             client.DefaultRequestHeaders.Add("X-Antiphon-Task-Token", token);
