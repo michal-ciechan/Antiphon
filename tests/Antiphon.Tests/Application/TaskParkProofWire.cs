@@ -29,6 +29,7 @@ internal sealed class TaskParkProofWire : IAsyncDisposable
     public bool OmitSourceModes { get; set; }
     public List<TerminalSeatReleaseRequest> Received { get; } = [];
     public int ForceCalls { get; private set; }
+    public int ReleaseCalls { get; private set; }
     public ISessionRunnerClient Client { get; private set; } = null!;
     public ISessionRunnerDirectory Directory => new ProofDirectory(Client);
 
@@ -68,6 +69,7 @@ internal sealed class TaskParkProofWire : IAsyncDisposable
         _app = builder.Build();
         _app.Use(async (context, next) =>
         {
+            if (context.Request.Path.Value?.EndsWith("/release-terminal-seat") == true) ReleaseCalls++;
             if (context.Request.Path == "/capabilities" && OmitSourceModes)
             { await context.Response.WriteAsJsonAsync(surface.Capabilities()); return; }
             if (context.Request.Path.Value is { } p && (p.EndsWith("/kill") || p.EndsWith("/kill-generation") || p.EndsWith("/release")))
@@ -92,7 +94,8 @@ internal sealed class TaskParkProofWire : IAsyncDisposable
                 var frame = await PhoneHomeFraming.ReadFrameAsync(_socket!, 16 * 1024 * 1024, _lifetime.Token);
                 if (frame is null) break;
                 if (frame.Kind != PhoneHomeFrameKind.Request) continue;
-                if (frame.Operation is PhoneHomeOperation.Kill or PhoneHomeOperation.KillGeneration or PhoneHomeOperation.ReleaseSlot)
+                if (frame.Operation == PhoneHomeOperation.ReleaseTerminalSeat) ReleaseCalls++;
+                if (frame.Operation is PhoneHomeOperation.KillGeneration or PhoneHomeOperation.ReleaseSlot)
                 { ForceCalls++; throw new InvalidOperationException("Unexpected force fallback"); }
                 var answer = await dispatcher.DispatchAsync(frame, _lifetime.Token);
                 await PhoneHomeFraming.WriteFrameAsync(_socket!, answer, 16 * 1024 * 1024, _lifetime.Token);

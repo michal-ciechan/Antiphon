@@ -1,6 +1,7 @@
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Antiphon.Server.Infrastructure.Git;
@@ -152,9 +153,11 @@ public sealed class TaskParkRunnerIdentityTests
                     new RoutingSessionRunnerClient(wire.Directory), new RunnerScopedSessionRunnerClient(wire.Directory, "fixture") })
                 {
                     wire.OmitSourceModes = true;
+                    var before = wire.ReleaseCalls;
                     (await client.ReleaseTerminalSeatAsync(w.Fixture.SessionId, request, default)).Outcome
                         .ShouldBe(TerminalSeatReleaseOutcome.Unsupported, "G-225 missing feature");
                     wire.Received.ShouldBeEmpty("G-225 zero release wire calls, no downgrade");
+                    wire.ReleaseCalls.ShouldBe(before, "G-225 capability refusal precedes the wire");
                     wire.OmitSourceModes = false;
                     await client.ReleaseTerminalSeatAsync(w.Fixture.SessionId, request, default);
                     wire.Received.ShouldHaveSingleItem().ShouldBe(request, "G-226 exact runtime-received version/mode/null SHA");
