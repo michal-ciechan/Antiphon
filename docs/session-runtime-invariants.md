@@ -106,10 +106,10 @@ Report prose and a card moving to Done start nothing.
 An old session TurnEnd cannot settle the new attempt.
 The caller UserPrompt receipt is proven on the inline path only. The fixture sets completionSingleWriteBytes to 86400 while production PtySingleChunkBytes stays 1024, so a spilled completion note's transcript line is the pointer.
 
-ReclaimLegacyAsync(32, 3) runs from the dispatcher pool-release sweep and from RunnerSlotReconcileJob.
+ReclaimScheduledAsync runs from the dispatcher pool-release sweep and from RunnerSlotReconcileJob and calls ReclaimLegacyAsync(32, 3).
 The reclaim cursor is the singleton BlockedTaskParkReclaimCursors row Id 1 and advances after every visit, including failure.
-A short tail wraps. One call runs at most three passes of up to 32 rows (at most 96 row visits), and after wrap-around the same row at most three times. There is no discovery gate.
-The reconcile job's released total includes those visit counts.
+A short tail wraps. ReclaimScheduledAsync shares one overlap gate and, unless ReclaimIntervalSeconds is 0, runs at most once per ReclaimIntervalSeconds. One run visits each eligible Blocked row at most once and stops at the smaller of the eligible count and page size times the pass budget.
+The reconcile job's released total counts confirmed releases only and does not include visit counts.
 FreshLegacyWindow uses StableFor only as a duration and requires the server-clock interval since park.CreatedAt to reach 120 seconds; the runner's FirstObservedAt is ignored. An old CompletedAt is not the idle window.
 Known limits stay on CARD-1097, CARD-1103, CARD-1104, and CARD-1108.
 
