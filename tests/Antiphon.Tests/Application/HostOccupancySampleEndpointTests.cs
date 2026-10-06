@@ -104,6 +104,59 @@ public sealed class HostOccupancySampleEndpointTests
         clampedRows.ShouldNotContain(row => Instant(row, "sampledAt") == stale);
     }
 
+    [Test]
+    public async Task C1101_Limit_below_one_is_400_and_the_cap_and_default_apply()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var clock = new FakeTimeProvider(Now);
+        await using var host = await StartAsync(schema, clock);
+
+        using var omitted = await host.Http.GetAsync("/api/hosts/local/occupancy-samples");
+        omitted.StatusCode.ShouldBe(HttpStatusCode.OK);
+        using var omittedJson = JsonDocument.Parse(await omitted.Content.ReadAsStringAsync());
+        omittedJson.RootElement.GetProperty("limit").GetInt32().ShouldBe(500);
+
+        using var zero = await host.Http.GetAsync("/api/hosts/local/occupancy-samples?limit=0");
+        zero.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
+        (await zero.Content.ReadAsStringAsync()).ShouldContain("limit_invalid");
+
+        using var negative = await host.Http.GetAsync("/api/hosts/local/occupancy-samples?limit=-1");
+        negative.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
+        (await negative.Content.ReadAsStringAsync()).ShouldContain("limit_invalid");
+
+        using var clamped = await host.Http.GetAsync("/api/hosts/local/occupancy-samples?limit=2001");
+        clamped.StatusCode.ShouldBe(HttpStatusCode.OK);
+        using var clampedJson = JsonDocument.Parse(await clamped.Content.ReadAsStringAsync());
+        clampedJson.RootElement.GetProperty("limit").GetInt32().ShouldBe(2000);
+    }
+
+    [Test]
+    public async Task C1101_To_near_minimum_without_from_is_400_window_invalid()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var clock = new FakeTimeProvider(Now);
+        await using var host = await StartAsync(schema, clock);
+
+        foreach (var to in new[] { "0001-01-01T00:00:00.0000000Z", "0001-01-01T23:00:00.0000000Z" })
+        {
+            using var response = await host.Http.GetAsync(
+                "/api/hosts/local/occupancy-samples?to=" + Uri.EscapeDataString(to));
+            response.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
+            var body = await response.Content.ReadAsStringAsync();
+            body.ShouldContain("window_invalid");
+            body.ShouldNotContain("An unexpected error occurred.");
+        }
+
+        const string edge = "0001-01-02T00:00:00.0000000Z";
+        using var ok = await host.Http.GetAsync(
+            "/api/hosts/local/occupancy-samples?to=" + Uri.EscapeDataString(edge));
+        ok.StatusCode.ShouldBe(HttpStatusCode.OK);
+        using var json = JsonDocument.Parse(await ok.Content.ReadAsStringAsync());
+        json.RootElement.GetProperty("from").GetDateTime().ShouldBe(DateTime.MinValue);
+        json.RootElement.GetProperty("to").GetDateTime().ShouldBe(
+            DateTime.Parse(edge, null, System.Globalization.DateTimeStyles.AdjustToUniversal));
+    }
+
     private static Task<PhoneHomeTestHost> StartAsync(IsolatedTestSchema schema, FakeTimeProvider clock) =>
         PhoneHomeTestHost.StartAsync(clock: clock, connectionString: schema.ConnectionString,
             configureServices: services =>
