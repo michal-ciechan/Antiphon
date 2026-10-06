@@ -325,6 +325,45 @@ describe('compactQueueReason', () => {
   it('collapses awaitingDispatch to queued', () => {
     expect(compactQueueReason(queued({ queueReason: 'awaitingDispatch', heldBy: [] }), empty, cap)).toBe('queued')
   })
+
+  it('names a repository lease holder by short id and collapses an empty hold', () => {
+    expect(
+      compactQueueReason(
+        queued({ queueReason: 'repositoryLease', heldBy: [holder({ shortId: '1a2b3c4d', title: 'CARD-0288 lease holder' })] }),
+        empty,
+        cap,
+      ),
+    ).toBe('lease ~1a2b3c4d')
+    expect(compactQueueReason(queued({ queueReason: 'repositoryLease', heldBy: [] }), empty, cap)).toBe('lease')
+  })
+
+  it('names a remote-prep holder by short id and collapses an empty hold', () => {
+    expect(
+      compactQueueReason(
+        queued({ queueReason: 'remotePrep', heldBy: [holder({ shortId: '9f8e7d6c', title: 'push the branch' })] }),
+        empty,
+        cap,
+      ),
+    ).toBe('prep ~9f8e7d6c')
+    expect(compactQueueReason(queued({ queueReason: 'remotePrep', heldBy: [] }), empty, cap)).toBe('prep')
+  })
+
+  it('collapses hostBudget to host full', () => {
+    expect(compactQueueReason(queued({ queueReason: 'hostBudget', heldBy: [] }), empty, cap)).toBe('host full')
+  })
+
+  it('renders an unknown future reason as queued without throwing or echoing it', () => {
+    const line = compactQueueReason(
+      queued({
+        queueReason: 'futureBudget' as AgentTaskPipelineQueuedDto['queueReason'],
+        heldBy: [holder({ title: 'futureBudget holder' })],
+      }),
+      empty,
+      cap,
+    )
+    expect(line).toBe('queued')
+    expect(line).not.toContain('futureBudget')
+  })
 })
 
 describe('rightCell against a pinned now', () => {

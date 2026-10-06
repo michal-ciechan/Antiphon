@@ -218,9 +218,27 @@ export function compactQueueReason(
     }
     case 'concurrencyCap':
       return `slots ${pipeline.inFlightAgainstCap}/${pipeline.maxConcurrentTasks}`
+    case 'repositoryLease': {
+      const first = row.heldBy[0]
+      return first ? `lease ~${first.shortId}` : 'lease'
+    }
+    case 'remotePrep': {
+      const first = row.heldBy[0]
+      return first ? `prep ~${first.shortId}` : 'prep'
+    }
+    case 'hostBudget':
+      return 'host full'
     case 'awaitingDispatch':
       return 'queued'
+    default:
+      return unknownCompactQueueReason(row.queueReason)
   }
+}
+
+/** A reason the server emits before this client knows it. Do not echo the raw token. */
+function unknownCompactQueueReason(reason: never): string {
+  void reason
+  return 'queued'
 }
 
 export function rightCell(

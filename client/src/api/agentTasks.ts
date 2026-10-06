@@ -470,6 +470,9 @@ export type AgentTaskPipelineQueueReason =
   | 'siblingLandInFlight'
   | 'concurrencyCap'
   | 'routingPinNotBefore'
+  | 'repositoryLease'
+  | 'remotePrep'
+  | 'hostBudget'
   | 'awaitingDispatch'
 
 export type RoutingPinProvenance = 'Auto' | 'Human'

@@ -611,6 +611,31 @@ describe('TaskCard', () => {
     ['concurrencyCap', 'waiting: 6 of 6 task slots in use', {}, {}],
     ['routingPinNotBefore', 'waiting: not before 14:00 (routing pin)', {}, { routingPin: pin() }],
     ['awaitingDispatch', 'queued — next dispatch tick', {}, {}],
+    [
+      'repositoryLease',
+      'waiting: repository lease held by task-1a2b3c4d — in-flight docs pass',
+      { heldBy: [{ taskId: 'hold-1', shortId: '1a2b3c4d', title: 'in-flight docs pass' }] },
+      {},
+    ],
+    [
+      'repositoryLease',
+      'waiting: repository lease held by another process',
+      { heldBy: [] },
+      {},
+    ],
+    [
+      'remotePrep',
+      'waiting: remote workspace preparation (behind task-9f8e7d6c — push the branch)',
+      { heldBy: [{ taskId: 'hold-9', shortId: '9f8e7d6c', title: 'push the branch' }] },
+      {},
+    ],
+    [
+      'remotePrep',
+      'waiting: remote workspace preparation (branch push and mirror)',
+      { heldBy: [] },
+      {},
+    ],
+    ['hostBudget', 'waiting: runner host at its budget', { heldBy: [] }, {}],
   ])('prints the %s queue-reason line', (reason, line, queuedExtras, stageExtras) => {
     const queued = item({
       source: 'Delegation',
