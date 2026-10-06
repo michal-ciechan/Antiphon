@@ -184,6 +184,28 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
         return SyncCoreAsync(task, [park.SyncSourceSha!], inspectMirror: false, ct, singleAttempt: true);
     }
 
+    /// <summary>
+    /// CARD-1082 D-5. Fast-forward a settled checkout only to the debt's recorded source.
+    /// A mismatched episode refuses <c>settlement_sync_source_changed</c> and touches no Git.
+    /// </summary>
+    public Task<RemoteSettlementSyncResult> SyncSettledAsync(
+        AgentTask task, AgentTaskSyncDebt debt, CancellationToken ct)
+    {
+        var baseline = TaskProgressJson.TryReadBaseline(task.ProgressBaselineJson)?.Primary;
+        if (debt.TaskId != task.Id || debt.Attempt != task.Attempt
+            || !IsEligible(task)
+            || debt.WorktreePath != task.WorktreePath
+            || debt.RemoteWorktreePath != task.RemoteWorktreePath
+            || debt.RunnerId != task.RunnerId
+            || baseline is null
+            || debt.BaselineSha != baseline.LocalSha
+            || debt.FullRef != baseline.FullRef
+            || !GitObjectId.IsFull(debt.SourceSha))
+            return Task.FromResult(Outcome(RemoteSettlementSyncState.Refused,
+                RemoteSettlementSyncReasons.SettlementSyncSourceChanged));
+        return SyncCoreAsync(task, [debt.SourceSha!], inspectMirror: false, ct, singleAttempt: true);
+    }
+
     public Task<RemoteSettlementSyncResult> SyncForReviewEvidenceAsync(
         AgentTask task, IReadOnlyCollection<string>? reportedTips, CancellationToken ct) =>
         SyncCoreAsync(task, reportedTips, inspectMirror: true, ct);
@@ -758,8 +780,7 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
         {
             var descriptor = await _runners.DescribeAsync(task.RunnerId, ct);
             var guarded = descriptor?.Capabilities?.Features?.Contains(RunnerCapabilityFeatures.WorkspacePublishV1) == true;
-            publishedSha ??= TaskProgressJson.TryReadEvidence(task.CompletionProgressEvidenceJson)
-                ?.RemoteSync?.ConfirmedSha ?? task.WorktreeBaseSha;
+            publishedSha ??= PublishedShaForRemoval(task);
             var response = await Remote(task.RunnerId).RemoveWorkspaceAsync(
                 new PhoneHomeWorkspaceRemoveRequest(task.RemoteWorktreePath,
                     PublishedSha: guarded && GitObjectId.IsFull(publishedSha) ? publishedSha : null), ct);
@@ -773,6 +794,17 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
                 ? task.RemoteWorktreePath + " (" + ex.Message + ")"
                 : task.RemoteWorktreePath;
         }
+    }
+
+    /// <summary>
+    /// CARD-1082 D-6. Pending evidence with no confirmed SHA publishes the observed origin tip.
+    /// </summary>
+    private static string? PublishedShaForRemoval(AgentTask task)
+    {
+        var sync = TaskProgressJson.TryReadEvidence(task.CompletionProgressEvidenceJson)?.RemoteSync;
+        return sync?.ConfirmedSha
+            ?? (sync is { State: RemoteSettlementSyncState.Pending } ? sync.ObservedSha : null)
+            ?? task.WorktreeBaseSha;
     }
 
     private PhoneHomeRunnerClient Remote(string? runnerId) =>

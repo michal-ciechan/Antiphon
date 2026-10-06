@@ -103,4 +103,7 @@ public static class RemoteSettlementSyncReasons
 
     /// <summary>Bind-refusal recovery: origin's tip is not a commit the recovered evidence names.</summary>
     public const string TipNotReported = "runner_sync_tip_not_reported";
+
+    /// <summary>CARD-1082. The debt no longer names this task episode or a full source object id.</summary>
+    public const string SettlementSyncSourceChanged = "settlement_sync_source_changed";
 }
