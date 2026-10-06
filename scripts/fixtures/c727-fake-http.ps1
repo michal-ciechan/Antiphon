@@ -34,9 +34,31 @@ if ($Path) {
     if ($state.taskError) { [Console]::Error.WriteLine([string]$state.taskError); exit 2 }
     if ($Path.StartsWith('/api/agent-tasks?', [StringComparison]::Ordinal)) {
         $scopeId = ([regex]::Match($Path, 'projectId=([^&]+)')).Groups[1].Value
-        if ($state.taskScopes -and $state.taskScopes.PSObject.Properties.Name -contains $scopeId) { $state.taskScopes.$scopeId | ConvertTo-Json -Compress -Depth 20 }
-        elseif ($state.tasks) { $state.tasks | ConvertTo-Json -Compress -Depth 20 }
-        else { Write-Output '{"items":[],"scope":{"projectId":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1","unscoped":"include"},"excluded":{"total":0,"unscoped":0,"byProject":[]}}' }
+        if ($state.taskQueries -and $state.taskQueries.PSObject.Properties.Name -ccontains $Path) {
+            $envelope = $state.taskQueries.$Path
+            # Sequence entries are consumed per exact path, permitting pass-two drift.
+            if ($envelope -is [array]) {
+                $envelope = $envelope[0]
+                if ($state.taskQueries.$Path.Count -gt 1) {
+                    $state.taskQueries.$Path = @($state.taskQueries.$Path | Select-Object -Skip 1)
+                    $state | ConvertTo-Json -Compress -Depth 30 | Set-Content -LiteralPath $env:C727_TEST_STATE
+                }
+            }
+        } else {
+            $envelope = if ($state.taskScopes -and $state.taskScopes.PSObject.Properties.Name -contains $scopeId) { $state.taskScopes.$scopeId }
+                elseif ($state.tasks) { $state.tasks }
+                else { '{"items":[],"scope":{"projectId":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1","unscoped":"include"},"excluded":{"total":0,"unscoped":0,"byProject":[]}}' | ConvertFrom-Json }
+            # Preserve malformed envelopes so fixtures can still prove fail-closed checks.
+            if ($envelope.items -is [array]) {
+                if ($Path.Contains('&status=')) {
+                    $statuses = ([regex]::Match($Path, 'status=([^&]+)')).Groups[1].Value.Split(',')
+                    $envelope.items = @($envelope.items | Where-Object { $_.status -cin $statuses })
+                } elseif ($Path.Contains('&landPending=true')) {
+                    $envelope.items = @($envelope.items | Where-Object { $null -ne $_.landRequestedAt -or $null -ne $_.landStartedAt })
+                }
+            }
+        }
+        ConvertTo-Json -InputObject $envelope -Compress -Depth 20
         exit 0
     }
     if ($Path -like '/api/agent-tasks/*') {
