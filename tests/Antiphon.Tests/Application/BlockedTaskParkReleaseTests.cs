@@ -204,6 +204,7 @@ public sealed class BlockedTaskParkReleaseTests
                     new Antiphon.Server.Application.Interfaces.RunnerInventory.Available([]));
                 await File.WriteAllTextAsync(Path.Combine(f.SourcePath, "dirt.txt"), "unpublished");
                 await f.HandleParkAsync();
+                await f.RecoverAttentionAsync(); // Audit-only legacy recovery cannot bypass an extant park's source fence.
                 (await f.ParkAsync()).State.ShouldBe(AgentTaskParkState.ReleasePending, "absent runner cannot waive source checks");
                 File.Delete(Path.Combine(f.SourcePath, "dirt.txt"));
             }

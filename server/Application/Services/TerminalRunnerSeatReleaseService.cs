@@ -489,7 +489,7 @@ public sealed class TerminalRunnerSeatReleaseService(
             }
             if (release.State != RunnerSeatReleaseState.Reserved) return;
             var source = await ReleaseSourceAsync(release, verify: true, ct);
-            if (await RequiresPublicationAsync(release, ct) && source is null) return;
+            if (await RequiresPublicationAsync(release, recoveryOnly: false, ct) && source is null) return;
             if (BoundaryAsync is not null) await BoundaryAsync("BeforeDispatch", ct);
             if (!await RunnerReadyAsync(release, ct))
             {
@@ -514,7 +514,7 @@ public sealed class TerminalRunnerSeatReleaseService(
             await using (var tx = await db.Database.BeginTransactionAsync(ct))
             {
                 await LockIdentityAsync(release, ct);
-                if (await RevalidateAsync(release, ct) is { } refusal)
+                if (await RevalidateAsync(release, recoveryOnly: false, ct) is { } refusal)
                 {
                     await PendingAsync(release, refusal.ToString(), ct);
                     await tx.CommitAsync(ct);
@@ -559,7 +559,7 @@ public sealed class TerminalRunnerSeatReleaseService(
                 return;
             }
             if (await RunnerReadyAsync(release, ct))
-                await ConfirmAsync(release, result.Outcome, ct);
+                await ConfirmAsync(release, result.Outcome, recoveryOnly: false, ct);
         }
         finally { gate.Release(); }
     }
@@ -584,9 +584,13 @@ public sealed class TerminalRunnerSeatReleaseService(
     private async Task ReconcileAsync(RunnerSeatRelease release,
         TerminalSeatObservationRequest? observation, CancellationToken ct)
     {
-        if (await RevalidateAsync(release, ct) is not null || !await RunnerReadyAsync(release, ct)) return;
+        // With no observation this is audit-only recovery: it cannot qualify or send.
+        // CARD-0667 actions already sent before parks existed still need fresh absence
+        // reconciliation. An extant park always retains its source checks, even here.
+        var recoveryOnly = observation is null;
+        if (await RevalidateAsync(release, recoveryOnly, ct) is not null || !await RunnerReadyAsync(release, ct)) return;
         var source = await ReleaseSourceAsync(release, verify: true, ct);
-        if (await RequiresPublicationAsync(release, ct) && source is null) return;
+        if (await RequiresPublicationAsync(release, recoveryOnly, ct) && source is null) return;
         RunnerInventory inventory;
         try { inventory = await DiscoveryInventoryAsync(release.RunnerId, ct); }
         catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested) { return; }
@@ -597,7 +601,7 @@ public sealed class TerminalRunnerSeatReleaseService(
         if (seats.Length == 0)
         {
             if (source is not null && !await VerifyExitedParkAsync(release, source, ct)) return;
-            await ConfirmAsync(release, TerminalSeatReleaseOutcome.AlreadyAbsent, ct);
+            await ConfirmAsync(release, TerminalSeatReleaseOutcome.AlreadyAbsent, recoveryOnly, ct);
             return;
         }
         if (seats.Length != 1 || seats[0].AcceptedStartedAt != release.AcceptedStartedAt
@@ -605,7 +609,7 @@ public sealed class TerminalRunnerSeatReleaseService(
         if (seats[0].Status == "Exited")
         {
             if (source is not null && !await VerifyExitedParkAsync(release, source, ct)) return;
-            await ConfirmAsync(release, TerminalSeatReleaseOutcome.AlreadyExited, ct);
+            await ConfirmAsync(release, TerminalSeatReleaseOutcome.AlreadyExited, recoveryOnly, ct);
             return;
         }
 
@@ -632,7 +636,7 @@ public sealed class TerminalRunnerSeatReleaseService(
         if (!await RunnerReadyAsync(release, ct)) return;
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         await LockIdentityAsync(release, ct);
-        if (await RevalidateAsync(release, ct) is null)
+        if (await RevalidateAsync(release, recoveryOnly: false, ct) is null)
         {
             await db.RunnerSeatReleases.Where(r => r.Id == release.Id && r.Revision == release.Revision
                 && r.State == RunnerSeatReleaseState.Unresolved && r.ActionId == release.ActionId)
@@ -666,8 +670,9 @@ public sealed class TerminalRunnerSeatReleaseService(
         catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested) { return false; }
     }
 
-    private Task<bool> RequiresPublicationAsync(RunnerSeatRelease release, CancellationToken ct) =>
-        db.AgentTasks.AnyAsync(t => t.Id == release.TaskId && t.Status == AgentTaskStatus.Blocked, ct);
+    private Task<bool> RequiresPublicationAsync(RunnerSeatRelease release, bool recoveryOnly, CancellationToken ct) =>
+        db.AgentTasks.AnyAsync(t => t.Id == release.TaskId && t.Status == AgentTaskStatus.Blocked
+            && (!recoveryOnly || db.AgentTaskParks.Any(p => p.TaskId == t.Id && p.Attempt == release.Attempt)), ct);
 
     private async Task<TaskParkPublicationEvidence?> ReleaseSourceAsync(RunnerSeatRelease release, bool verify, CancellationToken ct)
     {
@@ -720,7 +725,8 @@ public sealed class TerminalRunnerSeatReleaseService(
             """, ct);
     }
 
-    private async Task<TerminalRunnerSeatDecision?> RevalidateAsync(RunnerSeatRelease release, CancellationToken ct)
+    private async Task<TerminalRunnerSeatDecision?> RevalidateAsync(
+        RunnerSeatRelease release, bool recoveryOnly, CancellationToken ct)
     {
         if (release.TaskId is null) return await RowlessHoldAsync(release, ct);
         var task = await db.AgentTasks.AsNoTracking().SingleOrDefaultAsync(t => t.Id == release.TaskId, ct);
@@ -731,7 +737,8 @@ public sealed class TerminalRunnerSeatReleaseService(
             return TerminalRunnerSeatDecision.StaleAttempt;
         if (await SettlementEventAsync(task, ct) != release.SettlementEventId)
             return TerminalRunnerSeatDecision.StaleAttempt;
-        if (task.Status == AgentTaskStatus.Blocked && await ReleaseSourceAsync(release, verify: false, ct) is null)
+        if (await RequiresPublicationAsync(release, recoveryOnly, ct)
+            && await ReleaseSourceAsync(release, verify: false, ct) is null)
             return TerminalRunnerSeatDecision.PublicationRequired;
         var session = await db.AgentSessions.AsNoTracking().SingleOrDefaultAsync(s => s.Id == release.SessionId, ct);
         if (session is not null && (session.RunnerId != release.RunnerId || session.RunnerStoreId != release.RunnerStoreId
@@ -759,11 +766,12 @@ public sealed class TerminalRunnerSeatReleaseService(
         return state.Working ? TerminalRunnerSeatDecision.Working : null;
     }
 
-    private async Task ConfirmAsync(RunnerSeatRelease release, TerminalSeatReleaseOutcome outcome, CancellationToken ct)
+    private async Task ConfirmAsync(
+        RunnerSeatRelease release, TerminalSeatReleaseOutcome outcome, bool recoveryOnly, CancellationToken ct)
     {
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         await LockIdentityAsync(release, ct);
-        if (await RevalidateAsync(release, ct) is { } refusal)
+        if (await RevalidateAsync(release, recoveryOnly, ct) is { } refusal)
         {
             await PendingAsync(release, refusal.ToString(), ct);
             await tx.CommitAsync(ct);
