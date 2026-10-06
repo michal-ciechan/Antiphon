@@ -1,3 +1,4 @@
+using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
@@ -192,6 +193,80 @@ public class TaskProgressStallSweepTests
 
         var result = await harness.TickAsync(CancellationToken.None);
         result.SweepFailures.ShouldBeGreaterThanOrEqualTo(1);
+    }
+
+    /// <summary>
+    /// CARD-1072. The sweep used to probe every open task before the stall gates.
+    /// One tick must probe a past-stall mid-turn directory once, and must not probe
+    /// a younger task, an idle session, or a runner-bound desktop checkout.
+    /// </summary>
+    [Test]
+    public async Task a_stalled_directory_is_probed_once_and_a_young_idle_or_remote_task_is_not()
+    {
+        var (harness, _) = CreateHarness();
+        var probe = new CountingProbe();
+        harness.WorkspaceProbeOverride = probe;
+        await using var world = new ProbeWorld();
+
+        var stallMinutes = new DelegationSettings().StallDetection.StallMinutes;
+        var fileAt = DateTime.UtcNow.AddHours(-5);
+        var commitAt = DateTime.UtcNow.AddHours(-6);
+        var quiet = new WorkspaceProgressArm(true, fileAt, commitAt, false);
+
+        var youngDir = world.Directory("young");
+        var idleDir = world.Directory("idle");
+        var remoteDir = world.Directory("main");
+        var localDir = world.Directory("local");
+        var sharedDir = world.Directory("shared");
+        var sharedAlias = sharedDir + Path.DirectorySeparatorChar;
+
+        var young = await world.SeedWorkingAsync(youngDir, dispatchedMinutesAgo: Math.Max(1, stallMinutes / 6));
+        var idle = await world.SeedIdleAsync(idleDir, dispatchedMinutesAgo: stallMinutes + 20);
+        var remote = await world.SeedWorkingAsync(
+            remoteDir, dispatchedMinutesAgo: stallMinutes + 20, runnerId: "server2",
+            worktreePath: world.Directory("remote-wt"));
+        var local = await world.SeedWorkingAsync(
+            localDir, dispatchedMinutesAgo: stallMinutes + 20, workspace: WorkspaceMode.Worktree);
+        var sharedA = await world.SeedWorkingAsync(
+            sharedDir, dispatchedMinutesAgo: stallMinutes + 20, workspace: WorkspaceMode.Worktree);
+        var sharedB = await world.SeedWorkingAsync(
+            sharedAlias, dispatchedMinutesAgo: stallMinutes + 20, workspace: WorkspaceMode.Worktree);
+
+        probe.Arm(localDir, quiet);
+        probe.Arm(sharedDir, quiet);
+
+        await harness.DetectStalledProgressAsync(CancellationToken.None);
+
+        probe.Count(youngDir).ShouldBe(0);
+        probe.Count(idleDir).ShouldBe(0);
+        probe.Count(remoteDir).ShouldBe(0);
+        probe.Count(localDir).ShouldBe(1);
+        probe.Count(sharedDir).ShouldBe(1);
+        probe.SharedFlag(localDir).ShouldBe(false);
+
+        (await world.IncidentAsync(young.SessionId)).ShouldBeNull();
+        (await world.IncidentAsync(idle.SessionId)).ShouldBeNull();
+
+        var remoteIncident = await world.IncidentAsync(remote.SessionId);
+        remoteIncident.ShouldNotBeNull();
+        remoteIncident.Message.ShouldContain("no workspace arm");
+
+        var localIncident = await world.IncidentAsync(local.SessionId);
+        localIncident.ShouldNotBeNull();
+        localIncident.Message.ShouldContain("last file change");
+        localIncident.Message.ShouldContain("last commit");
+        localIncident.FailureReason.ShouldNotBeNull();
+        localIncident.FailureReason.ShouldContain("files=");
+        localIncident.FailureReason.ShouldNotContain("files=none");
+        localIncident.FailureReason.ShouldContain("commits=");
+        localIncident.FailureReason.ShouldNotContain("commits=none");
+
+        foreach (var sessionId in new[] { sharedA.SessionId, sharedB.SessionId })
+        {
+            var incident = await world.IncidentAsync(sessionId);
+            incident.ShouldNotBeNull();
+            incident.Message.ShouldContain("last file change");
+        }
     }
 
     private static (AgentTaskDispatcher Dispatcher, RecordingSessionStopper Stopper) CreateHarness(
@@ -390,5 +465,215 @@ public class TaskProgressStallSweepTests
             await db.AgentSessions.Where(s => s.Id == _sessionId).ExecuteDeleteAsync();
             await db.Agents.Where(a => a.Id == _agentId).ExecuteDeleteAsync();
         }
+    }
+
+    private sealed record ProbeTask(Guid SessionId, Guid TaskId);
+
+    /// <summary>CARD-1072 fixture. Each task has its own session so the sweep's working check is per row.</summary>
+    private sealed class ProbeWorld : IAsyncDisposable
+    {
+        private readonly List<Guid> _sessions = [];
+        private readonly List<Guid> _agents = [];
+        private readonly List<Guid> _tasks = [];
+
+        public string Directory(string name) =>
+            Path.Combine(Path.GetTempPath(), $"c1072-{name}-{Guid.NewGuid():N}");
+
+        public async Task<ProbeTask> SeedIdleAsync(string workingDirectory, int dispatchedMinutesAgo)
+        {
+            var dispatched = DateTime.UtcNow.AddMinutes(-dispatchedMinutesAgo);
+            var ids = await InsertTaskAsync(
+                workingDirectory, dispatched, WorkspaceMode.Worktree, runnerId: null, worktreePath: workingDirectory);
+            return ids;
+        }
+
+        public async Task<ProbeTask> SeedWorkingAsync(
+            string workingDirectory, int dispatchedMinutesAgo, string? runnerId = null,
+            string? worktreePath = null, WorkspaceMode workspace = WorkspaceMode.Worktree)
+        {
+            var ids = await SeedIdleAsync(workingDirectory, dispatchedMinutesAgo);
+            if (runnerId is not null || worktreePath is not null || workspace != WorkspaceMode.Worktree)
+            {
+                await using var db = CreateContext();
+                var task = await db.AgentTasks.SingleAsync(t => t.Id == ids.TaskId);
+                task.RunnerId = runnerId;
+                task.WorktreePath = worktreePath ?? workingDirectory;
+                task.RepoPath = workingDirectory;
+                task.Workspace = workspace;
+                await db.SaveChangesAsync();
+            }
+
+            await SeedLoopAsync(ids.SessionId, dispatchedMinutesAgo);
+            return ids;
+        }
+
+        public async Task<AgentIncident?> IncidentAsync(Guid sessionId)
+        {
+            await using var db = CreateContext();
+            return await db.AgentIncidents.AsNoTracking()
+                .Where(i => i.SessionId == sessionId && i.Kind == AgentIncidentKind.TaskProgressStalled)
+                .OrderBy(i => i.CreatedAt)
+                .FirstOrDefaultAsync();
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            await using var db = CreateContext();
+            await db.AgentIncidents.Where(i => i.AgentId != null && _agents.Contains(i.AgentId.Value)).ExecuteDeleteAsync();
+            await db.TranscriptEntries.Where(e => _sessions.Contains(e.AgentSessionId)).ExecuteDeleteAsync();
+            await db.AgentTaskEvents.Where(e => _tasks.Contains(e.AgentTaskId)).ExecuteDeleteAsync();
+            await db.AgentTasks.Where(t => _tasks.Contains(t.Id)).ExecuteDeleteAsync();
+            await db.AgentSessions.Where(s => _sessions.Contains(s.Id)).ExecuteDeleteAsync();
+            await db.Agents.Where(a => _agents.Contains(a.Id)).ExecuteDeleteAsync();
+        }
+
+        private async Task<ProbeTask> InsertTaskAsync(
+            string workingDirectory, DateTime dispatched, WorkspaceMode workspace,
+            string? runnerId, string? worktreePath)
+        {
+            var sessionId = Guid.NewGuid();
+            var agentId = Guid.NewGuid();
+            var taskId = Guid.NewGuid();
+            var name = $"c1072-{agentId:N}"[..20];
+            await using var db = CreateContext();
+            db.AgentSessions.Add(new AgentSession
+            {
+                Id = sessionId,
+                DefinitionName = "stall-probe-test",
+                AgentKind = AgentKind.ClaudeCode,
+                Status = SessionStatus.Running,
+                Cwd = workingDirectory,
+                Cols = 120,
+                Rows = 30,
+                CreatedAt = dispatched,
+                StartedAt = dispatched,
+                LastSeenAt = DateTime.UtcNow,
+            });
+            db.Agents.Add(new Agent
+            {
+                Id = agentId,
+                Name = name,
+                Slug = name,
+                WorkingDirectory = workingDirectory,
+                Details = "CARD-1072 stall probe test delegate.",
+                Status = AgentStatus.Running,
+                ModelLevel = AgentModelLevel.Frontier,
+                IsPoolDelegate = true,
+                PersistentSessionId = sessionId.ToString("D"),
+                RunnerId = runnerId,
+                CreatedAt = dispatched,
+                UpdatedAt = dispatched,
+            });
+            db.AgentTasks.Add(new AgentTask
+            {
+                Id = taskId,
+                RootTaskId = taskId,
+                Title = "stall probe test",
+                Goal = "loop",
+                Role = AgentTaskRole.Code,
+                ModelLevel = AgentModelLevel.Frontier,
+                Workspace = workspace,
+                WorkingDirectory = workingDirectory,
+                WorktreePath = worktreePath,
+                RepoPath = workingDirectory,
+                RunnerId = runnerId,
+                AgentId = agentId,
+                AgentSessionId = sessionId,
+                Status = AgentTaskStatus.Working,
+                CreatedAt = dispatched,
+                DispatchedAt = dispatched,
+            });
+            await db.SaveChangesAsync();
+            _sessions.Add(sessionId);
+            _agents.Add(agentId);
+            _tasks.Add(taskId);
+            return new ProbeTask(sessionId, taskId);
+        }
+
+        private async Task SeedLoopAsync(Guid sessionId, int dispatchedMinutesAgo)
+        {
+            await using var db = CreateContext();
+            long seq = 0;
+            void Add(string kind, string? toolName, string? toolInput, string? text, int minutesAgo)
+            {
+                var at = DateTime.UtcNow.AddMinutes(-minutesAgo);
+                db.TranscriptEntries.Add(new TranscriptEntry
+                {
+                    Id = Guid.NewGuid(),
+                    AgentSessionId = sessionId,
+                    Sequence = ++seq,
+                    Kind = kind,
+                    Uuid = $"c1072-{Guid.NewGuid():N}",
+                    Role = kind == TranscriptKinds.UserPrompt ? "user" : "assistant",
+                    Text = text,
+                    ToolName = toolName,
+                    ToolInput = toolInput,
+                    Timestamp = at,
+                    CreatedAt = at,
+                });
+            }
+
+            Add(TranscriptKinds.ToolCall, "Read", "{\"path\":\"src/loop.cs\"}", null, dispatchedMinutesAgo - 2);
+            Add(TranscriptKinds.ToolResult, null, null, "file contents of loop.cs", dispatchedMinutesAgo - 3);
+            const int rows = 14;
+            const int spanMinutes = 40;
+            const int endMinutesAgo = 2;
+            var startMinutesAgo = endMinutesAgo + spanMinutes;
+            var step = spanMinutes / (double)(rows - 1);
+            for (var i = 0; i < rows; i++)
+            {
+                var ago = startMinutesAgo - (int)Math.Round(i * step);
+                var kind = i % 3 == 0 ? TranscriptKinds.ToolCall
+                    : i % 3 == 1 ? TranscriptKinds.ToolResult
+                    : TranscriptKinds.Thinking;
+                if (kind == TranscriptKinds.ToolCall)
+                    Add(kind, "Read", "{\"path\":\"src/loop.cs\"}", null, ago);
+                else if (kind == TranscriptKinds.ToolResult)
+                    Add(kind, null, null, "file contents of loop.cs", ago);
+                else
+                    Add(kind, null, null, $"thinking pass {i}", ago);
+            }
+
+            await db.SaveChangesAsync();
+        }
+    }
+
+    private sealed class CountingProbe : IWorkspaceProgressProbe
+    {
+        private readonly Dictionary<string, WorkspaceProgressArm> _arms = new(PathComparer);
+        private readonly List<(string? Directory, bool Shared)> _calls = [];
+
+        public void Arm(string directory, WorkspaceProgressArm arm) =>
+            _arms[Normalise(directory)] = arm;
+
+        public int Count(string directory)
+        {
+            var key = Normalise(directory);
+            return _calls.Count(call => call.Directory is not null && Normalise(call.Directory) == key);
+        }
+
+        public bool? SharedFlag(string directory)
+        {
+            var key = Normalise(directory);
+            var call = _calls.FirstOrDefault(item => item.Directory is not null && Normalise(item.Directory) == key);
+            return _calls.Any(item => item.Directory is not null && Normalise(item.Directory) == key)
+                ? call.Shared
+                : null;
+        }
+
+        public Task<WorkspaceProgressArm> ProbeProgressAsync(
+            string? workingDirectory, DateTime since, bool sharedCheckout, CancellationToken ct)
+        {
+            _calls.Add((workingDirectory, sharedCheckout));
+            if (workingDirectory is not null && _arms.TryGetValue(Normalise(workingDirectory), out var arm))
+                return Task.FromResult(arm with { SharedCheckout = sharedCheckout });
+            return Task.FromResult(new WorkspaceProgressArm(false, null, null, sharedCheckout));
+        }
+
+        private static string Normalise(string directory) =>
+            DelegationWorkspaceResolver.NormalizeSeparators(Path.GetFullPath(directory));
+
+        private static StringComparer PathComparer { get; } =
+            OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
     }
 }

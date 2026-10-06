@@ -1820,6 +1820,7 @@ public sealed class AgentTaskDispatcher
             }
 
             owned.CatchUpOverride = CatchUpOverride;
+            owned.WorkspaceProbeOverride = WorkspaceProbeOverride;
             owned.ProgressStallSweepFault = ProgressStallSweepFault;
             owned.ReuseEnqueueOverride = ReuseEnqueueOverride;
 
@@ -3020,6 +3021,12 @@ public sealed class AgentTaskDispatcher
     internal Func<Guid, CancellationToken, Task>? CatchUpOverride { get; set; }
 
     /// <summary>
+    /// CARD-1072 test seam. Production leaves it null and probes through
+    /// <see cref="AgentFilesService"/>. A sweep test counts calls without starting git.
+    /// </summary>
+    internal IWorkspaceProgressProbe? WorkspaceProbeOverride { get; set; }
+
+    /// <summary>
     /// CARD-0727 test seam. Runs after this tick's Queued snapshot is loaded and before any row
     /// is claimed. Production leaves it null.
     /// </summary>
@@ -3115,12 +3122,15 @@ public sealed class AgentTaskDispatcher
             return 0;
 
         var raised = 0;
+        // One probe per normalised directory for this tick. A later tick probes again:
+        // the arm exists to notice a new file, so it is not cached across ticks.
+        var probedDirectories = new Dictionary<string, WorkspaceProgressArm?>(ProbeDirectoryComparer);
         foreach (var task in open)
         {
             ct.ThrowIfCancellationRequested();
             try
             {
-                if (await TryRaiseProgressStallAsync(task, ct))
+                if (await TryRaiseProgressStallAsync(task, probedDirectories, ct))
                     raised++;
             }
             catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
@@ -3135,9 +3145,12 @@ public sealed class AgentTaskDispatcher
         return raised;
     }
 
-    private async Task<bool> TryRaiseProgressStallAsync(AgentTask task, CancellationToken ct)
+    private async Task<bool> TryRaiseProgressStallAsync(
+        AgentTask task,
+        Dictionary<string, WorkspaceProgressArm?> probedDirectories,
+        CancellationToken ct)
     {
-        var workspace = await ProbeWorkspaceAsync(task, ct);
+        var workspace = await ProbeStalledProgressWorkspaceAsync(task, probedDirectories, ct);
         var suspected = await TaskProgressPolicy.EvaluateAsync(
             _db, task, UtcNow(), _settings, ct, workspace);
         if (suspected is null)
@@ -3145,7 +3158,7 @@ public sealed class AgentTaskDispatcher
 
         var sessionId = task.AgentSessionId!.Value;
         await CatchUpTranscriptAsync(sessionId, ct);
-        workspace = await ProbeWorkspaceAsync(task, ct);
+        workspace = await ProbeStalledProgressWorkspaceAsync(task, probedDirectories, ct);
         var verdict = await TaskProgressPolicy.EvaluateAsync(
             _db, task, UtcNow(), _settings, ct, workspace);
         if (verdict is null)
@@ -3204,13 +3217,74 @@ public sealed class AgentTaskDispatcher
         return channelBound ? AlertSeverity.Critical : AlertSeverity.Error;
     }
 
+    private IWorkspaceProgressProbe? ProgressProbe => WorkspaceProbeOverride ?? _files;
+
+    private static readonly StringComparer ProbeDirectoryComparer =
+        OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+
     /// <summary>
+    /// CARD-1072. The progress-stall arm can only withhold a stall, so it runs after
+    /// <see cref="StallDetectionSettings.StallMinutes"/> and only for a mid-turn session.
+    /// A runner-bound row stores the desktop main checkout in <see cref="AgentTask.WorkingDirectory"/>
+    /// and has no local tree to read. One completed probe is reused for every task on that
+    /// directory during this tick, including the post-catch-up re-evaluation. The boot-stall
+    /// guard keeps the ungated <see cref="ProbeWorkspaceAsync"/>.
+    /// </summary>
+    private async Task<WorkspaceProgressArm?> ProbeStalledProgressWorkspaceAsync(
+        AgentTask task,
+        Dictionary<string, WorkspaceProgressArm?> probedDirectories,
+        CancellationToken ct)
+    {
+        var probe = ProgressProbe;
+        if (probe is null || task.DispatchedAt is not DateTime dispatched)
+            return null;
+        if (UtcNow() - dispatched < TimeSpan.FromMinutes(_settings.StallDetection.StallMinutes))
+            return null;
+        // Remote work is on the runner mirror. Probing the desktop checkout reads the wrong tree.
+        if (!string.IsNullOrWhiteSpace(task.RunnerId))
+            return null;
+        if (task.AgentSessionId is not Guid sessionId
+            || !await SessionMessageQueueService.IsWorkingAsync(_db, sessionId, ct))
+            return null;
+
+        var key = NormaliseProbeDirectory(task.WorkingDirectory);
+        if (key is not null && probedDirectories.TryGetValue(key, out var cached))
+            return cached;
+
+        var arm = await probe.ProbeProgressAsync(
+            task.WorkingDirectory, dispatched, task.Workspace == WorkspaceMode.Shared, ct);
+        // Only a completed probe is stored. An earlier task that never probed must not
+        // hide a later task on the same directory.
+        if (key is not null)
+            probedDirectories[key] = arm;
+        return arm;
+    }
+
+    private static string? NormaliseProbeDirectory(string? directory)
+    {
+        if (string.IsNullOrWhiteSpace(directory))
+            return null;
+        try
+        {
+            return DelegationWorkspaceResolver.NormalizeSeparators(Path.GetFullPath(directory));
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Raw workspace read. The boot-stall guard still calls this on every candidate.
+    /// The progress-stall sweep uses <see cref="ProbeStalledProgressWorkspaceAsync"/>.
+    /// </summary>
     private async Task<WorkspaceProgressArm?> ProbeWorkspaceAsync(
         AgentTask task, CancellationToken ct)
     {
-        if (_files is null || task.DispatchedAt is not DateTime dispatched)
+        var probe = ProgressProbe;
+        if (probe is null || task.DispatchedAt is not DateTime dispatched)
             return null;
-        return await _files.ProbeProgressAsync(
+        return await probe.ProbeProgressAsync(
             task.WorkingDirectory, dispatched, task.Workspace == WorkspaceMode.Shared, ct);
     }
 
