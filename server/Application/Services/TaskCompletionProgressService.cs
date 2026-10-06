@@ -145,6 +145,11 @@ public sealed class TaskCompletionProgressService
     /// CARD-0657 D-4/D-5. Progress for a runner-bound task, judged against the prepared commit S
     /// and the captured baseline B only. No second remote observation, no desktop file rescue:
     /// a refused or unavailable sync is Indeterminate, and only a confirmed S can be Primary.
+    /// CARD-1082 D-4. A Pending result whose ancestry was read and whose objects are local is
+    /// attributed the same way, without reading or moving the desktop HEAD. Every other Pending
+    /// result, and a raw lease-busy result that merely carries an advertised SHA, stays
+    /// Indeterminate. Novelty against the captured remote baseline still requires
+    /// <see cref="ProgressRemoteState.Present"/>.
     /// </summary>
     private async Task<Evaluation> EvaluateRemoteAsync(
         AgentTask task, ProgressClaimParse claim, RemoteSettlementSyncResult prepared, CancellationToken ct)
@@ -175,6 +180,58 @@ public sealed class TaskCompletionProgressService
             return Negative(claim.Sha is not null
                 ? RemoteSettlementSyncReasons.ReportedCommitNotPushed
                 : prepared.Reason ?? RemoteSettlementSyncReasons.NoPushedProgress);
+
+        // CARD-1082 D-4. Classify is what mints Pending; this arm does not. SourceDescends is the
+        // pre-lease ancestry read, and RevParseCommitAsync is the local-object gate (G-7). S == b
+        // is the NoPushedProgress negative. The desktop HEAD check below stays on the confirmed path.
+        if (prepared.State == RemoteSettlementSyncState.Pending)
+        {
+            var pendingRepo = baseline.CanonicalRepository;
+            if (prepared.SourceDescends == true
+                && prepared.RemoteSha is { } tip
+                && GitObjectId.IsFull(tip)
+                && (await _git.RevParseCommitAsync(pendingRepo, tip, ct)).Succeeded)
+            {
+                if (string.Equals(tip, baseline.LocalSha, StringComparison.Ordinal))
+                    return Negative(claim.Sha is not null
+                        ? RemoteSettlementSyncReasons.ReportedCommitNotPushed
+                        : RemoteSettlementSyncReasons.NoPushedProgress);
+
+                if (claim.Sha is { } pendingClaim)
+                {
+                    var pendingPresent = await _git.RevParseCommitAsync(pendingRepo, pendingClaim, ct);
+                    if (!pendingPresent.Succeeded)
+                        return pendingPresent.Reason == "rev_parse_failed"
+                            ? Unknown("primary_log_unavailable")
+                            : Negative(RemoteSettlementSyncReasons.ReportedCommitNotPushed);
+                    var pendingReachable = await _git.IsAncestorAsync(pendingRepo, pendingClaim, tip, ct);
+                    if (pendingReachable is null)
+                        return Unknown("primary_log_unavailable");
+                    if (pendingReachable == false)
+                        return Negative(RemoteSettlementSyncReasons.ReportedCommitNotPushed);
+                    foreach (var pendingBaseline in PresentBaselineTips(baseline))
+                    {
+                        var pendingContained = await _git.IsAncestorAsync(pendingRepo, pendingClaim, pendingBaseline, ct);
+                        if (pendingContained is null)
+                            return Unknown("primary_log_unavailable");
+                        if (pendingContained == true)
+                            return Negative("claimed_commit_not_novel");
+                    }
+                }
+
+                return await ClassifyNoveltyAsync(pendingRepo, tip, baseline, ct) switch
+                {
+                    CommitNovelty.Descendant => Result(
+                        CompletionProgressAssessment.ProgressObserved, null, true,
+                        prepared.DesktopBeforeSha ?? baseline.LocalSha, tip),
+                    CommitNovelty.Contained => Negative(RemoteSettlementSyncReasons.NoPushedProgress),
+                    CommitNovelty.Divergent => Unknown("baseline_lineage_broken"),
+                    _ => Unknown("primary_log_unavailable"),
+                };
+            }
+
+            return Unknown(RemoteSettlementSyncReasons.LeaseBusy);
+        }
 
         if (prepared.State != RemoteSettlementSyncState.Synchronized || !prepared.Confirmed)
             return Unknown(prepared.Reason ?? RemoteSettlementSyncReasons.InspectionUnavailable);

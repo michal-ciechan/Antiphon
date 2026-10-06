@@ -193,6 +193,125 @@ public sealed class RunnerCompletionProgressTests
         return Task.CompletedTask;
     }
 
+    /// <summary>
+    /// CARD-1082 V-9. A Pending tip whose objects are already local attributes the claim against
+    /// that tip. The desktop checkout stays at the baseline; an unconfirmed lease-busy result,
+    /// and a Pending result that never read ancestry, stay indeterminate.
+    /// </summary>
+    [Test]
+    public async Task C1082_PendingWithLocalObjectsAttributesClaimAgainstObservedTip()
+    {
+        await using var world = await SyncWorld.CreateAsync();
+        var s = await world.RunnerPushAsync("work.txt", "runner");
+        await world.RunAsync(world.Desktop, "fetch", "--no-tags", "origin", world.FullRef);
+        (await world.HasObjectAsync(s)).ShouldBeTrue();
+        (await world.HeadAsync()).ShouldBe(world.Baseline);
+        world.Git.Clear();
+
+        var prepared = Pending(world, s, descends: true);
+        var evaluated = await Evaluator(world).EvaluateAsync(
+            world.Task, "Done.\n" + Claim(world, s), prepared, CancellationToken.None);
+
+        evaluated.IsProgress.ShouldBeTrue(evaluated.Reason);
+        var primary = evaluated.Evidence.Sources!.Single(x => x.Assessment == CompletionProgressAssessment.ProgressObserved);
+        primary.Origin.ShouldBe(ProgressOrigin.Primary);
+        primary.VerifiedSha.ShouldBe(s);
+        primary.ClaimedSha.ShouldBe(s);
+        primary.LocalObserved.ShouldBe(world.Baseline);
+        primary.RemoteObserved.ShouldBe(s);
+        evaluated.Evidence.RemoteSync.ShouldNotBeNull();
+        evaluated.Evidence.RemoteSync!.State.ShouldBe(RemoteSettlementSyncState.Pending);
+        evaluated.Evidence.RemoteSync.ObservedSha.ShouldBe(s);
+        evaluated.Evidence.RemoteSync.ConfirmedSha.ShouldBeNull();
+        evaluated.AllowsAutomaticWorkspaceMutation.ShouldBeTrue();
+        (await world.HeadAsync()).ShouldBe(world.Baseline);
+        world.Git.Commands.ShouldNotContain(x => IsSyncCommand(x));
+
+        // CARD-1115. The raw lease-busy answer now carries the tip and ancestry, but it is not
+        // Pending until settlement classifies it. Progress must not treat that answer as S.
+        var raw = prepared with { State = RemoteSettlementSyncState.Unavailable };
+        var gated = await Evaluator(world).EvaluateAsync(
+            world.Task, "Done.\n" + Claim(world, s), raw, CancellationToken.None);
+        gated.IsIndeterminate.ShouldBeTrue(gated.Reason);
+        gated.Reason.ShouldBe(RemoteSettlementSyncReasons.LeaseBusy);
+        gated.IsProgress.ShouldBeFalse();
+
+        var unproven = prepared with { SourceDescends = null };
+        var closed = await Evaluator(world).EvaluateAsync(
+            world.Task, "Done.\n" + Claim(world, s), unproven, CancellationToken.None);
+        closed.IsIndeterminate.ShouldBeTrue(closed.Reason);
+        closed.Reason.ShouldBe(RemoteSettlementSyncReasons.LeaseBusy);
+        (await world.HeadAsync()).ShouldBe(world.Baseline);
+    }
+
+    /// <summary>
+    /// CARD-1082 V-10. Pending with S equal to the captured baseline is the same negative as
+    /// NoPushedProgress. Missing ancestry stays indeterminate rather than becoming that negative.
+    /// </summary>
+    [Test]
+    public async Task C1082_PendingEqualTipIsNoPushedProgress()
+    {
+        await using var world = await SyncWorld.CreateAsync();
+        (await world.HeadAsync()).ShouldBe(world.Baseline);
+        world.Git.Clear();
+        var prepared = Pending(world, world.Baseline, descends: true);
+
+        var plain = await Evaluator(world).EvaluateAsync(world.Task, "Done.", prepared, CancellationToken.None);
+        plain.IsNegative.ShouldBeTrue(plain.Reason);
+        plain.Reason.ShouldBe(RemoteSettlementSyncReasons.NoPushedProgress);
+        plain.Evidence.RemoteSync!.State.ShouldBe(RemoteSettlementSyncState.Pending);
+        plain.Evidence.RemoteSync.ObservedSha.ShouldBe(world.Baseline);
+        plain.Evidence.RemoteSync.ConfirmedSha.ShouldBeNull();
+
+        var claimed = await Evaluator(world).EvaluateAsync(
+            world.Task, "Done.\n" + Claim(world, world.Baseline), prepared, CancellationToken.None);
+        claimed.IsNegative.ShouldBeTrue(claimed.Reason);
+        claimed.Reason.ShouldBe(RemoteSettlementSyncReasons.ReportedCommitNotPushed);
+        claimed.Evidence.ClaimedSha.ShouldBe(world.Baseline);
+
+        var unproven = await Evaluator(world).EvaluateAsync(
+            world.Task, "Done.", prepared with { SourceDescends = null }, CancellationToken.None);
+        unproven.IsIndeterminate.ShouldBeTrue(unproven.Reason);
+        unproven.Reason.ShouldBe(RemoteSettlementSyncReasons.LeaseBusy);
+        (await world.HeadAsync()).ShouldBe(world.Baseline);
+        world.Git.Commands.ShouldNotContain(x => IsSyncCommand(x));
+    }
+
+    /// <summary>
+    /// CARD-1082 V-11 / G-7. Pending whose objects were never fetched stays indeterminate with
+    /// the lease reason. The locality read is what makes skipping <c>RevParseCommitAsync</c> red.
+    /// </summary>
+    [Test]
+    public async Task C1082_PendingWithoutLocalObjectsIsIndeterminate()
+    {
+        await using var world = await SyncWorld.CreateAsync();
+        var s = await world.RunnerPushAsync("work.txt", "runner");
+        (await world.HasObjectAsync(s)).ShouldBeFalse();
+        world.Git.Clear();
+
+        var prepared = Pending(world, s, descends: true);
+        var evaluated = await Evaluator(world).EvaluateAsync(
+            world.Task, "Done.\n" + Claim(world, s), prepared, CancellationToken.None);
+
+        evaluated.IsIndeterminate.ShouldBeTrue(evaluated.Reason);
+        evaluated.Reason.ShouldBe(RemoteSettlementSyncReasons.LeaseBusy);
+        evaluated.IsProgress.ShouldBeFalse();
+        evaluated.Evidence.RemoteSync!.State.ShouldBe(RemoteSettlementSyncState.Pending);
+        evaluated.Evidence.RemoteSync.ObservedSha.ShouldBe(s);
+        evaluated.Evidence.RemoteSync.ConfirmedSha.ShouldBeNull();
+        world.Git.Commands.ShouldContain(c =>
+            c.StartsWith("rev-parse ", StringComparison.Ordinal) && c.Contains(s, StringComparison.Ordinal));
+        world.Git.Commands.ShouldNotContain(x => IsSyncCommand(x));
+        (await world.HasObjectAsync(s)).ShouldBeFalse();
+        (await world.HeadAsync()).ShouldBe(world.Baseline);
+
+        var unproven = await Evaluator(world).EvaluateAsync(
+            world.Task, "Done.\n" + Claim(world, s), prepared with { SourceDescends = null }, CancellationToken.None);
+        unproven.IsIndeterminate.ShouldBeTrue(unproven.Reason);
+        unproven.Reason.ShouldBe(RemoteSettlementSyncReasons.LeaseBusy);
+        (await world.HeadAsync()).ShouldBe(world.Baseline);
+    }
+
     [Test]
     public async Task Missing_remote_sync_dependency_is_unavailable()
     {
@@ -212,6 +331,17 @@ public sealed class RunnerCompletionProgressTests
 
     private static TaskCompletionProgressService Evaluator(SyncWorld world) =>
         new(world.Git, null, TimeProvider.System, world.Service());
+
+    /// <summary>A prepared Pending result. Settlement classification is a later slice; this one only evaluates it.</summary>
+    private static RemoteSettlementSyncResult Pending(SyncWorld world, string sha, bool? descends) =>
+        new(
+            RemoteSettlementSyncState.Pending,
+            RemoteSettlementSyncReasons.LeaseBusy,
+            world.FullRef,
+            world.Baseline,
+            sha,
+            world.Baseline,
+            SourceDescends: descends);
 
     /// <summary>A fetch, an advertisement read or a merge; never an ancestry query such as merge-base.</summary>
     internal static bool IsSyncCommand(string command) =>
