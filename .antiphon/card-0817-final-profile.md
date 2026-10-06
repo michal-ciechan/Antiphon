@@ -1,5 +1,12 @@
 # CARD-0817 supplemental Final profile
 
+Historical execution manifest: the caller's refinement in
+`.antiphon/inbox/250ae3ea-0d32-4f5f-9c3f-24a0b4a4acdc.md` stopped further
+whole-Unit and baseline work and retained CP-1..CP-6 as this task's closed list.
+The runs below had already finished; their failures and timeout remain recorded
+in `.antiphon/task-2a876d8a.md`. Unit qualification is incomplete and caller-owned.
+This file is retained as provenance, not a request to launch more runs.
+
 Original Code owner: `2a876d8a-7681-47be-94bb-c8cba4abfade`.
 Implementation plan: `docs/superpowers/plans/2026-10-05-card-0817-https-token-push-credential-plan.md`.
 

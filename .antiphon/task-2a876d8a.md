@@ -1,4 +1,11 @@
-# CARD-0817 Code: implementation delivered; Final completion blocked
+# CARD-0817 Code: closed checkpoints delivered; Unit qualification caller-owned
+
+The caller's refinement arrived after the test runs had finished and their build
+slots had been released. It directs stopping whole-Unit/baseline work, treating
+CP-1..CP-6 as the closed list, and committing, pushing and reporting existing
+results. No further build, test, baseline run or source/test repair was started.
+Unit qualification remains incomplete and caller-owned; this report does not
+claim a green Final Unit profile.
 
 Original Code task / landing owner: `2a876d8a-7681-47be-94bb-c8cba4abfade`.
 Branch: `feat/card-task-2a876d8a`.
@@ -8,16 +15,18 @@ Implementation plan: `docs/superpowers/plans/2026-10-05-card-0817-https-token-pu
 Supplemental Final manifest: `.antiphon/card-0817-final-profile.md`.
 The final caller-facing progress marker identifies the pushed report commit; actual tested SHAs are recorded below.
 
-## Final outcome and decision required
+## Outcome under the caller's refinement
 
-S1-S3 are implemented and pushed, including the two explicitly authorized scratch bindings. CP-1..CP-6 passed 54/54 tests, and the full workspace integration class passed 33/33. **This task is not Review-ready:** the mandatory Antiphon.Tests Unit row timed out without a TRX and its console exposed a confirmed new mount-count fixture failure.
+S1-S3 are implemented and pushed, including the two explicitly authorized scratch bindings. CP-1..CP-6 passed 54/54 tests, and the full workspace integration class passed 33/33. The implementation and completed ordinary V/R evidence are handed to Review with the limitations below. The broader Antiphon.Tests Unit row timed out without a TRX and its console exposed a confirmed new mount-count fixture failure; neither that failure nor the incomplete Final qualification is represented as green.
+
+The controlling refinement is `.antiphon/inbox/250ae3ea-0d32-4f5f-9c3f-24a0b4a4acdc.md`: "Stop the whole-Unit and baseline runs now and release the build slot; CP-1 to CP-6 are the closed list. Commit, push and report with the results you have; Unit qualification is caller-owned." All owned runs had already ended, every launcher had reported its slot released, the baseline worktree had been removed, and alternate outputs had been cleaned. These facts were checked again on receipt; no additional slot was acquired.
 
 The brief at `.antiphon/inbox/2e99facf-854c-4bb1-b019-45dbba79165a.md` says: "If a slice needs a seam outside the plan table, STOP and report it exactly." It also limits this dispatch to "at most 3 repair rounds." The user's follow-up authorized only the two scratch bindings already delivered. The following additional repair has not been applied:
 
 - **F-1, introduced:** `tests/Antiphon.Tests/Scripts/RetiredTempContainerHostTests.cs:160`, `C994_Production_mount_topology_is_proven`, expects the exact logical roster `[14,3]`; the required token-directory bind makes it `[15,3]`. The same method passed at the original base (CP-14). Add this test file to scope and update the exact expected topology for the new read-only bind, keeping the existing negative topology cases. This is a new fixture seam beyond the two authorized files.
 - **F-2, additional failure in an already-red guard:** `tests/Antiphon.Tests/Scripts/RemoteScriptContractTests.cs:1685`, `Nested_lane_never_uses_sudo_or_python`, does not include `ensure_runner_github_token_dir` among recognized host helpers. The task console fails on that helper's `sudo install -d`. The new helper itself refuses a non-host lane before sudo. A repair should assert that guard and recognize only that helper body, preserving the nested-lane prohibition. At base, the same method already fails on the unrelated `c1008_owned_mounts` readlink line (CP-13); merely fixing the new exemption will not erase that inherited failure.
 
-**Requested decision:** authorize the additional F-1 fixture file, another repair round for F-1/F-2, and a fresh Code verification budget to complete the Final Unit scope in bounded class/namespace selections without widening timeouts. The inherited guard failure needs separate triage or an explicitly recorded inherited-red disposition. No source/test repair was made after the third allowed round.
+**Caller-owned follow-up:** disposition of F-1/F-2 and the incomplete Unit scope remains with the caller and Review. A future repair needs the additional F-1 fixture seam and an authorized repair budget. The inherited guard failure also needs separate triage or an explicitly recorded inherited-red disposition. The latest refinement supersedes this report's earlier request to continue Code here. No source/test repair was made after the third allowed round.
 
 ### Supplemental Final and baseline results
 
@@ -43,7 +52,7 @@ The CP-9 console shows five failed methods before cancellation: F-1, F-2, the cl
 
 **F-3, unresolved observation:** `PhoneHomeConnectionServiceTests.Websocket_connect_that_hangs_ends_within_the_connect_timeout` expected OperationCanceledException but got WebSocketException in CP-7. It passed at base (CP-11) and at task HEAD (CP-17). Both the test file and PhoneHomeConnectionService.cs are unchanged over the task range. This is not established as an introduced defect or a proven inherited red; no retry was added to the test, and no further repetition followed green.
 
-Deferred to the next Final completion: CP-9's whole Unit coverage, F-1/F-2 corrections and their ordinary verification, and disposition of F-3. All V-1..V-18 and R-1..R-3 completed their named plan selections; none of these deferred items is marked passed.
+Deferred to caller-owned Final qualification: CP-9's whole Unit coverage, F-1/F-2 corrections and their ordinary verification, and disposition of F-3. CP-7's original red result remains recorded. All V-1..V-18 and R-1..R-3 completed their named plan selections; none of these deferred items is marked passed.
 
 ## Implementation and authorized scope
 
@@ -69,6 +78,7 @@ All commits were pushed fast-forward to the assigned branch; no amend, rebase, r
 | `80f79859d8b5435c8956cae32405b851ec7bea76` | S3; a parse-only check found invalid multiline PowerShell boolean continuation. |
 | `d01a9b5d2cc92a9e3f9c5118c6223147024f35c8` | Repair 3: place the boolean operators on the preceding lines; syntax checks and CP-6 passed. |
 | `9da56ce047e2109ad19b958c1be9b5e9d1abc63d` | Declare the mandatory supplemental Final scope before running it. No implementation change. |
+| `de2931b79740c7d117f801662de55f3070550bb9` | Record the completed checks, Final timeout and fixture findings before the caller's stop-and-report refinement. |
 
 The three permitted repair rounds are used. No timeout was widened, assertion loosened or retry added. Deliberate mutants were not run.
 
@@ -240,6 +250,6 @@ All checkpoint commands have finished; no owned test run remains active. The che
 The final publication checks are `git diff --check` and `pwsh -NoProfile -File scripts/check-evidence-diff.ps1 -BaseRef 71685b84772b82517c2db5dd5d18e085ca8f360a -HeadRef HEAD` over the full task history, including this report commit. Their actual result and the remote-confirmed final SHA are stated in the caller-facing final message.
 
 --- next stage ---
-next: decide
-handoff: Authorize RetiredTempContainerHostTests.cs fixture scope and another repair round for the new mount roster and host-helper guard, then commission Code to finish bounded Final Unit verification. CP-1..CP-6 and the full workspace class passed; CP-9 timed out. Keep all 20 PCs pending for SourceLanding Mutation after Review and landing of the original Code task.
+next: review
+handoff: Review S1-S3 and the green CP-1..CP-6 receipts at their recorded SHAs. The caller stopped further Unit/baseline work and owns Unit qualification; retain F-1/F-2 fixture findings, the CP-9 timeout and F-3 observation. Keep all 20 PCs pending for SourceLanding Mutation after Review and landing of the original Code task.
 artifact: docs/superpowers/plans/2026-10-05-card-0817-https-token-push-credential-plan.md
