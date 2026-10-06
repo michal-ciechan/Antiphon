@@ -3146,12 +3146,25 @@ public sealed class AgentTaskService
         }
         if (task.Status != AgentTaskStatus.Blocked) return false;
         var release = await TerminalRunnerSeatReleaseService.FindAttemptReleaseAsync(_db, task, ct);
-        if (release?.State is not (RunnerSeatReleaseState.Confirmed or RunnerSeatReleaseState.Unresolved))
+        // A reply while the seat is reserved keeps this answer off the old session. Only a park
+        // already linked to that release, with its publication receipt, is that case.
+        var releasePendingPark = false;
+        if (release is { State: RunnerSeatReleaseState.Reserved })
+        {
+            releasePendingPark = await _db.AgentTaskParks.AsNoTracking().AnyAsync(p =>
+                p.TaskId == task.Id && p.Attempt == task.Attempt
+                && p.State == AgentTaskParkState.ReleasePending && p.RunnerSeatReleaseId == release.Id
+                && p.PublicationReceiptId != null, ct);
+        }
+        if (!releasePendingPark
+            && release?.State is not (RunnerSeatReleaseState.Confirmed or RunnerSeatReleaseState.Unresolved))
         {
             if (task.ReleasedSeatAnswerId is not null && task.ReleasedSeatAnswerTargetAttempt == task.Attempt + 1)
                 throw new ConflictException("The accepted answer is awaiting its exact release receipt.", "runner_seat_release_pending");
             return false;
         }
+
+        if (release is null) return false;
 
         // Authentication refusal is not acceptance. Availability/quota/workspace refusal below
         // does retain the authorized input for an explicit retry.
@@ -3201,6 +3214,17 @@ public sealed class AgentTaskService
                     InputBody = $"{DelegationReportFormatter.TaskMarker(task.Id)}\n\n{answer}" });
                 await _db.SaveChangesAsync(ct);
             }
+            var resumeAt = UtcNow();
+            var resumeAnswerId = task.ReleasedSeatAnswerId;
+            await _db.AgentTaskParks.Where(p => p.TaskId == task.Id && p.Attempt == task.Attempt
+                    && p.RunnerSeatReleaseId == release.Id && p.PublicationReceiptId != null
+                    && (p.State == AgentTaskParkState.ReleasePending || p.State == AgentTaskParkState.Parked))
+                .ExecuteUpdateAsync(s => s.SetProperty(p => p.State, AgentTaskParkState.ResumePending)
+                    .SetProperty(p => p.ResumePendingAt, resumeAt)
+                    .SetProperty(p => p.ResumeInputEventId, resumeAnswerId)
+                    .SetProperty(p => p.ReasonCode, "park_resume_pending")
+                    .SetProperty(p => p.Revision, p => p.Revision + 1)
+                    .SetProperty(p => p.UpdatedAt, resumeAt), ct);
             await tx.CommitAsync(ct);
         }
         await _eventBus.PublishToAllAsync("AgentTaskChanged", new { taskId = task.Id, rootId = task.RootTaskId }, ct);
@@ -3221,10 +3245,26 @@ public sealed class AgentTaskService
             """, ct);
     }
 
+    private async Task<bool> ParkContinuationReceiptMissingAsync(AgentTask task, CancellationToken ct)
+    {
+        var parks = await _db.AgentTaskParks.AsNoTracking()
+            .Where(p => p.TaskId == task.Id && p.Attempt == task.Attempt)
+            .Select(p => new { p.RunnerSeatReleaseId, p.PublicationReceiptId, p.State })
+            .ToListAsync(ct);
+        if (parks.Count == 0) return false;
+        return !parks.Any(p => p.RunnerSeatReleaseId == task.ReleasedSeatAnswerReleaseId
+            && p.PublicationReceiptId != null
+            && p.State is AgentTaskParkState.ResumePending or AgentTaskParkState.Parked or AgentTaskParkState.Resumed);
+    }
+
     private async Task ContinueReleasedSeatAnswerAsync(AgentTask task, CancellationToken ct)
     {
         var release = await TerminalRunnerSeatReleaseService.FindAttemptReleaseAsync(_db, task, ct);
         if (!TerminalRunnerSeatReleaseService.IsConfirmed(release)) return;
+        if (await ParkContinuationReceiptMissingAsync(task, ct))
+            throw new ConflictException(
+                "The parked continuation has no exact publication receipt.",
+                "park_resume_refused:park_receipt_missing");
         var answerId = task.ReleasedSeatAnswerId;
         var revision = task.ConcurrencyToken;
         var attempt = task.Attempt;
@@ -3322,6 +3362,18 @@ public sealed class AgentTaskService
             await _capacityRecovery.SupersedeTaskWaitsOnAsync(
                 _db, task.Id, $"requeued:{type}:attempt-{task.Attempt + 1}", ct);
 
+        // An exact parked continuation keeps the agent that published the checkout. A retry
+        // and a historical release with no park row still retire an ephemeral delegate.
+        AgentTaskPark? continuation = null;
+        if (acceptedAnswerId is not null)
+        {
+            var answerReleaseId = task.ReleasedSeatAnswerReleaseId;
+            continuation = await _db.AgentTaskParks.AsNoTracking().FirstOrDefaultAsync(p =>
+                p.TaskId == task.Id && p.Attempt == task.Attempt
+                && p.RunnerSeatReleaseId == answerReleaseId && p.PublicationReceiptId != null
+                && (p.State == AgentTaskParkState.ResumePending || p.State == AgentTaskParkState.Parked), ct);
+        }
+
         var now = UtcNow();
         task.Attempt++;
         if (acceptedAnswerId is null)
@@ -3341,7 +3393,7 @@ public sealed class AgentTaskService
         // discarded — row included, or every retry leaks a dead agent; a pinned agent is the
         // caller's explicit choice and stays. CARD-0537 R2 treats a null AgentSessionId as never-ran,
         // so retire before clearing the session (same order as BlockOnWallAsync).
-        if (task.Ephemeral)
+        if (task.Ephemeral && continuation is null)
         {
             await RemoveEphemeralAgentAsync(task, task.AgentId, ct);
             task.AgentId = null;
@@ -3376,6 +3428,21 @@ public sealed class AgentTaskService
         var (token, hash) = NewToken();
         task.TokenHash = hash;
         RawTokens[task.Id] = token;
+
+        if (continuation is not null)
+        {
+            var resumedAttempt = task.Attempt;
+            var resumeAnswerId = acceptedAnswerId;
+            await _db.AgentTaskParks.Where(p => p.Id == continuation.Id && p.PublicationReceiptId != null
+                    && (p.State == AgentTaskParkState.ResumePending || p.State == AgentTaskParkState.Parked))
+                .ExecuteUpdateAsync(s => s.SetProperty(p => p.State, AgentTaskParkState.Resumed)
+                    .SetProperty(p => p.ResumeAttempt, resumedAttempt)
+                    .SetProperty(p => p.ResumeInputEventId, resumeAnswerId)
+                    .SetProperty(p => p.ResumedAt, now)
+                    .SetProperty(p => p.ReasonCode, "park_resumed")
+                    .SetProperty(p => p.Revision, p => p.Revision + 1)
+                    .SetProperty(p => p.UpdatedAt, now), ct);
+        }
 
         AddEvent(task.Id, type, level, detail, now);
         foreach (var obligation in pending)

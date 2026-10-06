@@ -617,6 +617,86 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
         string? observationRef = null, string? fingerprint = null) =>
         new(state, reason, fullRef, baselineSha, remoteSha, desktopBefore, desktopAfter, observationRef, fingerprint);
 
+    /// <summary>
+    /// CARD-1065 S7. A parked continuation launches only from the published checkout.
+    /// A missing mirror is recreated from the existing branch when its tip is the parked
+    /// SHA. HEAD is never reset, and a worktree is never added from another tip.
+    /// </summary>
+    internal async Task<string?> RefuseParkResumeAsync(AgentTask task, AgentTaskPark park, CancellationToken ct)
+    {
+        try
+        {
+            var repo = task.RepoPath;
+            var path = park.WorktreePath ?? task.WorktreePath;
+            var fullRef = park.FullRef;
+            var sha = park.SourceSha;
+            if (string.IsNullOrWhiteSpace(repo) || string.IsNullOrWhiteSpace(path)
+                || string.IsNullOrWhiteSpace(fullRef) || park.PublicationReceiptId is null
+                || !GitObjectId.IsFull(sha))
+                return "park_source_missing";
+
+            var present = await _git.RunAsync(repo, ["cat-file", "-e", sha + "^{commit}"], ct);
+            if (!present.Succeeded) return "park_source_missing";
+
+            if (!Directory.Exists(path))
+            {
+                var tip = await _git.RunAsync(repo, ["rev-parse", "--verify", fullRef + "^{commit}"], ct);
+                if (!tip.Succeeded || !string.Equals(tip.Output.Trim(), sha, StringComparison.Ordinal))
+                    return "park_source_missing";
+                const string heads = "refs/heads/";
+                if (!fullRef.StartsWith(heads, StringComparison.Ordinal) || fullRef.Length == heads.Length)
+                    return "park_source_missing";
+                var prune = await _git.RunAsync(repo, ["worktree", "prune"], ct);
+                if (!prune.Succeeded) return "park_source_missing";
+                var added = await _git.RunAsync(repo, ["worktree", "add", path, fullRef[heads.Length..]], ct);
+                if (!added.Succeeded || !Directory.Exists(path)) return "park_source_missing";
+            }
+
+            var top = await _git.RunAsync(path, ["rev-parse", "--show-toplevel"], ct);
+            if (!top.Succeeded || !PathsEqual(top.Output.Trim(), path)) return "park_source_missing";
+
+            var symbolic = await _git.RunAsync(path, ["symbolic-ref", "-q", "HEAD"], ct);
+            if (!symbolic.Succeeded || !string.Equals(symbolic.Output.Trim(), fullRef, StringComparison.Ordinal))
+                return "park_ref_changed";
+
+            var gitDir = await _git.RunAsync(path, ["rev-parse", "--path-format=absolute", "--git-dir"], ct);
+            if (!gitDir.Succeeded) return "park_source_missing";
+            var gitDirectory = gitDir.Output.Trim();
+            if (new[] { "MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "rebase-apply", "rebase-merge", "sequencer", "BISECT_LOG" }
+                .Any(name => File.Exists(Path.Combine(gitDirectory, name)) || Directory.Exists(Path.Combine(gitDirectory, name))))
+                return "park_dirty";
+
+            var status = await _git.RunAsync(path,
+                ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=none"], ct);
+            if (!status.Succeeded) return "park_source_missing";
+            if (status.Output.Length != 0) return "park_dirty";
+
+            var head = await _git.RunAsync(path, ["rev-parse", "--verify", "HEAD^{commit}"], ct);
+            if (!head.Succeeded || !string.Equals(head.Output.Trim(), sha, StringComparison.Ordinal))
+                return "park_source_changed";
+
+            if (!string.IsNullOrEmpty(park.EndpointFingerprint))
+            {
+                var url = await _git.RunAsync(path, ["remote", "get-url", "--push", "--all", "origin"], ct);
+                var lines = url.Output.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
+                if (!url.Succeeded || lines.Length != 1 || lines[0].StartsWith('-')
+                    || !string.Equals(BlockedTaskParkingService.Digest(lines[0]), park.EndpointFingerprint, StringComparison.Ordinal))
+                    return "park_endpoint_changed";
+            }
+
+            return null;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Parked resume refused for task {TaskId}: source inspection failed", task.Id);
+            return "park_source_missing";
+        }
+    }
+
     private static bool PathsEqual(string left, string right) => string.Equals(
         Path.TrimEndingDirectorySeparator(Path.GetFullPath(left)),
         Path.TrimEndingDirectorySeparator(Path.GetFullPath(right)),

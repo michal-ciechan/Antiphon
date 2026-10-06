@@ -430,6 +430,7 @@ public sealed class AgentTaskReplyService
                 var watermark = await db.TranscriptEntries.AsNoTracking()
                     .Where(t => t.AgentSessionId == blockedSessionId)
                     .MaxAsync(t => (long?)t.Sequence, ct) ?? 0;
+                await HoldUnreservedParkAsync(scope.ServiceProvider, db, task, ct);
                 task.Status = AgentTaskStatus.Working;
                 task.RepliedAt = now;
                 task.RepliedAtSequence = watermark;
@@ -4801,6 +4802,21 @@ public sealed class AgentTaskReplyService
     /// </summary>
     private static Task ReleaseAdmittedAsync(IServiceProvider services, WorkspaceReservationSnapshot? admitted) =>
         services.GetService<WorkspaceUseAdmission>()?.ReleaseAsync(admitted, CancellationToken.None) ?? Task.CompletedTask;
+
+    private static async Task HoldUnreservedParkAsync(
+        IServiceProvider services, AppDbContext db, AgentTask task, CancellationToken ct)
+    {
+        var parks = await db.AgentTaskParks.AsNoTracking().Where(p => p.TaskId == task.Id
+            && p.Attempt == task.Attempt && p.RunnerSeatReleaseId == null
+            && (p.State == AgentTaskParkState.Requested || p.State == AgentTaskParkState.Published)).ToListAsync(ct);
+        if (parks.Count == 0) return;
+        // PersistState refuses a context that already tracks the reply. The hold commits on its own.
+        await using var hold = services.GetRequiredService<IServiceScopeFactory>().CreateAsyncScope();
+        var parking = hold.ServiceProvider.GetRequiredService<BlockedTaskParkingService>();
+        foreach (var park in parks)
+            await parking.PersistStateAsync(park.Id, park.Revision, park.State, AgentTaskParkState.Held,
+                "park_reply_before_reserve", ct);
+    }
 
     private DateTime UtcNow() => _timeProvider.GetUtcNow().UtcDateTime;
 }
