@@ -21,6 +21,12 @@ public enum RemoteSettlementSyncState
 
     /// <summary>The answer could not be established (I/O, timeout, lease, missing wiring).</summary>
     Unavailable = 4,
+
+    /// <summary>
+    /// CARD-1082 D-2. The report settled on its own verdict and the desktop fast-forward is owed.
+    /// Never <see cref="RemoteSettlementSyncResult.Confirmed"/>: the checkout was not moved.
+    /// </summary>
+    Pending = 5,
 }
 
 /// <summary>
@@ -41,8 +47,18 @@ public sealed record RemoteSettlementSyncResult(
     string? MirrorRelation = null,
     bool? MirrorDirty = null,
     bool MirrorPushed = false,
-    string? MirrorInspection = null)
+    string? MirrorInspection = null,
+    /// <summary>
+    /// CARD-1082 D-3. True when the server read, before the lease, that the observed tip descends
+    /// from the baseline. Null when those objects were not local. Absent on older results.
+    /// </summary>
+    bool? SourceDescends = null)
 {
+    /// <summary>
+    /// Only a desktop SHA on <see cref="RemoteSettlementSyncState.Synchronized"/> or
+    /// <see cref="RemoteSettlementSyncState.NoPushedProgress"/> is confirmed.
+    /// <see cref="RemoteSettlementSyncState.Pending"/> stays false even when a desktop SHA is present.
+    /// </summary>
     public bool Confirmed => State is RemoteSettlementSyncState.Synchronized or RemoteSettlementSyncState.NoPushedProgress
         && DesktopAfterSha is not null;
 

@@ -639,6 +639,20 @@ public sealed class DelegationSettings
     public int RunnerSyncBudgetSeconds { get; set; } = 120;
 
     /// <summary>
+    /// CARD-1082 D-1. When true, a spent desktop lease with a server-observed tip is recorded as
+    /// sync debt instead of blocking the task. False keeps today's Blocked settlement. Default
+    /// true. Settlement does not read this until a later slice; <c>SettlementSyncDebtPolicy</c>
+    /// is the pure rule.
+    /// </summary>
+    public bool RunnerSyncDebtOnSettlement { get; set; } = true;
+
+    /// <summary>
+    /// CARD-1082 D-7. A Pending sync-debt row older than this many minutes raises attention.
+    /// Default 30, floor 1.
+    /// </summary>
+    public int RunnerSyncDebtAttentionMinutes { get; set; } = 30;
+
+    /// <summary>
     /// CARD-0672 D-2: how long one land request may stand aside at admission while queued
     /// dispatches wait for the repository mutation lease. Each yield lasts one land sweep
     /// (<see cref="LandSweepSeconds"/>); past this budget the land acquires anyway and writes one
@@ -1198,6 +1212,8 @@ public sealed class DelegationSettingsValidator : IValidateOptions<DelegationSet
             failures.Add("Delegation:RemotePrepPushBudgetMinutes must be at least 1.");
         if (options.RunnerSyncBudgetSeconds < 1)
             failures.Add("Delegation:RunnerSyncBudgetSeconds must be at least 1.");
+        if (options.RunnerSyncDebtAttentionMinutes < 1)
+            failures.Add("Delegation:RunnerSyncDebtAttentionMinutes must be at least 1.");
         if (options.LandYieldToDispatchMaxSeconds is < 0 or > 600)
             failures.Add("Delegation:LandYieldToDispatchMaxSeconds must be between 0 and 600.");
         if (options.CheckInterpreterFirstAttemptSeconds is { } firstAttempt
