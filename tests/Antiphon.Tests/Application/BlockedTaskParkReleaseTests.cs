@@ -62,7 +62,9 @@ public sealed class BlockedTaskParkReleaseTests
                 await using var fresh = f.Db();
                 var settled = await fresh.AgentTasks.SingleAsync(t => t.Id == f.TaskId);
                 settled.Result.ShouldNotBeNullOrEmpty("G-94 report is committed before wire");
-                (await fresh.AgentTaskLandNotifications.SingleAsync(n => n.Id == note.Id)).SourceEventId.ShouldNotBeNull("G-94 obligation is durable");
+                var committedNote = await fresh.AgentTaskLandNotifications.SingleAsync(n => n.Id == note.Id);
+                (await fresh.AgentTaskEvents.AnyAsync(e => e.Id == committedNote.SourceEventId && e.AgentTaskId == f.TaskId))
+                    .ShouldBeTrue("G-94 obligation names the committed settlement event");
                 var park = await fresh.AgentTaskParks.SingleAsync(p => p.Id == command.ActionId);
                 park.State.ShouldBe(AgentTaskParkState.ReleasePending, "G-96 park intent is committed");
                 var action = await fresh.RunnerSeatReleases.SingleAsync(r => r.Id == park.RunnerSeatReleaseId);
@@ -298,7 +300,7 @@ public sealed class BlockedTaskParkReleaseTests
             await store.SaveChangesAsync();
             await world.EditAsync((task, _) => task.Status = AgentTaskStatus.Canceled);
             (await PoolDelegateRelease.Reservations(store).Where(p => p.AgentId == world.AgentId).Select(p => p.TaskId).ToListAsync())
-                .ShouldBe(new[] { other.Id }, "G-117 cancellation releases only its own reservation");
+                .ShouldHaveSingleItem("G-117 cancellation releases only its own reservation").ShouldBe(other.Id);
         }
     }
 
