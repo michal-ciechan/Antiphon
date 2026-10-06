@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
@@ -52,7 +53,7 @@ public sealed class BlockedTaskParkingService(
             RemoteWorktreePath = task.RemoteWorktreePath,
             FullRef = task.WorktreeBranch is null ? baseline?.FullRef : "refs/heads/" + task.WorktreeBranch,
             BaselineSha = task.WorktreeBaseSha ?? baseline?.LocalSha, ReportReference = task.ResultFilePath,
-            ReportDigest = task.Result is null ? null : Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(task.Result))),
+            ReportDigest = await HandoffDigestAsync(db, task, floor, ct),
             TranscriptSequence = floor, BlockedAt = block.At, CompletedAt = task.CompletedAt,
             State = AgentTaskParkState.Requested, CreatedAt = now, UpdatedAt = now
         };
@@ -82,7 +83,8 @@ public sealed class BlockedTaskParkingService(
         if (task is null || task.Status != AgentTaskStatus.Blocked || task.Attempt != snapshot.Attempt
             || task.ConcurrencyToken != snapshot.TaskConcurrencyToken || task.AgentId != snapshot.AgentId
             || task.AgentSessionId != snapshot.SessionId || task.RunnerId != snapshot.RunnerId
-            || task.ResultFilePath != snapshot.ReportReference || Digest(task.Result) != snapshot.ReportDigest
+            || task.ResultFilePath != snapshot.ReportReference
+            || await HandoffDigestAsync(db, task, snapshot.TranscriptSequence, ct) != snapshot.ReportDigest
             || (await LatestBlockAsync(task.Id, ct))?.Id != snapshot.BlockEventId) return false;
         // Same task-before-session lock order as CARD-0667. No lock spans external I/O.
         await db.Database.ExecuteSqlInterpolatedAsync($"""
@@ -112,6 +114,21 @@ public sealed class BlockedTaskParkingService(
 
     internal static string? Digest(string? value) => value is null ? null
         : Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
+
+    // A nonreport hold retains the existing transcript through a fixed coordinate. Never
+    // manufacture Result/CompletedAt, and never let later ingestion change this checkpoint.
+    internal static async Task<string?> HandoffDigestAsync(AppDbContext db, AgentTask task,
+        long? floor, CancellationToken ct)
+    {
+        if (task.Result is not null) return Digest(task.Result);
+        if (task.AgentSessionId is null || floor is null) return null;
+        var entries = await db.TranscriptEntries.AsNoTracking()
+            .Where(e => e.AgentSessionId == task.AgentSessionId && e.Sequence <= floor)
+            .OrderBy(e => e.Sequence)
+            .Select(e => new { e.Sequence, e.Kind, e.Uuid, e.Text, e.ToolName, e.ToolInput,
+                e.ToolUseId, e.StopReason, e.ApiErrorClass }).ToListAsync(ct);
+        return entries.Count == 0 ? null : Digest(JsonSerializer.Serialize(entries));
+    }
 
     private Task<AgentTaskEvent?> LatestBlockAsync(Guid taskId, CancellationToken ct) =>
         db.AgentTaskEvents.AsNoTracking().Where(e => e.AgentTaskId == taskId && e.Type == AgentTaskEventType.Blocked)

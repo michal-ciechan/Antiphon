@@ -30,6 +30,12 @@ internal static class PoolDelegateRelease
     internal static bool CanRelease(Agent agent) => agent.IsPoolDelegate && !agent.AlwaysOn
         && agent.BoardId is null && agent.StandingSpecialistRole is null && agent.StandingSpecialistOwnerId is null;
 
+    // Scope the reservation to its still-open blocked attempt. Continuation or explicit
+    // cancellation releases only that attempt; another blocked task's custody survives.
+    internal static IQueryable<AgentTaskPark> Reservations(AppDbContext db) => db.AgentTaskParks.Where(p =>
+        p.State != AgentTaskParkState.Resumed && db.AgentTasks.Any(t => t.Id == p.TaskId
+            && t.Status == AgentTaskStatus.Blocked && t.Attempt == p.Attempt));
+
     /// <summary>Warm pool state, reserved for the run that just used it (settlement's rule).</summary>
     internal static void PoolWarm(Agent agent, Guid reservedForRootTaskId, DateTime now)
     {

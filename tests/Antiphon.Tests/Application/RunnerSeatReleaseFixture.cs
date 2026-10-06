@@ -9,6 +9,7 @@ using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.Server.Infrastructure.Git;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
@@ -34,7 +35,7 @@ using SessionRunnerSettings = Antiphon.Server.Application.Settings.SessionRunner
 namespace Antiphon.Tests.Application;
 
 /// <summary>Migrated isolated PostgreSQL, real queue/state/DI and serialized fake runner I/O.</summary>
-internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
+internal sealed partial class RunnerSeatReleaseFixture : IAsyncDisposable
 {
     public required IsolatedTestSchema Schema { get; init; }
     public required BridgeQueueHarness Harness { get; set; }
@@ -161,6 +162,12 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
                     services.AddScoped<TerminalRunnerSeatReleaseService>();
                     services.AddSingleton(Options.Create(new BlockedTaskParkingOptions { Enabled = parking }));
                     services.AddScoped<BlockedTaskParkingService>();
+                    services.AddSingleton<ITaskProgressGit, TaskParkPublicationTests.ParkGit>();
+                    services.AddSingleton<IRepositoryMutationLease>(sp => new RepositoryMutationLease(
+                        (TaskParkPublicationTests.ParkGit)sp.GetRequiredService<ITaskProgressGit>()));
+                    services.AddSingleton<IWorkspaceReservationJournal, WorkspaceReservationJournal>();
+                    services.AddScoped<LocalTaskParkPublisher>();
+                    services.AddScoped<TaskParkPublicationService>();
                     services.AddSingleton<DelegationWorkspaceResolver>();
                     services.AddDelegationWorktreeGraph(new GitSettings());
                     services.AddSingleton<IDelegateSessionStopper, RecordingSessionStopper>();
@@ -510,6 +517,8 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
         private readonly string _root = Path.Combine(Path.GetTempPath(), "c667-server-seat-" + Guid.NewGuid().ToString("N"));
         private readonly bool _phoneHome;
         private readonly string _provider;
+        public string? Checkout { get; set; }
+        public SessionRunnerRuntime.RunnerSession Session { get; private set; } = null!;
         private readonly DateTime _generation;
         private readonly SemaphoreSlim _pollPermit = new(0);
         private readonly Channel<bool> _pollArrived = Channel.CreateUnbounded<bool>();
@@ -599,6 +608,8 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
             var session = new SessionRunnerRuntime.RunnerSession(SessionId, Settings,
                 new SessionRunnerEventHub(), NullLogger.Instance);
             session.BindChildForTest(Child, _tailer, _generation);
+            if (Checkout is not null) session.RetainCheckout(Checkout);
+            Session = session;
             Runtime.Track(session);
         }
 
@@ -801,6 +812,7 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
         public Func<TerminalSeatReleaseRequest, Task>? AtCommand { get; set; }
         public Exception? CallbackFailure { get; private set; }
         public Func<TerminalSeatReleaseResult, TerminalSeatReleaseResult>? RewriteReply { get; set; }
+        public Func<TerminalSeatReleaseRequest, Task<bool>>? VerifySource { get; set; }
         public List<TerminalSeatReleaseRequest> Requests { get; } = [];
         public List<string> Calls { get; } = [];
         public int ConditionalCommands => Calls.Count(p => p.EndsWith("/release-terminal-seat"));
@@ -816,6 +828,9 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
             // An old transport rejects both observation and release. Do not synthesize a
             // successful release receipt before applying the configured unsupported response.
             if (Unsupported) return new HttpResponseMessage(UnsupportedStatusCode);
+            if (request.RequestUri.AbsolutePath == "/capabilities")
+                return new(HttpStatusCode.OK) { Content = JsonContent.Create(new RunnerCapabilitiesDto("fixture", "fixture", "fixture", false,
+                    Features: [RunnerCapabilityFeatures.TerminalSeatReleaseV1, RunnerCapabilityFeatures.WorkspaceParkSourceModesV1])) };
             if (request.RequestUri.AbsolutePath.EndsWith("/release-terminal-seat"))
             {
                 var command = (await request.Content!.ReadFromJsonAsync<TerminalSeatReleaseRequest>(ct))!;
@@ -825,9 +840,10 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
                     try { await AtCommand(command); }
                     catch (Exception ex) { CallbackFailure = ex; throw; }
                 }
+                var sourceValid = VerifySource is null || await VerifySource(command);
                 if (DropReply) throw new HttpRequestException("fixture dropped the reply after execution");
                 var sessionId = Guid.Parse(request.RequestUri.AbsolutePath.Split('/')[2]);
-                var result = new TerminalSeatReleaseResult(sessionId, command.ActionId, Outcome,
+                var result = new TerminalSeatReleaseResult(sessionId, command.ActionId, sourceValid ? Outcome : TerminalSeatReleaseOutcome.Unknown,
                     command.Observation.ExpectedAcceptedStartedAt);
                 return new(HttpStatusCode.OK) { Content = JsonContent.Create(RewriteReply?.Invoke(result) ?? result) };
             }
@@ -839,6 +855,7 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
     {
         public string RunnerId { get; set; } = "fixture";
         public bool IsLocal { get; set; }
+        public bool LocalBinding { get; set; }
         public IReadOnlyList<string>? RunnerIds { get; set; }
         public Func<string?, Task<RunnerInventory>>? InventoryByRunner { get; set; }
         public Func<string?, Task<RunnerDescriptor?>>? DescriptorByRunner { get; set; }
@@ -874,7 +891,8 @@ internal sealed class RunnerSeatReleaseFixture : IAsyncDisposable
         }
         public IReadOnlyList<string> KnownRunnerIds => RunnerIds ?? [IsLocal ? PhoneHomeProtocol.LocalRunnerId : RunnerId];
         public Task<SessionRunnerOwner?> GetOwnerAsync(Guid id, CancellationToken ct) => Task.FromResult<SessionRunnerOwner?>(new("fixture", StoreId, "/fixture"));
-        public Task<SessionRunnerBinding> GetBindingAsync(Guid id, CancellationToken ct) => Task.FromResult<SessionRunnerBinding>(new SessionRunnerBinding.Remote(new("fixture", StoreId, "/fixture")));
+        public Task<SessionRunnerBinding> GetBindingAsync(Guid id, CancellationToken ct) => Task.FromResult<SessionRunnerBinding>(
+            LocalBinding ? SessionRunnerBinding.Local.Instance : new SessionRunnerBinding.Remote(new("fixture", StoreId, "/fixture")));
         public async Task<RunnerInventory> GetInventoryAsync(string? id, CancellationToken ct)
         {
             InventoryCalls++;

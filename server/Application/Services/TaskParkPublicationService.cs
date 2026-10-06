@@ -142,17 +142,24 @@ public sealed class TaskParkPublicationService(AppDbContext db, LocalTaskParkPub
     public async Task<TaskParkPublicationResult> VerifyAsync(Guid parkId, CancellationToken ct)
     {
         if (!CanOwnTransaction()) return Held("park_busy");
+        var evidence = await ReadEvidenceAsync(parkId, ct);
+        if (evidence is null) return Held("park_receipt_missing");
+        return await AcceptAsync(parkId, evidence, ct)
+            ? new(evidence.Outcome, "park_source_verified", evidence) : Held("park_receipt_changed");
+    }
+
+    // Database-only binding check for the short reservation/send transaction. The caller
+    // separately performs VerifyAsync before opening it; the runner rechecks at signal.
+    internal async Task<TaskParkPublicationEvidence?> ReadEvidenceAsync(Guid parkId, CancellationToken ct)
+    {
         var c = await LoadAsync(parkId, ct);
-        if (c is null || c.Park.PublicationReceiptId is null) return Held("park_receipt_missing");
-        var binding = await runners.GetBindingAsync(c.Park.SessionId!.Value, ct);
-        var remote = binding is SessionRunnerBinding.Remote;
+        if (c is null || c.Park.PublicationReceiptId is null
+            || c.Park.State is not (AgentTaskParkState.Published or AgentTaskParkState.ReleasePending or AgentTaskParkState.Parked)) return null;
+        var remote = !string.IsNullOrEmpty(c.Park.RemoteWorktreePath);
         var kind = c.Park.VerifiedRemoteSha is null ? TaskParkPublicationOutcome.NoSourceChanges : TaskParkPublicationOutcome.Published;
         var evidence = new TaskParkPublicationEvidence(c.Park.PublicationReceiptId.Value, Request(c.Park, remote),
             c.Park.SourceSha!, c.Park.VerifiedRemoteSha, true, true, kind);
-        if (Digest(evidence) != c.Park.PublicationReceiptDigest) return Held("park_receipt_changed");
-        return await AcceptAsync(parkId, evidence, ct)
-            ? new(kind, kind == TaskParkPublicationOutcome.Published ? "park_published" : "park_no_source_changes", evidence)
-            : Held("park_receipt_changed");
+        return Digest(evidence) == c.Park.PublicationReceiptDigest ? evidence : null;
     }
 
     /// <summary>Never trusts a receipt against itself: compare persisted intent, verify real source,
@@ -309,6 +316,7 @@ public sealed class TaskParkPublicationService(AppDbContext db, LocalTaskParkPub
             && session.StartedAt == park.AcceptedStartedAt
             && (park.RemoteWorktreePath is null || session.RunnerCwd == park.RemoteWorktreePath)
             && block == park.BlockEventId && SameEpisode(task, park)
+            && await BlockedTaskParkingService.HandoffDigestAsync(db, task, park.TranscriptSequence, ct) == park.ReportDigest
             ? new(task, park, baseline.Primary) : null;
     }
 
@@ -335,8 +343,7 @@ public sealed class TaskParkPublicationService(AppDbContext db, LocalTaskParkPub
         && t.WorktreeId == p.WorktreeId && (t.WorktreePath ?? t.WorkingDirectory ?? t.RepoPath) == p.WorktreePath
         && t.RemoteWorktreePath == p.RemoteWorktreePath && t.ResultFilePath == p.ReportReference
         && (t.WorktreeBranch is null || "refs/heads/" + t.WorktreeBranch == p.FullRef)
-        && (t.WorktreeBaseSha is null || t.WorktreeBaseSha == p.BaselineSha)
-        && BlockedTaskParkingService.Digest(t.Result) == p.ReportDigest;
+        && (t.WorktreeBaseSha is null || t.WorktreeBaseSha == p.BaselineSha);
     private static WorkspaceParkRequest Request(AgentTaskPark p, bool remote) => new(
         (remote ? p.RemoteWorktreePath : p.WorktreePath)!, new(p.Id, p.Id, p.TaskId, p.Attempt, p.BlockEventId,
             p.AgentId!.Value, p.RunnerId!, p.RunnerStoreId!.Value, p.SessionId!.Value, p.AcceptedStartedAt!.Value,
