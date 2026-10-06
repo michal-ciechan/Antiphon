@@ -51,15 +51,71 @@ existing incident policies.
 Capacity notices use the reply handle captured in that inbound envelope, even if the channel
 catalog later points to a newer handle. A `QueuedUserPrompt` is not a delivery receipt.
 
+## Recoverable agent replies (CARD-0519)
+
+`ChannelOutbound:UnifiedRecoveryEnabled` defaults to **false** and remains disabled for
+deployment. The following recovery contract applies when it is enabled. Activation is
+caller-owned after the [plan's qualification and Mutation gates](superpowers/plans/2026-10-04-card-0519-unified-outbound-recovery-plan.md#s12-split-selection-plan-02c16198-2026-10-05),
+including compatible server and runner transcript-completion support. With the switch off,
+the existing direct agent path and optional CARD-0418 conversion journal remain in use.
+
+When enabled, catalog-backed main answers, trailing text and eligible machine follow-ups enter the same
+`ChannelOutboundDelivery` journal, including replies without a conversion profile or
+attachments. Capture commits the original response, route, source membership and preparation
+descriptors before reading files or calling the producer. A root's durable cursor reserves
+each trailing interval with its fragment; a later prompt caps the old window without
+discarding already owed text. Hosted recovery discovers historical unclaimed sources and
+drains captured replies at startup and on bounded scans, without another user message or
+turn end. Matching still requires the complete owning prompt and original attempt evidence.
+Machine follow-ups use channel context established before the injection, never a later chat.
+The retained catalog-less conversation-ID fallback still sends directly for either switch
+value (the plan's S4 compatibility amendment); it has no durable channel owner and does not
+gain this capture guarantee.
+
+Preparation freezes validated attachment bytes under `.antiphon/outbound/<delivery-id>/`.
+Publication means **Kafka producer acceptance**, not Telegram/Slack receipt or a human read.
+Published state, its timestamp and main/machine source settlement commit together. Channel
+preview/`LastReplyAt` and eligible bundle delivery stamps are repaired separately from the
+accepted frozen payload. `MetadataAppliedAt == null` on a Published row means projection
+repair is owed; it never authorizes another send.
+
+An expired Publishing lease, unknown producer error, send timeout or lost acceptance commit
+becomes `PublishUncertain`. It never retries automatically, even if a crash happened before
+producer entry. After inspecting the delivery, explicitly retry with
+`POST /api/channels/outbound-deliveries/{id}/retry` and
+`{"acknowledgePossibleDuplicate":true}`. That acknowledgement accepts possible duplication
+and opens a fresh bounded budget while retaining the lifetime attempt count. Definite
+`Local_QueueFull` refusal instead schedules persisted retries (defaults: three attempts,
+30 seconds apart). Size refusal is terminal for unchanged bytes. Preparation has its own
+three-attempt cap and the original obligation's `PendingReplyTtlMinutes` age bound.
+
+Failed and PublishUncertain outcomes commit a Critical `ChannelReplyLost` incident, Alert
+and durable episode stamp with the delivery transition. TTL/unroutable loss commits source
+settlement with its loss evidence, even when the owning agent is missing. Failed releases
+channel ordering; Held and PublishUncertain block later replies. Chat notices follow the
+commit and cannot replace its evidence. Intentional main `NO_REPLY` can retain a Suppressed
+root for later text, with no publication timestamp. Machine silence and disallowed text
+retain their existing no-publication policy. Previously settled legacy sources are not
+replayed or given invented publication timestamps.
+
+Retention protects potentially owed sources, their sessions/transcripts and referenced
+task/bundle evidence, unresolved deliveries (including Failed), pending metadata repair and
+open root windows. Published/Suppressed roots become ordinarily prunable only after their
+whole prompt window is examined. Closing the last window of a terminal session also needs
+complete, generation-bound transcript evidence; terminal status alone is insufficient.
+Conclusive machine ineligibility closes discovery without claiming publication. Unresolved
+frozen files and loss dedupe stamps survive incident-history pruning.
+
 ## Optional outbound agent preparation (CARD-0418)
 
-Agent replies normally publish directly with source Markdown attachments. A channel may select
+Conversion is optional within the outbound path. A channel may select
 one named `ChannelOutbound:Profiles` entry with `PATCH /api/channels/{id}`. Its worker belongs to
 the same project, has its own workspace, and reads a frozen request under the server's durable
 `.antiphon/outbound/<delivery-id>/` directory. `MarkdownSources` runs for an attached Markdown
 source or source manifest; `EveryAgentReply` runs for every agent reply. Server-composed control
-notices and proactive sends always publish directly. Clearing the binding restores the direct
-source path for new replies.
+notices and proactive sends always publish directly and are outside CARD-0519's agent-reply
+durability guarantee. Clearing the profile binding selects source passthrough for new replies;
+with unified recovery enabled, passthrough still uses capture and the pump.
 
 For a project-local PDF worker, put `channel-outbound-pdf.md` in that worker's workspace and
 configure a named profile with placeholders replaced by the approved project and worker ids:
