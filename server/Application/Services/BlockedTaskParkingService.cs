@@ -40,16 +40,18 @@ public sealed class BlockedTaskParkingService(
         var floor = task.AgentSessionId is null ? null : await db.TranscriptEntries.AsNoTracking()
             .Where(t => t.AgentSessionId == task.AgentSessionId).MaxAsync(t => (long?)t.Sequence, ct);
         var now = clock.GetUtcNow().UtcDateTime;
+        var baseline = Antiphon.Server.Application.Dtos.TaskProgressJson.TryReadBaseline(task.ProgressBaselineJson)?.Primary;
         var park = new AgentTaskPark
         {
             Id = Guid.NewGuid(), TaskId = taskId, Attempt = attempt, BlockEventId = blockEventId,
             TaskConcurrencyToken = taskConcurrencyToken, AgentId = task.AgentId,
             SessionId = task.AgentSessionId, RunnerId = task.RunnerId,
             RunnerStoreId = session?.RunnerStoreId, AcceptedStartedAt = session?.StartedAt,
-            Workspace = task.Workspace, WorktreeId = task.WorktreeId, WorktreePath = task.WorktreePath,
+            Workspace = task.Workspace, WorktreeId = task.WorktreeId,
+            WorktreePath = task.WorktreePath ?? task.WorkingDirectory ?? task.RepoPath,
             RemoteWorktreePath = task.RemoteWorktreePath,
-            FullRef = task.WorktreeBranch is null ? null : "refs/heads/" + task.WorktreeBranch,
-            BaselineSha = task.WorktreeBaseSha, ReportReference = task.ResultFilePath,
+            FullRef = task.WorktreeBranch is null ? baseline?.FullRef : "refs/heads/" + task.WorktreeBranch,
+            BaselineSha = task.WorktreeBaseSha ?? baseline?.LocalSha, ReportReference = task.ResultFilePath,
             ReportDigest = task.Result is null ? null : Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(task.Result))),
             TranscriptSequence = floor, BlockedAt = block.At, CompletedAt = task.CompletedAt,
             State = AgentTaskParkState.Requested, CreatedAt = now, UpdatedAt = now
@@ -80,6 +82,7 @@ public sealed class BlockedTaskParkingService(
         if (task is null || task.Status != AgentTaskStatus.Blocked || task.Attempt != snapshot.Attempt
             || task.ConcurrencyToken != snapshot.TaskConcurrencyToken || task.AgentId != snapshot.AgentId
             || task.AgentSessionId != snapshot.SessionId || task.RunnerId != snapshot.RunnerId
+            || task.ResultFilePath != snapshot.ReportReference || Digest(task.Result) != snapshot.ReportDigest
             || (await LatestBlockAsync(task.Id, ct))?.Id != snapshot.BlockEventId) return false;
         // Same task-before-session lock order as CARD-0667. No lock spans external I/O.
         await db.Database.ExecuteSqlInterpolatedAsync($"""
@@ -106,6 +109,9 @@ public sealed class BlockedTaskParkingService(
 
     private bool CanOwnTransaction() => db.Database.CurrentTransaction is null
         && System.Transactions.Transaction.Current is null && !db.ChangeTracker.HasChanges();
+
+    internal static string? Digest(string? value) => value is null ? null
+        : Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
 
     private Task<AgentTaskEvent?> LatestBlockAsync(Guid taskId, CancellationToken ct) =>
         db.AgentTaskEvents.AsNoTracking().Where(e => e.AgentTaskId == taskId && e.Type == AgentTaskEventType.Blocked)

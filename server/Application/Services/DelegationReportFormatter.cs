@@ -206,7 +206,7 @@ public static class DelegationReportFormatter
             sb.AppendLine();
         }
 
-        if (RemoteWorkspaceService.IsEligible(task)
+        if (RemoteWorkspaceService.IsEligible(task) && task.CommitOnSettle != CommitOnSettlePolicy.Never
             && !string.IsNullOrWhiteSpace(task.RemoteWorktreePath)
             && !string.IsNullOrWhiteSpace(task.WorktreeBranch))
         {
@@ -251,7 +251,9 @@ public static class DelegationReportFormatter
 
         // CARD-0644 D-9. Only an explicit Shared task is told to commit. A Worktree task keeps the
         // separate landing contract and is not instructed to commit and push when it finishes.
-        if (task.Workspace == WorkspaceMode.ReadOnly)
+        if (task.SourceLandingOperationId is not null)
+            sb.AppendLine("Before reporting blocked, retain the snapshot and follow its restoration and custody protocol; do not commit or push.").AppendLine();
+        else if (task.Workspace == WorkspaceMode.ReadOnly)
             sb.AppendLine("Do NOT modify any files. This is a read-only task — report findings only.").AppendLine();
         else if (task.Workspace == WorkspaceMode.Shared && task.Role == AgentTaskRole.Commit
             && task.ParentTaskId is not null && task.CommitOnSettle == CommitOnSettlePolicy.Never)
@@ -260,13 +262,20 @@ public static class DelegationReportFormatter
                 + "Do NOT push. Report a gate refusal verbatim.").AppendLine();
         else if (task.Workspace == WorkspaceMode.Shared && task.Role == AgentTaskRole.Merge)
             sb.AppendLine("This is a conflict-resolution seat. Follow the push instructions in the goal for its named branch and remote lease. Never push a landing target by hand when the server owns its Land operation.").AppendLine();
-        else if (task.Workspace == WorkspaceMode.Shared && task.CommitOnSettle == CommitOnSettlePolicy.Never)
+        else if (task.CommitOnSettle == CommitOnSettlePolicy.Never)
             sb.AppendLine(DoNotCommitLine).AppendLine();
         else if (task.Workspace == WorkspaceMode.Shared
             && task.Role is AgentTaskRole.Plan or AgentTaskRole.Docs or AgentTaskRole.Code)
         {
             sb.AppendLine(SharedWriteCommitLine).AppendLine();
         }
+
+        if (task.SourceLandingOperationId is null && task.Workspace != WorkspaceMode.ReadOnly
+            && task.CommitOnSettle != CommitOnSettlePolicy.Never
+            && task.Role is AgentTaskRole.Plan or AgentTaskRole.Docs or AgentTaskRole.Code)
+            sb.AppendLine("Before reporting blocked, commit all assigned source changes, including non-ignored untracked files, in a truthful WIP commit and push the explicitly authorized task ref. "
+                + "Keep generated ignored evidence ignored. If ownership, publication authority, or the commit gate is uncertain, report that publication hold; never push a shared target without authorization. "
+                + "Parking will not autosave your changes or launch a Commit delegate.").AppendLine();
 
         var inlineMax = replyInlineMaxChars ?? settings.ReplyInlineMaxChars;
         if (!string.IsNullOrWhiteSpace(task.StandingAuthority))
