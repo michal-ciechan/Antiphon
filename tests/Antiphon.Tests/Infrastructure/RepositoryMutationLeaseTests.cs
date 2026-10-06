@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Infrastructure.Git;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
@@ -646,5 +647,63 @@ public sealed class RepositoryMutationLeaseTests
         await using var reacquired = await otherProvider.TryAcquireAsync(fixture.Source, CancellationToken.None);
         reacquired.ShouldNotBeNull();
         await fixture.AssertRemoteSourceAsync();
+    }
+
+    // CARD-1076 V-3. A live tagged remote-prep push does not fence. Dead, reused and unknown records still do,
+    // and the recovery sentence names the purpose and task.
+    [Test]
+    [Arguments("alive")]
+    [Arguments("exited")]
+    [Arguments("reused")]
+    [Arguments("unknown")]
+    [Timeout(30_000)]
+    public async Task C1076_LiveTaggedPrepPushChildDoesNotFenceButDeadReusedOrUnknownStillDoes(string state)
+    {
+        await using var fixture = new LandingGitFixture();
+        await fixture.InitializeAsync();
+        var provider = new RepositoryMutationLease(fixture.Git);
+        var taskId = Guid.NewGuid();
+        var journal = await RepositoryChildJournal.BeginAsync(fixture.Repository,
+            new RepositoryChildTag(taskId, RepositoryChildPurposes.RemotePrepPush), CancellationToken.None);
+        var start = new ProcessStartInfo("pwsh") { UseShellExecute = false, CreateNoWindow = true };
+        foreach (var arg in new[] { "-NoProfile", "-Command", "Start-Sleep -Seconds 90" }) start.ArgumentList.Add(arg);
+        using var child = Process.Start(start)!;
+        try
+        {
+            if (state != "unknown")
+                await journal.StartedAsync(child.Id, child.StartTime.ToUniversalTime().Ticks + (state == "reused" ? 1 : 0), CancellationToken.None);
+            if (state == "exited")
+            {
+                child.Kill(entireProcessTree: true);
+                await child.WaitForExitAsync();
+            }
+
+            var common = await fixture.Git.CommonDirectoryAsync(fixture.Repository, CancellationToken.None);
+            var recordPath = Directory.EnumerateFiles(Path.Combine(common, "antiphon", "children"), "*.json").ShouldHaveSingleItem();
+            await using var admitted = await provider.TryAcquireAsync(fixture.Source, CancellationToken.None);
+            var described = await provider.DescribeUnavailableAsync(fixture.Source, CancellationToken.None);
+            if (state == "alive")
+            {
+                admitted.ShouldNotBeNull();
+                described.ShouldBeNull();
+                File.Exists(recordPath).ShouldBeTrue();
+            }
+            else
+            {
+                admitted.ShouldBeNull();
+                described.ShouldNotBeNull();
+                described.ShouldContain("recover-repository-children.ps1");
+                described.ShouldContain("purpose=remote-prep-push");
+                described.ShouldContain(taskId.ToString("N"));
+            }
+
+            if (state != "exited") child.HasExited.ShouldBeFalse("admission never kills a recorded or reused PID");
+        }
+        finally
+        {
+            if (!child.HasExited) child.Kill(entireProcessTree: true);
+            await child.WaitForExitAsync();
+            journal.Exited(child);
+        }
     }
 }

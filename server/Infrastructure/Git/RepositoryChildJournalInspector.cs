@@ -18,7 +18,9 @@ public sealed record JournalRecordFinding(
     TimeSpan Age,
     bool Stale,
     int? ProcessId,
-    DateTimeOffset WrittenAt);
+    DateTimeOffset WrittenAt,
+    string? Purpose = null,
+    Guid? TaskId = null);
 
 public sealed record JournalInspection(string? CommonDirectory, IReadOnlyList<JournalRecordFinding> Findings)
 {
@@ -82,10 +84,10 @@ public class RepositoryChildJournalInspector(ILandingGit git)
         }
 
         if (record is not { SchemaVersion: 1 })
-            return ClassifyPath(path, JournalRecordState.Unknown, record?.ProcessId, staleAfter, now);
+            return ClassifyPath(path, JournalRecordState.Unknown, record?.ProcessId, staleAfter, now, record?.Purpose, record?.TaskId);
 
         if (record.StartTicks is null && record.Completed)
-            return ClassifyPath(path, JournalRecordState.Completed, record.ProcessId, staleAfter, now);
+            return ClassifyPath(path, JournalRecordState.Completed, record.ProcessId, staleAfter, now, record.Purpose, record.TaskId);
 
         if (record.ProcessId is int processId && record.StartTicks is long startTicks
             && LandingGit.PathsEqual(record.CommonDirectory, common))
@@ -97,16 +99,17 @@ public class RepositoryChildJournalInspector(ILandingGit git)
                 false => JournalRecordState.Dead,
                 _ => JournalRecordState.Unknown,
             };
-            return ClassifyPath(path, state, processId, staleAfter, now);
+            return ClassifyPath(path, state, processId, staleAfter, now, record.Purpose, record.TaskId);
         }
 
-        return ClassifyPath(path, JournalRecordState.Unknown, record.ProcessId, staleAfter, now);
+        return ClassifyPath(path, JournalRecordState.Unknown, record.ProcessId, staleAfter, now, record.Purpose, record.TaskId);
     }
 
     protected virtual DateTime ReadWrittenAtUtc(string path) => File.GetLastWriteTimeUtc(path);
 
     private JournalRecordFinding? ClassifyPath(
-        string path, JournalRecordState state, int? processId, TimeSpan staleAfter, DateTimeOffset now)
+        string path, JournalRecordState state, int? processId, TimeSpan staleAfter, DateTimeOffset now,
+        string? purpose = null, Guid? taskId = null)
     {
         var writtenUtc = ReadWrittenAtUtc(path);
         // GetLastWriteTimeUtc returns 1601-01-01 when the file disappeared between the directory
@@ -119,7 +122,7 @@ public class RepositoryChildJournalInspector(ILandingGit git)
             age = TimeSpan.Zero;
         var stale = state != JournalRecordState.Alive && age >= staleAfter;
         return new JournalRecordFinding(path, state, age, stale, processId,
-            new DateTimeOffset(writtenUtc, TimeSpan.Zero));
+            new DateTimeOffset(writtenUtc, TimeSpan.Zero), purpose, taskId);
     }
 
     private static bool PathExists(string path)

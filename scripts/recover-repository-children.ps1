@@ -106,6 +106,19 @@ function Get-ChildState($Record, [string]$Common) {
     finally { if ($null -ne $recordedProcess) { $recordedProcess.Dispose() } }
 }
 
+function Get-ChildTag($Record) {
+    $tag = ''
+    $purpose = $Record.PSObject.Properties['Purpose']
+    if ($null -ne $purpose -and -not [string]::IsNullOrEmpty([string]$purpose.Value)) {
+        $tag += ' purpose=' + [string]$purpose.Value
+    }
+    $task = $Record.PSObject.Properties['TaskId']
+    if ($null -ne $task -and -not [string]::IsNullOrEmpty([string]$task.Value)) {
+        $tag += ' task=' + [string]$task.Value
+    }
+    return $tag
+}
+
 $lease = $null
 try {
     $commonOutput = @(& git -C $Repository rev-parse --path-format=absolute --git-common-dir)
@@ -125,10 +138,12 @@ try {
         }
         foreach ($file in Get-ChildItem -LiteralPath $directory -File -Force) {
             $state = 'unknown'
+            $tag = ''
             try {
                 if ($file.Extension -ceq '.json' -and -not ($file.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
                     $record = Get-Content -LiteralPath $file.FullName -Raw | ConvertFrom-Json
                     $state = Get-ChildState $record $common
+                    $tag = Get-ChildTag $record
                 }
                 if ($state -in @('dead', 'reused', 'completed') -and $Execute -and $ConfirmDescendantsExited) {
                     Remove-Item -LiteralPath $file.FullName -Force
@@ -137,7 +152,7 @@ try {
                 }
             } catch { $state = 'unknown' }
             $retained++
-            Write-Output "retained ($state): $($file.FullName)"
+            Write-Output "retained ($state): $($file.FullName)$tag"
         }
     }
     if ($retained -gt 0) {

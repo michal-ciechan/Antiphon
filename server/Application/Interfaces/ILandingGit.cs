@@ -2,10 +2,26 @@ using Antiphon.Server.Application.Dtos;
 
 namespace Antiphon.Server.Application.Interfaces;
 
+/// <summary>CARD-1076 D-1: optional budget and journal tag for one git command.</summary>
+public sealed record LandingGitRunOptions(TimeSpan? Budget = null, RepositoryChildTag? Child = null);
+
+/// <summary>Task and purpose stored on a mutating git child's journal record.</summary>
+public sealed record RepositoryChildTag(Guid? TaskId, string Purpose);
+
+/// <summary>Purpose strings a child journal may carry. The reader, not the writer, decides which stay off the lease fence.</summary>
+public static class RepositoryChildPurposes
+{
+    public const string RemotePrepPush = "remote-prep-push";
+}
+
 /// <summary>Typed, shell-free I/O for the landing protocol. Errors are never absence.</summary>
 public interface ILandingGit
 {
     Task<LandingGitResult> RunAsync(string repository, IReadOnlyList<string> arguments, CancellationToken ct);
+
+    /// <summary>CARD-1076 D-1. Forwards to the three-argument overload so existing fakes keep working.</summary>
+    Task<LandingGitResult> RunAsync(string repository, IReadOnlyList<string> arguments, LandingGitRunOptions options, CancellationToken ct)
+        => RunAsync(repository, arguments, ct);
     Task<LandingGitResult> RunOwnedAsync(string repository, IReadOnlyList<string> arguments,
         Func<int, long, CancellationToken, Task> started, CancellationToken ct);
     Task<bool?> IsProcessAliveAsync(int processId, long startTicks, CancellationToken ct);
