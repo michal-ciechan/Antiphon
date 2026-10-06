@@ -203,6 +203,8 @@ public sealed class TerminalRunnerSeatReleaseService(
         var session = await db.AgentSessions.AsNoTracking().SingleOrDefaultAsync(s => s.Id == seat.SessionId, ct);
         // Local nonpark conversations retain their existing owner. A Blocked park still
         // needs the same source, generation and input fences as a remote one.
+        if (session is not null && RunnerRequestIntent.IsDesktopAlias(runnerId) && !ParkingEnabled)
+            return new(runnerId, seat.SessionId, null, "Owned");
         if (session is not null && (session.RunnerId != runnerId || session.RunnerStoreId != storeId
             || session.StartedAt != generation)) return new(runnerId, seat.SessionId, null, "IdentityUnknown");
         var task = await db.AgentTasks.AsNoTracking().Where(t => t.AgentSessionId == seat.SessionId)
