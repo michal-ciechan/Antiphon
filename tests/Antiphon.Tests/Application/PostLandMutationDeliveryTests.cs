@@ -556,8 +556,9 @@ public sealed partial class PostLandMutationDeliveryTests
             settled.Bridge.SessionId, busy: false, cut: "after-receipt");
         await using var recovered = settled.World.Host.CreateContext();
         (await recovered.AgentTasks.SingleAsync(t => t.Id == settled.World.TaskId)).Result.ShouldBe(result);
-        (await recovered.TranscriptEntries.CountAsync(e => e.AgentSessionId == settled.Bridge.SessionId
-            && e.Kind == TranscriptKinds.UserPrompt)).ShouldBe(1);
+        var prompts = await recovered.TranscriptEntries.Where(e => e.AgentSessionId == settled.Bridge.SessionId
+            && e.Kind == TranscriptKinds.UserPrompt).ToListAsync();
+        AssertHarnessSubmitAndCatchUpReceipt(prompts, "c478-queued-" + queued.Id.ToString("N"), queued.Body);
     }
 
     [Test]
@@ -773,24 +774,10 @@ public sealed partial class PostLandMutationDeliveryTests
         }
         await h.AddSourceAsync();
         var ready = Path.Combine(h.Fixture.Root, "worker-ready.json");
-        var script = Path.Combine(h.Fixture.Root, "protocol-worker.ps1");
-        await File.WriteAllTextAsync(script, """
-            $ErrorActionPreference = 'Stop'
-            $assembly = [Reflection.Assembly]::LoadFrom($args[0])
-            $type = $assembly.GetType('Antiphon.Tests.TestHelpers.LandingSafetyHarness', $true)
-            $method = $type.GetMethod('RunCrashWorkerAsync', [Reflection.BindingFlags]'Public,Static')
-            $task = $method.Invoke($null, [object[]]@($args[1], $args[2], $args[3], $args[4]))
-            $task.GetAwaiter().GetResult()
-            """);
-        var start = new System.Diagnostics.ProcessStartInfo("pwsh")
-        {
-            UseShellExecute = false, CreateNoWindow = true,
-            RedirectStandardOutput = true, RedirectStandardError = true,
-        };
-        foreach (var arg in new[] { "-NoProfile", "-File", script, typeof(LandingSafetyHarness).Assembly.Location,
-                     h.Fixture.Root, h.Fixture.TaskId.ToString(), "C14", ready }) start.ArgumentList.Add(arg);
-        start.Environment["ANTIPHON_C448_TEST_CONNECTION"] = h.Schema.ConnectionString;
-        using var worker = System.Diagnostics.Process.Start(start)!;
+        var assembly = typeof(LandingSafetyHarness).Assembly.Location;
+        using var worker = PostLandMutationDeliveryWorker.StartPublicationCommit(
+            h.Schema.ConnectionString, h.Fixture.Root, h.Fixture.TaskId, "C14", ready, assembly);
+        var stdout = worker.StandardOutput.ReadToEndAsync();
         var stderr = worker.StandardError.ReadToEndAsync();
         try
         {
@@ -803,17 +790,22 @@ public sealed partial class PostLandMutationDeliveryTests
         finally
         {
             if (!worker.HasExited) worker.Kill(true);
+            await Task.WhenAll(stdout, stderr);
         }
-        start.ArgumentList[6] = "resume";
-        using (var resumed = System.Diagnostics.Process.Start(start)!)
+        using (var resumed = PostLandMutationDeliveryWorker.StartPublicationCommit(
+            h.Schema.ConnectionString, h.Fixture.Root, h.Fixture.TaskId, "resume", ready, assembly))
         {
+            var resumedOut = resumed.StandardOutput.ReadToEndAsync();
+            var resumedError = resumed.StandardError.ReadToEndAsync();
             using var resumedBudget = new CancellationTokenSource(TimeSpan.FromMinutes(2));
             try { await resumed.WaitForExitAsync(resumedBudget.Token); }
             finally
             {
                 if (!resumed.HasExited) resumed.Kill(true);
                 await resumed.WaitForExitAsync();
+                await Task.WhenAll(resumedOut, resumedError);
             }
+            resumed.ExitCode.ShouldBe(0, await resumedError);
         }
         await using var observer = h.CreateContext();
         var note = await observer.AgentTaskLandNotifications.SingleAsync(n =>
@@ -969,8 +961,39 @@ public sealed partial class PostLandMutationDeliveryTests
         var confirmed = await recovered.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n => n.Id == note.Id);
         confirmed.State.ShouldBe(LandNotificationState.Confirmed);
         confirmed.ConfirmingPromptSequence.ShouldBe(11);
-        (await recovered.TranscriptEntries.CountAsync(p => p.AgentSessionId == h.SessionId && p.Kind == TranscriptKinds.UserPrompt)).ShouldBe(1);
+        var prompts = await recovered.TranscriptEntries.Where(p => p.AgentSessionId == h.SessionId
+            && p.Kind == TranscriptKinds.UserPrompt).ToListAsync();
+        if (alreadySubmitted)
+            prompts.Count.ShouldBe(1);
+        else
+        {
+            var receiptUuid = "c478-land-" + note.Id.ToString("N");
+            AssertHarnessSubmitAndCatchUpReceipt(prompts, receiptUuid, queued.Body);
+            prompts.Single(p => p.Uuid == receiptUuid).Sequence.ShouldBe(11);
+            prompts.Single(p => p.Uuid is null).Sequence.ShouldBeLessThanOrEqualTo(10);
+        }
         h.Adapter.Inputs.Count.ShouldBe(typed);
+    }
+
+    /// <summary>
+    /// The flush records the harness submit prompt (no uuid). Catch-up then stores one receipt
+    /// snapshot at its own sequence and uuid. Exactly one of each: a second receipt or a missing
+    /// receipt fails, and so does a missing harness submit.
+    /// </summary>
+    private static void AssertHarnessSubmitAndCatchUpReceipt(
+        List<TranscriptEntry> prompts, string receiptUuid, string submittedBody)
+    {
+        var receipts = prompts.Where(p => p.Uuid == receiptUuid).ToList();
+        receipts.Count.ShouldBe(1);
+        var receipt = receipts[0];
+        receipt.Text.ShouldNotBeNull();
+        PromptSubmissionMatch.IsConfirmedBy(submittedBody, receipt.Text).ShouldBeTrue();
+        PromptSubmissionMatch.IsCompleteIn(submittedBody, receipt.Text).ShouldBeTrue();
+        var harness = prompts.Where(p => p.Uuid != receiptUuid).ToList();
+        harness.Count.ShouldBe(1);
+        harness[0].Uuid.ShouldBeNull();
+        harness[0].Text.ShouldNotBeNull();
+        PromptSubmissionMatch.IsCompleteIn(submittedBody, harness[0].Text).ShouldBeTrue();
     }
 
     private static async Task ConfirmQueuedReceiptAsync(string connection, BridgeQueueHarness h,
