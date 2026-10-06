@@ -106,4 +106,13 @@ public static class RemoteSettlementSyncReasons
 
     /// <summary>CARD-1082. The debt no longer names this task episode or a full source object id.</summary>
     public const string SettlementSyncSourceChanged = "settlement_sync_source_changed";
+
+    /// <summary>CARD-1082 D-5. Attempt, baseline, worktree or status moved before the debt was saved.</summary>
+    public const string SettlementSyncEpisodeChanged = "settlement_sync_episode_changed";
+
+    /// <summary>CARD-1082 D-5. The worktree registration is gone, so the debt is not retried.</summary>
+    public const string SettlementSyncSuperseded = "settlement_sync_superseded_by_retirement";
+
+    /// <summary>CARD-1082 D-5. The desktop checkout was confirmed at the debt's recorded source.</summary>
+    public const string SettlementSyncReady = "settlement_sync_ready";
 }

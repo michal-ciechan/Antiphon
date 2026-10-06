@@ -10,6 +10,7 @@ using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
@@ -36,6 +37,9 @@ internal sealed class RunnerSettlementWorld : IAsyncDisposable
 
     /// <summary>The settlement sync's budget clock when created with a controlled clock; else null.</summary>
     public FakeTimeProvider? SyncClock { get; }
+
+    /// <summary>CARD-1082 D-5. Clock for the settlement sync-debt sweep, independent of the lease budget.</summary>
+    public FakeTimeProvider DebtClock { get; } = new(new DateTimeOffset(2026, 10, 6, 12, 0, 0, TimeSpan.Zero));
 
     /// <summary>Every time the settlement sync finds the repository lease busy and waits for it.</summary>
     public LeaseBusySignal LeaseBusy { get; } = new();
@@ -168,6 +172,12 @@ internal sealed class RunnerSettlementWorld : IAsyncDisposable
         services.AddScoped<ReviewEvidenceBindingService>();
         services.AddScoped<AgentTaskService>();
         services.AddScoped<RoutingPinService>();
+        services.AddScoped(sp => new SettlementSyncRecoveryService(
+            sp.GetRequiredService<AppDbContext>(),
+            sp.GetRequiredService<RemoteWorkspaceService>(),
+            sp.GetRequiredService<IEventBus>(),
+            DebtClock,
+            sp.GetRequiredService<ILogger<SettlementSyncRecoveryService>>()));
         services.AddScoped<AgentTaskDispatcher>();
         services.AddScoped<AgentReviewCheckpointService>();
         services.AddScoped<AgentFilesService>();
@@ -325,6 +335,19 @@ internal sealed class RunnerSettlementWorld : IAsyncDisposable
         }
         await TurnSeeding.SeedTurnAsync(CreateContext, session, DelegationReportFormatter.TaskMarker(id), report);
         return id;
+    }
+
+    /// <summary>CARD-1082 D-5. One run of the dispatcher's settlement sync-debt sweep on its own scope.</summary>
+    public async Task<int> SweepSettlementSyncAsync()
+    {
+        int swept;
+        await using (var scope = Services.CreateAsyncScope())
+        {
+            swept = await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>()
+                .RecoverSettlementSyncAsync(CancellationToken.None);
+        }
+        await ReloadAsync();
+        return swept;
     }
 
     /// <summary>One run of the dispatcher's real deferred-report sweep on its own scope.</summary>
