@@ -1,3 +1,4 @@
+using System.Data.Common;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Services;
@@ -7,6 +8,7 @@ using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Shouldly;
 using TUnit.Core;
@@ -517,6 +519,7 @@ public sealed class RunnerTaskSettlementTests
         world.Evidence()!.RemoteSync!.Reason.ShouldBe(RemoteSettlementSyncReasons.LeaseBusy);
         var settlement = (await world.EventsAsync()).Single(e => e.Type == AgentTaskEventType.Blocked);
         await AssertCompletionObligationAsync(world, settlement, "runner sync block", decide: true);
+        await AssertNoDebtAsync(world);
     }
 
     private static async Task AssertCompletionObligationAsync(
@@ -599,8 +602,12 @@ public sealed class RunnerTaskSettlementTests
         world.Task.FailureCode.ShouldBeNull();
         world.Task.NextStage.ShouldBe(PipelineHandoffKind.Decide);
         world.Task.Result!.ShouldContain("Implemented and pushed.");
-        world.Evidence()!.RemoteSync!.State.ShouldBe(RemoteSettlementSyncState.Unavailable);
+        // CARD-1082 D-2. Classify records Pending before the progress read. The objects were not
+        // local, so the Code read stays indeterminate and the verdict stays Blocked (R-2).
+        world.Evidence()!.RemoteSync!.State.ShouldBe(RemoteSettlementSyncState.Pending);
+        world.Evidence()!.RemoteSync!.ConfirmedSha.ShouldBeNull();
         world.Evidence()!.RemoteSync!.Reason.ShouldBe(RemoteSettlementSyncReasons.LeaseBusy);
+        await AssertNoDebtAsync(world);
         (await world.EventsAsync()).ShouldContain(e => e.Type == AgentTaskEventType.Warning
             && e.Detail.Contains(RemoteSettlementSyncReasons.LeaseBusy, StringComparison.Ordinal));
         (await world.NoProgressIncidentsAsync()).ShouldBe(0);
@@ -682,6 +689,7 @@ public sealed class RunnerTaskSettlementTests
         (await world.EventsAsync()).Count(e => e.Type == AgentTaskEventType.Blocked).ShouldBe(1);
         (await world.NoProgressIncidentsAsync()).ShouldBe(0);
         (await world.Git.HeadAsync()).ShouldBe(world.Git.Baseline);
+        await AssertNoDebtAsync(world);
     }
 
     [Test]
@@ -773,6 +781,320 @@ public sealed class RunnerTaskSettlementTests
         note!.Body.ShouldContain(DelegationGitFacts.FormatHeader(1, 1));
     }
 
+    /// <summary>
+    /// CARD-1082 V-20 / G-11. A Review whose only sync failure is a spent desktop lease settles
+    /// Succeeded on the report. A cut at settlement-before-commit rolls the debt back with the
+    /// verdict; the same transcript then settles once.
+    /// </summary>
+    [Test]
+    public async Task C1082_ReviewLeaseBusySettlesSucceededWithPendingSyncDebt()
+    {
+        await using var world = await RunnerSettlementWorld.CreateAsync(
+            AgentTaskRole.Review, profiled: true, controlledSyncClock: true);
+        var subject = await world.AddReviewSubjectAsync(world.Git.Baseline);
+        var counter = new StatementCounter();
+        world.Interceptors.Add(counter);
+        world.ConfigureServices = s => s.AddSingleton<LandDeliveryBoundary>(new ThrowBoundary("settlement-before-commit"));
+        await world.RestartServicesAsync();
+        var report = ReviewReport(world, subject);
+
+        await using (var held = await world.Git.Leases.TryAcquireAsync(world.Git.Desktop, CancellationToken.None))
+        {
+            held.ShouldNotBeNull();
+            var settle = world.SettleAsync(report);
+            await FinishBusySettleAsync(world, settle, world.LeaseBusy.First);
+            world.Task.Status.ShouldBe(AgentTaskStatus.Working, Why(world));
+            await AssertNoDebtAsync(world);
+            await using (var db = world.CreateContext())
+                (await db.StageOutcomes.CountAsync(o => o.StageTaskId == world.TaskId)).ShouldBe(0);
+
+            world.ConfigureServices = null;
+            await world.RestartServicesAsync();
+            counter.Reset();
+            var retryBusy = world.LeaseBusy.Next();
+            var retry = world.Services.GetRequiredService<AgentTaskReplyService>()
+                .OnTurnEndAsync(world.SessionId, CancellationToken.None);
+            await FinishBusySettleAsync(world, retry, retryBusy);
+            await world.ReloadAsync();
+        }
+
+        var debtSql = DebtStatements(counter);
+        Console.WriteLine($"C1082-SQL path=pending-review statements={counter.Statements} debtSql={debtSql}");
+        debtSql.ShouldBe(1);
+        world.Task.Status.ShouldBe(AgentTaskStatus.Succeeded, Why(world));
+        world.Task.FailureCode.ShouldBeNull();
+        world.Task.NextStage.ShouldBe(PipelineHandoffKind.None);
+        (world.Task.NextHandoff ?? "").ShouldNotContain("Runner sync blocked");
+        world.Task.LandRequestedAt.ShouldBeNull();
+        var sync = world.Evidence()!.RemoteSync!;
+        sync.State.ShouldBe(RemoteSettlementSyncState.Pending);
+        sync.ObservedSha.ShouldBe(world.Git.Baseline);
+        sync.ConfirmedSha.ShouldBeNull();
+        (await world.Git.HeadAsync()).ShouldBe(world.Git.Baseline);
+        world.Git.Git.Commands.ShouldNotContain(x => IsMergeCommand(x));
+        world.Services.GetRequiredService<RecordingSessionStopper>().Killed.ShouldBeEmpty();
+        var warnings = (await world.EventsAsync()).Where(e => e.Type == AgentTaskEventType.Warning).Select(e => e.Detail).ToArray();
+        warnings.ShouldContain(d => d.Contains("synced later", StringComparison.Ordinal));
+        warnings.ShouldNotContain(d => d.Contains("then reply", StringComparison.Ordinal));
+        var obligation = (await world.ObligationsAsync()).Single();
+        obligation.Body.ShouldContain("desktop-sync=pending");
+        obligation.Body.ShouldNotContain("next=decide");
+        var settlement = (await world.EventsAsync()).Single(e => e.Id == obligation.SourceEventId);
+        await AssertCompletionObligationAsync(world, settlement, "pending review", decide: false);
+        await using (var db = world.CreateContext())
+        {
+            var row = await db.StageOutcomes.SingleAsync(o => o.StageTaskId == world.TaskId);
+            row.SubjectTaskId.ShouldBe(subject);
+            row.ReviewedSourceSha.ShouldBe(world.Git.Baseline);
+            var debt = await db.AgentTaskSyncDebts.SingleAsync(d => d.TaskId == world.TaskId);
+            debt.SettlementEventId.ShouldBe(obligation.SourceEventId);
+            AssertPendingDebt(debt, world, world.Git.Baseline, settlement);
+        }
+
+        await using (var db = world.CreateContext())
+        {
+            var committed = await db.AgentTaskSyncDebts.AsNoTracking().SingleAsync(d => d.TaskId == world.TaskId);
+            db.AgentTaskSyncDebts.Add(new AgentTaskSyncDebt
+            {
+                Id = Guid.NewGuid(),
+                TaskId = committed.TaskId,
+                Attempt = committed.Attempt,
+                SettlementEventId = committed.SettlementEventId,
+                RunnerId = committed.RunnerId,
+                WorktreePath = committed.WorktreePath,
+                RemoteWorktreePath = committed.RemoteWorktreePath,
+                RepositoryPath = committed.RepositoryPath,
+                FullRef = committed.FullRef,
+                BaselineSha = committed.BaselineSha,
+                SourceSha = committed.SourceSha,
+                DesktopBeforeSha = committed.DesktopBeforeSha,
+                EndpointFingerprint = committed.EndpointFingerprint,
+                State = committed.State,
+                ReasonCode = committed.ReasonCode,
+                Attempts = committed.Attempts,
+                NextAttemptAt = committed.NextAttemptAt,
+                Revision = committed.Revision,
+                CreatedAt = committed.CreatedAt,
+                UpdatedAt = committed.UpdatedAt,
+            });
+            await Should.ThrowAsync<DbUpdateException>(async () => await db.SaveChangesAsync());
+        }
+        await using (var db = world.CreateContext())
+            (await db.AgentTaskSyncDebts.CountAsync(d => d.TaskId == world.TaskId)).ShouldBe(1);
+    }
+
+    /// <summary>
+    /// CARD-1082 V-21. Code whose pushed tip is already a local object settles Succeeded Pending.
+    /// The desktop HEAD stays at the baseline and no merge runs.
+    /// </summary>
+    [Test]
+    public async Task C1082_CodeLeaseBusyWithLocalObjectsSettlesSucceededPending()
+    {
+        await using var world = await RunnerSettlementWorld.CreateAsync(controlledSyncClock: true);
+        var s = await world.Git.RunnerPushAsync("work.txt", "runner work");
+        await world.Git.RunAsync(world.Git.Desktop, "fetch", "--no-tags", "origin", world.Git.FullRef);
+        (await world.Git.HasObjectAsync(s)).ShouldBeTrue();
+        (await world.Git.HeadAsync()).ShouldBe(world.Git.Baseline);
+        world.Git.Git.Clear();
+
+        await using (var held = await world.Git.Leases.TryAcquireAsync(world.Git.Desktop, CancellationToken.None))
+        {
+            held.ShouldNotBeNull();
+            var settle = world.SettleAsync(RunnerSettlementWorld.Report("Implemented and pushed."));
+            await FinishBusySettleAsync(world, settle, world.LeaseBusy.First);
+        }
+
+        world.Task.Status.ShouldBe(AgentTaskStatus.Succeeded, Why(world));
+        world.Task.NextStage.ShouldNotBe(PipelineHandoffKind.Decide);
+        world.Evidence()!.Assessment.ShouldBe(CompletionProgressAssessment.ProgressObserved);
+        world.Evidence()!.Sources!.Single(x => x.Assessment == CompletionProgressAssessment.ProgressObserved)
+            .VerifiedSha.ShouldBe(s);
+        world.Evidence()!.RemoteSync!.State.ShouldBe(RemoteSettlementSyncState.Pending);
+        world.Evidence()!.RemoteSync!.ObservedSha.ShouldBe(s);
+        world.Evidence()!.RemoteSync!.ConfirmedSha.ShouldBeNull();
+        (await world.Git.HeadAsync()).ShouldBe(world.Git.Baseline);
+        world.Git.Git.Commands.ShouldNotContain(x => IsMergeCommand(x));
+        var note = (await world.NoteAsync())!.Body;
+        note.ShouldContain($"source {s} (desktop-sync=pending)");
+        note.ShouldContain(DelegationGitFacts.FormatHeader(1, 1));
+        note.ShouldNotContain("then reply");
+        await using var db = world.CreateContext();
+        var debt = await db.AgentTaskSyncDebts.SingleAsync(d => d.TaskId == world.TaskId);
+        var settlement = (await world.EventsAsync()).Single(e => e.Id == debt.SettlementEventId);
+        settlement.Type.ShouldBe(AgentTaskEventType.Completed);
+        AssertPendingDebt(debt, world, s, settlement);
+    }
+
+    /// <summary>
+    /// CARD-1082 V-22. A Code report that pushed nothing fails on its own no-progress verdict.
+    /// The lease still leaves a Pending debt for the observed baseline tip.
+    /// </summary>
+    [Test]
+    public async Task C1082_CodeLeaseBusyEqualTipFailsOnItsOwnVerdict()
+    {
+        await using var world = await RunnerSettlementWorld.CreateAsync(controlledSyncClock: true);
+        await using (var held = await world.Git.Leases.TryAcquireAsync(world.Git.Desktop, CancellationToken.None))
+        {
+            held.ShouldNotBeNull();
+            var settle = world.SettleAsync(RunnerSettlementWorld.Report("Done, all pushed."));
+            await FinishBusySettleAsync(world, settle, world.LeaseBusy.First);
+        }
+
+        AssertNoPush(world, RemoteSettlementSyncReasons.NoPushedProgress, "Done, all pushed.");
+        world.Evidence()!.RemoteSync!.State.ShouldBe(RemoteSettlementSyncState.Pending);
+        world.Evidence()!.RemoteSync!.ObservedSha.ShouldBe(world.Git.Baseline);
+        world.Evidence()!.RemoteSync!.ConfirmedSha.ShouldBeNull();
+        (await world.Git.HeadAsync()).ShouldBe(world.Git.Baseline);
+        world.Git.Git.Commands.ShouldNotContain(x => IsMergeCommand(x));
+        Directory.Exists(world.Git.Worktree).ShouldBeTrue();
+        var note = (await world.NoteAsync())!.Body;
+        note.ShouldContain(RemoteSettlementSyncReasons.NoPushedProgress);
+        note.ShouldContain("synced later");
+        note.ShouldNotContain("then reply");
+        await using var db = world.CreateContext();
+        var debt = await db.AgentTaskSyncDebts.SingleAsync(d => d.TaskId == world.TaskId);
+        var settlement = (await world.EventsAsync()).Single(e => e.Id == debt.SettlementEventId);
+        settlement.Type.ShouldBe(AgentTaskEventType.Failed);
+        AssertPendingDebt(debt, world, world.Git.Baseline, settlement);
+    }
+
+    /// <summary>
+    /// CARD-1082 V-2. The kill switch keeps today's Blocked settlement. The synchronized settle
+    /// above it is the no-debt statement count.
+    /// </summary>
+    [Test]
+    public async Task C1082_DisabledSettingKeepsLeaseBusyBlocked()
+    {
+        await using (var synced = await RunnerSettlementWorld.CreateAsync())
+        {
+            var counter = new StatementCounter();
+            synced.Interceptors.Add(counter);
+            await synced.RestartServicesAsync();
+            await synced.Git.RunnerPushAsync("work.txt", "runner work");
+            counter.Reset();
+            await synced.SettleAsync(RunnerSettlementWorld.Report("Implemented and pushed."));
+            var debtSql = DebtStatements(counter);
+            Console.WriteLine($"C1082-SQL path=synchronized statements={counter.Statements} debtSql={debtSql}");
+            synced.Task.Status.ShouldBe(AgentTaskStatus.Succeeded, Why(synced));
+            synced.Evidence()!.RemoteSync!.State.ShouldBe(RemoteSettlementSyncState.Synchronized);
+            debtSql.ShouldBe(0);
+            await AssertNoDebtAsync(synced);
+        }
+
+        await using var world = await RunnerSettlementWorld.CreateAsync(controlledSyncClock: true, syncDebt: false);
+        var blocked = new StatementCounter();
+        world.Interceptors.Add(blocked);
+        await world.RestartServicesAsync();
+        await world.Git.RunnerPushAsync("work.txt", "runner work");
+        await using (var held = await world.Git.Leases.TryAcquireAsync(world.Git.Desktop, CancellationToken.None))
+        {
+            held.ShouldNotBeNull();
+            blocked.Reset();
+            var settle = world.SettleAsync(RunnerSettlementWorld.Report("Implemented and pushed."));
+            await FinishBusySettleAsync(world, settle, world.LeaseBusy.First);
+        }
+
+        var blockedSql = DebtStatements(blocked);
+        Console.WriteLine($"C1082-SQL path=kill-switch statements={blocked.Statements} debtSql={blockedSql}");
+        blockedSql.ShouldBe(0);
+        world.Task.Status.ShouldBe(AgentTaskStatus.Blocked, Why(world));
+        world.Task.NextStage.ShouldBe(PipelineHandoffKind.Decide);
+        world.Task.NextHandoff!.ShouldStartWith("Runner sync blocked");
+        world.Evidence()!.RemoteSync!.State.ShouldBe(RemoteSettlementSyncState.Unavailable);
+        world.Evidence()!.RemoteSync!.Reason.ShouldBe(RemoteSettlementSyncReasons.LeaseBusy);
+        (await world.Git.HeadAsync()).ShouldBe(world.Git.Baseline);
+        var warning = (await world.EventsAsync()).Single(e => e.Type == AgentTaskEventType.Warning
+            && e.Detail.Contains(RemoteSettlementSyncReasons.LeaseBusy, StringComparison.Ordinal));
+        warning.Detail.ShouldContain("then reply");
+        (await world.NoteAsync())!.Body.ShouldContain("Runner sync blocked");
+        await AssertNoDebtAsync(world);
+    }
+
+    /// <summary>
+    /// CARD-1082 V-23. After the review settles Pending, the dispatcher sweep fast-forwards the
+    /// recorded source and leaves the settlement evidence alone.
+    /// </summary>
+    [Test]
+    public async Task C1082_PendingDebtRecoversThroughTheDispatcherSweep()
+    {
+        await using var world = await RunnerSettlementWorld.CreateAsync(
+            AgentTaskRole.Review, profiled: true, controlledSyncClock: true);
+        var subject = await world.AddReviewSubjectAsync(world.Git.Baseline);
+        await using (var held = await world.Git.Leases.TryAcquireAsync(world.Git.Desktop, CancellationToken.None))
+        {
+            held.ShouldNotBeNull();
+            var settle = world.SettleAsync(ReviewReport(world, subject));
+            await FinishBusySettleAsync(world, settle, world.LeaseBusy.First);
+        }
+
+        world.Task.Status.ShouldBe(AgentTaskStatus.Succeeded, Why(world));
+        var evidence = world.Task.CompletionProgressEvidenceJson;
+        world.DebtClock.SetUtcNow(DateTimeOffset.UtcNow.AddMinutes(1));
+        var swept = await world.SweepSettlementSyncAsync();
+        swept.ShouldBe(1);
+        world.Task.Status.ShouldBe(AgentTaskStatus.Succeeded);
+        world.Task.CompletionProgressEvidenceJson.ShouldBe(evidence);
+        world.Evidence()!.RemoteSync!.State.ShouldBe(RemoteSettlementSyncState.Pending);
+        world.Evidence()!.RemoteSync!.ConfirmedSha.ShouldBeNull();
+        (await world.Git.HeadAsync()).ShouldBe(world.Git.Baseline);
+        (await world.ObligationsAsync()).Count.ShouldBe(1);
+        await using var db = world.CreateContext();
+        var debt = await db.AgentTaskSyncDebts.SingleAsync(d => d.TaskId == world.TaskId);
+        debt.State.ShouldBe(AgentTaskSyncDebtState.Ready);
+        debt.ConfirmedSha.ShouldBe(world.Git.Baseline);
+        debt.SourceSha.ShouldBe(world.Git.Baseline);
+    }
+
+    private static string ReviewReport(RunnerSettlementWorld world, Guid subject) =>
+        RunnerSettlementWorld.Report(
+            "No branch change.\n" + DelegationReportFormatter.FindingToken(world.TaskId, "clean")
+            + $"\n--- review evidence ---\nsubjectTaskId: {subject:D}\nreviewedSourceSha: {world.Git.Baseline}\n"
+            + "reviewedSourceClean: true\nordinaryScopeCompleted: Full\n\n",
+            next: "none");
+
+    private static async Task FinishBusySettleAsync(
+        RunnerSettlementWorld world, System.Threading.Tasks.Task running, System.Threading.Tasks.Task busy)
+    {
+        (await System.Threading.Tasks.Task.WhenAny(busy, running)).ShouldBe(busy,
+            "the settlement sync must wait for a busy lease within its budget");
+        world.SyncClock!.Advance(TimeSpan.FromSeconds(new DelegationSettings().RunnerSyncBudgetSeconds));
+        await running;
+    }
+
+    private static async Task AssertNoDebtAsync(RunnerSettlementWorld world)
+    {
+        await using var db = world.CreateContext();
+        (await db.AgentTaskSyncDebts.CountAsync(d => d.TaskId == world.TaskId)).ShouldBe(0);
+    }
+
+    private static void AssertPendingDebt(
+        AgentTaskSyncDebt debt, RunnerSettlementWorld world, string source, AgentTaskEvent settlement)
+    {
+        debt.TaskId.ShouldBe(world.TaskId);
+        debt.Attempt.ShouldBe(world.Task.Attempt);
+        debt.Attempt.ShouldBe(1);
+        debt.State.ShouldBe(AgentTaskSyncDebtState.Pending);
+        debt.ReasonCode.ShouldBe(RemoteSettlementSyncReasons.LeaseBusy);
+        debt.SourceSha.ShouldBe(source);
+        debt.BaselineSha.ShouldBe(world.Git.Baseline);
+        debt.FullRef.ShouldBe(world.Git.FullRef);
+        debt.WorktreePath.ShouldBe(world.Task.WorktreePath);
+        debt.RemoteWorktreePath.ShouldBe(world.Task.RemoteWorktreePath);
+        debt.RunnerId.ShouldBe(world.Task.RunnerId);
+        debt.RepositoryPath.ShouldBe(world.Task.RepoPath);
+        debt.DesktopBeforeSha.ShouldBe(world.Git.Baseline);
+        debt.EndpointFingerprint.ShouldNotBeNullOrWhiteSpace();
+        debt.Attempts.ShouldBe(0);
+        debt.Revision.ShouldBe(0);
+        debt.ConfirmedSha.ShouldBeNull();
+        debt.SettlementEventId.ShouldBe(settlement.Id);
+        debt.NextAttemptAt.ShouldNotBeNull();
+        debt.CreatedAt.ShouldBe(debt.UpdatedAt);
+    }
+
+    private static int DebtStatements(StatementCounter counter) =>
+        counter.Texts.Count(t => t.Contains("AgentTaskSyncDebts", StringComparison.Ordinal));
+
     private static void AssertNoPush(RunnerSettlementWorld world, string reason, string body)
     {
         world.Task.Status.ShouldBe(AgentTaskStatus.Failed, Why(world));
@@ -798,6 +1120,7 @@ public sealed class RunnerTaskSettlementTests
         world.Services.GetRequiredService<RecordingSessionStopper>().Killed.ShouldBeEmpty();
         Directory.Exists(world.Git.Worktree).ShouldBeTrue();
         world.Task.WorktreePath.ShouldBe(world.Git.Task.WorktreePath);
+        await AssertNoDebtAsync(world);
         // The caller dispatches from the header: decide, not the report's own next: review.
         var note = await world.NoteAsync();
         note!.Body.ShouldContain("next=decide");
@@ -815,5 +1138,61 @@ public sealed class RunnerTaskSettlementTests
     {
         world.Git.Git.Commands.ShouldNotContain(x => RunnerCompletionProgressTests.IsSyncCommand(x)
             || x.Contains(s, StringComparison.Ordinal));
+    }
+
+    private sealed class ThrowBoundary(string cut) : LandDeliveryBoundary
+    {
+        public override System.Threading.Tasks.Task ReachedAsync(string boundary, Guid taskId, Guid identity, CancellationToken ct) =>
+            boundary == cut
+                ? System.Threading.Tasks.Task.FromException(new IOException("C1082 injected precommit failure"))
+                : System.Threading.Tasks.Task.CompletedTask;
+    }
+
+    private sealed class StatementCounter : DbCommandInterceptor
+    {
+        public int Statements { get; private set; }
+        public List<string> Texts { get; } = [];
+
+        public void Reset()
+        {
+            Statements = 0;
+            Texts.Clear();
+        }
+
+        private void Hit(DbCommand command)
+        {
+            Statements++;
+            Texts.Add(command.CommandText);
+        }
+
+        public override InterceptionResult<DbDataReader> ReaderExecuting(
+            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result)
+        {
+            Hit(command);
+            return base.ReaderExecuting(command, eventData, result);
+        }
+
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result,
+            CancellationToken cancellationToken = default)
+        {
+            Hit(command);
+            return base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
+        }
+
+        public override InterceptionResult<int> NonQueryExecuting(
+            DbCommand command, CommandEventData eventData, InterceptionResult<int> result)
+        {
+            Hit(command);
+            return base.NonQueryExecuting(command, eventData, result);
+        }
+
+        public override ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<int> result,
+            CancellationToken cancellationToken = default)
+        {
+            Hit(command);
+            return base.NonQueryExecutingAsync(command, eventData, result, cancellationToken);
+        }
     }
 }
