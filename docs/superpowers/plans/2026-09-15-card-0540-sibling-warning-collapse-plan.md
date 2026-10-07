@@ -301,7 +301,7 @@ wall-clock performance as a functional test.
 |---|---|
 | R-1 | All `AgentTaskDispatchBaseGuardTests`, especially hold/deleted/single-warning, `C508_RepairRecordsOwnerAndSkipsSiblings`, `C508_GuardRefMismatchWarnedOnce`, `C508_RebasedSiblingUsesActualDefault`, `C508_GuardPreservesFailedDefault`. Preserve counts for their genuinely divergent seed branches. |
 | R-2 | `WorktreeBaseSelectionTests`, `DelegationWorktreeTests`: existing base precedence, patch containment and worktree behavior remain green. Snapshot all seeded sibling refs and sentinel dirty/untracked worktree files around DG tests; reduction changes none. |
-| R-3 | DN `C508_ClaimCapturesWarningIntents`, `C508_IntentAttemptIdentity`, `C508_IntentUniqueKeys`: same final-event/key replays same IDs; another final event gets new IDs even with identical task/Attempt/text. |
+| R-3 | DN `C508_VanishedDefaultStillCapturesWarning` (CARD-1126 replacement for the historical positive-capture reference `C508_ClaimCapturesWarningIntents`), `C508_IntentAttemptIdentity`, `C508_IntentUniqueKeys`: same final-event/key replays same IDs; another final event gets new IDs even with identical task/Attempt/text. |
 | R-4 | All `DispatchBaseNotificationTests`: frozen route/body/digest, projection integrity, concurrent projection, lost acknowledgement, retry and initial-state rules remain intact. `ReplyTo=None` remains NotRequired; unavailable destination retains custody. |
 | R-5 | `AgentTaskLandDeliveryE2ETests.C467_V22_AlreadyIdleGetsOutcomeWithoutNewInput`, `C467_V26_HardCrashAfterQueueInsertReusesRow`, `C467_V30_ReceiptSaveFailureNeverRetypes` (both rows): land-mode setup, header census and child recovery still work after fixture extension. |
 

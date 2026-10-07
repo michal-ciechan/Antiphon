@@ -40,7 +40,7 @@ public partial class DispatchBaseNotificationTests
     /// </summary>
     [Test]
     [Timeout(90_000)]
-    public async Task C508_ClaimCapturesWarningIntents(CancellationToken ct)
+    public async Task C508_KeptSiblingBaseCapturesNoIntent(CancellationToken ct)
     {
         using var repo = new ScratchGitRepo("c508-dbn-capture");
         await repo.CommitFileAsync("README.md", "base\n");
