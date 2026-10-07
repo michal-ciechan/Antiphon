@@ -391,12 +391,7 @@ public sealed class BlockedTaskParkDeliveryTests
         releasedAgain.Code.ShouldBe("follow_up_agent_blocked", "G-7");
         releasedAgain.Message.ShouldContain("The published seat was released", Case.Sensitive, "G-7");
 
-        await f.EditAsync((task, agent) =>
-        {
-            task.RunnerId = "server2";
-            agent.RunnerId = "server2";
-            agent.IsPoolDelegate = true;
-        });
+        await AlignReplyAdmissionAsync(f, "server2");
         var named = await Should.ThrowAsync<ValidationException>(() => FollowUpAsync(f));
         named.StatusCode.ShouldBe(422, "G-8");
         named.Code.ShouldBe("follow_up_remote_pool_unsupported", "G-8");
@@ -594,7 +589,7 @@ public sealed class BlockedTaskParkDeliveryTests
         return answer;
     }
 
-    private static async Task<string> PublishAsync(RunnerSeatReleaseFixture f)
+    internal static async Task<string> PublishAsync(RunnerSeatReleaseFixture f)
     {
         await f.CreateSourceAsync();
         var branch = (await f.TaskAsync()).WorktreeBranch.ShouldNotBeNull();
@@ -620,7 +615,7 @@ public sealed class BlockedTaskParkDeliveryTests
         return tip;
     }
 
-    private static Task StampAsync(RunnerSeatReleaseFixture f) => f.EditAsync((task, _) =>
+    internal static Task StampAsync(RunnerSeatReleaseFixture f) => f.EditAsync((task, _) =>
     {
         task.RepliedAtSequence = 9;
         task.ReportNudgedAt = f.Now;
@@ -657,6 +652,36 @@ public sealed class BlockedTaskParkDeliveryTests
             Id = Guid.NewGuid(), AgentTaskId = f.TaskId, Type = AgentTaskEventType.Blocked,
             At = f.Now.AddMinutes(task.Attempt), Detail = "Which answer?",
         });
+        await db.SaveChangesAsync();
+    }
+
+    private static async Task AlignReplyAdmissionAsync(RunnerSeatReleaseFixture f, string runnerId)
+    {
+        await using var db = f.Db();
+        var task = await db.AgentTasks.SingleAsync(t => t.Id == f.TaskId);
+        var agent = await db.Agents.SingleAsync(a => a.Id == f.AgentId);
+        var session = await db.AgentSessions.SingleAsync(s => s.Id == f.SessionId);
+        var release = await db.RunnerSeatReleases.SingleAsync(r => r.TaskId == f.TaskId && r.Attempt == task.Attempt);
+        var store = session.RunnerStoreId ?? Guid.NewGuid();
+        task.AgentSessionId = f.SessionId;
+        task.RunnerId = runnerId;
+        task.AgentId = f.AgentId;
+        agent.RunnerId = runnerId;
+        agent.IsPoolDelegate = true;
+        session.RunnerId = runnerId;
+        session.RunnerStoreId = store;
+        release.RunnerId = runnerId;
+        release.RunnerStoreId = store;
+        release.SessionId = f.SessionId;
+        release.AcceptedStartedAt = session.StartedAt;
+        release.AgentId = f.AgentId;
+        release.Attempt = task.Attempt;
+        release.SettlementRevision = task.ConcurrencyToken;
+        release.SettledAt = task.CompletedAt;
+        release.State = RunnerSeatReleaseState.Confirmed;
+        release.ConfirmedAt ??= f.Now;
+        release.ActionId ??= Guid.NewGuid();
+        release.OutcomeCode = nameof(TerminalSeatReleaseOutcome.Released);
         await db.SaveChangesAsync();
     }
 
@@ -704,7 +729,7 @@ public sealed class BlockedTaskParkDeliveryTests
         return detail.Blocked.ShouldNotBeNull();
     }
 
-    private static async Task FollowUpAsync(RunnerSeatReleaseFixture f)
+    internal static async Task FollowUpAsync(RunnerSeatReleaseFixture f)
     {
         using var scope = f.Harness.Provider.CreateScope();
         await scope.ServiceProvider.GetRequiredService<AgentTaskService>().CreateAsync(
