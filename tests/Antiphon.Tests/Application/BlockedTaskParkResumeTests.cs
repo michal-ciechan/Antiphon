@@ -472,6 +472,93 @@ public sealed class BlockedTaskParkResumeTests
         }
     }
 
+    [Test]
+    public async Task C1097_RefusedParkedResumeWarnsOncePerReason()
+    {
+        const string dirty = "park_resume_refused:park_dirty";
+        const string moved = "park_resume_refused:park_source_changed";
+        await using var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked, parking: true);
+        var tip = await PublishAsync(f);
+        await StampAsync(f);
+        await f.AnswerAsync(Answer);
+        await File.WriteAllTextAsync(Path.Combine(f.SourcePath, "dirty.txt"), "dirty bytes");
+
+        await f.DispatchAsync();
+        await f.DispatchAsync();
+        await f.DispatchAsync();
+
+        var first = await ResumeWarningsAsync(f);
+        string.Join(",", first).ShouldBe(dirty, "G-9");
+        f.Launches.Calls.ShouldBeEmpty("G-9");
+        var held = await f.TaskAsync();
+        held.Status.ShouldBe(AgentTaskStatus.Queued, "G-9");
+        held.Attempt.ShouldBe(2, "G-9");
+        held.ReleasedSeatAnswer.ShouldBe(Answer, "G-9");
+
+        await OpenLaterParkEpisodeAsync(f);
+        await f.DispatchAsync();
+        string.Join(",", await ResumeWarningsAsync(f)).ShouldBe(dirty + "," + dirty, "G-9");
+        f.Launches.Calls.ShouldBeEmpty("G-9");
+        (await f.TaskAsync()).Status.ShouldBe(AgentTaskStatus.Queued, "G-9");
+
+        File.Delete(Path.Combine(f.SourcePath, "dirty.txt"));
+        await f.GitAsync(f.SourcePath, "commit", "--allow-empty", "-m", "move the parked tip");
+        await f.DispatchAsync();
+        var reasons = string.Join(",", await ResumeWarningsAsync(f));
+        reasons.ShouldBe(dirty + "," + dirty + "," + moved, "G-9");
+        f.Launches.Calls.ShouldBeEmpty("G-9");
+
+        await f.GitAsync(f.SourcePath, "reset", "--hard", tip);
+        await f.DispatchAsync();
+        f.Launches.Calls.Count.ShouldBe(1, "G-9");
+        (await f.TaskAsync()).AgentSessionId.ShouldNotBeNull("G-9");
+        string.Join(",", await ResumeWarningsAsync(f)).ShouldBe(reasons, "G-9");
+    }
+
+    private static async Task OpenLaterParkEpisodeAsync(RunnerSeatReleaseFixture f)
+    {
+        var prior = await f.ParkAsync();
+        f.Clock.Advance(TimeSpan.FromSeconds(5));
+        await using var db = f.Db();
+        await using var tx = await db.Database.BeginTransactionAsync();
+        (await db.AgentTaskParks.Where(p => p.Id == prior.Id).ExecuteUpdateAsync(s => s
+            .SetProperty(p => p.State, AgentTaskParkState.Held)
+            .SetProperty(p => p.PublicationReceiptId, (Guid?)null))).ShouldBe(1, "G-9");
+        db.AgentTaskParks.Add(new AgentTaskPark
+        {
+            Id = Guid.NewGuid(),
+            TaskId = prior.TaskId,
+            Attempt = prior.Attempt,
+            BlockEventId = Guid.NewGuid(),
+            TaskConcurrencyToken = prior.TaskConcurrencyToken,
+            Workspace = prior.Workspace,
+            WorktreePath = prior.WorktreePath,
+            FullRef = prior.FullRef,
+            SourceSha = prior.SourceSha,
+            EndpointFingerprint = prior.EndpointFingerprint,
+            PublicationReceiptId = prior.PublicationReceiptId,
+            RunnerSeatReleaseId = prior.RunnerSeatReleaseId,
+            BlockedAt = prior.BlockedAt,
+            State = AgentTaskParkState.Parked,
+            ReasonCode = prior.ReasonCode,
+            CreatedAt = f.Now,
+            UpdatedAt = f.Now,
+        });
+        await db.SaveChangesAsync();
+        await tx.CommitAsync();
+    }
+
+    private static async Task<List<string>> ResumeWarningsAsync(RunnerSeatReleaseFixture f)
+    {
+        await using var db = f.Db();
+        return await db.AgentTaskEvents.AsNoTracking()
+            .Where(e => e.AgentTaskId == f.TaskId && e.Type == AgentTaskEventType.Warning
+                && e.Detail.StartsWith("park_resume_refused:"))
+            .OrderBy(e => e.At).ThenBy(e => e.Id)
+            .Select(e => e.Detail)
+            .ToListAsync();
+    }
+
     private static async Task<string> PublishAsync(RunnerSeatReleaseFixture f,
         WorkspaceMode mode = WorkspaceMode.Worktree, bool handle = true)
     {

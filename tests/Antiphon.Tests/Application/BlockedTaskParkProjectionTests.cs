@@ -58,7 +58,7 @@ public sealed class BlockedTaskParkProjectionTests
         Require(runtime, "Legacy discovery additionally requires ReclaimExisting.", "c1065-legacy-gate");
         Require(runtime, "Disabling does not delete a publication receipt, does not abandon an accepted answer, and does not stop release reconciliation or sync-debt recovery.", "c1065-disable-keeps-recovery");
         Require(runtime, "Parking never stops a Working session.", "c1065-working-veto");
-        Require(runtime, "park_resume_refused is written on each refused dispatch tick with no dedupe.", "c1065-resume-warn");
+        Require(runtime, "park_resume_refused is written once per refusal reason for the current park episode; a tick that refuses again for the same reason adds no event, a changed reason is written again, and a new park episode writes that reason again (CARD-1097).", "c1065-resume-warn");
         Require(runtime, "Resume reads the desktop checkout, not runner operation 37.", "c1065-resume-desktop");
         Require(runtime, "git worktree prune prunes the whole repository.", "c1065-prune-repo");
         Require(runtime, "A missing mirror is recreated with worktree add only when the branch tip equals the parked SHA, and HEAD is never reset.", "c1065-worktree-add");
@@ -82,7 +82,7 @@ public sealed class BlockedTaskParkProjectionTests
         Require(Read("docs/ops-http.md"), "ReclaimIntervalSeconds", "c1108-ops-interval");
         Require(runtime, "A Held episode is not prepared again until its NextAttemptAt, stamped at now plus ReclaimHeldBackoffSeconds (default 600; 0 disables; a negative value is treated as 0), except park_workspace_reserved which stays immediate.", "c1108-held-backoff");
         Require(runtime, "A refusal on a Held row re-stamps NextAttemptAt from the same backoff and records the refusal reason, so a Held row is never prepared on consecutive sweeps while its backoff runs (CARD-1135).", "c1135-held-restamp");
-        const string knownLimits = "Known limits stay on CARD-1097 item 1 (park_resume_refused is written on each refused dispatch tick with no dedupe) and item 2 (resume reads the desktop checkout, not the runner mirror), CARD-1104 for a remote parent with RunnerCwd, CARD-1143 (a Held row whose episode can no longer be loaded is visited on later sweeps without a re-stamp), and CARD-1144 (the first mark-read rotates the settlement token, so Reply admission misses and the live Blocked fallback accepts the answer on the old session).";
+        const string knownLimits = "Known limits stay on CARD-1097 item 2 (resume reads the desktop checkout, not the runner mirror), CARD-1104 for a remote parent with RunnerCwd, CARD-1143 (a Held row whose episode can no longer be loaded is visited on later sweeps without a re-stamp), and CARD-1144 (the first mark-read rotates the settlement token, so Reply admission misses and the live Blocked fallback accepts the answer on the old session).";
         var knownLimitsLine = runtime.Replace("\r\n", "\n").Split('\n')
             .Single(line => line.StartsWith("Known limits stay on ", StringComparison.Ordinal));
         knownLimitsLine.ShouldBe(knownLimits, "c1141-known-limits");
