@@ -61,13 +61,37 @@ owning runner positively reports absence, and whose current brief is demonstrabl
 unattempted. Use a shared constant for that existing reason without changing its
 public wording; do not use a broad `Contains("launch")` predicate.
 
-The proof is a current-attempt Delegation row with Pending status, zero attempts,
-no SentAt, delivery baseline/generation/start/verdict evidence, and no attributable
-turn prompt. A zero-row sibling also qualifies for a retained hold if the task
-input is still present; zero rows alone must never authorize a relaunch. Any
-attempted/ambiguous row or unrelated failure stays outside this exception.
-Run existing bind/report recovery first where applicable; evidence of attempted
-work must not be reclassified as an unattempted task.
+Repair 2 tightens this into a whitelist: a task is never attempted only when
+there is exactly one original Pending brief, bound to this session and dispatch,
+with zero attempts and every delivery, confirmation, failure, control and reply
+marker pristine under every supported identity; there is no other related message
+of any kind; no Working history or transcript entry of any kind exists; complete
+native/sidecar evidence is positively empty for this generation; the owning runner
+positively reports absence; and the session failure is exactly the runner-unknown
+reason. Missing rows, unknown columns, null/unreadable evidence, and unexpected
+shapes do not qualify. Current Working and listed/unknown runner safety gates
+withhold before either hold or failure. Bind/report recovery still runs first.
+
+The pure `AbsentLaunchPolicy.IsNeverAttempted` is the one decision. Its message
+column census is compared to the EF model without a database statement, so an
+unclassified mapped column fails closed. The original payload, optional specialist
+input policy and execution deadline are retained metadata, not delivery markers.
+All related rows are read without an origin/status filter, including ExecutionTaskId,
+SourceTaskId, task-input ConversationKey, task marker in Body/RemoteSpillBody, and
+RulesCoveredByMessageId custody links. At most two rows are materialized: two is
+already outside the one-brief whitelist. Any database transcript kind/time excludes
+the hold, including queued input, old activity, and an ended Working turn. Replied
+fields and non-launch task events also exclude historical Working/reply activity.
+
+Native evidence limitation: today's runner `GetTranscript` uses `GetSession`, so an
+absent session normally answers 404. That answer is unknown, not an empty history.
+Under this brief's strict fail-closed rule it takes the previous Failed path.
+A positive hold now requires a complete, empty snapshot with the matching session
+and accepted generation; the positive integration fixtures supply that explicit
+certificate. They do not prove that today's absent-session API can produce it.
+Supporting positive holds for that production shape requires a separately designed
+runner-side retained-history/absence proof; this repair adds no runner protocol or
+filesystem guesses. No 404 fallback is silently treated as proof.
 
 Persist `Status=Blocked`, `CompletedAt=null`, a stable reason beginning
 `dispatch_launch_absent`, one Blocked event and a caller note when ReplyTo requires

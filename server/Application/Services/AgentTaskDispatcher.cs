@@ -2663,12 +2663,6 @@ public sealed class AgentTaskDispatcher
         Held = 2,
     }
 
-    private enum BriefCustody
-    {
-        Unattempted = 0,
-        Attempted = 1,
-    }
-
     private enum RunnerAbsence
     {
         Positive = 0,
@@ -2712,15 +2706,6 @@ public sealed class AgentTaskDispatcher
             return AbsentLaunchDecision.Withheld;
         }
 
-        // A native user or queued-command record is attempt evidence when the database
-        // ingested nothing. It stays after the working guard: a live turn is withheld,
-        // and the failure path already names the file.
-        if (nativeAttempt)
-            return AbsentLaunchDecision.NotThisShape;
-
-        if (await ReadBriefCustodyAsync(task, sessionId, ct) != BriefCustody.Unattempted)
-            return AbsentLaunchDecision.NotThisShape;
-
         var expectedStartedAt = await _db.AgentSessions.AsNoTracking()
             .Where(s => s.Id == sessionId)
             .Select(s => (DateTime?)s.StartedAt)
@@ -2731,45 +2716,66 @@ public sealed class AgentTaskDispatcher
         if (await ReadAbsenceAsync(sessionId, runnerSessions, ct) != RunnerAbsence.Positive)
             return AbsentLaunchDecision.Withheld;
 
+        if (!AbsentLaunchPolicy.IsNeverAttempted(await ReadAbsentLaunchEvidenceAsync(
+                task, sessionId, expectedStartedAt.Value, session!.FailureReason, nativeAttempt, ct)))
+        {
+            // Reading evidence can take time. An intervening live turn/process still wins
+            // over the ordinary failure, including when the evidence read itself failed.
+            if (await SessionMessageQueueService.IsWorkingAsync(_db, sessionId, ct)
+                || await ReadAbsenceAsync(sessionId, cachedLocal: null, ct) != RunnerAbsence.Positive)
+                return AbsentLaunchDecision.Withheld;
+            return AbsentLaunchDecision.NotThisShape;
+        }
+
         return await TryHoldAbsentLaunchAsync(
             task, sessionId, expectedStatus, expectedAttempt, expectedDispatchedAt, expectedStartedAt.Value, ct);
     }
 
-    /// <summary>
-    /// Current-attempt delegation rows plus a user prompt at or after dispatch. Zero rows qualify
-    /// only when the goal is still present, and they never authorize a relaunch. Two rows, any
-    /// delivery evidence, or a prompt is attempted and stays on the failure path.
-    /// </summary>
-    private async Task<BriefCustody> ReadBriefCustodyAsync(AgentTask task, Guid sessionId, CancellationToken ct)
+    /// <summary>Rare due-failure path only; null means the whitelist has no proof.</summary>
+    private async Task<AbsentLaunchEvidence?> ReadAbsentLaunchEvidenceAsync(
+        AgentTask task, Guid sessionId, DateTime startedAt, string? failureReason,
+        bool nativeAttempt, CancellationToken ct)
     {
-        var rows = await _db.SessionQueuedMessages.AsNoTracking()
-            .Where(m => m.AgentSessionId == sessionId
-                && m.Origin == QueuedMessageOrigin.Delegation
-                && m.ExecutionTaskId == task.Id)
-            .ToListAsync(ct);
-        var dispatchedAt = task.DispatchedAt;
-        var prompted = await _db.TranscriptEntries.AsNoTracking().AnyAsync(
-            t => t.AgentSessionId == sessionId
-                && t.Kind == TranscriptKinds.UserPrompt
-                && (t.Timestamp == null || dispatchedAt == null || t.Timestamp >= dispatchedAt),
-            ct);
-        if (prompted)
-            return BriefCustody.Attempted;
-        if (rows.Count == 0)
-            return string.IsNullOrWhiteSpace(task.Goal) ? BriefCustody.Attempted : BriefCustody.Unattempted;
-        if (rows.Count != 1)
-            return BriefCustody.Attempted;
-
-        var row = rows[0];
-        var clean = row.Status == QueuedMessageStatus.Pending
-            && row.DeliveryAttempts == 0
-            && row.SentAt is null
-            && row.CanceledAt is null
-            && row.LastDeliveryBaselineSequence is null
-            && row.LastDeliveryGeneration is null
-            && row.LastDeliveryStartedAt is null
-            && row.DeliveryVerdict is null;
-        return clean ? BriefCustody.Unattempted : BriefCustody.Attempted;
+        try
+        {
+            var marker = DelegationReportFormatter.TaskMarker(task.Id);
+            var correlationPrefix = $"task-input:{task.Id:D}:";
+            var related = _db.SessionQueuedMessages.AsNoTracking().Where(m =>
+                m.AgentSessionId == sessionId || m.ExecutionTaskId == task.Id || m.SourceTaskId == task.Id
+                || (m.ConversationKey != null && m.ConversationKey.StartsWith(correlationPrefix))
+                || m.Body.Contains(marker)
+                || (m.RemoteSpillBody != null && m.RemoteSpillBody.Contains(marker)));
+            // Count only as far as the refusal boundary. Include message-id custody links too.
+            var rows = await _db.SessionQueuedMessages.AsNoTracking().Where(m =>
+                    related.Select(r => r.Id).Contains(m.Id)
+                    || (m.RulesCoveredByMessageId != null && related.Select(r => r.Id).Contains(m.RulesCoveredByMessageId.Value)))
+                .Take(2).ToListAsync(ct);
+            var emptyTranscript = !await _db.TranscriptEntries.AsNoTracking()
+                .AnyAsync(t => t.AgentSessionId == sessionId, ct);
+            var neverWorking = task.RepliedAt is null && task.RepliedAtSequence is null
+                && !await _db.AgentTaskEvents.AsNoTracking().AnyAsync(e => e.AgentTaskId == task.Id
+                    && e.Type != AgentTaskEventType.Created && e.Type != AgentTaskEventType.Dispatched
+                    && e.Type != AgentTaskEventType.Warning, ct);
+            var knownColumns = _db.Model.FindEntityType(typeof(SessionQueuedMessage))?.GetProperties()
+                .Select(p => p.Name).ToHashSet(StringComparer.Ordinal)
+                .SetEquals(AbsentLaunchPolicy.MessageColumns.Split(' '));
+            bool? emptyNative = nativeAttempt ? false : null;
+            if (!nativeAttempt && _runnerClient is not null)
+            {
+                // The owning runner is routed by session id. A 404, an unbound/incomplete tail,
+                // or any failed read is unknown, never an empty native/sidecar history.
+                var transcript = await _runnerClient.GetTranscriptAsync(sessionId, ct);
+                emptyNative = transcript is { TerminalComplete: true, LastSequence: 0, Entries.Count: 0 }
+                    && transcript.SessionId == sessionId && transcript.AcceptedStartedAt == startedAt;
+            }
+            return new(task.Id, sessionId, task.Status, task.DispatchedAt, task.Goal, failureReason,
+                rows, knownColumns, neverWorking, emptyTranscript, emptyNative, RunnerAbsent: true);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            _logger.LogDebug(ex, "Absent-launch evidence is unknown for task {TaskId}", task.Id);
+            return null;
+        }
     }
 
     /// <summary>
@@ -2893,11 +2899,6 @@ public sealed class AgentTaskDispatcher
         DateTime expectedStartedAt,
         CancellationToken ct)
     {
-        // Final evidence read is under the queue gate. A brief that became attempted is the
-        // existing failure, and the gate is released before that failure can enqueue.
-        if (await ReadBriefCustodyAsync(task, sessionId, ct) != BriefCustody.Unattempted)
-            return AbsentLaunchDecision.NotThisShape;
-
         var addedBefore = _db.ChangeTracker.Entries()
             .Where(e => e.State == EntityState.Added)
             .Select(e => e.Entity)
@@ -2927,8 +2928,16 @@ public sealed class AgentTaskDispatcher
                     StringComparison.Ordinal))
                 return AbsentLaunchDecision.Withheld;
 
-            if (await ReadAbsenceAsync(sessionId, cachedLocal: null, ct) != RunnerAbsence.Positive)
+            // Re-read every whitelist fact after the queue gate and task lock. A turn which
+            // started while waiting must be withheld, not routed to terminal failure.
+            var neverAttempted = AbsentLaunchPolicy.IsNeverAttempted(await ReadAbsentLaunchEvidenceAsync(
+                task, sessionId, fresh.StartedAt, fresh.FailureReason, nativeAttempt: false, ct));
+            if (task.Status == AgentTaskStatus.Working
+                || await SessionMessageQueueService.IsWorkingAsync(_db, sessionId, ct)
+                || await ReadAbsenceAsync(sessionId, cachedLocal: null, ct) != RunnerAbsence.Positive)
                 return AbsentLaunchDecision.Withheld;
+            if (!neverAttempted)
+                return AbsentLaunchDecision.NotThisShape;
 
             task.CompletedAt = null;
             StageBlocked(task, DispatchLaunchAbsentReason);
