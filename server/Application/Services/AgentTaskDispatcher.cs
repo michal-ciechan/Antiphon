@@ -7147,13 +7147,13 @@ public sealed class AgentTaskDispatcher
             repair = new ProgressSourceBaseline(
                 repo, common, owner.Id, owner.WorktreePath, ownerRef, ownerSha.Sha, ownerRemote);
             await _progressGit.PinBaselineAsync(repo, task.Id, "repair-local", ownerSha.Sha, ct);
-            if (ownerRemote.Sha is not null)
-                await _progressGit.PinBaselineAsync(repo, task.Id, "repair-remote", ownerRemote.Sha, ct);
+            if (ownerRemote is { State: ProgressRemoteState.Present, Sha: { } ownerRemoteSha })
+                await _progressGit.PinBaselineAsync(repo, task.Id, "repair-remote", ownerRemoteSha, ct);
         }
 
         await _progressGit.PinBaselineAsync(repo, task.Id, "primary-local", primarySha.Sha, ct);
-        if (primaryRemote.Sha is not null)
-            await _progressGit.PinBaselineAsync(repo, task.Id, "primary-remote", primaryRemote.Sha, ct);
+        if (primaryRemote is { State: ProgressRemoteState.Present, Sha: { } primaryRemoteSha })
+            await _progressGit.PinBaselineAsync(repo, task.Id, "primary-remote", primaryRemoteSha, ct);
 
         var snapshot = new ProgressBaselineSnapshot(1, capturedAt, capturedAt, primary, repair);
         return new(TaskProgressJson.SerializeBaseline(snapshot), warning, null);

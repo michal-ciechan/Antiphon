@@ -265,6 +265,122 @@ public class RepairSourceDispatchTests
     }
 
     [Test]
+    [Timeout(120_000)]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task C1115_PrimaryBaselinePinsOnlyPresentObservations(bool present)
+    {
+        await using var world = await RepairSourceWorld.CreateAsync(ordinaryCodeTask: true);
+        var advertised = await PublishRemoteOnlyPrimaryAsync(world);
+        if (present)
+            await FetchAdvertisedObjectAsync(world, advertised.FullRef);
+
+        var (repair, _) = await world.DispatchAsync();
+        repair.Status.ShouldBe(AgentTaskStatus.Dispatched);
+        repair.RunnerId.ShouldBeNull();
+        (await TryRevParseAsync(world.Repo.Path, advertised.FullRef)).ShouldBe(advertised.LocalSha);
+        (await ScratchGitRepo.GitInAsync(repair.WorktreePath!, "rev-parse", "HEAD")).StdOut.Trim()
+            .ShouldBe(advertised.LocalSha);
+
+        var baseline = await ReloadBaselineAsync(world, repair.Id);
+        baseline.RepairSource.ShouldBeNull();
+        baseline.Primary.FullRef.ShouldBe(advertised.FullRef);
+        baseline.Primary.LocalSha.ShouldBe(advertised.LocalSha);
+        baseline.Primary.Remote.EndpointFingerprint.ShouldNotBeNullOrWhiteSpace();
+        baseline.Primary.Remote.EndpointFingerprint!.Length.ShouldBe(64);
+
+        var localPin = BaselinePin(repair.Id, "primary-local");
+        var remotePin = BaselinePin(repair.Id, "primary-remote");
+        (await TryRevParseAsync(world.Repo.Path, localPin)).ShouldBe(advertised.LocalSha);
+        if (present)
+        {
+            baseline.Primary.Remote.State.ShouldBe(ProgressRemoteState.Present);
+            baseline.Primary.Remote.Sha.ShouldBe(advertised.AdvertisedSha);
+            baseline.Primary.Remote.Reason.ShouldBeNull();
+            (await TryRevParseAsync(world.Repo.Path, remotePin)).ShouldBe(advertised.AdvertisedSha);
+        }
+        else
+        {
+            (await CommitExistsAsync(world.Repo.Path, advertised.AdvertisedSha)).ShouldBeFalse();
+            baseline.Primary.Remote.State.ShouldBe(ProgressRemoteState.Unavailable);
+            baseline.Primary.Remote.Sha.ShouldBe(advertised.AdvertisedSha);
+            baseline.Primary.Remote.Reason.ShouldBe("repository_lease_busy");
+            TraceNames(world.Git.Trace, remotePin).ShouldBeFalse();
+            (await TryRevParseAsync(world.Repo.Path, remotePin)).ShouldBeNull();
+        }
+    }
+
+    [Test]
+    [Timeout(120_000)]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task C1115_RepairBaselinePinsOnlyPresentObservations(bool present)
+    {
+        await using var world = await RepairSourceWorld.CreateAsync();
+        var ownerReads = 0;
+        string? advanced = null;
+        if (!present)
+        {
+            // The first owner ls-remote is currency and must still see A. The second is baseline
+            // capture: advance origin before that command so the nested lease refuses the fetch.
+            world.Git.BeforeCommand = async (_, args) =>
+            {
+                if (!IsExactOwnerLsRemote(args, world.OwnerRef))
+                    return null;
+                var seen = ++ownerReads;
+                if (seen == 2)
+                    advanced = await world.CommitFromSecondCloneAsync(world.OwnerRef, "repair remote advance");
+                return null;
+            };
+        }
+
+        try
+        {
+            var (repair, _) = await world.DispatchAsync();
+            repair.Status.ShouldBe(AgentTaskStatus.Dispatched);
+            repair.RunnerId.ShouldBeNull();
+            var baseline = await ReloadBaselineAsync(world, repair.Id);
+            baseline.RepairSource.ShouldNotBeNull();
+            baseline.RepairSource!.LocalSha.ShouldBe(world.OwnerSha);
+            baseline.Primary.LocalSha.ShouldBe(world.OwnerSha);
+            baseline.RepairSource.Remote.EndpointFingerprint.ShouldNotBeNullOrWhiteSpace();
+            baseline.RepairSource.Remote.EndpointFingerprint!.Length.ShouldBe(64);
+            (await TryRevParseAsync(world.Repo.Path, world.OwnerRef)).ShouldBe(world.OwnerSha);
+            (await ScratchGitRepo.GitInAsync(world.Owner.WorktreePath!, "rev-parse", "HEAD")).StdOut.Trim()
+                .ShouldBe(world.OwnerSha);
+
+            var repairLocal = BaselinePin(repair.Id, "repair-local");
+            var primaryLocal = BaselinePin(repair.Id, "primary-local");
+            var repairRemote = BaselinePin(repair.Id, "repair-remote");
+            (await TryRevParseAsync(world.Repo.Path, repairLocal)).ShouldBe(world.OwnerSha);
+            (await TryRevParseAsync(world.Repo.Path, primaryLocal)).ShouldBe(world.OwnerSha);
+            if (present)
+            {
+                baseline.RepairSource.Remote.State.ShouldBe(ProgressRemoteState.Present);
+                baseline.RepairSource.Remote.Sha.ShouldBe(world.OwnerSha);
+                baseline.RepairSource.Remote.Reason.ShouldBeNull();
+                (await TryRevParseAsync(world.Repo.Path, repairRemote)).ShouldBe(world.OwnerSha);
+            }
+            else
+            {
+                ownerReads.ShouldBe(2);
+                advanced.ShouldNotBeNull();
+                advanced.ShouldNotBe(world.OwnerSha);
+                (await CommitExistsAsync(world.Repo.Path, advanced!)).ShouldBeFalse();
+                baseline.RepairSource.Remote.State.ShouldBe(ProgressRemoteState.Unavailable);
+                baseline.RepairSource.Remote.Sha.ShouldBe(advanced);
+                baseline.RepairSource.Remote.Reason.ShouldBe("repository_lease_busy");
+                TraceNames(world.Git.Trace, repairRemote).ShouldBeFalse();
+                (await TryRevParseAsync(world.Repo.Path, repairRemote)).ShouldBeNull();
+            }
+        }
+        finally
+        {
+            world.Git.BeforeCommand = null;
+        }
+    }
+
+    [Test]
     [Arguments("source-landing")]
     [Arguments("pinned-agent")]
     [Arguments("follow-up")]
@@ -427,6 +543,71 @@ public class RepairSourceDispatchTests
         repair.ProgressBaselineJson.ShouldBeNull();
         repair.AgentSessionId.ShouldBeNull();
         repair.WorktreePath.ShouldBeNull();
+    }
+
+    private sealed record RemoteAdvertisement(string LocalSha, string AdvertisedSha, string FullRef);
+
+    private static async Task<RemoteAdvertisement> PublishRemoteOnlyPrimaryAsync(RepairSourceWorld world)
+    {
+        var masterResult = await ScratchGitRepo.GitInAsync(world.Repo.Path, "rev-parse", "refs/heads/master");
+        masterResult.Ok.ShouldBeTrue(masterResult.StdErr);
+        var master = masterResult.StdOut.Trim();
+        var fullRef = "refs/heads/" + RemoteWorkspaceService.OwnedBranch(world.Repair.Id);
+        (await ScratchGitRepo.GitInAsync(world.Repo.Path, "push", "origin", $"refs/heads/master:{fullRef}")).Ok.ShouldBeTrue();
+        var advertised = await world.CommitFromSecondCloneAsync(fullRef, "primary remote advance");
+        advertised.ShouldNotBe(master);
+        (await CommitExistsAsync(world.Repo.Path, advertised)).ShouldBeFalse();
+        (await TryRevParseAsync(world.Repo.Path, fullRef)).ShouldBeNull();
+        return new RemoteAdvertisement(master, advertised, fullRef);
+    }
+
+    private static async Task FetchAdvertisedObjectAsync(RepairSourceWorld world, string fullRef)
+    {
+        var scratch = $"refs/antiphon/progress/{world.Repair.Id:N}/scratch-observe";
+        (await ScratchGitRepo.GitInAsync(
+            world.Repo.Path, "fetch", "--no-tags", world.Remote, $"{fullRef}:{scratch}")).Ok.ShouldBeTrue();
+        (await TryRevParseAsync(world.Repo.Path, fullRef)).ShouldBeNull();
+        (await ScratchGitRepo.GitInAsync(world.Repo.Path, "rev-parse", "HEAD")).StdOut.Trim()
+            .ShouldBe((await ScratchGitRepo.GitInAsync(world.Repo.Path, "rev-parse", "refs/heads/master")).StdOut.Trim());
+    }
+
+    private static async Task<ProgressBaselineSnapshot> ReloadBaselineAsync(RepairSourceWorld world, Guid taskId)
+    {
+        await using var db = world.CreateContext();
+        var row = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
+        var baseline = TaskProgressJson.TryReadBaseline(row.ProgressBaselineJson).ShouldNotBeNull();
+        var again = TaskProgressJson.TryReadBaseline(TaskProgressJson.SerializeBaseline(baseline!)).ShouldNotBeNull();
+        again!.Primary.Remote.ShouldBe(baseline.Primary.Remote);
+        again.Primary.LocalSha.ShouldBe(baseline.Primary.LocalSha);
+        again.Primary.FullRef.ShouldBe(baseline.Primary.FullRef);
+        again.RepairSource?.Remote.ShouldBe(baseline.RepairSource?.Remote);
+        again.RepairSource?.LocalSha.ShouldBe(baseline.RepairSource?.LocalSha);
+        return baseline;
+    }
+
+    private static string BaselinePin(Guid taskId, string name) =>
+        $"refs/antiphon/progress/{taskId:N}/baseline-{name}";
+
+    private static bool TraceNames(IEnumerable<string[]> trace, string pin) =>
+        trace.Any(args => args.Any(arg => arg.Contains(pin, StringComparison.Ordinal)));
+
+    private static bool IsExactOwnerLsRemote(IReadOnlyList<string> args, string ownerRef) =>
+        args.Count > 0
+        && args[0] == "ls-remote"
+        && args.Contains("--refs")
+        && args.Contains("--exit-code")
+        && string.Equals(args[^1], ownerRef, StringComparison.Ordinal);
+
+    private static async Task<bool> CommitExistsAsync(string repo, string sha)
+    {
+        var result = await ScratchGitRepo.GitInAsync(repo, "cat-file", "-e", sha + "^{commit}");
+        return result.Ok;
+    }
+
+    private static async Task<string?> TryRevParseAsync(string repo, string revision)
+    {
+        var result = await ScratchGitRepo.GitInAsync(repo, "rev-parse", "--verify", "--quiet", revision);
+        return result.Ok ? result.StdOut.Trim() : null;
     }
 
     private static async Task<int> CountSessions(RepairSourceWorld world)
