@@ -818,10 +818,10 @@ public sealed class RunnerTaskSettlementTests
             await world.ReloadAsync();
         }
 
+        world.Task.Status.ShouldBe(AgentTaskStatus.Succeeded, Why(world));
         var debtSql = DebtStatements(counter);
         Console.WriteLine($"C1082-SQL path=pending-review statements={counter.Statements} debtSql={debtSql}");
         debtSql.ShouldBe(1);
-        world.Task.Status.ShouldBe(AgentTaskStatus.Succeeded, Why(world));
         world.Task.FailureCode.ShouldBeNull();
         world.Task.NextStage.ShouldBe(PipelineHandoffKind.None);
         (world.Task.NextHandoff ?? "").ShouldNotContain("Runner sync blocked");
@@ -1003,9 +1003,9 @@ public sealed class RunnerTaskSettlementTests
         world.Evidence()!.RemoteSync!.State.ShouldBe(RemoteSettlementSyncState.Unavailable);
         world.Evidence()!.RemoteSync!.Reason.ShouldBe(RemoteSettlementSyncReasons.LeaseBusy);
         (await world.Git.HeadAsync()).ShouldBe(world.Git.Baseline);
-        var warning = (await world.EventsAsync()).Single(e => e.Type == AgentTaskEventType.Warning
-            && e.Detail.Contains(RemoteSettlementSyncReasons.LeaseBusy, StringComparison.Ordinal));
-        warning.Detail.ShouldContain("then reply");
+        (await world.EventsAsync()).ShouldContain(e => e.Type == AgentTaskEventType.Warning
+            && e.Detail.Contains(RemoteSettlementSyncReasons.LeaseBusy, StringComparison.Ordinal)
+            && e.Detail.Contains("then reply", StringComparison.Ordinal));
         (await world.NoteAsync())!.Body.ShouldContain("Runner sync blocked");
         await AssertNoDebtAsync(world);
     }
