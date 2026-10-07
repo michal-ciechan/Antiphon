@@ -4401,6 +4401,7 @@ c1008_git_program() {
 set -euo pipefail
 export GIT_OPTIONAL_LOCKS=0 GIT_NO_LAZY_FETCH=1 GIT_TERMINAL_PROMPT=0 LC_ALL=C
 export GIT_CONFIG_SYSTEM=/dev/null GIT_CONFIG_GLOBAL=/dev/null
+export GIT_NO_REPLACE_OBJECTS=1
 root=''
 scratch=''
 audit_check=unclassified
@@ -4457,10 +4458,10 @@ refuse_unpublished() {
     printf 'RecycleUnpublishedWork\n'
     exit 2
 }
-# A --no-checkout seed has no index. Porcelain that is only staged deletions of
-# HEAD, with no file outside .git, is that seed. Any other output is dirty.
+# An absent index is safe only with the deploy seed's empty worktree shape.
+# There is then no worktree/index content to lose; recovery tips are proved below.
 consider_dirty() {
-    local where="$1" kind="$2" clean index index_path line seed extra index_existed=0
+    local where="$1" kind="$2" clean index index_path line seed extra index_existed=0 entry metadata path mode oid stage actual flags
     audit_repo="$where"
     audit_check=index
     index="$(git -C "$where" rev-parse --git-path index 2>/dev/null)" || fail $?
@@ -4471,7 +4472,6 @@ consider_dirty() {
     if [ -e "$index_path" ]; then index_existed=1; fi
     audit_check="$kind"
     clean="$(git -C "$where" status --porcelain --untracked-files=all 2>/dev/null)" || fail $?
-    [ -n "$clean" ] || return 0
     seed=0
     if [ "$index_existed" = 0 ]; then
         seed=1
@@ -4484,11 +4484,70 @@ consider_dirty() {
         done <<< "$clean"
         if [ "$seed" = 1 ]; then
             audit_check=worktree-files
-            extra="$(find "$where" -mindepth 1 -name .git -prune -o -print -quit 2>/dev/null)" || fail $?
-            [ -n "$extra" ] || return 0
+            extra="$(find "$where" -mindepth 1 -path "$where/.git" -prune -o -print -quit 2>/dev/null)" || fail $?
+            if [ -z "$extra" ]; then
+                audit_check=seed-stash
+                git -C "$where" for-each-ref --format='%(objectname)' refs/stash > "$scratch/stash" 2>/dev/null || fail $?
+                [ ! -s "$scratch/stash" ] || refuse_dirty "$kind" "$where"
+                return 0
+            fi
         fi
+        refuse_dirty "$kind" "$where"
     fi
-    refuse_dirty "$kind" "$where"
+    [ -z "$clean" ] || refuse_dirty "$kind" "$where"
+    # Status trusts index flags and stat data. Refuse shortcut/sparse entries and
+    # hash every regular file or symlink without filters, regardless of timestamps.
+    audit_check=index-flags
+    git -C "$where" ls-files -v -z > "$scratch/flags" 2>/dev/null || fail $?
+    while IFS= read -r -d '' flags; do
+        [[ "$flags" == 'H '* ]] || refuse_dirty index-flags "$where"
+    done < "$scratch/flags"
+    audit_check=index-content
+    git -C "$where" ls-files --stage -z > "$scratch/index" 2>/dev/null || fail $?
+    while IFS= read -r -d '' entry; do
+        [[ "$entry" == *$'\t'* ]] || fail 2
+        metadata="${entry%%$'\t'*}"; path="${entry#*$'\t'}"
+        read -r mode oid stage <<< "$metadata"
+        [[ "$oid" =~ ^[0-9a-f]{40}$ && "$stage" = 0 && -n "$path" ]] || fail 2
+        case "$path" in /*|../*|*/../*|*/..) fail 2 ;; esac
+        case "$mode" in
+            100644|100755)
+                [ -f "$where/$path" ] && [ ! -L "$where/$path" ] || refuse_dirty index-content "$where"
+                actual="$(git -C "$where" hash-object --no-filters -- "$where/$path" 2>/dev/null)" || fail $?
+                ;;
+            120000)
+                [ -L "$where/$path" ] || refuse_dirty index-content "$where"
+                actual="$(readlink -n -- "$where/$path" | git -C "$where" hash-object --stdin 2>/dev/null)" || fail $?
+                ;;
+            *) refuse_unknown index-mode 2 "$where" ;;
+        esac
+        [ "$actual" = "$oid" ] || refuse_dirty index-content "$where"
+    done < "$scratch/index"
+}
+# Read both sides of every reflog entry, including the oldest old tip. Git's
+# reflog presentation can omit unreachable/missing entries; malformed logs refuse.
+consider_tips() {
+    local where="$1" directory log old new rest oid
+    audit_repo="$where"
+    audit_check=for-each-ref
+    git -C "$where" for-each-ref --format='%(objectname)' >> "$scratch/tips" 2> "$scratch/ref-errors" || fail $?
+    [ ! -s "$scratch/ref-errors" ] || fail 2
+    audit_check=head
+    git -C "$where" rev-parse --verify HEAD >> "$scratch/tips" 2>/dev/null || fail $?
+    audit_check=reflog-directory
+    directory="$(git -C "$where" rev-parse --path-format=absolute --git-path logs 2>/dev/null)" || fail $?
+    [ -d "$directory" ] || return 0
+    audit_check=reflog-list
+    find "$directory" -type f -print0 > "$scratch/logs" 2>/dev/null || fail $?
+    while IFS= read -r -d '' log; do
+        audit_check=reflog-read
+        while IFS=' ' read -r old new rest || [ -n "$old$new$rest" ]; do
+            [[ "$old" =~ ^[0-9a-f]{40}$ && "$new" =~ ^[0-9a-f]{40}$ && -n "$rest" ]] || fail 2
+            for oid in "$old" "$new"; do
+                [ "$oid" = 0000000000000000000000000000000000000000 ] || printf '%s\n' "$oid" >> "$scratch/tips"
+            done
+        done < "$log"
+    done < "$scratch/logs"
 }
 trap 'fail $?' ERR
 trap '[ -n "$scratch" ] && [ -d "$scratch" ] && rm -r -- "$scratch"' EXIT
@@ -4524,6 +4583,7 @@ while IFS= read -r -d '' entry; do
     gitdir="$(readlink -e "$gitdir")" || fail $?
     [[ "$gitdir/" == "$root/"* ]] || refuse_unknown git-dir-confine 0 "$repo"
     for directory in "$top" "$gitdir"; do
+        [ ! -s "$directory/info/grafts" ] || refuse_unknown grafts 0 "$repo"
         for marker in index.lock MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD rebase-merge rebase-apply; do
             [ ! -e "$directory/$marker" ] || refuse_unknown "lock-$marker" 0 "$repo"
         done
@@ -4551,8 +4611,8 @@ while IFS= read -r -d '' entry; do
     audit_repo="$repo"
     audit_check=worktree-list
     git -C "$repo" worktree list --porcelain -z > "$scratch/worktrees" 2>/dev/null || fail $?
-    audit_check=for-each-ref
-    git -C "$repo" for-each-ref --format='%(objectname)' refs/heads refs/tags > "$scratch/tips" 2>/dev/null || fail $?
+    : > "$scratch/tips"
+    consider_tips "$repo"
     while IFS= read -r -d '' field; do
         [[ "$field" == worktree\ * ]] || continue
         audit_check=worktree-path
@@ -4563,19 +4623,12 @@ while IFS= read -r -d '' entry; do
         work_bare="$(git -C "$work" rev-parse --is-bare-repository 2>/dev/null)" || fail $?
         if [ "$work_bare" = false ]; then
             consider_dirty "$work" worktree-status
-            audit_repo="$work"
-            audit_check=worktree-head
-            git -C "$work" rev-parse --verify HEAD >> "$scratch/tips" 2>/dev/null || fail $?
         elif [ "$work_bare" != true ]; then
             refuse_unknown worktree-bare 2 "$work"
         fi
+        consider_tips "$work"
     done < "$scratch/worktrees"
-    # A mirror may have no HEAD; its explicit local branch/tag tips still count.
     audit_repo="$repo"
-    if [ "$bare" = false ]; then
-        audit_check=head
-        git -C "$repo" rev-parse --verify HEAD >> "$scratch/tips" 2>/dev/null || fail $?
-    fi
     audit_check=ls-remote
     timeout --kill-after=5s 30s git -C "$repo" ls-remote --heads origin > "$scratch/origin" 2>/dev/null || fail $?
     audit_check=origin-parse
@@ -4603,8 +4656,17 @@ while IFS= read -r -d '' entry; do
     audit_check=tips
     sort -u "$scratch/tips" > "$scratch/unique" || fail $?
     [ -s "$scratch/unique" ] || refuse_unknown tips-empty 0 "$repo"
+    # Traverse the full graph, without the publication exclusions that could hide
+    # a missing ancestor. Only blobs are optional in the blobless seed contract.
+    audit_check=object-completeness
+    cat "$scratch/unique" > "$scratch/roots" || fail $?
+    printf '%s\n' "${comparisons[@]}" >> "$scratch/roots"
+    timeout --kill-after=5s 30s git -C "$repo" rev-list --objects --no-object-names --filter=blob:none --missing=error --stdin \
+        < "$scratch/roots" > "$scratch/objects" 2>/dev/null || fail $?
     while IFS= read -r tip; do
         [[ "$tip" =~ ^[0-9a-f]{40}$ ]] || refuse_unknown tips 2 "$repo"
+        audit_check=tip-commit
+        git -C "$repo" cat-file -e "$tip^{commit}" 2>/dev/null || fail $?
         audit_check=rev-list
         count="$(timeout --kill-after=5s 30s git -C "$repo" rev-list --count "$tip" --not "${comparisons[@]}" 2>/dev/null)" || fail $?
         [[ "$count" =~ ^[0-9]+$ ]] || refuse_unknown rev-list-count 2 "$repo"
@@ -4737,7 +4799,7 @@ c1008_audit() {
 }
 
 c1008_audit_checked() {
-    local audit code=0 work_state
+    local audit code=0 work_state detail
     work_state="$(printf '%s' "$C1008_RECORD" | jq -r --arg name "${C1008_PROJECT}_work" '.volumes[$name].outcome')"
     if [ "${C1008_RESUME:-0}" = 1 ] && { [ "$work_state" = removed ] ||
         { [ "$work_state" = pending ] && [ "$(printf '%s' "$C1008_RECORD" | jq -r .phase)" = removing ]; }; }; then
@@ -4758,7 +4820,7 @@ c1008_audit_checked() {
     if [ "$code" != 0 ]; then
         detail="$(printf '%s\n' "$audit" | sed -n '/^audit check=/{p;q;}')"
         [ -n "$detail" ] || detail='audit check=unclassified status= repo='
-        C1008_RECORD="$(printf '%s' "$C1008_RECORD" | jq -c --arg audit "$detail" '.audit=$audit')" || c1008_refuse RecycleReceiptUnavailable
+        C1008_RECORD="$(printf '%s' "$C1008_RECORD" | jq -c --arg audit "$detail" '.auditFailure=$audit | .audit //= $audit')" || c1008_refuse RecycleReceiptUnavailable
         c1008_save || c1008_refuse RecycleReceiptUnavailable
         case "$code" in
             3) c1008_refuse "RecycleUnpublishedWork $detail" ;;

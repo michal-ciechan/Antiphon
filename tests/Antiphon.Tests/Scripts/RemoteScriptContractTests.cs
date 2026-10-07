@@ -748,6 +748,8 @@ public sealed class RemoteScriptContractTests
             repo="$root/work/repo"
             src="$root/seed-src"
             git init -q --bare "$origin"
+            git -C "$origin" config uploadpack.allowFilter true
+            git -C "$origin" config uploadpack.allowAnySHA1InWant true
             git init -q -b master "$src"
             git -C "$src" config user.name Fixture
             git -C "$src" config user.email fixture@example.invalid
@@ -761,6 +763,12 @@ public sealed class RemoteScriptContractTests
             filter="$(git -C "$repo" config --get remote.origin.partialclonefilter)"
             printf 'PROMISOR=%s\nFILTER=%s\n' "$promisor" "$filter"
             [ "$promisor" = true ] && [ "$filter" = blob:none ]
+            blob="$(git -C "$repo" rev-parse HEAD:file)"
+            missing="$(GIT_NO_LAZY_FETCH=1 git -C "$repo" rev-list --objects --missing=print HEAD)"
+            printf '%s\n' "$missing" | grep -Fx "?$blob"
+            if GIT_NO_LAZY_FETCH=1 git -C "$repo" cat-file -e "$blob" 2>/dev/null; then
+                echo 'seed unexpectedly contains its blob' >&2; exit 1
+            fi
             case "$mode" in
                 published) ;;
                 unpublished)
@@ -788,6 +796,61 @@ public sealed class RemoteScriptContractTests
         var output = await stdout + await stderr;
         proc.ExitCode.ShouldBe(0, output);
         return output;
+    }
+
+    [Test]
+    [Arguments("stash")]
+    [Arguments("reflog")]
+    [Arguments("reflog-old")]
+    [Arguments("recovery")]
+    [Arguments("secondary")]
+    [Arguments("worktree-ref")]
+    [Arguments("linked-head")]
+    [Arguments("linked-private")]
+    [Arguments("bare-head")]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1105_Git_audit_recovery_tips(string variant) => C1105AuditContract(variant);
+
+    [Test]
+    [Arguments("seed")]
+    [Arguments("fetch-only")]
+    [Arguments("empty-used")]
+    [Arguments("seed-untracked")]
+    [Arguments("seed-tracked")]
+    [Arguments("seed-ignored")]
+    [Arguments("seed-empty-ignored")]
+    [Arguments("seed-stash")]
+    [Arguments("staged")]
+    [Arguments("modified")]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1105_Git_audit_seed_content(string variant) => C1105AuditContract(variant);
+
+    [Test]
+    [Arguments("assume")]
+    [Arguments("skip")]
+    [Arguments("intent")]
+    [Arguments("sparse")]
+    [Arguments("racy")]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1105_Git_audit_index_content(string variant) => C1105AuditContract(variant);
+
+    [Test]
+    [Arguments("missing-commit")]
+    [Arguments("missing-tree")]
+    [Arguments("missing-head-tree")]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1105_Git_audit_object_completeness(string variant) => C1105AuditContract(variant);
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1105_Git_audit_resume_preserves_proof() => C1105AuditContract("resume");
+
+    private static void C1105AuditContract(string variant)
+    {
+        C1008HostFixture.RequireNativeLinux();
+        var output = LinuxShell("node \"$repo/scripts/fixtures/c1105-git-audit.cjs\" " + variant
+            + " \"$repo/scripts/c590-remote.sh\"\n", "repo");
+        output.ShouldContain("PASS " + variant);
     }
 
     [Test]
