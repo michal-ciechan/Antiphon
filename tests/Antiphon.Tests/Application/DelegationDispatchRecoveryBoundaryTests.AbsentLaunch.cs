@@ -48,7 +48,15 @@ public partial class DelegationDispatchRecoveryBoundaryTests
                 services.AddSingleton<DelegationWorkspaceResolver>();
                 services.AddDelegationWorktreeGraph();
                 services.AddScoped<AgentTaskService>();
-                services.AddScoped<AgentTaskDispatcher>();
+                // A positive whitelist test needs explicit complete native-history evidence.
+        // Production's absent-session 404 is unknown, never this fixture's empty certificate.
+        runner.ReadTranscript ??= async id =>
+        {
+            await using var nativeDb = new AppDbContext(TestDbFixture.CreateDbContextOptions(connection));
+            var generation = await nativeDb.AgentSessions.Where(s => s.Id == id).Select(s => s.StartedAt).SingleAsync();
+            return new SessionRunnerTranscriptDto(id, [], 0, TerminalComplete: true, AcceptedStartedAt: generation);
+        };
+        services.AddScoped<AgentTaskDispatcher>();
                 services.AddSingleton<IOptionsMonitor<AgentRegistrySettings>>(
                     new BridgeQueueHarness.OptionsMonitorStub<AgentRegistrySettings>(new AgentRegistrySettings
                     {
@@ -570,6 +578,14 @@ public partial class DelegationDispatchRecoveryBoundaryTests
             services.AddSingleton<DelegateBindRefusalRecovery>();
         }
 
+        // A positive whitelist test needs explicit complete native-history evidence.
+        // Production's absent-session 404 is unknown, never this fixture's empty certificate.
+        runner.ReadTranscript ??= async id =>
+        {
+            await using var nativeDb = new AppDbContext(TestDbFixture.CreateDbContextOptions(connection));
+            var generation = await nativeDb.AgentSessions.Where(s => s.Id == id).Select(s => s.StartedAt).SingleAsync();
+            return new SessionRunnerTranscriptDto(id, [], 0, TerminalComplete: true, AcceptedStartedAt: generation);
+        };
         services.AddScoped<AgentTaskDispatcher>();
         return new SweepHost(services.BuildServiceProvider(), runner, stopper, clock);
     }
@@ -676,8 +692,9 @@ public partial class DelegationDispatchRecoveryBoundaryTests
         public Task<SessionRunnerSnapshotDto> GetSnapshotAsync(Guid sessionId, CancellationToken ct) =>
             throw new NotSupportedException();
 
+        public Func<Guid, Task<SessionRunnerTranscriptDto>>? ReadTranscript { get; set; }
         public Task<SessionRunnerTranscriptDto> GetTranscriptAsync(Guid sessionId, CancellationToken ct) =>
-            throw new NotSupportedException();
+            ReadTranscript?.Invoke(sessionId) ?? throw new NotSupportedException();
 
         public Task ClearLiveBufferAsync(Guid sessionId, CancellationToken ct) =>
             throw new NotSupportedException();

@@ -1,4 +1,5 @@
 using System.Text;
+using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
@@ -13,6 +14,41 @@ namespace Antiphon.Tests.Application;
 
 public partial class DelegationDispatchRecoveryBoundaryTests
 {
+    [Test]
+    [Arguments("unreadable")]
+    [Arguments("null")]
+    [Arguments("incomplete")]
+    [Arguments("sidecar-entry")]
+    [Arguments("wrong-session")]
+    [Arguments("wrong-generation")]
+    public async Task C1149_Unknown_native_evidence_is_not_unattempted(string condition)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var seeded = await SeedAsync(schema.ConnectionString, new AbsentShape());
+        var runner = new CountingRunner
+        {
+            ReadTranscript = id => condition switch
+            {
+                "unreadable" => throw new IOException("native store unreadable"),
+                "null" => Task.FromResult<SessionRunnerTranscriptDto>(null!),
+                _ => Task.FromResult(new SessionRunnerTranscriptDto(
+                    condition == "wrong-session" ? Guid.NewGuid() : id, [],
+                    condition == "sidecar-entry" ? 1 : 0,
+                    TerminalComplete: condition != "incomplete",
+                    AcceptedStartedAt: condition == "wrong-generation" ? seeded.StartedAt.AddHours(1) : seeded.StartedAt)),
+            },
+        };
+        var stopper = new RecordingSessionStopper();
+        await using (var host = OpenSweep(schema.ConnectionString, runner, stopper,
+            new FakeTimeProvider(DateTimeOffset.UtcNow), new DeadSessionFirstSeenState()))
+            await host.DueAsync();
+        await using var verify = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        (await verify.AgentTasks.SingleAsync(t => t.Id == seeded.TaskId)).Status
+            .ShouldBe(AgentTaskStatus.Failed, condition);
+        (await verify.AgentTaskEvents.CountAsync(e => e.AgentTaskId == seeded.TaskId
+            && e.Type == AgentTaskEventType.Blocked)).ShouldBe(0, condition);
+        Quiet(runner, stopper, condition);
+    }
     [Test]
     [Arguments("F1-source-task-delivered")]
     [Arguments("F1-custody-on-other-session")]
@@ -85,7 +121,7 @@ public partial class DelegationDispatchRecoveryBoundaryTests
                         break;
                     case "prior-replied-task": task.RepliedAt = seeded.DispatchedAt; break;
                     case "old-transcript": Add(TranscriptKinds.TurnEnd, 1, seeded.DispatchedAt.AddHours(-1)); break;
-                    case "unknown-transcript-kind": Add("future-entry-kind", 1); break;
+                    case "unknown-transcript-kind": Add("future-entry-kind", 1); Add(TranscriptKinds.TurnEnd, 2); break;
                     case "missing-brief": db.SessionQueuedMessages.Remove(brief); break;
                     case "verdict-time-only": brief.DeliveryVerdictAt = seeded.DispatchedAt; break;
                     case "rules-prompt-only": brief.RulesPromptSequence = 0; break;
