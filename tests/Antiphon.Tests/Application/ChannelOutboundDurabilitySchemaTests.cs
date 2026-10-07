@@ -24,7 +24,7 @@ public sealed class ChannelOutboundDurabilitySchemaTests
         var migrations = (await db.Database.GetAppliedMigrationsAsync()).ToArray();
         var position = Array.FindIndex(migrations,
             m => m.EndsWith("_ExtendChannelOutboundRecovery", StringComparison.Ordinal));
-        position.ShouldBe(migrations.Length - 1);
+        // Pinned to its predecessor, never as the newest migration.
         position.ShouldBeGreaterThan(0);
         migrations[position - 1].ShouldBe("20261004011911_CompletedCardWorktreeCleanup");
         var migrator = db.GetService<IMigrator>();
