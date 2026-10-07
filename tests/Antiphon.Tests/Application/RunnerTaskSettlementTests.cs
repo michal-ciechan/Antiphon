@@ -1006,7 +1006,13 @@ public sealed class RunnerTaskSettlementTests
         (await world.EventsAsync()).ShouldContain(e => e.Type == AgentTaskEventType.Warning
             && e.Detail.Contains(RemoteSettlementSyncReasons.LeaseBusy, StringComparison.Ordinal)
             && e.Detail.Contains("then reply", StringComparison.Ordinal));
-        (await world.NoteAsync())!.Body.ShouldContain("Runner sync blocked");
+        // Today's blocked note carries the unavailable warning, not the pending-debt vocabulary.
+        // "Runner sync blocked" is the handoff, asserted above.
+        var note = (await world.NoteAsync())!.Body;
+        note.ShouldContain("Runner sync unavailable");
+        note.ShouldContain("then reply");
+        note.ShouldNotContain("synced later");
+        note.ShouldNotContain("desktop-sync=pending");
         await AssertNoDebtAsync(world);
     }
 
