@@ -422,7 +422,8 @@ The target roster is the hard-coded contract in `c1008_compose_model`, including
 directory bind `/run/antiphon/github-token`. `RecycleComposeMismatch` refuses a target render
 failure or a declaration that is not that roster. Host Compose v2.18.1 `docker compose config --format json`
 omits a default service-secret target and emits secret declarations as name, file, and external
-false. That shape is pinned by `scripts/fixtures/c1105-compose-v218-config.json`. The same token refuses a byte mismatch between
+false. A missing target defaults to the source name, and an explicit relative target is honoured
+under `/run/secrets/`. That shape is pinned by `scripts/fixtures/c1105-compose-v218-config.json`. The same token refuses a byte mismatch between
 the materialized Compose file and `SERVER2_COMPOSE`: that comparison runs before the recycle lock
 and before any removal, and `deploy-parent` compares the same two files again before `compose up`.
 The running proof prints
