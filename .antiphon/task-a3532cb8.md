@@ -1,20 +1,72 @@
-# Authorized continuation — verification pending
+# CARD-1105 audit repair D1-D6 — completed Code report a3532cb8
 
-The caller raised the repair cap by one and authorized the prepared check-order patch. The previous blocked report below is historical and is superseded by this continuation. The current-origin advertisement check now precedes recovery-tip enumeration; both checks and the existing diagnostic assertion are unchanged. Verification selection: CP-2, CP-11, CP-7 and CP-12 (77 cases); exclusions and prior source attribution are recorded in the plan. This is the final authorized repair round; a remaining red result must be reported blocked.
+The authorized check-order repair passed: **77/77 fresh cases, zero failed or skipped**. Origin advertisement is checked before recovery-tip enumeration; both checks remain fail-closed and the existing assertion is unchanged. All commissioned ordinary V/R checks are complete using this affected-row rerun plus the prior full-run evidence for eight unaffected rows (96 cases). This supersedes the earlier blocked report and its unexecuted proposal. Next: **review**. Every positive control remains pending SourceLanding Mutation.
 
----
+Task: **a3532cb8-5815-4bad-8c6e-72931b340785**. Original Code/landing owner: **6192d44b-9ec0-43a8-aed1-81fdb4565fc2**. Branch: **feat/card-task-a3532cb8**. Worktree: **/work/worktrees/task-a3532cb8**. The desktop checkout C:\Antiphon\worktrees\card-task-a3532cb8 is not reachable here.
 
-# CARD-1105 audit repair D1-D6 — Code report a3532cb8
+Task base: **4bfc7379df6465df75481ac5a0f8069d435f3755**. Original full-candidate base: **b5e78700ae9a76430c13d75cc03399055dd82e59**. Final tested source (R3): **57178fff2b2d1486d734b1e86ecb6a05480a18a2**. Prior full run (R2): **fff8dcd2eaece3ebb9c1dec8dcaf8093bd48f219**. Source slices 554faf1354cd98fd6b33e8f3ec00f496bddaa894, fff8dcd2eaece3ebb9c1dec8dcaf8093bd48f219 and 57178fff2b2d1486d734b1e86ecb6a05480a18a2 were committed and pushed before their checkpoint runs. Report-only commits do not relabel test receipts; the final report commit and matching remote SHA are given in the caller summary/publication record.
 
-Implementation is pushed, but Final verification is not clean: 172/173 passed, 1 failed. One existing diagnostic assertion still needs a production check-order repair. The brief's two-round cap has been reached; approval for another round was requested while the remaining authorized rows ran. No approval has arrived. Do not land or send this candidate to clean Review yet.
+Changed deliverables: scripts/c590-remote.sh; scripts/fixtures/c1105-git-audit.cjs; tests/Antiphon.Tests/Scripts/RemoteScriptContractTests.cs; docs/docker-stack.md; docs/investigations/2026-10-07-card-1105-git-audit-promisor.md (plan and closed manifest); this report. The last production patch only relocates the existing worktree-list/consider_tips block after origin-advertisement validation. Static comparison confirms the complete production line multiset is unchanged and the test source is byte-for-byte unchanged (SHA-256 18a0e4567329bdf00bbbaa5e1e2c14013effb1c50bffbc6e386b6d27ef09d024).
 
-Task: a3532cb8-5815-4bad-8c6e-72931b340785. Original Code/landing owner: **6192d44b-9ec0-43a8-aed1-81fdb4565fc2**. Branch: feat/card-task-a3532cb8. Worktree: /work/worktrees/task-a3532cb8. The desktop checkout C:\Antiphon\worktrees\card-task-a3532cb8 is not reachable here.
+## Final repair and scope
 
-Reviewed/task base: 4bfc7379df6465df75481ac5a0f8069d435f3755. Original complete-candidate base: b5e78700ae9a76430c13d75cc03399055dd82e59. Initial implementation commit: 554faf1354cd98fd6b33e8f3ec00f496bddaa894. Actual final tested source: **fff8dcd2eaece3ebb9c1dec8dcaf8093bd48f219**. Both implementation slices were committed and pushed immediately. A later report-only commit does not relabel these test receipts.
+The prior full run had one introduced diagnostic failure: C1008_Recycle_refuses_uninspectable_git expected check=origin-advertisement but got check=for-each-ref when broken origin tracking was seen by recovery enumeration first. Both runs refused removal as RecycleGitAuditUnknown. The caller explicitly authorized one additional, final repair round. Moving the unchanged origin proof first makes the receipt name the first failing check deterministically. The unchanged method now passes in a fresh TRX (executionId 4669eca3-94cd-46c2-8913-f9b44b061372, duration 173.2791011s), including deleted/missing/stale origin diagnostics and the later fault cases. Both fail-closed checks are still required; no assertion, timeout, retry policy or fixture was changed in R3.
 
-Initial fetch observed origin/master=3eeea31cc261c7265e81b1b05c8bc7b40079886e and merge-tree exited 0, tree ec239f5171c8b2dc7046b8f26a40a0bdada9133f. Final fetch/merge/remote/evidence-guard facts accompany the final caller report. This branch was never rebased, reset, amended or force-pushed.
+R3 ran CP-2, CP-11, CP-7 and CP-12. CP-11 covers the audit/receipt matrix and all D1-D6 cases. CP-7's full class exercises published, dirty and unpublished real Git repositories through retirement. CP-12's full wrapper class is expressly required by the caller. CP-2 is the registry guard. Every intended class, method and parameter variant was checked in fresh TRX, with unique execution IDs, fresh start/end times, nonzero counts and unchanged original rosters.
 
-Changed source: scripts/c590-remote.sh; scripts/fixtures/c1105-git-audit.cjs; tests/Antiphon.Tests/Scripts/RemoteScriptContractTests.cs; docs/docker-stack.md; docs/investigations/2026-10-07-card-1105-git-audit-promisor.md. The latter is the plan and closed checkpoint manifest. The new fixture executes extracted production code with only the owned /work path boundary remapped; Git remotes use local file transport and Docker is stubbed at the receipt boundary. Nothing contacted production server2. GET /api/runner-defaults and GET /api/session-runners succeeded against the configured control-plane API; no runner/platform pin or dispatch was used.
+The other eight rows retain their green evidence from run 20261007-193034-be09, source fff8dcd2eaece3ebb9c1dec8dcaf8093bd48f219 (96 cases). CP-1 pins unchanged documentation contract sentences; CP-3 pins seed/compose/deploy text outside the audit; CP-4 invokes compose/mount/generation helpers, not the Git audit; CP-5 uses wrapper/cleanup/bridge fixtures without a materialized Git repository; CP-6 exercises prerequisite admission and refuses before the Git audit; CP-8, CP-9 and CP-10 use empty-work Git inventories or refuse before the audit, so none enters the reordered per-repository checks. No assertion, timeout, filter, expected count, or fixture changed in this extra round. Whole Unit and deliberate PC mutants remain outside Code's commissioned scope.
+
+The scope is bounded to the recycle script and named script contracts. No service implementation for delivery, landing, leases or persistence changed; no unbounded shared impact or full-assembly run was introduced. No whole-Unit run was performed or claimed. Deferred-to-final ordinary IDs: **none**. PCs are a separate pending stage, not deferred ordinary checks.
+
+## Ordinary outcomes
+
+| ID | Actual outcome |
+|---|---|
+| V-1 | PASS: all 10 retained recovery-tip variants, R3 CP-11 |
+| V-2 | PASS: all 10 seed/content variants, R3 CP-11 |
+| V-3 | PASS: all 5 flag/stat variants, R3 CP-11 |
+| V-4 | PASS: all 3 required-object-loss variants and missing-blob positive seed, R3 CP-11 |
+| V-5 | PASS: actual deploy clone line with genuinely absent blobs, R3 CP-11 and retained shape measurement |
+| V-6 | PASS: outage preserves saved proof and restoration resumes, R3 CP-11 |
+| R-1 | PASS: full 12-row ordinary scope completed; 77 affected/registry cases R3 plus 96 unaffected cases R2, explicitly source-attributed |
+| R-2 | PASS: no lazy fetch and required environment at every Git start in all 29 new cases, R3 CP-11 |
+| R-3 | PASS: unchanged classification/receipt/UID/count-failure assertions, R3 CP-11 |
+
+| CP | Source run | Executed | Passed | Failed | Skipped | Driver time | Slot | Waited |
+|---|---|---:|---:|---:|---:|---|---|---|
+| CP-1 | R2 | 14 | 14 | 0 | 0 | 0m 4s | granted | 0s |
+| CP-2 | R3 | 3 | 3 | 0 | 0 | 0m 6s | granted | 0s |
+| CP-3 | R2 | 6 | 6 | 0 | 0 | 0m 3s | granted | 0s |
+| CP-11 | R3 | 37 | 37 | 0 | 0 | 8m 24s | granted | 0s |
+| CP-4 | R2 | 12 | 12 | 0 | 0 | 1m 5s | granted | 0s |
+| CP-5 | R2 | 13 | 13 | 0 | 0 | 3m 4s | granted | 0s |
+| CP-6 | R2 | 39 | 39 | 0 | 0 | 7m 1s | granted | 0s |
+| CP-8 | R2 | 5 | 5 | 0 | 0 | 3m 47s | granted | 0s |
+| CP-10 | R2 | 4 | 4 | 0 | 0 | 1m 30s | granted | 0s |
+| CP-7 | R3 | 21 | 21 | 0 | 0 | 11m 30s | granted | 0s |
+| CP-9 | R2 | 3 | 3 | 0 | 0 | 15m 5s | granted | 0s |
+| CP-12 | R3 | 16 | 16 | 0 | 0 | 18m 1s | granted | 0s |
+
+R3 run **20261007-205352-2b6a**: wall **40m 48s**, one isolated test build **166.5662988s**, 636 warnings / 0 errors, UseAppHost=false, serial drivers, TUNIT_MAX_PARALLEL_TESTS=1. Maximum concurrent builds=1, rows=1. All build/test leases were granted with waited=0s. The current source stayed clean and frozen throughout. No repeated proof run was added after green.
+
+The only additional build in this extra round was the necessary checkpoint-tool bootstrap after prior cleanup: 1 build, 8.54s compiler time / 9s lease held, 1 nullable warning / 0 errors, lease aa20cd5a-86fd-436d-b0c8-ba3278e24899, slot=granted waited=0s. Read-only static, TRX and receipt inspections are not extra test drivers. Warning totals are observations, not a claim that each warning was independently baseline-verified.
+
+R3 leases, unedited:
+
+```text
+2026-10-07T20:53:54.5159793+00:00 BUILD SLOT granted lease=885bc121-7241-4798-889a-fe0a2de58805 label="build:bin-c1105-promisor" waited=0s maxcpucount=6
+2026-10-07T20:56:41.3041132+00:00 BUILD SLOT granted lease=4c912a7e-56ea-47fa-a9a6-ef115abce58e label="CP-2@bin-c1105-promisor" waited=0s maxcpucount=6
+2026-10-07T20:56:46.9191554+00:00 BUILD SLOT granted lease=4d35d526-7bf7-4091-b06e-59087d72357d label="CP-11@bin-c1105-promisor" waited=0s maxcpucount=6
+2026-10-07T21:05:10.6610628+00:00 BUILD SLOT granted lease=b62c31c2-86db-4cfb-87d2-5dfd72581349 label="CP-7@bin-c1105-promisor" waited=0s maxcpucount=6
+2026-10-07T21:16:40.8115609+00:00 BUILD SLOT granted lease=86e9490e-54c0-432b-95f5-bd7a7e59dfde label="CP-12@bin-c1105-promisor" waited=0s maxcpucount=6
+```
+
+Source validation exited 0 for all four R3 rows and separately for the eight unaffected R2 rows:
+
+```text
+CHECKPOINT SOURCE VALID source=57178fff2b2d1486d734b1e86ecb6a05480a18a2 rows=4
+CHECKPOINT SOURCE VALID source=fff8dcd2eaece3ebb9c1dec8dcaf8093bd48f219 rows=8
+```
 
 ## Repairs and detecting evidence
 
@@ -31,46 +83,9 @@ D2 policy decision: a previously used checkout emptied to the exact no-index/no-
 
 New local audit cases: 29/29 passed in CP-11. Seventeen detecting variants fail on reviewed production source; twelve additional positive/retained regression variants already pass there and are explicitly not claimed as new defect detectors. The racy fixture was strengthened after its first baseline run to assert status really missed the change; its strengthened baseline is red. D5 separately establishes the old fixture's false blobless assumption. No deliberate production mutant was run: governing Code-stage instructions reserve those cycles and missing-control discovery for SourceLanding Mutation.
 
-## Remaining failure and concrete repair
+## Earlier attempts and supplementary red evidence
 
-C1008_Recycle_refuses_uninspectable_git fails at RemoteScriptContractTests.cs:628: expected check=origin-advertisement for a deleted/missing/stale origin-tracking reference, but got audit check=for-each-ref status=2 repo=repo. The new all-ref stderr guard encounters the broken origin symbolic ref before the current-origin equality check. Classification remains RecycleGitAuditUnknown and removal is refused; the diagnostic contract is not satisfied. This is introduced by this task, not blamed on an inherited failure. No assertion was changed or weakened.
-
-Proposed next Code slice: move the worktree-list/consider_tips block from before ls-remote to immediately after current origin-advertisement validation, retaining every safety guard. This preserves the existing diagnostic precedence. The exact unexecuted proposal follows at the end of this report. It has not been applied or tested. The brief explicitly says “repair cap two rounds”; continuing requires another authorized round or a fresh Code task. No passing Review is claimed.
-
-Round 1 had two receipt-name failures (object-completeness versus check=rev-list). Round 2 changed the name to rev-list-objects, preserving both existing assertions, and added the reflog-type refusal. Both original name failures are now resolved; the origin-advertisement assertion was reached later in the same method and remains red. No timeout was widened and no retry was added.
-
-## Ordinary outcomes
-
-| ID | Actual outcome |
-|---|---|
-| V-1 recovery tips | PASS, all 10 variants |
-| V-2 seed/content | PASS, all 10 variants |
-| V-3 flags/stat data | PASS, all 5 variants |
-| V-4 completeness | PASS, all 3 object-loss variants and positive missing-blob seed |
-| V-5 true seed shape | PASS, existing C1008 promisor method plus direct shape measurement |
-| V-6 saved proof/resume | PASS |
-| R-1 closed regression list | FAIL, 172 passed / 1 failed / 0 skipped |
-| R-2 no fetch / per-Git environment | PASS in all 29 new cases |
-| R-3 classifications/receipts/UID/count failures | FAIL on the one origin-advertisement diagnostic assertion; other CP-11 methods pass |
-
-Final profile uses the brief's explicit 12-row scope. The whole Unit lane and full assembly were excluded, not deferred or claimed passed. No unbounded shared service impact was introduced. All named ordinary rows ran; R-1/R-3 remain unresolved rather than passed. Production activation is outside this offline Code task.
-
-| CP | Executed | Passed | Failed | Skipped | Driver time | Slot | Waited |
-|---|---:|---:|---:|---:|---|---|---|
-| CP-1 | 14 | 14 | 0 | 0 | 0m 4s | granted | 0s |
-| CP-2 | 3 | 3 | 0 | 0 | 0m 6s | granted | 0s |
-| CP-3 | 6 | 6 | 0 | 0 | 0m 3s | granted | 0s |
-| CP-11 | 37 | 36 | 1 | 0 | 7m 7s | granted | 0s |
-| CP-4 | 12 | 12 | 0 | 0 | 1m 5s | granted | 0s |
-| CP-5 | 13 | 13 | 0 | 0 | 3m 4s | granted | 0s |
-| CP-6 | 39 | 39 | 0 | 0 | 7m 1s | granted | 0s |
-| CP-8 | 5 | 5 | 0 | 0 | 3m 47s | granted | 0s |
-| CP-10 | 4 | 4 | 0 | 0 | 1m 30s | granted | 0s |
-| CP-7 | 21 | 21 | 0 | 0 | 11m 54s | granted | 0s |
-| CP-9 | 3 | 3 | 0 | 0 | 15m 5s | granted | 0s |
-| CP-12 | 16 | 16 | 0 | 0 | 19m 7s | granted | 0s |
-
-Checkpoint 20261007-193034-be09: total wall 72m 39s. One isolated test build per run, serial drivers, UseAppHost=false, TUNIT_MAX_PARALLEL_TESTS=1, expected-source-sha=fff8dcd2eaece3ebb9c1dec8dcaf8093bd48f219. Final build: 2m 44s, slot=granted, waited=0s. Source stayed frozen throughout each run. Fresh TRX inspection found 173 distinct executions and the intended full class/method/variant rosters; all existing rosters match the prior Review baseline. The one failed result remains recorded. Do not infer a clean certificate from clean source alone.
+R2 run 20261007-193034-be09 executed the entire twelve-row list: 173 executed / 172 passed / 1 failed / 0 skipped, wall 72m39s. Its build took 164.0312175s, with 637 warnings and zero errors. The one failure was the diagnostic order repaired by R3. The prior whole-run source validator correctly exited 2 (row_failed); the eight unaffected rows now selected for retained evidence validate against their own SHA. The red result remains in the unedited receipts below and is not recast as a passing run.
 
 Initial checkpoint 20261007-191556-a81f on 554faf1354cd98fd6b33e8f3ec00f496bddaa894 built in 3m 57s (slot=granted, waited=0s). Completed rows: CP-1 14/14, CP-2 3/3, CP-3 6/6, CP-4 12/12, CP-11 34/36 with two failures. CP-5 was stopped in progress with no completed TRX; later rows were not run in that attempt. Stop was awaited and owned processes were confirmed absent before editing. The wait reports exit 6 after explicit stop (state=stopped), not an unexplained process crash. Its outputs were cleaned using the checkpoint tool before the second isolated build.
 
@@ -98,27 +113,40 @@ Additional drivers were narrow baseline/shape proofs required by D1-D6, plus the
 
 Read-only syntax/evidence inspections are not extra test builds. No loaded repetitions, full-assembly run or mutation qualification occurred. Repeated ordinary rows were triggered by the recorded production fix and clean source qualification, not a green-proof repetition loop.
 
-Evidence root: /work/worktrees/task-a3532cb8/.antiphon/a3532cb8-evidence. Checkpoint receipts/TRX/logs: /work/worktrees/task-a3532cb8/.antiphon/checkpoints/20261007-193034-be09/ and /work/worktrees/task-a3532cb8/.antiphon/checkpoints/20261007-191556-a81f/. The prior Review and recovered Code report were read from /work/review-evidence/4a14585d/review.md and code-report.txt because the named branch report paths were absent. Generated receipts/logs remain ignored; only this Markdown report is committed.
+## Provenance, publication and cleanup
 
-Final source validation: full report correctly refused with exit 2, CHECKPOINT SOURCE INVALID reason=row_failed. Selecting the eleven green rows validated with exit 0: CHECKPOINT SOURCE VALID source=fff8dcd2eaece3ebb9c1dec8dcaf8093bd48f219 rows=11. All 173 fresh executions, exact classes and method/variant rosters were independently checked. There is no clean full-candidate certificate.
+Latest fetch: origin/master=3eeea31cc261c7265e81b1b05c8bc7b40079886e. The tested source merges cleanly onto it: git merge-tree --write-tree HEAD origin/master exited 0, tree 99b3cecb58d7bdef12ea9061e6fd82ce9a33e878. No rebase, reset, amend or force-push occurred. The final report-only commit is checked and pushed after this report is written, then the remote ref is verified with git ls-remote. The exact final SHA and full-range guard result accompany the caller summary.
 
-Build accounting: initial test build 636 warnings / 0 errors; second test build 637 warnings / 0 errors; bootstrap 1 warning / 0 errors. Warning totals are observed counts, not a blanket claim that each warning was baseline-verified. Final cleanup removed all 28 producer-owned bin-c1105-promisor directories through the checkpoint tool; the separate bootstrap directory was removed after checking its exact path and producer DLL hash. Initial cleanup also removed its 28 isolated outputs. No build/test process remains owned by this task.
+Source-range evidence guards both passed, unedited:
 
-Final fetch still observed origin/master=3eeea31cc261c7265e81b1b05c8bc7b40079886e. The tested source fff8dcd2eaece3ebb9c1dec8dcaf8093bd48f219 merges cleanly onto it (merge-tree exit 0, tree 57de812a0aaa258a60a2cab4b661359393009630). Source-range evidence guard b5e78700ae9a76430c13d75cc03399055dd82e59..fff8dcd2eaece3ebb9c1dec8dcaf8093bd48f219 passed, commits=4, entries=0, violations=0. The full report-commit range and final remote SHA are verified after this report is committed and stated in the caller summary.
+```text
+EVIDENCE range base=4bfc7379df6465df75481ac5a0f8069d435f3755 head=57178fff2b2d1486d734b1e86ecb6a05480a18a2
+EVIDENCE result commits=4 entries=2 violations=0 base=4bfc7379df6465df75481ac5a0f8069d435f3755 head=57178fff2b2d1486d734b1e86ecb6a05480a18a2
+EVIDENCE range base=b5e78700ae9a76430c13d75cc03399055dd82e59 head=57178fff2b2d1486d734b1e86ecb6a05480a18a2
+EVIDENCE result commits=6 entries=2 violations=0 base=b5e78700ae9a76430c13d75cc03399055dd82e59 head=57178fff2b2d1486d734b1e86ecb6a05480a18a2
+```
 
-For retention after mirror retirement, unedited generated evidence is also copied to /work/code-evidence/a3532cb8 (outside Git; no generated payload is committed). Native checkpoint copies live under checkpoints/<run-id>; the supplementary evidence is under diagnostics.
+The full task-base..final-report-HEAD guard is also required after the report commit; its final output is retained as evidence-diff-task-final-round3.log, with the broader original-base range in evidence-diff-full-final-round3.log. No generated evidence is committed. The only committed evidence artifact is this standalone Markdown report, under the allowed size limit.
 
-Rerun command after an authorized committed repair, using a slot-built checkpoint tool: dotnet <tool-output>/Antiphon.Checkpoints.dll run --plan docs/investigations/2026-10-07-card-1105-git-audit-promisor.md --rows CP-11 --serial --expected-source-sha <new-committed-SHA> --max-wait 50s; wait until exit is not 75. A fresh Final commissioning may require the complete twelve-row list again. The proposed patch below passed bash -n only; it has not been applied or behaviorally tested.
+Checkpoint cleanup reports cleanedOutputs=true. All producer-owned bin-c1105-promisor project outputs and the checkpoint shadow copy were removed; the bootstrap bin-a3532cb8-tool directory was removed after checking its exact path and producer DLL hash. The remaining paths named bin-c1105-promisor inside checkpoint/builds are evidence directories containing build.log, not project binaries. All owned runs have completed and no test/build process remains.
+
+Native evidence: /work/worktrees/task-a3532cb8/.antiphon/checkpoints/20261007-205352-2b6a/ (report.json, report.md, fresh TRX, console/build logs and source provenance). Supplementary evidence: /work/worktrees/task-a3532cb8/.antiphon/a3532cb8-evidence/ (roster-round3.json, order-round3.json, receipt-round3.log, bootstrap-round3.log, guards and publication record). Evidence preserved outside the retiring mirror: /work/code-evidence/a3532cb8/checkpoints/20261007-205352-2b6a/ and /work/code-evidence/a3532cb8/round3/; earlier evidence remains intact in its existing directories. Current report copy: /work/code-evidence/a3532cb8/round3/task-a3532cb8.md.
+
+The earlier Review and recovered Code report were read from /work/review-evidence/4a14585d/review.md and code-report.txt because the named branch report files were absent. GET /api/runner-defaults and GET /api/session-runners were read through the configured control-plane API. No host pin was embedded and no production host execution or deployment occurred. Git test remotes use local file transport; Docker/HTTP boundaries are isolated fixtures.
+
+To reproduce the authorized selection, bootstrap tools/Antiphon.Checkpoints through scripts/build-slot.ps1 into an isolated output, then run its DLL with: run --plan docs/investigations/2026-10-07-card-1105-git-audit-promisor.md --rows CP-2,CP-11,CP-7,CP-12 --serial --expected-source-sha 57178fff2b2d1486d734b1e86ecb6a05480a18a2 --max-wait 50s; continue wait --run <id> --max-wait 50s until exit is not 75. Check out the named source before replay; do not label a later report-only HEAD as the tested source.
 
 ## Pending Mutation and activation
 
 Every control remains pending for method-scoped SourceLanding Mutation: PC-1, PC-2, PC-3; PC-D1 (stash, reflog, reflog-old, reflog-symlink, recovery, secondary, worktree-ref, linked-head, linked-private, bare-head); PC-D2 (seed-untracked, seed-tracked, seed-ignored, seed-empty-ignored, seed-stash, staged, modified); PC-D3 (assume, skip, intent, sparse, racy); PC-D4 (missing-commit, missing-tree, missing-head-tree); PC-D5 (filter, clone-flags); PC-D6; PC-doc (DockerStackDocumentationTests.Main_volume_recycling_is_scripted_only). The plan maps each method and deliberate defect. Code baseline reds do not discharge any PC, and no red/restore/green mutation qualification is claimed.
 
-restart: none. Owner of later activation: caller/orchestrator. After ordinary verification and separate Review, the caller lands original Code owner 6192d44b-9ec0-43a8-aed1-81fdb4565fc2 with this repair adopted, commissions SourceLanding Mutation, pulls canonical, restarts AppHost with ExpectedServerSha, then follows check-census, check-host-jq, redeploy-old -DryRun and the authorized redeploy-old of the landed SHA. No land/deploy is this task's next stage.
+restart: **none**. Owner of later activation: **caller/orchestrator**. Separate Review is next. After Review, the caller lands original Code owner 6192d44b-9ec0-43a8-aed1-81fdb4565fc2 with this repair adopted and commissions SourceLanding Mutation. No land or deployment is part of this Code task.
 
-## Unedited CHECKPOINT receipts
+## Unedited CHECKPOINT receipts — all attempts
 
-Initial attempt:
+Earlier red/stopped attempt evidence is retained for provenance. Only the source-attributed final selection above supplies the completed ordinary verdict.
+
+### 20261007-191556-a81f — source 554faf1354cd98fd6b33e8f3ec00f496bddaa894
 
 ```text
 CHECKPOINT CP-1 commit=554faf1354cd98fd6b33e8f3ec00f496bddaa894 build=ok filter=/*/*/DockerStackDocumentationTests/* executed=14 passed=14 failed=0 skipped=0 trx=/work/worktrees/task-a3532cb8/.antiphon/checkpoints/20261007-191556-a81f/rows/CP-1/run.trx slot=granted waited=0s dirty=0 source=554faf1354cd98fd6b33e8f3ec00f496bddaa894 sourceState=clean buildSource=verified
@@ -128,7 +156,7 @@ CHECKPOINT CP-11 commit=554faf1354cd98fd6b33e8f3ec00f496bddaa894 build=reused fi
 CHECKPOINT CP-4 commit=554faf1354cd98fd6b33e8f3ec00f496bddaa894 build=reused filter=/*/*/RollingProductionMountTests/* executed=12 passed=12 failed=0 skipped=0 trx=/work/worktrees/task-a3532cb8/.antiphon/checkpoints/20261007-191556-a81f/rows/CP-4/run.trx slot=granted waited=0s dirty=0 source=554faf1354cd98fd6b33e8f3ec00f496bddaa894 sourceState=clean buildSource=verified
 ```
 
-Second attempt:
+### 20261007-193034-be09 — source fff8dcd2eaece3ebb9c1dec8dcaf8093bd48f219
 
 ```text
 CHECKPOINT CP-1 commit=fff8dcd2eaece3ebb9c1dec8dcaf8093bd48f219 build=ok filter=/*/*/DockerStackDocumentationTests/* executed=14 passed=14 failed=0 skipped=0 trx=/work/worktrees/task-a3532cb8/.antiphon/checkpoints/20261007-193034-be09/rows/CP-1/run.trx slot=granted waited=0s dirty=0 source=fff8dcd2eaece3ebb9c1dec8dcaf8093bd48f219 sourceState=clean buildSource=verified
@@ -145,73 +173,58 @@ CHECKPOINT CP-9 commit=fff8dcd2eaece3ebb9c1dec8dcaf8093bd48f219 build=reused fil
 CHECKPOINT CP-12 commit=fff8dcd2eaece3ebb9c1dec8dcaf8093bd48f219 build=reused filter=/*/*/RollingVolumeRecycleScriptTests/* executed=16 passed=16 failed=0 skipped=0 trx=/work/worktrees/task-a3532cb8/.antiphon/checkpoints/20261007-193034-be09/rows/CP-12/run.trx slot=granted waited=0s dirty=0 source=fff8dcd2eaece3ebb9c1dec8dcaf8093bd48f219 sourceState=clean buildSource=verified
 ```
 
-## Unexecuted proposed check-order patch
+### 20261007-205352-2b6a — source 57178fff2b2d1486d734b1e86ecb6a05480a18a2
 
-```diff
-diff --git a/scripts/c590-remote.sh b/scripts/c590-remote.sh
-index 6c6bb5c37..2172b873c 100644
---- a/scripts/c590-remote.sh
-+++ b/scripts/c590-remote.sh
-@@ -4611,27 +4611,6 @@ while IFS= read -r -d '' entry; do
-         true) ;;
-         *) refuse_unknown bare 2 "$repo" ;;
-     esac
--    audit_repo="$repo"
--    audit_check=worktree-list
--    git -C "$repo" worktree list --porcelain -z > "$scratch/worktrees" 2>/dev/null || fail $?
--    : > "$scratch/tips"
--    consider_tips "$repo"
--    while IFS= read -r -d '' field; do
--        [[ "$field" == worktree\ * ]] || continue
--        audit_check=worktree-path
--        work="${field#worktree }"
--        work="$(readlink -e "$work")" || fail $?
--        [[ "$work/" == "$root/"* ]] || refuse_unknown worktree-confine 0 "$repo"
--        audit_check=worktree-bare
--        work_bare="$(git -C "$work" rev-parse --is-bare-repository 2>/dev/null)" || fail $?
--        if [ "$work_bare" = false ]; then
--            consider_dirty "$work" worktree-status
--        elif [ "$work_bare" != true ]; then
--            refuse_unknown worktree-bare 2 "$work"
--        fi
--        consider_tips "$work"
--    done < "$scratch/worktrees"
--    audit_repo="$repo"
-     audit_check=ls-remote
-     timeout --kill-after=5s 30s git -C "$repo" ls-remote --heads origin > "$scratch/origin" 2>/dev/null || fail $?
-     audit_check=origin-parse
-@@ -4656,6 +4635,27 @@ while IFS= read -r -d '' entry; do
-         local_refs="$(awk '$2!="refs/heads/HEAD" {print}' "$scratch/local" | sort)" || fail $?
-         [ "$origin" = "$local_refs" ] || refuse_unknown origin-advertisement 2 "$repo"
-     fi
-+    audit_repo="$repo"
-+    audit_check=worktree-list
-+    git -C "$repo" worktree list --porcelain -z > "$scratch/worktrees" 2>/dev/null || fail $?
-+    : > "$scratch/tips"
-+    consider_tips "$repo"
-+    while IFS= read -r -d '' field; do
-+        [[ "$field" == worktree\ * ]] || continue
-+        audit_check=worktree-path
-+        work="${field#worktree }"
-+        work="$(readlink -e "$work")" || fail $?
-+        [[ "$work/" == "$root/"* ]] || refuse_unknown worktree-confine 0 "$repo"
-+        audit_check=worktree-bare
-+        work_bare="$(git -C "$work" rev-parse --is-bare-repository 2>/dev/null)" || fail $?
-+        if [ "$work_bare" = false ]; then
-+            consider_dirty "$work" worktree-status
-+        elif [ "$work_bare" != true ]; then
-+            refuse_unknown worktree-bare 2 "$work"
-+        fi
-+        consider_tips "$work"
-+    done < "$scratch/worktrees"
-+    audit_repo="$repo"
-     audit_check=tips
-     sort -u "$scratch/tips" > "$scratch/unique" || fail $?
-     [ -s "$scratch/unique" ] || refuse_unknown tips-empty 0 "$repo"
+```text
+CHECKPOINT CP-2 commit=57178fff2b2d1486d734b1e86ecb6a05480a18a2 build=ok filter=/*/*/(TestClassificationGuardTests*)|(SlowTestTripwireTests*)/* executed=3 passed=3 failed=0 skipped=0 trx=/work/worktrees/task-a3532cb8/.antiphon/checkpoints/20261007-205352-2b6a/rows/CP-2/run.trx slot=granted waited=0s dirty=0 source=57178fff2b2d1486d734b1e86ecb6a05480a18a2 sourceState=clean buildSource=verified
+CHECKPOINT CP-11 commit=57178fff2b2d1486d734b1e86ecb6a05480a18a2 build=reused filter=/*/*/RemoteScriptContractTests/(C1008_Recycle_refuses_uninspectable_git*)|(C1008_Recycle_refuses_unpublished_and_dirty_work*)|(C1008_Retire_temp_rechecks_absence_and_retirement*)|(C1087_Host_census_filters_and_names_cause*)|(C1008_Recycle_preserves_tmp_copyup*)|(C1008_Retire_temp_reclaims_below_cache_disk_gate*)|(C1008_Recycle_audits_work_as_1654*)|(C1008_Recycle_audits_promisor_checkout*)|(C1105_Git_audit_*) executed=37 passed=37 failed=0 skipped=0 trx=/work/worktrees/task-a3532cb8/.antiphon/checkpoints/20261007-205352-2b6a/rows/CP-11/run.trx slot=granted waited=0s dirty=0 source=57178fff2b2d1486d734b1e86ecb6a05480a18a2 sourceState=clean buildSource=verified
+CHECKPOINT CP-7 commit=57178fff2b2d1486d734b1e86ecb6a05480a18a2 build=reused filter=/*/*/RetiredTempContainerHostTests/* executed=21 passed=21 failed=0 skipped=0 trx=/work/worktrees/task-a3532cb8/.antiphon/checkpoints/20261007-205352-2b6a/rows/CP-7/run.trx slot=granted waited=0s dirty=0 source=57178fff2b2d1486d734b1e86ecb6a05480a18a2 sourceState=clean buildSource=verified
+CHECKPOINT CP-12 commit=57178fff2b2d1486d734b1e86ecb6a05480a18a2 build=reused filter=/*/*/RollingVolumeRecycleScriptTests/* executed=16 passed=16 failed=0 skipped=0 trx=/work/worktrees/task-a3532cb8/.antiphon/checkpoints/20261007-205352-2b6a/rows/CP-12/run.trx slot=granted waited=0s dirty=0 source=57178fff2b2d1486d734b1e86ecb6a05480a18a2 sourceState=clean buildSource=verified
+```
 
+## All checkpoint build and row lease identities
+
+### 20261007-191556-a81f
+
+```text
+2026-10-07T19:15:58.7013910+00:00 BUILD SLOT granted lease=6e9e32a2-3737-4208-a61e-0dd6b52040e7 label="build:bin-c1105-promisor" waited=0s maxcpucount=6
+2026-10-07T19:19:56.4105283+00:00 BUILD SLOT granted lease=60d3c501-7411-4006-b957-0b357d62ef59 label="CP-1@bin-c1105-promisor" waited=0s maxcpucount=6
+2026-10-07T19:20:00.5987552+00:00 BUILD SLOT granted lease=f077294c-5d73-42f4-8155-94d688a6ce70 label="CP-2@bin-c1105-promisor" waited=0s maxcpucount=6
+2026-10-07T19:20:07.1260587+00:00 BUILD SLOT granted lease=ae8b8a4c-a75a-45fe-94c1-bf0a193c2ec6 label="CP-3@bin-c1105-promisor" waited=0s maxcpucount=6
+2026-10-07T19:20:11.4143114+00:00 BUILD SLOT granted lease=990f6d72-5799-40db-aa0c-120993bc8fa0 label="CP-11@bin-c1105-promisor" waited=0s maxcpucount=6
+2026-10-07T19:26:07.9162680+00:00 BUILD SLOT granted lease=d9ecafad-8dd3-4048-818d-d9b90bedb659 label="CP-4@bin-c1105-promisor" waited=0s maxcpucount=6
+2026-10-07T19:27:10.9067201+00:00 BUILD SLOT granted lease=27c86411-abac-402e-81ec-71be89fafe8c label="CP-5@bin-c1105-promisor" waited=0s maxcpucount=6
+```
+
+### 20261007-193034-be09
+
+```text
+2026-10-07T19:30:37.2034815+00:00 BUILD SLOT granted lease=3121626b-d59f-4c96-8717-415ed9fcb133 label="build:bin-c1105-promisor" waited=0s maxcpucount=6
+2026-10-07T19:33:21.4494903+00:00 BUILD SLOT granted lease=4d5a9242-d194-42c0-9a9c-89a0140d9c4f label="CP-1@bin-c1105-promisor" waited=0s maxcpucount=6
+2026-10-07T19:33:25.1416388+00:00 BUILD SLOT granted lease=23eeed8d-9fb9-4daa-ba2f-5b4ecccd0af2 label="CP-2@bin-c1105-promisor" waited=0s maxcpucount=6
+2026-10-07T19:33:31.0004079+00:00 BUILD SLOT granted lease=2925a669-cb81-46d1-bc18-f4e032437f0b label="CP-3@bin-c1105-promisor" waited=0s maxcpucount=6
+2026-10-07T19:33:34.3795362+00:00 BUILD SLOT granted lease=b111fb97-6c07-4dfe-9f9a-087c4598995a label="CP-11@bin-c1105-promisor" waited=0s maxcpucount=6
+2026-10-07T19:40:41.8309232+00:00 BUILD SLOT granted lease=587c8fe2-035b-4949-ba81-348d37638781 label="CP-4@bin-c1105-promisor" waited=0s maxcpucount=6
+2026-10-07T19:41:46.9397010+00:00 BUILD SLOT granted lease=a3ec83ec-daa9-4b78-8811-566e55253048 label="CP-5@bin-c1105-promisor" waited=0s maxcpucount=6
+2026-10-07T19:44:50.8285527+00:00 BUILD SLOT granted lease=d212c6e0-96f5-441a-994e-28ad795ef596 label="CP-6@bin-c1105-promisor" waited=0s maxcpucount=6
+2026-10-07T19:51:52.0125861+00:00 BUILD SLOT granted lease=57ade37a-4a5b-4b41-ad95-c597824706b3 label="CP-8@bin-c1105-promisor" waited=0s maxcpucount=6
+2026-10-07T19:55:38.9581426+00:00 BUILD SLOT granted lease=2db6b215-8f76-439a-8b00-6754b0c4913c label="CP-10@bin-c1105-promisor" waited=0s maxcpucount=6
+2026-10-07T19:57:09.0114240+00:00 BUILD SLOT granted lease=d20d8fdd-9b4b-4667-9342-ef21842e4b2d label="CP-7@bin-c1105-promisor" waited=0s maxcpucount=6
+2026-10-07T20:09:03.5507650+00:00 BUILD SLOT granted lease=6e378e07-3d98-418d-9e5b-82f213836680 label="CP-9@bin-c1105-promisor" waited=0s maxcpucount=6
+2026-10-07T20:24:08.6366478+00:00 BUILD SLOT granted lease=28ef5b16-f878-49cc-94d4-ded2a6192397 label="CP-12@bin-c1105-promisor" waited=0s maxcpucount=6
+```
+
+### 20261007-205352-2b6a
+
+```text
+2026-10-07T20:53:54.5159793+00:00 BUILD SLOT granted lease=885bc121-7241-4798-889a-fe0a2de58805 label="build:bin-c1105-promisor" waited=0s maxcpucount=6
+2026-10-07T20:56:41.3041132+00:00 BUILD SLOT granted lease=4c912a7e-56ea-47fa-a9a6-ef115abce58e label="CP-2@bin-c1105-promisor" waited=0s maxcpucount=6
+2026-10-07T20:56:46.9191554+00:00 BUILD SLOT granted lease=4d35d526-7bf7-4091-b06e-59087d72357d label="CP-11@bin-c1105-promisor" waited=0s maxcpucount=6
+2026-10-07T21:05:10.6610628+00:00 BUILD SLOT granted lease=b62c31c2-86db-4cfb-87d2-5dfd72581349 label="CP-7@bin-c1105-promisor" waited=0s maxcpucount=6
+2026-10-07T21:16:40.8115609+00:00 BUILD SLOT granted lease=86e9490e-54c0-432b-95f5-bd7a7e59dfde label="CP-12@bin-c1105-promisor" waited=0s maxcpucount=6
 ```
 
 --- next stage ---
-next: decide
-handoff: Authorize one additional Code repair round or a fresh Code continuation for the remaining origin-advertisement receipt assertion. Apply the unexecuted check-order patch above, retain every guard, and rerun CP-11. All PCs stay pending for SourceLanding Mutation. Original landing owner: 6192d44b-9ec0-43a8-aed1-81fdb4565fc2.
+next: review
+handoff: Review the D1-D6 audit repair and final check-order fix; 77 affected/registry cases pass on 57178fff2b2d1486d734b1e86ecb6a05480a18a2 plus 96 unaffected prior cases. Preserve all pending SourceLanding PCs. Original landing owner: 6192d44b-9ec0-43a8-aed1-81fdb4565fc2.
 artifact: docs/investigations/2026-10-07-card-1105-git-audit-promisor.md
