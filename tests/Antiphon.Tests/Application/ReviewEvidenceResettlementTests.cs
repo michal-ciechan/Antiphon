@@ -449,6 +449,59 @@ public sealed class ReviewEvidenceResettlementTests
         }
     }
 
+    /// <summary>
+    /// CARD-1082 V-27 / G-15. A Review blocked by desktop dirt, then continued under a held
+    /// lease, settles Succeeded Pending. Strict repair refuses that Pending witness, so the
+    /// unbound row stays and the handoff is the repair refusal.
+    /// </summary>
+    [Test]
+    public async Task C1082_PendingContinuationRefusesStrictRebind()
+    {
+        var w = await RunnerSettlementWorld.CreateAsync(AgentTaskRole.Review, profiled: true,
+            controlledSyncClock: true, mirrorPublish: true);
+        await using var owned = w;
+        await w.Git.EnsureRunnerAsync();
+        var subject = await w.AddReviewSubjectAsync(w.Git.Baseline);
+        var dirt = Path.Combine(w.Git.Worktree, "scratch.txt");
+        await File.WriteAllTextAsync(dirt, "desktop dirt");
+        var report = Report(w, subject, w.Git.Baseline);
+
+        await w.SettleAsync(report);
+        w.Task.Status.ShouldBe(AgentTaskStatus.Blocked);
+        w.Evidence()!.RemoteSync!.State.ShouldBe(RemoteSettlementSyncState.Refused);
+        w.Evidence()!.RemoteSync!.Reason.ShouldBe(RemoteSettlementSyncReasons.Dirty);
+        var old = (await RowsAsync(w)).ShouldHaveSingleItem();
+        old.Outcome.ShouldBe(StageOutcomeKind.Clean);
+        old.ReviewedSourceSha.ShouldBeNull();
+
+        await AnswerAsync(w);
+        await using (var held = await w.Git.Leases.TryAcquireAsync(w.Git.Desktop, CancellationToken.None))
+        {
+            held.ShouldNotBeNull();
+            var busy = w.LeaseBusy.Next();
+            var settling = w.SettleAsync(report);
+            try
+            {
+                (await System.Threading.Tasks.Task.WhenAny(busy, settling).WaitAsync(Guard)).ShouldBe(busy);
+                w.SyncClock!.Advance(TimeSpan.FromSeconds(new DelegationSettings().RunnerSyncBudgetSeconds));
+                await settling.WaitAsync(Guard);
+            }
+            finally { await settling.WaitAsync(Guard); }
+        }
+
+        w.Task.Status.ShouldBe(AgentTaskStatus.Succeeded);
+        w.Task.NextStage.ShouldBe(PipelineHandoffKind.Decide);
+        w.Task.NextHandoff.ShouldNotBeNull().ShouldStartWith(
+            "Review evidence repair refused: review_evidence_sync_unconfirmed");
+        var sync = w.Evidence()!.RemoteSync!;
+        sync.State.ShouldBe(RemoteSettlementSyncState.Pending);
+        sync.ObservedSha.ShouldBe(w.Git.Baseline);
+        sync.ConfirmedSha.ShouldBeNull();
+        (await RowsAsync(w)).ShouldHaveSingleItem().Id.ShouldBe(old.Id);
+        (await File.ReadAllTextAsync(dirt)).ShouldBe("desktop dirt");
+        (await w.Git.HeadAsync()).ShouldBe(w.Git.Baseline);
+    }
+
     private sealed class ThrowBoundary(string cut) : LandDeliveryBoundary
     {
         public override Task ReachedAsync(string boundary, Guid taskId, Guid identity, CancellationToken ct) =>

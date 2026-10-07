@@ -320,7 +320,7 @@ public sealed class ReviewEvidenceRecoveryTests
     [Test]
     public async Task C1043_StoredSyncRequired()
     {
-        foreach (var invalid in new[] { "missing", "unconfirmed", "dirty", "wrong-ref", "wrong-sha", "unavailable" })
+        foreach (var invalid in new[] { "missing", "unconfirmed", "dirty", "wrong-ref", "wrong-sha", "unavailable", "pending" })
         {
             await using var w = await ReviewRecoveryWorld.CreateAsync();
             await w.ChangeAsync(t =>
@@ -332,10 +332,19 @@ public sealed class ReviewEvidenceRecoveryTests
                     "missing" => null, "unconfirmed" => sync with { ConfirmedSha = null },
                     "dirty" => sync with { MirrorDirty = true }, "wrong-ref" => sync with { FullRef = "refs/heads/other" },
                     "wrong-sha" => sync with { ConfirmedSha = new string('a', 40) },
+                    // ConfirmedSha stays. State is the only predicate this arm is allowed to fail.
+                    "pending" => sync with { State = RemoteSettlementSyncState.Pending },
                     _ => sync with { State = RemoteSettlementSyncState.Unavailable },
                 } });
             });
-            await RefusedAsync(w, "G57 " + invalid);
+            if (invalid == "pending")
+            {
+                (await Should.ThrowAsync<ConflictException>(() => w.RecoverAsync()))
+                    .Code.ShouldBe("review_evidence_rebind_stored_sync_unconfirmed", "G57 pending");
+                await w.UnchangedAsync("G57 pending");
+            }
+            else
+                await RefusedAsync(w, "G57 " + invalid);
         }
         await using var ok = await ReviewRecoveryWorld.CreateAsync();
         await ok.ChangeAsync(t => { var evidence = TaskProgressJson.TryReadEvidence(t.CompletionProgressEvidenceJson)!;
