@@ -1,5 +1,8 @@
 using System.Data.Common;
 using System.Text.Json;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
@@ -565,9 +568,9 @@ public sealed class SettlementSyncRecoveryTests
     }
 
     /// <summary>
-    /// CARD-1082 F3d round 3. An empty gitdir, an unreadable admin child, a symlink alias,
-    /// and a worktree moved onto the task row are not identity. Each stays Held, and the
-    /// Held branch of the claim contains no filesystem read.
+    /// CARD-1082 F3d round 3. An empty gitdir, a gitdir held so a second read fails, a
+    /// symlink alias, and a worktree moved onto the task row are not identity. Each stays
+    /// Held. The Held restamp closure, including its helpers, touches no filesystem.
     /// </summary>
     [Test]
     [Arguments("empty-pointer")]
@@ -589,7 +592,7 @@ public sealed class SettlementSyncRecoveryTests
         var scratch = Path.Combine(world.Git.Desktop, ".git", "worktrees", "f3d-" + scenario);
         var moved = path + "-f3d-moved";
         string? link = null;
-        string? locked = null;
+        FileStream? unreadableGate = null;
         try
         {
             if (scenario == "moved")
@@ -609,8 +612,8 @@ public sealed class SettlementSyncRecoveryTests
                 else if (scenario == "unreadable")
                 {
                     await File.WriteAllTextAsync(gitdir, path + "\n");
-                    File.SetUnixFileMode(scratch, UnixFileMode.None);
-                    locked = scratch;
+                    unreadableGate = new FileStream(gitdir, FileMode.Open, FileAccess.Read, FileShare.None);
+                    AssertExclusiveRegistrationUnreadable(gitdir);
                 }
                 else
                 {
@@ -633,11 +636,7 @@ public sealed class SettlementSyncRecoveryTests
         }
         finally
         {
-            if (locked is not null)
-            {
-                File.SetUnixFileMode(locked, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
-            }
-
+            unreadableGate?.Dispose();
             if (Directory.Exists(scratch))
                 Directory.Delete(scratch, recursive: true);
             if (link is not null && Directory.Exists(link))
@@ -920,24 +919,144 @@ public sealed class SettlementSyncRecoveryTests
 
     /// <summary>
     /// The Held claim restamps the debt and does not read a retirement or the filesystem.
-    /// A regression that puts either read back into that branch fails this pin.
+    /// The checked closure is the Held-reachable part of <c>ClaimAsync</c> (the shared prefix,
+    /// the Held branch, and the rescue tail; not the Pending else) plus every same-class method
+    /// it calls: <c>LockTaskAsync</c>, <c>RescheduleHeldAsync</c>, and
+    /// <c>RescheduleHeldInNewTransactionAsync</c>. A filesystem, retirement, or Git call in any
+    /// of those methods fails this pin.
     /// </summary>
     private static void AssertHeldRecheckReadsNoFilesystem()
     {
         var source = ReadRepoFile("server/Application/Services/SettlementSyncRecoveryService.cs");
-        var held = source.IndexOf("if (debt.State == AgentTaskSyncDebtState.Held)", StringComparison.Ordinal);
-        held.ShouldBeGreaterThanOrEqualTo(0);
-        var pending = source.IndexOf("\n            else", held, StringComparison.Ordinal);
-        pending.ShouldBeGreaterThan(held);
-        var block = source[held..pending];
-        block.ShouldContain("RescheduleHeldAsync");
-        block.ShouldNotContain("Directory");
-        block.ShouldNotContain("File");
-        block.ShouldNotContain("TaskWorktreeRetirements");
-        block.ShouldNotContain("gitdir");
-        block.ShouldNotContain("Superseded");
-        block.ShouldNotContain("RegistrationGone");
+        var closure = ScanHeldRestampClosure(source);
+        string.Join(", ", closure.Methods).ShouldBe(
+            "ClaimAsync, LockTaskAsync, RescheduleHeldAsync, RescheduleHeldInNewTransactionAsync",
+            "Held restamp call-path closure");
+        closure.FilesystemAccess.ShouldBeEmpty(
+            "Held restamp closure " + string.Join(", ", closure.Methods));
     }
+
+    /// <summary>A second open must fail while the registration file is held exclusively.</summary>
+    private static void AssertExclusiveRegistrationUnreadable(string gitdir)
+    {
+        IOException? denied = null;
+        try
+        {
+            using var probe = new FileStream(gitdir, FileMode.Open, FileAccess.Read, FileShare.Read);
+        }
+        catch (IOException ex)
+        {
+            denied = ex;
+        }
+
+        denied.ShouldNotBeNull("the gitdir registration is held exclusively and cannot be read");
+    }
+
+    private readonly record struct HeldRestampScan(IReadOnlyList<string> Methods, IReadOnlyList<string> FilesystemAccess);
+
+    private static HeldRestampScan ScanHeldRestampClosure(string source)
+    {
+        var root = CSharpSyntaxTree.ParseText(source).GetRoot();
+        var type = root.DescendantNodes().OfType<ClassDeclarationSyntax>()
+            .Single(candidate => candidate.Identifier.ValueText == "SettlementSyncRecoveryService");
+        var methods = type.Members.OfType<MethodDeclarationSyntax>()
+            .ToDictionary(method => method.Identifier.ValueText, StringComparer.Ordinal);
+        var claim = methods["ClaimAsync"];
+        var heldIf = claim.DescendantNodes().OfType<IfStatementSyntax>().Single(statement =>
+            statement.Condition.ToString().Contains("debt.State == AgentTaskSyncDebtState.Held", StringComparison.Ordinal));
+        var pendingElse = heldIf.Else;
+        bool HeldReachable(SyntaxNode node) => pendingElse is null || !pendingElse.Span.Contains(node.Span);
+
+        var names = new List<string> { "ClaimAsync" };
+        var seen = new HashSet<string>(StringComparer.Ordinal) { "ClaimAsync" };
+        var scanned = new List<(string Name, SyntaxNode Node, Func<SyntaxNode, bool> Include)>
+        {
+            ("ClaimAsync", claim, HeldReachable),
+        };
+        var queue = new Queue<string>(LocalCalls(claim, HeldReachable, methods));
+        while (queue.Count > 0)
+        {
+            var name = queue.Dequeue();
+            if (!seen.Add(name)) continue;
+            names.Add(name);
+            var body = methods[name];
+            scanned.Add((name, body, static _ => true));
+            foreach (var called in LocalCalls(body, static _ => true, methods))
+                queue.Enqueue(called);
+        }
+
+        var access = new List<string>();
+        foreach (var (name, node, include) in scanned)
+        {
+            foreach (var hit in node.DescendantNodes().Where(include))
+            {
+                var described = DescribeFilesystemAccess(hit);
+                if (described is not null)
+                    access.Add(name + ": " + described);
+            }
+        }
+
+        return new HeldRestampScan(names, access);
+    }
+
+    private static IEnumerable<string> LocalCalls(
+        SyntaxNode node, Func<SyntaxNode, bool> include, Dictionary<string, MethodDeclarationSyntax> methods)
+    {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var call in node.DescendantNodes().OfType<InvocationExpressionSyntax>())
+        {
+            if (!include(call)) continue;
+            var name = InvocationName(call);
+            if (name is not null && methods.ContainsKey(name) && seen.Add(name))
+                yield return name;
+        }
+    }
+
+    private static string? InvocationName(InvocationExpressionSyntax call) => call.Expression switch
+    {
+        IdentifierNameSyntax identifier => identifier.Identifier.ValueText,
+        MemberAccessExpressionSyntax member => member.Name.Identifier.ValueText,
+        _ => null,
+    };
+
+    private static string? DescribeFilesystemAccess(SyntaxNode node)
+    {
+        if (node is MemberAccessExpressionSyntax access)
+        {
+            var receiver = access.Expression.ToString();
+            if (IsFilesystemReceiver(receiver))
+                return receiver + "." + access.Name.Identifier.ValueText;
+            if (access.Name.Identifier.ValueText is "TaskWorktreeRetirements" or "Superseded")
+                return access.ToString();
+        }
+
+        if (node is ObjectCreationExpressionSyntax created && IsFilesystemType(created.Type.ToString()))
+            return "new " + created.Type;
+
+        if (node is LiteralExpressionSyntax literal
+            && literal.IsKind(SyntaxKind.StringLiteralExpression)
+            && literal.Token.ValueText.Contains("gitdir", StringComparison.Ordinal))
+            return "gitdir";
+
+        if (node is InvocationExpressionSyntax call
+            && InvocationName(call) is "RegistrationGoneAsync" or "WorktreeMissing" or "SyncSettledAsync")
+            return InvocationName(call);
+
+        return null;
+    }
+
+    private static bool IsFilesystemReceiver(string receiver) =>
+        receiver is "File" or "Directory" or "FileInfo" or "DirectoryInfo"
+        || receiver.EndsWith(".File", StringComparison.Ordinal)
+        || receiver.EndsWith(".Directory", StringComparison.Ordinal)
+        || receiver.EndsWith(".FileInfo", StringComparison.Ordinal)
+        || receiver.EndsWith(".DirectoryInfo", StringComparison.Ordinal);
+
+    private static bool IsFilesystemType(string type) =>
+        type is "FileStream" or "FileInfo" or "DirectoryInfo"
+        || type.EndsWith(".FileStream", StringComparison.Ordinal)
+        || type.EndsWith(".FileInfo", StringComparison.Ordinal)
+        || type.EndsWith(".DirectoryInfo", StringComparison.Ordinal);
 
     private static string ReadRepoFile(string relative)
     {
