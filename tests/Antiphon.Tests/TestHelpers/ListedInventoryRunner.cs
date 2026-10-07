@@ -9,7 +9,7 @@ namespace Antiphon.Tests.TestHelpers;
 /// Kill, start, release and compaction-stop are counted separately. Release does not
 /// fall through to <see cref="KillAsync"/>.
 /// </summary>
-internal sealed class RecordingRunnerClient : ISessionRunnerClient
+internal sealed class ListedInventoryRunner : ISessionRunnerClient
 {
     public List<SessionRunnerSessionDto> Sessions { get; } = [];
     public int Lists { get; private set; }
