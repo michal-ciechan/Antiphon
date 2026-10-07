@@ -411,6 +411,69 @@ public sealed class BlockedTaskParkDeliveryTests
         }
     }
 
+    [Test]
+    public async Task C1104_ParkedReviewReplyReceiptSpillsToPointerAtProductionChunkSize()
+    {
+        // V-27's inline arm stays at 86_400. This arm leaves the production chunk size in place.
+        var world = await ReviewWorld.StartAsync(busyCaller: false, completionSingleWriteBytes: null);
+        await using var f = world.Fixture;
+        f.Harness.Delegation.PtySingleChunkBytes.ShouldBe(new DelegationSettings().PtySingleChunkBytes, "G-12");
+        var beforeReply = await OutcomesAsync(f);
+        beforeReply.Count.ShouldBe(1, "G-12");
+        beforeReply.Single().ReviewedSourceSha.ShouldBeNull("G-12");
+        await f.RestartAsync();
+        (await OutcomesAsync(f)).Count.ShouldBe(1, "G-12");
+        (await f.TaskAsync()).Status.ShouldBe(AgentTaskStatus.Blocked, "G-12");
+
+        await f.AnswerAsync("report the final evidence again", round: null);
+        f.Launches.Calls.ShouldBeEmpty("G-12");
+        await ConfirmContinuationAsync(f, busy: true);
+        await SettleReviewAsync(f, (await f.TaskAsync()).AgentSessionId!.Value, world.Report());
+        var successor = await BoundSuccessorAsync(f, beforeReply.Single().Id);
+        var evidenceId = successor.Id.ToString("N");
+        successor.ReviewedSourceSha.ShouldBe(world.Sha, "G-12");
+        successor.ReviewedSourceClean.ShouldBe(true, "G-12");
+
+        Guid finalId;
+        await using (var db = f.Db())
+        {
+            var notes = await db.AgentTaskLandNotifications.AsNoTracking().Where(n => n.TaskId == f.TaskId).ToListAsync();
+            finalId = notes.Single(n => TaskCompletionNotification.TryReadSnapshot(n.CompletionSnapshotJson) is { Status: AgentTaskStatus.Succeeded }).Id;
+        }
+
+        await f.AttachRecipientAsync(world.ParentId, busy: false);
+        using (var scope = f.Harness.Provider.CreateScope())
+            await scope.ServiceProvider.GetRequiredService<AgentTaskLandNotificationService>().ReconcileAsync(finalId, CancellationToken.None);
+        await f.FlushAsync(world.ParentId);
+
+        await using var after = f.Db();
+        var reconciled = await after.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n => n.Id == finalId);
+        var queueId = reconciled.QueueMessageId.ShouldNotBeNull("G-12");
+        var row = await after.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == queueId);
+        var relative = TypedBodySpill.InboxRelativePath(row.Id.ToString("D"));
+        var prompts = await after.TranscriptEntries.AsNoTracking().Where(t => t.AgentSessionId == world.ParentId
+            && t.Kind == TranscriptKinds.UserPrompt).Select(t => t.Text).ToListAsync();
+        prompts.Count(t => t != null
+            && t.Contains(TypedBodySpill.PointerHeadline, StringComparison.Ordinal)
+            && t.Contains(relative, StringComparison.Ordinal)).ShouldBe(1, "G-12");
+        prompts.ShouldNotContain(t => t != null && t.Contains(evidenceId, StringComparison.Ordinal), "G-12");
+
+        var retained = row.RemoteSpillBody;
+        if (retained is null)
+        {
+            var cwd = await after.AgentSessions.AsNoTracking().Where(s => s.Id == world.ParentId)
+                .Select(s => s.Cwd).SingleAsync();
+            var path = TypedBodySpill.InboxAbsolutePath(cwd.ShouldNotBeNull("G-12"), row.Id.ToString("D"));
+            File.Exists(path).ShouldBeTrue("G-12");
+            retained = await File.ReadAllTextAsync(path);
+        }
+
+        retained.ShouldContain("review-evidence=" + evidenceId, Case.Sensitive, "G-12");
+        retained.ShouldContain("reviewed-sha=" + world.Sha, Case.Sensitive, "G-12");
+        reconciled.LastErrorCode.ShouldNotBe("queue_pointer_content_mismatch", "G-12");
+        reconciled.State.ShouldBe(LandNotificationState.Confirmed, "G-12");
+    }
+
     private static string Label(string shape) => shape switch
     {
         "partial" => "G-155",
@@ -589,11 +652,12 @@ public sealed class BlockedTaskParkDeliveryTests
                 + "--- next stage ---\nnext: land\nhandoff: final report\n";
         }
 
-        public static async Task<ReviewWorld> StartAsync(bool busyCaller)
+        public static async Task<ReviewWorld> StartAsync(bool busyCaller, int? completionSingleWriteBytes = 86_400)
         {
             // CARD-1082 D-8: parked-review rebinding stays on the CARD-1065 path with sync debt off.
+            // Null keeps DelegationSettings.PtySingleChunkBytes at the production default (CARD-1104).
             var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked, parking: true, syncRecovery: true,
-                completionSingleWriteBytes: 86_400, syncDebt: false);
+                completionSingleWriteBytes: completionSingleWriteBytes, syncDebt: false);
             try
             {
                 await f.CreateSourceAsync(remote: true);
