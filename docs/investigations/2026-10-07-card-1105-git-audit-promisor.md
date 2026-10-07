@@ -1,32 +1,57 @@
 # CARD-1105 recycle git audit on a blobless promisor checkout
 
-The recycle publication audit refused every repository that had promisor or `extensions.partialclone` configuration. The deploy seeds that shape with `git clone --filter=blob:none --no-checkout`, so `redeploy-old` stopped in preflight with `RecycleGitAuditUnknown` before any container or volume was removed.
+The audit protects content in the worktree/index and every locally retained commit before volume removal. Promisor configuration alone is permitted. Every Git invocation exports GIT_NO_LAZY_FETCH=1, GIT_CONFIG_SYSTEM=/dev/null and GIT_CONFIG_GLOBAL=/dev/null; replacement objects are disabled. An explicit current-origin advertisement is still required. No production host was inspected during this repair.
 
-A promisor checkout is now audited with the same publication proof as any other repository: `git rev-list --count <tip> --not <origin heads>`. `GIT_NO_LAZY_FETCH=1` is exported before every Git command in the helper. Partial-clone configuration is not itself a refusal. A missing commit or tree, a failing `rev-list`, a failing `ls-remote`, a shallow repository, a lock, or any unclassifiable Git exit still refuses `RecycleGitAuditUnknown`. A Git failure is never counted as zero unpublished commits. An unpublished tip still refuses `RecycleUnpublishedWork` (helper classification 3, process exit 2). A dirty worktree still refuses `RecycleWorktreeDirty` (classification 4, process exit 2).
+D1: enumerate all refs in every namespace, main and linked-worktree HEADs (including bare detached HEAD), private worktree refs, and both old/new object IDs in every main/private reflog entry. Reflog-only amended/rebased tips count as recoverable work: abandonment cannot be established from a log, so unpublished entries refuse RecycleUnpublishedWork. Missing/malformed logs or tips refuse RecycleGitAuditUnknown. The actual deploy seed command leaves clone reflogs pointing at published HEAD; a fetch-only clone also passes. The offline seed/fetch-only fixtures establish this without a live rollout. RunnerWorkspaceService uses the same blobless/no-checkout flags; the supplied 390-repository replay reports zero shallow/locks, but does not prove those hosts' current reflog contents. Old private rewrite history may therefore require operator recovery/publication before recycling.
 
-A `--no-checkout` seed has no index. `git status --porcelain` prints only staged deletions of HEAD (`D  <path>`) and the worktree has no file outside `.git`. That shape is the seed, not a dirty worktree. An index with any porcelain output, an untracked file, or a modification still refuses dirty. `git commit --allow-empty` on that seed creates an index and an empty status; the unpublished commit is then caught by `rev-list`.
+D2: absence of an index is accepted only when porcelain contains no changes except HEAD deletions, the worktree contains literally nothing outside its top-level .git, and refs/stash is absent. This is exactly the deploy no-checkout filesystem shape. A previously used checkout emptied to this shape has no index or worktree bytes left to lose; remaining refs/reflogs must independently prove publication. We deliberately accept that equivalent empty shape without claiming seed provenance. Any file (including ignored content or tracked content), subdirectory, stash, modification or staged content refuses dirty. The empty-HEAD plus ignored-file case detects the previous early-return hole; an empty tree is not authority to discard ignored bytes.
 
-On refusal the journal `audit` field is one line, `audit check=<command> status=<exit> repo=<path>`. The path is relative to the work volume. A component matching credential, token, secret, password, `ghp_`/`gho_`/`ghu_`/`ghs_`/`ghr_`, or `github_pat_` is `REDACTED`. Git stderr is not copied. On success the same field keeps the existing `tip=` lines and adds `repositories=<n> partial=<n>`. `GithubTokenAbsent` stays a warning. This audit does not read the token; the token is only for secondary receive-pack probes.
+D3: porcelain alone is insufficient. Reject non-H ls-files -v entries (assume-unchanged, skip-worktree, sparse/unmerged states), then hash every regular file/symlink against its index blob ID without filters or stat-cache shortcuts. Status also rejects staged and intent-to-add changes. Non-file index modes refuse unknown. Raw hashing deliberately refuses normalized checkout differences that cannot be proved byte-identical. The racy-stat fixture preserves the old blob ID while making cached stat data match a changed same-size file and asserts ordinary status is empty before auditing.
 
-The whole Unit lane is outside this ordinary scope. The brief overrides the Final profile's Unit lane, and `/*/*/*/*[Category=Unit]` is not a checkpoint row.
+D4: traverse all local/recovery and advertised origin roots with rev-list --objects --filter=blob:none --missing=error --stdin, without publication exclusions. Missing ancestor commits/trees refuse unknown, while omitted blobs are allowed. Every tip must peel to a commit; noncommit recovery refs cannot establish publication and refuse unknown. Grafts refuse; replacement refs cannot replace the graph. The subsequent rev-list --count proof still checks each tip against current origin heads, validates numeric output, and never converts Git failure to zero.
 
-Current `origin/master` at the fast-forward was `16ed20f3af157e0e922a95ab9b4cb90fb2c7e3a2` (docs-only CARD-1074). The dispatch base was `b5e78700ae9a76430c13d75cc03399055dd82e59`.
+D5: the existing C1008SeedPromisor fixture now enables uploadpack.allowFilter/allowAnySHA1InWant on its local origin and asserts that the HEAD blob appears as missing in rev-list --objects --missing=print, with no lazy fetch. It still executes the unique actual deploy clone line. New helper contracts use that same command and verify no fetch child and all three required environment values at every traced Git start.
+
+D6: the journal audit field retains the successful publication proof used by resume. A refusal writes auditFailure; a first refusal with no proof also initializes audit for backward-compatible diagnostics. Both contain check/status/redacted-relative-repo details without Git stderr. The actual audit wrapper and resume comparison are exercised through outage/restoration of a local origin. GithubTokenAbsent remains a warning; the audit does not read the token (secondary receive-pack probes use it).
+
+The whole Unit lane is outside this explicitly commissioned closed scope; it is not deferred or claimed passed. No full-assembly run is needed: the change is bounded to the recycle script, its local Git fixtures, documentation and named script classes. No delivery/landing/lease/persistence service implementation changed.
+
+## Ordinary invariants
+
+| ID | Required proof | Selection |
+|---|---|---|
+| V-1 | Every retained recovery tip is published or refused | C1105_Git_audit_recovery_tips, all 9 variants |
+| V-2 | Only empty no-index seed shape passes; content is retained | C1105_Git_audit_seed_content, all 10 variants |
+| V-3 | Flags and stat shortcuts cannot conceal private content | C1105_Git_audit_index_content, all 5 variants |
+| V-4 | Commit/tree completeness; blobs may be absent | C1105_Git_audit_object_completeness, all 3 variants; seed positive |
+| V-5 | Actual deploy fixture is truly blobless | C1008_Recycle_audits_promisor_checkout and each new local fixture |
+| V-6 | Failure preserves saved proof; unchanged recovered origin resumes | C1105_Git_audit_resume_preserves_proof |
+| R-1 | Full commissioned adjacent regression | CP-1 through CP-12 |
+| R-2 | No lazy fetch; required environment at every Git start | all 28 C1105_Git_audit cases |
+| R-3 | Dirty/unpublished/unknown classification, receipts, zero-count failures, UID 1654 | CP-11 existing 8 methods |
 
 ## Positive controls pending
 
-These stay pending for method-scoped SourceLanding Mutation. The detecting filter for each is `/*/*/RemoteScriptContractTests/C1008_Recycle_audits_promisor_checkout*`.
+All controls remain pending for method-scoped SourceLanding Mutation, including the earlier PC-1/2/3. No deliberate production mutants run in Code. The method filter is /*/*/RemoteScriptContractTests/<exact method>; parameterized variants retain individual evidence.
 
-| PC | Production line | Mutation | Expected red |
+| PC / variants | Detecting method | Deliberate defect for Mutation | Expected red |
 |---|---|---|---|
-| PC-1 | promisor `case` in `c1008_git_program` that continues when `partial_status` is 0 | restore `[ "$partial_status" = 1 ] \|\| fail "$partial_status"` | published blobless seed is refused |
-| PC-2 | `rev-list --count` assignment's `\|\| fail $?` | change that failure to `\|\| count=0` | `gitFault=exit128` is accepted and volumes are removed |
-| PC-3 | `export GIT_NO_LAZY_FETCH=1` at the top of the helper | drop `GIT_NO_LAZY_FETCH=1` | missing pack is accepted, or the helper text no longer contains the export |
+| PC-1 | C1008_Recycle_audits_promisor_checkout | restore unconditional promisor refusal | published seed refused |
+| PC-2 | C1008_Recycle_audits_promisor_checkout | turn failed count into zero | failing rev-list permits removal |
+| PC-3 | C1105_Git_audit_seed_content | drop GIT_NO_LAZY_FETCH export | per-Git environment/no-fetch proof fails |
+| PC-D1 / stash,reflog,reflog-old,recovery,secondary,worktree-ref,linked-head,linked-private,bare-head | C1105_Git_audit_recovery_tips | omit the corresponding ref/reflog/HEAD source (isolate other retention roots) | private tip accepted |
+| PC-D2 / seed-untracked,seed-tracked,seed-ignored,seed-empty-ignored,seed-stash,staged,modified | C1105_Git_audit_seed_content | bypass matching dirty/content/stash guard | content accepted |
+| PC-D3 / assume,skip,intent,sparse,racy | C1105_Git_audit_index_content | bypass matching flag/content/status guard | hidden modification accepted |
+| PC-D4 / missing-commit,missing-tree,missing-head-tree | C1105_Git_audit_object_completeness | omit complete graph validation (and HEAD status control where necessary) | absent required object accepted |
+| PC-D5 / filter,clone-flags | C1008_Recycle_audits_promisor_checkout | disable origin filtering or change seed clone filter | real missing-blob/seed-command guard fails |
+| PC-D6 | C1105_Git_audit_resume_preserves_proof | overwrite saved audit on refusal | proof differs and recovery cannot resume |
+| PC-doc | DockerStackDocumentationTests (existing exact audit documentation method) | remove required audit contract sentence | documentation pins fail |
 
-Code ran each mutation once against the built `C1008_Recycle_audits_promisor_checkout` test and restored `scripts/c590-remote.sh` before the commit. PC-1 refused the published seed (`RecycleGitAuditUnknown`, `check=config-promisor status=0`, `published.Removed.Length`). PC-2 removed volumes when `rev-list` exited 128 (`revList.Removed` was not empty). PC-3 failed the assertion that the helper text contains `GIT_NO_LAZY_FETCH=1`. Those runs are the Code proof. The official red, restore, and green cycles stay with SourceLanding Mutation.
+Some variants are retained regressions already green at 4bfc7379; they are not claimed to detect a newly introduced defect. Baseline diagnostics record exact outcomes. D1/D2/D3/D4/D6 have independently reproduced baseline reds; D5's prior fixture shape is measured separately. Controls requiring more than one guard removal are explicitly variants for Mutation's missing-control discovery, not declared qualified by Code.
 
 ## Checkpoints
 
-Closed list. One isolated build, serial rows, no whole-Unit lane. UseAppHost=false is applied by the checkpoint tool on this host. CP-11 is the git-audit row and CP-12 is the recycle wrapper; both run last.
+Closed list: one isolated test build, UseAppHost=false, serial drivers. CP-11 has 36 cases (8 existing + 28 new). The slow CP-7/CP-9/CP-12 run last. Existing timeout estimates are unchanged. Expected total: 172 cases. Measured previous 12-row wall was 74m36s; allow roughly 80 minutes plus implementation and baseline diagnostics.
 
 ### Checkpoints
 
@@ -35,12 +60,12 @@ Closed list. One isolated build, serial rows, no whole-Unit lane. UseAppHost=fal
 | CP-1 | promisor | `tests/Antiphon.Tests -> bin-c1105-promisor/` | docs-pins | `/*/*/DockerStackDocumentationTests/*` | doc pins | 14 methods, 0 failed | 14 | 15 | true |
 | CP-2 | promisor | CP-1 | registry-guard | `/*/*/(TestClassificationGuardTests*)\|(SlowTestTripwireTests*)/*` | registry guard | 3 methods, 0 failed | 3 | 3 | true |
 | CP-3 | promisor | CP-1 | compose-text-pins | `/*/*/RemoteScriptContractTests/(C1105_Deploy_parent_orders_checkout_and_boot_files_before_recycle*)\|(Deploy_parent_creates_the_github_token_directory_without_reading_it*)\|(Deploy_parent_creates_the_codex_home_directory_without_reading_it*)\|(Deploy_parent_seeds_or_verifies_runner_checkout*)\|(Persistent_restart_ensures_the_identity_file_before_stopping_an_older_runner*)\|(Deploy_parent_seeds_a_fresh_runner_checkout_before_starting_the_runner*)` | compose text pins | 6 methods, 0 failed | 6 | 4 | true |
+| CP-11 | promisor | CP-1 | remote-git-audit | `/*/*/RemoteScriptContractTests/(C1008_Recycle_refuses_uninspectable_git*)\|(C1008_Recycle_refuses_unpublished_and_dirty_work*)\|(C1008_Retire_temp_rechecks_absence_and_retirement*)\|(C1087_Host_census_filters_and_names_cause*)\|(C1008_Recycle_preserves_tmp_copyup*)\|(C1008_Retire_temp_reclaims_below_cache_disk_gate*)\|(C1008_Recycle_audits_work_as_1654*)\|(C1008_Recycle_audits_promisor_checkout*)\|(C1105_Git_audit_*)` | C1008/C1087 promisor audit | 13 methods / 36 cases, 0 failed | 36 | 15 | true |
 | CP-4 | promisor | CP-1 | mount-class | `/*/*/RollingProductionMountTests/*` | class regression | 12 methods, 0 failed | 12 | 10 | true |
 | CP-5 | promisor | CP-1 | retired-temp-script | `/*/*/RetiredTempContainerScriptTests/*` | class regression | 13 methods, 0 failed | 13 | 10 | true |
 | CP-6 | promisor | CP-1 | host-jq | `/*/*/HostJqPrerequisiteScriptTests/*` | class regression | 39 methods, 0 failed | 39 | 15 | true |
-| CP-7 | promisor | CP-1 | retired-temp-host | `/*/*/RetiredTempContainerHostTests/*` | class regression | 21 methods, 0 failed | 21 | 15 | true |
 | CP-8 | promisor | CP-1 | remote-generation | `/*/*/RemoteScriptContractTests/(C1105_Redeploy_accepts_previous_generation_and_requires_new_bind*)\|(C1105_Generation_identity_refuses_mismatch*)\|(C1105_Dry_run_previews_a_generation_change_without_moving_the_checkout*)\|(C1008_Recycle_exact_default_volumes*)\|(C1008_Recycle_dry_run_never_mutates*)` | C1008/C1105 | 5 methods, 0 failed | 5 | 15 | true |
-| CP-9 | promisor | CP-1 | remote-census-long | `/*/*/RemoteScriptContractTests/(C1008_Recycle_resume_requires_matching_receipt*)\|(C1008_Recycle_receipt_records_disk_and_partial_failure*)\|(C1008_Recycle_refuses_references_and_unknown_census*)` | C1008 | 3 methods, 0 failed | 3 | 15 | true |
 | CP-10 | promisor | CP-1 | remote-resume | `/*/*/RemoteScriptContractTests/(C1105_Compose_cmp_refuses_before_removal*)\|(C1105_Resume_identity_refusals*)\|(C1105_Resume_state_init_image_follows_the_journal*)\|(C1105_Resume_foreign_leftover_is_not_an_image_mismatch*)` | C1105 | 4 methods, 0 failed | 4 | 12 | true |
-| CP-11 | promisor | CP-1 | remote-git-audit | `/*/*/RemoteScriptContractTests/(C1008_Recycle_refuses_uninspectable_git*)\|(C1008_Recycle_refuses_unpublished_and_dirty_work*)\|(C1008_Retire_temp_rechecks_absence_and_retirement*)\|(C1087_Host_census_filters_and_names_cause*)\|(C1008_Recycle_preserves_tmp_copyup*)\|(C1008_Retire_temp_reclaims_below_cache_disk_gate*)\|(C1008_Recycle_audits_work_as_1654*)\|(C1008_Recycle_audits_promisor_checkout*)` | C1008/C1087 promisor audit | 8 methods, 0 failed | 8 | 15 | true |
+| CP-7 | promisor | CP-1 | retired-temp-host | `/*/*/RetiredTempContainerHostTests/*` | class regression | 21 methods, 0 failed | 21 | 15 | true |
+| CP-9 | promisor | CP-1 | remote-census-long | `/*/*/RemoteScriptContractTests/(C1008_Recycle_resume_requires_matching_receipt*)\|(C1008_Recycle_receipt_records_disk_and_partial_failure*)\|(C1008_Recycle_refuses_references_and_unknown_census*)` | C1008 | 3 methods, 0 failed | 3 | 15 | true |
 | CP-12 | promisor | CP-1 | recycle-wrapper | `/*/*/RollingVolumeRecycleScriptTests/*` | class regression | 16 methods, 0 failed | 16 | 15 | true |
