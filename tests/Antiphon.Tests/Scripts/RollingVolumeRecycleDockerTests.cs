@@ -46,14 +46,18 @@ public sealed class RollingVolumeRecycleDockerTests
         }
         var output = await stdout + await stderr;
         child.ExitCode.ShouldBe(0, "recycle-real-comparison: real Docker/Git outcomes; " + output);
-        var match = Regex.Match(output, @"C1008_REAL cases=32 base=5 changed=27 failures=0 cleanup=absent evidence=(.+)");
-        match.Success.ShouldBeTrue("recycle-real-comparison: 32 outcomes and checked cleanup; " + output);
+        var match = Regex.Match(output, @"C1008_REAL cases=34 base=5 changed=29 failures=0 cleanup=absent evidence=(.+)");
+        match.Success.ShouldBeTrue("recycle-real-comparison: 34 outcomes and checked cleanup; " + output);
         var evidence = JsonNode.Parse(File.ReadAllText(match.Groups[1].Value.Trim()))!;
         var rows = evidence["results"]!.AsArray();
-        rows.Count.ShouldBe(32);
-        rows.Select(x => x!["name"]!.GetValue<string>()).Distinct().Count().ShouldBe(32);
+        rows.Count.ShouldBe(34);
+        rows.Select(x => x!["name"]!.GetValue<string>()).Distinct().Count().ShouldBe(34);
         rows.Count(x => x!["version"]!.GetValue<string>() == "B").ShouldBe(5);
-        rows.Count(x => x!["version"]!.GetValue<string>() == "C").ShouldBe(27);
+        rows.Count(x => x!["version"]!.GetValue<string>() == "C").ShouldBe(29);
+        rows.ShouldContain(x => x!["name"]!.GetValue<string>() == "C-previous-generation-main" && x["accepted"]!.GetValue<bool>());
+        rows.ShouldContain(x => x!["name"]!.GetValue<string>() == "C-previous-generation-foreign-mount"
+            && x["diagnosis"]!.GetValue<string>() == "RecycleContainerStateUnknown"
+            && x["accepted"]!.GetValue<bool>() == false);
         evidence["failure"].ShouldBeNull();
         evidence["realDf"]!.GetValue<string>().ShouldContain("Filesystem");
         Console.WriteLine(output);

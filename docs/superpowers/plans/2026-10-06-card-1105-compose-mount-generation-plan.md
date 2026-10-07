@@ -187,6 +187,15 @@ temp model: `SOURCE_REVISION` from `$SERVER2_TEMP_ENV`, cross-checked with the r
 temp it derives nothing (D-2). The receipt's `candidates[].Topology` therefore describes the
 containers' own generation.
 
+A temp project that owns a state-init container and no session-runner binds that generation by
+`SOURCE_REVISION` alone. `c1008_previous_generation` still requires the stack file's SHA to be 40
+lowercase hex and equal the temp registration `buildVersion`, then records `imageTag` and
+`imageId` as null and does not inspect an image. The image leg applies only while a session-runner
+remains. Main still requires exactly one session-runner image and refuses `RecycleGenerationUnknown`
+when it has none. `retire-temp-containers` and `retire-temp-runner` (via `c1008_recycle`) both call
+`c1008_previous_generation`, so neither keeps a stricter image refusal for that state-init-only
+shape.
+
 ### D-7: refusal vocabulary and what does not weaken
 
 New first tokens: `RecycleGenerationUnknown`, `RecycleGenerationMismatch`. Unchanged and still
