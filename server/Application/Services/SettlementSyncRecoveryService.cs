@@ -11,12 +11,11 @@ namespace Antiphon.Server.Application.Services;
 /// CARD-1082 D-5. Retries an accepted desktop fast-forward. At most 32 due rows, Git outside
 /// the claim transaction, and the only write is the debt row. An empty table costs the one
 /// indexed read in <see cref="SweepAsync"/>. A Held row is re-checked every
-/// <see cref="HeldRecheckMinutes"/> for its worktree registration only. It ends
-/// Superseded only when <see cref="HeldRegistrationPermanentlyGoneAsync"/> is true for
-/// the registration that retirement recorded. A retirement of an earlier registration,
-/// a registration recreated at the same path, a revoked retirement, a missing or
-/// unreadable path, a lease or runner gap, and any failed read keep the row Held and
-/// move its next attempt forward. The re-check never runs Git.
+/// <see cref="HeldRecheckMinutes"/> by restamping <c>NextAttemptAt</c>. The re-check does not
+/// read the filesystem, match a path, query a retirement, run Git, or fast-forward, and it
+/// does not supersede: <see cref="AgentTaskSyncDebt"/> has no registration id a complete
+/// retirement can be bound to. Any failure keeps the row Held and still moves the next
+/// attempt forward. Pending recovery is unchanged.
 /// This service does not read
 /// <c>RunnerSyncDebtOnSettlement</c>: that switch stops settlement from minting a row, and a
 /// row already accepted keeps recovering.
@@ -79,40 +78,23 @@ public sealed class SettlementSyncRecoveryService(AppDbContext db, RemoteWorkspa
             if (debt.State == AgentTaskSyncDebtState.Held)
             {
                 if (debt.NextAttemptAt is not null && debt.NextAttemptAt > due) return null;
-                var gone = false;
-                var failed = false;
                 try
-                {
-                    gone = await HeldRegistrationPermanentlyGoneAsync(debt, due, ct);
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
-                {
-                    failed = true;
-                    logger.LogWarning("Settlement sync debt {DebtId} stays Held ({Type})", id, ex.GetType().Name);
-                }
-
-                if (!failed && gone)
-                {
-                    await TerminalAsync(debt, AgentTaskSyncDebtState.Superseded,
-                        RemoteSettlementSyncReasons.SettlementSyncSuperseded, due, ct);
-                    await tx.CommitAsync(ct);
-                    return null;
-                }
-
-                if (!failed)
                 {
                     if (await RescheduleHeldAsync(id, debt.Revision, due, ct) == 1)
                         await tx.CommitAsync(ct);
                     return null;
                 }
-
-                try { await tx.RollbackAsync(ct); }
                 catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
                 {
                     logger.LogWarning("Settlement sync debt {DebtId} stays Held ({Type})", id, ex.GetType().Name);
-                }
+                    try { await tx.RollbackAsync(ct); }
+                    catch (Exception rollback) when (rollback is not OperationCanceledException || !ct.IsCancellationRequested)
+                    {
+                        logger.LogWarning("Settlement sync debt {DebtId} stays Held ({Type})", id, rollback.GetType().Name);
+                    }
 
-                rescue = (debt.TaskId, debt.Revision);
+                    rescue = (debt.TaskId, debt.Revision);
+                }
             }
             else
             {
@@ -251,151 +233,6 @@ public sealed class SettlementSyncRecoveryService(AppDbContext db, RemoteWorkspa
             && string.Equals(baseline.FullRef, debt.FullRef, StringComparison.Ordinal);
     }
 
-    /// <summary>
-    /// CARD-1136 F3b / CARD-1082 F3c. A Held registration is permanently gone only when
-    /// exactly one active <see cref="WorktreeRetirementState.Complete"/> retirement for
-    /// this task and attempt names the debt's worktree path, has
-    /// <see cref="TaskWorktreeRetirement.DirectoryRemovedAt"/>,
-    /// <see cref="TaskWorktreeRetirement.RegistrationRemovedAt"/> and
-    /// <see cref="TaskWorktreeRetirement.RetirementCompletedAt"/> all set at or before
-    /// <paramref name="due"/> and not before the debt row was created, the recorded
-    /// directory is absent, and that retirement's git directory is the registration that
-    /// is absent now. A recreated registration at the same path, an earlier incarnation,
-    /// a revoked, inactive, released, partial, refused, or contradicted retirement is not
-    /// gone. A blank, missing, or unreadable path without that completed retirement is not
-    /// gone. This check does not run Git and does not contact a runner.
-    /// </summary>
-    private async Task<bool> HeldRegistrationPermanentlyGoneAsync(
-        AgentTaskSyncDebt debt, DateTime due, CancellationToken ct)
-    {
-        if (string.IsNullOrWhiteSpace(debt.WorktreePath)) return false;
-        var rows = await db.TaskWorktreeRetirements.AsNoTracking()
-            .Where(r => r.TaskId == debt.TaskId && r.TaskAttempt == debt.Attempt && r.Active
-                && r.State == WorktreeRetirementState.Complete)
-            .Select(r => new
-            {
-                r.WorktreePath,
-                r.DirectoryRemovedAt,
-                r.RegistrationRemovedAt,
-                r.RetirementCompletedAt,
-                r.GitDirectory,
-                r.CommonDirectory,
-            })
-            .ToListAsync(ct);
-        if (rows.Count != 1) return false;
-        var row = rows[0];
-        if (!string.Equals(row.WorktreePath, debt.WorktreePath, StringComparison.Ordinal)) return false;
-        if (row.DirectoryRemovedAt is null || row.DirectoryRemovedAt > due) return false;
-        if (row.RegistrationRemovedAt is null || row.RegistrationRemovedAt > due) return false;
-        if (row.RetirementCompletedAt is null || row.RetirementCompletedAt > due) return false;
-        if (row.RetirementCompletedAt < debt.CreatedAt) return false;
-        try
-        {
-            if (Directory.Exists(debt.WorktreePath)) return false;
-        }
-        catch (Exception ex) when (IsRegistrationDoubt(ex))
-        {
-            return false;
-        }
-
-        return RecordedRegistrationIsAbsent(
-            row.GitDirectory, row.CommonDirectory, debt.RepositoryPath, debt.WorktreePath);
-    }
-
-    /// <summary>
-    /// The recorded git directory is this registration only while that directory is gone
-    /// and no current <c>worktrees/*/gitdir</c> names the debt path. Doubt stays Held.
-    /// </summary>
-    private static bool RecordedRegistrationIsAbsent(
-        string? gitDirectory, string? commonDirectory, string? repositoryPath, string worktreePath)
-    {
-        try
-        {
-            if (string.IsNullOrWhiteSpace(gitDirectory) || PathExists(gitDirectory)) return false;
-            foreach (var gitdir in CandidateGitdirFiles(gitDirectory, commonDirectory, repositoryPath))
-            {
-                if (GitdirNames(gitdir, worktreePath)) return false;
-            }
-
-            return true;
-        }
-        catch (Exception ex) when (IsRegistrationDoubt(ex))
-        {
-            return false;
-        }
-    }
-
-    private static IEnumerable<string> CandidateGitdirFiles(
-        string gitDirectory, string? commonDirectory, string? repositoryPath)
-    {
-        var seen = new HashSet<string>(PathComparer());
-        foreach (var root in WorktreeAdminRoots(gitDirectory, commonDirectory, repositoryPath))
-        {
-            var full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
-            if (!seen.Add(full) || !Directory.Exists(full)) continue;
-            foreach (var admin in Directory.EnumerateDirectories(full))
-            {
-                var gitdir = Path.Combine(admin, "gitdir");
-                if (File.Exists(gitdir)) yield return gitdir;
-            }
-        }
-    }
-
-    private static IEnumerable<string> WorktreeAdminRoots(
-        string gitDirectory, string? commonDirectory, string? repositoryPath)
-    {
-        var parent = Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(gitDirectory));
-        if (!string.IsNullOrEmpty(parent)
-            && string.Equals(Path.GetFileName(parent), "worktrees", StringComparison.OrdinalIgnoreCase))
-            yield return parent;
-        if (!string.IsNullOrWhiteSpace(commonDirectory))
-        {
-            foreach (var root in GitWorktreeRoots(commonDirectory)) yield return root;
-        }
-
-        if (!string.IsNullOrWhiteSpace(repositoryPath))
-        {
-            foreach (var root in GitWorktreeRoots(repositoryPath)) yield return root;
-        }
-    }
-
-    private static IEnumerable<string> GitWorktreeRoots(string path)
-    {
-        var trimmed = Path.TrimEndingDirectorySeparator(path);
-        yield return Path.Combine(trimmed, ".git", "worktrees");
-        yield return Path.Combine(trimmed, "worktrees");
-    }
-
-    private static bool GitdirNames(string gitdirFile, string worktreePath)
-    {
-        var text = File.ReadAllText(gitdirFile).Trim();
-        const string prefix = "gitdir:";
-        if (text.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
-            text = text[prefix.Length..].Trim();
-        if (string.IsNullOrWhiteSpace(text)) return false;
-        if (!Path.IsPathRooted(text))
-        {
-            var directory = Path.GetDirectoryName(gitdirFile);
-            if (string.IsNullOrEmpty(directory)) return false;
-            text = Path.GetFullPath(Path.Combine(directory, text));
-        }
-
-        return PathsEqual(text, worktreePath) || PathsEqual(text, Path.Combine(worktreePath, ".git"));
-    }
-
-    private static bool PathExists(string path) => Directory.Exists(path) || File.Exists(path);
-
-    private static bool PathsEqual(string left, string right) => string.Equals(
-        Path.TrimEndingDirectorySeparator(Path.GetFullPath(left)),
-        Path.TrimEndingDirectorySeparator(Path.GetFullPath(right)),
-        OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
-
-    private static StringComparer PathComparer() =>
-        OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
-
-    private static bool IsRegistrationDoubt(Exception ex) =>
-        ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException;
-
     private Task<int> RescheduleHeldAsync(Guid id, long revision, DateTime due, CancellationToken ct)
     {
         var recheck = due.AddMinutes(HeldRecheckMinutes);
@@ -429,7 +266,7 @@ public sealed class SettlementSyncRecoveryService(AppDbContext db, RemoteWorkspa
     /// <summary>
     /// Pending fast-forward guard, checked before Git so a retired checkout is not fast-forwarded.
     /// The recorded worktree is missing, or any retirement row exists for this attempt.
-    /// Held re-checks use <see cref="HeldRegistrationPermanentlyGoneAsync"/> instead.
+    /// Held re-checks do not call this.
     /// </summary>
     private async Task<bool> RegistrationGoneAsync(AgentTaskSyncDebt debt, CancellationToken ct)
     {

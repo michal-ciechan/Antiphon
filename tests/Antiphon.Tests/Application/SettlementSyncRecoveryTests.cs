@@ -19,9 +19,10 @@ namespace Antiphon.Tests.Application;
 
 /// <summary>
 /// CARD-1082 S4b. The dispatcher sweep fast-forwards a seeded debt only to its recorded source.
-/// Fourteen methods, twenty results: the three refusal rows, the two episode rows, the
-/// task-detail projection, and CARD-1136's Held re-check methods, including the F3b controls
-/// that stay Held when removal is not proved and the F3c recreated-registration control.
+/// Fifteen methods, twenty-four results: the three refusal rows, the two episode rows, the
+/// task-detail projection, and CARD-1136's Held re-check methods. F3d keeps every row Held:
+/// a complete retirement, a recreated registration, and an unreadable, empty, symlinked, or
+/// moved registration are not a registration id.
 /// </summary>
 [Category("Integration")]
 [Category("Slow")]
@@ -465,20 +466,18 @@ public sealed class SettlementSyncRecoveryTests
     }
 
     /// <summary>
-    /// V-8. A Held <c>runner_sync_tip_not_reported</c> row stays Held until 60 minutes have
-    /// passed. The re-check then ends it Superseded only when one active Complete retirement
-    /// of this registration has recorded directory and registration removal at or before that
-    /// re-check and both the recorded path and that git directory are absent. No Git, no
-    /// attempt, and no attention row.
+    /// CARD-1082 F3d. A Complete retirement records removal, and the debt row still has no
+    /// registration id to bind that retirement to. The due re-check stays Held, keeps the
+    /// warning, and does not read the removed directory.
     /// </summary>
     [Test]
-    public async Task C1136_HeldDebtEndsSupersededOnceTheWorktreeIsRetired()
+    public async Task C1136_CompleteRetirementWithoutRegistrationIdKeepsHeldDebt()
     {
+        AssertHeldRecheckReadsNoFilesystem();
         await using var world = await SeedHeldTipAsync();
         var seeded = await DebtAsync(world);
         seeded.WorktreePath.ShouldNotBeNullOrWhiteSpace();
         var path = seeded.WorktreePath!;
-        var attempts = seeded.Attempts;
         var head = await world.Git.HeadAsync();
         var gitDir = await world.Git.RunAsync(path, "rev-parse", "--absolute-git-dir");
         await world.Git.RunAsync(world.Git.Desktop, "worktree", "remove", "--force", path);
@@ -489,20 +488,10 @@ public sealed class SettlementSyncRecoveryTests
 
         await AssertNotDueAsync(world, seeded, "committed removal is not due yet");
         world.DebtClock.Advance(TimeSpan.FromMinutes(60));
-        world.Git.Git.Clear();
-        (await world.SweepSettlementSyncAsync()).ShouldBe(0, "committed removal is not an attempt");
-        var debt = await DebtAsync(world);
-        debt.State.ShouldBe(AgentTaskSyncDebtState.Superseded);
-        debt.ReasonCode.ShouldBe(RemoteSettlementSyncReasons.SettlementSyncSuperseded);
-        debt.Attempts.ShouldBe(attempts);
-        debt.NextAttemptAt.ShouldBeNull();
-        world.Git.Git.Commands.ShouldBeEmpty();
+        await AssertHeldRescheduledAsync(world, seeded, "a complete retirement has no registration id", head: null);
         Directory.Exists(path).ShouldBeFalse();
         Directory.Exists(gitDir).ShouldBeFalse();
         (await world.Git.RunAsync(world.Git.Desktop, "rev-parse", world.Git.FullRef)).ShouldBe(head);
-        SettlementSyncDebtAttention.Build(
-            [debt], [world.Task], world.DebtClock.GetUtcNow().UtcDateTime, new DelegationSettings())
-            .ShouldBeEmpty();
     }
 
     /// <summary>
@@ -514,6 +503,7 @@ public sealed class SettlementSyncRecoveryTests
     [Test]
     public async Task C1136_RecreatedRegistrationKeepsHeldDebtAndReschedules()
     {
+        AssertHeldRecheckReadsNoFilesystem();
         await using var world = await SeedHeldTipAsync();
         var seeded = await DebtAsync(world);
         seeded.WorktreePath.ShouldNotBeNullOrWhiteSpace();
@@ -550,7 +540,7 @@ public sealed class SettlementSyncRecoveryTests
             world.Git.Git.Clear();
             counter.Reset();
             (await world.SweepSettlementSyncAsync()).ShouldBe(0, "a recreated registration is not an attempt");
-            counter.Statements.ShouldBe(6, "binding the current registration adds no statement");
+            counter.Statements.ShouldBe(5, "a due Held re-check is one reschedule and no retirement read");
             var debt = await DebtAsync(world);
             debt.State.ShouldBe(AgentTaskSyncDebtState.Held);
             debt.ReasonCode.ShouldBe(RemoteSettlementSyncReasons.TipNotReported);
@@ -575,6 +565,89 @@ public sealed class SettlementSyncRecoveryTests
     }
 
     /// <summary>
+    /// CARD-1082 F3d round 3. An empty gitdir, an unreadable admin child, a symlink alias,
+    /// and a worktree moved onto the task row are not identity. Each stays Held, and the
+    /// Held branch of the claim contains no filesystem read.
+    /// </summary>
+    [Test]
+    [Arguments("empty-pointer")]
+    [Arguments("unreadable")]
+    [Arguments("symlink")]
+    [Arguments("moved")]
+    public async Task C1136_AliasOrUnreadableRegistrationKeepsHeldDebtAndReschedules(string scenario)
+    {
+        AssertHeldRecheckReadsNoFilesystem();
+        await using var world = await SeedHeldTipAsync();
+        var seeded = await DebtAsync(world);
+        seeded.WorktreePath.ShouldNotBeNullOrWhiteSpace();
+        var path = seeded.WorktreePath!;
+        var gitDir = await world.Git.RunAsync(path, "rev-parse", "--absolute-git-dir");
+        await world.Git.RunAsync(world.Git.Desktop, "worktree", "remove", "--force", path);
+        await AddRetirementAsync(world, seeded, WorktreeRetirementState.Complete, active: true,
+            committedRemoval: true, gitDirectory: gitDir);
+
+        var scratch = Path.Combine(world.Git.Desktop, ".git", "worktrees", "f3d-" + scenario);
+        var moved = path + "-f3d-moved";
+        string? link = null;
+        string? locked = null;
+        try
+        {
+            if (scenario == "moved")
+            {
+                Directory.CreateDirectory(moved);
+                await using var db = world.CreateContext();
+                var task = await db.AgentTasks.SingleAsync(t => t.Id == world.TaskId);
+                task.WorktreePath = moved;
+                await db.SaveChangesAsync();
+            }
+            else
+            {
+                Directory.CreateDirectory(scratch);
+                var gitdir = Path.Combine(scratch, "gitdir");
+                if (scenario == "empty-pointer")
+                    await File.WriteAllTextAsync(gitdir, "");
+                else if (scenario == "unreadable")
+                {
+                    await File.WriteAllTextAsync(gitdir, path + "\n");
+                    File.SetUnixFileMode(scratch, UnixFileMode.None);
+                    locked = scratch;
+                }
+                else
+                {
+                    link = Path.Combine(Path.GetTempPath(), "f3d-alias-" + Guid.NewGuid().ToString("N"));
+                    Directory.CreateSymbolicLink(link, Path.GetDirectoryName(path)!);
+                    var alias = Path.Combine(link, Path.GetFileName(path)!, ".git");
+                    await File.WriteAllTextAsync(gitdir, alias + "\n");
+                }
+            }
+
+            world.DebtClock.Advance(TimeSpan.FromMinutes(60));
+            await AssertHeldRescheduledAsync(world, seeded, scenario, head: null);
+            if (scenario == "moved")
+            {
+                await using var db = world.CreateContext();
+                (await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == world.TaskId))
+                    .WorktreePath.ShouldBe(moved, scenario);
+                Directory.Exists(moved).ShouldBeTrue(scenario);
+            }
+        }
+        finally
+        {
+            if (locked is not null)
+            {
+                File.SetUnixFileMode(locked, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            }
+
+            if (Directory.Exists(scratch))
+                Directory.Delete(scratch, recursive: true);
+            if (link is not null && Directory.Exists(link))
+                Directory.Delete(link);
+            if (Directory.Exists(moved))
+                Directory.Delete(moved, recursive: true);
+        }
+    }
+
+    /// <summary>
     /// CARD-1136 F3b. A revoked retirement is not proof the worktree is gone. The due
     /// re-check keeps the Held warning and moves the next attempt forward 60 minutes,
     /// whether the recorded directory is still present or temporarily absent.
@@ -584,6 +657,7 @@ public sealed class SettlementSyncRecoveryTests
     [Arguments("absent")]
     public async Task C1136_RevokedRetirementKeepsHeldDebtAndReschedules(string scenario)
     {
+        AssertHeldRecheckReadsNoFilesystem();
         await using var world = await SeedHeldTipAsync();
         var seeded = await DebtAsync(world);
         seeded.WorktreePath.ShouldNotBeNullOrWhiteSpace();
@@ -609,6 +683,7 @@ public sealed class SettlementSyncRecoveryTests
     [Test]
     public async Task C1136_TemporaryWorktreeAbsenceKeepsHeldDebtAndReschedules()
     {
+        AssertHeldRecheckReadsNoFilesystem();
         await using var world = await SeedHeldTipAsync();
         var seeded = await DebtAsync(world);
         seeded.WorktreePath.ShouldNotBeNullOrWhiteSpace();
@@ -648,6 +723,7 @@ public sealed class SettlementSyncRecoveryTests
     [Arguments("blank-path")]
     public async Task C1136_UncertainHeldRegistrationKeepsHeldDebtAndReschedules(string scenario)
     {
+        AssertHeldRecheckReadsNoFilesystem();
         await using var world = await SeedHeldTipAsync();
         var seeded = await DebtAsync(world);
         seeded.WorktreePath.ShouldNotBeNullOrWhiteSpace();
@@ -680,6 +756,7 @@ public sealed class SettlementSyncRecoveryTests
     [Test]
     public async Task C1136_HeldRecheckReadFailureKeepsHeldDebtAndReschedules()
     {
+        AssertHeldRecheckReadsNoFilesystem();
         await using var world = await SeedHeldTipAsync();
         var seeded = await DebtAsync(world);
         var head = await world.Git.HeadAsync();
@@ -697,6 +774,7 @@ public sealed class SettlementSyncRecoveryTests
     [Test]
     public async Task C1136_HeldDebtWithALiveWorktreeStaysHeldAndReschedules()
     {
+        AssertHeldRecheckReadsNoFilesystem();
         await using var world = await SeedHeldTipAsync();
         var before = await DebtAsync(world);
         var head = await world.Git.HeadAsync();
@@ -717,6 +795,7 @@ public sealed class SettlementSyncRecoveryTests
         world.Git.Git.Clear();
         counter.Reset();
         (await world.SweepSettlementSyncAsync()).ShouldBe(0, "a Held re-check is not an attempt");
+        counter.Statements.ShouldBe(5, "a due Held re-check is one reschedule and no retirement read");
         var debt = await DebtAsync(world);
         debt.State.ShouldBe(AgentTaskSyncDebtState.Held);
         debt.ReasonCode.ShouldBe(RemoteSettlementSyncReasons.TipNotReported);
@@ -839,7 +918,42 @@ public sealed class SettlementSyncRecoveryTests
         Directory.Delete(path, recursive: true);
     }
 
-    /// <summary>Fails the retirement read the Held re-check uses, before any row is judged gone.</summary>
+    /// <summary>
+    /// The Held claim restamps the debt and does not read a retirement or the filesystem.
+    /// A regression that puts either read back into that branch fails this pin.
+    /// </summary>
+    private static void AssertHeldRecheckReadsNoFilesystem()
+    {
+        var source = ReadRepoFile("server/Application/Services/SettlementSyncRecoveryService.cs");
+        var held = source.IndexOf("if (debt.State == AgentTaskSyncDebtState.Held)", StringComparison.Ordinal);
+        held.ShouldBeGreaterThanOrEqualTo(0);
+        var pending = source.IndexOf("\n            else", held, StringComparison.Ordinal);
+        pending.ShouldBeGreaterThan(held);
+        var block = source[held..pending];
+        block.ShouldContain("RescheduleHeldAsync");
+        block.ShouldNotContain("Directory");
+        block.ShouldNotContain("File");
+        block.ShouldNotContain("TaskWorktreeRetirements");
+        block.ShouldNotContain("gitdir");
+        block.ShouldNotContain("Superseded");
+        block.ShouldNotContain("RegistrationGone");
+    }
+
+    private static string ReadRepoFile(string relative)
+    {
+        var directory = AppContext.BaseDirectory;
+        while (!string.IsNullOrEmpty(directory))
+        {
+            var candidate = Path.Combine(directory, relative);
+            if (File.Exists(candidate))
+                return File.ReadAllText(candidate);
+            directory = Path.GetDirectoryName(directory)!;
+        }
+
+        throw new FileNotFoundException(relative);
+    }
+
+    /// <summary>Fails a retirement read. The Held re-check does not issue one; a reintroduced query that throws must still reschedule.</summary>
     private sealed class RetirementReadFailure : DbCommandInterceptor
     {
         public override InterceptionResult<DbDataReader> ReaderExecuting(
