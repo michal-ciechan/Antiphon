@@ -357,6 +357,63 @@ public sealed class BlockedTaskParkDeliveryTests
     }
 
     [Test]
+    public async Task C1103_ConfirmedParkGuidanceIsAttemptScopedAndNamesReply()
+    {
+        await using var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked, parking: true);
+        await PublishAsync(f);
+        await StampAsync(f);
+        await RetireLocalSessionAsync(f);
+        var before = await CountTasksAsync(f);
+        var blockedShort = DelegationReportFormatter.Short(f.TaskId);
+
+        var parked = await DetailAsync(f);
+        parked.CanAnswer.ShouldBeTrue("G-7");
+        parked.Context.ShouldNotBeNull().ShouldContain("published seat was released", Case.Sensitive, "G-7");
+        var released = await Should.ThrowAsync<ConflictException>(() => FollowUpAsync(f));
+        released.Code.ShouldBe("follow_up_agent_blocked", "G-7");
+        released.Message.ShouldContain("The published seat was released", Case.Sensitive, "G-7");
+        (await CountTasksAsync(f)).ShouldBe(before, "G-7");
+
+        await AdvanceAttemptAsync(f);
+        var moved = await DetailAsync(f);
+        moved.CanAnswer.ShouldBeFalse("G-7");
+        (moved.Context ?? "").ShouldNotContain("published seat was released", Case.Sensitive, "G-7");
+        var cancel = await Should.ThrowAsync<ConflictException>(() => FollowUpAsync(f));
+        cancel.Code.ShouldBe("follow_up_agent_blocked", "G-7");
+        cancel.Message.ShouldContain("re-send", Case.Sensitive, "G-7");
+        cancel.Message.ShouldNotContain("published seat was released", Case.Sensitive, "G-7");
+
+        await ConfirmCurrentAttemptParkAsync(f);
+        var again = await DetailAsync(f);
+        again.CanAnswer.ShouldBeTrue("G-7");
+        again.Context.ShouldNotBeNull().ShouldContain("published seat was released", Case.Sensitive, "G-7");
+        var releasedAgain = await Should.ThrowAsync<ConflictException>(() => FollowUpAsync(f));
+        releasedAgain.Code.ShouldBe("follow_up_agent_blocked", "G-7");
+        releasedAgain.Message.ShouldContain("The published seat was released", Case.Sensitive, "G-7");
+
+        await f.EditAsync((task, agent) =>
+        {
+            task.RunnerId = "server2";
+            agent.RunnerId = "server2";
+            agent.IsPoolDelegate = true;
+        });
+        var named = await Should.ThrowAsync<ValidationException>(() => FollowUpAsync(f));
+        named.StatusCode.ShouldBe(422, "G-8");
+        named.Code.ShouldBe("follow_up_remote_pool_unsupported", "G-8");
+        named.Message.ShouldContain($"-Reply {blockedShort}", Case.Sensitive, "G-8");
+        named.Message.ShouldContain(blockedShort, Case.Sensitive, "G-8");
+        named.Message.ShouldContain("without -OnAgent", Case.Sensitive, "G-8");
+        (await CountTasksAsync(f)).ShouldBe(before, "G-8");
+
+        await RemoveCurrentAttemptParkAsync(f);
+        var silent = await Should.ThrowAsync<ValidationException>(() => FollowUpAsync(f));
+        silent.StatusCode.ShouldBe(422, "G-8");
+        silent.Code.ShouldBe("follow_up_remote_pool_unsupported", "G-8");
+        silent.Message.ShouldNotContain("-Reply", Case.Sensitive, "G-8");
+        silent.Message.ShouldContain("without -OnAgent", Case.Sensitive, "G-8");
+    }
+
+    [Test]
     public async Task C1065_ParkedReviewReplyBindsFreshEvidence()
     {
         foreach (var busyCaller in new[] { true, false })
@@ -572,6 +629,96 @@ public sealed class BlockedTaskParkDeliveryTests
         task.CheckCount = 4;
         task.RemoteWorktreePath = task.WorktreePath;
     });
+
+    private static async Task RetireLocalSessionAsync(RunnerSeatReleaseFixture f)
+    {
+        await using var db = f.Db();
+        var task = await db.AgentTasks.SingleAsync(t => t.Id == f.TaskId);
+        var agent = await db.Agents.SingleAsync(a => a.Id == f.AgentId);
+        var session = await db.AgentSessions.SingleAsync(s => s.Id == f.SessionId);
+        task.AgentSessionId = null;
+        task.RunnerId = null;
+        agent.RunnerId = null;
+        session.Status = SessionStatus.Stopped;
+        session.EndedAt = f.Now;
+        await db.SaveChangesAsync();
+    }
+
+    private static async Task AdvanceAttemptAsync(RunnerSeatReleaseFixture f)
+    {
+        await using var db = f.Db();
+        var task = await db.AgentTasks.SingleAsync(t => t.Id == f.TaskId);
+        task.Attempt = task.Attempt + 1;
+        task.ConcurrencyToken = Guid.NewGuid();
+        task.Status = AgentTaskStatus.Blocked;
+        task.AgentSessionId = null;
+        db.AgentTaskEvents.Add(new AgentTaskEvent
+        {
+            Id = Guid.NewGuid(), AgentTaskId = f.TaskId, Type = AgentTaskEventType.Blocked,
+            At = f.Now.AddMinutes(task.Attempt), Detail = "Which answer?",
+        });
+        await db.SaveChangesAsync();
+    }
+
+    private static async Task ConfirmCurrentAttemptParkAsync(RunnerSeatReleaseFixture f)
+    {
+        await using var db = f.Db();
+        var task = await db.AgentTasks.SingleAsync(t => t.Id == f.TaskId);
+        var blockId = await db.AgentTaskEvents
+            .Where(e => e.AgentTaskId == f.TaskId && e.Type == AgentTaskEventType.Blocked)
+            .OrderByDescending(e => e.At).ThenByDescending(e => e.Id)
+            .Select(e => e.Id).FirstAsync();
+        var releaseId = Guid.NewGuid();
+        db.RunnerSeatReleases.Add(new RunnerSeatRelease
+        {
+            Id = releaseId, RunnerId = "c1103", RunnerStoreId = Guid.NewGuid(),
+            SessionId = f.SessionId, AcceptedStartedAt = f.Now.AddMinutes(task.Attempt), TaskId = f.TaskId,
+            Attempt = task.Attempt, AgentId = f.AgentId, State = RunnerSeatReleaseState.Confirmed,
+            ConfirmedAt = f.Now, ReasonCode = "confirmed", CreatedAt = f.Now, UpdatedAt = f.Now,
+        });
+        db.AgentTaskParks.Add(new AgentTaskPark
+        {
+            Id = Guid.NewGuid(), TaskId = f.TaskId, Attempt = task.Attempt, BlockEventId = blockId,
+            TaskConcurrencyToken = task.ConcurrencyToken, AgentId = f.AgentId, SessionId = f.SessionId,
+            PublicationReceiptId = Guid.NewGuid(), RunnerSeatReleaseId = releaseId,
+            State = AgentTaskParkState.Parked, Workspace = task.Workspace, BlockedAt = f.Now,
+            ReasonCode = "parked", CreatedAt = f.Now, UpdatedAt = f.Now, ParkedAt = f.Now,
+        });
+        await db.SaveChangesAsync();
+    }
+
+    private static async Task RemoveCurrentAttemptParkAsync(RunnerSeatReleaseFixture f)
+    {
+        await using var db = f.Db();
+        var attempt = await db.AgentTasks.Where(t => t.Id == f.TaskId).Select(t => t.Attempt).SingleAsync();
+        var parks = await db.AgentTaskParks.Where(p => p.TaskId == f.TaskId && p.Attempt == attempt).ToListAsync();
+        db.AgentTaskParks.RemoveRange(parks);
+        await db.SaveChangesAsync();
+    }
+
+    private static async Task<BlockedContextDto> DetailAsync(RunnerSeatReleaseFixture f)
+    {
+        using var scope = f.Harness.Provider.CreateScope();
+        var detail = await scope.ServiceProvider.GetRequiredService<AgentTaskService>()
+            .GetAsync(f.TaskId, CancellationToken.None);
+        return detail.Blocked.ShouldNotBeNull();
+    }
+
+    private static async Task FollowUpAsync(RunnerSeatReleaseFixture f)
+    {
+        using var scope = f.Harness.Provider.CreateScope();
+        await scope.ServiceProvider.GetRequiredService<AgentTaskService>().CreateAsync(
+            new CreateAgentTaskRequest("c1103 follow-up", Role: AgentTaskRole.Code,
+                FollowUpOnTask: f.TaskId.ToString("D")),
+            new AgentTaskService.Caller(null, null, f.Harness.TempRoot),
+            CancellationToken.None);
+    }
+
+    private static async Task<int> CountTasksAsync(RunnerSeatReleaseFixture f)
+    {
+        await using var db = f.Db();
+        return await db.AgentTasks.CountAsync();
+    }
 
     private sealed class ReviewWorld
     {

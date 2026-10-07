@@ -97,8 +97,8 @@ It clears stale worktree registrations for that repository and does not delete c
 Refusals stay park_source_missing, park_ref_changed, park_dirty, park_source_changed, and park_endpoint_changed.
 A reply that arrives before reserve holds the unreleased park as park_reply_before_reserve.
 
-The 422 follow_up_remote_pool_unsupported fires before the Blocked branch, so a confirmed park on a remote pool agent does not hear Reply.
-HasConfirmedPublishedParkAsync is not scoped to the current attempt and accepts Resumed.
+The 422 follow_up_remote_pool_unsupported fires before the Blocked branch and, when the Blocked task has a confirmed published park for its current attempt, names that task and Reply (CARD-1103).
+HasConfirmedPublishedParkAsync is scoped to the task's current attempt and accepts Parked or ResumePending only (CARD-1103).
 A live Blocked session refuses a follow-up with 409 follow_up_agent_blocked and names Reply or cancel.
 A confirmed published park whose session is not live uses that 409 and says the published seat was released.
 A dead session with no confirmed park names cancel and re-send.
