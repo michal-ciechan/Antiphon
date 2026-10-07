@@ -157,8 +157,13 @@ of all tick sweeps, source readiness, delivery, or automatic release.
 
 ### Regression selection
 
-The closed CP list executes the complete two affected classes exactly once per slice, split
-by method instead of repeating a class after its focused cases:
+The closed CP list executes the seven selected methods in PhoneHomeRollingRunnerTests.cs
+(four existing plus three C1125 methods) and both methods of
+DispatcherSweepLifetimeRegistrationTests. PhoneHomeRollingRunnerTests is a partial class
+with 30 methods across its main, Drain and Retire files; the other 23 methods are outside
+this plan's ordinary scope. (CARD-1152 correction; counted at
+`e2c5150101014b259b436adb951f163dc0b1cdcd`: 7 main + 19 Drain + 4 Retire.) Each selected
+method runs once per slice, split by method:
 
 | ID | Class / existing tests | Why / results at inspected master |
 |---|---|---|
@@ -173,6 +178,13 @@ No argument expansion is planned. Total ordinary executions: **9**, all passed, 
 skipped. Recovery/progress/seat-release classes are not rerun by this plan because neither their
 behavior nor fixtures change. A necessary edit outside this footprint requires a stated scope
 and checkpoint amendment; it is not covered by these nine results.
+
+CARD-1152 follow-up: the later fixture change giving both Pending `RemoteSyncEvidence`
+objects `Reason: RemoteSettlementSyncReasons.LeaseBusy` is verified only by the three `C1125_*`
+methods (original CP-1..CP-3) under
+`docs/superpowers/plans/2026-10-08-test-hardening-batch-1137-1134-1130-1126-1152-plan.md`
+CP-39..CP-41. It made no dispatcher probe or registration edit, so the CARD-1128 rows were
+not part of its scope; the historical nine-result evidence above is unchanged.
 
 ### Guard inventory and negative mutation controls
 
