@@ -4678,9 +4678,9 @@ public sealed class AgentTaskDispatcher
 
         if (await RefuseParkedResumeAsync(task, needsLease, ct) is { } parkResume)
         {
-            if (parkResume == ParkResumeHeld)
+            if (parkResume.Detail == ParkResumeHeld)
                 return DispatchOneResult.HeldOnLease;
-            await RemoteWarnAsync(task, UtcNow(), parkResume, ct);
+            await WarnParkResumeOncePerReasonAsync(task, parkResume, ct);
             return DispatchOneResult.NotClaimed;
         }
 
@@ -6369,12 +6369,15 @@ public sealed class AgentTaskDispatcher
 
     private const string ParkResumeHeld = "park_resume_held";
 
+    /// <summary>A refused parked resume. <see cref="EpisodeCreatedAt"/> is the park row's CreatedAt.</summary>
+    private readonly record struct ParkedResumeRefusal(string Detail, DateTime EpisodeCreatedAt);
+
     /// <summary>
     /// Git for a parked continuation runs before the answer gate and the claim transaction.
     /// A prepared mirror skips the ordinary dispatch lease, so this acquires a short one
     /// around the inspection only. No park row is the historical release path.
     /// </summary>
-    private async Task<string?> RefuseParkedResumeAsync(AgentTask task, bool needsLease, CancellationToken ct)
+    private async Task<ParkedResumeRefusal?> RefuseParkedResumeAsync(AgentTask task, bool needsLease, CancellationToken ct)
     {
         if (task.ReleasedSeatAnswerId is null || _remoteWorkspace is null) return null;
         var park = await _db.AgentTaskParks.AsNoTracking().FirstOrDefaultAsync(p =>
@@ -6389,10 +6392,31 @@ public sealed class AgentTaskDispatcher
             ? await _repositoryLeases!.TryAcquireAsync(
                 task.RepoPath!, new RepositoryLeaseOwnerTag(task.Id, RepositoryLeasePurposes.Dispatch), ct)
             : null;
-        if (holdParkLease && parkLease is null) return ParkResumeHeld;
-        if (park.PublicationReceiptId is null) return "park_resume_refused:park_receipt_missing";
+        if (holdParkLease && parkLease is null) return new ParkedResumeRefusal(ParkResumeHeld, park.CreatedAt);
+        if (park.PublicationReceiptId is null)
+            return new ParkedResumeRefusal("park_resume_refused:park_receipt_missing", park.CreatedAt);
         var reason = await _remoteWorkspace.RefuseParkResumeAsync(task, park, ct);
-        return reason is null ? null : "park_resume_refused:" + reason;
+        return reason is null ? null : new ParkedResumeRefusal("park_resume_refused:" + reason, park.CreatedAt);
+    }
+
+    /// <summary>
+    /// One warning per refusal reason for this park episode. A repeat of the newest in-episode
+    /// warning is not inserted; the dispatch outcome stays NotClaimed either way.
+    /// </summary>
+    private async Task WarnParkResumeOncePerReasonAsync(
+        AgentTask task, ParkedResumeRefusal refusal, CancellationToken ct)
+    {
+        var newest = await _db.AgentTaskEvents.AsNoTracking()
+            .Where(e => e.AgentTaskId == task.Id
+                && e.Type == AgentTaskEventType.Warning
+                && e.At >= refusal.EpisodeCreatedAt)
+            .OrderByDescending(e => e.At)
+            .ThenByDescending(e => e.Id)
+            .Select(e => e.Detail)
+            .FirstOrDefaultAsync(ct);
+        if (newest == refusal.Detail)
+            return;
+        await RemoteWarnAsync(task, UtcNow(), refusal.Detail, ct);
     }
 
     /// <summary>

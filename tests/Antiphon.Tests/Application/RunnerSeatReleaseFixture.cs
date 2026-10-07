@@ -250,7 +250,8 @@ internal sealed partial class RunnerSeatReleaseFixture : IAsyncDisposable
                         repositoryLeases: sp.GetRequiredService<IRepositoryMutationLease>(),
                         taskLaunchSink: sp.GetRequiredService<LaunchRecorder>(),
                         terminalSeatRelease: sp.GetRequiredService<TerminalRunnerSeatReleaseService>(),
-                        blockedTaskSync: sp.GetRequiredService<BlockedTaskSyncRecoveryService>()));
+                        blockedTaskSync: sp.GetRequiredService<BlockedTaskSyncRecoveryService>(),
+                        scopeFactory: sp.GetRequiredService<IServiceScopeFactory>()));
                 }
             };
             harness = await BridgeQueueHarness.CreateAsync(harnessOptions);

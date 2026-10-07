@@ -90,7 +90,7 @@ Attention SessionDisagreement keyed runner-seat-release:{releaseId} carries the 
 CARD-1082. Delegation:RunnerSyncDebtOnSettlement defaults to true. Pending is never Confirmed. A settled lease-contention report keeps desktop-sync=pending in the workspace note and tells the caller synced later. Dirty, diverged, and unfetched Code stay Blocked, and the Blocked warning says then reply. The sweep's backoff is 1, 2, 4, then 5 minutes. -Land does not read RemoteSync. Task detail exposes syncDebt for the current attempt.
 
 Resume reads the desktop checkout, not runner operation 37.
-park_resume_refused is written on each refused dispatch tick with no dedupe.
+park_resume_refused is written once per refusal reason for the current park episode; a tick that refuses again for the same reason adds no event, a changed reason is written again, and a new park episode writes that reason again (CARD-1097).
 The inspection lease ends before the dispatch claim.
 A missing mirror is recreated with worktree add only when the branch tip equals the parked SHA, and HEAD is never reset.
 git worktree prune prunes the whole repository.
@@ -118,7 +118,7 @@ A sweep's Released counts only confirmations produced by this run; a row Parked 
 FreshLegacyWindow uses StableFor only as a duration and requires the server-clock interval since park.CreatedAt to reach 120 seconds; the runner's FirstObservedAt is ignored. An old CompletedAt is not the idle window.
 A Held episode is not prepared again until its NextAttemptAt, stamped at now plus ReclaimHeldBackoffSeconds (default 600; 0 disables; a negative value is treated as 0), except park_workspace_reserved which stays immediate.
 A refusal on a Held row re-stamps NextAttemptAt from the same backoff and records the refusal reason, so a Held row is never prepared on consecutive sweeps while its backoff runs (CARD-1135).
-Known limits stay on CARD-1097 item 1 (park_resume_refused is written on each refused dispatch tick with no dedupe) and item 2 (resume reads the desktop checkout, not the runner mirror), CARD-1104 for a remote parent with RunnerCwd, CARD-1143 (a Held row whose episode can no longer be loaded is visited on later sweeps without a re-stamp), and CARD-1144 (the first mark-read rotates the settlement token, so Reply admission misses and the live Blocked fallback accepts the answer on the old session).
+Known limits stay on CARD-1097 item 2 (resume reads the desktop checkout, not the runner mirror), CARD-1104 for a remote parent with RunnerCwd, CARD-1143 (a Held row whose episode can no longer be loaded is visited on later sweeps without a re-stamp), and CARD-1144 (the first mark-read rotates the settlement token, so Reply admission misses and the live Blocked fallback accepts the answer on the old session).
 
 CARD-0519 S10: a terminal session status alone does not close outbound recovery
 windows. The optional transcript snapshot `TerminalComplete` is reader-owned EOF
