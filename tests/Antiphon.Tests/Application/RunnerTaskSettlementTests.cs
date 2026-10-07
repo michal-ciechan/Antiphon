@@ -832,6 +832,9 @@ public sealed class RunnerTaskSettlementTests
         sync.ConfirmedSha.ShouldBeNull();
         (await world.Git.HeadAsync()).ShouldBe(world.Git.Baseline);
         world.Git.Git.Commands.ShouldNotContain(x => IsMergeCommand(x));
+        var pendingEvents = await world.EventsAsync();
+        pendingEvents.ShouldNotContain(e => e.Type is AgentTaskEventType.Failed or AgentTaskEventType.Merged);
+        pendingEvents.ShouldNotContain(e => e.Detail.StartsWith("Merge-back failed", StringComparison.Ordinal));
         world.Services.GetRequiredService<RecordingSessionStopper>().Killed.ShouldBeEmpty();
         var warnings = (await world.EventsAsync()).Where(e => e.Type == AgentTaskEventType.Warning).Select(e => e.Detail).ToArray();
         warnings.ShouldContain(d => d.Contains("synced later", StringComparison.Ordinal));
@@ -914,6 +917,9 @@ public sealed class RunnerTaskSettlementTests
         world.Evidence()!.RemoteSync!.ConfirmedSha.ShouldBeNull();
         (await world.Git.HeadAsync()).ShouldBe(world.Git.Baseline);
         world.Git.Git.Commands.ShouldNotContain(x => IsMergeCommand(x));
+        var pendingEvents = await world.EventsAsync();
+        pendingEvents.ShouldNotContain(e => e.Type is AgentTaskEventType.Failed or AgentTaskEventType.Merged);
+        pendingEvents.ShouldNotContain(e => e.Detail.StartsWith("Merge-back failed", StringComparison.Ordinal));
         var note = (await world.NoteAsync())!.Body;
         note.ShouldContain($"source {s} (desktop-sync=pending)");
         note.ShouldContain(DelegationGitFacts.FormatHeader(1, 1));
