@@ -76,6 +76,7 @@ Disabling does not delete a publication receipt, does not abandon an accepted an
 Parking never stops a Working session.
 With Enabled and ReclaimExisting set, physical release still requires AutomaticEnabled.
 The park bound is this release path (CARD-1083). It is dormant while BlockedTaskParking:Enabled is false, and while it is dormant nothing automatically releases a session that waits for input.
+Do not infer a release deadline from the 120-second idle proof, the 120-second reclaim interval, or the 600-second Held backoff. For a Blocked input wait, parking supplies no automatic release deadline while disabled; with its gates enabled, publication and conditional release evidence still control release.
 
 OccupiesCapacity is true for any non-empty runner status other than Exited or Failed.
 OpenTaskId is the owner task: the latest Queued, Dispatched, Working or Blocked task bound to the session, so a live Blocked or Queued owner reads orphan=false (CARD-1124).

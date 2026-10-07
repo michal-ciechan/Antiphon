@@ -13,6 +13,7 @@ count only Queued, Dispatched and Working, and it still occupies a runner seat
 operator-visible rows are SeatIdle for a live Blocked seat (orphan=false, with its park field), SlotOrphan for a seat with no live session or owner task, and attention key runner-seat-release:.
 Parking is dormant: BlockedTaskParking:Enabled defaults to false and does not by itself
 free the seat.
+An accepted Reply changes a live Blocked task to Working; it does not itself free the runner seat. Use -Continue only for a Blocked question with standing authority; -Refine returns 409 on Blocked. While parking is disabled, do not assume an automatic release deadline.
 
 An attributable provider usage-limit API error blocks its delegated task with
 `SubscriptionQuotaExceeded` (CARD-0719). It keeps the session and worktree and leaves
