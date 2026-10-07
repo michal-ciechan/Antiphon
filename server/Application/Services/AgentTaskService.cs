@@ -2611,7 +2611,11 @@ public sealed class AgentTaskService
             row.ReviewedSourceRef, row.ReviewedRepositoryPath, row.Outcome, row.ReviewedSourceClean);
     }
 
-    /// <summary>Record the first operator read; repeat opens deliberately preserve that timestamp.</summary>
+    /// <summary>
+    /// Record the first operator read; repeat opens deliberately preserve that timestamp.
+    /// ReadAt is acknowledgement metadata, so the settlement revision a seat release
+    /// recorded stays valid for Reply admission (CARD-1144).
+    /// </summary>
     public async Task<AgentTaskSummaryDto> MarkReadAsync(Guid id, CancellationToken ct)
     {
         var task = await _db.AgentTasks.FirstOrDefaultAsync(t => t.Id == id, ct)
@@ -2620,7 +2624,6 @@ public sealed class AgentTaskService
         if (task.ReadAt is null)
         {
             task.ReadAt = UtcNow();
-            task.ConcurrencyToken = Guid.NewGuid();
             await _db.SaveChangesAsync(ct);
         }
 
@@ -3175,6 +3178,12 @@ public sealed class AgentTaskService
         {
             if (task.ReleasedSeatAnswerId is not null && task.ReleasedSeatAnswerTargetAttempt == task.Attempt + 1)
                 throw new ConflictException("The accepted answer is awaiting its exact release receipt.", "runner_seat_release_pending");
+            // The seat of a confirmed published park was released; the live fallback would
+            // queue this answer to that stopped session. Refuse instead of guessing (CARD-1144).
+            if (await HasConfirmedPublishedParkAsync(task, ct))
+                throw new ConflictException(
+                    "This task's published park has a confirmed seat release whose identity no longer matches the task, so the answer cannot continue it.",
+                    "park_release_identity_mismatch");
             return false;
         }
 
