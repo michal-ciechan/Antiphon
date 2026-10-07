@@ -126,7 +126,7 @@ public sealed class SeatDesktopJoinTests
         var blocked = rows[blockedSession];
         blocked.Live.ShouldBeTrue();
         blocked.Status.ShouldBe("Running");
-        blocked.OpenTaskId.ShouldBeNull();
+        blocked.OpenTaskId.ShouldBe(newerTask);
         blocked.PooledWarm.ShouldBeFalse();
         blocked.PublicationReceipt.ShouldBeTrue();
         blocked.BlockedAt.ShouldBe(lateAt);
@@ -166,7 +166,7 @@ public sealed class SeatDesktopJoinTests
 
         var stale = rows[staleSession];
         stale.PublicationReceipt.ShouldBeFalse();
-        stale.OpenTaskId.ShouldBeNull();
+        stale.OpenTaskId.ShouldBe(staleTask);
         stale.LatestTask.ShouldNotBeNull();
         stale.LatestTask.Id.ShouldBe(staleTask);
 
@@ -179,31 +179,37 @@ public sealed class SeatDesktopJoinTests
     }
 
     [Test]
-    public async Task C1079_Join_open_task_is_dispatched_or_working_only()
+    public async Task C1124_Join_owner_task_is_queued_dispatched_working_or_blocked()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var options = TestDbFixture.CreateDbContextOptions(schema.ConnectionString);
-        AgentTaskStatus[] closed =
+        AgentTaskStatus[] owners =
         [
             AgentTaskStatus.Queued,
+            AgentTaskStatus.Dispatched,
+            AgentTaskStatus.Working,
             AgentTaskStatus.Blocked,
+        ];
+        AgentTaskStatus[] settled =
+        [
             AgentTaskStatus.Succeeded,
             AgentTaskStatus.Failed,
             AgentTaskStatus.Canceled,
         ];
         var ids = new Dictionary<AgentTaskStatus, (Guid Session, Guid Task)>();
-        var dispatchedSession = Guid.NewGuid();
-        var dispatchedTask = Guid.NewGuid();
-        var workingSession = Guid.NewGuid();
-        var workingTask = Guid.NewGuid();
-        var mixedSession = Guid.NewGuid();
-        var mixedWorking = Guid.NewGuid();
-        var mixedSucceeded = Guid.NewGuid();
+        var mixedWorkingSession = Guid.NewGuid();
+        var mixedWorkingTask = Guid.NewGuid();
+        var mixedWorkingSucceeded = Guid.NewGuid();
+        var mixedBlockedSession = Guid.NewGuid();
+        var mixedBlockedTask = Guid.NewGuid();
+        var mixedBlockedSucceeded = Guid.NewGuid();
         var emptySession = Guid.NewGuid();
+        var stoppedSession = Guid.NewGuid();
+        var stoppedTask = Guid.NewGuid();
 
         await using (var db = new AppDbContext(options))
         {
-            foreach (var status in closed)
+            foreach (var status in owners.Concat(settled))
             {
                 var session = Guid.NewGuid();
                 var task = Guid.NewGuid();
@@ -213,29 +219,39 @@ public sealed class SeatDesktopJoinTests
             }
 
             db.AgentSessions.AddRange(
-                Session(dispatchedSession, SessionStatus.Running),
-                Session(workingSession, SessionStatus.Running),
-                Session(mixedSession, SessionStatus.Running),
-                Session(emptySession, SessionStatus.Running));
+                Session(mixedWorkingSession, SessionStatus.Running),
+                Session(mixedBlockedSession, SessionStatus.Running),
+                Session(emptySession, SessionStatus.Running),
+                Session(stoppedSession, SessionStatus.Stopped));
             db.AgentTasks.AddRange(
-                TaskRow(dispatchedTask, dispatchedSession, AgentTaskStatus.Dispatched, Now),
-                TaskRow(workingTask, workingSession, AgentTaskStatus.Working, Now),
-                TaskRow(mixedWorking, mixedSession, AgentTaskStatus.Working, Now),
-                TaskRow(mixedSucceeded, mixedSession, AgentTaskStatus.Succeeded, Now.AddMinutes(5),
-                    completedAt: Now.AddMinutes(6)));
+                TaskRow(mixedWorkingTask, mixedWorkingSession, AgentTaskStatus.Working, Now),
+                TaskRow(mixedWorkingSucceeded, mixedWorkingSession, AgentTaskStatus.Succeeded, Now.AddMinutes(5),
+                    completedAt: Now.AddMinutes(6)),
+                TaskRow(mixedBlockedTask, mixedBlockedSession, AgentTaskStatus.Blocked, Now),
+                TaskRow(mixedBlockedSucceeded, mixedBlockedSession, AgentTaskStatus.Succeeded, Now.AddMinutes(5),
+                    completedAt: Now.AddMinutes(6)),
+                TaskRow(stoppedTask, stoppedSession, AgentTaskStatus.Blocked, Now));
             await db.SaveChangesAsync();
         }
 
         await using var read = new AppDbContext(options);
         var wanted = ids.Values.Select(pair => pair.Session)
-            .Append(dispatchedSession)
-            .Append(workingSession)
-            .Append(mixedSession)
+            .Append(mixedWorkingSession)
+            .Append(mixedBlockedSession)
             .Append(emptySession)
+            .Append(stoppedSession)
             .ToArray();
         var rows = await SeatDesktopJoin.LoadAsync(read, wanted, CancellationToken.None);
 
-        foreach (var status in closed)
+        foreach (var status in owners)
+        {
+            var (session, task) = ids[status];
+            rows[session].OpenTaskId.ShouldBe(task, status.ToString());
+            rows[session].LatestTask.ShouldNotBeNull();
+            rows[session].LatestTask.Id.ShouldBe(task);
+        }
+
+        foreach (var status in settled)
         {
             var (session, task) = ids[status];
             rows[session].OpenTaskId.ShouldBeNull(status.ToString());
@@ -244,13 +260,128 @@ public sealed class SeatDesktopJoinTests
             rows[session].LatestTask.Status.ShouldBe(status);
         }
 
-        rows[dispatchedSession].OpenTaskId.ShouldBe(dispatchedTask);
-        rows[workingSession].OpenTaskId.ShouldBe(workingTask);
-        rows[mixedSession].OpenTaskId.ShouldBe(mixedWorking);
-        rows[mixedSession].LatestTask.ShouldNotBeNull();
-        rows[mixedSession].LatestTask.Id.ShouldBe(mixedSucceeded);
+        rows[mixedWorkingSession].OpenTaskId.ShouldBe(mixedWorkingTask);
+        rows[mixedWorkingSession].LatestTask.ShouldNotBeNull();
+        rows[mixedWorkingSession].LatestTask.Id.ShouldBe(mixedWorkingSucceeded);
+        rows[mixedBlockedSession].OpenTaskId.ShouldBe(mixedBlockedTask);
+        rows[mixedBlockedSession].LatestTask.ShouldNotBeNull();
+        rows[mixedBlockedSession].LatestTask.Id.ShouldBe(mixedBlockedSucceeded);
         rows[emptySession].OpenTaskId.ShouldBeNull();
         rows[emptySession].LatestTask.ShouldBeNull();
+        rows[stoppedSession].Live.ShouldBeFalse();
+        rows[stoppedSession].OpenTaskId.ShouldBe(stoppedTask);
+    }
+
+    [Test]
+    public async Task C1124_Join_reports_the_current_attempt_park_in_nine_statements()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var plain = TestDbFixture.CreateDbContextOptions(schema.ConnectionString);
+        var projectId = Guid.NewGuid();
+        var boardId = Guid.NewGuid();
+        var columnId = Guid.NewGuid();
+        var cardId = Guid.NewGuid();
+        var sessionA = Guid.NewGuid();
+        var sessionB = Guid.NewGuid();
+        var sessionC = Guid.NewGuid();
+        var taskA = Guid.NewGuid();
+        var taskB = Guid.NewGuid();
+        var taskC = Guid.NewGuid();
+        var blockA = Guid.NewGuid();
+        var historicalPark = Guid.NewGuid();
+        var olderPark = Guid.NewGuid();
+        var newerPark = Guid.NewGuid();
+        var releaseId = Guid.NewGuid();
+        var historicalReceipt = Guid.NewGuid();
+        var olderAt = Now.AddMinutes(10);
+        var newerAt = Now.AddMinutes(20);
+
+        await using (var db = new AppDbContext(plain))
+        {
+            db.Projects.Add(new Project
+            {
+                Id = projectId,
+                Name = "c1124-join",
+                GitRepositoryUrl = "https://example.invalid/c1124.git",
+                CreatedAt = Now,
+                UpdatedAt = Now,
+            });
+            db.Boards.Add(new Board
+            {
+                Id = boardId,
+                ProjectId = projectId,
+                Name = "c1124",
+                CreatedAt = Now,
+                UpdatedAt = Now,
+            });
+            db.BoardColumns.Add(new BoardColumn
+            {
+                Id = columnId,
+                BoardId = boardId,
+                Name = "Backlog",
+                StateKey = "backlog",
+                CardStatus = CardStatus.Backlog,
+                CreatedAt = Now,
+                UpdatedAt = Now,
+            });
+            db.Cards.Add(new Card
+            {
+                Id = cardId,
+                BoardId = boardId,
+                BoardColumnId = columnId,
+                Identifier = "CARD-1124",
+                Title = "park",
+                CreatedAt = Now,
+                UpdatedAt = Now,
+            });
+            db.AgentSessions.AddRange(
+                Session(sessionA, SessionStatus.Running),
+                Session(sessionB, SessionStatus.Running),
+                Session(sessionC, SessionStatus.Running));
+            db.AgentTasks.AddRange(
+                TaskRow(taskA, sessionA, AgentTaskStatus.Blocked, Now, attempt: 2, cardId: cardId),
+                TaskRow(taskB, sessionB, AgentTaskStatus.Working, Now, attempt: 1),
+                TaskRow(taskC, sessionC, AgentTaskStatus.Blocked, Now, attempt: 3));
+            db.AgentTaskEvents.Add(Event(blockA, taskA, sessionA, newerAt));
+            db.AgentTaskParks.AddRange(
+                Park(taskA, attempt: 1, blockEventId: Guid.NewGuid(), receipt: historicalReceipt, at: Now,
+                    state: AgentTaskParkState.Parked, id: historicalPark),
+                Park(taskA, attempt: 2, blockEventId: Guid.NewGuid(), receipt: null, at: olderAt,
+                    state: AgentTaskParkState.Requested, reason: "park_requested", id: olderPark),
+                Park(taskA, attempt: 2, blockEventId: blockA, receipt: null, at: newerAt,
+                    state: AgentTaskParkState.Held, reason: "park_dirty", releaseId: releaseId,
+                    sync: AgentTaskParkSyncState.Pending, id: newerPark),
+                Park(taskC, attempt: 1, blockEventId: Guid.NewGuid(), receipt: Guid.NewGuid(), at: Now,
+                    state: AgentTaskParkState.Parked));
+            await db.SaveChangesAsync();
+        }
+
+        var capture = new CountingCommandInterceptor();
+        await using var read = new AppDbContext(CountingOptions(schema.ConnectionString, capture));
+        var rows = await SeatDesktopJoin.LoadAsync(read, [sessionA, sessionB, sessionC], CancellationToken.None);
+        var commands = capture.Commands.ToArray();
+        commands.Length.ShouldBe(9, string.Join("\n---\n", commands));
+        foreach (var sql in commands)
+        {
+            sql.Contains("INSERT", StringComparison.Ordinal).ShouldBeFalse(sql);
+            sql.Contains("UPDATE", StringComparison.Ordinal).ShouldBeFalse(sql);
+            sql.Contains("DELETE", StringComparison.Ordinal).ShouldBeFalse(sql);
+        }
+
+        var owned = rows[sessionA];
+        owned.OpenTaskId.ShouldBe(taskA);
+        owned.PublicationReceipt.ShouldBeFalse();
+        owned.Park.ShouldBe(new SeatParkRow(
+            newerPark, AgentTaskParkState.Held, "park_dirty", releaseId, AgentTaskParkSyncState.Pending));
+
+        var working = rows[sessionB];
+        working.OpenTaskId.ShouldBe(taskB);
+        working.Park.ShouldBeNull();
+
+        var historical = rows[sessionC];
+        historical.OpenTaskId.ShouldBe(taskC);
+        historical.Park.ShouldBeNull();
+        historical.PublicationReceipt.ShouldBeFalse();
     }
 
     [Test]
@@ -271,14 +402,7 @@ public sealed class SeatDesktopJoinTests
         }
 
         var capture = new CountingCommandInterceptor();
-        var options = new DbContextOptionsBuilder<AppDbContext>()
-            .UseNpgsql(schema.ConnectionString, npgsql =>
-            {
-                npgsql.MigrationsAssembly("Antiphon.Server");
-                npgsql.SetPostgresVersion(16, 0);
-            })
-            .AddInterceptors(capture)
-            .Options;
+        var options = CountingOptions(schema.ConnectionString, capture);
         await using var read = new AppDbContext(options);
         var rows = await SeatDesktopJoin.LoadAsync(read, [session], CancellationToken.None);
         rows[session].LatestTask.ShouldNotBeNull();
@@ -288,6 +412,17 @@ public sealed class SeatDesktopJoinTests
             && sql.Contains("MAX(", StringComparison.OrdinalIgnoreCase)).ShouldBeTrue(
             string.Join("\n---\n", capture.Commands));
     }
+
+    private static DbContextOptions<AppDbContext> CountingOptions(
+        string connectionString, CountingCommandInterceptor capture) =>
+        new DbContextOptionsBuilder<AppDbContext>()
+            .UseNpgsql(connectionString, npgsql =>
+            {
+                npgsql.MigrationsAssembly("Antiphon.Server");
+                npgsql.SetPostgresVersion(16, 0);
+            })
+            .AddInterceptors(capture)
+            .Options;
 
     private static AgentSession Session(Guid id, SessionStatus status) => new()
     {
@@ -346,17 +481,26 @@ public sealed class SeatDesktopJoinTests
         At = at,
     };
 
-    private static AgentTaskPark Park(Guid taskId, int attempt, Guid blockEventId, Guid? receipt, DateTime at) => new()
+    private static AgentTaskPark Park(
+        Guid taskId, int attempt, Guid blockEventId, Guid? receipt, DateTime at,
+        AgentTaskParkState state = AgentTaskParkState.Requested,
+        string reason = "park_requested",
+        Guid? releaseId = null,
+        AgentTaskParkSyncState sync = AgentTaskParkSyncState.NotRequired,
+        Guid? id = null) => new()
     {
-        Id = Guid.NewGuid(),
+        Id = id ?? Guid.NewGuid(),
         TaskId = taskId,
         Attempt = attempt,
         BlockEventId = blockEventId,
         TaskConcurrencyToken = Guid.NewGuid(),
         PublicationReceiptId = receipt,
+        State = state,
+        ReasonCode = reason,
+        RunnerSeatReleaseId = releaseId,
+        SyncState = sync,
         BlockedAt = at,
         CreatedAt = at,
         UpdatedAt = at,
-        ReasonCode = "park_requested",
     };
 }
