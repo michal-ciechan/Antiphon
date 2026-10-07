@@ -393,4 +393,3 @@ above. No whole-Unit or runtime integration run is authorized.
 | CP-18 | S2 | CP-5 | catalog-contract | `/*/*/InstructionBundleTests/the_catalog_holds_exactly_the_bundles_that_ship*` | R-3 | exact 1, 0 failed/skipped | 1 | 1 |
 | CP-19 | S2 | CP-5 | attachment-only-board | `/*/*/InstructionBundleTests/the_board_api_bundle_is_on_no_role_by_default*` | R-3 | exact 1, 0 failed/skipped | 1 | 1 |
 | CP-20 | S2 | CP-5 | updated-parking-docs | `/*/*/BlockedTaskParkProjectionTests/*` | R-1 | exact 2, 0 failed/skipped | 2 | 1 |
-
