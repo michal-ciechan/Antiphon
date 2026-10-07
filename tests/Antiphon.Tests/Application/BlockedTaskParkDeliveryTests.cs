@@ -428,7 +428,17 @@ public sealed class BlockedTaskParkDeliveryTests
         await f.AnswerAsync("report the final evidence again", round: null);
         f.Launches.Calls.ShouldBeEmpty("G-12");
         await ConfirmContinuationAsync(f, busy: true);
-        await SettleReviewAsync(f, (await f.TaskAsync()).AgentSessionId!.Value, world.Report());
+        // StartAsync already queued the blocked settlement's caller note. A flush batches every
+        // pending note on that session and names the spill after the oldest row, so this receipt
+        // has to be delivered on its own once that earlier note is no longer pending.
+        await f.AttachRecipientAsync(world.ParentId, busy: false);
+        await f.FlushAsync(world.ParentId);
+        await f.EndTurnAsync(world.ParentId);
+        // Delivered alone, the unpadded note stays under PtySingleChunkBytes (1_024) and is typed
+        // inline. The two-note batch crossed that ceiling only as a composed body. This pad keeps
+        // the succeeded receipt on the pointer path when it is the only pending row.
+        var report = world.Report() + "\n" + new string('x', 1_200);
+        await SettleReviewAsync(f, (await f.TaskAsync()).AgentSessionId!.Value, report);
         var successor = await BoundSuccessorAsync(f, beforeReply.Single().Id);
         var evidenceId = successor.Id.ToString("N");
         successor.ReviewedSourceSha.ShouldBe(world.Sha, "G-12");
@@ -441,10 +451,11 @@ public sealed class BlockedTaskParkDeliveryTests
             finalId = notes.Single(n => TaskCompletionNotification.TryReadSnapshot(n.CompletionSnapshotJson) is { Status: AgentTaskStatus.Succeeded }).Id;
         }
 
-        await f.AttachRecipientAsync(world.ParentId, busy: false);
         using (var scope = f.Harness.Provider.CreateScope())
             await scope.ServiceProvider.GetRequiredService<AgentTaskLandNotificationService>().ReconcileAsync(finalId, CancellationToken.None);
         await f.FlushAsync(world.ParentId);
+        using (var scope = f.Harness.Provider.CreateScope())
+            await scope.ServiceProvider.GetRequiredService<AgentTaskLandNotificationService>().ReconcileAsync(finalId, CancellationToken.None);
 
         await using var after = f.Db();
         var reconciled = await after.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n => n.Id == finalId);
