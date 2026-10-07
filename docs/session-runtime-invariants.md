@@ -113,7 +113,7 @@ ReclaimScheduledAsync runs from the dispatcher pool-release sweep and from Runne
 The reclaim cursor is the singleton BlockedTaskParkReclaimCursors row Id 1 and advances after every visit, including failure.
 A short tail wraps. ReclaimScheduledAsync shares one overlap gate and, unless ReclaimIntervalSeconds is 0, runs at most once per ReclaimIntervalSeconds. One run visits each eligible Blocked row at most once and stops at the smaller of the eligible count and page size times the pass budget.
 The reconcile job's released total counts confirmed releases only and does not include visit counts.
-A sweep's Released counts only ledger rows confirmed during that run; a row Parked before the run is visited and counted in Visited and Registered but not in Released, and a run stops at the first row it has already visited (CARD-1129).
+A sweep's Released counts only confirmations produced by this run; a row Parked before the run is visited and counted in Visited and Registered but not in Released, and a run stops at the first row it has already visited (CARD-1129).
 FreshLegacyWindow uses StableFor only as a duration and requires the server-clock interval since park.CreatedAt to reach 120 seconds; the runner's FirstObservedAt is ignored. An old CompletedAt is not the idle window.
 A Held episode is not prepared again until its NextAttemptAt, stamped at now plus ReclaimHeldBackoffSeconds (default 600; 0 disables; a negative value is treated as 0), except park_workspace_reserved which stays immediate.
 A refusal on a Held row re-stamps NextAttemptAt from the same backoff and records the refusal reason, so a Held row is never prepared on consecutive sweeps while its backoff runs (CARD-1135).
