@@ -1,3 +1,9 @@
+# Authorized continuation — verification pending
+
+The caller raised the repair cap by one and authorized the prepared check-order patch. The previous blocked report below is historical and is superseded by this continuation. The current-origin advertisement check now precedes recovery-tip enumeration; both checks and the existing diagnostic assertion are unchanged. Verification selection: CP-2, CP-11, CP-7 and CP-12 (77 cases); exclusions and prior source attribution are recorded in the plan. This is the final authorized repair round; a remaining red result must be reported blocked.
+
+---
+
 # CARD-1105 audit repair D1-D6 — Code report a3532cb8
 
 Implementation is pushed, but Final verification is not clean: 172/173 passed, 1 failed. One existing diagnostic assertion still needs a production check-order repair. The brief's two-round cap has been reached; approval for another round was requested while the remaining authorized rows ran. No approval has arrived. Do not land or send this candidate to clean Review yet.

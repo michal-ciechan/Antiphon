@@ -4611,27 +4611,6 @@ while IFS= read -r -d '' entry; do
         true) ;;
         *) refuse_unknown bare 2 "$repo" ;;
     esac
-    audit_repo="$repo"
-    audit_check=worktree-list
-    git -C "$repo" worktree list --porcelain -z > "$scratch/worktrees" 2>/dev/null || fail $?
-    : > "$scratch/tips"
-    consider_tips "$repo"
-    while IFS= read -r -d '' field; do
-        [[ "$field" == worktree\ * ]] || continue
-        audit_check=worktree-path
-        work="${field#worktree }"
-        work="$(readlink -e "$work")" || fail $?
-        [[ "$work/" == "$root/"* ]] || refuse_unknown worktree-confine 0 "$repo"
-        audit_check=worktree-bare
-        work_bare="$(git -C "$work" rev-parse --is-bare-repository 2>/dev/null)" || fail $?
-        if [ "$work_bare" = false ]; then
-            consider_dirty "$work" worktree-status
-        elif [ "$work_bare" != true ]; then
-            refuse_unknown worktree-bare 2 "$work"
-        fi
-        consider_tips "$work"
-    done < "$scratch/worktrees"
-    audit_repo="$repo"
     audit_check=ls-remote
     timeout --kill-after=5s 30s git -C "$repo" ls-remote --heads origin > "$scratch/origin" 2>/dev/null || fail $?
     audit_check=origin-parse
@@ -4656,6 +4635,27 @@ while IFS= read -r -d '' entry; do
         local_refs="$(awk '$2!="refs/heads/HEAD" {print}' "$scratch/local" | sort)" || fail $?
         [ "$origin" = "$local_refs" ] || refuse_unknown origin-advertisement 2 "$repo"
     fi
+    audit_repo="$repo"
+    audit_check=worktree-list
+    git -C "$repo" worktree list --porcelain -z > "$scratch/worktrees" 2>/dev/null || fail $?
+    : > "$scratch/tips"
+    consider_tips "$repo"
+    while IFS= read -r -d '' field; do
+        [[ "$field" == worktree\ * ]] || continue
+        audit_check=worktree-path
+        work="${field#worktree }"
+        work="$(readlink -e "$work")" || fail $?
+        [[ "$work/" == "$root/"* ]] || refuse_unknown worktree-confine 0 "$repo"
+        audit_check=worktree-bare
+        work_bare="$(git -C "$work" rev-parse --is-bare-repository 2>/dev/null)" || fail $?
+        if [ "$work_bare" = false ]; then
+            consider_dirty "$work" worktree-status
+        elif [ "$work_bare" != true ]; then
+            refuse_unknown worktree-bare 2 "$work"
+        fi
+        consider_tips "$work"
+    done < "$scratch/worktrees"
+    audit_repo="$repo"
     audit_check=tips
     sort -u "$scratch/tips" > "$scratch/unique" || fail $?
     [ -s "$scratch/unique" ] || refuse_unknown tips-empty 0 "$repo"
