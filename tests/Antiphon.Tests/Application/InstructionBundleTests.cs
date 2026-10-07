@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
@@ -282,7 +284,7 @@ public class InstructionBundleTests
             mutation.ShouldContain(text);
         var review = Compose(AgentTaskRole.Review);
         review.ShouldContain("Read-only");
-        review.ShouldContain("Executed PCs are not a prerequisite");
+        review.ShouldContain("PCs may remain pending");
         review.ShouldNotContain("run the listed PCs");
         var design = Compose(AgentTaskRole.TestDesign);
         design.ShouldContain("ordinary V/R floor (Code)");
@@ -927,10 +929,102 @@ public class InstructionBundleTests
         basics.ShouldContain("A parked session may be released and resumed from that pushed branch.", customMessage: "c1065-resume-branch");
         basics.ShouldContain("Parking will not autosave (CARD-1083).", customMessage: "c1065-card-1083");
 
+        const string planChecklist =
+            "only when the plan adds or changes a session that waits for input: what releases a session that waits for input, and after how long? With parking disabled, no automatic release deadline exists (CARD-1083).";
+        const string reviewChecklist =
+            "For changed input waits, ask: what releases a session that waits for input, and after how long? With parking disabled, no automatic release deadline exists (CARD-1083).";
         var plan = InstructionBundles.TextOf(InstructionBundles.StagePlan);
-        plan.ShouldContain(
-            "only when the plan adds or changes a session that waits for input: what releases a session that waits for input, and after how long? Today nothing releases such a session automatically (CARD-1083).",
-            customMessage: "c1065-release-question");
+        PinSentence(plan, planChecklist, "c1065-release-question");
+        var review = InstructionBundles.TextOf(InstructionBundles.StageReview);
+        PinSentence(review, reviewChecklist, "c1083-review-deadline");
+        plan.ShouldNotContain("Today nothing", Case.Sensitive, "c1083-plan-no-today-nothing");
+        review.ShouldNotContain("Today nothing", Case.Sensitive, "c1083-review-no-today-nothing");
+    }
+
+    /// <summary>
+    /// CARD-1083 V-3. Embedded orchestrator text states the seat, the answer verbs, and the
+    /// compressed report contract. Expected sentences are literals, not quotations of the plan.
+    /// </summary>
+    [Test]
+    public void C1083_OrchestratorExplainsBlockedSeatsAndAnswerVerbs()
+    {
+        var text = Collapse(InstructionBundles.TextOf(InstructionBundles.Orchestrator));
+        const string report =
+            "A delegate reports `[antiphon-report:<id> done|blocked|failed]`; `report=unmarked` is unverified. "
+            + "Blocked notes carry `reason:` / `asks:` / `authority:` / `next:`. Use -Continue <id> only for a "
+            + "Blocked question with standing authority; otherwise -Reply if you can answer, else surface asks: "
+            + "now; never NO_REPLY a blocked note. Dispatch pre-approved sequences with "
+            + "-Authority \"<the user's own words>\"; keep the work delegated.";
+        const string seat =
+            "A live Blocked child keeps its runner seat; Reply resumes work without freeing it. "
+            + "Parking defaults off (BlockedTaskParking:Enabled=false); do not assume a release deadline. "
+            + "Answer or surface it before leaving. At capacity read GET /api/session-runners/{id}/slots: "
+            + "a live Blocked owner reads orphan=false with its park field; orphan=true is not a count of free seats.";
+        const string refine =
+            "Steer Queued, Dispatched or Working tasks with -Refine <taskId> \"one sentence\". "
+            + "Use -Reply for a Blocked task; -Refine returns 409 there.";
+        PinSentence(text, report, "c1083-orchestrator-report");
+        PinSentence(text, seat, "c1083-orchestrator-seat");
+        PinSentence(text, refine, "c1083-orchestrator-refine");
+        text.ShouldNotContain("A delegate's own report closes with", Case.Sensitive, "c1083-orchestrator-no-old-report");
+        text.ShouldNotContain("Taking the work back is the failure mode", Case.Sensitive, "c1083-orchestrator-no-take-back");
+        text.ShouldNotContain("If the spec sharpens", Case.Sensitive, "c1083-orchestrator-no-sharpen");
+        text.ShouldNotContain("Reply frees the runner seat", Case.Sensitive, "c1083-orchestrator-no-reply-frees");
+        text.ShouldContain("BlockedTaskParking:Enabled=false", Case.Sensitive, "c1083-orchestrator-default-off");
+    }
+
+    /// <summary>
+    /// CARD-1083 V-6. Disk source, after the same LF+Trim normalisation the catalog uses, is the
+    /// embedded resource. A source edit without a rebuild fails this; two aliases of one object would not.
+    /// </summary>
+    [Test]
+    public void C1083_EmbeddedBundlesMatchSourceAndRenderedHeaders()
+    {
+        foreach (var key in new[]
+        {
+            InstructionBundles.Orchestrator,
+            InstructionBundles.DelegateBasics,
+            InstructionBundles.StagePlan,
+            InstructionBundles.StageReview,
+            InstructionBundles.BoardApi,
+        })
+        {
+            var source = File.ReadAllText(Path.Combine(
+                DelegateScriptRunner.RepoRoot, "server", "Bundles", key + ".md"));
+            var normalised = source.ReplaceLineEndings("\n").Trim();
+            var version = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(normalised)))
+                .ToLowerInvariant()[..8];
+            var bundle = InstructionBundles.Get(key);
+            bundle.Text.ShouldBe(normalised, key + "-text");
+            bundle.Version.ShouldBe(version, key + "-version");
+            bundle.Header.ShouldBe($"[bundle:{key} v{version}]", key + "-header");
+            bundle.Render().ShouldBe(bundle.Header + "\n" + bundle.Text, key + "-rendered");
+        }
+
+        void ContainsRendered(AgentTaskKind kind, AgentTaskRole role, string key, string[]? attached = null)
+        {
+            var composed = InstructionBundleComposer.Compose(
+                InstructionBundles.ForDelegate(kind, role, attached)).Text;
+            composed.ShouldContain(InstructionBundles.Get(key).Render(), Case.Sensitive, key + "-composed");
+        }
+
+        ContainsRendered(AgentTaskKind.Orchestrator, AgentTaskRole.Plan, InstructionBundles.Orchestrator);
+        ContainsRendered(AgentTaskKind.Worker, AgentTaskRole.Plan, InstructionBundles.StagePlan);
+        ContainsRendered(AgentTaskKind.Worker, AgentTaskRole.Review, InstructionBundles.StageReview);
+        ContainsRendered(AgentTaskKind.Worker, AgentTaskRole.Plan, InstructionBundles.DelegateBasics);
+        ContainsRendered(AgentTaskKind.Worker, AgentTaskRole.Plan, InstructionBundles.BoardApi,
+            [InstructionBundles.BoardApi]);
+    }
+
+    private static string Collapse(string text) =>
+        string.Join(" ", text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+
+    private static void PinSentence(string text, string sentence, string label)
+    {
+        text.ShouldContain(sentence, Case.Sensitive, label);
+        var removed = text.Replace(sentence, "", StringComparison.Ordinal);
+        removed.ShouldNotBe(text, label + "-present");
+        Should.Throw<ShouldAssertException>(() => removed.ShouldContain(sentence, Case.Sensitive, label));
     }
 
     private static int CountOccurrences(string haystack, string needle)

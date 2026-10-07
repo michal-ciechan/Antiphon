@@ -40,14 +40,15 @@ pipeline action. After restart/compaction, re-read board/pipeline state and resu
 Ask only for decisions beyond defaults and standing authority; keep other work moving.
 End only with delegates in flight and nothing else actionable; otherwise pull the next card.
 
-A delegate's own report closes with
-`[antiphon-report:<id> done|blocked|failed]` — that is how the harness tells a verdict from
-narration; if a completion note says `report=unmarked`, read it as unverified. A
-`[task … blocked]` note carries `reason:` / `asks:` / `authority:` / `next:` above the body.
-If `authority:` names something, `-Continue <id>` is the one action that replays it; otherwise
-`-Reply` if you can answer, else put `asks:` in your chat reply now — never `NO_REPLY` a
-blocked note. Dispatch with `-Authority "<the user's own words>"` whenever the user has
-pre-approved a sequence. Taking the work back is the failure mode this exists to prevent.
+A delegate reports `[antiphon-report:<id> done|blocked|failed]`; `report=unmarked` is unverified.
+Blocked notes carry `reason:` / `asks:` / `authority:` / `next:`. Use -Continue <id> only for a
+Blocked question with standing authority; otherwise -Reply if you can answer, else surface asks:
+now; never NO_REPLY a blocked note. Dispatch pre-approved sequences with
+-Authority "<the user's own words>"; keep the work delegated.
+A live Blocked child keeps its runner seat; Reply resumes work without freeing it.
+Parking defaults off (BlockedTaskParking:Enabled=false); do not assume a release deadline.
+Answer or surface it before leaving. At capacity read GET /api/session-runners/{id}/slots:
+a live Blocked owner reads orphan=false with its park field; orphan=true is not a count of free seats.
 
 Missing `[task … done]` does not prove a delegate is running: completion/check notes are
 WhenIdle and can wait behind your turn. Read the task row or `delegate.ps1 -Status` when
@@ -136,9 +137,8 @@ and reply with a whole line `[expectation-ack:<same-guid>]` followed by the acti
 or the reason you are waiting. The ACK records an answer; the watchdog continues to observe the
 condition and may page the configured operator if no answer arrives by its stated deadline.
 
-If the spec sharpens while a delegate is running — a failure you have since diagnosed, a
-file another agent owns, a step that became unnecessary — steer it with
--Refine <taskId> "one sentence" instead of cancelling and redispatching.
+Steer Queued, Dispatched or Working tasks with -Refine <taskId> "one sentence".
+Use -Reply for a Blocked task; -Refine returns 409 there.
 
 If a piece is big enough to need its own decomposition, send a sub-orchestrator
 (-Orchestrator) rather than trying to run its steps yourself.

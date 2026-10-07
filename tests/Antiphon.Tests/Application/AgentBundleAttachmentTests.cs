@@ -409,9 +409,61 @@ public class AgentBundleAttachmentTests
         basics.ShouldContain("A parked session may be released and resumed from that pushed branch.", customMessage: "c1065-resume-branch");
         basics.ShouldContain("Parking will not autosave (CARD-1083).", customMessage: "c1065-card-1083");
 
-        InstructionBundles.TextOf(InstructionBundles.StagePlan).ShouldContain(
-            "only when the plan adds or changes a session that waits for input: what releases a session that waits for input, and after how long? Today nothing releases such a session automatically (CARD-1083).",
-            customMessage: "c1065-release-question");
+        const string planChecklist =
+            "only when the plan adds or changes a session that waits for input: what releases a session that waits for input, and after how long? With parking disabled, no automatic release deadline exists (CARD-1083).";
+        const string reviewChecklist =
+            "For changed input waits, ask: what releases a session that waits for input, and after how long? With parking disabled, no automatic release deadline exists (CARD-1083).";
+        InstructionBundles.TextOf(InstructionBundles.StagePlan).ShouldContain(planChecklist, customMessage: "c1065-release-question");
+
+        var plan = InstructionBundleComposer.Compose(
+            InstructionBundles.ForDelegate(AgentTaskKind.Worker, AgentTaskRole.Plan)).Text;
+        var review = InstructionBundleComposer.Compose(
+            InstructionBundles.ForDelegate(AgentTaskKind.Worker, AgentTaskRole.Review)).Text;
+        var orchestrator = InstructionBundleComposer.Compose(
+            InstructionBundles.ForDelegate(AgentTaskKind.Orchestrator, AgentTaskRole.Plan)).Text;
+        var withBoard = InstructionBundleComposer.Compose(
+            InstructionBundles.ForDelegate(AgentTaskKind.Worker, AgentTaskRole.Plan, [InstructionBundles.BoardApi])).Text;
+
+        plan.ShouldContain(planChecklist, customMessage: "c1083-plan-composed");
+        review.ShouldContain(reviewChecklist, customMessage: "c1083-review-composed");
+        var orchestratorCollapsed = string.Join(" ", orchestrator.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+        orchestratorCollapsed.ShouldContain(
+            "A live Blocked child keeps its runner seat; Reply resumes work without freeing it.",
+            customMessage: "c1083-orchestrator-seat");
+        orchestratorCollapsed.ShouldContain(
+            "Use -Reply for a Blocked task; -Refine returns 409 there.",
+            customMessage: "c1083-orchestrator-refine");
+        withBoard.ShouldContain(planChecklist, customMessage: "c1083-board-plan");
+
+        static int Count(string haystack, string needle)
+        {
+            var count = 0;
+            for (var i = haystack.IndexOf(needle, StringComparison.Ordinal); i >= 0;
+                 i = haystack.IndexOf(needle, i + needle.Length, StringComparison.Ordinal))
+                count++;
+            return count;
+        }
+
+        void OnceThen(string prompt, string earlier, string later, string label)
+        {
+            var earlierAt = prompt.IndexOf(earlier, StringComparison.Ordinal);
+            var laterAt = prompt.IndexOf(later, StringComparison.Ordinal);
+            earlierAt.ShouldBeGreaterThanOrEqualTo(0, label + "-earlier");
+            laterAt.ShouldBeGreaterThan(earlierAt, label + "-order");
+            Count(prompt, earlier).ShouldBe(1, label + "-once");
+            Count(prompt, later).ShouldBe(1, label + "-later-once");
+        }
+
+        var planBundle = InstructionBundles.Get(InstructionBundles.StagePlan);
+        var reviewBundle = InstructionBundles.Get(InstructionBundles.StageReview);
+        var basicsBundle = InstructionBundles.Get(InstructionBundles.DelegateBasics);
+        var orchestratorBundle = InstructionBundles.Get(InstructionBundles.Orchestrator);
+        var board = InstructionBundles.Get(InstructionBundles.BoardApi);
+        OnceThen(plan, planBundle.Render(), basicsBundle.Render(), "c1083-plan-order");
+        OnceThen(review, reviewBundle.Render(), basicsBundle.Render(), "c1083-review-order");
+        OnceThen(orchestrator, orchestratorBundle.Render(), basicsBundle.Render(), "c1083-orchestrator-order");
+        OnceThen(withBoard, basicsBundle.Render(), board.Render(), "c1083-board-order");
+        OnceThen(withBoard, planBundle.Render(), basicsBundle.Render(), "c1083-board-plan-order");
     }
 
     private static Task<AgentLaunchComposition> ComposeAsync(AppDbContext db, Agent agent)

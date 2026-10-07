@@ -20,7 +20,7 @@ public sealed class PostLandMutationContractTests
         code.ShouldContain("pending for Mutation");
         code.ShouldNotContain("next: mutation when");
         var review = Compose(AgentTaskRole.Review);
-        review.ShouldContain("Executed PCs are not a prerequisite");
+        review.ShouldContain("PCs may remain pending");
         review.ShouldContain("Reject a missing producer-to-recipient test");
         review.ShouldContain("next: land when there are no defects");
         review.ShouldContain("original Code landing owner");
@@ -65,7 +65,7 @@ public sealed class PostLandMutationContractTests
     [Test]
     public void C478_G163_ReviewHasNoExecutedPcPrerequisite() =>
         InstructionBundleComposer.Compose(InstructionBundles.ForDelegate(AgentTaskKind.Worker, AgentTaskRole.Review))
-            .Text.ShouldContain("Executed PCs are not a prerequisite");
+            .Text.ShouldContain("PCs may remain pending");
 
     [Test]
     public void C478_G166_SnapshotCommitException() =>
