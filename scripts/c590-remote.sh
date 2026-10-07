@@ -4527,7 +4527,7 @@ consider_dirty() {
 # Read both sides of every reflog entry, including the oldest old tip. Git's
 # reflog presentation can omit unreachable/missing entries; malformed logs refuse.
 consider_tips() {
-    local where="$1" directory log old new rest oid
+    local where="$1" directory log old new rest oid unsupported
     audit_repo="$where"
     audit_check=for-each-ref
     git -C "$where" for-each-ref --format='%(objectname)' >> "$scratch/tips" 2> "$scratch/ref-errors" || fail $?
@@ -4536,8 +4536,11 @@ consider_tips() {
     git -C "$where" rev-parse --verify HEAD >> "$scratch/tips" 2>/dev/null || fail $?
     audit_check=reflog-directory
     directory="$(git -C "$where" rev-parse --path-format=absolute --git-path logs 2>/dev/null)" || fail $?
-    [ -d "$directory" ] || return 0
+    if [ ! -e "$directory" ] && [ ! -L "$directory" ]; then return 0; fi
+    [ -d "$directory" ] && [ ! -L "$directory" ] || fail 2
     audit_check=reflog-list
+    unsupported="$(find "$directory" ! -type d ! -type f -print -quit 2>/dev/null)" || fail $?
+    [ -z "$unsupported" ] || fail 2
     find "$directory" -type f -print0 > "$scratch/logs" 2>/dev/null || fail $?
     while IFS= read -r -d '' log; do
         audit_check=reflog-read
@@ -4658,7 +4661,7 @@ while IFS= read -r -d '' entry; do
     [ -s "$scratch/unique" ] || refuse_unknown tips-empty 0 "$repo"
     # Traverse the full graph, without the publication exclusions that could hide
     # a missing ancestor. Only blobs are optional in the blobless seed contract.
-    audit_check=object-completeness
+    audit_check=rev-list-objects
     cat "$scratch/unique" > "$scratch/roots" || fail $?
     printf '%s\n' "${comparisons[@]}" >> "$scratch/roots"
     timeout --kill-after=5s 30s git -C "$repo" rev-list --objects --no-object-names --filter=blob:none --missing=error --stdin \

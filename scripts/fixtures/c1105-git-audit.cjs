@@ -87,6 +87,12 @@ try {
         }
         case 'stash': checkout(); fs.writeFileSync(path.join(repo, 'file'), 'private'); git('stash', 'push', '-qm', 'private'); break;
         case 'reflog': checkout(); privateCommit(); git('reset', '--hard', 'HEAD~1'); break;
+        case 'reflog-symlink': {
+            checkout(); privateCommit(); git('reset', '--hard', 'HEAD~1');
+            const log = path.join(repo, '.git/logs/HEAD');
+            fs.renameSync(log, log + '.saved'); fs.symlinkSync('HEAD.saved', log);
+            expected = 'RecycleGitAuditUnknown'; break;
+        }
         case 'reflog-old': checkout(); privateCommit(); git('reset', '--hard', 'HEAD~1'); {
             // Retain only the final reset entry: its old side is the sole private root.
             for (const file of ['HEAD','refs/heads/master']) {

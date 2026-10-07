@@ -802,6 +802,7 @@ public sealed class RemoteScriptContractTests
     [Arguments("stash")]
     [Arguments("reflog")]
     [Arguments("reflog-old")]
+    [Arguments("reflog-symlink")]
     [Arguments("recovery")]
     [Arguments("secondary")]
     [Arguments("worktree-ref")]
