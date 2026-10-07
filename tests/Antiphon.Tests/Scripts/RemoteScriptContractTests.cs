@@ -595,13 +595,21 @@ public sealed class RemoteScriptContractTests
             await C1008GitGraph(accepted); var run = await accepted.Run();
             accepted.Removed.Length.ShouldBe(3, "recycle-git-unknown-refuses: complete history control; " + run.Output);
         }
-        foreach (var fault in new[] { "exit128", "timeout", "empty", "nonnumeric", "negative", "shallow", "partial", "stale", "deleted", "missing", "broken-gitdir", "escaping-link", "missing-object", "origin-failed" })
+        using (var partial = new C1008HostFixture())
+        {
+            await C1008GitGraph(partial);
+            File.AppendAllText(Path.Combine(partial.Root, "work/repo/.git/config"), "\n[extensions]\npartialClone = origin\n");
+            var run = await partial.Run();
+            partial.Removed.Length.ShouldBe(3, "recycle-git-unknown-refuses: published promisor config is not a refusal; " + run.Output);
+            run.Exit.ShouldBe(0);
+            C1008Audit(partial).ShouldContain("repositories=1 partial=1");
+        }
+        foreach (var fault in new[] { "exit128", "timeout", "empty", "nonnumeric", "negative", "shallow", "stale", "deleted", "missing", "broken-gitdir", "escaping-link", "missing-object", "origin-failed" })
         {
             using var bad = new C1008HostFixture(); await C1008GitGraph(bad, fault == "origin-failed" ? fault : "");
             var repo = Path.Combine(bad.Root, "work/repo");
             if (fault is "exit128" or "timeout" or "empty" or "nonnumeric" or "negative") bad.Docker["gitFault"] = fault;
             else if (fault == "shallow") File.WriteAllText(Path.Combine(repo, ".git/shallow"), File.ReadAllText(Path.Combine(repo, ".git/refs/heads/master")));
-            else if (fault == "partial") File.AppendAllText(Path.Combine(repo, ".git/config"), "\n[extensions]\npartialClone = origin\n");
             else if (fault is "deleted" or "missing") File.Delete(Path.Combine(repo, ".git/refs/remotes/origin/master"));
             else if (fault == "stale") File.WriteAllText(Path.Combine(repo, ".git/refs/remotes/origin/master"), new string('0', 40));
             else if (fault == "broken-gitdir") File.WriteAllText(Path.Combine(bad.Root, "work/.git"), "gitdir: /missing\n");
@@ -609,6 +617,18 @@ public sealed class RemoteScriptContractTests
             else if (fault == "missing-object") Directory.Delete(Path.Combine(repo, ".git/objects"), true);
             var refused = await bad.Run(); bad.Removed.ShouldBeEmpty("recycle-git-unknown-refuses: " + fault);
             refused.Output.ShouldContain("RecycleGitAuditUnknown");
+            var audit = C1008Audit(bad);
+            audit.ShouldContain("audit check=", Case.Sensitive, "recycle-git-unknown-refuses: receipt names the check for " + fault);
+            if (fault is "exit128" or "timeout" or "empty" or "nonnumeric" or "negative")
+                audit.ShouldContain("check=rev-list");
+            if (fault == "exit128") audit.ShouldContain("status=128");
+            if (fault == "timeout") audit.ShouldContain("status=124");
+            if (fault == "origin-failed") audit.ShouldContain("check=ls-remote");
+            if (fault == "shallow") audit.ShouldContain("check=shallow");
+            if (fault is "deleted" or "missing" or "stale") audit.ShouldContain("check=origin-advertisement");
+            if (fault == "missing-object") audit.ShouldContain("check=git-common-dir");
+            if (fault == "broken-gitdir") audit.ShouldContain("check=git-common-dir");
+            if (fault == "escaping-link") audit.ShouldContain("check=link-confine");
         }
         foreach (var marker in new[] { "index.lock", "MERGE_HEAD", "rebase-merge" })
         {
@@ -616,6 +636,7 @@ public sealed class RemoteScriptContractTests
             File.WriteAllText(Path.Combine(f.Root, "work/repo/.git", marker), "unknown");
             var run = await f.Run(); f.Removed.ShouldBeEmpty("recycle-git-unknown-refuses: " + marker);
             run.Output.ShouldContain("RecycleGitAuditUnknown");
+            C1008Audit(f).ShouldContain("check=lock-" + marker);
         }
         using (var linked = new C1008HostFixture())
         {
@@ -626,6 +647,147 @@ public sealed class RemoteScriptContractTests
             linked.Removed.ShouldBeEmpty("recycle-git-unknown-refuses: linked worktree index lock");
             refused.Output.ShouldContain("RecycleGitAuditUnknown");
         }
+    }
+
+    // CARD-1105. The deploy seeds `git clone --filter=blob:none --no-checkout`. That promisor
+    // checkout is auditable when its commit graph is complete. A missing object, an unpublished
+    // tip, a dirty worktree, a failing rev-list, and a failing ls-remote stay refusals, and the
+    // helper never lazy-fetches.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1008_Recycle_audits_promisor_checkout()
+    {
+        C1008HostFixture.RequireNativeLinux();
+        var cloneLine = File.ReadAllLines(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c590-remote.sh"))
+            .Single(line => line.Contains("git clone --filter=blob:none --no-checkout", StringComparison.Ordinal));
+        cloneLine.ShouldContain("git clone --filter=blob:none --no-checkout \"$2\" \"$repo\"");
+
+        using (var published = new C1008HostFixture())
+        {
+            var seeded = await C1008SeedPromisor(published, cloneLine, "published");
+            seeded.ShouldContain("PROMISOR=true");
+            seeded.ShouldContain("FILTER=blob:none");
+            var run = await published.Run();
+            published.Removed.Length.ShouldBe(3, "recycle-promisor: published blobless seed is reclaimed; " + run.Output);
+            run.Exit.ShouldBe(0, run.Output);
+            var audit = C1008Audit(published);
+            audit.ShouldContain("repositories=1 partial=1");
+            Regex.IsMatch(audit, "repo=[0-9a-f]{64}").ShouldBeTrue("recycle-promisor: publication proof still records the tip");
+            published.Trace.Any(args => args.Any(arg => arg.Contains("GIT_NO_LAZY_FETCH=1", StringComparison.Ordinal)))
+                .ShouldBeTrue("recycle-promisor: the helper exports GIT_NO_LAZY_FETCH");
+        }
+        using (var unpublished = new C1008HostFixture())
+        {
+            await C1008SeedPromisor(unpublished, cloneLine, "unpublished");
+            var refused = await unpublished.Run();
+            unpublished.Removed.ShouldBeEmpty("recycle-promisor: unpublished tip is kept");
+            refused.Exit.ShouldBe(2, refused.Output);
+            refused.Output.ShouldContain("RecycleUnpublishedWork");
+            var audit = C1008Audit(unpublished);
+            audit.ShouldContain("check=rev-list");
+            audit.ShouldContain("status=0");
+        }
+        using (var missing = new C1008HostFixture())
+        {
+            await C1008SeedPromisor(missing, cloneLine, "missing");
+            var pack = Path.Combine(missing.Root, "work/repo/.git/objects/pack");
+            Directory.Exists(pack).ShouldBeFalse("recycle-promisor: the seed pack was removed before the audit");
+            var refused = await missing.Run();
+            missing.Removed.ShouldBeEmpty("recycle-promisor: missing objects are kept");
+            refused.Exit.ShouldBe(2, refused.Output);
+            refused.Output.ShouldContain("RecycleGitAuditUnknown");
+            C1008Audit(missing).ShouldContain("check=status");
+            Directory.Exists(pack).ShouldBeFalse("recycle-promisor: the audit must not lazy-fetch the pack back");
+            missing.Trace.Any(args => args.Any(arg => arg.Contains("GIT_NO_LAZY_FETCH=1", StringComparison.Ordinal)))
+                .ShouldBeTrue("recycle-promisor: lazy fetch stays disabled in the helper program");
+        }
+        using (var dirty = new C1008HostFixture())
+        {
+            await C1008SeedPromisor(dirty, cloneLine, "dirty");
+            var refused = await dirty.Run();
+            dirty.Removed.ShouldBeEmpty("recycle-promisor: an untracked file is kept");
+            refused.Exit.ShouldBe(2, refused.Output);
+            refused.Output.ShouldContain("RecycleWorktreeDirty");
+            var audit = C1008Audit(dirty);
+            audit.ShouldContain("check=status");
+            audit.ShouldContain("status=0");
+        }
+        using (var revList = new C1008HostFixture())
+        {
+            await C1008SeedPromisor(revList, cloneLine, "published");
+            revList.Docker["gitFault"] = "exit128";
+            var refused = await revList.Run();
+            revList.Removed.ShouldBeEmpty("recycle-promisor: rev-list failure is not zero unpublished commits");
+            refused.Exit.ShouldBe(2, refused.Output);
+            refused.Output.ShouldContain("RecycleGitAuditUnknown");
+            var audit = C1008Audit(revList);
+            audit.ShouldContain("check=rev-list");
+            audit.ShouldContain("status=128");
+        }
+        using (var remote = new C1008HostFixture())
+        {
+            await C1008SeedPromisor(remote, cloneLine, "lsremote");
+            var refused = await remote.Run();
+            remote.Removed.ShouldBeEmpty("recycle-promisor: ls-remote failure is kept");
+            refused.Exit.ShouldBe(2, refused.Output);
+            refused.Output.ShouldContain("RecycleGitAuditUnknown");
+            C1008Audit(remote).ShouldContain("check=ls-remote");
+        }
+    }
+
+    private static string C1008Audit(C1008HostFixture fixture) =>
+        JsonNode.Parse(File.ReadAllText(Path.Combine(fixture.Root, "server/recycle/c100800000000000000000000000000000001.json")))!["audit"]!.GetValue<string>();
+
+    private static async Task<string> C1008SeedPromisor(C1008HostFixture fixture, string cloneLine, string mode)
+    {
+        var script = """
+            set -euo pipefail
+            root="$1"
+            mode="$2"
+            origin="$root/origin.git"
+            repo="$root/work/repo"
+            src="$root/seed-src"
+            git init -q --bare "$origin"
+            git init -q -b master "$src"
+            git -C "$src" config user.name Fixture
+            git -C "$src" config user.email fixture@example.invalid
+            echo A > "$src/file"
+            git -C "$src" add file
+            git -C "$src" commit -qm A
+            git -C "$src" push -q "$origin" master
+            export repo
+            bash -c "$C1008_CLONE_LINE" antiphon-seed ignored "file://$origin"
+            promisor="$(git -C "$repo" config --get remote.origin.promisor)"
+            filter="$(git -C "$repo" config --get remote.origin.partialclonefilter)"
+            printf 'PROMISOR=%s\nFILTER=%s\n' "$promisor" "$filter"
+            [ "$promisor" = true ] && [ "$filter" = blob:none ]
+            case "$mode" in
+                published) ;;
+                unpublished)
+                    git -C "$repo" config user.name Fixture
+                    git -C "$repo" config user.email fixture@example.invalid
+                    git -C "$repo" commit -qm unpublished --allow-empty
+                    ;;
+                missing) rm -rf "$repo/.git/objects/pack" ;;
+                dirty) echo extra > "$repo/new" ;;
+                lsremote) git -C "$repo" remote set-url origin "$root/missing-origin" ;;
+                *) printf 'bad mode %s\n' "$mode" >&2; exit 1 ;;
+            esac
+            """;
+        var psi = new ProcessStartInfo("bash") { RedirectStandardOutput = true, RedirectStandardError = true };
+        psi.Environment["C1008_CLONE_LINE"] = cloneLine.Trim();
+        psi.ArgumentList.Add("-c");
+        psi.ArgumentList.Add(script);
+        psi.ArgumentList.Add("seed");
+        psi.ArgumentList.Add(fixture.Root);
+        psi.ArgumentList.Add(mode);
+        using var proc = Process.Start(psi)!;
+        var stdout = proc.StandardOutput.ReadToEndAsync();
+        var stderr = proc.StandardError.ReadToEndAsync();
+        await proc.WaitForExitAsync();
+        var output = await stdout + await stderr;
+        proc.ExitCode.ShouldBe(0, output);
+        return output;
     }
 
     [Test]
