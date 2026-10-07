@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using TUnit.Core;
 using Antiphon.Server.Infrastructure.Data;
 
@@ -56,6 +57,10 @@ public class TestDbFixture
 			return TestDbFixtureLifecycle.BuildOptions(connectionString);
 		return Lifecycle.CreateDbContextOptions();
 	}
+
+	public static DbContextOptions<AppDbContext> CreateDbContextOptions(
+		string connectionString, params IInterceptor[] interceptors) =>
+		TestDbFixtureLifecycle.BuildOptions(connectionString, interceptors);
 
 	/// <summary>
 	/// Returns a connection string to an empty, fully-migrated store. Isolation is a cloned

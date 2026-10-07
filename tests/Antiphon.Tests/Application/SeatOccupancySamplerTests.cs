@@ -345,6 +345,91 @@ public sealed class SeatOccupancySamplerTests
         (local.InFlight - local.DispatchedWorking).ShouldBe(0);
     }
 
+    [Test]
+    public async Task C1138_Sampler_tick_is_fifteen_reader_statements_per_runner_host()
+    {
+        var withCard = await SampleTickAsync(attachCard: true);
+        AssertTickBudget(withCard, 15);
+
+        var withoutCard = await SampleTickAsync(attachCard: false);
+        AssertTickBudget(withoutCard, 14);
+    }
+
+    private static async Task<string[]> SampleTickAsync(bool attachCard)
+    {
+        var counter = new CountingCommandInterceptor();
+        await using var rig = await Rig.SeedRemoteAsync(listThrows: false, counter);
+        if (attachCard)
+            await AttachCardToBlockedTaskAsync(rig);
+
+        await rig.SampleAsync();
+        var commands = counter.Commands.ToArray();
+        await using var read = new AppDbContext(rig.DbOptions);
+        (await read.HostOccupancySamples.CountAsync()).ShouldBe(2);
+        return commands;
+    }
+
+    private static void AssertTickBudget(string[] commands, int expected)
+    {
+        commands.Length.ShouldBe(expected, string.Join("\n---\n", commands));
+        var inserts = commands.Where(sql => sql.Contains("INSERT", StringComparison.Ordinal)).ToArray();
+        inserts.Length.ShouldBe(1, string.Join("\n---\n", commands));
+        inserts[0].Contains("HostOccupancySamples", StringComparison.Ordinal).ShouldBeTrue(inserts[0]);
+        foreach (var sql in commands)
+        {
+            sql.Contains("UPDATE", StringComparison.Ordinal).ShouldBeFalse(sql);
+            sql.Contains("DELETE", StringComparison.Ordinal).ShouldBeFalse(sql);
+        }
+    }
+
+    private static async Task AttachCardToBlockedTaskAsync(Rig rig)
+    {
+        var projectId = Guid.NewGuid();
+        var boardId = Guid.NewGuid();
+        var columnId = Guid.NewGuid();
+        var cardId = Guid.NewGuid();
+        await using var db = new AppDbContext(rig.DbOptions);
+        db.Projects.Add(new Project
+        {
+            Id = projectId,
+            Name = "c1138-sampler",
+            GitRepositoryUrl = "https://example.invalid/c1138.git",
+            CreatedAt = Now,
+            UpdatedAt = Now,
+        });
+        db.Boards.Add(new Board
+        {
+            Id = boardId,
+            ProjectId = projectId,
+            Name = "c1138",
+            CreatedAt = Now,
+            UpdatedAt = Now,
+        });
+        db.BoardColumns.Add(new BoardColumn
+        {
+            Id = columnId,
+            BoardId = boardId,
+            Name = "Backlog",
+            StateKey = "backlog",
+            CardStatus = CardStatus.Backlog,
+            CreatedAt = Now,
+            UpdatedAt = Now,
+        });
+        db.Cards.Add(new Card
+        {
+            Id = cardId,
+            BoardId = boardId,
+            BoardColumnId = columnId,
+            Identifier = "CARD-1138",
+            Title = "sampler pin",
+            CreatedAt = Now,
+            UpdatedAt = Now,
+        });
+        var blocked = await db.AgentTasks.SingleAsync(t => t.AgentSessionId == rig.BlockedSession);
+        blocked.CardId = cardId;
+        await db.SaveChangesAsync();
+    }
+
     private static HostOccupancySample Sample(Guid id, DateTime at) => new()
     {
         Id = id,
@@ -369,6 +454,8 @@ public sealed class SeatOccupancySamplerTests
     {
         public required IsolatedTestSchema Schema { get; init; }
         public required DbContextOptions<AppDbContext> DbOptions { get; init; }
+        public required DbContextOptions<AppDbContext> CountingOptions { get; init; }
+        public CountingCommandInterceptor? Counter { get; init; }
         public required FakeTimeProvider Clock { get; init; }
         public required SeatOccupancyState State { get; init; }
         public required ListingClient Client { get; init; }
@@ -433,12 +520,12 @@ public sealed class SeatOccupancySamplerTests
 
         public static async Task<Rig> EmptyAsync() => await CreateAsync(seedRemote: false, listThrows: false);
 
-        public static async Task<Rig> SeedRemoteAsync(bool listThrows) =>
-            await CreateAsync(seedRemote: true, listThrows);
+        public static async Task<Rig> SeedRemoteAsync(bool listThrows, CountingCommandInterceptor? counter = null) =>
+            await CreateAsync(seedRemote: true, listThrows, counter);
 
         public async Task SampleAsync(ISessionRunnerDirectory? inventory = null)
         {
-            await using var db = new AppDbContext(DbOptions);
+            await using var db = new AppDbContext(Counter is null ? DbOptions : CountingOptions);
             var budgets = new HostBudgetService(
                 db, Directory, Options.Create(new DelegationSettings { MaxConcurrentTasks = 4 }), Clock);
             var sampler = new SeatOccupancySampler(
@@ -449,10 +536,14 @@ public sealed class SeatOccupancySamplerTests
 
         public async ValueTask DisposeAsync() => await Schema.DisposeAsync();
 
-        private static async Task<Rig> CreateAsync(bool seedRemote, bool listThrows)
+        private static async Task<Rig> CreateAsync(
+            bool seedRemote, bool listThrows, CountingCommandInterceptor? counter = null)
         {
             var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
             var options = TestDbFixture.CreateDbContextOptions(schema.ConnectionString);
+            var counting = counter is null
+                ? options
+                : TestDbFixture.CreateDbContextOptions(schema.ConnectionString, counter);
             var workingSession = Guid.NewGuid();
             var blockedSession = Guid.NewGuid();
             var unboundSession = Guid.NewGuid();
@@ -527,6 +618,8 @@ public sealed class SeatOccupancySamplerTests
             {
                 Schema = schema,
                 DbOptions = options,
+                CountingOptions = counting,
+                Counter = counter,
                 Clock = new FakeTimeProvider(new DateTimeOffset(Now)),
                 State = new SeatOccupancyState(),
                 Client = client,
