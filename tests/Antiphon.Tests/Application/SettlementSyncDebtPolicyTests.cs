@@ -45,7 +45,7 @@ public sealed class SettlementSyncDebtPolicyTests
     [Arguments(AgentTaskRole.Review, CompletionProgressAssessment.Indeterminate, null)]
     [Arguments(AgentTaskRole.Plan, CompletionProgressAssessment.NoAttributedProgress, null)]
     [Arguments(AgentTaskRole.Code, CompletionProgressAssessment.ProgressObserved, null)]
-    [Arguments(AgentTaskRole.Code, CompletionProgressAssessment.Indeterminate, RemoteSettlementSyncReasons.LeaseBusy)]
+    [Arguments(AgentTaskRole.Code, CompletionProgressAssessment.Indeterminate, "progress_read_other")]
     public void C1082_BlockReasonForPendingDependsOnRoleAndProgress(
         AgentTaskRole role, CompletionProgressAssessment assessment, string? expected)
     {
@@ -94,6 +94,73 @@ public sealed class SettlementSyncDebtPolicyTests
         warning.ShouldNotContain("then reply");
         SettlementSyncDebtPolicy.WorkspaceNote(task, result).ShouldBe(
             "branch " + Branch + " left for review; source " + Sha + " (desktop-sync=pending)");
+    }
+
+    /// <summary>
+    /// CARD-1113 item 1. Eligible admits only the task's own owned ref. A foreign branch,
+    /// a tag, or a null ref stays the Unavailable result Classify was given.
+    /// </summary>
+    [Test]
+    [Arguments("refs/heads/feat/card-task-ffffffff")]
+    [Arguments("refs/tags/feat/card-task-abcd1234")]
+    [Arguments(null)]
+    public void C1113_ForeignFullRefIsNeverPending(string? fullRef)
+    {
+        var result = LeaseBusy() with { FullRef = fullRef };
+        var classified = SettlementSyncDebtPolicy.Classify(Task(), result, new DelegationSettings());
+        classified.ShouldBeSameAs(result);
+        classified.State.ShouldBe(RemoteSettlementSyncState.Unavailable);
+        classified.State.ShouldNotBe(RemoteSettlementSyncState.Pending);
+    }
+
+    /// <summary>
+    /// CARD-1113 item 2. Pending with no progress evidence blocks a Code report with the
+    /// lease reason and leaves every other role unblocked.
+    /// </summary>
+    [Test]
+    [Arguments(AgentTaskRole.Code, RemoteSettlementSyncReasons.LeaseBusy)]
+    [Arguments(AgentTaskRole.Review, null)]
+    public void C1113_PendingCodeWithoutEvidenceBlocksWithLeaseReason(AgentTaskRole role, string? expected)
+    {
+        var reason = SettlementSyncDebtPolicy.BlockReason(
+            Task(role), LeaseBusy() with { State = RemoteSettlementSyncState.Pending }, evidence: null);
+        reason.ShouldBe(expected);
+    }
+
+    /// <summary>
+    /// CARD-1119 item 2. An indeterminate Code read under Pending carries the evaluated
+    /// reason, and a missing reason falls back to the lease reason.
+    /// </summary>
+    [Test]
+    [Arguments("baseline_lineage_broken", "baseline_lineage_broken")]
+    [Arguments(null, RemoteSettlementSyncReasons.LeaseBusy)]
+    public void C1119_PendingCodeIndeterminateCarriesEvaluatedReason(string? evidenceReason, string expected)
+    {
+        var evidence = new CompletionProgressEvidence(
+            1, CompletionProgressAssessment.Indeterminate, evidenceReason);
+        var reason = SettlementSyncDebtPolicy.BlockReason(
+            Task(AgentTaskRole.Code),
+            LeaseBusy() with { State = RemoteSettlementSyncState.Pending },
+            evidence);
+        reason.ShouldBe(expected);
+    }
+
+    /// <summary>
+    /// CARD-1113 item 3. Pending text is refused for any other state, so a dropped call-site
+    /// guard cannot print "synced later" for a result that is not owed.
+    /// </summary>
+    [Test]
+    [Arguments(RemoteSettlementSyncState.Unavailable)]
+    [Arguments(RemoteSettlementSyncState.Synchronized)]
+    public void C1113_PendingTextHelpersRefuseANonPendingResult(RemoteSettlementSyncState state)
+    {
+        var result = LeaseBusy() with { State = state };
+        var task = Task();
+        var warning = Should.Throw<ArgumentException>(
+            () => SettlementSyncDebtPolicy.PendingWarning(task, result));
+        warning.Message.ShouldContain(state.ToString());
+        warning.Message.ShouldNotContain("Runner sync pending");
+        Should.Throw<ArgumentException>(() => SettlementSyncDebtPolicy.WorkspaceNote(task, result));
     }
 
     [Test]
@@ -233,6 +300,8 @@ public sealed class SettlementSyncDebtPolicyTests
 
     private static AgentTask Task(AgentTaskRole role = AgentTaskRole.Review) => new()
     {
+        // OwnedBranch(this id) is feat/card-task-abcd1234, the FullRef the fixture already uses.
+        Id = Guid.Parse("abcd1234-0000-0000-0000-000000000000"),
         Role = role,
         WorktreeBranch = Branch,
         WorktreePath = Checkout,

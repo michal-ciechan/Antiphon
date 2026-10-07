@@ -16,9 +16,10 @@ public static class SettlementSyncDebtPolicy
 {
     /// <summary>
     /// Returns <paramref name="result"/> with state <see cref="RemoteSettlementSyncState.Pending"/>
-    /// when the only failure is a spent desktop lease and the server observed a full tip.
-    /// Otherwise the same instance. Role does not decide eligibility; an indeterminate Code
-    /// read still blocks through <see cref="BlockReason"/>.
+    /// when the only failure is a spent desktop lease and the server observed a full tip on the
+    /// task's own owned ref. Otherwise the same instance. Role does not decide eligibility.
+    /// A Code report with no progress evidence, and an indeterminate Code read, still block
+    /// through <see cref="BlockReason"/>.
     /// </summary>
     public static RemoteSettlementSyncResult Classify(
         AgentTask task, RemoteSettlementSyncResult result, DelegationSettings settings)
@@ -26,15 +27,16 @@ public static class SettlementSyncDebtPolicy
         ArgumentNullException.ThrowIfNull(task);
         ArgumentNullException.ThrowIfNull(result);
         ArgumentNullException.ThrowIfNull(settings);
-        if (!Eligible(result, settings))
+        if (!Eligible(task, result, settings))
             return result;
         return result with { State = RemoteSettlementSyncState.Pending };
     }
 
     /// <summary>
-    /// Today's runner-sync block, plus one arm: <see cref="RemoteSettlementSyncState.Pending"/>
-    /// blocks only a Code task whose progress evidence is indeterminate, and then with the
-    /// lease reason. Every other Pending result may keep its own verdict.
+    /// Today's runner-sync block, plus the Pending arm. Pending blocks only a Code task:
+    /// no progress evidence blocks with the lease reason, and an indeterminate read blocks
+    /// with that evidence's reason, or the lease reason when the reason is absent. Every
+    /// other Pending result may keep its own verdict. The non-Pending arms are unchanged.
     /// </summary>
     public static string? BlockReason(
         AgentTask task, RemoteSettlementSyncResult? prepared, CompletionProgressEvidence? evidence)
@@ -44,9 +46,12 @@ public static class SettlementSyncDebtPolicy
             return null;
         if (prepared.State == RemoteSettlementSyncState.Pending)
         {
-            if (task.Role == AgentTaskRole.Code
-                && evidence is { Assessment: CompletionProgressAssessment.Indeterminate })
+            if (task.Role != AgentTaskRole.Code)
+                return null;
+            if (evidence is null)
                 return RemoteSettlementSyncReasons.LeaseBusy;
+            if (evidence.Assessment == CompletionProgressAssessment.Indeterminate)
+                return evidence.Reason ?? RemoteSettlementSyncReasons.LeaseBusy;
             return null;
         }
 
@@ -66,6 +71,7 @@ public static class SettlementSyncDebtPolicy
     {
         ArgumentNullException.ThrowIfNull(task);
         ArgumentNullException.ThrowIfNull(result);
+        RequirePending(result);
         var sha = result.RemoteSha;
         return "Runner sync pending: " + RemoteSettlementSyncReasons.LeaseBusy
             + ". Origin " + result.FullRef + " is at " + sha
@@ -79,13 +85,25 @@ public static class SettlementSyncDebtPolicy
     {
         ArgumentNullException.ThrowIfNull(task);
         ArgumentNullException.ThrowIfNull(result);
+        RequirePending(result);
         return "branch " + task.WorktreeBranch + " left for review; source " + result.RemoteSha
             + " (desktop-sync=pending)";
     }
 
-    private static bool Eligible(RemoteSettlementSyncResult result, DelegationSettings settings) =>
+    private static void RequirePending(RemoteSettlementSyncResult result)
+    {
+        if (result.State != RemoteSettlementSyncState.Pending)
+            throw new ArgumentException(
+                "Pending text requires a Pending result; got " + result.State + ".", nameof(result));
+    }
+
+    private static bool Eligible(AgentTask task, RemoteSettlementSyncResult result, DelegationSettings settings) =>
         settings.RunnerSyncDebtOnSettlement
         && result.State == RemoteSettlementSyncState.Unavailable
         && result.Reason == RemoteSettlementSyncReasons.LeaseBusy
-        && GitObjectId.IsFull(result.RemoteSha);
+        && GitObjectId.IsFull(result.RemoteSha)
+        && string.Equals(
+            result.FullRef,
+            "refs/heads/" + RemoteWorkspaceService.OwnedBranch(task.Id),
+            StringComparison.Ordinal);
 }
