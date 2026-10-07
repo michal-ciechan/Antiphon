@@ -251,7 +251,7 @@ public partial class DispatchBaseNotificationTests
     /// </summary>
     [Test]
     [Timeout(90_000)]
-    public async Task C508_ClaimIntentAtomic(CancellationToken ct)
+    public async Task C508_KeptSiblingClaimCommitsWithoutDrafts(CancellationToken ct)
     {
         using var repo = new ScratchGitRepo("c508-claim-atomic");
         await repo.CommitFileAsync("README.md", "base\n");
@@ -291,7 +291,7 @@ public partial class DispatchBaseNotificationTests
     /// </summary>
     [Test]
     [Timeout(90_000)]
-    public async Task C508_IntentCaptureRoute(CancellationToken ct)
+    public async Task C508_KeptSiblingClaimKeepsReboundParent(CancellationToken ct)
     {
         using var repo = new ScratchGitRepo("c508-capture-route");
         await repo.CommitFileAsync("README.md", "base\n");
@@ -378,6 +378,8 @@ public partial class DispatchBaseNotificationTests
             .Where(i => i.TaskId == task.Id).ToListAsync(ct);
         intents.Count.ShouldBe(2);
         intents.ShouldAllBe(i => i.DispatchEventId == finalDispatch.Id);
+        // CARD-1126: every intent shares the final dispatch event timestamp.
+        intents.ShouldAllBe(i => i.CreatedAt == finalDispatch.At);
         intents.ShouldAllBe(i => i.ParentSessionId == destinationB);
         intents.ShouldAllBe(i => i.ReplyTo == AgentTaskReplyTo.Session);
         intents.ShouldNotContain(i => i.WarningKey.StartsWith(
