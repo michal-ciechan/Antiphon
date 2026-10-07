@@ -14,7 +14,21 @@ public sealed class RetiredTempContainerHostTests
     private static C1008HostFixture Fixture(params string[] services) {
         var f = new C1008HostFixture(main:false); var id='7';
         foreach (var service in services) f.Docker["containers"]!.AsArray().Add(f.Container(id++, Project, service, false));
+        // Same-generation containers carry the token bind. Their stack SHA must render that roster.
+        if (services.Any(service => service is "session-runner" or "state-init")) AlignSameGeneration(f);
         return f;
+    }
+    private static void AlignSameGeneration(C1008HostFixture f) {
+        var sha = new string('a', 40);
+        f.Statuses["server2-temp"]!["buildVersion"] = sha;
+        File.WriteAllText(Path.Combine(f.Root, "temp.env"),
+            "RUNNER_GROK_STORE_DIR=" + f.Root + "/grok\nSOURCE_REVISION=" + sha + "\n");
+    }
+    private static void PinReceiptImage(C1008HostFixture f, string image) {
+        var path = Path.Combine(f.Root, "server/temp-container-retirement/c99400000000000000000000000000000001.json");
+        var receipt = JsonNode.Parse(File.ReadAllText(path))!.AsObject();
+        receipt["image"] = image;
+        File.WriteAllText(path, receipt.ToJsonString());
     }
     private static bool Mutating(string[] a) => a[0] is "rm" or "stop" or "kill" or "create" or "start" or "prune" || a.Contains("down") || a.Take(2).SequenceEqual(new[] { "volume", "rm" });
     private static void NoMutation(C1008HostFixture f, string label) => f.Trace.Any(Mutating).ShouldBeFalse(label);
@@ -380,10 +394,10 @@ public sealed class RetiredTempContainerHostTests
     }
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C994_Audit_image_is_pinned_and_required() {
-        foreach(var fault in new[]{"image-inspect-error","image-inspect-wrong","original-image-missing"}) {using var f=Fixture("session-runner");if(fault=="original-image-missing")f.Docker["containers"]!.AsArray().Last()!["Image"]="sha256:"+new string('b',64);(await Cleanup(f)).Exit.ShouldBe(0);f.ReloadDocker();f.Docker["fault"]=fault;
+        foreach(var fault in new[]{"image-inspect-error","image-inspect-wrong","original-image-missing"}) {using var f=Fixture("session-runner");(await Cleanup(f)).Exit.ShouldBe(0);f.ReloadDocker();if(fault=="original-image-missing")PinReceiptImage(f,"sha256:"+new string('b',64));f.Docker["fault"]=fault;
             var run=await f.Run("retire-temp-runner","C1008_CLEANUP_OPERATION=c99400000000000000000000000000000001");run.Exit.ShouldBe(2,"c994-image-required: "+run.Output);run.Output.ShouldContain("RecycleGitAuditUnknown");f.Removed.ShouldBeEmpty("c994-audit-required");}
         foreach(var work in new[]{"published","dirty","unpublished"}) {
-            using var f=Fixture("session-runner");f.Docker["containers"]!.AsArray().Last()!["Image"]="sha256:"+new string('b',64);
+            using var f=Fixture("session-runner");
             var setup=await C994ScriptProcess.Run("bash","-c",$$"""
                 set -euo pipefail
                 git init -q --bare '{{f.Root}}/origin'
@@ -396,7 +410,7 @@ public sealed class RetiredTempContainerHostTests
                 git -C '{{f.Root}}/work/repo' remote add origin '{{f.Root}}/origin'
                 git -C '{{f.Root}}/work/repo' push -qu origin main
                 """);setup.Exit.ShouldBe(0,"c994-audit-required: real Git setup; "+setup.Output);
-            (await Cleanup(f)).Exit.ShouldBe(0,"c994-image-required: preserve original digest");f.ReloadDocker();
+            (await Cleanup(f)).Exit.ShouldBe(0,"c994-image-required: preserve original digest");PinReceiptImage(f,"sha256:"+new string('b',64));f.ReloadDocker();
             if(work=="dirty")File.WriteAllText(f.Root+"/work/repo/dirty","unpublished-sentinel");
             if(work=="unpublished") {
                 File.WriteAllText(f.Root+"/work/repo/local","unpublished-sentinel");
@@ -456,5 +470,33 @@ public sealed class RetiredTempContainerHostTests
         var run=await C994ScriptProcess.Run("node","--input-type=module","-e",script);
         run.Exit.ShouldBe(0,"c994-fixture-ownership c994-child-reaped: "+run.Output);
         run.Output.ShouldContain("C994_CUSTODY cases=5 reaped=true");
+    }
+
+    // CARD-1105 V-6. Temp cleanup proves the containers' own generation, not the target roster.
+    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1105_Temp_cleanup_uses_previous_generation()
+    {
+        C1008HostFixture.RequireNativeLinux();
+        using (var accepted = new C1008HostFixture(main: false))
+        {
+            accepted.Docker["containers"]!.AsArray().Add(accepted.Container('7', Project, "session-runner", false, previousGeneration: true));
+            accepted.Docker["containers"]!.AsArray().Add(accepted.Container('8', Project, "state-init", false, previousGeneration: true));
+            var run = await Cleanup(accepted);
+            run.Exit.ShouldBe(0, "c1105-temp-generation: " + run.Output);
+            var mounts = Receipt(accepted)["candidates"]!.AsArray().Single(candidate =>
+                candidate!["Config"]!["Labels"]!["com.docker.compose.service"]!.GetValue<string>() == "session-runner")!
+                ["Topology"]!["mounts"]!.AsArray();
+            mounts.Count.ShouldBe(14, "c1105-temp-generation: previous temp roster has no token bind");
+            mounts.Any(mount => mount!["target"]!.GetValue<string>() == "/run/antiphon/github-token").ShouldBeFalse();
+        }
+        using var refused = new C1008HostFixture(main: false);
+        refused.Docker["containers"]!.AsArray().Add(refused.Container('7', Project, "session-runner", false, previousGeneration: true));
+        refused.Docker["containers"]!.AsArray().Add(refused.Container('8', Project, "state-init", false, previousGeneration: true));
+        File.WriteAllText(Path.Combine(refused.Root, "temp.env"),
+            "RUNNER_GROK_STORE_DIR=" + refused.Root + "/grok\nSOURCE_REVISION=" + new string('d', 40) + "\n");
+        var mismatch = await Cleanup(refused);
+        mismatch.Exit.ShouldBe(2, "c1105-temp-generation: a different stack SHA refuses; " + mismatch.Output);
+        mismatch.Output.ShouldContain("RecycleGenerationMismatch");
+        NoMutation(refused, "c1105-temp-generation");
     }
 }

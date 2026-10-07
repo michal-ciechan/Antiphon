@@ -278,8 +278,13 @@ Files: `scripts/c590-remote.sh`, `tests/Antiphon.Tests/Scripts/RemoteScriptContr
 - `case_retire_temp_containers` and the temp branch of `c1008_recycle` use the previous temp
   model (D-6).
 - `C1105_Generation_identity_refuses_mismatch` (V-3): six refusals, each proving no stop, no
-  `rm`, no volume removal and no journal.
+  `rm`, no volume removal and no journal. The edited-journal `previousSha` case is the
+  CARD-1117 control that belongs here; the other S2 resume controls stay in their own methods.
 - `C1105_Temp_cleanup_uses_previous_generation` (V-6).
+- Folded from the S2 repair review: CP-10 runs the four CARD-1116/CARD-1117 methods; CP-7's
+  count is 16; the vacuous `runners=0` image `jq` leg is deleted; `C1008HostFixture.Run` waits
+  120s (measured deploy-parent Runs are 22-30s, the method passes at 47-53s, and 30s cancels
+  under load 19-23).
 
 ### S4: documentation and the real-Docker comparison (30-45 minutes)
 
@@ -366,7 +371,7 @@ server2-class runners provide.
 | R-3 | `RemoteScriptContractTests.Deploy_parent_creates_the_github_token_directory_without_reading_it` and the other three deploy-parent text pins | Existing ordering pins (`ensure_runner_boot_files` before `seed_runner_checkout` and `compose_host up -d`) and the roster line survive the reordering. |
 | R-4 | `RemoteScriptContractTests.C1008_*` (10) and `C1087_Host_census_filters_and_names_cause` | Every existing host-lane recycle contract passes on the extended fixture, including the dry-run, resume and partial-failure journeys. |
 | R-5 | `RetiredTempContainerHostTests.C994_*` (20) | The temp cleanup contracts, including the 15-mount topology receipt for a same-generation temp, pass on the extended fixture. |
-| R-6 | `RollingVolumeRecycleScriptTests.*` (18) | Wrapper vectors, transport pins, secret-leak checks and the fixture's own pins pass. |
+| R-6 | `RollingVolumeRecycleScriptTests.*` (16) | Wrapper vectors, transport pins, secret-leak checks and the fixture's own pins pass. |
 | R-7 | `RollingVolumeRecycleDockerTests` existing 32 outcomes | Unchanged base and changed outcomes beside the two new cases. |
 
 ### Positive controls (SourceLanding Mutation, method-scoped, one per behaviour)
@@ -387,10 +392,13 @@ next. Zero tests, a build error or a missing tool is not red.
 | PC-9 | `case_retire_temp_containers` renders the target model | `/*/*/RetiredTempContainerHostTests/C1105_Temp_cleanup_uses_previous_generation` | Exit 2 on the valid previous-generation containers. |
 | PC-10 | Drop the `mount count` check in `c1008_owned_mounts` | `/*/*/RollingProductionMountTests/C994_Bind_sources_are_canonical_and_typed` | The `extra` variant is accepted. |
 | PC-11 | Remove the CARD-1105 heading from docker-stack.md | `/*/*/DockerStackDocumentationTests/Mount_generation_protocol_is_documented` | Pin assertion fails. |
+| PC-12 | Delete the early `cmp` block in `c1008_recycle` | `/*/*/RemoteScriptContractTests/C1105_Compose_cmp_refuses_before_removal` | Exit 0 or removal before the refusal. The order pin in `C1105_Deploy_parent_orders_checkout_and_boot_files_before_recycle` also fails. |
+| PC-13 | In the `runners=0` resume branch, refuse unless every leftover image equals `generation.imageId` | `/*/*/RemoteScriptContractTests/C1105_Resume_state_init_image_follows_the_journal` | `RecycleGenerationMismatch` instead of `RecycleResumeMismatch`. `C1105_Resume_foreign_leftover_is_not_an_image_mismatch` likewise misses `RecycleContainerStateUnknown`. |
+| PC-14 | Replace the session-runner image compare in `c1008_previous_generation` with `true` | `/*/*/RemoteScriptContractTests/C1105_Resume_identity_refusals` | The `runner` case no longer reports `RecycleGenerationMismatch`. |
 
 ### Cost
 
-Checkpoint floor is the `EstimatedMinutes` sum, 86 minutes, plus authoring of roughly 165-225
+Checkpoint floor is the `EstimatedMinutes` sum, 94 minutes, plus authoring of roughly 165-225
 minutes across S1-S4. One checkpoint run per committed slice group, each through the build-slot
 gate with the exact committed SHA:
 
@@ -399,7 +407,7 @@ $planPath = 'docs/superpowers/plans/2026-10-06-card-1105-compose-mount-generatio
 $sha = git rev-parse HEAD
 pwsh -NoProfile -File scripts/build-slot.ps1 -Label c1105-cp1 -- dotnet run --project tools/Antiphon.Checkpoints --property:OutputPath=bin-c1105-tool/ -- run --plan $planPath --rows CP-1 --expected-source-sha $sha --row-timeout 15m --total-timeout 30m
 pwsh -NoProfile -File scripts/build-slot.ps1 -Label c1105-cp2 -- dotnet run --project tools/Antiphon.Checkpoints --property:OutputPath=bin-c1105-tool/ -- run --plan $planPath --rows CP-2 --expected-source-sha $sha --row-timeout 15m --total-timeout 30m
-pwsh -NoProfile -File scripts/build-slot.ps1 -Label c1105-cp3-7 -- dotnet run --project tools/Antiphon.Checkpoints --property:OutputPath=bin-c1105-tool/ -- run --plan $planPath --rows CP-3,CP-4,CP-5,CP-6,CP-7 --expected-source-sha $sha --row-timeout 20m --total-timeout 90m
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label c1105-cp3-7 -- dotnet run --project tools/Antiphon.Checkpoints --property:OutputPath=bin-c1105-tool/ -- run --plan $planPath --after S3 --expected-source-sha $sha --row-timeout 20m --total-timeout 120m
 pwsh -NoProfile -File scripts/build-slot.ps1 -Label c1105-cp8-9 -- dotnet run --project tools/Antiphon.Checkpoints --property:OutputPath=bin-c1105-tool/ -- run --plan $planPath --rows CP-8,CP-9 --expected-source-sha $sha --row-timeout 20m --total-timeout 40m
 ```
 
@@ -413,7 +421,7 @@ to pass; a red row is fixed and rerun as the same row. The Code brief points at 
 
 Closed Code list: one isolated build and one literal TUnit filter per row. Counts are from source
 inspection at the base (`RollingProductionMountTests` 5, `RetiredTempContainerHostTests` 20,
-`RollingVolumeRecycleScriptTests` 18, `DockerStackDocumentationTests` 13, `RemoteScriptContractTests`
+`RollingVolumeRecycleScriptTests` 16, `DockerStackDocumentationTests` 13, `RemoteScriptContractTests`
 C1008/C1087 12); recount at Code admission. Rows that reuse a build share its `After` group.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
@@ -424,7 +432,8 @@ C1008/C1087 12); recount at Code admission. Rows that reuse a build share its `A
 | CP-4 | S3 | CP-3 | host-census-long-linux | `/*/*/RemoteScriptContractTests/(C1008_Recycle_resume_requires_matching_receipt*)\|(C1008_Recycle_receipt_records_disk_and_partial_failure*)\|(C1008_Recycle_refuses_references_and_unknown_census*)` | R-4 | exact 3 methods, 0 failed/skipped, native Linux | 3 | 15 | true |
 | CP-5 | S3 | CP-3 | host-census-rest-linux | `/*/*/RemoteScriptContractTests/(C1008_Recycle_refuses_uninspectable_git*)\|(C1008_Recycle_refuses_unpublished_and_dirty_work*)\|(C1008_Retire_temp_rechecks_absence_and_retirement*)\|(C1087_Host_census_filters_and_names_cause*)\|(C1008_Recycle_preserves_tmp_copyup*)\|(C1008_Retire_temp_reclaims_below_cache_disk_gate*)\|(C1008_Recycle_audits_work_as_1654*)` | R-4 | exact 7 methods, 0 failed/skipped, native Linux | 7 | 9 | true |
 | CP-6 | S3 | CP-3 | temp-cleanup-linux | `/*/*/RetiredTempContainerHostTests/*` | V-6, R-5 | exact 21 methods (20 C994_* + C1105_Temp_cleanup_uses_previous_generation), 0 failed/skipped, native Linux | 21 | 12 | true |
-| CP-7 | S3 | CP-3 | wrapper-and-fixture-pins | `/*/*/RollingVolumeRecycleScriptTests/*` | R-6 | exact 18 methods, 0 failed/skipped | 18 | 14 | true |
+| CP-7 | S3 | CP-3 | wrapper-and-fixture-pins | `/*/*/RollingVolumeRecycleScriptTests/*` | R-6 | exact 16 methods, 0 failed/skipped | 16 | 14 | true |
+| CP-10 | S3 | CP-3 | resume-and-compose-refusals-linux | `/*/*/RemoteScriptContractTests/(C1105_Compose_cmp_refuses_before_removal*)\|(C1105_Resume_identity_refusals*)\|(C1105_Resume_state_init_image_follows_the_journal*)\|(C1105_Resume_foreign_leftover_is_not_an_image_mismatch*)` | CARD-1116, CARD-1117 | exact 4 methods, 0 failed/skipped, native Linux | 4 | 8 | true |
 | CP-8 | S4 | `tests/Antiphon.Tests -> bin-c1105-d/` | docs-pins | `/*/*/DockerStackDocumentationTests/*` | R-1 | exact 14 methods (13 existing + Mount_generation_protocol_is_documented), 0 failed/skipped | 14 | 1 | true |
 | CP-9 | S4 | CP-8 | real-docker-nested-linux | `/*/*/RollingVolumeRecycleDockerTests/C1008_Real_docker_comparison*` | V-7, R-7 | 1 result; `C1008_REAL cases=34 base=5 changed=29 failures=0`, owned residue absent, 0 failed/skipped; needs the runner's nested daemon | 1 | 14 | true |
 
