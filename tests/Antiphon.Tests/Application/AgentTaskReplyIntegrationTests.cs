@@ -2715,11 +2715,17 @@ public partial class AgentTaskReplyIntegrationTests
         var factory = new TestScopeFactory();
         var service = factory.ServiceProvider.GetRequiredService<AgentTaskService>();
 
+        Guid TokenOf(AppDbContext db) => db.AgentTasks.AsNoTracking().Single(t => t.Id == task.Id).ConcurrencyToken;
+        await using var verify = CreateContext();
+        var revision = TokenOf(verify);
+
         var first = await service.MarkReadAsync(task.Id, CancellationToken.None);
+        TokenOf(verify).ShouldBe(revision, "CARD-1144: the first read leaves the settlement revision alone");
         var second = await service.MarkReadAsync(task.Id, CancellationToken.None);
 
         first.ReadAt.ShouldNotBeNull();
         second.ReadAt.ShouldBe(first.ReadAt);
+        TokenOf(verify).ShouldBe(revision, "CARD-1144: a repeated read leaves the settlement revision alone");
     }
 
     [Test]
