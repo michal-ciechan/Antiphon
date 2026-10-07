@@ -107,7 +107,7 @@ Continue requires question classification plus standing authority, then the acce
 Only an explicit Reply after confirmed prerequisite publication continues a parked prerequisite.
 Report prose and a card moving to Done start nothing.
 An old session TurnEnd cannot settle the new attempt.
-The caller UserPrompt receipt is proven on the inline path only. The fixture sets completionSingleWriteBytes to 86400 while production PtySingleChunkBytes stays 1024, so a spilled completion note's transcript line is the pointer.
+The caller UserPrompt receipt is proven inline at completionSingleWriteBytes 86400, and for a local parent with Cwd set and no RunnerCwd at the production PtySingleChunkBytes 1024, where the transcript line is the pointer, the inbox file under that cwd is present, and the retained spill carries review-evidence and reviewed-sha (CARD-1104). A remote parent with RunnerCwd is not covered by that parked-receipt arm.
 
 ReclaimScheduledAsync runs from the dispatcher pool-release sweep and from RunnerSlotReconcileJob and calls ReclaimLegacyAsync(32, 3).
 The reclaim cursor is the singleton BlockedTaskParkReclaimCursors row Id 1 and advances after every visit, including failure.
@@ -117,7 +117,7 @@ A sweep's Released counts only confirmations produced by this run; a row Parked 
 FreshLegacyWindow uses StableFor only as a duration and requires the server-clock interval since park.CreatedAt to reach 120 seconds; the runner's FirstObservedAt is ignored. An old CompletedAt is not the idle window.
 A Held episode is not prepared again until its NextAttemptAt, stamped at now plus ReclaimHeldBackoffSeconds (default 600; 0 disables; a negative value is treated as 0), except park_workspace_reserved which stays immediate.
 A refusal on a Held row re-stamps NextAttemptAt from the same backoff and records the refusal reason, so a Held row is never prepared on consecutive sweeps while its backoff runs (CARD-1135).
-Known limits stay on CARD-1097, CARD-1103, and CARD-1104.
+Known limits stay on CARD-1097 item 1 (park_resume_refused is written on each refused dispatch tick with no dedupe) and item 2 (resume reads the desktop checkout, not the runner mirror), CARD-1104 for a remote parent with RunnerCwd, CARD-1143 (a Held row whose episode can no longer be loaded is visited on later sweeps without a re-stamp), and CARD-1144 (the first mark-read rotates the settlement token, so Reply admission misses and the live Blocked fallback accepts the answer on the old session).
 
 CARD-0519 S10: a terminal session status alone does not close outbound recovery
 windows. The optional transcript snapshot `TerminalComplete` is reader-owned EOF

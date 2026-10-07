@@ -555,14 +555,31 @@ internal sealed partial class RunnerSeatReleaseFixture : IAsyncDisposable
         adapter.OnSubmitted = async body =>
         {
             Submitted.Add(body);
-            var spill = await Harness.Provider.GetRequiredService<RemoteSpillCourier>()
-                .FindDurableAsync(sessionId, body, default);
-            if (spill is not null)
+            // A desktop-local parent has Cwd and no RunnerCwd. Production writes the inbox
+            // file and the local runner types the pointer; it does not call FindDurableAsync.
+            // A row with RunnerCwd still does. A throw returns before NativePromptAsync, so
+            // flush reverts the row and the note stays unconfirmed.
+            string? runnerCwd;
+            await using (var lookup = Db())
             {
-                var file = Path.Combine(Harness.TempRoot, spill.Spill.RelativePath);
-                System.IO.Directory.CreateDirectory(Path.GetDirectoryName(file)!);
-                await File.WriteAllTextAsync(file, spill.Spill.Body);
+                runnerCwd = await lookup.AgentSessions.AsNoTracking()
+                    .Where(s => s.Id == sessionId)
+                    .Select(s => s.RunnerCwd)
+                    .SingleAsync();
             }
+
+            if (!string.IsNullOrWhiteSpace(runnerCwd))
+            {
+                var spill = await Harness.Provider.GetRequiredService<RemoteSpillCourier>()
+                    .FindDurableAsync(sessionId, body, default);
+                if (spill is not null)
+                {
+                    var file = Path.Combine(Harness.TempRoot, spill.Spill.RelativePath);
+                    System.IO.Directory.CreateDirectory(Path.GetDirectoryName(file)!);
+                    await File.WriteAllTextAsync(file, spill.Spill.Body);
+                }
+            }
+
             await NativePromptAsync(sessionId, body);
         };
         if (sessionId != Harness.SessionId) Harness.Runtime.Register(sessionId, adapter);

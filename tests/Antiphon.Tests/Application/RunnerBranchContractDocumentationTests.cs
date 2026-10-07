@@ -1,3 +1,6 @@
+using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Settings;
 using Shouldly;
 using TUnit.Core;
 
@@ -28,18 +31,20 @@ public class RunnerBranchContractDocumentationTests
     [Test]
     public void C1076_remote_prep_push_contract_is_documented()
     {
-        foreach (var relative in new[] { "docs/orchestration-loop.md", "docs/ops-http.md" })
+        var loop = Read("docs/orchestration-loop.md");
+        foreach (var text in new[] { loop, Read("docs/ops-http.md") })
         {
-            var text = Read(relative);
-            text.ShouldContain("RemotePrepPushBudgetMinutes");
-            text.ShouldContain("remote-prep-push");
-            text.ShouldContain("repositoryLease");
-            text.ShouldContain("remotePrep");
+            text.ShouldContain(nameof(DelegationSettings.RemotePrepPushBudgetMinutes));
+            text.ShouldContain(RepositoryChildPurposes.RemotePrepPush);
+            text.ShouldContain(AgentTaskPipelineStatusService.QueueReasonRepositoryLease);
+            text.ShouldContain(AgentTaskPipelineStatusService.QueueReasonRemotePrep);
             text.ShouldContain("does not track origin");
-            text.ShouldContain("BehindTaskId");
+            text.ShouldContain(nameof(RemotePrepProgress.BehindTaskId));
             text.ShouldContain("enqueue-time snapshot");
             text.ShouldContain("CARD-1093");
         }
+
+        loop.ShouldContain(AgentTaskPipelineStatusService.QueueReasonHostBudget);
     }
 
     [Test]

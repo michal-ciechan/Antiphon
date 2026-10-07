@@ -71,7 +71,7 @@ public sealed class BlockedTaskParkProjectionTests
         Require(runtime, "Only an explicit Reply after confirmed prerequisite publication continues a parked prerequisite.", "c1065-prerequisite");
         Require(runtime, "Report prose and a card moving to Done start nothing.", "c1065-no-inference");
         Require(runtime, "An old session TurnEnd cannot settle the new attempt.", "c1065-stale-turn");
-        Require(runtime, "The caller UserPrompt receipt is proven on the inline path only. The fixture sets completionSingleWriteBytes to 86400 while production PtySingleChunkBytes stays 1024, so a spilled completion note's transcript line is the pointer.", "c1065-v27-inline");
+        Require(runtime, "The caller UserPrompt receipt is proven inline at completionSingleWriteBytes 86400, and for a local parent with Cwd set and no RunnerCwd at the production PtySingleChunkBytes 1024, where the transcript line is the pointer, the inbox file under that cwd is present, and the retained spill carries review-evidence and reviewed-sha (CARD-1104). A remote parent with RunnerCwd is not covered by that parked-receipt arm.", "c1065-v27-inline");
         Require(runtime, "ReclaimScheduledAsync runs from the dispatcher pool-release sweep and from RunnerSlotReconcileJob and calls ReclaimLegacyAsync(32, 3).", "c1065-reclaim-callers");
         Require(runtime, "The reclaim cursor is the singleton BlockedTaskParkReclaimCursors row Id 1 and advances after every visit, including failure.", "c1065-reclaim-cursor");
         Require(runtime, "The park bound is this release path (CARD-1083).", "c1065-park-bound");
@@ -82,6 +82,12 @@ public sealed class BlockedTaskParkProjectionTests
         Require(Read("docs/ops-http.md"), "ReclaimIntervalSeconds", "c1108-ops-interval");
         Require(runtime, "A Held episode is not prepared again until its NextAttemptAt, stamped at now plus ReclaimHeldBackoffSeconds (default 600; 0 disables; a negative value is treated as 0), except park_workspace_reserved which stays immediate.", "c1108-held-backoff");
         Require(runtime, "A refusal on a Held row re-stamps NextAttemptAt from the same backoff and records the refusal reason, so a Held row is never prepared on consecutive sweeps while its backoff runs (CARD-1135).", "c1135-held-restamp");
+        const string knownLimits = "Known limits stay on CARD-1097 item 1 (park_resume_refused is written on each refused dispatch tick with no dedupe) and item 2 (resume reads the desktop checkout, not the runner mirror), CARD-1104 for a remote parent with RunnerCwd, CARD-1143 (a Held row whose episode can no longer be loaded is visited on later sweeps without a re-stamp), and CARD-1144 (the first mark-read rotates the settlement token, so Reply admission misses and the live Blocked fallback accepts the answer on the old session).";
+        var knownLimitsLine = runtime.Replace("\r\n", "\n").Split('\n')
+            .Single(line => line.StartsWith("Known limits stay on ", StringComparison.Ordinal));
+        knownLimitsLine.ShouldBe(knownLimits, "c1141-known-limits");
+        foreach (var closed in new[] { "CARD-1103", "CARD-1129", "CARD-1135" })
+            knownLimitsLine.ShouldNotContain(closed, Case.Sensitive, "c1141-known-limits");
         Require(Read("docs/antiphon-api.md"), "`ReclaimHeldBackoffSeconds` defaults to 600; 0 disables the Held backoff and a negative value is treated as 0.", "c1108-api-backoff");
         Require(Read("docs/ops-http.md"), "ReclaimHeldBackoffSeconds defaults to 600", "c1108-ops-backoff");
         Require(runtime, "FreshLegacyWindow uses StableFor only as a duration and requires the server-clock interval since park.CreatedAt to reach 120 seconds; the runner's FirstObservedAt is ignored. An old CompletedAt is not the idle window.", "c1065-fresh-window");
