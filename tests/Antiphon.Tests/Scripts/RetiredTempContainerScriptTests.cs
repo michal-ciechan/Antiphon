@@ -306,6 +306,10 @@ public sealed class RetiredTempContainerScriptTests
             """);run.Exit.ShouldBe(0,"c994-bridge-context c994-literal-transport: "+run.Output);
         using var host=new C1008HostFixture(main:false);
         host.Docker["containers"]!.AsArray().Add(host.Container('7',"antiphon-runner-temp","session-runner",false));
+        // Same-generation container carries the token bind. Its stack SHA must render that roster.
+        var sha=new string('a',40);
+        host.Statuses["server2-temp"]!["buildVersion"]=sha;
+        File.WriteAllText(Path.Combine(host.Root,"temp.env"),"RUNNER_GROK_STORE_DIR="+host.Root+"/grok\nSOURCE_REVISION="+sha+"\n");
         var cleaned=await host.Run("retire-temp-containers");cleaned.Exit.ShouldBe(0,"c994-literal-transport: host evidence; "+cleaned.Output);
         await CheckLiveBridge(host,false);
         foreach(var file in new[]{"scripts/deploy-server2.ps1","scripts/c590-real.ps1","scripts/verify-docker-stack.ps1"})File.ReadAllBytes(Path.Combine(DelegateScriptRunner.RepoRoot,file)).All(b=>b<128).ShouldBeTrue("c994-literal-transport: ASCII");
