@@ -749,6 +749,69 @@ public sealed class BlockedTaskParkReclaimTests
         counts.ConfirmedAfterNegative.ShouldBe(3, "V-3");
     }
 
+    [Test]
+#pragma warning disable EXTEXP0004 // SetUtcNow refuses a backward instant; AdjustTime is the step.
+    public async Task C1145_ReleasedCountsConfirmationsThisRunProduces()
+    {
+        await using (var backward = await ReadyLegacyReleaseAsync())
+        {
+            var start = backward.Clock.GetUtcNow();
+            var stepped = false;
+            var result = await backward.ReclaimResultAsync(32, 1, (name, _) =>
+            {
+                if (name == "BeforeResponse" && !stepped)
+                {
+                    stepped = true;
+                    // SetUtcNow throws on a backward instant. AdjustTime is the step.
+                    backward.Clock.AdjustTime(start.AddSeconds(-1));
+                }
+                return Task.CompletedTask;
+            });
+            stepped.ShouldBeTrue("C1145-back");
+            Released(backward, backward.SessionId).ShouldBeTrue("C1145-back");
+            SameInstant(await ConfirmedStampAsync(backward, backward.TaskId), start.UtcDateTime.AddSeconds(-1), "C1145-back");
+            result.Released.ShouldBe(1, "C1145-back");
+        }
+
+        await using (var equal = await ReadyLegacyReleaseAsync())
+        {
+            var start = equal.Clock.GetUtcNow();
+            var result = await equal.ReclaimResultAsync(32, 1);
+            result.Released.ShouldBe(1, "C1145-equal");
+            Released(equal, equal.SessionId).ShouldBeTrue("C1145-equal");
+            var stamp = await ConfirmedStampAsync(equal, equal.TaskId);
+            SameInstant(stamp, start.UtcDateTime, "C1145-equal");
+
+            equal.Clock.Advance(TimeSpan.FromSeconds(120));
+            var normal = await equal.ReclaimResultAsync(32, 1);
+            normal.Released.ShouldBe(0, "C1145-prior");
+            normal.Visited.ShouldBeGreaterThan(0, "C1145-prior");
+            normal.Registered.ShouldBeGreaterThan(0, "C1145-prior");
+            (await ConfirmedCountAsync(equal)).ShouldBe(1, "C1145-prior");
+
+            equal.Clock.AdjustTime(new DateTimeOffset(DateTime.SpecifyKind(stamp!.Value, DateTimeKind.Utc), TimeSpan.Zero));
+            var equalPrior = await equal.ReclaimResultAsync(32, 1);
+            equalPrior.Released.ShouldBe(0, "C1145-prior-equal");
+            equalPrior.Visited.ShouldBeGreaterThan(0, "C1145-prior-equal");
+            equalPrior.Registered.ShouldBeGreaterThan(0, "C1145-prior-equal");
+            (await ConfirmedCountAsync(equal)).ShouldBe(1, "C1145-prior-equal");
+
+            equal.Clock.AdjustTime(equal.Clock.GetUtcNow().AddSeconds(-1));
+            var steppedPrior = await equal.ReclaimResultAsync(32, 1);
+            steppedPrior.Released.ShouldBe(0, "C1145-prior-step");
+            steppedPrior.Visited.ShouldBeGreaterThan(0, "C1145-prior-step");
+            steppedPrior.Registered.ShouldBeGreaterThan(0, "C1145-prior-step");
+            (await ConfirmedCountAsync(equal)).ShouldBe(1, "C1145-prior-step");
+        }
+    }
+#pragma warning restore EXTEXP0004
+
+    private static async Task<DateTime?> ConfirmedStampAsync(RunnerSeatReleaseFixture f, Guid taskId)
+    {
+        await using var db = f.Db();
+        return (await db.RunnerSeatReleases.AsNoTracking().SingleAsync(r => r.TaskId == taskId)).ConfirmedAt;
+    }
+
     private sealed record VisitMeasurement(
         LegacyReclaimResult Result, List<Guid> Listed, Guid? Cursor, int Statements);
 
