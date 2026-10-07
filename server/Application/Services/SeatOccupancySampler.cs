@@ -144,7 +144,9 @@ public sealed class SeatOccupancySampler(
                 seatClass,
                 SeatOccupancyProjection.IdleSince(
                     seatClass, row.BlockedAt, row.LatestTask?.CompletedAt, session.StartedAt),
-                SeatOccupancyProjection.Pushed(row.PublicationReceipt)));
+                SeatOccupancyProjection.Pushed(row.PublicationReceipt),
+                row.Park?.State.ToString() ?? "none",
+                row.Park?.ReasonCode));
         }
 
         return new HostOccupancyObservation(

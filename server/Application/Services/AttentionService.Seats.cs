@@ -127,7 +127,7 @@ public sealed partial class AttentionService
         + $"attempt={seat.Attempt?.ToString(CultureInfo.InvariantCulture) ?? "unknown"}; "
         + $"status={seat.TaskStatus?.ToString() ?? "none"}; {AgeField(age)}; pushed={seat.Pushed}; "
         + $"observedAt={snapshot.GeneratedAt:O}; "
-        + $"slotOrphan={SlotOrphanKey(seat)}; divergence={DivergenceKey(host)}";
+        + $"slotOrphan={SlotOrphanKey(seat)}; divergence={DivergenceKey(host)}; {ParkField(seat)}";
 
     private static string OrphanEvidence(
         HostOccupancyObservation host, SeatObservation seat, SeatOccupancySnapshot snapshot, DateTime now)
@@ -137,7 +137,15 @@ public sealed partial class AttentionService
             + $"attempt={seat.Attempt?.ToString(CultureInfo.InvariantCulture) ?? "unknown"}; "
             + $"status={seat.TaskStatus?.ToString() ?? "none"}; {AgeField(age)}; pushed={seat.Pushed}; "
             + $"observedAt={snapshot.GeneratedAt:O}; "
-            + $"seatIdle={SeatIdleKey(seat)}; divergence={DivergenceKey(host)}";
+            + $"seatIdle={SeatIdleKey(seat)}; divergence={DivergenceKey(host)}; {ParkField(seat)}";
+    }
+
+    private static string ParkField(SeatObservation seat)
+    {
+        var state = string.IsNullOrEmpty(seat.ParkState) ? "none" : seat.ParkState;
+        if (state == "none" || string.IsNullOrEmpty(seat.ParkReason))
+            return $"park={state}";
+        return $"park={state}:{seat.ParkReason}";
     }
 
     private static string DivergenceEvidence(HostOccupancyObservation host, SeatOccupancySnapshot snapshot)
