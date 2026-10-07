@@ -990,6 +990,59 @@ public sealed class RemoteScriptContractTests
         f.Removed.ShouldBeEmpty();
     }
 
+    // CARD-1105 V-3. Generation identity refuses before stop, removal, volume deletion, or a journal.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1105_Generation_identity_refuses_mismatch()
+    {
+        C1008HostFixture.RequireNativeLinux();
+        using (var mismatch = new C1008HostFixture())
+        {
+            File.WriteAllText(Path.Combine(mismatch.Root, "main.env"), "SOURCE_REVISION=" + new string('d', 40) + "\n");
+            await C1105AssertFreshRefusal(mismatch, "RecycleGenerationMismatch");
+        }
+        using (var missing = new C1008HostFixture())
+        {
+            File.Delete(Path.Combine(missing.Root, "main.env"));
+            await C1105AssertFreshRefusal(missing, "RecycleGenerationUnknown");
+        }
+        using (var malformed = new C1008HostFixture())
+        {
+            File.WriteAllText(Path.Combine(malformed.Root, "main.env"), "SOURCE_REVISION=zz\n");
+            await C1105AssertFreshRefusal(malformed, "RecycleGenerationUnknown");
+        }
+        using (var image = new C1008HostFixture())
+        {
+            image.Docker["fault"] = "image-inspect-wrong";
+            await C1105AssertFreshRefusal(image, "RecycleGenerationMismatch");
+        }
+        using (var source = new C1008HostFixture())
+        {
+            await C1105AssertFreshRefusal(source, "RecycleGenerationUnknown", """
+                c1008_compose_source() {
+                  if [ "$1" = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" ]; then return 2; fi
+                  mkdir -p -- "$2" || return 2
+                  cp -f -- "$SERVER2_COMPOSE" "$2/docker-compose.server2-runner.yml" || return 2
+                  cp -f -- "$SERVER2_COMPOSE" "$2/docker-compose.server2-runner.temp.yml" || return 2
+                }
+                """);
+        }
+        using (var foreign = new C1008HostFixture())
+        {
+            foreign.Docker["containers"]!.AsArray()[0]!["Mounts"]!.AsArray().Add(new JsonObject
+            {
+                ["Type"] = "bind", ["Source"] = "/foreign", ["Destination"] = "/foreign", ["RW"] = true
+            });
+            await C1105AssertFreshRefusal(foreign, "RecycleContainerStateUnknown");
+        }
+        using var edited = await C1105Interrupt("(.stopReceipts|length)>0");
+        var record = JsonNode.Parse(File.ReadAllText(C1105Journal(edited)))!.AsObject();
+        record["previousSha"] = new string('d', 40);
+        File.WriteAllText(C1105Journal(edited), record.ToJsonString());
+        await C1105AssertResumeRefuses(edited, "RecycleResumeMismatch");
+        edited.Removed.ShouldBeEmpty("c1105-generation: an edited previousSha removes nothing");
+    }
+
     // CARD-1105 V-5. Apply orders checkout and boot files first; the preview stays read-only.
     [Test]
     public void C1105_Deploy_parent_orders_checkout_and_boot_files_before_recycle()
@@ -1044,8 +1097,8 @@ public sealed class RemoteScriptContractTests
         File.Exists(C1105Journal(f)).ShouldBeFalse("c1105-compose-cmp: refusal is before the journal");
     }
 
-    // CARD-1117. S2 resume refusals in c1008_bind_generation. The runners=0 image leg
-    // compares session-runner leftovers only; a state-init server image is not a mismatch.
+    // CARD-1117. S2 resume refusals in c1008_bind_generation. A state-init image is not
+    // compared with generation.imageId; reconcile pins it.
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1105_Resume_identity_refusals()
@@ -1105,8 +1158,8 @@ public sealed class RemoteScriptContractTests
         await C1105AssertResumeRefuses(journalImage, "RecycleResumeMismatch");
     }
 
-    // CARD-1117. A non-roster leftover is a container-state refusal. The runners=0 image
-    // leg must not treat it as a generation mismatch before the service allowlist.
+    // CARD-1117. A non-roster leftover is a container-state refusal. Reconcile pins
+    // journaled leftovers; generation.imageId is not that check.
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1105_Resume_foreign_leftover_is_not_an_image_mismatch()
@@ -1140,6 +1193,16 @@ public sealed class RemoteScriptContractTests
         var container = fixture.Docker["containers"]!.AsArray().Single(node =>
             node!["Config"]!["Labels"]!["com.docker.compose.service"]!.GetValue<string>() == service);
         container["Image"] = image;
+    }
+
+    private static async Task C1105AssertFreshRefusal(C1008HostFixture fixture, string token, string extra = "")
+    {
+        var run = await fixture.Run(extra: extra);
+        run.Exit.ShouldBe(2, "c1105-generation: " + token + "; " + run.Output);
+        run.Output.ShouldContain(token);
+        fixture.Removed.ShouldBeEmpty(token + " removes no volume");
+        C1105DockerMutations(fixture).ShouldBe(0, token + " does not stop, rm, or volume rm");
+        File.Exists(C1105Journal(fixture)).ShouldBeFalse(token + " writes no journal");
     }
 
     private static async Task C1105AssertResumeRefuses(C1008HostFixture fixture, string token, bool freezeJournal = true)

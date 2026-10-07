@@ -3908,6 +3908,13 @@ c1008_previous_generation() {
     [ "$status_sha" = "$sha" ] || c1008_refuse RecycleGenerationMismatch
     image_count="$(printf '%s' "$owned" | jq -er '[.[] | select(.Config.Labels["com.docker.compose.service"]=="session-runner") | .Image] | unique | length')" \
         || c1008_refuse RecycleGenerationUnknown
+    # Temp cleanup can own a state-init and no session-runner. There is no runner image to bind.
+    # Main still requires the session-runner image leg.
+    if [ "$image_count" = 0 ] && [ "$project" = "$TEMP_PROJECT" ]; then
+        C1008_PREVIOUS_SHA="$sha"
+        jq -nc --arg sha "$sha" '{statusBuildVersion:$sha,imageTag:null,imageId:null}'
+        return 0
+    fi
     [ "$image_count" = 1 ] || c1008_refuse RecycleGenerationUnknown
     container_image="$(printf '%s' "$owned" | jq -er '[.[] | select(.Config.Labels["com.docker.compose.service"]=="session-runner") | .Image] | unique | .[0]')" \
         || c1008_refuse RecycleGenerationUnknown
@@ -4716,7 +4723,7 @@ c1008_capture_json() {
 
 # CARD-1105 D-5. Resolve the running generation before preview, removal, or resume reconciliation.
 c1008_bind_generation() {
-    local model="$1" gen_owned saved_sha saved_digest stack digest_now mounts target_mounts label
+    local model="$1" gen_owned saved_sha saved_digest stack digest_now mounts target_mounts label runners
     gen_owned="$(printf '%s' "$C1008_CENSUS" | jq -c --arg project "$C1008_PROJECT" \
         '[.[]|select(.Config.Labels["com.docker.compose.project"]==$project and .Config.Labels["com.docker.compose.service"]!="build-slots")]')" \
         || c1008_refuse RecycleGenerationUnknown
@@ -4734,16 +4741,13 @@ c1008_bind_generation() {
             C1008_PREVIOUS_SHA="$saved_sha"
         else
             # A crashed removal can resume after the session-runner is already gone.
-            # generation.imageId is that image. Other leftovers are pinned by reconcile.
+            # Leftovers are pinned by c1008_reconcile_owned, not by generation.imageId.
             runners="$(printf '%s' "$gen_owned" | jq -er '[.[] | select(.Config.Labels["com.docker.compose.service"]=="session-runner")] | length')" \
                 || c1008_refuse RecycleGenerationUnknown
             if [ "$runners" = 0 ]; then
                 if [ -n "$saved_sha" ]; then
                     stack="$(c1008_stack_revision)"
                     [ "$stack" = "$saved_sha" ] || c1008_refuse RecycleResumeMismatch
-                    printf '%s' "$gen_owned" | jq -e --argjson saved "$C1008_RECORD" \
-                        'all(.[]; .Config.Labels["com.docker.compose.service"]!="session-runner" or .Image==$saved.generation.imageId)' >/dev/null \
-                        || c1008_refuse RecycleGenerationMismatch
                 fi
                 C1008_PREVIOUS_SHA="$saved_sha"
             else
@@ -5422,7 +5426,7 @@ case_retire_temp_containers() {
     c994_status_proof
     C1008_PROJECT="$TEMP_PROJECT"
     if [ -s "$SERVER2_TEMP_ENV" ]; then RUNNER_GROK_STORE_DIR="$(sed -n 's/^RUNNER_GROK_STORE_DIR=//p' "$SERVER2_TEMP_ENV" | head -n 1)"; fi
-    local model census owned volumes='{}' name facts id current expected image count
+    local model census owned volumes='{}' name facts id current expected image count gen_count
     model="$(c1008_compose_model)" || c994_refuse RecycleComposeMismatch
     census="$(c1008_container_census)" || c994_refuse TempContainerCensusUnavailable
     owned="$(printf '%s' "$census" | jq -c --arg project "$TEMP_PROJECT" '[.[]|select(.Config.Labels["com.docker.compose.project"]==$project)]')"
@@ -5431,6 +5435,16 @@ case_retire_temp_containers() {
       ([.[]|select(.Config.Labels["com.docker.compose.service"]=="session-runner")]|length)<=1' >/dev/null || c994_refuse TempContainerOwnershipUnknown
     if printf '%s' "$owned" | jq -e 'any(.[]; .State.Running==true and .State.Status=="running")' >/dev/null; then c994_refuse TempContainerStillRunning; fi
     printf '%s' "$owned" | jq -e 'all(.[]; .State.Running==false and .State.Status=="exited")' >/dev/null || c994_refuse TempContainerStateUnknown
+    # CARD-1105 D-6. Exited temp containers are proved against their own generation.
+    gen_count="$(printf '%s' "$owned" | jq -er '[.[] | select(.Config.Labels["com.docker.compose.service"]=="session-runner" or .Config.Labels["com.docker.compose.service"]=="state-init")] | length')" \
+        || c994_refuse TempContainerStateUnknown
+    if [ "$gen_count" != 0 ]; then
+        C1008_STATUS="$(c849_status_body server2-temp)" || c994_refuse RunnerStatusMissing
+        c1008_capture_json "$CASE_DIR/generation.json" c1008_previous_generation "$TEMP_PROJECT" "$owned"
+        [ -n "${C1008_PREVIOUS_SHA:-}" ] || c994_refuse RecycleGenerationUnknown
+        c1008_capture_json "$CASE_DIR/previous-model.json" c1008_previous_model "$C1008_PREVIOUS_SHA"
+        model="$(cat "$CASE_DIR/previous-model.json")"
+    fi
     for name in work runner-state runner-tmp dind-data; do
         facts="$(c1008_volume "${TEMP_PROJECT}_$name")" || c994_refuse RecycleVolumeIdentityMismatch
         c1008_private_identity "$facts" "${TEMP_PROJECT}_$name" "$TEMP_PROJECT" "$name" || c994_refuse RecycleVolumeIdentityMismatch

@@ -1011,7 +1011,9 @@ internal sealed class C1008HostFixture : IDisposable
         psi.Environment["C604_SERVER_ORIGIN"] = "http://127.0.0.1:1";
         using var proc = Process.Start(psi)!;
         var stdout = proc.StandardOutput.ReadToEndAsync(); var stderr = proc.StandardError.ReadToEndAsync();
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        // CARD-1130. A deploy-parent Run measures 22-30s and exceeds 30s at load 19-23
+        // (method wall 47s idle, 53s at that load). 120s still cancels a hang inside the row timeout.
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(120));
         try { await proc.WaitForExitAsync(deadline.Token); }
         catch { if (!proc.HasExited) { proc.Kill(true); await proc.WaitForExitAsync(); } throw; }
         return (proc.ExitCode, await stdout + await stderr);
