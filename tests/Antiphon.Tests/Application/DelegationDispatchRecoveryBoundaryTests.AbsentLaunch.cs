@@ -392,16 +392,16 @@ public partial class DelegationDispatchRecoveryBoundaryTests
 
     private static async Task<SeededAbsent> SeedAsync(string connection, AbsentShape shape)
     {
-        var taskId = Guid.NewGuid();
+        var taskId = shape.TaskId ?? Guid.NewGuid();
         var sessionId = Guid.NewGuid();
         var agentId = Guid.NewGuid();
-        var parentId = shape.Parent ? Guid.NewGuid() : (Guid?)null;
-        var briefId = Guid.NewGuid();
+        var parentId = shape.ExistingParentId ?? (shape.Parent ? Guid.NewGuid() : null);
+        var briefId = shape.Brief ? Guid.NewGuid() : Guid.Empty;
         var dispatched = Pg(DateTime.UtcNow.AddMinutes(-1));
         var cwd = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "antiphon-c1149-s1", taskId.ToString("N"))).FullName;
         var name = $"c1149-{agentId:N}"[..16];
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(connection));
-        if (parentId is Guid parent)
+        if (shape.ExistingParentId is null && parentId is Guid parent)
         {
             db.AgentSessions.Add(new AgentSession
             {
@@ -462,7 +462,7 @@ public partial class DelegationDispatchRecoveryBoundaryTests
             WorkingDirectory = cwd,
             Status = shape.Status,
             Attempt = 1,
-            ReplyTo = shape.Parent ? AgentTaskReplyTo.Session : AgentTaskReplyTo.None,
+            ReplyTo = parentId is null ? AgentTaskReplyTo.None : AgentTaskReplyTo.Session,
             ParentSessionId = parentId,
             Ephemeral = false,
             CreatedAt = dispatched,
@@ -470,19 +470,22 @@ public partial class DelegationDispatchRecoveryBoundaryTests
             AgentId = agentId,
             AgentSessionId = sessionId,
         });
-        db.SessionQueuedMessages.Add(new SessionQueuedMessage
+        if (shape.Brief)
         {
-            Id = briefId,
-            AgentSessionId = sessionId,
-            Body = shape.Body,
-            RemoteSpillBody = shape.Spill,
-            Status = QueuedMessageStatus.Pending,
-            Sequence = 1,
-            Origin = QueuedMessageOrigin.Delegation,
-            ExecutionTaskId = taskId,
-            DeliveryAttempts = shape.DeliveryAttempts,
-            CreatedAt = dispatched,
-        });
+            db.SessionQueuedMessages.Add(new SessionQueuedMessage
+            {
+                Id = briefId,
+                AgentSessionId = sessionId,
+                Body = shape.Body,
+                RemoteSpillBody = shape.Spill,
+                Status = QueuedMessageStatus.Pending,
+                Sequence = 1,
+                Origin = QueuedMessageOrigin.Delegation,
+                ExecutionTaskId = taskId,
+                DeliveryAttempts = shape.DeliveryAttempts,
+                CreatedAt = dispatched,
+            });
+        }
         if (shape.Prompt)
         {
             db.TranscriptEntries.Add(new TranscriptEntry
@@ -514,7 +517,7 @@ public partial class DelegationDispatchRecoveryBoundaryTests
             taskId, sessionId, parentId, briefId,
             Encoding.UTF8.GetBytes(shape.Body),
             shape.Spill is null ? null : Encoding.UTF8.GetBytes(shape.Spill),
-            dispatched, dispatched, 1, shape.Goal);
+            dispatched, dispatched, 1, shape.Goal, cwd);
     }
 
     private static SweepHost OpenSweep(
@@ -524,7 +527,8 @@ public partial class DelegationDispatchRecoveryBoundaryTests
         FakeTimeProvider clock,
         DeadSessionFirstSeenState firstSeen,
         IInterceptor? interceptor = null,
-        bool unavailable = false)
+        bool unavailable = false,
+        string? projectsRoot = null)
     {
         var services = new ServiceCollection();
         services.AddLogging();
@@ -556,6 +560,16 @@ public partial class DelegationDispatchRecoveryBoundaryTests
         services.AddSingleton(new BootWedgeRelaunchState());
         if (unavailable)
             services.AddSingleton<ISessionRunnerDirectory>(new UnavailableDirectory());
+        if (!string.IsNullOrWhiteSpace(projectsRoot))
+        {
+            services.AddSingleton<AgentTaskReplyService>();
+            services.AddSingleton(Options.Create(new DelegateBindRefusalRecoverySettings
+            {
+                ClaudeProjectsRoot = projectsRoot,
+            }));
+            services.AddSingleton<DelegateBindRefusalRecovery>();
+        }
+
         services.AddScoped<AgentTaskDispatcher>();
         return new SweepHost(services.BuildServiceProvider(), runner, stopper, clock);
     }
@@ -598,6 +612,9 @@ public partial class DelegationDispatchRecoveryBoundaryTests
         public bool Prompt { get; init; }
         public bool TurnEnd { get; init; }
         public bool Parent { get; init; }
+        public Guid? TaskId { get; init; }
+        public bool Brief { get; init; } = true;
+        public Guid? ExistingParentId { get; init; }
         public string Goal { get; init; } = "Keep this goal exact.\nLine two café \u2603.";
         public string Body { get; init; } = "brief café \u2603\n";
         public string? Spill { get; init; } = "spill café \u2603\n";
@@ -605,7 +622,7 @@ public partial class DelegationDispatchRecoveryBoundaryTests
 
     private sealed record SeededAbsent(
         Guid TaskId, Guid SessionId, Guid? ParentId, Guid BriefId,
-        byte[] Body, byte[]? Spill, DateTime DispatchedAt, DateTime StartedAt, int Attempt, string Goal);
+        byte[] Body, byte[]? Spill, DateTime DispatchedAt, DateTime StartedAt, int Attempt, string Goal, string Cwd);
 
     private sealed class CountingRunner : ISessionRunnerClient
     {

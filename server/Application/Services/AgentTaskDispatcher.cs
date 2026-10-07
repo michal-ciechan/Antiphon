@@ -2490,6 +2490,7 @@ public sealed class AgentTaskDispatcher
 
         var open = await _db.AgentTasks
             .Where(t => t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working)
+            .OrderBy(t => t.Id)
             .ToListAsync(ct);
         if (open.Count == 0)
             return 0;
@@ -2635,7 +2636,8 @@ public sealed class AgentTaskDispatcher
             // a positively absent unattempted launch becomes a Blocked hold. Every other shape keeps
             // today's failure. A withhold leaves the grace clock so a later pass can still act; only
             // a committed hold forgets it. This decision does not fail, retry, stop, or release.
-            var absentLaunch = await DecideAbsentLaunchAsync(task, session, runnerSessions, ct);
+            var absentLaunch = await DecideAbsentLaunchAsync(
+                task, session, runnerSessions, ct, nativeAttempt: unreportedJsonlPath is not null);
             if (absentLaunch == AbsentLaunchDecision.Held)
                 _deadSessions.Forget(task.Id);
             if (absentLaunch != AbsentLaunchDecision.NotThisShape)
@@ -2684,7 +2686,8 @@ public sealed class AgentTaskDispatcher
         AgentTask task,
         AgentTaskLiveness.SessionSnapshot? session,
         IReadOnlyList<SessionRunnerSessionDto> runnerSessions,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool nativeAttempt = false)
     {
         if (task.AgentSessionId is not Guid sessionId)
             return AbsentLaunchDecision.NotThisShape;
@@ -2708,6 +2711,12 @@ public sealed class AgentTaskDispatcher
                 DelegationReportFormatter.Short(task.Id));
             return AbsentLaunchDecision.Withheld;
         }
+
+        // A native user or queued-command record is attempt evidence when the database
+        // ingested nothing. It stays after the working guard: a live turn is withheld,
+        // and the failure path already names the file.
+        if (nativeAttempt)
+            return AbsentLaunchDecision.NotThisShape;
 
         if (await ReadBriefCustodyAsync(task, sessionId, ct) != BriefCustody.Unattempted)
             return AbsentLaunchDecision.NotThisShape;
@@ -2889,6 +2898,10 @@ public sealed class AgentTaskDispatcher
         if (await ReadBriefCustodyAsync(task, sessionId, ct) != BriefCustody.Unattempted)
             return AbsentLaunchDecision.NotThisShape;
 
+        var addedBefore = _db.ChangeTracker.Entries()
+            .Where(e => e.State == EntityState.Added)
+            .Select(e => e.Entity)
+            .ToHashSet();
         try
         {
             await using var tx = await _db.Database.BeginTransactionAsync(ct);
@@ -2925,12 +2938,39 @@ public sealed class AgentTaskDispatcher
             await tx.CommitAsync(ct);
             return AbsentLaunchDecision.Held;
         }
-        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        catch (Exception ex)
         {
+            // The transaction rolled back. Staged Blocked state, its event, and the caller
+            // note stay tracked unless they are dropped here, and the next task's save in
+            // this same context would persist them without another eligibility check.
+            await DiscardUncommittedHoldAsync(task, addedBefore);
+            if (ex is OperationCanceledException && ct.IsCancellationRequested)
+                throw;
             _logger.LogWarning(
                 ex, "Absent-launch hold for task {ShortId} did not commit; the dispatch debt stays",
                 DelegationReportFormatter.Short(task.Id));
             return AbsentLaunchDecision.Withheld;
+        }
+    }
+
+    private async Task DiscardUncommittedHoldAsync(AgentTask task, HashSet<object> addedBefore)
+    {
+        foreach (var entry in _db.ChangeTracker.Entries().ToList())
+        {
+            if (entry.State == EntityState.Added && !addedBefore.Contains(entry.Entity))
+                entry.State = EntityState.Detached;
+        }
+
+        var tracked = _db.Entry(task);
+        if (tracked.State == EntityState.Detached)
+            return;
+        try
+        {
+            await tracked.ReloadAsync(CancellationToken.None);
+        }
+        catch (Exception)
+        {
+            tracked.State = EntityState.Detached;
         }
     }
 
