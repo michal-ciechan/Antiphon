@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Git;
@@ -206,8 +207,10 @@ public class DelegateScriptWorktreeBaseTests
         {
             if (args is ["rev-parse", "--path-format=absolute", "--git-common-dir"])
             {
-                // WorktreeBaseInspectionTimeoutSeconds defaults to 5; a shorter advance never trips it.
-                clock.Advance(TimeSpan.FromSeconds(5));
+                // CARD-1134: the provider leaves WorktreeBaseInspectionTimeoutSeconds at its default;
+                // the extra tick crosses that configured deadline instead of a copied literal.
+                clock.Advance(TimeSpan.FromSeconds(new GitSettings().WorktreeBaseInspectionTimeoutSeconds)
+                    + TimeSpan.FromTicks(1));
                 return Task.FromResult(new LandingGitResult(0, repository, ""));
             }
             return base.RunAsync(repository, args, ct);

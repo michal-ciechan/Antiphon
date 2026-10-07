@@ -564,7 +564,10 @@ public partial class AgentTaskDispatchBaseGuardTests
                 && args.Any(a => a == $"refs/heads/{branch}"))
             {
                 Fired = true;
-                clock.Advance(TimeSpan.FromSeconds(5));
+                // CARD-1134: CreateProvider leaves WorktreeBaseInspectionTimeoutSeconds at its default;
+                // the extra tick crosses that configured deadline instead of a copied literal.
+                clock.Advance(TimeSpan.FromSeconds(new GitSettings().WorktreeBaseInspectionTimeoutSeconds)
+                    + TimeSpan.FromTicks(1));
             }
             return await base.RunAsync(repository, args, ct);
         }
