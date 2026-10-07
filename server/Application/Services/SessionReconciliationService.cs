@@ -34,6 +34,13 @@ namespace Antiphon.Server.Application.Services;
 /// </summary>
 public sealed class SessionReconciliationService
 {
+    /// <summary>
+    /// CARD-1149. Pass 1 writes this exact sentence when the owning runner does not list a live
+    /// session. The absent-launch hold matches it with equality; a substring such as "launch" is not this reason.
+    /// </summary>
+    public const string RunnerUnknownSessionReason =
+        "Session runner does not know this session (the launch failed, the runner restarted, or the server restarted before the launch reached the runner).";
+
     private static readonly SessionStatus[] LiveStatuses =
         [SessionStatus.Starting, SessionStatus.Running, SessionStatus.Stopping];
 
@@ -240,8 +247,7 @@ public sealed class SessionReconciliationService
                 }
 
                 session.Status = SessionStatus.Failed;
-                session.FailureReason =
-                    "Session runner does not know this session (the launch failed, the runner restarted, or the server restarted before the launch reached the runner).";
+                session.FailureReason = RunnerUnknownSessionReason;
                 session.EndedAt ??= now;
                 session.LastSeenAt = now;
                 SessionTermination.Record(session, SessionTerminationSource.SystemRequest);

@@ -119,6 +119,15 @@ public sealed class AgentTaskDispatcher
     internal (bool BlockedTaskSync, bool SettlementSync) SyncDebtSweepsWired =>
         (_blockedTaskSync is not null, _settlementSync is not null);
 
+    /// <summary>
+    /// CARD-1149. A positively absent, unattempted dispatch is held Blocked. The token is the
+    /// stable prefix; the sentence is what the caller reads. Automatic relaunch stays at zero.
+    /// </summary>
+    internal const string DispatchLaunchAbsentReason =
+        "dispatch_launch_absent: Launch never reached the runner; no brief attempt is recorded. "
+        + "Original input is retained. Automatic relaunch is disabled; inspect the session and queued input, "
+        + "then explicitly retry or cancel this task.";
+
     public AgentTaskDispatcher(
         AppDbContext db,
         AgentRegistry agentRegistry,
@@ -2622,6 +2631,16 @@ public sealed class AgentTaskDispatcher
                 continue;
             }
 
+            // CARD-1149. After the grace and the existing bind, report, and commit-recovery gates,
+            // a positively absent unattempted launch becomes a Blocked hold. Every other shape keeps
+            // today's failure. A withhold leaves the grace clock so a later pass can still act; only
+            // a committed hold forgets it. This decision does not fail, retry, stop, or release.
+            var absentLaunch = await DecideAbsentLaunchAsync(task, session, runnerSessions, ct);
+            if (absentLaunch == AbsentLaunchDecision.Held)
+                _deadSessions.Forget(task.Id);
+            if (absentLaunch != AbsentLaunchDecision.NotThisShape)
+                continue;
+
             // The FailNeverStartedAsync tail, minus its KillAsync. Nothing here may be destructive:
             // the whole justification for acting is that the session is already gone, so if that
             // evidence is ever wrong a kill would be the CARD-0056 disaster rather than tidiness.
@@ -2633,6 +2652,286 @@ public sealed class AgentTaskDispatcher
         }
 
         return failed;
+    }
+
+    private enum AbsentLaunchDecision
+    {
+        NotThisShape = 0,
+        Withheld = 1,
+        Held = 2,
+    }
+
+    private enum BriefCustody
+    {
+        Unattempted = 0,
+        Attempted = 1,
+    }
+
+    private enum RunnerAbsence
+    {
+        Positive = 0,
+        Listed = 1,
+        Unknown = 2,
+    }
+
+    /// <summary>
+    /// CARD-1149. The current attempt is a hold only when the session failed for the exact
+    /// runner-unknown reason, the task is not mid-turn, the brief was never attempted, and the
+    /// owning runner positively reports the session absent. Listed and unknown inventory withhold
+    /// without failing. A different reason or an attempted brief stays on the existing failure path.
+    /// </summary>
+    private async Task<AbsentLaunchDecision> DecideAbsentLaunchAsync(
+        AgentTask task,
+        AgentTaskLiveness.SessionSnapshot? session,
+        IReadOnlyList<SessionRunnerSessionDto> runnerSessions,
+        CancellationToken ct)
+    {
+        if (task.AgentSessionId is not Guid sessionId)
+            return AbsentLaunchDecision.NotThisShape;
+        if (!string.Equals(
+                session?.FailureReason,
+                SessionReconciliationService.RunnerUnknownSessionReason,
+                StringComparison.Ordinal))
+            return AbsentLaunchDecision.NotThisShape;
+
+        // Captured before any await. The hold recheck compares these observed values, so removing
+        // the working guard below admits a Working task and the recheck then commits the hold.
+        var expectedStatus = task.Status;
+        var expectedAttempt = task.Attempt;
+        var expectedDispatchedAt = task.DispatchedAt;
+
+        if (expectedStatus == AgentTaskStatus.Working
+            || await SessionMessageQueueService.IsWorkingAsync(_db, sessionId, ct))
+        {
+            _logger.LogDebug(
+                "Task {ShortId} is mid-turn on an absent-launch session; leaving it untouched",
+                DelegationReportFormatter.Short(task.Id));
+            return AbsentLaunchDecision.Withheld;
+        }
+
+        if (await ReadBriefCustodyAsync(task, sessionId, ct) != BriefCustody.Unattempted)
+            return AbsentLaunchDecision.NotThisShape;
+
+        var expectedStartedAt = await _db.AgentSessions.AsNoTracking()
+            .Where(s => s.Id == sessionId)
+            .Select(s => (DateTime?)s.StartedAt)
+            .FirstOrDefaultAsync(ct);
+        if (expectedStartedAt is null)
+            return AbsentLaunchDecision.Withheld;
+
+        if (await ReadAbsenceAsync(sessionId, runnerSessions, ct) != RunnerAbsence.Positive)
+            return AbsentLaunchDecision.Withheld;
+
+        return await TryHoldAbsentLaunchAsync(
+            task, sessionId, expectedStatus, expectedAttempt, expectedDispatchedAt, expectedStartedAt.Value, ct);
+    }
+
+    /// <summary>
+    /// Current-attempt delegation rows plus a user prompt at or after dispatch. Zero rows qualify
+    /// only when the goal is still present, and they never authorize a relaunch. Two rows, any
+    /// delivery evidence, or a prompt is attempted and stays on the failure path.
+    /// </summary>
+    private async Task<BriefCustody> ReadBriefCustodyAsync(AgentTask task, Guid sessionId, CancellationToken ct)
+    {
+        var rows = await _db.SessionQueuedMessages.AsNoTracking()
+            .Where(m => m.AgentSessionId == sessionId
+                && m.Origin == QueuedMessageOrigin.Delegation
+                && m.ExecutionTaskId == task.Id)
+            .ToListAsync(ct);
+        var dispatchedAt = task.DispatchedAt;
+        var prompted = await _db.TranscriptEntries.AsNoTracking().AnyAsync(
+            t => t.AgentSessionId == sessionId
+                && t.Kind == TranscriptKinds.UserPrompt
+                && (t.Timestamp == null || dispatchedAt == null || t.Timestamp >= dispatchedAt),
+            ct);
+        if (prompted)
+            return BriefCustody.Attempted;
+        if (rows.Count == 0)
+            return string.IsNullOrWhiteSpace(task.Goal) ? BriefCustody.Attempted : BriefCustody.Unattempted;
+        if (rows.Count != 1)
+            return BriefCustody.Attempted;
+
+        var row = rows[0];
+        var clean = row.Status == QueuedMessageStatus.Pending
+            && row.DeliveryAttempts == 0
+            && row.SentAt is null
+            && row.CanceledAt is null
+            && row.LastDeliveryBaselineSequence is null
+            && row.LastDeliveryGeneration is null
+            && row.LastDeliveryStartedAt is null
+            && row.DeliveryVerdict is null;
+        return clean ? BriefCustody.Unattempted : BriefCustody.Attempted;
+    }
+
+    /// <summary>
+    /// Positive absence is an id missing from the owning runner's inventory. Any listed status or
+    /// generation is listed. A remote owner is never judged from the local list; unavailable
+    /// inventory and a missing directory are unknown, not an empty list.
+    /// </summary>
+    private async Task<RunnerAbsence> ReadAbsenceAsync(
+        Guid sessionId, IReadOnlyList<SessionRunnerSessionDto>? cachedLocal, CancellationToken ct)
+    {
+        var runnerId = await _db.AgentSessions.AsNoTracking()
+            .Where(s => s.Id == sessionId)
+            .Select(s => s.RunnerId)
+            .FirstOrDefaultAsync(ct);
+        if (!string.IsNullOrWhiteSpace(runnerId))
+        {
+            if (_runners is null)
+                return RunnerAbsence.Unknown;
+            try
+            {
+                var inventory = await _runners.GetInventoryAsync(runnerId, ct);
+                if (inventory is not RunnerInventory.Available available)
+                    return RunnerAbsence.Unknown;
+                return ContainsSession(available.Sessions, sessionId)
+                    ? RunnerAbsence.Listed
+                    : RunnerAbsence.Positive;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+            {
+                _logger.LogDebug(ex, "Owning runner inventory for session {SessionId} is unknown", sessionId);
+                return RunnerAbsence.Unknown;
+            }
+        }
+
+        IReadOnlyList<SessionRunnerSessionDto> local;
+        if (cachedLocal is not null)
+            local = cachedLocal;
+        else if (_runnerClient is null)
+            return RunnerAbsence.Unknown;
+        else
+        {
+            try
+            {
+                local = await _runnerClient.ListAsync(ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+            {
+                _logger.LogDebug(ex, "Local runner list for session {SessionId} is unknown", sessionId);
+                return RunnerAbsence.Unknown;
+            }
+        }
+
+        return ContainsSession(local, sessionId) ? RunnerAbsence.Listed : RunnerAbsence.Positive;
+    }
+
+    private static bool ContainsSession(IReadOnlyList<SessionRunnerSessionDto> sessions, Guid sessionId)
+    {
+        for (var i = 0; i < sessions.Count; i++)
+        {
+            if (sessions[i].SessionId == sessionId)
+                return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Queue gate, then a fresh task lock. Status, attempt, session, dispatch time, and generation
+    /// are rechecked, and so is the owning runner. The blocked state, its event, and the caller
+    /// note commit together or not at all. The change notice is published after the lock is released.
+    /// </summary>
+    private async Task<AbsentLaunchDecision> TryHoldAbsentLaunchAsync(
+        AgentTask task,
+        Guid sessionId,
+        AgentTaskStatus expectedStatus,
+        int expectedAttempt,
+        DateTime? expectedDispatchedAt,
+        DateTime expectedStartedAt,
+        CancellationToken ct)
+    {
+        var gate = _queue.GetLock(sessionId);
+        await gate.WaitAsync(ct);
+        AbsentLaunchDecision decision;
+        try
+        {
+            decision = await HoldUnderLockAsync(
+                task, sessionId, expectedStatus, expectedAttempt, expectedDispatchedAt, expectedStartedAt, ct);
+        }
+        finally
+        {
+            gate.Release();
+        }
+
+        if (decision != AbsentLaunchDecision.Held)
+            return decision;
+
+        try
+        {
+            await _eventBus.PublishToAllAsync(
+                "AgentTaskChanged", new { taskId = task.Id, rootId = task.RootTaskId }, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            _logger.LogWarning(
+                ex, "Absent-launch hold for task {ShortId} committed but the change notice failed",
+                DelegationReportFormatter.Short(task.Id));
+        }
+
+        _logger.LogInformation(
+            "Task {ShortId} held blocked: launch never reached the runner and no brief attempt is recorded",
+            DelegationReportFormatter.Short(task.Id));
+        return AbsentLaunchDecision.Held;
+    }
+
+    private async Task<AbsentLaunchDecision> HoldUnderLockAsync(
+        AgentTask task,
+        Guid sessionId,
+        AgentTaskStatus expectedStatus,
+        int expectedAttempt,
+        DateTime? expectedDispatchedAt,
+        DateTime expectedStartedAt,
+        CancellationToken ct)
+    {
+        // Final evidence read is under the queue gate. A brief that became attempted is the
+        // existing failure, and the gate is released before that failure can enqueue.
+        if (await ReadBriefCustodyAsync(task, sessionId, ct) != BriefCustody.Unattempted)
+            return AbsentLaunchDecision.NotThisShape;
+
+        try
+        {
+            await using var tx = await _db.Database.BeginTransactionAsync(ct);
+            await _db.Database.ExecuteSqlInterpolatedAsync(
+                $"""SELECT 1 FROM "AgentTasks" WHERE "Id" = {task.Id} FOR UPDATE""", ct);
+            await _db.Entry(task).ReloadAsync(ct);
+            if (task.Status != expectedStatus
+                || task.Attempt != expectedAttempt
+                || task.AgentSessionId != sessionId
+                || task.DispatchedAt != expectedDispatchedAt)
+                return AbsentLaunchDecision.Withheld;
+
+            var fresh = await _db.AgentSessions.AsNoTracking()
+                .Where(s => s.Id == sessionId)
+                .Select(s => new { s.Status, s.FailureReason, s.StartedAt })
+                .FirstOrDefaultAsync(ct);
+            if (fresh is null
+                || fresh.Status != SessionStatus.Failed
+                || fresh.StartedAt != expectedStartedAt
+                || !string.Equals(
+                    fresh.FailureReason,
+                    SessionReconciliationService.RunnerUnknownSessionReason,
+                    StringComparison.Ordinal))
+                return AbsentLaunchDecision.Withheld;
+
+            if (await ReadAbsenceAsync(sessionId, cachedLocal: null, ct) != RunnerAbsence.Positive)
+                return AbsentLaunchDecision.Withheld;
+
+            task.CompletedAt = null;
+            StageBlocked(task, DispatchLaunchAbsentReason);
+            if (task.ReplyTo == AgentTaskReplyTo.Session)
+                await _tasks.EnqueueBlockedParentNoteAsync(task, DispatchLaunchAbsentReason, ct);
+            await _db.SaveChangesAsync(ct);
+            await tx.CommitAsync(ct);
+            return AbsentLaunchDecision.Held;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            _logger.LogWarning(
+                ex, "Absent-launch hold for task {ShortId} did not commit; the dispatch debt stays",
+                DelegationReportFormatter.Short(task.Id));
+            return AbsentLaunchDecision.Withheld;
+        }
     }
 
     /// <summary>
