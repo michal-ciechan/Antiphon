@@ -218,7 +218,8 @@ public sealed partial class PhoneHomeRollingRunnerTests
         var baseline = new string('a', 40);
         var observed = new string('b', 40);
         var task = RemovalTask(baseline, new RemoteSyncEvidence(
-            1, RemoteSettlementSyncState.Pending, ObservedSha: observed, ConfirmedSha: null));
+            1, RemoteSettlementSyncState.Pending, ObservedSha: observed, ConfirmedSha: null,
+            Reason: RemoteSettlementSyncReasons.LeaseBusy));
 
         await AssertRemovalPublishesAsync(world, task, observed);
     }
@@ -244,7 +245,8 @@ public sealed partial class PhoneHomeRollingRunnerTests
         var observed = new string('b', 40);
         var confirmed = new string('c', 40);
         var task = RemovalTask(baseline, new RemoteSyncEvidence(
-            1, RemoteSettlementSyncState.Pending, ObservedSha: observed, ConfirmedSha: confirmed));
+            1, RemoteSettlementSyncState.Pending, ObservedSha: observed, ConfirmedSha: confirmed,
+            Reason: RemoteSettlementSyncReasons.LeaseBusy));
 
         await AssertRemovalPublishesAsync(world, task, confirmed);
     }
