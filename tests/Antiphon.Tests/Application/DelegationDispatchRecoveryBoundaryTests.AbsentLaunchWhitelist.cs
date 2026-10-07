@@ -117,7 +117,7 @@ public partial class DelegationDispatchRecoveryBoundaryTests
             var result = await verify.AgentTasks.SingleAsync(t => t.Id == seeded.TaskId);
             result.Status.ShouldBe(AgentTaskStatus.Failed, condition);
             result.CompletedAt.ShouldNotBeNull(condition);
-            result.FailureReason!.ShouldContain(SessionReconciliationService.RunnerUnknownSessionReason, condition);
+            result.FailureReason!.Contains(SessionReconciliationService.RunnerUnknownSessionReason, StringComparison.Ordinal).ShouldBeTrue(condition);
             (await verify.AgentTaskEvents.CountAsync(e => e.AgentTaskId == seeded.TaskId
                 && e.Type == AgentTaskEventType.Blocked)).ShouldBe(0, condition);
             foreach (var row in before)
