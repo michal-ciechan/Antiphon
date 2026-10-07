@@ -608,8 +608,15 @@ public sealed class RunnerTaskSettlementTests
         world.Evidence()!.RemoteSync!.ConfirmedSha.ShouldBeNull();
         world.Evidence()!.RemoteSync!.Reason.ShouldBe(RemoteSettlementSyncReasons.LeaseBusy);
         await AssertNoDebtAsync(world);
-        (await world.EventsAsync()).ShouldContain(e => e.Type == AgentTaskEventType.Warning
-            && e.Detail.Contains(RemoteSettlementSyncReasons.LeaseBusy, StringComparison.Ordinal));
+        // CARD-1133. A Pending result that blocks must not tell the caller the sweep will catch up.
+        var blockedEvents = await world.EventsAsync();
+        blockedEvents.ShouldContain(e => e.Type == AgentTaskEventType.Warning
+            && e.Detail.Contains("Runner sync unavailable: " + RemoteSettlementSyncReasons.LeaseBusy, StringComparison.Ordinal)
+            && e.Detail.Contains("then reply", StringComparison.Ordinal));
+        blockedEvents.ShouldNotContain(e => e.Detail.Contains("Runner sync pending", StringComparison.Ordinal));
+        var blockedNote = (await world.NoteAsync())!.Body;
+        blockedNote.ShouldContain("Runner sync unavailable");
+        blockedNote.ShouldNotContain("synced later");
         (await world.NoProgressIncidentsAsync()).ShouldBe(0);
         (await world.Git.HeadAsync()).ShouldBe(world.Git.Baseline);
 
@@ -630,6 +637,48 @@ public sealed class RunnerTaskSettlementTests
         world.Evidence()!.Sources!.Single(x => x.Assessment == CompletionProgressAssessment.ProgressObserved)
             .VerifiedSha.ShouldBe(s);
         (await world.Git.HeadAsync()).ShouldBe(s);
+    }
+
+    /// <summary>
+    /// CARD-1113 item 2. No progress service means no evidence write. A Code report under the
+    /// held lease stays Blocked/Decide on the lease reason, with no debt row.
+    /// </summary>
+    [Test]
+    public async Task C1113_CodeLeaseBusyWithoutProgressServiceStaysBlocked()
+    {
+        await using var world = await RunnerSettlementWorld.CreateAsync(controlledSyncClock: true);
+        // CARD-1113. ConfigureServices runs after both registrations, so this test removes
+        // every TaskCompletionProgressService descriptor. Every other world keeps the service.
+        world.ConfigureServices = services =>
+        {
+            var registered = services.Where(d => d.ServiceType == typeof(TaskCompletionProgressService)).ToList();
+            registered.ShouldNotBeEmpty();
+            foreach (var descriptor in registered)
+                services.Remove(descriptor);
+        };
+        await world.RestartServicesAsync();
+        using (var scope = world.Services.CreateScope())
+            scope.ServiceProvider.GetService<TaskCompletionProgressService>().ShouldBeNull();
+        await world.Git.RunnerPushAsync("work.txt", "runner work");
+
+        await using (var held = await world.Git.Leases.TryAcquireAsync(world.Git.Desktop, CancellationToken.None))
+        {
+            held.ShouldNotBeNull();
+            var settle = world.SettleAsync(RunnerSettlementWorld.Report("Implemented and pushed."));
+            await FinishBusySettleAsync(world, settle, world.LeaseBusy.First);
+        }
+
+        world.Task.Status.ShouldBe(AgentTaskStatus.Blocked, Why(world));
+        world.Task.NextStage.ShouldBe(PipelineHandoffKind.Decide);
+        world.Task.NextHandoff.ShouldNotBeNull();
+        world.Task.NextHandoff!.ShouldContain(RemoteSettlementSyncReasons.LeaseBusy);
+        world.Task.CompletionProgressEvidenceJson.ShouldBeNull();
+        (await world.Git.HeadAsync()).ShouldBe(world.Git.Baseline);
+        await AssertNoDebtAsync(world);
+        var note = (await world.NoteAsync())!.Body;
+        note.ShouldNotContain("synced later");
+        (await world.EventsAsync()).ShouldNotContain(
+            e => e.Detail.Contains("synced later", StringComparison.Ordinal));
     }
 
     [Test]
