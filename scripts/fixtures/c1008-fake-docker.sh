@@ -120,8 +120,10 @@ else if(args[0]==='volume'&&args[1]==='inspect') {
   // timeout execs Git directly; a shell function cannot receive that call.
   const shim=path.join(root,'git-fault-bin');fs.mkdirSync(shim,{recursive:true});
   const realGit=cp.execFileSync('which',['git'],{encoding:'utf8'}).trim();
-  const fault=state.gitFault==='exit128'?'exit 128':state.gitFault==='timeout'?'exit 124':state.gitFault==='empty'?'exit 0':state.gitFault==='nonnumeric'?'echo unknown; exit 0':'echo -1; exit 0';
-  fs.writeFileSync(path.join(shim,'git'),'#!/bin/bash\ncase " $* " in *" rev-list "*) '+fault+' ;; esac\nexec '+JSON.stringify(realGit)+' "$@"\n',{mode:0o755});
+  // count-exit128 fails only the per-tip count, after the object traversal succeeded.
+  const match=state.gitFault==='count-exit128'?'*" rev-list --count "*':'*" rev-list "*';
+  const fault=state.gitFault==='exit128'||state.gitFault==='count-exit128'?'exit 128':state.gitFault==='timeout'?'exit 124':state.gitFault==='empty'?'exit 0':state.gitFault==='nonnumeric'?'echo unknown; exit 0':'echo -1; exit 0';
+  fs.writeFileSync(path.join(shim,'git'),'#!/bin/bash\ncase " $* " in '+match+') '+fault+' ;; esac\nexec '+JSON.stringify(realGit)+' "$@"\n',{mode:0o755});
   gitPath=shim+':'+gitPath;
  }
  if(state.gitStderr)process.stderr.write(state.gitStderr+'\n');

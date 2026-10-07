@@ -724,6 +724,18 @@ public sealed class RemoteScriptContractTests
             audit.ShouldContain("check=rev-list");
             audit.ShouldContain("status=128");
         }
+        using (var countOnly = new C1008HostFixture())
+        {
+            // Only the per-tip count fails; the object traversal before it succeeds.
+            await C1008SeedPromisor(countOnly, cloneLine, "published");
+            countOnly.Docker["gitFault"] = "count-exit128";
+            var refused = await countOnly.Run();
+            countOnly.Removed.ShouldBeEmpty("recycle-promisor: a failed rev-list --count is not zero unpublished commits");
+            refused.Exit.ShouldBe(2, refused.Output);
+            refused.Output.ShouldContain("RecycleGitAuditUnknown");
+            var audit = C1008Audit(countOnly);
+            audit.ShouldContain("check=rev-list status=128");
+        }
         using (var remote = new C1008HostFixture())
         {
             await C1008SeedPromisor(remote, cloneLine, "lsremote");
@@ -815,6 +827,7 @@ public sealed class RemoteScriptContractTests
     [Test]
     [Arguments("seed")]
     [Arguments("fetch-only")]
+    [Arguments("long-lived")]
     [Arguments("empty-used")]
     [Arguments("seed-untracked")]
     [Arguments("seed-tracked")]
@@ -845,6 +858,24 @@ public sealed class RemoteScriptContractTests
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public void C1105_Git_audit_resume_preserves_proof() => C1105AuditContract("resume");
+
+    // One case per Git-directory location in the fixture's HIDDEN-LOCATIONS table: a
+    // private commit stored only there refuses, a published one passes. A new location
+    // is one table row.
+    [Test]
+    [MethodDataSource(nameof(C1105HiddenLocations))]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1105_Git_audit_hidden_locations(string location) => C1105AuditContract(location);
+
+    public static IEnumerable<string> C1105HiddenLocations()
+    {
+        var fixture = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/fixtures/c1105-git-audit.cjs"));
+        var start = fixture.IndexOf("// HIDDEN-LOCATIONS-BEGIN", StringComparison.Ordinal);
+        var end = fixture.IndexOf("// HIDDEN-LOCATIONS-END", StringComparison.Ordinal);
+        var rows = Regex.Matches(fixture[start..end], @"(?m)^    '([a-z0-9-]+)': \[").Select(m => m.Groups[1].Value).ToArray();
+        rows.Length.ShouldBeGreaterThan(0);
+        return rows;
+    }
 
     private static void C1105AuditContract(string variant)
     {

@@ -72,9 +72,100 @@ function objectLoss(spec) {
     for (const name of fs.readdirSync(packs)) remove(path.join(packs, name));
     remove(path.join(repo, '.git/objects', oid.slice(0, 2), oid.slice(2)));
 }
+const U = 'RecycleUnpublishedWork', K = 'RecycleGitAuditUnknown', D = 'RecycleWorktreeDirty', P = '';
+const gd = (...parts) => path.join(repo, '.git', ...parts);
+function put(rel, text) { fs.mkdirSync(path.dirname(gd(rel)), {recursive: true}); fs.writeFileSync(gd(rel), text); }
+function add(rel, text) { fs.mkdirSync(path.dirname(gd(rel)), {recursive: true}); fs.appendFileSync(gd(rel), text); }
+// A commit no ref, reflog or index names until the row stores it in one location.
+function priv() { return git('commit-tree', 'HEAD^{tree}', '-p', 'HEAD', '-m', 'private'); }
+const head = () => git('rev-parse', 'HEAD');
+const entry = (oid, old) => `${old ?? head()} ${oid} Fixture <fixture@example.invalid> 1700000000 +0000\tprivate\n`;
+function linked() { checkout(); git('worktree', 'add', '-q', '--detach', path.join(work, 'linked'), 'HEAD'); return 'worktrees/linked/'; }
+const lg = (...args) => run('git', ['-C', path.join(work, 'linked'), ...args]);
+function fetchOther() {
+    const other = path.join(root, 'other.git'); run('git', ['clone', '-q', '--bare', origin, other]);
+    const oid = run('git', ['-C', other, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit-tree', 'HEAD^{tree}', '-p', 'HEAD', '-m', 'private']);
+    run('git', ['-C', other, 'update-ref', 'refs/heads/master', oid]); git('fetch', '-q', 'file://' + other, 'master');
+    assert.equal(git('rev-parse', 'FETCH_HEAD'), oid); assert.equal(git('for-each-ref', '--contains', oid), '');
+}
+function bareMirror() {
+    const bare = path.join(work, 'bare.git'); run('git', ['clone', '-q', '--mirror', repo, bare]);
+    run('git', ['-C', bare, 'remote', 'set-url', 'origin', origin]); return bare;
+}
+function reftable() {
+    remove(gd('logs')); git('refs', 'migrate', '--ref-format=reftable'); assert.ok(fs.existsSync(gd('reftable')));
+    const was = head(), oid = priv(); git('update-ref', '-m', 'private', 'HEAD', oid); git('update-ref', '-m', 'back', 'HEAD', was);
+}
+function moduleDir() {
+    const sub = gd('modules/sub'); run('git', ['clone', '-q', '--bare', origin, sub]);
+    run('git', ['-C', sub, 'update-ref', 'refs/heads/private', run('git', ['-C', sub, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit-tree', 'HEAD^{tree}', '-p', 'HEAD', '-m', 'private'])]);
+}
+function longLived() {
+    // Deploy-seeded clone after normal use: filtered fetches, a remote branch that
+    // is pruned after gc wrote info/refs, and the deploy's own fetch of FETCH_HEAD.
+    const src = path.join(root, 'src'), s = (...args) => run('git', ['-C', src, ...args]);
+    s('checkout', '-q', '-b', 'feature'); s('commit', '-q', '--allow-empty', '-m', 'feature'); s('push', '-q', origin, 'feature');
+    git('fetch', '-q', '--filter=blob:none', 'origin'); git('gc', '-q');
+    const feature = git('rev-parse', 'origin/feature');
+    assert.ok(fs.readFileSync(gd('info/refs'), 'utf8').includes(feature), 'gc must record the soon-stale branch');
+    run('git', ['-C', origin, 'update-ref', '-d', 'refs/heads/feature']); git('fetch', '-q', '--prune', 'origin');
+    git('fetch', '-q', '--no-tags', 'origin', 'master');
+    assert.equal(git('rev-parse', 'FETCH_HEAD'), git('rev-parse', 'origin/master'));
+    for (const line of fs.readFileSync(gd('logs/HEAD'), 'utf8').trim().split('\n')) assert.match(line, /\tclone: /);
+    assert.equal(cp.spawnSync('git', ['-C', repo, 'cat-file', '-e', git('rev-parse', 'HEAD:file')], {env: {...env, GIT_NO_LAZY_FETCH: '1'}}).status, 1, 'HEAD blob stays absent');
+}
+// HIDDEN-LOCATIONS-BEGIN: one row per Git-directory location (closure table in
+// docs/investigations/2026-10-07-card-1105-git-audit-promisor.md). A private commit
+// stored only in that location must refuse; a published one must pass.
+const hidden = {
+    'head': [U, () => put('HEAD', priv() + '\n')],
+    'loose-ref': [U, () => put('refs/heads/private', priv() + '\n')],
+    'packed-ref': [U, () => add('packed-refs', `${priv()} refs/heads/private\n`)],
+    'reflog': [U, () => add('logs/HEAD', entry(priv()))],
+    'stash': [U, () => { checkout(); fs.writeFileSync(path.join(repo, 'file'), 'private'); git('stash', 'push', '-qm', 'private'); }],
+    'notes': [U, () => git('notes', 'add', '-m', 'private', priv())],
+    'index': [D, () => { checkout(); fs.writeFileSync(path.join(repo, 'file'), 'private'); git('add', 'file'); }],
+    'linked-head': [U, () => put(linked() + 'HEAD', priv() + '\n')],
+    'linked-ref': [U, () => put(linked() + 'refs/worktree/private', priv() + '\n')],
+    'linked-reflog': [U, () => add(linked() + 'logs/HEAD', entry(priv()))],
+    'linked-reset': [U, () => { linked(); lg('commit', '-q', '--allow-empty', '-m', 'private'); lg('reset', '-q', '--hard', 'HEAD~1'); }],
+    'linked-orig-head': [U, () => put(linked() + 'ORIG_HEAD', priv() + '\n')],
+    'linked-fetch-head': [U, () => put(linked() + 'FETCH_HEAD', `${priv()}\t\tbranch 'master' of other\n`)],
+    'linked-merge-head': [K, () => put(linked() + 'MERGE_HEAD', priv() + '\n'), 'check=lock-MERGE_HEAD'],
+    'orig-head': [U, () => put('ORIG_HEAD', priv() + '\n')],
+    'orig-head-missing': [K, () => put('ORIG_HEAD', 'f'.repeat(40) + '\n'), 'check=rev-list-objects'],
+    'fetch-head': [U, fetchOther],
+    'rebase-head': [U, () => put('REBASE_HEAD', priv() + '\n')],
+    'bisect-head': [U, () => put('BISECT_HEAD', priv() + '\n')],
+    'auto-merge': [U, () => put('AUTO_MERGE', priv() + '\n')],
+    'merge-autostash': [U, () => put('MERGE_AUTOSTASH', priv() + '\n')],
+    'merge-head': [K, () => put('MERGE_HEAD', priv() + '\n'), 'check=lock-MERGE_HEAD'],
+    'cherry-pick-head': [K, () => put('CHERRY_PICK_HEAD', priv() + '\n'), 'check=lock-CHERRY_PICK_HEAD'],
+    'revert-head': [K, () => put('REVERT_HEAD', priv() + '\n'), 'check=lock-REVERT_HEAD'],
+    'rebase-merge': [K, () => put('rebase-merge/orig-head', priv() + '\n'), 'check=lock-rebase-merge'],
+    'rebase-apply': [K, () => put('rebase-apply/orig-head', priv() + '\n'), 'check=lock-rebase-apply'],
+    'sequencer': [K, () => put('sequencer/head', priv() + '\n'), 'check=lock-sequencer'],
+    'bisect-state': [K, () => put('BISECT_EXPECTED_REV', priv() + '\n'), 'check=lock-BISECT_EXPECTED_REV'],
+    'notes-merge': [K, () => put('NOTES_MERGE_PARTIAL', priv() + '\n'), 'check=lock-NOTES_MERGE_PARTIAL'],
+    'ref-lock': [K, () => put('refs/heads/private.lock', priv() + '\n'), 'check=lock-ref'],
+    'replace': [K, () => put('refs/replace/' + priv(), head() + '\n'), 'check=replace-ref'],
+    'replace-packed': [K, () => add('packed-refs', `${head()} refs/replace/${priv()}\n`), 'check=replace-ref'],
+    'grafts': [K, () => put('info/grafts', `${head()} ${priv()}\n`), 'check=grafts'],
+    'info-entry': [K, () => put('info/private', priv() + '\n'), 'check=gitdir-info'],
+    'unknown-entry': [K, () => { const oid = priv(); put('lost-found/commit/' + oid, oid + '\n'); }, 'check=gitdir-entry'],
+    'modules': [K, moduleDir, 'check=gitdir-modules'],
+    'reftable': [K, reftable, 'check=ref-storage'],
+    'bare-index': [K, () => { const bare = bareMirror(), blob = run('git', ['-C', bare, 'hash-object', '-w', '--stdin'], {input: 'private'});
+        run('git', ['-C', bare, 'update-index', '--add', '--cacheinfo', `100644,${blob},private`]); }, 'check=bare-index'],
+    'published-fetch-head': [P, () => git('fetch', '-q', '--no-tags', 'origin', 'master')],
+    'published-orig-head': [P, () => put('ORIG_HEAD', git('rev-parse', 'HEAD~1') + '\n')],
+    'published-linked': [P, () => { linked(); lg('reset', '-q', '--hard', 'HEAD~1'); lg('reset', '-q', '--hard', 'ORIG_HEAD'); }],
+    'published-gc': [P, () => { git('fetch', '-q', 'origin'); git('gc', '-q'); assert.ok(fs.existsSync(gd('info/refs'))); }],
+};
+// HIDDEN-LOCATIONS-END
 try {
     setup(); helper();
-    let expected = 'RecycleUnpublishedWork';
+    let expected = 'RecycleUnpublishedWork', expectedCheck;
     switch (mode) {
         case 'seed': expected = ''; break;
         case 'fetch-only': git('fetch', 'origin'); expected = ''; break;
@@ -172,11 +263,16 @@ try {
             git('remote','set-url','origin','file://'+origin);
             run('bash',[script],opts); console.log('PASS resume'); process.exitCode = 0; break;
         }
-        default: throw Error('Unknown mode ' + mode);
+        case 'long-lived': longLived(); expected = ''; break;
+        default: {
+            if (!Object.hasOwn(hidden, mode)) throw Error('Unknown mode ' + mode);
+            const [want, hide, check] = hidden[mode]; hide(); expected = want; expectedCheck = check; break;
+        }
     }
     if (mode !== 'resume') {
         const result = audit();
         assert.equal(result.status, expected ? 2 : 0, `${mode}: ${result.stdout}\n${result.stderr}`);
+        if (expectedCheck) assert.ok(result.stdout.includes(expectedCheck + ' '), `${mode}: ${result.stdout}`);
         if (expected) assert.ok(result.stdout.includes(expected), `${mode}: ${result.stdout}`);
         else assert.match(result.stdout, /repositories=\d+ partial=\d+/);
         console.log('PASS ' + mode);
