@@ -63,8 +63,9 @@ public sealed class BlockedTaskParkProjectionTests
         Require(runtime, "git worktree prune prunes the whole repository.", "c1065-prune-repo");
         Require(runtime, "A missing mirror is recreated with worktree add only when the branch tip equals the parked SHA, and HEAD is never reset.", "c1065-worktree-add");
         Require(runtime, "The inspection lease ends before the dispatch claim.", "c1065-inspection-lease");
-        Require(runtime, "The 422 follow_up_remote_pool_unsupported fires before the Blocked branch, so a confirmed park on a remote pool agent does not hear Reply.", "c1065-remote-422");
-        Require(runtime, "HasConfirmedPublishedParkAsync is not scoped to the current attempt and accepts Resumed.", "c1065-park-identity");
+        Require(runtime, "The 422 follow_up_remote_pool_unsupported fires before the Blocked branch and, when the Blocked task has a confirmed published park for its current attempt, names that task and Reply (CARD-1103).", "c1065-remote-422");
+        runtime.ShouldNotContain("does not hear Reply", Case.Sensitive, "c1103-no-silent-422");
+        Require(runtime, "HasConfirmedPublishedParkAsync is scoped to the task's current attempt and accepts Parked or ResumePending only (CARD-1103).", "c1065-park-identity");
         Require(runtime, "Continue requires question classification plus standing authority, then the accepted-answer path.", "c1065-continue");
         Require(runtime, "Only an explicit Reply after confirmed prerequisite publication continues a parked prerequisite.", "c1065-prerequisite");
         Require(runtime, "Report prose and a card moving to Done start nothing.", "c1065-no-inference");
@@ -89,7 +90,8 @@ public sealed class BlockedTaskParkProjectionTests
         Require(loop, "Blocked is outside MaxOpenTasks and still occupies a runner seat.", "c1065-max-open");
         Require(loop, "orphan=true is not a count of free seats", "c1065-loop-orphan");
         loop.ShouldNotContain("count orphan=true", Case.Sensitive, "c1124-loop-no-count");
-        Require(loop, "The 422 follow_up_remote_pool_unsupported fires before the Blocked branch, so a confirmed park on a remote pool agent does not hear Reply.", "c1065-loop-422");
+        Require(loop, "The 422 follow_up_remote_pool_unsupported fires before the Blocked branch and, when the Blocked task has a confirmed published park for its current attempt, names that task and Reply (CARD-1103).", "c1065-loop-422");
+        loop.ShouldNotContain("does not hear Reply", Case.Sensitive, "c1103-loop-no-silent-422");
         Require(loop, "including Blocked", "c1065-including-blocked");
 
         var agents = Read("AGENTS.md");
@@ -128,7 +130,7 @@ public sealed class BlockedTaskParkProjectionTests
             "if (!options.Value.AutomaticEnabled) return false;", "c1065-automatic-return");
 
         var follow = Read("server/Application/Services/AgentTaskService.cs");
-        var remote = follow.IndexOf("RefuseRemotePoolFollowUp(followAgent, retainedRunnerId, priorId);", StringComparison.Ordinal);
+        var remote = follow.IndexOf("RefuseRemotePoolFollowUp(followAgent, retainedRunnerId, priorId, confirmedPark, blockedOnAgent.Id);", StringComparison.Ordinal);
         var live = follow.IndexOf("if (sessionLive)", StringComparison.Ordinal);
         remote.ShouldBeGreaterThanOrEqualTo(0, "c1065-remote-refuse");
         live.ShouldBeGreaterThan(remote, "c1065-remote-before-blocked");

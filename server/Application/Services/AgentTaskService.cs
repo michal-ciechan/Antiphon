@@ -507,8 +507,12 @@ public sealed class AgentTaskService
                                 && (s.Status == SessionStatus.Starting || s.Status == SessionStatus.Running),
                             ct);
                     // CARD-1037 still refuses a remote pool continuation when a Blocked
-                    // task is pinned to that agent. Local guidance is the branch below.
-                    RefuseRemotePoolFollowUp(followAgent, retainedRunnerId, priorId);
+                    // task is pinned to that agent. The Reply clause is only for a
+                    // current-attempt confirmed park (CARD-1103). Local guidance is below.
+                    var confirmedPark = followAgent.IsPoolDelegate
+                        && RunnerRequestIntent.CanonicalRunnerId(retainedRunnerId) is not null
+                        && await HasConfirmedPublishedParkAsync(blockedOnAgent, ct);
+                    RefuseRemotePoolFollowUp(followAgent, retainedRunnerId, priorId, confirmedPark, blockedOnAgent.Id);
 
                     if (sessionLive)
                     {
@@ -517,7 +521,7 @@ public sealed class AgentTaskService
                             "follow_up_agent_blocked");
                     }
 
-                    if (await HasConfirmedPublishedParkAsync(blockedOnAgent.Id, ct))
+                    if (await HasConfirmedPublishedParkAsync(blockedOnAgent, ct))
                     {
                         throw new ConflictException(
                             $"Task {priorShort} ran on agent '{followAgent.Name}', which is parked on Blocked task {blockedShort}. The published seat was released. Reply to continue that task (delegate.ps1 -Reply {blockedShort} \"...\"); do not cancel it to start a follow-up.",
@@ -2476,7 +2480,7 @@ public sealed class AgentTaskService
             .ToListAsync(ct);
 
         var confirmedPark = task.Status == AgentTaskStatus.Blocked
-            && await HasConfirmedPublishedParkAsync(task.Id, ct);
+            && await HasConfirmedPublishedParkAsync(task, ct);
         var blocked = await BlockedContextBuilder.BuildAsync(
             task, family, events, _checkProbe, ct, confirmedPark);
         var landing = task.ActiveLandingId is Guid landingId
@@ -3254,7 +3258,9 @@ public sealed class AgentTaskService
             """, ct);
     }
 
-    private static void RefuseRemotePoolFollowUp(Agent followAgent, string? retainedRunnerId, Guid priorId)
+    private static void RefuseRemotePoolFollowUp(
+        Agent followAgent, string? retainedRunnerId, Guid priorId,
+        bool confirmedPark = false, Guid? blockedTaskId = null)
     {
         var poolRunnerId = RunnerRequestIntent.CanonicalRunnerId(retainedRunnerId);
         if (!followAgent.IsPoolDelegate || poolRunnerId is null)
@@ -3264,23 +3270,33 @@ public sealed class AgentTaskService
             + $"on runner '{poolRunnerId}'. Remote pool continuations cannot reuse that process. "
             + "Publish the intended source, then create a fresh task with "
             + "-Worktree -StartRef <published-sha> without -OnAgent.";
+        if (confirmedPark && blockedTaskId is Guid blockedId)
+        {
+            var blockedShort = DelegationReportFormatter.Short(blockedId);
+            message +=
+                $" Blocked task {blockedShort} has a confirmed published park for its current attempt; "
+                + $"reply to it (delegate.ps1 -Reply {blockedShort} \"...\") to continue that task instead "
+                + "of creating a fresh one.";
+        }
+
         throw new ValidationException(
             nameof(CreateAgentTaskRequest.FollowUpOnTask), message,
             "follow_up_remote_pool_unsupported", message);
     }
 
     /// <summary>
-    /// A published park whose seat release is already confirmed. Receipts and the release
-    /// ledger are the evidence; park state alone is not.
+    /// A published park whose seat release is already confirmed for this attempt.
+    /// Receipts and the release ledger are the evidence; park state alone is not.
+    /// A Resumed park belongs to the previous attempt and does not match.
     /// </summary>
-    private async Task<bool> HasConfirmedPublishedParkAsync(Guid taskId, CancellationToken ct) =>
+    private async Task<bool> HasConfirmedPublishedParkAsync(AgentTask task, CancellationToken ct) =>
         await _db.AgentTaskParks.AsNoTracking().AnyAsync(p =>
-            p.TaskId == taskId
+            p.TaskId == task.Id
+            && p.Attempt == task.Attempt
             && p.PublicationReceiptId != null
             && p.RunnerSeatReleaseId != null
             && (p.State == AgentTaskParkState.Parked
-                || p.State == AgentTaskParkState.ResumePending
-                || p.State == AgentTaskParkState.Resumed)
+                || p.State == AgentTaskParkState.ResumePending)
             && _db.RunnerSeatReleases.Any(r =>
                 r.Id == p.RunnerSeatReleaseId
                 && r.State == RunnerSeatReleaseState.Confirmed
