@@ -4524,19 +4524,74 @@ consider_dirty() {
         [ "$actual" = "$oid" ] || refuse_dirty index-content "$where"
     done < "$scratch/index"
 }
+# CARD-1105 closed list. Each Git directory (the common directory and every
+# worktrees/<id>) is classified entry by entry; an entry outside this list refuses
+# RecycleGitAuditUnknown. Locations that can name an object, and their treatment:
+#   HEAD, loose refs/**, packed-refs, logs/** (both sides): publication tips
+#   ORIG_HEAD FETCH_HEAD REBASE_HEAD BISECT_HEAD AUTO_MERGE MERGE_AUTOSTASH: tips
+#     (a missing object fails the complete-graph traversal: unknown)
+#   MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD rebase-merge rebase-apply sequencer
+#     BISECT_* NOTES_MERGE_* and *.lock: interrupted operation, unknown
+#   refs/replace (loose or packed), info/grafts, reftable, modules: unknown
+#   index: worktree content (consider_dirty); an index in a bare directory: unknown
+#   stash: refs/stash and logs/refs/stash; notes: refs/notes tips
+#   objects is the store: an object no location names is outside the audit, as
+#   for gc. info/refs is repack's copy of refs that are read directly here.
+# Configuration, hooks, descriptions and message files name no object.
+consider_pseudoref() {
+    local file="$1" name="$2" line
+    audit_check=pseudoref
+    [ -f "$file" ] && [ ! -L "$file" ] || fail 2
+    while IFS= read -r line || [ -n "$line" ]; do
+        [ -n "$line" ] || continue
+        if [ "$name" = HEAD ] && [[ "$line" =~ ^ref:\ refs/[^[:space:]]+$ ]]; then continue; fi
+        [[ "$line" =~ ^([0-9a-f]{40})($|[[:space:]]) ]] || fail 2
+        printf '%s\n' "${BASH_REMATCH[1]}" >> "$scratch/tips"
+    done < "$file"
+}
+consider_refs() {
+    local directory="$1" file content unsupported
+    audit_check=ref-files
+    [ -d "$directory" ] && [ ! -L "$directory" ] || fail 2
+    unsupported="$(find "$directory" ! -type d ! -type f -print -quit 2>/dev/null)" || fail $?
+    [ -z "$unsupported" ] || fail 2
+    find "$directory" -type f -print0 > "$scratch/ref-files" 2>/dev/null || fail $?
+    while IFS= read -r -d '' file; do
+        case "${file#"$directory"/}" in
+            replace/*) refuse_unknown replace-ref 0 "$audit_repo" ;;
+            *.lock) refuse_unknown lock-ref 0 "$audit_repo" ;;
+        esac
+        audit_check=ref-read
+        content="$(< "$file")" || fail $?
+        if [[ "$content" =~ ^[0-9a-f]{40}$ ]]; then
+            printf '%s\n' "$content" >> "$scratch/tips"
+        else
+            [[ "$content" =~ ^ref:\ refs/[^[:space:]]+$ ]] || fail 2
+        fi
+    done < "$scratch/ref-files"
+}
+consider_packed() {
+    local file="$1" line oid
+    audit_check=packed-refs
+    [ -f "$file" ] && [ ! -L "$file" ] || fail 2
+    while IFS= read -r line || [ -n "$line" ]; do
+        case "$line" in '#'*) continue ;; esac
+        if [[ "$line" =~ ^([0-9a-f]{40})\ (refs/[^[:space:]]+)$ ]]; then
+            oid="${BASH_REMATCH[1]}"
+            case "${BASH_REMATCH[2]}" in refs/replace/*) refuse_unknown replace-ref 0 "$audit_repo" ;; esac
+        elif [[ "$line" =~ ^\^([0-9a-f]{40})$ ]]; then
+            oid="${BASH_REMATCH[1]}"
+        else
+            fail 2
+        fi
+        printf '%s\n' "$oid" >> "$scratch/tips"
+    done < "$file"
+}
 # Read both sides of every reflog entry, including the oldest old tip. Git's
 # reflog presentation can omit unreachable/missing entries; malformed logs refuse.
-consider_tips() {
-    local where="$1" directory log old new rest oid unsupported
-    audit_repo="$where"
-    audit_check=for-each-ref
-    git -C "$where" for-each-ref --format='%(objectname)' >> "$scratch/tips" 2> "$scratch/ref-errors" || fail $?
-    [ ! -s "$scratch/ref-errors" ] || fail 2
-    audit_check=head
-    git -C "$where" rev-parse --verify HEAD >> "$scratch/tips" 2>/dev/null || fail $?
+consider_logs() {
+    local directory="$1" log old new rest oid unsupported
     audit_check=reflog-directory
-    directory="$(git -C "$where" rev-parse --path-format=absolute --git-path logs 2>/dev/null)" || fail $?
-    if [ ! -e "$directory" ] && [ ! -L "$directory" ]; then return 0; fi
     [ -d "$directory" ] && [ ! -L "$directory" ] || fail 2
     audit_check=reflog-list
     unsupported="$(find "$directory" ! -type d ! -type f -print -quit 2>/dev/null)" || fail $?
@@ -4551,6 +4606,69 @@ consider_tips() {
             done
         done < "$log"
     done < "$scratch/logs"
+}
+consider_info() {
+    local directory="$1" entry
+    audit_check=gitdir-info
+    [ -d "$directory" ] && [ ! -L "$directory" ] || fail 2
+    find "$directory" -mindepth 1 -print0 > "$scratch/info" 2>/dev/null || fail $?
+    while IFS= read -r -d '' entry; do
+        [ -f "$entry" ] && [ ! -L "$entry" ] || refuse_unknown gitdir-info 0 "$audit_repo"
+        case "${entry#"$directory"/}" in
+            exclude|attributes|sparse-checkout|refs) ;;
+            grafts) [ ! -s "$entry" ] || refuse_unknown grafts 0 "$audit_repo" ;;
+            *) refuse_unknown gitdir-info 0 "$audit_repo" ;;
+        esac
+    done < "$scratch/info"
+}
+consider_gitdir() {
+    local directory="$1" level="$2" entry name linked
+    audit_check=gitdir-list
+    [ -d "$directory" ] && [ ! -L "$directory" ] || fail 2
+    [ ! -e "$directory/reftable" ] && [ ! -L "$directory/reftable" ] || refuse_unknown ref-storage 0 "$audit_repo"
+    find "$directory" -mindepth 1 -maxdepth 1 -print0 > "$scratch/entries-$level" 2>/dev/null || fail $?
+    sort -z "$scratch/entries-$level" > "$scratch/sorted-$level" || fail $?
+    while IFS= read -r -d '' entry; do
+        name="${entry##*/}"
+        case "$name" in
+            HEAD|ORIG_HEAD|FETCH_HEAD|REBASE_HEAD|BISECT_HEAD|AUTO_MERGE|MERGE_AUTOSTASH) consider_pseudoref "$entry" "$name" ;;
+            refs) consider_refs "$entry" ;;
+            packed-refs) consider_packed "$entry" ;;
+            logs) consider_logs "$entry" ;;
+            info) consider_info "$entry" ;;
+            worktrees)
+                [ "$level" = common ] && [ -d "$entry" ] && [ ! -L "$entry" ] || refuse_unknown gitdir-entry 0 "$audit_repo"
+                find "$entry" -mindepth 1 -maxdepth 1 -print0 > "$scratch/linked" 2>/dev/null || fail $?
+                while IFS= read -r -d '' linked; do
+                    consider_gitdir "$linked" linked
+                done < "$scratch/linked"
+                ;;
+            index) [ "$level" = linked ] || [ "$bare" = false ] || refuse_unknown bare-index 0 "$audit_repo" ;;
+            MERGE_HEAD|CHERRY_PICK_HEAD|REVERT_HEAD|rebase-merge|rebase-apply|sequencer|BISECT_*|NOTES_MERGE_*|*.lock)
+                refuse_unknown "lock-$name" 0 "$audit_repo" ;;
+            shallow|modules) refuse_unknown "gitdir-$name" 0 "$audit_repo" ;;
+            objects|hooks|branches|remotes|config|config.worktree|description|commondir|gitdir|locked|gc.log|gc.pid) ;;
+            COMMIT_EDITMSG|MERGE_MSG|MERGE_MODE|MERGE_RR|SQUASH_MSG|TAG_EDITMSG|NOTES_EDITMSG|EDIT_DESCRIPTION|BRANCH_DESCRIPTION) ;;
+            rr-cache|sharedindex.*|fsmonitor--daemon|fsmonitor--daemon.ipc) ;;
+            *) refuse_unknown gitdir-entry 0 "$audit_repo" ;;
+        esac
+    done < "$scratch/sorted-$level"
+}
+# Git's own view of every worktree's refs and HEAD. Every worktree's own Git
+# directory must be one consider_gitdir classified: the common directory or a
+# direct child of its worktrees directory.
+consider_tips() {
+    local where="$1" own
+    audit_repo="$where"
+    audit_check=for-each-ref
+    git -C "$where" for-each-ref --format='%(objectname)' >> "$scratch/tips" 2> "$scratch/ref-errors" || fail $?
+    [ ! -s "$scratch/ref-errors" ] || fail 2
+    audit_check=head
+    git -C "$where" rev-parse --verify HEAD >> "$scratch/tips" 2>/dev/null || fail $?
+    audit_check=git-dir-layout
+    own="$(git -C "$where" rev-parse --absolute-git-dir 2>/dev/null)" || fail $?
+    own="$(readlink -e "$own")" || fail $?
+    [ "$own" = "$top" ] || [ "${own%/*}" = "$top/worktrees" ] || refuse_unknown git-dir-layout 0 "$where"
 }
 trap 'fail $?' ERR
 trap '[ -n "$scratch" ] && [ -d "$scratch" ] && rm -r -- "$scratch"' EXIT
@@ -4639,6 +4757,7 @@ while IFS= read -r -d '' entry; do
     audit_check=worktree-list
     git -C "$repo" worktree list --porcelain -z > "$scratch/worktrees" 2>/dev/null || fail $?
     : > "$scratch/tips"
+    consider_gitdir "$top" common
     consider_tips "$repo"
     while IFS= read -r -d '' field; do
         [[ "$field" == worktree\ * ]] || continue

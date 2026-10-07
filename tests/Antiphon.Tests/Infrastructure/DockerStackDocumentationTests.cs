@@ -46,6 +46,13 @@ public sealed class DockerStackDocumentationTests
         section.ShouldContain("RunnerCounterUnknown", Case.Sensitive, "a stopped main makes redeploy-old refuse");
         section.ShouldContain("scripted only");
         section.ShouldContain("GIT_NO_LAZY_FETCH=1");
+        // CARD-1105: the linked worktree's own reflog and the pseudorefs are tips; the old
+        // sentence claimed every worktree reflog was read while only the common logs were.
+        section.ShouldContain("in each linked worktree's own logs");
+        section.ShouldContain("ORIG_HEAD, FETCH_HEAD, REBASE_HEAD, BISECT_HEAD, AUTO_MERGE and MERGE_AUTOSTASH pseudorefs");
+        section.ShouldContain("an entry outside it refuses `RecycleGitAuditUnknown`");
+        section.ShouldNotContain("each worktree's private refs and HEAD (also bare HEAD), and both sides of every reflog entry must prove publication",
+            Case.Sensitive, "the false every-reflog sentence is gone");
         section.ShouldContain("git clone --filter=blob:none --no-checkout");
         section.ShouldContain("RecycleGitAuditUnknown");
         section.ShouldContain("GithubTokenAbsent");
