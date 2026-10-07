@@ -117,7 +117,7 @@ public class BootStallWorkingTickCharacterizationTests
     {
         private readonly ServiceProvider _provider;
         private readonly ListLog _log;
-        public required RecordingRunnerClient Runner { get; init; }
+        public required ListedInventoryRunner Runner { get; init; }
         public required RecordingSessionStopper Stopper { get; init; }
         public required Guid SessionId { get; init; }
         public required Guid TaskId { get; init; }
@@ -210,7 +210,7 @@ public class BootStallWorkingTickCharacterizationTests
                 await db.SaveChangesAsync();
             }
 
-            var runner = new RecordingRunnerClient();
+            var runner = new ListedInventoryRunner();
             runner.Sessions.Add(new SessionRunnerSessionDto(
                 sessionId, Pid: 4242, StartedAt: dispatched, Status: "Running", ExitCode: null,
                 ExitReason: AgentExitReason.Unknown, LastSequence: assistantAfterPrompt ? 2 : 1,

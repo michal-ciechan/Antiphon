@@ -133,7 +133,7 @@ public partial class DelegationDispatchRecoveryBoundaryTests
             await seed.SaveChangesAsync();
         }
 
-        var runner = new RecordingRunnerClient();
+        var runner = new ListedInventoryRunner();
         if (working)
         {
             runner.Sessions.Add(new SessionRunnerSessionDto(
