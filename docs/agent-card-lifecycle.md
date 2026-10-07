@@ -10,7 +10,7 @@ deliberately warm Shared replies retain their existing same-session behavior.
 Blocked stays open for the card. It is outside MaxOpenTasks and the role gate, which
 count only Queued, Dispatched and Working, and it still occupies a runner seat
 (CARD-1083). A Blocked session keeps its runner seat until parking releases it. The
-operator-visible rows are SeatIdle, SlotOrphan, and attention key runner-seat-release:.
+operator-visible rows are SeatIdle for a live Blocked seat (orphan=false, with its park field), SlotOrphan for a seat with no live session or owner task, and attention key runner-seat-release:.
 Parking is dormant: BlockedTaskParking:Enabled defaults to false and does not by itself
 free the seat.
 

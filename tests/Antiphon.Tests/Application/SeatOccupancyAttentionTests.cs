@@ -193,6 +193,38 @@ public sealed class SeatOccupancyAttentionTests
     }
 
     [Test]
+    public async Task C1124_Seat_evidence_names_the_park_state()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var blockedId = Guid.NewGuid();
+        var unboundId = Guid.NewGuid();
+        var taskId = Guid.NewGuid();
+        var idleSince = Ago(40);
+        var state = State(Host("server2", inFlight: 2, dispatchedWorking: 0, idleSeats: 2, oldest: idleSince, seats:
+        [
+            Seat(blockedId, SeatClass.IdleBlocked, idleSince, occupies: true, orphan: false,
+                status: AgentTaskStatus.Blocked, taskId: taskId, attempt: 4,
+                parkState: "Held", parkReason: "park_dirty"),
+            Seat(unboundId, SeatClass.IdleUnbound, idleSince, occupies: true, orphan: true,
+                status: null, taskId: null, parkState: "none"),
+        ]));
+
+        var rows = (await ReadAsync(schema, state)).Items;
+        var idle = rows.Where(i => i.Kind == AttentionKind.SeatIdle && i.SessionId == blockedId)
+            .ShouldHaveSingleItem();
+        idle.Severity.ShouldBe(AlertSeverity.Warning);
+        idle.Evidence.ShouldContain("park=Held:park_dirty");
+        idle.Evidence.ShouldContain("pushed=unknown");
+        idle.Actions.ShouldBe([AttentionAction.Reply, AttentionAction.Cancel, AttentionAction.OpenDrawer]);
+        rows.ShouldNotContain(i => i.ConditionKey == $"slot-orphan:server2:{blockedId:N}");
+
+        var orphan = rows.Where(i => i.Kind == AttentionKind.SlotOrphan).ShouldHaveSingleItem();
+        orphan.SessionId.ShouldBe(unboundId);
+        orphan.Evidence.ShouldContain("park=none");
+        orphan.ConditionKey.ShouldBe($"slot-orphan:server2:{unboundId:N}");
+    }
+
+    [Test]
     public async Task C1079_No_snapshot_or_unavailable_inventory_yields_no_seat_rows()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
@@ -299,10 +331,12 @@ public sealed class SeatOccupancyAttentionTests
         string pushed = "unknown",
         bool pooledWarm = false,
         DateTime? started = null,
-        string runnerId = "server2") =>
+        string runnerId = "server2",
+        string parkState = "none",
+        string? parkReason = null) =>
         new(runnerId, sessionId, occupies ? "Running" : "Exited", 42, started ?? idleSince, occupies, orphan,
             pooledWarm, "Running", taskId, status, attempt, AgentTaskRole.Code, cardId, boardId, agentId,
-            seatClass, idleSince, pushed);
+            seatClass, idleSince, pushed, parkState, parkReason);
 
     private static async Task<AttentionDto> ReadAsync(
         IsolatedTestSchema schema, SeatOccupancyState? seats = null, AttentionSettings? attention = null)

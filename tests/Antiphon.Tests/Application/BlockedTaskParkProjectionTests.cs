@@ -22,12 +22,14 @@ public sealed class BlockedTaskParkProjectionTests
 
         var ops = Read("docs/ops-http.md");
         Require(ops, "a live Blocked child is not an orphan", "c1124-ops-orphan-owner");
+        Require(ops, "seat evidence carries `park=`", "c1124-ops-seat-park");
         Require(ops, "BlockedTaskParking:Enabled", "c1065-ops-enabled");
         Require(ops, "runner-seat-release:", "c1065-ops-attention-key");
         Require(ops, "parkSync", "c1065-ops-parksync");
 
         var api = Read("docs/antiphon-api.md");
         Require(api, "parkSync", "c1065-api-parksync");
+        Require(api, "also counted live Blocked owners", "c1124-api-orphan-slots");
         Require(api, "BlockedTaskParking:Enabled", "c1065-api-enabled");
         Require(api, "runner-seat-release:", "c1065-api-attention-key");
 
@@ -35,6 +37,7 @@ public sealed class BlockedTaskParkProjectionTests
         Require(lifecycle, "A Blocked session keeps its runner seat until parking releases it.", "c1065-lifecycle-seat");
         Require(lifecycle, "outside MaxOpenTasks and the role gate", "c1065-lifecycle-gate");
         Require(lifecycle, "SeatIdle", "c1065-lifecycle-seat-idle");
+        Require(lifecycle, "SeatIdle for a live Blocked seat", "c1124-lifecycle-blocked-not-orphan");
         Require(lifecycle, "SlotOrphan", "c1065-lifecycle-slot-orphan");
         Require(lifecycle, "runner-seat-release:", "c1065-lifecycle-attention-key");
 

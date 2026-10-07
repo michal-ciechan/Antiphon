@@ -43,7 +43,7 @@ public sealed class SeatOccupancySamplerTests
         server2.InFlightMirrors.ShouldBe(0);
         server2.DispatchedWorking.ShouldBe(1);
         server2.IdleSeats.ShouldBe(2);
-        server2.OrphanSlots.ShouldBe(2);
+        server2.OrphanSlots.ShouldBe(1);
         server2.EffectiveLimit.ShouldBe(10);
         server2.InventoryState.ShouldBe("listed");
         server2.SampledAt.ShouldBe(Now);
@@ -79,7 +79,7 @@ public sealed class SeatOccupancySamplerTests
         var blocked = server2.Seats.Single(s => s.SessionId == rig.BlockedSession);
         blocked.Class.ShouldBe(SeatClass.IdleBlocked);
         blocked.IdleSince.ShouldBe(BlockedAt);
-        blocked.Orphan.ShouldBeTrue();
+        blocked.Orphan.ShouldBeFalse();
         blocked.Pushed.ShouldBe("yes");
         blocked.TaskStatus.ShouldBe(AgentTaskStatus.Blocked);
         blocked.Attempt.ShouldBe(4);
@@ -95,6 +95,77 @@ public sealed class SeatOccupancySamplerTests
         working.Orphan.ShouldBeFalse();
 
         server2.OldestIdleSince.ShouldBe(new[] { blocked.IdleSince, unbound.IdleSince }.Min());
+    }
+
+    [Test]
+    public async Task C1124_Blocked_owner_is_idle_not_orphan_and_carries_its_park()
+    {
+        await using var rig = await Rig.SeedRemoteAsync(listThrows: false);
+        await using (var before = new AppDbContext(rig.DbOptions))
+        {
+            var park = await before.AgentTaskParks.AsNoTracking().SingleAsync();
+            var task = await before.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == rig.WorkingTask);
+            rig.ParkRevision = park.Revision;
+            rig.ParkState = park.State;
+            rig.WorkingStatus = task.Status;
+        }
+
+        await rig.SampleAsync();
+
+        await using var db = new AppDbContext(rig.DbOptions);
+        var stored = await db.HostOccupancySamples.AsNoTracking().SingleAsync(r => r.HostId == "server2");
+        stored.OrphanSlots.ShouldBe(1);
+        stored.IdleSeats.ShouldBe(2);
+        stored.DispatchedWorking.ShouldBe(1);
+        stored.InFlight.ShouldBe(4);
+
+        var server2 = rig.State.Current.Hosts.Single(h => h.HostId == "server2");
+        server2.OrphanSlots.ShouldBe(1);
+        server2.IdleSeats.ShouldBe(2);
+        server2.DispatchedWorking.ShouldBe(1);
+        server2.InFlight.ShouldBe(4);
+        server2.OrphanSlots.ShouldBeGreaterThan(0);
+
+        var blocked = server2.Seats.Single(s => s.SessionId == rig.BlockedSession);
+        blocked.Orphan.ShouldBeFalse();
+        blocked.Class.ShouldBe(SeatClass.IdleBlocked);
+        blocked.IdleSince.ShouldBe(BlockedAt);
+        blocked.ParkState.ShouldBe("Requested");
+        blocked.ParkReason.ShouldBe("park_requested");
+        blocked.Pushed.ShouldBe("yes");
+
+        var unbound = server2.Seats.Single(s => s.SessionId == rig.UnboundSession);
+        unbound.Orphan.ShouldBeTrue();
+        unbound.ParkState.ShouldBe("none");
+        unbound.ParkReason.ShouldBeNull();
+        unbound.Pushed.ShouldBe("unknown");
+
+        var working = server2.Seats.Single(s => s.SessionId == rig.WorkingSession);
+        working.Orphan.ShouldBeFalse();
+        working.ParkState.ShouldBe("none");
+        working.ParkReason.ShouldBeNull();
+
+        var settled = await rig.AddSettledReceiptSessionsAsync();
+        await rig.SampleAsync();
+        var again = rig.State.Current.Hosts.Single(h => h.HostId == "server2");
+        var published = again.Seats.Single(s => s.SessionId == settled.PublishedSession);
+        published.Orphan.ShouldBeTrue();
+        published.TaskStatus.ShouldBe(AgentTaskStatus.Succeeded);
+        published.Attempt.ShouldBe(2);
+        published.Pushed.ShouldBe("yes");
+        var historical = again.Seats.Single(s => s.SessionId == settled.HistoricalSession);
+        historical.Orphan.ShouldBeTrue();
+        historical.Attempt.ShouldBe(2);
+        historical.Pushed.ShouldBe("unknown");
+        again.Seats.Single(s => s.SessionId == rig.BlockedSession).Orphan.ShouldBeFalse();
+
+        await using var after = new AppDbContext(rig.DbOptions);
+        var parked = await after.AgentTaskParks.AsNoTracking().SingleAsync(p => p.TaskId != settled.PublishedTask && p.TaskId != settled.HistoricalTask);
+        parked.Revision.ShouldBe(rig.ParkRevision);
+        parked.State.ShouldBe(rig.ParkState);
+        (await after.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == rig.WorkingTask)).Status.ShouldBe(rig.WorkingStatus);
+        (await after.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == rig.BlockedSession)).Status
+            .ShouldBe(SessionStatus.Running);
     }
 
     [Test]
@@ -306,6 +377,59 @@ public sealed class SeatOccupancySamplerTests
         public Guid BlockedSession { get; init; }
         public Guid UnboundSession { get; init; }
         public Guid WorkingTask { get; init; }
+        public long ParkRevision { get; set; }
+        public AgentTaskParkState ParkState { get; set; }
+        public AgentTaskStatus WorkingStatus { get; set; }
+
+        public async Task<SettledReceipts> AddSettledReceiptSessionsAsync()
+        {
+            var publishedSession = Guid.NewGuid();
+            var historicalSession = Guid.NewGuid();
+            var publishedTask = Guid.NewGuid();
+            var historicalTask = Guid.NewGuid();
+            Client.Sessions =
+            [
+                ..Client.Sessions,
+                Listed(publishedSession, 14),
+                Listed(historicalSession, 15),
+            ];
+            await using var db = new AppDbContext(DbOptions);
+            var published = RemoteTask(publishedTask, publishedSession, AgentTaskStatus.Succeeded, Now.AddMinutes(-25), attempt: 2);
+            var historical = RemoteTask(historicalTask, historicalSession, AgentTaskStatus.Succeeded, Now.AddMinutes(-25), attempt: 2);
+            published.CompletedAt = Now.AddMinutes(-10);
+            historical.CompletedAt = Now.AddMinutes(-10);
+            db.AgentSessions.AddRange(RemoteSession(publishedSession), RemoteSession(historicalSession));
+            db.AgentTasks.AddRange(published, historical);
+            db.AgentTaskParks.AddRange(
+                new AgentTaskPark
+                {
+                    Id = Guid.NewGuid(),
+                    TaskId = publishedTask,
+                    Attempt = 2,
+                    BlockEventId = Guid.NewGuid(),
+                    TaskConcurrencyToken = Guid.NewGuid(),
+                    PublicationReceiptId = Guid.NewGuid(),
+                    BlockedAt = Now.AddMinutes(-20),
+                    CreatedAt = Now.AddMinutes(-20),
+                    UpdatedAt = Now.AddMinutes(-20),
+                    ReasonCode = "park_requested",
+                },
+                new AgentTaskPark
+                {
+                    Id = Guid.NewGuid(),
+                    TaskId = historicalTask,
+                    Attempt = 1,
+                    BlockEventId = Guid.NewGuid(),
+                    TaskConcurrencyToken = Guid.NewGuid(),
+                    PublicationReceiptId = Guid.NewGuid(),
+                    BlockedAt = Now.AddMinutes(-30),
+                    CreatedAt = Now.AddMinutes(-30),
+                    UpdatedAt = Now.AddMinutes(-30),
+                    ReasonCode = "park_requested",
+                });
+            await db.SaveChangesAsync();
+            return new SettledReceipts(publishedSession, historicalSession, publishedTask, historicalTask);
+        }
 
         public static async Task<Rig> EmptyAsync() => await CreateAsync(seedRemote: false, listThrows: false);
 
@@ -449,6 +573,9 @@ public sealed class SeatOccupancySamplerTests
             DispatchedAt = created,
         };
     }
+
+    internal readonly record struct SettledReceipts(
+        Guid PublishedSession, Guid HistoricalSession, Guid PublishedTask, Guid HistoricalTask);
 
     private sealed class ListingClient : ISessionRunnerClient
     {

@@ -577,7 +577,7 @@ after `to`) is 200 with `samples: []` and the requested bounds.
 Rows are newest first and carry the stored counters (`inFlight`,
 `dispatchedWorking`, `sessions`, `pendingLaunch`, `inFlightMirrors`, `idleSeats`,
 `pooledWarmSeats`, `orphanSlots`, `effectiveLimit`, `declaredCapacity`,
-`oldestIdleSince`, `inventoryState`, `inventoryReason`). `inventoryReason` on
+`oldestIdleSince`, `inventoryState`, `inventoryReason`). `orphanSlots` counts occupying slots with no live desktop session or no owner task (Queued, Dispatched, Working or Blocked); samples stored before CARD-1124 activated also counted live Blocked owners. `inventoryReason` on
 the wire is null or one of four exact categories: `unavailable`, `timeout`,
 `error`, or `unavailable: phone-home`. The sampler stores those categories
 and never a raw exception message. A runner that is not connected stores

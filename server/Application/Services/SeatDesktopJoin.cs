@@ -43,8 +43,11 @@ internal readonly record struct SeatDesktopRow(
 /// CARD-1079: the one desktop join shared by the slots route and the occupancy sampler.
 /// A seat is owned by the latest Queued, Dispatched, Working or Blocked task (CARD-1124).
 /// The task table is the latest row per session (CARD-1090), not that session's whole history.
-/// The card query reads the board id only. Park and publication receipt are computed in memory
-/// from one park query, keyed on the owner task's current attempt.
+/// The card query reads the board id only. One park query feeds both facts in memory.
+/// <see cref="SeatDesktopRow.Park"/> is the owner task's current-attempt episode.
+/// <see cref="SeatDesktopRow.PublicationReceipt"/> follows the latest task's current attempt,
+/// which is the task the seat observation prints: a seat with no owner still reports that
+/// receipt, so a settled published orphan reads pushed=yes (CARD-1079; CARD-1124 S2).
 /// </summary>
 internal static class SeatDesktopJoin
 {
@@ -158,8 +161,14 @@ internal static class SeatDesktopJoin
                     blockedTime = at;
             }
 
-            var hasReceipt = open is not null && parkRows.Any(p =>
-                p.TaskId == open.Id && p.Attempt == open.Attempt && p.HasReceipt);
+            var hasReceipt = false;
+            if (latest is not null)
+            {
+                var receiptTaskId = latest.Id;
+                var receiptAttempt = latest.Attempt;
+                hasReceipt = parkRows.Any(p =>
+                    p.TaskId == receiptTaskId && p.Attempt == receiptAttempt && p.HasReceipt);
+            }
             rows[id] = new SeatDesktopRow(
                 live,
                 session?.Status.ToString(),

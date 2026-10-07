@@ -33,7 +33,11 @@ public sealed record HostOccupancyObservation(
     DateTime? OldestIdleSince,
     IReadOnlyList<SeatObservation> Seats);
 
-/// <summary>One runner seat joined to the desktop row. <see cref="Pushed"/> is <c>yes</c> or <c>unknown</c>.</summary>
+/// <summary>
+/// One runner seat joined to the desktop row. <see cref="Pushed"/> is <c>yes</c> or <c>unknown</c>.
+/// <see cref="ParkState"/> is <c>none</c> or the owner's current-attempt park state; <see cref="ParkReason"/>
+/// is that episode's reason, or null when there is no row.
+/// </summary>
 public sealed record SeatObservation(
     string RunnerId,
     Guid SessionId,
@@ -53,4 +57,6 @@ public sealed record SeatObservation(
     Guid? AgentId,
     SeatClass Class,
     DateTime IdleSince,
-    string Pushed);
+    string Pushed,
+    string ParkState = "none",
+    string? ParkReason = null);
