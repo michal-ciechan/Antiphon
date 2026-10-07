@@ -304,6 +304,99 @@ public sealed class RollingProductionMountTests
         await ProveGenerationIdentity();
     }
 
+    // Names the c1008_compose_model target guard. A missing service-secret target is
+    // /run/secrets/ plus .source. Reverting that guard, or the declaration allowed list, refuses this fixture.
+    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1105_V218_compose_model_accepts_the_host_shape()
+    {
+        C1008HostFixture.RequireNativeLinux();
+        using var f = new C1008HostFixture();
+        var accept = C1008HostFixture.LoadComposeV218(f.Root);
+        SessionVolumeBinds(accept).ShouldBe(11);
+        var shortSet = accept.DeepClone().AsObject();
+        var mounts = shortSet["services"]!["session-runner"]!["volumes"]!.AsArray();
+        mounts.Remove(mounts.Single(x => x!["target"]!.GetValue<string>() == "/run/antiphon/github-token"));
+        var external = accept.DeepClone().AsObject();
+        external["secrets"]!["phone-home"]!["external"] = true;
+        WriteV218(f, "v218-target.json", accept);
+        WriteV218(f, "v218-short.json", shortSet);
+        WriteV218(f, "v218-external.json", external);
+        var run = await f.Run(extra: V218ModelProbe("c1008_compose_model"));
+        run.Exit.ShouldBe(0, "v218-compose-model: " + run.Output);
+        Case(run.Output, "target").ShouldBe(("accept", "11"));
+        Case(run.Output, "short").ShouldBe(("refuse", "RecycleComposeMismatch"));
+        Case(run.Output, "external").ShouldBe(("refuse", "RecycleComposeMismatch"));
+    }
+
+    // Names the c1008_previous_model declaration allowed list. external:false is the v2.18.1
+    // declaration shape; external:true and an unknown bind stay RecycleGenerationUnknown.
+    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1105_V218_previous_model_accepts_the_host_shape()
+    {
+        C1008HostFixture.RequireNativeLinux();
+        using var f = new C1008HostFixture();
+        var accept = C1008HostFixture.LoadComposeV218(f.Root);
+        var external = accept.DeepClone().AsObject();
+        external["secrets"]!["antiphon-deploy-key"]!["external"] = true;
+        var foreign = accept.DeepClone().AsObject();
+        foreign["services"]!["session-runner"]!["volumes"]!.AsArray().Add(new JsonObject {
+            ["type"] = "bind", ["source"] = f.Root + "/foreign", ["target"] = "/foreign", ["read_only"] = true,
+            ["bind"] = new JsonObject { ["create_host_path"] = true } });
+        WriteV218(f, "v218-target.json", accept);
+        WriteV218(f, "v218-external.json", external);
+        WriteV218(f, "v218-short.json", foreign);
+        var run = await f.Run(extra: V218ModelProbe("c1008_previous_model \"$C1008_PREVIOUS_SHA\""));
+        run.Exit.ShouldBe(0, "v218-previous-model: " + run.Output);
+        Case(run.Output, "target").ShouldBe(("accept", "11"));
+        Case(run.Output, "external").ShouldBe(("refuse", "RecycleGenerationUnknown"));
+        Case(run.Output, "short").ShouldBe(("refuse", "RecycleGenerationUnknown"));
+    }
+
+    private static void WriteV218(C1008HostFixture f, string name, JsonNode model) =>
+        File.WriteAllText(Path.Combine(f.Root, name), model.ToJsonString());
+
+    private static int SessionVolumeBinds(JsonObject model) =>
+        model["services"]!["session-runner"]!["volumes"]!.AsArray()
+            .Count(x => x!["type"]!.GetValue<string>() is "volume" or "bind");
+
+    private static (string Outcome, string Detail) Case(string output, string label)
+    {
+        var line = output.Split('\n').Single(x => x.StartsWith("V218_CASE " + label + " ", StringComparison.Ordinal));
+        var parts = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        return (parts[2], parts[3]);
+    }
+
+    private static string V218ModelProbe(string render)
+    {
+        var sha = new string('b', 40);
+        return $$"""
+            LANE=host
+            C1008_PROJECT="$HOST_PROJECT"
+            C1008_PREVIOUS_SHA={{sha}}
+            c1008_compose_source() { :; }
+            c1008_refuse() { printf 'DIAGNOSIS=%s\n' "$1"; exit 2; }
+            compose_host() { printf '%s' "$C1105_V218_MODEL"; }
+            compose_temp() { printf '%s' "$C1105_V218_MODEL"; }
+            run_case() {
+                label="$1"
+                C1105_V218_MODEL="$(cat "$2")"
+                model_code=0
+                model="$({{render}})" || model_code=$?
+                if [ "$model_code" != 0 ]; then
+                    diagnosis="$(printf '%s\n' "$model" | sed -n 's/^DIAGNOSIS=//p' | tail -n 1)"
+                    printf 'V218_CASE %s refuse %s\n' "$label" "$diagnosis"
+                    return 0
+                fi
+                count="$(c1008_session_mount_count "$model")" || { printf 'V218_CASE %s count-fail 0\n' "$label"; return 0; }
+                printf 'V218_CASE %s accept %s\n' "$label" "$count"
+            }
+            run_case target "$C1008_FIXTURE_ROOT/v218-target.json"
+            run_case short "$C1008_FIXTURE_ROOT/v218-short.json"
+            run_case external "$C1008_FIXTURE_ROOT/v218-external.json"
+            write_result true '' 0
+            """;
+    }
+
     private static JsonArray OwnedFrom(C1008HostFixture f, string project, JsonObject model)
     {
         var saved = f.Docker["models"]![project]!.DeepClone();

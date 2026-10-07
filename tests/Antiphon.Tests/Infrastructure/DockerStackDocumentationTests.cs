@@ -238,6 +238,8 @@ public sealed class DockerStackDocumentationTests
             "keep its bind-kind entry and keep exporting its host-path variable for at least one generation",
             "accepts the running container's own generation and requires the new one after recreate",
             "A state-init-only temp binds by SOURCE_REVISION alone",
+            "Host Compose v2.18.1",
+            "scripts/fixtures/c1105-compose-v218-config.json",
         };
         var missing = new List<string>();
         foreach (var pin in pins)

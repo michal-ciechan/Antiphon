@@ -990,6 +990,40 @@ public sealed class RemoteScriptContractTests
         f.Removed.ShouldBeEmpty();
     }
 
+    // CARD-1105. Host Compose v2.18.1 config shape reaches the generation line on a dry run.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1105_V218_dry_run_reaches_the_generation_line()
+    {
+        C1008HostFixture.RequireNativeLinux();
+        using var f = new C1008HostFixture();
+        var target = C1008HostFixture.LoadComposeV218(f.Root);
+        var previous = target.DeepClone().AsObject();
+        var mounts = previous["services"]!["session-runner"]!["volumes"]!.AsArray();
+        mounts.Remove(mounts.Single(x => x!["target"]!.GetValue<string>() == "/run/antiphon/github-token"));
+        File.WriteAllText(Path.Combine(f.Root, "v218-target.json"), target.ToJsonString());
+        File.WriteAllText(Path.Combine(f.Root, "v218-previous.json"), previous.ToJsonString());
+        var run = await f.Run(dryRun: true, extra: """
+            compose_host() {
+                case "$(basename "${C1008_COMPOSE_DIR:-}")" in
+                    bbbbbbbbbbbb) cat "$C1008_FIXTURE_ROOT/v218-previous.json" ;;
+                    *) cat "$C1008_FIXTURE_ROOT/v218-target.json" ;;
+                esac
+            }
+            compose_temp() { compose_host "$@"; }
+            """);
+        run.Exit.ShouldBe(0, "v218-dry-run: " + run.Output);
+        run.Output.ShouldContain("C1008_GENERATION project=antiphon-runner previous=" + C1008HostFixture.PreviousSha
+            + " target=" + new string('a', 40) + " previousMounts=10 targetMounts=11");
+        run.Output.ShouldContain("C1008_PREVIEW");
+        run.Output.ShouldNotContain("RecycleComposeMismatch");
+        run.Output.ShouldNotContain("RecycleGenerationUnknown");
+        run.Output.ShouldNotContain("MUTATION");
+        f.Removed.ShouldBeEmpty();
+        f.Trace.Any(a => new[] { "stop", "rm", "create", "start", "run" }.Contains(a[0])
+            || a.Take(2).SequenceEqual(new[] { "volume", "rm" })).ShouldBeFalse();
+    }
+
     // CARD-1105 V-3. Generation identity refuses before stop, removal, volume deletion, or a journal.
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
