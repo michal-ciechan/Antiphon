@@ -264,7 +264,7 @@ SELECT by merging assertions into the measured action or disabling another sweep
 |---|---:|---|
 | Held Dispatched/Starting tick | 18 | **18 exactly**, delta 0 |
 | Working/live tick below unrelated deadline | 18 | **18 exactly**, delta 0 |
-| Runner-absent scan inside Starting grace | 8 | **8 exactly**, delta 0 |
+| Runner-absent scan inside Starting grace | 4 measured (investigation said 8) | **4 exactly** on the one-task BuildService fixture. Do not treat 8 as this fixture's acceptance. Delta 0. |
 | First dead-session observation tick | 18 | **18 exactly**, new evidence reads wait until due |
 | Initial refused dispatch | 45 | Record new total; <= 55, including queue identity checks |
 | Runner-unknown close scan | 6 | **6 exactly**; no task recovery query in this close arm |
@@ -278,12 +278,15 @@ SELECT by merging assertions into the measured action or disabling another sweep
 | Empty tick / unrelated healthy scan | Not measured | Establish baseline and assert delta 0 |
 
 The new-path numbers are conservative **design ceilings, not measured results**.
-TestDesign must pin the measurement cases; Code records each actual absolute
-count and the statement roster. If a necessary implementation exceeds a ceiling,
-explain the extra operation and revise the plan before broadening the run. Never
-waive the 18/8 acceptance totals or trade them for elapsed-time claims. Also
-inspect the enriched candidate query's shape: constant round-trip count is not
-permission for an unbounded materialized per-session join.
+TestDesign pinned three rows in `C1149_C1150_Statement_budgets`: held
+Dispatched/Starting tick 18, young Working tick 18, and the one-task inside-grace
+absent scan 4 (live AgentSessions select, FOR UPDATE, reload, Agents). The
+investigation's scan total of 8 was not reproduced on that BuildService graph.
+Never waive the measured 18/4 totals or trade them for elapsed-time claims. The
+unknown-close 6 and the other D-6 rows stay plan figures until Code adds those
+arguments and records their rosters. Also inspect the enriched candidate query's
+shape: constant round-trip count is not permission for an unbounded materialized
+per-session join.
 
 **Waiting-session checklist:** D-1 has positively established no runner process;
 its Blocked task therefore does not create a physical waiting seat. D-2/D-5 can
@@ -330,8 +333,9 @@ S1 -> S2 -> S3 -> S4 -> S5 is mandatory. Shared dispatcher edits are serialized.
 Each authoring slice is 30-60 minutes excluding builds, row execution and slot
 waits. Commit and push each meaningful slice before its checkpoint group.
 S2-S4 form one checkpoint group: the queue identity, discovery and watchdog
-behaviors depend on one another. Push each slice, then build and run CP-6..20
+behaviors depend on one another. Push each slice, then build and run CP-6..19
 once after all three commits; do not test an unfinished deadline/hold path early.
+CP-20 is After S-boot and is not part of that group.
 
 ## Slices, files, activation and overlap
 
@@ -448,7 +452,7 @@ V IDs so later coverage/mutation selection stays unambiguous.
 | V-16 | `C1149_Watchdog_first_holds_absent_launch` | Due watchdog runs before due dead sweep on the exact refused/absent shape: same atomic hold, byte preservation and zero process calls as V-1. |
 | V-17 | `C1150_Recovery_exhaustion_is_visible_without_replacement` | At queue MaxDeliveryAttempts, keep row/attempt evidence, one Blocked reason, no reset/retype/replacement/start/stop. Repeat after restart; no warning storm. |
 | V-18 | `C1150_Watchdog_cleanup_requires_failure_and_fresh_safe_evidence` (5 arguments) | Working before decision; Working after catch-up; listed session; unavailable inventory; failure-write loses to settlement. All stopper and release counts zero. Independent real non-Working unrelated failure with authoritative safe evidence retains its failure and conditional stopper behavior. |
-| V-19 | `C1149_C1150_Statement_budgets` (14 arguments) | One argument for each D-6 table action (split paired variants internally and emit their individual totals). Exact 18/8/18/6 invariants, delta-zero healthy paths, bounded new paths; count separately scoped queue SQL and await all repair work. |
+| V-19 | `C1149_C1150_Statement_budgets` (14 arguments) | One argument for each D-6 table action (split paired variants internally and emit their individual totals). Pinned fixtures: held tick 18, inside-grace scan 4, young Working tick 18. Unknown-close 6 stays the plan figure until that argument exists. Delta-zero healthy paths, bounded new paths; count separately scoped queue SQL and await all repair work. |
 | V-20 | `C1149_C1150_Working_full_tick_safety` (2 arguments) | Active Working companion, aged prompt-only boot stall. Real scan/resume/tick, same runner generation. No recovery mutation, submit, stop or release; no CARD-0079 episode. D-7 is an inherited-red prerequisite: do not disable boot wait or claim this passes without evidence. |
 
 V-20 cannot be marked green merely because the recovery branch returned early:
@@ -509,7 +513,7 @@ all source, commit any authorized repair separately, and run that method green.
 | PC-15 | Run watchdog failure before recovery arbitration. | V-15 and separately V-16: terminal failure or stop instead of recover/hold. Two cycles. |
 | PC-16 | Reset DeliveryAttempts or ignore its cap. | V-17: extra submit/replacement/attempt reset, or absent Blocked reason. |
 | PC-17 | Remove Working, listed/unknown-runner, or successful-current-failure requirement at cleanup. | V-18: corresponding forbidden stopper/release call. Three variants. |
-| PC-18 | Add one SELECT to held tick or inside-grace scan. | V-19: 19 != 18 or 9 != 8. Two variants. |
+| PC-18 | Add one SELECT to held tick or inside-grace scan. | V-19: 19 != 18, or 5 != 4 on the pinned inside-grace fixture. Two variants. |
 | PC-19 | Bypass a new Working guard in recovery; after prerequisite repair, bypass its boot guard separately. | V-20: stop/release or recovery mutation under real full tick. Second cycle belongs to the prerequisite repair's owner, not an unassigned mutation here. |
 
 ### Execution, cost and provenance
@@ -523,24 +527,30 @@ own row drivers. Slot timeout is not run, never permission for an unleased run.
 Use forward-slash alternate outputs and default Linux UseAppHost=false. Keep
 source frozen during each run; reuse a build only in its own After group.
 
-TestDesign's baseline V-20 probe is a separately declared diagnostic run using
-the exact CP-20 method filter against the pinned base production files; it is
-expected to classify the inherited conflict, not to certify the candidate.
+TestDesign's baseline probe is `BootStallWorkingTickCharacterizationTests`,
+not the unwritten V-20 method. It ran against the pinned base and classified
+the inherited conflict. It does not certify the candidate.
 Any probe authoring gets its own test-only commit and named source provenance.
 No whole-Unit, namespace or assembly run is commissioned here.
 
-Authoring estimate: 285 minutes. Ordinary forward checkpoints: **118 minutes**
-plus build-slot waits; a Code dispatch budgets both, and re-estimates the two
+Authoring estimate: 285 minutes. Ordinary forward checkpoints for commissioned
+Code (CP-1..CP-19 and CP-21..CP-38): **119 minutes**, plus build-slot waits.
+CP-20 adds 3 minutes and is After S-boot, not in that budget. A Code dispatch
+budgets both, and re-estimates the two
 larger queue classes from fresh roster timings before starting if necessary.
 Mutation has at least 35 assigned method-scoped variant cycles (plus the separate
 boot prerequisite cycle), estimated 105 minutes plus setup/restoration. These are
 budgets, not observed runtimes or executed counts. No repeat-proof run is required.
 
-Full-class Min=1 below is a discovery floor, not an expected class size. TestDesign
-must replace those floors with verified expanded rosters where available and
-retain all named class results; Code reports actual TRX counts, failures and skips
-for every CP. New methods' Min counts reflect explicit arguments above. Zero
-tests, skipped mandatory cases, and missing methods cannot be green. Preserve
+TestDesign on 2026-10-07 replaced the full-class Min=1 discovery floors with
+verified execution counts. CP-22 stays 3 and CP-36 stays 8. CP-21 is 59 once
+V-1..V-20 exist as specified; the boot-stall characterization class is not part
+of that 59. The three budget arguments committed at TestDesign are the start of
+V-19's 14, not executions added on top. CP-19 Min stays 14 and fails until Code
+adds the other eleven arguments. CP-20 is After S-boot with its own build.
+CP-37 and CP-38 pin the characterization and must stay green. Code reports
+actual TRX counts, failures and skips for every CP. Zero tests, skipped
+mandatory cases, and missing methods cannot be green. Preserve
 unedited CHECKPOINT lines and source receipts in the stored report; generated
 TRX/JSON/logs remain ignored. Code/Review run the evidence-diff guard over the full
 task range and validate receipts against exact tested SHAs. Remove only inventoried
@@ -570,20 +580,22 @@ new failure/change reason.
 | CP-17 | S2-S4 | `CP-6` | attempt-bound | `/*/*/DelegationDispatchRecoveryBoundaryTests/C1150_Recovery_exhaustion_is_visible_without_replacement*` | V-17 | 1 executed, 0 failed/skipped | 1 | 2 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-18 | S2-S4 | `CP-6` | cleanup-gates | `/*/*/DelegationDispatchRecoveryBoundaryTests/C1150_Watchdog_cleanup_requires_failure_and_fresh_safe_evidence*` | V-18 | 5 executed, 0 failed/skipped | 5 | 3 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-19 | S2-S4 | `CP-6` | statement-cost | `/*/*/DelegationDispatchRecoveryBoundaryTests/C1149_C1150_Statement_budgets*` | V-19 | 14 executed, 0 failed/skipped; actual totals reported per action | 14 | 5 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-20 | S2-S4 | `CP-6` | working-safety | `/*/*/DelegationDispatchRecoveryBoundaryTests/C1149_C1150_Working_full_tick_safety*` | V-20 | 2 executed, 0 failed/skipped; D-7 prerequisite resolved first | 2 | 3 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-21 | S5 | `tests/Antiphon.Tests -> bin-c1149-s5/` | boundary-regression | `/*/*/DelegationDispatchRecoveryBoundaryTests/*` | R-1 | full class, 0 failed/skipped | 1 | 6 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-22 | S5 | `CP-21` | landed-brief | `/*/*/DelegationBriefRecoveryTests/*` | R-2 | all 3 methods, 0 failed/skipped | 3 | 2 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-23 | S5 | `CP-21` | dead-session | `/*/*/AgentTaskDeadSessionReconciliationTests/*` | R-3 | full class, 0 failed/skipped | 1 | 3 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-24 | S5 | `CP-21` | watchdog-regression | `/*/*/AgentTaskDeliveryWatchdogTests/*` | R-4 | full partial class including C714, 0 failed/skipped | 1 | 5 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-25 | S5 | `CP-21` | resume-regression | `/*/*/AgentSessionInterruptedLaunchResumeTests/*` | R-5 | full class, 0 failed/skipped | 1 | 3 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-26 | S5 | `CP-21` | reconcile-regression | `/*/*/SessionReconciliationServiceTests/*` | R-6 | full class, 0 failed/skipped | 1 | 3 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-27 | S5 | `CP-21` | ownership-regression | `/*/*/AgentSessionLaunchQueueOwnershipTests/*` | R-7 | full class, 0 failed/skipped | 1 | 3 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-28 | S5 | `CP-21` | dispatch-failure | `/*/*/AgentTaskDispatchFailureTests/*` | R-8 | full class, 0 failed/skipped | 1 | 3 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-29 | S5 | `CP-21` | claim-capacity | `/*/*/AgentTaskConcurrencyLimitTests/*` | R-9 | full class, 0 failed/skipped | 1 | 3 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-30 | S5 | `CP-21` | claim-predicates | `/*/*/AgentTaskDispatcherPredicateTests/*` | R-10 | full class, 0 failed/skipped | 1 | 1 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-31 | S5 | `CP-21` | interrupted-attempt | `/*/*/SessionMessageQueueInterruptedAttemptTests/*` | R-11 | full class, 0 failed/skipped | 1 | 4 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-32 | S5 | `CP-21` | queue-verification | `/*/*/SessionMessageQueueDeliveryVerificationTests/*` | R-12 | full class, 0 failed/skipped | 1 | 6 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-33 | S5 | `CP-21` | queue-regression | `/*/*/SessionMessageQueueServiceTests/*` | R-13 | full class, 0 failed/skipped | 1 | 6 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-34 | S5 | `CP-21` | termination-source | `/*/*/SessionTerminationSourcePersistenceTests/*` | R-14 | full class, 0 failed/skipped | 1 | 2 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-35 | S5 | `CP-21` | liveness-classifier | `/*/*/AgentTaskLivenessTests/*` | R-15 | full class, 0 failed/skipped | 1 | 1 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-36 | S5 | `CP-21` | converter-handoff | `/*/*/ChannelOutboundUnifiedTransportTests/C519_Converter_handoff*` | R-16 | all 8 cases, 0 failed/skipped | 8 | 8 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-20 | S-boot | `tests/Antiphon.Tests -> bin-c1149-sboot/` | working-safety | `/*/*/DelegationDispatchRecoveryBoundaryTests/C1149_C1150_Working_full_tick_safety*` | V-20 | 2 executed, 0 failed/skipped; prerequisite card has removed the boot kill | 2 | 3 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-21 | S5 | `tests/Antiphon.Tests -> bin-c1149-s5/` | boundary-regression | `/*/*/DelegationDispatchRecoveryBoundaryTests/*` | R-1 | 59 executed, 0 failed/skipped | 59 | 6 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-22 | S5 | `CP-21` | landed-brief | `/*/*/DelegationBriefRecoveryTests/*` | R-2 | 3 executed, 0 failed/skipped | 3 | 2 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-23 | S5 | `CP-21` | dead-session | `/*/*/AgentTaskDeadSessionReconciliationTests/*` | R-3 | 25 executed, 0 failed/skipped | 25 | 3 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-24 | S5 | `CP-21` | watchdog-regression | `/*/*/AgentTaskDeliveryWatchdogTests/*` | R-4 | 85 executed, 0 failed/skipped | 85 | 5 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-25 | S5 | `CP-21` | resume-regression | `/*/*/AgentSessionInterruptedLaunchResumeTests/*` | R-5 | 8 executed, 0 failed/skipped | 8 | 3 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-26 | S5 | `CP-21` | reconcile-regression | `/*/*/SessionReconciliationServiceTests/*` | R-6 | 67 executed, 0 failed/skipped | 67 | 3 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-27 | S5 | `CP-21` | ownership-regression | `/*/*/AgentSessionLaunchQueueOwnershipTests/*` | R-7 | 7 executed, 0 failed/skipped | 7 | 3 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-28 | S5 | `CP-21` | dispatch-failure | `/*/*/AgentTaskDispatchFailureTests/*` | R-8 | 15 executed, 0 failed/skipped | 15 | 3 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-29 | S5 | `CP-21` | claim-capacity | `/*/*/AgentTaskConcurrencyLimitTests/*` | R-9 | 25 executed, 0 failed/skipped | 25 | 3 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-30 | S5 | `CP-21` | claim-predicates | `/*/*/AgentTaskDispatcherPredicateTests/*` | R-10 | 17 executed, 0 failed/skipped | 17 | 1 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-31 | S5 | `CP-21` | interrupted-attempt | `/*/*/SessionMessageQueueInterruptedAttemptTests/*` | R-11 | 15 executed, 0 failed/skipped | 15 | 4 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-32 | S5 | `CP-21` | queue-verification | `/*/*/SessionMessageQueueDeliveryVerificationTests/*` | R-12 | 123 executed, 0 failed/skipped | 123 | 6 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-33 | S5 | `CP-21` | queue-regression | `/*/*/SessionMessageQueueServiceTests/*` | R-13 | 25 executed, 0 failed/skipped | 25 | 6 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-34 | S5 | `CP-21` | termination-source | `/*/*/SessionTerminationSourcePersistenceTests/*` | R-14 | 3 executed, 0 failed/skipped | 3 | 2 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-35 | S5 | `CP-21` | liveness-classifier | `/*/*/AgentTaskLivenessTests/*` | R-15 | 6 executed, 0 failed/skipped | 6 | 1 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-36 | S5 | `CP-21` | converter-handoff | `/*/*/ChannelOutboundUnifiedTransportTests/C519_Converter_handoff*` | R-16 | 8 executed, 0 failed/skipped | 8 | 8 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-37 | S1 | `CP-1` | boot-stall-now | `/*/*/BootStallWorkingTickCharacterizationTests/*` | R-boot | 3 executed, 0 failed/skipped | 3 | 2 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-38 | S5 | `CP-21` | boot-stall-still | `/*/*/BootStallWorkingTickCharacterizationTests/*` | R-boot | 3 executed, 0 failed/skipped | 3 | 2 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
