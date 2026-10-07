@@ -206,7 +206,8 @@ public class DelegateScriptWorktreeBaseTests
         {
             if (args is ["rev-parse", "--path-format=absolute", "--git-common-dir"])
             {
-                clock.Advance(TimeSpan.FromSeconds(2));
+                // WorktreeBaseInspectionTimeoutSeconds defaults to 5; a shorter advance never trips it.
+                clock.Advance(TimeSpan.FromSeconds(5));
                 return Task.FromResult(new LandingGitResult(0, repository, ""));
             }
             return base.RunAsync(repository, args, ct);
