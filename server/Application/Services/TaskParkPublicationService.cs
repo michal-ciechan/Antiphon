@@ -22,6 +22,8 @@ public sealed class TaskParkPublicationService(AppDbContext db, LocalTaskParkPub
 {
     // Pause only at the real receipt persistence boundary; never substitutes eligibility or I/O.
     internal Func<TaskParkPublicationEvidence, CancellationToken, Task>? BeforeReceiptSaveAsync { get; init; }
+    // Test witness for a source re-read. Production leaves it null, so VerifyAsync is unchanged.
+    internal Func<Guid, CancellationToken, Task>? BeforeVerifyAsync { get; init; }
     /// <summary>Read source identity from the bound runner and persist the Requested intent.
     /// No publication or release occurs here, and no database lock spans the runner read.</summary>
     public async Task<TaskParkSourceIdentityResult> CaptureSourceIdentityAsync(Guid parkId, CancellationToken ct)
@@ -141,6 +143,7 @@ public sealed class TaskParkPublicationService(AppDbContext db, LocalTaskParkPub
     /// <summary>Fresh, read-only source verification of a durable receipt, for the future coordinator.</summary>
     public async Task<TaskParkPublicationResult> VerifyAsync(Guid parkId, CancellationToken ct)
     {
+        if (BeforeVerifyAsync is not null) await BeforeVerifyAsync(parkId, ct);
         if (!CanOwnTransaction()) return Held("park_busy");
         var evidence = await ReadEvidenceAsync(parkId, ct);
         if (evidence is null) return Held("park_receipt_missing");

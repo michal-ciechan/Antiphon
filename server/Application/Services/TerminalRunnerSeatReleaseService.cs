@@ -616,13 +616,18 @@ public sealed class TerminalRunnerSeatReleaseService(
             if (release.State != RunnerSeatReleaseState.Reserved) return;
             var source = await ReleaseSourceAsync(release, verify: true, ct);
             if (await RequiresPublicationAsync(release, recoveryOnly: false, ct) && source is null) return;
-            if (BoundaryAsync is not null) await BoundaryAsync("BeforeDispatch", ct);
-            // The pre-boundary read cannot see a source change made at this cut.
-            source = await ReleaseSourceAsync(release, verify: true, ct);
-            if (await RequiresPublicationAsync(release, recoveryOnly: false, ct) && source is null)
+            // Production never installs BoundaryAsync, so the second read is a duplicate.
+            // A fixture cut still re-reads, and a missing source still records PublicationRequired.
+            if (BoundaryAsync is not null)
             {
-                await PendingAsync(release, nameof(TerminalRunnerSeatDecision.PublicationRequired), ct);
-                return;
+                await BoundaryAsync("BeforeDispatch", ct);
+                // The pre-boundary read cannot see a source change made at this cut.
+                source = await ReleaseSourceAsync(release, verify: true, ct);
+                if (await RequiresPublicationAsync(release, recoveryOnly: false, ct) && source is null)
+                {
+                    await PendingAsync(release, nameof(TerminalRunnerSeatDecision.PublicationRequired), ct);
+                    return;
+                }
             }
             if (!await RunnerReadyAsync(release, ct))
             {

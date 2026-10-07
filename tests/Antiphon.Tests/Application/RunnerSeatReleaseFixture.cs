@@ -192,7 +192,22 @@ internal sealed partial class RunnerSeatReleaseFixture : IAsyncDisposable
                             sp.GetRequiredService<WorkspaceReservationJournal>(), reservationGate));
                     }
                     services.AddScoped<LocalTaskParkPublisher>();
-                    services.AddScoped<TaskParkPublicationService>();
+                    services.AddScoped(sp => new TaskParkPublicationService(
+                        sp.GetRequiredService<AppDbContext>(),
+                        sp.GetRequiredService<LocalTaskParkPublisher>(),
+                        sp.GetRequiredService<ISessionRunnerDirectory>(),
+                        sp.GetRequiredService<IWorkspaceReservationJournal>(),
+                        sp.GetRequiredService<TimeProvider>(),
+                        sp.GetRequiredService<IOptions<BlockedTaskParkingOptions>>())
+                    {
+                        BeforeReceiptSaveAsync = wire.BeforeReceiptSaveAsync,
+                        BeforeVerifyAsync = (parkId, ct) =>
+                        {
+                            wire.VerifyCalls++;
+                            return wire.BeforeVerifyAsync is null
+                                ? Task.CompletedTask : wire.BeforeVerifyAsync(parkId, ct);
+                        },
+                    });
                     services.AddScoped<BlockedTaskSyncRecoveryService>();
                     services.AddSingleton<DelegationWorkspaceResolver>();
                     services.AddDelegationWorktreeGraph(new GitSettings());
@@ -913,6 +928,9 @@ internal sealed partial class RunnerSeatReleaseFixture : IAsyncDisposable
         public Exception? CallbackFailure { get; private set; }
         public Func<TerminalSeatReleaseResult, TerminalSeatReleaseResult>? RewriteReply { get; set; }
         public Func<TerminalSeatReleaseRequest, Task<bool>>? VerifySource { get; set; }
+        public int VerifyCalls { get; set; }
+        public Func<TaskParkPublicationEvidence, CancellationToken, Task>? BeforeReceiptSaveAsync { get; set; }
+        public Func<Guid, CancellationToken, Task>? BeforeVerifyAsync { get; set; }
         public RunnerWorkspaceParkService? ParkRuntime { get; set; }
         public Action? LeaseBusyObserved { get; set; }
         public List<TerminalSeatReleaseRequest> Requests { get; } = [];

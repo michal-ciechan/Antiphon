@@ -600,6 +600,72 @@ public sealed class BlockedTaskParkReclaimTests
     }
 
     [Test]
+    public async Task C1108_AdvanceVerifiesSourceOnceWithoutBoundary()
+    {
+        await using (var plain = await ReadyLegacyReleaseAsync())
+        {
+            await plain.ReclaimAsync(32, 1);
+            // Two publication-gate verifies stay. AdvanceAsync adds one, or two when a boundary is installed.
+            await AssertDispatchedReleaseAsync(plain, verifyCalls: 3, "G-11");
+        }
+
+        await using (var cut = await ReadyLegacyReleaseAsync())
+        {
+            await cut.ReclaimAsync(32, 1, (_, _) => Task.CompletedTask);
+            await AssertDispatchedReleaseAsync(cut, verifyCalls: 4, "V-6");
+        }
+    }
+
+    private static async Task AssertDispatchedReleaseAsync(RunnerSeatReleaseFixture f, int verifyCalls, string label)
+    {
+        Console.WriteLine($"C1108 verify label={label} calls={f.Wire.VerifyCalls}");
+        Released(f, f.SessionId).ShouldBeTrue(label);
+        f.Wire.Requests.Count(r => r.ParkVersion == 2).ShouldBe(1, label);
+        f.Wire.ForceCommands.ShouldBe(0, label);
+        f.Wire.VerifyCalls.ShouldBe(verifyCalls, label);
+        (await ParkOfAsync(f, f.TaskId)).State.ShouldBe(AgentTaskParkState.Parked, label);
+        await using var ledger = f.Db();
+        (await ledger.RunnerSeatReleases.AsNoTracking().ToListAsync())
+            .Count(TerminalRunnerSeatReleaseService.IsConfirmed).ShouldBe(1, label);
+    }
+
+    private static async Task<RunnerSeatReleaseFixture> ReadyLegacyReleaseAsync()
+    {
+        var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked, parking: true, reclaim: true);
+        try
+        {
+            f.Wire.Qualified = Idle(TimeSpan.Zero, null);
+            await f.EditAsync((task, _) => task.Role = AgentTaskRole.Code);
+            await f.CreateSourceAsync();
+            await CommitTipAsync(f);
+            var ancientAt = f.Now.AddHours(-30);
+            await using (var db = f.Db())
+            {
+                await db.AgentTasks.Where(t => t.Id == f.TaskId).ExecuteUpdateAsync(s => s
+                    .SetProperty(t => t.CompletedAt, ancientAt));
+                await db.AgentTaskEvents.Where(e => e.AgentTaskId == f.TaskId && e.Type == AgentTaskEventType.Blocked)
+                    .ExecuteUpdateAsync(s => s.SetProperty(e => e.At, ancientAt));
+            }
+            var verifier = new RunnerWorkspaceParkService();
+            f.Wire.VerifySource = async command => command is { ParkVersion: 2, Publication: { } receipt }
+                && (await verifier.VerifySessionCheckoutAsync(receipt, receipt.Request.Path, default)).Receipt is not null;
+            (await f.ReclaimAsync(32, 1)).ShouldBeGreaterThan(0, "V-6");
+            var park = await ParkOfAsync(f, f.TaskId);
+            park.LegacyDiscovery.ShouldBeTrue("V-6");
+            park.State.ShouldNotBe(AgentTaskParkState.Parked, "V-6");
+            AdvanceTo(f, park.CreatedAt, TimeSpan.FromMilliseconds(120_001));
+            f.Wire.BySession[f.SessionId] = Idle(TimeSpan.FromMilliseconds(120_001), AsUtc(park.CreatedAt));
+            f.Wire.VerifyCalls = 0;
+            return f;
+        }
+        catch
+        {
+            await f.DisposeAsync();
+            throw;
+        }
+    }
+
+    [Test]
     public async Task C1065_ClaimAndReplyInvalidateLegacyCandidate()
     {
         await InvalidateAsync("G-175", (f, _) => DriveAsync(f, f.AnswerAsync("reply invalidates the legacy candidate")), list: true);
