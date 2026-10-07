@@ -451,8 +451,10 @@ public sealed class ReviewEvidenceResettlementTests
 
     /// <summary>
     /// CARD-1082 V-27 / G-15. A Review blocked by desktop dirt, then continued under a held
-    /// lease, settles Succeeded Pending. Strict repair refuses that Pending witness, so the
-    /// unbound row stays and the handoff is the repair refusal.
+    /// lease, settles Succeeded Pending. Checkout validation runs before the lease, so the
+    /// continuation repairs the dirt first; the held lease is then the only sync failure.
+    /// Strict repair refuses that Pending witness, so the unbound row stays and the handoff
+    /// is the repair refusal.
     /// </summary>
     [Test]
     public async Task C1082_PendingContinuationRefusesStrictRebind()
@@ -474,6 +476,7 @@ public sealed class ReviewEvidenceResettlementTests
         old.Outcome.ShouldBe(StageOutcomeKind.Clean);
         old.ReviewedSourceSha.ShouldBeNull();
 
+        File.Delete(dirt);
         await AnswerAsync(w);
         await using (var held = await w.Git.Leases.TryAcquireAsync(w.Git.Desktop, CancellationToken.None))
         {
@@ -498,7 +501,7 @@ public sealed class ReviewEvidenceResettlementTests
         sync.ObservedSha.ShouldBe(w.Git.Baseline);
         sync.ConfirmedSha.ShouldBeNull();
         (await RowsAsync(w)).ShouldHaveSingleItem().Id.ShouldBe(old.Id);
-        (await File.ReadAllTextAsync(dirt)).ShouldBe("desktop dirt");
+        File.Exists(dirt).ShouldBeFalse();
         (await w.Git.HeadAsync()).ShouldBe(w.Git.Baseline);
     }
 
