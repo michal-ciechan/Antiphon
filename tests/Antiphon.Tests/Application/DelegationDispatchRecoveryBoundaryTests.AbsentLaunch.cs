@@ -48,15 +48,7 @@ public partial class DelegationDispatchRecoveryBoundaryTests
                 services.AddSingleton<DelegationWorkspaceResolver>();
                 services.AddDelegationWorktreeGraph();
                 services.AddScoped<AgentTaskService>();
-                // A positive whitelist test needs explicit complete native-history evidence.
-        // Production's absent-session 404 is unknown, never this fixture's empty certificate.
-        runner.ReadTranscript ??= async id =>
-        {
-            await using var nativeDb = new AppDbContext(TestDbFixture.CreateDbContextOptions(connection));
-            var generation = await nativeDb.AgentSessions.Where(s => s.Id == id).Select(s => s.StartedAt).SingleAsync();
-            return new SessionRunnerTranscriptDto(id, [], 0, TerminalComplete: true, AcceptedStartedAt: generation);
-        };
-        services.AddScoped<AgentTaskDispatcher>();
+                services.AddScoped<AgentTaskDispatcher>();
                 services.AddSingleton<IOptionsMonitor<AgentRegistrySettings>>(
                     new BridgeQueueHarness.OptionsMonitorStub<AgentRegistrySettings>(new AgentRegistrySettings
                     {
