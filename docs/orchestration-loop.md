@@ -786,7 +786,7 @@ card, and prefer GitHub-linked cards. Feed depth and alternation are advisory. C
 create-time gate is the hard stop: `MaxOpenTasks` defaults to 6 per project scope across all
 runners, counting Queued, Dispatched and Working non-specialist tasks but not Blocked ones. Its
 live value is exposed only in a 409 `concurrency_limit` response, `axis: absolute`.
-Blocked is outside MaxOpenTasks and still occupies a runner seat. A Blocked session keeps its runner seat until parking releases it. At capacity, read GET /api/session-runners/{id}/slots and count orphan=true.
+Blocked is outside MaxOpenTasks and still occupies a runner seat. A Blocked session keeps its runner seat until parking releases it. At capacity, read GET /api/session-runners/{id}/slots. orphan=true is not a count of free seats: it marks a seat with no live desktop session or no owner task, and a live Blocked child reads orphan=false with its park field. Answer or cancel each Blocked child.
 The role gate
 uses `Delegation:RolePolicy:<role>:RecommendedInFlight`, also reported as `axis: role` on 409.
 The code defaults in `DelegationSettings.cs` are Code 2, Review 2 and other named roles 1.

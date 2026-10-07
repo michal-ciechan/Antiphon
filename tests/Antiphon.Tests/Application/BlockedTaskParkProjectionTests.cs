@@ -87,7 +87,8 @@ public sealed class BlockedTaskParkProjectionTests
         Require(loop, "the published seat was released", "c1065-published-seat");
         Require(loop, "A Blocked session keeps its runner seat until parking releases it.", "c1065-loop-seat");
         Require(loop, "Blocked is outside MaxOpenTasks and still occupies a runner seat.", "c1065-max-open");
-        Require(loop, "count orphan=true", "c1065-loop-orphan");
+        Require(loop, "orphan=true is not a count of free seats", "c1065-loop-orphan");
+        loop.ShouldNotContain("count orphan=true", Case.Sensitive, "c1124-loop-no-count");
         Require(loop, "The 422 follow_up_remote_pool_unsupported fires before the Blocked branch, so a confirmed park on a remote pool agent does not hear Reply.", "c1065-loop-422");
         Require(loop, "including Blocked", "c1065-including-blocked");
 
@@ -108,7 +109,8 @@ public sealed class BlockedTaskParkProjectionTests
             Require(text, "A Blocked child holds its seat until it is answered or cancelled.", "c1065-blocked-child:" + relative);
             Require(text, "do not leave one overnight", "c1065-overnight:" + relative);
             Require(text, "GET /api/session-runners/{id}/slots", "c1065-slots:" + relative);
-            Require(text, "count orphan=true", "c1065-orphan-count:" + relative);
+            Require(text, "orphan=true is not a count of free seats", "c1065-orphan-count:" + relative);
+            text.ShouldNotContain("count orphan=true", Case.Sensitive, "c1124-skill-no-count");
             Require(text, "(CARD-1083)", "c1065-card-1083:" + relative);
         }
 
