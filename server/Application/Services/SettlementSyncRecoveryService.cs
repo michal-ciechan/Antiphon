@@ -10,13 +10,19 @@ namespace Antiphon.Server.Application.Services;
 /// <summary>
 /// CARD-1082 D-5. Retries an accepted desktop fast-forward. At most 32 due rows, Git outside
 /// the claim transaction, and the only write is the debt row. An empty table costs the one
-/// indexed read in <see cref="SweepAsync"/>. This service does not read
+/// indexed read in <see cref="SweepAsync"/>. A Held row is re-checked every
+/// <see cref="HeldRecheckMinutes"/> for its worktree registration only: it ends
+/// Superseded once that registration is gone, and the re-check never runs Git.
+/// This service does not read
 /// <c>RunnerSyncDebtOnSettlement</c>: that switch stops settlement from minting a row, and a
 /// row already accepted keeps recovering.
 /// </summary>
 public sealed class SettlementSyncRecoveryService(AppDbContext db, RemoteWorkspaceService workspace,
     IEventBus events, TimeProvider clock, ILogger<SettlementSyncRecoveryService> logger)
 {
+    /// <summary>CARD-1136 D-3. Not a setting. A Held row is revisited at most once per hour.</summary>
+    private const int HeldRecheckMinutes = 60;
+
     internal Func<string, CancellationToken, Task>? BoundaryAsync { get; set; }
 
     public async Task<int> SweepAsync(CancellationToken ct)
@@ -25,7 +31,9 @@ public sealed class SettlementSyncRecoveryService(AppDbContext db, RemoteWorkspa
             || db.ChangeTracker.HasChanges()) return 0;
         var now = clock.GetUtcNow().UtcDateTime;
         var ids = await db.AgentTaskSyncDebts.AsNoTracking()
-            .Where(d => d.State == AgentTaskSyncDebtState.Pending && d.NextAttemptAt <= now)
+            .Where(d => (d.State == AgentTaskSyncDebtState.Pending && d.NextAttemptAt <= now)
+                || (d.State == AgentTaskSyncDebtState.Held
+                    && (d.NextAttemptAt == null || d.NextAttemptAt <= now)))
             .OrderBy(d => d.NextAttemptAt).ThenBy(d => d.Id).Select(d => d.Id).Take(32).ToListAsync(ct);
         var attempted = 0;
         foreach (var id in ids)
@@ -62,6 +70,27 @@ public sealed class SettlementSyncRecoveryService(AppDbContext db, RemoteWorkspa
         if (snapshot is null) return null;
         await LockTaskAsync(snapshot.TaskId, ct);
         var debt = await db.AgentTaskSyncDebts.AsNoTracking().SingleAsync(d => d.Id == id, ct);
+        if (debt.State == AgentTaskSyncDebtState.Held)
+        {
+            if (debt.NextAttemptAt is not null && debt.NextAttemptAt > due) return null;
+            if (await RegistrationGoneAsync(debt, ct))
+            {
+                await TerminalAsync(debt, AgentTaskSyncDebtState.Superseded,
+                    RemoteSettlementSyncReasons.SettlementSyncSuperseded, due, ct);
+                await tx.CommitAsync(ct);
+                return null;
+            }
+
+            var recheck = due.AddMinutes(HeldRecheckMinutes);
+            var rescheduled = await db.AgentTaskSyncDebts.Where(d => d.Id == id && d.Revision == debt.Revision
+                    && d.State == AgentTaskSyncDebtState.Held)
+                .ExecuteUpdateAsync(u => u.SetProperty(d => d.NextAttemptAt, recheck)
+                    .SetProperty(d => d.UpdatedAt, due)
+                    .SetProperty(d => d.Revision, d => d.Revision + 1), ct);
+            if (rescheduled == 1) await tx.CommitAsync(ct);
+            return null;
+        }
+
         if (debt.State != AgentTaskSyncDebtState.Pending || debt.NextAttemptAt is null || debt.NextAttemptAt > due)
             return null;
         var task = await db.AgentTasks.AsNoTracking().SingleOrDefaultAsync(t => t.Id == debt.TaskId, ct);
@@ -148,6 +177,8 @@ public sealed class SettlementSyncRecoveryService(AppDbContext db, RemoteWorkspa
             next = claim.Debt.NextAttemptAt;
         }
         var now = clock.GetUtcNow().UtcDateTime;
+        if (state == AgentTaskSyncDebtState.Held)
+            next = now.AddMinutes(HeldRecheckMinutes);
         var changed = await db.AgentTaskSyncDebts.Where(d => d.Id == claim.Debt.Id
                 && d.Revision == claim.Debt.Revision
                 && d.State == AgentTaskSyncDebtState.Pending
@@ -165,14 +196,17 @@ public sealed class SettlementSyncRecoveryService(AppDbContext db, RemoteWorkspa
     }
 
     private async Task TerminalAsync(AgentTaskSyncDebt debt, AgentTaskSyncDebtState state, string reason,
-        DateTime now, CancellationToken ct) =>
+        DateTime now, CancellationToken ct)
+    {
+        DateTime? next = state == AgentTaskSyncDebtState.Held ? now.AddMinutes(HeldRecheckMinutes) : null;
         await db.AgentTaskSyncDebts.Where(d => d.Id == debt.Id && d.Revision == debt.Revision
-                && d.State == AgentTaskSyncDebtState.Pending)
+                && d.State == debt.State)
             .ExecuteUpdateAsync(u => u.SetProperty(d => d.State, state)
                 .SetProperty(d => d.ReasonCode, reason)
-                .SetProperty(d => d.NextAttemptAt, (DateTime?)null)
+                .SetProperty(d => d.NextAttemptAt, next)
                 .SetProperty(d => d.UpdatedAt, now)
                 .SetProperty(d => d.Revision, d => d.Revision + 1), ct);
+    }
 
     private static bool EpisodeMatches(AgentTask? task, AgentTaskSyncDebt debt)
     {

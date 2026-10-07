@@ -19,8 +19,8 @@ namespace Antiphon.Tests.Application;
 
 /// <summary>
 /// CARD-1082 S4b. The dispatcher sweep fast-forwards a seeded debt only to its recorded source.
-/// Seven methods, ten results: CP-6 counted the three refusal rows and the two episode rows;
-/// S6 adds the task-detail projection.
+/// Nine methods, thirteen results: the three refusal rows, the two episode rows, the task-detail
+/// projection, and CARD-1136's two Held re-check methods (one of them with two arguments).
 /// </summary>
 [Category("Integration")]
 [Category("Slow")]
@@ -54,6 +54,38 @@ public sealed class SettlementSyncRecoveryTests
         counter.Reset();
         (await world.SweepSettlementSyncAsync()).ShouldBe(0);
         counter.Statements.ShouldBe(1, "the kill switch adds no second query while the table is empty");
+
+        var probeNow = world.DebtClock.GetUtcNow().UtcDateTime;
+        await using (var db = world.CreateContext())
+        {
+            db.AgentTaskSyncDebts.Add(new AgentTaskSyncDebt
+            {
+                Id = Guid.NewGuid(),
+                TaskId = world.TaskId,
+                Attempt = world.Task.Attempt,
+                SettlementEventId = Guid.NewGuid(),
+                State = AgentTaskSyncDebtState.Held,
+                ReasonCode = RemoteSettlementSyncReasons.TipNotReported,
+                NextAttemptAt = probeNow.AddMinutes(60),
+                CreatedAt = probeNow,
+                UpdatedAt = probeNow,
+            });
+            await db.SaveChangesAsync();
+        }
+        counter.Reset();
+        (await world.SweepSettlementSyncAsync()).ShouldBe(0, "a not-due Held row attempts nothing");
+        counter.Statements.ShouldBe(1, "a not-due Held row is still one statement per tick");
+        var heldSql = counter.Texts.Single();
+        heldSql.ShouldContain("AgentTaskSyncDebts");
+        heldSql.ShouldContain("NextAttemptAt");
+        heldSql.ShouldContain("IS NULL");
+        heldSql.ShouldNotContain("UPDATE");
+        await using (var db = world.CreateContext())
+        {
+            var probe = await db.AgentTaskSyncDebts.SingleAsync(d => d.TaskId == world.TaskId);
+            db.AgentTaskSyncDebts.Remove(probe);
+            await db.SaveChangesAsync();
+        }
 
         var source = await world.Git.RunnerPushAsync("work.txt", "recorded");
         (await world.Git.HeadAsync()).ShouldBe(world.Git.Baseline);
@@ -106,7 +138,7 @@ public sealed class SettlementSyncRecoveryTests
         debt.ReasonCode.ShouldBe(RemoteSettlementSyncReasons.TipNotReported);
         debt.ConfirmedSha.ShouldBeNull();
         debt.SourceReadyAt.ShouldBeNull();
-        debt.NextAttemptAt.ShouldBeNull();
+        debt.NextAttemptAt.ShouldBe(world.DebtClock.GetUtcNow().UtcDateTime.AddMinutes(60));
         (await world.Git.HeadAsync()).ShouldBe(world.Git.Baseline);
         world.Git.Git.Commands.ShouldNotContain(c => c.Contains("--ff-only", StringComparison.Ordinal));
         File.Exists(Path.Combine(world.Git.Worktree, "later.txt")).ShouldBeFalse();
@@ -130,6 +162,7 @@ public sealed class SettlementSyncRecoveryTests
         refused.State.ShouldBe(AgentTaskSyncDebtState.Held);
         refused.ReasonCode.ShouldBe(RemoteSettlementSyncReasons.Diverged);
         refused.ConfirmedSha.ShouldBeNull();
+        refused.NextAttemptAt.ShouldBe(rewritten.DebtClock.GetUtcNow().UtcDateTime.AddMinutes(60));
         (await rewritten.Git.HeadAsync()).ShouldBe(rewritten.Git.Baseline);
         rewritten.Git.Git.Commands.ShouldNotContain(c => c.Contains("--ff-only", StringComparison.Ordinal));
         File.Exists(Path.Combine(rewritten.Git.Worktree, "orphan.txt")).ShouldBeFalse();
@@ -240,7 +273,7 @@ public sealed class SettlementSyncRecoveryTests
             _ => RemoteSettlementSyncReasons.Diverged,
         }, scenario);
         debt.ConfirmedSha.ShouldBeNull(scenario);
-        debt.NextAttemptAt.ShouldBeNull(scenario);
+        debt.NextAttemptAt.ShouldBe(world.DebtClock.GetUtcNow().UtcDateTime.AddMinutes(60), scenario);
         (await world.Git.HeadAsync()).ShouldBe(head, scenario);
         world.Git.Git.Commands.ShouldNotContain(c => c.Contains("--ff-only", StringComparison.Ordinal), scenario);
         if (scenario == "dirty")
@@ -302,11 +335,13 @@ public sealed class SettlementSyncRecoveryTests
         {
             debt.State.ShouldBe(AgentTaskSyncDebtState.Held);
             debt.ReasonCode.ShouldBe(RemoteSettlementSyncReasons.SettlementSyncEpisodeChanged);
+            debt.NextAttemptAt.ShouldBe(world.DebtClock.GetUtcNow().UtcDateTime.AddMinutes(60), scenario);
         }
         else
         {
             debt.State.ShouldBe(AgentTaskSyncDebtState.Superseded);
             debt.ReasonCode.ShouldBe(RemoteSettlementSyncReasons.SettlementSyncSuperseded);
+            debt.NextAttemptAt.ShouldBeNull(scenario);
         }
         debt.ConfirmedSha.ShouldBeNull(scenario);
         debt.Attempts.ShouldBe(0, scenario);
@@ -426,6 +461,158 @@ public sealed class SettlementSyncRecoveryTests
         detail.ProgressEvidence.RemoteSync!.State.ShouldBe(RemoteSettlementSyncState.Pending);
         detail.ProgressEvidence.RemoteSync.ObservedSha.ShouldBe(source);
         detail.ProgressEvidence.RemoteSync.ConfirmedSha.ShouldBeNull();
+    }
+
+    /// <summary>
+    /// V-8. A Held <c>runner_sync_tip_not_reported</c> row stays Held until 60 minutes have
+    /// passed. The re-check then ends it Superseded when a retirement row exists or the worktree
+    /// directory is gone, without Git, without counting an attempt, and with no attention row.
+    /// </summary>
+    [Test]
+    [Arguments("retirement-row")]
+    [Arguments("directory-gone")]
+    public async Task C1136_HeldDebtEndsSupersededOnceTheWorktreeIsRetired(string scenario)
+    {
+        await using var world = await SeedHeldTipAsync();
+        var seeded = await DebtAsync(world);
+        var attempts = seeded.Attempts;
+        var head = await world.Git.HeadAsync();
+        var gitDir = scenario == "directory-gone"
+            ? await world.Git.RunAsync(world.Git.Worktree, "rev-parse", "--absolute-git-dir")
+            : null;
+        if (scenario == "retirement-row")
+            await AddRetirementAsync(world, seeded);
+        else
+            DeleteWorktree(world);
+
+        world.Git.Git.Clear();
+        (await world.SweepSettlementSyncAsync()).ShouldBe(0, scenario + " is not due yet");
+        var early = await DebtAsync(world);
+        early.State.ShouldBe(AgentTaskSyncDebtState.Held, scenario);
+        early.Attempts.ShouldBe(attempts, scenario);
+        early.ReasonCode.ShouldBe(RemoteSettlementSyncReasons.TipNotReported, scenario);
+        world.Git.Git.Commands.ShouldBeEmpty(scenario + " before the re-check");
+
+        world.DebtClock.Advance(TimeSpan.FromMinutes(60));
+        (await world.SweepSettlementSyncAsync()).ShouldBe(0, scenario + " re-check is not an attempt");
+        var debt = await DebtAsync(world);
+        debt.State.ShouldBe(AgentTaskSyncDebtState.Superseded, scenario);
+        debt.ReasonCode.ShouldBe(RemoteSettlementSyncReasons.SettlementSyncSuperseded, scenario);
+        debt.Attempts.ShouldBe(attempts, scenario);
+        debt.NextAttemptAt.ShouldBeNull(scenario);
+        world.Git.Git.Commands.ShouldBeEmpty(scenario);
+        if (scenario == "directory-gone")
+        {
+            Directory.Exists(world.Git.Worktree).ShouldBeFalse(scenario);
+            (await world.Git.RunAsync(world.Git.Desktop, "--git-dir", gitDir!, "rev-parse", "HEAD"))
+                .ShouldBe(head, scenario);
+        }
+        else
+            (await world.Git.HeadAsync()).ShouldBe(head, scenario);
+
+        SettlementSyncDebtAttention.Build(
+            [debt], [world.Task], world.DebtClock.GetUtcNow().UtcDateTime, new DelegationSettings())
+            .ShouldBeEmpty();
+    }
+
+    /// <summary>
+    /// V-9. After 60 minutes a Held row whose worktree is still registered stays Held, moves
+    /// <c>NextAttemptAt</c> forward 60 minutes, advances <c>Revision</c>, runs no Git, counts
+    /// no attempt, and still warns.
+    /// </summary>
+    [Test]
+    public async Task C1136_HeldDebtWithALiveWorktreeStaysHeldAndReschedules()
+    {
+        await using var world = await SeedHeldTipAsync();
+        var before = await DebtAsync(world);
+        var head = await world.Git.HeadAsync();
+        var counter = new StatementCounter();
+        world.Interceptors.Add(counter);
+        await world.RestartServicesAsync();
+
+        (await world.SweepSettlementSyncAsync()).ShouldBe(0, "a not-due Held row is not claimed");
+        counter.Statements.ShouldBe(1, "a not-due Held row is still one statement per tick");
+        var sql = counter.Texts.Single();
+        sql.ShouldContain("AgentTaskSyncDebts");
+        sql.ShouldContain("NextAttemptAt");
+        sql.ShouldContain("IS NULL");
+        sql.ShouldNotContain("UPDATE");
+        (await DebtAsync(world)).Revision.ShouldBe(before.Revision);
+
+        world.DebtClock.Advance(TimeSpan.FromMinutes(60));
+        world.Git.Git.Clear();
+        counter.Reset();
+        (await world.SweepSettlementSyncAsync()).ShouldBe(0, "a Held re-check is not an attempt");
+        var debt = await DebtAsync(world);
+        debt.State.ShouldBe(AgentTaskSyncDebtState.Held);
+        debt.ReasonCode.ShouldBe(RemoteSettlementSyncReasons.TipNotReported);
+        debt.NextAttemptAt.ShouldBe(before.NextAttemptAt!.Value.AddMinutes(60));
+        debt.NextAttemptAt.ShouldBe(world.DebtClock.GetUtcNow().UtcDateTime.AddMinutes(60));
+        debt.Revision.ShouldBe(before.Revision + 1);
+        debt.Attempts.ShouldBe(before.Attempts);
+        world.Git.Git.Commands.ShouldBeEmpty();
+        (await world.Git.HeadAsync()).ShouldBe(head);
+        var item = SettlementSyncDebtAttention.Build(
+            [debt], [world.Task], world.DebtClock.GetUtcNow().UtcDateTime, new DelegationSettings())
+            .ShouldHaveSingleItem();
+        item.Severity.ShouldBe(AlertSeverity.Warning);
+        item.Kind.ShouldBe(AttentionKind.SessionDisagreement);
+        item.ConditionKey.ShouldBe("settlement-sync-debt:" + debt.Id.ToString("D"));
+    }
+
+    private static async Task<RunnerSettlementWorld> SeedHeldTipAsync()
+    {
+        var world = await RunnerSettlementWorld.CreateAsync();
+        var source = await world.Git.RunnerPushAsync("work.txt", "recorded");
+        var advanced = await world.Git.RunnerPushAsync("later.txt", "advanced");
+        advanced.ShouldNotBe(source);
+        await SeedAsync(world, source);
+        world.Git.Git.Clear();
+        (await world.SweepSettlementSyncAsync()).ShouldBe(1);
+        var debt = await DebtAsync(world);
+        debt.State.ShouldBe(AgentTaskSyncDebtState.Held);
+        debt.ReasonCode.ShouldBe(RemoteSettlementSyncReasons.TipNotReported);
+        debt.Attempts.ShouldBe(1);
+        debt.NextAttemptAt.ShouldBe(world.DebtClock.GetUtcNow().UtcDateTime.AddMinutes(60));
+        (await world.Git.HeadAsync()).ShouldBe(world.Git.Baseline);
+        world.Git.Git.Clear();
+        return world;
+    }
+
+    private static async Task AddRetirementAsync(RunnerSettlementWorld world, AgentTaskSyncDebt debt)
+    {
+        await using var db = world.CreateContext();
+        var now = world.DebtClock.GetUtcNow().UtcDateTime;
+        db.TaskWorktreeRetirements.Add(new TaskWorktreeRetirement
+        {
+            Id = Guid.NewGuid(),
+            TaskId = world.TaskId,
+            TaskAttempt = debt.Attempt,
+            TerminalStatus = AgentTaskStatus.Succeeded,
+            TaskCompletedAt = now,
+            ReleasedTaskRevision = Guid.NewGuid(),
+            CallerIdentity = "sweep",
+            ReleaseReason = "retired",
+            ReleasedAt = now,
+            RepositoryPath = world.Git.Desktop,
+            CommonDirectory = world.Git.Desktop,
+            WorktreePath = world.Git.Worktree,
+            GitDirectory = world.Git.Desktop,
+            SourceFullRef = world.Git.FullRef,
+            SourceSha = debt.SourceSha ?? "",
+            TargetFullRef = "refs/heads/master",
+            State = WorktreeRetirementState.Released,
+            Active = true,
+            UpdatedAt = now,
+        });
+        await db.SaveChangesAsync();
+    }
+
+    private static void DeleteWorktree(RunnerSettlementWorld world)
+    {
+        foreach (var file in Directory.EnumerateFiles(world.Git.Worktree, "*", SearchOption.AllDirectories))
+            File.SetAttributes(file, FileAttributes.Normal);
+        Directory.Delete(world.Git.Worktree, recursive: true);
     }
 
     private static async Task<AgentTaskDetailDto> DetailAsync(RunnerSettlementWorld world)
