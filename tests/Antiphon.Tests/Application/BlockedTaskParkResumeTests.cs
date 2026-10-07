@@ -1,3 +1,4 @@
+using System.Data.Common;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
@@ -515,6 +516,73 @@ public sealed class BlockedTaskParkResumeTests
         string.Join(",", await ResumeWarningsAsync(f)).ShouldBe(reasons, "G-9");
     }
 
+    [Test]
+    public async Task C1097Telemetry_LookupTimeoutKeepsRefusedParkQueued()
+    {
+        var fault = new ParkResumeWarningFault { Armed = ParkResumeWarningFault.Cut.LookupTimeout };
+        await using var f = await PrepareDirtyRefusalAsync(fault);
+        var tick = await f.DispatchAsync();
+        fault.Faults.ShouldBeGreaterThan(0, "G-9 lookup");
+        await AssertRefusalUnchangedAsync(f, tick, "G-9 lookup");
+        (await ResumeWarningsAsync(f)).Count.ShouldBe(1, "G-9 lookup");
+    }
+
+    [Test]
+    public async Task C1097Telemetry_InsertCancellationKeepsRefusedParkQueued()
+    {
+        var fault = new ParkResumeWarningFault { Armed = ParkResumeWarningFault.Cut.InsertNotCallerCancel };
+        await using var f = await PrepareDirtyRefusalAsync(fault);
+        var tick = await f.DispatchAsync();
+        fault.Faults.ShouldBeGreaterThan(0, "G-9 insert");
+        await AssertRefusalUnchangedAsync(f, tick, "G-9 insert");
+        (await ResumeWarningsAsync(f)).ShouldBeEmpty("G-9 insert");
+    }
+
+    [Test]
+    public async Task C1097Telemetry_CallerCancellationStillPropagates()
+    {
+        var fault = new ParkResumeWarningFault { Armed = ParkResumeWarningFault.Cut.LookupCallerCancel };
+        await using var f = await PrepareDirtyRefusalAsync(fault);
+        using var caller = new CancellationTokenSource();
+        fault.Caller = caller;
+        await Should.ThrowAsync<OperationCanceledException>(() => f.DispatchAsync(caller.Token));
+        fault.Faults.ShouldBeGreaterThan(0, "G-9 cancel");
+        var held = await f.TaskAsync();
+        held.Status.ShouldBe(AgentTaskStatus.Queued, "G-9 cancel");
+        held.Attempt.ShouldBe(2, "G-9 cancel");
+        held.ReleasedSeatAnswer.ShouldBe(Answer, "G-9 cancel");
+        held.FailureReason.ShouldBeNull("G-9 cancel");
+        held.AgentSessionId.ShouldBeNull("G-9 cancel");
+        f.Launches.Calls.ShouldBeEmpty("G-9 cancel");
+    }
+
+    private static async Task<RunnerSeatReleaseFixture> PrepareDirtyRefusalAsync(ParkResumeWarningFault fault)
+    {
+        var f = await RunnerSeatReleaseFixture.CreateAsync(
+            AgentTaskStatus.Blocked, parking: true, configureDb: options => options.AddInterceptors(fault));
+        await PublishAsync(f);
+        await StampAsync(f);
+        await f.AnswerAsync(Answer);
+        await File.WriteAllTextAsync(Path.Combine(f.SourcePath, "dirty.txt"), "dirty bytes");
+        return f;
+    }
+
+    private static async Task AssertRefusalUnchangedAsync(
+        RunnerSeatReleaseFixture f, AgentTaskDispatcher.TickResult tick, string label)
+    {
+        tick.Failures.ShouldBe(0, label);
+        tick.Dispatched.ShouldBe(0, label);
+        tick.HeldOnLease.ShouldBe(0, label);
+        tick.Eligible.ShouldBe(1, label);
+        f.Launches.Calls.ShouldBeEmpty(label);
+        var held = await f.TaskAsync();
+        held.Status.ShouldBe(AgentTaskStatus.Queued, label);
+        held.Attempt.ShouldBe(2, label);
+        held.ReleasedSeatAnswer.ShouldBe(Answer, label);
+        held.FailureReason.ShouldBeNull(label);
+        held.AgentSessionId.ShouldBeNull(label);
+    }
+
     private static async Task OpenLaterParkEpisodeAsync(RunnerSeatReleaseFixture f)
     {
         var prior = await f.ParkAsync();
@@ -610,6 +678,66 @@ public sealed class BlockedTaskParkResumeTests
         await using var db = f.Db();
         var row = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.AgentSessionId == sessionId);
         return (row.RemoteSpillBody ?? "") + "\n" + row.Body;
+    }
+
+    private sealed class ParkResumeWarningFault : DbCommandInterceptor
+    {
+        public enum Cut { None, LookupTimeout, InsertNotCallerCancel, LookupCallerCancel }
+
+        public Cut Armed { get; set; }
+        public CancellationTokenSource? Caller { get; set; }
+        public int Faults { get; private set; }
+        private bool _sawLookup;
+
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result,
+            CancellationToken cancellationToken = default)
+        {
+            Observe(command);
+            return ValueTask.FromResult(result);
+        }
+
+        public override ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<int> result,
+            CancellationToken cancellationToken = default)
+        {
+            Observe(command);
+            return ValueTask.FromResult(result);
+        }
+
+        private void Observe(DbCommand command)
+        {
+            var text = command.CommandText;
+            if (IsLookup(text))
+                _sawLookup = true;
+            if (Armed == Cut.LookupTimeout && IsLookup(text))
+            {
+                Faults++;
+                throw new TimeoutException("injected park-resume warning lookup timeout");
+            }
+
+            if (Armed == Cut.InsertNotCallerCancel && _sawLookup
+                && text.StartsWith("INSERT INTO \"AgentTaskEvents\"", StringComparison.Ordinal))
+            {
+                Faults++;
+                throw new OperationCanceledException(
+                    "injected park-resume warning insert cancellation", CancellationToken.None);
+            }
+
+            if (Armed == Cut.LookupCallerCancel && IsLookup(text))
+            {
+                Faults++;
+                var caller = Caller ?? throw new InvalidOperationException("caller token was not armed");
+                caller.Cancel();
+                throw new OperationCanceledException(caller.Token);
+            }
+        }
+
+        private static bool IsLookup(string text) =>
+            text.Contains("SELECT a.\"Detail\"", StringComparison.Ordinal)
+            && text.Contains("FROM \"AgentTaskEvents\"", StringComparison.Ordinal)
+            && text.Contains("\"At\" >=", StringComparison.Ordinal)
+            && text.Contains("ORDER BY a.\"At\" DESC", StringComparison.Ordinal);
     }
 
     private sealed class ResumeSaveCut : SaveChangesInterceptor

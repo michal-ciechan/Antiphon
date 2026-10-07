@@ -466,10 +466,10 @@ internal sealed partial class RunnerSeatReleaseFixture : IAsyncDisposable
         await scope.ServiceProvider.GetRequiredService<AgentTaskService>().RetryAsync(TaskId, default);
     }
 
-    public async Task<AgentTaskDispatcher.TickResult> DispatchAsync()
+    public async Task<AgentTaskDispatcher.TickResult> DispatchAsync(CancellationToken ct = default)
     {
         using var scope = Harness.Provider.CreateScope();
-        var work = scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(default);
+        var work = scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(ct);
         await DriveAsync(work);
         return await work;
     }
