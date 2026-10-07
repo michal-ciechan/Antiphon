@@ -311,7 +311,12 @@ public sealed class BlockedTaskParkReclaimTests
             foreach (var id in blocked)
                 (await ParkCountAsync(f, id)).ShouldBe(1, "G-3");
 
-            f.Clock.Advance(TimeSpan.FromSeconds(120));
+            f.Clock.Advance(TimeSpan.FromSeconds(119));
+            var early = await f.ReclaimScheduledAsync();
+            early.ShouldBe(LegacyReclaimResult.None, "G-3");
+            (await CursorAsync(f))!.AfterTaskId.ShouldBe(marked, "G-3");
+
+            f.Clock.Advance(TimeSpan.FromSeconds(1));
             var third = await f.ReclaimScheduledAsync();
             third.Visited.ShouldBe(5, "V-2");
             third.Eligible.ShouldBe(5, "V-2");
@@ -710,6 +715,187 @@ public sealed class BlockedTaskParkReclaimTests
         await SessionRunningAsync(f, dirty.SessionId, "V-1");
         await SessionRunningAsync(f, squatter.SessionId, "V-1");
         await SessionRunningAsync(f, binding.SessionId, "V-2");
+    }
+
+    [Test]
+    public async Task C1129_SweepCountsThisRunsReleasesAndVisitsEachRowOnce()
+    {
+        var shrinking = await MeasureVisitsAsync(shrink: true);
+        var open = await MeasureVisitsAsync(shrink: false);
+        var counts = await MeasureReleasesAsync();
+
+        shrinking.Result.Eligible.ShouldBe(6, "V-4");
+        shrinking.Result.Cap.ShouldBe(6, "V-4");
+        shrinking.Result.Visited.ShouldBe(4, "V-4");
+        shrinking.Listed.Count.ShouldBe(4, "V-4");
+        shrinking.Listed.Distinct().Count().ShouldBe(shrinking.Listed.Count, "V-4");
+        shrinking.Cursor.ShouldBe(shrinking.Listed[^1], "V-4");
+        open.Result.Eligible.ShouldBe(6, "V-4");
+        open.Result.Cap.ShouldBe(6, "V-4");
+        open.Result.Visited.ShouldBe(6, "V-4");
+        open.Listed.Count.ShouldBe(6, "V-4");
+        open.Listed.Distinct().Count().ShouldBe(open.Listed.Count, "V-4");
+        open.Cursor.ShouldBe(open.Listed[^1], "V-4");
+
+        counts.Run1.Released.ShouldBe(2, "V-3");
+        counts.Run1.Released.ShouldBe(counts.ConfirmedAfterRun1, "V-3");
+        counts.Run2.Visited.ShouldBe(3, "V-3");
+        counts.Run2.Registered.ShouldBe(3, "V-3");
+        counts.Run2.Released.ShouldBe(0, "V-3");
+        counts.ConfirmedAfterRun2.ShouldBe(2, "V-3");
+        counts.Version2AfterRun2.ShouldBe(counts.Version2AfterRun1, "V-3");
+        counts.ForceAfterRun2.ShouldBe(0, "V-3");
+        counts.Negative.Released.ShouldBe(1, "V-3");
+        counts.ConfirmedAfterNegative.ShouldBe(3, "V-3");
+    }
+
+    private sealed record VisitMeasurement(
+        LegacyReclaimResult Result, List<Guid> Listed, Guid? Cursor, int Statements);
+
+    private sealed record ReleaseMeasurement(
+        LegacyReclaimResult Run1, LegacyReclaimResult Run2, LegacyReclaimResult Negative,
+        int ConfirmedAfterRun1, int ConfirmedAfterRun2, int ConfirmedAfterNegative,
+        int Version2AfterRun1, int Version2AfterRun2, int ForceAfterRun2, int StatementsRun2);
+
+    private static async Task<VisitMeasurement> MeasureVisitsAsync(bool shrink)
+    {
+        var counter = new CountingCommandInterceptor();
+        await using var f = await RunnerSeatReleaseFixture.CreateAsync(
+            AgentTaskStatus.Blocked, parking: true, reclaim: true,
+            configureDb: options => options.AddInterceptors(counter));
+        f.Wire.Qualified = Idle(TimeSpan.Zero, null);
+        for (var i = 0; i < 5; i++)
+            await SeedBlockedAsync(f, (shrink ? "shrink-" : "open-") + i);
+        var working = await SeedBlockedAsync(f, "working-seat", status: AgentTaskStatus.Working, completed: false);
+        (await f.ReclaimResultAsync(2, 1)).Visited.ShouldBe(2, "V-4");
+
+        var listed = new List<Guid>();
+        var flipped = false;
+        var statementsAt = counter.Commands.Count;
+        var result = await f.ReclaimResultAsync(2, 3, async (name, _) =>
+        {
+            if (!name.StartsWith("ReclaimList:", StringComparison.Ordinal)) return;
+            listed.Add(Guid.Parse(name["ReclaimList:".Length..]));
+            if (!shrink || flipped) return;
+            flipped = true;
+            await using var db = f.Db();
+            var highest = await db.AgentTasks.AsNoTracking()
+                .Where(t => t.Status == AgentTaskStatus.Blocked)
+                .OrderByDescending(t => t.Id).Select(t => t.Id).Take(2).ToListAsync();
+            await db.AgentTasks.Where(t => highest.Contains(t.Id)).ExecuteUpdateAsync(s => s
+                .SetProperty(t => t.Status, AgentTaskStatus.Succeeded));
+        });
+        var statements = counter.Commands.Count - statementsAt;
+        var cursor = (await CursorAsync(f))?.AfterTaskId;
+        Console.WriteLine(
+            $"C1129 visits shrink={shrink} rows=6 visited={result.Visited} eligible={result.Eligible} cap={result.Cap} listed={listed.Count} distinct={listed.Distinct().Count()} statements={statements}");
+        await SessionRunningAsync(f, working.SessionId, "V-4");
+        await using (var db = f.Db())
+            (await db.AgentTasks.SingleAsync(t => t.Id == working.TaskId)).Status
+                .ShouldBe(AgentTaskStatus.Working, "V-4");
+        listed.ShouldNotContain(working.TaskId, "V-4");
+        return new VisitMeasurement(result, listed, cursor, statements);
+    }
+
+    private static async Task<ReleaseMeasurement> MeasureReleasesAsync()
+    {
+        var counter = new CountingCommandInterceptor();
+        await using var f = await RunnerSeatReleaseFixture.CreateAsync(
+            AgentTaskStatus.Blocked, parking: true, reclaim: true,
+            configureDb: options => options.AddInterceptors(counter));
+        f.Wire.Qualified = Idle(TimeSpan.Zero, null);
+        await f.EditAsync((task, _) => task.Role = AgentTaskRole.Code);
+        await f.CreateSourceAsync();
+        await CommitTipAsync(f);
+        await AncientBlockAsync(f, f.TaskId);
+        ArmPathVerifier(f);
+        var second = await SeedBlockedAsync(f, "second");
+        await f.CreateReclaimSourceAsync(second.TaskId, second.SessionId);
+        await AncientBlockAsync(f, second.TaskId);
+        var dirty = await SeedBlockedAsync(f, "dirty");
+        var dirtyPath = await f.CreateReclaimSourceAsync(dirty.TaskId, dirty.SessionId, dirty: true);
+
+        (await f.ReclaimResultAsync(32, 1)).Released.ShouldBe(0, "V-3");
+        var anchor = new[]
+        {
+            (await ParkOfAsync(f, f.TaskId)).CreatedAt,
+            (await ParkOfAsync(f, second.TaskId)).CreatedAt,
+            (await ParkOfAsync(f, dirty.TaskId)).CreatedAt
+        }.Max();
+        AdvanceTo(f, anchor, TimeSpan.FromMilliseconds(120_001));
+        await ArmIdleAsync(f, f.TaskId, f.SessionId);
+        await ArmIdleAsync(f, second.TaskId, second.SessionId);
+        await ArmIdleAsync(f, dirty.TaskId, dirty.SessionId);
+
+        var run1 = await f.ReclaimResultAsync(32, 1);
+        var confirmedAfterRun1 = await ConfirmedCountAsync(f);
+        var version2AfterRun1 = f.Wire.Requests.Count(r => r.ParkVersion == 2);
+        Released(f, f.SessionId).ShouldBeTrue("V-3");
+        Released(f, second.SessionId).ShouldBeTrue("V-3");
+        Released(f, dirty.SessionId).ShouldBeFalse("V-3");
+        (await ParkOfAsync(f, dirty.TaskId)).ReasonCode.ShouldBe("park_dirty", "V-3");
+        await SessionRunningAsync(f, dirty.SessionId, "V-3");
+        Directory.Exists(dirtyPath).ShouldBeTrue("V-3");
+        f.Wire.ForceCommands.ShouldBe(0, "V-3");
+
+        f.Clock.Advance(TimeSpan.FromSeconds(120));
+        var statementsAt = counter.Commands.Count;
+        var run2 = await f.ReclaimResultAsync(32, 1);
+        var statementsRun2 = counter.Commands.Count - statementsAt;
+        var confirmedAfterRun2 = await ConfirmedCountAsync(f);
+        var version2AfterRun2 = f.Wire.Requests.Count(r => r.ParkVersion == 2);
+        Console.WriteLine(
+            $"C1129 releases rows=3 run1Released={run1.Released} run2Visited={run2.Visited} run2Registered={run2.Registered} run2Released={run2.Released} statementsRun2={statementsRun2}");
+        await SessionRunningAsync(f, dirty.SessionId, "V-3");
+
+        var third = await SeedBlockedAsync(f, "third");
+        await f.CreateReclaimSourceAsync(third.TaskId, third.SessionId);
+        await AncientBlockAsync(f, third.TaskId);
+        var registeredThird = await f.ReclaimResultAsync(32, 1);
+        Console.WriteLine($"C1129 registerThird released={registeredThird.Released}");
+        var thirdPark = await ParkOfAsync(f, third.TaskId);
+        AdvanceTo(f, thirdPark.CreatedAt, TimeSpan.FromMilliseconds(120_001));
+        await ArmIdleAsync(f, third.TaskId, third.SessionId);
+        var negative = await f.ReclaimResultAsync(32, 1);
+        var confirmedAfterNegative = await ConfirmedCountAsync(f);
+        Released(f, third.SessionId).ShouldBeTrue("V-3");
+        f.Wire.ForceCommands.ShouldBe(0, "V-3");
+        Console.WriteLine(
+            $"C1129 negative released={negative.Released} confirmed={confirmedAfterNegative} version2={f.Wire.Requests.Count(r => r.ParkVersion == 2)}");
+        registeredThird.Released.ShouldBe(0, "V-3");
+        return new ReleaseMeasurement(
+            run1, run2, negative, confirmedAfterRun1, confirmedAfterRun2, confirmedAfterNegative,
+            version2AfterRun1, version2AfterRun2, f.Wire.ForceCommands, statementsRun2);
+    }
+
+    private static void ArmPathVerifier(RunnerSeatReleaseFixture f)
+    {
+        var verifier = new RunnerWorkspaceParkService();
+        f.Wire.VerifySource = async command => command is { ParkVersion: 2, Publication: { } receipt }
+            && (await verifier.VerifySessionCheckoutAsync(receipt, receipt.Request.Path, default)).Receipt is not null;
+    }
+
+    private static async Task AncientBlockAsync(RunnerSeatReleaseFixture f, Guid taskId)
+    {
+        var ancientAt = f.Now.AddHours(-30);
+        await using var db = f.Db();
+        await db.AgentTasks.Where(t => t.Id == taskId).ExecuteUpdateAsync(s => s
+            .SetProperty(t => t.CompletedAt, ancientAt));
+        await db.AgentTaskEvents.Where(e => e.AgentTaskId == taskId && e.Type == AgentTaskEventType.Blocked)
+            .ExecuteUpdateAsync(s => s.SetProperty(e => e.At, ancientAt));
+    }
+
+    private static async Task ArmIdleAsync(RunnerSeatReleaseFixture f, Guid taskId, Guid sessionId)
+    {
+        var created = (await ParkOfAsync(f, taskId)).CreatedAt;
+        f.Wire.BySession[sessionId] = Idle(TimeSpan.FromMilliseconds(120_001), AsUtc(created));
+    }
+
+    private static async Task<int> ConfirmedCountAsync(RunnerSeatReleaseFixture f)
+    {
+        await using var ledger = f.Db();
+        return (await ledger.RunnerSeatReleases.AsNoTracking().ToListAsync())
+            .Count(TerminalRunnerSeatReleaseService.IsConfirmed);
     }
 
     [Test]
