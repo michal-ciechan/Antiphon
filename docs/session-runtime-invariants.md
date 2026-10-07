@@ -114,6 +114,7 @@ A short tail wraps. ReclaimScheduledAsync shares one overlap gate and, unless Re
 The reconcile job's released total counts confirmed releases only and does not include visit counts.
 FreshLegacyWindow uses StableFor only as a duration and requires the server-clock interval since park.CreatedAt to reach 120 seconds; the runner's FirstObservedAt is ignored. An old CompletedAt is not the idle window.
 A Held episode is not prepared again until its NextAttemptAt, stamped at now plus ReclaimHeldBackoffSeconds (default 600; 0 disables; a negative value is treated as 0), except park_workspace_reserved which stays immediate.
+A refusal on a Held row re-stamps NextAttemptAt from the same backoff and records the refusal reason, so a Held row is never prepared on consecutive sweeps while its backoff runs (CARD-1135).
 Known limits stay on CARD-1097, CARD-1103, and CARD-1104.
 
 CARD-0519 S10: a terminal session status alone does not close outbound recovery

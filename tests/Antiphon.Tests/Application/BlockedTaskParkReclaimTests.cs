@@ -600,6 +600,119 @@ public sealed class BlockedTaskParkReclaimTests
     }
 
     [Test]
+    public async Task C1135_HeldRefusalsRestampAndRecordTheirReason()
+    {
+        var gate = new ReclaimReservationGate();
+        var counter = new CountingCommandInterceptor();
+        await using var f = await RunnerSeatReleaseFixture.CreateAsync(
+            AgentTaskStatus.Blocked, parking: true, reclaim: true, reservationGate: gate,
+            configureDb: options => options.AddInterceptors(counter));
+        f.Wire.Qualified = Idle(TimeSpan.FromMilliseconds(119_999), null);
+        await f.EditAsync((task, _) => task.Status = AgentTaskStatus.Succeeded);
+
+        var dirty = await SeedBlockedAsync(f, "dirty");
+        var binding = await SeedBlockedAsync(f, "binding");
+        var reserved = await SeedBlockedAsync(f, "reserved");
+        var dirtyPath = await f.CreateReclaimSourceAsync(dirty.TaskId, dirty.SessionId, dirty: true);
+        await f.CreateReclaimSourceAsync(binding.TaskId, binding.SessionId, dirty: true);
+        await f.CreateReclaimSourceAsync(reserved.TaskId, reserved.SessionId);
+        gate.RefuseTaskId = reserved.TaskId;
+        var git = (TaskParkPublicationTests.ParkGit)f.Harness.Provider.GetRequiredService<ITaskProgressGit>();
+
+        (await f.ReclaimAsync(32, 1)).ShouldBe(3, "V-1");
+        var dirtyPark = await ParkOfAsync(f, dirty.TaskId);
+        dirtyPark.State.ShouldBe(AgentTaskParkState.Held, "V-1");
+        dirtyPark.ReasonCode.ShouldBe("park_dirty", "V-1");
+        dirtyPark.HeldFromState.ShouldBe(AgentTaskParkState.Requested, "V-1");
+        SameInstant(dirtyPark.NextAttemptAt, dirtyPark.UpdatedAt.AddSeconds(600), "V-1");
+        var revision = dirtyPark.Revision;
+        var heldFrom = dirtyPark.HeldFromState;
+        var bindingPark = await ParkOfAsync(f, binding.TaskId);
+        bindingPark.ReasonCode.ShouldBe("park_dirty", "V-2");
+        var bindingRevision = bindingPark.Revision;
+        var reservedPark = await ParkOfAsync(f, reserved.TaskId);
+        reservedPark.ReasonCode.ShouldBe("park_workspace_reserved", "V-2");
+        reservedPark.NextAttemptAt.ShouldBeNull("V-2");
+        var reservedRevision = reservedPark.Revision;
+
+        gate.RefuseTaskId = null;
+        await f.ReclaimAsync(32, 1);
+        var reservedAgain = await ParkOfAsync(f, reserved.TaskId);
+        reservedAgain.Revision.ShouldBeGreaterThan(reservedRevision, "V-2");
+        reservedAgain.ReasonCode.ShouldNotBe("park_workspace_reserved", "V-2");
+        (await ParkOfAsync(f, dirty.TaskId)).Revision.ShouldBe(revision, "V-1");
+        await using (var retire = f.Db())
+        {
+            await retire.AgentTasks.Where(t => t.Id == reserved.TaskId)
+                .ExecuteUpdateAsync(s => s.SetProperty(t => t.Status, AgentTaskStatus.Succeeded));
+        }
+
+        // A shared WorktreePath is park_ownership_ambiguous before PrepareAsync. RefusalAsync
+        // matches WorkingDirectory too, so this Working neighbor is park_other_writer first.
+        var squatter = await SeedBlockedAsync(f, "squatter", status: AgentTaskStatus.Working, completed: false);
+        await using (var db = f.Db())
+        {
+            await db.AgentTasks.Where(t => t.Id == squatter.TaskId)
+                .ExecuteUpdateAsync(s => s.SetProperty(t => t.WorkingDirectory, dirtyPath));
+            await db.AgentTaskParks.Where(p => p.TaskId == binding.TaskId)
+                .ExecuteUpdateAsync(s => s.SetProperty(p => p.ReportDigest, (string?)null));
+        }
+
+        f.Clock.Advance(TimeSpan.FromSeconds(600));
+        git.Commands.Clear();
+        var statementsAt = counter.Commands.Count;
+        (await f.ReclaimAsync(32, 1)).ShouldBe(2, "V-1");
+        var statusDue = StatusVisits(git);
+        var statementsDue = counter.Commands.Count - statementsAt;
+        var dueNow = f.Now;
+        var dirtyDue = await ParkOfAsync(f, dirty.TaskId);
+        var bindingDue = await ParkOfAsync(f, binding.TaskId);
+
+        f.Clock.Advance(TimeSpan.FromSeconds(1));
+        git.Commands.Clear();
+        statementsAt = counter.Commands.Count;
+        await f.ReclaimAsync(32, 1);
+        var statusFollow = StatusVisits(git);
+        var statementsFollow = counter.Commands.Count - statementsAt;
+        var dirtyFollow = await ParkOfAsync(f, dirty.TaskId);
+        var bindingFollow = await ParkOfAsync(f, binding.TaskId);
+        Console.WriteLine(
+            $"C1135 visits statusDue={statusDue} statementsDue={statementsDue} statusFollow={statusFollow} statementsFollow={statementsFollow}");
+
+        dirtyDue.State.ShouldBe(AgentTaskParkState.Held, "G-1");
+        dirtyDue.ReasonCode.ShouldBe("park_other_writer", "G-1");
+        dirtyDue.Revision.ShouldBe(revision, "G-1");
+        dirtyDue.HeldFromState.ShouldBe(heldFrom, "G-1");
+        SameInstant(dirtyDue.UpdatedAt, dueNow, "G-1");
+        SameInstant(dirtyDue.NextAttemptAt, dueNow.AddSeconds(600), "G-1");
+        SameInstant(dirtyFollow.UpdatedAt, dirtyDue.UpdatedAt, "G-1");
+        statusFollow.ShouldBe(0, "G-1");
+        bindingDue.ReasonCode.ShouldBe("park_binding_missing", "G-2");
+        bindingDue.Revision.ShouldBe(bindingRevision, "G-2");
+        SameInstant(bindingDue.NextAttemptAt, dueNow.AddSeconds(600), "G-2");
+        SameInstant(bindingDue.UpdatedAt, dueNow, "G-2");
+        SameInstant(bindingFollow.UpdatedAt, bindingDue.UpdatedAt, "G-2");
+        bindingFollow.Revision.ShouldBe(bindingRevision, "G-2");
+
+        await using (var db = f.Db())
+        {
+            await db.AgentTasks.Where(t => t.Id == squatter.TaskId)
+                .ExecuteUpdateAsync(s => s.SetProperty(t => t.Status, AgentTaskStatus.Succeeded));
+        }
+        f.Clock.Advance(TimeSpan.FromSeconds(600));
+        await f.ReclaimAsync(32, 1);
+        var dirtyAfter = await ParkOfAsync(f, dirty.TaskId);
+        dirtyAfter.Revision.ShouldBeGreaterThan(revision, "V-1");
+        dirtyAfter.ReasonCode.ShouldBe("park_dirty", "V-1");
+        dirtyAfter.State.ShouldBe(AgentTaskParkState.Held, "V-1");
+        Released(f, dirty.SessionId).ShouldBeFalse("V-1");
+        Directory.Exists(dirtyPath).ShouldBeTrue("V-1");
+        await SessionRunningAsync(f, dirty.SessionId, "V-1");
+        await SessionRunningAsync(f, squatter.SessionId, "V-1");
+        await SessionRunningAsync(f, binding.SessionId, "V-2");
+    }
+
+    [Test]
     public async Task C1108_AdvanceVerifiesSourceOnceWithoutBoundary()
     {
         await using (var plain = await ReadyLegacyReleaseAsync())

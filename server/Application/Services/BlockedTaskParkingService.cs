@@ -161,13 +161,18 @@ public sealed class BlockedTaskParkingService(
         await tx.CommitAsync(ct);
     }
 
-    /// <summary>Held to Held is refused, so a due episode rewrites only its next attempt.</summary>
-    internal async Task StampHeldAttemptAsync(Guid parkId, long revision, DateTime? nextAttemptAt, CancellationToken ct)
+    /// <summary>Held to Held is refused, so a due episode rewrites its next attempt and reason.</summary>
+    internal async Task StampHeldAttemptAsync(Guid parkId, long revision, DateTime? nextAttemptAt, string reasonCode, CancellationToken ct)
     {
         if (!CanOwnTransaction()) return;
+        if (string.IsNullOrEmpty(reasonCode) || reasonCode.Length > 64
+            || reasonCode.Any(c => !(char.IsAsciiLetterOrDigit(c) || c == '_')))
+            throw new ArgumentException("A bounded park reason code is required.", nameof(reasonCode));
         var now = clock.GetUtcNow().UtcDateTime;
         await db.AgentTaskParks.Where(p => p.Id == parkId && p.Revision == revision && p.State == AgentTaskParkState.Held)
-            .ExecuteUpdateAsync(s => s.SetProperty(p => p.NextAttemptAt, nextAttemptAt).SetProperty(p => p.UpdatedAt, now), ct);
+            .ExecuteUpdateAsync(s => s.SetProperty(p => p.NextAttemptAt, nextAttemptAt)
+                .SetProperty(p => p.ReasonCode, reasonCode)
+                .SetProperty(p => p.UpdatedAt, now), ct);
     }
 
     internal static DateTime? HeldBackoff(BlockedTaskParkingOptions options, TimeProvider clock, string reason)
