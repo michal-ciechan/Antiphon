@@ -215,7 +215,7 @@ public class RunnerBranchContractDocumentationTests
         "RunnerSyncDebtAttentionMinutes defaults to 30.",
         "The desktop checkout is dirty. This debt stays Held.",
         "Review that exact pushed S in a Worktree Review with -StartRef",
-        "A Held debt is re-checked every 60 minutes for its worktree registration only: it ends Superseded only when one active Complete retirement has recorded directory and registration removal at or before the re-check and the recorded path is absent, and it never runs Git or fast-forwards.",
+        "A Held debt is re-checked every 60 minutes for its worktree registration only: it ends Superseded only when that one active Complete retirement is the current registration, has recorded directory and registration removal at or before the re-check, and the recorded path is absent. An earlier incarnation, a recreated registration, or any doubt keeps the row Held. The re-check never runs Git or fast-forwards.",
     ];
 
     private static readonly string[] RuntimeSentences =
@@ -229,7 +229,7 @@ public class RunnerBranchContractDocumentationTests
         "backoff is 1, 2, 4, then 5 minutes",
         "-Land does not read RemoteSync.",
         "syncDebt",
-        "A Held debt ends Superseded only after one completed retirement has removed that worktree path.",
+        "A Held debt ends Superseded only after one completed retirement of the current registration has removed that worktree path.",
     ];
 
     private static readonly string[] OpsSentences =
@@ -243,7 +243,7 @@ public class RunnerBranchContractDocumentationTests
         "synced later",
         "Pending evidence without a debt row means the task stayed Blocked and a reply is required.",
         "RunnerSyncDebtAttentionMinutes defaults to 30.",
-        "Held debt is re-checked hourly and ends Superseded only after a completed retirement has removed its path, which clears its attention row.",
+        "Held debt is re-checked hourly and ends Superseded only after a completed retirement of the current registration has removed its path, which clears its attention row.",
     ];
 
     private static readonly string[] ApiSentences =

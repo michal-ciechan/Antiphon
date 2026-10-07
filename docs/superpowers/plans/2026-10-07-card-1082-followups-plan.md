@@ -151,19 +151,26 @@ predicate superseded a live Held debt after `RevokeAsync` (the row stays, `Activ
 uses `RegistrationGoneAsync` so a retired checkout is not fast-forwarded. The Held re-check uses
 `HeldRegistrationPermanentlyGoneAsync` and does not run Git.
 
-Permanently gone means all of the following, read inside the claim: exactly one active
+Permanently gone, after F3c, means all of the following, read inside the claim: exactly one active
 `WorktreeRetirementState.Complete` retirement for the debt's task and attempt; its `WorktreePath`
 equals the debt's recorded path; `DirectoryRemovedAt`, `RegistrationRemovedAt` and
-`RetirementCompletedAt` are all set at or before the re-check instant; and `Directory.Exists` on
-that path is false. Anything else stays Held with `NextAttemptAt` moved forward 60 minutes, including
-a revoked or inactive retirement, a Released/Partial/Refused retirement, a Complete retirement whose
-directory is still present, a blank or missing or unreadable path, a lease-busy or runner-unavailable
-observation (this check never asks), and any exception from the read. Superseded is never written on
-doubt. Negative controls: `C1136_RevokedRetirementKeepsHeldDebtAndReschedules` (live, absent),
+`RetirementCompletedAt` are all set at or before the re-check instant and `RetirementCompletedAt`
+is not before the debt row's `CreatedAt`; `Directory.Exists` on that path is false; the retirement's
+recorded `GitDirectory` is absent; and no current `worktrees/*/gitdir` names the debt path. A
+retirement of an earlier incarnation, a registration recreated at the same path, a revoked or
+inactive retirement, a Released/Partial/Refused retirement, a Complete retirement whose directory
+or git directory is still present, a blank or missing or unreadable path, a lease-busy or
+runner-unavailable observation (this check never asks), and any exception from the read stay Held
+with `NextAttemptAt` moved forward 60 minutes. Superseded is never written on doubt. The same
+SELECT also reads `GitDirectory` and `CommonDirectory`, so the due nonblank Held path stays 6
+statements. A blank path still returns before that query. Negative controls:
+`C1136_RevokedRetirementKeepsHeldDebtAndReschedules` (live, absent),
 `C1136_TemporaryWorktreeAbsenceKeepsHeldDebtAndReschedules`,
 `C1136_UncertainHeldRegistrationKeepsHeldDebtAndReschedules` (released-absent, complete-present,
-blank-path), `C1136_HeldRecheckReadFailureKeepsHeldDebtAndReschedules`. The positive V-8 row is one
-result: Complete removal timestamps plus an absent path. CP-4 and CP-12 rosters are 19.
+blank-path), `C1136_HeldRecheckReadFailureKeepsHeldDebtAndReschedules`,
+`C1136_RecreatedRegistrationKeepsHeldDebtAndReschedules`. The positive V-8 row is one
+result: Complete removal of the current registration, including its recorded git directory.
+CP-4 and CP-12 rosters are 20. The Held re-check does not enqueue a caller note. The lease-busy caller notes are proved by `PendingSettlementDeliveryTests.C1082_LeaseBusySettlementNoteIsAcceptedComplete`: the profiled Succeeded Pending note and the non-profiled Blocked note, each accepted once for an eligible recipient, a busy recipient, and a crash between enqueue and confirmation.
 
 ### D-4. Baseline remote pins require a Present observation; the record documents its `Sha`
 
@@ -266,7 +273,7 @@ closed list has one certificate.
 | V-5 | A Blocked lease-busy Code settlement warns "Runner sync unavailable: runner_sync_lease_busy ... then reply", never "Runner sync pending"; evidence Pending, no debt, HEAD at baseline, reply path unchanged. | `RunnerTaskSettlementTests.Sync_uncertainty_blocks_and_reply_retries` |
 | V-6 | A Code lease-busy settlement with no progress service stays Blocked/Decide with the lease reason and no debt row. | `RunnerTaskSettlementTests.C1113_CodeLeaseBusyWithoutProgressServiceStaysBlocked` |
 | V-7 | The owner docs carry the D-2 sentence, the Held re-check sentence and the null-evidence sentence. | `RunnerBranchContractDocumentationTests.C1082_settlement_sync_debt_is_documented` |
-| V-8 | A Held debt ends Superseded at its re-check only when one active Complete retirement has recorded directory and registration removal at or before that re-check and the recorded path is absent, and not before. | `SettlementSyncRecoveryTests.C1136_HeldDebtEndsSupersededOnceTheWorktreeIsRetired` |
+| V-8 | A Held debt ends Superseded at its re-check only when one active Complete retirement of the current registration has recorded directory and registration removal at or before that re-check, the recorded path and its git directory are absent, no current gitdir names the path, and not before. | `SettlementSyncRecoveryTests.C1136_HeldDebtEndsSupersededOnceTheWorktreeIsRetired` |
 | V-9 | A Held debt with a live registration stays Held, reschedules 60 minutes, runs no Git, keeps `Attempts`, still warns. | `SettlementSyncRecoveryTests.C1136_HeldDebtWithALiveWorktreeStaysHeldAndReschedules` |
 | V-10 | Held rows carry `NextAttemptAt = now + 60 min`; an empty table and a not-due Held row are one statement per tick. | `SettlementSyncRecoveryTests.C1082_AdvancedRemoteTipIsHeldNotFollowed`, `C1082_DesktopRefusalsHoldWithReason` (3), `C1082_ChangedEpisodeOrRetiredWorktreeEndsTheDebt` (2), `C1082_DueDebtFastForwardsDesktopAndMarksReady` |
 | V-11 | A lease-busy baseline observation records the advertised tip with `State = Unavailable` and issues no remote pin; a Present observation still pins. | `RepairSourceDispatchTests.C1115_LeaseBusyBaselineRecordsTheAdvertisedTipWithoutARemotePin` |
@@ -333,9 +340,9 @@ Restore source and rebuild before the green run. Controls sharing a file run seq
 
 | Doc | Sentence | Pin |
 |---|---|---|
-| `docs/orchestration-loop.md` (Runner sync outcomes, CARD-1082 paragraph) | Replace "The Blocked warning says Runner sync pending and then reply." with "A Blocked lease-busy settlement's warning says Runner sync unavailable and then reply, never Runner sync pending; its evidence still records Pending." Add "The policy accepts only the task's own owned ref as the observed tip, and a Code report with no progress evidence under Pending stays Blocked." Add "A Held debt is re-checked every 60 minutes for its worktree registration only: it ends Superseded only when one active Complete retirement has recorded directory and registration removal at or before the re-check and the recorded path is absent, and it never runs Git or fast-forwards." | `RunnerBranchContractDocumentationTests.LoopSentences` (F2, F3) |
-| `docs/session-runtime-invariants.md` (CARD-1082 paragraph) | Add "A Held debt ends Superseded only after one completed retirement has removed that worktree path." | `RuntimeSentences` (F3) |
-| `docs/ops-http.md` (Settlement sync debt row) | Add "Held debt is re-checked hourly and ends Superseded only after a completed retirement has removed its path, which clears its attention row." | `OpsSentences` (F3) |
+| `docs/orchestration-loop.md` (Runner sync outcomes, CARD-1082 paragraph) | Replace "The Blocked warning says Runner sync pending and then reply." with "A Blocked lease-busy settlement's warning says Runner sync unavailable and then reply, never Runner sync pending; its evidence still records Pending." Add "The policy accepts only the task's own owned ref as the observed tip, and a Code report with no progress evidence under Pending stays Blocked." Add "A Held debt is re-checked every 60 minutes for its worktree registration only: it ends Superseded only when that one active Complete retirement is the current registration, has recorded directory and registration removal at or before the re-check, and the recorded path is absent. An earlier incarnation, a recreated registration, or any doubt keeps the row Held. The re-check never runs Git or fast-forwards." | `RunnerBranchContractDocumentationTests.LoopSentences` (F2, F3) |
+| `docs/session-runtime-invariants.md` (CARD-1082 paragraph) | Add "A Held debt ends Superseded only after one completed retirement of the current registration has removed that worktree path." | `RuntimeSentences` (F3) |
+| `docs/ops-http.md` (Settlement sync debt row) | Add "Held debt is re-checked hourly and ends Superseded only after a completed retirement of the current registration has removed its path, which clears its attention row." | `OpsSentences` (F3) |
 | `docs/testing-and-build.md` (Build slots) | "Never chain a second driver after the gated command with a shell operator: the lease ends when build-slot.ps1 returns, so `-- dotnet build ... && dotnet exec ...` runs the exec unleased and Review flags it." | `CheckpointManifestDocumentationTests.the_chained_operator_pitfall_is_documented` (F5) |
 | `server/Application/Dtos/TaskProgressDtos.cs` (`ProgressRemoteBaseline`) | XML doc: `Sha` with `State != Present` is the advertised origin tip, not a local object; readers gate on `State`. | reading only (F4) |
 
@@ -352,7 +359,7 @@ importer (`import --plan`, tool built through `scripts/build-slot.ps1`).
 | CP-1 | F1 | `tests/Antiphon.Tests -> bin-c1082fu-cp1/` | policy-pins | `/*/*/SettlementSyncDebtPolicyTests/*` | V-1, V-2, V-3, V-4, R-1, R-2 | exact 30 results (21 existing + 3 + 2 + 2 + 2), 0 failed/skipped | 30 | 6 | |
 | CP-2 | F2 | `tests/Antiphon.Tests -> bin-c1082fu-cp2/` | blocked-warning | `/*/*/RunnerTaskSettlementTests/(Sync_uncertainty_blocks_and_reply_retries*)\|(C1113_*)\|(C1082_*)` | V-5, V-6, R-3 | exact 7 results (1 + 1 + 5), 0 failed/skipped | 7 | 10 | true |
 | CP-3 | F2 | CP-2 | docs-vocabulary | `/*/*/RunnerBranchContractDocumentationTests/*` | V-7 | exact 5 results, 0 failed/skipped | 5 | 3 | |
-| CP-4 | F3 | `tests/Antiphon.Tests -> bin-c1082fu-cp4/` | held-lifecycle | `/*/*/SettlementSyncRecoveryTests/*` | V-8, V-9, V-10, R-4, R-5 | exact 19 results (10 existing + 1 committed removal + 8 uncertain-or-live), 0 failed/skipped | 19 | 14 | true |
+| CP-4 | F3 | `tests/Antiphon.Tests -> bin-c1082fu-cp4/` | held-lifecycle | `/*/*/SettlementSyncRecoveryTests/*` | V-8, V-9, V-10, R-4, R-5 | exact 20 results (10 existing + 1 committed removal + 8 uncertain-or-live + 1 recreated registration), 0 failed/skipped | 20 | 14 | true |
 | CP-5 | F3 | CP-4 | docs-held | `/*/*/RunnerBranchContractDocumentationTests/*` | V-7 | exact 5 results, 0 failed/skipped | 5 | 3 | |
 | CP-4N | F3 | CP-4 | held-revoked | `/*/*/SettlementSyncRecoveryTests/(C1136_RevokedRetirementKeepsHeldDebtAndReschedules*)` | F3b revoked | exact 2 results, 0 failed/skipped | 2 | 4 | true |
 | CP-4T | F3 | CP-4 | held-temporary | `/*/*/SettlementSyncRecoveryTests/(C1136_TemporaryWorktreeAbsenceKeepsHeldDebtAndReschedules*)` | F3b temporary absence | exact 1 result, 0 failed/skipped | 1 | 4 | true |
@@ -376,7 +383,7 @@ importer (`import --plan`, tool built through `scripts/build-slot.ps1`).
 | CP-9 | F5 | CP-8 | cli-status | `/*/*/DelegateScriptLandStatusTests/C1136_*` | V-15 | exact 3 results, 0 failed/skipped | 3 | 5 | true |
 | CP-10 | F5 | CP-8 | docs-pitfall | `/*/*/(CheckpointManifestDocumentationTests*)\|(RunnerBranchContractDocumentationTests*)/*` | V-16, V-7 | exact 13 results (8 + 5), 0 failed/skipped | 13 | 3 | |
 | CP-11 | all | `tests/Antiphon.Tests -> bin-c1082fu-final/` | final-settlement | `/*/*/RunnerTaskSettlementTests/*` | V-5, V-6, R-3, R-8 | exact 32 results (31 + 1), 0 failed/skipped | 32 | 14 | true |
-| CP-12 | all | CP-11 | final-sweep | `/*/*/SettlementSyncRecoveryTests/*` | V-8, V-9, V-10, R-4, R-5, R-8 | exact 19 results, 0 failed/skipped | 19 | 12 | true |
+| CP-12 | all | CP-11 | final-sweep | `/*/*/SettlementSyncRecoveryTests/*` | V-8, V-9, V-10, R-4, R-5, R-8 | exact 20 results, 0 failed/skipped | 20 | 12 | true |
 | CP-13 | all | CP-11 | final-dispatch-mirror | `/*/*/(RepairSourceDispatchTests*)\|(PhoneHomeRollingRunnerTests*)\|(DispatcherSweepLifetimeRegistrationTests*)/*` | V-11, V-12, V-13, V-14, R-6, R-7, R-9 | exact 40 results (31 + 7 + 2), 0 failed/skipped | 40 | 14 | true |
 | CP-14 | all | CP-11 | final-units-cli-docs | `/*/*/(SettlementSyncDebtPolicyTests*)\|(DelegateScriptLandStatusTests*)\|(RunnerBranchContractDocumentationTests*)\|(CheckpointManifestDocumentationTests*)\|(RunnerCompletionProgressTests*)/*` | V-1-V-4, V-7, V-15, V-16, R-1, R-2, R-10 | exact 76 results (30 + 22 + 5 + 8 + 11), 0 failed/skipped | 76 | 10 | true |
 | CP-15 | all | CP-11 | final-legacy | `/*/*/(ReviewEvidenceResettlementTests*)\|(TerminalRunnerSeatReleaseTests*)\|(BlockedTaskSyncRecoveryTests*)\|(BlockedTaskParkDeliveryTests*)/*` | R-11 | exact 55 results (10 + 39 + 2 + 4), 0 failed/skipped | 55 | 15 | true |
