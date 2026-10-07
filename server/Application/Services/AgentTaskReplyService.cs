@@ -964,6 +964,15 @@ public sealed class AgentTaskReplyService
         // the task, an incident on the agent's timeline, and a line the CALLER reads above the
         // report itself.
         string? callerWarning = remoteBlockWarning;
+        if (remoteBlock is null
+            && remote.Result is { State: RemoteSettlementSyncState.Pending } pendingSync
+            && task.Status is AgentTaskStatus.Succeeded or AgentTaskStatus.Failed)
+        {
+            var pendingWarning = SettlementSyncDebtPolicy.PendingWarning(task, pendingSync);
+            callerWarning = pendingWarning;
+            db.AgentTaskEvents.Add(NewEvent(task.Id, AgentTaskEventType.Warning, pendingWarning, now));
+        }
+
         if (task.CompletionProgressEvidenceJson is not null
             && TaskProgressJson.TryReadEvidence(task.CompletionProgressEvidenceJson) is { } progressEvidence
             && (TaskCompletionProgressService.ProgressWarning(progressEvidence)
@@ -1027,6 +1036,11 @@ public sealed class AgentTaskReplyService
                 $"Desktop worktree confirmed at the runner's pushed commit {syncedSha}.", now));
             workspaceNote = workspaceNote is null ? $"source {syncedSha}" : $"{workspaceNote}; source {syncedSha}";
         }
+
+        if (remoteBlock is null
+            && remote.Result is { State: RemoteSettlementSyncState.Pending } pendingNote
+            && task.Status is AgentTaskStatus.Succeeded or AgentTaskStatus.Failed)
+            workspaceNote = SettlementSyncDebtPolicy.WorkspaceNote(task, pendingNote);
 
         string? gitHeader;
         string? gitWarning;
@@ -1133,6 +1147,38 @@ public sealed class AgentTaskReplyService
             || (task.Status == AgentTaskStatus.Blocked
                 && services.GetService<TerminalRunnerSeatReleaseService>()?.OwnsAutomaticPath(task) == true);
         var killSession = task.FailureCode != AgentTaskFailureCode.CompletedWithoutProgress;
+
+        // CARD-1082 D-5. The debt row commits with this settlement. A crash before commit rolls
+        // both back; the unique (TaskId, Attempt) index is the duplicate guard, not a pre-query.
+        if (remoteBlock is null
+            && remote.Result is { State: RemoteSettlementSyncState.Pending } owed
+            && task.Status is AgentTaskStatus.Succeeded or AgentTaskStatus.Failed
+            && !db.AgentTaskSyncDebts.Local.Any(d => d.TaskId == task.Id && d.Attempt == task.Attempt))
+        {
+            db.AgentTaskSyncDebts.Add(new AgentTaskSyncDebt
+            {
+                Id = Guid.NewGuid(),
+                TaskId = task.Id,
+                Attempt = task.Attempt,
+                SettlementEventId = settlementEvent.Id,
+                RunnerId = task.RunnerId,
+                WorktreePath = task.WorktreePath,
+                RemoteWorktreePath = task.RemoteWorktreePath,
+                RepositoryPath = task.RepoPath,
+                FullRef = owed.FullRef,
+                BaselineSha = owed.BaselineSha,
+                SourceSha = owed.RemoteSha,
+                DesktopBeforeSha = owed.DesktopBeforeSha,
+                EndpointFingerprint = owed.EndpointFingerprint,
+                State = AgentTaskSyncDebtState.Pending,
+                ReasonCode = RemoteSettlementSyncReasons.LeaseBusy,
+                Attempts = 0,
+                Revision = 0,
+                NextAttemptAt = now,
+                CreatedAt = now,
+                UpdatedAt = now,
+            });
+        }
 
         await PersistDeliverThenReleaseAsync(
             services, db, task, now, settledBody, ct,
@@ -1935,7 +1981,21 @@ public sealed class AgentTaskReplyService
         {
             sync = null;
         }
-        return await TaskCompletionProgressService.PrepareAsync(sync, task, ct, reportedTips, reviewEvidenceRepair);
+        var prepared = await TaskCompletionProgressService.PrepareAsync(sync, task, ct, reportedTips, reviewEvidenceRepair);
+        if (prepared is null)
+            return null;
+        // CARD-1082 D-2. One state for progress, the block, the evidence JSON and the debt row.
+        // Missing settings fail closed: the raw result keeps today's Blocked settlement.
+        DelegationSettings? settings;
+        try
+        {
+            settings = services.GetService<IOptions<DelegationSettings>>()?.Value;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            settings = null;
+        }
+        return settings is null ? prepared : SettlementSyncDebtPolicy.Classify(task, prepared, settings);
     }
 
     /// <summary>
@@ -1986,18 +2046,9 @@ public sealed class AgentTaskReplyService
     /// checkout was not confirmed at a pushed commit, a non-Code task's branch is missing, or the
     /// Code progress read against the prepared commit is itself uncertain. Null when it may succeed.
     /// </summary>
-    private static string? RemoteSyncBlockReason(AgentTask task, RemoteSettlementSyncResult? prepared)
-    {
-        if (prepared is null || prepared.State == RemoteSettlementSyncState.NotApplicable)
-            return null;
-        if (!prepared.Confirmed)
-            return prepared.Reason ?? RemoteSettlementSyncReasons.InspectionUnavailable;
-        if (task.Role == AgentTaskRole.Code
-            && TaskProgressJson.TryReadEvidence(task.CompletionProgressEvidenceJson) is
-                { Assessment: CompletionProgressAssessment.Indeterminate } uncertain)
-            return uncertain.Reason ?? RemoteSettlementSyncReasons.InspectionUnavailable;
-        return null;
-    }
+    private static string? RemoteSyncBlockReason(AgentTask task, RemoteSettlementSyncResult? prepared) =>
+        SettlementSyncDebtPolicy.BlockReason(
+            task, prepared, TaskProgressJson.TryReadEvidence(task.CompletionProgressEvidenceJson));
 
     /// <summary>
     /// CARD-0657 D-5, bind-refusal recovery. Null when the prepared sync confirmed the desktop at a
@@ -3275,6 +3326,35 @@ public sealed class AgentTaskReplyService
     /// before <c>SaveChangesAsync</c>, the same contract <see cref="RecordScopeDriftAsync"/> already
     /// holds itself to for the same reason.
     /// </summary>
+    /// <summary>
+    /// CARD-1082 D-4/D-7. The observed tip when Pending ancestry was read and the object is local.
+    /// Anything else returns null so the caller keeps today's unconfirmed absence.
+    /// </summary>
+    private static async Task<string?> PendingLocalTipAsync(
+        IServiceProvider services, AgentTask task, RemoteSettlementSyncResult prepared, CancellationToken ct)
+    {
+        if (prepared.State != RemoteSettlementSyncState.Pending
+            || prepared.SourceDescends != true
+            || !GitObjectId.IsFull(prepared.RemoteSha))
+            return null;
+        ITaskProgressGit? git;
+        try
+        {
+            git = services.GetService<ITaskProgressGit>();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return null;
+        }
+        if (git is null)
+            return null;
+        var repo = task.RepoPath ?? task.WorkingDirectory;
+        if (string.IsNullOrWhiteSpace(repo))
+            return null;
+        var parsed = await git.RevParseCommitAsync(repo, prepared.RemoteSha, ct);
+        return parsed.Succeeded ? prepared.RemoteSha : null;
+    }
+
     private async Task<(string? Path, string? Ref)> ResolveDeliverableAsync(
         IServiceProvider services, AgentTask task, string report, string? preferredPath, CancellationToken ct,
         RemoteSettlementSyncResult? prepared = null)
@@ -3287,8 +3367,13 @@ public sealed class AgentTaskReplyService
             if (prepared is not null && prepared.State != RemoteSettlementSyncState.NotApplicable)
             {
                 if (!prepared.Confirmed)
-                    return (null, null);
-                sourceSha = prepared.DesktopAfterSha;
+                {
+                    sourceSha = await PendingLocalTipAsync(services, task, prepared, ct);
+                    if (sourceSha is null)
+                        return (null, null);
+                }
+                else
+                    sourceSha = prepared.DesktopAfterSha;
             }
 
             var git = services.GetRequiredService<GitWorkspaceService>();
@@ -4440,9 +4525,12 @@ public sealed class AgentTaskReplyService
             var rangeEnd = "HEAD";
             if (prepared is not null && prepared.State != RemoteSettlementSyncState.NotApplicable)
             {
-                if (!prepared.Confirmed)
+                if (await PendingLocalTipAsync(services, task, prepared, ct) is { } pendingTip)
+                    rangeEnd = pendingTip;
+                else if (!prepared.Confirmed)
                     return ("base unknown", null);
-                rangeEnd = prepared.DesktopAfterSha!;
+                else
+                    rangeEnd = prepared.DesktopAfterSha!;
             }
 
             var (commits, files) = await git.CountRangeAsync(directory, gitBase, rangeEnd, ct);
