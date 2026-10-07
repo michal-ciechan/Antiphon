@@ -106,7 +106,7 @@ Continue requires question classification plus standing authority, then the acce
 Only an explicit Reply after confirmed prerequisite publication continues a parked prerequisite.
 Report prose and a card moving to Done start nothing.
 An old session TurnEnd cannot settle the new attempt.
-The caller UserPrompt receipt is proven on both paths: inline at completionSingleWriteBytes 86400, and at the production PtySingleChunkBytes 1024, where the transcript line is the pointer and the retained spill carries review-evidence and reviewed-sha (CARD-1104).
+The caller UserPrompt receipt is proven inline at completionSingleWriteBytes 86400, and for a local parent with Cwd set and no RunnerCwd at the production PtySingleChunkBytes 1024, where the transcript line is the pointer, the inbox file under that cwd is present, and the retained spill carries review-evidence and reviewed-sha (CARD-1104). A remote parent with RunnerCwd is not covered by that parked-receipt arm.
 
 ReclaimScheduledAsync runs from the dispatcher pool-release sweep and from RunnerSlotReconcileJob and calls ReclaimLegacyAsync(32, 3).
 The reclaim cursor is the singleton BlockedTaskParkReclaimCursors row Id 1 and advances after every visit, including failure.
@@ -114,7 +114,7 @@ A short tail wraps. ReclaimScheduledAsync shares one overlap gate and, unless Re
 The reconcile job's released total counts confirmed releases only and does not include visit counts.
 FreshLegacyWindow uses StableFor only as a duration and requires the server-clock interval since park.CreatedAt to reach 120 seconds; the runner's FirstObservedAt is ignored. An old CompletedAt is not the idle window.
 A Held episode is not prepared again until its NextAttemptAt, stamped at now plus ReclaimHeldBackoffSeconds (default 600; 0 disables; a negative value is treated as 0), except park_workspace_reserved which stays immediate.
-Known limits stay on CARD-1097 items 2-5 (resume reads the desktop checkout, the inspection lease window, confirm-path bookkeeping, and whole-repository prune); CARD-1103, CARD-1104, CARD-1129 and CARD-1135 are closed by the CARD-1108/1124 follow-up plan.
+Known limits stay on CARD-1097 (per-tick park_resume_refused with no dedupe, resume reads the desktop checkout, the inspection lease window, confirm-path bookkeeping, and whole-repository prune), CARD-1103, CARD-1129, CARD-1135, and CARD-1104 for a remote parent with RunnerCwd.
 
 CARD-0519 S10: a terminal session status alone does not close outbound recovery
 windows. The optional transcript snapshot `TerminalComplete` is reader-owned EOF

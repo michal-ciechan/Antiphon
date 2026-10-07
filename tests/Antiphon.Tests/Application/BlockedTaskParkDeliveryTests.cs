@@ -458,15 +458,13 @@ public sealed class BlockedTaskParkDeliveryTests
             && t.Contains(relative, StringComparison.Ordinal)).ShouldBe(1, "G-12");
         prompts.ShouldNotContain(t => t != null && t.Contains(evidenceId, StringComparison.Ordinal), "G-12");
 
-        var retained = row.RemoteSpillBody;
-        if (retained is null)
-        {
-            var cwd = await after.AgentSessions.AsNoTracking().Where(s => s.Id == world.ParentId)
-                .Select(s => s.Cwd).SingleAsync();
-            var path = TypedBodySpill.InboxAbsolutePath(cwd.ShouldNotBeNull("G-12"), row.Id.ToString("D"));
-            File.Exists(path).ShouldBeTrue("G-12");
-            retained = await File.ReadAllTextAsync(path);
-        }
+        var parent = await after.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == world.ParentId);
+        parent.RunnerCwd.ShouldBeNull("G-12");
+        var inboxPath = TypedBodySpill.InboxAbsolutePath(parent.Cwd.ShouldNotBeNull("G-12"), row.Id.ToString("D"));
+        File.Exists(inboxPath).ShouldBeTrue("G-12");
+        var retained = await File.ReadAllTextAsync(inboxPath);
+        if (row.RemoteSpillBody is not null)
+            retained.ShouldBe(row.RemoteSpillBody, "G-12");
 
         retained.ShouldContain("review-evidence=" + evidenceId, Case.Sensitive, "G-12");
         retained.ShouldContain("reviewed-sha=" + world.Sha, Case.Sensitive, "G-12");

@@ -69,7 +69,7 @@ public sealed class BlockedTaskParkProjectionTests
         Require(runtime, "Only an explicit Reply after confirmed prerequisite publication continues a parked prerequisite.", "c1065-prerequisite");
         Require(runtime, "Report prose and a card moving to Done start nothing.", "c1065-no-inference");
         Require(runtime, "An old session TurnEnd cannot settle the new attempt.", "c1065-stale-turn");
-        Require(runtime, "The caller UserPrompt receipt is proven on both paths: inline at completionSingleWriteBytes 86400, and at the production PtySingleChunkBytes 1024, where the transcript line is the pointer and the retained spill carries review-evidence and reviewed-sha (CARD-1104).", "c1065-v27-inline");
+        Require(runtime, "The caller UserPrompt receipt is proven inline at completionSingleWriteBytes 86400, and for a local parent with Cwd set and no RunnerCwd at the production PtySingleChunkBytes 1024, where the transcript line is the pointer, the inbox file under that cwd is present, and the retained spill carries review-evidence and reviewed-sha (CARD-1104). A remote parent with RunnerCwd is not covered by that parked-receipt arm.", "c1065-v27-inline");
         Require(runtime, "ReclaimScheduledAsync runs from the dispatcher pool-release sweep and from RunnerSlotReconcileJob and calls ReclaimLegacyAsync(32, 3).", "c1065-reclaim-callers");
         Require(runtime, "The reclaim cursor is the singleton BlockedTaskParkReclaimCursors row Id 1 and advances after every visit, including failure.", "c1065-reclaim-cursor");
         Require(runtime, "The park bound is this release path (CARD-1083).", "c1065-park-bound");
@@ -81,7 +81,7 @@ public sealed class BlockedTaskParkProjectionTests
         Require(Read("docs/antiphon-api.md"), "`ReclaimHeldBackoffSeconds` defaults to 600; 0 disables the Held backoff and a negative value is treated as 0.", "c1108-api-backoff");
         Require(Read("docs/ops-http.md"), "ReclaimHeldBackoffSeconds defaults to 600", "c1108-ops-backoff");
         Require(runtime, "FreshLegacyWindow uses StableFor only as a duration and requires the server-clock interval since park.CreatedAt to reach 120 seconds; the runner's FirstObservedAt is ignored. An old CompletedAt is not the idle window.", "c1065-fresh-window");
-        Require(runtime, "Known limits stay on CARD-1097 items 2-5 (resume reads the desktop checkout, the inspection lease window, confirm-path bookkeeping, and whole-repository prune); CARD-1103, CARD-1104, CARD-1129 and CARD-1135 are closed by the CARD-1108/1124 follow-up plan.", "c1141-known-limits");
+        Require(runtime, "Known limits stay on CARD-1097 (per-tick park_resume_refused with no dedupe, resume reads the desktop checkout, the inspection lease window, confirm-path bookkeeping, and whole-repository prune), CARD-1103, CARD-1129, CARD-1135, and CARD-1104 for a remote parent with RunnerCwd.", "c1141-known-limits");
         Require(runtime, "With Enabled and ReclaimExisting set, physical release still requires AutomaticEnabled.", "c1065-automatic-still-required");
 
         var loop = Read("docs/orchestration-loop.md");
