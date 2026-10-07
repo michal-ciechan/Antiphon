@@ -220,6 +220,31 @@ public sealed class DockerStackDocumentationTests
             .ShouldBeFalse("the Claude digest lives in the Dockerfile and docker-stack.md, never here");
     }
 
+    // CARD-1105 R-1. Whitespace is collapsed by Read, so each pin is a phrase the prose must still
+    // contain after wrapping. A wrong sentence fails the collected list by name.
+    [Test]
+    public void Mount_generation_protocol_is_documented()
+    {
+        var text = Read("docs/docker-stack.md");
+        var pins = new[]
+        {
+            "### Mount generations and the rolling proofs (CARD-1105)",
+            "RecycleGenerationUnknown",
+            "RecycleGenerationMismatch",
+            "RecycleComposeMismatch",
+            "SOURCE_REVISION",
+            "C1008_GENERATION",
+            "add it to the target roster in c1008_compose_model and to the bind-kind table in the same commit as the Compose change",
+            "keep its bind-kind entry and keep exporting its host-path variable for at least one generation",
+            "accepts the running container's own generation and requires the new one after recreate",
+            "A state-init-only temp binds by SOURCE_REVISION alone",
+        };
+        var missing = new List<string>();
+        foreach (var pin in pins)
+            if (!text.Contains(pin, StringComparison.Ordinal)) missing.Add(pin);
+        missing.ShouldBeEmpty("mount-generation pins missing: " + string.Join(" | ", missing));
+    }
+
     // CARD-0628 G-17b.
     [Test]
     public void Ops_http_names_provider_auth()

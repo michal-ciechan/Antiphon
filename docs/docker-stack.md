@@ -104,7 +104,7 @@ the drain redirect cannot promote temp for it: stop and report the missing routi
 | 3. Mark temp primary | There is **no independent promotion phase today**. Verify `server2-temp` is accepting and the canary succeeded; record the runner-defaults read. The next phase, `drain-old`, atomically writes `server2.draining=true` and `redirectTo=server2-temp`; `DefaultRunnerRoutingPolicy` then redirects automatic placement from a `server2` default to temp. It does not PUT `/api/runner-defaults`. | If the redirect cannot be made with a healthy accepting temp, stop with old accepting. CARD-0935 tracks a separate promotion gate. Explicit pins and already running sessions need separate inspection; do not assume they moved. |
 | 4. Drain old | Run `pwsh -NoProfile -File scripts/deploy-server2.ps1 -Rolling -Sha <sha> -Phase drain-old -WaitIdleMinutes 240`; check `server2` status shows `draining=true`, `redirectTo=server2-temp`, and temp still accepts new work. A new unpinned canary should resolve to temp. | If the phase refuses before drain, keep old accepting. If it refuses after drain, stop and report the code. To roll back while old is healthy, `pwsh -NoProfile -File scripts/runner-drain.ps1 clear -RunnerId server2 -Reason 'rolling rollback'`, then verify it accepts; only then consider draining temp. |
 | 5. Wait up to four hours | `drain-old -WaitIdleMinutes 240` performs this wait. Check `pwsh -NoProfile -File scripts/runner-slots.ps1 list -RunnerId server2` and old status at the deadline. Proceed to `redeploy-old` only when all three counters are zero. | `OldRunnerStillBusy` at 240 minutes is a reportable cap, not permission to redeploy a busy runner. The operator explicitly authorizes stopping the remaining **server2** sessions at this cap: prefer a resumable owner/session stop; for each exact remaining seat, use `pwsh -NoProfile -File scripts/runner-slots.ps1 release -RunnerId server2 -SessionId <guid> -Reason 'CARD-0934 four-hour drain cap'`. Record the IDs and effects, recheck all counters, and rerun `drain-old`; if anything remains or a stop refuses, stop and report. Do not kill sessions on other runners. |
-| 6. Upgrade old | Run `pwsh -NoProfile -File scripts/deploy-server2.ps1 -Rolling -Sha <sha> -Phase redeploy-old` only after step 5's zero gate. The phase runs `deploy-parent`, verifies mounts/cache and `buildVersion`, then clears old's drain. | If it refuses, keep temp accepting and old drained; use the retained rollback image and the [rollback procedure](#shared-server2-runner-caches-card-0849) only through a reviewed recovery. Do not clear an unverified old runner. |
+| 6. Upgrade old | Run `pwsh -NoProfile -File scripts/deploy-server2.ps1 -Rolling -Sha <sha> -Phase redeploy-old` only after step 5's zero gate. The phase runs `deploy-parent`, verifies mounts/cache and `buildVersion`, then clears old's drain. It accepts the running container's own generation and requires the new one after recreate. | If it refuses, keep temp accepting and old drained; use the retained rollback image and the [rollback procedure](#shared-server2-runner-caches-card-0849) only through a reviewed recovery. Do not clear an unverified old runner. |
 | 7. Smoke upgraded old | Run the command block below for `server2`, a sanctioned `Plan` canary pinned with `-Runner server2`, and `pwsh -NoProfile -File scripts/verify-card0849-caches.ps1 -Case Both -Sha <sha>`. | `redeploy-old` already clears old's drain after its own host checks, before this separate canary. If this gate fails, immediately drain old toward accepting temp with `pwsh -NoProfile -File scripts/runner-drain.ps1 drain -RunnerId server2 -RedirectTo server2-temp -Reason 'post-upgrade smoke failed'`; stop and report. CARD-0935 tracks a separate canary-before-promotion gate. |
 | 8. Return scheduling and drain temp | Once old passes step 7 and accepts work, run `pwsh -NoProfile -File scripts/deploy-server2.ps1 -Rolling -Sha <sha> -Phase drain-temp -WaitIdleMinutes 240`. This sets temp `redirectTo=server2` and `retireWhenIdle=true`; automatic placement uses old again. Verify old accepting and temp drained/retired/offline, then prove temp container absence. The phase observes exit and removes only proven owned exited runner/state-init IDs without volumes. Retirement and exit share one deadline from `WaitIdleMinutes`; `TempContainerExitTimeout` removes nothing live. | If the phase refuses, leave old accepting and temp in its observed state; report the code. If a rollback is needed before temp retires, clear temp's drain only after verifying old remains accepting; do not start two drains. |
 | 9. Retire temp | Always run `pwsh -NoProfile -File scripts/deploy-server2.ps1 -Rolling -Sha <sha> -Phase retire-temp` immediately after successful gate 8, including already-absent cleanup; reclaim its volumes under [Volume recycling and disk reclaim](#volume-recycling-and-disk-reclaim-card-1008). Retain the rollout receipts. | The retired, offline, absent placeholder may have null live inventory only with the complete host proof. Other refusals stop the rollout. |
@@ -394,6 +394,60 @@ Evidence, 2026-10-02/03: server2 reached 98% disk with 17.6 GiB free, below the
 accounted for 100.7 GiB), runner-tmp 38.6 GB and dind-data 17 GB; retired temp volumes
 occupied another 76 GB + 7.3 GB. Cleanup and temp-volume reclaim increased free space
 from 17.6 GiB to 272 GiB (60% used).
+
+### Mount generations and the rolling proofs (CARD-1105)
+
+`redeploy-old` proves the containers it stops against the generation those containers were created
+from, then proves the replacement against the generation this checkout renders. `retire-temp`
+proves any owned temp containers against that same previous generation and does not start a
+replacement runner. The previous generation is `SOURCE_REVISION` in the stack env (`SERVER2_ENV` on
+main, `SERVER2_TEMP_ENV` on temp). That value must be 40 lowercase hex and equal the runner status
+`buildVersion`. When the project owns exactly one session-runner image, `docker image inspect` of
+`antiphon-server2/session-testing:<sha12>` must equal that container's image id. A missing stack
+file, a value that is not 40 lowercase hex, a status body that cannot be read, a git or render
+failure, an unknown bind target, or a structurally invalid previous Compose file refuses
+`RecycleGenerationUnknown`. A `buildVersion` that is not the stack SHA, or a session-runner image
+id that is not the inspected tag, refuses `RecycleGenerationMismatch`. No owned session-runner or
+state-init means the previous generation is not derived.
+
+A state-init-only temp binds by SOURCE_REVISION alone. The stack SHA must still be 40 lowercase
+hex and equal the temp registration `buildVersion`; the recorded image tag and image id are null
+and no image is inspected. The image leg applies only while a session-runner remains. Main still
+requires exactly one session-runner image and refuses `RecycleGenerationUnknown` when it has none.
+`retire-temp-containers` and `retire-temp-runner` both reach this proof through
+`c1008_previous_generation` (`retire-temp-runner` calls `c1008_recycle`), so neither keeps a
+stricter image refusal for that state-init-only shape.
+
+The target roster is the hard-coded contract in `c1008_compose_model`, including the read-only
+directory bind `/run/antiphon/github-token`. `RecycleComposeMismatch` refuses a target render
+failure or a declaration that is not that roster. The same token refuses a byte mismatch between
+the materialized Compose file and `SERVER2_COMPOSE`: that comparison runs before the recycle lock
+and before any removal, and `deploy-parent` compares the same two files again before `compose up`.
+The running proof prints
+`C1008_GENERATION project=<p> previous=<sha|none> target=<sha> previousMounts=<n> targetMounts=<n>`.
+
+Inside `c1008_recycle`, `RecycleGenerationUnknown` and `RecycleGenerationMismatch` happen before
+the recycle lock and before any recycle journal. A foreign extra mount is
+`RecycleContainerStateUnknown` after that lock, before the recycle journal is written, and before
+any `docker stop`; the volumes stay. `retire-temp-containers` takes the rollout lock and writes
+its pending container receipt first. A generation refusal then marks that receipt refused and does
+not `docker rm`.
+
+Adding a bind: add it to the target roster in c1008_compose_model and to the bind-kind table in
+the same commit as the Compose change. The previous generation is rendered from Git. It needs no
+separate roster, but the bind-kind table must already name every bind that file contains. A target
+the table does not name refuses `RecycleGenerationUnknown` the next time a generation containing
+it is recycled.
+
+Removing a bind: take it out of the target roster and the Compose file, keep its bind-kind entry
+and keep exporting its host-path variable for at least one generation, because the previous
+Compose file still interpolates that path. Moving a host path is a two-generation change. A
+single-step move renders the previous file with the new path, which does not match the container,
+and refuses `RecycleContainerStateUnknown`.
+
+A `redeploy-old` rollback to an older SHA works only when that SHA contains this fix. An older SHA
+runs the pre-fix script, which requires the target mount count of the containers it stops, so a
+container that lacks the new bind refuses on mount count. Accepting temp remains the live rollback.
 
 ## Shared server2 runner caches (CARD-0849)
 
