@@ -2717,7 +2717,7 @@ public sealed class AgentTaskDispatcher
             return AbsentLaunchDecision.Withheld;
 
         if (!AbsentLaunchPolicy.IsNeverAttempted(await ReadAbsentLaunchEvidenceAsync(
-                task, sessionId, expectedStartedAt.Value, session!.FailureReason, nativeAttempt, ct)))
+                task, sessionId, expectedStartedAt.Value, session?.FailureReason, nativeAttempt, ct)))
         {
             // Reading evidence can take time. An intervening live turn/process still wins
             // over the ordinary failure, including when the evidence read itself failed.
