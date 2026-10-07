@@ -127,7 +127,7 @@ public sealed class BlockedTaskParkProjectionTests
         }
 
         Require(Read("server/Bundles/stage-plan.md"),
-            "only when the plan adds or changes a session that waits for input: what releases a session that waits for input, and after how long? Today nothing releases such a session automatically (CARD-1083).",
+            "only when the plan adds or changes a session that waits for input: what releases a session that waits for input, and after how long? With parking disabled, no automatic release deadline exists (CARD-1083).",
             "c1065-release-question");
 
         Require(Read("server/Application/Settings/BlockedTaskParkingOptions.cs"),

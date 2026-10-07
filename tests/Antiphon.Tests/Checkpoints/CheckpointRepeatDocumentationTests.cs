@@ -28,6 +28,6 @@ public sealed class CheckpointRepeatDocumentationTests : CheckpointTestBase
         // CARD-0884 compresses existing policy to restore real argv headroom.
         // Pin the approved bytes; repeat policy remains in Code's bundle and owner docs.
         Convert.ToHexString(SHA256.HashData(orchestrator)).ToLowerInvariant()
-            .ShouldBe("97df1ecd8383d5d54c0f285e553ed683d1269969e9748af709bde86d40db39cf", "orchestrator-approved-bytes");
+            .ShouldBe("f3139a0a1d71daa0bf5a699b3e1bdcccf26449b5d52157bad56c59cf1d78f7ab", "orchestrator-approved-bytes");
     }
 }

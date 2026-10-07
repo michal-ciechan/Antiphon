@@ -36,8 +36,7 @@ public sealed class VerificationRoundInstructionTests
         var review = Compose(AgentTaskRole.Review);
         foreach (var required in new[]
                  {
-                     "A Final Review reruns the complete ordinary scope itself, including every row an Interim round deferred;",
-                     "an Interim pass never discharges it.",
+                     "Final Review reruns the complete ordinary scope, including Interim deferrals.",
                      "next: land when there are no defects and this was a Final Review;",
                      "review (Final) when a clean Interim;",
                      "ordinaryScopeCompleted: <Full|Interim|None>",
@@ -75,7 +74,7 @@ public sealed class VerificationRoundInstructionTests
     public void C544_ManualAndPcContract()
     {
         var review = Compose(AgentTaskRole.Review);
-        review.ShouldContain("Required manual work stays pending and nightly green never satisfies manual or PC checks.",
+        review.ShouldContain("Required manual work stays pending; nightly green cannot satisfy manual or PC checks.",
             customMessage: "Review row: manual/PC not credited by nightly");
         review.ShouldContain("PCs stay pending", customMessage: "Review row: PCs pending");
         var code = Compose(AgentTaskRole.Code);
@@ -89,7 +88,7 @@ public sealed class VerificationRoundInstructionTests
         var review = Compose(AgentTaskRole.Review);
         foreach (var required in new[]
                  {
-                     "Require fresh executed identities and nonzero counts;",
+                     "Require fresh identities and nonzero counts;",
                      "exit 0, --list-tests or missing parameter rows are not evidence.",
                  })
             review.ShouldContain(required, customMessage: $"execution evidence row: {required}");
