@@ -7,6 +7,8 @@ Antiphon.Tests.Application.BlockedTaskParkReleaseTests
 Antiphon.Tests.Application.BlockedTaskParkResumeTests
 # CARD-1065 S8: parked continuation UserPrompt receipts, follow-up guidance, and review successor binding.
 Antiphon.Tests.Application.BlockedTaskParkDeliveryTests
+# CARD-1103: real confirmed park, mark-read, and remote-pool follow-up admission on isolated PostgreSQL.
+Antiphon.Tests.Application.BlockedTaskParkReplyAdmissionTests
 # CARD-1065 S1: migrated PostgreSQL clones, transaction cuts and repeated DI recreation; measured 8-9s per method.
 Antiphon.Tests.Application.BlockedTaskParkStateTests
 # CARD-0804: lifecycle host launches verify real TUnit teardown across failure paths.

@@ -507,12 +507,13 @@ public sealed class AgentTaskService
                                 && (s.Status == SessionStatus.Starting || s.Status == SessionStatus.Running),
                             ct);
                     // CARD-1037 still refuses a remote pool continuation when a Blocked
-                    // task is pinned to that agent. The Reply clause is only for a
-                    // current-attempt confirmed park (CARD-1103). Local guidance is below.
-                    var confirmedPark = followAgent.IsPoolDelegate
+                    // task is pinned to that agent. Reply is named only when that park
+                    // would be admitted (CARD-1103). Local guidance is below.
+                    var parkReply = followAgent.IsPoolDelegate
                         && RunnerRequestIntent.CanonicalRunnerId(retainedRunnerId) is not null
-                        && await HasConfirmedPublishedParkAsync(blockedOnAgent, ct);
-                    RefuseRemotePoolFollowUp(followAgent, retainedRunnerId, priorId, confirmedPark, blockedOnAgent.Id);
+                        ? await RemotePoolParkReplyAsync(blockedOnAgent, ct)
+                        : RemotePoolParkReply.None;
+                    RefuseRemotePoolFollowUp(followAgent, retainedRunnerId, priorId, parkReply, blockedOnAgent.Id);
 
                     if (sessionLive)
                     {
@@ -3258,9 +3259,11 @@ public sealed class AgentTaskService
             """, ct);
     }
 
+    private enum RemotePoolParkReply { None, Admitted, ReleaseMismatch }
+
     private static void RefuseRemotePoolFollowUp(
         Agent followAgent, string? retainedRunnerId, Guid priorId,
-        bool confirmedPark = false, Guid? blockedTaskId = null)
+        RemotePoolParkReply parkReply = RemotePoolParkReply.None, Guid? blockedTaskId = null)
     {
         var poolRunnerId = RunnerRequestIntent.CanonicalRunnerId(retainedRunnerId);
         if (!followAgent.IsPoolDelegate || poolRunnerId is null)
@@ -3270,7 +3273,7 @@ public sealed class AgentTaskService
             + $"on runner '{poolRunnerId}'. Remote pool continuations cannot reuse that process. "
             + "Publish the intended source, then create a fresh task with "
             + "-Worktree -StartRef <published-sha> without -OnAgent.";
-        if (confirmedPark && blockedTaskId is Guid blockedId)
+        if (parkReply == RemotePoolParkReply.Admitted && blockedTaskId is Guid blockedId)
         {
             var blockedShort = DelegationReportFormatter.Short(blockedId);
             message +=
@@ -3278,10 +3281,75 @@ public sealed class AgentTaskService
                 + $"reply to it (delegate.ps1 -Reply {blockedShort} \"...\") to continue that task instead "
                 + "of creating a fresh one.";
         }
+        else if (parkReply == RemotePoolParkReply.ReleaseMismatch && blockedTaskId is Guid staleId)
+        {
+            var blockedShort = DelegationReportFormatter.Short(staleId);
+            message +=
+                $" Blocked task {blockedShort} has a published park for its current attempt, but its seat release does not match answer admission, so that parked answer cannot be continued. Create a fresh task as above.";
+        }
 
         throw new ValidationException(
             nameof(CreateAgentTaskRequest.FollowUpOnTask), message,
             "follow_up_remote_pool_unsupported", message);
+    }
+
+    /// <summary>
+    /// One read on a remote-pool follow-up create. Admitted copies
+    /// <see cref="TerminalRunnerSeatReleaseService.FindAttemptReleaseAsync"/> and
+    /// <see cref="TerminalRunnerSeatReleaseService.IsConfirmed"/> onto the current-attempt park.
+    /// A confirmed park that fails that match must not recommend Reply.
+    /// </summary>
+    private async Task<RemotePoolParkReply> RemotePoolParkReplyAsync(AgentTask task, CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(task.RunnerId) || task.AgentSessionId is not Guid sessionId)
+        {
+            return await HasConfirmedPublishedParkAsync(task, ct)
+                ? RemotePoolParkReply.ReleaseMismatch
+                : RemotePoolParkReply.None;
+        }
+
+        var taskId = task.Id;
+        var attempt = task.Attempt;
+        var agentId = task.AgentId;
+        var runnerId = task.RunnerId;
+        var revision = task.ConcurrencyToken;
+        var settledAt = task.CompletedAt;
+        var released = nameof(TerminalSeatReleaseOutcome.Released);
+        var exited = nameof(TerminalSeatReleaseOutcome.AlreadyExited);
+        var absent = nameof(TerminalSeatReleaseOutcome.AlreadyAbsent);
+        var facts = await _db.AgentTaskParks.AsNoTracking()
+            .Where(p => p.TaskId == taskId && p.Attempt == attempt
+                && p.PublicationReceiptId != null && p.RunnerSeatReleaseId != null
+                && (p.State == AgentTaskParkState.Parked || p.State == AgentTaskParkState.ResumePending))
+            .Select(p => new
+            {
+                Confirmed = _db.RunnerSeatReleases.Any(r =>
+                    r.Id == p.RunnerSeatReleaseId
+                    && r.State == RunnerSeatReleaseState.Confirmed
+                    && r.ConfirmedAt != null),
+                Admitted = _db.RunnerSeatReleases.Any(r =>
+                    r.Id == p.RunnerSeatReleaseId
+                    && r.TaskId == taskId
+                    && r.Attempt == attempt
+                    && r.SessionId == sessionId
+                    && r.AgentId == agentId
+                    && r.RunnerId == runnerId
+                    && r.SettlementRevision == revision
+                    && r.SettledAt == settledAt
+                    && r.State == RunnerSeatReleaseState.Confirmed
+                    && r.ConfirmedAt != null
+                    && r.ActionId != null
+                    && (r.OutcomeCode == released || r.OutcomeCode == exited || r.OutcomeCode == absent)
+                    && _db.AgentSessions.Any(s =>
+                        s.Id == sessionId
+                        && s.RunnerId == runnerId
+                        && s.RunnerStoreId == r.RunnerStoreId
+                        && s.StartedAt == r.AcceptedStartedAt)),
+            })
+            .ToListAsync(ct);
+        if (facts.Any(f => f.Admitted)) return RemotePoolParkReply.Admitted;
+        if (facts.Any(f => f.Confirmed)) return RemotePoolParkReply.ReleaseMismatch;
+        return RemotePoolParkReply.None;
     }
 
     /// <summary>
