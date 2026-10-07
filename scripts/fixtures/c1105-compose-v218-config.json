@@ -1,0 +1,270 @@
+{
+  "name": "antiphon-runner",
+  "networks": {
+    "antiphon-build-slots": {
+      "name": "antiphon-build-slots",
+      "ipam": {},
+      "external": true
+    },
+    "default": {
+      "name": "antiphon-runner_default",
+      "ipam": {}
+    }
+  },
+  "secrets": {
+    "antiphon-deploy-key": {
+      "name": "antiphon-runner_antiphon-deploy-key",
+      "file": "/inert/c1105/deploy-key",
+      "external": false
+    },
+    "phone-home": {
+      "name": "antiphon-runner_phone-home",
+      "file": "/inert/c1105/phone-home",
+      "external": false
+    }
+  },
+  "services": {
+    "session-runner": {
+      "build": {
+        "context": "/inert/c1105/repo",
+        "dockerfile": "docker/session-runner-grok/Dockerfile",
+        "args": {
+          "SOURCE_REVISION": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "target": "session-testing"
+      },
+      "command": null,
+      "depends_on": {
+        "state-init": {
+          "condition": "service_completed_successfully",
+          "required": true
+        }
+      },
+      "entrypoint": null,
+      "environment": {
+        "ANTIPHON_BUILD_SLOTS_URL": "http://build-slots:8080/build-slots",
+        "ANTIPHON_DEPLOY_KEY_SOURCE": "/run/secrets/antiphon-deploy-key",
+        "ANTIPHON_PHONE_HOME_SECRET_SOURCE": "/run/secrets/phone-home",
+        "ANTIPHON_PTY_BACKEND": "inbox",
+        "ASPNETCORE_URLS": "http://+:8080",
+        "Agents__GrokCredentialProbeEnabled": "false",
+        "CLAUDE_CONFIG_DIR": "/state/claude",
+        "CODEX_HOME": "/state/codex",
+        "GIT_CONFIG_GLOBAL": "/run/antiphon/gitconfig",
+        "GROK_HOME": "/state/grok",
+        "NPM_CONFIG_CACHE": "/home/app/.npm",
+        "NUGET_PACKAGES": "/home/app/.nuget/packages",
+        "NUGET_SCRATCH": "/var/cache/antiphon/nuget-scratch",
+        "PhoneHome__AllowedCwd": "/work",
+        "PhoneHome__Capacity": "10",
+        "PhoneHome__ClaudeHome": "/state/claude",
+        "PhoneHome__CodexHome": "/state/codex",
+        "PhoneHome__Enabled": "true",
+        "PhoneHome__GrokHome": "/state/grok",
+        "PhoneHome__PushCredentialPolicyPath": "/run/antiphon/push-allow-list",
+        "PhoneHome__RunnerId": "server2",
+        "PhoneHome__SecretPath": "/run/antiphon/phone-home",
+        "PhoneHome__ServerOrigin": "http://fixture.invalid",
+        "PhoneHome__StoreIdPath": "/state/runner-store-id",
+        "Serilog__LogPath": "/state/runner-logs",
+        "SessionRunner__BuildSlots__MaxConcurrent": "4",
+        "SessionRunner__BuildSlots__MaxCpuCount": "6",
+        "SessionRunner__BuildSlots__MinAvailableMemoryMb": "16384",
+        "SessionRunner__Herdr__Enabled": "false",
+        "SessionRunner__HostStats__Volumes__0": "/work",
+        "SessionRunner__HostStats__Volumes__1": "/state",
+        "SessionRunner__PtyBackend": "inbox",
+        "SessionRunner__PtyHostDir": "/tmp/antiphon-pty-hosts",
+        "SessionRunner__SessionLogPath": "/state/session-runner",
+        "TMPDIR": "/tmp"
+      },
+      "healthcheck": {
+        "test": [
+          "CMD-SHELL",
+          "curl -fsS http://127.0.0.1:8080/health && docker info >/dev/null && setpriv --reuid=1654 --regid=1654 --clear-groups /bin/sh -c 'head -c 1 \"$$PhoneHome__SecretPath\" >/dev/null'"
+        ],
+        "timeout": "10s",
+        "interval": "10s",
+        "retries": 6,
+        "start_period": "1m0s"
+      },
+      "image": "antiphon-server2/session-testing:aaaaaaaaaaaa",
+      "init": true,
+      "networks": {
+        "antiphon-build-slots": null,
+        "default": null
+      },
+      "privileged": true,
+      "restart": "unless-stopped",
+      "secrets": [
+        {
+          "source": "antiphon-deploy-key"
+        },
+        {
+          "source": "phone-home"
+        }
+      ],
+      "stop_grace_period": "1m30s",
+      "tmpfs": [
+        "/run/antiphon"
+      ],
+      "user": "0:0",
+      "volumes": [
+        {
+          "type": "volume",
+          "source": "work",
+          "target": "/work",
+          "volume": {}
+        },
+        {
+          "type": "volume",
+          "source": "runner-state",
+          "target": "/state",
+          "volume": {}
+        },
+        {
+          "type": "volume",
+          "source": "dind-data",
+          "target": "/var/lib/docker",
+          "volume": {}
+        },
+        {
+          "type": "volume",
+          "source": "runner-tmp",
+          "target": "/tmp",
+          "volume": {}
+        },
+        {
+          "type": "volume",
+          "source": "runner-nuget-packages",
+          "target": "/home/app/.nuget/packages",
+          "volume": {
+            "nocopy": true
+          }
+        },
+        {
+          "type": "volume",
+          "source": "runner-nuget-scratch",
+          "target": "/var/cache/antiphon/nuget-scratch",
+          "volume": {
+            "nocopy": true
+          }
+        },
+        {
+          "type": "volume",
+          "source": "runner-npm-content",
+          "target": "/home/app/.npm/_cacache",
+          "volume": {
+            "nocopy": true
+          }
+        },
+        {
+          "type": "bind",
+          "source": "/inert/c1105/claude-token",
+          "target": "/run/antiphon/claude-oauth-token",
+          "read_only": true,
+          "bind": {
+            "create_host_path": true
+          }
+        },
+        {
+          "type": "bind",
+          "source": "/inert/c1105/gitconfig",
+          "target": "/run/antiphon/gitconfig",
+          "read_only": true,
+          "bind": {
+            "create_host_path": true
+          }
+        },
+        {
+          "type": "bind",
+          "source": "/inert/c1105/github-token",
+          "target": "/run/antiphon/github-token",
+          "read_only": true,
+          "bind": {
+            "create_host_path": true
+          }
+        },
+        {
+          "type": "bind",
+          "source": "/inert/c1105/codex",
+          "target": "/state/codex",
+          "bind": {
+            "create_host_path": true
+          }
+        }
+      ]
+    },
+    "state-init": {
+      "build": {
+        "context": "/inert/c1105/repo",
+        "dockerfile": "Dockerfile",
+        "args": {
+          "SOURCE_REVISION": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "command": null,
+      "entrypoint": [
+        "/bin/sh",
+        "/stack/init-state.sh"
+      ],
+      "environment": {
+        "CODEX_HOME_REQUIRED": "1"
+      },
+      "image": "antiphon-server2/server:aaaaaaaaaaaa",
+      "networks": {
+        "default": null
+      },
+      "restart": "no",
+      "user": "0:0",
+      "volumes": [
+        {
+          "type": "volume",
+          "source": "work",
+          "target": "/work",
+          "volume": {}
+        },
+        {
+          "type": "volume",
+          "source": "runner-state",
+          "target": "/runner-state",
+          "volume": {}
+        },
+        {
+          "type": "bind",
+          "source": "/inert/c1105/codex",
+          "target": "/codex-home",
+          "bind": {
+            "create_host_path": true
+          }
+        }
+      ]
+    }
+  },
+  "volumes": {
+    "dind-data": {
+      "name": "antiphon-runner_dind-data"
+    },
+    "runner-npm-content": {
+      "name": "antiphon-runner-cache-npm-content",
+      "external": true
+    },
+    "runner-nuget-packages": {
+      "name": "antiphon-runner-cache-nuget-packages",
+      "external": true
+    },
+    "runner-nuget-scratch": {
+      "name": "antiphon-runner-cache-nuget-scratch",
+      "external": true
+    },
+    "runner-state": {
+      "name": "antiphon-runner_runner-state"
+    },
+    "runner-tmp": {
+      "name": "antiphon-runner_runner-tmp"
+    },
+    "work": {
+      "name": "antiphon-runner_work"
+    }
+  }
+}

@@ -3981,7 +3981,8 @@ c1008_previous_model() {
               else "/run/secrets/"+(.source // "") end) as $target |
              if ($secret|type)!="object" or (($secret|allowed(["source","target"]))|not) or
                 ($secret.source|type)!="string" or ($model.secrets[$secret.source]|type)!="object" or
-                (($model.secrets[$secret.source]|allowed(["file","name"]))|not) or
+                (($model.secrets[$secret.source]|allowed(["file","name","external"]))|not) or
+                ((($model.secrets[$secret.source].external // false)==false)|not) or
                 ($model.secrets[$secret.source].file|type)!="string" or
                 (($model.secrets[$secret.source].file|startswith("/"))|not) or
                 $target!=("/run/secrets/"+$secret.source) then error("secret")
@@ -4062,9 +4063,12 @@ c1008_compose_model() {
             ($svc.secrets|map(.source)|sort)!=["antiphon-deploy-key","phone-home"] then error("ephemeral") else . end |
           [$svc.secrets[] | . as $secret |
             (if .source=="antiphon-deploy-key" then $key else $phone end) as $source |
-            (if (.target|startswith("/")) then .target else "/run/secrets/"+.target end) as $target |
+            (if (.target|type)=="string" and (.target|startswith("/")) then .target
+             else "/run/secrets/"+(.source // "") end) as $target |
             if (allowed(["source","target"])) and $target==("/run/secrets/"+.source) and
-              ($model.secrets[.source]|allowed(["file","name"])) and $model.secrets[.source].file==$source and
+              ($model.secrets[.source]|allowed(["file","name","external"])) and
+              (($model.secrets[.source].external // false)==false) and
+              $model.secrets[.source].file==$source and
               ($source|startswith("/")) then {kind:"secret",source:$source,target:$target,rw:false,file:true}
             else error("secret") end] + [{kind:"tmpfs",source:"",target:"/run/antiphon",rw:true}]
          else if (($svc.secrets // [])|length)!=0 or (($svc.tmpfs // [])|length)!=0 then error("init ephemeral") else [] end end) as $extra |

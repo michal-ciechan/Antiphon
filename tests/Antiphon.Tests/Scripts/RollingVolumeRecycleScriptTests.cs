@@ -954,6 +954,13 @@ internal sealed class C1008HostFixture : IDisposable
                 ["com.docker.compose.service"] = service } }, ["Mounts"] = mounts, ["HostConfig"] = hostConfig };
     }
 
+    internal static JsonObject LoadComposeV218(string root)
+    {
+        var text = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot,
+            "scripts/fixtures/c1105-compose-v218-config.json")).Replace("/inert/c1105", root, StringComparison.Ordinal);
+        return JsonNode.Parse(text)!.AsObject();
+    }
+
     internal async Task<(int Exit, string Output)> Run(string hostCase = "deploy-parent", string extra = "", bool dryRun = false)
     {
         File.WriteAllText(StatePath, Docker.ToJsonString());
