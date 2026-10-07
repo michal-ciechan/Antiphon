@@ -260,6 +260,7 @@ docker() {
   if [ "$1:$2" = image:inspect ]; then
     case "$*" in *antiphon-server2/session-testing:*) printf '%s\n' '${docker('image','inspect','--format','{{.Id}}',image)}' ;; *) command docker "$@" ;; esac
   elif [ "$1" = ps ] && [ '${options.censusError?1:0}' = 1 ]; then return 77
+  elif [ "$1" = ps ]; then command docker "$@" --filter 'label=${label}=${prefix}'
   elif [ "$1:$2" = volume:rm ]; then
     n=0; [ ! -f '${f.root}/rm-count' ] || n="$(cat '${f.root}/rm-count')"
     if [ '${options.failAt||0}' -gt 0 ] && [ "$n" = '${(options.failAt||0)-1}' ]; then return 77; fi
