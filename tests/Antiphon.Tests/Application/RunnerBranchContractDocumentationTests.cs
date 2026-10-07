@@ -86,7 +86,7 @@ public class RunnerBranchContractDocumentationTests
         "A debt row is created only for the lease-contention case of a complete report that settles Succeeded or Failed.",
         "Dirty, diverged, and unfetched Code stay Blocked with no debt row.",
         "The policy accepts only the task's own owned ref as the observed tip, and a Code report with no progress evidence under Pending stays Blocked.",
-        "The Blocked warning says Runner sync pending and then reply.",
+        "A Blocked lease-busy settlement's warning says Runner sync unavailable and then reply, never Runner sync pending; its evidence still records Pending.",
         "Pending evidence without a debt row means the task stayed Blocked and a reply is required.",
         "desktop-sync=pending",
         "synced later",

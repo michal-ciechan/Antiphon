@@ -942,7 +942,7 @@ public sealed class AgentTaskReplyService
         if (remoteBlock is not null)
         {
             var sync = remote.Result!;
-            remoteBlockWarning = $"Runner sync {sync.State.ToString().ToLowerInvariant()}: {remoteBlock}. "
+            remoteBlockWarning = $"Runner sync {(sync.State == RemoteSettlementSyncState.Pending ? "unavailable" : sync.State.ToString().ToLowerInvariant())}: {remoteBlock}. "
                 + (sync.Reason == RemoteSettlementSyncReasons.MirrorDiverged
                     ? $"Runner '{task.RunnerId}' mirror {task.RemoteWorktreePath} is at {sync.MirrorSha}, "
                       + $"baseline {sync.BaselineSha}. This branch is fast-forward-only. Dispatch a fresh Code task "
