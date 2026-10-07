@@ -211,6 +211,71 @@ public sealed partial class PhoneHomeRollingRunnerTests
         residue.ShouldContain(unpublished);
     }
 
+    [Test]
+    public async Task C1125_PendingRemovalUsesObservedSha()
+    {
+        await using var world = await RollingWorld.StartAsync();
+        var baseline = new string('a', 40);
+        var observed = new string('b', 40);
+        var task = RemovalTask(baseline, new RemoteSyncEvidence(
+            1, RemoteSettlementSyncState.Pending, ObservedSha: observed, ConfirmedSha: null));
+
+        await AssertRemovalPublishesAsync(world, task, observed);
+    }
+
+    [Test]
+    public async Task C1125_UnavailableRemovalUsesWorktreeBaseSha()
+    {
+        await using var world = await RollingWorld.StartAsync();
+        var baseline = new string('a', 40);
+        var observed = new string('b', 40);
+        var task = RemovalTask(baseline, new RemoteSyncEvidence(
+            1, RemoteSettlementSyncState.Unavailable, ObservedSha: observed, ConfirmedSha: null,
+            Reason: RemoteSettlementSyncReasons.LeaseBusy));
+
+        await AssertRemovalPublishesAsync(world, task, baseline);
+    }
+
+    [Test]
+    public async Task C1125_PendingRemovalPrefersConfirmedSha()
+    {
+        await using var world = await RollingWorld.StartAsync();
+        var baseline = new string('a', 40);
+        var observed = new string('b', 40);
+        var confirmed = new string('c', 40);
+        var task = RemovalTask(baseline, new RemoteSyncEvidence(
+            1, RemoteSettlementSyncState.Pending, ObservedSha: observed, ConfirmedSha: confirmed));
+
+        await AssertRemovalPublishesAsync(world, task, confirmed);
+    }
+
+    private static AgentTask RemovalTask(string baseline, RemoteSyncEvidence sync) => new()
+    {
+        Id = Guid.NewGuid(),
+        RunnerId = RollingRunnerSettings.Server2,
+        RemoteWorktreePath = "/work/worktrees/task-c1125",
+        WorktreeBaseSha = baseline,
+        CompletionProgressEvidenceJson = TaskProgressJson.SerializeEvidence(new CompletionProgressEvidence(
+            1, CompletionProgressAssessment.ProgressObserved, RemoteSync: sync)),
+    };
+
+    /// <summary>CARD-1125: asserts the supplied SHA. It does not recompute the production fallback.</summary>
+    private static async Task AssertRemovalPublishesAsync(RollingWorld world, AgentTask task, string expectedSha)
+    {
+        using var scope = world.Harness.Provider.CreateScope();
+        var residue = await scope.ServiceProvider.GetRequiredService<RemoteWorkspaceService>()
+            .RemoveMirrorAsync(task, CancellationToken.None);
+
+        residue.ShouldBeNull();
+        world.PeerA.RequestCount(PhoneHomeOperation.WorkspaceRemove).ShouldBe(1);
+        world.PeerB.RequestCount(PhoneHomeOperation.WorkspaceRemove).ShouldBe(0);
+        var request = world.PeerA.Incoming
+            .Single(frame => frame.Operation == PhoneHomeOperation.WorkspaceRemove)
+            .Payload!.Value.Deserialize<PhoneHomeWorkspaceRemoveRequest>(PhoneHomeFraming.Json)!;
+        request.Path.ShouldBe(task.RemoteWorktreePath);
+        request.PublishedSha.ShouldBe(expectedSha);
+    }
+
     private static string? InputText(PhoneHomeFrame frame)
     {
         if (frame.Payload is not { } payload || payload.ValueKind != JsonValueKind.Object)
