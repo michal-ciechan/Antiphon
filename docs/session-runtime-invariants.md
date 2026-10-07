@@ -78,9 +78,9 @@ With Enabled and ReclaimExisting set, physical release still requires AutomaticE
 The park bound is this release path (CARD-1083). It is dormant while BlockedTaskParking:Enabled is false, and while it is dormant nothing automatically releases a session that waits for input.
 
 OccupiesCapacity is true for any non-empty runner status other than Exited or Failed.
-OpenTaskId is set only for Dispatched or Working, so a live Blocked or Queued owner remains orphan=true.
+OpenTaskId is the owner task: the latest Queued, Dispatched, Working or Blocked task bound to the session, so a live Blocked or Queued owner reads orphan=false (CARD-1124).
 A warm pool delegate is excluded from that orphan flag.
-The slot DTO does not carry park state, so a bound Blocked or Queued owner is still reported as an orphan.
+The slot DTO carries park: null, or the owner's current-attempt park id, state, reason code, release id and sync state. It is display-only and never release authority.
 An unavailable runner inventory records inventoryState unavailable and does not zero desktop in-flight sessions.
 A confirmed Exited or Failed status, or absence from a listed catalogue, drops that seat.
 Task detail exposes parkSync when the sync state is not NotRequired.
