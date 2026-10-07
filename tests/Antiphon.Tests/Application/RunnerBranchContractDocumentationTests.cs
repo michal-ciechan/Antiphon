@@ -106,6 +106,7 @@ public class RunnerBranchContractDocumentationTests
         "RunnerSyncDebtAttentionMinutes defaults to 30.",
         "The desktop checkout is dirty. This debt stays Held.",
         "Review that exact pushed S in a Worktree Review with -StartRef",
+        "A Held debt is re-checked every 60 minutes for its worktree registration only: it ends Superseded once the worktree is retired or gone, and it never runs Git or fast-forwards.",
     ];
 
     private static readonly string[] RuntimeSentences =
@@ -119,6 +120,7 @@ public class RunnerBranchContractDocumentationTests
         "backoff is 1, 2, 4, then 5 minutes",
         "-Land does not read RemoteSync.",
         "syncDebt",
+        "A Held debt ends Superseded once its worktree is retired.",
     ];
 
     private static readonly string[] OpsSentences =
@@ -132,6 +134,7 @@ public class RunnerBranchContractDocumentationTests
         "synced later",
         "Pending evidence without a debt row means the task stayed Blocked and a reply is required.",
         "RunnerSyncDebtAttentionMinutes defaults to 30.",
+        "Held debt is re-checked hourly and ends Superseded after worktree retirement, which clears its attention row.",
     ];
 
     private static readonly string[] ApiSentences =
