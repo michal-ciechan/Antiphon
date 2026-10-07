@@ -124,9 +124,11 @@ public sealed class TerminalRunnerSeatReleaseService(
     /// Pages current Blocked tasks that never took the post-commit fast path. Enabled and
     /// ReclaimExisting are both required. Each attempt commits the cursor after it finishes,
     /// including a caught failure, so one poison row cannot pin the page or skip its neighbor.
-    /// One run visits each eligible row at most once and stops at the smaller of the eligible
-    /// count and <paramref name="pageSize"/> times <paramref name="passBudget"/>. The cursor
-    /// still wraps, so the next run continues fairly.
+    /// One run visits each eligible row at most once. It stops at the first id already visited
+    /// in this run, without committing the cursor for that id, and at the smaller of the
+    /// eligible count and <paramref name="pageSize"/> times <paramref name="passBudget"/>.
+    /// Released counts ledger rows confirmed at or after this run's start. The cursor still
+    /// wraps, so the next run continues fairly.
     /// </summary>
     public async Task<LegacyReclaimResult> ReclaimLegacyAsync(int pageSize, int passBudget, CancellationToken ct)
     {
@@ -140,23 +142,32 @@ public sealed class TerminalRunnerSeatReleaseService(
         var eligible = await db.AgentTasks.AsNoTracking()
             .CountAsync(t => t.Status == AgentTaskStatus.Blocked, ct);
         var cap = (int)Math.Min(eligible, (long)pageSize * passBudget);
+        var runStart = clock.GetUtcNow().UtcDateTime;
+        var seen = new HashSet<Guid>();
         var visited = 0;
         var registered = 0;
         var released = 0;
-        for (var pass = 0; pass < passBudget && visited < cap; pass++)
+        var stopped = false;
+        for (var pass = 0; pass < passBudget && visited < cap && !stopped; pass++)
         {
             var page = await parks.NextLegacyPageAsync(pageSize, ct);
             if (page.Count == 0) break;
             foreach (var taskId in page)
             {
                 if (visited >= cap) break;
+                if (!seen.Add(taskId))
+                {
+                    stopped = true;
+                    break;
+                }
                 try
                 {
                     if (BoundaryAsync is not null) await BoundaryAsync("ReclaimList:" + taskId.ToString("D"), ct);
                     if (await parks.RegisterLegacyAsync(taskId, ct) is not null) registered++;
                     await TryHandleTaskAsync(taskId, ct);
                     var task = await db.AgentTasks.AsNoTracking().SingleOrDefaultAsync(t => t.Id == taskId, ct);
-                    if (task is not null && IsConfirmed(await FindAttemptReleaseAsync(db, task, ct)))
+                    var release = task is null ? null : await FindAttemptReleaseAsync(db, task, ct);
+                    if (IsConfirmed(release) && release!.ConfirmedAt is DateTime confirmed && confirmed >= runStart)
                         released++;
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)

@@ -77,6 +77,7 @@ public sealed class BlockedTaskParkProjectionTests
         Require(runtime, "The park bound is this release path (CARD-1083).", "c1065-park-bound");
         Require(runtime, "A short tail wraps. ReclaimScheduledAsync shares one overlap gate and, unless ReclaimIntervalSeconds is 0, runs at most once per ReclaimIntervalSeconds. One run visits each eligible Blocked row at most once and stops at the smaller of the eligible count and page size times the pass budget.", "c1065-reclaim-page");
         Require(runtime, "The reconcile job's released total counts confirmed releases only and does not include visit counts.", "c1065-reclaim-count");
+        Require(runtime, "A sweep's Released counts only ledger rows confirmed during that run; a row Parked before the run is visited and counted in Visited and Registered but not in Released, and a run stops at the first row it has already visited (CARD-1129).", "c1129-released-this-run");
         Require(Read("docs/antiphon-api.md"), "ReclaimIntervalSeconds", "c1108-api-interval");
         Require(Read("docs/ops-http.md"), "ReclaimIntervalSeconds", "c1108-ops-interval");
         Require(runtime, "A Held episode is not prepared again until its NextAttemptAt, stamped at now plus ReclaimHeldBackoffSeconds (default 600; 0 disables; a negative value is treated as 0), except park_workspace_reserved which stays immediate.", "c1108-held-backoff");
