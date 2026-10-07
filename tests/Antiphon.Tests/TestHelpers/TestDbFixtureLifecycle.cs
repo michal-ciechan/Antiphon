@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Npgsql;
 using Testcontainers.PostgreSql;
 using Antiphon.Server.Infrastructure.Data;
@@ -363,6 +364,20 @@ internal sealed class TestDbFixtureLifecycle
                 npgsql.SetPostgresVersion(16, 0);
             })
             .Options;
+
+    internal static DbContextOptions<AppDbContext> BuildOptions(
+        string connectionString, params IInterceptor[] interceptors)
+    {
+        var builder = new DbContextOptionsBuilder<AppDbContext>()
+            .UseNpgsql(connectionString, npgsql =>
+            {
+                npgsql.MigrationsAssembly("Antiphon.Server");
+                npgsql.SetPostgresVersion(16, 0);
+            });
+        if (interceptors.Length > 0)
+            builder.AddInterceptors(interceptors);
+        return builder.Options;
+    }
 
     internal static string DeriveMaintenance(string sharedConnectionString) =>
         new NpgsqlConnectionStringBuilder(sharedConnectionString)

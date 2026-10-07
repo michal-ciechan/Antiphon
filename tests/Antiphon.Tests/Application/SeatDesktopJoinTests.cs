@@ -385,6 +385,108 @@ public sealed class SeatDesktopJoinTests
     }
 
     [Test]
+    public async Task C1138_Join_park_follows_the_owner_and_receipt_follows_the_latest_task()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var plain = TestDbFixture.CreateDbContextOptions(schema.ConnectionString);
+        var projectId = Guid.NewGuid();
+        var boardId = Guid.NewGuid();
+        var columnId = Guid.NewGuid();
+        var cardId = Guid.NewGuid();
+        var sessionA = Guid.NewGuid();
+        var sessionB = Guid.NewGuid();
+        var blockedOwner = Guid.NewGuid();
+        var succeeded = Guid.NewGuid();
+        var heldOwner = Guid.NewGuid();
+        var succeededPark = Guid.NewGuid();
+        var heldPark = Guid.NewGuid();
+        var receipt = Guid.NewGuid();
+        // Shared attempt: the owner-task key is what keeps the Succeeded park off session A.
+        const int attempt = 1;
+
+        await using (var db = new AppDbContext(plain))
+        {
+            db.Projects.Add(new Project
+            {
+                Id = projectId,
+                Name = "c1138-join",
+                GitRepositoryUrl = "https://example.invalid/c1138.git",
+                CreatedAt = Now,
+                UpdatedAt = Now,
+            });
+            db.Boards.Add(new Board
+            {
+                Id = boardId,
+                ProjectId = projectId,
+                Name = "c1138",
+                CreatedAt = Now,
+                UpdatedAt = Now,
+            });
+            db.BoardColumns.Add(new BoardColumn
+            {
+                Id = columnId,
+                BoardId = boardId,
+                Name = "Backlog",
+                StateKey = "backlog",
+                CardStatus = CardStatus.Backlog,
+                CreatedAt = Now,
+                UpdatedAt = Now,
+            });
+            db.Cards.Add(new Card
+            {
+                Id = cardId,
+                BoardId = boardId,
+                BoardColumnId = columnId,
+                Identifier = "CARD-1138",
+                Title = "cross-task park",
+                CreatedAt = Now,
+                UpdatedAt = Now,
+            });
+            db.AgentSessions.AddRange(
+                Session(sessionA, SessionStatus.Running),
+                Session(sessionB, SessionStatus.Running));
+            db.AgentTasks.AddRange(
+                TaskRow(blockedOwner, sessionA, AgentTaskStatus.Blocked, Now, attempt: attempt),
+                TaskRow(succeeded, sessionA, AgentTaskStatus.Succeeded, Now.AddMinutes(10), attempt: attempt,
+                    cardId: cardId, completedAt: Now.AddMinutes(20)),
+                TaskRow(heldOwner, sessionB, AgentTaskStatus.Blocked, Now, attempt: attempt));
+            db.AgentTaskParks.AddRange(
+                Park(succeeded, attempt, blockEventId: Guid.NewGuid(), receipt: receipt, at: Now.AddMinutes(10),
+                    state: AgentTaskParkState.Parked, id: succeededPark),
+                Park(heldOwner, attempt, blockEventId: Guid.NewGuid(), receipt: null, at: Now,
+                    state: AgentTaskParkState.Held, reason: "park_dirty", id: heldPark));
+            await db.SaveChangesAsync();
+        }
+
+        var capture = new CountingCommandInterceptor();
+        await using var read = new AppDbContext(CountingOptions(schema.ConnectionString, capture));
+        var rows = await SeatDesktopJoin.LoadAsync(read, [sessionA, sessionB], CancellationToken.None);
+        var commands = capture.Commands.ToArray();
+        commands.Length.ShouldBe(9, string.Join("\n---\n", commands));
+        foreach (var sql in commands)
+        {
+            sql.Contains("INSERT", StringComparison.Ordinal).ShouldBeFalse(sql);
+            sql.Contains("UPDATE", StringComparison.Ordinal).ShouldBeFalse(sql);
+            sql.Contains("DELETE", StringComparison.Ordinal).ShouldBeFalse(sql);
+        }
+
+        var crossed = rows[sessionA];
+        crossed.OpenTaskId.ShouldBe(blockedOwner);
+        crossed.LatestTask.ShouldNotBeNull();
+        crossed.LatestTask.Id.ShouldBe(succeeded);
+        crossed.Park.ShouldBeNull();
+        crossed.PublicationReceipt.ShouldBeTrue();
+
+        var held = rows[sessionB];
+        held.OpenTaskId.ShouldBe(heldOwner);
+        held.LatestTask.ShouldNotBeNull();
+        held.LatestTask.Id.ShouldBe(heldOwner);
+        held.Park.ShouldBe(new SeatParkRow(
+            heldPark, AgentTaskParkState.Held, "park_dirty", null, AgentTaskParkSyncState.NotRequired));
+        held.PublicationReceipt.ShouldBeFalse();
+    }
+
+    [Test]
     public async Task C1079_Join_latest_task_query_is_grouped_per_session()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
@@ -415,14 +517,7 @@ public sealed class SeatDesktopJoinTests
 
     private static DbContextOptions<AppDbContext> CountingOptions(
         string connectionString, CountingCommandInterceptor capture) =>
-        new DbContextOptionsBuilder<AppDbContext>()
-            .UseNpgsql(connectionString, npgsql =>
-            {
-                npgsql.MigrationsAssembly("Antiphon.Server");
-                npgsql.SetPostgresVersion(16, 0);
-            })
-            .AddInterceptors(capture)
-            .Options;
+        TestDbFixture.CreateDbContextOptions(connectionString, capture);
 
     private static AgentSession Session(Guid id, SessionStatus status) => new()
     {
