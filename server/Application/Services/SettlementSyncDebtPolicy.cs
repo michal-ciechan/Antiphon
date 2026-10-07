@@ -7,8 +7,9 @@ using Antiphon.Server.Domain.Enums;
 namespace Antiphon.Server.Application.Services;
 
 /// <summary>
-/// CARD-1082 D-1/D-2. Pure rule for desktop sync debt. Settlement does not call this until a
-/// later slice. With <see cref="DelegationSettings.RunnerSyncDebtOnSettlement"/> off, every
+/// CARD-1082 D-1/D-2. Pure rule for desktop sync debt. Settlement classifies once in
+/// PrepareRemoteAsync, before progress, the block decision, and the debt row.
+/// With <see cref="DelegationSettings.RunnerSyncDebtOnSettlement"/> off, every
 /// method that classifies returns the sync result unchanged.
 /// </summary>
 public static class SettlementSyncDebtPolicy
