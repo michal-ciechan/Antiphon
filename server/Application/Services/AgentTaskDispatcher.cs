@@ -115,6 +115,10 @@ public sealed class AgentTaskDispatcher
     /// <summary>This instance's context, so a test can tell an owned-scope sweep's context apart.</summary>
     internal AppDbContext Db => _db;
 
+    /// <summary>CARD-1128: reports the dependencies received by this dispatcher; tests only.</summary>
+    internal (bool BlockedTaskSync, bool SettlementSync) SyncDebtSweepsWired =>
+        (_blockedTaskSync is not null, _settlementSync is not null);
+
     public AgentTaskDispatcher(
         AppDbContext db,
         AgentRegistry agentRegistry,
