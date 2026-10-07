@@ -24,7 +24,12 @@ public partial class DelegationDispatchRecoveryBoundaryTests
     [Test]
     [Arguments("held-dispatched-tick", 18)]
     [Arguments("working-live-tick", 18)]
-    [Arguments("inside-grace-absent-scan", 8)]
+    // BuildService, one Starting session inside the 90s grace, empty runner,
+    // launch ownership absent and census alerts off. Measured roster is the live
+    // AgentSessions select, the FOR UPDATE, the reload, and the Agents select.
+    // The investigation's 8 is not this graph; the plan's exact 8 has to be
+    // revised before Code treats it as acceptance for this fixture.
+    [Arguments("inside-grace-absent-scan", 4)]
     public async Task C1149_C1150_Statement_budgets(string action, int expected)
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();

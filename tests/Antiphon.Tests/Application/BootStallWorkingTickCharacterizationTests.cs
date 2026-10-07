@@ -232,6 +232,9 @@ public class BootStallWorkingTickCharacterizationTests
             services.AddSingleton<SessionMessageQueueService>();
             services.AddSingleton<IDelegateSessionStopper>(stopper);
             services.AddSingleton<ISessionRunnerClient>(runner);
+            // The queue constructor requires the runtime. An empty runner transcript
+            // persists nothing, so the seeded UserPrompt stays the boot clock.
+            services.AddSingleton<AgentSessionRuntime>();
             services.AddSingleton<DeadSessionFirstSeenState>();
             services.AddSingleton<DelegationWorkspaceResolver>();
             services.AddDelegationWorktreeGraph(new GitSettings
