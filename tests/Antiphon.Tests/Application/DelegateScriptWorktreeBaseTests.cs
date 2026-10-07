@@ -41,11 +41,12 @@ public class DelegateScriptWorktreeBaseTests
         }
         await db.SaveChangesAsync();
         var sourceSha = (await repo.GitReadAsync("rev-parse", source.WorktreeBranch!)).Trim();
-        var firstGit = scenario == "unknown_fallback"
-            ? new RefLookupFailureGit(source.WorktreeBranch!) : null;
-        await RunArmAsync(repo, schema, card, source, sourceSha, scenario, firstGit, null);
+        WorktreeListingFailureGit? fault = scenario == "unknown_fallback"
+            ? new(repo.Path) : null;
+        await RunArmAsync(repo, schema, card, source, sourceSha, scenario, fault, null);
         if (scenario == "unknown_fallback")
         {
+            fault!.Calls.ShouldBeGreaterThan(0, "the worktree-listing fault must be reached");
             var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
             await RunArmAsync(repo, schema, card, source, sourceSha, "inspection_timeout",
                 new DeadlineGit(clock), clock);
@@ -90,6 +91,7 @@ public class DelegateScriptWorktreeBaseTests
                 run.Output.ShouldContain("Fresh worktree omits");
                 break;
             case "unknown_fallback":
+                run.Output.ShouldContain("Target at master");
                 run.Output.ShouldContain("unknown");
                 run.Output.ShouldContain(source.WorktreeBranch!);
                 break;
@@ -180,14 +182,21 @@ public class DelegateScriptWorktreeBaseTests
         }
     }
 
-    private sealed class RefLookupFailureGit(string branch) : LandingGit
+    private sealed class WorktreeListingFailureGit(string repositoryPath) : LandingGit
     {
+        public int Calls { get; private set; }
+
         public override Task<LandingGitResult> RunAsync(string repository, IReadOnlyList<string> args,
-            CancellationToken ct) =>
-            args is ["rev-parse", "--verify", "--quiet", var reference]
-                && reference == $"refs/heads/{branch}^{{commit}}"
-                    ? Task.FromResult(new LandingGitResult(128, "", "injected source read failure"))
-                    : base.RunAsync(repository, args, ct);
+            CancellationToken ct)
+        {
+            if (args is ["worktree", "list", "--porcelain"] && repository == repositoryPath)
+            {
+                Calls++;
+                return Task.FromResult(new LandingGitResult(128, "", "injected worktree listing failure"));
+            }
+
+            return base.RunAsync(repository, args, ct);
+        }
     }
 
     private sealed class DeadlineGit(FakeTimeProvider clock) : LandingGit
