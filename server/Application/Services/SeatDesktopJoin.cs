@@ -5,7 +5,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Antiphon.Server.Application.Services;
 
-/// <summary>The latest task bound to a session, plus the open Dispatched/Working task when that is a different row.</summary>
+/// <summary>The latest task bound to a session, plus the owner task (Queued, Dispatched, Working or Blocked) when that is a different row.</summary>
 internal sealed record SeatBoundTask(
     Guid Id,
     AgentTaskStatus Status,
@@ -25,8 +25,9 @@ internal sealed record SeatParkRow(
     AgentTaskParkSyncState SyncState);
 
 /// <summary>
-/// Desktop facts for one runner session. <see cref="OpenTaskId"/> is set only for Dispatched
-/// or Working. <see cref="LatestTask"/> is the newest task on the session regardless of status.
+/// Desktop facts for one runner session. <see cref="OpenTaskId"/> is the owner task: the latest
+/// Queued, Dispatched, Working or Blocked task bound to the session. <see cref="LatestTask"/> is
+/// the newest task on the session regardless of status.
 /// </summary>
 internal readonly record struct SeatDesktopRow(
     bool Live,
@@ -40,9 +41,10 @@ internal readonly record struct SeatDesktopRow(
 
 /// <summary>
 /// CARD-1079: the one desktop join shared by the slots route and the occupancy sampler.
-/// A seat is owned only by a Dispatched or Working task. The task table is the latest row
-/// per session (CARD-1090), not that session's whole history. The card query reads the
-/// board id only.
+/// A seat is owned by the latest Queued, Dispatched, Working or Blocked task (CARD-1124).
+/// The task table is the latest row per session (CARD-1090), not that session's whole history.
+/// The card query reads the board id only. Park and publication receipt are computed in memory
+/// from one park query, keyed on the owner task's current attempt.
 /// </summary>
 internal static class SeatDesktopJoin
 {
@@ -61,7 +63,10 @@ internal static class SeatDesktopJoin
             .Where(t => t.AgentSessionId != null && sessionIds.Contains(t.AgentSessionId.Value));
         var latestBySession = await LatestPerSessionAsync(scoped, ct);
         var openBySession = await LatestPerSessionAsync(
-            scoped.Where(t => t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working),
+            scoped.Where(t => t.Status == AgentTaskStatus.Queued
+                || t.Status == AgentTaskStatus.Dispatched
+                || t.Status == AgentTaskStatus.Working
+                || t.Status == AgentTaskStatus.Blocked),
             ct);
 
         var latestIds = latestBySession.Values.Select(t => t.Id).ToArray();
@@ -102,15 +107,26 @@ internal static class SeatDesktopJoin
             .Where(id => id != Guid.Empty)
             .ToHashSet();
 
-        var receipts = new HashSet<(Guid TaskId, int Attempt)>();
+        var parkRows = new List<ParkSlice>();
         if (latestIds.Length > 0)
         {
-            var parks = await db.AgentTaskParks.AsNoTracking()
-                .Where(p => latestIds.Contains(p.TaskId) && p.PublicationReceiptId != null)
-                .Select(p => new { p.TaskId, p.Attempt })
+            var parkTaskIds = latestIds
+                .Concat(openBySession.Values.Select(t => t.Id))
+                .Distinct()
+                .ToArray();
+            parkRows = await db.AgentTaskParks.AsNoTracking()
+                .Where(p => parkTaskIds.Contains(p.TaskId))
+                .Select(p => new ParkSlice(
+                    p.Id,
+                    p.TaskId,
+                    p.Attempt,
+                    p.State,
+                    p.ReasonCode,
+                    p.RunnerSeatReleaseId,
+                    p.SyncState,
+                    p.CreatedAt,
+                    p.PublicationReceiptId != null))
                 .ToListAsync(ct);
-            foreach (var park in parks)
-                receipts.Add((park.TaskId, park.Attempt));
         }
 
         var sessionById = sessions.ToDictionary(s => s.Id);
@@ -124,7 +140,6 @@ internal static class SeatDesktopJoin
             openBySession.TryGetValue(id, out var open);
             SeatBoundTask? bound = null;
             DateTime? blockedTime = null;
-            var hasReceipt = false;
             if (latest is not null)
             {
                 Guid? boardId = latest.CardId is Guid cardId && boards.TryGetValue(cardId, out var board)
@@ -141,9 +156,10 @@ internal static class SeatDesktopJoin
                     latest.CompletedAt);
                 if (blockedAt.TryGetValue(latest.Id, out var at))
                     blockedTime = at;
-                hasReceipt = receipts.Contains((latest.Id, latest.Attempt));
             }
 
+            var hasReceipt = open is not null && parkRows.Any(p =>
+                p.TaskId == open.Id && p.Attempt == open.Attempt && p.HasReceipt);
             rows[id] = new SeatDesktopRow(
                 live,
                 session?.Status.ToString(),
@@ -151,7 +167,8 @@ internal static class SeatDesktopJoin
                 bound,
                 blockedTime,
                 pooledIds.Contains(id),
-                hasReceipt);
+                hasReceipt,
+                CurrentPark(parkRows, open));
         }
 
         return rows;
@@ -207,6 +224,37 @@ internal static class SeatDesktopJoin
     private static bool Newer(TaskSlice candidate, TaskSlice current) =>
         candidate.CreatedAt > current.CreatedAt
         || (candidate.CreatedAt == current.CreatedAt && candidate.Id.CompareTo(current.Id) > 0);
+
+    private static SeatParkRow? CurrentPark(List<ParkSlice> parks, TaskSlice? owner)
+    {
+        if (owner is null)
+            return null;
+        ParkSlice? chosen = null;
+        foreach (var park in parks)
+        {
+            if (park.TaskId != owner.Id || park.Attempt != owner.Attempt)
+                continue;
+            if (chosen is null
+                || park.CreatedAt > chosen.CreatedAt
+                || (park.CreatedAt == chosen.CreatedAt && park.Id.CompareTo(chosen.Id) > 0))
+                chosen = park;
+        }
+
+        return chosen is null
+            ? null
+            : new SeatParkRow(chosen.Id, chosen.State, chosen.ReasonCode, chosen.ReleaseId, chosen.SyncState);
+    }
+
+    private sealed record ParkSlice(
+        Guid Id,
+        Guid TaskId,
+        int Attempt,
+        AgentTaskParkState State,
+        string ReasonCode,
+        Guid? ReleaseId,
+        AgentTaskParkSyncState SyncState,
+        DateTime CreatedAt,
+        bool HasReceipt);
 
     private sealed record TaskSlice(
         Guid Id,

@@ -23,8 +23,10 @@ public static class RunnerSlotService
         && !status.Equals("Failed", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
-    /// An orphan has no live desktop session, or a live one with no open task, unless that
-    /// session is a warm pool delegate the process-release invariant is keeping on purpose.
+    /// An orphan has no live desktop session, or a live one with no owner task (Queued,
+    /// Dispatched, Working or Blocked), unless that session is a warm pool delegate the
+    /// process-release invariant is keeping on purpose. The flag is display and selection,
+    /// never release authority.
     /// </summary>
     public static bool IsOrphan(bool desktopLive, bool openTask, bool pooledWarm) =>
         !pooledWarm && (!desktopLive || !openTask);
@@ -55,7 +57,8 @@ public static class RunnerSlotService
                 session.VerificationBinding?.Backend,
                 session.VerificationBinding?.ExecutionId,
                 row.Status,
-                row.OpenTaskId);
+                row.OpenTaskId,
+                ToPark(row.Park));
         }).ToArray();
         var capacity = directory.DeclaredCapacity(runnerId);
         return new RunnerSlotsDto(runnerId, capacity, slots.Count(s => s.OccupiesCapacity), slots);
@@ -392,11 +395,22 @@ public static class RunnerSlotService
         foreach (var id in ids)
         {
             joined.TryGetValue(id, out var row);
-            rows[id] = new DesktopRow(row.Live, row.Status, row.OpenTaskId, row.PooledWarm);
+            rows[id] = new DesktopRow(row.Live, row.Status, row.OpenTaskId, row.PooledWarm, row.Park);
         }
 
         return rows;
     }
 
-    private readonly record struct DesktopRow(bool Live, string? Status, Guid? OpenTaskId, bool PooledWarm);
+    private static RunnerSlotParkDto? ToPark(SeatParkRow? park) =>
+        park is null
+            ? null
+            : new RunnerSlotParkDto(
+                park.ParkId,
+                park.State.ToString(),
+                park.ReasonCode,
+                park.ReleaseId,
+                park.SyncState.ToString());
+
+    private readonly record struct DesktopRow(
+        bool Live, string? Status, Guid? OpenTaskId, bool PooledWarm, SeatParkRow? Park);
 }
