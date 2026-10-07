@@ -19,7 +19,8 @@ namespace Antiphon.Tests.Application;
 
 /// <summary>
 /// CARD-1082 S4b. The dispatcher sweep fast-forwards a seeded debt only to its recorded source.
-/// Six methods, nine results: CP-6 counts the three refusal rows and the two episode rows.
+/// Seven methods, ten results: CP-6 counted the three refusal rows and the two episode rows;
+/// S6 adds the task-detail projection.
 /// </summary>
 [Category("Integration")]
 [Category("Slow")]
@@ -389,6 +390,49 @@ public sealed class SettlementSyncRecoveryTests
         after.ShouldBe(before, "G-9 settlement evidence, outcomes, events and obligations stay immutable");
         await world.ReloadAsync();
         world.Task.Status.ShouldBe(AgentTaskStatus.Succeeded);
+    }
+
+    /// <summary>
+    /// V-24. Task detail exposes the debt row beside immutable Pending evidence.
+    /// A task with no row leaves syncDebt null.
+    /// </summary>
+    [Test]
+    public async Task C1082_TaskDetailExposesSyncDebt()
+    {
+        await using var world = await RunnerSettlementWorld.CreateAsync();
+        (await DetailAsync(world)).SyncDebt.ShouldBeNull();
+
+        var source = await world.Git.RunnerPushAsync("work.txt", "recorded");
+        var evidence = TaskProgressJson.SerializeEvidence(new CompletionProgressEvidence(
+            1,
+            CompletionProgressAssessment.ProgressObserved,
+            RemoteSync: new RemoteSyncEvidence(
+                1,
+                RemoteSettlementSyncState.Pending,
+                ObservedSha: source,
+                Reason: RemoteSettlementSyncReasons.LeaseBusy)));
+        await SeedAsync(world, source, evidence);
+
+        var detail = await DetailAsync(world);
+        var debt = detail.SyncDebt.ShouldNotBeNull();
+        debt.State.ShouldBe(nameof(AgentTaskSyncDebtState.Pending));
+        debt.SourceSha.ShouldBe(source);
+        debt.ConfirmedSha.ShouldBeNull();
+        debt.ReasonCode.ShouldBe(RemoteSettlementSyncReasons.LeaseBusy);
+        debt.Attempts.ShouldBe(0);
+        debt.NextAttemptAt.ShouldNotBeNull();
+        detail.ProgressEvidence.ShouldNotBeNull();
+        detail.ProgressEvidence!.RemoteSync.ShouldNotBeNull();
+        detail.ProgressEvidence.RemoteSync!.State.ShouldBe(RemoteSettlementSyncState.Pending);
+        detail.ProgressEvidence.RemoteSync.ObservedSha.ShouldBe(source);
+        detail.ProgressEvidence.RemoteSync.ConfirmedSha.ShouldBeNull();
+    }
+
+    private static async Task<AgentTaskDetailDto> DetailAsync(RunnerSettlementWorld world)
+    {
+        await using var scope = world.Services.CreateAsyncScope();
+        return await scope.ServiceProvider.GetRequiredService<AgentTaskService>()
+            .GetAsync(world.TaskId, CancellationToken.None);
     }
 
     private static async Task AssertCrashRecoversAsync(string cut)

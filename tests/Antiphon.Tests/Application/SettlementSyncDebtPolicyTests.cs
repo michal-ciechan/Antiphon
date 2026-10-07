@@ -125,6 +125,101 @@ public sealed class SettlementSyncDebtPolicyTests
         classified.Reason.ShouldBe(RemoteSettlementSyncReasons.LeaseBusy);
     }
 
+    [Test]
+    [Arguments("Held")]
+    [Arguments("StalePending")]
+    [Arguments("FreshPending")]
+    [Arguments("Ready")]
+    public void C1082_AttentionWarnsOnHeldAndStalePendingDebt(string shape)
+    {
+        var now = new DateTime(2026, 10, 7, 12, 0, 0, DateTimeKind.Utc);
+        var taskId = Guid.Parse("aaaaaaaa-0000-0000-0000-000000000001");
+        var task = Task();
+        task.Id = taskId;
+        task.Attempt = 4;
+        var settings = new DelegationSettings();
+        settings.RunnerSyncDebtAttentionMinutes.ShouldBe(30);
+
+        AgentTaskSyncDebt Debt(AgentTaskSyncDebtState state, DateTime created, string reason) => new()
+        {
+            Id = Guid.Parse("11111111-2222-3333-4444-555555555555"),
+            TaskId = taskId,
+            Attempt = 4,
+            State = state,
+            SourceSha = Sha,
+            ReasonCode = reason,
+            CreatedAt = created,
+        };
+
+        var (state, created, reason, warns) = shape switch
+        {
+            "Held" => (AgentTaskSyncDebtState.Held, now,
+                RemoteSettlementSyncReasons.SettlementSyncEpisodeChanged, true),
+            "StalePending" => (AgentTaskSyncDebtState.Pending, now.AddMinutes(-30).AddSeconds(-1),
+                RemoteSettlementSyncReasons.LeaseBusy, true),
+            "FreshPending" => (AgentTaskSyncDebtState.Pending, now.AddMinutes(-30),
+                RemoteSettlementSyncReasons.LeaseBusy, false),
+            "Ready" => (AgentTaskSyncDebtState.Ready, now.AddHours(-5),
+                RemoteSettlementSyncReasons.SettlementSyncReady, false),
+            _ => throw new InvalidOperationException(shape),
+        };
+
+        var items = SettlementSyncDebtAttention.Build([Debt(state, created, reason)], [task], now, settings);
+        if (!warns)
+        {
+            items.ShouldBeEmpty();
+            if (shape == "Ready")
+            {
+                SettlementSyncDebtAttention.Build(
+                    [Debt(AgentTaskSyncDebtState.Superseded, now.AddHours(-5),
+                        RemoteSettlementSyncReasons.SettlementSyncSuperseded)],
+                    [task], now, settings).ShouldBeEmpty();
+            }
+
+            return;
+        }
+
+        var item = items.ShouldHaveSingleItem();
+        item.Kind.ShouldBe(AttentionKind.SessionDisagreement);
+        item.Severity.ShouldBe(AlertSeverity.Warning);
+        item.TaskId.ShouldBe(taskId);
+        item.ConditionKey.ShouldBe("settlement-sync-debt:11111111-2222-3333-4444-555555555555");
+        item.Evidence.ShouldContain("task=aaaaaaaa-0000-0000-0000-000000000001");
+        item.Evidence.ShouldContain("attempt=4");
+        item.Evidence.ShouldContain("source=" + Sha);
+        item.Evidence.ShouldContain("reason=" + reason);
+        if (shape == "Held")
+        {
+            item.Headline.ShouldBe(
+                "Desktop sync debt held: " + RemoteSettlementSyncReasons.SettlementSyncEpisodeChanged);
+            item.Evidence.ShouldNotContain("then reply");
+            foreach (var (code, sentence) in HeldRecoveries)
+            {
+                var held = SettlementSyncDebtAttention.Build(
+                    [Debt(AgentTaskSyncDebtState.Held, now, code)], [task], now, settings)
+                    .ShouldHaveSingleItem();
+                held.Headline.ShouldBe("Desktop sync debt held: " + code);
+                held.Evidence.ShouldContain(sentence);
+            }
+        }
+        else
+        {
+            item.Headline.ShouldBe("desktop sync still pending (lease contention)");
+        }
+    }
+
+    private static readonly (string Code, string Sentence)[] HeldRecoveries =
+    [
+        (RemoteSettlementSyncReasons.SettlementSyncEpisodeChanged,
+            "The task attempt, baseline or worktree changed; this debt will not be fast-forwarded."),
+        (RemoteSettlementSyncReasons.TipNotReported,
+            "Origin moved past the recorded source; the sweep does not follow it."),
+        (RemoteSettlementSyncReasons.Diverged,
+            "Review that exact pushed S in a Worktree Review with -StartRef"),
+        (RemoteSettlementSyncReasons.Dirty,
+            "The desktop checkout is dirty. This debt stays Held."),
+    ];
+
     private static void AssertPending(RemoteSettlementSyncResult classified, string sha)
     {
         classified.State.ShouldBe(RemoteSettlementSyncState.Pending);

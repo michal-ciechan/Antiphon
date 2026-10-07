@@ -2562,6 +2562,12 @@ public sealed class AgentTaskService
                 .OrderByDescending(p => p.CreatedAt).ThenByDescending(p => p.Id)
                 .Select(p => new TaskParkSyncDto(p.Id, p.SyncState.ToString(), p.SyncSourceSha,
                     p.SyncReasonCode, p.SyncAttempts, p.SyncNextAttemptAt, p.SourceReadyAt))
+                .FirstOrDefaultAsync(ct),
+            SyncDebt: await _db.AgentTaskSyncDebts.AsNoTracking()
+                .Where(d => d.TaskId == task.Id && d.Attempt == task.Attempt)
+                .OrderByDescending(d => d.CreatedAt).ThenByDescending(d => d.Id)
+                .Select(d => new TaskSyncDebtDto(d.Id, d.State.ToString(), d.SourceSha,
+                    d.ConfirmedSha, d.ReasonCode, d.Attempts, d.NextAttemptAt, d.SourceReadyAt))
                 .FirstOrDefaultAsync(ct));
     }
 

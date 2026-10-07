@@ -51,6 +51,100 @@ public class RunnerBranchContractDocumentationTests
         text.ShouldContain("phone_home_unpublished_work");
     }
 
+    [Test]
+    public void C1082_settlement_sync_debt_is_documented()
+    {
+        var loop = Read("docs/orchestration-loop.md");
+        foreach (var sentence in LoopSentences)
+            loop.ShouldContain(sentence);
+        var runtime = Read("docs/session-runtime-invariants.md");
+        foreach (var sentence in RuntimeSentences)
+            runtime.ShouldContain(sentence);
+        var ops = Read("docs/ops-http.md");
+        foreach (var sentence in OpsSentences)
+            ops.ShouldContain(sentence);
+        var api = Read("docs/antiphon-api.md");
+        foreach (var sentence in ApiSentences)
+            api.ShouldContain(sentence);
+        var script = Read("scripts/delegate.ps1");
+        script.ShouldContain("Runner sync: Pending $($r.reason); origin=$($r.observedSha)");
+        script.ShouldContain("Desktop sync debt:");
+        script.ShouldContain(
+            "Pending evidence without a debt row means the task stayed Blocked and a reply is required.");
+        Read("server/Application/Services/SettlementSyncDebtAttention.cs").ShouldContain(
+            "The task attempt, baseline or worktree changed; this debt will not be fast-forwarded.");
+        Read("server/Application/Services/AttentionService.cs").ShouldContain(
+            "SettlementSyncDebtAttention.Build");
+        Read("server/Application/Services/AgentTaskService.cs").ShouldContain("new TaskSyncDebtDto");
+    }
+
+    private static readonly string[] LoopSentences =
+    [
+        "Delegation:RunnerSyncDebtOnSettlement defaults to true.",
+        "runner_sync_lease_busy",
+        "Pending is never Confirmed.",
+        "A debt row is created only for the lease-contention case of a complete report that settles Succeeded or Failed.",
+        "Dirty, diverged, and unfetched Code stay Blocked with no debt row.",
+        "The Blocked warning says Runner sync pending and then reply.",
+        "Pending evidence without a debt row means the task stayed Blocked and a reply is required.",
+        "desktop-sync=pending",
+        "synced later",
+        "No reply is needed",
+        "the report's next= is kept",
+        "-Land uses the pushed branch the same way it does for a synchronized owner.",
+        "backoff is 1, 2, 4, then 5 minutes",
+        "An empty debt table is 1 statement per tick.",
+        "A synchronized settle is 30 statements and debtSql 0.",
+        "A pending-review retry is 40 statements and debtSql 1.",
+        "The kill switch off is 31 statements and debtSql 0.",
+        "desktop sync still pending (lease contention)",
+        "The task attempt, baseline or worktree changed; this debt will not be fast-forwarded.",
+        "Origin moved past the recorded source; the sweep does not follow it.",
+        "settlement-sync-debt:",
+        "syncDebt",
+        "RunnerSyncDebtAttentionMinutes defaults to 30.",
+        "The desktop checkout is dirty. This debt stays Held.",
+        "Review that exact pushed S in a Worktree Review with -StartRef",
+    ];
+
+    private static readonly string[] RuntimeSentences =
+    [
+        "Delegation:RunnerSyncDebtOnSettlement defaults to true.",
+        "Pending is never Confirmed.",
+        "desktop-sync=pending",
+        "synced later",
+        "Dirty, diverged, and unfetched Code stay Blocked",
+        "then reply",
+        "backoff is 1, 2, 4, then 5 minutes",
+        "-Land does not read RemoteSync.",
+        "syncDebt",
+    ];
+
+    private static readonly string[] OpsSentences =
+    [
+        "syncDebt",
+        "Pending is never Confirmed.",
+        "settlement-sync-debt:",
+        "desktop sync still pending (lease contention)",
+        "Delegation:RunnerSyncDebtOnSettlement defaults to true.",
+        "runner_sync_lease_busy",
+        "synced later",
+        "Pending evidence without a debt row means the task stayed Blocked and a reply is required.",
+        "RunnerSyncDebtAttentionMinutes defaults to 30.",
+    ];
+
+    private static readonly string[] ApiSentences =
+    [
+        "syncDebt",
+        "Pending is never Confirmed.",
+        "settlement-sync-debt:",
+        "Delegation:RunnerSyncDebtOnSettlement defaults to true.",
+        "runner_sync_lease_busy",
+        "synced later",
+        "RunnerSyncDebtAttentionMinutes defaults to 30.",
+        "desktop-sync=pending",
+    ];
+
     private static string Read(string relative)
     {
         var directory = AppContext.BaseDirectory;

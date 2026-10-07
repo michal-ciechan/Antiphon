@@ -451,11 +451,27 @@ public sealed record AgentTaskDetailDto(
     string? WorktreeBaseBranch = null,
     string? WorktreeBasePreviewJson = null,
     IReadOnlyList<InternalDecisionQuestionHistoryDto>? InternalDecisionQuestions = null,
-    TaskParkSyncDto? ParkSync = null);
+    TaskParkSyncDto? ParkSync = null,
+    /// <summary>CARD-1082 D-7. Null when this attempt has no settlement sync debt row.</summary>
+    TaskSyncDebtDto? SyncDebt = null);
 
 /// <summary>Desktop source readiness is independent of the historical task verdict and release.</summary>
 public sealed record TaskParkSyncDto(Guid ParkId, string State, string? SourceSha, string? ReasonCode,
     int Attempts, DateTime? NextAttemptAt, DateTime? SourceReadyAt);
+
+/// <summary>
+/// CARD-1082 D-7. The mutable debt row beside immutable <c>progressEvidence.remoteSync</c>.
+/// Pending evidence with a null <see cref="AgentTaskDetailDto.SyncDebt"/> is a Blocked settlement.
+/// </summary>
+public sealed record TaskSyncDebtDto(
+    Guid Id,
+    string State,
+    string? SourceSha,
+    string? ConfirmedSha,
+    string ReasonCode,
+    int Attempts,
+    DateTime? NextAttemptAt,
+    DateTime? SourceReadyAt);
 
 /// <summary>One accepted launch attempt for a sourced Mutation snapshot. Receipt bytes stay on the server.</summary>
 public sealed record VerificationExecutionDetailDto(

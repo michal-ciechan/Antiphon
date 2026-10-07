@@ -740,7 +740,11 @@ switch ($PSCmdlet.ParameterSetName) {
             $p = $task.progressEvidence
             if ($p.remoteSync) {
                 $r = $p.remoteSync
-                Write-Output "Runner sync: $($r.state) $($r.reason); mirror=$($r.mirrorSha) $($r.mirrorRelation) pushed=$($r.mirrorPushed) dirty=$($r.mirrorDirty)"
+                if ($r.state -eq 'Pending') {
+                    Write-Output "Runner sync: Pending $($r.reason); origin=$($r.observedSha)"
+                } else {
+                    Write-Output "Runner sync: $($r.state) $($r.reason); mirror=$($r.mirrorSha) $($r.mirrorRelation) pushed=$($r.mirrorPushed) dirty=$($r.mirrorDirty)"
+                }
             }
             $origin = $null
             if ($p.sources) { $origin = @($p.sources)[0] }
@@ -751,6 +755,12 @@ switch ($PSCmdlet.ParameterSetName) {
             } elseif ($origin) {
                 Write-Output ("Progress: {0}; commit {1}" -f $origin.origin, $origin.commit)
             }
+        }
+        if ($task.syncDebt) {
+            $d = $task.syncDebt
+            Write-Output ("Desktop sync debt: {0} source={1} confirmed={2} reason={3} attempts={4}" -f $d.state, $d.sourceSha, $d.confirmedSha, $d.reasonCode, $d.attempts)
+        } elseif ($task.progressEvidence -and $task.progressEvidence.remoteSync -and $task.progressEvidence.remoteSync.state -eq 'Pending') {
+            Write-Output 'Pending evidence without a debt row means the task stayed Blocked and a reply is required.'
         }
         if ($task.session) {
             $session = $task.session

@@ -603,6 +603,8 @@ switches off does not delete a publication receipt, abandon an accepted answer, 
 stop release reconciliation and sync-debt recovery. Parking never stops a Working
 session.
 
+CARD-1082. Task detail includes syncDebt (id, state, sourceSha, confirmedSha, reasonCode, attempts, nextAttemptAt, sourceReadyAt) when this attempt has a settlement sync debt row. Pending is never Confirmed. Delegation:RunnerSyncDebtOnSettlement defaults to true. The debt row is created only for runner_sync_lease_busy on a complete report that settles. The workspace note contains desktop-sync=pending and the caller warning says synced later. GET /api/attention adds SessionDisagreement keyed settlement-sync-debt: for Held debt and for Pending debt older than the threshold. RunnerSyncDebtAttentionMinutes defaults to 30.
+
 Host budgets are separate from the sampled host stats. A local budget overrides
 `Delegation:MaxConcurrentTasks`; a runner's effective limit is the minimum of its configured
 budget and declared capacity. A null budget uses the setting or declaration. A zero budget

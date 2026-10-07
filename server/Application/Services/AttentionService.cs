@@ -235,6 +235,7 @@ public sealed partial class AttentionService
         items.AddRange(await BuildChannelOutboundDeliveryItemsAsync(ct));
         items.AddRange(await BuildAgentOutlivedTaskItemsAsync(now, ct));
         items.AddRange(await BuildRunnerSeatReleaseItemsAsync(since, ct));
+        items.AddRange(await BuildSettlementSyncDebtItemsAsync(now, ct));
         // One local List for both stop evidence and disagreement. Remote liveness is the
         // CARD-0679 cached live/unknown inventory, never an RPC to an unavailable runner.
         var runnerSessions = await TryListRunnerSessionsAsync(ct);
@@ -3202,5 +3203,21 @@ public sealed partial class AttentionService
         return span.TotalHours >= 1
             ? $"{(int)span.TotalHours}h{span.Minutes:00}m"
             : $"{(int)span.TotalMinutes}m";
+    }
+
+    /// <summary>
+    /// CARD-1082 D-7. Held and Pending debt only. Ready and Superseded are not loaded.
+    /// Fresh Pending is filtered by <see cref="SettlementSyncDebtAttention.Build"/>.
+    /// </summary>
+    private async Task<List<AttentionItemDto>> BuildSettlementSyncDebtItemsAsync(DateTime now, CancellationToken ct)
+    {
+        var debts = await _db.AgentTaskSyncDebts.AsNoTracking()
+            .Where(d => d.State == AgentTaskSyncDebtState.Held || d.State == AgentTaskSyncDebtState.Pending)
+            .ToListAsync(ct);
+        if (debts.Count == 0)
+            return [];
+        var taskIds = debts.Select(d => d.TaskId).Distinct().ToArray();
+        var tasks = await _db.AgentTasks.AsNoTracking().Where(t => taskIds.Contains(t.Id)).ToListAsync(ct);
+        return SettlementSyncDebtAttention.Build(debts, tasks, now, _delegation).ToList();
     }
 }
