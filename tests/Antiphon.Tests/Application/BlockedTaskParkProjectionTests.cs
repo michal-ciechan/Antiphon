@@ -118,7 +118,7 @@ public sealed class BlockedTaskParkProjectionTests
         foreach (var relative in new[] { ".claude/skills/antiphon-orchestrator/SKILL.md" })
         {
             var text = Read(relative);
-            Require(text, "A Blocked child holds its seat until it is answered or cancelled.", "c1065-blocked-child:" + relative);
+            Require(text, "A live Blocked child keeps its runner seat; an accepted Reply resumes work and does not itself free the seat.", "c1065-blocked-child:" + relative);
             Require(text, "do not leave one overnight", "c1065-overnight:" + relative);
             Require(text, "GET /api/session-runners/{id}/slots", "c1065-slots:" + relative);
             Require(text, "orphan=true is not a count of free seats", "c1065-orphan-count:" + relative);
