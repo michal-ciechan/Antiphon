@@ -4901,9 +4901,12 @@ public sealed class AgentTaskReplyService
         // PersistState refuses a context that already tracks the reply. The hold commits on its own.
         await using var hold = services.GetRequiredService<IServiceScopeFactory>().CreateAsyncScope();
         var parking = hold.ServiceProvider.GetRequiredService<BlockedTaskParkingService>();
+        var clock = hold.ServiceProvider.GetRequiredService<TimeProvider>();
+        var parkingOptions = hold.ServiceProvider.GetRequiredService<IOptions<BlockedTaskParkingOptions>>().Value;
+        var backoff = BlockedTaskParkingService.HeldBackoff(parkingOptions, clock, "park_reply_before_reserve");
         foreach (var park in parks)
             await parking.PersistStateAsync(park.Id, park.Revision, park.State, AgentTaskParkState.Held,
-                "park_reply_before_reserve", ct);
+                "park_reply_before_reserve", ct, backoff);
     }
 
     private DateTime UtcNow() => _timeProvider.GetUtcNow().UtcDateTime;

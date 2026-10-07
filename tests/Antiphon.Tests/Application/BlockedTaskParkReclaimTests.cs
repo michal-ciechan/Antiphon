@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Security.Claims;
 using Antiphon.Server.Api.Endpoints;
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
@@ -453,6 +454,152 @@ public sealed class BlockedTaskParkReclaimTests
     }
 
     [Test]
+    public async Task C1108_HeldEpisodesBackOffUntilNextAttempt()
+    {
+        var gate = new ReclaimReservationGate();
+        await using (var f = await RunnerSeatReleaseFixture.CreateAsync(
+            AgentTaskStatus.Blocked, parking: true, reclaim: true, reservationGate: gate))
+        {
+            f.Wire.Qualified = Idle(TimeSpan.FromMilliseconds(119_999), null);
+            await f.EditAsync((task, _) => task.Role = AgentTaskRole.Code);
+            await f.CreateSourceAsync();
+            await CommitTipAsync(f);
+            var verifier = new RunnerWorkspaceParkService();
+            f.Wire.VerifySource = async command => command is { ParkVersion: 2, Publication: { } receipt }
+                && (await verifier.VerifySessionCheckoutAsync(receipt, receipt.Request.Path, default)).Receipt is not null;
+
+            var dirty = await SeedBlockedAsync(f, "dirty");
+            var reserved = await SeedBlockedAsync(f, "reserved");
+            var heal = await SeedBlockedAsync(f, "heal");
+            var working = await SeedBlockedAsync(f, "working-seat", status: AgentTaskStatus.Working, completed: false);
+            var dirtyPath = await f.CreateReclaimSourceAsync(dirty.TaskId, dirty.SessionId, dirty: true);
+            await f.CreateReclaimSourceAsync(reserved.TaskId, reserved.SessionId);
+            var healPath = await f.CreateReclaimSourceAsync(heal.TaskId, heal.SessionId, dirty: true);
+            f.Wire.BySession[f.SessionId] = Idle(TimeSpan.FromMilliseconds(119_999), null);
+            gate.RefuseTaskId = reserved.TaskId;
+
+            (await f.ReclaimAsync(32, 1)).ShouldBeGreaterThan(0, "V-5");
+            var dirtyPark = await ParkOfAsync(f, dirty.TaskId);
+            dirtyPark.ReasonCode.ShouldBe("park_dirty", "G-8");
+            dirtyPark.NextAttemptAt.ShouldNotBeNull("G-8");
+            SameInstant(dirtyPark.NextAttemptAt, dirtyPark.UpdatedAt.AddSeconds(600), "G-8");
+            var revision = dirtyPark.Revision;
+            var waiting = await ParkOfAsync(f, f.TaskId);
+            waiting.State.ShouldBe(AgentTaskParkState.Published, "G-10");
+            Observations(f, f.SessionId).ShouldBe(1, "G-10");
+            var reservedPark = await ParkOfAsync(f, reserved.TaskId);
+            reservedPark.ReasonCode.ShouldBe("park_workspace_reserved", "G-9");
+            reservedPark.NextAttemptAt.ShouldBeNull("G-9");
+            var reservedRevision = reservedPark.Revision;
+            (await ParkCountAsync(f, working.TaskId)).ShouldBe(0, "V-5");
+            await SessionRunningAsync(f, working.SessionId, "V-5");
+
+            gate.RefuseTaskId = null;
+            var observed = Observations(f, f.SessionId);
+            await f.ReclaimAsync(32, 1);
+            (await f.HandleAsync(dirty.TaskId)).ShouldBeTrue("G-8");
+            var dirtyAgain = await ParkOfAsync(f, dirty.TaskId);
+            dirtyAgain.Revision.ShouldBe(revision, "G-8");
+            dirtyAgain.ReasonCode.ShouldBe("park_dirty", "G-8");
+            Observations(f, f.SessionId).ShouldBe(observed + 1, "G-10");
+            var reservedAgain = await ParkOfAsync(f, reserved.TaskId);
+            reservedAgain.Revision.ShouldBeGreaterThan(reservedRevision, "G-9");
+            reservedAgain.ReasonCode.ShouldNotBe("park_workspace_reserved", "G-9");
+            Released(f, f.SessionId).ShouldBeFalse("G-10");
+            Released(f, heal.SessionId).ShouldBeFalse("V-5");
+
+            File.Delete(Path.Combine(healPath, "dirty.txt"));
+            var healPark = await ParkOfAsync(f, heal.TaskId);
+            f.Wire.BySession[heal.SessionId] = Idle(TimeSpan.FromMilliseconds(120_001), AsUtc(healPark.CreatedAt));
+            var due = dirtyAgain.NextAttemptAt ?? f.Now.AddSeconds(600);
+            var delta = new DateTimeOffset(DateTime.SpecifyKind(due, DateTimeKind.Utc)) - f.Clock.GetUtcNow();
+            if (delta > TimeSpan.Zero)
+                f.Clock.Advance(delta);
+            await f.ReclaimAsync(32, 1);
+            var dirtyAfter = await ParkOfAsync(f, dirty.TaskId);
+            dirtyAfter.Revision.ShouldBeGreaterThan(revision, "G-8");
+            dirtyAfter.ReasonCode.ShouldBe("park_dirty", "G-8");
+            dirtyAfter.NextAttemptAt.ShouldNotBeNull("G-8");
+            SameInstant(dirtyAfter.NextAttemptAt, f.Now.AddSeconds(600), "G-8");
+            Released(f, heal.SessionId).ShouldBeTrue("V-5");
+            Released(f, dirty.SessionId).ShouldBeFalse("G-8");
+            Released(f, f.SessionId).ShouldBeFalse("G-10");
+            Directory.Exists(dirtyPath).ShouldBeTrue("V-5");
+            await SessionRunningAsync(f, working.SessionId, "V-5");
+        }
+
+        await using (var open = await RunnerSeatReleaseFixture.CreateAsync(
+            AgentTaskStatus.Blocked, parking: true, reclaim: true, reclaimHeldBackoffSeconds: 0))
+        {
+            open.Wire.Qualified = Idle(TimeSpan.FromMilliseconds(119_999), null);
+            await open.EditAsync((task, _) => task.Status = AgentTaskStatus.Succeeded);
+            var row = await SeedBlockedAsync(open, "open-dirty");
+            await open.CreateReclaimSourceAsync(row.TaskId, row.SessionId, dirty: true);
+            (await open.ReclaimAsync(32, 1)).ShouldBe(1, "V-5");
+            var first = await ParkOfAsync(open, row.TaskId);
+            first.ReasonCode.ShouldBe("park_dirty", "V-5");
+            first.NextAttemptAt.ShouldBeNull("V-5");
+            await open.ReclaimAsync(32, 1);
+            var second = await ParkOfAsync(open, row.TaskId);
+            second.Revision.ShouldBeGreaterThan(first.Revision, "V-5");
+            second.ReasonCode.ShouldBe("park_dirty", "V-5");
+        }
+
+        var counter = new CountingCommandInterceptor();
+        await using var measured = await RunnerSeatReleaseFixture.CreateAsync(
+            AgentTaskStatus.Blocked, parking: true, reclaim: true,
+            configureDb: options => options.AddInterceptors(counter));
+        measured.Wire.Qualified = Idle(TimeSpan.FromMilliseconds(119_999), null);
+        await measured.EditAsync((task, _) => task.Status = AgentTaskStatus.Succeeded);
+        var held = new Row[3];
+        for (var i = 0; i < held.Length; i++)
+        {
+            held[i] = await SeedBlockedAsync(measured, "held-" + i);
+            await measured.CreateReclaimSourceAsync(held[i].TaskId, held[i].SessionId, dirty: true);
+        }
+        var poison = await SeedBlockedAsync(measured, "poison");
+        await measured.CreateReclaimSourceAsync(poison.TaskId, poison.SessionId, dirty: true);
+        var poisoned = false;
+        Func<string, CancellationToken, Task> boundary = (name, _) =>
+        {
+            if (name != "ReclaimList:" + poison.TaskId.ToString("D") || poisoned)
+                return Task.CompletedTask;
+            poisoned = true;
+            throw new InvalidOperationException("injected reclaim failure");
+        };
+        var git = (TaskParkPublicationTests.ParkGit)measured.Harness.Provider.GetRequiredService<ITaskProgressGit>();
+        git.Commands.Clear();
+        var statementsAt = counter.Commands.Count;
+        var firstSweep = await measured.ReclaimResultAsync(32, 1, boundary);
+        var statusBefore = StatusVisits(git);
+        var statementsBefore = counter.Commands.Count - statementsAt;
+        poisoned.ShouldBeTrue("V-5");
+        firstSweep.Visited.ShouldBe(4, "V-5");
+        (await ParkCountAsync(measured, poison.TaskId)).ShouldBe(0, "V-5");
+        var revisions = new long[held.Length];
+        for (var i = 0; i < held.Length; i++)
+        {
+            var park = await ParkOfAsync(measured, held[i].TaskId);
+            park.ReasonCode.ShouldBe("park_dirty", "V-5");
+            revisions[i] = park.Revision;
+        }
+        git.Commands.Clear();
+        statementsAt = counter.Commands.Count;
+        await measured.ReclaimAsync(32, 1, boundary);
+        var statusAfter = StatusVisits(git);
+        var statementsAfter = counter.Commands.Count - statementsAt;
+        Console.WriteLine(
+            $"C1108 held visits rows=3 statusBefore={statusBefore} statusAfter={statusAfter} statementsBefore={statementsBefore} statementsAfter={statementsAfter}");
+        statusAfter.ShouldBeLessThan(statusBefore,
+            $"status visits before={statusBefore} after={statusAfter}; statements before={statementsBefore} after={statementsAfter}");
+        statementsAfter.ShouldBeLessThan(statementsBefore,
+            $"statements before={statementsBefore} after={statementsAfter}");
+        (await ParkCountAsync(measured, poison.TaskId)).ShouldBe(1, "V-5");
+        for (var i = 0; i < held.Length; i++)
+            (await ParkOfAsync(measured, held[i].TaskId)).Revision.ShouldBe(revisions[i], "G-8");
+    }
+
+    [Test]
     public async Task C1065_ClaimAndReplyInvalidateLegacyCandidate()
     {
         await InvalidateAsync("G-175", (f, _) => DriveAsync(f, f.AnswerAsync("reply invalidates the legacy candidate")), list: true);
@@ -667,6 +814,20 @@ public sealed class BlockedTaskParkReclaimTests
         var delta = AsUtc(createdAt) + elapsed - f.Clock.GetUtcNow();
         if (delta > TimeSpan.Zero)
             f.Clock.Advance(delta);
+    }
+
+    private static int Observations(RunnerSeatReleaseFixture f, Guid sessionId) =>
+        f.Wire.Calls.Count(path => path.Contains(sessionId.ToString("D"), StringComparison.Ordinal)
+            && path.EndsWith("/terminal-seat-observation", StringComparison.Ordinal));
+
+    private static int StatusVisits(TaskParkPublicationTests.ParkGit git) =>
+        git.Commands.Count(command => command.Length > 0 && command[0] == "status");
+
+    private static void SameInstant(DateTime? actual, DateTime expected, string label)
+    {
+        actual.ShouldNotBeNull(label);
+        DateTime.SpecifyKind(actual.Value, DateTimeKind.Utc)
+            .ShouldBe(DateTime.SpecifyKind(expected, DateTimeKind.Utc), label);
     }
 
     private static bool Released(RunnerSeatReleaseFixture f, Guid sessionId) =>

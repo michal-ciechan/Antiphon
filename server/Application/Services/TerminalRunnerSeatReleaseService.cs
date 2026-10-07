@@ -81,18 +81,28 @@ public sealed class TerminalRunnerSeatReleaseService(
                 if (parkId is null || task.AgentSessionId is null) return true;
                 var park = await db.AgentTaskParks.AsNoTracking().SingleAsync(p => p.Id == parkId, ct);
                 if (park.State == AgentTaskParkState.Parked) return true;
+                if (park.State == AgentTaskParkState.Held
+                    && park.NextAttemptAt is DateTime due
+                    && due > clock.GetUtcNow().UtcDateTime)
+                    return true;
                 if (park.ReportDigest is null)
                 {
+                    var backoff = BlockedTaskParkingService.HeldBackoff(parkingOptions!.Value, clock, "park_binding_missing");
                     if (park.State is AgentTaskParkState.Requested or AgentTaskParkState.Published)
                         await parks.PersistStateAsync(park.Id, park.Revision, park.State, AgentTaskParkState.Held,
-                            "park_binding_missing", ct);
+                            "park_binding_missing", ct, backoff);
+                    else if (park.State == AgentTaskParkState.Held)
+                        await parks.StampHeldAttemptAsync(park.Id, park.Revision, backoff, ct);
                     return true;
                 }
                 if (await AmbiguousOwnershipAsync(task, ct))
                 {
+                    var backoff = BlockedTaskParkingService.HeldBackoff(parkingOptions!.Value, clock, "park_ownership_ambiguous");
                     if (park.State is AgentTaskParkState.Requested or AgentTaskParkState.Published)
                         await parks.PersistStateAsync(park.Id, park.Revision, park.State, AgentTaskParkState.Held,
-                            "park_ownership_ambiguous", ct);
+                            "park_ownership_ambiguous", ct, backoff);
+                    else if (park.State == AgentTaskParkState.Held)
+                        await parks.StampHeldAttemptAsync(park.Id, park.Revision, backoff, ct);
                     return true;
                 }
                 if (park.PublicationReceiptId is null && (await publication.PrepareAsync(park.Id, ct)).Evidence is null) return true;

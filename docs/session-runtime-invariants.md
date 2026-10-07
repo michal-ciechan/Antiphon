@@ -111,6 +111,7 @@ The reclaim cursor is the singleton BlockedTaskParkReclaimCursors row Id 1 and a
 A short tail wraps. ReclaimScheduledAsync shares one overlap gate and, unless ReclaimIntervalSeconds is 0, runs at most once per ReclaimIntervalSeconds. One run visits each eligible Blocked row at most once and stops at the smaller of the eligible count and page size times the pass budget.
 The reconcile job's released total counts confirmed releases only and does not include visit counts.
 FreshLegacyWindow uses StableFor only as a duration and requires the server-clock interval since park.CreatedAt to reach 120 seconds; the runner's FirstObservedAt is ignored. An old CompletedAt is not the idle window.
+A Held episode is not prepared again until its NextAttemptAt, stamped at now plus ReclaimHeldBackoffSeconds (default 600; 0 disables; a negative value is treated as 0), except park_workspace_reserved which stays immediate.
 Known limits stay on CARD-1097, CARD-1103, CARD-1104, and CARD-1108.
 
 CARD-0519 S10: a terminal session status alone does not close outbound recovery
