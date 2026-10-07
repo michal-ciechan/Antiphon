@@ -119,6 +119,12 @@ public sealed class TaskParkPublicationService(AppDbContext db, LocalTaskParkPub
         park.RepositoryIdentity = identity;
         park.EndpointFingerprint = endpoint;
         park.Revision++;
+        // The row is Requested with no backoff. A later hold must see that, or a Held
+        // episode stamps a row that is no longer Held and stays Requested with no due time.
+        park.State = AgentTaskParkState.Requested;
+        park.ReasonCode = "park_publication_requested";
+        park.HeldFromState = null;
+        park.NextAttemptAt = null;
         var request = Request(park, remote);
         var key = WorkspaceReservationKey.For(park.WorktreePath, park.FullRef, baseline.CanonicalRepository);
         var admitted = await reservations.TryAdmitConsumerAsync(new(key, WorkspaceReservationKind.Launch,
@@ -349,8 +355,11 @@ public sealed class TaskParkPublicationService(AppDbContext db, LocalTaskParkPub
         TaskParkPublicationOutcome outcome = TaskParkPublicationOutcome.Held)
     {
         var backoff = BlockedTaskParkingService.HeldBackoff(options.Value, clock, reason);
-        await new BlockedTaskParkingService(db, clock, options).PersistStateAsync(park.Id, park.Revision,
-            AgentTaskParkState.Requested, AgentTaskParkState.Held, reason, ct, backoff);
+        var parks = new BlockedTaskParkingService(db, clock, options);
+        if (park.State == AgentTaskParkState.Held)
+            await parks.StampHeldAttemptAsync(park.Id, park.Revision, backoff, reason, ct);
+        else
+            await parks.PersistStateAsync(park.Id, park.Revision, park.State, AgentTaskParkState.Held, reason, ct, backoff);
         return new(outcome, reason);
     }
 

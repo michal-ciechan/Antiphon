@@ -92,7 +92,7 @@ public sealed class TerminalRunnerSeatReleaseService(
                         await parks.PersistStateAsync(park.Id, park.Revision, park.State, AgentTaskParkState.Held,
                             "park_binding_missing", ct, backoff);
                     else if (park.State == AgentTaskParkState.Held)
-                        await parks.StampHeldAttemptAsync(park.Id, park.Revision, backoff, ct);
+                        await parks.StampHeldAttemptAsync(park.Id, park.Revision, backoff, "park_binding_missing", ct);
                     return true;
                 }
                 if (await AmbiguousOwnershipAsync(task, ct))
@@ -102,7 +102,7 @@ public sealed class TerminalRunnerSeatReleaseService(
                         await parks.PersistStateAsync(park.Id, park.Revision, park.State, AgentTaskParkState.Held,
                             "park_ownership_ambiguous", ct, backoff);
                     else if (park.State == AgentTaskParkState.Held)
-                        await parks.StampHeldAttemptAsync(park.Id, park.Revision, backoff, ct);
+                        await parks.StampHeldAttemptAsync(park.Id, park.Revision, backoff, "park_ownership_ambiguous", ct);
                     return true;
                 }
                 if (park.PublicationReceiptId is null && (await publication.PrepareAsync(park.Id, ct)).Evidence is null) return true;

@@ -638,6 +638,10 @@ internal sealed partial class RunnerSeatReleaseFixture : IAsyncDisposable
         private readonly SemaphoreSlim _pollPermit = new(0);
         private readonly Channel<bool> _pollArrived = Channel.CreateUnbounded<bool>();
         private readonly StringBuilder _composer = new();
+        // CARD-1137: the production ListTimeoutSeconds default of 3 cancels a cold in-process
+        // Kestrel inventory read when this seat starts beside the rest of the class. One budget
+        // covers the HttpClient, the loopback factory and the runner settings. Production timeouts stay.
+        private const int LoopbackBudgetSeconds = 10;
         private ITranscriptTailer _tailer = null!;
         private WebApplication? _app;
         private HttpClient? _http;
@@ -813,9 +817,14 @@ internal sealed partial class RunnerSeatReleaseFixture : IAsyncDisposable
             await _app.StartAsync();
             var uri = new Uri(_app.Urls.Single());
             uri.IsLoopback.ShouldBeTrue(); uri.Port.ShouldNotBe(17204);
-            _http = new HttpClient { BaseAddress = uri, Timeout = TimeSpan.FromSeconds(10) };
+            _http = new HttpClient { BaseAddress = uri, Timeout = TimeSpan.FromSeconds(LoopbackBudgetSeconds) };
             Client = new SessionRunnerHttpClient(_http, new LoopbackClientFactory(uri),
-                Options.Create(new SessionRunnerSettings { BaseUrl = uri.ToString() }));
+                Options.Create(new SessionRunnerSettings
+                {
+                    BaseUrl = uri.ToString(),
+                    ListTimeoutSeconds = LoopbackBudgetSeconds,
+                    RequestTimeoutSeconds = LoopbackBudgetSeconds
+                }));
         }
 
         private async Task PumpAsync(PhoneHomeCommandDispatcher dispatcher, CancellationToken ct)
@@ -907,7 +916,7 @@ internal sealed partial class RunnerSeatReleaseFixture : IAsyncDisposable
         // requests keep their separate long-lived client, as in the real DI registration.
         private sealed class LoopbackClientFactory(Uri address) : IHttpClientFactory
         {
-            public HttpClient CreateClient(string name) => new() { BaseAddress = address, Timeout = TimeSpan.FromSeconds(10) };
+            public HttpClient CreateClient(string name) => new() { BaseAddress = address, Timeout = TimeSpan.FromSeconds(LoopbackBudgetSeconds) };
         }
     }
 
