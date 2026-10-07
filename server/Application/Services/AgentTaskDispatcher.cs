@@ -6401,23 +6401,55 @@ public sealed class AgentTaskDispatcher
 
     /// <summary>
     /// One warning per refusal reason for this park episode. A repeat of the newest in-episode
-    /// warning is not inserted; the dispatch outcome stays NotClaimed either way.
+    /// warning is not inserted. The read and the insert are telemetry: a failure is logged and
+    /// the dispatch outcome stays NotClaimed. A failed read is treated as no previous warning,
+    /// so the insert is still attempted.
     /// </summary>
     private async Task WarnParkResumeOncePerReasonAsync(
         AgentTask task, ParkedResumeRefusal refusal, CancellationToken ct)
     {
-        var newest = await _db.AgentTaskEvents.AsNoTracking()
-            .Where(e => e.AgentTaskId == task.Id
-                && e.Type == AgentTaskEventType.Warning
-                && e.At >= refusal.EpisodeCreatedAt)
-            .OrderByDescending(e => e.At)
-            .ThenByDescending(e => e.Id)
-            .Select(e => e.Detail)
-            .FirstOrDefaultAsync(ct);
+        string? newest;
+        try
+        {
+            newest = await _db.AgentTaskEvents.AsNoTracking()
+                .Where(e => e.AgentTaskId == task.Id
+                    && e.Type == AgentTaskEventType.Warning
+                    && e.At >= refusal.EpisodeCreatedAt)
+                .OrderByDescending(e => e.At)
+                .ThenByDescending(e => e.Id)
+                .Select(e => e.Detail)
+                .FirstOrDefaultAsync(ct);
+        }
+        catch (Exception ex) when (IsBestEffortWarningFailure(ex, ct))
+        {
+            _logger.LogWarning(ex,
+                "Could not read park-resume warnings for task {Task}; recording the refusal anyway",
+                task.Id);
+            newest = null;
+        }
+
         if (newest == refusal.Detail)
             return;
-        await RemoteWarnAsync(task, UtcNow(), refusal.Detail, ct);
+
+        try
+        {
+            await RemoteWarnAsync(task, UtcNow(), refusal.Detail, ct);
+        }
+        catch (Exception ex) when (IsBestEffortWarningFailure(ex, ct))
+        {
+            _logger.LogWarning(ex,
+                "Could not record a park-resume refusal warning for task {Task}",
+                task.Id);
+        }
     }
+
+    /// <summary>
+    /// Caller cancellation is an <see cref="OperationCanceledException"/> observed while
+    /// <paramref name="caller"/> is already canceled. A timeout or <see cref="System.Data.Common.DbException"/>,
+    /// including an <see cref="OperationCanceledException"/> from any other token, is telemetry.
+    /// </summary>
+    private static bool IsBestEffortWarningFailure(Exception ex, CancellationToken caller) =>
+        ex is not OperationCanceledException || !caller.IsCancellationRequested;
 
     /// <summary>
     /// Records a remote-dispatch warning on the task OUTSIDE the claim transaction, so it survives
