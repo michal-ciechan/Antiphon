@@ -31,4 +31,27 @@ public sealed class DispatcherSweepLifetimeRegistrationTests
         b.ServiceProvider.GetRequiredService<SweepInFlightState>().ShouldBeSameAs(root,
             "a per-scope instance would forget an abandoned sweep on the next tick");
     }
+
+    [Test]
+    public async Task Program_wires_both_sync_debt_sweeps_into_the_dispatcher()
+    {
+        await using var first = _factory.Services.CreateAsyncScope();
+        await using var second = _factory.Services.CreateAsyncScope();
+        var dispatcherA = first.ServiceProvider.GetRequiredService<AgentTaskDispatcher>();
+        var dispatcherB = second.ServiceProvider.GetRequiredService<AgentTaskDispatcher>();
+
+        dispatcherA.SyncDebtSweepsWired.BlockedTaskSync.ShouldBeTrue(
+            "BlockedTaskSyncRecoveryService was not injected");
+        dispatcherA.SyncDebtSweepsWired.SettlementSync.ShouldBeTrue(
+            "SettlementSyncRecoveryService was not injected");
+        dispatcherB.SyncDebtSweepsWired.BlockedTaskSync.ShouldBeTrue(
+            "BlockedTaskSyncRecoveryService was not injected");
+        dispatcherB.SyncDebtSweepsWired.SettlementSync.ShouldBeTrue(
+            "SettlementSyncRecoveryService was not injected");
+
+        first.ServiceProvider.GetRequiredService<BlockedTaskSyncRecoveryService>();
+        first.ServiceProvider.GetRequiredService<SettlementSyncRecoveryService>();
+        second.ServiceProvider.GetRequiredService<BlockedTaskSyncRecoveryService>();
+        second.ServiceProvider.GetRequiredService<SettlementSyncRecoveryService>();
+    }
 }
