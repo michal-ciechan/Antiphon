@@ -596,7 +596,7 @@ Task detail includes `parkSync` when the current attempt's sync state is not
 `runner-seat-release:{releaseId}` for an open runner-seat release or pending or held
 sync. The evidence line carries the park id, sync state, source SHA and reason, and
 omits report and answer text. `BlockedTaskParking:Enabled` defaults to false.
-`ReclaimExisting` defaults to false. `ReclaimIntervalSeconds` defaults to 120; 0 sweeps on every scheduled call and a negative value is treated as 0. `TerminalRunnerSeatRelease:AutomaticEnabled`
+`ReclaimExisting` defaults to false. `ReclaimIntervalSeconds` defaults to 120; 0 sweeps on every scheduled call and a negative value is treated as 0. `ReclaimHeldBackoffSeconds` defaults to 600; 0 disables the Held backoff and a negative value is treated as 0. `TerminalRunnerSeatRelease:AutomaticEnabled`
 defaults to false. New publication and a Blocked release require both Enabled and
 automatic release. Legacy discovery also requires ReclaimExisting. Turning the
 switches off does not delete a publication receipt, abandon an accepted answer, or

@@ -70,7 +70,7 @@ public sealed class BlockedTaskParkingService(
     /// Reconciliation may persist already accepted work while new registration is disabled.
     /// </summary>
     internal async Task<bool> PersistStateAsync(Guid parkId, long revision, AgentTaskParkState expected,
-        AgentTaskParkState next, string reasonCode, CancellationToken ct)
+        AgentTaskParkState next, string reasonCode, CancellationToken ct, DateTime? nextAttemptAt = null)
     {
         if (!CanOwnTransaction() || !Allowed(expected, next)) return false;
         if (string.IsNullOrEmpty(reasonCode) || reasonCode.Length > 64
@@ -96,11 +96,13 @@ public sealed class BlockedTaskParkingService(
             || session.RunnerStoreId != snapshot.RunnerStoreId
             || session.StartedAt != snapshot.AcceptedStartedAt)) return false;
         var now = clock.GetUtcNow().UtcDateTime;
+        DateTime? due = next == AgentTaskParkState.Held ? nextAttemptAt : null;
         var changed = await db.AgentTaskParks.Where(p => p.Id == parkId && p.Revision == revision && p.State == expected)
             .ExecuteUpdateAsync(s => s.SetProperty(p => p.State, next)
                 .SetProperty(p => p.HeldFromState, next == AgentTaskParkState.Held ? expected : (AgentTaskParkState?)null)
                 .SetProperty(p => p.ReasonCode, reasonCode).SetProperty(p => p.Revision, p => p.Revision + 1)
                 .SetProperty(p => p.UpdatedAt, now)
+                .SetProperty(p => p.NextAttemptAt, due)
                 .SetProperty(p => p.PublishedAt, p => next == AgentTaskParkState.Published ? now : p.PublishedAt)
                 .SetProperty(p => p.ReleasePendingAt, p => next == AgentTaskParkState.ReleasePending ? now : p.ReleasePendingAt)
                 .SetProperty(p => p.ParkedAt, p => next == AgentTaskParkState.Parked ? now : p.ParkedAt)
@@ -157,6 +159,23 @@ public sealed class BlockedTaskParkingService(
             await db.SaveChangesAsync(ct);
         }
         await tx.CommitAsync(ct);
+    }
+
+    /// <summary>Held to Held is refused, so a due episode rewrites only its next attempt.</summary>
+    internal async Task StampHeldAttemptAsync(Guid parkId, long revision, DateTime? nextAttemptAt, CancellationToken ct)
+    {
+        if (!CanOwnTransaction()) return;
+        var now = clock.GetUtcNow().UtcDateTime;
+        await db.AgentTaskParks.Where(p => p.Id == parkId && p.Revision == revision && p.State == AgentTaskParkState.Held)
+            .ExecuteUpdateAsync(s => s.SetProperty(p => p.NextAttemptAt, nextAttemptAt).SetProperty(p => p.UpdatedAt, now), ct);
+    }
+
+    internal static DateTime? HeldBackoff(BlockedTaskParkingOptions options, TimeProvider clock, string reason)
+    {
+        if (reason == "park_workspace_reserved") return null;
+        var seconds = options.ReclaimHeldBackoffSeconds;
+        if (seconds <= 0) return null;
+        return clock.GetUtcNow().UtcDateTime.AddSeconds(seconds);
     }
 
     private bool CanOwnTransaction() => db.Database.CurrentTransaction is null

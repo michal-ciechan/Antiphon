@@ -306,6 +306,7 @@ public sealed class TaskParkPublicationService(AppDbContext db, LocalTaskParkPub
                 .SetProperty(p => p.State, AgentTaskParkState.Requested)
                 .SetProperty(p => p.HeldFromState, (AgentTaskParkState?)null)
                 .SetProperty(p => p.ReasonCode, "park_publication_requested")
+                .SetProperty(p => p.NextAttemptAt, (DateTime?)null)
                 .SetProperty(p => p.UpdatedAt, now)
                 .SetProperty(p => p.Revision, p => p.Revision + 1), ct);
         if (changed != 1) return "park_episode_changed";
@@ -344,8 +345,9 @@ public sealed class TaskParkPublicationService(AppDbContext db, LocalTaskParkPub
     private async Task<TaskParkPublicationResult> HoldAsync(AgentTaskPark park, string reason, CancellationToken ct,
         TaskParkPublicationOutcome outcome = TaskParkPublicationOutcome.Held)
     {
+        var backoff = BlockedTaskParkingService.HeldBackoff(options.Value, clock, reason);
         await new BlockedTaskParkingService(db, clock, options).PersistStateAsync(park.Id, park.Revision,
-            AgentTaskParkState.Requested, AgentTaskParkState.Held, reason, ct);
+            AgentTaskParkState.Requested, AgentTaskParkState.Held, reason, ct, backoff);
         return new(outcome, reason);
     }
 

@@ -133,7 +133,9 @@ internal sealed partial class RunnerSeatReleaseFixture : IAsyncDisposable
         bool reclaim = false,
         int? completionSingleWriteBytes = null,
         bool syncDebt = true,
-        int reclaimIntervalSeconds = 120)
+        int reclaimIntervalSeconds = 120,
+        int reclaimHeldBackoffSeconds = 600,
+        ReclaimReservationGate? reservationGate = null)
     {
         var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 5, 0, 0, 0, TimeSpan.Zero));
@@ -173,13 +175,22 @@ internal sealed partial class RunnerSeatReleaseFixture : IAsyncDisposable
                     services.AddSingleton(Options.Create(new BlockedTaskParkingOptions
                     {
                         Enabled = parking || reclaim, ReclaimExisting = reclaim,
-                        ReclaimIntervalSeconds = reclaimIntervalSeconds
+                        ReclaimIntervalSeconds = reclaimIntervalSeconds,
+                        ReclaimHeldBackoffSeconds = reclaimHeldBackoffSeconds
                     }));
                     services.AddScoped<BlockedTaskParkingService>();
                     services.AddSingleton<ITaskProgressGit, TaskParkPublicationTests.ParkGit>();
                     services.AddSingleton<IRepositoryMutationLease>(sp => new RepositoryMutationLease(
                         (TaskParkPublicationTests.ParkGit)sp.GetRequiredService<ITaskProgressGit>()));
-                    services.AddSingleton<IWorkspaceReservationJournal, WorkspaceReservationJournal>();
+                    if (reservationGate is null)
+                        services.AddSingleton<IWorkspaceReservationJournal, WorkspaceReservationJournal>();
+                    else
+                    {
+                        services.AddSingleton(reservationGate);
+                        services.AddSingleton<WorkspaceReservationJournal>();
+                        services.AddSingleton<IWorkspaceReservationJournal>(sp => new GatedReservationJournal(
+                            sp.GetRequiredService<WorkspaceReservationJournal>(), reservationGate));
+                    }
                     services.AddScoped<LocalTaskParkPublisher>();
                     services.AddScoped<TaskParkPublicationService>();
                     services.AddScoped<BlockedTaskSyncRecoveryService>();
@@ -353,6 +364,13 @@ internal sealed partial class RunnerSeatReleaseFixture : IAsyncDisposable
 
     public TerminalRunnerSeatDiscoveryState State =>
         Harness.Provider.GetRequiredService<TerminalRunnerSeatDiscoveryState>();
+
+    public async Task<bool> HandleAsync(Guid taskId)
+    {
+        using var scope = Harness.Provider.CreateScope();
+        return await scope.ServiceProvider.GetRequiredService<TerminalRunnerSeatReleaseService>()
+            .TryHandleTaskAsync(taskId, CancellationToken.None);
+    }
 
     public async Task<Guid> AddParentAsync(bool busy)
     {
@@ -1014,4 +1032,49 @@ internal sealed partial class RunnerSeatReleaseFixture : IAsyncDisposable
         }
         public bool RemoteInventoryPending(string? runnerId) => !Recovered;
     }
+}
+
+/// <summary>
+/// Refuses the first consumer admit for one task. A fence committed before Prepare is
+/// <c>park_other_writer</c>; <c>park_workspace_reserved</c> is the admit that loses.
+/// </summary>
+internal sealed class ReclaimReservationGate
+{
+    public Guid? RefuseTaskId { get; set; }
+}
+
+internal sealed class GatedReservationJournal(WorkspaceReservationJournal inner, ReclaimReservationGate gate)
+    : IWorkspaceReservationJournal
+{
+    public Task<IReadOnlyList<WorkspaceReservationSnapshot>> ReadActiveAsync(WorkspaceReservationKey key, CancellationToken ct) =>
+        inner.ReadActiveAsync(key, ct);
+
+    public Task<IReadOnlyList<WorkspaceReservationSnapshot>> ReadActiveAsync(
+        WorkspaceReservationKey key, bool liveOwnersOnly, CancellationToken ct) =>
+        inner.ReadActiveAsync(key, liveOwnersOnly, ct);
+
+    public Task<WorkspaceReservationCommitResult> TryAdmitConsumerAsync(WorkspaceReservationCommand command, CancellationToken ct)
+    {
+        if (gate.RefuseTaskId is Guid id && command.TaskId == id)
+            return Task.FromResult(new WorkspaceReservationCommitResult(false, null, "workspace_reserved"));
+        return inner.TryAdmitConsumerAsync(command, ct);
+    }
+
+    public Task<WorkspaceReservationCommitResult> TryClaimRetirementAsync(WorkspaceReservationCommand command, CancellationToken ct) =>
+        inner.TryClaimRetirementAsync(command, ct);
+
+    public Task InvalidateUnclaimedReleaseAsync(Guid taskId, CancellationToken ct) =>
+        inner.InvalidateUnclaimedReleaseAsync(taskId, ct);
+
+    public Task ReleaseConsumerAsync(Guid reservationId, int generation, CancellationToken ct) =>
+        inner.ReleaseConsumerAsync(reservationId, generation, ct);
+
+    public Task ReleaseTaskConsumersAsync(Guid taskId, CancellationToken ct) =>
+        inner.ReleaseTaskConsumersAsync(taskId, ct);
+
+    public Task ReleaseSessionConsumersAsync(Guid sessionId, CancellationToken ct) =>
+        inner.ReleaseSessionConsumersAsync(sessionId, ct);
+
+    public Task<int> ReleaseOrphanedConsumersAsync(CancellationToken ct) =>
+        inner.ReleaseOrphanedConsumersAsync(ct);
 }
