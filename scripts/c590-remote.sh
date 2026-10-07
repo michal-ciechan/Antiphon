@@ -4401,87 +4401,218 @@ c1008_git_program() {
 set -euo pipefail
 export GIT_OPTIONAL_LOCKS=0 GIT_NO_LAZY_FETCH=1 GIT_TERMINAL_PROMPT=0 LC_ALL=C
 export GIT_CONFIG_SYSTEM=/dev/null GIT_CONFIG_GLOBAL=/dev/null
-unknown() { printf 'RecycleGitAuditUnknown\n'; exit 2; }
-trap 'unknown' ERR
-root="$(readlink -e /work)" || unknown
-scratch="$(mktemp -d /tmp/c1008-audit-XXXXXXXX)" || unknown
+root=''
+scratch=''
+audit_check=unclassified
+audit_repo=''
+repos=0
+partial_repos=0
+# Receipt paths are relative to the work volume. A credential-shaped component is
+# replaced; git stderr is never copied. A path outside the volume is "?".
+rel_repo() {
+    local path="$1" rest part lower out
+    case "$path" in
+        *$'\n'*|*$'\r'*) printf '?'; return 0 ;;
+    esac
+    [ -n "$root" ] || { printf '?'; return 0; }
+    case "$path" in
+        "$root") printf '.'; return 0 ;;
+        "$root"/*) rest="${path#"$root"/}" ;;
+        *) printf '?'; return 0 ;;
+    esac
+    out=''
+    local IFS=/
+    local -a parts=()
+    read -r -a parts <<< "$rest"
+    for part in "${parts[@]}"; do
+        lower="$(printf '%s' "$part" | tr '[:upper:]' '[:lower:]')"
+        case "$lower" in
+            *credential*|*token*|*secret*|*password*|ghp_*|gho_*|ghu_*|ghs_*|ghr_*|github_pat_*) part=REDACTED ;;
+        esac
+        if [ -z "$out" ]; then out="$part"; else out="$out/$part"; fi
+    done
+    printf '%s' "$out"
+}
+fail() {
+    trap - ERR
+    printf 'audit check=%s status=%s repo=%s\n' "${audit_check:-unclassified}" "${1:-}" "$(rel_repo "${audit_repo:-}")"
+    printf 'RecycleGitAuditUnknown\n'
+    exit 2
+}
+refuse_unknown() {
+    trap - ERR
+    printf 'audit check=%s status=%s repo=%s\n' "$1" "$2" "$(rel_repo "$3")"
+    printf 'RecycleGitAuditUnknown\n'
+    exit 2
+}
+refuse_dirty() {
+    trap - ERR
+    printf 'audit check=%s status=0 repo=%s\n' "$1" "$(rel_repo "$2")"
+    printf 'RecycleWorktreeDirty\n'
+    exit 2
+}
+refuse_unpublished() {
+    trap - ERR
+    printf 'audit check=rev-list status=0 repo=%s\n' "$(rel_repo "$1")"
+    printf 'RecycleUnpublishedWork\n'
+    exit 2
+}
+# A --no-checkout seed has no index. Porcelain that is only staged deletions of
+# HEAD, with no file outside .git, is that seed. Any other output is dirty.
+consider_dirty() {
+    local where="$1" kind="$2" clean index index_path line seed extra index_existed=0
+    audit_repo="$where"
+    audit_check=index
+    index="$(git -C "$where" rev-parse --git-path index 2>/dev/null)" || fail $?
+    case "$index" in
+        /*) index_path="$index" ;;
+        *) index_path="$where/$index" ;;
+    esac
+    if [ -e "$index_path" ]; then index_existed=1; fi
+    audit_check="$kind"
+    clean="$(git -C "$where" status --porcelain --untracked-files=all 2>/dev/null)" || fail $?
+    [ -n "$clean" ] || return 0
+    seed=0
+    if [ "$index_existed" = 0 ]; then
+        seed=1
+        while IFS= read -r line || [ -n "$line" ]; do
+            [ -n "$line" ] || continue
+            case "$line" in
+                'D '*) ;;
+                *) seed=0 ;;
+            esac
+        done <<< "$clean"
+        if [ "$seed" = 1 ]; then
+            audit_check=worktree-files
+            extra="$(find "$where" -mindepth 1 -name .git -prune -o -print -quit 2>/dev/null)" || fail $?
+            [ -n "$extra" ] || return 0
+        fi
+    fi
+    refuse_dirty "$kind" "$where"
+}
+trap 'fail $?' ERR
 trap '[ -n "$scratch" ] && [ -d "$scratch" ] && rm -r -- "$scratch"' EXIT
+audit_check=readlink-root
+root="$(readlink -e /work)" || fail $?
+audit_check=scratch
+scratch="$(mktemp -d /tmp/c1008-audit-XXXXXXXX)" || fail $?
 # Capture enumeration before reading it: process substitution loses find failures.
-find "$root" -xdev -name .git -print0 -prune -o -type f -name HEAD -print0 > "$scratch/repositories" 2>/dev/null || unknown
-find "$root" -xdev -type l -print0 > "$scratch/links" 2>/dev/null || unknown
+audit_check=find-repositories
+find "$root" -xdev -name .git -print0 -prune -o -type f -name HEAD -print0 > "$scratch/repositories" 2>/dev/null || fail $?
+audit_check=find-links
+find "$root" -xdev -type l -print0 > "$scratch/links" 2>/dev/null || fail $?
 while IFS= read -r -d '' link; do
-    resolved="$(readlink -e -- "$link")" || unknown
-    [[ "$resolved/" == "$root/"* ]] || unknown
+    audit_check=link-resolve
+    audit_repo="$link"
+    resolved="$(readlink -e -- "$link")" || fail $?
+    [[ "$resolved/" == "$root/"* ]] || refuse_unknown link-confine 0 "$link"
 done < "$scratch/links"
 while IFS= read -r -d '' entry; do
-    case "$entry" in */.git) repo="${entry%/.git}" ;; */HEAD) repo="${entry%/HEAD}" ;; *) unknown ;; esac
-    top="$(git -C "$repo" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || unknown
-    top="$(readlink -e "$top")" || unknown
-    [[ "$top/" == "$root/"* ]] || unknown
-    gitdir="$(git -C "$repo" rev-parse --absolute-git-dir 2>/dev/null)" || unknown
-    gitdir="$(readlink -e "$gitdir")" || unknown
-    [[ "$gitdir/" == "$root/"* ]] || unknown
+    case "$entry" in
+        */.git) repo="${entry%/.git}" ;;
+        */HEAD) repo="${entry%/HEAD}" ;;
+        *) refuse_unknown find-repositories 2 "$entry" ;;
+    esac
+    audit_repo="$repo"
+    repos=$((repos + 1))
+    audit_check=git-common-dir
+    top="$(git -C "$repo" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || fail $?
+    top="$(readlink -e "$top")" || fail $?
+    [[ "$top/" == "$root/"* ]] || refuse_unknown common-dir-confine 0 "$repo"
+    audit_check=git-dir
+    gitdir="$(git -C "$repo" rev-parse --absolute-git-dir 2>/dev/null)" || fail $?
+    gitdir="$(readlink -e "$gitdir")" || fail $?
+    [[ "$gitdir/" == "$root/"* ]] || refuse_unknown git-dir-confine 0 "$repo"
     for directory in "$top" "$gitdir"; do
         for marker in index.lock MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD rebase-merge rebase-apply; do
-            [ ! -e "$directory/$marker" ] || unknown
+            [ ! -e "$directory/$marker" ] || refuse_unknown "lock-$marker" 0 "$repo"
         done
     done
-    [ "$(git -C "$repo" rev-parse --is-shallow-repository 2>/dev/null)" = false ] || unknown
+    audit_check=shallow
+    shallow="$(git -C "$repo" rev-parse --is-shallow-repository 2>/dev/null)" || fail $?
+    [ "$shallow" = false ] || refuse_unknown shallow 0 "$repo"
+    # Exit 0 keeps the promisor checkout on the same publication proof. Exit 1
+    # means it is not partial. Any other status cannot be classified.
+    audit_check=config-promisor
     partial_status=0
-    git -C "$repo" config --get-regexp '^(extensions\.partialclone|remote\..*\.promisor)$' > /dev/null 2>&1 || partial_status=$?
-    [ "$partial_status" = 1 ] || unknown
-    bare="$(git -C "$repo" rev-parse --is-bare-repository 2>/dev/null)" || unknown
-    case "$bare" in
-        false)
-            clean="$(git -C "$repo" status --porcelain --untracked-files=all 2>/dev/null)" || unknown
-            [ -z "$clean" ] || { printf 'RecycleWorktreeDirty\n'; exit 2; } ;;
-        true) ;;
-        *) unknown ;;
+    git -C "$repo" config --get-regexp '^(extensions\.partialclone|remote\..*\.promisor)$' >/dev/null 2>&1 || partial_status=$?
+    case "$partial_status" in
+        0) partial_repos=$((partial_repos + 1)) ;;
+        1) ;;
+        *) fail "$partial_status" ;;
     esac
-    git -C "$repo" worktree list --porcelain -z > "$scratch/worktrees" 2>/dev/null || unknown
-    git -C "$repo" for-each-ref --format='%(objectname)' refs/heads refs/tags > "$scratch/tips" 2>/dev/null || unknown
+    audit_check=bare
+    bare="$(git -C "$repo" rev-parse --is-bare-repository 2>/dev/null)" || fail $?
+    case "$bare" in
+        false) consider_dirty "$repo" status ;;
+        true) ;;
+        *) refuse_unknown bare 2 "$repo" ;;
+    esac
+    audit_repo="$repo"
+    audit_check=worktree-list
+    git -C "$repo" worktree list --porcelain -z > "$scratch/worktrees" 2>/dev/null || fail $?
+    audit_check=for-each-ref
+    git -C "$repo" for-each-ref --format='%(objectname)' refs/heads refs/tags > "$scratch/tips" 2>/dev/null || fail $?
     while IFS= read -r -d '' field; do
         [[ "$field" == worktree\ * ]] || continue
-        work="${field#worktree }"; work="$(readlink -e "$work")" || unknown
-        [[ "$work/" == "$root/"* ]] || unknown
-        work_bare="$(git -C "$work" rev-parse --is-bare-repository 2>/dev/null)" || unknown
+        audit_check=worktree-path
+        work="${field#worktree }"
+        work="$(readlink -e "$work")" || fail $?
+        [[ "$work/" == "$root/"* ]] || refuse_unknown worktree-confine 0 "$repo"
+        audit_check=worktree-bare
+        work_bare="$(git -C "$work" rev-parse --is-bare-repository 2>/dev/null)" || fail $?
         if [ "$work_bare" = false ]; then
-            clean="$(git -C "$work" status --porcelain --untracked-files=all 2>/dev/null)" || unknown
-            [ -z "$clean" ] || { printf 'RecycleWorktreeDirty\n'; exit 2; }
-            git -C "$work" rev-parse --verify HEAD >> "$scratch/tips" 2>/dev/null || unknown
-        elif [ "$work_bare" != true ]; then unknown; fi
+            consider_dirty "$work" worktree-status
+            audit_repo="$work"
+            audit_check=worktree-head
+            git -C "$work" rev-parse --verify HEAD >> "$scratch/tips" 2>/dev/null || fail $?
+        elif [ "$work_bare" != true ]; then
+            refuse_unknown worktree-bare 2 "$work"
+        fi
     done < "$scratch/worktrees"
     # A mirror may have no HEAD; its explicit local branch/tag tips still count.
-    if [ "$bare" = false ]; then git -C "$repo" rev-parse --verify HEAD >> "$scratch/tips" 2>/dev/null || unknown; fi
-    timeout --kill-after=5s 30s git -C "$repo" ls-remote --heads origin > "$scratch/origin" 2>/dev/null || unknown
-    origin="$(sort "$scratch/origin")" || unknown
-    [ -n "$origin" ] || unknown
+    audit_repo="$repo"
+    if [ "$bare" = false ]; then
+        audit_check=head
+        git -C "$repo" rev-parse --verify HEAD >> "$scratch/tips" 2>/dev/null || fail $?
+    fi
+    audit_check=ls-remote
+    timeout --kill-after=5s 30s git -C "$repo" ls-remote --heads origin > "$scratch/origin" 2>/dev/null || fail $?
+    audit_check=origin-parse
+    origin="$(sort "$scratch/origin")" || fail $?
+    [ -n "$origin" ] || refuse_unknown origin-empty 0 "$repo"
     comparisons=()
     while IFS=$'\t' read -r tip ref; do
-        [[ "$tip" =~ ^[0-9a-f]{40}$ && "$ref" == refs/heads/* ]] || unknown
-        git -C "$repo" cat-file -e "$tip^{commit}" 2>/dev/null || unknown
+        [[ "$tip" =~ ^[0-9a-f]{40}$ && "$ref" == refs/heads/* ]] || refuse_unknown origin-parse 2 "$repo"
+        audit_check=cat-file
+        git -C "$repo" cat-file -e "$tip^{commit}" 2>/dev/null || fail $?
         comparisons+=("$tip")
         if [ "$bare" = true ]; then
-            local_tip="$(git -C "$repo" rev-parse --verify "$ref^{commit}" 2>/dev/null)" || unknown
-            [ "$local_tip" = "$tip" ] || unknown
+            audit_check=bare-ref
+            local_tip="$(git -C "$repo" rev-parse --verify "$ref^{commit}" 2>/dev/null)" || fail $?
+            [ "$local_tip" = "$tip" ] || refuse_unknown bare-ref 2 "$repo"
         fi
     done <<< "$origin"
-    [ "${#comparisons[@]}" -gt 0 ] || unknown
+    [ "${#comparisons[@]}" -gt 0 ] || refuse_unknown origin-empty 0 "$repo"
     if [ "$bare" = false ]; then
-        git -C "$repo" for-each-ref --format='%(objectname)%09refs/heads/%(refname:strip=3)' refs/remotes/origin > "$scratch/local" 2>/dev/null || unknown
-        local_refs="$(awk '$2!="refs/heads/HEAD" {print}' "$scratch/local" | sort)" || unknown
-        [ "$origin" = "$local_refs" ] || unknown
+        audit_check=origin-advertisement
+        git -C "$repo" for-each-ref --format='%(objectname)%09refs/heads/%(refname:strip=3)' refs/remotes/origin > "$scratch/local" 2>/dev/null || fail $?
+        local_refs="$(awk '$2!="refs/heads/HEAD" {print}' "$scratch/local" | sort)" || fail $?
+        [ "$origin" = "$local_refs" ] || refuse_unknown origin-advertisement 2 "$repo"
     fi
-    sort -u "$scratch/tips" > "$scratch/unique" || unknown
-    [ -s "$scratch/unique" ] || unknown
+    audit_check=tips
+    sort -u "$scratch/tips" > "$scratch/unique" || fail $?
+    [ -s "$scratch/unique" ] || refuse_unknown tips-empty 0 "$repo"
     while IFS= read -r tip; do
-        [[ "$tip" =~ ^[0-9a-f]{40}$ ]] || unknown
-        count="$(timeout --kill-after=5s 30s git -C "$repo" rev-list --count "$tip" --not "${comparisons[@]}" 2>/dev/null)" || unknown
-        [[ "$count" =~ ^[0-9]+$ ]] || unknown
-        [ "$count" = 0 ] || { printf 'RecycleUnpublishedWork\n'; exit 2; }
+        [[ "$tip" =~ ^[0-9a-f]{40}$ ]] || refuse_unknown tips 2 "$repo"
+        audit_check=rev-list
+        count="$(timeout --kill-after=5s 30s git -C "$repo" rev-list --count "$tip" --not "${comparisons[@]}" 2>/dev/null)" || fail $?
+        [[ "$count" =~ ^[0-9]+$ ]] || refuse_unknown rev-list-count 2 "$repo"
+        [ "$count" = 0 ] || refuse_unpublished "$repo"
         printf 'tip=%s origin=%s repo=%s\n' "$tip" "$(printf '%s' "$origin" | sha256sum | cut -d' ' -f1)" "$(printf '%s' "$repo" | sha256sum | cut -d' ' -f1)"
     done < "$scratch/unique"
 done < "$scratch/repositories"
+printf 'repositories=%s partial=%s\n' "$repos" "$partial_repos"
 C1008_GIT
 }
 
@@ -4599,6 +4730,7 @@ c1008_audit() {
     output="$(docker start -a "$helper" 2>/dev/null)" || code=$?
     docker rm -- "$helper" >/dev/null 2>&1 || return 2
     if [ "$code" != 0 ]; then
+        printf '%s\n' "$output"
         case "$output" in *RecycleUnpublishedWork*) return 3 ;; *RecycleWorktreeDirty*) return 4 ;; *) return 2 ;; esac
     fi
     printf '%s' "$output" | sort
@@ -4623,7 +4755,17 @@ c1008_audit_checked() {
         fi
     fi
     audit="$(c1008_audit)" || code=$?
-    case "$code" in 0) ;; 3) c1008_refuse RecycleUnpublishedWork ;; 4) c1008_refuse RecycleWorktreeDirty ;; *) c1008_refuse RecycleGitAuditUnknown ;; esac
+    if [ "$code" != 0 ]; then
+        detail="$(printf '%s\n' "$audit" | sed -n '/^audit check=/{p;q;}')"
+        [ -n "$detail" ] || detail='audit check=unclassified status= repo='
+        C1008_RECORD="$(printf '%s' "$C1008_RECORD" | jq -c --arg audit "$detail" '.audit=$audit')" || c1008_refuse RecycleReceiptUnavailable
+        c1008_save || c1008_refuse RecycleReceiptUnavailable
+        case "$code" in
+            3) c1008_refuse "RecycleUnpublishedWork $detail" ;;
+            4) c1008_refuse "RecycleWorktreeDirty $detail" ;;
+            *) c1008_refuse "RecycleGitAuditUnknown $detail" ;;
+        esac
+    fi
     C1008_AUDIT="$audit"
 }
 
