@@ -163,6 +163,8 @@ Antiphon.Tests.Application.WorktreeDefaultContinuationTests
 Antiphon.Tests.Application.WorktreeDefaultCallerTests
 # CARD-0657: real reply-service settlement with a bare origin, desktop worktree and runner clone.
 Antiphon.Tests.Application.RunnerTaskSettlementTests
+# CARD-1082: real Git lease-busy settlement note delivered to a complete caller UserPrompt.
+Antiphon.Tests.Application.PendingSettlementDeliveryTests
 # CARD-0698: owned PostgreSQL database with 377k synthetic rows and actual query plans.
 Antiphon.Tests.Application.TranscriptHotPathQueryTests
 # CARD-0698: persisted-row oracle and actual concurrent migration/rollback in owned databases.

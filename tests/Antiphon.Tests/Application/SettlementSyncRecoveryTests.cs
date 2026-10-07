@@ -19,9 +19,9 @@ namespace Antiphon.Tests.Application;
 
 /// <summary>
 /// CARD-1082 S4b. The dispatcher sweep fast-forwards a seeded debt only to its recorded source.
-/// Thirteen methods, nineteen results: the three refusal rows, the two episode rows, the
+/// Fourteen methods, twenty results: the three refusal rows, the two episode rows, the
 /// task-detail projection, and CARD-1136's Held re-check methods, including the F3b controls
-/// that stay Held when removal is not proved.
+/// that stay Held when removal is not proved and the F3c recreated-registration control.
 /// </summary>
 [Category("Integration")]
 [Category("Slow")]
@@ -467,8 +467,9 @@ public sealed class SettlementSyncRecoveryTests
     /// <summary>
     /// V-8. A Held <c>runner_sync_tip_not_reported</c> row stays Held until 60 minutes have
     /// passed. The re-check then ends it Superseded only when one active Complete retirement
-    /// has recorded directory and registration removal at or before that re-check and the
-    /// recorded path is absent. No Git, no attempt, and no attention row.
+    /// of this registration has recorded directory and registration removal at or before that
+    /// re-check and both the recorded path and that git directory are absent. No Git, no
+    /// attempt, and no attention row.
     /// </summary>
     [Test]
     public async Task C1136_HeldDebtEndsSupersededOnceTheWorktreeIsRetired()
@@ -480,8 +481,11 @@ public sealed class SettlementSyncRecoveryTests
         var attempts = seeded.Attempts;
         var head = await world.Git.HeadAsync();
         var gitDir = await world.Git.RunAsync(path, "rev-parse", "--absolute-git-dir");
-        await AddRetirementAsync(world, seeded, WorktreeRetirementState.Complete, active: true, committedRemoval: true);
-        DeleteTree(path);
+        await world.Git.RunAsync(world.Git.Desktop, "worktree", "remove", "--force", path);
+        Directory.Exists(path).ShouldBeFalse();
+        Directory.Exists(gitDir).ShouldBeFalse();
+        await AddRetirementAsync(world, seeded, WorktreeRetirementState.Complete, active: true,
+            committedRemoval: true, gitDirectory: gitDir);
 
         await AssertNotDueAsync(world, seeded, "committed removal is not due yet");
         world.DebtClock.Advance(TimeSpan.FromMinutes(60));
@@ -494,10 +498,80 @@ public sealed class SettlementSyncRecoveryTests
         debt.NextAttemptAt.ShouldBeNull();
         world.Git.Git.Commands.ShouldBeEmpty();
         Directory.Exists(path).ShouldBeFalse();
-        (await world.Git.RunAsync(world.Git.Desktop, "--git-dir", gitDir, "rev-parse", "HEAD")).ShouldBe(head);
+        Directory.Exists(gitDir).ShouldBeFalse();
+        (await world.Git.RunAsync(world.Git.Desktop, "rev-parse", world.Git.FullRef)).ShouldBe(head);
         SettlementSyncDebtAttention.Build(
             [debt], [world.Task], world.DebtClock.GetUtcNow().UtcDateTime, new DelegationSettings())
             .ShouldBeEmpty();
+    }
+
+    /// <summary>
+    /// CARD-1082 F3c D1. A Complete retirement of an earlier registration does not
+    /// supersede the live debt after the same path is registered again. Temporary
+    /// absence of the recreated directory stays Held and moves the next attempt
+    /// forward 60 minutes. Restoring the directory keeps the warning.
+    /// </summary>
+    [Test]
+    public async Task C1136_RecreatedRegistrationKeepsHeldDebtAndReschedules()
+    {
+        await using var world = await SeedHeldTipAsync();
+        var seeded = await DebtAsync(world);
+        seeded.WorktreePath.ShouldNotBeNullOrWhiteSpace();
+        var path = seeded.WorktreePath!;
+        var head = await world.Git.HeadAsync();
+        var history = await HistoryAsync(world);
+        var gitDir = await world.Git.RunAsync(path, "rev-parse", "--absolute-git-dir");
+        await world.Git.RunAsync(world.Git.Desktop, "worktree", "remove", "--force", path);
+        await world.Git.RunAsync(world.Git.Desktop, "branch", "-D", world.Git.Branch);
+        Directory.Exists(path).ShouldBeFalse();
+        Directory.Exists(gitDir).ShouldBeFalse();
+        await AddRetirementAsync(world, seeded, WorktreeRetirementState.Complete, active: true,
+            committedRemoval: true, gitDirectory: gitDir);
+        await world.Git.RunAsync(world.Git.Desktop, "worktree", "add", "-b", world.Git.Branch, path, head);
+        (await world.Git.RunAsync(world.Git.Desktop, "worktree", "list", "--porcelain"))
+            .ShouldContain("worktree " + path);
+
+        await AssertNotDueAsync(world, seeded, "recreated registration is not due yet");
+        world.DebtClock.Advance(TimeSpan.FromMinutes(59));
+        world.Git.Git.Clear();
+        (await world.SweepSettlementSyncAsync()).ShouldBe(0, "minute 59 is not due");
+        (await DebtAsync(world)).Revision.ShouldBe(seeded.Revision);
+
+        var aside = path + "-f3c-aside";
+        PrepareTree(path);
+        Directory.Move(path, aside);
+        try
+        {
+            world.DebtClock.Advance(TimeSpan.FromMinutes(1));
+            var counter = new StatementCounter();
+            world.Interceptors.Add(counter);
+            await world.RestartServicesAsync();
+            var due = world.DebtClock.GetUtcNow().UtcDateTime;
+            world.Git.Git.Clear();
+            counter.Reset();
+            (await world.SweepSettlementSyncAsync()).ShouldBe(0, "a recreated registration is not an attempt");
+            counter.Statements.ShouldBe(6, "binding the current registration adds no statement");
+            var debt = await DebtAsync(world);
+            debt.State.ShouldBe(AgentTaskSyncDebtState.Held);
+            debt.ReasonCode.ShouldBe(RemoteSettlementSyncReasons.TipNotReported);
+            debt.Attempts.ShouldBe(seeded.Attempts);
+            debt.Revision.ShouldBe(seeded.Revision + 1);
+            debt.NextAttemptAt.ShouldBe(due.AddMinutes(60));
+            world.Git.Git.Commands.ShouldBeEmpty();
+            (await HistoryAsync(world)).ShouldBe(history);
+            Directory.Exists(path).ShouldBeFalse();
+
+            Directory.Move(aside, path);
+            aside = "";
+            world.DebtClock.Advance(TimeSpan.FromMinutes(60));
+            await AssertHeldRescheduledAsync(world, debt, "restored recreated registration stays Held", head);
+            Directory.Exists(path).ShouldBeTrue();
+        }
+        finally
+        {
+            if (aside.Length > 0 && Directory.Exists(aside) && !Directory.Exists(path))
+                Directory.Move(aside, path);
+        }
     }
 
     /// <summary>
@@ -720,7 +794,8 @@ public sealed class SettlementSyncRecoveryTests
         AgentTaskSyncDebt debt,
         WorktreeRetirementState state,
         bool active,
-        bool committedRemoval)
+        bool committedRemoval,
+        string? gitDirectory = null)
     {
         await using var db = world.CreateContext();
         var now = world.DebtClock.GetUtcNow().UtcDateTime;
@@ -738,7 +813,7 @@ public sealed class SettlementSyncRecoveryTests
             RepositoryPath = world.Git.Desktop,
             CommonDirectory = world.Git.Desktop,
             WorktreePath = debt.WorktreePath ?? "",
-            GitDirectory = world.Git.Desktop,
+            GitDirectory = gitDirectory ?? world.Git.Desktop,
             SourceFullRef = world.Git.FullRef,
             SourceSha = debt.SourceSha ?? "",
             TargetFullRef = "refs/heads/master",
