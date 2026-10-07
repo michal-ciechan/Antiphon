@@ -3,10 +3,7 @@ using TUnit.Core;
 
 namespace Antiphon.Tests.Application;
 
-/// <summary>
-/// CARD-1065 S10. Pins the owner docs and instruction text to the code that is on
-/// master. The slot route still marks a live Blocked or Queued owner orphan=true.
-/// </summary>
+/// <summary>The slot route marks a live Blocked or Queued owner owned and carries its park (CARD-1124).</summary>
 [Category("Unit")]
 public sealed class BlockedTaskParkProjectionTests
 {
@@ -16,12 +13,15 @@ public sealed class BlockedTaskParkProjectionTests
         var runtime = Read("docs/session-runtime-invariants.md");
         Require(runtime, "A Blocked session keeps its runner seat until parking releases it.", "c1065-seat-kept");
         Require(runtime, "OccupiesCapacity is true for any non-empty runner status other than Exited or Failed.", "c1065-occupies");
-        Require(runtime, "OpenTaskId is set only for Dispatched or Working, so a live Blocked or Queued owner remains orphan=true.", "c1065-orphan-owner");
+        Require(runtime, "OpenTaskId is the owner task: the latest Queued, Dispatched, Working or Blocked task bound to the session, so a live Blocked or Queued owner reads orphan=false (CARD-1124).", "c1065-orphan-owner");
+        runtime.ShouldNotContain("remains orphan=true", Case.Sensitive, "c1124-no-stale-orphan");
+        Require(runtime, "The slot DTO carries park: null, or the owner's current-attempt park id, state, reason code, release id and sync state. It is display-only and never release authority.", "c1124-slot-park");
         Require(runtime, "An unavailable runner inventory records inventoryState unavailable and does not zero desktop in-flight sessions.", "c1065-unavailable-inventory");
         Require(runtime, "Task detail exposes parkSync when the sync state is not NotRequired.", "c1065-parksync-detail");
         Require(runtime, "Attention SessionDisagreement keyed runner-seat-release:{releaseId} carries the park id, sync state, source SHA and reason, and omits report and answer text.", "c1065-attention-row");
 
         var ops = Read("docs/ops-http.md");
+        Require(ops, "a live Blocked child is not an orphan", "c1124-ops-orphan-owner");
         Require(ops, "BlockedTaskParking:Enabled", "c1065-ops-enabled");
         Require(ops, "runner-seat-release:", "c1065-ops-attention-key");
         Require(ops, "parkSync", "c1065-ops-parksync");
@@ -39,7 +39,7 @@ public sealed class BlockedTaskParkProjectionTests
         Require(lifecycle, "runner-seat-release:", "c1065-lifecycle-attention-key");
 
         Require(Read("server/Application/Services/SeatDesktopJoin.cs"),
-            "<see cref=\"OpenTaskId\"/> is set only for Dispatched", "c1065-join-open-task");
+            "<see cref=\"OpenTaskId\"/> is the owner task", "c1065-join-open-task");
         Require(Read("server/Application/Services/RunnerSlotService.cs"),
             "OccupiesCapacity", "c1065-slot-occupies");
     }

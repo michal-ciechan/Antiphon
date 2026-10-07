@@ -374,6 +374,111 @@ public class RunnerSlotEndpointTests
             .FailureReason.ShouldBe("reconciled");
     }
 
+    [Test]
+    public async Task C1124_Slots_mark_a_live_blocked_owner_owned_and_carry_its_park()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var host = await PhoneHomeTestHost.StartAsync(connectionString: schema.ConnectionString);
+        await using var peer = await host.ConnectPeerAsync();
+        host.Directory.MarkRecovered(await host.WaitLiveAsync());
+        var seatA = Guid.NewGuid();
+        var seatB = Guid.NewGuid();
+        var taskA = Guid.NewGuid();
+        var taskB = Guid.NewGuid();
+        var parkId = Guid.NewGuid();
+        var now = DateTime.UtcNow;
+        const string canary = "c1124-worktree-canary-/srv/do-not-leak";
+        peer.Sessions.Add(new RunnerSessionDto(seatA, 4, now, "Running", null, "", 0));
+        peer.Sessions.Add(new RunnerSessionDto(seatB, 5, now, "Running", null, "", 0));
+
+        var options = TestDbFixture.CreateDbContextOptions(schema.ConnectionString);
+        await using (var db = new AppDbContext(options))
+        {
+            db.AgentSessions.AddRange(
+                RunningSession(seatA, now, host.StoreId, host.AllowedRunnerId),
+                RunningSession(seatB, now, host.StoreId, host.AllowedRunnerId));
+            db.AgentTasks.AddRange(
+                OpenTask(taskA, seatA, now, AgentTaskStatus.Blocked, attempt: 1),
+                OpenTask(taskB, seatB, now, AgentTaskStatus.Succeeded, attempt: 1));
+            db.AgentTaskParks.Add(new AgentTaskPark
+            {
+                Id = parkId,
+                TaskId = taskA,
+                Attempt = 1,
+                BlockEventId = Guid.NewGuid(),
+                TaskConcurrencyToken = Guid.NewGuid(),
+                State = AgentTaskParkState.Requested,
+                ReasonCode = "park_requested",
+                SyncState = AgentTaskParkSyncState.NotRequired,
+                WorktreePath = canary,
+                PublicationReceiptId = null,
+                BlockedAt = now,
+                CreatedAt = now,
+                UpdatedAt = now,
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var before = await SlotSnapshotAsync(options);
+        using var response = await host.Http.GetAsync($"/api/session-runners/{host.AllowedRunnerId}/slots");
+        response.EnsureSuccessStatusCode();
+        var body = await response.Content.ReadAsStringAsync();
+        body.ShouldNotContain(canary);
+        var listed = JsonSerializer.Deserialize<RunnerSlotsDto>(body, Json);
+        listed.ShouldNotBeNull();
+        listed.Occupied.ShouldBe(2);
+        var owned = listed.Slots.Single(slot => slot.SessionId == seatA);
+        owned.Orphan.ShouldBeFalse();
+        owned.OccupiesCapacity.ShouldBeTrue();
+        owned.OpenTaskId.ShouldBe(taskA);
+        owned.Park.ShouldBe(new RunnerSlotParkDto(parkId, "Requested", "park_requested", null, "NotRequired"));
+        var settled = listed.Slots.Single(slot => slot.SessionId == seatB);
+        settled.Orphan.ShouldBeTrue();
+        settled.OpenTaskId.ShouldBeNull();
+        settled.Park.ShouldBeNull();
+
+        var after = await SlotSnapshotAsync(options);
+        after.ShouldBe(before);
+        peer.RequestCount(PhoneHomeOperation.ReleaseSlot).ShouldBe(0);
+        peer.RequestCount(PhoneHomeOperation.KillGeneration).ShouldBe(0);
+    }
+
+    [Test]
+    public async Task C1124_Reconcile_fails_an_orphan_sweep_intent_claimed_by_a_blocked_owner()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var host = await PhoneHomeTestHost.StartAsync(connectionString: schema.ConnectionString);
+        await using var peer = await host.ConnectPeerAsync();
+        host.Directory.MarkRecovered(await host.WaitLiveAsync());
+        var blockedId = Guid.NewGuid();
+        var succeededId = Guid.NewGuid();
+        var now = DateTime.UtcNow;
+        await SeedRunningSessionAsync(schema.ConnectionString, blockedId, now, host.StoreId);
+        await SeedRunningSessionAsync(schema.ConnectionString, succeededId, now, host.StoreId);
+        await SeedOpenTaskAsync(schema.ConnectionString, blockedId, now, status: AgentTaskStatus.Blocked, attempt: 2);
+        await SeedOpenTaskAsync(schema.ConnectionString, succeededId, now, status: AgentTaskStatus.Succeeded);
+        await SeedIntentAsync(schema.ConnectionString, blockedId, "pending:orphan:grok-linux", now.AddMinutes(-2));
+        await SeedIntentAsync(schema.ConnectionString, succeededId, "pending:orphan:grok-linux", now.AddMinutes(-1));
+
+        await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString)))
+        {
+            var finished = await RunnerSlotService.ReconcilePendingReleasesAsync(
+                host.Directory, db, CancellationToken.None);
+            finished.ShouldBe([succeededId]);
+        }
+
+        peer.RequestCount(PhoneHomeOperation.ReleaseSlot).ShouldBe(0);
+        peer.RequestCount(PhoneHomeOperation.KillGeneration).ShouldBe(0);
+        await using var verify = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        (await verify.AgentIncidents.SingleAsync(incident => incident.SessionId == blockedId))
+            .FailureReason!.ShouldStartWith("failed:");
+        (await verify.AgentSessions.SingleAsync(session => session.Id == blockedId)).Status.ShouldBe(SessionStatus.Running);
+        (await verify.AgentIncidents.SingleAsync(incident =>
+                incident.SessionId == succeededId && incident.Kind == AgentIncidentKind.RunnerSlotReleaseIntent))
+            .FailureReason.ShouldBe("reconciled");
+        (await verify.AgentSessions.SingleAsync(session => session.Id == succeededId)).Status.ShouldBe(SessionStatus.Stopped);
+    }
+
     private static Func<PhoneHomeFrame, PhoneHomeFrame?> ReleaseDrops(
         PhoneHomeScriptedPeer peer, Guid sessionId, DateTime now) => frame =>
     {
@@ -404,30 +509,70 @@ public class RunnerSlotEndpointTests
     }
 
     private static async Task SeedOpenTaskAsync(string connectionString, Guid sessionId, DateTime now,
-        string? runnerId = null, AgentTaskStatus status = AgentTaskStatus.Working)
+        string? runnerId = null, AgentTaskStatus status = AgentTaskStatus.Working, int attempt = 1)
     {
         var id = Guid.NewGuid();
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(connectionString));
-        db.AgentTasks.Add(new AgentTask
-        {
-            Id = id,
-            RootTaskId = id,
-            Title = "claimed",
-            Goal = "claim the seat",
-            Kind = AgentTaskKind.Worker,
-            Role = AgentTaskRole.Code,
-            AgentKind = AgentKind.Grok,
-            ModelLevel = AgentModelLevel.Frontier,
-            Workspace = WorkspaceMode.Shared,
-            WorkingDirectory = "/work",
-            Status = status,
-            ReplyTo = AgentTaskReplyTo.None,
-            CreatedAt = now,
-            ConcurrencyToken = Guid.NewGuid(),
-            AgentSessionId = sessionId,
-            RunnerId = runnerId,
-        });
+        db.AgentTasks.Add(OpenTask(id, sessionId, now, status, attempt, runnerId));
         await db.SaveChangesAsync();
+    }
+
+    private static AgentTask OpenTask(
+        Guid id, Guid sessionId, DateTime now, AgentTaskStatus status, int attempt, string? runnerId = null) => new()
+    {
+        Id = id,
+        RootTaskId = id,
+        Title = "claimed",
+        Goal = "claim the seat",
+        Kind = AgentTaskKind.Worker,
+        Role = AgentTaskRole.Code,
+        AgentKind = AgentKind.Grok,
+        ModelLevel = AgentModelLevel.Frontier,
+        Workspace = WorkspaceMode.Shared,
+        WorkingDirectory = "/work",
+        Status = status,
+        Attempt = attempt,
+        ReplyTo = AgentTaskReplyTo.None,
+        CreatedAt = now,
+        ConcurrencyToken = Guid.NewGuid(),
+        AgentSessionId = sessionId,
+        RunnerId = runnerId,
+    };
+
+    private static AgentSession RunningSession(Guid sessionId, DateTime now, Guid storeId, string runnerId) => new()
+    {
+        Id = sessionId,
+        DefinitionName = "grok",
+        AgentKind = AgentKind.Grok,
+        Status = SessionStatus.Running,
+        Cwd = "/work",
+        Cols = 80,
+        Rows = 24,
+        CreatedAt = now,
+        StartedAt = now,
+        LastSeenAt = now,
+        RunnerId = runnerId,
+        RunnerStoreId = storeId,
+        RunnerCwd = "/work",
+    };
+
+    private static async Task<string> SlotSnapshotAsync(DbContextOptions<AppDbContext> options)
+    {
+        await using var db = new AppDbContext(options);
+        var parks = await db.AgentTaskParks.AsNoTracking()
+            .OrderBy(park => park.Id)
+            .Select(park => park.Id + ":" + park.Revision + ":" + park.State)
+            .ToListAsync();
+        var sessions = await db.AgentSessions.AsNoTracking()
+            .OrderBy(session => session.Id)
+            .Select(session => session.Id + ":" + session.Status)
+            .ToListAsync();
+        var tasks = await db.AgentTasks.AsNoTracking()
+            .OrderBy(task => task.Id)
+            .Select(task => task.Id + ":" + task.Status + ":" + task.ConcurrencyToken)
+            .ToListAsync();
+        var incidents = await db.AgentIncidents.CountAsync();
+        return string.Join("|", parks) + "/" + string.Join("|", sessions) + "/" + string.Join("|", tasks) + "/" + incidents;
     }
 
     private static DbContextOptions<AppDbContext> OptionsWith(string connectionString, IInterceptor interceptor) =>

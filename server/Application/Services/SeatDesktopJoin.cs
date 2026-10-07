@@ -16,6 +16,14 @@ internal sealed record SeatBoundTask(
     Guid? AgentId,
     DateTime? CompletedAt);
 
+/// <summary>The owner's current-attempt park episode, or null when that attempt has no park row.</summary>
+internal sealed record SeatParkRow(
+    Guid ParkId,
+    AgentTaskParkState State,
+    string ReasonCode,
+    Guid? ReleaseId,
+    AgentTaskParkSyncState SyncState);
+
 /// <summary>
 /// Desktop facts for one runner session. <see cref="OpenTaskId"/> is set only for Dispatched
 /// or Working. <see cref="LatestTask"/> is the newest task on the session regardless of status.
@@ -27,7 +35,8 @@ internal readonly record struct SeatDesktopRow(
     SeatBoundTask? LatestTask,
     DateTime? BlockedAt,
     bool PooledWarm,
-    bool PublicationReceipt);
+    bool PublicationReceipt,
+    SeatParkRow? Park = null);
 
 /// <summary>
 /// CARD-1079: the one desktop join shared by the slots route and the occupancy sampler.

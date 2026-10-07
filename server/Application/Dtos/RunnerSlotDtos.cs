@@ -1,5 +1,13 @@
 namespace Antiphon.Server.Application.Dtos;
 
+/// <summary>CARD-1124: the owner's current-attempt park episode. Display only; never release authority.</summary>
+public sealed record RunnerSlotParkDto(
+    Guid ParkId,
+    string State,
+    string ReasonCode,
+    Guid? ReleaseId,
+    string SyncState);
+
 /// <summary>CARD-0653: one seat the runner still remembers.</summary>
 public sealed record RunnerSlotDto(
     Guid SessionId,
@@ -12,7 +20,8 @@ public sealed record RunnerSlotDto(
     string? CustodyBackend,
     Guid? CustodyExecutionId,
     string? DesktopStatus,
-    Guid? OpenTaskId);
+    Guid? OpenTaskId,
+    RunnerSlotParkDto? Park = null);
 
 public sealed record RunnerSlotsDto(
     string RunnerId,
