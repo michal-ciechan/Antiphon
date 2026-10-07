@@ -86,7 +86,7 @@ A confirmed Exited or Failed status, or absence from a listed catalogue, drops t
 Task detail exposes parkSync when the sync state is not NotRequired.
 Attention SessionDisagreement keyed runner-seat-release:{releaseId} carries the park id, sync state, source SHA and reason, and omits report and answer text.
 
-CARD-1082. Delegation:RunnerSyncDebtOnSettlement defaults to true. Pending is never Confirmed. A settled lease-contention report keeps desktop-sync=pending in the workspace note and tells the caller synced later. Dirty, diverged, and unfetched Code stay Blocked, and the Blocked warning says then reply. The sweep's backoff is 1, 2, 4, then 5 minutes. -Land does not read RemoteSync. Task detail exposes syncDebt for the current attempt. A Held debt ends Superseded only after one completed retirement of the current registration has removed that worktree path.
+CARD-1082. Delegation:RunnerSyncDebtOnSettlement defaults to true. Pending is never Confirmed. A settled lease-contention report keeps desktop-sync=pending in the workspace note and tells the caller synced later. Dirty, diverged, and unfetched Code stay Blocked, and the Blocked warning says then reply. The sweep's backoff is 1, 2, 4, then 5 minutes. -Land does not read RemoteSync. Task detail exposes syncDebt for the current attempt. A Held debt is re-checked hourly and stays Held: the re-check does not read the worktree and does not supersede the row.
 
 Resume reads the desktop checkout, not runner operation 37.
 park_resume_refused is written on each refused dispatch tick with no dedupe.

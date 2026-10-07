@@ -172,6 +172,10 @@ blank-path), `C1136_HeldRecheckReadFailureKeepsHeldDebtAndReschedules`,
 result: Complete removal of the current registration, including its recorded git directory.
 CP-4 and CP-12 rosters are 20. The Held re-check does not enqueue a caller note. The lease-busy caller notes are proved by `PendingSettlementDeliveryTests.C1082_LeaseBusySettlementNoteIsAcceptedComplete`: the profiled Succeeded Pending note and the non-profiled Blocked note, each accepted once for an eligible recipient, a busy recipient, and a crash between enqueue and confirmation.
 
+### F3d. The Held re-check does not supersede
+
+Three reviews each found a new way for a filesystem or path match to supersede a live Held debt. `AgentTaskSyncDebts` has no registration id, and `TaskWorktreeRetirement` has none either. Treating any Complete retirement of the same task attempt as identity would repeat the same-path recreation defect, and adding a column would be a migration. F3d drops supersession from the Held re-check. The re-check only restamps `NextAttemptAt` 60 minutes ahead: no retirement SELECT, no filesystem read, no Git, no fast-forward, and never Ready. An empty table and a not-due Held row stay 1 statement. A due Held re-check is 5 statements: the sweep select, the snapshot, the task lock, the re-read, and the reschedule. Pending recovery, including `RegistrationGoneAsync`, is unchanged. CARD-1136 item 3 stays open: a Held attention row remains for the life of the debt, because the S4b sweep's Ready and Superseded rules apply to Pending rows only. CARD-1148 owns the registration-identity binding. The closed F3d rows are `docs/investigations/2026-10-07-card-1082-f3d-rows.md`.
+
 ### D-4. Baseline remote pins require a Present observation; the record documents its `Sha`
 
 `CaptureProgressBaselineAsync` pins `repair-remote` and `primary-remote` only when the observation
@@ -273,7 +277,7 @@ closed list has one certificate.
 | V-5 | A Blocked lease-busy Code settlement warns "Runner sync unavailable: runner_sync_lease_busy ... then reply", never "Runner sync pending"; evidence Pending, no debt, HEAD at baseline, reply path unchanged. | `RunnerTaskSettlementTests.Sync_uncertainty_blocks_and_reply_retries` |
 | V-6 | A Code lease-busy settlement with no progress service stays Blocked/Decide with the lease reason and no debt row. | `RunnerTaskSettlementTests.C1113_CodeLeaseBusyWithoutProgressServiceStaysBlocked` |
 | V-7 | The owner docs carry the D-2 sentence, the Held re-check sentence and the null-evidence sentence. | `RunnerBranchContractDocumentationTests.C1082_settlement_sync_debt_is_documented` |
-| V-8 | A Held debt ends Superseded at its re-check only when one active Complete retirement of the current registration has recorded directory and registration removal at or before that re-check, the recorded path and its git directory are absent, no current gitdir names the path, and not before. | `SettlementSyncRecoveryTests.C1136_HeldDebtEndsSupersededOnceTheWorktreeIsRetired` |
+| V-8 | A Held re-check never supersedes. A Complete retirement, a recreated path, a revoked retirement, a temporary absence, and an unreadable, empty, symlinked, or moved registration all stay Held. The Held claim contains no filesystem or retirement read. | `SettlementSyncRecoveryTests.C1136_CompleteRetirementWithoutRegistrationIdKeepsHeldDebt` |
 | V-9 | A Held debt with a live registration stays Held, reschedules 60 minutes, runs no Git, keeps `Attempts`, still warns. | `SettlementSyncRecoveryTests.C1136_HeldDebtWithALiveWorktreeStaysHeldAndReschedules` |
 | V-10 | Held rows carry `NextAttemptAt = now + 60 min`; an empty table and a not-due Held row are one statement per tick. | `SettlementSyncRecoveryTests.C1082_AdvancedRemoteTipIsHeldNotFollowed`, `C1082_DesktopRefusalsHoldWithReason` (3), `C1082_ChangedEpisodeOrRetiredWorktreeEndsTheDebt` (2), `C1082_DueDebtFastForwardsDesktopAndMarksReady` |
 | V-11 | A lease-busy baseline observation records the advertised tip with `State = Unavailable` and issues no remote pin; a Present observation still pins. | `RepairSourceDispatchTests.C1115_LeaseBusyBaselineRecordsTheAdvertisedTipWithoutARemotePin` |
@@ -308,7 +312,7 @@ closed list has one certificate.
 | G-3 | D-1: the evaluated reason reaches the block | PC-3 |
 | G-4 | D-1: the Pending text helpers refuse a non-Pending result | PC-4 |
 | G-5 | D-2: a Blocked lease-busy warning never says "pending" | PC-5 |
-| G-6 | D-3: a Held re-check supersedes only a gone registration | PC-6 |
+| G-6 | D-3 / F3d: a Held re-check does not supersede and does not read the filesystem | PC-6 |
 | G-7 | D-3: a Held re-check never runs Git or counts an attempt | PC-7 |
 | G-8 | D-4: a remote baseline pin needs a Present observation | PC-8 |
 | G-9 | D-5: the production dispatcher receives both sweep services | PC-9 |
@@ -329,7 +333,7 @@ Restore source and rebuild before the green run. Controls sharing a file run seq
 | PC-3 | G-3: the Indeterminate arm returns the constant lease reason. | `/*/*/SettlementSyncDebtPolicyTests/C1119_PendingCodeIndeterminateCarriesEvaluatedReason` | `G-3`: the reason is `runner_sync_lease_busy` instead of the evidence reason. |
 | PC-4 | G-4: remove the state guard from `PendingWarning` and `WorkspaceNote`. | `/*/*/SettlementSyncDebtPolicyTests/C1113_PendingTextHelpersRefuseANonPendingResult` | `G-4`: no `ArgumentException`; a "Runner sync pending" line is returned for an Unavailable result. |
 | PC-5 | G-5: use the lower-cased state word for a Pending result that blocks. | `/*/*/RunnerTaskSettlementTests/Sync_uncertainty_blocks_and_reply_retries` | `G-5`: a Warning event contains "Runner sync pending". |
-| PC-6 | G-6: the Held re-check ends Superseded unconditionally; separately, the claim read selects Pending only. | `/*/*/SettlementSyncRecoveryTests/C1136_HeldDebtWithALiveWorktreeStaysHeldAndReschedules`; `/*/*/SettlementSyncRecoveryTests/C1136_HeldDebtEndsSupersededOnceTheWorktreeIsRetired` | `G-6`: the live-worktree row is Superseded; the retired row stays Held after 60 minutes. |
+| PC-6 | G-6: the Held re-check supersedes when the recorded path is absent; separately, the claim read selects Pending only. | `/*/*/SettlementSyncRecoveryTests/C1136_HeldDebtWithALiveWorktreeStaysHeldAndReschedules`; `/*/*/SettlementSyncRecoveryTests/C1136_CompleteRetirementWithoutRegistrationIdKeepsHeldDebt`; `/*/*/SettlementSyncRecoveryTests/C1136_TemporaryWorktreeAbsenceKeepsHeldDebtAndReschedules` | `G-6`: a missing path becomes Superseded; a Pending-only claim leaves the due Held row at the old NextAttemptAt. |
 | PC-7 | G-7: the Held re-check calls `SyncSettledAsync` and increments `Attempts`. | `/*/*/SettlementSyncRecoveryTests/C1136_HeldDebtWithALiveWorktreeStaysHeldAndReschedules` | `G-7`: a Git command is recorded and `Attempts` moves. |
 | PC-8 | G-8: pin `repair-remote` whenever `Sha` is not null. | `/*/*/RepairSourceDispatchTests/C1115_LeaseBusyBaselineRecordsTheAdvertisedTipWithoutARemotePin` | `G-8`: `ProgressPins()` contains `baseline-repair-remote` and `Trace` has its `update-ref`. |
 | PC-9 | G-9: register `AgentTaskDispatcher` in `Program.cs` through a factory lambda that passes no `settlementSync`. | `/*/*/DispatcherSweepLifetimeRegistrationTests/Program_wires_both_sync_debt_sweeps_into_the_dispatcher` | `G-9`: `SyncDebtSweepsWired.SettlementSync` is false. |
@@ -340,9 +344,9 @@ Restore source and rebuild before the green run. Controls sharing a file run seq
 
 | Doc | Sentence | Pin |
 |---|---|---|
-| `docs/orchestration-loop.md` (Runner sync outcomes, CARD-1082 paragraph) | Replace "The Blocked warning says Runner sync pending and then reply." with "A Blocked lease-busy settlement's warning says Runner sync unavailable and then reply, never Runner sync pending; its evidence still records Pending." Add "The policy accepts only the task's own owned ref as the observed tip, and a Code report with no progress evidence under Pending stays Blocked." Add "A Held debt is re-checked every 60 minutes for its worktree registration only: it ends Superseded only when that one active Complete retirement is the current registration, has recorded directory and registration removal at or before the re-check, and the recorded path is absent. An earlier incarnation, a recreated registration, or any doubt keeps the row Held. The re-check never runs Git or fast-forwards." | `RunnerBranchContractDocumentationTests.LoopSentences` (F2, F3) |
-| `docs/session-runtime-invariants.md` (CARD-1082 paragraph) | Add "A Held debt ends Superseded only after one completed retirement of the current registration has removed that worktree path." | `RuntimeSentences` (F3) |
-| `docs/ops-http.md` (Settlement sync debt row) | Add "Held debt is re-checked hourly and ends Superseded only after a completed retirement of the current registration has removed its path, which clears its attention row." | `OpsSentences` (F3) |
+| `docs/orchestration-loop.md` (Runner sync outcomes, CARD-1082 paragraph) | Replace "The Blocked warning says Runner sync pending and then reply." with "A Blocked lease-busy settlement's warning says Runner sync unavailable and then reply, never Runner sync pending; its evidence still records Pending." Add "The policy accepts only the task's own owned ref as the observed tip, and a Code report with no progress evidence under Pending stays Blocked." F3d replaces the Held sentence with "A Held debt is re-checked every 60 minutes by restamping NextAttemptAt 60 minutes ahead: the re-check reads no filesystem and matches no path, runs no Git, fast-forwards nothing, and does not supersede, because AgentTaskSyncDebts has no registration id that a complete retirement can be bound to. The attention warning stays until that binding exists." | `RunnerBranchContractDocumentationTests.LoopSentences` (F2, F3, F3d) |
+| `docs/session-runtime-invariants.md` (CARD-1082 paragraph) | F3d replaces the Held sentence with "A Held debt is re-checked hourly and stays Held: the re-check does not read the worktree and does not supersede the row." | `RuntimeSentences` (F3d) |
+| `docs/ops-http.md` (Settlement sync debt row) | F3d replaces the Held sentence with "Held debt is re-checked hourly and stays Held, so the re-check does not clear its attention row." | `OpsSentences` (F3d) |
 | `docs/testing-and-build.md` (Build slots) | "Never chain a second driver after the gated command with a shell operator: the lease ends when build-slot.ps1 returns, so `-- dotnet build ... && dotnet exec ...` runs the exec unleased and Review flags it." | `CheckpointManifestDocumentationTests.the_chained_operator_pitfall_is_documented` (F5) |
 | `server/Application/Dtos/TaskProgressDtos.cs` (`ProgressRemoteBaseline`) | XML doc: `Sha` with `State != Present` is the advertised origin tip, not a local object; readers gate on `State`. | reading only (F4) |
 
@@ -417,8 +421,9 @@ SHA. No setting changes, no migration: a Held row written before F3 has `NextAtt
 is re-checked on the first tick after the restart, then rescheduled hourly. F5 is live on land.
 After the restart, a Blocked lease-busy task's warning reads "Runner sync unavailable" and its
 `syncDebt` stays absent, which is the documented reply-required case. Operators watching
-`settlement-sync-debt:*` attention see Held rows disappear within an hour of the owner's land or
-worktree retirement.
+`settlement-sync-debt:*` attention keep a Held row for the life of that debt. The hourly re-check
+only restamps NextAttemptAt. F3d dropped path-based supersession because the debt has no
+registration id.
 
 ## Cards recommended to close as not needed
 
