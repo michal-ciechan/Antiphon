@@ -304,8 +304,8 @@ public sealed class RollingProductionMountTests
         await ProveGenerationIdentity();
     }
 
-    // Names the c1008_compose_model target guard. A missing service-secret target is
-    // /run/secrets/ plus .source. Reverting that guard, or the declaration allowed list, refuses this fixture.
+    // Names the c1008_compose_model target guard. A missing service-secret target defaults to
+    // the source name. Reverting that guard, or the declaration allowed list, refuses this fixture.
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1105_V218_compose_model_accepts_the_host_shape()
     {
@@ -352,6 +352,110 @@ public sealed class RollingProductionMountTests
         Case(run.Output, "short").ShouldBe(("refuse", "RecycleGenerationUnknown"));
     }
 
+    // An explicit relative target is mounted at /run/secrets/<target>. "elsewhere" is not the
+    // roster destination, so both filters refuse before any caller can recycle.
+    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1105_Relative_secret_target_is_refused()
+    {
+        C1008HostFixture.RequireNativeLinux();
+        using var f = new C1008HostFixture();
+        WriteSecretCase(f, "elsewhere", _ => JsonValue.Create("elsewhere"));
+        await AssertSecretCase(f, "elsewhere", expectAccept: false);
+    }
+
+    // A relative target equal to the secret's own name is the Compose default destination.
+    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1105_Relative_secret_target_equal_to_its_name_is_accepted()
+    {
+        C1008HostFixture.RequireNativeLinux();
+        using var f = new C1008HostFixture();
+        WriteSecretCase(f, "own-name", name => JsonValue.Create(name));
+        await AssertSecretCase(f, "own-name", expectAccept: true);
+    }
+
+    // Absolute targets stay on the base-commit rule: the path must be /run/secrets/<source>.
+    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1105_Absolute_secret_target_keeps_the_base_rule()
+    {
+        C1008HostFixture.RequireNativeLinux();
+        using var f = new C1008HostFixture();
+        WriteSecretCase(f, "absolute-match", name => JsonValue.Create("/run/secrets/" + name));
+        WriteSecretCase(f, "absolute-other", _ => JsonValue.Create("/run/secrets/elsewhere"));
+        foreach (var (render, diagnosis) in SecretFilters)
+        {
+            var run = await f.Run(extra: V218ModelProbe(render, "absolute-match", "absolute-other"));
+            run.Exit.ShouldBe(0, render + ": " + run.Output);
+            run.Output.ShouldNotContain("startswith() requires string inputs");
+            Case(run.Output, "absolute-match").ShouldBe(("accept", "11"), render);
+            Case(run.Output, "absolute-other").ShouldBe(("refuse", diagnosis), render);
+        }
+    }
+
+    // Explicit null, empty, and non-string targets are refusals. A missing key is not this case.
+    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1105_Malformed_secret_target_is_refused()
+    {
+        C1008HostFixture.RequireNativeLinux();
+        using var f = new C1008HostFixture();
+        WriteExplicitNullTargets(f, "null-target");
+        WriteSecretCase(f, "empty-target", _ => JsonValue.Create(""));
+        WriteSecretCase(f, "number-target", _ => JsonValue.Create(1));
+        WriteSecretCase(f, "false-target", _ => JsonValue.Create(false));
+        WriteSecretCase(f, "object-target", _ => new JsonObject());
+        var labels = new[] { "null-target", "empty-target", "number-target", "false-target", "object-target" };
+        foreach (var (render, diagnosis) in SecretFilters)
+        {
+            var run = await f.Run(extra: V218ModelProbe(render, labels));
+            run.Exit.ShouldBe(0, render + ": " + run.Output);
+            run.Output.ShouldNotContain("startswith() requires string inputs");
+            foreach (var label in labels)
+                Case(run.Output, label).ShouldBe(("refuse", diagnosis), render + " " + label);
+        }
+    }
+
+    private static readonly (string Render, string Diagnosis)[] SecretFilters =
+    [
+        ("c1008_compose_model", "RecycleComposeMismatch"),
+        ("c1008_previous_model \"$C1008_PREVIOUS_SHA\"", "RecycleGenerationUnknown"),
+    ];
+
+    private static async Task AssertSecretCase(C1008HostFixture f, string label, bool expectAccept)
+    {
+        foreach (var (render, diagnosis) in SecretFilters)
+        {
+            var run = await f.Run(extra: V218ModelProbe(render, label));
+            run.Exit.ShouldBe(0, label + " " + render + ": " + run.Output);
+            run.Output.ShouldNotContain("startswith() requires string inputs");
+            Case(run.Output, label).ShouldBe(expectAccept ? ("accept", "11") : ("refuse", diagnosis), render);
+        }
+    }
+
+    // JsonNode's indexer returns C# null for a JSON null, and ToJsonString then omits the key.
+    // The missing-key shape is the v2.18 acceptance case, so this writer keeps an explicit null.
+    private static void WriteExplicitNullTargets(C1008HostFixture f, string label)
+    {
+        var text = C1008HostFixture.LoadComposeV218(f.Root).ToJsonString();
+        var updated = text
+            .Replace("\"source\":\"antiphon-deploy-key\"", "\"source\":\"antiphon-deploy-key\",\"target\":null", StringComparison.Ordinal)
+            .Replace("\"source\":\"phone-home\"", "\"source\":\"phone-home\",\"target\":null", StringComparison.Ordinal);
+        if (updated.Split("\"target\":null").Length != 3)
+            throw new InvalidOperationException("explicit null targets were not written: " + text);
+        File.WriteAllText(Path.Combine(f.Root, "v218-" + label + ".json"), updated);
+    }
+
+    private static void WriteSecretCase(C1008HostFixture f, string label, Func<string, JsonNode?> target)
+    {
+        var model = C1008HostFixture.LoadComposeV218(f.Root);
+        foreach (var secret in model["services"]!["session-runner"]!["secrets"]!.AsArray())
+        {
+            var name = secret!["source"]!.GetValue<string>();
+            var value = target(name);
+            if (value is null) secret.AsObject().Remove("target");
+            else secret["target"] = value;
+        }
+        WriteV218(f, "v218-" + label + ".json", model);
+    }
+
     private static void WriteV218(C1008HostFixture f, string name, JsonNode model) =>
         File.WriteAllText(Path.Combine(f.Root, name), model.ToJsonString());
 
@@ -366,8 +470,11 @@ public sealed class RollingProductionMountTests
         return (parts[2], parts[3]);
     }
 
-    private static string V218ModelProbe(string render)
+    private static string V218ModelProbe(string render, params string[] labels)
     {
+        if (labels.Length == 0) labels = ["target", "short", "external"];
+        var calls = string.Join('\n', labels.Select(label =>
+            $"            run_case {label} \"$C1008_FIXTURE_ROOT/v218-{label}.json\""));
         var sha = new string('b', 40);
         return $$"""
             LANE=host
@@ -390,9 +497,7 @@ public sealed class RollingProductionMountTests
                 count="$(c1008_session_mount_count "$model")" || { printf 'V218_CASE %s count-fail 0\n' "$label"; return 0; }
                 printf 'V218_CASE %s accept %s\n' "$label" "$count"
             }
-            run_case target "$C1008_FIXTURE_ROOT/v218-target.json"
-            run_case short "$C1008_FIXTURE_ROOT/v218-short.json"
-            run_case external "$C1008_FIXTURE_ROOT/v218-external.json"
+            {{calls}}
             write_result true '' 0
             """;
     }

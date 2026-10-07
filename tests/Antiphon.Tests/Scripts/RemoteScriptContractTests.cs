@@ -1024,6 +1024,46 @@ public sealed class RemoteScriptContractTests
             || a.Take(2).SequenceEqual(new[] { "volume", "rm" })).ShouldBeFalse();
     }
 
+    // CARD-1105. target: elsewhere is a real relative mount. Both generations refuse it
+    // before stop, rm, or volume rm. The byte comparison cannot see this destination.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1105_Relative_dry_run_refuses_before_removal()
+    {
+        C1008HostFixture.RequireNativeLinux();
+        using var f = new C1008HostFixture();
+        var clean = C1008HostFixture.LoadComposeV218(f.Root);
+        var relative = clean.DeepClone().AsObject();
+        foreach (var secret in relative["services"]!["session-runner"]!["secrets"]!.AsArray())
+            secret!["target"] = "elsewhere";
+        File.WriteAllText(Path.Combine(f.Root, "v218-clean.json"), clean.ToJsonString());
+        File.WriteAllText(Path.Combine(f.Root, "v218-relative.json"), relative.ToJsonString());
+        await AssertRelativeDryRun(f, "v218-relative.json", "v218-clean.json", "RecycleComposeMismatch");
+        await AssertRelativeDryRun(f, "v218-clean.json", "v218-relative.json", "RecycleGenerationUnknown");
+    }
+
+    private static async Task AssertRelativeDryRun(C1008HostFixture f, string targetFile, string previousFile, string diagnosis)
+    {
+        var run = await f.Run(dryRun: true, extra: $$"""
+            compose_host() {
+                case "$(basename "${C1008_COMPOSE_DIR:-}")" in
+                    bbbbbbbbbbbb) cat "$C1008_FIXTURE_ROOT/{{previousFile}}" ;;
+                    *) cat "$C1008_FIXTURE_ROOT/{{targetFile}}" ;;
+                esac
+            }
+            compose_temp() { compose_host "$@"; }
+            """);
+        run.Exit.ShouldBe(2, diagnosis + ": " + run.Output);
+        run.Output.ShouldContain(diagnosis);
+        run.Output.ShouldNotContain("C1008_GENERATION");
+        run.Output.ShouldNotContain("C1008_PREVIEW");
+        run.Output.ShouldNotContain("MUTATION");
+        run.Output.ShouldNotContain("startswith() requires string inputs");
+        f.Removed.ShouldBeEmpty(diagnosis + " removes no volume");
+        C1105DockerMutations(f).ShouldBe(0, diagnosis + " does not stop, rm, or volume rm");
+        File.Exists(C1105Journal(f)).ShouldBeFalse(diagnosis + " writes no journal");
+    }
+
     // CARD-1105 V-3. Generation identity refuses before stop, removal, volume deletion, or a journal.
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]

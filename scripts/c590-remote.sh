@@ -3946,6 +3946,14 @@ c1008_previous_model() {
     model="$(printf '%s' "$model" | jq -ce --argjson kinds "$kinds" '
       def boolfield($k): (has($k)|not) or (.[$k]|type)=="boolean";
       def allowed($approved): (keys - $approved | length)==0;
+      # Absent target defaults to the source name. A present relative target is kept.
+      def secret_dest:
+        (if type!="object" then ""
+         elif (has("target")|not) then
+           if (.source|type)!="string" or .source=="" then error("secret") else .source end
+         elif (.target|type)!="string" or .target=="" then error("secret")
+         else .target end) as $named
+        | if ($named|startswith("/")) then $named else "/run/secrets/"+$named end;
       . as $model |
       if (($model.services["state-init"]|type)!="object") or (($model.services["session-runner"]|type)!="object") or
          ((($model.configs // {})|length)!=0) then error("services") else . end |
@@ -3977,8 +3985,7 @@ c1008_previous_model() {
            if ($svc.tmpfs|type)!="array" or ($svc.secrets|type)!="array" or
               any($svc.tmpfs[]; (type!="string") or (startswith("/")|not)) then error("ephemeral") else . end |
            [$svc.secrets[] | . as $secret |
-             (if (.target|type)=="string" and (.target|startswith("/")) then .target
-              else "/run/secrets/"+(.source // "") end) as $target |
+             (secret_dest) as $target |
              if ($secret|type)!="object" or (($secret|allowed(["source","target"]))|not) or
                 ($secret.source|type)!="string" or ($model.secrets[$secret.source]|type)!="object" or
                 (($model.secrets[$secret.source]|allowed(["file","name","external"]))|not) or
@@ -4023,6 +4030,14 @@ c1008_compose_model() {
         --argjson temp "$([ "$C1008_PROJECT" = "$TEMP_PROJECT" ] && echo true || echo false)" '
       def boolfield($k): (has($k)|not) or (.[$k]|type)=="boolean";
       def allowed($approved): (keys - $approved | length)==0;
+      # Absent target defaults to the source name. A present relative target is kept.
+      def secret_dest:
+        (if type!="object" then ""
+         elif (has("target")|not) then
+           if (.source|type)!="string" or .source=="" then error("secret") else .source end
+         elif (.target|type)!="string" or .target=="" then error("secret")
+         else .target end) as $named
+        | if ($named|startswith("/")) then $named else "/run/secrets/"+$named end;
       def volume($role;$target;$copy): {kind:"volume",role:$role,target:$target,rw:true,nocopy:$copy};
       def bind($source;$target;$rw;$file): {kind:"bind",source:$source,target:$target,rw:$rw,file:$file};
       . as $model |
@@ -4063,8 +4078,7 @@ c1008_compose_model() {
             ($svc.secrets|map(.source)|sort)!=["antiphon-deploy-key","phone-home"] then error("ephemeral") else . end |
           [$svc.secrets[] | . as $secret |
             (if .source=="antiphon-deploy-key" then $key else $phone end) as $source |
-            (if (.target|type)=="string" and (.target|startswith("/")) then .target
-             else "/run/secrets/"+(.source // "") end) as $target |
+            (secret_dest) as $target |
             if (allowed(["source","target"])) and $target==("/run/secrets/"+.source) and
               ($model.secrets[.source]|allowed(["file","name","external"])) and
               (($model.secrets[.source].external // false)==false) and
