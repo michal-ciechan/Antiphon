@@ -508,24 +508,31 @@ public sealed class AgentTaskService
                             ct);
                     // CARD-1037 still refuses a remote pool continuation when a Blocked
                     // task is pinned to that agent. Reply is named only when that park
-                    // would be admitted (CARD-1103). Local guidance is below.
-                    var parkReply = followAgent.IsPoolDelegate
-                        && RunnerRequestIntent.CanonicalRunnerId(retainedRunnerId) is not null
-                        ? await RemotePoolParkReplyAsync(blockedOnAgent, ct)
-                        : RemotePoolParkReply.None;
+                    // would be admitted (CARD-1103). The same one read classifies the
+                    // local branch, and confirmed park evidence outranks the session
+                    // projection, so a stale Running row cannot recommend a Reply that
+                    // answer admission refuses (CARD-1154).
+                    var parkReply = await RemotePoolParkReplyAsync(blockedOnAgent, ct);
                     RefuseRemotePoolFollowUp(followAgent, retainedRunnerId, priorId, parkReply, blockedOnAgent.Id);
+
+                    if (parkReply == RemotePoolParkReply.Admitted)
+                    {
+                        throw new ConflictException(
+                            $"Task {priorShort} ran on agent '{followAgent.Name}', which is parked on Blocked task {blockedShort}. The published seat was released. Reply to continue that task (delegate.ps1 -Reply {blockedShort} \"...\"); do not cancel it to start a follow-up.",
+                            "follow_up_agent_blocked");
+                    }
+
+                    if (parkReply == RemotePoolParkReply.ReleaseMismatch)
+                    {
+                        throw new ConflictException(
+                            $"Task {priorShort} ran on agent '{followAgent.Name}', which is parked on Blocked task {blockedShort}. Its published park's seat release does not match answer admission, so that parked answer cannot be continued.",
+                            "follow_up_agent_blocked");
+                    }
 
                     if (sessionLive)
                     {
                         throw new ConflictException(
                             $"Task {priorShort} ran on agent '{followAgent.Name}', which is parked on Blocked task {blockedShort} waiting for an answer; a follow-up would queue behind it indefinitely. Reply to it (delegate.ps1 -Reply {blockedShort} \"...\") or cancel it (POST /api/agent-tasks/{blockedShort}/cancel), then re-send.",
-                            "follow_up_agent_blocked");
-                    }
-
-                    if (await HasConfirmedPublishedParkAsync(blockedOnAgent, ct))
-                    {
-                        throw new ConflictException(
-                            $"Task {priorShort} ran on agent '{followAgent.Name}', which is parked on Blocked task {blockedShort}. The published seat was released. Reply to continue that task (delegate.ps1 -Reply {blockedShort} \"...\"); do not cancel it to start a follow-up.",
                             "follow_up_agent_blocked");
                     }
 
@@ -3303,7 +3310,8 @@ public sealed class AgentTaskService
     }
 
     /// <summary>
-    /// One read on a remote-pool follow-up create. Admitted is the confirmed-receipt and
+    /// One read per blocked follow-up create, serving both the remote-pool 422 and the
+    /// local 409 guidance (CARD-1154). Admitted is the confirmed-receipt and
     /// release-identity query answer continuation uses (<see cref="RunnerSeatReleaseQueries"/>),
     /// correlated to the current-attempt park's linked release (CARD-1146). A confirmed park
     /// that fails that match must not recommend Reply.
