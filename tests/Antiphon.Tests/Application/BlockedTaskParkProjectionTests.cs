@@ -64,7 +64,6 @@ public sealed class BlockedTaskParkProjectionTests
         Require(runtime, "A missing mirror is recreated with worktree add only when the branch tip equals the parked SHA, and HEAD is never reset.", "c1065-worktree-add");
         Require(runtime, "The inspection lease ends before the dispatch claim.", "c1065-inspection-lease");
         Require(runtime, "The 422 follow_up_remote_pool_unsupported fires before the Blocked branch and names that task and Reply only when the Blocked task's current attempt has a confirmed published park whose seat release matches Reply admission, including the settlement revision (CARD-1103).", "c1065-remote-422");
-        Require(runtime, "A confirmed published park whose seat release does not match that admission does not name Reply; the parked answer cannot be continued (CARD-1103).", "c1103-stale-release");
         runtime.ShouldNotContain("does not hear Reply", Case.Sensitive, "c1103-no-silent-422");
         Require(runtime, "HasConfirmedPublishedParkAsync is scoped to the task's current attempt and accepts Parked or ResumePending only (CARD-1103).", "c1065-park-identity");
         Require(runtime, "Follow-up Create guidance no longer calls HasConfirmedPublishedParkAsync; that detector, which does not compare release identity, remains the CARD-1144 stale-answer veto and the task-detail confirmed-park input (CARD-1154).", "c1154-veto-detector");
@@ -85,14 +84,18 @@ public sealed class BlockedTaskParkProjectionTests
             Require(text, MarkReadSentence, "c1144-read-revision:" + owner);
             Require(text, NoOldSessionSentence, "c1144-no-old-session:" + owner);
             Require(text, SharedQuerySentence, "c1146-shared-query:" + owner);
+            Require(text, StaleReleaseSentence, "c1103-stale-release:" + owner);
             Require(text, LocalGuidanceSentence, "c1154-local-guidance:" + owner);
-            Require(text, EvidenceOrderSentence, "c1154-evidence-order:" + owner);
+            Require(text, PrecedenceSentence, "c1154-evidence-order:" + owner);
             Require(text, OneReadSentence, "c1154-one-read:" + owner);
+            Require(text, "When no candidate park gives the Reply or mismatch advice, a live Blocked session ", "c1154-mixed-candidates:" + owner);
             text.ShouldNotContain(StaleLocalGuidanceSentence, Case.Sensitive, "c1154-local-guidance:" + owner);
-            Require(text, MismatchSentence, "c1154-mismatch-confirmed-at:" + owner);
-            Require(text, NoneSentence, "c1154-none-fallback:" + owner);
             text.ShouldNotContain(StaleLocalReplySentence, Case.Sensitive, "c1154-local-guidance:" + owner);
             text.ShouldNotContain(StaleMismatchSentence, Case.Sensitive, "c1154-mismatch-confirmed-at:" + owner);
+            // CARD-1154 repair 2 (Review c9686076 D3): the classifier ranks all candidate parks, so a
+            // per-park fallback or mismatch promise is false when another candidate is admitted.
+            foreach (var perPark in PerParkGuidanceWording)
+                text.ShouldNotContain(perPark, Case.Sensitive, "c1154-mixed-candidates:" + owner);
         }
         Require(Read("docs/antiphon-api.md"), "ReclaimIntervalSeconds", "c1108-api-interval");
         Require(Read("docs/ops-http.md"), "ReclaimIntervalSeconds", "c1108-ops-interval");
@@ -177,8 +180,13 @@ public sealed class BlockedTaskParkProjectionTests
         var guidance = Between(follow, "internal async Task<RemotePoolParkReply> RemotePoolParkReplyAsync(", "private async Task<bool> HasConfirmedPublishedParkAsync(");
         Require(guidance, "RunnerSeatReleaseQueries.Confirmed(RunnerSeatReleaseQueries.ForAttempt(_db, task))", "c1146-shared-query:guidance");
         CountOf(guidance, "await ").ShouldBe(1, "c1146-shared-query:one-read");
-        // The owner mismatch sentence names ConfirmedAt because the mismatch arm requires it.
+        // The owner precedence sentence names ConfirmedAt because the mismatch arm requires it,
+        // and ranks any admitted candidate park above a mismatched one.
         Require(guidance, "&& r.ConfirmedAt != null),", "c1154-mismatch-confirmed-at:source");
+        var anyAdmitted = guidance.IndexOf("if (facts.Any(f => f.Admitted)) return RemotePoolParkReply.Admitted;", StringComparison.Ordinal);
+        var anyConfirmed = guidance.IndexOf("if (facts.Any(f => f.Confirmed)) return RemotePoolParkReply.ReleaseMismatch;", StringComparison.Ordinal);
+        anyAdmitted.ShouldBeGreaterThanOrEqualTo(0, "c1154-mixed-candidates:source");
+        anyConfirmed.ShouldBeGreaterThan(anyAdmitted, "c1154-mixed-candidates:source");
         var seat = Read("server/Application/Services/TerminalRunnerSeatReleaseService.cs").Replace("\r\n", "\n");
         Require(seat, "RunnerSeatReleaseQueries.ForAttempt(db, task).SingleOrDefaultAsync(ct);", "c1146-shared-query:identity");
         Require(seat, "RunnerSeatReleaseQueries.Confirmed(RunnerSeatReleaseQueries.ForAttempt(db, task)).SingleOrDefaultAsync(ct);", "c1146-shared-query:continuation");
@@ -214,13 +222,23 @@ public sealed class BlockedTaskParkProjectionTests
     private const string MarkReadSentence = "Mark-read records the first ReadAt without changing the task's ConcurrencyToken, the settlement revision a seat release records; a matching confirmed-park Reply after a read still queues one new attempt (CARD-1144).";
     private const string NoOldSessionSentence = "Reply to a confirmed published park whose release identity no longer matches, with no accepted answer pending, returns 409 park_release_identity_mismatch before any old-session input is queued (CARD-1144).";
     private const string SharedQuerySentence = "The remote-pool 422 guidance and confirmed-park Reply continuation use the same EF queries, RunnerSeatReleaseQueries.ForAttempt for release identity and RunnerSeatReleaseQueries.Confirmed for the confirmed receipt; that guidance remains one database read (CARD-1146).";
-    private const string LocalGuidanceSentence = "Local 409 follow_up_agent_blocked guidance uses the same confirmed release-identity query as Reply; it gives the published-seat Reply advice (the seat was released; reply and do not cancel) only when that query admits the linked release of a current-attempt published park in Parked or ResumePending, and otherwise falls back to the mismatch or live/dead advice, whose live form also names Reply or cancel (CARD-1154).";
-    // The mismatch arm also requires ConfirmedAt (RemotePoolParkReplyAsync); a Confirmed release without it is None.
-    private const string MismatchSentence = "The mismatch 409, which says that parked answer cannot be continued, applies only when no current-attempt published park in Parked or ResumePending is admitted and at least one such park has a linked release in state Confirmed with a non-null ConfirmedAt: a release identity mismatch, a missing ActionId, or an OutcomeCode outside Released, AlreadyExited and AlreadyAbsent (CARD-1154).";
-    private const string NoneSentence = "A linked release in state Confirmed with a null ConfirmedAt, a release in any other state, or no such park at all gives no confirmed park classification, so the live/dead advice applies (CARD-1154).";
+    private const string StaleReleaseSentence = "When no candidate park of the task is admitted, a confirmed published park whose seat release does not match that admission does not name Reply; that parked answer cannot be continued (CARD-1103).";
+    private const string LocalGuidanceSentence = "Local 409 follow_up_agent_blocked guidance gives the published-seat Reply advice (the seat was released; reply and do not cancel) only when the shared admission query that Reply uses admits the linked release of a candidate park of the Blocked task, a current-attempt published park in Parked or ResumePending (CARD-1154).";
+    // RemotePoolParkReplyAsync: any admitted candidate wins; the mismatch arm also requires ConfirmedAt.
+    private const string PrecedenceSentence = "Across all candidate parks of that task, any admitted park gives the published-seat Reply advice; otherwise, if some candidate has a linked release in state Confirmed with a non-null ConfirmedAt that fails admission, the 409 gives the mismatch text, which says that parked answer cannot be continued and names neither Reply nor cancel; otherwise the ordinary live/dead advice applies (CARD-1154).";
     private const string StaleLocalReplySentence = "it recommends Reply for a current-attempt published park only when that query admits its linked release";
     private const string StaleMismatchSentence = "Confirmed but not admitted";
-    private const string EvidenceOrderSentence = "Confirmed park evidence is evaluated before local live-session advice; a confirmed park with mismatched release identity names neither Reply nor cancellation (CARD-1154).";
+    // Earlier per-park wording, each false for an admitted candidate beside a mismatched one.
+    private static readonly string[] PerParkGuidanceWording =
+    [
+        "and otherwise falls back to the mismatch or live/dead advice",
+        "a confirmed park with mismatched release identity names neither Reply nor cancellation",
+        "The mismatch 409, which says that parked answer cannot be continued, applies only when",
+        "gives no confirmed park classification, so the live/dead advice applies",
+        "When no confirmed park classification takes precedence",
+        "A current-attempt published park whose linked release",
+        "A confirmed published park whose seat release does not match that admission does not name Reply; the parked answer cannot be continued (CARD-1103).",
+    ];
     private const string OneReadSentence = "Confirmed-park guidance performs one database read per blocked follow-up, independent of the number of candidate parks; the existing session-liveness read is separate (CARD-1154).";
     private const string StaleLocalGuidanceSentence = "does not check that release identity, so it can name Reply";
     private const string ConfirmCommitSentence = "A failed or rolled-back confirmation contributes nothing to that sweep's Released count, even if a separate recovery confirms the same release before the sweep reads it (CARD-1147).";
