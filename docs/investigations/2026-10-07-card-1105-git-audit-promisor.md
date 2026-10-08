@@ -8,7 +8,7 @@ D2: absence of an index is accepted only when porcelain contains no changes exce
 
 D3: porcelain alone is insufficient. Reject non-H ls-files -v entries (assume-unchanged, skip-worktree, sparse/unmerged states), then hash every regular file/symlink against its index blob ID without filters or stat-cache shortcuts. Status also rejects staged and intent-to-add changes. Non-file index modes refuse unknown. Raw hashing deliberately refuses normalized checkout differences that cannot be proved byte-identical. The racy-stat fixture preserves the old blob ID while making cached stat data match a changed same-size file and asserts ordinary status is empty before auditing.
 
-D4: traverse all local/recovery and advertised origin roots with rev-list --objects --filter=blob:none --missing=error --stdin, without publication exclusions. Missing ancestor commits/trees refuse unknown, while omitted blobs are allowed. Every tip must peel to a commit; noncommit recovery refs cannot establish publication and refuse unknown. Grafts refuse; replacement refs cannot replace the graph. The subsequent rev-list --count proof still checks each tip against current origin heads, validates numeric output, and never converts Git failure to zero.
+D4: traverse all local/recovery and advertised origin roots with rev-list --objects --filter=blob:none --missing=error --stdin, without publication exclusions. Missing ancestor commits/trees refuse unknown, while omitted blobs are allowed. Repair 5 replaces the old "every tip must peel to a commit" rule: a non-commit tip must be the very object origin advertises (see the repair 5 section). Grafts refuse; replacement refs cannot replace the graph. The subsequent rev-list --count proof still checks each tip against current origin heads, validates numeric output, and never converts Git failure to zero.
 
 D5: the existing C1008SeedPromisor fixture now enables uploadpack.allowFilter/allowAnySHA1InWant on its local origin and asserts that the HEAD blob appears as missing in rev-list --objects --missing=print, with no lazy fetch. It still executes the unique actual deploy clone line. New helper contracts use that same command and verify no fetch child and all three required environment values at every traced Git start (repair 4 adds the five commit-graph keys; an origin-side local-transport git-upload-pack, which Git starts with per-repository configuration variables cleared, is exempt from those five only).
 
@@ -26,13 +26,17 @@ The whole Unit lane is outside this explicitly commissioned closed scope; it is 
 | V-4 | Commit/tree completeness; blobs may be absent; a commit-graph cannot hide a missing commit | C1105_Git_audit_object_completeness, all 4 variants; seed positive |
 | V-5 | Actual deploy fixture is truly blobless | C1008_Recycle_audits_promisor_checkout and each new local fixture |
 | V-6 | Failure preserves saved proof; unchanged recovered origin resumes | C1105_Git_audit_resume_preserves_proof |
-| V-7 | Every Git-directory location in the closed list: private commit hidden only there refuses with the stated class/check; published value passes; repair 4 shapes (present-origin comparison, admin-directory scan, AUTO_MERGE, antiphon/review-evidence, empty markers, editor files, ignored files) | C1105_Git_audit_hidden_locations, all 64 table rows |
+| V-7 | Every Git-directory location in the closed list: private commit hidden only there refuses with the stated class/check; published value passes; repair 4 shapes (present-origin comparison, admin-directory scan, AUTO_MERGE, antiphon/review-evidence, empty markers, editor files, ignored files); repair 5 shapes (V-12 to V-15) | C1105_Git_audit_hidden_locations, all 93 table rows |
 | V-8 | A failure of only the per-tip `rev-list --count` refuses `check=rev-list status=128` | C1008_Recycle_audits_promisor_checkout (count-only block) |
 | V-9 | Origin ahead of the clone or a deleted tracking ref is not a refusal; a tracking ref no origin head contains refuses unpublished | C1008_Recycle_refuses_uninspectable_git (tracking-deleted, origin-ahead, gone blocks) and the origin-* rows of V-7 |
 | V-10 | Running out of the overall budget refuses `check=audit-timeout` | C1105_Git_audit_overall_timeout |
 | V-11 | A replay-shaped volume (blobless mirror, 250 linked worktrees of 300 files, ignored build output) audits within 240 s; one pass per common directory, one content check per worktree | C1105_Git_audit_volume_scale |
+| V-12 | An existing recorded checkout is inspected against its admin directory when its `.git` pointer is missing or names another directory; clean or ignored-only content passes; an absent checkout keeps the index-equals-HEAD rule | hidden rows orphan-missing-modified, orphan-missing-untracked, orphan-elsewhere-modified, orphan-missing-clean, orphan-missing-ignored, orphan-symlink-ignored, plus stale-linked-published, pruned-path-staged, stale-pointer-staged |
+| V-13 | A non-commit tip is published only as the very advertised object (a tree also when a present head reaches it); an advertised tag's commit is still proven against the heads | hidden rows tag-annotated, tag-annotated-packed, tag-annotated-published, tag-of-tag, tag-of-tag-published, tag-lightweight, tag-tree, tree-ref-published, tree-ref-unpublished, blob-ref, tag-published-off-branch |
+| V-14 | Ignored output never refuses and never changes the receipt; symlinks in a checkout are its content and never followed; metadata and loose symlinks keep volume confinement | hidden rows ignored-head-equality, bare-reflog, damaged-git-dir-ignored, ignored-symlink-outside, ignored-symlink-dangling, untracked-symlink, tracked-symlink-outside, metadata-symlink-outside, loose-symlink-dangling; C1008_Recycle_refuses_uninspectable_git (escaping-link) |
+| V-15 | Content Git never shows or a work tree moved by configuration refuses unknown | hidden rows dot-git-content, linked-core-worktree, bare-dot-git |
 | R-1 | Full commissioned adjacent regression | CP-1 through CP-12 |
-| R-2 | No lazy fetch; required environment (including the commit-graph keys) at every Git start | all 97 C1105_Git_audit cases |
+| R-2 | No lazy fetch; required environment (including the commit-graph keys) at every Git start | all 126 C1105_Git_audit cases |
 | R-3 | Dirty/unpublished/unknown classification, receipts, zero-count failures, UID 1654 | CP-11 existing 8 methods |
 
 ## Positive controls pending
@@ -57,6 +61,8 @@ All controls remain pending for method-scoped SourceLanding Mutation, including 
 | PC-R4-scale / dedupe,common-once | C1105_Git_audit_volume_scale | remove `dirty_seen` / `common_seen` | status or ls-remote count, or budget, fails |
 | PC-R4-origin / ahead,tracking,gone | C1008_Recycle_refuses_uninspectable_git | missing advertised head refuses / require a loose tracking ref / count check no-op | positive block refuses, or tracking-only commit removed |
 | PC-doc-r4 | DockerStackDocumentationTests.Main_volume_recycling_is_scripted_only | remove a repair 4 sentence or restore AUTO_MERGE to the pseudoref list | documentation pins fail |
+| PC-R5 / one variant per row of the repair 5 mutation table | C1105_Git_audit_hidden_locations | the mutation named for that row | the named rows go red |
+| PC-doc-r5 | DockerStackDocumentationTests.Main_volume_recycling_is_scripted_only | remove a repair 5 sentence, or restore "Noncommit tips, unsupported index modes and grafts refuse unknown" | documentation pins fail |
 
 Round 1 found two existing receipt-name assertions red because the completeness traversal named its logical purpose instead of its Git command. The corrected receipt names rev-list-objects; no assertion or timeout changed. The stopped row and rerun are retained in the task report.
 
@@ -88,14 +94,15 @@ Final Review 2 found two more places an object ID could hide: a linked worktree'
 | NOTES_MERGE_* | commits | notes merge in progress: unknown | notes-merge |
 | *.lock (top level and under refs) | new ref value | interrupted update: unknown | ref-lock |
 | stash | refs/stash and logs/refs/stash | ref and reflog tips | stash |
-| index (+ sharedindex.*) | staged blobs | proven checkout: status plus raw hash (D2/D3); no proven checkout: must equal its HEAD (`stale-index`, dirty); index in a bare directory: unknown | index, bare-index, stale-pointer-staged, pruned-path-staged |
-| worktrees/<id> (repair 4) | a whole linked Git directory | scanned directly, whether or not the checkout exists; common directory must match (`git-dir-layout`); checkout inspected only when both pointers agree; registration outside the volume: `worktree-confine` | stale-linked-published, linked-outside, linked-* |
+| index (+ sharedindex.*) | staged blobs | proven checkout: status plus raw hash (D2/D3); an existing checkout with a lost or foreign pointer: status plus raw hash against this admin directory (repair 5), after the index-equals-HEAD check; absent checkout: must equal its HEAD (`stale-index`, dirty); index in a bare directory: unknown | index, bare-index, stale-pointer-staged, pruned-path-staged, orphan-* |
+| worktrees/<id> (repair 4, 5) | a whole linked Git directory and its recorded checkout | scanned directly, whether or not the checkout exists; common directory must match (`git-dir-layout`); the recorded checkout directory, when it exists, is inspected (through its own `.git` when both pointers agree, otherwise with `--git-dir=<id> --work-tree=<checkout>`: `orphan-status`); registration outside the volume: `worktree-confine`; a recorded path not ending in `.git`, a non-directory checkout or an unsearchable parent: `worktree-path`; a per-worktree `core.worktree`: `core-worktree` | stale-linked-published, linked-outside, linked-*, orphan-*, linked-core-worktree |
 | antiphon/ (common only, repair 4) | product state, no object | ignored; non-empty `children/`: `antiphon-children`; in a linked directory: `gitdir-entry` | antiphon-state, antiphon-children, antiphon-linked |
 | review-evidence/ (common only, repair 4) | agent evidence, no repository state | ignored, contents not audited; in a linked directory: `gitdir-entry` | review-evidence, review-evidence-linked |
 | common/ and git-daemon-export-ok (common only, repair 4) | nothing when empty | empty: ignored; non-empty: `gitdir-common` / `gitdir-daemon-export` | common-empty, common-content, daemon-export |
 | editor swap/backup (`.*.sw?`, `*~`, repair 4) | unrecovered text | `gitdir-editor`: recover or delete | editor-swap |
 | info/grafts; refs/replace (loose or packed) | graph rewrite; replaced oid is only a refname | unknown | grafts, replace, replace-packed |
 | refs/notes | notes commit naming objects by path | tip; never an origin head ancestor: unpublished | notes |
+| any ref, packed-ref or pseudoref naming a non-commit (repair 5) | an annotated tag (its message), a tag of a tag, a tree, a blob | the very object must be advertised by origin (`ls-remote --heads --tags`, peeled lines included); a tree also when a present head reaches it; otherwise `RecycleUnpublishedWork` `check=tip-object`; an advertised tag's commit is counted against the heads | tag-*, tree-ref-*, blob-ref |
 | reftable/ | refs and reflogs not in files | unknown (`ref-storage`) | reftable |
 | modules/ | whole submodule repositories | unknown (`gitdir-modules`) | modules |
 | shallow | boundary | unknown (existing `shallow`) | existing C1008 shallow case |
@@ -103,6 +110,7 @@ Final Review 2 found two more places an object ID could hide: a linked worktree'
 | any other entry (for example lost-found) | unknown | unknown (`gitdir-entry`) | unknown-entry |
 | objects/ | the store itself | an object no location above names is outside the audit, exactly as for `git gc`; it is never a tip | (none) |
 | info/refs | repack's copy of refs | the refs it was copied from are read directly; a stale entry names an object no live location names (same as `objects/`) | published-gc, long-lived |
+| outside Git directories (repair 5) | checkout content and stray files | a `.git` directory that is not the checkout's Git directory: `dot-git`; a HEAD file outside a Git-shaped directory (objects, refs, packed-refs or commondir) is not an entry; a Git-shaped directory Git does not open: `git-dir-shape`; a symlink in a checkout belongs to its content audit, any other must resolve inside the volume (`link-resolve`, `link-confine`); a bare common directory named `.git`: `core-bare` | dot-git-content, ignored-head-equality, bare-reflog, damaged-git-dir-ignored, *-symlink-*, bare-dot-git |
 | config, config.worktree, description, hooks, branches, remotes, commondir, gitdir, locked, gc.log, gc.pid, COMMIT_EDITMSG, MERGE_MSG, MERGE_MODE, MERGE_RR, SQUASH_MSG, TAG_EDITMSG, NOTES_EDITMSG, EDIT_DESCRIPTION, BRANCH_DESCRIPTION, rr-cache, fsmonitor--daemon(.ipc) | no object ID | ignored | (none) |
 
 The brief's "unless the object is a published commit" exception for a missing pseudoref object is vacuous: every commit reachable from an advertised origin head must already be present (cat-file and the complete traversal refuse otherwise), so a missing object cannot be shown to be published and always refuses unknown.
@@ -226,9 +234,86 @@ Mutation matrix (copies of the repaired helper, never the worktree; one gated dr
 
 Method-scoped TUnit confirmation (`bin-c1105r4/`, every driver gated): with the c3b0381f `scripts/c590-remote.sh` and `docs/docker-stack.md` checked out, `C1008_Recycle_refuses_uninspectable_git`, the four `C1105_Git_audit_object_completeness` variants and `C1105_Git_audit_overall_timeout` failed 6/6 and `Main_volume_recycling_is_scripted_only` failed 1/1 (the old completeness rows fail there on the new commit-graph environment assertion, which is intended). Worktree-script mutants, restored with `git checkout` after each: `missing)` refusing failed `C1008_Recycle_refuses_uninspectable_git` at "published clone with origin-ahead"; requiring a loose `refs/remotes/origin/master` failed it at the `tracking-deleted` block (`Removed.Length` 3); the count check no-op failed it at "a tracking ref no origin head contains".
 
+## Repair 5: orphaned checkout content, non-commit tips, symlinks and ignored HEAD files
+
+Source: Final Review 4 (task de168b6d, three defects at 1ac296dd). No production host was contacted; every node fixture, mutation and TUnit driver ran through `scripts/build-slot.ps1`.
+
+### What changed, per finding
+
+| ID | Change |
+|---|---|
+| D1 (P1, introduced by repair 4) | `consider_linked` resolves the checkout an admin directory records (`<id>/gitdir` names `<checkout>/.git`; the directory part is resolved, the `.git` entry is not followed). When that directory exists it is always inspected: through its own `.git` when both pointers agree, otherwise by `consider_dirty` with `git -C <checkout> --git-dir=<id> --work-tree=<checkout>` (status, index flags, raw hashes; `check=orphan-status`), after the index-equals-HEAD check. Only an absent checkout falls back to the index-equals-HEAD check alone. A recorded path not ending in `.git`, a checkout that is not a directory, or an absent checkout below an unsearchable directory refuses `worktree-path`. The inspection is queued like every other worktree (same parallel queue, one status and one batched hash). |
+| D2 (P1, inherited) | `ls-remote --heads --tags` (still one call). Each unique tip's own object type is read with one `cat-file --batch-check`. A commit is proven by the count, as before. A tag, tree or blob is published only when origin advertises that very object (heads, tags and peeled tag lines); a tree also when a present origin head reaches it (one extra `rev-list --objects --filter=blob:none` over the heads, only when such a tree exists); otherwise `RecycleUnpublishedWork` `check=tip-object`. An advertised tag's commit is still counted against the heads (consistent with the peeled line of a packed tag), so an advertised tag on an otherwise unpublished commit refuses `check=rev-list`. The old `tip-commit` unknown refusal is gone. |
+| D3a (P2, inherited) | The volume symlink pass runs after every content audit. A dangling or out-of-volume symlink whose nearest owner is a checkout work tree (a queued worktree path, including orphan checkouts) is that checkout's content: ignored ones are ignored, tracked ones were compared by link text, unignored untracked ones already refused `status`. A symlink inside a Git directory (any `.git` component, a common or Git directory) or outside every checkout must still resolve inside the volume (`link-resolve`, `link-confine`). Symlinks are never followed or hashed as content. |
+| D3b (P2, inherited) | A file named `HEAD` is a repository candidate only in a directory shaped like a Git directory (it also holds `objects`, `refs`, `packed-refs` or `commondir`); otherwise it adds no entry and runs no Git. A shaped directory must be its own Git directory; a subdirectory of a Git directory (a bare repository's `logs/`) is skipped; any other shaped directory Git does not open refuses `git-dir-shape`. The receipt lines (`entry`, `tip`) therefore depend only on repositories and retained tips; an ignored `obj/HEAD` leaves them equal. |
+
+### Re-scan of the closed list (families: object IDs or content in a place the audit does not read)
+
+| Location | Coverage now |
+|---|---|
+| Every Git-directory entry (common and each admin directory) | unchanged closed list (table above); unknown entries refuse |
+| Refs, packed refs, pseudorefs, reflogs | raw parse plus Git's view; every named object is a tip; non-commit tips now proven as objects (D2) |
+| Tag objects, tags of tags, trees, blobs | D2 |
+| Main checkout | proven by `<checkout>/.git` = common directory; otherwise index equals HEAD; `core.worktree` in the common config refuses; NEW: `core.bare` on a directory named `.git` refuses `core-bare` (the files beside it were outside Git's view) |
+| Linked checkouts reachable from admin directories | D1: inspected whenever the recorded directory exists; NEW: a per-worktree `core.worktree` (`config.worktree`, measured to redirect `status` to another directory while the recorded checkout's untracked files go unread) refuses `core-worktree` |
+| Checkout content | status (untracked = all, ignored by the repository's own rules not protected), index flags, raw hashes; NEW: a `.git` directory inside a checkout that Git does not open as that checkout's Git directory refuses `dot-git` (measured: Git never lists `.git` entries, so `sub/.git/notes` was invisible and the audit passed) |
+| Symlinks | D3a |
+| Ignore-rule effects | ignored files never refuse (D2 of repair 4) and never change the receipt (D3b). Consequence of that decision, listed not changed: an untracked self-ignoring `.gitignore` (or `info/exclude`, `core.excludesFile`) hides untracked files by design |
+| Objects no location names, unreferenced dangling commits, marker-free AUTO_MERGE trees, `rr-cache/`, stale `sharedindex.*`, message files, hooks | outside the audit by the documented closed-list decisions (repairs 3 and 4); unchanged |
+| Files outside every repository (stray directories in the volume) | not Git content and not audited, as before; a stray `HEAD` file there no longer refuses (D3b), a Git-shaped directory there still must open |
+| Separate-git-dir main checkout whose `.git` file was deleted | its files cannot be located from Git metadata (Git records no main work tree path); listed, not reachable by this audit |
+
+### Baseline (1ac296dd helper; observing fixture copy without the pre-Git trace assertion, so baseline refusals that ran no Git still show their outcome)
+
+| Case | Expect now | 1ac296dd outcome |
+|---|---|---|
+| orphan-missing-modified, orphan-missing-untracked | D `orphan-status` | pass (Review D1) |
+| tag-annotated, tag-annotated-packed, tag-of-tag | U `tip-object` | pass (Review D2) |
+| tag-tree, tree-ref-unpublished, blob-ref | U `tip-object` | K `tip-commit` |
+| tree-ref-published | pass | K `tip-commit` |
+| ignored-head-equality | pass, receipts equal | receipts differ (Review D3) |
+| ignored-symlink-outside, tracked-symlink-outside | pass | K `link-confine` |
+| ignored-symlink-dangling, orphan-symlink-ignored | pass | K `link-resolve` (Review D3) |
+| untracked-symlink | D `status` | K `link-resolve` |
+| damaged-git-dir-ignored | K `git-dir-shape` | pass |
+| dot-git-content, linked-core-worktree, bare-dot-git | K `dot-git` / `core-worktree` / `core-bare` | pass |
+
+Controls green at 1ac296dd by nature (not claimed as new detections): orphan-elsewhere-modified (D `status`, the entry scan already reads it), orphan-missing-clean, orphan-missing-ignored, tag-annotated-published, tag-of-tag-published, tag-lightweight, tag-published-off-branch (U `rev-list`), bare-reflog, metadata-symlink-outside (K `link-confine`), loose-symlink-dangling (K `link-resolve`). The prunable clean/staged cases are the existing rows stale-linked-published and pruned-path-staged.
+
+### Mutation matrix (copies of the repaired helper, never the worktree; one gated driver, 18 mutants, 66 runs, 0 mismatches; each mutant also ran `seed` and `long-lived`, all green)
+
+| Mutated production line | Case(s) red |
+|---|---|
+| orphan `queue_dirty ... orphan-status` removed | orphan-missing-modified, orphan-missing-untracked |
+| `--git-dir=<admin> --work-tree` array not set | orphan-missing-modified, orphan-missing-clean, orphan-missing-ignored |
+| index-equals-HEAD check before the orphan inspection removed | stale-pointer-staged (`orphan-status` instead of `stale-index`) |
+| unadvertised tag/blob refusal no-op | tag-annotated, tag-annotated-packed, tag-of-tag, tag-tree, blob-ref |
+| tag refs not added to the advertised set | tag-annotated-published, tag-of-tag-published |
+| unreached-tree refusal no-op | tree-ref-unpublished |
+| tree reachability skipped | tree-ref-published |
+| advertised tag's commit not counted | tag-published-off-branch |
+| every tip classified as a tag | tag-lightweight |
+| HEAD shape skip removed | ignored-head-equality |
+| Git-directory subdirectory refuses | bare-reflog |
+| `git-dir-shape` refusal no-op | damaged-git-dir-ignored |
+| `dot-git` refusal no-op | dot-git-content |
+| checkout-owned symlink skip removed | ignored-symlink-outside, ignored-symlink-dangling, tracked-symlink-outside, orphan-symlink-ignored |
+| symlink owner always the checkout | metadata-symlink-outside, loose-symlink-dangling |
+| status-dirty refusal no-op | untracked-symlink |
+| `core-worktree` refusal no-op | linked-core-worktree |
+| `core-bare` refusal no-op | bare-dot-git |
+
+### Performance
+
+`volume-scale` (250 linked worktrees of 300 files, ignored build output): 47.2 s and 45.5 s for the candidate, 32.3 s for the 1ac296dd helper, on server2-temp at load average 30 to 43 (24 cores); assertion < 240 s, budget 1800 s. A trace profile of the same fixture at 60 worktrees, run back to back, counted identical Git starts per subcommand for both helpers except one more `cat-file` per common directory (the tip-type read), and took 4.1 s (candidate) and 7.6 s (baseline): the difference at 250 is host load, not added per-worktree processes. The orphan inspection uses the same queue and the same one-status, one-batched-hash cost per checkout.
+
+### New and changed cases
+
+29 new `C1105_Git_audit_hidden_locations` rows (93 total), each named in V-12 to V-15. No assertion was removed or weakened; `stale-pointer-staged` keeps `check=stale-index`. Documentation pins: five new sentences and two forbidden old sentences.
+
 ## Checkpoints
 
-Closed list: one isolated test build, UseAppHost=false, serial drivers. CP-11 has 105 cases (8 existing methods + 97 C1105_Git_audit cases: 10 recovery, 11 seed, 5 index, 4 completeness, 1 resume, 64 hidden-location rows, 1 overall timeout, 1 volume scale). The slow CP-7/CP-9/CP-12 run last. Existing timeout estimates are unchanged. Expected total: 241 cases (repair 3 added the 42 hidden-location rows and the long-lived seed variant; repair 4 adds 22 hidden-location rows, the missing-ancestor-graph variant and two methods; the C1008 origin blocks are inside an existing method). Measured previous 12-row wall was 74m36s; allow roughly 80 minutes plus implementation and baseline diagnostics.
+Closed list: one isolated test build, UseAppHost=false, serial drivers. CP-11 has 134 cases (8 existing methods + 126 C1105_Git_audit cases: 10 recovery, 11 seed, 5 index, 4 completeness, 1 resume, 93 hidden-location rows, 1 overall timeout, 1 volume scale). The slow CP-7/CP-9/CP-12 run last. Existing timeout estimates are unchanged. Expected total: 270 cases (repair 3 added the 42 hidden-location rows and the long-lived seed variant; repair 4 added 22 hidden-location rows, the missing-ancestor-graph variant and two methods; the C1008 origin blocks are inside an existing method; repair 5 adds 29 hidden-location rows). Measured previous 12-row wall was 74m36s; allow roughly 80 minutes plus implementation and baseline diagnostics.
 
 ### Checkpoints
 
@@ -237,7 +322,7 @@ Closed list: one isolated test build, UseAppHost=false, serial drivers. CP-11 ha
 | CP-1 | promisor | `tests/Antiphon.Tests -> bin-c1105-promisor/` | docs-pins | `/*/*/DockerStackDocumentationTests/*` | doc pins | 14 methods, 0 failed | 14 | 15 | true |
 | CP-2 | promisor | CP-1 | registry-guard | `/*/*/(TestClassificationGuardTests*)\|(SlowTestTripwireTests*)/*` | registry guard | 3 methods, 0 failed | 3 | 3 | true |
 | CP-3 | promisor | CP-1 | compose-text-pins | `/*/*/RemoteScriptContractTests/(C1105_Deploy_parent_orders_checkout_and_boot_files_before_recycle*)\|(Deploy_parent_creates_the_github_token_directory_without_reading_it*)\|(Deploy_parent_creates_the_codex_home_directory_without_reading_it*)\|(Deploy_parent_seeds_or_verifies_runner_checkout*)\|(Persistent_restart_ensures_the_identity_file_before_stopping_an_older_runner*)\|(Deploy_parent_seeds_a_fresh_runner_checkout_before_starting_the_runner*)` | compose text pins | 6 methods, 0 failed | 6 | 4 | true |
-| CP-11 | promisor | CP-1 | remote-git-audit | `/*/*/RemoteScriptContractTests/(C1008_Recycle_refuses_uninspectable_git*)\|(C1008_Recycle_refuses_unpublished_and_dirty_work*)\|(C1008_Retire_temp_rechecks_absence_and_retirement*)\|(C1087_Host_census_filters_and_names_cause*)\|(C1008_Recycle_preserves_tmp_copyup*)\|(C1008_Retire_temp_reclaims_below_cache_disk_gate*)\|(C1008_Recycle_audits_work_as_1654*)\|(C1008_Recycle_audits_promisor_checkout*)\|(C1105_Git_audit_*)` | C1008/C1087 promisor audit | 16 methods / 105 cases, 0 failed | 105 | 15 | true |
+| CP-11 | promisor | CP-1 | remote-git-audit | `/*/*/RemoteScriptContractTests/(C1008_Recycle_refuses_uninspectable_git*)\|(C1008_Recycle_refuses_unpublished_and_dirty_work*)\|(C1008_Retire_temp_rechecks_absence_and_retirement*)\|(C1087_Host_census_filters_and_names_cause*)\|(C1008_Recycle_preserves_tmp_copyup*)\|(C1008_Retire_temp_reclaims_below_cache_disk_gate*)\|(C1008_Recycle_audits_work_as_1654*)\|(C1008_Recycle_audits_promisor_checkout*)\|(C1105_Git_audit_*)` | C1008/C1087 promisor audit | 16 methods / 134 cases, 0 failed | 134 | 15 | true |
 | CP-4 | promisor | CP-1 | mount-class | `/*/*/RollingProductionMountTests/*` | class regression | 12 methods, 0 failed | 12 | 10 | true |
 | CP-5 | promisor | CP-1 | retired-temp-script | `/*/*/RetiredTempContainerScriptTests/*` | class regression | 13 methods, 0 failed | 13 | 10 | true |
 | CP-6 | promisor | CP-1 | host-jq | `/*/*/HostJqPrerequisiteScriptTests/*` | class regression | 39 methods, 0 failed | 39 | 15 | true |
