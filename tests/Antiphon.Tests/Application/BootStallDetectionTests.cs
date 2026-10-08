@@ -11,6 +11,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
 using Npgsql;
 using Shouldly;
@@ -21,7 +22,7 @@ namespace Antiphon.Tests.Application;
 
 /// <summary>
 /// CARD-1151 (decision Q-1 option B): the dispatcher's boot disposition on a real overdue sweep.
-/// Design V-3..V-6, V-9, V-16 here; V-12, V-13 and V-15 are S5 and stay skipped until that slice.
+/// Design V-3..V-6, V-9, V-12, V-13, V-15 and V-16 here (V-12, V-13 and V-15 landed in S5).
 /// V-7 and V-8 were struck with option B (there is no automatic boot failure to prove or revoke).
 /// Fixture: the shared <see cref="BootStallWorld"/> over an isolated PostgreSQL database with a
 /// fake clock. Shipped deadlines stay in force (boot 8, model wait 20, Code ceiling 240); age is
@@ -401,54 +402,298 @@ public class BootStallDetectionTests
     }
 
     /// <summary>
-    /// V-12 (S5). A detected Working task keeps its seat: no AgentTaskPark row, no
-    /// RunnerSeatRelease row, runner Releases 0, stopper empty, task Working, with
-    /// BlockedTaskParking Enabled false (parking-off) and true (parking-on). The session-scoped
-    /// BootReplyWatchdogService sweep in the same fixture raises no LivenessProbeFailed incident
-    /// and calls no stopper because the task stays open.
+    /// V-12. A detected Working task keeps its seat through detection and the operator stage, each
+    /// on a real <c>TickAsync</c> followed by the session-scoped <see cref="BootReplyWatchdogService"/>
+    /// sweep, with BlockedTaskParking Enabled false (parking-off) and true (parking-on). Decisive: no
+    /// AgentTaskPark row, no RunnerSeatRelease row, runner Releases 0, stopper empty, the agent row
+    /// and the binding kept, task Working at the same attempt; the watch stands down for the open
+    /// task (acts on nothing, no LivenessProbeFailed incident) and both stages are written once.
     /// </summary>
     [Test]
     [Arguments("parking-off")]
     [Arguments("parking-on")]
-    public Task C1151_Detection_does_not_release_or_park(string parking) =>
-        Card1151Pending.Skip("S5", nameof(C1151_Detection_does_not_release_or_park));
+    public async Task C1151_Detection_does_not_release_or_park(string parking)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var world = await BootStallWorld.CreateAsync(
+            schema.ConnectionString,
+            new BootStallWorldOptions { MinutesAgo = 9, ParkingEnabled = parking == "parking-on" });
+        var before = await world.TaskAsync();
+
+        for (var stage = 0; stage < 2; stage++)
+        {
+            if (stage == 1)
+                world.Clock.SetUtcNow(new DateTimeOffset(world.PromptAt.AddMinutes(20), TimeSpan.Zero));
+            var tick = await world.TickAsync();
+            tick.SweepFailures.ShouldBe(0, world.Warnings());
+            tick.Dispatched.ShouldBe(0);
+            await using var scope = world.CreateScope();
+            var watch = new BootReplyWatchdogService(
+                scope.ServiceProvider.GetRequiredService<IServiceScopeFactory>(),
+                scope.ServiceProvider.GetRequiredService<IOptions<DelegationSettings>>(),
+                world.Clock,
+                scope.ServiceProvider.GetRequiredService<ILogger<BootReplyWatchdogService>>(),
+                runtime: scope.ServiceProvider.GetRequiredService<AgentSessionRuntime>());
+            (await watch.SweepAsync(CancellationToken.None))
+                .ShouldBe(0, $"{parking}: the open delegate task owns the boot stall, the watch stands down");
+        }
+
+        var warnings = await world.BootWarningsAsync();
+        warnings.Select(w => w.Split(' ')[0])
+            .ShouldBe([BootStallPolicy.DetectedToken, BootStallPolicy.NeedsOperatorToken], world.Warnings());
+        AssertNothingDestructive(world);
+        await AssertSameAttemptAsync(world, before);
+        await AssertNoFailureTraceAsync(world);
+        await using var db = world.Read();
+        (await db.AgentTaskParks.AnyAsync(p => p.TaskId == world.TaskId)).ShouldBeFalse($"{parking}: detection parks nothing");
+        (await db.RunnerSeatReleases.AnyAsync(r => r.SessionId == world.SessionId || r.TaskId == world.TaskId))
+            .ShouldBeFalse($"{parking}: detection releases no seat");
+        (await db.AgentIncidents.AnyAsync(i => i.SessionId == world.SessionId && i.Kind == AgentIncidentKind.LivenessProbeFailed))
+            .ShouldBeFalse("the session watch raised nothing for a delegate's session");
+        var agent = await db.Agents.AsNoTracking().SingleAsync(a => a.Id == world.AgentId);
+        agent.PersistentSessionId.ShouldBe(world.SessionId.ToString("D"), "the seat stays bound to its session");
+        (await world.PromptCountAsync()).ShouldBe(1, "detection sends nothing to the delegate");
+    }
 
     /// <summary>
-    /// V-13 (S5). FullCommandCounter over every context (the sweep's and the telemetry
-    /// writer's) plus runner call counters, on the paths of the design's statement table under
-    /// option B. Code pins the measured exact totals and each argument prints its roster.
-    /// young-preview: 0 delta. working-first-detection. working-repeated-episode (A-7: no runner
-    /// pull, no second evaluation). operator-escalation. identity-changed-before-event.
-    /// event-save-fault. non-working-listed and absent-proof-refused: the idle boot past the
-    /// ceiling, with zero inventory reads under option B. The two safe-absent arguments were
-    /// struck with option B.
+    /// V-13. <see cref="FullCommandCounter"/> on the scoped context's options, which the warning
+    /// writer's default context is built from, so every statement of the overdue sweep (the whole
+    /// <c>FailOverdueTasksAsync</c>, inherited prefix included) is counted on one counter; the
+    /// event-save-fault path counts on the writer's own factory as well. Runner transcript pulls and
+    /// owning-inventory reads are counted beside it. Each argument prints its roster and pins the
+    /// measured exact total (CARD-1151 S5, server2 mirror). young-preview: a 7-minute prompt is
+    /// inside the 6.4-minute preview and short of the 8-minute boot clock, so the first evaluation
+    /// returns before any gate. working-first-detection: the 9-minute first sweep (gates 1/1b, the
+    /// ownership read, the A-7 key read, the pull, the second evaluation, the writer). working-
+    /// repeated-episode: the second sweep, which A-7 keeps off the runner and the writer.
+    /// operator-escalation: the sweep that writes NeedsOperator after Detected. identity-changed-
+    /// before-event: the attempt moves as the writer's task lock executes, so the writer stops at
+    /// its lock read. event-save-fault: the writer's insert throws. non-working-listed and
+    /// absent-proof-refused: the idle boot past the ceiling (an interrupt marker makes Working
+    /// false), listed and not listed: one NeedsOperator, zero inventory reads under option B. The
+    /// two option-A safe-absent arguments were struck.
     /// </summary>
     [Test]
-    [Arguments("young-preview")]
-    [Arguments("working-first-detection")]
-    [Arguments("working-repeated-episode")]
-    [Arguments("operator-escalation")]
-    [Arguments("identity-changed-before-event")]
-    [Arguments("event-save-fault")]
-    [Arguments("non-working-listed")]
-    [Arguments("absent-proof-refused")]
-    public Task C1151_Boot_branch_statement_counts(string path) =>
-        Card1151Pending.Skip("S5", nameof(C1151_Boot_branch_statement_counts));
+    // Measured 2026-10-08 on the server2 mirror. Prefix: the open-task list 1 plus the first
+    // evaluation 8 (Grok-rules, last entry 2, Working, launch clock, boot turn 3) = 9. Gates 1/1b 2,
+    // ownership 1, A-7 key read 1 = 13. Pull (empty persist, 0 SQL) and the second evaluation 8 = 21.
+    // Writer: task lock 1, dedup read 1, session share lock 1, boot turn 3, insert 1 = 28; a refused
+    // identity stops at the task lock (22); a faulted insert is still counted (28).
+    [Arguments("young-preview", 9, 0)]
+    [Arguments("working-first-detection", 28, 1)]
+    [Arguments("working-repeated-episode", 13, 0)]
+    [Arguments("operator-escalation", 28, 1)]
+    [Arguments("identity-changed-before-event", 22, 1)]
+    [Arguments("event-save-fault", 28, 1)]
+    [Arguments("non-working-listed", 28, 1)]
+    [Arguments("absent-proof-refused", 28, 1)]
+    public async Task C1151_Boot_branch_statement_counts(string path, int expected, int expectedPulls)
+    {
+        var counter = new FullCommandCounter();
+        var fault = path == "event-save-fault" ? new TelemetryFaults("insert") : null;
+        var idle = path is "non-working-listed" or "absent-proof-refused";
+        IInterceptor[] interceptors = fault is not null ? [counter, fault] : [counter];
+        var options = new BootStallWorldOptions
+        {
+            MinutesAgo = path switch
+            {
+                "young-preview" => 7,
+                _ when idle => 241,
+                _ => 9,
+            },
+            InterruptAfterPrompt = idle,
+            Listing = path == "absent-proof-refused" ? BootStallListing.None : BootStallListing.Matching,
+            Directory = BootStallDirectoryMode.Available,
+            Interceptors = interceptors,
+        };
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var world = await BootStallWorld.CreateAsync(schema.ConnectionString, options);
+        var before = await world.TaskAsync();
+
+        if (path is "working-repeated-episode" or "operator-escalation")
+        {
+            (await world.RunOverdueSweepAsync()).ShouldBe(0, world.Warnings());
+            (await world.BootWarningsAsync()).Count.ShouldBe(1, world.Warnings());
+            if (path == "operator-escalation")
+                world.Clock.SetUtcNow(new DateTimeOffset(world.PromptAt.AddMinutes(20), TimeSpan.Zero));
+        }
+
+        WriterInterleaving? interleave = null;
+        if (path == "identity-changed-before-event")
+        {
+            interleave = new WriterInterleaving(async () =>
+            {
+                await using var other = world.Read();
+                await other.AgentTasks.Where(t => t.Id == world.TaskId)
+                    .ExecuteUpdateAsync(s => s.SetProperty(t => t.Attempt, t => t.Attempt + 1));
+            });
+            world.UseTelemetryFactory = true;
+            world.TelemetryInterceptors = [counter, interleave];
+        }
+        else if (fault is not null)
+        {
+            world.UseTelemetryFactory = true;
+            world.TelemetryInterceptors = [counter, fault];
+        }
+
+        var pullsBefore = world.Runner.TranscriptPulls;
+        counter.Reset();
+        (await world.RunOverdueSweepAsync()).ShouldBe(0, world.Warnings());
+        var total = counter.Total;
+        var roster = counter.Roster();
+        var pulls = world.Runner.TranscriptPulls - pullsBefore;
+        Console.WriteLine($"C1151-BUDGET {path} total={total} pulls={pulls} inventory={world.Directory!.Reads}");
+        Console.WriteLine(roster);
+
+        total.ShouldBe(expected, $"path {path}{Environment.NewLine}{roster}");
+        pulls.ShouldBe(expectedPulls, $"path {path}: runner transcript pulls");
+        world.Directory.Reads.ShouldBe(0, "the boot branch never consults runner inventory");
+        world.Runner.Lists.ShouldBe(0);
+        AssertNothingDestructive(world);
+        await AssertNoFailureTraceAsync(world);
+
+        var warnings = (await world.BootWarningsAsync()).Select(w => w.Split(' ')[0]).ToArray();
+        string[] stages = path switch
+        {
+            "young-preview" or "identity-changed-before-event" or "event-save-fault" => [],
+            "working-first-detection" or "working-repeated-episode" => [BootStallPolicy.DetectedToken],
+            "operator-escalation" => [BootStallPolicy.DetectedToken, BootStallPolicy.NeedsOperatorToken],
+            _ => [BootStallPolicy.NeedsOperatorToken],
+        };
+        warnings.ShouldBe(stages, world.Warnings());
+        if (path == "event-save-fault")
+            fault!.Fired.ShouldBeTrue("the insert fault must actually fire");
+        if (interleave is not null)
+        {
+            interleave.Arrivals.ShouldBe(1, "the attempt moved as the writer's lock statement executed");
+            (await world.TaskAsync()).Attempt.ShouldBe(before.Attempt + 1);
+        }
+        else
+        {
+            await AssertSameAttemptAsync(world, before);
+        }
+    }
 
     /// <summary>
-    /// V-15 (S5). The delivery watchdog's stopper stays conditional. real-idle-failure-cleans-up:
-    /// a Dispatched task, Pending brief, idle session, ten minutes: Failed and the existing kill.
-    /// working-withholds: the same with a Working transcript: Failed, no kill.
-    /// stale-or-unsuccessful-failure-withholds: the Failed write is refused by a concurrency
-    /// fault; no kill. In every argument a BootStallDetected Warning present on the task is never
-    /// read as a delivery failure and never routes to the stopper.
+    /// V-15. The delivery watchdog's stopper stays conditional, on the real
+    /// <c>FailNeverStartedAsync</c>. Every argument: a Dispatched task eleven minutes old (past the
+    /// 10-minute delivery timeout), a session whose only prompt predates this dispatch (inherited
+    /// history, so no turn prompt since dispatch), and a <c>BootStallDetected</c> Warning already on
+    /// the task. real-idle-failure-cleans-up: the brief is still Pending and the session is idle (an
+    /// interrupt marker ends its turn): Failed and the existing kill, exactly once.
+    /// working-withholds: the brief was typed (Sent) and the session is Working: Failed, and the
+    /// CARD-0117 D9 withhold keeps the kill off (a Pending brief on a Working session is deferred
+    /// whole by D8, so it would never reach the cleanup condition this argument guards).
+    /// stale-or-unsuccessful-failure-withholds: the idle shape, but the Failed write is refused by
+    /// a concurrency fault: the sweep throws, nothing is failed, nothing is killed. In none of them
+    /// is the boot Warning read as a delivery failure or routed to the stopper.
     /// </summary>
     [Test]
     [Arguments("real-idle-failure-cleans-up")]
     [Arguments("working-withholds")]
     [Arguments("stale-or-unsuccessful-failure-withholds")]
-    public Task C1151_Delivery_watchdog_stopper_requires_real_safe_failure(string shape) =>
-        Card1151Pending.Skip("S5", nameof(C1151_Delivery_watchdog_stopper_requires_real_safe_failure));
+    public async Task C1151_Delivery_watchdog_stopper_requires_real_safe_failure(string shape)
+    {
+        var refuse = new FailedWriteRefusal(shape == "stale-or-unsuccessful-failure-withholds");
+        var working = shape == "working-withholds";
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var world = await BootStallWorld.CreateAsync(schema.ConnectionString, new BootStallWorldOptions
+        {
+            MinutesAgo = 11,
+            PromptAge = TimeSpan.FromMinutes(12),
+            TaskStatus = AgentTaskStatus.Dispatched,
+            Brief = working ? QueuedMessageStatus.Sent : QueuedMessageStatus.Pending,
+            InterruptAfterPrompt = !working,
+            Interceptors = [refuse],
+        });
+        var before = await world.TaskAsync();
+        var warningDetail = $"{BootStallPolicy.DetectedToken} c1151-v15-episode; promptAt={world.PromptAt:o};";
+        await using (var seed = world.Read())
+        {
+            seed.AgentTaskEvents.Add(new AgentTaskEvent
+            {
+                Id = Guid.NewGuid(),
+                AgentTaskId = world.TaskId,
+                Type = AgentTaskEventType.Warning,
+                Detail = warningDetail,
+                At = world.Now0.AddMinutes(-2),
+            });
+            await seed.SaveChangesAsync();
+        }
+
+        await using (var scope = world.CreateScope())
+        {
+            var dispatcher = world.Prepare(scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>());
+            if (refuse.Armed)
+            {
+                await Should.ThrowAsync<DbUpdateConcurrencyException>(
+                    () => dispatcher.FailNeverStartedAsync(CancellationToken.None));
+                refuse.Fired.ShouldBeTrue("the Failed write was attempted and refused");
+            }
+            else
+            {
+                (await dispatcher.FailNeverStartedAsync(CancellationToken.None)).ShouldBe(1, world.Warnings());
+            }
+        }
+
+        var task = await world.TaskAsync();
+        var events = await world.EventsAsync();
+        events.Count(e => e.Type == AgentTaskEventType.Warning && e.Detail == warningDetail)
+            .ShouldBe(1, "the boot Warning is left as it was");
+        world.Runner.Inputs.ShouldBe(0);
+        world.Runner.Releases.ShouldBe(0);
+        world.Runner.CompactionStops.ShouldBe(0);
+        switch (shape)
+        {
+            case "real-idle-failure-cleans-up":
+                task.Status.ShouldBe(AgentTaskStatus.Failed, world.Warnings());
+                task.FailureReason.ShouldNotBeNull();
+                task.FailureReason.ShouldStartWith("Boot prompt was never delivered");
+                world.Stopper.Killed.ShouldBe([world.SessionId], "a real idle delivery failure keeps the existing cleanup");
+                (await world.SessionAsync()).FailureReason.ShouldNotBeNull().ShouldStartWith("Killed by the delivery watchdog");
+                break;
+            case "working-withholds":
+                task.Status.ShouldBe(AgentTaskStatus.Failed, world.Warnings());
+                task.FailureReason.ShouldNotBeNull();
+                task.FailureReason.ShouldStartWith("Boot prompt was never delivered");
+                world.Stopper.Killed.ShouldBeEmpty("a Working session is never stopped by the watchdog");
+                (await world.SessionAsync()).Status.ShouldBe(SessionStatus.Running);
+                break;
+            default:
+                task.Status.ShouldBe(before.Status, "the refused write failed nothing");
+                task.Attempt.ShouldBe(before.Attempt);
+                task.FailureReason.ShouldBeNull();
+                events.ShouldNotContain(e => e.Type == AgentTaskEventType.Failed);
+                world.Stopper.Killed.ShouldBeEmpty("an unsuccessful failure write never routes to the stopper");
+                (await world.SessionAsync()).Status.ShouldBe(SessionStatus.Running);
+                break;
+        }
+
+        task.Attempt.ShouldBe(1, "the watchdog never requeues");
+        events.ShouldNotContain(e => e.Type == AgentTaskEventType.Retried);
+    }
+
+    /// <summary>Refuses the delivery watchdog's Failed write with a concurrency fault, once.</summary>
+    private sealed class FailedWriteRefusal(bool armed) : SaveChangesInterceptor
+    {
+        public bool Armed { get; } = armed;
+
+        public bool Fired { get; private set; }
+
+        public override ValueTask<InterceptionResult<int>> SavingChangesAsync(
+            DbContextEventData eventData, InterceptionResult<int> result, CancellationToken cancellationToken = default)
+        {
+            if (Armed && !Fired && eventData.Context is { } context
+                && context.ChangeTracker.Entries<AgentTask>().Any(e =>
+                    e.State == EntityState.Modified && e.Entity.Status == AgentTaskStatus.Failed))
+            {
+                Fired = true;
+                throw new DbUpdateConcurrencyException("C1151 injected refusal of the Failed write");
+            }
+
+            return base.SavingChangesAsync(eventData, result, cancellationToken);
+        }
+    }
 
     /// <summary>
     /// V-16. A detected Working task retried by the explicit <c>AgentTaskService.RetryAsync</c>

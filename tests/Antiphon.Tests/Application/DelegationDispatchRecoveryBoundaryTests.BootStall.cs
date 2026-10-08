@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
@@ -13,28 +15,126 @@ namespace Antiphon.Tests.Application;
 
 /// <summary>
 /// CARD-1151 S5: the brief owner boundary (CARD-1150 S2). Design V-10. Fixture: the isolated
-/// PostgreSQL schema and the <c>BridgeQueueHarness</c>/<c>OpenSweep</c> shapes of this partial
-/// class, a Working prompt-only task at nine minutes, the real <c>TickAsync</c> repeated through
-/// detection (8 min) and operator escalation (20 min) on a <c>FakeTimeProvider</c>. Helper names
+/// PostgreSQL schema and the shared <see cref="BootStallWorld"/> (its graph carries the real
+/// queue service), a Working prompt-only task at nine minutes, the real <c>TickAsync</c> repeated
+/// through detection (8 min) and operator escalation (20 min) on its fake clock. R3 below uses this
+/// partial class's <c>BridgeQueueHarness</c>/<c>OpenSweep</c> shapes. Helper names
 /// in this file carry the <c>BootStall</c> prefix so they cannot collide with the S2 repair's
 /// <c>Brief*</c> partials.
 /// </summary>
 public partial class DelegationDispatchRecoveryBoundaryTests
 {
     /// <summary>
-    /// V-10. inline: the Sent delegation brief row. spilled: the Sent row plus its spill file.
-    /// pending-ui-followup: a Pending Ui row queued behind the Sent brief. Decisive: SHA-256 of
-    /// Body, RemoteSpillBody and the spill file bytes, plus Id, Sequence, DeliveryAttempts,
-    /// Status and the task's Attempt/DispatchedAt/ConcurrencyToken, equal before the first
-    /// detection tick and after the escalation tick; zero new SessionQueuedMessages rows on the
-    /// delegate session; runner Inputs 0; no ensure/send call recorded.
+    /// V-10. The shared <see cref="BootStallWorld"/> (A-11): a Working prompt-only Code task whose
+    /// brief prompt is nine minutes old, driven by the real <c>TickAsync</c> through detection
+    /// (twice), the operator stage at <c>promptAt + 20</c> and a tick from a recreated provider.
+    /// inline: the Sent delegation brief row. spilled: the Sent pointer row with its
+    /// RemoteSpillBody and the spill file it names. pending-ui-followup: a Pending Ui row queued
+    /// behind the Sent brief. Decisive: every queue row on the delegate session (Id, Sequence,
+    /// Status, Origin, DeliveryAttempts, SentAt, ExecutionTaskId, RemoteSpillRelativePath and the
+    /// SHA-256 of Body and RemoteSpillBody) and the spill file's bytes are equal before the first
+    /// tick and after the last; no new row; runner Inputs 0; the task keeps its attempt, token and
+    /// dispatch; both boot stages are written once.
     /// </summary>
     [Test]
     [Arguments("inline")]
     [Arguments("spilled")]
     [Arguments("pending-ui-followup")]
-    public Task C1151_Brief_and_spill_remain_byte_identical(string shape) =>
-        Card1151Pending.Skip("S5", nameof(C1151_Brief_and_spill_remain_byte_identical));
+    public async Task C1151_Brief_and_spill_remain_byte_identical(string shape)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var world = await BootStallWorld.CreateAsync(schema.ConnectionString, new BootStallWorldOptions
+        {
+            MinutesAgo = 9,
+            Brief = QueuedMessageStatus.Sent,
+        });
+        string? spillPath = null;
+        try
+        {
+            await using (var db = world.Read())
+            {
+                var brief = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == world.SessionId);
+                brief.ExecutionTaskId = world.TaskId;
+                brief.DeliveryAttempts = 1;
+                if (shape == "spilled")
+                {
+                    var stem = brief.Id.ToString("D");
+                    var relative = TypedBodySpill.InboxRelativePath(stem);
+                    brief.Body = $"{DelegationReportFormatter.TaskMarker(world.TaskId)} Read {relative} in full before you start.";
+                    brief.RemoteSpillRelativePath = relative;
+                    brief.RemoteSpillBody = $"spill café ☃\nthe whole brief {BootStallWorld.PromptCanary}\n";
+                    var cwd = (await world.SessionAsync()).Cwd;
+                    spillPath = TypedBodySpill.InboxAbsolutePath(cwd, stem);
+                    Directory.CreateDirectory(Path.GetDirectoryName(spillPath)!);
+                    await File.WriteAllTextAsync(spillPath, brief.RemoteSpillBody, new UTF8Encoding(false));
+                }
+                else if (shape == "pending-ui-followup")
+                {
+                    db.SessionQueuedMessages.Add(new SessionQueuedMessage
+                    {
+                        Id = Guid.NewGuid(),
+                        AgentSessionId = world.SessionId,
+                        Sequence = 2,
+                        Body = "a follow-up from the UI café ☃",
+                        Origin = QueuedMessageOrigin.Ui,
+                        Status = QueuedMessageStatus.Pending,
+                        CreatedAt = world.Now0.AddMinutes(-1),
+                    });
+                }
+                else if (shape != "inline")
+                {
+                    throw new ArgumentOutOfRangeException(nameof(shape), shape, null);
+                }
+
+                await db.SaveChangesAsync();
+            }
+
+            var before = await world.TaskAsync();
+            var queue = await BootStallQueueSnapshotAsync(world, spillPath);
+
+            (await world.TickAsync()).SweepFailures.ShouldBe(0, world.Warnings());
+            (await world.TickAsync()).SweepFailures.ShouldBe(0, world.Warnings());
+            world.Clock.SetUtcNow(new DateTimeOffset(world.PromptAt.AddMinutes(20), TimeSpan.Zero));
+            (await world.TickAsync()).SweepFailures.ShouldBe(0, world.Warnings());
+            await using (var restarted = world.Recreate())
+                (await restarted.TickAsync()).SweepFailures.ShouldBe(0, restarted.Warnings());
+
+            (await world.BootWarningsAsync()).Select(w => w.Split(' ')[0])
+                .ShouldBe([BootStallPolicy.DetectedToken, BootStallPolicy.NeedsOperatorToken], world.Warnings());
+            (await BootStallQueueSnapshotAsync(world, spillPath))
+                .ShouldBe(queue, $"{shape}: detection and escalation leave every queue byte and identity alone");
+            BootStallWorkingTickCharacterizationTests.AssertNothingDestructive(world);
+            await BootStallWorkingTickCharacterizationTests.AssertSameAttemptAsync(world, before);
+            await BootStallWorkingTickCharacterizationTests.AssertNoFailureTraceAsync(world);
+            (await world.PromptCountAsync()).ShouldBe(1, "nothing was sent to the delegate");
+        }
+        finally
+        {
+            if (spillPath is not null && File.Exists(spillPath))
+                File.Delete(spillPath);
+        }
+    }
+
+    /// <summary>Every queue row on the world's session plus the spill file, hashed, one line each.</summary>
+    private static async Task<string> BootStallQueueSnapshotAsync(BootStallWorld world, string? spillPath)
+    {
+        await using var db = world.Read();
+        var rows = await db.SessionQueuedMessages.AsNoTracking()
+            .Where(m => m.AgentSessionId == world.SessionId)
+            .OrderBy(m => m.Sequence)
+            .ToListAsync();
+        var lines = rows.Select(m => string.Join('|',
+            m.Id, m.Sequence, m.Status, m.Origin, m.DeliveryAttempts, m.SentAt?.ToString("o"), m.ExecutionTaskId,
+            m.RemoteSpillRelativePath, BootStallSha(m.Body), m.RemoteSpillBody is null ? "-" : BootStallSha(m.RemoteSpillBody)))
+            .ToList();
+        lines.Insert(0, $"rows={rows.Count}");
+        if (spillPath is not null)
+            lines.Add($"spill={Convert.ToHexString(SHA256.HashData(await File.ReadAllBytesAsync(spillPath)))}");
+        return string.Join('\n', lines);
+    }
+
+    private static string BootStallSha(string text) =>
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text)));
 
     /// <summary>
     /// CARD-1151 R3. The role-ceiling failure is the failure path CARD-1151 keeps (and R1 restores

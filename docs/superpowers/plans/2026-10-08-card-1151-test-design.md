@@ -470,6 +470,49 @@ Mutation total under option B with R1-R3 and F1-F2: 45 cycles (39 + 6).
   formula replaced by "20 minutes", settings formula removed: V-17 red each time at the matching
   assertion. Production mutation of the formula belongs to SourceLanding Mutation.
 
+## S5 as built (Code 739f831c)
+
+Tests only: no production file, setting, migration or runner change; no restart. The four S5
+skeletons are implemented on the shared `BootStallWorld`, which gains one option,
+`Interceptors` (registered on the scoped context's options; the warning writer's default
+context is built from the same options, so a counter there sees the telemetry statements too).
+The original 18/18/4 `C1149_C1150_Statement_budgets` arguments are untouched.
+
+- **V-10** `C1151_Brief_and_spill_remain_byte_identical` (3): the world's Sent brief row
+  (`inline`), the same row as a spill pointer with `RemoteSpillBody` and the spill file under the
+  session's `.antiphon/inbox/` (`spilled`), and a Pending Ui row behind it
+  (`pending-ui-followup`). Four real `TickAsync` calls (detection, repeat, operator stage at
+  `promptAt + 20`, a recreated provider); every queue row's identity fields and body/spill
+  SHA-256 plus the file bytes are compared before and after; runner Inputs 0; one Detected and
+  one NeedsOperator. It uses `BootStallWorld` rather than `BridgeQueueHarness` because the world
+  already carries the real queue service and a fake clock that reaches the operator stage.
+- **V-12** `C1151_Detection_does_not_release_or_park` (2): a real tick at 9 minutes and at
+  `promptAt + 20`, each followed by a `BootReplyWatchdogService` sweep, parking off and on. No
+  `AgentTaskParks` or `RunnerSeatReleases` row, Releases 0, stopper empty, agent still bound, the
+  watch acts on nothing and raises no `LivenessProbeFailed`.
+- **V-13** `C1151_Boot_branch_statement_counts` (8, signature `(path, expected, expectedPulls)`):
+  the whole `FailOverdueTasksAsync` on one `FullCommandCounter`, measured and pinned:
+  young-preview 9/0 pulls, working-first-detection 28/1, working-repeated-episode 13/0 (A-7),
+  operator-escalation 28/1, identity-changed-before-event 22/1 (the writer stops at its task
+  lock), event-save-fault 28/1 (the attempted insert counted), non-working-listed 28/1,
+  absent-proof-refused 28/1; inventory reads 0 on every path. Decomposition: open-task list 1 +
+  first evaluation 8 = 9; gates 1/1b 2, ownership 1, A-7 key read 1 = 13; pull (empty persist,
+  0 SQL) and second evaluation 8 = 21; writer task lock 1, dedup read 1, session share lock 1,
+  boot turn 3, insert 1 = 28. Against the design table's caps: the post-evaluation boot work is
+  ownership 1 + key read 1 + writer 7 = 9 on a stage write, above the plan's option-A cap of 3
+  because R2 (repair 1) added the four-statement revalidation, as R2's cost line already records;
+  the repeated episode is 13 with no pull, which is the design's 10 + 2 plus the open-task list
+  the design's prefix leaves out.
+- **V-15** `C1151_Delivery_watchdog_stopper_requires_real_safe_failure` (3), on the real
+  `FailNeverStartedAsync` with a seeded `BootStallDetected` Warning: idle + Pending brief fails
+  and kills once; Working + Sent brief fails with the D9 withhold (a Pending brief on a Working
+  session is deferred whole by D8 and never reaches the cleanup condition, so this argument uses
+  a typed brief); a refused Failed write (injected `DbUpdateConcurrencyException`) throws, fails
+  nothing and kills nothing. The skeleton's "Failed, no kill" for Working is kept; its
+  "the same with a Working transcript" is corrected to the Sent brief for that reason.
+- **CP-46** reruns the registry guard (CP-38) on the S5 build, so `--after S5` selects
+  CP-14, CP-15, CP-16, CP-20 and CP-46.
+
 ## Assertion reversals
 
 Every existing test that encodes today's stop, with its flip. No assertion is weakened or
@@ -797,6 +840,7 @@ CP-16 `Min` is 8, and the regression rows plus CP-37/CP-38 run after S1-S3 on th
 | CP-15 | S5 | `CP-14` | portable-no-park | `/*/*/BootStallDetectionTests/C1151_Detection_does_not_release_or_park*` | V-12 | 2 executed, 0 failed/skipped | 2 | 2 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-16 | S5 | `CP-14` | portable-new-cost | `/*/*/BootStallDetectionTests/C1151_Boot_branch_statement_counts*` | V-13 | 8 executed, exact rosters printed, 0 failed/skipped | 8 | 4 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-20 | S5 | `CP-14` | portable-watchdog-safety | `/*/*/BootStallDetectionTests/C1151_Delivery_watchdog_stopper_requires_real_safe_failure*` | V-15 | 3 executed, 0 failed/skipped | 3 | 3 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-46 | S5 | `CP-14` | portable-registry-guard | `/*/*/(TestClassificationGuardTests*)\|(SlowTestTripwireTests*)/*` | R-19 | all listed, 0 failed/skipped (S5 rerun of CP-38 on its own build) | 3 | 2 | true | n/a |
 | CP-36 | S6 | `tests/Antiphon.Tests -> bin-c1151-s6/` | windows-conpty-boot | `/*/*/GrokDelegateEndToEndTests/a_provider_that_never_answers_boot_is_detected_until_explicit_retry*` | R-16 | 1 executed, 0 failed/skipped | 1 | 8 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 Roster notes. Counts are TUnit executions from `[Test]` plus `[Arguments]`; no Skip,
 MethodData or Matrix in any selected class at this baseline, and no platform skip on Linux
