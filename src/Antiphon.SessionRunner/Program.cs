@@ -102,6 +102,9 @@ builder.Services.AddSingleton(sp => new RunnerStartupDiagnostics(
     int.TryParse(Environment.GetEnvironmentVariable("ANTIPHON_STARTUP_SUPERVISOR_PID"), out var supervisorPid) ? supervisorPid : null,
     Environment.GetEnvironmentVariable("ANTIPHON_STARTUP_SUPERVISOR_START")));
 builder.Services.AddSingleton<SessionRunnerRuntime>();
+// CARD-1153 D-3: the direct-HTTP absence evidence key (optional; missing disables only HTTP certification).
+builder.Services.AddSingleton(sp => new AbsenceEvidenceKeyProvider(
+    sp.GetRequiredService<IOptions<SessionRunnerSettings>>(), sp.GetRequiredService<ILogger<AbsenceEvidenceKeyProvider>>()));
 builder.Services.AddSingleton<HerdrPaneDisposalService>();
 builder.Services.AddHealthChecks();
 // Prune PTY-audit dumps on startup and periodically, keeping them within the configured age + count caps
@@ -144,29 +147,8 @@ app.Lifetime.ApplicationStarted.Register(() => startup.Record("application-start
 // once; unlike the pty-backend flag there is no useful per-request re-resolution.
 var runnerBuild = RunnerBuildIdentity.Resolve();
 
-// CARD-0101: an unknown session id is routine (a caller racing a session's end, a stale id from
-// before a restart) - it must answer 404, not crash the request pipeline with an unhandled
-// KeyNotFoundException out of SessionRunnerRuntime.GetSession. Narrow on purpose: this is the ONLY
-// exception type every session-lookup endpoint throws for "not found" today, so mapping anything
-// wider here would hide a real bug as a 404 instead of surfacing it.
-app.Use(async (context, next) =>
-{
-    try
-    {
-        await next(context);
-    }
-    catch (KeyNotFoundException ex)
-    {
-        app.Logger.LogInformation("404: {Message}", ex.Message);
-        context.Response.StatusCode = StatusCodes.Status404NotFound;
-        await context.Response.WriteAsJsonAsync(new { error = ex.Message });
-    }
-    catch (VerificationCustodyException ex)
-    {
-        await Results.Problem(title: ex.Code, type: ex.Code, statusCode: StatusCodes.Status409Conflict)
-            .ExecuteAsync(context);
-    }
-});
+// CARD-0101 404 / custody 409 / CARD-1153 closed-identity 409 mapping, shared with isolated contract hosts.
+app.UseRunnerExceptionMapping();
 
 // CARD-0186 S3: /input, /kill, /resize, /snapshot map HerdrBackendUnavailableException to 503
 // with problem-type herdr_unreachable. Waiting on _clientReady would hold the queue's
@@ -228,6 +210,8 @@ app.MapHostStatsRoutes();
 app.MapHerdrPaneDisposalRoutes();
 
 app.MapSessionGetRoute();
+// CARD-1153: authenticated prepare/certify; neither resolves through GetSession.
+app.MapAbsenceEvidenceRoutes();
 
 app.MapGet("/sessions/{id:guid}/executions/{executionId:guid}/custody", async (
     Guid id, Guid executionId, DateTime acceptedStartedAt, SessionRunnerRuntime runtime, CancellationToken ct) =>
@@ -309,8 +293,7 @@ app.MapGet("/sessions/{id:guid}/snapshot", (Guid id, SessionRunnerRuntime runtim
     Results.Ok(runtime.GetSnapshot(id)))
     .AddEndpointFilter(HerdrUnreachableFilter);
 
-app.MapGet("/sessions/{id:guid}/transcript", (Guid id, SessionRunnerRuntime runtime) =>
-    Results.Ok(runtime.GetTranscript(id)));
+app.MapSessionTranscriptRoute();
 
 app.MapPost("/sessions/{id:guid}/input", async (
     Guid id,
@@ -446,7 +429,8 @@ internal static class TerminalSeatReleaseRoutes
 {
     internal static void MapRunnerCapabilitiesRoute(this IEndpointRouteBuilder app, RunnerBuildDto runnerBuild)
     {
-        app.MapGet("/capabilities", (IOptions<HerdrSettings> herdrSettings, IOptions<HostStatsSettings> hostStats, SessionRunnerRuntime runtime) =>
+        app.MapGet("/capabilities", (IOptions<HerdrSettings> herdrSettings, IOptions<HostStatsSettings> hostStats, SessionRunnerRuntime runtime,
+            HttpContext context) =>
         {
             // CARD-0160: advertise from the actual dispatch surface. pty-host is always available;
             // herdr is advertised only when SessionRunner:Herdr:Enabled is true — an Enabled=false
@@ -468,6 +452,11 @@ internal static class TerminalSeatReleaseRoutes
             if (runtime.SupportsWorkspaceSourceModes)
                 features = [.. features, RunnerCapabilityFeatures.WorkspaceParkSourceModesV1];
             features = HostStatsRoutes.CapabilityFeatures(features, hostStats.Value);
+            // CARD-1153 D-3: only when the evidence service is ready AND this transport can authenticate.
+            // Resolved optionally: isolated hosts that map this route without the key provider simply omit it.
+            if (runtime.AbsenceEvidenceReady
+                && context.RequestServices.GetService<AbsenceEvidenceKeyProvider>()?.Key is not null)
+                features = [.. features, RunnerAbsenceEvidence.Feature];
             return Results.Ok(runtime.DescribeCapabilities(runnerBuild, sessionBackends, features));
         });
     }

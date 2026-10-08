@@ -19,4 +19,16 @@ public sealed class SessionRunnerSettings
     /// (2026-07-23). Must comfortably exceed the runner's Events:KeepAliveSeconds (default 15 s).
     /// </summary>
     public int EventStreamIdleTimeoutSeconds { get; set; } = 90;
+
+    /// <summary>
+    /// CARD-1153 D-3: direct-HTTP absence evidence. <c>SessionRunner:AbsenceEvidence:KeyPath</c>
+    /// names an owner-readable key file under configuration custody; missing means this transport
+    /// cannot certify (launch and failure semantics are unchanged).
+    /// </summary>
+    public SessionRunnerAbsenceEvidenceSettings AbsenceEvidence { get; set; } = new();
+}
+
+public sealed class SessionRunnerAbsenceEvidenceSettings
+{
+    public string? KeyPath { get; set; }
 }

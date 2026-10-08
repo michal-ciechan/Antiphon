@@ -4,6 +4,13 @@ public sealed class SessionRunnerSettings
 {
     public global::Antiphon.SessionRunner.Contracts.GrokRulesSettings GrokRules { get; set; } = new();
     public string SessionLogPath { get; set; } = Path.Combine("workspace", "session-runner-logs");
+
+    /// <summary>
+    /// CARD-1153 D-3: <c>SessionRunner:AbsenceEvidence:KeyPath</c> names the owner-readable key file
+    /// for direct-HTTP absence evidence. Missing disables only HTTP absence certification.
+    /// </summary>
+    public RunnerAbsenceEvidenceSettings AbsenceEvidence { get; set; } = new();
+
     public int ReplayBufferMaxChars { get; set; } = 256 * 1024;
 
     /// <summary>How often the liveness sweep verifies that "Running" sessions still have a live OS process.</summary>
@@ -71,4 +78,9 @@ public sealed class SessionRunnerSettings
     public string PtyHostBinDir => Path.Combine(ResolvedPtyHostDir, "bin");
     public string PtyHostLogDir => Path.Combine(ResolvedPtyHostDir, "logs");
     public string ResolvedPtyHostSourceDir => PtyHostSourceDir ?? AppContext.BaseDirectory;
+}
+
+public sealed class RunnerAbsenceEvidenceSettings
+{
+    public string? KeyPath { get; set; }
 }

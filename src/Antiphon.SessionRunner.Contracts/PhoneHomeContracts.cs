@@ -103,6 +103,12 @@ public enum PhoneHomeOperation
     ReleaseTerminalSeat = 35,
     WorkspacePark = 36,
     WorkspaceRepositoryIdentity = 37,
+
+    /// <summary>CARD-1153 D-1: prepare absence evidence for a freshly allocated id (store-bound).</summary>
+    PrepareAbsenceEvidence = 38,
+
+    /// <summary>CARD-1153 D-2: certify and close a prepared, never-created id. Old runners answer unsupported.</summary>
+    CertifyAbsence = 39,
 }
 
 /// <summary>Exactly one prepare or verify payload; unknown versions fail closed.</summary>

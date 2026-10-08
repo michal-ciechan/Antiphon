@@ -105,6 +105,14 @@ public sealed class RunnerScopedSessionRunnerClient : ISessionRunnerClient, IVer
     public Task<SessionRunnerTranscriptDto> GetTranscriptAsync(Guid sessionId, CancellationToken ct) =>
         Current.GetTranscriptAsync(sessionId, ct);
 
+    public Task<SessionRunnerAbsencePrepareResult> PrepareAbsenceEvidenceAsync(
+        Guid sessionId, DateTime acceptedStartedAt, Guid? expectedRunnerStoreId, CancellationToken ct) =>
+        Current.PrepareAbsenceEvidenceAsync(sessionId, acceptedStartedAt, expectedRunnerStoreId, ct);
+
+    public Task<SessionRunnerAbsenceEvidenceResult> CertifyAbsenceAsync(
+        Guid sessionId, DateTime acceptedStartedAt, Guid? expectedRunnerStoreId, CancellationToken ct) =>
+        Current.CertifyAbsenceAsync(sessionId, acceptedStartedAt, expectedRunnerStoreId, ct);
+
     public Task SendInputAsync(Guid sessionId, string input, CancellationToken ct) =>
         Current.SendInputAsync(sessionId, input, ct);
 

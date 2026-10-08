@@ -53,6 +53,9 @@ public sealed class PhoneHomeRuntimeAdapter : IPhoneHomeRuntimeSurface
         if (custody is not null)
             features = [.. features, RunnerCapabilityFeatures.VerificationCustodyV1];
         features = [.. features, RunnerCapabilityFeatures.RequiredPlatformV1];
+        // CARD-1153 D-3: advertised only while the evidence service is ready (adoption done, no latch).
+        if (_runtime.AbsenceEvidenceReady)
+            features = [.. features, RunnerAbsenceEvidence.Feature];
         var cli = _runtime.CodexCliProbe?.Snapshot;
         return new RunnerCapabilitiesDto(
             decision.Backend.ToString(), decision.Requested, decision.Reason, decision.FellBack,
@@ -73,6 +76,10 @@ public sealed class PhoneHomeRuntimeAdapter : IPhoneHomeRuntimeSurface
             ? VerificationCustodyBackends.LinuxCgroup : null;
 
     public Guid RunnerStoreId => _runtime.RunnerStoreId;
+    public Task<RunnerAbsenceOutcome<RunnerAbsencePrepared>> PrepareAbsenceEvidenceAsync(RunnerAbsenceRequest request, CancellationToken ct) =>
+        _runtime.PrepareAbsenceEvidenceAsync(request, ct);
+    public Task<RunnerAbsenceOutcome<RunnerAbsenceCertificate>> CertifyAbsenceAsync(RunnerAbsenceRequest request, CancellationToken ct) =>
+        _runtime.CertifyAbsenceAsync(request, ct);
 
     public Task<VerificationCustodyStatus> ReadCustodyAsync(
         VerificationExecutionBinding binding, bool seal, CancellationToken ct) =>
