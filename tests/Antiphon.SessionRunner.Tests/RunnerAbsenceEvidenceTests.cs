@@ -39,10 +39,10 @@ public class RunnerAbsenceEvidenceTests
             "the fixture generation carries sub-microsecond ticks the record must normalize away");
         record.RunnerStoreId.ShouldBe(world.StoreId);
         record.RuntimeEpoch.ShouldBe(world.Service.Epoch);
-        world.AllFiles().ShouldBe([$"absence-evidence/{id:N}.json"],
-            "prepare creates the record and nothing else: no manifest, sidecar, transcript or watermark");
+        world.AllFiles().ShouldBe(EvidenceFiles(id),
+            "prepare creates the record and the store identity (F1) and nothing else: no manifest, sidecar, transcript or watermark");
         world.RuntimeEntries.ShouldBeEmpty();
-        world.Files.Writes.ShouldBe(1);
+        world.Files.Writes.ShouldBe(4, "first write initializes closure log, header and anchor, then the record");
         var bytes = world.RecordBytes(id);
 
         var second = world.Service.Prepare(world.Request(id));
@@ -52,8 +52,8 @@ public class RunnerAbsenceEvidenceTests
         second.Value.RuntimeEpoch.ShouldBe(first.Value.RuntimeEpoch);
         second.Value.AcceptedStartedAt.ShouldBe(first.Value.AcceptedStartedAt);
         world.RecordBytes(id).ShouldBe(bytes, "an identical prepare returns the original record without rewriting it");
-        world.Files.Writes.ShouldBe(1);
-        world.AllFiles().ShouldBe([$"absence-evidence/{id:N}.json"]);
+        world.Files.Writes.ShouldBe(4);
+        world.AllFiles().ShouldBe(EvidenceFiles(id));
         return Task.CompletedTask;
     }
 
@@ -269,6 +269,7 @@ public class RunnerAbsenceEvidenceTests
     [Arguments("empty-session-id")]
     [Arguments("corrupt-record")]
     [Arguments("closed-same-epoch-reissue")]
+    [Arguments("store-header-changed")]
     public Task C1153_Certify_requires_every_fact(string condition)
     {
         using var world = new RunnerAbsenceEvidenceHarness();
@@ -329,6 +330,12 @@ public class RunnerAbsenceEvidenceTests
                 File.WriteAllText(world.RecordPath(id), File.ReadAllText(world.RecordPath(id)).Replace("\"Prepared\"", "\"Prepared \""));
                 expectedCode = RunnerAbsenceRefusalCodes.Unavailable;
                 break;
+            case "store-header-changed":
+                // F1: a replaced store header is unknown evidence, never a blank or healthy store.
+                File.WriteAllText(Path.Combine(world.Store.Root, "store.json"),
+                    $"{{\"version\":1,\"incarnation\":\"{Guid.NewGuid():D}\"}}");
+                expectedCode = RunnerAbsenceRefusalCodes.Unavailable;
+                break;
             case "closed-same-epoch-reissue":
                 world.Service.Certify(world.Request(id)).Refusal.ShouldBeNull();
                 world.Record(id).State.ShouldBe(RunnerAbsenceRecordState.ClosedUnused);
@@ -356,6 +363,103 @@ public class RunnerAbsenceEvidenceTests
         world.RecordBytes(id).ShouldBe(before, "a refusal makes no state transition");
         return Task.CompletedTask;
     }
+
+    /// <summary>
+    /// CARD-1153 F1 (Review 1a174347). A certificate already issued cannot be revoked, so the
+    /// closure must survive every later storage failure: each case certifies the id, damages
+    /// exactly one thing, then requires that the read-only fence and the attempt marker both refuse
+    /// with the closed-identity type (no Attempted write) and that a fresh certify never answers.
+    /// A pristine control on another id still admits a launch marker before the damage.
+    /// </summary>
+    [Test]
+    [Arguments("corrupt-record")]
+    [Arguments("truncated-record")]
+    [Arguments("zero-length-record")]
+    [Arguments("deleted-record")]
+    [Arguments("directory-in-place")]
+    [Arguments("denied-read")]
+    [Arguments("read-error")]
+    [Arguments("store-wiped")]
+    [Arguments("store-replaced")]
+    [Arguments("lost-root")]
+    [Arguments("reverted-record")]
+    [Arguments("anchor-lost")]
+    public Task C1153_Closure_survives_storage_failure(string fault)
+    {
+        using var world = new RunnerAbsenceEvidenceHarness();
+        var control = Guid.NewGuid();
+        world.Service.RequireOpenIdentity(control);
+        world.Service.RecordCreationAttempt(control, RunnerAbsenceEvidenceHarness.Generation);
+        world.Record(control).State.ShouldBe(RunnerAbsenceRecordState.Attempted, "pristine control admits creation");
+
+        var id = Guid.NewGuid();
+        world.PrepareOk(id);
+        world.Service.Certify(world.Request(id)).Value.ShouldNotBeNull("the certificate is issued before the damage");
+        var path = world.RecordPath(id);
+        var closed = File.ReadAllBytes(path);
+        switch (fault)
+        {
+            case "corrupt-record": File.WriteAllText(path, "{\"version\":1,\"state\":\"Clo"); break;
+            case "truncated-record": File.WriteAllBytes(path, closed[..(closed.Length / 2)]); break;
+            case "zero-length-record": File.WriteAllBytes(path, []); break;
+            case "deleted-record": File.Delete(path); break;
+            case "directory-in-place": File.Delete(path); Directory.CreateDirectory(path); break;
+            case "denied-read":
+                world.Files.ReadFault = p => p == path ? new UnauthorizedAccessException("denied") : null;
+                break;
+            case "read-error":
+                world.Files.ReadFault = p => p == path ? new IOException("disk read error") : null;
+                break;
+            case "store-wiped":
+                // The volume lost every evidence file while the directory itself survived.
+                foreach (var file in Directory.GetFiles(world.Store.Root)) File.Delete(file);
+                break;
+            case "store-replaced":
+                // A different store (its own header) now sits where this one was.
+                foreach (var file in Directory.GetFiles(world.Store.Root)) File.Delete(file);
+                File.WriteAllText(Path.Combine(world.Store.Root, "store.json"),
+                    $"{{\"version\":1,\"incarnation\":\"{Guid.NewGuid():D}\"}}");
+                File.WriteAllBytes(Path.Combine(world.Store.Root, "closed.log"), []);
+                break;
+            case "lost-root": Directory.Delete(world.Store.Root, recursive: true); break;
+            case "reverted-record":
+                // A well-formed record that is no longer ClosedUnused (an older copy restored).
+                File.WriteAllBytes(path, RunnerAbsenceEvidenceStore.Serialize(world.Store.Read(id).Record! with
+                {
+                    State = RunnerAbsenceRecordState.Attempted,
+                }));
+                break;
+            case "anchor-lost":
+                // Anchor and every evidence file gone while this process runs: not a fresh store.
+                File.Delete(world.Store.Root + ".identity.json");
+                foreach (var file in Directory.GetFiles(world.Store.Root)) File.Delete(file);
+                break;
+            default: throw new ArgumentOutOfRangeException(nameof(fault), fault, null);
+        }
+
+        var writes = world.Files.Writes;
+
+        Should.Throw<SessionIdentityClosedException>(() => world.Service.RequireOpenIdentity(id),
+            $"{fault}: the fence refuses a creation it cannot prove open").SessionId.ShouldBe(id);
+        Should.Throw<SessionIdentityClosedException>(
+            () => world.Service.RecordCreationAttempt(id, RunnerAbsenceEvidenceHarness.Generation),
+            $"{fault}: the marker refuses too").SessionId.ShouldBe(id);
+        world.Files.Writes.ShouldBe(writes, "a refused creation writes no Attempted marker");
+
+        world.Files.ReadFault = null;
+        if (fault is "denied-read" or "read-error")
+            world.Store.Read(id).Record!.State.ShouldBe(RunnerAbsenceRecordState.ClosedUnused, "the closure itself was never rewritten");
+        var reissue = world.Service.Certify(world.Request(id));
+        reissue.Value.ShouldBeNull($"{fault}: unknown evidence never certifies absence");
+        reissue.Refusal.ShouldNotBeNull();
+        return Task.CompletedTask;
+    }
+
+    private static string[] EvidenceFiles(Guid id) => new[]
+    {
+        "absence-evidence.identity.json", $"absence-evidence/{id:N}.json", "absence-evidence/closed.log",
+        "absence-evidence/store.json",
+    }.OrderBy(p => p, StringComparer.Ordinal).ToArray();
 
     private static void AssertCertificate(RunnerAbsenceCertificate certificate, RunnerAbsenceEvidenceHarness world, Guid id, string nonce)
     {
