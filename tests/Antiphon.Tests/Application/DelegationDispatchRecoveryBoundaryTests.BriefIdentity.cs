@@ -378,6 +378,7 @@ public partial class DelegationDispatchRecoveryBoundaryTests
     [Arguments("legacy-pointer-corrupt", "Unavailable", true)]
     [Arguments("legacy-pointer-intact", "Reuse", false)]
     [Arguments("lookalike-other-marker-headline", "Reuse", false)]
+    [Arguments("lookalike-joined-other-marker-headline", "Reuse", false)]
     [Arguments("lookalike-pointer-without-report-tail", "Reuse", false)]
     // Repair 3 F7: only the outer envelope is read, never a quoted previous report or goal.
     [Arguments("retry-handoff-own-pointer", "Reuse", false)]
@@ -717,6 +718,14 @@ public partial class DelegationDispatchRecoveryBoundaryTests
                     Body = ownPointer.Replace(marker + " YOUR BRIEF",
                         DelegationReportFormatter.TaskMarker(Guid.NewGuid()) + " YOUR BRIEF", StringComparison.Ordinal),
                 };
+                break;
+            case "lookalike-joined-other-marker-headline":
+                rows[0] = row with
+                {
+                    Body = Pointer(localPath, AgentKind.Codex).Replace(marker + " YOUR BRIEF",
+                        DelegationReportFormatter.TaskMarker(Guid.NewGuid()) + " YOUR BRIEF", StringComparison.Ordinal),
+                };
+                rows[0].Body.ShouldNotContain("\n", Case.Sensitive, condition);
                 break;
             case "lookalike-pointer-without-report-tail":
                 rows[0] = row with
