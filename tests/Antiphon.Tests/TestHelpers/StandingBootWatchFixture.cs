@@ -71,7 +71,7 @@ internal sealed class StandingBootWatchFixture : IAsyncDisposable
             var runner = new ListedInventoryRunner();
             var stopper = new RecordingSessionStopper { StopsSessionsIn = schema.ConnectionString };
             var (sessionId, agentId) = (Guid.NewGuid(), Guid.NewGuid());
-            var startedAt = Pg(now.AddHours(-6));
+            var startedAt = Pg(now - options.StartedAge);
             var promptAt = Pg(now - options.PromptAge);
             await SeedAsync(schema.ConnectionString, options, sessionId, agentId, startedAt, promptAt);
             if (options.Listed)
@@ -452,6 +452,9 @@ internal sealed record StandingBootWatchOptions
 {
     public AgentKind Kind { get; init; } = AgentKind.ClaudeCode;
     public TimeSpan PromptAge { get; init; } = TimeSpan.FromMinutes(9);
+
+    /// <summary>How long before <c>Now0</c> the session started (its generation and launch clock).</summary>
+    public TimeSpan StartedAge { get; init; } = TimeSpan.FromHours(6);
     public string PromptKind { get; init; } = TranscriptKinds.UserPrompt;
     public bool InterruptAfterPrompt { get; init; }
     public bool AlwaysOn { get; init; } = true;

@@ -223,13 +223,15 @@ public sealed partial class AttentionService
         items.AddRange(await BuildDispatchHeldItemsAsync(now, ct));
         items.AddRange(await BuildCardlessDetailsNoPromptItemsAsync(now, ct));
         items.AddRange(await BuildInboundUnconsumedItemsAsync(since, ct));
+        // CARD-1156: ahead of the recent-incident sweep, so a current standing boot episode's Error
+        // receipt is struck off it rather than reported a second time under another name.
+        items.AddRange(await BuildBootReplyMissingItemsAsync(now, since, attachedIncidents, ct));
         items.AddRange(await BuildRecentIncidentItemsAsync(since, attachedIncidents, ct));
         items.AddRange(BuildFailureUnacknowledgedItems(unacknowledged, costs, checkDigests));
         items.AddRange(await BuildOrchestratorInvestigationItemsAsync(since, ct));
         items.AddRange(await BuildOrchestratorWorkspaceItemsAsync(since, ct));
         items.AddRange(await BuildRemoteControlModalItemsAsync(ct));
         items.AddRange(await BuildQueuedInputStuckItemsAsync(since, ct));
-        items.AddRange(await BuildBootReplyMissingItemsAsync(since, ct));
         items.AddRange(await BuildHerdrSupervisionHeldItemsAsync(ct));
         items.AddRange(await BuildStandingContinuityItemsAsync(ct));
         items.AddRange(await BuildChannelOutboundDeliveryItemsAsync(ct));
@@ -2192,18 +2194,30 @@ public sealed partial class AttentionService
     // ---- CARD-0312: the boot prompt the model never answered -------------------------------------
 
     /// <summary>
-    /// Projects <see cref="AttentionKind.LivenessProbeFailed"/> from open
-    /// <see cref="AgentIncidentKind.LivenessProbeFailed"/> incidents, on the
-    /// <see cref="BuildQueuedInputStuckItemsAsync"/> pattern: one row per episode, re-verified at
-    /// read time against a live session AND a boot prompt that is still unanswered, so the row
-    /// exists because the condition holds NOW rather than because it once did.
+    /// Projects <see cref="AttentionKind.LivenessProbeFailed"/> for a boot prompt the model never
+    /// answered. This is where the human escalation lives, per AGENTS.md — a decision belongs on
+    /// the attention feed, never a new column or an alert sink.
     ///
-    /// <para>This is where the human escalation lives, per AGENTS.md — a decision belongs on the
-    /// attention feed, never a new column or an alert sink.</para>
+    /// <para><b>A taskless AlwaysOn session (CARD-1156, option A)</b> is projected by
+    /// <see cref="StandingBootAttentionProjection"/> from its CURRENT boot facts: Warning from the boot
+    /// due, Error from the operator due, independent of whether a receipt was saved, how old it is
+    /// or whether the prune removed it. Its current receipts are struck off the recent-incident
+    /// sweep (<paramref name="attachedIncidents"/>).</para>
+    ///
+    /// <para><b>Everything else</b> keeps the legacy projection from open <c>bootSeq=</c> incidents, on
+    /// the <see cref="BuildQueuedInputStuckItemsAsync"/> pattern: one row per episode, re-verified at
+    /// read time against a live session AND a boot prompt that is still unanswered, so the row
+    /// exists because the condition holds NOW rather than because it once did. A legacy row is
+    /// suppressed for a session the standing projection covers (old restart-ladder history must not
+    /// duplicate the current row) and for a session an open task owns (CARD-1151's task row).</para>
     /// </summary>
     private async Task<List<AttentionItemDto>> BuildBootReplyMissingItemsAsync(
-        DateTime since, CancellationToken ct)
+        DateTime now, DateTime since, HashSet<Guid> attachedIncidents, CancellationToken ct)
     {
+        var standing = await StandingBootAttentionProjection.ProjectAsync(_db, _delegation, now, ct);
+        attachedIncidents.UnionWith(standing.AttachedReceipts);
+        var items = new List<AttentionItemDto>(standing.Items);
+
         var rows = await _db.AgentIncidents.AsNoTracking()
             .Where(i => i.Kind == AgentIncidentKind.LivenessProbeFailed
                 && i.CreatedAt >= since
@@ -2212,8 +2226,11 @@ public sealed partial class AttentionService
                 && i.FailureReason.StartsWith("bootSeq="))
             .Select(i => new { i.AgentId, i.SessionId, i.Severity, i.Message, i.CreatedAt, i.FailureReason })
             .ToListAsync(ct);
+        rows = rows
+            .Where(r => !standing.Covered.Contains(r.SessionId!.Value) && !standing.TaskOwned.Contains(r.SessionId!.Value))
+            .ToList();
         if (rows.Count == 0)
-            return [];
+            return items;
 
         var episodes = rows
             .GroupBy(r => (r.SessionId!.Value, r.FailureReason))
@@ -2221,11 +2238,17 @@ public sealed partial class AttentionService
             .ToList();
 
         var sessionIds = episodes.Select(e => e.SessionId!.Value).Distinct().ToList();
+        // Live, and owned by no open task: an open task's boot silence is CARD-1151's task row.
         var liveSessions = (await _db.AgentSessions.AsNoTracking()
                 .Where(s => sessionIds.Contains(s.Id)
                     && (s.Status == SessionStatus.Starting
                         || s.Status == SessionStatus.Running
-                        || s.Status == SessionStatus.Stopping))
+                        || s.Status == SessionStatus.Stopping)
+                    && !_db.AgentTasks.Any(t => t.AgentSessionId == s.Id
+                        && (t.Status == AgentTaskStatus.Queued
+                            || t.Status == AgentTaskStatus.Dispatched
+                            || t.Status == AgentTaskStatus.Working
+                            || t.Status == AgentTaskStatus.Blocked)))
                 .Select(s => s.Id)
                 .ToListAsync(ct))
             .ToHashSet();
@@ -2238,7 +2261,6 @@ public sealed partial class AttentionService
                 .Select(a => new { a.Id, a.Name })
                 .ToDictionaryAsync(a => a.Id, a => a.Name, ct);
 
-        var items = new List<AttentionItemDto>();
         foreach (var episode in episodes)
         {
             var sessionId = episode.SessionId!.Value;

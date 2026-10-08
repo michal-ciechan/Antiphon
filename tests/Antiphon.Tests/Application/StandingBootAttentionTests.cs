@@ -1,4 +1,15 @@
+using System.Data.Common;
+using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Settings;
+using Antiphon.Server.Domain.Entities;
+using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Infrastructure.Data;
+using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
+using Shouldly;
 using TUnit.Core;
 
 namespace Antiphon.Tests.Application;
@@ -15,6 +26,10 @@ namespace Antiphon.Tests.Application;
 [Category("Integration")]
 public class StandingBootAttentionTests
 {
+    /// <summary>Wording of the retired CARD-0312 restart ladder, absent from every standing row.</summary>
+    private static readonly string[] RetiredWording =
+        ["restart ladder", "stopped restarting", "kill", "retry", "Boot prompt confirmed", "composer holds"];
+
     /// <summary>
     /// V-8. One derived LivenessProbeFailed row per current episode, independent of incident
     /// history: no-incident (no receipt at all), failed-save (the sweep's writer faulted),
@@ -33,8 +48,116 @@ public class StandingBootAttentionTests
     [Arguments("older-than-24-hours")]
     [Arguments("pruned-history")]
     [Arguments("legacy-and-current")]
-    public Task C1156_Current_boot_attention_survives_optional_history(string history) =>
-        Card1156Pending.Skip("S4", nameof(C1156_Current_boot_attention_survives_optional_history));
+    public async Task C1156_Current_boot_attention_survives_optional_history(string history)
+    {
+        var options = history switch
+        {
+            "older-than-24-hours" => new StandingBootWatchOptions
+            {
+                PromptAge = TimeSpan.FromHours(25), StartedAge = TimeSpan.FromHours(26),
+            },
+            // Starts before the boot due, so the fake clock can walk forward onto it.
+            "warning-at-eight" => new StandingBootWatchOptions { PromptAge = TimeSpan.FromMinutes(7) },
+            _ => new StandingBootWatchOptions(),
+        };
+        await using var f = await StandingBootWatchFixture.CreateAsync(options);
+        var before = await f.SnapshotAsync();
+        var bootDue = f.PromptAt.AddMinutes(8);
+        var operatorDue = f.PromptAt.AddMinutes(20);
+        var expected = AlertSeverity.Warning;
+        var receipts = 1;
+
+        switch (history)
+        {
+            case "no-incident":
+                receipts = 0;
+                break;
+            case "failed-save":
+            {
+                var fault = new IncidentInsertFault();
+                f.WriterInterceptors = [fault];
+                (await f.SweepAsync()).ShouldBe(0, f.Warnings());
+                fault.Fired.ShouldBeTrue("control: the writer's insert must actually fault");
+                f.Warnings().ShouldContain("Could not record standing boot receipt");
+                receipts = 0;
+                break;
+            }
+            case "warning-at-eight":
+                f.At(bootDue.AddSeconds(-1));
+                (await LivenessRowsAsync(f)).ShouldBeEmpty("one second before the boot due nothing is due");
+                f.At(bootDue);
+                (await f.SweepAsync()).ShouldBe(1, f.Warnings());
+                break;
+            case "error-at-twenty":
+                f.At(operatorDue.AddSeconds(-1));
+                (await LivenessRowsAsync(f)).Single().Severity
+                    .ShouldBe(AlertSeverity.Warning, "control: one second before the operator due the row is a Warning");
+                f.At(operatorDue);
+                (await f.SweepAsync()).ShouldBe(1, f.Warnings());
+                expected = AlertSeverity.Error;
+                break;
+            case "older-than-24-hours":
+                (await f.SweepAsync()).ShouldBe(1, f.Warnings());
+                await ShiftReceiptsAsync(f, TimeSpan.FromHours(-25));
+                expected = AlertSeverity.Error;
+                break;
+            case "pruned-history":
+                (await f.SweepAsync()).ShouldBe(1, f.Warnings());
+                await using (var db = f.Read())
+                {
+                    (await db.AgentIncidents.Where(i => i.SessionId == f.SessionId).ExecuteDeleteAsync())
+                        .ShouldBe(1, "control: the receipt existed and is gone");
+                }
+
+                receipts = 0;
+                break;
+            case "legacy-and-current":
+                await AddIncidentAsync(f, BootReplyWatchdogService.EpisodeKey(1), AlertSeverity.Warning,
+                    f.Clock.GetUtcNow().UtcDateTime.AddMinutes(-1),
+                    "Boot prompt confirmed at sequence 1; restart ladder engaged; stopped restarting after two.");
+                (await f.SweepAsync()).ShouldBe(1, f.Warnings());
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(history), history, null);
+        }
+
+        var now = f.Clock.GetUtcNow().UtcDateTime;
+        var all = await ProjectAsync(f);
+        var rows = all.Where(i => i.Kind == AttentionKind.LivenessProbeFailed).ToList();
+        rows.Count.ShouldBe(1, $"{history}: exactly one current row, whatever the history");
+        var row = rows[0];
+        row.Severity.ShouldBe(expected, history);
+        row.AgentId.ShouldBe(f.AgentId);
+        row.TaskId.ShouldBeNull();
+        row.Title.ShouldStartWith("sbw-");
+        row.SinceUtc.ShouldBe(f.PromptAt);
+        row.Actions.ShouldBe([AttentionAction.OpenAgent, AttentionAction.OpenDrawer],
+            "the agent's own controls; never a task-only Retry or Cancel");
+        row.Headline.ShouldContain($"no model reply {StandingBootWatchPolicy.Describe(now - f.PromptAt)} after the prompt");
+        row.Headline.ShouldStartWith(expected == AlertSeverity.Error
+            ? "Standing boot stall needs an operator decision"
+            : "Standing boot stall detected");
+        row.Evidence.ShouldContain("Inspect the session or its transcript, then choose: keep waiting, reply "
+            + "through the session, or explicitly Stop and Start/resume the agent.");
+        row.Evidence.ShouldContain("Detection only: the session keeps running and keeps its seat; nothing is "
+            + "stopped, typed, restarted or latched automatically, and no deadline ends this episode.");
+        row.Evidence.ShouldContain($"Prompt #1 (UserPrompt) at {f.PromptAt:u}, {StandingBootWatchPolicy.Describe(now - f.PromptAt)} ago");
+        row.Evidence.ShouldContain($"Boot notice due {bootDue:u}.");
+        row.Evidence.ShouldContain($"Operator decision due {operatorDue:u}.");
+        foreach (var retired in RetiredWording)
+        {
+            (row.Headline + "\n" + row.Evidence).ShouldNotContain(retired, Case.Insensitive,
+                $"{history}: the retired restart-ladder wording must not reach a standing row");
+        }
+
+        (row.Headline + row.Evidence).ShouldNotContain(StandingBootWatchFixture.PromptCanary);
+        all.ShouldNotContain(i => i.Kind == AttentionKind.RecentCriticalIncident && i.AgentId == f.AgentId,
+            "the current episode's receipt is the row's own evidence, never a second row under another name");
+
+        (await f.ReceiptsAsync()).Count.ShouldBe(receipts, $"{history}: the projection never writes a receipt");
+        (await f.SnapshotAsync()).ShouldBe(before, "detection changes no custody or supervision state");
+        f.AssertNothingDestructive();
+    }
 
     /// <summary>
     /// V-9. The five real model kinds (assistant, thinking, tool-call, tool-result, turn-end) past
@@ -51,8 +174,64 @@ public class StandingBootAttentionTests
     [Arguments("turn-end")]
     [Arguments("terminal-session")]
     [Arguments("replaced-launch")]
-    public Task C1156_Positive_resolution_clears_only_the_current_episode(string resolution) =>
-        Card1156Pending.Skip("S4", nameof(C1156_Positive_resolution_clears_only_the_current_episode));
+    public async Task C1156_Positive_resolution_clears_only_the_current_episode(string resolution)
+    {
+        await using var f = await StandingBootWatchFixture.CreateAsync();
+        (await f.SweepAsync()).ShouldBe(1, f.Warnings());
+        var receipt = (await f.ReceiptsAsync()).Single();
+        (await LivenessRowsAsync(f)).Count.ShouldBe(1, "control: the unresolved episode projects");
+
+        var refinedAt = f.PromptAt.AddMinutes(2);
+        switch (resolution)
+        {
+            case "assistant":
+            case "thinking":
+            case "tool-call":
+            case "tool-result":
+            case "turn-end":
+                await f.AddEntryAsync(ModelKind(resolution), "late first token", f.PromptAt.AddMinutes(8.5));
+                break;
+            case "terminal-session":
+                await using (var db = f.Read())
+                {
+                    var now = f.Clock.GetUtcNow().UtcDateTime;
+                    await db.AgentSessions.Where(s => s.Id == f.SessionId).ExecuteUpdateAsync(u => u
+                        .SetProperty(s => s.Status, SessionStatus.Stopped)
+                        .SetProperty(s => s.EndedAt, (DateTime?)now));
+                }
+
+                break;
+            case "replaced-launch":
+                await using (var db = f.Read())
+                {
+                    var resumed = StandingBootWatchFixture.Pg(f.PromptAt.AddMinutes(1));
+                    await db.AgentSessions.Where(s => s.Id == f.SessionId).ExecuteUpdateAsync(u => u
+                        .SetProperty(s => s.LaunchResumedAt, (DateTime?)resumed));
+                }
+
+                await f.AddEntryAsync(TranscriptKinds.UserPrompt, "the resumed brief", refinedAt);
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(resolution), resolution, null);
+        }
+
+        (await LivenessRowsAsync(f)).ShouldBeEmpty($"{resolution}: the old episode's row is gone");
+        (await f.ReceiptsAsync()).Select(r => r.Id)
+            .ShouldBe([receipt.Id], "history remains; only the derived row resolves");
+
+        if (resolution == "replaced-launch")
+        {
+            f.At(refinedAt.AddMinutes(8));
+            var replacement = (await LivenessRowsAsync(f)).ShouldHaveSingleItem("the replacement episode appears once due");
+            replacement.Severity.ShouldBe(AlertSeverity.Warning,
+                "the old episode's receipts never escalate the new one");
+            replacement.SinceUtc.ShouldBe(refinedAt);
+            replacement.Evidence.ShouldContain($"Prompt #2 (UserPrompt) at {refinedAt:u}");
+            replacement.Evidence.ShouldContain($"Boot notice due {refinedAt.AddMinutes(8):u}.");
+        }
+
+        f.AssertNothingDestructive();
+    }
 
     /// <summary>
     /// V-10. The real cold prune with the shipped age cutoff and a lowered per-agent cap:
@@ -68,6 +247,258 @@ public class StandingBootAttentionTests
     [Arguments("agent-cap")]
     [Arguments("unknown-current-read")]
     [Arguments("positive-resolution")]
-    public Task C1156_Prune_preserves_active_dedup_and_releases_resolved_history(string pressure) =>
-        Card1156Pending.Skip("S4", nameof(C1156_Prune_preserves_active_dedup_and_releases_resolved_history));
+    public async Task C1156_Prune_preserves_active_dedup_and_releases_resolved_history(string pressure)
+    {
+        await using var f = await StandingBootWatchFixture.CreateAsync();
+        (await f.SweepAsync()).ShouldBe(1, f.Warnings());
+        f.At(f.PromptAt.AddMinutes(21));
+        (await f.SweepAsync()).ShouldBe(1, f.Warnings());
+        var current = (await f.ReceiptsAsync()).Select(r => r.Id).ToList();
+        current.Count.ShouldBe(2, "control: both stages of the current episode are on record");
+
+        var now = f.Clock.GetUtcNow().UtcDateTime;
+        var old = now.AddDays(-31);
+        // A receipt of an earlier, long-resolved episode on the same session: never protected.
+        var resolvedEpisode = await AddIncidentAsync(
+            f, "standingBoot:v1;g=1;l=1;p=0;stage=detected", AlertSeverity.Warning,
+            pressure == "agent-cap" ? now.AddHours(-1) : old, "an earlier episode");
+        var unrelated = new List<Guid>();
+        if (pressure == "agent-cap")
+        {
+            for (var i = 0; i < 6; i++)
+                unrelated.Add(await AddUnrelatedAsync(f, now.AddHours(1).AddMinutes(i)));
+        }
+        else
+        {
+            unrelated.Add(await AddUnrelatedAsync(f, old));
+            await ShiftReceiptsAsync(f, TimeSpan.FromDays(-31), current);
+        }
+
+        if (pressure == "positive-resolution")
+            await f.AddEntryAsync(TranscriptKinds.AssistantText, "answered at last", now.AddMinutes(-1));
+
+        var fault = pressure == "unknown-current-read" ? new CandidateReadFault() : null;
+        var settings = pressure == "agent-cap" ? new SupervisionSettings { IncidentCapPerAgent = 2 } : new SupervisionSettings();
+        var (removed, log) = await PruneAsync(f, settings, fault);
+
+        var remaining = await RemainingAsync(f);
+        string[] expected;
+        switch (pressure)
+        {
+            case "age-cutoff":
+                expected = Ids(current);
+                removed.ShouldBe(2, "the unrelated and the resolved-episode rows past retention");
+                break;
+            case "agent-cap":
+                expected = Ids([.. current, unrelated[4], unrelated[5]]);
+                removed.ShouldBe(5, "four older unrelated rows and the resolved-episode receipt are capped");
+                break;
+            case "unknown-current-read":
+                fault!.Fired.ShouldBeTrue("control: the candidate read must actually fault");
+                log.ShouldContain(l => l.StartsWith("[Warning]") && l.Contains("Could not read the current standing boot episodes"),
+                    string.Join('\n', log));
+                expected = Ids([.. current, resolvedEpisode]);
+                removed.ShouldBe(1, "uncertainty retains every standing receipt; the unrelated row still prunes");
+                break;
+            case "positive-resolution":
+                expected = [];
+                removed.ShouldBe(4, "an answered episode's receipts are ordinary history again");
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(pressure), pressure, null);
+        }
+
+        remaining.ShouldBe(expected, ignoreOrder: true, $"{pressure}: the rows the prune kept");
+
+        // The retained receipts are live dedup: the next tick finds them and mints nothing.
+        (await f.SweepAsync()).ShouldBe(0, f.Warnings());
+        (await RemainingAsync(f)).ShouldBe(expected, ignoreOrder: true, $"{pressure}: no receipt was re-minted");
+        f.AssertNothingDestructive();
+    }
+
+    // ---- helpers ---------------------------------------------------------------------------------
+
+    private static string ModelKind(string resolution) => resolution switch
+    {
+        "assistant" => TranscriptKinds.AssistantText,
+        "thinking" => TranscriptKinds.Thinking,
+        "tool-call" => TranscriptKinds.ToolCall,
+        "tool-result" => TranscriptKinds.ToolResult,
+        "turn-end" => TranscriptKinds.TurnEnd,
+        _ => throw new ArgumentOutOfRangeException(nameof(resolution), resolution, null),
+    };
+
+    /// <summary>
+    /// The real <see cref="AttentionService.GetAsync"/> on this fixture's database and clock, every
+    /// row about the fixture's session or agent. Asserts the read wrote nothing and asked the runner
+    /// exactly the one inherited list question.
+    /// </summary>
+    private static async Task<List<AttentionItemDto>> ProjectAsync(StandingBootWatchFixture f)
+    {
+        var counter = new FullCommandCounter();
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(f.ConnectionString, counter));
+        var lists = f.Runner.Lists;
+        var result = await AttentionServiceTests.BuildService(f.Runner, timeProvider: f.Clock, db: db)
+            .GetAsync(CancellationToken.None);
+        counter.Commands.Where(IsWrite).ShouldBeEmpty("the projection is read-only:\n" + counter.Roster());
+        db.ChangeTracker.HasChanges().ShouldBeFalse("nothing is staged during a GET");
+        (f.Runner.Lists - lists).ShouldBe(1, "no runner call beyond GetAsync's inherited list");
+        return result.Items.Where(i => i.SessionId == f.SessionId || i.AgentId == f.AgentId).ToList();
+    }
+
+    private static async Task<List<AttentionItemDto>> LivenessRowsAsync(StandingBootWatchFixture f) =>
+        (await ProjectAsync(f)).Where(i => i.Kind == AttentionKind.LivenessProbeFailed).ToList();
+
+    private static bool IsWrite(string sql)
+    {
+        var head = sql.TrimStart();
+        return head.StartsWith("INSERT", StringComparison.OrdinalIgnoreCase)
+            || head.StartsWith("UPDATE", StringComparison.OrdinalIgnoreCase)
+            || head.StartsWith("DELETE", StringComparison.OrdinalIgnoreCase)
+            || head.StartsWith("MERGE", StringComparison.OrdinalIgnoreCase)
+            || sql.Contains("FOR UPDATE", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static async Task ShiftReceiptsAsync(StandingBootWatchFixture f, TimeSpan by, IReadOnlyList<Guid>? ids = null)
+    {
+        await using var db = f.Read();
+        var rows = await db.AgentIncidents
+            .Where(i => i.SessionId == f.SessionId && i.FailureReason != null
+                && i.FailureReason.StartsWith(StandingBootWatchPolicy.KeyPrefix))
+            .ToListAsync();
+        if (ids is not null)
+            rows = rows.Where(r => ids.Contains(r.Id)).ToList();
+        rows.ShouldNotBeEmpty("control: there are receipts to age");
+        foreach (var row in rows)
+            row.CreatedAt = StandingBootWatchFixture.Pg(row.CreatedAt + by);
+        await db.SaveChangesAsync();
+    }
+
+    private static async Task<Guid> AddIncidentAsync(
+        StandingBootWatchFixture f, string failureReason, AlertSeverity severity, DateTime at, string message)
+    {
+        await using var db = f.Read();
+        var id = Guid.NewGuid();
+        db.AgentIncidents.Add(new AgentIncident
+        {
+            Id = id,
+            AgentId = f.AgentId,
+            SessionId = f.SessionId,
+            Kind = AgentIncidentKind.LivenessProbeFailed,
+            Severity = severity,
+            Message = message,
+            FailureReason = failureReason,
+            CreatedAt = StandingBootWatchFixture.Pg(at),
+        });
+        await db.SaveChangesAsync();
+        return id;
+    }
+
+    private static async Task<Guid> AddUnrelatedAsync(StandingBootWatchFixture f, DateTime at)
+    {
+        await using var db = f.Read();
+        var id = Guid.NewGuid();
+        db.AgentIncidents.Add(new AgentIncident
+        {
+            Id = id,
+            AgentId = f.AgentId,
+            SessionId = f.SessionId,
+            Kind = AgentIncidentKind.Recovered,
+            Severity = AlertSeverity.Info,
+            Message = "unrelated history",
+            CreatedAt = StandingBootWatchFixture.Pg(at),
+        });
+        await db.SaveChangesAsync();
+        return id;
+    }
+
+    private static async Task<string[]> RemainingAsync(StandingBootWatchFixture f)
+    {
+        await using var db = f.Read();
+        return Ids(await db.AgentIncidents.Where(i => i.AgentId == f.AgentId).Select(i => i.Id).ToListAsync());
+    }
+
+    private static string[] Ids(IEnumerable<Guid> ids) => ids.Select(i => i.ToString("D")).OrderBy(i => i).ToArray();
+
+    private static async Task<(int Removed, List<string> Log)> PruneAsync(
+        StandingBootWatchFixture f, SupervisionSettings settings, IInterceptor? fault)
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), $"c1156-prune-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempRoot);
+        try
+        {
+            await using var harness = AgentSupervisionTests.BuildHarness(
+                tempRoot, [], supervision: settings, connectionString: f.ConnectionString,
+                configureDb: fault is null ? null : o => o.AddInterceptors(fault));
+            var removed = await harness.Supervisor().PruneIncidentsAsync(CancellationToken.None);
+            List<string> log;
+            lock (harness.SupervisorLog)
+                log = [.. harness.SupervisorLog];
+            harness.Runner.KillCalls.ShouldBe(0, "the prune touches no session");
+            return (removed, log);
+        }
+        finally
+        {
+            try
+            {
+                Directory.Delete(tempRoot, recursive: true);
+            }
+            catch (IOException)
+            {
+                // Best-effort temp cleanup.
+            }
+        }
+    }
+
+    /// <summary>Faults the receipt writer's INSERT, so the sweep's save fails and nothing is recorded.</summary>
+    private sealed class IncidentInsertFault : DbCommandInterceptor
+    {
+        public bool Fired { get; private set; }
+
+        public override ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<int> result,
+            CancellationToken cancellationToken = default)
+        {
+            Throw(command);
+            return base.NonQueryExecutingAsync(command, eventData, result, cancellationToken);
+        }
+
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result,
+            CancellationToken cancellationToken = default)
+        {
+            Throw(command);
+            return base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
+        }
+
+        private void Throw(DbCommand command)
+        {
+            if (!command.CommandText.Contains("INSERT INTO \"AgentIncidents\"", StringComparison.Ordinal))
+                return;
+            Fired = true;
+            throw new InvalidOperationException("c1156: injected receipt insert fault");
+        }
+    }
+
+    /// <summary>Faults the prune's protected-key candidate read (sessions joined to standing receipts).</summary>
+    private sealed class CandidateReadFault : DbCommandInterceptor
+    {
+        public bool Fired { get; private set; }
+
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result,
+            CancellationToken cancellationToken = default)
+        {
+            var sql = command.CommandText;
+            if (sql.TrimStart().StartsWith("SELECT", StringComparison.OrdinalIgnoreCase)
+                && sql.Contains("FROM \"AgentSessions\"", StringComparison.Ordinal)
+                && sql.Contains("\"AgentIncidents\"", StringComparison.Ordinal))
+            {
+                Fired = true;
+                throw new InvalidOperationException("c1156: injected candidate read fault");
+            }
+
+            return base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
+        }
+    }
 }
