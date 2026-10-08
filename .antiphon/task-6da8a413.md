@@ -1,0 +1,149 @@
+# CARD-1149/1150 S2 repair 4 (F10) — Code report, task 6da8a413
+
+Outcome: F10 fixed. After the resumed launch has attempted input, a failure of its later bookkeeping is logged and the Working recipient stays Running. Before any input, today's kill-and-fail path is unchanged. The new regression and the 7-case table were red on 066b302d and red under seven method-scoped mutants. All 44 ordinary rows are green at 9ed2074c: 855 executed, 855 passed.
+
+- Branch `feat/card-task-6da8a413`, worktree `/work/worktrees/task-6da8a413` (desktop `C:\Antiphon\worktrees\card-task-6da8a413`).
+- Base 066b302dc3c3fb9e81b249fa253f493688b14327. Net-diff base 31632adc03b78956c7dc2d056280d7309681a7ff.
+- Original Code landing owner: ea5ef98c-75dd-4918-9513-f13a66b1680d.
+- Commits: c42e8daebf2b57a777cbf0b50876a9ab5ed2e41b (fix and tests), 9ed2074ce24e1295f663bfaf12d3c52ee7438cfd (test design and report qualifications, tested SHA). This report is committed after them.
+- Plan: `docs/superpowers/plans/2026-10-07-card-1149-1150-dispatch-recovery-plan.md`. Test design: `docs/superpowers/plans/2026-10-07-card-1149-1150-test-design.md`, section "Repair 6 evidence (S2 F10)".
+
+## Fix (fail-closed)
+
+- `SessionMessageQueueService.DispatchBrief.cs`: `DispatchBriefEnsureResult.InputStarted` (init-only). It is true when the post-commit `DeliverNextLockedAsync` returned `Delivered` or `Failed`, so a delivery attempt may have typed.
+- `SessionMessageQueueService.cs`: `FlushSessionAsync` delegates to a new internal `FlushSessionReportingInputAsync`, which returns the same flag. Other callers are unchanged.
+- `AgentSessionService.ResumeInterruptedLaunchAsync`:
+  - `inputStarted` comes from the ensure. If the ensure did not type, it comes from the boot flush.
+  - Both event saves go through `SaveResumeEventAsync(event, afterInput)`. After input, a failed save is logged at Warning, the event is detached and the outcome does not change. Before input it is the old `SaveChangesAsync`, so a failure still reaches the catch.
+  - After input, a flush failure is logged. Before input, it reaches the catch as it does today.
+  - OperationCanceledException is never swallowed, as before.
+- Unchanged: the CARD-0340 order (attach, ready, Running save, events, flush), the legacy `EnqueueAsync(deliverIfIdle:false)` branch, the catch itself, the boot-stall tail, and the dispatcher's ensure. There is no migration.
+
+Every step that runs after the early input:
+
+| Step | 066b302d | Now |
+|---|---|---|
+| "brief re-queued" save | kill + Failed | logged, event detached |
+| `FlushSessionAsync` | kill + Failed | logged |
+| "launch resumed" save | kill + Failed | logged, event detached |
+| `RecordLaunchInterruptedByRestartAsync` | already best-effort (own scope, try/catch) | unchanged |
+
+When the ensure typed nothing but the flush delivered, the "launch resumed" save is also after input. It is now non-destructive. That case was already destructive on the net-diff base; the same flag fixes it.
+
+Known limits, unchanged from the net-diff base: a throw inside a delivery after typing still reaches the catch. That includes the ensure's own delivery, which is the same boundary as the base flush's delivery, and the flush's post-delivery `GetQueueAsync`. S2 adds no new exposure there. Backlog text for caller triage: "Resumed-launch catch: classify a throw from inside a delivery after typing (and the flush's post-delivery GetQueueAsync) as post-input so it never kills a Working recipient."
+
+## Tests (CP-75, 8 executions; CP-68 191 -> 199)
+
+File: `tests/Antiphon.Tests/Application/DelegationDispatchRecoveryBoundaryTests.ResumeBookkeeping.cs`. Each test runs the real `AgentSessionService` and queue on an isolated schema with the fake adapter. The adapter records the typed body as a UserPrompt and leaves the turn open (no TurnEnd). Faults are one-shot: a `SaveChangesInterceptor` on the event detail, or a command interceptor on the boot flush's supervision read, armed after "brief re-queued" is saved.
+
+- `C1150_Resumed_backfill_event_save_failure_keeps_the_working_recipient`: Review 818f247a's cut. It asserts that the fault was reached once and that no error, kill or Failed status followed. The session stays Running, the transcript is Working and the task is Dispatched. There is one Sent brief with one attempt. Exactly one UserPrompt equals the row body and the typed body, and `PromptSubmissionMatch` holds. A later flush types nothing. The failed event is not persisted and the "launch resumed" event is.
+- `C1150_Resumed_launch_post_input_bookkeeping_flips_one_step`: 7 cases.
+  - Post-input cases: requeued-event-save, flush-after-ensure-input, resumed-event-save and flush-input-then-resumed-event-save.
+  - Healthy control.
+  - Pre-input controls that keep the kill-and-fail path: pre-input-legacy-requeued-event-save (no dispatch time, so it enqueues without delivering) and pre-input-resumed-event-save (brief received and turn ended before the restart).
+
+Red on 066b302d's production files (`git checkout 066b302d -- server/Application/Services/`, rebuilt, restored afterwards): 5/8 failed, all with `outcome.Error should be null` from the injected fault. They were the standalone and the four post-input cases. The three controls passed there by design.
+
+Mutants (built, run on `C1150_Resumed_*`, reverted; disjoint red sets per batch):
+
+| Case | Mutant (production line) | Red |
+|---|---|---|
+| standalone, requeued-event-save | M1 "brief re-queued" save `afterInput:false` | yes (batch A) |
+| flush-after-ensure-input | M2 flush catch filter `ex is null` (rethrow) | yes (A) |
+| pre-input-resumed-event-save | M7 "launch resumed" save `afterInput:true` | yes (A) |
+| flush-input-then-resumed-event-save | M3 `FlushSessionReportingInputAsync` returns false | yes (B) |
+| pre-input-legacy-requeued-event-save | M5 "brief re-queued" save `afterInput:true` | yes (B) |
+| resumed-event-save, flush-input-then-resumed-event-save | M4 "launch resumed" save `afterInput:false` | yes (C) |
+| standalone, requeued-event-save, flush-after-ensure-input, resumed-event-save | M6 ensure `InputStarted = false` | yes (D) |
+
+Each batch's red set was exactly the predicted set. The healthy control stayed green under every mutant, as a control should. Source was restored after each batch, and `git status` was clean before the commit and the run.
+
+Pending SourceLanding Mutation (none discharged here): PC-F10/requeued (M1), PC-F10/flush (M2), PC-F10/flush-flag (M3), PC-F10/resumed (M4), PC-F10/ensure-flag (M6), PC-F10/pre-input (M5, M7), and every earlier PC (PC-F1..PC-F9 families, PC-T/*, PC-6..PC-9 ...), unchanged.
+
+## Ordinary scope: 44 rows, one build
+
+The scope is the Review's 43 rows with filters unchanged, plus CP-75. CP-68's floor is 199. After/Build are regrouped to `S2-R6` and one build, `bin-c1150-r6/` (UseAppHost=false, added by the tool on Linux). Every row was serial with `TUNIT_MAX_PARALLEL_TESTS=1` on Postgres 53300 test schemas. Selection: `/tmp/claude-1654/-work-worktrees-task-6da8a413/8b56d333-472d-4cae-a16d-3dec330b8ac5/scratchpad/selection.md`. Filters, Min and EstimatedMinutes match the branch's test-design table for all 44 rows.
+
+`start --plan <selection> --rows <44 ids> --serial --expected-source-sha 9ed2074c...`. Run `20261008-121909-0519`: **GREEN exit 0**. 44 green, 0 red, 0 skipped. 855 executed, 855 passed. Wall 44m38s, one build (183 s, lease a4562bea, waited 0s), max concurrent builds 1, `unlisted: none`. `validate`: `CHECKPOINT SOURCE VALID source=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd rows=44`. Every line is dirty=0, sourceState=clean, buildSource=verified, slot=granted, waited=0s.
+
+CP-6=1, CP-7=3, CP-8=4, CP-9=1, CP-60=1, CP-61=5, CP-62=12, CP-63=1, CP-69=18, CP-70=73, CP-71=15, CP-72=2, CP-73=48, CP-74=7, CP-75=8, CP-1=1, CP-2=1, CP-3=5, CP-4=3, CP-5=3, CP-37=3, CP-39=4, CP-40=1, CP-41=3, CP-58=77, CP-67=49, CP-68=199, CP-43=3, CP-44=25, CP-45=85, CP-46=8, CP-47=67, CP-48=7, CP-49=15, CP-50=25, CP-51=17, CP-52=3, CP-53=1, CP-54=3, CP-55=3, CP-56=6, CP-64=4, CP-65=2, CP-66=33.
+
+The whole Unit lane was **not** run: the brief and AGENTS.md forbid it, and this brief overrides the generic Final profile. The 26 classifier and 5 queue probes from the Review were not rerun; they are Review-owned probes outside the 43 rows.
+
+## Every build and test run
+
+All ran through `scripts/build-slot.ps1` or the checkpoint tool and released their leases. All waits were 0s.
+
+| # | What / why | Outcome | Lease | held |
+|---|---|---|---|---|
+| 1 | build tests -> bin-f10 (fix) | ok | d425f9c9 | 126s |
+| 2 | `C1150_Resumed_*` on fix (tree == c42e8dae, before commit) | 8/8 passed | f404ddb6 | 52s |
+| 3 | build with 066b302d production files (red proof, brief-required) | ok | a54f0e1a | 113s |
+| 4 | `C1150_Resumed_*` red proof | 5 failed / 3 passed (expected) | 25f034c0 | 49s |
+| 5 | batch A build / run (M1+M2+M7) | ok / 4 failed, 4 passed | d2047463 / 109b8efa | 115s / 59s |
+| 6 | batch B build / run (M3+M5) | ok / 2 failed, 6 passed | c896f276 / 776d5610 | 120s / 87s |
+| 7 | batch C build / run (M4) | ok / 2 failed, 6 passed | b185ea7a / c5f41d2e | 118s / 69s |
+| 8 | batch D build / run (M6) | ok / 4 failed, 4 passed | e5e537d5 / 6d3bd06c | 127s / 62s |
+| 9 | build tools/Antiphon.Checkpoints -> bin-c1150r6drv (bootstrap) | ok, 1 warning | 8f3ef70a | 4s |
+| 10 | checkpoint run 20261008-121909-0519 at 9ed2074c | 44/44 green, 855 passed | build a4562bea | 183s build, 44m38s wall |
+
+All `bin-f10` and `bin-c1150r6drv` output directories were deleted. The tool deleted `bin-c1150-r6/`.
+
+## Invariants and other facts
+
+- Nothing now stops or fails a Working session because of resumed-launch bookkeeping after input. CARD-0079 remains the only automatic stop. The inherited CARD-1151 boot-stall tail (CP-37, 3/3) still stops an aged prompt-only Working session. It is untouched (the diff does not touch `TryFailBootStallAsync`).
+- `.antiphon/task-d30ad28b.md:246` and `.antiphon/task-44fc0e5a.md:206` are qualified: their "S2 adds no stop/fail path" was wrong until this repair.
+- Statement budgets (CP-67) are green. The decision table and the S1 whitelist are unchanged (CP-58 77/77, CP-69 18/18, CP-70 73/73).
+- No assertion was weakened or deleted, and no timeout was widened. Only CP-68's floor was raised.
+- Restart: **server** (AppHost restart to activate the server code after land). Runner: none. Migration: none. The owner is the landing orchestrator.
+- Platform: `GET /api/runner-defaults` 200 and `GET /api/session-runners` 200. No Runner or Platform pin.
+- Merge-tree and evidence guard: see the final message; they were rerun at the final tip.
+
+## Unedited CHECKPOINT lines (run 20261008-121909-0519)
+
+```text
+CHECKPOINT CP-6 commit=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd build=ok filter=/*/*/DelegationDispatchRecoveryBoundaryTests/C1150_Concurrent_producers_ensure_one_brief* executed=1 passed=1 failed=0 skipped=0 trx=/work/worktrees/task-6da8a413/.antiphon/checkpoints/20261008-121909-0519/rows/CP-6/run.trx slot=granted waited=0s dirty=0 source=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd sourceState=clean buildSource=verified
+CHECKPOINT CP-7 commit=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd build=reused filter=/*/*/DelegationDispatchRecoveryBoundaryTests/C1150_Existing_brief_and_spill_are_byte_identical* executed=3 passed=3 failed=0 skipped=0 trx=/work/worktrees/task-6da8a413/.antiphon/checkpoints/20261008-121909-0519/rows/CP-7/run.trx slot=granted waited=0s dirty=0 source=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd sourceState=clean buildSource=verified
+CHECKPOINT CP-8 commit=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd build=reused filter=/*/*/DelegationDispatchRecoveryBoundaryTests/C1150_Uncertain_evidence_cannot_create_a_replacement* executed=4 passed=4 failed=0 skipped=0 trx=/work/worktrees/task-6da8a413/.antiphon/checkpoints/20261008-121909-0519/rows/CP-8/run.trx slot=granted waited=0s dirty=0 source=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd sourceState=clean buildSource=verified
+CHECKPOINT CP-9 commit=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd build=reused filter=/*/*/DelegationDispatchRecoveryBoundaryTests/C1150_Old_attempt_evidence_does_not_suppress_current_brief* executed=1 passed=1 failed=0 skipped=0 trx=/work/worktrees/task-6da8a413/.antiphon/checkpoints/20261008-121909-0519/rows/CP-9/run.trx slot=granted waited=0s dirty=0 source=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd sourceState=clean buildSource=verified
+CHECKPOINT CP-60 commit=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd build=reused filter=/*/*/DelegationDispatchRecoveryBoundaryTests/C1150_Working_probe_failure_keeps_the_committed_brief* executed=1 passed=1 failed=0 skipped=0 trx=/work/worktrees/task-6da8a413/.antiphon/checkpoints/20261008-121909-0519/rows/CP-60/run.trx slot=granted waited=0s dirty=0 source=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd sourceState=clean buildSource=verified
+CHECKPOINT CP-61 commit=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd build=reused filter=/*/*/DelegationDispatchRecoveryBoundaryTests/C1150_Local_spill_must_be_present_and_intact* executed=5 passed=5 failed=0 skipped=0 trx=/work/worktrees/task-6da8a413/.antiphon/checkpoints/20261008-121909-0519/rows/CP-61/run.trx slot=granted waited=0s dirty=0 source=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd sourceState=clean buildSource=verified
+CHECKPOINT CP-62 commit=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd build=reused filter=/*/*/DelegationDispatchRecoveryBoundaryTests/C1150_Spill_pointer_forms_fail_closed* executed=12 passed=12 failed=0 skipped=0 trx=/work/worktrees/task-6da8a413/.antiphon/checkpoints/20261008-121909-0519/rows/CP-62/run.trx slot=granted waited=0s dirty=0 source=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd sourceState=clean buildSource=verified
+CHECKPOINT CP-63 commit=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd build=reused filter=/*/*/DelegationDispatchRecoveryBoundaryTests/C1150_Real_producers_race_to_one_brief_and_keep_the_followup* executed=1 passed=1 failed=0 skipped=0 trx=/work/worktrees/task-6da8a413/.antiphon/checkpoints/20261008-121909-0519/rows/CP-63/run.trx slot=granted waited=0s dirty=0 source=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd sourceState=clean buildSource=verified
+CHECKPOINT CP-69 commit=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd build=reused filter=/*/*/DelegationDispatchRecoveryBoundaryTests/C1150_Brief_decision_table_flips_one_condition* executed=18 passed=18 failed=0 skipped=0 trx=/work/worktrees/task-6da8a413/.antiphon/checkpoints/20261008-121909-0519/rows/CP-69/run.trx slot=granted waited=0s dirty=0 source=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd sourceState=clean buildSource=verified
+CHECKPOINT CP-70 commit=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd build=reused filter=/*/*/DelegationDispatchRecoveryBoundaryTests/C1150_Brief_evidence_whitelist_flips_one_condition* executed=73 passed=73 failed=0 skipped=0 trx=/work/worktrees/task-6da8a413/.antiphon/checkpoints/20261008-121909-0519/rows/CP-70/run.trx slot=granted waited=0s dirty=0 source=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd sourceState=clean buildSource=verified
+CHECKPOINT CP-71 commit=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd build=reused filter=/*/*/DelegationDispatchRecoveryBoundaryTests/C1150_Inline_brief_mentioning_spill_paths_is_not_held* executed=15 passed=15 failed=0 skipped=0 trx=/work/worktrees/task-6da8a413/.antiphon/checkpoints/20261008-121909-0519/rows/CP-71/run.trx slot=granted waited=0s dirty=0 source=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd sourceState=clean buildSource=verified
+CHECKPOINT CP-72 commit=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd build=reused filter=/*/*/DelegationDispatchRecoveryBoundaryTests/C1150_Late_ensure_after_remote_receipt_and_payload_release* executed=2 passed=2 failed=0 skipped=0 trx=/work/worktrees/task-6da8a413/.antiphon/checkpoints/20261008-121909-0519/rows/CP-72/run.trx slot=granted waited=0s dirty=0 source=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd sourceState=clean buildSource=verified
+CHECKPOINT CP-73 commit=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd build=reused filter=/*/*/DelegationDispatchRecoveryBoundaryTests/C1150_Brief_envelope_corpus_matches_the_expected_matrix* executed=48 passed=48 failed=0 skipped=0 trx=/work/worktrees/task-6da8a413/.antiphon/checkpoints/20261008-121909-0519/rows/CP-73/run.trx slot=granted waited=0s dirty=0 source=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd sourceState=clean buildSource=verified
+CHECKPOINT CP-74 commit=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd build=reused filter=/*/*/DelegationDispatchRecoveryBoundaryTests/C1150_Outer_envelope_and_receipt_floor_through_the_queue* executed=7 passed=7 failed=0 skipped=0 trx=/work/worktrees/task-6da8a413/.antiphon/checkpoints/20261008-121909-0519/rows/CP-74/run.trx slot=granted waited=0s dirty=0 source=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd sourceState=clean buildSource=verified
+CHECKPOINT CP-75 commit=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd build=reused filter=/*/*/DelegationDispatchRecoveryBoundaryTests/C1150_Resumed_* executed=8 passed=8 failed=0 skipped=0 trx=/work/worktrees/task-6da8a413/.antiphon/checkpoints/20261008-121909-0519/rows/CP-75/run.trx slot=granted waited=0s dirty=0 source=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd sourceState=clean buildSource=verified
+CHECKPOINT CP-1 commit=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd build=reused filter=/*/*/DelegationDispatchRecoveryBoundaryTests/C1149_Absent_launch_is_blocked_with_original_input* executed=1 passed=1 failed=0 skipped=0 trx=/work/worktrees/task-6da8a413/.antiphon/checkpoints/20261008-121909-0519/rows/CP-1/run.trx slot=granted waited=0s dirty=0 source=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd sourceState=clean buildSource=verified
+CHECKPOINT CP-2 commit=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd build=reused filter=/*/*/DelegationDispatchRecoveryBoundaryTests/C1149_Hold_is_once_and_automatic_relaunch_bound_is_zero* executed=1 passed=1 failed=0 skipped=0 trx=/work/worktrees/task-6da8a413/.antiphon/checkpoints/20261008-121909-0519/rows/CP-2/run.trx slot=granted waited=0s dirty=0 source=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd sourceState=clean buildSource=verified
+CHECKPOINT CP-3 commit=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd build=reused filter=/*/*/DelegationDispatchRecoveryBoundaryTests/C1149_Listed_or_unknown_runner_is_never_absence* executed=5 passed=5 failed=0 skipped=0 trx=/work/worktrees/task-6da8a413/.antiphon/checkpoints/20261008-121909-0519/rows/CP-3/run.trx slot=granted waited=0s dirty=0 source=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd sourceState=clean buildSource=verified
+CHECKPOINT CP-4 commit=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd build=reused filter=/*/*/DelegationDispatchRecoveryBoundaryTests/C1149_Changed_or_working_attempt_is_untouched* executed=3 passed=3 failed=0 skipped=0 trx=/work/worktrees/task-6da8a413/.antiphon/checkpoints/20261008-121909-0519/rows/CP-4/run.trx slot=granted waited=0s dirty=0 source=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd sourceState=clean buildSource=verified
+CHECKPOINT CP-5 commit=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd build=reused filter=/*/*/DelegationDispatchRecoveryBoundaryTests/C1149_Different_reason_or_attempted_brief_still_uses_failure_policy* executed=3 passed=3 failed=0 skipped=0 trx=/work/worktrees/task-6da8a413/.antiphon/checkpoints/20261008-121909-0519/rows/CP-5/run.trx slot=granted waited=0s dirty=0 source=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd sourceState=clean buildSource=verified
+CHECKPOINT CP-37 commit=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd build=reused filter=/*/*/BootStallWorkingTickCharacterizationTests/* executed=3 passed=3 failed=0 skipped=0 trx=/work/worktrees/task-6da8a413/.antiphon/checkpoints/20261008-121909-0519/rows/CP-37/run.trx slot=granted waited=0s dirty=0 source=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd sourceState=clean buildSource=verified
+CHECKPOINT CP-39 commit=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd build=reused filter=/*/*/DelegationDispatchRecoveryBoundaryTests/C1149_Native_attempt_keeps_the_failure_path* executed=4 passed=4 failed=0 skipped=0 trx=/work/worktrees/task-6da8a413/.antiphon/checkpoints/20261008-121909-0519/rows/CP-39/run.trx slot=granted waited=0s dirty=0 source=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd sourceState=clean buildSource=verified
+CHECKPOINT CP-40 commit=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd build=reused filter=/*/*/DelegationDispatchRecoveryBoundaryTests/C1149_Failed_hold_does_not_persist_on_a_later_save* executed=1 passed=1 failed=0 skipped=0 trx=/work/worktrees/task-6da8a413/.antiphon/checkpoints/20261008-121909-0519/rows/CP-40/run.trx slot=granted waited=0s dirty=0 source=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd sourceState=clean buildSource=verified
+CHECKPOINT CP-41 commit=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd build=reused filter=/*/*/DelegationDispatchRecoveryBoundaryTests/C1149_Caller_note_has_one_complete_user_prompt* executed=3 passed=3 failed=0 skipped=0 trx=/work/worktrees/task-6da8a413/.antiphon/checkpoints/20261008-121909-0519/rows/CP-41/run.trx slot=granted waited=0s dirty=0 source=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd sourceState=clean buildSource=verified
+CHECKPOINT CP-58 commit=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd build=reused filter=/*/*/AbsentLaunchPolicyTests/* executed=77 passed=77 failed=0 skipped=0 trx=/work/worktrees/task-6da8a413/.antiphon/checkpoints/20261008-121909-0519/rows/CP-58/run.trx slot=granted waited=0s dirty=0 source=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd sourceState=clean buildSource=verified
+CHECKPOINT CP-67 commit=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd build=reused filter=/*/*/DelegationDispatchRecoveryBoundaryTests/C1149_* executed=49 passed=49 failed=0 skipped=0 trx=/work/worktrees/task-6da8a413/.antiphon/checkpoints/20261008-121909-0519/rows/CP-67/run.trx slot=granted waited=0s dirty=0 source=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd sourceState=clean buildSource=verified
+CHECKPOINT CP-68 commit=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd build=reused filter=/*/*/DelegationDispatchRecoveryBoundaryTests/C1150_* executed=199 passed=199 failed=0 skipped=0 trx=/work/worktrees/task-6da8a413/.antiphon/checkpoints/20261008-121909-0519/rows/CP-68/run.trx slot=granted waited=0s dirty=0 source=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd sourceState=clean buildSource=verified
+CHECKPOINT CP-43 commit=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd build=reused filter=/*/*/DelegationBriefRecoveryTests/* executed=3 passed=3 failed=0 skipped=0 trx=/work/worktrees/task-6da8a413/.antiphon/checkpoints/20261008-121909-0519/rows/CP-43/run.trx slot=granted waited=0s dirty=0 source=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd sourceState=clean buildSource=verified
+CHECKPOINT CP-44 commit=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd build=reused filter=/*/*/AgentTaskDeadSessionReconciliationTests/* executed=25 passed=25 failed=0 skipped=0 trx=/work/worktrees/task-6da8a413/.antiphon/checkpoints/20261008-121909-0519/rows/CP-44/run.trx slot=granted waited=0s dirty=0 source=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd sourceState=clean buildSource=verified
+CHECKPOINT CP-45 commit=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd build=reused filter=/*/*/AgentTaskDeliveryWatchdogTests/* executed=85 passed=85 failed=0 skipped=0 trx=/work/worktrees/task-6da8a413/.antiphon/checkpoints/20261008-121909-0519/rows/CP-45/run.trx slot=granted waited=0s dirty=0 source=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd sourceState=clean buildSource=verified
+CHECKPOINT CP-46 commit=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd build=reused filter=/*/*/AgentSessionInterruptedLaunchResumeTests/* executed=8 passed=8 failed=0 skipped=0 trx=/work/worktrees/task-6da8a413/.antiphon/checkpoints/20261008-121909-0519/rows/CP-46/run.trx slot=granted waited=0s dirty=0 source=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd sourceState=clean buildSource=verified
+CHECKPOINT CP-47 commit=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd build=reused filter=/*/*/SessionReconciliationServiceTests/* executed=67 passed=67 failed=0 skipped=0 trx=/work/worktrees/task-6da8a413/.antiphon/checkpoints/20261008-121909-0519/rows/CP-47/run.trx slot=granted waited=0s dirty=0 source=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd sourceState=clean buildSource=verified
+CHECKPOINT CP-48 commit=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd build=reused filter=/*/*/AgentSessionLaunchQueueOwnershipTests/* executed=7 passed=7 failed=0 skipped=0 trx=/work/worktrees/task-6da8a413/.antiphon/checkpoints/20261008-121909-0519/rows/CP-48/run.trx slot=granted waited=0s dirty=0 source=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd sourceState=clean buildSource=verified
+CHECKPOINT CP-49 commit=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd build=reused filter=/*/*/AgentTaskDispatchFailureTests/* executed=15 passed=15 failed=0 skipped=0 trx=/work/worktrees/task-6da8a413/.antiphon/checkpoints/20261008-121909-0519/rows/CP-49/run.trx slot=granted waited=0s dirty=0 source=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd sourceState=clean buildSource=verified
+CHECKPOINT CP-50 commit=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd build=reused filter=/*/*/AgentTaskConcurrencyLimitTests/* executed=25 passed=25 failed=0 skipped=0 trx=/work/worktrees/task-6da8a413/.antiphon/checkpoints/20261008-121909-0519/rows/CP-50/run.trx slot=granted waited=0s dirty=0 source=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd sourceState=clean buildSource=verified
+CHECKPOINT CP-51 commit=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd build=reused filter=/*/*/AgentTaskDispatcherPredicateTests/* executed=17 passed=17 failed=0 skipped=0 trx=/work/worktrees/task-6da8a413/.antiphon/checkpoints/20261008-121909-0519/rows/CP-51/run.trx slot=granted waited=0s dirty=0 source=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd sourceState=clean buildSource=verified
+CHECKPOINT CP-52 commit=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd build=reused filter=/*/*/PhoneHomeRollingRunnerTests/C1125_* executed=3 passed=3 failed=0 skipped=0 trx=/work/worktrees/task-6da8a413/.antiphon/checkpoints/20261008-121909-0519/rows/CP-52/run.trx slot=granted waited=0s dirty=0 source=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd sourceState=clean buildSource=verified
+CHECKPOINT CP-53 commit=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd build=reused filter=/*/*/DispatcherSweepLifetimeRegistrationTests/Program_wires_both_sync_debt_sweeps_into_the_dispatcher* executed=1 passed=1 failed=0 skipped=0 trx=/work/worktrees/task-6da8a413/.antiphon/checkpoints/20261008-121909-0519/rows/CP-53/run.trx slot=granted waited=0s dirty=0 source=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd sourceState=clean buildSource=verified
+CHECKPOINT CP-54 commit=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd build=reused filter=/*/*/(TestClassificationGuardTests*)|(SlowTestTripwireTests*)/* executed=3 passed=3 failed=0 skipped=0 trx=/work/worktrees/task-6da8a413/.antiphon/checkpoints/20261008-121909-0519/rows/CP-54/run.trx slot=granted waited=0s dirty=0 source=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd sourceState=clean buildSource=verified
+CHECKPOINT CP-55 commit=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd build=reused filter=/*/*/SessionTerminationSourcePersistenceTests/* executed=3 passed=3 failed=0 skipped=0 trx=/work/worktrees/task-6da8a413/.antiphon/checkpoints/20261008-121909-0519/rows/CP-55/run.trx slot=granted waited=0s dirty=0 source=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd sourceState=clean buildSource=verified
+CHECKPOINT CP-56 commit=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd build=reused filter=/*/*/AgentTaskLivenessTests/* executed=6 passed=6 failed=0 skipped=0 trx=/work/worktrees/task-6da8a413/.antiphon/checkpoints/20261008-121909-0519/rows/CP-56/run.trx slot=granted waited=0s dirty=0 source=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd sourceState=clean buildSource=verified
+CHECKPOINT CP-64 commit=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd build=reused filter=/*/*/RepairSourceDispatchTests/C1115_* executed=4 passed=4 failed=0 skipped=0 trx=/work/worktrees/task-6da8a413/.antiphon/checkpoints/20261008-121909-0519/rows/CP-64/run.trx slot=granted waited=0s dirty=0 source=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd sourceState=clean buildSource=verified
+CHECKPOINT CP-65 commit=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd build=reused filter=/*/*/BlockedTaskParkReplyAdmissionTests/C1144_* executed=2 passed=2 failed=0 skipped=0 trx=/work/worktrees/task-6da8a413/.antiphon/checkpoints/20261008-121909-0519/rows/CP-65/run.trx slot=granted waited=0s dirty=0 source=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd sourceState=clean buildSource=verified
+CHECKPOINT CP-66 commit=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd build=reused filter=/*/*/BlockedTaskParkReplyAdmissionTests/C1146_* executed=33 passed=33 failed=0 skipped=0 trx=/work/worktrees/task-6da8a413/.antiphon/checkpoints/20261008-121909-0519/rows/CP-66/run.trx slot=granted waited=0s dirty=0 source=9ed2074ce24e1295f663bfaf12d3c52ee7438cfd sourceState=clean buildSource=verified
+```
