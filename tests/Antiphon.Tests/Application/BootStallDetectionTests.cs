@@ -824,13 +824,13 @@ public class BootStallDetectionTests
 
             var during = world.LogEntries().Skip(mark).ToList();
             var described = string.Join('\n', during.Select(e => $"{e.Level} {e.Category} [{e.EventId.Id}]: {e.Message}"));
-            during.ShouldContain(
-                e => e.Level == LogLevel.Debug && e.Message.Contains("is missing or mid-update"),
-                $"the writer met the held row and said so at Debug\n{described}");
             during.Where(e => e.Level > LogLevel.Debug && e.EventId.Id != RelationalEventId.CommandExecuted.Id)
                 .ShouldBeEmpty($"expected contention logs nothing above Debug\n{described}");
             during.Where(e => e.Exception is not null)
                 .ShouldBeEmpty($"expected contention is a result, not an exception\n{described}");
+            during.ShouldContain(
+                e => e.Level == LogLevel.Debug && e.Message.Contains("is missing or mid-update"),
+                $"the writer met the held row and said so at Debug\n{described}");
             (await world.BootWarningsAsync()).ShouldBeEmpty("a held session row writes nothing");
             await AssertSameAttemptAsync(world, before);
         }
