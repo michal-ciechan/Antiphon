@@ -1020,7 +1020,7 @@ public sealed class BlockedTaskParkReplyAdmissionTests
         return refused;
     }
 
-    // A confirmed park that answer admission refuses: neither Reply nor cancellation is named.
+    // No candidate park is admitted and a confirmed one fails admission: neither Reply nor cancellation is named.
     private static async Task<ConflictException> LocalMismatchRefusedAsync(RunnerSeatReleaseFixture f, string label)
     {
         var refused = await LocalFollowUpRefusedAsync(f, label);

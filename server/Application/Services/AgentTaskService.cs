@@ -507,11 +507,11 @@ public sealed class AgentTaskService
                                 && (s.Status == SessionStatus.Starting || s.Status == SessionStatus.Running),
                             ct);
                     // CARD-1037 still refuses a remote pool continuation when a Blocked
-                    // task is pinned to that agent. Reply is named only when that park
-                    // would be admitted (CARD-1103). The same one read classifies the
-                    // local branch, and confirmed park evidence outranks the session
-                    // projection, so a stale Running row cannot recommend a Reply that
-                    // answer admission refuses (CARD-1154).
+                    // task is pinned to that agent. Reply is named only when some candidate
+                    // park of that task would be admitted (CARD-1103). The same one read
+                    // classifies the local branch, and confirmed park evidence outranks the
+                    // session projection, so a stale Running row cannot recommend a Reply
+                    // that answer admission refuses (CARD-1154).
                     var parkReply = await RemotePoolParkReplyAsync(blockedOnAgent, ct);
                     RefuseRemotePoolFollowUp(followAgent, retainedRunnerId, priorId, parkReply, blockedOnAgent.Id);
 
@@ -3311,10 +3311,14 @@ public sealed class AgentTaskService
 
     /// <summary>
     /// One read per blocked follow-up create, serving both the remote-pool 422 and the
-    /// local 409 guidance (CARD-1154). Admitted is the confirmed-receipt and
-    /// release-identity query answer continuation uses (<see cref="RunnerSeatReleaseQueries"/>),
-    /// correlated to the current-attempt park's linked release (CARD-1146). A confirmed park
-    /// that fails that match must not recommend Reply.
+    /// local 409 guidance (CARD-1154). Candidates are the task's current-attempt published
+    /// parks in Parked or ResumePending with a linked release. Admitted is the confirmed-receipt
+    /// and release-identity query answer continuation uses (<see cref="RunnerSeatReleaseQueries"/>),
+    /// correlated to a candidate's linked release (CARD-1146). Across all candidates, any
+    /// admitted candidate returns Admitted, the Reply advice; otherwise a candidate whose linked
+    /// release is Confirmed with a non-null ConfirmedAt but fails admission returns
+    /// ReleaseMismatch, the mismatch text that names neither Reply nor cancel; otherwise None,
+    /// the ordinary live/dead advice or the plain remote-pool 422.
     /// </summary>
     internal async Task<RemotePoolParkReply> RemotePoolParkReplyAsync(AgentTask task, CancellationToken ct)
     {
