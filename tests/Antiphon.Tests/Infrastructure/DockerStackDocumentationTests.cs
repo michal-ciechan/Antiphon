@@ -67,6 +67,17 @@ public sealed class DockerStackDocumentationTests
         section.ShouldContain("the whole audit has a 30-minute budget");
         section.ShouldNotContain("each worktree's private refs and HEAD (also bare HEAD), and both sides of every reflog entry must prove publication",
             Case.Sensitive, "the false every-reflog sentence is gone");
+        // CARD-1105 repair 5: an existing orphaned checkout is inspected, non-commit tips must be
+        // the advertised object, symlinks and HEAD-named files follow checkout ownership.
+        section.ShouldContain("its files are inspected even if the checkout's `.git` pointer is missing or names another directory");
+        section.ShouldContain("must be the very object origin advertises (`ls-remote` heads and tags)");
+        section.ShouldContain("Symlinks are never followed: a tracked symlink compares by its link text");
+        section.ShouldContain("A file named `HEAD` counts as a repository only in a directory shaped like a Git directory");
+        section.ShouldContain("ignored content and a moving origin leave the before/after comparison equal");
+        section.ShouldNotContain("Noncommit tips, unsupported index modes and grafts refuse unknown", Case.Sensitive,
+            "non-commit tips are proven as objects, not refused unknown");
+        section.ShouldNotContain("Its checkout's files are inspected only when its `gitdir` file and the checkout's `.git` file name each other",
+            Case.Sensitive, "an existing checkout with a lost pointer is inspected");
         section.ShouldContain("git clone --filter=blob:none --no-checkout");
         section.ShouldContain("RecycleGitAuditUnknown");
         section.ShouldContain("GithubTokenAbsent");
