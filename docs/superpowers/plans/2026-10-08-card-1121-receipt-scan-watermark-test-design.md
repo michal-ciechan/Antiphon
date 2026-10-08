@@ -116,6 +116,16 @@ session.
   returning one committed row. The cohort's pull fails, so the quiet pass is 6 commands today
   and 5 on reuse. Both shapes are pinned in §4; the live-row shape stays 9/8.
 
+- **A-5, Code S1 (task `56c39ac6`), operator decisions applied.** Q2 takes the one-constant
+  fallback: `MaxExpectedTextChars = 16384` and `MaxProofs = 256` (same 8 MiB bound); every
+  boundary row is written against the constants, and V-2 `capacity-1025th-evicts-oldest` is
+  named `capacity-overflow-evicts-oldest` (`MaxProofs + 1` notes). W-6's `ResetEpoch >= 0`
+  guard gets its own V-1 state row `reset-epoch-negative` (V-1 96 rows; CP-1 108 results).
+  Eligibility and state rows apply the flip to **both** sides so the named guard alone refuses
+  (a reuse-side-only flip would also be refused by the context or stamp comparison and could not
+  go red on that guard's mutation). `note-id` refuses as `no-proof`: `NoteId` is the proof's
+  key. The `CountingReader` promotion moves to S2, its first consumer, so S1 edits no R-1 file.
+
 Two implementation seams the amendments and tests need, within the plan's S1/S2 scope:
 new `LandDeliveryBoundary` names `receipt-scan-before-stamp` (after catch-up and the
 observation, before the before-stamp read), `receipt-scan-exhausted` (after
@@ -433,7 +443,7 @@ through CP-6 own a Testcontainers PostgreSQL and an isolated schema per test. Bu
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
 |---|---|---|---|---|---|---|---:|---:|---|---|
-| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1121-policy/` | policy | `/*/*/LandReceiptScanCacheTests/*` | V-1, V-2 | 107 executed, 0 failed/skipped | 107 | 4 | true | n/a |
+| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1121-policy/` | policy | `/*/*/LandReceiptScanCacheTests/*` | V-1, V-2 | 108 executed (A-5), 0 failed/skipped | 108 | 4 | true | n/a |
 | CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1121-behavior/` | pg-behavior | `/*/*/AgentTaskLandReceiptWatermarkTests/*` | V-3, V-4, V-5, V-6, V-10, V-11 | 36 executed, 0 failed/skipped | 36 | 8 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-3 | S3 | `tests/Antiphon.Tests -> bin-c1121-safety/` | pg-safety | `/*/*/AgentTaskLandReceiptWatermarkSafetyTests/*` | V-7, V-8, V-9 | 14 executed, 0 failed/skipped | 14 | 7 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-4 | S3 | `CP-3` | pg-receipts | `/*/Antiphon.Tests.Application/(AgentTaskLandReceiptTests*)\|(AgentTaskLandQueuedReceiptTests*)/*` | R-1 | 64 executed including all 12 C1073 results, 0 failed/skipped | 64 | 5 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |

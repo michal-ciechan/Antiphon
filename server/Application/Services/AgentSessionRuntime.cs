@@ -703,20 +703,66 @@ public sealed class AgentSessionRuntime
     /// for the stream to catch up was measured at 90 seconds and still lost the race.</para>
     /// </summary>
     /// <returns>True when the pull stored at least one entry that was not already known.</returns>
-    public async Task<bool> CatchUpTranscriptAsync(Guid sessionId, CancellationToken ct)
+    public async Task<bool> CatchUpTranscriptAsync(Guid sessionId, CancellationToken ct) =>
+        (await PullAndPersistAsync(sessionId, ct)).Persisted.LastStoredSeq is not null;
+
+    // The one pull shared by catch-up and the receipt observation. Pulled is false when the runner
+    // pull itself failed; a swallowed persist failure is reported through NeedsReload/_persistFailures.
+    private async Task<(bool Pulled, PersistResult Persisted)> PullAndPersistAsync(Guid sessionId, CancellationToken ct)
     {
         try
         {
             var snapshot = await _runnerClient.GetTranscriptAsync(sessionId, ct);
-            return (await PersistTranscriptAsync(sessionId, snapshot.Entries)).LastStoredSeq is not null;
+            return (true, await PersistTranscriptAsync(sessionId, snapshot.Entries));
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             // Not live in the runner, or the runner is unreachable: the caller falls back to
             // whatever the stream has already stored, which is exactly today's behaviour.
             _logger.LogDebug(ex, "Transcript catch-up skipped for session {SessionId}", sessionId);
-            return false;
+            return (false, PersistResult.Empty);
         }
+    }
+
+    /// <summary>
+    /// CARD-1121 D-4 as amended by A-2: the same catch-up pull, then the committed state of this
+    /// runtime's own store read after it. A failed pull is the expected answer only for a destination
+    /// the caller found terminal; for any other destination it is unknown. A persist that needs a
+    /// reload, a retained persist failure, a missing or disabled store and a failed state read are
+    /// unknown too. Unknown never certifies anything; cancellation propagates.
+    /// </summary>
+    internal async Task<LandReceiptScanCache.Observation> CatchUpForReceiptAsync(
+        Guid sessionId, bool destinationTerminal, CancellationToken ct)
+    {
+        var (pulled, persisted) = await PullAndPersistAsync(sessionId, ct);
+        if (!pulled && !destinationTerminal) return LandReceiptScanCache.Observation.Unknown("pull_failed");
+        if (persisted.NeedsReload) return LandReceiptScanCache.Observation.Unknown("persist_needs_reload");
+        return await ObserveReceiptStateAsync(sessionId, ct);
+    }
+
+    /// <summary>
+    /// CARD-1121: a serialized read of this runtime's store (no pull), used for the before and after
+    /// stamps around a receipt scan. Unknown when the store is absent or disabled, the read faults, or
+    /// a persist failure is retained for the session.
+    /// </summary>
+    internal async Task<LandReceiptScanCache.Observation> ObserveReceiptStateAsync(Guid sessionId, CancellationToken ct)
+    {
+        if (_states is null) return LandReceiptScanCache.Observation.Unknown("store_absent");
+        if (!_states.Enabled) return LandReceiptScanCache.Observation.Unknown("store_disabled");
+        SessionStateSnapshot snapshot;
+        try
+        {
+            snapshot = await _states.ReadAsync(sessionId, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogDebug(ex, "Receipt state observation unavailable for session {SessionId}", sessionId);
+            return LandReceiptScanCache.Observation.Unknown("state_read_failed");
+        }
+        // Checked after the read so a failure recorded under the gate before it is never missed.
+        return TryGetTranscriptPersistFailure(sessionId, out _)
+            ? LandReceiptScanCache.Observation.Unknown("persist_failure_retained")
+            : LandReceiptScanCache.Observation.Known(snapshot);
     }
 
     /// <summary>
