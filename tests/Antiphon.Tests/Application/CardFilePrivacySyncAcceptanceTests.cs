@@ -6,6 +6,9 @@ using TUnit.Core;
 
 namespace Antiphon.Tests.Application;
 
+// CARD-1137: compare EF entities with EntityScalarSnapshot.Of(db, ...), not default-options
+// JsonSerializer: an entity graph serialize holds STJ's process-wide metadata lock for seconds and
+// stalls the in-process runner (rule and reason: TerminalRunnerSeatReleaseTests header).
 [Category("Integration")]
 [NotInParallel]
 [ParallelLimiter<ProcessSpawnLimit>]
