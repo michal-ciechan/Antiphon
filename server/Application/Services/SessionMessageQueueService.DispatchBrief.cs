@@ -87,7 +87,7 @@ public sealed partial class SessionMessageQueueService
                 .Where(t => t.Text != null
                     && t.Text.Contains(marker)
                     && (t.Kind == TranscriptKinds.UserPrompt || t.Kind == TranscriptKinds.QueuedUserPrompt))
-                .Select(t => new DispatchBriefPromptEvidence(t.AgentSessionId, t.Kind, t.Text, t.Timestamp))
+                .Select(t => new DispatchBriefPromptEvidence(t.AgentSessionId, t.Kind, t.Text, t.Timestamp, t.Sequence))
                 .ToListAsync(ct);
 
             var decision = DispatchBriefEvidence.Classify(
@@ -297,5 +297,6 @@ public sealed partial class SessionMessageQueueService
             row.LastDeliveryStartedAt,
             row.SentAt,
             row.CanceledAt,
-            row.LastDeliveryGeneration);
+            row.LastDeliveryGeneration,
+            row.LastDeliveryBaselineSequence);
 }

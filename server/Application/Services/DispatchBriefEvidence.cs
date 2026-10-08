@@ -56,13 +56,15 @@ internal sealed record DispatchBriefRowEvidence(
     DateTime? LastDeliveryStartedAt,
     DateTime? SentAt,
     DateTime? CanceledAt,
-    DateTime? LastDeliveryGeneration);
+    DateTime? LastDeliveryGeneration,
+    long? LastDeliveryBaselineSequence = null);
 
 internal sealed record DispatchBriefPromptEvidence(
     Guid AgentSessionId,
     string Kind,
     string? Text,
-    DateTime? Timestamp);
+    DateTime? Timestamp,
+    long? Sequence = null);
 
 /// <summary>
 /// What the ensure observed about one task's current brief, each a positive observation. Row
@@ -258,7 +260,7 @@ internal static class DispatchBriefEvidence
     {
         foreach (var prompt in prompts)
         {
-            if (!PromptInWindow(prompt, request))
+            if (!IsCurrentReceipt(prompt, row, request))
                 continue;
             if (!string.Equals(prompt.Kind, TranscriptKinds.UserPrompt, StringComparison.Ordinal))
                 continue;
@@ -290,9 +292,31 @@ internal static class DispatchBriefEvidence
         return false;
     }
 
+    /// <summary>
+    /// Possibly this attempt's: enough to hold rather than insert a second brief. An undated
+    /// prompt cannot be excluded here, so it stays evidence.
+    /// </summary>
     private static bool PromptInWindow(DispatchBriefPromptEvidence prompt, DispatchBriefEnsureRequest request) =>
         prompt.AgentSessionId == request.SessionId
         && (prompt.Timestamp is null || InWindow(prompt.Timestamp.Value, request.DispatchedAt));
+
+    /// <summary>
+    /// Proven this attempt's: enough to stand in for a missing payload (F8). The queue's own
+    /// floor applies when it has one: the prompt must follow the row's last delivery baseline,
+    /// as in its late confirm. A dated prompt must also be in the dispatch window. An undated
+    /// prompt has only that floor; with no floor it proves nothing and is not a receipt.
+    /// </summary>
+    private static bool IsCurrentReceipt(
+        DispatchBriefPromptEvidence prompt, DispatchBriefRowEvidence row, DispatchBriefEnsureRequest request)
+    {
+        if (prompt.AgentSessionId != request.SessionId)
+            return false;
+        if (row.LastDeliveryBaselineSequence is long floor && !(prompt.Sequence > floor))
+            return false;
+        return prompt.Timestamp is DateTime at
+            ? InWindow(at, request.DispatchedAt)
+            : row.LastDeliveryBaselineSequence is not null;
+    }
 
     /// <summary>
     /// The rooted spill file a pointer names in its slot, or null. The local producer writes it
