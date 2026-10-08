@@ -169,7 +169,19 @@ Do not replay any CARD-1144/1146/1147 slice or edit generated `docs/cards` files
 Replace `LocalGuidanceSentence` in both runtime/orchestration owners and its existing
 pin with this exact sentence:
 
-> Local 409 follow_up_agent_blocked guidance uses the same confirmed release-identity query as Reply; it recommends Reply for a current-attempt published park only when that query admits its linked release (CARD-1154).
+> Local 409 follow_up_agent_blocked guidance uses the same confirmed release-identity query as Reply; it gives the published-seat Reply advice (the seat was released; reply and do not cancel) only when that query admits the linked release of a current-attempt published park in Parked or ResumePending, and otherwise falls back to the mismatch or live/dead advice, whose live form also names Reply or cancel (CARD-1154).
+
+Repair (Review fd379736, D1): the earlier wording of this sentence promised that every
+Reply recommendation for a published park requires admission, and the owners promised
+mismatch text for any Confirmed but inadmissible release. `RemotePoolParkReplyAsync`
+returns ReleaseMismatch only when the linked release also has a non-null ConfirmedAt;
+otherwise it returns None and the generic live/dead advice applies (V-3
+`missing-confirmed-at-stopped`). Add and pin these two sentences in both owners, with a
+source anchor on the classifier's ConfirmedAt condition and stale-wording exclusions:
+
+> The mismatch 409, which says that parked answer cannot be continued, applies only when no current-attempt published park in Parked or ResumePending is admitted and at least one such park has a linked release in state Confirmed with a non-null ConfirmedAt: a release identity mismatch, a missing ActionId, or an OutcomeCode outside Released, AlreadyExited and AlreadyAbsent (CARD-1154).
+
+> A linked release in state Confirmed with a null ConfirmedAt, a release in any other state, or no such park at all gives no confirmed park classification, so the live/dead advice applies (CARD-1154).
 
 Add and pin these two sentences in both owners:
 
@@ -274,7 +286,11 @@ released park with its evidence deleted. No `Task.Delay`, real-provider launch o
 retry is part of these witnesses.
 
 V-4 uses the existing all-six-command-path `FullCommandCounter`; retain the complete
-SQL list/count outside tracked evidence and print a bounded roster. At the helper
+SQL list/count outside tracked evidence and print a bounded roster. (Repair, Review
+fd379736 D2: the test appends every helper and public-window command verbatim to
+`c1154-local-guidance-<utc>-<pid>.sql.txt` in the run's `--results-directory`, the
+checkpoint row directory, attaches it to the TRX result, prints its path, and asserts
+the file holds all ten windows and each measured command untruncated.) At the helper
 boundary require Total=1, a SELECT and zero writes. In a separate public Create
 window count **all** commands, require exactly one command referencing park/release
 evidence, no standalone release preload or duplicate park SELECT, zero writes,
