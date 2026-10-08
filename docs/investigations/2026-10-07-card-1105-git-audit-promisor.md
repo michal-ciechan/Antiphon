@@ -26,10 +26,10 @@ The whole Unit lane is outside this explicitly commissioned closed scope; it is 
 | V-4 | Commit/tree completeness; blobs may be absent; a commit-graph cannot hide a missing commit | C1105_Git_audit_object_completeness, all 4 variants; seed positive |
 | V-5 | Actual deploy fixture is truly blobless | C1008_Recycle_audits_promisor_checkout and each new local fixture |
 | V-6 | Failure preserves saved proof; unchanged recovered origin resumes | C1105_Git_audit_resume_preserves_proof |
-| V-7 | Every Git-directory location in the closed list: private commit hidden only there refuses with the stated class/check; published value passes; repair 4 shapes (present-origin comparison, admin-directory scan, AUTO_MERGE, antiphon/review-evidence, empty markers, editor files, ignored files); repair 5 shapes (V-12 to V-15) | C1105_Git_audit_hidden_locations, all 93 table rows |
+| V-7 | Every Git-directory location in the closed list: private commit hidden only there refuses with the stated class/check; published value passes; repair 4 shapes (present-origin comparison, admin-directory scan, AUTO_MERGE, antiphon/review-evidence, empty markers, editor files, ignored files); repair 5 shapes (V-12 to V-15) | C1105_Git_audit_hidden_locations, every table row (122 at repair 7: 93 through repair 5, 16 added by repair 6, 13 by repair 7) |
 | V-8 | A failure of only the per-tip `rev-list --count` refuses `check=rev-list status=128` | C1008_Recycle_audits_promisor_checkout (count-only block) |
 | V-9 | Origin ahead of the clone or a deleted tracking ref is not a refusal; a tracking ref no origin head contains refuses unpublished | C1008_Recycle_refuses_uninspectable_git (tracking-deleted, origin-ahead, gone blocks) and the origin-* rows of V-7 (origin-none-present now with the proof fetch failing; see V-17) |
-| V-10 | Running out of the overall budget refuses `check=audit-timeout` | C1105_Git_audit_overall_timeout |
+| V-10 | Running out of the overall budget (3000 s since repair 7) refuses `check=audit-timeout` | C1105_Git_audit_overall_timeout (its anchor is the exact 3000 s budget line) |
 | V-11 | A replay-shaped volume (blobless mirror, 250 linked worktrees of 300 files, ignored build output) audits within 240 s; one pass per common directory, one content check per worktree | C1105_Git_audit_volume_scale |
 | V-12 | An existing recorded checkout is inspected against its admin directory when its `.git` pointer is missing or names another directory; clean or ignored-only content passes; an absent checkout keeps the index-equals-HEAD rule | hidden rows orphan-missing-modified, orphan-missing-untracked, orphan-elsewhere-modified, orphan-missing-clean, orphan-missing-ignored, orphan-symlink-ignored, plus stale-linked-published, pruned-path-staged, stale-pointer-staged |
 | V-13 | A non-commit tip is published only as the very advertised object (a tree also when a present head reaches it); an advertised tag's commit is still proven against the heads | hidden rows tag-annotated, tag-annotated-packed, tag-annotated-published, tag-of-tag, tag-of-tag-published, tag-lightweight, tag-tree, tree-ref-published, tree-ref-unpublished, blob-ref, tag-published-off-branch |
@@ -39,8 +39,10 @@ The whole Unit lane is outside this explicitly commissioned closed scope; it is 
 | V-17 | Publication is proven against origin's real heads fetched blobless into a scratch repository; a failed or timed-out fetch falls back to present heads (more refusals); no comparison head refuses unknown; the only fetch is that one, never lazy, never into the audited volume | hidden rows origin-none-present-fetched, origin-stale-master, origin-stale-master-fetch-failed, origin-stale-master-fetch-timeout, origin-none-present, origin-fetched-unpublished; the per-start fetch assertion in every C1105_Git_audit case; volume-scale (one fetch per common directory) |
 | V-18 | The audited volume is never written: read-only bind mount and an unchanged metadata snapshot | hidden rows origin-stale-master-readonly, origin-stale-master |
 | V-19 | Replay 3b (branches origin deleted) still refuses; the refusal receipt counts `gone-tracking` and `unadvertised-local` with `proof=` and `commits`/`tips` | hidden rows origin-gone-counts, origin-tracking-deleted, origin-fetched-unpublished |
+| V-20 | Repair 7: a registered tmp checkout's path is translated to the mount before it is resolved: a `..` in the recorded path, a symlink target outside the runner's /tmp, or a target climbing above the mount refuses `worktree-confine`; a relative target, or an absolute one under the runner's /tmp, is followed in the mount; inside the checkout every `.git` entry and Git-shaped `HEAD` directory is classified as under /work (only another registered checkout's own pointer passes); ignored output and a registered checkout nested in it pass | hidden rows tmp-nested-dot-git, tmp-nested-dot-git-file, tmp-nested-pointer-unregistered, tmp-nested-git-shaped, tmp-dot-git-symlink, tmp-linked-ignored, tmp-nested-registered, tmp-symlink-dotdot, tmp-symlink-relative, tmp-symlink-absolute, tmp-symlink-climb |
+| V-21 | Repair 7: all proof fetches share a 600 s allowance besides the 300 s cap each; once spent no fetch starts and the present heads decide (more refusals) | hidden rows origin-fetch-allowance-spent, origin-fetch-allowance-shared |
 | R-1 | Full commissioned adjacent regression | CP-1 through CP-12 |
-| R-2 | No lazy fetch; required environment (including the commit-graph keys) at every Git start | all 142 C1105_Git_audit cases |
+| R-2 | No lazy fetch; required environment (including the commit-graph keys) at every Git start | all 155 C1105_Git_audit cases |
 | R-3 | Dirty/unpublished/unknown classification, receipts, zero-count failures, UID 1654 | CP-11 existing 8 methods |
 
 ## Positive controls pending
@@ -70,6 +72,9 @@ All controls remain pending for method-scoped SourceLanding Mutation, including 
 | PC-R6 / one variant per row of the repair 6 mutation table (M1-M14) | C1105_Git_audit_hidden_locations | the mutation named for that row | the named rows go red |
 | PC-R6-create | C1008_Recycle_audits_work_as_1654 | drop the runner-tmp mount, its C1008_TMP_MOUNT env or the scratch tmpfs from c1008_audit | create-argument assertion fails |
 | PC-doc-r6 | DockerStackDocumentationTests.Main_volume_recycling_is_scripted_only | remove a repair 6 sentence, or restore the present-only sentence | documentation pins fail |
+| PC-R7 / one variant per row of the repair 7 mutation table (M1-M12) | C1105_Git_audit_hidden_locations (and tmp-linked-clean for M11) | the mutation named for that row | the named rows go red |
+| PC-R7-budget | C1105_Git_audit_overall_timeout; C1105_Git_audit_hidden_locations origin-fetch-allowance-* | restore 1800 s, or drop/alter the 600 s allowance or the cap clamp | anchor assertion fails (text pin) |
+| PC-doc-r7 | DockerStackDocumentationTests.Main_volume_recycling_is_scripted_only | remove a repair 7 sentence, or restore the 30-minute budget or the resolve-through-symlink sentence | documentation pins fail |
 
 Round 1 found two existing receipt-name assertions red because the completeness traversal named its logical purpose instead of its Git command. The corrected receipt names rev-list-objects; no assertion or timeout changed. The stopped row and rerun are retained in the task report.
 
@@ -368,7 +373,7 @@ Green at 302b870f by nature (negative controls, not claimed as new detections): 
 
 ### Performance and headroom
 
-`volume-scale` (250 linked worktrees of 300 files, one common directory, one proof fetch from a local origin): 17.2 s and 18.1 s for the candidate, 16.8 s for the 302b870f helper, back to back on server2-temp at load average 4 to 6 (assertion < 240 s, budget 1800 s). The fetch adds about one second locally plus whatever origin needs to send; it is capped at 300 s and then falls back. Replay headroom: the OLD-volume replay took 23.4 min (1404 s) end to end and its content checks about 20 min (about 1200 s) at load average 17. The real audit's content checks are the same, so the expected whole audit is about 21 to 24 min plus the fetch; with the fetch at its 300 s cap that is about 26 to 29 min of the 30 min budget. The headroom is therefore 1 to 9 minutes on a loaded host; a timeout refuses (`audit-timeout`), never passes. Raising the budget is an operator decision and was not done here.
+`volume-scale` (250 linked worktrees of 300 files, one common directory, one proof fetch from a local origin): 17.2 s and 18.1 s for the candidate, 16.8 s for the 302b870f helper, back to back on server2-temp at load average 4 to 6 (assertion < 240 s, budget 1800 s). The fetch adds about one second locally plus whatever origin needs to send; it is capped at 300 s and then falls back. Replay headroom (corrected by repair 7; the 1 to 9 minutes first written here assumed one capped fetch and was wrong): the OLD-volume replay took 23.4 min (1404 s) end to end, about 20 min (about 1200 s) of it content checks, at load average 17. That volume has two common directories, so two proof fetches: one at its 300 s cap makes about 1704 s (28.4 min, 96 s left of 1800 s), two make about 2004 s (33.4 min), 204 s over the 1800 s budget. A timeout refuses (`audit-timeout`), never passes; repair 7 raised the budget (below).
 
 ### New and changed cases
 
@@ -376,9 +381,77 @@ Green at 302b870f by nature (negative controls, not claimed as new detections): 
 
 Round 1 (run 20261008-134838-4b98 at b40da800, stopped after CP-11): CP-11 149/150, the one red was origin-stale-master-fetch-timeout. Its 0.01 s fetch timeout killed an origin-side `pack-objects` between its trace start event and its environment parameter events, so the per-start environment check saw a start without `GIT_NO_LAZY_FETCH`. The row now times out a fetch that waits on an origin that never answers (`--upload-pack='sleep 10; git-upload-pack'`, 2 s), so no Git process is killed mid-start; the expectation (fallback, `U rev-list proof=present`) and the check are unchanged; 5 repeated runs green and mutant M7 still red. No production line changed in round 2.
 
+## Repair 7: tmp checkout fail-opens and the audit budget
+
+Source: Final Review e079b0d3 of repair 6 (d6ba7439), which found two fail-opens in the runner-tmp checkout audit (both pass on d6ba7439 and refuse on 302b870f), the contradictory plan counts, and the headroom prose corrected above. No production host was contacted; every fixture, baseline, mutant and TUnit driver ran through `scripts/build-slot.ps1` or the checkpoint tool.
+
+### What changed, per finding
+
+| ID | Change |
+|---|---|
+| F1 (hidden Git content in a tmp checkout) | Under /work the repository scan makes every `.git` entry and Git-shaped `HEAD` directory an entry of its own; nothing scanned the tmp volume. `consider_tmp_git` runs the same `find` over each registered tmp checkout that exists. A `.git` file is accepted only when its `gitdir:` names an admin directory whose own recorded checkout is that very directory (a registered tmp checkout, inspected by its own admin; checked after every common directory through `tmp_nested`/`tmp_registered`). A `.git` directory, a symlinked `.git`, any other `.git` file and a Git-shaped `HEAD` directory refuse `RecycleGitAuditUnknown` (`dot-git`, `git-dir-shape`), ignored or not: their metadata is outside /work, the same reason /work refuses `common-dir-confine`. Ignored output itself still passes. |
+| F2 (symlink plus `..`) | A recorded path under the runner's /tmp is translated to the mount before anything resolves it (`tmp_resolve`): a `..` component in the recorded path refuses; symlinks are followed one hop at a time in the mount, a relative target from its own directory, an absolute target only under the runner's /tmp (translated), a `..` in a target never above the mount and only from an existing directory, at most 40 hops. Anything it cannot prove refuses `worktree-confine`. A recorded path outside /tmp resolves in place and must lie under /work (it is no longer re-translated after resolving, which also read the helper's /tmp). |
+| Budget | Overall audit budget 1800 s -> 3000 s. All proof fetches share a 600 s allowance (`fetch_left_ms`), charged by measured wall time; each fetch is capped at the smaller of 300 s and the remaining allowance; once spent, the remaining common directories compare only their present heads (more refusals, never fewer). A timeout still refuses `audit-timeout`. |
+| F3 | V-7 now counts 122 rows; the checkpoint census says 163/299 once, history labelled. |
+| F4 | Process: every run of this repair is gated (listed in the task report). |
+
+### Deadline chain (measured, file:line at the repair 7 tip)
+
+| Deadline | Where | Value | Encloses the audit? |
+|---|---|---|---|
+| Overall audit budget | scripts/c590-remote.sh:5385 | 3000 s, kill after 10 s more | is the audit |
+| Proof fetch, each | scripts/c590-remote.sh:5053 (cap 5035, allowance 4439) | min(300 s, allowance left); allowance 600 s | inside |
+| ls-remote / object traversal / tree reach / count | scripts/c590-remote.sh:5103, 5171, 5200, 5220 | 30 s each | inside |
+| Unpublished detail | scripts/c590-remote.sh:5076 | 60 s, refusal path only | inside |
+| Helper container | scripts/c590-remote.sh:5518 `docker start -a` | none | yes, unbounded |
+| Pre-stop and post-removal audits | scripts/c590-remote.sh:5863, 5897 | one budget each | yes, sequential |
+| Remote case under the rollout lock | scripts/c590-remote.sh:3779 `flock -w 60` | acquisition only | no wall limit after |
+| ssh bridge | scripts/c590-real.ps1:112 | ServerAliveInterval 30 x CountMax 240: dead-link detection, not a wall deadline | yes, unbounded while the link answers |
+| Host case | scripts/deploy-server2.ps1:892 (`& pwsh ... $verifier`), called at :1045 and :1102 | none | yes, unbounded |
+| Rollout admission lock | scripts/deploy-server2.ps1:251 | 70 s to acquire | no |
+| Host jq transport | scripts/deploy-server2.ps1:91 | 30 s / 180 s | no: check/provision-host-jq only |
+| C1008 host fixture | tests/Antiphon.Tests/Scripts/RollingVolumeRecycleScriptTests.cs:655, 768, 1023; RemoteScriptContractTests.cs:908 | 12 min, 30 s, 120 s, 12 min | test processes around fake Docker; not production |
+
+No production deadline encloses the audit below 3000 s, so nothing else was raised. 3000 s is 2.14 x the replay's 1404 s and 996 s above the replay plus the whole 600 s fetch allowance (2004 s). Pins: the `audit-timeout` row anchors on the exact `timeout --kill-after=10s 3000s bash -c` line; the allowance rows anchor on `fetch_left_ms=600000` and the cap line; documentation pins the 3000 s budget and the 600 s allowance and forbids "30-minute budget".
+
+### Baseline (d6ba7439 helper; same fixture)
+
+| Case | Expect now | d6ba7439 outcome |
+|---|---|---|
+| tmp-nested-dot-git, tmp-nested-dot-git-file, tmp-nested-pointer-unregistered, tmp-nested-git-shaped, tmp-dot-git-symlink | K `dot-git` / `git-dir-shape` | pass (fail-open) |
+| tmp-symlink-dotdot | K `worktree-confine` | pass (fail-open, F2) |
+| tmp-symlink-climb | K `worktree-confine` | pass (fail-open: climbs out of the mount and back in) |
+| tmp-symlink-absolute | D `worktree-status repo=/tmp/actual` | K `worktree-confine` (false refusal: resolved in the helper's /tmp) |
+| origin-fetch-allowance-spent, origin-fetch-allowance-shared | U `proof=present`, 0 / 2 fetches | red on the anchor (no allowance exists) |
+
+Green at d6ba7439 by nature (negative controls): tmp-linked-ignored, tmp-nested-registered, tmp-symlink-relative. 10 of 13 red, 3 controls.
+
+### Mutation matrix (copies of the repaired helper, never the worktree; gated drivers, 12 mutants; each also ran `seed`, all green)
+
+| Mutated production line | Case(s) red |
+|---|---|
+| M1 `consider_tmp_git` not called | tmp-nested-dot-git, tmp-nested-dot-git-file, tmp-nested-pointer-unregistered, tmp-nested-git-shaped |
+| M2 deferred registered-pointer check removed | tmp-nested-pointer-unregistered |
+| M3 regular-file check on a nested `.git` removed | tmp-dot-git-symlink (tmp-nested-dot-git still refuses under M3: a directory read as a pointer is empty) |
+| M4 Git-shaped `HEAD` refusal removed | tmp-nested-git-shaped |
+| M5 `..` in the recorded path accepted | tmp-symlink-dotdot |
+| M6 repair 6 order restored (resolve, then translate) | tmp-symlink-dotdot, tmp-symlink-absolute, tmp-symlink-climb |
+| M7 absolute target under the runner's /tmp not translated | tmp-symlink-absolute |
+| M8 floor on `..` in a link target removed | tmp-symlink-climb |
+| M9 spent-allowance guard removed | origin-fetch-allowance-spent (allowance-shared stays green: a negative cap makes `timeout` itself fail, which also falls back) |
+| M10 fetch not charged | origin-fetch-allowance-shared |
+| M11 tmp checkout not registered | tmp-linked-clean, tmp-nested-registered |
+| M12 symlinks not followed in the mount | tmp-symlink-relative, tmp-symlink-absolute |
+
+The cap clamp (`cap` below 300 s when the allowance is lower) and the 3000 s constant are pinned by text anchors only.
+
+### New and changed cases
+
+13 new `C1105_Git_audit_hidden_locations` rows (122 total), named in V-20 and V-21; hidden rows may now carry a fourth element run after the audit (the two allowance rows count fetch starts). Changed fixture anchors, not assertions: the proof-fetch anchor is now `timeout --kill-after=5s "${cap}s" git --git-dir="$proof" fetch` (the fetch-timeout row still shortens it to 2 s), and the overall-timeout anchor is the 3000 s line. Documentation pins: six new, one changed (the budget), two forbidden. No assertion was removed or weakened.
+
 ## Checkpoints
 
-Closed list: one isolated test build, UseAppHost=false, serial drivers. CP-11 has 150 cases (8 existing methods + 142 C1105_Git_audit cases: 10 recovery, 11 seed, 5 index, 4 completeness, 1 resume, 109 hidden-location rows, 1 overall timeout, 1 volume scale); repair 6 adds 16 hidden-location rows and keeps every row and method of the list, so the expected total is 286 cases. The slow CP-7/CP-9/CP-12 run last. Existing timeout estimates are unchanged. Expected total: 270 cases (repair 3 added the 42 hidden-location rows and the long-lived seed variant; repair 4 added 22 hidden-location rows, the missing-ancestor-graph variant and two methods; the C1008 origin blocks are inside an existing method; repair 5 adds 29 hidden-location rows). Measured previous 12-row wall was 74m36s; allow roughly 80 minutes plus implementation and baseline diagnostics.
+Closed list: one isolated test build, UseAppHost=false, serial drivers. Current census (repair 7): CP-11 has 163 cases (8 existing methods + 155 C1105_Git_audit cases: 10 recovery, 11 seed, 5 index, 4 completeness, 1 resume, 122 hidden-location rows, 1 overall timeout, 1 volume scale), and the twelve rows' floors sum to 299 cases. History, for reading earlier reports only: repair 3 added 42 hidden-location rows and the long-lived seed variant; repair 4 added 22 rows, the missing-ancestor-graph variant and two methods; repair 5 added 29 rows (total then 270); repair 6 added 16 rows (286); repair 7 adds 13 rows (299). The slow CP-7/CP-9/CP-12 run last. Existing timeout estimates are unchanged. The Final Review e079b0d3 12-row wall was 83m27s; allow roughly 85 minutes plus implementation and baseline diagnostics.
 
 ### Checkpoints
 
@@ -387,7 +460,7 @@ Closed list: one isolated test build, UseAppHost=false, serial drivers. CP-11 ha
 | CP-1 | promisor | `tests/Antiphon.Tests -> bin-c1105-promisor/` | docs-pins | `/*/*/DockerStackDocumentationTests/*` | doc pins | 14 methods, 0 failed | 14 | 15 | true |
 | CP-2 | promisor | CP-1 | registry-guard | `/*/*/(TestClassificationGuardTests*)\|(SlowTestTripwireTests*)/*` | registry guard | 3 methods, 0 failed | 3 | 3 | true |
 | CP-3 | promisor | CP-1 | compose-text-pins | `/*/*/RemoteScriptContractTests/(C1105_Deploy_parent_orders_checkout_and_boot_files_before_recycle*)\|(Deploy_parent_creates_the_github_token_directory_without_reading_it*)\|(Deploy_parent_creates_the_codex_home_directory_without_reading_it*)\|(Deploy_parent_seeds_or_verifies_runner_checkout*)\|(Persistent_restart_ensures_the_identity_file_before_stopping_an_older_runner*)\|(Deploy_parent_seeds_a_fresh_runner_checkout_before_starting_the_runner*)` | compose text pins | 6 methods, 0 failed | 6 | 4 | true |
-| CP-11 | promisor | CP-1 | remote-git-audit | `/*/*/RemoteScriptContractTests/(C1008_Recycle_refuses_uninspectable_git*)\|(C1008_Recycle_refuses_unpublished_and_dirty_work*)\|(C1008_Retire_temp_rechecks_absence_and_retirement*)\|(C1087_Host_census_filters_and_names_cause*)\|(C1008_Recycle_preserves_tmp_copyup*)\|(C1008_Retire_temp_reclaims_below_cache_disk_gate*)\|(C1008_Recycle_audits_work_as_1654*)\|(C1008_Recycle_audits_promisor_checkout*)\|(C1105_Git_audit_*)` | C1008/C1087 promisor audit | 16 methods / 150 cases, 0 failed | 150 | 15 | true |
+| CP-11 | promisor | CP-1 | remote-git-audit | `/*/*/RemoteScriptContractTests/(C1008_Recycle_refuses_uninspectable_git*)\|(C1008_Recycle_refuses_unpublished_and_dirty_work*)\|(C1008_Retire_temp_rechecks_absence_and_retirement*)\|(C1087_Host_census_filters_and_names_cause*)\|(C1008_Recycle_preserves_tmp_copyup*)\|(C1008_Retire_temp_reclaims_below_cache_disk_gate*)\|(C1008_Recycle_audits_work_as_1654*)\|(C1008_Recycle_audits_promisor_checkout*)\|(C1105_Git_audit_*)` | C1008/C1087 promisor audit | 16 methods / 163 cases, 0 failed | 163 | 15 | true |
 | CP-4 | promisor | CP-1 | mount-class | `/*/*/RollingProductionMountTests/*` | class regression | 12 methods, 0 failed | 12 | 10 | true |
 | CP-5 | promisor | CP-1 | retired-temp-script | `/*/*/RetiredTempContainerScriptTests/*` | class regression | 13 methods, 0 failed | 13 | 10 | true |
 | CP-6 | promisor | CP-1 | host-jq | `/*/*/HostJqPrerequisiteScriptTests/*` | class regression | 39 methods, 0 failed | 39 | 15 | true |

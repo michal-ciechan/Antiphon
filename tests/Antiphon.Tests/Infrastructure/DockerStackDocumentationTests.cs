@@ -73,7 +73,16 @@ public sealed class DockerStackDocumentationTests
         section.ShouldContain("a non-empty `antiphon/children/` journal means a repository mutation may still be running and refuses unknown");
         section.ShouldContain("`review-evidence/` are product and agent state, not repository state");
         section.ShouldContain("a file hidden by an ignore rule is accepted by design");
-        section.ShouldContain("the whole audit has a 30-minute budget");
+        // CARD-1105 repair 7: the budget is 3000 s (more than twice the 1404 s replay), the proof fetches
+        // share a 600 s allowance, tmp paths are translated before resolving, nested Git metadata in a
+        // tmp checkout is classified as under /work.
+        section.ShouldContain("the whole audit has a 50-minute (3000 s) budget");
+        section.ShouldNotContain("30-minute budget", Case.Sensitive, "the budget is 3000 s");
+        section.ShouldContain("once all proof fetches of the audit together have used their 600 s allowance");
+        section.ShouldContain("is translated to the tmp mount before anything resolves it");
+        section.ShouldContain("a `..` in the recorded path refuses");
+        section.ShouldContain("Inside a registered tmp checkout every `.git` entry and every Git-shaped `HEAD` directory is classified as under `/work`");
+        section.ShouldNotContain("resolving outside the tmp mount through a symlink refuses unknown", Case.Sensitive, "the tmp path is proven, not resolved first");
         section.ShouldNotContain("each worktree's private refs and HEAD (also bare HEAD), and both sides of every reflog entry must prove publication",
             Case.Sensitive, "the false every-reflog sentence is gone");
         // CARD-1105 repair 5: an existing orphaned checkout is inspected, non-commit tips must be
