@@ -386,6 +386,13 @@ public partial class DelegationDispatchRecoveryBoundaryTests
     [Arguments("retry-handoff-fenced-headline", "Reuse", false)]
     [Arguments("goal-quotes-own-pointer", "Reuse", false)]
     [Arguments("retry-outer-pointer-missing", "Unavailable", true)]
+    // Repair 3 F8: a receipt must be proven this attempt's; undated needs the queue's floor.
+    [Arguments("stale-undated-receipt-retry", "Unavailable", true)]
+    [Arguments("stale-undated-receipt-under-floor", "Unavailable", true)]
+    [Arguments("undated-receipt-proven-sequence", "Received", false)]
+    [Arguments("dated-receipt-before-dispatch", "Unavailable", true)]
+    [Arguments("dated-receipt-under-floor", "Unavailable", true)]
+    [Arguments("dated-receipt-above-floor", "Received", false)]
     public Task C1150_Brief_evidence_whitelist_flips_one_condition(string condition, string expected, bool hold)
     {
         var taskId = Guid.NewGuid();
@@ -453,6 +460,7 @@ public partial class DelegationDispatchRecoveryBoundaryTests
                 Result = result,
             }, new DelegationSettings());
         }
+        var floored = delivered with { Body = ownPointer, LastDeliveryBaselineSequence = 5 };
 
         switch (condition)
         {
@@ -743,6 +751,35 @@ public partial class DelegationDispatchRecoveryBoundaryTests
             case "retry-outer-pointer-missing":
                 Retry(fencedOwn);
                 rows[0] = row with { Body = ownPointer };
+                break;
+            case "stale-undated-receipt-retry":
+                // Attempt 1 on this pooled session typed the same pointer; its prompt has no timestamp.
+                Retry(fencedOwn);
+                rows[0] = row with { Body = ownPointer };
+                prompts.Add(new DispatchBriefPromptEvidence(sessionId, TranscriptKinds.UserPrompt, ownPointer, null, 3));
+                break;
+            case "stale-undated-receipt-under-floor":
+                rows[0] = floored;
+                prompts.Add(new DispatchBriefPromptEvidence(sessionId, TranscriptKinds.UserPrompt, ownPointer, null, 5));
+                break;
+            case "undated-receipt-proven-sequence":
+                rows[0] = floored;
+                prompts.Add(new DispatchBriefPromptEvidence(sessionId, TranscriptKinds.UserPrompt, ownPointer, null, 6));
+                break;
+            case "dated-receipt-before-dispatch":
+                rows[0] = row with { Body = ownPointer };
+                prompts.Add(new DispatchBriefPromptEvidence(
+                    sessionId, TranscriptKinds.UserPrompt, ownPointer, dispatched.AddDays(-1), 3));
+                break;
+            case "dated-receipt-under-floor":
+                rows[0] = floored;
+                prompts.Add(new DispatchBriefPromptEvidence(
+                    sessionId, TranscriptKinds.UserPrompt, ownPointer, dispatched.AddMinutes(1), 4));
+                break;
+            case "dated-receipt-above-floor":
+                rows[0] = floored;
+                prompts.Add(new DispatchBriefPromptEvidence(
+                    sessionId, TranscriptKinds.UserPrompt, ownPointer, dispatched.AddMinutes(1), 6));
                 break;
             default:
                 throw new ArgumentOutOfRangeException(nameof(condition));
