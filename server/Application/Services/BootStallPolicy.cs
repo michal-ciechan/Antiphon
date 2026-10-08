@@ -18,7 +18,8 @@ namespace Antiphon.Server.Application.Services;
 /// Disabling it removes the eight-minute event, never the protection.
 /// </param>
 /// <param name="OperatorDueAt">
-/// <c>PromptAt + max(boot wait, operator wait)</c>: when the episode asks the operator to decide.
+/// <c>PromptAt + max(positive boot wait, operator wait)</c>: when the episode asks the operator to
+/// decide. The operator wait is <c>ModelWaitDeadlineMinutes</c>, or 20 minutes when that is <c>&lt;= 0</c>.
 /// </param>
 internal sealed record BootStallFacts(
     DateTime? SessionStartedAt,
@@ -51,7 +52,10 @@ internal sealed record BootStallFacts(
 /// </summary>
 internal static class BootStallPolicy
 {
-    /// <summary>Operator threshold when the general model-wait clock is disarmed.</summary>
+    /// <summary>
+    /// The operator wait when the general model-wait clock is disarmed. It replaces only that
+    /// operand: the threshold is still <c>max(positive boot wait, 20 minutes)</c> (<see cref="Facts"/>).
+    /// </summary>
     internal const int DefaultOperatorMinutes = 20;
 
     internal const string DetectedToken = "BootStallDetected";

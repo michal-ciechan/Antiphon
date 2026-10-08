@@ -635,6 +635,9 @@ the transcript mutation gate. Activation requires both server and runner support
   boot facts (Warning from the 80% preview, Error from the operator threshold), so a model reply
   removes it. A queued-only prompt opens no episode. The operator threshold bounds visibility,
   not the task's lifetime: absent a reply or an explicit action the session stays Working.
+  The operator threshold is `prompt + max(positive boot wait, operator wait)`: the boot wait is `Delegation:BootModelWaitDeadlineMinutes` (zero when `<= 0`), and the operator wait is `Delegation:ModelWaitDeadlineMinutes`, or 20 minutes when that is `<= 0`, so a disabled model-wait deadline still waits for a boot wait above 20 minutes.
+  Computed by `BootStallPolicy.OperatorWait` and `BootStallPolicy.Facts`.
+  This bullet is a delegate task's boot episode. A taskless AlwaysOn session is the exception: the boot reply watchdog still raises its incident and stops the session for the existing standing-agent restart ladder (`BootReplyWatchdogService`, unchanged by CARD-1151; CARD-1156).
 
 
 <!-- CARD-0254 preserved source begins -->

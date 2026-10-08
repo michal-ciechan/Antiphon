@@ -1095,7 +1095,9 @@ retries or releases the session, and holds no alias.
 A transcript-confirmed boot prompt with no model reply is detection only while the session is Working, runner-listed, or safety evidence is unknown. At eight minutes it records BootStallDetected; at the bounded operator threshold (20 minutes with defaults) it asks for an operator decision without failure, retry, input, stop or seat release.
 The general and role deadlines do not terminalize that unresolved boot episode; positive model progress returns it to ordinary deadline policy.
 The task's events carry `BootStallDetected` and then `BootStallNeedsOperator` Warnings, and its
-Overdue attention row turns Error at the operator threshold. The decision is yours: inspect the
+Overdue attention row turns Error at the operator threshold.
+The operator threshold is `prompt + max(positive boot wait, operator wait)`: the boot wait is `Delegation:BootModelWaitDeadlineMinutes` (zero when `<= 0`), and the operator wait is `Delegation:ModelWaitDeadlineMinutes`, or 20 minutes when that is `<= 0`, so a disabled model-wait deadline still waits for a boot wait above 20 minutes.
+The decision is yours: inspect the
 session, then keep waiting, reply, or explicitly cancel or retry the task (expect the same
 provider on a retry). `Delegation:BootStallRepeatHoldMinutes` is retired and holds nothing. Owner
 and test pins: [session runtime invariants](session-runtime-invariants.md) ("A boot stall is
