@@ -176,7 +176,7 @@ Missing setup recorded for Code:
 - The runtime's launcher is a concrete `PtyHostLauncher` (`SessionRunnerRuntime.cs:47`). V-5/V-6/V-7/V-8 need an injectable creation seam that records the order of the Attempted write against the first effect without a process; `RunnerSession.BindChildForTest` (`:3475-3478`) and `SeatWorld` show the shape. The seam is test-only and must not bypass the gate.
 - V-23 needs the inspection seam of A-10.
 - V-14 hosts the production `AbsenceEvidenceRoutes`, `MapSessionGetRoute` and the transcript route on a random-port Kestrel inside `tests/Antiphon.Tests` (the project references `Antiphon.SessionRunner`), with the real evidence service over a temp root and a synthetic key. The phone-home case uses `PhoneHomeTestHost` with a real `PhoneHomeCommandDispatcher` over a `PhoneHomeRuntimeAdapter` as the scripted peer.
-- `RunnerSessionGenerationTests` has no platform skip and uses `cmd.exe`; CP-35 is a Windows-only lane selected with `--rows`.
+- `RunnerSessionGenerationTests` has no platform skip and uses `cmd.exe`; CP-35 and CP-36 are Windows-only rows selected with `--rows`.
 - New classes are `Unit` or `Integration`; none is `Slow`, so `slow-tests-allowlist.txt` is unchanged.
 
 Excluded: a database migration, a new per-tick query, parking enablement, any automatic
@@ -238,7 +238,7 @@ skeleton commit are recorded under "Diagnostic runs" below; they are not checkpo
 - R-2: `AbsentLaunchPolicyTests` (77). CP-27.
 - R-3: `SessionRunnerGenerationWireTests` (9). CP-28.
 - R-4: `PhoneHomeCommandDispatcherTests` `Duplicate_launch*` (3) and `Pre_ack_resend*` plus `Launch_of_an_exited_session_under_a_new_generation_still_relaunches` (3). CP-32, CP-33.
-- R-5: `CompactionContinuationStopTests` (6). CP-34.
+- R-5: `CompactionContinuationStopTests` (6, Windows lane: it launches `cmd.exe`). CP-36.
 - R-6: `BootStallWorkingTickCharacterizationTests` (3, CARD-1151 boundary unchanged). CP-29.
 - R-7: `DelegationBriefRecoveryTests` (3). CP-30.
 - R-8: `C1149_C1150_Statement_budgets` (3 at this baseline; more if S2 lands arguments). CP-31.
@@ -335,7 +335,7 @@ assertion can observe timing; Review reads the compare call).
 
 Group prefix names the lane: `portable-` or `windows-`. Builds add `UseAppHost=false` off
 Windows; Postgres classes run serial with `TUNIT_MAX_PARALLEL_TESTS=1`. One build per After
-group per project; CP-35 is selected alone with `--rows` on a Windows host.
+group per project; CP-35 and CP-36 are selected alone with `--rows` on a Windows host.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
 |---|---|---|---|---|---|---|---:|---:|---|---|
@@ -372,29 +372,48 @@ group per project; CP-35 is selected alone with `--rows` on a Windows host.
 | CP-31 | all | `CP-26` | portable-budget | `/*/*/DelegationDispatchRecoveryBoundaryTests/C1149_C1150_Statement_budgets*` | R-8 | baseline 18/18/4 plus any landed S2 arguments, 0 failed/skipped | 3 | 2 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-32 | all | `CP-26` | portable-docs | `/*/*/SessionRunnerAbsenceEvidenceDocumentationTests/C1153_Owner_sentences_match_the_protocol*` | V-21 | 1 executed, 0 failed/skipped | 1 | 1 | true | n/a |
 | CP-33 | all | `tests/Antiphon.SessionRunner.Tests -> bin-c1153-final-runner/` | portable-launch-generation | `/*/*/PhoneHomeCommandDispatcherTests/Duplicate_launch*` | R-4 | all 3 duplicate-launch methods, 0 failed/skipped | 3 | 5 | true | n/a |
-| CP-34 | all | `CP-33` | portable-release-generation | `/*/*/PhoneHomeCommandDispatcherTests/(Pre_ack_resend*\|Launch_of_an_exited_session_under_a_new_generation_still_relaunches*)` | R-4 | all 3 methods, 0 failed/skipped | 3 | 1 | true | n/a |
-| CP-35 | all | `CP-33` | portable-compaction-stop | `/*/*/CompactionContinuationStopTests/*` | R-5 | 6 executed, 0 failed/skipped | 6 | 1 | true | n/a |
-| CP-36 | all | `tests/Antiphon.SessionRunner.Tests -> bin-c1153-final-windows/` | windows-generation | `/*/*/RunnerSessionGenerationTests/*` | R-9 | all 5 methods, 0 failed/skipped | 5 | 6 | true | n/a |
+| CP-34 | all | `CP-33` | portable-release-generation | `/*/*/PhoneHomeCommandDispatcherTests/(Pre_ack_resend*)\|(Launch_of_an_exited_session_under_a_new_generation_still_relaunches*)` | R-4 | all 3 methods, 0 failed/skipped | 3 | 1 | true | n/a |
+| CP-35 | all | `tests/Antiphon.SessionRunner.Tests -> bin-c1153-final-windows/` | windows-generation | `/*/*/RunnerSessionGenerationTests/*` | R-9 | all 5 methods, 0 failed/skipped | 5 | 6 | true | n/a |
+| CP-36 | all | `CP-35` | windows-compaction-stop | `/*/*/CompactionContinuationStopTests/*` | R-5 | 6 executed, 0 failed/skipped | 6 | 1 | true | n/a |
 
 Roster notes. Counts are TUnit executions from `[Test]` plus `[Arguments]`; no Skip, MethodData
 or Matrix in any selected class. CP-26's 49 is V-1 1, V-2 1, V-3 5, V-4 3, V-5 3, unknown-native
 6, whitelist-gap 19, native-attempt 4, failed-hold 1, caller-note 3, budgets 3; include any
 argument CARD-1149/1150 S2 lands. CP-10's 12 is the four parameterized methods of
-`UnixPtyArgvAdmissionTests`. CP-36 runs on a Windows host only (`cmd.exe`, no platform
-skip); on Linux select the run with `--rows CP-26,...,CP-35` and run CP-36 separately.
-`--after all` on Linux therefore passes `--rows` excluding CP-36. Union of all rows =
-V-1..V-24 and R-1..R-11.
+`UnixPtyArgvAdmissionTests`. CP-35 and CP-36 run on a Windows host only: both classes launch
+`cmd.exe` and carry no platform skip, and `CompactionContinuationStopTests` measured 2 passed,
+4 failed on this Linux mirror at the baseline (`Status` already `Exited`), so the plan's
+`portable-compaction-stop` label was wrong. On Linux pass `--rows CP-26,CP-27,CP-28,CP-29,
+CP-30,CP-31,CP-32,CP-33,CP-34` for the final group and run CP-35 and CP-36 on Windows with
+`--rows CP-35,CP-36`. CP-34 uses the CARD-0403 per-operand form `(A*)|(B*)`; the plan's
+single-group `(A*|B*)` form is not the documented syntax. Both CP-33 and CP-34 were verified
+on this mirror to select exactly 3 methods each (3 passed). Union of all rows = V-1..V-24
+and R-1..R-11.
 
 ### Cost
 
-- Ordinary V/R floor for Code (sum of EstimatedMinutes, CP-1..CP-36) = 80 minutes, estimated: S1 rows 9, S2 rows 10, S3 runner rows 7, S3 server rows 8, S4 rows 13, final server rows 15, final runner rows 7, Windows lane 6, plus 5 minutes of per-row slot waits counted in the row estimates.
+- Ordinary V/R floor for Code (sum of EstimatedMinutes, CP-1..CP-36) = 75 minutes, estimated: S1 rows 9, S2 rows 10, S3 runner rows 7, S3 server rows 8, S4 rows 13, final server rows 15, final runner rows 6, Windows lane 7. Slot waits are outside the floor; today's diagnostic waits were 0 to 105 seconds per lease.
 - Setup/build = 8 isolated builds (runner S1, S2, S3, final; server S3, S4, final; Windows runner final) at about 2 to 3 minutes each, 20 minutes estimated, already inside the row estimates that build.
 - PC floor (Mutation) = 525 minutes, estimated: 150 method-scoped cycles. Runner-side cycles (PC-1..PC-16, PC-27: 64 variants) at 3 minutes = 192; server non-Postgres cycles (PC-17, PC-18, PC-19: 52 variants) at 3.5 minutes = 182; server Postgres cycles (PC-20..PC-26, PC-28: 29 variants) at 5 minutes = 145; documentation controls (PC-29: 5) at 1 minute = 5; rounded to 525. The plan's 100-minute floor is revised upward; the two one-flip tables (55 cycles, about 180 minutes) dominate and cannot be batched because they share one method each, and SourceLanding forbids shards.
-- Total = 285 authoring (plan) + 80 ordinary + 525 PC = 890 minutes, estimated. Reuse avoids 28 extra builds (every `CP-n` build cell); at 2.5 minutes each that is 70 minutes not spent.
+- Total = 285 authoring (plan) + 75 ordinary + 525 PC = 885 minutes, estimated. Reuse avoids 28 extra builds (every `CP-n` build cell); at 2.5 minutes each that is 70 minutes not spent.
 
 Passed the bundle check: bodies read; guards 30, mapped 29 plus 1 inherited with its prior PC, missing 0, duplicate PC maps 0; every PC names a compiling defect and an exact method; Cost is numeric.
 
 ## Diagnostic runs
 
-Recorded after the skeleton commit; these are not checkpoint executions. See the final
-section of this file.
+Run on this Linux runner mirror (nested Docker, Testcontainers PostgreSQL) at the skeleton
+commit `bb77118e90c0920c51fb6871310839f6c7ac6aae`, through the build-slot gate. They are
+diagnostics, not checkpoint executions, and they prove three things: the skeletons compile
+in both test projects, the baseline rows this design leans on are green here, and the
+statement budgets are measured at 18/18/4 by the existing row.
+
+- Checkpoint tool: `import --plan` on this file imported 36 rows with no warnings; `coverage --plan` reported `obligations=0 missing=0 unmapped=0 result=clean` (the lint binds the plan's V table; this note's bullet format yields no obligations).
+- `CHECKPOINT TD-R1 commit=bb77118e9 build=ok filter=/*/*/CompactionContinuationStopTests/* executed=6 passed=2 failed=4 skipped=0 slot=granted waited=90s dirty=0 sourceState=clean buildSource=verified` (runner build `bin-c1153-td-runner/`, 46 s build, 21 s run). The four failures assert `Status` not `Exited` on a `cmd.exe` child; inherited Windows-only fixture, moved to CP-36.
+- Runner skeletons on that build: `/*/*/RunnerAbsenceEvidence*/*` discovered all 58 skeleton cases as skipped with their `CARD-1153 S<n> pending` reason (22+9+5+3+1 for S1, 4+3+2+1 for S2, 4+3+1 for S3); 0 passed, 0 failed.
+- `dotnet build tests/Antiphon.Tests --property:OutputPath=bin-c1153-td-server/ --property:UseAppHost=false`: 0 errors, 142 s under lease.
+- `CHECKPOINT TD-S1 commit=bb77118e9 build=reused filter=/*/*/DelegationDispatchRecoveryBoundaryTests/C1149_C1150_Statement_budgets* executed=3 passed=3 failed=0 skipped=0 dirty=0 sourceState=clean` with `C1149-BUDGET held-dispatched-tick total=18`, `working-live-tick total=18`, `inside-grace-absent-scan total=4`; 47 s wall clock including the container.
+- `CHECKPOINT TD-S2 commit=bb77118e9 build=reused filter=/*/*/AbsentLaunchPolicyTests/* executed=77 passed=77 failed=0 skipped=0`; 2 s.
+- Server skeletons on that build: `/*/Antiphon.Tests.Application/(RunnerAbsenceEvidenceValidatorTests*)|(SessionRunnerAbsenceEvidenceDocumentationTests*)|(DelegationDispatchRecoveryBoundaryTests*)/C1153_*` discovered 64 skipped (35, 1, 28) and `/*/Antiphon.Tests.Agents/(SessionRunnerAbsenceEvidenceClientTests*)/C1153_*` discovered 18 skipped (14+4); 0 passed, 0 failed. A parenthesised class list without the per-operand form selected zero tests, which is the CARD-0403 behaviour.
+- `/*/*/PhoneHomeCommandDispatcherTests/Duplicate_launch*` and `/*/*/PhoneHomeCommandDispatcherTests/(Pre_ack_resend*)|(Launch_of_an_exited_session_under_a_new_generation_still_relaunches*)` each executed 3, passed 3 on the runner build.
+
+Alternate outputs `bin-c1153-td-tool/`, `bin-c1153-td-runner/` and `bin-c1153-td-server/` were deleted after these runs; results stay under the ignored `.antiphon/c1153-td/`.
