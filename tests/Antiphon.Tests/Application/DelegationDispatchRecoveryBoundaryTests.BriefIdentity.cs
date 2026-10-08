@@ -1,5 +1,6 @@
 using System.Text;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
@@ -344,6 +345,14 @@ public partial class DelegationDispatchRecoveryBoundaryTests
     [Arguments("failed-status", "Uncertain", false)]
     [Arguments("queued-user-prompt", "Reuse", false)]
     [Arguments("two-unattempted", "Uncertain", true)]
+    [Arguments("remote-released-received", "Received", false)]
+    [Arguments("remote-released-unreceived", "Unavailable", true)]
+    [Arguments("remote-released-clipped-prompt", "Unavailable", true)]
+    [Arguments("local-spill-deleted-received", "Received", false)]
+    [Arguments("canceled-received", "Received", false)]
+    [Arguments("windows-spill-missing", "Unavailable", true)]
+    [Arguments("windows-spill-intact", "Reuse", false)]
+    [Arguments("retried-intact-spill", "AttemptOwned", false)]
     public Task C1150_Brief_evidence_whitelist_flips_one_condition(string condition, string expected, bool hold)
     {
         var taskId = Guid.NewGuid();
@@ -363,6 +372,28 @@ public partial class DelegationDispatchRecoveryBoundaryTests
         var rows = new List<DispatchBriefRowEvidence> { row };
         var prompts = new List<DispatchBriefPromptEvidence>();
         var files = new Dictionary<string, string>(StringComparer.Ordinal);
+        var pointerTask = new AgentTask
+        {
+            Id = taskId,
+            Title = "Whitelist pointer",
+            Goal = goal,
+            Role = AgentTaskRole.Custom,
+            ModelLevel = AgentModelLevel.Frontier,
+            Workspace = WorkspaceMode.Shared,
+        };
+        string Pointer(string? spillPath, AgentKind kind = AgentKind.ClaudeCode) =>
+            DelegationReportFormatter.BuildBriefPointer(pointerTask, new DelegationSettings(), spillPath, 5000, kind);
+        var inbox = ".antiphon/inbox/" + row.Id.ToString("D") + ".md";
+        var localPath = "/srv/antiphon/whitelist/.antiphon/task-" + DelegationReportFormatter.Short(taskId) + "-brief.md";
+        var windowsPath = @"C:\Antiphon\worktrees\whitelist\.antiphon\task-" + DelegationReportFormatter.Short(taskId) + "-brief.md";
+        var delivered = row with
+        {
+            Status = QueuedMessageStatus.Sent,
+            SentAt = dispatched,
+            DeliveryAttempts = 1,
+            DeliveryVerdict = DeliveryVerdict.Delivered,
+            LastDeliveryStartedAt = dispatched,
+        };
 
         switch (condition)
         {
@@ -470,6 +501,36 @@ public partial class DelegationDispatchRecoveryBoundaryTests
                 break;
             case "two-unattempted":
                 rows.Add(row with { Id = Guid.NewGuid() });
+                break;
+            case "remote-released-received":
+            case "remote-released-unreceived":
+            case "remote-released-clipped-prompt":
+                // F5: the queue typed the bound pointer, then released its retained bytes.
+                rows[0] = delivered with { Body = Pointer(inbox), RemoteSpillRelativePath = inbox, RemoteSpillBody = null };
+                if (condition == "remote-released-received")
+                    prompts.Add(new DispatchBriefPromptEvidence(sessionId, TranscriptKinds.UserPrompt, rows[0].Body, dispatched));
+                else if (condition == "remote-released-clipped-prompt")
+                    prompts.Add(new DispatchBriefPromptEvidence(
+                        sessionId, TranscriptKinds.UserPrompt, rows[0].Body[..(rows[0].Body.Length / 2)], dispatched));
+                break;
+            case "local-spill-deleted-received":
+                rows[0] = delivered with { Body = Pointer(localPath) };
+                prompts.Add(new DispatchBriefPromptEvidence(sessionId, TranscriptKinds.UserPrompt, rows[0].Body, dispatched));
+                break;
+            case "canceled-received":
+                rows[0] = row with { Status = QueuedMessageStatus.Canceled, CanceledAt = dispatched, DeliveryAttempts = 1 };
+                prompts.Add(new DispatchBriefPromptEvidence(sessionId, TranscriptKinds.UserPrompt, body, dispatched));
+                break;
+            case "windows-spill-missing":
+                rows[0] = row with { Body = Pointer(windowsPath) };
+                break;
+            case "windows-spill-intact":
+                rows[0] = row with { Body = Pointer(windowsPath) };
+                files[windowsPath] = body;
+                break;
+            case "retried-intact-spill":
+                rows[0] = row with { Body = Pointer(localPath), DeliveryAttempts = 2, LastDeliveryStartedAt = dispatched };
+                files[localPath] = body;
                 break;
             default:
                 throw new ArgumentOutOfRangeException(nameof(condition));
