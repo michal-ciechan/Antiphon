@@ -35,7 +35,7 @@ Lines are `SessionMessageQueueService.cs` at acab4c82. "Pre-S2" (31632adc) and "
 | 2948 | recovery finds a truncated UserPrompt of the run | may have typed | kill | kept | kept |
 | 3098/3122 | Enter-only `Truncated` or failure after the Enter | may have typed | kill | kept | kept |
 
-The pre-input rows now match pre-S2. The may-have-typed rows keep repair 4's protection, which CP-75 needs. No result is classified by its value alone, so no case is unknown: a `Failed` without the mark is pre-input. `Delivered`, `Nothing` and `LateConfirmed` map as before (true, false, false).
+The pre-input rows now match pre-S2. The may-have-typed rows keep repair 4's protection. (Corrected by task 3e7ac85d, Review df0d419a F13: this first said CP-75 needs that protection. It does not. CP-75's five fault cases return `Delivered`, which maps to true without the mark, and its two pre-input controls must not be protected.) No result is classified by its value alone, so no case is unknown: a `Failed` without the mark is pre-input. `Delivered`, `Nothing` and `LateConfirmed` map as before (true, false, false).
 
 ## F12 (docs and comments)
 
