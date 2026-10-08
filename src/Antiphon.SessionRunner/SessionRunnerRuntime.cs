@@ -199,6 +199,103 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         _shadowStore = new ShadowCopyStore(_settings.PtyHostBinDir);
         _launcher = new PtyHostLauncher(_shadowStore, _settings.ResolvedPtyHostSourceDir);
         _transcriptClaims.ClaimDisplaced += OnTranscriptClaimDisplaced;
+        _absence = CreateAbsenceEvidence(phoneHomeSettings?.Value is { Enabled: true } ph ? ph.LaunchGenerationsPath : null);
+    }
+
+    // CARD-1153: the evidence service, or null when its store could not be initialized (the feature
+    // is then unavailable; launches are unaffected).
+    private readonly RunnerAbsenceEvidenceService? _absence;
+    private volatile bool _absenceAdoptionComplete;
+
+    /// <summary>
+    /// CARD-1153 S2 test seam: invoked at each creation path's first provider effect (pty launch,
+    /// Herdr attach contact, adoption registration) with the path name. Production never sets it.
+    /// </summary>
+    internal Func<Guid, string, Task>? CreationEffectForTest { get; set; }
+
+    /// <summary>CARD-1153 S2 test seam: inside the launch gate, before a prepare/certify decision.</summary>
+    internal Func<Guid, Task>? AbsenceDecisionUnderGateForTest { get; set; }
+
+    internal RunnerAbsenceEvidenceService? AbsenceEvidence => _absence;
+
+    /// <summary>Advertise <see cref="RunnerAbsenceEvidence.Feature"/> only while this is true.</summary>
+    public bool AbsenceEvidenceReady => _absence?.Ready == true;
+
+    private RunnerAbsenceEvidenceService? CreateAbsenceEvidence(string? launchGenerationsPath)
+    {
+        try
+        {
+            var store = new RunnerAbsenceEvidenceStore(_settings.SessionLogPath);
+            var inspection = new RunnerAbsenceArtifactInspection(
+                _settings,
+                id => _sessions.TryGetValue(id, out var session)
+                    ? session.HasExited ? RunnerAbsenceRuntimeEntry.Exited : RunnerAbsenceRuntimeEntry.Live
+                    : RunnerAbsenceRuntimeEntry.None,
+                () => _absenceAdoptionComplete,
+                id => HasCustodyLedger && _custody.Value.Store.ReadReservations().Any(b => b.Generation.SessionId == id),
+                launchGenerationsPath);
+            return new RunnerAbsenceEvidenceService(store, inspection, () => RunnerStoreId, _labelClock, _logger);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _logger.LogWarning(ex, "Absence evidence store unavailable; absence certification is disabled for this runner process");
+            return null;
+        }
+    }
+
+    /// <summary>CARD-1153 D-1: prepare a freshly allocated id, under the per-session launch gate.</summary>
+    public async Task<RunnerAbsenceOutcome<RunnerAbsencePrepared>> PrepareAbsenceEvidenceAsync(
+        RunnerAbsenceRequest request, CancellationToken ct)
+    {
+        if (_absence is null)
+            return RunnerAbsenceOutcome<RunnerAbsencePrepared>.Refuse(RunnerAbsenceRefusalCodes.Unavailable, 503, "evidence store unavailable");
+        var gate = _launchLocks.GetOrAdd(request.SessionId, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(ct);
+        try
+        {
+            if (AbsenceDecisionUnderGateForTest is { } hook) await hook(request.SessionId);
+            return _absence.Prepare(request);
+        }
+        finally { gate.Release(); }
+    }
+
+    /// <summary>
+    /// CARD-1153 D-2: certify and close an unused id, under the same launch gate every creation
+    /// path holds, so a certificate and a creation can never both succeed.
+    /// </summary>
+    public async Task<RunnerAbsenceOutcome<RunnerAbsenceCertificate>> CertifyAbsenceAsync(
+        RunnerAbsenceRequest request, CancellationToken ct)
+    {
+        if (_absence is null)
+            return RunnerAbsenceOutcome<RunnerAbsenceCertificate>.Refuse(RunnerAbsenceRefusalCodes.Unavailable, 503, "evidence store unavailable");
+        var gate = _launchLocks.GetOrAdd(request.SessionId, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(ct);
+        try
+        {
+            if (AbsenceDecisionUnderGateForTest is { } hook) await hook(request.SessionId);
+            return _absence.Certify(request);
+        }
+        finally { gate.Release(); }
+    }
+
+    // Called under the launch gate before custody, Grok files, manifests, sidecars or any provider
+    // effect. Throws SessionIdentityClosedException for a certified id; never refuses otherwise.
+    private void RecordCreationAttemptUnderGate(Guid sessionId, DateTime? acceptedStartedAt) =>
+        _absence?.RecordCreationAttempt(sessionId, acceptedStartedAt);
+
+    private Task CreationEffectAsync(Guid sessionId, string path) =>
+        CreationEffectForTest is { } hook ? hook(sessionId, path) : Task.CompletedTask;
+
+    // Adoption runs before readiness and outside a launch gate: record the discovered id as
+    // attempted. A closed record with a surviving artifact is runner-store tampering (H-24); keep
+    // the session, and latch evidence for this epoch instead of refusing adoption.
+    private void RecordAdoptedAttempt(Guid sessionId, DateTime? acceptedStartedAt)
+    {
+        try { _absence?.RecordCreationAttempt(sessionId, acceptedStartedAt); }
+        catch (SessionIdentityClosedException)
+        {
+            _absence?.Latch($"closed identity {sessionId:D} has a surviving artifact at adoption");
+        }
     }
 
     private void OnTranscriptClaimDisplaced(string path, Guid previousOwner, Guid newOwner)
@@ -319,6 +416,9 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         await gate.WaitAsync(ct);
         try
         {
+            // CARD-1153 A-5: fence and write-ahead marker before custody PrepareStart, Grok rules
+            // files, manifests, sidecars and the first provider effect.
+            RecordCreationAttemptUnderGate(request.SessionId, request.AcceptedStartedAt);
             if (request.VerificationBinding is null)
             {
                 if (HasCustodyLedger) _custody.Value.RequireUntrackedSession(request.SessionId);
@@ -491,6 +591,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                         UpdatedAtUtc = DateTime.UtcNow,
                         AcceptedStartedAt = request.AcceptedStartedAt,
                     }.SaveAtomic(HerdrPaneSidecar.PathFor(_settings.SessionLogPath, request.SessionId));
+                await CreationEffectAsync(request.SessionId, "start");
                 await session.StartHerdrAsync(
                     request,
                     _herdrClient!,
@@ -511,6 +612,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                         HostStartTimeUtc = DateTime.MinValue, CreatedAtUtc = DateTime.UtcNow,
                         AcceptedStartedAt = request.AcceptedStartedAt,
                     }.SaveAtomic(PtyHostManifest.PathFor(_settings.PtyHostManifestDir, request.SessionId));
+                await CreationEffectAsync(request.SessionId, "start");
                 await session.StartAsync(request, _launcher, BackendDecision.Requested, ct);
             }
 
@@ -557,6 +659,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         await gate.WaitAsync(ct);
         try
         {
+            RecordCreationAttemptUnderGate(request.SessionId, request.AcceptedStartedAt);
             if (HasCustodyLedger) _custody.Value.RequireUntrackedSession(request.SessionId);
             return await AttachHerdrCoreAsync(request, ct);
         }
@@ -568,6 +671,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         if (request.SessionId == Guid.Empty)
             throw new ArgumentException("SessionId must not be empty.", nameof(request));
         ArgumentException.ThrowIfNullOrWhiteSpace(request.PaneId);
+        await CreationEffectAsync(request.SessionId, "attach");
         EnsureHerdrClient();
         if (!HerdrAgentKinds.IsSupported(request.ExpectedKind))
         {
@@ -1711,6 +1815,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         if (!Directory.Exists(manifestDir))
         {
             pty.Complete(0); sweep.Complete(0);
+            _absenceAdoptionComplete = true;
             return 0;
         }
 
@@ -1737,6 +1842,9 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 continue;
             }
 
+            // CARD-1153: a discovered id is attempted history before it is registered.
+            RecordAdoptedAttempt(manifest.SessionId, manifest.AcceptedStartedAt);
+
             var tracked = hasCustodyLedger ? _custody.Value.Store.ReadReservations()
                 .Where(b => b.Generation.SessionId == manifest.SessionId).ToArray() : [];
             if (tracked.Length != 0)
@@ -1755,6 +1863,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             }
 
             using var hostAttempt = _startup.Begin("pty-host-adoption", manifest.SessionId);
+            await CreationEffectAsync(manifest.SessionId, "adoption");
 
             if (manifest.HostPid > 0 && probe.IsAlive(manifest.HostPid, manifest.HostStartTimeUtc))
             {
@@ -1798,6 +1907,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         }
 
         pty.Complete(adopted); sweep.Complete(adopted);
+        _absenceAdoptionComplete = true;
         return adopted;
     }
 
@@ -1828,6 +1938,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
                 continue;
             }
+            RecordAdoptedAttempt(sidecar.SessionId, sidecar.AcceptedStartedAt);
+            await CreationEffectAsync(sidecar.SessionId, "adoption");
             var verdict = await EvaluateHerdrBarAsync(sidecar, probe, ct);
             switch (verdict)
             {
