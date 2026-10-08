@@ -586,7 +586,10 @@ public class BootStallDetectionTests
     /// whole by D8, so it would never reach the cleanup condition this argument guards).
     /// stale-or-unsuccessful-failure-withholds: the idle shape, but the Failed write is refused by
     /// a concurrency fault: the sweep throws, nothing is failed, nothing is killed. In none of them
-    /// is the boot Warning read as a delivery failure or routed to the stopper.
+    /// is the boot Warning read as a delivery failure or routed to the stopper. Both withholding
+    /// arguments check every destructive channel (stopper, direct runner Kill and Start, Input,
+    /// Release, compaction stop) and the session row's Status, EndedAt and FailureReason; the
+    /// cleanup argument's one kill goes through the stopper, never a direct runner Kill or Start.
     /// </summary>
     [Test]
     [Arguments("real-idle-failure-cleans-up")]
@@ -621,6 +624,7 @@ public class BootStallDetectionTests
             await seed.SaveChangesAsync();
         }
 
+        var sessionBefore = await world.SessionAsync();
         await using (var scope = world.CreateScope())
         {
             var dispatcher = world.Prepare(scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>());
@@ -650,6 +654,8 @@ public class BootStallDetectionTests
                 task.FailureReason.ShouldNotBeNull();
                 task.FailureReason.ShouldStartWith("Boot prompt was never delivered");
                 world.Stopper.Killed.ShouldBe([world.SessionId], "a real idle delivery failure keeps the existing cleanup");
+                world.Runner.Kills.ShouldBe(0, "the cleanup kill goes through the stopper, not the runner directly");
+                world.Runner.Starts.ShouldBe(0);
                 (await world.SessionAsync()).FailureReason.ShouldNotBeNull().ShouldStartWith("Killed by the delivery watchdog");
                 break;
             case "working-withholds":
@@ -657,7 +663,8 @@ public class BootStallDetectionTests
                 task.FailureReason.ShouldNotBeNull();
                 task.FailureReason.ShouldStartWith("Boot prompt was never delivered");
                 world.Stopper.Killed.ShouldBeEmpty("a Working session is never stopped by the watchdog");
-                (await world.SessionAsync()).Status.ShouldBe(SessionStatus.Running);
+                AssertNothingDestructive(world);
+                await AssertSessionUntouchedAsync(world, sessionBefore, shape);
                 break;
             default:
                 task.Status.ShouldBe(before.Status, "the refused write failed nothing");
@@ -665,12 +672,23 @@ public class BootStallDetectionTests
                 task.FailureReason.ShouldBeNull();
                 events.ShouldNotContain(e => e.Type == AgentTaskEventType.Failed);
                 world.Stopper.Killed.ShouldBeEmpty("an unsuccessful failure write never routes to the stopper");
-                (await world.SessionAsync()).Status.ShouldBe(SessionStatus.Running);
+                AssertNothingDestructive(world);
+                await AssertSessionUntouchedAsync(world, sessionBefore, shape);
                 break;
         }
 
         task.Attempt.ShouldBe(1, "the watchdog never requeues");
         events.ShouldNotContain(e => e.Type == AgentTaskEventType.Retried);
+    }
+
+    /// <summary>The session row still says Running with the status, end and failure it had before.</summary>
+    private static async Task AssertSessionUntouchedAsync(BootStallWorld world, AgentSession before, string shape)
+    {
+        var session = await world.SessionAsync();
+        session.Status.ShouldBe(SessionStatus.Running, shape);
+        session.Status.ShouldBe(before.Status, shape);
+        session.EndedAt.ShouldBe(before.EndedAt, shape);
+        session.FailureReason.ShouldBe(before.FailureReason, shape);
     }
 
     /// <summary>Refuses the delivery watchdog's Failed write with a concurrency fault, once.</summary>

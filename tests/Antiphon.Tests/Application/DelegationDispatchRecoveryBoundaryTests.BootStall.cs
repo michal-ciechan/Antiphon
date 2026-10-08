@@ -30,11 +30,16 @@ public partial class DelegationDispatchRecoveryBoundaryTests
     /// (twice), the operator stage at <c>promptAt + 20</c> and a tick from a recreated provider.
     /// inline: the Sent delegation brief row. spilled: the Sent pointer row with its
     /// RemoteSpillBody and the spill file it names. pending-ui-followup: a Pending Ui row queued
-    /// behind the Sent brief. Decisive: every queue row on the delegate session (Id, Sequence,
-    /// Status, Origin, DeliveryAttempts, SentAt, ExecutionTaskId, RemoteSpillRelativePath and the
-    /// SHA-256 of Body and RemoteSpillBody) and the spill file's bytes are equal before the first
-    /// tick and after the last; no new row; runner Inputs 0; the task keeps its attempt, token and
-    /// dispatch; both boot stages are written once.
+    /// behind the Sent brief. The brief carries a persisted delivery identity: the non-null
+    /// transcript baseline its attempt captured (0, the floor just before the brief prompt at
+    /// sequence 1, the anti-duplicate keystone), the accepted generation it typed into, its start
+    /// time and a Delivered verdict. Decisive: every queue row on the delegate session (Id,
+    /// Sequence, Status, Origin, DeliveryAttempts, SentAt, ExecutionTaskId,
+    /// LastDeliveryBaselineSequence, LastDeliveryGeneration, LastDeliveryStartedAt,
+    /// DeliveryVerdict, DeliveryVerdictAt, RemoteSpillRelativePath and the SHA-256 of Body and
+    /// RemoteSpillBody) and the spill file's bytes are equal before the first tick and after the
+    /// last; the brief still holds the seeded baseline and generation; no new row; runner Inputs 0;
+    /// the task keeps its attempt, token and dispatch; both boot stages are written once.
     /// </summary>
     [Test]
     [Arguments("inline")]
@@ -49,6 +54,8 @@ public partial class DelegationDispatchRecoveryBoundaryTests
             Brief = QueuedMessageStatus.Sent,
         });
         string? spillPath = null;
+        const long baseline = 0;
+        var generation = (await world.SessionAsync()).StartedAt;
         try
         {
             await using (var db = world.Read())
@@ -56,6 +63,11 @@ public partial class DelegationDispatchRecoveryBoundaryTests
                 var brief = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == world.SessionId);
                 brief.ExecutionTaskId = world.TaskId;
                 brief.DeliveryAttempts = 1;
+                brief.LastDeliveryBaselineSequence = baseline;
+                brief.LastDeliveryGeneration = generation;
+                brief.LastDeliveryStartedAt = brief.SentAt.ShouldNotBeNull().AddSeconds(-1);
+                brief.DeliveryVerdict = DeliveryVerdict.Delivered;
+                brief.DeliveryVerdictAt = brief.SentAt;
                 if (shape == "spilled")
                 {
                     var stem = brief.Id.ToString("D");
@@ -103,6 +115,14 @@ public partial class DelegationDispatchRecoveryBoundaryTests
                 .ShouldBe([BootStallPolicy.DetectedToken, BootStallPolicy.NeedsOperatorToken], world.Warnings());
             (await BootStallQueueSnapshotAsync(world, spillPath))
                 .ShouldBe(queue, $"{shape}: detection and escalation leave every queue byte and identity alone");
+            await using (var db = world.Read())
+            {
+                var brief = await db.SessionQueuedMessages.AsNoTracking()
+                    .SingleAsync(m => m.AgentSessionId == world.SessionId && m.Origin == QueuedMessageOrigin.Delegation);
+                brief.LastDeliveryBaselineSequence.ShouldBe(baseline, $"{shape}: the anti-duplicate baseline survives");
+                brief.LastDeliveryGeneration.ShouldBe(generation, shape);
+            }
+
             BootStallWorkingTickCharacterizationTests.AssertNothingDestructive(world);
             await BootStallWorkingTickCharacterizationTests.AssertSameAttemptAsync(world, before);
             await BootStallWorkingTickCharacterizationTests.AssertNoFailureTraceAsync(world);
@@ -125,6 +145,8 @@ public partial class DelegationDispatchRecoveryBoundaryTests
             .ToListAsync();
         var lines = rows.Select(m => string.Join('|',
             m.Id, m.Sequence, m.Status, m.Origin, m.DeliveryAttempts, m.SentAt?.ToString("o"), m.ExecutionTaskId,
+            m.LastDeliveryBaselineSequence?.ToString() ?? "-", m.LastDeliveryGeneration?.ToString("o"),
+            m.LastDeliveryStartedAt?.ToString("o"), m.DeliveryVerdict, m.DeliveryVerdictAt?.ToString("o"),
             m.RemoteSpillRelativePath, BootStallSha(m.Body), m.RemoteSpillBody is null ? "-" : BootStallSha(m.RemoteSpillBody)))
             .ToList();
         lines.Insert(0, $"rows={rows.Count}");
