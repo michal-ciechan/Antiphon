@@ -479,3 +479,14 @@ changed cited file. Bind the dispatch to this artifact's pushed plan commit and 
 design; only after review and confirmed land should the caller commission SourceLanding
 Mutation for PC-1..PC-17. Activate the server slice through the canonical restart owner, keeping
 parking/automatic-release defaults off.
+
+### Code amendment, 2026-10-08 (task `cab80ac2`)
+
+S1 measured the planned census exactly at `91f43ceb35e25bd42eb7bb8aa59770616a71942c`
+(CP-4 stdout): `prepare-due 5`, `capture-due 5`, `handle-due 13`, `handle-backed-off 7`,
+`sweep-due 26`, four `sweep-backed-off` visits of 20, five default-interval visits 106. The due
+raw sweep reads the park four times (RegisterLegacy, TryHandle's Register, the Held gate and the
+preparation load); the backed-off sweep three. One implementation detail differs from D-3's
+sketch: `StampUnloadedHeldAttemptAsync(parkId, revision, observedNextAttemptAt, ct)` takes the
+retained snapshot's deadline so the known-future skip happens inside the same method that
+captures the clock; the database predicate is unchanged. No other decision changed.

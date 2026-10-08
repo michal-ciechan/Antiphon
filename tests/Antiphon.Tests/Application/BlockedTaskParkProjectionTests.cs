@@ -89,12 +89,17 @@ public sealed class BlockedTaskParkProjectionTests
         Require(Read("docs/antiphon-api.md"), "ReclaimIntervalSeconds", "c1108-api-interval");
         Require(Read("docs/ops-http.md"), "ReclaimIntervalSeconds", "c1108-ops-interval");
         Require(runtime, "A Held episode is not prepared again until its NextAttemptAt, stamped at now plus ReclaimHeldBackoffSeconds (default 600; 0 disables; a negative value is treated as 0), except park_workspace_reserved which stays immediate.", "c1108-held-backoff");
-        Require(runtime, "A refusal on a Held row re-stamps NextAttemptAt from the same backoff and records the refusal reason, so a Held row is never prepared on consecutive sweeps while its backoff runs (CARD-1135).", "c1135-held-restamp");
-        const string knownLimits = "Known limits stay on CARD-1097 item 2 (resume reads the desktop checkout, not the runner mirror), CARD-1104 for a remote parent with RunnerCwd, CARD-1143 (a Held row whose episode can no longer be loaded is visited on later sweeps without a re-stamp), and CARD-1154 (the local 409 can name Reply for a confirmed published park whose release identity no longer matches).";
+        Require(runtime, "A refusal routed through HoldAsync on a Held row re-stamps NextAttemptAt from the same backoff and records the refusal reason (CARD-1135).", "c1135-held-restamp");
+        runtime.ShouldNotContain("so a Held row is never prepared on consecutive sweeps while its backoff runs", Case.Sensitive, "c1135-held-restamp");
+        Require(runtime, "When PrepareAsync or CaptureSourceIdentityAsync loads a due Held park but cannot load its episode, it records park_episode_changed and the same configured Held backoff without changing the park state, revision, publication receipt or release ledger (CARD-1143).", "c1143-unloadable-held");
+        Require(runtime, "With a positive Held backoff, a repeated or concurrent unloadable-episode refusal does not move an already future NextAttemptAt; zero or negative backoff still disables the delay.", "c1143-no-repeat");
+        Require(runtime, "Disabled or busy entry, intent-CAS and receipt refusals keep their existing behavior; proof verification stays read-only on an unloadable episode.", "c1143-refusal-scope");
+        const string knownLimits = "Known limits stay on CARD-1097 item 2 (resume reads the desktop checkout, not the runner mirror), CARD-1104 for a remote parent with RunnerCwd, and CARD-1154 (the local 409 can name Reply for a confirmed published park whose release identity no longer matches).";
         var knownLimitsLine = runtime.Replace("\r\n", "\n").Split('\n')
             .Single(line => line.StartsWith("Known limits stay on ", StringComparison.Ordinal));
         knownLimitsLine.ShouldBe(knownLimits, "c1141-known-limits");
-        foreach (var closed in new[] { "CARD-1103", "CARD-1129", "CARD-1135", "CARD-1144" })
+        runtime.ShouldNotContain("visited on later sweeps without a re-stamp", Case.Sensitive, "c1143-residual-closed");
+        foreach (var closed in new[] { "CARD-1103", "CARD-1129", "CARD-1135", "CARD-1143", "CARD-1144" })
             knownLimitsLine.ShouldNotContain(closed, Case.Sensitive, "c1141-known-limits");
         Require(Read("docs/antiphon-api.md"), "`ReclaimHeldBackoffSeconds` defaults to 600; 0 disables the Held backoff and a negative value is treated as 0.", "c1108-api-backoff");
         Require(Read("docs/ops-http.md"), "ReclaimHeldBackoffSeconds defaults to 600", "c1108-ops-backoff");
