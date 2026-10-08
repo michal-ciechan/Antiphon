@@ -166,31 +166,45 @@ Do not replay any CARD-1144/1146/1147 slice or edit generated `docs/cards` files
 
 ## Owner documentation changes
 
+A candidate park of the Blocked task is a current-attempt published park in Parked or
+ResumePending with a linked release (`RemotePoolParkReplyAsync`; R-3 `C1146_ParkScopeParity`).
+The classifier reads every candidate in one SELECT and ranks the result across all of
+them: any admitted candidate gives Admitted; otherwise any candidate whose linked
+release is Confirmed with a non-null ConfirmedAt gives ReleaseMismatch; otherwise None.
 Replace `LocalGuidanceSentence` in both runtime/orchestration owners and its existing
 pin with this exact sentence:
 
-> Local 409 follow_up_agent_blocked guidance uses the same confirmed release-identity query as Reply; it gives the published-seat Reply advice (the seat was released; reply and do not cancel) only when that query admits the linked release of a current-attempt published park in Parked or ResumePending, and otherwise falls back to the mismatch or live/dead advice, whose live form also names Reply or cancel (CARD-1154).
+> Local 409 follow_up_agent_blocked guidance gives the published-seat Reply advice (the seat was released; reply and do not cancel) only when the shared admission query that Reply uses admits the linked release of a candidate park of the Blocked task, a current-attempt published park in Parked or ResumePending (CARD-1154).
 
-Repair (Review fd379736, D1): the earlier wording of this sentence promised that every
-Reply recommendation for a published park requires admission, and the owners promised
-mismatch text for any Confirmed but inadmissible release. `RemotePoolParkReplyAsync`
-returns ReleaseMismatch only when the linked release also has a non-null ConfirmedAt;
-otherwise it returns None and the generic live/dead advice applies (V-3
-`missing-confirmed-at-stopped`). Add and pin these two sentences in both owners, with a
-source anchor on the classifier's ConfirmedAt condition and stale-wording exclusions:
+Add and pin this precedence sentence in both owners, with source anchors on the
+classifier's ConfirmedAt condition and on Admitted being returned before ReleaseMismatch:
 
-> The mismatch 409, which says that parked answer cannot be continued, applies only when no current-attempt published park in Parked or ResumePending is admitted and at least one such park has a linked release in state Confirmed with a non-null ConfirmedAt: a release identity mismatch, a missing ActionId, or an OutcomeCode outside Released, AlreadyExited and AlreadyAbsent (CARD-1154).
+> Across all candidate parks of that task, any admitted park gives the published-seat Reply advice; otherwise, if some candidate has a linked release in state Confirmed with a non-null ConfirmedAt that fails admission, the 409 gives the mismatch text, which says that parked answer cannot be continued and names neither Reply nor cancel; otherwise the ordinary live/dead advice applies (CARD-1154).
 
-> A linked release in state Confirmed with a null ConfirmedAt, a release in any other state, or no such park at all gives no confirmed park classification, so the live/dead advice applies (CARD-1154).
+Each clause is verified against the classifier and a test: admitted beside a mismatched
+candidate (V-4 `multiple-parks`), mismatch without Reply or cancel (V-1, V-2, V-3
+`mismatch-*`, `unknown-outcome-stopped`), null ConfirmedAt falls to live/dead (V-3
+`missing-confirmed-at-stopped`), and live/dead without a candidate (V-3 `no-park-*`).
 
-Add and pin these two sentences in both owners:
-
-> Confirmed park evidence is evaluated before local live-session advice; a confirmed park with mismatched release identity names neither Reply nor cancellation (CARD-1154).
+Add and pin this sentence in both owners:
 
 > Confirmed-park guidance performs one database read per blocked follow-up, independent of the number of candidate parks; the existing session-liveness read is separate (CARD-1154).
 
-Qualify the surrounding generic live/dead descriptions: they apply when no confirmed
-park classification takes precedence; published-seat Reply advice requires Admitted.
+Qualify the CARD-1103 remote stale-release sentence the same way, since the remote 422
+uses the same classifier:
+
+> When no candidate park of the task is admitted, a confirmed published park whose seat release does not match that admission does not name Reply; that parked answer cannot be continued (CARD-1103).
+
+Repair history: Review fd379736 D1 required the ConfirmedAt condition; Review c9686076
+D3 found that the earlier per-park wording (an unadmitted release "falls back", a
+mismatched confirmed park "names neither Reply nor cancellation", a null ConfirmedAt
+"gives no confirmed park classification") is false when another candidate is admitted.
+The pin now rejects each of those phrases and requires only the sentences above.
+An enumeration of the ways a Confirmed release can fail admission is not stated in
+the owners, because the missing-ActionId path is tested only as "not Admitted".
+
+Qualify the surrounding generic live/dead descriptions: they apply when no candidate
+park gives the Reply or mismatch advice; published-seat Reply advice requires Admitted.
 Retain the CARD-1144 veto, CARD-1146 shared-query and CARD-1103 remote-precedence
 sentences and pins. Replace the obsolete c1154 source anchor about the weak detector
 with anchors for the Create consumer and its evidence order. Keep the separate weak
