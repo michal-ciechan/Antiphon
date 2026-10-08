@@ -31,7 +31,7 @@ namespace Antiphon.Tests.Application;
 [Category("Slow")]
 [NotInParallel("MessageQueue")]
 [ParallelLimiter<ProcessSpawnLimit>]
-public sealed class BlockedTaskParkReclaimTests
+public sealed partial class BlockedTaskParkReclaimTests
 {
     [Test]
     public async Task C1065_LegacySweepRequiresFreshPublicationAndIdleWindow()

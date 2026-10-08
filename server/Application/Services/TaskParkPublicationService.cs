@@ -29,7 +29,7 @@ public sealed class TaskParkPublicationService(AppDbContext db, LocalTaskParkPub
     public async Task<TaskParkSourceIdentityResult> CaptureSourceIdentityAsync(Guid parkId, CancellationToken ct)
     {
         if (!options.Value.Enabled || !CanOwnTransaction()) return new(TaskParkSourceIdentityOutcome.Held, "park_disabled_or_busy");
-        var candidate = await LoadAsync(parkId, ct);
+        var candidate = await LoadForPreparationAsync(parkId, ct);
         if (candidate is null) return new(TaskParkSourceIdentityOutcome.Held, "park_episode_changed");
         var (task, park, baseline) = candidate;
         async Task<TaskParkSourceIdentityResult> RefuseAsync(string reason, bool unknown = false)
@@ -91,14 +91,14 @@ public sealed class TaskParkPublicationService(AppDbContext db, LocalTaskParkPub
     public async Task<TaskParkPublicationResult> PrepareAsync(Guid parkId, CancellationToken ct)
     {
         if (!options.Value.Enabled || !CanOwnTransaction()) return Held("park_disabled_or_busy");
-        var candidate = await LoadAsync(parkId, ct);
+        var candidate = await LoadForPreparationAsync(parkId, ct);
         if (candidate is null) return Held("park_episode_changed");
         if (candidate.Park.RepositoryIdentity is null || candidate.Park.EndpointFingerprint is null)
         {
             var capture = await CaptureSourceIdentityAsync(parkId, ct);
             if (!capture.Captured) return new(capture.Outcome == TaskParkSourceIdentityOutcome.Unknown
                 ? TaskParkPublicationOutcome.Unknown : TaskParkPublicationOutcome.Held, capture.Reason);
-            candidate = await LoadAsync(parkId, ct);
+            candidate = await LoadForPreparationAsync(parkId, ct);
             if (candidate is null) return Held("park_episode_changed");
         }
         var (task, park, baseline) = candidate;
@@ -323,9 +323,25 @@ public sealed class TaskParkPublicationService(AppDbContext db, LocalTaskParkPub
         return null;
     }
 
-    private async Task<Candidate?> LoadAsync(Guid id, CancellationToken ct)
+    // Read-only: proof verification, receipt reads and locked CAS reloads never write here.
+    private async Task<Candidate?> LoadAsync(Guid id, CancellationToken ct) =>
+        await LoadAsync(await db.AgentTaskParks.AsNoTracking().SingleOrDefaultAsync(p => p.Id == id, ct), ct);
+
+    // CARD-1143: preparation only. The park snapshot already read is retained, so an
+    // unloadable episode on a due Held row records park_episode_changed with the ordinary
+    // Held backoff and no further SELECT. Nothing is released, retired or reclassified.
+    private async Task<Candidate?> LoadForPreparationAsync(Guid id, CancellationToken ct)
     {
         var park = await db.AgentTaskParks.AsNoTracking().SingleOrDefaultAsync(p => p.Id == id, ct);
+        var candidate = await LoadAsync(park, ct);
+        if (candidate is null && park is { State: AgentTaskParkState.Held })
+            await new BlockedTaskParkingService(db, clock, options)
+                .StampUnloadedHeldAttemptAsync(park.Id, park.Revision, park.NextAttemptAt, ct);
+        return candidate;
+    }
+
+    private async Task<Candidate?> LoadAsync(AgentTaskPark? park, CancellationToken ct)
+    {
         if (park is null || park.AgentId is null || park.SessionId is null || park.RunnerStoreId is null
             || park.AcceptedStartedAt is null || park.RunnerId is null || park.ReportDigest is null) return null;
         var task = await db.AgentTasks.AsNoTracking().SingleOrDefaultAsync(t => t.Id == park.TaskId, ct);
