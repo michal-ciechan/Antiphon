@@ -501,9 +501,6 @@ public class StandingBootAttentionTests
         (await f.SweepAsync()).ShouldBe(1, f.Warnings());
         var now = f.Clock.GetUtcNow().UtcDateTime;
         var row = (await LivenessRowsAsync(f)).ShouldHaveSingleItem(prompt);
-        row.Evidence.ShouldContain($"Prompt #1 (UserPrompt) at {f.PromptAt:u}, "
-            + $"{StandingBootWatchPolicy.Describe(now - f.PromptAt)} ago; no assistant, thinking, tool or "
-            + "turn-end row since.\n", customMessage: "the prompt line states the record and the silence only");
         var receipt = (await f.ReceiptsAsync()).ShouldHaveSingleItem().Message;
         foreach (var text in new[] { row.Headline, row.Evidence, receipt })
         {
@@ -513,6 +510,10 @@ public class StandingBootAttentionTests
                     $"{prompt}: the standing row cannot verify delivery, so it never asserts or denies it");
             }
         }
+
+        row.Evidence.ShouldContain($"Prompt #1 (UserPrompt) at {f.PromptAt:u}, "
+            + $"{StandingBootWatchPolicy.Describe(now - f.PromptAt)} ago; no assistant, thinking, tool or "
+            + "turn-end row since.\n", customMessage: "the prompt line states the record and the silence only");
 
         f.AssertNothingDestructive();
     }
