@@ -1,3 +1,4 @@
+using Antiphon.Server.Application.Services;
 using Shouldly;
 using TUnit.Core;
 
@@ -15,6 +16,12 @@ namespace Antiphon.Tests.Application;
 /// failure/retry outcome") describes an outcome option B deleted, so writing it verbatim would
 /// document behaviour the code no longer has. Every pin is a <c>nameof</c>, so renaming a pinned
 /// test without the document breaks the build, not just this assertion.</para>
+///
+/// <para>The S4 repair (Review 04808159) adds two corrections: the Grok note's no-automatic-end
+/// promise is scoped to an open delegate task with the taskless AlwaysOn watchdog stop named as
+/// the exception (F1), and every owner plus the <c>ModelWaitDeadlineMinutes</c> comment states the
+/// operator threshold <c>BootStallPolicy.Facts</c> actually computes, which is checked against the
+/// policy itself, including model wait disabled with a boot wait above 20 minutes (F2).</para>
 /// </summary>
 [Category("Unit")]
 public class BootStallDocumentationTests
@@ -40,6 +47,28 @@ public class BootStallDocumentationTests
         "CARD-0079 is the only automatic Working stop authorization; boot-stall detection does not "
         + "call it. Parking is default-off and provides no release deadline for an input-waiting "
         + "session.";
+
+    /// <summary>
+    /// The operator threshold as <c>BootStallPolicy.Facts</c> computes it (CARD-1151 S4 repair,
+    /// Review 04808159 F2): the 20-minute fallback replaces only the model-wait operand.
+    /// </summary>
+    internal const string OperatorThresholdSentence =
+        "The operator threshold is `prompt + max(positive boot wait, operator wait)`: the boot wait is "
+        + "`Delegation:BootModelWaitDeadlineMinutes` (zero when `<= 0`), and the operator wait is "
+        + "`Delegation:ModelWaitDeadlineMinutes`, or 20 minutes when that is `<= 0`, so a disabled "
+        + "model-wait deadline still waits for a boot wait above 20 minutes.";
+
+    /// <summary>Review 04808159 F1: the no-automatic-end promise is scoped to an open delegate task.</summary>
+    internal const string DelegateScopedSentence =
+        "For a session owned by an open delegate task, since CARD-1151 no deadline ends the boot "
+        + "episode automatically: the task asks for an operator decision at the operator threshold, "
+        + "and an operator cancels or retries it explicitly.";
+
+    /// <summary>Review 04808159 F1: the boot reply watchdog's taskless AlwaysOn stop is unchanged.</summary>
+    internal const string AlwaysOnExceptionSentence =
+        "A taskless AlwaysOn session is the exception: the boot reply watchdog still raises its "
+        + "incident and stops the session for the existing standing-agent restart ladder "
+        + "(`BootReplyWatchdogService`, unchanged by CARD-1151; CARD-1156).";
 
     private static readonly string[] RetiredPromises =
     [
@@ -102,8 +131,45 @@ public class BootStallDocumentationTests
         }
 
         // The Grok note no longer says the deadline ends a hung provider call.
-        Read("docs/agent-kinds.md").ShouldNotContain(
+        var kinds = Read("docs/agent-kinds.md");
+        kinds.ShouldNotContain(
             "Antiphon's boot-turn deadline is what ends this", Case.Sensitive, "agent-kinds: retired promise");
+
+        // F1: the promise is the open delegate task's, and the taskless AlwaysOn stop stays explicit.
+        kinds.ShouldNotContain("since CARD-1151 nothing ends it automatically", Case.Sensitive,
+            "agent-kinds: unscoped no-automatic-end promise");
+        kinds.ShouldContain(DelegateScopedSentence, Case.Sensitive, "agent-kinds: delegate-scoped sentence");
+        foreach (var (owner, text) in new[] { ("agent-kinds", kinds), ("runtime", runtime) })
+            text.ShouldContain(AlwaysOnExceptionSentence, Case.Sensitive, $"{owner}: AlwaysOn exception");
+
+        // F2: every owner states the threshold the policy computes; the settings comment does too.
+        foreach (var (owner, text) in new[] { ("runtime", runtime), ("loop", loop), ("agent-kinds", kinds) })
+            text.ShouldContain(OperatorThresholdSentence, Case.Sensitive, $"{owner}: operator threshold formula");
+        var settings = Read("server/Application/Settings/DelegationSettings.cs");
+        settings.ShouldNotContain("With this disabled the operator threshold is 20 minutes", Case.Sensitive,
+            "settings: the 20-minute fallback is not the whole threshold");
+        settings.ShouldContain("<c>max(positive boot wait, 20 minutes)</c>", Case.Sensitive,
+            "settings: fallback threshold formula");
+
+        // ...and the formula is the one the policy computes, including the case the old comment got wrong.
+        OperatorDueAfter(bootWait: 8, modelWait: 20).ShouldBe(TimeSpan.FromMinutes(20), "defaults");
+        OperatorDueAfter(bootWait: 8, modelWait: 0).ShouldBe(TimeSpan.FromMinutes(20), "fallback operand");
+        OperatorDueAfter(bootWait: 30, modelWait: 0).ShouldBe(TimeSpan.FromMinutes(30),
+            "a boot wait above 20 still sets the threshold with model wait disabled");
+        OperatorDueAfter(bootWait: 0, modelWait: 0).ShouldBe(TimeSpan.FromMinutes(20), "no positive boot wait");
+    }
+
+    private static TimeSpan OperatorDueAfter(int bootWait, int modelWait)
+    {
+        var promptAt = new DateTime(2026, 10, 8, 12, 0, 0, DateTimeKind.Utc);
+        var facts = BootStallPolicy.Facts(
+            promptAt, promptAt,
+            new BootReplyWatch.BootTurn(
+                PromptSequence: 1, PromptAt: promptAt, PromptCount: 1,
+                AcceptedSequence: 1, AcceptedAt: promptAt, AcceptedCount: 1),
+            bootWait, modelWait)
+            ?? throw new InvalidOperationException("an accepted prompt always yields facts");
+        return facts.OperatorDueAt - promptAt;
     }
 
     private static string Pin(string type, string method) => $"`{type}.{method}`";

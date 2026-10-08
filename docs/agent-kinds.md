@@ -469,8 +469,10 @@ synthetic `/api-key` credential hit. See the [measurement record](investigations
   14:03Z) were accepted and produced no `first_token`, no retry and no error for the full 16
   minutes until the orchestrator cancelled — inside an xAI capacity window that also logged 289
   HTTP 500s ("The model is currently at capacity due to high demand") between 14:25Z and 15:39Z.
-  Antiphon's boot-turn deadline is what detects this (`Delegation:BootModelWaitDeadlineMinutes`);
-  since CARD-1151 nothing ends it automatically, and an operator cancels or retries it explicitly.
+  Antiphon's boot-turn deadline is what detects this (`Delegation:BootModelWaitDeadlineMinutes`).
+  For a session owned by an open delegate task, since CARD-1151 no deadline ends the boot episode automatically: the task asks for an operator decision at the operator threshold, and an operator cancels or retries it explicitly.
+  The operator threshold is `prompt + max(positive boot wait, operator wait)`: the boot wait is `Delegation:BootModelWaitDeadlineMinutes` (zero when `<= 0`), and the operator wait is `Delegation:ModelWaitDeadlineMinutes`, or 20 minutes when that is `<= 0`, so a disabled model-wait deadline still waits for a boot wait above 20 minutes.
+  A taskless AlwaysOn session is the exception: the boot reply watchdog still raises its incident and stops the session for the existing standing-agent restart ladder (`BootReplyWatchdogService`, unchanged by CARD-1151; CARD-1156).
 - **Grok's own diagnostics, for a human — never a verdict.** Next to the `updates.jsonl` the runner
   tails, Grok writes `~/.grok/sessions/<id>/events.jsonl` (`turn_started` →
   `phase_changed: waiting_for_model` → `first_token` → …) and `~/.grok/logs/unified.jsonl`

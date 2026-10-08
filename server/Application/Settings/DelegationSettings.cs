@@ -414,9 +414,14 @@ public sealed class DelegationSettings
     ///
     /// <para><b>Not for a boot episode (CARD-1151).</b> A session whose accepted boot prompt has
     /// had no model reply is never failed by this clock; for it the same number is the operator
-    /// threshold, <c>prompt + max(</c><see cref="BootModelWaitDeadlineMinutes"/><c>, this)</c>,
-    /// at which the task records <c>BootStallNeedsOperator</c> and its attention row turns
-    /// Error. With this disabled the operator threshold is 20 minutes.</para>
+    /// wait in the operator threshold, at which the task records <c>BootStallNeedsOperator</c>
+    /// and its attention row turns Error. The threshold is
+    /// <c>prompt + max(positive boot wait, operator wait)</c>, where the boot wait is
+    /// <see cref="BootModelWaitDeadlineMinutes"/> (zero when <c>&lt;= 0</c>) and the operator
+    /// wait is this value, or 20 minutes when this is <c>&lt;= 0</c>
+    /// (<c>BootStallPolicy.OperatorWait</c> and <c>BootStallPolicy.Facts</c>). With this
+    /// disabled the 20 minutes replaces only this operand, so a boot wait above 20 still sets
+    /// the threshold: <c>max(positive boot wait, 20 minutes)</c>.</para>
     /// </summary>
     public int ModelWaitDeadlineMinutes { get; set; } = 20;
 
