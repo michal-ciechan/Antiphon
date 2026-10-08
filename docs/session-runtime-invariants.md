@@ -122,8 +122,11 @@ A sweep's Released counts only confirmations produced by this run; a row Parked 
 A failed or rolled-back confirmation contributes nothing to that sweep's Released count, even if a separate recovery confirms the same release before the sweep reads it (CARD-1147).
 FreshLegacyWindow uses StableFor only as a duration and requires the server-clock interval since park.CreatedAt to reach 120 seconds; the runner's FirstObservedAt is ignored. An old CompletedAt is not the idle window.
 A Held episode is not prepared again until its NextAttemptAt, stamped at now plus ReclaimHeldBackoffSeconds (default 600; 0 disables; a negative value is treated as 0), except park_workspace_reserved which stays immediate.
-A refusal on a Held row re-stamps NextAttemptAt from the same backoff and records the refusal reason, so a Held row is never prepared on consecutive sweeps while its backoff runs (CARD-1135).
-Known limits stay on CARD-1097 item 2 (resume reads the desktop checkout, not the runner mirror), CARD-1104 for a remote parent with RunnerCwd, CARD-1143 (a Held row whose episode can no longer be loaded is visited on later sweeps without a re-stamp), and CARD-1154 (the local 409 can name Reply for a confirmed published park whose release identity no longer matches).
+A refusal routed through HoldAsync on a Held row re-stamps NextAttemptAt from the same backoff and records the refusal reason (CARD-1135).
+When PrepareAsync or CaptureSourceIdentityAsync loads a due Held park but cannot load its episode, it records park_episode_changed and the same configured Held backoff without changing the park state, revision, publication receipt or release ledger (CARD-1143).
+With a positive Held backoff, a repeated or concurrent unloadable-episode refusal does not move an already future NextAttemptAt; zero or negative backoff still disables the delay.
+Disabled or busy entry, intent-CAS and receipt refusals keep their existing behavior; proof verification stays read-only on an unloadable episode.
+Known limits stay on CARD-1097 item 2 (resume reads the desktop checkout, not the runner mirror), CARD-1104 for a remote parent with RunnerCwd, and CARD-1154 (the local 409 can name Reply for a confirmed published park whose release identity no longer matches).
 
 CARD-0519 S10: a terminal session status alone does not close outbound recovery
 windows. The optional transcript snapshot `TerminalComplete` is reader-owned EOF
