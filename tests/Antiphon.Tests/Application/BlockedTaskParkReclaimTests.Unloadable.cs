@@ -435,7 +435,7 @@ public sealed partial class BlockedTaskParkReclaimTests
     // A read whose primary FROM is the table; a subquery inside another table's read does not count.
     private static bool IsSelect(string sql, string table)
     {
-        var text = sql.TrimStart();
+        var text = string.Join(' ', sql.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
         var from = text.IndexOf(" FROM \"", StringComparison.Ordinal);
         return text.StartsWith("SELECT", StringComparison.Ordinal) && !text.Contains("FOR UPDATE", StringComparison.Ordinal)
             && from >= 0 && text.AsSpan(from).StartsWith($" FROM \"{table}\"", StringComparison.Ordinal);
