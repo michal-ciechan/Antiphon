@@ -89,6 +89,10 @@ public sealed class BlockedTaskParkProjectionTests
             Require(text, EvidenceOrderSentence, "c1154-evidence-order:" + owner);
             Require(text, OneReadSentence, "c1154-one-read:" + owner);
             text.ShouldNotContain(StaleLocalGuidanceSentence, Case.Sensitive, "c1154-local-guidance:" + owner);
+            Require(text, MismatchSentence, "c1154-mismatch-confirmed-at:" + owner);
+            Require(text, NoneSentence, "c1154-none-fallback:" + owner);
+            text.ShouldNotContain(StaleLocalReplySentence, Case.Sensitive, "c1154-local-guidance:" + owner);
+            text.ShouldNotContain(StaleMismatchSentence, Case.Sensitive, "c1154-mismatch-confirmed-at:" + owner);
         }
         Require(Read("docs/antiphon-api.md"), "ReclaimIntervalSeconds", "c1108-api-interval");
         Require(Read("docs/ops-http.md"), "ReclaimIntervalSeconds", "c1108-ops-interval");
@@ -173,6 +177,8 @@ public sealed class BlockedTaskParkProjectionTests
         var guidance = Between(follow, "internal async Task<RemotePoolParkReply> RemotePoolParkReplyAsync(", "private async Task<bool> HasConfirmedPublishedParkAsync(");
         Require(guidance, "RunnerSeatReleaseQueries.Confirmed(RunnerSeatReleaseQueries.ForAttempt(_db, task))", "c1146-shared-query:guidance");
         CountOf(guidance, "await ").ShouldBe(1, "c1146-shared-query:one-read");
+        // The owner mismatch sentence names ConfirmedAt because the mismatch arm requires it.
+        Require(guidance, "&& r.ConfirmedAt != null),", "c1154-mismatch-confirmed-at:source");
         var seat = Read("server/Application/Services/TerminalRunnerSeatReleaseService.cs").Replace("\r\n", "\n");
         Require(seat, "RunnerSeatReleaseQueries.ForAttempt(db, task).SingleOrDefaultAsync(ct);", "c1146-shared-query:identity");
         Require(seat, "RunnerSeatReleaseQueries.Confirmed(RunnerSeatReleaseQueries.ForAttempt(db, task)).SingleOrDefaultAsync(ct);", "c1146-shared-query:continuation");
@@ -208,7 +214,12 @@ public sealed class BlockedTaskParkProjectionTests
     private const string MarkReadSentence = "Mark-read records the first ReadAt without changing the task's ConcurrencyToken, the settlement revision a seat release records; a matching confirmed-park Reply after a read still queues one new attempt (CARD-1144).";
     private const string NoOldSessionSentence = "Reply to a confirmed published park whose release identity no longer matches, with no accepted answer pending, returns 409 park_release_identity_mismatch before any old-session input is queued (CARD-1144).";
     private const string SharedQuerySentence = "The remote-pool 422 guidance and confirmed-park Reply continuation use the same EF queries, RunnerSeatReleaseQueries.ForAttempt for release identity and RunnerSeatReleaseQueries.Confirmed for the confirmed receipt; that guidance remains one database read (CARD-1146).";
-    private const string LocalGuidanceSentence = "Local 409 follow_up_agent_blocked guidance uses the same confirmed release-identity query as Reply; it recommends Reply for a current-attempt published park only when that query admits its linked release (CARD-1154).";
+    private const string LocalGuidanceSentence = "Local 409 follow_up_agent_blocked guidance uses the same confirmed release-identity query as Reply; it gives the published-seat Reply advice (the seat was released; reply and do not cancel) only when that query admits the linked release of a current-attempt published park in Parked or ResumePending, and otherwise falls back to the mismatch or live/dead advice, whose live form also names Reply or cancel (CARD-1154).";
+    // The mismatch arm also requires ConfirmedAt (RemotePoolParkReplyAsync); a Confirmed release without it is None.
+    private const string MismatchSentence = "The mismatch 409, which says that parked answer cannot be continued, applies only when no current-attempt published park in Parked or ResumePending is admitted and at least one such park has a linked release in state Confirmed with a non-null ConfirmedAt: a release identity mismatch, a missing ActionId, or an OutcomeCode outside Released, AlreadyExited and AlreadyAbsent (CARD-1154).";
+    private const string NoneSentence = "A linked release in state Confirmed with a null ConfirmedAt, a release in any other state, or no such park at all gives no confirmed park classification, so the live/dead advice applies (CARD-1154).";
+    private const string StaleLocalReplySentence = "it recommends Reply for a current-attempt published park only when that query admits its linked release";
+    private const string StaleMismatchSentence = "Confirmed but not admitted";
     private const string EvidenceOrderSentence = "Confirmed park evidence is evaluated before local live-session advice; a confirmed park with mismatched release identity names neither Reply nor cancellation (CARD-1154).";
     private const string OneReadSentence = "Confirmed-park guidance performs one database read per blocked follow-up, independent of the number of candidate parks; the existing session-liveness read is separate (CARD-1154).";
     private const string StaleLocalGuidanceSentence = "does not check that release identity, so it can name Reply";

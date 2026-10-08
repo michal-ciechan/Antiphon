@@ -757,6 +757,11 @@ public sealed class BlockedTaskParkReplyAdmissionTests
     public async Task C1154_LocalGuidanceUsesOneStatement()
     {
         var rosters = new Dictionary<string, string[]>();
+        // V-4 retains the complete SQL of every measured command in a run-owned, ignored file;
+        // the console keeps only the bounded roster.
+        var sqlEvidence = FullCommandCounter.CreateEvidenceFile("c1154-local-guidance");
+        Console.WriteLine($"C1154-SQL full-commands={sqlEvidence}");
+        var measured = new List<string>();
         foreach (var world in new[] { "admitted", "mismatched-revision", "missing-session", "no-park", "multiple-parks" })
         {
             var label = $"c1154-sql-{world}";
@@ -810,6 +815,8 @@ public sealed class BlockedTaskParkReplyAdmissionTests
                 actual = await service.RemotePoolParkReplyAsync(task, CancellationToken.None);
             }
             var helperRoster = counter.Roster();
+            counter.AppendFullCommands(sqlEvidence, $"helper world={world}");
+            measured.AddRange(counter.Commands);
             Console.WriteLine($"C1154-SQL helper world={world} statements={counter.Total}\n{helperRoster}");
             actual.ShouldBe(expected, label);
             counter.Total.ShouldBe(1, $"{label}\n{helperRoster}");
@@ -821,6 +828,8 @@ public sealed class BlockedTaskParkReplyAdmissionTests
             var refused = await Should.ThrowAsync<ConflictException>(() => BlockedTaskParkDeliveryTests.FollowUpAsync(f));
             var commands = counter.Commands.ToArray();
             var publicRoster = counter.Roster();
+            counter.AppendFullCommands(sqlEvidence, $"create world={world}");
+            measured.AddRange(commands);
             Console.WriteLine($"C1154-SQL create world={world} statements={commands.Length}\n{publicRoster}");
             refused.StatusCode.ShouldBe(409, label);
             refused.Code.ShouldBe("follow_up_agent_blocked", label);
@@ -851,6 +860,14 @@ public sealed class BlockedTaskParkReplyAdmissionTests
 
         // One versus several candidate parks: the same commands, in the same order.
         rosters["multiple-parks"].ShouldBe(rosters["admitted"], "c1154-sql-multiple-parks roster");
+
+        // The artifact holds each command verbatim, not the 180-character console prefix.
+        var retained = File.ReadAllText(sqlEvidence);
+        retained.Split('\n').Count(line => line.StartsWith("=== ", StringComparison.Ordinal)).ShouldBe(10, "c1154-sql-artifact windows");
+        measured.ShouldNotBeEmpty("c1154-sql-artifact");
+        foreach (var sql in measured)
+            retained.ShouldContain("\n" + sql + "\n", Case.Sensitive, "c1154-sql-artifact");
+        measured.ShouldContain(sql => sql.Length > 180, "c1154-sql-artifact untruncated");
     }
 
     private static string Normalize(string sql) =>

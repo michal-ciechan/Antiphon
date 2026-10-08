@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Data.Common;
+using System.Text;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 
 namespace Antiphon.Tests.TestHelpers;
@@ -33,6 +34,48 @@ public sealed class FullCommandCounter : DbCommandInterceptor
                 flat = flat[..180];
             return $"{index + 1}. {flat}";
         }));
+    }
+
+    /// <summary>
+    /// Appends every recorded command, untruncated, to a run-owned evidence file and returns
+    /// the text written. <see cref="Roster"/> stays the bounded console view.
+    /// </summary>
+    public string AppendFullCommands(string path, string window)
+    {
+        var lines = _commands.ToArray();
+        var text = new StringBuilder()
+            .Append("=== ").Append(window).Append(" statements=").Append(lines.Length).Append('\n');
+        for (var index = 0; index < lines.Length; index++)
+            text.Append("--- ").Append(index + 1).Append('\n').Append(lines[index]).Append('\n');
+        File.AppendAllText(path, text.ToString());
+        return text.ToString();
+    }
+
+    /// <summary>
+    /// A new evidence file in the test run's <c>--results-directory</c> (the checkpoint row
+    /// directory), or under the ignored <c>.antiphon/test-evidence</c> when run without one.
+    /// The file is attached to the TRX result as an artifact.
+    /// </summary>
+    public static string CreateEvidenceFile(string name)
+    {
+        var args = Environment.GetCommandLineArgs();
+        var at = Array.IndexOf(args, "--results-directory");
+        var directory = at >= 0 && at + 1 < args.Length
+            ? Path.GetFullPath(args[at + 1])
+            : Path.Combine(RepositoryRoot(), ".antiphon", "test-evidence");
+        Directory.CreateDirectory(directory);
+        var path = Path.Combine(directory, $"{name}-{DateTime.UtcNow:yyyyMMddTHHmmssfffZ}-{Environment.ProcessId}.sql.txt");
+        File.WriteAllText(path, "");
+        TUnit.Core.TestContext.Current?.Output.AttachArtifact(path, Path.GetFileName(path), "complete SQL of every counted command");
+        return path;
+    }
+
+    private static string RepositoryRoot()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "Antiphon.sln")))
+            directory = directory.Parent;
+        return directory?.FullName ?? throw new DirectoryNotFoundException("Antiphon.sln was not found.");
     }
 
     private void Record(DbCommand command) => _commands.Enqueue(command.CommandText);
