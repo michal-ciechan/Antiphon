@@ -296,3 +296,71 @@ Scratch build `bin-c1137mut/` with the two classes
 Batch 1: 25 of 41 red; batch 2: 6 of 41 red; restored source 41/41 green. These probes do not
 discharge any PC; the original PC-1..PC-3 and the warm-up PC-1..PC-2 remain pending for SourceLanding
 Mutation, and the rows above are offered as additional PC candidates.
+
+### Repair results (R1)
+
+Source `7a703ae1b7911b20c70df6af80847b30cd9a83bb` (clean, `buildSource=verified`; `validate`
+reports `CHECKPOINT SOURCE VALID rows=21`). Checkpoint run `20261008-083436-5358`, `--after R1
+--serial`, one test build (`bin-c1137r/`, 246 s, lease `c9725255-5734-4e81-88a0-4c280492a989`, slot
+waited 0 s; the report's `builds: 2` counts the unselected S1 entry `bin-c1137p/`, which was not
+built), every row `slot=granted` (waited 0 s except CP-50, 135 s), `unlisted: none`, wall 38m49s,
+verdict GREEN. Host load average 18-28 during the run.
+
+| Rows | Result |
+|---|---|
+| CP-39 V-1/V-5 guard | 30/30 green |
+| CP-40 V-6 snapshot boundaries | 11/11 green |
+| CP-41 `Pending_delivery_prevents_release` | 1/1 green |
+| CP-42 `C1043_RecoveryPreservesHistory` | 1/1 green |
+| CP-43 card-file dry-run site | 5/5 green |
+| CP-44 warm-up guard | 1/1 green |
+| CP-45 orphan class | 17/17 green |
+| CP-46 release class | 39/39 green |
+| CP-47 registry guard | 3/3 green |
+| CP-48..CP-59 V-3 combined 56 | **12 of 12 green** (56/56 each); host wall 110-164 s per row |
+
+<details><summary>R1 CHECKPOINT lines (unedited)</summary>
+
+```text
+CHECKPOINT CP-39 commit=7a703ae1b7911b20c70df6af80847b30cd9a83bb build=ok filter=/*/*/EntityGraphSerializationGuardTests/* executed=30 passed=30 failed=0 skipped=0 trx=/work/worktrees/task-fcd3f992/.antiphon/checkpoints/20261008-083436-5358/rows/CP-39/run.trx slot=granted waited=0s dirty=0 source=7a703ae1b7911b20c70df6af80847b30cd9a83bb sourceState=clean buildSource=verified
+CHECKPOINT CP-40 commit=7a703ae1b7911b20c70df6af80847b30cd9a83bb build=reused filter=/*/*/EntityScalarSnapshotTests/* executed=11 passed=11 failed=0 skipped=0 trx=/work/worktrees/task-fcd3f992/.antiphon/checkpoints/20261008-083436-5358/rows/CP-40/run.trx slot=granted waited=0s dirty=0 source=7a703ae1b7911b20c70df6af80847b30cd9a83bb sourceState=clean buildSource=verified
+CHECKPOINT CP-41 commit=7a703ae1b7911b20c70df6af80847b30cd9a83bb build=reused filter=/*/*/TerminalRunnerSeatReleaseTests/Pending_delivery_prevents_release* executed=1 passed=1 failed=0 skipped=0 trx=/work/worktrees/task-fcd3f992/.antiphon/checkpoints/20261008-083436-5358/rows/CP-41/run.trx slot=granted waited=0s dirty=0 source=7a703ae1b7911b20c70df6af80847b30cd9a83bb sourceState=clean buildSource=verified
+CHECKPOINT CP-42 commit=7a703ae1b7911b20c70df6af80847b30cd9a83bb build=reused filter=/*/*/ReviewEvidenceRecoveryTests/C1043_RecoveryPreservesHistory* executed=1 passed=1 failed=0 skipped=0 trx=/work/worktrees/task-fcd3f992/.antiphon/checkpoints/20261008-083436-5358/rows/CP-42/run.trx slot=granted waited=0s dirty=0 source=7a703ae1b7911b20c70df6af80847b30cd9a83bb sourceState=clean buildSource=verified
+CHECKPOINT CP-43 commit=7a703ae1b7911b20c70df6af80847b30cd9a83bb build=reused filter=/*/*/CardFilePrivacySyncAcceptanceTests/Dry_run_leaves_existing_files_pins_tokens_ignore_index_and_HEAD_unchanged* executed=5 passed=5 failed=0 skipped=0 trx=/work/worktrees/task-fcd3f992/.antiphon/checkpoints/20261008-083436-5358/rows/CP-43/run.trx slot=granted waited=0s dirty=0 source=7a703ae1b7911b20c70df6af80847b30cd9a83bb sourceState=clean buildSource=verified
+CHECKPOINT CP-44 commit=7a703ae1b7911b20c70df6af80847b30cd9a83bb build=reused filter=/*/*/RunnerSeatLiveSeatWarmupTests/* executed=1 passed=1 failed=0 skipped=0 trx=/work/worktrees/task-fcd3f992/.antiphon/checkpoints/20261008-083436-5358/rows/CP-44/run.trx slot=granted waited=0s dirty=0 source=7a703ae1b7911b20c70df6af80847b30cd9a83bb sourceState=clean buildSource=verified
+CHECKPOINT CP-45 commit=7a703ae1b7911b20c70df6af80847b30cd9a83bb build=reused filter=/*/*/RunnerSeatOrphanSweepTests/* executed=17 passed=17 failed=0 skipped=0 trx=/work/worktrees/task-fcd3f992/.antiphon/checkpoints/20261008-083436-5358/rows/CP-45/run.trx slot=granted waited=0s dirty=0 source=7a703ae1b7911b20c70df6af80847b30cd9a83bb sourceState=clean buildSource=verified
+CHECKPOINT CP-46 commit=7a703ae1b7911b20c70df6af80847b30cd9a83bb build=reused filter=/*/*/TerminalRunnerSeatReleaseTests/* executed=39 passed=39 failed=0 skipped=0 trx=/work/worktrees/task-fcd3f992/.antiphon/checkpoints/20261008-083436-5358/rows/CP-46/run.trx slot=granted waited=0s dirty=0 source=7a703ae1b7911b20c70df6af80847b30cd9a83bb sourceState=clean buildSource=verified
+CHECKPOINT CP-47 commit=7a703ae1b7911b20c70df6af80847b30cd9a83bb build=reused filter=/*/*/(TestClassificationGuardTests*)|(SlowTestTripwireTests*)/* executed=3 passed=3 failed=0 skipped=0 trx=/work/worktrees/task-fcd3f992/.antiphon/checkpoints/20261008-083436-5358/rows/CP-47/run.trx slot=granted waited=0s dirty=0 source=7a703ae1b7911b20c70df6af80847b30cd9a83bb sourceState=clean buildSource=verified
+CHECKPOINT CP-48 commit=7a703ae1b7911b20c70df6af80847b30cd9a83bb build=reused filter=/*/*/(TerminalRunnerSeatReleaseTests*)|(RunnerSeatOrphanSweepTests*)/* executed=56 passed=56 failed=0 skipped=0 trx=/work/worktrees/task-fcd3f992/.antiphon/checkpoints/20261008-083436-5358/rows/CP-48/run.trx slot=granted waited=0s dirty=0 source=7a703ae1b7911b20c70df6af80847b30cd9a83bb sourceState=clean buildSource=verified
+CHECKPOINT CP-49 commit=7a703ae1b7911b20c70df6af80847b30cd9a83bb build=reused filter=/*/*/(TerminalRunnerSeatReleaseTests*)|(RunnerSeatOrphanSweepTests*)/* executed=56 passed=56 failed=0 skipped=0 trx=/work/worktrees/task-fcd3f992/.antiphon/checkpoints/20261008-083436-5358/rows/CP-49/run.trx slot=granted waited=0s dirty=0 source=7a703ae1b7911b20c70df6af80847b30cd9a83bb sourceState=clean buildSource=verified
+CHECKPOINT CP-50 commit=7a703ae1b7911b20c70df6af80847b30cd9a83bb build=reused filter=/*/*/(TerminalRunnerSeatReleaseTests*)|(RunnerSeatOrphanSweepTests*)/* executed=56 passed=56 failed=0 skipped=0 trx=/work/worktrees/task-fcd3f992/.antiphon/checkpoints/20261008-083436-5358/rows/CP-50/run.trx slot=granted waited=135s dirty=0 source=7a703ae1b7911b20c70df6af80847b30cd9a83bb sourceState=clean buildSource=verified
+CHECKPOINT CP-51 commit=7a703ae1b7911b20c70df6af80847b30cd9a83bb build=reused filter=/*/*/(TerminalRunnerSeatReleaseTests*)|(RunnerSeatOrphanSweepTests*)/* executed=56 passed=56 failed=0 skipped=0 trx=/work/worktrees/task-fcd3f992/.antiphon/checkpoints/20261008-083436-5358/rows/CP-51/run.trx slot=granted waited=0s dirty=0 source=7a703ae1b7911b20c70df6af80847b30cd9a83bb sourceState=clean buildSource=verified
+CHECKPOINT CP-52 commit=7a703ae1b7911b20c70df6af80847b30cd9a83bb build=reused filter=/*/*/(TerminalRunnerSeatReleaseTests*)|(RunnerSeatOrphanSweepTests*)/* executed=56 passed=56 failed=0 skipped=0 trx=/work/worktrees/task-fcd3f992/.antiphon/checkpoints/20261008-083436-5358/rows/CP-52/run.trx slot=granted waited=0s dirty=0 source=7a703ae1b7911b20c70df6af80847b30cd9a83bb sourceState=clean buildSource=verified
+CHECKPOINT CP-53 commit=7a703ae1b7911b20c70df6af80847b30cd9a83bb build=reused filter=/*/*/(TerminalRunnerSeatReleaseTests*)|(RunnerSeatOrphanSweepTests*)/* executed=56 passed=56 failed=0 skipped=0 trx=/work/worktrees/task-fcd3f992/.antiphon/checkpoints/20261008-083436-5358/rows/CP-53/run.trx slot=granted waited=0s dirty=0 source=7a703ae1b7911b20c70df6af80847b30cd9a83bb sourceState=clean buildSource=verified
+CHECKPOINT CP-54 commit=7a703ae1b7911b20c70df6af80847b30cd9a83bb build=reused filter=/*/*/(TerminalRunnerSeatReleaseTests*)|(RunnerSeatOrphanSweepTests*)/* executed=56 passed=56 failed=0 skipped=0 trx=/work/worktrees/task-fcd3f992/.antiphon/checkpoints/20261008-083436-5358/rows/CP-54/run.trx slot=granted waited=0s dirty=0 source=7a703ae1b7911b20c70df6af80847b30cd9a83bb sourceState=clean buildSource=verified
+CHECKPOINT CP-55 commit=7a703ae1b7911b20c70df6af80847b30cd9a83bb build=reused filter=/*/*/(TerminalRunnerSeatReleaseTests*)|(RunnerSeatOrphanSweepTests*)/* executed=56 passed=56 failed=0 skipped=0 trx=/work/worktrees/task-fcd3f992/.antiphon/checkpoints/20261008-083436-5358/rows/CP-55/run.trx slot=granted waited=0s dirty=0 source=7a703ae1b7911b20c70df6af80847b30cd9a83bb sourceState=clean buildSource=verified
+CHECKPOINT CP-56 commit=7a703ae1b7911b20c70df6af80847b30cd9a83bb build=reused filter=/*/*/(TerminalRunnerSeatReleaseTests*)|(RunnerSeatOrphanSweepTests*)/* executed=56 passed=56 failed=0 skipped=0 trx=/work/worktrees/task-fcd3f992/.antiphon/checkpoints/20261008-083436-5358/rows/CP-56/run.trx slot=granted waited=0s dirty=0 source=7a703ae1b7911b20c70df6af80847b30cd9a83bb sourceState=clean buildSource=verified
+CHECKPOINT CP-57 commit=7a703ae1b7911b20c70df6af80847b30cd9a83bb build=reused filter=/*/*/(TerminalRunnerSeatReleaseTests*)|(RunnerSeatOrphanSweepTests*)/* executed=56 passed=56 failed=0 skipped=0 trx=/work/worktrees/task-fcd3f992/.antiphon/checkpoints/20261008-083436-5358/rows/CP-57/run.trx slot=granted waited=0s dirty=0 source=7a703ae1b7911b20c70df6af80847b30cd9a83bb sourceState=clean buildSource=verified
+CHECKPOINT CP-58 commit=7a703ae1b7911b20c70df6af80847b30cd9a83bb build=reused filter=/*/*/(TerminalRunnerSeatReleaseTests*)|(RunnerSeatOrphanSweepTests*)/* executed=56 passed=56 failed=0 skipped=0 trx=/work/worktrees/task-fcd3f992/.antiphon/checkpoints/20261008-083436-5358/rows/CP-58/run.trx slot=granted waited=0s dirty=0 source=7a703ae1b7911b20c70df6af80847b30cd9a83bb sourceState=clean buildSource=verified
+CHECKPOINT CP-59 commit=7a703ae1b7911b20c70df6af80847b30cd9a83bb build=reused filter=/*/*/(TerminalRunnerSeatReleaseTests*)|(RunnerSeatOrphanSweepTests*)/* executed=56 passed=56 failed=0 skipped=0 trx=/work/worktrees/task-fcd3f992/.antiphon/checkpoints/20261008-083436-5358/rows/CP-59/run.trx slot=granted waited=0s dirty=0 source=7a703ae1b7911b20c70df6af80847b30cd9a83bb sourceState=clean buildSource=verified
+```
+
+</details>
+
+### Repair run inventory (every build and test driver, all under the build-slot gate)
+
+| # | What | Outcome | Duration | Lease |
+|---|---|---|---|---|
+| 1 | Dev build `tests/Antiphon.Tests -> bin-c1137dev/` (UseAppHost=false), first compile of the repair | ok, 0 errors | 118 s | `97535567-cceb-4e40-8a93-bcbc778ba2a6`, waited 0 s |
+| 2 | Dev run, the two unit classes (`/*/*/(EntityGraphSerializationGuardTests*)\|(EntityScalarSnapshotTests*)/*`) at `ff1d453c6` source | 41/41 green | 8 s | `7734cb05-3acb-44da-aa6d-5452753a96ff`, waited 0 s |
+| 3 | Mutation batch 1 build `bin-c1137mut/` | ok | 130 s | `5c064b46-4b5e-4995-bf6d-a222a3cf9944`, waited 0 s |
+| 4 | Mutation batch 1 run, same filter | 25 failed / 16 passed (intended red) | 9 s | `93e6db98-40d6-4d63-85cf-746fc5657649`, waited 0 s |
+| 5 | Mutation batch 2 build `bin-c1137mut/` | ok | 67 s | `a349aeb1-c1db-4308-9253-6545eedb3bb1`, waited 0 s |
+| 6 | Mutation batch 2 run, same filter | 6 failed / 35 passed (intended red) | 9 s | `c738d274-f06d-4a47-a911-fbb18f9db998`, waited 0 s |
+| 7 | Checkpoint tool bootstrap `tools/Antiphon.Checkpoints -> bin-c1137rdrv/` | ok | 3 s | `9bf9f63c-79ef-49b0-9a44-2824bd07451b`, waited 0 s |
+| 8 | Checkpoint run `20261008-083436-5358` (one build + 21 rows, above) | GREEN 21/21 | 38m49s | build `c9725255-5734-4e81-88a0-4c280492a989`; one lease per row in `executor.log` |
+
+Runs 1-6 are Code-stage development and mutation probes (reason: compile the repair and prove each
+new test red), not ordinary evidence; the ordinary evidence is run 8 alone. Runs 3-6 restored with
+`git checkout -- tests/`; all `bin-c1137dev`, `bin-c1137mut` and `bin-c1137rdrv` directories were
+removed with a root-confined loop; the green checkpoint run deleted its own `bin-c1137r/`.
