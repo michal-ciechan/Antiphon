@@ -305,21 +305,26 @@ internal static class DispatchBriefEvidence
             ? location
             : null;
 
-    private const string BriefHeadline = " YOUR BRIEF IS NOT IN THIS MESSAGE. It is ";
+    private const string BriefHeadline = "YOUR BRIEF IS NOT IN THIS MESSAGE. It is ";
     private const string MessageHeadline = TypedBodySpill.PointerHeadline + " It is ";
     private const string LengthUnit = " characters";
     private const string SlotOpen = "Read it in full before you do anything else:";
     private const string SlotClose = "Everything you need is there. Do not start from this summary.";
+    private const string ReadOnlyLine = "Do NOT modify any files. This is a read-only task — report findings only.";
+    private const string ReportHeading = "--- how to report back ---";
     private const string CompactOpen = "Read the complete task brief at ";
     private const string CompactClose = " before doing anything. Follow its reporting contract.";
 
     /// <summary>
-    /// The location a pointer names, read only from the slot its producer writes it in.
-    /// <see cref="DelegationReportFormatter.BuildBriefPointer"/> opens with this task's header and
-    /// has either the full headline at the start of a line, with its length and location slot, or
-    /// the compact second line. A <see cref="TypedBodySpill"/> pointer opens with its own headline.
-    /// Both renderings, multi-line and the joined one line, are read. A path mentioned or a
-    /// pointer quoted anywhere else is inline text (CARD-1150 F4).
+    /// The location a pointer names, read only from the outer envelope its producer writes.
+    /// <see cref="DelegationReportFormatter.BuildBriefPointer"/> is this task's header line, the
+    /// title paragraph, then the headline paragraph with its length and location slot, then the
+    /// read-only line or the report section; or the header and the compact second line. Since
+    /// eb24e568f (2026-08-10) the headline is the third paragraph; 563568e60 (2026-09-24) put
+    /// this task's marker in front of it, so a persisted row may carry either (F6). Both
+    /// renderings, multi-line and the joined one line (ad258cd41), are read. A
+    /// <see cref="TypedBodySpill"/> pointer opens with its own headline. A pointer quoted in a
+    /// goal or a previous attempt's report is never in that position, so it is inline (F4, F7).
     /// </summary>
     internal static bool TryReadPointerLocation(string body, string? marker, out string location)
     {
@@ -327,6 +332,7 @@ internal static class DispatchBriefEvidence
         var text = body.ReplaceLineEndings("\n").Trim();
         var flat = !text.Contains('\n');
         int after;
+        var brief = false;
         if (marker is not null && text.StartsWith(marker + " role=", StringComparison.Ordinal))
         {
             var compactTail = CompactClose + (flat ? " " : "\n") + marker;
@@ -338,10 +344,9 @@ internal static class DispatchBriefEvidence
                 return TrySlot(text, compact + CompactOpen.Length, text.Length - compactTail.Length, out location);
             }
 
-            var headline = text.IndexOf(marker + BriefHeadline, StringComparison.Ordinal);
-            if (headline <= 0 || text[headline - 1] != (flat ? ' ' : '\n'))
+            if (!TryReadBriefHeadline(text, marker, flat, out after))
                 return false;
-            after = headline + marker.Length + BriefHeadline.Length;
+            brief = true;
         }
         else
         {
@@ -360,7 +365,57 @@ internal static class DispatchBriefEvidence
             return false;
         var slot = open + SlotOpen.Length;
         var close = text.IndexOf(SlotClose, slot, StringComparison.Ordinal);
-        return close >= 0 && TrySlot(text, slot, close, out location);
+        if (close < 0 || (brief && !IsReportTail(text, close + SlotClose.Length)))
+            return false;
+        return TrySlot(text, slot, close, out location);
+    }
+
+    /// <summary>
+    /// Where the full form's headline text starts. Multi-line: the header line, a blank line,
+    /// one title paragraph, a blank line, then the headline, bare or after this task's marker.
+    /// Joined: the first headline on the line, after a space, and after no other task's marker.
+    /// </summary>
+    private static bool TryReadBriefHeadline(string text, string marker, bool flat, out int after)
+    {
+        after = 0;
+        int headline;
+        if (flat)
+        {
+            headline = text.IndexOf(BriefHeadline, StringComparison.Ordinal);
+            if (headline <= 0 || text[headline - 1] != ' ')
+                return false;
+            // A marker right before the headline is this task's (563568e60 onward), or none (F6).
+            var before = text[..(headline - 1)];
+            var token = before[(before.LastIndexOf(' ') + 1)..];
+            if (token.StartsWith("[antiphon-task:", StringComparison.Ordinal) && token != marker)
+                return false;
+        }
+        else
+        {
+            var headerEnd = text.IndexOf('\n');
+            if (headerEnd < 0 || string.CompareOrdinal(text, headerEnd, "\n\n", 0, 2) != 0)
+                return false;
+            var titleEnd = text.IndexOf("\n\n", headerEnd + 2, StringComparison.Ordinal);
+            if (titleEnd < 0 || string.IsNullOrWhiteSpace(text[(headerEnd + 2)..titleEnd]))
+                return false;
+            headline = titleEnd + 2;
+            if (string.CompareOrdinal(text, headline, marker + " ", 0, marker.Length + 1) == 0)
+                headline += marker.Length + 1;
+            if (string.CompareOrdinal(text, headline, BriefHeadline, 0, BriefHeadline.Length) != 0)
+                return false;
+        }
+
+        after = headline + BriefHeadline.Length;
+        return true;
+    }
+
+    /// <summary>After the slot every producer version writes the read-only line or the report section.</summary>
+    private static bool IsReportTail(string text, int start)
+    {
+        var rest = text.AsSpan(start).TrimStart();
+        if (rest.StartsWith(ReadOnlyLine, StringComparison.Ordinal))
+            rest = rest[ReadOnlyLine.Length..].TrimStart();
+        return rest.StartsWith(ReportHeading, StringComparison.Ordinal);
     }
 
     private static bool IsHeaderOnly(string line, string marker)
