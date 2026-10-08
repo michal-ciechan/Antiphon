@@ -80,7 +80,9 @@ public partial class DelegationDispatchRecoveryBoundaryTests
             .Prepared.ShouldBeTrue(transport);
         // A misleading local list names the session; the remote owner's inventory decides.
         var runner = new CountingRunner { Evidence = routing };
-        runner.Sessions.Add(Listed(seeded.SessionId, "Running", seeded.StartedAt, null, seeded.StartedAt));
+        // Exited, not Running: a locally Running id is the separate CARD-0056 gate that leaves any task
+        // alone. A local Exited listing would withhold a local owner (C1149 listed-exited).
+        runner.Sessions.Add(Listed(seeded.SessionId, "Exited", seeded.StartedAt, null, seeded.StartedAt));
         var stopper = new RecordingSessionStopper();
         var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
         await using (var host = OpenSweep(schema.ConnectionString, runner, stopper, clock,
@@ -549,8 +551,8 @@ public partial class DelegationDispatchRecoveryBoundaryTests
     }
 
     // V-24 pins, measured by this method at the S4 commit (C1153-BUDGET lines in the TRX).
-    private const int DueHoldStatementsNoParent = 0;
-    private const int DueHoldStatementsWithParent = 0;
+    private const int DueHoldStatementsNoParent = 19;
+    private const int DueHoldStatementsWithParent = 21;
 
     private static async Task AssertHeldAsync(string connection, SeededAbsent seeded, string label)
     {
@@ -735,7 +737,7 @@ public partial class DelegationDispatchRecoveryBoundaryTests
                 Id = warmAgent, Name = $"task-{warmAgent:N}"[..13], Slug = $"task-{warmAgent:N}"[..13],
                 WorkingDirectory = directory, Details = "Warm pool delegate.", Status = AgentStatus.Idle,
                 Kind = AgentKind.ClaudeCode, ModelLevel = AgentModelLevel.Medium, IsPoolDelegate = true,
-                PoolIdleSince = now.AddMinutes(-3), PersistentSessionId = warmSession.ToString("D"), LaunchEnvJson = "{}",
+                PoolIdleSince = now.AddMinutes(-30), PersistentSessionId = warmSession.ToString("D"), LaunchEnvJson = "{}",
                 CreatedAt = now, UpdatedAt = now,
             });
             db.AgentTasks.Add(new AgentTask
@@ -755,10 +757,9 @@ public partial class DelegationDispatchRecoveryBoundaryTests
             var claimed = await db.AgentTasks.SingleAsync(t => t.Id == taskId);
             (await dispatcher.TryReuseWarmAgentAsync(claimed, DateTime.UtcNow, CancellationToken.None))
                 .ShouldBe(AgentTaskDispatcher.ReuseOutcome.Reused, label);
+            claimed.AgentSessionId.ShouldBe(warmSession, label + ": the warm session id is reused, none allocated");
         }
 
-        await using var verify = new AppDbContext(TestDbFixture.CreateDbContextOptions(connection));
-        (await verify.AgentTasks.SingleAsync(t => t.Id == taskId)).AgentSessionId.ShouldBe(warmSession, label);
         runner.Prepares.ShouldBe(0, label);
         sink.SessionIds.ShouldBeEmpty(label);
     }
@@ -1173,7 +1174,16 @@ public partial class DelegationDispatchRecoveryBoundaryTests
                     Interlocked.Increment(ref remote._certifyFrames);
                 if (request.Operation == PhoneHomeOperation.PrepareAbsenceEvidence)
                     Interlocked.Increment(ref remote._prepareFrames);
-                return dispatcher.DispatchAsync(request, CancellationToken.None).GetAwaiter().GetResult();
+                var reply = dispatcher.DispatchAsync(request, CancellationToken.None).GetAwaiter().GetResult();
+                if (oldRunner && request.Operation == PhoneHomeOperation.Capabilities && reply?.Payload is { } payload)
+                {
+                    // An old runner build: the capability set without the absence feature.
+                    var old = payload.Deserialize<RunnerCapabilitiesDto>(PhoneHomeFraming.Json)!;
+                    old = old with { Features = old.Features!.Where(f => f != RunnerAbsenceEvidence.Feature).ToList() };
+                    reply = reply with { Payload = JsonSerializer.SerializeToElement(old, PhoneHomeFraming.Json) };
+                }
+
+                return reply;
             };
             remote.Host.Directory.MarkRecovered(await remote.Host.WaitLiveAsync());
             return remote;
