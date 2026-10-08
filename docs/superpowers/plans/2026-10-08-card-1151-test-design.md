@@ -249,6 +249,7 @@ supersedes every option-A statement above where they disagree.
   `git status` rewrites the index) fails identically at task base `27e3e3f7f`; it touches no
   deadline code.
 - **Mutation total under option B:** 31 method-scoped cycles, all pending for SourceLanding.
+
 ## Assertion reversals
 
 Every existing test that encodes today's stop, with its flip. No assertion is weakened or
