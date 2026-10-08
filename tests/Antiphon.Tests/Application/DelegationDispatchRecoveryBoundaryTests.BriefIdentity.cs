@@ -353,6 +353,22 @@ public partial class DelegationDispatchRecoveryBoundaryTests
     [Arguments("windows-spill-missing", "Unavailable", true)]
     [Arguments("windows-spill-intact", "Reuse", false)]
     [Arguments("retried-intact-spill", "AttemptOwned", false)]
+    [Arguments("inline-relative-mentions", "Reuse", false)]
+    [Arguments("inline-absolute-posix-mention", "Reuse", false)]
+    [Arguments("inline-absolute-windows-mention", "Reuse", false)]
+    [Arguments("inline-quoted-path", "Reuse", false)]
+    [Arguments("inline-mention-received", "Received", false)]
+    [Arguments("inline-mention-attempted", "AttemptOwned", false)]
+    [Arguments("lookalike-bare-path-lines", "Reuse", false)]
+    [Arguments("lookalike-other-task-pointer", "Reuse", false)]
+    [Arguments("lookalike-pointer-without-length", "Reuse", false)]
+    [Arguments("lookalike-message-pointer-midbody", "Reuse", false)]
+    [Arguments("delivery-time-spill-released", "AttemptOwned", false)]
+    [Arguments("api-fallback-pointer", "Reuse", false)]
+    [Arguments("genuine-relative-pointer-missing", "Unavailable", true)]
+    [Arguments("genuine-compact-pointer-missing", "Unavailable", true)]
+    [Arguments("genuine-joined-pointer-missing", "Unavailable", true)]
+    [Arguments("genuine-message-pointer-missing", "Unavailable", true)]
     public Task C1150_Brief_evidence_whitelist_flips_one_condition(string condition, string expected, bool hold)
     {
         var taskId = Guid.NewGuid();
@@ -386,6 +402,10 @@ public partial class DelegationDispatchRecoveryBoundaryTests
         var inbox = ".antiphon/inbox/" + row.Id.ToString("D") + ".md";
         var localPath = "/srv/antiphon/whitelist/.antiphon/task-" + DelegationReportFormatter.Short(taskId) + "-brief.md";
         var windowsPath = @"C:\Antiphon\worktrees\whitelist\.antiphon\task-" + DelegationReportFormatter.Short(taskId) + "-brief.md";
+        var briefSpill = ".antiphon/task-" + DelegationReportFormatter.Short(taskId) + "-brief.md";
+        string Inline(string mention) =>
+            marker + "\n\n" + mention + " starts the goal.\n" + goal + "\nThe middle names " + mention
+            + " too.\nretained-canary ends with " + mention;
         var delivered = row with
         {
             Status = QueuedMessageStatus.Sent,
@@ -452,9 +472,10 @@ public partial class DelegationDispatchRecoveryBoundaryTests
                 var path = Path.Combine(
                     Path.GetTempPath(), "c1150-whitelist-" + Guid.NewGuid().ToString("N"), ".antiphon", "conflict.md");
                 files[path] = body + "\nfile-bytes";
+                // F4: only a producer pointer names a spill file; a bare path line is inline text.
                 rows[0] = row with
                 {
-                    Body = marker + "\n" + path,
+                    Body = Pointer(path),
                     RemoteSpillBody = body + "\nremote-bytes",
                     RemoteSpillRelativePath = ".antiphon/inbox/conflict.md",
                 };
@@ -531,6 +552,91 @@ public partial class DelegationDispatchRecoveryBoundaryTests
             case "retried-intact-spill":
                 rows[0] = row with { Body = Pointer(localPath), DeliveryAttempts = 2, LastDeliveryStartedAt = dispatched };
                 files[localPath] = body;
+                break;
+            case "inline-relative-mentions":
+                rows[0] = row with { Body = Inline(".antiphon/task-report.md and .antiphon\\inbox\\notes.md") };
+                break;
+            case "inline-absolute-posix-mention":
+                // A readable unrelated file at the mentioned path is still not this brief's payload.
+                files["/srv/antiphon/whitelist/.antiphon/inbox/notes.md"] = "unrelated notes";
+                rows[0] = row with { Body = Inline("/srv/antiphon/whitelist/.antiphon/inbox/notes.md") };
+                break;
+            case "inline-absolute-windows-mention":
+                rows[0] = row with { Body = Inline(windowsPath) };
+                break;
+            case "inline-quoted-path":
+                rows[0] = row with { Body = Inline(@"'C:\Antiphon\work tree\whitelist\.antiphon\inbox\notes.md'") };
+                break;
+            case "inline-mention-received":
+                rows[0] = delivered with { Body = Inline(briefSpill) };
+                prompts.Add(new DispatchBriefPromptEvidence(sessionId, TranscriptKinds.UserPrompt, rows[0].Body, dispatched));
+                break;
+            case "inline-mention-attempted":
+                rows[0] = delivered with { Body = Inline(briefSpill) };
+                break;
+            case "lookalike-bare-path-lines":
+                rows[0] = row with { Body = marker + "\n" + briefSpill + "\n" + marker };
+                break;
+            case "lookalike-other-task-pointer":
+                var other = new AgentTask
+                {
+                    Id = Guid.NewGuid(),
+                    Title = "Another task",
+                    Goal = "Another goal",
+                    Role = AgentTaskRole.Custom,
+                    ModelLevel = AgentModelLevel.Frontier,
+                    Workspace = WorkspaceMode.Shared,
+                };
+                rows[0] = row with
+                {
+                    Body = body + "\nQuoted from another task:\n"
+                        + DelegationReportFormatter.BuildBriefPointer(other, new DelegationSettings(), briefSpill, 5000),
+                };
+                break;
+            case "lookalike-pointer-without-length":
+                rows[0] = row with
+                {
+                    Body = marker + " role=Custom tier=Frontier workspace=Shared\n\nWhitelist pointer\n\n" + marker
+                        + " YOUR BRIEF IS NOT IN THIS MESSAGE. Read it in full before you do anything else:\n\n    "
+                        + briefSpill + "\n\nEverything you need is there. Do not start from this summary.\n\n" + marker,
+                };
+                break;
+            case "lookalike-message-pointer-midbody":
+                var quoted = TypedBodySpill.Fit(new TypedBodySpill.Request(
+                    "quoted channel message " + new string('q', 200), 64, null,
+                    RelativeSpillPath: inbox, ApiFallback: inbox)).ToType;
+                rows[0] = row with { Body = body + "\n" + quoted };
+                break;
+            case "delivery-time-spill-released":
+                // The queue spilled this inline body at delivery and released those bytes; the body
+                // is still the whole brief.
+                rows[0] = delivered with { RemoteSpillRelativePath = inbox, RemoteSpillBody = null };
+                break;
+            case "api-fallback-pointer":
+                rows[0] = row with { Body = Pointer(null) };
+                break;
+            case "genuine-relative-pointer-missing":
+                rows[0] = row with { Body = Pointer(briefSpill) };
+                break;
+            case "genuine-compact-pointer-missing":
+                rows[0] = row with
+                {
+                    Body = DelegationReportFormatter.BuildBriefPointer(
+                        pointerTask, new DelegationSettings(), briefSpill, 5000, maxWireBytes: 400),
+                };
+                rows[0].Body.ShouldContain("Read the complete task brief at", Case.Sensitive, condition);
+                break;
+            case "genuine-joined-pointer-missing":
+                rows[0] = row with { Body = Pointer(briefSpill, AgentKind.Codex) };
+                rows[0].Body.ShouldNotContain("\n", Case.Sensitive, condition);
+                break;
+            case "genuine-message-pointer-missing":
+                rows[0] = row with
+                {
+                    Body = TypedBodySpill.Fit(new TypedBodySpill.Request(
+                        body + new string('x', 400), 64, null, RelativeSpillPath: inbox, ApiFallback: inbox)).ToType,
+                };
+                rows[0].Body.ShouldStartWith(marker + " " + TypedBodySpill.PointerHeadline, Case.Sensitive, condition);
                 break;
             default:
                 throw new ArgumentOutOfRangeException(nameof(condition));
@@ -671,7 +777,16 @@ public partial class DelegationDispatchRecoveryBoundaryTests
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             await File.WriteAllTextAsync(path, payload);
             fileBytes = await File.ReadAllBytesAsync(path);
-            row.Body = marker + "\n" + path + "\n" + marker;
+            // The producer's pointer, so this shape is a real local spill and not inline text (F4).
+            row.Body = DelegationReportFormatter.BuildBriefPointer(new AgentTask
+            {
+                Id = seeded.TaskId,
+                Title = "Queue-owned brief",
+                Goal = seeded.Goal,
+                Role = AgentTaskRole.Custom,
+                ModelLevel = AgentModelLevel.Frontier,
+                Workspace = WorkspaceMode.Shared,
+            }, new DelegationSettings(), path, payload.Length);
         }
         else if (shape == "remote-spill")
         {

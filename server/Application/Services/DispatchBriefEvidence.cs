@@ -215,18 +215,20 @@ internal static class DispatchBriefEvidence
         || row.SentAt is not null;
 
     /// <summary>
-    /// The text the agent needs: the retained or spilled payload of a spill claim, otherwise the
-    /// body itself.
+    /// The text the agent needs. A spill pointer is either the queue's own claim (its retained
+    /// path column, named in the typed body) or a producer pointer whose slot names a spill file.
+    /// Any other body is inline and is its own payload, whatever paths it mentions (F4).
     /// </summary>
     private static SpillPayload ReadPayload(
         DispatchBriefRowEvidence row, string marker, Func<string, string?>? readAbsoluteFile)
     {
-        var claimsSpill = !string.IsNullOrEmpty(row.RemoteSpillRelativePath)
-            || SpillTokenIndex(row.Body, 0) >= 0;
-        if (!claimsSpill)
+        var location = TryReadPointerLocation(row.Body, marker, out var slot) && IsFileLocation(slot) ? slot : null;
+        var queueClaim = !string.IsNullOrEmpty(row.RemoteSpillRelativePath)
+            && row.Body.Contains(row.RemoteSpillRelativePath, StringComparison.Ordinal);
+        if (location is null && !queueClaim)
             return new SpillPayload(false, row.Body, Conflict: false);
 
-        var file = ReadSpill(AbsoluteSpillPath(row.Body), readAbsoluteFile);
+        var file = location is not null && IsRootedOnAnyPlatform(location) ? ReadSpill(location, readAbsoluteFile) : null;
         var retained = string.IsNullOrEmpty(row.RemoteSpillBody) ? null : row.RemoteSpillBody;
         var conflict = retained is not null && file is not null && !string.Equals(file, retained, StringComparison.Ordinal);
         return new SpillPayload(true, retained ?? file, conflict);
@@ -293,62 +295,126 @@ internal static class DispatchBriefEvidence
         && (prompt.Timestamp is null || InWindow(prompt.Timestamp.Value, request.DispatchedAt));
 
     /// <summary>
-    /// The local producer writes its spill with <see cref="Path.Combine(string, string, string)"/>,
-    /// so a Windows pointer names <c>.antiphon\</c>. Both separators are a spill claim. A rooted
-    /// path of either platform is returned verbatim; one this host cannot read stays unproven.
+    /// The rooted spill file a pointer names in its slot, or null. The local producer writes it
+    /// with <see cref="Path.Combine(string, string, string)"/>, so either platform's root and
+    /// separator can appear; one this host cannot read stays unproven.
     /// </summary>
-    internal static string? AbsoluteSpillPath(string body)
+    internal static string? AbsoluteSpillPath(string body) =>
+        TryReadPointerLocation(body, TypedBodySpill.TryReadOpeningTaskMarker(body), out var location)
+        && IsFileLocation(location) && IsRootedOnAnyPlatform(location)
+            ? location
+            : null;
+
+    private const string BriefHeadline = " YOUR BRIEF IS NOT IN THIS MESSAGE. It is ";
+    private const string MessageHeadline = TypedBodySpill.PointerHeadline + " It is ";
+    private const string LengthUnit = " characters";
+    private const string SlotOpen = "Read it in full before you do anything else:";
+    private const string SlotClose = "Everything you need is there. Do not start from this summary.";
+    private const string CompactOpen = "Read the complete task brief at ";
+    private const string CompactClose = " before doing anything. Follow its reporting contract.";
+
+    /// <summary>
+    /// The location a pointer names, read only from the slot its producer writes it in.
+    /// <see cref="DelegationReportFormatter.BuildBriefPointer"/> opens with this task's header and
+    /// has either the full headline at the start of a line, with its length and location slot, or
+    /// the compact second line. A <see cref="TypedBodySpill"/> pointer opens with its own headline.
+    /// Both renderings, multi-line and the joined one line, are read. A path mentioned or a
+    /// pointer quoted anywhere else is inline text (CARD-1150 F4).
+    /// </summary>
+    internal static bool TryReadPointerLocation(string body, string? marker, out string location)
     {
-        var index = 0;
-        while ((index = SpillTokenIndex(body, index)) >= 0)
+        location = "";
+        var text = body.ReplaceLineEndings("\n").Trim();
+        var flat = !text.Contains('\n');
+        int after;
+        if (marker is not null && text.StartsWith(marker + " role=", StringComparison.Ordinal))
         {
-            var tokenEnd = index + SpillToken.Length + 1;
-            if (QuotedPathAround(body, index, tokenEnd) is { } quoted && IsRootedOnAnyPlatform(quoted))
-                return quoted;
-            var start = index;
-            while (start > 0 && !char.IsWhiteSpace(body[start - 1]))
-                start--;
-            var end = tokenEnd;
-            while (end < body.Length && !char.IsWhiteSpace(body[end]))
-                end++;
-            var path = body[start..end].Trim('`', '"', '\'', ',', '.', ')', '(');
-            if (IsRootedOnAnyPlatform(path))
-                return path;
-            index = end;
+            var compactTail = CompactClose + (flat ? " " : "\n") + marker;
+            var compact = text.IndexOf(CompactOpen, StringComparison.Ordinal);
+            var lineEnd = flat ? compact - 1 : text.IndexOf('\n');
+            if (compact > 0 && lineEnd >= 0 && compact == lineEnd + 1
+                && IsHeaderOnly(text[..lineEnd], marker) && text.EndsWith(compactTail, StringComparison.Ordinal))
+            {
+                return TrySlot(text, compact + CompactOpen.Length, text.Length - compactTail.Length, out location);
+            }
+
+            var headline = text.IndexOf(marker + BriefHeadline, StringComparison.Ordinal);
+            if (headline <= 0 || text[headline - 1] != (flat ? ' ' : '\n'))
+                return false;
+            after = headline + marker.Length + BriefHeadline.Length;
+        }
+        else
+        {
+            var start = marker is not null && text.StartsWith(marker + " ", StringComparison.Ordinal)
+                ? marker.Length + 1
+                : 0;
+            if (string.CompareOrdinal(text, start, MessageHeadline, 0, MessageHeadline.Length) != 0)
+                return false;
+            after = start + MessageHeadline.Length;
         }
 
-        return null;
+        if (!TrySkipLength(text, after, out after))
+            return false;
+        var open = text.IndexOf(SlotOpen, after, StringComparison.Ordinal);
+        if (open < 0 || text.AsSpan(after, open - after).Contains("\n\n", StringComparison.Ordinal))
+            return false;
+        var slot = open + SlotOpen.Length;
+        var close = text.IndexOf(SlotClose, slot, StringComparison.Ordinal);
+        return close >= 0 && TrySlot(text, slot, close, out location);
     }
 
-    private const string SpillToken = ".antiphon";
-
-    private static int SpillTokenIndex(string body, int from)
+    private static bool IsHeaderOnly(string line, string marker)
     {
-        var index = from;
-        while ((index = body.IndexOf(SpillToken, index, StringComparison.Ordinal)) >= 0)
+        var tokens = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (tokens.Length < 2 || !string.Equals(tokens[0], marker, StringComparison.Ordinal))
+            return false;
+        for (var i = 1; i < tokens.Length; i++)
         {
-            var next = index + SpillToken.Length;
-            if (next < body.Length && body[next] is '/' or '\\')
-                return index;
-            index = next;
+            if (tokens[i].IndexOf('=') <= 0)
+                return false;
         }
 
-        return -1;
+        return true;
     }
 
-    private static string? QuotedPathAround(string body, int tokenStart, int tokenEnd)
+    /// <summary>The producer's <c>{length:N0} characters</c>; any culture's digit grouping.</summary>
+    private static bool TrySkipLength(string text, int start, out int after)
     {
-        var open = tokenStart - 1;
-        while (open >= 0 && body[open] is not ('\'' or '"' or '`' or '\n' or '\r'))
-            open--;
-        if (open < 0 || body[open] is '\n' or '\r')
-            return null;
-        var close = body.IndexOf(body[open], tokenEnd);
-        var line = body.IndexOf('\n', tokenEnd);
-        if (close < 0 || (line >= 0 && line < close))
-            return null;
-        return body[(open + 1)..close];
+        after = start;
+        var end = text.IndexOf(LengthUnit, start, StringComparison.Ordinal);
+        if (end < 0 || end - start > 24)
+            return false;
+        var digits = 0;
+        for (var i = start; i < end; i++)
+        {
+            if (char.IsAsciiDigit(text[i]))
+                digits++;
+            else if (text[i] == '\n' || char.IsLetter(text[i]))
+                return false;
+        }
+
+        after = end + LengthUnit.Length;
+        return digits > 0;
     }
+
+    private static bool TrySlot(string text, int start, int end, out string location)
+    {
+        location = "";
+        if (end < start)
+            return false;
+        var slot = text[start..end].Trim();
+        if (slot.Length >= 2 && slot[0] == '\'' && slot[^1] == '\'')
+            slot = slot[1..^1];
+        if (slot.Length == 0 || slot.Contains('\n'))
+            return false;
+        location = slot;
+        return true;
+    }
+
+    /// <summary>A spill file, not the API fallback the producer names when it could not write one.</summary>
+    private static bool IsFileLocation(string location) =>
+        location.Contains(".antiphon/", StringComparison.Ordinal)
+        || location.Contains(".antiphon\\", StringComparison.Ordinal);
 
     private static bool IsRootedOnAnyPlatform(string path) =>
         Path.IsPathRooted(path)
