@@ -1,8 +1,8 @@
 namespace Antiphon.Server.Application.Services;
 
 /// <summary>
-/// The facts of one unresolved boot episode (CARD-1151 D-1/A-3): a transcript-confirmed prompt
-/// on this task's launch clock with no model row since. Carried on
+/// The facts of one unresolved boot episode (CARD-1151 D-1/A-3): a transcript-confirmed,
+/// accepted prompt on this task's launch clock with no model row since. Carried on
 /// <see cref="TaskDeadlinePolicy.Verdict.Boot"/> independent of which clock won, so a ceiling or
 /// general model-wait breach can never strip the boot identity off the task it judges.
 /// </summary>
@@ -11,7 +11,7 @@ namespace Antiphon.Server.Application.Services;
 /// not found. Part of the episode key, never a clock.
 /// </param>
 /// <param name="LaunchClock"><c>max(DispatchedAt, LaunchResumedAt)</c>, the boot predicate's lower bound.</param>
-/// <param name="PromptSequence">The latest real prompt's sequence.</param>
+/// <param name="PromptSequence">The latest accepted prompt's sequence (R1: never a queued-only row).</param>
 /// <param name="PromptAt">That prompt's own timestamp. Every due time is derived from it.</param>
 /// <param name="BootDueAt">
 /// <c>PromptAt + BootModelWaitDeadlineMinutes</c>; null when the boot notification is disabled.
@@ -35,8 +35,9 @@ internal sealed record BootStallFacts(
 /// this path. CARD-0079 remains the only automatic stop of a Working session.
 ///
 /// <para><b>Disposition</b> has exactly two values. <see cref="Disposition.NotBoot"/> needs the
-/// positive answer of the boot predicate (a model row since the launch clock, or no real prompt
-/// at all) and hands the task back to the ordinary, non-destructive deadline policy.
+/// positive answer of the boot predicate (a model row since the launch clock, or no accepted
+/// prompt at all; a queued-only prompt is not one, R1) and hands the task back to the ordinary,
+/// non-destructive deadline policy.
 /// <see cref="Disposition.DetectOnly"/> is every other case, and it returns from the overdue
 /// sweep before any failure. There is deliberately no third value: a dead boot session is the
 /// dead-session reconciler's (A-1), and a human Retry is the only retry.</para>
@@ -58,7 +59,7 @@ internal static class BootStallPolicy
 
     internal enum Disposition
     {
-        /// <summary>A model row answered the boot prompt (or no real prompt exists): ordinary policy.</summary>
+        /// <summary>A model row answered the boot prompt (or no accepted prompt exists, R1): ordinary policy.</summary>
         NotBoot = 0,
 
         /// <summary>Unresolved boot episode: detection only, never a failure.</summary>
@@ -132,21 +133,30 @@ internal static class BootStallPolicy
     internal static TimeSpan OperatorWait(int modelWaitMinutes) =>
         TimeSpan.FromMinutes(modelWaitMinutes > 0 ? modelWaitMinutes : DefaultOperatorMinutes);
 
-    internal static BootStallFacts Facts(
+    /// <summary>
+    /// The task's boot facts, anchored on the latest ACCEPTED prompt (CARD-1151 R1). Null unless
+    /// the turn carries one: a queued-only prompt was never received, so it opens no episode and
+    /// earns no protection, and the task keeps the ordinary deadline policy exactly as before.
+    /// A later queued row never advances an episode; only a later accepted prompt does.
+    /// </summary>
+    internal static BootStallFacts? Facts(
         DateTime? sessionStartedAt,
         DateTime launchClock,
         BootReplyWatch.BootTurn turn,
         int bootWaitMinutes,
         int modelWaitMinutes)
     {
+        if (turn.AcceptedSequence is not long sequence || turn.AcceptedAt is not DateTime promptAt)
+            return null;
+
         var bootWait = bootWaitMinutes > 0 ? TimeSpan.FromMinutes(bootWaitMinutes) : TimeSpan.Zero;
         var operatorWait = OperatorWait(modelWaitMinutes);
         if (bootWait > operatorWait)
             operatorWait = bootWait;
         return new(
-            sessionStartedAt, launchClock, turn.PromptSequence, turn.PromptAt, turn.PromptCount,
-            bootWait > TimeSpan.Zero ? turn.PromptAt + bootWait : null,
-            turn.PromptAt + operatorWait);
+            sessionStartedAt, launchClock, sequence, promptAt, turn.AcceptedCount,
+            bootWait > TimeSpan.Zero ? promptAt + bootWait : null,
+            promptAt + operatorWait);
     }
 
     /// <summary>

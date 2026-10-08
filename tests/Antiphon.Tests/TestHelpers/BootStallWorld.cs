@@ -323,7 +323,7 @@ internal sealed class BootStallWorld : IAsyncDisposable
         });
         var sequence = 1L;
         db.TranscriptEntries.Add(Entry(
-            sessionId, sequence++, TranscriptKinds.UserPrompt,
+            sessionId, sequence++, options.PromptKind,
             $"{DelegationReportFormatter.TaskMarker(taskId)} the brief {PromptCanary}", promptAt));
         if (options.AssistantAfterPrompt)
         {
@@ -436,6 +436,12 @@ internal sealed record BootStallWorldOptions
 
     /// <summary>The boot prompt's age; defaults to the dispatch age.</summary>
     public TimeSpan? PromptAge { get; init; }
+
+    /// <summary>
+    /// The seeded boot prompt's kind. <c>QueuedUserPrompt</c> models input that was only queued
+    /// and never accepted (CARD-1151 R1): no boot episode.
+    /// </summary>
+    public string PromptKind { get; init; } = TranscriptKinds.UserPrompt;
 
     public bool AssistantAfterPrompt { get; init; }
     public bool InterruptAfterPrompt { get; init; }

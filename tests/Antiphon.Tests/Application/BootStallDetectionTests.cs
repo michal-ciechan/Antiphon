@@ -493,6 +493,76 @@ public class BootStallDetectionTests
             .ShouldNotContain("TryFailBootStallAsync", "the automatic boot tail is removed");
     }
 
+    /// <summary>
+    /// CARD-1151 R1 at the dispatcher. accepted-no-reply-detects: an accepted prompt with no reply
+    /// is DetectOnly with one Detected and no failure. accepted-then-queued-refinement: past the
+    /// ceiling, the accepted prompt's episode has its operator event; a queued refinement then
+    /// lands and the clock moves eight minutes past it. The queued row neither opens a new episode
+    /// nor restarts the clock: no Detected for a second key, still no failure.
+    /// queued-only-past-ceiling: the one prompt was only queued, so there is no episode and the
+    /// shipped 240-minute Code ceiling fails the task non-destructively, exactly as before
+    /// CARD-1151.
+    /// </summary>
+    [Test]
+    [Arguments("accepted-no-reply-detects")]
+    [Arguments("accepted-then-queued-refinement")]
+    [Arguments("queued-only-past-ceiling")]
+    public async Task C1151_Only_an_accepted_prompt_is_protected(string shape)
+    {
+        var options = shape switch
+        {
+            "queued-only-past-ceiling" => new BootStallWorldOptions { MinutesAgo = 241, PromptKind = TranscriptKinds.QueuedUserPrompt },
+            "accepted-then-queued-refinement" => new BootStallWorldOptions { MinutesAgo = 241 },
+            _ => new BootStallWorldOptions { MinutesAgo = 9 },
+        };
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var world = await BootStallWorld.CreateAsync(schema.ConnectionString, options);
+        var before = await world.TaskAsync();
+
+        if (shape == "queued-only-past-ceiling")
+        {
+            (await world.RunOverdueSweepAsync()).ShouldBe(1, world.Warnings());
+            var task = await world.TaskAsync();
+            task.Status.ShouldBe(AgentTaskStatus.Failed, "nothing was received, so nothing is protected");
+            task.FailureCode.ShouldBeNull();
+            task.FailureReason.ShouldNotBeNull();
+            task.FailureReason.ShouldContain("240-minute ceiling for role Code");
+            task.FailureReason.ShouldContain("Last transcript entry: QueuedUserPrompt");
+            task.FailureReason.ShouldContain("The session was NOT killed");
+            task.Attempt.ShouldBe(1);
+            (await world.BootWarningsAsync()).ShouldBeEmpty("a queued-only prompt is no boot episode");
+            AssertNothingDestructive(world);
+            return;
+        }
+
+        (await world.RunOverdueSweepAsync()).ShouldBe(0, world.Warnings());
+        var first = await world.BootWarningsAsync();
+        first.Count.ShouldBe(1, world.Warnings());
+        var expected = shape == "accepted-then-queued-refinement"
+            ? BootStallPolicy.NeedsOperatorToken
+            : BootStallPolicy.DetectedToken;
+        first[0].ShouldStartWith(expected + " ");
+        var key = first[0].Split(';')[0].Split(' ')[1];
+
+        if (shape == "accepted-then-queued-refinement")
+        {
+            var refined = world.Now0;
+            await world.AddEntryAsync(TranscriptKinds.QueuedUserPrompt, "a refinement, still queued", refined);
+            (await world.RunOverdueSweepAsync()).ShouldBe(0, world.Warnings());
+            world.Clock.SetUtcNow(new DateTimeOffset(refined.AddMinutes(8), TimeSpan.Zero));
+            (await world.RunOverdueSweepAsync()).ShouldBe(0, world.Warnings());
+            (await world.RunOverdueSweepAsync()).ShouldBe(0, world.Warnings());
+        }
+
+        var warnings = await world.BootWarningsAsync();
+        warnings.Count.ShouldBe(1, $"{shape}: one episode, one event; a queued row opens none\n{world.Warnings()}");
+        warnings[0].ShouldContain($" {key};", customMessage: "the event belongs to the accepted prompt's episode");
+        warnings[0].ShouldContain($"promptAt={world.PromptAt:o};");
+        AssertNothingDestructive(world);
+        await AssertSameAttemptAsync(world, before);
+        await AssertNoFailureTraceAsync(world);
+    }
+
     private static FakeTimeProvider Fake(DateTime at) => new(new DateTimeOffset(at, TimeSpan.Zero));
 
     /// <summary>
