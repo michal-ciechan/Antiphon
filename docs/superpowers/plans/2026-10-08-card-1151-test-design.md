@@ -243,6 +243,11 @@ supersedes every option-A statement above where they disagree.
 - **Open for S6:** `GrokDelegateEndToEndTests.a_provider_that_never_answers_the_boot_prompt_is_failed_killed_and_retried_once`
   still asserts the removed kill/retry and is red on Windows until S6 flips it; it is skipped on
   Linux.
+- **Checkpoint facts (Code 4adef3e9):** CP-22's `Min` is 28, not 29 (the 29th `[Test]` in that file is
+  `AgentTaskDispatcherWiringTests`). CP-37 carries one inherited red on the server2 mirror,
+  `DelegateCheckProbeTests.a_status_probe_leaves_the_git_index_untouched`: its control (a bare
+  `git status` rewrites the index) fails identically at task base `27e3e3f7f`; it touches no
+  deadline code.
 - **Mutation total under option B:** 31 method-scoped cycles, all pending for SourceLanding.
 ## Assertion reversals
 
@@ -536,7 +541,7 @@ CP-16 `Min` is 8, and the regression rows plus CP-37/CP-38 run after S1-S3 on th
 | CP-18 | S1-S3 | `CP-1` | portable-other-reason | `/*/*/DelegationDispatchRecoveryBoundaryTests/C1149_Different_reason_or_attempted_brief_still_uses_failure_policy*` | V-14 | 3 executed, 0 failed/skipped | 3 | 3 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-19 | S1-S3 | `CP-1` | portable-s1-hold | `/*/*/DelegationDispatchRecoveryBoundaryTests/C1149_Absent_launch_is_blocked_with_original_input*` | V-14 | 1 executed, 0 failed/skipped | 1 | 2 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-21 | S1-S3 | `CP-1` | portable-characterization | `/*/*/BootStallWorkingTickCharacterizationTests/*` | R-1 | all 3 named witnesses, 0 failed/skipped | 3 | 2 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-22 | S1-S3 | `CP-1` | portable-overdue | `/*/*/AgentTaskOverdueDeadlineTests/*` | R-2 | all listed, 0 failed/skipped | 29 | 4 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-22 | S1-S3 | `CP-1` | portable-overdue | `/*/*/AgentTaskOverdueDeadlineTests/*` | R-2 | all listed, 0 failed/skipped (28: the 29th `[Test]` in the file is `AgentTaskDispatcherWiringTests`, another class) | 28 | 4 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-23 | S1-S3 | `CP-1` | portable-policy | `/*/*/TaskDeadlinePolicyTests/*` | R-3 | all listed, 0 failed/skipped | 26 | 3 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-24 | S1-S3 | `CP-1` | portable-boot-predicate | `/*/*/BootReplyWatchTests/*` | R-4 | all listed, 0 failed/skipped | 27 | 3 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-25 | S1-S3 | `CP-1` | portable-session-watch | `/*/*/BootReplyWatchdogTests/*` | R-5 | all listed, 0 failed/skipped | 11 | 3 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
