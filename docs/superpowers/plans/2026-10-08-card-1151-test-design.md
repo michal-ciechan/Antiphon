@@ -482,7 +482,8 @@ The original 18/18/4 `C1149_C1150_Statement_budgets` arguments are untouched.
   (`inline`), the same row as a spill pointer with `RemoteSpillBody` and the spill file under the
   session's `.antiphon/inbox/` (`spilled`), and a Pending Ui row behind it
   (`pending-ui-followup`). Four real `TickAsync` calls (detection, repeat, operator stage at
-  `promptAt + 20`, a recreated provider); every queue row's identity fields and body/spill
+  `promptAt + 20`, a recreated provider); every queue row's listed fields (see the S5 repair
+  below for the exact list, which now includes the delivery baseline and identity) and body/spill
   SHA-256 plus the file bytes are compared before and after; runner Inputs 0; one Detected and
   one NeedsOperator. It uses `BootStallWorld` rather than `BridgeQueueHarness` because the world
   already carries the real queue service and a fake clock that reaches the operator stage.
@@ -522,6 +523,44 @@ The original 18/18/4 `C1149_C1150_Statement_budgets` arguments are untouched.
   V-15 `working-withholds` red at `Stopper.Killed`; its other two arguments stay green, as they
   must. Batch B: M4 `BootStallDetectAsync` appends a space to every queue row body on the session
   (PC-10 shape): V-10 red 3/3 at the queue snapshot. Restored source: 16/16 green.
+
+## S5 repair (Code 238e6a98, Review d73c50f1 F1/F2)
+
+Tests only, rebased onto the landed S4 repair (the S4-repair section above is kept verbatim; the
+only cherry-pick conflict was this file, where both sections now stand). No production file,
+setting, migration or runner change; no restart.
+
+- **F1, V-10.** The Sent brief now carries a persisted delivery identity: a non-null
+  `LastDeliveryBaselineSequence` of 0 (the transcript floor just before the brief prompt at
+  sequence 1, the anti-duplicate keystone), `LastDeliveryGeneration` equal to the session's
+  accepted start, `LastDeliveryStartedAt` one second before `SentAt`, and a `Delivered` verdict
+  at `SentAt`. The queue snapshot's exact field list is Id, Sequence, Status, Origin,
+  DeliveryAttempts, SentAt, ExecutionTaskId, LastDeliveryBaselineSequence,
+  LastDeliveryGeneration, LastDeliveryStartedAt, DeliveryVerdict, DeliveryVerdictAt,
+  RemoteSpillRelativePath and the SHA-256 of Body and RemoteSpillBody, compared before the first
+  tick and after detection, repetition, escalation and the recreated provider; the brief's
+  baseline and generation are also asserted equal to the seeded values afterwards, so a fixture
+  that drops the seed cannot pass by comparing null with null.
+- **F2, V-15.** Both withholding arguments (`working-withholds`,
+  `stale-or-unsuccessful-failure-withholds`) assert `AssertNothingDestructive` (stopper empty,
+  runner Kills, Starts, Inputs, Releases and CompactionStops 0) and an unchanged session row
+  (Status Running and equal to before, EndedAt and FailureReason equal to before). The cleanup
+  argument keeps its one stopper kill and pins runner Kills and Starts to 0, so the kill goes
+  through the stopper and never through a direct runner call.
+- **V-13 counts unchanged** (9/28/13/28/22/28/28/28): the seed lives in V-10 only; V-13's
+  fixture and statements are untouched.
+- **Author red evidence** (local diagnostics on `bin-c1151s5r/` under `build-slot.ps1`,
+  worktree-only production mutations restored with `git checkout -- server/`; not PC
+  discharges). Batch A, two files: M5 `BootStallWarningWriter` resets every queue row's
+  `LastDeliveryBaselineSequence` to null in the stage-write transaction: V-10 red 3/3 at the
+  queue snapshot (`0` versus `-`). M6 `FailNeverStartedAsync` calls `_runnerClient.KillAsync`
+  directly before the Failed write: V-15 red 3/3, `real-idle-failure-cleans-up` at the new
+  `Runner.Kills` pin, the two withholding arguments at `AssertNothingDestructive`'s
+  `Runner.Kills` (the stopper and the Running status stay unchanged under this mutant, which is
+  why the previous assertions passed it). Batch B: M7 `FailNeverStartedAsync` writes the
+  session's `EndedAt` directly before the Failed write: V-15 red 2/3 at the session-row
+  `EndedAt` check in both withholding arguments; the cleanup argument stays green, as it must.
+  Restored source: V-10 3/3 and V-15 3/3 green.
 
 
 ## Assertion reversals
