@@ -124,7 +124,7 @@ public sealed class BlockedTaskParkProjectionTests
         Require(loop, "orphan=true is not a count of free seats", "c1065-loop-orphan");
         loop.ShouldNotContain("count orphan=true", Case.Sensitive, "c1124-loop-no-count");
         Require(loop, "The 422 follow_up_remote_pool_unsupported fires before the Blocked branch and names that task and Reply only when the Blocked task's current attempt has a confirmed published park whose seat release matches Reply admission, including the settlement revision (CARD-1103).", "c1065-loop-422");
-        Require(loop, "A confirmed published park whose seat release does not match that admission does not name Reply; the parked answer cannot be continued (CARD-1103).", "c1103-loop-stale-release");
+        Require(loop, StaleReleaseSentence, "c1103-loop-stale-release");
         loop.ShouldNotContain("does not hear Reply", Case.Sensitive, "c1103-loop-no-silent-422");
         Require(loop, "including Blocked", "c1065-including-blocked");
 
