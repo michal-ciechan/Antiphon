@@ -55,7 +55,9 @@ function helper(edit = x => x) {
 // The origin proof fetch fails, or runs out of time: the audit falls back to present heads.
 const proofFetch = 'timeout --kill-after=5s 300s git --git-dir="$proof" fetch';
 function noFetch() { helper(text => { assert.equal(text.split(proofFetch).length, 2); return text.replace(proofFetch, proofFetch + ' --upload-pack=false'); }); }
-function fetchTimeout() { helper(text => { assert.equal(text.split(proofFetch).length, 2); return text.replace(proofFetch, proofFetch.replace('300s', '0.01s')); }); }
+// The timeout fires while the fetch waits for an origin that never answers, so no Git process is
+// killed between its trace start and its parameter events.
+function fetchTimeout() { helper(text => { assert.equal(text.split(proofFetch).length, 2); return text.replace(proofFetch, proofFetch.replace('300s', '2s') + " --upload-pack='sleep 10; git-upload-pack'"); }); }
 // Metadata of every path in the audited volume except access times.
 function snapshot() {
     const out = [];
