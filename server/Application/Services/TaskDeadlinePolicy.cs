@@ -106,7 +106,8 @@ internal static class TaskDeadlinePolicy
         /// <summary>
         /// CARD-1151 D-1. The unresolved boot episode behind this verdict, whichever clock won;
         /// null when the boot predicate positively answered (a model row since the launch clock,
-        /// or no real prompt). Non-null means the task is detection only.
+        /// or no ACCEPTED prompt: a queued-only one never counts, R1). Non-null means the task is
+        /// detection only.
         /// </summary>
         internal BootStallFacts? Boot { get; init; }
     }
@@ -282,13 +283,21 @@ internal static class TaskDeadlinePolicy
     private static async Task<(DateTime Clock, DateTime? StartedAt)> LoadLaunchAsync(
         AppDbContext db, AgentTask task, Guid sessionId, CancellationToken ct)
     {
-        var clock = task.DispatchedAt ?? DateTime.MinValue;
         var row = await db.AgentSessions.AsNoTracking()
             .Where(s => s.Id == sessionId)
             .Select(s => new { s.LaunchResumedAt, StartedAt = (DateTime?)s.StartedAt })
             .FirstOrDefaultAsync(ct);
-        var resumed = row?.LaunchResumedAt;
-        return (resumed is DateTime at && at > clock ? at : clock, row?.StartedAt);
+        return (LaunchClock(task.DispatchedAt, row?.LaunchResumedAt), row?.StartedAt);
+    }
+
+    /// <summary>
+    /// <c>max(DispatchedAt, LaunchResumedAt)</c> over values the caller already holds. The boot
+    /// warning writer re-derives it from the locked rows (CARD-1151 R2), so both read one rule.
+    /// </summary>
+    internal static DateTime LaunchClock(DateTime? dispatchedAt, DateTime? launchResumedAt)
+    {
+        var clock = dispatchedAt ?? DateTime.MinValue;
+        return launchResumedAt is DateTime at && at > clock ? at : clock;
     }
 
     /// <summary>

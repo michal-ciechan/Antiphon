@@ -831,6 +831,55 @@ public class AgentTaskOverdueDeadlineTests
         saves.Saves.Count(s => s.Any(AbandonedHere)).ShouldBe(1);
     }
 
+    /// <summary>
+    /// CARD-1151 R1. A prompt that was only QUEUED (a <c>QueuedUserPrompt</c>, never accepted by
+    /// the session) is not a boot episode, so it earns no boot protection: the role ceiling fails
+    /// the task exactly as it did before CARD-1151. dispatched-idle is the Review's shape
+    /// (Dispatched, Working false); working-inherited-mid-turn keeps the session Working through
+    /// an inherited ToolCall from before dispatch; terminal-session has a Stopped, ended row. Uses
+    /// only symbols that exist at the CARD-1151 base, so the same method runs there unchanged.
+    /// </summary>
+    [Test]
+    [Arguments("dispatched-idle")]
+    [Arguments("working-inherited-mid-turn")]
+    [Arguments("terminal-session")]
+    public async Task a_queued_only_prompt_is_no_boot_and_keeps_the_ceiling_failure(string shape)
+    {
+        var (harness, stopper) = CreateHarness();
+        await using var scenario = new Scenario();
+        var task = await scenario.SeedTaskAsync(
+            dispatchedMinutesAgo: 150_000,
+            status: shape == "working-inherited-mid-turn" ? AgentTaskStatus.Working : AgentTaskStatus.Dispatched);
+        if (shape == "working-inherited-mid-turn")
+            await scenario.SeedEntriesAsync((TranscriptKinds.ToolCall, "the previous task's tool", 150_100));
+        await scenario.SeedEntriesAsync(
+            (TranscriptKinds.QueuedUserPrompt, "[antiphon-task:queued] queued only, never accepted", 149_000));
+        if (shape == "terminal-session")
+        {
+            await using var db = CreateContext();
+            await db.AgentSessions.Where(s => s.Id == scenario.SessionId).ExecuteUpdateAsync(s => s
+                .SetProperty(x => x.Status, SessionStatus.Stopped)
+                .SetProperty(x => x.EndedAt, DateTime.UtcNow.AddMinutes(-148_000)));
+        }
+
+        await harness.FailOverdueTasksAsync(CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var failed = await verify.AgentTasks.SingleAsync(t => t.Id == task);
+        failed.Status.ShouldBe(AgentTaskStatus.Failed, $"{shape}: nothing was ever received, so nothing is protected");
+        failed.FailureCode.ShouldBeNull();
+        failed.FailureReason.ShouldNotBeNull();
+        failed.FailureReason.ShouldContain($"{Ceiling}-minute ceiling for role Code");
+        failed.FailureReason.ShouldContain("Last transcript entry: QueuedUserPrompt");
+        failed.Attempt.ShouldBe(1);
+        stopper.Killed.ShouldBeEmpty("the ceiling failure never stops the session");
+        (await verify.AgentTaskEvents.CountAsync(
+            e => e.AgentTaskId == task && e.Type == AgentTaskEventType.Failed)).ShouldBe(1);
+        (await verify.AgentTaskEvents.AnyAsync(
+            e => e.AgentTaskId == task && e.Detail.StartsWith("BootStall"))).ShouldBeFalse(
+            "a queued-only prompt is no boot episode, so there is nothing to detect");
+    }
+
     // ---- helpers ---------------------------------------------------------------------------------
 
     private static (AgentTaskDispatcher Dispatcher, RecordingSessionStopper Stopper) CreateHarness(

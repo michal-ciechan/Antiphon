@@ -202,8 +202,19 @@ internal static class BootReplyWatch
         if (real.Count == 0)
             return null;
 
+        // CARD-1151 R1: a task's boot episode needs an ACCEPTED prompt, the transcript-confirmed
+        // UserPrompt every delivery verdict reads. A QueuedUserPrompt is our input not yet taken,
+        // and an interrupt marker ends a turn rather than asking for one, so neither can open or
+        // advance a task's episode. The session-scoped watch keeps reading every real prompt.
+        var accepted = real
+            .Where(r => r.Kind == TranscriptKinds.UserPrompt
+                && !TranscriptKinds.IsInterruptPrompt(r.Kind, r.Text))
+            .ToList();
         var latest = real[^1];
-        return new BootTurn(latest.Sequence, latest.At, real.Count);
+        var acceptedLatest = accepted.Count == 0 ? null : accepted[^1];
+        return new BootTurn(
+            latest.Sequence, latest.At, real.Count,
+            acceptedLatest?.Sequence, acceptedLatest?.At, accepted.Count);
     }
 
     /// <summary>
@@ -302,5 +313,18 @@ internal static class BootReplyWatch
     /// <param name="PromptSequence">The latest real prompt's sequence — the watch's lower bound.</param>
     /// <param name="PromptAt">Its timestamp — the clock the deadline is measured from.</param>
     /// <param name="PromptCount">How many real prompts have landed since the launch clock.</param>
-    internal sealed record BootTurn(long PromptSequence, DateTime PromptAt, int PromptCount);
+    /// <param name="AcceptedSequence">
+    /// The latest ACCEPTED prompt's sequence: a non-housekeeping <c>UserPrompt</c> that is not an
+    /// interrupt marker. Null when every real prompt is only queued. The task boot episode reads
+    /// only these three fields (CARD-1151 R1).
+    /// </param>
+    /// <param name="AcceptedAt">That accepted prompt's timestamp.</param>
+    /// <param name="AcceptedCount">How many accepted prompts have landed since the launch clock.</param>
+    internal sealed record BootTurn(
+        long PromptSequence,
+        DateTime PromptAt,
+        int PromptCount,
+        long? AcceptedSequence = null,
+        DateTime? AcceptedAt = null,
+        int AcceptedCount = 0);
 }

@@ -23,9 +23,12 @@ public class BootStallPolicyTests
     /// the condition, except <c>model-reply-present</c>, which alone is NotBoot.
     /// <c>would-be-absent-pristine</c> is option A's admitted shape (the session is gone and
     /// every absence fact holds): under option B it can only ever be DetectOnly.
+    /// <c>prompt-only-queued</c> (CARD-1151 R1) rebuilds the facts from the same boot turn with its
+    /// one prompt queued and never accepted: no episode, so NotBoot and the ordinary policy.
     /// </summary>
     [Test]
     [Arguments("model-reply-present")]
+    [Arguments("prompt-only-queued")]
     [Arguments("session-row-missing")]
     [Arguments("session-terminal")]
     [Arguments("brief-pending")]
@@ -53,6 +56,11 @@ public class BootStallPolicyTests
         {
             case "model-reply-present":
                 flipped = flipped with { Boot = null };
+                expectedReason = "model-reply-or-no-prompt";
+                break;
+            case "prompt-only-queued":
+                flipped = flipped with { Boot = BootStallPolicy.Facts(
+                    PromptAt.AddMinutes(-1), PromptAt.AddMinutes(-1), QueuedOnly(), 8, 20) };
                 expectedReason = "model-reply-or-no-prompt";
                 break;
             case "session-row-missing":
@@ -99,7 +107,7 @@ public class BootStallPolicyTests
         decision.Stage.ShouldBe(BootStallPolicy.Stage.None, missing);
         decision.Reason.ShouldBe(expectedReason);
         decision.Disposition.ShouldBe(
-            missing == "model-reply-present"
+            missing is "model-reply-present" or "prompt-only-queued"
                 ? BootStallPolicy.Disposition.NotBoot
                 : BootStallPolicy.Disposition.DetectOnly);
         return Task.CompletedTask;
@@ -139,11 +147,59 @@ public class BootStallPolicyTests
         return Task.CompletedTask;
     }
 
+    /// <summary>
+    /// CARD-1151 R1. A queued row never opens or advances the task's episode: with an accepted
+    /// prompt at sequence 3 and a later queued refinement at sequence 5, the facts, due times and
+    /// key stay the accepted prompt's; a later ACCEPTED prompt is a new episode.
+    /// </summary>
+    [Test]
+    public Task C1151_Only_an_accepted_prompt_opens_or_advances_the_episode()
+    {
+        var accepted = Facts(bootWait: 8, modelWait: 20);
+        var refined = BootStallPolicy.Facts(
+            PromptAt.AddMinutes(-1), PromptAt.AddMinutes(-1),
+            new BootReplyWatch.BootTurn(
+                PromptSequence: 5, PromptAt: PromptAt.AddMinutes(4), PromptCount: 2,
+                AcceptedSequence: 3, AcceptedAt: PromptAt, AcceptedCount: 1),
+            8, 20);
+        refined.ShouldNotBeNull();
+        refined.ShouldBe(accepted, "a queued refinement leaves the episode exactly as it was");
+        refined.PromptSequence.ShouldBe(3);
+        refined.BootDueAt.ShouldBe(PromptAt.AddMinutes(8));
+
+        var task = Guid.NewGuid();
+        var session = Guid.NewGuid();
+        BootStallPolicy.EpisodeKey(task, 1, session, refined)
+            .ShouldBe(BootStallPolicy.EpisodeKey(task, 1, session, accepted));
+
+        var later = BootStallPolicy.Facts(
+            PromptAt.AddMinutes(-1), PromptAt.AddMinutes(-1),
+            new BootReplyWatch.BootTurn(
+                PromptSequence: 6, PromptAt: PromptAt.AddMinutes(6), PromptCount: 3,
+                AcceptedSequence: 6, AcceptedAt: PromptAt.AddMinutes(6), AcceptedCount: 2),
+            8, 20);
+        later.ShouldNotBeNull();
+        later.PromptSequence.ShouldBe(6, "an accepted later prompt is a new request");
+        BootStallPolicy.EpisodeKey(task, 1, session, later)
+            .ShouldNotBe(BootStallPolicy.EpisodeKey(task, 1, session, accepted));
+
+        BootStallPolicy.Facts(PromptAt.AddMinutes(-1), PromptAt.AddMinutes(-1), QueuedOnly(), 8, 20)
+            .ShouldBeNull("a queued-only turn is no episode at all");
+        return Task.CompletedTask;
+    }
+
     private static BootStallFacts Facts(int bootWait, int modelWait) =>
         BootStallPolicy.Facts(
             PromptAt.AddMinutes(-1), PromptAt.AddMinutes(-1),
-            new BootReplyWatch.BootTurn(PromptSequence: 3, PromptAt: PromptAt, PromptCount: 1),
-            bootWait, modelWait);
+            new BootReplyWatch.BootTurn(
+                PromptSequence: 3, PromptAt: PromptAt, PromptCount: 1,
+                AcceptedSequence: 3, AcceptedAt: PromptAt, AcceptedCount: 1),
+            bootWait, modelWait)
+        ?? throw new InvalidOperationException("an accepted prompt always yields facts");
+
+    /// <summary>The same turn with its one prompt queued and never accepted.</summary>
+    private static BootReplyWatch.BootTurn QueuedOnly() =>
+        new(PromptSequence: 3, PromptAt: PromptAt, PromptCount: 1);
 
     private static BootStallPolicy.Observation Pristine() => new(
         Facts(bootWait: 8, modelWait: 20),

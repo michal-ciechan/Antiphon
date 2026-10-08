@@ -449,6 +449,93 @@ public class TaskDeadlinePolicyTests
         TaskDeadlinePolicy.PreviewFraction.ShouldBe(0.8);
     }
 
+    // ---- CARD-1151 R1: only an ACCEPTED prompt is a boot ------------------------------------------
+
+    /// <summary>
+    /// CARD-1151 R1. The task's boot facts need an accepted prompt (a non-housekeeping
+    /// <c>UserPrompt</c> that is not an interrupt marker) since the launch clock. One condition
+    /// per argument. queued-only-idle and queued-only-working (an inherited mid-turn ToolCall
+    /// before dispatch keeps the session Working) and interrupt-only-after-resume carry no
+    /// accepted prompt: the role ceiling wins with no boot facts, exactly as before CARD-1151.
+    /// accepted-only, accepted-then-queued-refinement and queued-then-accepted anchor the facts on
+    /// the latest ACCEPTED prompt: a queued row neither opens nor advances the episode.
+    /// </summary>
+    [Test]
+    [Arguments("accepted-only")]
+    [Arguments("queued-only-idle")]
+    [Arguments("queued-only-working")]
+    [Arguments("accepted-then-queued-refinement")]
+    [Arguments("queued-then-accepted")]
+    [Arguments("interrupt-only-after-resume")]
+    public async Task C1151_Boot_facts_need_an_accepted_prompt(string shape)
+    {
+        await using var scenario = new Scenario();
+        AgentTask task;
+        long? acceptedSequence;
+        int acceptedMinutesAgo = 0;
+        switch (shape)
+        {
+            case "accepted-only":
+                task = await scenario.SeedTaskAsync(dispatchedMinutesAgo: 60);
+                await scenario.SeedEntriesAsync((TranscriptKinds.UserPrompt, "the brief", 30));
+                (acceptedSequence, acceptedMinutesAgo) = (1, 30);
+                break;
+            case "queued-only-idle":
+                task = await scenario.SeedTaskAsync(dispatchedMinutesAgo: 241);
+                await scenario.SeedEntriesAsync((TranscriptKinds.QueuedUserPrompt, "the brief, never taken", 240));
+                acceptedSequence = null;
+                break;
+            case "queued-only-working":
+                task = await scenario.SeedTaskAsync(dispatchedMinutesAgo: 241);
+                await scenario.SeedEntriesAsync(
+                    (TranscriptKinds.ToolCall, "the previous task's tool", 250),
+                    (TranscriptKinds.QueuedUserPrompt, "the brief, never taken", 240));
+                acceptedSequence = null;
+                break;
+            case "accepted-then-queued-refinement":
+                task = await scenario.SeedTaskAsync(dispatchedMinutesAgo: 241);
+                await scenario.SeedEntriesAsync(
+                    (TranscriptKinds.UserPrompt, "the brief", 30),
+                    (TranscriptKinds.QueuedUserPrompt, "a refinement, still queued", 10));
+                (acceptedSequence, acceptedMinutesAgo) = (1, 30);
+                break;
+            case "queued-then-accepted":
+                task = await scenario.SeedTaskAsync(dispatchedMinutesAgo: 60);
+                await scenario.SeedEntriesAsync(
+                    (TranscriptKinds.QueuedUserPrompt, "the brief, queued first", 30),
+                    (TranscriptKinds.UserPrompt, "the brief, accepted", 10));
+                (acceptedSequence, acceptedMinutesAgo) = (2, 10);
+                break;
+            case "interrupt-only-after-resume":
+                task = await scenario.SeedTaskAsync(dispatchedMinutesAgo: 241);
+                await scenario.SeedEntriesAsync(
+                    (TranscriptKinds.UserPrompt, "the brief, before the resume", 240),
+                    (TranscriptKinds.UserPrompt, $"{TranscriptKinds.InterruptedPromptPrefix} by user]", 190));
+                await scenario.SetLaunchResumedAsync(minutesAgo: 200);
+                acceptedSequence = null;
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(shape), shape, null);
+        }
+
+        var verdict = await scenario.EvaluateAsync(task);
+
+        verdict.ShouldNotBeNull(shape);
+        if (acceptedSequence is null)
+        {
+            verdict.Boot.ShouldBeNull($"{shape}: no accepted prompt, so no boot episode and no protection");
+            verdict.Kind.ShouldBe(TaskDeadlinePolicy.DeadlineKind.Ceiling);
+            verdict.Breached.ShouldBeTrue("the role ceiling still judges the task, as before CARD-1151");
+            return;
+        }
+
+        verdict.Boot.ShouldNotBeNull(shape);
+        verdict.Boot.PromptSequence.ShouldBe(acceptedSequence.Value, "the episode is the latest ACCEPTED prompt's");
+        verdict.Boot.PromptCount.ShouldBe(1, "a queued row is never counted as an accepted prompt");
+        verdict.Boot.PromptAt.ShouldBe(DateTime.UtcNow.AddMinutes(-acceptedMinutesAgo), TimeSpan.FromMinutes(1));
+        verdict.Boot.BootDueAt.ShouldBe(verdict.Boot.PromptAt.AddMinutes(8));
+    }
+
     // ---- helpers ---------------------------------------------------------------------------------
 
     private sealed class Scenario : IAsyncDisposable
