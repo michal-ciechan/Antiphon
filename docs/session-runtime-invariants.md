@@ -101,13 +101,16 @@ A reply that arrives before reserve holds the unreleased park as park_reply_befo
 The 422 follow_up_remote_pool_unsupported fires before the Blocked branch and names that task and Reply only when the Blocked task's current attempt has a confirmed published park whose seat release matches Reply admission, including the settlement revision (CARD-1103).
 A confirmed published park whose seat release does not match that admission does not name Reply; the parked answer cannot be continued (CARD-1103).
 HasConfirmedPublishedParkAsync is scoped to the task's current attempt and accepts Parked or ResumePending only (CARD-1103).
+Follow-up Create guidance no longer calls HasConfirmedPublishedParkAsync; that detector, which does not compare release identity, remains the CARD-1144 stale-answer veto and the task-detail confirmed-park input (CARD-1154).
 Mark-read records the first ReadAt without changing the task's ConcurrencyToken, the settlement revision a seat release records; a matching confirmed-park Reply after a read still queues one new attempt (CARD-1144).
 Reply to a confirmed published park whose release identity no longer matches, with no accepted answer pending, returns 409 park_release_identity_mismatch before any old-session input is queued (CARD-1144).
 The remote-pool 422 guidance and confirmed-park Reply continuation use the same EF queries, RunnerSeatReleaseQueries.ForAttempt for release identity and RunnerSeatReleaseQueries.Confirmed for the confirmed receipt; that guidance remains one database read (CARD-1146).
-The local 409 for a confirmed published park whose session is not live does not check that release identity, so it can name Reply for a park whose Reply returns 409 park_release_identity_mismatch (CARD-1154).
-A live Blocked session refuses a follow-up with 409 follow_up_agent_blocked and names Reply or cancel.
-A confirmed published park whose session is not live uses that 409 and says the published seat was released.
-A dead session with no confirmed park names cancel and re-send.
+Local 409 follow_up_agent_blocked guidance uses the same confirmed release-identity query as Reply; it recommends Reply for a current-attempt published park only when that query admits its linked release (CARD-1154).
+Confirmed park evidence is evaluated before local live-session advice; a confirmed park with mismatched release identity names neither Reply nor cancellation (CARD-1154).
+Confirmed-park guidance performs one database read per blocked follow-up, independent of the number of candidate parks; the existing session-liveness read is separate (CARD-1154).
+A current-attempt published park whose linked release that query admits uses that 409 and says the published seat was released, whether or not the session row still reads Starting or Running; published-seat Reply advice requires that admission.
+A current-attempt published park whose linked release is Confirmed but not admitted, including a receipt without ActionId or with an OutcomeCode outside Released, AlreadyExited and AlreadyAbsent, gets the mismatch 409: that parked answer cannot be continued.
+When no confirmed park classification takes precedence, a live Blocked session refuses a follow-up with 409 follow_up_agent_blocked and names Reply or cancel, and a dead session names cancel and re-send.
 Continue requires question classification plus standing authority, then the accepted-answer path.
 Only an explicit Reply after confirmed prerequisite publication continues a parked prerequisite.
 Report prose and a card moving to Done start nothing.
@@ -126,7 +129,7 @@ A refusal routed through HoldAsync on a Held row re-stamps NextAttemptAt from th
 When PrepareAsync or CaptureSourceIdentityAsync loads a due Held park but cannot load its episode, it records park_episode_changed and the same configured Held backoff without changing the park state, revision, publication receipt or release ledger (CARD-1143).
 With a positive Held backoff, a repeated or concurrent unloadable-episode refusal does not move an already future NextAttemptAt; zero or negative backoff still disables the delay.
 Disabled or busy entry, intent-CAS and receipt refusals keep their existing behavior; proof verification stays read-only on an unloadable episode.
-Known limits stay on CARD-1097 item 2 (resume reads the desktop checkout, not the runner mirror), CARD-1104 for a remote parent with RunnerCwd, and CARD-1154 (the local 409 can name Reply for a confirmed published park whose release identity no longer matches).
+Known limits stay on CARD-1097 item 2 (resume reads the desktop checkout, not the runner mirror) and CARD-1104 for a remote parent with RunnerCwd.
 
 CARD-0519 S10: a terminal session status alone does not close outbound recovery
 windows. The optional transcript snapshot `TerminalComplete` is reader-owned EOF
