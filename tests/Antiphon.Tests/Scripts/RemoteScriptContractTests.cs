@@ -604,13 +604,15 @@ public sealed class RemoteScriptContractTests
             run.Exit.ShouldBe(0);
             C1008Audit(partial).ShouldContain("repositories=1 partial=1");
         }
-        foreach (var fault in new[] { "exit128", "timeout", "empty", "nonnumeric", "negative", "shallow", "stale", "deleted", "missing", "broken-gitdir", "escaping-link", "missing-object", "origin-failed" })
+        // CARD-1105 repair 4: tips are compared only with advertised origin heads present in the
+        // clone, so a missing or lagging tracking ref is no longer a refusal by itself (see the
+        // origin blocks below); a broken tracking ref still refuses.
+        foreach (var fault in new[] { "exit128", "timeout", "empty", "nonnumeric", "negative", "shallow", "stale", "broken-gitdir", "escaping-link", "missing-object", "origin-failed" })
         {
             using var bad = new C1008HostFixture(); await C1008GitGraph(bad, fault == "origin-failed" ? fault : "");
             var repo = Path.Combine(bad.Root, "work/repo");
             if (fault is "exit128" or "timeout" or "empty" or "nonnumeric" or "negative") bad.Docker["gitFault"] = fault;
             else if (fault == "shallow") File.WriteAllText(Path.Combine(repo, ".git/shallow"), File.ReadAllText(Path.Combine(repo, ".git/refs/heads/master")));
-            else if (fault is "deleted" or "missing") File.Delete(Path.Combine(repo, ".git/refs/remotes/origin/master"));
             else if (fault == "stale") File.WriteAllText(Path.Combine(repo, ".git/refs/remotes/origin/master"), new string('0', 40));
             else if (fault == "broken-gitdir") File.WriteAllText(Path.Combine(bad.Root, "work/.git"), "gitdir: /missing\n");
             else if (fault == "escaping-link") Directory.CreateSymbolicLink(Path.Combine(bad.Root, "work/escape"), bad.Root);
@@ -625,10 +627,32 @@ public sealed class RemoteScriptContractTests
             if (fault == "timeout") audit.ShouldContain("status=124");
             if (fault == "origin-failed") audit.ShouldContain("check=ls-remote");
             if (fault == "shallow") audit.ShouldContain("check=shallow");
-            if (fault is "deleted" or "missing" or "stale") audit.ShouldContain("check=origin-advertisement");
+            if (fault == "stale") audit.ShouldContain("check=for-each-ref");
             if (fault == "missing-object") audit.ShouldContain("check=git-common-dir");
             if (fault == "broken-gitdir") audit.ShouldContain("check=git-common-dir");
             if (fault == "escaping-link") audit.ShouldContain("check=link-confine");
+        }
+        foreach (var shape in new[] { "tracking-deleted", "origin-ahead" })
+        {
+            // A drained runner's mirror stops fetching while origin moves on: neither a deleted
+            // tracking ref nor an advertised head the clone lacks hides work.
+            using var f = new C1008HostFixture(); await C1008GitGraph(f);
+            var repo = Path.Combine(f.Root, "work/repo");
+            if (shape == "tracking-deleted") File.Delete(Path.Combine(repo, ".git/refs/remotes/origin/master"));
+            else await C1008Git(f.Root, "git clone -q origin ahead && git -C ahead push -q origin HEAD:refs/heads/kept && git -C ahead -c user.name=F -c user.email=f@example.invalid commit -q --allow-empty -m ahead && git -C ahead push -q origin HEAD:master HEAD:refs/heads/new");
+            var run = await f.Run();
+            f.Removed.Length.ShouldBe(3, "recycle-git-unknown-refuses: published clone with " + shape + "; " + run.Output);
+        }
+        using (var gone = new C1008HostFixture())
+        {
+            // The origin branch is deleted; only the local tracking ref keeps its commit.
+            await C1008GitGraph(gone);
+            await C1008Git(gone.Root, "git -C work/repo checkout -q -b gone && git -C work/repo commit -q --allow-empty -m gone && git -C work/repo push -q origin gone"
+                + " && git -C work/repo checkout -q master && git -C work/repo branch -q -D gone && git -C origin branch -q -D gone"
+                + " && git -C work/repo reflog expire --expire=now --all");
+            var refused = await gone.Run();
+            gone.Removed.ShouldBeEmpty("recycle-git-unknown-refuses: a tracking ref no origin head contains");
+            refused.Output.ShouldContain("RecycleUnpublishedWork");
         }
         foreach (var marker in new[] { "index.lock", "MERGE_HEAD", "rebase-merge" })
         {
@@ -852,8 +876,35 @@ public sealed class RemoteScriptContractTests
     [Arguments("missing-commit")]
     [Arguments("missing-tree")]
     [Arguments("missing-head-tree")]
+    [Arguments("missing-ancestor-graph")]
     [ParallelLimiter<ProcessSpawnLimit>]
     public void C1105_Git_audit_object_completeness(string variant) => C1105AuditContract(variant);
+
+    // CARD-1105 repair 4: the whole audit has one overall budget; running out refuses.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1105_Git_audit_overall_timeout() => C1105AuditContract("audit-timeout");
+
+    // CARD-1105 repair 4 (server2 replay F-4): a volume shaped like the replay, one blobless
+    // mirror and 250 linked worktrees of 300 tracked files plus ignored build output, is
+    // audited within 240 s (measured 22 s on server2-temp); each common directory is read
+    // once and each worktree's content once. Setup plus audit can exceed LinuxShell's minute.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1105_Git_audit_volume_scale()
+    {
+        C1008HostFixture.RequireNativeLinux();
+        var psi = new ProcessStartInfo("node") { RedirectStandardOutput = true, RedirectStandardError = true, WorkingDirectory = DelegateScriptRunner.RepoRoot };
+        foreach (var arg in new[] { "scripts/fixtures/c1105-git-audit.cjs", "volume-scale", "scripts/c590-remote.sh" }) psi.ArgumentList.Add(arg);
+        using var proc = Process.Start(psi)!;
+        var stdout = proc.StandardOutput.ReadToEndAsync(); var stderr = proc.StandardError.ReadToEndAsync();
+        using var budget = new CancellationTokenSource(TimeSpan.FromMinutes(12));
+        try { await proc.WaitForExitAsync(budget.Token); }
+        catch (OperationCanceledException) { proc.Kill(true); throw new TimeoutException("volume-scale fixture exceeded 12 minutes"); }
+        var output = await stdout + await stderr;
+        proc.ExitCode.ShouldBe(0, output);
+        output.ShouldContain("PASS volume-scale");
+    }
 
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
@@ -1640,6 +1691,14 @@ public sealed class RemoteScriptContractTests
                 bash '{{fake}}' "$@"
             }
             """;
+    }
+
+    private static async Task C1008Git(string root, string script)
+    {
+        var psi = new ProcessStartInfo("bash") { RedirectStandardOutput = true, RedirectStandardError = true, WorkingDirectory = root };
+        psi.ArgumentList.Add("-c"); psi.ArgumentList.Add("set -e; " + script);
+        using var proc = Process.Start(psi)!; var stdout = proc.StandardOutput.ReadToEndAsync(); var stderr = proc.StandardError.ReadToEndAsync();
+        await proc.WaitForExitAsync(); proc.ExitCode.ShouldBe(0, await stdout + await stderr);
     }
 
     private static async Task C1008GitGraph(C1008HostFixture fixture, string fault = "")
