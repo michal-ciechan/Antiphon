@@ -39,6 +39,25 @@ public static class RunnerAbsenceEvidence
 
     public static string NewNonce() =>
         Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(NonceBytes));
+
+    /// <summary>The exact version 1 request body: five members, normalized "O" generation.</summary>
+    public static byte[] RequestBody(RunnerAbsenceRequest request)
+    {
+        using var buffer = new MemoryStream();
+        using (var json = new System.Text.Json.Utf8JsonWriter(buffer))
+        {
+            json.WriteStartObject();
+            json.WriteNumber("version", request.Version);
+            json.WriteString("sessionId", request.SessionId.ToString("D"));
+            json.WriteString("acceptedStartedAt", SessionGeneration.Normalize(request.AcceptedStartedAt)
+                .ToString("O", System.Globalization.CultureInfo.InvariantCulture));
+            json.WriteString("runnerStoreId", request.RunnerStoreId.ToString("D"));
+            json.WriteString("requestNonce", request.RequestNonce);
+            json.WriteEndObject();
+        }
+
+        return buffer.ToArray();
+    }
 }
 
 /// <summary>Typed refusal codes. Status is the HTTP status the route answers with.</summary>

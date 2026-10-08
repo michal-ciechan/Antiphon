@@ -109,6 +109,22 @@ public interface ISessionRunnerClient
     Task<SessionRunnerBufferDto> GetBufferAsync(Guid sessionId, CancellationToken ct);
     Task<SessionRunnerSnapshotDto> GetSnapshotAsync(Guid sessionId, CancellationToken ct);
     Task<SessionRunnerTranscriptDto> GetTranscriptAsync(Guid sessionId, CancellationToken ct);
+
+    /// <summary>
+    /// CARD-1153 D-1: prepare absence evidence for a freshly allocated cold-dispatch id. One bounded
+    /// attempt; an unsupported or failed prepare never gates the launch. Default: unsupported.
+    /// </summary>
+    Task<SessionRunnerAbsencePrepareResult> PrepareAbsenceEvidenceAsync(
+        Guid sessionId, DateTime acceptedStartedAt, Guid? expectedRunnerStoreId, CancellationToken ct) =>
+        Task.FromResult(SessionRunnerAbsencePrepareResult.Unsupported("absence_evidence_unsupported"));
+
+    /// <summary>
+    /// CARD-1153 D-2/D-4: request and validate a never-created certificate. Only a Proven result
+    /// is evidence; caller cancellation propagates. Default: unsupported, never proof.
+    /// </summary>
+    Task<SessionRunnerAbsenceEvidenceResult> CertifyAbsenceAsync(
+        Guid sessionId, DateTime acceptedStartedAt, Guid? expectedRunnerStoreId, CancellationToken ct) =>
+        Task.FromResult(SessionRunnerAbsenceEvidenceResult.Unsupported("absence_evidence_unsupported"));
     Task SendInputAsync(Guid sessionId, string input, CancellationToken ct);
 
     /// <summary>

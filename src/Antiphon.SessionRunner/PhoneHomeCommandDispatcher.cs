@@ -11,6 +11,11 @@ public interface IPhoneHomeRuntimeSurface
     Task<WorkspaceParkResult> ParkWorkspaceAsync(WorkspaceParkCommand request, CancellationToken ct) =>
         Task.FromResult(new WorkspaceParkResult(WorkspaceParkOutcome.Held, "park_unsupported"));
     RunnerCapabilitiesDto Capabilities();
+    /// <summary>CARD-1153: default unsupported, so an adapter without the evidence service never certifies.</summary>
+    Task<RunnerAbsenceOutcome<RunnerAbsencePrepared>> PrepareAbsenceEvidenceAsync(RunnerAbsenceRequest request, CancellationToken ct) =>
+        Task.FromResult(RunnerAbsenceOutcome<RunnerAbsencePrepared>.Refuse(PhoneHomeProblemTypes.UnsupportedOperation, 501, "absence evidence unsupported"));
+    Task<RunnerAbsenceOutcome<RunnerAbsenceCertificate>> CertifyAbsenceAsync(RunnerAbsenceRequest request, CancellationToken ct) =>
+        Task.FromResult(RunnerAbsenceOutcome<RunnerAbsenceCertificate>.Refuse(PhoneHomeProblemTypes.UnsupportedOperation, 501, "absence evidence unsupported"));
     Task<RunnerCodexCliVersionDto?> GetCodexCliVersionAsync(RunnerCodexCliProbeRequest request, CancellationToken ct) =>
         Task.FromResult<RunnerCodexCliVersionDto?>(null);
     string Health();
@@ -362,6 +367,11 @@ public sealed class PhoneHomeCommandDispatcher
                     request, await _runtime.ObserveCompactionAsync(ReadSessionId(request), ct)),
                 PhoneHomeOperation.HostStats => HostStatsResult(request),
                 PhoneHomeOperation.HostStatsSeries => HostStatsSeriesResult(request),
+                // CARD-1153 D-3: the authenticated, runner/store-bound connection is the authentication.
+                PhoneHomeOperation.PrepareAbsenceEvidence => await MutateAsync(request, async () =>
+                    AbsenceFrame(request, await _runtime.PrepareAbsenceEvidenceAsync(ReadAbsenceRequest(request), ct))),
+                PhoneHomeOperation.CertifyAbsence => await MutateAsync(request, async () =>
+                    AbsenceFrame(request, await _runtime.CertifyAbsenceAsync(ReadAbsenceRequest(request), ct))),
                 PhoneHomeOperation.SetCapacity => await MutateAsync(request, () =>
                 {
                     var body = request.Payload?.Deserialize<PhoneHomeSetCapacityRequest>(PhoneHomeFraming.Json)
@@ -400,6 +410,11 @@ public sealed class PhoneHomeCommandDispatcher
         catch (UnixPtyArgvException ex)
         {
             return Error(request, ex.Code, ex.Message, 409);
+        }
+        catch (SessionIdentityClosedException ex)
+        {
+            // CARD-1153 A-3: terminal refusal for a certified never-created id; the desktop never retries it.
+            return Error(request, RunnerAbsenceEvidence.PhoneHomeClosedIdentityErrorType, ex.Message, 409);
         }
         catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
         {
@@ -756,6 +771,27 @@ public sealed class PhoneHomeCommandDispatcher
             MutationLock.Release();
         }
     }
+
+    // Strict version 1 body (the HTTP route's parser) bound to this runner's store; a foreign store
+    // is refused before the runtime is entered.
+    private RunnerAbsenceRequest ReadAbsenceRequest(PhoneHomeFrame request)
+    {
+        var parsed = request.Payload is { ValueKind: JsonValueKind.Object } payload
+            ? AbsenceEvidenceRoutes.ParseRequest(System.Text.Encoding.UTF8.GetBytes(payload.GetRawText()))
+            : null;
+        if (parsed is null)
+            throw new PhoneHomeAdmissionException(RunnerAbsenceRefusalCodes.InvalidRequest, "Malformed absence evidence body.", 400);
+        var store = _runtime.RunnerStoreId;
+        if (store == Guid.Empty || parsed.RunnerStoreId != store)
+            throw new PhoneHomeAdmissionException(RunnerAbsenceRefusalCodes.BindingMismatch,
+                "Absence evidence names another runner store.", 409);
+        return parsed;
+    }
+
+    private static PhoneHomeFrame AbsenceFrame<T>(PhoneHomeFrame request, RunnerAbsenceOutcome<T> outcome) where T : class =>
+        outcome.Value is { } value
+            ? Result(request, value)
+            : Error(request, outcome.Refusal!.Code, outcome.Refusal.Reason, outcome.Refusal.Status);
 
     private static Guid ReadSessionId(PhoneHomeFrame request)
     {

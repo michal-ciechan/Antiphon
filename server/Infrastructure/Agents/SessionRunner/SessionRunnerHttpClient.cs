@@ -107,6 +107,7 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
         _time = time ?? TimeProvider.System;
         _resilience = resilience;
         _hostStats = hostStats?.Value ?? new HostStatsSettings();
+        _absenceKey = new(() => AbsenceEvidenceKey.TryLoad(_settings.AbsenceEvidence.KeyPath, out _));
         _httpClient.BaseAddress = new Uri(_settings.BaseUrl.TrimEnd('/') + "/");
     }
 
@@ -600,6 +601,122 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
             transcript.SessionId,
             transcript.Entries.Select(MapTranscript).ToList(),
             transcript.LastSequence, transcript.TerminalComplete, transcript.AcceptedStartedAt);
+    }
+
+    // CARD-1153 D-3/D-4: one signed POST, one fresh nonce, a five-second total deadline on the
+    // injected clock, no generic read retries. The transcript 404 is never reinterpreted.
+    private static readonly TimeSpan AbsenceDeadline = TimeSpan.FromSeconds(5);
+    private readonly Lazy<AbsenceEvidenceKey?> _absenceKey;
+
+    private sealed record AbsenceExchange(
+        string? Unsupported, string? Failure, int Status, byte[] Body, RunnerAbsenceAuthentication Authentication,
+        RunnerAbsenceRequest Request, DateTimeOffset SentAt, DateTimeOffset ReceivedAt);
+
+    public async Task<SessionRunnerAbsencePrepareResult> PrepareAbsenceEvidenceAsync(
+        Guid sessionId, DateTime acceptedStartedAt, Guid? expectedRunnerStoreId, CancellationToken ct)
+    {
+        var exchange = await ExchangeAbsenceAsync(AbsenceEvidenceAuthentication.PrepareOperation,
+            sessionId, acceptedStartedAt, expectedRunnerStoreId, ct);
+        if (exchange.Unsupported is { } unsupported) return SessionRunnerAbsencePrepareResult.Unsupported(unsupported);
+        if (exchange.Failure is { } failure) return new(false, failure);
+        if (exchange.Status != 200 || exchange.Authentication != RunnerAbsenceAuthentication.Verified)
+            return new(false, $"absence_prepare_refused: status {exchange.Status} {exchange.Authentication}");
+        try
+        {
+            var ack = JsonSerializer.Deserialize<RunnerAbsencePrepared>(exchange.Body, JsonOptions);
+            return ack is not null && ack.SessionId == sessionId && ack.State == "Prepared"
+                && ack.RequestNonce == exchange.Request.RequestNonce
+                && SessionGeneration.Equal(ack.AcceptedStartedAt, acceptedStartedAt)
+                ? new(true, "prepared")
+                : new(false, "absence_prepare_ack_mismatch");
+        }
+        catch (JsonException) { return new(false, "absence_prepare_ack_malformed"); }
+    }
+
+    public async Task<SessionRunnerAbsenceEvidenceResult> CertifyAbsenceAsync(
+        Guid sessionId, DateTime acceptedStartedAt, Guid? expectedRunnerStoreId, CancellationToken ct)
+    {
+        var exchange = await ExchangeAbsenceAsync(AbsenceEvidenceAuthentication.CertifyOperation,
+            sessionId, acceptedStartedAt, expectedRunnerStoreId, ct);
+        if (exchange.Unsupported is { } unsupported) return SessionRunnerAbsenceEvidenceResult.Unsupported(unsupported);
+        if (exchange.Failure is { } failure) return SessionRunnerAbsenceEvidenceResult.Unknown(failure);
+        if (exchange.Status == 501) return SessionRunnerAbsenceEvidenceResult.Unsupported("absence_certify_not_implemented");
+        if (exchange.Status != 200) return SessionRunnerAbsenceEvidenceResult.Unknown($"absence_certify_status_{exchange.Status}");
+        System.Text.Json.Nodes.JsonNode? body;
+        try { body = System.Text.Json.Nodes.JsonNode.Parse(exchange.Body); }
+        catch (JsonException) { return SessionRunnerAbsenceEvidenceResult.Unknown("absence_certificate_malformed"); }
+        return RunnerAbsenceEvidenceValidator.Validate(body,
+            new RunnerAbsenceExpectation(sessionId, acceptedStartedAt, exchange.Request.RunnerStoreId, exchange.Request.RequestNonce),
+            exchange.Authentication, exchange.SentAt, exchange.ReceivedAt, _time.GetUtcNow());
+    }
+
+    private async Task<AbsenceExchange> ExchangeAbsenceAsync(
+        string operation, Guid sessionId, DateTime acceptedStartedAt, Guid? expectedRunnerStoreId, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        var placeholder = new RunnerAbsenceRequest(RunnerAbsenceEvidence.Version, sessionId, acceptedStartedAt, Guid.Empty, "");
+        AbsenceExchange Unsupported(string reason) =>
+            new(reason, null, 0, [], RunnerAbsenceAuthentication.Missing, placeholder, default, default);
+        AbsenceExchange Failed(string reason, RunnerAbsenceRequest request) =>
+            new(null, reason, 0, [], RunnerAbsenceAuthentication.Missing, request, default, default);
+
+        var capabilities = await GetCapabilitiesAsync(ct);
+        if (capabilities?.Features?.Contains(RunnerAbsenceEvidence.Feature) != true)
+            return Unsupported("absence_evidence_capability_absent");
+        if (_absenceKey.Value is not { } key)
+            return Unsupported("absence_evidence_key_unconfigured");
+        // A-7: a remote-style bound store must equal the runner's; a local session with no bound
+        // store uses the runner's advertised store, which must itself be known.
+        if (capabilities.RunnerStoreId is not { } advertised || advertised == Guid.Empty)
+            return Unsupported("absence_evidence_store_unknown");
+        if (expectedRunnerStoreId is { } bound && bound != advertised)
+            return Failed("absence_evidence_store_mismatch", placeholder);
+
+        var request = new RunnerAbsenceRequest(RunnerAbsenceEvidence.Version, sessionId,
+            SessionGeneration.Normalize(acceptedStartedAt), advertised, RunnerAbsenceEvidence.NewNonce());
+        var body = RunnerAbsenceEvidence.RequestBody(request);
+        var path = operation == AbsenceEvidenceAuthentication.PrepareOperation
+            ? $"sessions/{sessionId:D}/absence-evidence/prepare"
+            : $"sessions/{sessionId:D}/absence-evidence";
+        using var message = new HttpRequestMessage(HttpMethod.Post, path)
+        {
+            Content = new ByteArrayContent(body),
+        };
+        message.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/json");
+        message.Headers.Add(AbsenceEvidenceAuthentication.KeyIdHeader, key.KeyId);
+        message.Headers.Add(AbsenceEvidenceAuthentication.MacHeader, AbsenceEvidenceAuthentication.Sign(key,
+            AbsenceEvidenceAuthentication.RequestCanonical(operation, sessionId, request.AcceptedStartedAt,
+                request.RunnerStoreId, request.RequestNonce, body)));
+
+        using var deadline = new CancellationTokenSource(AbsenceDeadline, _time);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, deadline.Token);
+        var sentAt = _time.GetUtcNow();
+        int status;
+        byte[] responseBody;
+        RunnerAbsenceAuthentication authentication;
+        try
+        {
+            using var response = await _httpClient.SendAsync(message, linked.Token);
+            status = (int)response.StatusCode;
+            responseBody = await response.Content.ReadAsByteArrayAsync(linked.Token);
+            var keyId = response.Headers.TryGetValues(AbsenceEvidenceAuthentication.KeyIdHeader, out var ids) ? ids.FirstOrDefault() : null;
+            var mac = response.Headers.TryGetValues(AbsenceEvidenceAuthentication.MacHeader, out var macs) ? macs.FirstOrDefault() : null;
+            authentication = keyId is null || mac is null ? RunnerAbsenceAuthentication.Missing
+                : keyId == key.KeyId && AbsenceEvidenceAuthentication.Verify(key,
+                    AbsenceEvidenceAuthentication.ResponseCanonical(operation, request.RequestNonce, status, responseBody), mac)
+                    ? RunnerAbsenceAuthentication.Verified
+                    : RunnerAbsenceAuthentication.Mismatch;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException or IOException)
+        {
+            return Failed(deadline.IsCancellationRequested ? "absence_evidence_deadline" : "absence_evidence_unreachable: " + ex.GetType().Name, request);
+        }
+
+        return new(null, null, status, responseBody, authentication, request, sentAt, _time.GetUtcNow());
     }
 
     public async Task SendInputAsync(Guid sessionId, string input, CancellationToken ct)

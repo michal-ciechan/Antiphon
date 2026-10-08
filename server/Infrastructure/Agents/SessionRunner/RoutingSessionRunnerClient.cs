@@ -60,6 +60,33 @@ public sealed class RoutingSessionRunnerClient : ISessionRunnerClient
     public async Task<SessionRunnerTranscriptDto> GetTranscriptAsync(Guid sessionId, CancellationToken ct) =>
         await (await Route(sessionId, ct)).GetTranscriptAsync(sessionId, ct);
 
+    // CARD-1153: the owning runner's transport answers; a remote owner is never judged locally.
+    public async Task<SessionRunnerAbsencePrepareResult> PrepareAbsenceEvidenceAsync(
+        Guid sessionId, DateTime acceptedStartedAt, Guid? expectedRunnerStoreId, CancellationToken ct)
+    {
+        try
+        {
+            return await (await Route(sessionId, ct)).PrepareAbsenceEvidenceAsync(sessionId, acceptedStartedAt, expectedRunnerStoreId, ct);
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        {
+            return SessionRunnerAbsencePrepareResult.Unsupported("absence_prepare_route_failed: " + ex.GetType().Name);
+        }
+    }
+
+    public async Task<SessionRunnerAbsenceEvidenceResult> CertifyAbsenceAsync(
+        Guid sessionId, DateTime acceptedStartedAt, Guid? expectedRunnerStoreId, CancellationToken ct)
+    {
+        try
+        {
+            return await (await Route(sessionId, ct)).CertifyAbsenceAsync(sessionId, acceptedStartedAt, expectedRunnerStoreId, ct);
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        {
+            return SessionRunnerAbsenceEvidenceResult.Unknown("absence_certify_route_failed: " + ex.GetType().Name);
+        }
+    }
+
     public async Task SendInputAsync(Guid sessionId, string input, CancellationToken ct) =>
         await (await Route(sessionId, ct)).SendInputAsync(sessionId, input, ct);
 

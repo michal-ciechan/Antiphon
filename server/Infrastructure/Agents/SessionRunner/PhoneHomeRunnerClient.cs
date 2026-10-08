@@ -59,12 +59,15 @@ public sealed class PhoneHomeRunnerClient : ISessionRunnerClient, IVerificationW
     private readonly RunnerContractMapper _mapper = new();
     private readonly Antiphon.Server.Application.Services.RemoteSpillCourier? _spills;
     private readonly Func<bool>? _isCurrent;
+    private readonly TimeProvider _time;
 
     public PhoneHomeRunnerClient(
         PhoneHomeLiveConnection connection,
-        Antiphon.Server.Application.Services.RemoteSpillCourier? spills = null, Func<bool>? isCurrent = null)
+        Antiphon.Server.Application.Services.RemoteSpillCourier? spills = null, Func<bool>? isCurrent = null,
+        TimeProvider? time = null)
     {
         _connection = connection;
+        _time = time ?? TimeProvider.System;
         _spills = spills;
         _isCurrent = isCurrent;
     }
@@ -202,6 +205,98 @@ public sealed class PhoneHomeRunnerClient : ISessionRunnerClient, IVerificationW
         var frame = await _connection.RequestAsync(PhoneHomeOperation.Snapshot, new { sessionId }, ct);
         var dto = Read<RunnerSnapshotDto>(frame) ?? throw Missing("snapshot");
         return new SessionRunnerSnapshotDto(dto.SessionId, dto.RawOutput, dto.RenderedScreen, dto.LastSequence, dto.StartedAt);
+    }
+
+    // CARD-1153 D-3/D-4: the authenticated, runner/store-bound connection is the authentication;
+    // the response must come back on the same, still-current connection for the same operation.
+    private static readonly TimeSpan AbsenceDeadline = TimeSpan.FromSeconds(5);
+
+    public async Task<SessionRunnerAbsencePrepareResult> PrepareAbsenceEvidenceAsync(
+        Guid sessionId, DateTime acceptedStartedAt, Guid? expectedRunnerStoreId, CancellationToken ct)
+    {
+        var exchange = await ExchangeAbsenceAsync(PhoneHomeOperation.PrepareAbsenceEvidence,
+            sessionId, acceptedStartedAt, expectedRunnerStoreId, ct);
+        if (exchange.Unsupported is { } unsupported) return SessionRunnerAbsencePrepareResult.Unsupported(unsupported);
+        if (exchange.Failure is { } failure || exchange.Payload is not { } payload) return new(false, exchange.Failure ?? "absence_prepare_empty");
+        try
+        {
+            var ack = payload.Deserialize<RunnerAbsencePrepared>(PhoneHomeFraming.Json);
+            return ack is not null && ack.SessionId == sessionId && ack.State == "Prepared"
+                && ack.RequestNonce == exchange.Request.RequestNonce && ack.RunnerStoreId == exchange.Request.RunnerStoreId
+                && SessionGeneration.Equal(ack.AcceptedStartedAt, acceptedStartedAt)
+                ? new(true, "prepared")
+                : new(false, "absence_prepare_ack_mismatch");
+        }
+        catch (JsonException) { return new(false, "absence_prepare_ack_malformed"); }
+    }
+
+    public async Task<SessionRunnerAbsenceEvidenceResult> CertifyAbsenceAsync(
+        Guid sessionId, DateTime acceptedStartedAt, Guid? expectedRunnerStoreId, CancellationToken ct)
+    {
+        var exchange = await ExchangeAbsenceAsync(PhoneHomeOperation.CertifyAbsence,
+            sessionId, acceptedStartedAt, expectedRunnerStoreId, ct);
+        if (exchange.Unsupported is { } unsupported) return SessionRunnerAbsenceEvidenceResult.Unsupported(unsupported);
+        if (exchange.Failure is { } failure) return SessionRunnerAbsenceEvidenceResult.Unknown(failure);
+        System.Text.Json.Nodes.JsonNode? body;
+        try { body = exchange.Payload is { } payload ? System.Text.Json.Nodes.JsonNode.Parse(payload.GetRawText()) : null; }
+        catch (JsonException) { return SessionRunnerAbsenceEvidenceResult.Unknown("absence_certificate_malformed"); }
+        return Antiphon.Server.Application.Services.RunnerAbsenceEvidenceValidator.Validate(body,
+            new(sessionId, acceptedStartedAt, exchange.Request.RunnerStoreId, exchange.Request.RequestNonce),
+            exchange.Authentication, exchange.SentAt, exchange.ReceivedAt, _time.GetUtcNow());
+    }
+
+    private sealed record AbsenceExchange(
+        string? Unsupported, string? Failure, JsonElement? Payload,
+        Antiphon.Server.Application.Services.RunnerAbsenceAuthentication Authentication,
+        RunnerAbsenceRequest Request, DateTimeOffset SentAt, DateTimeOffset ReceivedAt);
+
+    private async Task<AbsenceExchange> ExchangeAbsenceAsync(
+        PhoneHomeOperation operation, Guid sessionId, DateTime acceptedStartedAt, Guid? expectedRunnerStoreId,
+        CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        var missing = Antiphon.Server.Application.Services.RunnerAbsenceAuthentication.Missing;
+        var store = _connection.RunnerStoreId;
+        var request = new RunnerAbsenceRequest(RunnerAbsenceEvidence.Version, sessionId,
+            SessionGeneration.Normalize(acceptedStartedAt), store, RunnerAbsenceEvidence.NewNonce());
+        AbsenceExchange Unsupported(string reason) => new(reason, null, null, missing, request, default, default);
+        AbsenceExchange Failed(string reason) => new(null, reason, null, missing, request, default, default);
+
+        if (store == Guid.Empty) return Unsupported("absence_evidence_store_unknown");
+        if (expectedRunnerStoreId is { } bound && bound != store) return Failed("absence_evidence_store_mismatch");
+        using var deadline = new CancellationTokenSource(AbsenceDeadline, _time);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, deadline.Token);
+        try
+        {
+            var capabilities = await GetCapabilitiesAsync(linked.Token);
+            if (capabilities?.Features?.Contains(RunnerAbsenceEvidence.Feature) != true)
+                return Unsupported("absence_evidence_capability_absent");
+            if (capabilities.RunnerStoreId != store)
+                return Failed("absence_evidence_store_mismatch");
+            var sentAt = _time.GetUtcNow();
+            using var body = JsonDocument.Parse(RunnerAbsenceEvidence.RequestBody(request));
+            var frame = await _connection.RequestAsync(operation, body.RootElement.Clone(), linked.Token);
+            var receivedAt = _time.GetUtcNow();
+            if (frame.Kind == PhoneHomeFrameKind.Error)
+                return frame.ErrorCode == PhoneHomeProblemTypes.UnsupportedOperation
+                    ? Unsupported("absence_evidence_operation_unsupported")
+                    : Failed("absence_evidence_refused: " + frame.ErrorCode);
+            if (frame.Kind != PhoneHomeFrameKind.Result || frame.Operation is { } op && op != operation)
+                return Failed("absence_evidence_frame_mismatch");
+            var current = _isCurrent?.Invoke() != false;
+            return new(null, null, frame.Payload, current
+                    ? Antiphon.Server.Application.Services.RunnerAbsenceAuthentication.Verified
+                    : Antiphon.Server.Application.Services.RunnerAbsenceAuthentication.Mismatch,
+                request, sentAt, receivedAt);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            return Failed(deadline.IsCancellationRequested ? "absence_evidence_deadline" : "absence_evidence_transport: " + ex.GetType().Name);
+        }
     }
 
     public async Task<SessionRunnerTranscriptDto> GetTranscriptAsync(Guid sessionId, CancellationToken ct)

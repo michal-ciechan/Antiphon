@@ -12,6 +12,46 @@ public static class SessionReadLaunchRoutes
             Results.Ok(await runtime.GetAsync(id, ct)));
     }
 
+    public static void MapSessionTranscriptRoute(this WebApplication app)
+    {
+        app.MapGet("/sessions/{id:guid}/transcript", (Guid id, SessionRunnerRuntime runtime) =>
+            Results.Ok(runtime.GetTranscript(id)));
+    }
+
+    // CARD-0101: an unknown session id is routine (a caller racing a session's end, a stale id from
+    // before a restart) - it must answer 404, not crash the request pipeline with an unhandled
+    // KeyNotFoundException out of SessionRunnerRuntime.GetSession. Narrow on purpose: this is the ONLY
+    // exception type every session-lookup endpoint throws for "not found" today, so mapping anything
+    // wider here would hide a real bug as a 404 instead of surfacing it.
+    public static void UseRunnerExceptionMapping(this WebApplication app)
+    {
+        app.Use(async (context, next) =>
+        {
+            try
+            {
+                await next(context);
+            }
+            catch (KeyNotFoundException ex)
+            {
+                app.Logger.LogInformation("404: {Message}", ex.Message);
+                context.Response.StatusCode = StatusCodes.Status404NotFound;
+                await context.Response.WriteAsJsonAsync(new { error = ex.Message });
+            }
+            catch (VerificationCustodyException ex)
+            {
+                await Results.Problem(title: ex.Code, type: ex.Code, statusCode: StatusCodes.Status409Conflict)
+                    .ExecuteAsync(context);
+            }
+            catch (SessionIdentityClosedException ex)
+            {
+                // CARD-1153 A-3: a certified never-created id refuses every later creation; not retryable.
+                await Results.Problem(title: RunnerAbsenceEvidence.ClosedIdentityProblemType, detail: ex.Message,
+                        type: RunnerAbsenceEvidence.ClosedIdentityProblemType, statusCode: StatusCodes.Status409Conflict)
+                    .ExecuteAsync(context);
+            }
+        });
+    }
+
     public static void MapSessionLaunchRoute(this WebApplication app)
     {
         app.MapPost("/sessions", async (
