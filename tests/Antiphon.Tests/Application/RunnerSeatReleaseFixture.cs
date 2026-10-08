@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Json;
 using Antiphon.Server.Application.Dtos;
@@ -660,6 +661,11 @@ internal sealed partial class RunnerSeatReleaseFixture : IAsyncDisposable
         // Kestrel inventory read when this seat starts beside the rest of the class. One budget
         // covers the HttpClient, the loopback factory and the runner settings. Production timeouts stay.
         private const int LoopbackBudgetSeconds = 10;
+        // CARD-1137: a fresh app builds every endpoint and its JSON contracts on its first
+        // request. Ten seats doing that at once outran the 10 s budget above. Each HTTP seat
+        // pays it once under this separate startup budget, before the test gets Client.
+        private const int StartupBudgetSeconds = 60;
+        private readonly List<string> _served = [];
         private ITranscriptTailer _tailer = null!;
         private WebApplication? _app;
         private HttpClient? _http;
@@ -678,6 +684,9 @@ internal sealed partial class RunnerSeatReleaseFixture : IAsyncDisposable
         public string? ResponseFault { get; set; }
         public bool SwallowNextEnter { get; set; }
         public List<string> NativeSubmissions { get; } = [];
+        /// <summary>Requests this seat's current HTTP app had served when Client was handed out.</summary>
+        public IReadOnlyList<string> ServedBeforeClient { get; private set; } = [];
+        public TimeSpan WarmupElapsed { get; private set; }
         public string TranscriptPath => Path.Combine(_root, "native.jsonl");
         private Antiphon.SessionRunner.SessionRunnerSettings Settings => new() { SessionLogPath = _root };
 
@@ -811,9 +820,15 @@ internal sealed partial class RunnerSeatReleaseFixture : IAsyncDisposable
             builder.Services.Configure<HerdrSettings>(_ => { });
             builder.Services.Configure<Antiphon.SessionRunner.HostStatsSettings>(_ => { });
             _app = builder.Build();
+            lock (_served) _served.Clear();
             _app.Use(async (context, next) =>
             {
                 var path = context.Request.Path.Value!;
+                context.Response.OnStarting(() =>
+                {
+                    lock (_served) _served.Add($"{context.Request.Method} {path} {context.Response.StatusCode}");
+                    return Task.CompletedTask;
+                });
                 if (path.EndsWith("/terminal-seat-observation"))
                 {
                     context.Request.EnableBuffering();
@@ -835,6 +850,8 @@ internal sealed partial class RunnerSeatReleaseFixture : IAsyncDisposable
             await _app.StartAsync();
             var uri = new Uri(_app.Urls.Single());
             uri.IsLoopback.ShouldBeTrue(); uri.Port.ShouldNotBe(17204);
+            await WarmUpAsync(uri);
+            lock (_served) ServedBeforeClient = [.. _served];
             _http = new HttpClient { BaseAddress = uri, Timeout = TimeSpan.FromSeconds(LoopbackBudgetSeconds) };
             Client = new SessionRunnerHttpClient(_http, new LoopbackClientFactory(uri),
                 Options.Create(new SessionRunnerSettings
@@ -843,6 +860,15 @@ internal sealed partial class RunnerSeatReleaseFixture : IAsyncDisposable
                     ListTimeoutSeconds = LoopbackBudgetSeconds,
                     RequestTimeoutSeconds = LoopbackBudgetSeconds
                 }));
+        }
+
+        private async Task WarmUpAsync(Uri uri)
+        {
+            var started = Stopwatch.GetTimestamp();
+            using var warm = new HttpClient { BaseAddress = uri, Timeout = TimeSpan.FromSeconds(StartupBudgetSeconds) };
+            using var response = await warm.GetAsync("/sessions");
+            response.EnsureSuccessStatusCode();
+            WarmupElapsed = Stopwatch.GetElapsedTime(started);
         }
 
         private async Task PumpAsync(PhoneHomeCommandDispatcher dispatcher, CancellationToken ct)
