@@ -4,7 +4,6 @@ using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
-using Npgsql;
 
 namespace Antiphon.Server.Application.Services;
 
@@ -21,8 +20,11 @@ namespace Antiphon.Server.Application.Services;
 /// session's accepted generation and launch clock under a share lock on the session row, then
 /// the latest accepted prompt through the same boot predicate the decision read. A relaunch,
 /// resume, newer accepted prompt or model reply between the decision and the write therefore
-/// writes nothing, silently. The session lock is taken with NOWAIT so this telemetry write can
-/// never wait on, or deadlock with, a session write: a held row is treated as a changing one.</para>
+/// writes nothing, silently. The session lock is taken with SKIP LOCKED so this telemetry write
+/// can never wait on, or deadlock with, a session write: a held row reads as no row, which is
+/// treated as a changing one. Contention is therefore an ordinary empty result, not a database
+/// error, and logs nothing above Debug (CARD-1151 repair 2: NOWAIT raised 55P03, which EF Core
+/// logged at Error before any handler ran).</para>
 /// </summary>
 internal sealed class BootStallWarningWriter(Func<AppDbContext> contexts, IEventBus events, ILogger logger)
 {
@@ -87,7 +89,7 @@ internal sealed class BootStallWarningWriter(Func<AppDbContext> contexts, IEvent
                 if (BootStallPolicy.IsRecorded(await ReadDetailsAsync(db, episode.TaskId, ct), episode.Key, stage))
                     return Outcome.Duplicate;
 
-                if (!await SameEpisodeAsync(db, episode, current.DispatchedAt, ct))
+                if (!await SameEpisodeAsync(db, episode, stage, current.DispatchedAt, ct))
                     return Outcome.IdentityChanged;
 
                 db.AgentTaskEvents.Add(new AgentTaskEvent
@@ -101,15 +103,6 @@ internal sealed class BootStallWarningWriter(Func<AppDbContext> contexts, IEvent
                 await db.SaveChangesAsync(ct);
                 await tx.CommitAsync(ct);
             }
-        }
-        catch (Exception ex) when (IsLockNotAvailable(ex))
-        {
-            // The session row is being written right now: its identity is in flux. Nothing is
-            // written; the next tick decides again on the settled row.
-            logger.LogDebug(
-                "Task {ShortId}: session {SessionId} is mid-update; {Token} not recorded this tick",
-                DelegationReportFormatter.Short(episode.TaskId), episode.SessionId, BootStallPolicy.Token(stage));
-            return Outcome.IdentityChanged;
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
         {
@@ -140,20 +133,29 @@ internal sealed class BootStallWarningWriter(Func<AppDbContext> contexts, IEvent
     }
 
     /// <summary>
-    /// R2: the session's generation and launch clock (session row share-locked, NOWAIT), then the
-    /// latest accepted prompt with no model reply since, all equal to the decided episode. A
-    /// missing row, a missing generation or a resolved turn is a mismatch.
+    /// R2: the session's generation and launch clock (session row share-locked, SKIP LOCKED), then
+    /// the latest accepted prompt with no model reply since, all equal to the decided episode. A
+    /// missing or write-locked row, a missing generation or a resolved turn is a mismatch.
     /// </summary>
-    private static async Task<bool> SameEpisodeAsync(
-        AppDbContext db, Episode episode, DateTime? dispatchedAt, CancellationToken ct)
+    private async Task<bool> SameEpisodeAsync(
+        AppDbContext db, Episode episode, BootStallPolicy.Stage stage, DateTime? dispatchedAt, CancellationToken ct)
     {
         var session = await db.AgentSessions
-            .FromSqlInterpolated($"SELECT * FROM \"AgentSessions\" WHERE \"Id\" = {episode.SessionId} FOR SHARE NOWAIT")
+            .FromSqlInterpolated($"SELECT * FROM \"AgentSessions\" WHERE \"Id\" = {episode.SessionId} FOR SHARE SKIP LOCKED")
             .AsNoTracking()
             .Select(s => new { s.StartedAt, s.LaunchResumedAt })
             .SingleOrDefaultAsync(ct);
-        if (session is null
-            || episode.Boot.SessionStartedAt is not DateTime generation
+        if (session is null)
+        {
+            // Gone, or being written right now (a held row is skipped): its identity is in flux.
+            // Nothing is written; the next tick decides again on the settled row.
+            logger.LogDebug(
+                "Task {ShortId}: session {SessionId} is missing or mid-update; {Token} not recorded this tick",
+                DelegationReportFormatter.Short(episode.TaskId), episode.SessionId, BootStallPolicy.Token(stage));
+            return false;
+        }
+
+        if (episode.Boot.SessionStartedAt is not DateTime generation
             || session.StartedAt != generation)
         {
             return false;
@@ -166,17 +168,6 @@ internal sealed class BootStallWarningWriter(Func<AppDbContext> contexts, IEvent
         var turn = await BootReplyWatch.LoadBootTurnAsync(db, episode.SessionId, clock, ct);
         return turn?.AcceptedSequence == episode.Boot.PromptSequence
             && turn.AcceptedAt == episode.Boot.PromptAt;
-    }
-
-    private static bool IsLockNotAvailable(Exception exception)
-    {
-        for (var current = exception; current is not null; current = current.InnerException)
-        {
-            if (current is PostgresException { SqlState: PostgresErrorCodes.LockNotAvailable })
-                return true;
-        }
-
-        return false;
     }
 
     private static Task<List<string>> ReadDetailsAsync(AppDbContext db, Guid taskId, CancellationToken ct) =>

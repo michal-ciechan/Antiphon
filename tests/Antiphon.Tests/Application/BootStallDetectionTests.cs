@@ -10,7 +10,9 @@ using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Time.Testing;
+using Npgsql;
 using Shouldly;
 using TUnit.Core;
 using static Antiphon.Tests.Application.BootStallWorkingTickCharacterizationTests;
@@ -651,6 +653,222 @@ public class BootStallDetectionTests
         task.Attempt.ShouldBe(before.Attempt);
         task.AgentSessionId.ShouldBe(world.SessionId);
         task.FailureReason.ShouldBeNull();
+    }
+
+    /// <summary>
+    /// CARD-1151 H-7 (repair 2, Final Review 409623bd F1). Gate 2's runner pull is the only way a
+    /// reply the database has not stored yet reaches the decision. Every argument starts from
+    /// stored rows with an accepted prompt 21 minutes old and no model reply, so the stored-row
+    /// pass alone would write BootStallNeedsOperator. fresh-reply-lands-in-the-pull: the pull
+    /// lands a reply stamped now; the episode ends and the ordinary policy finds nothing due (no
+    /// warning, task Working, and the next sweep has no reason to pull). stale-reply-lands-in-the-pull:
+    /// the pull lands a reply the tailer missed 30 s after the prompt; the ordinary general clock
+    /// fails the task non-destructively, with no boot warning. pull-times-out: the production pull
+    /// reaches the runner and its transcript request times out (a TaskCanceledException on an
+    /// uncancelled sweep); detection still records BootStallNeedsOperator once and the task stays
+    /// Working. CP-4's pre-seeded model-reply-returns-to-ordinary-policy stays the stored-row control.
+    /// </summary>
+    [Test]
+    [Arguments("fresh-reply-lands-in-the-pull")]
+    [Arguments("stale-reply-lands-in-the-pull")]
+    [Arguments("pull-times-out")]
+    public async Task C1151_Reply_landing_in_the_pull_ends_the_episode(string pull)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var world = await BootStallWorld.CreateAsync(
+            schema.ConnectionString, new BootStallWorldOptions { MinutesAgo = 21 });
+        var before = await world.TaskAsync();
+        await using (var db = world.Read())
+        {
+            (await db.TranscriptEntries.CountAsync(t => t.AgentSessionId == world.SessionId
+                && t.Kind != TranscriptKinds.UserPrompt)).ShouldBe(0, "control: no model reply is stored before the pull");
+        }
+
+        var pulls = 0;
+        DateTime? replyAt = pull switch
+        {
+            "fresh-reply-lands-in-the-pull" => world.Now0,
+            "stale-reply-lands-in-the-pull" => world.PromptAt.AddSeconds(30),
+            "pull-times-out" => null,
+            _ => throw new ArgumentOutOfRangeException(nameof(pull), pull, null),
+        };
+        if (replyAt is { } at)
+        {
+            world.CatchUp = async (sessionId, _) =>
+            {
+                sessionId.ShouldBe(world.SessionId);
+                if (++pulls == 1)
+                    await world.AddEntryAsync(TranscriptKinds.AssistantText, "the reply the tailer had not stored", at);
+            };
+        }
+        else
+        {
+            world.Runner.TranscriptFault = new TaskCanceledException("C1151 runner transcript request timed out");
+        }
+
+        var failed = await world.RunOverdueSweepAsync();
+
+        AssertNothingDestructive(world);
+        world.Warnings().ShouldNotContain("Overdue-deadline evaluation");
+        switch (pull)
+        {
+            case "fresh-reply-lands-in-the-pull":
+                failed.ShouldBe(0, world.Warnings());
+                pulls.ShouldBe(1, "the sweep pulled before deciding");
+                (await world.BootWarningsAsync()).ShouldBeEmpty("the reply the pull landed ended the episode");
+                (await world.RunOverdueSweepAsync()).ShouldBe(0, world.Warnings());
+                pulls.ShouldBe(1, "with the reply stored nothing is due, so nothing is pulled");
+                (await world.BootWarningsAsync()).ShouldBeEmpty();
+                await AssertSameAttemptAsync(world, before);
+                await AssertNoFailureTraceAsync(world);
+                break;
+            case "stale-reply-lands-in-the-pull":
+            {
+                failed.ShouldBe(1, world.Warnings());
+                pulls.ShouldBe(1, "the sweep pulled before deciding");
+                var task = await world.TaskAsync();
+                task.Status.ShouldBe(AgentTaskStatus.Failed, "the landed reply returns the task to the ordinary general clock");
+                task.FailureCode.ShouldBeNull("the general arm has no failure code and no retry");
+                task.FailureReason.ShouldNotBeNull();
+                task.FailureReason.ShouldContain("The session was NOT killed");
+                task.Attempt.ShouldBe(1);
+                (await world.BootWarningsAsync()).ShouldBeEmpty("a resolved boot writes no boot warning");
+                break;
+            }
+            default:
+            {
+                failed.ShouldBe(0, world.Warnings());
+                world.Runner.TranscriptPulls.ShouldBe(1, "the production pull reached the runner and failed there");
+                var warnings = await world.BootWarningsAsync();
+                warnings.Select(w => w.Split(' ')[0]).ShouldBe([BootStallPolicy.NeedsOperatorToken], world.Warnings());
+                await AssertSameAttemptAsync(world, before);
+                await AssertNoFailureTraceAsync(world);
+                break;
+            }
+        }
+    }
+
+    /// <summary>
+    /// CARD-1151 repair 2 (Final Review 409623bd F2). The warning writer's session revalidation
+    /// under real two-connection contention, through the production logging graph: the scoped
+    /// context and the writer's default context log through the world's factory, captured from
+    /// Debug up, so EF Core's own command and query errors are visible. held-session-row: a second
+    /// connection holds an uncommitted UPDATE of the session row (the lock any session write
+    /// takes), and a control proves the row really refuses a share lock. The sweep returns
+    /// promptly, writes no event and leaves the task Working; in that window nothing is logged
+    /// above Debug except EF's routine executed-command records, nothing carries an exception, and
+    /// the writer says at Debug that the session was mid-update. After the holder rolls back the
+    /// next sweep records exactly one BootStallDetected. session-read-fault: a genuine, non-contention
+    /// fault on the same session statement is still reported as before (the writer's Warning) and
+    /// writes nothing; once it clears, one event.
+    /// </summary>
+    [Test]
+    [Arguments("held-session-row")]
+    [Arguments("session-read-fault")]
+    public async Task C1151_Session_row_contention_is_quiet(string shape)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var world = await BootStallWorld.CreateAsync(
+            schema.ConnectionString, new BootStallWorldOptions { MinutesAgo = 9, MinimumLogLevel = LogLevel.Debug });
+        var before = await world.TaskAsync();
+
+        if (shape == "session-read-fault")
+        {
+            var fault = new SessionStatementFault();
+            world.UseTelemetryFactory = true;
+            world.TelemetryInterceptors = [fault];
+            (await world.RunOverdueSweepAsync()).ShouldBe(0, world.Warnings());
+            fault.Fired.ShouldBeTrue("the fault must hit the writer's session statement");
+            world.Warnings().ShouldContain(
+                $"Could not record {BootStallPolicy.DetectedToken}", customMessage: "a genuine fault is still reported");
+            (await world.BootWarningsAsync()).ShouldBeEmpty("a faulted statement writes nothing");
+            await AssertSameAttemptAsync(world, before);
+            fault.Armed = false;
+        }
+        else if (shape == "held-session-row")
+        {
+            // Warm the model so first-use model-building logs fall outside the measured window.
+            await using (var warm = world.CreateScope())
+                await warm.ServiceProvider.GetRequiredService<AppDbContext>().AgentSessions.AnyAsync();
+
+            await using var holder = new NpgsqlConnection(schema.ConnectionString);
+            await holder.OpenAsync();
+            await using var hold = await holder.BeginTransactionAsync();
+            await using (var update = new NpgsqlCommand(
+                "UPDATE \"AgentSessions\" SET \"LastSeenAt\" = \"LastSeenAt\" WHERE \"Id\" = @id", holder, hold))
+            {
+                update.Parameters.AddWithValue("id", world.SessionId);
+                (await update.ExecuteNonQueryAsync()).ShouldBe(1, "the holder writes the session row");
+            }
+
+            await using (var probe = new NpgsqlConnection(schema.ConnectionString))
+            {
+                await probe.OpenAsync();
+                await using var check = new NpgsqlCommand(
+                    "SELECT 1 FROM \"AgentSessions\" WHERE \"Id\" = @id FOR SHARE NOWAIT", probe);
+                check.Parameters.AddWithValue("id", world.SessionId);
+                (await Should.ThrowAsync<PostgresException>(() => check.ExecuteScalarAsync()))
+                    .SqlState.ShouldBe(PostgresErrorCodes.LockNotAvailable, "control: the row is really held");
+            }
+
+            var mark = world.LogEntries().Count;
+            try
+            {
+                (await world.RunOverdueSweepAsync().WaitAsync(TimeSpan.FromSeconds(30)))
+                    .ShouldBe(0, world.Warnings());
+            }
+            finally
+            {
+                await hold.RollbackAsync();
+            }
+
+            var during = world.LogEntries().Skip(mark).ToList();
+            var described = string.Join('\n', during.Select(e => $"{e.Level} {e.Category} [{e.EventId.Id}]: {e.Message}"));
+            during.ShouldContain(
+                e => e.Level == LogLevel.Debug && e.Message.Contains("is missing or mid-update"),
+                $"the writer met the held row and said so at Debug\n{described}");
+            during.Where(e => e.Level > LogLevel.Debug && e.EventId.Id != RelationalEventId.CommandExecuted.Id)
+                .ShouldBeEmpty($"expected contention logs nothing above Debug\n{described}");
+            during.Where(e => e.Exception is not null)
+                .ShouldBeEmpty($"expected contention is a result, not an exception\n{described}");
+            (await world.BootWarningsAsync()).ShouldBeEmpty("a held session row writes nothing");
+            await AssertSameAttemptAsync(world, before);
+        }
+        else
+        {
+            throw new ArgumentOutOfRangeException(nameof(shape), shape, null);
+        }
+
+        (await world.RunOverdueSweepAsync()).ShouldBe(0, world.Warnings());
+        var warnings = await world.BootWarningsAsync();
+        warnings.Count.ShouldBe(1, world.Warnings());
+        warnings[0].ShouldStartWith(BootStallPolicy.DetectedToken + " ");
+        AssertNothingDestructive(world);
+        await AssertSameAttemptAsync(world, before);
+        await AssertNoFailureTraceAsync(world);
+    }
+
+    /// <summary>A non-contention fault on the warning writer's session share-lock statement.</summary>
+    private sealed class SessionStatementFault : DbCommandInterceptor
+    {
+        public volatile bool Armed = true;
+
+        public bool Fired { get; private set; }
+
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result,
+            CancellationToken cancellationToken = default)
+        {
+            if (Armed
+                && command.CommandText.Contains("\"AgentSessions\"", StringComparison.Ordinal)
+                && command.CommandText.Contains("FOR SHARE", StringComparison.Ordinal))
+            {
+                Fired = true;
+                throw new InvalidOperationException("C1151 injected session-statement fault");
+            }
+
+            return base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
+        }
     }
 
     /// <summary>
