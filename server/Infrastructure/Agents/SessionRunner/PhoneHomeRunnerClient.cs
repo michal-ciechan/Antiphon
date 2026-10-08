@@ -267,6 +267,8 @@ public sealed class PhoneHomeRunnerClient : ISessionRunnerClient, IVerificationW
         if (expectedRunnerStoreId is { } bound && bound != store) return Failed("absence_evidence_store_mismatch");
         using var deadline = new CancellationTokenSource(AbsenceDeadline, _time);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, deadline.Token);
+        // F3: elapsed time, like the deadline, starts before capability discovery.
+        var sentAt = _time.GetUtcNow();
         try
         {
             var capabilities = await GetCapabilitiesAsync(linked.Token);
@@ -274,7 +276,6 @@ public sealed class PhoneHomeRunnerClient : ISessionRunnerClient, IVerificationW
                 return Unsupported("absence_evidence_capability_absent");
             if (capabilities.RunnerStoreId != store)
                 return Failed("absence_evidence_store_mismatch");
-            var sentAt = _time.GetUtcNow();
             using var body = JsonDocument.Parse(RunnerAbsenceEvidence.RequestBody(request));
             var frame = await _connection.RequestAsync(operation, body.RootElement.Clone(), linked.Token);
             var receivedAt = _time.GetUtcNow();
