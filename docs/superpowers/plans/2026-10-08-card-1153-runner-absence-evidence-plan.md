@@ -118,7 +118,14 @@ the runner admits a nonce at most once per runner epoch (any operation, any outc
 refuses a request issued outside a 30-second freshness window of its clock or before its
 epoch start plus that window (the bounded nonce cache is memory only, so a request
 captured before a restart is stale, not new), and answers `absence_evidence_replayed`
-(409) or `absence_evidence_stale_request` (401).
+(409) or `absence_evidence_stale_request` (401). Admission is monotone (Review a086fe80
+F2): a per-epoch, in-memory high-water mark of the issuedAtUtc values that passed those
+checks refuses (401) any request issued more than the window before it, and a consumed
+nonce is retired only below that mark, so no eviction and no wall-clock movement revives
+an admitted request; the 4096-entry cache refuses (503) instead of evicting. The runner's
+wall clock is compared with its monotonic clock at every request; a backward step beyond
+500 ms plus 0.1% of the monotonic gap refuses every evidence request (503) for one full
+window of monotonic time.
 
 ClosedUnused permanently refuses a later create or attach for that session ID,
 including another generation. The closure survives storage failure (Review 1a174347 F1):
@@ -126,7 +133,16 @@ a durable store identity (header plus an anchor beside the root) and a flushed c
 log make a wiped, replaced or damaged store, and a closed record that is later missing,
 corrupt, truncated, unreadable or no longer ClosedUnused, unknown evidence; creation and
 attach admit only a positive read (never-initialized or healthy store, no record or a
-Prepared/Attempted record), so unknown evidence refuses creation and never certifies. That prevents a delayed launch after the last inventory
+Prepared/Attempted record), so unknown evidence refuses creation and never certifies.
+Names are durable before they are relied on (Review a086fe80 F1): every created directory,
+created file and rename is followed by a sync of the directory that holds the new name
+(Unix: fsync of the directory; Windows: write-through rename and FlushFileBuffers on the
+directory handle), the anchor is written last, and a certificate or ClosedUnused record is
+returned only after its closure-log append is flushed and every name it depends on is
+durable; a sync failure fails closed. Closure metadata must agree (Review a086fe80 F3):
+each closure-log line carries the hash of the exact ClosedUnused record and of the line
+before it, so a record without its entry, a record differing from its entry, or a
+duplicated, reordered or foreign line is unknown evidence. That prevents a delayed launch after the last inventory
 read from invalidating the proof. This is an admission fence for an ID that has never
 had a process, not a stop, kill, parking operation, capacity seat or timer. Explicit
 Retry can allocate a new session through its existing path; this plan adds no retry.
