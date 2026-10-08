@@ -22,6 +22,9 @@ internal sealed class ReceiptScanRecognizer : DbCommandInterceptor
 
     public IReadOnlyList<Scan> Scans => _scans.ToArray();
 
+    /// <summary>CARD-1121 S3 reader-fault seam: runs after each row a receipt scan reads (a throw faults the scan there).</summary>
+    public Action<int>? AfterRow { get; set; }
+
     public void Reset()
     {
         while (_scans.TryDequeue(out _))
@@ -58,7 +61,7 @@ internal sealed class ReceiptScanRecognizer : DbCommandInterceptor
     {
         if (!IsReceiptScan(command.CommandText))
             return base.ReaderExecutedAsync(command, eventData, result, cancellationToken);
-        var counting = new CountingReader(result);
+        var counting = new CountingReader(result, AfterRow);
         _scans.Enqueue(new Scan(command.CommandText, Session(command), Floor(command), counting));
         return new(counting);
     }
@@ -67,7 +70,7 @@ internal sealed class ReceiptScanRecognizer : DbCommandInterceptor
     {
         if (!IsReceiptScan(command.CommandText))
             return base.ReaderExecuted(command, eventData, result);
-        var counting = new CountingReader(result);
+        var counting = new CountingReader(result, AfterRow);
         _scans.Enqueue(new Scan(command.CommandText, Session(command), Floor(command), counting));
         return counting;
     }
@@ -95,21 +98,21 @@ internal sealed class ReceiptScanRecognizer : DbCommandInterceptor
 }
 
 /// <summary>Counts the rows a client actually read from one reader. Promoted from CARD-1073's probe.</summary>
-internal sealed class CountingReader(DbDataReader inner) : DbDataReader
+internal sealed class CountingReader(DbDataReader inner, Action<int>? afterRow = null) : DbDataReader
 {
     public int Rows { get; private set; }
 
     public override bool Read()
     {
         var ok = inner.Read();
-        if (ok) Rows++;
+        if (ok) afterRow?.Invoke(++Rows);
         return ok;
     }
 
     public override async Task<bool> ReadAsync(CancellationToken cancellationToken)
     {
         var ok = await inner.ReadAsync(cancellationToken);
-        if (ok) Rows++;
+        if (ok) afterRow?.Invoke(++Rows);
         return ok;
     }
 
