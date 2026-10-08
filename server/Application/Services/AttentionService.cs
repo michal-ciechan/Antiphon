@@ -2209,12 +2209,15 @@ public sealed partial class AttentionService
     /// read time against a live session AND a boot prompt that is still unanswered, so the row
     /// exists because the condition holds NOW rather than because it once did. A legacy row is
     /// suppressed for a session the standing projection covers (old restart-ladder history must not
-    /// duplicate the current row) and for a session an open task owns (CARD-1151's task row).</para>
+    /// duplicate the current row) and for a live session an open task owns (CARD-1151's task row);
+    /// a suppressed row of either severity is also struck off the recent-incident sweep
+    /// (<paramref name="attachedIncidents"/>). Legacy rows of other sessions, including dead ones,
+    /// stay ordinary recent-incident history.</para>
     /// </summary>
     private async Task<List<AttentionItemDto>> BuildBootReplyMissingItemsAsync(
         DateTime now, DateTime since, HashSet<Guid> attachedIncidents, CancellationToken ct)
     {
-        var standing = await StandingBootAttentionProjection.ProjectAsync(_db, _delegation, now, ct);
+        var standing = await StandingBootAttentionProjection.ProjectAsync(_db, _delegation, now, _logger, ct);
         attachedIncidents.UnionWith(standing.AttachedReceipts);
         var items = new List<AttentionItemDto>(standing.Items);
 
@@ -2224,11 +2227,16 @@ public sealed partial class AttentionService
                 && i.SessionId != null
                 && i.FailureReason != null
                 && i.FailureReason.StartsWith("bootSeq="))
-            .Select(i => new { i.AgentId, i.SessionId, i.Severity, i.Message, i.CreatedAt, i.FailureReason })
+            .Select(i => new { i.Id, i.AgentId, i.SessionId, i.Severity, i.Message, i.CreatedAt, i.FailureReason })
             .ToListAsync(ct);
-        rows = rows
-            .Where(r => !standing.Covered.Contains(r.SessionId!.Value) && !standing.TaskOwned.Contains(r.SessionId!.Value))
-            .ToList();
+        // A suppressed legacy row is struck off the recent-incident sweep too, at any severity, so
+        // its Error twin cannot reappear there with the retired restart wording.
+        var covered = rows
+            .Where(r => standing.Covered.Contains(r.SessionId!.Value) || standing.TaskOwned.Contains(r.SessionId!.Value))
+            .Select(r => r.Id)
+            .ToHashSet();
+        attachedIncidents.UnionWith(covered);
+        rows = rows.Where(r => !covered.Contains(r.Id)).ToList();
         if (rows.Count == 0)
             return items;
 
@@ -2238,20 +2246,26 @@ public sealed partial class AttentionService
             .ToList();
 
         var sessionIds = episodes.Select(e => e.SessionId!.Value).Distinct().ToList();
-        // Live, and owned by no open task: an open task's boot silence is CARD-1151's task row.
-        var liveSessions = (await _db.AgentSessions.AsNoTracking()
-                .Where(s => sessionIds.Contains(s.Id)
-                    && (s.Status == SessionStatus.Starting
-                        || s.Status == SessionStatus.Running
-                        || s.Status == SessionStatus.Stopping)
-                    && !_db.AgentTasks.Any(t => t.AgentSessionId == s.Id
-                        && (t.Status == AgentTaskStatus.Queued
-                            || t.Status == AgentTaskStatus.Dispatched
-                            || t.Status == AgentTaskStatus.Working
-                            || t.Status == AgentTaskStatus.Blocked)))
-                .Select(s => s.Id)
-                .ToListAsync(ct))
-            .ToHashSet();
+        // Live, and owned by no open task: an open task's boot silence is CARD-1151's task row, and
+        // its legacy rows are struck off the recent-incident sweep like a covered session's.
+        var live = await _db.AgentSessions.AsNoTracking()
+            .Where(s => sessionIds.Contains(s.Id)
+                && (s.Status == SessionStatus.Starting
+                    || s.Status == SessionStatus.Running
+                    || s.Status == SessionStatus.Stopping))
+            .Select(s => new
+            {
+                s.Id,
+                TaskOwned = _db.AgentTasks.Any(t => t.AgentSessionId == s.Id
+                    && (t.Status == AgentTaskStatus.Queued
+                        || t.Status == AgentTaskStatus.Dispatched
+                        || t.Status == AgentTaskStatus.Working
+                        || t.Status == AgentTaskStatus.Blocked)),
+            })
+            .ToListAsync(ct);
+        var taskOwned = live.Where(s => s.TaskOwned).Select(s => s.Id).ToHashSet();
+        attachedIncidents.UnionWith(rows.Where(r => taskOwned.Contains(r.SessionId!.Value)).Select(r => r.Id));
+        var liveSessions = live.Where(s => !s.TaskOwned).Select(s => s.Id).ToHashSet();
 
         var agentIds = episodes.Where(r => r.AgentId is not null).Select(r => r.AgentId!.Value).Distinct().ToList();
         var agentNames = agentIds.Count == 0

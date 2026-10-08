@@ -164,6 +164,9 @@ internal sealed class StandingBootWatchFixture : IAsyncDisposable
 
     public AppDbContext Read() => new(TestDbFixture.CreateDbContextOptions(ConnectionString));
 
+    /// <summary>A logger on this fixture's captured log (<see cref="LogEntries"/>).</summary>
+    public ILogger<T> Logger<T>() => _provider.GetRequiredService<ILogger<T>>();
+
     public async Task ArmAsync()
     {
         await using var db = Read();

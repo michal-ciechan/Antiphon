@@ -5,6 +5,7 @@ using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 
 namespace Antiphon.Server.Application.Services;
 
@@ -18,7 +19,9 @@ namespace Antiphon.Server.Application.Services;
 /// <para><b>Read-only.</b> No runner call, no queue operation, no arm, no save and no telemetry
 /// write happens during a GET. The candidate reads are bulk (owners, live sessions, open tasks,
 /// current receipts) and each candidate then costs the boot predicate's two reads over the loaded
-/// row: the model-reply EXISTS and the prompt rows.</para>
+/// row: the model-reply EXISTS and the prompt rows. The receipt read is optional: when it fails
+/// (anything but the caller's cancellation) a Warning is logged and every episode is projected
+/// from its clock alone, as if it had no receipt.</para>
 ///
 /// <para>Admission is <see cref="StandingBootWatchPolicy.Decide"/>, the sweep's own whitelist, so
 /// the row and the receipt can never disagree about who is watched. The episode identity is the
@@ -38,7 +41,8 @@ internal static class StandingBootAttentionProjection
     /// <param name="Covered">
     /// Every live session an AlwaysOn agent points at, whether or not a stage is due. Legacy
     /// <c>bootSeq=</c> rows on these sessions are history of the retired restart ladder and are
-    /// suppressed, so they can neither duplicate the current row nor show obsolete wording.
+    /// suppressed, both as attention rows and in the recent-incident sweep, so they can neither
+    /// duplicate the current row nor show obsolete wording.
     /// </param>
     /// <param name="TaskOwned">Live sessions an open task owns: no boot row of either format.</param>
     /// <param name="AttachedReceipts">The current episodes' receipts, consumed as their row's own evidence.</param>
@@ -52,7 +56,7 @@ internal static class StandingBootAttentionProjection
     }
 
     internal static async Task<Result> ProjectAsync(
-        AppDbContext db, DelegationSettings delegation, DateTime now, CancellationToken ct)
+        AppDbContext db, DelegationSettings delegation, DateTime now, ILogger logger, CancellationToken ct)
     {
         // Every agent sharing a persistent pointer with an AlwaysOn agent, so the owner shape (count,
         // AlwaysOn, conflict) is read exactly as the sweep reads it. One read.
@@ -94,15 +98,28 @@ internal static class StandingBootAttentionProjection
                 .ToListAsync(ct))
             .ToHashSet();
 
-        var receipts = (await db.AgentIncidents.AsNoTracking()
-                .Where(i => i.SessionId != null
-                    && liveIds.Contains(i.SessionId.Value)
-                    && i.Kind == AgentIncidentKind.LivenessProbeFailed
-                    && i.FailureReason != null
-                    && i.FailureReason.StartsWith(StandingBootWatchPolicy.KeyPrefix))
-                .Select(i => new { i.Id, SessionId = i.SessionId!.Value, i.FailureReason })
-                .ToListAsync(ct))
-            .ToLookup(r => r.SessionId);
+        // Optional history: a failed read projects every episode as if it had no receipt (the
+        // ordinary clock stage), so it can neither abort the feed nor hide a current row.
+        ILookup<Guid, (Guid Id, Guid SessionId, string FailureReason)> receipts;
+        try
+        {
+            receipts = (await db.AgentIncidents.AsNoTracking()
+                    .Where(i => i.SessionId != null
+                        && liveIds.Contains(i.SessionId.Value)
+                        && i.Kind == AgentIncidentKind.LivenessProbeFailed
+                        && i.FailureReason != null
+                        && i.FailureReason.StartsWith(StandingBootWatchPolicy.KeyPrefix))
+                    .Select(i => new { i.Id, SessionId = i.SessionId!.Value, i.FailureReason })
+                    .ToListAsync(ct))
+                .Select(r => (r.Id, r.SessionId, r.FailureReason!))
+                .ToLookup(r => r.SessionId);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            logger.LogWarning(
+                ex, "Could not read the standing boot receipts; current boot attention is projected without them");
+            receipts = Array.Empty<(Guid Id, Guid SessionId, string FailureReason)>().ToLookup(r => r.SessionId);
+        }
 
         var items = new List<AttentionItemDto>();
         var attached = new List<Guid>();
@@ -141,23 +158,23 @@ internal static class StandingBootAttentionProjection
                 // The identity IS the current latest real prompt; the armed columns are not consulted.
                 IdentityMatches = turn is not null,
             });
-            if (decision.Stage == StandingBootWatchPolicy.Stage.None || decision.Facts is not { } facts
-                || observation.OwnerAgentId is not Guid agentId)
-            {
+            // Facts are set only when every whitelist condition holds; Stage.None with facts means the
+            // episode is valid and unresolved but no stage is due on the clock alone.
+            if (decision.Facts is not { } facts || observation.OwnerAgentId is not Guid agentId)
                 continue;
-            }
 
             var prefix = StandingBootWatchPolicy.EpisodePrefix(facts);
             var episodeReceipts = receipts[session.Id]
-                .Where(r => r.FailureReason!.StartsWith(prefix, StringComparison.Ordinal))
+                .Where(r => r.FailureReason.StartsWith(prefix, StringComparison.Ordinal))
                 .ToList();
             // Once the operator stage is on record for THIS episode it stays the displayed stage,
-            // so a clock stepping back cannot downgrade the row.
-            var stage = decision.Stage == StandingBootWatchPolicy.Stage.NeedsOperator
-                || StandingBootWatchPolicy.IsRecorded(
-                    episodeReceipts.Select(r => r.FailureReason), prefix, StandingBootWatchPolicy.Stage.NeedsOperator)
+            // even before the boot due, so a clock stepping back cannot downgrade or hide the row.
+            var stage = StandingBootWatchPolicy.IsRecorded(
+                    episodeReceipts.Select(r => (string?)r.FailureReason), prefix, StandingBootWatchPolicy.Stage.NeedsOperator)
                 ? StandingBootWatchPolicy.Stage.NeedsOperator
-                : StandingBootWatchPolicy.Stage.Detected;
+                : decision.Stage;
+            if (stage == StandingBootWatchPolicy.Stage.None)
+                continue;
             attached.AddRange(episodeReceipts.Select(r => r.Id));
 
             var name = sessionOwners.First(o => o.Id == agentId).Name;

@@ -9,6 +9,8 @@ using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Time.Testing;
 using Shouldly;
 using TUnit.Core;
 
@@ -316,6 +318,151 @@ public class StandingBootAttentionTests
         f.AssertNothingDestructive();
     }
 
+    /// <summary>
+    /// Repair of Review 3fe22492 F-1. The receipt read is optional history: a fault on it must not
+    /// abort the attention feed. The real <c>GetAsync</c> with a one-shot fault on the standing
+    /// receipt SELECT still returns the current episode's row from its clock alone and every
+    /// unrelated row (an unrelated Crash incident on the same agent); a Warning is logged.
+    /// detected-on-record: a Warning receipt exists, the row is the ordinary Warning.
+    /// operator-on-record-unreadable: an operator receipt exists but the clock has stepped back
+    /// below the operator due; with the receipt unreadable the row is the clock's Warning (unknown
+    /// evidence is the normal-threshold row, never a hidden one).
+    /// </summary>
+    [Test]
+    [Arguments("detected-on-record")]
+    [Arguments("operator-on-record-unreadable")]
+    public async Task C1156_Optional_receipt_read_fault_keeps_current_attention(string record)
+    {
+        await using var f = await StandingBootWatchFixture.CreateAsync();
+        (await f.SweepAsync()).ShouldBe(1, f.Warnings());
+        if (record == "operator-on-record-unreadable")
+        {
+            f.At(f.PromptAt.AddMinutes(21));
+            (await f.SweepAsync()).ShouldBe(1, f.Warnings());
+        }
+
+        // The operator case observes the episode below its operator due: a clock stepped back.
+        DateTime? at = record == "operator-on-record-unreadable" ? f.PromptAt.AddMinutes(9) : null;
+        await AddCrashAsync(f, f.Clock.GetUtcNow().UtcDateTime.AddMinutes(-30));
+        var fault = new ReceiptReadFault();
+        var all = await ProjectAsync(f, fault, at);
+
+        fault.Fired.ShouldBeTrue("control: the optional receipt read must actually fault");
+        var row = all.Where(i => i.Kind == AttentionKind.LivenessProbeFailed)
+            .ShouldHaveSingleItem($"{record}: the current episode still projects from its clock");
+        row.Severity.ShouldBe(AlertSeverity.Warning, record);
+        row.AgentId.ShouldBe(f.AgentId);
+        row.SinceUtc.ShouldBe(f.PromptAt);
+        row.Headline.ShouldStartWith("Standing boot stall detected");
+        all.ShouldContain(i => i.Kind == AttentionKind.RecentCriticalIncident && i.Headline.Contains("Crash"),
+            "the rest of the feed is still returned");
+        f.LogEntries().ShouldContain(
+            e => e.Level == LogLevel.Warning && e.Message.Contains("Could not read the standing boot receipts")
+                && e.Exception != null,
+            string.Join('\n', f.LogEntries().Select(e => $"[{e.Level}] {e.Message}")));
+        f.AssertNothingDestructive();
+    }
+
+    /// <summary>
+    /// Repair of Review 3fe22492 F-2. A legacy <c>bootSeq=</c> Error row on a session the standing
+    /// projection covers, or on a live session an open task owns, is suppressed in the recent-incident
+    /// sweep as well as on the attention feed, so the retired restart wording never reappears there.
+    /// covered-due: the AlwaysOn taskless session's current episode is due (one standing row);
+    /// covered-not-due: its prompt is 5 minutes old (no boot row at all); task-owned: a non-AlwaysOn
+    /// session a Working task owns. In every case the same agent's legacy Error on a dead session
+    /// stays ordinary recent-incident history (exactly one Error, about that session).
+    /// </summary>
+    [Test]
+    [Arguments("covered-due")]
+    [Arguments("covered-not-due")]
+    [Arguments("task-owned")]
+    public async Task C1156_Legacy_error_history_is_suppressed_with_its_attention_row(string owner)
+    {
+        var options = owner switch
+        {
+            "covered-not-due" => new StandingBootWatchOptions { PromptAge = TimeSpan.FromMinutes(5) },
+            "task-owned" => new StandingBootWatchOptions { AlwaysOn = false },
+            _ => new StandingBootWatchOptions(),
+        };
+        await using var f = await StandingBootWatchFixture.CreateAsync(options);
+        var now = f.Clock.GetUtcNow().UtcDateTime;
+        if (owner == "task-owned")
+            await AddWorkingTaskAsync(f);
+        var dead = await AddDeadSessionAsync(f);
+
+        await AddIncidentAsync(f, BootReplyWatchdogService.EpisodeKey(1), AlertSeverity.Error, now.AddMinutes(-1),
+            "Boot prompt confirmed at sequence 1; restart ladder engaged; stopped restarting after two.");
+        await AddIncidentAsync(f, BootReplyWatchdogService.EpisodeKey(1), AlertSeverity.Error, now.AddHours(-2),
+            "dead-session history: stopped restarting after two.", sessionId: dead);
+
+        var all = await ProjectAsync(f);
+        var boot = all.Where(i => i.Kind == AttentionKind.LivenessProbeFailed).ToList();
+        if (owner == "covered-due")
+        {
+            boot.ShouldHaveSingleItem("the current episode is the one boot row").Headline
+                .ShouldStartWith("Standing boot stall detected");
+        }
+        else
+        {
+            boot.ShouldBeEmpty($"{owner}: the legacy row is suppressed and no standing stage is due");
+        }
+
+        var history = all.Where(i => i.Kind == AttentionKind.RecentCriticalIncident
+                && i.Headline.Contains(nameof(AgentIncidentKind.LivenessProbeFailed)))
+            .ShouldHaveSingleItem($"{owner}: only the dead session's legacy Error remains history");
+        history.SessionId.ShouldBe(dead, owner);
+        history.Headline.ShouldBe($"{AlertSeverity.Error} {AgentIncidentKind.LivenessProbeFailed} in the last 24h.", owner);
+        foreach (var item in all.Where(i => i.SessionId == f.SessionId
+            && i.Kind is AttentionKind.LivenessProbeFailed or AttentionKind.RecentCriticalIncident))
+        {
+            foreach (var retired in RetiredWording)
+            {
+                (item.Headline + "\n" + item.Evidence).ShouldNotContain(retired, Case.Insensitive,
+                    $"{owner}: {item.Kind} on the suppressed session shows retired wording");
+            }
+        }
+
+        f.AssertNothingDestructive();
+    }
+
+    /// <summary>
+    /// Repair of Review 3fe22492 F-3. Once the operator stage is on record for the episode it stays
+    /// the displayed stage when the clock steps back: the real receipt is recorded at prompt+21,
+    /// then the same unchanged episode is projected at prompt+9 (control, between the dues),
+    /// below-boot-due (prompt+7) and before-prompt (prompt-1). A model reply still resolves it.
+    /// </summary>
+    [Test]
+    [Arguments("below-boot-due")]
+    [Arguments("before-prompt")]
+    public async Task C1156_Recorded_operator_stage_survives_clock_rollback(string rollback)
+    {
+        await using var f = await StandingBootWatchFixture.CreateAsync();
+        f.At(f.PromptAt.AddMinutes(21));
+        (await f.SweepAsync()).ShouldBe(1, f.Warnings());
+        (await f.ReceiptsAsync()).Select(r => r.FailureReason).ShouldContain(r => r!.EndsWith("stage=operator"),
+            "control: the operator stage is on record");
+        var receipts = (await f.ReceiptsAsync()).Count;
+
+        // A clock stepped back: the attention read observes an earlier time than the receipt.
+        (await LivenessRowsAsync(f, f.PromptAt.AddMinutes(9))).ShouldHaveSingleItem().Severity
+            .ShouldBe(AlertSeverity.Error, "control: between the dues the recorded stage holds");
+
+        var at = rollback == "below-boot-due" ? f.PromptAt.AddMinutes(7) : f.PromptAt.AddMinutes(-1);
+        var all = await ProjectAsync(f, at: at);
+        var row = all.Where(i => i.Kind == AttentionKind.LivenessProbeFailed)
+            .ShouldHaveSingleItem($"{rollback}: a recorded operator stage is never hidden by a clock step");
+        row.Severity.ShouldBe(AlertSeverity.Error, rollback);
+        row.Headline.ShouldStartWith("Standing boot stall needs an operator decision");
+        row.SinceUtc.ShouldBe(f.PromptAt);
+        all.ShouldNotContain(i => i.Kind == AttentionKind.RecentCriticalIncident && i.AgentId == f.AgentId,
+            "the recorded receipt is the row's own evidence");
+
+        await f.AddEntryAsync(TranscriptKinds.AssistantText, "answered", f.PromptAt.AddSeconds(30));
+        (await LivenessRowsAsync(f, at)).ShouldBeEmpty($"{rollback}: a model reply still resolves the episode");
+        (await f.ReceiptsAsync()).Count.ShouldBe(receipts, "the projection never writes a receipt");
+        f.AssertNothingDestructive();
+    }
+
     // ---- helpers ---------------------------------------------------------------------------------
 
     private static string ModelKind(string resolution) => resolution switch
@@ -333,12 +480,17 @@ public class StandingBootAttentionTests
     /// row about the fixture's session or agent. Asserts the read wrote nothing and asked the runner
     /// exactly the one inherited list question.
     /// </summary>
-    private static async Task<List<AttentionItemDto>> ProjectAsync(StandingBootWatchFixture f)
+    private static async Task<List<AttentionItemDto>> ProjectAsync(
+        StandingBootWatchFixture f, IInterceptor? fault = null, DateTime? at = null)
     {
         var counter = new FullCommandCounter();
-        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(f.ConnectionString, counter));
+        await using var db = new AppDbContext(fault is null
+            ? TestDbFixture.CreateDbContextOptions(f.ConnectionString, counter)
+            : TestDbFixture.CreateDbContextOptions(f.ConnectionString, counter, fault));
         var lists = f.Runner.Lists;
-        var result = await AttentionServiceTests.BuildService(f.Runner, timeProvider: f.Clock, db: db)
+        var result = await AttentionServiceTests.BuildService(
+                f.Runner, timeProvider: at is { } observed ? new FakeTimeProvider(new DateTimeOffset(observed, TimeSpan.Zero)) : f.Clock,
+                db: db, logger: f.Logger<AttentionService>())
             .GetAsync(CancellationToken.None);
         counter.Commands.Where(IsWrite).ShouldBeEmpty("the projection is read-only:\n" + counter.Roster());
         db.ChangeTracker.HasChanges().ShouldBeFalse("nothing is staged during a GET");
@@ -346,8 +498,8 @@ public class StandingBootAttentionTests
         return result.Items.Where(i => i.SessionId == f.SessionId || i.AgentId == f.AgentId).ToList();
     }
 
-    private static async Task<List<AttentionItemDto>> LivenessRowsAsync(StandingBootWatchFixture f) =>
-        (await ProjectAsync(f)).Where(i => i.Kind == AttentionKind.LivenessProbeFailed).ToList();
+    private static async Task<List<AttentionItemDto>> LivenessRowsAsync(StandingBootWatchFixture f, DateTime? at = null) =>
+        (await ProjectAsync(f, at: at)).Where(i => i.Kind == AttentionKind.LivenessProbeFailed).ToList();
 
     private static bool IsWrite(string sql)
     {
@@ -375,7 +527,8 @@ public class StandingBootAttentionTests
     }
 
     private static async Task<Guid> AddIncidentAsync(
-        StandingBootWatchFixture f, string failureReason, AlertSeverity severity, DateTime at, string message)
+        StandingBootWatchFixture f, string failureReason, AlertSeverity severity, DateTime at, string message,
+        Guid? sessionId = null)
     {
         await using var db = f.Read();
         var id = Guid.NewGuid();
@@ -383,7 +536,7 @@ public class StandingBootAttentionTests
         {
             Id = id,
             AgentId = f.AgentId,
-            SessionId = f.SessionId,
+            SessionId = sessionId ?? f.SessionId,
             Kind = AgentIncidentKind.LivenessProbeFailed,
             Severity = severity,
             Message = message,
@@ -407,6 +560,74 @@ public class StandingBootAttentionTests
             Severity = AlertSeverity.Info,
             Message = "unrelated history",
             CreatedAt = StandingBootWatchFixture.Pg(at),
+        });
+        await db.SaveChangesAsync();
+        return id;
+    }
+
+    /// <summary>An unrelated Error incident on the fixture's agent: its own RecentCriticalIncident row.</summary>
+    private static async Task AddCrashAsync(StandingBootWatchFixture f, DateTime at)
+    {
+        await using var db = f.Read();
+        db.AgentIncidents.Add(new AgentIncident
+        {
+            Id = Guid.NewGuid(),
+            AgentId = f.AgentId,
+            SessionId = f.SessionId,
+            Kind = AgentIncidentKind.Crash,
+            Severity = AlertSeverity.Error,
+            Message = "unrelated crash history",
+            CreatedAt = StandingBootWatchFixture.Pg(at),
+        });
+        await db.SaveChangesAsync();
+    }
+
+    /// <summary>An open (Working) task bound to the fixture's session.</summary>
+    private static async Task AddWorkingTaskAsync(StandingBootWatchFixture f)
+    {
+        await using var db = f.Read();
+        var id = Guid.NewGuid();
+        db.AgentTasks.Add(new AgentTask
+        {
+            Id = id,
+            RootTaskId = id,
+            Title = "open task on the session",
+            Goal = "owns the boot silence",
+            Role = AgentTaskRole.Code,
+            AgentKind = f.Setup.Kind,
+            ModelLevel = AgentModelLevel.Frontier,
+            Workspace = WorkspaceMode.Shared,
+            WorkingDirectory = Path.GetTempPath(),
+            AgentId = f.AgentId,
+            AgentSessionId = f.SessionId,
+            Status = AgentTaskStatus.Working,
+            ReplyTo = AgentTaskReplyTo.None,
+            CreatedAt = f.StartedAt,
+            DispatchedAt = f.StartedAt,
+        });
+        await db.SaveChangesAsync();
+    }
+
+    /// <summary>An earlier, ended session of the fixture's agent: its legacy rows are plain history.</summary>
+    private static async Task<Guid> AddDeadSessionAsync(StandingBootWatchFixture f)
+    {
+        await using var db = f.Read();
+        var id = Guid.NewGuid();
+        var started = StandingBootWatchFixture.Pg(f.StartedAt.AddHours(-3));
+        db.AgentSessions.Add(new AgentSession
+        {
+            Id = id,
+            DefinitionName = "standing-boot",
+            AgentKind = f.Setup.Kind,
+            Status = SessionStatus.Stopped,
+            Cwd = Path.GetTempPath(),
+            Cols = 120,
+            Rows = 30,
+            CreatedAt = started,
+            StartedAt = started,
+            EndedAt = StandingBootWatchFixture.Pg(f.StartedAt.AddMinutes(-1)),
+            LastSeenAt = started,
+            StandingAgentId = f.AgentId,
         });
         await db.SaveChangesAsync();
         return id;
@@ -477,6 +698,29 @@ public class StandingBootAttentionTests
                 return;
             Fired = true;
             throw new InvalidOperationException("c1156: injected receipt insert fault");
+        }
+    }
+
+    /// <summary>Faults the attention projection's optional standing-receipt read, once.</summary>
+    private sealed class ReceiptReadFault : DbCommandInterceptor
+    {
+        public bool Fired { get; private set; }
+
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result,
+            CancellationToken cancellationToken = default)
+        {
+            var sql = command.CommandText;
+            if (!Fired
+                && sql.TrimStart().StartsWith("SELECT", StringComparison.OrdinalIgnoreCase)
+                && sql.Contains("FROM \"AgentIncidents\"", StringComparison.Ordinal)
+                && sql.Contains(StandingBootWatchPolicy.KeyPrefix, StringComparison.Ordinal))
+            {
+                Fired = true;
+                throw new InvalidOperationException("c1156: injected standing receipt read fault");
+            }
+
+            return base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
         }
     }
 

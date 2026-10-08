@@ -13,6 +13,7 @@ using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
@@ -2498,10 +2499,11 @@ public partial class AttentionServiceTests
         int staleAfterDays = 7,
         IWorkspaceProgressProbe? workspaceProgress = null,
         TimeProvider? timeProvider = null,
-        AppDbContext? db = null) =>
+        AppDbContext? db = null,
+        ILogger<AttentionService>? logger = null) =>
         new(db ?? CreateContext(), runner, Options.Create(new SupervisionSettings()),
             Options.Create(new DelegationSettings()), timeProvider ?? TimeProvider.System,
-            NullLogger<AttentionService>.Instance,
+            logger ?? NullLogger<AttentionService>.Instance,
             workspaceProgress: workspaceProgress,
             cardTransitions: Options.Create(new CardWorkTransitionSettings { StaleAfterDays = staleAfterDays }));
 
