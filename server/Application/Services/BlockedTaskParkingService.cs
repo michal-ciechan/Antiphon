@@ -175,6 +175,28 @@ public sealed class BlockedTaskParkingService(
                 .SetProperty(p => p.UpdatedAt, now), ct);
     }
 
+    /// <summary>
+    /// CARD-1143: a due Held park whose episode no longer loads records park_episode_changed
+    /// with the ordinary Held backoff. Metadata only: State, Revision, HeldFromState and every
+    /// evidence coordinate stay. A known future snapshot is skipped, and the database due
+    /// predicate stops a repeated or concurrent stale snapshot from moving a future deadline.
+    /// </summary>
+    internal async Task<bool> StampUnloadedHeldAttemptAsync(Guid parkId, long revision,
+        DateTime? observedNextAttemptAt, CancellationToken ct)
+    {
+        if (!options.Value.Enabled || !CanOwnTransaction()) return false;
+        var now = clock.GetUtcNow().UtcDateTime;
+        if (observedNextAttemptAt is DateTime observed && observed > now) return false;
+        var next = HeldBackoff(options.Value, clock, UnloadedEpisodeReason);
+        return await db.AgentTaskParks.Where(p => p.Id == parkId && p.Revision == revision
+                && p.State == AgentTaskParkState.Held && (p.NextAttemptAt == null || p.NextAttemptAt <= now))
+            .ExecuteUpdateAsync(s => s.SetProperty(p => p.NextAttemptAt, next)
+                .SetProperty(p => p.ReasonCode, UnloadedEpisodeReason)
+                .SetProperty(p => p.UpdatedAt, now), ct) == 1;
+    }
+
+    private const string UnloadedEpisodeReason = "park_episode_changed";
+
     internal static DateTime? HeldBackoff(BlockedTaskParkingOptions options, TimeProvider clock, string reason)
     {
         if (reason == "park_workspace_reserved") return null;
