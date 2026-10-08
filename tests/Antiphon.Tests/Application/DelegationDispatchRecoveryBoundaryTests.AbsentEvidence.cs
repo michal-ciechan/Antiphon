@@ -239,8 +239,8 @@ public partial class DelegationDispatchRecoveryBoundaryTests
         if (remote is not null)
         {
             store = remote.Runtime.RunnerStoreId;
-            await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString)))
-                await db.AgentSessions.Where(s => s.Id == seeded.SessionId)
+            await using (var bind = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString)))
+                await bind.AgentSessions.Where(s => s.Id == seeded.SessionId)
                     .ExecuteUpdateAsync(s => s.SetProperty(x => x.RunnerStoreId, store));
             client = new RoutingSessionRunnerClient(remote.Host.Directory);
         }
