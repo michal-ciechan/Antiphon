@@ -39,7 +39,8 @@ public sealed partial class SessionMessageQueueService
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         AgentTask? task = null;
         var committed = false;
-        var flush = false;
+        AgentSession? probe = null;
+        RemoteSpillCourier.StagedSpill? staged = null;
         DispatchBriefEnsureResult result;
         await using (var tx = await db.Database.BeginTransactionAsync(ct))
         try
@@ -108,8 +109,9 @@ public sealed partial class SessionMessageQueueService
                     result = new DispatchBriefEnsureResult(DispatchBriefKind.Uncertain, null, false);
                 else
                 {
-                    var inserted = await InsertAbsentBriefAsync(db, task, session, request, ct);
-                    flush = _runtime.IsLiveOrUnknown(session) && !await ReadWorkingAsync(db, session.Id, ct);
+                    var (inserted, spill) = await InsertAbsentBriefAsync(db, task, session, request, ct);
+                    staged = spill;
+                    probe = session;
                     result = new DispatchBriefEnsureResult(DispatchBriefKind.Absent, inserted.Id, true);
                 }
             }
@@ -143,17 +145,23 @@ public sealed partial class SessionMessageQueueService
                 }
 
                 await DiscardUncommittedBriefAsync(db, task);
+                if (staged is not null)
+                    _remoteSpills?.Ack(request.SessionId, staged);
             }
 
             throw;
         }
 
-        if (flush)
+        // The row and its retained payload are committed. Delivery-state probing comes after,
+        // as in EnqueueAsync, so a failed probe cannot roll back the only brief (CARD-1150 F1).
+        if (staged is not null)
+            _remoteSpills?.Ack(request.SessionId, staged);
+        if (probe is not null && _runtime.IsLiveOrUnknown(probe) && !await ReadWorkingAsync(db, probe.Id, ct))
             await DeliverNextLockedAsync(db, request.SessionId, ct);
         return result;
     }
 
-    private async Task<SessionQueuedMessage> InsertAbsentBriefAsync(
+    private async Task<(SessionQueuedMessage Row, RemoteSpillCourier.StagedSpill? Staged)> InsertAbsentBriefAsync(
         AppDbContext db,
         AgentTask task,
         AgentSession session,
@@ -210,9 +218,7 @@ public sealed partial class SessionMessageQueueService
         var staged = BindStagedSpill(session.Id, row);
         db.SessionQueuedMessages.Add(row);
         await db.SaveChangesAsync(ct);
-        if (staged is not null)
-            _remoteSpills?.Ack(session.Id, staged);
-        return row;
+        return (row, staged);
     }
 
     private void StageBriefHold(AppDbContext db, AgentTask task, string reason)
