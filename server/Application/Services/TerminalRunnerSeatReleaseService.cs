@@ -529,20 +529,16 @@ public sealed class TerminalRunnerSeatReleaseService(
     }
 
     // This reader is shared by answer admission and retry. A missing/stopped session alone is
-    // never authority to skip StopDelegateAsync. Keep every part of the accepted identity.
-    internal static async Task<RunnerSeatRelease?> FindAttemptReleaseAsync(
-        AppDbContext db, AgentTask task, CancellationToken ct)
-    {
-        if (string.IsNullOrEmpty(task.RunnerId)
-            || task.AgentSessionId is not Guid sessionId) return null;
-        var session = await db.AgentSessions.AsNoTracking().SingleOrDefaultAsync(s => s.Id == sessionId, ct);
-        if (session is null || session.RunnerId != task.RunnerId) return null;
-        return await db.RunnerSeatReleases.AsNoTracking().SingleOrDefaultAsync(r =>
-            r.TaskId == task.Id && r.Attempt == task.Attempt && r.SessionId == sessionId
-            && r.AgentId == task.AgentId && r.RunnerId == task.RunnerId
-            && r.RunnerStoreId == session.RunnerStoreId && r.AcceptedStartedAt == session.StartedAt
-            && r.SettlementRevision == task.ConcurrencyToken && r.SettledAt == task.CompletedAt, ct);
-    }
+    // never authority to skip StopDelegateAsync. Keep every part of the accepted identity;
+    // RunnerSeatReleaseQueries owns it so Reply guidance cannot drift from it (CARD-1146).
+    internal static Task<RunnerSeatRelease?> FindAttemptReleaseAsync(
+        AppDbContext db, AgentTask task, CancellationToken ct) =>
+        RunnerSeatReleaseQueries.ForAttempt(db, task).SingleOrDefaultAsync(ct);
+
+    // The confirmed form answer continuation requires before it requeues.
+    internal static Task<RunnerSeatRelease?> FindConfirmedAttemptReleaseAsync(
+        AppDbContext db, AgentTask task, CancellationToken ct) =>
+        RunnerSeatReleaseQueries.Confirmed(RunnerSeatReleaseQueries.ForAttempt(db, task)).SingleOrDefaultAsync(ct);
 
     internal static bool IsConfirmed(RunnerSeatRelease? release) =>
         release is { State: RunnerSeatReleaseState.Confirmed, ConfirmedAt: not null, ActionId: not null }

@@ -3268,7 +3268,7 @@ public sealed class AgentTaskService
             """, ct);
     }
 
-    private enum RemotePoolParkReply { None, Admitted, ReleaseMismatch }
+    internal enum RemotePoolParkReply { None, Admitted, ReleaseMismatch }
 
     private static void RefuseRemotePoolFollowUp(
         Agent followAgent, string? retainedRunnerId, Guid priorId,
@@ -3303,29 +3303,16 @@ public sealed class AgentTaskService
     }
 
     /// <summary>
-    /// One read on a remote-pool follow-up create. Admitted copies
-    /// <see cref="TerminalRunnerSeatReleaseService.FindAttemptReleaseAsync"/> and
-    /// <see cref="TerminalRunnerSeatReleaseService.IsConfirmed"/> onto the current-attempt park.
-    /// A confirmed park that fails that match must not recommend Reply.
+    /// One read on a remote-pool follow-up create. Admitted is the confirmed-receipt and
+    /// release-identity query answer continuation uses (<see cref="RunnerSeatReleaseQueries"/>),
+    /// correlated to the current-attempt park's linked release (CARD-1146). A confirmed park
+    /// that fails that match must not recommend Reply.
     /// </summary>
-    private async Task<RemotePoolParkReply> RemotePoolParkReplyAsync(AgentTask task, CancellationToken ct)
+    internal async Task<RemotePoolParkReply> RemotePoolParkReplyAsync(AgentTask task, CancellationToken ct)
     {
-        if (string.IsNullOrEmpty(task.RunnerId) || task.AgentSessionId is not Guid sessionId)
-        {
-            return await HasConfirmedPublishedParkAsync(task, ct)
-                ? RemotePoolParkReply.ReleaseMismatch
-                : RemotePoolParkReply.None;
-        }
-
         var taskId = task.Id;
         var attempt = task.Attempt;
-        var agentId = task.AgentId;
-        var runnerId = task.RunnerId;
-        var revision = task.ConcurrencyToken;
-        var settledAt = task.CompletedAt;
-        var released = nameof(TerminalSeatReleaseOutcome.Released);
-        var exited = nameof(TerminalSeatReleaseOutcome.AlreadyExited);
-        var absent = nameof(TerminalSeatReleaseOutcome.AlreadyAbsent);
+        var admitted = RunnerSeatReleaseQueries.Confirmed(RunnerSeatReleaseQueries.ForAttempt(_db, task));
         var facts = await _db.AgentTaskParks.AsNoTracking()
             .Where(p => p.TaskId == taskId && p.Attempt == attempt
                 && p.PublicationReceiptId != null && p.RunnerSeatReleaseId != null
@@ -3336,24 +3323,7 @@ public sealed class AgentTaskService
                     r.Id == p.RunnerSeatReleaseId
                     && r.State == RunnerSeatReleaseState.Confirmed
                     && r.ConfirmedAt != null),
-                Admitted = _db.RunnerSeatReleases.Any(r =>
-                    r.Id == p.RunnerSeatReleaseId
-                    && r.TaskId == taskId
-                    && r.Attempt == attempt
-                    && r.SessionId == sessionId
-                    && r.AgentId == agentId
-                    && r.RunnerId == runnerId
-                    && r.SettlementRevision == revision
-                    && r.SettledAt == settledAt
-                    && r.State == RunnerSeatReleaseState.Confirmed
-                    && r.ConfirmedAt != null
-                    && r.ActionId != null
-                    && (r.OutcomeCode == released || r.OutcomeCode == exited || r.OutcomeCode == absent)
-                    && _db.AgentSessions.Any(s =>
-                        s.Id == sessionId
-                        && s.RunnerId == runnerId
-                        && s.RunnerStoreId == r.RunnerStoreId
-                        && s.StartedAt == r.AcceptedStartedAt)),
+                Admitted = admitted.Any(r => r.Id == p.RunnerSeatReleaseId),
             })
             .ToListAsync(ct);
         if (facts.Any(f => f.Admitted)) return RemotePoolParkReply.Admitted;
@@ -3393,8 +3363,8 @@ public sealed class AgentTaskService
 
     private async Task ContinueReleasedSeatAnswerAsync(AgentTask task, CancellationToken ct)
     {
-        var release = await TerminalRunnerSeatReleaseService.FindAttemptReleaseAsync(_db, task, ct);
-        if (!TerminalRunnerSeatReleaseService.IsConfirmed(release)) return;
+        var release = await TerminalRunnerSeatReleaseService.FindConfirmedAttemptReleaseAsync(_db, task, ct);
+        if (release is null) return;
         if (await ParkContinuationReceiptMissingAsync(task, ct))
             throw new ConflictException(
                 "The parked continuation has no exact publication receipt.",
@@ -3414,14 +3384,14 @@ public sealed class AgentTaskService
         await AdmitWorkspaceAsync(task, ct);
         await using (var tx = await _db.Database.BeginTransactionAsync(ct))
         {
-            await LockReleasedAnswerAsync(task.Id, release!.Id, release.SessionId, ct);
+            await LockReleasedAnswerAsync(task.Id, release.Id, release.SessionId, ct);
             await _db.Entry(task).ReloadAsync(ct);
             // ConcurrencyToken is an application revision, not an EF concurrency token.
             // Compare it and the accepted answer while holding the actual task row lock.
             if (!MatchesReleasedAnswerRevision(task, revision, attempt, answerId.Value, release.Id))
                 throw new ConflictException("The accepted answer changed before requeue.", "answer_revision_changed");
-            release = await TerminalRunnerSeatReleaseService.FindAttemptReleaseAsync(_db, task, ct);
-            if (!TerminalRunnerSeatReleaseService.IsConfirmed(release))
+            release = await TerminalRunnerSeatReleaseService.FindConfirmedAttemptReleaseAsync(_db, task, ct);
+            if (release is null)
                 throw new ConflictException("The seat release receipt no longer matches.", "runner_seat_release_pending");
             await RequeueCoreAsync(task, AgentTaskEventType.Retried, task.ModelLevel,
                 "Seat was released; answer queued for a new attempt.", ct,
