@@ -1,6 +1,8 @@
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 
 namespace Antiphon.Server.Application.Services;
 
@@ -65,10 +67,29 @@ public sealed partial class AgentTaskDispatcher
             UtcNow()));
 
     /// <summary>
-    /// First-pass decision on the stored rows. False returns DetectOnly before the runner pull:
-    /// nothing is due, or the reconciler/watchdog owns the task.
+    /// CARD-1151 test seam: the context the warning writer opens per write. Production leaves it
+    /// null and builds a fresh context over this dispatcher's own options, so every interceptor
+    /// registered on them sees the telemetry statements too.
     /// </summary>
-    private Task<bool> BootStallNeedsPullAsync(
+    internal Func<AppDbContext>? BootStallContextFactory { get; set; }
+
+    private BootStallWarningWriter? _bootStallWarnings;
+
+    private BootStallWarningWriter BootStallWarnings => _bootStallWarnings ??= new(
+        BootStallContextFactory ?? (() => new AppDbContext(
+            (DbContextOptions<AppDbContext>)_db.GetService<IDbContextOptions>())),
+        _eventBus, _logger);
+
+    private static BootStallWarningWriter.Episode BootStallEpisode(AgentTask task, Guid sessionId, BootStallFacts boot) =>
+        new(task.Id, task.RootTaskId, task.Attempt, sessionId, task.DispatchedAt,
+            BootStallPolicy.EpisodeKey(task.Id, task.Attempt, sessionId, boot));
+
+    /// <summary>
+    /// First-pass decision on the stored rows. False returns DetectOnly before the runner pull:
+    /// nothing is due, the reconciler/watchdog owns the task, or (A-7) the due stage is already
+    /// recorded for this episode, so a detected task costs no runner call until its next stage.
+    /// </summary>
+    private async Task<bool> BootStallNeedsPullAsync(
         AgentTask task, Guid sessionId, BootStallFacts boot, BootStallOwnership ownership, CancellationToken ct)
     {
         var decision = BootStallDecide(task, sessionId, boot, ownership);
@@ -77,24 +98,25 @@ public sealed partial class AgentTaskDispatcher
             _logger.LogDebug(
                 "Task {ShortId}: unresolved boot prompt on session {SessionId}, detection only ({Reason})",
                 DelegationReportFormatter.Short(task.Id), sessionId, decision.Reason);
-            return Task.FromResult(false);
+            return false;
         }
 
-        return Task.FromResult(true);
+        return !await BootStallWarnings.IsRecordedAsync(BootStallEpisode(task, sessionId, boot), decision.Stage, ct);
     }
 
-    /// <summary>Post-pull decision. Detection only; the task's outcome never changes here.</summary>
-    private Task BootStallDetectAsync(
+    /// <summary>
+    /// Post-pull decision. Records the due stage once; the task's outcome never changes here,
+    /// and nothing the writer reports can change it.
+    /// </summary>
+    private async Task BootStallDetectAsync(
         AgentTask task, Guid sessionId, BootStallFacts boot, BootStallOwnership ownership, CancellationToken ct)
     {
         var decision = BootStallDecide(task, sessionId, boot, ownership);
-        if (decision.Stage != BootStallPolicy.Stage.None)
-        {
-            _logger.LogWarning(
-                "Task {ShortId}: {Token} on session {SessionId}; detection only, the session is not stopped",
-                DelegationReportFormatter.Short(task.Id), decision.Reason, sessionId);
-        }
+        if (decision.Stage == BootStallPolicy.Stage.None)
+            return;
 
-        return Task.CompletedTask;
+        var episode = BootStallEpisode(task, sessionId, boot);
+        await BootStallWarnings.RecordAsync(
+            episode, decision.Stage, BootStallPolicy.Detail(decision.Stage, episode.Key, boot), UtcNow(), ct);
     }
 }
