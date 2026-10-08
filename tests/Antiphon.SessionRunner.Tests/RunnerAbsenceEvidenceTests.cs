@@ -707,6 +707,110 @@ public class RunnerAbsenceEvidenceTests
         return Task.CompletedTask;
     }
 
+    /// <summary>
+    /// V-30, CARD-1153 F3 round 2 (Review a086fe80). A closure is trusted only while its record
+    /// and its closure-log entry agree. Two ids are certified (<c>id</c> last), one disagreement is
+    /// made, and then, each without a prior fence call latching anything: certify of the id
+    /// refuses (no certificate); after a restart the read-only fence and the attempt marker both
+    /// refuse with the closed-identity type and write nothing. The damage edits lines and bytes
+    /// without knowing the log's line format. (A logged closure whose record is missing or not
+    /// ClosedUnused is V-25 <c>deleted-record</c> and <c>reverted-record</c>.)
+    /// </summary>
+    [Test]
+    [Arguments("record-without-log-entry")]
+    [Arguments("last-entry-truncated")]
+    [Arguments("record-differs-from-logged-closure")]
+    [Arguments("duplicate-entry")]
+    [Arguments("reordered-entries")]
+    public Task C1153_Closure_record_and_log_must_agree(string damage)
+    {
+        using var world = new RunnerAbsenceEvidenceHarness();
+        var first = Guid.NewGuid();
+        var id = Guid.NewGuid();
+        foreach (var closing in new[] { first, id })
+        {
+            world.PrepareOk(closing);
+            world.Service.Certify(world.Request(closing)).Value.ShouldNotBeNull("the pristine closure certifies");
+        }
+
+        var log = Path.Combine(world.Store.Root, "closed.log");
+        var lines = File.ReadAllText(log).Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(l => l + "\n").ToList();
+        lines.Count.ShouldBe(2);
+        switch (damage)
+        {
+            case "record-without-log-entry": File.WriteAllBytes(log, []); break; // Review: an empty, well-formed log
+            case "last-entry-truncated": File.WriteAllText(log, lines[0]); break;
+            case "record-differs-from-logged-closure":
+                File.WriteAllBytes(world.RecordPath(id), RunnerAbsenceEvidenceStore.Serialize(world.Store.Read(id).Record! with
+                {
+                    UpdatedAtUtc = world.Store.Read(id).Record!.UpdatedAtUtc.AddSeconds(1),
+                }));
+                break;
+            case "duplicate-entry": File.AppendAllText(log, lines[1]); break;
+            case "reordered-entries": File.WriteAllText(log, lines[1] + lines[0]); break;
+            default: throw new ArgumentOutOfRangeException(nameof(damage), damage, null);
+        }
+
+        world.Store.Read(id).IsKnown.ShouldBeFalse($"{damage}: disagreeing closure metadata is unknown evidence");
+        var reissue = world.Service.Certify(world.Request(id));
+        reissue.Value.ShouldBeNull($"{damage}: no certificate from disagreeing closure metadata");
+        reissue.Refusal!.Code.ShouldBe(RunnerAbsenceRefusalCodes.Unavailable);
+
+        world.Restart();
+        var writes = world.Files.Writes;
+        Should.Throw<SessionIdentityClosedException>(() => world.Service.RequireOpenIdentity(id),
+            $"{damage}: delayed creation is refused").SessionId.ShouldBe(id);
+        Should.Throw<SessionIdentityClosedException>(
+            () => world.Service.RecordCreationAttempt(id, RunnerAbsenceEvidenceHarness.Generation), damage).SessionId.ShouldBe(id);
+        world.Files.Writes.ShouldBe(writes, "a refused creation writes nothing");
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// V-31, CARD-1153 round 2: deterministic controls for two fail-closed lines the previous
+    /// round left without one (the anchor-last order is V-28 <c>anchor-written</c>; the 4096 cap
+    /// is V-29 <c>flood-then-replay-at-cap</c>). <c>attempt-store-turns-unknown</c>: the store reads
+    /// healthy for the marker's admission and unknown when the marker writes, so the marker
+    /// refuses and latches instead of letting the launch proceed. <c>closure-log-length-malformed</c>:
+    /// a closure log with a partial line reads unknown and refuses creation and certification.
+    /// </summary>
+    [Test]
+    [Arguments("attempt-store-turns-unknown")]
+    [Arguments("closure-log-length-malformed")]
+    public Task C1153_Store_guard_lines_fail_closed(string guard)
+    {
+        using var world = new RunnerAbsenceEvidenceHarness();
+        var control = Guid.NewGuid();
+        world.PrepareOk(control);
+        world.Service.Certify(world.Request(control)).Value.ShouldNotBeNull("pristine control certifies");
+        var id = Guid.NewGuid();
+        var anchor = world.Store.Root + ".identity.json";
+        switch (guard)
+        {
+            case "attempt-store-turns-unknown":
+                var anchorReads = 0;
+                world.Files.ReadFault = p => p == anchor && ++anchorReads == 2 ? new IOException("anchor unreadable") : null;
+                Should.Throw<SessionIdentityClosedException>(
+                    () => world.Service.RecordCreationAttempt(id, RunnerAbsenceEvidenceHarness.Generation),
+                    "the store turned unknown between the admission read and the marker write").SessionId.ShouldBe(id);
+                anchorReads.ShouldBe(2, "admission read the anchor once, the write once");
+                world.Files.ReadFault = null;
+                world.RecordBytes(id).ShouldBeNull("no marker was written");
+                world.Service.LatchReason.ShouldNotBeNull("evidence is latched for the epoch");
+                break;
+            case "closure-log-length-malformed":
+                File.AppendAllText(Path.Combine(world.Store.Root, "closed.log"), "abcde");
+                world.Store.UnknownReason.ShouldNotBeNull("a partial closure-log line is a damaged store");
+                world.Service.Certify(world.Request(control)).Value.ShouldBeNull("no certificate from a damaged store");
+                Should.Throw<SessionIdentityClosedException>(() => world.Service.RequireOpenIdentity(id),
+                    "a damaged store refuses creation of any id").SessionId.ShouldBe(id);
+                break;
+            default: throw new ArgumentOutOfRangeException(nameof(guard), guard, null);
+        }
+
+        return Task.CompletedTask;
+    }
+
     private static string[] EvidenceFiles(Guid id) => new[]
     {
         "absence-evidence.identity.json", $"absence-evidence/{id:N}.json", "absence-evidence/closed.log",

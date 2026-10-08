@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Globalization;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Antiphon.SessionRunner.Contracts;
@@ -31,6 +32,11 @@ public enum RunnerAbsenceReadKind
     StoreUnknown,
     /// <summary>The closure log names the id but its record is missing or no longer ClosedUnused (F1).</summary>
     ClosedRecordLost,
+    /// <summary>
+    /// A ClosedUnused record without a closure-log entry, or one that differs from the record its
+    /// entry hashed (F3 round 2): the closure metadata disagrees, so nothing about the id is known.
+    /// </summary>
+    ClosureMismatch,
 }
 
 public readonly record struct RunnerAbsenceRead(RunnerAbsenceReadKind Kind, RunnerAbsenceRecord? Record, string? Detail)
@@ -185,6 +191,11 @@ public sealed class RunnerAbsenceEvidenceFiles : IRunnerAbsenceEvidenceFiles
 /// well formed). Anything else (anchor or header missing or changed, root lost, closure log
 /// missing or malformed, a logged closure whose record is missing, unreadable or not ClosedUnused)
 /// is unknown, so a wiped, replaced or damaged store is never read as "nothing was certified".
+/// F3 (round 2): each closure-log line also carries the SHA-256 of the exact ClosedUnused record
+/// bytes and of the line before it (a chain seeded by the incarnation). A ClosedUnused record
+/// without an entry or differing from its entry is unknown for that id
+/// (<see cref="RunnerAbsenceReadKind.ClosureMismatch"/>); a broken chain (duplicated, reordered,
+/// removed or foreign line) makes the whole store unknown. Either refuses creation and certification.
 /// Namespace durability (F1, round 2): flushing a file does not persist its directory entry, so
 /// every created directory, created file and rename is followed by a sync of the directory that
 /// holds the new name (<see cref="IRunnerAbsenceEvidenceFiles.SyncDirectory"/>): the parents of
@@ -208,7 +219,8 @@ public sealed class RunnerAbsenceEvidenceStore
     public const string DirectoryName = "absence-evidence";
     public const string HeaderName = "store.json";
     public const string ClosureLogName = "closed.log";
-    private const int ClosureLineBytes = 33;
+    // "<id:N> <SHA-256 of the closed record> <SHA-256 of the previous line, or the chain seed>\n"
+    private const int ClosureLineBytes = 32 + 1 + 64 + 1 + 64 + 1;
 
     private static readonly string[] Members =
         ["version", "state", "sessionId", "acceptedStartedAt", "runnerStoreId", "runtimeEpoch", "updatedAtUtc"];
@@ -270,7 +282,7 @@ public sealed class RunnerAbsenceEvidenceStore
             if (!state.Initialized)
                 return new(RunnerAbsenceReadKind.NoRecord, null, null);
 
-            var closed = state.Closed!.Contains(sessionId);
+            var closed = state.Closed!.TryGetValue(sessionId, out var loggedHash);
             byte[]? bytes;
             try { bytes = _files.ReadIfExists(PathFor(sessionId)); }
             catch (UnauthorizedAccessException ex) { return new(RunnerAbsenceReadKind.Denied, null, ex.GetType().Name); }
@@ -288,6 +300,11 @@ public sealed class RunnerAbsenceEvidenceStore
             if (closed && parsed.Record is not { State: RunnerAbsenceRecordState.ClosedUnused })
                 return new(RunnerAbsenceReadKind.ClosedRecordLost, null,
                     "closed record reads as " + (parsed.Record?.State.ToString() ?? Describe(parsed)));
+            // F3 round 2: a closure is trusted only when its record and its log entry agree exactly.
+            if (closed && RecordHash(bytes) != loggedHash)
+                return new(RunnerAbsenceReadKind.ClosureMismatch, null, "closed record differs from its closure-log entry");
+            if (!closed && parsed.Record is { State: RunnerAbsenceRecordState.ClosedUnused })
+                return new(RunnerAbsenceReadKind.ClosureMismatch, null, "closed record without a closure-log entry");
             return parsed;
         }
     }
@@ -308,17 +325,20 @@ public sealed class RunnerAbsenceEvidenceStore
             else
                 EnsureNamespaceDurable();
 
-            if (record.State == RunnerAbsenceRecordState.ClosedUnused && !state.Closed!.Contains(record.SessionId))
-                _files.AppendDurable(ClosureLogPath, Encoding.ASCII.GetBytes(record.SessionId.ToString("N") + "\n"));
-            _files.WriteAtomic(PathFor(record.SessionId), Serialize(record));
+            var bytes = Serialize(record);
+            if (record.State == RunnerAbsenceRecordState.ClosedUnused && !state.Closed!.ContainsKey(record.SessionId))
+                _files.AppendDurable(ClosureLogPath,
+                    Encoding.ASCII.GetBytes($"{record.SessionId:N} {RecordHash(bytes)} {state.Tail}\n"));
+            _files.WriteAtomic(PathFor(record.SessionId), bytes);
             _files.SyncDirectory(Root);
         }
     }
 
-    private readonly record struct StoreState(bool Initialized, HashSet<Guid>? Closed, RunnerAbsenceRead? Unknown);
+    // Closed maps each logged id to the SHA-256 of its closed record; Tail is the chain value the next line names.
+    private readonly record struct StoreState(bool Initialized, IReadOnlyDictionary<Guid, string>? Closed, string? Tail, RunnerAbsenceRead? Unknown);
 
     private static StoreState UnknownState(RunnerAbsenceReadKind kind, string detail) =>
-        new(false, null, new RunnerAbsenceRead(kind, null, detail));
+        new(false, null, null, new RunnerAbsenceRead(kind, null, detail));
 
     // Caller holds _rootGate.
     private StoreState Inspect()
@@ -340,7 +360,7 @@ public sealed class RunnerAbsenceEvidenceStore
                     ? UnknownState(RunnerAbsenceReadKind.StoreUnknown, "store anchor missing after initialization")
                     : UnknownState(RunnerAbsenceReadKind.LostRoot, "evidence root missing after initialization");
             if (!rootPresent)
-                return new(false, null, null);
+                return new(false, null, null, null);
             // An interrupted first initialization leaves at most the header and an empty log; a
             // record or a logged closure without an anchor means the anchor was lost.
             try
@@ -356,7 +376,7 @@ public sealed class RunnerAbsenceEvidenceStore
             }
             catch (UnauthorizedAccessException ex) { return UnknownState(RunnerAbsenceReadKind.Denied, "store root: " + ex.GetType().Name); }
             catch (IOException ex) { return UnknownState(RunnerAbsenceReadKind.IoError, "store root: " + ex.GetType().Name); }
-            return new(false, null, null);
+            return new(false, null, null, null);
         }
 
         if (!TryIdentity(anchor, out var incarnation))
@@ -381,11 +401,11 @@ public sealed class RunnerAbsenceEvidenceStore
             return UnknownState(RunnerAbsenceReadKind.StoreUnknown, "store header changed");
         if (log is null)
             return UnknownState(RunnerAbsenceReadKind.StoreUnknown, "closure log missing");
-        if (ParseClosures(log) is not { } closed)
+        if (ParseClosures(log, incarnation) is not { } closures)
             return UnknownState(RunnerAbsenceReadKind.StoreUnknown, "closure log malformed");
 
         _incarnation ??= incarnation;
-        return new(true, closed, null);
+        return new(true, closures.Closed, closures.Tail, null);
     }
 
     // Caller holds _rootGate; the store is never initialized. Each created or renamed name is
@@ -410,7 +430,7 @@ public sealed class RunnerAbsenceEvidenceStore
         _files.SyncDirectory(ParentOf(Root)!);
         _incarnation = incarnation;
         _namespaceDurable = true;
-        return new(true, [], null);
+        return new(true, new Dictionary<Guid, string>(), ChainSeed(incarnation), null);
     }
 
     // Caller holds _rootGate. A healthy store this process did not initialize may hold names an
@@ -433,22 +453,36 @@ public sealed class RunnerAbsenceEvidenceStore
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return false; }
     }
 
-    private static HashSet<Guid>? ParseClosures(byte[] log)
+    // F3 round 2: each line names its id, the hash of the closed record and the hash of the line
+    // before it (the first names a seed bound to the incarnation), so a duplicated, reordered,
+    // removed-from-the-middle or foreign line breaks the chain and the whole log reads unknown.
+    // Losing only trailing lines leaves closed records without an entry (ClosureMismatch).
+    private static (Dictionary<Guid, string> Closed, string Tail)? ParseClosures(byte[] log, Guid incarnation)
     {
         if (log.Length % ClosureLineBytes != 0)
             return null;
-        var closed = new HashSet<Guid>();
+        var closed = new Dictionary<Guid, string>();
+        var previous = ChainSeed(incarnation);
         for (var offset = 0; offset < log.Length; offset += ClosureLineBytes)
         {
-            if (log[offset + ClosureLineBytes - 1] != (byte)'\n'
-                || !Guid.TryParseExact(Encoding.ASCII.GetString(log, offset, ClosureLineBytes - 1), "N", out var id)
-                || id == Guid.Empty)
+            // A malformed record hash is not checked here: it never equals a record's hash, so that
+            // id reads ClosureMismatch.
+            var line = Encoding.ASCII.GetString(log, offset, ClosureLineBytes);
+            if (line[^1] != '\n'
+                || !Guid.TryParseExact(line[..32], "N", out var id) || id == Guid.Empty
+                || line.Substring(98, 64) != previous
+                || !closed.TryAdd(id, line.Substring(33, 64)))
                 return null;
-            closed.Add(id);
+            previous = Convert.ToHexString(SHA256.HashData(log.AsSpan(offset, ClosureLineBytes)));
         }
 
-        return closed;
+        return (closed, previous);
     }
+
+    private static string ChainSeed(Guid incarnation) =>
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes($"absence-evidence closure log {incarnation:D}")));
+
+    private static string RecordHash(byte[] record) => Convert.ToHexString(SHA256.HashData(record));
 
     private static byte[] Identity(Guid incarnation) =>
         Encoding.UTF8.GetBytes($"{{\"version\":{SchemaVersion},\"incarnation\":\"{incarnation:D}\"}}");
