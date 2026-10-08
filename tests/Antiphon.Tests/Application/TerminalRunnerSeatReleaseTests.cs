@@ -25,9 +25,11 @@ namespace Antiphon.Tests.Application;
 // System.Text.Json metadata for every reachable navigation type while holding STJ's process-wide
 // default-options metadata lock, for seconds on a cold host; the in-process runner's release path
 // (RunnerSessionExitedEvent publish) waits on that same lock and overran its 10 s budget
-// (docs/investigations/2026-10-08-card-1137-release-stall.md). No source scanner enforces this: a
-// static guard cannot establish a serialized result type, so it was removed deliberately; the rule
-// lives here and EntityScalarSnapshotTests proves the snapshot covers every scalar property.
+// (docs/investigations/2026-10-08-card-1137-release-stall.md). No assembly-wide scanner enforces this:
+// a static guard cannot establish a serialized result type, so it was removed deliberately. The rule
+// lives here; EntityScalarSnapshotConsumerGuardTests fails on any System.Text.Json serialization in
+// this class and the two other call-site classes beyond a small exact allow-list (no type
+// classification), and EntityScalarSnapshotTests proves the snapshot covers every scalar property.
 [Category("Integration")]
 public class TerminalRunnerSeatReleaseTests
 {
