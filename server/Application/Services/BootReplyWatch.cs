@@ -179,6 +179,33 @@ internal static class BootReplyWatch
         if (await HasModelReplySinceAsync(db, sessionId, clock, ct))
             return null;
 
+        return (await LoadPromptTurnAsync(db, sessionId, clock, ct))?.Turn;
+    }
+
+    /// <summary>
+    /// CARD-1156: the same predicate as <see cref="LoadBootTurnAsync(AppDbContext, Guid, DateTime, CancellationToken)"/>
+    /// over a row the caller already loaded (the standing boot writer's locked row), so the Grok
+    /// rules gate reads the row instead of costing its own round trip.
+    /// </summary>
+    internal static async Task<BootTurn?> LoadBootTurnAsync(
+        AppDbContext db, AgentSession session, DateTime clock, CancellationToken ct)
+    {
+        if (session.GrokRulesState is GrokRulesState.Pending or GrokRulesState.Failed)
+            return null;
+        if (await HasModelReplySinceAsync(db, session.Id, clock, ct))
+            return null;
+
+        return (await LoadPromptTurnAsync(db, session.Id, clock, ct))?.Turn;
+    }
+
+    /// <summary>
+    /// The prompt half of the boot predicate: the real prompts since <paramref name="clock"/>, with
+    /// the latest one's transcript kind. The caller has already asked
+    /// <see cref="HasModelReplySinceAsync"/>; this reads only prompt rows.
+    /// </summary>
+    internal static async Task<PromptTurn?> LoadPromptTurnAsync(
+        AppDbContext db, Guid sessionId, DateTime clock, CancellationToken ct)
+    {
         var prompts = await db.TranscriptEntries.AsNoTracking()
             .Where(t => t.AgentSessionId == sessionId
                 && (t.Timestamp ?? t.CreatedAt) >= clock
@@ -212,10 +239,16 @@ internal static class BootReplyWatch
             .ToList();
         var latest = real[^1];
         var acceptedLatest = accepted.Count == 0 ? null : accepted[^1];
-        return new BootTurn(
-            latest.Sequence, latest.At, real.Count,
-            acceptedLatest?.Sequence, acceptedLatest?.At, accepted.Count);
+        return new PromptTurn(
+            new BootTurn(
+                latest.Sequence, latest.At, real.Count,
+                acceptedLatest?.Sequence, acceptedLatest?.At, accepted.Count),
+            latest.Kind);
     }
+
+    /// <param name="Turn">The boot turn the predicate returns.</param>
+    /// <param name="LatestKind">The latest real prompt's transcript kind (<c>UserPrompt</c> or <c>QueuedUserPrompt</c>).</param>
+    internal sealed record PromptTurn(BootTurn Turn, string LatestKind);
 
     /// <summary>
     /// Arm (or re-arm, or clear) the watch on one session from the boot predicate, and return the

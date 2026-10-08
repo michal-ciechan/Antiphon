@@ -46,12 +46,18 @@ internal sealed class ListedInventoryRunner : ISessionRunnerClient
     /// <summary>When set, every transcript pull throws it (an unreachable or timed-out runner).</summary>
     public Exception? TranscriptFault { get; set; }
 
+    /// <summary>
+    /// CARD-1156: when set, what a transcript pull returns (so a real runtime catch-up can land a
+    /// reply the tailer had not stored). Null returns an empty transcript.
+    /// </summary>
+    public Func<Guid, SessionRunnerTranscriptDto>? Transcript { get; set; }
+
     public Task<SessionRunnerTranscriptDto> GetTranscriptAsync(Guid sessionId, CancellationToken ct)
     {
         TranscriptPulls++;
         return TranscriptFault is { } fault
             ? Task.FromException<SessionRunnerTranscriptDto>(fault)
-            : Task.FromResult(new SessionRunnerTranscriptDto(sessionId, [], 0));
+            : Task.FromResult(Transcript?.Invoke(sessionId) ?? new SessionRunnerTranscriptDto(sessionId, [], 0));
     }
 
     public Task SendInputAsync(Guid sessionId, string input, CancellationToken ct)

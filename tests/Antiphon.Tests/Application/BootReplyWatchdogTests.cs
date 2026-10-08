@@ -16,14 +16,22 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 /// <summary>
-/// CARD-0312 S3/S4 — the sweep that resolves the boot-reply watch, and the bounded recovery it
-/// routes into.
+/// CARD-0312 S3 — the sweep that resolves the boot-reply watch — under CARD-1156's detection-only
+/// policy (operator decision option A): a boot prompt the model never answered is recorded and
+/// surfaced, and nothing on this path stops, restarts, latches or types into a session.
 ///
 /// <para>The negative controls here are not edge cases; each is a mistake this repo has already
 /// paid for. A periodic liveness probe was measured and deleted TWICE (the pong probe on
 /// 2026-07-23 for spending model turns on healthy idle sessions, and a TUI echo probe on
 /// 2026-07-20 for false-positive-killing them), so "a slow-but-alive boot is never touched" and
 /// "an unarmed session is never judged" carry the weight here.</para>
+///
+/// <para><b>Three contracts are deliberately reversed by CARD-1156</b>, each under a comment that
+/// says so: the CARD-0312 S4 stop of a hung standing session, the third-failure latch and the
+/// disarm after a raise. They pinned the intervention policy the operator retired in favour of
+/// the AGENTS.md rule that CARD-0079 is the only automatic stop of a Working session; each
+/// replacement asserts the explicit negation plus a stronger positive (custody unchanged, the
+/// versioned receipt present, the watch still armed).</para>
 ///
 /// <para><c>NotInParallel</c> with no group key: the sweep is fleet-global against the shared test
 /// Postgres, so it also walks every other suite's live sessions.</para>
@@ -35,7 +43,7 @@ public class BootReplyWatchdogTests
     private const int Deadline = 8;
 
     [Test]
-    public async Task a_delivered_prompt_the_model_never_answers_raises_one_incident_naming_what_was_seen()
+    public async Task an_unanswered_standing_boot_raises_once_and_keeps_its_watch_for_escalation()
     {
         // P1's core. The prompt IS in the transcript — delivery is not the problem — and no
         // assistant, thinking, tool or turn-end row followed it.
@@ -43,6 +51,10 @@ public class BootReplyWatchdogTests
         await scenario.SeedAgentAsync(alwaysOn: true);
         await scenario.SeedPromptAsync(minutesAgo: 30);
         await scenario.ArmAsync();
+        long? armedSequence;
+        await using (var armed = CreateContext())
+            armedSequence = (await armed.AgentSessions.SingleAsync(s => s.Id == scenario.SessionId)).BootPromptSequence;
+        armedSequence.ShouldNotBeNull();
 
         (await scenario.SweepAsync()).ShouldBe(1);
 
@@ -50,26 +62,36 @@ public class BootReplyWatchdogTests
         var incident = await verify.AgentIncidents.SingleAsync(
             i => i.SessionId == scenario.SessionId
                 && i.Kind == AgentIncidentKind.LivenessProbeFailed);
-        incident.Severity.ShouldBe(AlertSeverity.Warning);
-        incident.Message.ShouldContain("Boot prompt confirmed at sequence");
+        // CARD-1156: the first observation is 30 minutes after the prompt, past the 20-minute
+        // operator due, so it is the operator stage alone (Error), never a burst of both stages.
+        incident.Severity.ShouldBe(AlertSeverity.Error);
+        incident.Message.ShouldContain("Boot prompt at sequence");
         incident.Message.ShouldContain("no assistant, thinking, tool or turn-end row");
+        incident.Message.ShouldNotContain("composer holds");
         incident.FailureReason.ShouldNotBeNull();
-        incident.FailureReason.ShouldStartWith("bootSeq=");
+        incident.FailureReason.ShouldStartWith("standingBoot:v1;g=");
 
-        // The watch is spent for this episode: the recovery ladder owns it now, and re-raising the
-        // same silence every tick would be an alarm, not a signal.
+        // CARD-1156 reversal of "the watch is spent for this episode": a standing watch stays armed
+        // after its receipt, so the operator stage can follow and a later model reply disarms it.
+        // The persisted receipt, not a cleared watch, is what keeps the same silence from raising
+        // twice.
         var session = await verify.AgentSessions.SingleAsync(s => s.Id == scenario.SessionId);
-        session.BootReplyDueAt.ShouldBeNull();
+        session.BootReplyDueAt.ShouldNotBeNull("the standing watch stays armed for escalation");
+        session.BootPromptSequence.ShouldBe(armedSequence, "the same prompt is still the watched one");
         (await scenario.SweepAsync()).ShouldBe(0, "a second tick must not raise the same episode again");
     }
 
     [Test]
-    public async Task a_standing_agent_goes_through_the_existing_restart_ladder()
+    public async Task a_standing_boot_stall_is_detected_without_stopping_or_driving_the_restart_ladder()
     {
-        // S4: no new relaunch ladder. ConsecutiveFailures is what drives the EXISTING Backoff and
-        // FreshAfterResumeFailures — but SuperviseAsync only schedules a restart when the agent
-        // has no live session, so the raise must also STOP the hung session. A test that only
-        // pins ConsecutiveFailures == 1 would stay green against the no-op.
+        // CARD-1156 DELIBERATE BEHAVIOUR CHANGE (operator decision: option A, detection only). This
+        // test used to be a_standing_agent_goes_through_the_existing_restart_ladder and pinned the
+        // CARD-0312 S4 intervention contract: the raise STOPPED the hung Running session
+        // (Stopper.Killed == [SessionId]) and counted ConsecutiveFailures == 1 so the supervisor's
+        // not-running branch would restart it. That stop had no Working check, so it could end a
+        // Working session, contrary to the AGENTS.md rule that CARD-0079 is the only automatic stop
+        // of a Working session. The reversal is the explicit negation (no stop, no supervision row
+        // created) plus stronger positives (custody unchanged, the versioned receipt present).
         await using var scenario = new Scenario();
         await scenario.SeedAgentAsync(alwaysOn: true);
         await scenario.SeedPromptAsync(minutesAgo: 30);
@@ -77,20 +99,31 @@ public class BootReplyWatchdogTests
 
         await scenario.SweepAsync();
 
+        scenario.Stopper.Killed.ShouldBeEmpty("a boot stall is detection only; the session keeps its seat");
         await using var verify = CreateContext();
-        var state = await verify.AgentSupervisionStates.SingleAsync(s => s.AgentId == scenario.AgentId);
-        state.ConsecutiveFailures.ShouldBe(1);
-        state.LivenessLatchedAt.ShouldBeNull("one failure is not a latch");
-        scenario.Stopper.Killed.ShouldBe(
-            [scenario.SessionId],
-            "the hung Running session must be stopped so the supervisor's not-running branch fires");
+        (await verify.AgentSupervisionStates.SingleOrDefaultAsync(s => s.AgentId == scenario.AgentId))
+            .ShouldBeNull("the sweep creates no supervision state: no failure count, no restart, no latch");
+        var session = await verify.AgentSessions.SingleAsync(s => s.Id == scenario.SessionId);
+        session.Status.ShouldBe(SessionStatus.Running);
+        session.TerminationSource.ShouldBe(default(SessionTerminationSource));
+        session.EndedAt.ShouldBeNull();
+        var agent = await verify.Agents.SingleAsync(a => a.Id == scenario.AgentId);
+        agent.PersistentSessionId.ShouldBe(scenario.SessionId.ToString("D"));
+        var incident = await verify.AgentIncidents.SingleAsync(
+            i => i.SessionId == scenario.SessionId && i.Kind == AgentIncidentKind.LivenessProbeFailed);
+        incident.FailureReason.ShouldNotBeNull();
+        incident.FailureReason.ShouldStartWith("standingBoot:v1;");
+        incident.AgentId.ShouldBe(scenario.AgentId);
+        incident.Message.ShouldContain("Detection only");
     }
 
     [Test]
-    public async Task the_third_consecutive_failure_latches_the_mechanism_off_instead_of_restarting()
+    public async Task boot_silence_preserves_existing_failure_history_without_creating_a_latch()
     {
-        // The hard stop. A third probe-driven restart is the 2026-07 restart loop by another
-        // route, so the mechanism stops and says so at Error.
+        // CARD-1156 reversal of the_third_consecutive_failure_latches_the_mechanism_off_instead_of_restarting.
+        // With the stop retired there is no restart ladder for this sweep to drive and nothing to
+        // latch off: existing failure history is preserved untouched and no latch is created. The
+        // Error severity stays, for the new reason: the 30-minute silence is past the operator due.
         await using var scenario = new Scenario();
         await scenario.SeedAgentAsync(alwaysOn: true, consecutiveFailures: 2);
         await scenario.SeedPromptAsync(minutesAgo: 30);
@@ -100,14 +133,15 @@ public class BootReplyWatchdogTests
 
         await using var verify = CreateContext();
         var state = await verify.AgentSupervisionStates.SingleAsync(s => s.AgentId == scenario.AgentId);
-        state.LivenessLatchedAt.ShouldNotBeNull();
-        state.ConsecutiveFailures.ShouldBe(2, "a latched mechanism stops driving the ladder");
+        state.LivenessLatchedAt.ShouldBeNull("boot silence creates no latch");
+        state.ConsecutiveFailures.ShouldBe(2, "existing failure history is preserved, not incremented");
+        state.NextRestartAt.ShouldBeNull();
         var incident = await verify.AgentIncidents.SingleAsync(
             i => i.SessionId == scenario.SessionId && i.Kind == AgentIncidentKind.LivenessProbeFailed);
         incident.Severity.ShouldBe(AlertSeverity.Error);
-        incident.Message.ShouldContain("stopped restarting");
-        scenario.Stopper.Killed.ShouldBeEmpty(
-            "the latching third strike stops restarting; it must not kill the session either");
+        incident.Message.ShouldNotContain("stopped restarting");
+        incident.Message.ShouldContain("Detection only");
+        scenario.Stopper.Killed.ShouldBeEmpty("boot silence never stops the session");
     }
 
     // ---- negative controls -----------------------------------------------------------------------

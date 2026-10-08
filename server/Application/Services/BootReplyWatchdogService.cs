@@ -5,6 +5,7 @@ using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -26,12 +27,20 @@ namespace Antiphon.Server.Application.Services;
 /// turns on healthy idle sessions, and a TUI echo probe before that for false-positive-killing
 /// them. <c>SessionHealthTests.No_probe_prompts_are_ever_sent_to_an_idle_session</c> pins that
 /// absence and stays green: this sweep sends NOTHING. It only resolves a watch a launch already
-/// armed, at most once per launch, and an idle healthy session is never armed at all.</para>
+/// armed, and an idle healthy session is never armed at all.</para>
+///
+/// <para><b>Detection only, never a stop (CARD-1156, operator decision option A).</b> A boot prompt
+/// the model never answered is recorded and surfaced; this sweep never stops, restarts, latches,
+/// types into, releases or re-queues a session, and writes no supervision state, whatever the
+/// evidence says and however stale or missing it is. CARD-0079 remains the only automatic stop of
+/// a Working session. The CARD-0312 S4 restart ladder (stop the hung session, count a failure,
+/// latch after two) is retired: a hung standing session keeps its seat until an operator acts or
+/// the process genuinely exits.</para>
 ///
 /// <para><b>Pull before you judge.</b> On an <c>Overdue</c> reading the runner's own transcript is
 /// pulled and the verdict re-evaluated before anything is recorded — the live stream is not a
-/// reliable clock, and the kill that proved it wrong is what produced the records (CARD-0055,
-/// session e809ce65).</para>
+/// reliable clock (CARD-0055, session e809ce65). The pull's result is never freshness proof and
+/// its availability is never required: a failed pull leaves the stored rows to judge.</para>
 /// </summary>
 public sealed class BootReplyWatchdogService
 {
@@ -42,6 +51,7 @@ public sealed class BootReplyWatchdogService
     private readonly DelegationSettings _delegation;
     private readonly ContextWindowSettings _contextWindow;
     private readonly AgentSessionRuntime? _runtime;
+    private readonly IEventBus? _events;
     private readonly TimeProvider _time;
     private readonly ILogger<BootReplyWatchdogService> _logger;
 
@@ -53,7 +63,9 @@ public sealed class BootReplyWatchdogService
         IOptions<ContextWindowSettings>? contextWindow = null,
         // Optional for the same reason the dispatcher's is: a harness without a runtime falls back
         // to whatever streamed, and the pull swallows its own failures anyway.
-        AgentSessionRuntime? runtime = null)
+        AgentSessionRuntime? runtime = null,
+        // Optional: the standing receipt's change notice is best effort and never delivery evidence.
+        IEventBus? events = null)
     {
         _scopeFactory = scopeFactory;
         _delegation = delegation.Value;
@@ -61,9 +73,17 @@ public sealed class BootReplyWatchdogService
         _time = time;
         _logger = logger;
         _runtime = runtime;
+        _events = events;
     }
 
-    /// <summary>Returns how many sessions this pass judged overdue and acted on.</summary>
+    /// <summary>
+    /// CARD-1156 test seam: the context the standing receipt writer opens per write. Production
+    /// leaves it null and builds a fresh context over the sweep scope's own options, so every
+    /// interceptor registered on them sees the telemetry statements too.
+    /// </summary>
+    internal Func<AppDbContext>? WriterContextFactory { get; set; }
+
+    /// <summary>Returns how many sessions this pass judged overdue and recorded a receipt for.</summary>
     public async Task<int> SweepAsync(CancellationToken ct)
     {
         var deadline = _delegation.BootModelWaitDeadlineMinutes;
@@ -86,7 +106,7 @@ public sealed class BootReplyWatchdogService
             ct.ThrowIfCancellationRequested();
             try
             {
-                if (await EvaluateAsync(db, scope, session, now, deadline, ct))
+                if (await EvaluateAsync(db, session, now, deadline, ct))
                     acted++;
             }
             catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
@@ -102,7 +122,6 @@ public sealed class BootReplyWatchdogService
 
     private async Task<bool> EvaluateAsync(
         AppDbContext db,
-        IServiceScope scope,
         AgentSession session,
         DateTime now,
         int deadlineMinutes,
@@ -126,7 +145,7 @@ public sealed class BootReplyWatchdogService
             await db.SaveChangesAsync(ct);
         }
 
-        var status = await BootReplyWatch.EvaluateSessionAsync(db, session, now, ct);
+        var (status, rows) = await EvaluateWatchAsync(db, session, now, ct);
         if (status == BootReplyWatch.Status.Answered)
         {
             await BootReplyWatch.DisarmAsync(db, session.Id, ct);
@@ -137,8 +156,15 @@ public sealed class BootReplyWatchdogService
         if (status != BootReplyWatch.Status.Overdue)
             return false;
 
-        // PULL BEFORE YOU JUDGE. Everything below records a failure about "the transcript does not
-        // contain a model row", and the live stream is not a reliable clock (CARD-0055).
+        // CARD-1156: an episode whose due stage is already on record costs nothing more — no pull,
+        // no owner or prompt reads — until its next stage falls due. Skipped while a newer prompt
+        // row sits past the watched one: that may be a refinement, which is a new episode.
+        if (!rows.Any(r => BootReplyWatch.IsPromptRow(r.Kind))
+            && await StandingStageRecordedAsync(db, session, deadlineMinutes, now, ct))
+            return false;
+
+        // PULL BEFORE YOU JUDGE. Everything below records an observation about "the transcript
+        // does not contain a model row", and the live stream is not a reliable clock (CARD-0055).
         if (_runtime is not null)
         {
             try
@@ -152,7 +178,7 @@ public sealed class BootReplyWatchdogService
                     session.Id);
             }
 
-            status = await BootReplyWatch.EvaluateSessionAsync(db, session, now, ct);
+            (status, _) = await EvaluateWatchAsync(db, session, now, ct);
             if (status != BootReplyWatch.Status.Overdue)
             {
                 if (status == BootReplyWatch.Status.Answered)
@@ -169,36 +195,135 @@ public sealed class BootReplyWatchdogService
             }
         }
 
-        // ONE OWNER PER POPULATION. A session bound to an OPEN delegate task belongs to the
-        // dispatcher's overdue-deadline sweep, which since CARD-1151 only DETECTS a boot stall: it
-        // writes BootStallDetected, then BootStallNeedsOperator, on the task and derives the
-        // Overdue attention row; it never fails, stops, retries or releases the session, and holds
-        // no alias. Raising here as well would be a second row for the same silence, and this
-        // service's own AlwaysOn stop below must never reach a delegate's session. The watch stays
-        // armed so the sweep's own re-read is the one that judges it. (The taskless AlwaysOn stop
-        // in RaiseAsync is separate policy that CARD-1151 deliberately leaves unchanged.)
-        if (await db.AgentTasks.AsNoTracking().AnyAsync(
-                t => t.AgentSessionId == session.Id
-                    && (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working),
-                ct))
+        // ONE OWNER PER POPULATION. A session bound to an ACTIVE delegate task (Dispatched or
+        // Working) belongs to the dispatcher's overdue-deadline sweep, which since CARD-1151 only
+        // DETECTS a boot stall: it writes BootStallDetected, then BootStallNeedsOperator, on the task
+        // and derives the Overdue attention row; it never fails, stops, retries or releases the
+        // session, and holds no alias. Raising here as well would be a second row for the same
+        // silence. The watch stays armed so the sweep's own re-read is the one that judges it.
+        var owners = await StandingBootWatchObservation.ReadOwnersAsync(db, session.Id, ct);
+        var taskOwner = await StandingBootWatchObservation.ReadTaskOwnerAsync(db, session.Id, ct);
+        if (taskOwner is StandingBootTaskOwner.Dispatched or StandingBootTaskOwner.Working)
         {
             _logger.LogDebug(
                 "Session {SessionId} is boot-stalled and belongs to an open delegate task; the "
-                + "overdue-deadline sweep owns the recovery",
+                + "overdue-deadline sweep owns the detection",
                 session.Id);
             return false;
         }
 
-        return await RaiseAsync(db, scope, session, now, ct);
+        // No always-on agent points at this session: the existing generic diagnostic, detection only.
+        if (!owners.Any(o => o.AlwaysOn))
+            return await RaiseDiagnosticAsync(db, session, now, ct);
+
+        return await ObserveStandingAsync(db, session, owners, taskOwner, now, deadlineMinutes, ct);
     }
 
     /// <summary>
-    /// The diagnostic bundle and the incident. Every fact here is available today — no dependency
-    /// on CARD-0311 shipping — and the message NAMES what was observed rather than asserting a
-    /// diagnosis: the sequence, the wait, the context fullness, and what the composer is holding.
+    /// CARD-1156: a taskless AlwaysOn session. The positive whitelist decides whether a receipt is
+    /// due; the writer revalidates the episode under the session row lock and records it in its own
+    /// context. Nothing here, on any outcome or fault, stops, restarts, latches or types.
     /// </summary>
-    private async Task<bool> RaiseAsync(
-        AppDbContext db, IServiceScope scope, AgentSession session, DateTime now, CancellationToken ct)
+    private async Task<bool> ObserveStandingAsync(
+        AppDbContext db,
+        AgentSession session,
+        IReadOnlyList<StandingBootOwner> owners,
+        StandingBootTaskOwner taskOwner,
+        DateTime now,
+        int deadlineMinutes,
+        CancellationToken ct)
+    {
+        var modelWait = _delegation.ModelWaitDeadlineMinutes;
+        var observation = await StandingBootWatchObservation.ReadAsync(
+            db, session, owners, taskOwner, session.BootPromptSequence, deadlineMinutes, modelWait, now, ct);
+        var decision = StandingBootWatchPolicy.Decide(observation);
+        if (decision.Stage == StandingBootWatchPolicy.Stage.None || decision.Facts is not { } facts
+            || observation.OwnerAgentId is not Guid agentId)
+        {
+            if (decision.Reason is "identity-changed" or "prompt-missing" or "reply-observed")
+            {
+                // The armed watch no longer names the latest real prompt on this launch (a refinement,
+                // a resume, or a reply below the watched sequence): re-derive it from the same predicate
+                // so the next tick judges the current episode. Watch columns only; nothing else moves.
+                await BootReplyWatch.TryArmAsync(db, session.Id, deadlineMinutes, ct);
+                await db.SaveChangesAsync(ct);
+            }
+
+            _logger.LogDebug(
+                "Session {SessionId}: standing boot receipt not due ({Reason}); the session keeps its seat",
+                session.Id, decision.Reason);
+            return false;
+        }
+
+        // The watch stays armed: a later operator stage can follow, and a model reply disarms it.
+        var writer = new StandingBootWarningWriter(
+            WriterContextFactory ?? (() => new AppDbContext(
+                (DbContextOptions<AppDbContext>)db.GetService<IDbContextOptions>())),
+            _events,
+            _logger);
+        var outcome = await writer.RecordAsync(
+            new StandingBootWarningWriter.Episode(
+                session.Id, agentId, facts, observation.PromptKind ?? TranscriptKinds.UserPrompt),
+            decision.Stage, deadlineMinutes, modelWait, now, ct);
+        return outcome == StandingBootWarningWriter.Outcome.Recorded;
+    }
+
+    /// <summary>
+    /// The cheap pre-check from the armed columns: the prompt time is <c>BootReplyDueAt</c> minus
+    /// the boot wait, the identity is the row's generation, launch clock and watched sequence. One
+    /// read. A miss only costs the pull the sweep would make anyway; the writer is the dedup.
+    /// </summary>
+    private async Task<bool> StandingStageRecordedAsync(
+        AppDbContext db, AgentSession session, int deadlineMinutes, DateTime now, CancellationToken ct)
+    {
+        if (session.BootPromptSequence is not long sequence || session.BootReplyDueAt is not DateTime due)
+            return false;
+
+        var facts = StandingBootWatchPolicy.Facts(
+            SessionGeneration.Normalize(session.StartedAt), BootReplyWatch.LaunchClock(session), sequence,
+            due.AddMinutes(-deadlineMinutes), deadlineMinutes, _delegation.ModelWaitDeadlineMinutes);
+        var stage = StandingBootWatchPolicy.DueStage(facts, now);
+        if (stage == StandingBootWatchPolicy.Stage.None)
+            return false;
+
+        var prefix = StandingBootWatchPolicy.EpisodePrefix(facts);
+        var recorded = await db.AgentIncidents.AsNoTracking()
+            .Where(i => i.SessionId == session.Id
+                && i.Kind == AgentIncidentKind.LivenessProbeFailed
+                && i.FailureReason != null
+                && i.FailureReason.StartsWith(prefix))
+            .Select(i => i.FailureReason)
+            .ToListAsync(ct);
+        return StandingBootWatchPolicy.IsRecorded(recorded, prefix, stage);
+    }
+
+    /// <summary>
+    /// <see cref="BootReplyWatch.EvaluateSessionAsync"/>'s verdict, with the rows it read: the
+    /// same one query, so the sweep can see a newer prompt past the watched one.
+    /// </summary>
+    private static async Task<(BootReplyWatch.Status Status, IReadOnlyList<BootReplyWatch.Row> Rows)> EvaluateWatchAsync(
+        AppDbContext db, AgentSession session, DateTime now, CancellationToken ct)
+    {
+        if (session.BootPromptSequence is not long sequence || session.BootReplyDueAt is null)
+            return (BootReplyWatch.Status.Disarmed, []);
+
+        var rows = await db.TranscriptEntries.AsNoTracking()
+            .Where(t => t.AgentSessionId == session.Id && t.Sequence > sequence)
+            .OrderBy(t => t.Sequence)
+            .Select(t => new BootReplyWatch.Row(t.Sequence, t.Kind))
+            .ToListAsync(ct);
+        return (BootReplyWatch.Evaluate(session.BootPromptSequence, session.BootReplyDueAt, now, rows), rows);
+    }
+
+    /// <summary>
+    /// The generic diagnostic for a session no always-on agent points at (CARD-0312 S3): the
+    /// bundle and one <c>bootSeq=</c> incident per episode. Every fact here is available today and
+    /// the message NAMES what was observed rather than asserting a diagnosis: the sequence, the
+    /// wait, the context fullness, and what the composer is holding. Detection only: since
+    /// CARD-1156 no branch of this sweep stops a session or touches supervision state.
+    /// </summary>
+    private async Task<bool> RaiseDiagnosticAsync(
+        AppDbContext db, AgentSession session, DateTime now, CancellationToken ct)
     {
         var sequence = session.BootPromptSequence!.Value;
         var due = session.BootReplyDueAt!.Value;
@@ -214,9 +339,6 @@ public sealed class BootReplyWatchdogService
             return false;
 
         var owner = await SessionOwnerLookup.ResolveOwningAgentIdAsync(db, session.Id, ct);
-        var agent = owner is Guid ownerId
-            ? await db.Agents.FirstOrDefaultAsync(a => a.Id == ownerId, ct)
-            : null;
 
         var promptAt = await db.TranscriptEntries.AsNoTracking()
             .Where(t => t.AgentSessionId == session.Id && t.Sequence == sequence)
@@ -235,39 +357,14 @@ public sealed class BootReplyWatchdogService
             .Select(t => t.Kind + "@" + t.Sequence)
             .ToListAsync(ct);
 
-        // Whether this is the latching third strike is decided before the message is written, so
-        // the row says what actually happened rather than what was intended.
-        AgentSupervisionState? state = null;
-        var latching = false;
-        if (agent is { AlwaysOn: true })
-        {
-            state = await db.AgentSupervisionStates
-                .FirstOrDefaultAsync(s => s.AgentId == agent.Id, ct);
-            if (state is null)
-            {
-                state = new AgentSupervisionState { AgentId = agent.Id, UpdatedAt = now };
-                db.AgentSupervisionStates.Add(state);
-            }
-
-            latching = state.LivenessLatchedAt is not null
-                || state.ConsecutiveFailures + 1 > MaxProbeDrivenRestarts;
-        }
-
         var message =
             $"Boot prompt confirmed at sequence {sequence}; no assistant, thinking, tool or "
-            + $"turn-end row in {Describe(waited)}"
+            + $"turn-end row in {StandingBootWatchPolicy.Describe(waited)}"
             + (fullness is double f ? $"; context {f:P0}" : "; context unknown")
             + (composer is { Length: > 0 } head ? $"; composer holds: \"{head}\"" : "; composer not readable")
             + (kinds.Count > 0 ? $"; rows since: {string.Join(", ", kinds)}" : "; no rows since")
             + (session.LaunchResumedAt is DateTime resumed ? $"; launch resumed {resumed:u}" : string.Empty)
-            + ". "
-            + (latching
-                ? "This mechanism has now stopped restarting this agent — two consecutive "
-                  + "probe-driven restarts did not clear it, so a third would be the 2026-07 "
-                  + "restart loop by another route. A human StartAsync clears the latch."
-                : agent is { AlwaysOn: true }
-                    ? "Routed to the supervisor's existing restart ladder."
-                    : "Detection only for this session: it has no always-on agent to restart.");
+            + ". Detection only for this session: nothing was stopped, restarted or latched.";
 
         db.AgentIncidents.Add(new AgentIncident
         {
@@ -275,79 +372,24 @@ public sealed class BootReplyWatchdogService
             AgentId = owner,
             SessionId = session.Id,
             Kind = AgentIncidentKind.LivenessProbeFailed,
-            Severity = latching ? AlertSeverity.Error : AlertSeverity.Warning,
+            Severity = AlertSeverity.Warning,
             Message = ColumnText.Clip(message, AgentIncident.MessageMaxLength),
             FailureReason = key,
             CreatedAt = now,
         });
 
-        if (state is not null)
-        {
-            if (latching)
-            {
-                state.LivenessLatchedAt ??= now;
-            }
-            else
-            {
-                // Preserve the existing bounded liveness intervention budget. The supervisor
-                // retries the same conversation with capped backoff; no probe failure permits
-                // Fresh. SuperviseAsync only schedules a restart when the
-                // agent has no live session, so a hung-but-Running session must be stopped here
-                // (StopHungStandingSessionAsync, taskless AlwaysOn only; the delegate task arm no
-                // longer stops anything, CARD-1151) or this increment is a no-op. A session that
-                // is producing output was never armed.
-                state.ConsecutiveFailures++;
-                state.NextRestartAt = null;
-                state.UpdatedAt = now;
-            }
-        }
-
-        // The watch has done its job for this episode either way; leaving it armed would re-raise
-        // the same silence against a session the recovery ladder now owns.
+        // The generic watch has done its job for this episode: one diagnostic, then disarmed.
         session.BootPromptSequence = null;
         session.BootReplyDueAt = null;
         await db.SaveChangesAsync(ct);
 
-        if (!latching && agent is { AlwaysOn: true })
-            await StopHungStandingSessionAsync(scope, session.Id, ct);
-
         _logger.LogWarning(
-            "Boot reply never came on session {SessionId} ({Severity}): {Message}",
-            session.Id, latching ? "Error" : "Warning", message);
+            "Boot reply never came on session {SessionId} (Warning): {Message}",
+            session.Id, message);
         return true;
     }
 
-    /// <summary>
-    /// Stops the hung standing-agent session so the supervisor's not-running branch applies its
-    /// normal capped backoff and strict conversation continuity policy. Resolved from the sweep scope
-    /// because this service is a singleton and <see cref="IDelegateSessionStopper"/> is scoped.
-    /// A missing stopper (a harness that did not register one) is a no-op, not a throw.
-    /// </summary>
-    private async Task StopHungStandingSessionAsync(
-        IServiceScope scope, Guid sessionId, CancellationToken ct)
-    {
-        var stopper = scope.ServiceProvider.GetService<IDelegateSessionStopper>();
-        if (stopper is null)
-            return;
-
-        try
-        {
-            await stopper.KillAsync(sessionId, ct);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            _logger.LogWarning(
-                ex, "Could not stop boot-stalled standing-agent session {SessionId}", sessionId);
-        }
-    }
-
-    /// <summary>
-    /// CARD-0312 S4's hard stop: at most two consecutive probe-driven restarts per agent. The
-    /// third consecutive failure latches the mechanism off for that agent rather than restarting
-    /// again.
-    /// </summary>
-    internal const int MaxProbeDrivenRestarts = 2;
-
+    /// <summary>The generic diagnostic's episode key. Old receipts keep this format.</summary>
     internal static string EpisodeKey(long bootPromptSequence) => $"bootSeq={bootPromptSequence}";
 
     private async Task<double?> LoadFullnessAsync(AppDbContext db, AgentSession session, CancellationToken ct)
@@ -377,9 +419,4 @@ public sealed class BootReplyWatchdogService
         var trimmed = screen.Replace("\r", " ").Replace("\n", " ").Trim();
         return trimmed.Length <= 200 ? trimmed : trimmed[^200..];
     }
-
-    private static string Describe(TimeSpan span) =>
-        span.TotalMinutes >= 1
-            ? $"{(int)span.TotalMinutes}m{span.Seconds:00}s"
-            : $"{(int)span.TotalSeconds}s";
 }
