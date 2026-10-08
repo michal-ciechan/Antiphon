@@ -331,6 +331,12 @@ public class StandingBootWatchdogTests
 
         if (fault is not ("publish-fault" or "caller-cancel"))
             f.Warnings().ShouldContain("Could not record standing boot receipt");
+        if (fault == "caller-cancel")
+        {
+            f.Warnings().ShouldNotContain("Could not record",
+                customMessage: "the caller's cancellation propagates; it is never swallowed as a telemetry fault\n" + f.Warnings());
+        }
+
         f.Warnings().ShouldNotContain("Boot-reply sweep failed", customMessage: "a telemetry fault is isolated in the writer");
         (await f.ReceiptsAsync()).Count.ShouldBe(fault == "publish-fault" ? 1 : 0,
             "a failed telemetry transaction leaves nothing behind; a failed publish is after the commit");
