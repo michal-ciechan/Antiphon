@@ -563,6 +563,126 @@ public class BootStallDetectionTests
         await AssertNoFailureTraceAsync(world);
     }
 
+    /// <summary>
+    /// CARD-1151 R2. The warning writer revalidates the whole episode immediately before its
+    /// insert. An interleaving runs on a separate connection just as the writer's first statement
+    /// (the task-row lock) executes, after the sweep has decided. generation-change: the session
+    /// row's accepted generation moves (launch clock unchanged). launch-clock-change: a resume
+    /// moves the launch clock to between dispatch and the prompt (prompt still visible, generation
+    /// unchanged). prompt-identity-change: a newer accepted prompt lands. Each writes nothing, and
+    /// silently. same-episode: the interleaving changes nothing and the event is written once
+    /// across two sweeps. concurrent-writers: two dispatchers meet at the writer's lock statement;
+    /// exactly one row.
+    /// </summary>
+    [Test]
+    [Arguments("generation-change")]
+    [Arguments("launch-clock-change")]
+    [Arguments("prompt-identity-change")]
+    [Arguments("same-episode")]
+    [Arguments("concurrent-writers")]
+    public async Task C1151_Warning_writer_revalidates_the_episode_identity(string change)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var world = await BootStallWorld.CreateAsync(
+            schema.ConnectionString,
+            new BootStallWorldOptions { MinutesAgo = 10, PromptAge = TimeSpan.FromMinutes(9) });
+        var before = await world.TaskAsync();
+        var dispatched = before.DispatchedAt!.Value;
+        var interleave = new WriterInterleaving(change switch
+        {
+            "generation-change" => async () =>
+            {
+                await using var db = world.Read();
+                await db.AgentSessions.Where(s => s.Id == world.SessionId)
+                    .ExecuteUpdateAsync(s => s.SetProperty(x => x.StartedAt, world.Now0));
+            },
+            "launch-clock-change" => async () =>
+            {
+                await using var db = world.Read();
+                await db.AgentSessions.Where(s => s.Id == world.SessionId)
+                    .ExecuteUpdateAsync(s => s.SetProperty(x => x.LaunchResumedAt, (DateTime?)dispatched.AddSeconds(30)));
+            },
+            "prompt-identity-change" => () => world.AddEntryAsync(
+                TranscriptKinds.UserPrompt, "a newer accepted prompt", world.Now0.AddMinutes(-1)),
+            "same-episode" => () => Task.CompletedTask,
+            "concurrent-writers" => null,
+            _ => throw new ArgumentOutOfRangeException(nameof(change), change, null),
+        });
+        world.UseTelemetryFactory = true;
+        world.TelemetryInterceptors = [interleave];
+
+        if (change == "concurrent-writers")
+        {
+            await using var a = world.CreateScope();
+            await using var b = world.CreateScope();
+            var first = world.Prepare(a.ServiceProvider.GetRequiredService<AgentTaskDispatcher>());
+            var second = world.Prepare(b.ServiceProvider.GetRequiredService<AgentTaskDispatcher>());
+            var results = await Task.WhenAll(
+                Task.Run(() => first.FailOverdueTasksAsync(CancellationToken.None)),
+                Task.Run(() => second.FailOverdueTasksAsync(CancellationToken.None)));
+            results.ShouldBe([0, 0], world.Warnings());
+            interleave.Arrivals.ShouldBe(2, "both writers reached the lock statement together");
+        }
+        else
+        {
+            (await world.RunOverdueSweepAsync()).ShouldBe(0, world.Warnings());
+            interleave.Arrivals.ShouldBe(1, "the interleaving ran inside the writer, after the decision");
+        }
+
+        var warnings = await world.BootWarningsAsync();
+        if (change is "same-episode" or "concurrent-writers")
+        {
+            if (change == "same-episode")
+                (await world.RunOverdueSweepAsync()).ShouldBe(0, world.Warnings());
+            warnings = await world.BootWarningsAsync();
+            warnings.Count.ShouldBe(1, world.Warnings());
+            warnings[0].ShouldStartWith(BootStallPolicy.DetectedToken + " ");
+        }
+        else
+        {
+            warnings.ShouldBeEmpty($"{change}: the decided episode is no longer current, so nothing is written");
+            world.Warnings().ShouldNotContain("Could not record", customMessage: "a mismatch is silent, not a fault");
+        }
+
+        AssertNothingDestructive(world);
+        await AssertNoFailureTraceAsync(world);
+        var task = await world.TaskAsync();
+        task.Status.ShouldBe(before.Status);
+        task.Attempt.ShouldBe(before.Attempt);
+        task.AgentSessionId.ShouldBe(world.SessionId);
+        task.FailureReason.ShouldBeNull();
+    }
+
+    /// <summary>
+    /// Runs one interleaving (or, with none, meets a second writer) just as the warning writer's
+    /// task-row lock statement executes: the sweep has already decided and only the writer's
+    /// revalidation stands between that decision and the insert.
+    /// </summary>
+    private sealed class WriterInterleaving(Func<Task>? change) : DbCommandInterceptor
+    {
+        private readonly Barrier _writers = new(2);
+        private int _arrivals;
+
+        public int Arrivals => Volatile.Read(ref _arrivals);
+
+        public override async ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result,
+            CancellationToken cancellationToken = default)
+        {
+            if (command.CommandText.Contains("\"AgentTasks\"", StringComparison.Ordinal)
+                && command.CommandText.Contains("FOR UPDATE", StringComparison.Ordinal))
+            {
+                var arrival = Interlocked.Increment(ref _arrivals);
+                if (change is null)
+                    _writers.SignalAndWait(TimeSpan.FromSeconds(20)).ShouldBeTrue("both writers reach the lock");
+                else if (arrival == 1)
+                    await change();
+            }
+
+            return await base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
+        }
+    }
+
     private static FakeTimeProvider Fake(DateTime at) => new(new DateTimeOffset(at, TimeSpan.Zero));
 
     /// <summary>
