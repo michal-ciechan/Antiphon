@@ -187,7 +187,9 @@ public sealed class BlockedTaskParkingService(
         if (!options.Value.Enabled || !CanOwnTransaction()) return false;
         var now = clock.GetUtcNow().UtcDateTime;
         if (observedNextAttemptAt is DateTime observed && observed > now) return false;
-        var next = HeldBackoff(options.Value, clock, UnloadedEpisodeReason);
+        // One clock read: the deadline and the due cutoff share it, so a clock moved backward between
+        // two overlapping callers cannot let the second move the first caller's deadline (CARD-1143 F1).
+        var next = HeldBackoff(options.Value, now, UnloadedEpisodeReason);
         return await db.AgentTaskParks.Where(p => p.Id == parkId && p.Revision == revision
                 && p.State == AgentTaskParkState.Held && (p.NextAttemptAt == null || p.NextAttemptAt <= now))
             .ExecuteUpdateAsync(s => s.SetProperty(p => p.NextAttemptAt, next)
@@ -197,12 +199,15 @@ public sealed class BlockedTaskParkingService(
 
     private const string UnloadedEpisodeReason = "park_episode_changed";
 
-    internal static DateTime? HeldBackoff(BlockedTaskParkingOptions options, TimeProvider clock, string reason)
+    internal static DateTime? HeldBackoff(BlockedTaskParkingOptions options, TimeProvider clock, string reason) =>
+        HeldBackoff(options, clock.GetUtcNow().UtcDateTime, reason);
+
+    internal static DateTime? HeldBackoff(BlockedTaskParkingOptions options, DateTime now, string reason)
     {
         if (reason == "park_workspace_reserved") return null;
         var seconds = options.ReclaimHeldBackoffSeconds;
         if (seconds <= 0) return null;
-        return clock.GetUtcNow().UtcDateTime.AddSeconds(seconds);
+        return now.AddSeconds(seconds);
     }
 
     private bool CanOwnTransaction() => db.Database.CurrentTransaction is null

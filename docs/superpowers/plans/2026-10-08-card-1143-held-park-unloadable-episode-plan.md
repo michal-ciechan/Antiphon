@@ -280,13 +280,14 @@ source tip and wire/Git counters before every negative arm.
 | V-8 | `BlockedTaskParkReclaimTests.C1143_WorkingSessionAndWarningsAreUntouched` (1) | Change the task to Working after it acquired a Held park; raw reclaim excludes it. Direct stale-park preparation may only stamp historical metadata: task status/token/failure/completion, session status/generation, queue and all release records are byte-equivalent; no stop/kill/force, no new child/attempt. Repeated due and backed-off refusals add zero Warning events, incidents or caller notes and no release attention duplicates. Read slot projection after a normal Blocked restamp and assert the stored park reason is visible. |
 | V-9 | `BlockedTaskParkReclaimTests.C1143_ReadOnlyProofReadersNeverRestamp` (1) | With a due Held stale episode, call VerifyAsync, ReadEvidenceAsync and AcceptAsync with retained otherwise-valid evidence. Each refuses as today with zero UPDATE/INSERT, unchanged park and zero new Git/wire release calls. Repeat under a transaction: proof reads cannot acquire the new write path. |
 | V-10 | `BlockedTaskParkReclaimTests.C1143_RestampFailureLeavesNoTrackedWrite` (1) | A DbCommandInterceptor throws before the due park UPDATE. Caller retains the existing refusal/exception handling, no release or warning row is invented. Remove the fault, save an unrelated sentinel in the same DbContext and reload from a fresh one: park remains unchanged and no added/modified park entity exists. A subsequent fresh successful due visit stamps normally. Check any explicit rollback paths detach their own entities. |
+| V-12 | `BlockedTaskParkReclaimTests.C1143_BackwardClockOverlapKeepsTheCapturedDeadline` (8 arguments: rolled-back, rolled-forward-in-window, exact-boundary, before-boundary, each in both caller orders) | Repair F1. Two callers hold the same pre-write due snapshot; each captures its due cutoff on its first clock read, and every later read returns a clock moved backward, or forward within the window. The winning restamp is that caller's captured cutoff plus 600 and UpdatedAt is the captured cutoff; the later caller cannot move a deadline that is future at its own captured cutoff. Exactly equal is due; one millisecond before is not. Each call reads the clock exactly once. State, HeldFromState and Revision stay. |
 | V-11 | `BlockedTaskParkProjectionTests.C1065_DefaultOffRetainsRecoveryOfAcceptedAnswers` (existing 1) | Exact owner sentences/pins above, no old CARD-1143 residual text, unchanged default-off, Working and waiting-session pins; the other projection method remains green. |
 
 ### Guards the regression
 
 | R | Existing class/method scope and invariant |
 |---|---|
-| R-1 | Whole `BlockedTaskParkReclaimTests`: idle proof, cursor fairness, gating, Held retries, this-run confirmation accounting, rollback accounting and single-verify behavior. 12 existing results + 18 new = 30. |
+| R-1 | Whole `BlockedTaskParkReclaimTests`: idle proof, cursor fairness, gating, Held retries, this-run confirmation accounting, rollback accounting and single-verify behavior. 12 existing results + 18 new + 8 repair (V-12) = 38. |
 | R-2 | Whole `TaskParkPublicationTests` (3) and `TaskParkRunnerIdentityTests` (2): source mode, identity capture, policy refusal, intent and receipt CAS, no accidental side effects in proof verification. |
 | R-3 | Whole `TerminalRunnerSeatReleaseTests` (39): terminal admission, exact release receipts, caller delivery, Working refusal, reply and warning/attention behavior. |
 | R-4 | Whole `RemotePoolFollowUpAdmissionTests` (3): existing 422/409 and local/explicit-worktree admission. No AgentTaskService edits. |
@@ -306,7 +307,7 @@ tests, skipped Pending placeholders, a fixture error or a missing method is not 
 |---|---|---|---|
 | G-1 | Null candidate in either preparation entry routes through retained-snapshot restamp, D-2 | V-1, V-2 | PC-1, PC-2 |
 | G-2 | Fixed refusal reason and existing backoff, no episode transition, D-1/D-3 | V-1, V-3 | PC-3, PC-4 |
-| G-3 | Id/revision/Held/due CAS, D-3 | V-3 | PC-5..PC-8 |
+| G-3 | Id/revision/Held/due CAS, D-3; one captured clock read for cutoff and deadline (repair F1) | V-3, V-12 | PC-5..PC-8, PC-18, PC-19 |
 | G-4 | No extra lookup and existing Held early gate, D-2/D-3 | V-4 | PC-9, PC-10 |
 | G-5 | Existing policy and successful-candidate behavior, D-2 | V-5, R-1, R-2 | PC-11 |
 | G-6 | Disabled/busy/unknown and read-only proof paths, D-2/D-4 | V-7, V-9 | PC-12, PC-13 |
@@ -341,6 +342,8 @@ per-PC external evidence; do not commit from a SourceLanding snapshot.
 | PC-14 | New null-candidate handler updates the task to Failed or session to Stopped. | `/*/*/BlockedTaskParkReclaimTests/C1143_WorkingSessionAndWarningsAreUntouched` | Working task/session snapshot changes (no provider process needed). |
 | PC-15 | Append and save a Warning event for each park_episode_changed result. | `/*/*/BlockedTaskParkReclaimTests/C1143_WorkingSessionAndWarningsAreUntouched` | Event delta is nonzero / repeated warnings. |
 | PC-16 | Attach a changed park entity before ExecuteUpdate and leave it attached when that command fails. | `/*/*/BlockedTaskParkReclaimTests/C1143_RestampFailureLeavesNoTrackedWrite` | Later unrelated SaveChanges leaks reason/deadline into park. |
+| PC-18 | Restamp deadline re-reads the clock, `HeldBackoff(options.Value, clock, UnloadedEpisodeReason)`, instead of the captured `now` (the ddeb495c line). | `/*/*/BlockedTaskParkReclaimTests/C1143_BackwardClockOverlapKeepsTheCapturedDeadline` | Rolled-back arms: second caller returns true and moves the deadline; rolled-forward arms: deadline is not captured+600; every arm reads the clock twice. |
+| PC-19 | Due CAS cutoff re-reads the clock instead of the captured `now`. | `/*/*/BlockedTaskParkReclaimTests/C1143_BackwardClockOverlapKeepsTheCapturedDeadline` | Rolled-back arms: first caller is refused at the rolled-back cutoff; every arm reads the clock twice. |
 | PC-17 | Restore the old broad c1135 sentence and old CARD-1143 Known-limits clause in the owner doc. | `/*/*/BlockedTaskParkProjectionTests/C1065_DefaultOffRetainsRecoveryOfAcceptedAnswers` | c1135-held-restamp / c1141-known-limits / new scope pins reject stale prose. |
 
 ### Out of scope
@@ -353,10 +356,10 @@ No full assembly or whole-Unit run is authorized by this plan.
 
 ### Cost
 
-Ordinary V/R estimate: S1 19 + S2 17 + S3 40 = **76 minutes**, sum of the rows below.
+Ordinary V/R estimate: S1 19 + S2 17 + S3 43 = **79 minutes**, sum of the rows below.
 Authoring estimate 83 minutes; total three slices about **159 minutes** plus a one-time
 5-minute checkpoint-driver bootstrap allowance. These are estimates, not measured runtimes.
-Post-land Mutation: 17 sequential method-scoped controls, allow about 90-120 minutes.
+Post-land Mutation: 19 sequential method-scoped controls, allow about 90-120 minutes.
 Do not turn either cost into a test-count floor or reduce scope to fit a dispatch timeout.
 
 ### Checkpoints
@@ -380,7 +383,7 @@ filter per behavior/regression row. Reuse only within that same After group and 
 | CP-9 | S2 | CP-5 | pg-proof-readers | `/*/*/BlockedTaskParkReclaimTests/C1143_ReadOnlyProofReadersNeverRestamp*` | V-9 | exact 1, 0 failed/skipped | 1 | 2 | true |
 | CP-10 | S2 | CP-5 | pg-write-failure | `/*/*/BlockedTaskParkReclaimTests/C1143_RestampFailureLeavesNoTrackedWrite*` | V-10 | exact 1, 0 failed/skipped | 1 | 2 | true |
 | CP-11 | S3 | `tests/Antiphon.Tests -> bin-c1143-final/` | meta-park-docs | `/*/*/(BlockedTaskParkProjectionTests*)\|(RunnerBranchContractDocumentationTests*)/*` | V-11, R-6 | exact 9, 0 failed/skipped | 9 | 5 | true |
-| CP-12 | S3 | CP-11 | pg-reclaim-regression | `/*/*/BlockedTaskParkReclaimTests/*` | R-1, V-1..V-10 | exact 30, 0 failed/skipped | 30 | 10 | true |
+| CP-12 | S3 | CP-11 | pg-reclaim-regression | `/*/*/BlockedTaskParkReclaimTests/*` | R-1, V-1..V-10, V-12 | exact 38, 0 failed/skipped | 38 | 10 | true |
 | CP-13 | S3 | CP-11 | pg-publication-regression | `/*/*/(TaskParkPublicationTests*)\|(TaskParkRunnerIdentityTests*)/*` | R-2 | exact 5, 0 failed/skipped | 5 | 3 | true |
 | CP-14 | S3 | CP-11 | pg-terminal-regression | `/*/*/TerminalRunnerSeatReleaseTests/*` | R-3 | exact 39, 0 failed/skipped | 39 | 7 | true |
 | CP-15 | S3 | CP-11 | pg-followup-regression | `/*/*/RemotePoolFollowUpAdmissionTests/*` | R-4 | exact 3, 0 failed/skipped | 3 | 2 | true |
@@ -388,6 +391,7 @@ filter per behavior/regression row. Reuse only within that same After group and 
 | CP-17 | S3 | CP-11 | pg-desktop-budget | `/*/*/DelegationDispatchRecoveryBoundaryTests/C1149_C1150_Statement_budgets*` | R-7 | exact 3, 0 failed/skipped; totals 18/18/4 | 3 | 3 | true |
 | CP-18 | S3 | CP-11 | pg-sweep-registration | `/*/*/DispatcherSweepLifetimeRegistrationTests/*` | R-8 | exact 2, 0 failed/skipped | 2 | 3 | true |
 | CP-19 | S3 | CP-11 | meta-registry-guard | `/*/*/(TestClassificationGuardTests*)\|(SlowTestTripwireTests*)/*` | R-6 | exact 3, 0 failed/skipped | 3 | 1 | true |
+| CP-20 | S3 | CP-11 | pg-backward-clock | `/*/*/BlockedTaskParkReclaimTests/C1143_BackwardClockOverlapKeepsTheCapturedDeadline*` | V-12 | exact 8, 0 failed/skipped | 8 | 3 | true |
 
 Execution recipe (no host pin):
 
@@ -490,3 +494,18 @@ preparation load); the backed-off sweep three. One implementation detail differs
 sketch: `StampUnloadedHeldAttemptAsync(parkId, revision, observedNextAttemptAt, ct)` takes the
 retained snapshot's deadline so the known-future skip happens inside the same method that
 captures the clock; the database predicate is unchanged. No other decision changed.
+
+### Repair amendment F1, 2026-10-08 (task `d4d2efcb`)
+
+Final Review `b44ef513` finding F1 (P2): at `ddeb495c` the restamp captured `now` for the due
+predicate but computed the deadline through `HeldBackoff(options, clock, ...)`, a second clock
+read. Two callers holding the same due snapshot and both capturing 02:00, with the clock rolled
+back to 01:00 before either computed its deadline, both succeeded: 01:10:00 then 01:10:01, which
+contradicts the owner sentence that a repeated or concurrent refusal does not move an already
+future NextAttemptAt. D-3 now reads: the deadline is the same captured `now` plus the Held
+backoff; the restamp path reads the clock exactly once. `HeldBackoff` gains a `DateTime now`
+overload; its `TimeProvider` overload and its other callers (HoldAsync, terminal release, reply)
+are unchanged. Metadata-only behaviour, Enabled/busy gates, zero/negative backoff and every other
+decision stay. V-12, PC-18 and PC-19 are added; CP-12 becomes 38 and CP-20 runs V-12 alone.
+The owner sentence at `docs/session-runtime-invariants.md` (repeated or concurrent refusal) is
+true after the fix and is unchanged. No migration; activation is the ordinary server restart.

@@ -275,6 +275,70 @@ public sealed partial class BlockedTaskParkReclaimTests
         Metadata((await ReadAsync(neighbor.Id))!).ShouldBe(Metadata(neighbor), race + " neighbor");
     }
 
+    // F1: two overlapping callers capture a due cutoff, then the clock moves before either writes.
+    // Each restamp is its own captured cutoff plus the backoff, so the later caller cannot move a
+    // deadline the earlier caller made future for it, in either order. Offsets are seconds from
+    // 02:00; the row starts due at 01:59:59, so the first caller always wins.
+    [Test]
+    [Arguments("rolled-back", 0.0, -3600.0, 0.0, -3599.0, false, 600.0, 0.0)]
+    [Arguments("rolled-back-reversed", 0.0, -3599.0, 0.0, -3600.0, false, 600.0, 0.0)]
+    [Arguments("rolled-forward-in-window", 0.0, 300.0, 0.0, 301.0, false, 600.0, 0.0)]
+    [Arguments("rolled-forward-in-window-reversed", 0.0, 301.0, 0.0, 300.0, false, 600.0, 0.0)]
+    [Arguments("exact-boundary", 0.0, -3600.0, 600.0, -3600.0, true, 1200.0, 600.0)]
+    [Arguments("exact-boundary-reversed", 600.0, -3600.0, 0.0, -3600.0, false, 1200.0, 600.0)]
+    [Arguments("before-boundary", 0.0, -3600.0, 599.999, -3600.0, false, 600.0, 0.0)]
+    [Arguments("before-boundary-reversed", 599.999, -3600.0, 0.0, -3600.0, false, 1199.999, 599.999)]
+    public async Task C1143_BackwardClockOverlapKeepsTheCapturedDeadline(string label,
+        double firstCaptured, double firstLater, double secondCaptured, double secondLater,
+        bool secondWins, double finalDue, double finalUpdated)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var origin = new DateTime(2026, 10, 5, 2, 0, 0, DateTimeKind.Utc);
+        DateTime At(double seconds) => origin.AddTicks((long)Math.Round(seconds * TimeSpan.TicksPerSecond));
+        AppDbContext Db() => new(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        async Task<AgentTaskPark> ReadAsync(Guid id)
+        {
+            await using var db = Db();
+            return await db.AgentTaskParks.AsNoTracking().SingleAsync(p => p.Id == id);
+        }
+        var park = new AgentTaskPark
+        {
+            Id = Guid.NewGuid(), TaskId = Guid.NewGuid(), Attempt = 1, BlockEventId = Guid.NewGuid(),
+            TaskConcurrencyToken = Guid.NewGuid(), Workspace = WorkspaceMode.Worktree,
+            BlockedAt = At(-1800), State = AgentTaskParkState.Held,
+            HeldFromState = AgentTaskParkState.Requested, ReasonCode = "park_dirty", Revision = 3,
+            CreatedAt = At(-1800), UpdatedAt = At(-600), NextAttemptAt = At(-1)
+        };
+        await using (var db = Db())
+        {
+            db.AgentTaskParks.Add(park);
+            await db.SaveChangesAsync();
+        }
+        // Both callers hold the same pre-write snapshot.
+        var observed = await ReadAsync(park.Id);
+        var first = new SteppedClock(At(firstCaptured), At(firstLater));
+        var second = new SteppedClock(At(secondCaptured), At(secondLater));
+
+        (await StampWithAsync(Db(), first, 600, observed.Id, observed.Revision, observed.NextAttemptAt))
+            .ShouldBeTrue(label + " first");
+        var afterFirst = await ReadAsync(park.Id);
+        SameInstant(afterFirst.NextAttemptAt, At(firstCaptured).AddSeconds(600), label + " first deadline");
+        SameInstant(afterFirst.UpdatedAt, At(firstCaptured), label + " first updated");
+
+        (await StampWithAsync(Db(), second, 600, observed.Id, observed.Revision, observed.NextAttemptAt))
+            .ShouldBe(secondWins, label + " second");
+        var after = await ReadAsync(park.Id);
+        SameInstant(after.NextAttemptAt, At(finalDue), label + " final deadline");
+        SameInstant(after.UpdatedAt, At(finalUpdated), label + " final updated");
+        after.State.ShouldBe(AgentTaskParkState.Held, label);
+        after.HeldFromState.ShouldBe(observed.HeldFromState, label);
+        after.Revision.ShouldBe(observed.Revision, label);
+        after.ReasonCode.ShouldBe("park_episode_changed", label);
+        // The due cutoff and the deadline come from one captured instant.
+        first.Reads.ShouldBe(1, label + " first clock reads");
+        second.Reads.ShouldBe(1, label + " second clock reads");
+    }
+
     [Test]
     public async Task C1143_UnloadableSweepStatementBudget()
     {
@@ -938,6 +1002,14 @@ public sealed partial class BlockedTaskParkReclaimTests
             Incidents = await db.AgentIncidents.CountAsync(),
             Notes = await db.AgentTaskLandNotifications.CountAsync()
         }, options);
+    }
+
+    // Returns the captured instant on the first read and the moved clock on every later read.
+    private sealed class SteppedClock(DateTime captured, DateTime later) : TimeProvider
+    {
+        public int Reads { get; private set; }
+
+        public override DateTimeOffset GetUtcNow() => new(Reads++ == 0 ? captured : later, TimeSpan.Zero);
     }
 
     private sealed class InjectedDbException() : DbException("CARD-1143 injected command failure");
