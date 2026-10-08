@@ -117,6 +117,8 @@ Measured with `node scripts/fixtures/c1105-git-audit.cjs <row> <script>` (the ex
 | reftable check removed | reftable | green |
 | bare-index check made a no-op | bare-index | green |
 
+Method-scoped TUnit confirmation (isolated `bin-c1105r3mut/`, UseAppHost=false, every driver under `scripts/build-slot.ps1`, source restored with `git checkout` after each mutation): `C1105_Git_audit_hidden_locations*` with the 039b2661 `scripts/c590-remote.sh` checked out failed exactly those 22 rows (42 total, 20 passed). `C1008_Recycle_audits_promisor_checkout` with the count line's fallback mutated to `count=0` failed at the count-only block (`countOnly.Removed`, "a failed rev-list --count is not zero unpublished commits"); before this repair that mutant stayed green. `Main_volume_recycling_is_scripted_only` with the false every-reflog sentence restored failed on the new pins. Restored source: those methods passed 43/43 and 1/1.
+
 The 15 retained refusal rows are each covered twice (raw parse and Git's own `for-each-ref`/`rev-parse`/early marker check); a Mutation variant must remove both to go red.
 
 ## Checkpoints
