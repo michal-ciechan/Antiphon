@@ -550,6 +550,13 @@ public sealed class RemoteScriptContractTests
         var run = await f.Run();
         f.Trace.Any(a => a[0] == "create" && a.Contains("1654:1654") && a.Contains("--entrypoint") &&
             a.Any(x => x.EndsWith(",target=/work,readonly", StringComparison.Ordinal))).ShouldBeTrue("recycle-audit-uid: pinned readonly uid helper; " + run.Output);
+        // CARD-1105 repair 6: the runner's tmp volume (checkouts registered under /tmp) is mounted
+        // read-only beside /work, and the helper's own scratch is a private tmpfs.
+        f.Trace.Where(a => a[0] == "create").ShouldAllBe(a =>
+            a.Contains("type=volume,source=antiphon-runner_runner-tmp,target=/runner-tmp,readonly") &&
+            a.Contains("C1008_TMP_MOUNT=/runner-tmp") &&
+            a.Contains("type=tmpfs,destination=/tmp,tmpfs-mode=1777,tmpfs-size=2147483648"), "recycle-audit-uid: read-only runner-tmp mount and private scratch tmpfs; " + run.Output);
+        f.Trace.Count(a => a[0] == "create").ShouldBeGreaterThan(0);
         run.Exit.ShouldBe(0, "recycle-audit-uid: published layouts; " + run.Output);
         f.Removed.Length.ShouldBe(3, "recycle-audit-uid: published layouts permit exact reclaim");
         var record = JsonNode.Parse(File.ReadAllText(Path.Combine(f.Root, "server/recycle/c100800000000000000000000000000000001.json")))!;
