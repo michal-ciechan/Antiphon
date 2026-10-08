@@ -81,7 +81,7 @@ public sealed partial class AgentTaskDispatcher
         _eventBus, _logger);
 
     private static BootStallWarningWriter.Episode BootStallEpisode(AgentTask task, Guid sessionId, BootStallFacts boot) =>
-        new(task.Id, task.RootTaskId, task.Attempt, sessionId, task.DispatchedAt,
+        new(task.Id, task.RootTaskId, task.Attempt, sessionId, task.DispatchedAt, boot,
             BootStallPolicy.EpisodeKey(task.Id, task.Attempt, sessionId, boot));
 
     /// <summary>

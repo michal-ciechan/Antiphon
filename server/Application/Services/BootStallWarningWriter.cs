@@ -4,6 +4,7 @@ using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using Npgsql;
 
 namespace Antiphon.Server.Application.Services;
 
@@ -14,6 +15,14 @@ namespace Antiphon.Server.Application.Services;
 /// and the existing key, and every fault short of the caller's own cancellation is logged and
 /// swallowed. It never changes a task's status, attempt, binding or failure fields, and its
 /// result is never an input to the disposition.
+///
+/// <para><b>The whole episode identity is revalidated immediately before the insert</b>
+/// (CARD-1151 R2): the task's attempt, session and dispatch under the task row lock, then the
+/// session's accepted generation and launch clock under a share lock on the session row, then
+/// the latest accepted prompt through the same boot predicate the decision read. A relaunch,
+/// resume, newer accepted prompt or model reply between the decision and the write therefore
+/// writes nothing, silently. The session lock is taken with NOWAIT so this telemetry write can
+/// never wait on, or deadlock with, a session write: a held row is treated as a changing one.</para>
 /// </summary>
 internal sealed class BootStallWarningWriter(Func<AppDbContext> contexts, IEventBus events, ILogger logger)
 {
@@ -25,9 +34,14 @@ internal sealed class BootStallWarningWriter(Func<AppDbContext> contexts, IEvent
         Faulted = 3,
     }
 
-    /// <summary>The episode identity the event belongs to, as the sweep observed it.</summary>
+    /// <summary>
+    /// The episode identity the event belongs to, as the sweep observed it. <paramref name="Boot"/>
+    /// carries the generation, launch clock and accepted prompt that the key encodes; they are
+    /// compared field by field, never through the opaque key.
+    /// </summary>
     internal sealed record Episode(
-        Guid TaskId, Guid RootTaskId, int Attempt, Guid SessionId, DateTime? DispatchedAt, string Key);
+        Guid TaskId, Guid RootTaskId, int Attempt, Guid SessionId, DateTime? DispatchedAt,
+        BootStallFacts Boot, string Key);
 
     /// <summary>
     /// A-7's cheap read: is this stage (or a higher one) already on record for the key? A fault
@@ -73,6 +87,9 @@ internal sealed class BootStallWarningWriter(Func<AppDbContext> contexts, IEvent
                 if (BootStallPolicy.IsRecorded(await ReadDetailsAsync(db, episode.TaskId, ct), episode.Key, stage))
                     return Outcome.Duplicate;
 
+                if (!await SameEpisodeAsync(db, episode, current.DispatchedAt, ct))
+                    return Outcome.IdentityChanged;
+
                 db.AgentTaskEvents.Add(new AgentTaskEvent
                 {
                     Id = Guid.NewGuid(),
@@ -84,6 +101,15 @@ internal sealed class BootStallWarningWriter(Func<AppDbContext> contexts, IEvent
                 await db.SaveChangesAsync(ct);
                 await tx.CommitAsync(ct);
             }
+        }
+        catch (Exception ex) when (IsLockNotAvailable(ex))
+        {
+            // The session row is being written right now: its identity is in flux. Nothing is
+            // written; the next tick decides again on the settled row.
+            logger.LogDebug(
+                "Task {ShortId}: session {SessionId} is mid-update; {Token} not recorded this tick",
+                DelegationReportFormatter.Short(episode.TaskId), episode.SessionId, BootStallPolicy.Token(stage));
+            return Outcome.IdentityChanged;
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
         {
@@ -111,6 +137,46 @@ internal sealed class BootStallWarningWriter(Func<AppDbContext> contexts, IEvent
         }
 
         return Outcome.Recorded;
+    }
+
+    /// <summary>
+    /// R2: the session's generation and launch clock (session row share-locked, NOWAIT), then the
+    /// latest accepted prompt with no model reply since, all equal to the decided episode. A
+    /// missing row, a missing generation or a resolved turn is a mismatch.
+    /// </summary>
+    private static async Task<bool> SameEpisodeAsync(
+        AppDbContext db, Episode episode, DateTime? dispatchedAt, CancellationToken ct)
+    {
+        var session = await db.AgentSessions
+            .FromSqlInterpolated($"SELECT * FROM \"AgentSessions\" WHERE \"Id\" = {episode.SessionId} FOR SHARE NOWAIT")
+            .AsNoTracking()
+            .Select(s => new { s.StartedAt, s.LaunchResumedAt })
+            .SingleOrDefaultAsync(ct);
+        if (session is null
+            || episode.Boot.SessionStartedAt is not DateTime generation
+            || session.StartedAt != generation)
+        {
+            return false;
+        }
+
+        var clock = TaskDeadlinePolicy.LaunchClock(dispatchedAt, session.LaunchResumedAt);
+        if (clock != episode.Boot.LaunchClock)
+            return false;
+
+        var turn = await BootReplyWatch.LoadBootTurnAsync(db, episode.SessionId, clock, ct);
+        return turn?.AcceptedSequence == episode.Boot.PromptSequence
+            && turn.AcceptedAt == episode.Boot.PromptAt;
+    }
+
+    private static bool IsLockNotAvailable(Exception exception)
+    {
+        for (var current = exception; current is not null; current = current.InnerException)
+        {
+            if (current is PostgresException { SqlState: PostgresErrorCodes.LockNotAvailable })
+                return true;
+        }
+
+        return false;
     }
 
     private static Task<List<string>> ReadDetailsAsync(AppDbContext db, Guid taskId, CancellationToken ct) =>
