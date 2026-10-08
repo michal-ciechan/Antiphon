@@ -318,31 +318,41 @@ internal sealed class RuntimeWorld : IAsyncDisposable
     private readonly bool _ownsRoot;
     public string Root { get; }
     public SessionRunnerSettings Settings { get; }
-    public FakeTimeProvider Clock { get; } = new(new DateTimeOffset(2026, 10, 8, 4, 0, 0, TimeSpan.Zero));
+    public static readonly DateTimeOffset Start = new(2026, 10, 8, 4, 0, 0, TimeSpan.Zero);
+    public FakeTimeProvider Clock { get; }
     public SessionRunnerRuntime Runtime { get; private set; } = null!;
     public List<(Guid Id, string Path, RunnerAbsenceRecordState? StateAtEffect, string? LatchedAtEffect)> Effects { get; } = new();
     public bool ThrowAtEffect { get; set; }
     public Func<Task>? EffectBarrier { get; set; }
 
-    private RuntimeWorld(string root, bool ownsRoot)
+    private RuntimeWorld(string root, bool ownsRoot, DateTimeOffset start)
     {
+        Clock = new(start);
         Root = root;
         _ownsRoot = ownsRoot;
         Settings = new SessionRunnerSettings { SessionLogPath = root };
     }
 
-    public static async Task<RuntimeWorld> CreateAsync(string? root = null, HerdrClient? herdr = null)
+    /// <summary>
+    /// <paramref name="start"/> is the new process's clock; <paramref name="pastReplayWindow"/> (default)
+    /// advances it past the F2 epoch window so freshly signed requests are admissible.
+    /// </summary>
+    public static async Task<RuntimeWorld> CreateAsync(string? root = null, HerdrClient? herdr = null,
+        DateTimeOffset? start = null, bool pastReplayWindow = true)
     {
-        var world = new RuntimeWorld(root ?? Path.Combine(Path.GetTempPath(), "c1153-rt-" + Guid.NewGuid().ToString("N")), root is null);
+        var world = new RuntimeWorld(root ?? Path.Combine(Path.GetTempPath(), "c1153-rt-" + Guid.NewGuid().ToString("N")), root is null,
+            start ?? Start);
         world.Runtime = new SessionRunnerRuntime(Options.Create(world.Settings), NullLogger<SessionRunnerRuntime>.Instance,
             herdr, timeProvider: world.Clock);
         world.Runtime.CreationEffectForTest = world.OnEffectAsync;
         await world.Runtime.AdoptOrphanedHostsAsync(new SystemProcessLivenessProbe(), CancellationToken.None);
+        if (pastReplayWindow) world.Clock.Advance(RunnerAbsenceEvidence.RequestFreshness + TimeSpan.FromSeconds(1));
         return world;
     }
 
     /// <summary>A second runtime (new epoch) over the same root; adoption runs with the seam set.</summary>
-    public Task<RuntimeWorld> RestartAsync() => CreateAsync(Root);
+    public Task<RuntimeWorld> RestartAsync(DateTimeOffset? start = null, bool pastReplayWindow = true) =>
+        CreateAsync(Root, start: start ?? Clock.GetUtcNow(), pastReplayWindow: pastReplayWindow);
 
     private async Task OnEffectAsync(Guid id, string path)
     {
@@ -355,7 +365,8 @@ internal sealed class RuntimeWorld : IAsyncDisposable
     public Guid StoreId => Runtime.RunnerStoreId;
 
     public RunnerAbsenceRequest Request(Guid id, string? nonce = null) =>
-        new(RunnerAbsenceEvidence.Version, id, Generation, StoreId, nonce ?? RunnerAbsenceEvidence.NewNonce());
+        new(RunnerAbsenceEvidence.Version, id, Generation, StoreId, nonce ?? RunnerAbsenceEvidence.NewNonce(),
+            Clock.GetUtcNow().UtcDateTime);
 
     public Task<RunnerAbsenceOutcome<RunnerAbsencePrepared>> PrepareAsync(Guid id) =>
         Runtime.PrepareAbsenceEvidenceAsync(Request(id), CancellationToken.None);

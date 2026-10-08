@@ -11,6 +11,15 @@ public static class RunnerAbsenceEvidence
     public const string NeverCreated = "never_created";
     public const int NonceBytes = 32;
 
+    /// <summary>
+    /// CARD-1153 F2: replay rejection. A request carries a signed <c>issuedAtUtc</c>; the runner admits it
+    /// only within this window of its own clock, admits each nonce once (a bounded per-epoch cache
+    /// that forgets a nonce only after its request is stale), and refuses any request issued before
+    /// its own start plus this window, so a request captured before a restart cannot be replayed
+    /// into the new process whose cache is empty.
+    /// </summary>
+    public static readonly TimeSpan RequestFreshness = TimeSpan.FromSeconds(30);
+
     /// <summary>Capability token advertised only when the evidence service is ready.</summary>
     public const string Feature = "sessionAbsenceEvidenceV1";
 
@@ -40,7 +49,7 @@ public static class RunnerAbsenceEvidence
     public static string NewNonce() =>
         Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(NonceBytes));
 
-    /// <summary>The exact version 1 request body: five members, normalized "O" generation.</summary>
+    /// <summary>The exact version 1 request body: six members, normalized "O" generation, "O" issue time.</summary>
     public static byte[] RequestBody(RunnerAbsenceRequest request)
     {
         using var buffer = new MemoryStream();
@@ -53,6 +62,11 @@ public static class RunnerAbsenceEvidence
                 .ToString("O", System.Globalization.CultureInfo.InvariantCulture));
             json.WriteString("runnerStoreId", request.RunnerStoreId.ToString("D"));
             json.WriteString("requestNonce", request.RequestNonce);
+            if (request.IssuedAtUtc is { } issued)
+                json.WriteString("issuedAtUtc", DateTime.SpecifyKind(issued, DateTimeKind.Utc)
+                    .ToString("O", System.Globalization.CultureInfo.InvariantCulture));
+            else
+                json.WriteNull("issuedAtUtc");
             json.WriteEndObject();
         }
 
@@ -77,17 +91,25 @@ public static class RunnerAbsenceRefusalCodes
     public const string InvalidRequest = "absence_evidence_invalid_request";
     /// <summary>401: missing or wrong authentication, or no key configured.</summary>
     public const string Unauthenticated = "absence_evidence_unauthenticated";
+    /// <summary>409 (F2): this nonce was already presented to this runner epoch (any operation).</summary>
+    public const string Replayed = "absence_evidence_replayed";
+    /// <summary>401 (F2): issuedAtUtc outside the freshness window, or before this epoch could exclude replays.</summary>
+    public const string StaleRequest = "absence_evidence_stale_request";
 }
 
 public sealed record RunnerAbsenceRefusal(string Code, int Status, string Reason);
 
-/// <summary>Request body for both prepare and certify (same identity fields).</summary>
+/// <summary>
+/// Request body for both prepare and certify (same identity fields). <see cref="IssuedAtUtc"/> (F2)
+/// is the signer's UTC clock at signing; a missing value is a malformed request.
+/// </summary>
 public sealed record RunnerAbsenceRequest(
     int Version,
     Guid SessionId,
     DateTime AcceptedStartedAt,
     Guid RunnerStoreId,
-    string RequestNonce);
+    string RequestNonce,
+    DateTime? IssuedAtUtc = null);
 
 /// <summary>Prepare acknowledgement: the durable record's identity, never a certificate.</summary>
 public sealed record RunnerAbsencePrepared(

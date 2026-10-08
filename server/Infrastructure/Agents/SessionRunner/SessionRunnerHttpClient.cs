@@ -673,7 +673,8 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
             return Failed("absence_evidence_store_mismatch", placeholder);
 
         var request = new RunnerAbsenceRequest(RunnerAbsenceEvidence.Version, sessionId,
-            SessionGeneration.Normalize(acceptedStartedAt), advertised, RunnerAbsenceEvidence.NewNonce());
+            SessionGeneration.Normalize(acceptedStartedAt), advertised, RunnerAbsenceEvidence.NewNonce(),
+            _time.GetUtcNow().UtcDateTime);
         var body = RunnerAbsenceEvidence.RequestBody(request);
         var path = operation == AbsenceEvidenceAuthentication.PrepareOperation
             ? $"sessions/{sessionId:D}/absence-evidence/prepare"

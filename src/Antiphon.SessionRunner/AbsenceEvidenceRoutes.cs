@@ -26,7 +26,8 @@ public sealed class AbsenceEvidenceKeyProvider
 /// CARD-1153: <c>POST /sessions/{id}/absence-evidence/prepare</c> and
 /// <c>POST /sessions/{id}/absence-evidence</c>. Thin adapters over the runtime's evidence service.
 /// Requests and responses are HMAC-authenticated; the route id, body id and signed id must be one
-/// value (A-1); every answer is <c>Cache-Control: no-store</c>. Neither route resolves a session
+/// value (A-1); every answer is <c>Cache-Control: no-store</c>. A verified request is then admitted
+/// at most once (F2): the shared evidence service refuses a stale or replayed nonce before any decision. Neither route resolves a session
 /// through <c>GetSession</c>: an unknown id is answered by the evidence store, never by a 404 throw.
 /// </summary>
 public static class AbsenceEvidenceRoutes
@@ -36,7 +37,7 @@ public static class AbsenceEvidenceRoutes
     private const int MaxBodyBytes = 16 * 1024;
 
     private static readonly string[] RequestMembers =
-        ["version", "sessionId", "acceptedStartedAt", "runnerStoreId", "requestNonce"];
+        ["version", "sessionId", "acceptedStartedAt", "runnerStoreId", "requestNonce", "issuedAtUtc"];
 
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
@@ -137,7 +138,13 @@ public static class AbsenceEvidenceRoutes
             var nonce = root.GetProperty("requestNonce");
             if (nonce.ValueKind != JsonValueKind.String)
                 return null;
-            return new RunnerAbsenceRequest(v, sessionId, generation, store, nonce.GetString()!);
+            // F2: the signed issue time; replay admission itself is the evidence service's decision.
+            var issued = root.GetProperty("issuedAtUtc");
+            if (issued.ValueKind != JsonValueKind.String
+                || !DateTime.TryParseExact(issued.GetString(), "O", CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var issuedAt)
+                || issuedAt.Kind != DateTimeKind.Utc)
+                return null;
+            return new RunnerAbsenceRequest(v, sessionId, generation, store, nonce.GetString()!, issuedAt);
         }
         catch (JsonException) { return null; }
     }

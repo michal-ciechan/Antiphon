@@ -49,11 +49,14 @@ internal sealed class RunnerAbsenceEvidenceHarness : IDisposable
             id => CustodyReservations.ContainsKey(id),
             WatermarkDirectory);
         Service = new RunnerAbsenceEvidenceService(Store, inspection, () => StoreId, Clock);
+        // F2: requests issued within the window after an epoch starts are refused as possible replays.
+        Clock.Advance(RunnerAbsenceEvidence.RequestFreshness + TimeSpan.FromSeconds(1));
         return Service;
     }
 
     public RunnerAbsenceRequest Request(Guid id, DateTime? generation = null, Guid? store = null, string? nonce = null) =>
-        new(RunnerAbsenceEvidence.Version, id, generation ?? Generation, store ?? StoreId, nonce ?? RunnerAbsenceEvidence.NewNonce());
+        new(RunnerAbsenceEvidence.Version, id, generation ?? Generation, store ?? StoreId, nonce ?? RunnerAbsenceEvidence.NewNonce(),
+            Clock.GetUtcNow().UtcDateTime);
 
     public RunnerAbsencePrepared PrepareOk(Guid id)
     {

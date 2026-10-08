@@ -89,6 +89,11 @@ public sealed class RunnerAbsenceEvidenceService
     private readonly ILogger? _logger;
     private readonly object _sync = new();
     private string? _latchReason;
+    private readonly DateTime _startedAtUtc;
+    private readonly Dictionary<string, DateTime> _consumedNonces = new(StringComparer.Ordinal);
+
+    /// <summary>F2: the replay cache never evicts a live nonce; when full, requests refuse (503).</summary>
+    public const int MaxConsumedNonces = 4096;
 
     /// <summary>A-4: random per instance, memory only, compared by equality, never derived from time.</summary>
     public Guid Epoch { get; } = Guid.NewGuid();
@@ -105,6 +110,7 @@ public sealed class RunnerAbsenceEvidenceService
         _currentStore = currentStore;
         _time = time ?? TimeProvider.System;
         _logger = logger;
+        _startedAtUtc = _time.GetUtcNow().UtcDateTime;
     }
 
     public RunnerAbsenceEvidenceStore Store => _store;
@@ -127,6 +133,8 @@ public sealed class RunnerAbsenceEvidenceService
             return RunnerAbsenceOutcome<RunnerAbsencePrepared>.Refuse(RunnerAbsenceRefusalCodes.InvalidRequest, 400, invalid);
         lock (_sync)
         {
+            if (AdmitOnceLocked(request) is { } replay)
+                return RunnerAbsenceOutcome<RunnerAbsencePrepared>.Refuse(replay.Code, replay.Status, replay.Reason);
             if (Unready() is { } unready)
                 return RunnerAbsenceOutcome<RunnerAbsencePrepared>.Refuse(RunnerAbsenceRefusalCodes.Unavailable, 503, unready);
             if (StoreRefusal(request.RunnerStoreId) is { } storeRefusal)
@@ -177,6 +185,8 @@ public sealed class RunnerAbsenceEvidenceService
             return RunnerAbsenceOutcome<RunnerAbsenceCertificate>.Refuse(RunnerAbsenceRefusalCodes.InvalidRequest, 400, invalid);
         lock (_sync)
         {
+            if (AdmitOnceLocked(request) is { } replay)
+                return RunnerAbsenceOutcome<RunnerAbsenceCertificate>.Refuse(replay.Code, replay.Status, replay.Reason);
             if (Unready() is { } unready)
                 return RunnerAbsenceOutcome<RunnerAbsenceCertificate>.Refuse(RunnerAbsenceRefusalCodes.Unavailable, 503, unready);
             var read = _store.Read(request.SessionId);
@@ -307,6 +317,32 @@ public sealed class RunnerAbsenceEvidenceService
         _logger?.LogWarning("Absence evidence latched unavailable for this runner epoch: {Reason}", reason);
     }
 
+    /// <summary>
+    /// CARD-1153 F2: each well-formed request is admitted at most once per runner epoch, whatever
+    /// its outcome or operation. Fresh means issued within <see cref="RunnerAbsenceEvidence.RequestFreshness"/>
+    /// of this clock and after this epoch's start plus that window: the cache is memory only, so a
+    /// request captured before a restart is refused as stale instead of meeting an empty cache.
+    /// A consumed nonce is forgotten only once its request is stale anyway.
+    /// </summary>
+    private RunnerAbsenceRefusal? AdmitOnceLocked(RunnerAbsenceRequest request)
+    {
+        var now = _time.GetUtcNow().UtcDateTime;
+        var window = RunnerAbsenceEvidence.RequestFreshness;
+        var issued = request.IssuedAtUtc!.Value;
+        if (issued < now - window || issued > now + window)
+            return new(RunnerAbsenceRefusalCodes.StaleRequest, 401, "request issued outside the freshness window");
+        if (issued <= _startedAtUtc + window)
+            return new(RunnerAbsenceRefusalCodes.StaleRequest, 401, "request issued before this runner epoch excludes replays");
+        foreach (var expired in _consumedNonces.Where(e => e.Value < now).Select(e => e.Key).ToList())
+            _consumedNonces.Remove(expired);
+        if (_consumedNonces.ContainsKey(request.RequestNonce))
+            return new(RunnerAbsenceRefusalCodes.Replayed, 409, "request nonce already presented");
+        if (_consumedNonces.Count >= MaxConsumedNonces)
+            return new(RunnerAbsenceRefusalCodes.Unavailable, 503, "replay cache full");
+        _consumedNonces[request.RequestNonce] = issued + window;
+        return null;
+    }
+
     private string? Unready()
     {
         if (_latchReason is { } latched) return "evidence latched: " + latched;
@@ -360,6 +396,7 @@ public sealed class RunnerAbsenceEvidenceService
         if (request.RunnerStoreId == Guid.Empty) return "empty runner store";
         if (request.AcceptedStartedAt == default) return "missing generation";
         if (!RunnerAbsenceEvidence.IsValidNonce(request.RequestNonce)) return "nonce must be 32 random bytes";
+        if (request.IssuedAtUtc is not { Kind: DateTimeKind.Utc }) return "missing issuedAtUtc";
         return null;
     }
 }

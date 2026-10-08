@@ -270,6 +270,11 @@ public class RunnerAbsenceEvidenceTests
     [Arguments("corrupt-record")]
     [Arguments("closed-same-epoch-reissue")]
     [Arguments("store-header-changed")]
+    [Arguments("replayed-nonce")]
+    [Arguments("stale-issued-at")]
+    [Arguments("future-issued-at")]
+    [Arguments("issued-in-epoch-window")]
+    [Arguments("issued-at-missing")]
     public Task C1153_Certify_requires_every_fact(string condition)
     {
         using var world = new RunnerAbsenceEvidenceHarness();
@@ -289,10 +294,15 @@ public class RunnerAbsenceEvidenceTests
         switch (condition)
         {
             case "no-record": File.Delete(world.RecordPath(id)); expectedCode = RunnerAbsenceRefusalCodes.NotPrepared; break;
-            case "prepared-prior-epoch": world.Restart(); expectedCode = RunnerAbsenceRefusalCodes.PriorEpoch; break;
+            case "prepared-prior-epoch":
+                world.Restart();
+                request = world.Request(id); // F2: signed after the new epoch's replay window
+                expectedCode = RunnerAbsenceRefusalCodes.PriorEpoch;
+                break;
             case "closed-prior-epoch":
                 world.Service.Certify(world.Request(id)).Refusal.ShouldBeNull();
                 world.Restart();
+                request = world.Request(id);
                 expectedCode = RunnerAbsenceRefusalCodes.PriorEpoch;
                 break;
             case "attempted":
@@ -336,6 +346,27 @@ public class RunnerAbsenceEvidenceTests
                     $"{{\"version\":1,\"incarnation\":\"{Guid.NewGuid():D}\"}}");
                 expectedCode = RunnerAbsenceRefusalCodes.Unavailable;
                 break;
+            // F2: replay admission. Each flips only the request's freshness or its nonce's history.
+            case "replayed-nonce":
+                // The identical signed request was already presented (cross-route: as a prepare).
+                world.Service.Prepare(request).Refusal.ShouldBeNull("the first presentation is admitted");
+                expectedCode = RunnerAbsenceRefusalCodes.Replayed;
+                break;
+            case "stale-issued-at":
+                request = request with { IssuedAtUtc = request.IssuedAtUtc!.Value - RunnerAbsenceEvidence.RequestFreshness - TimeSpan.FromSeconds(1) };
+                expectedCode = RunnerAbsenceRefusalCodes.StaleRequest;
+                break;
+            case "future-issued-at":
+                request = request with { IssuedAtUtc = request.IssuedAtUtc!.Value + RunnerAbsenceEvidence.RequestFreshness + TimeSpan.FromSeconds(1) };
+                expectedCode = RunnerAbsenceRefusalCodes.StaleRequest;
+                break;
+            case "issued-in-epoch-window":
+                // Fresh (2 s old) but issued before this epoch's start plus the window: a possible
+                // pre-restart capture meeting an empty replay cache.
+                request = request with { IssuedAtUtc = request.IssuedAtUtc!.Value - TimeSpan.FromSeconds(2) };
+                expectedCode = RunnerAbsenceRefusalCodes.StaleRequest;
+                break;
+            case "issued-at-missing": request = request with { IssuedAtUtc = null }; expectedCode = RunnerAbsenceRefusalCodes.InvalidRequest; break;
             case "closed-same-epoch-reissue":
                 world.Service.Certify(world.Request(id)).Refusal.ShouldBeNull();
                 world.Record(id).State.ShouldBe(RunnerAbsenceRecordState.ClosedUnused);

@@ -156,6 +156,90 @@ public class RunnerAbsenceEvidenceContractTests
 
         wire.AssertNoSecretLeak(null);
     }
+
+    /// <summary>
+    /// CARD-1153 F2 (Review 1a174347 replay-prepare/replay-certify probes). A verified request is
+    /// admitted at most once: the identical signed prepare or certify sent again, the same body
+    /// and nonce re-signed for the other route, a replay after the freshness window, and a replay
+    /// into a restarted runner (empty replay cache) are each refused with an authenticated typed
+    /// answer and no state change. A fresh nonce on the same host still succeeds afterwards.
+    /// </summary>
+    [Test]
+    [Arguments("prepare-twice")]
+    [Arguments("certify-twice")]
+    [Arguments("cross-route")]
+    [Arguments("after-skew-window")]
+    [Arguments("across-restart")]
+    public async Task C1153_Replayed_request_is_rejected(string replay)
+    {
+        await using var wire = await EvidenceWire.StartAsync(withKey: true);
+        var id = Guid.NewGuid();
+        var prepared = await wire.PostAsync(AbsenceEvidenceAuthentication.PrepareOperation, id);
+        prepared.Status.ShouldBe(200, "the first presentation is admitted");
+        EvidenceWire? restarted = null;
+        try
+        {
+            var original = prepared;
+            var expectedState = RunnerAbsenceRecordState.Prepared;
+            EvidenceWire.Answer replayed;
+            byte[]? before;
+            string code;
+            switch (replay)
+            {
+                case "prepare-twice":
+                    before = wire.World.RecordBytes(id);
+                    replayed = await wire.ResendAsync(prepared);
+                    code = RunnerAbsenceRefusalCodes.Replayed;
+                    break;
+                case "certify-twice":
+                    original = await wire.PostAsync(AbsenceEvidenceAuthentication.CertifyOperation, id);
+                    original.Status.ShouldBe(200);
+                    expectedState = RunnerAbsenceRecordState.ClosedUnused;
+                    before = wire.World.RecordBytes(id);
+                    replayed = await wire.ResendAsync(original);
+                    code = RunnerAbsenceRefusalCodes.Replayed;
+                    break;
+                case "cross-route":
+                    before = wire.World.RecordBytes(id);
+                    replayed = await wire.ResendAsync(prepared, AbsenceEvidenceAuthentication.CertifyOperation);
+                    code = RunnerAbsenceRefusalCodes.Replayed;
+                    break;
+                case "after-skew-window":
+                    wire.World.Clock.Advance(RunnerAbsenceEvidence.RequestFreshness + TimeSpan.FromSeconds(1));
+                    before = wire.World.RecordBytes(id);
+                    replayed = await wire.ResendAsync(prepared);
+                    code = RunnerAbsenceRefusalCodes.StaleRequest;
+                    break;
+                case "across-restart":
+                    restarted = await EvidenceWire.StartAsync(withKey: true, restartOf: wire);
+                    restarted.World.Runtime.AbsenceEvidence!.Epoch.ShouldNotBe(wire.World.Runtime.AbsenceEvidence!.Epoch);
+                    before = wire.World.RecordBytes(id);
+                    replayed = await restarted.ResendAsync(prepared);
+                    code = RunnerAbsenceRefusalCodes.StaleRequest;
+                    break;
+                default: throw new ArgumentOutOfRangeException(nameof(replay), replay, null);
+            }
+
+            replayed.Status.ShouldBe(code == RunnerAbsenceRefusalCodes.Replayed ? 409 : 401, replay);
+            var text = Encoding.UTF8.GetString(replayed.Body);
+            text.ShouldContain(code);
+            text.ShouldNotContain(RunnerAbsenceEvidence.NeverCreated, Case.Sensitive, "a replay never yields a certificate");
+            replayed.Authenticated.ShouldBeTrue("the refusal is itself an authenticated answer");
+            replayed.CacheControl.ShouldBe("no-store");
+            wire.World.ReadState(id).ShouldBe(expectedState, "a replay changes no state");
+            wire.World.RecordBytes(id).ShouldBe(before);
+
+            if (replay != "across-restart")
+            {
+                var fresh = await wire.PostAsync(AbsenceEvidenceAuthentication.CertifyOperation, id);
+                fresh.Status.ShouldBe(200, "a fresh nonce is still admitted: the refusal is per nonce, not per id");
+            }
+        }
+        finally
+        {
+            if (restarted is not null) await restarted.DisposeAsync();
+        }
+    }
 }
 
 /// <summary>A random-port Kestrel host mapping the production routes over a real runtime.</summary>
@@ -186,12 +270,18 @@ internal sealed class EvidenceWire : IAsyncDisposable
     public static AbsenceEvidenceKey ForeignKey() =>
         AbsenceEvidenceKey.FromMaterial(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
 
-    public static async Task<EvidenceWire> StartAsync(bool withKey)
+    /// <summary>
+    /// <paramref name="restartOf"/> (F2): a new runner process over the same root and key, started one
+    /// second after the old one's clock and NOT advanced past its replay window.
+    /// </summary>
+    public static async Task<EvidenceWire> StartAsync(bool withKey, EvidenceWire? restartOf = null)
     {
-        var world = await RuntimeWorld.CreateAsync();
-        string? keyPath = null;
-        string? keyText = null;
-        if (withKey)
+        var world = restartOf is null
+            ? await RuntimeWorld.CreateAsync()
+            : await restartOf.World.RestartAsync(restartOf.World.Clock.GetUtcNow().AddSeconds(1), pastReplayWindow: false);
+        string? keyPath = restartOf?._keyPath;
+        string? keyText = restartOf?._keyText;
+        if (withKey && restartOf is null)
         {
             keyPath = Path.Combine(world.Root, "secret-absence-key-" + Guid.NewGuid().ToString("N") + ".key");
             keyText = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
@@ -227,25 +317,52 @@ internal sealed class EvidenceWire : IAsyncDisposable
             logs, world, key, keyPath, keyText);
     }
 
-    public sealed record Answer(int Status, byte[] Body, string Nonce, string? Mac, string? CacheControl, bool Authenticated);
+    public sealed record Answer(int Status, byte[] Body, string Nonce, string? Mac, string? CacheControl, bool Authenticated)
+    {
+        /// <summary>F2: what was sent, so a test can replay the identical signed request.</summary>
+        public byte[] SentBody { get; init; } = [];
+        public string SentMac { get; init; } = "";
+        public string SentKeyId { get; init; } = "";
+        public Guid RouteId { get; init; }
+        public string SentOperation { get; init; } = "";
+    }
 
     public async Task<Answer> PostAsync(
         string operation, Guid routeId, AbsenceEvidenceKey? signingKey = null, string? keyIdOverride = null,
         Func<string, string>? mutateBodyAfterSigning = null, Guid? bodySessionId = null)
     {
         var request = new RunnerAbsenceRequest(RunnerAbsenceEvidence.Version, bodySessionId ?? routeId,
-            RuntimeWorld.Generation, World.StoreId, RunnerAbsenceEvidence.NewNonce());
+            RuntimeWorld.Generation, World.StoreId, RunnerAbsenceEvidence.NewNonce(), World.Clock.GetUtcNow().UtcDateTime);
         var body = RunnerAbsenceEvidence.RequestBody(request);
         var signer = signingKey ?? Key ?? ForeignKey();
         var mac = AbsenceEvidenceAuthentication.Sign(signer, AbsenceEvidenceAuthentication.RequestCanonical(
             operation, routeId, request.AcceptedStartedAt, request.RunnerStoreId, request.RequestNonce, body));
         if (mutateBodyAfterSigning is not null)
             body = Encoding.UTF8.GetBytes(mutateBodyAfterSigning(Encoding.UTF8.GetString(body)));
+        return await SendAsync(operation, routeId, body, keyIdOverride ?? signer.KeyId, mac, request.RequestNonce);
+    }
+
+    /// <summary>
+    /// F2: send the identical signed request again, or (with <paramref name="otherOperation"/>) the
+    /// same body and nonce correctly re-signed by the key holder for the other route.
+    /// </summary>
+    public Task<Answer> ResendAsync(Answer original, string? otherOperation = null)
+    {
+        if (otherOperation is null)
+            return SendAsync(original.SentOperation, original.RouteId, original.SentBody, original.SentKeyId, original.SentMac, original.Nonce);
+        var parsed = AbsenceEvidenceRoutes.ParseRequest(original.SentBody)!;
+        var mac = AbsenceEvidenceAuthentication.Sign(Key!, AbsenceEvidenceAuthentication.RequestCanonical(
+            otherOperation, original.RouteId, parsed.AcceptedStartedAt, parsed.RunnerStoreId, parsed.RequestNonce, original.SentBody));
+        return SendAsync(otherOperation, original.RouteId, original.SentBody, Key!.KeyId, mac, original.Nonce);
+    }
+
+    private async Task<Answer> SendAsync(string operation, Guid routeId, byte[] body, string keyId, string mac, string nonce)
+    {
         var path = operation == AbsenceEvidenceAuthentication.PrepareOperation
             ? $"/sessions/{routeId:D}/absence-evidence/prepare" : $"/sessions/{routeId:D}/absence-evidence";
         using var message = new HttpRequestMessage(HttpMethod.Post, path) { Content = new ByteArrayContent(body) };
         message.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/json");
-        message.Headers.Add(AbsenceEvidenceAuthentication.KeyIdHeader, keyIdOverride ?? signer.KeyId);
+        message.Headers.Add(AbsenceEvidenceAuthentication.KeyIdHeader, keyId);
         message.Headers.Add(AbsenceEvidenceAuthentication.MacHeader, mac);
         using var response = await _http.SendAsync(message);
         var bytes = await response.Content.ReadAsByteArrayAsync();
@@ -253,9 +370,11 @@ internal sealed class EvidenceWire : IAsyncDisposable
         _responses.Add(Encoding.UTF8.GetString(bytes));
         _responses.Add(string.Join(";", response.Headers.Select(h => h.Key + "=" + string.Join(",", h.Value))));
         var authenticated = Key is not null && AbsenceEvidenceAuthentication.Verify(Key,
-            AbsenceEvidenceAuthentication.ResponseCanonical(operation, request.RequestNonce, (int)response.StatusCode, bytes), responseMac);
-        return new((int)response.StatusCode, bytes, request.RequestNonce, responseMac,
-            response.Headers.CacheControl?.ToString(), authenticated);
+            AbsenceEvidenceAuthentication.ResponseCanonical(operation, nonce, (int)response.StatusCode, bytes), responseMac);
+        return new((int)response.StatusCode, bytes, nonce, responseMac, response.Headers.CacheControl?.ToString(), authenticated)
+        {
+            SentBody = body, SentMac = mac, SentKeyId = keyId, RouteId = routeId, SentOperation = operation,
+        };
     }
 
     public async Task<HttpStatusCode> GetAsync(string path)
