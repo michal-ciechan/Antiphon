@@ -428,9 +428,12 @@ public class StandingBootWatchdogTests
                             break;
                         }
                         case "pointer-changed-before-insert":
+                        {
+                            var elsewhere = Guid.NewGuid().ToString("D");
                             await db.Agents.Where(a => a.Id == f.AgentId)
-                                .ExecuteUpdateAsync(a => a.SetProperty(x => x.PersistentSessionId, Guid.NewGuid().ToString("D")));
+                                .ExecuteUpdateAsync(a => a.SetProperty(x => x.PersistentSessionId, elsewhere));
                             break;
+                        }
                         default:
                             await db.AgentSessions.Where(s => s.Id == f.SessionId)
                                 .ExecuteUpdateAsync(s => s.SetProperty(x => x.StartedAt, f.StartedAt.AddHours(-1)));
@@ -440,8 +443,22 @@ public class StandingBootWatchdogTests
                 f.WriterInterceptors = [interleave];
                 (await f.SweepAsync()).ShouldBe(0, f.Warnings());
                 interleave.Arrivals.ShouldBe(1, "the change ran inside the writer, after the decision");
+                await using (var db = f.Read())
+                {
+                    var pointer = f.SessionId.ToString("D");
+                    var landed = change switch
+                    {
+                        "pointer-changed-before-insert" => !await db.Agents.AnyAsync(
+                            a => a.Id == f.AgentId && a.PersistentSessionId == pointer),
+                        "generation-changed-before-insert" => await db.AgentSessions.AnyAsync(
+                            s => s.Id == f.SessionId && s.StartedAt == f.StartedAt.AddHours(-1)),
+                        _ => await db.AgentTasks.AnyAsync(t => t.AgentSessionId == f.SessionId),
+                    };
+                    landed.ShouldBeTrue($"control: the {change} committed before the writer's lock statement");
+                }
+
                 (await f.ReceiptsAsync()).ShouldBeEmpty($"{change}: the decided episode is no longer current");
-                f.Warnings().ShouldNotContain("Could not record", customMessage: "a mismatch is silent, not a fault");
+                f.Warnings().ShouldNotContain("Could not record", customMessage: "a mismatch is silent, not a fault\n" + f.Warnings());
                 var after = await f.SnapshotAsync();
                 after.Supervision.ShouldBe(before.Supervision);
                 after.QueueBodies.ShouldBe(before.QueueBodies);
