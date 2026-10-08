@@ -574,6 +574,338 @@ public sealed class BlockedTaskParkReplyAdmissionTests
         await ShouldContinueAsync(f, $"{label}-restored");
     }
 
+    [Test]
+    [Arguments("missing-session")]
+    [Arguments("session-runner-mismatch")]
+    [Arguments("session-store-mismatch")]
+    [Arguments("task-runner-null")]
+    [Arguments("task-runner-empty")]
+    [Arguments("task-session-null")]
+    public async Task C1154_LocalSessionIdentityParity(string world)
+    {
+        var label = $"c1154-local-session-{world}";
+        await using var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked, parking: true);
+        await BlockedTaskParkDeliveryTests.PublishAsync(f);
+        await BlockedTaskParkDeliveryTests.StampAsync(f);
+        await f.EditAsync((_, agent) => agent.IsPoolDelegate = false);
+        var release = await ReleaseAsync(f);
+        await ShouldAdmitLocallyAsync(f, release.Id, $"{label}-before");
+
+        // Only the named session or task binding changes; the ledger stays confirmed and exact.
+        await using (var db = f.Db())
+        {
+            var task = await db.AgentTasks.SingleAsync(t => t.Id == f.TaskId);
+            var session = await db.AgentSessions.SingleAsync(s => s.Id == f.SessionId);
+            switch (world)
+            {
+                case "missing-session":
+                    (await db.AgentSessions.Where(s => s.Id == f.SessionId).ExecuteDeleteAsync()).ShouldBe(1, label);
+                    break;
+                case "session-runner-mismatch": session.RunnerId = "other-runner"; break;
+                // CK_AgentSessions_RunnerBinding_AllOrNone forbids a lone null store.
+                case "session-store-mismatch": session.RunnerStoreId = Guid.NewGuid(); break;
+                case "task-runner-null": task.RunnerId = null; break;
+                case "task-runner-empty": task.RunnerId = ""; break;
+                case "task-session-null": task.AgentSessionId = null; break;
+                default: throw new ArgumentOutOfRangeException(nameof(world), world, null);
+            }
+            await db.SaveChangesAsync();
+        }
+
+        await ShouldNotAdmitAsync(f, label);
+        (await GuidanceAsync(f)).ShouldBe(AgentTaskService.RemotePoolParkReply.ReleaseMismatch, label);
+        await LocalMismatchRefusedAsync(f, label);
+        await ShouldVetoAnswerAsync(f, label);
+        ShouldMatch(await ReleaseAsync(f), release, label);
+    }
+
+    [Test]
+    [Arguments("admitted-stopped")]
+    [Arguments("admitted-running")]
+    [Arguments("mismatch-stopped")]
+    [Arguments("mismatch-running")]
+    [Arguments("no-park-running")]
+    [Arguments("no-park-stopped")]
+    [Arguments("previous-attempt-stopped")]
+    [Arguments("unknown-outcome-stopped")]
+    [Arguments("missing-confirmed-at-stopped")]
+    [Arguments("remote-admitted-running")]
+    [Arguments("remote-mismatch-running")]
+    public async Task C1154_LocalGuidanceEvidenceOrder(string world)
+    {
+        var label = $"c1154-order-{world}";
+        var parked = !world.StartsWith("no-park", StringComparison.Ordinal);
+        await using var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked, parking: parked);
+        if (parked)
+        {
+            await BlockedTaskParkDeliveryTests.PublishAsync(f);
+            await BlockedTaskParkDeliveryTests.StampAsync(f);
+        }
+        if (!world.StartsWith("remote-", StringComparison.Ordinal))
+            await f.EditAsync((_, agent) => agent.IsPoolDelegate = false);
+
+        switch (world)
+        {
+            case "mismatch-stopped" or "mismatch-running" or "remote-mismatch-running":
+                await EditReleaseAsync(f, r => r.SettlementRevision = Guid.NewGuid());
+                break;
+            case "previous-attempt-stopped":
+            {
+                await using var db = f.Db();
+                var park = await db.AgentTaskParks.SingleAsync(p => p.TaskId == f.TaskId);
+                park.Attempt = park.Attempt - 1;
+                await db.SaveChangesAsync();
+                break;
+            }
+            case "unknown-outcome-stopped":
+                await EditReleaseAsync(f, r => r.OutcomeCode = nameof(TerminalSeatReleaseOutcome.Unknown));
+                break;
+            case "missing-confirmed-at-stopped":
+                await EditReleaseAsync(f, r => r.ConfirmedAt = null);
+                break;
+        }
+
+        // Only the session status changes to model a stale or dead projection.
+        await SetSessionStatusAsync(f, world.EndsWith("-running", StringComparison.Ordinal)
+            ? SessionStatus.Running : SessionStatus.Stopped);
+        var blockedShort = DelegationReportFormatter.Short(f.TaskId);
+
+        switch (world)
+        {
+            case "admitted-stopped" or "admitted-running":
+            {
+                (await GuidanceAsync(f)).ShouldBe(AgentTaskService.RemotePoolParkReply.Admitted, label);
+                var named = await LocalFollowUpRefusedAsync(f, label);
+                named.Message.ShouldContain("The published seat was released.", Case.Sensitive, label);
+                named.Message.ShouldContain($"-Reply {blockedShort}", Case.Sensitive, label);
+                named.Message.ShouldNotContain("waiting for an answer", Case.Sensitive, label);
+                named.Message.ShouldNotContain("/cancel", Case.Sensitive, label);
+                await ShouldContinueAsync(f, label);
+                break;
+            }
+            case "mismatch-stopped" or "mismatch-running":
+                (await GuidanceAsync(f)).ShouldBe(AgentTaskService.RemotePoolParkReply.ReleaseMismatch, label);
+                (await LocalMismatchRefusedAsync(f, label)).Message
+                    .ShouldNotContain("waiting for an answer", Case.Sensitive, label);
+                await ShouldVetoAnswerAsync(f, label);
+                break;
+            case "no-park-running":
+            {
+                (await GuidanceAsync(f)).ShouldBe(AgentTaskService.RemotePoolParkReply.None, label);
+                var live = await LocalFollowUpRefusedAsync(f, label);
+                live.Message.ShouldContain("waiting for an answer", Case.Sensitive, label);
+                live.Message.ShouldContain($"-Reply {blockedShort}", Case.Sensitive, label);
+                live.Message.ShouldContain($"/api/agent-tasks/{blockedShort}/cancel", Case.Sensitive, label);
+                live.Message.ShouldNotContain("published seat was released", Case.Sensitive, label);
+                live.Message.ShouldNotContain("does not match answer admission", Case.Sensitive, label);
+
+                // An ordinary live Reply stays on this session and attempt and stops nothing.
+                await f.IngestAsync(TranscriptKinds.UserPrompt, "busy", f.Now);
+                await f.AnswerAsync("same conversation c1154");
+                var task = await f.TaskAsync();
+                task.Attempt.ShouldBe(1, label);
+                task.AgentSessionId.ShouldBe(f.SessionId, label);
+                task.Status.ShouldBe(AgentTaskStatus.Working, label);
+                task.ReleasedSeatAnswerId.ShouldBeNull(label);
+                await using var read = f.Db();
+                (await read.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == f.SessionId)).Body
+                    .ShouldContain("same conversation c1154", Case.Sensitive, label);
+                f.RecordedStops.Killed.ShouldBeEmpty(label);
+                f.Launches.Calls.ShouldBeEmpty(label);
+                break;
+            }
+            case "no-park-stopped" or "previous-attempt-stopped" or "missing-confirmed-at-stopped":
+            {
+                (await GuidanceAsync(f)).ShouldBe(AgentTaskService.RemotePoolParkReply.None, label);
+                var dead = await LocalFollowUpRefusedAsync(f, label);
+                dead.Message.ShouldContain("no longer live", Case.Sensitive, label);
+                dead.Message.ShouldContain($"/api/agent-tasks/{blockedShort}/cancel", Case.Sensitive, label);
+                dead.Message.ShouldContain("re-send", Case.Sensitive, label);
+                dead.Message.ShouldNotContain("-Reply", Case.Sensitive, label);
+                dead.Message.ShouldNotContain("published seat was released", Case.Sensitive, label);
+                dead.Message.ShouldNotContain("does not match answer admission", Case.Sensitive, label);
+                break;
+            }
+            case "unknown-outcome-stopped":
+                (await GuidanceAsync(f)).ShouldBe(AgentTaskService.RemotePoolParkReply.ReleaseMismatch, label);
+                await LocalMismatchRefusedAsync(f, label);
+                break;
+            case "remote-admitted-running":
+            {
+                (await GuidanceAsync(f)).ShouldBe(AgentTaskService.RemotePoolParkReply.Admitted, label);
+                var named = await RemoteFollowUpRefusedAsync(f, label);
+                named.Message.ShouldContain($"-Reply {blockedShort}", Case.Sensitive, label);
+                named.Message.ShouldNotContain("cannot be continued", Case.Sensitive, label);
+                await ShouldContinueAsync(f, label);
+                break;
+            }
+            case "remote-mismatch-running":
+            {
+                (await GuidanceAsync(f)).ShouldBe(AgentTaskService.RemotePoolParkReply.ReleaseMismatch, label);
+                var refused = await RemoteFollowUpRefusedAsync(f, label);
+                refused.Message.ShouldNotContain("-Reply", Case.Sensitive, label);
+                refused.Message.ShouldContain("does not match answer admission", Case.Sensitive, label);
+                refused.Message.ShouldContain("Create a fresh task", Case.Sensitive, label);
+                await ShouldVetoAnswerAsync(f, label);
+                break;
+            }
+            default: throw new ArgumentOutOfRangeException(nameof(world), world, null);
+        }
+    }
+
+    [Test]
+    public async Task C1154_LocalGuidanceUsesOneStatement()
+    {
+        var rosters = new Dictionary<string, string[]>();
+        foreach (var world in new[] { "admitted", "mismatched-revision", "missing-session", "no-park", "multiple-parks" })
+        {
+            var label = $"c1154-sql-{world}";
+            var counter = new FullCommandCounter();
+            var parked = world != "no-park";
+            await using var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked, parking: parked,
+                configureDb: options => options.AddInterceptors(counter));
+            if (parked)
+            {
+                await BlockedTaskParkDeliveryTests.PublishAsync(f);
+                await BlockedTaskParkDeliveryTests.StampAsync(f);
+            }
+            await f.EditAsync((_, agent) => agent.IsPoolDelegate = false);
+            var expected = AgentTaskService.RemotePoolParkReply.Admitted;
+            switch (world)
+            {
+                case "admitted": break;
+                case "mismatched-revision":
+                    await EditReleaseAsync(f, r => r.SettlementRevision = Guid.NewGuid());
+                    expected = AgentTaskService.RemotePoolParkReply.ReleaseMismatch;
+                    break;
+                case "missing-session":
+                {
+                    await using var db = f.Db();
+                    (await db.AgentSessions.Where(s => s.Id == f.SessionId).ExecuteDeleteAsync()).ShouldBe(1, label);
+                    expected = AgentTaskService.RemotePoolParkReply.ReleaseMismatch;
+                    break;
+                }
+                case "no-park":
+                {
+                    // The ordinary live Blocked world: one liveness read plus the one guidance read.
+                    await using var db = f.Db();
+                    (await db.AgentSessions.SingleAsync(s => s.Id == f.SessionId)).Status
+                        .ShouldBe(SessionStatus.Running, label);
+                    expected = AgentTaskService.RemotePoolParkReply.None;
+                    break;
+                }
+                case "multiple-parks":
+                    await AddMismatchedCandidateAsync(f);
+                    break;
+                default: throw new ArgumentOutOfRangeException(nameof(world), world);
+            }
+
+            // Helper boundary: the classifier alone is one SELECT with no write.
+            var task = await f.TaskAsync();
+            AgentTaskService.RemotePoolParkReply actual;
+            using (var scope = f.Harness.Provider.CreateScope())
+            {
+                var service = scope.ServiceProvider.GetRequiredService<AgentTaskService>();
+                counter.Reset();
+                actual = await service.RemotePoolParkReplyAsync(task, CancellationToken.None);
+            }
+            var helperRoster = counter.Roster();
+            Console.WriteLine($"C1154-SQL helper world={world} statements={counter.Total}\n{helperRoster}");
+            actual.ShouldBe(expected, label);
+            counter.Total.ShouldBe(1, $"{label}\n{helperRoster}");
+            ShouldBeGuidanceSelect(counter.Commands[0], label);
+
+            // Public Create: every command the real follow-up sends, with no fixture read inside.
+            var tasksBefore = await CountAsync(f);
+            counter.Reset();
+            var refused = await Should.ThrowAsync<ConflictException>(() => BlockedTaskParkDeliveryTests.FollowUpAsync(f));
+            var commands = counter.Commands.ToArray();
+            var publicRoster = counter.Roster();
+            Console.WriteLine($"C1154-SQL create world={world} statements={commands.Length}\n{publicRoster}");
+            refused.StatusCode.ShouldBe(409, label);
+            refused.Code.ShouldBe("follow_up_agent_blocked", label);
+            switch (expected)
+            {
+                case AgentTaskService.RemotePoolParkReply.Admitted:
+                    refused.Message.ShouldContain($"-Reply {DelegationReportFormatter.Short(f.TaskId)}", Case.Sensitive, label);
+                    refused.Message.ShouldContain("The published seat was released.", Case.Sensitive, label);
+                    break;
+                case AgentTaskService.RemotePoolParkReply.ReleaseMismatch:
+                    refused.Message.ShouldNotContain("-Reply", Case.Sensitive, label);
+                    refused.Message.ShouldContain("does not match answer admission", Case.Sensitive, label);
+                    break;
+                default:
+                    refused.Message.ShouldContain("waiting for an answer", Case.Sensitive, label);
+                    break;
+            }
+            (await CountAsync(f)).ShouldBe(tasksBefore, label);
+
+            var evidence = commands.Where(c => c.Contains("\"AgentTaskParks\"", StringComparison.Ordinal)
+                || c.Contains("\"RunnerSeatReleases\"", StringComparison.Ordinal)).ToArray();
+            evidence.Length.ShouldBe(1, $"{label}\n{publicRoster}");
+            ShouldBeGuidanceSelect(evidence[0], label);
+            foreach (var sql in commands)
+                ShouldNotWrite(sql, $"{label}\n{publicRoster}");
+            rosters[world] = commands.Select(Normalize).ToArray();
+        }
+
+        // One versus several candidate parks: the same commands, in the same order.
+        rosters["multiple-parks"].ShouldBe(rosters["admitted"], "c1154-sql-multiple-parks roster");
+    }
+
+    private static string Normalize(string sql) =>
+        string.Join(' ', sql.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+
+    private static void ShouldBeGuidanceSelect(string sql, string label)
+    {
+        sql.TrimStart().ShouldStartWith("SELECT", Case.Insensitive, label);
+        sql.ShouldContain("\"AgentTaskParks\"", Case.Sensitive, label);
+        sql.ShouldContain("\"RunnerSeatReleases\"", Case.Sensitive, label);
+        sql.ShouldContain("\"AgentSessions\"", Case.Sensitive, label);
+        ShouldNotWrite(sql, label);
+    }
+
+    private static void ShouldNotWrite(string sql, string label)
+    {
+        foreach (var write in new[] { "INSERT ", "UPDATE ", "DELETE " })
+            sql.ShouldNotContain(write, Case.Insensitive, label);
+    }
+
+    // A second current-attempt park whose confirmed release has its own, mismatched identity.
+    private static async Task AddMismatchedCandidateAsync(RunnerSeatReleaseFixture f)
+    {
+        await using var db = f.Db();
+        var park = await db.AgentTaskParks.AsNoTracking().SingleAsync(p => p.TaskId == f.TaskId);
+        var release = await db.RunnerSeatReleases.AsNoTracking().SingleAsync(r => r.Id == park.RunnerSeatReleaseId);
+        var candidateId = Guid.NewGuid();
+        db.RunnerSeatReleases.Add(new RunnerSeatRelease
+        {
+            Id = candidateId, RunnerId = release.RunnerId, RunnerStoreId = release.RunnerStoreId,
+            SessionId = release.SessionId, AcceptedStartedAt = release.AcceptedStartedAt.AddSeconds(1),
+            TaskId = release.TaskId, Attempt = release.Attempt, AgentId = release.AgentId,
+            SettlementRevision = Guid.NewGuid(), SettledAt = release.SettledAt,
+            State = RunnerSeatReleaseState.Confirmed, ConfirmedAt = release.ConfirmedAt,
+            ActionId = Guid.NewGuid(), OutcomeCode = release.OutcomeCode,
+            ReasonCode = release.ReasonCode, CreatedAt = f.Now, UpdatedAt = f.Now,
+        });
+        db.AgentTaskParks.Add(new AgentTaskPark
+        {
+            Id = Guid.NewGuid(), TaskId = park.TaskId, Attempt = park.Attempt,
+            BlockEventId = Guid.NewGuid(), TaskConcurrencyToken = park.TaskConcurrencyToken,
+            PublicationReceiptId = Guid.NewGuid(), RunnerSeatReleaseId = candidateId,
+            State = AgentTaskParkState.Parked, ReasonCode = "park_parked",
+            BlockedAt = park.BlockedAt, CreatedAt = f.Now, UpdatedAt = f.Now,
+        });
+        await db.SaveChangesAsync();
+    }
+
+    private static async Task SetSessionStatusAsync(RunnerSeatReleaseFixture f, SessionStatus status)
+    {
+        await using var db = f.Db();
+        (await db.AgentSessions.Where(s => s.Id == f.SessionId)
+            .ExecuteUpdateAsync(u => u.SetProperty(s => s.Status, status))).ShouldBe(1);
+    }
+
     private static async Task<AgentTaskService.RemotePoolParkReply> GuidanceAsync(RunnerSeatReleaseFixture f)
     {
         var task = await f.TaskAsync();
@@ -668,6 +1000,18 @@ public sealed class BlockedTaskParkReplyAdmissionTests
         (await QueuedAsync(f, f.SessionId)).ShouldBe(queued, label);
         f.Launches.Calls.Count.ShouldBe(launches, label);
         f.RecordedStops.Killed.Count.ShouldBe(kills, label);
+        return refused;
+    }
+
+    // A confirmed park that answer admission refuses: neither Reply nor cancellation is named.
+    private static async Task<ConflictException> LocalMismatchRefusedAsync(RunnerSeatReleaseFixture f, string label)
+    {
+        var refused = await LocalFollowUpRefusedAsync(f, label);
+        refused.Message.ShouldNotContain("-Reply", Case.Sensitive, label);
+        refused.Message.ShouldNotContain("cancel", Case.Insensitive, label);
+        refused.Message.ShouldNotContain("published seat was released", Case.Sensitive, label);
+        refused.Message.ShouldContain("does not match answer admission", Case.Sensitive, label);
+        refused.Message.ShouldContain("cannot be continued", Case.Sensitive, label);
         return refused;
     }
 
