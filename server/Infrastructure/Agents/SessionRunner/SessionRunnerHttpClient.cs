@@ -604,7 +604,8 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
     }
 
     // CARD-1153 D-3/D-4: one signed POST, one fresh nonce, a five-second total deadline on the
-    // injected clock, no generic read retries. The transcript 404 is never reinterpreted.
+    // injected clock, no generic read retries. The transcript 404 is never reinterpreted. F3: the
+    // deadline starts before capability discovery and bounds discovery plus the POST together.
     private static readonly TimeSpan AbsenceDeadline = TimeSpan.FromSeconds(5);
     private readonly Lazy<AbsenceEvidenceKey?> _absenceKey;
 
@@ -660,7 +661,24 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
         AbsenceExchange Failed(string reason, RunnerAbsenceRequest request) =>
             new(null, reason, 0, [], RunnerAbsenceAuthentication.Missing, request, default, default);
 
-        var capabilities = await GetCapabilitiesAsync(ct);
+        // F3: one deadline from before discovery to the end of the read; elapsed time starts here too.
+        using var deadline = new CancellationTokenSource(AbsenceDeadline, _time);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, deadline.Token);
+        var sentAt = _time.GetUtcNow();
+        RunnerCapabilitiesDto? capabilities;
+        try
+        {
+            capabilities = await GetCapabilitiesAsync(linked.Token);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (OperationCanceledException) when (deadline.IsCancellationRequested)
+        {
+            return Failed("absence_evidence_deadline", placeholder);
+        }
+
         if (capabilities?.Features?.Contains(RunnerAbsenceEvidence.Feature) != true)
             return Unsupported("absence_evidence_capability_absent");
         if (_absenceKey.Value is not { } key)
@@ -689,9 +707,6 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
             AbsenceEvidenceAuthentication.RequestCanonical(operation, sessionId, request.AcceptedStartedAt,
                 request.RunnerStoreId, request.RequestNonce, body)));
 
-        using var deadline = new CancellationTokenSource(AbsenceDeadline, _time);
-        using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, deadline.Token);
-        var sentAt = _time.GetUtcNow();
         int status;
         byte[] responseBody;
         RunnerAbsenceAuthentication authentication;

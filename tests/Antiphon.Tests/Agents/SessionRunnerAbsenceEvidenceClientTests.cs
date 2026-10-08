@@ -131,6 +131,68 @@ public class SessionRunnerAbsenceEvidenceClientTests
         RunnerAbsenceEvidence.IsValidNonce(world.Posts[0].Nonce).ShouldBeTrue("each read carries a fresh 32-byte nonce");
     }
 
+    /// <summary>
+    /// CARD-1153 F3 (Review 1a174347 prepare/certify-capability-deadline probes). The five-second
+    /// total deadline covers capability discovery plus the POST, for both methods: a discovery
+    /// that never answers ends at the deadline (fake clock, no wall sleep) with the unknown/failed
+    /// outcome and no POST; a 3 s discovery plus a 2.1 s POST ends at the deadline too. Each method
+    /// has a pristine control (2 s discovery plus 2.9 s POST admits). Never proof, never absent.
+    /// </summary>
+    [Test]
+    [Arguments("certify", "pending-discovery")]
+    [Arguments("certify", "discovery-plus-post")]
+    [Arguments("prepare", "pending-discovery")]
+    [Arguments("prepare", "discovery-plus-post")]
+    public async Task C1153_Deadline_covers_capability_discovery(string method, string shape)
+    {
+        using var world = new ClientWorld();
+        var started = world.Clock.GetUtcNow();
+        world.CapabilitiesDelay = TimeSpan.FromSeconds(2);
+        var control = method == "certify"
+            ? (await world.CertifyAsync(_ => ClientWorld.Answer.Pristine with { AdvanceBefore = TimeSpan.FromSeconds(2.9) })).Kind.ToString()
+            : (await world.PrepareAsync(TimeSpan.FromSeconds(2.9))).Prepared.ToString();
+        control.ShouldBe(method == "certify" ? nameof(SessionRunnerAbsenceEvidenceKind.Proven) : bool.TrueString,
+            "pristine control: discovery plus POST inside five seconds admits");
+        world.Posts.Clear();
+
+        started = world.Clock.GetUtcNow();
+        Task<string> call;
+        if (shape == "pending-discovery")
+        {
+            var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            world.CapabilitiesDelay = TimeSpan.Zero;
+            world.CapabilitiesGate = async token => { entered.TrySetResult(); await Task.Delay(Timeout.Infinite, token); };
+            call = Outcome(world, method, TimeSpan.Zero);
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            world.Clock.Advance(TimeSpan.FromSeconds(5.1));
+        }
+        else
+        {
+            world.CapabilitiesDelay = TimeSpan.FromSeconds(3);
+            call = Outcome(world, method, TimeSpan.FromSeconds(2.1));
+        }
+
+        var outcome = await call.WaitAsync(TimeSpan.FromSeconds(10));
+
+        outcome.ShouldBe((method == "certify" ? "Unknown" : "False") + ":absence_evidence_deadline",
+            $"{shape}: the total deadline ended the {method}");
+        (world.Clock.GetUtcNow() - started).ShouldBeLessThan(TimeSpan.FromSeconds(5.2), "no extra budget after the deadline");
+        world.Posts.Count.ShouldBe(shape == "pending-discovery" ? 0 : 1);
+    }
+
+    private static async Task<string> Outcome(ClientWorld world, string method, TimeSpan postDelay)
+    {
+        if (method == "certify")
+        {
+            var result = await world.CertifyAsync(_ => ClientWorld.Answer.Pristine with { AdvanceBefore = postDelay });
+            result.Evidence.ShouldBeNull();
+            return result.Kind + ":" + result.Reason;
+        }
+
+        var prepared = await world.PrepareAsync(postDelay);
+        return prepared.Prepared + ":" + prepared.Reason;
+    }
+
     /// <summary>The production HTTP client over a stub runner that signs with the production signer.</summary>
     private sealed class ClientWorld : IDisposable
     {
@@ -156,6 +218,10 @@ public class SessionRunnerAbsenceEvidenceClientTests
         public Guid SessionId { get; } = Guid.NewGuid();
         public List<Post> Posts { get; } = [];
 
+        /// <summary>F3: fake time the capabilities answer takes, and an optional gate it awaits.</summary>
+        public TimeSpan CapabilitiesDelay { get; set; }
+        public Func<CancellationToken, Task>? CapabilitiesGate { get; set; }
+
         public ClientWorld()
         {
             Directory.CreateDirectory(_root);
@@ -165,7 +231,7 @@ public class SessionRunnerAbsenceEvidenceClientTests
             _key = AbsenceEvidenceKey.FromMaterial(material);
             var settings = new SessionRunnerSettings { BaseUrl = "http://runner.test" };
             settings.AbsenceEvidence.KeyPath = keyPath;
-            _client = new SessionRunnerHttpClient(new HttpClient(new StubHandler(Respond)), new StubFactory(),
+            _client = new SessionRunnerHttpClient(new HttpClient(new StubHandler(RespondAsync)), new StubFactory(),
                 Options.Create(settings), time: Clock);
         }
 
@@ -173,6 +239,24 @@ public class SessionRunnerAbsenceEvidenceClientTests
         {
             _answer = answer;
             return _client.CertifyAbsenceAsync(SessionId, Generation, Store, ct);
+        }
+
+        /// <summary>F3: prepare, answered by a signed Prepared acknowledgement after <paramref name="postDelay"/>.</summary>
+        public Task<SessionRunnerAbsencePrepareResult> PrepareAsync(TimeSpan postDelay, CancellationToken ct = default)
+        {
+            _answer = _ => Answer.Pristine with { AdvanceBefore = postDelay };
+            return _client.PrepareAbsenceEvidenceAsync(SessionId, Generation, Store, ct);
+        }
+
+        private async Task<HttpResponseMessage> RespondAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            if (request.RequestUri!.AbsolutePath == "/capabilities")
+            {
+                if (CapabilitiesGate is { } gate) await gate(ct);
+                if (CapabilitiesDelay > TimeSpan.Zero) Clock.Advance(CapabilitiesDelay);
+            }
+
+            return Respond(request);
         }
 
         private HttpResponseMessage Respond(HttpRequestMessage request)
@@ -189,7 +273,12 @@ public class SessionRunnerAbsenceEvidenceClientTests
             var answer = _answer(posted);
             if (answer.AdvanceBefore > TimeSpan.Zero) Clock.Advance(answer.AdvanceBefore);
             string text;
+            var prepare = request.RequestUri.AbsolutePath.EndsWith("/prepare", StringComparison.Ordinal);
             if (answer.RawBody is { } raw) text = raw;
+            else if (prepare)
+                text = JsonSerializer.Serialize(new RunnerAbsencePrepared(1, "Prepared", posted.SessionId,
+                    SessionGeneration.Normalize(posted.AcceptedStartedAt), posted.RunnerStoreId, Guid.NewGuid(), posted.RequestNonce),
+                    new JsonSerializerOptions(JsonSerializerDefaults.Web));
             else
             {
                 var shape = AbsenceCertificateShape.Pristine(posted.SessionId, posted.AcceptedStartedAt, posted.RunnerStoreId,
@@ -205,7 +294,7 @@ public class SessionRunnerAbsenceEvidenceClientTests
                 var signer = answer.ForeignKey ? AbsenceEvidenceKey.FromMaterial(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32)) : _key;
                 response.Headers.Add(AbsenceEvidenceAuthentication.KeyIdHeader, _key.KeyId);
                 response.Headers.Add(AbsenceEvidenceAuthentication.MacHeader, AbsenceEvidenceAuthentication.Sign(signer,
-                    AbsenceEvidenceAuthentication.ResponseCanonical(AbsenceEvidenceAuthentication.CertifyOperation,
+                    AbsenceEvidenceAuthentication.ResponseCanonical(prepare ? AbsenceEvidenceAuthentication.PrepareOperation : AbsenceEvidenceAuthentication.CertifyOperation,
                         posted.RequestNonce, (int)answer.Code, bytes)));
             }
 
@@ -229,13 +318,13 @@ public class SessionRunnerAbsenceEvidenceClientTests
         public HttpClient CreateClient(string name) => new();
     }
 
-    private sealed class StubHandler(Func<HttpRequestMessage, HttpResponseMessage> respond) : HttpMessageHandler
+    private sealed class StubHandler(Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> respond) : HttpMessageHandler
     {
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
-            var response = respond(request);
+            var response = await respond(request, cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
-            return Task.FromResult(response);
+            return response;
         }
     }
 }
