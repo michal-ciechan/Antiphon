@@ -258,7 +258,8 @@ public sealed class PhoneHomeRunnerClient : ISessionRunnerClient, IVerificationW
         var missing = Antiphon.Server.Application.Services.RunnerAbsenceAuthentication.Missing;
         var store = _connection.RunnerStoreId;
         var request = new RunnerAbsenceRequest(RunnerAbsenceEvidence.Version, sessionId,
-            SessionGeneration.Normalize(acceptedStartedAt), store, RunnerAbsenceEvidence.NewNonce());
+            SessionGeneration.Normalize(acceptedStartedAt), store, RunnerAbsenceEvidence.NewNonce(),
+            _time.GetUtcNow().UtcDateTime);
         AbsenceExchange Unsupported(string reason) => new(reason, null, null, missing, request, default, default);
         AbsenceExchange Failed(string reason) => new(null, reason, null, missing, request, default, default);
 
