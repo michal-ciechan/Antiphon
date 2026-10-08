@@ -9,9 +9,10 @@ citations below refer to that inspected SHA, not the older plans' line numbers.
 
 Status: implementation and verification design complete; **next: code**. This dispatch
 supplies the requested negative controls, mutation design and executable checkpoint manifest
-in this artifact. No production change is made by the Plan task. Source-derived SQL counts
-below are a statement census, not a claim that a PostgreSQL measurement or test ran in Plan.
-Code must execute the count pins before calling the change verified.
+in this artifact. No production change is made by the Plan task. The source-derived SQL census
+was subsequently checked by an isolated PostgreSQL diagnostic: seven command-count checks and
+three existing budget-method invocations passed. See the dated measurement amendment below.
+The proposed fix has not run; Code must execute its count pins before calling it verified.
 
 ## Outcome and scope
 
@@ -69,8 +70,8 @@ Registration returns the same park; `SameEpisode` fails, `LoadAsync` returns nul
 returns Held/`park_episode_changed`, and neither Git inspection nor the release coordinator is
 reached. At master, both NextAttemptAt and `park_dirty` remain stale. Another visit repeats.
 
-This is a code-path reproduction, not an experiment against a live session or production DB.
-The census counts executing DbCommands, including `ExecuteSql` task locks and UPDATEs; transaction
+This reproduction also ran against an isolated test database (measurement amendment below),
+never a live session or production DB. The census counts executing DbCommands, including `ExecuteSql` task locks and UPDATEs; transaction
 begin/commit messages are not DbCommands. It deliberately differs from
 `CountingCommandInterceptor`, which records only readers. Use `FullCommandCounter`
 (`tests/Antiphon.Tests/TestHelpers/FullCommandCounter.cs:7-9,40-82`) for executed validation.
@@ -411,8 +412,66 @@ Plan inspected the card, current source, referenced owner docs and both follow-u
 live runner defaults/catalogue; counted the exact narrow regression rosters and SQL call paths.
 The checkpoint tool was built through `scripts/build-slot.ps1` at the inspected source SHA:
 build succeeded, 0 errors, 1 existing CS8602 warning in `TaskOwnerGuard.cs:170`. Its importer
-accepted all 19 rows (exit 0). Generated YAML remains ignored. Production and test execution
-is reserved for Code's manifest. No PostgreSQL experiment or CPU-time benchmark is claimed.
+accepted all 19 rows (exit 0). Generated YAML remains ignored. Ordinary implementation acceptance
+is reserved for Code's manifest. No CPU-time benchmark is claimed.
+
+### Measurement amendment, 2026-10-08 08:09 UTC
+
+After the initial plan commit, a foreground, inherited diagnostic executable used the existing
+`RunnerSeatReleaseFixture` through reflection, `FullCommandCounter`, real scratch Git and the
+fixture's fake bound runner. It invoked the two public publication entries, `HandleAsync` and
+`ReclaimResultAsync`, and then the three existing budget arguments directly. PostgreSQL was a
+fixture-owned container with isolated cloned databases, explicitly disposed at completion.
+The runner/check-interpreter/diagnose/distiller/Hangfire environment was pinned to the existing
+test guard's disabled/dead-runner values. No real Program host or provider process was started.
+
+Source at both build and execution: `06163abfa61b4be78915c34405d982f289cbae58`, the initial
+plan-only commit. `git diff 394229df96f7901a9d60c75b1a62a64c259e1e2b..06163abfa61b4be78915c34405d982f289cbae58 -- server tests`
+is empty. Source stayed unchanged through the run. The ignored diagnostic is not a production
+fix, a new committed test, a TUnit/Checkpoint receipt or a claim that CP-1..CP-19 ran.
+
+Commands (the diagnostic artifacts/logs are intentionally ignored):
+
+```sh
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label c1143-cost-probe-build -- dotnet build .antiphon/c1143-probe/Probe.csproj --property:OutputPath=bin-c1143-probe/ --property:UseAppHost=false --nologo
+SessionRunner__BaseUrl=http://127.0.0.1:1 Delegation__CheckInterpreterEnabled=false Delegation__DiagnoseEnabled=false Delegation__OutputDistillerEnabled=false Hangfire__ServerEnabled=false pwsh -NoProfile -File scripts/build-slot.ps1 -Label c1143-cost-probe-run -- dotnet .antiphon/c1143-probe/bin-c1143-probe/Probe.dll
+```
+
+Build: exit 0, 0 errors, 645 warnings across the referenced test/project graph, 142 seconds
+holding its granted build slot. Run: exit 0, seven exact command-count checks plus three budget
+argument invocations, zero failures, 48 seconds holding its granted slot. These are diagnostic
+counts, not TUnit executed-result counts. The future-deadline controls were arranged with a
+direct fixture-only UPDATE after proving the stale row stayed unchanged; they test the existing
+gate, not the unimplemented restamp. The planned due totals of 5/13/26 remain the measured
+4/12/25 plus the proposed single UPDATE.
+
+Diagnostic artifact SHA-256 provenance (payloads remain ignored):
+
+| Artifact under `.antiphon/c1143-probe/` | SHA-256 |
+|---|---|
+| `Program.cs` | `0bbd8e8343c6423fcb932e91630ae3a56332fa566326bc6f525d824bc24f7c8a` |
+| `Probe.csproj` | `30037a0abbc6aaf966e7ecd6e3968769870092f97492db0e75ab920a98007648` |
+| `build.log` | `5802c8a8d5aa3980b52027ab852acf61a9db56b041a6a0270fbea8f3688781d8` |
+| `run.log` | `2fd800ff10dd63ad3f4d1fd23bf636675410f2e8f0047c9332228af37bec4cb2` |
+
+Essential unedited output:
+
+```text
+BUILD SLOT granted lease=b8dfe352-1563-47ec-911b-4f7c90f4b97e waited=0s maxcpucount=6
+C1143-MEASURE prepare-stale-token commands=4 expected=4
+C1143-MEASURE capture-stale-token commands=4 expected=4
+C1143-MEASURE handle-due commands=12 expected=12
+C1143-MEASURE sweep-due commands=25 expected=25
+C1143-MEASURE sweep-next-still-hot commands=25 expected=25
+C1143-RESIDUAL reproduced unchanged-due=true unchanged-revision=true stale-reason=park_dirty release-ledgers=0
+C1143-MEASURE handle-future-manual-control commands=7 expected=7
+C1143-MEASURE sweep-future-manual-control commands=20 expected=20
+C1149-BUDGET held-dispatched-tick total=18
+C1149-BUDGET working-live-tick total=18
+C1149-BUDGET inside-grace-absent-scan total=4
+C1143-DIAGNOSTIC completed command-checks=7 existing-budget-arguments=3 failures=0
+BUILD SLOT released lease=b8dfe352-1563-47ec-911b-4f7c90f4b97e held=48s
+```
 
 Code starts with S1 on current landed source, preserving these decisions and rechecking any
 changed cited file. Bind the dispatch to this artifact's pushed plan commit and section
