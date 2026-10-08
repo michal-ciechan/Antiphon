@@ -448,13 +448,13 @@ public sealed class ReviewEvidenceRecoveryTests
         await using var w = await ReviewRecoveryWorld.CreateAsync();
         await w.SnapshotAsync();
         await using var db = w.Db();
-        var beforeTask = JsonSerializer.Serialize(await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == w.ReviewId));
-        var sessions = JsonSerializer.Serialize(await db.AgentSessions.AsNoTracking().OrderBy(s => s.Id).ToListAsync());
-        var notifications = JsonSerializer.Serialize(await db.AgentTaskLandNotifications.AsNoTracking().ToListAsync());
+        var beforeTask = EntityScalarSnapshot.Of(db, await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == w.ReviewId));
+        var sessions = EntityScalarSnapshot.Of(db, await db.AgentSessions.AsNoTracking().OrderBy(s => s.Id).ToListAsync());
+        var notifications = EntityScalarSnapshot.Of(db, await db.AgentTaskLandNotifications.AsNoTracking().ToListAsync());
         await w.RecoverAsync();
-        JsonSerializer.Serialize(await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == w.ReviewId)).ShouldBe(beforeTask, "G63 Result/status/cost/handoff/receipt");
-        JsonSerializer.Serialize(await db.AgentSessions.AsNoTracking().OrderBy(s => s.Id).ToListAsync()).ShouldBe(sessions, "G63");
-        JsonSerializer.Serialize(await db.AgentTaskLandNotifications.AsNoTracking().ToListAsync()).ShouldBe(notifications, "G63 no new completion");
+        EntityScalarSnapshot.Of(db, await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == w.ReviewId)).ShouldBe(beforeTask, "G63 Result/status/cost/handoff/receipt");
+        EntityScalarSnapshot.Of(db, await db.AgentSessions.AsNoTracking().OrderBy(s => s.Id).ToListAsync()).ShouldBe(sessions, "G63");
+        EntityScalarSnapshot.Of(db, await db.AgentTaskLandNotifications.AsNoTracking().ToListAsync()).ShouldBe(notifications, "G63 no new completion");
     }
     [Test]
     public async Task C1043_ManualFindingCannotCopyFull()
