@@ -126,6 +126,28 @@ session.
   go red on that guard's mutation). `note-id` refuses as `no-proof`: `NoteId` is the proof's
   key. The `CountingReader` promotion moves to S2, its first consumer, so S1 edits no R-1 file.
 
+- **A-6, Code S2 (task `344ba889`).** D1 (S1 Review `ed952d1c`): the cache header now states the
+  telemetry-neutral contract (a lookup, publication or clock fault refuses reuse; a metrics fault is
+  swallowed and a valid hit stays a hit); behaviour and tests unchanged. S1 Review identity follow-up:
+  `TryBuildContext` refuses a malformed identity before any eligibility member (`identity:NoteId` for
+  an empty note id, `identity:QueueMessageId` unless `note.QueueMessageId == row.Id`,
+  `identity:ParentSessionId` for a null or empty parent, `identity:QueueDestination` for an empty row
+  destination), and `TryReuse` refuses `identity:ScanSession` unless the current stamp's session is the
+  context's parent (the scanned session). New policy method
+  `LandReceiptScanCacheTests.C1121_MalformedIdentityNeverReusesNegativeScan` (7 rows), so CP-1 is
+  115 results (96 + 12 + 7). The reconciler is `AgentTaskLandNotificationService.ReconcileAsync`
+  (the Code brief's "SessionReconciliationService.cs" names no file this change touches). Harness
+  differences from §5: the seeded transcript closes with a `TurnEnd` (Count 50, LastSequence 59) so
+  V-11's real queue sees an idle recipient; expected sequences are computed from the committed rows
+  and the in-memory oracle rather than the illustrative 59; `oversized-body` sets an equal
+  16,385+-character body on note and row after the enqueue pass (the event `Detail` column is
+  `varchar(4000)`); `profiled-completion` marks the linked note profiled with a delivery JSON whose
+  member list holds the row (7 commands every pass, as designed); `runner-pull-persist-fails` refuses
+  the row and its stub, which retains a persist failure (W-5's retained-failure arm; a `NeedsReload`
+  arm needs a 23505 race and stays with S3/V-7); the recognizer also accepts the timestamp-floor shape
+  (`t."Timestamp" >= @`, floor null) so `timestamp-only-baseline` is counted. Measured command totals
+  matched §4 exactly for all six V-3 rows.
+
 Two implementation seams the amendments and tests need, within the plan's S1/S2 scope:
 new `LandDeliveryBoundary` names `receipt-scan-before-stamp` (after catch-up and the
 observation, before the before-stamp read), `receipt-scan-exhausted` (after
@@ -443,7 +465,7 @@ through CP-6 own a Testcontainers PostgreSQL and an isolated schema per test. Bu
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
 |---|---|---|---|---|---|---|---:|---:|---|---|
-| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1121-policy/` | policy | `/*/*/LandReceiptScanCacheTests/*` | V-1, V-2 | 108 executed (A-5), 0 failed/skipped | 108 | 4 | true | n/a |
+| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1121-policy/` | policy | `/*/*/LandReceiptScanCacheTests/*` | V-1, V-2, A-6 identity | 115 executed (A-5, A-6), 0 failed/skipped | 115 | 4 | true | n/a |
 | CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1121-behavior/` | pg-behavior | `/*/*/AgentTaskLandReceiptWatermarkTests/*` | V-3, V-4, V-5, V-6, V-10, V-11 | 36 executed, 0 failed/skipped | 36 | 8 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-3 | S3 | `tests/Antiphon.Tests -> bin-c1121-safety/` | pg-safety | `/*/*/AgentTaskLandReceiptWatermarkSafetyTests/*` | V-7, V-8, V-9 | 14 executed, 0 failed/skipped | 14 | 7 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-4 | S3 | `CP-3` | pg-receipts | `/*/Antiphon.Tests.Application/(AgentTaskLandReceiptTests*)\|(AgentTaskLandQueuedReceiptTests*)/*` | R-1 | 64 executed including all 12 C1073 results, 0 failed/skipped | 64 | 5 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
