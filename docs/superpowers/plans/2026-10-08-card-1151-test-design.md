@@ -111,7 +111,7 @@ that proves it. Rows marked with an A-n depend on an addition below.
 | H-3 | Owning runner unreachable, directory missing, null or unsupported inventory | Unknown is a veto. DetectOnly, no failure | V-3 unavailable-remote, missing-directory, null-list; V-2 inventory-unavailable; PC-3 |
 | H-4 | Stale runner listing | A stale "present" listing vetoes (safe side). A stale "absent" list (the dead-session sweep's cached local list) is never an input to the boot decision: a fresh owning inventory is read, and re-read at the final barrier | V-2 inventory-listed; V-8 inventory-entry; PC-8 |
 | H-5 | Different generation: resume or relaunch moves the launch clock; a listing with another `AcceptedStartedAt` | The old prompt is invisible to the boot predicate (`LaunchClockAsync`); a listing of any generation is listed | V-3 idle-wrong-generation; R-clocks; PC-3 |
-| H-6 | Prompt only queued (`QueuedUserPrompt`, nothing typed) | `TranscriptWorkingStateQuery.ActivityPredicate` excludes it, so Working is false and no phase deadline arms; the delivery watchdog's queued-only withhold owns it. No boot episode exists | R-delivery, R-replies; excluded from V by construction |
+| H-6 | Prompt only queued (`QueuedUserPrompt`, never accepted by the session) | No boot episode exists and no boot protection is given: the task keeps the ordinary role-ceiling failure exactly as at base, whether the session is idle, Working through an inherited mid-turn row, or terminal. A later queued row never opens or advances an accepted prompt's episode (R1, section "Final Review repairs") | V-18 (CP-39, CP-40, CP-41) and CP-2 `prompt-only-queued` |
 | H-7 | Transcript tailer lag: the reply exists on the runner, not in the database | Gate 2 pulls before any decision; a reply that lands ends the episode; a failed pull leaves DetectOnly | V-4 model-reply-returns-to-ordinary-policy (reply landed through `CatchUpOverride`); PC-4 |
 | H-8 | AlwaysOn Check seat (CARD-0079 territory) | Boot detection never calls `CheckCompactionContinuationService` or the runner's conditional compaction stop; `CompactionStops` is asserted zero in every witness; CARD-0079's own tests are unchanged | V-1; R-C0079 (CP-34, CP-35); PC-23 |
 | H-9 | Parked or Blocked session | Blocked is outside the overdue population; detection creates no park row, no release row, no release call, with parking off and on | V-12; PC-12 |
@@ -250,6 +250,80 @@ supersedes every option-A statement above where they disagree.
   deadline code.
 - **Mutation total under option B:** 31 method-scoped cycles, all pending for SourceLanding.
 
+## Final Review repairs R1-R3 (Review 9b356254, Code e96821a4)
+
+The Final Review of `5182f31a` found three defects. This section records the repairs and
+supersedes any earlier statement here that disagrees.
+
+- **R1, queued-only input earned boot protection.** `BootReplyWatch.LoadBootTurnAsync` counted
+  a `QueuedUserPrompt` as a real prompt, and the S1 fallback attached boot facts to every
+  surfacing verdict, so a task whose only input was queued (never accepted) stayed open past
+  its role ceiling with a `BootStallNeedsOperator` warning; at base it failed by the ceiling.
+  Repair: `BootTurn` now also carries the latest ACCEPTED prompt (a non-housekeeping
+  `UserPrompt` that is not an interrupt marker), and `BootStallPolicy.Facts` returns null
+  without one, so the task boot episode, its key, its due times and its protection exist only
+  for an accepted prompt. A queued row neither opens nor advances an episode; a later accepted
+  prompt does. The session-scoped `BootReplyWatchdogService` watch and `DelegateCheckProbe`
+  keep reading every real prompt, deliberately unchanged (CP-24 `BootReplyWatchTests` still
+  pins the queued-prompt watch argument). No new statement: the accepted prompt comes out of the
+  same prompt-row query.
+- **R2, the warning writer trusted an opaque key.** `BootStallWarningWriter.RecordAsync` checked
+  only task status, attempt, session and `DispatchedAt` under the task lock. Repair: the
+  episode carries its `BootStallFacts`; immediately before the insert, inside the writer's own
+  transaction, the session row is share-locked with `NOWAIT` and its accepted generation
+  (`StartedAt`) and launch clock (`max(DispatchedAt, LaunchResumedAt)`, one shared
+  `TaskDeadlinePolicy.LaunchClock` rule) must equal the decided episode's, and the boot
+  predicate re-read on that clock must return the same accepted prompt sequence and timestamp
+  with no model reply since. Any mismatch, a missing row, or a session row locked by a
+  concurrent writer writes nothing and logs nothing above Debug. Dedupe stays per episode and
+  stage under the task lock; every other fault is still swallowed. Cost: a stage write adds
+  four statements (session lock, Grok-rules check, model-reply EXISTS, prompt rows), at most
+  twice per episode; the A-7 repeated-episode tick never reaches the writer and is unchanged.
+  V-13 (S5) pins the totals.
+- **R3, a false evidence claim.** The delivery-inventory row cited the CARD-1149 blocked-caller
+  test as proof of the `FailAndNotifyAsync` caller note. It is a different producer. The row and
+  the substitutes paragraph are corrected, and V-20 adds the missing producer-to-recipient proof
+  for the failure path CARD-1151 keeps (role ceiling). The dead-session reconciler's note still
+  has no recipient-level test; that is stated, not claimed. The other evidence citations in
+  this note were re-read: H-6 claimed Working is always false for queued-only input and cited no
+  existing witness (corrected); the substitutes paragraph cited "R-1 D3", which in this note is
+  the characterization class (corrected). The remaining V/R/CP citations name methods that exist
+  at this commit with the counts in the table.
+
+Re-scan of the boot predicate and policy for unearned protection or a Working stop:
+
+| Shape | Status |
+|---|---|
+| Queued-only prompt (idle, Working through an inherited row, terminal row) | Fixed (R1): ordinary policy, ceiling failure as at base |
+| Interrupt marker as the only `UserPrompt` since the launch clock (e.g. after a resume) | Fixed (R1): an interrupt marker is not an accepted prompt |
+| Accepted prompt, then interrupt, idle (option B consequence) | By design: DetectOnly with operator warning; the ceiling no longer resolves it |
+| Task's own brief Pending while another accepted prompt is unanswered (A-2) | Unchanged, listed: DetectOnly without emission, so the overdue sweep never fails it; the delivery watchdog owns it and withholds while the session is Working. Whether A-2 should instead return such a task to the ordinary ceiling is a caller decision |
+| Terminal or missing session row (A-1) | Unchanged, listed: DetectOnly without emission; the dead-session reconciler owns it (Review probe: fails below the delivery timeout; the runner-unknown Working shape stays open and visible as DeadSession) |
+| Episode at NeedsOperator, reply only on the runner (tailer lag) | Unchanged, listed (A-7 design): no further pull from this sweep; the live stream or another sweep's pull ends the episode |
+| A Working session failed or stopped by this path | None found. The boot branch returns before any failure; the NotBoot path is the pre-existing non-destructive failure (no stop, no release); the writer only reads and share-locks the session row |
+
+New proofs (all `Integration` on isolated or scoped Postgres except the pure policy rows):
+
+- V-18 (R1): `TaskDeadlinePolicyTests.C1151_Boot_facts_need_an_accepted_prompt` (6: accepted-only, queued-only-idle, queued-only-working, accepted-then-queued-refinement, queued-then-accepted, interrupt-only-after-resume); `AgentTaskOverdueDeadlineTests.a_queued_only_prompt_is_no_boot_and_keeps_the_ceiling_failure` (3: dispatched-idle, working-inherited-mid-turn, terminal-session; it uses only base symbols, so the same method runs unchanged at base `27e3e3f7f`); `BootStallDetectionTests.C1151_Only_an_accepted_prompt_is_protected` (3: accepted-no-reply-detects, accepted-then-queued-refinement, queued-only-past-ceiling); `BootStallPolicyTests` gains the `prompt-only-queued` flip and `C1151_Only_an_accepted_prompt_opens_or_advances_the_episode` (CP-2 `Min` 14).
+- V-19 (R2): `BootStallDetectionTests.C1151_Warning_writer_revalidates_the_episode_identity` (5: generation-change, launch-clock-change, prompt-identity-change write nothing silently; same-episode writes once across two sweeps; concurrent-writers, meeting at the writer's lock statement, write one row).
+- V-20 (R3): `DelegationDispatchRecoveryBoundaryTests.C1151_Ceiling_failure_note_has_one_complete_user_prompt` (3: eligible, busy, crash).
+
+Class-row floors move with them: CP-2 `Min` 14, CP-22 `Min` 31, CP-23 `Min` 32. CP-26 selects
+`C1149_*` only and is unchanged.
+
+Pending positive controls for SourceLanding Mutation (method-scoped, one cycle each):
+
+- PC-24: `LoadBootTurnAsync` treats every real prompt (queued rows and interrupt markers too) as accepted. `C1151_Boot_facts_need_an_accepted_prompt` red on `queued-only-idle`, `queued-only-working`, `accepted-then-queued-refinement`, `interrupt-only-after-resume`.
+- PC-25: `BootStallPolicy.Facts` falls back to the latest real prompt when no accepted one exists. `C1151_Whitelist_requires_positive_evidence` red on `prompt-only-queued`.
+- PC-26: drop the writer's generation comparison. `C1151_Warning_writer_revalidates_the_episode_identity` red on `generation-change`.
+- PC-27: drop the writer's launch-clock comparison. Same method, red on `launch-clock-change`.
+- PC-28: drop the writer's accepted-prompt comparison. Same method, red on `prompt-identity-change`.
+- PC-29: make the revalidation always refuse. Same method, red on `same-episode`.
+- PC-30: drop the dedupe read under the task lock. Same method, red on `concurrent-writers`.
+- PC-31: skip the parent-note enqueue in `FailAndNotifyAsync`. `C1151_Ceiling_failure_note_has_one_complete_user_prompt` red on every argument.
+
+Mutation total under option B with R1-R3: 39 cycles (31 + 8).
+
 ## Assertion reversals
 
 Every existing test that encodes today's stop, with its flip. No assertion is weakened or
@@ -382,16 +456,22 @@ certificate call from the boot sweep, and widening `CatchUpTranscriptAsync`'s bo
 
 | Path | Producer | Destination | Persistence boundary | Recovery | Observable receipt (durable identity) |
 |---|---|---|---|---|---|
-| Boot Warning event | Overdue sweep's telemetry writer, after the disposition is selected | `AgentTaskEvents` row, `Type = Warning`, Detail reason token plus key | Separate short-lived context: task lock, key/stage read, insert, commit | Next tick re-reads the key; a failed write leaves nothing and is retried by the next tick (V-6) | The row read back by episode key and stage from a fresh context after one, two and N ticks and after a process restart (V-5, V-9); the publish is not evidence |
+| Boot Warning event | Overdue sweep's telemetry writer, after the disposition is selected | `AgentTaskEvents` row, `Type = Warning`, Detail reason token plus key | Separate short-lived context: task lock, key/stage read, episode revalidation (generation, launch clock, accepted prompt; R2), insert, commit | Next tick re-reads the key; a failed write leaves nothing and is retried by the next tick (V-6) | The row read back by episode key and stage from a fresh context after one, two and N ticks and after a process restart (V-5, V-9); the publish is not evidence |
 | Change notice | `PublishToAllAsync("AgentTaskChanged")` after the commit | Event bus | After the commit | Logged only | Not delivery evidence; excluded |
 | Attention row | `AttentionService` projection from current boot facts | HTTP read model | None (derived) | None needed | The row from `GetAsync` with the expected kind, severity, actions and wording, and its absence after a reply (V-11); never a persisted Warning |
 | Safe-absent requeue (option A) | Internal attempt-bound requeue after the final revalidation | `AgentTasks` row Queued, attempt+1, Retried event | The existing requeue transaction under the queue gate | A requeue fault retains Failed and warns; no stopper, no kill compensation (V-7) | Task row at attempt 2 with the Retried event and the same kind/tier (V-7); a Queued row is not a dispatched session, and no claim is asserted |
-| Parent completion note (option A, failure path) | `FailAndNotifyAsync` through the real queue | Parent session | Queue row committed with the Failed status | Existing queue delivery and verification | One complete UserPrompt in the parent transcript is already proved for this producer by CARD-1149 R-1 `C1149_Caller_note_has_one_complete_user_prompt` (busy, eligible, crash); V-7 asserts the queued note's identity and reason and does not claim receipt |
+| Parent completion note (role-ceiling failure path; the option-A boot failure that this row first described is struck) | `FailOverdueTasksAsync` -> `FailAndNotifyAsync` through the real queue | Parent session | Queue row committed after the Failed status | Existing queue delivery and verification | One complete matching UserPrompt in the parent transcript with the note's SourceTaskId and a Delivered verdict, eligible, busy and crash (re-attached harness), plus no second submit and nothing on a decoy session: V-20 `C1151_Ceiling_failure_note_has_one_complete_user_prompt` (CP-43, added by R3). Corrected claim: `C1149_Caller_note_has_one_complete_user_prompt` proves the CARD-1149 blocked-caller note (`HoldUnderLockAsync` -> `EnqueueBlockedParentNoteAsync`), a different producer, and is not evidence for this one |
 | Delegate session input | None. Detection sends nothing to the delegate | n/a | n/a | n/a | Runner `Inputs` 0 and the delegate transcript's prompt count unchanged in V-1, V-3, V-10 |
 
 Substitutes and what they cannot prove: a queued parent note is not a received UserPrompt
-(R-1 D3 proves receipt); a zero direct runner kill count does not prove no stop (the
-stopper, `RetryAsync`'s `StopDelegateAsync` and the watchdog's kill are counted separately);
+(receipt is proved per producer: V-20 for the role-ceiling failure note; CARD-1149's
+`C1149_Caller_note_has_one_complete_user_prompt` for the blocked-caller note only;
+`ReceiptFailureDeliveryTests` for the delivery watchdog's `FailNeverStartedAsync` caller note
+and its durable DeliveryFailure obligation; `AgentTaskDeadSessionReconciliationTests` asserts
+the dead-session reconciler's terminal state and queued parent text only, and no test here
+proves that reconciler's note reaches a recipient); a zero direct runner kill count does not
+prove no stop (the stopper, `RetryAsync`'s `StopDelegateAsync` and the watchdog's kill are
+counted separately);
 a `ListedInventoryRunner` is not a transport (the native S6 witness runs the real runner on
 ConPTY). No design stops before recipient evidence: every event is read back from a fresh
 context, and the only session input in scope is the explicit Retry of S6, whose receipt is
@@ -530,7 +610,7 @@ CP-16 `Min` is 8, and the regression rows plus CP-37/CP-38 run after S1-S3 on th
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
 |---|---|---|---|---|---|---|---:|---:|---|---|
 | CP-1 | S1-S3 | `tests/Antiphon.Tests -> bin-c1151-core/` | portable-working | `/*/*/BootStallWorkingTickCharacterizationTests/Aged_prompt_only_Working_tick_detects_without_stopping_or_requeueing*` | V-1 | 1 executed, 0 failed/skipped | 1 | 5 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-2 | S1-S3 | `CP-1` | portable-whitelist | `/*/*/BootStallPolicyTests/*` | V-2 | 12 executed (11 arguments plus the stage-boundary method), 0 failed/skipped | 12 | 1 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-2 | S1-S3 | `CP-1` | portable-whitelist | `/*/*/BootStallPolicyTests/*` | V-2, V-18 | 14 executed (12 arguments plus the stage-boundary and accepted-prompt methods), 0 failed/skipped | 14 | 1 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-3 | S1-S3 | `CP-1` | portable-listed | `/*/*/BootStallDetectionTests/C1151_Listed_or_unknown_session_is_untouched*` | V-3 | 11 executed, 0 failed/skipped | 11 | 4 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-4 | S1-S3 | `CP-1` | portable-deadlines | `/*/*/BootStallDetectionTests/C1151_Boot_protection_survives_all_deadlines*` | V-4 | 7 executed, 0 failed/skipped | 7 | 3 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-5 | S1-S3 | `CP-1` | portable-operator | `/*/*/BootStallDetectionTests/C1151_Operator_escalation_preserves_the_attempt*` | V-5 | 5 executed, 0 failed/skipped | 5 | 3 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
@@ -542,8 +622,8 @@ CP-16 `Min` is 8, and the regression rows plus CP-37/CP-38 run after S1-S3 on th
 | CP-18 | S1-S3 | `CP-1` | portable-other-reason | `/*/*/DelegationDispatchRecoveryBoundaryTests/C1149_Different_reason_or_attempted_brief_still_uses_failure_policy*` | V-14 | 3 executed, 0 failed/skipped | 3 | 3 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-19 | S1-S3 | `CP-1` | portable-s1-hold | `/*/*/DelegationDispatchRecoveryBoundaryTests/C1149_Absent_launch_is_blocked_with_original_input*` | V-14 | 1 executed, 0 failed/skipped | 1 | 2 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-21 | S1-S3 | `CP-1` | portable-characterization | `/*/*/BootStallWorkingTickCharacterizationTests/*` | R-1 | all 3 named witnesses, 0 failed/skipped | 3 | 2 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-22 | S1-S3 | `CP-1` | portable-overdue | `/*/*/AgentTaskOverdueDeadlineTests/*` | R-2 | all listed, 0 failed/skipped (28: the 29th `[Test]` in the file is `AgentTaskDispatcherWiringTests`, another class) | 28 | 4 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-23 | S1-S3 | `CP-1` | portable-policy | `/*/*/TaskDeadlinePolicyTests/*` | R-3 | all listed, 0 failed/skipped | 26 | 3 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-22 | S1-S3 | `CP-1` | portable-overdue | `/*/*/AgentTaskOverdueDeadlineTests/*` | R-2, V-18 | all listed, 0 failed/skipped (31: the file's `AgentTaskDispatcherWiringTests` `[Test]` is another class; R1 adds 3) | 31 | 4 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-23 | S1-S3 | `CP-1` | portable-policy | `/*/*/TaskDeadlinePolicyTests/*` | R-3, V-18 | all listed, 0 failed/skipped (R1 adds 6) | 32 | 3 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-24 | S1-S3 | `CP-1` | portable-boot-predicate | `/*/*/BootReplyWatchTests/*` | R-4 | all listed, 0 failed/skipped | 27 | 3 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-25 | S1-S3 | `CP-1` | portable-session-watch | `/*/*/BootReplyWatchdogTests/*` | R-5 | all listed, 0 failed/skipped | 11 | 3 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-26 | S1-S3 | `CP-1` | portable-recovery-boundary | `/*/*/DelegationDispatchRecoveryBoundaryTests/C1149_*` | R-6 | all C1149 methods and arguments, 0 failed/skipped | 49 | 6 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
@@ -558,6 +638,11 @@ CP-16 `Min` is 8, and the regression rows plus CP-37/CP-38 run after S1-S3 on th
 | CP-35 | S1-S3 | `CP-1` | portable-compaction-flow | `/*/*/CheckCompactionRecoveryFlowTests/*` | R-14 | all listed, 0 failed/skipped | 1 | 4 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-37 | S1-S3 | `CP-1` | portable-check-probe | `/*/*/DelegateCheckProbeTests/*` | R-18 | all listed, 0 failed/skipped | 43 | 4 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-38 | S1-S3 | `CP-1` | portable-registry-guard | `/*/*/(TestClassificationGuardTests*)\|(SlowTestTripwireTests*)/*` | R-19 | all listed, 0 failed/skipped | 3 | 2 | true | n/a |
+| CP-39 | S1-S3 | `CP-1` | portable-r1-policy | `/*/*/TaskDeadlinePolicyTests/C1151_Boot_facts_need_an_accepted_prompt*` | V-18 | 6 executed, 0 failed/skipped | 6 | 1 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-40 | S1-S3 | `CP-1` | portable-r1-overdue | `/*/*/AgentTaskOverdueDeadlineTests/a_queued_only_prompt_is_no_boot_and_keeps_the_ceiling_failure*` | V-18 | 3 executed, 0 failed/skipped | 3 | 2 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-41 | S1-S3 | `CP-1` | portable-r1-dispatcher | `/*/*/BootStallDetectionTests/C1151_Only_an_accepted_prompt_is_protected*` | V-18 | 3 executed, 0 failed/skipped | 3 | 2 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-42 | S1-S3 | `CP-1` | portable-r2-writer | `/*/*/BootStallDetectionTests/C1151_Warning_writer_revalidates_the_episode_identity*` | V-19 | 5 executed, 0 failed/skipped | 5 | 2 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-43 | S1-S3 | `CP-1` | portable-r3-ceiling-note | `/*/*/DelegationDispatchRecoveryBoundaryTests/C1151_Ceiling_failure_note_has_one_complete_user_prompt*` | V-20 | 3 executed, 0 failed/skipped | 3 | 3 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-11 | S4 | `tests/Antiphon.Tests -> bin-c1151-s4/` | portable-attention | `/*/*/BootStallAttentionTests/C1151_Attention_describes_detection_and_resolution*` | V-11 | 5 executed, 0 failed/skipped | 5 | 5 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-12 | S4 | `CP-11` | portable-docs | `/*/*/BootStallDocumentationTests/C1151_Docs_describe_detection_and_only_compaction_exception*` | V-17 | 1 executed, 0 failed/skipped | 1 | 1 | true | n/a |
 | CP-14 | S5 | `tests/Antiphon.Tests -> bin-c1151-s5/` | portable-brief | `/*/*/DelegationDispatchRecoveryBoundaryTests/C1151_Brief_and_spill_remain_byte_identical*` | V-10 | 3 executed, 0 failed/skipped | 3 | 5 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |

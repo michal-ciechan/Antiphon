@@ -601,6 +601,14 @@ public partial class DelegationDispatchRecoveryBoundaryTests
                 .FailDeadSessionTasksAsync(CancellationToken.None);
         }
 
+        /// <summary>The overdue-deadline sweep alone (CARD-1151 R3's role-ceiling producer).</summary>
+        public async Task<int> OverdueAsync()
+        {
+            await using var scope = provider.CreateAsyncScope();
+            return await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>()
+                .FailOverdueTasksAsync(CancellationToken.None);
+        }
+
         public async Task DueAsync()
         {
             await SweepAsync();
