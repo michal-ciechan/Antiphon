@@ -22,7 +22,7 @@ namespace Antiphon.Server.Application.Services;
 /// Everything about WHAT the delegate will be (tier, directory, whether it may delegate) was decided
 /// and authorised at creation; this only executes it.
 /// </summary>
-public sealed class AgentTaskDispatcher
+public sealed partial class AgentTaskDispatcher
 {
     private readonly TerminalRunnerSeatReleaseService? _terminalSeatRelease;
     private readonly BlockedTaskSyncRecoveryService? _blockedTaskSync;
@@ -3117,6 +3117,16 @@ public sealed class AgentTaskDispatcher
             return false;
         }
 
+        // CARD-1151 D-1: an unresolved boot episode is detection only. It returns here, before the
+        // pull, unless a new stage is due; A-7 keeps a recorded episode off the runner.
+        BootStallOwnership? bootOwnership = null;
+        if (suspected.Boot is { } suspectedBoot)
+        {
+            bootOwnership = await BootStallReadOwnershipAsync(task, sessionId, ct);
+            if (!await BootStallNeedsPullAsync(task, sessionId, suspectedBoot, bootOwnership, ct))
+                return false;
+        }
+
         // Gate 2 — pull the runner's own view, then re-read the clocks against it.
         await CatchUpTranscriptAsync(sessionId, ct);
         var verdict = await TaskDeadlinePolicy.EvaluateAsync(_db, task, UtcNow(), _settings, ct);
@@ -3128,6 +3138,20 @@ public sealed class AgentTaskDispatcher
                 DelegationReportFormatter.Short(task.Id));
             return false;
         }
+
+        // Still unresolved after the pull: record the due stage, never fail. A model row the pull
+        // landed makes the verdict NotBoot and the ordinary non-destructive policy below applies.
+        if (verdict.Boot is { } boot)
+        {
+            bootOwnership ??= await BootStallReadOwnershipAsync(task, sessionId, ct);
+            await BootStallDetectAsync(task, sessionId, boot, bootOwnership, ct);
+            return false;
+        }
+
+        // Unreachable: BootModelWait arms only with boot facts. Kept fail-closed so a future
+        // edit to the policy cannot turn a boot clock into a failure.
+        if (verdict.Kind == TaskDeadlinePolicy.DeadlineKind.BootModelWait)
+            return false;
 
         // Gate 3 — CARD-0085, and ONLY for the population CARD-0085 was written for: a session that
         // ingested nothing. Same predicate as the dead-session reconciler. A session with rows is
@@ -3148,32 +3172,6 @@ public sealed class AgentTaskDispatcher
             bindRefusal = await TryRecoverBindRefusalAsync(task, sessionId, ct);
         if (bindRefusal.Outcome == BindRefusalOutcome.Recovered)
             return false;
-
-        // Gate 4 — CARD-0353 S2. The boot arm is the ONE deadline here that kills and retries, so
-        // it gets its own guard and its own tail. Everything below stays the non-destructive
-        // failure the other two clocks have always been.
-        if (verdict.Kind == TaskDeadlinePolicy.DeadlineKind.BootModelWait)
-        {
-            var acted = await TryFailBootStallAsync(task, sessionId, verdict, ct);
-            if (acted is not null)
-                return acted.Value;
-
-            // The workspace says work happened, so the boot arm's licence to kill is gone. Its
-            // tighter clock goes with it: failing here would apply an 8-minute deadline to a
-            // session the 20-minute one has not yet judged. Decline until the GENERAL model-wait
-            // clock is breached too, then fall through to the ordinary non-killing failure — which
-            // is also what stops the guard from stranding the task forever.
-            var general = TimeSpan.FromMinutes(_settings.ModelWaitDeadlineMinutes);
-            if (general <= TimeSpan.Zero || verdict.Elapsed < general)
-            {
-                _logger.LogInformation(
-                    "Task {ShortId} is past the boot-turn deadline but its workspace shows progress "
-                    + "since dispatch — not killed, not failed; the general {Minutes}-minute "
-                    + "model-wait clock will judge it",
-                    DelegationReportFormatter.Short(task.Id), _settings.ModelWaitDeadlineMinutes);
-                return false;
-            }
-        }
 
         // The Summary already names the clock, the phase and the last entry's age — the failure
         // reason and the attention row are deliberately the same sentence, so a human who saw the
