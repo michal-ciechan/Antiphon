@@ -508,10 +508,12 @@ cycles about 1 minute.
 - PC-20 (3): change the detection sentence in one owner document, one per document. `C1156_Docs_name_detection_clocks_custody_and_compaction_exception` red; documentation control.
 - PC-21 (4, added by repair d9a5492f): (a) in `StandingBootAttentionProjection.ProjectAsync`, rethrow from the optional receipt-read catch: `C1156_Optional_receipt_read_fault_keeps_current_attention` red on both arguments (the injected fault escapes `GetAsync`); (b) in `AttentionService.BuildBootReplyMissingItemsAsync`, drop `attachedIncidents.UnionWith(covered)`: `C1156_Legacy_error_history_is_suppressed_with_its_attention_row` red on `covered-due` and `covered-not-due` at `history.SessionId` (the covered session's legacy Error is the newest recent-incident row); (c) drop the task-owned live-session union: same method red on `task-owned`; (d) in the projection, restore `if (decision.Stage == Stage.None) continue;` ahead of the recorded-stage lookup: `C1156_Recorded_operator_stage_survives_clock_rollback` red on `below-boot-due` and `before-prompt` at the single-row assertion.
 - PC-22 (1, added by repair 25d569de): in `StandingBootAttentionProjection.Item`, put a delivery verdict back on the UserPrompt line (append `, so delivery is not the problem`): `C1156_Standing_row_makes_no_delivery_claim` red on `partial-prefix` and `complete-match` at the no-delivery-claim assertion.
+- PC-23 (1, added by repair e1fcd348, client): in `client/src/features/attention/attentionVisuals.ts`, restore the `LivenessProbeFailed` hint of `47d67de5` (delivery verdict, delegate retry, restart ladder, latch): the Vitest case `CARD-1156 F-5 the standing boot row tooltip claims no delivery and no automatic action` in `AttentionPanel.test.tsx` red at its first true-statement `toContain`. Run `pwsh -File scripts/test-client.ps1 src/features/attention/AttentionPanel.test.tsx -t "CARD-1156 F-5"` (about 10 s).
 
-Cycle total: **46** (the plan's 31 retained plus 10 added: PC-4c, PC-5b, PC-10b, PC-16b,
+Cycle total: **47** (the plan's 31 retained plus 10 added: PC-4c, PC-5b, PC-10b, PC-16b,
 PC-17, PC-18, PC-19 behavioural, PC-20 three documentation; plus PC-21's four from the S4 repair
-and PC-22's one from S4 repair 2). Excluded from mutation with reason:
+and PC-22's one from S4 repair 2, and PC-23's client one from S4 repair 3).
+Excluded from mutation with reason:
 "no RPC while holding the lock" (no assertion observes statement order inside the writer's
 transaction; Review reads `RecordAsync` for any runtime call, and V-11's pull counts bound the
 number of pulls to one per cold path); log wording (Review reads the reason tokens).
@@ -874,3 +876,48 @@ needed after the reviewed land (server change); no runner upgrade and no migrati
 | Case | Production mutation | Red at |
 |---|---|---|
 | CP-33 `partial-prefix`, `complete-match` | PC-22: the UserPrompt line ends ", so delivery is not the problem." (base `d833a35d`) | no-delivery-claim assertion, `deliver` |
+
+### S4 repair 3 (Code task e1fcd348, Final Review 7c7df08d)
+
+Branch `feat/card-task-e1fcd348` from `47d67de5`; landing owner remains 470638a8. Client only:
+the `LivenessProbeFailed` badge tooltip (`client/src/features/attention/attentionVisuals.ts`) and
+its type comment (`client/src/api/attention.ts`). Tests: one new Vitest case in
+`AttentionPanel.test.tsx`. No server change, no existing assertion changed, no migration. The
+"Out of scope: a client change" line above predates Review 7c7df08d F-5, which commissioned this one.
+
+- **F-5, the standing row's tooltip.** `AttentionPanel` draws every `LivenessProbeFailed` row's
+  badge tooltip from the kind's `hint`, so the standing row showed "The prompt reached the
+  transcript, so delivery is not the problem ... A delegate task is retried once; a standing
+  agent goes through the restart ladder and then latches off." After CARD-1156 the watchdog never
+  stops, restarts or latches a standing agent, and the projection cannot verify complete delivery.
+  The hint now says only: no assistant, thinking, tool or turn-end row has appeared since the boot
+  prompt, past the boot-reply deadline; a standing agent's row is Warning from the boot notice due
+  and Error from the operator decision due, and its evidence gives the prompt age and both due
+  times; detection only, Antiphon only reports this and the session keeps running and keeps its
+  seat; open the agent or the session, then reply through the session or keep waiting.
+- **Shared text.** The same hint also serves the legacy `bootSeq=` rows (CARD-0312). The task
+  card liveness badge never shows this kind (`LIVENESS_KINDS` excludes it) and the CARD-1151 task
+  row is `Overdue`, not this kind. Every sentence is true for the legacy rows too: nothing acts
+  on a boot stall automatically since CARD-1156, and the severity sentence is scoped to a standing
+  agent. No other kind's hint changed. Action labels on the row (`Open agent`, `Read it first`) are unchanged and true.
+- **Regression** `CARD-1156 F-5 the standing boot row tooltip claims no delivery and no automatic
+  action` renders `AttentionPanel` over the shape `StandingBootAttentionProjection.Item` emits
+  (Error, no task, session and agent, the five evidence lines, `OpenAgent`/`OpenDrawer`), hovers the
+  badge and reads the rendered `role=tooltip` text. It asserts the true statements and that the
+  tooltip contains none of `deliver`, `restart`, `ladder`, `latch`, `retry`, `retri`, `kill`,
+  `stop`. The row's own evidence still says "nothing is stopped, typed, restarted or latched", so
+  the negative check is scoped to the tooltip.
+- **Still not changed (server, outside this repair):** the legacy `bootSeq=` row's evidence
+  sentence and the CARD-1151 task Overdue row's wording, as disclosed in S4 repair 2.
+
+| Case | Mutation | Red at |
+|---|---|---|
+| F-5 tooltip | PC-23: restore the 47d67de5 hint (`attentionVisuals.ts` at 47d67de5) | first true-statement `toContain` |
+| F-5 tooltip | new hint plus " A delegate task is retried once." | negative loop, `retri` |
+| F-5 tooltip | new hint plus " Nothing is stopped automatically." | negative loop, `stop` |
+| F-5 tooltip | new hint plus " The prompt was delivered." | negative loop, `deliver` |
+
+The first author mutant with "retried" passed against the first draft of the test, which checked
+only `retry`; the stem `retri` was added and all three mutants then went red. PC-23 joins the
+pending list. The client change needs a `client/dist` rebuild (Aspire's watcher on 17203, or the
+AppHost restart already required by S4) before the browser shows it.
