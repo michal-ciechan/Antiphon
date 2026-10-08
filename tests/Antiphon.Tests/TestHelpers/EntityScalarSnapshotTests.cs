@@ -1,5 +1,6 @@
 using System.ComponentModel.DataAnnotations.Schema;
 using System.Reflection;
+using System.Text.Json;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
@@ -9,10 +10,13 @@ using TUnit.Core;
 namespace Antiphon.Tests.TestHelpers;
 
 /// <summary>
-/// CARD-1137 F-2: <see cref="EntityScalarSnapshot"/>'s exact, fail-closed leaf contract at the
-/// boundaries the entity census does not reach (Half, sub-millisecond TimeOnly, byte[] versus null,
-/// DateTime Kind and offsets, decimal scale, enums, nullables, unsupported types). Offline model, no
-/// database.
+/// CARD-1137: <see cref="EntityScalarSnapshot"/>'s exact, fail-closed contract. Leaf encodings at
+/// their boundaries (Half, sub-millisecond TimeOnly, byte[] versus null, DateTime Kind and offsets,
+/// decimal scale, enums, nullables); unsupported declared types and unsupported RUNTIME values
+/// (empty collections, entities, delegates, JsonDocument/JsonElement in an object-typed property)
+/// throw; and, for the entity types the CARD-1137 call sites snapshot, the rendering covers exactly
+/// the reflected non-navigation properties (EF metadata is the navigation oracle), so a scalar added
+/// later is compared automatically. Offline models, no database.
 /// </summary>
 [Category("Unit")]
 public sealed class EntityScalarSnapshotTests
@@ -96,24 +100,62 @@ public sealed class EntityScalarSnapshotTests
         }
     }
 
+    public static IEnumerable<Func<(string Label, object Value)>> UnsupportedRuntimeValues()
+    {
+        yield return () => ("Version", new Version(1, 2));
+        yield return () => ("KeyValuePair", new KeyValuePair<string, int>("k", 1));
+        yield return () => ("empty List<int>", new List<int>());
+        yield return () => ("empty int[]", Array.Empty<int>());
+        yield return () => ("empty byte[][]", Array.Empty<byte[]>());
+        yield return () => ("empty Dictionary", new Dictionary<string, int>());
+        yield return () => ("empty IEnumerable", Enumerable.Empty<string>());
+        yield return () => ("non-empty List<string>", new List<string> { "a" });
+        yield return () => ("entity instance", new UnsupportedProbe());
+        yield return () => ("empty entity list", new List<ScalarProbe>());
+        yield return () => ("delegate", new Func<int>(() => 1));
+        yield return () => ("JsonDocument", JsonDocument.Parse("{}"));
+        yield return () => ("JsonElement", JsonDocument.Parse("1").RootElement.Clone());
+        yield return () => ("Uri", new Uri("https://example.invalid/"));
+    }
+
     [Test]
-    public void Unsupported_types_throw_naming_type_and_property()
+    [MethodDataSource(nameof(UnsupportedRuntimeValues))]
+    public void Unsupported_runtime_values_throw_naming_property_and_runtime_type(string label, object value)
     {
         using var db = new ProbeContext();
-        Should.Throw<NotSupportedException>(() => EntityScalarSnapshot.Of(db, new UnsupportedProbe()))
-            .Message.ShouldSatisfyAllConditions(
-                m => m.ShouldContain("'Link'"),
-                m => m.ShouldContain("System.Uri"));
-        Should.Throw<NotSupportedException>(() => EntityScalarSnapshot.Of(db, new ScalarProbe { Value = new Version(1, 2) }))
+        Should.Throw<NotSupportedException>(() => EntityScalarSnapshot.Of(db, new ScalarProbe { Value = value }), label)
             .Message.ShouldSatisfyAllConditions(
                 m => m.ShouldContain("'Value'"),
-                m => m.ShouldContain("System.Version"));
-        Should.Throw<NotSupportedException>(() => EntityScalarSnapshot.Of(db, new ScalarProbe { Value = new KeyValuePair<string, int>("k", 1) }))
-            .Message.ShouldContain("'Value'");
-        Should.Throw<NotSupportedException>(() => EntityScalarSnapshot.Of(db, new Uri("https://example.invalid/")))
+                m => m.ShouldContain(value.GetType().FullName!));
+    }
+
+    [Test]
+    [Arguments(typeof(UriProbe), "Link", typeof(Uri))]
+    [Arguments(typeof(ListProbe), "Tags", typeof(List<string>))]
+    [Arguments(typeof(JsonDocumentProbe), "Document", typeof(JsonDocument))]
+    [Arguments(typeof(JsonElementProbe), "Element", typeof(JsonElement))]
+    public void Unsupported_declared_types_throw_before_the_value_is_read(Type probe, string property, Type declared)
+    {
+        using var db = new ProbeContext();
+        Should.Throw<NotSupportedException>(() => EntityScalarSnapshot.Of(db, Activator.CreateInstance(probe)))
             .Message.ShouldSatisfyAllConditions(
-                m => m.ShouldContain("'<root>'"),
-                m => m.ShouldContain("System.Uri"));
+                m => m.ShouldContain($"'{property}'"),
+                m => m.ShouldContain(declared.FullName!));
+    }
+
+    [Test]
+    public void Unsupported_roots_throw_naming_the_root_or_item()
+    {
+        using var db = new ProbeContext();
+        Should.Throw<NotSupportedException>(() => EntityScalarSnapshot.Of(db, new Uri("https://example.invalid/")))
+            .Message.ShouldSatisfyAllConditions(m => m.ShouldContain("'<root>'"), m => m.ShouldContain("System.Uri"));
+        Should.Throw<NotSupportedException>(() => EntityScalarSnapshot.Of(db, new List<int>()))
+            .Message.ShouldContain("'<root>'");
+        Should.Throw<NotSupportedException>(() => EntityScalarSnapshot.Of(db, new List<object> { new ScalarProbe() }))
+            .Message.ShouldContain("'<root>'");
+        Should.Throw<NotSupportedException>(() => EntityScalarSnapshot.Of(db, new List<ScalarProbe?> { null }))
+            .Message.ShouldContain("'[0]'");
+        EntityScalarSnapshot.Of(db, new List<ScalarProbe>()).ShouldBe(".Count=0\n");
     }
 
     [Test]
@@ -230,7 +272,30 @@ public sealed class EntityScalarSnapshotTests
     public sealed class UnsupportedProbe
     {
         public int Id { get; set; }
+    }
+
+    public sealed class UriProbe
+    {
+        public int Id { get; set; }
         [NotMapped] public Uri? Link { get; set; }
+    }
+
+    public sealed class ListProbe
+    {
+        public int Id { get; set; }
+        [NotMapped] public List<string>? Tags { get; set; }
+    }
+
+    public sealed class JsonDocumentProbe
+    {
+        public int Id { get; set; }
+        [NotMapped] public JsonDocument? Document { get; set; }
+    }
+
+    public sealed class JsonElementProbe
+    {
+        public int Id { get; set; }
+        [NotMapped] public JsonElement Element { get; set; }
     }
 
     private sealed class ProbeContext : DbContext
@@ -242,6 +307,10 @@ public sealed class EntityScalarSnapshotTests
         {
             modelBuilder.Entity<ScalarProbe>();
             modelBuilder.Entity<UnsupportedProbe>();
+            modelBuilder.Entity<UriProbe>();
+            modelBuilder.Entity<ListProbe>();
+            modelBuilder.Entity<JsonDocumentProbe>();
+            modelBuilder.Entity<JsonElementProbe>();
         }
     }
 }
