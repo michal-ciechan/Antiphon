@@ -68,6 +68,7 @@ Test-side only. No production change, no migration, no AppHost or runner restart
 | V-7 | `EntityScalarSnapshotTests` runtime-type rows (repair 3): 14 `Unsupported_runtime_values_throw_naming_property_and_runtime_type`, 4 `Unsupported_declared_types_throw_before_the_value_is_read`, `Unsupported_roots_throw_naming_the_root_or_item` | F-2 round 2: an object-typed property holding an empty or non-empty collection, an entity, a delegate, JsonDocument, JsonElement or any value without an exact encoding throws naming the property and runtime type; unsupported declared types throw before the value is read; a root sequence whose element type is not an entity throws even when empty. |
 | V-8 | `EntityScalarSnapshotTests.Snapshot_covers_exactly_the_reflected_non_navigation_properties` (6: SessionQueuedMessage, AgentTask, AgentSession, AgentTaskLandNotification, Board, Card) | The snapshot renders exactly the reflected non-navigation properties (EF navigation metadata is the oracle; 57 for SessionQueuedMessage), each changes the snapshot when changed, a navigation does not. Replaces the removed scanner guard. |
 | R-5 | `TestClassificationGuardTests`, `SlowTestTripwireTests` after the class deletion | Deleting `EntityGraphSerializationGuardTests` leaves the registry classification green. |
+| V-9 | `EntityScalarSnapshotConsumerGuardTests` (4 results: 3 `Consumer_serializes_only_allow_listed_tokens_and_keeps_its_snapshots` rows, one per call-site class, and `Allow_list_premises_hold`) | Review 50078537 F-1 (repair 4): for exactly the three call-site classes, any System.Text.Json serialization call that is not an exact allow-listed token, a `using static`/alias hiding `JsonSerializer`, a stale allow entry, or `EntityScalarSnapshot.Of` uses below the per-file floor (2/6/4) fails; a missing file fails. No argument-type classification. |
 
 Repeat budget: V-3's 30 repetitions exceed the default `repeat-proof` budget (3 normal + 2 loaded).
 The flake was demonstrated by the warm-up remedy's checkpoint run `20261008-013108-9e3c`
@@ -170,6 +171,7 @@ forbids an unbounded broad run), namespaces, the full assembly, `Antiphon.Agents
 | CP-77 | R2 | `CP-60` | linux-r2-combined-10 | `/*/*/(TerminalRunnerSeatReleaseTests*)\|(RunnerSeatOrphanSweepTests*)/*` | V-3 | exact 56 results, 0 failed/skipped | 56 | 3 | true | n/a |
 | CP-78 | R2 | `CP-60` | linux-r2-combined-11 | `/*/*/(TerminalRunnerSeatReleaseTests*)\|(RunnerSeatOrphanSweepTests*)/*` | V-3 | exact 56 results, 0 failed/skipped | 56 | 3 | true | n/a |
 | CP-79 | R2 | `CP-60` | linux-r2-combined-12 | `/*/*/(TerminalRunnerSeatReleaseTests*)\|(RunnerSeatOrphanSweepTests*)/*` | V-3 | exact 56 results, 0 failed/skipped | 56 | 3 | true | n/a |
+| CP-80 | R2 | `CP-60` | linux-r4-consumer-guard | `/*/*/EntityScalarSnapshotConsumerGuardTests/*` | V-9 | exact 4 results, 0 failed/skipped | 4 | 2 | true | n/a |
 
 ## Results
 
@@ -524,3 +526,42 @@ new test red), not ordinary evidence; the ordinary evidence is run 10 alone. The
 the green checkpoint run deleted its own `bin-c1137r2/`. `scripts/check-evidence-diff.ps1` over the
 full task range (`7ae4ea6b9..641ae05cb`, 13 commits) and over this repair (`6ec083b8d..641ae05cb`):
 0 entries, 0 violations.
+
+### Repair 4: bounded consumer guard (Review 50078537 F-1)
+
+F-1: after repair 3 removed the assembly-wide scanner, reverting a call site to default-options
+entity serialization failed no deterministic test. `EntityScalarSnapshotConsumerGuardTests` restores
+a guard that needs no type classification, so it cannot repeat the scanner's misclassification:
+
+- It reads exactly the three call-site classes (`TerminalRunnerSeatReleaseTests`,
+  `ReviewEvidenceRecoveryTests`, `CardFilePrivacySyncAcceptanceTests`) from the repository root
+  (`DelegateScriptRunner.RepoRoot`); a missing file fails with its path, never passes.
+- Every `JsonSerializer.<member>(...)`, `JsonContent.Create`, `JsonValue.Create` and
+  `Post/Put/PatchAsJsonAsync` call outside full-line comments is reduced to its exact call text and
+  must equal an allow-list entry for that file. It is stricter than "outside lines through
+  EntityScalarSnapshot": no line is exempt. `using static`/alias forms that hide `JsonSerializer` fail.
+- Allow-list (4 tokens, each commented): the phone-home Error payload literal
+  `SerializeToElement(new { code = "unsupported_operation" })` in the release class, and three
+  `ReviewRecoveryWorld.RowsAsync()` (`List<StageOutcome>`) comparisons predating CARD-1137 in
+  `ReviewEvidenceRecoveryTests`. Their premise, that `StageOutcome` has no EF navigation, is asserted
+  from EF metadata by `Allow_list_premises_hold`; a stale entry fails.
+- Vacuity controls: exactly three protected files; `EntityScalarSnapshot.Of` code uses per file at
+  least the recorded floor (2/6/4), so dropping a helper use is red even without serialization.
+
+The class-header rule in `TerminalRunnerSeatReleaseTests` now names this guard; the reflection
+coverage test (V-8) is unchanged. No production code, no assertion removed.
+
+Scratch mutation proof (build `bin-c1137r4mut/`, filter `/*/*/EntityScalarSnapshotConsumerGuardTests/*`,
+restored with `git checkout -- tests/`; offered as PC candidates, not discharged PCs):
+
+| Batch | Call site -> mutation | Red |
+|---|---|---|
+| A | `TerminalRunnerSeatReleaseTests.cs:1018/1023` `EntityScalarSnapshot.Of(db, x)` -> `JsonSerializer.Serialize(x)` | release-class row: tokens `JsonSerializer.Serialize(message)`, `JsonSerializer.Serialize(await db.SessionQueuedMessages.SingleAsync())` |
+| A | `ReviewEvidenceRecoveryTests.cs:454/458` same revert on the AgentTask pair | review-recovery row: "not System.Text.Json serialization" |
+| A | `CardFilePrivacySyncAcceptanceTests.cs:132/137` -> `System.Text.Json.JsonSerializer.Serialize(...)` (fully qualified) | card-file row: both Board tokens |
+| B | `TerminalRunnerSeatReleaseTests.cs:1018/1023` helper dropped (`DeliveryAttempts.ToString()`) | release-class row: "EntityScalarSnapshot.Of uses dropped below 2" |
+| B | `ReviewEvidenceRecoveryTests.cs:456/460` helper dropped (`Count.ToString()`) | review-recovery row: "dropped below 6" |
+| B | `CardFilePrivacySyncAcceptanceTests.cs` `using static System.Text.Json.JsonSerializer;` + bare `Serialize(...)` at 132/137 | card-file row: "an alias or using static hides JsonSerializer" |
+
+Batch A 3 of 4 red, batch B 3 of 4 red (`Allow_list_premises_hold` green in both, as intended);
+restored source 4/4 green.
