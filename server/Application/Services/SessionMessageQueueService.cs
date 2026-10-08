@@ -3560,9 +3560,7 @@ public sealed partial class SessionMessageQueueService
             && TryGetLocalCommandFact(localKind, trimmed, out var localFact)
             && !localFact.WritesUserPrompt)
         {
-            if (inputAttempt is not null)
-                inputAttempt.MayHaveTyped = true;
-            var typed = await TypeLocalCommandAsync(sessionId, trimmed, ct);
+            var typed = await TypeLocalCommandAsync(sessionId, trimmed, ct, inputAttempt: inputAttempt);
             if (typed == LocalCommandTypeResult.Sent)
                 return DeliveryOutcome.Delivered;
             return DeliveryOutcome.Of(DeliveryVerdict.LocalCommandNotAccepted);
@@ -5464,7 +5462,9 @@ public sealed partial class SessionMessageQueueService
     /// buffer capture, and everything else.
     /// </summary>
     private async Task<LocalCommandTypeResult> TypeLocalCommandAsync(
-        Guid sessionId, string command, CancellationToken ct, int? sequenceTimeoutSeconds = null)
+        Guid sessionId, string command, CancellationToken ct, int? sequenceTimeoutSeconds = null,
+        // CARD-1150 F11: marked at the first write, after the modal and snapshot refusals.
+        InputAttempt? inputAttempt = null)
     {
         if (await IsModalBlockedAsync(sessionId, ct))
             return LocalCommandTypeResult.NotAccepted;
@@ -5472,6 +5472,8 @@ public sealed partial class SessionMessageQueueService
         if (!_runtime.TryGetLiveSnapshot(sessionId, out var before))
             return LocalCommandTypeResult.NotAccepted;
 
+        if (inputAttempt is not null)
+            inputAttempt.MayHaveTyped = true;
         await _runtime.SendInputAsync(sessionId, command, ct, trackManualTurn: false);
 
         if (!await WaitForComposerEvidenceAsync(sessionId, before.RenderedScreen, command, ct))
