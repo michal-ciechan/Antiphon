@@ -353,7 +353,8 @@ describe('AttentionPanel', () => {
     expect(tooltip).toContain('Detection only: Antiphon only reports this')
     expect(tooltip).toContain('Open the agent or the session')
     expect(tooltip).toContain('reply through the session')
-    for (const claim of ['deliver', 'restart', 'ladder', 'latch', 'retry', 'kill', 'stop']) {
+    // Stems, so inflections count too: 'retri' catches "retried" and "retries".
+    for (const claim of ['deliver', 'restart', 'ladder', 'latch', 'retry', 'retri', 'kill', 'stop']) {
       expect(tooltip.toLowerCase(), claim).not.toContain(claim)
     }
   })
