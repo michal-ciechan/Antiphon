@@ -88,14 +88,27 @@ public sealed class RunnerAbsenceEvidenceStore
         ["version", "state", "sessionId", "acceptedStartedAt", "runnerStoreId", "runtimeEpoch", "updatedAtUtc"];
 
     private readonly IRunnerAbsenceEvidenceFiles _files;
+    private readonly object _rootGate = new();
+    private bool _initialized;
 
     public string Root { get; }
 
+    /// <summary>
+    /// Construction has no disk effect: the root is created by the first write. A root that existed
+    /// at construction, or that this instance created, is initialized; its later absence is
+    /// <see cref="RunnerAbsenceReadKind.LostRoot"/>, never a blank store.
+    /// </summary>
     public RunnerAbsenceEvidenceStore(string sessionLogPath, IRunnerAbsenceEvidenceFiles? files = null)
     {
         _files = files ?? RunnerAbsenceEvidenceFiles.Instance;
         Root = Path.Combine(sessionLogPath, DirectoryName);
-        _files.CreateDirectory(Root);
+        _initialized = RootPresent();
+    }
+
+    /// <summary>The root was initialized and is now missing (recycled volume, deletion, IO failure).</summary>
+    public bool RootLost
+    {
+        get { lock (_rootGate) return _initialized && !RootPresent(); }
     }
 
     public static string DirectoryFor(string sessionLogPath) => Path.Combine(sessionLogPath, DirectoryName);
@@ -111,7 +124,14 @@ public sealed class RunnerAbsenceEvidenceStore
     public RunnerAbsenceRead Read(Guid sessionId)
     {
         if (!RootPresent())
-            return new(RunnerAbsenceReadKind.LostRoot, null, "evidence root missing after initialization");
+        {
+            // Before the first write nothing was ever recorded here: an absent root is no record.
+            lock (_rootGate)
+                return _initialized
+                    ? new(RunnerAbsenceReadKind.LostRoot, null, "evidence root missing after initialization")
+                    : new(RunnerAbsenceReadKind.NoRecord, null, null);
+        }
+
         byte[]? bytes;
         try { bytes = _files.ReadIfExists(PathFor(sessionId)); }
         catch (UnauthorizedAccessException ex) { return new(RunnerAbsenceReadKind.Denied, null, ex.GetType().Name); }
@@ -119,7 +139,7 @@ public sealed class RunnerAbsenceEvidenceStore
         if (bytes is null)
         {
             // The file is absent, but only a root that is still present makes that a known fact.
-            return RootPresent()
+            return RootPresent() || !_initialized
                 ? new(RunnerAbsenceReadKind.NoRecord, null, null)
                 : new(RunnerAbsenceReadKind.LostRoot, null, "evidence root missing after initialization");
         }
@@ -130,8 +150,17 @@ public sealed class RunnerAbsenceEvidenceStore
     /// <summary>Durable before return; a failure throws so the caller can latch.</summary>
     public void Write(RunnerAbsenceRecord record)
     {
-        if (!RootPresent())
-            throw new IOException("evidence root missing after initialization");
+        lock (_rootGate)
+        {
+            if (_initialized && !RootPresent())
+                throw new IOException("evidence root missing after initialization");
+            if (!_initialized)
+            {
+                _files.CreateDirectory(Root);
+                _initialized = true;
+            }
+        }
+
         _files.WriteAtomic(PathFor(record.SessionId), Serialize(record));
     }
 

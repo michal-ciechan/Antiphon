@@ -117,7 +117,7 @@ public sealed class RunnerAbsenceEvidenceService
         get
         {
             lock (_sync)
-                return _latchReason is null && SafeAdoptionComplete() && _store.RootPresent();
+                return _latchReason is null && SafeAdoptionComplete() && !_store.RootLost;
         }
     }
 
@@ -265,6 +265,23 @@ public sealed class RunnerAbsenceEvidenceService
         }
     }
 
+    /// <summary>
+    /// Read-only admission fence: refuses a ClosedUnused id (any epoch, any generation) with
+    /// <see cref="SessionIdentityClosedException"/> and writes nothing, so a creation that later
+    /// fails validation keeps today's no-disk-effect refusal. An unreadable record latches.
+    /// </summary>
+    public void RequireOpenIdentity(Guid sessionId)
+    {
+        lock (_sync)
+        {
+            var read = _store.Read(sessionId);
+            if (read.Record is { State: RunnerAbsenceRecordState.ClosedUnused })
+                throw new SessionIdentityClosedException(sessionId);
+            if (!read.IsKnown)
+                LatchLocked("fence read unknown: " + RunnerAbsenceEvidenceStore.Describe(read));
+        }
+    }
+
     /// <summary>Latch evidence unavailable for the rest of this runtime.</summary>
     public void Latch(string reason)
     {
@@ -281,7 +298,7 @@ public sealed class RunnerAbsenceEvidenceService
     {
         if (_latchReason is { } latched) return "evidence latched: " + latched;
         if (!SafeAdoptionComplete()) return "adoption incomplete";
-        if (!_store.RootPresent()) return "evidence root missing after initialization";
+        if (_store.RootLost) return "evidence root missing after initialization";
         return null;
     }
 
