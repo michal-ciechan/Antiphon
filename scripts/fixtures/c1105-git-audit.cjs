@@ -185,6 +185,20 @@ function tmpLinked(name = 'c1005-master') {
     assert.equal(fs.existsSync(path.join(runnerTmp, name)), false, 'the recorded path is absent where the helper runs');
     return path.join(mntTmp, name);
 }
+// Repair 8: the registered checkout moved to <mount>/<target>, reached through the symlink
+// <mount>/<link> -> <target> exactly as the kernel resolves the recorded runner path. A
+// target with a remaining component (link/checkout) holds the checkout one level down.
+function linkTarget(target, recorded, dirty = true) {
+    const c = tmpLinked(), deep = recorded.includes('/'), actual = deep ? path.join(mntTmp, target, 'checkout') : path.join(mntTmp, target);
+    if (deep) fs.mkdirSync(path.join(mntTmp, target));
+    fs.renameSync(c, actual); fs.symlinkSync(target, path.join(mntTmp, recorded.split('/')[0]));
+    put('worktrees/c1005-master/gitdir', runnerTmp + '/' + recorded + '/.git\n');
+    if (dirty) fs.writeFileSync(path.join(actual, 'new'), 'sole private bytes');
+    assert.equal(fs.readlinkSync(path.join(mntTmp, recorded.split('/')[0])), target, 'the link holds the exact target bytes');
+    assert.equal(fs.realpathSync(path.join(mntTmp, recorded)), actual, 'the kernel resolves the recorded runner path to the checkout');
+    if (target !== target.replace(/[\0-\x1f\x7f]/g, '')) assert.equal(fs.existsSync(path.join(mntTmp, target.replace(/[\0-\x1f\x7f]+$/, ''))), false, 'the stripped path is absent');
+    assert.equal(run('git', ['-C', actual, 'status', '--porcelain', '--untracked-files=all']), dirty ? '?? new' : '', 'Git status of the real checkout');
+}
 // Replay 3a: the clone's master and origin/master are stale; origin's master moved on to
 // a head the clone never fetched; the only present advertised head (side) is older.
 function staleMaster() {
@@ -476,6 +490,38 @@ const hidden = {
         fs.symlinkSync('../' + path.basename(mntTmp) + '/actual', path.join(mntTmp, 'link')); put('worktrees/c1005-master/gitdir', path.join(runnerTmp, 'link/.git') + '\n');
         assert.equal(fs.realpathSync(path.join(mntTmp, 'link')), path.join(mntTmp, 'actual'));
     }, /^audit check=worktree-confine status=0 repo=repo\/\.git\/worktrees\/c1005-master$/m],
+    // Repair 8 (Final Review 72434373 F1): command substitution drops a link target's trailing newline,
+    // so the resolver walked to another, absent path and skipped the dirty checkout. A target or recorded
+    // path holding a control character is unsupported: unknown, never normalized away.
+    'tmp-link-target-newline': [K, () => linkTarget('actual\n', 'link/checkout'), /^audit check=worktree-confine status=0 repo=repo\/\.git\/worktrees\/c1005-master$/m],
+    'tmp-link-target-newline-last': [K, () => linkTarget('actual\n', 'link'), /^audit check=worktree-confine status=0 repo=repo\/\.git\/worktrees\/c1005-master$/m],
+    'tmp-link-target-cr': [K, () => linkTarget('actual\r', 'link'), /^audit check=worktree-confine status=0 repo=repo\/\.git\/worktrees\/c1005-master$/m],
+    // A NUL in the recorded path: Git reads up to it, command substitution dropped it.
+    'tmp-recorded-nul': [K, () => {
+        const c = tmpLinked(); fs.writeFileSync(path.join(c, 'new'), 'sole private bytes');
+        put('worktrees/c1005-master/gitdir', path.join(runnerTmp, 'c1005-master') + '\0x/.git\n');
+        assert.equal(fs.existsSync(path.join(mntTmp, 'c1005-masterx')), false, 'the NUL-dropped path is absent');
+    }, /^audit check=worktree-path status=2 repo=repo\/\.git\/worktrees\/c1005-master$/m],
+    'tmp-recorded-cr': [K, () => {
+        const c = tmpLinked(), actual = path.join(mntTmp, 'c1005-master\r'); fs.renameSync(c, actual); fs.writeFileSync(path.join(actual, 'new'), 'sole private bytes');
+        put('worktrees/c1005-master/gitdir', path.join(runnerTmp, 'c1005-master\r/.git') + '\n');
+    }, /^audit check=worktree-path status=2 repo=repo\/\.git\/worktrees\/c1005-master$/m],
+    // The same two shapes for an orphaned checkout in the work volume (no .git, so no entry of its own).
+    'linked-recorded-nul-orphan': [K, () => {
+        linked(); remove(lp('.git')); fs.writeFileSync(lp('new'), 'sole private bytes');
+        put('worktrees/linked/gitdir', path.join(work, 'linked') + '\0x/.git\n');
+    }, /^audit check=worktree-path status=2 repo=repo\/\.git\/worktrees\/linked$/m],
+    'linked-link-target-newline-orphan': [K, () => {
+        linked(); const actual = path.join(work, 'actual\n'); fs.renameSync(path.join(work, 'linked'), actual);
+        remove(path.join(actual, '.git')); fs.writeFileSync(path.join(actual, 'new'), 'sole private bytes');
+        fs.symlinkSync('actual\n', path.join(work, 'link')); put('worktrees/linked/gitdir', path.join(work, 'link/.git') + '\n');
+        assert.equal(fs.realpathSync(path.join(work, 'link')), actual); assert.equal(fs.existsSync(path.join(work, 'actual')), false);
+    }, /^audit check=worktree-path status=3 repo=repo\/\.git\/worktrees\/linked$/m],
+    // Negative controls: a clean relative link, and link and checkout names with spaces, a leading dash,
+    // glob characters and a backslash, resolved exactly (dirty refuses, clean passes).
+    'tmp-link-clean': [P, () => linkTarget('actual', 'link', false)],
+    'tmp-space-path': [P, () => linkTarget(' -act*al\\ [x] ', ' l ink ', false)],
+    'tmp-space-path-untracked': [D, () => linkTarget(' -act*al\\ [x] ', ' l ink '), /^audit check=worktree-status status=0 repo=\/tmp\/ -act\*al\\ \[x\] $/m],
     // Repair 6 (B): publication against origin's real heads, fetched blobless into a scratch repository.
     'origin-stale-master': [P, () => {
         staleMaster(); const before = snapshot(), result = audit(); assert.equal(result.status, 0, result.stdout);

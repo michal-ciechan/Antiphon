@@ -26,7 +26,7 @@ The whole Unit lane is outside this explicitly commissioned closed scope; it is 
 | V-4 | Commit/tree completeness; blobs may be absent; a commit-graph cannot hide a missing commit | C1105_Git_audit_object_completeness, all 4 variants; seed positive |
 | V-5 | Actual deploy fixture is truly blobless | C1008_Recycle_audits_promisor_checkout and each new local fixture |
 | V-6 | Failure preserves saved proof; unchanged recovered origin resumes | C1105_Git_audit_resume_preserves_proof |
-| V-7 | Every Git-directory location in the closed list: private commit hidden only there refuses with the stated class/check; published value passes; repair 4 shapes (present-origin comparison, admin-directory scan, AUTO_MERGE, antiphon/review-evidence, empty markers, editor files, ignored files); repair 5 shapes (V-12 to V-15) | C1105_Git_audit_hidden_locations, every table row (122 at repair 7: 93 through repair 5, 16 added by repair 6, 13 by repair 7) |
+| V-7 | Every Git-directory location in the closed list: private commit hidden only there refuses with the stated class/check; published value passes; repair 4 shapes (present-origin comparison, admin-directory scan, AUTO_MERGE, antiphon/review-evidence, empty markers, editor files, ignored files); repair 5 shapes (V-12 to V-15) | C1105_Git_audit_hidden_locations, every table row (132 at repair 8: 93 through repair 5, 16 added by repair 6, 13 by repair 7, 10 by repair 8) |
 | V-8 | A failure of only the per-tip `rev-list --count` refuses `check=rev-list status=128` | C1008_Recycle_audits_promisor_checkout (count-only block) |
 | V-9 | Origin ahead of the clone or a deleted tracking ref is not a refusal; a tracking ref no origin head contains refuses unpublished | C1008_Recycle_refuses_uninspectable_git (tracking-deleted, origin-ahead, gone blocks) and the origin-* rows of V-7 (origin-none-present now with the proof fetch failing; see V-17) |
 | V-10 | Running out of the overall budget (3000 s since repair 7) refuses `check=audit-timeout` | C1105_Git_audit_overall_timeout (its anchor is the exact 3000 s budget line) |
@@ -41,8 +41,9 @@ The whole Unit lane is outside this explicitly commissioned closed scope; it is 
 | V-19 | Replay 3b (branches origin deleted) still refuses; the refusal receipt counts `gone-tracking` and `unadvertised-local` with `proof=` and `commits`/`tips` | hidden rows origin-gone-counts, origin-tracking-deleted, origin-fetched-unpublished |
 | V-20 | Repair 7: a registered tmp checkout's path is translated to the mount before it is resolved: a `..` in the recorded path, a symlink target outside the runner's /tmp, or a target climbing above the mount refuses `worktree-confine`; a relative target, or an absolute one under the runner's /tmp, is followed in the mount; inside the checkout every `.git` entry and Git-shaped `HEAD` directory is classified as under /work (only another registered checkout's own pointer passes); ignored output and a registered checkout nested in it pass | hidden rows tmp-nested-dot-git, tmp-nested-dot-git-file, tmp-nested-pointer-unregistered, tmp-nested-git-shaped, tmp-dot-git-symlink, tmp-linked-ignored, tmp-nested-registered, tmp-symlink-dotdot, tmp-symlink-relative, tmp-symlink-absolute, tmp-symlink-climb |
 | V-21 | Repair 7: all proof fetches share a 600 s allowance besides the 300 s cap each; once spent no fetch starts and the present heads decide (more refusals) | hidden rows origin-fetch-allowance-spent, origin-fetch-allowance-shared |
+| V-22 | Repair 8: a symlink target or recorded worktree path is read byte for byte (a sentinel after the output, the command status kept, a NUL detected by length); one holding a newline, CR or other control character refuses unknown, never normalized; clean links and names with spaces, a leading dash, glob characters or a backslash resolve exactly | hidden rows tmp-link-target-newline, tmp-link-target-newline-last, tmp-link-target-cr, tmp-recorded-nul, tmp-recorded-cr, linked-recorded-nul-orphan, linked-link-target-newline-orphan, tmp-link-clean, tmp-space-path, tmp-space-path-untracked; existing tmp-symlink-relative and tmp-linked-ignored |
 | R-1 | Full commissioned adjacent regression | CP-1 through CP-12 |
-| R-2 | No lazy fetch; required environment (including the commit-graph keys) at every Git start | all 155 C1105_Git_audit cases |
+| R-2 | No lazy fetch; required environment (including the commit-graph keys) at every Git start | all 165 C1105_Git_audit cases |
 | R-3 | Dirty/unpublished/unknown classification, receipts, zero-count failures, UID 1654 | CP-11 existing 8 methods |
 
 ## Positive controls pending
@@ -75,6 +76,9 @@ All controls remain pending for method-scoped SourceLanding Mutation, including 
 | PC-R7 / one variant per row of the repair 7 mutation table (M1-M12) | C1105_Git_audit_hidden_locations (and tmp-linked-clean for M11) | the mutation named for that row | the named rows go red |
 | PC-R7-budget | C1105_Git_audit_overall_timeout; C1105_Git_audit_hidden_locations origin-fetch-allowance-* | restore 1800 s, or drop/alter the 600 s allowance or the cap clamp | anchor assertion fails (text pin) |
 | PC-doc-r7 | DockerStackDocumentationTests.Main_volume_recycling_is_scripted_only | remove a repair 7 sentence, or restore the 30-minute budget or the resolve-through-symlink sentence | documentation pins fail |
+| PC-R8 / one variant per row of the repair 8 mutation table (M1-M6) | C1105_Git_audit_hidden_locations | the mutation named for that row | the named rows go red |
+| PC-R8-sweep / tmp-git,agreement,main,entry,link-scan,origin-url | C1105_Git_audit_hidden_locations (rows to be added by Mutation if missing: missing-control discovery) | revert that site to plain command substitution | a newline-/NUL-named path accepted (no row demonstrates one yet) |
+| PC-doc-r8 | DockerStackDocumentationTests.Main_volume_recycling_is_scripted_only | remove the byte-for-byte sentence | documentation pin fails |
 
 Round 1 found two existing receipt-name assertions red because the completeness traversal named its logical purpose instead of its Git command. The corrected receipt names rev-list-objects; no assertion or timeout changed. The stopped row and rerun are retained in the task report.
 
@@ -449,9 +453,63 @@ The cap clamp (`cap` below 300 s when the allowance is lower) and the 3000 s con
 
 13 new `C1105_Git_audit_hidden_locations` rows (122 total), named in V-20 and V-21; hidden rows may now carry a fourth element run after the audit (the two allowance rows count fetch starts). Changed fixture anchors, not assertions: the proof-fetch anchor is now `timeout --kill-after=5s "${cap}s" git --git-dir="$proof" fetch` (the fetch-timeout row still shortens it to 2 s), and the overall-timeout anchor is the 3000 s line. Documentation pins: six new, one changed (the budget), two forbidden. No assertion was removed or weakened.
 
+## Repair 8: link targets and recorded paths byte for byte
+
+Source: Final Review 72434373 of repair 7 (a81c8bf0), F1 (P1): `tmp_resolve` read a symlink target through command substitution, which drops trailing newlines before the newline check; a link whose target is `actual\n` made the helper walk the absent `actual/checkout` and accept (exit 0) a registered `/tmp` checkout holding untracked content that d6ba7439 refuses. No production host was contacted; every fixture, baseline, mutant and TUnit driver ran through `scripts/build-slot.ps1` or the checkpoint tool.
+
+### What changed
+
+Two helpers in the audit body. `path_of <command>` captures a path a command prints with a sentinel byte after the output (`"$("$@" && printf x)"`), keeps the command's own status (a failed read never becomes an empty or different path), strips exactly the command's one trailing newline, and returns 3 for a path holding any control character (`[[:cntrl:]]` under `LC_ALL=C`: newline, CR, tab, ...). `read_record <file>` reads a recorded path (a worktree `gitdir`, a `.git` pointer) with the same sentinel, refuses a NUL (command substitution drops NUL bytes, so the text must be as long as `stat -c %s`), strips Git's one trailing newline and refuses any control character (1), or a failed read (2). Unsupported means unknown, never normalized.
+
+### Sweep: every path-derived string through command substitution, read loops, xargs or word splitting in the audit body (scripts/c590-remote.sh at the repair 8 tip)
+
+| Site | Before | Treatment |
+|---|---|---|
+| :4931 `tmp_resolve` link target | `$(readlink -- path)` dropped a trailing newline (F1) | `path_of readlink --`; control character refuses `worktree-confine` |
+| :4915, :4938 `tmp_resolve` `IFS=/ read -a <<<` | a here-string read stops at a newline | inputs are control-free (`read_record`, `path_of`); `IFS=/` only, so spaces, a leading dash, globs and backslashes stay exact (`-r`) |
+| :5005 `consider_linked` worktree `gitdir` | `$(< gitdir)` dropped trailing newlines and NUL bytes | `read_record`; refuses `worktree-path` (fail 2) |
+| :5023 `consider_linked` checkout under /work | `$(realpath -m)` dropped a trailing newline of a resolved symlink target (orphan checkout skipped) | `path_of realpath -m`; refuses `worktree-path` status 3 |
+| :5018 `$(tmp_resolve ...)` | output trailing newline | every component is control-free, so the one stripped newline is the printf's |
+| :5031, :5038 `.git` pointer agreement | `$(< .git)` and `$(readlink -e)` comparison could agree on a normalized name | `read_record` (NUL/control: does not agree, the checkout is inspected against its admin directory; a failed read still fails) and `path_of readlink -e` compared exactly |
+| :4960, :4964 `consider_tmp_git` nested `.git` | `$(< .git)`, `$(readlink -e)` | `read_record`, `path_of readlink -e`; refuses `dot-git` |
+| :4987-4988, :5317-5323 common/Git directory | `$(git rev-parse)`, `$(readlink -e)` | `path_of` for both; a control character fails unknown (status 3) |
+| :4895 main checkout, :5338 `.git` directory identity | `$(readlink -e)` compared to `top`/`gitdir` | `path_of readlink -e` compared exactly (mismatch keeps the stricter branch: stale index, `dot-git`) |
+| :5412 symlink scan | `$(readlink -e)` | `path_of`; a control-character resolution outside a checkout fails unknown |
+| :5281, :5285 `/work` and tmp mount roots | `$(readlink -e)` of fixed paths | `path_of` (fixed names; uniform) |
+| :5077 origin URL for the proof fetch | `$(git remote get-url)` | `path_of`; a control character skips the fetch (present heads: more refusals) |
+| :5080 `alternates` line | line-based file | `top` is control-free (`path_of`) |
+| :4548 `rev-parse --git-path index` | trailing newline | the name ends in `index`; only decides seed mode |
+| :4555, :4568, emptiness probes (`find -print -quit`, `status --porcelain`) | trailing newline | only emptiness is used; porcelain v1 C-quotes unusual names; a glob in `-path "$where/.git"` can prune only nested `.git` entries whose parent is printed first |
+| :4609 `readlink -n` pipe, `ls-files -z`, `find -print0` loops | | exact (pipe, NUL-delimited) |
+| :4473 `rel_repo` | here-string | receipt text only; newline/CR names print `?` |
+| :4618-4642, :4721, :4742, ref/log/pseudoref reads | | object IDs and ref names, validated by anchored patterns; not paths |
+| :5269 `kill $pids` | word splitting | job IDs only |
+| xargs | | none in the audit |
+
+### Baseline (a81c8bf0 helper; same fixture)
+
+Six of the ten new rows are red on a81c8bf0. Five are fail-opens that exit 0 (`repositories=1 partial=1`): tmp-link-target-newline (Review's case), tmp-link-target-newline-last, tmp-recorded-nul, linked-recorded-nul-orphan and linked-link-target-newline-orphan. tmp-link-target-cr and tmp-recorded-cr are policy rows: the base followed the CR name exactly and refused `RecycleWorktreeDirty`; they now refuse unknown. The three controls (tmp-link-clean, tmp-space-path, tmp-space-path-untracked) are green on both.
+
+### Mutation matrix (copies of the repaired helper, never the worktree; one gated driver, 6 mutants x 7 refusal rows)
+
+| Mutant | Red rows |
+|---|---|
+| M1 `tmp_resolve` target back to `$(readlink -- path)` | tmp-link-target-newline, tmp-link-target-newline-last, tmp-link-target-cr |
+| M2 `path_of` without the sentinel | tmp-link-target-newline, tmp-link-target-newline-last, linked-link-target-newline-orphan |
+| M3 `path_of` control-character refusal removed | tmp-link-target-newline, tmp-link-target-newline-last, tmp-link-target-cr, linked-link-target-newline-orphan |
+| M4 `read_record` NUL length check removed | tmp-recorded-nul, linked-recorded-nul-orphan |
+| M5 `read_record` refusing only a newline | tmp-recorded-cr |
+| M6 checkout under /work back to `$(realpath -m)` | linked-link-target-newline-orphan |
+
+Every other mutant/row pair stayed green. The remaining `path_of`/`read_record` call sites (`consider_tmp_git`, the `.git` agreement, `consider_main`, the entry loop, the symlink scan, the origin URL) are hardening with no demonstrated fail-open; their controls are pending for SourceLanding Mutation.
+
+### New and changed cases
+
+10 new `C1105_Git_audit_hidden_locations` rows (132 total), named in V-22; one helper (`linkTarget`) asserts the exact link bytes, the kernel-resolved checkout, the absent stripped path and Git's own status before the audit. One new documentation pin (the byte-for-byte sentence). No assertion was removed or weakened; no anchor changed.
+
 ## Checkpoints
 
-Closed list: one isolated test build, UseAppHost=false, serial drivers. Current census (repair 7): CP-11 has 163 cases (8 existing methods + 155 C1105_Git_audit cases: 10 recovery, 11 seed, 5 index, 4 completeness, 1 resume, 122 hidden-location rows, 1 overall timeout, 1 volume scale), and the twelve rows' floors sum to 299 cases. History, for reading earlier reports only: repair 3 added 42 hidden-location rows and the long-lived seed variant; repair 4 added 22 rows, the missing-ancestor-graph variant and two methods; repair 5 added 29 rows (total then 270); repair 6 added 16 rows (286); repair 7 adds 13 rows (299). The slow CP-7/CP-9/CP-12 run last. Existing timeout estimates are unchanged. The Final Review e079b0d3 12-row wall was 83m27s; allow roughly 85 minutes plus implementation and baseline diagnostics.
+Closed list: one isolated test build, UseAppHost=false, serial drivers. Current census (repair 8): CP-11 has 173 cases (8 existing methods + 165 C1105_Git_audit cases: 10 recovery, 11 seed, 5 index, 4 completeness, 1 resume, 132 hidden-location rows, 1 overall timeout, 1 volume scale), and the twelve rows' floors sum to 309 cases. History, for reading earlier reports only: repair 3 added 42 hidden-location rows and the long-lived seed variant; repair 4 added 22 rows, the missing-ancestor-graph variant and two methods; repair 5 added 29 rows (total then 270); repair 6 added 16 rows (286); repair 7 added 13 rows (299); repair 8 adds 10 rows (309). The slow CP-7/CP-9/CP-12 run last. Existing timeout estimates are unchanged. The Final Review e079b0d3 12-row wall was 83m27s; allow roughly 85 minutes plus implementation and baseline diagnostics.
 
 ### Checkpoints
 
@@ -460,7 +518,7 @@ Closed list: one isolated test build, UseAppHost=false, serial drivers. Current 
 | CP-1 | promisor | `tests/Antiphon.Tests -> bin-c1105-promisor/` | docs-pins | `/*/*/DockerStackDocumentationTests/*` | doc pins | 14 methods, 0 failed | 14 | 15 | true |
 | CP-2 | promisor | CP-1 | registry-guard | `/*/*/(TestClassificationGuardTests*)\|(SlowTestTripwireTests*)/*` | registry guard | 3 methods, 0 failed | 3 | 3 | true |
 | CP-3 | promisor | CP-1 | compose-text-pins | `/*/*/RemoteScriptContractTests/(C1105_Deploy_parent_orders_checkout_and_boot_files_before_recycle*)\|(Deploy_parent_creates_the_github_token_directory_without_reading_it*)\|(Deploy_parent_creates_the_codex_home_directory_without_reading_it*)\|(Deploy_parent_seeds_or_verifies_runner_checkout*)\|(Persistent_restart_ensures_the_identity_file_before_stopping_an_older_runner*)\|(Deploy_parent_seeds_a_fresh_runner_checkout_before_starting_the_runner*)` | compose text pins | 6 methods, 0 failed | 6 | 4 | true |
-| CP-11 | promisor | CP-1 | remote-git-audit | `/*/*/RemoteScriptContractTests/(C1008_Recycle_refuses_uninspectable_git*)\|(C1008_Recycle_refuses_unpublished_and_dirty_work*)\|(C1008_Retire_temp_rechecks_absence_and_retirement*)\|(C1087_Host_census_filters_and_names_cause*)\|(C1008_Recycle_preserves_tmp_copyup*)\|(C1008_Retire_temp_reclaims_below_cache_disk_gate*)\|(C1008_Recycle_audits_work_as_1654*)\|(C1008_Recycle_audits_promisor_checkout*)\|(C1105_Git_audit_*)` | C1008/C1087 promisor audit | 16 methods / 163 cases, 0 failed | 163 | 15 | true |
+| CP-11 | promisor | CP-1 | remote-git-audit | `/*/*/RemoteScriptContractTests/(C1008_Recycle_refuses_uninspectable_git*)\|(C1008_Recycle_refuses_unpublished_and_dirty_work*)\|(C1008_Retire_temp_rechecks_absence_and_retirement*)\|(C1087_Host_census_filters_and_names_cause*)\|(C1008_Recycle_preserves_tmp_copyup*)\|(C1008_Retire_temp_reclaims_below_cache_disk_gate*)\|(C1008_Recycle_audits_work_as_1654*)\|(C1008_Recycle_audits_promisor_checkout*)\|(C1105_Git_audit_*)` | C1008/C1087 promisor audit | 16 methods / 173 cases, 0 failed | 173 | 15 | true |
 | CP-4 | promisor | CP-1 | mount-class | `/*/*/RollingProductionMountTests/*` | class regression | 12 methods, 0 failed | 12 | 10 | true |
 | CP-5 | promisor | CP-1 | retired-temp-script | `/*/*/RetiredTempContainerScriptTests/*` | class regression | 13 methods, 0 failed | 13 | 10 | true |
 | CP-6 | promisor | CP-1 | host-jq | `/*/*/HostJqPrerequisiteScriptTests/*` | class regression | 39 methods, 0 failed | 39 | 15 | true |

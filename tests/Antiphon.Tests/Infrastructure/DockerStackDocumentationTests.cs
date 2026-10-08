@@ -81,6 +81,8 @@ public sealed class DockerStackDocumentationTests
         section.ShouldContain("once all proof fetches of the audit together have used their 600 s allowance");
         section.ShouldContain("is translated to the tmp mount before anything resolves it");
         section.ShouldContain("a `..` in the recorded path refuses");
+        // CARD-1105 repair 8: a link target or recorded path is never normalized (a trailing newline).
+        section.ShouldContain("Link targets and recorded paths are read byte for byte; one holding a control character (a newline, CR or NUL included) cannot be resolved exactly and refuses unknown.");
         section.ShouldContain("Inside a registered tmp checkout every `.git` entry and every Git-shaped `HEAD` directory is classified as under `/work`");
         section.ShouldNotContain("resolving outside the tmp mount through a symlink refuses unknown", Case.Sensitive, "the tmp path is proven, not resolved first");
         section.ShouldNotContain("each worktree's private refs and HEAD (also bare HEAD), and both sides of every reflog entry must prove publication",

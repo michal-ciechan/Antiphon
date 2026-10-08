@@ -4431,6 +4431,7 @@ top=''
 top_bare=''
 declare -A dirty_seen=() common_seen=() common_repo=() work_trees=() git_dirs=() tmp_registered=()
 tmp_nested=()
+path_out=''
 commons=()
 commons_fetched=0
 # Every origin proof fetch together may take this many milliseconds (each one also
@@ -4504,6 +4505,31 @@ refuse_unpublished() {
     exit 2
 }
 digest() { printf '%s' "$1" | sha256sum | cut -d' ' -f1; }
+# CARD-1105 repair 8. A path printed by a command, byte for byte: command substitution
+# drops trailing newlines, so a sentinel follows the output and the command's own
+# status is kept (a failed read never becomes an empty or different path). The command
+# ends its path with one newline. Sets path_out. A path holding a control character
+# (newline, CR, tab, ...) is unsupported and returns 3: refused, never normalized.
+path_of() {
+    path_out="$("$@" && printf x)" || { path_out=''; return 1; }
+    [[ "$path_out" == *$'\n'x ]] || { path_out=''; return 1; }
+    path_out="${path_out%$'\n'x}"
+    case "$path_out" in ''|*[[:cntrl:]]*) path_out=''; return 3 ;; esac
+}
+# A path recorded in a file (a worktree's gitdir, a .git pointer), byte for byte:
+# command substitution would also drop NUL bytes, so the text must be as long as the
+# file. Git ends the record with one newline. Sets path_out; a NUL, an empty record or
+# any other control character returns 1, a failed read 2.
+read_record() {
+    local size
+    path_out=''
+    size="$(stat -c %s -- "$1")" && [[ "$size" =~ ^[0-9]+$ ]] || return 2
+    path_out="$(cat -- "$1" && printf x)" || { path_out=''; return 2; }
+    path_out="${path_out%x}"
+    [ "${#path_out}" = "$size" ] || { path_out=''; return 1; }
+    path_out="${path_out%$'\n'}"
+    case "$path_out" in ''|*[[:cntrl:]]*) path_out=''; return 1 ;; esac
+}
 # Worktree content. Protected: tracked files (raw bytes against the index), staged
 # entries and untracked files that are not ignored. Ignored files (build output,
 # caches, local config) are not work: status omits them, under the ignore rules the
@@ -4866,7 +4892,7 @@ consider_main() {
     esac
     if [ "${top##*/}" = .git ]; then
         main="${top%/.git}"
-        if [ "$(readlink -e -- "$main/.git" 2>/dev/null)" = "$top" ]; then
+        if path_of readlink -e -- "$main/.git" 2>/dev/null && [ "$path_out" = "$top" ]; then
             queue_dirty "$main" status
             return 0
         fi
@@ -4879,7 +4905,9 @@ consider_main() {
 # may not climb with '..'. Symlinks are followed one hop at a time: a relative target
 # from its own directory, an absolute one only under the runner's /tmp (translated to
 # the mount), and a '..' never above the mount. Prints the mount path; returns 1 when
-# the path cannot be proven to stay inside the mount.
+# the path cannot be proven to stay inside the mount. Repair 8: a link target is read
+# byte for byte (path_of), so one holding a control character returns 1; the recorded
+# path itself comes from read_record.
 tmp_resolve() {
     local path="$tmp_root" part target hops=0
     local -a parts=() more=()
@@ -4900,9 +4928,9 @@ tmp_resolve() {
         [ -L "$path" ] || continue
         hops=$((hops + 1))
         [ "$hops" -le 40 ] || return 1
-        target="$(readlink -- "$path")" || return 1
+        path_of readlink -- "$path" || return 1
+        target="$path_out"
         case "$target" in
-            ''|*$'\n'*) return 1 ;;
             "$runner_tmp"|"$runner_tmp"/*) path="$tmp_root"; target="${target#"$runner_tmp"}" ;;
             /*) return 1 ;;
             *) path="${path%/*}" ;;
@@ -4920,7 +4948,7 @@ tmp_resolve() {
 # tmp_nested). Every other .git entry and every Git-shaped HEAD directory keeps its
 # metadata outside /work, cannot be classified, and refuses unknown.
 consider_tmp_git() {
-    local checkout="$1" entry dir marker content target
+    local checkout="$1" entry dir marker target
     audit_repo="$checkout"
     audit_check=tmp-git
     find "$checkout" -xdev -mindepth 1 -name .git -print0 -prune -o -type f -name HEAD -print0 > "$scratch/tmp-git" 2>/dev/null || fail $?
@@ -4929,12 +4957,12 @@ consider_tmp_git() {
         case "$entry" in
             */.git)
                 [ -f "$entry" ] && [ ! -L "$entry" ] || refuse_unknown dot-git 0 "$dir"
-                content="$(< "$entry")" || fail $?
+                read_record "$entry" || refuse_unknown dot-git 0 "$dir"
                 target=''
-                case "$content" in "gitdir: "*) target="${content#gitdir: }" ;; esac
-                case "$target" in ''|*$'\n'*) refuse_unknown dot-git 0 "$dir" ;; /*) ;; *) target="$dir/$target" ;; esac
-                target="$(readlink -e -- "$target")" || refuse_unknown dot-git 0 "$dir"
-                tmp_nested+=("$target" "$dir")
+                case "$path_out" in "gitdir: "*) target="${path_out#gitdir: }" ;; esac
+                case "$target" in '') refuse_unknown dot-git 0 "$dir" ;; /*) ;; *) target="$dir/$target" ;; esac
+                path_of readlink -e -- "$target" || refuse_unknown dot-git 0 "$dir"
+                tmp_nested+=("$path_out" "$dir")
                 ;;
             */HEAD)
                 for marker in objects refs packed-refs commondir; do
@@ -4953,12 +4981,12 @@ consider_tmp_git() {
 # pointer cannot hide modified or untracked files. Only an absent checkout (Git's
 # prunable state) leaves the index, which must then equal its HEAD.
 consider_linked() {
-    local admin="$1" common pointer parent recorded content target='' checkout='' agreed=0 probe status=0 in_tmp=0
+    local admin="$1" pointer parent recorded target='' checkout='' agreed=0 probe status=0 in_tmp=0 read=0
     audit_repo="$admin"
     audit_check=git-dir-layout
-    common="$(git --git-dir="$admin" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || fail $?
-    common="$(readlink -e -- "$common")" || fail $?
-    [ "$common" = "$top" ] || refuse_unknown git-dir-layout 0 "$admin"
+    path_of git --git-dir="$admin" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || fail $?
+    path_of readlink -e -- "$path_out" || fail $?
+    [ "$path_out" = "$top" ] || refuse_unknown git-dir-layout 0 "$admin"
     # extensions.worktreeConfig lets config.worktree move this work tree elsewhere.
     if [ -e "$admin/config.worktree" ] || [ -L "$admin/config.worktree" ]; then
         audit_check=core-worktree
@@ -4973,8 +5001,10 @@ consider_linked() {
     audit_check=worktree-path
     if [ -e "$admin/gitdir" ] || [ -L "$admin/gitdir" ]; then
         [ -f "$admin/gitdir" ] && [ ! -L "$admin/gitdir" ] || fail 2
-        pointer="$(< "$admin/gitdir")" || fail $?
-        case "$pointer" in ''|*$'\n'*) fail 2 ;; /*) ;; *) pointer="$admin/$pointer" ;; esac
+        # Byte for byte (read_record): a record holding a control character refuses.
+        read_record "$admin/gitdir" || fail 2
+        pointer="$path_out"
+        case "$pointer" in /*) ;; *) pointer="$admin/$pointer" ;; esac
         # Git records <checkout>/.git; the checkout directory is resolved, the .git
         # entry itself is not followed.
         [ "${pointer##*/}" = .git ] || refuse_unknown worktree-path 0 "$admin"
@@ -4990,15 +5020,22 @@ consider_linked() {
             tmp_registered[$admin]="$checkout"
             in_tmp=1
         else
-            checkout="$(realpath -m -- "${parent:-/}")" || fail $?
+            path_of realpath -m -- "${parent:-/}" || fail $?
+            checkout="$path_out"
             [[ "$checkout/.git/" == "$root/"* ]] || refuse_unknown worktree-confine 0 "$admin"
         fi
         recorded="$checkout/.git"
         if [ -f "$recorded" ] && [ ! -L "$recorded" ]; then
-            content="$(< "$recorded")" || fail $?
-            case "$content" in "gitdir: "*) target="${content#gitdir: }" ;; esac
-            case "$target" in ''|*$'\n'*) target='' ;; /*) ;; *) target="$checkout/$target" ;; esac
-            if [ -n "$target" ] && [ "$(readlink -e -- "$target" 2>/dev/null)" = "$admin" ]; then agreed=1; fi
+            # A pointer holding a NUL or another control character does not agree: the
+            # checkout is then inspected against this admin directory.
+            read_record "$recorded" || read=$?
+            case "$read" in
+                0) case "$path_out" in "gitdir: "*) target="${path_out#gitdir: }" ;; esac ;;
+                1) ;;
+                *) fail "$read" ;;
+            esac
+            case "$target" in ''|/*) ;; *) target="$checkout/$target" ;; esac
+            if [ -n "$target" ] && path_of readlink -e -- "$target" 2>/dev/null && [ "$path_out" = "$admin" ]; then agreed=1; fi
         fi
     fi
     if [ -n "$checkout" ] && { [ -e "$checkout" ] || [ -L "$checkout" ]; }; then
@@ -5037,8 +5074,8 @@ fetch_origin() {
     fetched=()
     [ "$fetch_left_ms" -gt 0 ] || return 1
     [ "$fetch_left_ms" -ge 300000 ] || cap=$(((fetch_left_ms + 999) / 1000))
-    url="$(git --git-dir="$top" remote get-url origin 2>/dev/null)" || return 1
-    [ -n "$url" ] || return 1
+    path_of git --git-dir="$top" remote get-url origin 2>/dev/null || return 1
+    url="$path_out"
     git init -q --bare --template= -- "$proof" >/dev/null 2>&1 || return 1
     printf '%s\n' "$top/objects" > "$proof/objects/info/alternates" || return 1
     git --git-dir="$proof" config core.repositoryformatversion 1 >/dev/null 2>&1 || return 1
@@ -5241,10 +5278,12 @@ dirty_parallel="$(nproc 2>/dev/null)" || dirty_parallel=1
 [[ "$dirty_parallel" =~ ^[1-9][0-9]*$ ]] || dirty_parallel=1
 [ "$dirty_parallel" -le 8 ] || dirty_parallel=8
 audit_check=readlink-root
-root="$(readlink -e /work)" || fail $?
+path_of readlink -e /work || fail $?
+root="$path_out"
 if [ -n "${C1008_TMP_MOUNT:-}" ]; then
     audit_check=readlink-tmp
-    tmp_root="$(readlink -e -- "$C1008_TMP_MOUNT")" || fail $?
+    path_of readlink -e -- "$C1008_TMP_MOUNT" || fail $?
+    tmp_root="$path_out"
     [ -d "$tmp_root" ] && [ "$tmp_root" != / ] || fail 2
 fi
 audit_check=scratch
@@ -5275,12 +5314,14 @@ while IFS= read -r -d '' entry; do
     esac
     audit_repo="$repo"
     audit_check=git-common-dir
-    top="$(git -C "$repo" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || fail $?
-    top="$(readlink -e "$top")" || fail $?
+    path_of git -C "$repo" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || fail $?
+    path_of readlink -e -- "$path_out" || fail $?
+    top="$path_out"
     [[ "$top/" == "$root/"* ]] || refuse_unknown common-dir-confine 0 "$repo"
     audit_check=git-dir
-    gitdir="$(git -C "$repo" rev-parse --absolute-git-dir 2>/dev/null)" || fail $?
-    gitdir="$(readlink -e "$gitdir")" || fail $?
+    path_of git -C "$repo" rev-parse --absolute-git-dir 2>/dev/null || fail $?
+    path_of readlink -e -- "$path_out" || fail $?
+    gitdir="$path_out"
     [[ "$gitdir/" == "$root/"* ]] || refuse_unknown git-dir-confine 0 "$repo"
     case "$entry" in
         */HEAD)
@@ -5294,7 +5335,7 @@ while IFS= read -r -d '' entry; do
         *)
             # Git never shows an entry named .git as content: a .git directory that is
             # not this checkout's Git directory could hide files.
-            if [ -d "$entry" ] && [ "$(readlink -e -- "$entry")" != "$gitdir" ]; then
+            if [ -d "$entry" ] && ! { path_of readlink -e -- "$entry" && [ "$path_out" = "$gitdir" ]; }; then
                 refuse_unknown dot-git 0 "$repo"
             fi
             ;;
@@ -5368,7 +5409,8 @@ while IFS= read -r -d '' link; do
     audit_check=link-resolve
     audit_repo="$link"
     status=0
-    resolved="$(readlink -e -- "$link")" || status=$?
+    path_of readlink -e -- "$link" || status=$?
+    resolved="$path_out"
     if [ "$status" = 0 ] && [[ "$resolved/" == "$root/"* ]]; then continue; fi
     [ "$(link_owner "$link")" != tree ] || continue
     [ "$status" = 0 ] || fail "$status"
