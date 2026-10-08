@@ -830,3 +830,47 @@ Review R2 disclosures, judged here (no production change):
 
 PC-21 joins the pending list; every PC stays pending for post-land SourceLanding Mutation. AppHost
 restart is needed after the reviewed land (server change); no runner upgrade and no migration.
+
+Evidence correction (Review 67673f16 R3): repair d9a5492f's report and brief stated 289 test
+executions for its final checkpoint run 20261008-205030-4a16; its 16 rows sum to **268**
+(7+7+4+1+1+1+5+1+2+164+25+10+33+2+3+2). No row or argument was missing; the CP lines themselves
+were right.
+
+### S4 repair 2 (Code task 25d569de, Final Review 67673f16)
+
+Branch `feat/card-task-25d569de` from `d833a35d`; landing owner remains 470638a8. Production:
+one sentence in `StandingBootAttentionProjection.Item`. Tests: one new method in
+`StandingBootAttentionTests` (CP-33). No existing assertion changed; no migration.
+
+- **F-4, no delivery verdict on the standing row.** The UserPrompt evidence line ended "..., so
+  delivery is not the problem." The projection reads only the latest prompt record's kind,
+  sequence and time (`BootReplyWatch.LoadPromptTurnAsync`) and never matches it against the
+  intended request, so a 12-character prefix with zero complete matching UserPrompt records
+  produced the same sentence. The line now ends "no assistant, thinking, tool or turn-end row
+  since." and states no delivery success or failure. The queued-record line, headline, the other
+  evidence lines and the receipt message (`StandingBootWatchPolicy.Message`) already made no
+  delivery claim and are unchanged. The plan's "retain the transcript-delivery distinction"
+  instruction is corrected to match.
+- **CP-33** `C1156_Standing_row_makes_no_delivery_claim`: `partial-prefix` (the only UserPrompt
+  is cut to the first 12 characters of the still-Pending queued body; control: one record, zero
+  complete matches) and `complete-match` (control: one complete match). Both assert the headline,
+  the evidence and the sweep's receipt message contain none of `deliver`, `not the problem`,
+  `received`, `accepted`, `reached the`, `confirmed`, then that the prompt line is exactly the
+  stored facts and the silence.
+- **Not changed (outside this card's footprint, disclosed for Backlog):** the same "delivery is
+  not the problem" wording on the legacy `bootSeq=` attention row
+  (`AttentionService.BuildBootReplyMissingItemsAsync`, CARD-0312, pinned by
+  `AttentionServiceTests` CP-21), on the CARD-1151 task Overdue row (`AttentionService.BootStallItem`),
+  in the client `LivenessProbeFailed` tooltip (`client/src/features/attention/attentionVisuals.ts`,
+  which the standing row also shows) and in `docs/orchestration-loop.md` (CARD-0353 section).
+
+Author red: `server/` checked out at `d833a35d` (the server diff to this repair is exactly the
+restored sentence plus a two-line comment, so this is also the PC-22 mutant), tests at this
+repair, class method run from an isolated build: both arguments red at the no-delivery-claim
+assertion (`text should not contain "deliver"`); restored, rebuilt: both green. PC-22 joins the
+pending list; every PC stays pending for post-land SourceLanding Mutation. AppHost restart is
+needed after the reviewed land (server change); no runner upgrade and no migration.
+
+| Case | Production mutation | Red at |
+|---|---|---|
+| CP-33 `partial-prefix`, `complete-match` | PC-22: the UserPrompt line ends ", so delivery is not the problem." (base `d833a35d`) | no-delivery-claim assertion, `deliver` |
