@@ -30,7 +30,17 @@ public class RunnerAbsenceEvidenceRuntimeTests
     [Arguments("adoption")]
     public async Task C1153_Creation_consumes_proof_before_effects(string path)
     {
-        await using var world = await RuntimeWorld.CreateAsync();
+        // Attach writes its marker only after herdr answers (an unreachable herdr writes nothing),
+        // so that arm runs against a fake herdr.
+        await using var fake = path == "attach" ? new FakeHerdrServer() : null;
+        if (fake is not null)
+        {
+            fake.Start();
+            await fake.WaitUntilListeningAsync();
+        }
+
+        await using var world = await RuntimeWorld.CreateAsync(herdr: fake is null ? null
+            : new HerdrClient(new HerdrSettings { Enabled = true, Session = fake.Session, SocketPath = fake.EndpointPath }));
         var id = Guid.NewGuid();
         (await world.PrepareAsync(id)).Refusal.ShouldBeNull();
         world.ReadState(id).ShouldBe(RunnerAbsenceRecordState.Prepared);
@@ -244,11 +254,11 @@ internal sealed class RuntimeWorld : IAsyncDisposable
         Settings = new SessionRunnerSettings { SessionLogPath = root };
     }
 
-    public static async Task<RuntimeWorld> CreateAsync(string? root = null)
+    public static async Task<RuntimeWorld> CreateAsync(string? root = null, HerdrClient? herdr = null)
     {
         var world = new RuntimeWorld(root ?? Path.Combine(Path.GetTempPath(), "c1153-rt-" + Guid.NewGuid().ToString("N")), root is null);
         world.Runtime = new SessionRunnerRuntime(Options.Create(world.Settings), NullLogger<SessionRunnerRuntime>.Instance,
-            timeProvider: world.Clock);
+            herdr, timeProvider: world.Clock);
         world.Runtime.CreationEffectForTest = world.OnEffectAsync;
         await world.Runtime.AdoptOrphanedHostsAsync(new SystemProcessLivenessProbe(), CancellationToken.None);
         return world;
