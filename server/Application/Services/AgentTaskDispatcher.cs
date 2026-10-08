@@ -2706,18 +2706,24 @@ public sealed partial class AgentTaskDispatcher
             return AbsentLaunchDecision.Withheld;
         }
 
-        var expectedStartedAt = await _db.AgentSessions.AsNoTracking()
+        var expected = await _db.AgentSessions.AsNoTracking()
             .Where(s => s.Id == sessionId)
-            .Select(s => (DateTime?)s.StartedAt)
+            .Select(s => new { s.StartedAt, s.RunnerStoreId })
             .FirstOrDefaultAsync(ct);
-        if (expectedStartedAt is null)
+        if (expected is null)
             return AbsentLaunchDecision.Withheld;
 
         if (await ReadAbsenceAsync(sessionId, runnerSessions, ct) != RunnerAbsence.Positive)
             return AbsentLaunchDecision.Withheld;
 
-        if (!AbsentLaunchPolicy.IsNeverAttempted(await ReadAbsentLaunchEvidenceAsync(
-                task, sessionId, expectedStartedAt.Value, session?.FailureReason, nativeAttempt, ct)))
+        // CARD-1153 D-4. Pre-screen the database facts with a provisional native-empty fact, so a
+        // nonpristine brief or a native attempt never closes the runner identity. The provisional
+        // value is confined to this check: the decision below uses only a validated certificate.
+        var facts = await ReadAbsentLaunchEvidenceAsync(task, sessionId, session?.FailureReason, ct);
+        AbsenceCertificate? certificate = null;
+        if (AbsentLaunchPolicy.IsNeverAttempted(WithNativeEmpty(facts, !nativeAttempt)))
+            certificate = await ReadAbsenceCertificateAsync(sessionId, expected.StartedAt, expected.RunnerStoreId, ct);
+        if (nativeAttempt || !AbsentLaunchPolicy.IsNeverAttempted(WithNativeEmpty(facts, certificate is not null)))
         {
             // Reading evidence can take time. An intervening live turn/process still wins
             // over the ordinary failure, including when the evidence read itself failed.
@@ -2728,13 +2734,94 @@ public sealed partial class AgentTaskDispatcher
         }
 
         return await TryHoldAbsentLaunchAsync(
-            task, sessionId, expectedStatus, expectedAttempt, expectedDispatchedAt, expectedStartedAt.Value, ct);
+            task, sessionId, expectedStatus, expectedAttempt, expectedDispatchedAt, expected.StartedAt,
+            certificate!, ct);
     }
 
-    /// <summary>Rare due-failure path only; null means the whitelist has no proof.</summary>
+    /// <summary>
+    /// CARD-1153: a validated never-created certificate, the store the request named, and a
+    /// deadline on this dispatcher's clock taken before the request was sent. No certificate
+    /// survives this decision: the hold re-checks it under the lock and then drops it.
+    /// </summary>
+    private sealed record AbsenceCertificate(
+        SessionRunnerAbsenceEvidence Evidence, Guid? RequestedRunnerStoreId, DateTime LocalDeadline);
+
+    private static AbsentLaunchEvidence? WithNativeEmpty(AbsentLaunchEvidence? facts, bool nativeEmpty) =>
+        facts is null ? null : facts with { EmptyNativeTranscript = nativeEmpty };
+
+    /// <summary>
+    /// CARD-1153 D-1. One bounded prepare for the session this cold dispatch just allocated and
+    /// committed. Unsupported, refused or failed preparation leaves no proof and never prevents
+    /// the launch; only caller cancellation propagates.
+    /// </summary>
+    private async Task PrepareAbsenceEvidenceAsync(AgentTask claimed, AgentSession session, CancellationToken ct)
+    {
+        if (_runnerClient is null)
+            return;
+        try
+        {
+            var prepared = await _runnerClient.PrepareAbsenceEvidenceAsync(
+                session.Id, session.StartedAt, session.RunnerStoreId, ct);
+            _logger.LogDebug(
+                "Task {ShortId}: absence evidence for session {SessionId} prepared={Prepared} ({Reason})",
+                DelegationReportFormatter.Short(claimed.Id), session.Id, prepared.Prepared, prepared.Reason);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            _logger.LogDebug(ex, "Task {ShortId}: absence evidence preparation for session {SessionId} failed",
+                DelegationReportFormatter.Short(claimed.Id), session.Id);
+        }
+    }
+
+    /// <summary>
+    /// CARD-1153 D-4. Only a Proven result from the owning runner's transport for this exact
+    /// session, generation and (when bound) store is a certificate. Every other result,
+    /// including a 404, an empty transcript, an unsupported runner or a failed read, is null.
+    /// </summary>
+    private async Task<AbsenceCertificate?> ReadAbsenceCertificateAsync(
+        Guid sessionId, DateTime startedAt, Guid? runnerStoreId, CancellationToken ct)
+    {
+        if (_runnerClient is null)
+            return null;
+        var deadline = UtcNow() + RunnerAbsenceEvidenceValidator.Lifetime;
+        try
+        {
+            var result = await _runnerClient.CertifyAbsenceAsync(sessionId, startedAt, runnerStoreId, ct);
+            if (!result.IsProven || result.Evidence is not { } evidence)
+            {
+                _logger.LogDebug("Absence certificate for session {SessionId} is {Kind}: {Reason}",
+                    sessionId, result.Kind, result.Reason);
+                return null;
+            }
+
+            return evidence.SessionId == sessionId
+                && SessionGeneration.Equal(evidence.AcceptedStartedAt, startedAt)
+                && (runnerStoreId is not Guid bound || evidence.RunnerStoreId == bound)
+                    ? new AbsenceCertificate(evidence, runnerStoreId, deadline)
+                    : null;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            _logger.LogDebug(ex, "Absence certificate for session {SessionId} is unknown", sessionId);
+            return null;
+        }
+    }
+
+    /// <summary>The first-read certificate still names the locked row and has not expired.</summary>
+    private bool AbsenceCertificateHolds(
+        AbsenceCertificate certificate, Guid sessionId, DateTime startedAt, Guid? runnerStoreId) =>
+        certificate.Evidence.SessionId == sessionId
+        && SessionGeneration.Equal(certificate.Evidence.AcceptedStartedAt, startedAt)
+        && certificate.RequestedRunnerStoreId == runnerStoreId
+        && (runnerStoreId is not Guid bound || certificate.Evidence.RunnerStoreId == bound)
+        && UtcNow() <= certificate.LocalDeadline;
+
+    /// <summary>
+    /// Rare due-failure path only; database facts. The native-empty fact is left unknown here and
+    /// is supplied by the caller: provisional for the pre-screen, the certificate for a decision.
+    /// </summary>
     private async Task<AbsentLaunchEvidence?> ReadAbsentLaunchEvidenceAsync(
-        AgentTask task, Guid sessionId, DateTime startedAt, string? failureReason,
-        bool nativeAttempt, CancellationToken ct)
+        AgentTask task, Guid sessionId, string? failureReason, CancellationToken ct)
     {
         try
         {
@@ -2759,17 +2846,10 @@ public sealed partial class AgentTaskDispatcher
             var knownColumns = _db.Model.FindEntityType(typeof(SessionQueuedMessage))?.GetProperties()
                 .Select(p => p.Name).ToHashSet(StringComparer.Ordinal)
                 .SetEquals(AbsentLaunchPolicy.MessageColumns.Split(' '));
-            bool? emptyNative = nativeAttempt ? false : null;
-            if (!nativeAttempt && _runnerClient is not null)
-            {
-                // The owning runner is routed by session id. A 404, an unbound/incomplete tail,
-                // or any failed read is unknown, never an empty native/sidecar history.
-                var transcript = await _runnerClient.GetTranscriptAsync(sessionId, ct);
-                emptyNative = transcript is { TerminalComplete: true, LastSequence: 0, Entries.Count: 0 }
-                    && transcript.SessionId == sessionId && transcript.AcceptedStartedAt == startedAt;
-            }
+            // CARD-1153: no transcript read here. A 404 or an empty transcript is not a
+            // never-created certificate; the caller supplies the native-empty fact.
             return new(task.Id, sessionId, task.Status, task.DispatchedAt, task.Goal, failureReason,
-                rows, knownColumns, neverWorking, emptyTranscript, emptyNative, RunnerAbsent: true);
+                rows, knownColumns, neverWorking, emptyTranscript, EmptyNativeTranscript: null, RunnerAbsent: true);
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
         {
@@ -2854,6 +2934,7 @@ public sealed partial class AgentTaskDispatcher
         int expectedAttempt,
         DateTime? expectedDispatchedAt,
         DateTime expectedStartedAt,
+        AbsenceCertificate certificate,
         CancellationToken ct)
     {
         var gate = _queue.GetLock(sessionId);
@@ -2862,7 +2943,7 @@ public sealed partial class AgentTaskDispatcher
         try
         {
             decision = await HoldUnderLockAsync(
-                task, sessionId, expectedStatus, expectedAttempt, expectedDispatchedAt, expectedStartedAt, ct);
+                task, sessionId, expectedStatus, expectedAttempt, expectedDispatchedAt, expectedStartedAt, certificate, ct);
         }
         finally
         {
@@ -2897,6 +2978,7 @@ public sealed partial class AgentTaskDispatcher
         int expectedAttempt,
         DateTime? expectedDispatchedAt,
         DateTime expectedStartedAt,
+        AbsenceCertificate certificate,
         CancellationToken ct)
     {
         var addedBefore = _db.ChangeTracker.Entries()
@@ -2917,7 +2999,7 @@ public sealed partial class AgentTaskDispatcher
 
             var fresh = await _db.AgentSessions.AsNoTracking()
                 .Where(s => s.Id == sessionId)
-                .Select(s => new { s.Status, s.FailureReason, s.StartedAt })
+                .Select(s => new { s.Status, s.FailureReason, s.StartedAt, s.RunnerStoreId })
                 .FirstOrDefaultAsync(ct);
             if (fresh is null
                 || fresh.Status != SessionStatus.Failed
@@ -2930,14 +3012,21 @@ public sealed partial class AgentTaskDispatcher
 
             // Re-read every whitelist fact after the queue gate and task lock. A turn which
             // started while waiting must be withheld, not routed to terminal failure.
-            var neverAttempted = AbsentLaunchPolicy.IsNeverAttempted(await ReadAbsentLaunchEvidenceAsync(
-                task, sessionId, fresh.StartedAt, fresh.FailureReason, nativeAttempt: false, ct));
+            var facts = await ReadAbsentLaunchEvidenceAsync(task, sessionId, fresh.FailureReason, ct);
             if (task.Status == AgentTaskStatus.Working
                 || await SessionMessageQueueService.IsWorkingAsync(_db, sessionId, ct)
                 || await ReadAbsenceAsync(sessionId, cachedLocal: null, ct) != RunnerAbsence.Positive)
                 return AbsentLaunchDecision.Withheld;
-            if (!neverAttempted)
+            if (!AbsentLaunchPolicy.IsNeverAttempted(WithNativeEmpty(facts, nativeEmpty: true)))
                 return AbsentLaunchDecision.NotThisShape;
+
+            // CARD-1153 D-4: the native-empty fact is the first read's certificate, re-checked
+            // here immediately before staging: the same generation and store as the locked
+            // session row, and unexpired on this dispatcher's clock. A changed condition is a
+            // withhold; the next due pass asks the runner again.
+            if (!AbsentLaunchPolicy.IsNeverAttempted(WithNativeEmpty(
+                    facts, AbsenceCertificateHolds(certificate, sessionId, fresh.StartedAt, fresh.RunnerStoreId))))
+                return AbsentLaunchDecision.Withheld;
 
             task.CompletedAt = null;
             StageBlocked(task, DispatchLaunchAbsentReason);
@@ -5431,6 +5520,11 @@ public sealed partial class AgentTaskDispatcher
             claimed, agent, session, program, attachedBundleKeys, verificationBinding, remoteCwd,
             $"task {DelegationReportFormatter.Short(claimed.Id)} on agent '{agent.Name}'",
             ct);
+        // CARD-1153 D-1: this invocation allocated the session id above and the claim has
+        // committed; no launch sink has been called yet. A released-seat resume is not a cold
+        // start and never prepares. Preparation is never a launch gate.
+        if (claimed.ReleasedSeatAnswerId is null)
+            await PrepareAbsenceEvidenceAsync(claimed, session, ct);
         try
         {
             if (_taskLaunchSink is not null)

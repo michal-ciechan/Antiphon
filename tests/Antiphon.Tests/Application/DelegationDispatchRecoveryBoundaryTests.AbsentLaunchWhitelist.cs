@@ -25,17 +25,22 @@ public partial class DelegationDispatchRecoveryBoundaryTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var seeded = await SeedAsync(schema.ConnectionString, new AbsentShape());
+        // CARD-1153: the same six unknown-native conditions, now as the certificate's own fields.
         var runner = new CountingRunner
         {
-            ReadTranscript = id => condition switch
+            Certify = (id, generation, store) => condition switch
             {
                 "unreadable" => throw new IOException("native store unreadable"),
-                "null" => Task.FromResult<SessionRunnerTranscriptDto>(null!),
-                _ => Task.FromResult(new SessionRunnerTranscriptDto(
-                    condition == "wrong-session" ? Guid.NewGuid() : id, [],
-                    condition == "sidecar-entry" ? 1 : 0,
-                    TerminalComplete: condition != "incomplete",
-                    AcceptedStartedAt: condition == "wrong-generation" ? seeded.StartedAt.AddHours(1) : seeded.StartedAt)),
+                "null" => Task.FromResult<SessionRunnerAbsenceEvidenceResult>(null!),
+                _ => Task.FromResult(FixtureCertificate(id, generation, store, shape =>
+                {
+                    if (condition == "wrong-session") shape["sessionId"] = Guid.NewGuid().ToString("D");
+                    if (condition == "sidecar-entry") shape["sidecarTranscriptPresent"] = true;
+                    if (condition == "incomplete") shape["complete"] = false;
+                    if (condition == "wrong-generation")
+                        shape["acceptedStartedAt"] = DateTime.SpecifyKind(seeded.StartedAt.AddHours(1), DateTimeKind.Utc)
+                            .ToString("O", System.Globalization.CultureInfo.InvariantCulture);
+                })),
             },
         };
         var stopper = new RecordingSessionStopper();
@@ -48,6 +53,7 @@ public partial class DelegationDispatchRecoveryBoundaryTests
         (await verify.AgentTaskEvents.CountAsync(e => e.AgentTaskId == seeded.TaskId
             && e.Type == AgentTaskEventType.Blocked)).ShouldBe(0, condition);
         Quiet(runner, stopper, condition);
+        runner.Certifies.ShouldBeGreaterThan(0, condition + ": the certificate was asked for and refused");
     }
     [Test]
     [Arguments("F1-source-task-delivered")]
