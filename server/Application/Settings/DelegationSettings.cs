@@ -411,21 +411,35 @@ public sealed class DelegationSettings
     /// p99 60 s, max 1 478 s. 20 min is ~3x the observed maximum, so a single slow day is not an
     /// incident. The card's original proposal of ~60 s would have fired on roughly 1 turn in 25.
     /// <c>&lt;= 0</c> disables the model-wait deadline.</para>
+    ///
+    /// <para><b>Not for a boot episode (CARD-1151).</b> A session whose accepted boot prompt has
+    /// had no model reply is never failed by this clock; for it the same number is the operator
+    /// threshold, <c>prompt + max(</c><see cref="BootModelWaitDeadlineMinutes"/><c>, this)</c>,
+    /// at which the task records <c>BootStallNeedsOperator</c> and its attention row turns
+    /// Error. With this disabled the operator threshold is 20 minutes.</para>
     /// </summary>
     public int ModelWaitDeadlineMinutes { get; set; } = 20;
 
     /// <summary>
     /// The BOOT-TURN model-wait deadline (minutes): how long a session that has produced
-    /// <b>nothing at all</b> since its own first prompt may sit before the harness acts
+    /// <b>nothing at all</b> since its own accepted prompt may sit before the harness SAYS so
     /// (CARD-0353 S1, CARD-0312 S1). One setting, one clock, two consumers — the task-scoped
     /// arm in <c>TaskDeadlinePolicy</c>/<c>AgentTaskDispatcher</c> and the session-scoped
     /// <c>BootReplyWatch</c>. CARD-0312's plan forbids a second overlapping number, so
     /// <c>BootReplyDeadlineMinutes</c> deliberately does not exist.
     ///
-    /// <para><b>Why tighter than <see cref="ModelWaitDeadlineMinutes"/>.</b> The general
-    /// 20-minute arm is conservative because a mid-task session may hold real work
-    /// (CARD-0056) — it fails without killing. A boot turn has produced no assistant row, no
-    /// tool call and no file, so there is nothing to protect and no reason to wait.</para>
+    /// <para><b>Detection only (CARD-1151).</b> For a delegate task this deadline records one
+    /// <c>BootStallDetected</c> Warning event and shows the Overdue attention row (previewed at
+    /// 80%); it never fails, stops, retries or releases the session, and no other clock does
+    /// either while the boot episode is unresolved. The operator threshold
+    /// (<see cref="ModelWaitDeadlineMinutes"/>, see there) is the second and last step. A model
+    /// reply returns the task to the ordinary deadlines. CARD-0079 is the only automatic stop
+    /// of a Working session.</para>
+    ///
+    /// <para><b>Why tighter than <see cref="ModelWaitDeadlineMinutes"/>.</b> A boot turn that has
+    /// produced no assistant row, no tool call and no file is far more likely a provider that
+    /// has not answered than slow work, so it is worth telling a human early. It is not proof
+    /// that nothing is running, which is why the notice is detection and not a kill.</para>
     ///
     /// <para><b>8 minutes is measured, not chosen.</b> Queried 2026-09-04 over
     /// <c>TranscriptEntries</c> joined to <c>AgentSessions</c> since 2026-08-20: the gap from
@@ -443,21 +457,22 @@ public sealed class DelegationSettings
     ///
     /// <para><b>TurnEnd counts as an answer.</b> The same query showed two Codex sessions whose
     /// boot prompt drew an immediate API-error <c>TurnEnd</c> (~1 s) and then sat in CARD-0072's
-    /// retry ladder for 43 minutes. Treating <c>TurnEnd</c> as silence would have had this
-    /// deadline kill sessions the API-error recovery was already correctly retrying.</para>
+    /// retry ladder for 43 minutes. Treating <c>TurnEnd</c> as silence would have flagged
+    /// sessions the API-error recovery was already correctly retrying.</para>
     ///
-    /// <para><c>&lt;= 0</c> disables the boot arm entirely: the task-scoped classification falls
-    /// back to <see cref="ModelWaitDeadlineMinutes"/> and no session-scoped watch is armed.</para>
+    /// <para><c>&lt;= 0</c> disables the eight-minute NOTICE, never the protection: no
+    /// <c>BootStallDetected</c> event is written and no session-scoped watch is armed, but an
+    /// unresolved boot episode that another clock brings into evaluation is still detection
+    /// only, and the operator threshold still applies (CARD-1151 D-1).</para>
     /// </summary>
     public int BootModelWaitDeadlineMinutes { get; set; } = 8;
 
     /// <summary>
-    /// CARD-0353 S2 step 5. When two boot-turn stalls fire for the same
-    /// <c>(AgentKind, model alias)</c> within this many minutes — across tasks, read from
-    /// <c>AgentTasks.FailureCode == ProviderUnresponsive</c> — the alias is put on a
-    /// <c>ModelAvailability</c> AutoDetected hold of the same length. Never on the FIRST stall:
-    /// one hung request is not evidence about a provider, and on 2026-09-03 a dispatch during
-    /// the same incident succeeded 38 minutes after the first stall. <c>0</c> disables the hold.
+    /// Retired by CARD-1151 (decision Q-1 option B) and read by nothing. It was CARD-0353 S2
+    /// step 5: two boot-turn failures on the same <c>(AgentKind, model alias)</c> inside this
+    /// window put the alias on an AutoDetected <c>ModelAvailability</c> hold. A boot stall is now
+    /// detection only, so there is no boot failure to count and no hold is ever placed. Kept so
+    /// existing configuration still binds; changing it has no effect.
     /// </summary>
     public int BootStallRepeatHoldMinutes { get; set; } = 30;
 

@@ -1090,14 +1090,16 @@ header adds `after reply; dispatched … ago` and the completion note carries bo
 **A session showing only its own prompt, and WORKING, is a provider stall (CARD-0353/CARD-0312).**
 The prompt reached the transcript, so delivery is not the problem; the model has not produced its
 first token. The check digest names it — a `BOOT TURN` line on `SESSION`, and a `DEADLINE:` line
-naming `BootModelWait` — and the harness handles it: at
-`Delegation:BootModelWaitDeadlineMinutes` (8, measured) the task is failed with
-`ProviderUnresponsive`, the session is killed (it produced nothing, so nothing is lost) and the
-task is **retried once** at the same kind and tier. A second stall on the same task fails without
-retrying and names the alias; two stalls on the same `(kind, alias)` inside
-`Delegation:BootStallRepeatHoldMinutes` (30) put that alias on an AutoDetected hold. Cancel and
-retry by hand only if you cannot wait out the deadline — and if you do, expect the same provider.
-For a Grok session, `~/.grok/sessions/<id>/events.jsonl` (`phase_changed: waiting_for_model` with
+naming `BootModelWait` — and the harness only DETECTS it (CARD-1151): it never fails, stops,
+retries or releases the session, and holds no alias.
+A transcript-confirmed boot prompt with no model reply is detection only while the session is Working, runner-listed, or safety evidence is unknown. At eight minutes it records BootStallDetected; at the bounded operator threshold (20 minutes with defaults) it asks for an operator decision without failure, retry, input, stop or seat release.
+The general and role deadlines do not terminalize that unresolved boot episode; positive model progress returns it to ordinary deadline policy.
+The task's events carry `BootStallDetected` and then `BootStallNeedsOperator` Warnings, and its
+Overdue attention row turns Error at the operator threshold. The decision is yours: inspect the
+session, then keep waiting, reply, or explicitly cancel or retry the task (expect the same
+provider on a retry). `Delegation:BootStallRepeatHoldMinutes` is retired and holds nothing. Owner
+and test pins: [session runtime invariants](session-runtime-invariants.md) ("A boot stall is
+detection, never a stop"). For a Grok session, `~/.grok/sessions/<id>/events.jsonl` (`phase_changed: waiting_for_model` with
 no `first_token`) and `~/.grok/logs/unified.jsonl` (`shell.turn.inference_start` with no
 `inference_done`) are the diagnostics; see `docs/agent-kinds.md`.
 

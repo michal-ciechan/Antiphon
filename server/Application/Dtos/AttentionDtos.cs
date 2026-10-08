@@ -74,6 +74,13 @@ public enum AttentionKind
     /// case — a session that is working is "never listed for being slow, however far past the
     /// estimate it has run" — and the mid-turn case is exactly the hole this fills. An idle task
     /// keeps the more explanatory row; a working one falls through to this.</para>
+    ///
+    /// <para><b>Boot episode (CARD-1151).</b> A task whose accepted boot prompt has had no model
+    /// reply gets this kind ABOVE PastExpectedIdle and ProgressStalled, and its row promises no
+    /// outcome: no clock fails, stops or retries a boot episode. It is detection (Warning, from the
+    /// 80% preview and at the boot deadline) and then an operator decision (Error, from the
+    /// operator threshold): keep waiting, reply, or explicitly cancel or retry. Derived from the
+    /// current boot facts, so a model reply removes it.</para>
     /// </summary>
     Overdue = 10,
 

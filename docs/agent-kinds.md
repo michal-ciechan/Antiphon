@@ -469,7 +469,8 @@ synthetic `/api-key` credential hit. See the [measurement record](investigations
   14:03Z) were accepted and produced no `first_token`, no retry and no error for the full 16
   minutes until the orchestrator cancelled — inside an xAI capacity window that also logged 289
   HTTP 500s ("The model is currently at capacity due to high demand") between 14:25Z and 15:39Z.
-  Antiphon's boot-turn deadline is what ends this (`Delegation:BootModelWaitDeadlineMinutes`).
+  Antiphon's boot-turn deadline is what detects this (`Delegation:BootModelWaitDeadlineMinutes`);
+  since CARD-1151 nothing ends it automatically, and an operator cancels or retries it explicitly.
 - **Grok's own diagnostics, for a human — never a verdict.** Next to the `updates.jsonl` the runner
   tails, Grok writes `~/.grok/sessions/<id>/events.jsonl` (`turn_started` →
   `phase_changed: waiting_for_model` → `first_token` → …) and `~/.grok/logs/unified.jsonl`

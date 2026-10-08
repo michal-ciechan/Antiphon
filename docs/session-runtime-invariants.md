@@ -611,12 +611,30 @@ the transcript mutation gate. Activation requires both server and runner support
 - **A delivered boot prompt with no assistant row is a PROVIDER STALL, never a delivery
   re-attempt** (CARD-0353/CARD-0312). Once a prompt is transcript-confirmed, our bytes arrived —
   re-typing it, pressing Enter again or resending the brief can only double-submit. The next
-  expected event is the model's first token, and its absence is the boot-turn deadline's business:
-  `Delegation:BootModelWaitDeadlineMinutes` (8, measured) fails the task with
-  `ProviderUnresponsive`, kills the session because it provably produced nothing, and retries it
-  once. The evidence ladder has five rungs, and only the fifth is about the MODEL: ready → composer
-  → submit → transcript confirm → **a reply**. Screen movement is wedge evidence at rung 3, never
-  reply evidence at rung 5.
+  expected event is the model's first token, and its absence is the boot-turn deadline's business
+  (`Delegation:BootModelWaitDeadlineMinutes`, 8, measured). The evidence ladder has five rungs,
+  and only the fifth is about the MODEL: ready → composer → submit → transcript confirm → **a
+  reply**. Screen movement is wedge evidence at rung 3, never reply evidence at rung 5.
+
+- **A boot stall is detection, never a stop** (CARD-1151, decision Q-1 option B).
+  A transcript-confirmed boot prompt with no model reply is detection only while the session is Working, runner-listed, or safety evidence is unknown. At eight minutes it records BootStallDetected; at the bounded operator threshold (20 minutes with defaults) it asks for an operator decision without failure, retry, input, stop or seat release.
+  Pinned by `BootStallWorkingTickCharacterizationTests.Aged_prompt_only_Working_tick_detects_without_stopping_or_requeueing`
+  and `BootStallDetectionTests.C1151_Operator_escalation_preserves_the_attempt`.
+  The general and role deadlines do not terminalize that unresolved boot episode; positive model progress returns it to ordinary deadline policy.
+  Pinned by `BootStallDetectionTests.C1151_Boot_protection_survives_all_deadlines`.
+  No boot evidence permits an automatic failure or retry: under option B the narrow automatic boot failure/retry is retired, a terminal or missing session row stays with the dead-session reconciler's existing policy, a Pending brief stays with the delivery watchdog, a human Retry is the only retry, and S1's pristine absent-launch hold still takes precedence.
+  Pinned by `BootStallDetectionTests.C1151_Listed_or_unknown_session_is_untouched`,
+  `BootStallDetectionTests.C1151_Explicit_retry_retains_operator_semantics` and
+  `DelegationDispatchRecoveryBoundaryTests.C1149_Absent_launch_is_blocked_with_original_input`.
+  CARD-0079 is the only automatic Working stop authorization; boot-stall detection does not call it. Parking is default-off and provides no release deadline for an input-waiting session.
+  Pinned by `CheckCompactionRecoveryFlowTests` (the compaction regression) and
+  `BootStallDetectionTests.C1151_Detection_does_not_release_or_park`.
+  The episode is keyed by task, attempt, session, accepted generation, launch clock and the
+  accepted prompt's sequence; each stage is one `Warning` event whose Detail starts with the
+  token and never carries prompt text, and the Overdue attention row is derived from the current
+  boot facts (Warning from the 80% preview, Error from the operator threshold), so a model reply
+  removes it. A queued-only prompt opens no episode. The operator threshold bounds visibility,
+  not the task's lifetime: absent a reply or an explicit action the session stays Working.
 
 
 <!-- CARD-0254 preserved source begins -->
