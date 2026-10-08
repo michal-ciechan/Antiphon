@@ -210,6 +210,16 @@ public sealed class BlockedTaskParkProjectionTests
         Require(mismatchArm, "does not match answer admission, so that parked answer cannot be continued.", "c1154-evidence-order:source");
         mismatchArm.ShouldNotContain("-Reply", Case.Sensitive, "c1154-evidence-order:source");
         mismatchArm.ShouldNotContain("cancel", Case.Insensitive, "c1154-evidence-order:source");
+        // CARD-1154 repair 3 (Review f83b877d D4): the classifier's own summary states the
+        // all-candidate precedence; a per-park "must not recommend Reply" is false beside an
+        // admitted candidate.
+        var summary = string.Join(" ", Between(follow, "/// One read per blocked follow-up create,", "internal async Task<RemotePoolParkReply> RemotePoolParkReplyAsync(")
+            .Split('\n').Select(line => line.Trim().TrimStart('/').Trim()).Where(line => line.Length > 0));
+        Require(summary, ClassifierSummarySentence, "c1154-classifier-summary:source");
+        foreach (var perPark in PerParkSourceWording)
+            follow.ShouldNotContain(perPark, Case.Sensitive, "c1154-classifier-summary:source");
+        Read("server/Application/Services/RunnerSeatReleaseQueries.cs")
+            .ShouldNotContain("the remote-pool Reply guidance compose", Case.Sensitive, "c1154-classifier-summary:queries");
         // The weak detector stays the CARD-1144 stale-answer veto; strengthening it would remove that veto.
         Between(follow, "private async Task<bool> HasConfirmedPublishedParkAsync(", "private async Task<bool> ParkContinuationReceiptMissingAsync(")
             .ShouldNotContain("RunnerSeatReleaseQueries", Case.Sensitive, "c1154-veto-detector:source");
@@ -238,6 +248,14 @@ public sealed class BlockedTaskParkProjectionTests
         "When no confirmed park classification takes precedence",
         "A current-attempt published park whose linked release",
         "A confirmed published park whose seat release does not match that admission does not name Reply; the parked answer cannot be continued (CARD-1103).",
+    ];
+    private const string ClassifierSummarySentence = "Across all candidates, any admitted candidate returns Admitted, the Reply advice; otherwise a candidate whose linked release is Confirmed with a non-null ConfirmedAt but fails admission returns ReleaseMismatch, the mismatch text that names neither Reply nor cancel; otherwise None, the ordinary live/dead advice or the plain remote-pool 422.";
+    // Earlier per-park source comments, each false for an admitted candidate beside a mismatched one.
+    private static readonly string[] PerParkSourceWording =
+    [
+        "must not recommend Reply",
+        "correlated to the current-attempt park's linked release",
+        "Reply is named only when that park",
     ];
     private const string OneReadSentence = "Confirmed-park guidance performs one database read per blocked follow-up, independent of the number of candidate parks; the existing session-liveness read is separate (CARD-1154).";
     private const string StaleLocalGuidanceSentence = "does not check that release identity, so it can name Reply";

@@ -7,8 +7,9 @@ namespace Antiphon.Server.Application.Services;
 
 /// <summary>
 /// The release identity answer admission accepts, as EF-translatable queries. Reply
-/// continuation and the remote-pool Reply guidance compose these same expressions, so the
-/// guidance names Reply only for a release the continuation would accept (CARD-1146).
+/// continuation and the follow-up Reply guidance (remote-pool 422 and local 409) compose
+/// these same expressions, so the guidance names Reply only when some candidate park's
+/// release is one the continuation would accept (CARD-1146, CARD-1154).
 /// </summary>
 internal static class RunnerSeatReleaseQueries
 {
