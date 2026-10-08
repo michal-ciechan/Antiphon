@@ -887,13 +887,15 @@ public sealed class AgentSessionService : IDelegateSessionStopper
                 .Where(t => t.AgentSessionId == session.Id && t.Status == AgentTaskStatus.Dispatched)
                 .OrderByDescending(t => t.DispatchedAt)
                 .FirstOrDefaultAsync(ct);
-            // CARD-1150 F10/F11: once the ensure or flush returns that it may have typed input, the
-            // recipient may be Working. The event saves and the flush after that return are logged
-            // and never reach the launch-failure catch, which kills and fails the session. A refusal
-            // before any byte reports no input, so today's failure path is unchanged. A throw from
-            // inside a delivery after typing (e.g. its verdict save, or the flush's post-delivery
-            // queue read) still reaches the catch, as before S2.
-            var inputStarted = false;
+            // CARD-1150 F10/F11: once the ensure or flush reports a completed delivery
+            // (SessionMessageQueueService.CompletedInput: result Delivered, nothing else), the
+            // recipient may be Working. The event saves and the flush after that report are logged
+            // and never reach the launch-failure catch, which kills and fails the session. Every
+            // other result (a refusal, a failed or unconfirmed write, no delivery) reports false, so
+            // the pre-S2 failure path is unchanged by construction. A throw from inside a delivery
+            // (e.g. its verdict save, or the flush's post-delivery queue read) still reaches the
+            // catch, as before S2.
+            var inputDelivered = false;
             if (task is not null)
             {
                 var marker = DelegationReportFormatter.TaskMarker(task.Id);
@@ -914,7 +916,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
                     var ensured = await _messageQueue.EnsureDispatchBriefAsync(new DispatchBriefEnsureRequest(
                         task.Id, task.Attempt, session.Id, dispatchedAt, session.StartedAt), ct);
                     requeued = ensured.Inserted;
-                    inputStarted = ensured.InputStarted;
+                    inputDelivered = ensured.InputDelivered;
                 }
                 else if (!hasBrief && !receivedBrief)
                 {
@@ -937,12 +939,12 @@ public sealed class AgentSessionService : IDelegateSessionStopper
                         Id = Guid.NewGuid(), AgentTaskId = task.Id, Type = AgentTaskEventType.Warning,
                         Detail = "brief re-queued: the interrupted dispatch died before its brief row was persisted",
                         At = UtcNow(),
-                    }, inputStarted, ct);
+                    }, inputDelivered, ct);
                 }
             }
 
-            if (!inputStarted)
-                inputStarted = await _messageQueue.FlushSessionReportingInputAsync(session.Id, ct);
+            if (!inputDelivered)
+                inputDelivered = await _messageQueue.FlushSessionReportingDeliveryAsync(session.Id, ct);
             else
             {
                 try
@@ -952,7 +954,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
                     _logger.LogWarning(ex,
-                        "Flush after the resumed launch's brief input failed for session {SessionId}; "
+                        "Flush after the resumed launch's completed delivery failed for session {SessionId}; "
                         + "the session is left running", session.Id);
                 }
             }
@@ -967,7 +969,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
                     Detail =
                         $"launch resumed after a server restart: the session sat Starting for {startingSeconds} s; ready re-verified",
                     At = UtcNow(),
-                }, inputStarted, ct);
+                }, inputDelivered, ct);
             }
 
             await RecordLaunchInterruptedByRestartAsync(
@@ -1001,14 +1003,14 @@ public sealed class AgentSessionService : IDelegateSessionStopper
     }
 
     /// <summary>
-    /// CARD-1150 F10: an interrupted-launch event. Before any input, a failed save still fails the
-    /// resumed launch. After input it is logged and the event detached, so the possibly Working
-    /// recipient is not killed over bookkeeping and the next save does not retry the row.
+    /// CARD-1150 F10: an interrupted-launch event. Without a completed delivery, a failed save
+    /// still fails the resumed launch. After one it is logged and the event detached, so the
+    /// possibly Working recipient is not killed over bookkeeping and the next save does not retry.
     /// </summary>
-    private async Task SaveResumeEventAsync(AgentTaskEvent taskEvent, bool afterInput, CancellationToken ct)
+    private async Task SaveResumeEventAsync(AgentTaskEvent taskEvent, bool afterDelivery, CancellationToken ct)
     {
         _db.AgentTaskEvents.Add(taskEvent);
-        if (!afterInput)
+        if (!afterDelivery)
         {
             await _db.SaveChangesAsync(ct);
             return;
@@ -1022,7 +1024,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         {
             _db.Entry(taskEvent).State = EntityState.Detached;
             _logger.LogWarning(ex,
-                "Recording '{Detail}' for task {TaskId} after its resumed launch typed input failed; "
+                "Recording '{Detail}' for task {TaskId} after its resumed launch delivered input failed; "
                 + "the session is left running", taskEvent.Detail, taskEvent.AgentTaskId);
         }
     }

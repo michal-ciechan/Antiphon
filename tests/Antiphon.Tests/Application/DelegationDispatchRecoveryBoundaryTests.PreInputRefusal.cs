@@ -16,16 +16,18 @@ using Shouldly;
 namespace Antiphon.Tests.Application;
 
 /// <summary>
-/// CARD-1150 S2 repair F11 (Review 0336a6b0): a delivery that the queue refuses before any byte
-/// is typed is not input. A later resume bookkeeping failure must still kill and fail the launch,
-/// exactly as before S2. A write that began and then failed stays possible input.
+/// CARD-1150 S2 repair F11 (Reviews 0336a6b0, 6bab136d, 52d6dd7f): only a completed delivery
+/// (result Delivered) is input for the resumed launch. Every refusal before a byte and every write
+/// that began and then failed is not, so a later resume bookkeeping failure still kills and fails
+/// the launch exactly as before S2 (parent 31632adc).
 /// </summary>
 public partial class DelegationDispatchRecoveryBoundaryTests
 {
     /// <summary>
     /// One pre-input refusal class per case, through the boot flush (existing brief row) or the
-    /// backfill ensure (no row), followed by a one-shot event-save fault. The last case is the
-    /// may-have-typed companion: the write began, so the recipient is kept.
+    /// backfill ensure (no row), followed by a one-shot event-save fault. The last case is a write
+    /// that began and then threw. Repair 7 (Review 52d6dd7f) deliberately returns it to the pre-S2
+    /// kill-and-fail path: it is not a completed delivery, and no F10 case depends on keeping it.
     /// </summary>
     [Test]
     [Arguments("flush-missing-spill")]
@@ -50,16 +52,13 @@ public partial class DelegationDispatchRecoveryBoundaryTests
 
         if (label == "may-have-typed-transport-failure")
         {
-            // The write call began: the terminal may hold the body, so bookkeeping is best-effort.
-            outcome.Error.ShouldBeNull(why + ": a possibly typed delivery fails the resumed launch");
-            outcome.Killed.ShouldBeFalse(why);
-            outcome.SessionStatus.ShouldBe(SessionStatus.Running, why);
+            // The write call began and threw; the delivery did not complete, so the attempt is
+            // charged and, as before S2, the failed bookkeeping kills and fails the launch.
             brief.DeliveryAttempts.ShouldBe(1, why);
-            return;
         }
 
-        // Pre-S2 behaviour: nothing was typed, so the failed bookkeeping kills and fails the launch.
-        outcome.Error.ShouldNotBeNull(why + ": a pre-input refusal suppressed the launch failure");
+        // Pre-S2 behaviour: no completed delivery, so the failed bookkeeping kills and fails the launch.
+        outcome.Error.ShouldNotBeNull(why + ": a delivery that did not complete suppressed the launch failure");
         outcome.Error.ShouldContain(ResumeBookkeepingFault.Message, Case.Sensitive, why);
         outcome.Killed.ShouldBeTrue(why);
         outcome.SessionStatus.ShouldBe(SessionStatus.Failed, why);
@@ -75,8 +74,9 @@ public partial class DelegationDispatchRecoveryBoundaryTests
     /// CARD-1150 S2 repair 6 (Review 6bab136d): a UI local command queued while the session is
     /// Starting is flushed ahead of the brief. Its helper refuses a modal or a missing snapshot,
     /// or its modal read throws, before the first byte; that is not input, so the resume
-    /// bookkeeping fault still kills and fails the launch as before S2. A local-command write
-    /// that began and then failed keeps the recipient. Each class also runs without the fault.
+    /// bookkeeping fault still kills and fails the launch as before S2. A local-command write that
+    /// began and then failed did not complete either; repair 7 (Review 52d6dd7f) deliberately
+    /// returns it to the same pre-S2 path. Each class also runs without the fault.
     /// </summary>
     [Test]
     [Arguments("local-no-snapshot", false)]
@@ -109,9 +109,76 @@ public partial class DelegationDispatchRecoveryBoundaryTests
         brief.Status.ShouldBe(QueuedMessageStatus.Pending, why + ": the brief waits behind the local command");
         brief.DeliveryAttempts.ShouldBe(0, why);
 
-        if (!bookkeepingFault || label == "local-write-failure")
+        if (!bookkeepingFault)
         {
-            // No bookkeeping failure, or the write began and the recipient may be Working.
+            // No bookkeeping failure: the resumed launch completes and keeps the session.
+            outcome.Error.ShouldBeNull(why);
+            outcome.Killed.ShouldBeFalse(why);
+            outcome.SessionStatus.ShouldBe(SessionStatus.Running, why);
+            return;
+        }
+
+        // Pre-S2 behaviour: no completed delivery, so the failed bookkeeping kills and fails the launch.
+        outcome.Error.ShouldNotBeNull(why + ": a local command that did not complete suppressed the launch failure");
+        outcome.Error.ShouldContain(ResumeBookkeepingFault.Message, Case.Sensitive, why);
+        outcome.Killed.ShouldBeTrue(why);
+        outcome.SessionStatus.ShouldBe(SessionStatus.Failed, why);
+    }
+
+    /// <summary>
+    /// CARD-1150 S2 repair 7 (Review 52d6dd7f, diagnostics R6): a typed phone-home refusal of the
+    /// first Input request (closed before send, runner unavailable, in-flight request limit) sends
+    /// no byte. Through the UI local command, the boot-flush body and the backfill ensure, each
+    /// keeps the pre-S2 kill-and-fail path under the bookkeeping fault and keeps the session
+    /// without it. The five Review rows (local before-send, unavailable and request-limit; flush
+    /// and ensure request-limit) suppressed the failure on 7bdd0b00; the other four are controls.
+    /// </summary>
+    [Test]
+    [Arguments("local-before-send", false)]
+    [Arguments("local-before-send", true)]
+    [Arguments("local-unavailable", false)]
+    [Arguments("local-unavailable", true)]
+    [Arguments("local-request-limit", false)]
+    [Arguments("local-request-limit", true)]
+    [Arguments("flush-before-send", false)]
+    [Arguments("flush-before-send", true)]
+    [Arguments("flush-unavailable", false)]
+    [Arguments("flush-unavailable", true)]
+    [Arguments("flush-request-limit", false)]
+    [Arguments("flush-request-limit", true)]
+    [Arguments("ensure-before-send", false)]
+    [Arguments("ensure-before-send", true)]
+    [Arguments("ensure-unavailable", false)]
+    [Arguments("ensure-unavailable", true)]
+    [Arguments("ensure-request-limit", false)]
+    [Arguments("ensure-request-limit", true)]
+    public async Task C1150_Pre_input_refusal_keeps_the_resume_failure_path_for_a_transport_refusal(
+        string label, bool bookkeepingFault)
+    {
+        var outcome = await RunPreInputRefusalAsync(label, bookkeepingFault);
+        var why = $"F11 {label} bookkeepingFault={bookkeepingFault}";
+
+        outcome.Faults.ShouldBe(bookkeepingFault ? 1 : 0, why + ": injected event-save fault reached");
+        outcome.HelperFaults.ShouldBe(0, why);
+        outcome.Inputs.ShouldBe(0, why + ": the fake terminal received no bytes");
+        outcome.Submitted.ShouldBeEmpty(why);
+        outcome.Prompts.ShouldBeEmpty(why);
+        outcome.TaskStatus.ShouldBe(AgentTaskStatus.Dispatched, why);
+        outcome.TaskFailureReason.ShouldBeNull(why);
+        var brief = outcome.Rows.Where(m => m.Origin == QueuedMessageOrigin.Delegation).ShouldHaveSingleItem(why);
+        brief.ExecutionTaskId.ShouldBe(outcome.TaskId, why);
+        brief.Status.ShouldBe(QueuedMessageStatus.Pending, why + ": the refused brief stays deliverable");
+        if (label.StartsWith("local-", StringComparison.Ordinal))
+        {
+            var local = outcome.Rows.Where(m => m.Origin == QueuedMessageOrigin.Ui).ShouldHaveSingleItem(why);
+            local.Body.ShouldBe("/status", why);
+            brief.DeliveryAttempts.ShouldBe(0, why + ": the brief waits behind the local command");
+        }
+        else
+            outcome.Rows.Count.ShouldBe(1, why);
+
+        if (!bookkeepingFault)
+        {
             outcome.Error.ShouldBeNull(why);
             outcome.Killed.ShouldBeFalse(why);
             outcome.SessionStatus.ShouldBe(SessionStatus.Running, why);
@@ -119,7 +186,7 @@ public partial class DelegationDispatchRecoveryBoundaryTests
         }
 
         // Pre-S2 behaviour: nothing was typed, so the failed bookkeeping kills and fails the launch.
-        outcome.Error.ShouldNotBeNull(why + ": a local-command refusal before its write suppressed the launch failure");
+        outcome.Error.ShouldNotBeNull(why + ": a typed transport refusal suppressed the launch failure");
         outcome.Error.ShouldContain(ResumeBookkeepingFault.Message, Case.Sensitive, why);
         outcome.Killed.ShouldBeTrue(why);
         outcome.SessionStatus.ShouldBe(SessionStatus.Failed, why);
@@ -153,6 +220,15 @@ public partial class DelegationDispatchRecoveryBoundaryTests
                 "flush-courier-missing-spill" or "ensure-courier-missing-spill" =>
                     new RemoteSpillUndeliverableException(),
                 "flush-spill-write-refusal" or "ensure-spill-write-refusal" => new RunnerSpillWriteException(),
+                "local-before-send" or "flush-before-send" or "ensure-before-send" =>
+                    new PhoneHomeTransportException(PhoneHomeProblemTypes.ConnectionClosedBeforeSend,
+                        "C1150 F11 connection closed before the first Input frame"),
+                "local-unavailable" or "flush-unavailable" or "ensure-unavailable" =>
+                    new ServiceUnavailableException("C1150 F11 runner unavailable before routing Input",
+                        PhoneHomeProblemTypes.Unavailable),
+                "local-request-limit" or "flush-request-limit" or "ensure-request-limit" =>
+                    new PhoneHomeTransportException(PhoneHomeProblemTypes.RequestLimit,
+                        "C1150 F11 in-flight request limit before registration or send"),
                 "may-have-typed-transport-failure" or "local-write-failure" =>
                     new InvalidOperationException("C1150 F11 transport failed during the write"),
                 _ => null,
