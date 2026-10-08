@@ -96,4 +96,62 @@ No AppHost or runner restart.
 
 ## Results
 
-Pending: filled in after the checkpoint run.
+Source `b327cb4d79d9689884d24bdcfca52580bf60a4f4` (clean, `buildSource=verified`). Checkpoint run
+`20261008-013108-9e3c`, `--serial`, one build (`bin-c1137/`, 138 s, after a 30 s slot wait). Every
+row ran with `slot=granted`, and the tool reported `unlisted: none`. Wall time 56m21s. Ambient
+server2 fleet load only; no synthetic load.
+
+| Rows | Result |
+|---|---|
+| CP-1 V-1 guard | 1/1 green |
+| CP-2 named method alone | 1/1 green |
+| CP-3 orphan class | 17/17 green |
+| CP-4 release class | 39/39 green |
+| CP-5 registry guard | 3/3 green |
+| CP-6..CP-25 combined 56 | **18 of 20 green; CP-20 and CP-22 red, 53/56 each** |
+
+**Warm-up cost (V-1 `C1137-WARMUP` line, uncontended, CP-1):** the first app in the process took
+315 ms. A second app took 43 ms. The apps recreated after a server-transport restart and a
+runner restart took 50 ms and 48 ms. The first test call after the warm-up took 86 ms. Most of
+the uncontended cold cost is therefore process-wide, and each app adds a small cost of its own.
+D-2's per-seat warm-up covers both. This is one sample in a quiet process. It does not measure
+the contended cost in the combined row.
+
+**What changed.** Baseline (S1): 3 of 16 red, 8-11 failures per red run. The failures were
+mainly the `SubmitAsync` and `AcquireAsync`/`ListAsync` cohort, timing out while waiting for
+response headers. With the warm-up: 2 of 20 red, 3 failures per red run. No `SubmitAsync` or
+`ListAsync` timeout occurred in any of the 20 runs.
+
+**Residual, not settled.** Both red runs failed the same three `RunnerSeatOrphanSweepTests`
+methods:
+
+- `Discovery_request_uses_runner_owned_delivery_evidence`: `TaskCanceledException`, the
+  10 s `HttpClient.Timeout`, in `SessionRunnerHttpClient.ReleaseTerminalSeatAsync`
+  (`SessionRunnerHttpClient.cs:61`) at test line 381. The inner exception is `IOException`
+  "Unable to read data from the transport connection". So the request was sent, and the warmed
+  in-process runner app returned no response headers to `POST /sessions/{id}/release-terminal-seat`
+  within 10 s.
+- `Unknown_server_session_with_idle_runner_is_released` (`Released` 0 instead of 1, PC-55 local) and
+  `One_runner_failure_does_not_hide_other_candidates` (`Released` 0 instead of 1, PC-53). Their
+  failures end 2 s after the named method's. I infer, without verifying, that their discovery
+  release hit the same unanswered release call.
+
+In CP-20, the named method's release was outstanding from about +37 s to +47 s. In that window
+about 20 other methods completed, including other release-path tests, so the process was not
+frozen. The endpoint build was already paid by the warm-up. This residual is therefore not the
+first-request endpoint build. Its cause is unmeasured. Candidates to measure, not claims: the
+first execution of the runner-side release handler and its JSON response contract under the
+contention S1 saw; and the runner's release path awaiting the tailer
+(`SessionRunnerRuntime.ReleaseTerminalSeatAsync`, `ObserveTerminalSeatAsync`) while the
+fixture's poll gate holds. No stacks were captured in a red run here.
+
+**Not done:** a second repair round. A speculative warm-up of the release route could not be
+told apart from luck at a ~10 % red rate in another 20 runs (0/20 has probability about 0.12
+at 10 %). Capturing stacks inside a red run is the next step. The 10 s budget was not widened,
+and no assertion was changed.
+
+**Guard mutations (Code-stage probes, not the post-land PCs):** PC-1 (warm-up deleted) and PC-2
+(warm-up moved after the hand-out) were each built into `bin-c1137mut/` and run with the exact
+method filter. Each was red, 1 failed, on `first.ServedBeforeClient should be ["GET /sessions 200"]
+but was []`. Both were restored; the tree was clean before the checkpoint run. The restored
+green is CP-1. PC-1 and PC-2 stay pending for SourceLanding Mutation.
