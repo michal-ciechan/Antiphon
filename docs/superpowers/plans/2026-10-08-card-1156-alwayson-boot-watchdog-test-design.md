@@ -507,9 +507,11 @@ cycles about 1 minute.
 - PC-19 (1): in `StandingBootWatchObservation.ReadAsync`, read `TranscriptWorkingStateQuery` and refuse emission when Working. `C1156_Working_boot_keeps_its_session_and_supervisor_custody` red on `claude-code` at zero Warning receipts; `C1156_Boot_watch_statement_budgets` red on `first-detected-stage` at 16 versus 15.
 - PC-20 (3): change the detection sentence in one owner document, one per document. `C1156_Docs_name_detection_clocks_custody_and_compaction_exception` red; documentation control.
 - PC-21 (4, added by repair d9a5492f): (a) in `StandingBootAttentionProjection.ProjectAsync`, rethrow from the optional receipt-read catch: `C1156_Optional_receipt_read_fault_keeps_current_attention` red on both arguments (the injected fault escapes `GetAsync`); (b) in `AttentionService.BuildBootReplyMissingItemsAsync`, drop `attachedIncidents.UnionWith(covered)`: `C1156_Legacy_error_history_is_suppressed_with_its_attention_row` red on `covered-due` and `covered-not-due` at `history.SessionId` (the covered session's legacy Error is the newest recent-incident row); (c) drop the task-owned live-session union: same method red on `task-owned`; (d) in the projection, restore `if (decision.Stage == Stage.None) continue;` ahead of the recorded-stage lookup: `C1156_Recorded_operator_stage_survives_clock_rollback` red on `below-boot-due` and `before-prompt` at the single-row assertion.
+- PC-22 (1, added by repair 25d569de): in `StandingBootAttentionProjection.Item`, put a delivery verdict back on the UserPrompt line (append `, so delivery is not the problem`): `C1156_Standing_row_makes_no_delivery_claim` red on `partial-prefix` and `complete-match` at the no-delivery-claim assertion.
 
-Cycle total: **45** (the plan's 31 retained plus 10 added: PC-4c, PC-5b, PC-10b, PC-16b,
-PC-17, PC-18, PC-19 behavioural, PC-20 three documentation; plus PC-21's four from the S4 repair). Excluded from mutation with reason:
+Cycle total: **46** (the plan's 31 retained plus 10 added: PC-4c, PC-5b, PC-10b, PC-16b,
+PC-17, PC-18, PC-19 behavioural, PC-20 three documentation; plus PC-21's four from the S4 repair
+and PC-22's one from S4 repair 2). Excluded from mutation with reason:
 "no RPC while holding the lock" (no assertion observes statement order inside the writer's
 transaction; Review reads `RecordAsync` for any runtime call, and V-11's pull counts bound the
 number of pulls to one per cold path); log wording (Review reads the reason tokens).
@@ -556,6 +558,7 @@ and `wait` until the exit is not 75.
 | CP-30 | S4 | `CP-10` | portable-receipt-read-fault | `/*/*/StandingBootAttentionTests/C1156_Optional_receipt_read_fault_keeps_current_attention*` | V-8 (repair F-1) | all 2, 0 failed/skipped | 2 | 2 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-31 | S4 | `CP-10` | portable-legacy-error-suppression | `/*/*/StandingBootAttentionTests/C1156_Legacy_error_history_is_suppressed_with_its_attention_row*` | V-8 (repair F-2) | all 3, 0 failed/skipped | 3 | 2 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-32 | S4 | `CP-10` | portable-operator-rollback | `/*/*/StandingBootAttentionTests/C1156_Recorded_operator_stage_survives_clock_rollback*` | V-8 (repair F-3) | all 2, 0 failed/skipped | 2 | 2 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-33 | S4 | `CP-10` | portable-no-delivery-claim | `/*/*/StandingBootAttentionTests/C1156_Standing_row_makes_no_delivery_claim*` | V-8 (repair F-4) | all 2, 0 failed/skipped | 2 | 2 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-17 | S5-S6 | `tests/Antiphon.Tests -> bin-c1156-final/` | portable-watch-cost | `/*/*/StandingBootStatementBudgetTests/C1156_Boot_watch_statement_budgets*` | V-11 | all 8, exact pins, rosters printed, 0 failed/skipped | 8 | 7 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-18 | S5-S6 | `CP-17` | portable-projection-cost | `/*/*/StandingBootStatementBudgetTests/C1156_Attention_and_pruning_statement_budgets*` | V-11 | all 3, exact pins, rosters printed, 0 failed/skipped | 3 | 3 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-19 | S5-S6 | `CP-17` | portable-delivery-scope | `/*/*/BootLivenessProbeScopeTests/*` | R-1 | all 8, 0 failed/skipped | 8 | 3 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |

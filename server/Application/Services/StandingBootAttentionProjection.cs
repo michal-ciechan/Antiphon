@@ -195,10 +195,12 @@ internal static class StandingBootAttentionProjection
         var headline = stage == StandingBootWatchPolicy.Stage.NeedsOperator
             ? $"Standing boot stall needs an operator decision: no model reply {waited} after the prompt."
             : $"Standing boot stall detected: no model reply {waited} after the prompt.";
+        // Only the latest prompt record's kind, sequence and time are known here; nothing matches it
+        // against the intended request, so the row states no delivery verdict either way.
         var prompt = promptKind == TranscriptKinds.QueuedUserPrompt
             ? $"Queued prompt record #{facts.PromptSequence} at {facts.PromptAt:u}, {waited} ago; no reply observed."
             : $"Prompt #{facts.PromptSequence} ({promptKind}) at {facts.PromptAt:u}, {waited} ago; no assistant, "
-                + "thinking, tool or turn-end row since, so delivery is not the problem.";
+                + "thinking, tool or turn-end row since.";
         var lines = new[]
         {
             "Inspect the session or its transcript, then choose: keep waiting, reply through the session, "

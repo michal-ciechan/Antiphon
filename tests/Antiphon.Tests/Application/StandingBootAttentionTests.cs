@@ -463,7 +463,65 @@ public class StandingBootAttentionTests
         f.AssertNothingDestructive();
     }
 
+    /// <summary>
+    /// Repair of Review 67673f16 F-4. The standing row reads only the latest prompt record's kind,
+    /// sequence and time; it never matches that record against the queued request, so it makes no
+    /// delivery claim either way. partial-prefix: the only UserPrompt holds the first 12 characters
+    /// of the still-Pending queued body (zero complete matching records); complete-match: the
+    /// UserPrompt holds the whole body (one complete matching record). The row and the sweep's
+    /// receipt message read the same in both.
+    /// </summary>
+    [Test]
+    [Arguments("partial-prefix")]
+    [Arguments("complete-match")]
+    public async Task C1156_Standing_row_makes_no_delivery_claim(string prompt)
+    {
+        await using var f = await StandingBootWatchFixture.CreateAsync();
+        string body;
+        await using (var db = f.Read())
+        {
+            body = (await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == f.SessionId)).Body;
+            if (prompt == "partial-prefix")
+            {
+                (await db.TranscriptEntries
+                        .Where(t => t.AgentSessionId == f.SessionId && t.Kind == TranscriptKinds.UserPrompt)
+                        .ExecuteUpdateAsync(u => u.SetProperty(t => t.Text, body.Substring(0, 12))))
+                    .ShouldBe(1, "control: exactly the one prompt record is cut to a prefix");
+            }
+
+            var records = await db.TranscriptEntries
+                .Where(t => t.AgentSessionId == f.SessionId && t.Kind == TranscriptKinds.UserPrompt)
+                .Select(t => t.Text)
+                .ToListAsync();
+            records.Count.ShouldBe(1, "control: one prompt record");
+            records.Count(t => t == body).ShouldBe(prompt == "partial-prefix" ? 0 : 1,
+                $"control: {prompt} complete matching records");
+        }
+
+        (await f.SweepAsync()).ShouldBe(1, f.Warnings());
+        var now = f.Clock.GetUtcNow().UtcDateTime;
+        var row = (await LivenessRowsAsync(f)).ShouldHaveSingleItem(prompt);
+        row.Evidence.ShouldContain($"Prompt #1 (UserPrompt) at {f.PromptAt:u}, "
+            + $"{StandingBootWatchPolicy.Describe(now - f.PromptAt)} ago; no assistant, thinking, tool or "
+            + "turn-end row since.\n", customMessage: "the prompt line states the record and the silence only");
+        var receipt = (await f.ReceiptsAsync()).ShouldHaveSingleItem().Message;
+        foreach (var text in new[] { row.Headline, row.Evidence, receipt })
+        {
+            foreach (var claim in DeliveryClaims)
+            {
+                text.ShouldNotContain(claim, Case.Insensitive,
+                    $"{prompt}: the standing row cannot verify delivery, so it never asserts or denies it");
+            }
+        }
+
+        f.AssertNothingDestructive();
+    }
+
     // ---- helpers ---------------------------------------------------------------------------------
+
+    /// <summary>Delivery verdicts only complete matching UserPrompt evidence may carry (F-4).</summary>
+    private static readonly string[] DeliveryClaims =
+        ["deliver", "not the problem", "received", "accepted", "reached the", "confirmed"];
 
     private static string ModelKind(string resolution) => resolution switch
     {
