@@ -28,16 +28,24 @@ internal sealed class RunnerAbsenceEvidenceHarness : IDisposable
     public RunnerAbsenceEvidenceStore Store { get; private set; } = null!;
     public RunnerAbsenceEvidenceService Service { get; private set; } = null!;
 
+    /// <summary>The store's file access; defaults to <see cref="Files"/>. F1 crash tests swap in a simulated volume.</summary>
+    public IRunnerAbsenceEvidenceFiles StoreFiles { get; set; } = null!;
+
+    /// <summary>The session log path the store lives under; defaults to <see cref="Root"/>.</summary>
+    public string StorePath { get; set; } = null!;
+
     public RunnerAbsenceEvidenceHarness()
     {
         Settings = new SessionRunnerSettings { SessionLogPath = Root };
+        StoreFiles = Files;
+        StorePath = Root;
         Restart();
     }
 
     /// <summary>A new service instance over the same root: a new random epoch.</summary>
     public RunnerAbsenceEvidenceService Restart()
     {
-        Store = new RunnerAbsenceEvidenceStore(Root, Files);
+        Store = new RunnerAbsenceEvidenceStore(StorePath, StoreFiles);
         var inspection = new RunnerAbsenceArtifactInspection(
             Settings,
             id =>
@@ -161,4 +169,166 @@ internal sealed class FaultingEvidenceFiles : IRunnerAbsenceEvidenceFiles
 
     public IReadOnlyList<string> FileNames(string path) =>
         Directory.EnumerateFiles(path).Select(p => Path.GetFileName(p)).ToList();
+
+    public Func<string, Exception?>? SyncFault { get; set; }
+
+    public void SyncDirectory(string path)
+    {
+        if (SyncFault?.Invoke(path) is { } fault) throw fault;
+        RunnerAbsenceEvidenceFiles.Instance.SyncDirectory(path);
+    }
+}
+
+/// <summary>Power failed: the simulated process stops here.</summary>
+internal sealed class SimulatedPowerLoss(string operation) : Exception("power lost after " + operation);
+
+/// <summary>Which of the not-yet-synced names the disk happened to write back before power failed.</summary>
+internal enum Writeback { None, All, Latest }
+
+/// <summary>
+/// CARD-1153 F1 round 2 (Review a086fe80): an in-memory volume that separates what the process
+/// sees from what survives power loss. File contents are durable once written (the production
+/// writer flushes before its rename; the append flushes). A NAME (a created directory, a renamed
+/// file) is durable only after <see cref="SyncDirectory"/> of the directory that holds it.
+/// <see cref="Crash"/> keeps the durable names plus a chosen subset of the pending ones (none,
+/// all, or only the latest, modelling arbitrary writeback order) and then drops every name whose
+/// directory did not survive. Paths outside the volume always exist.
+/// </summary>
+internal sealed class PowerLossEvidenceFiles : IRunnerAbsenceEvidenceFiles
+{
+    private sealed class Node(bool directory)
+    {
+        public bool IsDirectory { get; } = directory;
+        public byte[] Content { get; set; } = [];
+    }
+
+    private readonly string _volume;
+    private readonly HashSet<string> _initial;
+    private Dictionary<string, Node> _live = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Node> _durable = new(StringComparer.Ordinal);
+    private List<(string Path, Node Node)> _pending = [];
+
+    /// <param name="volume">Everything outside this directory always exists.</param>
+    /// <param name="durableDirectories">Directories that already exist durably inside the volume.</param>
+    public PowerLossEvidenceFiles(string volume, params string[] durableDirectories)
+    {
+        _volume = Path.TrimEndingDirectorySeparator(volume);
+        _initial = new HashSet<string>(durableDirectories, StringComparer.Ordinal);
+        foreach (var dir in durableDirectories)
+            _live[dir] = _durable[dir] = new Node(true);
+    }
+
+    /// <summary>Every mutating call in order: <c>mkdir:</c>, <c>write:</c>, <c>append:</c>, <c>sync:</c> plus the name.</summary>
+    public List<string> Operations { get; } = [];
+
+    /// <summary>Power fails immediately after the first operation this matches.</summary>
+    public Func<string, bool>? CrashAfter { get; set; }
+
+    private bool Ambient(string path) => !path.StartsWith(_volume + Path.DirectorySeparatorChar, StringComparison.Ordinal);
+
+    public bool DirectoryExists(string path) => Ambient(path) || _live.TryGetValue(path, out var node) && node.IsDirectory;
+
+    public void CreateDirectory(string path)
+    {
+        var missing = new List<string>();
+        for (var dir = path; !DirectoryExists(dir); dir = Path.GetDirectoryName(dir)!)
+            missing.Insert(0, dir);
+        foreach (var dir in missing)
+            Bind(dir, new Node(true), "mkdir:");
+    }
+
+    public byte[]? ReadIfExists(string path)
+    {
+        if (!_live.TryGetValue(path, out var node))
+            return null;
+        if (node.IsDirectory)
+            throw new UnauthorizedAccessException("is a directory");
+        return node.Content.ToArray();
+    }
+
+    public void WriteAtomic(string path, byte[] bytes)
+    {
+        if (!DirectoryExists(Path.GetDirectoryName(path)!))
+            throw new DirectoryNotFoundException(path);
+        Bind(path, new Node(false) { Content = bytes.ToArray() }, "write:");
+    }
+
+    public void AppendDurable(string path, byte[] bytes)
+    {
+        if (!_live.TryGetValue(path, out var node) || node.IsDirectory)
+            throw new FileNotFoundException(path);
+        node.Content = [.. node.Content, .. bytes];
+        After("append:" + Path.GetFileName(path));
+    }
+
+    public IReadOnlyList<string> FileNames(string path) => _live
+        .Where(e => !e.Value.IsDirectory && Path.GetDirectoryName(e.Key) == path)
+        .Select(e => Path.GetFileName(e.Key)).ToList();
+
+    public void SyncDirectory(string path)
+    {
+        if (!DirectoryExists(path))
+            throw new DirectoryNotFoundException(path);
+        foreach (var (name, node) in _pending.Where(c => Path.GetDirectoryName(c.Path) == path))
+            _durable[name] = node;
+        _pending = _pending.Where(c => Path.GetDirectoryName(c.Path) != path).ToList();
+        After("sync:" + Path.GetFileName(path));
+    }
+
+    /// <summary>
+    /// The process restarted without losing power after an earlier process (or build) created
+    /// these names but never synced them: everything inside the volume is pending again.
+    /// </summary>
+    public void ForgetDurability()
+    {
+        _pending = _live.Where(e => !_initial.Contains(e.Key)).OrderBy(e => e.Key.Length).Select(e => (e.Key, e.Value)).ToList();
+        foreach (var (name, _) in _pending)
+            _durable.Remove(name);
+    }
+
+    /// <summary>Power loss: the durable names plus the chosen writeback survive.</summary>
+    public void Crash(Writeback writeback)
+    {
+        var survivors = writeback switch
+        {
+            Writeback.All => _pending,
+            Writeback.Latest => _pending.TakeLast(1).ToList(),
+            _ => [],
+        };
+        foreach (var (name, node) in survivors)
+            _durable[name] = node;
+        _pending = [];
+        bool dropped;
+        do
+        {
+            dropped = false;
+            foreach (var name in _durable.Keys.ToList())
+            {
+                var parent = Path.GetDirectoryName(name)!;
+                if (Ambient(parent) || _durable.TryGetValue(parent, out var dir) && dir.IsDirectory)
+                    continue;
+                _durable.Remove(name);
+                dropped = true;
+            }
+        }
+        while (dropped);
+        _live = new Dictionary<string, Node>(_durable, StringComparer.Ordinal);
+        CrashAfter = null;
+    }
+
+    private void Bind(string path, Node node, string verb)
+    {
+        _live[path] = node;
+        _pending.Add((path, node));
+        After(verb + Path.GetFileName(path));
+    }
+
+    private void After(string operation)
+    {
+        Operations.Add(operation);
+        if (CrashAfter?.Invoke(operation) != true)
+            return;
+        CrashAfter = null;
+        throw new SimulatedPowerLoss(operation);
+    }
 }

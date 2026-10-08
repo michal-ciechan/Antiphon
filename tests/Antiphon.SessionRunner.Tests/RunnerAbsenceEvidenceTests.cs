@@ -486,6 +486,126 @@ public class RunnerAbsenceEvidenceTests
         return Task.CompletedTask;
     }
 
+    /// <summary>
+    /// V-28, CARD-1153 F1 round 2 (Review a086fe80). A certificate is returned only after every
+    /// name its closure depends on is durable. Each case runs prepare and certify of a fresh
+    /// store on a simulated volume (<see cref="PowerLossEvidenceFiles"/>), loses power immediately
+    /// after the named operation (before any later directory sync), under each writeback outcome
+    /// (no pending name, every pending name, only the latest), restarts, and requires: the store
+    /// is usable (anchor last, each name synced before the next step depends on it); an id whose
+    /// certificate was returned or whose closure was logged refuses delayed creation and
+    /// certification; an id with neither is still open. Then the recovered store certifies a new
+    /// id and that certificate survives a second power loss with no writeback.
+    /// <c>sync-fails</c>: a directory sync that cannot complete refuses the certificate and latches.
+    /// </summary>
+    [Test]
+    [Arguments("root-created")]
+    [Arguments("closure-log-created")]
+    [Arguments("header-written")]
+    [Arguments("anchor-written")]
+    [Arguments("prepared-record-written")]
+    [Arguments("closure-appended")]
+    [Arguments("closed-record-written")]
+    [Arguments("certificate-returned")]
+    [Arguments("session-log-path-created")]
+    [Arguments("adopted-unsynced-store")]
+    [Arguments("sync-fails")]
+    public Task C1153_Certified_closure_survives_power_loss(string boundary)
+    {
+        if (boundary == "sync-fails")
+        {
+            using var faulty = new RunnerAbsenceEvidenceHarness();
+            var closing = Guid.NewGuid();
+            faulty.PrepareOk(closing);
+            faulty.Files.SyncFault = p => p == faulty.Store.Root ? new IOException("directory fsync failed") : null;
+
+            var refused = faulty.Service.Certify(faulty.Request(closing));
+
+            refused.Value.ShouldBeNull("no certificate before the closure's names are durable");
+            refused.Refusal!.Code.ShouldBe(RunnerAbsenceRefusalCodes.Unavailable);
+            faulty.Service.LatchReason.ShouldNotBeNull("a failed sync latches evidence for this epoch");
+            return Task.CompletedTask;
+        }
+
+        foreach (var writeback in new[] { Writeback.None, Writeback.All, Writeback.Latest })
+        {
+            var label = $"{boundary}/{writeback}";
+            using var world = new RunnerAbsenceEvidenceHarness();
+            var volume = new PowerLossEvidenceFiles(Path.GetDirectoryName(world.Root)!, world.Root);
+            world.StoreFiles = volume;
+            if (boundary == "session-log-path-created")
+                world.StorePath = Path.Combine(world.Root, "state", "sessions");
+            world.Restart();
+            if (boundary == "adopted-unsynced-store")
+            {
+                world.PrepareOk(Guid.NewGuid());
+                volume.ForgetDurability();
+                world.Restart();
+            }
+
+            var id = Guid.NewGuid();
+            var record = $"write:{id:N}.json";
+            var crashAt = boundary switch
+            {
+                "root-created" => "mkdir:absence-evidence",
+                "closure-log-created" => "write:closed.log",
+                "header-written" => "write:store.json",
+                "anchor-written" => "write:absence-evidence.identity.json",
+                "prepared-record-written" => record,
+                _ => null,
+            };
+            RunnerAbsenceCertificate? certificate = null;
+            try
+            {
+                volume.CrashAfter = op => op == crashAt;
+                world.Service.Prepare(world.Request(id)).Refusal.ShouldBeNull(label);
+                volume.CrashAfter = boundary switch
+                {
+                    "closure-appended" => op => op == "append:closed.log",
+                    "closed-record-written" => op => op == record,
+                    _ => null,
+                };
+                var certified = world.Service.Certify(world.Request(id));
+                certified.Refusal.ShouldBeNull(label);
+                certificate = certified.Value;
+            }
+            catch (SimulatedPowerLoss) { }
+
+            var certifiedBeforeLoss = boundary is "certificate-returned" or "session-log-path-created" or "adopted-unsynced-store";
+            (certificate is not null).ShouldBe(certifiedBeforeLoss, $"{label}: only an uninterrupted sequence returns a certificate");
+            volume.Crash(writeback);
+            world.Restart();
+
+            world.Store.UnknownReason.ShouldBeNull($"{label}: power loss at any step leaves a usable store");
+            if (certifiedBeforeLoss)
+                world.Store.Read(id).Record.ShouldNotBeNull(label).State.ShouldBe(RunnerAbsenceRecordState.ClosedUnused,
+                    $"{label}: the certified record itself is durable, not only its closure-log line");
+            if (certifiedBeforeLoss || boundary is "closure-appended" or "closed-record-written")
+            {
+                Should.Throw<SessionIdentityClosedException>(() => world.Service.RequireOpenIdentity(id),
+                    $"{label}: a certified or logged closure survives power loss").SessionId.ShouldBe(id);
+                Should.Throw<SessionIdentityClosedException>(
+                    () => world.Service.RecordCreationAttempt(id, RunnerAbsenceEvidenceHarness.Generation), label);
+                world.Service.Certify(world.Request(id)).Value.ShouldBeNull($"{label}: no second certificate");
+            }
+            else
+                Should.NotThrow(() => world.Service.RequireOpenIdentity(id), $"{label}: no closure, so the id is still open");
+
+            // The recovered store issues a certificate that survives power loss with no writeback.
+            world.Restart();
+            var next = Guid.NewGuid();
+            world.PrepareOk(next);
+            world.Service.Certify(world.Request(next)).Value.ShouldNotBeNull($"{label}: the recovered store certifies");
+            volume.Crash(Writeback.None);
+            world.Restart();
+            world.Store.Read(next).Record.ShouldNotBeNull(label).State.ShouldBe(RunnerAbsenceRecordState.ClosedUnused, $"{label}: durable closed record");
+            Should.Throw<SessionIdentityClosedException>(() => world.Service.RequireOpenIdentity(next),
+                $"{label}: the next certificate is durable when returned").SessionId.ShouldBe(next);
+        }
+
+        return Task.CompletedTask;
+    }
+
     private static string[] EvidenceFiles(Guid id) => new[]
     {
         "absence-evidence.identity.json", $"absence-evidence/{id:N}.json", "absence-evidence/closed.log",
