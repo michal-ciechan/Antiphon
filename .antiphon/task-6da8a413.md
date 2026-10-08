@@ -1,6 +1,6 @@
 # CARD-1149/1150 S2 repair 4 (F10) — Code report, task 6da8a413
 
-Outcome: F10 fixed. After the resumed launch has attempted input, a failure of its later bookkeeping is logged and the Working recipient stays Running. Before any input, today's kill-and-fail path is unchanged. The new regression and the 7-case table were red on 066b302d and red under seven method-scoped mutants. All 44 ordinary rows are green at 9ed2074c: 855 executed, 855 passed.
+Outcome: F10 fixed. After the resumed launch's ensure or boot flush has returned that it attempted input, a failure of the resume's own later bookkeeping (the event saves and the follow-up flush) is logged and the Working recipient stays Running. *Qualified by repair 5 (task 31f67fe1, Review 0336a6b0 F11/F12): "attempted input" now needs positive evidence that a write began, so a pre-input refusal keeps the kill-and-fail path; and a throw from inside a delivery after typing, such as a failed Delivered-verdict save after one complete UserPrompt, still kills and fails the recipient, as on the pre-S2 baseline. That inherited gap is not fixed.* Before any input, today's kill-and-fail path is unchanged. The new regression and the 7-case table were red on 066b302d and red under seven method-scoped mutants. All 44 ordinary rows are green at 9ed2074c: 855 executed, 855 passed.
 
 - Branch `feat/card-task-6da8a413`, worktree `/work/worktrees/task-6da8a413` (desktop `C:\Antiphon\worktrees\card-task-6da8a413`).
 - Base 066b302dc3c3fb9e81b249fa253f493688b14327. Net-diff base 31632adc03b78956c7dc2d056280d7309681a7ff.
@@ -10,7 +10,7 @@ Outcome: F10 fixed. After the resumed launch has attempted input, a failure of i
 
 ## Fix (fail-closed)
 
-- `SessionMessageQueueService.DispatchBrief.cs`: `DispatchBriefEnsureResult.InputStarted` (init-only). It is true when the post-commit `DeliverNextLockedAsync` returned `Delivered` or `Failed`, so a delivery attempt may have typed.
+- `SessionMessageQueueService.DispatchBrief.cs`: `DispatchBriefEnsureResult.InputStarted` (init-only). It is true when the post-commit `DeliverNextLockedAsync` returned `Delivered` or `Failed`, so a delivery attempt may have typed. *Corrected by repair 5 (Review 0336a6b0 F11): `Failed` alone was wrong, because a pre-input refusal also returns it; the flag now needs `Delivered` or positive evidence that a write began.*
 - `SessionMessageQueueService.cs`: `FlushSessionAsync` delegates to a new internal `FlushSessionReportingInputAsync`, which returns the same flag. Other callers are unchanged.
 - `AgentSessionService.ResumeInterruptedLaunchAsync`:
   - `inputStarted` comes from the ensure. If the ensure did not type, it comes from the boot flush.
@@ -19,7 +19,7 @@ Outcome: F10 fixed. After the resumed launch has attempted input, a failure of i
   - OperationCanceledException is never swallowed, as before.
 - Unchanged: the CARD-0340 order (attach, ready, Running save, events, flush), the legacy `EnqueueAsync(deliverIfIdle:false)` branch, the catch itself, the boot-stall tail, and the dispatcher's ensure. There is no migration.
 
-Every step that runs after the early input:
+The resume's own steps after the early input (not the delivery itself; see Known limits):
 
 | Step | 066b302d | Now |
 |---|---|---|
@@ -28,7 +28,7 @@ Every step that runs after the early input:
 | "launch resumed" save | kill + Failed | logged, event detached |
 | `RecordLaunchInterruptedByRestartAsync` | already best-effort (own scope, try/catch) | unchanged |
 
-When the ensure typed nothing but the flush delivered, the "launch resumed" save is also after input. It is now non-destructive. That case was already destructive on the net-diff base; the same flag fixes it.
+When the ensure typed nothing but the flush delivered, the "launch resumed" save is also after input. That save is now non-destructive; a throw inside that flush's own delivery is not (see Known limits). That case was already destructive on the net-diff base; the same flag fixes it.
 
 Known limits, unchanged from the net-diff base: a throw inside a delivery after typing still reaches the catch. That includes the ensure's own delivery, which is the same boundary as the base flush's delivery, and the flush's post-delivery `GetQueueAsync`. S2 adds no new exposure there. Backlog text for caller triage: "Resumed-launch catch: classify a throw from inside a delivery after typing (and the flush's post-delivery GetQueueAsync) as post-input so it never kills a Working recipient."
 
@@ -91,7 +91,7 @@ All `bin-f10` and `bin-c1150r6drv` output directories were deleted. The tool del
 
 ## Invariants and other facts
 
-- Nothing now stops or fails a Working session because of resumed-launch bookkeeping after input. CARD-0079 remains the only automatic stop. The inherited CARD-1151 boot-stall tail (CP-37, 3/3) still stops an aged prompt-only Working session. It is untouched (the diff does not touch `TryFailBootStallAsync`).
+- A failure of the resume's own bookkeeping (event saves, follow-up flush) after the ensure or flush has returned possible input no longer stops or fails a Working session. *Qualified by repair 5 (Review 0336a6b0 F12): this is not every step after input. A throw inside a delivery after typing, such as a failed Delivered-verdict save after one complete UserPrompt, still kills and fails the recipient, as on the pre-S2 baseline; that inherited gap is not fixed.* CARD-0079 remains the only automatic stop. The inherited CARD-1151 boot-stall tail (CP-37, 3/3) still stops an aged prompt-only Working session. It is untouched (the diff does not touch `TryFailBootStallAsync`).
 - `.antiphon/task-d30ad28b.md:246` and `.antiphon/task-44fc0e5a.md:206` are qualified: their "S2 adds no stop/fail path" was wrong until this repair.
 - Statement budgets (CP-67) are green. The decision table and the S1 whitelist are unchanged (CP-58 77/77, CP-69 18/18, CP-70 73/73).
 - No assertion was weakened or deleted, and no timeout was widened. Only CP-68's floor was raised.
