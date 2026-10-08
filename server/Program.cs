@@ -457,6 +457,8 @@ try
     builder.Services.AddScoped<AgentTaskLandingState>();
     builder.Services.AddScoped<AgentTaskLandService>();
     builder.Services.AddScoped<AgentTaskLandNotificationService>();
+    // CARD-1121: process-local negative receipt-scan proofs; a restart starts empty.
+    builder.Services.AddSingleton<LandReceiptScanCache>();
     builder.Services.AddScoped<AgentTaskLandMonitorService>();
     builder.Services.AddSingleton<LandDeliveryBoundary>();
     builder.Services.AddScoped<AgentTaskLandingProtocol>();

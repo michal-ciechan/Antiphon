@@ -16,7 +16,8 @@ namespace Antiphon.Server.Application.Services;
 public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMessageQueueService messages,
     CompletionNoteFlushQueue flushes, AgentSessionRuntime runtime, TimeProvider clock, LandDeliveryBoundary? boundary = null,
     IOptions<SupervisionSettings>? supervision = null,
-    IAgentReportStore? reports = null, CheckCompactionBoundary? compactionBoundary = null)
+    IAgentReportStore? reports = null, CheckCompactionBoundary? compactionBoundary = null,
+    LandReceiptScanCache? scanCache = null)
 {
     /// <summary>
     /// Kinds whose keyed row is also the caller's completion note: task-root conversation key,
@@ -44,15 +45,26 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
     {
         var note = await db.AgentTaskLandNotifications.SingleAsync(n => n.Id == id, ct);
         await db.Entry(note).ReloadAsync(ct);
-        if (note.State is LandNotificationState.Confirmed or LandNotificationState.NotRequired or LandNotificationState.LegacyUnverified) return;
+        if (note.State is LandNotificationState.Confirmed or LandNotificationState.NotRequired or LandNotificationState.LegacyUnverified)
+        {
+            scanCache?.Invalidate(note.Id);
+            return;
+        }
         if (note.IsLegacy && note.QueueMessageId is null) return; // Historical evidence never creates a new submission.
         var now = clock.GetUtcNow().UtcDateTime;
         if (note.QueueMessageId is null && note.NextAttemptAt > now) return;
+        (LandReceiptScanCache.Context Context, LandReceiptScanCache.StateStamp? Before, LandReceiptScanCache.StateStamp? After,
+            bool Matched, long? CompletedAt)? negative = null;
         try
         {
             note.ConcurrencyToken = Guid.NewGuid();
-            if (note.ParentSessionId is not Guid session
-                || !await db.AgentSessions.AnyAsync(s => s.Id == session, ct))
+            // CARD-1121 A-1: the one destination SELECT also projects the status and generation the
+            // receipt scan cache binds; it adds no command.
+            var destination = note.ParentSessionId is Guid parent
+                ? await db.AgentSessions.Where(s => s.Id == parent)
+                    .Select(s => new { s.Status, s.StartedAt }).SingleOrDefaultAsync(ct)
+                : null;
+            if (note.ParentSessionId is not Guid session || destination is null)
             {
                 note.State = LandNotificationState.DestinationUnavailable;
                 note.LastErrorCode = "destination_unavailable";
@@ -237,14 +249,48 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
                     await db.SaveChangesAsync(ct);
                     return;
                 }
-                await runtime.CatchUpTranscriptAsync(session, ct);
+                // CARD-1121: only a whitelisted shape bound to a terminal destination gets a scan
+                // context. Every other note keeps today's catch-up and scan, with no added command.
+                var scan = ReceiptScanContext(note, row, destination.Status, expected);
+                LandReceiptScanCache.StateStamp? current = null;
+                if (scan is null)
+                    await runtime.CatchUpTranscriptAsync(session, ct);
+                else
+                    current = ReceiptStamp(await runtime.CatchUpForReceiptAsync(session,
+                        destination.Status is SessionStatus.Stopped or SessionStatus.Failed, ct), destination.StartedAt);
                 // CARD-0641 D-2 kinds, destination and delivery floor: LandNoteReceipt, shared with
                 // the CARD-0650 watchdog's read-only note-debt check.
                 var prompts = LandNoteReceipt.Prompts(db.TranscriptEntries.AsNoTracking(), session, note.IsLegacy,
                     note.Kind, row.LastDeliveryBaselineSequence, row.LastDeliveryStartedAt,
                     (supervision?.Value ?? new SupervisionSettings()).DeliveryVerification.UnobservableBaselineConfirmClockToleranceSeconds);
                 if (prompts is null) return;
-                var evidence = await LandNoteReceipt.FirstReceiptAsync(prompts, expected, ct);
+                ReceiptPrompt? evidence = null;
+                // A proof omits exactly this one SELECT; the pull above, the bookkeeping and the
+                // final UPDATE below run on a hit as on a miss.
+                if (scan is null || current is null || !scanCache!.TryReuse(scan, current, out _))
+                {
+                    LandReceiptScanCache.StateStamp? before = null;
+                    if (scan is not null)
+                    {
+                        if (boundary is not null) await boundary.ReachedAsync("receipt-scan-before-stamp", note.TaskId, note.Id, ct);
+                        before = ReceiptStamp(await runtime.ObserveReceiptStateAsync(session, ct), destination.StartedAt);
+                    }
+                    evidence = await LandNoteReceipt.FirstReceiptAsync(prompts, expected, ct);
+                    if (scan is not null)
+                    {
+                        // A certificate needs the same committed state on both sides of a scan that
+                        // ran to exhaustion; it is published only after the final save below.
+                        var matched = evidence is not null;
+                        var completedAt = scanCache!.TryGetTimestamp();
+                        LandReceiptScanCache.StateStamp? after = null;
+                        if (!matched)
+                        {
+                            if (boundary is not null) await boundary.ReachedAsync("receipt-scan-exhausted", note.TaskId, note.Id, ct);
+                            after = ReceiptStamp(await runtime.ObserveReceiptStateAsync(session, ct), destination.StartedAt);
+                        }
+                        negative = (scan, before, after, matched, completedAt);
+                    }
+                }
                 // A pointer prompt proves receipt of the pointer only; the referenced file must still
                 // hold exactly the content that was spilled behind it.
                 if (evidence is not null && rendering?.SpillPath is { } spillPath
@@ -264,6 +310,15 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
                 }
             }
             await db.SaveChangesAsync(ct);
+            if (scanCache is null) return;
+            if (note.State == LandNotificationState.Confirmed)
+                scanCache.Invalidate(note.Id);
+            else if (negative is { } certificate)
+            {
+                if (boundary is not null) await boundary.ReachedAsync("receipt-scan-before-certificate", note.TaskId, note.Id, ct);
+                scanCache.Publish(certificate.Context, certificate.Before, certificate.After, certificate.Matched,
+                    saveCompleted: true, certificate.CompletedAt);
+            }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -323,6 +378,33 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
         {
             return false;
         }
+    }
+
+    // CARD-1121 W-10: a cache fault is a refusal, never a failed note; the caller keeps today's scan.
+    private LandReceiptScanCache.Context? ReceiptScanContext(AgentTaskLandNotification note, SessionQueuedMessage row,
+        SessionStatus destinationStatus, string expected)
+    {
+        if (scanCache is null) return null;
+        try
+        {
+            if (LandReceiptScanCache.TryBuildContext(note, row, destinationStatus, expected, out var context, out var refusal))
+                return context;
+            scanCache.RecordRefusal(refusal);
+        }
+        catch (Exception) { }
+        return null;
+    }
+
+    private LandReceiptScanCache.StateStamp? ReceiptStamp(LandReceiptScanCache.Observation observation, DateTime? destinationStartedAt)
+    {
+        try
+        {
+            if (LandReceiptScanCache.StateStamp.TryCreate(observation, destinationStartedAt, out var stamp, out var refusal))
+                return stamp;
+            scanCache?.RecordRefusal(refusal);
+        }
+        catch (Exception) { }
+        return null;
     }
 
     internal static int RetrySeconds(int attempt) => (int)Math.Min(300, 5 * Math.Pow(2, Math.Clamp(attempt - 1, 0, 10)));

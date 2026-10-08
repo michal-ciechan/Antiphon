@@ -332,6 +332,60 @@ public sealed class LandReceiptScanCacheTests
         }
     }
 
+    /// <summary>
+    /// CARD-1121 S2 (S1 Review follow-up): a malformed identity never yields a context or a reuse,
+    /// whatever else is positive. Both sides carry the shape, so the named guard alone refuses.
+    /// </summary>
+    [Test]
+    [Arguments("note-id-empty")]
+    [Arguments("note-queue-message-id-null")]
+    [Arguments("note-queue-message-id-other-row")]
+    [Arguments("parent-session-null")]
+    [Arguments("parent-session-empty")]
+    [Arguments("queue-destination-empty")]
+    [Arguments("scan-session-incoherent")]
+    public void C1121_MalformedIdentityNeverReusesNegativeScan(string flip)
+    {
+        var ids = Ids.New();
+        var publish = Side.Positive(ids);
+        var reuse = Side.Positive(ids);
+        var expectedRefusal = "";
+        foreach (var side in new[] { publish, reuse })
+        {
+            expectedRefusal = flip switch
+            {
+                "note-id-empty" => Set(() => side.Note.Id = Guid.Empty, "identity:NoteId"),
+                "note-queue-message-id-null" => Set(() => side.Note.QueueMessageId = null, "identity:QueueMessageId"),
+                "note-queue-message-id-other-row" => Set(() => side.Note.QueueMessageId = Guid.NewGuid(), "identity:QueueMessageId"),
+                "parent-session-null" => Set(() => side.Note.ParentSessionId = null, "identity:ParentSessionId"),
+                "parent-session-empty" => Set(() =>
+                {
+                    side.Note.ParentSessionId = Guid.Empty;
+                    side.Row.AgentSessionId = ids.Parent;
+                    side.Snapshot = side.Snapshot with { SessionId = Guid.Empty };
+                }, "identity:ParentSessionId"),
+                "queue-destination-empty" => Set(() => side.Row.AgentSessionId = Guid.Empty, "identity:QueueDestination"),
+                "scan-session-incoherent" => Set(() => side.Snapshot = side.Snapshot with { SessionId = ids.Epoch }, "identity:ScanSession"),
+                _ => throw new ArgumentOutOfRangeException(nameof(flip), flip, null),
+            };
+        }
+
+        var cache = new LandReceiptScanCache(new ManualClock());
+        if (publish.TryBuild(out var context, out var stamp, out _))
+            cache.Publish(context!, stamp, stamp, false, true, cache.TryGetTimestamp());
+        var reused = reuse.TryBuild(out var current, out var currentStamp, out var refusal)
+            && cache.TryReuse(current!, currentStamp!, out refusal);
+
+        reused.ShouldBeFalse(flip);
+        refusal.ShouldBe(expectedRefusal, flip);
+
+        static string Set(Action change, string refusal)
+        {
+            change();
+            return refusal;
+        }
+    }
+
     private static async Task ConcurrentPublicationsKeepOwnBindingAsync(LandReceiptScanCache cache, CancellationToken ct)
     {
         var ids = Ids.New();
