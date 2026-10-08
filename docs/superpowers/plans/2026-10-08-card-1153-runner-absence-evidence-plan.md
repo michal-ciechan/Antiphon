@@ -81,7 +81,10 @@ after the DB commit. Preserve the marker on failed starts, releases and disposal
 Startup/adoption records discovered IDs as attempted and completes before evidence is
 available. An attempted-write failure latches evidence unavailable for this runtime
 before launch proceeds; it must not leave a valid Prepared record usable in memory.
-Do not introduce a new launch refusal just because optional evidence storage failed.
+Do not introduce a new launch refusal just because the optional Attempted write failed
+after a positive read. A read that cannot prove the identity open (unknown or damaged
+store, closed record lost or unreadable) is different: it refuses creation (F1), because
+an already-issued certificate cannot be revoked.
 
 Prepared/ClosedUnused proof is usable only in the epoch that prepared it. After a
 runner restart all earlier records refuse certification; their presence also refuses
@@ -108,11 +111,22 @@ expected generation/store and a fresh random nonce. This is deliberately POST: i
 closes the unused identity. Under the launch gate, require the same-epoch Prepared
 record, complete adoption, no latched storage fault, no attempt and no runtime or
 retained artifact. Atomically change Prepared to ClosedUnused **before** replying.
-Subsequent requests can return a fresh certificate from the same ClosedUnused record
-after the same exclusions are checked. Do not cache response bodies/nonces.
+Subsequent requests with a fresh nonce can return a fresh certificate from the same
+ClosedUnused record after the same exclusions are checked. Do not cache response bodies.
+Replays are rejected (Review 1a174347 F2): each request carries a signed `issuedAtUtc`;
+the runner admits a nonce at most once per runner epoch (any operation, any outcome),
+refuses a request issued outside a 30-second freshness window of its clock or before its
+epoch start plus that window (the bounded nonce cache is memory only, so a request
+captured before a restart is stale, not new), and answers `absence_evidence_replayed`
+(409) or `absence_evidence_stale_request` (401).
 
 ClosedUnused permanently refuses a later create or attach for that session ID,
-including another generation. That prevents a delayed launch after the last inventory
+including another generation. The closure survives storage failure (Review 1a174347 F1):
+a durable store identity (header plus an anchor beside the root) and a flushed closure
+log make a wiped, replaced or damaged store, and a closed record that is later missing,
+corrupt, truncated, unreadable or no longer ClosedUnused, unknown evidence; creation and
+attach admit only a positive read (never-initialized or healthy store, no record or a
+Prepared/Attempted record), so unknown evidence refuses creation and never certifies. That prevents a delayed launch after the last inventory
 read from invalidating the proof. This is an admission fence for an ID that has never
 had a process, not a stop, kill, parking operation, capacity seat or timer. Explicit
 Retry can allocate a new session through its existing path; this plan adds no retry.
@@ -193,7 +207,8 @@ routing and runner-scoped wrappers. Keep raw wire parsing in Infrastructure. Exp
 validated application result, not a caller-set `authenticated=true` bit. Share structural
 validation so transports cannot disagree. Use TimeProvider for request elapsed time.
 
-Each read uses a new nonce, a five-second total deadline and no generic read retries.
+Each read uses a new nonce, a five-second total deadline that starts before capability
+discovery and covers discovery plus the POST (Review 1a174347 F3), and no generic read retries.
 Accept only a successful authenticated response for the owning store, exact session
 and `SessionGeneration.Equal` generation, known nonempty runtime epoch, matching nonce,
 version 1, outcome never_created, complete=true, identityClosed=true and every presence
