@@ -53,6 +53,15 @@ public sealed record ProgressSourceBaseline(
     string LocalSha,
     ProgressRemoteBaseline Remote);
 
+/// <summary>
+/// CARD-1115 D-4. A <c>repository_lease_busy</c> observation may retain the exact
+/// origin-advertised <see cref="Sha"/> with <see cref="State"/>
+/// <see cref="ProgressRemoteState.Unavailable"/>. That SHA is not proof that the object is
+/// locally available. Require <see cref="ProgressRemoteState.Present"/> before pinning it or
+/// treating it as a locally verified baseline. The retained advertisement may participate in
+/// conservative equality/no-movement checks. Other Unavailable observations may omit
+/// <see cref="Sha"/>.
+/// </summary>
 public sealed record ProgressRemoteBaseline(
     ProgressRemoteState State,
     string? Sha = null,
