@@ -129,7 +129,9 @@ Keep session-scope UserPrompt/QueuedUserPrompt admission; do not change shared
 `BootReplyWatch.TryArmAsync` to use the task-only AcceptedSequence contract.
 For queued-only evidence, say “queued prompt record” and “no reply observed,”
 not “the model accepted the input” or “delivery succeeded.” Never resend it.
-For an ordinary accepted prompt, retain the transcript-delivery distinction.
+For a UserPrompt record, state its kind, sequence, time and the absence of a model row
+only: the standing row does not match the record against the intended request, so it
+neither asserts nor denies delivery (S4 repair 2, Review 67673f16 F-4).
 Housekeeping and interrupt interpretation stays with the existing shared
 predicate; a questionable record can cause only detection, never recovery.
 
