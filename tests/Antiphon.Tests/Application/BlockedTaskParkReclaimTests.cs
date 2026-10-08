@@ -1,3 +1,4 @@
+using System.Data.Common;
 using System.Net;
 using System.Net.Http.Json;
 using System.Security.Claims;
@@ -17,6 +18,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -805,6 +807,369 @@ public sealed class BlockedTaskParkReclaimTests
         }
     }
 #pragma warning restore EXTEXP0004
+
+    [Test]
+    public async Task C1147_RolledBackConfirmationIsNotThisRunsRelease()
+    {
+        // One condition flips per world: commit fault, then an independent recovery before the tally.
+        ConfirmCommitWorld[] worlds =
+        [
+            new("c1147-control", Fault: false, Recover: false, Released: 3, Confirmed: 3, Commands: 3),
+            new("c1147-rollback", Fault: true, Recover: false, Released: 2, Confirmed: 2, Commands: 3),
+            new("c1147-recovered", Fault: true, Recover: true, Released: 2, Confirmed: 3, Commands: 4),
+        ];
+        var measured = new List<ConfirmCommitMeasurement>();
+        foreach (var world in worlds)
+            measured.Add(await MeasureConfirmCommitAsync(world));
+
+        var control = measured[0];
+        foreach (var m in measured)
+        {
+            var label = m.World.Label;
+            m.Result.Visited.ShouldBe(3, label);
+            m.Result.Registered.ShouldBe(3, label);
+            m.Result.Eligible.ShouldBe(3, label);
+            m.Result.Released.ShouldBe(m.World.Released, label);
+            m.ConfirmedAfter.ShouldBe(m.World.Confirmed, label);
+            m.ReleaseCommands.ShouldBe(m.World.Commands, label);
+            m.ForceCommands.ShouldBe(0, label);
+            // The commit fault follows every confirmation statement, so the sweep context sends
+            // the same statements in every world. Recovery runs on its own context.
+            m.SweepCommands.Count.ShouldBeGreaterThan(0, label);
+            m.SweepCommands.ShouldBe(control.SweepCommands, label);
+            m.Tallies.Count.ShouldBe(3, label);
+            foreach (var tally in m.Tallies)
+            {
+                tally.Commands.Count.ShouldBe(2, label + " tally");
+                tally.Commands[0].ShouldStartWith("SELECT", Case.Sensitive, label + " tally");
+                tally.Commands[0].ShouldContain("FROM \"AgentTasks\"", Case.Sensitive, label + " tally");
+                tally.Commands[1].ShouldStartWith("SELECT", Case.Sensitive, label + " tally");
+                tally.Commands[1].ShouldContain("FROM \"RunnerSeatReleases\"", Case.Sensitive, label + " tally");
+            }
+        }
+        control.ConfirmWrites.ShouldBe(0, "c1147-control");
+        control.Rollbacks.ShouldBe(0, "c1147-control");
+        control.RecoveryCommands.ShouldBeEmpty("c1147-control");
+        foreach (var m in measured.Skip(1))
+        {
+            m.ConfirmWrites.ShouldBe(1, m.World.Label);
+            m.Rollbacks.ShouldBe(1, m.World.Label);
+        }
+        measured[1].RecoveryCommands.ShouldBeEmpty("c1147-rollback");
+        var recovered = measured[2];
+        recovered.RecoveryCommands.Count(IsConfirmWrite).ShouldBe(1, "c1147-recovered");
+        recovered.RecoveredBeforeTally.ShouldBeTrue("c1147-recovered");
+    }
+
+    private sealed record ConfirmCommitWorld(
+        string Label, bool Fault, bool Recover, int Released, int Confirmed, int Commands);
+
+    private sealed record ConfirmCommitMeasurement(
+        ConfirmCommitWorld World, LegacyReclaimResult Result, int ConfirmedAfter, int ReleaseCommands,
+        int ForceCommands, int ConfirmWrites, int Rollbacks, IReadOnlyList<string> SweepCommands,
+        IReadOnlyList<string> RecoveryCommands, IReadOnlyList<ConfirmCommitFault.Tally> Tallies,
+        bool RecoveredBeforeTally);
+
+    private static async Task<ConfirmCommitMeasurement> MeasureConfirmCommitAsync(ConfirmCommitWorld world)
+    {
+        var label = world.Label;
+        var fault = new ConfirmCommitFault();
+        await using var f = await RunnerSeatReleaseFixture.CreateAsync(
+            AgentTaskStatus.Blocked, parking: true, reclaim: true, reclaimIntervalSeconds: 0,
+            configureDb: options => options.AddInterceptors(fault));
+        f.Wire.Qualified = Idle(TimeSpan.Zero, null);
+        await f.EditAsync((task, _) => task.Role = AgentTaskRole.Code);
+        await f.CreateSourceAsync();
+        await CommitTipAsync(f);
+        await AncientBlockAsync(f, f.TaskId);
+        ArmPathVerifier(f);
+        var rows = new List<Row> { new(f.TaskId, f.SessionId) };
+        for (var i = 0; i < 2; i++)
+        {
+            var row = await SeedBlockedAsync(f, "c1147-" + i);
+            await f.CreateReclaimSourceAsync(row.TaskId, row.SessionId);
+            await AncientBlockAsync(f, row.TaskId);
+            // Link each agent to its seat like the fixture's own row, so the agent projection is live.
+            await using (var db = f.Db())
+            {
+                var agentId = (await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == row.TaskId)).AgentId;
+                await db.Agents.Where(a => a.Id == agentId).ExecuteUpdateAsync(s => s
+                    .SetProperty(a => a.PersistentSessionId, row.SessionId.ToString("D")));
+            }
+            rows.Add(row);
+        }
+
+        var order = new List<Guid>();
+        var registration = await f.ReclaimScheduledAsync((name, _) =>
+        {
+            if (name.StartsWith("ReclaimList:", StringComparison.Ordinal))
+                order.Add(Guid.Parse(name["ReclaimList:".Length..]));
+            return Task.CompletedTask;
+        });
+        registration.Visited.ShouldBe(3, label);
+        registration.Released.ShouldBe(0, label);
+        order.Distinct().Count().ShouldBe(3, label);
+        var target = rows.Single(r => r.TaskId == order[1]);
+        var anchor = new List<DateTime>();
+        foreach (var row in rows)
+            anchor.Add((await ParkOfAsync(f, row.TaskId)).CreatedAt);
+        AdvanceTo(f, anchor.Max(), TimeSpan.FromMilliseconds(120_001));
+        foreach (var row in rows)
+            await ArmIdleAsync(f, row.TaskId, row.SessionId);
+        var agentBefore = await TargetAgentAsync(f, target);
+        agentBefore.Status.ShouldNotBe(AgentStatus.Stopped, label);
+        var releaseCommandsBefore = f.Wire.ConditionalCommands;
+        if (world.Fault) fault.Target = target.TaskId;
+
+        var listed = new List<Guid>();
+        var recovered = false;
+        LegacyReclaimResult result;
+        using (var scope = f.Harness.Provider.CreateScope())
+        {
+            var service = scope.ServiceProvider.GetRequiredService<TerminalRunnerSeatReleaseService>();
+            var sweepDb = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            fault.Sweep = sweepDb;
+            service.BoundaryAsync = async (name, ct) =>
+            {
+                if (name.StartsWith("ReclaimList:", StringComparison.Ordinal))
+                {
+                    listed.Add(Guid.Parse(name["ReclaimList:".Length..]));
+                    return;
+                }
+                if (name != "BeforeAttentionPublish") return;
+                if (world.Recover && fault.Rollbacks == 1 && !recovered)
+                {
+                    recovered = true;
+                    await RecoverElsewhereAsync(f, fault, service, sweepDb, target, label, ct);
+                }
+                fault.OpenTally();
+            };
+            result = await service.ReclaimScheduledAsync(default);
+        }
+        fault.Target = null;
+        fault.Sweep = null;
+
+        listed.ShouldBe(order, label);
+        (await CursorAsync(f))!.AfterTaskId.ShouldBe(listed[^1], label);
+        foreach (var row in rows)
+        {
+            Released(f, row.SessionId).ShouldBeTrue(label);
+            if (row == target) continue;
+            (await ParkOfAsync(f, row.TaskId)).State.ShouldBe(AgentTaskParkState.Parked, label + " neighbor");
+            TerminalRunnerSeatReleaseService.IsConfirmed(await ReleaseOfAsync(f, row.TaskId))
+                .ShouldBeTrue(label + " neighbor");
+        }
+        var targetRelease = await ReleaseOfAsync(f, target.TaskId);
+        var targetPark = await ParkOfAsync(f, target.TaskId);
+        var agentAfter = await TargetAgentAsync(f, target);
+        await using (var db = f.Db())
+        {
+            var session = await db.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == target.SessionId);
+            if (world.Fault && !world.Recover)
+            {
+                // Nothing the failed transaction wrote is visible to a fresh context.
+                targetRelease.State.ShouldBe(RunnerSeatReleaseState.Unresolved, label);
+                targetRelease.ConfirmedAt.ShouldBeNull(label);
+                targetPark.State.ShouldBe(AgentTaskParkState.ReleasePending, label);
+                session.Status.ShouldBe(SessionStatus.Running, label);
+                agentAfter.Status.ShouldBe(agentBefore.Status, label);
+                agentAfter.UpdatedAt.ShouldBe(agentBefore.UpdatedAt, label);
+            }
+            else
+            {
+                TerminalRunnerSeatReleaseService.IsConfirmed(targetRelease).ShouldBeTrue(label);
+                targetRelease.OutcomeCode.ShouldBe(world.Recover
+                    ? nameof(TerminalSeatReleaseOutcome.AlreadyAbsent) : nameof(TerminalSeatReleaseOutcome.Released), label);
+                targetPark.State.ShouldBe(AgentTaskParkState.Parked, label);
+                session.Status.ShouldBe(SessionStatus.Stopped, label);
+                agentAfter.Status.ShouldBe(AgentStatus.Stopped, label);
+            }
+        }
+        var tallies = fault.Tallies;
+        var recoveredBeforeTally = recovered && tallies.Count == 3 && fault.RecoveryLast < tallies[1].First;
+        Console.WriteLine(
+            $"C1147 {label} visited={result.Visited} registered={result.Registered} released={result.Released} confirmed={await ConfirmedCountAsync(f)} confirmWrites={fault.ConfirmWrites} rollbacks={fault.Rollbacks} sweep={fault.SweepCommands.Count} recovery={fault.RecoveryCommands.Count} tallies={string.Join(',', tallies.Select(t => t.Commands.Count))}");
+        return new ConfirmCommitMeasurement(world, result, await ConfirmedCountAsync(f),
+            f.Wire.ConditionalCommands - releaseCommandsBefore, f.Wire.ForceCommands, fault.ConfirmWrites, fault.Rollbacks,
+            fault.SweepCommands, fault.RecoveryCommands, tallies, recoveredBeforeTally);
+    }
+
+    /// <summary>
+    /// Real accepted-answer recovery in another scope, after the failed transaction disposed and
+    /// AdvanceAsync released the queue gate. It has no legacy accounting set of its own.
+    /// </summary>
+    private static async Task RecoverElsewhereAsync(RunnerSeatReleaseFixture f, ConfirmCommitFault fault,
+        TerminalRunnerSeatReleaseService sweep, AppDbContext sweepDb, Row target, string label, CancellationToken ct)
+    {
+        var release = await ReleaseOfAsync(f, target.TaskId);
+        release.State.ShouldBe(RunnerSeatReleaseState.Unresolved, label);
+        sweepDb.Database.CurrentTransaction.ShouldBeNull(label);
+        using var other = f.Harness.Provider.CreateScope();
+        var recovery = other.ServiceProvider.GetRequiredService<TerminalRunnerSeatReleaseService>();
+        var recoveryDb = other.ServiceProvider.GetRequiredService<AppDbContext>();
+        ReferenceEquals(recovery, sweep).ShouldBeFalse(label);
+        ReferenceEquals(recoveryDb, sweepDb).ShouldBeFalse(label);
+        recovery.BoundaryAsync.ShouldBeNull(label);
+        fault.Recovery = recoveryDb;
+        f.Directory.Inventory = () => Task.FromResult<RunnerInventory>(new RunnerInventory.Available([]));
+        try { await recovery.ReconcileAcceptedAnswerAsync(release.Id, ct); }
+        finally
+        {
+            f.Directory.Inventory = null;
+            fault.Recovery = null;
+        }
+        TerminalRunnerSeatReleaseService.IsConfirmed(await ReleaseOfAsync(f, target.TaskId)).ShouldBeTrue(label);
+    }
+
+    private static async Task<RunnerSeatRelease> ReleaseOfAsync(RunnerSeatReleaseFixture f, Guid taskId)
+    {
+        await using var db = f.Db();
+        return await db.RunnerSeatReleases.AsNoTracking().SingleAsync(r => r.TaskId == taskId);
+    }
+
+    private static async Task<Agent> TargetAgentAsync(RunnerSeatReleaseFixture f, Row row)
+    {
+        await using var db = f.Db();
+        var agentId = (await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == row.TaskId)).AgentId;
+        return await db.Agents.AsNoTracking().SingleAsync(a => a.Id == agentId);
+    }
+
+    private static bool IsConfirmWrite(string sql) =>
+        sql.StartsWith("UPDATE \"RunnerSeatReleases\"", StringComparison.Ordinal)
+        && sql.Contains("\"ConfirmedAt\"", StringComparison.Ordinal);
+
+    /// <summary>
+    /// Rolls back, once, the sweep transaction that locked the target task and wrote its
+    /// Confirmed row, then throws from TransactionCommitting. Reservation, Unresolved intent,
+    /// cursor and fixture writes are never faulted. Records the sweep and recovery contexts'
+    /// statements apart, and each tally window from BeforeAttentionPublish to the cursor write.
+    /// </summary>
+    private sealed class ConfirmCommitFault : DbCommandInterceptor, IDbTransactionInterceptor
+    {
+        internal sealed record Tally(int First, List<string> Commands);
+
+        private readonly Lock _gate = new();
+        private readonly List<string> _sweep = [];
+        private readonly List<string> _recovery = [];
+        private readonly List<Tally> _tallies = [];
+        private Tally? _open;
+        private DbTransaction? _locked;
+        private DbTransaction? _confirm;
+
+        public Guid? Target { get; set; }
+        public DbContext? Sweep { get; set; }
+        public DbContext? Recovery { get; set; }
+        public int ConfirmWrites { get; private set; }
+        public int Rollbacks { get; private set; }
+        public int Sequence { get; private set; }
+        public int RecoveryLast { get; private set; } = -1;
+        public IReadOnlyList<string> SweepCommands { get { lock (_gate) return _sweep.ToArray(); } }
+        public IReadOnlyList<string> RecoveryCommands { get { lock (_gate) return _recovery.ToArray(); } }
+        public IReadOnlyList<Tally> Tallies { get { lock (_gate) return _tallies.ToArray(); } }
+
+        public void OpenTally()
+        {
+            lock (_gate) _open = new Tally(Sequence, []);
+        }
+
+        private void Record(DbCommand command, CommandEventData data)
+        {
+            lock (_gate)
+            {
+                var sql = command.CommandText;
+                if (data.Context is { } context && ReferenceEquals(context, Recovery))
+                {
+                    _recovery.Add(sql);
+                    RecoveryLast = Sequence++;
+                    return;
+                }
+                if (data.Context is null || !ReferenceEquals(data.Context, Sweep)) return;
+                _sweep.Add(sql);
+                Sequence++;
+                if (_open is not null)
+                {
+                    if (sql.Contains("\"BlockedTaskParkReclaimCursors\"", StringComparison.Ordinal))
+                    {
+                        _tallies.Add(_open);
+                        _open = null;
+                    }
+                    else
+                        _open.Commands.Add(sql);
+                }
+                if (Target is not Guid target || Rollbacks > 0 || command.Transaction is not { } tx) return;
+                if (sql.Contains("FROM \"AgentTasks\"", StringComparison.Ordinal)
+                    && sql.Contains("FOR UPDATE", StringComparison.Ordinal)
+                    && command.Parameters.Cast<DbParameter>().Any(p => p.Value is Guid id && id == target))
+                    _locked = tx;
+                else if (IsConfirmWrite(sql) && ReferenceEquals(tx, _locked))
+                {
+                    ConfirmWrites++;
+                    _confirm = tx;
+                }
+            }
+        }
+
+        public async ValueTask<InterceptionResult> TransactionCommittingAsync(DbTransaction transaction,
+            TransactionEventData eventData, InterceptionResult result, CancellationToken cancellationToken = default)
+        {
+            bool fire;
+            lock (_gate)
+            {
+                fire = _confirm is not null && ReferenceEquals(transaction, _confirm) && Rollbacks == 0;
+                if (fire)
+                {
+                    _confirm = null;
+                    _locked = null;
+                }
+            }
+            if (!fire) return result;
+            await transaction.RollbackAsync(cancellationToken);
+            lock (_gate) Rollbacks++;
+            throw new IOException("c1147 confirmation commit rolled back");
+        }
+
+        public override InterceptionResult<DbDataReader> ReaderExecuting(
+            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result)
+        {
+            Record(command, eventData);
+            return result;
+        }
+
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(DbCommand command,
+            CommandEventData eventData, InterceptionResult<DbDataReader> result, CancellationToken cancellationToken = default)
+        {
+            Record(command, eventData);
+            return ValueTask.FromResult(result);
+        }
+
+        public override InterceptionResult<int> NonQueryExecuting(
+            DbCommand command, CommandEventData eventData, InterceptionResult<int> result)
+        {
+            Record(command, eventData);
+            return result;
+        }
+
+        public override ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(DbCommand command,
+            CommandEventData eventData, InterceptionResult<int> result, CancellationToken cancellationToken = default)
+        {
+            Record(command, eventData);
+            return ValueTask.FromResult(result);
+        }
+
+        public override InterceptionResult<object> ScalarExecuting(
+            DbCommand command, CommandEventData eventData, InterceptionResult<object> result)
+        {
+            Record(command, eventData);
+            return result;
+        }
+
+        public override ValueTask<InterceptionResult<object>> ScalarExecutingAsync(DbCommand command,
+            CommandEventData eventData, InterceptionResult<object> result, CancellationToken cancellationToken = default)
+        {
+            Record(command, eventData);
+            return ValueTask.FromResult(result);
+        }
+    }
 
     private static async Task<DateTime?> ConfirmedStampAsync(RunnerSeatReleaseFixture f, Guid taskId)
     {
