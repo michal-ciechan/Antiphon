@@ -154,9 +154,9 @@ export type AttentionKind =
    */
   | 'ScheduleMisfired'
   /**
-   * A launch's boot prompt was delivered and transcript-confirmed and the model never
-   * answered it (CARD-0312) — rung 5 of the delivery evidence ladder. Warning; Error once
-   * the mechanism has stopped restarting. Delivery is NOT the problem here.
+   * A boot prompt with no assistant, thinking, tool or turn-end row since it, past the boot-reply
+   * deadline (CARD-0312). Detection only since CARD-1156: nothing acts on it automatically. A
+   * standing agent's row is Warning from the boot notice due and Error from the operator due.
    */
   | 'LivenessProbeFailed'
   /**

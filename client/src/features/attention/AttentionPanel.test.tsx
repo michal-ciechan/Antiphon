@@ -317,6 +317,47 @@ describe('AttentionPanel', () => {
     expect(screen.queryByText(/Recovered/i)).not.toBeInTheDocument()
   })
 
+  it('CARD-1156 F-5 the standing boot row tooltip claims no delivery and no automatic action', async () => {
+    // The shape StandingBootAttentionProjection.Item emits for an operator-stage standing episode.
+    serve({
+      items: [
+        item({
+          kind: 'LivenessProbeFailed',
+          severity: 'Error',
+          title: 'orchestrator',
+          sessionId: 's-standing',
+          agentId: 'a-standing',
+          headline: 'Standing boot stall needs an operator decision: no model reply 45m after the prompt.',
+          evidence: [
+            'Inspect the session or its transcript, then choose: keep waiting, reply through the session, '
+              + 'or explicitly Stop and Start/resume the agent.',
+            'Detection only: the session keeps running and keeps its seat; nothing is stopped, typed, '
+              + 'restarted or latched automatically, and no deadline ends this episode.',
+            'Prompt #12 (UserPrompt) at 2026-08-17 09:00:00Z, 45m ago; no assistant, thinking, tool or turn-end row since.',
+            'Boot notice due 2026-08-17 09:10:00Z.',
+            'Operator decision due 2026-08-17 09:30:00Z.',
+          ].join('\n'),
+          sinceUtc: '2026-08-17T09:00:00Z',
+          actions: ['OpenAgent', 'OpenDrawer'],
+        }),
+      ],
+    })
+
+    renderWithProviders(<AttentionPanel />)
+
+    await userEvent.hover(await screen.findByText('No reply to boot prompt'))
+    const tooltip = (await screen.findByRole('tooltip')).textContent ?? ''
+    expect(tooltip).toContain('No assistant, thinking, tool or turn-end row has appeared since the boot prompt')
+    expect(tooltip).toContain('Warning from the boot notice due and an Error from the operator decision due')
+    expect(tooltip).toContain('prompt age and both due times')
+    expect(tooltip).toContain('Detection only: Antiphon only reports this')
+    expect(tooltip).toContain('Open the agent or the session')
+    expect(tooltip).toContain('reply through the session')
+    for (const claim of ['deliver', 'restart', 'ladder', 'latch', 'retry', 'kill', 'stop']) {
+      expect(tooltip.toLowerCase(), claim).not.toContain(claim)
+    }
+  })
+
   it('opens the task drawer on the sibling tab when a task row is clicked', async () => {
     serve({
       items: [

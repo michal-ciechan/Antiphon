@@ -291,7 +291,9 @@ export const ATTENTION_VISUALS: Record<AttentionKind, AttentionVisual> = {
     label: 'No reply to boot prompt',
     color: 'warning',
     icon: TbAlertTriangle,
-    hint: 'The prompt reached the transcript, so delivery is not the problem — the model produced nothing within the boot-turn deadline. A delegate task is retried once; a standing agent goes through the restart ladder and then latches off.',
+    // CARD-1156: one tooltip serves the standing row and the legacy bootSeq rows. Both are detection
+    // only, so it states no delivery verdict and names no automatic action.
+    hint: 'No assistant, thinking, tool or turn-end row has appeared since the boot prompt, past the boot-reply deadline. For a standing agent the row is a Warning from the boot notice due and an Error from the operator decision due; its evidence gives the prompt age and both due times. Detection only: Antiphon only reports this, and the session keeps running and keeps its seat. Open the agent or the session to inspect it, then reply through the session or keep waiting.',
   },
   ImportedIssueNeedsReview: {
     label: 'Needs review',
