@@ -54,6 +54,7 @@ internal sealed class LandReceiptScanHarness : IAsyncDisposable
     public ReceiptScanRecognizer Receipts { get; } = new();
     public ArmedTranscriptSaveFault SaveFault { get; } = new();
     public RejectTranscriptUuid Reject { get; } = new();
+    public HeldTranscriptSave IngestGate { get; } = new();
     public AppDbContext Db { get; private set; } = null!;
     public AgentTaskLandNotificationService Service { get; private set; } = null!;
     public string ConnectionString => _schema.ConnectionString;
@@ -90,7 +91,7 @@ internal sealed class LandReceiptScanHarness : IAsyncDisposable
         ConnectionString = _schema.ConnectionString,
         AttachSessionId = attachSession,
         AttachAgentId = attachAgent,
-        ConfigureDbContext = o => o.AddInterceptors(Commands, Receipts, SaveFault, Reject),
+        ConfigureDbContext = o => o.AddInterceptors(Commands, Receipts, SaveFault, Reject, IngestGate),
         ConfigureServices = services =>
         {
             services.AddSingleton<ISessionRunnerClient>(Runner);
@@ -371,6 +372,71 @@ internal sealed class LandReceiptScanHarness : IAsyncDisposable
                 .Any(e => e.State == EntityState.Added && e.Entity.Uuid?.StartsWith(Prefix, StringComparison.Ordinal) == true))
                 throw new DbUpdateException("planned row rejection", new Npgsql.PostgresException("planned", "ERROR", "ERROR", "XX000"));
             return ValueTask.FromResult(result);
+        }
+    }
+
+    /// <summary>
+    /// CARD-1121 S3. While armed, the next transcript insert stops inside its SaveChanges, so the runtime
+    /// ingest holds the session's state gate across an uncommitted append until the test releases it.
+    /// </summary>
+    internal sealed class HeldTranscriptSave : SaveChangesInterceptor
+    {
+        private int _armed;
+        public TaskCompletionSource Reached { get; private set; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Release { get; private set; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public void Arm()
+        {
+            Reached = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            Volatile.Write(ref _armed, 1);
+        }
+
+        public override async ValueTask<InterceptionResult<int>> SavingChangesAsync(DbContextEventData eventData,
+            InterceptionResult<int> result, CancellationToken cancellationToken = default)
+        {
+            if (eventData.Context!.ChangeTracker.Entries<TranscriptEntry>().Any(e => e.State == EntityState.Added)
+                && Interlocked.Exchange(ref _armed, 0) == 1)
+            {
+                Reached.TrySetResult();
+                await Release.Task.WaitAsync(TimeSpan.FromSeconds(60), cancellationToken);
+            }
+            return result;
+        }
+    }
+
+    /// <summary>
+    /// CARD-1121 S3. Deterministic cuts at the reconciler's named boundaries: <see cref="Hold"/> parks the
+    /// pass at a boundary until <see cref="Cut.Release"/>; <see cref="Fail"/> throws there once.
+    /// </summary>
+    internal sealed class CutBoundary : LandDeliveryBoundary
+    {
+        private readonly ConcurrentDictionary<string, Cut> _cuts = new(StringComparer.Ordinal);
+        private readonly ConcurrentDictionary<string, Exception> _faults = new(StringComparer.Ordinal);
+        private readonly ConcurrentQueue<string> _reached = new();
+
+        public IReadOnlyList<string> ReachedNames => _reached.ToArray();
+
+        public Cut Hold(string boundary) => _cuts[boundary] = new Cut();
+
+        public void Fail(string boundary, Exception fault) => _faults[boundary] = fault;
+
+        public override async Task ReachedAsync(string boundary, Guid taskId, Guid identity, CancellationToken ct)
+        {
+            _reached.Enqueue(boundary);
+            if (_faults.TryRemove(boundary, out var fault)) throw fault;
+            if (_cuts.TryRemove(boundary, out var cut))
+            {
+                cut.Reached.TrySetResult();
+                await cut.Released.Task.WaitAsync(TimeSpan.FromSeconds(60), ct);
+            }
+        }
+
+        internal sealed class Cut
+        {
+            public TaskCompletionSource Reached { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            public TaskCompletionSource Released { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            public void Release() => Released.TrySetResult();
         }
     }
 }
