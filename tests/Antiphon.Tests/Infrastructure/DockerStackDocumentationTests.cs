@@ -49,8 +49,22 @@ public sealed class DockerStackDocumentationTests
         // CARD-1105: the linked worktree's own reflog and the pseudorefs are tips; the old
         // sentence claimed every worktree reflog was read while only the common logs were.
         section.ShouldContain("in each linked worktree's own logs");
-        section.ShouldContain("ORIG_HEAD, FETCH_HEAD, REBASE_HEAD, BISECT_HEAD, AUTO_MERGE and MERGE_AUTOSTASH pseudorefs");
+        // CARD-1105 repair 4: AUTO_MERGE (a tree) left the tip list; it is ignored after the
+        // operation and refuses while one is in progress.
+        section.ShouldContain("ORIG_HEAD, FETCH_HEAD, REBASE_HEAD, BISECT_HEAD and MERGE_AUTOSTASH pseudorefs");
+        section.ShouldContain("AUTO_MERGE, the tree Git leaves after a conflicted merge or rebase, is ignored when no merge");
         section.ShouldContain("an entry outside it refuses `RecycleGitAuditUnknown`");
+        // CARD-1105 repair 4: present-origin comparison, admin-directory scan, commit-graph
+        // off, product/agent state, the ignored-files decision and the overall budget.
+        section.ShouldContain("`core.commitGraph=false`");
+        section.ShouldContain("against the origin heads that `ls-remote` advertises and that are present in the clone");
+        section.ShouldNotContain("must prove publication against current origin heads", Case.Sensitive,
+            "the exact-advertisement comparison is gone");
+        section.ShouldContain("audited whether or not its checkout still exists");
+        section.ShouldContain("a non-empty `antiphon/children/` journal means a repository mutation may still be running and refuses unknown");
+        section.ShouldContain("`review-evidence/` are product and agent state, not repository state");
+        section.ShouldContain("a file hidden by an ignore rule is accepted by design");
+        section.ShouldContain("the whole audit has a 30-minute budget");
         section.ShouldNotContain("each worktree's private refs and HEAD (also bare HEAD), and both sides of every reflog entry must prove publication",
             Case.Sensitive, "the false every-reflog sentence is gone");
         section.ShouldContain("git clone --filter=blob:none --no-checkout");
