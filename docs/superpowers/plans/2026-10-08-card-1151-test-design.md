@@ -448,6 +448,28 @@ Mutation total under option B with R1-R3 and F1-F2: 45 cycles (39 + 6).
 - **PC-11 and PC-22 stay pending** for SourceLanding Mutation as written above; PC-11's second
   variant (require a persisted Warning) has no author probe here.
 
+## S4 repair (Code cc45ec44, Review 04808159 F1/F2)
+
+- **F1.** `docs/agent-kinds.md`'s Grok note promised "nothing ends it automatically" for any
+  session. It now scopes that to a session owned by an open delegate task and names the taskless
+  AlwaysOn exception: `BootReplyWatchdogService` still raises and stops such a session for the
+  standing-agent restart ladder (CARD-1156). The runtime owner states the same exception.
+- **F2.** The operator threshold is what `BootStallPolicy.Facts` computes:
+  `promptAt + max(bootWait, OperatorWait(modelWait))` with `bootWait = boot > 0 ? boot : 0` and
+  `OperatorWait = modelWait > 0 ? modelWait : 20` (`BootStallPolicy.cs` `OperatorWait` and
+  `Facts`, the `bootWait`/`operatorWait` lines). With model wait disabled it is
+  `max(positive boot wait, 20 minutes)`, not 20. The `ModelWaitDeadlineMinutes` comment, the
+  `DefaultOperatorMinutes`/`OperatorDueAt` comments and all three owner docs now say so; the
+  plan's sentence one ("20 minutes with defaults") stays verbatim because it is true.
+- **V-17 extended, still one execution (CP-12 unchanged).** It pins the delegate-scoped and
+  AlwaysOn sentences, the threshold sentence in the runtime, loop and agent-kinds docs, the
+  absence of the old Grok sentence and of the old settings sentence, the settings formula, and
+  the formula itself against `BootStallPolicy.Facts` (8/20 -> 20, 8/0 -> 20, 30/0 -> 30,
+  0/0 -> 20). Author red evidence (doc/comment text only, each restored): settings false sentence
+  restored, old Grok sentence restored, AlwaysOn exception removed, loop formula removed, runtime
+  formula replaced by "20 minutes", settings formula removed: V-17 red each time at the matching
+  assertion. Production mutation of the formula belongs to SourceLanding Mutation.
+
 ## Assertion reversals
 
 Every existing test that encodes today's stop, with its flip. No assertion is weakened or
