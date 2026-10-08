@@ -488,7 +488,7 @@ Two helpers in the audit body. `path_of <command>` captures a path a command pri
 
 ### Baseline (a81c8bf0 helper; same fixture)
 
-Six of the ten new rows are red on a81c8bf0. Five are fail-opens that exit 0 (`repositories=1 partial=1`): tmp-link-target-newline (Review's case), tmp-link-target-newline-last, tmp-recorded-nul, linked-recorded-nul-orphan and linked-link-target-newline-orphan. tmp-link-target-cr and tmp-recorded-cr are policy rows: the base followed the CR name exactly and refused `RecycleWorktreeDirty`; they now refuse unknown. The three controls (tmp-link-clean, tmp-space-path, tmp-space-path-untracked) are green on both.
+Seven of the ten new rows are red on a81c8bf0 (corrected by repair 9 from six; Final Review df55a140 F1 re-ran all ten against that base): five inputs the base accepts and two it refuses with a different class. The five accepted inputs are fail-opens that exit 0 (`repositories=1 partial=1`): tmp-link-target-newline (Review's case), tmp-link-target-newline-last, tmp-recorded-nul, linked-recorded-nul-orphan and linked-link-target-newline-orphan. The two differently classified refusals, tmp-link-target-cr and tmp-recorded-cr, are policy rows: the base followed the CR name exactly and refused `RecycleWorktreeDirty`; they now refuse unknown. The three controls (tmp-link-clean, tmp-space-path, tmp-space-path-untracked) match on both.
 
 ### Mutation matrix (copies of the repaired helper, never the worktree; one gated driver, 6 mutants x 7 refusal rows)
 
