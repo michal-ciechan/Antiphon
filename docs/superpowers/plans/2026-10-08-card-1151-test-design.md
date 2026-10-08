@@ -417,6 +417,37 @@ Pending positive controls for SourceLanding Mutation (method-scoped, one cycle e
 
 Mutation total under option B with R1-R3 and F1-F2: 45 cycles (39 + 6).
 
+## S4 as built (Code 2a3aa29c)
+
+- **Attention row.** `AttentionService` reads the deadline verdict once per task at a new arm
+  8b, after UncorrelatedReport and before PastExpectedIdle, ProgressStalled and the generic
+  Overdue arm (which reuses that verdict). A verdict with `Boot` facts yields the Overdue boot
+  row: Warning before `OperatorDueAt`, Error from it (inclusive); actions OpenDrawer/Reply/Cancel;
+  `SinceUtc` is the prompt time; the evidence lines are not excerpted (operator sentence, detection
+  only, prompt sequence and age, boot and operator due times, any general/ceiling breach). The
+  generic arm's BootModelWait wording is deleted: that kind needs boot facts, so it is unreachable
+  there. Earlier arms (CommitRecoveryPending, DeadSession, NeverStarted, CardClosedWhileWorking,
+  BriefUndelivered, ReportUnsettled, UnmarkedWaiting, UncorrelatedReport) still win. No enum,
+  client, endpoint or migration change.
+- **Sentence three is the option-B form.** The plan's option-A sentence ("Only positively
+  non-Working, absent and terminal evidence permits the narrow existing boot failure/retry
+  outcome ...") describes the outcome option B deleted, so V-17 pins this instead, in
+  `docs/session-runtime-invariants.md`: "No boot evidence permits an automatic failure or retry:
+  under option B the narrow automatic boot failure/retry is retired, a terminal or missing session
+  row stays with the dead-session reconciler's existing policy, a Pending brief stays with the
+  delivery watchdog, a human Retry is the only retry, and S1's pristine absent-launch hold still
+  takes precedence." Pins: `C1151_Listed_or_unknown_session_is_untouched`,
+  `C1151_Explicit_retry_retains_operator_semantics`, `C1149_Absent_launch_is_blocked_with_original_input`.
+  Sentences one, two and four are verbatim; the loop doc carries one and two. Every pin is a
+  `nameof`. `docs/agent-kinds.md`'s "is what ends this" is corrected too.
+- **Author red evidence** (local diagnostics on `bin-c1151s4mut/`, not PC discharges; each
+  restored): docs D1 option-A sentence three restored, D2 the old kill/retry promise re-added to
+  the loop section, D3 a pin removed: V-17 red each time. M1 arm 8b removed (falls to the generic
+  row): V-11 red 5/5. M2 the old kill/retry sentence added to the boot evidence: V-11 red 5/5 at
+  `kill`. M3 Error only after `OperatorDueAt`: V-11 red on `operator-20m` only.
+- **PC-11 and PC-22 stay pending** for SourceLanding Mutation as written above; PC-11's second
+  variant (require a persisted Warning) has no author probe here.
+
 ## Assertion reversals
 
 Every existing test that encodes today's stop, with its flip. No assertion is weakened or
