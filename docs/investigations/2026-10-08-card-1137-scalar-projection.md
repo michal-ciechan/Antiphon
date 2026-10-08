@@ -124,4 +124,100 @@ forbids an unbounded broad run), namespaces, the full assembly, `Antiphon.Agents
 
 ## Results
 
-(pending)
+Source `160f9206b0d43772b9281e34f7635a0be4daf400` (clean, `buildSource=verified`; `validate`
+reports `CHECKPOINT SOURCE VALID rows=38`). Checkpoint run `20261008-043649-0779`, `--serial`, one
+build (`bin-c1137p/`, 165 s, slot waited 0 s), every row `slot=granted waited=0s`, `unlisted: none`,
+wall 68m21s, verdict GREEN. Ambient server2 load only (load average 15-34 during this session).
+
+| Rows | Result |
+|---|---|
+| CP-1 V-1 guard | 9/9 green |
+| CP-2 V-2 `Pending_delivery_prevents_release` alone | 1/1 green |
+| CP-3 warm-up guard | 1/1 green |
+| CP-4 orphan class | 17/17 green |
+| CP-5 release class | 39/39 green |
+| CP-6 registry guard | 3/3 green |
+| CP-7 `ReviewEvidenceRecoveryTests` | 21/21 green |
+| CP-8 `CardFilePrivacySyncAcceptanceTests` | 35/35 green |
+| CP-9..CP-38 V-3 combined 56 | **30 of 30 green** (56/56 each); host wall 95-143 s per row |
+
+Before: 3/16 red (no warm-up), 2/20 red (warm-up), 2/8 red in the instrumented investigation.
+After: 0/30, plus 5/5 in the timing runs below. At an unchanged 10 % rate, 0/35 has probability
+about 2.5 %; the timing evidence, not the count, is what shows the mechanism is gone.
+
+**V-4 timing (unlisted runs, scratch only).** A detached scratch worktree at `160f9206` with
+throwaway markers: a `Stopwatch` around `SessionRunnerEventHub.Publish`'s `JsonSerializer.Serialize`
+(`SessionRunnerRuntime.cs:4197`) and around the test's `EntityScalarSnapshot.Of(db, message)`,
+appended to a trace file. One build (`bin-c1137i/`, 118 s lease), five serial runs of the combined
+filter through `build-slot.ps1`; the worktree was removed afterwards, nothing committed.
+
+| Run | Load avg (1 min) | Result | Exited-event serializes | Longest exited-event serialize | Waits > 1 s | Longest owner snapshot |
+|---|---:|---|---:|---:|---:|---:|
+| t1 | 17.9 | 56/56 | 16 | 49 ms | 0 | 177 ms |
+| t2 | 20.6 | 56/56 | 16 | 54 ms | 0 | 286 ms |
+| t3 | 25.7 | 56/56 | 16 | 137 ms | 0 | 157 ms |
+| t4 | 33.7 | 56/56 | 16 | 191 ms | 0 | 136 ms |
+| t5 | 25.3 | 56/56 | 16 | 22 ms | 0 | 194 ms |
+
+The investigation measured 2.5-9.9 s for the same wait with 5-6 waiters over 1 s per run. The
+longest wait is now the first `RunnerSessionExitedEvent` metadata build itself (tens of ms, up to
+191 ms at load average 34), with no waiter behind another serialize. The owner snapshot's first
+call (reflection, no STJ, no shared lock) is 136-286 ms and blocks nobody.
+
+**Quick mutations** (Code-stage probes; scratch builds `bin-c1137mut/`, restored, directories
+deleted): PC-1 red, 1 failed, `Pending_delivery_prevents_release` on
+"pending bytes/status/attempt evidence retained" (`DeliveryAttempts=0` vs `=1`), the 6 snapshot
+cases green beside it. PC-2 + PC-3 batched (different files and methods): 3 failed of 9,
+`Release_and_sweep_...` naming `:1008 serializes 'message'` and `:1013`, `Tests_do_not_...` naming
+`:1013 serializes SessionQueuedMessages`, and `Snapshot_changes_...(SessionQueuedMessage)` on
+"SessionQueuedMessage.DeliveryAttempts must be part of the snapshot". Restored green is CP-1/CP-2.
+PC-1..PC-3 stay pending for SourceLanding Mutation.
+
+**Backlog (not fixed here):** `RemoteControlModalPersistenceTests.cs:134` serializes
+`RemoteControlModalEpisode` (navigation `AgentSession`) with default options for `ShouldNotContain`
+checks. It is out of this brief's named sites; the guard lists it as explicit debt (`DbSetDebt`).
+
+<details><summary>CHECKPOINT lines (unedited)</summary>
+
+```text
+CHECKPOINT CP-1 commit=160f9206b0d43772b9281e34f7635a0be4daf400 build=ok filter=/*/*/EntityGraphSerializationGuardTests/* executed=9 passed=9 failed=0 skipped=0 trx=/work/worktrees/task-98b5e24f/.antiphon/checkpoints/20261008-043649-0779/rows/CP-1/run.trx slot=granted waited=0s dirty=0 source=160f9206b0d43772b9281e34f7635a0be4daf400 sourceState=clean buildSource=verified
+CHECKPOINT CP-2 commit=160f9206b0d43772b9281e34f7635a0be4daf400 build=reused filter=/*/*/TerminalRunnerSeatReleaseTests/Pending_delivery_prevents_release* executed=1 passed=1 failed=0 skipped=0 trx=/work/worktrees/task-98b5e24f/.antiphon/checkpoints/20261008-043649-0779/rows/CP-2/run.trx slot=granted waited=0s dirty=0 source=160f9206b0d43772b9281e34f7635a0be4daf400 sourceState=clean buildSource=verified
+CHECKPOINT CP-3 commit=160f9206b0d43772b9281e34f7635a0be4daf400 build=reused filter=/*/*/RunnerSeatLiveSeatWarmupTests/* executed=1 passed=1 failed=0 skipped=0 trx=/work/worktrees/task-98b5e24f/.antiphon/checkpoints/20261008-043649-0779/rows/CP-3/run.trx slot=granted waited=0s dirty=0 source=160f9206b0d43772b9281e34f7635a0be4daf400 sourceState=clean buildSource=verified
+CHECKPOINT CP-4 commit=160f9206b0d43772b9281e34f7635a0be4daf400 build=reused filter=/*/*/RunnerSeatOrphanSweepTests/* executed=17 passed=17 failed=0 skipped=0 trx=/work/worktrees/task-98b5e24f/.antiphon/checkpoints/20261008-043649-0779/rows/CP-4/run.trx slot=granted waited=0s dirty=0 source=160f9206b0d43772b9281e34f7635a0be4daf400 sourceState=clean buildSource=verified
+CHECKPOINT CP-5 commit=160f9206b0d43772b9281e34f7635a0be4daf400 build=reused filter=/*/*/TerminalRunnerSeatReleaseTests/* executed=39 passed=39 failed=0 skipped=0 trx=/work/worktrees/task-98b5e24f/.antiphon/checkpoints/20261008-043649-0779/rows/CP-5/run.trx slot=granted waited=0s dirty=0 source=160f9206b0d43772b9281e34f7635a0be4daf400 sourceState=clean buildSource=verified
+CHECKPOINT CP-6 commit=160f9206b0d43772b9281e34f7635a0be4daf400 build=reused filter=/*/*/(TestClassificationGuardTests*)|(SlowTestTripwireTests*)/* executed=3 passed=3 failed=0 skipped=0 trx=/work/worktrees/task-98b5e24f/.antiphon/checkpoints/20261008-043649-0779/rows/CP-6/run.trx slot=granted waited=0s dirty=0 source=160f9206b0d43772b9281e34f7635a0be4daf400 sourceState=clean buildSource=verified
+CHECKPOINT CP-7 commit=160f9206b0d43772b9281e34f7635a0be4daf400 build=reused filter=/*/*/ReviewEvidenceRecoveryTests/* executed=21 passed=21 failed=0 skipped=0 trx=/work/worktrees/task-98b5e24f/.antiphon/checkpoints/20261008-043649-0779/rows/CP-7/run.trx slot=granted waited=0s dirty=0 source=160f9206b0d43772b9281e34f7635a0be4daf400 sourceState=clean buildSource=verified
+CHECKPOINT CP-8 commit=160f9206b0d43772b9281e34f7635a0be4daf400 build=reused filter=/*/*/CardFilePrivacySyncAcceptanceTests/* executed=35 passed=35 failed=0 skipped=0 trx=/work/worktrees/task-98b5e24f/.antiphon/checkpoints/20261008-043649-0779/rows/CP-8/run.trx slot=granted waited=0s dirty=0 source=160f9206b0d43772b9281e34f7635a0be4daf400 sourceState=clean buildSource=verified
+CHECKPOINT CP-9 commit=160f9206b0d43772b9281e34f7635a0be4daf400 build=reused filter=/*/*/(TerminalRunnerSeatReleaseTests*)|(RunnerSeatOrphanSweepTests*)/* executed=56 passed=56 failed=0 skipped=0 trx=/work/worktrees/task-98b5e24f/.antiphon/checkpoints/20261008-043649-0779/rows/CP-9/run.trx slot=granted waited=0s dirty=0 source=160f9206b0d43772b9281e34f7635a0be4daf400 sourceState=clean buildSource=verified
+CHECKPOINT CP-10 commit=160f9206b0d43772b9281e34f7635a0be4daf400 build=reused filter=/*/*/(TerminalRunnerSeatReleaseTests*)|(RunnerSeatOrphanSweepTests*)/* executed=56 passed=56 failed=0 skipped=0 trx=/work/worktrees/task-98b5e24f/.antiphon/checkpoints/20261008-043649-0779/rows/CP-10/run.trx slot=granted waited=0s dirty=0 source=160f9206b0d43772b9281e34f7635a0be4daf400 sourceState=clean buildSource=verified
+CHECKPOINT CP-11 commit=160f9206b0d43772b9281e34f7635a0be4daf400 build=reused filter=/*/*/(TerminalRunnerSeatReleaseTests*)|(RunnerSeatOrphanSweepTests*)/* executed=56 passed=56 failed=0 skipped=0 trx=/work/worktrees/task-98b5e24f/.antiphon/checkpoints/20261008-043649-0779/rows/CP-11/run.trx slot=granted waited=0s dirty=0 source=160f9206b0d43772b9281e34f7635a0be4daf400 sourceState=clean buildSource=verified
+CHECKPOINT CP-12 commit=160f9206b0d43772b9281e34f7635a0be4daf400 build=reused filter=/*/*/(TerminalRunnerSeatReleaseTests*)|(RunnerSeatOrphanSweepTests*)/* executed=56 passed=56 failed=0 skipped=0 trx=/work/worktrees/task-98b5e24f/.antiphon/checkpoints/20261008-043649-0779/rows/CP-12/run.trx slot=granted waited=0s dirty=0 source=160f9206b0d43772b9281e34f7635a0be4daf400 sourceState=clean buildSource=verified
+CHECKPOINT CP-13 commit=160f9206b0d43772b9281e34f7635a0be4daf400 build=reused filter=/*/*/(TerminalRunnerSeatReleaseTests*)|(RunnerSeatOrphanSweepTests*)/* executed=56 passed=56 failed=0 skipped=0 trx=/work/worktrees/task-98b5e24f/.antiphon/checkpoints/20261008-043649-0779/rows/CP-13/run.trx slot=granted waited=0s dirty=0 source=160f9206b0d43772b9281e34f7635a0be4daf400 sourceState=clean buildSource=verified
+CHECKPOINT CP-14 commit=160f9206b0d43772b9281e34f7635a0be4daf400 build=reused filter=/*/*/(TerminalRunnerSeatReleaseTests*)|(RunnerSeatOrphanSweepTests*)/* executed=56 passed=56 failed=0 skipped=0 trx=/work/worktrees/task-98b5e24f/.antiphon/checkpoints/20261008-043649-0779/rows/CP-14/run.trx slot=granted waited=0s dirty=0 source=160f9206b0d43772b9281e34f7635a0be4daf400 sourceState=clean buildSource=verified
+CHECKPOINT CP-15 commit=160f9206b0d43772b9281e34f7635a0be4daf400 build=reused filter=/*/*/(TerminalRunnerSeatReleaseTests*)|(RunnerSeatOrphanSweepTests*)/* executed=56 passed=56 failed=0 skipped=0 trx=/work/worktrees/task-98b5e24f/.antiphon/checkpoints/20261008-043649-0779/rows/CP-15/run.trx slot=granted waited=0s dirty=0 source=160f9206b0d43772b9281e34f7635a0be4daf400 sourceState=clean buildSource=verified
+CHECKPOINT CP-16 commit=160f9206b0d43772b9281e34f7635a0be4daf400 build=reused filter=/*/*/(TerminalRunnerSeatReleaseTests*)|(RunnerSeatOrphanSweepTests*)/* executed=56 passed=56 failed=0 skipped=0 trx=/work/worktrees/task-98b5e24f/.antiphon/checkpoints/20261008-043649-0779/rows/CP-16/run.trx slot=granted waited=0s dirty=0 source=160f9206b0d43772b9281e34f7635a0be4daf400 sourceState=clean buildSource=verified
+CHECKPOINT CP-17 commit=160f9206b0d43772b9281e34f7635a0be4daf400 build=reused filter=/*/*/(TerminalRunnerSeatReleaseTests*)|(RunnerSeatOrphanSweepTests*)/* executed=56 passed=56 failed=0 skipped=0 trx=/work/worktrees/task-98b5e24f/.antiphon/checkpoints/20261008-043649-0779/rows/CP-17/run.trx slot=granted waited=0s dirty=0 source=160f9206b0d43772b9281e34f7635a0be4daf400 sourceState=clean buildSource=verified
+CHECKPOINT CP-18 commit=160f9206b0d43772b9281e34f7635a0be4daf400 build=reused filter=/*/*/(TerminalRunnerSeatReleaseTests*)|(RunnerSeatOrphanSweepTests*)/* executed=56 passed=56 failed=0 skipped=0 trx=/work/worktrees/task-98b5e24f/.antiphon/checkpoints/20261008-043649-0779/rows/CP-18/run.trx slot=granted waited=0s dirty=0 source=160f9206b0d43772b9281e34f7635a0be4daf400 sourceState=clean buildSource=verified
+CHECKPOINT CP-19 commit=160f9206b0d43772b9281e34f7635a0be4daf400 build=reused filter=/*/*/(TerminalRunnerSeatReleaseTests*)|(RunnerSeatOrphanSweepTests*)/* executed=56 passed=56 failed=0 skipped=0 trx=/work/worktrees/task-98b5e24f/.antiphon/checkpoints/20261008-043649-0779/rows/CP-19/run.trx slot=granted waited=0s dirty=0 source=160f9206b0d43772b9281e34f7635a0be4daf400 sourceState=clean buildSource=verified
+CHECKPOINT CP-20 commit=160f9206b0d43772b9281e34f7635a0be4daf400 build=reused filter=/*/*/(TerminalRunnerSeatReleaseTests*)|(RunnerSeatOrphanSweepTests*)/* executed=56 passed=56 failed=0 skipped=0 trx=/work/worktrees/task-98b5e24f/.antiphon/checkpoints/20261008-043649-0779/rows/CP-20/run.trx slot=granted waited=0s dirty=0 source=160f9206b0d43772b9281e34f7635a0be4daf400 sourceState=clean buildSource=verified
+CHECKPOINT CP-21 commit=160f9206b0d43772b9281e34f7635a0be4daf400 build=reused filter=/*/*/(TerminalRunnerSeatReleaseTests*)|(RunnerSeatOrphanSweepTests*)/* executed=56 passed=56 failed=0 skipped=0 trx=/work/worktrees/task-98b5e24f/.antiphon/checkpoints/20261008-043649-0779/rows/CP-21/run.trx slot=granted waited=0s dirty=0 source=160f9206b0d43772b9281e34f7635a0be4daf400 sourceState=clean buildSource=verified
+CHECKPOINT CP-22 commit=160f9206b0d43772b9281e34f7635a0be4daf400 build=reused filter=/*/*/(TerminalRunnerSeatReleaseTests*)|(RunnerSeatOrphanSweepTests*)/* executed=56 passed=56 failed=0 skipped=0 trx=/work/worktrees/task-98b5e24f/.antiphon/checkpoints/20261008-043649-0779/rows/CP-22/run.trx slot=granted waited=0s dirty=0 source=160f9206b0d43772b9281e34f7635a0be4daf400 sourceState=clean buildSource=verified
+CHECKPOINT CP-23 commit=160f9206b0d43772b9281e34f7635a0be4daf400 build=reused filter=/*/*/(TerminalRunnerSeatReleaseTests*)|(RunnerSeatOrphanSweepTests*)/* executed=56 passed=56 failed=0 skipped=0 trx=/work/worktrees/task-98b5e24f/.antiphon/checkpoints/20261008-043649-0779/rows/CP-23/run.trx slot=granted waited=0s dirty=0 source=160f9206b0d43772b9281e34f7635a0be4daf400 sourceState=clean buildSource=verified
+CHECKPOINT CP-24 commit=160f9206b0d43772b9281e34f7635a0be4daf400 build=reused filter=/*/*/(TerminalRunnerSeatReleaseTests*)|(RunnerSeatOrphanSweepTests*)/* executed=56 passed=56 failed=0 skipped=0 trx=/work/worktrees/task-98b5e24f/.antiphon/checkpoints/20261008-043649-0779/rows/CP-24/run.trx slot=granted waited=0s dirty=0 source=160f9206b0d43772b9281e34f7635a0be4daf400 sourceState=clean buildSource=verified
+CHECKPOINT CP-25 commit=160f9206b0d43772b9281e34f7635a0be4daf400 build=reused filter=/*/*/(TerminalRunnerSeatReleaseTests*)|(RunnerSeatOrphanSweepTests*)/* executed=56 passed=56 failed=0 skipped=0 trx=/work/worktrees/task-98b5e24f/.antiphon/checkpoints/20261008-043649-0779/rows/CP-25/run.trx slot=granted waited=0s dirty=0 source=160f9206b0d43772b9281e34f7635a0be4daf400 sourceState=clean buildSource=verified
+CHECKPOINT CP-26 commit=160f9206b0d43772b9281e34f7635a0be4daf400 build=reused filter=/*/*/(TerminalRunnerSeatReleaseTests*)|(RunnerSeatOrphanSweepTests*)/* executed=56 passed=56 failed=0 skipped=0 trx=/work/worktrees/task-98b5e24f/.antiphon/checkpoints/20261008-043649-0779/rows/CP-26/run.trx slot=granted waited=0s dirty=0 source=160f9206b0d43772b9281e34f7635a0be4daf400 sourceState=clean buildSource=verified
+CHECKPOINT CP-27 commit=160f9206b0d43772b9281e34f7635a0be4daf400 build=reused filter=/*/*/(TerminalRunnerSeatReleaseTests*)|(RunnerSeatOrphanSweepTests*)/* executed=56 passed=56 failed=0 skipped=0 trx=/work/worktrees/task-98b5e24f/.antiphon/checkpoints/20261008-043649-0779/rows/CP-27/run.trx slot=granted waited=0s dirty=0 source=160f9206b0d43772b9281e34f7635a0be4daf400 sourceState=clean buildSource=verified
+CHECKPOINT CP-28 commit=160f9206b0d43772b9281e34f7635a0be4daf400 build=reused filter=/*/*/(TerminalRunnerSeatReleaseTests*)|(RunnerSeatOrphanSweepTests*)/* executed=56 passed=56 failed=0 skipped=0 trx=/work/worktrees/task-98b5e24f/.antiphon/checkpoints/20261008-043649-0779/rows/CP-28/run.trx slot=granted waited=0s dirty=0 source=160f9206b0d43772b9281e34f7635a0be4daf400 sourceState=clean buildSource=verified
+CHECKPOINT CP-29 commit=160f9206b0d43772b9281e34f7635a0be4daf400 build=reused filter=/*/*/(TerminalRunnerSeatReleaseTests*)|(RunnerSeatOrphanSweepTests*)/* executed=56 passed=56 failed=0 skipped=0 trx=/work/worktrees/task-98b5e24f/.antiphon/checkpoints/20261008-043649-0779/rows/CP-29/run.trx slot=granted waited=0s dirty=0 source=160f9206b0d43772b9281e34f7635a0be4daf400 sourceState=clean buildSource=verified
+CHECKPOINT CP-30 commit=160f9206b0d43772b9281e34f7635a0be4daf400 build=reused filter=/*/*/(TerminalRunnerSeatReleaseTests*)|(RunnerSeatOrphanSweepTests*)/* executed=56 passed=56 failed=0 skipped=0 trx=/work/worktrees/task-98b5e24f/.antiphon/checkpoints/20261008-043649-0779/rows/CP-30/run.trx slot=granted waited=0s dirty=0 source=160f9206b0d43772b9281e34f7635a0be4daf400 sourceState=clean buildSource=verified
+CHECKPOINT CP-31 commit=160f9206b0d43772b9281e34f7635a0be4daf400 build=reused filter=/*/*/(TerminalRunnerSeatReleaseTests*)|(RunnerSeatOrphanSweepTests*)/* executed=56 passed=56 failed=0 skipped=0 trx=/work/worktrees/task-98b5e24f/.antiphon/checkpoints/20261008-043649-0779/rows/CP-31/run.trx slot=granted waited=0s dirty=0 source=160f9206b0d43772b9281e34f7635a0be4daf400 sourceState=clean buildSource=verified
+CHECKPOINT CP-32 commit=160f9206b0d43772b9281e34f7635a0be4daf400 build=reused filter=/*/*/(TerminalRunnerSeatReleaseTests*)|(RunnerSeatOrphanSweepTests*)/* executed=56 passed=56 failed=0 skipped=0 trx=/work/worktrees/task-98b5e24f/.antiphon/checkpoints/20261008-043649-0779/rows/CP-32/run.trx slot=granted waited=0s dirty=0 source=160f9206b0d43772b9281e34f7635a0be4daf400 sourceState=clean buildSource=verified
+CHECKPOINT CP-33 commit=160f9206b0d43772b9281e34f7635a0be4daf400 build=reused filter=/*/*/(TerminalRunnerSeatReleaseTests*)|(RunnerSeatOrphanSweepTests*)/* executed=56 passed=56 failed=0 skipped=0 trx=/work/worktrees/task-98b5e24f/.antiphon/checkpoints/20261008-043649-0779/rows/CP-33/run.trx slot=granted waited=0s dirty=0 source=160f9206b0d43772b9281e34f7635a0be4daf400 sourceState=clean buildSource=verified
+CHECKPOINT CP-34 commit=160f9206b0d43772b9281e34f7635a0be4daf400 build=reused filter=/*/*/(TerminalRunnerSeatReleaseTests*)|(RunnerSeatOrphanSweepTests*)/* executed=56 passed=56 failed=0 skipped=0 trx=/work/worktrees/task-98b5e24f/.antiphon/checkpoints/20261008-043649-0779/rows/CP-34/run.trx slot=granted waited=0s dirty=0 source=160f9206b0d43772b9281e34f7635a0be4daf400 sourceState=clean buildSource=verified
+CHECKPOINT CP-35 commit=160f9206b0d43772b9281e34f7635a0be4daf400 build=reused filter=/*/*/(TerminalRunnerSeatReleaseTests*)|(RunnerSeatOrphanSweepTests*)/* executed=56 passed=56 failed=0 skipped=0 trx=/work/worktrees/task-98b5e24f/.antiphon/checkpoints/20261008-043649-0779/rows/CP-35/run.trx slot=granted waited=0s dirty=0 source=160f9206b0d43772b9281e34f7635a0be4daf400 sourceState=clean buildSource=verified
+CHECKPOINT CP-36 commit=160f9206b0d43772b9281e34f7635a0be4daf400 build=reused filter=/*/*/(TerminalRunnerSeatReleaseTests*)|(RunnerSeatOrphanSweepTests*)/* executed=56 passed=56 failed=0 skipped=0 trx=/work/worktrees/task-98b5e24f/.antiphon/checkpoints/20261008-043649-0779/rows/CP-36/run.trx slot=granted waited=0s dirty=0 source=160f9206b0d43772b9281e34f7635a0be4daf400 sourceState=clean buildSource=verified
+CHECKPOINT CP-37 commit=160f9206b0d43772b9281e34f7635a0be4daf400 build=reused filter=/*/*/(TerminalRunnerSeatReleaseTests*)|(RunnerSeatOrphanSweepTests*)/* executed=56 passed=56 failed=0 skipped=0 trx=/work/worktrees/task-98b5e24f/.antiphon/checkpoints/20261008-043649-0779/rows/CP-37/run.trx slot=granted waited=0s dirty=0 source=160f9206b0d43772b9281e34f7635a0be4daf400 sourceState=clean buildSource=verified
+CHECKPOINT CP-38 commit=160f9206b0d43772b9281e34f7635a0be4daf400 build=reused filter=/*/*/(TerminalRunnerSeatReleaseTests*)|(RunnerSeatOrphanSweepTests*)/* executed=56 passed=56 failed=0 skipped=0 trx=/work/worktrees/task-98b5e24f/.antiphon/checkpoints/20261008-043649-0779/rows/CP-38/run.trx slot=granted waited=0s dirty=0 source=160f9206b0d43772b9281e34f7635a0be4daf400 sourceState=clean buildSource=verified
+```
+
+</details>
