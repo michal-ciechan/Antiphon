@@ -369,6 +369,23 @@ public partial class DelegationDispatchRecoveryBoundaryTests
     [Arguments("genuine-compact-pointer-missing", "Unavailable", true)]
     [Arguments("genuine-joined-pointer-missing", "Unavailable", true)]
     [Arguments("genuine-message-pointer-missing", "Unavailable", true)]
+    // Repair 3 F6: the bare-headline pointer every producer wrote before 563568e60.
+    [Arguments("legacy-pointer-missing", "Unavailable", true)]
+    [Arguments("legacy-pointer-attempted-missing", "Unavailable", true)]
+    [Arguments("legacy-windows-pointer-missing", "Unavailable", true)]
+    [Arguments("legacy-unc-pointer-missing", "Unavailable", true)]
+    [Arguments("legacy-joined-pointer-missing", "Unavailable", true)]
+    [Arguments("legacy-pointer-corrupt", "Unavailable", true)]
+    [Arguments("legacy-pointer-intact", "Reuse", false)]
+    [Arguments("lookalike-other-marker-headline", "Reuse", false)]
+    [Arguments("lookalike-pointer-without-report-tail", "Reuse", false)]
+    // Repair 3 F7: only the outer envelope is read, never a quoted previous report or goal.
+    [Arguments("retry-handoff-own-pointer", "Reuse", false)]
+    [Arguments("retry-handoff-own-pointer-attempted", "AttemptOwned", false)]
+    [Arguments("retry-handoff-nested-quotes", "Reuse", false)]
+    [Arguments("retry-handoff-fenced-headline", "Reuse", false)]
+    [Arguments("goal-quotes-own-pointer", "Reuse", false)]
+    [Arguments("retry-outer-pointer-missing", "Unavailable", true)]
     public Task C1150_Brief_evidence_whitelist_flips_one_condition(string condition, string expected, bool hold)
     {
         var taskId = Guid.NewGuid();
@@ -414,6 +431,28 @@ public partial class DelegationDispatchRecoveryBoundaryTests
             DeliveryVerdict = DeliveryVerdict.Delivered,
             LastDeliveryStartedAt = dispatched,
         };
+        var uncPath = @"\\host\share\whitelist\.antiphon\task-" + DelegationReportFormatter.Short(taskId) + "-brief.md";
+        string Legacy(string pointer) => pointer.Replace(
+            marker + " YOUR BRIEF IS NOT IN THIS MESSAGE.", "YOUR BRIEF IS NOT IN THIS MESSAGE.", StringComparison.Ordinal);
+        var ownPointer = Pointer(localPath);
+        var fencedOwn = "I was given this pointer and could not read it:\n```text\n" + ownPointer + "\n```";
+        string Retry(string result, string? inlineGoal = null)
+        {
+            // Attempt 2 of the same task: BuildBrief renders the previous report as its handoff.
+            request = request with { Attempt = 2 };
+            snapshot = snapshot with { Attempt = 2 };
+            return DelegationReportFormatter.BuildBrief(new AgentTask
+            {
+                Id = taskId,
+                Title = "Whitelist pointer",
+                Goal = inlineGoal ?? goal,
+                Role = AgentTaskRole.Custom,
+                ModelLevel = AgentModelLevel.Frontier,
+                Workspace = WorkspaceMode.Shared,
+                Attempt = 2,
+                Result = result,
+            }, new DelegationSettings());
+        }
 
         switch (condition)
         {
@@ -637,6 +676,73 @@ public partial class DelegationDispatchRecoveryBoundaryTests
                         body + new string('x', 400), 64, null, RelativeSpillPath: inbox, ApiFallback: inbox)).ToType,
                 };
                 rows[0].Body.ShouldStartWith(marker + " " + TypedBodySpill.PointerHeadline, Case.Sensitive, condition);
+                break;
+            case "legacy-pointer-missing":
+                rows[0] = row with { Body = Legacy(ownPointer) };
+                rows[0].Body.ShouldNotContain(marker + " YOUR BRIEF", Case.Sensitive, condition);
+                break;
+            case "legacy-pointer-attempted-missing":
+                rows[0] = delivered with { Body = Legacy(ownPointer) };
+                break;
+            case "legacy-windows-pointer-missing":
+                rows[0] = row with { Body = Legacy(Pointer(windowsPath)) };
+                break;
+            case "legacy-unc-pointer-missing":
+                rows[0] = row with { Body = Legacy(Pointer(uncPath)) };
+                break;
+            case "legacy-joined-pointer-missing":
+                rows[0] = row with { Body = Legacy(Pointer(localPath, AgentKind.Codex)) };
+                rows[0].Body.ShouldNotContain("\n", Case.Sensitive, condition);
+                break;
+            case "legacy-pointer-corrupt":
+                rows[0] = row with { Body = Legacy(ownPointer) };
+                files[localPath] = marker + "\nthe goal was cut away";
+                break;
+            case "legacy-pointer-intact":
+                rows[0] = row with { Body = Legacy(ownPointer) };
+                files[localPath] = body;
+                break;
+            case "lookalike-other-marker-headline":
+                // No producer writes another task's marker on this task's headline (F4 stays).
+                rows[0] = row with
+                {
+                    Body = ownPointer.Replace(marker + " YOUR BRIEF",
+                        DelegationReportFormatter.TaskMarker(Guid.NewGuid()) + " YOUR BRIEF", StringComparison.Ordinal),
+                };
+                break;
+            case "lookalike-pointer-without-report-tail":
+                rows[0] = row with
+                {
+                    Body = ownPointer[..ownPointer.IndexOf("--- how to report back ---", StringComparison.Ordinal)]
+                        + "A paragraph no producer writes.\n\n" + marker,
+                };
+                break;
+            case "retry-handoff-own-pointer":
+                rows[0] = row with { Body = Retry(fencedOwn) };
+                rows[0].Body.ShouldContain(marker + " YOUR BRIEF", Case.Sensitive, condition);
+                break;
+            case "retry-handoff-own-pointer-attempted":
+                rows[0] = delivered with { Body = Retry(fencedOwn) };
+                break;
+            case "retry-handoff-nested-quotes":
+                rows[0] = row with
+                {
+                    Body = Retry("--- previous attempt ---\nAttempt 1 ran at frontier and did not settle this. "
+                        + "Do not start cold — this is\nwhat it reported:\n\n" + ownPointer + "\n\n> "
+                        + fencedOwn.Replace("\n", "\n> ", StringComparison.Ordinal)),
+                };
+                break;
+            case "retry-handoff-fenced-headline":
+                var headline = ownPointer[ownPointer.IndexOf(marker + " YOUR BRIEF", 1, StringComparison.Ordinal)
+                    ..ownPointer.IndexOf("--- how to report back ---", StringComparison.Ordinal)].Trim();
+                rows[0] = row with { Body = Retry("```\n" + headline + "\n```") };
+                break;
+            case "goal-quotes-own-pointer":
+                rows[0] = row with { Body = Retry("Attempt 1 ended.", "Analyze this pointer:\n```text\n" + ownPointer + "\n```\n" + goal) };
+                break;
+            case "retry-outer-pointer-missing":
+                Retry(fencedOwn);
+                rows[0] = row with { Body = ownPointer };
                 break;
             default:
                 throw new ArgumentOutOfRangeException(nameof(condition));
