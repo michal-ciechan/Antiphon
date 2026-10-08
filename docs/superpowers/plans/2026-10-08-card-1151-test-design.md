@@ -187,6 +187,63 @@ as landed) and state exactly what option B removes.
 Either option keeps every safety guarantee the card asks for. The caller chooses; Code then
 takes this artifact with the option named in its brief.
 
+## Q-1 decided: option B (Code S1-S3)
+
+The caller chose option B. Code task `4adef3e9` implemented S1-S3 on that basis; this section
+supersedes every option-A statement above where they disagree.
+
+- **Disposition.** `BootStallPolicy.Disposition` has exactly `NotBoot` and `DetectOnly`. A
+  transcript-confirmed prompt with no model row since the launch clock is DetectOnly whatever
+  the Working verdict, runner listing, workspace probe, attempt count or task status says.
+  `NotBoot` needs the positive answer of the boot predicate (a model row, or no real prompt).
+  Boot facts ride `TaskDeadlinePolicy.Verdict.Boot` whichever clock wins and are read only
+  behind the existing cheap age gate, so the 18/18/4 hot paths are untouched.
+- **Consequence recorded, not in the plan's text:** a session that is NOT Working with an
+  unanswered boot prompt (prompt, then an interrupt marker) is also DetectOnly; the role ceiling
+  no longer fails it, and the operator event is written instead (V-3 idle shapes pin it).
+- **Removed (S3 = remove the tail):** `TryFailBootStallAsync` (ProviderUnresponsive failure,
+  automatic `RetryAsync`, both `KillAsync` fallbacks), `BootStallLedgerKey` and
+  `TryHoldOnBootStallRepeatAsync` (incident and repeat-alias hold), the raw `ProbeWorkspaceAsync`.
+  No internal no-stop requeue was added; `AgentTaskService.cs` is untouched. A human Retry is
+  the only retry; a terminal session row is the dead-session reconciler's (A-1); a Pending
+  brief is the delivery watchdog's (A-2). `DelegationSettings.BootStallRepeatHoldMinutes` is now
+  read by nothing; its comment is S4's (the setting stays, no configuration break).
+- **Operator threshold:** `promptAt + max(boot wait, ModelWaitDeadlineMinutes)`, 20 minutes when
+  the model wait is disarmed. With the shipped 8/20 it is `promptAt + 20`.
+- **A-7 as built:** the post-detection tick costs the first evaluation, gates 1/1b, one
+  ownership read (session status/EndedAt plus the brief row in one statement) and one lock-free
+  key read on the telemetry context; no runner pull and no second evaluation until the next
+  stage is due. The key is re-read under the task lock before any insert.
+- **Struck rows and skeletons:** V-7 (`C1151_Safe_absent_boot_keeps_failure_and_retry`, 4
+  arguments) and V-8 (`C1151_Race_revokes_absent_failure`, 4) are removed from
+  `BootStallDetectionTests`; CP-8 and CP-9 are struck from the table; PC-7, PC-8 and PC-15
+  and guards G-7, G-8, G-15 are removed.
+- **V-2 re-derived (CP-2):** the option-A fifteen-flip table described inventory and
+  terminal-evidence conditions that no longer exist. Option B's table flips the emission
+  whitelist instead, one condition per argument, eleven arguments: `model-reply-present`
+  (NotBoot), `session-row-missing`, `session-terminal`, `brief-pending`, `brief-state-unknown`,
+  `api-recovery-unresolved`, `api-recovery-unknown`, `commit-recovery-pending`,
+  `identity-changed`, `stage-not-due`, `would-be-absent-pristine` (option A's admitted shape,
+  DetectOnly). One added method, `C1151_Stage_boundaries_come_from_the_prompt_clock`, pins the
+  stage boundaries and the dedup rule. CP-2 selects the class: `Min` 12. PC-2 is one cycle
+  (admit any failure disposition / treat one unknown as admitted) per the note.
+- **V-13 (S5):** the two safe-absent arguments are removed from the skeleton (eight remain);
+  CP-16 `Min` 8.
+- **Regression rows moved to S1-S3:** the production change landed in S1-S3, so CP-13, CP-17,
+  CP-18, CP-19 and CP-21..CP-35 now run after S1-S3 on the CP-1 build. Two rows are added:
+  CP-37 `DelegateCheckProbeTests` (it calls `TaskDeadlinePolicy.EvaluateAsync` and the boot
+  predicate) and CP-38 the registry guard (`TestClassificationGuardTests`,
+  `SlowTestTripwireTests`). The S4-S6 Code task reruns these rows on its own build.
+- **Assertion reversals 2-4 moved from S5 into S1-S3:** the three `AgentTaskOverdueDeadlineTests`
+  boot witnesses and the alias-hold test would be red after S1 otherwise; they are flipped as
+  listed in "Assertion reversals" (the overdue harness's model wait is 50 000, so its operator
+  threshold is not reached at 44 000 minutes and the flipped witness asserts one Detected only).
+  `TaskDeadlinePolicyTests.a_prompt_with_nothing_after_it_takes_the_tighter_boot_deadline` keeps
+  its assertions, corrects its "licenses the kill" message and adds the boot-facts pin.
+- **Open for S6:** `GrokDelegateEndToEndTests.a_provider_that_never_answers_the_boot_prompt_is_failed_killed_and_retried_once`
+  still asserts the removed kill/retry and is red on Windows until S6 flips it; it is skipped on
+  Linux.
+- **Mutation total under option B:** 31 method-scoped cycles, all pending for SourceLanding.
 ## Assertion reversals
 
 Every existing test that encodes today's stop, with its flip. No assertion is weakened or
@@ -377,6 +434,8 @@ under "Diagnostic runs" below; they are not checkpoint executions.
 - R-15: `AttentionServiceTests` Overdue section and precedence (5 named methods). CP-13.
 - R-16: `GrokDelegateEndToEndTests` renamed native witness (1, Windows ConPTY). CP-36.
 - R-17: `C1149_C1150_Statement_budgets` (3 at this baseline: 18/18/4). CP-17.
+- R-18: `DelegateCheckProbeTests` (43; it calls `TaskDeadlinePolicy.EvaluateAsync` and the boot predicate). CP-37 (added with Q-1 option B).
+- R-19: registry guard, `TestClassificationGuardTests` and `SlowTestTripwireTests` (3). CP-38 (added with Q-1 option B).
 
 ### Guard inventory
 
@@ -458,49 +517,48 @@ tokens).
 Group prefix names the lane: `portable-` or `windows-`. Builds add `UseAppHost=false` off
 Windows; every row is serial with `TUNIT_MAX_PARALLEL_TESTS=1` (Postgres classes, and the
 native witness holds `ProcessSpawnLimit`). One build per After group; CP-36 is selected
-alone with `--rows CP-36` on a Windows host, and the Linux S6 group passes no rows. Under
-Q-1 option B, CP-8 and CP-9 are struck, CP-2 `Min` is 3 and CP-16 `Min` is 8; everything
-else is unchanged.
+alone with `--rows CP-36` on a Windows host, and the Linux S6 group passes no rows. Q-1 is
+decided (option B, section above): CP-8 and CP-9 are struck, CP-2 selects the class (`Min` 12),
+CP-16 `Min` is 8, and the regression rows plus CP-37/CP-38 run after S1-S3 on the CP-1 build.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
 |---|---|---|---|---|---|---|---:|---:|---|---|
 | CP-1 | S1-S3 | `tests/Antiphon.Tests -> bin-c1151-core/` | portable-working | `/*/*/BootStallWorkingTickCharacterizationTests/Aged_prompt_only_Working_tick_detects_without_stopping_or_requeueing*` | V-1 | 1 executed, 0 failed/skipped | 1 | 5 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-2 | S1-S3 | `CP-1` | portable-whitelist | `/*/*/BootStallPolicyTests/C1151_Whitelist_requires_positive_evidence*` | V-2 | 15 executed, 0 failed/skipped | 15 | 1 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-2 | S1-S3 | `CP-1` | portable-whitelist | `/*/*/BootStallPolicyTests/*` | V-2 | 12 executed (11 arguments plus the stage-boundary method), 0 failed/skipped | 12 | 1 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-3 | S1-S3 | `CP-1` | portable-listed | `/*/*/BootStallDetectionTests/C1151_Listed_or_unknown_session_is_untouched*` | V-3 | 11 executed, 0 failed/skipped | 11 | 4 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-4 | S1-S3 | `CP-1` | portable-deadlines | `/*/*/BootStallDetectionTests/C1151_Boot_protection_survives_all_deadlines*` | V-4 | 7 executed, 0 failed/skipped | 7 | 3 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-5 | S1-S3 | `CP-1` | portable-operator | `/*/*/BootStallDetectionTests/C1151_Operator_escalation_preserves_the_attempt*` | V-5 | 5 executed, 0 failed/skipped | 5 | 3 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-6 | S1-S3 | `CP-1` | portable-telemetry | `/*/*/BootStallDetectionTests/C1151_Telemetry_failure_never_changes_disposition*` | V-6 | 5 executed, 0 failed/skipped | 5 | 3 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-7 | S1-S3 | `CP-1` | portable-dedup | `/*/*/BootStallDetectionTests/C1151_Warnings_deduplicate_per_episode*` | V-9 | 4 executed, 0 failed/skipped | 4 | 3 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-8 | S1-S3 | `CP-1` | portable-absent | `/*/*/BootStallDetectionTests/C1151_Safe_absent_boot_keeps_failure_and_retry*` | V-7 | 4 executed, 0 failed/skipped (option A only) | 4 | 3 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-9 | S1-S3 | `CP-1` | portable-race | `/*/*/BootStallDetectionTests/C1151_Race_revokes_absent_failure*` | V-8 | 4 executed, 0 failed/skipped (option A only) | 4 | 3 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-10 | S1-S3 | `CP-1` | portable-explicit-retry | `/*/*/BootStallDetectionTests/C1151_Explicit_retry_retains_operator_semantics*` | V-16 | 1 executed, 0 failed/skipped | 1 | 2 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-13 | S1-S3 | `CP-1` | portable-attention-regression | `/*/*/AttentionServiceTests/(a_mid_turn_task_closing_on_its_ceiling_is_listed_before_the_sweep_fails_it*)\|(a_task_only_part_way_through_its_ceiling_is_not_listed_as_overdue*)\|(a_breached_deadline_says_the_sweep_is_about_to_fail_it*)\|(an_idle_task_keeps_the_more_explanatory_past_expected_row*)\|(ProgressStalled_beats_Overdue_and_loses_to_PastExpectedIdle_when_idle*)` | R-15 | 5 executed, 0 failed/skipped | 5 | 2 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-17 | S1-S3 | `CP-1` | portable-hot-cost | `/*/*/DelegationDispatchRecoveryBoundaryTests/C1149_C1150_Statement_budgets*` | R-17 | all listed; 18/18/4 unchanged; 0 failed/skipped | 3 | 3 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-18 | S1-S3 | `CP-1` | portable-other-reason | `/*/*/DelegationDispatchRecoveryBoundaryTests/C1149_Different_reason_or_attempted_brief_still_uses_failure_policy*` | V-14 | 3 executed, 0 failed/skipped | 3 | 3 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-19 | S1-S3 | `CP-1` | portable-s1-hold | `/*/*/DelegationDispatchRecoveryBoundaryTests/C1149_Absent_launch_is_blocked_with_original_input*` | V-14 | 1 executed, 0 failed/skipped | 1 | 2 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-21 | S1-S3 | `CP-1` | portable-characterization | `/*/*/BootStallWorkingTickCharacterizationTests/*` | R-1 | all 3 named witnesses, 0 failed/skipped | 3 | 2 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-22 | S1-S3 | `CP-1` | portable-overdue | `/*/*/AgentTaskOverdueDeadlineTests/*` | R-2 | all listed, 0 failed/skipped | 29 | 4 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-23 | S1-S3 | `CP-1` | portable-policy | `/*/*/TaskDeadlinePolicyTests/*` | R-3 | all listed, 0 failed/skipped | 26 | 3 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-24 | S1-S3 | `CP-1` | portable-boot-predicate | `/*/*/BootReplyWatchTests/*` | R-4 | all listed, 0 failed/skipped | 27 | 3 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-25 | S1-S3 | `CP-1` | portable-session-watch | `/*/*/BootReplyWatchdogTests/*` | R-5 | all listed, 0 failed/skipped | 11 | 3 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-26 | S1-S3 | `CP-1` | portable-recovery-boundary | `/*/*/DelegationDispatchRecoveryBoundaryTests/C1149_*` | R-6 | all C1149 methods and arguments, 0 failed/skipped | 49 | 6 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-27 | S1-S3 | `CP-1` | portable-dead-session | `/*/*/AgentTaskDeadSessionReconciliationTests/*` | R-7 | all listed, 0 failed/skipped | 25 | 3 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-28 | S1-S3 | `CP-1` | portable-delivery | `/*/*/AgentTaskDeliveryWatchdogTests/*` | R-8 | all listed, 0 failed/skipped | 76 | 8 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-29 | S1-S3 | `CP-1` | portable-claim | `/*/*/AgentTaskConcurrencyLimitTests/*` | R-9 | all listed, 0 failed/skipped | 25 | 3 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-30 | S1-S3 | `CP-1` | portable-claim-predicates | `/*/*/AgentTaskDispatcherPredicateTests/*` | R-10 | all listed, 0 failed/skipped | 17 | 1 | true | n/a |
+| CP-31 | S1-S3 | `CP-1` | portable-launch-failure | `/*/*/AgentTaskDispatchFailureTests/*` | R-11 | all listed, 0 failed/skipped | 15 | 3 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-32 | S1-S3 | `CP-1` | portable-launch-owner | `/*/*/AgentSessionLaunchQueueOwnershipTests/*` | R-12 | all listed, 0 failed/skipped | 7 | 3 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-33 | S1-S3 | `CP-1` | portable-resume | `/*/*/AgentSessionInterruptedLaunchResumeTests/*` | R-13 | all listed, 0 failed/skipped | 8 | 3 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-34 | S1-S3 | `CP-1` | portable-compaction | `/*/*/CheckCompactionContinuationTests/*` | R-14 | all listed, 0 failed/skipped | 2 | 3 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-35 | S1-S3 | `CP-1` | portable-compaction-flow | `/*/*/CheckCompactionRecoveryFlowTests/*` | R-14 | all listed, 0 failed/skipped | 1 | 4 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-37 | S1-S3 | `CP-1` | portable-check-probe | `/*/*/DelegateCheckProbeTests/*` | R-18 | all listed, 0 failed/skipped | 43 | 4 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-38 | S1-S3 | `CP-1` | portable-registry-guard | `/*/*/(TestClassificationGuardTests*)\|(SlowTestTripwireTests*)/*` | R-19 | all listed, 0 failed/skipped | 3 | 2 | true | n/a |
 | CP-11 | S4 | `tests/Antiphon.Tests -> bin-c1151-s4/` | portable-attention | `/*/*/BootStallAttentionTests/C1151_Attention_describes_detection_and_resolution*` | V-11 | 5 executed, 0 failed/skipped | 5 | 5 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-12 | S4 | `CP-11` | portable-docs | `/*/*/BootStallDocumentationTests/C1151_Docs_describe_detection_and_only_compaction_exception*` | V-17 | 1 executed, 0 failed/skipped | 1 | 1 | true | n/a |
-| CP-13 | S4 | `CP-11` | portable-attention-regression | `/*/*/AttentionServiceTests/(a_mid_turn_task_closing_on_its_ceiling_is_listed_before_the_sweep_fails_it*)\|(a_task_only_part_way_through_its_ceiling_is_not_listed_as_overdue*)\|(a_breached_deadline_says_the_sweep_is_about_to_fail_it*)\|(an_idle_task_keeps_the_more_explanatory_past_expected_row*)\|(ProgressStalled_beats_Overdue_and_loses_to_PastExpectedIdle_when_idle*)` | R-15 | 5 executed, 0 failed/skipped | 5 | 2 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-14 | S5 | `tests/Antiphon.Tests -> bin-c1151-s5/` | portable-brief | `/*/*/DelegationDispatchRecoveryBoundaryTests/C1151_Brief_and_spill_remain_byte_identical*` | V-10 | 3 executed, 0 failed/skipped | 3 | 5 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-15 | S5 | `CP-14` | portable-no-park | `/*/*/BootStallDetectionTests/C1151_Detection_does_not_release_or_park*` | V-12 | 2 executed, 0 failed/skipped | 2 | 2 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-16 | S5 | `CP-14` | portable-new-cost | `/*/*/BootStallDetectionTests/C1151_Boot_branch_statement_counts*` | V-13 | 10 executed, exact rosters printed, 0 failed/skipped (8 under option B) | 10 | 4 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-17 | S5 | `CP-14` | portable-hot-cost | `/*/*/DelegationDispatchRecoveryBoundaryTests/C1149_C1150_Statement_budgets*` | R-17 | all listed; 18/18/4 unchanged; 0 failed/skipped | 3 | 3 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-18 | S5 | `CP-14` | portable-other-reason | `/*/*/DelegationDispatchRecoveryBoundaryTests/C1149_Different_reason_or_attempted_brief_still_uses_failure_policy*` | V-14 | 3 executed, 0 failed/skipped | 3 | 3 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-19 | S5 | `CP-14` | portable-s1-hold | `/*/*/DelegationDispatchRecoveryBoundaryTests/C1149_Absent_launch_is_blocked_with_original_input*` | V-14 | 1 executed, 0 failed/skipped | 1 | 2 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-16 | S5 | `CP-14` | portable-new-cost | `/*/*/BootStallDetectionTests/C1151_Boot_branch_statement_counts*` | V-13 | 8 executed, exact rosters printed, 0 failed/skipped | 8 | 4 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-20 | S5 | `CP-14` | portable-watchdog-safety | `/*/*/BootStallDetectionTests/C1151_Delivery_watchdog_stopper_requires_real_safe_failure*` | V-15 | 3 executed, 0 failed/skipped | 3 | 3 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-21 | S5 | `CP-14` | portable-characterization | `/*/*/BootStallWorkingTickCharacterizationTests/*` | R-1 | all 3 named witnesses, 0 failed/skipped | 3 | 2 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-22 | S5 | `CP-14` | portable-overdue | `/*/*/AgentTaskOverdueDeadlineTests/*` | R-2 | all listed, 0 failed/skipped | 29 | 4 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-23 | S5 | `CP-14` | portable-policy | `/*/*/TaskDeadlinePolicyTests/*` | R-3 | all listed, 0 failed/skipped | 26 | 3 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-24 | S5 | `CP-14` | portable-boot-predicate | `/*/*/BootReplyWatchTests/*` | R-4 | all listed, 0 failed/skipped | 27 | 3 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-25 | S5 | `CP-14` | portable-session-watch | `/*/*/BootReplyWatchdogTests/*` | R-5 | all listed, 0 failed/skipped | 11 | 3 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-26 | S5 | `CP-14` | portable-recovery-boundary | `/*/*/DelegationDispatchRecoveryBoundaryTests/C1149_*` | R-6 | all C1149 methods and arguments, 0 failed/skipped | 49 | 6 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-27 | S5 | `CP-14` | portable-dead-session | `/*/*/AgentTaskDeadSessionReconciliationTests/*` | R-7 | all listed, 0 failed/skipped | 25 | 3 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-28 | S5 | `CP-14` | portable-delivery | `/*/*/AgentTaskDeliveryWatchdogTests/*` | R-8 | all listed, 0 failed/skipped | 76 | 8 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-29 | S5 | `CP-14` | portable-claim | `/*/*/AgentTaskConcurrencyLimitTests/*` | R-9 | all listed, 0 failed/skipped | 25 | 3 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-30 | S5 | `CP-14` | portable-claim-predicates | `/*/*/AgentTaskDispatcherPredicateTests/*` | R-10 | all listed, 0 failed/skipped | 17 | 1 | true | n/a |
-| CP-31 | S5 | `CP-14` | portable-launch-failure | `/*/*/AgentTaskDispatchFailureTests/*` | R-11 | all listed, 0 failed/skipped | 15 | 3 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-32 | S5 | `CP-14` | portable-launch-owner | `/*/*/AgentSessionLaunchQueueOwnershipTests/*` | R-12 | all listed, 0 failed/skipped | 7 | 3 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-33 | S5 | `CP-14` | portable-resume | `/*/*/AgentSessionInterruptedLaunchResumeTests/*` | R-13 | all listed, 0 failed/skipped | 8 | 3 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-34 | S5 | `CP-14` | portable-compaction | `/*/*/CheckCompactionContinuationTests/*` | R-14 | all listed, 0 failed/skipped | 2 | 3 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-35 | S5 | `CP-14` | portable-compaction-flow | `/*/*/CheckCompactionRecoveryFlowTests/*` | R-14 | all listed, 0 failed/skipped | 1 | 4 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-36 | S6 | `tests/Antiphon.Tests -> bin-c1151-s6/` | windows-conpty-boot | `/*/*/GrokDelegateEndToEndTests/a_provider_that_never_answers_boot_is_detected_until_explicit_retry*` | R-16 | 1 executed, 0 failed/skipped | 1 | 8 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-
 Roster notes. Counts are TUnit executions from `[Test]` plus `[Arguments]`; no Skip,
 MethodData or Matrix in any selected class at this baseline, and no platform skip on Linux
 in any portable row (`AgentTaskDispatchFailureTests`' `OperatingSystem.IsWindows()` only
