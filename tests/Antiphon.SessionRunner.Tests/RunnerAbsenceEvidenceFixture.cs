@@ -19,6 +19,9 @@ internal sealed class RunnerAbsenceEvidenceHarness : IDisposable
     public SessionRunnerSettings Settings { get; }
     public FaultingEvidenceFiles Files { get; } = new();
     public FakeTimeProvider Clock { get; } = new(new DateTimeOffset(2026, 10, 8, 2, 0, 0, TimeSpan.Zero));
+
+    /// <summary>F2 round 2: the runner's clock. Monotonic time is <see cref="Clock"/>; the wall clock can step.</summary>
+    public SteppingWallClock RunnerClock { get; }
     public ConcurrentDictionary<Guid, RunnerAbsenceRuntimeEntry> RuntimeEntries { get; } = new();
     public ConcurrentDictionary<Guid, bool> CustodyReservations { get; } = new();
     public bool AdoptionComplete { get; set; } = true;
@@ -37,6 +40,7 @@ internal sealed class RunnerAbsenceEvidenceHarness : IDisposable
     public RunnerAbsenceEvidenceHarness()
     {
         Settings = new SessionRunnerSettings { SessionLogPath = Root };
+        RunnerClock = new SteppingWallClock(Clock);
         StoreFiles = Files;
         StorePath = Root;
         Restart();
@@ -56,7 +60,7 @@ internal sealed class RunnerAbsenceEvidenceHarness : IDisposable
             () => AdoptionComplete,
             id => CustodyReservations.ContainsKey(id),
             WatermarkDirectory);
-        Service = new RunnerAbsenceEvidenceService(Store, inspection, () => StoreId, Clock);
+        Service = new RunnerAbsenceEvidenceService(Store, inspection, () => StoreId, RunnerClock);
         // F2: requests issued within the window after an epoch starts are refused as possible replays.
         Clock.Advance(RunnerAbsenceEvidence.RequestFreshness + TimeSpan.FromSeconds(1));
         return Service;
@@ -177,6 +181,28 @@ internal sealed class FaultingEvidenceFiles : IRunnerAbsenceEvidenceFiles
         if (SyncFault?.Invoke(path) is { } fault) throw fault;
         RunnerAbsenceEvidenceFiles.Instance.SyncDirectory(path);
     }
+}
+
+/// <summary>
+/// CARD-1153 F2 round 2: the runner's clock in the replay tests. The monotonic timestamp is the
+/// shared <see cref="FakeTimeProvider"/>'s; the wall clock is that clock plus <see cref="WallOffset"/>,
+/// so a test can step the runner's wall clock backwards or forwards (or skew it from the server's)
+/// without monotonic time moving. Zero offset is exactly the shared clock.
+/// </summary>
+internal sealed class SteppingWallClock(FakeTimeProvider monotonic) : TimeProvider
+{
+    public TimeSpan WallOffset { get; set; }
+
+    public override DateTimeOffset GetUtcNow() => monotonic.GetUtcNow() + WallOffset;
+
+    public override long GetTimestamp() => monotonic.GetTimestamp();
+
+    public override long TimestampFrequency => monotonic.TimestampFrequency;
+
+    public override TimeZoneInfo LocalTimeZone => monotonic.LocalTimeZone;
+
+    public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period) =>
+        monotonic.CreateTimer(callback, state, dueTime, period);
 }
 
 /// <summary>Power failed: the simulated process stops here.</summary>

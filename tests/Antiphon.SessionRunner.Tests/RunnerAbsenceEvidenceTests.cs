@@ -606,6 +606,107 @@ public class RunnerAbsenceEvidenceTests
         return Task.CompletedTask;
     }
 
+    /// <summary>
+    /// V-29, CARD-1153 F2 round 2 (Review a086fe80). Replay admission is monotone: once a request
+    /// was admitted, no later wall-clock movement of the runner, cache eviction or flood admits it
+    /// again. The server's clock is <c>Clock</c> (it signs issuedAtUtc); the runner's wall clock is
+    /// <c>RunnerClock</c>, which can step without monotonic time moving. Each case admits a
+    /// prepare request <c>replayed</c>, moves time, and presents the identical signed request again.
+    /// </summary>
+    [Test]
+    [Arguments("expiry-then-rollback")]
+    [Arguments("rollback-then-identical")]
+    [Arguments("flood-then-replay-at-cap")]
+    [Arguments("forward-jump")]
+    [Arguments("small-step-under-skew")]
+    public Task C1153_Replay_admission_is_monotone(string scenario)
+    {
+        using var world = new RunnerAbsenceEvidenceHarness();
+        if (scenario == "small-step-under-skew")
+        {
+            // The runner's wall clock runs 20 s ahead of the server's for the whole epoch.
+            world.RunnerClock.WallOffset = TimeSpan.FromSeconds(20);
+            world.Restart();
+            world.Clock.Advance(TimeSpan.FromSeconds(20));
+        }
+
+        var replayed = world.Request(Guid.NewGuid());
+        world.Service.Prepare(replayed).Refusal.ShouldBeNull("the first presentation is admitted");
+        RunnerAbsenceRefusal? refusal;
+        switch (scenario)
+        {
+            case "expiry-then-rollback":
+                // The Review's sequence: a later request 30.5 s on retires nothing it could revive,
+                // then the runner's wall clock steps back one second.
+                world.Clock.Advance(TimeSpan.FromSeconds(30.5));
+                world.Service.Prepare(world.Request(Guid.NewGuid())).Refusal.ShouldBeNull("a later fresh request");
+                world.RunnerClock.WallOffset -= TimeSpan.FromSeconds(1);
+                refusal = world.Service.Prepare(replayed).Refusal;
+                refusal.ShouldNotBeNull("a replay after expiry and a clock rollback is refused");
+                refusal.Code.ShouldBe(RunnerAbsenceRefusalCodes.Unavailable);
+                refusal.Reason.ShouldContain("stepped backwards");
+                world.Clock.Advance(RunnerAbsenceEvidence.RequestFreshness + TimeSpan.FromSeconds(1));
+                world.Service.Prepare(world.Request(Guid.NewGuid())).Refusal.ShouldBeNull("admission resumes one window after the step");
+                break;
+            case "rollback-then-identical":
+                world.Clock.Advance(TimeSpan.FromSeconds(31));
+                world.Service.Prepare(world.Request(Guid.NewGuid())).Refusal.ShouldBeNull("a later fresh request");
+                world.RunnerClock.WallOffset -= TimeSpan.FromSeconds(70);
+                world.Service.Certify(world.Request(Guid.NewGuid())).Refusal.ShouldNotBeNull("no request is admitted right after the step");
+                // One window of monotonic time later the step refusal has ended and the runner's
+                // wall clock (8 s behind the replay's issuedAtUtc) would call the replay fresh.
+                world.Clock.Advance(TimeSpan.FromSeconds(31));
+                refusal = world.Service.Prepare(replayed).Refusal;
+                refusal.ShouldNotBeNull("the identical request is refused while the runner clock is behind");
+                refusal.Code.ShouldBe(RunnerAbsenceRefusalCodes.StaleRequest, "issued a window before a request already seen");
+                break;
+            case "flood-then-replay-at-cap":
+                world.Clock.Advance(TimeSpan.FromSeconds(29));
+                for (var i = 1; i < RunnerAbsenceEvidenceService.MaxConsumedNonces; i++)
+                    world.Service.Certify(world.Request(Guid.NewGuid())).Refusal!.Code.ShouldBe(RunnerAbsenceRefusalCodes.NotPrepared);
+                world.Service.Prepare(replayed).Refusal!.Code.ShouldBe(RunnerAbsenceRefusalCodes.Replayed,
+                    "a full cache still holds every nonce whose request could be admitted");
+                world.Service.Certify(world.Request(Guid.NewGuid())).Refusal!.Code.ShouldBe(RunnerAbsenceRefusalCodes.Unavailable,
+                    "a full cache refuses a new nonce instead of evicting a live one");
+                world.Clock.Advance(TimeSpan.FromSeconds(2));
+                world.Service.Prepare(world.Request(Guid.NewGuid())).Refusal.ShouldBeNull(
+                    "a request a window after the oldest retires it and is admitted");
+                world.RunnerClock.WallOffset -= TimeSpan.FromSeconds(40);
+                world.Service.Certify(world.Request(Guid.NewGuid())).Refusal.ShouldNotBeNull("no request is admitted right after the step");
+                world.Clock.Advance(TimeSpan.FromSeconds(31));
+                refusal = world.Service.Prepare(replayed).Refusal;
+                refusal.ShouldNotBeNull("the retired nonce's request is refused");
+                refusal.Code.ShouldBe(RunnerAbsenceRefusalCodes.StaleRequest, "retired below the high-water mark, never revived by eviction");
+                break;
+            case "forward-jump":
+                world.RunnerClock.WallOffset += TimeSpan.FromHours(1);
+                world.Service.Prepare(world.Request(Guid.NewGuid())).Refusal!.Code.ShouldBe(RunnerAbsenceRefusalCodes.StaleRequest,
+                    "a runner clock an hour ahead admits nothing");
+                world.RunnerClock.WallOffset -= TimeSpan.FromHours(1);
+                refusal = world.Service.Prepare(world.Request(Guid.NewGuid())).Refusal;
+                refusal.ShouldNotBeNull("the jump back is a backward step");
+                refusal.Code.ShouldBe(RunnerAbsenceRefusalCodes.Unavailable);
+                world.Service.Prepare(replayed).Refusal.ShouldNotBeNull("the replay is refused during the step window");
+                world.Clock.Advance(RunnerAbsenceEvidence.RequestFreshness + TimeSpan.FromSeconds(1));
+                world.Service.Prepare(world.Request(Guid.NewGuid())).Refusal.ShouldBeNull("admission resumes one window after the step");
+                world.Service.Prepare(replayed).Refusal.ShouldNotBeNull("and the replay stays refused");
+                break;
+            case "small-step-under-skew":
+                // A step below the detection tolerance while the replay is just inside the window:
+                // only the retained nonce refuses it.
+                world.Clock.Advance(TimeSpan.FromSeconds(10.4));
+                world.Service.Prepare(world.Request(Guid.NewGuid())).Refusal.ShouldBeNull("a later fresh request");
+                world.RunnerClock.WallOffset -= TimeSpan.FromSeconds(0.45);
+                refusal = world.Service.Prepare(replayed).Refusal;
+                refusal.ShouldNotBeNull("a replay just inside the window after a small step is refused");
+                refusal.Code.ShouldBe(RunnerAbsenceRefusalCodes.Replayed, "its nonce is retained until a later request retires it");
+                break;
+            default: throw new ArgumentOutOfRangeException(nameof(scenario), scenario, null);
+        }
+
+        return Task.CompletedTask;
+    }
+
     private static string[] EvidenceFiles(Guid id) => new[]
     {
         "absence-evidence.identity.json", $"absence-evidence/{id:N}.json", "absence-evidence/closed.log",
