@@ -887,6 +887,10 @@ public sealed class AgentSessionService : IDelegateSessionStopper
                 .Where(t => t.AgentSessionId == session.Id && t.Status == AgentTaskStatus.Dispatched)
                 .OrderByDescending(t => t.DispatchedAt)
                 .FirstOrDefaultAsync(ct);
+            // CARD-1150 F10: once this resume has attempted input, the recipient may be Working.
+            // Failures after that point are logged and never reach the launch-failure catch, which
+            // kills and fails the session. Before any input, today's failure path is unchanged.
+            var inputStarted = false;
             if (task is not null)
             {
                 var marker = DelegationReportFormatter.TaskMarker(task.Id);
@@ -907,6 +911,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
                     var ensured = await _messageQueue.EnsureDispatchBriefAsync(new DispatchBriefEnsureRequest(
                         task.Id, task.Attempt, session.Id, dispatchedAt, session.StartedAt), ct);
                     requeued = ensured.Inserted;
+                    inputStarted = ensured.InputStarted;
                 }
                 else if (!hasBrief && !receivedBrief)
                 {
@@ -924,21 +929,34 @@ public sealed class AgentSessionService : IDelegateSessionStopper
 
                 if (requeued)
                 {
-                    _db.AgentTaskEvents.Add(new AgentTaskEvent
+                    await SaveResumeEventAsync(new AgentTaskEvent
                     {
                         Id = Guid.NewGuid(), AgentTaskId = task.Id, Type = AgentTaskEventType.Warning,
                         Detail = "brief re-queued: the interrupted dispatch died before its brief row was persisted",
                         At = UtcNow(),
-                    });
-                    await _db.SaveChangesAsync(ct);
+                    }, inputStarted, ct);
                 }
             }
 
-            await _messageQueue.FlushSessionAsync(session.Id, ct);
+            if (!inputStarted)
+                inputStarted = await _messageQueue.FlushSessionReportingInputAsync(session.Id, ct);
+            else
+            {
+                try
+                {
+                    await _messageQueue.FlushSessionAsync(session.Id, ct);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.LogWarning(ex,
+                        "Flush after the resumed launch's brief input failed for session {SessionId}; "
+                        + "the session is left running", session.Id);
+                }
+            }
 
             if (task is not null)
             {
-                _db.AgentTaskEvents.Add(new AgentTaskEvent
+                await SaveResumeEventAsync(new AgentTaskEvent
                 {
                     Id = Guid.NewGuid(),
                     AgentTaskId = task.Id,
@@ -946,8 +964,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
                     Detail =
                         $"launch resumed after a server restart: the session sat Starting for {startingSeconds} s; ready re-verified",
                     At = UtcNow(),
-                });
-                await _db.SaveChangesAsync(ct);
+                }, inputStarted, ct);
             }
 
             await RecordLaunchInterruptedByRestartAsync(
@@ -977,6 +994,33 @@ public sealed class AgentSessionService : IDelegateSessionStopper
                 ex as AgentLaunchBlockedException,
                 CancellationToken.None);
             throw;
+        }
+    }
+
+    /// <summary>
+    /// CARD-1150 F10: an interrupted-launch event. Before any input, a failed save still fails the
+    /// resumed launch. After input it is logged and the event detached, so the possibly Working
+    /// recipient is not killed over bookkeeping and the next save does not retry the row.
+    /// </summary>
+    private async Task SaveResumeEventAsync(AgentTaskEvent taskEvent, bool afterInput, CancellationToken ct)
+    {
+        _db.AgentTaskEvents.Add(taskEvent);
+        if (!afterInput)
+        {
+            await _db.SaveChangesAsync(ct);
+            return;
+        }
+
+        try
+        {
+            await _db.SaveChangesAsync(ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _db.Entry(taskEvent).State = EntityState.Detached;
+            _logger.LogWarning(ex,
+                "Recording '{Detail}' for task {TaskId} after its resumed launch typed input failed; "
+                + "the session is left running", taskEvent.Detail, taskEvent.AgentTaskId);
         }
     }
 
