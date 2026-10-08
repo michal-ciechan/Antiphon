@@ -887,9 +887,12 @@ public sealed class AgentSessionService : IDelegateSessionStopper
                 .Where(t => t.AgentSessionId == session.Id && t.Status == AgentTaskStatus.Dispatched)
                 .OrderByDescending(t => t.DispatchedAt)
                 .FirstOrDefaultAsync(ct);
-            // CARD-1150 F10: once this resume has attempted input, the recipient may be Working.
-            // Failures after that point are logged and never reach the launch-failure catch, which
-            // kills and fails the session. Before any input, today's failure path is unchanged.
+            // CARD-1150 F10/F11: once the ensure or flush returns that it may have typed input, the
+            // recipient may be Working. The event saves and the flush after that return are logged
+            // and never reach the launch-failure catch, which kills and fails the session. A refusal
+            // before any byte reports no input, so today's failure path is unchanged. A throw from
+            // inside a delivery after typing (e.g. its verdict save, or the flush's post-delivery
+            // queue read) still reaches the catch, as before S2.
             var inputStarted = false;
             if (task is not null)
             {

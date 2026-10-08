@@ -12,8 +12,9 @@ public sealed partial class SessionMessageQueueService
     internal sealed record DispatchBriefEnsureResult(DispatchBriefKind Kind, Guid? MessageId, bool Inserted)
     {
         /// <summary>
-        /// CARD-1150 F10: the post-commit delivery attempted terminal input, so the recipient may
-        /// now be Working. A caller's later bookkeeping failure must not tear that session down.
+        /// CARD-1150 F10/F11: the post-commit delivery may have typed terminal input, so the
+        /// recipient may now be Working. A caller's later bookkeeping failure must not tear that
+        /// session down. False after a refusal before any byte, which keeps the failure path.
         /// </summary>
         public bool InputStarted { get; init; }
     }
@@ -165,8 +166,9 @@ public sealed partial class SessionMessageQueueService
             _remoteSpills?.Ack(request.SessionId, staged);
         if (probe is not null && _runtime.IsLiveOrUnknown(probe) && !await ReadWorkingAsync(db, probe.Id, ct))
         {
-            var delivery = await DeliverNextLockedAsync(db, request.SessionId, ct);
-            result = result with { InputStarted = InputMayHaveStarted(delivery) };
+            var input = new InputAttempt();
+            var delivery = await DeliverNextLockedAsync(db, request.SessionId, ct, input: input);
+            result = result with { InputStarted = InputMayHaveStarted(delivery, input) };
         }
         return result;
     }

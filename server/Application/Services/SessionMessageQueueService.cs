@@ -1662,15 +1662,16 @@ public sealed partial class SessionMessageQueueService
         FlushSessionReportingInputAsync(sessionId, ct);
 
     /// <summary>
-    /// <see cref="FlushSessionAsync"/>, reporting whether this flush attempted terminal input
-    /// (CARD-1150 F10). After input the recipient may be Working, so the resumed launch treats
-    /// its later bookkeeping as best-effort.
+    /// <see cref="FlushSessionAsync"/>, reporting whether this flush may have typed terminal input
+    /// (CARD-1150 F10/F11). After input the recipient may be Working, so the resumed launch treats
+    /// its later bookkeeping as best-effort. A refusal before any byte reports false.
     /// </summary>
     internal async Task<bool> FlushSessionReportingInputAsync(Guid sessionId, CancellationToken ct)
     {
         var sem = GetLock(sessionId);
         await sem.WaitAsync(ct);
         FlushResult result;
+        var input = new InputAttempt();
         try
         {
             await using var scope = _scopeFactory.CreateAsyncScope();
@@ -1679,7 +1680,7 @@ public sealed partial class SessionMessageQueueService
             var receipts = await ReconcileDeliveredSpillsLockedAsync(db, sessionId, ct);
             await CancelPendingSupervisionLockedAsync(db, sessionId, "boot-flush", ct);
             result = !await ReadWorkingAsync(db, sessionId, ct)
-                ? await DeliverNextLockedAsync(db, sessionId, ct)
+                ? await DeliverNextLockedAsync(db, sessionId, ct, input: input)
                 : FlushResult.Nothing;
             if (result == FlushResult.Nothing && receipts.Confirmed > 0)
                 result = FlushResult.LateConfirmed;
@@ -1691,12 +1692,23 @@ public sealed partial class SessionMessageQueueService
 
         if (result != FlushResult.Nothing)
             await PublishQueueChangedAsync(await GetQueueAsync(sessionId, ct), ct);
-        return InputMayHaveStarted(result);
+        return InputMayHaveStarted(result, input);
     }
 
-    // Delivered and Failed both follow a delivery attempt; Failed can follow partial typing.
-    private static bool InputMayHaveStarted(FlushResult result) =>
-        result is FlushResult.Delivered or FlushResult.Failed;
+    // CARD-1150 F11: Delivered always followed typing. Failed counts only with positive evidence
+    // that a write began; a refusal before any byte (missing spill, runner spill-write refusal,
+    // modal or forbidden body, an exception before the write) keeps the pre-input failure path.
+    private static bool InputMayHaveStarted(FlushResult result, InputAttempt input) =>
+        result == FlushResult.Delivered || (result == FlushResult.Failed && input.MayHaveTyped);
+
+    /// <summary>
+    /// CARD-1150 F11: set by one delivery call when a terminal write begins, or when transcript
+    /// evidence shows earlier typing of the run. A refusal before the first byte leaves it false.
+    /// </summary>
+    private sealed class InputAttempt
+    {
+        public bool MayHaveTyped { get; set; }
+    }
 
     /// <summary>
     /// NARROW flush for a manual compaction boundary (CARD-0041): deliver the next queued message
@@ -2038,7 +2050,8 @@ public sealed partial class SessionMessageQueueService
         AppDbContext db,
         Guid sessionId,
         CancellationToken ct,
-        LateConfirmCollector? lateConfirmed = null)
+        LateConfirmCollector? lateConfirmed = null,
+        InputAttempt? input = null)
     {
         var rulesSession = await db.AgentSessions.AsNoTracking().SingleOrDefaultAsync(s => s.Id == sessionId, ct);
         if (rulesSession is null || !_runtime.IsLiveOrUnknown(rulesSession)) return FlushResult.Nothing;
@@ -2107,7 +2120,7 @@ public sealed partial class SessionMessageQueueService
         if (interrupted.Count > 0)
         {
             var recovered = await RecoverDeliveryRunLockedAsync(
-                db, sessionId, interrupted, ct, ceilings, lateConfirmed);
+                db, sessionId, interrupted, ct, ceilings, lateConfirmed, input);
             if (recovered != FlushResult.Nothing)
                 return recovered;
             if (interrupted.Any(m => m.Status == QueuedMessageStatus.Sent))
@@ -2419,7 +2432,7 @@ public sealed partial class SessionMessageQueueService
             }
 
             if (ComposerDeliveryEvidence.HeadFragmentIsVisibleWhole(retrySnap.RenderedScreen, body))
-                return await EnterOnlyConfirmLockedAsync(db, sessionId, run, body, ct, ceilings);
+                return await EnterOnlyConfirmLockedAsync(db, sessionId, run, body, ct, ceilings, input);
         }
 
         // Recheck after composing the run, while the delivery lock is still held and before an
@@ -2479,7 +2492,8 @@ public sealed partial class SessionMessageQueueService
             if (await CancelJustClaimedExpiredBriefsAsync(db, run, ct)) return FlushResult.Nothing;
             using var observation = new RuntimePhase(_logger, _timeProvider, sessionId, "queue.delivery-confirm");
             capturedGeneration = await CaptureSessionGenerationAsync(sessionId, ct);
-            outcome = await DeliverAsync(sessionId, body, ct, baseline, ceilings, FirstInputDeadline(run));
+            outcome = await DeliverAsync(sessionId, body, ct, baseline, ceilings, FirstInputDeadline(run),
+                inputAttempt: input);
         }
         catch (OptionalBriefExpiredException)
         {
@@ -2907,7 +2921,8 @@ public sealed partial class SessionMessageQueueService
         IReadOnlyList<SessionQueuedMessage> run,
         CancellationToken ct,
         PtyDeliveryCeilings ceilings,
-        LateConfirmCollector? lateConfirmed = null)
+        LateConfirmCollector? lateConfirmed = null,
+        InputAttempt? input = null)
     {
         if (run.Count == 0)
             return FlushResult.Nothing;
@@ -2925,7 +2940,12 @@ public sealed partial class SessionMessageQueueService
         {
             if (late.Confirmed > 0)
                 return FlushResult.LateConfirmed;
-            return late.Truncated > 0 ? FlushResult.Failed : FlushResult.Nothing;
+            if (late.Truncated == 0)
+                return FlushResult.Nothing;
+            // A truncated UserPrompt of this run is transcript evidence of earlier typing.
+            if (input is not null)
+                input.MayHaveTyped = true;
+            return FlushResult.Failed;
         }
 
         // CARD-0501 re-review F3: the attempts cap is DURABLE, but it is filtered in
@@ -2963,7 +2983,7 @@ public sealed partial class SessionMessageQueueService
             }
 
             if (ComposerDeliveryEvidence.HeadFragmentIsVisibleWhole(snapshot.RenderedScreen, body))
-                return await EnterOnlyConfirmLockedAsync(db, sessionId, remaining, body, ct, ceilings);
+                return await EnterOnlyConfirmLockedAsync(db, sessionId, remaining, body, ct, ceilings, input);
         }
 
         foreach (var message in remaining.Where(m => m.Status == QueuedMessageStatus.Sent))
@@ -2991,7 +3011,8 @@ public sealed partial class SessionMessageQueueService
         IReadOnlyList<SessionQueuedMessage> run,
         string body,
         CancellationToken ct,
-        PtyDeliveryCeilings ceilings)
+        PtyDeliveryCeilings ceilings,
+        InputAttempt? input = null)
     {
         var kind = await TryGetSessionKindAsync(sessionId, ct);
         var head = run[0];
@@ -3015,6 +3036,8 @@ public sealed partial class SessionMessageQueueService
 
         var submitBaseline = await SettlePostEvidenceAsync(sessionId, ct);
         var capturedGeneration = await CaptureSessionGenerationAsync(sessionId, ct);
+        if (input is not null)
+            input.MayHaveTyped = true;
         try
         {
             await _runtime.SendInputAsync(sessionId, "\r", ct);
@@ -3447,7 +3470,9 @@ public sealed partial class SessionMessageQueueService
         PtyDeliveryCeilings? ceilings = null, DateTime? firstInputDeadlineAt = null,
         // CARD-0650 D-7: the watchdog's direct send disables both overlay arms (S6 proactive Esc,
         // S5 Esc-and-retype). Every existing caller keeps the default.
-        bool overlayRecovery = true)
+        bool overlayRecovery = true,
+        // CARD-1150 F11: marked as a typing write begins; cleared on a proven pre-input refusal.
+        InputAttempt? inputAttempt = null)
     {
         // Line endings are normalized to LF before anything touches the PTY. Measured against real
         // Claude (probe runs 2026-07-31): a \n in written input is ALWAYS a literal newline in the
@@ -3535,6 +3560,8 @@ public sealed partial class SessionMessageQueueService
             && TryGetLocalCommandFact(localKind, trimmed, out var localFact)
             && !localFact.WritesUserPrompt)
         {
+            if (inputAttempt is not null)
+                inputAttempt.MayHaveTyped = true;
             var typed = await TypeLocalCommandAsync(sessionId, trimmed, ct);
             if (typed == LocalCommandTypeResult.Sent)
                 return DeliveryOutcome.Delivered;
@@ -3635,6 +3662,8 @@ public sealed partial class SessionMessageQueueService
 
         var payload = Antiphon.Agents.Pty.PtyInputEncoding.WrapIfMultiline(trimmed);
         if (firstInputDeadlineAt <= UtcNow()) throw new OptionalBriefExpiredException();
+        if (inputAttempt is not null)
+            inputAttempt.MayHaveTyped = true;
         try
         {
             await _runtime.SendInputAsync(sessionId, payload, ct);
@@ -3642,6 +3671,8 @@ public sealed partial class SessionMessageQueueService
         catch (RunnerSpillWriteException)
         {
             // The runner issued this code inside its spill writer, before SendInputAsync.
+            if (inputAttempt is not null)
+                inputAttempt.MayHaveTyped = false;
             return new DeliveryOutcome(DeliveryVerdict.BackendUnreachable,
                 SpillWriteFailedBeforeInput: true);
         }
@@ -3655,6 +3686,9 @@ public sealed partial class SessionMessageQueueService
         }
         catch (RemoteSpillUndeliverableException)
         {
+            // The courier refuses a missing spill body before the Input frame is sent.
+            if (inputAttempt is not null)
+                inputAttempt.MayHaveTyped = false;
             return DeliveryOutcome.Of(DeliveryVerdict.SpillBodyMissing);
         }
 
