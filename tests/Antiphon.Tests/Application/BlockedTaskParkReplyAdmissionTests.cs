@@ -2,6 +2,7 @@ using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -261,7 +262,7 @@ public sealed class BlockedTaskParkReplyAdmissionTests
     [Arguments("task-runner-null")]
     [Arguments("task-runner-empty")]
     [Arguments("task-session-null")]
-    [Arguments("session-store-null")]
+    [Arguments("session-store-mismatch")]
     public async Task C1146_SessionIdentityParity(string world)
     {
         var label = $"c1146-session-{world}";
@@ -285,7 +286,9 @@ public sealed class BlockedTaskParkReplyAdmissionTests
                 case "task-runner-null": task.RunnerId = null; break;
                 case "task-runner-empty": task.RunnerId = ""; break;
                 case "task-session-null": task.AgentSessionId = null; break;
-                case "session-store-null": session.RunnerStoreId = null; break;
+                // CK_AgentSessions_RunnerBinding_AllOrNone forbids a lone null store, so the
+                // session side of the store equality is exercised with a different store.
+                case "session-store-mismatch": session.RunnerStoreId = Guid.NewGuid(); break;
                 default: throw new ArgumentOutOfRangeException(nameof(world), world, null);
             }
             await db.SaveChangesAsync();
@@ -313,6 +316,209 @@ public sealed class BlockedTaskParkReplyAdmissionTests
         ShouldMatch(await ReleaseAsync(f), release, label);
     }
 
+    [Test]
+    [Arguments("Released", true)]
+    [Arguments("AlreadyExited", true)]
+    [Arguments("AlreadyAbsent", true)]
+    [Arguments("Observing", false)]
+    [Arguments("Reserved", false)]
+    [Arguments("Unresolved", false)]
+    [Arguments("null-ConfirmedAt", false)]
+    [Arguments("null-ActionId", false)]
+    [Arguments("null-OutcomeCode", false)]
+    [Arguments("unknown-OutcomeCode", false)]
+    public async Task C1146_ConfirmationParity(string receipt, bool confirmed)
+    {
+        var label = $"c1146-confirmation-{receipt}";
+        await using var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked, parking: true);
+        await BlockedTaskParkDeliveryTests.PublishAsync(f);
+        await BlockedTaskParkDeliveryTests.StampAsync(f);
+        var release = await ReleaseAsync(f);
+        release.State.ShouldBe(RunnerSeatReleaseState.Confirmed, label);
+
+        // Identity stays exact; only the confirmation receipt changes.
+        await EditReleaseAsync(f, r =>
+        {
+            switch (receipt)
+            {
+                case "Released" or "AlreadyExited" or "AlreadyAbsent": r.OutcomeCode = receipt; break;
+                case "Observing": r.State = RunnerSeatReleaseState.Observing; break;
+                case "Reserved": r.State = RunnerSeatReleaseState.Reserved; break;
+                case "Unresolved": r.State = RunnerSeatReleaseState.Unresolved; break;
+                case "null-ConfirmedAt": r.ConfirmedAt = null; break;
+                case "null-ActionId": r.ActionId = null; break;
+                case "null-OutcomeCode": r.OutcomeCode = null; break;
+                case "unknown-OutcomeCode": r.OutcomeCode = nameof(TerminalSeatReleaseOutcome.Unknown); break;
+                default: throw new ArgumentOutOfRangeException(nameof(receipt), receipt, null);
+            }
+        });
+
+        var (exact, identity, confirmedRows) = await QueriesAsync(f);
+        exact.ShouldNotBeNull(label).Id.ShouldBe(release.Id, label);
+        identity.Select(r => r.Id).ShouldBe(new[] { release.Id }, label);
+        // The shared confirmed query and IsConfirmed agree on every receipt.
+        TerminalRunnerSeatReleaseService.IsConfirmed(exact).ShouldBe(confirmed, label);
+        confirmedRows.Select(r => r.Id).ShouldBe(confirmed ? new[] { release.Id } : Array.Empty<Guid>(), label);
+        await using (var db = f.Db())
+        {
+            var continuation = await TerminalRunnerSeatReleaseService.FindConfirmedAttemptReleaseAsync(
+                db, await f.TaskAsync(), CancellationToken.None);
+            (continuation?.Id).ShouldBe(confirmed ? release.Id : null, label);
+        }
+
+        var guidance = await GuidanceAsync(f);
+        var refused = await RemoteFollowUpRefusedAsync(f, label);
+        if (confirmed)
+        {
+            guidance.ShouldBe(AgentTaskService.RemotePoolParkReply.Admitted, label);
+            refused.Message.ShouldContain($"-Reply {DelegationReportFormatter.Short(f.TaskId)}", Case.Sensitive, label);
+            await ShouldContinueAsync(f, label);
+        }
+        else
+        {
+            // Reserved/Unresolved keep their existing buffering contract; nothing here
+            // requires an immediate attempt, and guidance never offers Reply.
+            guidance.ShouldNotBe(AgentTaskService.RemotePoolParkReply.Admitted, label);
+            refused.Message.ShouldNotContain("-Reply", Case.Sensitive, label);
+        }
+    }
+
+    [Test]
+    [Arguments("Parked", true)]
+    [Arguments("ResumePending", true)]
+    [Arguments("foreign-task", false)]
+    [Arguments("prior-attempt", false)]
+    [Arguments("null-publication-receipt", false)]
+    [Arguments("null-linked-release", false)]
+    [Arguments("Resumed", false)]
+    public async Task C1146_ParkScopeParity(string scope, bool named)
+    {
+        var label = $"c1146-park-{scope}";
+        await using var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked, parking: true);
+        await BlockedTaskParkDeliveryTests.PublishAsync(f);
+        await BlockedTaskParkDeliveryTests.StampAsync(f);
+        var release = await ReleaseAsync(f);
+        await ShouldAdmitAsync(f, release.Id, $"{label}-before");
+
+        // Only the park changes; the release still matches exactly.
+        await using (var db = f.Db())
+        {
+            var park = await db.AgentTaskParks.SingleAsync(p => p.TaskId == f.TaskId);
+            park.State.ShouldBe(AgentTaskParkState.Parked, label);
+            switch (scope)
+            {
+                case "Parked": break;
+                case "ResumePending": park.State = AgentTaskParkState.ResumePending; break;
+                case "foreign-task": park.TaskId = Guid.NewGuid(); break;
+                case "prior-attempt": park.Attempt = park.Attempt - 1; break;
+                case "null-publication-receipt": park.PublicationReceiptId = null; break;
+                case "null-linked-release": park.RunnerSeatReleaseId = null; break;
+                case "Resumed": park.State = AgentTaskParkState.Resumed; break;
+                default: throw new ArgumentOutOfRangeException(nameof(scope), scope, null);
+            }
+            await db.SaveChangesAsync();
+        }
+        var (exact, _, confirmedRows) = await QueriesAsync(f);
+        exact.ShouldNotBeNull(label).Id.ShouldBe(release.Id, label);
+        confirmedRows.Select(r => r.Id).ShouldBe(new[] { release.Id }, label);
+
+        (await GuidanceAsync(f)).ShouldBe(
+            named ? AgentTaskService.RemotePoolParkReply.Admitted : AgentTaskService.RemotePoolParkReply.None, label);
+        var refused = await RemoteFollowUpRefusedAsync(f, label);
+        if (named)
+        {
+            refused.Message.ShouldContain($"-Reply {DelegationReportFormatter.Short(f.TaskId)}", Case.Sensitive, label);
+            await ShouldContinueAsync(f, label);
+        }
+        else
+        {
+            refused.Message.ShouldNotContain("-Reply", Case.Sensitive, label);
+            refused.Message.ShouldNotContain("cannot be continued", Case.Sensitive, label);
+        }
+    }
+
+    [Test]
+    public async Task C1146_GuidanceUsesOneStatement()
+    {
+        foreach (var world in new[] { "admitted", "stale", "missing-session", "multiple-parks" })
+        {
+            var label = $"c1146-sql-{world}";
+            var counter = new FullCommandCounter();
+            await using var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked, parking: true,
+                configureDb: options => options.AddInterceptors(counter));
+            await BlockedTaskParkDeliveryTests.PublishAsync(f);
+            await BlockedTaskParkDeliveryTests.StampAsync(f);
+            var release = await ReleaseAsync(f);
+            var expected = AgentTaskService.RemotePoolParkReply.Admitted;
+            switch (world)
+            {
+                case "admitted": break;
+                case "stale":
+                    await f.EditAsync((task, _) => task.ConcurrencyToken = Guid.NewGuid());
+                    expected = AgentTaskService.RemotePoolParkReply.ReleaseMismatch;
+                    break;
+                case "missing-session":
+                {
+                    await using var db = f.Db();
+                    (await db.AgentSessions.Where(s => s.Id == f.SessionId).ExecuteDeleteAsync()).ShouldBe(1, label);
+                    expected = AgentTaskService.RemotePoolParkReply.ReleaseMismatch;
+                    break;
+                }
+                case "multiple-parks":
+                {
+                    // Two more current-attempt parks; a per-park read would add statements.
+                    await using var db = f.Db();
+                    var park = await db.AgentTaskParks.AsNoTracking().SingleAsync(p => p.TaskId == f.TaskId);
+                    foreach (var _ in new[] { 1, 2 })
+                    {
+                        db.AgentTaskParks.Add(new AgentTaskPark
+                        {
+                            Id = Guid.NewGuid(), TaskId = park.TaskId, Attempt = park.Attempt,
+                            BlockEventId = Guid.NewGuid(), TaskConcurrencyToken = park.TaskConcurrencyToken,
+                            PublicationReceiptId = Guid.NewGuid(), RunnerSeatReleaseId = release.Id,
+                            State = AgentTaskParkState.Parked, ReasonCode = "park_parked",
+                            BlockedAt = park.BlockedAt, CreatedAt = f.Now, UpdatedAt = f.Now,
+                        });
+                    }
+                    await db.SaveChangesAsync();
+                    break;
+                }
+                default: throw new ArgumentOutOfRangeException(nameof(world), world);
+            }
+
+            // Measure the guidance query alone; seeding and reads above use an uncounted context.
+            var task = await f.TaskAsync();
+            AgentTaskService.RemotePoolParkReply actual;
+            using (var scope = f.Harness.Provider.CreateScope())
+            {
+                var service = scope.ServiceProvider.GetRequiredService<AgentTaskService>();
+                counter.Reset();
+                actual = await service.RemotePoolParkReplyAsync(task, CancellationToken.None);
+            }
+            var roster = counter.Roster();
+            Console.WriteLine($"C1146-SQL world={world} statements={counter.Total}\n{roster}");
+            actual.ShouldBe(expected, label);
+            counter.Total.ShouldBe(1, $"{label}\n{roster}");
+            var sql = counter.Commands[0].TrimStart();
+            sql.ShouldStartWith("SELECT", Case.Insensitive, label);
+            sql.ShouldContain("\"AgentTaskParks\"", Case.Sensitive, label);
+            sql.ShouldContain("\"RunnerSeatReleases\"", Case.Sensitive, label);
+            sql.ShouldContain("\"AgentSessions\"", Case.Sensitive, label);
+            foreach (var write in new[] { "INSERT ", "UPDATE ", "DELETE " })
+                sql.ShouldNotContain(write, Case.Insensitive, label);
+
+            // Public Create gives the same classification and inserts nothing.
+            var refused = await RemoteFollowUpRefusedAsync(f, label);
+            if (expected == AgentTaskService.RemotePoolParkReply.Admitted)
+                refused.Message.ShouldContain($"-Reply {DelegationReportFormatter.Short(f.TaskId)}", Case.Sensitive, label);
+            else
+            {
+                refused.Message.ShouldNotContain("-Reply", Case.Sensitive, label);
+                refused.Message.ShouldContain("does not match answer admission", Case.Sensitive, label);
+            }
+        }
+    }
+
     private static async Task<AgentTaskService.RemotePoolParkReply> GuidanceAsync(RunnerSeatReleaseFixture f)
     {
         var task = await f.TaskAsync();
@@ -337,8 +543,8 @@ public sealed class BlockedTaskParkReplyAdmissionTests
         var (exact, identity, confirmed) = await QueriesAsync(f);
         exact.ShouldNotBeNull(label).Id.ShouldBe(releaseId, label);
         TerminalRunnerSeatReleaseService.IsConfirmed(exact).ShouldBeTrue(label);
-        identity.Select(r => r.Id).ShouldBe([releaseId], label);
-        confirmed.Select(r => r.Id).ShouldBe([releaseId], label);
+        identity.Select(r => r.Id).ShouldBe(new[] { releaseId }, label);
+        confirmed.Select(r => r.Id).ShouldBe(new[] { releaseId }, label);
         (await GuidanceAsync(f)).ShouldBe(AgentTaskService.RemotePoolParkReply.Admitted, label);
         var named = await RemoteFollowUpRefusedAsync(f, label);
         named.Message.ShouldContain($"-Reply {DelegationReportFormatter.Short(f.TaskId)}", Case.Sensitive, label);
@@ -417,7 +623,7 @@ public sealed class BlockedTaskParkReplyAdmissionTests
             .Select(p => p.RunnerSeatReleaseId).SingleAsync();
         var release = await db.RunnerSeatReleases.SingleAsync(r => r.Id == releaseId);
         edit(release);
-        (await db.SaveChangesAsync()).ShouldBe(1);
+        await db.SaveChangesAsync();
     }
 
     private static void RestoreIdentity(RunnerSeatRelease row, RunnerSeatRelease original)
