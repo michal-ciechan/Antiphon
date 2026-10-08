@@ -57,6 +57,7 @@ public partial class DelegationDispatchRecoveryBoundaryTests
         new("inline-other-task-pointer", CorpusShape.Inline, "BuildBrief, goal quotes another task's pointer"),
         new("lookalike-without-report-tail", CorpusShape.Inline, "pointer text followed by a paragraph no producer writes"),
         new("lookalike-other-marker-headline", CorpusShape.Inline, "pointer whose headline carries another task's marker"),
+        new("lookalike-joined-other-marker-headline", CorpusShape.Inline, "joined pointer whose headline carries another task's marker"),
     ];
 
     /// <summary>Where the payload lives. Hand-written: readable, and retained by the queue.</summary>
@@ -162,6 +163,7 @@ public partial class DelegationDispatchRecoveryBoundaryTests
     [Arguments("inline-other-task-pointer", "n/a")]
     [Arguments("lookalike-without-report-tail", "n/a")]
     [Arguments("lookalike-other-marker-headline", "n/a")]
+    [Arguments("lookalike-joined-other-marker-headline", "n/a")]
     public Task C1150_Brief_envelope_corpus_matches_the_expected_matrix(string formName, string locationName)
     {
         var form = CorpusForms.Single(f => f.Name == formName);
@@ -366,6 +368,10 @@ public partial class DelegationDispatchRecoveryBoundaryTests
                 "lookalike-without-report-tail" => own[..own.IndexOf("--- how to report back ---", StringComparison.Ordinal)]
                     + "A paragraph no producer writes.\n\n" + Marker,
                 "lookalike-other-marker-headline" => own.Replace(
+                    Marker + " YOUR BRIEF", DelegationReportFormatter.TaskMarker(Guid.NewGuid()) + " YOUR BRIEF",
+                    StringComparison.Ordinal),
+                "lookalike-joined-other-marker-headline" => Pointer(
+                    "/srv/antiphon/corpus/.antiphon/task-" + Short + "-brief.md", AgentKind.Codex).Replace(
                     Marker + " YOUR BRIEF", DelegationReportFormatter.TaskMarker(Guid.NewGuid()) + " YOUR BRIEF",
                     StringComparison.Ordinal),
                 _ => throw new ArgumentOutOfRangeException(nameof(name)),
