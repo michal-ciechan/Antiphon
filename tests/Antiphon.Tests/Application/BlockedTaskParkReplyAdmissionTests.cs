@@ -15,7 +15,7 @@ namespace Antiphon.Tests.Application;
 /// CARD-1103 repair. Reply guidance follows the release identity answer admission checks.
 /// A genuine settlement-revision change makes that 422 stop recommending -Reply. Mark-read
 /// is not such a change (CARD-1144), and a stale confirmed park never falls back to the
-/// old session.
+/// old session. The local 409 uses the same classification (CARD-1154).
 /// </summary>
 [Category("Integration")]
 [Category("Slow")]
@@ -519,6 +519,61 @@ public sealed class BlockedTaskParkReplyAdmissionTests
         }
     }
 
+    [Test]
+    [Arguments("TaskId")]
+    [Arguments("Attempt")]
+    [Arguments("SessionId")]
+    [Arguments("AgentId")]
+    [Arguments("RunnerId")]
+    [Arguments("RunnerStoreId")]
+    [Arguments("AcceptedStartedAt")]
+    [Arguments("SettlementRevision")]
+    [Arguments("SettledAt")]
+    public async Task C1154_LocalReleaseIdentityParity(string field)
+    {
+        var label = $"c1154-local-release-{field}";
+        await using var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked, parking: true);
+        await BlockedTaskParkDeliveryTests.PublishAsync(f);
+        await BlockedTaskParkDeliveryTests.StampAsync(f);
+        // The local branch with admissible identity: only the pool flag changes, so task,
+        // session, store and release bindings all stay exact.
+        await f.EditAsync((_, agent) => agent.IsPoolDelegate = false);
+        var original = await ReleaseAsync(f);
+        await ShouldAdmitLocallyAsync(f, original.Id, $"{label}-before");
+
+        // Historical release fields have no foreign keys: change the ledger only.
+        await EditReleaseAsync(f, r =>
+        {
+            switch (field)
+            {
+                case "TaskId": r.TaskId = Guid.NewGuid(); break;
+                case "Attempt": r.Attempt = r.Attempt + 1; break;
+                case "SessionId": r.SessionId = Guid.NewGuid(); break;
+                case "AgentId": r.AgentId = Guid.NewGuid(); break;
+                case "RunnerId": r.RunnerId = "other-runner"; break;
+                case "RunnerStoreId": r.RunnerStoreId = Guid.NewGuid(); break;
+                case "AcceptedStartedAt": r.AcceptedStartedAt = r.AcceptedStartedAt.AddSeconds(1); break;
+                case "SettlementRevision": r.SettlementRevision = Guid.NewGuid(); break;
+                case "SettledAt": r.SettledAt = r.SettledAt.ShouldNotBeNull(label).AddSeconds(1); break;
+                default: throw new ArgumentOutOfRangeException(nameof(field), field, null);
+            }
+        });
+        await ShouldNotAdmitAsync(f, label);
+        (await GuidanceAsync(f)).ShouldBe(AgentTaskService.RemotePoolParkReply.ReleaseMismatch, label);
+        var refused = await LocalFollowUpRefusedAsync(f, label);
+        refused.Message.ShouldNotContain("-Reply", Case.Sensitive, label);
+        refused.Message.ShouldNotContain("cancel", Case.Insensitive, label);
+        refused.Message.ShouldNotContain("published seat was released", Case.Sensitive, label);
+        refused.Message.ShouldContain("does not match answer admission", Case.Sensitive, label);
+        refused.Message.ShouldContain("cannot be continued", Case.Sensitive, label);
+        await ShouldVetoAnswerAsync(f, label);
+
+        // Restoring that one field restores the local Reply advice and the confirmed continuation.
+        await EditReleaseAsync(f, r => RestoreIdentity(r, original));
+        await ShouldAdmitLocallyAsync(f, original.Id, $"{label}-restored");
+        await ShouldContinueAsync(f, $"{label}-restored");
+    }
+
     private static async Task<AgentTaskService.RemotePoolParkReply> GuidanceAsync(RunnerSeatReleaseFixture f)
     {
         var task = await f.TaskAsync();
@@ -568,6 +623,51 @@ public sealed class BlockedTaskParkReplyAdmissionTests
         refused.Code.ShouldBe("follow_up_remote_pool_unsupported", label);
         refused.Message.ShouldContain("without -OnAgent", Case.Sensitive, label);
         (await CountAsync(f)).ShouldBe(before, label);
+        return refused;
+    }
+
+    private static async Task ShouldAdmitLocallyAsync(RunnerSeatReleaseFixture f, Guid releaseId, string label)
+    {
+        var (exact, identity, confirmed) = await QueriesAsync(f);
+        exact.ShouldNotBeNull(label).Id.ShouldBe(releaseId, label);
+        TerminalRunnerSeatReleaseService.IsConfirmed(exact).ShouldBeTrue(label);
+        identity.Select(r => r.Id).ShouldBe(new[] { releaseId }, label);
+        confirmed.Select(r => r.Id).ShouldBe(new[] { releaseId }, label);
+        (await GuidanceAsync(f)).ShouldBe(AgentTaskService.RemotePoolParkReply.Admitted, label);
+        var named = await LocalFollowUpRefusedAsync(f, label);
+        named.Message.ShouldContain("The published seat was released.", Case.Sensitive, label);
+        named.Message.ShouldContain($"-Reply {DelegationReportFormatter.Short(f.TaskId)}", Case.Sensitive, label);
+        named.Message.ShouldNotContain("does not match answer admission", Case.Sensitive, label);
+        named.Message.ShouldNotContain("/cancel", Case.Sensitive, label);
+    }
+
+    // The local 409 changes nothing: no task, answer, event, old-session input, launch or stop.
+    private static async Task<ConflictException> LocalFollowUpRefusedAsync(RunnerSeatReleaseFixture f, string label)
+    {
+        var before = await f.TaskAsync();
+        var count = await CountAsync(f);
+        var replied = await RepliedAsync(f);
+        var queued = await QueuedAsync(f, f.SessionId);
+        var launches = f.Launches.Calls.Count;
+        var kills = f.RecordedStops.Killed.Count;
+
+        var refused = await Should.ThrowAsync<ConflictException>(() => BlockedTaskParkDeliveryTests.FollowUpAsync(f));
+        refused.StatusCode.ShouldBe(409, label);
+        refused.Code.ShouldBe("follow_up_agent_blocked", label);
+        refused.Message.ShouldContain(
+            $"parked on Blocked task {DelegationReportFormatter.Short(f.TaskId)}", Case.Sensitive, label);
+        refused.Message.ShouldNotContain("without -OnAgent", Case.Sensitive, label);
+
+        var after = await f.TaskAsync();
+        after.Status.ShouldBe(before.Status, label);
+        after.Attempt.ShouldBe(before.Attempt, label);
+        after.ConcurrencyToken.ShouldBe(before.ConcurrencyToken, label);
+        after.ReleasedSeatAnswerId.ShouldBe(before.ReleasedSeatAnswerId, label);
+        (await CountAsync(f)).ShouldBe(count, label);
+        (await RepliedAsync(f)).ShouldBe(replied, label);
+        (await QueuedAsync(f, f.SessionId)).ShouldBe(queued, label);
+        f.Launches.Calls.Count.ShouldBe(launches, label);
+        f.RecordedStops.Killed.Count.ShouldBe(kills, label);
         return refused;
     }
 
