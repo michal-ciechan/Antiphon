@@ -67,6 +67,7 @@ public sealed class BlockedTaskParkProjectionTests
         Require(runtime, "A confirmed published park whose seat release does not match that admission does not name Reply; the parked answer cannot be continued (CARD-1103).", "c1103-stale-release");
         runtime.ShouldNotContain("does not hear Reply", Case.Sensitive, "c1103-no-silent-422");
         Require(runtime, "HasConfirmedPublishedParkAsync is scoped to the task's current attempt and accepts Parked or ResumePending only (CARD-1103).", "c1065-park-identity");
+        Require(runtime, "Follow-up Create guidance no longer calls HasConfirmedPublishedParkAsync; that detector, which does not compare release identity, remains the CARD-1144 stale-answer veto and the task-detail confirmed-park input (CARD-1154).", "c1154-veto-detector");
         Require(runtime, "Continue requires question classification plus standing authority, then the accepted-answer path.", "c1065-continue");
         Require(runtime, "Only an explicit Reply after confirmed prerequisite publication continues a parked prerequisite.", "c1065-prerequisite");
         Require(runtime, "Report prose and a card moving to Done start nothing.", "c1065-no-inference");
@@ -85,6 +86,9 @@ public sealed class BlockedTaskParkProjectionTests
             Require(text, NoOldSessionSentence, "c1144-no-old-session:" + owner);
             Require(text, SharedQuerySentence, "c1146-shared-query:" + owner);
             Require(text, LocalGuidanceSentence, "c1154-local-guidance:" + owner);
+            Require(text, EvidenceOrderSentence, "c1154-evidence-order:" + owner);
+            Require(text, OneReadSentence, "c1154-one-read:" + owner);
+            text.ShouldNotContain(StaleLocalGuidanceSentence, Case.Sensitive, "c1154-local-guidance:" + owner);
         }
         Require(Read("docs/antiphon-api.md"), "ReclaimIntervalSeconds", "c1108-api-interval");
         Require(Read("docs/ops-http.md"), "ReclaimIntervalSeconds", "c1108-ops-interval");
@@ -94,12 +98,12 @@ public sealed class BlockedTaskParkProjectionTests
         Require(runtime, "When PrepareAsync or CaptureSourceIdentityAsync loads a due Held park but cannot load its episode, it records park_episode_changed and the same configured Held backoff without changing the park state, revision, publication receipt or release ledger (CARD-1143).", "c1143-unloadable-held");
         Require(runtime, "With a positive Held backoff, a repeated or concurrent unloadable-episode refusal does not move an already future NextAttemptAt; zero or negative backoff still disables the delay.", "c1143-no-repeat");
         Require(runtime, "Disabled or busy entry, intent-CAS and receipt refusals keep their existing behavior; proof verification stays read-only on an unloadable episode.", "c1143-refusal-scope");
-        const string knownLimits = "Known limits stay on CARD-1097 item 2 (resume reads the desktop checkout, not the runner mirror), CARD-1104 for a remote parent with RunnerCwd, and CARD-1154 (the local 409 can name Reply for a confirmed published park whose release identity no longer matches).";
+        const string knownLimits = "Known limits stay on CARD-1097 item 2 (resume reads the desktop checkout, not the runner mirror) and CARD-1104 for a remote parent with RunnerCwd.";
         var knownLimitsLine = runtime.Replace("\r\n", "\n").Split('\n')
             .Single(line => line.StartsWith("Known limits stay on ", StringComparison.Ordinal));
         knownLimitsLine.ShouldBe(knownLimits, "c1141-known-limits");
         runtime.ShouldNotContain("visited on later sweeps without a re-stamp", Case.Sensitive, "c1143-residual-closed");
-        foreach (var closed in new[] { "CARD-1103", "CARD-1129", "CARD-1135", "CARD-1143", "CARD-1144" })
+        foreach (var closed in new[] { "CARD-1103", "CARD-1129", "CARD-1135", "CARD-1143", "CARD-1144", "CARD-1154" })
             knownLimitsLine.ShouldNotContain(closed, Case.Sensitive, "c1141-known-limits");
         Require(Read("docs/antiphon-api.md"), "`ReclaimHeldBackoffSeconds` defaults to 600; 0 disables the Held backoff and a negative value is treated as 0.", "c1108-api-backoff");
         Require(Read("docs/ops-http.md"), "ReclaimHeldBackoffSeconds defaults to 600", "c1108-ops-backoff");
@@ -173,9 +177,28 @@ public sealed class BlockedTaskParkProjectionTests
         Require(seat, "RunnerSeatReleaseQueries.ForAttempt(db, task).SingleOrDefaultAsync(ct);", "c1146-shared-query:identity");
         Require(seat, "RunnerSeatReleaseQueries.Confirmed(RunnerSeatReleaseQueries.ForAttempt(db, task)).SingleOrDefaultAsync(ct);", "c1146-shared-query:continuation");
         CountOf(follow, "TerminalRunnerSeatReleaseService.FindConfirmedAttemptReleaseAsync(").ShouldBeGreaterThanOrEqualTo(1, "c1146-shared-query:continuation");
-        // CARD-1154 is open while the local 409 keeps the weak park detector; fixing it must update the docs.
+        // CARD-1154: the follow-up Create consumer classifies once, unconditionally, and evaluates
+        // admitted and mismatched confirmed parks before the live-session advice.
+        var create = Between(follow, "if (blockedOnAgent is not null)", "// The agent is already running, as whatever program");
+        Require(create, "var parkReply = await RemotePoolParkReplyAsync(blockedOnAgent, ct);", "c1154-local-guidance:source");
+        CountOf(create, "RemotePoolParkReplyAsync(").ShouldBe(1, "c1154-one-read:source");
+        create.ShouldNotContain("HasConfirmedPublishedParkAsync", Case.Sensitive, "c1154-one-read:source");
+        var refuseAt = create.IndexOf("RefuseRemotePoolFollowUp(followAgent, retainedRunnerId, priorId, parkReply, blockedOnAgent.Id);", StringComparison.Ordinal);
+        var admittedAt = create.IndexOf("if (parkReply == RemotePoolParkReply.Admitted)", StringComparison.Ordinal);
+        var mismatchAt = create.IndexOf("if (parkReply == RemotePoolParkReply.ReleaseMismatch)", StringComparison.Ordinal);
+        var liveAt = create.IndexOf("if (sessionLive)", StringComparison.Ordinal);
+        refuseAt.ShouldBeGreaterThanOrEqualTo(0, "c1154-evidence-order:source");
+        admittedAt.ShouldBeGreaterThan(refuseAt, "c1154-evidence-order:source");
+        mismatchAt.ShouldBeGreaterThan(admittedAt, "c1154-evidence-order:source");
+        liveAt.ShouldBeGreaterThan(mismatchAt, "c1154-evidence-order:source");
+        Require(create[admittedAt..mismatchAt], "The published seat was released. Reply to continue that task (delegate.ps1 -Reply {blockedShort}", "c1154-local-guidance:source");
+        var mismatchArm = create[mismatchAt..liveAt];
+        Require(mismatchArm, "does not match answer admission, so that parked answer cannot be continued.", "c1154-evidence-order:source");
+        mismatchArm.ShouldNotContain("-Reply", Case.Sensitive, "c1154-evidence-order:source");
+        mismatchArm.ShouldNotContain("cancel", Case.Insensitive, "c1154-evidence-order:source");
+        // The weak detector stays the CARD-1144 stale-answer veto; strengthening it would remove that veto.
         Between(follow, "private async Task<bool> HasConfirmedPublishedParkAsync(", "private async Task<bool> ParkContinuationReceiptMissingAsync(")
-            .ShouldNotContain("RunnerSeatReleaseQueries", Case.Sensitive, "c1154-local-guidance:source");
+            .ShouldNotContain("RunnerSeatReleaseQueries", Case.Sensitive, "c1154-veto-detector:source");
         var commit = seat.IndexOf("await tx.CommitAsync(ct);\n        if (changed == 1 && release.TaskId is Guid confirmedTask)\n            legacyConfirmations?.Add(confirmedTask);", StringComparison.Ordinal);
         commit.ShouldBeGreaterThanOrEqualTo(0, "c1147-confirm-commit:source");
         CountOf(seat, "legacyConfirmations?.Add(").ShouldBe(1, "c1147-confirm-commit:source");
@@ -185,7 +208,10 @@ public sealed class BlockedTaskParkProjectionTests
     private const string MarkReadSentence = "Mark-read records the first ReadAt without changing the task's ConcurrencyToken, the settlement revision a seat release records; a matching confirmed-park Reply after a read still queues one new attempt (CARD-1144).";
     private const string NoOldSessionSentence = "Reply to a confirmed published park whose release identity no longer matches, with no accepted answer pending, returns 409 park_release_identity_mismatch before any old-session input is queued (CARD-1144).";
     private const string SharedQuerySentence = "The remote-pool 422 guidance and confirmed-park Reply continuation use the same EF queries, RunnerSeatReleaseQueries.ForAttempt for release identity and RunnerSeatReleaseQueries.Confirmed for the confirmed receipt; that guidance remains one database read (CARD-1146).";
-    private const string LocalGuidanceSentence = "The local 409 for a confirmed published park whose session is not live does not check that release identity, so it can name Reply for a park whose Reply returns 409 park_release_identity_mismatch (CARD-1154).";
+    private const string LocalGuidanceSentence = "Local 409 follow_up_agent_blocked guidance uses the same confirmed release-identity query as Reply; it recommends Reply for a current-attempt published park only when that query admits its linked release (CARD-1154).";
+    private const string EvidenceOrderSentence = "Confirmed park evidence is evaluated before local live-session advice; a confirmed park with mismatched release identity names neither Reply nor cancellation (CARD-1154).";
+    private const string OneReadSentence = "Confirmed-park guidance performs one database read per blocked follow-up, independent of the number of candidate parks; the existing session-liveness read is separate (CARD-1154).";
+    private const string StaleLocalGuidanceSentence = "does not check that release identity, so it can name Reply";
     private const string ConfirmCommitSentence = "A failed or rolled-back confirmation contributes nothing to that sweep's Released count, even if a separate recovery confirms the same release before the sweep reads it (CARD-1147).";
 
     private static string Between(string text, string start, string end)
