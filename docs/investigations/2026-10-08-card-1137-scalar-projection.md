@@ -19,11 +19,11 @@ Test-side only. No production change, no migration, no AppHost or runner restart
   `DeliveryAttempts`, `LastDeliveryStartedAt`, `HoldUntil`, `CreatedAt`, verdict/maintenance/rules
   fields, ...) plus `"AgentSession": null` (the navigation is never loaded here: a fresh context
   before, `ChangeTracker.Clear()` + no `Include` after). After: every one of those same scalar
-  properties, rendered as `Name=value` lines (strings quoted and escaped, `DateTime` as round-trip
-  `O` plus `Kind`, enums by type and name, `null` distinct from `"null"`); the navigation (constant
-  `null` in both JSON strings) is excluded. Same assertion, same message
+  properties, rendered as `Name=value` lines (exact type-tagged encodings since the F-2 repair below;
+  strings quoted and escaped, `null` distinct from `"null"` and from any byte array); the navigation
+  (constant `null` in both JSON strings) is excluded. Same assertion, same message
   ("pending bytes/status/attempt evidence retained"); nothing weakened or deleted. A property type
-  the renderer does not understand throws instead of being skipped.
+  the renderer does not support throws (see "Repair F-1/F-2" for the exact contract).
 - **D-2. Same fix at the two other named sites**, obviously local, assertion meaning preserved:
   `ReviewEvidenceRecoveryTests.C1043_RecoveryPreservesHistory` (AgentTask, AgentSession list,
   AgentTaskLandNotification list; previously the JSON of `AsNoTracking` rows, whose navigations were
@@ -33,15 +33,16 @@ Test-side only. No production change, no migration, no AppHost or runner restart
 - **D-3. Deterministic recurrence guard** `EntityGraphSerializationGuardTests` (Unit, no DB; an
   offline `AppDbContext` model):
   - `Tests_do_not_serialize_navigation_entities_straight_from_a_DbSet`: assembly-wide source census;
-    a `JsonSerializer.Serialize*(` whose argument is `[await] x.<DbSet>...` for a DbSet whose entity
-    has navigations fails. One pre-existing out-of-scope site is listed as explicit debt:
+    a `JsonSerializer.Serialize*(` whose argument is `[await] x.<DbSet>...` fails when its result
+    type after projections (F-1 repair) is, or carries, an entity with navigations. One pre-existing out-of-scope site is listed as explicit debt:
     `RemoteControlModalPersistenceTests.cs:134` (`RemoteControlModalEpisodes`, navigation
     `AgentSession`), for a Backlog card.
   - `Release_and_sweep_sources_serialize_only_payloads_and_navigation_free_values`: in
     `TerminalRunnerSeatReleaseTests`, `RunnerSeatOrphanSweepTests`, `RunnerSeatReleaseFixture` and
     `RunnerSeatLiveSeatWarmupTests`, every `JsonSerializer.Serialize*` argument must be a `new ...`
-    payload literal or an allowlisted value (`invalidation.Payload`, `items`,
-    `await db.RunnerSeatReleases.ToListAsync()`); the allowlisted entity `RunnerSeatRelease` must stay
+    payload literal, an allowlisted value (`invalidation.Payload`, `items`,
+    `await db.RunnerSeatReleases.ToListAsync()`) or (F-1 repair) a DbSet query with a
+    navigation-free result; the allowlisted entity `RunnerSeatRelease` must stay
     navigation-free.
   - `Scanners_flag_the_CARD_1137_shapes`: the two scanners flag the original lines 1008/1013 and a
     `Boards` serialize, and accept payload literals and `RunnerSeatReleases`.
@@ -60,6 +61,9 @@ Test-side only. No production change, no migration, no AppHost or runner restart
 | R-1 | `RunnerSeatLiveSeatWarmupTests` (1), `RunnerSeatOrphanSweepTests` (17), `TerminalRunnerSeatReleaseTests` (39) | No behaviour change. |
 | R-2 | `ReviewEvidenceRecoveryTests` (21), `CardFilePrivacySyncAcceptanceTests` (35) | D-2 sites stay green as whole classes. |
 | R-3 | `TestClassificationGuardTests`, `SlowTestTripwireTests` | New Unit class needs no Slow entry; 3 results. |
+| V-5 | `EntityGraphSerializationGuardTests` (30 results: the 9 above plus 10 `Scanners_admit_navigation_free_projections` and 11 `Scanners_flag_navigation_bearing_results`) | F-1: projections to scalars, strings, records, anonymous objects and dictionaries are admitted by both scanners; navigation-bearing results stay flagged with the serialized type. |
+| V-6 | `EntityScalarSnapshotTests` (11 results: 9 `Distinct_supported_values_never_render_alike` groups, `Nullable_properties_distinguish_null_default_and_another_value`, `Unsupported_types_throw_naming_type_and_property`) | F-2: exact encodings at Half/TimeOnly/byte[]/DateTime/decimal/enum/floating/cross-type/string boundaries; nullables render null, default and another value three ways; unsupported types throw naming type and property. |
+| R-4 | `C1043_RecoveryPreservesHistory` (1), `Dry_run_leaves_existing_files_pins_tokens_ignore_index_and_HEAD_unchanged` (5), `Pending_delivery_prevents_release` (1) | The three call sites keep their assertions under the new encodings. |
 
 Repeat budget: V-3's 30 repetitions exceed the default `repeat-proof` budget (3 normal + 2 loaded).
 The flake was demonstrated by the warm-up remedy's checkpoint run `20261008-013108-9e3c`
@@ -121,6 +125,27 @@ forbids an unbounded broad run), namespaces, the full assembly, `Antiphon.Agents
 | CP-36 | S1 | `CP-1` | linux-combined-28 | `/*/*/(TerminalRunnerSeatReleaseTests*)\|(RunnerSeatOrphanSweepTests*)/*` | V-3 | exact 56 results, 0 failed/skipped | 56 | 3 | true | n/a |
 | CP-37 | S1 | `CP-1` | linux-combined-29 | `/*/*/(TerminalRunnerSeatReleaseTests*)\|(RunnerSeatOrphanSweepTests*)/*` | V-3 | exact 56 results, 0 failed/skipped | 56 | 3 | true | n/a |
 | CP-38 | S1 | `CP-1` | linux-combined-30 | `/*/*/(TerminalRunnerSeatReleaseTests*)\|(RunnerSeatOrphanSweepTests*)/*` | V-3 | exact 56 results, 0 failed/skipped | 56 | 3 | true | n/a |
+| CP-39 | R1 | `tests/Antiphon.Tests -> bin-c1137r/` | linux-r1-guard | `/*/*/EntityGraphSerializationGuardTests/*` | V-1, V-5 | exact 30 results, 0 failed/skipped | 30 | 3 | true | n/a |
+| CP-40 | R1 | `CP-39` | linux-r1-snapshot | `/*/*/EntityScalarSnapshotTests/*` | V-6 | exact 11 results, 0 failed/skipped | 11 | 2 | true | n/a |
+| CP-41 | R1 | `CP-39` | linux-r1-pending-alone | `/*/*/TerminalRunnerSeatReleaseTests/Pending_delivery_prevents_release*` | V-2, R-4 | exact 1 results, 0 failed/skipped | 1 | 2 | true | n/a |
+| CP-42 | R1 | `CP-39` | linux-r1-review-recovery-site | `/*/*/ReviewEvidenceRecoveryTests/C1043_RecoveryPreservesHistory*` | R-4 | exact 1 results, 0 failed/skipped | 1 | 3 | true | n/a |
+| CP-43 | R1 | `CP-39` | linux-r1-cardfile-dry-run-site | `/*/*/CardFilePrivacySyncAcceptanceTests/Dry_run_leaves_existing_files_pins_tokens_ignore_index_and_HEAD_unchanged*` | R-4 | exact 5 results, 0 failed/skipped | 5 | 3 | true | n/a |
+| CP-44 | R1 | `CP-39` | linux-r1-warmup-guard | `/*/*/RunnerSeatLiveSeatWarmupTests/*` | R-1 | exact 1 results, 0 failed/skipped | 1 | 2 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
+| CP-45 | R1 | `CP-39` | linux-r1-orphan-class | `/*/*/RunnerSeatOrphanSweepTests/*` | R-1 | exact 17 results, 0 failed/skipped | 17 | 3 | true | n/a |
+| CP-46 | R1 | `CP-39` | linux-r1-release-class | `/*/*/TerminalRunnerSeatReleaseTests/*` | R-1 | exact 39 results, 0 failed/skipped | 39 | 3 | true | n/a |
+| CP-47 | R1 | `CP-39` | linux-r1-registry-guard | `/*/*/(TestClassificationGuardTests*)\|(SlowTestTripwireTests*)/*` | R-3 | exact 3 results, 0 failed/skipped | 3 | 2 | true | n/a |
+| CP-48 | R1 | `CP-39` | linux-r1-combined-01 | `/*/*/(TerminalRunnerSeatReleaseTests*)\|(RunnerSeatOrphanSweepTests*)/*` | V-3 | exact 56 results, 0 failed/skipped | 56 | 3 | true | n/a |
+| CP-49 | R1 | `CP-39` | linux-r1-combined-02 | `/*/*/(TerminalRunnerSeatReleaseTests*)\|(RunnerSeatOrphanSweepTests*)/*` | V-3 | exact 56 results, 0 failed/skipped | 56 | 3 | true | n/a |
+| CP-50 | R1 | `CP-39` | linux-r1-combined-03 | `/*/*/(TerminalRunnerSeatReleaseTests*)\|(RunnerSeatOrphanSweepTests*)/*` | V-3 | exact 56 results, 0 failed/skipped | 56 | 3 | true | n/a |
+| CP-51 | R1 | `CP-39` | linux-r1-combined-04 | `/*/*/(TerminalRunnerSeatReleaseTests*)\|(RunnerSeatOrphanSweepTests*)/*` | V-3 | exact 56 results, 0 failed/skipped | 56 | 3 | true | n/a |
+| CP-52 | R1 | `CP-39` | linux-r1-combined-05 | `/*/*/(TerminalRunnerSeatReleaseTests*)\|(RunnerSeatOrphanSweepTests*)/*` | V-3 | exact 56 results, 0 failed/skipped | 56 | 3 | true | n/a |
+| CP-53 | R1 | `CP-39` | linux-r1-combined-06 | `/*/*/(TerminalRunnerSeatReleaseTests*)\|(RunnerSeatOrphanSweepTests*)/*` | V-3 | exact 56 results, 0 failed/skipped | 56 | 3 | true | n/a |
+| CP-54 | R1 | `CP-39` | linux-r1-combined-07 | `/*/*/(TerminalRunnerSeatReleaseTests*)\|(RunnerSeatOrphanSweepTests*)/*` | V-3 | exact 56 results, 0 failed/skipped | 56 | 3 | true | n/a |
+| CP-55 | R1 | `CP-39` | linux-r1-combined-08 | `/*/*/(TerminalRunnerSeatReleaseTests*)\|(RunnerSeatOrphanSweepTests*)/*` | V-3 | exact 56 results, 0 failed/skipped | 56 | 3 | true | n/a |
+| CP-56 | R1 | `CP-39` | linux-r1-combined-09 | `/*/*/(TerminalRunnerSeatReleaseTests*)\|(RunnerSeatOrphanSweepTests*)/*` | V-3 | exact 56 results, 0 failed/skipped | 56 | 3 | true | n/a |
+| CP-57 | R1 | `CP-39` | linux-r1-combined-10 | `/*/*/(TerminalRunnerSeatReleaseTests*)\|(RunnerSeatOrphanSweepTests*)/*` | V-3 | exact 56 results, 0 failed/skipped | 56 | 3 | true | n/a |
+| CP-58 | R1 | `CP-39` | linux-r1-combined-11 | `/*/*/(TerminalRunnerSeatReleaseTests*)\|(RunnerSeatOrphanSweepTests*)/*` | V-3 | exact 56 results, 0 failed/skipped | 56 | 3 | true | n/a |
+| CP-59 | R1 | `CP-39` | linux-r1-combined-12 | `/*/*/(TerminalRunnerSeatReleaseTests*)\|(RunnerSeatOrphanSweepTests*)/*` | V-3 | exact 56 results, 0 failed/skipped | 56 | 3 | true | n/a |
 
 ## Results
 
@@ -221,3 +246,53 @@ CHECKPOINT CP-38 commit=160f9206b0d43772b9281e34f7635a0be4daf400 build=reused fi
 ```
 
 </details>
+
+## Repair F-1/F-2
+
+Code task `fcd3f992`, branch `feat/card-task-fcd3f992` from the reviewed `0624a7079` (Final Review
+`1b429692`; original Code/landing owner `98b5e24f`). Test-side only: no production change, no
+migration, no AppHost or runner restart. Rows CP-39..CP-59 (`After` R1) are this repair's ordinary
+scope; the whole Unit lane is not part of it (AGENTS.md forbids an unbounded broad run).
+
+- **F-1 (`EntityGraphSerializationGuardTests`).** The scanners judged the originating DbSet, so a
+  safe `Select(m => new { m.Id, m.Body })` was flagged. They now resolve the serialized result type
+  along the query chain: `Select` projections (the lambda parameter's member chains, and a `new` of
+  a model entity type), element operators (`Single*`, `First*`, `Find*`, ...), member access, and
+  scalar aggregates (`Count*`, `Any*`, ...). STJ builds metadata per declared type, so the type
+  decides, not whether a navigation is loaded. Scalar, string, record, anonymous and dictionary
+  projections are admitted by both scanners; a result that is, or carries, a navigation-bearing
+  entity stays flagged and is reported with its type; an unreadable expression keeps the
+  originating entity (fails closed). The release/sweep scanner additionally admits a DbSet query
+  with a navigation-free result; variables (`message`) stay rejected. New cases:
+  `Scanners_admit_navigation_free_projections` (10) and `Scanners_flag_navigation_bearing_results`
+  (11).
+- **F-2 (`EntityScalarSnapshot`).** Exact type-tagged leaf encodings: `Half`/`float`/`double` carry
+  round-trip text plus the IEEE bit pattern, `TimeOnly` round-trip `O` (full ticks), `byte[]` as
+  `b64:<base64>` (never the null sentinel, never a quoted string), `DateTime` `O` plus `Kind`,
+  `DateTimeOffset` `O` (offset kept), `DateOnly` `O`, `TimeSpan` `c`, `decimal` with its scale,
+  enums as full type name, member name and underlying value, integers tagged with their type.
+  Composite rendering is limited to model entity types and sequences; a property whose declared
+  type is unsupported throws even while null, and any other runtime value throws, naming the type
+  and the property path. The helper XML documentation states the same contract. New
+  `EntityScalarSnapshotTests` (11 results). The 57 `SessionQueuedMessage` scalars and the three call
+  sites are unchanged; each site compares two renderings by the same helper, so the encoding change
+  does not alter an assertion's meaning.
+
+### Repair quick mutations (Code-stage probes, not post-land PCs)
+
+Scratch build `bin-c1137mut/` with the two classes
+(`/*/*/(EntityGraphSerializationGuardTests*)|(EntityScalarSnapshotTests*)/*`), restored with
+`git checkout -- tests/` after each batch; the mutated rows are attributable per parameter row.
+
+| Batch | Temporary mutation (line it names) | Red |
+|---|---|---|
+| 1 | `SerializedNavigationEntity`: `break` before the chain walk (the originating DbSet decides again) | all 10 `Scanners_admit_navigation_free_projections` rows (also 4 flag rows whose expected type differs) |
+| 1 | `Scalar`: `TimeOnly` default format; `Half` renders `"Half:"`; `byte[]` without `b64:`; `DateTime` without `Kind`; decimal scale normalised; enum as underlying value only; `double` without bits; integers untagged; `Quote` without backslash escaping | each of the 9 `Distinct_supported_values_never_render_alike` groups ("Half(1) and Half(2)", "TimeOnly(12:34) and TimeOnly(12:34)", "null and byte[3]{158,233,101}", ...), and `Nullable_properties_distinguish_null_default_and_another_value` |
+| 1 | `Render`: the final unsupported-type `throw` becomes a silent `return` | `Unsupported_types_throw_naming_type_and_property` (`Version` value should throw) |
+| 2 | `Projected`: the bare lambda parameter does not flow into the result | flag rows `m => m`, `new { Message = m }`, dictionary `["message"] = m`, `new QueuedRow(m.Id, m.Body, m)` |
+| 2 | `Projected`: `ToString()` no longer exempt | admit row `m.AgentSession.ToString()` |
+| 2 | `Render`: declared-type check disabled | `Unsupported_types_throw_naming_type_and_property` (`UnsupportedProbe.Link` null should throw) |
+
+Batch 1: 25 of 41 red; batch 2: 6 of 41 red; restored source 41/41 green. These probes do not
+discharge any PC; the original PC-1..PC-3 and the warm-up PC-1..PC-2 remain pending for SourceLanding
+Mutation, and the rows above are offered as additional PC candidates.
