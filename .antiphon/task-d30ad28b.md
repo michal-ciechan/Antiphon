@@ -243,7 +243,7 @@ Cleanup:
 
 ## Invariants
 
-- CARD-0079 remains the only automatic stop the session contract allows. **This repair and S2 add no stop, release, fail or relaunch path.** The inherited CARD-1151 boot-stall tail, which CP-37 characterizes, still stops an aged prompt-only Working session. It is untouched here and being replaced separately.
+- CARD-0079 remains the only automatic stop the session contract allows. **This repair and S2 add no stop, release, fail or relaunch path.** *Qualified by repair 4 (Review 818f247a F10): at this commit that statement was wrong. S2's interrupted-launch backfill typed the brief before the resume saved its "brief re-queued" event, so a failed save reached the launch-failure catch and killed and failed a Working recipient. Repair 4 (task 6da8a413) makes every resume step after input non-destructive; see the test design's "Repair 6 evidence (S2 F10)".* The inherited CARD-1151 boot-stall tail, which CP-37 characterizes, still stops an aged prompt-only Working session. It is untouched here and being replaced separately.
 - The ensure is unchanged: it is absent from the steady-state tick and the absent scan.
 - Statement budgets 18/18/4.
 - S1 whitelist unchanged: CP-58 77/77, CP-67 49/49. F1-F5 rows green.
