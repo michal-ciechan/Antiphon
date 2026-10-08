@@ -688,3 +688,78 @@ then **S5** (V-11 statement budgets, CP-17/18 plus the S5-S6 regression rows), t
 documents, `BootStallDocumentationTests.AlwaysOnExceptionSentence` and its two assertions replaced,
 V-13; CP-28/29). AppHost restart is needed after the reviewed land (server change); no runner
 upgrade and no migration.
+
+## As built: S4 (Code task 470638a8)
+
+Branch `feat/card-task-470638a8` from `origin/master` `8a8cfda480288bbdd353dac063482c0aa61667bc`
+(the landed S1-S3 tip). Production: new `StandingBootAttentionProjection.cs`;
+`AttentionService.BuildBootReplyMissingItemsAsync` and its one call in `GetAsync`;
+`AgentSupervisorService.PruneIncidentsAsync` only. Tests: the three V-8/V-9/V-10 bodies in
+`StandingBootAttentionTests.cs`; `StandingBootWatchFixture` gains `StartedAge` (default 6 h,
+unchanged for every S1-S3 test). No migration, no `Program.cs` change, no client change. No
+existing assertion was weakened or deleted; the only edits outside the S4 skeleton are the
+fixture option and the files above.
+
+Decisions and deviations Review should check:
+
+- **Projection admission is the sweep's own `StandingBootWatchPolicy.Decide`**, over
+  `StandingBootWatchObservation.FromRow` plus the current boot predicate (model-reply EXISTS, then
+  `LoadPromptTurnAsync`), with `IdentityMatches` derived from the CURRENT latest real prompt and
+  never from the armed watch columns. Owners are read as every agent sharing a persistent pointer
+  with an AlwaysOn agent, so count/AlwaysOn/conflict match the sweep. Error comes from the
+  operator due, or from a recorded `stage=operator` receipt of the same episode (no downgrade).
+- **The call moved ahead of `BuildRecentIncidentItemsAsync`**: the current episode's receipts are
+  added to `attachedIncidents`, so an Error receipt is not reported a second time as a
+  `RecentCriticalIncident`. Item order is unchanged (the list is sorted at the end).
+- **Legacy suppression**: a `bootSeq=` row is suppressed for every live session an AlwaysOn agent
+  points at (covered, whether or not a stage is due) and for every session an open task
+  (Queued/Dispatched/Working/Blocked) owns; the legacy live-session read carries the task
+  exclusion as a `NOT EXISTS`, so its command count is unchanged.
+- **Prune candidates deviate from the design roster** ("the same candidate reads, no receipts
+  read"): `CurrentEpisodeKeysAsync` reads the live sessions that hold a `standingBoot:v1;`
+  receipt (one command, the receipt test is an `EXISTS` subquery), then the boot predicate's two
+  reads per candidate (EXISTS, prompt rows). Reason: plan D-5 says retention checks episode
+  resolution, not the notification whitelist, so a disabled deadline, a flipped AlwaysOn, a moved
+  pointer or a bound task must not release dedup evidence; candidates selected by AlwaysOn owner
+  and task exclusion would release it. Protected keys are the exact two stage keys of each current
+  episode (`FailureReason` equality, not `LIKE prefix%`), applied to the age delete and to every
+  cap delete. A fault computing them retains every `standingBoot:v1;` row this pass (Warning
+  logged); cancellation propagates. Expected V-11 prune deltas for S5: zero candidates 1, one
+  candidate 3, two candidates 5 (design said 1 / 5 / 7). Projection roster as designed: 1 with no
+  AlwaysOn pointer; agents, sessions, tasks, receipts, then EXISTS and prompt rows per candidate
+  (6 for one, 8 for two), plus the unchanged legacy `bootSeq=` read.
+- **V-8 wording**: the design's mandated detection sentence itself says "nothing is stopped,
+  typed, restarted or latched automatically", so the "no restart/latch text" check asserts the
+  retired phrases instead: `restart ladder`, `stopped restarting`, `kill`, `retry`,
+  `Boot prompt confirmed`, `composer holds` (case-insensitive), and no Retry/Cancel action.
+- **V-8 `warning-at-eight`** seeds a 7-minute-old prompt so the fake clock walks forward onto the
+  boot due (one second before: no row); `error-at-twenty` checks one second before the operator
+  due is still a Warning. `older-than-24-hours` seeds a 26-hour-old launch and a 25-hour-old prompt
+  and ages the receipt by 25 hours. V-10 adds a receipt of an earlier resolved episode on the same
+  session so a global `standingBoot:v1;` exemption goes red, and asserts exact removed counts.
+
+Author red (method-scoped class runs from `bin-c1156s4dev/`, each batch restored with
+`git checkout -- server/` before the next; mutants in one batch touch disjoint test cases).
+
+| Case | Production mutation | Red at |
+|---|---|---|
+| V-8 no-incident, failed-save, pruned-history | M-A: `ProjectAsync` skips a candidate with no standing receipt (PC-11a) | `rows.Count` 0 |
+| V-8 legacy-and-current | M-D: legacy rows not suppressed for covered sessions (PC-12b) | `rows.Count` 2 |
+| V-10 age-cutoff (and unknown-current-read) | M-G: age delete over all incidents (PC-14a) | `removed` |
+| V-8 error-at-twenty, older-than-24-hours | M-C: `Item` severity always Warning (PC-12a) | `row.Severity` |
+| V-10 agent-cap | M-H: cap delete over all incidents (PC-14b) | `removed` |
+| V-10 positive-resolution | M-J: `CurrentEpisodeKeysAsync` skips the reply check | `removed` |
+| V-9 assistant, thinking, tool-call, tool-result, turn-end | M-E-reply: `ProjectAsync` drops the reply revalidation (PC-13) | rows not empty |
+| V-8 error-at-twenty | M-F: current receipts not attached | `RecentCriticalIncident` row present |
+| V-10 unknown-current-read | M-I: the fault path does not retain standing receipts | `removed` |
+| V-8 older-than-24-hours | M-B: projection skips a prompt older than 24 h (PC-11b shape) | `rows.Count` 0 |
+| V-9 terminal-session | M-E-live: no live-status filter and no live/ended gate | rows not empty |
+| V-9 replaced-launch | M-E-armed: prompt identity from the armed columns (PC-13) | rows not empty |
+| V-8 warning-at-eight (all seven) | M-K: boot-due evidence line prints the operator due | `row.Evidence` |
+
+Every PC in "Positive controls" stays pending for post-land SourceLanding Mutation; these
+author-red cycles discharge none of them. Next: **S5** (V-11 budgets, CP-17/18 and the S5-S6
+regression rows CP-19..CP-27; use the prune deltas above), then **S6** (owner documents,
+`BootStallDocumentationTests.AlwaysOnExceptionSentence` and its two assertions, V-13; CP-28/29).
+AppHost restart is needed after the reviewed land (server change); no runner upgrade and no
+migration.
