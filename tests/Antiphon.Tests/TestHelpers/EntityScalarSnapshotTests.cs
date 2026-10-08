@@ -1,4 +1,7 @@
 using System.ComponentModel.DataAnnotations.Schema;
+using System.Reflection;
+using Antiphon.Server.Domain.Entities;
+using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Shouldly;
 using TUnit.Core;
@@ -111,6 +114,76 @@ public sealed class EntityScalarSnapshotTests
             .Message.ShouldSatisfyAllConditions(
                 m => m.ShouldContain("'<root>'"),
                 m => m.ShouldContain("System.Uri"));
+    }
+
+    [Test]
+    [Arguments(typeof(SessionQueuedMessage))]
+    [Arguments(typeof(AgentTask))]
+    [Arguments(typeof(AgentSession))]
+    [Arguments(typeof(AgentTaskLandNotification))]
+    [Arguments(typeof(Board))]
+    [Arguments(typeof(Card))]
+    public void Snapshot_covers_exactly_the_reflected_non_navigation_properties(Type entityType)
+    {
+        using var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
+            .UseNpgsql("Host=localhost;Database=entity_snapshot_coverage;Username=unused;Password=unused").Options);
+        // The oracle is EF's own navigation metadata, not the helper's navigation rule.
+        var model = db.Model.FindEntityType(entityType)!;
+        var navigations = model.GetNavigations().Select(n => n.Name).Concat(model.GetSkipNavigations().Select(n => n.Name))
+            .ToHashSet(StringComparer.Ordinal);
+        if (entityType == typeof(SessionQueuedMessage))
+            navigations.ShouldBe(new[] { nameof(SessionQueuedMessage.AgentSession) });
+        var properties = entityType.GetProperties(BindingFlags.Public | BindingFlags.Instance)
+            .Where(p => p.GetIndexParameters().Length == 0).ToArray();
+        var expected = properties.Select(p => p.Name).Where(n => !navigations.Contains(n)).Order(StringComparer.Ordinal).ToArray();
+        expected.Length.ShouldBeGreaterThan(5);
+        // One instance, mutated and restored per property: some entities default Id to Guid.NewGuid().
+        var entity = Activator.CreateInstance(entityType)!;
+        var before = EntityScalarSnapshot.Of(db, entity);
+        Names(before).ShouldBe(expected,
+            $"{entityType.Name}: the snapshot must render each of its {expected.Length} reflected non-navigation properties once, in ordinal order, and no navigation ({string.Join(", ", navigations)})");
+        foreach (var property in properties.Where(p => p.SetMethod?.IsPublic == true))
+        {
+            var original = property.GetValue(entity);
+            if (navigations.Contains(property.Name))
+            {
+                if (property.PropertyType.IsAssignableTo(typeof(System.Collections.IEnumerable)))
+                    continue;
+                property.SetValue(entity, Activator.CreateInstance(property.PropertyType));
+                EntityScalarSnapshot.Of(db, entity).ShouldBe(before, $"{entityType.Name}.{property.Name} is a navigation");
+            }
+            else
+            {
+                property.SetValue(entity, Different(property.PropertyType, original, $"{entityType.Name}.{property.Name}"));
+                EntityScalarSnapshot.Of(db, entity).ShouldNotBe(before, $"{entityType.Name}.{property.Name} must be part of the snapshot");
+            }
+            property.SetValue(entity, original);
+        }
+    }
+
+    private static string[] Names(string snapshot) =>
+        snapshot.Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(line => line[..line.IndexOf('=')]).ToArray();
+
+    private static object? Different(Type type, object? current, string name)
+    {
+        var underlying = Nullable.GetUnderlyingType(type);
+        if (underlying is not null)
+            return current is null ? Activator.CreateInstance(underlying) : null;
+        if (type == typeof(string)) return (string?)current + "~";
+        if (type == typeof(bool)) return !(bool)current!;
+        if (type == typeof(Guid)) return Guid.NewGuid();
+        if (type == typeof(DateTime)) return ((DateTime)current!).AddTicks(1);
+        if (type == typeof(DateTimeOffset)) return ((DateTimeOffset)current!).AddTicks(1);
+        if (type == typeof(TimeSpan)) return ((TimeSpan)current!).Add(TimeSpan.FromTicks(1));
+        if (type == typeof(byte[])) return new byte[] { 1 };
+        if (type.IsEnum) return Enum.ToObject(type, Convert.ToInt64(current) + 1);
+        if (type == typeof(int)) return (int)current! + 1;
+        if (type == typeof(long)) return (long)current! + 1;
+        if (type == typeof(short)) return (short)((short)current! + 1);
+        if (type == typeof(decimal)) return (decimal)current! + 1;
+        if (type == typeof(double)) return (double)current! + 1;
+        if (type == typeof(float)) return (float)current! + 1;
+        throw new NotSupportedException($"{name}: add a distinct-value rule for {type.FullName}");
     }
 
     private static string Snap(ProbeContext db, object? value) => EntityScalarSnapshot.Of(db, new ScalarProbe { Value = value });

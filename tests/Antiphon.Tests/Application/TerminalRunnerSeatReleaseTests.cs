@@ -20,9 +20,14 @@ using TUnit.Core;
 
 namespace Antiphon.Tests.Application;
 
-// CARD-1137: compare EF entities with EntityScalarSnapshot, never default-options JsonSerializer.
-// Serializing a navigation-bearing entity holds the process-wide STJ metadata lock for seconds,
-// and the in-process runner's release path waits on it (EntityGraphSerializationGuardTests).
+// CARD-1137 rule: compare EF entity state with EntityScalarSnapshot.Of(db, ...) (a scalar projection),
+// never JsonSerializer.Serialize(entity) with default options. Serializing an EF entity graph builds
+// System.Text.Json metadata for every reachable navigation type while holding STJ's process-wide
+// default-options metadata lock, for seconds on a cold host; the in-process runner's release path
+// (RunnerSessionExitedEvent publish) waits on that same lock and overran its 10 s budget
+// (docs/investigations/2026-10-08-card-1137-release-stall.md). No source scanner enforces this: a
+// static guard cannot establish a serialized result type, so it was removed deliberately; the rule
+// lives here and EntityScalarSnapshotTests proves the snapshot covers every scalar property.
 [Category("Integration")]
 public class TerminalRunnerSeatReleaseTests
 {
