@@ -278,8 +278,13 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         finally { gate.Release(); }
     }
 
-    // Called under the launch gate before custody, Grok files, manifests, sidecars or any provider
-    // effect. Throws SessionIdentityClosedException for a certified id; never refuses otherwise.
+    // CARD-1153 A-5, called under the launch gate. The fence is read-only and runs at gate entry,
+    // before custody PrepareStart; it throws SessionIdentityClosedException for a certified id and
+    // never refuses otherwise. The write-ahead marker runs after request validation and before the
+    // first disk or provider effect (custody admission, Grok rules file, manifest/sidecar, launch),
+    // so a validation refusal keeps its existing no-disk-effect behaviour.
+    private void RequireOpenIdentityUnderGate(Guid sessionId) => _absence?.RequireOpenIdentity(sessionId);
+
     private void RecordCreationAttemptUnderGate(Guid sessionId, DateTime? acceptedStartedAt) =>
         _absence?.RecordCreationAttempt(sessionId, acceptedStartedAt);
 
@@ -416,14 +421,13 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         await gate.WaitAsync(ct);
         try
         {
-            // CARD-1153 A-5: fence and write-ahead marker before custody PrepareStart, Grok rules
-            // files, manifests, sidecars and the first provider effect.
-            RecordCreationAttemptUnderGate(request.SessionId, request.AcceptedStartedAt);
+            RequireOpenIdentityUnderGate(request.SessionId);
             if (request.VerificationBinding is null)
             {
                 if (HasCustodyLedger) _custody.Value.RequireUntrackedSession(request.SessionId);
                 return await StartCoreAsync(request, ct);
             }
+            RecordCreationAttemptUnderGate(request.SessionId, request.AcceptedStartedAt);
             using var custodyLease = _custody.Value.AcquireSession(request.SessionId);
             if (!_custody.Value.PrepareStart(request, BackendDecision.Requested, VerificationCustodyBackend))
             {
@@ -531,6 +535,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             var actualLength = request.Exe.Length + actualArgs.Sum(arg => arg.Length + 3);
             if (budget <= 0 || actualLength > budget)
                 throw new GrokRulesTransportException("grok_rules_argv_unsafe", "command_line_budget");
+            RecordCreationAttemptUnderGate(request.SessionId, request.AcceptedStartedAt);
             request = request with
             {
                 InstalledGrokRulesReceipt = await store.WriteAsync(request.SessionId, rules, ct),
@@ -540,6 +545,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         // CARD-0497: rewrite a recognized npm Codex shim to node.exe + codex.js and apply the
         // launcher-aware budget before a session is registered, a host starts, or Herdr is contacted.
         request = CodexWindowsLaunchPolicy.Apply(request, useHerdr);
+        RecordCreationAttemptUnderGate(request.SessionId, request.AcceptedStartedAt);
 
         var session = new RunnerSession(request.SessionId, _settings, _events, _logger, _transcriptClaims, _processLiveness);
         session.BindAcceptedGeneration(request.AcceptedStartedAt);
@@ -659,7 +665,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         await gate.WaitAsync(ct);
         try
         {
-            RecordCreationAttemptUnderGate(request.SessionId, request.AcceptedStartedAt);
+            RequireOpenIdentityUnderGate(request.SessionId);
             if (HasCustodyLedger) _custody.Value.RequireUntrackedSession(request.SessionId);
             return await AttachHerdrCoreAsync(request, ct);
         }
@@ -671,6 +677,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         if (request.SessionId == Guid.Empty)
             throw new ArgumentException("SessionId must not be empty.", nameof(request));
         ArgumentException.ThrowIfNullOrWhiteSpace(request.PaneId);
+        RecordCreationAttemptUnderGate(request.SessionId, request.AcceptedStartedAt);
         await CreationEffectAsync(request.SessionId, "attach");
         EnsureHerdrClient();
         if (!HerdrAgentKinds.IsSupported(request.ExpectedKind))
