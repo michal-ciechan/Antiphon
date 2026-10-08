@@ -78,15 +78,23 @@ public sealed class BlockedTaskParkProjectionTests
         Require(runtime, "A short tail wraps. ReclaimScheduledAsync shares one overlap gate and, unless ReclaimIntervalSeconds is 0, runs at most once per ReclaimIntervalSeconds. One run visits each eligible Blocked row at most once and stops at the smaller of the eligible count and page size times the pass budget.", "c1065-reclaim-page");
         Require(runtime, "The reconcile job's released total counts confirmed releases only and does not include visit counts.", "c1065-reclaim-count");
         Require(runtime, "A sweep's Released counts only confirmations produced by this run; a row Parked before the run is visited and counted in Visited and Registered but not in Released, and a run stops at the first row it has already visited (CARD-1129).", "c1129-released-this-run");
+        Require(runtime, ConfirmCommitSentence, "c1147-confirm-commit");
+        foreach (var (owner, text) in new[] { ("runtime", runtime), ("loop", Read("docs/orchestration-loop.md")) })
+        {
+            Require(text, MarkReadSentence, "c1144-read-revision:" + owner);
+            Require(text, NoOldSessionSentence, "c1144-no-old-session:" + owner);
+            Require(text, SharedQuerySentence, "c1146-shared-query:" + owner);
+            Require(text, LocalGuidanceSentence, "c1154-local-guidance:" + owner);
+        }
         Require(Read("docs/antiphon-api.md"), "ReclaimIntervalSeconds", "c1108-api-interval");
         Require(Read("docs/ops-http.md"), "ReclaimIntervalSeconds", "c1108-ops-interval");
         Require(runtime, "A Held episode is not prepared again until its NextAttemptAt, stamped at now plus ReclaimHeldBackoffSeconds (default 600; 0 disables; a negative value is treated as 0), except park_workspace_reserved which stays immediate.", "c1108-held-backoff");
         Require(runtime, "A refusal on a Held row re-stamps NextAttemptAt from the same backoff and records the refusal reason, so a Held row is never prepared on consecutive sweeps while its backoff runs (CARD-1135).", "c1135-held-restamp");
-        const string knownLimits = "Known limits stay on CARD-1097 item 2 (resume reads the desktop checkout, not the runner mirror), CARD-1104 for a remote parent with RunnerCwd, CARD-1143 (a Held row whose episode can no longer be loaded is visited on later sweeps without a re-stamp), and CARD-1144 (the first mark-read rotates the settlement token, so Reply admission misses and the live Blocked fallback accepts the answer on the old session).";
+        const string knownLimits = "Known limits stay on CARD-1097 item 2 (resume reads the desktop checkout, not the runner mirror), CARD-1104 for a remote parent with RunnerCwd, CARD-1143 (a Held row whose episode can no longer be loaded is visited on later sweeps without a re-stamp), and CARD-1154 (the local 409 can name Reply for a confirmed published park whose release identity no longer matches).";
         var knownLimitsLine = runtime.Replace("\r\n", "\n").Split('\n')
             .Single(line => line.StartsWith("Known limits stay on ", StringComparison.Ordinal));
         knownLimitsLine.ShouldBe(knownLimits, "c1141-known-limits");
-        foreach (var closed in new[] { "CARD-1103", "CARD-1129", "CARD-1135" })
+        foreach (var closed in new[] { "CARD-1103", "CARD-1129", "CARD-1135", "CARD-1144" })
             knownLimitsLine.ShouldNotContain(closed, Case.Sensitive, "c1141-known-limits");
         Require(Read("docs/antiphon-api.md"), "`ReclaimHeldBackoffSeconds` defaults to 600; 0 disables the Held backoff and a negative value is treated as 0.", "c1108-api-backoff");
         Require(Read("docs/ops-http.md"), "ReclaimHeldBackoffSeconds defaults to 600", "c1108-ops-backoff");
@@ -144,6 +152,52 @@ public sealed class BlockedTaskParkProjectionTests
         var live = follow.IndexOf("if (sessionLive)", StringComparison.Ordinal);
         remote.ShouldBeGreaterThanOrEqualTo(0, "c1065-remote-refuse");
         live.ShouldBeGreaterThan(remote, "c1065-remote-before-blocked");
+
+        // Each CARD-1144/1146/1147 sentence names a code fact; these anchors go red when it drifts.
+        var markRead = Between(follow, "public async Task<AgentTaskSummaryDto> MarkReadAsync(", "public async Task<AgentTaskSummaryDto> CancelAsync(");
+        Require(markRead, "task.ReadAt = UtcNow();", "c1144-read-revision:source");
+        markRead.ShouldNotContain("ConcurrencyToken", Case.Sensitive, "c1144-read-revision:source");
+        var accept = Between(follow, "internal async Task<bool> TryAcceptReleasedSeatAnswerAsync(", "if (release is null) return false;");
+        var veto = accept.IndexOf("\"park_release_identity_mismatch\");", StringComparison.Ordinal);
+        veto.ShouldBeGreaterThan(accept.IndexOf("\"runner_seat_release_pending\");", StringComparison.Ordinal), "c1144-no-old-session:source");
+        veto.ShouldBeLessThan(accept.LastIndexOf("return false;", StringComparison.Ordinal), "c1144-no-old-session:source");
+        var guidance = Between(follow, "internal async Task<RemotePoolParkReply> RemotePoolParkReplyAsync(", "private async Task<bool> HasConfirmedPublishedParkAsync(");
+        Require(guidance, "RunnerSeatReleaseQueries.Confirmed(RunnerSeatReleaseQueries.ForAttempt(_db, task))", "c1146-shared-query:guidance");
+        CountOf(guidance, "await ").ShouldBe(1, "c1146-shared-query:one-read");
+        var seat = Read("server/Application/Services/TerminalRunnerSeatReleaseService.cs").Replace("\r\n", "\n");
+        Require(seat, "RunnerSeatReleaseQueries.ForAttempt(db, task).SingleOrDefaultAsync(ct);", "c1146-shared-query:identity");
+        Require(seat, "RunnerSeatReleaseQueries.Confirmed(RunnerSeatReleaseQueries.ForAttempt(db, task)).SingleOrDefaultAsync(ct);", "c1146-shared-query:continuation");
+        CountOf(follow, "TerminalRunnerSeatReleaseService.FindConfirmedAttemptReleaseAsync(").ShouldBeGreaterThanOrEqualTo(1, "c1146-shared-query:continuation");
+        // CARD-1154 is open while the local 409 keeps the weak park detector; fixing it must update the docs.
+        Between(follow, "private async Task<bool> HasConfirmedPublishedParkAsync(", "private async Task<bool> ParkContinuationReceiptMissingAsync(")
+            .ShouldNotContain("RunnerSeatReleaseQueries", Case.Sensitive, "c1154-local-guidance:source");
+        var commit = seat.IndexOf("await tx.CommitAsync(ct);\n        if (changed == 1 && release.TaskId is Guid confirmedTask)\n            legacyConfirmations?.Add(confirmedTask);", StringComparison.Ordinal);
+        commit.ShouldBeGreaterThanOrEqualTo(0, "c1147-confirm-commit:source");
+        CountOf(seat, "legacyConfirmations?.Add(").ShouldBe(1, "c1147-confirm-commit:source");
+        Require(seat, "if (confirmedThisRun.Contains(taskId) && IsConfirmed(release))", "c1147-confirm-commit:source");
+    }
+
+    private const string MarkReadSentence = "Mark-read records the first ReadAt without changing the task's ConcurrencyToken, the settlement revision a seat release records; a matching confirmed-park Reply after a read still queues one new attempt (CARD-1144).";
+    private const string NoOldSessionSentence = "Reply to a confirmed published park whose release identity no longer matches, with no accepted answer pending, returns 409 park_release_identity_mismatch before any old-session input is queued (CARD-1144).";
+    private const string SharedQuerySentence = "The remote-pool 422 guidance and confirmed-park Reply continuation use the same EF queries, RunnerSeatReleaseQueries.ForAttempt for release identity and RunnerSeatReleaseQueries.Confirmed for the confirmed receipt; that guidance remains one database read (CARD-1146).";
+    private const string LocalGuidanceSentence = "The local 409 for a confirmed published park whose session is not live does not check that release identity, so it can name Reply for a park whose Reply returns 409 park_release_identity_mismatch (CARD-1154).";
+    private const string ConfirmCommitSentence = "A failed or rolled-back confirmation contributes nothing to that sweep's Released count, even if a separate recovery confirms the same release before the sweep reads it (CARD-1147).";
+
+    private static string Between(string text, string start, string end)
+    {
+        var from = text.IndexOf(start, StringComparison.Ordinal);
+        from.ShouldBeGreaterThanOrEqualTo(0, start);
+        var to = text.IndexOf(end, from, StringComparison.Ordinal);
+        to.ShouldBeGreaterThan(from, end);
+        return text[from..to];
+    }
+
+    private static int CountOf(string text, string phrase)
+    {
+        var count = 0;
+        for (var at = text.IndexOf(phrase, StringComparison.Ordinal); at >= 0; at = text.IndexOf(phrase, at + phrase.Length, StringComparison.Ordinal))
+            count++;
+        return count;
     }
 
     private static void Require(string text, string phrase, string label) =>
