@@ -91,9 +91,16 @@ public sealed class RunnerAbsenceEvidenceService
     private string? _latchReason;
     private readonly DateTime _startedAtUtc;
     private readonly Dictionary<string, DateTime> _consumedNonces = new(StringComparer.Ordinal);
+    private DateTime? _highWaterIssuedUtc;
+    private long _observedTimestamp;
+    private DateTime _observedWallUtc;
+    private long? _clockStepTimestamp;
 
     /// <summary>F2: the replay cache never evicts a live nonce; when full, requests refuse (503).</summary>
     public const int MaxConsumedNonces = 4096;
+
+    /// <summary>F2 round 2: a backward wall-clock step larger than this (plus slew) is a clock rollback.</summary>
+    public static readonly TimeSpan ClockStepTolerance = TimeSpan.FromMilliseconds(500);
 
     /// <summary>A-4: random per instance, memory only, compared by equality, never derived from time.</summary>
     public Guid Epoch { get; } = Guid.NewGuid();
@@ -111,6 +118,8 @@ public sealed class RunnerAbsenceEvidenceService
         _time = time ?? TimeProvider.System;
         _logger = logger;
         _startedAtUtc = _time.GetUtcNow().UtcDateTime;
+        _observedTimestamp = _time.GetTimestamp();
+        _observedWallUtc = _startedAtUtc;
     }
 
     public RunnerAbsenceEvidenceStore Store => _store;
@@ -322,24 +331,47 @@ public sealed class RunnerAbsenceEvidenceService
     /// its outcome or operation. Fresh means issued within <see cref="RunnerAbsenceEvidence.RequestFreshness"/>
     /// of this clock and after this epoch's start plus that window: the cache is memory only, so a
     /// request captured before a restart is refused as stale instead of meeting an empty cache.
-    /// A consumed nonce is forgotten only once its request is stale anyway.
+    /// <para>
+    /// Round 2 (Review a086fe80 F2), admission is monotone and never depends on the wall clock
+    /// moving forward. A high-water mark holds the latest issuedAtUtc that passed the freshness
+    /// checks in this epoch (it can never exceed this clock plus the window); a request issued
+    /// more than the window before it is refused for good, and a consumed nonce is forgotten only
+    /// once its request is below that mark, so eviction never revives a replay whatever the wall
+    /// clock does. The wall clock is also checked against the monotonic clock at every request: a
+    /// backward step beyond <see cref="ClockStepTolerance"/> (plus 0.1% of the monotonic gap, for
+    /// NTP slew) refuses every evidence request until a full window of monotonic time has passed.
+    /// </para>
     /// </summary>
     private RunnerAbsenceRefusal? AdmitOnceLocked(RunnerAbsenceRequest request)
     {
         var now = _time.GetUtcNow().UtcDateTime;
+        var timestamp = _time.GetTimestamp();
         var window = RunnerAbsenceEvidence.RequestFreshness;
+        var gap = _time.GetElapsedTime(_observedTimestamp, timestamp);
+        if (now < _observedWallUtc + gap - ClockStepTolerance - gap / 1000)
+            _clockStepTimestamp = timestamp;
+        _observedTimestamp = timestamp;
+        _observedWallUtc = now;
+        if (_clockStepTimestamp is { } step && _time.GetElapsedTime(step, timestamp) < window)
+            return new(RunnerAbsenceRefusalCodes.Unavailable, 503, "runner clock stepped backwards; evidence requests refuse for one freshness window");
+
         var issued = request.IssuedAtUtc!.Value;
         if (issued < now - window || issued > now + window)
             return new(RunnerAbsenceRefusalCodes.StaleRequest, 401, "request issued outside the freshness window");
         if (issued <= _startedAtUtc + window)
             return new(RunnerAbsenceRefusalCodes.StaleRequest, 401, "request issued before this runner epoch excludes replays");
-        foreach (var expired in _consumedNonces.Where(e => e.Value < now).Select(e => e.Key).ToList())
+        if (_highWaterIssuedUtc is { } mark && issued < mark - window)
+            return new(RunnerAbsenceRefusalCodes.StaleRequest, 401, "request issued a window before a request already seen");
+        if (_highWaterIssuedUtc is null || issued > _highWaterIssuedUtc)
+            _highWaterIssuedUtc = issued;
+        var retired = _highWaterIssuedUtc.Value - window;
+        foreach (var expired in _consumedNonces.Where(e => e.Value < retired).Select(e => e.Key).ToList())
             _consumedNonces.Remove(expired);
         if (_consumedNonces.ContainsKey(request.RequestNonce))
             return new(RunnerAbsenceRefusalCodes.Replayed, 409, "request nonce already presented");
         if (_consumedNonces.Count >= MaxConsumedNonces)
             return new(RunnerAbsenceRefusalCodes.Unavailable, 503, "replay cache full");
-        _consumedNonces[request.RequestNonce] = issued + window;
+        _consumedNonces[request.RequestNonce] = issued;
         return null;
     }
 
