@@ -31,7 +31,8 @@ Test-side only. No production change, no migration, no AppHost or runner restart
   `CardFilePrivacySyncAcceptanceTests.Dry_run_leaves_existing_files_pins_tokens_ignore_index_and_HEAD_unchanged`
   (Board, Card list; same shape). Order of list items is unchanged (the same queries).
 - **D-3. Deterministic recurrence guard** `EntityGraphSerializationGuardTests` (Unit, no DB; an
-  offline `AppDbContext` model):
+  offline `AppDbContext` model). **Removed deliberately in repair 3** (see "Repair 3" below); kept
+  here as the record of what rows CP-1 and CP-39 ran:
   - `Tests_do_not_serialize_navigation_entities_straight_from_a_DbSet`: assembly-wide source census;
     a `JsonSerializer.Serialize*(` whose argument is `[await] x.<DbSet>...` fails when its result
     type after projections (F-1 repair) is, or carries, an entity with navigations. One pre-existing out-of-scope site is listed as explicit debt:
@@ -64,6 +65,9 @@ Test-side only. No production change, no migration, no AppHost or runner restart
 | V-5 | `EntityGraphSerializationGuardTests` (30 results: the 9 above plus 10 `Scanners_admit_navigation_free_projections` and 11 `Scanners_flag_navigation_bearing_results`) | F-1: projections to scalars, strings, records, anonymous objects and dictionaries are admitted by both scanners; navigation-bearing results stay flagged with the serialized type. |
 | V-6 | `EntityScalarSnapshotTests` (11 results: 9 `Distinct_supported_values_never_render_alike` groups, `Nullable_properties_distinguish_null_default_and_another_value`, `Unsupported_types_throw_naming_type_and_property`) | F-2: exact encodings at Half/TimeOnly/byte[]/DateTime/decimal/enum/floating/cross-type/string boundaries; nullables render null, default and another value three ways; unsupported types throw naming type and property. |
 | R-4 | `C1043_RecoveryPreservesHistory` (1), `Dry_run_leaves_existing_files_pins_tokens_ignore_index_and_HEAD_unchanged` (5), `Pending_delivery_prevents_release` (1) | The three call sites keep their assertions under the new encodings. |
+| V-7 | `EntityScalarSnapshotTests` runtime-type rows (repair 3): 14 `Unsupported_runtime_values_throw_naming_property_and_runtime_type`, 4 `Unsupported_declared_types_throw_before_the_value_is_read`, `Unsupported_roots_throw_naming_the_root_or_item` | F-2 round 2: an object-typed property holding an empty or non-empty collection, an entity, a delegate, JsonDocument, JsonElement or any value without an exact encoding throws naming the property and runtime type; unsupported declared types throw before the value is read; a root sequence whose element type is not an entity throws even when empty. |
+| V-8 | `EntityScalarSnapshotTests.Snapshot_covers_exactly_the_reflected_non_navigation_properties` (6: SessionQueuedMessage, AgentTask, AgentSession, AgentTaskLandNotification, Board, Card) | The snapshot renders exactly the reflected non-navigation properties (EF navigation metadata is the oracle; 57 for SessionQueuedMessage), each changes the snapshot when changed, a navigation does not. Replaces the removed scanner guard. |
+| R-5 | `TestClassificationGuardTests`, `SlowTestTripwireTests` after the class deletion | Deleting `EntityGraphSerializationGuardTests` leaves the registry classification green. |
 
 Repeat budget: V-3's 30 repetitions exceed the default `repeat-proof` budget (3 normal + 2 loaded).
 The flake was demonstrated by the warm-up remedy's checkpoint run `20261008-013108-9e3c`
@@ -146,6 +150,26 @@ forbids an unbounded broad run), namespaces, the full assembly, `Antiphon.Agents
 | CP-57 | R1 | `CP-39` | linux-r1-combined-10 | `/*/*/(TerminalRunnerSeatReleaseTests*)\|(RunnerSeatOrphanSweepTests*)/*` | V-3 | exact 56 results, 0 failed/skipped | 56 | 3 | true | n/a |
 | CP-58 | R1 | `CP-39` | linux-r1-combined-11 | `/*/*/(TerminalRunnerSeatReleaseTests*)\|(RunnerSeatOrphanSweepTests*)/*` | V-3 | exact 56 results, 0 failed/skipped | 56 | 3 | true | n/a |
 | CP-59 | R1 | `CP-39` | linux-r1-combined-12 | `/*/*/(TerminalRunnerSeatReleaseTests*)\|(RunnerSeatOrphanSweepTests*)/*` | V-3 | exact 56 results, 0 failed/skipped | 56 | 3 | true | n/a |
+| CP-60 | R2 | `tests/Antiphon.Tests -> bin-c1137r2/` | linux-r2-snapshot | `/*/*/EntityScalarSnapshotTests/*` | V-7, V-8 | exact 35 results, 0 failed/skipped | 35 | 3 | true | n/a |
+| CP-61 | R2 | `CP-60` | linux-r2-pending-alone | `/*/*/TerminalRunnerSeatReleaseTests/Pending_delivery_prevents_release*` | V-2, R-4 | exact 1 results, 0 failed/skipped | 1 | 2 | true | n/a |
+| CP-62 | R2 | `CP-60` | linux-r2-review-recovery-site | `/*/*/ReviewEvidenceRecoveryTests/C1043_RecoveryPreservesHistory*` | R-4 | exact 1 results, 0 failed/skipped | 1 | 3 | true | n/a |
+| CP-63 | R2 | `CP-60` | linux-r2-cardfile-dry-run-site | `/*/*/CardFilePrivacySyncAcceptanceTests/Dry_run_leaves_existing_files_pins_tokens_ignore_index_and_HEAD_unchanged*` | R-4 | exact 5 results, 0 failed/skipped | 5 | 3 | true | n/a |
+| CP-64 | R2 | `CP-60` | linux-r2-warmup-guard | `/*/*/RunnerSeatLiveSeatWarmupTests/*` | R-1 | exact 1 results, 0 failed/skipped | 1 | 2 | true | TUNIT_MAX_PARALLEL_TESTS=1 |
+| CP-65 | R2 | `CP-60` | linux-r2-orphan-class | `/*/*/RunnerSeatOrphanSweepTests/*` | R-1 | exact 17 results, 0 failed/skipped | 17 | 3 | true | n/a |
+| CP-66 | R2 | `CP-60` | linux-r2-release-class | `/*/*/TerminalRunnerSeatReleaseTests/*` | R-1 | exact 39 results, 0 failed/skipped | 39 | 3 | true | n/a |
+| CP-67 | R2 | `CP-60` | linux-r2-registry-guard | `/*/*/(TestClassificationGuardTests*)\|(SlowTestTripwireTests*)/*` | R-3, R-5 | exact 3 results, 0 failed/skipped | 3 | 2 | true | n/a |
+| CP-68 | R2 | `CP-60` | linux-r2-combined-01 | `/*/*/(TerminalRunnerSeatReleaseTests*)\|(RunnerSeatOrphanSweepTests*)/*` | V-3 | exact 56 results, 0 failed/skipped | 56 | 3 | true | n/a |
+| CP-69 | R2 | `CP-60` | linux-r2-combined-02 | `/*/*/(TerminalRunnerSeatReleaseTests*)\|(RunnerSeatOrphanSweepTests*)/*` | V-3 | exact 56 results, 0 failed/skipped | 56 | 3 | true | n/a |
+| CP-70 | R2 | `CP-60` | linux-r2-combined-03 | `/*/*/(TerminalRunnerSeatReleaseTests*)\|(RunnerSeatOrphanSweepTests*)/*` | V-3 | exact 56 results, 0 failed/skipped | 56 | 3 | true | n/a |
+| CP-71 | R2 | `CP-60` | linux-r2-combined-04 | `/*/*/(TerminalRunnerSeatReleaseTests*)\|(RunnerSeatOrphanSweepTests*)/*` | V-3 | exact 56 results, 0 failed/skipped | 56 | 3 | true | n/a |
+| CP-72 | R2 | `CP-60` | linux-r2-combined-05 | `/*/*/(TerminalRunnerSeatReleaseTests*)\|(RunnerSeatOrphanSweepTests*)/*` | V-3 | exact 56 results, 0 failed/skipped | 56 | 3 | true | n/a |
+| CP-73 | R2 | `CP-60` | linux-r2-combined-06 | `/*/*/(TerminalRunnerSeatReleaseTests*)\|(RunnerSeatOrphanSweepTests*)/*` | V-3 | exact 56 results, 0 failed/skipped | 56 | 3 | true | n/a |
+| CP-74 | R2 | `CP-60` | linux-r2-combined-07 | `/*/*/(TerminalRunnerSeatReleaseTests*)\|(RunnerSeatOrphanSweepTests*)/*` | V-3 | exact 56 results, 0 failed/skipped | 56 | 3 | true | n/a |
+| CP-75 | R2 | `CP-60` | linux-r2-combined-08 | `/*/*/(TerminalRunnerSeatReleaseTests*)\|(RunnerSeatOrphanSweepTests*)/*` | V-3 | exact 56 results, 0 failed/skipped | 56 | 3 | true | n/a |
+| CP-76 | R2 | `CP-60` | linux-r2-combined-09 | `/*/*/(TerminalRunnerSeatReleaseTests*)\|(RunnerSeatOrphanSweepTests*)/*` | V-3 | exact 56 results, 0 failed/skipped | 56 | 3 | true | n/a |
+| CP-77 | R2 | `CP-60` | linux-r2-combined-10 | `/*/*/(TerminalRunnerSeatReleaseTests*)\|(RunnerSeatOrphanSweepTests*)/*` | V-3 | exact 56 results, 0 failed/skipped | 56 | 3 | true | n/a |
+| CP-78 | R2 | `CP-60` | linux-r2-combined-11 | `/*/*/(TerminalRunnerSeatReleaseTests*)\|(RunnerSeatOrphanSweepTests*)/*` | V-3 | exact 56 results, 0 failed/skipped | 56 | 3 | true | n/a |
+| CP-79 | R2 | `CP-60` | linux-r2-combined-12 | `/*/*/(TerminalRunnerSeatReleaseTests*)\|(RunnerSeatOrphanSweepTests*)/*` | V-3 | exact 56 results, 0 failed/skipped | 56 | 3 | true | n/a |
 
 ## Results
 
@@ -364,3 +388,68 @@ Runs 1-6 are Code-stage development and mutation probes (reason: compile the rep
 new test red), not ordinary evidence; the ordinary evidence is run 8 alone. Runs 3-6 restored with
 `git checkout -- tests/`; all `bin-c1137dev`, `bin-c1137mut` and `bin-c1137rdrv` directories were
 removed with a root-confined loop; the green checkpoint run deleted its own `bin-c1137r/`.
+
+## Repair 3: drop the scanner guard, runtime-type snapshot
+
+Code task `26526802`, branch `feat/card-task-26526802` from the reviewed `6ec083b8d` (Final Review
+`5d0ad279`, findings F-1/F-2; original Code/landing owner `98b5e24f`). Test-side only: no
+production change, no migration, no AppHost or runner restart. Rows CP-60..CP-79 (`After` R2) are
+this repair's ordinary scope; the whole Unit lane is not part of it (AGENTS.md forbids an unbounded
+broad run). The CARD-1137 flake fix itself (D-1/D-2) is unchanged.
+
+- **Scanner guard removed, deliberately** (commit `c6a0cb7e3`). `EntityGraphSerializationGuardTests`
+  was introduced on this branch (not on master) and is not needed for the fix. A static source
+  scanner cannot establish the type `JsonSerializer` will serialize: round 1 found it over-broad,
+  round 2 (F-1) found it rejecting safe Boolean projections (`m.AgentSession != null`) and admitting
+  nested entity projections; every round finds another edge. Its 30 cases (scanner census,
+  release/sweep allowlist, scanner self-tests, admit/flag projection rows) are deleted with the
+  scanner; no other assertion changed. What it protected and what protects it now:
+  - *the rule* (never default-options STJ on an EF entity graph; compare a scalar projection): stated
+    with its reason in the `TerminalRunnerSeatReleaseTests` class header (serializing an EF entity
+    graph takes System.Text.Json's process-wide default-options metadata lock for seconds and stalls
+    the in-process runner's `RunnerSessionExitedEvent` publish; compare `EntityScalarSnapshot.Of`),
+    with pointers in the `ReviewEvidenceRecoveryTests` and `CardFilePrivacySyncAcceptanceTests`
+    headers;
+  - *snapshot completeness* (the old `Snapshot_changes_when_any_settable_non_navigation_property_changes`,
+    6 types): moved, not weakened, to `EntityScalarSnapshotTests.Snapshot_covers_exactly_the_reflected_non_navigation_properties`
+    (V-8), same 6 entity types. It no longer asks the helper which properties are navigations: EF's
+    navigation metadata is the oracle, the snapshot's line names must equal the reflected
+    non-navigation properties exactly and in order (57 for `SessionQueuedMessage`, navigation
+    `AgentSession`), each settable one must change the snapshot when changed, and setting a navigation
+    must not. A scalar added to an entity later is compared automatically;
+  - *recurrence of the stall*: the 12 combined-filter repetitions (CP-68..CP-79) and the class rows.
+  - The one pre-existing out-of-scope site the scanner listed as debt,
+    `RemoteControlModalPersistenceTests.cs:134`, is unchanged and still wants its Backlog card.
+- **F-2 fixed: runtime types** (commit `c4424d763`). `EntityScalarSnapshot` checks the declared type
+  of every non-navigation property (even while null) and the runtime type of every value. Supported
+  scalars are exactly the tagged encodings already in place (string, `byte[]`, char, bool, enums,
+  date/time types, Guid, decimal, floating types with bit patterns, tagged integers) and their
+  nullables. An `object`-typed property holding a collection (empty or not: `List`, array,
+  `Dictionary`, `IEnumerable`), an entity, a delegate, or anything else throws naming the property
+  and the runtime type. The root must be an entity or an `IEnumerable<T>` of an entity type (a
+  non-entity sequence throws even when empty; a null or non-entity item throws naming `[i]`).
+  Owned types and primitive collections are unsupported. **JsonDocument/JsonElement are
+  unsupported**: by reflection none of `SessionQueuedMessage`, `AgentTask`, `AgentSession`,
+  `AgentTaskLandNotification`, `Board`, `Card` has a property of either type (the declared-type check
+  at the three call sites would throw if one appeared), so the shared `Json:` encoding is gone rather
+  than split. The helper XML documentation states this contract. The three call sites are unchanged
+  and compare two renderings by the same helper, so their assertions keep their meaning.
+
+### Repair 3 quick mutations (Code-stage probes, not post-land PCs)
+
+Scratch build `bin-c1137r2mut/`, filter `/*/*/EntityScalarSnapshotTests/*` (35), source restored with
+`git checkout -- tests/` after each batch; each red row is attributable to one mutation.
+
+| Batch | Temporary mutation (`EntityScalarSnapshot.cs` line) | Red |
+|---|---|---|
+| A | `:128` an unsupported runtime value renders `?` instead of throwing | all 14 `Unsupported_runtime_values_*` rows ("should throw ... but did not", e.g. `Version`, `empty List<int>`, `delegate`) |
+| A | `:50` root sequence accepted without an entity element type | `Unsupported_roots_throw_naming_the_root_or_item` (`new List<int>()` did not throw) |
+| A | `:122` `RenderEntity` also skips `DeliveryAttempts` | `Snapshot_covers_exactly_*(SessionQueuedMessage)`: "the snapshot must render each of its 57 reflected non-navigation properties ... and no navigation (AgentSession)" |
+| B | `:125` declared-type check disabled | `Unsupported_declared_types_*` rows `UriProbe.Link`, `ListProbe.Tags`, `JsonDocumentProbe.Document` (null values); the `JsonElement` row stays green because its non-null default is caught by the runtime check |
+| C | `:95`/`:103` JsonDocument/JsonElement re-admitted with a shared `Json:` encoding | runtime rows `JsonDocument`, `JsonElement`; declared rows `JsonDocument`, `JsonElement` |
+| C | `:134` navigation rule inverted (`entity.IsOwned()`) | `Snapshot_covers_exactly_*` for SessionQueuedMessage, AgentTask, AgentSession, Board, Card (AgentTaskLandNotification has no navigation and stays green) |
+
+Batch A 16 of 35 red, batch B 3 of 35, batch C 9 of 35; restored source is CP-60. These probes
+discharge no PC: PC-1..PC-3 (PC-2 named the removed scanner and is void with it; its protection is
+now the class-header rule) and the warm-up PC-1..PC-2 stay pending for SourceLanding Mutation; the
+rows above are offered as additional PC candidates.
