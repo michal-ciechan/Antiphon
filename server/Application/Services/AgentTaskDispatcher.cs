@@ -5655,9 +5655,7 @@ public sealed class AgentTaskDispatcher
             if (claimed.ReleasedSeatAnswerId is not null && claimed.ReleasedSeatAnswerTargetAttempt == claimed.Attempt)
                 await EnqueueReleasedSeatAnswerBriefAsync(claimed, session, ct);
             else
-                await _queue.EnqueueAsync(
-                    session.Id, FitBriefForSession(claimed, session), MessageSendMode.WhenIdle, ct, QueuedMessageOrigin.Delegation,
-                    executionDeadlineAt: claimed.ExecutionDeadlineAt, executionTaskId: claimed.Id);
+                await EnsureLaunchBriefAsync(claimed, session.Id, session.StartedAt, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -6060,9 +6058,7 @@ public sealed class AgentTaskDispatcher
             if (task.ReleasedSeatAnswerId is not null && task.ReleasedSeatAnswerTargetAttempt == task.Attempt)
                 await EnqueueReleasedSeatAnswerBriefAsync(task, session, ct);
             else
-                await _queue.EnqueueAsync(
-                    session.Id, FitBriefForSession(task, session), MessageSendMode.WhenIdle, ct, QueuedMessageOrigin.Delegation,
-                    executionDeadlineAt: task.ExecutionDeadlineAt, executionTaskId: task.Id);
+                await EnsureLaunchBriefAsync(task, session.Id, session.StartedAt, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -7739,7 +7735,7 @@ public sealed class AgentTaskDispatcher
         // existing ?? ClaudeCode default so no current rendering changes.
         var sessionRow = await _db.AgentSessions.AsNoTracking()
             .Where(s => s.Id == session)
-            .Select(s => new { s.AgentKind, s.RunnerCwd })
+            .Select(s => new { s.AgentKind, s.RunnerCwd, s.StartedAt })
             .FirstOrDefaultAsync(ct);
         var sessionKind = sessionRow?.AgentKind;
 
@@ -7768,16 +7764,58 @@ public sealed class AgentTaskDispatcher
                 "refocus compact", ct);
         }
 
-        var briefKind = sessionKind ?? AgentKind.ClaudeCode;
-        var brief = FitBriefForTyping(
-            task, _settings, CeilingsForBrief(_ptyProfile?.Ceilings, sessionRow?.RunnerCwd, _settings),
-            _logger, briefKind,
-            refocus: unrelated && !compactSupported,
-            runnerCwd: sessionRow?.RunnerCwd,
-            stageRemoteSpill: string.IsNullOrWhiteSpace(sessionRow?.RunnerCwd)
-                ? null
-                : spill => _queue.StageRemoteSpill(session, sessionRow!.RunnerCwd!, spill));
-        await TryEnqueueReuseAsync(task, session, brief, "brief", ct);
+        var refocus = unrelated && !compactSupported;
+        if (ReuseEnqueueOverride is not null)
+        {
+            var briefKind = sessionKind ?? AgentKind.ClaudeCode;
+            var brief = FitBriefForTyping(
+                task, _settings, CeilingsForBrief(_ptyProfile?.Ceilings, sessionRow?.RunnerCwd, _settings),
+                _logger, briefKind,
+                refocus: refocus,
+                runnerCwd: sessionRow?.RunnerCwd,
+                stageRemoteSpill: string.IsNullOrWhiteSpace(sessionRow?.RunnerCwd)
+                    ? null
+                    : spill => _queue.StageRemoteSpill(session, sessionRow!.RunnerCwd!, spill));
+            await TryEnqueueReuseAsync(task, session, brief, "brief", ct);
+            return;
+        }
+
+        await TryEnsureReuseBriefAsync(task, session, sessionRow?.StartedAt, refocus, ct);
+    }
+
+    internal async Task EnsureLaunchBriefAsync(
+        AgentTask task, Guid sessionId, DateTime? sessionStartedAt, CancellationToken ct, bool refocus = false)
+    {
+        if (task.DispatchedAt is not DateTime dispatched || sessionStartedAt is not DateTime started)
+        {
+            _logger.LogWarning(
+                "Task {ShortId}: brief ensure skipped; dispatch time or session generation is missing",
+                DelegationReportFormatter.Short(task.Id));
+            return;
+        }
+
+        await _queue.EnsureDispatchBriefAsync(new DispatchBriefEnsureRequest(
+            task.Id, task.Attempt, sessionId, dispatched, started, refocus), ct);
+    }
+
+    private async Task TryEnsureReuseBriefAsync(
+        AgentTask task, Guid session, DateTime? sessionStartedAt, bool refocus, CancellationToken ct)
+    {
+        try
+        {
+            await EnsureLaunchBriefAsync(task, session, sessionStartedAt, ct, refocus);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex, "Task {ShortId}: reuse brief was not queued ({Message})",
+                DelegationReportFormatter.Short(task.Id), ex.Message);
+            await RecordReuseEnqueueFailedAsync(task, session, "brief", ex, ct);
+        }
     }
 
     /// <summary>
