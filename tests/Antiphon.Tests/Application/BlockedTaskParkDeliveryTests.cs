@@ -323,15 +323,28 @@ public sealed class BlockedTaskParkDeliveryTests
 
         await using (var local = await ParkedPredecessor.CreateAsync(remote: false))
         {
+            // This local park's task has no runner and its release has no settlement identity,
+            // so answer admission refuses it; guidance names neither Reply nor cancel (CARD-1154).
             var before = await local.CountAsync();
             await using var db = local.Kit.Context();
+            var prior = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == local.PriorId);
+            (await local.Kit.Service(db).RemotePoolParkReplyAsync(prior, CancellationToken.None))
+                .ShouldBe(AgentTaskService.RemotePoolParkReply.ReleaseMismatch, "G-169");
             var refused = await Should.ThrowAsync<ConflictException>(() => local.Kit.Service(db).CreateAsync(
                 local.Follow(), local.Kit.Caller, CancellationToken.None));
+            refused.StatusCode.ShouldBe(409, "G-169");
             refused.Code.ShouldBe("follow_up_agent_blocked", "G-169");
             refused.Message.ShouldContain(DelegationReportFormatter.Short(local.PriorId), Case.Sensitive, "G-169");
-            refused.Message.ShouldContain("delegate.ps1 -Reply", Case.Sensitive, "G-169");
-            refused.Message.ShouldNotContain("/cancel", Case.Sensitive, "G-169");
+            refused.Message.ShouldContain("does not match answer admission", Case.Sensitive, "G-169");
+            refused.Message.ShouldContain("cannot be continued", Case.Sensitive, "G-169");
+            refused.Message.ShouldNotContain("-Reply", Case.Sensitive, "G-169");
+            refused.Message.ShouldNotContain("cancel", Case.Insensitive, "G-169");
+            refused.Message.ShouldNotContain("published seat was released", Case.Sensitive, "G-169");
             (await local.CountAsync()).ShouldBe(before, "G-169");
+            var after = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == local.PriorId);
+            after.Status.ShouldBe(AgentTaskStatus.Blocked, "G-169");
+            after.Attempt.ShouldBe(prior.Attempt, "G-169");
+            after.ConcurrencyToken.ShouldBe(prior.ConcurrencyToken, "G-169");
         }
 
         await using var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked, parking: true);
@@ -366,13 +379,14 @@ public sealed class BlockedTaskParkDeliveryTests
         var before = await CountTasksAsync(f);
         var blockedShort = DelegationReportFormatter.Short(f.TaskId);
 
+        // Task detail keeps the weak confirmed-park projection (outside CARD-1154). The local
+        // 409 follows answer admission, which refuses this retired, unbound park: it names
+        // neither Reply nor cancel, and an actual Reply is vetoed without effects.
         var parked = await DetailAsync(f);
         parked.CanAnswer.ShouldBeTrue("G-7");
         parked.Context.ShouldNotBeNull().ShouldContain("published seat was released", Case.Sensitive, "G-7");
-        var released = await Should.ThrowAsync<ConflictException>(() => FollowUpAsync(f));
-        released.Code.ShouldBe("follow_up_agent_blocked", "G-7");
-        released.Message.ShouldContain("The published seat was released", Case.Sensitive, "G-7");
-        (await CountTasksAsync(f)).ShouldBe(before, "G-7");
+        await LocalMismatchRefusedAsync(f, before, "G-7");
+        await VetoedReplyAsync(f, "G-7");
 
         await AdvanceAttemptAsync(f);
         var moved = await DetailAsync(f);
@@ -387,9 +401,9 @@ public sealed class BlockedTaskParkDeliveryTests
         var again = await DetailAsync(f);
         again.CanAnswer.ShouldBeTrue("G-7");
         again.Context.ShouldNotBeNull().ShouldContain("published seat was released", Case.Sensitive, "G-7");
-        var releasedAgain = await Should.ThrowAsync<ConflictException>(() => FollowUpAsync(f));
-        releasedAgain.Code.ShouldBe("follow_up_agent_blocked", "G-7");
-        releasedAgain.Message.ShouldContain("The published seat was released", Case.Sensitive, "G-7");
+        // An incomplete receipt for the current attempt is the same mismatch, not a Reply.
+        await LocalMismatchRefusedAsync(f, before, "G-7");
+        await VetoedReplyAsync(f, "G-7");
 
         await AlignReplyAdmissionAsync(f, "server2");
         var named = await Should.ThrowAsync<ValidationException>(() => FollowUpAsync(f));
@@ -809,6 +823,45 @@ public sealed class BlockedTaskParkDeliveryTests
                 FollowUpOnTask: f.TaskId.ToString("D")),
             new AgentTaskService.Caller(null, null, f.Harness.TempRoot),
             CancellationToken.None);
+    }
+
+    private static async Task LocalMismatchRefusedAsync(RunnerSeatReleaseFixture f, int tasks, string label)
+    {
+        var task = await f.TaskAsync();
+        var refused = await Should.ThrowAsync<ConflictException>(() => FollowUpAsync(f));
+        refused.StatusCode.ShouldBe(409, label);
+        refused.Code.ShouldBe("follow_up_agent_blocked", label);
+        refused.Message.ShouldContain($"parked on Blocked task {DelegationReportFormatter.Short(f.TaskId)}", Case.Sensitive, label);
+        refused.Message.ShouldContain("does not match answer admission", Case.Sensitive, label);
+        refused.Message.ShouldContain("cannot be continued", Case.Sensitive, label);
+        refused.Message.ShouldNotContain("-Reply", Case.Sensitive, label);
+        refused.Message.ShouldNotContain("cancel", Case.Insensitive, label);
+        refused.Message.ShouldNotContain("published seat was released", Case.Sensitive, label);
+        (await CountTasksAsync(f)).ShouldBe(tasks, label);
+        var after = await f.TaskAsync();
+        after.Status.ShouldBe(task.Status, label);
+        after.Attempt.ShouldBe(task.Attempt, label);
+        after.ConcurrencyToken.ShouldBe(task.ConcurrencyToken, label);
+    }
+
+    // The Reply that the old local guidance recommended is refused and changes nothing.
+    private static async Task VetoedReplyAsync(RunnerSeatReleaseFixture f, string label)
+    {
+        var task = await f.TaskAsync();
+        var launches = f.Launches.Calls.Count;
+        var refused = (await f.TryAnswerAsync($"answer for {label}")).ShouldBeOfType<ConflictException>(label);
+        refused.StatusCode.ShouldBe(409, label);
+        refused.Code.ShouldBe("park_release_identity_mismatch", label);
+        var after = await f.TaskAsync();
+        after.Status.ShouldBe(AgentTaskStatus.Blocked, label);
+        after.Attempt.ShouldBe(task.Attempt, label);
+        after.ConcurrencyToken.ShouldBe(task.ConcurrencyToken, label);
+        after.ReleasedSeatAnswerId.ShouldBeNull(label);
+        f.Launches.Calls.Count.ShouldBe(launches, label);
+        await using var db = f.Db();
+        (await db.AgentTaskEvents.CountAsync(e => e.AgentTaskId == f.TaskId && e.Type == AgentTaskEventType.Replied))
+            .ShouldBe(0, label);
+        (await db.SessionQueuedMessages.CountAsync(m => m.ExecutionTaskId == f.TaskId)).ShouldBe(0, label);
     }
 
     private static async Task<int> CountTasksAsync(RunnerSeatReleaseFixture f)
