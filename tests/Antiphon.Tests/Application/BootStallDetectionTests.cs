@@ -660,8 +660,9 @@ public class BootStallDetectionTests
     /// reply the database has not stored yet reaches the decision. Every argument starts from
     /// stored rows with an accepted prompt 21 minutes old and no model reply, so the stored-row
     /// pass alone would write BootStallNeedsOperator. fresh-reply-lands-in-the-pull: the pull
-    /// lands a reply stamped now; the episode ends and the ordinary policy finds nothing due (no
-    /// warning, task Working, and the next sweep has no reason to pull). stale-reply-lands-in-the-pull:
+    /// lands a reply stamped now; Gate 2 re-reads the clocks, the episode ends and the ordinary
+    /// policy finds nothing due (its "the pull is what saved it" record, no warning, task Working,
+    /// and the next sweep has no reason to pull). stale-reply-lands-in-the-pull:
     /// the pull lands a reply the tailer missed 30 s after the prompt; the ordinary general clock
     /// fails the task non-destructively, with no boot warning. pull-times-out: the production pull
     /// reaches the runner and its transcript request times out (a TaskCanceledException on an
@@ -676,7 +677,7 @@ public class BootStallDetectionTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var world = await BootStallWorld.CreateAsync(
-            schema.ConnectionString, new BootStallWorldOptions { MinutesAgo = 21 });
+            schema.ConnectionString, new BootStallWorldOptions { MinutesAgo = 21, MinimumLogLevel = LogLevel.Information });
         var before = await world.TaskAsync();
         await using (var db = world.Read())
         {
@@ -715,6 +716,9 @@ public class BootStallDetectionTests
             case "fresh-reply-lands-in-the-pull":
                 failed.ShouldBe(0, world.Warnings());
                 pulls.ShouldBe(1, "the sweep pulled before deciding");
+                world.LogEntries().ShouldContain(
+                    e => e.Level == LogLevel.Information && e.Message.Contains("the pull is what saved it"),
+                    "Gate 2 re-read the clocks after the pull and found nothing due");
                 (await world.BootWarningsAsync()).ShouldBeEmpty("the reply the pull landed ended the episode");
                 (await world.RunOverdueSweepAsync()).ShouldBe(0, world.Warnings());
                 pulls.ShouldBe(1, "with the reply stored nothing is due, so nothing is pulled");
