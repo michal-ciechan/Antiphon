@@ -619,3 +619,72 @@ cold path kills, and the checkpoint table imports.
 
 Alternate outputs `bin-c1156td/` and `bin-c1156td-tool/` are deleted after these runs; results
 stay under the ignored `.antiphon/c1156-td/`.
+
+## As built: S1-S3 (Code task c7e48c17)
+
+Branch `feat/card-task-c7e48c17` from `origin/master` `f8ecf3e6b4a5bd6895b3b0bc7e368d4d7c3cd0f6`
+(CARD-1151 S4 repair and S5 landed). The plan commit `877b98294` and this design's commit
+`6425df245` were cherry-picked with no conflict: both add new files only, and master's landed
+`BootReplyWatchdogTests.cs`, owner documents and `BootStallDocumentationTests.cs` were not touched
+by either. Production: `BootReplyWatchdogService.cs`, `BootReplyWatch.cs`, new
+`StandingBootWatchPolicy.cs`, `StandingBootWatchObservation.cs`, `StandingBootWarningWriter.cs`.
+Tests: `BootReplyWatchdogTests.cs` (three reversals), `StandingBootWatchPolicyTests.cs` (V-3, V-4),
+`StandingBootWatchdogTests.cs` (V-2, V-5, V-6, V-7, V-12), new `StandingBootWatchFixture.cs`,
+`ListedInventoryRunner.Transcript`. No migration, no `Program.cs` change (the sweep takes the
+registered `IEventBus` through a new optional constructor parameter). S4, S5 and S6 bodies remain
+skipped skeletons.
+
+Decisions and deviations Review should check:
+
+- **V-12 is implemented here, not in S5.** Its skeleton said S5, but the checkpoint table runs it
+  as CP-8 in the S1-S3 group, and it is the fail-closed no-recovery witness for the behaviour S1-S3
+  ships.
+- **V-5 new-generation and new-resume-clock move one identity component each**: the accepted
+  generation (with a seeded resume so the launch clock stays put) and the resume clock (moved, but
+  kept before the prompt). A new prompt would also change `p=` and hide a missing `g=` or `l=`
+  (PC-6); the refined prompt is the new-prompt argument.
+- **`BootReplyWatch.cs`**: besides the additive loaded-row `LoadBootTurnAsync` overload, the prompt
+  half of the predicate is extracted as `LoadPromptTurnAsync` (returning the latest real prompt's
+  kind, so a queued record is labelled as queued). The original `LoadBootTurnAsync(db, id, clock)`
+  calls it and keeps its semantics; R-1 (CP-9) guards that.
+- **Routing after the pull**: one owner read and one open-task read. A Dispatched/Working task stands
+  down for every population (unchanged). No AlwaysOn pointer owner: the generic diagnostic keeps
+  its `bootSeq=` Warning and disarm, minus the agent/supervision reads, the latch and the stop.
+  Otherwise the standing observation and policy decide; a Queued/Blocked owner, ambiguity, conflict
+  or unknown emits nothing and keeps the session.
+- **Pre-check and stale watch**: the recorded-key pre-check is skipped while a prompt row sits past
+  the watched sequence (a refinement may be a new episode); an `identity-changed`, `prompt-missing`
+  or `reply-observed` refusal re-derives the watch through `TryArmAsync` (watch columns only), so
+  the next tick judges the current episode.
+- **Cost**: a delegate-owned overdue session now costs the pre-check and the owner read on top of
+  today's rows/pull/rows/task read (6 commands plus the pull). The standing paths follow the
+  designed rosters; V-11 pins them in S5.
+
+Author red (method-scoped, `bin-c1156dev/`, each mutation restored with `git checkout -- server/`
+and the restored build re-run green). Batches touched different files and methods only.
+
+| Test | Production mutation | Red at |
+|---|---|---|
+| `BootReplyWatchdogTests.a_standing_boot_stall_is_detected_without_stopping_or_driving_the_restart_ladder` | M1: `ObserveStandingAsync` calls `IDelegateSessionStopper.KillAsync` after `Recorded` (batch A) | `Stopper.Killed` should be empty |
+| `StandingBootWatchdogTests.C1156_Working_boot_keeps_its_session_and_supervisor_custody` (3/3) | M1 | custody snapshot (session Stopped) |
+| `StandingBootWatchPolicyTests.C1156_Stages_use_the_prompt_clock` (`boot-longer-than-model`) | M4: `Facts` drops the `max(boot, operator)` raise (batch A) | `before.Stage` |
+| `StandingBootWatchdogTests.C1156_Fresh_evidence_revokes_stale_emission` (queued, blocked, pointer, generation) | M7: writer skips `SameOwnerAndSession` (batch A) | sweep returned 1 (a stale receipt) |
+| `StandingBootWatchdogTests.C1156_Evidence_variants_never_authorize_recovery` (8/9; the generic diagnostic has no standing receipt) | M2: `ConsecutiveFailures++` on the owner's supervision row after `Recorded` (batch B) | custody snapshot (supervision) |
+| `BootReplyWatchdogTests.boot_silence_preserves_existing_failure_history_without_creating_a_latch` | M2 | `state.ConsecutiveFailures` |
+| `StandingBootWatchPolicyTests.C1156_Emission_requires_each_positive_condition` (task-queued, -dispatched, -working, -blocked) | M3: task-owner clause bypassed (batch B) | `decision.Reason` |
+| `StandingBootWatchdogTests.C1156_Episodes_deduplicate_and_reopen_only_for_new_identity` (`concurrent-sweeps`) | PC-7: writer reads the session with a plain `SELECT` (batch B) | sweep B returned nonzero |
+| same method (`new-generation`) | PC-6a: `EpisodePrefix` omits `g=` (batch C) | second sweep returned 0 (suppressed) |
+| `BootReplyWatchdogTests.an_unanswered_standing_boot_raises_once_and_keeps_its_watch_for_escalation` | M8: clear the watch columns after `Recorded` (batch C2) | `session.BootReplyDueAt` should not be null |
+| `StandingBootWatchdogTests.C1156_Telemetry_faults_preserve_custody_and_future_writes` (`caller-cancel`) | PC-10b: writer `catch (Exception)` swallows cancellation (batch C2) | warnings should not contain "Could not record" |
+
+The PC-10b cycle was first green: the sweep's per-session cancellation check still threw for the
+trailing session. The argument was strengthened (cancellation is never logged as a telemetry
+fault) and then went red. Every PC in "Positive controls" stays pending for post-land
+SourceLanding Mutation; these author-red cycles do not discharge any of them.
+
+Slice order for the next tasks: **S4** (`AttentionService` boot projection, new
+`StandingBootAttentionProjection.cs`, `AgentSupervisorService.PruneIncidentsAsync` only; CP-10..16),
+then **S5** (V-11 statement budgets, CP-17/18 plus the S5-S6 regression rows), then **S6** (owner
+documents, `BootStallDocumentationTests.AlwaysOnExceptionSentence` and its two assertions replaced,
+V-13; CP-28/29). AppHost restart is needed after the reviewed land (server change); no runner
+upgrade and no migration.
