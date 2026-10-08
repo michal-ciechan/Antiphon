@@ -63,9 +63,8 @@ internal static class TaskDeadlinePolicy
         /// <summary>
         /// The BOOT turn: the session has produced nothing at all since its own first prompt, so
         /// the model owes its FIRST token (CARD-0353 S1). A tightening of
-        /// <see cref="ModelWait"/> and never a widening — it applies only where the general arm
-        /// would have applied, and only where there is provably nothing to protect. That is what
-        /// earns it the right to kill and retry, which <see cref="ModelWait"/> does not have.
+        /// <see cref="ModelWait"/> for NOTICE only: since CARD-1151 its breach is detection
+        /// (<see cref="BootStallPolicy"/>), never a failure, stop or retry.
         /// </summary>
         BootModelWait = 3,
     }
@@ -103,6 +102,13 @@ internal static class TaskDeadlinePolicy
 
         /// <summary>Worth surfacing to a human, whether or not it has fired yet.</summary>
         internal bool WorthSurfacing => Fraction >= PreviewFraction;
+
+        /// <summary>
+        /// CARD-1151 D-1. The unresolved boot episode behind this verdict, whichever clock won;
+        /// null when the boot predicate positively answered (a model row since the launch clock,
+        /// or no real prompt). Non-null means the task is detection only.
+        /// </summary>
+        internal BootStallFacts? Boot { get; init; }
     }
 
     /// <summary>
@@ -148,6 +154,23 @@ internal static class TaskDeadlinePolicy
         var last = await LoadLastEntryAsync(db, sessionId, ct);
         var lastAge = last is null ? (TimeSpan?)null : NonNegative(now - last.At);
 
+        // CARD-1151 D-1: the boot predicate is read at most once per evaluation and its facts ride
+        // on whichever verdict wins.
+        BootStallFacts? bootFacts = null;
+        var bootRead = false;
+        async Task<BootStallFacts?> ReadBootAsync()
+        {
+            bootRead = true;
+            var launch = await LoadLaunchAsync(db, task, sessionId, ct);
+            var turn = await BootReplyWatch.LoadBootTurnAsync(db, sessionId, launch.Clock, ct);
+            bootFacts = turn is null
+                ? null
+                : BootStallPolicy.Facts(
+                    launch.StartedAt, launch.Clock, turn,
+                    settings.BootModelWaitDeadlineMinutes, settings.ModelWaitDeadlineMinutes);
+            return bootFacts;
+        }
+
         Verdict? best = null;
         if (ceiling > TimeSpan.Zero)
         {
@@ -170,16 +193,16 @@ internal static class TaskDeadlinePolicy
             var (phaseKind, phaseLimit) = ClassifyPhase(last.Kind, modelWait, localExecution);
 
             // The BOOT arm (CARD-0353 S1). Asked only where the general model-wait arm already
-            // applies, so it can only ever TIGHTEN: a session that has produced nothing since its
-            // own first prompt is not "mid-turn holding work", it is a first token that never
-            // came. One extra query, and only for a task already past 80% of the smallest armed
-            // limit — the cheap gate above has already turned the ordinary tick away.
-            if (bootWait > TimeSpan.Zero && phaseKind == DeadlineKind.ModelWait)
+            // applies, so it can only ever TIGHTEN the notice: a session that has produced nothing
+            // since its own first prompt is a first token that never came. Only for a task
+            // already past 80% of the smallest armed limit — the cheap gate above has already
+            // turned the ordinary tick away. Read even with the boot notice disabled: disabling
+            // it removes the eight-minute event, not the protection (CARD-1151 D-1).
+            if (phaseKind == DeadlineKind.ModelWait
+                && await ReadBootAsync() is not null
+                && bootWait > TimeSpan.Zero)
             {
-                var boot = await BootReplyWatch.LoadBootTurnAsync(
-                    db, sessionId, await LaunchClockAsync(db, task, sessionId, ct), ct);
-                if (boot is not null)
-                    (phaseKind, phaseLimit) = (DeadlineKind.BootModelWait, bootWait);
+                (phaseKind, phaseLimit) = (DeadlineKind.BootModelWait, bootWait);
             }
 
             if (phaseLimit > TimeSpan.Zero)
@@ -199,14 +222,22 @@ internal static class TaskDeadlinePolicy
                     + $"{(int)phaseLimit.TotalMinutes}-minute deadline. {DescribeLast(last, lastAge)}"
                     + (phaseKind == DeadlineKind.BootModelWait
                         ? " The session has produced no assistant, thinking or tool row since its"
-                          + " own prompt — this is a boot turn, so nothing it did would be lost."
+                          + " own prompt — this is a boot turn."
                         : string.Empty));
                 if (best is null || candidate.Fraction > best.Fraction)
                     best = candidate;
             }
         }
 
-        return best is { WorthSurfacing: true } ? best : null;
+        if (best is not { WorthSurfacing: true })
+            return null;
+
+        // A verdict the caller may act on carries the boot identity whichever clock won: a role
+        // ceiling, an earlier custom ceiling, or a non-boot phase. Only read here when the phase
+        // arm did not already answer, so it costs nothing on the ordinary preview path.
+        if (!bootRead && last is not null)
+            await ReadBootAsync();
+        return best with { Boot = bootFacts };
     }
 
     /// <summary>
@@ -241,14 +272,23 @@ internal static class TaskDeadlinePolicy
     /// session that had only just been handed its prompt.
     /// </summary>
     internal static async Task<DateTime> LaunchClockAsync(
+        AppDbContext db, AgentTask task, Guid sessionId, CancellationToken ct) =>
+        (await LoadLaunchAsync(db, task, sessionId, ct)).Clock;
+
+    /// <summary>
+    /// <see cref="LaunchClockAsync"/> plus the session row's accepted generation, in the same one
+    /// query. The generation is null when the row is missing.
+    /// </summary>
+    private static async Task<(DateTime Clock, DateTime? StartedAt)> LoadLaunchAsync(
         AppDbContext db, AgentTask task, Guid sessionId, CancellationToken ct)
     {
         var clock = task.DispatchedAt ?? DateTime.MinValue;
-        var resumed = await db.AgentSessions.AsNoTracking()
+        var row = await db.AgentSessions.AsNoTracking()
             .Where(s => s.Id == sessionId)
-            .Select(s => s.LaunchResumedAt)
+            .Select(s => new { s.LaunchResumedAt, StartedAt = (DateTime?)s.StartedAt })
             .FirstOrDefaultAsync(ct);
-        return resumed is DateTime at && at > clock ? at : clock;
+        var resumed = row?.LaunchResumedAt;
+        return (resumed is DateTime at && at > clock ? at : clock, row?.StartedAt);
     }
 
     /// <summary>
