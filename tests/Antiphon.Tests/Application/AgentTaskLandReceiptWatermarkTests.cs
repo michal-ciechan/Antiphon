@@ -348,7 +348,6 @@ public sealed class AgentTaskLandReceiptWatermarkTests
             candidates: evidence == "fallback-confirms-with-unavailable-runner"
                 ? body => seq => seq == Floor + 1 ? (TranscriptKinds.UserPrompt, body) : (TranscriptKinds.UserPrompt, LandReceiptScanHarness.Filler(seq))
                 : null,
-            detail: evidence == "oversized-body" ? new string('d', LandReceiptScanCache.MaxExpectedTextChars + 1) : null,
             row: evidence == "timestamp-only-baseline" ? r => r.LastDeliveryBaselineSequence = null : null,
             destination: evidence switch
             {
@@ -396,8 +395,11 @@ public sealed class AgentTaskLandReceiptWatermarkTests
                 await h.UpdateNoteAsync(note.Id, n => n.Kind = LandNotificationKind.LegacyCheckNote);
                 break;
             case "oversized-body":
-                note.Body.Length.ShouldBeGreaterThan(LandReceiptScanCache.MaxExpectedTextChars);
-                (await h.RowAsync(row.Id)).Body.ShouldBe(note.Body, "an ordinary body, refused only for its size");
+                // An ordinary body, equal on note and row, refused only for its size.
+                var oversized = note.Body + "\n" + new string('d', LandReceiptScanCache.MaxExpectedTextChars);
+                oversized.Length.ShouldBeGreaterThan(LandReceiptScanCache.MaxExpectedTextChars);
+                await h.UpdateNoteAsync(note.Id, n => n.Body = oversized);
+                await h.UpdateRowAsync(row.Id, r => r.Body = oversized);
                 break;
         }
 
@@ -460,7 +462,9 @@ public sealed class AgentTaskLandReceiptWatermarkTests
             case "cached-stays-open":
             {
                 // The same fixture reconciled with no cache registered: every outcome column is today's.
+                await h.SetStatusAsync(parent, SessionStatus.Running);
                 var control = await h.SeedLinkedNoteAsync();
+                await h.SetStatusAsync(parent, SessionStatus.Stopped);
                 var controlRow = await h.MarkSentAsync(control, r => r.AgentSessionId = other);
                 await using var db = h.Fixture();
                 var today = new AgentTaskLandNotificationService(db, h.Bridge.Queue, new CompletionNoteFlushQueue(), h.Runtime, TimeProvider.System);
@@ -508,7 +512,8 @@ public sealed class AgentTaskLandReceiptWatermarkTests
         if (arm == "running-destination-real-delivery")
         {
             AgentTaskLandNotification note = null!;
-            note = await h.SeedLinkedNoteAsync(beforeEnqueue: async seeded =>
+            // A body that fits one write, so the queue types it whole rather than spilling it.
+            note = await h.SeedLinkedNoteAsync("C1121 real delivery outcome", beforeEnqueue: async seeded =>
                 await h.SeedTranscriptAsync(h.SessionId));
             await h.AssertCoherentAsync(h.SessionId);
             // The real queue types the keyed row; the submission lands through the runtime ingest.
@@ -521,6 +526,7 @@ public sealed class AgentTaskLandReceiptWatermarkTests
 
             var pass = await PassAsync(h, note.Id);
             pass.ReceiptSelects.ShouldBe(1);
+            row.Body.ShouldBe(note.Body, "typed whole");
             var confirmed = await h.InMemoryFirstReceiptAsync(h.SessionId, floor, false, LandNotificationKind.Outcome, note.Body);
             await ShouldBeConfirmedAtAsync(h, note, confirmed.ShouldNotBeNull(), floor);
             h.Cache!.GetMetrics().Publishes.ShouldBe(0, "a live destination is never certified (A-1)");

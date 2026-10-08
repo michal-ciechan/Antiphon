@@ -219,7 +219,7 @@ internal sealed class LandReceiptScanHarness : IAsyncDisposable
         row.DeliveryVerdict = null;
         change?.Invoke(row);
         await db.SaveChangesAsync();
-        return row;
+        return await RowAsync(row.Id); // as stored: timestamps carry the column's precision
     }
 
     public async Task SetStatusAsync(Guid session, SessionStatus status)
