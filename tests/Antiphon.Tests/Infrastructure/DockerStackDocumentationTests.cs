@@ -57,7 +57,16 @@ public sealed class DockerStackDocumentationTests
         // CARD-1105 repair 4: present-origin comparison, admin-directory scan, commit-graph
         // off, product/agent state, the ignored-files decision and the overall budget.
         section.ShouldContain("`core.commitGraph=false`");
-        section.ShouldContain("against the origin heads that `ls-remote` advertises and that are present in the clone");
+        // CARD-1105 repair 6: origin's real heads are fetched into a scratch proof repository; the
+        // present-only comparison is the fallback, and runner-tmp checkouts are read in a read-only mount.
+        section.ShouldNotContain("against the origin heads that `ls-remote` advertises and that are present in the clone", Case.Sensitive,
+            "the present-only comparison is now the fallback");
+        section.ShouldNotContain("An advertised head the clone has not fetched is skipped", Case.Sensitive, "fetched heads are compared");
+        section.ShouldContain("fetches origin's heads without blobs (`git fetch --filter=blob:none`) into a scratch bare repository");
+        section.ShouldContain("so the audited volume is never written");
+        section.ShouldContain("only the advertised heads present in the clone are compared, which can only refuse more");
+        section.ShouldContain("which the audit helper mounts read-only beside `/work`");
+        section.ShouldContain("counts `commits`, `tips`, `gone-tracking`");
         section.ShouldNotContain("must prove publication against current origin heads", Case.Sensitive,
             "the exact-advertisement comparison is gone");
         section.ShouldContain("audited whether or not its checkout still exists");
