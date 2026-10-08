@@ -29,7 +29,7 @@ Red proofs: one batched mutant build of three mutations in three different files
 ## Invariants
 
 - Boot-stall tail `TryFailBootStallAsync` lines 3211–3324: old master `e2c51501` hash `59f5909b7e5b80ddad0bace8bea4279771072d541d909186e09940113c18b711`; current master `31632adc` same lines, same hash; tested HEAD same hash. `AgentTaskDispatcher.cs` is not touched by the repair commits.
-- No kill/stop/release/fail of a Working session added; the ensure stays off the tick and absent-scan paths. Budgets (CP-67 TRX stdout): `held-dispatched-tick total=18`, `working-live-tick total=18`, `inside-grace-absent-scan total=4`.
+- No kill/stop/release/fail of a Working session added by this slice (the inherited CARD-1151 boot-stall tail, CP-37, still stops an aged prompt-only Working session and is untouched here). The ensure is absent from the steady-state held/young tick and the absent scan; it runs on post-claim dispatch, the boot-wedge launch brief, reuse/refocus and interrupted-launch backfill. (Qualified by CARD-1150 S2 repair 3, F9.) Budgets (CP-67 TRX stdout): `held-dispatched-tick total=18`, `working-live-tick total=18`, `inside-grace-absent-scan total=4`.
 - S1 absent-launch whitelist hold untouched. No migration. No assertion weakened or deleted. Rollback path still detaches added entities and reloads the task.
 - Note (not changed, fail-closed by design): an inline row whose body mentions a relative `.antiphon/` path (for example a full-inline specialist brief carrying the reporting contract's `.antiphon/task-<id>.md`) is classified as a spill claim with no payload → Unavailable hold if the ensure ever classifies it. Review may want a card.
 

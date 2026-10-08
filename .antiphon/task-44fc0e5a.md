@@ -203,7 +203,7 @@ All `bin-c1150r2*`, `bin-c1150r2m` and `bin-c1150r4drv` directories were deleted
 
 ## Invariants
 
-- CARD-0079 is still the only automatic stop. Nothing stops, releases or fails a Working session, or relaunches anything; CP-72 asserts the session is still Running.
+- This repair adds no stop, release, fail or relaunch path, and S2 itself adds none. That is narrower than "nothing stops a Working session": the inherited boot-stall tail (CARD-1151, `TryFailBootStallAsync`, characterized by CP-37 `Aged_prompt_only_Working_tick_stops_the_session_and_requeues_once`) still stops and requeues an aged prompt-only Working session today, and is being replaced separately. CARD-0079 remains the only automatic stop the session contract allows; the boot-stall tail is the known, tracked exception (D-7). CP-72 asserts only that its tested ensure path leaves the session Running. (Corrected by CARD-1150 S2 repair 3, F9.)
 - `AgentTaskDispatcher.cs` is untouched: an empty diff for e158cfe5..HEAD.
 - The ensure path and its queries are unchanged. Budgets are 18/18/4.
 - The boot-stall tail, lines 3211–3324, has SHA-256 `59f5909b7e5b80ddad0bace8bea4279771072d541d909186e09940113c18b711` at e2c51501, 31632adc, e158cfe5 and HEAD.
