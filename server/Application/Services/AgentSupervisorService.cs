@@ -578,11 +578,38 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
             ct);
     }
 
-    /// <summary>Nightly-ish hygiene: incidents past retention or beyond the per-agent cap.</summary>
+    /// <summary>
+    /// Nightly-ish hygiene: incidents past retention or beyond the per-agent cap.
+    ///
+    /// <para>CARD-1156 D-5: the receipts of a CURRENT unresolved standing boot episode are the boot
+    /// sweep's dedup evidence, so they are exempt from both deletes until a positive fact resolves
+    /// the episode (<see cref="StandingBootAttentionProjection.CurrentEpisodeKeysAsync"/>). When those
+    /// keys cannot be read, every <c>standingBoot:v1;</c> receipt is retained this pass: uncertainty
+    /// never deletes dedup evidence. Nothing here touches restart or counter logic.</para>
+    /// </summary>
     public async Task<int> PruneIncidentsAsync(CancellationToken ct)
     {
+        IReadOnlyList<string> protectedKeys = [];
+        var retainAllStanding = false;
+        try
+        {
+            protectedKeys = await StandingBootAttentionProjection.CurrentEpisodeKeysAsync(_db, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            retainAllStanding = true;
+            _logger.LogWarning(
+                ex, "Could not read the current standing boot episodes; every {Prefix} receipt is retained this prune",
+                StandingBootWatchPolicy.KeyPrefix);
+        }
+
+        var prunable = retainAllStanding
+            ? _db.AgentIncidents.Where(i => i.FailureReason == null
+                || !i.FailureReason.StartsWith(StandingBootWatchPolicy.KeyPrefix))
+            : _db.AgentIncidents.Where(i => i.FailureReason == null || !protectedKeys.Contains(i.FailureReason));
+
         var cutoff = UtcNow().AddDays(-_settings.IncidentRetentionDays);
-        var removed = await _db.AgentIncidents.Where(i => i.CreatedAt < cutoff).ExecuteDeleteAsync(ct);
+        var removed = await prunable.Where(i => i.CreatedAt < cutoff).ExecuteDeleteAsync(ct);
 
         var overCap = await _db.AgentIncidents
             .GroupBy(i => i.AgentId)
@@ -596,7 +623,7 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
                 .OrderByDescending(i => i.CreatedAt)
                 .Take(_settings.IncidentCapPerAgent)
                 .Select(i => i.Id);
-            removed += await _db.AgentIncidents
+            removed += await prunable
                 .Where(i => i.AgentId == agentId && !keepIds.Contains(i.Id))
                 .ExecuteDeleteAsync(ct);
         }
