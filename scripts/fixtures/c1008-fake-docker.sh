@@ -107,10 +107,18 @@ else if(args[0]==='volume'&&args[1]==='inspect') {
  } else fail();
 } else if(args[0]==='create') {
  if(!args.includes('--user')||args[args.indexOf('--user')+1]!=='1654:1654'||!args.includes('--entrypoint'))fail();
- const mount=args[args.indexOf('--mount')+1];
+ // CARD-1105 repair 6: /work first, a private tmpfs at /tmp, and the runner-tmp volume
+ // read-only at /runner-tmp with C1008_TMP_MOUNT when that volume exists.
+ const mounts=args.flatMap((a,i)=>a==='--mount'?[args[i+1]]:[]),envs=args.flatMap((a,i)=>a==='--env'?[args[i+1]]:[]);
+ const mount=mounts[0]||'';
  if(!mount.endsWith(',readonly')||!mount.includes('target=/work'))fail();
  const vol=mount.match(/source=([^,]+)/)[1];if(!state.volumes[vol])fail();
- const id='6'.repeat(64);state.auditProgram=args[args.indexOf('-c')+1];state.containers.push({Id:id,Image:'sha256:'+'a'.repeat(64),State:{Running:false,Status:'created'},Config:{Labels:{'io.antiphon.audit':'true'}},Mounts:[{Type:'volume',Name:vol,Source:state.volumes[vol].Mountpoint,Destination:'/work'}]});save();out(id+'\n');
+ if(mounts[1]!=='type=tmpfs,destination=/tmp,tmpfs-mode=1777,tmpfs-size=2147483648')fail();
+ const tmpVol=vol.replace(/_work$/,'_runner-tmp'),Mounts=[{Type:'volume',Name:vol,Source:state.volumes[vol].Mountpoint,Destination:'/work'}];
+ if(mounts.length===3){if(mounts[2]!=='type=volume,source='+tmpVol+',target=/runner-tmp,readonly'||!state.volumes[tmpVol]||envs.join()!=='C1008_TMP_MOUNT=/runner-tmp')fail();
+  Mounts.push({Type:'volume',Name:tmpVol,Source:state.volumes[tmpVol].Mountpoint,Destination:'/runner-tmp'});}
+ else if(mounts.length!==2||envs.length||state.volumes[tmpVol])fail();
+ const id='6'.repeat(64);state.auditProgram=args[args.indexOf('-c')+1];state.auditEnv=envs;state.containers.push({Id:id,Image:'sha256:'+'a'.repeat(64),State:{Running:false,Status:'created'},Config:{Labels:{'io.antiphon.audit':'true'}},Mounts});save();out(id+'\n');
 } else if(args[0]==='start') {
  const id=args.at(-1),c=state.containers.find(c=>c.Id===id);if(!c)fail();
  // Remap the mount path, preserving unrelated scratch filenames such as /worktrees.
@@ -127,7 +135,10 @@ else if(args[0]==='volume'&&args[1]==='inspect') {
   gitPath=shim+':'+gitPath;
  }
  if(state.gitStderr)process.stderr.write(state.gitStderr+'\n');
- const run=cp.spawnSync('bash',['-c',program],{env:{...process.env,PATH:gitPath},encoding:'utf8',timeout:15000});out(run.stdout||'');c.State={Running:false,Status:'exited'};save();process.exit(run.status??2);
+ // The runner-tmp volume is the fixture's runner-tmp directory.
+ const auditEnv={};for(const e of state.auditEnv||[]){const [k,v]=e.split('=');auditEnv[k]=v==='/runner-tmp'?path.join(root,'runner-tmp'):v;}
+ if(auditEnv.C1008_TMP_MOUNT)fs.mkdirSync(auditEnv.C1008_TMP_MOUNT,{recursive:true});
+ const run=cp.spawnSync('bash',['-c',program],{env:{...process.env,PATH:gitPath,...auditEnv},encoding:'utf8',timeout:15000});out(run.stdout||'');c.State={Running:false,Status:'exited'};save();process.exit(run.status??2);
 } else if(args[0]==='cp') {
  // The pinned audit helper receives only the test-materialized production program.
  const source=args[1];fs.copyFileSync(source,path.join(root,'audit.sh'));
