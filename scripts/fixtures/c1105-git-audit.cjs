@@ -285,11 +285,13 @@ const hidden = {
     'tag-annotated-published': [P, () => { git('tag', '-a', 'release', '-m', 'published annotation'); git('push', '-q', 'origin', 'release'); }],
     'tag-of-tag': [U, () => { git('tag', '-a', 'inner', '-m', 'inner'); git('push', '-q', 'origin', 'inner'); git('tag', '-a', 'outer', '-m', 'outer', 'inner'); }, 'check=tip-object'],
     'tag-of-tag-published': [P, () => { git('tag', '-a', 'inner', '-m', 'inner'); git('tag', '-a', 'outer', '-m', 'outer', 'inner'); git('tag', '-d', 'inner'); git('push', '-q', 'origin', 'outer'); }],
-    'tag-lightweight': [P, () => git('tag', 'light')],
+    'tag-lightweight': [P, () => git('tag', 'light', 'HEAD~1')],
     'tag-tree': [U, () => git('tag', '-a', 'tree-note', '-m', 'tree', 'HEAD^{tree}'), 'check=tip-object'],
     'tree-ref-published': [P, () => git('update-ref', 'refs/private/tree', git('rev-parse', 'HEAD^{tree}'))],
     'tree-ref-unpublished': [U, () => git('update-ref', 'refs/private/tree', conflictTree()), 'check=tip-object'],
     'blob-ref': [U, () => git('update-ref', 'refs/private/blob', run('git', ['-C', repo, 'hash-object', '-w', '--stdin'], {input: 'private'})), 'check=tip-object'],
+    // An advertised tag publishes its own object; its commit is still proven against the heads.
+    'tag-published-off-branch': [U, () => { git('tag', '-a', 'off-branch', '-m', 'off branch', priv()); git('push', '-q', 'origin', 'off-branch'); }, 'check=rev-list'],
     // Repair 5 (D3): ignored output never refuses and never changes the receipt; symlinks
     // in a checkout are its content and are never followed.
     'ignored-head-equality': [P, () => {
@@ -299,9 +301,21 @@ const hidden = {
         const after = audit(); assert.equal(after.status, 0, after.stdout);
         assert.equal(sorted(after.stdout), sorted(before.stdout), 'an ignored HEAD file must not change the receipt');
     }],
-    'ignored-symlink-outside': [P, () => { checkout(); fs.mkdirSync(path.join(repo, 'obj')); fs.symlinkSync(root, path.join(repo, 'obj/outside')); }],
+    // A HEAD file in a Git directory's own subdirectory (a bare repository's logs/) is not an entry;
+    // a Git-shaped directory that Git does not open refuses.
+    'bare-reflog': [P, () => {
+        const bare = bareMirror(), b = (...args) => run('git', ['-C', bare, ...args]);
+        b('config', 'core.logAllRefUpdates', 'true'); b('update-ref', '-m', 'back', 'refs/heads/master', 'HEAD~1'); b('update-ref', '-m', 'forth', 'refs/heads/master', head());
+        assert.ok(fs.existsSync(path.join(bare, 'logs/HEAD')) && fs.existsSync(path.join(bare, 'logs/refs')));
+    }],
+    'damaged-git-dir-ignored': [K, () => {
+        checkout(); fs.mkdirSync(path.join(repo, 'obj/refs'), {recursive: true}); fs.writeFileSync(path.join(repo, 'obj/HEAD'), 'ref: refs/heads/master\n');
+        assert.equal(git('status', '--porcelain', '--untracked-files=all'), '');
+    }, 'check=git-dir-shape'],
+    'ignored-symlink-outside': [P,() => { checkout(); fs.mkdirSync(path.join(repo, 'obj')); fs.symlinkSync(root, path.join(repo, 'obj/outside')); }],
     'ignored-symlink-dangling': [P, () => { checkout(); fs.mkdirSync(path.join(repo, 'obj')); fs.symlinkSync('gone', path.join(repo, 'obj/cache')); }],
-    'untracked-symlink': [D, () => { checkout(); fs.symlinkSync('gone', path.join(repo, 'link')); }, 'check=status'],
+    'orphan-symlink-ignored': [P, () => { linked(); fs.mkdirSync(lp('obj')); fs.symlinkSync('gone', lp('obj/cache')); remove(lp('.git')); }],
+    'untracked-symlink': [D,() => { checkout(); fs.symlinkSync('gone', path.join(repo, 'link')); }, 'check=status'],
     'tracked-symlink-outside': [P, () => {
         checkout(); fs.symlinkSync(root, path.join(repo, 'outside')); git('add', 'outside'); git('commit', '-qm', 'link'); git('push', '-q', 'origin', 'HEAD:master');
     }],
