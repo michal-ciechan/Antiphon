@@ -10,8 +10,9 @@ namespace Antiphon.Server.Application.Services;
 /// match against one exact committed session-state revision. A proof only lets the reconciler omit
 /// that one SELECT; it never confirms, never moves the delivery floor and never delays a pass.
 /// Reuse needs every positive condition below; anything missing or unknown keeps today's scan.
-/// A restart starts empty. Every fault inside the cache, including its clock and metrics, refuses
-/// reuse rather than escaping.
+/// A restart starts empty. A fault in a lookup, a publication or the clock refuses reuse rather than
+/// escaping. Metrics are telemetry only: a metrics fault is swallowed and never changes a decision,
+/// so a valid hit stays a hit.
 /// </summary>
 public sealed class LandReceiptScanCache(TimeProvider clock)
 {
@@ -96,14 +97,20 @@ public sealed class LandReceiptScanCache(TimeProvider clock)
     private sealed record Proof(Context Context, StateStamp Stamp, long ScanCompletedAt);
 
     /// <summary>
-    /// W-1..W-4: binds the scan context only for an enumerated note state and kind, a terminal
-    /// destination (A-1) and an ordinary keyed-row body that is exactly the expected text. Every
-    /// other shape keeps today's scan; nothing here inspects a diagnostic or grants eligibility.
+    /// W-1..W-4: binds the scan context only for a well-formed identity (a real note keyed to exactly
+    /// this row, with a parent session to scan and a row destination), an enumerated note state and
+    /// kind, a terminal destination (A-1) and an ordinary keyed-row body that is exactly the expected
+    /// text. The row destination is bound, not required equal to the parent (A-3). Every other shape
+    /// keeps today's scan; nothing here inspects a diagnostic or grants eligibility.
     /// </summary>
     internal static bool TryBuildContext(AgentTaskLandNotification note, SessionQueuedMessage row,
         SessionStatus destinationStatus, string expectedText, out Context? context, out string refusal)
     {
         context = null;
+        if (note.Id == Guid.Empty) return Refuse("identity:NoteId", out refusal);
+        if (note.QueueMessageId != row.Id) return Refuse("identity:QueueMessageId", out refusal);
+        if (note.ParentSessionId is not Guid parent || parent == Guid.Empty) return Refuse("identity:ParentSessionId", out refusal);
+        if (row.AgentSessionId == Guid.Empty) return Refuse("identity:QueueDestination", out refusal);
         if (!AdmitsState(note.State)) return Refuse("eligibility:NoteState", out refusal);
         if (!AdmitsKind(note.Kind)) return Refuse("eligibility:Kind", out refusal);
         if (note.CompletionSnapshotJson is not null) return Refuse("eligibility:CompletionSnapshotJson", out refusal);
@@ -209,6 +216,8 @@ public sealed class LandReceiptScanCache(TimeProvider clock)
             Proof? proof;
             lock (_gate) proof = _proofs.TryGetValue(context.NoteId, out var held) ? held.Proof : null;
             refusal = proof is null ? "no-proof" : ContextRefusal(proof.Context, context) ?? StampRefusal(proof.Stamp, stamp) ?? "";
+            // The scan reads the parent's transcript, so only the parent's committed state can vouch for it.
+            if (refusal.Length == 0 && stamp.SessionId != context.ParentSessionId) refusal = "identity:ScanSession";
             if (refusal.Length == 0)
             {
                 var elapsed = clock.GetElapsedTime(proof!.ScanCompletedAt, clock.GetTimestamp());
