@@ -677,8 +677,6 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         if (request.SessionId == Guid.Empty)
             throw new ArgumentException("SessionId must not be empty.", nameof(request));
         ArgumentException.ThrowIfNullOrWhiteSpace(request.PaneId);
-        RecordCreationAttemptUnderGate(request.SessionId, request.AcceptedStartedAt);
-        await CreationEffectAsync(request.SessionId, "attach");
         EnsureHerdrClient();
         if (!HerdrAgentKinds.IsSupported(request.ExpectedKind))
         {
@@ -697,6 +695,10 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 HerdrProblemTypes.PaneBound);
         }
 
+        // CARD-1153: the marker follows herdr reachability (an unreachable herdr still writes nothing)
+        // and precedes the runtime registration and the pane binding.
+        RecordCreationAttemptUnderGate(request.SessionId, request.AcceptedStartedAt);
+        await CreationEffectAsync(request.SessionId, "attach");
         var session = new RunnerSession(request.SessionId, _settings, _events, _logger, _transcriptClaims, _processLiveness);
         session.BindAcceptedGeneration(request.AcceptedStartedAt);
         if (!_sessions.TryAdd(request.SessionId, session))
