@@ -30,7 +30,7 @@ function setup() {
     run('git', ['init', '-q', '-b', 'master', src]);
     const s = (...args) => run('git', ['-C', src, ...args]);
     s('config', 'user.name', 'Fixture'); s('config', 'user.email', 'fixture@example.invalid');
-    fs.writeFileSync(path.join(src, '.gitignore'), 'ignored\n');
+    fs.writeFileSync(path.join(src, '.gitignore'), 'ignored\nbin-*/\nobj/\n');
     fs.writeFileSync(path.join(src, 'file'), 'A\n'); s('add', '.'); s('commit', '-qm', 'A');
     fs.writeFileSync(path.join(src, 'file'), 'B\n'); s('commit', '-qam', 'B'); s('push', '-q', origin, 'master');
     const lines = source.split('\n').filter(x => x.includes('git clone --filter=blob:none --no-checkout'));
@@ -42,22 +42,33 @@ function setup() {
     assert.ok(missing.split('\n').includes('?' + blob), 'seed must really lack HEAD blob');
     assert.equal(cp.spawnSync('git', ['-C', repo, 'cat-file', '-e', blob], {env: {...env, GIT_NO_LAZY_FETCH: '1'}}).status, 1, 'no blob may be fetched');
 }
-function helper() {
+function helper(edit = x => x) {
     const match = source.match(/cat <<'C1008_GIT'\n([\s\S]*?)\nC1008_GIT/);
     assert.ok(match); assert.equal(match[1].split('readlink -e /work').length, 2);
-    fs.writeFileSync(path.join(root, 'helper.sh'), match[1].replace('readlink -e /work', 'readlink -e "$C1105_WORK"'));
+    fs.writeFileSync(path.join(root, 'helper.sh'), edit(match[1].replace('readlink -e /work', 'readlink -e "$C1105_WORK"')));
 }
-function audit() {
+// Every Git start carries the no-fetch, no-system/global-config and no-commit-graph values.
+const required = {GIT_NO_LAZY_FETCH:'1', GIT_CONFIG_SYSTEM:'/dev/null', GIT_CONFIG_GLOBAL:'/dev/null', GIT_CONFIG_COUNT:'2',
+    GIT_CONFIG_KEY_0:'core.commitGraph', GIT_CONFIG_VALUE_0:'false', GIT_CONFIG_KEY_1:'gc.writeCommitGraph', GIT_CONFIG_VALUE_1:'false'};
+let events = [];
+function audit(timeout = 45000) {
     const trace = path.join(root, 'trace.jsonl');
+    if (fs.existsSync(trace)) fs.rmSync(trace);
     const result = cp.spawnSync('bash', [path.join(root, 'helper.sh')], {env: {...env, C1105_WORK: work, GIT_TRACE2_EVENT: trace,
-        GIT_TRACE2_ENV_VARS: 'GIT_NO_LAZY_FETCH,GIT_CONFIG_SYSTEM,GIT_CONFIG_GLOBAL'}, encoding: 'utf8', timeout: 45000});
-    const events = fs.readFileSync(trace, 'utf8').trim().split('\n').map(JSON.parse);
+        GIT_TRACE2_ENV_VARS: Object.keys(required).join(',')}, encoding: 'utf8', timeout, maxBuffer: 64e6});
+    const text = fs.existsSync(trace) ? fs.readFileSync(trace, 'utf8').trim() : '';
+    events = text ? text.split('\n').map(JSON.parse) : [];
+    assert.ok(events.length > 0 || mode === 'audit-timeout', 'the audit ran Git');
     assert.ok(!events.some(x => x.argv?.includes('fetch')), 'audit must never lazy-fetch');
-    const starts = events.filter(x => x.event === 'start');
-    for (const start of starts) for (const [key, value] of Object.entries({GIT_NO_LAZY_FETCH:'1', GIT_CONFIG_SYSTEM:'/dev/null', GIT_CONFIG_GLOBAL:'/dev/null'}))
-        assert.ok(events.some(x => x.sid === start.sid && x.event === 'def_param' && x.param === key && x.value === value), `${key} missing at git start`);
+    const params = new Set(events.filter(x => x.event === 'def_param').map(x => x.sid + '\0' + x.param + '\0' + x.value));
+    // A local-transport git-upload-pack serves the origin repository, and Git clears per-repository
+    // configuration variables for that other repository; it never reads the audited volume.
+    for (const start of events.filter(x => x.event === 'start')) for (const [key, value] of Object.entries(required))
+        if (!(/^GIT_CONFIG_(COUNT|KEY_|VALUE_)/.test(key) && /(^|\/)git-upload-pack$/.test(start.argv[0]) && start.argv[1] === path.join(root, 'origin.git'))) assert.ok(params.has(start.sid + '\0' + key + '\0' + value), `${key} missing at git start`);
     return result;
 }
+// Git starts during the last audit whose argv holds this exact argument.
+const starts = arg => events.filter(x => x.event === 'start' && x.argv.includes(arg)).length;
 function checkout() { git('reset', '--hard', 'HEAD'); }
 function eraseIndexAndFiles() { for (const name of fs.readdirSync(repo)) if (name !== '.git') remove(path.join(repo, name)); remove(path.join(repo, '.git/index')); }
 function privateCommit() { git('commit', '--allow-empty', '-qm', 'private'); return git('rev-parse', 'HEAD'); }
@@ -82,6 +93,31 @@ const head = () => git('rev-parse', 'HEAD');
 const entry = (oid, old) => `${old ?? head()} ${oid} Fixture <fixture@example.invalid> 1700000000 +0000\tprivate\n`;
 function linked() { checkout(); git('worktree', 'add', '-q', '--detach', path.join(work, 'linked'), 'HEAD'); return 'worktrees/linked/'; }
 const lg = (...args) => run('git', ['-C', path.join(work, 'linked'), ...args]);
+// A tree as git leaves in AUTO_MERGE: the conflicted result, named by no ref.
+function conflictTree() {
+    const blob = run('git', ['-C', repo, 'hash-object', '-w', '--stdin'], {input: '<<<<<<< private\n'});
+    return run('git', ['-C', repo, 'mktree'], {input: `100644 blob ${blob}\tfile\n`});
+}
+// Staged private bytes in a linked worktree's own index; only that index names them.
+function stagedLinked() {
+    linked(); fs.writeFileSync(path.join(work, 'linked', 'new'), 'sole staged bytes'); lg('add', 'new');
+    const blob = lg('rev-parse', ':new');
+    const all = run('git', ['-C', repo, 'rev-list', '--objects', '--missing=print', '--all'], {env: {...env, GIT_NO_LAZY_FETCH: '1'}});
+    assert.equal(all.includes(blob), false, 'no commit, ref or reflog names the staged blob');
+}
+const s = (...args) => run('git', ['-C', path.join(root, 'src'), ...args]);
+// Origin gains heads this clone never fetched, as for a drained runner's mirror.
+function originAhead() {
+    s('push', '-q', origin, 'master:refs/heads/feature'); git('fetch', '-q', 'origin');
+    s('commit', '-q', '--allow-empty', '-m', 'ahead'); s('push', '-q', origin, 'master', 'master:refs/heads/new-branch');
+    const ahead = s('rev-parse', 'HEAD');
+    assert.equal(cp.spawnSync('git', ['-C', repo, 'cat-file', '-e', ahead], {env: {...env, GIT_NO_LAZY_FETCH: '1'}}).status, 1, 'origin head absent here');
+}
+function trackingOnly() {
+    s('checkout', '-q', '-b', 'gone'); s('commit', '-q', '--allow-empty', '-m', 'gone'); s('push', '-q', origin, 'gone');
+    git('fetch', '-q', 'origin'); s('push', '-q', origin, ':gone'); s('checkout', '-q', 'master');
+    assert.ok(git('for-each-ref', 'refs/remotes/origin/gone'));
+}
 function fetchOther() {
     const other = path.join(root, 'other.git'); run('git', ['clone', '-q', '--bare', origin, other]);
     const oid = run('git', ['-C', other, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit-tree', 'HEAD^{tree}', '-p', 'HEAD', '-m', 'private']);
@@ -114,6 +150,24 @@ function longLived() {
     for (const line of fs.readFileSync(gd('logs/HEAD'), 'utf8').trim().split('\n')) assert.match(line, /\tclone: /);
     assert.equal(cp.spawnSync('git', ['-C', repo, 'cat-file', '-e', git('rev-parse', 'HEAD:file')], {env: {...env, GIT_NO_LAZY_FETCH: '1'}}).status, 1, 'HEAD blob stays absent');
 }
+// A whole volume shaped like the server2 replay: one blobless mirror and many
+// linked worktrees, each with a few hundred tracked files and ignored build output.
+function volumeScale(count, files) {
+    const src = path.join(root, 'src');
+    for (let i = 0; i < files; i++) {
+        const dir = path.join(src, 'd' + (i % 20)); fs.mkdirSync(dir, {recursive: true});
+        fs.writeFileSync(path.join(dir, 'f' + i + '.cs'), `// line ${i}\n`.repeat(40));
+    }
+    s('add', '.'); s('commit', '-qm', 'tree'); s('push', '-q', origin, 'master'); git('fetch', '-q', 'origin');
+    for (let i = 0; i < count; i++) {
+        const name = 'task-' + String(i).padStart(4, '0'), wt = path.join(work, 'worktrees', name);
+        git('worktree', 'add', '-q', '-b', name, wt, 'origin/master');
+        for (const rel of ['bin-c1105/a.dll', 'bin-c1105/a.pdb', 'obj/project.assets.json']) {
+            fs.mkdirSync(path.dirname(path.join(wt, rel)), {recursive: true}); fs.writeFileSync(path.join(wt, rel), 'build output ' + i);
+        }
+    }
+    git('push', '-q', 'origin', 'refs/heads/task-*:refs/heads/task-*');
+}
 // HIDDEN-LOCATIONS-BEGIN: one row per Git-directory location (closure table in
 // docs/investigations/2026-10-07-card-1105-git-audit-promisor.md). A private commit
 // stored only in that location must refuse; a published one must pass.
@@ -137,7 +191,15 @@ const hidden = {
     'fetch-head': [U, fetchOther],
     'rebase-head': [U, () => put('REBASE_HEAD', priv() + '\n')],
     'bisect-head': [U, () => put('BISECT_HEAD', priv() + '\n')],
-    'auto-merge': [U, () => put('AUTO_MERGE', priv() + '\n')],
+    // Git leaves AUTO_MERGE (a tree) after a conflicted merge or rebase; replayed on server2.
+    'auto-merge': [P, () => put('AUTO_MERGE', conflictTree() + '\n')],
+    'auto-merge-commit': [K, () => put('AUTO_MERGE', priv() + '\n'), 'check=auto-merge-type'],
+    'auto-merge-sequencer': [K, () => { put('AUTO_MERGE', conflictTree() + '\n'); put('sequencer/head', head() + '\n'); }, 'check=lock-AUTO_MERGE'],
+    'auto-merge-in-progress': [K, () => {
+        checkout(); git('checkout', '-q', '-b', 'side', 'HEAD~1'); fs.writeFileSync(path.join(repo, 'file'), 'side\n'); git('commit', '-qam', 'side');
+        git('checkout', '-q', 'master'); fs.writeFileSync(path.join(repo, 'file'), 'main\n'); git('commit', '-qam', 'main');
+        assert.equal(cp.spawnSync('git', ['-C', repo, 'merge', 'side'], {env}).status, 1); assert.ok(fs.existsSync(gd('AUTO_MERGE')));
+    }, 'check=lock-MERGE_HEAD'],
     'merge-autostash': [U, () => put('MERGE_AUTOSTASH', priv() + '\n')],
     'merge-head': [K, () => put('MERGE_HEAD', priv() + '\n'), 'check=lock-MERGE_HEAD'],
     'cherry-pick-head': [K, () => put('CHERRY_PICK_HEAD', priv() + '\n'), 'check=lock-CHERRY_PICK_HEAD'],
@@ -161,6 +223,44 @@ const hidden = {
     'published-orig-head': [P, () => put('ORIG_HEAD', git('rev-parse', 'HEAD~1') + '\n')],
     'published-linked': [P, () => { linked(); lg('reset', '-q', '--hard', 'HEAD~1'); lg('reset', '-q', '--hard', 'ORIG_HEAD'); }],
     'published-gc': [P, () => { git('fetch', '-q', 'origin'); git('gc', '-q'); assert.ok(fs.existsSync(gd('info/refs'))); }],
+    // Origin ahead of the clone: compare only against advertised heads present here.
+    'origin-ahead': [P, originAhead],
+    'origin-tracking-deleted': [U, trackingOnly],
+    'origin-none-present': [K, () => { s('commit', '-q', '--allow-empty', '-m', 'ahead'); s('push', '-q', origin, 'master'); }, 'check=origin-present'],
+    // update-ref refuses a tree on a branch; the file is written directly.
+    'origin-non-commit': [K, () => fs.writeFileSync(path.join(origin, 'refs/heads/tree'), git('rev-parse', 'HEAD^{tree}') + '\n'), 'check=origin-type'],
+    // Every worktrees/<id> is audited whether or not its checkout exists or points back.
+    'stale-pointer-staged': [D, () => { stagedLinked(); put('worktrees/linked/gitdir', gd() + '\n'); remove(path.join(work, 'linked')); }, 'check=stale-index'],
+    'pruned-path-staged': [D, () => { stagedLinked(); remove(path.join(work, 'linked')); }, 'check=stale-index'],
+    'stale-linked-published': [P, () => { linked(); remove(path.join(work, 'linked')); }],
+    'linked-outside': [K, () => { checkout(); git('worktree', 'add', '-q', '--detach', path.join(root, 'outside'), 'HEAD'); }, 'check=worktree-confine'],
+    // Ignored files are not protected work; tracked content stays protected.
+    'ignored-build-output': [P, () => {
+        checkout();
+        for (const rel of ['bin-c1105/Antiphon.dll', 'obj/project.assets.json', 'ignored']) {
+            fs.mkdirSync(path.dirname(path.join(repo, rel)), {recursive: true}); fs.writeFileSync(path.join(repo, rel), 'build output');
+        }
+        assert.equal(git('status', '--porcelain', '--untracked-files=all'), '');
+    }],
+    'ignored-tracked-modified': [D, () => {
+        checkout(); fs.mkdirSync(path.join(repo, 'obj')); fs.writeFileSync(path.join(repo, 'obj/tracked'), 'A\n');
+        git('add', '-f', 'obj/tracked'); git('commit', '-qm', 'tracked under obj'); git('push', '-q', 'origin', 'HEAD:master');
+        fs.writeFileSync(path.join(repo, 'obj/tracked'), 'private\n');
+    }, 'check=status'],
+    // Product and agent state under the common directory.
+    'antiphon-state': [P, () => {
+        put('antiphon/landing.lock', ''); put('antiphon/verification/op/task/restoration.json', '{}');
+        put('antiphon/reviews/task/review.md', 'notes'); fs.mkdirSync(gd('antiphon/children'));
+    }],
+    'antiphon-children': [K, () => put('antiphon/children/child.json', '{}'), 'check=antiphon-children'],
+    'antiphon-linked': [K, () => put(linked() + 'antiphon/landing.lock', ''), 'check=gitdir-entry'],
+    'review-evidence': [P, () => put('review-evidence/4a14585d/review.md', 'evidence')],
+    'review-evidence-linked': [K, () => put(linked() + 'review-evidence/review.md', 'evidence'), 'check=gitdir-entry'],
+    // Content-free layout markers pass; anything that can hold bytes refuses.
+    'common-empty': [P, () => fs.mkdirSync(gd('common'))],
+    'common-content': [K, () => put('common/private', priv() + '\n'), 'check=gitdir-common'],
+    'daemon-export': [P, () => put('git-daemon-export-ok', '')],
+    'editor-swap': [K, () => put('.COMMIT_EDITMSG.swp', 'unsaved message'), 'check=gitdir-editor'],
 };
 // HIDDEN-LOCATIONS-END
 try {
@@ -246,6 +346,32 @@ try {
             expected = 'RecycleWorktreeDirty'; break;
         }
         case 'missing-commit': objectLoss('HEAD~1'); expected = 'RecycleGitAuditUnknown'; break;
+        case 'missing-ancestor-graph': {
+            // A commit-graph still describes HEAD~1 after its object is gone.
+            git('commit-graph', 'write', '--reachable'); assert.ok(fs.existsSync(gd('objects/info/commit-graph')));
+            objectLoss('HEAD~1'); expected = K; expectedCheck = 'check=rev-list-objects'; break;
+        }
+        case 'audit-timeout': {
+            // The overall budget, shortened: an audit that cannot finish refuses, never passes.
+            const budget = 'timeout --kill-after=10s 1800s bash -c';
+            helper(text => { assert.equal(text.split(budget).length, 2); return text.replace(budget, 'timeout --kill-after=10s 0.01s bash -c'); });
+            expected = K; expectedCheck = 'check=audit-timeout'; break;
+        }
+        case 'volume-scale': {
+            const count = 250, files = 300, budget = 240;
+            volumeScale(count, files);
+            const started = process.hrtime.bigint(), result = audit(2 * budget * 1000);
+            const seconds = Number(process.hrtime.bigint() - started) / 1e9;
+            assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+            assert.match(result.stdout, new RegExp(`repositories=${count + 1} partial=${count + 1}`));
+            // One pass per common directory; one content check per worktree path.
+            assert.equal(starts('ls-remote'), 1, 'origin is read once for the shared common directory');
+            assert.equal(starts('status'), count + 1, 'status runs once per worktree path');
+            assert.equal(starts('--stdin-paths'), count, 'one batched hash per indexed worktree');
+            assert.ok(seconds < budget, `whole-volume audit took ${seconds}s, budget ${budget}s`);
+            console.log(`PASS volume-scale worktrees=${count} files=${files} seconds=${seconds.toFixed(1)}`);
+            expected = null; break;
+        }
         case 'missing-tree': objectLoss('HEAD~1^{tree}'); expected = 'RecycleGitAuditUnknown'; break;
         case 'missing-head-tree': objectLoss('HEAD^{tree}'); expected = 'RecycleGitAuditUnknown'; break;
         case 'resume': {
@@ -269,7 +395,7 @@ try {
             const [want, hide, check] = hidden[mode]; hide(); expected = want; expectedCheck = check; break;
         }
     }
-    if (mode !== 'resume') {
+    if (mode !== 'resume' && expected !== null) {
         const result = audit();
         assert.equal(result.status, expected ? 2 : 0, `${mode}: ${result.stdout}\n${result.stderr}`);
         if (expectedCheck) assert.ok(result.stdout.includes(expectedCheck + ' '), `${mode}: ${result.stdout}`);

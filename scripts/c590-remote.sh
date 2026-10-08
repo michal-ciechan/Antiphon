@@ -4398,16 +4398,34 @@ c1008_status_proof() {
 
 c1008_git_program() {
     cat <<'C1008_GIT'
+# CARD-1105: one overall budget for the whole audit. Measured on a runner: one
+# 7165-file worktree costs about 4 s (status plus raw hashing), so ~400 worktrees
+# take minutes with parallel worktree checks. 1800 s leaves a wide margin. A
+# timeout is RecycleGitAuditUnknown, never a pass.
+set -u
+c1008_audit_body=''
+IFS= read -r -d '' c1008_audit_body <<'C1008_AUDIT_BODY' || :
 set -euo pipefail
 export GIT_OPTIONAL_LOCKS=0 GIT_NO_LAZY_FETCH=1 GIT_TERMINAL_PROMPT=0 LC_ALL=C
 export GIT_CONFIG_SYSTEM=/dev/null GIT_CONFIG_GLOBAL=/dev/null
 export GIT_NO_REPLACE_OBJECTS=1
+# A commit-graph can answer parent/tree lookups for a commit whose object is gone.
+# Every Git call reads the objects themselves.
+export GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=core.commitGraph GIT_CONFIG_VALUE_0=false
+export GIT_CONFIG_KEY_1=gc.writeCommitGraph GIT_CONFIG_VALUE_1=false
 root=''
 scratch=''
 audit_check=unclassified
 audit_repo=''
 repos=0
 partial_repos=0
+top=''
+top_bare=''
+declare -A dirty_seen=() common_seen=() common_repo=()
+commons=()
+dirty_pids=()
+dirty_paths=()
+dirty_next=0
 # Receipt paths are relative to the work volume. A credential-shaped component is
 # replaced; git stderr is never copied. A path outside the volume is "?".
 rel_repo() {
@@ -4458,10 +4476,14 @@ refuse_unpublished() {
     printf 'RecycleUnpublishedWork\n'
     exit 2
 }
-# An absent index is safe only with the deploy seed's empty worktree shape.
-# There is then no worktree/index content to lose; recovery tips are proved below.
+digest() { printf '%s' "$1" | sha256sum | cut -d' ' -f1; }
+# Worktree content. Protected: tracked files (raw bytes against the index), staged
+# entries and untracked files that are not ignored. Ignored files (build output,
+# caches, local config) are not work: status omits them, under the ignore rules the
+# audited repository itself carries. An absent index is safe only with the deploy
+# seed's empty worktree shape; there any file refuses, ignored or not.
 consider_dirty() {
-    local where="$1" kind="$2" clean index index_path line seed extra index_existed=0 entry metadata path mode oid stage actual flags
+    local where="$1" kind="$2" work="$3" clean index index_path line seed extra index_existed=0 entry metadata rest path mode oid stage actual flags expected
     audit_repo="$where"
     audit_check=index
     index="$(git -C "$where" rev-parse --git-path index 2>/dev/null)" || fail $?
@@ -4487,8 +4509,8 @@ consider_dirty() {
             extra="$(find "$where" -mindepth 1 -path "$where/.git" -prune -o -print -quit 2>/dev/null)" || fail $?
             if [ -z "$extra" ]; then
                 audit_check=seed-stash
-                git -C "$where" for-each-ref --format='%(objectname)' refs/stash > "$scratch/stash" 2>/dev/null || fail $?
-                [ ! -s "$scratch/stash" ] || refuse_dirty "$kind" "$where"
+                git -C "$where" for-each-ref --format='%(objectname)' refs/stash > "$work.stash" 2>/dev/null || fail $?
+                [ ! -s "$work.stash" ] || refuse_dirty "$kind" "$where"
                 return 0
             fi
         fi
@@ -4498,45 +4520,107 @@ consider_dirty() {
     # Status trusts index flags and stat data. Refuse shortcut/sparse entries and
     # hash every regular file or symlink without filters, regardless of timestamps.
     audit_check=index-flags
-    git -C "$where" ls-files -v -z > "$scratch/flags" 2>/dev/null || fail $?
+    git -C "$where" ls-files -v -z > "$work.flags" 2>/dev/null || fail $?
     while IFS= read -r -d '' flags; do
         [[ "$flags" == 'H '* ]] || refuse_dirty index-flags "$where"
-    done < "$scratch/flags"
+    done < "$work.flags"
     audit_check=index-content
-    git -C "$where" ls-files --stage -z > "$scratch/index" 2>/dev/null || fail $?
-    while IFS= read -r -d '' entry; do
-        [[ "$entry" == *$'\t'* ]] || fail 2
-        metadata="${entry%%$'\t'*}"; path="${entry#*$'\t'}"
-        read -r mode oid stage <<< "$metadata"
-        [[ "$oid" =~ ^[0-9a-f]{40}$ && "$stage" = 0 && -n "$path" ]] || fail 2
-        case "$path" in /*|../*|*/../*|*/..) fail 2 ;; esac
-        case "$mode" in
-            100644|100755)
-                [ -f "$where/$path" ] && [ ! -L "$where/$path" ] || refuse_dirty index-content "$where"
-                actual="$(git -C "$where" hash-object --no-filters -- "$where/$path" 2>/dev/null)" || fail $?
-                ;;
-            120000)
-                [ -L "$where/$path" ] || refuse_dirty index-content "$where"
-                actual="$(readlink -n -- "$where/$path" | git -C "$where" hash-object --stdin 2>/dev/null)" || fail $?
-                ;;
-            *) refuse_unknown index-mode 2 "$where" ;;
-        esac
-        [ "$actual" = "$oid" ] || refuse_dirty index-content "$where"
-    done < "$scratch/index"
+    git -C "$where" ls-files --stage -z > "$work.index" 2>/dev/null || fail $?
+    {
+        while IFS= read -r -d '' entry; do
+            [[ "$entry" == *$'\t'* ]] || fail 2
+            metadata="${entry%%$'\t'*}"; path="${entry#*$'\t'}"
+            mode="${metadata%% *}"; rest="${metadata#* }"; oid="${rest%% *}"; stage="${rest#* }"
+            [[ "$mode" =~ ^[0-7]{6}$ && "$oid" =~ ^[0-9a-f]{40}$ && "$stage" = 0 && -n "$path" ]] || fail 2
+            case "$path" in /*|../*|*/../*|*/..) fail 2 ;; esac
+            case "$mode" in
+                100644|100755)
+                    [ -f "$where/$path" ] && [ ! -L "$where/$path" ] || refuse_dirty index-content "$where"
+                    case "$path" in
+                        *$'\n'*|*$'\r'*)
+                            # --stdin-paths reads lines; such a name is hashed alone.
+                            actual="$(git -C "$where" hash-object --no-filters -- "$where/$path" 2>/dev/null)" || fail $?
+                            [ "$actual" = "$oid" ] || refuse_dirty index-content "$where"
+                            ;;
+                        *) printf '%s\n' "$where/$path" >&3; printf '%s\n' "$oid" >&4 ;;
+                    esac
+                    ;;
+                120000)
+                    [ -L "$where/$path" ] || refuse_dirty index-content "$where"
+                    actual="$(readlink -n -- "$where/$path" | git -C "$where" hash-object --stdin 2>/dev/null)" || fail $?
+                    [ "$actual" = "$oid" ] || refuse_dirty index-content "$where"
+                    ;;
+                *) refuse_unknown index-mode 2 "$where" ;;
+            esac
+        done < "$work.index"
+    } 3> "$work.paths" 4> "$work.expected"
+    # One hash-object process per worktree; absolute paths never start with a quote.
+    git -C "$where" hash-object --no-filters --stdin-paths < "$work.paths" > "$work.actual" 2>/dev/null || fail $?
+    expected="$(< "$work.expected")"
+    actual="$(< "$work.actual")"
+    [ "$actual" = "$expected" ] || refuse_dirty index-content "$where"
+}
+# Each worktree path is checked once, in parallel. Results are read in queue order,
+# so the first refusal reported does not depend on scheduling.
+queue_dirty() {
+    local where="$1" kind="$2" n
+    [ -z "${dirty_seen[$where]+x}" ] || return 0
+    dirty_seen[$where]=1
+    while [ $((${#dirty_pids[@]} - dirty_next)) -ge "$dirty_parallel" ]; do reap_dirty; done
+    n="${#dirty_pids[@]}"
+    ( consider_dirty "$where" "$kind" "$scratch/dirty-$n" ) > "$scratch/dirty-$n.out" 2>/dev/null &
+    dirty_pids+=("$!")
+    dirty_paths+=("$where")
+}
+reap_dirty() {
+    local status=0 output
+    wait "${dirty_pids[$dirty_next]}" || status=$?
+    dirty_next=$((dirty_next + 1))
+    [ "$status" != 0 ] || return 0
+    trap - ERR
+    output="$(< "$scratch/dirty-$((dirty_next - 1)).out")" || output=''
+    case "$output" in
+        *'audit check='*) printf '%s\n' "$output" ;;
+        *) printf 'audit check=worktree-status status=%s repo=%s\nRecycleGitAuditUnknown\n' "$status" "$(rel_repo "${dirty_paths[$((dirty_next - 1))]}")" ;;
+    esac
+    exit 2
+}
+drain_dirty() {
+    while [ "$dirty_next" -lt "${#dirty_pids[@]}" ]; do reap_dirty; done
+}
+# Index without a proven checkout: its staged entries must equal its HEAD tree, so
+# it holds nothing beyond a commit that the tip proof covers.
+consider_stale_index() {
+    local directory="$1" status=0
+    [ -e "$directory/index" ] || [ -L "$directory/index" ] || return 0
+    audit_repo="$directory"
+    audit_check=stale-index
+    git --git-dir="$directory" diff-index --cached --quiet --ignore-submodules=none HEAD -- 2>/dev/null || status=$?
+    case "$status" in
+        0) ;;
+        1) refuse_dirty stale-index "$directory" ;;
+        *) fail "$status" ;;
+    esac
 }
 # CARD-1105 closed list. Each Git directory (the common directory and every
 # worktrees/<id>) is classified entry by entry; an entry outside this list refuses
 # RecycleGitAuditUnknown. Locations that can name an object, and their treatment:
 #   HEAD, loose refs/**, packed-refs, logs/** (both sides): publication tips
-#   ORIG_HEAD FETCH_HEAD REBASE_HEAD BISECT_HEAD AUTO_MERGE MERGE_AUTOSTASH: tips
+#   ORIG_HEAD FETCH_HEAD REBASE_HEAD BISECT_HEAD MERGE_AUTOSTASH: tips
 #     (a missing object fails the complete-graph traversal: unknown)
+#   AUTO_MERGE (a tree): ignored after the operation; unknown while one is in progress
 #   MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD rebase-merge rebase-apply sequencer
 #     BISECT_* NOTES_MERGE_* and *.lock: interrupted operation, unknown
 #   refs/replace (loose or packed), info/grafts, reftable, modules: unknown
-#   index: worktree content (consider_dirty); an index in a bare directory: unknown
+#   index: the proven checkout's content (consider_dirty) or, with no proven
+#     checkout, equal to HEAD (consider_stale_index); in a bare directory: unknown
 #   stash: refs/stash and logs/refs/stash; notes: refs/notes tips
+#   worktrees/<id>: every admin directory, whether or not its checkout exists
 #   objects is the store: an object no location names is outside the audit, as
 #   for gc. info/refs is repack's copy of refs that are read directly here.
+# Common directory only: antiphon/ (product state; a pending children/ journal is
+# unknown), review-evidence/ (agent evidence, not repository state), an empty
+# common/ and an empty git-daemon-export-ok. Editor swap/backup files: unknown.
 # Configuration, hooks, descriptions and message files name no object.
 consider_pseudoref() {
     local file="$1" name="$2" line
@@ -4548,6 +4632,26 @@ consider_pseudoref() {
         [[ "$line" =~ ^([0-9a-f]{40})($|[[:space:]]) ]] || fail 2
         printf '%s\n' "${BASH_REMATCH[1]}" >> "$scratch/tips"
     done < "$file"
+}
+# Git leaves AUTO_MERGE, the conflicted merge result tree, after a conflicted merge
+# or rebase. After the operation it names no work: the worktree and index are
+# audited themselves. While an operation is in progress it refuses.
+consider_auto_merge() {
+    local directory="$1" file="$2" marker line type bisect
+    audit_check=auto-merge
+    for marker in MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD rebase-merge rebase-apply sequencer; do
+        [ ! -e "$directory/$marker" ] && [ ! -L "$directory/$marker" ] || refuse_unknown lock-AUTO_MERGE 0 "$audit_repo"
+    done
+    bisect="$(find "$directory" -mindepth 1 -maxdepth 1 -name 'BISECT_*' -print -quit 2>/dev/null)" || fail $?
+    [ -z "$bisect" ] || refuse_unknown lock-AUTO_MERGE 0 "$audit_repo"
+    [ -f "$file" ] && [ ! -L "$file" ] || fail 2
+    line="$(< "$file")" || fail $?
+    [[ "$line" =~ ^[0-9a-f]{40}$ ]] || fail 2
+    type="$(printf '%s\n' "$line" | git --git-dir="$directory" cat-file --batch-check='%(objecttype)' 2>/dev/null)" || fail $?
+    case "$type" in
+        tree|"$line missing") ;;
+        *) refuse_unknown auto-merge-type 0 "$audit_repo" ;;
+    esac
 }
 consider_refs() {
     local directory="$1" file content unsupported
@@ -4621,8 +4725,23 @@ consider_info() {
         esac
     done < "$scratch/info"
 }
+# Product state under the common directory (RepositoryMutationLease and
+# RunnerWorkspaceParkService). landing.lock is never unlinked: its open handle, not
+# its existence, is the lease, and no container holds the volume when the audit
+# repeats after the runner stops. A pending children/ journal means a repository
+# mutation may still be running.
+consider_antiphon() {
+    local directory="$1" pending
+    audit_check=antiphon
+    [ -d "$directory" ] && [ ! -L "$directory" ] || refuse_unknown antiphon 0 "$audit_repo"
+    if [ -e "$directory/children" ] || [ -L "$directory/children" ]; then
+        [ -d "$directory/children" ] && [ ! -L "$directory/children" ] || refuse_unknown antiphon-children 0 "$audit_repo"
+        pending="$(find "$directory/children" -mindepth 1 -print -quit 2>/dev/null)" || fail $?
+        [ -z "$pending" ] || refuse_unknown antiphon-children 0 "$audit_repo"
+    fi
+}
 consider_gitdir() {
-    local directory="$1" level="$2" entry name linked
+    local directory="$1" level="$2" entry name linked held
     audit_check=gitdir-list
     [ -d "$directory" ] && [ ! -L "$directory" ] || fail 2
     [ ! -e "$directory/reftable" ] && [ ! -L "$directory/reftable" ] || refuse_unknown ref-storage 0 "$audit_repo"
@@ -4631,7 +4750,8 @@ consider_gitdir() {
     while IFS= read -r -d '' entry; do
         name="${entry##*/}"
         case "$name" in
-            HEAD|ORIG_HEAD|FETCH_HEAD|REBASE_HEAD|BISECT_HEAD|AUTO_MERGE|MERGE_AUTOSTASH) consider_pseudoref "$entry" "$name" ;;
+            HEAD|ORIG_HEAD|FETCH_HEAD|REBASE_HEAD|BISECT_HEAD|MERGE_AUTOSTASH) consider_pseudoref "$entry" "$name" ;;
+            AUTO_MERGE) consider_auto_merge "$directory" "$entry" ;;
             refs) consider_refs "$entry" ;;
             packed-refs) consider_packed "$entry" ;;
             logs) consider_logs "$entry" ;;
@@ -4643,35 +4763,194 @@ consider_gitdir() {
                     consider_gitdir "$linked" linked
                 done < "$scratch/linked"
                 ;;
-            index) [ "$level" = linked ] || [ "$bare" = false ] || refuse_unknown bare-index 0 "$audit_repo" ;;
+            index) [ "$level" = linked ] || [ "$top_bare" = false ] || refuse_unknown bare-index 0 "$audit_repo" ;;
+            antiphon)
+                [ "$level" = common ] || refuse_unknown gitdir-entry 0 "$audit_repo"
+                consider_antiphon "$entry"
+                ;;
+            review-evidence)
+                [ "$level" = common ] && [ -d "$entry" ] && [ ! -L "$entry" ] || refuse_unknown gitdir-entry 0 "$audit_repo" ;;
+            common)
+                [ "$level" = common ] && [ -d "$entry" ] && [ ! -L "$entry" ] || refuse_unknown gitdir-entry 0 "$audit_repo"
+                audit_check=gitdir-common
+                held="$(find "$entry" -mindepth 1 -print -quit 2>/dev/null)" || fail $?
+                [ -z "$held" ] || refuse_unknown gitdir-common 0 "$audit_repo"
+                ;;
+            git-daemon-export-ok)
+                [ "$level" = common ] && [ -f "$entry" ] && [ ! -L "$entry" ] && [ ! -s "$entry" ] \
+                    || refuse_unknown gitdir-daemon-export 0 "$audit_repo" ;;
             MERGE_HEAD|CHERRY_PICK_HEAD|REVERT_HEAD|rebase-merge|rebase-apply|sequencer|BISECT_*|NOTES_MERGE_*|*.lock)
                 refuse_unknown "lock-$name" 0 "$audit_repo" ;;
             shallow|modules) refuse_unknown "gitdir-$name" 0 "$audit_repo" ;;
             objects|hooks|branches|remotes|config|config.worktree|description|commondir|gitdir|locked|gc.log|gc.pid) ;;
             COMMIT_EDITMSG|MERGE_MSG|MERGE_MODE|MERGE_RR|SQUASH_MSG|TAG_EDITMSG|NOTES_EDITMSG|EDIT_DESCRIPTION|BRANCH_DESCRIPTION) ;;
             rr-cache|sharedindex.*|fsmonitor--daemon|fsmonitor--daemon.ipc) ;;
+            # An editor swap or backup may hold unrecovered text: recover or delete it.
+            .*.sw[a-p]|*~) refuse_unknown gitdir-editor 0 "$audit_repo" ;;
             *) refuse_unknown gitdir-entry 0 "$audit_repo" ;;
         esac
     done < "$scratch/sorted-$level"
 }
-# Git's own view of every worktree's refs and HEAD. Every worktree's own Git
-# directory must be one consider_gitdir classified: the common directory or a
-# direct child of its worktrees directory.
+# Git's own view of one Git directory's refs and HEAD: the shared refs plus that
+# directory's per-worktree refs.
 consider_tips() {
-    local where="$1" own
-    audit_repo="$where"
+    local directory="$1"
     audit_check=for-each-ref
-    git -C "$where" for-each-ref --format='%(objectname)' >> "$scratch/tips" 2> "$scratch/ref-errors" || fail $?
+    git --git-dir="$directory" for-each-ref --format='%(objectname)' >> "$scratch/tips" 2> "$scratch/ref-errors" || fail $?
     [ ! -s "$scratch/ref-errors" ] || fail 2
     audit_check=head
-    git -C "$where" rev-parse --verify HEAD >> "$scratch/tips" 2>/dev/null || fail $?
+    git --git-dir="$directory" rev-parse --verify HEAD >> "$scratch/tips" 2>/dev/null || fail $?
+}
+# The main checkout's content is inspected only when <checkout>/.git is the common
+# directory itself; otherwise its index must equal HEAD.
+consider_main() {
+    local main status=0
+    [ "$top_bare" = false ] || return 0
+    audit_check=core-worktree
+    git --git-dir="$top" config --get core.worktree >/dev/null 2>&1 || status=$?
+    case "$status" in
+        0) refuse_unknown core-worktree 0 "$audit_repo" ;;
+        1) ;;
+        *) fail "$status" ;;
+    esac
+    if [ "${top##*/}" = .git ]; then
+        main="${top%/.git}"
+        if [ "$(readlink -e -- "$main/.git" 2>/dev/null)" = "$top" ]; then
+            queue_dirty "$main" status
+            return 0
+        fi
+    fi
+    consider_stale_index "$top"
+}
+# Every worktrees/<id> directory is audited whether or not its checkout exists or
+# git worktree list would show it. Its checkout's content is inspected only when
+# both pointers agree: <id>/gitdir names <checkout>/.git and that .git file names
+# this directory. Otherwise the index must equal its HEAD.
+consider_linked() {
+    local admin="$1" common pointer recorded content target='' checkout=''
+    audit_repo="$admin"
     audit_check=git-dir-layout
-    own="$(git -C "$where" rev-parse --absolute-git-dir 2>/dev/null)" || fail $?
-    own="$(readlink -e "$own")" || fail $?
-    [ "$own" = "$top" ] || [ "${own%/*}" = "$top/worktrees" ] || refuse_unknown git-dir-layout 0 "$where"
+    common="$(git --git-dir="$admin" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || fail $?
+    common="$(readlink -e -- "$common")" || fail $?
+    [ "$common" = "$top" ] || refuse_unknown git-dir-layout 0 "$admin"
+    consider_tips "$admin"
+    audit_check=worktree-path
+    if [ -e "$admin/gitdir" ] || [ -L "$admin/gitdir" ]; then
+        [ -f "$admin/gitdir" ] && [ ! -L "$admin/gitdir" ] || fail 2
+        pointer="$(< "$admin/gitdir")" || fail $?
+        case "$pointer" in ''|*$'\n'*) fail 2 ;; /*) ;; *) pointer="$admin/$pointer" ;; esac
+        recorded="$(realpath -m -- "$pointer")" || fail $?
+        # A checkout registered outside the volume cannot be inspected and may be live.
+        [[ "$recorded/" == "$root/"* ]] || refuse_unknown worktree-confine 0 "$admin"
+        if [ "${recorded##*/}" = .git ] && [ -f "$recorded" ] && [ ! -L "$recorded" ]; then
+            content="$(< "$recorded")" || fail $?
+            case "$content" in "gitdir: "*) target="${content#gitdir: }" ;; esac
+            case "$target" in ''|*$'\n'*) target='' ;; /*) ;; *) target="${recorded%/*}/$target" ;; esac
+            if [ -n "$target" ] && [ "$(readlink -e -- "$target" 2>/dev/null)" = "$admin" ]; then
+                checkout="${recorded%/.git}"
+            fi
+        fi
+    fi
+    if [ -n "$checkout" ]; then queue_dirty "$checkout" worktree-status; else consider_stale_index "$admin"; fi
+}
+# One pass per common directory, shared by every entry that uses it.
+consider_common() {
+    local rep="${common_repo[$top]}" oid ref type lines tip admin count hash
+    audit_repo="$rep"
+    audit_check=bare
+    top_bare="$(git --git-dir="$top" rev-parse --is-bare-repository 2>/dev/null)" || fail $?
+    case "$top_bare" in true|false) ;; *) refuse_unknown bare 2 "$rep" ;; esac
+    audit_check=ls-remote
+    timeout --kill-after=5s 30s git --git-dir="$top" ls-remote --heads origin > "$scratch/origin" 2>/dev/null || fail $?
+    audit_check=origin-parse
+    sort "$scratch/origin" > "$scratch/origin-sorted" || fail $?
+    [ -s "$scratch/origin-sorted" ] || refuse_unknown origin-empty 0 "$rep"
+    : > "$scratch/origin-oids"
+    while IFS=$'\t' read -r oid ref || [ -n "$oid$ref" ]; do
+        [[ "$oid" =~ ^[0-9a-f]{40}$ && "$ref" == refs/heads/* ]] || refuse_unknown origin-parse 2 "$rep"
+        printf '%s\n' "$oid" >> "$scratch/origin-oids"
+    done < "$scratch/origin-sorted"
+    # Origin is ahead of a clone that stopped fetching (a drained runner) while other
+    # runners push. Only advertised heads present here are comparisons: fewer
+    # comparisons can only refuse more tips. A present non-commit head refuses.
+    audit_check=origin-present
+    git --git-dir="$top" cat-file --batch-check='%(objectname) %(objecttype)' < "$scratch/origin-oids" > "$scratch/present" 2>/dev/null || fail $?
+    comparisons=()
+    lines=0
+    while IFS=' ' read -r oid type || [ -n "$oid$type" ]; do
+        lines=$((lines + 1))
+        [[ "$oid" =~ ^[0-9a-f]{40}$ ]] || fail 2
+        case "$type" in
+            commit) comparisons+=("$oid") ;;
+            missing) ;;
+            *) refuse_unknown origin-type 0 "$rep" ;;
+        esac
+    done < "$scratch/present"
+    [ "$lines" = "$(wc -l < "$scratch/origin-oids")" ] || fail 2
+    [ "${#comparisons[@]}" -gt 0 ] || refuse_unknown origin-present 0 "$rep"
+    : > "$scratch/tips"
+    audit_repo="$rep"
+    consider_gitdir "$top" common
+    consider_tips "$top"
+    audit_repo="$rep"
+    consider_main
+    if [ -d "$top/worktrees" ]; then
+        audit_check=worktree-list
+        find "$top/worktrees" -mindepth 1 -maxdepth 1 -print0 > "$scratch/admins" 2>/dev/null || fail $?
+        sort -z "$scratch/admins" > "$scratch/admins-sorted" || fail $?
+        while IFS= read -r -d '' admin; do
+            consider_linked "$admin"
+        done < "$scratch/admins-sorted"
+    fi
+    audit_repo="$rep"
+    audit_check=tips
+    sort -u "$scratch/tips" > "$scratch/unique" || fail $?
+    [ -s "$scratch/unique" ] || refuse_unknown tips-empty 0 "$rep"
+    while IFS= read -r tip; do
+        [[ "$tip" =~ ^[0-9a-f]{40}$ ]] || refuse_unknown tips 2 "$rep"
+    done < "$scratch/unique"
+    # Traverse the full graph, without the publication exclusions that could hide
+    # a missing ancestor. Only blobs are optional in the blobless seed contract.
+    audit_check=rev-list-objects
+    { cat "$scratch/unique"; printf '%s\n' "${comparisons[@]}"; } > "$scratch/roots" || fail $?
+    timeout --kill-after=5s 30s git --git-dir="$top" rev-list --objects --no-object-names --filter=blob:none --missing=error --stdin \
+        < "$scratch/roots" > "$scratch/objects" 2>/dev/null || fail $?
+    audit_check=tip-commit
+    while IFS= read -r tip; do printf '%s^{commit}\n' "$tip"; done < "$scratch/unique" > "$scratch/peel" || fail $?
+    git --git-dir="$top" cat-file --batch-check='%(objecttype)' < "$scratch/peel" > "$scratch/types" 2>/dev/null || fail $?
+    lines=0
+    while IFS= read -r type || [ -n "$type" ]; do
+        lines=$((lines + 1))
+        [ "$type" = commit ] || refuse_unknown tip-commit 1 "$rep"
+    done < "$scratch/types"
+    [ "$lines" = "$(wc -l < "$scratch/unique")" ] || fail 2
+    # Every tip at once against every present origin head: zero commits reachable
+    # from a tip and from no head means each tip is published.
+    audit_check=rev-list
+    { cat "$scratch/unique"; printf '^%s\n' "${comparisons[@]}"; } > "$scratch/count-input" || fail $?
+    count="$(timeout --kill-after=5s 30s git --git-dir="$top" rev-list --count --stdin < "$scratch/count-input" 2>/dev/null)" || fail $?
+    [[ "$count" =~ ^[0-9]+$ ]] || refuse_unknown rev-list-count 2 "$rep"
+    [ "$count" = 0 ] || refuse_unpublished "$rep"
+    hash="$(digest "$top")"
+    while IFS= read -r tip; do
+        printf 'tip=%s common=%s\n' "$tip" "$hash"
+    done < "$scratch/unique"
+}
+cleanup() {
+    local pids
+    pids="$(jobs -p)" || pids=''
+    if [ -n "$pids" ]; then
+        kill $pids 2>/dev/null || :
+        wait 2>/dev/null || :
+    fi
+    if [ -n "$scratch" ] && [ -d "$scratch" ]; then rm -rf -- "$scratch" || :; fi
 }
 trap 'fail $?' ERR
-trap '[ -n "$scratch" ] && [ -d "$scratch" ] && rm -r -- "$scratch"' EXIT
+trap 'exit 143' TERM
+trap cleanup EXIT
+dirty_parallel="$(nproc 2>/dev/null)" || dirty_parallel=1
+[[ "$dirty_parallel" =~ ^[1-9][0-9]*$ ]] || dirty_parallel=1
+[ "$dirty_parallel" -le 8 ] || dirty_parallel=8
 audit_check=readlink-root
 root="$(readlink -e /work)" || fail $?
 audit_check=scratch
@@ -4687,6 +4966,8 @@ while IFS= read -r -d '' link; do
     resolved="$(readlink -e -- "$link")" || fail $?
     [[ "$resolved/" == "$root/"* ]] || refuse_unknown link-confine 0 "$link"
 done < "$scratch/links"
+# Per entry: its own Git directory and checkout. Common directories are audited
+# once each afterwards.
 while IFS= read -r -d '' entry; do
     case "$entry" in
         */.git) repo="${entry%/.git}" ;;
@@ -4703,6 +4984,9 @@ while IFS= read -r -d '' entry; do
     gitdir="$(git -C "$repo" rev-parse --absolute-git-dir 2>/dev/null)" || fail $?
     gitdir="$(readlink -e "$gitdir")" || fail $?
     [[ "$gitdir/" == "$root/"* ]] || refuse_unknown git-dir-confine 0 "$repo"
+    # Every Git directory is the common directory or one of its worktrees/<id>,
+    # so the common pass classifies it.
+    [ "$gitdir" = "$top" ] || [ "${gitdir%/*}" = "$top/worktrees" ] || refuse_unknown git-dir-layout 0 "$repo"
     for directory in "$top" "$gitdir"; do
         [ ! -s "$directory/info/grafts" ] || refuse_unknown grafts 0 "$repo"
         for marker in index.lock MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD rebase-merge rebase-apply; do
@@ -4725,78 +5009,39 @@ while IFS= read -r -d '' entry; do
     audit_check=bare
     bare="$(git -C "$repo" rev-parse --is-bare-repository 2>/dev/null)" || fail $?
     case "$bare" in
-        false) consider_dirty "$repo" status ;;
+        false) queue_dirty "$repo" status ;;
         true) ;;
         *) refuse_unknown bare 2 "$repo" ;;
     esac
-    audit_check=ls-remote
-    timeout --kill-after=5s 30s git -C "$repo" ls-remote --heads origin > "$scratch/origin" 2>/dev/null || fail $?
-    audit_check=origin-parse
-    origin="$(sort "$scratch/origin")" || fail $?
-    [ -n "$origin" ] || refuse_unknown origin-empty 0 "$repo"
-    comparisons=()
-    while IFS=$'\t' read -r tip ref; do
-        [[ "$tip" =~ ^[0-9a-f]{40}$ && "$ref" == refs/heads/* ]] || refuse_unknown origin-parse 2 "$repo"
-        audit_check=cat-file
-        git -C "$repo" cat-file -e "$tip^{commit}" 2>/dev/null || fail $?
-        comparisons+=("$tip")
-        if [ "$bare" = true ]; then
-            audit_check=bare-ref
-            local_tip="$(git -C "$repo" rev-parse --verify "$ref^{commit}" 2>/dev/null)" || fail $?
-            [ "$local_tip" = "$tip" ] || refuse_unknown bare-ref 2 "$repo"
-        fi
-    done <<< "$origin"
-    [ "${#comparisons[@]}" -gt 0 ] || refuse_unknown origin-empty 0 "$repo"
-    if [ "$bare" = false ]; then
-        audit_check=origin-advertisement
-        git -C "$repo" for-each-ref --format='%(objectname)%09refs/heads/%(refname:strip=3)' refs/remotes/origin > "$scratch/local" 2>/dev/null || fail $?
-        local_refs="$(awk '$2!="refs/heads/HEAD" {print}' "$scratch/local" | sort)" || fail $?
-        [ "$origin" = "$local_refs" ] || refuse_unknown origin-advertisement 2 "$repo"
+    printf 'entry repo=%s common=%s\n' "$(digest "$repo")" "$(digest "$top")"
+    if [ -z "${common_seen[$top]+x}" ]; then
+        common_seen[$top]=1
+        common_repo[$top]="$repo"
+        commons+=("$top")
     fi
-    audit_repo="$repo"
-    audit_check=worktree-list
-    git -C "$repo" worktree list --porcelain -z > "$scratch/worktrees" 2>/dev/null || fail $?
-    : > "$scratch/tips"
-    consider_gitdir "$top" common
-    consider_tips "$repo"
-    while IFS= read -r -d '' field; do
-        [[ "$field" == worktree\ * ]] || continue
-        audit_check=worktree-path
-        work="${field#worktree }"
-        work="$(readlink -e "$work")" || fail $?
-        [[ "$work/" == "$root/"* ]] || refuse_unknown worktree-confine 0 "$repo"
-        audit_check=worktree-bare
-        work_bare="$(git -C "$work" rev-parse --is-bare-repository 2>/dev/null)" || fail $?
-        if [ "$work_bare" = false ]; then
-            consider_dirty "$work" worktree-status
-        elif [ "$work_bare" != true ]; then
-            refuse_unknown worktree-bare 2 "$work"
-        fi
-        consider_tips "$work"
-    done < "$scratch/worktrees"
-    audit_repo="$repo"
-    audit_check=tips
-    sort -u "$scratch/tips" > "$scratch/unique" || fail $?
-    [ -s "$scratch/unique" ] || refuse_unknown tips-empty 0 "$repo"
-    # Traverse the full graph, without the publication exclusions that could hide
-    # a missing ancestor. Only blobs are optional in the blobless seed contract.
-    audit_check=rev-list-objects
-    cat "$scratch/unique" > "$scratch/roots" || fail $?
-    printf '%s\n' "${comparisons[@]}" >> "$scratch/roots"
-    timeout --kill-after=5s 30s git -C "$repo" rev-list --objects --no-object-names --filter=blob:none --missing=error --stdin \
-        < "$scratch/roots" > "$scratch/objects" 2>/dev/null || fail $?
-    while IFS= read -r tip; do
-        [[ "$tip" =~ ^[0-9a-f]{40}$ ]] || refuse_unknown tips 2 "$repo"
-        audit_check=tip-commit
-        git -C "$repo" cat-file -e "$tip^{commit}" 2>/dev/null || fail $?
-        audit_check=rev-list
-        count="$(timeout --kill-after=5s 30s git -C "$repo" rev-list --count "$tip" --not "${comparisons[@]}" 2>/dev/null)" || fail $?
-        [[ "$count" =~ ^[0-9]+$ ]] || refuse_unknown rev-list-count 2 "$repo"
-        [ "$count" = 0 ] || refuse_unpublished "$repo"
-        printf 'tip=%s origin=%s repo=%s\n' "$tip" "$(printf '%s' "$origin" | sha256sum | cut -d' ' -f1)" "$(printf '%s' "$repo" | sha256sum | cut -d' ' -f1)"
-    done < "$scratch/unique"
 done < "$scratch/repositories"
+drain_dirty
+for top in "${commons[@]}"; do
+    consider_common
+done
+drain_dirty
 printf 'repositories=%s partial=%s\n' "$repos" "$partial_repos"
+# C1008_AUDIT_END
+C1008_AUDIT_BODY
+case "$c1008_audit_body" in
+    *'# C1008_AUDIT_END'*) ;;
+    *) printf 'audit check=audit-body status=2 repo=.\nRecycleGitAuditUnknown\n'; exit 2 ;;
+esac
+c1008_audit_status=0
+timeout --kill-after=10s 1800s bash -c "$c1008_audit_body" || c1008_audit_status=$?
+case "$c1008_audit_status" in
+    124|137)
+        printf 'audit check=audit-timeout status=%s repo=.\n' "$c1008_audit_status"
+        printf 'RecycleGitAuditUnknown\n'
+        exit 2
+        ;;
+esac
+exit "$c1008_audit_status"
 C1008_GIT
 }
 
