@@ -112,7 +112,7 @@ that proves it. Rows marked with an A-n depend on an addition below.
 | H-4 | Stale runner listing | A stale "present" listing vetoes (safe side). A stale "absent" list (the dead-session sweep's cached local list) is never an input to the boot decision: a fresh owning inventory is read, and re-read at the final barrier | V-2 inventory-listed; V-8 inventory-entry; PC-8 |
 | H-5 | Different generation: resume or relaunch moves the launch clock; a listing with another `AcceptedStartedAt` | The old prompt is invisible to the boot predicate (`LaunchClockAsync`); a listing of any generation is listed | V-3 idle-wrong-generation; R-clocks; PC-3 |
 | H-6 | Prompt only queued (`QueuedUserPrompt`, never accepted by the session) | No boot episode exists and no boot protection is given: the task keeps the ordinary role-ceiling failure exactly as at base, whether the session is idle, Working through an inherited mid-turn row, or terminal. A later queued row never opens or advances an accepted prompt's episode (R1, section "Final Review repairs") | V-18 (CP-39, CP-40, CP-41) and CP-2 `prompt-only-queued` |
-| H-7 | Transcript tailer lag: the reply exists on the runner, not in the database | Gate 2 pulls before any decision; a reply that lands ends the episode; a failed pull leaves DetectOnly | V-4 model-reply-returns-to-ordinary-policy (reply landed through `CatchUpOverride`); PC-4 |
+| H-7 | Transcript tailer lag: the reply exists on the runner, not in the database | Gate 2 pulls before any decision; a reply that lands ends the episode; a failed pull leaves DetectOnly | V-21 `C1151_Reply_landing_in_the_pull_ends_the_episode` (CP-44): fresh-reply-lands-in-the-pull and stale-reply-lands-in-the-pull land the reply DURING Gate 2 through `CatchUpOverride` and assert the pull and the post-pull outcome; pull-times-out fails the production pull at the runner. V-4 model-reply-returns-to-ordinary-policy is only the stored-row control: its reply is pre-seeded before the first evaluation and it installs no pull hook (corrected by repair 2, Review 409623bd F1); PC-4, PC-32..PC-34 |
 | H-8 | AlwaysOn Check seat (CARD-0079 territory) | Boot detection never calls `CheckCompactionContinuationService` or the runner's conditional compaction stop; `CompactionStops` is asserted zero in every witness; CARD-0079's own tests are unchanged | V-1; R-C0079 (CP-34, CP-35); PC-23 |
 | H-9 | Parked or Blocked session | Blocked is outside the overdue population; detection creates no park row, no release row, no release call, with parking off and on | V-12; PC-12 |
 | H-10 | CARD-1149 S1 absent-launch hold in progress (Failed row, runner-unknown reason, grace running) | The terminal row is the reconciler's (A-1): the boot sweep writes no boot event and fails nothing; the S1 hold still wins | V-3 terminal-row-reconciler-owned; V-14 (CP-19); PC-17 |
@@ -270,12 +270,15 @@ supersedes any earlier statement here that disagrees.
 - **R2, the warning writer trusted an opaque key.** `BootStallWarningWriter.RecordAsync` checked
   only task status, attempt, session and `DispatchedAt` under the task lock. Repair: the
   episode carries its `BootStallFacts`; immediately before the insert, inside the writer's own
-  transaction, the session row is share-locked with `NOWAIT` and its accepted generation
+  transaction, the session row is share-locked with `SKIP LOCKED` (repair 2; it was `NOWAIT`, see below) and its accepted generation
   (`StartedAt`) and launch clock (`max(DispatchedAt, LaunchResumedAt)`, one shared
   `TaskDeadlinePolicy.LaunchClock` rule) must equal the decided episode's, and the boot
   predicate re-read on that clock must return the same accepted prompt sequence and timestamp
   with no model reply since. Any mismatch, a missing row, or a session row locked by a
-  concurrent writer writes nothing and logs nothing above Debug. Dedupe stays per episode and
+  concurrent writer writes nothing and logs nothing above Debug: a write-locked row is skipped,
+  so it reads as a missing row and is an ordinary empty result, never a database error (proved
+  by V-22 under real two-connection contention; under `NOWAIT` EF Core logged the 55P03 twice at
+  Error, Review 409623bd F2). Dedupe stays per episode and
   stage under the task lock; every other fault is still swallowed. Cost: a stage write adds
   four statements (session lock, Grok-rules check, model-reply EXISTS, prompt rows), at most
   twice per episode; the A-7 repeated-episode tick never reaches the writer and is unchanged.
@@ -323,6 +326,96 @@ Pending positive controls for SourceLanding Mutation (method-scoped, one cycle e
 - PC-31: skip the parent-note enqueue in `FailAndNotifyAsync`. `C1151_Ceiling_failure_note_has_one_complete_user_prompt` red on every argument.
 
 Mutation total under option B with R1-R3: 39 cycles (31 + 8).
+
+## Final Review repairs F1-F2 (Review 409623bd, Code a75e3df1)
+
+The Final Review of `11b70758` ran all 34 S1-S3 rows (463/464; the one red, CP-37's git-index
+control, fails identically at base `27e3e3f7f` and is inherited) and found two defects. This
+section records the repairs and supersedes any earlier statement here that disagrees.
+
+- **F1, a false H-7 citation.** H-7 cited V-4 `model-reply-returns-to-ordinary-policy` as a
+  reply "landed through `CatchUpOverride`". That argument seeds the reply before the first
+  evaluation (`AssistantAfterPrompt`) and installs no pull hook, so it never exercised a reply
+  arriving during Gate 2's pull. Repair: H-7 now cites V-21, which does, and keeps the V-4
+  argument as the stored-row control only. No production change: the behaviour was right, the
+  evidence claim was not.
+- **F2, expected contention logged at Error.** Under a held session row the writer's
+  `FOR SHARE NOWAIT` raised PostgreSQL 55P03, and EF Core logged `Failed executing DbCommand`
+  (20102) and `An exception occurred while iterating over the results of a query` (10100) at
+  Error before the writer's Debug catch ran, contradicting R2's "logs nothing above Debug".
+  Repair: the share lock is taken with `SKIP LOCKED`. A write-locked row is skipped, so the
+  statement succeeds with no row, which the writer already treats as a changing identity
+  (IdentityChanged, nothing written, one Debug line naming the session as missing or
+  mid-update). The `55P03` catch is removed because nothing raises it any more. Lock
+  semantics are unchanged: `FOR SHARE` still conflicts with exactly the locks `NOWAIT`
+  refused on (an `UPDATE`'s `FOR NO KEY UPDATE`, `FOR UPDATE`) and not with `FOR KEY SHARE`
+  (transcript inserts' foreign-key checks), it still never waits, and a granted lock is still
+  held to the end of the writer's transaction. Genuine faults on the statement still reach
+  the writer's Warning; EF logging is not filtered or lowered anywhere. Same statement count,
+  so the R2 cost line and CP-17's 18/18/4 are unchanged. No migration, no setting, no new
+  outcome: a held row was IdentityChanged before and is IdentityChanged now.
+
+Fail-closed review of the change: an unknown (skipped) row writes nothing, as before;
+telemetry still never feeds the disposition; nothing stops, fails or releases a Working
+session; detection only.
+
+New proofs (`Integration`, isolated Postgres):
+
+- V-21 (F1): `BootStallDetectionTests.C1151_Reply_landing_in_the_pull_ends_the_episode` (3).
+  Every argument starts from an accepted prompt 21 minutes old and no stored model row (a
+  control asserts it), so the stored-row pass alone would write `BootStallNeedsOperator`.
+  `fresh-reply-lands-in-the-pull`: the hook lands a reply stamped now during the pull; one
+  pull, Gate 2's "the pull is what saved it" Information record, no warning, task Working with
+  the same attempt, and a second sweep neither pulls nor writes. `stale-reply-lands-in-the-pull`:
+  the hook lands the reply the tailer missed (prompt + 30 s); one pull, the ordinary general
+  clock fails the task non-destructively (no failure code, "NOT killed"), no boot warning.
+  `pull-times-out`: no hook; the production pull reaches `ListedInventoryRunner`, whose
+  transcript request throws `TaskCanceledException` on an uncancelled sweep (the runtime does
+  not catch an `OperationCanceledException`; the dispatcher's catch does); one runner pull, one
+  `BootStallNeedsOperator`, task Working, no per-task evaluation error.
+- V-22 (F2): `BootStallDetectionTests.C1151_Session_row_contention_is_quiet` (2), with the
+  world's loggers captured from Debug up and the writer on its production default context (the
+  dispatcher's own options, so EF Core logs through the same factory). `held-session-row`: a
+  second connection holds an uncommitted `UPDATE` of the session row; a third connection's
+  `FOR SHARE NOWAIT` control must raise 55P03 (the row really is held); the sweep must finish
+  inside a 30-second bound, and in its window nothing is logged above Debug except EF's
+  routine `CommandExecuted` (20101) records, no entry carries an exception, the writer's Debug
+  line is present, no event is written and the task keeps its attempt; after rollback the next
+  sweep writes exactly one `BootStallDetected`. `session-read-fault`: an interceptor throws on
+  the session statement; the writer's `Could not record BootStallDetected` Warning is still
+  logged, nothing is written, and once cleared the next sweep writes one event.
+- Fixture: `BootStallWorld` gains `MinimumLogLevel` (default Warning, so every existing caller
+  is unchanged) and structured `LogEntries()` (level, category, event id, exception);
+  `ListedInventoryRunner` counts transcript pulls and can fault them.
+
+Author red evidence (Code a75e3df1, build `bin-c1151r2/`, method filters
+`C1151_Reply_landing_in_the_pull_ends_the_episode*` and `C1151_Session_row_contention_is_quiet*`,
+every build and run through `build-slot.ps1`; local diagnostics, not PC discharges):
+
+| Case | Mutation (worktree only, restored) | Result |
+|---|---|---|
+| held-session-row | pre-fix writer (`11b70758`, `NOWAIT`) | red: the 20102 and 10100 Error records in the window |
+| held-session-row | PC-35 `SKIP LOCKED` -> `NOWAIT` | red: same two Error records |
+| held-session-row | PC-36 `SKIP LOCKED` removed (blocking `FOR SHARE`) | red: `TimeoutException` at the 30-second bound |
+| session-read-fault | PC-37 catch-all at Debug around the revalidation in `RecordAsync` | red: the writer's Warning is missing |
+| fresh-reply-lands-in-the-pull | PC-32 Gate 2 reuses the stored-row verdict | red: no "the pull is what saved it" record (the writer's R2 revalidation alone also withholds the warning, which is why the witness pins Gate 2's record) |
+| stale-reply-lands-in-the-pull | PC-32 | red: failed 0, expected 1 |
+| all three V-21 arguments | PC-33 Gate 2's pull removed | red: pull count 0 |
+| pull-times-out | PC-34 the dispatcher catch loses `\|\| !ct.IsCancellationRequested` | red: the per-task "Overdue-deadline evaluation" Error |
+
+V-21 passes at the pre-fix writer (it witnesses unchanged behaviour); `session-read-fault`
+passes there too (a control that the fix does not over-suppress).
+
+Pending positive controls for SourceLanding Mutation (method-scoped, one cycle each):
+
+- PC-32: in `TryFailOverdueAsync`, Gate 2 reuses `suspected` instead of re-evaluating after the pull. `C1151_Reply_landing_in_the_pull_ends_the_episode` red on `fresh-reply-lands-in-the-pull` and `stale-reply-lands-in-the-pull`.
+- PC-33: in `TryFailOverdueAsync`, drop Gate 2's `CatchUpTranscriptAsync` call. Same method, red on every argument at the pull count.
+- PC-34: in `AgentTaskDispatcher.CatchUpTranscriptAsync`, narrow the catch to `ex is not OperationCanceledException`. Same method, red on `pull-times-out`.
+- PC-35: in `BootStallWarningWriter.SameEpisodeAsync`, `SKIP LOCKED` -> `NOWAIT`. `C1151_Session_row_contention_is_quiet` red on `held-session-row`.
+- PC-36: in `SameEpisodeAsync`, drop `SKIP LOCKED` (a blocking share lock). Same method, red on `held-session-row` at the 30-second bound.
+- PC-37: in `BootStallWarningWriter.RecordAsync`, swallow any revalidation exception at Debug as IdentityChanged. Same method, red on `session-read-fault`.
+
+Mutation total under option B with R1-R3 and F1-F2: 45 cycles (39 + 6).
 
 ## Assertion reversals
 
@@ -643,6 +736,8 @@ CP-16 `Min` is 8, and the regression rows plus CP-37/CP-38 run after S1-S3 on th
 | CP-41 | S1-S3 | `CP-1` | portable-r1-dispatcher | `/*/*/BootStallDetectionTests/C1151_Only_an_accepted_prompt_is_protected*` | V-18 | 3 executed, 0 failed/skipped | 3 | 2 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-42 | S1-S3 | `CP-1` | portable-r2-writer | `/*/*/BootStallDetectionTests/C1151_Warning_writer_revalidates_the_episode_identity*` | V-19 | 5 executed, 0 failed/skipped | 5 | 2 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-43 | S1-S3 | `CP-1` | portable-r3-ceiling-note | `/*/*/DelegationDispatchRecoveryBoundaryTests/C1151_Ceiling_failure_note_has_one_complete_user_prompt*` | V-20 | 3 executed, 0 failed/skipped | 3 | 3 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-44 | S1-S3 | `CP-1` | portable-f1-pull | `/*/*/BootStallDetectionTests/C1151_Reply_landing_in_the_pull_ends_the_episode*` | V-21 | 3 executed, 0 failed/skipped | 3 | 2 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-45 | S1-S3 | `CP-1` | portable-f2-contention | `/*/*/BootStallDetectionTests/C1151_Session_row_contention_is_quiet*` | V-22 | 2 executed, 0 failed/skipped | 2 | 2 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-11 | S4 | `tests/Antiphon.Tests -> bin-c1151-s4/` | portable-attention | `/*/*/BootStallAttentionTests/C1151_Attention_describes_detection_and_resolution*` | V-11 | 5 executed, 0 failed/skipped | 5 | 5 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-12 | S4 | `CP-11` | portable-docs | `/*/*/BootStallDocumentationTests/C1151_Docs_describe_detection_and_only_compaction_exception*` | V-17 | 1 executed, 0 failed/skipped | 1 | 1 | true | n/a |
 | CP-14 | S5 | `tests/Antiphon.Tests -> bin-c1151-s5/` | portable-brief | `/*/*/DelegationDispatchRecoveryBoundaryTests/C1151_Brief_and_spill_remain_byte_identical*` | V-10 | 3 executed, 0 failed/skipped | 3 | 5 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
