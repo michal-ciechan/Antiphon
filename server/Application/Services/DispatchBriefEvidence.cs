@@ -64,6 +64,24 @@ internal sealed record DispatchBriefPromptEvidence(
     string? Text,
     DateTime? Timestamp);
 
+/// <summary>
+/// What the ensure observed about one task's current brief, each a positive observation. Row
+/// facts are false unless exactly one current row is recognized as the brief.
+/// </summary>
+internal readonly record struct DispatchBriefFacts(
+    bool TaskOpen,
+    bool CurrentAttempt,
+    int RecognizedRows,
+    bool OtherCurrentEvidence,
+    bool CompleteReceipt,
+    bool SpillPointer,
+    bool PayloadIntact,
+    bool Canceled,
+    bool Unattempted,
+    bool Attempted);
+
+internal sealed record DispatchBriefRule(string Name, Func<DispatchBriefFacts, bool> When, DispatchBriefDecision Then);
+
 internal static class DispatchBriefEvidence
 {
     public const string InputUnavailableReason =
@@ -75,23 +93,59 @@ internal static class DispatchBriefEvidence
     public const string AttemptOwnedReason =
         "dispatch_brief_attempt_owned: the current brief was already attempted; queue recovery keeps that row.";
 
+    private static readonly DispatchBriefDecision UncertainHold =
+        new(DispatchBriefKind.Uncertain, Hold: true, EvidenceUncertainReason);
+
+    /// <summary>
+    /// CARD-1150. The whole verdict, in evidence order: the task and its attempt, then which rows
+    /// are the brief, then a complete receipt, then the retained payload, then the row's delivery
+    /// shape. The first rule that matches decides; the last holds whatever no rule admitted.
+    /// A receipt comes before the payload because the queue releases a spill's bytes after a
+    /// complete UserPrompt (F5), and only a queue-written spill pointer has a payload to lose (F4).
+    /// </summary>
+    internal static readonly IReadOnlyList<DispatchBriefRule> Table =
+    [
+        new("task-not-open", f => !f.TaskOpen, new(DispatchBriefKind.Uncertain, Hold: false, Reason: null)),
+        new("superseded", f => !f.CurrentAttempt, new(DispatchBriefKind.Superseded, Hold: false, Reason: null)),
+        new("several-briefs", f => f.RecognizedRows > 1, UncertainHold),
+        new("unrecognized-evidence", f => f.RecognizedRows == 0 && f.OtherCurrentEvidence, UncertainHold),
+        new("absent", f => f.RecognizedRows == 0, new(DispatchBriefKind.Absent, Hold: false, Reason: null)),
+        new("received", f => f.CompleteReceipt, new(DispatchBriefKind.Received, Hold: false, Reason: null)),
+        new("spill-unavailable", f => f.SpillPointer && !f.PayloadIntact,
+            new(DispatchBriefKind.Unavailable, Hold: true, InputUnavailableReason)),
+        new("canceled", f => f.Canceled, UncertainHold),
+        new("unattempted", f => f.Unattempted, new(DispatchBriefKind.Reuse, Hold: false, Reason: null)),
+        new("attempted", f => f.Attempted, new(DispatchBriefKind.AttemptOwned, Hold: false, AttemptOwnedReason)),
+        new("unknown", _ => true, UncertainHold),
+    ];
+
+    public static DispatchBriefDecision Decide(DispatchBriefFacts facts) =>
+        Table.First(rule => rule.When(facts)).Then;
+
     public static DispatchBriefDecision Classify(
+        DispatchBriefEnsureRequest request,
+        DispatchBriefTaskSnapshot task,
+        IReadOnlyList<DispatchBriefRowEvidence> rows,
+        IReadOnlyList<DispatchBriefPromptEvidence> prompts,
+        Func<string, string?>? readAbsoluteFile = null) =>
+        Decide(Observe(request, task, rows, prompts, readAbsoluteFile));
+
+    internal static DispatchBriefFacts Observe(
         DispatchBriefEnsureRequest request,
         DispatchBriefTaskSnapshot task,
         IReadOnlyList<DispatchBriefRowEvidence> rows,
         IReadOnlyList<DispatchBriefPromptEvidence> prompts,
         Func<string, string?>? readAbsoluteFile = null)
     {
-        if (task.Status is not (AgentTaskStatus.Dispatched or AgentTaskStatus.Working))
-            return new DispatchBriefDecision(DispatchBriefKind.Uncertain, Hold: false, Reason: null);
-
-        if (task.Attempt != request.Attempt
-            || task.AgentSessionId != request.SessionId
-            || task.DispatchedAt is not DateTime dispatchedAt
-            || task.SessionStartedAt is not DateTime startedAt
-            || !SameGeneration(dispatchedAt, request.DispatchedAt)
-            || !SameGeneration(startedAt, request.SessionStartedAt))
-            return new DispatchBriefDecision(DispatchBriefKind.Superseded, Hold: false, Reason: null);
+        var open = task.Status is AgentTaskStatus.Dispatched or AgentTaskStatus.Working;
+        var currentAttempt = task.Attempt == request.Attempt
+            && task.AgentSessionId == request.SessionId
+            && task.DispatchedAt is DateTime dispatchedAt
+            && task.SessionStartedAt is DateTime startedAt
+            && SameGeneration(dispatchedAt, request.DispatchedAt)
+            && SameGeneration(startedAt, request.SessionStartedAt);
+        if (!open || !currentAttempt)
+            return new DispatchBriefFacts(open, currentAttempt, 0, false, false, false, false, false, false, false);
 
         var marker = DelegationReportFormatter.TaskMarker(request.TaskId);
         var current = new List<DispatchBriefRowEvidence>();
@@ -108,46 +162,24 @@ internal static class DispatchBriefEvidence
                 recognized.Add(row);
         }
 
-        if (recognized.Count > 1)
-            return Uncertain();
+        var other = current.Count > recognized.Count || HasCurrentMarkerPrompt(prompts, request, marker);
+        if (recognized.Count != 1)
+            return new DispatchBriefFacts(true, true, recognized.Count, other, false, false, false, false, false, false);
 
-        if (recognized.Count == 1)
-            return ClassifyRecognized(recognized[0], request, marker, task.Goal, prompts, readAbsoluteFile);
-
-        if (current.Count > 0 || HasCurrentMarkerPrompt(prompts, request, marker))
-            return Uncertain();
-
-        return new DispatchBriefDecision(DispatchBriefKind.Absent, Hold: false, Reason: null);
+        var brief = recognized[0];
+        var payload = ReadPayload(brief, marker, readAbsoluteFile);
+        return new DispatchBriefFacts(
+            TaskOpen: true,
+            CurrentAttempt: true,
+            RecognizedRows: 1,
+            OtherCurrentEvidence: other,
+            CompleteReceipt: HasCompleteReceipt(brief, payload.Text, marker, prompts, request),
+            SpillPointer: payload.Spill,
+            PayloadIntact: payload.IsIntact(marker, task.Goal),
+            Canceled: brief.Status == QueuedMessageStatus.Canceled || brief.CanceledAt is not null,
+            Unattempted: IsUnattempted(brief),
+            Attempted: IsAttempted(brief));
     }
-
-    private static DispatchBriefDecision ClassifyRecognized(
-        DispatchBriefRowEvidence row,
-        DispatchBriefEnsureRequest request,
-        string marker,
-        string? goal,
-        IReadOnlyList<DispatchBriefPromptEvidence> prompts,
-        Func<string, string?>? readAbsoluteFile)
-    {
-        if (row.Status == QueuedMessageStatus.Canceled || row.CanceledAt is not null)
-            return Uncertain();
-
-        if (IsDamaged(row, marker, goal, readAbsoluteFile))
-            return new DispatchBriefDecision(DispatchBriefKind.Unavailable, Hold: true, InputUnavailableReason);
-
-        if (HasCompleteReceipt(row, marker, prompts, request, readAbsoluteFile))
-            return new DispatchBriefDecision(DispatchBriefKind.Received, Hold: false, Reason: null);
-
-        if (IsUnattempted(row))
-            return new DispatchBriefDecision(DispatchBriefKind.Reuse, Hold: false, Reason: null);
-
-        if (IsAttempted(row))
-            return new DispatchBriefDecision(DispatchBriefKind.AttemptOwned, Hold: false, AttemptOwnedReason);
-
-        return Uncertain();
-    }
-
-    private static DispatchBriefDecision Uncertain() =>
-        new(DispatchBriefKind.Uncertain, Hold: true, EvidenceUncertainReason);
 
     private static bool IsRecognized(DispatchBriefRowEvidence row, Guid taskId, string marker)
     {
@@ -182,46 +214,46 @@ internal static class DispatchBriefEvidence
         || row.LastDeliveryStartedAt is not null
         || row.SentAt is not null;
 
-    private static bool IsDamaged(
-        DispatchBriefRowEvidence row,
-        string marker,
-        string? goal,
-        Func<string, string?>? readAbsoluteFile)
+    /// <summary>
+    /// The text the agent needs: the retained or spilled payload of a spill claim, otherwise the
+    /// body itself.
+    /// </summary>
+    private static SpillPayload ReadPayload(
+        DispatchBriefRowEvidence row, string marker, Func<string, string?>? readAbsoluteFile)
     {
         var claimsSpill = !string.IsNullOrEmpty(row.RemoteSpillRelativePath)
             || SpillTokenIndex(row.Body, 0) >= 0;
         if (!claimsSpill)
-            return false;
+            return new SpillPayload(false, row.Body, Conflict: false);
 
-        var path = AbsoluteSpillPath(row.Body);
-        var file = ReadSpill(path, readAbsoluteFile);
-        if (!string.IsNullOrEmpty(row.RemoteSpillBody)
-            && file is not null
-            && !string.Equals(file, row.RemoteSpillBody, StringComparison.Ordinal))
-            return true;
-
-        var authoritative = !string.IsNullOrEmpty(row.RemoteSpillBody) ? row.RemoteSpillBody : file;
-        if (string.IsNullOrEmpty(authoritative))
-            return true;
-        if (!authoritative.Contains(marker, StringComparison.Ordinal))
-            return true;
-        var expectedGoal = goal?.Trim();
-        if (!string.IsNullOrEmpty(expectedGoal)
-            && !authoritative.Contains(expectedGoal, StringComparison.Ordinal))
-            return true;
-        return false;
+        var file = ReadSpill(AbsoluteSpillPath(row.Body), readAbsoluteFile);
+        var retained = string.IsNullOrEmpty(row.RemoteSpillBody) ? null : row.RemoteSpillBody;
+        var conflict = retained is not null && file is not null && !string.Equals(file, retained, StringComparison.Ordinal);
+        return new SpillPayload(true, retained ?? file, conflict);
     }
 
+    private readonly record struct SpillPayload(bool Spill, string? Text, bool Conflict)
+    {
+        public bool IsIntact(string marker, string? goal)
+        {
+            if (Conflict || string.IsNullOrEmpty(Text) || !Text.Contains(marker, StringComparison.Ordinal))
+                return false;
+            var expectedGoal = goal?.Trim();
+            return string.IsNullOrEmpty(expectedGoal) || Text.Contains(expectedGoal, StringComparison.Ordinal);
+        }
+    }
+
+    /// <summary>
+    /// A complete UserPrompt of the typed body, or of the payload it carried. The queue compares
+    /// the typed wire text, so a spill pointer is received when its pointer is.
+    /// </summary>
     private static bool HasCompleteReceipt(
         DispatchBriefRowEvidence row,
+        string? payload,
         string marker,
         IReadOnlyList<DispatchBriefPromptEvidence> prompts,
-        DispatchBriefEnsureRequest request,
-        Func<string, string?>? readAbsoluteFile)
+        DispatchBriefEnsureRequest request)
     {
-        var body = AuthoritativeBody(row, readAbsoluteFile);
-        if (!PromptSubmissionMatch.RequiresTextMatch(body))
-            return false;
         foreach (var prompt in prompts)
         {
             if (!PromptInWindow(prompt, request))
@@ -230,21 +262,15 @@ internal static class DispatchBriefEvidence
                 continue;
             if (string.IsNullOrEmpty(prompt.Text) || !prompt.Text.Contains(marker, StringComparison.Ordinal))
                 continue;
-            if (PromptSubmissionMatch.IsCompleteIn(body, prompt.Text))
+            if (CompleteIn(row.Body, prompt.Text) || CompleteIn(payload, prompt.Text))
                 return true;
         }
 
         return false;
     }
 
-    private static string? AuthoritativeBody(DispatchBriefRowEvidence row, Func<string, string?>? readAbsoluteFile)
-    {
-        if (!string.IsNullOrEmpty(row.RemoteSpillBody))
-            return row.RemoteSpillBody;
-        if (ReadSpill(AbsoluteSpillPath(row.Body), readAbsoluteFile) is { Length: > 0 } file)
-            return file;
-        return row.Body;
-    }
+    private static bool CompleteIn(string? body, string text) =>
+        PromptSubmissionMatch.RequiresTextMatch(body) && PromptSubmissionMatch.IsCompleteIn(body, text);
 
     private static bool HasCurrentMarkerPrompt(
         IReadOnlyList<DispatchBriefPromptEvidence> prompts,
