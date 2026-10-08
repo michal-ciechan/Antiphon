@@ -898,7 +898,17 @@ public sealed class AgentSessionService : IDelegateSessionStopper
                 var receivedBrief = !hasBrief && await _db.TranscriptEntries.AnyAsync(t => t.AgentSessionId == session.Id
                     && t.Kind == TranscriptKinds.UserPrompt && t.Text != null && t.Text.Contains(marker)
                     && (task.DispatchedAt == null || (t.Timestamp ?? t.CreatedAt) > task.DispatchedAt), ct);
-                if (!hasBrief && !receivedBrief)
+                var requeued = false;
+                if (!hasBrief && !receivedBrief && task.DispatchedAt is DateTime dispatchedAt)
+                {
+                    // CARD-1150 F3: the dispatcher's post-claim producer may still be on its way to
+                    // this brief. The queue-owned ensure re-checks and inserts under its gate and the
+                    // task row lock, so the two producers leave one row.
+                    var ensured = await _messageQueue.EnsureDispatchBriefAsync(new DispatchBriefEnsureRequest(
+                        task.Id, task.Attempt, session.Id, dispatchedAt, session.StartedAt), ct);
+                    requeued = ensured.Inserted;
+                }
+                else if (!hasBrief && !receivedBrief)
                 {
                     var brief = AgentTaskDispatcher.FitBriefForTyping(task, _delegationSettings,
                         AgentTaskDispatcher.CeilingsForBrief(_ptyProfile?.Ceilings, session.RunnerCwd, _delegationSettings),
@@ -909,6 +919,11 @@ public sealed class AgentSessionService : IDelegateSessionStopper
                     await _messageQueue.EnqueueAsync(session.Id, brief, MessageSendMode.WhenIdle, ct,
                         QueuedMessageOrigin.Delegation, deliverIfIdle: false,
                         executionDeadlineAt: task.ExecutionDeadlineAt, executionTaskId: task.Id);
+                    requeued = true;
+                }
+
+                if (requeued)
+                {
                     _db.AgentTaskEvents.Add(new AgentTaskEvent
                     {
                         Id = Guid.NewGuid(), AgentTaskId = task.Id, Type = AgentTaskEventType.Warning,
