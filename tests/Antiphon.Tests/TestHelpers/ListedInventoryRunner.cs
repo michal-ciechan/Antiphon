@@ -40,8 +40,19 @@ internal sealed class ListedInventoryRunner : ISessionRunnerClient
     public Task<SessionRunnerSnapshotDto> GetSnapshotAsync(Guid sessionId, CancellationToken ct) =>
         Task.FromResult(new SessionRunnerSnapshotDto(sessionId, "", "", 0, DateTime.UtcNow));
 
-    public Task<SessionRunnerTranscriptDto> GetTranscriptAsync(Guid sessionId, CancellationToken ct) =>
-        Task.FromResult(new SessionRunnerTranscriptDto(sessionId, [], 0));
+    /// <summary>Transcript pulls (the CARD-0055 catch-up), counted whether or not <see cref="TranscriptFault"/> fires.</summary>
+    public int TranscriptPulls { get; private set; }
+
+    /// <summary>When set, every transcript pull throws it (an unreachable or timed-out runner).</summary>
+    public Exception? TranscriptFault { get; set; }
+
+    public Task<SessionRunnerTranscriptDto> GetTranscriptAsync(Guid sessionId, CancellationToken ct)
+    {
+        TranscriptPulls++;
+        return TranscriptFault is { } fault
+            ? Task.FromException<SessionRunnerTranscriptDto>(fault)
+            : Task.FromResult(new SessionRunnerTranscriptDto(sessionId, [], 0));
+    }
 
     public Task SendInputAsync(Guid sessionId, string input, CancellationToken ct)
     {

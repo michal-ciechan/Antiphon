@@ -206,12 +206,12 @@ internal sealed class BootStallWorld : IAsyncDisposable
         CountingRunnerDirectory? directory,
         Guid sessionId, Guid taskId, Guid agentId, DateTime now0, DateTime promptAt)
     {
-        var log = new BootStallLog();
+        var log = new BootStallLog(options.MinimumLogLevel);
         var events = new MockEventBus();
         var settings = new DelegationSettings { MaxConcurrentTasks = options.MaxConcurrentTasks };
         options.Configure?.Invoke(settings);
         var services = new ServiceCollection();
-        services.AddLogging(builder => builder.AddProvider(log).SetMinimumLevel(LogLevel.Warning));
+        services.AddLogging(builder => builder.AddProvider(log).SetMinimumLevel(options.MinimumLogLevel));
         services.AddDbContext<AppDbContext>(o => o.UseNpgsql(connectionString));
         services.AddSingleton<IEventBus>(options.EventBus ?? events);
         services.AddSingleton<TimeProvider>(clock);
@@ -378,29 +378,50 @@ internal sealed class BootStallWorld : IAsyncDisposable
         return new DateTime(utc.Ticks - (utc.Ticks % 10), DateTimeKind.Utc);
     }
 
-    /// <summary>Warning-level log capture, so a test failure prints what the sweep said.</summary>
-    private sealed class BootStallLog : ILoggerProvider, ILogger
+    /// <summary>
+    /// Every log entry the provider's loggers write at or above
+    /// <see cref="BootStallWorldOptions.MinimumLogLevel"/>, in order. The scoped
+    /// <see cref="AppDbContext"/> and the warning writer's default context share this factory, so
+    /// EF Core's own command and query errors land here exactly as they would in production.
+    /// </summary>
+    public IReadOnlyList<BootStallLogEntry> LogEntries() => _log.Entries.ToArray();
+
+    /// <summary>
+    /// Warning-level text capture (so a test failure prints what the sweep said) plus the
+    /// structured entries at the world's minimum level (CARD-1151 repair 2).
+    /// </summary>
+    private sealed class BootStallLog(LogLevel minimum) : ILoggerProvider
     {
         public ConcurrentQueue<string> Lines { get; } = new();
 
-        public ILogger CreateLogger(string categoryName) => this;
+        public ConcurrentQueue<BootStallLogEntry> Entries { get; } = new();
+
+        public ILogger CreateLogger(string categoryName) => new Category(this, categoryName);
 
         public void Dispose()
         {
         }
 
-        public IDisposable BeginScope<TState>(TState state) where TState : notnull => NullScope.Instance;
-
-        public bool IsEnabled(LogLevel logLevel) => logLevel >= LogLevel.Warning;
-
-        public void Log<TState>(
-            LogLevel logLevel, EventId eventId, TState state, Exception? exception,
-            Func<TState, Exception?, string> formatter)
+        private sealed class Category(BootStallLog log, string name) : ILogger
         {
-            if (!IsEnabled(logLevel))
-                return;
-            Lines.Enqueue($"{logLevel}: {formatter(state, exception)}{(exception is null ? "" : $" [{exception.GetType().Name}: {exception.Message}]")}");
+            public IDisposable BeginScope<TState>(TState state) where TState : notnull => NullScope.Instance;
+
+            public bool IsEnabled(LogLevel logLevel) => logLevel >= log._minimum;
+
+            public void Log<TState>(
+                LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+                Func<TState, Exception?, string> formatter)
+            {
+                if (!IsEnabled(logLevel))
+                    return;
+                var message = formatter(state, exception);
+                log.Entries.Enqueue(new BootStallLogEntry(logLevel, name, eventId, message, exception));
+                if (logLevel >= LogLevel.Warning)
+                    log.Lines.Enqueue($"{logLevel}: {message}{(exception is null ? "" : $" [{exception.GetType().Name}: {exception.Message}]")}");
+            }
         }
+
+        private readonly LogLevel _minimum = minimum;
 
         private sealed class NullScope : IDisposable
         {
@@ -412,6 +433,8 @@ internal sealed class BootStallWorld : IAsyncDisposable
         }
     }
 }
+
+internal sealed record BootStallLogEntry(LogLevel Level, string Category, EventId EventId, string Message, Exception? Exception);
 
 internal enum BootStallListing
 {
@@ -465,6 +488,9 @@ internal sealed record BootStallWorldOptions
     public bool ParkingEnabled { get; init; }
     public IEventBus? EventBus { get; init; }
     public Action<DelegationSettings>? Configure { get; init; }
+
+    /// <summary>The capture floor for every logger in the world, EF Core included.</summary>
+    public LogLevel MinimumLogLevel { get; init; } = LogLevel.Warning;
 }
 
 /// <summary>
