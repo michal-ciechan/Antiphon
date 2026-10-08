@@ -490,6 +490,17 @@ The original 18/18/4 `C1149_C1150_Statement_budgets` arguments are untouched.
   "the same with a Working transcript" is corrected to the Sent brief for that reason.
 - **CP-46** reruns the registry guard (CP-38) on the S5 build, so `--after S5` selects
   CP-14, CP-15, CP-16, CP-20 and CP-46.
+- **Author red evidence** (local diagnostics on `bin-c1151s5dev/`, every build and run through
+  `build-slot.ps1`, worktree-only mutations restored with `git checkout -- server/`; not PC
+  discharges). Batch A, three mutants in different methods: M1 `BootStallDetectAsync` calls
+  `_runnerClient.ReleaseSlotAsync` after the writer (PC-12 shape): V-12 red 2/2 at
+  `Runner.Releases`. M2 `BootStallNeedsPullAsync` reads the key but always returns true (PC-18
+  shape): V-13 `working-repeated-episode` red at `total` (23 versus 13, pulls 1). M3 the D9
+  `IsWorkingAsync` withhold in `FailNeverStartedAsync` disabled (PC-14's cleanup condition):
+  V-15 `working-withholds` red at `Stopper.Killed`; its other two arguments stay green, as they
+  must. Batch B: M4 `BootStallDetectAsync` appends a space to every queue row body on the session
+  (PC-10 shape): V-10 red 3/3 at the queue snapshot. Restored source: 16/16 green.
+
 
 ## Assertion reversals
 
