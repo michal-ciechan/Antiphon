@@ -325,8 +325,8 @@ public class StandingBootAttentionTests
     /// unrelated row (an unrelated Crash incident on the same agent); a Warning is logged.
     /// detected-on-record: a Warning receipt exists, the row is the ordinary Warning.
     /// operator-on-record-unreadable: an operator receipt exists but the clock has stepped back
-    /// below the operator due; with the receipt unreadable the row is the clock's Warning (unknown
-    /// evidence is the normal-threshold row, never a hidden one).
+    /// below the operator due; with the receipt unreadable the row falls back to the clock's
+    /// Warning (unreadable history is never a hidden row and never a stop).
     /// </summary>
     [Test]
     [Arguments("detected-on-record")]

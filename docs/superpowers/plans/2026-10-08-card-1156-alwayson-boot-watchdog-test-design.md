@@ -506,9 +506,10 @@ cycles about 1 minute.
 - PC-18 (1): in `BootReplyWatchdogService.EvaluateAsync`, clear `BootPromptSequence` and `BootReplyDueAt` after a recorded stage and save. `C1156_Boot_watch_statement_budgets` red on `same-recorded-episode` at 9 versus 3 (the self-heal re-arm), and V-1's third witness red at `BootReplyDueAt.ShouldNotBeNull()`.
 - PC-19 (1): in `StandingBootWatchObservation.ReadAsync`, read `TranscriptWorkingStateQuery` and refuse emission when Working. `C1156_Working_boot_keeps_its_session_and_supervisor_custody` red on `claude-code` at zero Warning receipts; `C1156_Boot_watch_statement_budgets` red on `first-detected-stage` at 16 versus 15.
 - PC-20 (3): change the detection sentence in one owner document, one per document. `C1156_Docs_name_detection_clocks_custody_and_compaction_exception` red; documentation control.
+- PC-21 (4, added by repair d9a5492f): (a) in `StandingBootAttentionProjection.ProjectAsync`, rethrow from the optional receipt-read catch: `C1156_Optional_receipt_read_fault_keeps_current_attention` red on both arguments (the injected fault escapes `GetAsync`); (b) in `AttentionService.BuildBootReplyMissingItemsAsync`, drop `attachedIncidents.UnionWith(covered)`: `C1156_Legacy_error_history_is_suppressed_with_its_attention_row` red on `covered-due` and `covered-not-due` at `history.SessionId` (the covered session's legacy Error is the newest recent-incident row); (c) drop the task-owned live-session union: same method red on `task-owned`; (d) in the projection, restore `if (decision.Stage == Stage.None) continue;` ahead of the recorded-stage lookup: `C1156_Recorded_operator_stage_survives_clock_rollback` red on `below-boot-due` and `before-prompt` at the single-row assertion.
 
-Cycle total: **41** (the plan's 31 retained plus 10 added: PC-4c, PC-5b, PC-10b, PC-16b,
-PC-17, PC-18, PC-19 behavioural, PC-20 three documentation). Excluded from mutation with reason:
+Cycle total: **45** (the plan's 31 retained plus 10 added: PC-4c, PC-5b, PC-10b, PC-16b,
+PC-17, PC-18, PC-19 behavioural, PC-20 three documentation; plus PC-21's four from the S4 repair). Excluded from mutation with reason:
 "no RPC while holding the lock" (no assertion observes statement order inside the writer's
 transaction; Review reads `RecordAsync` for any runtime call, and V-11's pull counts bound the
 number of pulls to one per cold path); log wording (Review reads the reason tokens).
@@ -552,6 +553,9 @@ and `wait` until the exit is not 75.
 | CP-14 | S4 | `CP-10` | portable-legacy-answer | `/*/*/AttentionServiceTests/A_boot_prompt_that_was_answered_after_the_incident_is_no_longer_listed` | R-2 | 1, 0 failed/skipped | 1 | 1 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-15 | S4 | `CP-10` | portable-legacy-death | `/*/*/AttentionServiceTests/A_boot_reply_incident_on_a_dead_session_is_not_listed` | R-2 | 1, 0 failed/skipped | 1 | 1 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-16 | S4 | `CP-10` | portable-task-attention | `/*/*/BootStallAttentionTests/C1151_Attention_describes_detection_and_resolution*` | R-5 | all 5, no pending, 0 failed/skipped | 5 | 3 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-30 | S4 | `CP-10` | portable-receipt-read-fault | `/*/*/StandingBootAttentionTests/C1156_Optional_receipt_read_fault_keeps_current_attention*` | V-8 (repair F-1) | all 2, 0 failed/skipped | 2 | 2 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-31 | S4 | `CP-10` | portable-legacy-error-suppression | `/*/*/StandingBootAttentionTests/C1156_Legacy_error_history_is_suppressed_with_its_attention_row*` | V-8 (repair F-2) | all 3, 0 failed/skipped | 3 | 2 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-32 | S4 | `CP-10` | portable-operator-rollback | `/*/*/StandingBootAttentionTests/C1156_Recorded_operator_stage_survives_clock_rollback*` | V-8 (repair F-3) | all 2, 0 failed/skipped | 2 | 2 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-17 | S5-S6 | `tests/Antiphon.Tests -> bin-c1156-final/` | portable-watch-cost | `/*/*/StandingBootStatementBudgetTests/C1156_Boot_watch_statement_budgets*` | V-11 | all 8, exact pins, rosters printed, 0 failed/skipped | 8 | 7 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-18 | S5-S6 | `CP-17` | portable-projection-cost | `/*/*/StandingBootStatementBudgetTests/C1156_Attention_and_pruning_statement_budgets*` | V-11 | all 3, exact pins, rosters printed, 0 failed/skipped | 3 | 3 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-19 | S5-S6 | `CP-17` | portable-delivery-scope | `/*/*/BootLivenessProbeScopeTests/*` | R-1 | all 8, 0 failed/skipped | 8 | 3 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
@@ -691,7 +695,7 @@ upgrade and no migration.
 
 ## As built: S4 (Code task 470638a8)
 
-Branch `feat/card-task-470638a8` from `origin/master` `8a8cfda480288bbdd353dac063482c0aa61667bc`
+As first built at `fdd4d859` (the repair below changes three of these decisions). Branch `feat/card-task-470638a8` from `origin/master` `8a8cfda480288bbdd353dac063482c0aa61667bc`
 (the landed S1-S3 tip). Production: new `StandingBootAttentionProjection.cs`;
 `AttentionService.BuildBootReplyMissingItemsAsync` and its one call in `GetAsync`;
 `AgentSupervisorService.PruneIncidentsAsync` only. Tests: the three V-8/V-9/V-10 bodies in
@@ -707,14 +711,16 @@ Decisions and deviations Review should check:
   `LoadPromptTurnAsync`), with `IdentityMatches` derived from the CURRENT latest real prompt and
   never from the armed watch columns. Owners are read as every agent sharing a persistent pointer
   with an AlwaysOn agent, so count/AlwaysOn/conflict match the sweep. Error comes from the
-  operator due, or from a recorded `stage=operator` receipt of the same episode (no downgrade).
+  operator due, or from a recorded `stage=operator` receipt of the same episode (no downgrade;
+  since the repair this also holds below the boot due, see F-3 below).
 - **The call moved ahead of `BuildRecentIncidentItemsAsync`**: the current episode's receipts are
   added to `attachedIncidents`, so an Error receipt is not reported a second time as a
   `RecentCriticalIncident`. Item order is unchanged (the list is sorted at the end).
 - **Legacy suppression**: a `bootSeq=` row is suppressed for every live session an AlwaysOn agent
   points at (covered, whether or not a stage is due) and for every session an open task
-  (Queued/Dispatched/Working/Blocked) owns; the legacy live-session read carries the task
-  exclusion as a `NOT EXISTS`, so its command count is unchanged.
+  (Queued/Dispatched/Working/Blocked) owns while the session is live; the legacy live-session read
+  carries the task test inside the same command (first a `NOT EXISTS` filter, since the repair a
+  projected `EXISTS` column), so its command count is unchanged.
 - **Prune candidates deviate from the design roster** ("the same candidate reads, no receipts
   read"): `CurrentEpisodeKeysAsync` reads the live sessions that hold a `standingBoot:v1;`
   receipt (one command, the receipt test is an `EXISTS` subquery), then the boot predicate's two
@@ -763,3 +769,61 @@ regression rows CP-19..CP-27; use the prune deltas above), then **S6** (owner do
 `BootStallDocumentationTests.AlwaysOnExceptionSentence` and its two assertions, V-13; CP-28/29).
 AppHost restart is needed after the reviewed land (server change); no runner upgrade and no
 migration.
+
+### S4 repair (Code task d9a5492f, Final Review 3fe22492)
+
+Branch `feat/card-task-d9a5492f` from `ced090d8`; landing owner remains 470638a8. Production:
+`StandingBootAttentionProjection.ProjectAsync` (now takes the caller's `ILogger`) and
+`AttentionService.BuildBootReplyMissingItemsAsync` only. Tests: three new methods in
+`StandingBootAttentionTests` (CP-30..CP-32); `AttentionServiceTests.BuildService` gains an optional
+`logger` (default `NullLogger`, unchanged for every existing caller); `StandingBootWatchFixture`
+gains `Logger<T>()` over its captured log. The class helper `ProjectAsync` takes an optional fault
+interceptor and an optional observation time (a separate `FakeTimeProvider`, because the fixture's
+clock cannot move backwards). No existing assertion was weakened or deleted; no migration.
+
+- **F-1, optional receipt read isolated.** A non-cancellation fault on the standing-receipt SELECT
+  is caught, logged at Warning ("Could not read the standing boot receipts; ...") and every episode
+  is projected from its clock alone, as if it had no receipt; the caller's cancellation still
+  propagates. The rest of `GetAsync` is unaffected. Degraded mode: an unreadable operator receipt
+  is not attached, so its Error can also appear as a `RecentCriticalIncident` for that pass, and a
+  clock stepped back below the operator due shows the clock's Warning (pinned by
+  `operator-on-record-unreadable`).
+- **F-2, legacy Error suppressed in the recent-incident sweep.** Every legacy `bootSeq=` row inside
+  the 24-hour window on a covered session (live, AlwaysOn pointer) or on a live session an open task
+  owns is added to `attachedIncidents` before `BuildRecentIncidentItemsAsync`, at any severity.
+  Legacy rows of any other session, including ended sessions of the same agent, stay ordinary
+  recent-incident history (the test's dead-session row is the control).
+- **F-3, monotonic operator stage.** Admission still requires the whitelist (`decision.Facts` is
+  set only when every positive condition holds); `Stage.None` with facts is "valid, unresolved,
+  nothing due on the clock". A recorded `stage=operator` receipt of the same episode now yields
+  the Error row whatever the clock says, including below the boot due and before the prompt. A
+  recorded `stage=detected` receipt alone does not show a row below the boot due (not requested;
+  unchanged). Positive resolution (model reply, terminal session, new launch/prompt) still runs
+  before and wins.
+- **Statement counts** are unchanged: the receipt read and the legacy live-session read are still
+  one command each.
+
+Author red. Base: the seven new cases red with `server/` at `ced090d8` (18 existing green). Mutants
+built into `bin-c1156rdev/`, each batch restored with `git checkout -- server/`; batches pair
+mutants in different files whose cases are disjoint.
+
+| Case | Production mutation | Red at |
+|---|---|---|
+| CP-30 `detected-on-record`, `operator-on-record-unreadable` | PC-21a: rethrow in the receipt-read catch | injected fault escapes `GetAsync` |
+| CP-31 `covered-due`, `covered-not-due` | PC-21b: no `attachedIncidents.UnionWith(covered)` | `history.SessionId` (covered session's legacy Error) |
+| CP-31 `task-owned` | PC-21c: no task-owned live-session union | `history.SessionId` |
+| CP-32 `below-boot-due`, `before-prompt` | PC-21d: `Stage.None` skipped before the recorded-stage lookup | single-row assertion, 0 rows |
+
+Review R2 disclosures, judged here (no production change):
+
+- R2-1 (missing prompt facts release dedup receipts) is not a one-line change: retaining a
+  candidate whose generation or prompt cannot be read needs a per-session retention set in
+  `CurrentEpisodeKeysAsync` and `PruneIncidentsAsync`, plus new missing-prompt/missing-generation
+  prune cases. Backlog.
+- R2-2 (protected keys are `FailureReason` only, not `(SessionId, FailureReason)`) is conservative
+  over-retention. Backlog.
+- R2-3 (unknown-evidence wording versus the whitelist that declines unknowns) is a wording and
+  test-design reconciliation; the no-stop guarantee is unaffected. Backlog.
+
+PC-21 joins the pending list; every PC stays pending for post-land SourceLanding Mutation. AppHost
+restart is needed after the reviewed land (server change); no runner upgrade and no migration.
