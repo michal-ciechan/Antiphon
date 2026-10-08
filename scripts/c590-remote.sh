@@ -4398,10 +4398,13 @@ c1008_status_proof() {
 
 c1008_git_program() {
     cat <<'C1008_GIT'
-# CARD-1105: one overall budget for the whole audit. Measured on a runner: one
-# 7165-file worktree costs about 4 s (status plus raw hashing), so ~400 worktrees
-# take minutes with parallel worktree checks. 1800 s leaves a wide margin. A
-# timeout is RecycleGitAuditUnknown, never a pass.
+# CARD-1105: one overall budget for the whole audit. The read-only replay over the
+# server2 OLD volume (390 entries, two common directories) took 1404 s at load 17;
+# 3000 s is more than twice that, and still about 1000 s above it with the whole
+# 600 s origin proof-fetch allowance (fetch_origin) spent. Nothing that starts the
+# audit (deploy-server2.ps1, verify-docker-stack.ps1, the ssh in c590-real.ps1,
+# docker start -a) has a shorter wall deadline. A timeout is RecycleGitAuditUnknown,
+# never a pass.
 set -u
 c1008_audit_body=''
 IFS= read -r -d '' c1008_audit_body <<'C1008_AUDIT_BODY' || :
@@ -4426,9 +4429,14 @@ repos=0
 partial_repos=0
 top=''
 top_bare=''
-declare -A dirty_seen=() common_seen=() common_repo=() work_trees=() git_dirs=()
+declare -A dirty_seen=() common_seen=() common_repo=() work_trees=() git_dirs=() tmp_registered=()
+tmp_nested=()
 commons=()
 commons_fetched=0
+# Every origin proof fetch together may take this many milliseconds (each one also
+# stops at 300 s); once spent, the remaining common directories compare only their
+# present heads, which can only refuse more.
+fetch_left_ms=600000
 proof_dir=''
 fetched=()
 present=()
@@ -4865,6 +4873,78 @@ consider_main() {
     fi
     consider_stale_index "$top"
 }
+# CARD-1105 repair 7. A checkout path the runner recorded under its /tmp, resolved in
+# the tmp mount the way the runner resolves it. The helper's own /tmp is a different
+# directory, so nothing resolves the path before this translation. The recorded path
+# may not climb with '..'. Symlinks are followed one hop at a time: a relative target
+# from its own directory, an absolute one only under the runner's /tmp (translated to
+# the mount), and a '..' never above the mount. Prints the mount path; returns 1 when
+# the path cannot be proven to stay inside the mount.
+tmp_resolve() {
+    local path="$tmp_root" part target hops=0
+    local -a parts=() more=()
+    case "/$1/" in */../*) return 1 ;; esac
+    IFS=/ read -r -a parts <<< "${1#"$runner_tmp"}"
+    while [ "${#parts[@]}" -gt 0 ]; do
+        part="${parts[0]}"
+        parts=("${parts[@]:1}")
+        case "$part" in
+            ''|.) continue ;;
+            ..)
+                [ "$path" != "$tmp_root" ] && [ -d "$path" ] || return 1
+                path="${path%/*}"
+                continue
+                ;;
+        esac
+        path="$path/$part"
+        [ -L "$path" ] || continue
+        hops=$((hops + 1))
+        [ "$hops" -le 40 ] || return 1
+        target="$(readlink -- "$path")" || return 1
+        case "$target" in
+            ''|*$'\n'*) return 1 ;;
+            "$runner_tmp"|"$runner_tmp"/*) path="$tmp_root"; target="${target#"$runner_tmp"}" ;;
+            /*) return 1 ;;
+            *) path="${path%/*}" ;;
+        esac
+        IFS=/ read -r -a more <<< "$target"
+        parts=("${more[@]}" "${parts[@]}")
+    done
+    printf '%s\n' "$path"
+}
+# Git metadata inside a registered tmp checkout. Under /work the repository scan makes
+# every .git entry and every Git-shaped HEAD directory an entry of its own; nothing
+# scans the tmp volume, so this runs over each registered tmp checkout instead. A .git
+# file naming an admin directory whose own recorded checkout is that very directory is
+# a registered checkout, inspected like this one (checked after every common directory,
+# tmp_nested). Every other .git entry and every Git-shaped HEAD directory keeps its
+# metadata outside /work, cannot be classified, and refuses unknown.
+consider_tmp_git() {
+    local checkout="$1" entry dir marker content target
+    audit_repo="$checkout"
+    audit_check=tmp-git
+    find "$checkout" -xdev -mindepth 1 -name .git -print0 -prune -o -type f -name HEAD -print0 > "$scratch/tmp-git" 2>/dev/null || fail $?
+    while IFS= read -r -d '' entry; do
+        dir="${entry%/*}"
+        case "$entry" in
+            */.git)
+                [ -f "$entry" ] && [ ! -L "$entry" ] || refuse_unknown dot-git 0 "$dir"
+                content="$(< "$entry")" || fail $?
+                target=''
+                case "$content" in "gitdir: "*) target="${content#gitdir: }" ;; esac
+                case "$target" in ''|*$'\n'*) refuse_unknown dot-git 0 "$dir" ;; /*) ;; *) target="$dir/$target" ;; esac
+                target="$(readlink -e -- "$target")" || refuse_unknown dot-git 0 "$dir"
+                tmp_nested+=("$target" "$dir")
+                ;;
+            */HEAD)
+                for marker in objects refs packed-refs commondir; do
+                    if [ -e "$dir/$marker" ] || [ -L "$dir/$marker" ]; then refuse_unknown git-dir-shape 0 "$dir"; fi
+                done
+                ;;
+            *) fail 2 ;;
+        esac
+    done < "$scratch/tmp-git"
+}
 # Every worktrees/<id> directory is audited whether or not its checkout exists or
 # git worktree list would show it. <id>/gitdir records <checkout>/.git. When that
 # checkout directory exists its content is inspected: through its own .git file
@@ -4873,7 +4953,7 @@ consider_main() {
 # pointer cannot hide modified or untracked files. Only an absent checkout (Git's
 # prunable state) leaves the index, which must then equal its HEAD.
 consider_linked() {
-    local admin="$1" common pointer parent recorded content target='' checkout='' agreed=0 probe status=0
+    local admin="$1" common pointer parent recorded content target='' checkout='' agreed=0 probe status=0 in_tmp=0
     audit_repo="$admin"
     audit_check=git-dir-layout
     common="$(git --git-dir="$admin" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || fail $?
@@ -4899,14 +4979,19 @@ consider_linked() {
         # entry itself is not followed.
         [ "${pointer##*/}" = .git ] || refuse_unknown worktree-path 0 "$admin"
         parent="${pointer%/*}"
-        checkout="$(realpath -m -- "${parent:-/}")" || fail $?
         # A checkout registered outside every mounted volume cannot be inspected and
-        # may be live. One under the runner's /tmp is read in the read-only tmp mount
-        # and must resolve inside it; with no tmp mount it refuses.
-        if [[ "$checkout/.git/" != "$root/"* ]]; then
-            [ -n "$tmp_root" ] && [[ "$checkout/" == "$runner_tmp/"* ]] || refuse_unknown worktree-confine 0 "$admin"
-            checkout="$(realpath -m -- "$tmp_root${checkout#"$runner_tmp"}")" || fail $?
+        # may be live. One recorded under the runner's /tmp is read in the read-only
+        # tmp mount: translated there before anything resolves it, and it must stay
+        # inside (tmp_resolve); with no tmp mount it refuses.
+        if [[ "$parent/" == "$runner_tmp/"* ]]; then
+            [ -n "$tmp_root" ] || refuse_unknown worktree-confine 0 "$admin"
+            checkout="$(tmp_resolve "$parent")" || refuse_unknown worktree-confine 0 "$admin"
             [[ "$checkout/" == "$tmp_root/"* ]] || refuse_unknown worktree-confine 0 "$admin"
+            tmp_registered[$admin]="$checkout"
+            in_tmp=1
+        else
+            checkout="$(realpath -m -- "${parent:-/}")" || fail $?
+            [[ "$checkout/.git/" == "$root/"* ]] || refuse_unknown worktree-confine 0 "$admin"
         fi
         recorded="$checkout/.git"
         if [ -f "$recorded" ] && [ ! -L "$recorded" ]; then
@@ -4918,6 +5003,7 @@ consider_linked() {
     fi
     if [ -n "$checkout" ] && { [ -e "$checkout" ] || [ -L "$checkout" ]; }; then
         [ -d "$checkout" ] && [ ! -L "$checkout" ] || refuse_unknown worktree-path 0 "$admin"
+        [ "$in_tmp" = 0 ] || consider_tmp_git "$checkout"
         if [ "$agreed" = 1 ]; then
             queue_dirty "$checkout" worktree-status
         else
@@ -4940,14 +5026,17 @@ consider_linked() {
 # audited object store read-only (objects/info/alternates) and fetches origin's
 # heads without blobs; the audited repository is never written. Every step that
 # fails or times out falls back to the advertised heads present in the clone,
-# which can only refuse more. Sets proof_dir and fetched. Git would list the
+# which can only refuse more; so does a spent shared allowance (fetch_left_ms).
+# Sets proof_dir and fetched. Git would list the
 # alternate's refs with a child that drops this environment; that listing is off
 # (core.alternateRefsCommand=true) and the present heads are the proof's own refs,
 # so negotiation still sends them as haves.
 fetch_origin() {
-    local proof="$scratch/proof-$1" url oid type n=0
+    local proof="$scratch/proof-$1" url oid type n=0 cap=300 started ended status=0
     proof_dir=''
     fetched=()
+    [ "$fetch_left_ms" -gt 0 ] || return 1
+    [ "$fetch_left_ms" -ge 300000 ] || cap=$(((fetch_left_ms + 999) / 1000))
     url="$(git --git-dir="$top" remote get-url origin 2>/dev/null)" || return 1
     [ -n "$url" ] || return 1
     git init -q --bare --template= -- "$proof" >/dev/null 2>&1 || return 1
@@ -4960,9 +5049,13 @@ fetch_origin() {
     git --git-dir="$proof" config core.alternateRefsCommand true >/dev/null 2>&1 || return 1
     for oid in "${present[@]}"; do n=$((n + 1)); printf 'create refs/c1008/present/%s %s\n' "$n" "$oid"; done > "$proof.present" || return 1
     git --git-dir="$proof" update-ref --stdin < "$proof.present" >/dev/null 2>&1 || return 1
-    timeout --kill-after=5s 300s git --git-dir="$proof" fetch -q --filter=blob:none --no-tags --no-write-fetch-head \
+    started="$(date +%s%N)" && [[ "$started" =~ ^[0-9]+$ ]] || { fetch_left_ms=0; return 1; }
+    timeout --kill-after=5s "${cap}s" git --git-dir="$proof" fetch -q --filter=blob:none --no-tags --no-write-fetch-head \
         --no-auto-gc --no-auto-maintenance --no-recurse-submodules origin '+refs/heads/*:refs/c1008/origin/*' \
-        >/dev/null 2>&1 || return 1
+        >/dev/null 2>&1 || status=$?
+    ended="$(date +%s%N)" && [[ "$ended" =~ ^[0-9]+$ ]] || { fetch_left_ms=0; return 1; }
+    fetch_left_ms=$((fetch_left_ms - (ended - started) / 1000000))
+    [ "$status" = 0 ] || return 1
     git --git-dir="$proof" for-each-ref --format='%(objectname) %(objecttype)' refs/c1008/origin/ \
         > "$proof.heads" 2>/dev/null || return 1
     while IFS=' ' read -r oid type || [ -n "$oid$type" ]; do
@@ -5249,6 +5342,12 @@ drain_dirty
 for top in "${commons[@]}"; do
     consider_common
 done
+# A .git file inside a registered tmp checkout must be the pointer of a registered
+# tmp checkout at that very directory (consider_tmp_git).
+audit_check=tmp-git
+for ((nested = 0; nested < ${#tmp_nested[@]}; nested += 2)); do
+    [ "${tmp_registered[${tmp_nested[nested]}]:-}" = "${tmp_nested[nested + 1]}" ] || refuse_unknown dot-git 0 "${tmp_nested[nested + 1]}"
+done
 drain_dirty
 # Symlinks, after every checkout's content audit. A link inside a checkout's work
 # tree is that checkout's content, never followed: ignored, compared by link text
@@ -5283,7 +5382,7 @@ case "$c1008_audit_body" in
     *) printf 'audit check=audit-body status=2 repo=.\nRecycleGitAuditUnknown\n'; exit 2 ;;
 esac
 c1008_audit_status=0
-timeout --kill-after=10s 1800s bash -c "$c1008_audit_body" || c1008_audit_status=$?
+timeout --kill-after=10s 3000s bash -c "$c1008_audit_body" || c1008_audit_status=$?
 case "$c1008_audit_status" in
     124|137)
         printf 'audit check=audit-timeout status=%s repo=.\n' "$c1008_audit_status"

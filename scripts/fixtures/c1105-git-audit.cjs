@@ -53,11 +53,27 @@ function helper(edit = x => x) {
         .replace('\nrunner_tmp=/tmp\n', '\nrunner_tmp="$C1105_RUNNER_TMP"\n')));
 }
 // The origin proof fetch fails, or runs out of time: the audit falls back to present heads.
-const proofFetch = 'timeout --kill-after=5s 300s git --git-dir="$proof" fetch';
+const proofFetch = 'timeout --kill-after=5s "${cap}s" git --git-dir="$proof" fetch';
 function noFetch() { helper(text => { assert.equal(text.split(proofFetch).length, 2); return text.replace(proofFetch, proofFetch + ' --upload-pack=false'); }); }
 // The timeout fires while the fetch waits for an origin that never answers, so no Git process is
 // killed between its trace start and its parameter events.
-function fetchTimeout() { helper(text => { assert.equal(text.split(proofFetch).length, 2); return text.replace(proofFetch, proofFetch.replace('300s', '2s') + " --upload-pack='sleep 10; git-upload-pack'"); }); }
+function fetchTimeout() { helper(text => { assert.equal(text.split(proofFetch).length, 2); return text.replace(proofFetch, proofFetch.replace('"${cap}s"', '2s') + " --upload-pack='sleep 10; git-upload-pack'"); }); }
+// Repair 7: every proof fetch together has a 600 s allowance besides its own 300 s cap. Each fetch is
+// charged as if it took the given seconds (its real duration plus the offset), so no Git is killed.
+const allowanceLine = '\nfetch_left_ms=600000\n', capLine = '    [ "$fetch_left_ms" -ge 300000 ] || cap=$(((fetch_left_ms + 999) / 1000))\n';
+const fetchEnd = 'ended="$(date +%s%N)"';
+function allowance(ms, chargedSeconds = 0) {
+    helper(text => {
+        assert.equal(text.split(allowanceLine).length, 2); assert.equal(text.split(capLine).length, 2); assert.equal(text.split(fetchEnd).length, 2);
+        return text.replace(allowanceLine, `\nfetch_left_ms=${ms}\n`).replace(fetchEnd, `ended="$(date -d '+${chargedSeconds} seconds' +%s%N)"`);
+    });
+}
+// A blobless seed clone of origin as another repository (its own common directory) in the work volume.
+function seedClone(dir) {
+    const line = source.split('\n').filter(x => x.includes('git clone --filter=blob:none --no-checkout'));
+    assert.equal(line.length, 1);
+    run('bash', ['-c', line[0], 'antiphon-seed', 'ignored', 'file://' + origin], {env: {...env, repo: dir}});
+}
 // Metadata of every path in the audited volume except access times.
 function snapshot() {
     const out = [];
@@ -405,6 +421,61 @@ const hidden = {
         const c = tmpLinked(), elsewhere = path.join(root, 'elsewhere'); fs.mkdirSync(elsewhere); fs.renameSync(c, path.join(elsewhere, 'c1005-master'));
         fs.symlinkSync(elsewhere, path.join(mntTmp, 'link')); put('worktrees/c1005-master/gitdir', path.join(runnerTmp, 'link/c1005-master/.git') + '\n');
     }, 'check=worktree-confine'],
+    // Repair 7 (Final Review e079b0d3 F1): Git never shows an entry named .git, and nothing scanned the tmp
+    // volume for one. Inside a registered tmp checkout every .git entry and Git-shaped HEAD directory is
+    // classified as under /work: only another registered checkout's own pointer passes.
+    'tmp-nested-dot-git': [K, () => {
+        const c = tmpLinked(); fs.mkdirSync(path.join(c, 'sub/.git'), {recursive: true}); fs.writeFileSync(path.join(c, 'sub/.git/notes'), 'sole private bytes');
+        assert.equal(run('git', ['-C', c, 'status', '--porcelain', '--untracked-files=all']), '', 'Git does not show hidden .git content');
+    }, /^audit check=dot-git status=0 repo=\/tmp\/c1005-master\/sub$/m],
+    'tmp-nested-dot-git-file': [K, () => {
+        const c = tmpLinked(); fs.mkdirSync(path.join(c, 'obj/sub'), {recursive: true}); fs.writeFileSync(path.join(c, 'obj/sub/.git'), 'sole private bytes\n');
+        assert.equal(run('git', ['-C', c, 'status', '--porcelain', '--untracked-files=all']), '', 'ignored');
+    }, /^audit check=dot-git status=0 repo=\/tmp\/c1005-master\/obj\/sub$/m],
+    'tmp-nested-pointer-unregistered': [K, () => {
+        const c = tmpLinked(); fs.mkdirSync(path.join(c, 'obj/sub'), {recursive: true}); fs.writeFileSync(path.join(c, 'obj/sub/.git'), 'gitdir: ' + gd() + '\n');
+        fs.writeFileSync(path.join(c, 'obj/sub/new'), 'sole private bytes');
+    }, /^audit check=dot-git status=0 repo=\/tmp\/c1005-master\/obj\/sub$/m],
+    'tmp-nested-git-shaped': [K, () => {
+        const c = tmpLinked(); fs.mkdirSync(path.join(c, 'obj/bare/refs'), {recursive: true}); fs.writeFileSync(path.join(c, 'obj/bare/HEAD'), 'ref: refs/heads/private\n');
+        assert.equal(run('git', ['-C', c, 'status', '--porcelain', '--untracked-files=all']), '', 'ignored');
+    }, /^audit check=git-dir-shape status=0 repo=\/tmp\/c1005-master\/obj\/bare$/m],
+    // A symlinked .git would be read in the helper's namespace, not the runner's: refused even when it agrees.
+    'tmp-dot-git-symlink': [K, () => {
+        const c = tmpLinked(); fs.renameSync(path.join(c, '.git'), path.join(mntTmp, 'gitfile')); fs.symlinkSync('../gitfile', path.join(c, '.git'));
+        assert.equal(fs.readFileSync(path.join(c, '.git'), 'utf8'), 'gitdir: ' + gd('worktrees/c1005-master') + '\n');
+    }, /^audit check=dot-git status=0 repo=\/tmp\/c1005-master$/m],
+    // Negative controls: ignored output, and another registered checkout nested in ignored output, pass.
+    'tmp-linked-ignored': [P, () => { const c = tmpLinked(); fs.mkdirSync(path.join(c, 'obj')); fs.writeFileSync(path.join(c, 'obj/out'), 'build output'); fs.writeFileSync(path.join(c, 'ignored'), 'x'); }],
+    'tmp-nested-registered': [P, () => {
+        checkout(); git('worktree', 'add', '-q', '--detach', path.join(runnerTmp, 'c1005-master'), 'HEAD');
+        git('worktree', 'add', '-q', '--detach', path.join(runnerTmp, 'c1005-master/obj/inner'), 'HEAD');
+        fs.renameSync(runnerTmp, mntTmp); tmpMount = mntTmp;
+    }],
+    // Repair 7 (F2): the recorded path is translated to the mount before anything resolves it. The
+    // helper's own /tmp is not the runner's: '..' after a symlink would pick another directory there.
+    'tmp-symlink-dotdot': [K, () => {
+        const c = tmpLinked(), actual = path.join(mntTmp, 'deep/checkout');
+        fs.mkdirSync(path.join(mntTmp, 'deep/nested'), {recursive: true}); fs.renameSync(c, actual);
+        fs.symlinkSync('deep/nested', path.join(mntTmp, 'link')); fs.writeFileSync(path.join(actual, 'new'), 'sole private bytes');
+        put('worktrees/c1005-master/gitdir', runnerTmp + '/link/../checkout/.git\n');
+        assert.equal(run('realpath', ['-e', mntTmp + '/link/../checkout']), actual, 'the runner path resolves to the dirty checkout');
+    }, /^audit check=worktree-confine status=0 repo=repo\/\.git\/worktrees\/c1005-master$/m],
+    'tmp-symlink-relative': [D, () => {
+        const c = tmpLinked(); fs.renameSync(c, path.join(mntTmp, 'actual')); fs.symlinkSync('actual', c); fs.writeFileSync(path.join(mntTmp, 'actual/new'), 'private');
+    }, /^audit check=worktree-status status=0 repo=\/tmp\/actual$/m],
+    // An absolute link target under the runner's /tmp is the mount; in the helper it names its own /tmp.
+    'tmp-symlink-absolute': [D, () => {
+        const c = tmpLinked(); fs.renameSync(c, path.join(mntTmp, 'actual')); fs.symlinkSync(path.join(runnerTmp, 'actual'), path.join(mntTmp, 'link'));
+        put('worktrees/c1005-master/gitdir', path.join(runnerTmp, 'link/.git') + '\n'); fs.writeFileSync(path.join(mntTmp, 'actual/new'), 'private');
+    }, /^audit check=worktree-status status=0 repo=\/tmp\/actual$/m],
+    // A relative target that climbs out of the mount and back in names, for the runner, a directory
+    // beside its /tmp: here the helper would find the dirty checkout, the runner never had it there.
+    'tmp-symlink-climb': [K, () => {
+        const c = tmpLinked(); fs.renameSync(c, path.join(mntTmp, 'actual')); fs.writeFileSync(path.join(mntTmp, 'actual/new'), 'private');
+        fs.symlinkSync('../' + path.basename(mntTmp) + '/actual', path.join(mntTmp, 'link')); put('worktrees/c1005-master/gitdir', path.join(runnerTmp, 'link/.git') + '\n');
+        assert.equal(fs.realpathSync(path.join(mntTmp, 'link')), path.join(mntTmp, 'actual'));
+    }, /^audit check=worktree-confine status=0 repo=repo\/\.git\/worktrees\/c1005-master$/m],
     // Repair 6 (B): publication against origin's real heads, fetched blobless into a scratch repository.
     'origin-stale-master': [P, () => {
         staleMaster(); const before = snapshot(), result = audit(); assert.equal(result.status, 0, result.stdout);
@@ -419,11 +490,20 @@ const hidden = {
     // Replay 3b (policy pending): a tracking ref for a branch origin deleted still refuses; the receipt counts it.
     'origin-gone-counts': [U, () => { trackingOnly(); git('branch', 'kept-local', priv()); },
         /^audit check=rev-list status=0 repo=repo proof=fetched commits=2 tips=2 gone-tracking=1 unadvertised-local=1$/m],
+    // Repair 7: the proof fetches share one allowance. Spent, no fetch starts and the present heads decide.
+    'origin-fetch-allowance-spent': [U, () => { staleMaster(); allowance(0); }, /^audit check=rev-list status=0 repo=repo proof=present /m,
+        () => assert.equal(starts('+refs/heads/*:refs/c1008/origin/*'), 0, 'no fetch once the allowance is spent')],
+    // Three stale common directories; each fetch is charged 301 s (a fetch at its 300 s cap plus the kill
+    // grace). The 600 s allowance pays for two; the third compares its present heads and refuses.
+    'origin-fetch-allowance-shared': [U, () => {
+        seedClone(path.join(work, 'repo2')); seedClone(path.join(work, 'repo3')); staleMaster(); allowance(600000, 301);
+    }, /^audit check=rev-list status=0 repo=repo[23]? proof=present /m,
+        () => assert.equal(starts('+refs/heads/*:refs/c1008/origin/*'), 2, 'the allowance pays for two fetches')],
 };
 // HIDDEN-LOCATIONS-END
 try {
     setup(); helper();
-    let expected = 'RecycleUnpublishedWork', expectedCheck;
+    let expected = 'RecycleUnpublishedWork', expectedCheck, after = () => {};
     switch (mode) {
         case 'seed': expected = ''; break;
         case 'fetch-only': git('fetch', 'origin'); expected = ''; break;
@@ -511,7 +591,7 @@ try {
         }
         case 'audit-timeout': {
             // The overall budget, shortened: an audit that cannot finish refuses, never passes.
-            const budget = 'timeout --kill-after=10s 1800s bash -c';
+            const budget = 'timeout --kill-after=10s 3000s bash -c';
             helper(text => { assert.equal(text.split(budget).length, 2); return text.replace(budget, 'timeout --kill-after=10s 0.01s bash -c'); });
             expected = K; expectedCheck = 'check=audit-timeout'; break;
         }
@@ -551,7 +631,7 @@ try {
         case 'long-lived': longLived(); expected = ''; break;
         default: {
             if (!Object.hasOwn(hidden, mode)) throw Error('Unknown mode ' + mode);
-            const [want, hide, check] = hidden[mode]; hide(); expected = want; expectedCheck = check; break;
+            const [want, hide, check, then] = hidden[mode]; hide(); expected = want; expectedCheck = check; after = then ?? after; break;
         }
     }
     if (mode !== 'resume' && expected !== null) {
@@ -561,6 +641,7 @@ try {
         else if (expectedCheck) assert.ok(result.stdout.includes(expectedCheck + ' '), `${mode}: ${result.stdout}`);
         if (expected) assert.ok(result.stdout.includes(expected), `${mode}: ${result.stdout}`);
         else assert.match(result.stdout, /repositories=\d+ partial=\d+/);
+        after();
         console.log('PASS ' + mode);
     }
 } finally { if (fs.existsSync(root)) { assert.ok(root.startsWith('/tmp/c1105-audit-')); fs.rmSync(root,{recursive:true}); } }
