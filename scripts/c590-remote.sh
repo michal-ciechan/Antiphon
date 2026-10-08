@@ -4421,7 +4421,7 @@ repos=0
 partial_repos=0
 top=''
 top_bare=''
-declare -A dirty_seen=() common_seen=() common_repo=()
+declare -A dirty_seen=() common_seen=() common_repo=() work_trees=() git_dirs=()
 commons=()
 dirty_pids=()
 dirty_paths=()
@@ -4472,7 +4472,7 @@ refuse_dirty() {
 }
 refuse_unpublished() {
     trap - ERR
-    printf 'audit check=rev-list status=0 repo=%s\n' "$(rel_repo "$1")"
+    printf 'audit check=%s status=0 repo=%s\n' "${2:-rev-list}" "$(rel_repo "$1")"
     printf 'RecycleUnpublishedWork\n'
     exit 2
 }
@@ -4481,19 +4481,25 @@ digest() { printf '%s' "$1" | sha256sum | cut -d' ' -f1; }
 # entries and untracked files that are not ignored. Ignored files (build output,
 # caches, local config) are not work: status omits them, under the ignore rules the
 # audited repository itself carries. An absent index is safe only with the deploy
-# seed's empty worktree shape; there any file refuses, ignored or not.
+# seed's empty worktree shape; there any file refuses, ignored or not. Symlinks are
+# never followed: a tracked one compares by its link text, an untracked one that is
+# not ignored is untracked content, an ignored one is ignored.
+# An orphaned checkout (its .git pointer missing or naming another directory) is
+# read with its admin directory as the Git directory (fourth argument).
 consider_dirty() {
-    local where="$1" kind="$2" work="$3" clean index index_path line seed extra index_existed=0 entry metadata rest path mode oid stage actual flags expected
+    local where="$1" kind="$2" work="$3" admin="${4:-}" clean index index_path line seed extra index_existed=0 entry metadata rest path mode oid stage actual flags expected
+    local -a g=(git -C "$where")
+    [ -z "$admin" ] || g=(git -C "$where" --git-dir="$admin" --work-tree="$where")
     audit_repo="$where"
     audit_check=index
-    index="$(git -C "$where" rev-parse --git-path index 2>/dev/null)" || fail $?
+    index="$("${g[@]}" rev-parse --git-path index 2>/dev/null)" || fail $?
     case "$index" in
         /*) index_path="$index" ;;
         *) index_path="$where/$index" ;;
     esac
     if [ -e "$index_path" ]; then index_existed=1; fi
     audit_check="$kind"
-    clean="$(git -C "$where" status --porcelain --untracked-files=all 2>/dev/null)" || fail $?
+    clean="$("${g[@]}" status --porcelain --untracked-files=all 2>/dev/null)" || fail $?
     seed=0
     if [ "$index_existed" = 0 ]; then
         seed=1
@@ -4509,7 +4515,7 @@ consider_dirty() {
             extra="$(find "$where" -mindepth 1 -path "$where/.git" -prune -o -print -quit 2>/dev/null)" || fail $?
             if [ -z "$extra" ]; then
                 audit_check=seed-stash
-                git -C "$where" for-each-ref --format='%(objectname)' refs/stash > "$work.stash" 2>/dev/null || fail $?
+                "${g[@]}" for-each-ref --format='%(objectname)' refs/stash > "$work.stash" 2>/dev/null || fail $?
                 [ ! -s "$work.stash" ] || refuse_dirty "$kind" "$where"
                 return 0
             fi
@@ -4520,12 +4526,12 @@ consider_dirty() {
     # Status trusts index flags and stat data. Refuse shortcut/sparse entries and
     # hash every regular file or symlink without filters, regardless of timestamps.
     audit_check=index-flags
-    git -C "$where" ls-files -v -z > "$work.flags" 2>/dev/null || fail $?
+    "${g[@]}" ls-files -v -z > "$work.flags" 2>/dev/null || fail $?
     while IFS= read -r -d '' flags; do
         [[ "$flags" == 'H '* ]] || refuse_dirty index-flags "$where"
     done < "$work.flags"
     audit_check=index-content
-    git -C "$where" ls-files --stage -z > "$work.index" 2>/dev/null || fail $?
+    "${g[@]}" ls-files --stage -z > "$work.index" 2>/dev/null || fail $?
     {
         while IFS= read -r -d '' entry; do
             [[ "$entry" == *$'\t'* ]] || fail 2
@@ -4539,7 +4545,7 @@ consider_dirty() {
                     case "$path" in
                         *$'\n'*|*$'\r'*)
                             # --stdin-paths reads lines; such a name is hashed alone.
-                            actual="$(git -C "$where" hash-object --no-filters -- "$where/$path" 2>/dev/null)" || fail $?
+                            actual="$("${g[@]}" hash-object --no-filters -- "$where/$path" 2>/dev/null)" || fail $?
                             [ "$actual" = "$oid" ] || refuse_dirty index-content "$where"
                             ;;
                         *) printf '%s\n' "$where/$path" >&3; printf '%s\n' "$oid" >&4 ;;
@@ -4547,7 +4553,7 @@ consider_dirty() {
                     ;;
                 120000)
                     [ -L "$where/$path" ] || refuse_dirty index-content "$where"
-                    actual="$(readlink -n -- "$where/$path" | git -C "$where" hash-object --stdin 2>/dev/null)" || fail $?
+                    actual="$(readlink -n -- "$where/$path" | "${g[@]}" hash-object --stdin 2>/dev/null)" || fail $?
                     [ "$actual" = "$oid" ] || refuse_dirty index-content "$where"
                     ;;
                 *) refuse_unknown index-mode 2 "$where" ;;
@@ -4555,7 +4561,7 @@ consider_dirty() {
         done < "$work.index"
     } 3> "$work.paths" 4> "$work.expected"
     # One hash-object process per worktree; absolute paths never start with a quote.
-    git -C "$where" hash-object --no-filters --stdin-paths < "$work.paths" > "$work.actual" 2>/dev/null || fail $?
+    "${g[@]}" hash-object --no-filters --stdin-paths < "$work.paths" > "$work.actual" 2>/dev/null || fail $?
     expected="$(< "$work.expected")"
     actual="$(< "$work.actual")"
     [ "$actual" = "$expected" ] || refuse_dirty index-content "$where"
@@ -4563,12 +4569,14 @@ consider_dirty() {
 # Each worktree path is checked once, in parallel. Results are read in queue order,
 # so the first refusal reported does not depend on scheduling.
 queue_dirty() {
-    local where="$1" kind="$2" n
-    [ -z "${dirty_seen[$where]+x}" ] || return 0
-    dirty_seen[$where]=1
+    local where="$1" kind="$2" admin="${3:-}" key="$1" n
+    [ -z "$admin" ] || key="$admin|$where"
+    work_trees[$where]=1
+    [ -z "${dirty_seen[$key]+x}" ] || return 0
+    dirty_seen[$key]=1
     while [ $((${#dirty_pids[@]} - dirty_next)) -ge "$dirty_parallel" ]; do reap_dirty; done
     n="${#dirty_pids[@]}"
-    ( consider_dirty "$where" "$kind" "$scratch/dirty-$n" ) > "$scratch/dirty-$n.out" 2>/dev/null &
+    ( consider_dirty "$where" "$kind" "$scratch/dirty-$n" "$admin" ) > "$scratch/dirty-$n.out" 2>/dev/null &
     dirty_pids+=("$!")
     dirty_paths+=("$where")
 }
@@ -4615,9 +4623,21 @@ consider_stale_index() {
 #   index: the proven checkout's content (consider_dirty) or, with no proven
 #     checkout, equal to HEAD (consider_stale_index); in a bare directory: unknown
 #   stash: refs/stash and logs/refs/stash; notes: refs/notes tips
-#   worktrees/<id>: every admin directory, whether or not its checkout exists
+#   worktrees/<id>: every admin directory, whether or not its checkout exists. Its
+#     recorded checkout, when that directory exists, is inspected against this
+#     admin directory even with its .git pointer missing or naming another
+#     directory; only an absent checkout falls back to the index-equals-HEAD check.
+#     A per-worktree core.worktree (config.worktree) refuses.
+#   A tip that is not a commit (annotated tag, tag of a tag, tree, blob) is
+#     published only when origin advertises that very object (a tree also when a
+#     present origin head reaches it); an advertised tag's commit is still counted.
 #   objects is the store: an object no location names is outside the audit, as
 #   for gc. info/refs is repack's copy of refs that are read directly here.
+# Outside Git directories: a .git directory Git does not open as that checkout's
+# Git directory refuses (Git never shows .git entries as content); a file named
+# HEAD is a repository only in a Git-shaped directory; a symlink inside a checkout
+# belongs to that checkout's content audit (never followed), any other symlink must
+# resolve inside the volume.
 # Common directory only: antiphon/ (product state; a pending children/ journal is
 # unknown), review-evidence/ (agent evidence, not repository state), an empty
 # common/ and an empty git-daemon-export-ok. Editor swap/backup files: unknown.
@@ -4805,7 +4825,11 @@ consider_tips() {
 # directory itself; otherwise its index must equal HEAD.
 consider_main() {
     local main status=0
-    [ "$top_bare" = false ] || return 0
+    if [ "$top_bare" = true ]; then
+        # core.bare on a directory named .git leaves the files beside it outside Git.
+        [ "${top##*/}" != .git ] || refuse_unknown core-bare 0 "$audit_repo"
+        return 0
+    fi
     audit_check=core-worktree
     git --git-dir="$top" config --get core.worktree >/dev/null 2>&1 || status=$?
     case "$status" in
@@ -4823,35 +4847,67 @@ consider_main() {
     consider_stale_index "$top"
 }
 # Every worktrees/<id> directory is audited whether or not its checkout exists or
-# git worktree list would show it. Its checkout's content is inspected only when
-# both pointers agree: <id>/gitdir names <checkout>/.git and that .git file names
-# this directory. Otherwise the index must equal its HEAD.
+# git worktree list would show it. <id>/gitdir records <checkout>/.git. When that
+# checkout directory exists its content is inspected: through its own .git file
+# when both pointers agree, otherwise against this admin directory's index and
+# HEAD (git --git-dir=<id> --work-tree=<checkout>), so a lost or foreign .git
+# pointer cannot hide modified or untracked files. Only an absent checkout (Git's
+# prunable state) leaves the index, which must then equal its HEAD.
 consider_linked() {
-    local admin="$1" common pointer recorded content target='' checkout=''
+    local admin="$1" common pointer parent recorded content target='' checkout='' agreed=0 probe status=0
     audit_repo="$admin"
     audit_check=git-dir-layout
     common="$(git --git-dir="$admin" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || fail $?
     common="$(readlink -e -- "$common")" || fail $?
     [ "$common" = "$top" ] || refuse_unknown git-dir-layout 0 "$admin"
+    # extensions.worktreeConfig lets config.worktree move this work tree elsewhere.
+    if [ -e "$admin/config.worktree" ] || [ -L "$admin/config.worktree" ]; then
+        audit_check=core-worktree
+        git --git-dir="$admin" config --get core.worktree >/dev/null 2>&1 || status=$?
+        case "$status" in
+            0) refuse_unknown core-worktree 0 "$admin" ;;
+            1) ;;
+            *) fail "$status" ;;
+        esac
+    fi
     consider_tips "$admin"
     audit_check=worktree-path
     if [ -e "$admin/gitdir" ] || [ -L "$admin/gitdir" ]; then
         [ -f "$admin/gitdir" ] && [ ! -L "$admin/gitdir" ] || fail 2
         pointer="$(< "$admin/gitdir")" || fail $?
         case "$pointer" in ''|*$'\n'*) fail 2 ;; /*) ;; *) pointer="$admin/$pointer" ;; esac
-        recorded="$(realpath -m -- "$pointer")" || fail $?
+        # Git records <checkout>/.git; the checkout directory is resolved, the .git
+        # entry itself is not followed.
+        [ "${pointer##*/}" = .git ] || refuse_unknown worktree-path 0 "$admin"
+        parent="${pointer%/*}"
+        checkout="$(realpath -m -- "${parent:-/}")" || fail $?
+        recorded="$checkout/.git"
         # A checkout registered outside the volume cannot be inspected and may be live.
         [[ "$recorded/" == "$root/"* ]] || refuse_unknown worktree-confine 0 "$admin"
-        if [ "${recorded##*/}" = .git ] && [ -f "$recorded" ] && [ ! -L "$recorded" ]; then
+        if [ -f "$recorded" ] && [ ! -L "$recorded" ]; then
             content="$(< "$recorded")" || fail $?
             case "$content" in "gitdir: "*) target="${content#gitdir: }" ;; esac
-            case "$target" in ''|*$'\n'*) target='' ;; /*) ;; *) target="${recorded%/*}/$target" ;; esac
-            if [ -n "$target" ] && [ "$(readlink -e -- "$target" 2>/dev/null)" = "$admin" ]; then
-                checkout="${recorded%/.git}"
-            fi
+            case "$target" in ''|*$'\n'*) target='' ;; /*) ;; *) target="$checkout/$target" ;; esac
+            if [ -n "$target" ] && [ "$(readlink -e -- "$target" 2>/dev/null)" = "$admin" ]; then agreed=1; fi
         fi
     fi
-    if [ -n "$checkout" ]; then queue_dirty "$checkout" worktree-status; else consider_stale_index "$admin"; fi
+    if [ -n "$checkout" ] && { [ -e "$checkout" ] || [ -L "$checkout" ]; }; then
+        [ -d "$checkout" ] && [ ! -L "$checkout" ] || refuse_unknown worktree-path 0 "$admin"
+        if [ "$agreed" = 1 ]; then
+            queue_dirty "$checkout" worktree-status
+        else
+            consider_stale_index "$admin"
+            queue_dirty "$checkout" orphan-status "$admin"
+        fi
+        return 0
+    fi
+    if [ -n "$checkout" ]; then
+        # Absence is proven only below a searchable directory.
+        probe="$checkout"
+        while [ ! -e "$probe" ] && [ ! -L "$probe" ]; do probe="${probe%/*}"; done
+        [ ! -d "$probe" ] || [ -x "$probe" ] || refuse_unknown worktree-path 0 "$admin"
+    fi
+    consider_stale_index "$admin"
 }
 # One pass per common directory, shared by every entry that uses it.
 consider_common() {
@@ -4861,14 +4917,22 @@ consider_common() {
     top_bare="$(git --git-dir="$top" rev-parse --is-bare-repository 2>/dev/null)" || fail $?
     case "$top_bare" in true|false) ;; *) refuse_unknown bare 2 "$rep" ;; esac
     audit_check=ls-remote
-    timeout --kill-after=5s 30s git --git-dir="$top" ls-remote --heads origin > "$scratch/origin" 2>/dev/null || fail $?
+    timeout --kill-after=5s 30s git --git-dir="$top" ls-remote --heads --tags origin > "$scratch/origin" 2>/dev/null || fail $?
     audit_check=origin-parse
     sort "$scratch/origin" > "$scratch/origin-sorted" || fail $?
     [ -s "$scratch/origin-sorted" ] || refuse_unknown origin-empty 0 "$rep"
     : > "$scratch/origin-oids"
+    : > "$scratch/advertised"
+    # Heads are the commit comparisons. Every advertised object (head, tag, peeled
+    # tag) can prove a non-commit tip that names that very object.
     while IFS=$'\t' read -r oid ref || [ -n "$oid$ref" ]; do
-        [[ "$oid" =~ ^[0-9a-f]{40}$ && "$ref" == refs/heads/* ]] || refuse_unknown origin-parse 2 "$rep"
-        printf '%s\n' "$oid" >> "$scratch/origin-oids"
+        [[ "$oid" =~ ^[0-9a-f]{40}$ ]] || refuse_unknown origin-parse 2 "$rep"
+        case "$ref" in
+            refs/heads/*) printf '%s\n' "$oid" >> "$scratch/origin-oids" ;;
+            refs/tags/*) ;;
+            *) refuse_unknown origin-parse 2 "$rep" ;;
+        esac
+        printf '%s\n' "$oid" >> "$scratch/advertised"
     done < "$scratch/origin-sorted"
     # Origin is ahead of a clone that stopped fetching (a drained runner) while other
     # runners push. Only advertised heads present here are comparisons: fewer
@@ -4915,19 +4979,53 @@ consider_common() {
     { cat "$scratch/unique"; printf '%s\n' "${comparisons[@]}"; } > "$scratch/roots" || fail $?
     timeout --kill-after=5s 30s git --git-dir="$top" rev-list --objects --no-object-names --filter=blob:none --missing=error --stdin \
         < "$scratch/roots" > "$scratch/objects" 2>/dev/null || fail $?
-    audit_check=tip-commit
-    while IFS= read -r tip; do printf '%s^{commit}\n' "$tip"; done < "$scratch/unique" > "$scratch/peel" || fail $?
-    git --git-dir="$top" cat-file --batch-check='%(objecttype)' < "$scratch/peel" > "$scratch/types" 2>/dev/null || fail $?
+    # Each tip's own (unpeeled) object. A commit is proven by the count below. An
+    # annotated tag, a tag of a tag, a tree or a blob is itself work (a tag's
+    # message, a tree's paths): it is published only when origin advertises that
+    # very object, a tree also when a present origin head reaches it. An advertised
+    # tag's commit is still counted.
+    audit_check=tip-type
+    git --git-dir="$top" cat-file --batch-check='%(objectname) %(objecttype)' < "$scratch/unique" > "$scratch/types" 2>/dev/null || fail $?
+    : > "$scratch/commit-tips"; : > "$scratch/tag-tips"; : > "$scratch/tree-tips"; : > "$scratch/blob-tips"
     lines=0
-    while IFS= read -r type || [ -n "$type" ]; do
+    while IFS=' ' read -r oid type || [ -n "$oid$type" ]; do
         lines=$((lines + 1))
-        [ "$type" = commit ] || refuse_unknown tip-commit 1 "$rep"
+        [[ "$oid" =~ ^[0-9a-f]{40}$ ]] || fail 2
+        case "$type" in
+            commit|tag|tree|blob) printf '%s\n' "$oid" >> "$scratch/$type-tips" ;;
+            *) refuse_unknown tip-type 1 "$rep" ;;
+        esac
     done < "$scratch/types"
     [ "$lines" = "$(wc -l < "$scratch/unique")" ] || fail 2
-    # Every tip at once against every present origin head: zero commits reachable
-    # from a tip and from no head means each tip is published.
+    sort -u "$scratch/advertised" > "$scratch/advertised-sorted" || fail $?
+    audit_check=tip-object
+    for type in tag tree blob; do
+        sort -u "$scratch/$type-tips" > "$scratch/$type-sorted" || fail $?
+        comm -23 "$scratch/$type-sorted" "$scratch/advertised-sorted" > "$scratch/$type-unadvertised" || fail $?
+    done
+    [ ! -s "$scratch/tag-unadvertised" ] && [ ! -s "$scratch/blob-unadvertised" ] || refuse_unpublished "$rep" tip-object
+    if [ -s "$scratch/tree-unadvertised" ]; then
+        audit_check=tip-tree
+        printf '%s\n' "${comparisons[@]}" | timeout --kill-after=5s 30s git --git-dir="$top" rev-list --objects --no-object-names \
+            --filter=blob:none --missing=error --stdin > "$scratch/reached" 2>/dev/null || fail $?
+        sort -u "$scratch/reached" > "$scratch/reached-sorted" || fail $?
+        comm -23 "$scratch/tree-unadvertised" "$scratch/reached-sorted" > "$scratch/tree-unreached" || fail $?
+        [ ! -s "$scratch/tree-unreached" ] || refuse_unpublished "$rep" tip-object
+    fi
+    audit_check=tip-tag
+    while IFS= read -r tip; do printf '%s^{commit}\n' "$tip"; done < "$scratch/tag-sorted" > "$scratch/peel" || fail $?
+    git --git-dir="$top" cat-file --batch-check='%(objectname) %(objecttype)' < "$scratch/peel" > "$scratch/peeled" 2>/dev/null || fail $?
+    while IFS=' ' read -r oid type || [ -n "$oid$type" ]; do
+        case "$type" in
+            commit) printf '%s\n' "$oid" >> "$scratch/commit-tips" ;;
+            missing) ;;
+            *) fail 2 ;;
+        esac
+    done < "$scratch/peeled"
+    # Every commit tip at once against every present origin head: zero commits
+    # reachable from a tip and from no head means each tip is published.
     audit_check=rev-list
-    { cat "$scratch/unique"; printf '^%s\n' "${comparisons[@]}"; } > "$scratch/count-input" || fail $?
+    { cat "$scratch/commit-tips"; printf '^%s\n' "${comparisons[@]}"; } > "$scratch/count-input" || fail $?
     count="$(timeout --kill-after=5s 30s git --git-dir="$top" rev-list --count --stdin < "$scratch/count-input" 2>/dev/null)" || fail $?
     [[ "$count" =~ ^[0-9]+$ ]] || refuse_unknown rev-list-count 2 "$rep"
     [ "$count" = 0 ] || refuse_unpublished "$rep"
@@ -4960,22 +5058,26 @@ audit_check=find-repositories
 find "$root" -xdev -name .git -print0 -prune -o -type f -name HEAD -print0 > "$scratch/repositories" 2>/dev/null || fail $?
 audit_check=find-links
 find "$root" -xdev -type l -print0 > "$scratch/links" 2>/dev/null || fail $?
-while IFS= read -r -d '' link; do
-    audit_check=link-resolve
-    audit_repo="$link"
-    resolved="$(readlink -e -- "$link")" || fail $?
-    [[ "$resolved/" == "$root/"* ]] || refuse_unknown link-confine 0 "$link"
-done < "$scratch/links"
 # Per entry: its own Git directory and checkout. Common directories are audited
 # once each afterwards.
 while IFS= read -r -d '' entry; do
     case "$entry" in
         */.git) repo="${entry%/.git}" ;;
-        */HEAD) repo="${entry%/HEAD}" ;;
+        */HEAD)
+            repo="${entry%/HEAD}"
+            # A file named HEAD names a repository only in a directory shaped like a
+            # Git directory. Elsewhere it is checkout content (ignored build output or
+            # a tracked file, audited with that checkout) or lies outside any
+            # repository: it adds no entry, so it cannot change the receipt.
+            shaped=0
+            for marker in objects refs packed-refs commondir; do
+                if [ -e "$repo/$marker" ] || [ -L "$repo/$marker" ]; then shaped=1; fi
+            done
+            [ "$shaped" = 1 ] || continue
+            ;;
         *) refuse_unknown find-repositories 2 "$entry" ;;
     esac
     audit_repo="$repo"
-    repos=$((repos + 1))
     audit_check=git-common-dir
     top="$(git -C "$repo" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || fail $?
     top="$(readlink -e "$top")" || fail $?
@@ -4984,6 +5086,26 @@ while IFS= read -r -d '' entry; do
     gitdir="$(git -C "$repo" rev-parse --absolute-git-dir 2>/dev/null)" || fail $?
     gitdir="$(readlink -e "$gitdir")" || fail $?
     [[ "$gitdir/" == "$root/"* ]] || refuse_unknown git-dir-confine 0 "$repo"
+    case "$entry" in
+        */HEAD)
+            if [ "$gitdir" != "$repo" ]; then
+                # A subdirectory of a Git directory (logs/, refs/) belongs to it. Any
+                # other Git-shaped directory that Git does not open refuses.
+                [[ "$repo/" == "$gitdir/"* ]] || refuse_unknown git-dir-shape 0 "$repo"
+                continue
+            fi
+            ;;
+        *)
+            # Git never shows an entry named .git as content: a .git directory that is
+            # not this checkout's Git directory could hide files.
+            if [ -d "$entry" ] && [ "$(readlink -e -- "$entry")" != "$gitdir" ]; then
+                refuse_unknown dot-git 0 "$repo"
+            fi
+            ;;
+    esac
+    repos=$((repos + 1))
+    git_dirs[$top]=1
+    git_dirs[$gitdir]=1
     # Every Git directory is the common directory or one of its worktrees/<id>,
     # so the common pass classifies it.
     [ "$gitdir" = "$top" ] || [ "${gitdir%/*}" = "$top/worktrees" ] || refuse_unknown git-dir-layout 0 "$repo"
@@ -5025,6 +5147,31 @@ for top in "${commons[@]}"; do
     consider_common
 done
 drain_dirty
+# Symlinks, after every checkout's content audit. A link inside a checkout's work
+# tree is that checkout's content, never followed: ignored, compared by link text
+# when tracked, refused as untracked otherwise, wherever it points. A link inside a
+# Git directory or outside every checkout must resolve inside the volume.
+link_owner() {
+    local path="$1"
+    case "$path" in */.git|*/.git/*) printf git; return 0 ;; esac
+    path="${path%/*}"
+    while :; do
+        [ -z "${git_dirs[$path]+x}" ] || { printf git; return 0; }
+        [ -z "${work_trees[$path]+x}" ] || { printf tree; return 0; }
+        [ -n "$path" ] && [ "$path" != "$root" ] || { printf none; return 0; }
+        path="${path%/*}"
+    done
+}
+while IFS= read -r -d '' link; do
+    audit_check=link-resolve
+    audit_repo="$link"
+    status=0
+    resolved="$(readlink -e -- "$link")" || status=$?
+    if [ "$status" = 0 ] && [[ "$resolved/" == "$root/"* ]]; then continue; fi
+    [ "$(link_owner "$link")" != tree ] || continue
+    [ "$status" = 0 ] || fail "$status"
+    refuse_unknown link-confine 0 "$link"
+done < "$scratch/links"
 printf 'repositories=%s partial=%s\n' "$repos" "$partial_repos"
 # C1008_AUDIT_END
 C1008_AUDIT_BODY

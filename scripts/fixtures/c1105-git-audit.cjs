@@ -93,6 +93,8 @@ const head = () => git('rev-parse', 'HEAD');
 const entry = (oid, old) => `${old ?? head()} ${oid} Fixture <fixture@example.invalid> 1700000000 +0000\tprivate\n`;
 function linked() { checkout(); git('worktree', 'add', '-q', '--detach', path.join(work, 'linked'), 'HEAD'); return 'worktrees/linked/'; }
 const lg = (...args) => run('git', ['-C', path.join(work, 'linked'), ...args]);
+const lp = rel => path.join(work, 'linked', rel);
+const sorted = text => text.trim().split('\n').sort().join('\n');
 // A tree as git leaves in AUTO_MERGE: the conflicted result, named by no ref.
 function conflictTree() {
     const blob = run('git', ['-C', repo, 'hash-object', '-w', '--stdin'], {input: '<<<<<<< private\n'});
@@ -261,6 +263,64 @@ const hidden = {
     'common-content': [K, () => put('common/private', priv() + '\n'), 'check=gitdir-common'],
     'daemon-export': [P, () => put('git-daemon-export-ok', '')],
     'editor-swap': [K, () => put('.COMMIT_EDITMSG.swp', 'unsaved message'), 'check=gitdir-editor'],
+    // Repair 5 (D1): a recorded checkout that still exists is inspected against its admin
+    // directory even when its .git pointer is gone or names another directory.
+    'orphan-missing-modified': [D, () => { linked(); fs.writeFileSync(lp('file'), 'private\n'); remove(lp('.git')); }, 'check=orphan-status'],
+    'orphan-missing-untracked': [D, () => { linked(); fs.writeFileSync(lp('new'), 'private\n'); remove(lp('.git')); }, 'check=orphan-status'],
+    'orphan-elsewhere-modified': [D, () => {
+        linked(); git('worktree', 'add', '-q', '--detach', path.join(work, 'other'), 'HEAD');
+        fs.writeFileSync(lp('.git'), `gitdir: ${gd('worktrees/other')}\n`); fs.writeFileSync(lp('file'), 'private\n');
+    }, 'check=status'],
+    'orphan-missing-clean': [P, () => { linked(); remove(lp('.git')); }],
+    'orphan-missing-ignored': [P, () => {
+        linked();
+        for (const rel of ['bin-c1105/Antiphon.dll', 'obj/project.assets.json', 'ignored']) {
+            fs.mkdirSync(path.dirname(lp(rel)), {recursive: true}); fs.writeFileSync(lp(rel), 'build output');
+        }
+        remove(lp('.git'));
+    }],
+    // Repair 5 (D2): a tip that is not a commit is published only as that very object.
+    'tag-annotated': [U, () => git('tag', '-a', 'private-note', '-m', 'private annotation'), 'check=tip-object'],
+    'tag-annotated-packed': [U, () => { git('tag', '-a', 'private-note', '-m', 'private annotation'); git('pack-refs', '--all'); }, 'check=tip-object'],
+    'tag-annotated-published': [P, () => { git('tag', '-a', 'release', '-m', 'published annotation'); git('push', '-q', 'origin', 'release'); }],
+    'tag-of-tag': [U, () => { git('tag', '-a', 'inner', '-m', 'inner'); git('push', '-q', 'origin', 'inner'); git('tag', '-a', 'outer', '-m', 'outer', 'inner'); }, 'check=tip-object'],
+    'tag-of-tag-published': [P, () => { git('tag', '-a', 'inner', '-m', 'inner'); git('tag', '-a', 'outer', '-m', 'outer', 'inner'); git('tag', '-d', 'inner'); git('push', '-q', 'origin', 'outer'); }],
+    'tag-lightweight': [P, () => git('tag', 'light')],
+    'tag-tree': [U, () => git('tag', '-a', 'tree-note', '-m', 'tree', 'HEAD^{tree}'), 'check=tip-object'],
+    'tree-ref-published': [P, () => git('update-ref', 'refs/private/tree', git('rev-parse', 'HEAD^{tree}'))],
+    'tree-ref-unpublished': [U, () => git('update-ref', 'refs/private/tree', conflictTree()), 'check=tip-object'],
+    'blob-ref': [U, () => git('update-ref', 'refs/private/blob', run('git', ['-C', repo, 'hash-object', '-w', '--stdin'], {input: 'private'})), 'check=tip-object'],
+    // Repair 5 (D3): ignored output never refuses and never changes the receipt; symlinks
+    // in a checkout are its content and are never followed.
+    'ignored-head-equality': [P, () => {
+        checkout(); const before = audit(); assert.equal(before.status, 0, before.stdout);
+        fs.mkdirSync(path.join(repo, 'obj')); fs.writeFileSync(path.join(repo, 'obj/HEAD'), 'ref: refs/heads/master\n');
+        assert.equal(git('status', '--porcelain', '--untracked-files=all'), '');
+        const after = audit(); assert.equal(after.status, 0, after.stdout);
+        assert.equal(sorted(after.stdout), sorted(before.stdout), 'an ignored HEAD file must not change the receipt');
+    }],
+    'ignored-symlink-outside': [P, () => { checkout(); fs.mkdirSync(path.join(repo, 'obj')); fs.symlinkSync(root, path.join(repo, 'obj/outside')); }],
+    'ignored-symlink-dangling': [P, () => { checkout(); fs.mkdirSync(path.join(repo, 'obj')); fs.symlinkSync('gone', path.join(repo, 'obj/cache')); }],
+    'untracked-symlink': [D, () => { checkout(); fs.symlinkSync('gone', path.join(repo, 'link')); }, 'check=status'],
+    'tracked-symlink-outside': [P, () => {
+        checkout(); fs.symlinkSync(root, path.join(repo, 'outside')); git('add', 'outside'); git('commit', '-qm', 'link'); git('push', '-q', 'origin', 'HEAD:master');
+    }],
+    'metadata-symlink-outside': [K, () => fs.symlinkSync(root, gd('hooks/outside')), 'check=link-confine'],
+    'loose-symlink-dangling': [K, () => fs.symlinkSync('gone', path.join(work, 'dangling')), 'check=link-resolve'],
+    // Repair 5 re-scan: content Git never shows, or a work tree moved by configuration.
+    'dot-git-content': [K, () => {
+        checkout(); fs.mkdirSync(path.join(repo, 'sub/.git'), {recursive: true}); fs.writeFileSync(path.join(repo, 'sub/.git/notes'), 'private');
+        assert.equal(git('status', '--porcelain', '--untracked-files=all'), '');
+    }, 'check=dot-git'],
+    'linked-core-worktree': [K, () => {
+        linked(); const other = path.join(work, 'elsewhere'); fs.mkdirSync(other);
+        fs.writeFileSync(path.join(other, 'file'), 'B\n'); fs.writeFileSync(path.join(other, '.gitignore'), 'ignored\nbin-*/\nobj/\n');
+        git('config', 'extensions.worktreeConfig', 'true');
+        run('git', ['--git-dir=' + gd('worktrees/linked'), 'config', '--worktree', 'core.worktree', other]);
+        fs.writeFileSync(lp('new'), 'private');
+        assert.equal(lg('status', '--porcelain', '--untracked-files=all'), '');
+    }, 'check=core-worktree'],
+    'bare-dot-git': [K, () => { git('config', 'core.bare', 'true'); fs.writeFileSync(path.join(repo, 'new'), 'private'); }, 'check=core-bare'],
 };
 // HIDDEN-LOCATIONS-END
 try {
