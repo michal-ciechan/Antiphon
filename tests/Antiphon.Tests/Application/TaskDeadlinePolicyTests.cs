@@ -155,7 +155,9 @@ public class TaskDeadlinePolicyTests
         verdict.Summary.ShouldContain("FIRST token", customMessage:
             "the reason must say which token is late");
         verdict.Summary.ShouldContain("boot turn", customMessage:
-            "and that nothing it did would be lost — that is what licenses the kill");
+            "and that it is a boot turn (CARD-1151: a notice, never a licence to kill)");
+        verdict.Boot.ShouldNotBeNull("the boot facts ride the verdict (CARD-1151 D-1)");
+        verdict.Boot.BootDueAt.ShouldBe(verdict.Boot.PromptAt.AddMinutes(8));
     }
 
     [Test]
