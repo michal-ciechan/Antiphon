@@ -1658,7 +1658,15 @@ public sealed partial class SessionMessageQueueService
     /// refuses to type into a Starting session — without this nudge a fresh delegate's brief
     /// would wait for the stranded-queue watchdog's next sweep.
     /// </summary>
-    public async Task FlushSessionAsync(Guid sessionId, CancellationToken ct)
+    public Task FlushSessionAsync(Guid sessionId, CancellationToken ct) =>
+        FlushSessionReportingInputAsync(sessionId, ct);
+
+    /// <summary>
+    /// <see cref="FlushSessionAsync"/>, reporting whether this flush attempted terminal input
+    /// (CARD-1150 F10). After input the recipient may be Working, so the resumed launch treats
+    /// its later bookkeeping as best-effort.
+    /// </summary>
+    internal async Task<bool> FlushSessionReportingInputAsync(Guid sessionId, CancellationToken ct)
     {
         var sem = GetLock(sessionId);
         await sem.WaitAsync(ct);
@@ -1683,7 +1691,12 @@ public sealed partial class SessionMessageQueueService
 
         if (result != FlushResult.Nothing)
             await PublishQueueChangedAsync(await GetQueueAsync(sessionId, ct), ct);
+        return InputMayHaveStarted(result);
     }
+
+    // Delivered and Failed both follow a delivery attempt; Failed can follow partial typing.
+    private static bool InputMayHaveStarted(FlushResult result) =>
+        result is FlushResult.Delivered or FlushResult.Failed;
 
     /// <summary>
     /// NARROW flush for a manual compaction boundary (CARD-0041): deliver the next queued message
