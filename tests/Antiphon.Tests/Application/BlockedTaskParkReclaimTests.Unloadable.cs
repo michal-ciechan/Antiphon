@@ -59,7 +59,7 @@ public sealed partial class BlockedTaskParkReclaimTests
         stamped.RunnerSeatReleaseId.ShouldBeNull(fact);
         (await ReleaseCountAsync(f, row.TaskId)).ShouldBe(0, fact);
         StatusVisits(git).ShouldBe(0, fact);
-        ParkReads(due).ShouldBe(3, fact + "\n" + counter.Roster());
+        ParkReads(due).ShouldBe(4, fact + "\n" + counter.Roster());
         Updates(due, "AgentTaskParks").ShouldBe(1, fact + "\n" + counter.Roster());
 
         f.Clock.Advance(TimeSpan.FromSeconds(120));
@@ -68,7 +68,7 @@ public sealed partial class BlockedTaskParkReclaimTests
         var follow = counter.Commands;
         var backedOff = await ParkOfAsync(f, row.TaskId);
         Metadata(backedOff).ShouldBe(Metadata(stamped), fact);
-        ParkReads(follow).ShouldBe(2, fact + "\n" + counter.Roster());
+        ParkReads(follow).ShouldBe(3, fact + "\n" + counter.Roster());
         Reads(follow, "AgentSessions").ShouldBe(0, fact + "\n" + counter.Roster());
         Updates(follow, "AgentTaskParks").ShouldBe(0, fact + "\n" + counter.Roster());
         follow.Count.ShouldBeLessThan(due.Count, fact);
@@ -109,6 +109,7 @@ public sealed partial class BlockedTaskParkReclaimTests
         var held = await ParkOfAsync(f, row.TaskId);
         await BreakEpisodeAsync(f, row, "task-token");
         AdvanceToDue(f, held);
+        f.SourceGit.Commands.Clear();
 
         counter.Reset();
         (await EntryAsync(f, entry, held.Id)).ShouldBe(("Held", "park_episode_changed"), entry);
@@ -431,11 +432,13 @@ public sealed partial class BlockedTaskParkReclaimTests
     private static (AgentTaskParkState, AgentTaskParkState?, long, string, DateTime?, DateTime) Metadata(AgentTaskPark p) =>
         (p.State, p.HeldFromState, p.Revision, p.ReasonCode, p.NextAttemptAt, p.UpdatedAt);
 
+    // A read whose primary FROM is the table; a subquery inside another table's read does not count.
     private static bool IsSelect(string sql, string table)
     {
         var text = sql.TrimStart();
+        var from = text.IndexOf(" FROM \"", StringComparison.Ordinal);
         return text.StartsWith("SELECT", StringComparison.Ordinal) && !text.Contains("FOR UPDATE", StringComparison.Ordinal)
-            && text.Contains($"FROM \"{table}\"", StringComparison.Ordinal);
+            && from >= 0 && text.AsSpan(from).StartsWith($" FROM \"{table}\"", StringComparison.Ordinal);
     }
 
     private static int Reads(IEnumerable<string> commands, string table) => commands.Count(c => IsSelect(c, table));
