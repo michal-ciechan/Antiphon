@@ -1,0 +1,4435 @@
+[
+ {
+  "identifier": "CARD-0038",
+  "type": "feature",
+  "areas": [
+   "pty",
+   "runner",
+   "deploy-rollout"
+  ],
+  "recommendedState": "probably-done",
+  "relatedCard": "CARD-1022",
+  "confidence": "medium",
+  "reason": "UnixPty=2 is now a PtyBackend member on master (the 'fix this first' third state) and the server2 Linux runner is live; only the unmeasured Linux ceilings remain, overlapping CARD-0598/CARD-1022."
+ },
+ {
+  "identifier": "CARD-0073",
+  "type": "bug",
+  "areas": [
+   "transcripts",
+   "session-launch"
+  ],
+  "recommendedState": "needs-human-decision",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "S1 landed (620f6eb6c) and a plan exists; card is Aug-17 era and no later commit names it - decide whether the remaining slices still matter after the transcript-binding rework."
+ },
+ {
+  "identifier": "CARD-0081",
+  "type": "feature",
+  "areas": [
+   "providers",
+   "pty"
+  ],
+  "recommendedState": "needs-human-decision",
+  "relatedCard": null,
+  "confidence": "high",
+  "reason": "Explicitly parked by a user decision ('do not plan or dispatch without asking'); decide un-park or archive."
+ },
+ {
+  "identifier": "CARD-0097",
+  "type": "feature",
+  "areas": [
+   "routing",
+   "client"
+  ],
+  "recommendedState": "probably-done",
+  "relatedCard": "CARD-0333",
+  "confidence": "medium",
+  "reason": "CARD-0332/0333 shipped the Settings > Routing tab with the role x complexity matrix and pickers; residual is only the non-matrix RolePolicy entries (routingSettingsModel.ts:26 says the matrix does not govern every dispatch)."
+ },
+ {
+  "identifier": "CARD-0100",
+  "type": "feature",
+  "areas": [
+   "board",
+   "schema"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "high",
+  "reason": "Card-to-card blocked-by relations still absent for internal cards; repeatedly needed by triage like this one."
+ },
+ {
+  "identifier": "CARD-0105",
+  "type": "feature",
+  "areas": [
+   "client"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "Small UI convenience (right-click terminal icon); kebab menu already offers the same items."
+ },
+ {
+  "identifier": "CARD-0114",
+  "type": "tech-debt",
+  "areas": [
+   "agents-admin",
+   "schema"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "AgentTuiSecret store, endpoints and AgentTuiSecretMigrator still exist on master; plan says not small."
+ },
+ {
+  "identifier": "CARD-0121",
+  "type": "bug",
+  "areas": [
+   "delivery",
+   "pty"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "Redelivery re-type into a collapsed-paste composer can still duplicate a brief; needs headed canary first."
+ },
+ {
+  "identifier": "CARD-0148",
+  "type": "investigation",
+  "areas": [
+   "pty",
+   "client",
+   "providers"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "Grok SGR mouse-report leak never measured; low value unless hovering harm is seen."
+ },
+ {
+  "identifier": "CARD-0151",
+  "type": "feature",
+  "areas": [
+   "board",
+   "schema"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "Effort estimates + stage-transition audit for reporting; no implementation found."
+ },
+ {
+  "identifier": "CARD-0167",
+  "type": "feature",
+  "areas": [
+   "agents-admin",
+   "providers"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "Per-kind API-key/proxy setup still asymmetric; card carries a correction header and needs re-scoping before plan."
+ },
+ {
+  "identifier": "CARD-0173",
+  "type": "feature",
+  "areas": [
+   "tracker",
+   "channels"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "Watermark digest for GitHub-issue-became-card notifications; design sketch only."
+ },
+ {
+  "identifier": "CARD-0188",
+  "type": "bug",
+  "areas": [
+   "session-lifecycle",
+   "runner"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "Leaked prior always-on incarnation not reconciled; needs evidence pull; CARD-0502 (Done) is a different flapping defect."
+ },
+ {
+  "identifier": "CARD-0192",
+  "type": "feature",
+  "areas": [
+   "herdr"
+  ],
+  "recommendedState": "needs-human-decision",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "Filed 'so the idea is not lost, not because it is known to be wanted'; decide whether Herdr pane adoption is wanted."
+ },
+ {
+  "identifier": "CARD-0196",
+  "type": "feature",
+  "areas": [
+   "routing",
+   "client"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": "CARD-0333",
+  "confidence": "medium",
+  "reason": "Global role x complexity matrix shipped (CARD-0332/0333); per-project overrides and reset-to-global are still missing."
+ },
+ {
+  "identifier": "CARD-0197",
+  "type": "feature",
+  "areas": [
+   "board",
+   "delegation"
+  ],
+  "recommendedState": "stale-obsolete",
+  "relatedCard": "CARD-0146",
+  "confidence": "medium",
+  "reason": "Keyword-verdict auto-progression is largely superseded by the pipeline next-stage block (CARD-0146) the orchestrator dispatches from; residual auto-dispatch belongs to orchestration-loop design."
+ },
+ {
+  "identifier": "CARD-0223",
+  "type": "test-improvement",
+  "areas": [
+   "tests-infra"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "No dedicated GitWorkspaceService kill-on-timeout / runner-list-deadline test found on master."
+ },
+ {
+  "identifier": "CARD-0235",
+  "type": "feature",
+  "areas": [
+   "settlement-landing",
+   "worktree"
+  ],
+  "recommendedState": "needs-human-decision",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "Idea card (commit attribution ledger for Shared tasks); settlement now commits a Shared task's own footprint, so the need may be gone - decide."
+ },
+ {
+  "identifier": "CARD-0242",
+  "type": "bug",
+  "areas": [
+   "transcripts",
+   "providers"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "Codex normalizer still ingests no turn-abort signal per card; interrupted Codex delegate strands until deadline."
+ },
+ {
+  "identifier": "CARD-0253",
+  "type": "bug",
+  "areas": [
+   "providers",
+   "ops"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": ".claude/settings.json still wires orchestrator-investigation-hook.mjs (lines 35,47), so Grok compat still runs it; low harm."
+ },
+ {
+  "identifier": "CARD-0257",
+  "type": "feature",
+  "areas": [
+   "channels",
+   "attention"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "No notification path for cross-session messages; CARD-0283 (Done) fixed a different cardless-start defect."
+ },
+ {
+  "identifier": "CARD-0266",
+  "type": "bug",
+  "areas": [
+   "delivery"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "Canceled typed-but-unsubmitted composer text can fuse into the next delivery; same composer-hygiene cluster as CARD-0121."
+ },
+ {
+  "identifier": "CARD-0268",
+  "type": "bug",
+  "areas": [
+   "transcripts",
+   "runner"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "Event-pump catch-up/subscribe crack can drop a transcript record; subscribe-then-catch-up not verified on master."
+ },
+ {
+  "identifier": "CARD-0269",
+  "type": "reliability-ops",
+  "areas": [
+   "delegation",
+   "delivery"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "Check-delivered log line on failure; second half explicitly waits on recurrence."
+ },
+ {
+  "identifier": "CARD-0271",
+  "type": "feature",
+  "areas": [
+   "attention",
+   "ops"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "No server sweep reading CI status found on master (.github/workflows/ci.yml exists); red-CI attention still absent."
+ },
+ {
+  "identifier": "CARD-0274",
+  "type": "tech-debt",
+  "areas": [
+   "ops"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "Windows path-setting validation (CARD-0254 S4 family); only WorktreeCleanupSettingsValidator touches the rule."
+ },
+ {
+  "identifier": "CARD-0275",
+  "type": "dev-speed",
+  "areas": [
+   "tests-infra"
+  ],
+  "recommendedState": "stale-obsolete",
+  "relatedCard": "CARD-0723",
+  "confidence": "medium",
+  "reason": "Canonical test front door largely superseded by tools/Antiphon.Checkpoints + scripts/run-checkpoint.ps1 + build-slot.ps1; confirm no residual need."
+ },
+ {
+  "identifier": "CARD-0276",
+  "type": "dev-speed",
+  "areas": [
+   "tests-infra",
+   "ops"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "scripts/build-isolated.ps1 does not exist on master; trailing-space bin dir hazard still documented in delegate rules."
+ },
+ {
+  "identifier": "CARD-0277",
+  "type": "test-improvement",
+  "areas": [
+   "tests-infra"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "No hosted-pump OCE analyzer/contract found on master."
+ },
+ {
+  "identifier": "CARD-0278",
+  "type": "test-improvement",
+  "areas": [
+   "tests-infra",
+   "providers"
+  ],
+  "recommendedState": "probably-done",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "HeadedCodexGate.cs sets a dedicated CODEX_HOME test home; unverified whether every stub-proxy test routes through it and fails on the desktop home."
+ },
+ {
+  "identifier": "CARD-0280",
+  "type": "test-improvement",
+  "areas": [
+   "tests-infra"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "testing-and-build.md documents the safe clock shapes (CARD-0222) but no factory+contract guard found."
+ },
+ {
+  "identifier": "CARD-0290",
+  "type": "feature",
+  "areas": [
+   "routing",
+   "providers",
+   "attention"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "Provider usage sampling still opt-in and per-session; multi-window rollups missing."
+ },
+ {
+  "identifier": "CARD-0311",
+  "type": "reliability-ops",
+  "areas": [
+   "session-lifecycle",
+   "attention"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "Use contextFullness in dead/stuck diagnosis; signal exists, consumer does not."
+ },
+ {
+  "identifier": "CARD-0314",
+  "type": "bug",
+  "areas": [
+   "delegation",
+   "security"
+  ],
+  "recommendedState": "needs-human-decision",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "Tokenless-orchestrator path predates Delegation Capabilities (delegate.ps1 -Capability); decide whether capabilities close it and whether the 405 on model-availability hold still reproduces."
+ },
+ {
+  "identifier": "CARD-0317",
+  "type": "investigation",
+  "areas": [
+   "session-lifecycle",
+   "routing"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "Prompt-cache TTL keep-warm cadence; investigation-first, cost lever."
+ },
+ {
+  "identifier": "CARD-0318",
+  "type": "feature",
+  "areas": [
+   "session-lifecycle",
+   "delegation"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "Cosmetic-motion-aware stall detection and parseable ETA check-in; stall cluster."
+ },
+ {
+  "identifier": "CARD-0356",
+  "type": "bug",
+  "areas": [
+   "delegation",
+   "tests-infra"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "TaskDeadlinePolicy boot arm blind when TurnTitle follows prompt + order-dependent flake; small fix direction stated."
+ },
+ {
+  "identifier": "CARD-0357",
+  "type": "investigation",
+  "areas": [
+   "settlement-landing"
+  ],
+  "recommendedState": "stale-obsolete",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "Single Sep-4 incident of master advancing without -Land; land-v2 and evidence-policy CI landed since; reopen only on recurrence."
+ },
+ {
+  "identifier": "CARD-0363",
+  "type": "bug",
+  "areas": [
+   "tracker"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "high",
+  "reason": "ExternalTrackerSyncService.SyncAsync still parses config itself with no TrackerTokenResolver (master), so the read half stays unauthenticated."
+ },
+ {
+  "identifier": "CARD-0364",
+  "type": "feature",
+  "areas": [
+   "tracker",
+   "docs"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "high",
+  "reason": "ExternalIssueRef.UnannouncedStateChange (S3) not present on master; S4 docs pending."
+ },
+ {
+  "identifier": "CARD-0365",
+  "type": "feature",
+  "areas": [
+   "board",
+   "channels",
+   "tracker"
+  ],
+  "recommendedState": "needs-human-decision",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "Operator offered two shapes (auto-close vs digest-only, plus hybrid) with a GitHub-close-cascade risk; pick the shape before Plan."
+ },
+ {
+  "identifier": "CARD-0367",
+  "type": "investigation",
+  "areas": [
+   "delegation",
+   "board"
+  ],
+  "recommendedState": "stale-obsolete",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "Sep-4 one-off: the task completed after all; the card-create hang matches the WinPS ConvertTo-Json root cause in CARD-0370; nothing left to measure without recurrence."
+ },
+ {
+  "identifier": "CARD-0368",
+  "type": "feature",
+  "areas": [
+   "channels",
+   "delegation"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "high",
+  "reason": "CARD-0337 S4-S6 remainder: no attach-pdf marker or DeliverableUndelivered incident kind on master."
+ },
+ {
+  "identifier": "CARD-0369",
+  "type": "feature",
+  "areas": [
+   "delegation",
+   "channels"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "CARD-0294 S3-S6: AutoContinuedAt only appears as a DTO field on master; no firing logic, bound-chat SLA sweep or zero-progress Block found."
+ },
+ {
+  "identifier": "CARD-0370",
+  "type": "bug",
+  "areas": [
+   "board",
+   "delegation",
+   "ops"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "WinPS 5.1 ConvertTo-Json long-string explosion; card.ps1:240 still builds bodies with ConvertTo-Json -Depth 8; confirm whether a 5.1 caller can still hit it."
+ },
+ {
+  "identifier": "CARD-0371",
+  "type": "feature",
+  "areas": [
+   "routing",
+   "providers",
+   "channels"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "CARD-0281 S4-S7 remainder: no ProviderFallback settings on master; S4 is large and should be planned on its own."
+ },
+ {
+  "identifier": "CARD-0373",
+  "type": "feature",
+  "areas": [
+   "providers",
+   "session-lifecycle"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "CARD-0360/0361 S3-S6 remainder: no TransientDeathCap on master."
+ },
+ {
+  "identifier": "CARD-0374",
+  "type": "bug",
+  "areas": [
+   "channels",
+   "session-lifecycle"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "high",
+  "reason": "Resumed-turn answers never route to the owed channel correlation (all providers); real user-visible loss."
+ },
+ {
+  "identifier": "CARD-0375",
+  "type": "bug",
+  "areas": [
+   "providers",
+   "routing"
+  ],
+  "recommendedState": "probably-done",
+  "relatedCard": null,
+  "confidence": "high",
+  "reason": "ApiErrorClassifier.cs:30 maps usage_limit_exceeded to ApiErrorClassification.Wall on master."
+ },
+ {
+  "identifier": "CARD-0376",
+  "type": "reliability-ops",
+  "areas": [
+   "providers",
+   "transcripts"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "Grok retry_state surfacing; design question about stall-probe interaction first."
+ },
+ {
+  "identifier": "CARD-0379",
+  "type": "bug",
+  "areas": [
+   "client",
+   "ops"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "Built-client watcher missing git-checkout-driven changes; no polling/checkout handling visible in scripts/client-mode.ps1; affects every UI land verification."
+ },
+ {
+  "identifier": "CARD-0380",
+  "type": "process-policy",
+  "areas": [
+   "nightly",
+   "docs"
+  ],
+  "recommendedState": "probably-done",
+  "relatedCard": "CARD-0599",
+  "confidence": "medium",
+  "reason": "docs/release-gates.md (CARD-0599 era) defines published releases whose notes are generated from commits since the prior tag; the per-land RELEASE_NOTES append discipline was not adopted - confirm that is acceptable."
+ },
+ {
+  "identifier": "CARD-0392",
+  "type": "bug",
+  "areas": [
+   "channels",
+   "delegation"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "Output-distiller ledger written only at end of RequestAsync; no Requested/Interrupted outcome found on master."
+ },
+ {
+  "identifier": "CARD-0393",
+  "type": "test-improvement",
+  "areas": [
+   "tests-infra"
+  ],
+  "recommendedState": "duplicate-of",
+  "relatedCard": "CARD-0756",
+  "confidence": "high",
+  "reason": "Same ContractSnapshotTests stale-fixture failure, re-measured more precisely (4/5 plus user-secrets) in CARD-0756."
+ },
+ {
+  "identifier": "CARD-0394",
+  "type": "bug",
+  "areas": [
+   "session-lifecycle",
+   "transcripts"
+  ],
+  "recommendedState": "probably-done",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "FireOneAsync (ApiErrorRecoveryService.cs:302) now uses TranscriptPromptSpan.HasTurnPromptAfterAsync, which documents UserPrompt or QueuedUserPrompt - the fix the card proposed."
+ },
+ {
+  "identifier": "CARD-0399",
+  "type": "test-improvement",
+  "areas": [
+   "tests-infra"
+  ],
+  "recommendedState": "probably-done",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "The test now lives in DelegationUnitTests.cs:1629 and pins each AttentionKind member by value (ImportedIssueNeedsReview=28 and a name map) instead of a bare max; the stale-max shape the card describes is gone."
+ },
+ {
+  "identifier": "CARD-0404",
+  "type": "feature",
+  "areas": [
+   "routing"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "Complexity as default routing signal with low-tier auto-classification; pairs with CARD-0405."
+ },
+ {
+  "identifier": "CARD-0405",
+  "type": "investigation",
+  "areas": [
+   "routing",
+   "client"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "'Unbound' general complexity chain in settings - config or bug; answer feeds CARD-0404."
+ },
+ {
+  "identifier": "CARD-0413",
+  "type": "reliability-ops",
+  "areas": [
+   "deploy-rollout",
+   "channels"
+  ],
+  "recommendedState": "needs-human-decision",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "Operator-only deploy of the am-service consumer-group fix (fc9cdf5c); confirm whether it was deployed, then close."
+ },
+ {
+  "identifier": "CARD-0414",
+  "type": "bug",
+  "areas": [
+   "deploy-rollout",
+   "channels",
+   "ops"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "Assert-AmServiceMonitor (deploy-am-service.ps1:249) still does a single curl --max-time 15 read; PollTimeoutSec exists elsewhere in the script but not in this check."
+ },
+ {
+  "identifier": "CARD-0421",
+  "type": "feature",
+  "areas": [
+   "client"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "Home page projects-most-active-first, phone-first; subjective UI (see CARD-0423)."
+ },
+ {
+  "identifier": "CARD-0422",
+  "type": "feature",
+  "areas": [
+   "client",
+   "delegation"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "Dense per-stage pipeline view on project screen; same UI cluster as CARD-0421/0423."
+ },
+ {
+  "identifier": "CARD-0423",
+  "type": "process-policy",
+  "areas": [
+   "delegation",
+   "client"
+  ],
+  "recommendedState": "needs-human-decision",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "Mockup-then-human-pick pipeline mechanism; operator must choose new role vs flag before Plan."
+ },
+ {
+  "identifier": "CARD-0427",
+  "type": "reliability-ops",
+  "areas": [
+   "ops"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "dev-aspire.ps1 has no -Direct and scripts/task-apphost-start.ps1 is absent on master; Job Object caveat still stands."
+ },
+ {
+  "identifier": "CARD-0428",
+  "type": "test-improvement",
+  "areas": [
+   "tests-infra"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "Optional WallRecoveryFixture hardening (alias prediction, Manual-hold branch)."
+ },
+ {
+  "identifier": "CARD-0433",
+  "type": "bug",
+  "areas": [
+   "attention",
+   "board",
+   "delegation"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": "CARD-1081",
+  "confidence": "high",
+  "reason": "HomeTaskService.ClassifyCard (master :351) still returns NeedsHuman/Question for a Blocked bound task before checking Done; closing a card does not settle it."
+ },
+ {
+  "identifier": "CARD-0434",
+  "type": "feature",
+  "areas": [
+   "channels"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "Opt-in daily channel thread starter with low-tier summaries; large, standalone."
+ },
+ {
+  "identifier": "CARD-0435",
+  "type": "reliability-ops",
+  "areas": [
+   "channels",
+   "delegation"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "ReviewReplyDispatcher._pending is still an in-memory ConcurrentDictionary on master; durable review-thread correlation not done."
+ },
+ {
+  "identifier": "CARD-0438",
+  "type": "feature",
+  "areas": [
+   "client",
+   "attention"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "UI approval queue replacing ad-hoc approval files; generalizes several gates."
+ },
+ {
+  "identifier": "CARD-0439",
+  "type": "docs",
+  "areas": [
+   "docs",
+   "delegation"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "server/Bundles/orchestrator.md still has no agents->liveSession->transcript chain; ops-http.md only mentions liveSession in passing."
+ },
+ {
+  "identifier": "CARD-0440",
+  "type": "feature",
+  "areas": [
+   "delegation",
+   "security"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "Registered project's localRepositoryPath as an allowed dispatch root; no such resolution found in Delegation*/AgentTaskService on master."
+ },
+ {
+  "identifier": "CARD-0441",
+  "type": "test-improvement",
+  "areas": [
+   "mutation",
+   "tests-infra"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "29 unmutated positive controls for CARD-0412 by explicit operator deferral."
+ },
+ {
+  "identifier": "CARD-0445",
+  "type": "feature",
+  "areas": [
+   "routing",
+   "delegation"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "Direct exact-model dispatch; delegate.ps1 has no -Model on master; investigate -Reroute/-Pin overlap first."
+ },
+ {
+  "identifier": "CARD-0447",
+  "type": "tech-debt",
+  "areas": [
+   "routing",
+   "delegation"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "Four non-blocking CARD-0412 hardening notes (dead policy method, magic strings, staleness comment)."
+ },
+ {
+  "identifier": "CARD-0453",
+  "type": "bug",
+  "areas": [
+   "providers",
+   "pty"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "ClaudeEffortPrompt does not recognize the binary's built-in fallback copy ('Switch your default effort') on master."
+ },
+ {
+  "identifier": "CARD-0455",
+  "type": "investigation",
+  "areas": [
+   "ops",
+   "worktree"
+  ],
+  "recommendedState": "needs-human-decision",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "Opaque 'blocked by policy' on delegate bin-* cleanup comes from the agent CLI's own approval layer, not Antiphon; decide if it belongs here."
+ },
+ {
+  "identifier": "CARD-0456",
+  "type": "bug",
+  "areas": [
+   "delegation",
+   "attention"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "Stale boot-prompt-failure notice after the task succeeded; detector verdict not re-checked before delivery."
+ },
+ {
+  "identifier": "CARD-0463",
+  "type": "bug",
+  "areas": [
+   "session-launch",
+   "delegation"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "RequireCurrentCheckLaunchAsync (AgentSessionService.cs:~743) still gates on StandingSpecialistSeatPolicy.IsCheck(agent, settings); reviewer judged benign for realistic case."
+ },
+ {
+  "identifier": "CARD-0465",
+  "type": "bug",
+  "areas": [
+   "pty"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "high",
+  "reason": "TerminalScreen.cs:267 ESC M branch only moves/scrolls the cursor and does not clear pending-wrap on master."
+ },
+ {
+  "identifier": "CARD-0473",
+  "type": "tech-debt",
+  "areas": [
+   "client"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "Client lint debt (10 errors); not re-run here."
+ },
+ {
+  "identifier": "CARD-0483",
+  "type": "docs",
+  "areas": [
+   "tests-infra",
+   "docs"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "Testing convention (prefer fakes, prove new behaviour against the real thing first); waits on CARD-0482-style timing analysis."
+ },
+ {
+  "identifier": "CARD-0485",
+  "type": "test-improvement",
+  "areas": [
+   "mutation"
+  ],
+  "recommendedState": "needs-human-decision",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "Deferred 179-PC mutation battery for CARD-0475 (~530 min floor); operator must decide whether that spend is still wanted against today's code."
+ },
+ {
+  "identifier": "CARD-0489",
+  "type": "feature",
+  "areas": [
+   "ops"
+  ],
+  "recommendedState": "probably-done",
+  "relatedCard": null,
+  "confidence": "high",
+  "reason": "Hangfire is in-process on master (server/Application/Settings/HangfireSettings.cs, server/Infrastructure/Agents/HangfireConfiguration.cs; AGENTS.md lists Hangfire logs)."
+ },
+ {
+  "identifier": "CARD-0500",
+  "type": "bug",
+  "areas": [
+   "providers",
+   "delivery",
+   "tests-infra"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "Interactive Codex submit-confirm flake 3/5, launcher-independent; composer-stranding family."
+ },
+ {
+  "identifier": "CARD-0506",
+  "type": "feature",
+  "areas": [
+   "client",
+   "delegation"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": "CARD-0505",
+  "confidence": "medium",
+  "reason": "UI for global + per-project concurrency knobs; backend CARD-0505 is in Review, so sequence after it lands."
+ },
+ {
+  "identifier": "CARD-0507",
+  "type": "feature",
+  "areas": [
+   "delegation",
+   "providers"
+  ],
+  "recommendedState": "needs-human-decision",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "Pluggable per-stage custom agents (open-code-review); decide if wanted before investigation spend."
+ },
+ {
+  "identifier": "CARD-0509",
+  "type": "investigation",
+  "areas": [
+   "session-lifecycle"
+  ],
+  "recommendedState": "merge-into",
+  "relatedCard": "CARD-0510",
+  "confidence": "medium",
+  "reason": "Incident root-caused (context overflow + Fresh:false restarts); actionable remainder is CARD-0510, sibling findings in CARD-0511/0512 (Review)."
+ },
+ {
+  "identifier": "CARD-0510",
+  "type": "reliability-ops",
+  "areas": [
+   "session-lifecycle"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "high",
+  "reason": "AgentSupervisorService still restarts with Fresh: false unconditionally (master :284 and :471); no escalation after N failures."
+ },
+ {
+  "identifier": "CARD-0513",
+  "type": "bug",
+  "areas": [
+   "settlement-landing"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "Land outcome-receipt loops/duplicates seen Sep-13; land pipeline reworked since; needs a fresh repro check before planning."
+ },
+ {
+  "identifier": "CARD-0517",
+  "type": "bug",
+  "areas": [
+   "settlement-landing",
+   "worktree"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "No remote task-branch deletion after a confirmed land found in the land services on master."
+ },
+ {
+  "identifier": "CARD-0518",
+  "type": "bug",
+  "areas": [
+   "settlement-landing"
+  ],
+  "recommendedState": "probably-done",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "LandingGit.cs now has PinRetirementAsync/DeleteRetirementPinAsync with update-ref -d on refs/antiphon/land (master :915-927); unverified whether redundant source-recheck pins are pruned."
+ },
+ {
+  "identifier": "CARD-0520",
+  "type": "bug",
+  "areas": [
+   "channels"
+  ],
+  "recommendedState": "stale-obsolete",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "AdmitDeferredAsync no longer exists anywhere under server/ on master; re-check the outbound admission race under its new name before closing."
+ },
+ {
+  "identifier": "CARD-0521",
+  "type": "bug",
+  "areas": [
+   "channels"
+  ],
+  "recommendedState": "stale-obsolete",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "OutboundConversionManifestValidator/UnpackSourceZip no longer exist on master (CARD-0418 code restructured); confirm zip sources reach OutboundConversionTaskRunner."
+ },
+ {
+  "identifier": "CARD-0522",
+  "type": "test-improvement",
+  "areas": [
+   "tests-infra",
+   "channels"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "ChannelOutboundIsolatedTests need shared broker/FakeSlack E2E infra; large blast radius on AntiphonAppFixture."
+ },
+ {
+  "identifier": "CARD-0523",
+  "type": "test-improvement",
+  "areas": [
+   "tests-infra",
+   "channels"
+  ],
+  "recommendedState": "probably-done",
+  "relatedCard": "CARD-1064",
+  "confidence": "low",
+  "reason": "CARD-1064 (Done) fixed the inherited durability hold-reason assertions; unverified that this exact fixed-date assertion was among them."
+ },
+ {
+  "identifier": "CARD-0525",
+  "type": "investigation",
+  "areas": [
+   "ops"
+  ],
+  "recommendedState": "stale-obsolete",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "One-off Sep-14 CPU reading whose traces showed idle native waits; no recurrence named; reopen with a new measurement."
+ },
+ {
+  "identifier": "CARD-0526",
+  "type": "test-improvement",
+  "areas": [
+   "herdr",
+   "tests-infra"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "C461_G111 disposal assertion non-discriminating by construction."
+ },
+ {
+  "identifier": "CARD-0528",
+  "type": "bug",
+  "areas": [
+   "session-lifecycle",
+   "pty"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "DismissalIntentAt permanently blocks a remote-control modal episode once set."
+ },
+ {
+  "identifier": "CARD-0529",
+  "type": "bug",
+  "areas": [
+   "channels"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "high",
+  "reason": "OutputDistillationGate.cs:83 still trims only \").,;\" so backtick-wrapped URLs fail the anchor match on master."
+ },
+ {
+  "identifier": "CARD-0530",
+  "type": "process-policy",
+  "areas": [
+   "delegation",
+   "channels"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "Stage handoff blocks routinely exceed the 400-char contract; no producer-side enforcement found."
+ },
+ {
+  "identifier": "CARD-0531",
+  "type": "bug",
+  "areas": [
+   "runner",
+   "tests-infra"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "SessionRunner.Tests leaks a PtyHost holding the isolated OutputPath; process-safety rule."
+ },
+ {
+  "identifier": "CARD-0532",
+  "type": "feature",
+  "areas": [
+   "routing",
+   "delegation"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "Warn/confirm on same-company author/reviewer; no such check found on master."
+ },
+ {
+  "identifier": "CARD-0536",
+  "type": "test-improvement",
+  "areas": [
+   "settlement-landing",
+   "worktree",
+   "tests-infra"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "CARD-0443 left 103 planned test targets unwritten; large."
+ },
+ {
+  "identifier": "CARD-0538",
+  "type": "feature",
+  "areas": [
+   "delegation",
+   "worktree"
+  ],
+  "recommendedState": "probably-done",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "delegate.ps1 on master has -StartRef (cuts the task's own fresh worktree at a commit-ish, any role; refuses Shared/ReadOnly) and -BaseTask (CARD-0442); confirm it covers the Review case the card names."
+ },
+ {
+  "identifier": "CARD-0539",
+  "type": "test-improvement",
+  "areas": [
+   "tests-infra",
+   "routing"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "Date-dependent time-bomb tests in ComplexityWallRerouteTests/ApiErrorRecoveryServiceTests; same family as CARD-0523."
+ },
+ {
+  "identifier": "CARD-0548",
+  "type": "process-policy",
+  "areas": [
+   "delegation"
+  ],
+  "recommendedState": "stale-obsolete",
+  "relatedCard": null,
+  "confidence": "high",
+  "reason": "A corrected 'lesson' card whose premise was wrong; the lesson belongs in orchestration docs/memory, not the backlog."
+ },
+ {
+  "identifier": "CARD-0553",
+  "type": "test-improvement",
+  "areas": [
+   "mutation",
+   "herdr"
+  ],
+  "recommendedState": "needs-human-decision",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "Post-land Mutation obligation for CARD-0462 (119 PCs pending); operator decides whether to fund the battery."
+ },
+ {
+  "identifier": "CARD-0556",
+  "type": "test-improvement",
+  "areas": [
+   "mutation",
+   "settlement-landing"
+  ],
+  "recommendedState": "needs-human-decision",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "Post-land Mutation obligation for CARD-0547 (50 PCs); fund or waive."
+ },
+ {
+  "identifier": "CARD-0564",
+  "type": "bug",
+  "areas": [
+   "settlement-landing",
+   "tests-infra"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "C448_V19 red solo (8/18) - a real land-checkpoint defect per its verdict."
+ },
+ {
+  "identifier": "CARD-0565",
+  "type": "test-improvement",
+  "areas": [
+   "herdr",
+   "tests-infra"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": "CARD-0879",
+  "confidence": "medium",
+  "reason": "HerdrSupervisionBackoffTests queue-ownership case still red in class runs; related backlog CARD-0879."
+ },
+ {
+  "identifier": "CARD-0568",
+  "type": "test-improvement",
+  "areas": [
+   "tests-infra"
+  ],
+  "recommendedState": "probably-done",
+  "relatedCard": null,
+  "confidence": "high",
+  "reason": "DelegateScriptKindTests.cs:23 carries [ParallelLimiter<ProcessSpawnLimit>] on master."
+ },
+ {
+  "identifier": "CARD-0569",
+  "type": "docs",
+  "areas": [
+   "docs",
+   "delegation"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "docs/antiphon-api.md:503 still says retry with ignoreConcurrencyLimit if the user asked for parallel work this turn."
+ },
+ {
+  "identifier": "CARD-0570",
+  "type": "reliability-ops",
+  "areas": [
+   "ops",
+   "docs"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "ExceptionMiddleware has a 503 mapping table but no Npgsql/EF transient-failure arm found on master; delegate.ps1 retry and bootstrap gotcha also open."
+ },
+ {
+  "identifier": "CARD-0571",
+  "type": "tech-debt",
+  "areas": [
+   "client"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "high",
+  "reason": "client/eslint.config.js on master has no storybook-static ignore."
+ },
+ {
+  "identifier": "CARD-0572",
+  "type": "test-improvement",
+  "areas": [
+   "tests-infra",
+   "ops"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "high",
+  "reason": "No PruneTestDataScriptTests under tests/ on master."
+ },
+ {
+  "identifier": "CARD-0576",
+  "type": "test-improvement",
+  "areas": [
+   "mutation",
+   "delegation"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": "CARD-1155",
+  "confidence": "medium",
+  "reason": "CARD-0508 V-14 second-claim native receipt still unproven; CARD-1155 (Backlog) adds DispatchBaseWarningDeliveryE2ETests rows."
+ },
+ {
+  "identifier": "CARD-0579",
+  "type": "test-improvement",
+  "areas": [
+   "settlement-landing",
+   "mutation"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "PC-5 UnlandedMarker delimiter survives because rows build one sibling; small test-only change."
+ },
+ {
+  "identifier": "CARD-0581",
+  "type": "test-improvement",
+  "areas": [
+   "mutation",
+   "worktree"
+  ],
+  "recommendedState": "needs-human-decision",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "Post-land Mutation companion for CARD-0534 (116-PC inventory pending); fund or waive."
+ },
+ {
+  "identifier": "CARD-0582",
+  "type": "test-improvement",
+  "areas": [
+   "tests-infra",
+   "providers"
+  ],
+  "recommendedState": "probably-done",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "CodexReadyWaitTests.cs:684-692 now waits through DelayWithinPhaseAsync instead of the Task.Yield busy-spin the card names."
+ },
+ {
+  "identifier": "CARD-0583",
+  "type": "investigation",
+  "areas": [
+   "ops"
+  ],
+  "recommendedState": "needs-human-decision",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "Evaluate Hindsight skill (legitimacy check first); overlaps existing /reflect skills; operator interest call."
+ },
+ {
+  "identifier": "CARD-0587",
+  "type": "bug",
+  "areas": [
+   "deploy-rollout",
+   "ops"
+  ],
+  "recommendedState": "probably-done",
+  "relatedCard": "CARD-0590",
+  "confidence": "high",
+  "reason": "Root Dockerfile on master now does COPY src/ src/ and was last changed by cf4f3d93a (CARD-0590, 2026-09-21)."
+ },
+ {
+  "identifier": "CARD-0588",
+  "type": "test-improvement",
+  "areas": [
+   "tests-infra"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "high",
+  "reason": "3 of the 4 fixtures still assert OperatingSystem.IsWindows().ShouldBeTrue() on master (LandDeliveryFixture.cs:59, OutputDistillationApplyCanaryTests.cs:46, WorktreeLockDiagnosticsWindowsTests.cs:18); FakeGrokContractTests now skips."
+ },
+ {
+  "identifier": "CARD-0591",
+  "type": "bug",
+  "areas": [
+   "runner",
+   "session-lifecycle"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "Server-side poller retrying 404 session ids forever; no backoff verified on master."
+ },
+ {
+  "identifier": "CARD-0592",
+  "type": "test-improvement",
+  "areas": [
+   "checkpoints",
+   "tests-infra"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "HasSelectionRows scans the whole doc section, so PC-2 survives; small validator/test fix."
+ },
+ {
+  "identifier": "CARD-0596",
+  "type": "test-improvement",
+  "areas": [
+   "providers",
+   "tests-infra"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "Grok inspect canary still red; d1d046267 (CARD-1007) records it baseline-confirmed as an oracle red; decide pin vs update vs mark CLI-sensitive."
+ },
+ {
+  "identifier": "CARD-0598",
+  "type": "feature",
+  "areas": [
+   "settlement-landing",
+   "runner",
+   "deploy-rollout"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": "CARD-0604",
+  "confidence": "high",
+  "reason": "Linux SourceLanding custody backend still absent; depends on CARD-0604 (Review)."
+ },
+ {
+  "identifier": "CARD-0600",
+  "type": "tech-debt",
+  "areas": [
+   "tests-infra",
+   "providers"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "high",
+  "reason": "grok_4_6/Grok46 names still present (ApiErrorRecoveryServiceTests.cs:364, GrokLaunchArgsTests.cs:16) on master."
+ },
+ {
+  "identifier": "CARD-0601",
+  "type": "dev-speed",
+  "areas": [
+   "tests-infra",
+   "settlement-landing",
+   "worktree"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "Extract a contract-tested git boundary so land/cleanup tests stop paying 30-45 min of real git I/O; high dev-speed payoff."
+ },
+ {
+  "identifier": "CARD-0602",
+  "type": "test-improvement",
+  "areas": [
+   "deploy-rollout",
+   "tests-infra"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "high",
+  "reason": "tests/Antiphon.DockerStack.Fixture/Program.cs Serve() still prints 'serve' and returns 0 on master."
+ },
+ {
+  "identifier": "CARD-0605",
+  "type": "test-improvement",
+  "areas": [
+   "tests-infra",
+   "pty"
+  ],
+  "recommendedState": "probably-done",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "Code/Review now run on the server2 Linux runner mirror (this investigation ran there), giving RequireLinux classes a lane; not verified that a checkpoint row actually selects LinuxPtyHostLauncherTests."
+ },
+ {
+  "identifier": "CARD-0608",
+  "type": "tech-debt",
+  "areas": [
+   "pty"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "PosixProcessSpawner.CloseStdioAliases (master :118) still matches by readlink text without a pipe:/socket: prefix restriction."
+ },
+ {
+  "identifier": "CARD-0609",
+  "type": "test-improvement",
+  "areas": [
+   "herdr",
+   "tests-infra"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "HerdrPaneDisposalGuardedLiveTests is in NotInParallel(\"Headed\"), not \"ClaudeConfigDirEnv\", on master."
+ },
+ {
+  "identifier": "CARD-0612",
+  "type": "test-improvement",
+  "areas": [
+   "client",
+   "tests-infra"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "Client lint gate red but not enforced at land; cluster with CARD-0473/0571 lint debt."
+ },
+ {
+  "identifier": "CARD-0614",
+  "type": "bug",
+  "areas": [
+   "nightly",
+   "ops"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "Enter-NightlyExclusiveLock (scripts/lib/nightly-common.ps1:563) suspected of the unreadable-owner-record hazard by inspection only."
+ },
+ {
+  "identifier": "CARD-0618",
+  "type": "bug",
+  "areas": [
+   "delegation",
+   "tests-infra"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "C499_V07 baseline persistence failure, base-reproduced; RepairSource test cluster with CARD-0622/0624."
+ },
+ {
+  "identifier": "CARD-0619",
+  "type": "reliability-ops",
+  "areas": [
+   "delegation"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "high",
+  "reason": "AgentTaskDispatcher.cs:986 still formats only ex.Message ('Dispatch failed before a session existed: ...'), dropping ValidationException.Errors."
+ },
+ {
+  "identifier": "CARD-0620",
+  "type": "test-improvement",
+  "areas": [
+   "checkpoints",
+   "docs"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "No test pins the Min vs EstimatedMinutes checkpoint-column distinction."
+ },
+ {
+  "identifier": "CARD-0621",
+  "type": "docs",
+  "areas": [
+   "docs",
+   "tests-infra"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "No roster of test-pinned phrases in server/Bundles/*.md."
+ },
+ {
+  "identifier": "CARD-0622",
+  "type": "test-improvement",
+  "areas": [
+   "delegation",
+   "tests-infra"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "C499_V29 timeout under load only; RepairSource test cluster."
+ },
+ {
+  "identifier": "CARD-0623",
+  "type": "bug",
+  "areas": [
+   "client",
+   "tests-infra"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "TaskDetailBody.test.tsx reproducible failure (pre-existing); not re-run here."
+ },
+ {
+  "identifier": "CARD-0624",
+  "type": "test-improvement",
+  "areas": [
+   "delegation",
+   "tests-infra"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "C499_V17 90s budget with zero headroom; RepairSource test cluster."
+ },
+ {
+  "identifier": "CARD-0625",
+  "type": "test-improvement",
+  "areas": [
+   "client",
+   "tests-infra"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "AgentsPage intermittent 20s timeout."
+ },
+ {
+  "identifier": "CARD-0626",
+  "type": "reliability-ops",
+  "areas": [
+   "runner"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "Phone-home server never closes a lease-expired connection."
+ },
+ {
+  "identifier": "CARD-0627",
+  "type": "reliability-ops",
+  "areas": [
+   "runner"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "high",
+  "reason": "PhoneHomeLiveConnection.cs:425-426 still 'continue's silently on an epoch mismatch; CARD-0629 (Done) reports runner requests are now bounded, covering the timeout half."
+ },
+ {
+  "identifier": "CARD-0630",
+  "type": "bug",
+  "areas": [
+   "settlement-landing",
+   "transcripts"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "Land-outcome UserPrompt receipt duplicates on replay (14 inherited methods)."
+ },
+ {
+  "identifier": "CARD-0634",
+  "type": "test-improvement",
+  "areas": [
+   "deploy-rollout",
+   "runner"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": "CARD-0604",
+  "confidence": "medium",
+  "reason": "CARD-0604 CP-14 DinD harness inherited failures; blocks CARD-0604 native verification."
+ },
+ {
+  "identifier": "CARD-0635",
+  "type": "bug",
+  "areas": [
+   "settlement-landing",
+   "worktree"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "False-Failed Code on inherited failure + Review leaving detached HEAD forces manual git to land."
+ },
+ {
+  "identifier": "CARD-0636",
+  "type": "bug",
+  "areas": [
+   "delegation",
+   "worktree"
+  ],
+  "recommendedState": "merge-into",
+  "relatedCard": "CARD-0644",
+  "confidence": "medium",
+  "reason": "-OnAgent retired-agent fallback to Shared; CARD-0644 (In Progress) makes Worktree the dispatch default, which should cover it - verify after it lands."
+ },
+ {
+  "identifier": "CARD-0637",
+  "type": "test-improvement",
+  "areas": [
+   "runner",
+   "mutation"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "Three missing runner reply-path tests for CARD-0631."
+ },
+ {
+  "identifier": "CARD-0638",
+  "type": "test-improvement",
+  "areas": [
+   "deploy-rollout",
+   "security"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "CARD-0628 unverified items under the 3-min cap (CP-5, Linux token inheritance, tmpfs mount); one item already decided by operator."
+ },
+ {
+  "identifier": "CARD-0639",
+  "type": "test-improvement",
+  "areas": [
+   "channels",
+   "tests-infra"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "ChannelBridgeTests never prove recipient acceptance (no UserPrompt from the fake adapter)."
+ },
+ {
+  "identifier": "CARD-0648",
+  "type": "reliability-ops",
+  "areas": [
+   "worktree",
+   "attention"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "high",
+  "reason": "Dead repository-child journal fenced all worktree dispatch for 5h; attention alarms exist but no auto-recovery of dead-owner journals verified."
+ },
+ {
+  "identifier": "CARD-0652",
+  "type": "bug",
+  "areas": [
+   "delegation",
+   "transcripts",
+   "providers"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "high",
+  "reason": "Report attribution keys on the latest UserPrompt, so agent-injected system-reminder prompts unattribute real reports; no filter found on master."
+ },
+ {
+  "identifier": "CARD-0663",
+  "type": "reliability-ops",
+  "areas": [
+   "ops"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "AppHost restart port-collision on the server's Aspire port; script only reports 'health not confirmed'."
+ },
+ {
+  "identifier": "CARD-0668",
+  "type": "bug",
+  "areas": [
+   "runner",
+   "worktree"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "high",
+  "reason": "Linux child identity still uses .NET Process.StartTime ticks (AgentTaskLandService.cs:1792); no /proc stat starttime+boot id; recover script can misclassify a live child."
+ },
+ {
+  "identifier": "CARD-0669",
+  "type": "reliability-ops",
+  "areas": [
+   "settlement-landing",
+   "worktree"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": "CARD-0824",
+  "confidence": "medium",
+  "reason": "Land residue sweeper; cluster with CARD-0670/0673/0824/0844 and in-flight CARD-0826/0692 (Review)."
+ },
+ {
+  "identifier": "CARD-0670",
+  "type": "reliability-ops",
+  "areas": [
+   "worktree"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": "CARD-0824",
+  "confidence": "medium",
+  "reason": "Retention policy for never-landed non-Code worktrees; same residue cluster; CARD-1017 in progress touches it."
+ },
+ {
+  "identifier": "CARD-0673",
+  "type": "reliability-ops",
+  "areas": [
+   "worktree",
+   "providers"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": "CARD-0824",
+  "confidence": "medium",
+  "reason": "Codex reviewers cannot delete their bin-* output (CLI approval policy); same root as CARD-0455."
+ },
+ {
+  "identifier": "CARD-0674",
+  "type": "feature",
+  "areas": [
+   "runner",
+   "delegation"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "Host placement weights/fill-then-overflow/load-aware admission; no weight concept found in host services."
+ },
+ {
+  "identifier": "CARD-0680",
+  "type": "bug",
+  "areas": [
+   "delivery",
+   "pty"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "A ModalBlocked verdict exists (SessionMessageQueueService.Expectations.cs) but no Claude permission/AskUserQuestion screen detector was found in Antiphon.Agents.Pty."
+ },
+ {
+  "identifier": "CARD-0682",
+  "type": "bug",
+  "areas": [
+   "delivery",
+   "delegation"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "high",
+  "reason": "-Refine still waits for WhenIdle; long-turn delegates never see it (also on Codex/server2 2026-10-01); same defect as CARD-0731."
+ },
+ {
+  "identifier": "CARD-0683",
+  "type": "bug",
+  "areas": [
+   "runner"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "server2 runner 404 for sessions it reported running; reconnect registry not reproduced yet."
+ },
+ {
+  "identifier": "CARD-0686",
+  "type": "bug",
+  "areas": [
+   "delivery",
+   "session-lifecycle"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "Sessions wedge after a queued background-task notification; detection + recovery ask."
+ },
+ {
+  "identifier": "CARD-0687",
+  "type": "test-improvement",
+  "areas": [
+   "tests-infra",
+   "providers"
+  ],
+  "recommendedState": "probably-done",
+  "relatedCard": "CARD-0742",
+  "confidence": "high",
+  "reason": "Card's own 2026-10-02 note says the flake is canonically CARD-0742's, and CARD-0742 is Done."
+ },
+ {
+  "identifier": "CARD-0689",
+  "type": "bug",
+  "areas": [
+   "delegation"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "Check notes carry stray [antiphon-report] tokens and narration; CheckInterpretationValidator.cs:36 (2026-09-09) predates the incidents, so the leak path is elsewhere."
+ },
+ {
+  "identifier": "CARD-0690",
+  "type": "test-improvement",
+  "areas": [
+   "runner",
+   "tests-infra"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": "CARD-0868",
+  "confidence": "medium",
+  "reason": "SessionRunner.Tests Unit lane hang on Linux; Linux-red cluster with CARD-0868/0713/0715."
+ },
+ {
+  "identifier": "CARD-0695",
+  "type": "bug",
+  "areas": [
+   "worktree",
+   "runner"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "Restart during remote worktree prep leaves a branch with no directory; needs a cut-injection test."
+ },
+ {
+  "identifier": "CARD-0702",
+  "type": "reliability-ops",
+  "areas": [
+   "worktree",
+   "providers"
+  ],
+  "recommendedState": "duplicate-of",
+  "relatedCard": "CARD-0673",
+  "confidence": "high",
+  "reason": "Same defect as CARD-0673 (Codex approval policy blocks deleting own bin-* output), Windows instance."
+ },
+ {
+  "identifier": "CARD-0703",
+  "type": "decision-needed",
+  "areas": [
+   "herdr",
+   "runner"
+  ],
+  "recommendedState": "needs-human-decision",
+  "relatedCard": null,
+  "confidence": "high",
+  "reason": "Unlanded CARD-0395 Herdr rules-ownership work preserved in a worktree; operator must decide port vs discard (possible safety gap)."
+ },
+ {
+  "identifier": "CARD-0704",
+  "type": "decision-needed",
+  "areas": [
+   "client",
+   "tests-infra"
+  ],
+  "recommendedState": "needs-human-decision",
+  "relatedCard": null,
+  "confidence": "high",
+  "reason": "Unlanded CARD-0467 tests/drawer polling in two worktrees; decide port vs retire."
+ },
+ {
+  "identifier": "CARD-0709",
+  "type": "test-improvement",
+  "areas": [
+   "mutation",
+   "providers"
+  ],
+  "recommendedState": "needs-human-decision",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "Post-land SourceLanding Mutation obligation for CARD-0584; fund or waive."
+ },
+ {
+  "identifier": "CARD-0713",
+  "type": "test-improvement",
+  "areas": [
+   "tests-infra",
+   "board"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": "CARD-0868",
+  "confidence": "medium",
+  "reason": "20 card-file integration cases fail on Linux (hook exec bit, junctions, Windows path Join-Path in card.ps1:417)."
+ },
+ {
+  "identifier": "CARD-0715",
+  "type": "bug",
+  "areas": [
+   "agents-admin",
+   "tests-infra"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "ProjectSetupService duplicate-directory guard fails on Linux baseline; real cross-platform defect."
+ },
+ {
+  "identifier": "CARD-0720",
+  "type": "bug",
+  "areas": [
+   "schema",
+   "session-lifecycle"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "Cascade-delete recheck-to-DELETE race (ms-s window); FOR UPDATE fix stated."
+ },
+ {
+  "identifier": "CARD-0722",
+  "type": "bug",
+  "areas": [
+   "delegation"
+  ],
+  "recommendedState": "merge-into",
+  "relatedCard": "CARD-0689",
+  "confidence": "high",
+  "reason": "Same defect as CARD-0689 (interpreter report token/narration leaking into caller check digest)."
+ },
+ {
+  "identifier": "CARD-0724",
+  "type": "bug",
+  "areas": [
+   "settlement-landing",
+   "board",
+   "security"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "high",
+  "reason": "Land guard must check every published commit for revoked card exports; card says no land path guards it and land tests never register CardTaskFileService."
+ },
+ {
+  "identifier": "CARD-0725",
+  "type": "tech-debt",
+  "areas": [
+   "board",
+   "settlement-landing"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "Four CARD-0700 rough edges (pre-commit sweep lease race, pending receipt, startup-trigger test, missing CP evidence)."
+ },
+ {
+  "identifier": "CARD-0729",
+  "type": "bug",
+  "areas": [
+   "runner"
+  ],
+  "recommendedState": "probably-done",
+  "relatedCard": null,
+  "confidence": "high",
+  "reason": "PhoneHomeRunnerDirectory.Status(runnerId) (master :630-638) now looks the id up in _slots and handles the desktop alias instead of ignoring it."
+ },
+ {
+  "identifier": "CARD-0731",
+  "type": "bug",
+  "areas": [
+   "delivery",
+   "delegation"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "high",
+  "reason": "A refine queued mid-turn is delivered after the report and the task settles on the stale brief; pair with CARD-0682 as one plan."
+ },
+ {
+  "identifier": "CARD-0732",
+  "type": "dev-speed",
+  "areas": [
+   "tests-infra"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "high",
+  "reason": "SessionDeliveryProfileTests and CommitOnSettleMigrationTests are still Category(\"Unit\") on master, so the Unit lane still boots Postgres (~77s median)."
+ },
+ {
+  "identifier": "CARD-0733",
+  "type": "dev-speed",
+  "areas": [
+   "tests-infra"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "high",
+  "reason": "TestClassificationPolicyTests.RunProbeAsync (master :334) still builds the probe per call; ~66s serial per Unit run."
+ },
+ {
+  "identifier": "CARD-0734",
+  "type": "dev-speed",
+  "areas": [
+   "tests-infra",
+   "checkpoints"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "RunCheckpointScriptTests still runs Test-C585_* script cases (pwsh per case/assertion); last touched 2026-09-27."
+ },
+ {
+  "identifier": "CARD-0736",
+  "type": "dev-speed",
+  "areas": [
+   "tests-infra",
+   "transcripts"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "TranscriptHotPathFixture still seeds a cloned database per consumer (377k rows x4)."
+ },
+ {
+  "identifier": "CARD-0739",
+  "type": "dev-speed",
+  "areas": [
+   "tests-infra",
+   "channels",
+   "delivery"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "Apply ScaledTimeProvider to three more delivery classes; follow-on of CARD-0735 (Done)."
+ },
+ {
+  "identifier": "CARD-0741",
+  "type": "test-improvement",
+  "areas": [
+   "delegation",
+   "tests-infra"
+  ],
+  "recommendedState": "probably-done",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "f903232b8 (card-1015, 2026-10-03) 'preserve pinned instruction contracts within existing budgets' rewrote the stage bundles after this; unverified the two C544 cases are green."
+ },
+ {
+  "identifier": "CARD-0743",
+  "type": "dev-speed",
+  "areas": [
+   "settlement-landing",
+   "worktree"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": "CARD-1109",
+  "confidence": "medium",
+  "reason": "Docs-only land held the repository lease ~17 min, queueing dispatch; lease-sharing design question."
+ },
+ {
+  "identifier": "CARD-0744",
+  "type": "bug",
+  "areas": [
+   "runner",
+   "providers"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "Partly fixed: dispatcher uses ClaudeAuthProbeEnabledFor(task.RunnerId) at :3463, but :4877 and AgentTaskService.cs:4468 (Codex) still read the top-level flag."
+ },
+ {
+  "identifier": "CARD-0745",
+  "type": "investigation",
+  "areas": [
+   "tests-infra",
+   "delivery"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "Why MessageQueue delivery tests take 95-176s at clock speed 5; operator explicitly asked for this."
+ },
+ {
+  "identifier": "CARD-0746",
+  "type": "reliability-ops",
+  "areas": [
+   "deploy-rollout",
+   "runner"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "server2 deploy gate misses the 'Phone-home connection ended:' register/drop loop."
+ },
+ {
+  "identifier": "CARD-0747",
+  "type": "bug",
+  "areas": [
+   "settlement-landing",
+   "delivery"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "Land outcome receipt stays AwaitingReceipt and re-notifies LandAged after a delivered notice; CARD-0513 is an earlier sighting."
+ },
+ {
+  "identifier": "CARD-0748",
+  "type": "bug",
+  "areas": [
+   "settlement-landing",
+   "delivery"
+  ],
+  "recommendedState": "duplicate-of",
+  "relatedCard": "CARD-0747",
+  "confidence": "high",
+  "reason": "Byte-identical title and description to CARD-0747 (double filing)."
+ },
+ {
+  "identifier": "CARD-0750",
+  "type": "bug",
+  "areas": [
+   "runner",
+   "delegation"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "Runner-unavailable warning written under the claim row lock; plus a once-seen Linux log flake."
+ },
+ {
+  "identifier": "CARD-0751",
+  "type": "test-improvement",
+  "areas": [
+   "tests-infra"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": "CARD-0936",
+  "confidence": "low",
+  "reason": "HttpResilience fake-clock flakes; 2026-10-02 loaded evidence shows 3/3 green on branch and master."
+ },
+ {
+  "identifier": "CARD-0752",
+  "type": "test-improvement",
+  "areas": [
+   "settlement-landing",
+   "tests-infra"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "Two RepositoryMutationLease tests red on Windows master; Windows-only vs real defect undecided."
+ },
+ {
+  "identifier": "CARD-0754",
+  "type": "tech-debt",
+  "areas": [
+   "client"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": "CARD-0786",
+  "confidence": "medium",
+  "reason": "Client lint gate red (RunnerDefaultsSection set-state-in-effect); one plan with CARD-0473/0571/0612/0786."
+ },
+ {
+  "identifier": "CARD-0755",
+  "type": "bug",
+  "areas": [
+   "delegation",
+   "client"
+  ],
+  "recommendedState": "probably-done",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "AgentTaskPipelineStatusService.cs:165 now counts localInFlight only for rows without RunnerId and :174 counts per runner host."
+ },
+ {
+  "identifier": "CARD-0756",
+  "type": "test-improvement",
+  "areas": [
+   "tests-infra"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "ContractSnapshotTests 4/5 stale fixtures + user-secrets dependence; supersedes CARD-0393."
+ },
+ {
+  "identifier": "CARD-0757",
+  "type": "test-improvement",
+  "areas": [
+   "tests-infra"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": "CARD-0931",
+  "confidence": "medium",
+  "reason": "ScaledTimeProviderTests flake; root cause and fix shape recorded 2026-10-02."
+ },
+ {
+  "identifier": "CARD-0761",
+  "type": "test-improvement",
+  "areas": [
+   "runner",
+   "tests-infra"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "PhoneHomeConnectionServiceTests discards the accepted TcpClient; flake under parallel load."
+ },
+ {
+  "identifier": "CARD-0763",
+  "type": "test-improvement",
+  "areas": [
+   "settlement-landing",
+   "tests-infra"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "C448_V36 RemovalFixture not clean, inherited flake."
+ },
+ {
+  "identifier": "CARD-0764",
+  "type": "bug",
+  "areas": [
+   "checkpoints"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "Checkpoint tool labels an inherited flake INTRODUCED from one baseline pass; checkpoint-tool hardening cluster."
+ },
+ {
+  "identifier": "CARD-0765",
+  "type": "bug",
+  "areas": [
+   "checkpoints"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "Checkpoint Program.Stop/ParentAlive bare-pid trust; tools/Antiphon.Checkpoints/Cleanup/ProcessIdentity.cs now records start-time identity for cleanup, unverified for these two call sites."
+ },
+ {
+  "identifier": "CARD-0766",
+  "type": "tech-debt",
+  "areas": [
+   "tests-infra"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "high",
+  "reason": "tests/Antiphon.Tests/Application/LandingProtocolGuardTests.cs.new is still tracked on master; no guard against *.cs.new/*.orig/*.rej."
+ },
+ {
+  "identifier": "CARD-0769",
+  "type": "bug",
+  "areas": [
+   "checkpoints"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "Quoted command rows on Windows cmd /d /s /c; RowRunner.cs:103 still shells via cmd.exe; quoting fix unverified."
+ },
+ {
+  "identifier": "CARD-0770",
+  "type": "bug",
+  "areas": [
+   "checkpoints"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "wait --run with a non-run-id path loops at exit 75; no unknown-run refusal found."
+ },
+ {
+  "identifier": "CARD-0771",
+  "type": "decision-needed",
+  "areas": [
+   "delegation",
+   "security",
+   "checkpoints"
+  ],
+  "recommendedState": "needs-human-decision",
+  "relatedCard": null,
+  "confidence": "high",
+  "reason": "Whether GET /api/agent-tasks/{id} should authenticate X-Antiphon-Task-Token or the tool/plan should stop claiming authenticated ownership; card asks for the decision."
+ },
+ {
+  "identifier": "CARD-0773",
+  "type": "bug",
+  "areas": [
+   "checkpoints"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "Checkpoint tool starts parallel builds of tests/Antiphon.Tests sharing obj/; no serialisation found in tools/Antiphon.Checkpoints."
+ },
+ {
+  "identifier": "CARD-0774",
+  "type": "bug",
+  "areas": [
+   "checkpoints",
+   "runner"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "Linux row-timeout leaves an orphaned grandchild; process-group kill not verified."
+ },
+ {
+  "identifier": "CARD-0775",
+  "type": "reliability-ops",
+  "areas": [
+   "deploy-rollout",
+   "runner"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "server2 deploy leaves a stale dirty work checkout, registration omits hostStatsV1, a queued mirror fails forever; three small items."
+ },
+ {
+  "identifier": "CARD-0776",
+  "type": "test-improvement",
+  "areas": [
+   "checkpoints",
+   "tests-infra"
+  ],
+  "recommendedState": "duplicate-of",
+  "relatedCard": "CARD-0828",
+  "confidence": "medium",
+  "reason": "Same two CheckpointTaskOwnershipTests wall-clock gate waits; CARD-0828 adds the leaked watch-loop root cause."
+ },
+ {
+  "identifier": "CARD-0781",
+  "type": "bug",
+  "areas": [
+   "checkpoints"
+  ],
+  "recommendedState": "probably-done",
+  "relatedCard": null,
+  "confidence": "high",
+  "reason": "BuildSlotClient.ReadInt (tools/Antiphon.Checkpoints/Slots/BuildSlotClient.cs:437-443) now requires ValueKind == Number before TryGetInt32, so a null renewEverySeconds falls back."
+ },
+ {
+  "identifier": "CARD-0782",
+  "type": "test-improvement",
+  "areas": [
+   "settlement-landing",
+   "delivery"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": "CARD-1155",
+  "confidence": "medium",
+  "reason": "Three native land-delivery E2E rows red since a16d82d7 (stale completion-scan evidence channel, C540 flush stalls)."
+ },
+ {
+  "identifier": "CARD-0783",
+  "type": "test-improvement",
+  "areas": [
+   "providers",
+   "delegation",
+   "tests-infra"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": "CARD-0843",
+  "confidence": "medium",
+  "reason": "Four Codex dispatch tests stale after runner-less Codex refusal (CARD-0772)."
+ },
+ {
+  "identifier": "CARD-0786",
+  "type": "tech-debt",
+  "areas": [
+   "client"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": "CARD-0754",
+  "confidence": "medium",
+  "reason": "placement.tsx react-refresh lint errors; client lint cluster."
+ },
+ {
+  "identifier": "CARD-0787",
+  "type": "test-improvement",
+  "areas": [
+   "tests-infra",
+   "session-launch"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": "CARD-0868",
+  "confidence": "medium",
+  "reason": "Launch/refresh harnesses hard-code cmd.exe; Linux runs fail silently through a swallowed exception."
+ },
+ {
+  "identifier": "CARD-0789",
+  "type": "bug",
+  "areas": [
+   "checkpoints",
+   "client"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "Client-build row races client-test row's package install in a fresh worktree."
+ },
+ {
+  "identifier": "CARD-0790",
+  "type": "bug",
+  "areas": [
+   "channels",
+   "delegation"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "high",
+  "reason": "OutputDistillation.cs:44 and DelegationReportFormatter.cs:581 still say 'at most 12 bullets' on master, contradicting contract v4 'write six'."
+ },
+ {
+  "identifier": "CARD-0791",
+  "type": "test-improvement",
+  "areas": [
+   "tests-infra",
+   "providers"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": "CARD-0742",
+  "confidence": "medium",
+  "reason": "Codex half is CARD-0742 (Done); RunnerClaudeAdapterEffortPromptTests sibling remains."
+ },
+ {
+  "identifier": "CARD-0792",
+  "type": "test-improvement",
+  "areas": [
+   "tests-infra"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "high",
+  "reason": "tests/Antiphon.Tests/Infrastructure/GitServiceTests.cs on master has no ParallelLimiter attribute; small isolation fix plus roster entry."
+ },
+ {
+  "identifier": "CARD-0793",
+  "type": "bug",
+  "areas": [
+   "board",
+   "ops"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": "CARD-0713",
+  "confidence": "high",
+  "reason": "card.ps1 Write-CardFileStatus Join-Path on a Windows repositoryPath exits 1 on Linux after a successful write (duplicate-card risk); same Join-Path root as CARD-0713's script cases."
+ },
+ {
+  "identifier": "CARD-0794",
+  "type": "test-improvement",
+  "areas": [
+   "runner",
+   "tests-infra"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": "CARD-0742",
+  "confidence": "medium",
+  "reason": "Codex half covered by CARD-0742; RunnerMultilinePromptDeliveryTests broken-pipe hang on Linux remains."
+ },
+ {
+  "identifier": "CARD-0797",
+  "type": "tech-debt",
+  "areas": [
+   "board"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "decision_question_busy vs decision_question_stale error codes."
+ },
+ {
+  "identifier": "CARD-0798",
+  "type": "dev-speed",
+  "areas": [
+   "client",
+   "nightly"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "client/src/lint.gate.test.ts constructs ESLint without cache; nightly scans twice."
+ },
+ {
+  "identifier": "CARD-0799",
+  "type": "dev-speed",
+  "areas": [
+   "tests-infra"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "Amortize E2E app fixture startup (944s of 1191s between test bodies)."
+ },
+ {
+  "identifier": "CARD-0803",
+  "type": "bug",
+  "areas": [
+   "client"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "commit-on-settle Inherit label shows project override; small UI fix."
+ },
+ {
+  "identifier": "CARD-0809",
+  "type": "bug",
+  "areas": [
+   "settlement-landing",
+   "worktree",
+   "attention"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": "CARD-1076",
+  "confidence": "high",
+  "reason": "Unleased remote-prep push journals a child that fences the lease with 'owner unknown'; CARD-1076 (Review) is the adjacent push-timeout fence."
+ },
+ {
+  "identifier": "CARD-0814",
+  "type": "reliability-ops",
+  "areas": [
+   "deploy-rollout",
+   "providers"
+  ],
+  "recommendedState": "needs-human-decision",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "Bump runner Claude CLI to 2.1.284 for Sonnet 5.5; may already have been superseded by a later CLI bump - operator to confirm current image version."
+ },
+ {
+  "identifier": "CARD-0815",
+  "type": "test-improvement",
+  "areas": [
+   "tests-infra"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": "CARD-1040",
+  "confidence": "medium",
+  "reason": "Windows full-suite run 932 failures + 190-min timeout; baseline and shared-DB contention work; CARD-1039/1040 in Review touch it."
+ },
+ {
+  "identifier": "CARD-0818",
+  "type": "test-improvement",
+  "areas": [
+   "checkpoints",
+   "tests-infra"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": "CARD-0828",
+  "confidence": "high",
+  "reason": "CheckpointExecutorLogTests concurrent-callback test can hang the host; confirmed 30-min CP-2 timeout."
+ },
+ {
+  "identifier": "CARD-0819",
+  "type": "bug",
+  "areas": [
+   "checkpoints"
+  ],
+  "recommendedState": "duplicate-of",
+  "relatedCard": "CARD-0773",
+  "confidence": "high",
+  "reason": "Same defect as CARD-0773 (checkpoint tool parallel builds of tests/Antiphon.Tests collide on shared obj/)."
+ },
+ {
+  "identifier": "CARD-0821",
+  "type": "test-improvement",
+  "areas": [
+   "runner",
+   "tests-infra"
+  ],
+  "recommendedState": "duplicate-of",
+  "relatedCard": "CARD-0690",
+  "confidence": "medium",
+  "reason": "Same SessionRunner.Tests Linux Unit-lane fail-and-stall as CARD-0690 (re-found 5 days later)."
+ },
+ {
+  "identifier": "CARD-0823",
+  "type": "bug",
+  "areas": [
+   "checkpoints"
+  ],
+  "recommendedState": "duplicate-of",
+  "relatedCard": "CARD-0781",
+  "confidence": "high",
+  "reason": "Same null renewEverySeconds crash as CARD-0781; ReadInt now guards ValueKind == Number on master, so both are probably done."
+ },
+ {
+  "identifier": "CARD-0824",
+  "type": "feature",
+  "areas": [
+   "worktree",
+   "runner",
+   "settlement-landing"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "high",
+  "reason": "Operator request: per-slot reusable worktrees + delete remote branch after land; root fix for the residue cluster (CARD-0517/0669/0670/0673) and server2 disk-full incidents."
+ },
+ {
+  "identifier": "CARD-0825",
+  "type": "bug",
+  "areas": [
+   "checkpoints",
+   "runner",
+   "security"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "high",
+  "reason": "Checkpoint test child inherits production runner env (ASPNETCORE_URLS, SessionRunner__*); violates the never-launch-against-production rule."
+ },
+ {
+  "identifier": "CARD-0828",
+  "type": "test-improvement",
+  "areas": [
+   "checkpoints",
+   "tests-infra"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "high",
+  "reason": "CheckpointTaskOwnershipTests time out under load and leak a CPU-spinning owner watch loop."
+ },
+ {
+  "identifier": "CARD-0829",
+  "type": "bug",
+  "areas": [
+   "runner",
+   "pty"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "high",
+  "reason": "pty-host adoption can kill an unrelated process after container recreate (PID namespace reuse); destructive."
+ },
+ {
+  "identifier": "CARD-0830",
+  "type": "test-improvement",
+  "areas": [
+   "checkpoints"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "Checkpoint usage harness: unbounded child wait, unobservable progress, hard-coded census."
+ },
+ {
+  "identifier": "CARD-0831",
+  "type": "reliability-ops",
+  "areas": [
+   "deploy-rollout",
+   "runner"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": "CARD-1010",
+  "confidence": "high",
+  "reason": "Temp-runner retirement down -v can destroy unpublished task mirrors; CARD-1010 (Review) adjacent."
+ },
+ {
+  "identifier": "CARD-0832",
+  "type": "reliability-ops",
+  "areas": [
+   "transcripts",
+   "providers",
+   "runner"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "Runner-hosted Codex transcripts ingest no tool calls."
+ },
+ {
+  "identifier": "CARD-0834",
+  "type": "bug",
+  "areas": [
+   "settlement-landing",
+   "runner"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": "CARD-0938",
+  "confidence": "medium",
+  "reason": "Runner Code task rebased onto newer master refused runner_sync_diverged; no sanctioned re-base path."
+ },
+ {
+  "identifier": "CARD-0836",
+  "type": "bug",
+  "areas": [
+   "checkpoints"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "high",
+  "reason": "Checkpoint scheduler waits only on running rows, so a finished build does not wake queued rows; precise fix direction stated."
+ },
+ {
+  "identifier": "CARD-0837",
+  "type": "bug",
+  "areas": [
+   "settlement-landing",
+   "runner"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "high",
+  "reason": "Runner mirror salvage misclassifies partial push (Succeeded at S, drops slice 2) and mid-rebase (Failed not Blocked); silent work loss."
+ },
+ {
+  "identifier": "CARD-0838",
+  "type": "test-improvement",
+  "areas": [
+   "settlement-landing",
+   "tests-infra"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": "CARD-0815",
+  "confidence": "medium",
+  "reason": "Windows master C443/shared-scope reds plus ~989 full-suite failures; Windows-lane health cluster with CARD-0815."
+ },
+ {
+  "identifier": "CARD-0839",
+  "type": "bug",
+  "areas": [
+   "checkpoints",
+   "ops"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "high",
+  "reason": "run-checkpoint.ps1 can report a commit it did not build (location vs process cwd) - silent evidence misattribution."
+ },
+ {
+  "identifier": "CARD-0840",
+  "type": "tech-debt",
+  "areas": [
+   "checkpoints"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "Empty antiphon-checkpoints-baseline/<runId> dirs leak outside the usage census; negligible bytes."
+ },
+ {
+  "identifier": "CARD-0841",
+  "type": "bug",
+  "areas": [
+   "checkpoints"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "high",
+  "reason": "A green --rows run deletes bin-* outputs of unselected builds (CheckpointApp.cs:254), can break a concurrent run."
+ },
+ {
+  "identifier": "CARD-0843",
+  "type": "test-improvement",
+  "areas": [
+   "providers",
+   "tests-infra"
+  ],
+  "recommendedState": "merge-into",
+  "relatedCard": "CARD-0783",
+  "confidence": "high",
+  "reason": "Same CARD-0772 fallout (runner-less Codex refused) as CARD-0783; card itself suggests folding in."
+ },
+ {
+  "identifier": "CARD-0844",
+  "type": "reliability-ops",
+  "areas": [
+   "settlement-landing"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "high",
+  "reason": "Land verifier discards the build error tail, so verification_failed is undiagnosable (cost a Debug task)."
+ },
+ {
+  "identifier": "CARD-0847",
+  "type": "bug",
+  "areas": [
+   "tests-infra",
+   "runner",
+   "deploy-rollout"
+  ],
+  "recommendedState": "probably-done",
+  "relatedCard": "CARD-0849",
+  "confidence": "medium",
+  "reason": "docs/investigations/2026-09-30-card-0847-apphost-pack-evidence.md is on master and CARD-0849/CARD-0913 (Done) seed the net9 apphost packs; CopyOwnedPtyHostAppHost remains (csproj:210) - confirm a cold-cache Linux build is green."
+ },
+ {
+  "identifier": "CARD-0848",
+  "type": "test-improvement",
+  "areas": [
+   "checkpoints",
+   "tests-infra"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": "CARD-1071",
+  "confidence": "low",
+  "reason": "DetachedLauncherTests fixed 10s marker window flakes under load."
+ },
+ {
+  "identifier": "CARD-0850",
+  "type": "bug",
+  "areas": [
+   "checkpoints"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "Report says 'outputs: deleted' under --keep-outputs and counts unselected builds; misleading evidence."
+ },
+ {
+  "identifier": "CARD-0851",
+  "type": "bug",
+  "areas": [
+   "checkpoints",
+   "runner"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "high",
+  "reason": "Windows pid-mode build-slot lease reaped at 90-min TTL while holder alive; >90-min rows run unleased (CARD-0589 isolation broken)."
+ },
+ {
+  "identifier": "CARD-0853",
+  "type": "bug",
+  "areas": [
+   "session-launch",
+   "runner",
+   "security"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "high",
+  "reason": "Worker session on server2 launched without ANTIPHON_TASK_TOKEN; cause not verified."
+ },
+ {
+  "identifier": "CARD-0854",
+  "type": "bug",
+  "areas": [
+   "providers",
+   "routing"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "Codex date-less same-day reset parse; first capture a real diagnostic (format unconfirmed)."
+ },
+ {
+  "identifier": "CARD-0855",
+  "type": "test-improvement",
+  "areas": [
+   "tests-infra",
+   "deploy-rollout"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "DockerStackDocuments.List silently truncates at long-form compose entries, making assertions vacuous."
+ },
+ {
+  "identifier": "CARD-0856",
+  "type": "dev-speed",
+  "areas": [
+   "tests-infra"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "high",
+  "reason": "Measured: full Antiphon.Tests 270 min on Windows at 1.4x parallelism, Integration DB/git tests 96%; umbrella for the test-speed cluster."
+ },
+ {
+  "identifier": "CARD-0857",
+  "type": "security",
+  "areas": [
+   "providers"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "Grok loads MCP servers from outside the configured GROK_HOME; isolation/privacy gap."
+ },
+ {
+  "identifier": "CARD-0861",
+  "type": "bug",
+  "areas": [
+   "providers",
+   "pty"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "Grok readiness gate qualified only at 120x30; a resized session's relaunch times out."
+ },
+ {
+  "identifier": "CARD-0862",
+  "type": "test-improvement",
+  "areas": [
+   "routing",
+   "mutation"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "Pin the xmin token on the quota recovery row with a stale-writer test."
+ },
+ {
+  "identifier": "CARD-0864",
+  "type": "bug",
+  "areas": [
+   "herdr",
+   "runner"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "Herdr pane disposal is Windows-only (kernel32 locator store); 23 Linux rows skipped citing this card."
+ },
+ {
+  "identifier": "CARD-0865",
+  "type": "test-improvement",
+  "areas": [
+   "herdr",
+   "session-lifecycle",
+   "tests-infra"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": "CARD-0877",
+  "confidence": "medium",
+  "reason": "13 standing-history/always-on parity rows fail on Linux and are skipped citing this card."
+ },
+ {
+  "identifier": "CARD-0867",
+  "type": "test-improvement",
+  "areas": [
+   "delivery",
+   "providers",
+   "tests-infra"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "CodexStartupDeliveryTests message-wording reds since CARD-0696; decide wording per status."
+ },
+ {
+  "identifier": "CARD-0868",
+  "type": "test-improvement",
+  "areas": [
+   "tests-infra",
+   "providers"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "Linux-only reds in Codex/C4 classes (share-lock precondition, mtime ordering, UseAppHost=false); Linux lane health umbrella."
+ },
+ {
+  "identifier": "CARD-0869",
+  "type": "tech-debt",
+  "areas": [
+   "providers",
+   "docs"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "Minor Codex footer-readiness follow-ups (port a test, tighten cwd check, fix stale investigation doc)."
+ },
+ {
+  "identifier": "CARD-0870",
+  "type": "test-improvement",
+  "areas": [
+   "providers",
+   "tests-infra"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "GrokDelegateEndToEndTests IX_Agents_Slug duplicate on Windows, inherited; probably shared-DB fallout."
+ },
+ {
+  "identifier": "CARD-0871",
+  "type": "bug",
+  "areas": [
+   "pty",
+   "runner",
+   "providers"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "high",
+  "reason": "Linux PtyHost adoption with a changed rules receipt kills host and child; CARD-0801 weakened the Windows assertion meanwhile."
+ },
+ {
+  "identifier": "CARD-0872",
+  "type": "security",
+  "areas": [
+   "herdr"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "high",
+  "reason": "Herdr Unix client trusts any socket peer (no uid check), squattable /tmp fallback, no read timeout (caused a 20-min hang)."
+ },
+ {
+  "identifier": "CARD-0873",
+  "type": "test-improvement",
+  "areas": [
+   "pty",
+   "tests-infra"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "high",
+  "reason": "Tests leak pty-host/console children after the test host exits (antiphon-fake-grok-pty-*); process-safety rule."
+ },
+ {
+  "identifier": "CARD-0874",
+  "type": "test-improvement",
+  "areas": [
+   "deploy-rollout",
+   "mutation"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "c590-remote.sh jq predicates tested only through a filter-blind stub; unknown-as-zero mutant survives."
+ },
+ {
+  "identifier": "CARD-0875",
+  "type": "bug",
+  "areas": [
+   "deploy-rollout"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": "CARD-0997",
+  "confidence": "medium",
+  "reason": "C849 seed leaks its ~3 GB stage on post-copy refusals/aborts/signals (no trap)."
+ },
+ {
+  "identifier": "CARD-0876",
+  "type": "test-improvement",
+  "areas": [
+   "channels",
+   "tests-infra"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": "CARD-0887",
+  "confidence": "low",
+  "reason": "ChannelOutboundStorageTests symlink case needs a skip-if-no-privilege guard on Windows."
+ },
+ {
+  "identifier": "CARD-0877",
+  "type": "test-improvement",
+  "areas": [
+   "herdr",
+   "tests-infra"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "CARD-0801 fake: Windows tests that pass without asserting, untested cross-process pipe collision."
+ },
+ {
+  "identifier": "CARD-0878",
+  "type": "bug",
+  "areas": [
+   "pty",
+   "session-lifecycle"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "Linux PtyHost NativeSessionMissing classification race (4/20); product behaviour, not only a test."
+ },
+ {
+  "identifier": "CARD-0879",
+  "type": "test-improvement",
+  "areas": [
+   "herdr",
+   "tests-infra"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "Windows flake DetectTimeout vs PaneClosed; needs a 20x loop at base vs head."
+ },
+ {
+  "identifier": "CARD-0887",
+  "type": "test-improvement",
+  "areas": [
+   "tests-infra"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "C807 trio fails on CRLF checkouts; .gitattributes on master pins only server/Bundles/*.md to eol=lf."
+ },
+ {
+  "identifier": "CARD-0890",
+  "type": "test-improvement",
+  "areas": [
+   "settlement-landing",
+   "tests-infra"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "C448_V15 real-worker-death land recovery fails 7/7 on Linux (module initializer in bare pwsh); only real-process proof for that path."
+ },
+ {
+  "identifier": "CARD-0893",
+  "type": "bug",
+  "areas": [
+   "checkpoints"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "Tool validator accepts what the script validator refuses (notApplicable TUnit row, receipt count tokens)."
+ },
+ {
+  "identifier": "CARD-0894",
+  "type": "test-improvement",
+  "areas": [
+   "checkpoints",
+   "mutation"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "Eight CARD-0835 positive controls cannot go red at their named labels; blocks its SourceLanding Mutation."
+ },
+ {
+  "identifier": "CARD-0895",
+  "type": "test-improvement",
+  "areas": [
+   "checkpoints",
+   "mutation"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "Validator guard survivors contradict the guard-coverage doc."
+ },
+ {
+  "identifier": "CARD-0896",
+  "type": "test-improvement",
+  "areas": [
+   "checkpoints",
+   "mutation"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "Untested SourceSnapshot/SourceRunGuard guards (incl. the dirty-build laundering guard)."
+ },
+ {
+  "identifier": "CARD-0897",
+  "type": "test-improvement",
+  "areas": [
+   "checkpoints",
+   "mutation"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "checkpoint-source.ps1 unknown matrix untested (no injection seam); CARD-0835 test-strength cluster."
+ },
+ {
+  "identifier": "CARD-0898",
+  "type": "test-improvement",
+  "areas": [
+   "checkpoints"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "Six CARD-0835 plan V-matrix assertions have no test; add or amend plan."
+ },
+ {
+  "identifier": "CARD-0899",
+  "type": "bug",
+  "areas": [
+   "checkpoints"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "report --merge crashes (unhandled InvalidOperationException) on any legacy/unclean run."
+ },
+ {
+  "identifier": "CARD-0900",
+  "type": "test-improvement",
+  "areas": [
+   "checkpoints",
+   "tests-infra"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "C578 fixed 10s readiness wait; root cause and fix shape recorded 2026-10-02."
+ },
+ {
+  "identifier": "CARD-0906",
+  "type": "test-improvement",
+  "areas": [
+   "deploy-rollout"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "C849 front-door single -Case receipt validation has no offline coverage."
+ },
+ {
+  "identifier": "CARD-0908",
+  "type": "decision-needed",
+  "areas": [
+   "deploy-rollout"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "Decide CRLF acceptance for the Prune preview parse and pin it with a test either way."
+ },
+ {
+  "identifier": "CARD-0909",
+  "type": "tech-debt",
+  "areas": [
+   "deploy-rollout",
+   "providers"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "Codex image verifier strip should space every cursor-positioning CSI."
+ },
+ {
+  "identifier": "CARD-0910",
+  "type": "tech-debt",
+  "areas": [
+   "deploy-rollout",
+   "security"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "-SkipBuild trusts the image revision label for provenance; document or bind."
+ },
+ {
+  "identifier": "CARD-0911",
+  "type": "test-improvement",
+  "areas": [
+   "tests-infra"
+  ],
+  "recommendedState": "probably-done",
+  "relatedCard": null,
+  "confidence": "high",
+  "reason": "RemoteScriptContractTests.cs:4080 on master carries [ParallelLimiter<ProcessSpawnLimit>] on C849_Deploy_prepares_and_verifies_before_acceptance."
+ },
+ {
+  "identifier": "CARD-0914",
+  "type": "tech-debt",
+  "areas": [
+   "ops",
+   "deploy-rollout"
+  ],
+  "recommendedState": "needs-human-decision",
+  "relatedCard": null,
+  "confidence": "high",
+  "reason": ".NET 10 upgrade: all 45 csproj TargetFramework values are still net9.0 on master and net9 support ends 2026-11-10; large, cross-cutting - needs an operator go/no-go and a slot in the schedule."
+ },
+ {
+  "identifier": "CARD-0915",
+  "type": "tech-debt",
+  "areas": [
+   "deploy-rollout",
+   "runner"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "Baked net9 packs owned by uid 2001; tar --no-same-owner plus a size-comment fix."
+ },
+ {
+  "identifier": "CARD-0916",
+  "type": "test-improvement",
+  "areas": [
+   "deploy-rollout",
+   "runner"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "Image verifier net9-offline row pins RuntimeFrameworkVersion; cover default shape and net10."
+ },
+ {
+  "identifier": "CARD-0917",
+  "type": "test-improvement",
+  "areas": [
+   "checkpoints",
+   "tests-infra"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "CheckpointProcessIdentityTests teardown race on .checkpoint-root.lock."
+ },
+ {
+  "identifier": "CARD-0918",
+  "type": "tech-debt",
+  "areas": [
+   "tests-infra",
+   "deploy-rollout"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "DockerStackDocuments.Closure still AppendLine (mixed line endings on Windows)."
+ },
+ {
+  "identifier": "CARD-0919",
+  "type": "security",
+  "areas": [
+   "herdr"
+  ],
+  "recommendedState": "needs-human-decision",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "Disposal redaction residual for glued drive forms is documented and pinned as intended; decide whether to tighten or accept and close."
+ },
+ {
+  "identifier": "CARD-0920",
+  "type": "bug",
+  "areas": [
+   "deploy-rollout"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "Prune preview refuses a cold marker with the wrong refusal name."
+ },
+ {
+  "identifier": "CARD-0921",
+  "type": "test-improvement",
+  "areas": [
+   "deploy-rollout",
+   "docs"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "Legacy marker diagnoses changed without named assertions; document new codes."
+ },
+ {
+  "identifier": "CARD-0922",
+  "type": "decision-needed",
+  "areas": [
+   "checkpoints",
+   "tests-infra"
+  ],
+  "recommendedState": "needs-human-decision",
+  "relatedCard": null,
+  "confidence": "high",
+  "reason": "Strict receipt validator rejects every honest Linux Unit-lane receipt (33 platform skips); choose (a) declared skip set or (b) Linux Unit filter - blocks strict-clean receipts on the default runner."
+ },
+ {
+  "identifier": "CARD-0923",
+  "type": "bug",
+  "areas": [
+   "delegation",
+   "attention"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "progress=none warning fires on every no-commit Review/Debug completion, so the warning loses meaning."
+ },
+ {
+  "identifier": "CARD-0924",
+  "type": "reliability-ops",
+  "areas": [
+   "delegation",
+   "worktree"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "Thin desktop margin for the 5 s base-inspection budget; sample after activation."
+ },
+ {
+  "identifier": "CARD-0928",
+  "type": "test-improvement",
+  "areas": [
+   "deploy-rollout"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "Cross-SHA test labels never reach the call; cosmetic loop."
+ },
+ {
+  "identifier": "CARD-0929",
+  "type": "security",
+  "areas": [
+   "deploy-rollout"
+  ],
+  "recommendedState": "needs-human-decision",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "Cache seed marker forgeable by host user mc; operator decides whether an mc-level writer is in the threat model."
+ },
+ {
+  "identifier": "CARD-0930",
+  "type": "bug",
+  "areas": [
+   "settlement-landing",
+   "worktree"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "CARD-0788 S5 local non-Code probe now leaves deletion-only or pre-dispatch-dated work for review instead of merging."
+ },
+ {
+  "identifier": "CARD-0931",
+  "type": "test-improvement",
+  "areas": [
+   "checkpoints",
+   "tests-infra"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "Flaky-fix plan CP-3/CP-15 method-OR filters select zero tests on Linux; tool could refuse such filters."
+ },
+ {
+  "identifier": "CARD-0932",
+  "type": "test-improvement",
+  "areas": [
+   "checkpoints",
+   "tests-infra"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": "CARD-0936",
+  "confidence": "low",
+  "reason": "24-burner loaded stress controller stalls before the first ordinal receipt."
+ },
+ {
+  "identifier": "CARD-0935",
+  "type": "feature",
+  "areas": [
+   "deploy-rollout",
+   "runner"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "Separate server2 primary promotion from runner drain in the staged rollout."
+ },
+ {
+  "identifier": "CARD-0936",
+  "type": "test-improvement",
+  "areas": [
+   "tests-infra",
+   "checkpoints"
+  ],
+  "recommendedState": "needs-human-decision",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "N=30 loaded/quiet stress rows and Windows rows pending for CARD-0742; fund or waive."
+ },
+ {
+  "identifier": "CARD-0937",
+  "type": "test-improvement",
+  "areas": [
+   "mutation"
+  ],
+  "recommendedState": "needs-human-decision",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "CARD-0742 S1/S2/S5 method-scoped Mutation pending while the Mutation stage is paused; fund or waive."
+ },
+ {
+  "identifier": "CARD-0938",
+  "type": "bug",
+  "areas": [
+   "settlement-landing"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": "CARD-0834",
+  "confidence": "high",
+  "reason": "Land refuses an owner branch that merged master (rebase linearises and re-hits add/add); pairs with CARD-0834 as one re-base-path plan."
+ },
+ {
+  "identifier": "CARD-0941",
+  "type": "docs",
+  "areas": [
+   "docs",
+   "deploy-rollout"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "Staged rollout doc 'otherwise use the documented Seed source' points to the drain-both legacy Seed; autonomy wording risk."
+ },
+ {
+  "identifier": "CARD-0943",
+  "type": "test-improvement",
+  "areas": [
+   "tests-infra"
+  ],
+  "recommendedState": "merge-into",
+  "relatedCard": "CARD-0949",
+  "confidence": "high",
+  "reason": "Same tautological scratch self-compare pattern as CARD-0949; StandingPipelinePolicyDocumentationTests.cs:123-125 still carries it on master."
+ },
+ {
+  "identifier": "CARD-0949",
+  "type": "test-improvement",
+  "areas": [
+   "tests-infra",
+   "docs"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "high",
+  "reason": "Tautological scratch self-checks and case-insensitive ShouldContain still in pin loops (StandingPipelinePolicyDocumentationTests.cs:123-125 on master)."
+ },
+ {
+  "identifier": "CARD-0955",
+  "type": "reliability-ops",
+  "areas": [
+   "settlement-landing"
+  ],
+  "recommendedState": "probably-done",
+  "relatedCard": "CARD-0972",
+  "confidence": "medium",
+  "reason": "CARD-0972 records LandFailureDiagnostic.RedactedFrames (CARD-0954/0955) as landed with only Windows/Mutation verification pending."
+ },
+ {
+  "identifier": "CARD-0962",
+  "type": "reliability-ops",
+  "areas": [
+   "deploy-rollout",
+   "pty"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "CARD-0863 changes argv for every Linux arg with spaces/quotes at server2 activation; smoke at rollout."
+ },
+ {
+  "identifier": "CARD-0963",
+  "type": "bug",
+  "areas": [
+   "runner"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "Unix argv guard NREs on null exe/args before the existing validation; small."
+ },
+ {
+  "identifier": "CARD-0968",
+  "type": "test-improvement",
+  "areas": [
+   "checkpoints"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "CARD-0885 left 14 of 27 frozen test methods unwritten and benchmark/Windows rows pending."
+ },
+ {
+  "identifier": "CARD-0971",
+  "type": "decision-needed",
+  "areas": [
+   "settlement-landing",
+   "worktree"
+  ],
+  "recommendedState": "needs-human-decision",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "Decide whether an ignored nested git repo that does not collide should be accepted by half-reset proof."
+ },
+ {
+  "identifier": "CARD-0972",
+  "type": "test-improvement",
+  "areas": [
+   "settlement-landing",
+   "mutation"
+  ],
+  "recommendedState": "needs-human-decision",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "CARD-0954/0955 Windows native row and SourceLanding PCs pending; fund or waive."
+ },
+ {
+  "identifier": "CARD-0979",
+  "type": "test-improvement",
+  "areas": [
+   "settlement-landing",
+   "mutation"
+  ],
+  "recommendedState": "needs-human-decision",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "CARD-0883 residue: 9 seam-dependent results, Windows V-5, 81 PCs; fund or waive."
+ },
+ {
+  "identifier": "CARD-0982",
+  "type": "test-improvement",
+  "areas": [
+   "deploy-rollout",
+   "tests-infra"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "Qualify the rolling-harness jq probe on a real Windows host."
+ },
+ {
+  "identifier": "CARD-0985",
+  "type": "test-improvement",
+  "areas": [
+   "pty",
+   "tests-infra"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "ConPTY env guard-the-guard lacks an async/iterator fixture."
+ },
+ {
+  "identifier": "CARD-0987",
+  "type": "feature",
+  "areas": [
+   "ops",
+   "runner",
+   "worktree"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": "CARD-0826",
+  "confidence": "high",
+  "reason": "CARD-0826 daily host cleanup landed inert (no DI/hosted service); remaining S2-S5/native/PCs are the actual feature; part of the disk-residue cluster."
+ },
+ {
+  "identifier": "CARD-0988",
+  "type": "test-improvement",
+  "areas": [
+   "providers",
+   "tests-infra"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "RunnerGrokAdapterReadyTests LaunchBlock null under load."
+ },
+ {
+  "identifier": "CARD-0989",
+  "type": "security",
+  "areas": [
+   "deploy-rollout",
+   "providers"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "high",
+  "reason": "docker/session-runner-grok/Dockerfile:92 still pipes https://x.ai/cli/install.sh to bash with no SHA-256 check; only unverified download in the runner image."
+ },
+ {
+  "identifier": "CARD-0990",
+  "type": "test-improvement",
+  "areas": [
+   "settlement-landing",
+   "tests-infra"
+  ],
+  "recommendedState": "probably-done",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "The card's own 2026-10-02 Windows result says both GEN/Gen rows ran and passed on the desktop; only the scratch-mutation half is unrecorded."
+ },
+ {
+  "identifier": "CARD-0992",
+  "type": "reliability-ops",
+  "areas": [
+   "attention"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "Weak-arm caller inputs still read the whole transcript history per Attention poll."
+ },
+ {
+  "identifier": "CARD-0993",
+  "type": "reliability-ops",
+  "areas": [
+   "attention"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": "CARD-0992",
+  "confidence": "medium",
+  "reason": "Two transcript queries per input-bearing session per poll plus stream drain; same builder as CARD-0992 - one plan."
+ },
+ {
+  "identifier": "CARD-0995",
+  "type": "test-improvement",
+  "areas": [
+   "deploy-rollout"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "deploy-temp-runner host absence check has no ordinary TUnit guard."
+ },
+ {
+  "identifier": "CARD-1000",
+  "type": "test-improvement",
+  "areas": [
+   "settlement-landing",
+   "tests-infra"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "C883 registration case fails on Windows (forward vs back slashes); test-only fix."
+ },
+ {
+  "identifier": "CARD-1002",
+  "type": "test-improvement",
+  "areas": [
+   "session-lifecycle",
+   "tests-infra"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "StandingSessionRecoveryHttpTests not repeat-safe (PerClass adapter state); blocks -Repeat flake proofs."
+ },
+ {
+  "identifier": "CARD-1009",
+  "type": "feature",
+  "areas": [
+   "client",
+   "routing"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "Task chips should show the session EffectiveModelId for historical tier aliases."
+ },
+ {
+  "identifier": "CARD-1016",
+  "type": "decision-needed",
+  "areas": [
+   "mutation",
+   "checkpoints"
+  ],
+  "recommendedState": "needs-human-decision",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "Card asks to decide whether executed PC-label reachability proof is worth its cost while Mutation is paused, and to reconcile CARD-0891's note."
+ },
+ {
+  "identifier": "CARD-1028",
+  "type": "test-improvement",
+  "areas": [
+   "checkpoints",
+   "tests-infra"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "Qualify Windows coverage symlink and reparse checks; needs a privileged Windows host."
+ },
+ {
+  "identifier": "CARD-1032",
+  "type": "reliability-ops",
+  "areas": [
+   "worktree",
+   "runner"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": "CARD-1017",
+  "confidence": "high",
+  "reason": "CARD-1017 S3 runner/mirror removal execution; depends on CARD-1017 (In Progress) foundation landing."
+ },
+ {
+  "identifier": "CARD-1033",
+  "type": "reliability-ops",
+  "areas": [
+   "worktree",
+   "runner"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": "CARD-1017",
+  "confidence": "high",
+  "reason": "CARD-1017 S4/S5 scheduler, Windows qualification and remaining checkpoints; after CARD-1032."
+ },
+ {
+  "identifier": "CARD-1038",
+  "type": "test-improvement",
+  "areas": [
+   "providers",
+   "mutation"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": "CARD-1078",
+  "confidence": "low",
+  "reason": "Grok init-cleanup kills the recipient so PC-274 fixture is unbound; blocks only that PC (Mutation paused)."
+ },
+ {
+  "identifier": "CARD-1042",
+  "type": "decision-needed",
+  "areas": [
+   "tests-infra"
+  ],
+  "recommendedState": "needs-human-decision",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "Decide whether the evidence-policy Git/PowerShell family is marked Slow+allowlisted or the tripwire stays Unit-only."
+ },
+ {
+  "identifier": "CARD-1053",
+  "type": "bug",
+  "areas": [
+   "checkpoints"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "Coverage binder misses several PC labels packed in one Shouldly message; small binder extension."
+ },
+ {
+  "identifier": "CARD-1055",
+  "type": "docs",
+  "areas": [
+   "docs",
+   "checkpoints"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "Four historical plans still name the pre-CARD-1041 method (6 hits under docs/ on master)."
+ },
+ {
+  "identifier": "CARD-1069",
+  "type": "bug",
+  "areas": [
+   "delegation"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "Released-seat in-turn reply can match the accepted answer in the window before the dispatcher tick."
+ },
+ {
+  "identifier": "CARD-1071",
+  "type": "bug",
+  "areas": [
+   "checkpoints"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "checkpoint wait can report executor died after successful completion (read race)."
+ },
+ {
+  "identifier": "CARD-1075",
+  "type": "test-improvement",
+  "areas": [
+   "tests-infra"
+  ],
+  "recommendedState": "probably-done",
+  "relatedCard": null,
+  "confidence": "high",
+  "reason": "tests/Antiphon.Tests/slow-tests-allowlist.txt:259 on master now has a reason comment directly above DirectoryLinkFixtureWindowsTests."
+ },
+ {
+  "identifier": "CARD-1078",
+  "type": "test-improvement",
+  "areas": [
+   "mutation",
+   "tests-infra"
+  ],
+  "recommendedState": "needs-human-decision",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "Deferred CARD-1029 inert-observation matrix (114 vectors, 211 PCs) explicitly operator-deprioritized; fund or close."
+ },
+ {
+  "identifier": "CARD-1080",
+  "type": "test-improvement",
+  "areas": [
+   "runner",
+   "delegation"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": "CARD-1081",
+  "confidence": "high",
+  "reason": "No invariant test that a seat belongs only to Dispatched/Working work; existing tests pin the opposite (CARD-1077 retrospective)."
+ },
+ {
+  "identifier": "CARD-1081",
+  "type": "bug",
+  "areas": [
+   "attention",
+   "delegation",
+   "runner"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": "CARD-0433",
+  "confidence": "high",
+  "reason": "Blocked tasks have no clock or checks, and ClassifyBlocked reads every sync block as a human Question (63 runner_sync_lease_busy blocks as Critical)."
+ },
+ {
+  "identifier": "CARD-1084",
+  "type": "process-policy",
+  "areas": [
+   "docs",
+   "delegation"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "Extend the CARD-0811 retrospective trigger to audit-found design gaps."
+ },
+ {
+  "identifier": "CARD-1085",
+  "type": "bug",
+  "areas": [
+   "attention",
+   "client"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": "CARD-1081",
+  "confidence": "high",
+  "reason": "Attention feed noise (344 rows; 126 stale LandOutcomeUnconfirmed, 121 incidents) buries Critical rows; one attention plan with CARD-1081/0433."
+ },
+ {
+  "identifier": "CARD-1088",
+  "type": "bug",
+  "areas": [
+   "parking",
+   "runner"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": "CARD-1089",
+  "confidence": "medium",
+  "reason": "Remote no-source-change park debt held forever; dormant while parking is default-off."
+ },
+ {
+  "identifier": "CARD-1089",
+  "type": "bug",
+  "areas": [
+   "parking",
+   "runner"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": "CARD-1088",
+  "confidence": "medium",
+  "reason": "Transient claim-time refusals become permanent Held park debt; sibling of CARD-1088, dormant while parking is off."
+ },
+ {
+  "identifier": "CARD-1090",
+  "type": "reliability-ops",
+  "areas": [
+   "runner"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "SeatDesktopJoin loads a session's whole task history; grows once the occupancy sampler runs every minute."
+ },
+ {
+  "identifier": "CARD-1091",
+  "type": "bug",
+  "areas": [
+   "worktree",
+   "runner"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "Remote-prep push -u writes shared .git/config without lock retry; drop -u or --no-track."
+ },
+ {
+  "identifier": "CARD-1092",
+  "type": "test-improvement",
+  "areas": [
+   "ops",
+   "worktree"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "recover-repository-children purpose/task suffix untested; guid format mismatch."
+ },
+ {
+  "identifier": "CARD-1093",
+  "type": "reliability-ops",
+  "areas": [
+   "runner",
+   "delegation"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "Remote-prep BehindTaskId is an enqueue-time snapshot and goes stale."
+ },
+ {
+  "identifier": "CARD-1094",
+  "type": "test-improvement",
+  "areas": [
+   "runner",
+   "mutation"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "V-11 cannot detect PC-9; assert the disabled sampler completes at once."
+ },
+ {
+  "identifier": "CARD-1095",
+  "type": "test-improvement",
+  "areas": [
+   "delegation",
+   "mutation"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "Pin empty-string arms in the RearmsPreparedWorktree matrix."
+ },
+ {
+  "identifier": "CARD-1098",
+  "type": "dev-speed",
+  "areas": [
+   "checkpoints"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "Split the ~19-min CARD-1087 CP-3 row like CP-5."
+ },
+ {
+  "identifier": "CARD-1099",
+  "type": "test-improvement",
+  "areas": [
+   "deploy-rollout"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "Real-Docker census case races foreign container churn; harden fixture or census."
+ },
+ {
+  "identifier": "CARD-1100",
+  "type": "reliability-ops",
+  "areas": [
+   "delegation"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "Floor-free Held dedupe under-reports HeldAged and pipeline queueReason after re-queue."
+ },
+ {
+  "identifier": "CARD-1106",
+  "type": "test-improvement",
+  "areas": [
+   "docs",
+   "tests-infra"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "Doc pin V-15 binds literals, not code constants."
+ },
+ {
+  "identifier": "CARD-1107",
+  "type": "test-improvement",
+  "areas": [
+   "deploy-rollout"
+  ],
+  "recommendedState": "probably-done",
+  "relatedCard": "CARD-1105",
+  "confidence": "high",
+  "reason": "RetiredTempContainerHostTests.cs:143-146 on master now treats Failed/Canceled as not bound work (changed by 0fa96ae32, CARD-1105)."
+ },
+ {
+  "identifier": "CARD-1114",
+  "type": "test-improvement",
+  "areas": [
+   "nightly",
+   "tests-infra"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": "CARD-1039",
+  "confidence": "medium",
+  "reason": "Nothing recurring runs the CARD-1050 Windows audits or the Windows-only argv test; depends on nightly activation CARD-1039 (Review)."
+ },
+ {
+  "identifier": "CARD-1116",
+  "type": "reliability-ops",
+  "areas": [
+   "deploy-rollout"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": "CARD-1131",
+  "confidence": "high",
+  "reason": "Rolling deploy-parent compose cmp guard runs after the destructive recycle; move it before docker stop."
+ },
+ {
+  "identifier": "CARD-1117",
+  "type": "test-improvement",
+  "areas": [
+   "deploy-rollout",
+   "mutation"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": "CARD-1131",
+  "confidence": "medium",
+  "reason": "CARD-1105 S2 resume refusals have no negative controls; fold into S3 V-3."
+ },
+ {
+  "identifier": "CARD-1118",
+  "type": "tech-debt",
+  "areas": [
+   "delegation"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "Stall-probe dedupe edge cases; message text only, no stall withheld."
+ },
+ {
+  "identifier": "CARD-1119",
+  "type": "tech-debt",
+  "areas": [
+   "settlement-landing"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "Share claim rules between Pending and confirmed arms after S5; unreachable on master today."
+ },
+ {
+  "identifier": "CARD-1121",
+  "type": "reliability-ops",
+  "areas": [
+   "transcripts",
+   "schema"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "Receipt scan still returns every post-floor prompt Text for never-matching notes; re-measure after land."
+ },
+ {
+  "identifier": "CARD-1123",
+  "type": "tech-debt",
+  "areas": [
+   "agents-admin",
+   "docs"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "Occupancy audit 400 body depends on environment; equivalent mutant."
+ },
+ {
+  "identifier": "CARD-1130",
+  "type": "test-improvement",
+  "areas": [
+   "deploy-rollout",
+   "tests-infra"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "C1008HostFixture.Run 30 s deadline too tight under load; misclassified INTRODUCED by baseline."
+ },
+ {
+  "identifier": "CARD-1131",
+  "type": "test-improvement",
+  "areas": [
+   "deploy-rollout",
+   "checkpoints"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "CARD-1105 S2 repair follow-ups (checkpoint row for 1116/1117 controls, vacuous image leg, plan counts)."
+ },
+ {
+  "identifier": "CARD-1139",
+  "type": "test-improvement",
+  "areas": [
+   "deploy-rollout",
+   "checkpoints"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": "CARD-1142",
+  "confidence": "medium",
+  "reason": "CARD-1105 S3 follow-ups: CP-7 within seconds of its 20-min row timeout, unpinned main-lane guard."
+ },
+ {
+  "identifier": "CARD-1140",
+  "type": "docs",
+  "areas": [
+   "docs",
+   "mutation"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "Name PC-1+PC-2 as CARD-1065 PC-184's executed guard in both plans."
+ },
+ {
+  "identifier": "CARD-1141",
+  "type": "docs",
+  "areas": [
+   "docs",
+   "parking",
+   "mutation"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "CARD-1108 S4 plan/doc sentences under-count verify gates and omit cards."
+ },
+ {
+  "identifier": "CARD-1142",
+  "type": "test-improvement",
+  "areas": [
+   "deploy-rollout",
+   "tests-infra"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "CARD-1105 S4 follow-ups: real-Docker test near its 12-min child deadline, roster identity."
+ },
+ {
+  "identifier": "CARD-1154",
+  "type": "bug",
+  "areas": [
+   "parking",
+   "delegation"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "low",
+  "reason": "Local confirmed-park guidance recommends Reply for a mismatched release identity; parking default-off."
+ },
+ {
+  "identifier": "CARD-1155",
+  "type": "test-improvement",
+  "areas": [
+   "delivery",
+   "checkpoints"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "medium",
+  "reason": "Add DispatchBaseWarningDeliveryE2ETests as named, costed checkpoint rows (transcript-confirmed receipts)."
+ },
+ {
+  "identifier": "CARD-1156",
+  "type": "reliability-ops",
+  "areas": [
+   "session-lifecycle",
+   "delegation"
+  ],
+  "recommendedState": "keep",
+  "relatedCard": null,
+  "confidence": "high",
+  "reason": "Taskless AlwaysOn boot watchdog stops sessions, conflicting with the AGENTS.md rule that CARD-0079 is the only automatic stop of a Working session."
+ }
+]
