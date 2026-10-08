@@ -921,3 +921,54 @@ The first author mutant with "retried" passed against the first draft of the tes
 only `retry`; the stem `retri` was added and all three mutants then went red. PC-23 joins the
 pending list. The client change needs a `client/dist` rebuild (Aspire's watcher on 17203, or the
 AppHost restart already required by S4) before the browser shows it.
+
+## As built: S5 (Code task d99733e0)
+
+Branch `feat/card-task-d99733e0`, fast-forwarded from the S4 repair 3 tip `d5cb8e08` to
+`origin/master` `51f175dbf738519e8e50842697499c6c6c12b2c1` (CARD-1105 commits only on top; no
+CARD-1156 file differs). Tests only: the two V-11 bodies in `StandingBootStatementBudgetTests.cs`.
+No production change, no fixture change, no migration, no `Program.cs` change, no existing
+assertion changed. V-12 has no S5 body left: it was implemented with S1-S3 (see above). S5 itself
+needs no AppHost restart (test-only); the restart owed by S1-S4 is unchanged.
+
+Measured pins (FullCommandCounter on every context of the sweep's provider, which the writer and
+the runtime inherit; seed and arm contexts are uncounted):
+
+- **V-11a** equals the design table exactly: 0 / 1 / 2 / 2 / 15 (1 pull) / 3 / 15 (1 pull) / 14.
+  The runtime's pull persisted nothing (0 SQL). The cold roster is the designed one: candidates,
+  rows, recorded-key pre-check, rows (post-pull), owner list, task exclusion, model-reply EXISTS,
+  prompt rows; writer session `FOR UPDATE SKIP LOCKED`, owner, tasks, dedup, EXISTS, prompt rows,
+  INSERT. The test also asserts zero runner lists, no sweep or writer fault Warning, the exact
+  receipt stages on record after the measured tick, and the custody counters.
+- **V-11b projection** equals the design: 1 / 6 / 8. Measured by calling
+  `StandingBootAttentionProjection.ProjectAsync` directly with its own counter; the test then
+  requires that exact command sequence (same SQL text) to appear as one contiguous slice of the real
+  `GetAsync` roster, starting at the AlwaysOn pointer read, which appears once. `GetAsync`'s own
+  totals (52 / 50 / 52 here; the zero-candidate argument carries a legacy `bootSeq=` row, so its
+  legacy helper reads more) are printed but not pinned: the rest of `GetAsync` belongs to other
+  cards. Zero writes, nothing staged, exactly the one inherited runner list.
+- **V-11b prune** is **1 / 3 / 5** over the inherited age DELETE and cap GROUP BY (the design said
+  1 / 5 / 7). Reason: the S4 deviation recorded above. Prune candidates are live sessions holding a
+  `standingBoot:v1;` receipt (one read with an `EXISTS` subquery, no receipts loaded), then the boot
+  predicate's two reads per candidate; the design's roster re-read agents, sessions and tasks.
+  The test pins the inherited pair by shape (one DELETE, one GROUP BY) and requires the delta
+  commands to be reads.
+
+Author red (method-scoped class runs from `bin-c1156s5mut/`, each batch restored with
+`git checkout -- server/`; within a batch every case is moved by exactly one mutant):
+
+| Case | Production mutation | Red at |
+|---|---|---|
+| V-11a boot-deadline-disabled | A1: `SweepAsync` checks the deadline after the live-session read | `total` 1 vs 0 |
+| V-11a healthy-unarmed-answered | A2 (PC-15 shape): `EvaluateAsync` reads `AgentIncidents.AnyAsync` ahead of the cheap model-reply gate | `total` 3 vs 2 |
+| V-11a armed-before-deadline, same-recorded-episode, first-detected-stage, first-operator-stage, runtime-absent-detection | A3: `EvaluateAsync` reads the owner list before the Overdue return | `total` 3 / 4 / 16 / 16 / 15 |
+| V-11b zero-, one-, two-candidates | A4: `ProjectAsync` adds a standing-receipt `AnyAsync` ahead of the pointer read | `helperRoster.Count` 2 / 7 / 9 |
+| V-11a no-live-sessions | B1: `SweepAsync` adds an `Agents.AnyAsync` ahead of the live-session read | `total` 2 vs 1 |
+| V-11b zero-, one-, two-candidates | B2: `PruneIncidentsAsync` recomputes `CurrentEpisodeKeysAsync` before the cap loop | prune delta 2 / 6 / 10 |
+
+Every PC stays pending for post-land SourceLanding Mutation; these author-red cycles discharge none
+of them (PC-15, PC-18 and PC-19 name V-11 cases). A landed doc pin check: `BootStallDocumentationTests`
+(CP-29's class, S6's row) was run once from the S5 development build and is green at this baseline,
+so S1-S4 left no landed doc pin red. Next: **S6** (owner documents,
+`BootStallDocumentationTests.AlwaysOnExceptionSentence` and its two assertions replaced, the V-13
+body; CP-28/29).
