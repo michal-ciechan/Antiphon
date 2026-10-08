@@ -212,7 +212,12 @@ internal sealed class BootStallWorld : IAsyncDisposable
         options.Configure?.Invoke(settings);
         var services = new ServiceCollection();
         services.AddLogging(builder => builder.AddProvider(log).SetMinimumLevel(options.MinimumLogLevel));
-        services.AddDbContext<AppDbContext>(o => o.UseNpgsql(connectionString));
+        services.AddDbContext<AppDbContext>(o =>
+        {
+            o.UseNpgsql(connectionString);
+            if (options.Interceptors.Length > 0)
+                o.AddInterceptors(options.Interceptors);
+        });
         services.AddSingleton<IEventBus>(options.EventBus ?? events);
         services.AddSingleton<TimeProvider>(clock);
         services.AddSingleton(Options.Create(new SupervisionSettings()));
@@ -491,6 +496,12 @@ internal sealed record BootStallWorldOptions
 
     /// <summary>The capture floor for every logger in the world, EF Core included.</summary>
     public LogLevel MinimumLogLevel { get; init; } = LogLevel.Warning;
+
+    /// <summary>
+    /// Interceptors on the scoped context's options (CARD-1151 S5). The warning writer's default
+    /// context is built from those same options, so a counter here sees the telemetry statements too.
+    /// </summary>
+    public IInterceptor[] Interceptors { get; init; } = [];
 }
 
 /// <summary>
