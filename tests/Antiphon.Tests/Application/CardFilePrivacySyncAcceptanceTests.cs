@@ -1,4 +1,3 @@
-using System.Text.Json;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
@@ -127,13 +126,13 @@ public class CardFilePrivacySyncAcceptanceTests
         if (policy == "archive") await db.Boards.Where(b => b.Id == world.BoardId).ExecuteUpdateAsync(s => s.SetProperty(b => b.ArchivedAt, DateTime.UtcNow));
         if (policy == "ignored") await File.WriteAllTextAsync(Path.Combine(world.Repo.Path, ".gitignore"), "/docs/cards/\n");
         if (policy == "staged") { await File.WriteAllTextAsync(Path.Combine(world.DirectoryPath, "legacy.md"), "C408_STAGED"); await world.Repo.GitAsync("add", "--", "docs/cards/board/legacy.md"); }
-        var beforeBoard = JsonSerializer.Serialize(await db.Boards.AsNoTracking().SingleAsync(b => b.Id == world.BoardId));
-        var beforeCard = JsonSerializer.Serialize(await db.Cards.AsNoTracking().Where(c => c.BoardId == world.BoardId).ToListAsync());
+        var beforeBoard = EntityScalarSnapshot.Of(db, await db.Boards.AsNoTracking().SingleAsync(b => b.Id == world.BoardId));
+        var beforeCard = EntityScalarSnapshot.Of(db, await db.Cards.AsNoTracking().Where(c => c.BoardId == world.BoardId).ToListAsync());
         var files = Directory.GetFiles(world.DirectoryPath).ToDictionary(p => p, File.ReadAllText);
         var ignore = File.ReadAllText(Path.Combine(world.Repo.Path, ".gitignore")); var head = await world.Repo.GitReadAsync("rev-parse", "HEAD"); var index = await world.Repo.GitReadAsync("ls-files", "--stage", "-z");
         var result = await world.SyncAsync(true, true); result.Written.ShouldBe(0); if (policy != "ignored") result.Deleted.ShouldBeGreaterThan(0);
-        JsonSerializer.Serialize(await db.Boards.AsNoTracking().SingleAsync(b => b.Id == world.BoardId)).ShouldBe(beforeBoard);
-        JsonSerializer.Serialize(await db.Cards.AsNoTracking().Where(c => c.BoardId == world.BoardId).ToListAsync()).ShouldBe(beforeCard);
+        EntityScalarSnapshot.Of(db, await db.Boards.AsNoTracking().SingleAsync(b => b.Id == world.BoardId)).ShouldBe(beforeBoard);
+        EntityScalarSnapshot.Of(db, await db.Cards.AsNoTracking().Where(c => c.BoardId == world.BoardId).ToListAsync()).ShouldBe(beforeCard);
         Directory.GetFiles(world.DirectoryPath).ShouldBe(files.Keys, ignoreOrder: true);
         foreach (var (path, body) in files) File.ReadAllText(path).ShouldBe(body);
         File.ReadAllText(Path.Combine(world.Repo.Path, ".gitignore")).ShouldBe(ignore);

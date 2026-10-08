@@ -20,6 +20,9 @@ using TUnit.Core;
 
 namespace Antiphon.Tests.Application;
 
+// CARD-1137: compare EF entities with EntityScalarSnapshot, never default-options JsonSerializer.
+// Serializing a navigation-bearing entity holds the process-wide STJ metadata lock for seconds,
+// and the in-process runner's release path waits on it (EntityGraphSerializationGuardTests).
 [Category("Integration")]
 public class TerminalRunnerSeatReleaseTests
 {
@@ -1005,12 +1008,12 @@ public class TerminalRunnerSeatReleaseTests
                 LastDeliveryStartedAt = shape == "attempted" ? f.Now : null,
                 HoldUntil = shape == "held" ? f.Now.AddHours(1) : null };
             db.SessionQueuedMessages.Add(message); await db.SaveChangesAsync();
-            var before = JsonSerializer.Serialize(message);
+            var before = EntityScalarSnapshot.Of(db, message);
             (await f.RunAsync()).Decision.ShouldBe(TerminalRunnerSeatDecision.PendingDelivery, $"{input.Kind}/{shape}");
             f.Wire.ConditionalCommands.ShouldBe(0);
             (await db.RunnerSeatReleases.CountAsync(r => r.ActionId != null)).ShouldBe(0);
             db.ChangeTracker.Clear();
-            JsonSerializer.Serialize(await db.SessionQueuedMessages.SingleAsync()).ShouldBe(before, "pending bytes/status/attempt evidence retained");
+            EntityScalarSnapshot.Of(db, await db.SessionQueuedMessages.SingleAsync()).ShouldBe(before, "pending bytes/status/attempt evidence retained");
             await db.SessionQueuedMessages.ExecuteDeleteAsync();
             (await f.RunAsync()).Decision.ShouldBe(TerminalRunnerSeatDecision.Reserved, "pending guard is the only veto");
         }
