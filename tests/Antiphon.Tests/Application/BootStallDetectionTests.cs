@@ -137,13 +137,16 @@ public class BootStallDetectionTests
     /// 2 at the same kind/tier, one ProviderUnresponsive incident, no alias hold.
     /// exhausted-attempt-fails-once: attempt 2 stays Failed, reason names the alias, no third
     /// attempt. retry-infrastructure-error-stays-failed: the internal requeue throws; Failed is
-    /// retained and a warning is logged. All three: stopper empty, runner Kills/Releases/
+    /// retained and a warning is logged. second-absent-failure-holds-alias: a second proven-absent
+    /// failure on the same kind/alias inside BootStallRepeatHoldMinutes places the AutoDetected
+    /// hold (the ledger counts committed failures only). All four: stopper empty, runner Kills/Releases/
     /// CompactionStops 0, no KillAsync compensation.
     /// </summary>
     [Test]
     [Arguments("first-attempt-retries-once")]
     [Arguments("exhausted-attempt-fails-once")]
     [Arguments("retry-infrastructure-error-stays-failed")]
+    [Arguments("second-absent-failure-holds-alias")]
     public Task C1151_Safe_absent_boot_keeps_failure_and_retry(string attempt) =>
         Card1151Pending.Skip("S3", nameof(C1151_Safe_absent_boot_keeps_failure_and_retry));
 
