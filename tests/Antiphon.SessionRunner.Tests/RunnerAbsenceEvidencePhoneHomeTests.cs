@@ -84,16 +84,30 @@ public class RunnerAbsenceEvidencePhoneHomeTests
                 unsupported.Kind.ShouldBe(PhoneHomeFrameKind.Error);
                 unsupported.ErrorCode.ShouldBe(PhoneHomeProblemTypes.UnsupportedOperation);
 
+                var entered = 0;
+                world.Runtime.AbsenceDecisionUnderGateForTest = _ =>
+                {
+                    Interlocked.Increment(ref entered);
+                    return Task.CompletedTask;
+                };
                 var foreign = world.Request(id) with { RunnerStoreId = Guid.NewGuid() };
                 var refused = await dispatcher.DispatchAsync(Frame(PhoneHomeOperation.PrepareAbsenceEvidence, foreign), CancellationToken.None);
                 refused.Kind.ShouldBe(PhoneHomeFrameKind.Error);
                 refused.ErrorCode.ShouldBe(RunnerAbsenceRefusalCodes.BindingMismatch);
                 File.Exists(world.RecordPath(id)).ShouldBeFalse("a foreign-store request never reaches the store");
+                var foreignCertify = await dispatcher.DispatchAsync(Frame(PhoneHomeOperation.CertifyAbsence, foreign), CancellationToken.None);
+                foreignCertify.ErrorCode.ShouldBe(RunnerAbsenceRefusalCodes.BindingMismatch);
 
                 var malformed = await dispatcher.DispatchAsync(new PhoneHomeFrame(PhoneHomeFrameKind.Request, 1, Guid.NewGuid(),
                     PhoneHomeOperation.CertifyAbsence, JsonSerializer.SerializeToElement(new { sessionId = id, extra = true })), CancellationToken.None);
                 malformed.Kind.ShouldBe(PhoneHomeFrameKind.Error);
                 malformed.ErrorCode.ShouldBe(RunnerAbsenceRefusalCodes.InvalidRequest);
+                entered.ShouldBe(0, "foreign-store and malformed frames are refused before the runtime is entered");
+
+                // Positive control on the same dispatcher: the bound store does enter the runtime.
+                (await dispatcher.DispatchAsync(Frame(PhoneHomeOperation.PrepareAbsenceEvidence, world.Request(id)), CancellationToken.None))
+                    .Kind.ShouldBe(PhoneHomeFrameKind.Result);
+                entered.ShouldBe(1);
                 break;
             }
             case "transcript-of-prepared-id":
