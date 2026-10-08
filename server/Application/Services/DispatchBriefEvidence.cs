@@ -189,12 +189,12 @@ internal static class DispatchBriefEvidence
         Func<string, string?>? readAbsoluteFile)
     {
         var claimsSpill = !string.IsNullOrEmpty(row.RemoteSpillRelativePath)
-            || row.Body.Contains(".antiphon/", StringComparison.Ordinal);
+            || SpillTokenIndex(row.Body, 0) >= 0;
         if (!claimsSpill)
             return false;
 
         var path = AbsoluteSpillPath(row.Body);
-        string? file = path is null ? null : readAbsoluteFile?.Invoke(path);
+        var file = ReadSpill(path, readAbsoluteFile);
         if (!string.IsNullOrEmpty(row.RemoteSpillBody)
             && file is not null
             && !string.Equals(file, row.RemoteSpillBody, StringComparison.Ordinal))
@@ -241,8 +241,7 @@ internal static class DispatchBriefEvidence
     {
         if (!string.IsNullOrEmpty(row.RemoteSpillBody))
             return row.RemoteSpillBody;
-        var path = AbsoluteSpillPath(row.Body);
-        if (path is not null && readAbsoluteFile?.Invoke(path) is { Length: > 0 } file)
+        if (ReadSpill(AbsoluteSpillPath(row.Body), readAbsoluteFile) is { Length: > 0 } file)
             return file;
         return row.Body;
     }
@@ -267,25 +266,82 @@ internal static class DispatchBriefEvidence
         prompt.AgentSessionId == request.SessionId
         && (prompt.Timestamp is null || InWindow(prompt.Timestamp.Value, request.DispatchedAt));
 
+    /// <summary>
+    /// The local producer writes its spill with <see cref="Path.Combine(string, string, string)"/>,
+    /// so a Windows pointer names <c>.antiphon\</c>. Both separators are a spill claim. A rooted
+    /// path of either platform is returned verbatim; one this host cannot read stays unproven.
+    /// </summary>
     internal static string? AbsoluteSpillPath(string body)
     {
-        const string token = ".antiphon/";
         var index = 0;
-        while ((index = body.IndexOf(token, index, StringComparison.Ordinal)) >= 0)
+        while ((index = SpillTokenIndex(body, index)) >= 0)
         {
+            var tokenEnd = index + SpillToken.Length + 1;
+            if (QuotedPathAround(body, index, tokenEnd) is { } quoted && IsRootedOnAnyPlatform(quoted))
+                return quoted;
             var start = index;
             while (start > 0 && !char.IsWhiteSpace(body[start - 1]))
                 start--;
-            var end = index + token.Length;
+            var end = tokenEnd;
             while (end < body.Length && !char.IsWhiteSpace(body[end]))
                 end++;
             var path = body[start..end].Trim('`', '"', '\'', ',', '.', ')', '(');
-            if (Path.IsPathRooted(path))
+            if (IsRootedOnAnyPlatform(path))
                 return path;
             index = end;
         }
 
         return null;
+    }
+
+    private const string SpillToken = ".antiphon";
+
+    private static int SpillTokenIndex(string body, int from)
+    {
+        var index = from;
+        while ((index = body.IndexOf(SpillToken, index, StringComparison.Ordinal)) >= 0)
+        {
+            var next = index + SpillToken.Length;
+            if (next < body.Length && body[next] is '/' or '\\')
+                return index;
+            index = next;
+        }
+
+        return -1;
+    }
+
+    private static string? QuotedPathAround(string body, int tokenStart, int tokenEnd)
+    {
+        var open = tokenStart - 1;
+        while (open >= 0 && body[open] is not ('\'' or '"' or '`' or '\n' or '\r'))
+            open--;
+        if (open < 0 || body[open] is '\n' or '\r')
+            return null;
+        var close = body.IndexOf(body[open], tokenEnd);
+        var line = body.IndexOf('\n', tokenEnd);
+        if (close < 0 || (line >= 0 && line < close))
+            return null;
+        return body[(open + 1)..close];
+    }
+
+    private static bool IsRootedOnAnyPlatform(string path) =>
+        Path.IsPathRooted(path)
+        || (path.Length >= 3 && char.IsAsciiLetter(path[0]) && path[1] == ':' && path[2] is '\\' or '/')
+        || path.StartsWith(@"\\", StringComparison.Ordinal);
+
+    /// <summary>A reader that throws proves nothing: the payload is unavailable, never present.</summary>
+    private static string? ReadSpill(string? path, Func<string, string?>? readAbsoluteFile)
+    {
+        if (path is null || readAbsoluteFile is null)
+            return null;
+        try
+        {
+            return readAbsoluteFile(path);
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            return null;
+        }
     }
 
     private static bool InWindow(DateTime created, DateTime dispatched) =>
