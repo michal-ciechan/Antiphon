@@ -528,7 +528,8 @@ public partial class DelegationDispatchRecoveryBoundaryTests
         DeadSessionFirstSeenState firstSeen,
         IInterceptor? interceptor = null,
         bool unavailable = false,
-        string? projectsRoot = null)
+        string? projectsRoot = null,
+        ISessionRunnerDirectory? directory = null)
     {
         var services = new ServiceCollection();
         services.AddLogging();
@@ -560,6 +561,8 @@ public partial class DelegationDispatchRecoveryBoundaryTests
         services.AddSingleton(new BootWedgeRelaunchState());
         if (unavailable)
             services.AddSingleton<ISessionRunnerDirectory>(new UnavailableDirectory());
+        else if (directory is not null)
+            services.AddSingleton(directory);
         if (!string.IsNullOrWhiteSpace(projectsRoot))
         {
             services.AddSingleton<AgentTaskReplyService>();
@@ -570,16 +573,32 @@ public partial class DelegationDispatchRecoveryBoundaryTests
             services.AddSingleton<DelegateBindRefusalRecovery>();
         }
 
-        // A positive whitelist test needs explicit complete native-history evidence.
-        // Production's absent-session 404 is unknown, never this fixture's empty certificate.
-        runner.ReadTranscript ??= async id =>
-        {
-            await using var nativeDb = new AppDbContext(TestDbFixture.CreateDbContextOptions(connection));
-            var generation = await nativeDb.AgentSessions.Where(s => s.Id == id).Select(s => s.StartedAt).SingleAsync();
-            return new SessionRunnerTranscriptDto(id, [], 0, TerminalComplete: true, AcceptedStartedAt: generation);
-        };
+        // A positive whitelist test needs an explicit validated never-created certificate
+        // (CARD-1153). Production's absent-session 404 or empty transcript is never one.
+        runner.Certify ??= (id, generation, store) =>
+            Task.FromResult(FixtureCertificate(id, generation, store));
         services.AddScoped<AgentTaskDispatcher>();
         return new SweepHost(services.BuildServiceProvider(), runner, stopper, clock);
+    }
+
+    private static readonly Guid FixtureRunnerStore = Guid.Parse("11531153-0000-4000-8000-000000001153");
+
+    /// <summary>
+    /// CARD-1153: a version 1 certificate for the requested identity, one member optionally
+    /// changed, run through the production validator as authenticated. Only the validator's
+    /// Proven result is evidence, so a changed member yields its real refusal.
+    /// </summary>
+    private static SessionRunnerAbsenceEvidenceResult FixtureCertificate(
+        Guid id, DateTime generation, Guid? store, Action<System.Text.Json.Nodes.JsonObject>? change = null)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var nonce = RunnerAbsenceEvidence.NewNonce();
+        var runnerStore = store ?? FixtureRunnerStore;
+        var shape = AbsenceCertificateShape.Pristine(id, generation, runnerStore, Guid.NewGuid(), nonce, now.UtcDateTime);
+        change?.Invoke(shape);
+        return RunnerAbsenceEvidenceValidator.Validate(shape,
+            new RunnerAbsenceExpectation(id, generation, runnerStore, nonce),
+            RunnerAbsenceAuthentication.Verified, now, now, now);
     }
 
     private static SessionRunnerSessionDto Listed(
@@ -694,7 +713,43 @@ public partial class DelegationDispatchRecoveryBoundaryTests
 
         public Func<Guid, Task<SessionRunnerTranscriptDto>>? ReadTranscript { get; set; }
         public Task<SessionRunnerTranscriptDto> GetTranscriptAsync(Guid sessionId, CancellationToken ct) =>
-            ReadTranscript?.Invoke(sessionId) ?? throw new NotSupportedException();
+            Evidence is { } evidence ? evidence.GetTranscriptAsync(sessionId, ct)
+            : ReadTranscript?.Invoke(sessionId) ?? throw new NotSupportedException();
+
+        /// <summary>
+        /// CARD-1153: when set, prepare, certify and transcript reads go to this production
+        /// transport (the real HTTP or phone-home client); everything else stays counted here.
+        /// </summary>
+        public ISessionRunnerClient? Evidence { get; set; }
+
+        /// <summary>CARD-1153: the fake certify answer when no <see cref="Evidence"/> transport is set.</summary>
+        public Func<Guid, DateTime, Guid?, Task<SessionRunnerAbsenceEvidenceResult>>? Certify { get; set; }
+        public int Prepares { get; private set; }
+        public int Certifies { get; private set; }
+
+        /// <summary>CARD-1153 V-18: what had happened when prepare was called (set by the test).</summary>
+        public Func<Guid, Task>? OnPrepare { get; set; }
+
+        public async Task<SessionRunnerAbsencePrepareResult> PrepareAbsenceEvidenceAsync(
+            Guid sessionId, DateTime acceptedStartedAt, Guid? expectedRunnerStoreId, CancellationToken ct)
+        {
+            Prepares++;
+            if (OnPrepare is { } observe)
+                await observe(sessionId);
+            return Evidence is { } evidence
+                ? await evidence.PrepareAbsenceEvidenceAsync(sessionId, acceptedStartedAt, expectedRunnerStoreId, ct)
+                : SessionRunnerAbsencePrepareResult.Unsupported("absence_evidence_unsupported");
+        }
+
+        public Task<SessionRunnerAbsenceEvidenceResult> CertifyAbsenceAsync(
+            Guid sessionId, DateTime acceptedStartedAt, Guid? expectedRunnerStoreId, CancellationToken ct)
+        {
+            Certifies++;
+            if (Evidence is { } evidence)
+                return evidence.CertifyAbsenceAsync(sessionId, acceptedStartedAt, expectedRunnerStoreId, ct);
+            return Certify?.Invoke(sessionId, acceptedStartedAt, expectedRunnerStoreId)
+                ?? Task.FromResult(SessionRunnerAbsenceEvidenceResult.Unsupported("absence_evidence_unsupported"));
+        }
 
         public Task ClearLiveBufferAsync(Guid sessionId, CancellationToken ct) =>
             throw new NotSupportedException();
