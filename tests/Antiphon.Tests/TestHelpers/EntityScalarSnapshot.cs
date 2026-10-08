@@ -19,12 +19,17 @@ namespace Antiphon.Tests.TestHelpers;
 /// overruns its 10 s HTTP budget. See docs/investigations/2026-10-08-card-1137-release-stall.md.
 /// </para>
 /// <para>
-/// The snapshot renders every public readable property of the entity, in ordinal name
-/// order, except navigations to other (non-owned) entity types in <paramref name="db"/>'s model.
-/// Navigation values were constant in the JSON form these tests compared (not loaded: null or the
-/// entity's empty default collection), so dropping them keeps the comparison's meaning. Owned or
-/// plain complex values are rendered recursively; a type the renderer does not understand throws
-/// instead of being skipped silently.
+/// Contract. The value must be an instance of an entity type in <paramref name="db"/>'s model
+/// (<c>IModel.FindEntityType</c>), or a sequence of them. Each such object renders every public
+/// readable property, in ordinal name order, as one <c>path=value</c> line, except navigations to
+/// other (non-owned) entity types: navigation values were constant in the JSON form these tests
+/// compared (not loaded: null or the entity's empty default collection). Sequences render each item
+/// at <c>path[i]</c> plus <c>path.Count</c>. Leaves use one exact, type-tagged encoding per
+/// supported type (see <see cref="Scalar"/>): distinct values of a supported type never render
+/// alike, null never collides with a value, and floating-point values carry their bit pattern. A
+/// property whose declared type is not supported (see <see cref="IsSupportedPropertyType"/>), or any
+/// other runtime value, throws <see cref="NotSupportedException"/> naming the type and the property
+/// path, even while the value is null; nothing is skipped or rendered lossily.
 /// </para>
 /// </summary>
 internal static class EntityScalarSnapshot
@@ -49,6 +54,61 @@ internal static class EntityScalarSnapshot
     public static IReadOnlyList<string> NavigationNames(IModel model, Type type) =>
         Properties(type).Where(p => IsNavigation(model, p)).Select(p => p.Name).ToArray();
 
+    /// <summary>
+    /// The exact leaf encoding, or null for an unsupported type. Strings are quoted and escaped;
+    /// every other value carries a type tag, so no two supported values of different types, and no
+    /// value and null (<c>null</c>), share a rendering.
+    /// </summary>
+    public static string? Scalar(object value) => value switch
+    {
+        string s => Quote(s),
+        byte[] bytes => "b64:" + Convert.ToBase64String(bytes),
+        char c => "Char:U+" + ((int)c).ToString("X4", CultureInfo.InvariantCulture),
+        bool b => b ? "true" : "false",
+        Enum e => e.GetType().FullName + ":" + e + "(" + Convert.ToString(
+            Convert.ChangeType(e, Enum.GetUnderlyingType(e.GetType()), CultureInfo.InvariantCulture), CultureInfo.InvariantCulture) + ")",
+        DateTime d => "DateTime:" + d.ToString("O", CultureInfo.InvariantCulture) + "/" + d.Kind,
+        DateTimeOffset d => "DateTimeOffset:" + d.ToString("O", CultureInfo.InvariantCulture),
+        DateOnly d => "DateOnly:" + d.ToString("O", CultureInfo.InvariantCulture),
+        TimeOnly t => "TimeOnly:" + t.ToString("O", CultureInfo.InvariantCulture),
+        TimeSpan t => "TimeSpan:" + t.ToString("c", CultureInfo.InvariantCulture),
+        Guid g => "Guid:" + g.ToString("D"),
+        decimal m => "Decimal:" + m.ToString(CultureInfo.InvariantCulture),
+        double d => "Double:" + d.ToString("R", CultureInfo.InvariantCulture)
+            + "/0x" + BitConverter.DoubleToInt64Bits(d).ToString("X16", CultureInfo.InvariantCulture),
+        float f => "Single:" + f.ToString("R", CultureInfo.InvariantCulture)
+            + "/0x" + BitConverter.SingleToInt32Bits(f).ToString("X8", CultureInfo.InvariantCulture),
+        Half h => "Half:" + h.ToString(CultureInfo.InvariantCulture)
+            + "/0x" + BitConverter.HalfToUInt16Bits(h).ToString("X4", CultureInfo.InvariantCulture),
+        sbyte or byte or short or ushort or int or uint or long or ulong or nint or nuint or Int128 or UInt128 =>
+            value.GetType().Name + ":" + Convert.ToString(value, CultureInfo.InvariantCulture),
+        JsonDocument document => "Json:" + document.RootElement.GetRawText(),
+        JsonElement element => "Json:" + element.GetRawText(),
+        _ => null,
+    };
+
+    private static readonly HashSet<Type> LeafTypes =
+    [
+        typeof(string), typeof(byte[]), typeof(char), typeof(bool), typeof(DateTime), typeof(DateTimeOffset),
+        typeof(DateOnly), typeof(TimeOnly), typeof(TimeSpan), typeof(Guid), typeof(decimal), typeof(double),
+        typeof(float), typeof(Half), typeof(sbyte), typeof(byte), typeof(short), typeof(ushort), typeof(int),
+        typeof(uint), typeof(long), typeof(ulong), typeof(nint), typeof(nuint), typeof(Int128), typeof(UInt128),
+        typeof(JsonDocument), typeof(JsonElement),
+    ];
+
+    /// <summary>
+    /// Declared property types the renderer accepts: a <see cref="Scalar"/> leaf type or enum (or a
+    /// nullable of one), <see cref="object"/> (dispatched on the runtime value, which must itself be
+    /// supported), an entity type of <paramref name="model"/>, or a sequence of any of these.
+    /// </summary>
+    public static bool IsSupportedPropertyType(IModel model, Type type)
+    {
+        type = Nullable.GetUnderlyingType(type) ?? type;
+        if (LeafTypes.Contains(type) || type.IsEnum || type == typeof(object) || model.FindEntityType(type) is not null)
+            return true;
+        return ElementType(type) is { } element && element != type && IsSupportedPropertyType(model, element);
+    }
+
     private static IEnumerable<PropertyInfo> Properties(Type type) =>
         type.GetProperties(BindingFlags.Public | BindingFlags.Instance)
             .Where(p => p.CanRead && p.GetIndexParameters().Length == 0)
@@ -63,12 +123,27 @@ internal static class EntityScalarSnapshot
             builder.Append(path).Append("=null\n");
             return;
         }
-        if (TryScalar(value, out var text))
+        if (Scalar(value) is { } text)
         {
             builder.Append(path).Append('=').Append(text).Append('\n');
             return;
         }
-        if (value is IEnumerable items)
+        var type = value.GetType();
+        if (model.FindEntityType(type) is not null)
+        {
+            foreach (var property in Properties(type))
+            {
+                if (IsNavigation(model, property))
+                    continue;
+                var child = path.Length == 0 ? property.Name : $"{path}.{property.Name}";
+                if (!IsSupportedPropertyType(model, property.PropertyType))
+                    throw new NotSupportedException(
+                        $"EntityScalarSnapshot: '{child}' has unsupported type {property.PropertyType.FullName}; add an exact encoding or compare it another way.");
+                Render(model, property.GetValue(value), child, builder, depth + 1);
+            }
+            return;
+        }
+        if (value is IEnumerable items && ElementType(type) is not null)
         {
             var index = 0;
             foreach (var item in items)
@@ -76,37 +151,8 @@ internal static class EntityScalarSnapshot
             builder.Append(path).Append(".Count=").Append(index.ToString(CultureInfo.InvariantCulture)).Append('\n');
             return;
         }
-        var type = value.GetType();
-        if (type.IsPointer || typeof(Delegate).IsAssignableFrom(type) || typeof(MemberInfo).IsAssignableFrom(type))
-            throw new NotSupportedException($"EntityScalarSnapshot: '{path}' has unsupported type {type.FullName}.");
-        foreach (var property in Properties(type))
-        {
-            if (IsNavigation(model, property))
-                continue;
-            var child = path.Length == 0 ? property.Name : $"{path}.{property.Name}";
-            Render(model, property.GetValue(value), child, builder, depth + 1);
-        }
-    }
-
-    private static bool TryScalar(object value, out string text)
-    {
-        text = value switch
-        {
-            string s => Quote(s),
-            DateTime d => d.ToString("O", CultureInfo.InvariantCulture) + "/" + d.Kind,
-            DateTimeOffset d => d.ToString("O", CultureInfo.InvariantCulture),
-            byte[] bytes => Convert.ToBase64String(bytes),
-            JsonDocument document => document.RootElement.GetRawText(),
-            JsonElement element => element.GetRawText(),
-            Enum e => e.GetType().Name + "." + e.ToString(),
-            bool b => b ? "true" : "false",
-            Guid or TimeSpan or DateOnly or TimeOnly or decimal or char => Convert.ToString(value, CultureInfo.InvariantCulture)!,
-            double d => d.ToString("R", CultureInfo.InvariantCulture),
-            float f => f.ToString("R", CultureInfo.InvariantCulture),
-            _ when value.GetType().IsPrimitive => Convert.ToString(value, CultureInfo.InvariantCulture)!,
-            _ => null!,
-        };
-        return text is not null;
+        throw new NotSupportedException(
+            $"EntityScalarSnapshot: '{(path.Length == 0 ? "<root>" : path)}' has unsupported type {type.FullName}; add an exact encoding or compare it another way.");
     }
 
     private static string Quote(string value) =>
