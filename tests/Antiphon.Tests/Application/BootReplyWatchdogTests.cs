@@ -202,9 +202,9 @@ public class BootReplyWatchdogTests
     [Test]
     public async Task a_session_owned_by_an_open_delegate_task_is_left_to_the_deadline_sweep()
     {
-        // ONE RECOVERY PER POPULATION. CARD-0353 S2's boot arm fails the task, kills the session,
-        // retries once and tells the parent; raising here as well would be two mechanisms killing
-        // the same session for the same reason.
+        // ONE OWNER PER POPULATION. The dispatcher's overdue sweep detects and warns on an open
+        // delegate's boot stall (CARD-1151: no failure, stop or retry); raising here as well would
+        // be a second row for the same silence.
         await using var scenario = new Scenario();
         await scenario.SeedAgentAsync(alwaysOn: false);
         await scenario.SeedPromptAsync(minutesAgo: 30);

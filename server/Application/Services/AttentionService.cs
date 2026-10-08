@@ -1151,6 +1151,19 @@ public sealed partial class AttentionService
                 continue;
             }
 
+            // 8b. Overdue, boot episode (CARD-1151 D-3). The deadline verdict is read here, ahead of
+            // PastExpectedIdle, ProgressStalled and the generic Overdue row, so nothing generic can
+            // hide an unresolved boot episode or its operator escalation. The row is derived from
+            // the CURRENT boot facts, never from a persisted Warning event, so a model reply
+            // resolves it however many historical warnings remain. The generic Overdue arm below
+            // reuses this verdict, so the policy is still evaluated at most once per task.
+            var deadline = await TaskDeadlinePolicy.EvaluateAsync(_db, task, now, _delegation, ct);
+            if (deadline?.Boot is { } boot)
+            {
+                items.Add(BootStallItem(task, boot, now, digest, cost));
+                continue;
+            }
+
             // 9. PastExpectedIdle. THE exclusion lives here: a session that is mid-turn is not
             // listed, however far past the estimate it has run. The working verdict is the shared
             // one, and it is asked LAST — only for tasks that already crossed the clock — so the
@@ -1229,8 +1242,9 @@ public sealed partial class AttentionService
             // asked AFTER PastExpectedIdle because that condition owns the idle case and declines
             // the mid-turn one; the deadline that matters for a working session is the phase clock,
             // and the ceiling covers both. Same shared policy the dispatcher's sweep acts on, so a
-            // row here is always the failure that is coming, in the same words.
-            var deadline = await TaskDeadlinePolicy.EvaluateAsync(_db, task, now, _delegation, ct);
+            // row here is always the failure that is coming, in the same words. A verdict with
+            // boot facts never reaches here (8b): since CARD-1151 no clock fails a boot episode,
+            // so the BootModelWait kind, which needs those facts, has no arm below.
             if (deadline is not null)
             {
                 items.Add(new AttentionItemDto(
@@ -1253,16 +1267,6 @@ public sealed partial class AttentionService
                                 "The hard wall-clock ceiling for this role. Crossing it fails the task "
                                 + "with the phase named; nothing is killed and nothing is retried, so "
                                 + "a reply, a check or a cancel are all still open to you.",
-                            // CARD-0353 S1/S2: the boot arm is the one deadline that DOES kill and
-                            // retry, so the row must say so — a human reading it has three real
-                            // options (wait, cancel, retry now), not the usual two.
-                            TaskDeadlinePolicy.DeadlineKind.BootModelWait =>
-                                "The prompt was delivered and the session has produced nothing since "
-                                + "— no assistant, thinking or tool row. That is a provider that has "
-                                + "not answered, not work in progress. Crossing this deadline kills "
-                                + "the session (it has produced nothing, so nothing is lost) and "
-                                + "retries the task once at the same kind and tier; a second stall "
-                                + "fails it without retrying. Wait, cancel, or retry now.",
                             _ =>
                                 "The session is mid-turn and the phase it is in has run past its own "
                                 + "deadline. Crossing it fails the task; the session is not killed.",
@@ -3150,11 +3154,77 @@ public sealed partial class AttentionService
     /// </summary>
     private sealed record CheckExplanation(string Text, bool FromInterpreter);
 
+    /// <summary>
+    /// CARD-1151 D-3. The Overdue row for an unresolved boot episode: detection and an operator
+    /// decision, never a promised outcome. Warning until the operator threshold, Error from it
+    /// (inclusive). Actions are OpenDrawer, Reply and Cancel; ordinary task controls supply an
+    /// explicit Retry, and there is no Escalate, because nothing escalates or reclaims the seat
+    /// on its own. Every time shown is derived from the prompt's own timestamp, so the row reads
+    /// the same after a restart. The evidence is one fact per line and is not excerpted: the
+    /// operator sentence comes first and the due times and later breaches must all survive.
+    /// </summary>
+    private AttentionItemDto BootStallItem(
+        AgentTask task, BootStallFacts boot, DateTime now, CheckExplanation? digest, decimal? cost)
+    {
+        var stage = BootStallPolicy.DueStage(boot, now);
+        var age = Duration(now - boot.PromptAt);
+        var headline = stage switch
+        {
+            BootStallPolicy.Stage.NeedsOperator =>
+                $"Boot stall needs an operator decision: no model reply {age} after the prompt.",
+            BootStallPolicy.Stage.Detected =>
+                $"Boot stall detected: no model reply {age} after the prompt.",
+            _ => $"Boot prompt unanswered: no model reply {age} after the prompt yet.",
+        };
+
+        var lines = new List<string>
+        {
+            "Inspect the session, then choose: keep waiting, reply, or explicitly cancel or retry the task.",
+            "Detection only: the session keeps running and keeps its seat; nothing is stopped, typed "
+            + "or reassigned automatically, and no deadline ends this episode.",
+            $"Accepted prompt #{boot.PromptSequence} at {boot.PromptAt:u}, {age} ago; no assistant, "
+            + "thinking, tool or turn-end row since, so delivery is not the problem.",
+            boot.BootDueAt is DateTime bootDue
+                ? $"Boot notice due {bootDue:u}."
+                : "Boot notice disabled (BootModelWaitDeadlineMinutes <= 0).",
+            $"Operator decision due {boot.OperatorDueAt:u}.",
+        };
+        var modelWait = _delegation.ModelWaitDeadlineMinutes;
+        if (modelWait > 0 && now >= boot.PromptAt.AddMinutes(modelWait))
+        {
+            lines.Add($"The general {modelWait}-minute model-wait deadline passed "
+                + $"{boot.PromptAt.AddMinutes(modelWait):u}; it does not end a boot episode.");
+        }
+
+        var ceiling = TaskDeadlinePolicy.CeilingMinutes(_delegation, task.Role);
+        if (ceiling > 0 && task.DispatchedAt is DateTime dispatched && now >= dispatched.AddMinutes(ceiling))
+        {
+            lines.Add($"The {ceiling}-minute ceiling for role {task.Role} passed "
+                + $"{dispatched.AddMinutes(ceiling):u}; it does not end a boot episode.");
+        }
+
+        return new AttentionItemDto(
+            AttentionKind.Overdue,
+            stage == BootStallPolicy.Stage.NeedsOperator ? AlertSeverity.Error : AlertSeverity.Warning,
+            task.Id,
+            task.AgentSessionId,
+            task.AgentId,
+            null,
+            task.Title,
+            headline,
+            WithCheck(string.Join("\n", lines), digest),
+            boot.PromptAt,
+            cost,
+            [AttentionAction.OpenDrawer, AttentionAction.Reply, AttentionAction.Cancel]);
+    }
+
     // ---- text ------------------------------------------------------------------------------------
 
-    private static string Evidence(string primary, CheckExplanation? check)
+    private static string Evidence(string primary, CheckExplanation? check) =>
+        WithCheck(Excerpt(primary), check);
+
+    private static string WithCheck(string head, CheckExplanation? check)
     {
-        var head = Excerpt(primary);
         if (check is null || string.IsNullOrWhiteSpace(check.Text))
             return head;
 

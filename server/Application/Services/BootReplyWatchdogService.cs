@@ -169,12 +169,14 @@ public sealed class BootReplyWatchdogService
             }
         }
 
-        // ONE RECOVERY PER POPULATION. A session bound to an OPEN delegate task is owned by the
-        // dispatcher's boot arm (CARD-0353 S2): it fails the task with ProviderUnresponsive, kills
-        // the session, retries once at the same tier, tells the parent, and holds the alias on a
-        // repeat. Raising here as well would be two mechanisms killing the same session for the
-        // same reason — precisely the overlap CARD-0312's plan forbids. The watch stays armed so
-        // that arm's own re-read is the one that judges it.
+        // ONE OWNER PER POPULATION. A session bound to an OPEN delegate task belongs to the
+        // dispatcher's overdue-deadline sweep, which since CARD-1151 only DETECTS a boot stall: it
+        // writes BootStallDetected, then BootStallNeedsOperator, on the task and derives the
+        // Overdue attention row; it never fails, stops, retries or releases the session, and holds
+        // no alias. Raising here as well would be a second row for the same silence, and this
+        // service's own AlwaysOn stop below must never reach a delegate's session. The watch stays
+        // armed so the sweep's own re-read is the one that judges it. (The taskless AlwaysOn stop
+        // in RaiseAsync is separate policy that CARD-1151 deliberately leaves unchanged.)
         if (await db.AgentTasks.AsNoTracking().AnyAsync(
                 t => t.AgentSessionId == session.Id
                     && (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working),
@@ -291,8 +293,9 @@ public sealed class BootReplyWatchdogService
                 // retries the same conversation with capped backoff; no probe failure permits
                 // Fresh. SuperviseAsync only schedules a restart when the
                 // agent has no live session, so a hung-but-Running session must be stopped here
-                // (same stopper the task arm uses for a "produced nothing" kill) or this increment
-                // is a no-op. A session that is producing output was never armed.
+                // (StopHungStandingSessionAsync, taskless AlwaysOn only; the delegate task arm no
+                // longer stops anything, CARD-1151) or this increment is a no-op. A session that
+                // is producing output was never armed.
                 state.ConsecutiveFailures++;
                 state.NextRestartAt = null;
                 state.UpdatedAt = now;
