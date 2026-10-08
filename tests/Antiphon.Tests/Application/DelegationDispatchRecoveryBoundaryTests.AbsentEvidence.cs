@@ -225,14 +225,34 @@ public partial class DelegationDispatchRecoveryBoundaryTests
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
-        await using var evidence = await EvidenceHost.StartAsync(clock);
-        var seeded = await SeedAsync(schema.ConnectionString, new AbsentShape { Parent = true });
-        (await evidence.Client.PrepareAbsenceEvidenceAsync(seeded.SessionId, seeded.StartedAt, null, default))
+        // A store binding exists only on a runner-bound session (the binding is all-or-none), so
+        // the store change uses the remote owner over phone-home; the other two use local HTTP.
+        var storeChange = condition == "store-or-epoch-change";
+        await using var evidence = storeChange ? null : await EvidenceHost.StartAsync(clock);
+        await using var remote = storeChange ? await RemoteEvidence.StartAsync(schema.ConnectionString) : null;
+        var seeded = await SeedAsync(schema.ConnectionString, new AbsentShape
+        {
+            Parent = true, RunnerId = remote?.Host.AllowedRunnerId,
+        });
+        Guid? store = null;
+        ISessionRunnerClient client;
+        if (remote is not null)
+        {
+            store = remote.Runtime.RunnerStoreId;
+            await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString)))
+                await db.AgentSessions.Where(s => s.Id == seeded.SessionId)
+                    .ExecuteUpdateAsync(s => s.SetProperty(x => x.RunnerStoreId, store));
+            client = new RoutingSessionRunnerClient(remote.Host.Directory);
+        }
+        else
+            client = evidence!.Client;
+        (await client.PrepareAbsenceEvidenceAsync(seeded.SessionId, seeded.StartedAt, store, default))
             .Prepared.ShouldBeTrue(condition);
         var change = new LockedReadChange(schema.ConnectionString, seeded.SessionId, condition, clock);
-        var runner = new CountingRunner { Evidence = evidence.Client };
+        var runner = new CountingRunner { Evidence = client };
         var stopper = new RecordingSessionStopper();
-        await using (var host = OpenSweep(schema.ConnectionString, runner, stopper, clock, new DeadSessionFirstSeenState(), change))
+        await using (var host = OpenSweep(schema.ConnectionString, runner, stopper, clock, new DeadSessionFirstSeenState(), change,
+            directory: remote?.Host.Directory))
         {
             await host.SweepAsync();
             clock.Advance(TimeSpan.FromMinutes(3) + TimeSpan.FromSeconds(1));
@@ -241,8 +261,9 @@ public partial class DelegationDispatchRecoveryBoundaryTests
         }
 
         change.Fired.ShouldBe(1, condition);
+        change.Failure.ShouldBeNull(condition + ": the injected change itself committed");
         runner.Certifies.ShouldBe(1, condition);
-        evidence.Certifies.ShouldBe(1, condition);
+        (remote?.CertifyFrames ?? evidence!.Certifies).ShouldBe(1, condition);
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
         var task = await db.AgentTasks.SingleAsync(t => t.Id == seeded.TaskId);
         task.Status.ShouldBe(AgentTaskStatus.Dispatched, condition);
@@ -885,6 +906,7 @@ public partial class DelegationDispatchRecoveryBoundaryTests
     {
         public bool Armed { get; set; }
         public int Fired { get; private set; }
+        public Exception? Failure { get; private set; }
 
         public override async ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(
             DbCommand command, CommandEventData eventData, InterceptionResult<int> result,
@@ -894,27 +916,40 @@ public partial class DelegationDispatchRecoveryBoundaryTests
                 && command.CommandText.Contains("AgentTasks", StringComparison.Ordinal))
             {
                 Fired++;
-                await using var side = new AppDbContext(TestDbFixture.CreateDbContextOptions(connection));
-                switch (condition)
+                try
                 {
-                    case "changed-generation":
-                        await side.AgentSessions.Where(s => s.Id == sessionId)
-                            .ExecuteUpdateAsync(s => s.SetProperty(x => x.StartedAt, x => x.StartedAt.AddSeconds(1)), cancellationToken);
-                        break;
-                    case "store-or-epoch-change":
-                        var rebound = Guid.NewGuid();
-                        await side.AgentSessions.Where(s => s.Id == sessionId)
-                            .ExecuteUpdateAsync(s => s.SetProperty(x => x.RunnerStoreId, rebound), cancellationToken);
-                        break;
-                    case "expired-proof":
-                        clock.Advance(RunnerAbsenceEvidenceValidator.Lifetime + TimeSpan.FromSeconds(1));
-                        break;
-                    default:
-                        throw new ArgumentOutOfRangeException(nameof(condition), condition, null);
+                    await ChangeAsync(cancellationToken);
+                }
+                catch (Exception ex)
+                {
+                    Failure = ex;
+                    throw;
                 }
             }
 
             return await base.NonQueryExecutingAsync(command, eventData, result, cancellationToken);
+        }
+
+        private async Task ChangeAsync(CancellationToken cancellationToken)
+        {
+            await using var side = new AppDbContext(TestDbFixture.CreateDbContextOptions(connection));
+            switch (condition)
+            {
+                case "changed-generation":
+                    await side.AgentSessions.Where(s => s.Id == sessionId)
+                        .ExecuteUpdateAsync(s => s.SetProperty(x => x.StartedAt, x => x.StartedAt.AddSeconds(1)), cancellationToken);
+                    break;
+                case "store-or-epoch-change":
+                    var rebound = Guid.NewGuid();
+                    await side.AgentSessions.Where(s => s.Id == sessionId)
+                        .ExecuteUpdateAsync(s => s.SetProperty(x => x.RunnerStoreId, rebound), cancellationToken);
+                    break;
+                case "expired-proof":
+                    clock.Advance(RunnerAbsenceEvidenceValidator.Lifetime + TimeSpan.FromSeconds(1));
+                    break;
+                default:
+                    throw new ArgumentOutOfRangeException(nameof(condition), condition, null);
+            }
         }
     }
 
