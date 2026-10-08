@@ -4414,6 +4414,11 @@ export GIT_NO_REPLACE_OBJECTS=1
 export GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=core.commitGraph GIT_CONFIG_VALUE_0=false
 export GIT_CONFIG_KEY_1=gc.writeCommitGraph GIT_CONFIG_VALUE_1=false
 root=''
+# The session runner mounts its runner-tmp volume at /tmp. c1008_audit mounts that
+# volume read-only at C1008_TMP_MOUNT (only when the volume exists); a linked
+# checkout the runner registered under runner_tmp is read there.
+runner_tmp=/tmp
+tmp_root=''
 scratch=''
 audit_check=unclassified
 audit_repo=''
@@ -4423,6 +4428,12 @@ top=''
 top_bare=''
 declare -A dirty_seen=() common_seen=() common_repo=() work_trees=() git_dirs=()
 commons=()
+commons_fetched=0
+proof_dir=''
+fetched=()
+present=()
+comparisons=()
+cmp=()
 dirty_pids=()
 dirty_paths=()
 dirty_next=0
@@ -4434,12 +4445,20 @@ rel_repo() {
         *$'\n'*|*$'\r'*) printf '?'; return 0 ;;
     esac
     [ -n "$root" ] || { printf '?'; return 0; }
+    out=''
     case "$path" in
         "$root") printf '.'; return 0 ;;
         "$root"/*) rest="${path#"$root"/}" ;;
-        *) printf '?'; return 0 ;;
+        *)
+            # A checkout in the runner's tmp volume is named by its runner path.
+            if [ -n "$tmp_root" ] && [[ "$path/" == "$tmp_root/"* ]]; then
+                rest="${path#"$tmp_root"}"; rest="${rest#/}"; out='/tmp'
+                [ -n "$rest" ] || { printf '/tmp'; return 0; }
+            else
+                printf '?'; return 0
+            fi
+            ;;
     esac
-    out=''
     local IFS=/
     local -a parts=()
     read -r -a parts <<< "$rest"
@@ -4472,7 +4491,7 @@ refuse_dirty() {
 }
 refuse_unpublished() {
     trap - ERR
-    printf 'audit check=%s status=0 repo=%s\n' "${2:-rev-list}" "$(rel_repo "$1")"
+    printf 'audit check=%s status=0 repo=%s%s\n' "${2:-rev-list}" "$(rel_repo "$1")" "${3:+ $3}"
     printf 'RecycleUnpublishedWork\n'
     exit 2
 }
@@ -4881,9 +4900,15 @@ consider_linked() {
         [ "${pointer##*/}" = .git ] || refuse_unknown worktree-path 0 "$admin"
         parent="${pointer%/*}"
         checkout="$(realpath -m -- "${parent:-/}")" || fail $?
+        # A checkout registered outside every mounted volume cannot be inspected and
+        # may be live. One under the runner's /tmp is read in the read-only tmp mount
+        # and must resolve inside it; with no tmp mount it refuses.
+        if [[ "$checkout/.git/" != "$root/"* ]]; then
+            [ -n "$tmp_root" ] && [[ "$checkout/" == "$runner_tmp/"* ]] || refuse_unknown worktree-confine 0 "$admin"
+            checkout="$(realpath -m -- "$tmp_root${checkout#"$runner_tmp"}")" || fail $?
+            [[ "$checkout/" == "$tmp_root/"* ]] || refuse_unknown worktree-confine 0 "$admin"
+        fi
         recorded="$checkout/.git"
-        # A checkout registered outside the volume cannot be inspected and may be live.
-        [[ "$recorded/" == "$root/"* ]] || refuse_unknown worktree-confine 0 "$admin"
         if [ -f "$recorded" ] && [ ! -L "$recorded" ]; then
             content="$(< "$recorded")" || fail $?
             case "$content" in "gitdir: "*) target="${content#gitdir: }" ;; esac
@@ -4909,9 +4934,74 @@ consider_linked() {
     fi
     consider_stale_index "$admin"
 }
+# CARD-1105 repair 6: publication against origin's real heads. A clone that stopped
+# fetching lacks many advertised heads, so a tip only they reach would count as
+# unpublished. A scratch bare repository in the helper's own tmpfs borrows the
+# audited object store read-only (objects/info/alternates) and fetches origin's
+# heads without blobs; the audited repository is never written. Every step that
+# fails or times out falls back to the advertised heads present in the clone,
+# which can only refuse more. Sets proof_dir and fetched. Git would list the
+# alternate's refs with a child that drops this environment; that listing is off
+# (core.alternateRefsCommand=true) and the present heads are the proof's own refs,
+# so negotiation still sends them as haves.
+fetch_origin() {
+    local proof="$scratch/proof-$1" url oid type n=0
+    proof_dir=''
+    fetched=()
+    url="$(git --git-dir="$top" remote get-url origin 2>/dev/null)" || return 1
+    [ -n "$url" ] || return 1
+    git init -q --bare --template= -- "$proof" >/dev/null 2>&1 || return 1
+    printf '%s\n' "$top/objects" > "$proof/objects/info/alternates" || return 1
+    git --git-dir="$proof" config core.repositoryformatversion 1 >/dev/null 2>&1 || return 1
+    git --git-dir="$proof" config extensions.partialClone origin >/dev/null 2>&1 || return 1
+    git --git-dir="$proof" config remote.origin.url "$url" >/dev/null 2>&1 || return 1
+    git --git-dir="$proof" config remote.origin.promisor true >/dev/null 2>&1 || return 1
+    git --git-dir="$proof" config remote.origin.partialCloneFilter blob:none >/dev/null 2>&1 || return 1
+    git --git-dir="$proof" config core.alternateRefsCommand true >/dev/null 2>&1 || return 1
+    for oid in "${present[@]}"; do n=$((n + 1)); printf 'create refs/c1008/present/%s %s\n' "$n" "$oid"; done > "$proof.present" || return 1
+    git --git-dir="$proof" update-ref --stdin < "$proof.present" >/dev/null 2>&1 || return 1
+    timeout --kill-after=5s 300s git --git-dir="$proof" fetch -q --filter=blob:none --no-tags --no-write-fetch-head \
+        --no-auto-gc --no-auto-maintenance --no-recurse-submodules origin '+refs/heads/*:refs/c1008/origin/*' \
+        >/dev/null 2>&1 || return 1
+    git --git-dir="$proof" for-each-ref --format='%(objectname) %(objecttype)' refs/c1008/origin/ \
+        > "$proof.heads" 2>/dev/null || return 1
+    while IFS=' ' read -r oid type || [ -n "$oid$type" ]; do
+        [[ "$oid" =~ ^[0-9a-f]{40}$ ]] && [ "$type" = commit ] || { fetched=(); return 1; }
+        fetched+=("$oid")
+    done < "$proof.heads"
+    [ "${#fetched[@]}" -gt 0 ] || return 1
+    proof_dir="$proof"
+}
+# Refusal detail for unpublished commits (the verdict is already decided; a failed
+# count prints ?): the commits and distinct tips no origin head reaches, and the
+# current branches and origin tracking refs among those tips whose name origin no
+# longer advertises (a land deletes the branch). Whether such refs are work is an
+# operator decision (CARD-1105 replay 3b); they refuse like any other tip.
+unpublished_detail() {
+    local commits='?' tips='?' tracking='?' local_refs='?' oid ref symref name
+    local -A unpublished=() advertised=()
+    if timeout --kill-after=5s 60s "${cmp[@]}" rev-list --stdin < "$scratch/count-input" > "$scratch/unpublished" 2>/dev/null \
+        && git --git-dir="$top" for-each-ref --format='%(objectname) %(refname) %(symref)' refs/heads refs/remotes/origin \
+            > "$scratch/named" 2>/dev/null; then
+        commits=0; tips=0; tracking=0; local_refs=0
+        while IFS= read -r oid; do unpublished[$oid]=1; commits=$((commits + 1)); done < "$scratch/unpublished"
+        while IFS= read -r oid; do [ -z "${unpublished[$oid]+x}" ] || tips=$((tips + 1)); done < <(sort -u "$scratch/commit-tips")
+        while IFS=$'\t' read -r oid ref || [ -n "$oid$ref" ]; do
+            case "$ref" in refs/heads/*) advertised[${ref#refs/heads/}]=1 ;; esac
+        done < "$scratch/origin-sorted"
+        while IFS=' ' read -r oid ref symref || [ -n "$oid$ref" ]; do
+            [ -z "$symref" ] && [ -n "${unpublished[$oid]+x}" ] || continue
+            case "$ref" in
+                refs/heads/*) name="${ref#refs/heads/}"; [ -n "${advertised[$name]+x}" ] || local_refs=$((local_refs + 1)) ;;
+                refs/remotes/origin/*) name="${ref#refs/remotes/origin/}"; [ -n "${advertised[$name]+x}" ] || tracking=$((tracking + 1)) ;;
+            esac
+        done < "$scratch/named"
+    fi
+    printf 'proof=%s commits=%s tips=%s gone-tracking=%s unadvertised-local=%s' "$proof" "$commits" "$tips" "$tracking" "$local_refs"
+}
 # One pass per common directory, shared by every entry that uses it.
 consider_common() {
-    local rep="${common_repo[$top]}" oid ref type lines tip admin count hash
+    local rep="${common_repo[$top]}" oid ref type lines tip admin count hash proof
     audit_repo="$rep"
     audit_check=bare
     top_bare="$(git --git-dir="$top" rev-parse --is-bare-repository 2>/dev/null)" || fail $?
@@ -4935,22 +5025,29 @@ consider_common() {
         printf '%s\n' "$oid" >> "$scratch/advertised"
     done < "$scratch/origin-sorted"
     # Origin is ahead of a clone that stopped fetching (a drained runner) while other
-    # runners push. Only advertised heads present here are comparisons: fewer
-    # comparisons can only refuse more tips. A present non-commit head refuses.
+    # runners push. The advertised heads present here are comparisons; a present
+    # non-commit head refuses. Origin's heads fetched into the scratch proof
+    # repository are added (fetch_origin); without them only the present heads
+    # count, which can only refuse more tips. No comparison at all refuses.
     audit_check=origin-present
     git --git-dir="$top" cat-file --batch-check='%(objectname) %(objecttype)' < "$scratch/origin-oids" > "$scratch/present" 2>/dev/null || fail $?
-    comparisons=()
+    present=()
     lines=0
     while IFS=' ' read -r oid type || [ -n "$oid$type" ]; do
         lines=$((lines + 1))
         [[ "$oid" =~ ^[0-9a-f]{40}$ ]] || fail 2
         case "$type" in
-            commit) comparisons+=("$oid") ;;
+            commit) present+=("$oid") ;;
             missing) ;;
             *) refuse_unknown origin-type 0 "$rep" ;;
         esac
     done < "$scratch/present"
     [ "$lines" = "$(wc -l < "$scratch/origin-oids")" ] || fail 2
+    commons_fetched=$((commons_fetched + 1))
+    fetch_origin "$commons_fetched" || { proof_dir=''; fetched=(); }
+    comparisons=("${present[@]}" "${fetched[@]}")
+    if [ -n "$proof_dir" ]; then cmp=(git --git-dir="$proof_dir"); proof=fetched; else cmp=(git --git-dir="$top"); proof=present; fi
+    audit_check=origin-present
     [ "${#comparisons[@]}" -gt 0 ] || refuse_unknown origin-present 0 "$rep"
     : > "$scratch/tips"
     audit_repo="$rep"
@@ -4976,7 +5073,8 @@ consider_common() {
     # Traverse the full graph, without the publication exclusions that could hide
     # a missing ancestor. Only blobs are optional in the blobless seed contract.
     audit_check=rev-list-objects
-    { cat "$scratch/unique"; printf '%s\n' "${comparisons[@]}"; } > "$scratch/roots" || fail $?
+    # Present heads only: fetched heads live in the scratch repository.
+    { cat "$scratch/unique"; printf '%s\n' "${present[@]}"; } > "$scratch/roots" || fail $?
     timeout --kill-after=5s 30s git --git-dir="$top" rev-list --objects --no-object-names --filter=blob:none --missing=error --stdin \
         < "$scratch/roots" > "$scratch/objects" 2>/dev/null || fail $?
     # Each tip's own (unpeeled) object. A commit is proven by the count below. An
@@ -5006,7 +5104,7 @@ consider_common() {
     [ ! -s "$scratch/tag-unadvertised" ] && [ ! -s "$scratch/blob-unadvertised" ] || refuse_unpublished "$rep" tip-object
     if [ -s "$scratch/tree-unadvertised" ]; then
         audit_check=tip-tree
-        printf '%s\n' "${comparisons[@]}" | timeout --kill-after=5s 30s git --git-dir="$top" rev-list --objects --no-object-names \
+        printf '%s\n' "${comparisons[@]}" | timeout --kill-after=5s 30s "${cmp[@]}" rev-list --objects --no-object-names \
             --filter=blob:none --missing=error --stdin > "$scratch/reached" 2>/dev/null || fail $?
         sort -u "$scratch/reached" > "$scratch/reached-sorted" || fail $?
         comm -23 "$scratch/tree-unadvertised" "$scratch/reached-sorted" > "$scratch/tree-unreached" || fail $?
@@ -5022,13 +5120,13 @@ consider_common() {
             *) fail 2 ;;
         esac
     done < "$scratch/peeled"
-    # Every commit tip at once against every present origin head: zero commits
-    # reachable from a tip and from no head means each tip is published.
+    # Every commit tip at once against every origin head (present or fetched): zero
+    # commits reachable from a tip and from no head means each tip is published.
     audit_check=rev-list
     { cat "$scratch/commit-tips"; printf '^%s\n' "${comparisons[@]}"; } > "$scratch/count-input" || fail $?
-    count="$(timeout --kill-after=5s 30s git --git-dir="$top" rev-list --count --stdin < "$scratch/count-input" 2>/dev/null)" || fail $?
+    count="$(timeout --kill-after=5s 30s "${cmp[@]}" rev-list --count --stdin < "$scratch/count-input" 2>/dev/null)" || fail $?
     [[ "$count" =~ ^[0-9]+$ ]] || refuse_unknown rev-list-count 2 "$rep"
-    [ "$count" = 0 ] || refuse_unpublished "$rep"
+    [ "$count" = 0 ] || refuse_unpublished "$rep" rev-list "$(unpublished_detail)"
     hash="$(digest "$top")"
     while IFS= read -r tip; do
         printf 'tip=%s common=%s\n' "$tip" "$hash"
@@ -5051,6 +5149,11 @@ dirty_parallel="$(nproc 2>/dev/null)" || dirty_parallel=1
 [ "$dirty_parallel" -le 8 ] || dirty_parallel=8
 audit_check=readlink-root
 root="$(readlink -e /work)" || fail $?
+if [ -n "${C1008_TMP_MOUNT:-}" ]; then
+    audit_check=readlink-tmp
+    tmp_root="$(readlink -e -- "$C1008_TMP_MOUNT")" || fail $?
+    [ -d "$tmp_root" ] && [ "$tmp_root" != / ] || fail 2
+fi
 audit_check=scratch
 scratch="$(mktemp -d /tmp/c1008-audit-XXXXXXXX)" || fail $?
 # Capture enumeration before reading it: process substitution loses find failures.
@@ -5283,11 +5386,21 @@ c1008_verify_tmp() {
 }
 
 c1008_audit() {
-    local work="$C1008_PROJECT"_work facts image helper output code=0 program
+    local work="$C1008_PROJECT"_work tmp="$C1008_PROJECT"_runner-tmp facts tmp_facts image helper output code=0 program
+    local -a mounts=()
     facts="$(c1008_volume "$work")" || return 2
     if [ "$facts" = null ]; then
         [ "$C1008_PROJECT" = "$TEMP_PROJECT" ] && { printf 'absent'; return 0; }
         return 2
+    fi
+    # The helper's own scratch (and the origin proof repository) is a private tmpfs.
+    # The runner's tmp volume, which holds checkouts the runner registered under
+    # /tmp, is mounted read-only beside /work when it exists; without it such a
+    # checkout refuses worktree-confine.
+    mounts=(--mount "type=volume,source=$work,target=/work,readonly" --mount "type=tmpfs,destination=/tmp,tmpfs-mode=1777,tmpfs-size=2147483648")
+    tmp_facts="$(c1008_volume "$tmp")" || return 2
+    if [ "$tmp_facts" != null ]; then
+        mounts+=(--mount "type=volume,source=$tmp,target=/runner-tmp,readonly" --env C1008_TMP_MOUNT=/runner-tmp)
     fi
     image="$(printf '%s' "$C1008_RECORD" | jq -r '.image // empty')"
     if [ -z "$image" ]; then
@@ -5300,7 +5413,7 @@ c1008_audit() {
     [ "$(docker image inspect -f '{{.Id}}' "$image" 2>/dev/null)" = "$image" ] || return 2
     program="$(c1008_git_program)"
     helper="$(docker create --user 1654:1654 --entrypoint /bin/bash \
-        --mount "type=volume,source=$work,target=/work,readonly" "$image" -c "$program" 2>/dev/null)" \
+        "${mounts[@]}" "$image" -c "$program" 2>/dev/null)" \
         || return 2
     [[ "$helper" =~ ^[0-9a-f]{64}$ ]] || return 2
     output="$(docker start -a "$helper" 2>/dev/null)" || code=$?

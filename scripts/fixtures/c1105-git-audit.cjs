@@ -42,10 +42,29 @@ function setup() {
     assert.ok(missing.split('\n').includes('?' + blob), 'seed must really lack HEAD blob');
     assert.equal(cp.spawnSync('git', ['-C', repo, 'cat-file', '-e', blob], {env: {...env, GIT_NO_LAZY_FETCH: '1'}}).status, 1, 'no blob may be fetched');
 }
+// The runner's /tmp is <root>/runner-tmp here; a row that mounts the runner-tmp volume
+// moves it to <root>/mnt-tmp, so the recorded path itself is absent, as in the helper.
+const runnerTmp = path.join(root, 'runner-tmp'), mntTmp = path.join(root, 'mnt-tmp');
+let tmpMount = null, readOnly = false;
 function helper(edit = x => x) {
     const match = source.match(/cat <<'C1008_GIT'\n([\s\S]*?)\nC1008_GIT/);
-    assert.ok(match); assert.equal(match[1].split('readlink -e /work').length, 2);
-    fs.writeFileSync(path.join(root, 'helper.sh'), edit(match[1].replace('readlink -e /work', 'readlink -e "$C1105_WORK"')));
+    assert.ok(match); assert.equal(match[1].split('readlink -e /work').length, 2); assert.equal(match[1].split('\nrunner_tmp=/tmp\n').length, 2);
+    fs.writeFileSync(path.join(root, 'helper.sh'), edit(match[1].replace('readlink -e /work', 'readlink -e "$C1105_WORK"')
+        .replace('\nrunner_tmp=/tmp\n', '\nrunner_tmp="$C1105_RUNNER_TMP"\n')));
+}
+// The origin proof fetch fails, or runs out of time: the audit falls back to present heads.
+const proofFetch = 'timeout --kill-after=5s 300s git --git-dir="$proof" fetch';
+function noFetch() { helper(text => { assert.equal(text.split(proofFetch).length, 2); return text.replace(proofFetch, proofFetch + ' --upload-pack=false'); }); }
+function fetchTimeout() { helper(text => { assert.equal(text.split(proofFetch).length, 2); return text.replace(proofFetch, proofFetch.replace('300s', '0.01s')); }); }
+// Metadata of every path in the audited volume except access times.
+function snapshot() {
+    const out = [];
+    (function walk(dir) { for (const name of fs.readdirSync(dir).sort()) {
+        const p = path.join(dir, name), st = fs.lstatSync(p, {bigint: true});
+        out.push([p, st.mode, st.size, st.mtimeNs, st.ctimeNs, st.ino].join(' '));
+        if (st.isDirectory()) walk(p);
+    } })(work);
+    return out.join('\n');
 }
 // Every Git start carries the no-fetch, no-system/global-config and no-commit-graph values.
 const required = {GIT_NO_LAZY_FETCH:'1', GIT_CONFIG_SYSTEM:'/dev/null', GIT_CONFIG_GLOBAL:'/dev/null', GIT_CONFIG_COUNT:'2',
@@ -54,17 +73,31 @@ let events = [];
 function audit(timeout = 45000) {
     const trace = path.join(root, 'trace.jsonl');
     if (fs.existsSync(trace)) fs.rmSync(trace);
-    const result = cp.spawnSync('bash', [path.join(root, 'helper.sh')], {env: {...env, C1105_WORK: work, GIT_TRACE2_EVENT: trace,
+    const extra = tmpMount ? {C1008_TMP_MOUNT: tmpMount} : {};
+    // Read-only: the work volume is bind-mounted read-only in a private mount namespace;
+    // a successful write probe exits 97 before the audit runs.
+    const command = readOnly ? ['unshare', ['-Urm', 'bash', '-c', 'mount --bind "$C1105_WORK" "$C1105_WORK" && mount -o remount,ro,bind "$C1105_WORK" "$C1105_WORK" || exit 98; ' +
+        'if touch "$C1105_WORK/.write-probe" 2>/dev/null; then exit 97; fi; exec bash "$0"', path.join(root, 'helper.sh')]] : ['bash', [path.join(root, 'helper.sh')]];
+    const result = cp.spawnSync(command[0], command[1], {env: {...env, ...extra, C1105_WORK: work, C1105_RUNNER_TMP: runnerTmp, GIT_TRACE2_EVENT: trace,
         GIT_TRACE2_ENV_VARS: Object.keys(required).join(',')}, encoding: 'utf8', timeout, maxBuffer: 64e6});
+    assert.ok(result.status !== 97 && result.status !== 98, 'the work volume must be mounted read-only: ' + result.status);
     const text = fs.existsSync(trace) ? fs.readFileSync(trace, 'utf8').trim() : '';
     events = text ? text.split('\n').map(JSON.parse) : [];
     assert.ok(events.length > 0 || mode === 'audit-timeout', 'the audit ran Git');
-    assert.ok(!events.some(x => x.argv?.includes('fetch')), 'audit must never lazy-fetch');
+    // Repair 6: the only fetch is the origin proof into the scratch repository: whole heads,
+    // blobless, never into the audited volume and never a lazy (--stdin) object fetch.
+    for (const x of events.filter(x => x.event === 'start' && x.argv?.includes('fetch'))) {
+        const gitDir = x.argv.find(a => a.startsWith('--git-dir='));
+        assert.ok(x.argv.includes('+refs/heads/*:refs/c1008/origin/*') && x.argv.includes('--filter=blob:none') && !x.argv.includes('--stdin')
+            && gitDir && !path.resolve(gitDir.slice(10)).startsWith(work + '/'), 'audit must never lazy-fetch: ' + x.argv.join(' '));
+    }
     const params = new Set(events.filter(x => x.event === 'def_param').map(x => x.sid + '\0' + x.param + '\0' + x.value));
     // A local-transport git-upload-pack serves the origin repository, and Git clears per-repository
-    // configuration variables for that other repository; it never reads the audited volume.
+    // configuration variables for that other repository; it never reads the audited volume. Its own
+    // children (pack-objects for the repair 6 proof fetch) run in the origin repository too.
+    const originSide = events.filter(x => x.event === 'start' && /(^|\/)git-upload-pack$/.test(x.argv[0]) && x.argv[1] === path.join(root, 'origin.git')).map(x => x.sid);
     for (const start of events.filter(x => x.event === 'start')) for (const [key, value] of Object.entries(required))
-        if (!(/^GIT_CONFIG_(COUNT|KEY_|VALUE_)/.test(key) && /(^|\/)git-upload-pack$/.test(start.argv[0]) && start.argv[1] === path.join(root, 'origin.git'))) assert.ok(params.has(start.sid + '\0' + key + '\0' + value), `${key} missing at git start`);
+        if (!(/^GIT_CONFIG_(COUNT|KEY_|VALUE_)/.test(key) && originSide.some(sid => start.sid === sid || start.sid.startsWith(sid + '/')))) assert.ok(params.has(start.sid + "\0" + key + "\0" + value), `${key} missing at git start ${start.argv.join(" ")}`);
     return result;
 }
 // Git starts during the last audit whose argv holds this exact argument.
@@ -125,6 +158,21 @@ function fetchOther() {
     const oid = run('git', ['-C', other, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit-tree', 'HEAD^{tree}', '-p', 'HEAD', '-m', 'private']);
     run('git', ['-C', other, 'update-ref', 'refs/heads/master', oid]); git('fetch', '-q', 'file://' + other, 'master');
     assert.equal(git('rev-parse', 'FETCH_HEAD'), oid); assert.equal(git('for-each-ref', '--contains', oid), '');
+}
+// A linked checkout the runner registered under its /tmp (CARD-1005/0983 verification
+// worktrees on server2); the helper sees the runner-tmp volume only at its mount.
+function tmpLinked(name = 'c1005-master') {
+    checkout(); git('worktree', 'add', '-q', '--detach', path.join(runnerTmp, name), 'HEAD');
+    fs.renameSync(runnerTmp, mntTmp); tmpMount = mntTmp;
+    assert.equal(fs.existsSync(path.join(runnerTmp, name)), false, 'the recorded path is absent where the helper runs');
+    return path.join(mntTmp, name);
+}
+// Replay 3a: the clone's master and origin/master are stale; origin's master moved on to
+// a head the clone never fetched; the only present advertised head (side) is older.
+function staleMaster() {
+    s('push', '-q', origin, 'HEAD~1:refs/heads/side'); s('commit', '-q', '--allow-empty', '-m', 'moved on'); s('push', '-q', origin, 'master');
+    assert.equal(cp.spawnSync('git', ['-C', repo, 'cat-file', '-e', s('rev-parse', 'HEAD')], {env: {...env, GIT_NO_LAZY_FETCH: '1'}}).status, 1, 'origin master absent here');
+    assert.equal(git('rev-parse', 'origin/master'), s('rev-parse', 'HEAD~1'));
 }
 function bareMirror() {
     const bare = path.join(work, 'bare.git'); run('git', ['clone', '-q', '--mirror', repo, bare]);
@@ -228,7 +276,10 @@ const hidden = {
     // Origin ahead of the clone: compare only against advertised heads present here.
     'origin-ahead': [P, originAhead],
     'origin-tracking-deleted': [U, trackingOnly],
-    'origin-none-present': [K, () => { s('commit', '-q', '--allow-empty', '-m', 'ahead'); s('push', '-q', origin, 'master'); }, 'check=origin-present'],
+    // Repair 6: without the origin proof fetch (it failed) no present head refuses; with it, origin's
+    // fetched master proves the clone's commits.
+    'origin-none-present': [K, () => { noFetch(); s('commit', '-q', '--allow-empty', '-m', 'ahead'); s('push', '-q', origin, 'master'); }, 'check=origin-present'],
+    'origin-none-present-fetched': [P, () => { s('commit', '-q', '--allow-empty', '-m', 'ahead'); s('push', '-q', origin, 'master'); }],
     // update-ref refuses a tree on a branch; the file is written directly.
     'origin-non-commit': [K, () => fs.writeFileSync(path.join(origin, 'refs/heads/tree'), git('rev-parse', 'HEAD^{tree}') + '\n'), 'check=origin-type'],
     // Every worktrees/<id> is audited whether or not its checkout exists or points back.
@@ -335,6 +386,37 @@ const hidden = {
         assert.equal(lg('status', '--porcelain', '--untracked-files=all'), '');
     }, 'check=core-worktree'],
     'bare-dot-git': [K, () => { git('config', 'core.bare', 'true'); fs.writeFileSync(path.join(repo, 'new'), 'private'); }, 'check=core-bare'],
+    // Repair 6 (A): a checkout the runner registered under /tmp lives in the runner-tmp volume, mounted
+    // read-only for the audit, and is inspected like any other; outside every mounted volume it refuses.
+    'tmp-linked-clean': [P, () => tmpLinked()],
+    'tmp-linked-untracked': [D, () => fs.writeFileSync(path.join(tmpLinked(), 'new'), 'private'), /^audit check=worktree-status status=0 repo=\/tmp\/c1005-master$/m],
+    'tmp-linked-modified': [D, () => fs.writeFileSync(path.join(tmpLinked(), 'file'), 'private\n'), /^audit check=worktree-status status=0 repo=\/tmp\/c1005-master$/m],
+    'tmp-linked-orphan-untracked': [D, () => { const c = tmpLinked(); fs.writeFileSync(path.join(c, 'new'), 'private'); remove(path.join(c, '.git')); }, 'check=orphan-status'],
+    'tmp-linked-absent-clean': [P, () => remove(tmpLinked())],
+    'tmp-linked-absent-staged': [D, () => {
+        const c = tmpLinked(); fs.writeFileSync(path.join(c, 'new'), 'sole staged bytes'); run('git', ['-C', c, 'add', 'new']); remove(c);
+    }, 'check=stale-index'],
+    'tmp-unmounted': [K, () => { tmpLinked(); tmpMount = null; }, 'check=worktree-confine'],
+    'tmp-mounted-outside': [K, () => { fs.mkdirSync(mntTmp); tmpMount = mntTmp; checkout(); git('worktree', 'add', '-q', '--detach', path.join(root, 'outside'), 'HEAD'); }, 'check=worktree-confine'],
+    'tmp-escape': [K, () => {
+        // runner-tmp/link points outside the volume: the recorded checkout resolves outside the mount.
+        const c = tmpLinked(), elsewhere = path.join(root, 'elsewhere'); fs.mkdirSync(elsewhere); fs.renameSync(c, path.join(elsewhere, 'c1005-master'));
+        fs.symlinkSync(elsewhere, path.join(mntTmp, 'link')); put('worktrees/c1005-master/gitdir', path.join(runnerTmp, 'link/c1005-master/.git') + '\n');
+    }, 'check=worktree-confine'],
+    // Repair 6 (B): publication against origin's real heads, fetched blobless into a scratch repository.
+    'origin-stale-master': [P, () => {
+        staleMaster(); const before = snapshot(), result = audit(); assert.equal(result.status, 0, result.stdout);
+        assert.equal(snapshot(), before, 'the audit never writes the audited volume');
+    }],
+    'origin-stale-master-fetch-failed': [U, () => { staleMaster(); noFetch(); },
+        /^audit check=rev-list status=0 repo=repo proof=present commits=1 tips=1 gone-tracking=0 unadvertised-local=0$/m],
+    'origin-stale-master-fetch-timeout': [U, () => { staleMaster(); fetchTimeout(); }, /^audit check=rev-list status=0 repo=repo proof=present /m],
+    'origin-stale-master-readonly': [P, () => { staleMaster(); readOnly = true; }],
+    'origin-fetched-unpublished': [U, () => { checkout(); privateCommit(); },
+        /^audit check=rev-list status=0 repo=repo proof=fetched commits=1 tips=1 gone-tracking=0 unadvertised-local=0$/m],
+    // Replay 3b (policy pending): a tracking ref for a branch origin deleted still refuses; the receipt counts it.
+    'origin-gone-counts': [U, () => { trackingOnly(); git('branch', 'kept-local', priv()); },
+        /^audit check=rev-list status=0 repo=repo proof=fetched commits=2 tips=2 gone-tracking=1 unadvertised-local=1$/m],
 };
 // HIDDEN-LOCATIONS-END
 try {
@@ -440,6 +522,7 @@ try {
             assert.match(result.stdout, new RegExp(`repositories=${count + 1} partial=${count + 1}`));
             // One pass per common directory; one content check per worktree path.
             assert.equal(starts('ls-remote'), 1, 'origin is read once for the shared common directory');
+            assert.equal(starts('+refs/heads/*:refs/c1008/origin/*'), 1, 'origin heads are fetched once for the shared common directory');
             assert.equal(starts('status'), count + 1, 'status runs once per worktree path');
             assert.equal(starts('--stdin-paths'), count, 'one batched hash per indexed worktree');
             assert.ok(seconds < budget, `whole-volume audit took ${seconds}s, budget ${budget}s`);
@@ -456,7 +539,7 @@ try {
             assert.ok(start > 0 && end > start);
             const wrapper = `set -euo pipefail\nC1008_PROJECT=antiphon-runner\nC1008_RESUME=1\nC1008_RECORD="$(cat "$C1105_JOURNAL")"\nc1008_volume() { echo '{}'; }\nc1008_save() { printf '%s' "$C1008_RECORD" > "$C1105_JOURNAL"; }\nc1008_refuse() { echo "$1"; exit 2; }\nc1008_git_program() { cat "$C1105_HELPER"; }\ndocker() { case "$1 $2" in 'image inspect') echo sha256:${'a'.repeat(64)} ;; 'create --user') echo ${'b'.repeat(64)} ;; 'start -a') bash "$C1105_HELPER" ;; 'rm --') return 0 ;; *) return 2 ;; esac; }\n`;
             const script = path.join(root,'resume.sh'); fs.writeFileSync(script, wrapper + block('c1008_audit') + '\n' + block('c1008_audit_checked') + '\n' + source.slice(start,end));
-            const opts = {env:{...env, C1105_WORK:work, C1105_HELPER:path.join(root,'helper.sh'), C1105_JOURNAL:journal}, encoding:'utf8'};
+            const opts = {env:{...env, C1105_WORK:work, C1105_HELPER:path.join(root,'helper.sh'), C1105_RUNNER_TMP:runnerTmp, C1105_JOURNAL:journal}, encoding:'utf8'};
             git('remote','set-url','origin',path.join(root,'absent'));
             const failed = cp.spawnSync('bash',[script],opts); assert.equal(failed.status,2,failed.stdout); assert.match(failed.stdout,/RecycleGitAuditUnknown/);
             const saved = JSON.parse(fs.readFileSync(journal)); assert.equal(saved.audit,initial.audit,'failure must preserve publication proof'); assert.match(saved.auditFailure,/check=ls-remote status=128/);
@@ -472,7 +555,8 @@ try {
     if (mode !== 'resume' && expected !== null) {
         const result = audit();
         assert.equal(result.status, expected ? 2 : 0, `${mode}: ${result.stdout}\n${result.stderr}`);
-        if (expectedCheck) assert.ok(result.stdout.includes(expectedCheck + ' '), `${mode}: ${result.stdout}`);
+        if (expectedCheck instanceof RegExp) assert.match(result.stdout, expectedCheck, `${mode}: ${result.stdout}`);
+        else if (expectedCheck) assert.ok(result.stdout.includes(expectedCheck + ' '), `${mode}: ${result.stdout}`);
         if (expected) assert.ok(result.stdout.includes(expected), `${mode}: ${result.stdout}`);
         else assert.match(result.stdout, /repositories=\d+ partial=\d+/);
         console.log('PASS ' + mode);
