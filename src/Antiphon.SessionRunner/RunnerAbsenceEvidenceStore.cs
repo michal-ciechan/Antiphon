@@ -1,7 +1,10 @@
+using System.ComponentModel;
 using System.Globalization;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using Antiphon.SessionRunner.Contracts;
+using Microsoft.Win32.SafeHandles;
 
 namespace Antiphon.SessionRunner;
 
@@ -52,6 +55,13 @@ public interface IRunnerAbsenceEvidenceFiles
 
     /// <summary>File names directly under <paramref name="path"/>.</summary>
     IReadOnlyList<string> FileNames(string path);
+
+    /// <summary>
+    /// CARD-1153 F1 (round 2): make the names directly under <paramref name="path"/> durable.
+    /// Flushing a file never persists its directory entry, so every created or renamed name is
+    /// followed by this. Throws when the platform cannot establish it; the caller fails closed.
+    /// </summary>
+    void SyncDirectory(string path);
 }
 
 public sealed class RunnerAbsenceEvidenceFiles : IRunnerAbsenceEvidenceFiles
@@ -84,6 +94,15 @@ public sealed class RunnerAbsenceEvidenceFiles : IRunnerAbsenceEvidenceFiles
             stream.Flush(flushToDisk: true);
         }
 
+        if (OperatingSystem.IsWindows())
+        {
+            // Windows has no directory fsync for a rename; MOVEFILE_WRITE_THROUGH returns only once
+            // the move is on disk.
+            if (!MoveFileExW(tmp, path, MoveFileReplaceExisting | MoveFileWriteThrough))
+                throw new IOException("write-through rename failed", new Win32Exception(Marshal.GetLastWin32Error()));
+            return;
+        }
+
         File.Move(tmp, path, overwrite: true);
     }
 
@@ -98,6 +117,58 @@ public sealed class RunnerAbsenceEvidenceFiles : IRunnerAbsenceEvidenceFiles
 
     public IReadOnlyList<string> FileNames(string path) =>
         Directory.EnumerateFiles(path).Select(p => Path.GetFileName(p)).ToList();
+
+    /// <summary>
+    /// Unix: open the directory read-only and fsync it (the POSIX directory-entry persistence
+    /// primitive). Windows: FlushFileBuffers on a directory handle (FILE_FLAG_BACKUP_SEMANTICS);
+    /// renames are additionally write-through. Any failure throws, so no certificate is issued.
+    /// </summary>
+    public void SyncDirectory(string path)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            using var handle = CreateFileW(path, GenericRead | GenericWrite, ShareAll, IntPtr.Zero, OpenExisting,
+                FileFlagBackupSemantics, IntPtr.Zero);
+            if (handle.IsInvalid || !FlushFileBuffers(handle))
+                throw new IOException("directory flush failed", new Win32Exception(Marshal.GetLastWin32Error()));
+            return;
+        }
+
+        var fd = Open(path, ReadOnly);
+        if (fd < 0)
+            throw new IOException($"directory open for fsync failed: errno {Marshal.GetLastPInvokeError()}");
+        try
+        {
+            if (Fsync(fd) != 0)
+                throw new IOException($"directory fsync failed: errno {Marshal.GetLastPInvokeError()}");
+        }
+        finally { Close(fd); }
+    }
+
+    private const int ReadOnly = 0;
+    private const uint GenericRead = 0x80000000, GenericWrite = 0x40000000, ShareAll = 7, OpenExisting = 3;
+    private const uint FileFlagBackupSemantics = 0x02000000;
+    private const uint MoveFileReplaceExisting = 0x1, MoveFileWriteThrough = 0x8;
+
+    [DllImport("libc", EntryPoint = "open", SetLastError = true)]
+    private static extern int Open([MarshalAs(UnmanagedType.LPUTF8Str)] string path, int flags);
+
+    [DllImport("libc", EntryPoint = "fsync", SetLastError = true)]
+    private static extern int Fsync(int fd);
+
+    [DllImport("libc", EntryPoint = "close", SetLastError = true)]
+    private static extern int Close(int fd);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern SafeFileHandle CreateFileW(string name, uint access, uint share, IntPtr security, uint mode, uint flags, IntPtr template);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool FlushFileBuffers(SafeFileHandle handle);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool MoveFileExW(string existing, string replacement, uint flags);
 }
 
 /// <summary>
@@ -114,8 +185,18 @@ public sealed class RunnerAbsenceEvidenceFiles : IRunnerAbsenceEvidenceFiles
 /// well formed). Anything else (anchor or header missing or changed, root lost, closure log
 /// missing or malformed, a logged closure whose record is missing, unreadable or not ClosedUnused)
 /// is unknown, so a wiped, replaced or damaged store is never read as "nothing was certified".
-/// Rename durability: the record and header are flushed before their rename, but the containing
-/// directory is not; a rename lost in a crash leaves the flushed closure log entry, which reads as
+/// Namespace durability (F1, round 2): flushing a file does not persist its directory entry, so
+/// every created directory, created file and rename is followed by a sync of the directory that
+/// holds the new name (<see cref="IRunnerAbsenceEvidenceFiles.SyncDirectory"/>): the parents of
+/// the root and of any ancestor it created, the root after the closure log and after the header,
+/// the anchor's directory after the anchor, the root after every record. A store this process did
+/// not initialize has its root and anchor directory synced once before its first write. A write,
+/// and so a certificate or a ClosedUnused record, returns only after its closure-log append is
+/// flushed and every name it depends on is durable; any sync failure throws and certification
+/// fails closed. Platforms: Linux and other Unix fsync the directory itself (the POSIX primitive);
+/// Windows uses MOVEFILE_WRITE_THROUGH for renames and FlushFileBuffers on a directory handle,
+/// failing closed (no certificate, evidence latched) when NTFS or the host refuses either.
+/// A record rename lost before its sync leaves the flushed closure-log entry, which reads as
 /// <see cref="RunnerAbsenceReadKind.ClosedRecordLost"/>. Residual (runner-store tampering, H-24):
 /// deleting both a closed record and its closure log line, or the anchor together with the whole
 /// root, is indistinguishable from an id that was never closed.
@@ -135,6 +216,7 @@ public sealed class RunnerAbsenceEvidenceStore
     private IRunnerAbsenceEvidenceFiles _files;
     private readonly object _rootGate = new();
     private Guid? _incarnation;
+    private bool _namespaceDurable;
 
     public string Root { get; }
 
@@ -222,13 +304,14 @@ public sealed class RunnerAbsenceEvidenceStore
             if (state.Unknown is { } unknown)
                 throw new RunnerAbsenceStoreUnknownException(Describe(unknown));
             if (!state.Initialized)
-            {
                 state = Initialize();
-            }
+            else
+                EnsureNamespaceDurable();
 
             if (record.State == RunnerAbsenceRecordState.ClosedUnused && !state.Closed!.Contains(record.SessionId))
                 _files.AppendDurable(ClosureLogPath, Encoding.ASCII.GetBytes(record.SessionId.ToString("N") + "\n"));
             _files.WriteAtomic(PathFor(record.SessionId), Serialize(record));
+            _files.SyncDirectory(Root);
         }
     }
 
@@ -305,19 +388,44 @@ public sealed class RunnerAbsenceEvidenceStore
         return new(true, closed, null);
     }
 
-    // Caller holds _rootGate; the store is never initialized. The anchor is written last, so an
-    // interrupted initialization is still "never initialized" and is completed by the next write.
+    // Caller holds _rootGate; the store is never initialized. Each created or renamed name is
+    // made durable (its directory synced) before the next step depends on it, and the anchor is
+    // written last: a crash at any point reads as never initialized (completed by the next write)
+    // or healthy, and a durable anchor implies a durable root, header and closure log.
     private StoreState Initialize()
     {
         var incarnation = Guid.NewGuid();
         var identity = Identity(incarnation);
+        var created = new List<string> { Root };
+        for (var dir = ParentOf(Root); dir is not null && !_files.DirectoryExists(dir); dir = ParentOf(dir))
+            created.Insert(0, dir);
         _files.CreateDirectory(Root);
+        foreach (var dir in created)
+            _files.SyncDirectory(ParentOf(dir)!);
         _files.WriteAtomic(ClosureLogPath, []);
+        _files.SyncDirectory(Root);
         _files.WriteAtomic(HeaderPath, identity);
+        _files.SyncDirectory(Root);
         _files.WriteAtomic(AnchorPath, identity);
+        _files.SyncDirectory(ParentOf(Root)!);
         _incarnation = incarnation;
+        _namespaceDurable = true;
         return new(true, [], null);
     }
+
+    // Caller holds _rootGate. A healthy store this process did not initialize may hold names an
+    // earlier process created but never synced (it died before the OS wrote them); sync once
+    // before any write this process will rely on.
+    private void EnsureNamespaceDurable()
+    {
+        if (_namespaceDurable)
+            return;
+        _files.SyncDirectory(Root);
+        _files.SyncDirectory(ParentOf(Root)!);
+        _namespaceDurable = true;
+    }
+
+    private static string? ParentOf(string path) => Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(path));
 
     private bool SafeDirectoryExists(string path)
     {
