@@ -410,11 +410,13 @@ next one; do not widen a row.
 After land, dispatch a method-scoped SourceLanding Mutation for PC-1..PC-11 of this plan at
 the landed SHA. Every control selects one method with the filters above; none batches, because
 PC-1..PC-3 and PC-4/PC-6 share a target method and must each show their own red. Keep per-PC
-baseline, red and restored-green evidence in the external evidence root. This closes CARD-1065
-G-184/PC-184, whose declared target was never executed; the CARD-1065 plan amendment in S3
-says so. Amendment 2026-10-07 (CARD-1140): the Mutation evidence for PC-1 and PC-2 together
-closes CARD-1065 G-184/PC-184; the S3 amendment names this plan but not the controls, and this
-line replaces the sentence 'the CARD-1065 plan amendment in S3 says so'.
+baseline, red and restored-green evidence in the external evidence root.
+Amendment 2026-10-08 (CARD-1140): the Mutation evidence for PC-1 and PC-2 together closes
+CARD-1065 G-184/PC-184. Both select
+`SeatDesktopJoinTests.C1124_Join_owner_task_is_queued_dispatched_working_or_blocked`:
+PC-1 removes Blocked and PC-2 removes Queued. Carry this note in the PC-1..PC-11 Mutation
+brief and record PC-184 as closed by PC-1+PC-2; the CARD-1065 doc-pin filter cannot detect
+the production predicate mutation.
 
 ## Rollout and activation
 
