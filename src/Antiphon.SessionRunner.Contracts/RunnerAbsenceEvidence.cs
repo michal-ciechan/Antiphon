@@ -128,11 +128,27 @@ public sealed record RunnerAbsenceOutcome<T>(T? Value, RunnerAbsenceRefusal? Ref
 }
 
 /// <summary>
-/// A-3: a creation or attach refused because the id was certified never-created. Not a
-/// retryable fault; the server maps it to the existing refused-launch path.
+/// A-3: a creation or attach refused because the id was certified never-created, or (CARD-1153
+/// F1) because the evidence store cannot prove the id is open: a closure must survive storage
+/// failure, so an unreadable, damaged or lost store refuses creation. Not a retryable fault; the
+/// server maps it to the existing refused-launch path.
 /// </summary>
-public sealed class SessionIdentityClosedException(Guid sessionId)
-    : InvalidOperationException($"Session '{sessionId:D}' identity is closed: it was certified never created.")
+public sealed class SessionIdentityClosedException : InvalidOperationException
 {
-    public Guid SessionId { get; } = sessionId;
+    public SessionIdentityClosedException(Guid sessionId)
+        : base($"Session '{sessionId:D}' identity is closed: it was certified never created.")
+        => SessionId = sessionId;
+
+    /// <summary>F1: the store could not prove the identity open; <paramref name="evidenceProblem"/> names the unknown read.</summary>
+    public SessionIdentityClosedException(Guid sessionId, string evidenceProblem)
+        : base($"Session '{sessionId:D}' identity cannot be proven open: {evidenceProblem}.")
+    {
+        SessionId = sessionId;
+        EvidenceProblem = evidenceProblem;
+    }
+
+    public Guid SessionId { get; }
+
+    /// <summary>Null for a certified closure; otherwise the unknown evidence that refused creation.</summary>
+    public string? EvidenceProblem { get; }
 }

@@ -145,4 +145,17 @@ internal sealed class FaultingEvidenceFiles : IRunnerAbsenceEvidenceFiles
         Interlocked.Increment(ref Writes);
         RunnerAbsenceEvidenceFiles.Instance.WriteAtomic(path, bytes);
     }
+
+    public void AppendDurable(string path, byte[] bytes)
+    {
+        if (WriteFault?.Invoke(path) is { } fault) throw fault;
+        Interlocked.Increment(ref Writes);
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Write, FileShare.None);
+        stream.Seek(0, SeekOrigin.End);
+        stream.Write(bytes);
+        stream.Flush(flushToDisk: true);
+    }
+
+    public IReadOnlyList<string> FileNames(string path) =>
+        Directory.EnumerateFiles(path).Select(p => Path.GetFileName(p)).ToList();
 }

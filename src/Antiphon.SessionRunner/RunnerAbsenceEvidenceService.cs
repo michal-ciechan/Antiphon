@@ -111,13 +111,13 @@ public sealed class RunnerAbsenceEvidenceService
 
     public string? LatchReason { get { lock (_sync) return _latchReason; } }
 
-    /// <summary>Capability gate: adoption done, no latch, root present.</summary>
+    /// <summary>Capability gate: adoption done, no latch, store healthy or never initialized.</summary>
     public bool Ready
     {
         get
         {
             lock (_sync)
-                return _latchReason is null && SafeAdoptionComplete() && !_store.RootLost;
+                return Unready() is null;
         }
     }
 
@@ -225,25 +225,22 @@ public sealed class RunnerAbsenceEvidenceService
 
     /// <summary>
     /// D-1/D-2: every creation or attach entry calls this under the launch gate before its first
-    /// effect. A ClosedUnused record (any epoch, any generation) refuses with
-    /// <see cref="SessionIdentityClosedException"/>. Any storage problem latches evidence
-    /// unavailable for this runtime and lets the launch proceed: optional evidence storage never
-    /// becomes a new launch refusal.
+    /// effect. Admission is a whitelist (CARD-1153 F1): only a store that is healthy or never
+    /// initialized, answering no record or a Prepared/Attempted record, admits. A ClosedUnused
+    /// record (any epoch, any generation) refuses with <see cref="SessionIdentityClosedException"/>,
+    /// and so does every unknown read (corrupt, truncated or missing closed record, denied or
+    /// failed read, lost root, changed or missing store header or anchor): a closure must survive
+    /// storage failure, so unknown evidence is never read as an open identity. Only the optional
+    /// Attempted write may fail open after a positive read: it latches evidence unavailable for
+    /// this runtime and lets the launch proceed, because the read already proved no closure.
     /// </summary>
     public void RecordCreationAttempt(Guid sessionId, DateTime? acceptedStartedAt)
     {
         lock (_sync)
         {
-            var read = _store.Read(sessionId);
-            if (read.Record is { State: RunnerAbsenceRecordState.ClosedUnused })
-                throw new SessionIdentityClosedException(sessionId);
+            var read = AdmitLocked(sessionId, "attempt");
             if (read.Record is { State: RunnerAbsenceRecordState.Attempted })
                 return;
-            if (!read.IsKnown)
-            {
-                LatchLocked("attempt read unknown: " + RunnerAbsenceEvidenceStore.Describe(read));
-                return;
-            }
 
             try
             {
@@ -258,6 +255,12 @@ public sealed class RunnerAbsenceEvidenceService
                     acceptedStartedAt is { } g ? SessionGeneration.Normalize(g) : null,
                     store is { } s && s != Guid.Empty ? s : null, Epoch, _time.GetUtcNow().UtcDateTime));
             }
+            catch (RunnerAbsenceStoreUnknownException ex)
+            {
+                // The store turned unknown between the read and the write: no positive read remains.
+                LatchLocked("attempt write found the store unknown");
+                throw new SessionIdentityClosedException(sessionId, ex.Message);
+            }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
                 LatchLocked("attempt write failed: " + ex.GetType().Name);
@@ -266,20 +269,30 @@ public sealed class RunnerAbsenceEvidenceService
     }
 
     /// <summary>
-    /// Read-only admission fence: refuses a ClosedUnused id (any epoch, any generation) with
-    /// <see cref="SessionIdentityClosedException"/> and writes nothing, so a creation that later
-    /// fails validation keeps today's no-disk-effect refusal. An unreadable record latches.
+    /// Read-only admission fence with the same whitelist as <see cref="RecordCreationAttempt"/>:
+    /// refuses a ClosedUnused id or any unknown read with <see cref="SessionIdentityClosedException"/>
+    /// and writes nothing, so a creation that later fails validation keeps today's no-disk-effect
+    /// refusal. An unknown read also latches.
     /// </summary>
     public void RequireOpenIdentity(Guid sessionId)
     {
         lock (_sync)
+            AdmitLocked(sessionId, "fence");
+    }
+
+    private RunnerAbsenceRead AdmitLocked(Guid sessionId, string seam)
+    {
+        var read = _store.Read(sessionId);
+        if (read.Record is { State: RunnerAbsenceRecordState.ClosedUnused })
+            throw new SessionIdentityClosedException(sessionId);
+        if (!read.IsKnown)
         {
-            var read = _store.Read(sessionId);
-            if (read.Record is { State: RunnerAbsenceRecordState.ClosedUnused })
-                throw new SessionIdentityClosedException(sessionId);
-            if (!read.IsKnown)
-                LatchLocked("fence read unknown: " + RunnerAbsenceEvidenceStore.Describe(read));
+            var problem = RunnerAbsenceEvidenceStore.Describe(read);
+            LatchLocked(seam + " read unknown: " + problem);
+            throw new SessionIdentityClosedException(sessionId, problem);
         }
+
+        return read;
     }
 
     /// <summary>Latch evidence unavailable for the rest of this runtime.</summary>
@@ -298,7 +311,7 @@ public sealed class RunnerAbsenceEvidenceService
     {
         if (_latchReason is { } latched) return "evidence latched: " + latched;
         if (!SafeAdoptionComplete()) return "adoption incomplete";
-        if (_store.RootLost) return "evidence root missing after initialization";
+        if (_store.UnknownReason is { } unknown) return "evidence store unknown: " + unknown;
         return null;
     }
 

@@ -17,10 +17,18 @@ public sealed record RunnerAbsenceRecord(
     DateTime UpdatedAtUtc);
 
 /// <summary>
-/// Every way a strict read can end. Only <see cref="NoRecord"/> (root present, file absent) and
-/// <see cref="Record"/> are known facts; every other kind is unknown evidence, never a blank store.
+/// Every way a strict read can end. Only <see cref="NoRecord"/> (a healthy or never-initialized
+/// store without a record or closure for the id) and <see cref="Record"/> are known facts; every
+/// other kind is unknown evidence, never a blank store.
 /// </summary>
-public enum RunnerAbsenceReadKind { NoRecord, Record, Corrupt, UnknownSchema, Denied, LostRoot, IoError }
+public enum RunnerAbsenceReadKind
+{
+    NoRecord, Record, Corrupt, UnknownSchema, Denied, LostRoot, IoError,
+    /// <summary>Store anchor, header or closure log missing, changed or malformed (CARD-1153 F1).</summary>
+    StoreUnknown,
+    /// <summary>The closure log names the id but its record is missing or no longer ClosedUnused (F1).</summary>
+    ClosedRecordLost,
+}
 
 public readonly record struct RunnerAbsenceRead(RunnerAbsenceReadKind Kind, RunnerAbsenceRecord? Record, string? Detail)
 {
@@ -38,6 +46,12 @@ public interface IRunnerAbsenceEvidenceFiles
 
     /// <summary>Temp file, write, flush to disk, rename over the target.</summary>
     void WriteAtomic(string path, byte[] bytes);
+
+    /// <summary>Append and flush to disk before returning (the closure log).</summary>
+    void AppendDurable(string path, byte[] bytes);
+
+    /// <summary>File names directly under <paramref name="path"/>.</summary>
+    IReadOnlyList<string> FileNames(string path);
 }
 
 public sealed class RunnerAbsenceEvidenceFiles : IRunnerAbsenceEvidenceFiles
@@ -72,96 +86,280 @@ public sealed class RunnerAbsenceEvidenceFiles : IRunnerAbsenceEvidenceFiles
 
         File.Move(tmp, path, overwrite: true);
     }
+
+    public void AppendDurable(string path, byte[] bytes)
+    {
+        // Open, never create: a missing log was already refused by the caller as an unknown store.
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Write, FileShare.None);
+        stream.Seek(0, SeekOrigin.End);
+        stream.Write(bytes);
+        stream.Flush(flushToDisk: true);
+    }
+
+    public IReadOnlyList<string> FileNames(string path) =>
+        Directory.EnumerateFiles(path).Select(p => Path.GetFileName(p)).ToList();
 }
 
 /// <summary>
 /// CARD-1153 D-1: <c>&lt;SessionLogPath&gt;/absence-evidence/&lt;id:N&gt;.json</c>. Records are retained
 /// (no pruning, no AuditCleanup ownership). Reads are strict: a missing root after initialization,
 /// a denied or failed read, a corrupt record or an unknown schema are distinct unknown kinds.
+/// <para>
+/// F1 (closure survives storage failure). The store is initialized by its first write, in this
+/// order: root, empty closure log <c>closed.log</c>, header <c>store.json</c>, and last the anchor
+/// <c>absence-evidence.identity.json</c> beside the root, both naming one random incarnation. A
+/// closure appends the id to the closure log (flushed) before its ClosedUnused record is written.
+/// Only two states are positive: never initialized (no anchor, and no record or closure under the
+/// root) and healthy (anchor, header and remembered incarnation agree; closure log present and
+/// well formed). Anything else (anchor or header missing or changed, root lost, closure log
+/// missing or malformed, a logged closure whose record is missing, unreadable or not ClosedUnused)
+/// is unknown, so a wiped, replaced or damaged store is never read as "nothing was certified".
+/// Rename durability: the record and header are flushed before their rename, but the containing
+/// directory is not; a rename lost in a crash leaves the flushed closure log entry, which reads as
+/// <see cref="RunnerAbsenceReadKind.ClosedRecordLost"/>. Residual (runner-store tampering, H-24):
+/// deleting both a closed record and its closure log line, or the anchor together with the whole
+/// root, is indistinguishable from an id that was never closed.
+/// </para>
 /// </summary>
 public sealed class RunnerAbsenceEvidenceStore
 {
     public const int SchemaVersion = 1;
     public const string DirectoryName = "absence-evidence";
+    public const string HeaderName = "store.json";
+    public const string ClosureLogName = "closed.log";
+    private const int ClosureLineBytes = 33;
 
     private static readonly string[] Members =
         ["version", "state", "sessionId", "acceptedStartedAt", "runnerStoreId", "runtimeEpoch", "updatedAtUtc"];
 
-    private readonly IRunnerAbsenceEvidenceFiles _files;
+    private IRunnerAbsenceEvidenceFiles _files;
     private readonly object _rootGate = new();
-    private bool _initialized;
+    private Guid? _incarnation;
 
     public string Root { get; }
 
+    public string AnchorPath => Path.TrimEndingDirectorySeparator(Root) + ".identity.json";
+    public string HeaderPath => Path.Combine(Root, HeaderName);
+    public string ClosureLogPath => Path.Combine(Root, ClosureLogName);
+
     /// <summary>
-    /// Construction has no disk effect: the root is created by the first write. A root that existed
-    /// at construction, or that this instance created, is initialized; its later absence is
-    /// <see cref="RunnerAbsenceReadKind.LostRoot"/>, never a blank store.
+    /// Construction has no disk effect: the store is initialized by the first write. An anchor
+    /// readable at construction pins the incarnation this process will accept.
     /// </summary>
     public RunnerAbsenceEvidenceStore(string sessionLogPath, IRunnerAbsenceEvidenceFiles? files = null)
     {
         _files = files ?? RunnerAbsenceEvidenceFiles.Instance;
         Root = Path.Combine(sessionLogPath, DirectoryName);
-        _initialized = RootPresent();
+        try
+        {
+            if (_files.ReadIfExists(AnchorPath) is { } anchor && TryIdentity(anchor, out var incarnation))
+                _incarnation = incarnation;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
     }
 
-    /// <summary>The root was initialized and is now missing (recycled volume, deletion, IO failure).</summary>
-    public bool RootLost
+    /// <summary>CARD-1153 F1 test seam: swap the file access after construction (runtime tests).</summary>
+    internal IRunnerAbsenceEvidenceFiles Files { get => _files; set => _files = value; }
+
+    /// <summary>Null while the store is healthy or never initialized; otherwise why it is unknown.</summary>
+    public string? UnknownReason
     {
-        get { lock (_rootGate) return _initialized && !RootPresent(); }
+        get
+        {
+            lock (_rootGate)
+            {
+                var state = Inspect();
+                return state.Unknown is { } unknown ? Describe(unknown) : null;
+            }
+        }
     }
 
     public static string DirectoryFor(string sessionLogPath) => Path.Combine(sessionLogPath, DirectoryName);
 
     public string PathFor(Guid sessionId) => Path.Combine(Root, $"{sessionId:N}.json");
 
-    public bool RootPresent()
-    {
-        try { return _files.DirectoryExists(Root); }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return false; }
-    }
-
     public RunnerAbsenceRead Read(Guid sessionId)
     {
-        if (!RootPresent())
+        lock (_rootGate)
         {
-            // Before the first write nothing was ever recorded here: an absent root is no record.
-            lock (_rootGate)
-                return _initialized
-                    ? new(RunnerAbsenceReadKind.LostRoot, null, "evidence root missing after initialization")
+            var state = Inspect();
+            if (state.Unknown is { } unknown)
+                return unknown;
+            if (!state.Initialized)
+                return new(RunnerAbsenceReadKind.NoRecord, null, null);
+
+            var closed = state.Closed!.Contains(sessionId);
+            byte[]? bytes;
+            try { bytes = _files.ReadIfExists(PathFor(sessionId)); }
+            catch (UnauthorizedAccessException ex) { return new(RunnerAbsenceReadKind.Denied, null, ex.GetType().Name); }
+            catch (IOException ex) { return new(RunnerAbsenceReadKind.IoError, null, ex.GetType().Name); }
+            if (bytes is null)
+            {
+                if (!SafeDirectoryExists(Root))
+                    return new(RunnerAbsenceReadKind.LostRoot, null, "evidence root missing after initialization");
+                return closed
+                    ? new(RunnerAbsenceReadKind.ClosedRecordLost, null, "closed record missing")
                     : new(RunnerAbsenceReadKind.NoRecord, null, null);
-        }
+            }
 
-        byte[]? bytes;
-        try { bytes = _files.ReadIfExists(PathFor(sessionId)); }
-        catch (UnauthorizedAccessException ex) { return new(RunnerAbsenceReadKind.Denied, null, ex.GetType().Name); }
-        catch (IOException ex) { return new(RunnerAbsenceReadKind.IoError, null, ex.GetType().Name); }
-        if (bytes is null)
-        {
-            // The file is absent, but only a root that is still present makes that a known fact.
-            return RootPresent() || !_initialized
-                ? new(RunnerAbsenceReadKind.NoRecord, null, null)
-                : new(RunnerAbsenceReadKind.LostRoot, null, "evidence root missing after initialization");
+            var parsed = Parse(sessionId, bytes);
+            if (closed && parsed.Record is not { State: RunnerAbsenceRecordState.ClosedUnused })
+                return new(RunnerAbsenceReadKind.ClosedRecordLost, null,
+                    "closed record reads as " + (parsed.Record?.State.ToString() ?? Describe(parsed)));
+            return parsed;
         }
-
-        return Parse(sessionId, bytes);
     }
 
-    /// <summary>Durable before return; a failure throws so the caller can latch.</summary>
+    /// <summary>
+    /// Durable before return; a failure throws so the caller can latch. A store that is not healthy
+    /// or never initialized throws <see cref="RunnerAbsenceStoreUnknownException"/> and writes nothing.
+    /// </summary>
     public void Write(RunnerAbsenceRecord record)
     {
         lock (_rootGate)
         {
-            if (_initialized && !RootPresent())
-                throw new IOException("evidence root missing after initialization");
-            if (!_initialized)
+            var state = Inspect();
+            if (state.Unknown is { } unknown)
+                throw new RunnerAbsenceStoreUnknownException(Describe(unknown));
+            if (!state.Initialized)
             {
-                _files.CreateDirectory(Root);
-                _initialized = true;
+                state = Initialize();
             }
+
+            if (record.State == RunnerAbsenceRecordState.ClosedUnused && !state.Closed!.Contains(record.SessionId))
+                _files.AppendDurable(ClosureLogPath, Encoding.ASCII.GetBytes(record.SessionId.ToString("N") + "\n"));
+            _files.WriteAtomic(PathFor(record.SessionId), Serialize(record));
+        }
+    }
+
+    private readonly record struct StoreState(bool Initialized, HashSet<Guid>? Closed, RunnerAbsenceRead? Unknown);
+
+    private static StoreState UnknownState(RunnerAbsenceReadKind kind, string detail) =>
+        new(false, null, new RunnerAbsenceRead(kind, null, detail));
+
+    // Caller holds _rootGate.
+    private StoreState Inspect()
+    {
+        byte[]? anchor;
+        bool rootPresent;
+        try
+        {
+            anchor = _files.ReadIfExists(AnchorPath);
+            rootPresent = _files.DirectoryExists(Root);
+        }
+        catch (UnauthorizedAccessException ex) { return UnknownState(RunnerAbsenceReadKind.Denied, "store anchor: " + ex.GetType().Name); }
+        catch (IOException ex) { return UnknownState(RunnerAbsenceReadKind.IoError, "store anchor: " + ex.GetType().Name); }
+
+        if (anchor is null)
+        {
+            if (_incarnation is not null)
+                return rootPresent
+                    ? UnknownState(RunnerAbsenceReadKind.StoreUnknown, "store anchor missing after initialization")
+                    : UnknownState(RunnerAbsenceReadKind.LostRoot, "evidence root missing after initialization");
+            if (!rootPresent)
+                return new(false, null, null);
+            // An interrupted first initialization leaves at most the header and an empty log; a
+            // record or a logged closure without an anchor means the anchor was lost.
+            try
+            {
+                foreach (var name in _files.FileNames(Root))
+                {
+                    if (name is HeaderName || name.EndsWith(".tmp", StringComparison.Ordinal))
+                        continue;
+                    if (name == ClosureLogName && _files.ReadIfExists(ClosureLogPath) is { Length: 0 })
+                        continue;
+                    return UnknownState(RunnerAbsenceReadKind.StoreUnknown, "evidence without a store anchor");
+                }
+            }
+            catch (UnauthorizedAccessException ex) { return UnknownState(RunnerAbsenceReadKind.Denied, "store root: " + ex.GetType().Name); }
+            catch (IOException ex) { return UnknownState(RunnerAbsenceReadKind.IoError, "store root: " + ex.GetType().Name); }
+            return new(false, null, null);
         }
 
-        _files.WriteAtomic(PathFor(record.SessionId), Serialize(record));
+        if (!TryIdentity(anchor, out var incarnation))
+            return UnknownState(RunnerAbsenceReadKind.StoreUnknown, "store anchor malformed");
+        if (_incarnation is { } known && known != incarnation)
+            return UnknownState(RunnerAbsenceReadKind.StoreUnknown, "store incarnation changed");
+        if (!rootPresent)
+            return UnknownState(RunnerAbsenceReadKind.LostRoot, "evidence root missing after initialization");
+
+        byte[]? header;
+        byte[]? log;
+        try
+        {
+            header = _files.ReadIfExists(HeaderPath);
+            log = _files.ReadIfExists(ClosureLogPath);
+        }
+        catch (UnauthorizedAccessException ex) { return UnknownState(RunnerAbsenceReadKind.Denied, "store header: " + ex.GetType().Name); }
+        catch (IOException ex) { return UnknownState(RunnerAbsenceReadKind.IoError, "store header: " + ex.GetType().Name); }
+        if (header is null)
+            return UnknownState(RunnerAbsenceReadKind.StoreUnknown, "store header missing");
+        if (!TryIdentity(header, out var headerIncarnation) || headerIncarnation != incarnation)
+            return UnknownState(RunnerAbsenceReadKind.StoreUnknown, "store header changed");
+        if (log is null)
+            return UnknownState(RunnerAbsenceReadKind.StoreUnknown, "closure log missing");
+        if (ParseClosures(log) is not { } closed)
+            return UnknownState(RunnerAbsenceReadKind.StoreUnknown, "closure log malformed");
+
+        _incarnation ??= incarnation;
+        return new(true, closed, null);
+    }
+
+    // Caller holds _rootGate; the store is never initialized. The anchor is written last, so an
+    // interrupted initialization is still "never initialized" and is completed by the next write.
+    private StoreState Initialize()
+    {
+        var incarnation = Guid.NewGuid();
+        var identity = Identity(incarnation);
+        _files.CreateDirectory(Root);
+        _files.WriteAtomic(ClosureLogPath, []);
+        _files.WriteAtomic(HeaderPath, identity);
+        _files.WriteAtomic(AnchorPath, identity);
+        _incarnation = incarnation;
+        return new(true, [], null);
+    }
+
+    private bool SafeDirectoryExists(string path)
+    {
+        try { return _files.DirectoryExists(path); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return false; }
+    }
+
+    private static HashSet<Guid>? ParseClosures(byte[] log)
+    {
+        if (log.Length % ClosureLineBytes != 0)
+            return null;
+        var closed = new HashSet<Guid>();
+        for (var offset = 0; offset < log.Length; offset += ClosureLineBytes)
+        {
+            if (log[offset + ClosureLineBytes - 1] != (byte)'\n'
+                || !Guid.TryParseExact(Encoding.ASCII.GetString(log, offset, ClosureLineBytes - 1), "N", out var id)
+                || id == Guid.Empty)
+                return null;
+            closed.Add(id);
+        }
+
+        return closed;
+    }
+
+    private static byte[] Identity(Guid incarnation) =>
+        Encoding.UTF8.GetBytes($"{{\"version\":{SchemaVersion},\"incarnation\":\"{incarnation:D}\"}}");
+
+    private static bool TryIdentity(byte[] bytes, out Guid incarnation)
+    {
+        incarnation = Guid.Empty;
+        try
+        {
+            using var document = JsonDocument.Parse(bytes);
+            var root = document.RootElement;
+            return root.ValueKind == JsonValueKind.Object
+                && root.EnumerateObject().Count() == 2
+                && root.TryGetProperty("version", out var version) && version.ValueKind == JsonValueKind.Number
+                && version.TryGetInt32(out var v) && v == SchemaVersion
+                && root.TryGetProperty("incarnation", out var value) && value.ValueKind == JsonValueKind.String
+                && Guid.TryParseExact(value.GetString(), "D", out incarnation) && incarnation != Guid.Empty;
+        }
+        catch (JsonException) { return false; }
     }
 
     public static byte[] Serialize(RunnerAbsenceRecord record)
@@ -262,3 +460,7 @@ public sealed class RunnerAbsenceEvidenceStore
     internal static string Describe(RunnerAbsenceRead read) =>
         new StringBuilder(read.Kind.ToString()).Append(read.Detail is null ? "" : ": " + read.Detail).ToString();
 }
+
+/// <summary>CARD-1153 F1: the store is not healthy; nothing was written.</summary>
+public sealed class RunnerAbsenceStoreUnknownException(string reason)
+    : IOException("absence evidence store unknown: " + reason);

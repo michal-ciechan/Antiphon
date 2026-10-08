@@ -280,7 +280,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
     // CARD-1153 A-5, called under the launch gate. The fence is read-only and runs at gate entry,
     // before custody PrepareStart; it throws SessionIdentityClosedException for a certified id and
-    // never refuses otherwise. The write-ahead marker runs after request validation and before the
+    // (F1) for any evidence read it cannot prove open: a closure survives storage failure. The write-ahead marker runs after request validation and before the
     // first disk or provider effect (custody admission, Grok rules file, manifest/sidecar, launch),
     // so a validation refusal keeps its existing no-disk-effect behaviour.
     private void RequireOpenIdentityUnderGate(Guid sessionId) => _absence?.RequireOpenIdentity(sessionId);
@@ -292,14 +292,17 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         CreationEffectForTest is { } hook ? hook(sessionId, path) : Task.CompletedTask;
 
     // Adoption runs before readiness and outside a launch gate: record the discovered id as
-    // attempted. A closed record with a surviving artifact is runner-store tampering (H-24); keep
-    // the session, and latch evidence for this epoch instead of refusing adoption.
+    // attempted. A closed record with a surviving artifact is runner-store tampering (H-24), and an
+    // unknown evidence read cannot reopen anything here: the artifact already exists. Keep the
+    // session (adoption is existing work, never a new creation) and latch evidence for this epoch.
     private void RecordAdoptedAttempt(Guid sessionId, DateTime? acceptedStartedAt)
     {
         try { _absence?.RecordCreationAttempt(sessionId, acceptedStartedAt); }
-        catch (SessionIdentityClosedException)
+        catch (SessionIdentityClosedException ex)
         {
-            _absence?.Latch($"closed identity {sessionId:D} has a surviving artifact at adoption");
+            _absence?.Latch(ex.EvidenceProblem is null
+                ? $"closed identity {sessionId:D} has a surviving artifact at adoption"
+                : $"adoption of {sessionId:D} found unknown evidence");
         }
     }
 

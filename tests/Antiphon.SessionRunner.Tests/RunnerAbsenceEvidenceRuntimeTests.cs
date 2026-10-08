@@ -229,6 +229,83 @@ public class RunnerAbsenceEvidenceRuntimeTests
         repeat.Refusal.ShouldBeNull("a repeat certificate with a fresh nonce is still issued");
         repeat.Value!.RequestNonce.ShouldBe(nonce);
     }
+
+    /// <summary>
+    /// CARD-1153 F1 (Review 1a174347 probes closed-then-denied/corrupt/lost-root). A certificate is
+    /// issued, then the evidence store is damaged (optionally across a runner restart); the
+    /// delayed same-id start or attach must refuse with the closed-identity type before any
+    /// provider effect, registration, manifest or sidecar, and the id must never certify again.
+    /// </summary>
+    [Test]
+    [Arguments("corrupt-record", "start", false)]
+    [Arguments("truncated-record", "attach", false)]
+    [Arguments("zero-length-record", "start", false)]
+    [Arguments("deleted-record", "attach", false)]
+    [Arguments("directory-in-place", "start", false)]
+    [Arguments("permission-denied", "attach", false)]
+    [Arguments("store-wiped", "start", false)]
+    [Arguments("lost-root", "attach", false)]
+    [Arguments("deleted-record", "start", true)]
+    [Arguments("lost-root", "start", true)]
+    [Arguments("store-wiped", "attach", true)]
+    [Arguments("corrupt-record", "attach", true)]
+    public async Task C1153_Certified_identity_survives_store_damage(string fault, string entry, bool restart)
+    {
+        await using var first = await RuntimeWorld.CreateAsync();
+        var id = Guid.NewGuid();
+        (await first.PrepareAsync(id)).Refusal.ShouldBeNull();
+        (await first.CertifyAsync(id)).Value!.IdentityClosed.ShouldBe(true, "the certificate is already in the caller's hands");
+        var path = first.RecordPath(id);
+        var root = RunnerAbsenceEvidenceStore.DirectoryFor(first.Root);
+        var closed = File.ReadAllBytes(path);
+        var restoreMode = (UnixFileMode?)null;
+        FileStream? exclusive = null;
+        switch (fault)
+        {
+            case "corrupt-record": File.WriteAllText(path, "{\"version\":1,\"state\":\"Clo"); break;
+            case "truncated-record": File.WriteAllBytes(path, closed[..(closed.Length / 2)]); break;
+            case "zero-length-record": File.WriteAllBytes(path, []); break;
+            case "deleted-record": File.Delete(path); break;
+            case "directory-in-place": File.Delete(path); Directory.CreateDirectory(path); break;
+            case "permission-denied":
+                if (OperatingSystem.IsWindows())
+                    exclusive = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+                else
+                {
+                    restoreMode = File.GetUnixFileMode(path);
+                    File.SetUnixFileMode(path, UnixFileMode.None);
+                }
+                break;
+            case "store-wiped": foreach (var file in Directory.GetFiles(root)) File.Delete(file); break;
+            case "lost-root": Directory.Delete(root, recursive: true); break;
+            default: throw new ArgumentOutOfRangeException(nameof(fault), fault, null);
+        }
+
+        try
+        {
+            await using var restarted = restart ? await first.RestartAsync() : null;
+            var world = restarted ?? first;
+            world.ThrowAtEffect = true; // a regression reaches the fixture seam, never a real process
+            var attempt = entry == "start"
+                ? world.Runtime.StartAsync(world.Launch(id), CancellationToken.None)
+                : world.Runtime.AttachHerdrAsync(world.Attach(id), CancellationToken.None);
+
+            var refused = await Should.ThrowAsync<SessionIdentityClosedException>(attempt);
+
+            refused.SessionId.ShouldBe(id);
+            world.Effects.ShouldBeEmpty($"{fault}: no provider effect for an identity that cannot be proven open");
+            world.Runtime.List().ShouldNotContain(s => s.SessionId == id);
+            world.Runtime.StartCoreSessionRegistrations.ShouldBe(0);
+            File.Exists(PtyHostManifest.PathFor(world.Settings.PtyHostManifestDir, id)).ShouldBeFalse();
+            File.Exists(HerdrPaneSidecar.PathFor(world.Root, id)).ShouldBeFalse();
+            (await world.CertifyAsync(id)).Value.ShouldBeNull($"{fault}: damaged evidence never certifies absence");
+        }
+        finally
+        {
+            exclusive?.Dispose();
+            if (restoreMode is { } mode) File.SetUnixFileMode(path, mode);
+        }
+    }
 }
 
 internal sealed class ProviderEffectForTestException() : Exception("fixture: provider effect refused before any process");
