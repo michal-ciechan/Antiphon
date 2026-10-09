@@ -251,7 +251,7 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
                 }
                 // CARD-1157 D-1/D-3: a whitelisted keyed row is scanned on the session it was sent
                 // to, when that session's row exists. Any other shape scans the parent with no added
-                // command. A miss on either target leaves the note's state as it was.
+                // command. Only a receipt found on the scanned session confirms.
                 var scanSession = session;
                 var scanStatus = destination.Status;
                 var scanStartedAt = destination.StartedAt;

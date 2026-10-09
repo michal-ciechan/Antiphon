@@ -75,7 +75,7 @@ public sealed class LandReceiptScanCache(TimeProvider clock)
     {
         /// <summary>
         /// W-6: a Ready snapshot with a server epoch, a positive revision, sane counts and an accepted
-        /// generation equal to the destination's <c>StartedAt</c>. Anything else is no stamp.
+        /// generation equal to the scanned session's <c>StartedAt</c>. Anything else is no stamp.
         /// </summary>
         internal static bool TryCreate(Observation observation, DateTime? destinationStartedAt,
             out StateStamp? stamp, out string refusal)
@@ -103,7 +103,7 @@ public sealed class LandReceiptScanCache(TimeProvider clock)
     /// <summary>
     /// W-1..W-4: binds the scan context only for a well-formed identity (a real note keyed to exactly
     /// this row, with a parent session to scan and a row destination), an enumerated note state and
-    /// kind, a terminal destination (A-1) and an ordinary keyed-row body that is exactly the expected
+    /// kind, a terminal scanned session (A-1) and an ordinary keyed-row body that is exactly the expected
     /// text. The row destination is bound, not required equal to the parent (A-3). The context names
     /// the parent as its scanned session; the reconciler rebinds it when it scans the row destination
     /// (CARD-1157 D-4). Every other shape keeps today's scan; nothing here inspects a diagnostic or
