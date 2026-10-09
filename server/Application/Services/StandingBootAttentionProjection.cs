@@ -12,9 +12,12 @@ namespace Antiphon.Server.Application.Services;
 /// <summary>
 /// CARD-1156 D-6 (operator decision option A, detection only): the attention row for a taskless
 /// AlwaysOn boot stall is DERIVED FROM CURRENT FACTS, not from a receipt. The sweep's
-/// <c>standingBoot:v1;</c> incidents are optional history: a failed save, a receipt older than the
-/// 24-hour recency window or one the prune deleted never hides a current episode, and a receipt
-/// whose episode a model reply, a terminal session or a newer launch has resolved never shows one.
+/// <c>standingBoot:v1;</c> incidents are optional history: once the clock stage is due, the row is
+/// shown whether a save failed, the receipt is older than the 24-hour recency window or the prune
+/// deleted it (<c>C1156_Current_boot_attention_survives_optional_history</c>), and a receipt whose
+/// episode a model reply, a terminal session or a newer launch has resolved shows no row
+/// (<c>C1156_Positive_resolution_clears_only_the_current_episode</c>). Below the boot due only a
+/// readable operator receipt of the same episode shows a row (see the receipt read below).
 ///
 /// <para><b>Read-only.</b> No runner call, no queue operation, no arm, no save and no telemetry
 /// write happens during a GET. The candidate reads are bulk (owners, live sessions, open tasks,
@@ -98,8 +101,10 @@ internal static class StandingBootAttentionProjection
                 .ToListAsync(ct))
             .ToHashSet();
 
-        // Optional history: a failed read projects every episode as if it had no receipt (the
-        // ordinary clock stage), so it can neither abort the feed nor hide a current row.
+        // Optional history: a failed read cannot abort the feed. Every episode is then projected as
+        // if it had no receipt, from the clock stage alone; after a clock rollback below the boot due
+        // that stage is None and no row is shown, and the unattached receipt stays ordinary
+        // recent-incident history (C1156_Receipt_read_fault_below_the_boot_due_shows_no_standing_row).
         ILookup<Guid, (Guid Id, Guid SessionId, string FailureReason)> receipts;
         try
         {
@@ -167,8 +172,9 @@ internal static class StandingBootAttentionProjection
             var episodeReceipts = receipts[session.Id]
                 .Where(r => r.FailureReason.StartsWith(prefix, StringComparison.Ordinal))
                 .ToList();
-            // Once the operator stage is on record for THIS episode it stays the displayed stage,
-            // even before the boot due, so a clock stepping back cannot downgrade or hide the row.
+            // A READ operator receipt for THIS episode makes the operator stage the displayed stage,
+            // even before the boot due, so a clock stepping back does not downgrade or hide the row
+            // while that receipt is readable (C1156_Recorded_operator_stage_survives_clock_rollback).
             var stage = StandingBootWatchPolicy.IsRecorded(
                     episodeReceipts.Select(r => (string?)r.FailureReason), prefix, StandingBootWatchPolicy.Stage.NeedsOperator)
                 ? StandingBootWatchPolicy.Stage.NeedsOperator
