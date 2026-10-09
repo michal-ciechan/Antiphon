@@ -28,7 +28,7 @@ namespace Antiphon.Tests.Application;
 // (docs/investigations/2026-10-08-card-1137-release-stall.md). No assembly-wide scanner enforces this:
 // a static guard cannot establish a serialized result type, so it was removed deliberately. The rule
 // lives here; EntityScalarSnapshotConsumerGuardTests fails on any System.Text.Json serialization in
-// this class and the two other call-site classes beyond a small exact allow-list (no type
+// this class and the other protected call-site classes beyond a small exact allow-list (no type
 // classification), and EntityScalarSnapshotTests proves the snapshot covers every scalar property.
 [Category("Integration")]
 public class TerminalRunnerSeatReleaseTests
