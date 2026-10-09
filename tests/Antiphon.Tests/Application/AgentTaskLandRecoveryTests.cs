@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Globalization;
+using System.Text.Json;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Infrastructure.Git;
 using Antiphon.Server.Domain.Enums;
@@ -127,41 +129,56 @@ public sealed class AgentTaskLandRecoveryTests
             await h.Fixture.RequiredAsync(h.Fixture.Repository, "push", "origin", h.Fixture.TargetRef);
         }
         var ready = Path.Combine(h.Fixture.Root, "worker-ready.json");
-        var script = Path.Combine(h.Fixture.Root, "protocol-worker.ps1");
-        await File.WriteAllTextAsync(script, """
-            $ErrorActionPreference = 'Stop'
-            $assembly = [Reflection.Assembly]::LoadFrom($args[0])
-            $type = $assembly.GetType('Antiphon.Tests.TestHelpers.LandingSafetyHarness', $true)
-            $method = $type.GetMethod('RunCrashWorkerAsync', [Reflection.BindingFlags]'Public,Static')
-            $task = $method.Invoke($null, [object[]]@($args[1], $args[2], $args[3], $args[4]))
-            $task.GetAwaiter().GetResult()
-            """);
-        var start = new System.Diagnostics.ProcessStartInfo("pwsh") { UseShellExecute = false, CreateNoWindow = true,
-            RedirectStandardOutput = true, RedirectStandardError = true };
-        foreach (var arg in new[] { "-NoProfile", "-File", script, typeof(LandingSafetyHarness).Assembly.Location,
-                     h.Fixture.Root, h.Fixture.TaskId.ToString(), cut, ready }) start.ArgumentList.Add(arg);
-        start.Environment["ANTIPHON_C448_TEST_CONNECTION"] = h.Schema.ConnectionString;
-        using var worker = System.Diagnostics.Process.Start(start)!;
-        var stdout = worker.StandardOutput.ReadToEndAsync();
-        var stderr = worker.StandardError.ReadToEndAsync();
+        AssertLandAdmission(h, cut, ready);
+        if (cut == "C03")
+            await AssertLandObservationSeamsAsync(h, cut, ready);
+        var crashRequest = new LandProtocolCrashWorker.Request(h.Fixture.Root, h.Fixture.TaskId, cut, ready);
+        var prepared = CrashWorkerProcess.Prepare(new CrashWorkerProcess.Spec(
+            LandProtocolCrashWorker.Marker,
+            JsonSerializer.Serialize(crashRequest),
+            "ANTIPHON_C448_TEST_CONNECTION",
+            h.Schema.ConnectionString,
+            "/*/*/AgentTaskLandRecoveryTests/C448_V15_RealWorkerDeathRecoversDurableBoundaries",
+            ready,
+            cut));
+        AssertChildCarriesOneMarker(prepared, LandProtocolCrashWorker.Marker);
+        AssertConnectionStaysInEnvironment(prepared);
+        await using var crash = CrashWorkerProcess.Start(prepared);
+        var owned = new List<Process> { crash.Process };
+        Process? witness = null;
         try
         {
             using var budget = new CancellationTokenSource(TimeSpan.FromMinutes(2));
-            while (!File.Exists(ready) && !worker.HasExited) await Task.Delay(100, budget.Token);
-            File.Exists(ready).ShouldBeTrue(worker.HasExited ? await stderr : "required crash cut not reached");
+            CrashWorkerProcess.ReadyView observed;
+            try
+            {
+                observed = await CrashWorkerProcess.ObserveAsync(crash.Process, ready, cut, budget.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                var diagnostic = crash.Process.HasExited ? await crash.Stderr : "required crash cut not reached";
+                throw new TimeoutException(diagnostic);
+            }
+
+            observed.Outcome.ShouldBe("accepted", observed.Error);
+            observed.Cut.ShouldBe(cut, "worker-cut-identity");
+            observed.Pid.ShouldBe(crash.Process.Id, "worker-pid-identity");
             var interrupted = (await h.OperationAsync()).ShouldNotBeNull();
             var expected = cut switch { "C03" => LandPhase.Inspected, "C05" => LandPhase.RebaseStarted,
                 // CARD-0688 D-4: the target fast-forward (C09) is the canonical step after publication.
                 "C09" => LandPhase.PublicationConfirmed, "C12" => LandPhase.PushStarted,
                 "C14" => LandPhase.PublicationConfirmed, _ => LandPhase.CleanupStarted };
-            interrupted.Phase.ShouldBe(expected);
+            interrupted.Phase.ShouldBe(expected, "worker-durable-phase");
             if (cut == "C03")
             {
                 interrupted.SourcePinned.ShouldBeFalse("worker dies before the source-pin result is saved");
                 (await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", interrupted.RecoveryRefPrefix + "/source")).Trim().ShouldBe(source);
             }
-            worker.Kill(entireProcessTree: false);
-            await worker.WaitForExitAsync();
+            witness = Process.GetProcessById(int.Parse(
+                await File.ReadAllTextAsync(ready + ".witness"), CultureInfo.InvariantCulture));
+            crash.Process.Kill(entireProcessTree: false);
+            await crash.Process.WaitForExitAsync();
+            witness.HasExited.ShouldBeFalse("worker-crash-kills-root-only");
             string? index = null;
             if (cut == "C05")
             {
@@ -170,24 +187,30 @@ public sealed class AgentTaskLandRecoveryTests
                 index = (await h.Fixture.RequiredAsync(h.Fixture.Source, "write-tree")).Trim();
             }
             h.Fixture.Git.Trace.Clear();
-            start.ArgumentList[6] = "resume";
-            using (var resumedWorker = System.Diagnostics.Process.Start(start)!)
+            var resumeRequest = crashRequest with { Cut = "resume" };
+            var resumeJson = JsonSerializer.Serialize(resumeRequest);
+            JsonDocument.Parse(resumeJson).RootElement.GetProperty("Cut").GetString()
+                .ShouldBe("resume", "worker-typed-resume");
+            var resumePrepared = CrashWorkerProcess.Prepare(prepared.Spec with
             {
-                var resumedOutput = resumedWorker.StandardOutput.ReadToEndAsync();
-                var resumedError = resumedWorker.StandardError.ReadToEndAsync();
-                using var resumedBudget = new CancellationTokenSource(TimeSpan.FromMinutes(2));
-                try { await resumedWorker.WaitForExitAsync(resumedBudget.Token); }
-                finally
-                {
-                    if (!resumedWorker.HasExited) resumedWorker.Kill(true);
-                    await resumedWorker.WaitForExitAsync();
-                    await Task.WhenAll(resumedOutput, resumedError);
-                }
-                resumedWorker.ExitCode.ShouldBe(0, await resumedError);
-                h.Fixture.Git.Trace.AddRange(System.Text.Json.JsonSerializer.Deserialize<string[][]>(
-                    await File.ReadAllTextAsync(ready + ".resume-trace.json"))!);
+                RequestJson = resumeJson,
+                RequestedCut = "resume",
+            });
+            await using var resumed = CrashWorkerProcess.Start(resumePrepared);
+            owned.Add(resumed.Process);
+            using var resumedBudget = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+            try { await resumed.Process.WaitForExitAsync(resumedBudget.Token); }
+            finally
+            {
+                if (!resumed.Process.HasExited) resumed.Process.Kill(entireProcessTree: true);
+                await resumed.Process.WaitForExitAsync();
+                await Task.WhenAll(resumed.Stdout, resumed.Stderr);
             }
-            var recovered = (await h.OperationAsync()).ShouldNotBeNull();
+            resumed.Process.ExitCode.ShouldBe(0, "worker-resume-exit: " + await resumed.Stderr);
+            (await resumed.Stdout).ShouldContain(CrashWorkerProcess.StdoutSentinel, Case.Sensitive, "worker-stdout-drained");
+            h.Fixture.Git.Trace.AddRange(JsonSerializer.Deserialize<string[][]>(
+                await File.ReadAllTextAsync(ready + ".resume-trace.json"))!);
+            var recovered = (await h.OperationAsync()).ShouldNotBeNull("worker-parent-fixture-survives");
             recovered.Id.ShouldBe(interrupted.Id);
             (await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", recovered.RecoveryRefPrefix + "/source")).Trim().ShouldBe(source);
             if (cut == "C05")
@@ -228,13 +251,143 @@ public sealed class AgentTaskLandRecoveryTests
                 (await h.Fixture.RequiredAsync(h.Fixture.Remote, "rev-parse", h.Fixture.TargetRef)).Trim().ShouldBe(source);
             }
             await h.Fixture.AssertRemoteSourceAsync();
+            Directory.Exists(h.Fixture.Root).ShouldBeTrue("worker-parent-fixture-survives");
+            await CrashWorkerProcess.JoinOwnedAsync(owned, witness);
+            if (witness is not null)
+                witness.HasExited.ShouldBeTrue("worker-owned-children-joined");
+            foreach (var process in owned)
+                process.HasExited.ShouldBeTrue("worker-owned-children-joined");
         }
         finally
         {
-            if (!worker.HasExited) worker.Kill(entireProcessTree: true);
-            await worker.WaitForExitAsync();
-            await Task.WhenAll(stdout, stderr);
+            if (witness is null && File.Exists(ready + ".witness")
+                && int.TryParse(File.ReadAllText(ready + ".witness"), out var witnessPid))
+            {
+                try { witness = Process.GetProcessById(witnessPid); }
+                catch (ArgumentException) { }
+            }
+
+            if (witness is not null && !witness.HasExited)
+            {
+                try { witness.Kill(entireProcessTree: true); }
+                catch (InvalidOperationException) { }
+            }
+
+            foreach (var process in owned)
+            {
+                if (!process.HasExited)
+                {
+                    try { process.Kill(entireProcessTree: true); }
+                    catch (InvalidOperationException) { }
+                }
+            }
+
+            await crash.DrainAsync();
         }
+    }
+
+    private static void AssertLandAdmission(LandingSafetyHarness h, string cut, string ready)
+    {
+        var owned = new LandProtocolCrashWorker.Request(h.Fixture.Root, h.Fixture.TaskId, cut, ready);
+        LandProtocolCrashWorker.Rejection(owned).ShouldBeNull();
+        var outsideRoot = Path.Combine(Path.GetTempPath(), "c889-not-owned-" + Guid.NewGuid().ToString("N"));
+        LandProtocolCrashWorker.Rejection(owned with { Root = outsideRoot })
+            .ShouldNotBeNull("worker-root-owned");
+        var outsideReady = Path.Combine(Path.GetTempPath(), "c889-outside-" + Guid.NewGuid().ToString("N") + ".json");
+        LandProtocolCrashWorker.Rejection(owned with { Ready = outsideReady })
+            .ShouldNotBeNull("worker-ready-confined");
+        LandProtocolCrashWorker.Rejection(owned with { TaskId = Guid.NewGuid() })
+            .ShouldNotBeNull("worker-task-owned");
+        LandProtocolCrashWorker.Rejection(owned with { Cut = "not-a-land-cut" })
+            .ShouldNotBeNull("worker-cut-allowed");
+    }
+
+    private static async Task AssertLandObservationSeamsAsync(LandingSafetyHarness h, string cut, string ready)
+    {
+        var absent = Path.Combine(h.Fixture.Root, "worker-ready-absent.json");
+        var earlyStart = new ProcessStartInfo("pwsh")
+        {
+            UseShellExecute = false, CreateNoWindow = true,
+            RedirectStandardOutput = true, RedirectStandardError = true,
+        };
+        earlyStart.ArgumentList.Add("-NoProfile");
+        earlyStart.ArgumentList.Add("-NonInteractive");
+        earlyStart.ArgumentList.Add("-Command");
+        earlyStart.ArgumentList.Add("exit 3");
+        using (var early = Process.Start(earlyStart)!)
+        {
+            var earlyOut = early.StandardOutput.ReadToEndAsync();
+            var earlyErr = early.StandardError.ReadToEndAsync();
+            await early.WaitForExitAsync();
+            await Task.WhenAll(earlyOut, earlyErr);
+            var earlyView = await CrashWorkerProcess.ObserveAsync(
+                early, absent, cut, CancellationToken.None, Task.CompletedTask);
+            earlyView.Outcome.ShouldBe("early-exit", "worker-exit-before-ready");
+            earlyView.ExitCode.ShouldBe(3, "worker-exit-before-ready");
+            earlyView.Error.ShouldNotBeNullOrWhiteSpace("worker-exit-before-ready");
+        }
+
+        var recheckPath = ready + ".recheck.json";
+        var sleeperStart = new ProcessStartInfo("pwsh")
+        {
+            UseShellExecute = false, CreateNoWindow = true,
+            RedirectStandardOutput = true, RedirectStandardError = true,
+        };
+        sleeperStart.ArgumentList.Add("-NoProfile");
+        sleeperStart.ArgumentList.Add("-NonInteractive");
+        sleeperStart.ArgumentList.Add("-Command");
+        sleeperStart.ArgumentList.Add("Start-Sleep -Seconds 30");
+        using (var sleeper = Process.Start(sleeperStart)!)
+        {
+            var sleeperOut = sleeper.StandardOutput.ReadToEndAsync();
+            var sleeperErr = sleeper.StandardError.ReadToEndAsync();
+            try
+            {
+                await File.WriteAllTextAsync(recheckPath, JsonSerializer.Serialize(new { cut, worker = sleeper.Id }));
+                var recheck = await CrashWorkerProcess.ObserveAsync(
+                    sleeper, recheckPath, cut, CancellationToken.None, Task.CompletedTask);
+                recheck.Outcome.ShouldBe("accepted", "worker-ready-recheck");
+            }
+            finally
+            {
+                if (!sleeper.HasExited) sleeper.Kill(entireProcessTree: true);
+                await sleeper.WaitForExitAsync();
+                await Task.WhenAll(sleeperOut, sleeperErr);
+            }
+        }
+
+        var rejected = new LandProtocolCrashWorker.Request(h.Fixture.Root, h.Fixture.TaskId, "not-a-land-cut", ready);
+        var probe = CrashWorkerProcess.Prepare(new CrashWorkerProcess.Spec(
+            LandProtocolCrashWorker.Marker,
+            JsonSerializer.Serialize(rejected),
+            "ANTIPHON_C448_TEST_CONNECTION",
+            h.Schema.ConnectionString,
+            "/*/*/AgentTaskLandRecoveryTests/C448_V15_RealWorkerDeathRecoversDurableBoundaries",
+            ready,
+            "not-a-land-cut"));
+        await using var failing = CrashWorkerProcess.Start(probe);
+        using var probeBudget = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+        await failing.Process.WaitForExitAsync(probeBudget.Token);
+        failing.Process.ExitCode.ShouldBe(1);
+        (await failing.Stderr).ShouldContain(CrashWorkerProcess.StderrSentinel, Case.Sensitive, "worker-stderr-drained");
+    }
+
+    private static void AssertChildCarriesOneMarker(CrashWorkerProcess.Prepared prepared, string marker)
+    {
+        var present = TestWorkerModes.All
+            .Select(mode => mode.Marker)
+            .Where(key => prepared.Start.Environment.ContainsKey(key))
+            .ToArray();
+        present.ShouldBe(new[] { marker }, "worker-one-selected-marker");
+    }
+
+    private static void AssertConnectionStaysInEnvironment(CrashWorkerProcess.Prepared prepared)
+    {
+        var argv = string.Join('\n', prepared.Start.ArgumentList);
+        argv.ShouldNotContain(CrashWorkerProcess.ConnectionSentinel, Case.Sensitive, "worker-connection-env-only");
+        prepared.Spec.RequestJson.ShouldNotContain(CrashWorkerProcess.ConnectionSentinel, Case.Sensitive, "worker-connection-env-only");
+        prepared.Start.Environment[CrashWorkerProcess.SentinelVariable]
+            .ShouldBe(CrashWorkerProcess.ConnectionSentinel, "worker-connection-env-only");
     }
 
     [Test]

@@ -727,7 +727,7 @@ public sealed partial class PostLandMutationDeliveryTests
             if (cut == "before-enqueue") afterFault.QueueMessageId.ShouldBeNull();
             await seeded.AgentTaskLandNotifications.Where(n => n.Id == note.Id)
                 .ExecuteUpdateAsync(s => s.SetProperty(n => n.NextAttemptAt, DateTime.UtcNow.AddMinutes(-1)));
-            await ConfirmLandReceiptAsync(land.Schema.ConnectionString, h, note, busy);
+            await ConfirmLandReceiptAsync(land.Schema.ConnectionString, h, note, busy, cut: cut);
             return;
         }
 
@@ -738,7 +738,7 @@ public sealed partial class PostLandMutationDeliveryTests
             dropped.QueueMessageId.ShouldNotBeNull();
             dropped.ConfirmedAt.ShouldBeNull();
             h.Adapter.Inputs.ShouldBeEmpty();
-            await ConfirmLandReceiptAsync(land.Schema.ConnectionString, h, note, busy, alreadySubmitted: false);
+            await ConfirmLandReceiptAsync(land.Schema.ConnectionString, h, note, busy, alreadySubmitted: false, cut: cut);
             return;
         }
 
@@ -771,12 +771,12 @@ public sealed partial class PostLandMutationDeliveryTests
             cutBoundary.ReceiptSaveReached.ShouldBeTrue();
             (await seeded.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n => n.Id == note.Id))
                 .ConfirmedAt.ShouldBeNull();
-            await ConfirmLandReceiptAsync(land.Schema.ConnectionString, h, note, busy, alreadySubmitted: true);
+            await ConfirmLandReceiptAsync(land.Schema.ConnectionString, h, note, busy, alreadySubmitted: true, cut: cut);
             return;
         }
 
         await ConfirmLandReceiptAsync(land.Schema.ConnectionString, h, note, busy,
-            alreadySubmitted: cut == "after-receipt");
+            alreadySubmitted: cut == "after-receipt", cut: cut);
     }
 
     private static async Task PublicationCommitCrashAsync()
@@ -831,7 +831,7 @@ public sealed partial class PostLandMutationDeliveryTests
         var note = await observer.AgentTaskLandNotifications.SingleAsync(n =>
             n.TaskId == h.Fixture.TaskId && n.Kind == LandNotificationKind.Outcome);
         note.Body.ShouldContain("publication=");
-        await ConfirmLandReceiptAsync(h.Schema.ConnectionString, bridge, note, busy: false);
+        await ConfirmLandReceiptAsync(h.Schema.ConnectionString, bridge, note, busy: false, cut: "publication-commit");
     }
 
     private static async Task WorkerCrashAsync(string cut, bool busy)
@@ -926,24 +926,27 @@ public sealed partial class PostLandMutationDeliveryTests
     }
 
     private static async Task ConfirmLandReceiptAsync(string connection, BridgeQueueHarness h,
-        AgentTaskLandNotification note, bool busy, bool alreadySubmitted = false)
+        AgentTaskLandNotification note, bool busy, bool alreadySubmitted = false, string? cut = null)
     {
         if (busy) await SetWorkingAsync(connection, h.SessionId, true);
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(connection));
         var service = new AgentTaskLandNotificationService(db, h.Queue, new CompletionNoteFlushQueue(), h.Runtime, TimeProvider.System);
         await service.ReconcileAsync(note.Id, CancellationToken.None);
         var saved = await db.AgentTaskLandNotifications.SingleAsync(n => n.Id == note.Id);
-        if (saved.QueueMessageId is null)
+        saved.QueueMessageId.ShouldNotBeNull("land-queue-row-required");
+        if (cut == "queue-inserted")
         {
-            saved.State.ShouldBe(LandNotificationState.RetryPending);
-            return;
+            var keyed = await db.SessionQueuedMessages.AsNoTracking()
+                .Where(m => m.SourceLandNotificationId == note.Id).ToListAsync();
+            keyed.Count.ShouldBe(1, "land-keyed-recovery-single-row");
+            keyed[0].Id.ShouldBe(saved.QueueMessageId!.Value, "land-keyed-recovery-single-row");
         }
         var queued = await db.SessionQueuedMessages.SingleAsync(m => m.Id == saved.QueueMessageId);
         queued.Body.ShouldContain("publication=");
         if (busy && !alreadySubmitted)
         {
             await h.Queue.FlushIfIdleAsync(h.SessionId, CancellationToken.None);
-            h.Adapter.Inputs.ShouldBeEmpty();
+            h.Adapter.Inputs.ShouldBeEmpty("land-busy-does-not-submit");
             queued = await db.SessionQueuedMessages.SingleAsync(m => m.Id == queued.Id);
             queued.Status.ShouldBe(QueuedMessageStatus.Pending);
             await SetWorkingAsync(connection, h.SessionId, false);
@@ -971,6 +974,8 @@ public sealed partial class PostLandMutationDeliveryTests
             });
         }
         await db.SaveChangesAsync();
+        if (!alreadySubmitted)
+            await AssertRejectedReceiptsLeaveTheNoteOpenAsync(db, h, note, queued);
         h.Runner.SetTranscript(new(h.SessionId, [new SessionRunnerTranscriptEvent(h.SessionId, 11, TranscriptKinds.UserPrompt,
             "c478-land-" + note.Id.ToString("N"), null, DateTimeOffset.UtcNow, "user", queued.Body.Replace("\n", ""),
             null, null, null, null, null)], 11));
@@ -992,7 +997,75 @@ public sealed partial class PostLandMutationDeliveryTests
             prompts.Single(p => p.Uuid == receiptUuid).Sequence.ShouldBe(11);
             prompts.Single(p => p.Uuid is null).Sequence.ShouldBeLessThanOrEqualTo(10);
         }
-        h.Adapter.Inputs.Count.ShouldBe(typed);
+        await using var fresh = new AppDbContext(TestDbFixture.CreateDbContextOptions(connection));
+        var whole = await fresh.TranscriptEntries.AsNoTracking().SingleOrDefaultAsync(p =>
+            p.AgentSessionId == h.SessionId && p.Kind == TranscriptKinds.UserPrompt && p.Sequence == 11);
+        whole.ShouldNotBeNull("land-complete-userprompt-required");
+        PromptSubmissionMatch.IsCompleteIn(queued.Body, whole!.Text).ShouldBeTrue("land-complete-userprompt-required");
+        h.Adapter.Inputs.Count.ShouldBe(typed, "land-recovery-does-not-retype");
+    }
+
+    /// <summary>
+    /// Finite rejects before the valid sequence-11 receipt: wrong session, head+tail splice, and a
+    /// complete body sitting on the delivery floor. Each leaves the note unconfirmed.
+    /// </summary>
+    private static async Task AssertRejectedReceiptsLeaveTheNoteOpenAsync(
+        AppDbContext db, BridgeQueueHarness h, AgentTaskLandNotification note, SessionQueuedMessage queued)
+    {
+        var synthetic = "c889-land-complete-" + new string('x', 420);
+        var spliced = synthetic[..PromptSubmissionMatch.MatchWindowChars] + synthetic[^90..];
+        LandNoteReceipt.IsReceipt(synthetic, spliced).ShouldBeFalse("land-receipt-complete-body");
+        LandNoteReceipt.IsReceipt(synthetic, synthetic).ShouldBeTrue("land-receipt-complete-body");
+
+        var probe = new AgentTaskLandNotificationService(
+            db, h.Queue, new CompletionNoteFlushQueue(), h.Runtime, TimeProvider.System);
+        var other = Guid.NewGuid();
+        var wrong = new TranscriptEntry
+        {
+            Id = Guid.NewGuid(), AgentSessionId = other, Sequence = 11,
+            Kind = TranscriptKinds.UserPrompt, Text = queued.Body,
+            CreatedAt = DateTime.UtcNow, Timestamp = DateTime.UtcNow,
+        };
+        db.AgentSessions.Add(new AgentSession { Id = other, CreatedAt = DateTime.UtcNow, LastSeenAt = DateTime.UtcNow });
+        db.TranscriptEntries.Add(wrong);
+        await db.SaveChangesAsync();
+        await probe.ReconcileAsync(note.Id, CancellationToken.None);
+        (await db.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n => n.Id == note.Id))
+            .ConfirmedAt.ShouldBeNull("land-receipt-session-identity");
+        db.TranscriptEntries.Remove(wrong);
+        await db.SaveChangesAsync();
+
+        if (queued.Body.Length > PromptSubmissionMatch.MatchWindowChars + 100)
+        {
+            var partial = new TranscriptEntry
+            {
+                Id = Guid.NewGuid(), AgentSessionId = h.SessionId, Sequence = 11,
+                Kind = TranscriptKinds.UserPrompt,
+                Text = queued.Body[..PromptSubmissionMatch.MatchWindowChars] + queued.Body[^80..],
+                CreatedAt = DateTime.UtcNow, Timestamp = DateTime.UtcNow,
+            };
+            db.TranscriptEntries.Add(partial);
+            await db.SaveChangesAsync();
+            await probe.ReconcileAsync(note.Id, CancellationToken.None);
+            (await db.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n => n.Id == note.Id))
+                .ConfirmedAt.ShouldBeNull("land-receipt-complete-body");
+            db.TranscriptEntries.Remove(partial);
+            await db.SaveChangesAsync();
+        }
+
+        var baseline = await db.TranscriptEntries.SingleAsync(e =>
+            e.AgentSessionId == h.SessionId && e.Sequence == 10);
+        var savedKind = baseline.Kind;
+        var savedText = baseline.Text;
+        baseline.Kind = TranscriptKinds.UserPrompt;
+        baseline.Text = queued.Body;
+        await db.SaveChangesAsync();
+        await probe.ReconcileAsync(note.Id, CancellationToken.None);
+        (await db.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n => n.Id == note.Id))
+            .ConfirmedAt.ShouldBeNull("land-receipt-after-floor");
+        baseline.Kind = savedKind;
+        baseline.Text = savedText;
+        await db.SaveChangesAsync();
     }
 
     /// <summary>
