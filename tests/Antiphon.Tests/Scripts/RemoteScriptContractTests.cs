@@ -5610,16 +5610,16 @@ public sealed class RemoteScriptContractTests
                 "printf '%s %s %s %s %s %s\\n' probe-fs 100 1 " + available + " 1% \"$" + rootVariable + "\"",
             _ => throw new ArgumentOutOfRangeException(nameof(available))
         };
-        return $"""
-            df() {{
-              printf 'call argc=%s arg1=%s arg2=%s\n' "$#" "${{1-}}" "${{2-}}" >> "$c997_df_log"
-              if [ "$#" -ne 2 ] || [ "$1" != -Pk ] || [ "$2" != "${rootVariable}" ]; then
-                printf 'unexpected argc=%s arg1=%s arg2=%s\n' "$#" "${{1-}}" "${{2-}}" >> "$c997_df_log"
+        return $$"""
+            df() {
+              printf 'call argc=%s arg1=%s arg2=%s\n' "$#" "${1-}" "${2-}" >> "$c997_df_log"
+              if [ "$#" -ne 2 ] || [ "$1" != -Pk ] || [ "$2" != "${{rootVariable}}" ]; then
+                printf 'unexpected argc=%s arg1=%s arg2=%s\n' "$#" "${1-}" "${2-}" >> "$c997_df_log"
                 return 97
               fi
               printf '%s\n' 'Filesystem 1024-blocks Used Available Capacity Mounted on'
-              {data}
-            }}
+              {{data}}
+            }
             """;
     }
 
