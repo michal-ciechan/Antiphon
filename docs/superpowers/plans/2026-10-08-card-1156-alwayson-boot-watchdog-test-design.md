@@ -1083,3 +1083,30 @@ caller rather than changed here.
 | `AttentionPanel.test.tsx` LivenessProbeFailed tooltip case | `attentionVisuals.ts` checked out at `11847ca6f` | `toContain('No qualifying model reply ...')` |
 
 Text-only repair: no behaviour change, no migration, no restart beyond the one S1-S4 owe.
+
+**S6 repair 3 (Review 8216918f F-1, Code 5a07a450).** The `LivenessProbeFailed` tooltip
+(`attentionVisuals.ts`) and the client `AttentionKind` doc comment said the row stood "past the
+boot-reply deadline". `StandingBootAttentionProjection` keeps a standing row at Error once an
+operator-stage receipt of the same episode is on record, even when the read clock is before the
+boot due or before the prompt itself (S4 repair F-3), so that clause can be false while the row
+shows. Both now describe the severities without asserting a clock reading: Warning is raised from
+the boot notice threshold, Error from the operator decision threshold, an Error recorded for the
+episode stays Error even if the clock later moves backwards, and the row's evidence carries the
+prompt time, its age and both due times. The same omission was fixed in the `AttentionService`
+standing-projection comment and the orchestration-loop owner paragraph (both said Error from the
+operator threshold only). The DTO summary's "a saved Error receipt of the same episode only keeps
+the Error stage when the clock steps back" was also too narrow (a raised operator threshold keeps
+it too); it now reads "keeps the row at Error even if the clock later reads earlier than the
+operator threshold". Server emitted strings (headline, evidence lines, receipt message) were
+checked and left as found: none states a clock reading as present fact; the numbers are evidence.
+Deliberate assertion changes: the DTO pin
+(`C1156_LivenessProbeFailed_summary_claims_no_delivery_and_names_both_projections`) requires the
+new sentence and rejects the old "only keeps ... when the clock steps back"; the existing F-5
+Vitest case's three `toContain` strings follow the new tooltip text.
+
+| Pin | Mutation | Red at |
+|---|---|---|
+| `AttentionPanel.test.tsx` `CARD-1156 Review 8216918f F-1 a recorded Error read under a clock rollback ...` | `attentionVisuals.ts` checked out at `7d3638977` (old tooltip) | `toContain('No qualifying model reply to the boot ...')` |
+| same | new tooltip with ", past the boot-reply deadline" re-inserted | `past the: ... not to contain 'past the'` |
+
+Text-only repair: no behaviour change, no migration, no restart beyond the one S1-S4 owe.
