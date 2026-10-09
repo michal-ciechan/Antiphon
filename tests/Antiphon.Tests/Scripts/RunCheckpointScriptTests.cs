@@ -25,7 +25,9 @@ public sealed class RunCheckpointScriptTests
         "C578 Streaming owned processes exited");
 
     [Test]
-    public Task C578_FailedBuildKeepsLogAndExit() => RunC578CaseAsync(nameof(C578_FailedBuildKeepsLogAndExit), 5,
+    public Task C578_FailedBuildKeepsLogAndExit() => RunC578CaseAsync(nameof(C578_FailedBuildKeepsLogAndExit), 7,
+        "C578 c578-child-held-until-observed",
+        "C578 c578-late-ready-event-accepted",
         "C578 FailedBuild retains stdout and stderr",
         "C578 FailedBuild records actual exit 37 once",
         "C578 FailedBuild returns checkpoint exit 2",
