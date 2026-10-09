@@ -201,3 +201,91 @@ each mutant its own results directory, restored with `git checkout -- docs`, tre
 | drop-store-failure-pin | runtime: remove the `C1153_Store_failure_disables_proof_without_stopping_work` pin | 1 failed: pin must follow |
 | prepare-unconditional | runtime: "sends at most one prepare" -> "sends one prepare" | 1 failed: owner sentence missing (prepare) |
 | green-after | none | 1/1 passed |
+
+## Repair 2 (Code task f494c857, after Review e4ac990f): shrink the claims
+
+Third documentation round. Every S5 sentence in the four owner documents was re-read clause by
+clause against the code and a named test; a clause with no test was removed, and detail was
+replaced by a pointer to the code or test name. No production change, no migration; the 15-row
+behavioural evidence (run 20261009-022103-a32e at `eec04695`) stands on a compile-identical
+production tree (this repair edits only documents and the V-21 test).
+
+**F1 (marker).** The marker sentence said a Prepared record stays on disk after a failed marker
+write. False: the atomic replacement can succeed before the directory sync throws, so Attempted
+is present then (`C1153_Store_failure_disables_proof_without_stopping_work` checks only the case
+where the write itself fails). The sentence now says only: the marker is written before the first
+provider effect; when that write fails the launch may still proceed and absence evidence is
+unavailable for the rest of that runner epoch, so no certificate can be formed. It names no
+record and no disk state. V-21 `MarkerSentence` requires exactly that text; `UnconditionalMarkerPattern`
+rejects the marker promise without "; when that write fails,"; `DiskStatePattern` rejects
+`Prepared ... stays|remains|is left|is kept` and `on disk` anywhere in the CARD-1153 bullet.
+
+**F2 (withholding list).** "Every other shape keeps the existing failure" was not exhaustive: a
+listed owning inventory withholds. The runtime owner now states a closed list (V-21
+`WithholdSentence`; the old fallback is asserted absent), checked against
+`AgentTaskDispatcher.DecideAbsentLaunchAsync` and `HoldUnderLockAsync`:
+
+| Shape (leaves the task untouched) | Code (`AgentTaskDispatcher.cs`) | Test |
+|---|---|---|
+| owning runner lists the session (running, starting, exited, other generation) | `ReadAbsenceAsync != Positive` -> `Withheld` (decision and under lock) | `C1149_Listed_or_unknown_runner_is_never_absence` (listed-*, wrong-generation) |
+| owning inventory unavailable | same | `C1149_Listed_or_unknown_runner_is_never_absence` (unavailable-inventory), `C1153_Working_or_unknown_inventory_withholds` |
+| task Working or transcript Working | `expectedStatus == Working \|\| IsWorkingAsync` (decision, post-pre-screen, under lock) | `C1149_Changed_or_working_attempt_is_untouched`, `C1153_Working_or_unknown_inventory_withholds` |
+| session row gone | `expected is null` -> `Withheld`; `fresh is null` under lock | unpinned |
+| task or session row changed before the hold commits | task status/attempt/session/dispatchedAt or session status/reason/startedAt differ under lock | `C1149_Changed_or_working_attempt_is_untouched` (attempt-rebind), `C1149_Failed_hold_does_not_persist_on_a_later_save` (session reason changed) |
+| certificate no longer holds under the lock | `AbsenceCertificateHolds` false -> `Withheld` | `C1153_Final_certificate_is_revalidated_under_lock`, `C1153_Certificate_age_is_monotonic` |
+| hold does not commit | `catch` -> `DiscardUncommittedHoldAsync`, `Withheld` | unpinned |
+
+Any other shape is "decided by the existing failure rules" (e.g. a missing or bad certificate,
+which `C1153_Real_client_bad_evidence_keeps_failure` pins as Failed).
+
+### Second pass: every S5 sentence (file:line at the repair-2 tip)
+
+| Site | Kept | Removed |
+|---|---|---|
+| runtime:452-456 | CARD-1149 hold conditions (runner-unknown reason, positive absence, `AbsentLaunchPolicy`, native-empty); pointer to `DecideAbsentLaunchAsync`. Pinned by the CP-26 C1149 rows (`C1149_Absent_launch_is_blocked_with_original_input`, `C1149_Whitelist_gap_keeps_previous_failure`, `C1149_Unknown_native_evidence_is_not_unattempted`). | `StartingGraceMs` (90 s), `DeadSessionFailGraceMinutes` (3 min) and their timeline (CARD-1161 owns the grace); "original input kept, zero automatic relaunch" (moved to the no-relaunch sentence's pin). |
+| runtime:457 | closed withholding list (F2), fallback "decided by the existing failure rules". Pins 458-463; two shapes named unpinned. | "checked before any certificate request, and inventory and Working again when ... does not qualify" (ordering detail; the code is the reference). |
+| runtime:464 | certificate sentence unchanged (fresh: monotonic/age rows; authenticated: `C1153_Http_authentication_covers_request_and_response`; same session/generation/store: revalidation rows; 404 and empty transcript: `C1153_Real_client_bad_evidence_keeps_failure` plain404, empty-transcript). | none |
+| runtime:470 | at most one prepare, after the claim commit, before the launch is enqueued; warm reuse, boot-wedge relaunch, interrupted-launch resume send none; a failed prepare does not stop the launch (`C1153_Only_new_cold_dispatch_prepares_evidence` cold-fresh, warm-reuse, recovery, resume, prepare-faulted). | "either launch sink" (only the local enqueue order is asserted), "unsupported or slow" (slow is unpinned; unsupported moved to the old-runner sentence), the released-seat exclusion sentence (code-only, unpinned). |
+| runtime:472-473 | requested only after the database pre-screen, under one deadline covering capability discovery (`C1153_Nonpristine_brief_never_closes_identity`, `C1153_Deadline_covers_capability_discovery`). | "once per decision", "fresh nonce", "one transport attempt", "five-second" (no test names them on this path). |
+| runtime:476 | recheck: locked row's session/generation/store, monotonic age 0..5 s, wall deadline; failure withholds (`C1153_Final_certificate_is_revalidated_under_lock` changed-generation, store-or-epoch-change, expired-proof; `C1153_Certificate_age_is_monotonic`). | "queue gate", "the next due pass asks the runner again", and the wall-jump/rollback sentence (restated the rule; the test is the reference). |
+| runtime:479-481 | closes against a delayed start or attach; prior-epoch or other-store records never renewed (`C1153_Restart_or_store_change_never_renews_proof` prepared-prior-epoch, closed-prior-epoch, changed-store; `C1153_Closed_identity_refuses_delayed_creation`; race row); closed-id refusal types (`C1153_Closed_identity_refuses_delayed_creation`; phone-home type asserted in `C1153_Authenticated_operation_preserves_binding`). | "never stops a process", "old IDs ... remain unknown", "for every generation", "refuses creation when its evidence store is unreadable or damaged", "a task whose runner restarted ... keeps the existing failure" (none pinned by a named test here). |
+| runtime:486 | marker sentence (F1). | "under the launch gate", "I/O or access error after the admission read", "any Prepared record stays on disk", "stops advertising" |
+| runtime:489 | admitted once, signed issue time within 30 s (`C1153_Certify_requires_every_fact` stale-issued-at, `C1153_Replayed_request_is_rejected`). | "clocks must agree within 30 s" (derived), "a request issued within 30 s of a runner start is refused" (unpinned). |
+| runtime:492 | no automatic relaunch; CARD-1151 boot-stall neither stops nor retries (`C1149_Hold_is_once_and_automatic_relaunch_bound_is_zero`, `C1153_Real_client_certificate_holds_original_input`, the CP-29 boot-stall row). | "input-wait release deadline", "parking remains disabled by default (CARD-1083)" (owned by CARD-1083; not this card's test). |
+| runtime:496 | a runner without `sessionAbsenceEvidenceV1` gets no prepare and the absent launch keeps the existing failure (`C1153_Only_new_cold_dispatch_prepares_evidence` remote-old-runner, `C1153_Real_client_bad_evidence_keeps_failure` old-runner). | "Activation is runners first, then AppHost", "health alone is not activation", the `GET /api/session-runners` check (not pinned). |
+| ops-http:58-63 | routes sentence (pinned); signed with the key; offered via `sessionAbsenceEvidenceV1` on `GET /capabilities` (`Program.cs` capability gate; key-less runner asserted in `C1153_Http_authentication_covers_request_and_response`). | "server-internal", "not a curl probe", "no /api proxy", the phone-home `/api/session-runners` clause. |
+| api:897-898 | route-map lines (V-21; "fresh, never-used": `C1153_Prepare_records_only_a_fresh_identity`). | none |
+| api:913-922 | routes sentence and pins; HMAC-SHA256 both directions (`C1153_Http_authentication_covers_request_and_response` wrong-request-MAC, altered-response-bit); closed-id types; phone-home operations 38/39 (V-21 against the enum); pointer to `AbsenceEvidenceRoutes`/`RunnerAbsenceEvidence` and `RunnerAbsenceEvidenceContractTests`. | the wire summary: version 1 body fields, 32-byte nonce, `no-store`, the 200 field list, 404/409/400/401/503 mapping, the advertise rule, "prepares only the session id a cold dispatch just allocated" (runtime owns it). |
+| credentials:221-236 | credential sentence and pins; setting name, same file content, base64 of at least 32 bytes (V-21 against `MinimumKeyBytes`; `AbsenceEvidenceAuthentication` decodes base64); custody statement; HMAC both directions and key-less runner does not advertise; no key bytes or path in a response or captured log (`C1153_Http_authentication_covers_request_and_response` canary); operator-only provisioning (policy). | "read the file but do not check its permissions", argv/environment/capabilities-DTO/provider-environment claims, "logs only a derived key id", "versioned, domain-separated encoding", "covers every evidence field and the request nonce", the server-side missing-key clause, "launches still proceed", the restart order (runner first, AppHost second). |
+| this note, Change and Decisions 2-3, Repair F1 | historical record of what S5 and Repair F1 wrote. | Superseded by this section: decision 3's released-seat sentence, the wire summary, the operator restart order and Repair F1's "Prepared bytes are unchanged ... the owner sentence now states that exception" are no longer owner text. |
+
+### Repair 2 verification
+
+Checkpoint run `20261009-024609-3d19` at `04f5c299332e22caaff28aefa9f0fa0d959a9941`, bound (task
+token present), `--serial`, scratch plan of the Review's six rows with identical filters (CP-32,
+CP-45, CP-46, CP-47, CP-50 on one `tests/Antiphon.Tests` build; CP-901 on one
+`tests/Antiphon.SessionRunner.Tests` build), UseAppHost=false (tool default off Windows): 6 green,
+38 tests (1+1+2+18+15+1), 0 failed/skipped, `unlisted: none`, wall 2m28s, slot waits 0 s;
+`validate`: CHECKPOINT SOURCE VALID rows=6. The whole Unit lane was not run (AGENTS.md; brief).
+The 15-row behavioural run `20261009-022103-a32e` at `eec04695` stands: no production or
+behavioural test file changed since.
+
+Unlisted builds (both via `build-slot.ps1`, waited 0 s, deleted afterwards): `tools/Antiphon.Checkpoints
+-> bin-c1153r2drv/` (6 s, tool bootstrap); `tests/Antiphon.Tests -> bin-c1153r2mut/` (110 s,
+UseAppHost=false) for the V-21 red checks below (not PCs; method filter
+`/*/*/SessionRunnerAbsenceEvidenceDocumentationTests/C1153_Owner_sentences_match_the_protocol`;
+each mutant restored with `git checkout -- docs`, tree clean afterwards):
+
+| Case | Mutation (runtime owner) | Result |
+|---|---|---|
+| green-before | none | 1/1 passed |
+| old-disk-wording | marker sentence back to "proceeds, any Prepared record stays on disk" | 1 failed: owner sentence missing (marker) |
+| disk-claim-beside | "The Prepared record stays on disk." added in the CARD-1153 bullet | 1 failed: no record or disk-state claim (e4ac990f F1) |
+| old-fallback-beside | "Every other shape keeps the existing failure." added beside the new list | 1 failed: the fallback is not exhaustive (F2) |
+| drop-listed-shape | listed/unavailable inventory removed from the closed list | 1 failed: owner sentence missing (withhold) |
+| drop-listed-pin | `C1149_Listed_or_unknown_runner_is_never_absence` pin removed | 1 failed: pin must follow |
+| unconditional-marker | marker sentence without its failure clause | 1 failed: owner sentence missing (marker) |
+| fallback-reverted | "Any other shape is decided by the existing failure rules." -> the old fallback | 1 failed: owner sentence missing (withhold) |
+| green-after | none | 1/1 passed |
+
+PC-29 (documentation controls) and every other PC stay pending for post-land SourceLanding Mutation.
