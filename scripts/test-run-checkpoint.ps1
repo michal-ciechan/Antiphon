@@ -4,7 +4,10 @@
 # ASCII-only.
 param(
     [string]$Case = '',
-    [string]$ResultsDirectory = ''
+    [string]$ResultsDirectory = '',
+    [string]$C889Descriptor = '',
+    [string]$C889HoldPhase = '',
+    [switch]$C889IgnoreCancel
 )
 $ErrorActionPreference = 'Continue'
 $here = $PSScriptRoot
@@ -12,6 +15,10 @@ $lib = Join-Path $here 'lib'
 . (Join-Path $lib 'nightly-common.ps1')
 . (Join-Path $lib 'c487-harness.ps1')
 
+# CP-14 passes no -ResultsDirectory. Join-Path rejects a null $env:TEMP, so use the platform temp directory.
+if ([string]::IsNullOrWhiteSpace($ResultsDirectory) -and [string]::IsNullOrWhiteSpace($env:TEMP)) {
+    $ResultsDirectory = Join-Path ([System.IO.Path]::GetTempPath()) ('c487-' + [guid]::NewGuid().ToString('N'))
+}
 $ResultsDirectory = New-C487Root -ResultsDirectory $ResultsDirectory
 $script:RepoRoot = Split-Path -Parent $here
 $script:Runner = Join-Path $here 'run-checkpoint.ps1'
@@ -19,6 +26,10 @@ $script:Fixtures = Join-Path $here 'fixtures'
 $script:GreenTrx = Join-Path $script:Fixtures 'c585-green.trx'
 $script:FailuresTrx = Join-Path $script:Fixtures 'c585-failures.trx'
 $script:ZeroTrx = Join-Path $script:Fixtures 'c585-zero.trx'
+. (Join-Path $script:Fixtures 'c889-c578-observation.ps1')
+$script:C889HoldPhase = $C889HoldPhase
+$script:C889IgnoreCancel = [bool]$C889IgnoreCancel
+$script:C889CallerDescriptor = $C889Descriptor
 
 $script:ShimBody = @'
 param()
@@ -547,19 +558,52 @@ $script:C578ShimBody = @'
 param()
 $phase = [string]$args[0]
 $root = $env:C578_ROOT
+$fixture = $env:C889_FIXTURE
+if ($fixture) { . $fixture }
 $log = Join-Path $env:C578_PHASE_DIR ("$phase.log")
 $entry = Join-Path $root ("$phase.entry")
 $record = ('{0}|{1}|{2}' -f $PID, [System.Diagnostics.Process]::GetCurrentProcess().StartTime.ToUniversalTime().Ticks, (Test-Path -LiteralPath $log))
 [System.IO.File]::WriteAllText($entry, $record)
 [System.IO.File]::AppendAllText((Join-Path $root 'calls.log'), "$phase`n")
-[Console]::Out.WriteLine(('C578_{0}_STARTED_{1}' -f $phase.ToUpperInvariant(), $env:C578_NONCE))
-[Console]::Out.Flush()
-[Console]::Error.WriteLine(('C578_{0}_ERROR_{1}' -f $phase.ToUpperInvariant(), $env:C578_NONCE))
-[Console]::Error.Flush()
-[System.IO.File]::WriteAllText((Join-Path $root "$phase.ready"), 'ready')
-if ($env:C578_HOLD -eq 'both' -or ($env:C578_HOLD -eq 'build' -and $phase -eq 'build')) {
-    $release = Join-Path $root "$phase.release"
-    while (-not (Test-Path -LiteralPath $release)) { Start-Sleep -Milliseconds 25 }
+$upper = $phase.ToUpperInvariant()
+$nonce = [string]$env:C578_NONCE
+$desc = [string]$env:C889_DESCRIPTOR
+$holdPhase = [string]$env:C889_HOLD_PHASE
+$ignore = $env:C889_IGNORE_CANCEL -eq '1'
+$standalone = $env:C889_KIND -eq 'standalone'
+$stdoutMarker = 'C578_{0}_STARTED_{1}' -f $upper, $nonce
+$stdoutFence = 'C578_{0}_STDOUT_FENCE_{1}' -f $upper, $nonce
+$stderrMarker = 'C578_{0}_ERROR_{1}' -f $upper, $nonce
+$stderrFence = 'C578_{0}_STDERR_FENCE_{1}' -f $upper, $nonce
+$skipStderr = $phase -eq 'build' -and $holdPhase -eq 'partial-log'
+function Exit-C889Shim {
+    param([int]$Code)
+    if ($desc) { [System.IO.File]::WriteAllText((Join-Path $desc 'shim.exit'), ([string]$Code)) }
+    exit $Code
+}
+Write-C889SentinelLine -DescriptorDir $desc -Stream 'stdout' -Text $stdoutMarker
+Write-C889SentinelLine -DescriptorDir $desc -Stream 'stdout' -Text $stdoutFence
+if (-not $skipStderr) {
+    Write-C889SentinelLine -DescriptorDir $desc -Stream 'stderr' -Text $stderrMarker
+    Write-C889SentinelLine -DescriptorDir $desc -Stream 'stderr' -Text $stderrFence
+}
+$cancellationHold = $phase -eq 'build' -and ($holdPhase -eq 'before-ready' -or $holdPhase -eq 'partial-log' -or $holdPhase -eq 'release-held')
+if (-not $cancellationHold -or $holdPhase -eq 'release-held') {
+    [System.IO.File]::WriteAllText((Join-Path $root "$phase.ready"), 'ready')
+}
+$normalHold = $env:C578_HOLD -eq 'both' -or ($env:C578_HOLD -eq 'build' -and $phase -eq 'build')
+if ($cancellationHold -or $normalHold) {
+    if ($cancellationHold) {
+        [System.IO.File]::WriteAllText((Join-Path $root 'shim.held'), $holdPhase)
+    }
+    $outcome = Wait-C889ShimHold -Root $root -Phase $phase -DescriptorDir $desc -IgnoreCancel $ignore -Standalone $standalone
+    if ($outcome -eq 'Cancelled') {
+        if ($holdPhase -eq 'partial-log') {
+            Write-C889SentinelLine -DescriptorDir $desc -Stream 'stderr' -Text $stderrMarker
+            Write-C889SentinelLine -DescriptorDir $desc -Stream 'stderr' -Text $stderrFence
+        }
+        Exit-C889Shim 130
+    }
 }
 if ($phase -eq 'run') {
     $argv = @($args)
@@ -570,24 +614,56 @@ if ($phase -eq 'run') {
         }
     }
 }
-if ($phase -eq 'build' -and $env:C578_FAIL_BUILD -eq '1') { exit 37 }
-exit 0
+if ($phase -eq 'build' -and $env:C578_FAIL_BUILD -eq '1') { Exit-C889Shim 37 }
+Exit-C889Shim 0
 '@
 
 function New-C578Case {
     param([string]$Name, [string]$Hold = '', [switch]$FailBuild)
     $fx = New-C585Case -Name $Name
     Set-Content -LiteralPath $fx.Shim -Value $script:C578ShimBody -Encoding ASCII
+    $nonce = [guid]::NewGuid().ToString('N')
+    if ($script:C889CallerDescriptor) {
+        $noncePath = Join-Path $script:C889CallerDescriptor 'nonce'
+        if (Test-Path -LiteralPath $noncePath) {
+            $nonce = ([System.IO.File]::ReadAllText($noncePath)).Trim()
+        }
+    }
     $fx | Add-Member NoteProperty Stamp 'c578-fixed'
-    $fx | Add-Member NoteProperty Nonce ([guid]::NewGuid().ToString('N'))
+    $fx | Add-Member NoteProperty Nonce $nonce
     $fx | Add-Member NoteProperty Hold $Hold
     $fx | Add-Member NoteProperty FailBuild ([bool]$FailBuild)
     $fx | Add-Member NoteProperty PhaseDir (Join-Path $fx.ResultsRoot ('CP-1-' + $fx.Stamp))
     return $fx
 }
 
-function Start-C578Runner {
+function Open-C578Descriptor {
     param($Fx)
+    if ($script:C889CallerDescriptor) {
+        $nonce = $Fx.Nonce
+        $noncePath = Join-Path $script:C889CallerDescriptor 'nonce'
+        if (Test-Path -LiteralPath $noncePath) {
+            $nonce = ([System.IO.File]::ReadAllText($noncePath)).Trim()
+        }
+        $Fx.Nonce = $nonce
+        return [pscustomobject]@{
+            Directory = $script:C889CallerDescriptor
+            Nonce = $nonce
+            Kind = 'caller'
+            Watch = [System.Diagnostics.Stopwatch]::StartNew()
+            Subscriptions = New-Object System.Collections.Generic.List[object]
+            IgnoreCancel = [bool]$script:C889IgnoreCancel
+            HoldPhase = [string]$script:C889HoldPhase
+        }
+    }
+    $directory = Join-Path $Fx.Root 'c889'
+    $desc = New-C889Descriptor -Directory $directory -Nonce $Fx.Nonce -Kind 'standalone'
+    $Fx.Nonce = $desc.Nonce
+    return $desc
+}
+
+function Start-C578Runner {
+    param($Fx, $Descriptor)
     $psi = [System.Diagnostics.ProcessStartInfo]::new()
     $psi.FileName = 'pwsh'
     $psi.UseShellExecute = $false
@@ -610,7 +686,17 @@ function Start-C578Runner {
     $psi.Environment['C578_HOLD'] = $Fx.Hold
     $psi.Environment['C578_FAIL_BUILD'] = $(if ($Fx.FailBuild) { '1' } else { '0' })
     $psi.Environment['C578_GREEN_TRX'] = $script:GreenTrx
+    $psi.Environment['C889_FIXTURE'] = (Join-Path $script:Fixtures 'c889-c578-observation.ps1')
+    if ($Descriptor) {
+        $psi.Environment['C889_DESCRIPTOR'] = $Descriptor.Directory
+        $psi.Environment['C889_HOLD_PHASE'] = [string]$Descriptor.HoldPhase
+        $psi.Environment['C889_IGNORE_CANCEL'] = $(if ($Descriptor.IgnoreCancel) { '1' } else { '0' })
+        $psi.Environment['C889_KIND'] = [string]$Descriptor.Kind
+    }
     $proc = [System.Diagnostics.Process]::Start($psi)
+    if ($Descriptor -and $Descriptor.Kind -eq 'caller') {
+        Add-C889JournalLine -Descriptor $Descriptor -Role 'wrapper' -ProcessId $proc.Id -StartTicks $proc.StartTime.ToUniversalTime().Ticks
+    }
     return [pscustomobject]@{ Process = $proc; Out = $proc.StandardOutput.ReadToEndAsync(); Err = $proc.StandardError.ReadToEndAsync(); Children = @{} }
 }
 
@@ -638,41 +724,118 @@ function Read-C578Log {
     finally { $reader.Dispose() }
 }
 
-function Wait-C578RunOutput {
-    param($Run, $Fx)
-    $path = Join-Path $Fx.PhaseDir 'run.log'
-    $deadline = (Get-Date).AddSeconds(5)
-    while ((Get-Date) -lt $deadline) {
-        $log = Read-C578Log $path
-        if ($log.Contains("C578_RUN_STARTED_$($Fx.Nonce)") -and $log.Contains("C578_RUN_ERROR_$($Fx.Nonce)")) { return $log }
-        if ($Run.Process.HasExited) { break }
-        Start-Sleep -Milliseconds 25
+function Get-C578Observation {
+    param($Run, $Fx, [string]$Phase)
+    $nonce = [string]$Fx.Nonce
+    $upper = $Phase.ToUpperInvariant()
+    $log = Read-C578Log (Join-Path $Fx.PhaseDir "$Phase.log")
+    $entryPath = Join-Path $Fx.Root "$Phase.entry"
+    $child = $null
+    $childExited = $false
+    $identity = $null
+    $unreadable = $false
+    if ($Run.Process.HasExited -or ($Phase -eq 'build' -and (Test-Path -LiteralPath (Join-Path $Fx.Root 'run.entry')))) {
+        $childExited = $true
     }
-    return Read-C578Log $path
+    if (Test-Path -LiteralPath $entryPath) {
+        try {
+            $parts = ([System.IO.File]::ReadAllText($entryPath)).Split('|')
+            if ($parts.Count -ne 3) { $unreadable = $true }
+            else {
+                try {
+                    $proc = [System.Diagnostics.Process]::GetProcessById([int]$parts[0])
+                    $skew = [math]::Abs($proc.StartTime.ToUniversalTime().Ticks - [long]$parts[1])
+                    if ($skew -gt [TimeSpan]::TicksPerSecond) { $identity = $false }
+                    else {
+                        $identity = $true
+                        $Run.Children[$Phase] = $proc
+                        $child = [pscustomobject]@{ Process = $proc; LogAtEntry = ($parts[2] -eq 'True'); Pid = [int]$parts[0]; StartTicks = [long]$parts[1] }
+                        if ($proc.HasExited) { $childExited = $true }
+                    }
+                } catch { $childExited = $true }
+            }
+        } catch { $unreadable = $true }
+    }
+    $state = @{
+        CancelPresent = $false
+        Standalone = $false
+        ElapsedSeconds = 0
+        ChildExited = $childExited
+        IdentityMatches = $identity
+        ReadyPresent = (Test-Path -LiteralPath (Join-Path $Fx.Root "$Phase.ready"))
+        StdoutMarker = $log.Contains("C578_${upper}_STARTED_$nonce")
+        StderrMarker = $log.Contains("C578_${upper}_ERROR_$nonce")
+        StdoutFence = $log.Contains("C578_${upper}_STDOUT_FENCE_$nonce")
+        StderrFence = $log.Contains("C578_${upper}_STDERR_FENCE_$nonce")
+        PhaseMatches = $true
+        NonceMatches = $true
+        Unreadable = $unreadable
+    }
+    return [pscustomobject]@{ State = $state; Child = $child }
+}
+
+function Ensure-C578WatchRoot {
+    param($Fx)
+    if (-not (Test-Path -LiteralPath $Fx.ResultsRoot)) {
+        New-Item -ItemType Directory -Path $Fx.ResultsRoot -Force | Out-Null
+    }
+}
+
+function Wait-C578RunOutput {
+    param($Run, $Fx, $Descriptor)
+    $path = Join-Path $Fx.PhaseDir 'run.log'
+    $signal = [System.Threading.ManualResetEventSlim]::new($false)
+    Ensure-C578WatchRoot $Fx
+    Register-C889DirectoryWatch -Descriptor $Descriptor -Directory $Fx.ResultsRoot -Signal $signal
+    try {
+        $outcome = Wait-C889Signal -Descriptor $Descriptor -Signal $signal -Decide {
+            $log = Read-C578Log $path
+            $seen = $log.Contains("C578_RUN_STARTED_$($Fx.Nonce)") -and $log.Contains("C578_RUN_ERROR_$($Fx.Nonce)")
+            if ($seen) { return [pscustomobject]@{ Terminal = $true; Name = 'ObservedReady'; Log = $log } }
+            if ($Run.Process.HasExited) { return [pscustomobject]@{ Terminal = $true; Name = 'PrematureExit'; Log = $log } }
+            return [pscustomobject]@{ Terminal = $false; Name = 'Pending'; Log = $log }
+        }
+        if ($outcome.Log) { return [string]$outcome.Log }
+        return Read-C578Log $path
+    } finally { $signal.Dispose() }
 }
 
 function Wait-C578Ready {
-    param($Run, $Fx, [string]$Phase)
-    $deadline = (Get-Date).AddSeconds(10)
-    $ready = Join-Path $Fx.Root "$Phase.ready"
-    $entry = Join-Path $Fx.Root "$Phase.entry"
-    while ((Get-Date) -lt $deadline) {
-        $premature = $Run.Process.HasExited -or (($Phase -eq 'build') -and (Test-Path -LiteralPath (Join-Path $Fx.Root 'run.entry')))
-        if ($premature) { return [pscustomobject]@{ Ready = $false; Premature = $true; Child = (Get-C578Child $Run $Fx $Phase) } }
-        if ((Test-Path -LiteralPath $ready) -and (Test-Path -LiteralPath $entry)) {
-            $child = Get-C578Child $Run $Fx $Phase
-            if ($child) { return [pscustomobject]@{ Ready = $true; Premature = $false; Child = $child } }
+    param($Run, $Fx, [string]$Phase, $Descriptor)
+    $signal = [System.Threading.ManualResetEventSlim]::new($false)
+    Register-C889DirectoryWatch -Descriptor $Descriptor -Directory $Fx.Root -Signal $signal
+    Ensure-C578WatchRoot $Fx
+    Register-C889DirectoryWatch -Descriptor $Descriptor -Directory $Fx.ResultsRoot -Signal $signal
+    try {
+        $outcome = Wait-C889Signal -Descriptor $Descriptor -Signal $signal -Decide {
+            $obs = Get-C578Observation $Run $Fx $Phase
+            $name = Get-C889Decision $obs.State
+            $terminal = $name -ne 'Pending'
+            return [pscustomobject]@{ Terminal = $terminal; Name = $name; Child = $obs.Child }
         }
-        Start-Sleep -Milliseconds 25
-    }
-    return [pscustomobject]@{ Ready = $false; Premature = $false; Child = (Get-C578Child $Run $Fx $Phase) }
+        return [pscustomobject]@{
+            Ready = ($outcome.Name -eq 'ObservedReady')
+            Premature = ($outcome.Name -eq 'PrematureExit')
+            Child = $outcome.Child
+            Decision = [string]$outcome.Name
+        }
+    } finally { $signal.Dispose() }
 }
 
 function Wait-C578Exit {
-    param($Run, [int]$Seconds = 10)
-    if (-not $Run.Process.WaitForExit($Seconds * 1000)) { return $false }
-    $Run.Process.WaitForExit()
-    return $true
+    param($Run, $Descriptor)
+    if ($Run.Process.HasExited) { $Run.Process.WaitForExit(); return $true }
+    $signal = [System.Threading.ManualResetEventSlim]::new($false)
+    Initialize-C889WatchType
+    [void][Antiphon.C889Watch]::StartProcess($Run.Process, $signal)
+    $remaining = 300000
+    if ($Descriptor) {
+        $remaining = [int][Math]::Max(1, ($script:C889GuardSeconds - $Descriptor.Watch.Elapsed.TotalSeconds) * 1000)
+    }
+    [void]$signal.Wait($remaining)
+    $signal.Dispose()
+    if ($Run.Process.HasExited) { $Run.Process.WaitForExit(); return $true }
+    return $false
 }
 
 function Stop-C578Owned {
@@ -706,10 +869,11 @@ function Save-C578Evidence {
 
 function Test-C578_BuildLogVisibleBeforeExit {
     $fx = New-C578Case -Name 'c578-streaming' -Hold 'both'
-    $run = Start-C578Runner $fx
+    $desc = Open-C578Descriptor $fx
+    $run = Start-C578Runner $fx $desc
     $observation = ''
     try {
-        $build = Wait-C578Ready $run $fx 'build'
+        $build = Wait-C578Ready $run $fx 'build' $desc
         $buildLog = Read-C578Log (Join-Path $fx.PhaseDir 'build.log')
         $observation += "buildReady=$($build.Ready) premature=$($build.Premature) pid=$($build.Child.Pid) live=$(-not $run.Process.HasExited)`n"
         Assert-C487 -Cond ($build.Ready -and $build.Child.LogAtEntry) -Name 'C578 Streaming build log exists before child start' -Detail $observation
@@ -720,18 +884,18 @@ function Test-C578_BuildLogVisibleBeforeExit {
             -not (Test-Path (Join-Path $fx.Root 'run.entry')) -and -not $run.Process.HasExited) `
             -Name 'C578 Streaming held build has no completion or test run' -Detail $observation
         Set-Content -LiteralPath (Join-Path $fx.Root 'build.release') -Value 'release'
-        $runReady = Wait-C578Ready $run $fx 'run'
+        $runReady = Wait-C578Ready $run $fx 'run' $desc
         $buildDone = Read-C578Log (Join-Path $fx.PhaseDir 'build.log')
         Assert-C487 -Cond ($runReady.Ready -and $buildDone.Split('DOTNET build EXIT CODE: 0').Count -eq 2) `
             -Name 'C578 Streaming build completion records exit 0' -Detail $buildDone
-        $runLog = Wait-C578RunOutput $run $fx
+        $runLog = Wait-C578RunOutput $run $fx $desc
         $observation += "runReady=$($runReady.Ready) premature=$($runReady.Premature) pid=$($runReady.Child.Pid)`n"
         Assert-C487 -Cond ($runReady.Ready -and $runReady.Child.LogAtEntry) -Name 'C578 Streaming run log exists before child start' -Detail $observation
         Assert-C487 -Cond ($runReady.Ready -and -not $runReady.Child.Process.HasExited -and -not $run.Process.HasExited -and
             $runLog.Split("C578_RUN_STARTED_$($fx.Nonce)").Count -eq 2 -and $runLog.Split("C578_RUN_ERROR_$($fx.Nonce)").Count -eq 2 -and
             $runLog -notmatch 'DOTNET run EXIT CODE:') -Name 'C578 Streaming run streams readable while child and wrapper live' -Detail $runLog
         Set-Content -LiteralPath (Join-Path $fx.Root 'run.release') -Value 'release'
-        $exited = Wait-C578Exit $run
+        $exited = Wait-C578Exit $run $desc
         $stdout = [string]$run.Out.Result + [string]$run.Err.Result
         $runDone = Read-C578Log (Join-Path $fx.PhaseDir 'run.log')
         Assert-C487 -Cond ($exited -and $run.Process.ExitCode -eq 0 -and (Test-Path (Join-Path $fx.PhaseDir 'run.trx')) -and
@@ -740,39 +904,291 @@ function Test-C578_BuildLogVisibleBeforeExit {
             -Name 'C578 Streaming completed run has fresh green TRX' -Detail $stdout
     } finally {
         $clean = Stop-C578Owned $run
+        Clear-C889Subscriptions $desc
         Save-C578Evidence $fx $run $observation
         Assert-C487 -Cond $clean -Name 'C578 Streaming owned processes exited'
     }
 }
 
-function Test-C578_FailedBuildKeepsLogAndExit {
-    $fx = New-C578Case -Name 'c578-failed' -FailBuild
-    $run = Start-C578Runner $fx
+function Complete-C578FailedInner {
+    param($Run, $Fx, $Descriptor)
+    $release = Join-Path $Fx.Root 'build.release'
+    if (-not (Test-Path -LiteralPath $release)) { [System.IO.File]::WriteAllText($release, 'release') }
+    [void](Wait-C578Exit $Run $Descriptor)
+    $shim = $null
+    if ($Run.Children.Contains('build')) { $shim = $Run.Children['build'] }
+    if ($shim -and -not $shim.HasExited) {
+        try { $shim.Kill() } catch { }
+        try { [void]$shim.WaitForExit(15000) } catch { }
+    }
+    if (-not $Run.Process.HasExited) {
+        try { $Run.Process.Kill() } catch { }
+        try { [void]$Run.Process.WaitForExit(15000) } catch { }
+    }
+    try { [void]$Run.Out.Wait(15000) } catch { }
+    try { [void]$Run.Err.Wait(15000) } catch { }
+    Clear-C889Subscriptions $Descriptor
+    $shimDead = (-not $shim) -or $shim.HasExited
+    $subs = 0
+    if ($Descriptor -and $Descriptor.Subscriptions) { $subs = $Descriptor.Subscriptions.Count }
+    return ($shimDead -and $Run.Process.HasExited -and $subs -eq 0)
+}
+
+function ConvertTo-C889AckWord {
+    param([string]$Name)
+    switch ($Name) {
+        'Cancelled' { return 'cancel' }
+        'ObservedReady' { return 'ready' }
+        'Released' { return 'released' }
+        'PrematureExit' { return 'premature' }
+        'IdentityMismatch' { return 'identity' }
+        'MarkersMissing' { return 'markers' }
+        default { return 'pending' }
+    }
+}
+
+function Read-C889SentinelText {
+    param($Descriptor, [string]$Stream)
+    $path = Join-Path $Descriptor.Directory ($Stream + '.sentinel')
+    if (-not (Test-Path -LiteralPath $path)) { return '' }
+    return [System.IO.File]::ReadAllText($path)
+}
+
+function Get-C889HoldSnapshot {
+    param($Descriptor, [string]$Root, [bool]$CancelPresent)
+    $nonce = [string]$Descriptor.Nonce
+    $stdout = Read-C889SentinelText $Descriptor 'stdout'
+    $stderr = Read-C889SentinelText $Descriptor 'stderr'
+    return @{
+        CancelPresent = $CancelPresent
+        Standalone = $false
+        ElapsedSeconds = 0
+        ChildExited = $false
+        IdentityMatches = $true
+        ReadyPresent = (Test-Path -LiteralPath (Join-Path $Root 'build.ready'))
+        StdoutMarker = $stdout.Contains("C578_BUILD_STARTED_$nonce")
+        StderrMarker = $stderr.Contains("C578_BUILD_ERROR_$nonce")
+        StdoutFence = $stdout.Contains("C578_BUILD_STDOUT_FENCE_$nonce")
+        StderrFence = $stderr.Contains("C578_BUILD_STDERR_FENCE_$nonce")
+        PhaseMatches = $true
+        NonceMatches = $true
+        Unreadable = $false
+    }
+}
+
+function Test-C889HeldSentinels {
+    param($Descriptor, [string]$Phase, [string]$Root)
+    $nonce = [string]$Descriptor.Nonce
+    $stdout = Read-C889SentinelText $Descriptor 'stdout'
+    $stderr = Read-C889SentinelText $Descriptor 'stderr'
+    $stdoutReady = $stdout.Contains("C578_BUILD_STARTED_$nonce") -and $stdout.Contains("C578_BUILD_STDOUT_FENCE_$nonce")
+    $stderrReady = $stderr.Contains("C578_BUILD_ERROR_$nonce") -and $stderr.Contains("C578_BUILD_STDERR_FENCE_$nonce")
+    # Fence is appended after the marker, so the hold can proceed when only the marker line is omitted.
+    $stderrFenceReady = $stderr.Contains("C578_BUILD_STDERR_FENCE_$nonce")
+    $ready = Test-Path -LiteralPath (Join-Path $Root 'build.ready')
+    if ($Phase -eq 'partial-log') { return $stdoutReady -and -not $stderrReady -and -not $ready }
+    if ($Phase -eq 'before-ready') { return $stdoutReady -and $stderrFenceReady -and -not $ready }
+    if ($Phase -eq 'release-held') { return $stdoutReady -and $stderrReady -and $ready }
+    return $false
+}
+
+function Copy-C889CancellationEvidence {
+    param($Fx, $Run, $Descriptor)
+    $log = Join-Path $Fx.PhaseDir 'build.log'
+    $destLog = Join-Path $Descriptor.Directory 'build.log'
+    if (Test-Path -LiteralPath $log) { [System.IO.File]::Copy($log, $destLog, $true) }
+    else { [System.IO.File]::WriteAllText($destLog, '') }
+    $wrapper = ''
+    if ($Run.Out.IsCompleted) { $wrapper += [string]$Run.Out.Result }
+    if ($Run.Err.IsCompleted) { $wrapper += [string]$Run.Err.Result }
+    [System.IO.File]::WriteAllText((Join-Path $Descriptor.Directory 'wrapper.stdout'), $wrapper)
+    $entry = Test-Path -LiteralPath (Join-Path $Fx.Root 'run.entry')
+    $runLog = Test-Path -LiteralPath (Join-Path $Fx.PhaseDir 'run.log')
+    $trx = Test-Path -LiteralPath (Join-Path $Fx.PhaseDir 'run.trx')
+    $presence = "entry=$entry`nlog=$runLog`ntrx=$trx`n"
+    [System.IO.File]::WriteAllText((Join-Path $Descriptor.Directory 'run.presence'), $presence)
+}
+
+function Wait-C889ShimRecord {
+    param($Run, $Fx, $Descriptor, [string]$Phase)
+    $signal = [System.Threading.ManualResetEventSlim]::new($false)
+    Register-C889DirectoryWatch -Descriptor $Descriptor -Directory $Fx.Root -Signal $signal
+    Register-C889DirectoryWatch -Descriptor $Descriptor -Directory $Descriptor.Directory -Signal $signal
     try {
-        $ready = Wait-C578Ready $run $fx 'build'
-        $exited = Wait-C578Exit $run
+        return Wait-C889Signal -Descriptor $Descriptor -Signal $signal -Decide {
+            $heldPath = Join-Path $Fx.Root 'shim.held'
+            $held = ''
+            if (Test-Path -LiteralPath $heldPath) { $held = ([System.IO.File]::ReadAllText($heldPath)).Trim() }
+            $entry = Test-Path -LiteralPath (Join-Path $Fx.Root 'build.entry')
+            $sentinels = Test-C889HeldSentinels $Descriptor $Phase $Fx.Root
+            if ($held -eq $Phase -and $entry -and $sentinels) {
+                return [pscustomobject]@{ Terminal = $true; Name = 'Held' }
+            }
+            if ($Run.Process.HasExited) { return [pscustomobject]@{ Terminal = $true; Name = 'PrematureExit' } }
+            return [pscustomobject]@{ Terminal = $false; Name = 'Pending' }
+        }
+    } finally { $signal.Dispose() }
+}
+
+function Wait-C889CancelFile {
+    param($Run, $Descriptor)
+    $signal = [System.Threading.ManualResetEventSlim]::new($false)
+    Register-C889DirectoryWatch -Descriptor $Descriptor -Directory $Descriptor.Directory -Signal $signal
+    try {
+        return Wait-C889Signal -Descriptor $Descriptor -Signal $signal -Decide {
+            if (Test-C889CancelFile -Descriptor $Descriptor -IgnoreCancel $false) {
+                return [pscustomobject]@{ Terminal = $true; Name = 'Cancelled' }
+            }
+            if ($Run.Process.HasExited) { return [pscustomobject]@{ Terminal = $true; Name = 'PrematureExit' } }
+            return [pscustomobject]@{ Terminal = $false; Name = 'Pending' }
+        }
+    } finally { $signal.Dispose() }
+}
+
+function Stop-C889ShimAfterWrapper {
+    param($Shim)
+    if ($Shim -and -not $Shim.HasExited) {
+        $signal = [System.Threading.ManualResetEventSlim]::new($false)
+        Initialize-C889WatchType
+        [void][Antiphon.C889Watch]::StartProcess($Shim, $signal)
+        [void]$signal.Wait(15000)
+        $signal.Dispose()
+    }
+    if ($Shim -and -not $Shim.HasExited) {
+        try { $Shim.Kill() } catch { }
+        try { [void]$Shim.WaitForExit(15000) } catch { }
+    }
+    if ($Shim -and $Shim.HasExited) { return [int]$Shim.ExitCode }
+    return -1
+}
+
+function Invoke-C578Cancellation {
+    $phase = [string]$script:C889HoldPhase
+    if (-not $script:C889CallerDescriptor) {
+        Write-C487Fail -Name 'C578 FailedBuild cancelled' -Detail 'caller descriptor required'
+        return
+    }
+    $fx = New-C578Case -Name 'c578-cancel' -FailBuild
+    $desc = Open-C578Descriptor $fx
+    $run = Start-C578Runner $fx $desc
+    $snapshot = $null
+    try {
+        $held = Wait-C889ShimRecord $run $fx $desc $phase
+        if ($held.Name -ne 'Held') {
+            Write-C487Fail -Name 'C578 FailedBuild cancelled' -Detail ("held=" + $held.Name)
+            return
+        }
+        $entry = ([System.IO.File]::ReadAllText((Join-Path $fx.Root 'build.entry'))).Split('|')
+        $shimProc = $null
+        try { $shimProc = [System.Diagnostics.Process]::GetProcessById([int]$entry[0]) } catch { }
+        if ($shimProc) { $run.Children['build'] = $shimProc }
+        Add-C889JournalLine -Descriptor $desc -Role 'shim' -ProcessId ([int]$entry[0]) -StartTicks ([long]$entry[1])
+        Publish-C889Sentinels $desc
+        Write-C889Ack -Descriptor $desc -Fields @{ nonce = $desc.Nonce; phase = $phase; parentObserved = 'holding'; descriptor = 'caller' }
+        $snapshot = Get-C889HoldSnapshot $desc $fx.Root $false
+        if ($desc.IgnoreCancel) {
+            $signal = [System.Threading.ManualResetEventSlim]::new($false)
+            Register-C889DirectoryWatch -Descriptor $desc -Directory $desc.Directory -Signal $signal
+            try {
+                [void](Wait-C889Signal -Descriptor $desc -Signal $signal -Decide {
+                    return [pscustomobject]@{ Terminal = $false; Name = 'Pending' }
+                })
+            } finally { $signal.Dispose() }
+            Write-C487Fail -Name 'C578 FailedBuild cancelled' -Detail 'ignore-cancel returned'
+            return
+        }
+        $seen = Wait-C889CancelFile $run $desc
+        if ($seen.Name -ne 'Cancelled') {
+            Write-C487Fail -Name 'C578 FailedBuild cancelled' -Detail ("cancel=" + $seen.Name)
+            return
+        }
+        $wrapperFirst = $false
+        if (-not $run.Process.HasExited) {
+            try { $run.Process.Kill() } catch { }
+            $wrapperFirst = $true
+        }
+        try { [void]$run.Process.WaitForExit(15000) } catch { }
+        [System.IO.File]::WriteAllText((Join-Path $desc.Directory 'wrapper.stopped'), 'stopped')
+        $shimExit = Stop-C889ShimAfterWrapper $shimProc
+        $exitFile = Join-Path $desc.Directory 'shim.exit'
+        if (Test-Path -LiteralPath $exitFile) { $shimExit = [int](([System.IO.File]::ReadAllText($exitFile)).Trim()) }
+        Publish-C889Sentinels $desc
+        try { [void]$run.Out.Wait(15000) } catch { }
+        try { [void]$run.Err.Wait(15000) } catch { }
+        Copy-C889CancellationEvidence $fx $run $desc
+        Clear-C889Subscriptions $desc
+        $subs = 0
+        if ($desc.Subscriptions) { $subs = $desc.Subscriptions.Count }
+        $snapshot.CancelPresent = $true
+        $observed = ConvertTo-C889AckWord (Get-C889HeldDecision $snapshot)
+        Write-C889Ack -Descriptor $desc -Fields @{
+            nonce = $desc.Nonce
+            phase = $phase
+            parentObserved = $observed
+            shimExit = [string]$shimExit
+            cleanup = 'cooperative'
+            descriptor = 'caller'
+            wrapperFirst = $(if ($wrapperFirst) { 'true' } else { 'false' })
+            subscriptions = [string]$subs
+        }
+        Write-C487Fail -Name 'C578 FailedBuild cancelled' -Detail ("phase=" + $phase)
+        $shimDead = $shimProc -and $shimProc.HasExited
+        Assert-C487 -Cond ($run.Process.HasExited -and $shimDead) -Name 'C578 FailedBuild owned processes exited'
+    } finally {
+        Clear-C889Subscriptions $desc
+        if ($run) { [void](Stop-C578Owned $run -Interrupt) }
+    }
+}
+
+function Test-C578_FailedBuildKeepsLogAndExit {
+    if ($script:C889HoldPhase -eq 'before-ready' -or $script:C889HoldPhase -eq 'partial-log' -or $script:C889HoldPhase -eq 'release-held') {
+        Invoke-C578Cancellation
+        return
+    }
+    if (-not [string]::IsNullOrWhiteSpace($script:C889HoldPhase)) {
+        Assert-C487 -Cond $false -Name 'C578 FailedBuild unknown hold phase' -Detail $script:C889HoldPhase
+        return
+    }
+    Invoke-C889LogicalProof
+    $fx = New-C578Case -Name 'c578-failed' -Hold 'build' -FailBuild
+    $desc = Open-C578Descriptor $fx
+    $run = Start-C578Runner $fx $desc
+    $ready = $null
+    try {
+        $ready = Wait-C578Ready $run $fx 'build' $desc
         $log = Read-C578Log (Join-Path $fx.PhaseDir 'build.log')
-        $stdout = [string]$run.Out.Result + [string]$run.Err.Result
         Assert-C487 -Cond ($ready.Ready -and $log.Contains("C578_BUILD_STARTED_$($fx.Nonce)") -and $log.Contains("C578_BUILD_ERROR_$($fx.Nonce)")) `
             -Name 'C578 FailedBuild retains stdout and stderr' -Detail $log
+        $clean = Complete-C578FailedInner $run $fx $desc
+        $exited = $run.Process.HasExited
+        $log = Read-C578Log (Join-Path $fx.PhaseDir 'build.log')
+        $stdout = ''
+        if ($run.Out.IsCompleted) { $stdout += [string]$run.Out.Result }
+        if ($run.Err.IsCompleted) { $stdout += [string]$run.Err.Result }
         Assert-C487 -Cond ($log.Split('DOTNET build EXIT CODE: 37').Count -eq 2) -Name 'C578 FailedBuild records actual exit 37 once' -Detail $log
         Assert-C487 -Cond ($exited -and $run.Process.ExitCode -eq 2 -and $stdout -match 'build=failed .*exit=37' -and $stdout -match 'CHECKPOINT CP-1 EXIT CODE: 2') `
             -Name 'C578 FailedBuild returns checkpoint exit 2' -Detail $stdout
         Assert-C487 -Cond (-not (Test-Path (Join-Path $fx.Root 'run.entry')) -and -not (Test-Path (Join-Path $fx.PhaseDir 'run.log')) -and
             -not (Test-Path (Join-Path $fx.PhaseDir 'run.trx')) -and $stdout -notmatch 'CHECKPOINT CP-1 EXIT CODE: 0|^EXECUTED ') `
             -Name 'C578 FailedBuild never invokes tests' -Detail $stdout
-    } finally {
-        $clean = Stop-C578Owned $run
-        Save-C578Evidence $fx $run "buildReady=$($ready.Ready) pid=$($ready.Child.Pid)"
+        $pidText = ''
+        if ($ready -and $ready.Child) { $pidText = [string]$ready.Child.Pid }
+        Save-C578Evidence $fx $run "buildReady=$($ready.Ready) pid=$pidText"
         Assert-C487 -Cond $clean -Name 'C578 FailedBuild owned processes exited'
+    } finally {
+        $release = Join-Path $fx.Root 'build.release'
+        if (-not (Test-Path -LiteralPath $release)) { [System.IO.File]::WriteAllText($release, 'release') }
+        [void](Stop-C578Owned $run -Interrupt)
+        Clear-C889Subscriptions $desc
     }
 }
 
 function Test-C578_NoSuccessReceiptForInterruptedBuild {
     $fx = New-C578Case -Name 'c578-interrupted' -Hold 'build'
-    $run = Start-C578Runner $fx
+    $desc = Open-C578Descriptor $fx
+    $run = Start-C578Runner $fx $desc
     try {
-        $ready = Wait-C578Ready $run $fx 'build'
+        $ready = Wait-C578Ready $run $fx 'build' $desc
         $before = Read-C578Log (Join-Path $fx.PhaseDir 'build.log')
         $premature = $ready.Premature -or $run.Process.HasExited -or (Test-Path (Join-Path $fx.Root 'run.entry'))
         Assert-C487 -Cond ($ready.Ready -and -not $ready.Child.Process.HasExited -and -not $run.Process.HasExited) `
@@ -792,12 +1208,13 @@ function Test-C578_NoSuccessReceiptForInterruptedBuild {
             -Name 'C578 InterruptedBuild never reports green' -Detail $stdout
     } finally {
         $clean = Stop-C578Owned $run -Interrupt
+        Clear-C889Subscriptions $desc
         Save-C578Evidence $fx $run "ready=$($ready.Ready) premature=$premature pid=$($ready.Child.Pid)"
         Assert-C487 -Cond $clean -Name 'C578 InterruptedBuild owned processes exited'
     }
 }
 
-$script:C585ExpectedRows = 62 + 28 + 19
+$script:C585ExpectedRows = 62 + 28 + 21
 
 if (-not (Test-Path -LiteralPath $script:Runner)) { throw ('missing ' + $script:Runner) }
 
