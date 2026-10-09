@@ -935,6 +935,100 @@ public sealed class RemoteScriptContractTests
         return rows;
     }
 
+    // CARD-1105. One forbidden argv form per row. Putting the audit or the saved
+    // record back on a single jq argument is the redeploy-old failure.
+    [Test]
+    [Arguments("--arg audit \"$audit\"")]
+    [Arguments("--argjson saved \"$C1008_RECORD\"")]
+    public void C1105_Jq_argv_forms_are_absent(string needle)
+    {
+        Remote().Contains(needle, StringComparison.Ordinal).ShouldBeFalse(needle);
+    }
+
+    // One required file form per row. The counts are the audit store plus the
+    // three resume sites that read the spilled record.
+    [Test]
+    [Arguments("--rawfile audit \"$CASE_DIR/audit.txt\"", 1)]
+    [Arguments("--slurpfile saved \"$CASE_DIR/saved-record.json\"", 3)]
+    [Arguments("c1008_spill_record || c1008_refuse RecycleReceiptUnavailable", 3)]
+    [Arguments("( umask 077; : > \"$tmp\" )", 1)]
+    [Arguments("$saved[0].owned", 3)]
+    [Arguments("$saved[0].stopIntents", 1)]
+    [Arguments("# CARD-1105-AUDIT-STORE-BEGIN", 1)]
+    [Arguments("# CARD-1105-AUDIT-STORE-END", 1)]
+    public void C1105_Jq_file_forms_are_present(string needle, int count)
+    {
+        Regex.Matches(Remote(), Regex.Escape(needle)).Count.ShouldBe(count, needle);
+    }
+
+    // rawfile and arg are the platform limit. store drives the production audit block
+    // with a 200000-byte receipt: the record keeps those bytes and the file is 0600.
+    [Test]
+    [Arguments("rawfile", "EXIT=0")]
+    [Arguments("arg", "EXIT=126")]
+    [Arguments("store", "PASS store")]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1105_Jq_argv_limit(string mode, string expected)
+    {
+        C1008HostFixture.RequireNativeLinux();
+        var output = LinuxShell($$"""
+            set -euo pipefail
+            mode='{{mode}}'
+            prefix=$'{"\\\n'
+            rest="$(head -c $((200000 - ${#prefix})) /dev/zero | tr '\0' 'B')"
+            big="${prefix}${rest}"
+            [ "${#big}" -eq 200000 ]
+            if [ "$mode" = arg ]; then
+                set +e
+                jq -nc --arg audit "$big" '.audit=$audit' >/dev/null
+                code=$?
+                set -e
+                printf 'EXIT=%s\n' "$code"
+                exit 0
+            fi
+            if [ "$mode" = rawfile ]; then
+                dir="$(mktemp -d)"
+                trap 'rm -rf "$dir"' EXIT
+                printf '%s' "$big" > "$dir/in"
+                out="$(jq -nc --rawfile audit "$dir/in" '.audit=$audit')"
+                printf '%s' "$out" | jq -rj .audit > "$dir/got"
+                cmp -s "$dir/in" "$dir/got"
+                printf 'EXIT=0\n'
+                exit 0
+            fi
+            remote="$repo/scripts/c590-remote.sh"
+            fn="$(awk '
+                $0 == "c1008_write_private() {" {p=1}
+                p {print}
+                p && $0 == "}" {exit}
+            ' "$remote")"
+            block="$(awk '
+                /CARD-1105-AUDIT-STORE-BEGIN/ {p=1; next}
+                /CARD-1105-AUDIT-STORE-END/ {exit}
+                p {print}
+            ' "$remote")"
+            [ -n "$fn" ] && [ -n "$block" ]
+            eval "$fn"
+            c1008_save() { :; }
+            c1008_refuse() { printf 'REFUSED %s\n' "$1"; exit 2; }
+            CASE_DIR="$(mktemp -d)"
+            trap 'rm -rf "$CASE_DIR"' EXIT
+            umask 000
+            C1008_RECORD='{"phase":"preflight"}'
+            C1008_RESUME=0
+            audit="$big"
+            eval "$block"
+            printf '%s' "$audit" > "$CASE_DIR/expect"
+            printf '%s' "$C1008_RECORD" | jq -rj .audit > "$CASE_DIR/got"
+            cmp -s "$CASE_DIR/expect" "$CASE_DIR/got"
+            cmp -s "$CASE_DIR/expect" "$CASE_DIR/audit.txt"
+            mode_bits="$(stat -c %a "$CASE_DIR/audit.txt")"
+            [ "$mode_bits" = 600 ]
+            printf 'PASS store mode=%s bytes=%s\n' "$mode_bits" "${#audit}"
+            """, "repo");
+        output.ShouldContain(expected);
+    }
+
     private static void C1105AuditContract(string variant)
     {
         C1008HostFixture.RequireNativeLinux();

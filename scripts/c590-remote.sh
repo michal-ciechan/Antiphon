@@ -3785,6 +3785,23 @@ c1008_lock() {
     c849_lock
 }
 
+# CARD-1105. A git-audit receipt grows with repository tips and exceeds
+# MAX_ARG_STRLEN (131072) as one jq argument. Create the file at mode 0600
+# before the body is written so a permissive umask cannot publish it.
+c1008_write_private() {
+    local path="$1" body="$2" tmp
+    tmp="${path}.new.$$"
+    rm -f -- "$tmp" || return 1
+    ( umask 077; : > "$tmp" ) || return 1
+    printf '%s' "$body" > "$tmp" || return 1
+    chmod 0600 "$tmp" || return 1
+    mv -f -- "$tmp" "$path" || return 1
+}
+
+c1008_spill_record() {
+    c1008_write_private "$CASE_DIR/saved-record.json" "$C1008_RECORD"
+}
+
 c1008_save() {
     local tmp="$C1008_JOURNAL.new.$$"
     printf '%s\n' "$C1008_RECORD" > "$tmp" && chmod 0600 "$tmp" && mv -f -- "$tmp" "$C1008_JOURNAL" || return 1
@@ -4370,10 +4387,11 @@ c1008_status_proof() {
                 [ "$(printf '%s' "$ids" | jq -Sc '[.[]|select(.Config.Labels["com.docker.compose.service"]!="build-slots")|{Id,Image,Mounts:(.Mounts|sort_by(.Destination)),HostConfig}]|sort_by(.Id)')" = \
                   "$(printf '%s' "$C1008_RECORD" | jq -Sc '[.recreated.owned[]|{Id,Image,Mounts:(.Mounts|sort_by(.Destination)),HostConfig}]|sort_by(.Id)')" ] || c1008_refuse RecycleResumeMismatch
             elif [ "$saved" = stopped ]; then
-                printf '%s' "$ids" | jq -e --argjson saved "$C1008_RECORD" 'all(.[];
+                c1008_spill_record || c1008_refuse RecycleReceiptUnavailable
+                printf '%s' "$ids" | jq -e --slurpfile saved "$CASE_DIR/saved-record.json" 'all(.[];
                     .Config.Labels["com.docker.compose.service"]=="build-slots" or
                     (. as $c | .State.Running==false and .State.Status=="exited" and
-                     any($saved.owned[]; .Id==$c.Id and .Image==$c.Image and .Mounts==$c.Mounts and .Topology.version==1 and .HostConfig==$c.HostConfig)))' >/dev/null || c1008_refuse RecycleResumeMismatch
+                     any($saved[0].owned[]; .Id==$c.Id and .Image==$c.Image and .Mounts==$c.Mounts and .Topology.version==1 and .HostConfig==$c.HostConfig)))' >/dev/null || c1008_refuse RecycleResumeMismatch
             else
                 printf '%s' "$C1008_RECORD" | jq -e '.ownedRemoved==true' >/dev/null || c1008_refuse RecycleResumeMismatch
                 [ "$(printf '%s' "$ids" | jq '[.[]|select(.Config.Labels["com.docker.compose.service"]!="build-slots")]|length')" = 0 ] || c1008_refuse RecycleResumeMismatch
@@ -5672,12 +5690,14 @@ c1008_reconcile_owned() {
             C1008_RECORD="$(printf '%s' "$C1008_RECORD" | jq -c --arg id "$id" '.removeReceipts=((.removeReceipts+[$id])|unique)')"
         else
             current="$(c1008_refuse() { exit 2; }; c1008_owned_mounts "$current" "$reconcile_model" "$reconcile_volumes"; printf '%s' "$C1008_OWNED")" || c1008_refuse RecycleResumeMismatch
-            printf '%s' "$current" | jq -e --argjson saved "$C1008_RECORD" '.[0] as $c |
-                any($saved.owned[]; .Id==$c.Id and .Image==$c.Image and .Topology==$c.Topology)' >/dev/null || c1008_refuse RecycleResumeMismatch
-            if printf '%s' "$current" | jq -e --argjson saved "$C1008_RECORD" '.[0] as $c |
+            c1008_spill_record || c1008_refuse RecycleReceiptUnavailable
+            printf '%s' "$current" | jq -e --slurpfile saved "$CASE_DIR/saved-record.json" '.[0] as $c |
+                any($saved[0].owned[]; .Id==$c.Id and .Image==$c.Image and .Topology==$c.Topology)' >/dev/null || c1008_refuse RecycleResumeMismatch
+            c1008_spill_record || c1008_refuse RecycleReceiptUnavailable
+            if printf '%s' "$current" | jq -e --slurpfile saved "$CASE_DIR/saved-record.json" '.[0] as $c |
             $c.State.Running==false and $c.State.Status=="exited" and
-            any($saved.owned[]; .Id==$c.Id and .Image==$c.Image and .Topology==$c.Topology) and
-            any($saved.stopIntents[]?; .==$c.Id)' >/dev/null; then
+            any($saved[0].owned[]; .Id==$c.Id and .Image==$c.Image and .Topology==$c.Topology) and
+            any($saved[0].stopIntents[]?; .==$c.Id)' >/dev/null; then
                 C1008_RECORD="$(printf '%s' "$C1008_RECORD" | jq -c --arg id "$id" '.stopReceipts=((.stopReceipts+[$id])|unique)|.phase="stopped"')"
             fi
         fi
@@ -5906,10 +5926,14 @@ c1008_recycle() {
     if [ "${C1008_RESUME:-0}" = 1 ]; then
         [ "$audit" = "$(printf '%s' "$C1008_RECORD" | jq -r .audit)" ] || c1008_refuse RecycleResumeMismatch
     fi
+    # CARD-1105-AUDIT-STORE-BEGIN
     if [ "${C1008_RESUME:-0}" = 0 ]; then
-        C1008_RECORD="$(printf '%s' "$C1008_RECORD" | jq -c --arg audit "$audit" '.audit=$audit')"
+        c1008_write_private "$CASE_DIR/audit.txt" "$audit" || c1008_refuse RecycleReceiptUnavailable
+        C1008_RECORD="$(printf '%s' "$C1008_RECORD" | jq -c --rawfile audit "$CASE_DIR/audit.txt" '.audit=$audit')" \
+            || c1008_refuse RecycleReceiptUnavailable
         c1008_save || c1008_refuse RecycleReceiptUnavailable
     fi
+    # CARD-1105-AUDIT-STORE-END
     while IFS= read -r id; do
         [ -n "$id" ] || continue
         current="$(docker inspect "$id" 2>/dev/null)" || c1008_refuse RecycleVolumeCensusUnknown
