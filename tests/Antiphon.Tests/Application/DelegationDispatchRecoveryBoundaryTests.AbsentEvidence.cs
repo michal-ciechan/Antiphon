@@ -278,6 +278,82 @@ public partial class DelegationDispatchRecoveryBoundaryTests
     }
 
     /// <summary>
+    /// CARD-1153 S4 repair (Review a9d35067 R1). The certificate's five-second life is the
+    /// dispatcher's monotonic age since before the request; the wall deadline is a second,
+    /// fail-safe bound. The hold's task-row FOR UPDATE moves elapsed time and wall time
+    /// independently, after the real HTTP certify exchange. Decisive: Held is the committed
+    /// Blocked hold with one event and the caller note; Withheld leaves the task Dispatched with
+    /// no event and no note. Pinned rule: a wall jump forward past the deadline withholds even
+    /// when the monotonic age is fresh; a wall rollback with a fresh monotonic age holds.
+    /// </summary>
+    [Test]
+    [Arguments("review-rollback")]
+    [Arguments("rollback-before-request")]
+    [Arguments("negative-age")]
+    [Arguments("forward-jump-fresh")]
+    [Arguments("wall-rollback-fresh")]
+    [Arguments("exact-five-seconds")]
+    [Arguments("fresh")]
+    [Arguments("ordinary-expiry")]
+    public async Task C1153_Certificate_age_is_monotonic(string shape)
+    {
+        var life = RunnerAbsenceEvidenceValidator.Lifetime;
+        var (elapsed, wall, held) = shape switch
+        {
+            // R1's probe: six seconds elapsed, wall rolled back two seconds (wall +4 s).
+            "review-rollback" => (TimeSpan.FromSeconds(6), TimeSpan.FromSeconds(4), false),
+            // R1's clock-before-receipt: six seconds elapsed, wall one second before the request.
+            "rollback-before-request" => (TimeSpan.FromSeconds(6), TimeSpan.FromSeconds(-1), false),
+            "negative-age" => (TimeSpan.FromSeconds(-1), TimeSpan.Zero, false),
+            "forward-jump-fresh" => (TimeSpan.FromSeconds(1), life + TimeSpan.FromSeconds(1), false),
+            "wall-rollback-fresh" => (TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(-3), true),
+            "exact-five-seconds" => (life, life, true),
+            "fresh" => (TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1), true),
+            "ordinary-expiry" => (life + TimeSpan.FromTicks(1), life + TimeSpan.FromTicks(1), false),
+            _ => throw new ArgumentOutOfRangeException(nameof(shape), shape, null),
+        };
+
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var clock = new SplitClock(DateTimeOffset.UtcNow);
+        await using var evidence = await EvidenceHost.StartAsync(clock);
+        var seeded = await SeedAsync(schema.ConnectionString, new AbsentShape { Parent = true });
+        (await evidence.Client.PrepareAbsenceEvidenceAsync(seeded.SessionId, seeded.StartedAt, null, default))
+            .Prepared.ShouldBeTrue(shape);
+        var step = new LockedClockStep(clock, elapsed, wall);
+        var runner = new CountingRunner { Evidence = evidence.Client };
+        var stopper = new RecordingSessionStopper();
+        await using (var host = OpenSweep(schema.ConnectionString, runner, stopper, clock, new DeadSessionFirstSeenState(), step))
+        {
+            await host.SweepAsync();
+            clock.Advance(TimeSpan.FromMinutes(3) + TimeSpan.FromSeconds(1));
+            step.Armed = true;
+            await host.SweepAsync();
+        }
+
+        step.Fired.ShouldBe(1, shape);
+        runner.Certifies.ShouldBe(1, shape);
+        evidence.Certifies.ShouldBe(1, shape);
+        evidence.LastCertifyStatus.ShouldBe(200, shape);
+        Quiet(runner, stopper, shape);
+        if (held)
+        {
+            await AssertHeldAsync(schema.ConnectionString, seeded, shape);
+            return;
+        }
+
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var task = await db.AgentTasks.SingleAsync(t => t.Id == seeded.TaskId);
+        task.Status.ShouldBe(AgentTaskStatus.Dispatched, shape);
+        task.CompletedAt.ShouldBeNull(shape);
+        task.FailureReason.ShouldBeNull(shape);
+        task.Attempt.ShouldBe(seeded.Attempt, shape);
+        (await db.AgentTaskEvents.CountAsync(e => e.AgentTaskId == seeded.TaskId)).ShouldBe(0, shape);
+        (await db.SessionQueuedMessages.CountAsync(m => m.SourceTaskId == seeded.TaskId)).ShouldBe(0, shape);
+        var brief = await db.SessionQueuedMessages.SingleAsync(m => m.Id == seeded.BriefId);
+        Encoding.UTF8.GetBytes(brief.Body).ShouldBe(seeded.Body, shape);
+    }
+
+    /// <summary>
     /// V-17. Decisive: zero prepare/certify requests on the host, task and session unchanged,
     /// no fail/hold/kill/start. unavailable-owning-inventory pairs an UnavailableDirectory with
     /// a misleading empty local list.
@@ -950,6 +1026,48 @@ public partial class DelegationDispatchRecoveryBoundaryTests
                 default:
                     throw new ArgumentOutOfRangeException(nameof(condition), condition, null);
             }
+        }
+    }
+
+    /// <summary>
+    /// A fake clock whose monotonic timestamp and wall time can be stepped independently, as a
+    /// real host's can (an NTP step or a manual set moves only the wall). Timers stay on the
+    /// underlying fake time.
+    /// </summary>
+    private sealed class SplitClock(DateTimeOffset start) : FakeTimeProvider(start)
+    {
+        public TimeSpan Elapsed { get; set; }
+        public TimeSpan Wall { get; set; }
+
+        public override DateTimeOffset GetUtcNow() => base.GetUtcNow() + Wall;
+
+        public override long GetTimestamp() => (base.GetUtcNow() + Elapsed).UtcTicks;
+
+        public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+    }
+
+    /// <summary>
+    /// When armed, the hold's task-row FOR UPDATE steps the dispatcher's elapsed and wall time
+    /// by the given amounts, after the certificate was received and before it is re-checked.
+    /// </summary>
+    private sealed class LockedClockStep(SplitClock clock, TimeSpan elapsed, TimeSpan wall) : DbCommandInterceptor
+    {
+        public bool Armed { get; set; }
+        public int Fired { get; private set; }
+
+        public override ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<int> result,
+            CancellationToken cancellationToken = default)
+        {
+            if (Armed && Fired == 0 && command.CommandText.Contains("FOR UPDATE", StringComparison.Ordinal)
+                && command.CommandText.Contains("AgentTasks", StringComparison.Ordinal))
+            {
+                Fired++;
+                clock.Elapsed += elapsed;
+                clock.Wall += wall;
+            }
+
+            return base.NonQueryExecutingAsync(command, eventData, result, cancellationToken);
         }
     }
 
