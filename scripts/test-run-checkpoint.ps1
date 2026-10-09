@@ -594,7 +594,7 @@ if (-not $cancellationHold -or $holdPhase -eq 'release-held') {
 $normalHold = $env:C578_HOLD -eq 'both' -or ($env:C578_HOLD -eq 'build' -and $phase -eq 'build')
 if ($cancellationHold -or $normalHold) {
     if ($cancellationHold) {
-        [System.IO.File]::WriteAllText((Join-Path $root 'shim.held'), $holdPhase)
+        Write-C889SharedText -Path (Join-Path $root 'shim.held') -Text $holdPhase -Share (Get-C889FileShare) -Diagnostic 'C889_HELD_APPEND_FAILED'
     }
     $outcome = Wait-C889ShimHold -Root $root -Phase $phase -DescriptorDir $desc -IgnoreCancel $ignore -Standalone $standalone
     if ($outcome -eq 'Cancelled') {
@@ -695,7 +695,12 @@ function Start-C578Runner {
     }
     $proc = [System.Diagnostics.Process]::Start($psi)
     if ($Descriptor -and $Descriptor.Kind -eq 'caller') {
-        Add-C889JournalLine -Descriptor $Descriptor -Role 'wrapper' -ProcessId $proc.Id -StartTicks $proc.StartTime.ToUniversalTime().Ticks
+        try {
+            Add-C889JournalLine -Descriptor $Descriptor -Role 'wrapper' -ProcessId $proc.Id -StartTicks $proc.StartTime.ToUniversalTime().Ticks
+        } catch {
+            try { if (-not $proc.HasExited) { $proc.Kill() } } catch { }
+            throw
+        }
     }
     return [pscustomobject]@{ Process = $proc; Out = $proc.StandardOutput.ReadToEndAsync(); Err = $proc.StandardError.ReadToEndAsync(); Children = @{} }
 }
@@ -950,8 +955,7 @@ function ConvertTo-C889AckWord {
 function Read-C889SentinelText {
     param($Descriptor, [string]$Stream)
     $path = Join-Path $Descriptor.Directory ($Stream + '.sentinel')
-    if (-not (Test-Path -LiteralPath $path)) { return '' }
-    return [System.IO.File]::ReadAllText($path)
+    return Read-C889SharedText -Path $path
 }
 
 function Get-C889HoldSnapshot {
@@ -1016,9 +1020,7 @@ function Wait-C889ShimRecord {
     Register-C889DirectoryWatch -Descriptor $Descriptor -Directory $Descriptor.Directory -Signal $signal
     try {
         return Wait-C889Signal -Descriptor $Descriptor -Signal $signal -Decide {
-            $heldPath = Join-Path $Fx.Root 'shim.held'
-            $held = ''
-            if (Test-Path -LiteralPath $heldPath) { $held = ([System.IO.File]::ReadAllText($heldPath)).Trim() }
+            $held = (Read-C889SharedText -Path (Join-Path $Fx.Root 'shim.held')).Trim()
             $entry = Test-Path -LiteralPath (Join-Path $Fx.Root 'build.entry')
             $sentinels = Test-C889HeldSentinels $Descriptor $Phase $Fx.Root
             if ($held -eq $Phase -and $entry -and $sentinels) {

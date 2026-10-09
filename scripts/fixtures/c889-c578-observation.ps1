@@ -238,16 +238,103 @@ function Wait-C889Signal {
     }
 }
 
+function Get-C889FileShare {
+    return [System.IO.FileShare]([System.IO.FileShare]::ReadWrite -bor [System.IO.FileShare]::Delete)
+}
+
+function Open-C889SharedFile {
+    param(
+        [string]$Path,
+        [System.IO.FileMode]$Mode,
+        [System.IO.FileAccess]$Access,
+        [System.IO.FileShare]$Share
+    )
+    return [System.IO.FileStream]::new($Path, $Mode, $Access, $Share)
+}
+
+function Open-C889SharedRead {
+    param([string]$Path)
+    # Windows FileShare.Read rejects a concurrent append. This is the reader site.
+    $share = Get-C889FileShare
+    return Open-C889SharedFile -Path $Path -Mode ([System.IO.FileMode]::Open) -Access ([System.IO.FileAccess]::Read) -Share $share
+}
+
+function Read-C889SharedText {
+    param([string]$Path)
+    if (-not (Test-Path -LiteralPath $Path)) { return '' }
+    $stream = $null
+    $reader = $null
+    $failed = $null
+    $text = ''
+    try {
+        $stream = Open-C889SharedRead -Path $Path
+        $reader = [System.IO.StreamReader]::new($stream, [System.Text.Encoding]::UTF8, $true)
+        $text = $reader.ReadToEnd()
+    } catch {
+        $failed = 'C889_SHARED_READ_FAILED ' + $_.Exception.Message
+    } finally {
+        if ($null -ne $reader) { $reader.Dispose() }
+        elseif ($null -ne $stream) { $stream.Dispose() }
+    }
+    if ($null -ne $failed) { throw $failed }
+    return $text
+}
+
+function Add-C889SharedText {
+    param(
+        [string]$Path,
+        [string]$Text,
+        [System.IO.FileShare]$Share,
+        [string]$Diagnostic
+    )
+    $stream = $null
+    $failed = $null
+    try {
+        $stream = Open-C889SharedFile -Path $Path -Mode ([System.IO.FileMode]::Append) -Access ([System.IO.FileAccess]::Write) -Share $Share
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($Text)
+        $stream.Write($bytes, 0, $bytes.Length)
+        $stream.Flush()
+    } catch {
+        $failed = $Diagnostic + ' ' + $_.Exception.Message
+    } finally {
+        if ($null -ne $stream) { $stream.Dispose() }
+    }
+    if ($null -ne $failed) { throw $failed }
+}
+
+function Write-C889SharedText {
+    param(
+        [string]$Path,
+        [string]$Text,
+        [System.IO.FileShare]$Share,
+        [string]$Diagnostic
+    )
+    $stream = $null
+    $failed = $null
+    try {
+        $stream = Open-C889SharedFile -Path $Path -Mode ([System.IO.FileMode]::OpenOrCreate) -Access ([System.IO.FileAccess]::Write) -Share $Share
+        $stream.SetLength(0)
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($Text)
+        $stream.Write($bytes, 0, $bytes.Length)
+        $stream.Flush()
+    } catch {
+        $failed = $Diagnostic + ' ' + $_.Exception.Message
+    } finally {
+        if ($null -ne $stream) { $stream.Dispose() }
+    }
+    if ($null -ne $failed) { throw $failed }
+}
+
 function Add-C889JournalLine {
     param($Descriptor, [string]$Role, [int]$ProcessId, [long]$StartTicks)
     if (-not $Descriptor) { return }
     $path = Join-Path $Descriptor.Directory 'identity.journal'
     $prefix = $Role + '|'
     $existing = ''
-    if (Test-Path -LiteralPath $path) { $existing = [System.IO.File]::ReadAllText($path) }
+    if (Test-Path -LiteralPath $path) { $existing = Read-C889SharedText -Path $path }
     if ($existing.Contains($prefix)) { return }
     $line = '{0}|{1}|{2}' -f $Role, $ProcessId, $StartTicks
-    [System.IO.File]::AppendAllText($path, $line + "`n")
+    Add-C889SharedText -Path $path -Text ($line + "`n") -Share (Get-C889FileShare) -Diagnostic 'C889_JOURNAL_APPEND_FAILED'
 }
 
 function Write-C889Ack {
@@ -261,10 +348,7 @@ function Write-C889Ack {
     }
     $text = ($lines -join "`n") + "`n"
     $path = Join-Path $Descriptor.Directory 'phase.ack'
-    $temp = $path + '.tmp'
-    [System.IO.File]::WriteAllText($temp, $text)
-    if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Force }
-    [System.IO.File]::Move($temp, $path)
+    Write-C889SharedText -Path $path -Text $text -Share (Get-C889FileShare) -Diagnostic 'C889_ACK_WRITE_FAILED'
 }
 
 function Publish-C889Sentinels {
@@ -272,10 +356,15 @@ function Publish-C889Sentinels {
     if (-not $Descriptor) { return }
     foreach ($pair in @(@('stdout', [Console]::Out), @('stderr', [Console]::Error))) {
         $path = Join-Path $Descriptor.Directory ($pair[0] + '.sentinel')
-        if (-not (Test-Path -LiteralPath $path)) { continue }
+        $text = Read-C889SharedText -Path $path
+        if ($text -eq '') { continue }
         $writer = $pair[1]
-        foreach ($line in [System.IO.File]::ReadAllLines($path)) {
-            $writer.WriteLine($line)
+        $normalized = $text.Replace("`r", '')
+        $lines = $normalized.Split("`n")
+        $last = $lines.Length - 1
+        if ($last -ge 0 -and $lines[$last] -eq '') { $last = $last - 1 }
+        for ($i = 0; $i -le $last; $i++) {
+            $writer.WriteLine($lines[$i])
         }
         $writer.Flush()
     }
@@ -285,7 +374,7 @@ function Write-C889SentinelLine {
     param([string]$DescriptorDir, [string]$Stream, [string]$Text)
     if ($DescriptorDir) {
         $path = Join-Path $DescriptorDir ($Stream + '.sentinel')
-        [System.IO.File]::AppendAllText($path, $Text + "`n")
+        Add-C889SharedText -Path $path -Text ($Text + "`n") -Share (Get-C889FileShare) -Diagnostic 'C889_SENTINEL_APPEND_FAILED'
     }
     try {
         if ($Stream -eq 'stderr') {
