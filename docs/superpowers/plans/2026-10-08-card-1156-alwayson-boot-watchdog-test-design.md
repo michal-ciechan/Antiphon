@@ -1174,3 +1174,75 @@ behaviour precisely in the branch that runs only with receipts read
 the displayed stage", `StandingBootWatchPolicy.cs` "A recorded operator stage covers a later Detected
 decision"), test names and comments, and the reject lists. No predicate change, no migration, no
 restart beyond the one S1-S4 owe.
+
+### S6 repair 5 (Code task 5836fc02, Final Review 47bfbbef)
+
+F-1: the receipt-read comments now say what the code does. `StandingBootAttentionProjection.cs`: the
+class summary limits receipt independence to an episode whose clock stage is due and names the tests;
+the receipt-read comment says a failed read cannot abort the feed, projects from the clock stage
+alone, shows no row when a rollback puts the read below the boot due, and leaves the unattached
+receipt as ordinary recent-incident history; the recorded-stage comment applies only while the
+operator receipt is readable. `AttentionService.cs`: the standing paragraph and the call-site comment
+strike off only the receipts the projection read. New
+`C1156_Receipt_read_fault_below_the_boot_due_shows_no_standing_row` (`below-boot-due` prompt+7,
+`before-prompt` prompt-1): operator receipt recorded at prompt+21; control readable read is Error;
+with the one-shot receipt SELECT fault there is no `LivenessProbeFailed` row, the feed is returned,
+the operator receipt appears once as `Error LivenessProbeFailed in the last 24h.` on the session, a
+Warning is logged, no receipt is written and nothing destructive runs. CP-30's comment no longer
+claims unreadable history is never a hidden row. Audited and left as true, each with its witness:
+projection summary "the receipt read is optional ... projected from its clock alone" (CP-30, the new
+case); "the row and the receipt can never disagree about who is watched" (one `Decide`, CP-24);
+`CurrentEpisodeKeysAsync` "A fault ... must then retain every receipt" (CP-12);
+`StandingBootWatchPolicy.cs` "A recorded operator stage covers a later Detected decision" (receipt
+dedup on the writer's locked read, S6-PINS); `BootReplyWatchdogService.cs` "change notice is best
+effort and never delivery evidence" (S6-PINS); the DTO "It renders with or without a saved
+`standingBoot:v1;` incident" (CP-10 no-incident and the read-receipt cases).
+
+F-3 (CARD-1165): `StandingBootQueueWitnessTests`. `StandingBootWatchFixture` gains `SeedPrompt`
+(default true); with it false the fixture's taskless AlwaysOn session has no prompt row and a
+`BridgeQueueHarness` attached to it (`AttachSessionId`, isolated schema, the CARD-1150 pattern) is
+the only producer. The harness's `FakeAgentProtocolAdapter` records a silent model: the typed body as
+a stamped `UserPrompt`, or `QueuedUserPrompt` when the transcript working rule says the recipient is
+mid-turn, and nothing after it. The row is read through the real `AttentionService.GetAsync` at fake
+times measured from the stored prompt (the queue itself stays on the system clock).
+
+- `C1165_Real_queue_prompt_reaches_the_standing_row(eligible)`: idle recipient, inline WhenIdle
+  delivery. One body row Sent/Delivered, typed once, one complete matching `UserPrompt`; no row one
+  microsecond before the boot due; Warning at the boot due and Error at the operator due with the exact
+  headline and `Prompt #n (UserPrompt) at <prompt>, 8m00s ago; no qualifying model reply since.`; a
+  later `AssistantText` resolves it.
+- `(crash-after-enqueue)`: `deliverIfIdle: false`, the committed row is Pending and untyped with no
+  prompt record and no standing row; the harness is disposed and a second one (restart) delivers it
+  through `FlushStrandedQueuesAsync`; typed once across both adapters; same row and thresholds.
+- `(enqueue-failure)`: a one-shot save fault on the first queue-row insert makes `EnqueueAsync` throw;
+  no row, no prompt, no standing row; the retry is the only delivery; same row and thresholds.
+- `(busy-rules-turn)`: Grok session, rules receipt armed and the launch rules row Pending. The real
+  queue types the rules prompt, the model starts its rules turn (busy), the user body waits Pending and
+  untyped, the ACK line and `TurnEnd` land, `OnTurnEndAsync` runs the real `GrokRulesRefreshService`
+  judge (acknowledged, `RulesTurnEndSequence` set, Ready) and types the body. The rules turn's model
+  rows are excluded by `HasModelReplySinceAsync`, so the row is Warning/Error; control: with
+  `RulesPromptSequence` cleared the same rows resolve it, restored it shows again.
+- `C1165_Prompt_typed_into_a_busy_turn_is_labelled_queued_not_delivered`: A delivered to an idle
+  session (silent model, now mid-turn); B enqueued WhenIdle stays Pending and the row still describes
+  A; `SendNowAsync(B)` types B into the busy turn, the queue row reads Delivered, the transcript holds
+  only a `QueuedUserPrompt` of B (zero complete matching `UserPrompt`), and the row says
+  `Queued prompt record #n at <B>, 8m00s ago; no reply observed.` with no delivery claim.
+
+Harness limits: the rules turn is driven by the real queue and judged by the real refresh service,
+but its launch row and receipt are arranged by the test (no runner rules file); the fake adapter
+stands in for the provider; `AssertNothingDestructive` checks the fixture's runner, not the
+harness's `EmptyRunnerClient`.
+
+| Case | Mutation (author diagnostic, two batched builds, restored) | Red at |
+|---|---|---|
+| `C1156_Receipt_read_fault_below_the_boot_due_shows_no_standing_row` (both) | A1 `if (stage == None) continue;` removed | `LivenessProbeFailed ... should be empty but had 1` |
+| `busy-rules-turn` | A2 rules-turn clause removed from `HasModelReplySinceAsync` | `StandingRowsAsync(f, promptAt.AddMinutes(8)) should have single item but had 0` |
+| `C1165_Prompt_typed_into_a_busy_turn_is_labelled_queued_not_delivered` | A3 queued label branch disabled in `Item` | `lines should contain "Queued prompt record #2 ..."` |
+| `eligible` | B3 `now > OperatorDueAt` (operator due equality) | `error.Severity should be Error` |
+| `crash-after-enqueue` | B1 `FlushStrandedQueuesAsync` returns 0 | `FlushStrandedQueuesAsync ... should be greater than 0` |
+| `enqueue-failure` | B2 failed enqueue save swallowed and reported as success | `EnqueueAsync ... should throw InvalidOperationException but did not` |
+
+Side effects in the same batches: A1 also reds `eligible` (its microsecond-before-due check), B3 also
+reds `busy-rules-turn` (Error at the operator due); the other cases stayed green in each batch. Every
+PC stays pending for SourceLanding Mutation. No predicate change, no migration, no restart beyond the
+one S1-S4 owe.
