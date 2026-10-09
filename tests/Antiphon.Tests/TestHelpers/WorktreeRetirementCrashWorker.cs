@@ -28,8 +28,7 @@ internal static class WorktreeRetirementCrashWorker
         if (rejection is not null)
             throw new InvalidOperationException(CrashWorkerProcess.StderrSentinel + ": " + rejection);
 
-        Console.WriteLine(CrashWorkerProcess.StdoutSentinel);
-        Console.Out.Flush();
+        CrashWorkerProcess.WriteStdoutSentinel();
         await LandingSafetyHarness.RunRetirementCrashWorkerAsync(
             Path.GetFullPath(request.Root), request.TaskId.ToString("D"), request.Cut, Path.GetFullPath(request.Ready));
     }

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text;
 using System.Text.Json;
 
 namespace Antiphon.Tests.TestHelpers;
@@ -45,6 +46,21 @@ internal static class CrashWorkerProcess
 
     internal readonly record struct ReadyView(
         string Outcome, string? Cut, int? Pid, int? ExitCode, string? Error);
+
+    private static Stream? _standardOutput;
+
+    /// <summary>
+    /// The testing host replaces <see cref="Console.Out"/> before the assembly hook. Write the
+    /// diagnostic to the process stdout handle and keep that stream alive so a later collection
+    /// does not close the handle. The parent's drain then observes the sentinel.
+    /// </summary>
+    internal static void WriteStdoutSentinel()
+    {
+        var bytes = Encoding.UTF8.GetBytes(StdoutSentinel + Environment.NewLine);
+        _standardOutput ??= Console.OpenStandardOutput();
+        _standardOutput.Write(bytes, 0, bytes.Length);
+        _standardOutput.Flush();
+    }
 
     internal static Prepared Prepare(Spec spec)
     {
