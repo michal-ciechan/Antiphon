@@ -438,8 +438,10 @@ public sealed class DelegationSettings
     /// 80%); it never fails, stops, retries or releases the session, and no other clock does
     /// either while the boot episode is unresolved. The operator threshold
     /// (<see cref="ModelWaitDeadlineMinutes"/>, see there) is the second and last step. A model
-    /// reply returns the task to the ordinary deadlines. CARD-0079 is the only automatic stop
-    /// of a Working session.</para>
+    /// reply returns the task to the ordinary deadlines. For a taskless AlwaysOn session the
+    /// session-scoped watch records a Warning receipt at this deadline and an Error receipt at the
+    /// operator threshold and likewise never stops, restarts, latches or types (CARD-1156).
+    /// CARD-0079 is the only automatic stop of a Working session.</para>
     ///
     /// <para><b>Why tighter than <see cref="ModelWaitDeadlineMinutes"/>.</b> A boot turn that has
     /// produced no assistant row, no tool call and no file is far more likely a provider that

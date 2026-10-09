@@ -1105,6 +1105,15 @@ detection, never a stop"). For a Grok session, `~/.grok/sessions/<id>/events.jso
 no `first_token`) and `~/.grok/logs/unified.jsonl` (`shell.turn.inference_start` with no
 `inference_done`) are the diagnostics; see `docs/agent-kinds.md`.
 
+**A taskless AlwaysOn session showing only its boot prompt is reported, not recovered (CARD-1156).**
+A taskless AlwaysOn boot stall is detection, never a stop (CARD-1156, operator decision option A): the boot reply watchdog records at most one Warning receipt per episode (accepted generation, launch clock and boot prompt sequence) from the boot due (`Delegation:BootModelWaitDeadlineMinutes`, 8 minutes) and at most one Error receipt from the operator threshold (20 minutes with defaults), each in its own context and transaction, keeps the watch armed, and never stops, kills, fails, restarts, latches or types into the session or writes its supervision state.
+A hung taskless AlwaysOn boot is reported, not recovered: the session keeps running and keeps its seat until the model replies, an operator acts or the process exits; CARD-0079 remains the only automatic stop of a Working session, and no deadline releases the seat.
+Its `LivenessProbeFailed` attention row is Warning from the boot due and Error from the operator
+threshold, derived from the current boot facts. The decision is yours: inspect the session or its
+transcript, then keep waiting, reply through the session, or explicitly Stop and Start/resume the
+agent. Owner and test pins: [session runtime invariants](session-runtime-invariants.md) ("A taskless
+AlwaysOn boot stall is detection, never a stop").
+
 **A session past the general deadline is Failed, not recovered, when it has ingested rows.** The model-wait (20) and local-execution (90) clocks and the 240-minute ceiling fail the task without killing or retrying; the reason names the clock and the session. Bind-refusal recovery is not attempted on a session that has ingested rows — an overdue mid-turn worker is still working, not an unbound success (CARD-0551). The session was NOT killed; read it before you decide.
 
 **A Check-role task settles Succeeded when it has produced a reading (CARD-0302).** `LOOKS STUCK` /

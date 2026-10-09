@@ -45,13 +45,13 @@ public class AgentSupervisionState
     public DateTime? LastHealthyAt { get; set; }
 
     /// <summary>
-    /// CARD-0312 S4. When the boot-reply watch STOPPED restarting this agent. The mechanism gets
-    /// at most two consecutive probe-driven restarts; the third consecutive failure latches it off
-    /// and raises the incident at <c>AlertSeverity.Error</c> instead of restarting again. Null is
-    /// unlatched. Cleared by a human <c>StartAsync</c> (which already lifts the supervision latch)
-    /// or by any successful reply. This is the 2026-07 lesson held in a column: the periodic
-    /// liveness probe was deleted twice for false-positive-killing healthy sessions, and an
-    /// unbounded restart ladder driven by a liveness verdict is that failure by another route.
+    /// CARD-0312 S4. When the boot-reply watch latched this agent off after its probe-driven
+    /// restarts. CARD-1156 retired that ladder: the boot reply watchdog never stops, restarts or
+    /// latches a session and no code sets this column any more. A value left from before still
+    /// holds automatic starts (supervisor, standing seats, channel and capacity recovery) until a
+    /// human start or attach clears it with the supervision latch. Null is unlatched. The 2026-07
+    /// lesson stands: the periodic liveness probe was deleted twice for false-positive-killing
+    /// healthy sessions, and a restart driven by a liveness verdict is that failure by another route.
     /// </summary>
     public DateTime? LivenessLatchedAt { get; set; }
 

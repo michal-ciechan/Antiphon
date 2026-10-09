@@ -229,7 +229,10 @@ public enum AttentionKind
     /// never answered it — rung 5 of the delivery evidence ladder. Projected from open
     /// <c>AgentIncidentKind.LivenessProbeFailed</c> incidents (kind 10, reused rather than minting
     /// a 48th), re-verified at read time against a live session and a still-unanswered boot
-    /// prompt. Warning; Error on the latching third, where the mechanism has stopped restarting.
+    /// prompt. Detection only since CARD-1156: nothing stops, restarts or latches on it. A taskless
+    /// AlwaysOn agent's current episode is projected from its current boot facts, Warning from the
+    /// boot due and Error from the operator threshold; any other session's row carries its legacy
+    /// <c>bootSeq=</c> incident's severity.
     /// Appended after shipped 26; do not renumber.
     /// </summary>
     LivenessProbeFailed = 27,

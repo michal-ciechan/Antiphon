@@ -639,7 +639,31 @@ the transcript mutation gate. Activation requires both server and runner support
   not the task's lifetime: absent a reply or an explicit action the session stays Working.
   The operator threshold is `prompt + max(positive boot wait, operator wait)`: the boot wait is `Delegation:BootModelWaitDeadlineMinutes` (zero when `<= 0`), and the operator wait is `Delegation:ModelWaitDeadlineMinutes`, or 20 minutes when that is `<= 0`, so a disabled model-wait deadline still waits for a boot wait above 20 minutes.
   Computed by `BootStallPolicy.OperatorWait` and `BootStallPolicy.Facts`.
-  This bullet is a delegate task's boot episode. A taskless AlwaysOn session is the exception: the boot reply watchdog still raises its incident and stops the session for the existing standing-agent restart ladder (`BootReplyWatchdogService`, unchanged by CARD-1151; CARD-1156).
+  This bullet is a delegate task's boot episode; a taskless AlwaysOn session's is the next bullet (CARD-1156).
+
+- **A hung taskless AlwaysOn boot is reported, not recovered** (CARD-1156).
+  A taskless AlwaysOn boot stall is detection, never a stop (CARD-1156, operator decision option A): the boot reply watchdog records at most one Warning receipt per episode (accepted generation, launch clock and boot prompt sequence) from the boot due (`Delegation:BootModelWaitDeadlineMinutes`, 8 minutes) and at most one Error receipt from the operator threshold (20 minutes with defaults), each in its own context and transaction, keeps the watch armed, and never stops, kills, fails, restarts, latches or types into the session or writes its supervision state.
+  Pinned by `StandingBootWatchdogTests.C1156_Working_boot_keeps_its_session_and_supervisor_custody`,
+  `StandingBootWatchdogTests.C1156_Episodes_deduplicate_and_reopen_only_for_new_identity`,
+  `StandingBootWatchdogTests.C1156_Telemetry_faults_preserve_custody_and_future_writes` and
+  `BootReplyWatchdogTests.boot_silence_preserves_existing_failure_history_without_creating_a_latch`.
+  Its attention row is projected from the current boot facts, not from the receipts: Warning from the boot due, Error from the operator threshold or a recorded Error receipt of the same episode, and gone once the model replies, the session ends or a new launch or prompt opens a new episode.
+  Pinned by `StandingBootAttentionTests.C1156_Current_boot_attention_survives_optional_history`,
+  `StandingBootAttentionTests.C1156_Positive_resolution_clears_only_the_current_episode` and
+  `StandingBootAttentionTests.C1156_Recorded_operator_stage_survives_clock_rollback`.
+  Unknown evidence keeps the session: a policy input that cannot be read positively (provider delivery support, Grok rules, session row, generation, owner, task, prompt or reply) records nothing, an open task on the session (Queued, Dispatched, Working or Blocked) records nothing, a boot wait `<= 0` turns the watch off, and a missing runtime, a failed transcript pull or an absent runner listing still records from the stored transcript.
+  Pinned by `StandingBootWatchPolicyTests.C1156_Emission_requires_each_positive_condition`,
+  `StandingBootWatchdogTests.C1156_Fresh_evidence_revokes_stale_emission` and
+  `StandingBootWatchdogTests.C1156_Evidence_variants_never_authorize_recovery`.
+  A live session that no AlwaysOn agent points at and no Dispatched or Working task owns keeps the generic `bootSeq=` diagnostic: one Warning incident per boot prompt, then the watch is disarmed; it stops nothing and writes no supervision state either.
+  Pinned by `StandingBootWatchdogTests.C1156_Evidence_variants_never_authorize_recovery` (`non-alwayson-legacy-diagnostic`).
+  A hung taskless AlwaysOn boot is reported, not recovered: the session keeps running and keeps its seat until the model replies, an operator acts or the process exits; CARD-0079 remains the only automatic stop of a Working session, and no deadline releases the seat.
+  Pinned by `CheckCompactionRecoveryFlowTests` (the compaction regression) and
+  `StandingBootWatchdogTests.C1156_Working_boot_keeps_its_session_and_supervisor_custody`.
+  The receipts are `LivenessProbeFailed` incidents keyed `standingBoot:v1;g=<generation>;l=<launch clock>;p=<prompt sequence>;stage=<detected|operator>`;
+  they never carry prompt or composer text, and incident pruning keeps the current episode's
+  receipts (`StandingBootAttentionTests.C1156_Prune_preserves_active_dedup_and_releases_resolved_history`). The operator decides: inspect the session or its transcript, then keep waiting, reply
+  through the session, or explicitly Stop and Start/resume the agent.
 
 
 <!-- CARD-0254 preserved source begins -->
