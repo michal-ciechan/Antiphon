@@ -254,8 +254,9 @@ the transcript mutation gate. Activation requires both server and runner support
   The catch-up pull still runs every pass; its failure is the expected answer only for a Stopped
   or Failed destination. Any committed append or retention reseed, restart, changed attempt or
   payload, other destination status, profiled, spilled or pointer body, `LegacyCheckNote`,
-  timestamp-only floor, missing or disabled store, retained persist failure or proof older than
-  five minutes keeps the full scan from the keyed row's original floor. A proof never confirms,
+  timestamp-only floor, missing or disabled store, retained persist failure, catch-up persist that
+  needed a reload (a recovered unique conflict), commit between the catch-up and the scan, or proof
+  older than five minutes keeps the full scan from the keyed row's original floor. A proof never confirms,
   moves the floor, delays a pass or stops a session. A lookup, publication or clock fault
   refuses reuse; a metrics fault is swallowed and a valid hit stays a hit. Proofs are capped at
   256 and dropped when the note confirms or is reconciled as `Confirmed`, `NotRequired` or
