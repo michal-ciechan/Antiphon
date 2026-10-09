@@ -65,8 +65,8 @@ and never produces a wrong outcome.
 **Q3, the TaskCompletion note.** It is profiled (`CompletionSnapshotJson` present), so D-3
 excludes it; it reaches the SELECT with zero candidate rows (9 calls per 72.6 s, 0 rows) and
 pays the existing `StartedAt` generation SELECT (lines 232-233) before catch-up. It stays on
-today's path at negligible cost. Pinned by V-6 arm `profiled-completion` (scans every pass,
-no proof, 7 commands). An unprofiled TaskCompletion (CARD-0527 commit-outcome note) is admitted
+today's path. Pinned by V-6 arm `profiled-completion` (one receipt SELECT and 7 commands on
+each of its three passes; no proof). An unprofiled TaskCompletion (CARD-0527 commit-outcome note) is admitted
 by D-3 and pinned by V-1 `positive-task-completion-unprofiled` and V-3
 `task-completion-unprofiled-404`.
 
@@ -150,18 +150,17 @@ session.
   matched §4 exactly for all six V-3 rows.
 
 - **A-7, Code S3 plus repair of Final Review `570fd325` (task `5ea19771`).** D1: the telemetry
-  contract is now stated the same way everywhere (fail-closed rule above, W-10, G-13, the cache
-  header and the invariants bullet): a lookup, publication or clock fault refuses reuse and today's
+  contract is now stated the same way in the fail-closed rule above, W-10, G-13, the cache header
+  (`LandReceiptScanCache.cs:13-14`) and the invariants bullet: a lookup, publication or clock fault refuses reuse and today's
   scan runs; a metrics fault is swallowed and a valid hit stays a hit; neither changes a receipt
   outcome. Behaviour and tests unchanged (V-2 `metrics-never-throw-and-count` already pinned the
   metrics arm). D2: the delivery inventory's busy/crash substitutes are replaced by V-12 (three
   rows through the real queue and a runtime pull, rebinding the adapter submit path so the stream
-  never lands the prompt); CP-3 is 17 results (V-7 5, V-8 4, V-9 5, V-12 3). Harness seams added in
+  never lands the prompt); A-8 recounts CP-3. Harness seams added in
   S3: `CutBoundary` (hold or fail one named boundary), `HeldTranscriptSave` (an ingest held inside
   its commit, so it owns the session gate) and `ReceiptScanRecognizer.AfterRow` (a reader fault or
   cancellation after N rows). V-7 `commit-before-before-stamp` names its production line as the
-  before-stamp read preceding the enumeration (swapping them publishes a proof that never examined
-  the commit). No production change in S3.
+  before-stamp read preceding the enumeration. No production change in S3.
 
 - **A-8, repair of Final Review `200e9630` (Code task `6183911e`).** F1: the reconciler lost the
   catch-up refusal before publication. A `NeedsReload` catch-up (a 23505 recovered by a successful
@@ -171,7 +170,7 @@ session.
   catch-up stamp is known and equal to the before-stamp (`current is not null && before == current`);
   otherwise the refusal `certificate:CatchUp` is counted and nothing is published, so a pass that
   needed a reload, observed a retained failure or saw a commit land between its catch-up and its
-  scan certifies nothing and the next pass rescans. W-5 and W-8 now say so. The deferred A-6 witness
+  scan certifies nothing (`AgentTaskLandNotificationService.cs:294-297`). W-5 and W-8 now say so. The deferred A-6 witness
   is V-7 `unique-violation-reload-after-cached-miss`: after a cached miss the runner holds one new
   row and the harness `CompetingTranscriptInsert` commits the same row from an independent context
   inside the runtime's save, so the persist meets a real 23505, recovers the durable row, retains no
@@ -179,21 +178,18 @@ session.
   `state:Observation:persist_needs_reload` and `certificate:CatchUp` once each; the next pass rescans
   (1) and only then certifies, the pass after reuses (0), and a later matching prompt confirms at its
   own sequence. CP-3 is 18 results (V-7 6). Guard G-16 / PC-16. F2: the delivery inventory's
-  accepted-kind sentence now names `UserPrompt` or an admitted `QueuedUserPrompt` (only V-4
-  `matching-queued-user-prompt` uses one) and keeps the complete-`UserPrompt` requirement for the
+  accepted-kind sentence now names `UserPrompt` or an admitted `QueuedUserPrompt` (among the
+  confirmations it lists, only V-4 `matching-queued-user-prompt` uses one) and keeps the complete-`UserPrompt` requirement for the
   V-11/V-12 recovery evidence. Review PC-design corrections (documentation only): PC-4b's witness is
   the V-1 policy rows `stamp-epoch` and `stamp-reset-epoch` (the integration `fence-prune-reseed` arm
-  also changes Revision and Count, so it stays green under PC-4b alone); the A-6 malformed-identity
+  also changes Revision and Count, which PC-4b still compares); the A-6 malformed-identity
   guards are G-17.`<row>` (7) mapped to `C1121_MalformedIdentityNeverReusesNegativeScan`; V-1 has 66
   refusing rows since A-5 (`reset-epoch-negative`), so G-1 is 66 and guards total 109; the PC cost
   is recomputed. PC-13 is **not** repaired here: its `cache-clock-fault` fixture faults from the
   start, never publishes and so never reaches `TryReuse`'s clock on a hit; witnessing it needs a
   fixture change (a valid proof, then a clock fault), which is a test change for a separate Code
-  task. PC-13 stays pending and is currently unwitnessed. Red proof for the new row (Code `6183911e`,
-  method filter `/*/*/AgentTaskLandReceiptWatermarkSafetyTests/C1121_RacingCommitCannotPublishOrReuseStaleMiss*`,
-  6 results): green 6/6 at the fix; with the reconciler restored to `0c02ffed` 5/6, only this row red
-  at `metrics.Publishes` 1 expected, 2 actual; under PC-16 (`if (true)`) the same single red. These are
-  Code's red proof, not a discharged PC.
+  task; A-9 records that change. PC-13 stays pending. Code `6183911e` reported its red proof for
+  the new row; that is not a discharged PC.
 
 - **A-9, CARD-1163.** The `cache-clock-fault` arm publishes on a clean negative-scan pass
   (`Publishes` 1, `Proofs` 1), then `GetTimestamp` throws. The next pass keeps `LastErrorCode`
@@ -307,16 +303,25 @@ transcript members. Documents: the plan, the sample, `docs/testing-and-build.md`
 runner tool, build slots, PC execution), `docs/session-runtime-invariants.md` (committed
 projection and receipt bullets), `2026-10-08-card-1153-test-design.md` (house format).
 
-Boundaries and where each lands: lifetime at exactly 5 minutes and one tick before (V-2);
-capacity 1,024 versus 1,025 (V-2); text 4,096 versus 4,097 (V-1, V-2; V-6 `oversized-body` is above the cap, not at 4,097); `Revision` 0 and 1
-(V-1); `Count`/`LastSequence` consistency (V-1); null versus value for `LastDeliveryStartedAt`,
-`LastDeliveryGeneration`, verdict (V-1); floor equal versus one below (V-5
-`lower-baseline-includes-existing-match`); runner sequence rebase to `max + 1` (V-4); every
-`SessionStateReadiness` value (V-1); every `SessionStatus` on the destination (V-1 Stopped,
-Failed, Running, Starting, undefined; V-6 Running/Starting); every `DeliveryVerdict` value plus
-null (V-1); undefined enum values for kind, state, status, verdict (V-1); 48, 852 and 1,506
-candidates (V-9); cold versus warm store (V-3, V-9); reader fault on the second row (V-7); gate
-held by a writer (V-7); same-cache fresh scope versus new singleton (V-2, V-8). Excluded
+Boundaries and where each lands. The lifetime, capacity and text-size boundaries are stated only
+through the constants `LandReceiptScanCache.MaxProofs`, `MaxExpectedTextChars` and `Lifetime`
+(`LandReceiptScanCache.cs:20-22`) and are pinned by V-2 `lifetime-reuse-one-tick-before`,
+`lifetime-refuse-at-five-minutes`, `capacity-overflow-evicts-oldest`, `eviction-keeps-exact-binding`,
+`text-at-cap-admitted`, `text-over-cap-refused` and V-1 `positive-text-at-cap`, `text-over-cap`;
+V-6 `oversized-body` is a refusal arm, not a boundary test. The state, attempt and enum boundaries
+are pinned by the named V-1 rows: `revision-zero`, `revision-negative`, `count-negative`,
+`last-sequence-below-count`, the `*-null` and `positive-*-null-bound` rows, the four non-Ready
+`readiness-*` rows, the destination rows (Stopped in the positive fixture,
+`positive-destination-failed`, `destination-running`, `destination-starting`,
+`destination-status-undefined-enum`; V-1 has no `Created` or `Stopping` row), one
+`positive-verdict-*` row per `DeliveryVerdict` member plus `positive-verdict-null`, and the
+`*-undefined-enum` rows. Elsewhere: a baseline one below an existing match (V-5
+`lower-baseline-includes-existing-match`); a low runner sequence rebased to the committed
+`LastSequence + 1` (V-4 `rebased-low-sequence-old-timestamp`); the candidate count of each V-9
+shape (`two-kind-48`, `one-kind-852`, `two-kind-1506`); a cold store (V-3
+`two-kind-outcome-cold-store`); a reader fault after one row (V-7 `reader-throws-after-one-row`);
+a gate held by a writer (V-7 `writer-holds-gate-during-reuse-observation`); a new singleton (V-2
+`new-singleton-miss`) versus a fresh scope over the same cache (V-8). Excluded
 boundaries: the 512-UUID identity chunk (fixture seeding only; a 1,506-row ingest crosses it
 incidentally and is not asserted); `WarmupBatchSize`/`MaxSessions` store pressure (store
 owner's tests; a non-admitted entry reseeds every read, which can only produce a miss).
@@ -420,7 +425,7 @@ state, `ConfirmedAt` and `ConfirmingPromptSequence` as stated; cache metrics as 
 - V-3: unchanged transcript skips only the receipt SELECT | integration | `AgentTaskLandReceiptWatermarkTests.C1121_UnchangedTranscriptSkipsOnlyReceiptSelect(string shape)`, 6 rows: `two-kind-outcome-404` (6/5/5 commands, receipt 1/0/0, rows 48/0/0), `two-kind-outcome-cold-store` (7/5/5; store first touched by the observation), `one-kind-legacy-outcome-null-verdict-404` (6/5/5; SQL has `t."Kind" = 'UserPrompt'`), `dispatch-base-canceled-row` (queue row Canceled, note becomes Canceled with `queue_canceled_unconfirmed`; 6/5/5; never confirms), `task-completion-unprofiled-404` (7/6/6 with its generation SELECT), `two-kind-outcome-live-committed-row` (runner `CommittedRow` of an existing UUID; 9/8/8) | per-pass command totals and receipt SELECT counts exactly as listed; proofs 1, publishes 1, hits 2; `ConfirmedAt` null; state AwaitingReceipt (Canceled in the canceled row).
 - V-4: any committed change reopens the full scan | integration | `AgentTaskLandReceiptWatermarkTests.C1121_AnyCommittedChangeReopensFullScan(string change)`, 6 rows after a cached miss: `matching-user-prompt` (ingest the body as UserPrompt: next pass 1 receipt SELECT, Confirmed at the stored sequence 59, proofs 0 afterwards), `matching-queued-user-prompt` (two-kind note confirms; the same ingest on the legacy arm would not, which R-1 already pins), `rebased-low-sequence-old-timestamp` (runner sequence 1, timestamp one hour old, new UUID: stored at `max + 1`, Confirmed there), `unrelated-assistant-text` (next pass full scan 1/48, miss, new proof; the pass after reuses), `fence-prune-reseed` (`BeginMutationAsync` + `ExecuteDelete` of one candidate + `PublishCommittedAsync`: reset epoch +1; next pass 1/47, miss, new proof), `ingest-lower-runner-sequence-after-reseed` (after the fence, a matching prompt with runner sequence 3 rebases above the floor and confirms; the pre-fence proof never reuses) | `ConfirmingPromptSequence` equals `InMemoryFirstReceipt` over the database rows above the original floor; receipt floor parameter equals the row's baseline; no retyping.
 - V-5: attempt and payload changes reopen the original floor | integration | `AgentTaskLandReceiptWatermarkTests.C1121_AttemptAndPayloadChangesReopenOriginalFloor(string change)`, 6 rows after a cached miss with a matching prompt already present **at sequence 10 (the floor)**: `lower-baseline-includes-existing-match` (baseline 9: next pass confirms at 10; floor parameter 9), `attempts-increment` (full scan, miss, new proof bound to attempts 2), `expected-body-changed-to-existing-prompt` (note and row bodies set to candidate 20's text: confirms at 20), `queue-identity-changed` (note re-keyed to a second Sent row with the same body: full scan, new proof bound to the new row and its `SourceLandNotificationId`), `legacy-flag-flip-widens-acceptance` (starts legacy with a `QueuedUserPrompt` match at 30: miss cached; `IsLegacy = false`: confirms at 30), `kind-flip` (DispatchBase to Outcome with the same queued match: confirms at 30) | the first matching sequence is the already-present row, which a suffix cursor at the previous `LastSequence` would hide; floor parameter is the row's current baseline on every scan.
-- V-6: unknown evidence uses the existing scan | integration | `AgentTaskLandReceiptWatermarkTests.C1121_UnknownEvidenceUsesExistingScan(string evidence)`, 13 rows. Eleven arms run three passes and assert receipt SELECTs `[1, 1, 1]` and one pull per pass. `fallback-confirms-with-unavailable-runner` runs three passes but asserts only the first (one receipt SELECT, one pull, confirmed at `Floor + 1`); the confirmed note then returns at `ReconcileAsync`'s Confirmed check before any pull or SELECT, so its later passes scan zero times (`[1, 0, 0]`, not asserted). `cache-clock-fault` runs two passes: a clean first pass publishes, then the clock faults (CARD-1163). Arms: `store-absent` (harness without the store), `store-disabled` (`SessionStateSettings.Enabled = false`), `destination-running`, `destination-starting`, `runner-404-with-retained-persist-failure` (an earlier ingest failed through a `SaveFault`; `TryGetTranscriptPersistFailure` true), `runner-pull-persist-fails` (the runner returns a new row on each pull; the `RejectTranscriptUuid` interceptor refuses its insert and its persist stub), `timestamp-only-baseline`, `profiled-completion` (`CompletionSnapshotJson` and delivery JSON with the row in `MemberQueueIds`; 7 commands on each of the three passes), `pointer-headline-row` (row body is the owned pointer, `RemoteSpillBody` holds the body), `legacy-check-note`, `oversized-body` (note and row body extended by a newline and 4,096 `d` characters, so longer than `MaxExpectedTextChars`), `cache-clock-fault` (CARD-1163: pass one uses a live clock, scans once and publishes one proof; the clock then throws; pass two refuses reuse, counts `cache-fault` once, scans once and leaves `LastErrorCode` null), `fallback-confirms-with-unavailable-runner` (a valid complete `UserPrompt` already in the database and runner `NotFound`: pass one confirms) | in every arm the first pass runs the receipt SELECT. The twelve arms other than `cache-clock-fault` end with `Proofs`, `Publishes` and `Hits` at 0. `cache-clock-fault` publishes once before the fault and publishes nothing after it (`Publishes` stays 1, `Hits` 0).
+- V-6: unknown evidence uses the existing scan | integration | `AgentTaskLandReceiptWatermarkTests.C1121_UnknownEvidenceUsesExistingScan(string evidence)`, 13 rows. Eleven arms run three passes and assert receipt SELECTs `[1, 1, 1]` and one pull per pass. `fallback-confirms-with-unavailable-runner` runs three passes and asserts only the first (one receipt SELECT, one pull, confirmed at `Floor + 1`); its later passes return at the Confirmed check (`AgentTaskLandNotificationService.cs:48`) and are not asserted. `cache-clock-fault` runs two passes: a clean first pass publishes, then the clock faults (CARD-1163). Arms: `store-absent` (harness without the store), `store-disabled` (`SessionStateSettings.Enabled = false`), `destination-running`, `destination-starting`, `runner-404-with-retained-persist-failure` (an earlier ingest failed through a `SaveFault`; `TryGetTranscriptPersistFailure` true), `runner-pull-persist-fails` (the runner returns a new row on each pull; the `RejectTranscriptUuid` interceptor refuses its insert and its persist stub), `timestamp-only-baseline`, `profiled-completion` (`CompletionSnapshotJson` and delivery JSON with the row in `MemberQueueIds`; 7 commands on each of the three passes), `pointer-headline-row` (row body is the owned pointer, `RemoteSpillBody` holds the body), `legacy-check-note`, `oversized-body` (note and row body extended by a newline and `MaxExpectedTextChars` `d` characters; the test asserts the result is longer than `MaxExpectedTextChars`), `cache-clock-fault` (CARD-1163: pass one uses a live clock, scans once and publishes one proof; the clock then throws; pass two refuses reuse, counts `cache-fault` once, scans once and leaves `LastErrorCode` null), `fallback-confirms-with-unavailable-runner` (a `UserPrompt` carrying the note body seeded at `Floor + 1` and the harness runner in its default `NotFound` mode: pass one confirms) | each arm asserts one receipt SELECT on its first pass. The twelve arms other than `cache-clock-fault` end with `Proofs`, `Publishes` and `Hits` at 0. `cache-clock-fault` publishes once before the fault and publishes nothing after it (`Publishes` stays 1, `Hits` 0).
 - V-10: a foreign-destination note stays open exactly as today | integration | `AgentTaskLandReceiptWatermarkTests.C1121_ForeignDestinationNoteStaysOpenExactlyAsToday(string arm)`, 3 rows: `cached-stays-open` (row `AgentSessionId` = session B whose transcript holds the complete body as `UserPrompt` above the floor; parent A Stopped with 48 unrelated rows: pass 1 scans A 1/48 and publishes, passes 2-3 reuse; note AwaitingReceipt, `ConfirmedAt` null; every note column equals a control run of the same fixture with no cache registered), `parent-rehomed-to-row-destination` (`ParentSessionId = B`: full scan of B, Confirmed at B's sequence), `row-destination-changed` (row `AgentSessionId = A`: full scan of A, miss, new proof) | A-3 default; one expected value flips under strict D-3.
 - V-11: a real queue delivery is never hidden | integration, real queue | `AgentTaskLandReceiptWatermarkTests.C1121_RealQueueDeliveryIsNeverHiddenByTheCache(string arm)`, 2 rows: `running-destination-real-delivery` (destination Running; `Queue.FlushIfIdleAsync` delivers through the adapter; the submission is ingested through the runtime; reconcile confirms at that row's sequence; proofs 0 because A-1), `relaunch-after-cached-miss` (cached miss on Stopped; status set Running as the launch path does; the adapter submits the body and the runtime ingests it; next pass: W-3 fails, full scan, Confirmed at the new sequence; the reconciler typed nothing) | transcript-confirmed `UserPrompt` is the verdict; `SubmittedBodies` is not.
 
