@@ -18,10 +18,16 @@ namespace Antiphon.Tests.Application;
 /// test without the document breaks the build, not just this assertion.</para>
 ///
 /// <para>The S4 repair (Review 04808159) adds two corrections: the Grok note's no-automatic-end
-/// promise is scoped to an open delegate task with the taskless AlwaysOn watchdog stop named as
-/// the exception (F1), and every owner plus the <c>ModelWaitDeadlineMinutes</c> comment states the
+/// promise is scoped to an open delegate task with the taskless AlwaysOn session named as the
+/// exception (F1), and every owner plus the <c>ModelWaitDeadlineMinutes</c> comment states the
 /// operator threshold <c>BootStallPolicy.Facts</c> actually computes, which is checked against the
 /// policy itself, including model wait disabled with a boot wait above 20 minutes (F2).</para>
+///
+/// <para>CARD-1156 S6 (design reversal 4): the F1 exception sentence said the boot reply watchdog
+/// still stops a taskless AlwaysOn session for the standing-agent restart ladder. CARD-1156
+/// (operator decision option A) removed that stop, so the sentence became false; both owners now
+/// carry <see cref="StandingBootDocumentationTests.DetectionSentence"/> in its place, and this test
+/// requires it and the absence of the retired sentence. The F1 scoping assertions are unchanged.</para>
 /// </summary>
 [Category("Unit")]
 public class BootStallDocumentationTests
@@ -64,11 +70,12 @@ public class BootStallDocumentationTests
         + "episode automatically: the task asks for an operator decision at the operator threshold, "
         + "and an operator cancels or retries it explicitly.";
 
-    /// <summary>Review 04808159 F1: the boot reply watchdog's taskless AlwaysOn stop is unchanged.</summary>
-    internal const string AlwaysOnExceptionSentence =
-        "A taskless AlwaysOn session is the exception: the boot reply watchdog still raises its "
-        + "incident and stops the session for the existing standing-agent restart ladder "
-        + "(`BootReplyWatchdogService`, unchanged by CARD-1151; CARD-1156).";
+    /// <summary>
+    /// Review 04808159 F1, reversed by CARD-1156 S6: the taskless AlwaysOn exception is the
+    /// detection-only statement. The retired stop sentence is
+    /// <see cref="StandingBootDocumentationTests.RetiredAlwaysOnExceptionSentence"/>.
+    /// </summary>
+    internal const string AlwaysOnExceptionSentence = StandingBootDocumentationTests.DetectionSentence;
 
     private static readonly string[] RetiredPromises =
     [
@@ -135,12 +142,17 @@ public class BootStallDocumentationTests
         kinds.ShouldNotContain(
             "Antiphon's boot-turn deadline is what ends this", Case.Sensitive, "agent-kinds: retired promise");
 
-        // F1: the promise is the open delegate task's, and the taskless AlwaysOn stop stays explicit.
+        // F1: the promise is the open delegate task's, and the taskless AlwaysOn exception stays
+        // explicit: since CARD-1156 it is detection only, and the retired stop sentence is gone.
         kinds.ShouldNotContain("since CARD-1151 nothing ends it automatically", Case.Sensitive,
             "agent-kinds: unscoped no-automatic-end promise");
         kinds.ShouldContain(DelegateScopedSentence, Case.Sensitive, "agent-kinds: delegate-scoped sentence");
         foreach (var (owner, text) in new[] { ("agent-kinds", kinds), ("runtime", runtime) })
-            text.ShouldContain(AlwaysOnExceptionSentence, Case.Sensitive, $"{owner}: AlwaysOn exception");
+        {
+            text.ShouldContain(AlwaysOnExceptionSentence, Case.Sensitive, $"{owner}: AlwaysOn detection-only exception");
+            text.ShouldNotContain(StandingBootDocumentationTests.RetiredAlwaysOnExceptionSentence, Case.Sensitive,
+                $"{owner}: retired AlwaysOn stop sentence");
+        }
 
         // F2: every owner states the threshold the policy computes; the settings comment does too.
         foreach (var (owner, text) in new[] { ("runtime", runtime), ("loop", loop), ("agent-kinds", kinds) })
