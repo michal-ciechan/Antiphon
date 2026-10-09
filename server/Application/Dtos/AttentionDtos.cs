@@ -225,14 +225,23 @@ public enum AttentionKind
     ScheduleMisfired = 26,
 
     /// <summary>
-    /// CARD-0312 S3: a launch's boot prompt was delivered and transcript-confirmed and the model
-    /// never answered it — rung 5 of the delivery evidence ladder. Projected from open
-    /// <c>AgentIncidentKind.LivenessProbeFailed</c> incidents (kind 10, reused rather than minting
-    /// a 48th), re-verified at read time against a live session and a still-unanswered boot
-    /// prompt. Detection only since CARD-1156: nothing stops, restarts or latches on it. A taskless
-    /// AlwaysOn agent's current episode is projected from its current boot facts, Warning from the
-    /// boot due and Error from the operator threshold; any other session's row carries its legacy
-    /// <c>bootSeq=</c> incident's severity.
+    /// CARD-0312 S3: a session's boot prompt record has had no model reply. Detection only since
+    /// CARD-1156: nothing stops, restarts, types into or latches on it. Neither projection below
+    /// matches the prompt against the intended request, so neither row is a delivery verdict.
+    ///
+    /// <para><b>Standing boot row (CARD-1156).</b> For a taskless AlwaysOn session the row is
+    /// projected from the session's current facts at read time: the age of the latest prompt
+    /// record on its current launch against the boot due (Warning) and the operator threshold
+    /// (Error), with no assistant, thinking, tool or turn-end row on that launch. It renders with
+    /// or without a saved <c>standingBoot:v1;</c> incident; a saved Error receipt of the same
+    /// episode only keeps the Error stage when the clock steps back. It makes no claim about
+    /// delivery: the latest prompt record may be a queued one, and the row labels it so.</para>
+    ///
+    /// <para><b>Legacy <c>bootSeq=</c> row (CARD-0312).</b> For a live session that no AlwaysOn
+    /// agent points at and no open task owns, the row is projected from a <c>bootSeq=</c>
+    /// <c>AgentIncidentKind.LivenessProbeFailed</c> incident (kind 10, reused rather than minting
+    /// a 48th) created inside the recency window, re-verified at read time against no model row
+    /// past that incident's prompt sequence, and carries that incident's severity and message.</para>
     /// Appended after shipped 26; do not renumber.
     /// </summary>
     LivenessProbeFailed = 27,

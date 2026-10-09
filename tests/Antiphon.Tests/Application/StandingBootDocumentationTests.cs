@@ -172,6 +172,68 @@ public class StandingBootDocumentationTests
         return Task.CompletedTask;
     }
 
+    /// <summary>
+    /// Review f5b1d580 F-1: the <c>AttentionKind.LivenessProbeFailed</c> summary describes the
+    /// standing row as current-facts attention that can render without any incident and claims no
+    /// delivery, and describes the legacy <c>bootSeq=</c> incident projection separately. The
+    /// retired summary (a transcript-confirmed delivery, projected from incidents) is rejected.
+    /// </summary>
+    [Test]
+    public Task C1156_LivenessProbeFailed_summary_claims_no_delivery_and_names_both_projections()
+    {
+        var summary = EnumSummary(Read("server/Application/Dtos/AttentionDtos.cs"), "LivenessProbeFailed = 27,");
+
+        foreach (var sentence in new[]
+        {
+            "Neither projection below matches the prompt against the intended request, so neither row "
+            + "is a delivery verdict.",
+            "For a taskless AlwaysOn session the row is projected from the session's current facts at read "
+            + "time: the age of the latest prompt record on its current launch against the boot due "
+            + "(Warning) and the operator threshold (Error), with no assistant, thinking, tool or turn-end "
+            + "row on that launch.",
+            "It renders with or without a saved <c>standingBoot:v1;</c> incident;",
+            "It makes no claim about delivery: the latest prompt record may be a queued one, and the row "
+            + "labels it so.",
+            "For a live session that no AlwaysOn agent points at and no open task owns, the row is "
+            + "projected from a <c>bootSeq=</c>",
+        })
+        {
+            summary.ShouldContain(sentence, Case.Sensitive, $"LivenessProbeFailed summary: {sentence}");
+        }
+
+        foreach (var retired in new[]
+        {
+            "transcript-confirmed",
+            "was delivered",
+            "rung 5 of the delivery evidence ladder",
+            "Projected from open",
+        })
+        {
+            summary.ShouldNotContain(retired, Case.Insensitive, $"LivenessProbeFailed summary: retired '{retired}'");
+        }
+
+        return Task.CompletedTask;
+    }
+
+    /// <summary>The XML summary immediately above <paramref name="member"/>, its <c>///</c> lines joined by spaces.</summary>
+    private static string EnumSummary(string text, string member)
+    {
+        var at = text.IndexOf(member, StringComparison.Ordinal);
+        at.ShouldBeGreaterThanOrEqualTo(0, $"member missing: {member}");
+        var lines = text[..at].Split('\n');
+        var summary = new List<string>();
+        for (var i = lines.Length - 2; i >= 0; i--)
+        {
+            var line = lines[i].Trim();
+            if (!line.StartsWith("///", StringComparison.Ordinal))
+                break;
+            summary.Insert(0, line[3..].Trim());
+        }
+
+        summary.ShouldNotBeEmpty($"no summary above {member}");
+        return string.Join(" ", summary);
+    }
+
     private static string Pin(string type, string method) => $"`{type}.{method}`";
 
     /// <summary>The sentence verbatim, then each pin before the next owner sentence or bullet.</summary>
