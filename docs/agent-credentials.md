@@ -236,8 +236,9 @@ Pinned by `RunnerAbsenceEvidenceContractTests.C1153_Http_authentication_covers_r
 - Requests and responses are HMAC-SHA256 over a versioned, domain-separated encoding; the response
   MAC covers every evidence field and the request nonce. A request header alone would not
   authenticate a certificate.
-- Missing, unreadable or short key: the runner does not advertise `sessionAbsenceEvidenceV1` over
-  HTTP and the server sends neither prepare nor certify, so launches are unchanged and an absent
+- Missing, unreadable or short key: a runner without a usable key does not advertise
+  `sessionAbsenceEvidenceV1` over HTTP, and a server without one sends neither prepare nor certify
+  over HTTP, even to a runner that advertises it. Either way launches still proceed and an absent
   launch keeps the existing failure. Phone-home needs no extra key.
 - Provisioning or rotating the live key is an operator step: write the file on both sides, then
   restart the runner first and the AppHost second. No delegate or stage creates, prints or rotates it.

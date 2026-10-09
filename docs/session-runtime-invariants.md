@@ -455,16 +455,17 @@ the transcript mutation gate. Activation requires both server and runner support
   later the dead-session reconciler decides its Dispatched task. CARD-1149 holds that task Blocked
   (`dispatch_launch_absent`, original input kept, zero automatic relaunch) only when the owning
   runner's inventory positively lacks the session, the database whitelist (`AbsentLaunchPolicy`)
-  passes and the native history is proven empty. Unreachable or unknown owning inventory, or a
-  Working task or transcript, still leaves the task untouched before any certificate request;
-  every other shape keeps the existing failure.
+  passes and the native history is proven empty. Unreachable or unknown owning inventory, a Working
+  task or transcript, or a session row that is gone when the decision reads it leaves the task
+  untouched; these are checked before any certificate request, and inventory and Working again
+  when the pre-screen or certificate does not qualify. Every other shape keeps the existing failure.
   CARD-1153 accepts native-empty evidence only from a fresh, authenticated never-created certificate for the same session, generation and owning runner store; a 404 or an empty transcript is not that certificate.
   Pinned by `RunnerAbsenceEvidenceContractTests.C1153_Real_unknown_transcript_has_a_separate_certificate`,
   `SessionRunnerAbsenceEvidenceClientTests.C1153_Rejects_noncertificate_wire_shapes`,
   `DelegationDispatchRecoveryBoundaryTests.C1153_Real_client_certificate_holds_original_input`,
   `DelegationDispatchRecoveryBoundaryTests.C1153_Real_client_bad_evidence_keeps_failure` and
   `DelegationDispatchRecoveryBoundaryTests.C1153_Final_certificate_is_revalidated_under_lock`.
-  A fresh cold dispatch sends one prepare for the session id it just allocated, after the claim commits and before either launch sink; warm reuse, boot-wedge relaunch and interrupted-launch resume never prepare, and a failed, unsupported or slow prepare never gates the launch.
+  A fresh cold dispatch sends at most one prepare for the session id it just allocated, after the claim commits and before either launch sink; warm reuse, boot-wedge relaunch and interrupted-launch resume never prepare, and a failed, unsupported or slow prepare never gates the launch.
   Pinned by `DelegationDispatchRecoveryBoundaryTests.C1153_Only_new_cold_dispatch_prepares_evidence`.
   A released-seat answer resume is excluded the same way (`ReleasedSeatAnswerId` is set); that
   exclusion is in the code, but no test pins it yet. The certificate is asked for only after the
@@ -480,10 +481,12 @@ the transcript mutation gate. Activation requires both server and runner support
   `RunnerAbsenceEvidenceRuntimeTests.C1153_Creation_consumes_proof_before_effects`,
   `RunnerAbsenceEvidenceRuntimeTests.C1153_Certificate_and_launch_race_is_serialized` and
   `RunnerAbsenceEvidenceRuntimeTests.C1153_Closed_identity_refuses_delayed_creation`.
-  The runner writes an Attempted marker under the launch gate before the first provider effect,
-  refuses a later start or attach of a closed id with `session_identity_closed` (phone-home
-  `phone_home_session_identity_closed`) for every generation, and refuses creation when its
-  evidence store is unreadable or damaged. A task whose runner restarted between prepare and the
+  The runner writes an Attempted marker under the launch gate before the first provider effect, except when that write fails with an I/O or access error after the admission read has proved the identity open: the launch then proceeds without the marker, any Prepared record stays on disk, and evidence is latched unavailable for the rest of that runner epoch, so the runner stops advertising `sessionAbsenceEvidenceV1` and no certificate can be formed for that session.
+  Pinned by `RunnerAbsenceEvidenceRuntimeTests.C1153_Creation_consumes_proof_before_effects`
+  and `RunnerAbsenceEvidenceRuntimeTests.C1153_Store_failure_disables_proof_without_stopping_work`.
+  The runner refuses a later start or attach of a closed id with `session_identity_closed`
+  (phone-home `phone_home_session_identity_closed`) for every generation, and refuses creation when
+  its evidence store is unreadable or damaged. A task whose runner restarted between prepare and the
   due decision keeps the existing failure. The runner admits each evidence request once and only
   when its signed issue time is within 30 s of the runner's clock, so the server and runner clocks
   must agree within 30 s; a request issued within 30 s of a runner start is refused.
