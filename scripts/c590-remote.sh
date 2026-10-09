@@ -5580,8 +5580,15 @@ c1008_verify_tmp() {
     local container="$1" mode
     mode="$(docker exec -u 1654:1654 "$container" stat -c %a /tmp 2>/dev/null)" || c1008_refuse RecycleTmpUnavailable
     [ "$mode" = 1777 ] || c1008_refuse RecycleTmpModeInvalid
+    # The runner creates /tmp/antiphon-pty-hosts on first session launch. An absent
+    # path is success. A present path must be a real directory this uid can search,
+    # containing a regular file it can read. A failed exec is not an absent path.
     docker exec -u 1654:1654 "$container" sh -c \
-        'test -d /tmp/antiphon-pty-hosts && test -n "$(find /tmp/antiphon-pty-hosts -type f -print -quit)"' \
+        'p=/tmp/antiphon-pty-hosts
+        if [ ! -e "$p" ] && [ ! -L "$p" ]; then exit 0; fi
+        if [ -L "$p" ] || [ ! -d "$p" ] || [ ! -r "$p" ] || [ ! -x "$p" ]; then exit 1; fi
+        hit=$(find -H "$p" -type f -readable -print -quit)
+        [ -n "$hit" ]' \
         >/dev/null 2>&1 || c1008_refuse RecycleTmpAssetsMissing
 }
 
