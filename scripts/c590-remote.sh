@@ -927,6 +927,11 @@ RUNNER_CHECKOUT_DEFAULT="/work/repos/antiphon"
 # made `up -d --no-build` look for a tag that was never built, try to PULL it, and leave the runner
 # stopped. deploy-parent is the one case that writes this file, and the only one that may change it.
 deployed_sha12() {
+    # CARD-1105. Set only while a resume re-renders the journal digest. Cleared before seed and up.
+    if [ "${C1008_RESUME:-0}" = 1 ] && [[ "${C1008_RESUME_DIGEST_SHA12:-}" =~ ^[0-9a-f]{12}$ ]]; then
+        printf '%s' "$C1008_RESUME_DIGEST_SHA12"
+        return 0
+    fi
     local from_env=""
     if [ -f "$SERVER2_ENV" ]; then
         from_env="$(sed -n 's/^SOURCE_SHA12=//p' "$SERVER2_ENV" | head -n 1 | tr -d '[:space:]')"
@@ -5813,7 +5818,17 @@ c1008_recycle() {
     command -v jq >/dev/null || write_result false RecycleToolsMissing 2
     C1008_TARGETS=("${C1008_PROJECT}_work" "${C1008_PROJECT}_runner-tmp" "${C1008_PROJECT}_dind-data")
     if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then C1008_TARGETS+=("${C1008_PROJECT}_runner-state"); fi
-    local model digest owned image id service facts name audit after code=0 current journal_root mount originals='{}' preserved='{}'
+    local model digest owned image id service facts name audit after code=0 current journal_root mount originals='{}' preserved='{}' previous_sha=""
+    # CARD-1105. The saved digest used the tag in stack.env at save time. Resume runs after
+    # case_deploy_parent has rewritten SOURCE_SHA12, so pin that compare to previousSha.
+    # A missing or short previousSha leaves the pin unset and keeps the current-tag refusal.
+    unset C1008_RESUME_DIGEST_SHA12
+    if [ "${C1008_RESUME:-0}" = 1 ] && [ -f "$SERVER2_ROOT/recycle/$C1008_OPERATION.json" ] && [ ! -L "$SERVER2_ROOT/recycle/$C1008_OPERATION.json" ]; then
+        previous_sha="$(jq -r 'if (.previousSha|type)=="string" then .previousSha else "" end' "$SERVER2_ROOT/recycle/$C1008_OPERATION.json" 2>/dev/null || printf '')"
+        if [[ "$previous_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            C1008_RESUME_DIGEST_SHA12="${previous_sha:0:12}"
+        fi
+    fi
     model="$(c1008_compose_model)" || write_result false RecycleComposeMismatch 2
     # CARD-1116. The target file is already materialized. Refuse before the lock or any removal.
     if [ "$C1008_PROJECT" = "$HOST_PROJECT" ] && [ "${C1008_DRY_RUN:-0}" = 0 ]; then
@@ -5840,6 +5855,7 @@ c1008_recycle() {
         c994_lookup_image "${C1008_CLEANUP_OPERATION:-}" || c1008_refuse RecycleGitAuditUnknown
     elif [ -n "${C1008_CLEANUP_OPERATION:-}" ]; then c1008_refuse RecycleContextInvalid; fi
     c1008_bind_generation "$model"
+    unset C1008_RESUME_DIGEST_SHA12
     if [ "${C1008_DRY_RUN:-0}" = 1 ]; then
         for name in "${C1008_TARGETS[@]}"; do printf 'C1008_PREVIEW remove=%s\n' "$name"; done
         printf 'C1008_PREVIEW preserve=%s_runner-state,antiphon-runner-cache-nuget-packages,antiphon-runner-cache-nuget-scratch,antiphon-runner-cache-npm-content auditPending=true\n' "$HOST_PROJECT"
