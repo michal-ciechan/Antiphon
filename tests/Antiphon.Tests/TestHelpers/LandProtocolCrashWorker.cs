@@ -25,8 +25,7 @@ internal static class LandProtocolCrashWorker
         if (rejection is not null)
             throw new InvalidOperationException(CrashWorkerProcess.StderrSentinel + ": " + rejection);
 
-        Console.WriteLine(CrashWorkerProcess.StdoutSentinel);
-        Console.Out.Flush();
+        CrashWorkerProcess.WriteStdoutSentinel();
         var root = Path.GetFullPath(request.Root);
         var ready = Path.GetFullPath(request.Ready);
         if (request.Cut != "resume")
