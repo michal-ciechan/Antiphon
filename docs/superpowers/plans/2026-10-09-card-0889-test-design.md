@@ -457,7 +457,8 @@ minutes exclude the three-minute isolated build budgeted per control per phase.
 Closed list. One isolated build per group; `CP-n` reuse only within the same `After`.
 Groups: `A` = N1+N2+N4 committed; `C` = S4 committed; `B` = N3+S6 committed. Lane is in
 Group/Expect; the importer does not filter by OS: Linux selects all rows except CP-6,
-Windows all except CP-5. Counts are TUnit executed results; internal labels, rows and
+Windows all except CP-5. CP-5's method OR keeps a trailing wildcard on each name; the bare
+names select zero tests. Counts are TUnit executed results; internal labels, rows and
 schedules are stated in Expect only.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
@@ -466,7 +467,7 @@ schedules are stated in Expect only.
 | CP-2 | A | CP-1 | both-resilience | `/*/*/(ResilienceBudgetTests*)\|(HttpResilienceRegistrationTests*)/*` | V-7,R-6 | Both OSes: 14, 0 failed/skipped | 14 | 3 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-3 | A | CP-1 | both-submit | `/*/*/RunnerCodexAdapterSubmitConfirmTests*/*` | V-8,R-7 | Both OSes: 8, 0 failed/skipped | 8 | 3 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-4 | A | CP-1 | both-scaled | `/*/*/ScaledTimeProviderTests*/*` | V-10,R-9 | Both OSes: 6, 0 failed/skipped | 6 | 2 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-5 | A | CP-1 | linux-grok-launch | `/*/*/GrokRulesLaunchRefusalTests*/(Cold_grok_delegate_keeps_full_composed_bundles_in_typed_payload)\|(Named_grok_agent_with_a_single_line_append_composes_the_rendered_line_byte_identical)\|(Over_budget_single_line_composition_still_throws_invalid_operation)` | V-9,R-8 | Linux: 3, 0 failed/skipped | 3 | 3 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-5 | A | CP-1 | linux-grok-launch | `/*/*/GrokRulesLaunchRefusalTests/(Cold_grok_delegate_keeps_full_composed_bundles_in_typed_payload*)\|(Named_grok_agent_with_a_single_line_append_composes_the_rendered_line_byte_identical*)\|(Over_budget_single_line_composition_still_throws_invalid_operation*)` | V-9,R-8 | Linux: 3, 0 failed/skipped | 3 | 3 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-6 | A | CP-1 | windows-grok-launch | `/*/*/GrokRulesLaunchRefusalTests*/*` | V-9,R-8 | Windows: 5, 0 failed/skipped | 5 | 3 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-7 | A | `tests/Antiphon.SessionRunner.Tests -> bin-c889-policy/` | both-grok-policy | `/*/*/GrokRulesArgvPolicyTests*/*` | V-9,R-8 | Both OSes: 26, 0 failed/skipped | 26 | 4 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-8 | C | `tests/Antiphon.Tests -> bin-c889-c/` | both-land-worker | `/*/*/AgentTaskLandRecoveryTests*/C448_V15_RealWorkerDeathRecoversDurableBoundaries` | V-1,R-1,R-2 | Both OSes: 7 cuts, 0 failed/skipped | 7 | 11 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
