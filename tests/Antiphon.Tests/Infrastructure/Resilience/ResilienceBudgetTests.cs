@@ -1,4 +1,5 @@
 using System.Net;
+using System.Runtime.ExceptionServices;
 using Antiphon.Resilience;
 using Microsoft.Extensions.Time.Testing;
 using Antiphon.Tests.TestHelpers;
@@ -72,6 +73,7 @@ public class ResilienceBudgetTests
         var cancelled = new TaskCompletionSource<(int Phase, DateTimeOffset At, bool TokenCancelled)>(
             TaskCreationOptions.RunContinuationsAsynchronously);
         var releaseFirst = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releasePhase = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         using var firstCancellation = new RetainedCancellationRegistration();
         CancellationToken firstToken = default;
         var handler = new ScriptHandler(async (_, ct) =>
@@ -90,15 +92,23 @@ public class ResilienceBudgetTests
             secondEntered.TrySetResult();
             return ResilienceTestHost.Status(HttpStatusCode.ServiceUnavailable);
         });
-        await using var provider = ResilienceTestHost.Build(handler, ResilienceClientNames.RunnerRead, settings, time, new FixedResilienceJitter(1));
+        Action<ResilienceLogLine>? observe = null;
+        var logs = new CollectingLoggerProvider(line => observe?.Invoke(line));
+        await using var provider = ResilienceTestHost.Build(
+            handler, ResilienceClientNames.RunnerRead, settings, time, new FixedResilienceJitter(1), logs);
         using var client = ResilienceTestHost.Client(provider, ResilienceClientNames.RunnerRead);
         var budget = ResilienceBudget.Start(time, settings, profile: null);
         var started = time.GetUtcNow();
-        using var first = new HttpRequestMessage(HttpMethod.Get, "sessions/1");
-        ResilienceTestHost.Stamp(first, ResilienceOperations.RunnerGet, budget);
-        var firstSend = client.SendAsync(first);
+        var first = new HttpRequestMessage(HttpMethod.Get, "sessions/1");
+        HttpRequestMessage? second = null;
+        Task? driver = null;
+        Task<HttpResponseMessage>? firstSend = null;
+        Task<HttpResponseMessage>? secondSend = null;
+        Exception? primary = null;
         try
         {
+            ResilienceTestHost.Stamp(first, ResilienceOperations.RunnerGet, budget);
+            firstSend = client.SendAsync(first);
             await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
             var attemptTimer = time.Events
                 .Where(e => e.DueTime > TimeSpan.Zero && e.Deadline < started + TimeSpan.FromSeconds(30))
@@ -107,23 +117,52 @@ public class ResilienceBudgetTests
                 .ShouldBeTrue("attempt-cancel-at-10");
             time.AdvanceTo(started + TimeSpan.FromSeconds(10) - TimeSpan.FromTicks(1));
             firstToken.IsCancellationRequested.ShouldBeFalse("attempt-cancel-at-10");
-            await ResilienceTestHost.AdvanceAfterAsync(time, attemptTimer!, cancelled.Task,
-                started + TimeSpan.FromSeconds(10), firstToken);
+
+            var phase = Task.WhenAll(cancelled.Task, releasePhase.Task);
+            var stepSeen = new TaskCompletionSource<ResilienceTestHost.BoundaryStep>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            driver = ResilienceTestHost.AdvanceAfterAsync(
+                time, attemptTimer!, phase, started + TimeSpan.FromSeconds(10),
+                record => stepSeen.TrySetResult(record), firstToken);
+            await Task.WhenAny(stepSeen.Task, driver).WaitAsync(TimeSpan.FromSeconds(5));
+            stepSeen.Task.IsCompleted.ShouldBeTrue("held-completion-keeps-time-at-10");
+            var observed = stepSeen.Task.Result;
+            observed.PhasePending.ShouldBeTrue("held-completion-keeps-time-at-10");
+            observed.Error.ShouldBeNull("held-completion-keeps-time-at-10");
+            driver.IsFaulted.ShouldBeFalse("held-completion-keeps-time-at-10");
+            observed.Now.ShouldBe(started + TimeSpan.FromSeconds(10), "held-completion-keeps-time-at-10");
+            time.GetUtcNow().ShouldBe(started + TimeSpan.FromSeconds(10),
+                "held-completion-keeps-time-at-10");
             var firstCancel = await cancelled.Task;
             firstCancel.Phase.ShouldBe(1, "attempt-cancel-at-10");
             firstCancel.At.ShouldBe(started + TimeSpan.FromSeconds(10), "attempt-cancel-at-10");
             firstCancel.TokenCancelled.ShouldBeTrue("attempt-cancel-at-10");
-            time.GetUtcNow().ShouldBe(started + TimeSpan.FromSeconds(10),
-                "held-completion-keeps-time-at-10");
-            handler.Sends.ShouldBe(1, "cancelled-attempt-is-terminal");
-            releaseFirst.TrySetResult();
-            await Should.ThrowAsync<TaskCanceledException>(() => firstSend.WaitAsync(TimeSpan.FromSeconds(5)));
             handler.Sends.ShouldBe(1, "cancelled-attempt-is-terminal");
 
-            using var second = new HttpRequestMessage(HttpMethod.Get, "sessions/1");
+            releasePhase.TrySetResult();
+            await driver;
+
+            var retrySeen = new TaskCompletionSource<ResilienceLogLine>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            observe = line =>
+            {
+                if (IsRunnerGetRetry(line))
+                    retrySeen.TrySetResult(line);
+            };
+            releaseFirst.TrySetResult();
+            await Task.WhenAny(firstSend, retrySeen.Task, secondEntered.Task)
+                .WaitAsync(TimeSpan.FromSeconds(5));
+            retrySeen.Task.IsCompleted.ShouldBeFalse("cancelled-attempt-is-terminal");
+            secondEntered.Task.IsCompleted.ShouldBeFalse("cancelled-attempt-is-terminal");
+            handler.Sends.ShouldBe(1, "cancelled-attempt-is-terminal");
+            firstSend.IsCompleted.ShouldBeTrue("cancelled-attempt-is-terminal");
+            await Should.ThrowAsync<TaskCanceledException>(() => firstSend);
+            observe = null;
+
+            second = new HttpRequestMessage(HttpMethod.Get, "sessions/1");
             ResilienceTestHost.Stamp(second, ResilienceOperations.RunnerGet, budget);
             var beforeSecond = time.Events.Count;
-            var secondSend = client.SendAsync(second);
+            secondSend = client.SendAsync(second);
             await secondEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
             var secondTotal = time.Events
                 .Where(e => e.Sequence > beforeSecond && e.DueTime > TimeSpan.Zero)
@@ -136,9 +175,71 @@ public class ResilienceBudgetTests
             await Should.ThrowAsync<TaskCanceledException>(() => secondSend.WaitAsync(TimeSpan.FromSeconds(5)));
             (time.GetUtcNow() - started).ShouldBe(TimeSpan.FromSeconds(30));
         }
+        catch (Exception ex)
+        {
+            primary = ex;
+        }
         finally
         {
+            observe = null;
+            releasePhase.TrySetResult();
             releaseFirst.TrySetResult();
+            var cleanup = await CleanupBudgetAttemptAsync(driver, firstSend, secondSend);
+            first.Dispose();
+            second?.Dispose();
+            if (primary is not null && cleanup is not null)
+                throw new AggregateException(primary, cleanup);
+            if (primary is not null)
+                ExceptionDispatchInfo.Capture(primary).Throw();
+            if (cleanup is not null)
+                ExceptionDispatchInfo.Capture(cleanup).Throw();
+        }
+    }
+
+    private static bool IsRunnerGetRetry(ResilienceLogLine line)
+    {
+        var message = line.Message.Contains("Resilience retry", StringComparison.Ordinal)
+            && line.Message.Contains(ResilienceOperations.RunnerGet, StringComparison.Ordinal);
+        var structured = line.Properties.TryGetValue("Operation", out var operation)
+            && operation == ResilienceOperations.RunnerGet
+            && line.Properties.ContainsKey("Dependency")
+            && line.Properties.ContainsKey("RetryNumber");
+        return message || structured;
+    }
+
+    private static async Task<Exception?> CleanupBudgetAttemptAsync(
+        Task? driver,
+        Task<HttpResponseMessage>? firstSend,
+        Task<HttpResponseMessage>? secondSend)
+    {
+        try
+        {
+            if (driver is not null)
+            {
+                try { await driver.WaitAsync(TimeSpan.FromSeconds(5)); }
+                catch (Exception) when (driver.IsCompleted) { }
+            }
+
+            await DrainSendAsync(firstSend);
+            await DrainSendAsync(secondSend);
+            return null;
+        }
+        catch (Exception ex)
+        {
+            return ex;
+        }
+    }
+
+    private static async Task DrainSendAsync(Task<HttpResponseMessage>? send)
+    {
+        if (send is null)
+            return;
+        try
+        {
+            using var response = await send.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        catch (Exception) when (send.IsCompleted)
+        {
         }
     }
 
