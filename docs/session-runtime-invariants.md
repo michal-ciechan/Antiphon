@@ -239,6 +239,23 @@ the transcript mutation gate. Activation requires both server and runner support
   is unchanged. Working state grants no liveness, kill, delivery receipt or settlement authority;
   CARD-0679 live/unknown/gone and complete prompt matching still gate those actions.
 
+  The land-note receipt reconciler (CARD-1121) may omit its receipt SELECT for one note only on
+  a process-local negative proof bound to this committed state: server epoch, revision, reset
+  epoch, accepted generation (equal to the destination's `StartedAt`), count and last sequence
+  must be identical before and after a scan that read every candidate without a match, and the
+  note save after it must have committed. The proof also binds the note, keyed row, attempt
+  count, sequence floor, delivery start and generation, kind, legacy mode, note and queue state,
+  verdict, exact ordinary body (at most 16,384 characters) and a Stopped or Failed destination.
+  The catch-up pull still runs every pass; its failure is the expected answer only for a Stopped
+  or Failed destination. Any committed append or retention reseed, restart, changed attempt or
+  payload, other destination status, profiled, spilled or pointer body, `LegacyCheckNote`,
+  timestamp-only floor, missing or disabled store, retained persist failure or proof older than
+  five minutes keeps the full scan from the keyed row's original floor. A proof never confirms,
+  moves the floor, delays a pass or stops a session. A lookup, publication or clock fault
+  refuses reuse; a metrics fault is swallowed and a valid hit stays a hit. Proofs are capped at
+  256 and dropped when the note confirms or is reconciled as `Confirmed`, `NotRequired` or
+  `LegacyUnverified`.
+
   Startup warms active sessions and sessions referenced by open tasks, queues or notes in batches
   of at most 512 statement snapshots before hosted consumers start. A canceled reader cancels its
   wait, not the shared seed. Missing/fault retries are throttled for five seconds after completion.
