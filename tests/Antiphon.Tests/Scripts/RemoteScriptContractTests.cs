@@ -4559,7 +4559,8 @@ public sealed class RemoteScriptContractTests
             docker() {
                 local name="${@: -1}" format=''
                 case "$1:$2" in
-                    info:*) printf '%s\n' "$docker_root" ;;
+                    # observe assigns local docker_root from this output; reading that name is unset under set -u.
+                    info:*) printf '%s\n' "$root/docker" ;;
                     volume:inspect)
                         if [ "${3:-}" = -f ]; then format="$4"; fi
                         if [ "$name" = antiphon-runner_runner-state ]; then
