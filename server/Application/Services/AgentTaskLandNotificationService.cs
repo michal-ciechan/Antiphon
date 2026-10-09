@@ -288,7 +288,13 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
                             if (boundary is not null) await boundary.ReachedAsync("receipt-scan-exhausted", note.TaskId, note.Id, ct);
                             after = ReceiptStamp(await runtime.ObserveReceiptStateAsync(session, ct), destination.StartedAt);
                         }
-                        negative = (scan, before, after, matched, completedAt);
+                        // A-2/W-5: only this pass's catch-up stamp, unchanged at the before-stamp, can be
+                        // certified. A NeedsReload persist (a 23505 recovered by a reseed), a retained
+                        // failure or a commit after catch-up publishes nothing; the next pass rescans.
+                        if (current is not null && before == current)
+                            negative = (scan, before, after, matched, completedAt);
+                        else
+                            scanCache!.RecordRefusal("certificate:CatchUp");
                     }
                 }
                 // A pointer prompt proves receipt of the pointer only; the referenced file must still

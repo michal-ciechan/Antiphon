@@ -102,6 +102,7 @@ public sealed class AgentTaskLandReceiptWatermarkSafetyTests
     [Arguments("reader-throws-after-one-row")]
     [Arguments("reader-cancelled-after-one-row")]
     [Arguments("commit-before-before-stamp")]
+    [Arguments("unique-violation-reload-after-cached-miss")]
     public async Task C1121_RacingCommitCannotPublishOrReuseStaleMiss(string cut, CancellationToken ct)
     {
         var boundary = new LandReceiptScanHarness.CutBoundary();
@@ -194,6 +195,33 @@ public sealed class AgentTaskLandReceiptWatermarkSafetyTests
                 var next = await PassAsync(h, note.Id, ct);
                 next.ReceiptSelects.ShouldBe(1);
                 next.ReceiptRows.ShouldBe(48);
+                late = (await h.IngestAsync(h.SessionId, (TranscriptKinds.UserPrompt, note.Body))).Single();
+                break;
+            }
+            case "unique-violation-reload-after-cached-miss":
+            {
+                (await PassesAsync(h, note.Id, 2)).Select(p => p.ReceiptSelects).ShouldBe([1, 0], "a cached miss before the race");
+                h.Cache!.GetMetrics().Publishes.ShouldBe(1);
+                // The runner holds one new non-matching row; a competing writer commits the same row
+                // first, so this pass's persist meets a real 23505, recovers it and reseeds (NeedsReload).
+                h.Runner.Transcript = Mode.Entries;
+                h.Runner.NextEntries = session => [h.Event(session, 0, TranscriptKinds.AssistantText, "a competing commit",
+                    uuid: LandReceiptScanHarness.CompetingTranscriptInsert.Prefix + Guid.NewGuid().ToString("N"))];
+                h.Competitor.Arm();
+                var reloaded = await PassAsync(h, note.Id, ct);
+                h.Runner.Transcript = Mode.NotFound;
+                h.Competitor.Injected.ShouldBe(1, "the runtime's save met the competing commit");
+                h.Runtime.TryGetTranscriptPersistFailure(h.SessionId, out _).ShouldBeFalse("the reseed succeeded; no failure is retained");
+                reloaded.ReceiptSelects.ShouldBe(1, "a NeedsReload catch-up is unknown: the full scan runs");
+                reloaded.ReceiptRows.ShouldBe(48);
+                await ShouldStayOpenAsync(h, note.Id);
+                var metrics = h.Cache.GetMetrics();
+                metrics.Refusals.GetValueOrDefault("state:Observation:persist_needs_reload").ShouldBe(1);
+                metrics.Publishes.ShouldBe(1, "a pass that needed a reload certifies nothing (A-2/W-5)");
+                metrics.Refusals.GetValueOrDefault("certificate:CatchUp").ShouldBe(1);
+                // The next pass rescans against the reseeded revision; only then is the miss certified.
+                (await PassesAsync(h, note.Id, 2)).Select(p => p.ReceiptSelects).ShouldBe([1, 0], "the next pass rescans, then reuses");
+                h.Cache.GetMetrics().Publishes.ShouldBe(2);
                 late = (await h.IngestAsync(h.SessionId, (TranscriptKinds.UserPrompt, note.Body))).Single();
                 break;
             }

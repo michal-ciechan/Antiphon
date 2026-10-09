@@ -55,6 +55,7 @@ internal sealed class LandReceiptScanHarness : IAsyncDisposable
     public ArmedTranscriptSaveFault SaveFault { get; } = new();
     public RejectTranscriptUuid Reject { get; } = new();
     public HeldTranscriptSave IngestGate { get; } = new();
+    public CompetingTranscriptInsert Competitor { get; } = new();
     public AppDbContext Db { get; private set; } = null!;
     public AgentTaskLandNotificationService Service { get; private set; } = null!;
     public string ConnectionString => _schema.ConnectionString;
@@ -91,7 +92,7 @@ internal sealed class LandReceiptScanHarness : IAsyncDisposable
         ConnectionString = _schema.ConnectionString,
         AttachSessionId = attachSession,
         AttachAgentId = attachAgent,
-        ConfigureDbContext = o => o.AddInterceptors(Commands, Receipts, SaveFault, Reject, IngestGate),
+        ConfigureDbContext = o => o.AddInterceptors(Commands, Receipts, SaveFault, Reject, IngestGate, Competitor),
         ConfigureServices = services =>
         {
             services.AddSingleton<ISessionRunnerClient>(Runner);
@@ -401,6 +402,41 @@ internal sealed class LandReceiptScanHarness : IAsyncDisposable
                 Reached.TrySetResult();
                 await Release.Task.WaitAsync(TimeSpan.FromSeconds(60), cancellationToken);
             }
+            return result;
+        }
+    }
+
+    /// <summary>
+    /// CARD-1121 repair (Final Review 200e9630 F1). While armed, the next runtime insert of a transcript row
+    /// whose uuid starts with <see cref="Prefix"/> is preceded by an independent, committed insert of the
+    /// same row, so the runtime's save meets a real 23505, recovers the durable row and reseeds its store
+    /// (a NeedsReload persist with no retained failure). Fires once per <see cref="Arm"/>.
+    /// </summary>
+    internal sealed class CompetingTranscriptInsert : SaveChangesInterceptor
+    {
+        public const string Prefix = "compete-";
+        private int _armed;
+        public int Injected;
+
+        public void Arm() => Volatile.Write(ref _armed, 1);
+
+        public override async ValueTask<InterceptionResult<int>> SavingChangesAsync(DbContextEventData eventData,
+            InterceptionResult<int> result, CancellationToken cancellationToken = default)
+        {
+            var row = eventData.Context!.ChangeTracker.Entries<TranscriptEntry>()
+                .FirstOrDefault(e => e.State == EntityState.Added && e.Entity.Uuid?.StartsWith(Prefix, StringComparison.Ordinal) == true)?.Entity;
+            if (row is null || Interlocked.Exchange(ref _armed, 0) == 0) return result;
+            await using (var other = new AppDbContext(TestDbFixture.CreateDbContextOptions(eventData.Context.Database.GetConnectionString()!)))
+            {
+                other.TranscriptEntries.Add(new TranscriptEntry
+                {
+                    Id = Guid.NewGuid(), AgentSessionId = row.AgentSessionId, Sequence = row.Sequence, Kind = row.Kind,
+                    Uuid = row.Uuid, Timestamp = row.Timestamp, Role = row.Role, Text = row.Text, StopReason = row.StopReason,
+                    CreatedAt = DateTime.UtcNow,
+                });
+                await other.SaveChangesAsync(cancellationToken);
+            }
+            Interlocked.Increment(ref Injected);
             return result;
         }
     }
