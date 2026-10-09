@@ -1653,6 +1653,92 @@ public sealed class RemoteScriptContractTests
         await C1105AssertResumeRefuses(foreign, "RecycleContainerStateUnknown", freezeJournal: false);
     }
 
+    // CARD-1105. The fixture compose_host ignores deployed_sha12, which hides a resume whose
+    // stack.env tag was already rewritten. This compose_host stamps that tag into the model.
+    [Test]
+    [Arguments("matching", 0)]
+    [Arguments("edited-digest", 2)]
+    [Arguments("missing-previous", 2)]
+    [Arguments("short-previous", 2)]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1105_Resume_digest_pins_previous_sha12(string flip, int expect)
+    {
+        C1008HostFixture.RequireNativeLinux();
+        using var fixture = new C1008HostFixture();
+        File.WriteAllText(Path.Combine(fixture.Root, "main.env"),
+            "SOURCE_REVISION=" + C1008HostFixture.PreviousSha + "\nSOURCE_SHA12=" + C1008HostFixture.PreviousSha12 + "\n");
+        var saved = await fixture.Run(extra: C1105TagComposeHost);
+        saved.Exit.ShouldBe(0, "c1105-resume-digest: save under the previous tag; " + saved.Output);
+        saved.Output.ShouldNotContain("RecycleResumeMismatch");
+        var env = File.ReadAllText(Path.Combine(fixture.Root, "main.env"));
+        env.ShouldContain("SOURCE_SHA12=" + new string('a', 12), Case.Sensitive);
+        var savedCalls = C1105ComposeCalls(fixture);
+        savedCalls.ShouldContain("sha12=" + C1008HostFixture.PreviousSha12 + " cmd=config");
+        var journalPath = C1105Journal(fixture);
+        var record = JsonNode.Parse(File.ReadAllText(journalPath))!.AsObject();
+        record["previousSha"]!.GetValue<string>().ShouldBe(C1008HostFixture.PreviousSha);
+        record["composeDigest"]!.GetValue<string>().Length.ShouldBe(64);
+        if (flip == "edited-digest") record["composeDigest"] = new string('e', 64);
+        else if (flip == "missing-previous") record.Remove("previousSha");
+        else if (flip == "short-previous") record["previousSha"] = C1008HostFixture.PreviousSha12;
+        if (flip != "matching") File.WriteAllText(journalPath, record.ToJsonString());
+        fixture.ReloadDocker();
+        var removed = fixture.Removed.Length;
+        File.WriteAllText(Path.Combine(fixture.Root, "compose-calls.log"), "");
+        var resumed = await fixture.Run(extra: C1105TagComposeHost + "\nC1008_RESUME=1\n" + C1105ResumeTail);
+        resumed.Exit.ShouldBe(expect, "c1105-resume-digest: " + flip + "; " + resumed.Output);
+        fixture.Removed.Length.ShouldBe(removed, flip + " removes nothing further");
+        var calls = C1105ComposeCalls(fixture);
+        if (flip == "matching")
+        {
+            resumed.Output.ShouldNotContain("RecycleResumeMismatch");
+            calls.ShouldContain("sha12=" + C1008HostFixture.PreviousSha12 + " cmd=config");
+            calls.ShouldContain("sha12=" + new string('a', 12) + " cmd=run");
+            calls.ShouldContain("sha12=" + new string('a', 12) + " cmd=up");
+            calls.ShouldNotContain("sha12=" + C1008HostFixture.PreviousSha12 + " cmd=run");
+            calls.ShouldNotContain("sha12=" + C1008HostFixture.PreviousSha12 + " cmd=up");
+        }
+        else
+        {
+            resumed.Output.ShouldContain("RecycleResumeMismatch");
+            calls.ShouldNotContain("sha12=" + new string('a', 12) + " cmd=run");
+            calls.ShouldNotContain("sha12=" + new string('a', 12) + " cmd=up");
+            if (flip is "missing-previous" or "short-previous")
+            {
+                calls.ShouldContain("sha12=" + new string('a', 12) + " cmd=config");
+                calls.ShouldNotContain("sha12=" + C1008HostFixture.PreviousSha12 + " cmd=config");
+            }
+        }
+    }
+
+    private const string C1105TagComposeHost = """
+        compose_host() {
+            local sha12 model
+            sha12="$(deployed_sha12)"
+            printf 'sha12=%s cmd=%s\n' "$sha12" "$1" >> "$C1008_FIXTURE_ROOT/compose-calls.log"
+            if [ "$1" = config ]; then
+                model="$(docker compose -p "$HOST_PROJECT" "$@")" || return $?
+                printf '%s' "$model" | jq -c --arg tag "$sha12" '. + {sourceSha12:$tag}'
+                return $?
+            fi
+            if [ "$1" = up ]; then write_result true '' 0; fi
+            return 0
+        }
+        """;
+
+    private const string C1105ResumeTail = """
+        build_server2_images() { :; }
+        c849_prepare() { :; }
+        c849_require_ready() { :; }
+        ensure_build_slots_broker() { :; }
+        """;
+
+    private static string[] C1105ComposeCalls(C1008HostFixture fixture)
+    {
+        var path = Path.Combine(fixture.Root, "compose-calls.log");
+        return File.Exists(path) ? File.ReadAllLines(path) : [];
+    }
+
     private static string C1105Journal(C1008HostFixture fixture) =>
         Path.Combine(fixture.Root, "server/recycle/c100800000000000000000000000000000001.json");
 
