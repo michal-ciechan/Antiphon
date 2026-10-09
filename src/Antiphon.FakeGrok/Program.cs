@@ -48,6 +48,13 @@ namespace Antiphon.FakeGrok;
 ///    <c>stop_reason: error</c> and the same text in <c>agent_result</c> — and no
 ///    <c>agent_message_chunk</c>. <c>ANTIPHON_FAKE_API_ERROR_AFTER_TURNS=N</c> (default 1)
 ///    kills the Nth submitted turn only; later turns respond normally.
+///  * Opt-in <c>ANTIPHON_FAKE_CTRL_C_CANCELS=1</c> (CARD-0491): a <c>\x03</c> byte with an
+///    empty composer while a turn, report-hold, land-gate or question is in flight appends
+///    <c>turn_completed stop_reason=cancelled</c> (no usage), clears that in-flight state,
+///    writes the idle title and repaints the empty composer. A <c>\x03</c> with a draft
+///    clears the draft and leaves the turn in flight. The byte is stripped so it is not
+///    submitted as text. <c>ANTIPHON_FAKE_INPUT_LOG</c> appends each raw burst, including
+///    that byte. Unset, this arm is off.
 /// </summary>
 internal static class Program
 {
@@ -67,6 +74,7 @@ internal static class Program
     private static bool _questionOpen;
     private static string? _questionToolCallId;
     private static string? _questionText;
+    private static bool _ctrlCConsumedHold;
 
     /// <summary>
     /// CARD-0159 S0: a prompt received while a turn is in flight emits
@@ -79,6 +87,13 @@ internal static class Program
             Environment.GetEnvironmentVariable("ANTIPHON_FAKE_SUBMIT_WHILE_WORKING"),
             "cancel",
             StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>CARD-0491. Unset leaves Ctrl+C as ordinary input.</summary>
+    private static bool CtrlCCancels =>
+        string.Equals(
+            Environment.GetEnvironmentVariable("ANTIPHON_FAKE_CTRL_C_CANCELS"),
+            "1",
+            StringComparison.Ordinal);
 
     /// <summary>
     /// CARD-0241 S5: first submit opens <c>ask_user_question</c> (the three measured JSONL
@@ -335,16 +350,7 @@ internal static class Program
         Write(IdleTitle);
         // CARD-0778: the 1.0.41 120x30 ready shape. Keep the historical marker above it
         // for existing harnesses; readiness uses only this measured empty composer region.
-        var topBorder = "  ╭" + new string('─', 114) + "╮";
-        // CARD-1004: opt in to the captured Linux marker; existing harnesses keep ASCII '>'.
-        var composerMarker = Environment.GetEnvironmentVariable("ANTIPHON_FAKE_GROK_LINUX_COMPOSER") == "1"
-            ? '\u276f' : '>';
-        var composerRow = "  │ " + composerMarker + new string(' ', 112) + "│";
-        const string footerLabel = " grok-4.7 · always-approve ─╯";
-        var bottomBorder = "  ╰" + new string('─', 118 - 3 - footerLabel.Length) + footerLabel;
-        Write("\x1b[23;1H\x1b[2K\x1b[25;1H" + topBorder
-            + "\x1b[26;1H" + composerRow + "\x1b[27;1H" + bottomBorder
-            + "\x1b[29;1H  Shift+Tab:mode  │  Ctrl+x:shortcuts\x1b[30;1H");
+        PaintEmptyComposer(Write);
 
         // Native V-17 can repeat the captured positive redraw chunk span. This is a
         // synthetic repetition, not claimed as original chronology. The writer is joined
@@ -491,6 +497,48 @@ internal static class Program
 
         void ProcessBurst(byte[] burst)
         {
+            if (Environment.GetEnvironmentVariable("ANTIPHON_FAKE_INPUT_LOG") is { Length: > 0 } inputLog)
+            {
+                try { File.AppendAllBytes(inputLog, burst); }
+                catch (IOException) { /* a log failure must not kill the TUI */ }
+                catch (UnauthorizedAccessException) { /* same */ }
+            }
+
+            if (CtrlCCancels && Array.IndexOf(burst, (byte)0x03) >= 0)
+            {
+                var onlyCtrlC = true;
+                foreach (var one in burst)
+                {
+                    if (one == 0x03)
+                        continue;
+                    onlyCtrlC = false;
+                    break;
+                }
+
+                if (composer.Length > 0)
+                {
+                    composer.Clear();
+                    PaintEmptyComposer(Write, clearInterveningRows: true);
+                }
+                else if (_turnInFlight || _reportHoldUser is not null
+                    || _landBusyPromptId is not null || _questionOpen)
+                {
+                    CancelInFlightFromCtrlC(Write, sessionDir, sessionId);
+                }
+
+                if (onlyCtrlC)
+                    return;
+                var kept = new byte[burst.Length];
+                var n = 0;
+                foreach (var one in burst)
+                {
+                    if (one == 0x03)
+                        continue;
+                    kept[n++] = one;
+                }
+                burst = kept[..n];
+            }
+
             if (Environment.GetEnvironmentVariable("ANTIPHON_FAKE_INPUT_SHAPE_REPORT") is
                 { Length: > 0 } inputShapeReport)
                 File.AppendAllText(inputShapeReport,
@@ -578,6 +626,49 @@ internal static class Program
                     SubmitTurn(Write, sessionDir, sessionId, fragment);
             }
         }
+    }
+
+    /// <summary>
+    /// The measured 120x30 empty composer. Startup and the Ctrl+C arm share this so the
+    /// bytes stay the same. CARD-1004 keeps the Linux marker opt-in.
+    /// </summary>
+    private static void PaintEmptyComposer(Action<string> write, bool clearInterveningRows = false)
+    {
+        var topBorder = "  ╭" + new string('─', 114) + "╮";
+        var composerMarker = Environment.GetEnvironmentVariable("ANTIPHON_FAKE_GROK_LINUX_COMPOSER") == "1"
+            ? '\u276f' : '>';
+        var composerRow = "  │ " + composerMarker + new string(' ', 112) + "│";
+        const string footerLabel = " grok-4.7 · always-approve ─╯";
+        var bottomBorder = "  ╰" + new string('─', 118 - 3 - footerLabel.Length) + footerLabel;
+        // Rows 28 and 30 sit after the prompt line and are not part of the measured startup
+        // paint. A scrolled turn leaves text there, and the composer read treats that as unreadable.
+        var gaps = clearInterveningRows ? "\x1b[28;1H\x1b[2K\x1b[30;1H\x1b[2K" : "";
+        write(gaps + "\x1b[23;1H\x1b[2K\x1b[25;1H" + topBorder
+            + "\x1b[26;1H" + composerRow + "\x1b[27;1H" + bottomBorder
+            + "\x1b[29;1H  Shift+Tab:mode  │  Ctrl+x:shortcuts\x1b[30;1H");
+    }
+
+    /// <summary>
+    /// CARD-0491. One Ctrl+C against an empty composer ends the in-flight turn. A report
+    /// hold consumed here lets the next marked submit finish instead of holding again.
+    /// </summary>
+    private static void CancelInFlightFromCtrlC(Action<string> write, string sessionDir, string sessionId)
+    {
+        var held = _reportHoldUser is not null;
+        AppendTurnCompleted(sessionDir, sessionId, _inFlightPromptId, "cancelled", withUsage: false);
+        _turnInFlight = false;
+        _inFlightPromptId = null;
+        _landBusyPromptId = null;
+        _questionOpen = false;
+        _questionToolCallId = null;
+        _questionText = null;
+        _reportHoldDir = null;
+        _reportHoldSession = null;
+        _reportHoldUser = null;
+        if (held)
+            _ctrlCConsumedHold = true;
+        write(IdleTitle);
+        PaintEmptyComposer(write, clearInterveningRows: true);
     }
 
     private static void SubmitTurn(Action<string> write, string sessionDir, string sessionId, string text)
@@ -694,14 +785,21 @@ internal static class Program
         }
 
         var reportHoldPath = Environment.GetEnvironmentVariable("ANTIPHON_FAKE_REPORT_HOLD");
-        if (reportHoldPath is { Length: > 0 } && text.Contains("[antiphon-task:", StringComparison.Ordinal))
+        var markedTask = text.Contains("[antiphon-task:", StringComparison.Ordinal);
+        if (_ctrlCConsumedHold && markedTask)
+        {
+            _ctrlCConsumedHold = false;
+        }
+        else if (reportHoldPath is { Length: > 0 } && markedTask)
         {
             AppendUserChunkOnly(sessionDir, sessionId, text);
             _reportHoldDir = sessionDir;
             _reportHoldSession = sessionId;
             _reportHoldUser = text;
-            File.WriteAllText(reportHoldPath + ".held", sessionId);
             write("REPORT-HOLD\r\n");
+            if (CtrlCCancels)
+                PaintEmptyComposer(write, clearInterveningRows: true);
+            File.WriteAllText(reportHoldPath + ".held", sessionId);
             return;
         }
 

@@ -2537,8 +2537,15 @@ public sealed partial class SessionMessageQueueService
             foreach (var landRow in run.Where(m => m.SourceLandNotificationId != null))
                 if (rulesScope.ServiceProvider.GetService<LandDeliveryBoundary>() is { } landBoundary)
                     await landBoundary.ReachedAsync("queue-before-verdict", landRow.SourceTaskId!.Value, landRow.Id, ct);
-            StampAttemptVerdict(run, DeliveryVerdict.Delivered, UtcNow(),
-                releaseSpillBody: AcceptedByCompleteUserPrompt(outcome));
+            // CARD-0491: a mid-turn refinement stays Sent with a null verdict until a complete
+            // UserPrompt confirms it. Screen-only Delivered is not that confirm. Ordinary keys
+            // keep today's stamp.
+            var transcriptConfirmed = AcceptedByCompleteUserPrompt(outcome);
+            var stamp = run.Where(m =>
+                transcriptConfirmed || !MidTurnInterruptPolicy.IsRefinementKey(m.ConversationKey)).ToList();
+            if (stamp.Count > 0)
+                StampAttemptVerdict(stamp, DeliveryVerdict.Delivered, UtcNow(),
+                    releaseSpillBody: transcriptConfirmed);
             await ArmBootReplyWatchAsync(db, sessionId, ct);
             await db.SaveChangesAsync(ct);
             return FlushResult.Delivered;
@@ -2636,6 +2643,49 @@ public sealed partial class SessionMessageQueueService
         if (confirmedIds.Count > 0)
             await db.SaveChangesAsync(ct);
         return new LateConfirmCounts(confirmedIds.Count, 0, confirmedIds, channelIds);
+    }
+
+    /// <summary>
+    /// CARD-0491. A Sent mid-turn refinement with a null verdict becomes
+    /// <see cref="DeliveryVerdict.LateConfirmed"/> only when <see cref="TranscriptConfirm.Classify"/>
+    /// reports a complete UserPrompt past that attempt's baseline. A head match leaves the verdict
+    /// null and does not park, truncate, or retype. Does not consult
+    /// <see cref="DeliveryVerificationSettings.TranscriptConfirmEnabled"/>.
+    /// </summary>
+    internal async Task ConfirmSentRefinementsAsync(Guid sessionId, CancellationToken ct)
+    {
+        var sem = GetLock(sessionId);
+        await sem.WaitAsync(ct);
+        try
+        {
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var rows = await db.SessionQueuedMessages
+                .Where(m => m.AgentSessionId == sessionId
+                    && m.Status == QueuedMessageStatus.Sent
+                    && m.DeliveryVerdict == null
+                    && (m.ConversationKey ?? "").StartsWith(MidTurnInterruptPolicy.ConversationKeyPrefix))
+                .ToListAsync(ct);
+            var changed = false;
+            foreach (var row in rows)
+            {
+                if (row.LastDeliveryBaselineSequence is not long floor)
+                    continue;
+                var match = await TryFindConfirmingRecordAsync(db, sessionId, row.Body, floor, ct);
+                if (!match.Complete)
+                    continue;
+                row.DeliveryVerdict = DeliveryVerdict.LateConfirmed;
+                row.DeliveryVerdictAt = UtcNow();
+                changed = true;
+            }
+
+            if (changed)
+                await db.SaveChangesAsync(ct);
+        }
+        finally
+        {
+            sem.Release();
+        }
     }
 
     /// <summary>

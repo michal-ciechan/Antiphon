@@ -47,8 +47,24 @@ public readonly record struct MidTurnInterruptDecision(string? Reason)
 
 public static class MidTurnInterruptPolicy
 {
+    public const string ConversationKeyPrefix = "refine:";
+
     public static string ConversationKey(Guid taskId, Guid requestId) =>
-        $"refine:{taskId:N}:{requestId:N}";
+        $"{ConversationKeyPrefix}{taskId:N}:{requestId:N}";
+
+    public static bool IsRefinementKey(string? conversationKey) =>
+        conversationKey is not null
+        && conversationKey.StartsWith(ConversationKeyPrefix, StringComparison.Ordinal);
+
+    /// <summary>
+    /// Live read of the queue row. Pending until the verdict is a transcript confirm
+    /// (<see cref="DeliveryVerdict.LateConfirmed"/> or a transcript-stamped
+    /// <see cref="DeliveryVerdict.Delivered"/>). The request-time event stamp is separate.
+    /// </summary>
+    public static string ReadRefinementDelivered(DeliveryVerdict? verdict) =>
+        verdict is DeliveryVerdict.LateConfirmed or DeliveryVerdict.Delivered
+            ? "delivered"
+            : "pending";
 
     public static MidTurnInterruptDecision Decide(MidTurnInterruptFacts facts)
     {

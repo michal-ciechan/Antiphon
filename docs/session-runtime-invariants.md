@@ -520,6 +520,8 @@ the transcript mutation gate. Activation requires both server and runner support
   Routes: [ops-http.md](ops-http.md#two-processes-two-prefixes); key custody:
   [agent-credentials.md](agent-credentials.md#runner-absence-evidence-key-card-1153).
 
+- **One conditional Ctrl+C can interrupt a working Grok turn (CARD-0491).** The request is opt-in (`interruptCurrentTurn`) and fail-closed: the server writes one `\x03` only when the mid-turn whitelist admits it, after the marked WhenIdle refinement row is stored, fenced on the session generation and the runner sequence. An uncertain write is not repeated. A refusal leaves the refinement on the queue and names the reason. `interruptWritten` records the key (`written`, `already-sent`, `refused:<reason>`, `not-confirmed:<outcome>`). `refinementDelivered` stays pending until the queue row's `DeliveryVerdict` is confirmed from a complete UserPrompt (`LateConfirmed`, or `Delivered` confirmed by that prompt). A cancelled TurnEnd flushes the row and is not a report boundary, so the task stays in its open status. A head-only prompt does not confirm the row. Ctrl+C stops the current turn or tool. It does not stop the session, and it can leave partial tool output or files. `-Refine` without `-Interrupt` remains the non-interruptive path. Pinned by `AgentTaskMidTurnRefineTests.C0491_InterruptWritesOneConditionalCtrlCAfterTheMarkedRow`, `C0491_RefusalKeepsTheRowPendingAndSendsNoKey` and `C0491_CancelledBoundaryKeepsWorkingFlushesTheRowAndConfirmsFromTheUserPrompt`.
+
 - **The dead-session grace is monotonic elapsed time (CARD-1161).**
   `FailDeadSessionTasksAsync` continues while `TimeProvider.GetElapsedTime` from the
   `DeadSessionFirstSeenState` stamp is negative or shorter than `DeadSessionFailGraceMinutes`.

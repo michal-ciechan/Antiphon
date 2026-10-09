@@ -345,6 +345,12 @@ automatically — see "What the delegate is told" below; don't type them into `-
   It lands between the delegate's turns (never mid-tool-call), its report will open by noting the
   refinement arrived, and the task's timeline records what you said. A still-queued task gets the
   message folded into its brief instead; a Blocked one needs `-Reply`, not this.
+
+  `-Interrupt` on that `-Refine` asks for one conditional Ctrl+C before the message is typed.
+  Ctrl+C stops the current turn or tool. It does not stop the session, and it can leave partial
+  tool output or files. `interruptWritten` and `refinementDelivered` are separate: the key can be
+  written while delivery stays pending until a complete UserPrompt confirms the row. `-Refine`
+  without `-Interrupt` stays the non-interruptive path.
 - **Trust the full report.** A `[task … done]` note may be a distillation (CARD-0330) with a
   one-line pointer at the task. The evidence is still the settled task's own `Result` —
   `pwsh -NoProfile -File scripts/delegate.ps1 -Status <taskId>` or the drawer Report section —
