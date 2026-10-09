@@ -1109,8 +1109,8 @@ no `first_token`) and `~/.grok/logs/unified.jsonl` (`shell.turn.inference_start`
 A taskless AlwaysOn boot stall is detection, never a stop (CARD-1156, operator decision option A): the boot reply watchdog records at most one Warning receipt per episode (accepted generation, launch clock and boot prompt sequence) from the boot due (`Delegation:BootModelWaitDeadlineMinutes`, 8 minutes) and at most one Error receipt from the operator threshold (20 minutes with defaults), each in its own context and transaction, keeps the watch armed, and never stops, kills, fails, restarts, latches or types into the session or writes its supervision state.
 A hung taskless AlwaysOn boot is reported, not recovered: the session keeps running and keeps its seat until the model replies, an operator acts or the process exits; CARD-0079 remains the only automatic stop of a Working session, and no deadline releases the seat.
 Its `LivenessProbeFailed` attention row is Warning from the boot due and Error from the operator
-threshold, derived from the current boot facts; an Error receipt recorded for the same episode keeps
-the row at Error even if the clock later reads earlier. The decision is yours: inspect the session or its
+threshold, both computed from the session's current boot facts; its evidence gives the prompt time,
+its age and both due times. The decision is yours: inspect the session or its
 transcript, then keep waiting, reply through the session, or explicitly Stop and Start/resume the
 agent. Owner and test pins: [session runtime invariants](session-runtime-invariants.md) ("A taskless
 AlwaysOn boot stall is detection, never a stop").

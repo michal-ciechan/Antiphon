@@ -2500,9 +2500,10 @@ public partial class AttentionServiceTests
         IWorkspaceProgressProbe? workspaceProgress = null,
         TimeProvider? timeProvider = null,
         AppDbContext? db = null,
-        ILogger<AttentionService>? logger = null) =>
+        ILogger<AttentionService>? logger = null,
+        DelegationSettings? delegation = null) =>
         new(db ?? CreateContext(), runner, Options.Create(new SupervisionSettings()),
-            Options.Create(new DelegationSettings()), timeProvider ?? TimeProvider.System,
+            Options.Create(delegation ?? new DelegationSettings()), timeProvider ?? TimeProvider.System,
             logger ?? NullLogger<AttentionService>.Instance,
             workspaceProgress: workspaceProgress,
             cardTransitions: Options.Create(new CardWorkTransitionSettings { StaleAfterDays = staleAfterDays }));

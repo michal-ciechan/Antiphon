@@ -360,7 +360,7 @@ describe('AttentionPanel', () => {
     }
   })
 
-  it('CARD-1156 Review 8216918f F-1 a recorded Error read under a clock rollback gets a tooltip with no clock claim', async () => {
+  it('CARD-1156 Review 8216918f/4bbc024a F-1 a recorded Error read under a clock rollback gets a tooltip with no clock claim and no retention promise', async () => {
     // The shape StandingBootAttentionProjection.Item emits when the operator stage is on record and the
     // read clock is prompt+7m, before the prompt+8m boot due (StandingBootAttentionTests
     // .C1156_Recorded_operator_stage_survives_clock_rollback, below-boot-due): Error, yet a 7m age.
@@ -393,11 +393,13 @@ describe('AttentionPanel', () => {
     expect(await screen.findByText(/7m00s ago; no qualifying model reply since/)).toBeInTheDocument()
     await userEvent.hover(screen.getByText('No reply to boot prompt'))
     const tooltip = (await screen.findByRole('tooltip')).textContent ?? ''
-    // The true statements: the thresholds that raise each severity, the retained Error, where the times are.
+    // The true statements: the thresholds that raise each severity, computed from current facts, and where
+    // the times are. Review 4bbc024a F-1: no promise that a recorded Error is kept (an unreadable receipt
+    // falls back to the clock stage), so the tooltip states none.
     expect(tooltip).toContain('No qualifying model reply to the boot prompt has been seen')
     expect(tooltip).toContain('raised as a Warning from the boot notice threshold')
     expect(tooltip).toContain('as an Error from the operator decision threshold')
-    expect(tooltip).toContain('an Error recorded for the episode stays an Error even if the clock later moves backwards')
+    expect(tooltip).toContain('both computed from the current facts of the session')
     expect(tooltip).toContain('the prompt time, its age and both due times')
     expect(tooltip).toContain('the session keeps running and keeps its seat')
     // No current-clock claim (this row is Error 1m before its boot due) and no automatic action.
@@ -406,6 +408,9 @@ describe('AttentionPanel', () => {
       'deliver', 'restart', 'ladder', 'latch', 'retry', 'retri', 'kill', 'stop',
     ]) {
       expect(tooltip.toLowerCase(), claim).not.toContain(claim)
+    }
+    for (const promise of ['stays an error', 'stays error', 'recorded for the episode', 'moves backwards', 'clock later']) {
+      expect(tooltip.toLowerCase(), promise).not.toContain(promise)
     }
   })
 

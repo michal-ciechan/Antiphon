@@ -430,6 +430,8 @@ public class StandingBootAttentionTests
     /// the displayed stage when the clock steps back: the real receipt is recorded at prompt+21,
     /// then the same unchanged episode is projected at prompt+9 (control, between the dues),
     /// below-boot-due (prompt+7) and before-prompt (prompt-1). A model reply still resolves it.
+    /// Review 4bbc024a F-2 (b): before-prompt clamps the age to zero, so the headline and the prompt line
+    /// read <c>0s</c> while that same line keeps the real (future) prompt time, and both dues are shown.
     /// </summary>
     [Test]
     [Arguments("below-boot-due")]
@@ -454,11 +456,58 @@ public class StandingBootAttentionTests
         row.Severity.ShouldBe(AlertSeverity.Error, rollback);
         row.Headline.ShouldStartWith("Standing boot stall needs an operator decision");
         row.SinceUtc.ShouldBe(f.PromptAt);
+        if (rollback == "before-prompt")
+        {
+            // The read clock is a minute before the prompt: the age is clamped, never negative, and the
+            // line that shows it still carries the real prompt time.
+            row.Headline.ShouldBe("Standing boot stall needs an operator decision: no model reply 0s after the prompt.");
+            row.Evidence.Split('\n').ShouldContain(
+                $"Prompt #1 (UserPrompt) at {f.PromptAt:u}, 0s ago; no qualifying model reply since.",
+                row.Evidence);
+            row.Evidence.ShouldContain($"Boot notice due {f.PromptAt.AddMinutes(8):u}.");
+            row.Evidence.ShouldContain($"Operator decision due {f.PromptAt.AddMinutes(20):u}.");
+        }
+
         all.ShouldNotContain(i => i.Kind == AttentionKind.RecentCriticalIncident && i.AgentId == f.AgentId,
             "the recorded receipt is the row's own evidence");
 
         await f.AddEntryAsync(TranscriptKinds.AssistantText, "answered", f.PromptAt.AddSeconds(30));
         (await LivenessRowsAsync(f, at)).ShouldBeEmpty($"{rollback}: a model reply still resolves the episode");
+        (await f.ReceiptsAsync()).Count.ShouldBe(receipts, "the projection never writes a receipt");
+        f.AssertNothingDestructive();
+    }
+
+    /// <summary>
+    /// Review 4bbc024a F-2 (a). <c>Delegation:ModelWaitDeadlineMinutes</c> is raised from 20 to 60 AFTER
+    /// the operator stage was recorded at prompt+21. The settings are not part of the episode key
+    /// (generation, launch clock, prompt sequence), so the recorded operator receipt still matches when it
+    /// is read: the row stays Error at prompt+21, and its evidence shows the recalculated operator due
+    /// (prompt+60). Control: the same raised setting before any operator receipt projects a Warning.
+    /// </summary>
+    [Test]
+    public async Task C1156_Recorded_operator_stage_survives_raised_operator_threshold()
+    {
+        await using var f = await StandingBootWatchFixture.CreateAsync();
+        var raised = new DelegationSettings { ModelWaitDeadlineMinutes = 60 };
+        f.At(f.PromptAt.AddMinutes(21));
+        (await LivenessRowsAsync(f, delegation: raised)).ShouldHaveSingleItem().Severity
+            .ShouldBe(AlertSeverity.Warning, "control: with no operator receipt, prompt+21 is before the raised threshold");
+
+        (await f.SweepAsync()).ShouldBe(1, f.Warnings());
+        (await f.ReceiptsAsync()).Select(r => r.FailureReason).ShouldContain(r => r!.EndsWith("stage=operator"),
+            "control: the operator stage is on record under the shipped 20-minute threshold");
+        var receipts = (await f.ReceiptsAsync()).Count;
+
+        var row = (await LivenessRowsAsync(f, delegation: raised))
+            .ShouldHaveSingleItem("the raised threshold does not open a new episode");
+        row.Severity.ShouldBe(AlertSeverity.Error, "the recorded operator stage is read and kept");
+        row.Headline.ShouldBe("Standing boot stall needs an operator decision: no model reply 21m00s after the prompt.");
+        row.SinceUtc.ShouldBe(f.PromptAt);
+        row.Evidence.ShouldContain($"Prompt #1 (UserPrompt) at {f.PromptAt:u}, 21m00s ago");
+        row.Evidence.ShouldContain($"Boot notice due {f.PromptAt.AddMinutes(8):u}.");
+        row.Evidence.ShouldContain($"Operator decision due {f.PromptAt.AddMinutes(60):u}.",
+            customMessage: "the evidence shows the current setting's due, not the one the receipt was recorded under");
+
         (await f.ReceiptsAsync()).Count.ShouldBe(receipts, "the projection never writes a receipt");
         f.AssertNothingDestructive();
     }
@@ -540,7 +589,7 @@ public class StandingBootAttentionTests
     /// exactly the one inherited list question.
     /// </summary>
     private static async Task<List<AttentionItemDto>> ProjectAsync(
-        StandingBootWatchFixture f, IInterceptor? fault = null, DateTime? at = null)
+        StandingBootWatchFixture f, IInterceptor? fault = null, DateTime? at = null, DelegationSettings? delegation = null)
     {
         var counter = new FullCommandCounter();
         await using var db = new AppDbContext(fault is null
@@ -549,7 +598,7 @@ public class StandingBootAttentionTests
         var lists = f.Runner.Lists;
         var result = await AttentionServiceTests.BuildService(
                 f.Runner, timeProvider: at is { } observed ? new FakeTimeProvider(new DateTimeOffset(observed, TimeSpan.Zero)) : f.Clock,
-                db: db, logger: f.Logger<AttentionService>())
+                db: db, logger: f.Logger<AttentionService>(), delegation: delegation)
             .GetAsync(CancellationToken.None);
         counter.Commands.Where(IsWrite).ShouldBeEmpty("the projection is read-only:\n" + counter.Roster());
         db.ChangeTracker.HasChanges().ShouldBeFalse("nothing is staged during a GET");
@@ -557,8 +606,9 @@ public class StandingBootAttentionTests
         return result.Items.Where(i => i.SessionId == f.SessionId || i.AgentId == f.AgentId).ToList();
     }
 
-    private static async Task<List<AttentionItemDto>> LivenessRowsAsync(StandingBootWatchFixture f, DateTime? at = null) =>
-        (await ProjectAsync(f, at: at)).Where(i => i.Kind == AttentionKind.LivenessProbeFailed).ToList();
+    private static async Task<List<AttentionItemDto>> LivenessRowsAsync(
+        StandingBootWatchFixture f, DateTime? at = null, DelegationSettings? delegation = null) =>
+        (await ProjectAsync(f, at: at, delegation: delegation)).Where(i => i.Kind == AttentionKind.LivenessProbeFailed).ToList();
 
     private static bool IsWrite(string sql)
     {
