@@ -326,7 +326,9 @@ public class StandingBootAttentionTests
     /// detected-on-record: a Warning receipt exists, the row is the ordinary Warning.
     /// operator-on-record-unreadable: an operator receipt exists but the clock has stepped back
     /// below the operator due; with the receipt unreadable the row falls back to the clock's
-    /// Warning (unreadable history is never a hidden row and never a stop).
+    /// Warning (prompt+9 is past the boot due, so the clock alone still shows the row; nothing is
+    /// stopped). Below the boot due the same fault shows no standing row:
+    /// <see cref="C1156_Receipt_read_fault_below_the_boot_due_shows_no_standing_row"/>.
     /// </summary>
     [Test]
     [Arguments("detected-on-record")]
@@ -473,6 +475,54 @@ public class StandingBootAttentionTests
 
         await f.AddEntryAsync(TranscriptKinds.AssistantText, "answered", f.PromptAt.AddSeconds(30));
         (await LivenessRowsAsync(f, at)).ShouldBeEmpty($"{rollback}: a model reply still resolves the episode");
+        (await f.ReceiptsAsync()).Count.ShouldBe(receipts, "the projection never writes a receipt");
+        f.AssertNothingDestructive();
+    }
+
+    /// <summary>
+    /// Review 47bfbbef F-1: the combined fault the optional-history comment must not hide. The real
+    /// operator receipt is recorded at prompt+21, the clock steps back below the boot due (prompt+7,
+    /// or before the prompt at prompt-1), and the optional receipt SELECT faults once. The projection
+    /// then has only the clock stage, which is None there, so the code shows NO standing row; the
+    /// feed is still returned, the unattached operator receipt appears once as ordinary
+    /// recent-incident history (Error, the generic incident headline) and nothing is stopped or
+    /// written. Control: the same read without the fault shows the recorded Error row.
+    /// </summary>
+    [Test]
+    [Arguments("below-boot-due")]
+    [Arguments("before-prompt")]
+    public async Task C1156_Receipt_read_fault_below_the_boot_due_shows_no_standing_row(string rollback)
+    {
+        await using var f = await StandingBootWatchFixture.CreateAsync();
+        f.At(f.PromptAt.AddMinutes(21));
+        (await f.SweepAsync()).ShouldBe(1, f.Warnings());
+        (await f.ReceiptsAsync()).Select(r => r.FailureReason).ShouldContain(r => r!.EndsWith("stage=operator"),
+            "control: the operator stage is on record");
+        var receipts = (await f.ReceiptsAsync()).Count;
+
+        var at = rollback == "below-boot-due" ? f.PromptAt.AddMinutes(7) : f.PromptAt.AddMinutes(-1);
+        (await LivenessRowsAsync(f, at)).ShouldHaveSingleItem($"{rollback}: control, readable receipt")
+            .Severity.ShouldBe(AlertSeverity.Error, $"{rollback}: control, the readable operator receipt sets the stage");
+
+        await AddCrashAsync(f, at.AddMinutes(-30));
+        var fault = new ReceiptReadFault();
+        var all = await ProjectAsync(f, fault, at);
+
+        fault.Fired.ShouldBeTrue("control: the optional receipt read must actually fault");
+        all.Where(i => i.Kind == AttentionKind.LivenessProbeFailed)
+            .ShouldBeEmpty($"{rollback}: with the receipt unread, the clock stage below the boot due is None");
+        all.ShouldContain(i => i.Kind == AttentionKind.RecentCriticalIncident && i.Headline.Contains("Crash"),
+            "the rest of the feed is still returned");
+        var history = all.Where(i => i.Kind == AttentionKind.RecentCriticalIncident
+                && i.Headline.Contains(nameof(AgentIncidentKind.LivenessProbeFailed)))
+            .ShouldHaveSingleItem($"{rollback}: the unattached operator receipt is ordinary incident history");
+        history.Severity.ShouldBe(AlertSeverity.Error, rollback);
+        history.SessionId.ShouldBe(f.SessionId, rollback);
+        history.Headline.ShouldBe($"{AlertSeverity.Error} {AgentIncidentKind.LivenessProbeFailed} in the last 24h.", rollback);
+        f.LogEntries().ShouldContain(
+            e => e.Level == LogLevel.Warning && e.Message.Contains("Could not read the standing boot receipts")
+                && e.Exception != null,
+            string.Join('\n', f.LogEntries().Select(e => $"[{e.Level}] {e.Message}")));
         (await f.ReceiptsAsync()).Count.ShouldBe(receipts, "the projection never writes a receipt");
         f.AssertNothingDestructive();
     }

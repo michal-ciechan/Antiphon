@@ -23,7 +23,8 @@ namespace Antiphon.Tests.TestHelpers;
 /// CARD-1156: one taskless AlwaysOn session on its own isolated PostgreSQL database, watched by
 /// the real <see cref="BootReplyWatchdogService"/> sweep. A <see cref="FakeTimeProvider"/> pinned at
 /// <see cref="Now0"/> (this graph registers no message queue, so the CARD-0222 frozen-clock hazard
-/// does not apply), a <see cref="ListedInventoryRunner"/> listing the session Running at its
+/// does not apply; CARD-1165's witness attaches a <see cref="BridgeQueueHarness"/> on the system
+/// clock instead and reads the projection at fake times), a <see cref="ListedInventoryRunner"/> listing the session Running at its
 /// accepted generation, the real <see cref="AgentSessionRuntime"/> for the transcript pull, a
 /// <see cref="RecordingSessionStopper"/> that would close the row if anything asked it to, a
 /// <see cref="MockEventBus"/> and a capturing logger. Age is arranged by back-dating the prompt
@@ -356,8 +357,12 @@ internal sealed class StandingBootWatchFixture : IAsyncDisposable
         }
 
         var sequence = 1L;
-        db.TranscriptEntries.Add(Entry(
-            sessionId, sequence++, options.PromptKind, $"the standing brief {PromptCanary}", promptAt));
+        if (options.SeedPrompt)
+        {
+            db.TranscriptEntries.Add(Entry(
+                sessionId, sequence++, options.PromptKind, $"the standing brief {PromptCanary}", promptAt));
+        }
+
         if (options.InterruptAfterPrompt)
         {
             db.TranscriptEntries.Add(Entry(
@@ -459,6 +464,12 @@ internal sealed record StandingBootWatchOptions
     /// <summary>How long before <c>Now0</c> the session started (its generation and launch clock).</summary>
     public TimeSpan StartedAge { get; init; } = TimeSpan.FromHours(6);
     public string PromptKind { get; init; } = TranscriptKinds.UserPrompt;
+
+    /// <summary>
+    /// CARD-1165: false seeds no prompt row, so a real producer (<c>SessionMessageQueueService</c>
+    /// through an attached <see cref="BridgeQueueHarness"/>) writes the session's only prompt records.
+    /// </summary>
+    public bool SeedPrompt { get; init; } = true;
     public bool InterruptAfterPrompt { get; init; }
     public bool AlwaysOn { get; init; } = true;
     public bool Arm { get; init; } = true;

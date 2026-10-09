@@ -224,7 +224,8 @@ public sealed partial class AttentionService
         items.AddRange(await BuildCardlessDetailsNoPromptItemsAsync(now, ct));
         items.AddRange(await BuildInboundUnconsumedItemsAsync(since, ct));
         // CARD-1156: ahead of the recent-incident sweep, so a current standing boot episode's Error
-        // receipt is struck off it rather than reported a second time under another name.
+        // receipt that the projection read is struck off it rather than reported a second time
+        // under another name (a failed optional receipt read attaches none).
         items.AddRange(await BuildBootReplyMissingItemsAsync(now, since, attachedIncidents, ct));
         items.AddRange(await BuildRecentIncidentItemsAsync(since, attachedIncidents, ct));
         items.AddRange(BuildFailureUnacknowledgedItems(unacknowledged, costs, checkDigests));
@@ -2200,9 +2201,11 @@ public sealed partial class AttentionService
     ///
     /// <para><b>A taskless AlwaysOn session (CARD-1156, option A)</b> is projected by
     /// <see cref="StandingBootAttentionProjection"/> from its CURRENT boot facts: Warning from the boot
-    /// due, Error from the operator due, both computed from the session's current facts, shown
-    /// whether or not a receipt was saved, how old it is or whether the prune removed it. Its current receipts are struck off the recent-incident
-    /// sweep (<paramref name="attachedIncidents"/>).</para>
+    /// due, Error from the operator due, both computed from the session's current facts, and once the
+    /// clock stage is due the row does not depend on whether a receipt was saved, how old it is or
+    /// whether the prune removed it. The current receipts the projection read are struck off the
+    /// recent-incident sweep (<paramref name="attachedIncidents"/>); when that optional read fails,
+    /// none is attached and they stay ordinary recent-incident history.</para>
     ///
     /// <para><b>Everything else</b> keeps the legacy projection from open <c>bootSeq=</c> incidents, on
     /// the <see cref="BuildQueuedInputStuckItemsAsync"/> pattern: one row per episode, re-verified at
