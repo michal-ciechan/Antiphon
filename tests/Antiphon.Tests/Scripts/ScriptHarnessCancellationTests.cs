@@ -82,16 +82,22 @@ public sealed class ScriptHarnessCancellationTests
         {
             await WaitForHoldingAsync(directory, nonce, "before-ready", run);
             cancel.Cancel();
-            var error = await Should.ThrowAsync<OperationCanceledException>(async () => await run);
-            error.CancellationToken.ShouldBe(cancel.Token, "harness-fallback-joins-owned-tree");
+            var error = await ScriptHarnessProcessFixture.CaptureAsync(run);
+            error.ShouldNotBeNull("harness-fallback-joins-owned-tree");
+            var canceled = error.ShouldBeOfType<OperationCanceledException>("harness-fallback-joins-owned-tree");
+            canceled.CancellationToken.ShouldBe(cancel.Token, "harness-fallback-joins-owned-tree");
             var journal = File.ReadAllText(Path.Combine(directory, "identity.journal"));
             JournalNamesDistinctProcesses(journal).ShouldBeTrue("harness-fallback-joins-owned-tree");
             AssertJournalDead(journal, "harness-fallback-joins-owned-tree");
             File.ReadAllText(Path.Combine(directory, "phase.ack"))
                 .Contains("cleanup=cooperative", StringComparison.Ordinal)
                 .ShouldBeFalse("harness-fallback-joins-owned-tree");
-            var diagnostic = error.Data["ScriptHarnessDiagnostics"] as string ?? "";
-            diagnostic.ShouldContain("C578_BUILD_STARTED_" + nonce, Case.Sensitive, "harness-both-pipes-drained");
+            var diagnostic = error.Data.Contains("ScriptHarnessDiagnostics")
+                ? error.Data["ScriptHarnessDiagnostics"]?.ToString() ?? ""
+                : "";
+            var head = diagnostic.Length == 0 ? "<empty>" : diagnostic[..Math.Min(240, diagnostic.Length)].Replace("\n", " | ");
+            diagnostic.ShouldContain("C578_BUILD_STARTED_" + nonce, Case.Sensitive,
+                "harness-both-pipes-drained type=" + error.GetType().Name + " msg=" + error.Message + " head=" + head);
             diagnostic.ShouldContain("C578_BUILD_ERROR_" + nonce, Case.Sensitive, "harness-both-pipes-drained");
             diagnostic.Contains("retained results=", StringComparison.Ordinal).ShouldBeFalse("harness-fallback-joins-owned-tree");
             SnapshotOwnedDirectories().Except(before).ShouldBeEmpty("harness-fallback-joins-owned-tree");
