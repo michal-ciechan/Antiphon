@@ -796,6 +796,10 @@ The wait is visible in the transcript: `BUILD SLOT waiting label=<l> position=<n
 
 Offline seams, tests only: `C589_SLOT_SHIM` (a script answering in place of the HTTP call; `scripts/fixtures/c589-slot-shim.ps1` scripts `granted|unlimited|busy|memory_floor|notfound|unreachable` per `C589_SLOT_SCRIPT`), `C589_SLOT_WAIT_SECONDS`, `C589_SLOT_RETRY_MS`, `C589_SLOT_GRACE_SECONDS`, and the wrapper's `C589_COMMAND_SHIM`. Harnesses: `scripts/test-run-checkpoint.ps1` (`Test-C589_*`, `RunCheckpointScriptTests`) and `scripts/test-build-slot.ps1` (`BuildSlotScriptTests`); the cross-process proof is `BuildSlotEndToEndTests` against a loopback broker, never a production runner.
 
+## Host-independent cache disk readings (CARD-0997)
+
+`RemoteScriptContractTests` reaches `c849_budget_gate` and `c849-import-saved-donor.ps1` with fake free-space readings. The shell gate's `df` is a fixture-local function that accepts only `df -Pk <DockerRootDir>` and never calls the host `df`. The importer's optional `-GetAvailableFreeBytes` scriptblock defaults to `DriveInfo.AvailableFreeSpace` for the stage path it is given; `Check-Space` still compares that reading with 20 GiB plus the validated package and npm byte totals. `c849_saved_copy` and every other operational caller omit the parameter, so they keep the real disk admission. These Unit tests do not lower either threshold and do not skip when the host disk is low.
+
 ## Combined class filters (CARD-0403)
 
 For one invocation covering several named classes on the pinned TUnit 1.44 runner, use
