@@ -1711,6 +1711,176 @@ public sealed class RemoteScriptContractTests
         }
     }
 
+    // CARD-1105. After phase recreating, a journal task may finish and another runner may open
+    // work. One flip from the matching recreating journal per row. Preflight keeps the byte compare.
+    [Test]
+    [Arguments("matching", 0, "", Categories = ["c1105-matching"])]
+    [Arguments("terminal", 0, "", Categories = ["c1105-terminal"])]
+    [Arguments("new-temp", 0, "", Categories = ["c1105-new-temp"])]
+    [Arguments("new-desktop", 0, "", Categories = ["c1105-new-desktop"])]
+    [Arguments("new-server2", 2, "RecycleBoundTasks 44444444-4444-4444-4444-444444444444 status=Blocked runner=server2", Categories = ["c1105-new-server2"])]
+    [Arguments("rebound", 2, "RecycleTaskCensusUnknown cause=Unstable", Categories = ["c1105-rebound"])]
+    [Arguments("preflight", 2, "RecycleTaskCensusUnknown cause=Unstable", Categories = ["c1105-preflight"])]
+    [Arguments("missing-phase", 2, "RecycleTaskCensusUnknown cause=Unstable", Categories = ["c1105-missing-phase"])]
+    [Arguments("bad-tasks", 2, "RecycleTaskCensusUnknown cause=Unstable", Categories = ["c1105-bad-tasks"])]
+    [Arguments("verified", 0, "", Categories = ["c1105-verified"])]
+    [Arguments("land", 2, "RecycleLandInFlight 44444444-4444-4444-4444-444444444444", Categories = ["c1105-land"])]
+    [Arguments("unstable", 2, "RecycleTaskCensusUnknown cause=Unstable", Categories = ["c1105-unstable"])]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1105_Resume_post_removal_census_tracks_open_work(string flip, int expect, string token)
+    {
+        C1008HostFixture.RequireNativeLinux();
+        const string kept = "22222222-2222-2222-2222-222222222222";
+        const string added = "44444444-4444-4444-4444-444444444444";
+        using var fixture = new C1008HostFixture();
+        C1105AddOpenTask(fixture, kept, "server2-temp");
+        var saved = await fixture.Run(extra: C1105RecreatingSaveTail);
+        saved.Exit.ShouldBe(2, "c1105-census: save stops after recreating; " + saved.Output);
+        saved.Output.ShouldContain("HostComposeFailed");
+        var journalPath = C1105Journal(fixture);
+        var record = JsonNode.Parse(File.ReadAllText(journalPath))!.AsObject();
+        record["phase"]!.GetValue<string>().ShouldBe("recreating", saved.Output);
+        record["tasks"]!["open"]!["tasks"]![kept]!["runnerId"]!.GetValue<string>().ShouldBe("server2-temp");
+        fixture.ReloadDocker();
+        var removed = fixture.Removed.Length;
+        if (flip == "terminal" || flip == "preflight" || flip == "verified")
+            C1105DropOpenTask(fixture, kept);
+        else if (flip == "new-temp")
+            C1105AddOpenTask(fixture, added, "server2-temp", "Blocked");
+        else if (flip == "new-desktop")
+            C1105AddOpenTask(fixture, added, "desktop", "Blocked");
+        else if (flip == "new-server2")
+            C1105AddOpenTask(fixture, added, "server2", "Blocked");
+        else if (flip == "rebound")
+            C1105SetRunner(fixture, kept, "desktop");
+        else if (flip == "land")
+            C1105AddOpenTask(fixture, added, "server2-temp", "Succeeded", requested: "2020-01-01T00:00:00Z");
+        if (flip == "preflight") record["phase"] = "preflight";
+        else if (flip == "verified") record["phase"] = "verified";
+        else if (flip == "missing-phase") record.Remove("phase");
+        else if (flip == "bad-tasks") record["tasks"] = new JsonArray();
+        if (flip is "preflight" or "verified" or "missing-phase" or "bad-tasks")
+            File.WriteAllText(journalPath, record.ToJsonString());
+        var before = File.ReadAllText(journalPath);
+        var extra = "C1008_RESUME=1\n" + C1105RecreatingResumeTail;
+        if (flip == "unstable")
+        {
+            C1105WriteDrift(fixture, added);
+            extra += "\n" + C1105UnstableHttp;
+        }
+        var resumed = await fixture.Run(extra: extra);
+        resumed.Exit.ShouldBe(expect, "c1105-census: " + flip + "; " + resumed.Output);
+        fixture.Removed.Length.ShouldBe(removed, flip + " removes nothing further");
+        if (expect == 0)
+        {
+            resumed.Output.ShouldNotContain("RecycleTaskCensusUnknown");
+            resumed.Output.ShouldNotContain("RecycleBoundTasks");
+            resumed.Output.ShouldNotContain("RecycleLandInFlight");
+            resumed.Output.ShouldNotContain("RecycleResumeMismatch");
+            // record_recreated runs after the resume early-return and journals recreating
+            // again, including when the census accepted a verified journal. The dropped
+            // task is what proves that branch: byte equality would have refused it.
+            JsonNode.Parse(File.ReadAllText(journalPath))!["phase"]!.GetValue<string>()
+                .ShouldBe("recreating", flip);
+        }
+        else
+        {
+            resumed.Output.ShouldContain(token);
+            File.ReadAllText(journalPath).ShouldBe(before, flip + " leaves the journal unchanged");
+        }
+    }
+
+    private const string C1105RecreatingSaveTail = """
+        build_server2_images() { :; }
+        c849_prepare() { :; }
+        c849_require_ready() { :; }
+        ensure_build_slots_broker() { :; }
+        seed_runner_checkout() { :; }
+        compose_host() {
+            if [ "$1" = up ]; then return 1; fi
+            docker compose -p "$HOST_PROJECT" "$@"
+        }
+        """;
+
+    private const string C1105RecreatingResumeTail = """
+        build_server2_images() { :; }
+        c849_prepare() { :; }
+        c849_require_ready() { :; }
+        ensure_build_slots_broker() { :; }
+        seed_runner_checkout() { :; }
+        compose_host() {
+            if [ "$1" = up ]; then write_result true '' 0; fi
+            docker compose -p "$HOST_PROJECT" "$@"
+        }
+        """;
+
+    private const string C1105UnstableHttp = """
+        c1008_http() {
+            printf '%s\n' "$1" >> "$C1008_FIXTURE_ROOT/http-trace"
+            if [[ "$1" == *'status=Queued,Dispatched,Working,Blocked'* ]]; then
+                local count=0
+                if [ -f "$C1008_FIXTURE_ROOT/open-count" ]; then count="$(cat "$C1008_FIXTURE_ROOT/open-count")"; fi
+                count=$((count + 1))
+                printf '%s\n' "$count" > "$C1008_FIXTURE_ROOT/open-count"
+                if [ "$count" = 1 ]; then
+                    cp -f -- "$C1008_FIXTURE_ROOT/tasks.json" "$C1008_FIXTURE_ROOT/tasks-stable.json"
+                    cp -f -- "$C1008_FIXTURE_ROOT/tasks-drift.json" "$C1008_FIXTURE_ROOT/tasks.json"
+                elif [ "$count" = 2 ]; then
+                    cp -f -- "$C1008_FIXTURE_ROOT/tasks-stable.json" "$C1008_FIXTURE_ROOT/tasks.json"
+                fi
+            fi
+            C1008_HTTP_BODY="$(c1087_fixture_body "$1")" || {
+                C1008_TASK_ERROR="RecycleTaskCensusUnknown cause=Transport path=$1"; return 2;
+            }
+        }
+        """;
+
+    private static void C1105AddOpenTask(C1008HostFixture fixture, string id, string runner, string status = "Dispatched",
+        string? requested = null, string? started = null)
+    {
+        const string project = C994TaskVectors.Project;
+        var row = new JsonObject
+        {
+            ["id"] = id, ["status"] = status, ["runnerId"] = runner, ["projectId"] = project,
+            ["scopeSource"] = "Task", ["landRequestedAt"] = requested, ["landStartedAt"] = started
+        };
+        fixture.TaskScopes[project]!["items"]!.AsArray().Add(row);
+        fixture.TaskDetails[id] = new JsonObject { ["summary"] = row.DeepClone(), ["landRequest"] = null };
+    }
+
+    private static void C1105DropOpenTask(C1008HostFixture fixture, string id)
+    {
+        var items = fixture.TaskScopes[C994TaskVectors.Project]!["items"]!.AsArray();
+        var row = items.Single(node => node!["id"]!.GetValue<string>() == id);
+        items.Remove(row);
+    }
+
+    private static void C1105SetRunner(C1008HostFixture fixture, string id, string runner)
+    {
+        var row = fixture.TaskScopes[C994TaskVectors.Project]!["items"]!.AsArray()
+            .Single(node => node!["id"]!.GetValue<string>() == id)!;
+        row["runnerId"] = runner;
+        fixture.TaskDetails[id]!["summary"]!["runnerId"] = runner;
+    }
+
+    private static void C1105WriteDrift(C1008HostFixture fixture, string id)
+    {
+        var driftScopes = fixture.TaskScopes.DeepClone().AsObject();
+        var driftDetails = fixture.TaskDetails.DeepClone().AsObject();
+        const string project = C994TaskVectors.Project;
+        var row = new JsonObject
+        {
+            ["id"] = id, ["status"] = "Blocked", ["runnerId"] = "desktop", ["projectId"] = project,
+            ["scopeSource"] = "Task", ["landRequestedAt"] = null, ["landStartedAt"] = null
+        };
+        driftScopes[project]!["items"]!.AsArray().Add(row);
+        driftDetails[id] = new JsonObject { ["summary"] = row.DeepClone(), ["landRequest"] = null };
+        File.WriteAllText(Path.Combine(fixture.Root, "tasks-drift.json"), new JsonObject
+        {
+            ["scopes"] = driftScopes, ["details"] = driftDetails, ["faults"] = new JsonObject()
+        }.ToJsonString());
+    }
+
     private const string C1105TagComposeHost = """
         compose_host() {
             local sha12 model

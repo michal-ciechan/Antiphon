@@ -4342,6 +4342,42 @@ c1008_tasks_collect() {
     C1008_TASK_ERROR=''
 }
 
+# CARD-1105. Once removal has been journaled, other runners may finish or open
+# tasks. A journal task that is still open must still match, including its
+# runner. Every earlier phase keeps the byte compare. A missing phase, or tasks
+# that are not an object, refuses.
+c1008_tasks_match_record() {
+    local tasks="$1" phase="" saved="" live_norm="" saved_norm=""
+    saved="$(printf '%s' "$C1008_RECORD" | jq -c '.tasks' 2>/dev/null)" || return 1
+    phase="$(printf '%s' "$C1008_RECORD" | jq -r 'if (.phase|type)=="string" then .phase else "" end' 2>/dev/null)" || return 1
+    printf '%s' "$saved" | jq -e 'type=="object"' >/dev/null 2>&1 || return 1
+    printf '%s' "$tasks" | jq -e 'type=="object"' >/dev/null 2>&1 || return 1
+    [ -n "$phase" ] || return 1
+    if [ "$phase" != "recreating" ] && [ "$phase" != "verified" ]; then
+        live_norm="$(printf '%s' "$tasks" | jq -Sc . 2>/dev/null)" || return 1
+        saved_norm="$(printf '%s' "$saved" | jq -Sc . 2>/dev/null)" || return 1
+        [ "$live_norm" = "$saved_norm" ]
+        return
+    fi
+    printf '%s' "$tasks" | jq -e --argjson saved "$saved" --arg runner "$C1008_RUNNER" '
+        def row: {id,status,runnerId,projectId,scopeSource,landRequestedAt,landStartedAt};
+        . as $live | $saved as $old |
+        ($old.open.tasks|type)=="object" and ($old.open.land|type)=="object" and ($old.land.tasks|type)=="object" and
+        ($live.open.tasks|type)=="object" and ($live.open.land|type)=="object" and ($live.land.tasks|type)=="object" and
+        ([$live.open.tasks|to_entries[]|select(.value.runnerId==$runner)|.key]
+            | all(. as $id | $old.open.tasks|has($id))) and
+        ([$old.open.tasks|keys[]] | all(. as $id |
+            ($live.open.tasks|has($id)|not) or
+            ((($old.open.tasks[$id]|row)==($live.open.tasks[$id]|row)) and
+             ($old.open.land|has($id)) and ($live.open.land|has($id)) and
+             ($old.open.land[$id]==$live.open.land[$id])))) and
+        ([$live.land.tasks|keys[]] | all(. as $id |
+            ($old.land.tasks|has($id)) and ($old.land.tasks[$id]==$live.land.tasks[$id]))) and
+        ([$old.land.tasks|keys[]] | all(. as $id |
+            ($live.land.tasks|has($id)|not) or ($old.land.tasks[$id]==$live.land.tasks[$id])))
+    ' >/dev/null 2>&1
+}
+
 c1008_status_proof() {
     local body counterpart census ids stamp saved code tasks normalized expected_stamp
     body="$(c849_status_body "$C1008_RUNNER")" || c1008_refuse RunnerStatusMissing
@@ -4412,7 +4448,7 @@ c1008_status_proof() {
     [ "$code" = 0 ] || c1008_refuse "$C1008_TASK_ERROR"
     tasks="$C1008_TASKS"
     if [ "${C1008_ACTIVE:-0}" = 1 ] || [ "${C1008_RESUME:-0}" = 1 ]; then
-        [ "$(printf '%s' "$tasks" | jq -Sc .)" = "$(printf '%s' "$C1008_RECORD" | jq -Sc .tasks)" ] || c1008_refuse "RecycleTaskCensusUnknown cause=Unstable"
+        c1008_tasks_match_record "$tasks" || c1008_refuse "RecycleTaskCensusUnknown cause=Unstable"
     fi
     C1008_STATUS="$(printf '%s' "$body" | jq -c '{runnerId,runnerStoreId,epoch,available,dispatchEligible,acceptingNewWork,
         draining,redirectTo,retireWhenIdle,retiredAt,sessions,runnerSessions,queuedTasks,buildVersion}')"
