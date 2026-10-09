@@ -193,6 +193,10 @@ public class StandingBootDocumentationTests
             + "launch (as decided by <c>BootReplyWatch.HasModelReplySinceAsync</c>, which ignores Grok "
             + "rules-turn responses).",
             "It renders with or without a saved <c>standingBoot:v1;</c> incident;",
+            // Review 8216918f F-1: a recorded Error receipt keeps Error whenever the current reading
+            // precedes the operator threshold (a clock rollback, or a raised threshold), not only on rollback.
+            "a saved Error receipt of the same episode keeps the row at Error even if the clock later "
+            + "reads earlier than the operator threshold.",
             "It makes no claim about delivery: the latest prompt record may be a queued one, and the row "
             + "labels it so.",
             "For a live session that no AlwaysOn agent points at and no open task owns, the row is "
@@ -211,6 +215,7 @@ public class StandingBootDocumentationTests
             // Review 5906dbf4 F-1: an initialized Grok session's rules-turn rows are excluded, so the
             // summary must not enumerate row kinds as if any such row resolved the episode.
             "assistant, thinking, tool or turn-end",
+            "only keeps the Error stage when the clock steps back",
         })
         {
             summary.ShouldNotContain(retired, Case.Insensitive, $"LivenessProbeFailed summary: retired '{retired}'");

@@ -154,10 +154,11 @@ export type AttentionKind =
    */
   | 'ScheduleMisfired'
   /**
-   * A boot prompt with no qualifying model reply since it (as the server decides), past the
-   * boot-reply deadline (CARD-0312). Detection only since CARD-1156: nothing acts on it
-   * automatically. A standing agent's row is Warning from the boot notice due and Error from the
-   * operator due.
+   * A boot prompt with no qualifying model reply since it, as the server decides (CARD-0312).
+   * Detection only since CARD-1156: nothing acts on it automatically. A standing agent's row is
+   * raised as Warning from the boot notice threshold and as Error from the operator threshold, and an
+   * Error recorded for the episode stays Error even if the clock later moves backwards. The row's
+   * evidence carries the prompt time, its age and both due times.
    */
   | 'LivenessProbeFailed'
   /**
