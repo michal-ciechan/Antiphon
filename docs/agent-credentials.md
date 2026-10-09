@@ -227,21 +227,13 @@ Pinned by `RunnerAbsenceEvidenceContractTests.C1153_Http_authentication_covers_r
 `SessionRunnerAbsenceEvidenceClientTests.C1153_Freshness_and_cancellation_are_bounded`.
 
 - The setting is `SessionRunner:AbsenceEvidence:KeyPath`, on the server and on each direct-HTTP runner.
-  Both name a file with the same content: base64 of at least 32 random bytes. The runner and the
-  server read the file but do not check its permissions; the operator creates it owner-readable
-  under the same custody as the operator token, outside the repository.
-- The key is not a task or operator token, is never passed in argv or the environment, is never
-  logged (the runner logs only a derived key id), and is not in the capabilities DTO or a launched
-  provider's environment.
-- Requests and responses are HMAC-SHA256 over a versioned, domain-separated encoding; the response
-  MAC covers every evidence field and the request nonce. A request header alone would not
-  authenticate a certificate.
-- Missing, unreadable or short key: a runner without a usable key does not advertise
-  `sessionAbsenceEvidenceV1` over HTTP, and a server without one sends neither prepare nor certify
-  over HTTP, even to a runner that advertises it. Either way launches still proceed and an absent
-  launch keeps the existing failure. Phone-home needs no extra key.
-- Provisioning or rotating the live key is an operator step: write the file on both sides, then
-  restart the runner first and the AppHost second. No delegate or stage creates, prints or rotates it.
+  Both name a file with the same content: base64 of at least 32 random bytes. The operator keeps
+  it outside the repository under the same custody as the operator token.
+- Requests and responses are HMAC-SHA256 signed, and a runner without a usable key does not
+  advertise `sessionAbsenceEvidenceV1` over HTTP. `RunnerAbsenceEvidenceContractTests.C1153_Http_authentication_covers_request_and_response`
+  pins both and checks that no key bytes or key path appear in a response or a captured log line.
+- Provisioning or rotating the live key is an operator step. No delegate or stage creates, prints
+  or rotates it.
 
 ### server2 runner credentials (CARD-0604)
 
