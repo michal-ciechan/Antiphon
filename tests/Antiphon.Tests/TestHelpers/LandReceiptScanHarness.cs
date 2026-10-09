@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Data.Common;
 using System.Net;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
@@ -52,6 +53,7 @@ internal sealed class LandReceiptScanHarness : IAsyncDisposable
     public ScriptedTranscriptRunner Runner { get; } = new();
     public FullCommandCounter Commands { get; } = new();
     public ReceiptScanRecognizer Receipts { get; } = new();
+    public FaultNthSessionProjection SessionProjectionFault { get; } = new();
     public ArmedTranscriptSaveFault SaveFault { get; } = new();
     public RejectTranscriptUuid Reject { get; } = new();
     public HeldTranscriptSave IngestGate { get; } = new();
@@ -108,8 +110,9 @@ internal sealed class LandReceiptScanHarness : IAsyncDisposable
     private void Bind()
     {
         Cache = _options.Cache ? new LandReceiptScanCache(_options.CacheClock ?? TimeProvider.System) : null;
+        // The fault sits after Commands: ReaderExecuting records the statement, then the armed hook can throw.
         Db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>(TestDbFixture.CreateDbContextOptions(_schema.ConnectionString))
-            .AddInterceptors(Commands, Receipts).Options);
+            .AddInterceptors(Commands, SessionProjectionFault, Receipts).Options);
         Service = new AgentTaskLandNotificationService(Db, Bridge.Queue, new CompletionNoteFlushQueue(), Bridge.Runtime,
             TimeProvider.System, _options.Boundary, scanCache: Cache);
         // A submission becomes a committed transcript prompt the way the live stream lands one.
@@ -305,6 +308,27 @@ internal sealed class LandReceiptScanHarness : IAsyncDisposable
     {
         await using var db = Fixture();
         return await db.AgentSessions.Where(s => s.Id == session).Select(s => s.Status).SingleAsync();
+    }
+
+    /// <summary>
+    /// CARD-1157 T-6. Drops this isolated database's queue-row session foreign key so a test can
+    /// delete the session a keyed row still names. <c>C1157_FollowScanStatementBudget</c>
+    /// <c>row-session-missing</c> and <c>C1157_ProofForOneScanTargetNeverCertifiesTheOther</c> use it.
+    /// </summary>
+    public async Task DetachQueueRowsFromSessionsAsync()
+    {
+        await using var db = Fixture();
+        await db.Database.ExecuteSqlRawAsync(
+            """ALTER TABLE "SessionQueuedMessages" DROP CONSTRAINT "FK_SessionQueuedMessages_AgentSessions_AgentSessionId" """);
+    }
+
+    /// <summary>Deletes one <c>AgentSessions</c> row. Transcript rows cascade; a detached queue row does not.</summary>
+    public async Task DeleteSessionAsync(Guid session)
+    {
+        await using var db = Fixture();
+        var deleted = await db.AgentSessions.Where(s => s.Id == session).ExecuteDeleteAsync();
+        if (deleted != 1)
+            throw new InvalidOperationException($"deleted {deleted} session rows for {session}");
     }
 
     /// <summary>
@@ -506,6 +530,61 @@ internal sealed class LandReceiptScanHarness : IAsyncDisposable
             public TaskCompletionSource Reached { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
             public TaskCompletionSource Released { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
             public void Release() => Released.TrySetResult();
+        }
+    }
+
+    /// <summary>
+    /// CARD-1157. While armed, the Nth command since <see cref="Arm"/> whose text starts
+    /// <c>SELECT a."Status", a."StartedAt" FROM "AgentSessions"</c> throws once from the executing
+    /// hook. <c>C1157_SentRowDestinationReceiptConfirms</c> <c>stopped-after-session-select-fault</c>
+    /// arms the second projection. Registered after <see cref="Commands"/> so that statement is counted.
+    /// </summary>
+    internal sealed class FaultNthSessionProjection : DbCommandInterceptor
+    {
+        public const string Message = "planned session projection fault";
+        private const string Prefix = "SELECT a.\"Status\", a.\"StartedAt\" FROM \"AgentSessions\"";
+        private readonly object _gate = new();
+        private int _armedNth;
+        private int _seen;
+
+        public void Arm(int nth)
+        {
+            if (nth < 1) throw new ArgumentOutOfRangeException(nameof(nth));
+            lock (_gate)
+            {
+                _seen = 0;
+                _armedNth = nth;
+            }
+        }
+
+        // The command counter records each projection once, so each executing hook call is one
+        // statement. Npgsql reuses the DbCommand, so identity is not a per-statement key.
+        private bool ThrowIfNth(DbCommand command)
+        {
+            lock (_gate)
+            {
+                if (_armedNth == 0) return false;
+                var text = string.Join(' ', command.CommandText.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+                if (!text.StartsWith(Prefix, StringComparison.Ordinal)) return false;
+                if (++_seen != _armedNth) return false;
+                _armedNth = 0;
+                return true;
+            }
+        }
+
+        public override InterceptionResult<DbDataReader> ReaderExecuting(
+            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result)
+        {
+            if (ThrowIfNth(command)) throw new InvalidOperationException(Message);
+            return base.ReaderExecuting(command, eventData, result);
+        }
+
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result,
+            CancellationToken cancellationToken = default)
+        {
+            if (ThrowIfNth(command)) throw new InvalidOperationException(Message);
+            return base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
         }
     }
 }
