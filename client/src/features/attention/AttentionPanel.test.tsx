@@ -347,15 +347,64 @@ describe('AttentionPanel', () => {
 
     await userEvent.hover(await screen.findByText('No reply to boot prompt'))
     const tooltip = (await screen.findByRole('tooltip')).textContent ?? ''
-    expect(tooltip).toContain('No qualifying model reply has appeared since the boot prompt')
+    expect(tooltip).toContain('No qualifying model reply to the boot prompt has been seen')
     expect(tooltip).not.toContain('assistant, thinking, tool or turn-end')
-    expect(tooltip).toContain('Warning from the boot notice due and an Error from the operator decision due')
-    expect(tooltip).toContain('prompt age and both due times')
-    expect(tooltip).toContain('Detection only: Antiphon only reports this')
+    expect(tooltip).toContain('Warning from the boot notice threshold and as an Error from the operator decision threshold')
+    expect(tooltip).toContain('the prompt time, its age and both due times')
+    expect(tooltip).toContain('Detection only: Antiphon reports this and takes no automatic action on it')
     expect(tooltip).toContain('Open the agent or the session')
     expect(tooltip).toContain('reply through the session')
     // Stems, so inflections count too: 'retri' catches "retried" and "retries".
     for (const claim of ['deliver', 'restart', 'ladder', 'latch', 'retry', 'retri', 'kill', 'stop']) {
+      expect(tooltip.toLowerCase(), claim).not.toContain(claim)
+    }
+  })
+
+  it('CARD-1156 Review 8216918f F-1 a recorded Error read under a clock rollback gets a tooltip with no clock claim', async () => {
+    // The shape StandingBootAttentionProjection.Item emits when the operator stage is on record and the
+    // read clock is prompt+7m, before the prompt+8m boot due (StandingBootAttentionTests
+    // .C1156_Recorded_operator_stage_survives_clock_rollback, below-boot-due): Error, yet a 7m age.
+    serve({
+      items: [
+        item({
+          kind: 'LivenessProbeFailed',
+          severity: 'Error',
+          title: 'orchestrator',
+          sessionId: 's-rollback',
+          agentId: 'a-rollback',
+          headline: 'Standing boot stall needs an operator decision: no model reply 7m00s after the prompt.',
+          evidence: [
+            'Inspect the session or its transcript, then choose: keep waiting, reply through the session, '
+              + 'or explicitly Stop and Start/resume the agent.',
+            'Detection only: the session keeps running and keeps its seat; nothing is stopped, typed, '
+              + 'restarted or latched automatically, and no deadline ends this episode.',
+            'Prompt #12 (UserPrompt) at 2026-08-17 09:00:00Z, 7m00s ago; no qualifying model reply since.',
+            'Boot notice due 2026-08-17 09:08:00Z.',
+            'Operator decision due 2026-08-17 09:20:00Z.',
+          ].join('\n'),
+          sinceUtc: '2026-08-17T09:00:00Z',
+          actions: ['OpenAgent', 'OpenDrawer'],
+        }),
+      ],
+    })
+
+    renderWithProviders(<AttentionPanel />)
+
+    expect(await screen.findByText(/7m00s ago; no qualifying model reply since/)).toBeInTheDocument()
+    await userEvent.hover(screen.getByText('No reply to boot prompt'))
+    const tooltip = (await screen.findByRole('tooltip')).textContent ?? ''
+    // The true statements: the thresholds that raise each severity, the retained Error, where the times are.
+    expect(tooltip).toContain('No qualifying model reply to the boot prompt has been seen')
+    expect(tooltip).toContain('raised as a Warning from the boot notice threshold')
+    expect(tooltip).toContain('as an Error from the operator decision threshold')
+    expect(tooltip).toContain('an Error recorded for the episode stays an Error even if the clock later moves backwards')
+    expect(tooltip).toContain('the prompt time, its age and both due times')
+    expect(tooltip).toContain('the session keeps running and keeps its seat')
+    // No current-clock claim (this row is Error 1m before its boot due) and no automatic action.
+    for (const claim of [
+      'is past', 'has passed', 'past the', 'overdue',
+      'deliver', 'restart', 'ladder', 'latch', 'retry', 'retri', 'kill', 'stop',
+    ]) {
       expect(tooltip.toLowerCase(), claim).not.toContain(claim)
     }
   })
