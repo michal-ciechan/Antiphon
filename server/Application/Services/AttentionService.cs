@@ -2200,9 +2200,8 @@ public sealed partial class AttentionService
     ///
     /// <para><b>A taskless AlwaysOn session (CARD-1156, option A)</b> is projected by
     /// <see cref="StandingBootAttentionProjection"/> from its CURRENT boot facts: Warning from the boot
-    /// due, Error from the operator due or from a recorded Error receipt of the same episode (which
-    /// stays Error even if the clock later reads earlier), shown whether or not a receipt was saved,
-    /// how old it is or whether the prune removed it. Its current receipts are struck off the recent-incident
+    /// due, Error from the operator due, both computed from the session's current facts, shown
+    /// whether or not a receipt was saved, how old it is or whether the prune removed it. Its current receipts are struck off the recent-incident
     /// sweep (<paramref name="attachedIncidents"/>).</para>
     ///
     /// <para><b>Everything else</b> keeps the legacy projection from open <c>bootSeq=</c> incidents, on

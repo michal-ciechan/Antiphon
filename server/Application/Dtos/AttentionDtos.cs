@@ -234,9 +234,7 @@ public enum AttentionKind
     /// record on its current launch against the boot due (Warning) and the operator threshold
     /// (Error), with no qualifying boot-model reply on that launch (as decided by
     /// <c>BootReplyWatch.HasModelReplySinceAsync</c>, which ignores Grok rules-turn responses).
-    /// It renders with or without a saved <c>standingBoot:v1;</c> incident; a saved Error receipt
-    /// of the same episode keeps the row at Error even if the clock later reads earlier than the
-    /// operator threshold. It makes no claim
+    /// It renders with or without a saved <c>standingBoot:v1;</c> incident. It makes no claim
     /// about delivery: the latest prompt record may be a queued one, and the row labels it so.</para>
     ///
     /// <para><b>Legacy <c>bootSeq=</c> row (CARD-0312).</b> For a live session that no AlwaysOn

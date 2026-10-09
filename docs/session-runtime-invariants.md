@@ -647,7 +647,7 @@ the transcript mutation gate. Activation requires both server and runner support
   `StandingBootWatchdogTests.C1156_Episodes_deduplicate_and_reopen_only_for_new_identity`,
   `StandingBootWatchdogTests.C1156_Telemetry_faults_preserve_custody_and_future_writes` and
   `BootReplyWatchdogTests.boot_silence_preserves_existing_failure_history_without_creating_a_latch`.
-  Its attention row is projected from the current boot facts, not from the receipts: Warning from the boot due, Error from the operator threshold or a recorded Error receipt of the same episode, and gone once the model replies, the session ends or a new launch or prompt opens a new episode.
+  Its attention row is projected from the current boot facts: Warning from the boot due, Error from the operator threshold, and gone once the model replies, the session ends or a new launch or prompt opens a new episode.
   Pinned by `StandingBootAttentionTests.C1156_Current_boot_attention_survives_optional_history`,
   `StandingBootAttentionTests.C1156_Positive_resolution_clears_only_the_current_episode` and
   `StandingBootAttentionTests.C1156_Recorded_operator_stage_survives_clock_rollback`.

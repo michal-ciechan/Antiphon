@@ -292,9 +292,9 @@ export const ATTENTION_VISUALS: Record<AttentionKind, AttentionVisual> = {
     color: 'warning',
     icon: TbAlertTriangle,
     // CARD-1156: one tooltip serves the standing row and the legacy bootSeq rows. Both are detection
-    // only, so it states no delivery verdict and names no automatic action. It states no clock
-    // reading either: a recorded Error stays Error under a clock rollback, so the evidence carries the times.
-    hint: 'No qualifying model reply to the boot prompt has been seen; the server decides what qualifies. For a standing agent the row is raised as a Warning from the boot notice threshold and as an Error from the operator decision threshold, an Error recorded for the episode stays an Error even if the clock later moves backwards, and the evidence on the row gives the prompt time, its age and both due times. Detection only: Antiphon reports this and takes no automatic action on it, and the session keeps running and keeps its seat. Open the agent or the session to inspect it, then reply through the session or keep waiting.',
+    // only, so it states no delivery verdict and names no automatic action. It states no clock reading
+    // and no rule for keeping a severity: it names the two thresholds, and the evidence carries the times.
+    hint: 'No qualifying model reply to the boot prompt has been seen; the server decides what qualifies. For a standing agent the row is raised as a Warning from the boot notice threshold and as an Error from the operator decision threshold, both computed from the current facts of the session, and the evidence on the row gives the prompt time, its age and both due times. Detection only: Antiphon reports this and takes no automatic action on it, and the session keeps running and keeps its seat. Open the agent or the session to inspect it, then reply through the session or keep waiting.',
   },
   ImportedIssueNeedsReview: {
     label: 'Needs review',

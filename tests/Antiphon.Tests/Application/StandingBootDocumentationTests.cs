@@ -28,10 +28,9 @@ public class StandingBootDocumentationTests
         + "types into the session or writes its supervision state.";
 
     internal const string AttentionSentence =
-        "Its attention row is projected from the current boot facts, not from the receipts: Warning "
-        + "from the boot due, Error from the operator threshold or a recorded Error receipt of the "
-        + "same episode, and gone once the model replies, the session ends or a new launch or prompt "
-        + "opens a new episode.";
+        "Its attention row is projected from the current boot facts: Warning from the boot due, Error "
+        + "from the operator threshold, and gone once the model replies, the session ends or a new "
+        + "launch or prompt opens a new episode.";
 
     internal const string UnknownSentence =
         "Unknown evidence keeps the session: a policy input that cannot be read positively "
@@ -192,13 +191,9 @@ public class StandingBootDocumentationTests
             + "(Warning) and the operator threshold (Error), with no qualifying boot-model reply on that "
             + "launch (as decided by <c>BootReplyWatch.HasModelReplySinceAsync</c>, which ignores Grok "
             + "rules-turn responses).",
-            "It renders with or without a saved <c>standingBoot:v1;</c> incident;",
-            // Review 8216918f F-1: a recorded Error receipt keeps Error whenever the current reading
-            // precedes the operator threshold (a clock rollback, or a raised threshold), not only on rollback.
-            "a saved Error receipt of the same episode keeps the row at Error even if the clock later "
-            + "reads earlier than the operator threshold.",
-            "It makes no claim about delivery: the latest prompt record may be a queued one, and the row "
-            + "labels it so.",
+            // Review 4bbc024a F-1: no rule for keeping the Error stage; the summary names the thresholds only.
+            "It renders with or without a saved <c>standingBoot:v1;</c> incident. It makes no claim about "
+            + "delivery: the latest prompt record may be a queued one, and the row labels it so.",
             "For a live session that no AlwaysOn agent points at and no open task owns, the row is "
             + "projected from a <c>bootSeq=</c>",
         })
@@ -221,8 +216,82 @@ public class StandingBootDocumentationTests
             summary.ShouldNotContain(retired, Case.Insensitive, $"LivenessProbeFailed summary: retired '{retired}'");
         }
 
+        foreach (var promise in RetiredRetentionPromises)
+            summary.ShouldNotContain(promise, Case.Insensitive, $"LivenessProbeFailed summary: retention promise '{promise}'");
+
         return Task.CompletedTask;
     }
+
+    /// <summary>
+    /// Wording of the retired "a recorded Error stays Error" promise (S6 repair 3). It is false for a
+    /// standing row whose receipt read faults (CP-30, operator-on-record-unreadable: Warning), so no
+    /// operator-facing text carries it; the retained-Error behaviour is described only in the test design.
+    /// </summary>
+    private static readonly string[] RetiredRetentionPromises =
+    [
+        "stays Error",
+        "stays an Error",
+        "remains Error",
+        "keeps the row at Error",
+        "Error recorded for the episode",
+        "recorded Error",
+        "Error receipt of the same episode",
+        "Error receipt recorded",
+        "clock later",
+        "moves backwards",
+    ];
+
+    /// <summary>
+    /// Review 4bbc024a F-1: the five texts that describe the standing <c>LivenessProbeFailed</c> row (the
+    /// client tooltip, the client <c>AttentionKind</c> comment, the DTO summary, the
+    /// <c>AttentionService</c> projection comment and the orchestration-loop paragraph) say only what is
+    /// always true: Warning from the boot due, Error from the operator threshold, both computed from the
+    /// session's current facts. None of them promises that a recorded Error is retained.
+    /// </summary>
+    [Test]
+    public Task C1156_Standing_row_texts_name_thresholds_and_no_retention_promise()
+    {
+        var visuals = Read("client/src/features/attention/attentionVisuals.ts");
+        var surfaces = new (string Owner, string Text, string Required)[]
+        {
+            ("tooltip", Prose(Section(visuals, "  LivenessProbeFailed: {", "  ImportedIssueNeedsReview: {")),
+                "raised as a Warning from the boot notice threshold and as an Error from the operator decision "
+                + "threshold, both computed from the current facts of the session, and the evidence on the row "
+                + "gives the prompt time, its age and both due times."),
+            ("client type", Prose(Section(Read("client/src/api/attention.ts"),
+                    "A boot prompt with no qualifying model reply", "| 'LivenessProbeFailed'")),
+                "raised as Warning from the boot notice threshold and as Error from the operator threshold, both "
+                + "computed from the current facts of the session. The row's evidence carries the prompt time, "
+                + "its age and both due times."),
+            ("dto", EnumSummary(Read("server/Application/Dtos/AttentionDtos.cs"), "LivenessProbeFailed = 27,"),
+                "against the boot due (Warning) and the operator threshold (Error)"),
+            ("service", Prose(Section(Read("server/Application/Services/AttentionService.cs"),
+                    "<para><b>A taskless AlwaysOn session (CARD-1156, option A)</b>", "</para>")),
+                "Warning from the boot due, Error from the operator due, both computed from the session's "
+                + "current facts,"),
+            ("loop", Prose(Section(Read("docs/orchestration-loop.md"),
+                    "**A taskless AlwaysOn session showing only its boot prompt is reported, not recovered (CARD-1156).**",
+                    "**A session past the general deadline is Failed")),
+                "Its `LivenessProbeFailed` attention row is Warning from the boot due and Error from the operator "
+                + "threshold, both computed from the session's current boot facts; its evidence gives the prompt "
+                + "time, its age and both due times."),
+        };
+
+        foreach (var (owner, text, required) in surfaces)
+        {
+            text.ShouldContain(required, Case.Sensitive, $"{owner}: the thresholds, from current facts");
+            foreach (var promise in RetiredRetentionPromises)
+                text.ShouldNotContain(promise, Case.Insensitive, $"{owner}: retention promise '{promise}'");
+        }
+
+        return Task.CompletedTask;
+    }
+
+    /// <summary>Comment or Markdown lines as one line of prose: leading <c>///</c>, <c>//</c> and <c>*</c> dropped, whitespace collapsed.</summary>
+    private static string Prose(string raw) =>
+        string.Join(" ", raw.Split('\n')
+            .Select(l => l.Trim().TrimStart('/', '*').Trim())
+            .Where(l => l.Length > 0));
 
     /// <summary>The XML summary immediately above <paramref name="member"/>, its <c>///</c> lines joined by spaces.</summary>
     private static string EnumSummary(string text, string member)
