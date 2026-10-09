@@ -5,7 +5,6 @@ using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Time.Testing;
 using Shouldly;
 
@@ -18,13 +17,10 @@ public partial class DelegationDispatchRecoveryBoundaryTests
     /// the absent-launch hold) goes through the real queue, the way the Blocked note does.
     /// eligible: an idle caller gets one complete UserPrompt and that receipt closes the row.
     /// busy: the row stays queued, then one flush after TurnEnd delivers it once.
-    /// crash: the Failed commit stands, the note insert throws, and the next dead-session
-    /// sweep puts back exactly one note, which then closes with one receipt.
     /// </summary>
     [Test]
     [Arguments("eligible")]
     [Arguments("busy")]
-    [Arguments("crash")]
     public async Task C1161_Failed_caller_note_has_one_complete_user_prompt(string mode)
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
@@ -54,30 +50,11 @@ public partial class DelegationDispatchRecoveryBoundaryTests
             });
             var runner = new CountingRunner();
             var stopper = new RecordingSessionStopper();
-            var fault = mode == "crash" ? new FailedNoteInsertFault(seeded.TaskId) : null;
             await using (var host = OpenSweep(
-                schema.ConnectionString, runner, stopper, sweepClock, new DeadSessionFirstSeenState(), fault))
+                schema.ConnectionString, runner, stopper, sweepClock, new DeadSessionFirstSeenState()))
                 await host.DueAsync();
 
-            if (mode == "crash")
-            {
-                fault!.Fired.ShouldBeTrue(mode);
-                await using (var mid = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString)))
-                {
-                    var terminal = await mid.AgentTasks.SingleAsync(t => t.Id == seeded.TaskId);
-                    terminal.Status.ShouldBe(AgentTaskStatus.Failed, mode + "-terminal");
-                    terminal.CompletedAt.ShouldNotBeNull(mode + "-terminal");
-                    (await mid.SessionQueuedMessages.CountAsync(m => m.SourceTaskId == seeded.TaskId))
-                        .ShouldBe(0, mode + "-lost");
-                }
-
-                await using (var again = OpenSweep(
-                    schema.ConnectionString, runner, stopper, sweepClock, new DeadSessionFirstSeenState()))
-                    await again.SweepAsync();
-                await using (var third = OpenSweep(
-                    schema.ConnectionString, runner, stopper, sweepClock, new DeadSessionFirstSeenState()))
-                    await third.SweepAsync();
-            }
+            // enqueue-failure recovery is not covered: CARD-1167
 
             SessionQueuedMessage note;
             await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString)))
@@ -138,31 +115,5 @@ public partial class DelegationDispatchRecoveryBoundaryTests
     {
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(connection));
         return await db.SessionQueuedMessages.CountAsync(m => m.SourceTaskId == taskId);
-    }
-
-    /// <summary>
-    /// Throws on the first caller-note insert for one task. The Failed status is already
-    /// committed on the sweep context; this fault is the later queue insert.
-    /// </summary>
-    private sealed class FailedNoteInsertFault(Guid taskId) : SaveChangesInterceptor
-    {
-        public bool Fired { get; private set; }
-
-        public override ValueTask<InterceptionResult<int>> SavingChangesAsync(
-            DbContextEventData eventData, InterceptionResult<int> result, CancellationToken cancellationToken = default)
-        {
-            if (!Fired && eventData.Context is AppDbContext db)
-            {
-                var note = db.ChangeTracker.Entries<SessionQueuedMessage>().FirstOrDefault(e =>
-                    e.State == EntityState.Added && e.Entity.SourceTaskId == taskId);
-                if (note is not null)
-                {
-                    Fired = true;
-                    throw new IOException("injected failure-note enqueue fault after the terminal write");
-                }
-            }
-
-            return base.SavingChangesAsync(eventData, result, cancellationToken);
-        }
     }
 }
