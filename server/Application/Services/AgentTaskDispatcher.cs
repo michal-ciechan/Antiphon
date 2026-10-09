@@ -2498,8 +2498,18 @@ public sealed partial class AgentTaskDispatcher
             && briefAttempts >= _maxDeliveryAttempts;
         if (!unattempted && !absent && !exhausted)
             return false;
+        // A Working session with an unattempted or exhausted brief defers. Absent debt
+        // defers only when this dispatch window itself has working activity. A previous
+        // task's still-open prompt is not this task's missing brief, so today's failure stays.
         if (await SessionMessageQueueService.IsWorkingAsync(_db, sessionId, ct))
-            return true;
+        {
+            if (!absent)
+                return true;
+            if (task.DispatchedAt is DateTime dispatchedAt
+                && await HasWorkingActivitySinceAsync(sessionId, dispatchedAt, ct))
+                return true;
+            return false;
+        }
 
         var listing = await ReadDispatchRecoveryListingAsync(
             sessionId, sessionRunnerId, startedAt, cachedRunnerList, ct);
@@ -2532,6 +2542,32 @@ public sealed partial class AgentTaskDispatcher
 
         return false;
     }
+
+    /// <summary>
+    /// Working activity in this dispatch window. The kind filter matches the
+    /// transcript working query, and a timestamp is required so a pre-dispatch
+    /// row cannot qualify.
+    /// </summary>
+    private Task<bool> HasWorkingActivitySinceAsync(Guid sessionId, DateTime since, CancellationToken ct) =>
+        _db.TranscriptEntries.AsNoTracking().AnyAsync(t =>
+            t.AgentSessionId == sessionId
+            && t.Timestamp != null
+            && t.Timestamp >= since
+            && t.Kind != TranscriptKinds.TurnEnd
+            && t.Kind != TranscriptKinds.TurnTitle
+            && t.Kind != TranscriptKinds.SessionRestartBoundary
+            && t.Kind != TranscriptKinds.QueuedUserPrompt
+            && t.Kind != TranscriptKinds.QueueEnqueue
+            && t.Kind != TranscriptKinds.QueueDequeue
+            && t.Kind != TranscriptKinds.QueueRemove
+            && t.Kind != TranscriptKinds.CompactBoundary
+            && !(t.Kind == TranscriptKinds.UserPrompt
+                && t.Text != null
+                && (t.Text.StartsWith(TranscriptKinds.LocalCommandPrefix)
+                    || t.Text.StartsWith(TranscriptKinds.LocalCommandStdoutPrefix)
+                    || t.Text.StartsWith(TranscriptKinds.CompactionContinuationPromptPrefix)
+                    || t.Text.StartsWith(TranscriptKinds.InterruptedPromptPrefix))),
+            ct);
 
     private async Task<DispatchRecoveryListing> ReadDispatchRecoveryListingAsync(
         Guid sessionId,
