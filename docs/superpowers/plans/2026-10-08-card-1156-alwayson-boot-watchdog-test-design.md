@@ -972,3 +972,65 @@ of them (PC-15, PC-18 and PC-19 name V-11 cases). A landed doc pin check: `BootS
 so S1-S4 left no landed doc pin red. Next: **S6** (owner documents,
 `BootStallDocumentationTests.AlwaysOnExceptionSentence` and its two assertions replaced, the V-13
 body; CP-28/29).
+
+## As built: S6 (Code task 92cc0d45)
+
+Branch `feat/card-task-92cc0d45` from `origin/master` `f305e8aec721819f8757eb602a5a0d90c9f6b89b`
+(the landed S5 tip). Documentation and test text only; no production behaviour changes, no
+migration, no `Program.cs` change, no client change.
+
+- **Owners.** `docs/session-runtime-invariants.md`: the CARD-1151 bullet's last sentence now points
+  at a new bullet "A hung taskless AlwaysOn boot is reported, not recovered" with five sentences,
+  each followed by its pins (`StandingBootDocumentationTests` constants): `DetectionSentence`
+  (Warning receipt from the boot due, Error receipt from the operator threshold, at most one each per
+  episode, own context and transaction, watch armed, never stops, kills, fails, restarts, latches,
+  types or writes supervision state), `AttentionSentence` (row from current facts; Error also from a
+  recorded operator receipt; resolution), `UnknownSentence` (unreadable policy input and an open
+  Queued/Dispatched/Working/Blocked task record nothing; boot wait `<= 0` is off; runtime, pull and
+  runner absence still record from the stored transcript), `LegacyDiagnosticSentence` (the generic
+  `bootSeq=` path), `ReportedSentence` (CARD-0079 remains the only automatic stop of a Working
+  session; no deadline releases the seat). `docs/orchestration-loop.md` gains a paragraph after the
+  CARD-1151 provider-stall paragraph and `docs/agent-kinds.md` replaces the Grok note's exception
+  sentence; both carry `DetectionSentence` and `ReportedSentence`. AGENTS.md is unchanged.
+- **V-13** `C1156_Docs_name_detection_clocks_custody_and_compaction_exception`: the five sentences
+  and their `nameof` pins in the owner; the two sentences in the loop and Grok note; the retired
+  CARD-1151 sentence and the three CARD-0312 promises the design names absent from all three docs;
+  restart-ladder wording absent from the three changed sections; the 8 and 20 minutes checked
+  against `DelegationSettings` defaults and `StandingBootWatchPolicy.Facts`/`DueStage`.
+- **Design reversal 4 (declared).** `BootStallDocumentationTests.AlwaysOnExceptionSentence` was the
+  CARD-1151 F1 sentence "... still raises its incident and stops the session for the existing
+  standing-agent restart ladder ...". CARD-1156 option A made it false. The constant now equals
+  `StandingBootDocumentationTests.DetectionSentence`; its two `ShouldContain` assertions (runtime,
+  agent-kinds) are kept against the new text, and each gains a `ShouldNotContain` of the retired
+  sentence (`StandingBootDocumentationTests.RetiredAlwaysOnExceptionSentence`). No other assertion
+  changed.
+- **Other true-making edits** (repo grep for restart-ladder, latch, stop and "nothing ends it"
+  claims about standing/AlwaysOn sessions): `AttentionDtos.cs` `LivenessProbeFailed` comment ("Error
+  on the latching third, where the mechanism has stopped restarting"), `AgentSupervisionState.cs`
+  `LivenessLatchedAt` comment (no code sets it since CARD-1156; a legacy value still holds automatic
+  starts until a human start or attach clears it), `DelegationSettings.BootModelWaitDeadlineMinutes`
+  comment (adds the standing receipts). Already true and unchanged: `BootReplyWatchdogService.cs:36`,
+  `StandingBootAttentionProjection.cs:43`, `client/src/api/attention.ts:158`,
+  `AgentIncidentKind.LaunchInterruptedByRestart` (the supervisor's not-running restart, not the boot
+  watchdog), the negated wording in `BootReplyWatchdogTests` and `StandingBootAttentionTests`.
+  Out of this card's footprint and left as found: CARD-1160's delivery-claim lines; the CARD-1151
+  task-path residue `server/Bundles/check-interpreter.md:27` ("the harness kills and retries it once
+  there") and the Windows-only test name
+  `GrokDelegateEndToEndTests.a_provider_that_never_answers_the_boot_prompt_is_failed_killed_and_retried_once`.
+
+Author red (doc mutants need no rebuild; the doc tests read the files at run time; each mutant
+restored with `git checkout -- docs` and the clock mutant with `git checkout -- server`):
+
+| Case | Mutation | Red at |
+|---|---|---|
+| V-13, CP-29 | runtime: the old exception sentence restored beside the new bullet | V-13 `runtime: CARD-1151 AlwaysOn exception`; CP-29 `runtime: retired AlwaysOn stop sentence` |
+| V-13, CP-29 | agent-kinds: the detection sentence replaced by the old sentence | `agent-kinds: detection sentence`; `agent-kinds: AlwaysOn detection-only exception` |
+| V-13 | loop: the detection sentence replaced by the old sentence | `loop: detection sentence` (CP-29 does not read the loop for it: green) |
+| V-13, CP-29 | all three owners checked out at `f305e8aec` | `owner sentence missing`; `agent-kinds: AlwaysOn detection-only exception` |
+| V-13 | runtime: one pin replaced by prose | `pin ... must follow` |
+| V-13 | runtime: "two consecutive probe-driven restarts" appended | `runtime: retired promise` |
+| V-13 | agent-kinds: "goes through the restart ladder" in the Grok note | `agent-kinds: retired wording 'restart ladder'` |
+| V-13 | `StandingBootWatchPolicy.Facts` boot due from the operator wait (rebuild) | `boot due at the defaults` |
+
+PC-20 stays pending for post-land SourceLanding Mutation with every other PC. No AppHost restart is
+owed by S6 itself (comments and docs only); the restart owed by S1-S4 is unchanged.
