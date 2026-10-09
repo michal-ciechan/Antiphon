@@ -528,8 +528,9 @@ the transcript mutation gate. Activation requires both server and runner support
   and is not the grace decision. Past the grace, a certified unattempted launch is held
   Blocked (CARD-1149/1153); a shape that is not that hold keeps the existing failure path.
   The sweep does not stop the session.
-  Pinned by `DelegationDispatchRecoveryBoundaryTests.C1161_Dead_session_grace_is_monotonic`
-  and `DelegationDispatchRecoveryBoundaryTests.C1161_Owner_names_the_monotonic_grace`.
+  Pinned by `DelegationDispatchRecoveryBoundaryTests.C1161_Dead_session_grace_is_monotonic`,
+  `DelegationDispatchRecoveryBoundaryTests.C1161_Owner_names_the_monotonic_grace`,
+  and `DelegationDispatchRecoveryBoundaryTests.C1161_Failed_caller_note_has_one_complete_user_prompt`.
 
 - **A transport loss during a remote launch re-attaches after the ack and re-queues before it,
   bounded (CARD-0679 D-8; lands with R5).** Inside the launch, a transport-class loss before the
