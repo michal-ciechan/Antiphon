@@ -279,14 +279,23 @@ public sealed class WorktreeResidueRecoveryTests
     {
         await using var h = await SettledRemovalHarness.CreateAsync(namedLeaf: true);
         var ready = Path.Combine(h.Host.Fixture.Root, "worker-ready.json");
-        using var worker = StartRetirementWorker(h, cut, ready);
-        var stdout = worker.StandardOutput.ReadToEndAsync();
-        var stderr = worker.StandardError.ReadToEndAsync();
+        AssertRetirementAdmission(h, cut, ready);
+        await using var worker = StartRetirementWorker(h, cut, ready);
         try
         {
             using var budget = new CancellationTokenSource(TimeSpan.FromMinutes(2));
-            while (!File.Exists(ready) && !worker.HasExited) await Task.Delay(100, budget.Token);
-            File.Exists(ready).ShouldBeTrue(worker.HasExited ? await stderr : "required crash cut not reached");
+            CrashWorkerProcess.ReadyView observed;
+            try
+            {
+                observed = await CrashWorkerProcess.ObserveAsync(worker.Process, ready, cut, budget.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                var diagnostic = worker.Process.HasExited ? await worker.Stderr : "required crash cut not reached";
+                throw new TimeoutException(diagnostic);
+            }
+
+            observed.Outcome.ShouldBe("accepted", observed.Error);
             await using var observer = h.Host.CreateContext();
             var retirements = await observer.TaskWorktreeRetirements.AsNoTracking()
                 .Where(r => r.TaskId == h.Host.Fixture.TaskId).ToListAsync();
@@ -315,7 +324,9 @@ public sealed class WorktreeResidueRecoveryTests
                     .Where(a => a.RetirementId == retirements[0].Id)
                     .OrderByDescending(a => a.AttemptNumber)
                     .FirstAsync();
-                if (cut is "directory-result" or "registration-result" or "terminal-after")
+                if (cut == "directory-result")
+                    attempt.DirectoryRemoved.ShouldBe(true, "retirement-durable-handoff");
+                else if (cut is "registration-result" or "terminal-after")
                     attempt.DirectoryRemoved.ShouldBe(true);
                 if (cut is "registration-result" or "terminal-after")
                     attempt.RegistrationRemoved.ShouldBe(true);
@@ -327,24 +338,27 @@ public sealed class WorktreeResidueRecoveryTests
                     .ShouldBeGreaterThan(0);
             }
 
-            worker.Kill(entireProcessTree: false);
-            await worker.WaitForExitAsync();
+            worker.Process.Kill(entireProcessTree: false);
+            await worker.Process.WaitForExitAsync();
 
             var resumeReady = Path.Combine(h.Host.Fixture.Root, "worker-ready-resume.json");
-            using var resumed = StartRetirementWorker(h, "resume", resumeReady);
-            var resumedOut = resumed.StandardOutput.ReadToEndAsync();
-            var resumedErr = resumed.StandardError.ReadToEndAsync();
+            var resumeRequest = new WorktreeRetirementCrashWorker.Request(
+                h.Host.Fixture.Root, h.Host.Fixture.TaskId, "resume", resumeReady);
+            var resumeJson = System.Text.Json.JsonSerializer.Serialize(resumeRequest);
+            System.Text.Json.JsonDocument.Parse(resumeJson).RootElement.GetProperty("Cut").GetString()
+                .ShouldBe("resume", "worker-typed-resume");
+            await using var resumed = StartRetirementWorker(h, "resume", resumeReady, resumeJson);
             try
             {
                 using var resumeBudget = new CancellationTokenSource(TimeSpan.FromMinutes(2));
-                await resumed.WaitForExitAsync(resumeBudget.Token);
-                resumed.ExitCode.ShouldBe(0, await resumedErr);
+                await resumed.Process.WaitForExitAsync(resumeBudget.Token);
+                resumed.Process.ExitCode.ShouldBe(0, await resumed.Stderr);
             }
             finally
             {
-                if (!resumed.HasExited) resumed.Kill(true);
-                await resumed.WaitForExitAsync();
-                await Task.WhenAll(resumedOut, resumedErr);
+                if (!resumed.Process.HasExited) resumed.Process.Kill(entireProcessTree: true);
+                await resumed.Process.WaitForExitAsync();
+                await Task.WhenAll(resumed.Stdout, resumed.Stderr);
             }
 
             await using var recovered = h.Host.CreateContext();
@@ -367,36 +381,52 @@ public sealed class WorktreeResidueRecoveryTests
         }
         finally
         {
-            if (!worker.HasExited) worker.Kill(entireProcessTree: true);
-            await worker.WaitForExitAsync();
-            await Task.WhenAll(stdout, stderr);
+            await worker.DrainAsync();
         }
     }
 
-    private static Process StartRetirementWorker(SettledRemovalHarness h, string cut, string ready)
+    private static void AssertRetirementAdmission(SettledRemovalHarness h, string cut, string ready)
     {
-        var script = Path.Combine(h.Host.Fixture.Root, "retirement-worker.ps1");
-        File.WriteAllText(script, """
-            $ErrorActionPreference = 'Stop'
-            $assembly = [Reflection.Assembly]::LoadFrom($args[0])
-            $type = $assembly.GetType('Antiphon.Tests.TestHelpers.LandingSafetyHarness', $true)
-            $method = $type.GetMethod('RunRetirementCrashWorkerAsync', [Reflection.BindingFlags]'Public,Static')
-            $task = $method.Invoke($null, [object[]]@($args[1], $args[2], $args[3], $args[4]))
-            $task.GetAwaiter().GetResult()
-            """);
-        var start = new ProcessStartInfo("pwsh")
-        {
-            UseShellExecute = false, CreateNoWindow = true,
-            RedirectStandardOutput = true, RedirectStandardError = true,
-        };
-        foreach (var arg in new[]
-                 {
-                     "-NoProfile", "-File", script, typeof(LandingSafetyHarness).Assembly.Location,
-                     h.Host.Fixture.Root, h.Host.Fixture.TaskId.ToString(), cut, ready,
-                 })
-            start.ArgumentList.Add(arg);
-        start.Environment["ANTIPHON_C459_TEST_CONNECTION"] = h.Host.Schema.ConnectionString;
-        return Process.Start(start)!;
+        var owned = new WorktreeRetirementCrashWorker.Request(
+            h.Host.Fixture.Root, h.Host.Fixture.TaskId, cut, ready);
+        WorktreeRetirementCrashWorker.Rejection(owned).ShouldBeNull();
+        var outsideRoot = Path.Combine(Path.GetTempPath(), "c889-not-owned-" + Guid.NewGuid().ToString("N"));
+        WorktreeRetirementCrashWorker.Rejection(owned with { Root = outsideRoot })
+            .ShouldNotBeNull("retirement-root-owned");
+        var outsideReady = Path.Combine(Path.GetTempPath(), "c889-outside-" + Guid.NewGuid().ToString("N") + ".json");
+        WorktreeRetirementCrashWorker.Rejection(owned with { Ready = outsideReady })
+            .ShouldNotBeNull("retirement-ready-confined");
+        WorktreeRetirementCrashWorker.Rejection(owned with { TaskId = Guid.NewGuid() })
+            .ShouldNotBeNull("retirement-task-owned");
+        WorktreeRetirementCrashWorker.Rejection(owned with { Cut = "not-a-retirement-cut" })
+            .ShouldNotBeNull("retirement-cut-allowed");
+        WorktreeRetirementCrashWorker.Rejection(owned with { Cut = "C03" })
+            .ShouldNotBeNull("retirement-cut-allowed");
+    }
+
+    private static CrashWorkerProcess.Running StartRetirementWorker(
+        SettledRemovalHarness h, string cut, string ready, string? requestJson = null)
+    {
+        var request = new WorktreeRetirementCrashWorker.Request(
+            h.Host.Fixture.Root, h.Host.Fixture.TaskId, cut, ready);
+        var prepared = CrashWorkerProcess.Prepare(new CrashWorkerProcess.Spec(
+            WorktreeRetirementCrashWorker.Marker,
+            requestJson ?? System.Text.Json.JsonSerializer.Serialize(request),
+            "ANTIPHON_C459_TEST_CONNECTION",
+            h.Host.Schema.ConnectionString,
+            "/*/*/WorktreeResidueRecoveryTests/C459_WorkerDeathAtEveryRetirementHandoff",
+            ready,
+            cut));
+        var present = TestWorkerModes.All
+            .Select(mode => mode.Marker)
+            .Where(key => prepared.Start.Environment.ContainsKey(key))
+            .ToArray();
+        present.ShouldBe(new[] { WorktreeRetirementCrashWorker.Marker });
+        string.Join('\n', prepared.Start.ArgumentList)
+            .ShouldNotContain(CrashWorkerProcess.ConnectionSentinel);
+        prepared.Start.Environment[CrashWorkerProcess.SentinelVariable]
+            .ShouldBe(CrashWorkerProcess.ConnectionSentinel);
+        return CrashWorkerProcess.Start(prepared);
     }
 
     private static ReleaseWorktreeRetirementRequest ReleaseBody(AgentTask task, string sha) =>

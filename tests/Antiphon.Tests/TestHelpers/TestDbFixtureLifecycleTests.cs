@@ -473,8 +473,8 @@ public sealed class TestDbFixtureLifecycleTests
             .ToArray();
         declared.ShouldContain(CheckCompactionCrashWorker.Marker);
         declared.ShouldContain(LandQueueRaceWorker.Marker);
-        TestWorkerModes.All.Select(mode => mode.Marker).OrderBy(marker => marker, StringComparer.Ordinal)
-            .ShouldBe(declared);
+        TestWorkerModes.All.Select(mode => mode.Marker).OrderBy(marker => marker, StringComparer.Ordinal).ToArray()
+            .ShouldBe(declared, "all-owned-worker-markers-registered");
     }
 
     private static System.Reflection.MethodInfo Sample(string name) =>
