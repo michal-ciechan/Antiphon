@@ -424,6 +424,140 @@ public class SessionReconciliationServiceTests
     }
 
     [Test]
+    public async Task Running_dispatch_without_a_brief_is_handed_to_resume()
+    {
+        var marker = NewMarker();
+        var ownership = new RecordingLaunchOwnership();
+        var taskId = Guid.NewGuid();
+        try
+        {
+            var (agentId, sessionId, startedAt) = await SeedWorkingAgentWithSessionAsync(
+                marker, SessionStatus.Running, staleAgent: false);
+            await SeedDispatchedTaskAsync(marker, taskId, agentId, sessionId, startedAt);
+
+            await using var db = CreateContext();
+            var service = BuildService(db, RunnerRunning(sessionId, startedAt), new MockEventBus(), ownership: ownership);
+            await service.ScanAsync(CancellationToken.None);
+
+            ownership.Resumes.ShouldBe([(sessionId, agentId)]);
+        }
+        finally
+        {
+            await DeleteTaskAsync(taskId);
+            await CleanupAsync(marker);
+        }
+    }
+
+    [Test]
+    public async Task Running_dispatch_with_a_receipt_is_not_resumed()
+    {
+        var marker = NewMarker();
+        var ownership = new RecordingLaunchOwnership();
+        var taskId = Guid.NewGuid();
+        var sessionId = Guid.Empty;
+        try
+        {
+            var (agentId, seededSession, startedAt) = await SeedWorkingAgentWithSessionAsync(
+                marker, SessionStatus.Running, staleAgent: false);
+            sessionId = seededSession;
+            await SeedDispatchedTaskAsync(marker, taskId, agentId, sessionId, startedAt);
+            await using (var db = CreateContext())
+            {
+                db.TranscriptEntries.Add(new TranscriptEntry
+                {
+                    Id = Guid.NewGuid(),
+                    AgentSessionId = sessionId,
+                    Sequence = 1,
+                    Kind = TranscriptKinds.UserPrompt,
+                    Text = DelegationReportFormatter.TaskMarker(taskId) + "\nreceived",
+                    Timestamp = DateTime.UtcNow,
+                    CreatedAt = DateTime.UtcNow,
+                });
+                await db.SaveChangesAsync();
+            }
+
+            await using var scan = CreateContext();
+            var service = BuildService(scan, RunnerRunning(sessionId, startedAt), new MockEventBus(), ownership: ownership);
+            await service.ScanAsync(CancellationToken.None);
+
+            ownership.Resumes.ShouldBeEmpty();
+        }
+        finally
+        {
+            if (sessionId != Guid.Empty)
+            {
+                await using var db = CreateContext();
+                await db.TranscriptEntries.Where(t => t.AgentSessionId == sessionId).ExecuteDeleteAsync();
+            }
+            await DeleteTaskAsync(taskId);
+            await CleanupAsync(marker);
+        }
+    }
+
+    [Test]
+    public async Task Running_without_a_dispatched_task_is_not_resumed()
+    {
+        var marker = NewMarker();
+        var ownership = new RecordingLaunchOwnership();
+        try
+        {
+            var (_, sessionId, startedAt) = await SeedWorkingAgentWithSessionAsync(
+                marker, SessionStatus.Running, staleAgent: false);
+
+            await using var db = CreateContext();
+            var service = BuildService(db, RunnerRunning(sessionId, startedAt), new MockEventBus(), ownership: ownership);
+            await service.ScanAsync(CancellationToken.None);
+
+            ownership.Resumes.ShouldBeEmpty();
+        }
+        finally
+        {
+            await CleanupAsync(marker);
+        }
+    }
+
+    [Test]
+    public async Task Running_dispatch_with_an_attempted_brief_is_not_resumed()
+    {
+        var marker = NewMarker();
+        var ownership = new RecordingLaunchOwnership();
+        var taskId = Guid.NewGuid();
+        try
+        {
+            var (agentId, sessionId, startedAt) = await SeedWorkingAgentWithSessionAsync(
+                marker, SessionStatus.Running, staleAgent: false);
+            await SeedDispatchedTaskAsync(marker, taskId, agentId, sessionId, startedAt);
+            await using (var db = CreateContext())
+            {
+                db.SessionQueuedMessages.Add(new SessionQueuedMessage
+                {
+                    Id = Guid.NewGuid(),
+                    AgentSessionId = sessionId,
+                    Origin = QueuedMessageOrigin.Delegation,
+                    Status = QueuedMessageStatus.Pending,
+                    Sequence = 1,
+                    CreatedAt = startedAt,
+                    ExecutionTaskId = taskId,
+                    DeliveryAttempts = 1,
+                    Body = DelegationReportFormatter.TaskMarker(taskId) + "\nattempted",
+                });
+                await db.SaveChangesAsync();
+            }
+
+            await using var scan = CreateContext();
+            var service = BuildService(scan, RunnerRunning(sessionId, startedAt), new MockEventBus(), ownership: ownership);
+            await service.ScanAsync(CancellationToken.None);
+
+            ownership.Resumes.ShouldBeEmpty();
+        }
+        finally
+        {
+            await DeleteTaskAsync(taskId);
+            await CleanupAsync(marker);
+        }
+    }
+
+    [Test]
     public async Task Starting_runner_Running_owned_is_not_resumed()
     {
         var marker = NewMarker();
@@ -2066,6 +2200,40 @@ public class SessionReconciliationServiceTests
     }
 
     private static string NewMarker() => $"antiphon-reconciliation-tests-{Guid.NewGuid():N}";
+
+    private static async Task SeedDispatchedTaskAsync(
+        string marker, Guid taskId, Guid agentId, Guid sessionId, DateTime dispatchedAt)
+    {
+        await using var db = CreateContext();
+        db.AgentTasks.Add(new AgentTask
+        {
+            Id = taskId,
+            RootTaskId = taskId,
+            Title = "running brief debt",
+            Goal = "Do the thing.",
+            Role = AgentTaskRole.Code,
+            AgentKind = AgentKind.ClaudeCode,
+            ModelLevel = AgentModelLevel.Frontier,
+            Workspace = WorkspaceMode.Shared,
+            WorkingDirectory = Path.Combine(Path.GetTempPath(), marker),
+            AgentSessionId = sessionId,
+            AgentId = agentId,
+            Status = AgentTaskStatus.Dispatched,
+            Attempt = 1,
+            CreatedAt = dispatchedAt,
+            DispatchedAt = dispatchedAt,
+        });
+        await db.SaveChangesAsync();
+    }
+
+    private static async Task DeleteTaskAsync(Guid taskId)
+    {
+        await using var db = CreateContext();
+        await db.AgentTaskEvents.Where(e => e.AgentTaskId == taskId).ExecuteDeleteAsync();
+        await db.SessionQueuedMessages.Where(m => m.ExecutionTaskId == taskId || m.SourceTaskId == taskId)
+            .ExecuteDeleteAsync();
+        await db.AgentTasks.Where(t => t.Id == taskId).ExecuteDeleteAsync();
+    }
 
     private static async Task<(Guid AgentId, Guid SessionId, DateTime StartedAt)> SeedWorkingAgentWithSessionAsync(
         string marker,

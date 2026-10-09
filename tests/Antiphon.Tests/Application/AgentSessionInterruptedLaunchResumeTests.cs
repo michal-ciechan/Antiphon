@@ -188,24 +188,121 @@ public class AgentSessionInterruptedLaunchResumeTests
     public async Task Already_Running_row_is_a_noop()
     {
         var adapter = new FakeAgentProtocolAdapter();
-        await using var fixture = await ResumeFixture.CreateAsync(adapter, dispatchedTask: true);
+        var runner = new RecordingKillRunner();
+        await using var fixture = await ResumeFixture.CreateAsync(adapter, runner, dispatchedTask: true);
+        DateTime startedAt;
         await using (var db = ResumeFixture.CreateContext())
         {
             var session = await db.AgentSessions.SingleAsync(s => s.Id == fixture.SessionId);
             session.Status = SessionStatus.Running;
+            startedAt = session.StartedAt;
+            var taskId = fixture.TaskId!.Value;
+            db.TranscriptEntries.Add(new TranscriptEntry
+            {
+                Id = Guid.NewGuid(),
+                AgentSessionId = fixture.SessionId,
+                Sequence = 1,
+                Kind = TranscriptKinds.UserPrompt,
+                Uuid = $"receipt-{Guid.NewGuid():N}",
+                Role = "user",
+                Text = DelegationReportFormatter.TaskMarker(taskId) + "\n\nDo the thing.",
+                Timestamp = DateTime.UtcNow,
+                CreatedAt = DateTime.UtcNow,
+            });
             await db.SaveChangesAsync();
         }
 
+        runner.AcceptedStartedAt = startedAt;
         await fixture.ResumeAsync();
 
         adapter.Attached.ShouldBeFalse();
+        runner.Killed.ShouldBeEmpty();
+        runner.Starts.ShouldBe(0);
         await using var verify = ResumeFixture.CreateContext();
         var row = await verify.AgentSessions.SingleAsync(s => s.Id == fixture.SessionId);
         row.Status.ShouldBe(SessionStatus.Running);
         row.LaunchResumedAt.ShouldBeNull();
+        row.StartedAt.ShouldBe(startedAt);
         (await verify.AgentIncidents.CountAsync(
             i => i.SessionId == fixture.SessionId && i.Kind == AgentIncidentKind.LaunchInterruptedByRestart))
             .ShouldBe(0);
+        (await verify.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == fixture.SessionId)).ShouldBe(0);
+    }
+
+    [Test]
+    public async Task Running_delegate_missing_brief_is_recovered_without_a_restart()
+    {
+        var adapter = new FakeAgentProtocolAdapter();
+        var runner = new RecordingKillRunner();
+        await using var fixture = await ResumeFixture.CreateAsync(adapter, runner, dispatchedTask: true);
+        adapter.RegisterOnStart = fixture.Runtime;
+        adapter.OnSubmitted = async body =>
+        {
+            await using var db = ResumeFixture.CreateContext();
+            db.TranscriptEntries.Add(new TranscriptEntry
+            {
+                Id = Guid.NewGuid(),
+                AgentSessionId = fixture.SessionId,
+                Sequence = 1,
+                Kind = TranscriptKinds.UserPrompt,
+                Uuid = $"recovered-{Guid.NewGuid():N}",
+                Role = "user",
+                Text = body,
+                Timestamp = DateTime.UtcNow,
+                CreatedAt = DateTime.UtcNow,
+            });
+            await db.SaveChangesAsync();
+        };
+        DateTime startedAt;
+        await using (var db = ResumeFixture.CreateContext())
+        {
+            var session = await db.AgentSessions.SingleAsync(s => s.Id == fixture.SessionId);
+            session.Status = SessionStatus.Running;
+            startedAt = session.StartedAt;
+            await db.SaveChangesAsync();
+        }
+
+        runner.AcceptedStartedAt = startedAt;
+        await fixture.ResumeAsync();
+
+        adapter.Attached.ShouldBeTrue();
+        adapter.StartedAcceptedGeneration.ShouldBeNull();
+        runner.Starts.ShouldBe(0);
+        runner.Killed.ShouldBeEmpty();
+        await using var verify = ResumeFixture.CreateContext();
+        var row = await verify.AgentSessions.SingleAsync(s => s.Id == fixture.SessionId);
+        row.Status.ShouldBe(SessionStatus.Running);
+        row.LaunchResumedAt.ShouldBeNull();
+        row.StartedAt.ShouldBe(startedAt);
+        var briefs = await verify.SessionQueuedMessages
+            .Where(m => m.AgentSessionId == fixture.SessionId && m.Origin == QueuedMessageOrigin.Delegation)
+            .ToListAsync();
+        briefs.Count.ShouldBe(1);
+        briefs[0].Status.ShouldBe(QueuedMessageStatus.Sent);
+        briefs[0].DeliveryAttempts.ShouldBe(1);
+        var marker = DelegationReportFormatter.TaskMarker(fixture.TaskId!.Value);
+        var payload = briefs[0].RemoteSpillBody;
+        if (string.IsNullOrEmpty(payload))
+        {
+            var spillPath = DispatchBriefEvidence.AbsoluteSpillPath(briefs[0].Body);
+            payload = spillPath is not null && File.Exists(spillPath)
+                ? File.ReadAllText(spillPath)
+                : briefs[0].Body;
+        }
+
+        payload.Contains("Do the thing.", StringComparison.Ordinal).ShouldBeTrue();
+        payload.Contains(marker, StringComparison.Ordinal).ShouldBeTrue();
+        briefs[0].Body.Contains(marker, StringComparison.Ordinal).ShouldBeTrue();
+        (await verify.AgentIncidents.CountAsync(
+            i => i.SessionId == fixture.SessionId && i.Kind == AgentIncidentKind.LaunchInterruptedByRestart))
+            .ShouldBe(0);
+        var prompts = await verify.TranscriptEntries
+            .Where(t => t.AgentSessionId == fixture.SessionId && t.Kind == TranscriptKinds.UserPrompt)
+            .Select(t => t.Text)
+            .ToListAsync();
+        prompts.Count.ShouldBe(1);
+        prompts[0]!.Contains(marker, StringComparison.Ordinal).ShouldBeTrue();
+        PromptSubmissionMatch.IsCompleteIn(briefs[0].Body, prompts[0]).ShouldBeTrue();
     }
 
     [Test]
@@ -377,6 +474,7 @@ public class AgentSessionInterruptedLaunchResumeTests
     private sealed class RecordingKillRunner : ISessionRunnerClient
     {
         public GrokRulesReceipt? Receipt { get; set; }
+        public DateTime? AcceptedStartedAt { get; set; }
         public int Starts { get; private set; }
         public Guid SessionId { get; set; }
         public List<Guid> Killed { get; } = [];
@@ -413,7 +511,7 @@ public class AgentSessionInterruptedLaunchResumeTests
         private SessionRunnerSessionDto Running() =>
             new(SessionId, Pid: 4242, StartedAt: DateTime.UtcNow.AddMinutes(-2),
                 Status: "Running", ExitCode: null, ExitReason: AgentExitReason.Unknown, LastSequence: 1,
-                GrokRulesReceipt: Receipt);
+                GrokRulesReceipt: Receipt, AcceptedStartedAt: AcceptedStartedAt);
     }
 
     private sealed class NonAttachableAdapter : IAgentProtocolAdapter

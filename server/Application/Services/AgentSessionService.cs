@@ -823,6 +823,26 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         var session = await _db.AgentSessions.FirstOrDefaultAsync(s => s.Id == sessionId, ct)
             ?? throw new NotFoundException(nameof(AgentSession), sessionId);
 
+        // CARD-1150: a Running delegate whose current brief is absent or never attempted is
+        // recovered here, before the Starting-only return. This branch never starts a process,
+        // restamps the launch clocks, republishes SessionStarted, or replays rules bootstrap,
+        // and a fault here does not enter the kill below.
+        if (session.Status == SessionStatus.Running)
+        {
+            try
+            {
+                await RecoverRunningDispatchBriefAsync(session, agentId, ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+            {
+                _logger.LogWarning(ex,
+                    "Running brief recovery deferred for session {SessionId}; the process was not stopped",
+                    sessionId);
+            }
+
+            return;
+        }
+
         if (session.Status != SessionStatus.Starting)
             return;
 
@@ -831,8 +851,12 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         var resumedGeneration = SessionGeneration.Normalize(session.StartedAt);
         var now = UtcNow();
         var startingSeconds = Math.Max(0, (int)(now - session.StartedAt).TotalSeconds);
-        session.LaunchResumedAt = now;
-        await _db.SaveChangesAsync(ct);
+        // A later pass over the same Starting row must not move the delivery-watchdog clock.
+        if (session.LaunchResumedAt is null)
+        {
+            session.LaunchResumedAt = now;
+            await _db.SaveChangesAsync(ct);
+        }
 
         IAgentProtocolAdapter? adapter = null;
         var attached = false;
@@ -868,6 +892,30 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             await CaptureGrokRulesReceiptAsync(session, ct);
             await WaitForReadyOrThrowAsync(adapter, session.Id, ct);
 
+            var task = await _db.AgentTasks
+                .Where(t => t.AgentSessionId == session.Id && t.Status == AgentTaskStatus.Dispatched)
+                .OrderByDescending(t => t.DispatchedAt)
+                .FirstOrDefaultAsync(ct);
+            // CARD-1150: durable brief acceptance lands before Running and SessionStarted, so a
+            // crash in that publication leaves a row the Running arm can deliver. A fault here
+            // keeps the Starting row and does not enter the kill below.
+            var inputDelivered = false;
+            var requeued = false;
+            if (task is not null)
+            {
+                try
+                {
+                    (requeued, inputDelivered) = await AcceptDispatchBriefAsync(session, task, ct);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+                {
+                    _logger.LogWarning(ex,
+                        "Dispatch brief acceptance failed before Running for session {SessionId}; "
+                        + "the obligation stays and the process was not stopped", session.Id);
+                    return;
+                }
+            }
+
             session.Status = SessionStatus.Running;
             session.LastSeenAt = UtcNow();
             await _db.SaveChangesAsync(ct);
@@ -883,64 +931,14 @@ public sealed class AgentSessionService : IDelegateSessionStopper
                 ct);
             await _eventBus.PublishToAllAsync("AgentChanged", new AgentChangedEventDto(agentId), ct);
 
-            var task = await _db.AgentTasks
-                .Where(t => t.AgentSessionId == session.Id && t.Status == AgentTaskStatus.Dispatched)
-                .OrderByDescending(t => t.DispatchedAt)
-                .FirstOrDefaultAsync(ct);
-            // CARD-1150 F10/F11: once the ensure or flush reports a completed delivery
-            // (SessionMessageQueueService.CompletedInput: result Delivered, nothing else), the
-            // recipient may be Working. The event saves and the flush after that report are logged
-            // and never reach the launch-failure catch, which kills and fails the session. Every
-            // other result (a refusal, a failed or unconfirmed write, no delivery) reports false, so
-            // the pre-S2 failure path is unchanged by construction. A throw from inside a delivery
-            // (e.g. its verdict save, or the flush's post-delivery queue read) still reaches the
-            // catch, as before S2.
-            var inputDelivered = false;
-            if (task is not null)
+            if (requeued && task is not null)
             {
-                var marker = DelegationReportFormatter.TaskMarker(task.Id);
-                // Dispatch commits the claim before its singleton queue can persist the brief.
-                // Rules bootstrap also identifies its brief through SourceTaskId.
-                var hasBrief = await _db.SessionQueuedMessages.AnyAsync(m => m.AgentSessionId == session.Id
-                    && m.Origin == QueuedMessageOrigin.Delegation
-                    && (m.ExecutionTaskId == task.Id || (m.SourceTaskId == task.Id && m.Body.Contains(marker))), ct);
-                var receivedBrief = !hasBrief && await _db.TranscriptEntries.AnyAsync(t => t.AgentSessionId == session.Id
-                    && t.Kind == TranscriptKinds.UserPrompt && t.Text != null && t.Text.Contains(marker)
-                    && (task.DispatchedAt == null || (t.Timestamp ?? t.CreatedAt) > task.DispatchedAt), ct);
-                var requeued = false;
-                if (!hasBrief && !receivedBrief && task.DispatchedAt is DateTime dispatchedAt)
+                await SaveResumeEventAsync(new AgentTaskEvent
                 {
-                    // CARD-1150 F3: the dispatcher's post-claim producer may still be on its way to
-                    // this brief. The queue-owned ensure re-checks and inserts under its gate and the
-                    // task row lock, so the two producers leave one row.
-                    var ensured = await _messageQueue.EnsureDispatchBriefAsync(new DispatchBriefEnsureRequest(
-                        task.Id, task.Attempt, session.Id, dispatchedAt, session.StartedAt), ct);
-                    requeued = ensured.Inserted;
-                    inputDelivered = ensured.InputDelivered;
-                }
-                else if (!hasBrief && !receivedBrief)
-                {
-                    var brief = AgentTaskDispatcher.FitBriefForTyping(task, _delegationSettings,
-                        AgentTaskDispatcher.CeilingsForBrief(_ptyProfile?.Ceilings, session.RunnerCwd, _delegationSettings),
-                        _logger, session.AgentKind, runnerCwd: session.RunnerCwd,
-                        stageRemoteSpill: string.IsNullOrWhiteSpace(session.RunnerCwd)
-                            ? null
-                            : spill => _messageQueue.StageRemoteSpill(session.Id, session.RunnerCwd, spill));
-                    await _messageQueue.EnqueueAsync(session.Id, brief, MessageSendMode.WhenIdle, ct,
-                        QueuedMessageOrigin.Delegation, deliverIfIdle: false,
-                        executionDeadlineAt: task.ExecutionDeadlineAt, executionTaskId: task.Id);
-                    requeued = true;
-                }
-
-                if (requeued)
-                {
-                    await SaveResumeEventAsync(new AgentTaskEvent
-                    {
-                        Id = Guid.NewGuid(), AgentTaskId = task.Id, Type = AgentTaskEventType.Warning,
-                        Detail = "brief re-queued: the interrupted dispatch died before its brief row was persisted",
-                        At = UtcNow(),
-                    }, inputDelivered, ct);
-                }
+                    Id = Guid.NewGuid(), AgentTaskId = task.Id, Type = AgentTaskEventType.Warning,
+                    Detail = "brief re-queued: the interrupted dispatch died before its brief row was persisted",
+                    At = UtcNow(),
+                }, inputDelivered, ct);
             }
 
             if (!inputDelivered)
@@ -999,6 +997,265 @@ public sealed class AgentSessionService : IDelegateSessionStopper
                 ex as AgentLaunchBlockedException,
                 CancellationToken.None);
             throw;
+        }
+    }
+
+    /// <summary>
+    /// One current-attempt brief, under the queue gate. Returns whether a row was inserted and
+    /// whether that call already completed a delivery. A missing dispatch window keeps the older
+    /// direct enqueue; both producers still share the queue lock inside their own calls.
+    /// </summary>
+    private async Task<(bool Requeued, bool InputDelivered)> AcceptDispatchBriefAsync(
+        AgentSession session, AgentTask task, CancellationToken ct)
+    {
+        var marker = DelegationReportFormatter.TaskMarker(task.Id);
+        var hasBrief = await _db.SessionQueuedMessages.AnyAsync(m => m.AgentSessionId == session.Id
+            && m.Origin == QueuedMessageOrigin.Delegation
+            && (m.ExecutionTaskId == task.Id || (m.SourceTaskId == task.Id && m.Body.Contains(marker))), ct);
+        var receivedBrief = !hasBrief && await _db.TranscriptEntries.AnyAsync(t => t.AgentSessionId == session.Id
+            && t.Kind == TranscriptKinds.UserPrompt && t.Text != null && t.Text.Contains(marker)
+            && (task.DispatchedAt == null || (t.Timestamp ?? t.CreatedAt) > task.DispatchedAt), ct);
+        if (hasBrief || receivedBrief)
+            return (false, false);
+        if (task.DispatchedAt is not DateTime dispatchedAt)
+        {
+            var brief = AgentTaskDispatcher.FitBriefForTyping(task, _delegationSettings,
+                AgentTaskDispatcher.CeilingsForBrief(_ptyProfile?.Ceilings, session.RunnerCwd, _delegationSettings),
+                _logger, session.AgentKind, runnerCwd: session.RunnerCwd,
+                stageRemoteSpill: string.IsNullOrWhiteSpace(session.RunnerCwd)
+                    ? null
+                    : spill => _messageQueue.StageRemoteSpill(session.Id, session.RunnerCwd, spill));
+            await _messageQueue.EnqueueAsync(session.Id, brief, MessageSendMode.WhenIdle, ct,
+                QueuedMessageOrigin.Delegation, deliverIfIdle: false,
+                executionDeadlineAt: task.ExecutionDeadlineAt, executionTaskId: task.Id);
+            return (true, false);
+        }
+
+        var ensured = await _messageQueue.EnsureDispatchBriefAsync(new DispatchBriefEnsureRequest(
+            task.Id, task.Attempt, session.Id, dispatchedAt, session.StartedAt), ct);
+        return (ensured.Inserted, ensured.InputDelivered);
+    }
+
+    /// <summary>
+    /// CARD-1150. Running brief debt only. Every gate is re-read here so a watchdog handoff does
+    /// not depend on a prior reconciliation tick. Anything unproven returns without a write other
+    /// than the transcript catch-up, and without a process-control call.
+    /// </summary>
+    private async Task RecoverRunningDispatchBriefAsync(AgentSession session, Guid agentId, CancellationToken ct)
+    {
+        await _db.Entry(session).ReloadAsync(ct);
+        if (session.Status != SessionStatus.Running)
+            return;
+
+        var task = await _db.AgentTasks
+            .Where(t => t.AgentSessionId == session.Id && t.Status == AgentTaskStatus.Dispatched)
+            .OrderByDescending(t => t.DispatchedAt)
+            .FirstOrDefaultAsync(ct);
+        if (task?.DispatchedAt is not DateTime dispatchedAt || task.AgentSessionId != session.Id)
+            return;
+
+        var resumedGeneration = SessionGeneration.Normalize(session.StartedAt);
+        try
+        {
+            await _runtime.CatchUpTranscriptAsync(session.Id, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            _logger.LogDebug(ex, "Transcript catch-up for session {SessionId} is unavailable; brief recovery defers", session.Id);
+            return;
+        }
+
+        if (await SessionMessageQueueService.IsWorkingAsync(_db, session.Id, ct))
+            return;
+
+        var listed = await TryReadListedSessionAsync(session, ct);
+        if (listed is null
+            || !string.Equals(listed.Status, "Running", StringComparison.OrdinalIgnoreCase)
+            || !string.IsNullOrEmpty(listed.Pending)
+            || listed.AcceptedStartedAt is not DateTime accepted
+            || !SessionGeneration.Equal(accepted, session.StartedAt))
+            return;
+        // The queue marks the session owned before it calls in. That registration is this handoff,
+        // not a second owner. Any other owner defers without typing.
+        if (_launchOwnership?.Owns(session.Id) == true
+            && AgentSessionLaunchQueue.ResumeInProgress.Value != session.Id)
+            return;
+        if (await CheckCompactionAdmission.BlocksGenericLaunchResumeAsync(_db, session.Id, session.StartedAt, ct))
+            return;
+
+        await _db.Entry(session).ReloadAsync(ct);
+        await _db.Entry(task).ReloadAsync(ct);
+        if (session.Status != SessionStatus.Running
+            || task.Status != AgentTaskStatus.Dispatched
+            || task.AgentSessionId != session.Id
+            || task.DispatchedAt != dispatchedAt
+            || !SessionGeneration.Equal(SessionGeneration.Normalize(session.StartedAt), resumedGeneration))
+            return;
+        if (await SessionMessageQueueService.IsWorkingAsync(_db, session.Id, ct))
+            return;
+
+        var obligation = await ReadRunningObligationAsync(task, session, ct);
+        if (obligation is not (RunningBriefObligation.Absent or RunningBriefObligation.Unattempted))
+            return;
+
+        IAgentProtocolAdapter? adapter = null;
+        try
+        {
+            adapter = _adapterFactory.Create(session.AgentKind, session.RunnerId);
+            if (adapter is not IAttachableProtocolAdapter attachable
+                || session.SessionBackend == SessionBackend.Herdr)
+            {
+                if (adapter is not null)
+                    await adapter.DisposeAsync();
+                return;
+            }
+
+            await attachable.AttachAsync(session.Id, ct);
+            await WaitForReadyOrThrowAsync(adapter, session.Id, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            _logger.LogWarning(ex,
+                "Running brief recovery could not attach session {SessionId}; the process was not stopped",
+                session.Id);
+            if (adapter is not null)
+            {
+                try
+                {
+                    await adapter.DisposeAsync();
+                }
+                catch (Exception disposeEx) when (disposeEx is not OperationCanceledException)
+                {
+                    _logger.LogDebug(disposeEx,
+                        "Disposing the unready adapter for session {SessionId} failed", session.Id);
+                }
+            }
+
+            return;
+        }
+        // A successful attach stays registered. Disposing it here would drop the process the
+        // WhenIdle flush still has to type into. The Starting resume leaves its adapter the same way.
+
+        await _db.Entry(session).ReloadAsync(ct);
+        await _db.Entry(task).ReloadAsync(ct);
+        if (session.Status != SessionStatus.Running
+            || task.Status != AgentTaskStatus.Dispatched
+            || task.AgentSessionId != session.Id
+            || task.DispatchedAt != dispatchedAt)
+            return;
+
+        SessionMessageQueueService.DispatchBriefEnsureResult ensured;
+        try
+        {
+            ensured = await _messageQueue.EnsureDispatchBriefAsync(new DispatchBriefEnsureRequest(
+                task.Id, task.Attempt, session.Id, dispatchedAt, session.StartedAt), ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            _logger.LogWarning(ex,
+                "Running brief ensure failed for session {SessionId}; the obligation stays", session.Id);
+            return;
+        }
+
+        if (ensured.InputDelivered)
+            return;
+        try
+        {
+            await _messageQueue.FlushIfIdleAsync(session.Id, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            _logger.LogWarning(ex,
+                "WhenIdle flush after running brief recovery failed for session {SessionId}; the row stays",
+                session.Id);
+        }
+    }
+
+    private enum RunningBriefObligation
+    {
+        Absent,
+        Unattempted,
+        NotThis,
+        Unknown,
+    }
+
+    private async Task<RunningBriefObligation> ReadRunningObligationAsync(
+        AgentTask task, AgentSession session, CancellationToken ct)
+    {
+        if (task.DispatchedAt is not DateTime dispatchedAt)
+            return RunningBriefObligation.NotThis;
+        var marker = DelegationReportFormatter.TaskMarker(task.Id);
+        try
+        {
+            var received = await _db.TranscriptEntries.AsNoTracking().AnyAsync(t =>
+                t.AgentSessionId == session.Id
+                && t.Kind == TranscriptKinds.UserPrompt
+                && t.Text != null
+                && t.Text.Contains(marker)
+                && (t.Timestamp ?? t.CreatedAt) > dispatchedAt, ct);
+            if (received)
+                return RunningBriefObligation.NotThis;
+
+            var rows = await _db.SessionQueuedMessages.AsNoTracking()
+                .Where(m => m.AgentSessionId == session.Id
+                    && m.Origin == QueuedMessageOrigin.Delegation
+                    && (m.ExecutionTaskId == task.Id || m.SourceTaskId == task.Id)
+                    && m.CreatedAt >= dispatchedAt)
+                .Select(m => new
+                {
+                    m.Status,
+                    m.DeliveryAttempts,
+                    m.SentAt,
+                    m.CanceledAt,
+                    m.LastDeliveryStartedAt,
+                    m.DeliveryVerdict,
+                    m.ExecutionTaskId,
+                })
+                .ToListAsync(ct);
+            if (rows.Count == 0)
+                return RunningBriefObligation.Absent;
+            if (rows.Count == 1
+                && rows[0].ExecutionTaskId == task.Id
+                && rows[0].Status == QueuedMessageStatus.Pending
+                && rows[0].DeliveryAttempts == 0
+                && rows[0].SentAt == null
+                && rows[0].CanceledAt == null
+                && rows[0].LastDeliveryStartedAt == null
+                && rows[0].DeliveryVerdict == null)
+                return RunningBriefObligation.Unattempted;
+            return RunningBriefObligation.NotThis;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            _logger.LogDebug(ex, "Brief obligation for task {TaskId} is unknown", task.Id);
+            return RunningBriefObligation.Unknown;
+        }
+    }
+
+    private async Task<SessionRunnerSessionDto?> TryReadListedSessionAsync(AgentSession session, CancellationToken ct)
+    {
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(session.RunnerId) && _directory is not null)
+            {
+                var inventory = await _directory.GetInventoryAsync(session.RunnerId, ct);
+                if (inventory is not RunnerInventory.Available available)
+                    return null;
+                for (var i = 0; i < available.Sessions.Count; i++)
+                {
+                    if (available.Sessions[i].SessionId == session.Id)
+                        return available.Sessions[i];
+                }
+
+                return null;
+            }
+
+            return await _runtime.GetSessionAsync(session.Id, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            _logger.LogDebug(ex, "Runner evidence for session {SessionId} is unavailable", session.Id);
+            return null;
         }
     }
 

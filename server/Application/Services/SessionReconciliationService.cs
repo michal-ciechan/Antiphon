@@ -298,16 +298,16 @@ public sealed class SessionReconciliationService
 
         // A null owner is the local runner (RunnerId IS NULL). A captured null compared with ==
         // becomes "= @p" and matches nothing, so the two arms stay separate.
-        var startingQuery = _db.AgentSessions.Where(s => s.Status == SessionStatus.Starting);
-        startingQuery = owner is null
-            ? startingQuery.Where(s => s.RunnerId == null)
-            : startingQuery.Where(s => s.RunnerId == owner);
-        var starting = await startingQuery.ToListAsync(ct);
-        if (starting.Count == 0)
+        // CARD-1150: the same query also admits a Running session whose current Dispatched task
+        // still owes a brief (none, or one Pending row that was never attempted). Receipts,
+        // attempted rows and canceled rows stay out of this select. One round trip, no second sweep.
+        var candidates = InterruptedLaunchCandidates(owner);
+        var rows = await candidates.ToListAsync(ct);
+        if (rows.Count == 0)
             return;
 
         var runnerById = runnerSessions.ToDictionary(s => s.SessionId);
-        foreach (var session in starting)
+        foreach (var session in rows)
         {
             if (!runnerById.TryGetValue(session.Id, out var runnerSession))
                 continue;
@@ -322,15 +322,64 @@ public sealed class SessionReconciliationService
             if (await CheckCompactionAdmission.BlocksGenericLaunchResumeAsync(_db, session.Id, session.StartedAt, ct))
                 continue;
 
-            var startingSeconds = Math.Max(0, (int)(now - session.StartedAt).TotalSeconds);
-            _logger.LogInformation(
-                "Interrupted launch: session {SessionId} has been Starting for {StartingSeconds}s; "
-                + "the runner still serves it and this process does not own the launch (runner {RunnerId})",
-                session.Id, startingSeconds, owner ?? "local");
+            if (session.Status == SessionStatus.Starting)
+            {
+                var startingSeconds = Math.Max(0, (int)(now - session.StartedAt).TotalSeconds);
+                _logger.LogInformation(
+                    "Interrupted launch: session {SessionId} has been Starting for {StartingSeconds}s; "
+                    + "the runner still serves it and this process does not own the launch (runner {RunnerId})",
+                    session.Id, startingSeconds, owner ?? "local");
+            }
+            else
+            {
+                _logger.LogInformation(
+                    "Interrupted brief: session {SessionId} is Running with dispatch brief debt; "
+                    + "the runner still serves it and this process does not own the launch (runner {RunnerId})",
+                    session.Id, owner ?? "local");
+            }
 
             var agent = await FindOwningAgentAsync(session.Id, ct);
             _ownership.ResumeInterrupted(session.Id, agent?.Id ?? Guid.Empty);
         }
+    }
+
+    /// <summary>
+    /// Pass 1c candidates. Starting rows stay in the select. A Running row is in it only when a
+    /// current Dispatched task on that session has no brief in the dispatch window, or exactly
+    /// the never-attempted Pending brief. A UserPrompt after dispatch excludes the row.
+    /// </summary>
+    private IQueryable<AgentSession> InterruptedLaunchCandidates(string? owner)
+    {
+        var query = _db.AgentSessions.Where(s =>
+            s.Status == SessionStatus.Starting
+            || (s.Status == SessionStatus.Running
+                && _db.AgentTasks.Any(t =>
+                    t.AgentSessionId == s.Id
+                    && t.Status == AgentTaskStatus.Dispatched
+                    && t.DispatchedAt != null
+                    && !_db.TranscriptEntries.Any(e =>
+                        e.AgentSessionId == s.Id
+                        && e.Kind == TranscriptKinds.UserPrompt
+                        && (e.Timestamp ?? e.CreatedAt) > t.DispatchedAt)
+                    && (!_db.SessionQueuedMessages.Any(m =>
+                            m.AgentSessionId == s.Id
+                            && m.Origin == QueuedMessageOrigin.Delegation
+                            && (m.ExecutionTaskId == t.Id || m.SourceTaskId == t.Id)
+                            && m.CreatedAt >= t.DispatchedAt)
+                        || _db.SessionQueuedMessages.Any(m =>
+                            m.AgentSessionId == s.Id
+                            && m.Origin == QueuedMessageOrigin.Delegation
+                            && m.ExecutionTaskId == t.Id
+                            && m.Status == QueuedMessageStatus.Pending
+                            && m.DeliveryAttempts == 0
+                            && m.SentAt == null
+                            && m.CanceledAt == null
+                            && m.LastDeliveryStartedAt == null
+                            && m.DeliveryVerdict == null
+                            && m.CreatedAt >= t.DispatchedAt)))));
+        return owner is null
+            ? query.Where(s => s.RunnerId == null)
+            : query.Where(s => s.RunnerId == owner);
     }
 
     /// <summary>

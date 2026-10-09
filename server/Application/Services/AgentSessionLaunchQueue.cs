@@ -58,13 +58,32 @@ public sealed class AgentSessionLaunchQueue : ILaunchOwnership, ILaunchDrain
 
     public void Unregister(Guid sessionId) => _owned.TryRemove(sessionId, out _);
 
+    /// <summary>
+    /// The session whose resume this async flow is already inside. The queue registers ownership
+    /// before the service runs, so the service can tell its own handoff from a second owner.
+    /// </summary>
+    internal static readonly AsyncLocal<Guid?> ResumeInProgress = new();
+
     public void ResumeInterrupted(Guid sessionId, Guid agentId)
     {
         if (!_owned.TryAdd(sessionId, 0))
             return;
 
-        var launch = Task.Run(() => ResumeInterruptedLaunchAsync(sessionId, agentId));
+        var launch = Task.Run(() => ResumeOwnedAsync(sessionId, agentId));
         TrackLaunch(launch, sessionId, agentId, interactive: false);
+    }
+
+    private async Task ResumeOwnedAsync(Guid sessionId, Guid agentId)
+    {
+        ResumeInProgress.Value = sessionId;
+        try
+        {
+            await ResumeInterruptedLaunchAsync(sessionId, agentId);
+        }
+        finally
+        {
+            ResumeInProgress.Value = null;
+        }
     }
 
     private void TrackLaunch(Task launch, Guid sessionId, Guid agentId, bool interactive)

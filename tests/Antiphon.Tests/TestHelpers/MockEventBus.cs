@@ -10,6 +10,8 @@ public class MockEventBus : IEventBus
     private readonly object _gate = new();
     private readonly List<PublishedEvent> _events = [];
     public string? ThrowOnceOnEvent { get; set; }
+    /// <summary>When set, <see cref="ThrowOnceOnEvent"/> throws this instead of InvalidOperationException.</summary>
+    public Exception? ThrowOnce { get; set; }
     private int _threw;
 
     public IReadOnlyList<PublishedEvent> PublishedEvents
@@ -43,7 +45,7 @@ public class MockEventBus : IEventBus
             && string.Equals(name, eventName, StringComparison.Ordinal)
             && Interlocked.Exchange(ref _threw, 1) == 0)
         {
-            throw new InvalidOperationException($"MockEventBus throw-once on {eventName}");
+            throw ThrowOnce ?? new InvalidOperationException($"MockEventBus throw-once on {eventName}");
         }
     }
 
