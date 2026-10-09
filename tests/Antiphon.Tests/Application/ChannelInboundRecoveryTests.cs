@@ -2785,10 +2785,11 @@ public sealed class ChannelInboundRecoveryTests
     public async Task C593_ChannelWake_StartsNonAlwaysOnAutomaticallyThroughExhaustedQuota()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var bridgeSettings = Settings(timeout: 5);
         var launchAdapter = new FakeAgentProtocolAdapter();
         await using var h = await BridgeQueueHarness.CreateAsync(new()
         {
-            ConnectionString = schema.ConnectionString, Bridge = Settings(timeout: 5),
+            ConnectionString = schema.ConnectionString, Bridge = bridgeSettings,
             ClockSpeed = 5, AlwaysOn = false, PreserveDatabaseOnDispose = true,
             ConfigureServices = services =>
             {
@@ -2875,20 +2876,21 @@ public sealed class ChannelInboundRecoveryTests
             (await db.ChannelInbounds.Where(i => i.NativeMessageId == native)
                 .Select(i => i.QueueMessageId).SingleAsync()).ShouldBeNull();
         }
+        // FakeAgentProtocolAdapter.Started flips inside StartAsync, before FlushLaneAsync
+        // inserts the queue row. ClockSpeed 5 compresses the 5s budget used above; this
+        // wake uses 90s, then the test polls for the row.
+        bridgeSettings.AgentStartTimeoutSeconds = 90;
         await Bridge(h).DrainPendingAsync(Ct);
-        var launchDeadline = DateTime.UtcNow.AddSeconds(8);
-        while (!launchAdapter.Started && DateTime.UtcNow < launchDeadline)
-            await Task.Delay(25);
-        if (!launchAdapter.Started)
+        await WaitForAsync(async () =>
         {
-            await using var diagnostic = Db(schema.ConnectionString);
-            var sessions = await diagnostic.AgentSessions.AsNoTracking()
-                .Where(s => s.Cwd.StartsWith(h.TempRoot))
-                .Select(s => new { s.Id, s.Status }).ToListAsync();
-            var incidents = await diagnostic.AgentIncidents.AsNoTracking()
-                .Where(i => i.AgentId == h.AgentId).Select(i => i.Message).ToListAsync();
-            throw new InvalidOperationException($"No channel launch: sessions={string.Join(';', sessions.Select(s => $"{s.Id}:{s.Status}"))}; incidents={string.Join(';', incidents)}");
-        }
+            await using var db = Db(schema.ConnectionString);
+            var inboundId = await db.ChannelInbounds.AsNoTracking()
+                .Where(i => i.NativeMessageId == native)
+                .Select(i => (Guid?)i.Id)
+                .SingleOrDefaultAsync();
+            return inboundId is Guid id && await db.SessionQueuedMessages.AsNoTracking()
+                .AnyAsync(q => q.SourceChannelInboundId == id);
+        });
         await using var verify = Db(schema.ConnectionString);
         var inbound = await verify.ChannelInbounds.AsNoTracking().SingleAsync(i => i.NativeMessageId == native);
         var owner = await verify.SessionQueuedMessages.AsNoTracking()
