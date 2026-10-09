@@ -41,7 +41,9 @@ test); S4 still needs its AppHost restart after land, owned by the orchestrator.
    `PrepareAbsenceEvidenceAsync` call site, `ReadAbsenceCertificateAsync`, `AbsenceCertificateHolds`,
    `HoldUnderLockAsync`; runner `AbsenceEvidenceRoutes`, `Program.cs` capability gate,
    `PhoneHomeRuntimeAdapter`; `AbsenceEvidenceKey.TryLoad`; `RunnerAbsenceRefusalCodes` statuses)
-   and is pinned by a named test that passed at S4 (the server C1153 rows) or S1-S3 (the runner rows).
+   and, except the released-seat exclusion (decision 3), is pinned by a named test that passed at S4
+   (the server C1153 rows) or S1-S3 (the runner rows). This read missed the Attempted-marker write
+   failure exception (Review b588c5c7 F1); see Repair F1 below.
    The certificate is requested once per decision; the hold re-checks that first certificate under
    the lock rather than asking again, so the owner says exactly that.
 3. Released-seat answer resume: the cold path skips prepare when `ReleasedSeatAnswerId` is set, but
@@ -69,7 +71,7 @@ empty-transcript evidence and the StartingGrace (90 s) plus dead-session grace (
 | `docs/superpowers/plans/*`, `docs/investigations/*` | Historical records; not owner documents. Unchanged. |
 | Code comments in `AgentTaskDispatcher.cs`, `AbsentLaunchPolicy.cs`, the boundary test partials | Already updated by S4. |
 
-No other false sentence was found.
+No other false sentence was found by this sweep; Review b588c5c7 F1 later found the marker sentence false (Repair F1 below).
 
 ## Red checks for V-21 (quick mutations, not PCs)
 

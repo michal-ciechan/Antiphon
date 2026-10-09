@@ -57,8 +57,8 @@ public class SessionRunnerAbsenceEvidenceDocumentationTests
 
     /// <summary>The operator-context rule for preparation (S4).</summary>
     internal const string PrepareSentence =
-        "A fresh cold dispatch sends one prepare for the session id it just allocated, after the claim "
-        + "commits and before either launch sink; warm reuse, boot-wedge relaunch and interrupted-launch "
+        "A fresh cold dispatch sends at most one prepare for the session id it just allocated, after the "
+        + "claim commits and before either launch sink; warm reuse, boot-wedge relaunch and interrupted-launch "
         + "resume never prepare, and a failed, unsupported or slow prepare never gates the launch.";
 
     /// <summary>The operator-context rule for the hold's recheck (S4 monotonic-age repair).</summary>
@@ -74,12 +74,28 @@ public class SessionRunnerAbsenceEvidenceDocumentationTests
         + "`sessionAbsenceEvidenceV1` sends no prepare and keeps the existing failure, and health alone "
         + "is not activation.";
 
+    /// <summary>
+    /// The write-ahead marker and its one fail-open exception (Review b588c5c7 F1): an I/O or
+    /// access failure of the Attempted write after a positive admission read launches anyway,
+    /// leaves the Prepared record and latches evidence unavailable.
+    /// </summary>
+    internal const string MarkerSentence =
+        "The runner writes an Attempted marker under the launch gate before the first provider effect, "
+        + "except when that write fails with an I/O or access error after the admission read has proved "
+        + "the identity open: the launch then proceeds without the marker, any Prepared record stays on "
+        + "disk, and evidence is latched unavailable for the rest of that runner epoch, so the runner "
+        + "stops advertising `sessionAbsenceEvidenceV1` and no certificate can be formed for that session.";
+
+    /// <summary>The marker promise without its exception, in any wrapping (F1).</summary>
+    private const string UnconditionalMarkerPattern =
+        @"Attempted\s+marker\s+under\s+the\s+launch\s+gate\s+before\s+the\s+first\s+provider\s+effect(?!,\s+except\s+when\s)";
+
     private const string PlanBootStallRetrySentence = "CARD-1151 owns the existing boot-stall retry behavior";
 
     private static readonly string[] OwnerSentences =
     [
         CertificateSentence, ClosureSentence, RoutesSentence, CredentialSentence, NoDeadlineSentence,
-        PrepareSentence, RecheckSentence, ActivationSentence,
+        PrepareSentence, RecheckSentence, ActivationSentence, MarkerSentence,
     ];
 
     private const string RunnerTests = "tests/Antiphon.SessionRunner.Tests";
@@ -129,6 +145,12 @@ public class SessionRunnerAbsenceEvidenceDocumentationTests
             Pin(nameof(DelegationDispatchRecoveryBoundaryTests),
                 nameof(DelegationDispatchRecoveryBoundaryTests.C1153_Real_client_bad_evidence_keeps_failure)));
         runtime.ShouldNotContain(PlanBootStallRetrySentence, Case.Sensitive, "runtime: CARD-1151 retired the boot retry");
+        Pinned(runtime, MarkerSentence,
+            RunnerPin("RunnerAbsenceEvidenceRuntimeTests", "C1153_Creation_consumes_proof_before_effects"),
+            RunnerPin("RunnerAbsenceEvidenceRuntimeTests", "C1153_Store_failure_disables_proof_without_stopping_work"));
+        Regex.IsMatch(runtime, UnconditionalMarkerPattern)
+            .ShouldBeFalse("runtime: the Attempted-marker promise must carry its write-failure exception (F1)");
+        MarkerSentence.ShouldContain($"`{RunnerAbsenceEvidence.Feature}`", Case.Sensitive);
 
         // The runtime owner's numbers are the code's.
         RunnerAbsenceEvidenceValidator.Lifetime.ShouldBe(TimeSpan.FromSeconds(5), "certificate life");
