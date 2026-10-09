@@ -36,7 +36,7 @@ public sealed class ScriptHarnessCancellationTests
                 publish.Cancel();
                 var result = await run;
                 var ack = ReadAck(directory);
-                var journal = File.ReadAllText(Path.Combine(directory, "identity.journal"));
+                var journal = ReadSharedText(Path.Combine(directory, "identity.journal"));
                 var buildLog = File.ReadAllText(Path.Combine(directory, "build.log"));
                 var wrapper = File.ReadAllText(Path.Combine(directory, "wrapper.stdout"));
                 var presence = File.ReadAllText(Path.Combine(directory, "run.presence"));
@@ -86,10 +86,10 @@ public sealed class ScriptHarnessCancellationTests
             error.ShouldNotBeNull("harness-fallback-joins-owned-tree");
             var canceled = error.ShouldBeOfType<OperationCanceledException>("harness-fallback-joins-owned-tree");
             canceled.CancellationToken.ShouldBe(cancel.Token, "harness-fallback-joins-owned-tree");
-            var journal = File.ReadAllText(Path.Combine(directory, "identity.journal"));
+            var journal = ReadSharedText(Path.Combine(directory, "identity.journal"));
             JournalNamesDistinctProcesses(journal).ShouldBeTrue("harness-fallback-joins-owned-tree");
             AssertJournalDead(journal, "harness-fallback-joins-owned-tree");
-            File.ReadAllText(Path.Combine(directory, "phase.ack"))
+            ReadSharedText(Path.Combine(directory, "phase.ack"))
                 .Contains("cleanup=cooperative", StringComparison.Ordinal)
                 .ShouldBeFalse("harness-fallback-joins-owned-tree");
             var diagnostic = error.Data.Contains("ScriptHarnessDiagnostics")
@@ -188,10 +188,27 @@ public sealed class ScriptHarnessCancellationTests
         throw new TimeoutException("holding ack absent");
     }
 
+    private const FileShare SharedFile = FileShare.ReadWrite | FileShare.Delete;
+
+    private static string ReadSharedText(string path)
+    {
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, SharedFile);
+        using var reader = new StreamReader(stream);
+        return reader.ReadToEnd();
+    }
+
     private static bool TryReadHolding(string path, string nonce, string phase)
     {
         if (!File.Exists(path)) return false;
-        var text = File.ReadAllText(path);
+        string text;
+        try
+        {
+            text = ReadSharedText(path);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
         return text.Contains("parentObserved=holding", StringComparison.Ordinal)
             && text.Contains("nonce=" + nonce, StringComparison.Ordinal)
             && text.Contains("phase=" + phase, StringComparison.Ordinal);
@@ -206,7 +223,9 @@ public sealed class ScriptHarnessCancellationTests
     private static Dictionary<string, string> ReadAck(string directory)
     {
         var ack = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (var line in File.ReadAllLines(Path.Combine(directory, "phase.ack")))
+        using var stream = new FileStream(Path.Combine(directory, "phase.ack"), FileMode.Open, FileAccess.Read, SharedFile);
+        using var reader = new StreamReader(stream);
+        while (reader.ReadLine() is { } line)
         {
             var split = line.Split('=', 2);
             if (split.Length == 2) ack[split[0]] = split[1];
@@ -246,8 +265,9 @@ public sealed class ScriptHarnessCancellationTests
             if (process.HasExited) return false;
             return Math.Abs(process.StartTime.ToUniversalTime().Ticks - startTicks) <= TimeSpan.TicksPerSecond;
         }
-        catch (ArgumentException)
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
         {
+            // StartTime throws InvalidOperationException if the process exits after HasExited was false.
             return false;
         }
     }
@@ -256,7 +276,7 @@ public sealed class ScriptHarnessCancellationTests
     {
         var journalPath = Path.Combine(directory, "identity.journal");
         if (!File.Exists(journalPath)) return;
-        foreach (var identity in ParseJournal(File.ReadAllText(journalPath)))
+        foreach (var identity in ParseJournal(ReadSharedText(journalPath)))
         {
             if (!Executing(identity.Pid, identity.StartTicks)) continue;
             try
