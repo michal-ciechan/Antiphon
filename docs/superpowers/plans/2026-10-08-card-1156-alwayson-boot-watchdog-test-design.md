@@ -1110,3 +1110,67 @@ Vitest case's three `toContain` strings follow the new tooltip text.
 | same | new tooltip with ", past the boot-reply deadline" re-inserted | `past the: ... not to contain 'past the'` |
 
 Text-only repair: no behaviour change, no migration, no restart beyond the one S1-S4 owe.
+
+**S6 repair 4 (Review 4bbc024a F-1/F-2, Code c467dcb5; landing owner 5a07a450).** Repair 3's
+promise that "an Error recorded for the episode stays Error" is false on a live row: CP-30
+`operator-on-record-unreadable` records the operator stage, faults the optional receipt SELECT and
+reads a Warning. Operator-facing and client text therefore no longer describes retention at all.
+The tooltip (`attentionVisuals.ts`), the client `AttentionKind` comment (`attention.ts`), the DTO
+summary (`AttentionDtos.cs`), the `AttentionService` projection comment, the orchestration-loop
+paragraph and the session-runtime owner sentence (`AttentionSentence`, which said "Error from the
+operator threshold or a recorded Error receipt of the same episode") now say only what is always
+true: Warning from the boot notice threshold, Error from the operator decision threshold, both
+computed from the session's current facts; the evidence carries the prompt time, its age and both
+due times; the server decides what qualifies as a reply; detection only.
+
+The retained-Error behaviour is recorded here only, as the code produces it
+(`StandingBootAttentionProjection.ProjectAsync`):
+
+- The displayed stage is NeedsOperator (Error) when the receipt read succeeds AND it returns a
+  `standingBoot:v1;...;stage=operator` receipt whose prefix equals the current episode prefix
+  (generation, launch clock, prompt sequence; due settings and the wall clock are not in the key).
+  Otherwise it is the clock stage `DueStage(facts, now)`; `None` projects no row.
+- Clock rollback: with the operator receipt readable, a read at prompt+9, prompt+7 (below the boot
+  due) or prompt-1 (before the prompt) is Error (CP-32 `below-boot-due`, `before-prompt`).
+- Unreadable receipt: the SELECT fault is logged as a Warning and every episode is projected with no
+  receipts, so the same rollback at prompt+9 is a Warning (CP-30 `operator-on-record-unreadable`).
+- `Delegation:ModelWaitDeadlineMinutes` raised after the operator stage was recorded (20 -> 60, read at
+  prompt+21): the key is unchanged, so the receipt matches and the row is Error, with
+  `Operator decision due <prompt+60>` in the evidence; the same raised setting before any operator
+  receipt is a Warning (new `C1156_Recorded_operator_stage_survives_raised_operator_threshold`).
+- Age clamp: a read before the prompt shows `no model reply 0s after the prompt` and
+  `Prompt #1 (UserPrompt) at <real prompt time>, 0s ago; no qualifying model reply since.` on one
+  line, with both dues (CP-32 `before-prompt`, new assertions).
+
+F-3 (real-queue producer-to-recipient evidence) is not addressed here: the standing row reports and
+never delivers, so the operator treats it as an R2 Backlog disclosure. No test in this slice
+exercises delivery.
+
+Deliberate assertion changes: `AttentionSentence` follows the owner sentence; the DTO pin requires
+"It renders with or without a saved <c>standingBoot:v1;</c> incident. It makes no claim about
+delivery: ..." (the repair 3 retention sentence is gone) and rejects `RetiredRetentionPromises`; the
+new `C1156_Standing_row_texts_name_thresholds_and_no_retention_promise` requires the threshold
+wording in all five surfaces and rejects the promise wording in each; the Vitest rollback case
+replaces its `toContain('an Error recorded for the episode stays an Error ...')` with
+`toContain('both computed from the current facts of the session')`, keeps every earlier forbidden
+stem and adds `stays an error`, `stays error`, `recorded for the episode`, `moves backwards` and
+`clock later`. `AttentionServiceTests.BuildService` gains an optional `delegation` argument (default
+unchanged) so the projection can read a raised setting.
+
+| Pin | Mutation | Red at |
+|---|---|---|
+| `C1156_Standing_row_texts_name_thresholds_and_no_retention_promise` | each of the five files checked out at `1b573a238` (five runs) | `<surface>: the thresholds, from current facts` (tooltip, client type, service, loop); `dto: retention promise 'keeps the row at Error'` |
+| same | new text kept, promise sentence inserted after it, one surface per run (five runs) | `tooltip: ... 'stays an Error'`, `client type: ... 'stays Error'`, `dto: ... 'keeps the row at Error'`, `service: ... 'stays Error'`, `loop: ... 'keeps the row at Error'` |
+| `C1156_Docs_name_detection_clocks_custody_and_compaction_exception` | `session-runtime-invariants.md` at `1b573a238` | `owner sentence missing` (`AttentionSentence`) |
+| `C1156_LivenessProbeFailed_summary_claims_no_delivery_and_names_both_projections` | `AttentionDtos.cs` at `1b573a238` | `summary: It renders with or without ...` (required sentence) |
+| `C1156_Recorded_operator_stage_survives_clock_rollback(before-prompt)` | age clamp removed in `Item` | `Headline` should be `... 0s ...` but was `... -60s after the prompt.` (`below-boot-due` stays green) |
+| `C1156_Recorded_operator_stage_survives_raised_operator_threshold` | `stage = decision.Stage` (recorded operator stage ignored) | `the recorded operator stage is read and kept` (Warning) |
+| `AttentionPanel.test.tsx` rollback case | promise sentence inserted into the new tooltip | `stays an error: expected ... not to contain 'stays an error'` |
+
+These are author diagnostics; every PC stays pending for SourceLanding Mutation. Wording that remains
+after this repair, outside the as-built notes: implementation comments that state the code's
+behaviour precisely in the branch that runs only with receipts read
+(`StandingBootAttentionProjection.cs` "Once the operator stage is on record for THIS episode it stays
+the displayed stage", `StandingBootWatchPolicy.cs` "A recorded operator stage covers a later Detected
+decision"), test names and comments, and the reject lists. No predicate change, no migration, no
+restart beyond the one S1-S4 owe.
