@@ -788,6 +788,11 @@ public sealed class AgentSessionRuntime
             return;
         }
 
+        // CARD-0491: a Sent refinement with a null verdict confirms from a complete UserPrompt
+        // that this persist just stored. Before settlement and before the boundary flush, so a
+        // cancelled TurnEnd still flushes a pending row, and a later prompt can confirm the Sent one.
+        await ConfirmRefinementDeliveriesAsync(sessionId, ct);
+
         using (var rulesScope = _scopeFactory.CreateScope())
         {
             var rules = rulesScope.ServiceProvider.GetService<GrokRulesRefreshService>();
@@ -823,6 +828,22 @@ public sealed class AgentSessionRuntime
     /// try/catch so a throw in channel/review/queue flush cannot skip it. No-op when the reply
     /// service is unregistered (same as <see cref="FlushQueueOnIdleAsync"/>).
     /// </summary>
+    private async Task ConfirmRefinementDeliveriesAsync(Guid sessionId, CancellationToken ct)
+    {
+        try
+        {
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var queue = scope.ServiceProvider.GetService<SessionMessageQueueService>();
+            if (queue is null)
+                return;
+            await queue.ConfirmSentRefinementsAsync(sessionId, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Refinement confirm failed for session {SessionId}", sessionId);
+        }
+    }
+
     private async Task TryCatchUpSettlementAsync(Guid sessionId, bool addedTurnBoundary, CancellationToken ct)
     {
         try

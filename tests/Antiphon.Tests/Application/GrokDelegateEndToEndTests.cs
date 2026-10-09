@@ -719,6 +719,213 @@ public class GrokDelegateEndToEndTests
         }
     }
 
+    /// <summary>
+    /// CARD-0491 V-5. One conditional Ctrl+C reaches FakeGrok through the real runner.
+    /// The cancelled boundary flushes the refinement; a complete UserPrompt confirms it;
+    /// FakeGrok's later report settles the open delegate. The task row stays
+    /// <see cref="AgentTaskStatus.Dispatched"/> until that report (dispatch does not write
+    /// <see cref="AgentTaskStatus.Working"/>).
+    /// </summary>
+    [Test]
+    public async Task a_mid_turn_interrupt_refinement_reaches_a_working_fakegrok_delegate_as_a_complete_UserPrompt()
+    {
+        if (!IsWindows) throw new SkipTestException("ConPTY only on Windows");
+        if (!File.Exists(FakeGrokExe))
+            throw new SkipTestException($"fakegrok.exe not staged at {FakeGrokExe} — build the solution first");
+
+        using var workspace = new TempWorkspace();
+        var grokHome = Path.Combine(Path.GetTempPath(), $"antiphon-e2e-c0491-{Guid.NewGuid():N}");
+        var holdPath = Path.Combine(workspace.Path, "report-hold");
+        var inputLog = Path.Combine(workspace.Path, "fakegrok-input.log");
+        var env = new Dictionary<string, string>
+        {
+            ["GROK_HOME"] = grokHome,
+            ["ANTIPHON_FAKE_REPORT_LINE"] = "1",
+            ["ANTIPHON_FAKE_CTRL_C_CANCELS"] = "1",
+            ["ANTIPHON_FAKE_REPORT_HOLD"] = holdPath,
+            ["ANTIPHON_FAKE_INPUT_LOG"] = inputLog,
+        };
+        await using var harness = BuildHarness(
+            workspace.Path, grokHome, grokExe: FakeGrokExe, grokEnvironment: env,
+            configure: d => d.FinalMessageGraceSeconds = 0);
+
+        Guid sessionId = Guid.Empty;
+        using var pump = new CancellationTokenSource();
+        Task? pumping = null;
+        Task? catchingUp = null;
+        try
+        {
+            using var relay = new DelegateTaskApiRelay(workspace.Path, harness.Delegation);
+            const string title = "CARD-0491 interrupt";
+            var run = await DelegateScriptRunner.RunAsync(
+                relay.BaseUrl,
+                "-Role", "Code", "-Shared", "-Kind", "Grok", "-Title", title,
+                "-Goal", "Finish this slice.", "-Dir", workspace.Path);
+            run.ExitCode.ShouldBe(0, $"{run.Output}\n{relay.LastFailure}");
+
+            await using var created = CreateContext();
+            var queued = await created.AgentTasks.AsNoTracking()
+                .SingleAsync(t => t.Title == title && t.WorkingDirectory == workspace.Path);
+
+            using (var scope = harness.Provider.CreateScope())
+                await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(CancellationToken.None);
+
+            await using (var afterTick = CreateContext())
+            {
+                var dispatched = await afterTick.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == queued.Id);
+                dispatched.Status.ShouldBe(AgentTaskStatus.Dispatched, dispatched.FailureReason ?? "no failure reason");
+                sessionId = dispatched.AgentSessionId.ShouldNotBeNull();
+            }
+
+            pumping = PumpTranscriptAsync(harness.Provider, sessionId, pump.Token);
+            catchingUp = CatchUpWhileRefinementIsInFlightAsync(harness.Provider, sessionId, pump.Token);
+            await harness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromMinutes(2), CancellationToken.None);
+
+            await WaitUntilAsync(async () =>
+            {
+                if (!File.Exists(holdPath + ".held"))
+                    return false;
+                var snapshot = await harness.Runner.GetSnapshotAsync(sessionId, CancellationToken.None);
+                return GrokComposerScreen.Classify(snapshot.RenderedScreen) == GrokComposerState.Empty;
+            }, TimeSpan.FromSeconds(90), async () =>
+            {
+                string rendered;
+                GrokComposerState state;
+                try
+                {
+                    var snapshot = await harness.Runner.GetSnapshotAsync(sessionId, CancellationToken.None);
+                    rendered = snapshot.RenderedScreen ?? "";
+                    state = GrokComposerScreen.Classify(rendered);
+                }
+                catch (Exception ex)
+                {
+                    rendered = "(no rendered screen: " + ex.Message + ")";
+                    state = GrokComposerState.Unreadable;
+                }
+
+                return $"hold={File.Exists(holdPath + ".held")} classify={state}\n{rendered}";
+            });
+
+            AgentTaskSummaryDto refined;
+            using (var scope = harness.Provider.CreateScope())
+            {
+                refined = await scope.ServiceProvider.GetRequiredService<AgentTaskReplyService>().RefineAsync(
+                    queued.Id, "Skip the preamble and finish the slice.", CancellationToken.None,
+                    interruptCurrentTurn: true, requestId: Guid.NewGuid());
+            }
+
+            refined.InterruptWritten.ShouldBe("written");
+            var sawOpenAtCancel = false;
+            await WaitUntilAsync(async () =>
+            {
+                await using var db = CreateContext();
+                var task = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == queued.Id);
+                var session = await db.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == sessionId);
+                var cancelled = await db.TranscriptEntries.AsNoTracking().AnyAsync(t =>
+                    t.AgentSessionId == sessionId
+                    && t.Kind == TranscriptKinds.TurnEnd
+                    && t.StopReason == TranscriptKinds.StopReasons.Cancelled);
+                if (cancelled && task.Status == AgentTaskStatus.Dispatched && session.Status == SessionStatus.Running)
+                    sawOpenAtCancel = true;
+                return sawOpenAtCancel && task.Status == AgentTaskStatus.Succeeded;
+            }, TimeSpan.FromSeconds(90), async () =>
+            {
+                await using var db = CreateContext();
+                var task = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == queued.Id);
+                var ends = await db.TranscriptEntries.AsNoTracking()
+                    .Where(t => t.AgentSessionId == sessionId && t.Kind == TranscriptKinds.TurnEnd)
+                    .OrderBy(t => t.Sequence)
+                    .Select(t => t.Sequence + ":" + t.StopReason)
+                    .ToListAsync();
+                return $"status={task.Status} reason={task.FailureReason} sawOpen={sawOpenAtCancel} ends={string.Join(",", ends)}\n{await ScreenAsync(harness, sessionId)}";
+            });
+
+            await using var verify = CreateContext();
+            var settled = await verify.AgentTasks.SingleAsync(t => t.Id == queued.Id);
+            settled.Status.ShouldBe(AgentTaskStatus.Succeeded);
+            var sessionRow = await verify.AgentSessions.SingleAsync(s => s.Id == sessionId);
+            sessionRow.Status.ShouldBe(SessionStatus.Running);
+            var stopper = (RecordingSessionStopper)harness.Provider.GetRequiredService<IDelegateSessionStopper>();
+            stopper.Killed.ShouldBeEmpty();
+
+            var row = await verify.SessionQueuedMessages.SingleAsync(m =>
+                m.AgentSessionId == sessionId && m.ConversationKey.StartsWith("refine:"));
+            row.Status.ShouldBe(QueuedMessageStatus.Sent);
+            (row.DeliveryVerdict is DeliveryVerdict.Delivered or DeliveryVerdict.LateConfirmed)
+                .ShouldBeTrue($"verdict={row.DeliveryVerdict}");
+            MidTurnInterruptPolicy.ReadRefinementDelivered(row.DeliveryVerdict).ShouldBe("delivered");
+
+            var entries = await verify.TranscriptEntries.AsNoTracking()
+                .Where(t => t.AgentSessionId == sessionId)
+                .OrderBy(t => t.Sequence)
+                .ToListAsync();
+            var marker = DelegationReportFormatter.TaskMarker(queued.Id);
+            var brief = entries.First(e => e.Kind == TranscriptKinds.UserPrompt
+                && e.Text != null
+                && e.Text.Contains(marker, StringComparison.Ordinal)
+                && !PromptSubmissionMatch.IsCompleteIn(row.Body, e.Text));
+            var cancelledEnd = entries.First(e => e.Kind == TranscriptKinds.TurnEnd
+                && e.StopReason == TranscriptKinds.StopReasons.Cancelled
+                && e.Sequence > brief.Sequence);
+            var refinementPrompt = entries.First(e => e.Kind == TranscriptKinds.UserPrompt
+                && e.Sequence > cancelledEnd.Sequence
+                && e.Text != null
+                && e.Text.Contains(marker, StringComparison.Ordinal)
+                && PromptSubmissionMatch.IsCompleteIn(row.Body, e.Text));
+            entries.Any(e => e.Kind == TranscriptKinds.TurnEnd
+                && e.StopReason == TranscriptKinds.StopReasons.EndTurn
+                && e.Sequence > refinementPrompt.Sequence).ShouldBeTrue();
+
+            File.Exists(inputLog).ShouldBeTrue(inputLog);
+            var logged = await File.ReadAllBytesAsync(inputLog);
+            logged.Count(b => b == 0x03).ShouldBe(1);
+        }
+        finally
+        {
+            pump.Cancel();
+            if (pumping is not null)
+                await pumping;
+            if (catchingUp is not null)
+                await catchingUp;
+            await CleanupAsync(harness, sessionId, workspace.Path, grokHome);
+        }
+    }
+
+    /// <summary>
+    /// Persists runner rows while a refinement delivery is inside its confirm wait.
+    /// Starts only after that attempt is charged, so it cannot store the cancelled
+    /// boundary ahead of the pump sync that flushes the row.
+    /// </summary>
+    private static async Task CatchUpWhileRefinementIsInFlightAsync(
+        IServiceProvider provider, Guid sessionId, CancellationToken ct)
+    {
+        var runtime = provider.GetRequiredService<AgentSessionRuntime>();
+        while (!ct.IsCancellationRequested)
+        {
+            try
+            {
+                await using var db = CreateContext();
+                var delivering = await db.SessionQueuedMessages.AnyAsync(m =>
+                    m.AgentSessionId == sessionId
+                    && m.ConversationKey.StartsWith("refine:")
+                    && m.DeliveryAttempts > 0, ct);
+                if (delivering)
+                    await runtime.CatchUpTranscriptAsync(sessionId, CancellationToken.None);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                break;
+            }
+            catch (Exception)
+            {
+                // The session may not be live yet.
+            }
+
+            try { await Task.Delay(100, ct); }
+            catch (OperationCanceledException) { break; }
+        }
+    }
+
     // ---- harness -------------------------------------------------------------------------------
 
     internal static Harness BuildHarness(
@@ -1031,6 +1238,10 @@ internal sealed class RecordingRunnerClient : ISessionRunnerClient, IAsyncDispos
 
     public Task SendInputAsync(Guid sessionId, string input, CancellationToken ct) =>
         _inner.SendInputAsync(sessionId, input, ct);
+
+    public Task<RunnerConditionalInputResult> SendConditionalInputAsync(
+        Guid sessionId, RunnerConditionalInputRequest request, CancellationToken ct) =>
+        _inner.SendConditionalInputAsync(sessionId, request, ct);
 
     public Task ClearLiveBufferAsync(Guid sessionId, CancellationToken ct) =>
         _inner.ClearLiveBufferAsync(sessionId, ct);

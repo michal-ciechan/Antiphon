@@ -561,17 +561,19 @@ result fails the row's `0 skipped` expectation. Omit `-Runner` and `-Platform`.
 | CP-5 | S1 | CP-2 | existing-refine | `/*/*/AgentTaskRefineTests/*` | R-1 | 9 executed, 0 failed/skipped | 9 | 5 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-6 | S1 | CP-2 | rc-transport | `/*/*/RemoteControlMaintenanceQueueTests/*` | R-3 | 21 executed, 0 failed/skipped | 21 | 8 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-7 | S2 | `tests/Antiphon.Tests -> bin-c0491-delivery/` | cancelled-delivery | `/*/*/AgentTaskMidTurnRefineTests/C0491_CancelledBoundaryKeepsWorkingFlushesTheRowAndConfirmsFromTheUserPrompt*` | V-3 (M5) | 4 executed, 0 failed/skipped | 4 | 7 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-8 | S2 | CP-7 | boundary-and-docs | `/*/*/(AgentTaskReplyIntegrationTests/(a_cancelled_turn_end_does_not_settle_the_task_and_says_so*)\|(a_prior_internal_continue_does_not_make_a_cancelled_turn_a_report*)\|(the_next_end_turn_after_a_cancel_settles_normally*))\|(MidTurnInterruptDocumentationTests/*)` | V-7, R-2 | 4 executed, 0 failed/skipped | 4 | 5 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-8a | S2 | CP-7 | cancelled-boundary | `/*/*/AgentTaskReplyIntegrationTests/(a_cancelled_turn_end_does_not_settle_the_task_and_says_so*)\|(a_prior_internal_continue_does_not_make_a_cancelled_turn_a_report*)\|(the_next_end_turn_after_a_cancel_settles_normally*)` | R-2 | 3 executed, 0 failed/skipped | 3 | 4 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-8b | S2 | CP-7 | interrupt-docs | `/*/*/MidTurnInterruptDocumentationTests/*` | V-7 | 1 executed, 0 failed/skipped | 1 | 1 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-9 | S2 | `tests/Antiphon.Tests -> bin-c0491-e2e/` | fakegrok-interrupt-e2e | `/*/*/GrokDelegateEndToEndTests/a_mid_turn_interrupt_refinement_reaches_a_working_fakegrok_delegate_as_a_complete_UserPrompt*` | V-5 | 1 executed, 0 failed, 0 skipped (Windows ConPTY, staged fakegrok.exe) | 1 | 14 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 
-If the checkpoint tool refuses CP-8's nested group syntax, Code splits it into two rows with the
-same `After` and build (`CP-8a` the three `AgentTaskReplyIntegrationTests` methods, `CP-8b` the
-documentation class) and reports both; the counts are 3 and 1.
+TUnit 1.44 rejects the original CP-8 nested filter because a `/` inside a parenthesized
+expression is an unexpected operator. That row is split, same `After` and build: `CP-8a` is
+the three `AgentTaskReplyIntegrationTests` methods (3 executed) and `CP-8b` is
+`MidTurnInterruptDocumentationTests` (1 executed).
 
 Run through the checkpoint tool, one run per committed slice:
 `dotnet run --project tools/Antiphon.Checkpoints -- run --plan docs/superpowers/plans/2026-10-09-card-0491-test-design.md --after S0 --expected-source-sha <S0 full sha>`
-on the Windows desktop, then `--after S1` and `--after S2` (CP-9 on Windows, CP-7 and CP-8 on
-either); `wait` while the exit is 75; exit 4 is a slot timeout to report, never an unleased retry.
+on the Windows desktop, then `--after S1` and `--after S2` (CP-9 on Windows, CP-7, CP-8a and
+CP-8b on either); `wait` while the exit is 75; exit 4 is a slot timeout to report, never an unleased retry.
 Bootstrap the tool through `scripts/build-slot.ps1` if it is not built; do not wrap the checkpoint
 run in a second slot. Commit and push before each group and do not edit source while a run is in
 flight. A red row is fixed and rerun as the same row; a production fix found in S2 reruns CP-2
@@ -586,7 +588,7 @@ CP-1 measurement log attached to the Code report; S1-S2 still run their rows.
   CP-1 24 (one Pty build about 4 minutes plus two real Grok tool turns, each held up to 90 s, with
   the 2-minute and 30-second waits bounded), CP-2 6 (one server build about 4 minutes warm plus 41
   policy results), CP-3 2, CP-4 12, CP-5 5, CP-6 8 (21 slow integration results, reused build),
-  CP-7 7 (one build plus 4 results), CP-8 5, CP-9 14 (one Windows build plus a real FakeGrok
+  CP-7 7 (one build plus 4 results), CP-8a 4, CP-8b 1, CP-9 14 (one Windows build plus a real FakeGrok
   launch, a held turn and settlement). Reuse saves five builds against building per row, about
   15 minutes. Slot waits are outside the floor.
 - Authoring and review: about **60 minutes** (S0 canary 15, S1 policy and service 30, S2 FakeGrok,

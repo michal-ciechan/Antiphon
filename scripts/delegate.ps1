@@ -282,8 +282,12 @@ param(
     [Parameter(ParameterSetName = 'Refine', Position = 0)]
     [string]$Message,
 
-    # CARD-0491. Refine only: ask for one conditional Ctrl+C before this message lands.
-    # Absent, the message waits for the next turn the way it did before.
+    # CARD-0491. Refine only. -Interrupt asks for one conditional Ctrl+C before this message
+    # is typed. Ctrl+C stops the current turn or tool. It does not stop the session, and it
+    # can leave partial tool output or files. interruptWritten and refinementDelivered are
+    # separate statuses. A refusal leaves the refinement queued and names the reason.
+    # Without -Interrupt, -Refine stays the non-interruptive path and the message waits
+    # for the next turn.
     [Parameter(ParameterSetName = 'Refine')]
     [switch]$Interrupt,
 

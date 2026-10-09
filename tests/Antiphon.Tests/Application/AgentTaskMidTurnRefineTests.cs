@@ -19,8 +19,9 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 /// <summary>
-/// CARD-0491 V-3 methods 1-4. The key is one conditional Ctrl+C after the row exists.
-/// A refusal keeps today's refinement and names itself.
+/// CARD-0491 V-3 methods 1-5. The key is one conditional Ctrl+C after the row exists.
+/// A refusal keeps today's refinement and names itself. A cancelled boundary flushes the
+/// row and stays an open task; a complete UserPrompt confirms it.
 /// </summary>
 [Category("Integration")]
 [NotInParallel("AgentQueue")]
@@ -232,6 +233,125 @@ public sealed class AgentTaskMidTurnRefineTests
         second.ShouldBe(first);
     }
 
+    [Test]
+    [Arguments("cancelled-then-prompt")]
+    [Arguments("cancelled-then-head-only-prompt")]
+    [Arguments("cancelled-then-no-prompt")]
+    [Arguments("flush-transport-failure-then-retry")]
+    public async Task C0491_CancelledBoundaryKeepsWorkingFlushesTheRowAndConfirmsFromTheUserPrompt(string arm)
+    {
+        using var workspace = new TempWorkspace();
+        var fx = await PrepareAsync(
+            workspace.Path, AgentTaskStatus.Working, AgentKind.Grok, SessionStatus.Running, openQuestion: false);
+        var requestId = Guid.NewGuid();
+        var summary = await CreateService(fx).RefineAsync(
+            fx.Task.Id, Message, CancellationToken.None, interruptCurrentTurn: true, requestId: requestId);
+        summary.InterruptWritten.ShouldBe("written");
+        summary.RefinementDelivered.ShouldBe("pending");
+
+        if (arm == "flush-transport-failure-then-retry")
+            fx.Runner.ThrowOnInputOnce = new HttpRequestException("delivery write failed");
+
+        await IngestAsync(fx, TurnEnd(fx.SessionId, 42, TranscriptKinds.StopReasons.Cancelled));
+
+        await using (var afterBoundary = CreateContext())
+        {
+            var task = await afterBoundary.AgentTasks.SingleAsync(t => t.Id == fx.Task.Id);
+            task.Status.ShouldBe(AgentTaskStatus.Working, arm);
+            var row = await afterBoundary.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == fx.SessionId);
+            (await afterBoundary.AgentTaskEvents.CountAsync(e => e.AgentTaskId == fx.Task.Id
+                && (e.Type == AgentTaskEventType.Completed || e.Type == AgentTaskEventType.Failed)))
+                .ShouldBe(0, arm);
+            if (arm == "flush-transport-failure-then-retry")
+            {
+                row.Status.ShouldBe(QueuedMessageStatus.Pending);
+                row.DeliveryAttempts.ShouldBe(1);
+                fx.Runner.RawInputs.ShouldBeEmpty();
+            }
+            else
+            {
+                row.Status.ShouldBe(QueuedMessageStatus.Sent);
+                row.DeliveryVerdict.ShouldBeNull();
+                row.DeliveryAttempts.ShouldBe(1);
+                TypedOnce(fx, row.Body);
+                fx.Runner.KillCalls.ShouldBe(0);
+            }
+        }
+
+        await using var midway = CreateContext();
+        var stored = await midway.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == fx.SessionId);
+        var now = DateTimeOffset.UtcNow;
+        if (arm == "cancelled-then-prompt")
+        {
+            await IngestAsync(fx,
+                UserPrompt(fx.SessionId, 43, stored.Body, now),
+                ToolCall(fx.SessionId, 44, now));
+        }
+        else if (arm == "cancelled-then-head-only-prompt")
+        {
+            stored.Body.Length.ShouldBeGreaterThan(300);
+            await IngestAsync(fx, UserPrompt(fx.SessionId, 43, stored.Body[..300], now));
+        }
+        else if (arm == "cancelled-then-no-prompt")
+        {
+            await IngestAsync(fx, ToolCall(fx.SessionId, 43, now));
+        }
+        else
+        {
+            await IngestAsync(fx, TurnEnd(fx.SessionId, 43, TranscriptKinds.StopReasons.EndTurn));
+        }
+
+        await using var verify = CreateContext();
+        var after = await verify.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == fx.SessionId);
+        if (arm == "cancelled-then-prompt")
+        {
+            after.Status.ShouldBe(QueuedMessageStatus.Sent);
+            after.DeliveryVerdict.ShouldBe(DeliveryVerdict.LateConfirmed);
+            MidTurnInterruptPolicy.ReadRefinementDelivered(after.DeliveryVerdict).ShouldBe("delivered");
+            TypedOnce(fx, after.Body);
+            fx.Runner.KillCalls.ShouldBe(0);
+            (await verify.AgentTasks.SingleAsync(t => t.Id == fx.Task.Id)).Status.ShouldBe(AgentTaskStatus.Working);
+            (await verify.AgentTaskEvents.CountAsync(e => e.AgentTaskId == fx.Task.Id
+                && (e.Type == AgentTaskEventType.Completed || e.Type == AgentTaskEventType.Failed)))
+                .ShouldBe(0);
+        }
+        else if (arm == "flush-transport-failure-then-retry")
+        {
+            after.Status.ShouldBe(QueuedMessageStatus.Sent);
+            after.DeliveryVerdict.ShouldBeNull();
+            TypedOnce(fx, after.Body);
+        }
+        else
+        {
+            after.Status.ShouldBe(QueuedMessageStatus.Sent);
+            after.DeliveryAttempts.ShouldBe(1);
+            after.DeliveryVerdict.ShouldBeNull();
+            MidTurnInterruptPolicy.ReadRefinementDelivered(after.DeliveryVerdict).ShouldBe("pending");
+            TypedOnce(fx, after.Body);
+            fx.Runner.KillCalls.ShouldBe(0);
+        }
+
+        foreach (var raw in fx.Runner.RawInputs)
+        {
+            raw.Input.ShouldNotBe("\x03");
+            raw.Input.ShouldNotBe("\x1b");
+        }
+    }
+
+    private static void TypedOnce(Prepared fx, string body) =>
+        fx.Runner.RawInputs.Select(raw => raw.Input).ShouldBe(new[]
+        {
+            PtyInputEncoding.EncodeBody(body),
+            "\r",
+        });
+
+    private static async Task IngestAsync(Prepared fx, params SessionRunnerTranscriptEvent[] entries)
+    {
+        fx.Runner.NextEntries[fx.SessionId] = entries;
+        fx.Runner.LastSequence = entries.Max(e => e.Sequence);
+        await fx.Scope.Runtime.SyncTranscriptAsync(fx.SessionId, CancellationToken.None);
+    }
+
     private static void AssertNoKillOrBareEscape(RecordingInterruptRunner runner)
     {
         runner.KillCalls.ShouldBe(0);
@@ -315,9 +435,20 @@ public sealed class AgentTaskMidTurnRefineTests
     }
 
     private static SessionRunnerTranscriptEvent TurnEnd(Guid sessionId) =>
-        new(sessionId, 42, TranscriptKinds.TurnEnd, Guid.NewGuid().ToString("D"),
-            null, DateTimeOffset.UtcNow, "system", null, null, null, null, null,
-            TranscriptKinds.StopReasons.EndTurn);
+        TurnEnd(sessionId, 42, TranscriptKinds.StopReasons.EndTurn);
+
+    private static SessionRunnerTranscriptEvent TurnEnd(Guid sessionId, long sequence, string stopReason) =>
+        new(sessionId, sequence, TranscriptKinds.TurnEnd, Guid.NewGuid().ToString("D"),
+            null, DateTimeOffset.UtcNow, "system", null, null, null, null, null, stopReason);
+
+    private static SessionRunnerTranscriptEvent UserPrompt(
+        Guid sessionId, long sequence, string text, DateTimeOffset now) =>
+        new(sessionId, sequence, TranscriptKinds.UserPrompt, Guid.NewGuid().ToString("D"),
+            null, now, "user", text, null, null, null, null, null);
+
+    private static SessionRunnerTranscriptEvent ToolCall(Guid sessionId, long sequence, DateTimeOffset now) =>
+        new(sessionId, sequence, TranscriptKinds.ToolCall, Guid.NewGuid().ToString("D"),
+            null, now, "assistant", null, "run_terminal_command", "{}", "tool-2", false, null);
 
     private static async Task<Prepared> PrepareAsync(
         string workingDirectory, AgentTaskStatus status, AgentKind kind, SessionStatus sessionStatus, bool openQuestion)
@@ -327,7 +458,7 @@ public sealed class AgentTaskMidTurnRefineTests
         var scope = new ScopeFactory(runner);
         var (task, sessionId, started) = await SeedTaskAsync(workingDirectory, status, kind, sessionStatus);
         if (status != AgentTaskStatus.Queued)
-            await SeedWorkingAsync(scope.Runtime, sessionId, openQuestion);
+            await SeedWorkingAsync(scope.Runtime, sessionId, task.Id, openQuestion);
         runner.SessionId = sessionId;
         runner.AcceptedStartedAt = started;
         runner.SnapshotAcceptedStartedAt = started;
@@ -389,19 +520,36 @@ public sealed class AgentTaskMidTurnRefineTests
         return (task, sessionId, started);
     }
 
-    private static async Task SeedWorkingAsync(AgentSessionRuntime runtime, Guid sessionId, bool openQuestion)
+    private static async Task SeedWorkingAsync(
+        AgentSessionRuntime runtime, Guid sessionId, Guid taskId, bool openQuestion)
     {
-        var toolName = openQuestion ? GrokQuestionTool.AskUserQuestionName : "run_terminal_command";
-        var toolUseId = openQuestion ? "q-1" : "tool-1";
         var now = DateTimeOffset.UtcNow;
+        if (openQuestion)
+        {
+            await runtime.PersistTranscriptAsync(sessionId,
+            [
+                new SessionRunnerTranscriptEvent(
+                    sessionId, 40, TranscriptKinds.UserPrompt, Guid.NewGuid().ToString("D"),
+                    null, now, "user", "Do the thing.", null, null, null, null, null),
+                new SessionRunnerTranscriptEvent(
+                    sessionId, 41, TranscriptKinds.ToolCall, Guid.NewGuid().ToString("D"),
+                    null, now, "assistant", null, GrokQuestionTool.AskUserQuestionName, "{}", "q-1", false, null),
+            ]);
+            return;
+        }
+
+        // Marked prompt plus a settleable assistant line, still sequence 41, so a cancelled
+        // boundary that was wrongly treated as a report would finish the task.
         await runtime.PersistTranscriptAsync(sessionId,
         [
             new SessionRunnerTranscriptEvent(
                 sessionId, 40, TranscriptKinds.UserPrompt, Guid.NewGuid().ToString("D"),
-                null, now, "user", "Do the thing.", null, null, null, null, null),
+                null, now, "user", DelegationReportFormatter.TaskMarker(taskId) + "\n\nDo the thing.",
+                null, null, null, null, null),
             new SessionRunnerTranscriptEvent(
-                sessionId, 41, TranscriptKinds.ToolCall, Guid.NewGuid().ToString("D"),
-                null, now, "assistant", null, toolName, "{}", toolUseId, false, null),
+                sessionId, 41, TranscriptKinds.AssistantText, Guid.NewGuid().ToString("D"),
+                null, now, "assistant", "Working.\n" + DelegationReportFormatter.ReportToken(taskId, "done"),
+                null, null, null, null, null),
         ]);
     }
 
@@ -430,13 +578,18 @@ public sealed class AgentTaskMidTurnRefineTests
             services.AddSingleton<IEventBus, MockEventBus>();
             services.AddSingleton(Options.Create(supervision));
             services.AddSingleton(Options.Create(new ChannelBridgeSettings()));
-            services.AddSingleton(Options.Create(new DelegationSettings()));
+            services.AddSingleton(Options.Create(new DelegationSettings { FinalMessageGraceSeconds = 0 }));
             services.AddSingleton(TimeProvider.System);
             services.AddSingleton<ISessionRunnerClient>(runner);
             services.AddSingleton<AgentSessionRuntime>();
             services.AddSingleton<SessionMessageQueueService>();
+            services.AddSingleton<AgentTaskReplyService>();
             services.AddSingleton<IDelegateSessionStopper>(new RecordingSessionStopper());
             services.AddSingleton<DelegationWorkspaceResolver>();
+            services.AddDelegationWorktreeGraph(new GitSettings
+            {
+                WorktreeBasePath = Path.Combine(Path.GetTempPath(), "antiphon-c0491-wt"),
+            });
             services.AddScoped<AgentTaskService>();
             _provider = services.BuildServiceProvider();
         }

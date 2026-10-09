@@ -828,7 +828,7 @@ public sealed class AgentTaskReplyService
 
             var row = await db.SessionQueuedMessages.AsNoTracking()
                 .FirstOrDefaultAsync(m => m.ConversationKey == key, ct);
-            var delivered = row?.DeliveryVerdict == DeliveryVerdict.LateConfirmed ? "delivered" : "pending";
+            var delivered = MidTurnInterruptPolicy.ReadRefinementDelivered(row?.DeliveryVerdict);
             return (interruptWritten, delivered);
         }
         finally
