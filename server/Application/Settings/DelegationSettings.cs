@@ -575,9 +575,16 @@ public sealed class DelegationSettings
     public int BootWedgeRelaunchLimit { get; set; } = 1;
 
     /// <summary>
-    /// How long an open task whose session is DEAD (<see cref="AgentTaskLiveness.IsDeadSession"/>)
-    /// must keep looking dead before the dispatcher fails it (CARD-0021). Measured from the first
-    /// sweep that saw it that way, in memory — a server restart only ever delays the failure.
+    /// How long <see cref="AgentTaskDispatcher.FailDeadSessionTasksAsync"/> waits before it acts on
+    /// an open task whose session is dead (CARD-0021, CARD-1161). The wait is
+    /// <c>TimeProvider.GetElapsedTime</c> from the in-memory stamp
+    /// <see cref="DeadSessionFirstSeenState"/> takes on the first sweep that received a runner
+    /// list and did not see the session Running. A negative elapsed time does not act. A wall-clock
+    /// jump does not act while that elapsed time is inside the grace. A wall rollback does not keep
+    /// the gate shut once the elapsed time has reached the grace. A server restart drops the stamp
+    /// and the next observation waits again. Past the grace, a certified unattempted launch is held
+    /// Blocked (CARD-1149/1153). A shape that is not that hold keeps the existing failure path. The
+    /// sweep does not stop the session.
     ///
     /// <para>The window is not politeness, it is the CARD-0056 brake. A DB row saying a session is
     /// Failed was once wrong about a healthy session — the operator's own — and reconciliation's

@@ -19,13 +19,13 @@ namespace Antiphon.Server.Application.Services;
 /// </summary>
 public sealed class DeadSessionFirstSeenState
 {
-    private readonly ConcurrentDictionary<Guid, DateTime> _firstSeen = new();
+    private readonly ConcurrentDictionary<Guid, long> _firstSeen = new();
 
     /// <summary>
-    /// Records that this task looked dead at <paramref name="now"/> and returns the FIRST such
-    /// instant — <paramref name="now"/> itself the first time round, the remembered one thereafter.
+    /// Records the <see cref="TimeProvider"/> timestamp from the first sweep that saw this task
+    /// dead and returns that stamp. A later call returns the same stamp and does not replace it.
     /// </summary>
-    public DateTime FirstSeenAt(Guid taskId, DateTime now) => _firstSeen.GetOrAdd(taskId, now);
+    public long Observe(Guid taskId, long timestamp) => _firstSeen.GetOrAdd(taskId, timestamp);
 
     /// <summary>
     /// Forget a task: it stopped looking dead (re-adopted, settled, canceled) or it has now been
