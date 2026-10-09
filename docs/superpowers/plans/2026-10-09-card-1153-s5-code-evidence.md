@@ -143,3 +143,61 @@ platform skip). Run them as a separate Windows-pinned task with
 
 Every PC stays pending for post-land SourceLanding Mutation. For this slice: PC-29 (5 documentation
 controls, one per owner sentence). PC-1..PC-28 and PC-30..PC-33 remain pending from S1-S4.
+
+## Repair F1 (Code task e8c3f70b, after Review b588c5c7)
+
+Review b588c5c7 F1: the runtime owner said the runner writes an Attempted marker before the first
+provider effect, unconditionally. `RunnerAbsenceEvidenceService.RecordCreationAttempt` catches an
+`IOException` or `UnauthorizedAccessException` from that write after a positive admission read,
+latches evidence unavailable for the runner epoch and returns, so the launch proceeds; a store that
+turns unknown at the write still refuses (`SessionIdentityClosedException`).
+`RunnerAbsenceEvidenceRuntimeTests.C1153_Store_failure_disables_proof_without_stopping_work`
+asserts the provider effect ran, the latch was set before it, the Prepared bytes are unchanged,
+`AbsenceEvidenceReady` is false and a later certify answers `Unavailable` ("latched"). The owner
+sentence now states that exception, is followed by that test and
+`C1153_Creation_consumes_proof_before_effects`, and V-21 pins it (`MarkerSentence`) and rejects the
+marker promise without ", except when" in any wrapping. No production change.
+
+Absolute-word pass over every sentence S5 added or edited (file:line at the repair tip):
+
+| Site | Absolute | Verdict |
+|---|---|---|
+| runtime:452 bullet title | only | True: the hold needs a validated certificate (`DecideAbsentLaunchAsync` -> `TryHoldAbsentLaunchAsync`). |
+| runtime:455-458 | zero, only when | True: necessary conditions; the hold stages Blocked without a retry. |
+| runtime:458-461 | before any, every other | Qualified: a session row gone when the decision reads it is also withheld (code-only, unpinned), and inventory/Working are re-checked when the pre-screen or certificate does not qualify. |
+| runtime:462 | only | True: only `RunnerAbsenceEvidenceValidator`'s Proven result is a certificate. |
+| runtime:468 | one, never, never | Qualified: "sends at most one prepare"; an old runner, a missing server key or an unknown/mismatched store sends none (`remote-old-runner` argument, client `Unsupported` arms). "Never gates" stays: only the dispatcher's own cancellation propagates. |
+| runtime:470-473 | only after, once | True: one `ReadAbsenceCertificateAsync` per decision, after the inventory and pre-screen. |
+| runtime:474, 477-478 | anything else | True (Review row; `C1153_Certificate_age_is_monotonic`). |
+| runtime:479 | never stops | True: certify refuses a known identity; nothing in it stops a process. |
+| runtime:484 | before the first provider effect | F1: qualified with the write-failure exception and pinned. |
+| runtime:487-489 | every generation | True: `C1153_Closed_identity_refuses_delayed_creation` (newer-generation start, attach). Adoption is not a creation and is not claimed. |
+| runtime:490-492 | once and only when | True: necessary conditions; other refusals (clock step-back, full cache) are 503. |
+| runtime:493 | no, neither | True (Review row; CP-29). |
+| runtime:497 | no prepare, alone | True: the client checks the feature before any POST/frame. |
+| credentials:223 | only | True: prepare exists only for certification; launches are unchanged. |
+| credentials:233-235 | never | True: `TryLoad` problems name only the failure type; the runner logs the derived key id. |
+| credentials:236-238 | every | True: the response MAC covers the SHA-256 of the whole body, the nonce and the status. |
+| credentials:239-242 | neither | Qualified: the runner-side and server-side missing key were conflated; a server without a key sends neither over HTTP even to an advertising runner (`absence_evidence_key_unconfigured`, code-only). |
+| credentials:243-244 | no delegate | Policy statement, not a code claim. |
+| api:917-918 | only | True: the one prepare call site and the one certify call site. |
+| api:921-922 | every | True: the handler sets `no-store` before reading the body; a non-GUID id never reaches the route. |
+| api:925-928 | 404/409/400/401/503 | True against `Certify`, `AdmitOnceLocked` and the route handler. |
+| api:928-929 | only when | True: `Program.cs` needs `AbsenceEvidenceReady` and the key; phone-home needs a ready store. |
+| ops-http:58-63 | only, no proxy | True: no server route maps absence evidence. |
+| this note, decision 2 | every | Qualified: the released-seat exclusion is unpinned and the marker exception was missed. |
+| this note, sweep | no other | Qualified: F1 was found later. |
+
+Red checks for the repaired pin (not PCs; one probe build `tests/Antiphon.Tests -> bin-c1153f1mut/`,
+UseAppHost=false, 115 s under lease, deleted afterwards; method filter
+`/*/*/SessionRunnerAbsenceEvidenceDocumentationTests/C1153_Owner_sentences_match_the_protocol`;
+each mutant its own results directory, restored with `git checkout -- docs`, tree clean after each):
+
+| Case | Mutation | Result |
+|---|---|---|
+| green-before | none | 1/1 passed |
+| restore-old-sentence | runtime: the S5 marker sentence and its pins put back verbatim | 1 failed: owner sentence missing (marker) |
+| old-beside-new | runtime: the unconditional marker wording added beside the new sentence | 1 failed: the marker promise must carry its write-failure exception (F1) |
+| drop-store-failure-pin | runtime: remove the `C1153_Store_failure_disables_proof_without_stopping_work` pin | 1 failed: pin must follow |
+| prepare-unconditional | runtime: "sends at most one prepare" -> "sends one prepare" | 1 failed: owner sentence missing (prepare) |
+| green-after | none | 1/1 passed |
