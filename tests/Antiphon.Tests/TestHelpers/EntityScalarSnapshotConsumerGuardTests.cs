@@ -9,12 +9,13 @@ using TUnit.Core;
 namespace Antiphon.Tests.TestHelpers;
 
 /// <summary>
-/// CARD-1137 consumer guard, bounded on purpose. For exactly the three test classes that compare EF
-/// entities through <see cref="EntityScalarSnapshot"/>, it reads the source and fails on ANY
-/// System.Text.Json serialization call that is not an exact allow-listed token, and on any drop of
-/// the snapshot uses below the recorded floor. It never classifies an argument's type (the removed
+/// CARD-1137 consumer guard, bounded on purpose. For the protected test classes that compare EF
+/// entities through <see cref="EntityScalarSnapshot"/>, it reads the source and fails on a
+/// System.Text.Json serialization call that is not an exact allow-listed token, and on a drop of
+/// the snapshot uses below the recorded floor. It does not classify an argument's type (the removed
 /// assembly-wide scanner misclassified projections), so a reverted call site is red whatever it
 /// serializes. Full-line comments are skipped; anything else that mentions an API is flagged.
+/// <see cref="Allow_list_premises_hold"/> pins the protected-file count.
 /// </summary>
 [Category("Unit")]
 public sealed class EntityScalarSnapshotConsumerGuardTests
@@ -25,6 +26,8 @@ public sealed class EntityScalarSnapshotConsumerGuardTests
         ("tests/Antiphon.Tests/Application/TerminalRunnerSeatReleaseTests.cs", 2),
         ("tests/Antiphon.Tests/Application/ReviewEvidenceRecoveryTests.cs", 6),
         ("tests/Antiphon.Tests/Application/CardFilePrivacySyncAcceptanceTests.cs", 4),
+        // CARD-1158: one receipts comparison of the episode list. No Allowed token.
+        ("tests/Antiphon.Tests/Application/RemoteControlModalPersistenceTests.cs", 1),
     ];
 
     /// <summary>Exact serialization tokens (whitespace collapsed) a consumer may keep.</summary>
@@ -72,7 +75,7 @@ public sealed class EntityScalarSnapshotConsumerGuardTests
     [Test]
     public void Allow_list_premises_hold()
     {
-        Consumers.Length.ShouldBe(3, "the three CARD-1137 call-site classes");
+        Consumers.Length.ShouldBe(4, "RemoteControlModalPersistenceTests joined the three CARD-1137 call-site classes (CARD-1158)");
         Consumers.ShouldAllBe(c => c.SnapshotFloor > 0);
         Allowed.Select(a => a.File).Except(Consumers.Select(c => c.File)).ShouldBeEmpty("an Allowed entry names an unprotected file");
         using var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()

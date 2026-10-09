@@ -10,6 +10,10 @@ using TUnit.Core;
 
 namespace Antiphon.Tests.Application;
 
+// CARD-1158: compare persisted episodes with EntityScalarSnapshot.Of(db, ...). Default-options
+// JsonSerializer on RemoteControlModalEpisode walks AgentSession and takes STJ's process-wide
+// metadata lock (rule and reason: TerminalRunnerSeatReleaseTests header).
+// EntityScalarSnapshotConsumerGuardTests reads this file.
 [Category("Integration")]
 [Category("Slow")]
 public class RemoteControlModalPersistenceTests
@@ -131,10 +135,10 @@ public class RemoteControlModalPersistenceTests
         await db.SaveChangesAsync();
 
         await using var verify = Create(isolated.ConnectionString);
-        var json = System.Text.Json.JsonSerializer.Serialize(await verify.RemoteControlModalEpisodes.ToListAsync());
-        json.ShouldNotContain("SYNTHETIC");
-        json.ShouldNotContain("https://claude.ai");
-        json.ShouldNotContain("secret");
+        var snapshot = EntityScalarSnapshot.Of(verify, await verify.RemoteControlModalEpisodes.ToListAsync());
+        snapshot.ShouldNotContain("SYNTHETIC");
+        snapshot.ShouldNotContain("https://claude.ai");
+        snapshot.ShouldNotContain("secret");
         var incidents = await verify.AgentIncidents.ToListAsync();
         incidents.ShouldAllBe(i => !i.Message.Contains("https://", StringComparison.Ordinal));
     }
