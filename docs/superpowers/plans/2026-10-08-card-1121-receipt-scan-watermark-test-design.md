@@ -189,7 +189,11 @@ session.
   is recomputed. PC-13 is **not** repaired here: its `cache-clock-fault` fixture faults from the
   start, never publishes and so never reaches `TryReuse`'s clock on a hit; witnessing it needs a
   fixture change (a valid proof, then a clock fault), which is a test change for a separate Code
-  task. PC-13 stays pending and is currently unwitnessed.
+  task. PC-13 stays pending and is currently unwitnessed. Red proof for the new row (Code `6183911e`,
+  method filter `/*/*/AgentTaskLandReceiptWatermarkSafetyTests/C1121_RacingCommitCannotPublishOrReuseStaleMiss*`,
+  6 results): green 6/6 at the fix; with the reconciler restored to `0c02ffed` 5/6, only this row red
+  at `metrics.Publishes` 1 expected, 2 actual; under PC-16 (`if (true)`) the same single red. These are
+  Code's red proof, not a discharged PC.
 
 Two implementation seams the amendments and tests need, within the plan's S1/S2 scope:
 new `LandDeliveryBoundary` names `receipt-scan-before-stamp` (after catch-up and the
