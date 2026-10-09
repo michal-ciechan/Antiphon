@@ -95,4 +95,77 @@ public partial class DelegationDispatchRecoveryBoundaryTests
         "Blocked" => AgentTaskStatus.Blocked,
         _ => throw new ArgumentOutOfRangeException(nameof(expect), expect, null),
     };
+
+    /// <summary>
+    /// CARD-1161 V-2. The runtime bullet after the certificate-age pin, and the
+    /// <c>DeadSessionFailGraceMinutes</c> summary, name this gate.
+    /// </summary>
+    [Test]
+    public void C1161_Owner_names_the_monotonic_grace()
+    {
+        var runtime = ReadRepo("docs/session-runtime-invariants.md");
+        const string lead = "- **The dead-session grace is monotonic elapsed time (CARD-1161).**";
+        var bullet = Slice(runtime, lead, "\n- **");
+        var pinAt = runtime.IndexOf(
+            "DelegationDispatchRecoveryBoundaryTests.C1153_Certificate_age_is_monotonic",
+            StringComparison.Ordinal);
+        var bulletAt = runtime.IndexOf(lead, StringComparison.Ordinal);
+        pinAt.ShouldBeGreaterThanOrEqualTo(0);
+        bulletAt.ShouldBeGreaterThan(pinAt);
+        runtime[pinAt..bulletAt].ShouldNotContain("\n- **");
+
+        var settings = ReadRepo("server/Application/Settings/DelegationSettings.cs");
+        const string property = "public int DeadSessionFailGraceMinutes { get; set; } = 3;";
+        var propertyAt = settings.IndexOf(property, StringComparison.Ordinal);
+        propertyAt.ShouldBeGreaterThanOrEqualTo(0);
+        var summaryAt = settings.LastIndexOf("/// <summary>", propertyAt, StringComparison.Ordinal);
+        summaryAt.ShouldBeGreaterThanOrEqualTo(0);
+        var summary = settings[summaryAt..(propertyAt + property.Length)];
+
+        foreach (var phrase in new[]
+        {
+            "CARD-1161",
+            "GetElapsedTime",
+            "DeadSessionFirstSeenState",
+            "DeadSessionFailGraceMinutes",
+            "Blocked",
+            "FailDeadSessionTasksAsync",
+            "ShouldHold",
+            "C1161_Dead_session_grace_is_monotonic",
+            "C1161_Owner_names_the_monotonic_grace",
+        })
+            bullet.ShouldContain(phrase, Case.Sensitive);
+
+        foreach (var phrase in new[]
+        {
+            "CARD-1161",
+            "GetElapsedTime",
+            "DeadSessionFirstSeenState",
+            "DeadSessionFailGraceMinutes",
+            "Blocked",
+        })
+            summary.ShouldContain(phrase, Case.Sensitive);
+    }
+
+    private static string Slice(string text, string start, string end)
+    {
+        var from = text.IndexOf(start, StringComparison.Ordinal);
+        from.ShouldBeGreaterThanOrEqualTo(0, start);
+        var to = text.IndexOf(end, from + start.Length, StringComparison.Ordinal);
+        to.ShouldBeGreaterThan(from, end);
+        return text[from..to];
+    }
+
+    private static string ReadRepo(string relative)
+    {
+        var dir = AppContext.BaseDirectory;
+        while (!string.IsNullOrEmpty(dir))
+        {
+            if (File.Exists(Path.Combine(dir, "Antiphon.sln")))
+                return File.ReadAllText(Path.Combine(dir, relative)).Replace("\r\n", "\n");
+            dir = Path.GetDirectoryName(dir)!;
+        }
+
+        throw new DirectoryNotFoundException(relative);
+    }
 }
