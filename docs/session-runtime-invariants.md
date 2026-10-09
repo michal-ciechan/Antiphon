@@ -520,6 +520,20 @@ the transcript mutation gate. Activation requires both server and runner support
   Routes: [ops-http.md](ops-http.md#two-processes-two-prefixes); key custody:
   [agent-credentials.md](agent-credentials.md#runner-absence-evidence-key-card-1153).
 
+- **The dead-session grace is monotonic elapsed time (CARD-1161).**
+  `FailDeadSessionTasksAsync` continues while `TimeProvider.GetElapsedTime` from the
+  `DeadSessionFirstSeenState` stamp is negative or shorter than `DeadSessionFailGraceMinutes`.
+  A negative elapsed time withholds the failure and the hold and keeps the stamp. A wall-clock
+  jump does not act while that elapsed time is inside the grace. A wall rollback does not keep
+  the gate shut once the elapsed time has reached the grace. A server restart leaves the
+  in-memory map empty, and the next observation stores a new stamp and waits again. The wall
+  `UtcNow` taken beside the stamp is the argument to `CommitRecoveryObligations.ShouldHold`
+  and is not the grace decision. Past the grace, a certified unattempted launch is held
+  Blocked (CARD-1149/1153); a shape that is not that hold keeps the existing failure path.
+  The sweep does not stop the session.
+  Pinned by `DelegationDispatchRecoveryBoundaryTests.C1161_Dead_session_grace_is_monotonic`
+  and `DelegationDispatchRecoveryBoundaryTests.C1161_Owner_names_the_monotonic_grace`.
+
 - **A transport loss during a remote launch re-attaches after the ack and re-queues before it,
   bounded (CARD-0679 D-8; lands with R5).** Inside the launch, a transport-class loss before the
   Launch ack re-sends the Launch with the same accepted generation (the runner answers a
