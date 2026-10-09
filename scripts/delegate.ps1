@@ -282,6 +282,11 @@ param(
     [Parameter(ParameterSetName = 'Refine', Position = 0)]
     [string]$Message,
 
+    # CARD-0491. Refine only: ask for one conditional Ctrl+C before this message lands.
+    # Absent, the message waits for the next turn the way it did before.
+    [Parameter(ParameterSetName = 'Refine')]
+    [switch]$Interrupt,
+
     # Look up a task you already created.
     [Parameter(ParameterSetName = 'Status', Mandatory = $true)]
     [string]$Status,
@@ -896,12 +901,20 @@ switch ($PSCmdlet.ParameterSetName) {
             Write-Error 'Pass the message as the first argument: delegate.ps1 -Refine <taskId> "your message"'
             exit 1
         }
-        $summary = Invoke-Antiphon -Method POST -Path "/api/agent-tasks/$Refine/refine" -Body @{ message = $Message }
+        $summary = Invoke-Antiphon -Method POST -Path "/api/agent-tasks/$Refine/refine" -Body @{
+            message = $Message
+            interruptCurrentTurn = [bool]$Interrupt
+            requestId = [guid]::NewGuid()
+        }
         if ($summary.status -eq 'Queued') {
             Write-Output "Refined task $Refine before dispatch - folded into its brief."
         }
         else {
             Write-Output "Refined task $Refine. The message will land between its turns; its report will note it."
+        }
+        if ($Interrupt) {
+            Write-Output $summary.interruptWritten
+            Write-Output $summary.refinementDelivered
         }
         return
     }

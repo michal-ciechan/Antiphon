@@ -15,6 +15,15 @@ public sealed class DelegationSettings
     public WorkspaceMode DefaultWorkerWorkspace { get; set; } = WorkspaceMode.Worktree;
     public bool Enabled { get; set; } = true;
 
+    /// <summary>
+    /// CARD-0491. When true, a caller who passes <c>interruptCurrentTurn</c> may ask for one
+    /// conditional Ctrl+C on an empty Grok composer. The default is true because S0 CP-1
+    /// (grok 1.0.50, run 20261009-181529-7017) measured one <c>\x03</c> on an empty composer
+    /// producing one cancelled turn while the process stayed up. A draft composer cancelled
+    /// nothing. The key stays opt-in per request, and the whitelist can still refuse it.
+    /// </summary>
+    public bool GrokMidTurnInterruptEnabled { get; set; } = true;
+
     public int PollIntervalSeconds { get; set; } = 5;
 
     /// <summary>Recent-history window requested by delegations list clients unless they choose Show all.</summary>
