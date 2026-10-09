@@ -37,6 +37,9 @@ public sealed class AgentSessionRuntime
     private readonly ConcurrentDictionary<Guid, string?> _testAgentStatuses = new();
     // CARD-0186 S3 test seam: runner Pending on in-process adapters.
     private readonly ConcurrentDictionary<Guid, string?> _testPending = new();
+    // CARD-1150 test seam: accepted generation on in-process adapters. Production reads it from
+    // the runner DTO. Unset stays null, which recovery treats as generation-unknown.
+    private readonly ConcurrentDictionary<Guid, DateTime> _testAcceptedStartedAt = new();
     // CARD-0334 S2 test seam: transcript bind flag on in-process adapters (production reads it from the runner).
     private readonly ConcurrentDictionary<Guid, bool?> _testTranscriptBound = new();
     private readonly ConcurrentDictionary<Guid, StringBuilder> _testBuffers = new();
@@ -1574,6 +1577,7 @@ public sealed class AgentSessionRuntime
             int? exitCode = adapter.Exited.IsCompletedSuccessfully
                 ? adapter.Exited.Result
                 : null;
+            _testPending.TryGetValue(sessionId, out var pending);
             return Task.FromResult(new SessionRunnerSessionDto(
                 sessionId,
                 adapter.Pid,
@@ -1581,7 +1585,11 @@ public sealed class AgentSessionRuntime
                 exitCode is null ? "Running" : "Exited",
                 exitCode,
                 adapter.ExitReason,
-                GetDeltaSequenceOrDefault(sessionId)));
+                GetDeltaSequenceOrDefault(sessionId),
+                Pending: pending,
+                AcceptedStartedAt: _testAcceptedStartedAt.TryGetValue(sessionId, out var accepted)
+                    ? accepted
+                    : null));
         }
 
         return _runnerClient.GetAsync(sessionId, ct);
@@ -1603,6 +1611,13 @@ public sealed class AgentSessionRuntime
         _testPending[sessionId] = pending;
 
     /// <summary>
+    /// CARD-1150 test seam: the accepted generation <see cref="GetSessionAsync"/> reports for an
+    /// in-process adapter. Production local sessions take this from the runner client instead.
+    /// </summary>
+    public void SetTestAcceptedStartedAt(Guid sessionId, DateTime acceptedStartedAt) =>
+        _testAcceptedStartedAt[sessionId] = acceptedStartedAt;
+
+    /// <summary>
     /// CARD-0334 S2 test seam: set <see cref="AgentSessionLiveMetadata.TranscriptBound"/> for an
     /// in-process test adapter. Production reads this from the runner; a resume that is not
     /// bound would fall back to fresh and lose the conversation.
@@ -1620,6 +1635,7 @@ public sealed class AgentSessionRuntime
         _testBuffers.TryRemove(sessionId, out _);
         _testAgentStatuses.TryRemove(sessionId, out _);
         _testPending.TryRemove(sessionId, out _);
+        _testAcceptedStartedAt.TryRemove(sessionId, out _);
         _testTranscriptBound.TryRemove(sessionId, out _);
         return _testAdapters.TryRemove(sessionId, out adapter);
     }

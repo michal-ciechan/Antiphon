@@ -1,5 +1,6 @@
 using System.Text;
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.SessionRunner.Contracts;
@@ -241,7 +242,17 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter, IAttacha
         Started = true;
         StartedSessionId = sessionId;
         if (RegisterOnStart is not null)
-            RegisterOnStart.Register(sessionId, this);
+        {
+            try
+            {
+                RegisterOnStart.Register(sessionId, this);
+            }
+            catch (ConflictException)
+            {
+                // A second attach of this same test adapter is rediscovery. Production Register
+                // stays strict; only the fake treats that re-attach as already registered.
+            }
+        }
         Emit(StartupOutput);
         return Task.CompletedTask;
     }
