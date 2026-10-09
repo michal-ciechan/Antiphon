@@ -45,17 +45,26 @@ internal sealed class ScriptHandler : HttpMessageHandler
     }
 }
 
+internal readonly record struct ResilienceLogLine(
+    string Message,
+    IReadOnlyDictionary<string, string?> Properties);
+
 internal sealed class CollectingLoggerProvider : ILoggerProvider
 {
+    private readonly Action<ResilienceLogLine>? _onLine;
+
+    public CollectingLoggerProvider(Action<ResilienceLogLine>? onLine = null) =>
+        _onLine = onLine;
+
     public List<string> Lines { get; } = [];
 
-    public ILogger CreateLogger(string categoryName) => new Collector(Lines);
+    public ILogger CreateLogger(string categoryName) => new Collector(Lines, _onLine);
 
     public void Dispose()
     {
     }
 
-    private sealed class Collector(List<string> lines) : ILogger
+    private sealed class Collector(List<string> lines, Action<ResilienceLogLine>? onLine) : ILogger
     {
         public IDisposable BeginScope<TState>(TState state) where TState : notnull => NullScope.Instance;
 
@@ -64,14 +73,21 @@ internal sealed class CollectingLoggerProvider : ILoggerProvider
         public void Log<TState>(
             LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
         {
-            lines.Add(formatter(state, exception));
+            var message = formatter(state, exception);
+            lines.Add(message);
             if (exception is not null)
                 lines.Add(exception.ToString());
+            var properties = new Dictionary<string, string?>(StringComparer.Ordinal);
             if (state is IEnumerable<KeyValuePair<string, object?>> values)
             {
                 foreach (var pair in values)
+                {
                     lines.Add(pair.Key + "=" + pair.Value);
+                    properties[pair.Key] = pair.Value?.ToString();
+                }
             }
+
+            onLine?.Invoke(new ResilienceLogLine(message, properties));
         }
     }
 
@@ -143,12 +159,32 @@ internal static class ResilienceTestHost
         return await work.WaitAsync(TimeSpan.FromSeconds(2));
     }
 
+    /// <summary>One observed zero-advance step: current UTC, requested boundary, whether the phase was still pending, and any invariant exception.</summary>
+    internal readonly record struct BoundaryStep(
+        DateTimeOffset Now,
+        DateTimeOffset Boundary,
+        bool PhasePending,
+        Exception? Error);
+
     /// <summary>Advance one registered virtual boundary, then wait for its explicit phase.</summary>
+    public static Task AdvanceAfterAsync(
+        ControlledTimeProvider time,
+        ControlledTimeProvider.TimerEvent timer,
+        Task phase,
+        DateTimeOffset boundary,
+        CancellationToken token) =>
+        AdvanceAfterAsync(time, timer, phase, boundary, observer: null, token);
+
+    /// <summary>
+    /// Advance one registered virtual boundary, then wait for its explicit phase.
+    /// <paramref name="observer"/> receives each zero-advance loop step, including a captured invariant exception, before that exception is rethrown.
+    /// </summary>
     public static async Task AdvanceAfterAsync(
         ControlledTimeProvider time,
         ControlledTimeProvider.TimerEvent timer,
         Task phase,
         DateTimeOffset boundary,
+        Action<BoundaryStep>? observer,
         CancellationToken token)
     {
         if (timer.Sequence <= 0 || timer.Deadline != boundary || time.GetUtcNow() > boundary)
@@ -163,24 +199,38 @@ internal static class ResilienceTestHost
         var watchdog = Stopwatch.StartNew();
         while (!phase.IsCompleted)
         {
-            if (watchdog.Elapsed >= TimeSpan.FromSeconds(5))
+            Exception? error = null;
+            var pending = !phase.IsCompleted;
+            try
             {
-                var events = string.Join("; ", time.Events.Select(e =>
-                    $"#{e.Sequence} timer={e.TimerId} {e.Action} at={e.RegisteredAt:O} due={e.DueTime}"));
-                var states = string.Join("; ", time.TimerStates.Select(e => $"{e.Key}={e.Value}"));
-                throw new TimeoutException(
-                    $"Boundary phase did not complete at {boundary:O}; now={time.GetUtcNow():O}; " +
-                    $"tokenCancelled={token.IsCancellationRequested}; expectedTimer={timer.TimerId}; " +
-                    $"timerStates=[{states}]; timerEvents=[{events}]");
-            }
+                if (watchdog.Elapsed >= TimeSpan.FromSeconds(5))
+                {
+                    var events = string.Join("; ", time.Events.Select(e =>
+                        $"#{e.Sequence} timer={e.TimerId} {e.Action} at={e.RegisteredAt:O} due={e.DueTime}"));
+                    var states = string.Join("; ", time.TimerStates.Select(e => $"{e.Key}={e.Value}"));
+                    throw new TimeoutException(
+                        $"Boundary phase did not complete at {boundary:O}; now={time.GetUtcNow():O}; " +
+                        $"tokenCancelled={token.IsCancellationRequested}; expectedTimer={timer.TimerId}; " +
+                        $"timerStates=[{states}]; timerEvents=[{events}]");
+                }
 
-            // A timer can be registered or rearmed by a continuation after the first advance.
-            // Drive due callbacks again without changing the asserted virtual instant.
-            time.Advance(TimeSpan.Zero);
-            if (time.GetUtcNow() != boundary)
-                throw new InvalidOperationException("held-completion-keeps-time-at-boundary");
-            if (!phase.IsCompleted)
-                await Task.WhenAny(phase, Task.Delay(1));
+                // A timer can be registered or rearmed by a continuation after the first advance.
+                // Drive due callbacks again without changing the asserted virtual instant.
+                time.Advance(TimeSpan.Zero);
+                if (time.GetUtcNow() != boundary)
+                    throw new InvalidOperationException("held-completion-keeps-time-at-boundary");
+                if (!phase.IsCompleted)
+                    await Task.WhenAny(phase, Task.Delay(1));
+            }
+            catch (Exception ex)
+            {
+                error = ex;
+                throw;
+            }
+            finally
+            {
+                observer?.Invoke(new BoundaryStep(time.GetUtcNow(), boundary, pending, error));
+            }
         }
 
         await phase;

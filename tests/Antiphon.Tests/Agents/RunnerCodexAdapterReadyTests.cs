@@ -48,14 +48,6 @@ public class RunnerCodexAdapterReadyTests
         var client = new ScriptedCodexRunnerClient
         {
             StartupScreens = [CodexStartupFixtures.P3, CodexStartupFixtures.P3, CodexStartupFixtures.P3],
-            BeforeSnapshotAsync = async (attempt, ct) =>
-            {
-                if (attempt == 2)
-                {
-                    secondEntered.TrySetResult();
-                    await releaseSecond.Task.WaitAsync(ct);
-                }
-            },
         };
         var adapter = NewAdapter(client, settleMs: 50, maxMs: 5_000, timeProvider: time);
         using var cancel = new CancellationTokenSource();
@@ -75,6 +67,14 @@ public class RunnerCodexAdapterReadyTests
             poll.Deadline.ShouldBe(time.GetUtcNow() + TimeSpan.FromMilliseconds(50));
             client.SnapshotCompletions.ShouldBe(1, "snapshot-one-before-first-poll");
 
+            client.BeforeSnapshotAsync = async (attempt, ct) =>
+            {
+                if (attempt == 2)
+                {
+                    secondEntered.TrySetResult();
+                    await releaseSecond.Task.WaitAsync(ct);
+                }
+            };
             time.AdvanceTo(poll.Deadline);
             var nextTimer = time.WaitForTimerAsync(e => e.DueTime > TimeSpan.Zero,
                 poll.Sequence, cancel.Token);
