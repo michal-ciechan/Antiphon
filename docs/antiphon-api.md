@@ -896,6 +896,8 @@ POST /sessions            RunnerLaunchRequest
 GET  /sessions/{id}/buffer | /snapshot | /transcript
 POST /sessions/{id}/input | /clear-live-buffer | /resize | /kill
 POST /sessions/kill-all   scorched earth
+POST /sessions/{id}/absence-evidence/prepare   signed; records a fresh, never-used id (CARD-1153)
+POST /sessions/{id}/absence-evidence           signed never-created certificate (CARD-1153)
 GET  /events              SSE
 ```
 
@@ -907,6 +909,25 @@ false for modern/Unix, null/absent for an older peer. `ptyBackendRequested` pres
 `ptyBackendFellBack` distinguishes a missing-pair fallback from an explicit legacy request.
 HTTP and phone-home project the same runtime decision. These observations are not delivery
 receipts or a new admission gate. Windows defaults to modern; Unix retains Porta.
+
+**Runner absence evidence (CARD-1153).**
+POST /sessions/{id}/absence-evidence/prepare and POST /sessions/{id}/absence-evidence are runner routes without /api; ordinary session and transcript GETs still return 404 for a never-created ID.
+Pinned by `RunnerAbsenceEvidenceContractTests.C1153_Real_unknown_transcript_has_a_separate_certificate`
+and `RunnerAbsenceEvidenceContractTests.C1153_Http_authentication_covers_request_and_response`.
+The server prepares only the session id a cold dispatch just allocated, and asks for a certificate
+only on the rare due absent-launch decision. Both bodies are version 1 with the session id,
+normalized accepted generation, runner store, a fresh 32-byte nonce and a signed issue time; the
+request and the response are HMAC-SHA256 signed with the key in
+[agent-credentials.md](agent-credentials.md#runner-absence-evidence-key-card-1153), and every
+answer is `Cache-Control: no-store`. A 200 certificate (`outcome: never_created`) carries the
+session, generation, store, runtime epoch, request nonce, `complete` and `identityClosed` true
+and four presence fields false, and closes that id: a later start or attach is refused with
+`session_identity_closed` (phone-home `phone_home_session_identity_closed`). An id that was never
+prepared answers 404 without a certificate; a known, attempted, mismatched, prior-epoch or replayed
+request answers 409; a malformed one 400; an unauthenticated or stale one 401; unavailable
+inspection 503. The runner advertises `sessionAbsenceEvidenceV1` only when its evidence store is
+ready and, for HTTP, its key is loaded. Phone-home carries the same operations as
+`PrepareAbsenceEvidence` (38) and `CertifyAbsence` (39) on the runner's authenticated connection.
 
 **CARD-0478 runtime checkpoint, not a complete deployed feature:** this branch adds
 `verificationCustodyV1`, `verificationCustodyBackend` and stable `runnerStoreId` to

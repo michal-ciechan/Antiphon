@@ -467,6 +467,55 @@ the transcript mutation gate. Activation requires both server and runner support
   `ListLiveSessions()` and skip it. A runner that never returns leaves its sessions unknown; an
   operator kill or the runner's return settles them.
 
+- **A never-created session is held only on the runner's certificate (CARD-1153).** A Starting
+  session its runner does not list is marked Failed with the runner-unknown reason after
+  `SessionReconciliation:StartingGraceMs` (90 s); `Delegation:DeadSessionFailGraceMinutes` (3 min)
+  later the dead-session reconciler decides its Dispatched task. CARD-1149 holds that task Blocked
+  (`dispatch_launch_absent`, original input kept, zero automatic relaunch) only when the owning
+  runner's inventory positively lacks the session, the database whitelist (`AbsentLaunchPolicy`)
+  passes and the native history is proven empty. Unreachable or unknown owning inventory, or a
+  Working task or transcript, still leaves the task untouched before any certificate request;
+  every other shape keeps the existing failure.
+  CARD-1153 accepts native-empty evidence only from a fresh, authenticated never-created certificate for the same session, generation and owning runner store; a 404 or an empty transcript is not that certificate.
+  Pinned by `RunnerAbsenceEvidenceContractTests.C1153_Real_unknown_transcript_has_a_separate_certificate`,
+  `SessionRunnerAbsenceEvidenceClientTests.C1153_Rejects_noncertificate_wire_shapes`,
+  `DelegationDispatchRecoveryBoundaryTests.C1153_Real_client_certificate_holds_original_input`,
+  `DelegationDispatchRecoveryBoundaryTests.C1153_Real_client_bad_evidence_keeps_failure` and
+  `DelegationDispatchRecoveryBoundaryTests.C1153_Final_certificate_is_revalidated_under_lock`.
+  A fresh cold dispatch sends one prepare for the session id it just allocated, after the claim commits and before either launch sink; warm reuse, boot-wedge relaunch and interrupted-launch resume never prepare, and a failed, unsupported or slow prepare never gates the launch.
+  Pinned by `DelegationDispatchRecoveryBoundaryTests.C1153_Only_new_cold_dispatch_prepares_evidence`.
+  A released-seat answer resume is excluded the same way (`ReleasedSeatAnswerId` is set); that
+  exclusion is in the code, but no test pins it yet. The certificate is asked for only after the
+  database pre-screen passes, once per decision, with a fresh nonce, one transport attempt and one
+  five-second deadline that also covers capability discovery.
+  The hold re-checks the first read's certificate under the queue gate and task-row lock: the same session, generation and store as the locked row, a monotonic age of 0 to 5 s since before the request, and the wall deadline taken then; anything else withholds, and the next due pass asks the runner again.
+  Pinned by `DelegationDispatchRecoveryBoundaryTests.C1153_Final_certificate_is_revalidated_under_lock`
+  and `DelegationDispatchRecoveryBoundaryTests.C1153_Certificate_age_is_monotonic`.
+  A wall clock that jumps forward past the deadline therefore withholds even with a fresh
+  monotonic age, and a wall rollback cannot extend the five-second life.
+  Certification closes an unused session identity against delayed launch and never stops a process; old IDs and preparation from an earlier runner epoch remain unknown.
+  Pinned by `RunnerAbsenceEvidenceTests.C1153_Restart_or_store_change_never_renews_proof`,
+  `RunnerAbsenceEvidenceRuntimeTests.C1153_Creation_consumes_proof_before_effects`,
+  `RunnerAbsenceEvidenceRuntimeTests.C1153_Certificate_and_launch_race_is_serialized` and
+  `RunnerAbsenceEvidenceRuntimeTests.C1153_Closed_identity_refuses_delayed_creation`.
+  The runner writes an Attempted marker under the launch gate before the first provider effect,
+  refuses a later start or attach of a closed id with `session_identity_closed` (phone-home
+  `phone_home_session_identity_closed`) for every generation, and refuses creation when its
+  evidence store is unreadable or damaged. A task whose runner restarted between prepare and the
+  due decision keeps the existing failure. The runner admits each evidence request once and only
+  when its signed issue time is within 30 s of the runner's clock, so the server and runner clocks
+  must agree within 30 s; a request issued within 30 s of a runner start is refused.
+  CARD-1153 adds no automatic relaunch or input-wait release deadline; parking remains disabled by default (CARD-1083), and CARD-1151 owns the boot-stall behavior, which neither stops nor retries a session.
+  Pinned by `DelegationDispatchRecoveryBoundaryTests.C1153_Real_client_certificate_holds_original_input`,
+  `DelegationDispatchRecoveryBoundaryTests.C1153_Working_or_unknown_inventory_withholds` and
+  `BootStallWorkingTickCharacterizationTests.Aged_prompt_only_Working_tick_detects_without_stopping_or_requeueing`.
+  Activation is runners first, then AppHost; a server whose runner does not advertise `sessionAbsenceEvidenceV1` sends no prepare and keeps the existing failure, and health alone is not activation.
+  Pinned by `DelegationDispatchRecoveryBoundaryTests.C1153_Only_new_cold_dispatch_prepares_evidence`
+  and `DelegationDispatchRecoveryBoundaryTests.C1153_Real_client_bad_evidence_keeps_failure`.
+  Check the capability on the runner's `GET /capabilities` and on `GET /api/session-runners`.
+  Routes: [ops-http.md](ops-http.md#two-processes-two-prefixes); key custody:
+  [agent-credentials.md](agent-credentials.md#runner-absence-evidence-key-card-1153).
+
 - **A transport loss during a remote launch re-attaches after the ack and re-queues before it,
   bounded (CARD-0679 D-8; lands with R5).** Inside the launch, a transport-class loss before the
   Launch ack re-sends the Launch with the same accepted generation (the runner answers a

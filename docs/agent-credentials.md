@@ -218,7 +218,29 @@ Runner defaults (`/api/runner-defaults`) store a runner id, a reason, and a revi
 store provider secrets, executable paths, or phone-home shared secrets. `Delegation:DefaultRunnerId`
 is an import input only: after revision 1 exists, placement does not read it again.
 
-### server2 runner credentials (CARD-0604)
+### Runner absence-evidence key (CARD-1153)
+
+Direct HTTP absence evidence requires its dedicated key-file configuration and signed request/response; missing authentication disables only absence certification. Phone-home uses its authenticated owning connection.
+Pinned by `RunnerAbsenceEvidenceContractTests.C1153_Http_authentication_covers_request_and_response`,
+`RunnerAbsenceEvidencePhoneHomeTests.C1153_Authenticated_operation_preserves_binding`,
+`SessionRunnerAbsenceEvidenceClientTests.C1153_Rejects_noncertificate_wire_shapes` and
+`SessionRunnerAbsenceEvidenceClientTests.C1153_Freshness_and_cancellation_are_bounded`.
+
+- The setting is `SessionRunner:AbsenceEvidence:KeyPath`, on the server and on each direct-HTTP runner.
+  Both name a file with the same content: base64 of at least 32 random bytes. The runner and the
+  server read the file but do not check its permissions; the operator creates it owner-readable
+  under the same custody as the operator token, outside the repository.
+- The key is not a task or operator token, is never passed in argv or the environment, is never
+  logged (the runner logs only a derived key id), and is not in the capabilities DTO or a launched
+  provider's environment.
+- Requests and responses are HMAC-SHA256 over a versioned, domain-separated encoding; the response
+  MAC covers every evidence field and the request nonce. A request header alone would not
+  authenticate a certificate.
+- Missing, unreadable or short key: the runner does not advertise `sessionAbsenceEvidenceV1` over
+  HTTP and the server sends neither prepare nor certify, so launches are unchanged and an absent
+  launch keeps the existing failure. Phone-home needs no extra key.
+- Provisioning or rotating the live key is an operator step: write the file on both sides, then
+  restart the runner first and the AppHost second. No delegate or stage creates, prints or rotates it.
 
 Runner credentials never enter Antiphon's stores, the image or any evidence directory.
 The generated deploy key and phone-home secret stay on server2; the GitHub token is streamed
