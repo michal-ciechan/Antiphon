@@ -30,18 +30,48 @@ public partial class DelegationDispatchRecoveryBoundaryTests
     // The investigation's 8 is not this graph; the plan's exact 8 has to be
     // revised before Code treats it as acceptance for this fixture.
     [Arguments("inside-grace-absent-scan", 4)]
+    [Arguments("first-dead-session-observation", 18)]
+    // Measured 42. The plan's 45 was the pre-measure figure; the design ceiling is 55.
+    [Arguments("initial-refused-dispatch", 42)]
+    // Measured 5. The plan's 6 counted a commit or alert this interceptor does not see.
+    // Live select, FOR UPDATE, reload, the close UPDATE, then the Agents select. No AgentTasks query.
+    [Arguments("runner-unknown-close-scan", 5)]
+    // No-parent 19 and with-parent 21 are asserted in the measure. Ceilings were 40 and 48.
+    [Arguments("due-absent-hold", 19)]
+    // Measured 16, under the design ceiling of 18. The blocked task is not a delivery suspect.
+    [Arguments("repeated-blocked-tick", 16)]
+    // Measured 65. Reuses the pending row (no second insert). Ceiling was 85.
+    [Arguments("running-recovery-existing-brief", 65)]
+    // Measured 60, including the one brief insert and the awaited send. Ceiling was 95.
+    [Arguments("running-recovery-missing-brief", 60)]
+    // Measured 6. The delivered session drops out of pass 1c: selects only, no write.
+    [Arguments("repeated-discovery-after-delivery", 6)]
+    // Measured 12. One Blocked event; under the design ceiling of 65.
+    [Arguments("running-recovery-readiness-hold", 12)]
+    // Measured 60, including the awaited repair insert. Ceiling was 100.
+    [Arguments("watchdog-first-recovery", 60)]
+    // Two scans are equal. Measured 5 on the second scan. Delta 0.
+    [Arguments("empty-healthy-scan", 5)]
     public async Task C1149_C1150_Statement_budgets(string action, int expected)
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var counter = new FullCommandCounter();
+        if (action == "due-absent-hold")
+        {
+            expected.ShouldBe(19);
+            await MeasureDueAbsentHoldAsync(counter);
+            return;
+        }
+
         int total;
         string roster;
         if (action == "inside-grace-absent-scan")
             (total, roster) = await MeasureScanAsync(schema.ConnectionString, counter);
-        else
+        else if (action is "held-dispatched-tick" or "working-live-tick" or "first-dead-session-observation")
             (total, roster) = await MeasureTickAsync(schema.ConnectionString, counter, action);
+        else
+            (total, roster) = await MeasureAddedBudgetAsync(schema.ConnectionString, counter, action);
 
-        Console.WriteLine($"C1149-BUDGET {action} total={total}");
         total.ShouldBe(expected, $"action {action}{Environment.NewLine}{roster}");
     }
 
@@ -53,6 +83,7 @@ public partial class DelegationDispatchRecoveryBoundaryTests
         var agentId = Guid.NewGuid();
         var taskId = Guid.NewGuid();
         var working = action == "working-live-tick";
+        var observeDead = action == "first-dead-session-observation";
         var cwd = Path.Combine(Path.GetTempPath(), "antiphon-c1149-budget", sessionId.ToString("N"));
         Directory.CreateDirectory(cwd);
         await using (var seed = new AppDbContext(TestDbFixture.CreateDbContextOptions(connection)))
@@ -78,13 +109,17 @@ public partial class DelegationDispatchRecoveryBoundaryTests
                 Id = sessionId,
                 DefinitionName = "budget",
                 AgentKind = AgentKind.ClaudeCode,
-                Status = working ? SessionStatus.Running : SessionStatus.Starting,
+                Status = observeDead
+                    ? SessionStatus.Failed
+                    : working ? SessionStatus.Running : SessionStatus.Starting,
                 Cwd = cwd,
                 Cols = 120,
                 Rows = 30,
                 CreatedAt = now,
                 StartedAt = now,
                 LastSeenAt = now,
+                EndedAt = observeDead ? now : null,
+                FailureReason = observeDead ? SessionReconciliationService.RunnerUnknownSessionReason : null,
             });
             seed.AgentTasks.Add(new AgentTask
             {
@@ -186,7 +221,9 @@ public partial class DelegationDispatchRecoveryBoundaryTests
         task.Attempt.ShouldBe(1);
         task.FailureCode.ShouldBeNull();
         (await verify.AgentSessions.SingleAsync(s => s.Id == sessionId)).Status
-            .ShouldBe(working ? SessionStatus.Running : SessionStatus.Starting);
+            .ShouldBe(observeDead
+                ? SessionStatus.Failed
+                : working ? SessionStatus.Running : SessionStatus.Starting);
         return (total, roster);
     }
 

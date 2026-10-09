@@ -2159,6 +2159,31 @@ public partial class AgentTaskDeliveryWatchdogTests
             await using var verify = CreateContext();
             (await verify.AgentTasks.SingleAsync(t => t.Id == task.Id))
                 .Status.ShouldBe(AgentTaskStatus.Failed);
+            // The runner still lists the session, so the cleanup gate withholds the stop.
+            stopper.Killed.ShouldBeEmpty();
+        }
+        finally
+        {
+            await RetireSeededTaskAsync(task);
+        }
+    }
+
+    [Test]
+    public async Task Reconciliation_disabled_kills_a_Starting_session_the_runner_does_not_list()
+    {
+        var task = await SeedDispatchedTaskAsync(dispatchedMinutesAgo: 11, sessionStatus: SessionStatus.Starting);
+        try
+        {
+            await SeedBriefAsync(task.AgentSessionId!.Value, task.Id, QueuedMessageStatus.Pending);
+            var (harness, stopper) = CreateHarness(
+                runnerClient: new EmptyListRunnerClient(),
+                reconciliation: new SessionReconciliationSettings { Enabled = false, LaunchResumeEnabled = true });
+
+            await harness.FailNeverStartedAsync(CancellationToken.None);
+
+            await using var verify = CreateContext();
+            (await verify.AgentTasks.SingleAsync(t => t.Id == task.Id))
+                .Status.ShouldBe(AgentTaskStatus.Failed);
             stopper.Killed.ShouldContain(task.AgentSessionId.Value);
         }
         finally
@@ -3111,6 +3136,37 @@ public partial class AgentTaskDeliveryWatchdogTests
         {
             lock (sink)
                 sink.Add($"{formatter(state, exception)}");
+        }
+    }
+
+    private sealed class EmptyListRunnerClient : ISessionRunnerClient
+    {
+        public Task<IReadOnlyList<SessionRunnerSessionDto>> ListAsync(CancellationToken ct) =>
+            Task.FromResult<IReadOnlyList<SessionRunnerSessionDto>>([]);
+
+        public Task<SessionRunnerTranscriptDto> GetTranscriptAsync(Guid id, CancellationToken ct) =>
+            Task.FromResult(new SessionRunnerTranscriptDto(id, [], 0));
+
+        public Task<SessionRunnerSessionDto> StartAsync(Guid id, AgentLaunchSpec spec, CancellationToken ct) =>
+            throw new NotSupportedException();
+        public Task<SessionRunnerSessionDto> GetAsync(Guid id, CancellationToken ct) =>
+            throw new NotSupportedException();
+        public Task<SessionRunnerBufferDto> GetBufferAsync(Guid id, CancellationToken ct) =>
+            throw new NotSupportedException();
+        public Task<SessionRunnerSnapshotDto> GetSnapshotAsync(Guid id, CancellationToken ct) =>
+            throw new NotSupportedException();
+        public Task SendInputAsync(Guid id, string input, CancellationToken ct) =>
+            throw new NotSupportedException();
+        public Task ClearLiveBufferAsync(Guid id, CancellationToken ct) =>
+            throw new NotSupportedException();
+        public Task ResizeAsync(Guid id, int cols, int rows, CancellationToken ct) =>
+            throw new NotSupportedException();
+        public Task<SessionRunnerSessionDto> KillAsync(Guid id, CancellationToken ct) =>
+            throw new NotSupportedException();
+        public async IAsyncEnumerable<SessionRunnerEvent> StreamEventsAsync(
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
+        {
+            yield break;
         }
     }
 
