@@ -23,7 +23,7 @@ public sealed class AgentTaskLandReceiptWatermarkTests
     private const long Floor = LandReceiptScanHarness.Floor;
 
     private sealed record Pass(int Commands, int ReceiptSelects, int ReceiptRows, IReadOnlyList<long?> Floors,
-        IReadOnlyList<Guid?> Sessions, int Pulls, IReadOnlyList<string> Sql, string Roster);
+        IReadOnlyList<Guid?> Sessions, int Pulls, IReadOnlyList<string> Sql, string Roster, int SessionProjections);
 
     private static async Task<Pass> PassAsync(LandReceiptScanHarness h, Guid noteId)
     {
@@ -31,7 +31,8 @@ public sealed class AgentTaskLandReceiptWatermarkTests
         await h.Service.ReconcileAsync(noteId, CancellationToken.None);
         var scans = h.Receipts.Scans;
         return new(h.Commands.Total, scans.Count, scans.Sum(s => s.Rows), scans.Select(s => s.Floor).ToList(),
-            scans.Select(s => s.Session).ToList(), h.Runner.TotalPulls, scans.Select(s => s.Sql).ToList(), h.Commands.Roster());
+            scans.Select(s => s.Session).ToList(), h.Runner.TotalPulls, scans.Select(s => s.Sql).ToList(), h.Commands.Roster(),
+            h.SessionProjections);
     }
 
     private static async Task<IReadOnlyList<Pass>> PassesAsync(LandReceiptScanHarness h, Guid noteId, int count)
@@ -66,10 +67,10 @@ public sealed class AgentTaskLandReceiptWatermarkTests
     }
 
     private static async Task ShouldBeConfirmedAtAsync(LandReceiptScanHarness h, AgentTaskLandNotification note, long expected,
-        long floor = Floor, bool? legacy = null, LandNotificationKind? kind = null)
+        long floor = Floor, bool? legacy = null, LandNotificationKind? kind = null, Guid? session = null)
     {
         var saved = await h.NoteAsync(note.Id);
-        var oracle = await h.InMemoryFirstReceiptAsync(saved.ParentSessionId!.Value, floor, legacy ?? saved.IsLegacy, kind ?? saved.Kind, saved.Body);
+        var oracle = await h.InMemoryFirstReceiptAsync(session ?? saved.ParentSessionId!.Value, floor, legacy ?? saved.IsLegacy, kind ?? saved.Kind, saved.Body);
         oracle.ShouldBe(expected, "the in-memory CARD-0641 rule over the committed rows");
         saved.State.ShouldBe(LandNotificationState.Confirmed);
         saved.ConfirmedAt.ShouldNotBeNull();
@@ -432,71 +433,109 @@ public sealed class AgentTaskLandReceiptWatermarkTests
         ShouldNotHaveTyped(h);
     }
 
-    // V-10 ------------------------------------------------------------------------------------------
+    // V-10, rewritten by CARD-1157 D-5 -------------------------------------------------------------
 
+    /// <summary>
+    /// CARD-1157 D-5. B holds the complete body at 15 as a runtime-ingested <c>UserPrompt</c>. When the
+    /// keyed row was sent to B and D-2 holds, the scan reads B and confirms from that prompt. Equal ids
+    /// or a row still on the parent scan the parent as CARD-1121 did. The arms replace the CARD-1121
+    /// <c>cached-stays-open</c>, <c>parent-rehomed-to-row-destination</c> and <c>row-destination-changed</c> arms.
+    /// </summary>
     [Test]
     [Timeout(180_000)]
-    [Arguments("cached-stays-open")]
-    [Arguments("parent-rehomed-to-row-destination")]
-    [Arguments("row-destination-changed")]
-    public async Task C1121_ForeignDestinationNoteStaysOpenExactlyAsToday(string arm, CancellationToken ct)
+    [Arguments("row-destination-confirms")]
+    [Arguments("parent-equals-row-destination")]
+    [Arguments("row-equals-parent-miss")]
+    public async Task C1121_ForeignDestinationFollowsKeyedRow(string arm, CancellationToken ct)
     {
         await using var h = await LandReceiptScanHarness.CreateAsync();
         var parent = h.SessionId;
         var (note, row, _) = await ArrangeAsync(h);
-        // CARD-1157 shape: the keyed row was delivered to B, whose transcript holds the complete body.
-        var other = await h.AddStoppedSessionAsync();
+        // B's generation is one hour before A's, so a stamp built from A's StartedAt cannot vouch for B.
+        var parentStartedAt = await h.StartedAtAsync(parent);
+        var other = await h.AddSessionAsync(SessionStatus.Stopped, parentStartedAt.AddHours(-1));
         var atOther = (await h.IngestEventsAsync(other, [h.Event(other, Floor + 5, TranscriptKinds.UserPrompt, note.Body)])).Single();
-        atOther.ShouldBeGreaterThan(Floor);
-        await h.UpdateRowAsync(row.Id, r => r.AgentSessionId = other);
+        atOther.ShouldBe(Floor + 5);
+        if (arm != "row-equals-parent-miss")
+            row = await h.MarkSentAsync(note, destination: other);
+        if (arm == "parent-equals-row-destination")
+            await h.UpdateNoteAsync(note.Id, n => n.ParentSessionId = other);
+        row.AgentSessionId.ShouldBe(arm == "row-equals-parent-miss" ? parent : other);
+        await h.AssertCoherentAsync(parent);
+        await h.AssertCoherentAsync(other);
+        h.Runner.Transcript.ShouldBe(Mode.NotFound);
 
-        var cached = await PassesAsync(h, note.Id, 3);
-        cached.Select(p => p.ReceiptSelects).ShouldBe([1, 0, 0]);
-        cached[0].Sessions.ShouldBe([parent], "the scan target stays the note's parent session");
-        cached[0].ReceiptRows.ShouldBe(48);
-        await ShouldStayOpenAsync(h, note);
-        h.Cache!.GetMetrics().Publishes.ShouldBe(1);
+        var passes = await PassesAsync(h, note.Id, 3);
 
+        var rosters = string.Join("\n----\n", passes.Select(p => p.Roster));
+        var metrics = h.Cache!.GetMetrics();
         switch (arm)
         {
-            case "cached-stays-open":
+            case "row-destination-confirms":
             {
-                // The same fixture reconciled with no cache registered: every outcome column is today's.
+                passes[0].Sessions.ShouldBe([other], "the scan follows the keyed row to B");
+                passes[0].Floors.ShouldBe([Floor]);
+                passes.Select(p => p.Commands).ShouldBe([7, 2, 2], rosters);
+                passes.Select(p => p.ReceiptSelects).ShouldBe([1, 0, 0]);
+                passes.Select(p => p.SessionProjections).ShouldBe([2, 0, 0], "the parent projection and the D-3 projection of B");
+                await ShouldBeConfirmedAtAsync(h, note, atOther, session: other);
+                metrics.Publishes.ShouldBe(0);
+                metrics.Proofs.ShouldBe(0);
+                // A second note arranged the same way, reconciled with no cache registered: the
+                // cache is not what confirms.
                 await h.SetStatusAsync(parent, SessionStatus.Running);
                 var control = await h.SeedLinkedNoteAsync();
                 await h.SetStatusAsync(parent, SessionStatus.Stopped);
-                var controlRow = await h.MarkSentAsync(control, r => r.AgentSessionId = other);
+                var controlDestination = await h.AddSessionAsync(SessionStatus.Stopped, parentStartedAt.AddHours(-1));
+                (await h.IngestEventsAsync(controlDestination,
+                    [h.Event(controlDestination, Floor + 5, TranscriptKinds.UserPrompt, control.Body)])).Single().ShouldBe(atOther);
+                var controlRow = await h.MarkSentAsync(control, destination: controlDestination);
                 await using var db = h.Fixture();
                 var today = new AgentTaskLandNotificationService(db, h.Bridge.Queue, new CompletionNoteFlushQueue(), h.Runtime, TimeProvider.System);
                 for (var i = 0; i < 3; i++) await today.ReconcileAsync(control.Id, ct);
                 var a = await h.NoteAsync(note.Id);
                 var b = await h.NoteAsync(control.Id);
-                (a.State, a.ConfirmedAt, a.ConfirmingPromptSequence, a.LastErrorCode, a.EnqueueAttempts, a.ParentSessionId, a.QueueMessageId is null)
-                    .ShouldBe((b.State, b.ConfirmedAt, b.ConfirmingPromptSequence, b.LastErrorCode, b.EnqueueAttempts, b.ParentSessionId, b.QueueMessageId is null));
-                (await h.RowAsync(controlRow.Id)).AgentSessionId.ShouldBe(other);
+                (a.State, a.ConfirmingPromptSequence, a.LastErrorCode, a.EnqueueAttempts, a.ParentSessionId, a.QueueMessageId is null)
+                    .ShouldBe((b.State, b.ConfirmingPromptSequence, b.LastErrorCode, b.EnqueueAttempts, b.ParentSessionId, b.QueueMessageId is null));
+                b.ConfirmedAt.ShouldNotBeNull();
+                (await h.RowAsync(controlRow.Id)).AgentSessionId.ShouldBe(controlDestination);
                 break;
             }
-            case "parent-rehomed-to-row-destination":
+            case "parent-equals-row-destination":
             {
-                await h.UpdateNoteAsync(note.Id, n => n.ParentSessionId = other);
-                var next = await PassAsync(h, note.Id);
-                next.ReceiptSelects.ShouldBe(1);
-                next.Sessions.ShouldBe([other]);
+                // D-2 is false on equal ids: the parent scan is already B, with no second SELECT.
+                passes[0].Sessions.ShouldBe([other]);
+                passes[0].Floors.ShouldBe([Floor]);
+                passes.Select(p => p.Commands).ShouldBe([6, 2, 2], rosters);
+                passes.Select(p => p.ReceiptSelects).ShouldBe([1, 0, 0]);
+                passes.Select(p => p.SessionProjections).ShouldBe([1, 0, 0]);
                 await ShouldBeConfirmedAtAsync(h, note, atOther);
                 break;
             }
-            case "row-destination-changed":
+            case "row-equals-parent-miss":
             {
-                await h.UpdateRowAsync(row.Id, r => r.AgentSessionId = parent);
-                var next = await PassAsync(h, note.Id);
-                next.ReceiptSelects.ShouldBe(1);
-                next.Sessions.ShouldBe([parent]);
-                next.ReceiptRows.ShouldBe(48);
+                // The row stayed on A: today's parent scan and parent proof, although B holds the body.
+                passes.Select(p => p.Commands).ShouldBe([6, 5, 5], rosters);
+                passes.Select(p => p.ReceiptSelects).ShouldBe([1, 0, 0]);
+                passes.Select(p => p.SessionProjections).ShouldBe([1, 1, 1]);
+                passes[0].ReceiptRows.ShouldBe(48);
+                passes[0].Sessions.ShouldBe([parent]);
                 await ShouldStayOpenAsync(h, note);
-                h.Cache!.GetMetrics().Publishes.ShouldBe(2);
+                metrics.Publishes.ShouldBe(1);
+                (await h.InMemoryFirstReceiptAsync(other, Floor, false, LandNotificationKind.Outcome, note.Body))
+                    .ShouldBe(atOther, "a receipt exists on B and is not this row's delivery");
                 break;
             }
+            default:
+                throw new ArgumentOutOfRangeException(nameof(arm), arm, null);
         }
+        var after = await h.RowAsync(row.Id);
+        after.Status.ShouldBe(row.Status);
+        after.SentAt.ShouldBe(row.SentAt);
+        after.DeliveryAttempts.ShouldBe(row.DeliveryAttempts);
+        after.AgentSessionId.ShouldBe(row.AgentSessionId);
+        (await h.StatusAsync(parent)).ShouldBe(SessionStatus.Stopped);
+        (await h.StatusAsync(other)).ShouldBe(SessionStatus.Stopped);
         ShouldNotHaveTyped(h);
     }
 

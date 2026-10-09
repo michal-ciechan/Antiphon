@@ -7,9 +7,9 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 /// <summary>
-/// CARD-1157 policy lane (no database). Every row drives the production
+/// CARD-1157 policy lane (no database). V-1 drives the production
 /// <see cref="ReceiptScanTarget.FollowsQueueDestination"/> with exactly one member changed from the
-/// positive fixture.
+/// positive fixture. V-4 reads the runtime invariant; V-5 drives the production cache.
 /// </summary>
 [Category("Unit")]
 public sealed class ReceiptScanDestinationTests
@@ -108,6 +108,120 @@ public sealed class ReceiptScanDestinationTests
         }
 
         ReceiptScanTarget.FollowsQueueDestination(note, row, expectedText).ShouldBe(expected, flip);
+    }
+
+    /// <summary>
+    /// V-4. The CARD-1121 receipt paragraph names the scanned session (CARD-1157 D-8). This pins the
+    /// wording only; <c>C1121_ForeignDestinationFollowsKeyedRow</c> and V-5 pin the behavior.
+    /// </summary>
+    [Test]
+    public void C1157_RuntimeInvariantNamesTheScannedSession()
+    {
+        var text = Collapse(ReadRepositoryFile("docs/session-runtime-invariants.md"));
+
+        text.ShouldContain(Collapse("The scanned session is the keyed row's AgentSessionId when "
+            + "ReceiptScanTarget.FollowsQueueDestination is true and that session row exists; otherwise it is "
+            + "the note's ParentSessionId (CARD-1157)."));
+        text.ShouldContain("the scanned session's `StartedAt`");
+        text.ShouldContain("a Stopped or Failed scanned session");
+        text.ShouldNotContain("the destination's `StartedAt`");
+        text.ShouldNotContain("a Stopped or Failed destination");
+    }
+
+    /// <summary>
+    /// V-5. A negative-scan proof binds the session the scan read. The context starts on the parent;
+    /// the reconciler rebinds it to the row destination when it scans there. Every row drives the
+    /// production <see cref="LandReceiptScanCache.TryBuildContext"/>, <see cref="LandReceiptScanCache.StateStamp.TryCreate"/>,
+    /// <see cref="LandReceiptScanCache.Publish"/> and <see cref="LandReceiptScanCache.TryReuse"/>.
+    /// </summary>
+    [Test]
+    [Arguments("build-context-names-the-parent")]
+    [Arguments("positive-destination-scan")]
+    [Arguments("parent-stamp-cannot-vouch-for-destination-scan")]
+    [Arguments("proof-context-scan-session-is-bound")]
+    public void C1157_ProofBindsTheScannedSession(string arm)
+    {
+        var (note, row) = Positive();
+        LandReceiptScanCache.TryBuildContext(note, row, SessionStatus.Stopped, Body, out var built, out var refusal)
+            .ShouldBeTrue(refusal);
+        var context = built!;
+        context.QueueDestination.ShouldBe(DestinationB, "A-3 binds an unequal row destination");
+        if (arm == "build-context-names-the-parent")
+        {
+            context.ScanSessionId.ShouldBe(ParentA);
+            return;
+        }
+
+        var destinationScan = context with { ScanSessionId = DestinationB };
+        var parentStamp = Stamp(ParentA, ParentStartedAt);
+        var destinationStamp = Stamp(DestinationB, DestinationStartedAt);
+        var (publishContext, publishStamp, reuseStamp) = arm switch
+        {
+            "positive-destination-scan" => (destinationScan, destinationStamp, destinationStamp),
+            "parent-stamp-cannot-vouch-for-destination-scan" => (destinationScan, parentStamp, parentStamp),
+            // An unsafe publication only a mutated reconciler could make: the stamp and identity checks
+            // both pass at reuse, so the context member alone refuses.
+            "proof-context-scan-session-is-bound" => (context, destinationStamp, destinationStamp),
+            _ => throw new ArgumentOutOfRangeException(nameof(arm), arm, null),
+        };
+        var cache = new LandReceiptScanCache(new FixedClock());
+        cache.Publish(publishContext, publishStamp, publishStamp, matchObserved: false, saveCompleted: true,
+            cache.TryGetTimestamp()).ShouldBeTrue();
+
+        var reused = cache.TryReuse(destinationScan, reuseStamp, out var reuseRefusal);
+
+        switch (arm)
+        {
+            case "positive-destination-scan":
+                reused.ShouldBeTrue(reuseRefusal);
+                break;
+            case "parent-stamp-cannot-vouch-for-destination-scan":
+                reused.ShouldBeFalse();
+                reuseRefusal.ShouldBe("identity:ScanSession");
+                break;
+            case "proof-context-scan-session-is-bound":
+                reused.ShouldBeFalse();
+                reuseRefusal.ShouldBe("context:ScanSessionId");
+                break;
+        }
+    }
+
+    private static readonly DateTime ParentStartedAt = new(2026, 10, 9, 9, 0, 0, DateTimeKind.Utc);
+    private static readonly DateTime DestinationStartedAt = ParentStartedAt.AddHours(-1);
+
+    // A Ready committed state of one session whose accepted generation is that session's StartedAt.
+    private static LandReceiptScanCache.StateStamp Stamp(Guid session, DateTime startedAt)
+    {
+        var snapshot = new SessionStateSnapshot(session)
+        {
+            ServerEpoch = Guid.Parse("e1157000-0000-0000-0000-0000000000e0"), Revision = 7, ResetEpoch = 0,
+            Readiness = SessionStateReadiness.Ready, AcceptedGeneration = startedAt, Count = 49, LastSequence = 58,
+        };
+        LandReceiptScanCache.StateStamp.TryCreate(LandReceiptScanCache.Observation.Known(snapshot), startedAt,
+            out var stamp, out var refusal).ShouldBeTrue(refusal);
+        return stamp!;
+    }
+
+    private static string Collapse(string text) =>
+        string.Join(' ', text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+
+    private static string ReadRepositoryFile(string relative)
+    {
+        var directory = AppContext.BaseDirectory;
+        while (!string.IsNullOrEmpty(directory))
+        {
+            if (File.Exists(Path.Combine(directory, "docs", "session-runtime-invariants.md")))
+                return File.ReadAllText(Path.Combine(directory, relative));
+            directory = Path.GetDirectoryName(directory)!;
+        }
+        throw new DirectoryNotFoundException("Repository root was not found.");
+    }
+
+    /// <summary>A cache clock that never moves: a proof is reused at the instant it was published.</summary>
+    private sealed class FixedClock : TimeProvider
+    {
+        public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+        public override long GetTimestamp() => 1_000_000_000_000;
     }
 
     /// <summary>

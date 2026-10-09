@@ -8,7 +8,8 @@ namespace Antiphon.Server.Application.Services;
 /// session instead of the note's parent session. True needs every positive condition below; any
 /// other shape, including a null or empty id, returns false and keeps the parent scan.
 /// <c>ReceiptScanDestinationTests.C1157_FollowsQueueDestinationOnlyWhenEveryPositiveHolds</c> pins
-/// each condition. The reconciler does not call this yet (CARD-1157 S2 wires it).
+/// each condition. The reconciler calls it to choose the session a receipt scan reads
+/// (<c>AgentTaskLandReceiptWatermarkTests.C1121_ForeignDestinationFollowsKeyedRow</c>).
 /// </summary>
 internal static class ReceiptScanTarget
 {
