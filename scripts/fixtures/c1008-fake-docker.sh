@@ -11,6 +11,36 @@ fs.appendFileSync(trace, JSON.stringify(args)+'\n');
 const save = () => fs.writeFileSync(file, JSON.stringify(state));
 const out = x => process.stdout.write(typeof x === 'string' ? x : JSON.stringify(x));
 const fail = () => process.exit(2);
+// CARD-1105. Run the pty-host probe against one fixture shape. tmpAssets===false
+// stays a probe exit 1 and is not an absent directory.
+const ptyProbe = (shape, script) => {
+  const shapes = ['absent','empty','unreadable','other-uid','ok','file','symlink','dangling'];
+  if (!shapes.includes(shape)) return 2;
+  const dest = fs.mkdtempSync('/tmp/c1008-pty-');
+  let status = 1;
+  try {
+    fs.chmodSync(dest, 0o755);
+    const target = path.join(dest, 'antiphon-pty-hosts');
+    if (shape === 'empty' || shape === 'unreadable' || shape === 'other-uid' || shape === 'ok') fs.mkdirSync(target);
+    if (shape === 'unreadable') fs.chmodSync(target, 0o000);
+    if (shape === 'other-uid') fs.writeFileSync(path.join(target, 'host.log'), 'other\n', { mode: 0o044 });
+    if (shape === 'ok') fs.writeFileSync(path.join(target, 'host.log'), 'ok\n', { mode: 0o644 });
+    if (shape === 'file') fs.writeFileSync(target, 'file\n', { mode: 0o755 });
+    if (shape === 'symlink') {
+      const real = path.join(dest, 'real');
+      fs.mkdirSync(real);
+      fs.writeFileSync(path.join(real, 'host.log'), 'ok\n', { mode: 0o644 });
+      fs.symlinkSync(real, target);
+    }
+    if (shape === 'dangling') fs.symlinkSync(path.join(dest, 'missing'), target);
+    const run = cp.spawnSync('bash', ['-c', script.split('/tmp/antiphon-pty-hosts').join(target)], { encoding: 'utf8', timeout: 15000 });
+    status = run.status === null || run.status === undefined ? 2 : run.status;
+  } finally {
+    try { fs.chmodSync(path.join(dest, 'antiphon-pty-hosts'), 0o755); } catch (e) { /* absent or dangling */ }
+    fs.rmSync(dest, { recursive: true, force: true });
+  }
+  return status;
+};
 const name = args.at(-1), fault = state.fault || '';
 if(state.dockerStderr&&args[0]==='inspect')process.stderr.write(state.dockerStderr+'\n');
 if (fault === 'ps-error' && args[0] === 'ps') fail();
@@ -144,7 +174,15 @@ else if(args[0]==='volume'&&args[1]==='inspect') {
  const source=args[1];fs.copyFileSync(source,path.join(root,'audit.sh'));
 } else if(args[0]==='exec') {
  if(args.includes('stat'))out(state.tmpMode||'1777');
- else if(args.includes('sh'))process.exit(state.tmpAssets===false?1:0);
+ else if(args.includes('sh')){
+  const script=args.includes('-c')?args[args.indexOf('-c')+1]:'';
+  if(script.includes('/tmp/antiphon-pty-hosts')&&state.tmpProbe){
+   if(state.tmpAssets===false)process.exit(1);
+   if(state.tmpProbe==='error')fail();
+   process.exit(ptyProbe(state.tmpProbe,script));
+  }
+  process.exit(state.tmpAssets===false?1:0);
+ }
  else fail();
 } else fail();
 NODE

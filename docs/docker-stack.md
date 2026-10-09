@@ -247,11 +247,11 @@ the in-container cleanup below, with the runner kept **running**.
 | Volume | What it holds | Default on retire/replace | Consequence of recreating |
 |---|---|---|---|
 | `antiphon-runner-temp_work` | Temp task worktrees and mirrors | Remove on temp retirement | Empty workspace; recover unpublished work first |
-| `antiphon-runner-temp_runner-tmp` | Temp `/tmp` | Remove on temp retirement | Image `/tmp`, including `/tmp/antiphon-pty-hosts`, copies in on first mount (CARD-0827) |
+| `antiphon-runner-temp_runner-tmp` | Temp `/tmp` | Remove on temp retirement | Image `/tmp` copies in on first mount (CARD-0827). At image 8892b7b75 that copy does not include `/tmp/antiphon-pty-hosts`; the runner creates the directory on first session launch |
 | `antiphon-runner-temp_dind-data` | Temp nested Docker data | Remove on temp retirement | Nested images and containers must be rebuilt |
 | `antiphon-runner-temp_runner-state` | Temp identity/store and volume-backed provider state | Remove on temp retirement | New store; next deployment uses explicit retirement clear and lease admission (CARD-0953) |
 | `antiphon-runner_work` | Main task worktrees and mirrors | Recycle inside scripted replacement | Empty workspace; recover unpublished work first |
-| `antiphon-runner_runner-tmp` | Main `/tmp` | Recycle inside scripted replacement | Image `/tmp`, including `/tmp/antiphon-pty-hosts`, copies in on first mount; never substitute a name-pattern sweep |
+| `antiphon-runner_runner-tmp` | Main `/tmp` | Recycle inside scripted replacement | Image `/tmp` copies in on first mount; at image 8892b7b75 that copy does not include `/tmp/antiphon-pty-hosts` (the runner creates it on first session launch). Never substitute a name-pattern sweep |
 | `antiphon-runner_dind-data` | Main nested Docker data | Recycle inside scripted replacement | Nested images and containers must be rebuilt |
 | `antiphon-runner_runner-state` | Main runner identity/store and volume-backed provider state | Preserve; opt-in deferred to CARD-1010 | A different store hits `StoreMismatch`; retire, explicitly clear retirement, allow connection detachment and lease expiry, then re-register under CARD-0953 |
 | `antiphon-runner-cache-nuget-packages` | Shared NuGet packages | Preserve; opt-in deferred to CARD-1010 | CARD-0912 cold Seed required; minutes to an hour, best effort |

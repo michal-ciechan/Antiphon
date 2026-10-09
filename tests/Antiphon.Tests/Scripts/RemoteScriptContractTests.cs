@@ -1058,6 +1058,36 @@ public sealed class RemoteScriptContractTests
     }
 
     [Test]
+    [Arguments("absent", 0, "")]
+    [Arguments("empty", 2, "RecycleTmpAssetsMissing")]
+    [Arguments("other-uid", 2, "RecycleTmpAssetsMissing")]
+    [Arguments("file", 2, "RecycleTmpAssetsMissing")]
+    [Arguments("symlink", 2, "RecycleTmpAssetsMissing")]
+    [Arguments("dangling", 2, "RecycleTmpAssetsMissing")]
+    [Arguments("unreadable", 2, "RecycleTmpAssetsMissing")]
+    [Arguments("mode", 2, "RecycleTmpModeInvalid")]
+    [Arguments("error", 2, "RecycleTmpAssetsMissing")]
+    [Arguments("ok", 0, "")]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1105_Verify_tmp_accepts_an_absent_pty_host(string probe, int exit, string diagnosis)
+    {
+        C1008HostFixture.RequireNativeLinux();
+        using var f = new C1008HostFixture();
+        // One flip from a directory that holds a readable file at mode 1777.
+        if (probe == "mode") f.Docker["tmpMode"] = "0755";
+        f.Docker["tmpProbe"] = probe == "mode" ? "ok" : probe;
+        var run = await f.Run(extra: "c1008_verify_tmp " + new string('1', 64) + "; write_result true '' 0");
+        run.Exit.ShouldBe(exit, "c1105-tmp-absent: " + probe + "; " + run.Output);
+        if (diagnosis.Length == 0)
+        {
+            run.Output.ShouldContain("DIAGNOSIS=\n");
+            run.Output.ShouldNotContain("RecycleTmpAssetsMissing");
+            run.Output.ShouldNotContain("RecycleTmpModeInvalid");
+        }
+        else run.Output.ShouldContain(diagnosis);
+    }
+
+    [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1008_Recycle_resume_requires_matching_receipt()
     {
