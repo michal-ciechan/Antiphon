@@ -2570,8 +2570,11 @@ public sealed partial class AgentTaskDispatcher
                 continue;
             }
 
-            var firstSeen = _deadSessions.FirstSeenAt(task.Id, now);
-            if (now - firstSeen < grace)
+            // CARD-1161. Grace is GetElapsedTime from this process's stamp. A negative age
+            // withholds and keeps the stamp. This comparison does not read wall time.
+            var stamp = _deadSessions.Observe(task.Id, _timeProvider.GetTimestamp());
+            var age = _timeProvider.GetElapsedTime(stamp);
+            if (age < TimeSpan.Zero || (age >= TimeSpan.Zero && age < grace))
                 continue;
 
             // CARD-0085: same gate as FailNeverStartedAsync, and ONLY when this session also has
