@@ -8,7 +8,7 @@ Source: `docs/investigations/2026-10-08-card-1105-old-volume-audit-replay.md` se
 
 ## Outcome
 
-STEPS 1-3 are done: 620 refs deleted (2806 -> 2186) and every reflog expired (8320 entries -> 0). The STEP 4 audit replay is pending.
+**Not clean. STEPS 1-3 succeeded, and the audit now refuses only for items this task kept on purpose.** 620 refs were deleted (2806 -> 2186) and every reflog was expired (8315 entries -> 0). The STEP 4 replay of the `51f175db` audit shows 0 RecycleGitAuditUnknown and 2 remaining refusals: RecycleWorktreeDirty `worktrees/task-0eafbbee` (its discard was not run), and RecycleUnpublishedWork `repos/antiphon` with 29 commits and 6 tips, all of them KEEP refs or a worktree HEAD outside this task's scope. Next: decide (see the end of STEP 4).
 
 ## Preconditions (all held)
 
@@ -94,6 +94,19 @@ commits include a merge or a patch that `patch-id` does not find on master.
 The other 345 refs hold nothing that master lacks, by graph or by patch, so deleting them loses nothing. The
 deletion went ahead on that explanation.
 
+The caller's refinement arrived after STEP 2 had already run. It asked for the same reconciliation by category,
+and the deleted set satisfies it as it stands:
+
+| Category | Count | Inside the 620 | (i)-(iii) per ref |
+|---|---|---|---|
+| A: tip unpublished by graph (the audit's class; replay 289) | 275 | all 275 | yes |
+| B: tip reachable from current `origin/master` (242) or from another advertised head (103) | 345 | all 345 | yes |
+| C: anything else | 0 | n/a | n/a |
+
+Every one of the 620 was checked against (i), (ii) and (iii) individually by the census script. The replay counted
+14 more refs in its 289 than A holds. None of them was deleted: they are KEEP for the reasons above, which
+is the refinement's "KEEP the unexplained". No `fa0190b4` ref was deleted.
+
 ### KEEP refs that origin no longer advertises and whose tip no origin head contains (13)
 
 These hold work that this rule cannot prove is on master, so they stay. They will keep the audit refusing
@@ -142,7 +155,42 @@ that the rescue is on origin, but rule (ii) does not allow it. The operator can 
 
 ## STEP 4: audit replay (read-only)
 
-Pending: the audit is running.
+The run took 05:07:29Z to 05:40:56Z (33.5 min at load 8 to 39). The container exited 0, stderr was empty, and the final line was
+`repositories=390 partial=390`.
+
+| Result | Count | Receipt / code | Repo |
+|---|---|---|---|
+| Content audit (`consider_dirty`) PASS | 389 of 390 entries | | |
+| Content audit REFUSE | 1 | `audit check=status status=0` / **RecycleWorktreeDirty** | `worktrees/task-0eafbbee` |
+| Common pass REFUSE | 1 | `audit check=rev-list status=0 proof=fetched commits=29 tips=6 gone-tracking=8 unadvertised-local=5` / **RecycleUnpublishedWork** | `repos/antiphon` |
+| Common pass PASS | 1 | (12 commit tips) | `repos/markdown-package` |
+| RecycleGitAuditUnknown | **0** | no `worktree-confine` (the `runner-tmp` mount resolves the 3 `/tmp` checkouts), no layout, lock, shallow, dot-git, symlink or timeout refusal | |
+
+`rev-list` is the last check of `consider_common`, so every earlier check of `repos/antiphon` passed: entry layout,
+linked admin directories including the 3 `/tmp` ones, reflogs, pseudorefs and the object traversal. Before this
+cleanup the replay refused there with 728 commits and 428 tips. Now it refuses with **29 commits and 6 tips**. Those 6 tips
+are all accounted for by refs this task KEPT on purpose:
+
+- 4 distinct tips behind the **13 KEEP refs** listed in STEP 1 (`gone-tracking=8` and `unadvertised-local=5` match
+  the 8 `origin/…` and 5 `heads/…` refs exactly): `193a4a79`/`1d94da9e` (tip `14dbe1110`, holds a merge),
+  `97ea55ef`/`d24e1b4d` (tip `ce4cce1e8`, holds a merge), `d9b74136`/`5638a6b5` (tip `bac3ddeb9`, 4 patches not on
+  master), `2db75657`/`ba64b974` (tip `5475ddee6`, 4 patches not on master).
+- `heads/feat/card-task-3895bec1` (tip `1dcc03c0a`). Origin still advertises this name, so rule (i) kept it, but the
+  local branch has diverged from origin's branch. The replay's 3b put it at 1 commit whose patch is on master.
+- The detached `HEAD` of linked worktree `c1005-rebase-rX0auR` (`/tmp/c1005-rebase-rX0auR` in `runner-tmp`, HEAD
+  `6018e6aae`). A worktree HEAD is not a ref under `refs/heads` or `refs/remotes`, so it was outside this task's scope.
+  The replay found its 18 commits not on origin to be all patch-equivalent on master.
+
+No reflog-only tip remains. The 3c reflog states are gone.
+
+### Decisions left for the operator
+
+1. `worktrees/task-0eafbbee`: rescue the 7 lines that no commit records (see the compare note), or approve the loss and discard.
+2. The 13 KEEP refs (4 tips: two with a merge, two with 4 patches that `patch-id` does not find on master): delete them (content review or accept the loss), or rescue-push them.
+3. `heads/feat/card-task-3895bec1`: delete the diverged local branch (its origin branch stays).
+4. Linked worktree `c1005-rebase-rX0auR` (a CARD-1005 verification checkout in `runner-tmp`): `git worktree remove` it, or accept its detached HEAD (18 commits, all patch-equivalent on master per the replay).
+5. Optionally, the four unadvertised `fa0190b4` refs, which are safe since the rescue but kept by rule (ii). They do not cause a refusal.
+
 
 ## Census table (2803 refs)
 
