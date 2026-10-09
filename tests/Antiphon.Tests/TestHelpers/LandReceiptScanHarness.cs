@@ -120,6 +120,14 @@ internal sealed class LandReceiptScanHarness : IAsyncDisposable
     /// <summary>Uncounted fixture context: setup and assertion reads never enter a measured window.</summary>
     public AppDbContext Fixture() => new(TestDbFixture.CreateDbContextOptions(_schema.ConnectionString));
 
+    /// <summary>
+    /// Counted session projections of the shape the reconciler's parent SELECT and the CARD-1157 D-3
+    /// SELECT both have: <c>SELECT a."Status", a."StartedAt" FROM "AgentSessions"</c>.
+    /// </summary>
+    public int SessionProjections => Commands.Commands.Count(sql =>
+        string.Join(' ', sql.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries))
+            .StartsWith("SELECT a.\"Status\", a.\"StartedAt\" FROM \"AgentSessions\"", StringComparison.Ordinal));
+
     public void ResetCounters()
     {
         Commands.Reset();
@@ -206,11 +214,17 @@ internal sealed class LandReceiptScanHarness : IAsyncDisposable
         return note;
     }
 
-    /// <summary>The keyed row as one typed attempt above <see cref="Floor"/> in the destination's current generation.</summary>
-    public async Task<SessionQueuedMessage> MarkSentAsync(AgentTaskLandNotification note, Action<SessionQueuedMessage>? change = null)
+    /// <summary>
+    /// The keyed row as one typed attempt above <see cref="Floor"/> in the destination's current generation.
+    /// A <paramref name="destination"/> retargets the row first (the CARD-1157 carry), so the recorded
+    /// generation is that session's.
+    /// </summary>
+    public async Task<SessionQueuedMessage> MarkSentAsync(AgentTaskLandNotification note, Action<SessionQueuedMessage>? change = null,
+        Guid? destination = null)
     {
         await using var db = Fixture();
         var row = await db.SessionQueuedMessages.SingleAsync(m => m.Id == note.QueueMessageId);
+        if (destination is Guid carried) row.AgentSessionId = carried;
         var startedAt = await db.AgentSessions.Where(s => s.Id == row.AgentSessionId).Select(s => s.StartedAt).SingleAsync();
         row.Status = QueuedMessageStatus.Sent;
         row.DeliveryAttempts = 1;
@@ -259,19 +273,38 @@ internal sealed class LandReceiptScanHarness : IAsyncDisposable
     }
 
     /// <summary>A second Stopped session with its own committed transcript.</summary>
-    public async Task<Guid> AddStoppedSessionAsync()
+    public Task<Guid> AddStoppedSessionAsync() => AddSessionAsync(SessionStatus.Stopped);
+
+    /// <summary>
+    /// Another session in <paramref name="status"/>. CARD-1157 fixtures pass a <paramref name="startedAt"/>
+    /// one hour before the harness session's, so a stamp built from the wrong session's generation refuses.
+    /// </summary>
+    public async Task<Guid> AddSessionAsync(SessionStatus status, DateTime? startedAt = null, Guid? id = null)
     {
-        var id = Guid.NewGuid();
+        var sessionId = id ?? Guid.NewGuid();
         await using var db = Fixture();
         var now = DateTime.UtcNow;
         db.AgentSessions.Add(new AgentSession
         {
-            Id = id, DefinitionName = "fake", AgentKind = AgentKind.ClaudeCode, Status = SessionStatus.Stopped,
+            Id = sessionId, DefinitionName = "fake", AgentKind = AgentKind.ClaudeCode, Status = status,
             Cwd = Path.Combine(Bridge.TempRoot, "workspace"), Cols = 120, Rows = 30,
-            CreatedAt = now, StartedAt = now, LastSeenAt = now,
+            CreatedAt = now, StartedAt = startedAt ?? now, LastSeenAt = now,
         });
         await db.SaveChangesAsync();
-        return id;
+        return sessionId;
+    }
+
+    /// <summary>The stored <c>StartedAt</c> of a session (column precision).</summary>
+    public async Task<DateTime> StartedAtAsync(Guid session)
+    {
+        await using var db = Fixture();
+        return await db.AgentSessions.Where(s => s.Id == session).Select(s => s.StartedAt).SingleAsync();
+    }
+
+    public async Task<SessionStatus> StatusAsync(Guid session)
+    {
+        await using var db = Fixture();
+        return await db.AgentSessions.Where(s => s.Id == session).Select(s => s.Status).SingleAsync();
     }
 
     /// <summary>

@@ -249,18 +249,33 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
                     await db.SaveChangesAsync(ct);
                     return;
                 }
-                // CARD-1121: only a whitelisted shape bound to a terminal destination gets a scan
-                // context. Every other note keeps today's catch-up and scan, with no added command.
-                var scan = ReceiptScanContext(note, row, destination.Status, expected);
+                // CARD-1157 D-1/D-3: a whitelisted keyed row is scanned on the session it was sent
+                // to, when that session's row exists. Any other shape scans the parent with no added
+                // command. A miss on either target leaves the note's state as it was.
+                var scanSession = session;
+                var scanStatus = destination.Status;
+                var scanStartedAt = destination.StartedAt;
+                if (ReceiptScanTarget.FollowsQueueDestination(note, row, expected))
+                {
+                    var followed = await db.AgentSessions.Where(s => s.Id == row.AgentSessionId)
+                        .Select(s => new { s.Status, s.StartedAt }).SingleOrDefaultAsync(ct);
+                    if (followed is not null)
+                        (scanSession, scanStatus, scanStartedAt) = (row.AgentSessionId, followed.Status, followed.StartedAt);
+                }
+                // CARD-1121: only a whitelisted shape bound to a terminal scanned session gets a scan
+                // context, and its proof names the session the scan reads (CARD-1157 D-4). Every
+                // other note keeps today's catch-up and scan.
+                var scan = ReceiptScanContext(note, row, scanStatus, expected);
+                if (scan is not null && scanSession != session) scan = scan with { ScanSessionId = scanSession };
                 LandReceiptScanCache.StateStamp? current = null;
                 if (scan is null)
-                    await runtime.CatchUpTranscriptAsync(session, ct);
+                    await runtime.CatchUpTranscriptAsync(scanSession, ct);
                 else
-                    current = ReceiptStamp(await runtime.CatchUpForReceiptAsync(session,
-                        destination.Status is SessionStatus.Stopped or SessionStatus.Failed, ct), destination.StartedAt);
+                    current = ReceiptStamp(await runtime.CatchUpForReceiptAsync(scanSession,
+                        scanStatus is SessionStatus.Stopped or SessionStatus.Failed, ct), scanStartedAt);
                 // CARD-0641 D-2 kinds, destination and delivery floor: LandNoteReceipt, shared with
                 // the CARD-0650 watchdog's read-only note-debt check.
-                var prompts = LandNoteReceipt.Prompts(db.TranscriptEntries.AsNoTracking(), session, note.IsLegacy,
+                var prompts = LandNoteReceipt.Prompts(db.TranscriptEntries.AsNoTracking(), scanSession, note.IsLegacy,
                     note.Kind, row.LastDeliveryBaselineSequence, row.LastDeliveryStartedAt,
                     (supervision?.Value ?? new SupervisionSettings()).DeliveryVerification.UnobservableBaselineConfirmClockToleranceSeconds);
                 if (prompts is null) return;
@@ -273,7 +288,7 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
                     if (scan is not null)
                     {
                         if (boundary is not null) await boundary.ReachedAsync("receipt-scan-before-stamp", note.TaskId, note.Id, ct);
-                        before = ReceiptStamp(await runtime.ObserveReceiptStateAsync(session, ct), destination.StartedAt);
+                        before = ReceiptStamp(await runtime.ObserveReceiptStateAsync(scanSession, ct), scanStartedAt);
                     }
                     evidence = await LandNoteReceipt.FirstReceiptAsync(prompts, expected, ct);
                     if (scan is not null)
@@ -286,7 +301,7 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
                         if (!matched)
                         {
                             if (boundary is not null) await boundary.ReachedAsync("receipt-scan-exhausted", note.TaskId, note.Id, ct);
-                            after = ReceiptStamp(await runtime.ObserveReceiptStateAsync(session, ct), destination.StartedAt);
+                            after = ReceiptStamp(await runtime.ObserveReceiptStateAsync(scanSession, ct), scanStartedAt);
                         }
                         // A-2/W-5: only this pass's catch-up stamp, unchanged at the before-stamp, can be
                         // certified. A NeedsReload persist (a 23505 recovered by a reseed), a retained

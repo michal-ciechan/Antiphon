@@ -246,13 +246,13 @@ the transcript mutation gate. Activation requires both server and runner support
 
   The land-note receipt reconciler (CARD-1121) may omit its receipt SELECT for one note only on
   a process-local negative proof bound to this committed state: server epoch, revision, reset
-  epoch, accepted generation (equal to the destination's `StartedAt`), count and last sequence
+  epoch, accepted generation (equal to the scanned session's `StartedAt`), count and last sequence
   must be identical before and after a scan that read every candidate without a match, and the
   note save after it must have committed. The proof also binds the note, keyed row, attempt
   count, sequence floor, delivery start and generation, kind, legacy mode, note and queue state,
-  verdict, exact ordinary body (at most 16,384 characters) and a Stopped or Failed destination.
+  verdict, exact ordinary body (at most 16,384 characters) and a Stopped or Failed scanned session.
   The catch-up pull still runs every pass; its failure is the expected answer only for a Stopped
-  or Failed destination. Any committed append or retention reseed, restart, changed attempt or
+  or Failed scanned session. Any committed append or retention reseed, restart, changed attempt or
   payload, other destination status, profiled, spilled or pointer body, `LegacyCheckNote`,
   timestamp-only floor, missing or disabled store, retained persist failure, catch-up persist that
   needed a reload (a recovered unique conflict), commit between the catch-up and the scan, or proof
@@ -261,6 +261,9 @@ the transcript mutation gate. Activation requires both server and runner support
   refuses reuse; a metrics fault is swallowed and a valid hit stays a hit. Proofs are capped at
   256 and dropped when the note confirms or is reconciled as `Confirmed`, `NotRequired` or
   `LegacyUnverified`.
+
+  The scanned session is the keyed row's AgentSessionId when ReceiptScanTarget.FollowsQueueDestination is
+  true and that session row exists; otherwise it is the note's ParentSessionId (CARD-1157).
 
   Startup warms active sessions and sessions referenced by open tasks, queues or notes in batches
   of at most 512 statement snapshots before hosted consumers start. A canceled reader cancels its

@@ -30,7 +30,10 @@ public sealed class LandReceiptScanCache(TimeProvider clock)
     // Test seam: a throwing probe proves telemetry cannot change an outcome. Null changes nothing.
     internal Action<string>? MetricsProbe;
 
-    /// <summary>The exact attempt, payload and destination a negative scan examined (D-3, D-5, A-1, A-3).</summary>
+    /// <summary>
+    /// The exact attempt, payload and destination a negative scan examined (D-3, D-5, A-1, A-3).
+    /// <see cref="ScanSessionId"/> is the session whose transcript the scan read (CARD-1157 D-4).
+    /// </summary>
     internal sealed record Context(
         Guid NoteId,
         Guid QueueMessageId,
@@ -47,7 +50,8 @@ public sealed class LandReceiptScanCache(TimeProvider clock)
         DateTime? LastDeliveryStartedAt,
         DateTime? LastDeliveryGeneration,
         SessionStatus DestinationStatus,
-        string ExpectedText);
+        string ExpectedText,
+        Guid ScanSessionId);
 
     /// <summary>
     /// The runtime-owned committed-state read taken after catch-up (D-4 as amended by A-2), or the
@@ -100,8 +104,10 @@ public sealed class LandReceiptScanCache(TimeProvider clock)
     /// W-1..W-4: binds the scan context only for a well-formed identity (a real note keyed to exactly
     /// this row, with a parent session to scan and a row destination), an enumerated note state and
     /// kind, a terminal destination (A-1) and an ordinary keyed-row body that is exactly the expected
-    /// text. The row destination is bound, not required equal to the parent (A-3). Every other shape
-    /// keeps today's scan; nothing here inspects a diagnostic or grants eligibility.
+    /// text. The row destination is bound, not required equal to the parent (A-3). The context names
+    /// the parent as its scanned session; the reconciler rebinds it when it scans the row destination
+    /// (CARD-1157 D-4). Every other shape keeps today's scan; nothing here inspects a diagnostic or
+    /// grants eligibility.
     /// </summary>
     internal static bool TryBuildContext(AgentTaskLandNotification note, SessionQueuedMessage row,
         SessionStatus destinationStatus, string expectedText, out Context? context, out string refusal)
@@ -130,7 +136,7 @@ public sealed class LandReceiptScanCache(TimeProvider clock)
         if (expectedText.Length > MaxExpectedTextChars) return Refuse("eligibility:MaxExpectedTextChars", out refusal);
         context = new Context(note.Id, row.Id, note.ParentSessionId, row.AgentSessionId, row.SourceLandNotificationId,
             note.IsLegacy, note.Kind, note.State, row.Status, row.DeliveryVerdict, row.DeliveryAttempts, baseline,
-            row.LastDeliveryStartedAt, row.LastDeliveryGeneration, destinationStatus, expectedText);
+            row.LastDeliveryStartedAt, row.LastDeliveryGeneration, destinationStatus, expectedText, parent);
         refusal = "";
         return true;
     }
@@ -216,8 +222,8 @@ public sealed class LandReceiptScanCache(TimeProvider clock)
             Proof? proof;
             lock (_gate) proof = _proofs.TryGetValue(context.NoteId, out var held) ? held.Proof : null;
             refusal = proof is null ? "no-proof" : ContextRefusal(proof.Context, context) ?? StampRefusal(proof.Stamp, stamp) ?? "";
-            // The scan reads the parent's transcript, so only the parent's committed state can vouch for it.
-            if (refusal.Length == 0 && stamp.SessionId != context.ParentSessionId) refusal = "identity:ScanSession";
+            // Only the committed state of the session the scan read can vouch for it (CARD-1157 D-4).
+            if (refusal.Length == 0 && stamp.SessionId != context.ScanSessionId) refusal = "identity:ScanSession";
             if (refusal.Length == 0)
             {
                 var elapsed = clock.GetElapsedTime(proof!.ScanCompletedAt, clock.GetTimestamp());
@@ -283,6 +289,7 @@ public sealed class LandReceiptScanCache(TimeProvider clock)
         if (proof.LastDeliveryGeneration != current.LastDeliveryGeneration) return "context:LastDeliveryGeneration";
         if (proof.DestinationStatus != current.DestinationStatus) return "context:DestinationStatus";
         if (!string.Equals(proof.ExpectedText, current.ExpectedText, StringComparison.Ordinal)) return "context:ExpectedText";
+        if (proof.ScanSessionId != current.ScanSessionId) return "context:ScanSessionId";
         return null;
     }
 
