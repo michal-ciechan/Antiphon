@@ -34,7 +34,7 @@ public static class ReportValidator
             if (row.ExitCode != 0 || row.State != "green" || row.Failed != 0 || row.Skipped != 0)
                 return "row_failed";
             if (!IsSourceEligible(row.Source, expectedSha) || row.Source.Start.Fingerprint != report.Source.Start.Fingerprint ||
-                row.Source.BuildSource != report.Source.BuildSource)
+                row.Source.BuildSource != report.Source.BuildSource && row.Source.BuildSource != "notApplicable")
                 return "row_source_disagreement";
             if (row.Line is null || !row.Line.StartsWith("CHECKPOINT " + row.Id + " ", StringComparison.Ordinal))
                 return "row_receipt_missing";

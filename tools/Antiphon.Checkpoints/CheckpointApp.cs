@@ -230,6 +230,11 @@ public static class CheckpointApp
             state.Reason = sourceGuard.Reason;
             result = new SchedulerResult { ExitCode = ExitCodes.Invalid, Rows = result.Rows, State = state };
         }
+        var rowBindings = result.Rows.Select(row => row.Source.BuildSource).Distinct(StringComparer.Ordinal).ToList();
+        source.BuildSource = rowBindings.Count == 0 ? "unknown"
+            : rowBindings.All(binding => binding == "notApplicable") ? "notApplicable"
+            : rowBindings.All(binding => binding is "verified" or "notApplicable") ? "verified"
+            : rowBindings.Contains("mismatch") ? "mismatch" : "unknown";
         var model = BuildReport(runDirectory, repo, request, manifest, state, result);
         if (!owner.Ended.IsCancellationRequested && !string.IsNullOrWhiteSpace(request.Baseline))
         {
