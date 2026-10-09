@@ -14,8 +14,9 @@ pins the amended rule, not the plan's literal text where they differ.
 Fail-closed rule every test pins: a cache may skip a receipt scan **only** under the
 positive whitelist in §3 (transcript committed state frozen and unchanged, destination
 session terminal, note/attempt/payload identity unchanged); anything unknown keeps today's
-scan; a cache can never hide a prompt that could match; telemetry and clock faults never
-change an outcome; the cache is in-memory, so a restart rescans.
+scan; a cache can never hide a prompt that could match; a cache lookup, publication or clock
+fault refuses reuse (today's scan runs) and a metrics fault is swallowed (a valid hit stays a
+hit), so neither changes a receipt outcome; the cache is in-memory, so a restart rescans.
 
 ## 1. Measurement gate verdict and the sample's open questions
 
@@ -148,6 +149,20 @@ session.
   (`t."Timestamp" >= @`, floor null) so `timestamp-only-baseline` is counted. Measured command totals
   matched §4 exactly for all six V-3 rows.
 
+- **A-7, Code S3 plus repair of Final Review `570fd325` (task `5ea19771`).** D1: the telemetry
+  contract is now stated the same way everywhere (fail-closed rule above, W-10, G-13, the cache
+  header and the invariants bullet): a lookup, publication or clock fault refuses reuse and today's
+  scan runs; a metrics fault is swallowed and a valid hit stays a hit; neither changes a receipt
+  outcome. Behaviour and tests unchanged (V-2 `metrics-never-throw-and-count` already pinned the
+  metrics arm). D2: the delivery inventory's busy/crash substitutes are replaced by V-12 (three
+  rows through the real queue and a runtime pull, rebinding the adapter submit path so the stream
+  never lands the prompt); CP-3 is 17 results (V-7 5, V-8 4, V-9 5, V-12 3). Harness seams added in
+  S3: `CutBoundary` (hold or fail one named boundary), `HeldTranscriptSave` (an ingest held inside
+  its commit, so it owns the session gate) and `ReceiptScanRecognizer.AfterRow` (a reader fault or
+  cancellation after N rows). V-7 `commit-before-before-stamp` names its production line as the
+  before-stamp read preceding the enumeration (swapping them publishes a proof that never examined
+  the commit). No production change in S3.
+
 Two implementation seams the amendments and tests need, within the plan's S1/S2 scope:
 new `LandDeliveryBoundary` names `receipt-scan-before-stamp` (after catch-up and the
 observation, before the before-stamp read), `receipt-scan-exhausted` (after
@@ -170,7 +185,7 @@ before `Publish`), beside the existing `receipt-before-save`; and an optional
 | W-7 | An unexpired proof (< 5 minutes from the completed scan's monotonic timestamp; hits never extend) whose context equals every bound member (NoteId, QueueMessageId, ParentSessionId, row destination, `SourceLandNotificationId`, IsLegacy, Kind, note state, queue status, verdict, attempts, baseline, `LastDeliveryStartedAt`, `LastDeliveryGeneration`, destination status, exact text) and whose stamp equals the current W-6 stamp member for member (SessionId, ServerEpoch, Revision, ResetEpoch, AcceptedGeneration, Count, LastSequence). Null equals only null. | V-1 identity/attempt/payload/certificate rows, V-4, V-5 |
 | W-8 | A proof is published only from a completed no-match enumeration whose before-stamp equals its after-stamp, after the final `SaveChangesAsync` succeeded, with no exception or cancellation; a match, a pointer-hash failure after a match, a reader fault, or a failed save publishes nothing. | V-7, V-8 |
 | W-9 | On a hit the reconciler still performs catch-up, the keyed-row lookup, the existing error/status bookkeeping and the final note UPDATE; only `FirstReceiptAsync` is omitted. | V-3, V-9 |
-| W-10 | Any exception from the cache itself (lookup, publish, clock, metrics) is caught and falls back to today's scan; cancellation propagates. | V-6 `cache-clock-fault`, V-7 |
+| W-10 | A cache lookup, publication or clock fault is caught and refuses reuse, so today's scan runs; a metrics (telemetry) fault is swallowed inside the cache and changes no decision, so a valid hit stays a hit; neither fails the note; cancellation propagates. | V-6 `cache-clock-fault`; V-2 `invalid-elapsed-refuses`, `metrics-never-throw-and-count`; V-7 `reader-cancelled-after-one-row` |
 
 ## 4. Statement budgets
 
@@ -314,12 +329,15 @@ recovery pass and never changes any of the above.
 Producer-to-recipient test through the real queue: V-11 drives `Queue.FlushIfIdleAsync` so the
 harness adapter submits the note, the submission is ingested through the runtime (not fixture
 SQL), and the reconciler confirms it; arm `relaunch-after-cached-miss` proves a cached miss
-cannot survive the recipient coming back to life and taking the prompt. Substitutes declared:
-the busy recipient, already-eligible row and crash/enqueue-failure recovery shapes are the
-existing `C641_*`, `C467_V12_*` cuts and `C550_*` boundary tests (R-1, R-3); this change adds
-no handoff for them to cross, so they prove the path is unchanged, not that the cache is
-correct. Transcript-confirmed `UserPrompt` rows are the verdict in every V-4, V-7, V-10 and
-V-11 confirmation; `Sent`, `SentAt`, adapter `SubmittedBodies` and cache metrics are never
+cannot survive the recipient coming back to life and taking the prompt. Busy and crashed
+recipients are V-12 (A-7): the real queue types the note (after a turn end that reached only the
+runner, or into a destination that then crashes), the submission exists only in the runner's
+transcript, a runtime pull persists it (the queue's post-failure grace pull for the busy arm, the
+reconciler's own catch-up pull after the resume for the crash arms), and the reconciler confirms
+the complete prompt at its persisted sequence with the cache present; `proof-before-crash` starts
+from a cached miss. The existing `C641_*`, `C467_V12_*` and `C550_*` tests (R-1, R-3) remain the
+proof that the uncached enqueue and recovery paths are unchanged; they are not cache evidence. Transcript-confirmed `UserPrompt` rows are the verdict in every V-4, V-7, V-8, V-10, V-11 and
+V-12 confirmation; `Sent`, `SentAt`, adapter `SubmittedBodies` and cache metrics are never
 accepted as receipt.
 
 ### Proves it works now
@@ -371,6 +389,7 @@ Slice S3 (`tests/Antiphon.Tests/Application/AgentTaskLandReceiptWatermarkSafetyT
 - V-7: a racing commit cannot publish or reuse a stale miss | integration, deterministic cuts | `AgentTaskLandReceiptWatermarkSafetyTests.C1121_RacingCommitCannotPublishOrReuseStaleMiss(string cut)`, 5 rows: `commit-between-exhaustion-and-after-stamp` (hold `receipt-scan-exhausted`; ingest the match; release: no proof; next pass confirms at the new sequence), `writer-holds-gate-during-reuse-observation` (an ingest held at `SaveGate` owns the session gate; pass 2 must not complete while it is held; release: the ingest publishes, pass 2 observes the new revision, full scan, confirms), `reader-throws-after-one-row` (`notification_reconcile_failed:*` recorded, `EnqueueAttempts` +1, no proof; next pass full scan; an ingested match then confirms), `reader-cancelled-after-one-row` (`OperationCanceledException` escapes `ReconcileAsync`; no proof; note unchanged; next pass full scan), `commit-before-before-stamp` (hold `receipt-scan-before-stamp`; ingest the match; release: the scan itself finds it, confirms, no proof) | all gates released in `finally`; cancellation remains cancellation; the late receipt confirms at its own sequence in original first-match order.
 - V-8: a matched but uncommitted receipt is never cached | integration | `AgentTaskLandReceiptWatermarkSafetyTests.C1121_MatchedButUncommittedReceiptIsNeverCached(string cut)`, 4 rows: `receipt-before-save-fails` (boundary throws at `receipt-before-save`; no proof; a fresh scope with the same cache re-reads and confirms at the same sequence), `final-save-fails-after-match` (`ThrowOnceSaveInterceptor`; same recovery), `profiled-pointer-hash-mismatch-then-repair` (excluded profiled fixture with `SpillPath`/`SpillSha256`; wrong file bytes: `completion_pointer_content_mismatch`, no proof and, being excluded, no publish attempt; repair the bytes without a new prompt: confirms the same sequence), `negative-save-fails` (no match, final save throws: no proof; next pass full scan, then a proof) | proof count 0 after each failure; confirmation sequence identical before and after recovery.
 - V-9: reconcile pins statement and row budgets | integration | `AgentTaskLandReceiptWatermarkSafetyTests.C1121_ReconcilePinsStatementAndRowBudgets(string shape)`, 5 rows: `two-kind-48` (cold 7, then 5, 5; receipt 1/48 then 0/0; recognizer matches; floor parameter 10 each scan; projection excludes `ToolInput`, `ApiErrorTimeZoneId`, `ModelCalls`; no other `TranscriptEntries` statement in any pass; proofs 1), `one-kind-852` (legacy Outcome; 1/852 then 0/0; 6/5/5), `two-kind-1506` (1/1,506 then 0/0; 6/5/5), `changed-transcript-two-kind-48` (after a cached miss an unrelated `AssistantText` ingest (4 commands, outside the window); next pass 6 with 1/48, miss, new proof; then 5), `live-committed-row-9-8` (runner `CommittedRow`: 9 then 8; the extra three are the catch-up's `StartedAt`, identity and `MAX`, none a cache probe) | exact totals from §4; a hidden full-entity materialization or any per-note existence/count/max probe on the reuse path fails the roster assertion.
+- V-12: a busy or crashed destination recovers through the real queue and the runner pull | integration, real queue | `AgentTaskLandReceiptWatermarkSafetyTests.C1121_BusyOrCrashedDestinationRecoversThroughQueueAndRunnerPull(string arm)`, 3 rows; the adapter submit path is rebound so a typed note lands only in the scripted runner transcript, never through the stream: `busy-turn-end-and-prompt-only-via-runner-pull` (Running and mid-turn: `FlushIfIdleAsync` types nothing and the reconcile pass scans nothing; the turn end reaches only the runner, `AgentSessionRuntime.SyncTranscriptAsync` pulls it and flushes the real queue, which types the note once; the queue's post-failure grace pull persists the prompt), `crashed-after-typing-then-resumed` (Running and idle: the real queue types the note, the session takes it and crashes (runner 404, status Failed); two passes cache the quiet miss (1, 0 receipt SELECTs, one proof); resumed Running with the runner holding the prompt), `proof-before-crash-then-resumed` (an earlier attempt parked while Stopped is cached first (1, 0); relaunched Running, the real queue retypes it and the session crashes; the changed attempt rescans (1); resumed as above) | recovery pass: one pull, one receipt SELECT (Running is outside the whitelist), the complete prompt committed exactly once above the row's floor, `ConfirmingPromptSequence` equal to it and to the in-memory oracle, proofs 0, no further submissions from reconciliation, no kill.
 
 ### Guards the regression
 
@@ -415,11 +434,12 @@ rows share one forced-refusal control (PC-1.positive).
 | G-10 | A-1 policy: Running/Starting destinations are not whitelisted | PC-10 |
 | G-11 | A-2: `AcceptedGeneration` must equal the destination `StartedAt` | PC-11 |
 | G-12 | Out-of-scope defect not masked: the scan target stays `ParentSessionId` | PC-12 |
-| G-13 | W-10: cache exceptions fall back to the scan, never fail the note | PC-13 |
+| G-13 | W-10: a cache lookup, publication or clock fault falls back to the scan and never fails the note (a metrics fault is swallowed and keeps a valid hit) | PC-13 |
 | G-14 | D-6: confirmation and terminal states remove the note's proof | PC-14 |
+| G-15 | A-1/A-7: a note with no scan context (a Running destination) keeps its receipt SELECT, so a prompt recovered by a pull after a busy turn or a crash is confirmed | PC-15 |
 
-Guards 99 (65 + 1 + 7 + 2 + 2 + 1 + 1 + 1 + 5 + 1 + 3 + 3 + 2 + 1 + 1 + 1 + 1 + 1), mapped
-99, missing 0, duplicate PC maps 0. Not a guard: the harness coherence self-check (fixture
+Guards 100 (65 + 1 + 7 + 2 + 2 + 1 + 1 + 1 + 5 + 1 + 3 + 3 + 2 + 1 + 1 + 1 + 1 + 1 + 1), mapped
+100, missing 0, duplicate PC maps 0. Not a guard: the harness coherence self-check (fixture
 only) and the optional `land-note.receipt-scan` tag (diagnostic only; the recognizer tolerates
 its absence).
 
@@ -446,6 +466,7 @@ V/R rows; Review judges this roster before land.
 - PC-12: scan `row.AgentSessionId` instead of `note.ParentSessionId`; expect `/*/*/AgentTaskLandReceiptWatermarkTests/C1121_ForeignDestinationNoteStaysOpenExactlyAsToday*` red at `cached-stays-open`'s `State.ShouldBe(AwaitingReceipt)`.
 - PC-13: remove the `catch` around `TryReuse`/`Publish`; expect `C1121_UnknownEvidenceUsesExistingScan*` red at `cache-clock-fault`'s `LastErrorCode.ShouldBeNull()`.
 - PC-14: do not call `Invalidate` on confirmation; expect `C1121_AnyCommittedChangeReopensFullScan*` red at `matching-user-prompt`'s `proofs.ShouldBe(0)` after the confirming pass.
+- PC-15: in `ReconcileAsync` skip the receipt SELECT when the note has no scan context (`if (scan is not null && (current is null || !TryReuse(...)))`); expect `/*/*/AgentTaskLandReceiptWatermarkSafetyTests/C1121_BusyOrCrashedDestinationRecoversThroughQueueAndRunnerPull*` red at every arm's `recovery.ReceiptSelects.ShouldBe(1)`.
 
 ### Out of scope
 
@@ -467,7 +488,7 @@ through CP-6 own a Testcontainers PostgreSQL and an isolated schema per test. Bu
 |---|---|---|---|---|---|---|---:|---:|---|---|
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1121-policy/` | policy | `/*/*/LandReceiptScanCacheTests/*` | V-1, V-2, A-6 identity | 115 executed (A-5, A-6), 0 failed/skipped | 115 | 4 | true | n/a |
 | CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1121-behavior/` | pg-behavior | `/*/*/AgentTaskLandReceiptWatermarkTests/*` | V-3, V-4, V-5, V-6, V-10, V-11 | 36 executed, 0 failed/skipped | 36 | 8 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-3 | S3 | `tests/Antiphon.Tests -> bin-c1121-safety/` | pg-safety | `/*/*/AgentTaskLandReceiptWatermarkSafetyTests/*` | V-7, V-8, V-9 | 14 executed, 0 failed/skipped | 14 | 7 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-3 | S3 | `tests/Antiphon.Tests -> bin-c1121-safety/` | pg-safety | `/*/*/AgentTaskLandReceiptWatermarkSafetyTests/*` | V-7, V-8, V-9, V-12 | 17 executed (A-7), 0 failed/skipped | 17 | 7 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-4 | S3 | `CP-3` | pg-receipts | `/*/Antiphon.Tests.Application/(AgentTaskLandReceiptTests*)\|(AgentTaskLandQueuedReceiptTests*)/*` | R-1 | 64 executed including all 12 C1073 results, 0 failed/skipped | 64 | 5 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-5 | S3 | `CP-3` | pg-ingest | `/*/*/SessionStateCommitTests/*` | R-2 | 8 executed, 0 failed/skipped | 8 | 2 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-6 | S3 | `CP-3` | pg-recovery | `/*/Antiphon.Tests.Application/(AgentTaskLandNotificationRecoveryTests*)\|(ExpectationNoteDebtTests*)/*` | R-3 | 50 executed, 0 failed/skipped | 50 | 5 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
