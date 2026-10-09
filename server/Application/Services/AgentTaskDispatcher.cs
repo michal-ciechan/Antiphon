@@ -128,6 +128,14 @@ public sealed partial class AgentTaskDispatcher
         + "Original input is retained. Automatic relaunch is disabled; inspect the session and queued input, "
         + "then explicitly retry or cancel this task.";
 
+    /// <summary>
+    /// CARD-1150. An overdue recoverable brief whose gates refuse recovery. The token is the
+    /// stable prefix. Input and attempt counters stay; the session is not stopped.
+    /// </summary>
+    internal const string DispatchBriefRecoveryHeldReason =
+        "dispatch_brief_recovery_held: dispatch brief recovery did not complete before the delivery deadline. "
+        + "Original input is retained. The session was not stopped.";
+
     public AgentTaskDispatcher(
         AppDbContext db,
         AgentRegistry agentRegistry,
@@ -2048,7 +2056,17 @@ public sealed partial class AgentTaskDispatcher
         var sessionIds = suspects.Select(t => t.AgentSessionId!.Value).Distinct().ToList();
         var sessionById = (await _db.AgentSessions.AsNoTracking()
                 .Where(s => sessionIds.Contains(s.Id))
-                .Select(s => new { s.Id, s.Status, s.LaunchResumedAt, s.GrokRulesState })
+                .Select(s => new
+                {
+                    s.Id,
+                    s.Status,
+                    s.LaunchResumedAt,
+                    s.GrokRulesState,
+                    s.FailureReason,
+                    s.EndedAt,
+                    s.StartedAt,
+                    s.RunnerId,
+                })
                 .ToListAsync(ct))
             .ToDictionary(s => s.Id);
 
@@ -2058,6 +2076,7 @@ public sealed partial class AgentTaskDispatcher
         foreach (var task in suspects)
         {
             ct.ThrowIfCancellationRequested();
+            var observedAttempt = task.Attempt;
             var sessionId = task.AgentSessionId!.Value;
             sessionById.TryGetValue(sessionId, out var sessionSnap);
             if (sessionSnap?.GrokRulesState is GrokRulesState.Pending or GrokRulesState.Failed)
@@ -2144,7 +2163,15 @@ public sealed partial class AgentTaskDispatcher
                     && (task.DispatchedAt == null || m.CreatedAt >= task.DispatchedAt)
                     && m.Body.Contains(marker))
                 .OrderBy(m => m.Sequence)
-                .Select(m => new { m.Status, m.DeliveryAttempts })
+                .Select(m => new
+                {
+                    m.Status,
+                    m.DeliveryAttempts,
+                    m.SentAt,
+                    m.CanceledAt,
+                    m.LastDeliveryStartedAt,
+                    m.DeliveryVerdict,
+                })
                 .FirstOrDefaultAsync(ct);
             var briefNeverTyped = briefRow is { Status: QueuedMessageStatus.Pending };
 
@@ -2160,6 +2187,29 @@ public sealed partial class AgentTaskDispatcher
                     DelegationReportFormatter.Short(task.Id), sessionId);
                 continue;
             }
+
+            // CARD-1149/1150. Arbitration uses the rows this method already loaded. A proven
+            // recoverable debt is handed to the launch owner or held; anything unproven falls
+            // through to today's failure. The stopper gate below is separate.
+            if (await TryDeferRecoverableDispatchDebtAsync(
+                    task,
+                    sessionSnap?.Status,
+                    sessionSnap?.FailureReason,
+                    sessionSnap?.EndedAt,
+                    sessionSnap?.StartedAt,
+                    sessionSnap?.RunnerId,
+                    sessionId,
+                    briefRow?.Status,
+                    briefRow?.DeliveryAttempts ?? 0,
+                    briefRow is not null,
+                    briefRow?.SentAt,
+                    briefRow?.CanceledAt,
+                    briefRow?.LastDeliveryStartedAt,
+                    briefRow?.DeliveryVerdict,
+                    started,
+                    runnerListFetched ? runnerList : null,
+                    ct))
+                continue;
 
             string reason = "";
             var withholdKill = false;
@@ -2307,6 +2357,23 @@ public sealed partial class AgentTaskDispatcher
             else
                 await _db.Entry(task).ReloadAsync(ct);
 
+            if (BeforeNeverStartedCleanupAsync is { } beforeCleanup)
+                await beforeCleanup(task, sessionId, ct);
+
+            await _db.Entry(task).ReloadAsync(ct);
+            if (task.Status != AgentTaskStatus.Failed
+                || task.AgentSessionId != sessionId
+                || task.Attempt != observedAttempt)
+            {
+                _logger.LogInformation(
+                    "Task {ShortId}: delivery watchdog withholding cleanup; the failure is not the current attempt",
+                    DelegationReportFormatter.Short(task.Id));
+                continue;
+            }
+
+            if (!withholdKill && !await CleanupPermittedAsync(sessionId, ct))
+                withholdKill = true;
+
             if (!withholdKill)
             {
                 try
@@ -2363,6 +2430,284 @@ public sealed partial class AgentTaskDispatcher
         }
 
         return failed;
+    }
+
+    private enum DispatchRecoveryListing
+    {
+        NoChannel = 0,
+        Unknown = 1,
+        NotListed = 2,
+        Refused = 3,
+        Eligible = 4,
+        InFlight = 5,
+    }
+
+    /// <summary>
+    /// CARD-1149/1150. Returns true when this tick must not write today's never-started failure.
+    /// Absent-launch debt uses the same hold as the dead-session sweep. Running debt is resumed
+    /// only on a full whitelist, or held when a gate positively refuses. Unknown evidence returns
+    /// false so today's failure stays, and <see cref="CleanupPermittedAsync"/> still withholds the stop.
+    /// </summary>
+    private async Task<bool> TryDeferRecoverableDispatchDebtAsync(
+        AgentTask task,
+        SessionStatus? sessionStatus,
+        string? sessionFailureReason,
+        DateTime? sessionEndedAt,
+        DateTime? sessionStartedAt,
+        string? sessionRunnerId,
+        Guid sessionId,
+        QueuedMessageStatus? briefStatus,
+        int briefAttempts,
+        bool briefFound,
+        DateTime? briefSentAt,
+        DateTime? briefCanceledAt,
+        DateTime? briefLastStarted,
+        DeliveryVerdict? briefVerdict,
+        bool started,
+        IReadOnlyList<SessionRunnerSessionDto>? cachedRunnerList,
+        CancellationToken ct)
+    {
+        if (sessionStatus == SessionStatus.Failed
+            && string.Equals(
+                sessionFailureReason,
+                SessionReconciliationService.RunnerUnknownSessionReason,
+                StringComparison.Ordinal))
+        {
+            var decision = await DecideAbsentLaunchAsync(
+                task,
+                new AgentTaskLiveness.SessionSnapshot(sessionStatus.Value, sessionEndedAt, sessionFailureReason),
+                cachedRunnerList,
+                ct);
+            if (decision != AbsentLaunchDecision.NotThisShape)
+                return true;
+        }
+
+        if (sessionStatus != SessionStatus.Running || sessionStartedAt is not DateTime startedAt)
+            return false;
+
+        var unattempted = briefFound
+            && briefStatus == QueuedMessageStatus.Pending
+            && briefAttempts == 0
+            && briefSentAt is null
+            && briefCanceledAt is null
+            && briefLastStarted is null
+            && briefVerdict is null;
+        var absent = !briefFound && !started;
+        var exhausted = briefFound
+            && briefStatus == QueuedMessageStatus.Pending
+            && briefAttempts >= _maxDeliveryAttempts;
+        if (!unattempted && !absent && !exhausted)
+            return false;
+        if (await SessionMessageQueueService.IsWorkingAsync(_db, sessionId, ct))
+            return true;
+
+        var listing = await ReadDispatchRecoveryListingAsync(
+            sessionId, sessionRunnerId, startedAt, cachedRunnerList, ct);
+        var recoverable = unattempted || absent;
+        if (listing == DispatchRecoveryListing.InFlight)
+            return true;
+
+        if (listing == DispatchRecoveryListing.Eligible && recoverable && _launchResumeEnabled)
+        {
+            _logger.LogInformation(
+                "Task {ShortId}: delivery watchdog handing session {SessionId} to running brief recovery",
+                DelegationReportFormatter.Short(task.Id), sessionId);
+            _launchQueue.ResumeInterrupted(sessionId, task.AgentId ?? Guid.Empty);
+            try
+            {
+                await _launchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(30), ct);
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                _logger.LogInformation(
+                    "Task {ShortId}: running brief recovery has not settled; withholding the never-started failure",
+                    DelegationReportFormatter.Short(task.Id));
+            }
+
+            return true;
+        }
+
+        if (listing is DispatchRecoveryListing.Refused or DispatchRecoveryListing.Eligible)
+            return await HoldDispatchBriefRecoveryAsync(task, sessionId, startedAt, ct);
+
+        return false;
+    }
+
+    private async Task<DispatchRecoveryListing> ReadDispatchRecoveryListingAsync(
+        Guid sessionId,
+        string? runnerId,
+        DateTime startedAt,
+        IReadOnlyList<SessionRunnerSessionDto>? cachedLocal,
+        CancellationToken ct)
+    {
+        if (_launchQueue.Owns(sessionId))
+            return DispatchRecoveryListing.InFlight;
+
+        var remote = !string.IsNullOrWhiteSpace(runnerId);
+        if (!remote && _runnerClient is null && _runners is null)
+            return DispatchRecoveryListing.NoChannel;
+
+        SessionRunnerSessionDto? listed = null;
+        var sawList = false;
+        try
+        {
+            if (remote)
+            {
+                if (_runners is null)
+                    return DispatchRecoveryListing.Unknown;
+                var inventory = await _runners.GetInventoryAsync(runnerId, ct);
+                if (inventory is not RunnerInventory.Available available)
+                    return DispatchRecoveryListing.Unknown;
+                sawList = true;
+                for (var i = 0; i < available.Sessions.Count; i++)
+                {
+                    if (available.Sessions[i].SessionId == sessionId)
+                    {
+                        listed = available.Sessions[i];
+                        break;
+                    }
+                }
+            }
+            else if (_runnerClient is null)
+            {
+                return DispatchRecoveryListing.Unknown;
+            }
+            else
+            {
+                var sessions = cachedLocal ?? await _runnerClient.ListAsync(ct);
+                sawList = true;
+                for (var i = 0; i < sessions.Count; i++)
+                {
+                    if (sessions[i].SessionId == sessionId)
+                    {
+                        listed = sessions[i];
+                        break;
+                    }
+                }
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            _logger.LogDebug(ex, "Dispatch recovery inventory for session {SessionId} is unavailable", sessionId);
+            return DispatchRecoveryListing.Unknown;
+        }
+
+        if (!sawList)
+            return DispatchRecoveryListing.Unknown;
+        if (listed is null)
+            return DispatchRecoveryListing.NotListed;
+        if (listed.AcceptedStartedAt is not DateTime accepted)
+            return DispatchRecoveryListing.Unknown;
+        if (!SessionGeneration.Equal(accepted, startedAt)
+            || !string.Equals(listed.Status, "Running", StringComparison.OrdinalIgnoreCase)
+            || !string.IsNullOrEmpty(listed.Pending))
+            return DispatchRecoveryListing.Refused;
+        if (await CheckCompactionAdmission.BlocksGenericLaunchResumeAsync(_db, sessionId, startedAt, ct))
+            return DispatchRecoveryListing.Refused;
+        return DispatchRecoveryListing.Eligible;
+    }
+
+    /// <summary>
+    /// Visible hold for recoverable or exhausted brief debt. A lost recheck or a save fault leaves
+    /// the task Dispatched so this tick does not also write Failed. Attempts are not reset and no
+    /// replacement brief is inserted.
+    /// </summary>
+    private async Task<bool> HoldDispatchBriefRecoveryAsync(
+        AgentTask task, Guid sessionId, DateTime startedAt, CancellationToken ct)
+    {
+        var expectedAttempt = task.Attempt;
+        var expectedDispatchedAt = task.DispatchedAt;
+        var gate = _queue.GetLock(sessionId);
+        await gate.WaitAsync(ct);
+        var held = false;
+        try
+        {
+            var addedBefore = _db.ChangeTracker.Entries()
+                .Where(e => e.State == EntityState.Added)
+                .Select(e => e.Entity)
+                .ToHashSet();
+            try
+            {
+                await using var tx = await _db.Database.BeginTransactionAsync(ct);
+                await _db.Database.ExecuteSqlInterpolatedAsync(
+                    $"""SELECT 1 FROM "AgentTasks" WHERE "Id" = {task.Id} FOR UPDATE""", ct);
+                await _db.Entry(task).ReloadAsync(ct);
+                var session = await _db.AgentSessions.AsNoTracking()
+                    .Where(s => s.Id == sessionId)
+                    .Select(s => new { s.Status, s.StartedAt })
+                    .FirstOrDefaultAsync(ct);
+                if (task.Status != AgentTaskStatus.Dispatched
+                    || task.Attempt != expectedAttempt
+                    || task.AgentSessionId != sessionId
+                    || task.DispatchedAt != expectedDispatchedAt
+                    || session is null
+                    || session.Status != SessionStatus.Running
+                    || session.StartedAt != startedAt
+                    || await SessionMessageQueueService.IsWorkingAsync(_db, sessionId, ct))
+                    return true;
+
+                task.CompletedAt = null;
+                StageBlocked(task, DispatchBriefRecoveryHeldReason);
+                if (task.ReplyTo == AgentTaskReplyTo.Session)
+                    await _tasks.EnqueueBlockedParentNoteAsync(task, DispatchBriefRecoveryHeldReason, ct);
+                await _db.SaveChangesAsync(ct);
+                await tx.CommitAsync(ct);
+                held = true;
+            }
+            catch (Exception ex)
+            {
+                await DiscardUncommittedHoldAsync(task, addedBefore);
+                if (ex is OperationCanceledException && ct.IsCancellationRequested)
+                    throw;
+                _logger.LogWarning(
+                    ex, "Dispatch brief recovery hold for task {ShortId} did not commit; the debt stays",
+                    DelegationReportFormatter.Short(task.Id));
+                return true;
+            }
+        }
+        finally
+        {
+            gate.Release();
+        }
+
+        if (!held)
+            return true;
+        try
+        {
+            await _eventBus.PublishToAllAsync(
+                "AgentTaskChanged", new { taskId = task.Id, rootId = task.RootTaskId }, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            _logger.LogWarning(
+                ex, "Dispatch brief recovery hold for task {ShortId} committed but the change notice failed",
+                DelegationReportFormatter.Short(task.Id));
+        }
+
+        _logger.LogInformation(
+            "Task {ShortId} held blocked: dispatch brief recovery did not complete before the delivery deadline",
+            DelegationReportFormatter.Short(task.Id));
+        return true;
+    }
+
+    /// <summary>
+    /// A stopper needs a current failure, a fresh non-Working verdict, and positive absence.
+    /// A listed session or unavailable inventory withholds. No runner client and no directory
+    /// keeps today's kill.
+    /// </summary>
+    private async Task<bool> CleanupPermittedAsync(Guid sessionId, CancellationToken ct)
+    {
+        if (await SessionMessageQueueService.IsWorkingAsync(_db, sessionId, ct))
+            return false;
+
+        var runnerId = await _db.AgentSessions.AsNoTracking()
+            .Where(s => s.Id == sessionId)
+            .Select(s => s.RunnerId)
+            .FirstOrDefaultAsync(ct);
+        if (_runnerClient is null && _runners is null)
+            return string.IsNullOrWhiteSpace(runnerId);
+
+        return await ReadAbsenceAsync(sessionId, cachedLocal: null, ct) == RunnerAbsence.Positive;
     }
 
     /// <summary>
@@ -2682,7 +3027,7 @@ public sealed partial class AgentTaskDispatcher
     private async Task<AbsentLaunchDecision> DecideAbsentLaunchAsync(
         AgentTask task,
         AgentTaskLiveness.SessionSnapshot? session,
-        IReadOnlyList<SessionRunnerSessionDto> runnerSessions,
+        IReadOnlyList<SessionRunnerSessionDto>? runnerSessions,
         CancellationToken ct,
         bool nativeAttempt = false)
     {
@@ -3330,6 +3675,12 @@ public sealed partial class AgentTaskDispatcher
     /// arm-2 conditional update (CARD-0714). Null in production.
     /// </summary>
     internal Func<Guid, CancellationToken, Task>? DelayBeforeArm2ConditionalWriteAsync { get; set; }
+
+    /// <summary>
+    /// CARD-1150 test seam. Runs after a never-started failure commits and before cleanup
+    /// re-reads the task. Production leaves it null.
+    /// </summary>
+    internal Func<AgentTask, Guid, CancellationToken, Task>? BeforeNeverStartedCleanupAsync { get; set; }
 
     private readonly record struct Arm2Attempt(
         Guid TaskId,

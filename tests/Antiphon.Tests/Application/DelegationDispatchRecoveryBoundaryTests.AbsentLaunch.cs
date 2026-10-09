@@ -397,7 +397,7 @@ public partial class DelegationDispatchRecoveryBoundaryTests
         var agentId = Guid.NewGuid();
         var parentId = shape.ExistingParentId ?? (shape.Parent ? Guid.NewGuid() : null);
         var briefId = shape.Brief ? Guid.NewGuid() : Guid.Empty;
-        var dispatched = Pg(DateTime.UtcNow.AddMinutes(-1));
+        var dispatched = Pg(DateTime.UtcNow.AddMinutes(-shape.AgeMinutes));
         var cwd = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "antiphon-c1149-s1", taskId.ToString("N"))).FullName;
         var name = $"c1149-{agentId:N}"[..16];
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(connection));
@@ -422,7 +422,7 @@ public partial class DelegationDispatchRecoveryBoundaryTests
             Id = sessionId,
             DefinitionName = "absent-launch",
             AgentKind = AgentKind.ClaudeCode,
-            Status = SessionStatus.Failed,
+            Status = shape.LiveStatus,
             Cwd = cwd,
             RunnerId = shape.RunnerId,
             RunnerStoreId = shape.RunnerId is null ? null : Guid.NewGuid(),
@@ -430,8 +430,8 @@ public partial class DelegationDispatchRecoveryBoundaryTests
             CreatedAt = dispatched,
             StartedAt = dispatched,
             LastSeenAt = dispatched,
-            EndedAt = dispatched,
-            FailureReason = shape.SessionReason,
+            EndedAt = shape.LiveStatus == SessionStatus.Failed ? dispatched : null,
+            FailureReason = shape.LiveStatus == SessionStatus.Failed ? shape.SessionReason : null,
         });
         db.Agents.Add(new Agent
         {
@@ -635,12 +635,22 @@ public partial class DelegationDispatchRecoveryBoundaryTests
             await SweepAsync();
         }
 
+        public async Task<int> NeverStartedAsync(Action<AgentTaskDispatcher>? prepare = null)
+        {
+            await using var scope = provider.CreateAsyncScope();
+            var dispatcher = scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>();
+            prepare?.Invoke(dispatcher);
+            return await dispatcher.FailNeverStartedAsync(CancellationToken.None);
+        }
+
         public async ValueTask DisposeAsync() => await provider.DisposeAsync();
     }
 
     private sealed class AbsentShape
     {
         public AgentTaskStatus Status { get; init; } = AgentTaskStatus.Dispatched;
+        public SessionStatus LiveStatus { get; init; } = SessionStatus.Failed;
+        public int AgeMinutes { get; init; } = 1;
         public string? SessionReason { get; init; } = SessionReconciliationService.RunnerUnknownSessionReason;
         public string? RunnerId { get; init; }
         public int DeliveryAttempts { get; init; }
@@ -668,9 +678,13 @@ public partial class DelegationDispatchRecoveryBoundaryTests
         public int Releases { get; private set; }
         public int Inputs { get; private set; }
 
+        public Exception? ThrowOnList { get; set; }
+
         public Task<IReadOnlyList<SessionRunnerSessionDto>> ListAsync(CancellationToken ct)
         {
             Lists++;
+            if (ThrowOnList is { } fault)
+                throw fault;
             return Task.FromResult<IReadOnlyList<SessionRunnerSessionDto>>(Sessions.ToList());
         }
 

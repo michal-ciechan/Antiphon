@@ -425,11 +425,11 @@ public partial class DelegationDispatchRecoveryBoundaryTests
 
         public AppDbContext Read() => new(TestDbFixture.CreateDbContextOptions(Harness.ConnectionString));
 
-        public async Task ResumeAsync(CurrentBrief seeded)
+        public async Task ResumeAsync(CurrentBrief seeded, CancellationToken ct = default)
         {
             await using var scope = Harness.Provider.CreateAsyncScope();
             await scope.ServiceProvider.GetRequiredService<AgentSessionService>()
-                .ResumeInterruptedLaunchAsync(seeded.SessionId, seeded.AgentId, CancellationToken.None);
+                .ResumeInterruptedLaunchAsync(seeded.SessionId, seeded.AgentId, ct);
         }
 
         public async Task DiscoverAsync(CurrentBrief seeded)
