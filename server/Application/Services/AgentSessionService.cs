@@ -931,31 +931,35 @@ public sealed class AgentSessionService : IDelegateSessionStopper
                 ct);
             await _eventBus.PublishToAllAsync("AgentChanged", new AgentChangedEventDto(agentId), ct);
 
-            if (requeued && task is not null)
-            {
-                await SaveResumeEventAsync(new AgentTaskEvent
-                {
-                    Id = Guid.NewGuid(), AgentTaskId = task.Id, Type = AgentTaskEventType.Warning,
-                    Detail = "brief re-queued: the interrupted dispatch died before its brief row was persisted",
-                    At = UtcNow(),
-                }, inputDelivered, ct);
-            }
+            // AcceptDispatchBriefAsync committed the row while this session was still
+            // Starting, and DeliverNext refuses to type until it is Running. A legacy
+            // enqueue with no dispatch time still records the re-queue before any flush,
+            // so that failure stays pre-input. A dispatch-window insert is typed by the
+            // flush below; its re-queue event follows that delivery, and the contained
+            // flush after the event keeps a bookkeeping fault off the kill path.
+            var typedBeforeFlush = inputDelivered;
+            if (requeued && task is not null && (typedBeforeFlush || task.DispatchedAt is null))
+                await SaveRequeuedEventAsync(task, inputDelivered);
 
             if (!inputDelivered)
                 inputDelivered = await _messageQueue.FlushSessionReportingDeliveryAsync(session.Id, ct);
             else
+                await FlushContainedResumeAsync(session.Id, ct);
+
+            if (requeued && task is not null && !typedBeforeFlush && task.DispatchedAt is not null)
             {
-                try
-                {
-                    await _messageQueue.FlushSessionAsync(session.Id, ct);
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    _logger.LogWarning(ex,
-                        "Flush after the resumed launch's completed delivery failed for session {SessionId}; "
-                        + "the session is left running", session.Id);
-                }
+                await SaveRequeuedEventAsync(task, inputDelivered);
+                if (inputDelivered)
+                    await FlushContainedResumeAsync(session.Id, ct);
             }
+
+            Task SaveRequeuedEventAsync(AgentTask requeuedTask, bool afterDelivery) =>
+                SaveResumeEventAsync(new AgentTaskEvent
+                {
+                    Id = Guid.NewGuid(), AgentTaskId = requeuedTask.Id, Type = AgentTaskEventType.Warning,
+                    Detail = "brief re-queued: the interrupted dispatch died before its brief row was persisted",
+                    At = UtcNow(),
+                }, afterDelivery, ct);
 
             if (task is not null)
             {
@@ -1256,6 +1260,24 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         {
             _logger.LogDebug(ex, "Runner evidence for session {SessionId} is unavailable", session.Id);
             return null;
+        }
+    }
+
+    /// <summary>
+    /// A flush after a completed delivery. Its supervision read can fail once the re-queue
+    /// event has been saved; that fault is logged and the session stays running.
+    /// </summary>
+    private async Task FlushContainedResumeAsync(Guid sessionId, CancellationToken ct)
+    {
+        try
+        {
+            await _messageQueue.FlushSessionAsync(sessionId, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex,
+                "Flush after the resumed launch's completed delivery failed for session {SessionId}; "
+                + "the session is left running", sessionId);
         }
     }
 
