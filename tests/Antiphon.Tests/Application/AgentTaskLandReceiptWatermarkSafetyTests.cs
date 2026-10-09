@@ -67,10 +67,10 @@ public sealed class AgentTaskLandReceiptWatermarkSafetyTests
     private static Func<string, Func<long, (string, string)>?> BodyAt(long sequence, string kind = TranscriptKinds.UserPrompt) =>
         body => seq => seq == sequence ? (kind, body) : (TranscriptKinds.UserPrompt, LandReceiptScanHarness.Filler(seq));
 
-    private static async Task ShouldBeConfirmedAtAsync(LandReceiptScanHarness h, Guid noteId, long expected, long floor = Floor)
+    private static async Task ShouldBeConfirmedAtAsync(LandReceiptScanHarness h, Guid noteId, long expected, long floor = Floor, string? receiptText = null)
     {
         var saved = await h.NoteAsync(noteId);
-        var oracle = await h.InMemoryFirstReceiptAsync(saved.ParentSessionId!.Value, floor, saved.IsLegacy, saved.Kind, saved.Body);
+        var oracle = await h.InMemoryFirstReceiptAsync(saved.ParentSessionId!.Value, floor, saved.IsLegacy, saved.Kind, receiptText ?? saved.Body);
         oracle.ShouldBe(expected, "the in-memory CARD-0641 rule over the committed rows");
         saved.State.ShouldBe(LandNotificationState.Confirmed);
         saved.ConfirmedAt.ShouldNotBeNull();
@@ -325,7 +325,7 @@ public sealed class AgentTaskLandReceiptWatermarkSafetyTests
         }
         else
         {
-            await ShouldBeConfirmedAtAsync(h, note.Id, Match);
+            await ShouldBeConfirmedAtAsync(h, note.Id, Match, receiptText: cut == "profiled-pointer-hash-mismatch-then-repair" ? wire : null);
             h.Cache.GetMetrics().Proofs.ShouldBe(0);
         }
         h.Bridge.Adapter.Inputs.ShouldBeEmpty("receipt reconciliation must never type");

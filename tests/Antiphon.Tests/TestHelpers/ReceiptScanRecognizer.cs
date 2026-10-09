@@ -105,15 +105,19 @@ internal sealed class CountingReader(DbDataReader inner, Action<int>? afterRow =
     public override bool Read()
     {
         var ok = inner.Read();
-        if (ok) afterRow?.Invoke(++Rows);
-        return ok;
+        if (!ok) return false;
+        Rows++;
+        afterRow?.Invoke(Rows);
+        return true;
     }
 
     public override async Task<bool> ReadAsync(CancellationToken cancellationToken)
     {
         var ok = await inner.ReadAsync(cancellationToken);
-        if (ok) afterRow?.Invoke(++Rows);
-        return ok;
+        if (!ok) return false;
+        Rows++;
+        afterRow?.Invoke(Rows);
+        return true;
     }
 
     public override int Depth => inner.Depth;
