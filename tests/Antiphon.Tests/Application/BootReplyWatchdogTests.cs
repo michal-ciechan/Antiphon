@@ -66,7 +66,8 @@ public class BootReplyWatchdogTests
         // operator due, so it is the operator stage alone (Error), never a burst of both stages.
         incident.Severity.ShouldBe(AlertSeverity.Error);
         incident.Message.ShouldContain("Boot prompt at sequence");
-        incident.Message.ShouldContain("no assistant, thinking, tool or turn-end row");
+        incident.Message.ShouldContain("no qualifying model reply in");
+        incident.Message.ShouldNotContain("no assistant, thinking, tool or turn-end row");
         incident.Message.ShouldNotContain("composer holds");
         incident.FailureReason.ShouldNotBeNull();
         incident.FailureReason.ShouldStartWith("standingBoot:v1;g=");

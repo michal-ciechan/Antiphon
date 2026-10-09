@@ -143,8 +143,8 @@ internal static class StandingBootAttentionProjection
                 continue;
             }
 
-            // The boot predicate over the loaded row, revalidated now: any model row on this launch
-            // resolves the episode, whoever produced it.
+            // The boot predicate over the loaded row, revalidated now: any qualifying model reply on this
+            // launch resolves the episode, whoever produced it (HasModelReplySinceAsync decides what qualifies).
             if (await BootReplyWatch.HasModelReplySinceAsync(db, session.Id, clock, ct))
                 continue;
 
@@ -199,8 +199,8 @@ internal static class StandingBootAttentionProjection
         // against the intended request, so the row states no delivery verdict either way.
         var prompt = promptKind == TranscriptKinds.QueuedUserPrompt
             ? $"Queued prompt record #{facts.PromptSequence} at {facts.PromptAt:u}, {waited} ago; no reply observed."
-            : $"Prompt #{facts.PromptSequence} ({promptKind}) at {facts.PromptAt:u}, {waited} ago; no assistant, "
-                + "thinking, tool or turn-end row since.";
+            : $"Prompt #{facts.PromptSequence} ({promptKind}) at {facts.PromptAt:u}, {waited} ago; no qualifying "
+                + "model reply since.";
         var lines = new[]
         {
             "Inspect the session or its transcript, then choose: keep waiting, reply through the session, "

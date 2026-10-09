@@ -189,8 +189,9 @@ public class StandingBootDocumentationTests
             + "is a delivery verdict.",
             "For a taskless AlwaysOn session the row is projected from the session's current facts at read "
             + "time: the age of the latest prompt record on its current launch against the boot due "
-            + "(Warning) and the operator threshold (Error), with no assistant, thinking, tool or turn-end "
-            + "row on that launch.",
+            + "(Warning) and the operator threshold (Error), with no qualifying boot-model reply on that "
+            + "launch (as decided by <c>BootReplyWatch.HasModelReplySinceAsync</c>, which ignores Grok "
+            + "rules-turn responses).",
             "It renders with or without a saved <c>standingBoot:v1;</c> incident;",
             "It makes no claim about delivery: the latest prompt record may be a queued one, and the row "
             + "labels it so.",
@@ -207,6 +208,9 @@ public class StandingBootDocumentationTests
             "was delivered",
             "rung 5 of the delivery evidence ladder",
             "Projected from open",
+            // Review 5906dbf4 F-1: an initialized Grok session's rules-turn rows are excluded, so the
+            // summary must not enumerate row kinds as if any such row resolved the episode.
+            "assistant, thinking, tool or turn-end",
         })
         {
             summary.ShouldNotContain(retired, Case.Insensitive, $"LivenessProbeFailed summary: retired '{retired}'");

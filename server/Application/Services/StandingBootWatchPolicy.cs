@@ -184,7 +184,7 @@ internal static class StandingBootWatchPolicy
             ? $"Boot queued prompt record at sequence {facts.PromptSequence}; no reply observed"
             : $"Boot prompt at sequence {facts.PromptSequence} ({promptKind})";
         return opening
-            + $"; no assistant, thinking, tool or turn-end row in {Describe(age)}"
+            + $"; no qualifying model reply in {Describe(age)}"
             + $"; boot notice due {facts.BootDueAt:u}; operator decision due {facts.OperatorDueAt:u}. "
             + "Detection only: the session keeps its seat; nothing was stopped, restarted, typed or latched.";
     }

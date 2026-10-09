@@ -232,10 +232,11 @@ public enum AttentionKind
     /// <para><b>Standing boot row (CARD-1156).</b> For a taskless AlwaysOn session the row is
     /// projected from the session's current facts at read time: the age of the latest prompt
     /// record on its current launch against the boot due (Warning) and the operator threshold
-    /// (Error), with no assistant, thinking, tool or turn-end row on that launch. It renders with
-    /// or without a saved <c>standingBoot:v1;</c> incident; a saved Error receipt of the same
-    /// episode only keeps the Error stage when the clock steps back. It makes no claim about
-    /// delivery: the latest prompt record may be a queued one, and the row labels it so.</para>
+    /// (Error), with no qualifying boot-model reply on that launch (as decided by
+    /// <c>BootReplyWatch.HasModelReplySinceAsync</c>, which ignores Grok rules-turn responses).
+    /// It renders with or without a saved <c>standingBoot:v1;</c> incident; a saved Error receipt
+    /// of the same episode only keeps the Error stage when the clock steps back. It makes no claim
+    /// about delivery: the latest prompt record may be a queued one, and the row labels it so.</para>
     ///
     /// <para><b>Legacy <c>bootSeq=</c> row (CARD-0312).</b> For a live session that no AlwaysOn
     /// agent points at and no open task owns, the row is projected from a <c>bootSeq=</c>

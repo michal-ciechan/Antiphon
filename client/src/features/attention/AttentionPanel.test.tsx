@@ -333,7 +333,7 @@ describe('AttentionPanel', () => {
               + 'or explicitly Stop and Start/resume the agent.',
             'Detection only: the session keeps running and keeps its seat; nothing is stopped, typed, '
               + 'restarted or latched automatically, and no deadline ends this episode.',
-            'Prompt #12 (UserPrompt) at 2026-08-17 09:00:00Z, 45m ago; no assistant, thinking, tool or turn-end row since.',
+            'Prompt #12 (UserPrompt) at 2026-08-17 09:00:00Z, 45m ago; no qualifying model reply since.',
             'Boot notice due 2026-08-17 09:10:00Z.',
             'Operator decision due 2026-08-17 09:30:00Z.',
           ].join('\n'),
@@ -347,7 +347,8 @@ describe('AttentionPanel', () => {
 
     await userEvent.hover(await screen.findByText('No reply to boot prompt'))
     const tooltip = (await screen.findByRole('tooltip')).textContent ?? ''
-    expect(tooltip).toContain('No assistant, thinking, tool or turn-end row has appeared since the boot prompt')
+    expect(tooltip).toContain('No qualifying model reply has appeared since the boot prompt')
+    expect(tooltip).not.toContain('assistant, thinking, tool or turn-end')
     expect(tooltip).toContain('Warning from the boot notice due and an Error from the operator decision due')
     expect(tooltip).toContain('prompt age and both due times')
     expect(tooltip).toContain('Detection only: Antiphon only reports this')
