@@ -1034,3 +1034,20 @@ restored with `git checkout -- docs` and the clock mutant with `git checkout -- 
 
 PC-20 stays pending for post-land SourceLanding Mutation with every other PC. No AppHost restart is
 owed by S6 itself (comments and docs only); the restart owed by S1-S4 is unchanged.
+
+**S6 repair (Review f5b1d580 F-1, Code f6ed79e3).** The `AttentionKind.LivenessProbeFailed`
+summary claimed a delivered, transcript-confirmed boot prompt "projected from open incidents". It
+now says neither projection is a delivery verdict, describes the standing row as projected from
+the session's current facts (latest prompt record's age against the boot due and operator
+threshold, no model row on the current launch), rendering with or without a saved
+`standingBoot:v1;` incident and labelling a queued prompt record, and describes the legacy
+`bootSeq=` incident projection separately. Pin:
+`StandingBootDocumentationTests.C1156_LivenessProbeFailed_summary_claims_no_delivery_and_names_both_projections`
+(reads the summary text at run time; no rebuild per mutant):
+
+| Mutation | Red at |
+|---|---|
+| `AttentionDtos.cs` checked out at `b9ae1cd4f` (the old summary restored) | `LivenessProbeFailed summary: Neither projection below matches the prompt ...` |
+| new summary plus the line "The boot prompt was transcript-confirmed." | `LivenessProbeFailed summary: retired 'transcript-confirmed'` |
+
+Comment-only repair: no behaviour change, no migration, no restart beyond the one S1-S4 owe.
