@@ -242,6 +242,8 @@ Pinned by `RunnerAbsenceEvidenceContractTests.C1153_Http_authentication_covers_r
 - Provisioning or rotating the live key is an operator step: write the file on both sides, then
   restart the runner first and the AppHost second. No delegate or stage creates, prints or rotates it.
 
+### server2 runner credentials (CARD-0604)
+
 Runner credentials never enter Antiphon's stores, the image or any evidence directory.
 The generated deploy key and phone-home secret stay on server2; the GitHub token is streamed
 from the vault by the operator's refresh script. Names and locations only:
