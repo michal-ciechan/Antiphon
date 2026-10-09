@@ -4555,7 +4555,7 @@ public sealed class RemoteScriptContractTests
                 if [ "$1" = stat ]; then echo 1654:1654:700; return 0; fi
                 PRIVILEGED=1 "$@"
             }
-            """ + "\n" + ControlledCacheDf("docker_root", "25000000") + """
+            """ + "\n" + ControlledCacheDf("docker_root", "25000000") + "\n" + """
             docker() {
                 local name="${@: -1}" format=''
                 case "$1:$2" in
