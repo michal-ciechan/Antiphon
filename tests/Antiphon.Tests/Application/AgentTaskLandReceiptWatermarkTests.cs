@@ -338,11 +338,13 @@ public sealed class AgentTaskLandReceiptWatermarkTests
     [Arguments("fallback-confirms-with-unavailable-runner")]
     public async Task C1121_UnknownEvidenceUsesExistingScan(string evidence, CancellationToken ct)
     {
+        // CARD-1163: a proof has to exist before the clock faults, or TryReuse never reads it.
+        var clock = evidence == "cache-clock-fault" ? new FaultAfterPublishClock() : null;
         await using var h = await LandReceiptScanHarness.CreateAsync(new()
         {
             Store = evidence != "store-absent",
             StoreEnabled = evidence != "store-disabled",
-            CacheClock = evidence == "cache-clock-fault" ? new FaultingClock() : null,
+            CacheClock = clock,
         });
         var (note, row, _) = await ArrangeAsync(h,
             candidates: evidence == "fallback-confirms-with-unavailable-runner"
@@ -403,6 +405,35 @@ public sealed class AgentTaskLandReceiptWatermarkTests
                 break;
         }
 
+        if (evidence == "cache-clock-fault")
+        {
+            var published = await PassAsync(h, note.Id);
+            published.ReceiptSelects.ShouldBe(1);
+            published.Pulls.ShouldBe(1);
+            var beforeFault = h.Cache!.GetMetrics();
+            beforeFault.Publishes.ShouldBe(1);
+            beforeFault.Proofs.ShouldBe(1);
+            beforeFault.Hits.ShouldBe(0);
+            clock!.Fault = true;
+
+            var refused = await PassAsync(h, note.Id);
+            var savedFault = await h.NoteAsync(note.Id);
+            // PC-13 witness: removing TryReuse's catch records notification_reconcile_failed here.
+            savedFault.LastErrorCode.ShouldBeNull();
+            savedFault.EnqueueAttempts.ShouldBe(note.EnqueueAttempts, "a refusal is never a failed reconcile");
+            savedFault.State.ShouldBe(LandNotificationState.AwaitingReceipt);
+            savedFault.ConfirmedAt.ShouldBeNull();
+            refused.ReceiptSelects.ShouldBe(1, "a clock fault after a published proof refuses reuse and rescans");
+            refused.Pulls.ShouldBe(1);
+            var afterFault = h.Cache.GetMetrics();
+            afterFault.Hits.ShouldBe(0);
+            afterFault.Publishes.ShouldBe(1);
+            afterFault.Proofs.ShouldBe(1);
+            afterFault.Refusals.GetValueOrDefault("cache-fault").ShouldBe(1);
+            ShouldNotHaveTyped(h);
+            return;
+        }
+
         var passes = await PassesAsync(h, note.Id, 3);
 
         if (evidence == "fallback-confirms-with-unavailable-runner")
@@ -422,7 +453,7 @@ public sealed class AgentTaskLandReceiptWatermarkTests
             saved.ConfirmedAt.ShouldBeNull();
             saved.EnqueueAttempts.ShouldBe(note.EnqueueAttempts, "a refusal is never a failed reconcile");
             saved.LastErrorCode?.ShouldNotStartWith("notification_reconcile_failed");
-            if (evidence is "cache-clock-fault" or "store-absent" or "store-disabled" or "destination-running")
+            if (evidence is "store-absent" or "store-disabled" or "destination-running")
                 saved.LastErrorCode.ShouldBeNull();
         }
         var metrics = h.Cache!.GetMetrics();
@@ -547,8 +578,14 @@ public sealed class AgentTaskLandReceiptWatermarkTests
         }
     }
 
-    private sealed class FaultingClock : TimeProvider
+    /// <summary>CARD-1163. Live until <see cref="Fault"/> is set, then <see cref="GetTimestamp"/> throws.</summary>
+    private sealed class FaultAfterPublishClock : TimeProvider
     {
-        public override long GetTimestamp() => throw new InvalidOperationException("cache clock fault");
+        private readonly TimeProvider inner = TimeProvider.System;
+        public bool Fault { get; set; }
+        public override long TimestampFrequency => inner.TimestampFrequency;
+        public override long GetTimestamp() => Fault
+            ? throw new InvalidOperationException("cache clock fault")
+            : inner.GetTimestamp();
     }
 }
