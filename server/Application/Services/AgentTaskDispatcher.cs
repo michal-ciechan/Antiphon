@@ -2739,12 +2739,12 @@ public sealed partial class AgentTaskDispatcher
     }
 
     /// <summary>
-    /// CARD-1153: a validated never-created certificate, the store the request named, and a
-    /// deadline on this dispatcher's clock taken before the request was sent. No certificate
-    /// survives this decision: the hold re-checks it under the lock and then drops it.
+    /// CARD-1153: a validated never-created certificate, the store the request named, and this
+    /// dispatcher's monotonic timestamp and wall deadline, both taken before the request was sent.
+    /// No certificate survives this decision: the hold re-checks it under the lock and then drops it.
     /// </summary>
     private sealed record AbsenceCertificate(
-        SessionRunnerAbsenceEvidence Evidence, Guid? RequestedRunnerStoreId, DateTime LocalDeadline);
+        SessionRunnerAbsenceEvidence Evidence, Guid? RequestedRunnerStoreId, long RequestedTimestamp, DateTime LocalDeadline);
 
     private static AbsentLaunchEvidence? WithNativeEmpty(AbsentLaunchEvidence? facts, bool nativeEmpty) =>
         facts is null ? null : facts with { EmptyNativeTranscript = nativeEmpty };
@@ -2783,6 +2783,7 @@ public sealed partial class AgentTaskDispatcher
     {
         if (_runnerClient is null)
             return null;
+        var requested = _timeProvider.GetTimestamp();
         var deadline = UtcNow() + RunnerAbsenceEvidenceValidator.Lifetime;
         try
         {
@@ -2797,7 +2798,7 @@ public sealed partial class AgentTaskDispatcher
             return evidence.SessionId == sessionId
                 && SessionGeneration.Equal(evidence.AcceptedStartedAt, startedAt)
                 && (runnerStoreId is not Guid bound || evidence.RunnerStoreId == bound)
-                    ? new AbsenceCertificate(evidence, runnerStoreId, deadline)
+                    ? new AbsenceCertificate(evidence, runnerStoreId, requested, deadline)
                     : null;
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
@@ -2807,13 +2808,20 @@ public sealed partial class AgentTaskDispatcher
         }
     }
 
-    /// <summary>The first-read certificate still names the locked row and has not expired.</summary>
+    /// <summary>
+    /// The first-read certificate still names the locked row and has not expired. Its age is
+    /// monotonic elapsed time since before the request, so a wall-clock rollback cannot extend
+    /// its five-second life; a negative age is not an age. The wall deadline is kept as a second,
+    /// fail-safe bound: a forward jump past it only withholds, and the next pass asks again.
+    /// </summary>
     private bool AbsenceCertificateHolds(
         AbsenceCertificate certificate, Guid sessionId, DateTime startedAt, Guid? runnerStoreId) =>
         certificate.Evidence.SessionId == sessionId
         && SessionGeneration.Equal(certificate.Evidence.AcceptedStartedAt, startedAt)
         && certificate.RequestedRunnerStoreId == runnerStoreId
         && (runnerStoreId is not Guid bound || certificate.Evidence.RunnerStoreId == bound)
+        && _timeProvider.GetElapsedTime(certificate.RequestedTimestamp) is var age
+        && age >= TimeSpan.Zero && age <= RunnerAbsenceEvidenceValidator.Lifetime
         && UtcNow() <= certificate.LocalDeadline;
 
     /// <summary>
@@ -3022,7 +3030,7 @@ public sealed partial class AgentTaskDispatcher
 
             // CARD-1153 D-4: the native-empty fact is the first read's certificate, re-checked
             // here immediately before staging: the same generation and store as the locked
-            // session row, and unexpired on this dispatcher's clock. A changed condition is a
+            // session row, and unexpired by this dispatcher's monotonic age. A changed condition is a
             // withhold; the next due pass asks the runner again.
             if (!AbsentLaunchPolicy.IsNeverAttempted(WithNativeEmpty(
                     facts, AbsenceCertificateHolds(certificate, sessionId, fresh.StartedAt, fresh.RunnerStoreId))))
