@@ -239,6 +239,9 @@ baseline). Includes `the_grace_has_to_elapse_before_anything_is_failed` and
 `a_working_task_behind_a_dead_session_is_failed_too`. Covers D-1's boundary and
 D-5. `DueAsync` callers are not all in this class; R-1's tick and the aligned
 hold argument are the boundary-suite witnesses that `Advance` still opens the gate.
+The ordinary Failed caller receipt is
+`DelegationDispatchRecoveryBoundaryTests.C1161_Failed_caller_note_has_one_complete_user_prompt`
+(eligible, busy, crash).
 
 ### Production mutation controls
 
