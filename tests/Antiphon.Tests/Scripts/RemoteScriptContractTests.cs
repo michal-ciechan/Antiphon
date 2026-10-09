@@ -4111,7 +4111,8 @@ public sealed class RemoteScriptContractTests
                         if [[ "$*" == *'--entrypoint pwsh'* ]]; then
                             local expected="$(id -u):$(id -g)"
                             [[ "$*" == *"--user $expected"* ]] || { echo CacheImportOwnerInvalid; return 2; }
-                            pwsh -NoProfile -File "$repo/scripts/c849-import-saved-donor.ps1" -Source "$C590_SAVED_DONOR" -Stage "$stage"
+                            [ -n "${C997_TRACE:-}" ] || { echo C997_TRACE_MISSING; return 97; }
+                            pwsh -NoProfile -File "$repo/tests/Antiphon.Tests/Scripts/Fixtures/c997-import-saved-donor.ps1" -Importer "$repo/scripts/c849-import-saved-donor.ps1" -Source "$C590_SAVED_DONOR" -Stage "$stage" -AvailableBytes 68719476736 -Trace "$C997_TRACE"
                             return $?
                         fi
                         if [[ "$*" == *'cache verify'* ]]; then return 0; fi
@@ -4140,6 +4141,7 @@ public sealed class RemoteScriptContractTests
             }
             require_lane() { :; }
             write_result() { printf 'seed-result=%s:%s\n' "$1" "$2"; exit "$3"; }
+            C997_TRACE="$root/trace-tar"
             ( c849_seed ) > "$root/result" 2>&1
             printf 'success=%s %s\n' "$?" "$(cat "$root/result")"
             test -s "$C849_READY" && echo marker-written
@@ -4161,8 +4163,10 @@ public sealed class RemoteScriptContractTests
             mv "$root/accepted-marker" "$C849_READY"
             mkdir -p "$root/directory-stage/packages" "$root/directory-stage/npm"
             C590_SAVED_DONOR="$tree"
+            C997_TRACE="$root/trace-directory"
             c849_saved_copy "$tree/" "$root/directory-stage" image
             test -s "$root/directory-stage/packages/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native/apphost" && echo directory-imported
+            grep -F "entry source=$tree stage=$root/directory-stage" "$root/trace-directory" >/dev/null && echo C997-WRAPPER-ENTRY directory-import
             SERVER2_ENV="$root/main.env"; printf 'ready\n' > "$SERVER2_ENV"
             mkdir -p "$root/state/grok"
             SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; HOST_PROJECT=main
@@ -4186,13 +4190,16 @@ public sealed class RemoteScriptContractTests
                 ( case_deploy_$([ "$target" = parent ] && echo parent || echo temp_runner) ) > "$root/deploy" 2>&1
                 printf 'deploy-%s=%s\n' "$target" "$(cat "$root/deploy")"
             done
+            printf 'C997_TAR_ENTRY=%s\n' "$(grep '^entry ' "$root/trace-tar")"
             """, "repo");
         foreach (var expected in new[] { "success=0 seed-result=true:", "marker-written", "saved-identity",
             "payload-imported", "recovery-retained", "recovery-host-owned", "unsafe-mode-masked",
             "incomplete-pruned", "live-cache-owned-by-1654", "idle-count=3 smoke-count=1",
             "smoke-exit=2 diagnosis=seed-result=false:CacheSeedSmokeFailed", "smoke-no-ready-marker", "smoke-stage-cleaned", "directory-imported",
+            "C997-WRAPPER-ENTRY directory-import",
             "deploy-parent=seed-result=false:PastSeedGate", "deploy-temp=seed-result=false:PastSeedGate" })
             output.ShouldContain(expected);
+        Regex.IsMatch(output, @"C997_TAR_ENTRY=entry source=\S+/donor\.tar stage=\S+/stage-red-").ShouldBeTrue("C997-WRAPPER-ENTRY tar");
     }
 
     [Test]
@@ -4224,7 +4231,8 @@ public sealed class RemoteScriptContractTests
             }
             docker() {
                 if [ "$1" = run ] && [[ "$*" == *'--entrypoint pwsh'* ]]; then
-                    pwsh -NoProfile -File "$repo/scripts/c849-import-saved-donor.ps1" -Source "$SOURCE" -Stage "$STAGE"
+                    [ -n "${C997_TRACE:-}" ] || { echo C997_TRACE_MISSING; return 97; }
+                    pwsh -NoProfile -File "$repo/tests/Antiphon.Tests/Scripts/Fixtures/c997-import-saved-donor.ps1" -Importer "$repo/scripts/c849-import-saved-donor.ps1" -Source "$SOURCE" -Stage "$STAGE" -AvailableBytes 68719476736 -Trace "$C997_TRACE"
                     return $?
                 fi
                 if [ "$1" = ps ]; then
@@ -4255,17 +4263,21 @@ public sealed class RemoteScriptContractTests
             for fault in traversal nested-traversal duplicate unsupported symlink missing; do
                 stage="$root/stage-$fault"; mkdir -p "$stage/packages" "$stage/npm"
                 SOURCE="$root/$fault.tar" STAGE="$stage"
+                C997_TRACE="$root/trace-$fault"
                 diagnosis="$(c849_saved_copy "$SOURCE" "$STAGE" image)"; code=$?
                 if [ "$code" = 0 ]; then diagnosis="$(c849_validate_seed_tree "$stage")"; code=$?; fi
                 printf '%s code=%s diagnosis=%s\n' "$fault" "$code" "$diagnosis"
+                grep -F "entry source=$SOURCE stage=$STAGE" "$C997_TRACE" >/dev/null && printf 'C997-WRAPPER-ENTRY %s\n' "$fault"
             done
             test ! -e "$root/escape" && echo nested-traversal-no-escape
             mkfifo "$tree/packages/fifo"
             mkdir -p "$root/fifo-stage/packages" "$root/fifo-stage/npm"
             SOURCE="$tree" STAGE="$root/fifo-stage"
-            diagnosis="$(timeout 5s bash -c 'pwsh -NoProfile -File "$1/scripts/c849-import-saved-donor.ps1" -Source "$2" -Stage "$3"' _ "$repo" "$SOURCE" "$STAGE")"; code=$?
+            C997_TRACE="$root/trace-directory-fifo"
+            diagnosis="$(timeout 5s pwsh -NoProfile -File "$repo/tests/Antiphon.Tests/Scripts/Fixtures/c997-import-saved-donor.ps1" -Importer "$repo/scripts/c849-import-saved-donor.ps1" -Source "$SOURCE" -Stage "$STAGE" -AvailableBytes 68719476736 -Trace "$C997_TRACE")"; code=$?
             printf 'directory-fifo code=%s diagnosis=%s\n' "$code" "$diagnosis"
             test ! -e "$root/fifo-stage/packages/fifo" && echo directory-fifo-not-copied
+            grep -F "entry source=$SOURCE stage=$STAGE" "$C997_TRACE" >/dev/null && printf 'C997-WRAPPER-ENTRY directory-fifo\n'
             for STATUS in main-zero main-busy main-unknown; do
                 ( c849_prune_idle ) > "$root/verdict" 2>&1
                 printf '%s code=%s verdict=%s\n' "$STATUS" "$?" "$(cat "$root/verdict")"
@@ -4298,6 +4310,8 @@ public sealed class RemoteScriptContractTests
         output.ShouldContain("retired code=0 verdict=");
         output.ShouldContain("attached code=2 verdict=refusal=CacheConsumersBusy");
         output.ShouldContain("attachment-unknown code=2 verdict=refusal=CacheConsumerUnknown");
+        foreach (var id in new[] { "traversal", "nested-traversal", "duplicate", "unsupported", "symlink", "missing", "directory-fifo" })
+            output.ShouldContain("C997-WRAPPER-ENTRY " + id, customMessage: "C997-WRAPPER-ENTRY " + id);
     }
 
     [Test]
@@ -4324,12 +4338,15 @@ public sealed class RemoteScriptContractTests
                 open my $out, ">", $ARGV[0] or die $!;
                 print $out $h;
             ' "$root/bomb.tar"
-            diagnosis="$(pwsh -NoProfile -File "$repo/scripts/c849-import-saved-donor.ps1" -Source "$root/bomb.tar" -Stage "$root/stage")"; code=$?
+            C997_TRACE="$root/trace-size-bomb"
+            diagnosis="$(pwsh -NoProfile -File "$repo/tests/Antiphon.Tests/Scripts/Fixtures/c997-import-saved-donor.ps1" -Importer "$repo/scripts/c849-import-saved-donor.ps1" -Source "$root/bomb.tar" -Stage "$root/stage" -AvailableBytes 68719476736 -Trace "$C997_TRACE")"; code=$?
             printf 'size-bomb code=%s diagnosis=%s\n' "$code" "$diagnosis"
             test ! -e "$root/stage/packages/bomb" && echo size-bomb-not-written
+            grep -F "entry source=$root/bomb.tar stage=$root/stage" "$C997_TRACE" >/dev/null && printf 'C997-WRAPPER-ENTRY size-bomb\n'
             """, "repo");
         output.ShouldContain("size-bomb code=2 diagnosis=CacheBudgetExceeded");
         output.ShouldContain("size-bomb-not-written");
+        output.ShouldContain("C997-WRAPPER-ENTRY size-bomb", customMessage: "C997-WRAPPER-ENTRY size-bomb");
     }
 
     [Test]
@@ -4505,6 +4522,9 @@ public sealed class RemoteScriptContractTests
             printf 'C849_PRIVILEGE_ROOT=%s\n' "$root"
             trap '[[ "$root" == /tmp/c849-privilege-???????? && -d "$root" ]] && rm -rf -- "$root"' EXIT
             mkdir -p "$root/docker/volumes" "$root/case" "$root/server2" "$root/state/grok"
+            docker_root="$root/docker"
+            c997_df_log="$root/bare-df.log"
+            : > "$c997_df_log"
             CASE_DIR="$root/case"; SERVER2_ROOT="$root/server2"
             SERVER2_ENV="$root/main.env"; SERVER2_TEMP_ENV="$root/temp.env"
             printf 'parent\n' > "$SERVER2_ENV"
@@ -4535,10 +4555,11 @@ public sealed class RemoteScriptContractTests
                 if [ "$1" = stat ]; then echo 1654:1654:700; return 0; fi
                 PRIVILEGED=1 "$@"
             }
+            """ + "\n" + ControlledCacheDf("docker_root", "25000000") + """
             docker() {
                 local name="${@: -1}" format=''
                 case "$1:$2" in
-                    info:*) printf '%s\n' "$root/docker" ;;
+                    info:*) printf '%s\n' "$docker_root" ;;
                     volume:inspect)
                         if [ "${3:-}" = -f ]; then format="$4"; fi
                         if [ "$name" = antiphon-runner_runner-state ]; then
@@ -4578,6 +4599,10 @@ public sealed class RemoteScriptContractTests
             cat "$root/deploy"
             printf 'ELEVATED_REALPATH=%s\n' "$(grep -c '^realpath .*docker/volumes/' "$root/elevated" 2>/dev/null || true)"
             printf 'ELEVATED_SYMLINK=%s\n' "$(grep -c '^test .*docker/volumes/' "$root/elevated" 2>/dev/null || true)"
+            printf 'C997_DOCKER_ROOT=%s\n' "$docker_root"
+            printf 'C997_DF_LOG<<\n'
+            cat "$c997_df_log"
+            printf '\n>>\n'
             """);
         output.Contains("OBSERVE_EXIT=0", StringComparison.Ordinal)
             .ShouldBeTrue("CacheTargetInvalid: observe must traverse the Docker volume through sudo");
@@ -4589,6 +4614,11 @@ public sealed class RemoteScriptContractTests
         output.ShouldNotContain("DENIED unprivileged realpath");
         Regex.Match(output, @"ELEVATED_REALPATH=(\d+)").Groups[1].Value.ShouldNotBe("0");
         Regex.Match(output, @"ELEVATED_SYMLINK=(\d+)").Groups[1].Value.ShouldNotBe("0");
+        var dockerRoot = Regex.Match(output, @"C997_DOCKER_ROOT=(.*)").Groups[1].Value.Trim();
+        var dfLog = Between(output, "C997_DF_LOG<<\n", "\n>>");
+        var dfCalls = dfLog.Split('\n', StringSplitOptions.RemoveEmptyEntries).Where(line => line.StartsWith("call ", StringComparison.Ordinal)).ToList();
+        dfCalls.Count.ShouldBe(1, "C997-DF-ARGV");
+        dfCalls[0].ShouldBe("call argc=2 arg1=-Pk arg2=" + dockerRoot, "C997-DF-ARGV");
     }
 
     [Test]
@@ -4638,6 +4668,161 @@ public sealed class RemoteScriptContractTests
         preview.ShouldNotContain("chmod ");
         preview.ShouldContain("c849_observe_volume");
         preview.ShouldContain("c849_budget_state");
+    }
+
+    [Test]
+    [Arguments("20971519", 2, "CacheDiskLow", "")]
+    [Arguments("20971520", 0, "", "21474836480")]
+    [Arguments("20971521", 0, "", "21474837504")]
+    [Arguments("invalid", 2, "CacheDiskUnavailable", "")]
+    [Arguments("missing", 2, "CacheDiskUnavailable", "")]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C997_Cache_budget_gate_uses_controlled_disk_readings(string available, int expectedCode, string expectedDiagnosis, string expectedBytes)
+    {
+        var output = LinuxShell(Block(Remote(), "c849_budget_gate") + "\n" + ControlledCacheDf("docker_root", available) + "\n" + """
+            set -u
+            root="$(mktemp -d)"
+            trap 'rm -rf "$root"' EXIT
+            docker_root="$root/docker root"
+            mkdir -p "$docker_root" "$root/case"
+            CASE_DIR="$root/case"
+            c997_df_log="$root/df.log"
+            : > "$c997_df_log"
+            C849_PACKAGES=packages
+            C849_SCRATCH=scratch
+            C849_NPM=npm
+            docker() {
+                if [ "$1" = info ]; then printf '%s\n' "$docker_root"; return 0; fi
+                printf 'unexpected docker %s\n' "$*" >> "$c997_df_log"
+                return 1
+            }
+            c849_observe_volume() { printf '%s %s /vol/%s 1654:1654:700 100 %s\n' "$1" "$2" "$2" "$3"; }
+            write_result() { printf '%s\n' "$2"; exit "$3"; }
+            diagnosis="$(c849_budget_gate)"
+            code=$?
+            if [ "$code" = 0 ]; then : > "$root/continuation"; fi
+            free="$(sed -n 's/^free-bytes=//p' "$CASE_DIR/cache-budget.txt" | head -n 1)"
+            printf 'C997_CODE=%s\n' "$code"
+            printf 'C997_DIAG=%s\n' "$diagnosis"
+            printf 'C997_FREE=%s\n' "$free"
+            if [ -f "$root/continuation" ]; then printf 'C997_CONTINUATION=1\n'; else printf 'C997_CONTINUATION=0\n'; fi
+            printf 'C997_DOCKER_ROOT=%s\n' "$docker_root"
+            printf 'C997_DF_LOG<<\n'
+            cat "$c997_df_log"
+            printf '\n>>\n'
+            """);
+        var label = " available=" + available;
+        var dockerRoot = Field(output, "C997_DOCKER_ROOT");
+        var log = Between(output, "C997_DF_LOG<<\n", "\n>>");
+        var calls = log.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Where(line => line.StartsWith("call ", StringComparison.Ordinal)).ToList();
+        calls.Count.ShouldBe(1, "C997-DF-ARGV" + label);
+        calls[0].ShouldBe("call argc=2 arg1=-Pk arg2=" + dockerRoot, "C997-DF-ARGV" + label);
+        log.Contains("unexpected", StringComparison.Ordinal).ShouldBeFalse("C997-DF-ARGV" + label);
+        Field(output, "C997_CODE").ShouldBe(expectedCode.ToString(), "C997-SHELL-RESULT" + label);
+        Field(output, "C997_DIAG").ShouldBe(expectedDiagnosis, "C997-SHELL-RESULT" + label);
+        if (expectedBytes.Length == 0)
+        {
+            Field(output, "C997_FREE").ShouldBe("", "C997-SHELL-NO-ACCEPTANCE" + label);
+            Field(output, "C997_CONTINUATION").ShouldBe("0", "C997-SHELL-NO-ACCEPTANCE" + label);
+        }
+        else
+        {
+            Field(output, "C997_FREE").ShouldBe(expectedBytes, "C997-SHELL-BYTES" + label);
+            Field(output, "C997_CONTINUATION").ShouldBe("1", "C997-SHELL-BYTES" + label);
+        }
+    }
+
+    [Test]
+    [Arguments("tar", 21474836497L)]
+    [Arguments("tar", 21474836498L)]
+    [Arguments("tar", 21474836499L)]
+    [Arguments("directory", 21474836497L)]
+    [Arguments("directory", 21474836498L)]
+    [Arguments("directory", 21474836499L)]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C997_Saved_donor_space_gate_preserves_headroom_and_payload_allowance(string format, long available)
+    {
+        const long required = 21474836498L;
+        var output = LinuxShell(C997DonorInvocation(format, available, failProbe: false), "repo");
+        var label = " format=" + format + " available=" + available;
+        AssertC997Probe(output, available, label);
+        if (available < required)
+        {
+            Field(output, "C997_FILES").ShouldBe("0", "C997-IMPORT-NO-WRITES" + label);
+            Field(output, "C997_SENTINEL").ShouldBe("kept-sentinel", "C997-IMPORT-NO-WRITES" + label);
+            Field(output, "C997_CODE").ShouldBe("2", "C997-IMPORT-RESULT" + label);
+            Field(output, "C997_DIAG").ShouldBe("CacheDiskLow", "C997-IMPORT-RESULT" + label);
+        }
+        else
+        {
+            Field(output, "C997_PKG").ShouldBe("pkgdata", "C997-IMPORT-PAYLOAD" + label);
+            Field(output, "C997_NPM").ShouldBe("npm-content", "C997-IMPORT-PAYLOAD" + label);
+            Field(output, "C997_CODE").ShouldBe("0", "C997-IMPORT-RESULT" + label);
+            Field(output, "C997_DIAG").ShouldBe("", "C997-IMPORT-RESULT" + label);
+        }
+    }
+
+    [Test]
+    [Arguments("tar")]
+    [Arguments("directory")]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C997_Saved_donor_probe_failure_refuses_before_copy(string format)
+    {
+        var output = LinuxShell(C997DonorInvocation(format, 21474836499L, failProbe: true), "repo");
+        var label = " format=" + format;
+        Field(output, "C997_FILES").ShouldBe("0", "C997-PROBE-FAILURE-NO-WRITES" + label);
+        Field(output, "C997_SENTINEL").ShouldBe("kept-sentinel", "C997-PROBE-FAILURE-NO-WRITES" + label);
+        AssertC997Probe(output, 21474836499L, label);
+        Field(output, "C997_CODE").ShouldBe("2", "C997-PROBE-FAILURE-RESULT" + label);
+        Field(output, "C997_DIAG").ShouldBe("CacheSavedDonorReadFailed", "C997-PROBE-FAILURE-RESULT" + label);
+    }
+
+    [Test]
+    public void C997_Saved_donor_default_probe_remains_real()
+    {
+        var importer = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "c849-import-saved-donor.ps1"));
+        var block = DefaultProbeBlock(importer);
+        block.ShouldContain("param($stagePath)", customMessage: "C997-DEFAULT-REAL");
+        block.ShouldContain("([System.IO.DriveInfo]::new($stagePath)).AvailableFreeSpace", customMessage: "C997-DEFAULT-REAL");
+        var space = PowerShellFunction(importer, "Check-Space");
+        space.ShouldContain("& $GetAvailableFreeBytes $Stage", customMessage: "C997-DEFAULT-REAL");
+        space.ShouldNotContain("& $GetAvailableFreeBytes $Source", customMessage: "C997-DEFAULT-REAL");
+        space.ShouldContain("20GB + $sizes.packages + $sizes.npm", customMessage: "C997-DEFAULT-REAL");
+        var caller = Block(Remote(), "c849_saved_copy");
+        caller.ShouldContain("c849-import-saved-donor.ps1", customMessage: "C997-CALLER-DEFAULT");
+        caller.ShouldContain("-File /import.ps1 -Source /saved -Stage /stage", customMessage: "C997-CALLER-DEFAULT");
+        caller.ShouldNotContain("GetAvailableFreeBytes", customMessage: "C997-CALLER-DEFAULT");
+
+        var tests = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "tests", "Antiphon.Tests", "Scripts", "RemoteScriptContractTests.cs"));
+        Regex.IsMatch(tests, @"\[Category\(""Unit""\)\]\s*public sealed class RemoteScriptContractTests").ShouldBeTrue("C997-UNIT-ROSTER");
+        foreach (var name in new[]
+        {
+            "C849_Deploy_temp_observes_inaccessible_docker_mountpoints_with_sudo",
+            "C849_Saved_donor_archive_is_checked_and_imported_without_a_container",
+            "C849_Saved_donor_rejects_unsafe_archives_empty_payload_and_busy_counters",
+            "C849_Saved_donor_rejects_declared_size_bomb_before_writing",
+            "C849_Prune_preview_is_read_only_and_bounded",
+            "C905_Missing_linux_pwsh_skips_all_five_cases_before_a_script_block",
+            "C997_Cache_budget_gate_uses_controlled_disk_readings",
+            "C997_Saved_donor_space_gate_preserves_headroom_and_payload_allowance",
+            "C997_Saved_donor_probe_failure_refuses_before_copy",
+            "C997_Saved_donor_default_probe_remains_real"
+        })
+        {
+            var signature = tests.IndexOf("void " + name + "(", StringComparison.Ordinal);
+            signature.ShouldBeGreaterThanOrEqualTo(0, "C997-UNIT-ROSTER " + name);
+            var attrStart = tests.LastIndexOf("\n    [Test]", signature, StringComparison.Ordinal);
+            attrStart.ShouldBeGreaterThanOrEqualTo(0, "C997-UNIT-ROSTER " + name);
+            var attrs = tests[attrStart..signature];
+            attrs.Contains("Category(", StringComparison.Ordinal).ShouldBeFalse("C997-UNIT-ROSTER " + name);
+            attrs.Contains("Skip", StringComparison.Ordinal).ShouldBeFalse("C997-UNIT-ROSTER " + name);
+            var next = tests.IndexOf("\n    [Test]", signature, StringComparison.Ordinal);
+            var body = tests[signature..(next < 0 ? tests.Length : next)];
+            if (body.Contains("Linux" + "Shell(", StringComparison.Ordinal))
+                attrs.ShouldContain("ParallelLimiter<ProcessSpawnLimit>", customMessage: "C997-UNIT-ROSTER " + name);
+            body.Contains("Skip" + ".Test", StringComparison.Ordinal).ShouldBeFalse("C997-UNIT-ROSTER " + name);
+        }
     }
 
     [Test]
@@ -5410,6 +5595,137 @@ public sealed class RemoteScriptContractTests
             "cat > \"$fixture_root/reader.sh\" <<'C973_READER_BYTES'\n" + File.ReadAllText(Path.Combine(fixtures, "c973-marker-reader.sh")) + "\nC973_READER_BYTES\n" +
             "cat > \"$fixture_root/marker\" <<'C973_MARKER_BYTES'\n" + File.ReadAllText(Path.Combine(fixtures, "c973-cold-seed-accepted.txt")) + "C973_MARKER_BYTES\n" +
             "run_reader() { bash \"$fixture_root/reader.sh\" \"$fixture_root/remote.sh\" \"$1\" \"$fixture_root/marker\" \"$2\" \"$3\" \"$4\"; }\n";
+    }
+
+    // Fixture-local df. It never calls the host df. available is a KiB token, "invalid", or "missing".
+    private static string ControlledCacheDf(string rootVariable, string available)
+    {
+        if (!Regex.IsMatch(rootVariable, "^[A-Za-z_][A-Za-z0-9_]*$"))
+            throw new ArgumentOutOfRangeException(nameof(rootVariable));
+        var data = available switch
+        {
+            "missing" => "printf '%s\\n' 'probe-fs 100 50'",
+            "invalid" => "printf '%s %s %s %s %s %s\\n' probe-fs 100 1 invalid 1% \"$" + rootVariable + "\"",
+            _ when Regex.IsMatch(available, "^[0-9]+$") =>
+                "printf '%s %s %s %s %s %s\\n' probe-fs 100 1 " + available + " 1% \"$" + rootVariable + "\"",
+            _ => throw new ArgumentOutOfRangeException(nameof(available))
+        };
+        return $"""
+            df() {{
+              printf 'call argc=%s arg1=%s arg2=%s\n' "$#" "${{1-}}" "${{2-}}" >> "$c997_df_log"
+              if [ "$#" -ne 2 ] || [ "$1" != -Pk ] || [ "$2" != "${rootVariable}" ]; then
+                printf 'unexpected argc=%s arg1=%s arg2=%s\n' "$#" "${{1-}}" "${{2-}}" >> "$c997_df_log"
+                return 97
+              fi
+              printf '%s\n' 'Filesystem 1024-blocks Used Available Capacity Mounted on'
+              {data}
+            }}
+            """;
+    }
+
+    private static string C997DonorInvocation(string format, long available, bool failProbe)
+    {
+        if (format is not ("tar" or "directory"))
+            throw new ArgumentOutOfRangeException(nameof(format));
+        var failArgument = failProbe ? " -FailProbe" : "";
+        return $"""
+            set -u
+            root="$(mktemp -d)"
+            trap 'rm -rf "$root"' EXIT
+            source="$root/source"
+            mkdir -p "$source/packages" "$source/npm" "$root/stage"
+            printf 'pkgdata' > "$source/packages/item"
+            printf 'npm-content' > "$source/npm/item"
+            printf 'kept-sentinel' > "$root/sentinel"
+            if [ "{format}" = tar ]; then
+              tar -cf "$root/donor.tar" -C "$source" packages npm
+              import_source="$root/donor.tar"
+            else
+              import_source="$source"
+            fi
+            trace="$root/trace"
+            diagnosis="$(pwsh -NoProfile -File "$repo/tests/Antiphon.Tests/Scripts/Fixtures/c997-import-saved-donor.ps1" -Importer "$repo/scripts/c849-import-saved-donor.ps1" -Source "$import_source" -Stage "$root/stage" -AvailableBytes {available} -Trace "$trace"{failArgument})"
+            code=$?
+            files="$(find "$root/stage" -type f -print | wc -l | tr -d ' ')"
+            pkg="$(cat "$root/stage/packages/item" 2>/dev/null || true)"
+            npm="$(cat "$root/stage/npm/item" 2>/dev/null || true)"
+            printf 'C997_CODE=%s\n' "$code"
+            printf 'C997_DIAG=%s\n' "$diagnosis"
+            printf 'C997_FILES=%s\n' "$files"
+            printf 'C997_SENTINEL=%s\n' "$(cat "$root/sentinel")"
+            printf 'C997_PKG=%s\n' "$pkg"
+            printf 'C997_NPM=%s\n' "$npm"
+            printf 'C997_STAGE=%s\n' "$root/stage"
+            printf 'C997_SOURCE=%s\n' "$import_source"
+            printf 'C997_TRACE<<\n'
+            cat "$trace"
+            printf '\n>>\n'
+            """;
+    }
+
+    private static void AssertC997Probe(string output, long available, string label)
+    {
+        var stage = Field(output, "C997_STAGE");
+        var source = Field(output, "C997_SOURCE");
+        var trace = Between(output, "C997_TRACE<<\n", "\n>>");
+        var lines = trace.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        var entries = lines.Where(line => line.StartsWith("entry ", StringComparison.Ordinal)).ToList();
+        var probes = lines.Where(line => line.StartsWith("probe ", StringComparison.Ordinal)).ToList();
+        entries.Count.ShouldBe(1, "C997-PROBE-COUNT" + label);
+        probes.Count.ShouldBe(1, "C997-PROBE-COUNT" + label);
+        entries[0].ShouldBe("entry source=" + source + " stage=" + stage, "C997-WRAPPER-ENTRY" + label);
+        var probe = Regex.Match(probes[0], "^probe argument=(.*) value=([0-9]+)$");
+        probe.Success.ShouldBeTrue("C997-PROBE-STAGE" + label);
+        probe.Groups[1].Value.ShouldBe(stage, "C997-PROBE-STAGE" + label);
+        probe.Groups[2].Value.ShouldBe(available.ToString(), "C997-PROBE-VALUE" + label);
+    }
+
+    private static string Field(string output, string name)
+    {
+        var match = Regex.Match(output, "^" + Regex.Escape(name) + "=(.*)$", RegexOptions.Multiline);
+        match.Success.ShouldBeTrue(name);
+        return match.Groups[1].Value.Trim();
+    }
+
+    private static string Between(string text, string start, string end)
+    {
+        var startAt = text.IndexOf(start, StringComparison.Ordinal);
+        startAt.ShouldBeGreaterThanOrEqualTo(0, start);
+        startAt += start.Length;
+        var endAt = text.IndexOf(end, startAt, StringComparison.Ordinal);
+        endAt.ShouldBeGreaterThanOrEqualTo(0, end);
+        return text[startAt..endAt];
+    }
+
+    private static string DefaultProbeBlock(string source)
+    {
+        const string marker = "[scriptblock]$GetAvailableFreeBytes = {";
+        var start = source.IndexOf(marker, StringComparison.Ordinal);
+        start.ShouldBeGreaterThanOrEqualTo(0, "C997-DEFAULT-REAL");
+        return BraceBlock(source, source.IndexOf('{', start));
+    }
+
+    private static string PowerShellFunction(string source, string name)
+    {
+        var marker = "function " + name + " {";
+        var start = source.IndexOf(marker, StringComparison.Ordinal);
+        start.ShouldBeGreaterThanOrEqualTo(0, name);
+        return source[start..(source.IndexOf('{', start) + BraceBlock(source, source.IndexOf('{', start)).Length)];
+    }
+
+    private static string BraceBlock(string source, int open)
+    {
+        var depth = 0;
+        for (var i = open; i < source.Length; i++)
+        {
+            if (source[i] == '{') depth++;
+            else if (source[i] == '}')
+            {
+                depth--;
+                if (depth == 0) return source[open..(i + 1)];
+            }
+        }
+        throw new InvalidOperationException("unclosed brace block");
     }
 
     private static string CacheSeedTreeHarness()

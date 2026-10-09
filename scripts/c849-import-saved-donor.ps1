@@ -1,7 +1,15 @@
 # CARD-0849 host cache import. Invoked inside the pinned runner image with only the
 # explicit source and a private staging directory mounted. Emits diagnosis only.
+# GetAvailableFreeBytes defaults to the stage DriveInfo reading; production callers omit it.
 [CmdletBinding()]
-param([Parameter(Mandatory)][string]$Source, [Parameter(Mandatory)][string]$Stage)
+param(
+    [Parameter(Mandatory)][string]$Source,
+    [Parameter(Mandatory)][string]$Stage,
+    [scriptblock]$GetAvailableFreeBytes = {
+        param($stagePath)
+        ([System.IO.DriveInfo]::new($stagePath)).AvailableFreeSpace
+    }
+)
 $ErrorActionPreference = 'Stop'
 $roots = [ordered]@{
     'home/app/.nuget/packages' = 'packages'
@@ -47,7 +55,7 @@ function Check-Entry([string]$Name, [bool]$Directory, [long]$Length) {
 }
 
 function Check-Space {
-    $free = ([System.IO.DriveInfo]::new($Stage)).AvailableFreeSpace
+    $free = & $GetAvailableFreeBytes $Stage
     if ($free -lt (20GB + $sizes.packages + $sizes.npm)) { throw 'CacheDiskLow' }
 }
 
