@@ -37,8 +37,8 @@ public class SessionRunnerAbsenceEvidenceDocumentationTests
         + "transcript is not that certificate.";
 
     internal const string ClosureSentence =
-        "Certification closes an unused session identity against delayed launch and never stops a "
-        + "process; old IDs and preparation from an earlier runner epoch remain unknown.";
+        "Certification closes an unused session identity against a delayed start or attach; a record "
+        + "prepared or closed in an earlier runner epoch, or under another store, is never renewed.";
 
     internal const string RoutesSentence =
         "POST /sessions/{id}/absence-evidence/prepare and POST /sessions/{id}/absence-evidence are "
@@ -51,51 +51,64 @@ public class SessionRunnerAbsenceEvidenceDocumentationTests
         + "uses its authenticated owning connection.";
 
     internal const string NoDeadlineSentence =
-        "CARD-1153 adds no automatic relaunch or input-wait release deadline; parking remains disabled "
-        + "by default (CARD-1083), and CARD-1151 owns the boot-stall behavior, which neither stops nor "
-        + "retries a session.";
+        "CARD-1153 adds no automatic relaunch, and CARD-1151 owns the boot-stall behavior, which neither "
+        + "stops nor retries a session.";
 
     /// <summary>The operator-context rule for preparation (S4).</summary>
     internal const string PrepareSentence =
-        "A fresh cold dispatch sends at most one prepare for the session id it just allocated, after the "
-        + "claim commits and before either launch sink; warm reuse, boot-wedge relaunch and interrupted-launch "
-        + "resume never prepare, and a failed, unsupported or slow prepare never gates the launch.";
+        "A fresh cold dispatch sends at most one prepare for the session id it just allocated, after the claim "
+        + "commits and before the launch is enqueued; warm reuse, boot-wedge relaunch and interrupted-launch "
+        + "resume send none, and a failed prepare does not stop the launch.";
 
     /// <summary>The operator-context rule for the hold's recheck (S4 monotonic-age repair).</summary>
     internal const string RecheckSentence =
-        "The hold re-checks the first read's certificate under the queue gate and task-row lock: the "
-        + "same session, generation and store as the locked row, a monotonic age of 0 to 5 s since "
-        + "before the request, and the wall deadline taken then; anything else withholds, and the next "
-        + "due pass asks the runner again.";
+        "Under the task-row lock the hold re-checks the first read's certificate against the locked row's "
+        + "session, generation and store, a monotonic age of 0 to 5 s since before the request, and the "
+        + "wall deadline taken then; a certificate that fails any of these withholds.";
 
-    /// <summary>The restart/legacy caveat.</summary>
+    /// <summary>The legacy-runner caveat.</summary>
     internal const string ActivationSentence =
-        "Activation is runners first, then AppHost; a server whose runner does not advertise "
-        + "`sessionAbsenceEvidenceV1` sends no prepare and keeps the existing failure, and health alone "
-        + "is not activation.";
+        "A server whose runner does not advertise `sessionAbsenceEvidenceV1` sends it no prepare, and "
+        + "that task's absent launch keeps the existing failure.";
 
     /// <summary>
-    /// The write-ahead marker and its one fail-open exception (Review b588c5c7 F1): an I/O or
-    /// access failure of the Attempted write after a positive admission read launches anyway,
-    /// leaves the Prepared record and latches evidence unavailable.
+    /// The closed list of shapes the decision leaves untouched (Review e4ac990f F2), including the
+    /// listed owning inventory; the fallback defers to the existing failure rules.
+    /// </summary>
+    internal const string WithholdSentence =
+        "The decision leaves the task untouched in exactly these shapes: the owning runner lists the "
+        + "session or its inventory is unavailable; the task or its transcript is Working; the session "
+        + "row is gone; the task or session row changed before the hold commits; the certificate no "
+        + "longer holds under the lock; or the hold does not commit. Any other shape is decided by the "
+        + "existing failure rules.";
+
+    /// <summary>The non-exhaustive fallback F2 removed.</summary>
+    private const string OldFallbackSentence = "Every other shape keeps the existing failure";
+
+    /// <summary>
+    /// The write-ahead marker and its failure (Review b588c5c7 F1, Review e4ac990f F1): the smallest
+    /// true claim. A failed write may still launch and leaves evidence unavailable for the epoch; the
+    /// sentence says nothing about which record is left on disk, because the atomic replacement can
+    /// succeed before the directory sync throws.
     /// </summary>
     internal const string MarkerSentence =
-        "The runner writes an Attempted marker under the launch gate before the first provider effect, "
-        + "except when that write fails with an I/O or access error after the admission read has proved "
-        + "the identity open: the launch then proceeds without the marker, any Prepared record stays on "
-        + "disk, and evidence is latched unavailable for the rest of that runner epoch, so the runner "
-        + "stops advertising `sessionAbsenceEvidenceV1` and no certificate can be formed for that session.";
+        "The runner writes an Attempted marker before the first provider effect; when that write fails, "
+        + "the launch may still proceed and absence evidence is unavailable for the rest of that runner "
+        + "epoch, so no certificate can be formed.";
 
-    /// <summary>The marker promise without its exception, in any wrapping (F1).</summary>
+    /// <summary>The marker promise without its failure clause, in any wrapping (F1).</summary>
     private const string UnconditionalMarkerPattern =
-        @"Attempted\s+marker\s+under\s+the\s+launch\s+gate\s+before\s+the\s+first\s+provider\s+effect(?!,\s+except\s+when\s)";
+        @"Attempted\s+marker[^.;]*?before\s+the\s+first\s+provider\s+effect(?!;\s+when\s+that\s+write\s+fails,)";
+
+    /// <summary>Any record or disk-state claim about a failed marker write (Review e4ac990f F1).</summary>
+    private const string DiskStatePattern = @"\bPrepared\b[^.]*\b(stays|remains|is\s+left|is\s+kept)\b|\bon\s+disk\b";
 
     private const string PlanBootStallRetrySentence = "CARD-1151 owns the existing boot-stall retry behavior";
 
     private static readonly string[] OwnerSentences =
     [
         CertificateSentence, ClosureSentence, RoutesSentence, CredentialSentence, NoDeadlineSentence,
-        PrepareSentence, RecheckSentence, ActivationSentence, MarkerSentence,
+        PrepareSentence, RecheckSentence, ActivationSentence, MarkerSentence, WithholdSentence,
     ];
 
     private const string RunnerTests = "tests/Antiphon.SessionRunner.Tests";
@@ -109,6 +122,18 @@ public class SessionRunnerAbsenceEvidenceDocumentationTests
         var credentials = Read("docs/agent-credentials.md");
 
         // 1, 2 and 5 plus the S4 rules: the runtime owner, each sentence followed by its pins.
+        Pinned(runtime, WithholdSentence,
+            Pin(nameof(DelegationDispatchRecoveryBoundaryTests),
+                nameof(DelegationDispatchRecoveryBoundaryTests.C1149_Listed_or_unknown_runner_is_never_absence)),
+            Pin(nameof(DelegationDispatchRecoveryBoundaryTests),
+                nameof(DelegationDispatchRecoveryBoundaryTests.C1149_Changed_or_working_attempt_is_untouched)),
+            Pin(nameof(DelegationDispatchRecoveryBoundaryTests),
+                nameof(DelegationDispatchRecoveryBoundaryTests.C1153_Working_or_unknown_inventory_withholds)),
+            Pin(nameof(DelegationDispatchRecoveryBoundaryTests),
+                nameof(DelegationDispatchRecoveryBoundaryTests.C1149_Failed_hold_does_not_persist_on_a_later_save)),
+            Pin(nameof(DelegationDispatchRecoveryBoundaryTests),
+                nameof(DelegationDispatchRecoveryBoundaryTests.C1153_Final_certificate_is_revalidated_under_lock)));
+        runtime.ShouldNotContain(OldFallbackSentence, Case.Sensitive, "runtime: the fallback is not exhaustive (F2)");
         Pinned(runtime, CertificateSentence,
             RunnerPin("RunnerAbsenceEvidenceContractTests", "C1153_Real_unknown_transcript_has_a_separate_certificate"),
             Pin(nameof(SessionRunnerAbsenceEvidenceClientTests),
@@ -129,14 +154,14 @@ public class SessionRunnerAbsenceEvidenceDocumentationTests
                 nameof(DelegationDispatchRecoveryBoundaryTests.C1153_Certificate_age_is_monotonic)));
         Pinned(runtime, ClosureSentence,
             RunnerPin("RunnerAbsenceEvidenceTests", "C1153_Restart_or_store_change_never_renews_proof"),
-            RunnerPin("RunnerAbsenceEvidenceRuntimeTests", "C1153_Creation_consumes_proof_before_effects"),
             RunnerPin("RunnerAbsenceEvidenceRuntimeTests", "C1153_Certificate_and_launch_race_is_serialized"),
-            RunnerPin("RunnerAbsenceEvidenceRuntimeTests", "C1153_Closed_identity_refuses_delayed_creation"));
+            RunnerPin("RunnerAbsenceEvidenceRuntimeTests", "C1153_Closed_identity_refuses_delayed_creation"),
+            RunnerPin("RunnerAbsenceEvidencePhoneHomeTests", "C1153_Authenticated_operation_preserves_binding"));
         Pinned(runtime, NoDeadlineSentence,
             Pin(nameof(DelegationDispatchRecoveryBoundaryTests),
-                nameof(DelegationDispatchRecoveryBoundaryTests.C1153_Real_client_certificate_holds_original_input)),
+                nameof(DelegationDispatchRecoveryBoundaryTests.C1149_Hold_is_once_and_automatic_relaunch_bound_is_zero)),
             Pin(nameof(DelegationDispatchRecoveryBoundaryTests),
-                nameof(DelegationDispatchRecoveryBoundaryTests.C1153_Working_or_unknown_inventory_withholds)),
+                nameof(DelegationDispatchRecoveryBoundaryTests.C1153_Real_client_certificate_holds_original_input)),
             Pin(nameof(BootStallWorkingTickCharacterizationTests),
                 nameof(BootStallWorkingTickCharacterizationTests.Aged_prompt_only_Working_tick_detects_without_stopping_or_requeueing)));
         Pinned(runtime, ActivationSentence,
@@ -149,8 +174,10 @@ public class SessionRunnerAbsenceEvidenceDocumentationTests
             RunnerPin("RunnerAbsenceEvidenceRuntimeTests", "C1153_Creation_consumes_proof_before_effects"),
             RunnerPin("RunnerAbsenceEvidenceRuntimeTests", "C1153_Store_failure_disables_proof_without_stopping_work"));
         Regex.IsMatch(runtime, UnconditionalMarkerPattern)
-            .ShouldBeFalse("runtime: the Attempted-marker promise must carry its write-failure exception (F1)");
-        MarkerSentence.ShouldContain($"`{RunnerAbsenceEvidence.Feature}`", Case.Sensitive);
+            .ShouldBeFalse("runtime: the Attempted-marker promise must carry its write-failure clause (F1)");
+        var bullet = Section(runtime, "- **A never-created session is held only on the runner's certificate (CARD-1153).**", "\n- **");
+        Regex.IsMatch(bullet, DiskStatePattern)
+            .ShouldBeFalse("runtime: no record or disk-state claim about a failed marker write (e4ac990f F1)");
 
         // The runtime owner's numbers are the code's.
         RunnerAbsenceEvidenceValidator.Lifetime.ShouldBe(TimeSpan.FromSeconds(5), "certificate life");

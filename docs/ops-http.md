@@ -55,14 +55,12 @@ Simple mode serves the server on `17281`; an E2E run owns its own **random** run
 `http://localhost:17202` — and send `$env:ANTIPHON_TASK_TOKEN` as the `X-Antiphon-Task-Token`
 header when it is set. Inside a running agent session both are already in the environment.
 
-Absence evidence (CARD-1153) is runner-only and server-internal:
+Absence evidence (CARD-1153) is runner-only:
 POST /sessions/{id}/absence-evidence/prepare and POST /sessions/{id}/absence-evidence are runner routes without /api; ordinary session and transcript GETs still return 404 for a never-created ID.
-Both POSTs need the signed request described in [agent-credentials.md](agent-credentials.md#runner-absence-evidence-key-card-1153),
-so they are not a curl probe; there is no `/api` proxy. Whether a runner offers them is the
-`sessionAbsenceEvidenceV1` feature on its `GET /capabilities` (and on `GET /api/session-runners`
-for a phone-home runner). The hold rule is in
-[session-runtime-invariants.md](session-runtime-invariants.md); the route map is in
-[antiphon-api.md](antiphon-api.md#4-the-session-runners-own-api-internal).
+Both POSTs are signed with the key in [agent-credentials.md](agent-credentials.md#runner-absence-evidence-key-card-1153).
+Whether a runner offers them is the `sessionAbsenceEvidenceV1` feature on its `GET /capabilities`.
+The hold rule is in [session-runtime-invariants.md](session-runtime-invariants.md); the route map
+is in [antiphon-api.md](antiphon-api.md#4-the-session-runners-own-api-internal).
 
 ### ChatGPT / Codex as an external orchestrator (CARD-0398)
 
