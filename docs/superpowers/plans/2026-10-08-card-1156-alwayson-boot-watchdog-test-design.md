@@ -1051,3 +1051,35 @@ threshold, no model row on the current launch), rendering with or without a save
 | new summary plus the line "The boot prompt was transcript-confirmed." | `LivenessProbeFailed summary: retired 'transcript-confirmed'` |
 
 Comment-only repair: no behaviour change, no migration, no restart beyond the one S1-S4 owe.
+
+**S6 repair 2 (Review 5906dbf4 F-1, Code f405ce72).** The standing-row summary said the row
+exists "with no assistant, thinking, tool or turn-end row on that launch". That is false for a Grok
+session: `BootReplyWatch.HasModelReplySinceAsync` ignores rows inside a queued rules refresh's
+(`RulesPromptSequence`, `RulesTurnEndSequence`] window (the launch rules turn and a
+compaction-triggered refresh alike), so such rows can exist on the current launch, and, after a
+compaction refresh, even after the boot prompt, while the row stands. The summary now says "no
+qualifying boot-model reply on that launch (as decided by
+`BootReplyWatch.HasModelReplySinceAsync`, which ignores Grok rules-turn responses)". The same
+enumeration was emitted to users by the standing path, so it defers too: the receipt message
+(`StandingBootWatchPolicy.Message`) now reads "no qualifying model reply in {age}", the row's
+prompt line (`StandingBootAttentionProjection.Item`) "no qualifying model reply since.", the
+`LivenessProbeFailed` tooltip "No qualifying model reply has appeared since the boot prompt", and
+the projection's predicate comment and the client `AttentionKind` doc comment say the same. This
+supersedes the message shapes quoted in the D-4 and S6 sections above. Left as found, because their
+predicate really is every model row after the boot prompt (`BootReplyWatch.Evaluate`/
+`EvaluateSessionAsync`, no rules exclusion): the generic `bootSeq=` diagnostic message in
+`BootReplyWatchdogService` and its `AttentionServiceTests` fixture. Left as found and outside
+CARD-1156's footprint: the CARD-0353 task-path wording (`DelegateCheckProbe.CheckSessionFacts.BootTurn`,
+`AgentTaskFailureCode.ProviderUnresponsive`, `AgentIncidentKind.ProviderUnresponsive`, the
+`AttentionService` CARD-0353 excerpt and `server/Bundles/check-interpreter.md`), reported to the
+caller rather than changed here.
+
+| Pin | Mutation | Red at |
+|---|---|---|
+| `StandingBootDocumentationTests.C1156_LivenessProbeFailed_summary_claims_no_delivery_and_names_both_projections` | `AttentionDtos.cs` checked out at `11847ca6f` (old clause restored) | `LivenessProbeFailed summary: For a taskless AlwaysOn session ...` |
+| same | new summary plus "no assistant, thinking, tool or turn-end row" appended | `LivenessProbeFailed summary: retired 'assistant, thinking, tool or turn-end'` |
+| `StandingBootAttentionTests.C1156_Standing_row_makes_no_delivery_claim` | `StandingBootAttentionProjection.cs` checked out at `11847ca6f` (rebuild) | the prompt-line `ShouldContain` |
+| `BootReplyWatchdogTests.an_unanswered_standing_boot_raises_once_and_keeps_its_watch_for_escalation` | `StandingBootWatchPolicy.cs` checked out at `11847ca6f` (rebuild) | `ShouldContain("no qualifying model reply in")` |
+| `AttentionPanel.test.tsx` LivenessProbeFailed tooltip case | `attentionVisuals.ts` checked out at `11847ca6f` | `toContain('No qualifying model reply ...')` |
+
+Text-only repair: no behaviour change, no migration, no restart beyond the one S1-S4 owe.
