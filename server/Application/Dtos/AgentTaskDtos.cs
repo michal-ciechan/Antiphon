@@ -344,7 +344,17 @@ public sealed record AgentTaskSummaryDto(
     RequirementSource RequirementSource = RequirementSource.Default,
     string? ObservedPlatform = null,
     long? RunnerDefaultsRevision = null,
-    RunnerSelectionSource? RunnerSelectionSource = null);
+    RunnerSelectionSource? RunnerSelectionSource = null,
+    /// <summary>
+    /// CARD-0491. Null when this response is not an interrupt request.
+    /// <c>written</c>, <c>already-sent</c>, <c>refused:&lt;reason&gt;</c>, or <c>not-confirmed:&lt;outcome&gt;</c>.
+    /// </summary>
+    string? InterruptWritten = null,
+    /// <summary>
+    /// CARD-0491. Separate from <see cref="InterruptWritten"/>. <c>pending</c> until the queue
+    /// row's verdict is a transcript-confirmed UserPrompt, then <c>delivered</c>.
+    /// </summary>
+    string? RefinementDelivered = null);
 
 /// <summary>CARD-0515. Echo of the list/summary scope the caller selected.</summary>
 public sealed record AgentTaskScopeEchoDto(
@@ -629,7 +639,9 @@ public sealed record ScopeOverlapDto(
 public sealed record ReplyToAgentTaskRequest(
     string Message,
     int? Round = null,
-    AnswerOrigin? Origin = null);
+    AnswerOrigin? Origin = null,
+    bool InterruptCurrentTurn = false,
+    Guid? RequestId = null);
 
 /// <summary>Optional narrow test filter for an explicit <c>POST /land</c> verification.</summary>
 public sealed record CommitAgentTaskRequest(IReadOnlyList<string>? Paths, string Message);

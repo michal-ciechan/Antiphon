@@ -274,7 +274,8 @@ public static class AgentTaskEndpoints
             CancellationToken ct) =>
         {
             var taskId = await service.ResolveTaskIdAsync(id, ct);
-            return Results.Ok(await replies.RefineAsync(taskId, request.Message, ct));
+            return Results.Ok(await replies.RefineAsync(
+                taskId, request.Message, ct, request.InterruptCurrentTurn, request.RequestId));
         });
 
         // CARD-0330 S4. Explicit flag on a distillation. 409 if the task has no ledger row.

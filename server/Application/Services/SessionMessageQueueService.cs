@@ -5467,6 +5467,17 @@ public sealed partial class SessionMessageQueueService
         return LocalCommandTypeResult.Sent;
     }
 
+    /// <summary>
+    /// Deliver the pending head while the caller already holds <see cref="GetLock"/>.
+    /// <see cref="OnTurnEndAsync"/> takes that same lock and would deadlock here.
+    /// </summary>
+    internal async Task FlushPendingUnderHeldLockAsync(Guid sessionId, CancellationToken ct)
+    {
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        await DeliverNextLockedAsync(db, sessionId, ct);
+    }
+
     internal SemaphoreSlim GetLock(Guid sessionId) =>
         _locks.GetOrAdd(sessionId, _ => new SemaphoreSlim(1, 1));
 

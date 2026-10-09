@@ -611,7 +611,9 @@ public sealed class AgentTaskReplyService
     /// settles AFTER the enqueue, the queued note still cannot reopen anything —
     /// <see cref="OnTurnEndAsync"/> only settles tasks that are Dispatched or Working.</para>
     /// </summary>
-    public async Task<AgentTaskSummaryDto> RefineAsync(Guid taskId, string message, CancellationToken ct)
+    public async Task<AgentTaskSummaryDto> RefineAsync(
+        Guid taskId, string message, CancellationToken ct,
+        bool interruptCurrentTurn = false, Guid? requestId = null)
     {
         if (string.IsNullOrWhiteSpace(message))
             throw new ValidationException(nameof(message), "A refinement message is required.");
@@ -621,9 +623,21 @@ public sealed class AgentTaskReplyService
 
         var task = await db.AgentTasks.FirstOrDefaultAsync(t => t.Id == taskId, ct)
             ?? throw new NotFoundException(nameof(AgentTask), taskId);
+
+        // A repeated interrupt request returns the recorded outcome. No second row, event, or key.
+        Guid? interruptRequestId = interruptCurrentTurn ? requestId ?? Guid.NewGuid() : null;
+        if (interruptRequestId is Guid replayId)
+        {
+            var replayed = await TryReplayInterruptAsync(scope.ServiceProvider, db, task, replayId, ct);
+            if (replayed is not null)
+                return replayed;
+        }
+
         var admitted = await AdmitWorkspaceAsync(scope.ServiceProvider, task, ct);
 
         var saved = false;
+        string? interruptWritten = null;
+        string? refinementDelivered = null;
         try
         {
             var now = UtcNow();
@@ -636,11 +650,18 @@ public sealed class AgentTaskReplyService
                     // the goal, which is what BuildBrief types verbatim at dispatch.
                     task.Goal = $"{task.Goal.TrimEnd()}\n\nREFINEMENT (added by the caller before dispatch):\n{trimmed}";
                     task.ConcurrencyToken = Guid.NewGuid();
-                    db.AgentTaskEvents.Add(NewEvent(
+                    var queuedEvent = NewEvent(
                         taskId, AgentTaskEventType.Refined,
-                        $"Caller refined the brief before dispatch: {trimmed}", now));
+                        $"Caller refined the brief before dispatch: {trimmed}", now);
+                    db.AgentTaskEvents.Add(queuedEvent);
                     await db.SaveChangesAsync(ct);
                     saved = true;
+                    if (interruptRequestId is Guid queuedId)
+                    {
+                        interruptWritten = "refused:task-status";
+                        StampInterrupt(queuedEvent, interruptWritten, null, queuedId);
+                        await db.SaveChangesAsync(ct);
+                    }
                     break;
 
                 case AgentTaskStatus.Dispatched:
@@ -672,9 +693,20 @@ public sealed class AgentTaskReplyService
                             $"task_input_file_unavailable: {AgentTaskInputService.Route(taskId, inputEvent.Id)}", now));
                         await db.SaveChangesAsync(ct);
                     }
+                    var conversationKey = interruptRequestId is Guid keyedId
+                        ? MidTurnInterruptPolicy.ConversationKey(taskId, keyedId)
+                        : AgentTaskInputService.ConversationKey(taskId, inputEvent.Id);
                     await queue.EnqueueAsync(sessionId, body, MessageSendMode.WhenIdle, ct,
                         QueuedMessageOrigin.Delegation,
-                        conversationKey: AgentTaskInputService.ConversationKey(taskId, inputEvent.Id));
+                        conversationKey: conversationKey);
+
+                    if (interruptRequestId is Guid activeId)
+                    {
+                        (interruptWritten, refinementDelivered) = await EvaluateInterruptAsync(
+                            scope.ServiceProvider, db, queue, taskId, sessionId, activeId, ct);
+                        StampInterrupt(inputEvent, interruptWritten, refinementDelivered, activeId);
+                        await db.SaveChangesAsync(ct);
+                    }
                     break;
 
                 case AgentTaskStatus.Blocked:
@@ -697,7 +729,205 @@ public sealed class AgentTaskReplyService
 
         await PublishAsync(task, ct);
         var family = await db.AgentTasks.AsNoTracking().Where(t => t.RootTaskId == task.RootTaskId).ToListAsync(ct);
-        return await scope.ServiceProvider.GetRequiredService<AgentTaskService>().GetSummaryAsync(task, family);
+        var summary = await scope.ServiceProvider.GetRequiredService<AgentTaskService>().GetSummaryAsync(task, family);
+        if (!interruptCurrentTurn)
+            return summary;
+        return summary with
+        {
+            InterruptWritten = interruptWritten,
+            RefinementDelivered = refinementDelivered,
+        };
+    }
+
+    private async Task<AgentTaskSummaryDto?> TryReplayInterruptAsync(
+        IServiceProvider services, AppDbContext db, AgentTask task, Guid requestId, CancellationToken ct)
+    {
+        var key = MidTurnInterruptPolicy.ConversationKey(task.Id, requestId);
+        var row = await db.SessionQueuedMessages.AsNoTracking()
+            .FirstOrDefaultAsync(m => m.ConversationKey == key, ct);
+        if (row is null)
+            return null;
+
+        var details = await db.AgentTaskEvents.AsNoTracking()
+            .Where(e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Refined)
+            .Select(e => e.Detail)
+            .ToListAsync(ct);
+        var interruptWritten = "not-confirmed:unknown";
+        string? refinementDelivered = null;
+        foreach (var detail in details)
+        {
+            if (MidTurnInterruptStamp.TryRead(detail, out var id, out var written, out var delivered)
+                && id == requestId)
+            {
+                interruptWritten = written;
+                refinementDelivered = delivered;
+                break;
+            }
+        }
+
+        var family = await db.AgentTasks.AsNoTracking().Where(t => t.RootTaskId == task.RootTaskId).ToListAsync(ct);
+        var summary = await services.GetRequiredService<AgentTaskService>().GetSummaryAsync(task, family);
+        return summary with
+        {
+            InterruptWritten = interruptWritten,
+            RefinementDelivered = refinementDelivered,
+        };
+    }
+
+    private async Task<(string InterruptWritten, string? RefinementDelivered)> EvaluateInterruptAsync(
+        IServiceProvider services, AppDbContext db, SessionMessageQueueService queue,
+        Guid taskId, Guid sessionId, Guid requestId, CancellationToken ct)
+    {
+        var runtime = services.GetRequiredService<AgentSessionRuntime>();
+        var key = MidTurnInterruptPolicy.ConversationKey(taskId, requestId);
+        var gate = queue.GetLock(sessionId);
+        await gate.WaitAsync(ct);
+        try
+        {
+            // Catch-up persists only. OnTurnEndAsync would take this same lock and deadlock,
+            // and it can settle the task. Flush the pending row here when the new entries
+            // show the turn has ended.
+            var stored = await runtime.CatchUpTranscriptAsync(sessionId, ct);
+            var working = await SessionMessageQueueService.IsWorkingAsync(db, sessionId, ct);
+            if (stored && !working)
+                await queue.FlushPendingUnderHeldLockAsync(sessionId, ct);
+
+            var (facts, lastSequence) = await ReadInterruptFactsAsync(
+                services, db, queue, taskId, sessionId, key, working, ct);
+            var decision = MidTurnInterruptPolicy.Decide(facts);
+            string interruptWritten;
+            if (!decision.Admitted)
+            {
+                interruptWritten = decision.Reason == "already-sent"
+                    ? "already-sent"
+                    : $"refused:{decision.Reason}";
+            }
+            else
+            {
+                var startedAt = await db.AgentSessions.AsNoTracking()
+                    .Where(s => s.Id == sessionId)
+                    .Select(s => s.StartedAt)
+                    .SingleAsync(ct);
+                try
+                {
+                    var result = await runtime.SendConditionalInputAsync(
+                        sessionId,
+                        new RunnerConditionalInputRequest(startedAt, lastSequence, "\x03"),
+                        ct);
+                    interruptWritten = result.Outcome == ConditionalInputOutcomes.Written
+                        ? ConditionalInputOutcomes.Written
+                        : $"not-confirmed:{result.Outcome}";
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.LogWarning(ex,
+                        "Mid-turn interrupt write was not confirmed for session {SessionId}", sessionId);
+                    interruptWritten = "not-confirmed:unknown";
+                }
+            }
+
+            var row = await db.SessionQueuedMessages.AsNoTracking()
+                .FirstOrDefaultAsync(m => m.ConversationKey == key, ct);
+            var delivered = row?.DeliveryVerdict == DeliveryVerdict.LateConfirmed ? "delivered" : "pending";
+            return (interruptWritten, delivered);
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    private async Task<(MidTurnInterruptFacts Facts, long LastSequence)> ReadInterruptFactsAsync(
+        IServiceProvider services, AppDbContext db, SessionMessageQueueService queue,
+        Guid taskId, Guid sessionId, string conversationKey, bool working, CancellationToken ct)
+    {
+        var fresh = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId, ct);
+        var session = await db.AgentSessions.AsNoTracking().SingleOrDefaultAsync(s => s.Id == sessionId, ct);
+        var row = await db.SessionQueuedMessages.AsNoTracking()
+            .FirstOrDefaultAsync(m => m.ConversationKey == conversationKey, ct);
+        var client = services.GetRequiredService<ISessionRunnerClient>();
+
+        var runnerFound = false;
+        var runnerExited = false;
+        DateTime? runnerGeneration = null;
+        long lastSequence = 0;
+        try
+        {
+            var runnerSession = await client.GetAsync(sessionId, ct);
+            runnerFound = true;
+            runnerExited = string.Equals(runnerSession.Status, "Exited", StringComparison.OrdinalIgnoreCase);
+            runnerGeneration = runnerSession.AcceptedStartedAt;
+            lastSequence = runnerSession.LastSequence;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogDebug(ex, "Mid-turn interrupt runner read failed for session {SessionId}", sessionId);
+            runnerFound = false;
+        }
+
+        var conditional = false;
+        try
+        {
+            var caps = await client.GetCapabilitiesAsync(ct);
+            conditional = caps?.Features is { } features
+                && features.Contains(RunnerCapabilityFeatures.ConditionalMaintenanceInputV1, StringComparer.Ordinal);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogDebug(ex, "Mid-turn interrupt capability read failed for session {SessionId}", sessionId);
+            conditional = false;
+        }
+
+        var composer = GrokComposerState.Unreadable;
+        try
+        {
+            var snap = await client.GetSnapshotAsync(sessionId, ct);
+            if (snap is not null
+                && session is not null
+                && SessionGeneration.Equal(session.StartedAt, snap.AcceptedStartedAt))
+                composer = GrokComposerScreen.Classify(snap.RenderedScreen);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogDebug(ex, "Mid-turn interrupt snapshot read failed for session {SessionId}", sessionId);
+            composer = GrokComposerState.Unreadable;
+        }
+
+        var questionOpen = session is not null && await HasOpenQuestionToolAsync(db, sessionId, ct);
+        var modalBlocked = await queue.IsModalBlockedAsync(sessionId, ct);
+        var facts = new MidTurnInterruptFacts
+        {
+            Enabled = _settings.GrokMidTurnInterruptEnabled,
+            Requested = true,
+            Status = fresh.Status,
+            TaskSessionId = fresh.AgentSessionId,
+            RowSessionId = row?.AgentSessionId,
+            Kind = session?.AgentKind ?? AgentKind.Raw,
+            SessionStatus = session?.Status ?? SessionStatus.Created,
+            RunnerFound = runnerFound,
+            RunnerExited = runnerExited,
+            SessionStartedAt = session?.StartedAt,
+            RunnerAcceptedStartedAt = runnerGeneration,
+            Working = working,
+            RowStatus = row?.Status ?? QueuedMessageStatus.Canceled,
+            DeliveryAttempts = row?.DeliveryAttempts ?? 0,
+            QuestionOpen = questionOpen,
+            ModalBlocked = modalBlocked,
+            Composer = composer,
+            ConditionalCapability = conditional,
+        };
+        return (facts, lastSequence);
+    }
+
+    private static void StampInterrupt(
+        AgentTaskEvent refined, string interruptWritten, string? refinementDelivered, Guid requestId)
+    {
+        var stamp = MidTurnInterruptStamp.Format(interruptWritten, refinementDelivered, requestId);
+        var human = refined.Detail ?? "";
+        if (human.StartsWith("[card-0491 ", StringComparison.Ordinal))
+            return;
+        var combined = stamp + "\n" + human;
+        refined.Detail = combined.Length <= 4000 ? combined : combined[..4000];
     }
 
     /// <summary>
