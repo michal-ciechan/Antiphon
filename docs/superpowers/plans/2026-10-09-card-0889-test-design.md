@@ -457,8 +457,8 @@ minutes exclude the three-minute isolated build budgeted per control per phase.
 Closed list. One isolated build per group; `CP-n` reuse only within the same `After`.
 Groups: `A` = N1+N2+N4 committed; `C` = S4 committed; `B` = N3+S6 committed. Lane is in
 Group/Expect; the importer does not filter by OS: Linux selects all rows except CP-6,
-Windows all except CP-5. CP-5's method OR keeps a trailing wildcard on each name; the bare
-names select zero tests. Counts are TUnit executed results; internal labels, rows and
+Windows all except CP-5. CP-5 and CP-16 method ORs keep a trailing wildcard on each
+name; the bare names select zero tests. Counts are TUnit executed results; internal labels, rows and
 schedules are stated in Expect only.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
@@ -478,7 +478,7 @@ schedules are stated in Expect only.
 | CP-13 | B | `tests/Antiphon.Tests -> bin-c889-b/` | both-script-bridge | `/*/*/RunCheckpointScriptTests*/*` | V-5,R-4 | Both OSes: 24, 0 failed/skipped; internal C578 labels 8/7/6 | 24 | 10 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-14 | B | n/a | both-script-full-inventory | `pwsh -NoProfile -File scripts/test-run-checkpoint.ps1` | V-5,R-4 | Both OSes: `C487: 111 passed, 0 failed, 111 rows` and `C487 HARNESS EXIT CODE: 0` | n/a | 5 | true | n/a |
 | CP-15 | B | CP-13 | both-harness-cancellation | `/*/*/ScriptHarnessCancellationTests/*` | V-11,R-10 | Both OSes: 5 (3+1+1), 0 failed/skipped, no owned residue | 5 | 4 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-16 | B | CP-13 | both-harness-owner-compat | `/*/*/ScriptHarnessProcessContractTests/(Caller_cancellation_preserves_token)\|(Inventory_failures_remain_failures)` | V-11,R-10 | Both OSes: 2, 0 failed/skipped | 2 | 1 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-16 | B | CP-13 | both-harness-owner-compat | `/*/*/ScriptHarnessProcessContractTests/(Caller_cancellation_preserves_token*)\|(Inventory_failures_remain_failures*)` | V-11,R-10 | Both OSes: 2, 0 failed/skipped | 2 | 1 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 
 Census at `89e4f769c`: readiness 10 methods/12 results; resilience 7+7; submit 8; scaled 6;
 Grok launch 3 Linux-applicable of 5 (two Windows-only), policy 26; C448 selects 7, delivery
