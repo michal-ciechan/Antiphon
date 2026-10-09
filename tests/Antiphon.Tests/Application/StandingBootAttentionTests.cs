@@ -512,8 +512,8 @@ public class StandingBootAttentionTests
         }
 
         row.Evidence.ShouldContain($"Prompt #1 (UserPrompt) at {f.PromptAt:u}, "
-            + $"{StandingBootWatchPolicy.Describe(now - f.PromptAt)} ago; no assistant, thinking, tool or "
-            + "turn-end row since.\n", customMessage: "the prompt line states the record and the silence only");
+            + $"{StandingBootWatchPolicy.Describe(now - f.PromptAt)} ago; no qualifying model reply since.\n",
+            customMessage: "the prompt line states the record and the silence only");
 
         f.AssertNothingDestructive();
     }
