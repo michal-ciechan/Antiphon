@@ -341,6 +341,9 @@ public sealed class DelegationSettings
     /// <summary>What ANTIPHON_API is set to in a delegate's environment — where it calls back.</summary>
     public string ApiBaseUrl { get; set; } = "http://localhost:17202";
 
+    /// <summary>CARD-0822. Live orchestrator instructions file generated from settings.</summary>
+    public OrchestratorInstructionsSettings OrchestratorInstructions { get; set; } = new();
+
     /// <summary>Role → tier and per-role timeouts. Missing roles fall back to <see cref="DefaultLevel"/>.</summary>
     public Dictionary<string, RolePolicyEntry> RolePolicy { get; set; } = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -1343,6 +1346,52 @@ public sealed class DelegationSettingsValidator : IValidateOptions<DelegationSet
                     failures.Add(
                         $"Delegation:ComplexityChains:{tier} lists {candidate.Kind}/{candidate.Level} twice.");
                 }
+            }
+        }
+
+        var instructions = options.OrchestratorInstructions ?? new OrchestratorInstructionsSettings();
+        if (instructions.MaxBytes is < OrchestratorInstructionsSettings.MinMaxBytes
+            or > OrchestratorInstructionsSettings.MaxMaxBytes)
+        {
+            failures.Add(
+                "Delegation:OrchestratorInstructions:MaxBytes must be between "
+                + $"{OrchestratorInstructionsSettings.MinMaxBytes} and {OrchestratorInstructionsSettings.MaxMaxBytes}.");
+        }
+
+        if (instructions.SweepSeconds is < OrchestratorInstructionsSettings.MinSweepSeconds
+            or > OrchestratorInstructionsSettings.MaxSweepSeconds)
+        {
+            failures.Add(
+                "Delegation:OrchestratorInstructions:SweepSeconds must be between "
+                + $"{OrchestratorInstructionsSettings.MinSweepSeconds} and {OrchestratorInstructionsSettings.MaxSweepSeconds}.");
+        }
+
+        if (!string.IsNullOrWhiteSpace(instructions.Path) && !Path.IsPathRooted(instructions.Path))
+        {
+            failures.Add("Delegation:OrchestratorInstructions:Path must be an absolute path.");
+        }
+
+        var standing = instructions.StandingInstructions ?? [];
+        if (standing.Count > OrchestratorInstructionsSettings.MaxStandingLines)
+        {
+            failures.Add(
+                "Delegation:OrchestratorInstructions:StandingInstructions accepts at most "
+                + $"{OrchestratorInstructionsSettings.MaxStandingLines} lines.");
+        }
+
+        foreach (var line in standing)
+        {
+            if (line.Length > OrchestratorInstructionsSettings.MaxStandingLineChars)
+            {
+                failures.Add(
+                    "Delegation:OrchestratorInstructions:StandingInstructions lines must be at most "
+                    + $"{OrchestratorInstructionsSettings.MaxStandingLineChars} characters.");
+            }
+
+            if (line.Contains("{{key:", StringComparison.Ordinal))
+            {
+                failures.Add(
+                    "Delegation:OrchestratorInstructions:StandingInstructions must not contain {{key: placeholders.");
             }
         }
 

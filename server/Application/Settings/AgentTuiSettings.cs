@@ -1,5 +1,6 @@
-using Microsoft.Extensions.Options;
+using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Enums;
+using Microsoft.Extensions.Options;
 
 namespace Antiphon.Server.Application.Settings;
 
@@ -56,25 +57,8 @@ public sealed class AgentTuiSettings
         };
     }
 
-    private static string ResolveUnixDataRoot(AgentTuiPathEnvironment environment)
-    {
-        if (string.IsNullOrEmpty(environment.XdgDataHome))
-        {
-            return Combine(
-                RequireAbsolutePath(
-                    environment.HomeDirectory,
-                    "home directory",
-                    environment.Platform),
-                environment.Platform,
-                ".local",
-                "share");
-        }
-
-        if (!IsAbsolutePath(environment.XdgDataHome, environment.Platform))
-            throw new InvalidOperationException("The XDG_DATA_HOME path must be absolute.");
-
-        return environment.XdgDataHome;
-    }
+    private static string ResolveUnixDataRoot(AgentTuiPathEnvironment environment) =>
+        AntiphonDataPaths.ResolveUnixDataRoot(environment);
 
     public static AgentTuiDirectoryPermissionStrategy GetDirectoryPermissionStrategy(
         AgentTuiPlatform platform) => platform switch
@@ -99,46 +83,14 @@ public sealed class AgentTuiSettings
     private static string RequireAbsolutePath(
         string? path,
         string name,
-        AgentTuiPlatform platform)
-    {
-        if (string.IsNullOrWhiteSpace(path))
-            throw new InvalidOperationException($"The {name} path is unavailable.");
-        if (!IsAbsolutePath(path, platform))
-            throw new InvalidOperationException($"The {name} path must be absolute.");
-        return path;
-    }
+        AgentTuiPlatform platform) =>
+        AntiphonDataPaths.RequireAbsolutePath(path, name, platform);
 
-    private static bool IsAbsolutePath(string? path, AgentTuiPlatform platform)
-    {
-        if (string.IsNullOrWhiteSpace(path))
-            return false;
+    private static bool IsAbsolutePath(string? path, AgentTuiPlatform platform) =>
+        AntiphonDataPaths.IsAbsolutePath(path, platform);
 
-        return platform switch
-        {
-            AgentTuiPlatform.Windows =>
-                (path.Length >= 3
-                 && char.IsAsciiLetter(path[0])
-                 && path[1] == ':'
-                 && path[2] is '\\' or '/')
-                || path.StartsWith("\\\\", StringComparison.Ordinal)
-                || path.StartsWith("//", StringComparison.Ordinal),
-            AgentTuiPlatform.Linux or AgentTuiPlatform.MacOS => path[0] == '/',
-            _ => false
-        };
-    }
-
-    private static string Combine(string root, AgentTuiPlatform platform, params string[] segments)
-    {
-        var separator = platform == AgentTuiPlatform.Windows ? '\\' : '/';
-        var normalizedRoot = root.TrimEnd('/', '\\');
-        if (normalizedRoot.Length == 0)
-            normalizedRoot = separator.ToString();
-
-        var suffix = string.Join(separator, segments);
-        return normalizedRoot == separator.ToString()
-            ? normalizedRoot + suffix
-            : normalizedRoot + separator + suffix;
-    }
+    private static string Combine(string root, AgentTuiPlatform platform, params string[] segments) =>
+        AntiphonDataPaths.Combine(root, platform, segments);
 }
 
 public sealed class AgentTuiKeyProtectionSettings
