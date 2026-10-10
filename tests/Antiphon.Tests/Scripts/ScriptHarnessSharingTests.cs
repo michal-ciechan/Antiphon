@@ -9,6 +9,7 @@ namespace Antiphon.Tests.Scripts;
 /// <summary>
 /// CARD-0889 D-1. A reader opened the way the harness reads sentinels must not block the shim append.
 /// Reverting <c>Open-C889SharedRead</c> to <c>FileShare.Read</c> makes this fail.
+/// The pin uses a named <c>EventWaitHandle</c>, which Unix refuses, so it skips off Windows (CARD-1173).
 /// </summary>
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
@@ -35,6 +36,9 @@ public sealed class ScriptHarnessSharingTests
     [Test]
     public async Task Held_reader_accepts_shim_sentinel_append()
     {
+        if (!OperatingSystem.IsWindows())
+            throw new TUnit.Core.Exceptions.SkipTestException("Named EventWaitHandle sharing pin requires Windows");
+
         var nonce = Guid.NewGuid().ToString("N");
         var root = Path.Combine(Path.GetTempPath(), "c889-share-" + nonce);
         Directory.CreateDirectory(root);
