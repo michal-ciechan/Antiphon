@@ -733,27 +733,30 @@ public sealed class RecordingLaunchSink : IAgentTaskLaunchSink
     public bool? KeyFreeAtLaunch { get; private set; }
 
     /// <summary>
-    /// Backend of the in-flight claim. When set, launch observation reads that
-    /// backend's transaction start: a closed claim has released the parallel
-    /// key it took. The converse PUT acquires that same key once the claim commits.
+    /// Top-level xid of the in-flight claim, captured on that connection.
+    /// Launch observation reads <c>pg_xact_status</c> for this xid. Committed
+    /// means the claim released the parallel key before the external call.
+    /// A launch that runs before commit still sees <c>in progress</c>.
     /// </summary>
-    public int? ClaimBackendPid { get; set; }
+    public string? ClaimTransactionId { get; set; }
 
     public void Enqueue(Guid sessionId, Guid agentId, DateTime acceptedGeneration, AgentLaunchSpec spec)
     {
         Items.Add((sessionId, agentId, spec));
-        KeyFreeAtLaunch = ClaimBackendPid is int pid
-            ? ClaimTransactionClosed(pid)
+        KeyFreeAtLaunch = ClaimTransactionId is not null
+            ? ClaimTransactionCommitted()
             : ParallelKeyIsFree();
     }
 
-    private bool ClaimTransactionClosed(int pid)
+    public bool ClaimTransactionCommitted()
     {
+        if (ClaimTransactionId is not string xid)
+            throw new InvalidOperationException("claim transaction id was not captured");
         using var connection = new NpgsqlConnection(_connectionString);
         connection.Open();
         using var probe = new NpgsqlCommand(
-            "SELECT xact_start IS NULL FROM pg_stat_activity WHERE pid = @pid", connection);
-        probe.Parameters.AddWithValue("pid", pid);
+            "SELECT pg_xact_status(CAST(@xid AS xid8)) = 'committed'", connection);
+        probe.Parameters.AddWithValue("xid", xid);
         return probe.ExecuteScalar() is true;
     }
 
