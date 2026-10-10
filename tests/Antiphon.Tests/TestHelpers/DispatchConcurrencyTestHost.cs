@@ -709,10 +709,29 @@ public sealed class RecordingLaunchSink : IAgentTaskLaunchSink
     public List<(Guid SessionId, Guid AgentId, AgentLaunchSpec Spec)> Items { get; } = [];
     public bool? KeyFreeAtLaunch { get; private set; }
 
+    /// <summary>
+    /// Backend of the in-flight claim. When set, launch observation reads that
+    /// backend's transaction start: a closed claim has released the parallel
+    /// key it took. The converse PUT acquires that same key once the claim commits.
+    /// </summary>
+    public int? ClaimBackendPid { get; set; }
+
     public void Enqueue(Guid sessionId, Guid agentId, DateTime acceptedGeneration, AgentLaunchSpec spec)
     {
         Items.Add((sessionId, agentId, spec));
-        KeyFreeAtLaunch = ParallelKeyIsFree();
+        KeyFreeAtLaunch = ClaimBackendPid is int pid
+            ? ClaimTransactionClosed(pid)
+            : ParallelKeyIsFree();
+    }
+
+    private bool ClaimTransactionClosed(int pid)
+    {
+        using var connection = new NpgsqlConnection(_connectionString);
+        connection.Open();
+        using var probe = new NpgsqlCommand(
+            "SELECT xact_start IS NULL FROM pg_stat_activity WHERE pid = @pid", connection);
+        probe.Parameters.AddWithValue("pid", pid);
+        return probe.ExecuteScalar() is true;
     }
 
     public bool ParallelKeyIsFree()
