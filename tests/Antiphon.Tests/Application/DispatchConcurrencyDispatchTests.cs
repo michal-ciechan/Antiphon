@@ -617,7 +617,8 @@ public class DispatchConcurrencyDispatchTests
         {
             await WaitAsync(pause.AtSave.Task);
             world.Launches.ParallelKeyIsFree().ShouldBeFalse("no-external-io-under-key");
-            world.Launches.ClaimBackendPid = await ClaimBackendPidAsync(db);
+            world.Launches.ClaimTransactionId = await ClaimTransactionIdAsync(db);
+            world.Launches.ClaimTransactionCommitted().ShouldBe(false, "claim-xid-in-progress");
             var project = await world.Shop.ReadProjectAsync(world.Shop.ProjectP);
             var global = await world.Shop.ReadGlobalAsync();
             var put = Task.Run(async () =>
@@ -805,15 +806,18 @@ public class DispatchConcurrencyDispatchTests
             .FirstAsync();
     }
 
-    private static async Task<int> ClaimBackendPidAsync(AppDbContext db)
+    private static async Task<string> ClaimTransactionIdAsync(AppDbContext db)
     {
         var connection = db.Database.GetDbConnection();
         await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT pg_backend_pid()";
+        command.CommandText = "SELECT pg_current_xact_id()::text";
         if (db.Database.CurrentTransaction is { } current)
             command.Transaction = current.GetDbTransaction();
         var scalar = await command.ExecuteScalarAsync();
-        return Convert.ToInt32(scalar, CultureInfo.InvariantCulture);
+        var xid = Convert.ToString(scalar, CultureInfo.InvariantCulture);
+        if (string.IsNullOrWhiteSpace(xid))
+            throw new InvalidOperationException("claim transaction id was not assigned");
+        return xid;
     }
 
     private static async Task<int> PromptCountAsync(ConcurrencyDispatchWorld world, Guid sessionId)
