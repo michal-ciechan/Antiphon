@@ -87,7 +87,10 @@ public class BootStallAttentionTests
         row.Evidence.ShouldContain("Detection only", Case.Sensitive);
         row.Evidence.ShouldContain($"Boot notice due {promptAt.AddMinutes(8):u}.", Case.Sensitive);
         row.Evidence.ShouldContain($"Operator decision due {promptAt.AddMinutes(20):u}.", Case.Sensitive);
-        row.Evidence.ShouldContain($"Accepted prompt #1 at {promptAt:u}", Case.Sensitive);
+        row.Evidence.ShouldContain(
+            $"Prompt #1 at {promptAt:u}, {Duration(offset)} ago; no assistant, thinking, tool or turn-end row since.",
+            Case.Sensitive);
+        AssertNoDeliveryClaim(visible, moment);
         (await WarningCountAsync(task)).ShouldBe(0, "the row is derived from boot facts, never from a persisted Warning");
 
         switch (moment)
@@ -142,6 +145,69 @@ public class BootStallAttentionTests
                 break;
         }
     }
+
+    /// <summary>
+    /// CARD-1160. The Overdue boot row reads the accepted prompt's sequence and time. It does not
+    /// match that text against the intended request, so a partial record is not a delivery verdict.
+    /// partial-prefix: the UserPrompt is the first 12 characters (zero complete matches).
+    /// complete-match: the UserPrompt is the whole body (one complete match). Both rows state the
+    /// prompt age, the boot-notice and operator thresholds, and the detected stage.
+    /// </summary>
+    [Test]
+    [Arguments("partial-prefix")]
+    [Arguments("complete-match")]
+    public async Task C1160_Overdue_boot_row_states_facts_and_no_delivery_verdict(string prompt)
+    {
+        const string Intended = "zz1160briefX intended request that must not be called delivered";
+        await using var scenario = new AttentionServiceTests.Scenario();
+        var session = await scenario.AddSessionAsync();
+        var task = await scenario.AddTaskAsync(session, AgentTaskStatus.Working, dispatchedMinutesAgo: 1);
+        DateTime dispatchedAt;
+        await using (var db = NewContext())
+            dispatchedAt = (await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task)).DispatchedAt!.Value;
+
+        var promptAt = new DateTime(dispatchedAt.Ticks - dispatchedAt.Ticks % TimeSpan.TicksPerSecond, DateTimeKind.Utc)
+            .AddSeconds(30);
+        var text = prompt == "partial-prefix" ? Intended[..12] : Intended;
+        await scenario.AddTranscriptAtAsync(session, promptAt, (TranscriptKinds.UserPrompt, text, null));
+
+        await using (var db = NewContext())
+        {
+            var records = await db.TranscriptEntries.AsNoTracking()
+                .Where(t => t.AgentSessionId == session && t.Kind == TranscriptKinds.UserPrompt)
+                .Select(t => t.Text)
+                .ToListAsync();
+            records.Count.ShouldBe(1, $"control: {prompt} has one prompt record");
+            records.Count(t => t == Intended).ShouldBe(prompt == "partial-prefix" ? 0 : 1,
+                $"control: {prompt} complete matching records");
+        }
+
+        var now = promptAt.AddMinutes(8);
+        var row = await BootRowAsync(scenario, task, new FakeTimeProvider(new DateTimeOffset(now)));
+        row.ShouldNotBeNull(prompt);
+        row.Headline.ShouldBe("Boot stall detected: no model reply 8m after the prompt.");
+        row.Evidence.ShouldContain($"Prompt #1 at {promptAt:u}, 8m ago; no assistant, thinking, tool or turn-end row since.");
+        row.Evidence.ShouldContain($"Boot notice due {promptAt.AddMinutes(8):u}.");
+        row.Evidence.ShouldContain($"Operator decision due {promptAt.AddMinutes(20):u}.");
+        var visible = row.Headline + "\n" + row.Evidence;
+        visible.ShouldNotContain(Intended[..12], Case.Sensitive, "the prompt text never reaches the row");
+        AssertNoDeliveryClaim(visible, prompt);
+    }
+
+    /// <summary>Verdict words only a complete matching UserPrompt may carry (CARD-1160).</summary>
+    private static void AssertNoDeliveryClaim(string text, string moment)
+    {
+        foreach (var claim in new[]
+        {
+            "deliver", "not the problem", "received", "accepted", "reached the", "confirmed",
+        })
+        {
+            text.ShouldNotContain(claim, Case.Insensitive, $"{moment}: no '{claim}' delivery claim");
+        }
+    }
+
+    private static string Duration(TimeSpan span) =>
+        span.TotalHours >= 1 ? $"{(int)span.TotalHours}h{span.Minutes:00}m" : $"{(int)span.TotalMinutes}m";
 
     private static async Task<AttentionItemDto?> BootRowAsync(
         AttentionServiceTests.Scenario scenario, Guid task, TimeProvider clock)

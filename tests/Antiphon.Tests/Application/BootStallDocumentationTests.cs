@@ -171,6 +171,27 @@ public class BootStallDocumentationTests
         OperatorDueAfter(bootWait: 0, modelWait: 0).ShouldBe(TimeSpan.FromMinutes(20), "no positive boot wait");
     }
 
+    /// <summary>
+    /// CARD-1160. The provider-stall paragraph states the Overdue row's prompt age, thresholds and
+    /// stage, and does not claim the prompt reached the transcript. Restoring that claim fails the
+    /// negative assertions; deleting the facts fails the positive ones.
+    /// </summary>
+    [Test]
+    public Task C1160_Loop_provider_stall_states_facts_and_no_delivery_verdict()
+    {
+        var loop = Read("docs/orchestration-loop.md");
+        var section = Section(loop,
+            "**A session showing only its own prompt, and WORKING, is a provider stall",
+            "A transcript-confirmed boot prompt with no model reply is detection only");
+        section.ShouldContain("prompt's age", Case.Sensitive, "the row's age");
+        section.ShouldContain("boot-notice and operator thresholds", Case.Sensitive, "the row's thresholds");
+        section.ShouldContain("stage", Case.Sensitive, "the row's stage");
+        section.ShouldNotContain("delivery is not the problem", Case.Sensitive, "no delivery success");
+        section.ShouldNotContain("reached the transcript", Case.Sensitive, "no transcript-reached claim");
+        section.ShouldNotContain("restart ladder", Case.Sensitive, "the standing ladder is retired");
+        return Task.CompletedTask;
+    }
+
     private static TimeSpan OperatorDueAfter(int bootWait, int modelWait)
     {
         var promptAt = new DateTime(2026, 10, 8, 12, 0, 0, DateTimeKind.Utc);
