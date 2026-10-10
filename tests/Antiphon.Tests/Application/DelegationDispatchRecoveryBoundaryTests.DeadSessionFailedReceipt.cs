@@ -1,3 +1,4 @@
+using System.Data.Common;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
@@ -131,6 +132,115 @@ public partial class DelegationDispatchRecoveryBoundaryTests
         {
             await parent.DisposeAsync();
             await decoy.DisposeAsync();
+        }
+    }
+
+    /// <summary>
+    /// CARD-1182. A Failed dead-session row whose parent session row is already gone
+    /// used to throw on every sweep, log a warning, and leave CompletionNoteQueuedAt
+    /// null, so the next 5 s tick selected it again. The sweep stamps the note once
+    /// and the following tick does not look the parent up.
+    /// </summary>
+    [Test]
+    public async Task C1182_Gone_parent_stamps_the_lost_note_once()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 10, 12, 0, 0, TimeSpan.Zero));
+        var missingParent = Guid.NewGuid();
+        var seeded = await SeedAsync(schema.ConnectionString, new AbsentShape
+        {
+            Status = AgentTaskStatus.Failed,
+            Brief = false,
+            ExistingParentId = missingParent,
+        });
+        var decoyParent = Guid.NewGuid();
+        var decoy = await SeedAsync(schema.ConnectionString, new AbsentShape
+        {
+            Status = AgentTaskStatus.Failed,
+            Brief = false,
+            ExistingParentId = decoyParent,
+        });
+        var reason = AgentTaskLiveness.DeadSessionFailurePrefix
+            + " its session row is gone (no failure reason recorded). No report is coming.";
+        await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString)))
+        {
+            var task = await db.AgentTasks.SingleAsync(t => t.Id == seeded.TaskId);
+            task.FailureReason = reason;
+            task.CompletionNoteQueuedAt = null;
+            var other = await db.AgentTasks.SingleAsync(t => t.Id == decoy.TaskId);
+            other.FailureReason = "ordinary dispatch failure";
+            other.CompletionNoteQueuedAt = null;
+            (await db.AgentSessions.AnyAsync(s => s.Id == missingParent || s.Id == decoyParent))
+                .ShouldBeFalse();
+            await db.SaveChangesAsync();
+        }
+
+        var runner = new CountingRunner();
+        var stopper = new RecordingSessionStopper();
+        var seen = new DeadSessionFirstSeenState();
+        var lookups = new ParentSessionLookupCounter(missingParent);
+        await using (var host = OpenSweep(schema.ConnectionString, runner, stopper, clock, seen, lookups))
+            await host.SweepAsync();
+        var afterFirst = lookups.Count;
+        DateTime? firstStamp;
+        await using (var mid = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString)))
+        {
+            var task = await mid.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == seeded.TaskId);
+            firstStamp = task.CompletionNoteQueuedAt;
+            (await mid.SessionQueuedMessages.CountAsync(m => m.SourceTaskId == seeded.TaskId)).ShouldBe(0);
+        }
+
+        clock.Advance(TimeSpan.FromSeconds(5));
+        await using (var again = OpenSweep(schema.ConnectionString, runner, stopper, clock, seen, lookups))
+            await again.SweepAsync();
+
+        await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString)))
+        {
+            var task = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == seeded.TaskId);
+            lookups.Count.ShouldBe(afterFirst,
+                $"stamp={task.CompletionNoteQueuedAt:o} first={firstStamp:o} digest={task.CompletionNoteDigest}");
+            task.CompletionNoteQueuedAt.ShouldNotBeNull();
+            task.CompletionNoteQueuedAt.ShouldBe(firstStamp);
+            task.CompletionNoteDigest.ShouldBe(DelegationNoteDigest.Compute(reason));
+            task.Status.ShouldBe(AgentTaskStatus.Failed);
+            (await db.SessionQueuedMessages.CountAsync(m => m.SourceTaskId == seeded.TaskId)).ShouldBe(0);
+            var other = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == decoy.TaskId);
+            other.CompletionNoteQueuedAt.ShouldBeNull();
+            other.FailureReason.ShouldBe("ordinary dispatch failure");
+        }
+
+        Quiet(runner, stopper, "gone-parent");
+    }
+
+    /// <summary>Counts commands whose parameters name one session id.</summary>
+    private sealed class ParentSessionLookupCounter(Guid sessionId) : DbCommandInterceptor
+    {
+        public int Count { get; private set; }
+
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command,
+            CommandEventData eventData,
+            InterceptionResult<DbDataReader> result,
+            CancellationToken cancellationToken = default)
+        {
+            if (Mentions(command))
+                Count++;
+            return base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
+        }
+
+        private bool Mentions(DbCommand command)
+        {
+            foreach (DbParameter parameter in command.Parameters)
+            {
+                if (parameter.Value is Guid id && id == sessionId)
+                    return true;
+                if (parameter.Value is string text
+                    && Guid.TryParse(text, out var parsed)
+                    && parsed == sessionId)
+                    return true;
+            }
+
+            return false;
         }
     }
 
