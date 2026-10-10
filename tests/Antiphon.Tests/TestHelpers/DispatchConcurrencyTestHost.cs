@@ -548,13 +548,24 @@ public sealed class ConcurrencyDispatchWorld : IAsyncDisposable
     {
         var id = Guid.NewGuid();
         var now = createdAt ?? Shop.Clock.GetUtcNow().UtcDateTime;
+        // A follow-up stays in the parent run, so reuse keeps that session's context
+        // and delivers the brief directly.
+        var rootId = id;
+        if (followUpOf is Guid parentId)
+        {
+            await using var lookup = Shop.Db();
+            rootId = await lookup.AgentTasks.AsNoTracking()
+                .Where(t => t.Id == parentId)
+                .Select(t => t.RootTaskId)
+                .SingleAsync();
+        }
         var directory = workspace == WorkspaceMode.Worktree
             ? System.IO.Directory.CreateDirectory(Path.Combine(_directory, id.ToString("N"))).FullName
             : _directory;
         var task = new AgentTask
         {
             Id = id,
-            RootTaskId = id,
+            RootTaskId = rootId,
             Title = title ?? $"c0505-{role}-{status}",
             Goal = title ?? $"c0505-{role}-{status}-{id:N}",
             Kind = AgentTaskKind.Worker,
