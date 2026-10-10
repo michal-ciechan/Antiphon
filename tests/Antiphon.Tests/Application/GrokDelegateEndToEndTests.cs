@@ -342,12 +342,11 @@ public class GrokDelegateEndToEndTests
     /// because Grok Build 1.0.13 has no first-token timeout. The transcript ends at the delegate's
     /// own pointer prompt and the screen sits on "Waiting for response…".
     ///
-    /// <para>CARD-1162 renamed this method off <c>is_failed_killed_and_retried_once</c>. That
-    /// name claimed an automatic kill and one retry, which has been false since CARD-1151
-    /// (task-bound detection only) and CARD-1156 (taskless AlwaysOn). The name is the CARD-1151
-    /// S6 target. The assertions below are still the CARD-0353 witness; S6 (Windows ConPTY,
-    /// plan CP-36) replaces them with detection until an explicit retry. Do not read this body
-    /// as the landed boot policy, and do not run it on Linux: it skips.</para>
+    /// <para>CARD-1162 D1 names this method for the legacy CARD-0353 kill-and-retry the body
+    /// still asserts. That body is stale against the CARD-1151 detection policy and the
+    /// CARD-1156 taskless AlwaysOn watch. CARD-1151 S6 CP-36 (Windows ConPTY) replaces the
+    /// assertions with detection until an explicit retry. Do not read this body as the landed
+    /// boot policy, and do not run it on Linux: it skips.</para>
     ///
     /// <para>Everything the harness above makes real is real here too: the script, the dispatch,
     /// the launch onto a ConPTY, the delivery path, the runner's own tailer. The one thing that is
@@ -360,8 +359,9 @@ public class GrokDelegateEndToEndTests
     /// mutually exclusive by construction — and this asserts it against the same task rather than
     /// by reading the two predicates.</para>
     /// </summary>
+    // asserts the legacy CARD-0353 kill-and-retry; stale against the CARD-1151 detection policy, to be flipped by CARD-1151 S6 CP-36 (Windows)
     [Test]
-    public async Task a_provider_that_never_answers_boot_is_detected_until_explicit_retry()
+    public async Task a_provider_that_never_answers_boot_is_killed_and_retried_once_legacy_card_0353()
     {
         if (!IsWindows) throw new SkipTestException("ConPTY only on Windows");
         if (!File.Exists(FakeGrokExe))
