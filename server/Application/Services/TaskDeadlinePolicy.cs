@@ -222,8 +222,8 @@ internal static class TaskDeadlinePolicy
                     $"Mid-turn and {label} for {Duration(phaseElapsed)}, against a "
                     + $"{(int)phaseLimit.TotalMinutes}-minute deadline. {DescribeLast(last, lastAge)}"
                     + (phaseKind == DeadlineKind.BootModelWait
-                        ? " The session has produced no assistant, thinking or tool row since its"
-                          + " own prompt — this is a boot turn."
+                        ? " No qualifying boot-model reply since its own prompt"
+                          + " (the check ignores Grok rules-turn responses) — this is a boot turn."
                         : string.Empty));
                 if (best is null || candidate.Fraction > best.Fraction)
                     best = candidate;

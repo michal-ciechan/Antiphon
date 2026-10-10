@@ -22,8 +22,9 @@ Two bundle facts, each closing a reading that was guessed wrong. Neither changes
   length, and nothing further is queued. "Brief not delivered", "brief is queued" and
   "delivery failed" are never right about that prompt.
 - A `BOOT TURN` line means the prompt WAS delivered and the model has not answered it — no
-  assistant, thinking, tool or turn-end row since. That is a stalled provider, not a delivery
-  failure and not progress: Needs attention, naming the wait. If `DEADLINE:` shows a
+  qualifying boot-model reply since (the check ignores Grok rules-turn responses). That is a
+  stalled provider, not a delivery failure and not progress: Needs attention, naming the wait.
+  If `DEADLINE:` shows a
   BootModelWait closing or PAST, add that the harness only detects the stall (CARD-1151 for a
   delegate task, CARD-1156 for a taskless AlwaysOn session): it does not kill, fail, retry,
   stop or release the session. An operator decides.

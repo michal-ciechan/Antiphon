@@ -123,10 +123,11 @@ public sealed class DelegateCheckProbe
     /// a delegate is mid-turn would be worse than no check.
     /// </param>
     /// <param name="BootTurn">
-    /// CARD-0353 S3: non-null when everything this session has written since its launch clock is
-    /// its own prompt(s) — no assistant, thinking, tool or turn-end row. This is the fact the
-    /// check interpreter lacked on 2026-09-03, when it read a delivered pointer prompt on a
-    /// WORKING session as "brief delivery failed" twice.
+    /// CARD-0353 S3: non-null when <c>BootReplyWatch.LoadBootTurnAsync</c> finds no
+    /// qualifying boot-model reply since the launch clock. <c>HasModelReplySinceAsync</c>
+    /// decides that, and it ignores Grok rules-turn responses, so those rows do not clear
+    /// this fact. This is the fact the check interpreter lacked on 2026-09-03, when it read
+    /// a delivered pointer prompt on a WORKING session as "brief delivery failed" twice.
     /// </param>
     public sealed record CheckSessionFacts(
         Guid SessionId,
@@ -564,7 +565,7 @@ public sealed class DelegateCheckProbe
             if (session.BootTurn is { } boot)
             {
                 sb.Append("  BOOT TURN — prompt confirmed ").Append(Stamp(boot.PromptAt))
-                  .Append(", no model response since (").Append(Duration(boot.SincePrompt))
+                  .Append(", no qualifying boot-model reply since (").Append(Duration(boot.SincePrompt))
                   .AppendLine("). The prompt was DELIVERED; the provider has not answered it.");
             }
         }

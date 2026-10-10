@@ -483,8 +483,9 @@ public enum AgentIncidentKind
 
     /// <summary>
     /// CARD-0353 S2. The provider never answered a boot prompt: the brief was delivered and
-    /// transcript-confirmed, and no assistant, thinking, tool or turn-end row followed within
-    /// <c>DelegationSettings.BootModelWaitDeadlineMinutes</c>. The task's
+    /// transcript-confirmed, and no qualifying boot-model reply followed within
+    /// <c>DelegationSettings.BootModelWaitDeadlineMinutes</c>
+    /// (<c>BootReplyWatch.HasModelReplySinceAsync</c> ignores Grok rules-turn responses). The task's
     /// <c>AgentTaskFailureCode.ProviderUnresponsive</c> is the TASK's record; this is the AGENT's,
     /// so its incident list explains why a session that looked healthy was killed. Warning on the
     /// first (a retry follows), Error on the repeat that also holds the model alias.
