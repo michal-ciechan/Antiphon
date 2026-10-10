@@ -30,8 +30,9 @@ public sealed class CheckpointRepeatDocumentationTests : CheckpointTestBase
         // so the 500-char command-line headroom still holds. CARD-0822's bundle swap is
         // in the same file, so this pin is the SHA-256 of the merged LF bytes and is
         // recomputed whenever orchestrator.md changes.
+        // CARD-0881 swaps the three-route policy for the effective-settings route.
         // Repeat policy remains in Code's bundle and owner docs.
         Convert.ToHexString(SHA256.HashData(orchestrator)).ToLowerInvariant()
-            .ShouldBe("80b0c0be058db4f78ab068c05eeb47deac5966bf2d9aa97a7225a35de1e1f56a", "orchestrator-approved-bytes");
+            .ShouldBe("cc5dfdfc6fd462fd162d21d1de5a07f982e94c068d7db578856e30fa0c4bf057", "orchestrator-approved-bytes");
     }
 }
