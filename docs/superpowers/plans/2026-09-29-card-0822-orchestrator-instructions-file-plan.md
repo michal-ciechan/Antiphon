@@ -1,11 +1,31 @@
 # CARD-0822: live orchestrator instructions file generated from settings
 
 Date: 2026-09-29. Stage: Plan, with TestDesign folded in. Next: Code.
-Baseline: `d2fb7536eb6385822b5d306fc49157effa6de35c`.
+Original baseline: `d2fb7536eb6385822b5d306fc49157effa6de35c`.
+Amended 2026-10-10 (Plan task 392dc9f4) against master `8239e7d1077d7c376e8dfa30d6e0f1fa1496fdb5`;
+Code starts from that commit or later. See "Amendment log" below.
 Card `5a5bce6d-468f-4271-89f3-47fb7602c900` on board `8988ca03-7414-47ad-b0b6-51556c701703`,
 read in full with `scripts/card.ps1 get CARD-0822`. Related cards read: CARD-0439 (orchestrator
 bundle should surface the transcript chain), CARD-0509 (orchestrator restart loop after context
 overflow), CARD-0317 (keep-warm cadence), CARD-0818 (the "Code held at two" example the card cites).
+
+## Amendment log (2026-10-10)
+
+The first Code attempt (task c79d65cd, 2026-10-10) stopped before any edit because D-5, D-8, V-14
+and R-7 still described the 2026-09-29 bundle wording ("depth of two"). Master has since pinned a
+different standing policy (CARD-0533 as updated by the operator's 2026-10-01 ruling), the bundle
+was trimmed to the byte for the argv budget (CARD-0884, CARD-1065), and two neighbouring cards are
+in flight. Every claim below was re-read on `8239e7d1`; D-1 to D-4, D-6, D-7 and D-9 stand
+unchanged except where an item names them.
+
+| Item | What changed | Where |
+|---|---|---|
+| A-1 | The four policy copies keep their current pinned wording. No phrase is replaced in `StandingPipelinePolicyDocumentationTests`; the numbers the copies carry ("up to four", "at most six") stay as operator defaults and the generated file carries the live enforced values. | Ground truth row 1, D-5, D-8, V-14, R-7 |
+| A-2 | `server/Bundles/orchestrator.md` has zero argv headroom: the worst-case Orchestrator composition measures exactly the 29 500-char budget of `InstructionBundleTests.the_worst_case_composition_measured_sits_far_under_the_budget`. The bundle edit is a measured, length-neutral swap (appendix), not an addition. | Ground truth, D-5, R-7, appendix |
+| A-3 | CARD-0505's Code task (1522ff9c) is in flight on files this plan also edits, and CARD-0881 (which planned to feed this card's snapshot builder) is unlanded. Ordering and the integration seam are D-10. | Ground truth, D-10, handoff |
+| A-4 | Re-verified unchanged: no `OrchestratorInstructions*` source exists; `AgentIncidentKind` ends at `RunnerCapacityChanged = 79`, so 80..82 are free; the `SessionStart` matcher is `compact` only in `.claude/settings.json`, `Write-ClaudeSettings` and the hook test; `DelegationSettings` is `IOptions` in 60 places and `IOptionsMonitor` nowhere; `PolicyRefreshService` watches bundles and `InstructionFiles` only; every service, method, harness member and test class the slices name exists under the same name. | Ground truth |
+| A-5 | Live read 2026-10-10 of `GET /api/agent-tasks/pipeline`: Code and Review `recommendedInFlight` 5, Plan and Investigate 3, the rest 1, `maxConcurrentTasks` 2; the shipped defaults are still Code 2, Review 2, others 1. The bundle says "up to four". That gap is the card's premise, observed live. | Ground truth, D-2 |
+| A-6 | Platform read refreshed (2026-10-10): unchanged placement, no OS lane. | Platform section |
 
 ## Outcome and scope
 
@@ -27,7 +47,7 @@ how Workers receive settings, and any change to the CARD-0334 relaunch lane.
 
 | Card assumption | What the code does at the baseline | Consequence for this plan |
 |---|---|---|
-| Orchestrators learn operating settings from a static prompt bundle. | `server/Bundles/orchestrator.md` hard-codes "Code and Review at two, and one task in each other pipeline stage" and "Keep the Code stage at a depth of two". `DelegationSettings.RolePolicy[*].RecommendedInFlight` (Code 2, Review 2, others 1) is what `GET /api/agent-tasks/pipeline` reports and what `DelegationOpenGate` refuses on (409 `concurrency_limit`, axis `role`). Four copies pin the phrase "depth of two" (`StandingPipelinePolicyDocumentationTests.Phrases`). | The bundle keeps the rule and loses the numbers; the numbers live in the generated file. The pinned phrase changes in all four copies and in the test (D-8). |
+| Orchestrators learn operating settings from a static prompt bundle. | On `8239e7d1` the four policy copies (`AGENTS.md` line "An orchestrator working a board", `docs/orchestration-loop.md` "Standing pipeline policy", `server/Bundles/orchestrator.md` from "When you are working a board" to "Model-tier names are", `.claude/skills/antiphon-orchestrator/SKILL.md` short form) say "up to four" per stage, "at most six" on server2, "Keep Code at its depth cap (four unless Antiphon enforces less)" and "never more tasks in one stage than its cap". `StandingPipelinePolicyDocumentationTests.Phrases` pins those four phrases plus nine more ("effective concurrency limits", "server2", "-Runner server2", "absolutely requires", "use the lower effective stage cap", "CARD-0881", "GET /api/hosts", "-IgnoreConcurrencyLimit", "axis") in every copy. "depth of two" appears nowhere. Shipped `RolePolicy` is still Code 2, Review 2, others 1; `DelegationOpenGate` refuses at the enforced number (409 `concurrency_limit`, axis `role`); the production server reports Code 5, Review 5, Plan 3, Investigate 3 (A-5). | The copies keep every pinned phrase and gain one sentence pointing at the generated file (D-5). The file renders the enforced numbers, so "four" in the copies stays the operator default it already claims to be and the file is the live ceiling. No test phrase changes (D-8). |
 | A running orchestrator never finds out when a setting changes. | CARD-0334 `PolicyRefreshService` detects drift of bundles and of `PolicyRefreshSettings.InstructionFiles` under the agent's cwd, for standing agents only, once the session has been idle 2 min and outside a 30 min cooldown; it relaunches (kill + `--resume`) or queues a WhenIdle System note (`ChannelPreamble.PolicyDriftNotifyBody`). Nothing watches settings rows. Sub-orchestrator task sessions are not in its population. | Do not put the generated file under any cwd or in `InstructionFiles`: a regeneration must not become a relaunch. Build a separate, lighter notice lane that also reaches task-bound orchestrators (D-3, D-4). |
 | Pipeline queue settings: per-role recommended in-flight, `maxConcurrentTasks`, `MaxOpenTasks`. | All three are `DelegationSettings` (`IOptions`, bound at startup, no `IOptionsMonitor`). `MaxConcurrentTasks` is the desktop cap and can be overridden live by a `HostBudget` row for host `local` (`HostBudgetService.UpsertAsync`, `AgentIncidentKind.HostBudgetChanged`). | Section 1 of the file renders the role table and both caps; the effective local budget comes from `HostBudgetService`, not the raw setting. A config edit reaches the file at the next server start (D-3). |
 | Routing pins and held providers. | `RoutingPin` (card or stage-wide grain, ordered candidates, forbidden aliases, `NotBefore`/`NotAfter`, lazy expiry) written by `RoutingPinService.UpsertAsync/ClearAsync`; `ModelAvailabilityHold` (kind, alias or `*`, `DisabledUntil`, Manual or AutoDetected) written by `ModelAvailability.UpsertManualAsync/ClearAsync/UpsertAutoDetectedAsync/SweepExpiredAsync`. Neither raises an incident or event today. | Both writers gain a change signal after their save (D-3). Auto-detected holds and expiry sweeps count as changes: an orchestrator that keeps dispatching Fable under a session-limit hold is exactly the stale fact the card names. |
@@ -38,6 +58,9 @@ how Workers receive settings, and any change to the CARD-0334 relaunch lane.
 | Delivery to orchestrators: session message, WhenIdle vs Now, attribution. | `SessionMessageQueueService.EnqueueAsync` with `MessageSendMode.WhenIdle` and `QueuedMessageOrigin.System` delivers one body per turn at a turn end, verified by transcript `UserPrompt`; `Now` creates no row and types into a possibly busy composer. CARD-0714 report attribution treats a newer real prompt without the task marker as a barrier for its own response only; `[check …]` notes already reach sub-orchestrator callers WhenIdle. | WhenIdle System notes to orchestrator sessions only, never Now, never to Workers (D-4). |
 | Orchestrators run in worktrees and other repos. | A sub-orchestrator is a pool delegate in a Worktree (default `WorkspaceMode.Worktree`) and may be placed on a phone-home runner when it is ClaudeCode (`DefaultRunnerRoutingPolicy`); a standing orchestrator runs in a sibling `<checkout>-orchestrator` workspace (CARD-0251); `-Dir` sends work to another repo. `docs/cards/` is the precedent for generated files, written into the project checkout. | One global file outside every checkout, plus the HTTP route for a session whose host cannot see the desktop path (D-1). |
 | No secrets may be written. | `docs/agent-credentials.md`: four secret stores; `{{key:NAME}}` legal in env values only; `ApiKeyPlaceholder.EnsureAbsent` refuses rather than strips; runner defaults store no secrets; operator token, phone-home shared secret and OAuth stores are files the server never renders. | The snapshot builder reads none of those stores or columns, and the renderer refuses secret-shaped output (D-7). |
+| The bundle can take one more paragraph (added 2026-10-10). | `InstructionBundleTests.the_worst_case_composition_measured_sits_far_under_the_budget` composes `[orchestrator, delegate-basics, board-api, style-explanatory]` plus the CRLF Telegram preset and checks the argv estimate against `CommandLineBudgetChars` (30 000) minus a 500-char headroom. Recomputed on `8239e7d1` from the bundle bytes with the composer's exact formula (LF, trimmed, `[bundle:key vXXXXXXXX]` headers, `\n\n` separators, `--append-system-prompt` plus six quoted args): 29 500 of 29 500. `orchestrator_bundle_points_to_operational_autonomy_without_growing` separately caps the bundle at 14 310 chars (today 13 671 trimmed LF). CARD-0884 (`42b753d46`) and CARD-1065 (`951e5bf43`) each had to cut prose to stay inside. | Any net growth of `orchestrator.md` turns CP-2 red. D-5 adds its paragraph by a measured swap that removes more than it adds (appendix: 13 671 before, 13 665 after). |
+| Neighbouring cards are independent (added 2026-10-10). | CARD-0505 is `InProgress` with Code task 1522ff9c dispatched 2026-10-10 (its branch is still at the master tip); its plan edits `DelegationSettings.cs`, `Program.cs`, `AppDbContext.cs` and the model snapshot, `PhoneHomeRunnerDirectory.cs`, `RunnerDefaultSettingsService.cs`, `HostBudgetService.cs`, `AgentTaskDispatcher.cs`, `orchestrator.md` and `StandingPipelinePolicyDocumentationTests.cs`, and adds a DB-backed `DispatchConcurrencySettingsService` whose PUT publishes `DispatchConcurrencyChanged` on `IEventBus`. CARD-0881 is `InProgress` and unlanded; its plan asked this card's snapshot builder to consume its effective-settings projection and ordered 0505, then 0881, then 0822. Neither has code on master (`grep -rl EffectiveSettings server/` is empty). | Standing policy rule 5 (same source area as an in-flight Code task: defer) applies to this card's Code dispatch. D-10 states the ordering, the fallback when the caller waives it, and the one seam CARD-0881 later replaces. |
+| Delegates run in the working directory by default (bundle claim, checked 2026-10-10). | `DelegationSettings.DefaultWorkerWorkspace` is `WorkspaceMode.Worktree`; the bundle paragraph "Delegates run directly in the working directory by default" predates that. | It is one of the three unpinned paragraphs the D-5 swap shortens; the rewritten text drops the stale claim and keeps the two rules that still hold. |
 
 ## Decisions
 
@@ -205,7 +228,7 @@ describes.
 Defaults stated for the caller to veto: `Delegation:OrchestratorInstructions:Notify` is `All`
 (standing and task-bound orchestrators); `Standing` and `Off` are the other values.
 
-### D-5: reading points are the launch env, the bundle rule, the SessionStart hook, and a compaction note for non-Claude seats
+### D-5: reading points are the launch env, a length-neutral bundle paragraph, the SessionStart hook, and a compaction note for non-Claude seats (amended 2026-10-10)
 
 `scripts/hooks/orchestrator-investigation-hook.mjs` handles `SessionStart` for sources
 `startup`, `resume` and `compact` (matcher `startup|resume|compact` in `.claude/settings.json` and in
@@ -222,18 +245,39 @@ This makes "read at start, on resume and after compaction" automatic for every C
 url)` WhenIdle System; a Claude session keeps its existing behaviour (the hook already injected the
 file). Agents with a preamble keep `RecoveryNoteBody` unchanged.
 
-`server/Bundles/orchestrator.md` gains one paragraph (at most 700 chars): the file's purpose, the
-env var and route, read it at session start, after compaction and whenever the settings-changed
-note arrives, it outranks the numbers in this bundle and in the docs, and never edit it. The
-standing-policy paragraph becomes settings-driven: "Code and Review at their recommended in-flight
-and every other pipeline stage at its own (shipped defaults two and one; the live numbers are
-section 1 of your orchestrator instructions file)" and "keep the Code stage at a depth of its
-recommended in-flight". `scripts/orchestrator-workspace.ps1` `Write-ClaudeContext` and
-`Write-AgentsContext` add the same one-line rule. No change to `BootstrapBody` or
-`RestartResumeBody`.
+Bundle: `server/Bundles/orchestrator.md` gains the 304-char paragraph P-new of the appendix, placed
+directly after the standing-policy paragraph (the one that opens "When you are working a board
+through its pipeline") and before the line that opens "Follow
+docs/orchestration-loop.md#orchestrator-operational-autonomy-restart-rollout", so it sits inside
+the span `StandingPipelinePolicyDocumentationTests.PolicyCopy` reads. It names the env var, the
+route, "after compaction" and "outranks" (V-14 pins them) and ends "Never edit it." To pay for it
+the same edit (a) removes the sentence "The reasons are in docs/orchestration-loop.md §1." from the
+standing-policy paragraph and (b) replaces the three unpinned paragraphs that open "If a piece is
+big enough", "Delegates run directly in the working directory" and "Inspecting agents, boards and
+live sessions" with the shorter texts in the appendix. Measured on `8239e7d1`: trimmed LF length
+13 671 before, 13 665 after; every string in the appendix pin list is still present; the bundle
+still opens "You are an orchestrator." The standing-policy numbers, every pinned phrase and the
+Platform paragraph are not touched. Code applies the appendix verbatim (rewrapping lines is free,
+length is not) and reports the before and after trimmed LF lengths next to the CP-2 line; a result
+above 13 671 is a plan violation to report, never something to absorb by trimming a pinned
+sentence, raising the 14 310 cap or widening the argv budget.
+
+Copies: `scripts/orchestrator-workspace.ps1` `Write-ClaudeContext` and `Write-AgentsContext` add
+one line: "Live operating settings: read the file at $env:ANTIPHON_ORCHESTRATOR_INSTRUCTIONS (or
+GET /api/orchestrator-instructions) at session start, after compaction and when a settings-changed
+note arrives; it outranks the numbers in AGENTS.md." `AGENTS.md` (the single pinned line "- An
+orchestrator working a board ..."), `docs/orchestration-loop.md` §1 rule 1, and the first bullet
+of `.claude/skills/antiphon-orchestrator/SKILL.md` each gain one sentence of the same content,
+appended after their existing text so every pinned phrase keeps its position and no number in any
+copy changes ("up to four" and "at most six" stay the operator defaults the copies already call
+them). No change to `BootstrapBody` or `RestartResumeBody`.
 
 Rejected: a server-queued note at every launch (a turn per launch that the hook makes unnecessary);
-relying on the bundle sentence alone (a sentence is not a read; the hook is).
+relying on the bundle sentence alone (a sentence is not a read; the hook is); rewording the policy
+numbers in the copies to "recommended in-flight" (the 2026-09-29 D-5: "up to four" is now pinned
+and is the operator's stated default, and the live enforced values belong in the file, which
+outranks the copies); adding the paragraph without a swap (the argv estimate is at its budget
+today, and that budget is the Windows command-line limit, not a preference).
 
 ### D-6: not a bundle, not an instruction file, not an import; documented in the instruction-file contract
 
@@ -243,8 +287,9 @@ gains a section "Generated orchestrator instructions (CARD-0822)" owning: the pa
 vars, the route, the stamp line and hash rule, the byte cap, the never-edit rule, the exclusions
 above and why, and the precedence rule (live file over bundle numbers over doc numbers).
 `server/Bundles/README.md` gets two sentences saying live operating settings are not bundle
-content and pointing at that section. `docs/ops-http.md` gets the two route rows. `AGENTS.md` and
-`docs/orchestration-loop.md` §1 reword the fixed depth as in D-5.
+content and pointing at that section. `docs/ops-http.md` gets the two route rows. `AGENTS.md`,
+`docs/orchestration-loop.md` §1 and the orchestrator skill each gain the one sentence of D-5; no
+pinned phrase or number moves (amended 2026-10-10).
 
 ### D-7: no secret can reach the file, by construction and by tripwire
 
@@ -263,13 +308,19 @@ decides. Reasons on pins, holds and runner defaults are operator prose already v
 routes and are rendered as-is. The file is not a credential and needs no owner-only ACL; the
 directory is created with the same helper the operator token uses.
 
-### D-8: the doc-pin tests move with the wording
+### D-8: the doc-pin tests stay as they are; one new guidance class pins the additions (amended 2026-10-10)
 
-`StandingPipelinePolicyDocumentationTests.Phrases` replaces `"depth of two"` with
-`"recommended in-flight"`; the other three phrases stay. `TaskPlatformGuidanceTests`,
-`RunnerDefaultGuidanceTests` and `InstructionBundleTests` assertions on `orchestrator.md` are
-unaffected by the additions and must stay green (the bundle still opens "You are an orchestrator.").
-The hook settings test that pins `matcher === 'compact'` changes to the new matcher.
+`StandingPipelinePolicyDocumentationTests` is not edited: its thirteen phrases remain in all four
+copies because D-5 only appends to them. `TaskPlatformGuidanceTests`, `RunnerDefaultGuidanceTests`,
+`RepairSourceDocumentationTests`, `CheckpointRepeatDocumentationTests` and `InstructionBundleTests`
+assertions on `orchestrator.md` are unaffected by the swap (the appendix pin list was checked
+against each on `8239e7d1`) and must stay green; the two `InstructionBundleTests` budget methods
+named in R-7 are the proof that the swap was length-neutral. The hook settings test that pins
+`matcher === 'compact'` changes to the new matcher. The new `OrchestratorInstructionsGuidanceTests`
+(V-14) pins what this card adds and that the three swapped sentences are gone.
+
+Rejected: replacing a phrase in `Phrases` (the 2026-09-29 D-8), because the phrases now pinned are
+the operator's 2026-10-01 ruling and every copy carries them today.
 
 ### D-9: settings block and defaults
 
@@ -279,6 +330,35 @@ The hook settings test that pins `matcher === 'compact'` changes to the new matc
 chars, no `{{key:`). `Enabled=false` disables generation, notices and the env vars together, and the
 route answers 404 `orchestrator_instructions_disabled`.
 
+### D-10: ordering against CARD-0505 and CARD-0881, under stated defaults (added 2026-10-10)
+
+Default 1: Code for this card is dispatched after CARD-0505's Code task 1522ff9c lands. Standing
+policy rule 5 applies: that plan names nine of this plan's files, and a parallel edit of
+`DelegationSettings.cs`, `Program.cs`, `AppDbContext.cs` and the model snapshot would cost a Merge
+task and a second Review. The caller may waive the deferral in the dispatch; this plan is complete
+either way and the handoff line carries the condition.
+
+Default 2: this card does not wait for CARD-0881. The snapshot builder's policy reads are isolated
+in one method, `OrchestratorInstructionsSnapshotBuilder.ReadPipelinePolicy()`, returning the
+section-1 record (caps, per-role table, per-field source); CARD-0881 later replaces that method's
+body with its projection and nothing else in this card moves. Occupancy and `asOf` are already
+outside the snapshot and the hash (D-2), which is the property CARD-0881's plan asks of this file.
+
+Conditional, resolved by Code at its start commit and stated in its first progress line: if
+`server/Application/Services/DispatchConcurrencySettingsService.cs` exists on the Code base
+(CARD-0505 landed), then (a) `ReadPipelinePolicy()` reads the effective global role policy from
+that service, with `DelegationSettings.RolePolicy` only as the fallback the service itself uses;
+(b) its PUT path gets `Signal("dispatch-concurrency rev N")` after its commit, as one more row of
+the D-3 table; and (c) V-6 gains the `[Arguments("dispatch-concurrency")]` case, so CP-3's `Expect`
+becomes 16 results and its `Min` 16. If the file does not exist, `ReadPipelinePolicy()` reads
+`DelegationSettings` and the `HostBudgetService` local budget exactly as D-2 says and the table
+runs as printed. No other amendment is authorised by this paragraph.
+
+Rejected: blocking on CARD-0881 (its endpoint is read-only and unlanded, and the card's premise is
+live today, see A-5); landing this card first and letting CARD-0505 absorb the conflict (the
+opposite of rule 5, and 0505 is the one already in flight); folding CARD-0505's settings service
+into this card (it is 0505's deliverable and its Code is running).
+
 ## Implementation slices
 
 | Slice | Files / changes | Coverage that closes it |
@@ -286,16 +366,17 @@ route answers 404 `orchestrator_instructions_disabled`.
 | S1: model and renderer | `server/Application/Settings/OrchestratorInstructionsSettings.cs` (+ `DelegationSettings.OrchestratorInstructions`, validator); `server/Application/Services/AntiphonDataPaths.cs` (root resolution factored from `AgentTuiSettings`); `OrchestratorInstructionsSnapshot.cs`, `OrchestratorInstructionsRenderer.cs`, `OrchestratorInstructionsDelta.cs`, `OrchestratorInstructionsRecipients.cs`; `ChannelPreamble` bodies | Unit classes in V-1..V-4, R-1, R-2 |
 | S2: state, generation, triggers, route | `server/Domain/Entities/OrchestratorInstructionsState.cs`; `AppDbContext` + migration `AddOrchestratorInstructions` (state table, `AgentSessions.OrchestratorInstructionsVersion`); `OrchestratorInstructionsSnapshotBuilder.cs`, `OrchestratorInstructionsService.cs`, `OrchestratorInstructionsHostedService.cs`, `CompositeRunnerEligibilityObserver.cs`; signals in the six writers of D-3; `AgentIncidentKind` 80..82; `server/Api/Endpoints/OrchestratorInstructionsEndpoints.cs`; `Program.cs` registrations | V-5, V-6, V-9, V-10, R-3, R-4, migration shape test |
 | S3: notices, launch env, compaction | notice lane inside `OrchestratorInstructionsService`; `AgentSessionLaunchComposer` and `AgentTaskDispatcher.BuildEnv` env vars; session version stamp where `InstructionFileStamp` is set; `CompactionRecoveryService` non-Claude branch | V-7, V-8, V-11, V-12, R-5, R-6 |
-| S4: hook, scripts, bundle, docs | `scripts/hooks/orchestrator-investigation-hook.mjs`, its tests, `.claude/settings.json`; `scripts/orchestrator-workspace.ps1`; `server/Bundles/orchestrator.md`, `server/Bundles/README.md`; `AGENTS.md`, `docs/orchestration-loop.md`, `.claude/skills/antiphon-orchestrator/SKILL.md`, `docs/agent-instruction-file-contract.md`, `docs/ops-http.md`, `docs/agent-credentials.md`; `StandingPipelinePolicyDocumentationTests` phrase; new `OrchestratorInstructionsGuidanceTests` | V-13, V-14, R-7, R-8 |
+| S4: hook, scripts, bundle, docs | `scripts/hooks/orchestrator-investigation-hook.mjs`, its tests, `.claude/settings.json`; `scripts/orchestrator-workspace.ps1`; `server/Bundles/orchestrator.md`, `server/Bundles/README.md`; `AGENTS.md`, `docs/orchestration-loop.md`, `.claude/skills/antiphon-orchestrator/SKILL.md`, `docs/agent-instruction-file-contract.md`, `docs/ops-http.md`, `docs/agent-credentials.md`; the bundle swap of the appendix (no edit to `StandingPipelinePolicyDocumentationTests`); new `OrchestratorInstructionsGuidanceTests` | V-13, V-14, R-7, R-8 |
 
 Commit each slice as it completes; S1-S4 form one verification group and the checkpoint table runs
 once after S4 is committed. Never edit generated `docs/cards/` files.
 
 ## Platform, execution and rollout
 
-`GET /api/runner-defaults` and `GET /api/session-runners` were read on 2026-09-29 through the
-production API: runner defaults revision 2 route everything to `server2` (Human), and both `desktop`
-(windows, capacity 2) and `server2` (linux, capacity 10) are dispatch-eligible. Nothing in this card
+`GET /api/runner-defaults` and `GET /api/session-runners` were read on 2026-09-29 and again on
+2026-10-10 through the production API: runner defaults revision 2 route everything to `server2`
+(Human, no per-kind defaults), and both `desktop` (windows, capacity 2) and `server2` (linux,
+capacity 10) are dispatch-eligible and accepting new work. Nothing in this card
 needs an OS-specific lane: the path resolution has both branches and is unit-tested through a fake
 `AgentTuiPathEnvironment`, the file write is plain .NET IO, and the hook is Node. Keep the task
 platform Any, omit `-Runner` and `-Platform`, and let the runtime default place Code and Review.
@@ -336,7 +417,7 @@ tool: a method contributes one executed result, an `[Arguments]` method one per 
 | V-11 | `CompactionRecoveryTests` (+2 methods, 8 total): `Compact_boundary_on_a_non_claude_orchestrator_session_queues_the_instructions_re_read_note` (session `AgentKind=Grok`, bundle attached, no preamble: exactly one body, the compaction re-read note naming the path and route) and `Compact_boundary_on_a_claude_orchestrator_session_does_not_add_a_second_note` (with preamble: `SubmittedBodies` is exactly `[RecoveryNoteBody]`). |
 | V-12 | `OrchestratorInstructionsEndpointTests` (Integration, `AntiphonWebAppFactory`, 2 methods): GET returns the body with `ETag` and version header equal to the state row; POST refresh without the operator token is 403 `operator_token_required` and with it returns the version. |
 | V-13 | Hook tests in `scripts/hooks/__tests__/orchestrator-investigation-hook.test.mjs` (+7 cases): startup injects the file text when armed and the env path exists; resume injects; compact injects the file then `COMPACT_CONTEXT`; missing env is silent; missing file is silent; a 40 KiB file is cut at 16 384 bytes with the marker; a worker (`ANTIPHON_TASK_ID` set, kind Worker) is silent. The settings test asserts the matcher is `startup\|resume\|compact` and both entries reuse one wrapper command. |
-| V-14 | `OrchestratorInstructionsGuidanceTests` (Unit, 4 methods): `orchestrator.md` names `ANTIPHON_ORCHESTRATOR_INSTRUCTIONS`, `GET /api/orchestrator-instructions`, "after compaction" and "outranks", and no longer contains "at a depth of two"; the four policy copies no longer contain "depth of two" and still contain the three retained phrases; `orchestrator-workspace.ps1` contains the one-line rule in both context writers and the new matcher; `docs/agent-instruction-file-contract.md` has the CARD-0822 section naming the path rule, the stamp line and the exclusion from `InstructionFiles`. |
+| V-14 | `OrchestratorInstructionsGuidanceTests` (Unit, 4 methods; amended 2026-10-10): `The_bundle_names_the_file_route_compaction_and_precedence_and_dropped_the_swapped_sentences` (`orchestrator.md` contains `ANTIPHON_ORCHESTRATOR_INSTRUCTIONS`, `GET /api/orchestrator-instructions`, "after compaction", "outranks" and "Never edit it", and no longer contains "The reasons are in docs/orchestration-loop.md", "Delegates run directly in the working directory" or "rather than trying to run its steps yourself"); `The_policy_copies_keep_every_pinned_phrase_and_each_names_the_file` (the four copies, cut with the same bounds `StandingPipelinePolicyDocumentationTests.PolicyCopy` uses, each contain `ANTIPHON_ORCHESTRATOR_INSTRUCTIONS` and all thirteen pinned phrases, listed literally in this test rather than read from the other class's private array); `The_workspace_script_writes_the_rule_and_the_new_matcher` (`orchestrator-workspace.ps1` contains the one-line rule in both context writers and `startup\|resume\|compact`); `The_contract_doc_owns_the_generated_file` (`docs/agent-instruction-file-contract.md` has the CARD-0822 section naming the path rule, the stamp line, the exclusion from `InstructionFiles` and the precedence rule). |
 
 ### Guards the regression
 
@@ -348,7 +429,7 @@ tool: a method contributes one executed result, an `[Arguments]` method one per 
 | R-4 | `A_worker_delegate_session_receives_nothing`: same as V-7 with `Kind=Worker`; no row, no body. |
 | R-5 | `Secret_bearing_rows_never_reach_the_file_or_the_notice`: seed an `ApiKey`, an `AgentTuiSecret`, an `LlmProvider` key, a `DelegationCapability`, and `Agent.LaunchEnvJson` with distinct sentinel values, then a covered write; assert none of the sentinels appear in the file, the row body, or any delivered body. |
 | R-6 | `A_refused_render_keeps_the_previous_file_and_records_a_warning_without_a_notice`: after a good V-5 state, set a standing line containing `{{key:x}}` through the settings instance and reconcile; file bytes unchanged, `OrchestratorInstructionsWriteFailed` incident present, no body. |
-| R-7 | Existing doc-pin classes (`StandingPipelinePolicyDocumentationTests`, `TaskPlatformGuidanceTests`, `RunnerDefaultGuidanceTests`, `InstructionBundleTests`, `PolicyRefreshDeltaTests`) stay green after the bundle and doc edits. |
+| R-7 | Existing doc-pin classes (`StandingPipelinePolicyDocumentationTests`, `TaskPlatformGuidanceTests`, `RunnerDefaultGuidanceTests`, `InstructionBundleTests`, `PolicyRefreshDeltaTests`) stay green after the bundle and doc edits with no edit to any of them (amended 2026-10-10). Two `InstructionBundleTests` methods are the budget guards for the D-5 swap: `the_worst_case_composition_measured_sits_far_under_the_budget` (argv estimate at 29 500 of 29 500 today) and `orchestrator_bundle_points_to_operational_autonomy_without_growing` (14 310 cap). Code reports the bundle's trimmed LF length before and after the swap next to the CP-2 line. |
 | R-8 | `OrchestratorInstructionsMigrationShapeTests` (Unit, 1 method) pins the state table, the session column as nullable `character varying(16)`, and that the model snapshot has no pending changes. `CompactionRecoveryTests` existing 6 methods stay green. |
 
 ### Positive controls for the later Mutation stage
@@ -363,6 +444,7 @@ Method-scoped, restore between each; Code does not run them.
 | PC-4 | Remove the tripwire scan from the renderer | `/*/*/OrchestratorInstructionsRendererTests/Secret_shaped_content_refuses_the_render` |
 | PC-5 | Stop stamping the session column at enqueue | `/*/*/OrchestratorInstructionsRefreshTests/A_busy_session_gets_the_notice_after_its_turn_ends_and_a_second_change_replaces_the_pending_row` (duplicate body) |
 | PC-6 | Make the hook ignore `ANTIPHON_ORCHESTRATOR_INSTRUCTIONS` | the startup-injects hook case under `pwsh -File scripts/test-hooks.ps1` |
+| PC-7 | Delete the appendix paragraph P-new from `orchestrator.md` | `/*/*/OrchestratorInstructionsGuidanceTests/The_bundle_names_the_file_route_compaction_and_precedence_and_dropped_the_swapped_sentences` |
 
 ### Cost
 
@@ -386,4 +468,76 @@ a stated reason. If Code finds an existing test class asserting on `BuildEnv` or
 `ComposeForAgentAsync` env keys (`AgentBundleAttachmentTests`, `DelegateBundleLaunchTests`,
 `StandingSessionSelectionTests.Composition` name those keys), run it as an unlisted row with the
 reason "env contract widened by S3" and report it. Serial rows keep the MessageQueue exclusion
-honest; the Unit rows may overlap.
+honest; the Unit rows may overlap. CP-2's `InstructionBundleTests*` rows are the budget proof for
+the D-5 swap: a red there is fixed by shortening unpinned bundle prose, never by editing the test,
+the 14 310 cap or `CommandLineBudgetChars`. Under D-10's conditional (CARD-0505 landed before
+Code starts) CP-3 reads 16 results and `Min` 16; otherwise the table runs exactly as printed.
+
+## Appendix: the measured bundle swap (D-5, added 2026-10-10)
+
+Measured on `8239e7d1` with the composer's rules (CRLF folded to LF, trimmed): 13 671 chars before,
+13 665 after. Apply the five edits exactly; rewrap lines freely under 100 columns; touch no other
+paragraph.
+
+A. In the standing-policy paragraph (opens "When you are working a board through its pipeline"),
+delete its final sentence ` The reasons are in docs/orchestration-loop.md §1.` (50 chars with the
+leading space).
+
+B. Insert P-new (304 chars) as a new paragraph directly after that standing-policy paragraph and
+before the paragraph that opens "Follow docs/orchestration-loop.md#orchestrator-operational-autonomy":
+
+```text
+Live operating settings (caps, runners, holds, pins, levels, standing lines) are generated into
+ANTIPHON_ORCHESTRATOR_INSTRUCTIONS, also GET /api/orchestrator-instructions. Read it at session
+start, after compaction and on a settings-changed note; it outranks numbers here and in the docs.
+Never edit it.
+```
+
+C. Replace the paragraph that opens "If a piece is big enough to need its own decomposition"
+(141 chars) with (96 chars):
+
+```text
+A piece that needs its own decomposition goes to a sub-orchestrator (-Orchestrator), not to you.
+```
+
+D. Replace the paragraph that opens "Delegates run directly in the working directory by default"
+(257 chars) with (159 chars):
+
+```text
+Delegates writing the same files at once: pass -Worktree so they cannot overwrite each other.
+Work in another repo goes to a delegate with -Dir pointing there.
+```
+
+E. Replace the paragraph that opens "Inspecting agents, boards and live sessions" (416 chars) with
+(297 chars):
+
+```text
+Inspecting agents, boards and live sessions: read docs/ops-http.md; never grep MapGet for routes.
+Server :17202 /api/..., runner :17204 /sessions/... (no /api). No GET /api/sessions or /api/board;
+GET /api/cards needs boardId, status or updatedSince. Typed input: POST /api/sessions/{id}/messages.
+```
+
+Pin list checked against the result on `8239e7d1` (all present, case-insensitive after whitespace
+collapse): the thirteen `StandingPipelinePolicyDocumentationTests.Phrases`; "same source area"; the
+`TaskPlatformGuidanceTests` strings "inherits its predecessor's platform", "inherits the card's
+platform", "unpinned (Any)", "runtime default places it", "pass -Platform Any explicitly", "only when
+that piece of work requires it", "scope a platform-pinned task to just the OS-specific part",
+"habit, a stage name", "GET /api/runner-defaults", "GET /api/session-runners", "OS-only probe"; the
+`InstructionBundleTests` sentence "Follow docs/orchestration-loop.md#orchestrator-operational-autonomy-restart-rollout
+for autonomous AppHost and runner restarts and server2 rollouts."; "You are an orchestrator.";
+"Steer Queued, Dispatched or Working"; "RepairSource succeeded; owner Failed"; "expectation-nudge";
+"Model-tier names are"; "Delegate everything else"; "About to Edit, Write, or build";
+"channel-bound". The removed sentences are pinned by no test: a grep of `tests/` for "fanning out",
+"-Dir pointing", "There is no GET /api/sessions", "GET /api/cards is a 400", "runner's /input",
+"17202 /api", "(-Orchestrator)", "own decomposition" and "The reasons are in
+docs/orchestration-loop.md" returns nothing, and "overwrite each other" is pinned only against a
+create-time warning string in `AgentTaskServiceIntegrationTests` (the new text keeps the words
+anyway).
+
+How the 29 500 figure was obtained, so Code or Review can repeat it without a build: sum the
+trimmed LF lengths of `orchestrator.md`, `delegate-basics.md`, `board-api.md` and
+`style-explanatory.md`, add one `[bundle:<key> v<8 hex>]\n` header per bundle and `\n\n` between
+blocks, append the Telegram preset rendered with CRLF line endings (2 386 chars) after one more
+`\n\n`, then add `--append-system-prompt` (22) plus six args (`--name`, `task-1a2b3c4d`, `--model`,
+`opus`, `--session-id`, a 36-char GUID) at length plus 3 each, plus 6 for the append flag's own
+quoting. The test's budget is `CommandLineBudgetChars` (30 000) minus 500.
