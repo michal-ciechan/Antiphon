@@ -929,3 +929,23 @@ and the same row rerun, with counts/reruns reported.
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-c0505-s1/` | concurrency-settings | `/*/*/(DispatchConcurrencyPolicyTests*)\|(DispatchConcurrencySettingsTests*)\|(DispatchConcurrencyWireTests*)\|(DispatchConcurrencyMigrationTests*)\|(RunnerDefaultSettingsTests*)\|(RunnerDefaultMigrationTests*)/*` | V-1, V-2, V-3, V-4, R-1 | all named methods: 11 existing + 27 new = 38, 0 failed/skipped | 38 | 8 |
 | CP-2 | S2 | `tests/Antiphon.Tests -> bin-c0505-s2/` | concurrency-admission | `/*/*/(DispatchConcurrencyAdmissionTests*)\|(DispatchConcurrencyDispatchTests*)\|(AgentTaskConcurrencyLimitTests*)\|(AgentTaskDispatcherPredicateTests*)\|(DispatchHoldVisibilityTests*)\|(HostBudgetServiceTests*)/*` | V-5, V-6, R-2, R-3 | all named methods: 78 existing + 16 new = 94, 0 failed/skipped | 94 | 16 |
 | CP-3 | S3 | `tests/Antiphon.Tests -> bin-c0505-s3/` | concurrency-surface | `/*/*/(DispatchConcurrencyPipelineTests*)\|(DispatchConcurrencyScriptTests*)\|(AgentTaskPipelineStatusTests*)\|(AgentTaskPipelineEndpointTests*)\|(StandingPipelinePolicyDocumentationTests*)/*` | V-7, V-8, R-4, R-5 | all named methods: 66 existing + 11 new = 77, 0 failed/skipped | 77 | 12 |
+
+## Results
+
+Code task 1522ff9c on `feat/card-task-1522ff9c` in `/work/worktrees/task-1522ff9c`. Base `8239e7d1077d7c376e8dfa30d6e0f1fa1496fdb5`. The Checkpoints table above was not edited. Post-land Mutation was not run. Server restart: none.
+
+| CP | Run | Commit | Result | Slot |
+|---|---|---|---|---|
+| CP-1 | `20261010-083710-e7d8` | `691b69c840bf227e5507f229f045cb4d87904661` | executed 38, passed 38, failed 0, skipped 0 | granted, waited 0s, build ok, source clean |
+| CP-2 | `20261010-111109-d304` | `fd777cbd718010303fa46e5682488df20d91a11d` | executed 94, passed 94, failed 0, skipped 0 | granted, waited 0s, build ok, source clean |
+| CP-3 | `20261010-120525-cdf2` | `7e61bc8e098a89d4b60e8dacba380825a626c720` | executed 91, passed 91, failed 0, skipped 0 | granted, waited 0s, build ok, source clean |
+
+CP-1 evidence: `.antiphon/checkpoints/20261010-083710-e7d8/report.md`. An earlier row `20261010-083249-2e45` was 38 executed, 35 passed, 3 failed, and was superseded. CP-2 evidence: `.antiphon/checkpoints/20261010-111109-d304/report.md`. An earlier row `20261010-101549-27cb` was 94 executed, 88 passed, 6 failed, and was superseded. The importer warns that CP-2's derived timeout of 48 minutes exceeds the 45 minute advisory. That warning is not a failure.
+
+CP-3 evidence: `.antiphon/checkpoints/20261010-120525-cdf2/report.md`. The same filter on `d90b1ff86321440635302eb34dcc6b4320f8d1bf` (`20261010-115810-aea3`) executed 91, passed 90, failed 1: `AgentTaskPipelineEndpointTests.pipeline_route_is_literal_and_returns_the_advisory_contract` saw `InFlightAgainstCap` 1. `pipeline_json_includes_agent_kind_on_a_row` had left its Working Docs row in the shared factory database and ran immediately before that contract. Commit `7e61bc8e0` removes that row when the read finishes. The rerun is the green row above.
+
+The CP-3 filter executed 91 rather than the September census of 77. `AgentTaskPipelineStatusTests` is a partial class, so the prefix also selects the C557, C1076, and host-budget methods that landed after that census. The slow-class line on the green run reports 66 tests in that class. Min stayed 77. The 11 new V-7 and V-8 methods are inside the 91. No checkpoint Expect cell was changed.
+
+V-1 through V-8 and R-1 through R-5 passed inside those three rows. Unlisted runs, each through `scripts/build-slot.ps1`, slot granted, waited 0s: an isolated `bin-c0505-compile/` build of `tests/Antiphon.Tests` (0 errors) before the S3 commit; a preflight of the eleven new methods (10 passed, the fleet method failed the runner-binding check); a one-method rebuild and rerun of `Fleet_contract_and_host_totals_remain_distinct` (1 passed) after the session row gained `RunnerStoreId` and `RunnerCwd`.
+
+PC-1a, PC-1b, PC-1c, PC-2a, PC-2b, PC-2c, PC-3a, PC-3b, PC-4a, PC-4b, PC-4c, PC-4d, PC-4e, PC-4f, PC-4g, PC-5a, PC-5b, PC-5c, PC-6a, PC-6b, PC-6c, PC-7, PC-8a, PC-8b, PC-8c, PC-8d, PC-8e, PC-8f, PC-9a, PC-9b, PC-10a, PC-10b, PC-11a, PC-11b, PC-12a, PC-12b, PC-13a, PC-13b, PC-13c, PC-13d, PC-14a, PC-14b, PC-14c, and PC-15 stay pending for method-scoped SourceLanding Mutation. None were run.
