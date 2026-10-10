@@ -69,5 +69,36 @@ CODEX_CONFIG
     echo "state-init seeded codex config"
   fi
 fi
-chown -R "$uid:$gid" /state /work /runner-state
+# CARD-1168. server2-temp keeps this runner-state tree live through redeploy-old, so a
+# listed name can disappear before it is owned. A path that is already gone is not a
+# failure. A path that is still present and cannot be owned still fails the init.
+own_tree() {
+  owned_status=$(mktemp)
+  find_status=0
+  find "$1" -ignore_readdir_race -exec sh -c '
+    uid=$1
+    gid=$2
+    owned_status=$3
+    shift 3
+    for path do
+      if chown "$uid:$gid" "$path" 2>/dev/null; then
+        continue
+      fi
+      if [ -e "$path" ] || [ -L "$path" ]; then
+        chown "$uid:$gid" "$path" || {
+          echo fail >> "$owned_status"
+          exit 1
+        }
+      fi
+    done
+  ' sh "$uid" "$gid" "$owned_status" {} + || find_status=$?
+  if [ -s "$owned_status" ] || [ "$find_status" -ne 0 ]; then
+    rm -f "$owned_status"
+    return 1
+  fi
+  rm -f "$owned_status"
+}
+own_tree /state
+own_tree /work
+own_tree /runner-state
 echo "state-init owned uid=$uid"

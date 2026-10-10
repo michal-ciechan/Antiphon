@@ -419,7 +419,9 @@ public sealed class DindRunnerContractTests
         var loop = text[text.IndexOf("for d in \\", StringComparison.Ordinal)..text.IndexOf("\ndo\n", StringComparison.Ordinal)];
         loop.Split([' ', '\n', '\\'], StringSplitOptions.RemoveEmptyEntries)
             .ShouldContain("/runner-state/claude", "the mkdir loop names the Claude store");
-        text.ShouldContain("chown -R \"$uid:$gid\" /state /work /runner-state");
+        text.ShouldContain("own_tree /runner-state");
+        text.Contains("chown -R ", StringComparison.Ordinal).ShouldBeFalse(
+            "the claude store is owned with the rest of the volume, one path at a time");
     }
 
     // CARD-0628: the entrypoint merges the keys the CLI reads before dockerd, and the script

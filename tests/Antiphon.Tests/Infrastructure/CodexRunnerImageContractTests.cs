@@ -236,8 +236,10 @@ public sealed class CodexRunnerImageContractTests
         Order(home, "ForeignStateOwner path=$codex_home", "chown \"$uid:$gid\" \"$codex_home\"").ShouldBeTrue();
         foreach (var line in text.Split('\n').Where(line => line.Contains("$codex_home", StringComparison.Ordinal)))
             Regex.IsMatch(line, @"\b(chown|chmod)\s+-R\b").ShouldBeFalse("recursive over the Codex home: " + line);
-        var recursive = text.Split('\n').Single(line => line.StartsWith("chown -R ", StringComparison.Ordinal));
-        recursive.ShouldBe("chown -R \"$uid:$gid\" /state /work /runner-state", "the volume sweep never reaches the host home");
+        text.Contains("\nchown -R ", StringComparison.Ordinal).ShouldBeFalse(
+            "volume ownership is per path so a vanished file does not fail init");
+        foreach (var root in new[] { "/state", "/work", "/runner-state" })
+            text.ShouldContain("\nown_tree " + root + "\n", "the volume sweep never reaches the host home");
 
         // Only when absent: neither a regular file nor a dangling link is ever replaced.
         text.ShouldContain("codex_config=\"$codex_home/config.toml\"\n");
@@ -266,7 +268,7 @@ public sealed class CodexRunnerImageContractTests
         foreach (var token in new[] { "auth.json", "sessions", "sqlite", ".db" })
             text.Contains(token, StringComparison.Ordinal).ShouldBeFalse("init-state touches " + token);
         Order(text, "ForeignStateOwner path=$d", "codex_home=/codex-home").ShouldBeTrue("a foreign owner refuses before any seed");
-        Order(text, "ln \"$codex_seed\" \"$codex_config\"", "chown -R \"$uid:$gid\" /state /work /runner-state").ShouldBeTrue();
+        Order(text, "ln \"$codex_seed\" \"$codex_config\"", "own_tree /state").ShouldBeTrue();
     }
 
     // The Codex section of init-state.sh, run for real against a directory shaped like the host
@@ -277,7 +279,7 @@ public sealed class CodexRunnerImageContractTests
     public void State_initializer_seeds_an_existing_host_home_and_leaves_its_contents()
     {
         var text = Read("docker/stack/init-state.sh");
-        var section = Section(text, "codex_home=/codex-home\n", "chown -R ");
+        var section = Section(text, "codex_home=/codex-home\n", "own_tree() {");
         var script = string.Join('\n',
             "root=\"$(mktemp -d)\"",
             "trap 'rm -rf \"$root\"' EXIT",
@@ -351,7 +353,10 @@ public sealed class CodexRunnerImageContractTests
         script.ShouldContain("\nuid=$(id -u)\ngid=$(id -g)\n");
         script.ShouldContain("codex_home=$R/codex-home\n");
         script.ShouldContain("for d in $R/state $R/work $R/runner-state; do\n");
-        script.ShouldContain("chown -R \"$uid:$gid\" $R/state $R/work $R/runner-state\n");
+        script.ShouldContain("own_tree $R/state\n");
+        script.ShouldContain("own_tree $R/work\n");
+        script.ShouldContain("own_tree $R/runner-state\n");
+        script.Contains("chown -R ", StringComparison.Ordinal).ShouldBeFalse();
         script.Contains("INIT_STATE_SH", StringComparison.Ordinal).ShouldBeFalse();
 
         string Case(string name, string service, bool mounted) =>
