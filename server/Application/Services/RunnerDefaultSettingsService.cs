@@ -114,6 +114,14 @@ public sealed class RunnerDefaultSettingsService
         return await ProjectAsync(ct);
     }
 
+    /// <summary>CARD-0881. Projects the stored row. Null before the first import. Does not seed.</summary>
+    public async Task<RunnerDefaultsDto?> ReadAsync(CancellationToken ct)
+    {
+        if (await ReadSnapshotAsync(ct) is null)
+            return null;
+        return await ProjectAsync(ct);
+    }
+
     public async Task<RunnerDefaultsDto> PutAsync(
         PutRunnerDefaultsRequest request, Guid? callerTaskId, CancellationToken ct)
     {

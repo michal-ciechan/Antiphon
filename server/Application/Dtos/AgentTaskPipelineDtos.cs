@@ -29,6 +29,18 @@ public sealed record AgentTaskPipelineDto(
 
     /// <summary>CARD-0505. Effective policy and occupancy. Empty when the store has not been imported.</summary>
     public IReadOnlyList<AgentTaskPipelineConcurrencyScopeDto> ConcurrencyScopes { get; init; } = [];
+
+    /// <summary>
+    /// CARD-0881. The <c>GET /api/session-runners</c> rows, fleet-wide on every read.
+    /// Empty when no directory is registered.
+    /// </summary>
+    public IReadOnlyList<SessionRunnerCatalogueEntryDto> Runners { get; init; } = [];
+
+    /// <summary>
+    /// CARD-0881. The <c>GET /api/runner-defaults</c> body.
+    /// Null before the first import or when no service is registered.
+    /// </summary>
+    public RunnerDefaultsDto? RunnerDefaults { get; init; }
 }
 
 public sealed record HostLimitSummaryDto(
@@ -36,6 +48,9 @@ public sealed record HostLimitSummaryDto(
 {
     /// <summary>CARD-0505. Always <c>fleet</c>: a project filter does not add seats.</summary>
     public string Scope { get; init; } = "fleet";
+
+    /// <summary>CARD-0881. Nonnegative free slots. Null when <see cref="EffectiveLimit"/> is unknown.</summary>
+    public int? Remaining => EffectiveLimit is int limit ? Math.Max(0, limit - InFlight) : null;
 }
 
 /// <summary>
