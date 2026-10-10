@@ -1026,12 +1026,26 @@ public class AgentTaskPipelineEndpointTests
         });
         await db.SaveChangesAsync();
 
-        using var client = _factory.CreateClient();
-        var json = await client.GetStringAsync("/api/agent-tasks/pipeline");
-        json.ShouldContain("\"agentKind\"");
-        json.ShouldContain("\"Grok\"");
-        json.ShouldContain("\"modelLevel\"");
-        json.ShouldContain("\"workspace\"");
+        try
+        {
+            using var client = _factory.CreateClient();
+            var json = await client.GetStringAsync("/api/agent-tasks/pipeline");
+            json.ShouldContain("\"agentKind\"");
+            json.ShouldContain("\"Grok\"");
+            json.ShouldContain("\"modelLevel\"");
+            json.ShouldContain("\"workspace\"");
+        }
+        finally
+        {
+            using var cleanup = _factory.Services.CreateScope();
+            var cleanupDb = cleanup.ServiceProvider.GetRequiredService<AppDbContext>();
+            var row = await cleanupDb.AgentTasks.SingleOrDefaultAsync(task => task.Id == id);
+            if (row is not null)
+            {
+                cleanupDb.AgentTasks.Remove(row);
+                await cleanupDb.SaveChangesAsync();
+            }
+        }
     }
 
     [Test]
