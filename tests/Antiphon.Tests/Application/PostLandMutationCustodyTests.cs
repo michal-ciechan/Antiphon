@@ -373,9 +373,9 @@ public sealed class PostLandMutationCustodyTests
     [Test]
     public async Task C478_V17_RealModernHostReceiptImportsAndRemovesSnapshot()
     {
-        // CARD-1185: named EventWaitHandles and a cmd.exe launch spec need Windows. Skip before CreateAsync.
+        // CARD-1185: a cmd.exe launch spec and the modern ConPTY verification-custody backend need Windows. Skip before CreateAsync.
         if (!OperatingSystem.IsWindows())
-            throw new TUnit.Core.Exceptions.SkipTestException("Named EventWaitHandles and a cmd.exe launch spec need Windows");
+            throw new TUnit.Core.Exceptions.SkipTestException("A cmd.exe launch spec and the modern ConPTY verification-custody backend need Windows");
 
         await using var world = await PostLandMutationWorld.CreateAsync(native: true);
         var binding = await world.ReserveAsync();
