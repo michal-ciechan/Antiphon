@@ -26,9 +26,10 @@ public sealed class CheckpointRepeatDocumentationTests : CheckpointTestBase
         stage.Length.ShouldBeLessThan(2410, "stage-code-net-shorter-than-code-base");
         stage.All(value => value < 128).ShouldBeTrue("stage-code-ascii");
         // CARD-0884 compresses existing policy to restore real argv headroom.
-        // CARD-0479 appends the binding-only sentence; pin the resulting bytes.
+        // CARD-0479 keeps the binding-only sentence and trims unpinned platform examples
+        // so the 500-char command-line headroom still holds. Pin the resulting bytes.
         // Repeat policy remains in Code's bundle and owner docs.
         Convert.ToHexString(SHA256.HashData(orchestrator)).ToLowerInvariant()
-            .ShouldBe("a47d24d70b7a9d7a4700659cf6e72ee2dff16354b838eb7980408df0d67dceee", "orchestrator-approved-bytes");
+            .ShouldBe("42fd7e6d7bca145bae377ff0f97b460a8e891f15d0fa58724bdb6dbb1f09eedb", "orchestrator-approved-bytes");
     }
 }
