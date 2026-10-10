@@ -239,3 +239,58 @@ Activation is the ordinary land plus AppHost restart; confirm with `GET /api/ver
 Follow-ups for the caller to file if wanted (not blockers): (1) "Dispatch-concurrency seed origin: distinguish code default from configuration leaf in `default` sources" (D-3); (2) "Collapse `AgentTaskPipelineStatusService` remote occupancy and `SessionRunnerCatalogue` occupancy into one helper" (the two compute the same sessions + pending + mirrors sum; kept duplicated here to leave both contracts byte-identical).
 
 Collision note for the caller: S1 touches `AgentTaskPipelineDtos.cs`, `AgentTaskPipelineStatusService.cs` and `RunnerDefaultSettingsService.cs`; S2 touches the orchestrator bundle, AGENTS.md, the loop doc, the skill and both API docs. Defer this Code task while any in-flight Code task edits those paths.
+
+## Results
+
+Code task `7b32e72e` on `feat/card-task-7b32e72e` in `/work/worktrees/task-7b32e72e`. Base `b30a3d8e746d7b454d2a534e564520a83a298e98`. Bound (token present, not printed). Post-land Mutation was not run; PC-1..PC-4 stay pending. Restart: none. Landing owner is this task. Closed checkpoint table was not rewritten. No unlisted build or test. `builds: 2` on each report is the tool's own count, not an extra driver.
+
+Bundle after S2, LF file `server/Bundles/orchestrator.md`: length 13379 (pin ceiling 14310; plan projection 13379). `InstructionBundles` version prefix `b202af70` (SHA-256 of the trimmed LF text; plan baseline `884bd8a4`). File SHA-256 `cc5dfdfc6fd462fd162d21d1de5a07f982e94c068d7db578856e30fa0c4bf057` (was `80b0c0be058db4f78ab068c05eeb47deac5966bf2d9aa97a7225a35de1e1f56a`). Argv headroom is the CP-2 `InstructionBundleTests` assertion `budget - 500` (29500); that class passed, and the success path does not print the composed length.
+
+Deviations from the plan text, kept so the pins stay true:
+
+- `docs/orchestration-loop.md` item 1 still contains `use the lower effective stage cap`. The plan's replacement omitted that phrase, and it occurs only in item 1 inside the standing-policy slice. The sentence is "Antiphon's enforced limits are the ceiling, so use the lower effective stage cap: the lower of four and the enforced stage limit applies."
+- The stale-phrase loop is in both pin classes. The plan snippet named only `StandingPipelinePolicyDocumentationTests`; V-4 also names `OrchestratorInstructionsGuidanceTests`.
+- The `docs/antiphon-api.md` sentence uses `` `/api/agent-tasks/pipeline?projectId=<guid>` `` so the file contains that contiguous string. The plan's append said `` `?projectId=<guid>` ``, which is not that string, and the row did not already contain it.
+
+CP-1 roster is 78, not the plan's 51. `AgentTaskPipelineStatusTests` on this base reports 66 results, not 39. Min 51 holds. Green run: 78 passed, 0 failed, 0 skipped.
+
+### CP-1 compile failure (missing usings; run 20261010-190256-9b99)
+
+The executor granted build lease `09a133d7` and released it. The row line says `slot=skipped`.
+
+```
+CHECKPOINT CP-1 commit=7d3788440f77e76c4007639860bdc5faca2ffb46 build=failed filter=/*/*/(EffectiveSettingsPipelineTests*)|(DispatchConcurrencyPipelineTests*)|(AgentTaskPipelineStatusTests*)|(HostEndpointTests*)/* executed=n/a passed=n/a failed=n/a skipped=n/a trx=n/a slot=skipped waited=0s dirty=0 source=7d3788440f77e76c4007639860bdc5faca2ffb46 sourceState=clean buildSource=unknown
+```
+
+### CP-1 red (run 20261010-190712-1585)
+
+executed=78 passed=75 failed=3 skipped=0. The three failures are the missing JSON properties `runners`, `runnerDefaults`, and `remaining`.
+
+```
+CHECKPOINT CP-1 commit=1a562d8395e34a8992884a00686fffcaacbc09cc build=ok filter=/*/*/(EffectiveSettingsPipelineTests*)|(DispatchConcurrencyPipelineTests*)|(AgentTaskPipelineStatusTests*)|(HostEndpointTests*)/* executed=78 passed=75 failed=3 skipped=0 trx=/work/worktrees/task-7b32e72e/.antiphon/checkpoints/20261010-190712-1585/rows/CP-1/run.trx slot=granted waited=0s dirty=0 source=1a562d8395e34a8992884a00686fffcaacbc09cc sourceState=clean buildSource=verified
+```
+
+### CP-1 green (run 20261010-191127-c8d2)
+
+executed=78 passed=78 failed=0 skipped=0.
+
+```
+CHECKPOINT CP-1 commit=3891db5b6054cc126cd33962fbfdf2a382ee7d59 build=ok filter=/*/*/(EffectiveSettingsPipelineTests*)|(DispatchConcurrencyPipelineTests*)|(AgentTaskPipelineStatusTests*)|(HostEndpointTests*)/* executed=78 passed=78 failed=0 skipped=0 trx=/work/worktrees/task-7b32e72e/.antiphon/checkpoints/20261010-191127-c8d2/rows/CP-1/run.trx slot=granted waited=0s dirty=0 source=3891db5b6054cc126cd33962fbfdf2a382ee7d59 sourceState=clean buildSource=verified
+```
+
+### CP-2 compile failure (Shouldly overload; run 20261010-192441-c87e)
+
+`StandingPipelinePolicyDocumentationTests.cs` CS1503: `ShouldContain(string, string)` bound to the char predicate. The executor granted build lease `cbaed9b6-e2ce-41fa-b572-7e0ca6a8799d` and released it. The row line says `slot=skipped`. Fixed in `c18147511` by passing `Case.Sensitive`.
+
+```
+CHECKPOINT CP-2 commit=c998782c6ea19d571057ff181f466fc298dfa945 build=failed filter=/*/*/(StandingPipelinePolicyDocumentationTests*)|(OrchestratorInstructionsGuidanceTests*)|(InstructionBundleTests*)|(TaskPlatformGuidanceTests*)|(RunnerDefaultGuidanceTests*)|(CheckpointRepeatDocumentationTests*)/* executed=n/a passed=n/a failed=n/a skipped=n/a trx=n/a slot=skipped waited=0s dirty=0 source=c998782c6ea19d571057ff181f466fc298dfa945 sourceState=clean buildSource=unknown
+```
+
+### CP-2 green (run 20261010-192656-a6da)
+
+executed=99 passed=99 failed=0 skipped=0. Tested source `c18147511dd0aa5756b086f8adbb6594da49f909`.
+
+```
+CHECKPOINT CP-2 commit=c18147511dd0aa5756b086f8adbb6594da49f909 build=ok filter=/*/*/(StandingPipelinePolicyDocumentationTests*)|(OrchestratorInstructionsGuidanceTests*)|(InstructionBundleTests*)|(TaskPlatformGuidanceTests*)|(RunnerDefaultGuidanceTests*)|(CheckpointRepeatDocumentationTests*)/* executed=99 passed=99 failed=0 skipped=0 trx=/work/worktrees/task-7b32e72e/.antiphon/checkpoints/20261010-192656-a6da/rows/CP-2/run.trx slot=granted waited=0s dirty=0 source=c18147511dd0aa5756b086f8adbb6594da49f909 sourceState=clean buildSource=verified
+```
+
