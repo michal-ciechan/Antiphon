@@ -338,6 +338,64 @@ public sealed class AgentTaskMidTurnRefineTests
         }
     }
 
+    /// <summary>
+    /// CARD-1170. A complete UserPrompt stored by the live observe path confirms a Sent
+    /// refinement. The confirm does not wait for <see cref="AgentSessionRuntime.SyncTranscriptAsync"/>.
+    /// A head-only prompt stays pending.
+    /// </summary>
+    [Test]
+    public async Task C1170_LiveUserPromptConfirmsSentRefinementWithoutASyncPump()
+    {
+        using var completeWorkspace = new TempWorkspace();
+        var complete = await PrepareSentRefinementAsync(completeWorkspace.Path);
+        await complete.Fx.Scope.Runtime.ObserveTranscriptAsync(
+            UserPrompt(complete.Fx.SessionId, 43, complete.Body, DateTimeOffset.UtcNow), CancellationToken.None);
+
+        await using (var verify = CreateContext())
+        {
+            var after = await verify.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == complete.Fx.SessionId);
+            after.Status.ShouldBe(QueuedMessageStatus.Sent);
+            after.DeliveryVerdict.ShouldBe(DeliveryVerdict.LateConfirmed);
+            MidTurnInterruptPolicy.ReadRefinementDelivered(after.DeliveryVerdict).ShouldBe("delivered");
+            TypedOnce(complete.Fx, after.Body);
+            complete.Fx.Runner.KillCalls.ShouldBe(0);
+            (await verify.AgentTasks.SingleAsync(t => t.Id == complete.Fx.Task.Id)).Status.ShouldBe(AgentTaskStatus.Working);
+            (await verify.AgentTaskEvents.CountAsync(e => e.AgentTaskId == complete.Fx.Task.Id
+                && (e.Type == AgentTaskEventType.Completed || e.Type == AgentTaskEventType.Failed)))
+                .ShouldBe(0);
+        }
+
+        using var headWorkspace = new TempWorkspace();
+        var head = await PrepareSentRefinementAsync(headWorkspace.Path);
+        head.Body.Length.ShouldBeGreaterThan(300);
+        await head.Fx.Scope.Runtime.ObserveTranscriptAsync(
+            UserPrompt(head.Fx.SessionId, 43, head.Body[..300], DateTimeOffset.UtcNow), CancellationToken.None);
+
+        await using var headDb = CreateContext();
+        var headRow = await headDb.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == head.Fx.SessionId);
+        headRow.Status.ShouldBe(QueuedMessageStatus.Sent);
+        headRow.DeliveryVerdict.ShouldBeNull();
+        MidTurnInterruptPolicy.ReadRefinementDelivered(headRow.DeliveryVerdict).ShouldBe("pending");
+        TypedOnce(head.Fx, headRow.Body);
+        head.Fx.Runner.KillCalls.ShouldBe(0);
+    }
+
+    private static async Task<(Prepared Fx, string Body)> PrepareSentRefinementAsync(string workingDirectory)
+    {
+        var fx = await PrepareAsync(
+            workingDirectory, AgentTaskStatus.Working, AgentKind.Grok, SessionStatus.Running, openQuestion: false);
+        var summary = await CreateService(fx).RefineAsync(
+            fx.Task.Id, Message, CancellationToken.None, interruptCurrentTurn: true, requestId: Guid.NewGuid());
+        summary.InterruptWritten.ShouldBe("written");
+        summary.RefinementDelivered.ShouldBe("pending");
+        await IngestAsync(fx, TurnEnd(fx.SessionId, 42, TranscriptKinds.StopReasons.Cancelled));
+        await using var db = CreateContext();
+        var row = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == fx.SessionId);
+        row.Status.ShouldBe(QueuedMessageStatus.Sent);
+        row.DeliveryVerdict.ShouldBeNull();
+        return (fx, row.Body);
+    }
+
     private static void TypedOnce(Prepared fx, string body) =>
         fx.Runner.RawInputs.Select(raw => raw.Input).ShouldBe(new[]
         {
