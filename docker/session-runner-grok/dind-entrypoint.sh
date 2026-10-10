@@ -84,15 +84,20 @@ if ! setpriv --reuid="$APP_UID" --regid="$APP_GID" --clear-groups \
 fi
 export GIT_CONFIG_GLOBAL="$GIT_IDENTITY_SOURCE"
 
-# --- step 2c: Claude onboarding and worktree trust (CARD-0628) ------------------------
-# A fresh /state/claude has no hasCompletedOnboarding and no project trust, so the first
+# --- step 2c: Claude onboarding and worktree trust (CARD-0628, CARD-1176) -------------
+# A fresh Claude store has no hasCompletedOnboarding and no project trust, so the first
 # task in /work/worktrees/* stops on those dialogs. The CLI (2.1.280 / 2.1.281) reads
 # hasCompletedOnboarding and projects[<path>].hasTrustDialogAccepted. ah() maps a linked
-# worktree to its canonical git root, and ub() walks parents up to that root. Merge as
-# uid 1654 before dockerd so a failure refuses without leaving a daemon behind. The script
-# never writes .credentials.json.
+# worktree to its canonical git root, and ub() walks parents up to that root. Honour
+# CLAUDE_CONFIG_DIR, and when it is unset keep the production store /state/claude. Create
+# that directory as root before dropping privileges: the CARD-0604 harness mounts no
+# /state and points the store elsewhere, and uid 1654 cannot mkdir a missing root path.
+# Merge as uid 1654 before dockerd so a failure refuses without leaving a daemon behind.
+# The script never writes .credentials.json.
+claude_config_dir="${CLAUDE_CONFIG_DIR:-/state/claude}"
+install -d -o "$APP_UID" -g "$APP_GID" "$claude_config_dir"
 if ! setpriv --reuid="$APP_UID" --regid="$APP_GID" --clear-groups \
-     env HOME=/home/app CLAUDE_CONFIG_DIR=/state/claude \
+     env HOME=/home/app CLAUDE_CONFIG_DIR="$claude_config_dir" \
      node /usr/local/bin/antiphon-seed-claude-onboarding.mjs; then
   refuse ClaudeOnboardingSeedFailed
 fi

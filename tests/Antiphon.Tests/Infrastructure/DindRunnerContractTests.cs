@@ -429,7 +429,15 @@ public sealed class DindRunnerContractTests
     {
         var text = Entrypoint();
         text.ShouldContain("node /usr/local/bin/antiphon-seed-claude-onboarding.mjs");
-        text.ShouldContain("CLAUDE_CONFIG_DIR=/state/claude");
+        // CARD-1176: a hard-coded store path ignores CLAUDE_CONFIG_DIR. Unset still
+        // means /state/claude, and root creates that directory before setpriv.
+        text.ShouldContain("claude_config_dir=\"${CLAUDE_CONFIG_DIR:-/state/claude}\"");
+        text.ShouldContain("install -d -o \"$APP_UID\" -g \"$APP_GID\" \"$claude_config_dir\"");
+        text.ShouldContain("env HOME=/home/app CLAUDE_CONFIG_DIR=\"$claude_config_dir\"");
+        text.ShouldNotContain("CLAUDE_CONFIG_DIR=/state/claude");
+        Order(text, "install -d -o \"$APP_UID\" -g \"$APP_GID\" \"$claude_config_dir\"",
+                "node /usr/local/bin/antiphon-seed-claude-onboarding.mjs")
+            .ShouldBeTrue("root creates the store before the seed drops privileges");
         Refusal(text, "ClaudeOnboardingSeedFailed").ShouldBeTrue();
         Order(text, "node /usr/local/bin/antiphon-seed-claude-onboarding.mjs", "dockerd --config-file")
             .ShouldBeTrue("a seed failure refuses before dockerd starts");
