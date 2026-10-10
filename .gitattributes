@@ -52,3 +52,8 @@ docker/session-runner-grok/custody-containment-probe.sh text eol=lf
 # CARD-0660: bind-mounted into Linux containers by scripts/verify-card0660-codex-image.ps1.
 docker/stack/init-state.sh text eol=lf
 docker/session-runner-grok/verify-codex-image.sh text eol=lf
+
+# CARD-1179: shell and .mjs copied into the session-runner-grok image. text=auto checks
+# them out CRLF when core.autocrlf is true, and sh -n then fails the docker build.
+docker/session-runner-grok/**/*.sh text eol=lf
+docker/session-runner-grok/**/*.mjs text eol=lf
