@@ -171,6 +171,43 @@ public class BootStallDocumentationTests
         OperatorDueAfter(bootWait: 0, modelWait: 0).ShouldBe(TimeSpan.FromMinutes(20), "no positive boot wait");
     }
 
+    /// <summary>
+    /// CARD-1162: the standing check-interpreter contract must not tell a Check that a boot
+    /// stall is killed and retried once. CARD-1151 detects a task-bound stall and asks an
+    /// operator; CARD-1156 does the same for a taskless AlwaysOn session.
+    /// </summary>
+    [Test]
+    public void C1162_Check_interpreter_bundle_detects_a_boot_stall_without_kill_or_retry()
+    {
+        var source = Read("server/Bundles/check-interpreter.md").Trim();
+        var embedded = CheckInterpretation.Contract;
+        embedded.ShouldBe(source, "the embedded contract is the bundle file, LF-trimmed");
+        var collapsed = string.Join(" ", source.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+
+        const string detection =
+            "the harness only detects the stall (CARD-1151 for a delegate task, CARD-1156 for a "
+            + "taskless AlwaysOn session): it does not kill, fail, retry, stop or release the session.";
+        collapsed.ShouldContain(detection, Case.Sensitive, "bundle: detection sentence");
+        collapsed.ShouldNotContain("kills and retries", Case.Sensitive, "bundle: retired kill/retry claim");
+        collapsed.ShouldNotContain("retried once", Case.Sensitive, "bundle: retired one-retry claim");
+    }
+
+    /// <summary>
+    /// CARD-1162: the Windows ConPTY witness must not be named as a kill-and-retry. CARD-1151
+    /// S6 (CP-36) still owns flipping that method's assertions; this pin is the name only.
+    /// </summary>
+    [Test]
+    public void C1162_Grok_conpty_witness_name_does_not_claim_kill_and_retry()
+    {
+        const string retired =
+            "a_provider_that_never_answers_the_boot_prompt_is_failed_killed_and_retried_once";
+        const string witness =
+            "a_provider_that_never_answers_boot_is_detected_until_explicit_retry";
+        var names = typeof(GrokDelegateEndToEndTests).GetMethods().Select(m => m.Name).ToArray();
+        names.ShouldNotContain(retired);
+        names.ShouldContain(witness);
+    }
+
     private static TimeSpan OperatorDueAfter(int bootWait, int modelWait)
     {
         var promptAt = new DateTime(2026, 10, 8, 12, 0, 0, DateTimeKind.Utc);

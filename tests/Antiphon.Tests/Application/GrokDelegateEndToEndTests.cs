@@ -342,6 +342,13 @@ public class GrokDelegateEndToEndTests
     /// because Grok Build 1.0.13 has no first-token timeout. The transcript ends at the delegate's
     /// own pointer prompt and the screen sits on "Waiting for response…".
     ///
+    /// <para>CARD-1162 renamed this method off <c>is_failed_killed_and_retried_once</c>. That
+    /// name claimed an automatic kill and one retry, which has been false since CARD-1151
+    /// (task-bound detection only) and CARD-1156 (taskless AlwaysOn). The name is the CARD-1151
+    /// S6 target. The assertions below are still the CARD-0353 witness; S6 (Windows ConPTY,
+    /// plan CP-36) replaces them with detection until an explicit retry. Do not read this body
+    /// as the landed boot policy, and do not run it on Linux: it skips.</para>
+    ///
     /// <para>Everything the harness above makes real is real here too: the script, the dispatch,
     /// the launch onto a ConPTY, the delivery path, the runner's own tailer. The one thing that is
     /// arranged is WHICH turn hangs — <c>ANTIPHON_FAKE_NO_REPLY</c> on the task's launch-env
@@ -354,7 +361,7 @@ public class GrokDelegateEndToEndTests
     /// by reading the two predicates.</para>
     /// </summary>
     [Test]
-    public async Task a_provider_that_never_answers_the_boot_prompt_is_failed_killed_and_retried_once()
+    public async Task a_provider_that_never_answers_boot_is_detected_until_explicit_retry()
     {
         if (!IsWindows) throw new SkipTestException("ConPTY only on Windows");
         if (!File.Exists(FakeGrokExe))
