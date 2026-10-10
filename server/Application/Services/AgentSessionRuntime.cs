@@ -388,6 +388,11 @@ public sealed class AgentSessionRuntime
             await DispatchCapacityRecoveryTranscriptAsync(entry, storedSeq, ct);
         }
 
+        // CARD-1170: a newly stored live UserPrompt confirms a Sent refinement now.
+        // SyncTranscriptAsync still confirms a prompt that arrived only through catch-up.
+        if (entry.Kind == TranscriptKinds.UserPrompt && persisted.LastStoredSeq is not null)
+            await ConfirmRefinementDeliveriesAsync(entry.SessionId, ct);
+
         // A completed turn (the agent stopped and is waiting) is the trigger to flush the next queued
         // "wait until idle" message, or — when nothing is queued — to mark the session finished.
         // Interrupted turns (Esc / rejected tool call) end with the "[Request interrupted..." user
@@ -789,8 +794,10 @@ public sealed class AgentSessionRuntime
         }
 
         // CARD-0491: a Sent refinement with a null verdict confirms from a complete UserPrompt
-        // that this persist just stored. Before settlement and before the boundary flush, so a
-        // cancelled TurnEnd still flushes a pending row, and a later prompt can confirm the Sent one.
+        // that this persist just stored. The live path confirms a newly stored UserPrompt
+        // (CARD-1170); this remains the catch-up when that event was missed. Before settlement
+        // and before the boundary flush, so a cancelled TurnEnd still flushes a pending row,
+        // and a later prompt can confirm the Sent one.
         await ConfirmRefinementDeliveriesAsync(sessionId, ct);
 
         using (var rulesScope = _scopeFactory.CreateScope())
