@@ -96,6 +96,10 @@ public sealed class PostLandMutationCustodyTests
     [Arguments(AgentTaskStatus.Canceled, 16u)]
     public async Task C478_V17_RealReceiptToGuardedRemoval(AgentTaskStatus terminal, uint flags)
     {
+        // CARD-1181: a named EventWaitHandle is refused on Unix. Skip before any handle is built.
+        if (!OperatingSystem.IsWindows())
+            throw new TUnit.Core.Exceptions.SkipTestException("Named EventWaitHandle requires Windows");
+
         await using var world = await PostLandMutationWorld.CreateAsync(native: true);
         var binding = await world.ReserveAsync();
         var prefix = "Local\\c478-app-" + Guid.NewGuid().ToString("N");
