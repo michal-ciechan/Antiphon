@@ -132,6 +132,58 @@ public static class ChannelPreamble
         + ChannelContracts.NoReplyToken
         + " unless you have something for the user.]";
 
+    /// <summary>
+    /// CARD-0822. WhenIdle System note naming the settings delta, the file path, and the route.
+    /// <paramref name="changedMoreThanOnceSince"/> replaces the version arrow when the session
+    /// missed an intermediate revision while busy.
+    /// </summary>
+    public static string OrchestratorInstructionsChangedBody(
+        string delta,
+        string path,
+        string url,
+        string? oldVersion = null,
+        string? newVersion = null,
+        string? changedMoreThanOnceSince = null)
+    {
+        var change = changedMoreThanOnceSince is not null
+            ? "changed more than once since v" + changedMoreThanOnceSince
+            : oldVersion is not null && newVersion is not null
+                ? "v" + oldVersion + " → v" + newVersion
+                : "settings changed";
+        var kept = delta ?? "";
+        while (true)
+        {
+            var where = string.IsNullOrEmpty(url) ? "" : " at " + url;
+            var body = "[System note from Antiphon: orchestrator settings changed ("
+                + change
+                + "): "
+                + kept
+                + ". Re-read ANTIPHON_ORCHESTRATOR_INSTRUCTIONS ("
+                + path
+                + ", or GET /api/orchestrator-instructions"
+                + where
+                + ") before your next dispatch; where the new values differ from what you told a delegate, steer it with -Refine. Reply "
+                + ChannelContracts.NoReplyToken
+                + " unless you have something for the user.]";
+            if (body.Length <= 700 || kept.Length == 0)
+                return body;
+            kept = kept[..Math.Max(0, kept.Length - 40)];
+        }
+    }
+
+    /// <summary>
+    /// CARD-0822. Compaction re-read for a non-Claude orchestrator. Claude sessions already
+    /// receive the file from the SessionStart hook.
+    /// </summary>
+    public static string OrchestratorInstructionsCompactionBody(string path, string url) =>
+        "[System note from Antiphon: your context was just compacted. Re-read ANTIPHON_ORCHESTRATOR_INSTRUCTIONS ("
+        + path
+        + ", or GET /api/orchestrator-instructions"
+        + (string.IsNullOrEmpty(url) ? "" : " at " + url)
+        + ") before your next dispatch. Reply "
+        + ChannelContracts.NoReplyToken
+        + " unless you have something for the user.]";
+
     /// <summary>Eight hex chars, same short-id as <c>[task …]</c> / <c>[check …]</c>.</summary>
     public static string SessionShortId(Guid sessionId) => sessionId.ToString("N")[..8];
 
