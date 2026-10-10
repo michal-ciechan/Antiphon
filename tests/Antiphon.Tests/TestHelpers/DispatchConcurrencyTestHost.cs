@@ -74,11 +74,36 @@ public static class DispatchConcurrencyTestHost
         new(expectedRevision, expectedGlobalRevision, Json(overrides), reason, provenance);
 }
 
+/// <summary>
+/// Hold aging jumps this clock by hand. Elapsed wall time still moves
+/// <see cref="GetUtcNow"/>, and timers stay real, so a delivery confirm
+/// loop can finish. Settings tests keep a frozen <see cref="FakeTimeProvider"/>.
+/// </summary>
+public sealed class DispatchTestClock : TimeProvider
+{
+    private readonly DateTimeOffset _origin;
+    private readonly long _originTimestamp;
+    private long _advancedTicks;
+
+    public DispatchTestClock(DateTimeOffset origin)
+    {
+        _origin = origin;
+        _originTimestamp = TimeProvider.System.GetTimestamp();
+    }
+
+    public void Advance(TimeSpan by) => Interlocked.Add(ref _advancedTicks, by.Ticks);
+
+    public override DateTimeOffset GetUtcNow() =>
+        _origin
+        + TimeProvider.System.GetElapsedTime(_originTimestamp)
+        + TimeSpan.FromTicks(Interlocked.Read(ref _advancedTicks));
+}
+
 public sealed class DispatchConcurrencyShop : IAsyncDisposable
 {
     private readonly IsolatedTestSchema _schema;
 
-    public DispatchConcurrencyShop(IsolatedTestSchema schema, DelegationSettings settings, FakeTimeProvider clock, MockEventBus bus)
+    public DispatchConcurrencyShop(IsolatedTestSchema schema, DelegationSettings settings, TimeProvider clock, MockEventBus bus)
     {
         _schema = schema;
         Settings = settings;
@@ -87,18 +112,33 @@ public sealed class DispatchConcurrencyShop : IAsyncDisposable
     }
 
     public DelegationSettings Settings { get; }
-    public FakeTimeProvider Clock { get; }
+    public TimeProvider Clock { get; }
     public MockEventBus Bus { get; }
     public Guid ProjectP { get; private set; }
     public Guid ProjectQ { get; private set; }
     public string ConnectionString => _schema.ConnectionString;
 
-    public static async Task<DispatchConcurrencyShop> Open(DelegationSettings? settings = null)
+    public void Advance(TimeSpan by)
+    {
+        switch (Clock)
+        {
+            case DispatchTestClock stepping:
+                stepping.Advance(by);
+                return;
+            case FakeTimeProvider frozen:
+                frozen.Advance(by);
+                return;
+            default:
+                throw new InvalidOperationException("This shop clock cannot advance.");
+        }
+    }
+
+    public static async Task<DispatchConcurrencyShop> Open(DelegationSettings? settings = null, TimeProvider? clock = null)
     {
         var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var shop = new DispatchConcurrencyShop(
             schema, settings ?? DispatchConcurrencyTestHost.BoundSettings(),
-            new FakeTimeProvider(DispatchConcurrencyTestHost.SeedInstant), new MockEventBus());
+            clock ?? new FakeTimeProvider(DispatchConcurrencyTestHost.SeedInstant), new MockEventBus());
         await shop.SeedProjectsAsync();
         return shop;
     }
@@ -361,7 +401,9 @@ public sealed class ConcurrencyDispatchWorld : IAsyncDisposable
 
     public static async Task<ConcurrencyDispatchWorld> Open()
     {
-        var shop = await DispatchConcurrencyShop.Open(DispatchConcurrencyTestHost.DispatchSettings());
+        var shop = await DispatchConcurrencyShop.Open(
+            DispatchConcurrencyTestHost.DispatchSettings(),
+            new DispatchTestClock(DispatchConcurrencyTestHost.SeedInstant));
         var directory = System.IO.Directory.CreateTempSubdirectory("c0505-dispatch").FullName;
         var launches = new RecordingLaunchSink(shop.ConnectionString);
         var stopper = new RecordingSessionStopper();

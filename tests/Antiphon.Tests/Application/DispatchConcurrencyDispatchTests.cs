@@ -53,7 +53,7 @@ public class DispatchConcurrencyDispatchTests
         project.Launches.Items.Count.ShouldBe(1, "held-zero-launch");
         (await HeldAsync(project, successor.Id)).Count.ShouldBe(1, "held-zero-launch");
 
-        project.Shop.Clock.Advance(TimeSpan.FromSeconds(301));
+        project.Shop.Advance(TimeSpan.FromSeconds(301));
         await TickAsync(project);
         (await AgedAsync(project, successor.Id)).Count.ShouldBe(1, "held-zero-launch");
         await TickAsync(project);
@@ -281,7 +281,9 @@ public class DispatchConcurrencyDispatchTests
     public async Task Restart_recounts_without_leaked_slots()
     {
         await using var world = await OpenAsync();
-        await PutProjectAsync(world, Separate(1, null));
+        // The canceled claim has to reach the admitting save. Cap 1 with the
+        // first task already dispatched refuses before that save exists.
+        await PutProjectAsync(world, Separate(2, null));
         var admitted = await world.InsertAsync(
             AgentTaskRole.Code, AgentTaskStatus.Queued, world.Shop.ProjectP, WorkspaceMode.ReadOnly, title: "restart-admitted");
         await TickAsync(world);
@@ -303,6 +305,7 @@ public class DispatchConcurrencyDispatchTests
         rolled.Status.ShouldBe(AgentTaskStatus.Queued, "restart-recounts");
         rolled.AgentSessionId.ShouldBeNull("restart-recounts");
         (await SessionCountAsync(world)).ShouldBe(sessions, "restart-recounts");
+        await PutProjectAsync(world, Separate(1, null));
 
         await world.RebuildAsync();
         (await world.ReloadAsync(admitted.Id)).Status.ShouldBe(AgentTaskStatus.Dispatched, "restart-recounts");
