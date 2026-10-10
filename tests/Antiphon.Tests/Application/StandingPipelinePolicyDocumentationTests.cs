@@ -75,7 +75,7 @@ public sealed class StandingPipelinePolicyDocumentationTests
                 "remaining",
                 "CARD-0881",
             })
-                text.ShouldContain(phrase, relative);
+                text.ShouldContain(phrase, Case.Sensitive, relative);
         }
 
         ReadRepoFile("AGENTS.md").ShouldContain("Use its limits");
