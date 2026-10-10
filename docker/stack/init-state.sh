@@ -72,6 +72,7 @@ fi
 # CARD-1168. server2-temp keeps this runner-state tree live through redeploy-old, so a
 # listed name can disappear before it is owned. A path that is already gone is not a
 # failure. A path that is still present and cannot be owned still fails the init.
+# chown -h owns the path itself, including a dangling symlink, and does not follow it.
 own_tree() {
   owned_status=$(mktemp)
   find_status=0
@@ -81,11 +82,11 @@ own_tree() {
     owned_status=$3
     shift 3
     for path do
-      if chown "$uid:$gid" "$path" 2>/dev/null; then
+      if chown -h "$uid:$gid" "$path" 2>/dev/null; then
         continue
       fi
       if [ -e "$path" ] || [ -L "$path" ]; then
-        chown "$uid:$gid" "$path" || {
+        chown -h "$uid:$gid" "$path" || {
           echo fail >> "$owned_status"
           exit 1
         }
