@@ -117,14 +117,16 @@ public class MutationAdmissionTests
         using var workspace = new TempWorkspace();
         var service = CreateService(db);
         var created = await service.CreateAsync(
-            Request(Unique("nopin"), AgentTaskRole.Mutation), ManualCaller(workspace.Path), default);
+            Request(Unique("nopin"), AgentTaskRole.Mutation) with { Workspace = WorkspaceMode.Shared },
+            ManualCaller(workspace.Path), default);
         await using var read = CreateContext(schema);
         var row = await read.AgentTasks.SingleAsync(t => t.Id == created.Id);
         row.ModelLevel.ShouldBe(AgentModelLevel.Low);
         row.AgentKind.ShouldBe(AgentKind.ClaudeCode);
         row.RoutingPinId.ShouldBeNull();
         var code = await service.CreateAsync(
-            Request(Unique("code"), AgentTaskRole.Code), ManualCaller(workspace.Path), default);
+            Request(Unique("code"), AgentTaskRole.Code) with { Workspace = WorkspaceMode.Shared },
+            ManualCaller(workspace.Path), default);
         await using var readCode = CreateContext(schema);
         (await readCode.AgentTasks.SingleAsync(t => t.Id == code.Id)).ModelLevel.ShouldBe(AgentModelLevel.Frontier);
     }
@@ -139,7 +141,8 @@ public class MutationAdmissionTests
             new CreateAgentTaskRequest(
                 Goal: Unique("frontier"),
                 Role: AgentTaskRole.Mutation,
-                ModelLevel: AgentModelLevel.Frontier),
+                ModelLevel: AgentModelLevel.Frontier,
+                Workspace: WorkspaceMode.Shared),
             ManualCaller(workspace.Path), default);
         await using var read = CreateContext(schema);
         var row = await read.AgentTasks.SingleAsync(t => t.Id == created.Id);
