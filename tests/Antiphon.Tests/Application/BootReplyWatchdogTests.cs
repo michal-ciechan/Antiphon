@@ -252,6 +252,74 @@ public class BootReplyWatchdogTests
         (await verify.AgentIncidents.AnyAsync(i => i.SessionId == scenario.SessionId)).ShouldBeFalse();
     }
 
+    /// <summary>
+    /// CARD-1184. The generic <c>bootSeq=</c> headline may say the boot prompt was confirmed only
+    /// when the watched row is a transcript <c>UserPrompt</c>. A queued prompt record is named as
+    /// queued and carries no delivery verdict.
+    /// </summary>
+    [Test]
+    public async Task C1184_Generic_diagnostic_confirms_a_boot_prompt_only_with_a_user_prompt()
+    {
+        await using (var queued = new Scenario())
+        {
+            await queued.SeedAgentAsync(alwaysOn: false);
+            await queued.SeedRowAsync(TranscriptKinds.QueuedUserPrompt, minutesAgo: 30, "still queued");
+            await queued.ArmAsync();
+
+            long sequence;
+            await using (var armed = CreateContext())
+            {
+                var session = await armed.AgentSessions.SingleAsync(s => s.Id == queued.SessionId);
+                session.BootPromptSequence.ShouldNotBeNull();
+                sequence = session.BootPromptSequence!.Value;
+                (await armed.TranscriptEntries.CountAsync(
+                    t => t.AgentSessionId == queued.SessionId && t.Kind == TranscriptKinds.UserPrompt))
+                    .ShouldBe(0, "control: a queued record is not a UserPrompt");
+            }
+
+            (await queued.SweepAsync()).ShouldBe(1);
+
+            await using var verify = CreateContext();
+            var incident = await verify.AgentIncidents.SingleAsync(
+                i => i.SessionId == queued.SessionId && i.Kind == AgentIncidentKind.LivenessProbeFailed);
+            incident.FailureReason.ShouldBe(BootReplyWatchdogService.EpisodeKey(sequence));
+            incident.Message.ShouldStartWith(
+                $"Boot queued prompt record at sequence {sequence}; no assistant, thinking, tool or turn-end row in ");
+            incident.Message.ShouldNotContain("confirmed", Case.Insensitive);
+            incident.Message.ShouldNotContain("accepted", Case.Insensitive);
+            incident.Message.ShouldNotContain("delivered", Case.Insensitive);
+            (await verify.AgentSessions.SingleAsync(s => s.Id == queued.SessionId))
+                .BootPromptSequence.ShouldBeNull("the generic diagnostic disarms");
+        }
+
+        await using (var accepted = new Scenario())
+        {
+            await accepted.SeedAgentAsync(alwaysOn: false);
+            await accepted.SeedPromptAsync(minutesAgo: 30);
+            await accepted.ArmAsync();
+
+            long sequence;
+            await using (var armed = CreateContext())
+            {
+                var session = await armed.AgentSessions.SingleAsync(s => s.Id == accepted.SessionId);
+                session.BootPromptSequence.ShouldNotBeNull();
+                sequence = session.BootPromptSequence!.Value;
+                var row = await armed.TranscriptEntries.SingleAsync(
+                    t => t.AgentSessionId == accepted.SessionId && t.Sequence == sequence);
+                row.Kind.ShouldBe(TranscriptKinds.UserPrompt, "control: the watched row is a UserPrompt");
+            }
+
+            (await accepted.SweepAsync()).ShouldBe(1);
+
+            await using var verify = CreateContext();
+            var incident = await verify.AgentIncidents.SingleAsync(
+                i => i.SessionId == accepted.SessionId && i.Kind == AgentIncidentKind.LivenessProbeFailed);
+            incident.FailureReason.ShouldBe(BootReplyWatchdogService.EpisodeKey(sequence));
+            incident.Message.ShouldStartWith(
+                $"Boot prompt confirmed at sequence {sequence}; no assistant, thinking, tool or turn-end row in ");
+        }
+    }
+
     [Test]
     public async Task a_zero_deadline_disables_the_sweep_entirely()
     {

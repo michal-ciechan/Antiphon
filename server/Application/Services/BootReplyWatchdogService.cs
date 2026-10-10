@@ -319,7 +319,9 @@ public sealed class BootReplyWatchdogService
     /// The generic diagnostic for a session no always-on agent points at (CARD-0312 S3): the
     /// bundle and one <c>bootSeq=</c> incident per episode. Every fact here is available today and
     /// the message NAMES what was observed rather than asserting a diagnosis: the sequence, the
-    /// wait, the context fullness, and what the composer is holding. Detection only: since
+    /// wait, the context fullness, and what the composer is holding. "Confirmed" is a delivery
+    /// verdict, so it is used only when the row at that sequence is a <c>UserPrompt</c>
+    /// (CARD-1184); a queued record is named as queued. Detection only: since
     /// CARD-1156 no branch of this sweep stops a session or touches supervision state.
     /// </summary>
     private async Task<bool> RaiseDiagnosticAsync(
@@ -340,10 +342,11 @@ public sealed class BootReplyWatchdogService
 
         var owner = await SessionOwnerLookup.ResolveOwningAgentIdAsync(db, session.Id, ct);
 
-        var promptAt = await db.TranscriptEntries.AsNoTracking()
+        var prompt = await db.TranscriptEntries.AsNoTracking()
             .Where(t => t.AgentSessionId == session.Id && t.Sequence == sequence)
-            .Select(t => (DateTime?)(t.Timestamp ?? t.CreatedAt))
+            .Select(t => new { At = (DateTime?)(t.Timestamp ?? t.CreatedAt), t.Kind })
             .FirstOrDefaultAsync(ct);
+        var promptAt = prompt?.At;
         var waited = promptAt is DateTime at ? now - at : now - due;
         if (waited < TimeSpan.Zero)
             waited = TimeSpan.Zero;
@@ -357,9 +360,14 @@ public sealed class BootReplyWatchdogService
             .Select(t => t.Kind + "@" + t.Sequence)
             .ToListAsync(ct);
 
-        var message =
-            $"Boot prompt confirmed at sequence {sequence}; no assistant, thinking, tool or "
-            + $"turn-end row in {StandingBootWatchPolicy.Describe(waited)}"
+        // The session watch arms on the latest real prompt, which may be only queued.
+        var opening = prompt?.Kind == TranscriptKinds.UserPrompt
+            ? $"Boot prompt confirmed at sequence {sequence}"
+            : prompt?.Kind == TranscriptKinds.QueuedUserPrompt
+                ? $"Boot queued prompt record at sequence {sequence}"
+                : $"Boot sequence {sequence}";
+        var message = opening
+            + $"; no assistant, thinking, tool or turn-end row in {StandingBootWatchPolicy.Describe(waited)}"
             + (fullness is double f ? $"; context {f:P0}" : "; context unknown")
             + (composer is { Length: > 0 } head ? $"; composer holds: \"{head}\"" : "; composer not readable")
             + (kinds.Count > 0 ? $"; rows since: {string.Join(", ", kinds)}" : "; no rows since")
