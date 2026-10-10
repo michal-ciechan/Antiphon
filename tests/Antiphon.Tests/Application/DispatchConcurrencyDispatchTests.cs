@@ -16,6 +16,7 @@ namespace Antiphon.Tests.Application;
 
 /// <summary>CARD-0505 V-6. Real dispatcher claims against an isolated shop and recorded launches.</summary>
 [Category("Integration")]
+[NotInParallel("card-0505-advisory-lock")]
 public class DispatchConcurrencyDispatchTests
 {
     private static readonly TimeSpan HarnessBudget = TimeSpan.FromSeconds(20);
