@@ -140,11 +140,40 @@ Removed at 2026-10-10T10:41:02Z. Afterward the path was absent. Still present:
 
 ## Read-only walk
 
-Pending in this commit. The same `/tmp/c1175-replay.sh` (sha256
-`e77e035ffad16fcc7fceae3e57d2562a6922d5a29cfa4f6b22e58a40800e8361`) runs
-after this note is pushed. Nothing further is deleted.
+Same `/tmp/c1175-replay.sh` (sha256
+`e77e035ffad16fcc7fceae3e57d2562a6922d5a29cfa4f6b22e58a40800e8361`).
+Container `c1175-discard-replay`, removed when the walk exited. Image and
+user as above. Default bridge. Readonly `antiphon-runner-temp_work` at
+`/work` and readonly `antiphon-runner-temp_runner-tmp` at `/runner-tmp`.
+`C1008_TMP_MOUNT=/runner-tmp`. Private tmpfs `/tmp` (2 GiB, mode 1777,
+`noexec,nosuid,nodev`). Host inspect showed those three mounts and that
+tmpfs before the walk. The script printed `WORK_MOUNT_RO`, `TMP_MOUNT_RO`,
+`SCRATCH_TMPFS`, and `WRITE_PROBE_FAILED`.
+
+Window 2026-10-10T10:44:00Z to 2026-10-10T11:05:55Z. Container exit 0.
+Host proof `/tmp/c1175-resume-audit.out` (3002 lines, sha256
+`8e7ea7b1b156aecf0a9ace5aeb8b839709229a9b7c13bf3a9c89338bce969c02`).
+`antiphon-runner-session-runner-1` was still `Up (healthy)`.
+
+| Item | Survey | After fixture discard | After this drop |
+|---|---:|---:|---:|
+| `repositories=` | 581 | 434 | 433 |
+| `partial=` | 470 | 431 | 431 |
+| `ENTRY-META` | 580 | 434 | 433 |
+| `RecycleWorktreeDirty` | 10 | 0 | 0 |
+| `RecycleUnpublishedWork` | 18 | 0 | 0 |
+| `RecycleGitAuditUnknown` | 112 | 1 | 0 |
+| `tip=` lines | 2124 | 2106 | 2106 |
+| `TIP-UNPUBLISHED` | 0 | 0 | 0 |
+| `audit check=` lines | — | 1 | 0 |
+
+`resume-fixture` does not appear in the log. `REPLAY-*-CONTINUE` lines: 0.
+`TIP-CHECK-FAILED` is the survey replay's extra tip phase, the same line
+the survey and the fixture discard recorded. It is not an audit refusal.
+There is no `TIP-UNPUBLISHED` line. No further path was deleted.
 
 ## Next stage
 
-`next: land`. The walk result follows in a later commit on this branch.
-`retire-temp` stays with the orchestrator. Post-land Mutation does not apply.
+`next: land`. Zero c1008 refusals remain on the temp work volume.
+`retire-temp` stays with the orchestrator, from the canonical checkout, for
+sha `8892b7b759d96b3b5d6fa20518caf2c79c6be81a`. Post-land Mutation does not apply.
