@@ -56,6 +56,11 @@
     <PropertyGroup>
       <_F5PtyHostNativeDir>$(TargetDir)ptyhost-native/</_F5PtyHostNativeDir>
     </PropertyGroup>
+    <!-- The outer Linux build restores with UseAppHost=false, which omits the net9
+         apphost pack. Restore this producer with the same property as its inner build. -->
+    <MSBuild Projects="$(MSBuildThisFileDirectory)..\..\src\Antiphon.PtyHost\Antiphon.PtyHost.csproj"
+             Targets="Restore"
+             Properties="Configuration=$(Configuration);TargetFramework=$(TargetFramework);UseAppHost=true" />
     <MSBuild Projects="$(MSBuildThisFileDirectory)..\..\src\Antiphon.PtyHost\Antiphon.PtyHost.csproj"
              Targets="Build"
              Properties="Configuration=$(Configuration);TargetFramework=$(TargetFramework);UseAppHost=true;OutDir=$(_F5PtyHostNativeDir)" />
