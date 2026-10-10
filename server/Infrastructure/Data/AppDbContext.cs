@@ -96,6 +96,8 @@ public class AppDbContext : DbContext
     public DbSet<RunnerRoutingSettings> RunnerRoutingSettings => Set<RunnerRoutingSettings>();
     public DbSet<RunnerKindDefault> RunnerKindDefaults => Set<RunnerKindDefault>();
     public DbSet<RunnerRoutingRevision> RunnerRoutingRevisions => Set<RunnerRoutingRevision>();
+    public DbSet<DispatchConcurrencySettings> DispatchConcurrencySettings => Set<DispatchConcurrencySettings>();
+    public DbSet<DispatchConcurrencyRevision> DispatchConcurrencyRevisions => Set<DispatchConcurrencyRevision>();
     public DbSet<StandingSpecialistRouting> StandingSpecialistRoutings => Set<StandingSpecialistRouting>();
     public DbSet<StandingSpecialistCandidateState> StandingSpecialistCandidateStates => Set<StandingSpecialistCandidateState>();
     public DbSet<StandingSpecialistHealth> StandingSpecialistHealths => Set<StandingSpecialistHealth>();
@@ -2424,6 +2426,31 @@ public class AppDbContext : DbContext
             entity.Property(r => r.Reason).IsRequired().HasMaxLength(400);
             entity.Property(r => r.Provenance).IsRequired().HasMaxLength(32);
             entity.Property(r => r.SnapshotJson).IsRequired().HasColumnType("jsonb");
+            entity.HasIndex(r => new { r.SettingsId, r.Revision }).IsUnique();
+        });
+
+        modelBuilder.Entity<DispatchConcurrencySettings>(entity =>
+        {
+            entity.ToTable("DispatchConcurrencySettings");
+            entity.HasKey(s => s.Id);
+            entity.Property(s => s.ScopeKey).IsRequired().HasMaxLength(64);
+            entity.HasIndex(s => s.ScopeKey).IsUnique();
+            entity.Property(s => s.OverridesJson).IsRequired().HasColumnType("jsonb");
+            entity.Property(s => s.SeedJson).HasColumnType("jsonb");
+            entity.Property(s => s.LastReason).IsRequired().HasMaxLength(400);
+            entity.Property(s => s.LastProvenance).IsRequired().HasMaxLength(32);
+            entity.Property(s => s.Revision).IsConcurrencyToken();
+            entity.HasMany(s => s.Revisions).WithOne(r => r.Settings).HasForeignKey(r => r.SettingsId)
+                .OnDelete(DeleteBehavior.Cascade);
+            // No project FK: deleting a project must not cascade this audit row.
+        });
+        modelBuilder.Entity<DispatchConcurrencyRevision>(entity =>
+        {
+            entity.ToTable("DispatchConcurrencyRevisions");
+            entity.HasKey(r => r.Id);
+            entity.Property(r => r.SnapshotJson).IsRequired().HasColumnType("jsonb");
+            entity.Property(r => r.Reason).IsRequired().HasMaxLength(400);
+            entity.Property(r => r.Provenance).IsRequired().HasMaxLength(32);
             entity.HasIndex(r => new { r.SettingsId, r.Revision }).IsUnique();
         });
 
