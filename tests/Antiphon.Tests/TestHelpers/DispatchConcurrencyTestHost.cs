@@ -484,6 +484,7 @@ public sealed class ConcurrencyDispatchWorld : IAsyncDisposable
             taskLaunchSink: launches ?? Launches,
             hostBudgets: new HostBudgetService(db, Runners, options, Shop.Clock),
             remoteWorkspace: remote,
+            dispatchWarnings: new DispatchBaseWarningIntentService(db, Shop.Clock),
             dispatchConcurrency: concurrency);
     }
 
@@ -528,6 +529,7 @@ public sealed class ConcurrencyDispatchWorld : IAsyncDisposable
             Ephemeral = ephemeral,
             CapacityWaitRetained = retained,
             FollowUpOfTaskId = followUpOf,
+            ProgressBaselineJson = remoteWorktreePath is null ? null : "{\"schemaVersion\":1}",
             CreatedAt = now,
             DispatchedAt = status is AgentTaskStatus.Dispatched or AgentTaskStatus.Working ? now : null,
             ConcurrencyToken = Guid.NewGuid(),

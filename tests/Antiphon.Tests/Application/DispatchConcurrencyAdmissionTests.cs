@@ -17,6 +17,7 @@ namespace Antiphon.Tests.Application;
 
 /// <summary>CARD-0505 V-5. Real CreateAsync against the imported seed and later puts.</summary>
 [Category("Integration")]
+[NotInParallel("card-0505-advisory-lock")]
 public class DispatchConcurrencyAdmissionTests
 {
     [Test]
@@ -96,12 +97,15 @@ public class DispatchConcurrencyAdmissionTests
         await gate.Shop.PutProjectAsync(
             gate.Shop.ProjectP, 0, 3, """{"roles":{"Plan":{"maxParallel":3}}}""", "p plan three");
         var onP = await AdmitAsync(gate, "p-third", AgentTaskRole.Plan, gate.Shop.ProjectP);
+        await AdmitAsync(gate, Unique("q-first"), AgentTaskRole.Plan, gate.Shop.ProjectQ);
+        await AdmitAsync(gate, Unique("q-second"), AgentTaskRole.Plan, gate.Shop.ProjectQ);
         var qGoal = Unique("q-third");
         var qRefusal = await Should.ThrowAsync<ConcurrencyLimitException>(() =>
             AdmitAsync(gate, qGoal, AgentTaskRole.Plan, gate.Shop.ProjectQ));
         qRefusal.Concurrency.Limit.ShouldBe(2, "admission-used-revision");
         (await CountGoalAsync(gate.Shop, qGoal)).ShouldBe(0, "admission-used-revision");
         await gate.Shop.PutProjectAsync(gate.Shop.ProjectP, 1, 3, "{}", "clear p");
+        await AdmitAsync(gate, Unique("p-second-after-clear"), AgentTaskRole.Plan, gate.Shop.ProjectP);
         var restored = Unique("p-after-clear");
         var restoredRefusal = await Should.ThrowAsync<ConcurrencyLimitException>(() =>
             AdmitAsync(gate, restored, AgentTaskRole.Plan, gate.Shop.ProjectP));
