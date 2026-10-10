@@ -40,7 +40,7 @@
     ],
     "SessionStart": [
       {
-        "matcher": "compact",
+        "matcher": "startup|resume|compact",
         "hooks": [
           {
             "type": "command",

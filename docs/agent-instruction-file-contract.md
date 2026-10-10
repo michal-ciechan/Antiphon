@@ -37,3 +37,25 @@ survive a normal clone here. Measured on this machine, 2026-08-24:
 Net effect: `CLAUDE.md` holds a pointer and no knowledge, `AGENTS.md` holds everything, and the two
 cannot drift because only one of them has content.
 <!-- CARD-0254 preserved source ends -->
+
+## Generated orchestrator instructions (CARD-0822)
+
+The path rule: Windows uses `%LOCALAPPDATA%\Antiphon\orchestrator\ANTIPHON_ORCHESTRATOR_INSTRUCTIONS.md`.
+Linux uses `$XDG_DATA_HOME/antiphon/orchestrator/ANTIPHON_ORCHESTRATOR_INSTRUCTIONS.md` when
+`XDG_DATA_HOME` is set, otherwise `~/.local/share/antiphon/orchestrator/ANTIPHON_ORCHESTRATOR_INSTRUCTIONS.md`.
+`Delegation:OrchestratorInstructions:Path` overrides that only when the value is absolute.
+
+`ANTIPHON_ORCHESTRATOR_INSTRUCTIONS` is the absolute path. `ANTIPHON_ORCHESTRATOR_INSTRUCTIONS_URL`
+is the absolute URL of `GET /api/orchestrator-instructions`. `POST /api/orchestrator-instructions/refresh`
+requires `X-Antiphon-Operator-Token`.
+
+The stamp line is `[orchestrator-instructions v<8hex> rev N]`. The version is the first 8 lowercase
+hex digits of SHA-256 over the LF-normalised trimmed body, excluding the stamp line. The byte cap
+is 16,384. Never edit the file.
+
+It is excluded from `PolicyRefreshSettings.InstructionFiles`, from an agent's working directory,
+from the bundle catalog, and from a `CLAUDE.md` `@` import. Live caps would re-version a bundle on
+every change, and an import would copy the file into every turn's system prompt.
+
+The precedence rule is the live file over the numbers in the orchestrator bundle, and those over
+the numbers in the docs.

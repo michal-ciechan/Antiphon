@@ -40,7 +40,9 @@ For a desktop runner restart use `pwsh -NoProfile -File scripts/restart-session-
   operator-only setting, never an orchestrator-initiated write. Antiphon's enforced
   limits are the ceiling; use the lower effective stage cap. Run stages in parallel, never more tasks
   in one stage than its cap. Prefer server2 (`-Runner server2`); use desktop/Windows only when work
-  absolutely requires it, scoped to that piece.
+  absolutely requires it, scoped to that piece. Live operating settings: read the file at
+  ANTIPHON_ORCHESTRATOR_INSTRUCTIONS (or GET /api/orchestrator-instructions) at session start, after
+  compaction and when a settings-changed note arrives; it outranks the numbers in AGENTS.md.
 - **`-Worktree` by default on every dispatch.** Shared checkout only when explicitly told to
   default to Shared (globally/per-project/per-invocation), or when a task must continue on a
   branch that's already checked out elsewhere (see §4).

@@ -49,9 +49,9 @@ describe('settings.json install', () => {
     assert.match(hook.command, /\$\{CLAUDE_PROJECT_DIR\}/);
   });
 
-  it('SessionStart matcher is compact and reuses the same wrapper', () => {
+  it('SessionStart matcher is startup|resume|compact and reuses the same wrapper', () => {
     const entry = settings.hooks.SessionStart[0];
-    assert.equal(entry.matcher, 'compact');
+    assert.equal(entry.matcher, 'startup|resume|compact');
     assert.equal(
       entry.hooks[0].command,
       settings.hooks.PreToolUse[0].hooks[0].command,
@@ -261,6 +261,99 @@ describe('wrapper process (fail-open, nudge, compact)', () => {
     assert.equal(r.stdout, '');
   });
 
+  it('SessionStart startup injects the instructions file when armed', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 's2-instr-'));
+    try {
+      const file = join(dir, 'ANTIPHON_ORCHESTRATOR_INSTRUCTIONS.md');
+      writeFileSync(file, 'caps: four\n');
+      const out = await sessionStart('startup', 's2-startup', { ANTIPHON_ORCHESTRATOR_INSTRUCTIONS: file });
+      assert.equal(out.hookSpecificOutput.additionalContext, 'caps: four\n');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('SessionStart resume injects the instructions file when armed', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 's2-instr-'));
+    try {
+      const file = join(dir, 'ANTIPHON_ORCHESTRATOR_INSTRUCTIONS.md');
+      writeFileSync(file, 'runners: desktop\n');
+      const out = await sessionStart('resume', 's2-resume', { ANTIPHON_ORCHESTRATOR_INSTRUCTIONS: file });
+      assert.equal(out.hookSpecificOutput.additionalContext, 'runners: desktop\n');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('SessionStart compact injects the instructions file then COMPACT_CONTEXT', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 's2-instr-'));
+    try {
+      const file = join(dir, 'ANTIPHON_ORCHESTRATOR_INSTRUCTIONS.md');
+      writeFileSync(file, 'holds: opus\n');
+      const out = await sessionStart('compact', 's2-compact-file', { ANTIPHON_ORCHESTRATOR_INSTRUCTIONS: file });
+      assert.equal(out.hookSpecificOutput.additionalContext, `holds: opus\n\n${COMPACT_CONTEXT}`);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('SessionStart startup is silent when the instructions env is missing', async () => {
+    const r = await invoke(JSON.stringify({
+      hook_event_name: 'SessionStart',
+      source: 'startup',
+      session_id: 's2-startup-missing-env',
+    }), {});
+    assert.equal(r.code, 0);
+    assert.equal(r.stdout, '');
+  });
+
+  it('SessionStart startup is silent when the instructions file is missing', async () => {
+    const r = await invoke(JSON.stringify({
+      hook_event_name: 'SessionStart',
+      source: 'startup',
+      session_id: 's2-startup-missing-file',
+    }), { ANTIPHON_ORCHESTRATOR_INSTRUCTIONS: join(tmpdir(), 'c822-no-such-instructions.md') });
+    assert.equal(r.code, 0);
+    assert.equal(r.stdout, '');
+  });
+
+  it('SessionStart startup cuts a 40 KiB instructions file at 16384 bytes and adds the marker', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 's2-instr-'));
+    try {
+      const file = join(dir, 'ANTIPHON_ORCHESTRATOR_INSTRUCTIONS.md');
+      writeFileSync(file, 'A'.repeat(40 * 1024));
+      const out = await sessionStart('startup', 's2-startup-cut', { ANTIPHON_ORCHESTRATOR_INSTRUCTIONS: file });
+      const marker = '[orchestrator-instructions truncated at 16384 bytes]';
+      assert.equal(
+        out.hookSpecificOutput.additionalContext,
+        `${'A'.repeat(16384)}\n${marker}`,
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('SessionStart startup is silent for a worker even when the instructions file exists', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 's2-instr-'));
+    try {
+      const file = join(dir, 'ANTIPHON_ORCHESTRATOR_INSTRUCTIONS.md');
+      writeFileSync(file, 'caps: four\n');
+      const r = await invoke(JSON.stringify({
+        hook_event_name: 'SessionStart',
+        source: 'startup',
+        session_id: 's2-startup-worker',
+      }), {
+        ANTIPHON_TASK_ID: 'task-worker',
+        ANTIPHON_TASK_KIND: 'Worker',
+        ANTIPHON_ORCHESTRATOR_INSTRUCTIONS: file,
+      });
+      assert.equal(r.code, 0);
+      assert.equal(r.stdout, '');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('finishes well under the 5s hook timeout on the CARD-0246 fixture', async () => {
     const dir = mkdtempSync(join(tmpdir(), 's2-hook-'));
     try {
@@ -314,6 +407,18 @@ function coldRunTranscript(n) {
   return rows.map((r) => JSON.stringify(r)).join('\n') + '\n';
 }
 
+async function sessionStart(source, sessionId, extraEnv) {
+  const r = await invoke(JSON.stringify({
+    hook_event_name: 'SessionStart',
+    source,
+    session_id: sessionId,
+  }), extraEnv);
+  assert.equal(r.code, 0);
+  const out = JSON.parse(r.stdout);
+  assert.equal(out.hookSpecificOutput.hookEventName, 'SessionStart');
+  return out;
+}
+
 function invoke(stdin, extraEnv) {
   return new Promise((resolve, reject) => {
     const env = { ...process.env };
@@ -322,6 +427,7 @@ function invoke(stdin, extraEnv) {
     delete env.ANTIPHON_TASK_ID;
     delete env.ANTIPHON_TASK_KIND;
     delete env.ANTIPHON_ORCHESTRATOR;
+    delete env.ANTIPHON_ORCHESTRATOR_INSTRUCTIONS;
     Object.assign(env, extraEnv);
     const child = spawn(process.execPath, [wrapper], {
       env,

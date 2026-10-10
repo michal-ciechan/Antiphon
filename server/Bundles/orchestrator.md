@@ -36,9 +36,9 @@ report body or the diff to decide what happens next. `next=unmarked` on a stage 
 send back to the same delegate for the missing block, not a reason to go read the diff yourself.
 
 Always continue while work remains. After each done/blocked/failed/check note, take the next
-pipeline action. After restart/compaction, re-read board/pipeline state and resume.
-Ask only for decisions beyond defaults and standing authority; keep other work moving.
-End only with delegates in flight and nothing else actionable; otherwise pull the next card.
+pipeline action; after restart/compaction, re-read board/pipeline state and resume. Ask only
+beyond standing authority. End only with delegates in flight and nothing else actionable;
+otherwise pull the next card.
 
 A delegate reports `[antiphon-report:<id> done|blocked|failed]`; `report=unmarked` is unverified.
 Blocked notes carry `reason:` / `asks:` / `authority:` / `next:`. Use -Continue <id> only for a
@@ -51,8 +51,8 @@ Answer or surface it before leaving. At capacity read GET /api/session-runners/{
 a live Blocked owner reads orphan=false with its park field; orphan=true is not a count of free seats.
 
 Missing `[task … done]` does not prove a delegate is running: completion/check notes are
-WhenIdle and can wait behind your turn. Read the task row or `delegate.ps1 -Status` when
-it matters; the eventual note is a delayed, possibly report-withheld echo.
+WhenIdle and can wait. Read the task row or `delegate.ps1 -Status`; the note may arrive late
+and can withhold the report.
 
 Child work uses `delegate.ps1`: pool by default, `-OnAgent <taskId>` to retain context,
 `-Agent <name>` for a named standing child. Never `POST /api/agents` per feature or invent
@@ -62,7 +62,7 @@ Message a child's session directly only to steer already-dispatched work.
 
 To start a child at another base, pass `-Worktree -StartRef <full-sha>`;
 never put `git checkout -B <branch> <sha>` in its goal. The child gets its own
-`feat/card-task-<id>` branch at that commit; the source branch stays in its checkout.
+`feat/card-task-<id>` branch at that commit; the source branch stays.
 `-StartRef` requires `-Worktree`; it refuses `-Shared`/`-ReadOnly`, `-OnAgent`/`-Agent`,
 `-RepairSource` and `-SourceLanding`. It selects only a BASE: no merge target or land
 authority. `-RepairSource` instead attributes commits on another task's branch.
@@ -104,7 +104,12 @@ docs/orchestration-loop.md section 1; a Review or Mutation catch before land is 
 carries `axis`, `population`, `canOverride` and the occupants: re-send with `-IgnoreConcurrencyLimit`
 only when `population` is `open`, `canOverride` is true, the axis is `absolute`, and no occupant is in the stage you are dispatching; when it is
 `role`, `population` is `queued`, `canOverride` is false, or a same-stage occupant is listed, defer. Other projects' work never counts against
-yours. Read the scoped pipeline and `scripts/dispatch-concurrency.ps1` for the live limits. The reasons are in docs/orchestration-loop.md §1.
+yours. Read the scoped pipeline and `scripts/dispatch-concurrency.ps1` for the live limits.
+
+Live operating settings (caps, runners, holds, pins, levels, standing lines) are generated into
+ANTIPHON_ORCHESTRATOR_INSTRUCTIONS, also GET /api/orchestrator-instructions. Read it at session
+start, after compaction and on a settings-changed note; it outranks numbers here and in the docs.
+Never edit it.
 
 Follow docs/orchestration-loop.md#orchestrator-operational-autonomy-restart-rollout for autonomous AppHost and runner restarts and server2 rollouts.
 
@@ -123,13 +128,13 @@ If you are channel-bound (Slack/Telegram), the chat sees two kinds of turn. (1) 
 an inbound chat message — ending that turn settles the conversation. (2) Your reply to an Antiphon
 note — a `[task … done|failed|blocked|canceled]` report, a `[check …]` note, or a scheduled prompt —
 delivered as a follow-up to your most recent conversation, text and any `[[attach:]]` files, unless
-your whole reply is exactly `NO_REPLY`. Write those replies for the human: one or two lines on what
-changed, what happens next, and any question you need answered. Reply `NO_REPLY` to a check note
-that changes nothing. A bootstrap, restart or compaction note is never delivered unless it carries
+your whole reply is exactly `NO_REPLY`. Write those replies for the human in one or two
+lines. Reply `NO_REPLY` to a check note that changes nothing. A bootstrap, restart or
+compaction note is never delivered unless it carries
 `[[attach:]]`. A `[task … done]` note for a task that produced documents ends with a
 `--- deliverable ---` block of `[[attach:]]` lines; Antiphon attaches those files to your reply
-whether or not you copy them. A delegate's own `[[attach:]]` reaches only you, as text. The source
-Markdown files are the default deliverable; a configured channel step may add a converted file.
+whether or not you copy them. A delegate's own `[[attach:]]` reaches only you, as text.
+Source Markdown is the default deliverable; a channel step may add a converted file.
 Naming a SHA or a path in prose sends nothing.
 
 When a watchdog prompt contains `[expectation-nudge:<guid>]`, inspect the named task/card state
@@ -140,18 +145,14 @@ condition and may page the configured operator if no answer arrives by its state
 Steer Queued, Dispatched or Working tasks with -Refine <taskId> "one sentence".
 Use -Reply for a Blocked task; -Refine returns 409 there.
 
-If a piece is big enough to need its own decomposition, send a sub-orchestrator
-(-Orchestrator) rather than trying to run its steps yourself.
+A piece that needs its own decomposition goes to a sub-orchestrator (-Orchestrator), not to you.
 
-Delegates run directly in the working directory by default. If you are fanning out several
-delegates that will write the same files at once, pass -Worktree so they can't overwrite
-each other. Work in another repo goes to a delegate with -Dir pointing there.
+Delegates writing the same files at once: pass -Worktree so they cannot overwrite each other.
+Work in another repo goes to a delegate with -Dir pointing there.
 
-Inspecting agents, boards and live sessions: read docs/ops-http.md. Do not grep MapGet or
-Program.cs for routes. The server is :17202 /api/...; the session-runner is :17204 /sessions/...
-with no /api. There is no GET /api/sessions and no GET /api/board, and GET /api/cards is a 400
-unless you pass one of boardId, status or updatedSince. Typed input goes to POST
-/api/sessions/{id}/messages, not the runner's /input.
+Inspecting agents, boards and live sessions: read docs/ops-http.md; never grep MapGet for routes.
+Server :17202 /api/..., runner :17204 /sessions/... (no /api). No GET /api/sessions or /api/board;
+GET /api/cards needs boardId, status or updatedSince. Typed input: POST /api/sessions/{id}/messages.
 
 Default workflow: Code -> ordinary Review -> caller records same-board companion -> land
 the original Code task -> confirmed publication -> required deployment -> SourceLanding

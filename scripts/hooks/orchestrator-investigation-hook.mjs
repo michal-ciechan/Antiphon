@@ -14,6 +14,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 export const TAIL_BYTES = 256 * 1024;
+const INSTRUCTIONS_BYTE_CAP = 16384;
+const INSTRUCTIONS_TRUNCATION_MARKER = '[orchestrator-instructions truncated at 16384 bytes]';
 
 function failOpen() {
   process.exit(0);
@@ -65,6 +67,21 @@ function saveState(sessionId, state) {
   const dir = stateDir();
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, safeSessionFile(sessionId)), JSON.stringify(state));
+}
+
+function readInstructionsFile(env) {
+  const filePath = env.ANTIPHON_ORCHESTRATOR_INSTRUCTIONS;
+  if (typeof filePath !== 'string' || filePath.trim().length === 0) return null;
+  let buf;
+  try {
+    buf = fs.readFileSync(filePath);
+  } catch {
+    return null;
+  }
+  if (buf.length <= INSTRUCTIONS_BYTE_CAP) return buf.toString('utf8');
+  let end = INSTRUCTIONS_BYTE_CAP;
+  while (end > 0 && (buf[end] & 0xc0) === 0x80) end -= 1;
+  return `${buf.subarray(0, end).toString('utf8')}\n${INSTRUCTIONS_TRUNCATION_MARKER}`;
 }
 
 function readTranscriptTail(filePath, maxBytes) {
@@ -141,14 +158,27 @@ async function main() {
     const mod = await import('./orchestrator-investigation.mjs');
 
     if (input.hook_event_name === 'SessionStart') {
-      if (typeof input.source === 'string' && input.source !== 'compact') {
+      const source = typeof input.source === 'string' ? input.source : 'compact';
+      if (source !== 'startup' && source !== 'resume' && source !== 'compact') {
+        failOpen();
+        return;
+      }
+      const fileText = readInstructionsFile(process.env);
+      let additionalContext = fileText ?? '';
+      if (source === 'compact') {
+        if (additionalContext.endsWith('\n')) additionalContext = additionalContext.slice(0, -1);
+        additionalContext = additionalContext.length === 0
+          ? mod.COMPACT_CONTEXT
+          : `${additionalContext}\n\n${mod.COMPACT_CONTEXT}`;
+      }
+      if (additionalContext.length === 0) {
         failOpen();
         return;
       }
       process.stdout.write(JSON.stringify({
         hookSpecificOutput: {
           hookEventName: 'SessionStart',
-          additionalContext: mod.COMPACT_CONTEXT,
+          additionalContext,
         },
       }));
       failOpen();
