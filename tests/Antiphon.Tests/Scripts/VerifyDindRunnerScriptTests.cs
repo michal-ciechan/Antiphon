@@ -130,6 +130,84 @@ public sealed class VerifyDindRunnerScriptTests
             script.Contains(name, StringComparison.Ordinal).ShouldBeFalse("the harness never passes " + name);
     }
 
+    // CARD-1178. A fast HTTP 500 used to grade launch=True because the predicate was only
+    // elapsed milliseconds. The grade is the status; /tmp/state must be uid 1654 before the POST.
+    [Test]
+    public async Task Fast_http_500_does_not_grade_launch_true()
+    {
+        var script = Read("scripts/verify-card0604-dind-runner.ps1").Replace("\r\n", "\n");
+        var expression = LaunchGradeExpression(script);
+
+        var fastError = await GradeLaunchAsync(expression, status: 500, body: "UnauthorizedAccessException", launchMs: 100);
+        fastError.ShouldBeFalse("HTTP 500 is not a launch, including when it returns in under 5000ms");
+
+        expression.Contains("$launchMs", StringComparison.Ordinal).ShouldBeFalse(
+            "elapsed milliseconds do not grade launch");
+
+        var accepted = await GradeLaunchAsync(expression, status: 200, body: "{\"ok\":true}", launchMs: 9000);
+        accepted.ShouldBeTrue("a 2xx launch is accepted even when it is slower than 5000ms");
+
+        var notTwoHundred = await GradeLaunchAsync(expression, status: 300, body: "redirect", launchMs: 10);
+        notTwoHundred.ShouldBeFalse("only a 2xx status grades launch");
+
+        var prep = script.IndexOf("mkdir -p /tmp/state && chown 1654:1654 /tmp/state", StringComparison.Ordinal);
+        var post = script.IndexOf("http://127.0.0.1:$Port/sessions", StringComparison.Ordinal);
+        prep.ShouldBeGreaterThanOrEqualTo(0, "the harness pre-creates /tmp/state for uid 1654");
+        post.ShouldBeGreaterThan(prep, "/tmp/state is owned by uid 1654 before POST /sessions");
+    }
+
+    private static string LaunchGradeExpression(string script)
+    {
+        var graded = System.Text.RegularExpressions.Regex.Match(
+            script, @"(?m)^[ \t]*launch[ \t]*=[ \t]*(.+)$");
+        graded.Success.ShouldBeTrue("the harness grades a launch observation");
+        var rhs = graded.Groups[1].Value.Trim();
+        if (rhs != "$launchOk")
+            return rhs;
+
+        var defined = System.Text.RegularExpressions.Regex.Match(
+            script, @"(?m)^\$launchOk\s*=\s*(.+)$");
+        defined.Success.ShouldBeTrue("launch = $launchOk names the HTTP outcome predicate");
+        return defined.Groups[1].Value.Trim();
+    }
+
+    private static async Task<bool> GradeLaunchAsync(string expression, int status, string body, int launchMs)
+    {
+        expression.ShouldNotContain(";");
+        expression.ShouldNotContain("\n");
+        var command =
+            "$ErrorActionPreference='Stop'; " +
+            "$launchStatus=[int]$env:C1178_STATUS; " +
+            "$launchBody=$env:C1178_BODY; " +
+            "$launchMs=[int]$env:C1178_MS; " +
+            "$value = " + expression + "; " +
+            "if ($value) { 'True' } else { 'False' }";
+        var start = new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = "pwsh",
+            WorkingDirectory = DelegateScriptRunner.RepoRoot,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+        };
+        start.ArgumentList.Add("-NoProfile");
+        start.ArgumentList.Add("-NonInteractive");
+        start.ArgumentList.Add("-Command");
+        start.ArgumentList.Add(command);
+        start.Environment["C1178_STATUS"] = status.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        start.Environment["C1178_BODY"] = body;
+        start.Environment["C1178_MS"] = launchMs.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+        using var process = System.Diagnostics.Process.Start(start)!;
+        var stdout = await process.StandardOutput.ReadToEndAsync();
+        var stderr = await process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync();
+        process.ExitCode.ShouldBe(0, stderr);
+        var line = stdout.Trim();
+        (line is "True" or "False").ShouldBeTrue("grade printed " + line + " " + stderr);
+        return line == "True";
+    }
+
     private static string Read(string relative) =>
         File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, relative.Replace('/', Path.DirectorySeparatorChar)));
 
