@@ -28,17 +28,20 @@ public sealed class DispatchConcurrencySettingsService
     private readonly DelegationSettings _settings;
     private readonly TimeProvider _clock;
     private readonly IEventBus? _events;
+    private readonly IServiceProvider? _services;
 
     public DispatchConcurrencySettingsService(
         AppDbContext db,
         IOptions<DelegationSettings> settings,
         TimeProvider clock,
-        IEventBus? events = null)
+        IEventBus? events = null,
+        IServiceProvider? services = null)
     {
         _db = db;
         _settings = settings.Value;
         _clock = clock;
         _events = events;
+        _services = services;
     }
 
     public async Task EnsureInitializedAsync(CancellationToken ct)
@@ -364,12 +367,11 @@ public sealed class DispatchConcurrencySettingsService
         }
 
         if (committed)
-            await PublishChangedAsync(
-                scope,
-                projectId is null ? globalRevision : projectRevision,
-                globalRevision,
-                projectRevision,
-                ct);
+        {
+            var revision = projectId is null ? globalRevision : projectRevision;
+            await PublishChangedAsync(scope, revision, globalRevision, projectRevision, ct);
+            OrchestratorInstructionsSignal.Fire(_services, $"dispatch-concurrency rev {revision}");
+        }
 
         return projectId is Guid project
             ? await ProjectScopedAsync(project, ct)

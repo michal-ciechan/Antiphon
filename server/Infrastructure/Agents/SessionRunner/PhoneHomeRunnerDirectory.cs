@@ -11,6 +11,7 @@ using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 
 namespace Antiphon.Server.Infrastructure.Agents.SessionRunner;
@@ -492,6 +493,7 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory, IRunnerE
                 "(reconciled from runner heartbeat after capacity push)",
         });
         await db.SaveChangesAsync(ct);
+        // Heartbeat capacity is an incident only. The instructions sweep is the backstop.
     }
 
     public async Task<PhoneHomeSetCapacityResponse> SetDeclaredCapacityAsync(
@@ -536,7 +538,24 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory, IRunnerE
                     PhoneHomeProblemTypes.Unavailable);
             live.SetCapacity(capacity);
         }
+
+        SignalInstructions($"runner-capacity {runnerId}");
         return answer;
+    }
+
+    private void SignalInstructions(string reason)
+    {
+        if (_scopes is null)
+            return;
+        try
+        {
+            using var scope = _scopes.CreateScope();
+            OrchestratorInstructionsSignal.Fire(scope.ServiceProvider, reason);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Orchestrator instructions signal failed ({Reason})", reason);
+        }
     }
 
     /// <summary>

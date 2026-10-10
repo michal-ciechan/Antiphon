@@ -327,7 +327,11 @@ try
     });
     builder.Services.AddSingleton<RunnerAlarmState>();
     builder.Services.AddSingleton<AlarmWakeQueue>();
-    builder.Services.AddSingleton<IRunnerEligibilityObserver>(sp => sp.GetRequiredService<AlarmWakeQueue>());
+    builder.Services.AddSingleton<OrchestratorInstructionsService>();
+    builder.Services.AddSingleton<IOrchestratorInstructionsSignals>(sp =>
+        sp.GetRequiredService<OrchestratorInstructionsService>());
+    builder.Services.AddSingleton<IRunnerEligibilityObserver, CompositeRunnerEligibilityObserver>();
+    builder.Services.AddHostedService<OrchestratorInstructionsHostedService>();
     builder.Services.AddSingleton<IRepositoryFenceObserver>(sp => sp.GetRequiredService<AlarmWakeQueue>());
     builder.Services.AddSingleton<IRunnerAlarmExclusion, NeverExcluded>();
     builder.Services.AddSingleton<PhoneHomeRunnerDirectory>(sp => new PhoneHomeRunnerDirectory(
@@ -425,6 +429,7 @@ try
     builder.Services.AddScoped<VerificationCleanupService>();
     builder.Services.AddScoped<AgentTaskPipelineStatusService>();
     builder.Services.AddScoped<HostBudgetService>();
+    builder.Services.AddScoped<OrchestratorInstructionsSnapshotBuilder>();
     builder.Services.AddSingleton<AgentTaskLandQueue>();
     builder.Services.AddSingleton<ILandingGit, LandingGit>();
     builder.Services.AddSingleton<RepositoryChildJournalInspector>();
@@ -1133,6 +1138,7 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
     app.MapRoutingPinEndpoints();
     app.MapRunnerDefaultEndpoints();
     app.MapDispatchConcurrencyEndpoints();
+    app.MapOrchestratorInstructionsEndpoints();
     app.MapStandingSpecialistRoutingEndpoints();
     app.MapStageOutcomeEndpoints();
     app.MapComplexityChainEndpoints();

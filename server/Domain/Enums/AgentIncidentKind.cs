@@ -646,4 +646,13 @@ public enum AgentIncidentKind
 
     /// <summary>CARD-0654: a runner capacity push succeeded or was refused.</summary>
     RunnerCapacityChanged = 79,
+
+    /// <summary>CARD-0822: the orchestrator instructions file was regenerated. Info, no alert.</summary>
+    OrchestratorInstructionsRegenerated = 80,
+
+    /// <summary>CARD-0822: a render or write was refused. Warning. The previous file stays.</summary>
+    OrchestratorInstructionsWriteFailed = 81,
+
+    /// <summary>CARD-0822: one orchestrator session was queued a settings-changed note. Info.</summary>
+    OrchestratorInstructionsNotified = 82,
 }

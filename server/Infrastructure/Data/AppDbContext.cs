@@ -55,6 +55,7 @@ public class AppDbContext : DbContext
     public DbSet<LegacyCheckNotePublication> LegacyCheckNotePublications => Set<LegacyCheckNotePublication>();
     public DbSet<AgentIncident> AgentIncidents => Set<AgentIncident>();
     public DbSet<HostBudget> HostBudgets => Set<HostBudget>();
+    public DbSet<OrchestratorInstructionsState> OrchestratorInstructionsStates => Set<OrchestratorInstructionsState>();
     public DbSet<HostCleanupRun> HostCleanupRuns => Set<HostCleanupRun>();
     public DbSet<HostCleanupCandidate> HostCleanupCandidates => Set<HostCleanupCandidate>();
     public DbSet<HostCleanupHold> HostCleanupHolds => Set<HostCleanupHold>();
@@ -292,6 +293,20 @@ public class AppDbContext : DbContext
             entity.Property(b => b.HostId).HasMaxLength(64);
             entity.Property(b => b.Reason).IsRequired().HasMaxLength(400);
             entity.Property(b => b.UpdatedAt).IsRequired();
+        });
+
+        modelBuilder.Entity<OrchestratorInstructionsState>(entity =>
+        {
+            entity.ToTable("OrchestratorInstructionsStates");
+            entity.HasKey(state => state.Id);
+            entity.Property(state => state.Id).HasMaxLength(32);
+            entity.Property(state => state.Version).IsRequired().HasMaxLength(16);
+            entity.Property(state => state.Body).IsRequired();
+            entity.Property(state => state.SnapshotJson).IsRequired();
+            entity.Property(state => state.WrittenAt).IsRequired();
+            entity.Property(state => state.WrittenPath).IsRequired().HasMaxLength(1000);
+            entity.Property(state => state.LastReason).HasMaxLength(200);
+            entity.Property(state => state.LastWriteError).HasMaxLength(2000);
         });
 
         modelBuilder.Entity<SessionRunnerState>(entity =>
@@ -1476,6 +1491,7 @@ public class AppDbContext : DbContext
             // CARD-0334 S1. Same bound as the bundle stamp; the default file list is a few
             // hundred characters. PolicyNotifiedStamp holds both lines concatenated, so 4000.
             entity.Property(s => s.InstructionFileStamp).HasMaxLength(2000);
+            entity.Property(s => s.OrchestratorInstructionsVersion).HasMaxLength(16);
             entity.Property(s => s.PolicyNotifiedStamp).HasMaxLength(4000);
 
             entity.HasIndex(s => s.DelegationTokenHash)

@@ -151,6 +151,12 @@ public class AgentSession
     public string? InstructionFileStamp { get; set; }
 
     /// <summary>
+    /// CARD-0822. The instructions-file version this session was launched against, or last notified
+    /// about. Null means the column was never stamped. Eight hex characters.
+    /// </summary>
+    public string? OrchestratorInstructionsVersion { get; set; }
+
+    /// <summary>
     /// Last Notify-lane drift the session was told about (CARD-0334 S3). Dedupe key: current
     /// composed stamp line + file stamp line, ≤ 4000. Null until S3 writes it.
     /// </summary>
