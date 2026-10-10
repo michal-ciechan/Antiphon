@@ -30,6 +30,8 @@ $nested = 'unknown'
 $egress = 'unknown'
 $loopback = 'unknown'
 $launchMs = -1
+$launchStatus = 0
+$launchBody = ''
 $keyState = 'unknown'
 $restartState = 'unknown'
 $refusalState = 'unknown'
@@ -185,6 +187,14 @@ try {
     $loopMatch = [regex]::Match($loop.Output, '(?m)^(\d{3})\s*$')
     $loopback = if ($loopMatch.Success) { $loopMatch.Groups[1].Value } else { 'no' }
 
+    # CARD-1178: install -d for CLAUDE_CONFIG_DIR leaves /tmp/state root-owned, so uid 1654
+    # cannot create SessionLogPath and POST /sessions returns 500.
+    $stateDir = Invoke-Docker @('exec', $containerName, 'sh', '-c',
+        'mkdir -p /tmp/state && chown 1654:1654 /tmp/state') 'state-dir.txt'
+    if ($stateDir.ExitCode -ne 0) {
+        Exit-Harness 2 "could not prepare /tmp/state for uid 1654; see $script:evidenceDir/state-dir.txt"
+    }
+
     # --- step 7: a real session launch through the runner's own POST /sessions ---------------
     $body = @{
         sessionId = ([Guid]::NewGuid()).ToString()
@@ -200,11 +210,14 @@ try {
         $response = Invoke-WebRequest -Uri "http://127.0.0.1:$Port/sessions" -Method Post -Body $body `
             -ContentType 'application/json' -TimeoutSec 180 -SkipHttpErrorCheck
         $sw.Stop()
-        Write-Evidence 'post-sessions.txt' ("status=$([int]$response.StatusCode) elapsedMs=$($sw.ElapsedMilliseconds)`n" + $response.Content)
+        $launchStatus = [int]$response.StatusCode
+        $launchBody = [string]$response.Content
+        Write-Evidence 'post-sessions.txt' ("status=$launchStatus elapsedMs=$($sw.ElapsedMilliseconds)`n" + $launchBody)
     }
     catch {
         $sw.Stop()
-        Write-Evidence 'post-sessions.txt' ("elapsedMs=$($sw.ElapsedMilliseconds)`n" + $_.Exception.Message)
+        $launchBody = [string]$_.Exception.Message
+        Write-Evidence 'post-sessions.txt' ("status=$launchStatus elapsedMs=$($sw.ElapsedMilliseconds)`n" + $launchBody)
     }
     $launchMs = [int]$sw.ElapsedMilliseconds
 
@@ -352,11 +365,13 @@ finally {
     }
 }
 
+# Elapsed time stays in the summary. The grade is the HTTP status.
+$launchOk = ($launchStatus -ge 200) -and ($launchStatus -lt 300)
 $graded = @{
     nested   = $nested -eq 'yes'
     egress   = $egress -eq 'yes'
     loopback = $loopback -eq '200'
-    launch   = $launchMs -ge 0 -and $launchMs -lt 5000
+    launch   = $launchOk
     key      = $keyState -eq 'ok'
     restart  = $restartState -eq 'ok'
     refusal  = $refusalState -eq 'ok'
