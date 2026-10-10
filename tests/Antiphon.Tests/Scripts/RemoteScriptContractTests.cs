@@ -5,6 +5,7 @@ using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using System.Threading;
 using Antiphon.Tests.Application;
+using Antiphon.Tests.Infrastructure;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
@@ -6183,6 +6184,134 @@ public sealed class RemoteScriptContractTests
                 printf 'run=%s\nsource-sha=%s\nvolume-sha256=%s\ncreated-at=%s\n' "$C590_PREVIEW_RUN" "$SHA" "$hash" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$receipt/preview.txt"
             }
             """ + "\n" + Block(text, "c849_require_ready") + "\n" + Block(text, "c849_prune_validate_tree") + "\n" + Block(text, "c849_prune") + "\n";
+    }
+
+    // CARD-1168. server2-temp keeps the preserved runner-state grok directory live through
+    // redeploy-old. The chown on PATH deletes or refuses one file at the moment it is owned,
+    // which is the mid-walk point for both `chown -R` and a per-path walk.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1168_State_init_tolerates_a_file_deleted_mid_walk()
+    {
+        var output = LinuxShell(C1168Harness("vanish")).Replace("\r\n", "\n");
+        output.ShouldContain("vanish exit=0\n");
+        output.ShouldContain("vanish | state-init owned uid=");
+        output.ShouldContain("victim-absent=yes\n");
+        output.ShouldContain("survivor-owned=yes\n");
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1168_State_init_refuses_a_persistent_chown_error()
+    {
+        var output = LinuxShell(C1168Harness("denied")).Replace("\r\n", "\n");
+        output.ShouldContain("denied exit=1\n");
+        output.ShouldContain("Operation not permitted");
+        output.ShouldContain("victim-absent=no\n");
+        output.Contains("state-init owned uid=", StringComparison.Ordinal).ShouldBeFalse();
+    }
+
+    [Test]
+    public void C1168_Rollout_docs_keep_redeploy_while_temp_holds_the_shared_store()
+    {
+        var text = DockerStackDocuments.Read("docs/docker-stack.md").Replace("\r\n", "\n");
+        text.ShouldContain("redeploy-old` runs while `server2-temp` is still accepting");
+        text.ShouldContain("`RUNNER_GROK_STORE_DIR`");
+        text.ShouldContain("docker-compose.server2-runner.temp.yml");
+        text.ShouldContain("A missing path is not a failure");
+        text.ShouldContain("still present and cannot be owned still fails");
+        text.ShouldContain("drain-temp` is still later");
+    }
+
+    private static string C1168Harness(string mode)
+    {
+        var script = Regex.Replace(
+                DockerStackDocuments.Read("docker/stack/init-state.sh").Replace("\r\n", "\n"),
+                @"(?<=[\s=])/(state|work|runner-state|codex-home)(?=[/\s;]|$)",
+                "$$R/$1",
+                RegexOptions.Multiline)
+            .Replace("\nuid=1654\n", "\nuid=$(id -u)\n", StringComparison.Ordinal)
+            .Replace("\ngid=1654\n", "\ngid=$(id -g)\n", StringComparison.Ordinal)
+            .TrimEnd('\n');
+        if (script.Contains("C1168_INIT", StringComparison.Ordinal)
+            || script.Contains("C1168_CHOWN", StringComparison.Ordinal))
+            throw new InvalidOperationException("init-state.sh collided with the harness terminator");
+
+        return $$"""
+            root="$(mktemp -d)"
+            trap 'rm -rf "$root"' EXIT
+            cd "$root"
+            mkdir -p "$root/bin"
+            cat > "$root/bin/chown" <<'C1168_CHOWN'
+            #!/bin/sh
+            set -eu
+            real=/usr/bin/chown
+            if [ "${1:-}" = "-R" ]; then
+              shift
+              spec=$1
+              shift
+              fail=$(mktemp)
+              CHOWN_FAIL_FILE=$fail
+              export CHOWN_FAIL_FILE
+              for dir in "$@"; do
+                find "$dir" -ignore_readdir_race -exec "$0" "$spec" {} + || true
+              done
+              if [ -s "$fail" ]; then rm -f "$fail"; exit 1; fi
+              rm -f "$fail"
+              exit 0
+            fi
+            spec=$1
+            shift
+            status=0
+            for path in "$@"; do
+              if [ -n "${CHOWN_FAULT_PATH:-}" ] && [ "$path" = "$CHOWN_FAULT_PATH" ]; then
+                case "${CHOWN_FAULT_MODE:-}" in
+                  vanish)
+                    rm -f -- "$path"
+                    "$real" "$spec" -- "$path" >/dev/null 2>&1 || status=1
+                    ;;
+                  denied)
+                    printf "chown: changing ownership of '%s': Operation not permitted\n" "$path" >&2
+                    status=1
+                    ;;
+                  *)
+                    "$real" "$spec" -- "$path" || status=1
+                    ;;
+                esac
+              else
+                "$real" "$spec" -- "$path" || status=1
+              fi
+            done
+            if [ "$status" -ne 0 ] && [ -n "${CHOWN_FAIL_FILE:-}" ]; then
+              echo fail >> "$CHOWN_FAIL_FILE"
+            fi
+            exit "$status"
+            C1168_CHOWN
+            chmod 755 "$root/bin/chown"
+            cat > "$root/init-state.sh" <<'C1168_INIT'
+            {{script}}
+            C1168_INIT
+            R="$root/tree"
+            mkdir -p "$R/runner-state/grok" "$R/state" "$R/work"
+            printf kept > "$R/runner-state/grok/kept"
+            printf victim > "$R/runner-state/grok/victim"
+            printf state > "$R/state/marker"
+            printf work > "$R/work/marker"
+            export PATH="$root/bin:$PATH"
+            export R
+            export CHOWN_FAULT_MODE={{mode}}
+            export CHOWN_FAULT_PATH="$R/runner-state/grok/victim"
+            sh "$root/init-state.sh" > "$root/log" 2>&1
+            echo "{{mode}} exit=$?"
+            sed "s/^/{{mode}} | /" "$root/log"
+            if [ -e "$R/runner-state/grok/victim" ]; then echo victim-absent=no; else echo victim-absent=yes; fi
+            uid="$(id -u)"
+            ok=yes
+            for f in "$R/runner-state/grok/kept" "$R/state/marker" "$R/work/marker"; do
+              [ "$(stat -c %u "$f")" = "$uid" ] || ok=no
+            done
+            echo "survivor-owned=$ok"
+            """;
     }
 
     // The real Codex-home variables and function over a throwaway server2 root. sudo is a plain
