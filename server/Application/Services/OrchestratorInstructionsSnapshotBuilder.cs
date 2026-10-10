@@ -13,7 +13,7 @@ namespace Antiphon.Server.Application.Services;
 
 /// <summary>
 /// CARD-0822. Reads the covered stores into a plain snapshot. Occupancy is carried and not rendered.
-/// <see cref="ReadPipelinePolicy"/> is the only policy seam CARD-0881 replaces.
+/// <see cref="ReadPipelinePolicy"/> reads the same stores as the CARD-0881 effective-settings read (GET /api/agent-tasks/pipeline?projectId=); occupancy stays out of the file.
 /// </summary>
 public sealed class OrchestratorInstructionsSnapshotBuilder(
     AppDbContext db,

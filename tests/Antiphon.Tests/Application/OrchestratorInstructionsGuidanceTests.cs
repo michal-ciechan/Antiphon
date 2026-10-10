@@ -21,13 +21,13 @@ public sealed class OrchestratorInstructionsGuidanceTests
         "depth cap",
         "up to four",
         "at most six",
-        "effective concurrency limits",
+        "effective-settings route",
         "server2",
         "-Runner server2",
         "absolutely requires",
         "use the lower effective stage cap",
         "CARD-0881",
-        "GET /api/hosts",
+        "/api/agent-tasks/pipeline?projectId=",
         "-IgnoreConcurrencyLimit",
         "axis",
     ];
@@ -64,6 +64,8 @@ public sealed class OrchestratorInstructionsGuidanceTests
             text.ShouldContain(LiveSettingsSentence, Case.Insensitive, relative);
             foreach (var phrase in Phrases)
                 text.ShouldContain(phrase, Case.Insensitive, relative);
+            foreach (var stale in new[] { "three-route", "GET /api/session-runners", "GET /api/runner-defaults" })
+                text.ShouldNotContain(stale, Case.Insensitive, relative);
         }
     }
 

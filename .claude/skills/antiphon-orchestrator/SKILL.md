@@ -32,17 +32,18 @@ For AppHost and runner restarts or server2 rollouts without human confirmation, 
 For a desktop runner restart use `pwsh -NoProfile -File scripts/restart-session-runner.ps1` (`-Hard` only for a planned supervisor refresh; `-KillSessions` is human-only); check `logs/apphost.restart.lock` and `logs/apphost.launch.lock` first, and inspect AppHost exit 3 before retrying.
 
 - **Each pipeline stage at up to four; at most six tasks on server2 across all stages.** These are
-  operator defaults. Before dispatching, read the effective concurrency limits and current occupancy
-  from `GET /api/agent-tasks/pipeline` (stage and host limits/counts), `GET /api/session-runners`
-  (seats and eligibility), and `GET /api/runner-defaults` (placement defaults). This three-route
-  read is today's reality; CARD-0881 will replace it with a single effective-settings endpoint.
-  Read each host's limit and in-flight count from `GET /api/hosts`; changing a host budget is an
-  operator-only setting, never an orchestrator-initiated write. Antiphon's enforced
-  limits are the ceiling; use the lower effective stage cap. Run stages in parallel, never more tasks
-  in one stage than its cap. Prefer server2 (`-Runner server2`); use desktop/Windows only when work
-  absolutely requires it, scoped to that piece. Live operating settings: read the file at
-  ANTIPHON_ORCHESTRATOR_INSTRUCTIONS (or GET /api/orchestrator-instructions) at session start, after
-  compaction and when a settings-changed note arrives; it outranks the numbers in AGENTS.md.
+  operator defaults. Before dispatching, read the effective-settings route (CARD-0881):
+  `GET /api/agent-tasks/pipeline?projectId=<id>` (or `?unscoped=true`). Its `concurrencyScopes`
+  entry carries the absolute and per-stage effective limits with sources, open/queued counts and
+  remaining slots; `hosts` carries each host's effective limit, source, in-flight count and
+  `remaining`; `runners` carries seats and eligibility; `runnerDefaults` carries placement. Use its
+  limits; changing a host budget is an operator-only setting, never an orchestrator-initiated
+  write. Antiphon's enforced limits are the ceiling; use the lower effective stage cap. Run stages
+  in parallel, never more tasks in one stage than its cap. Prefer server2 (`-Runner server2`); use
+  desktop/Windows only when work absolutely requires it, scoped to that piece. Live operating
+  settings: read the file at ANTIPHON_ORCHESTRATOR_INSTRUCTIONS (or GET /api/orchestrator-instructions)
+  at session start, after compaction and when a settings-changed note arrives; it outranks the
+  numbers in AGENTS.md.
 - **`-Worktree` by default on every dispatch.** Shared checkout only when explicitly told to
   default to Shared (globally/per-project/per-invocation), or when a task must continue on a
   branch that's already checked out elsewhere (see §4).

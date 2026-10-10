@@ -13,13 +13,13 @@ public sealed class StandingPipelinePolicyDocumentationTests
         "depth cap",
         "up to four",
         "at most six",
-        "effective concurrency limits",
+        "effective-settings route",
         "server2",
         "-Runner server2",
         "absolutely requires",
         "use the lower effective stage cap",
         "CARD-0881",
-        "GET /api/hosts",
+        "/api/agent-tasks/pipeline?projectId=",
         "-IgnoreConcurrencyLimit",
         "axis",
     ];
@@ -57,6 +57,28 @@ public sealed class StandingPipelinePolicyDocumentationTests
         var text = Collapse(PolicyCopy(relative));
         foreach (var phrase in Phrases)
             text.ShouldContain(phrase, Case.Insensitive, relative);
+        foreach (var stale in new[] { "three-route", "GET /api/session-runners", "GET /api/runner-defaults" })
+            text.ShouldNotContain(stale, Case.Insensitive, relative);
+    }
+
+    [Test]
+    public void the_effective_settings_route_is_documented()
+    {
+        foreach (var relative in new[] { "docs/ops-http.md", "docs/antiphon-api.md" })
+        {
+            var text = ReadRepoFile(relative);
+            foreach (var phrase in new[]
+            {
+                "/api/agent-tasks/pipeline?projectId=",
+                "runnerDefaults",
+                "runners",
+                "remaining",
+                "CARD-0881",
+            })
+                text.ShouldContain(phrase, relative);
+        }
+
+        ReadRepoFile("AGENTS.md").ShouldContain("Use its limits");
     }
 
     [Test]

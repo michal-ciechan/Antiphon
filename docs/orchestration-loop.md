@@ -426,20 +426,21 @@ session override it for that session; nothing below needs restating to apply. Th
 is the `orchestrator` bundle; this section carries the reasons.
 
 1. **Each pipeline stage at up to four; at most six tasks on server2 across all stages.** These
-   are the operator's defaults. Before dispatching, read the effective concurrency limits and
-   current occupancy from `GET /api/agent-tasks/pipeline` (each stage's limit and occupancy and
-   per-host in-flight count and limit), `GET /api/session-runners` (capacity, occupied seats and
-   dispatch eligibility), and `GET /api/runner-defaults` (default runner and per-kind defaults;
-   there is no platform default). This three-route read is today's reality; CARD-0881 will replace
-   it with a single effective-settings endpoint. Antiphon's enforced limits are the ceiling: use
-   the lower effective stage cap, comparing four with the enforced stage limit when it exists.
-   Run Investigate, Plan,
-   TestDesign, Code, Review
-   and Mutation in parallel, each task in its own `-Worktree`, never more tasks in one stage than
-   its cap. Prefer server2 (`-Runner server2`) while it is eligible; shield the desktop/Windows
-   machine by using it only when work absolutely requires it (a Windows-only test row, native
-   ConPTY or desktop-only behaviour), scoped to that piece, as in CARD-0778 CP-3 and CARD-0801
-   W-1. Read `GET /api/hosts` for each host's `effectiveLimit` and `inFlight`. A
+   are the operator's defaults. Before dispatching, read the effective-settings route
+   (CARD-0881): `GET /api/agent-tasks/pipeline?projectId=<id>` (or `?unscoped=true` for the null
+   bucket). Its single `concurrencyScopes` entry carries the absolute and each stage's effective
+   limit with its source (`default` is the imported seed; `global` and `project` are runtime
+   overrides), the `open`/`parallel`/`queued` counts and the nonnegative `parallelRemaining` and
+   `queuedRemaining` slots; `hosts` carries each host's `effectiveLimit`, `configured`, `declared`,
+   `source` (`budget`, `config` or `runner`), `inFlight` and `remaining`; `runners` carries
+   capacity, occupied seats, `dispatchEligible` and `acceptingNewWork`; `runnerDefaults` carries
+   the global and per-kind runner defaults (there is no platform default). Use its limits:
+   Antiphon's enforced limits are the ceiling, so use the lower effective stage cap: the lower of four and the enforced stage limit
+   applies. Run Investigate, Plan, TestDesign, Code, Review and Mutation in parallel, each task in
+   its own `-Worktree`, never more tasks in one stage than its cap. Prefer server2
+   (`-Runner server2`) while it is eligible; shield the desktop/Windows machine by using it only
+   when work absolutely requires it (a Windows-only test row, native ConPTY or desktop-only
+   behaviour), scoped to that piece, as in CARD-0778 CP-3 and CARD-0801 W-1. A
    `PUT /api/hosts/server2/budget` with `{ "maxInFlight": <n>, "reason": "<why>" }` can
    hold new dispatch, but is an operator-only setting; the orchestrator does not write it on its
    own initiative. The orchestrator still keeps its six-task server2 default when no lower host
@@ -804,15 +805,14 @@ uses the effective dispatch-concurrency policy (CARD-0505). A fresh database imp
 `Delegation:RolePolicy:<role>:RecommendedInFlight` and `Delegation:MaxOpenTasks` once; later
 values come from `GET/PUT /api/dispatch-concurrency` and the project route, not from a restart.
 The import defaults are Code 2, Review 2 and other named roles 1, mode `LegacyOpen`.
-`SeparateQueues` is an explicit opt-in. Read effective values
-and occupancy from `GET /api/agent-tasks/pipeline` before dispatching;
-the lower of that role limit and the operator's four-task default applies. The route's host block
-also reports per-host count and limit. `GET /api/session-runners` reports capacity, occupied seats
-and eligibility; `GET /api/runner-defaults` reports the global and per-kind runner defaults, with
-no platform default. These three routes are today's read; CARD-0881 will replace them with a single
-effective-settings endpoint. CARD-0505 already stores the dispatch limits at runtime.
-There is no enforced server2 six-task cap beyond its seats unless a host budget is set; use
-`GET /api/hosts` to read each host's `effectiveLimit` and `inFlight`. An operator can set
+`SeparateQueues` is an explicit opt-in. Read effective values, occupancy, hosts, runners and runner defaults from the
+effective-settings route, `GET /api/agent-tasks/pipeline?projectId=<id>` (CARD-0881), before
+dispatching; the lower of that role limit and the operator's four-task default applies. Its
+`hosts` block reports each host's `effectiveLimit`, `inFlight` and `remaining`; `runners` reports
+capacity, occupied seats and eligibility; `runnerDefaults` reports the global and per-kind runner
+defaults, with no platform default. CARD-0505 stores the dispatch limits at runtime.
+There is no enforced server2 six-task cap beyond its seats unless a host budget is set.
+An operator can set
 `PUT /api/hosts/server2/budget` with `{ "maxInFlight": <n>, "reason": "<why>" }` to hold excess
 new dispatch (`hostBudget`); the orchestrator does not write it on its own initiative. The
 desktop delegated-task cap `MaxConcurrentTasks` defaults to 2 and does not

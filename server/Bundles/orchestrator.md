@@ -81,19 +81,18 @@ uses `-FromTask` and a Review of that separate source; an actual `-RepairSource`
 task cannot be used with `-FromTask`.
 
 When you are working a board through its pipeline, this is the standing policy unless the user
-says otherwise this session. Read effective concurrency limits and occupancy before dispatch:
-GET /api/agent-tasks/pipeline (stage/host counts and limits), GET /api/session-runners
-(seats/eligibility), and GET /api/runner-defaults (placement).
-CARD-0881 will replace the three-route read.
-GET /api/hosts gives host limits and in-flight counts; host budget writes need an operator request.
-Every pipeline stage runs at up to four;
-at most six tasks run on server2 across stages. These are operator defaults; use the lower
-effective stage cap under Antiphon's enforced limits. Run stages in parallel, each in its
-own -Worktree, never more tasks in one stage than its cap. Prefer server2 (-Runner server2);
-use desktop/Windows only when work absolutely requires it, scoped to that piece.
+says otherwise this session. Before dispatch read the effective-settings route (CARD-0881),
+GET /api/agent-tasks/pipeline?projectId=<id> (or ?unscoped=true): concurrencyScopes (absolute and
+per-stage limits with sources, open/queued counts, remaining slots), hosts (effective limit,
+source, in-flight, remaining), runners (seats, eligibility), runnerDefaults (placement). Use its
+limits. Operator defaults where Antiphon sets none: every stage at up to four; at most six tasks
+on server2 across stages; use the lower effective stage cap. Antiphon's limits are the ceiling.
+Host budget writes need an operator request. Run stages in parallel, each in its own -Worktree,
+never more tasks in one stage than its cap. Prefer server2 (-Runner server2); use desktop/Windows
+only when work absolutely requires it, scoped to that piece.
 On every completion dispatch the named next stage. Land a stage's work as soon as
 it is confirmed. Keep Code at its depth cap (four unless Antiphon enforces less), counting
-in flight, queued and ready from GET /api/agent-tasks/pipeline. Below cap, pull the lowest-rank
+in flight, queued and ready in that snapshot. Below cap, pull the lowest-rank
 unstarted Backlog card through Plan toward Code; at cap, start no new Plan toward Code.
 Defer Code touching an in-flight Code task's same source area until it lands, even with a free slot.
 File a Backlog card the moment
@@ -104,7 +103,7 @@ docs/orchestration-loop.md section 1; a Review or Mutation catch before land is 
 carries `axis`, `population`, `canOverride` and the occupants: re-send with `-IgnoreConcurrencyLimit`
 only when `population` is `open`, `canOverride` is true, the axis is `absolute`, and no occupant is in the stage you are dispatching; when it is
 `role`, `population` is `queued`, `canOverride` is false, or a same-stage occupant is listed, defer. Other projects' work never counts against
-yours. Read the scoped pipeline and `scripts/dispatch-concurrency.ps1` for the live limits.
+yours.
 
 Live operating settings (caps, runners, holds, pins, levels, standing lines) are generated into
 ANTIPHON_ORCHESTRATOR_INSTRUCTIONS, also GET /api/orchestrator-instructions. Read it at session
@@ -170,4 +169,4 @@ policy must allow it, it names -VerificationSubject (original owner), -Verificat
 silently as a different round. A clean Interim Review routes to a fresh Final Review of the
 unchanged candidate, never to land; a latched owner lands only with a Clean Final/Full Review.
 
-Platform: read GET /api/runner-defaults and GET /api/session-runners. Do not embed a fleet location. Normally omit -Runner; the runtime default places the task. Pin -Runner server2 when eligible. Omit -Platform: a follow-up inherits its predecessor's platform and a stage inherits the card's platform, else the task is unpinned (Any) and the runtime default places it. To unpin a stage on a pinned card pass -Platform Any explicitly. Pass a specific platform only when that piece of work requires it, including an OS-only probe. Habit, a stage name, or host preference are not requirements. If one part is OS-specific, scope a platform-pinned task to just the OS-specific part with its own filter and budget; leave the rest unpinned. A pipeline tick does not write defaults. A user-requested settings change is GET then PUT /api/runner-defaults with a reason and Human provenance.
+Platform: the pipeline read's runnerDefaults and runners equal GET /api/runner-defaults and GET /api/session-runners. Do not embed a fleet location. Normally omit -Runner; the runtime default places the task. Pin -Runner server2 when eligible. Omit -Platform: a follow-up inherits its predecessor's platform and a stage inherits the card's platform, else the task is unpinned (Any) and the runtime default places it. To unpin a stage on a pinned card pass -Platform Any explicitly. Pass a specific platform only when that piece of work requires it, including an OS-only probe. Habit, a stage name, or host preference are not requirements. If one part is OS-specific, scope a platform-pinned task to just the OS-specific part with its own filter and budget; leave the rest unpinned. A pipeline tick does not write defaults. A user-requested settings change is GET then PUT /api/runner-defaults with a reason and Human provenance.
