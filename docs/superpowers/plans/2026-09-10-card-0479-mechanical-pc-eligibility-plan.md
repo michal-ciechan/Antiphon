@@ -452,3 +452,23 @@ executed=7 passed=7 failed=0 skipped=0
 ```
 CHECKPOINT CP-8 commit=68be4213412614fd6fa3a62429ce3513308a4707 build=reused filter=/*/*/CheckpointManifestDocumentationTests/* executed=7 passed=7 failed=0 skipped=0 trx=/work/worktrees/task-020195af/.antiphon/checkpoints/20261010-144855-f230/rows/CP-8/run.trx slot=granted waited=0s dirty=0 source=68be4213412614fd6fa3a62429ce3513308a4707 sourceState=clean buildSource=verified
 ```
+
+### Group B
+
+Code task `18db3be4` on `feat/card-task-18db3be4` in `/work/worktrees/task-18db3be4`. Acceptance run `20261010-182424-04ee`. Tested source `4d1cc733ef1d8005724f891702241990341c9b13` (`state=clean`; CP-9 `buildSource=verified`, CP-10 command row `buildSource=notApplicable`). Exit 0. 2 green, 0 red. One isolated build `bin-c479-b/` (deleted on green). Both rows `slot=granted` `waited=0s`. `unlisted: none`. CP-9 TRX executed=10 passed=10 failed=0 skipped=0. CP-10 console: `C479: 38 passed, 0 failed, 38 rows` and `C487 HARNESS EXIT CODE: 0`. V-11 is 9 harness rows plus 3 provenance rows, and CP-9/CP-10 Expect stayed 38. Post-land Mutation was not run. PC-1..24 stay pending. Restart: none.
+
+### CP-9
+
+executed=10 passed=10 failed=0 skipped=0
+
+```
+CHECKPOINT CP-9 commit=4d1cc733ef1d8005724f891702241990341c9b13 build=ok filter=/*/*/MechanicalPcRehearsalTests/* executed=10 passed=10 failed=0 skipped=0 trx=/work/worktrees/task-18db3be4/.antiphon/checkpoints/20261010-182424-04ee/rows/CP-9/run.trx slot=granted waited=0s dirty=0 source=4d1cc733ef1d8005724f891702241990341c9b13 sourceState=clean buildSource=verified
+```
+
+### CP-10
+
+exit=0. Console: `C479: 38 passed, 0 failed, 38 rows` and `C487 HARNESS EXIT CODE: 0`.
+
+```
+CHECKPOINT CP-10 commit=4d1cc733ef1d8005724f891702241990341c9b13 build=n/a filter=pwsh -NoProfile -File scripts/test-mechanical-pc-contract.ps1 executed=n/a passed=n/a failed=n/a skipped=n/a trx=n/a exit=0 slot=granted waited=0s dirty=0 source=4d1cc733ef1d8005724f891702241990341c9b13 sourceState=clean buildSource=notApplicable
+```
