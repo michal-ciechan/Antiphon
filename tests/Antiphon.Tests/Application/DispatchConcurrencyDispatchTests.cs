@@ -156,11 +156,10 @@ public class DispatchConcurrencyDispatchTests
         var (warmAgent, warmSession) = await world.InsertAgentAsync(world.Shop.ProjectP, pool: true);
         await HoldThenReleaseReuseAsync(world, warmAgent, warmSession, pool: true, followUpOf: null, "path-warm");
         var (standingAgent, standingSession) = await world.InsertAgentAsync(world.Shop.ProjectP, pool: false);
-        await HoldThenReleaseReuseAsync(world, standingAgent, standingSession, pool: false, followUpOf: null, "path-standing");
-        var prior = await world.InsertAsync(
-            AgentTaskRole.Code, AgentTaskStatus.Succeeded, world.Shop.ProjectP, WorkspaceMode.Shared,
-            agentId: standingAgent, ephemeral: false, title: "path-prior");
-        await HoldThenReleaseReuseAsync(world, standingAgent, standingSession, pool: false, followUpOf: prior.Id, "path-follow");
+        var standingRun = await HoldThenReleaseReuseAsync(
+            world, standingAgent, standingSession, pool: false, followUpOf: null, "path-standing");
+        await HoldThenReleaseReuseAsync(
+            world, standingAgent, standingSession, pool: false, followUpOf: standingRun, "path-follow");
 
         await BusyRecipientAsync(world, warmAgent, warmSession);
         await EnqueueFailureAsync(world, warmAgent, warmSession);
@@ -419,7 +418,7 @@ public class DispatchConcurrencyDispatchTests
         await world.SetStatusAsync(candidate.Id, AgentTaskStatus.Succeeded);
     }
 
-    private static async Task HoldThenReleaseReuseAsync(
+    private static async Task<Guid> HoldThenReleaseReuseAsync(
         ConcurrencyDispatchWorld world, Guid agentId, Guid sessionId, bool pool, Guid? followUpOf, string marker)
     {
         var occupant = await world.InsertAsync(
@@ -456,6 +455,7 @@ public class DispatchConcurrencyDispatchTests
         await world.SetStatusAsync(candidate.Id, AgentTaskStatus.Succeeded);
         if (pool)
             await RestoreIdleAsync(world, agentId);
+        return candidate.Id;
     }
 
     private static async Task BusyRecipientAsync(ConcurrencyDispatchWorld world, Guid agentId, Guid sessionId)
