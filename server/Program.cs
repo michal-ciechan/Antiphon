@@ -398,6 +398,7 @@ try
     builder.Services.AddScoped<WorktreeHealthService>();
     builder.Services.AddScoped<InterimVerificationPolicy>();
     builder.Services.AddScoped<RunnerDefaultSettingsService>();
+    builder.Services.AddScoped<DispatchConcurrencySettingsService>();
     builder.Services.AddScoped<AgentTaskService>();
     builder.Services.Configure<TerminalRunnerSeatReleaseOptions>(
         builder.Configuration.GetSection(TerminalRunnerSeatReleaseOptions.SectionName));
@@ -872,6 +873,7 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
     builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.AwayDigestHostedService>();
     builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.DataRetentionHostedService>();
     builder.Services.AddHostedService<OrchestratorTickHostedService>();
+    builder.Services.AddHostedService<DispatchConcurrencyStartup>();
     builder.Services.AddHostedService<AgentTaskDispatcherHostedService>();
     builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Orchestration.AgentTaskLandHostedService>();
     builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Orchestration.AgentTaskLandSweepHostedService>();
@@ -1130,6 +1132,7 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
     app.MapSubscriptionUsageEndpoints();
     app.MapRoutingPinEndpoints();
     app.MapRunnerDefaultEndpoints();
+    app.MapDispatchConcurrencyEndpoints();
     app.MapStandingSpecialistRoutingEndpoints();
     app.MapStageOutcomeEndpoints();
     app.MapComplexityChainEndpoints();
