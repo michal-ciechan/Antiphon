@@ -1,5 +1,7 @@
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
+using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
@@ -24,8 +26,13 @@ public sealed record OrchestratorInstructionsPublication(
 /// </summary>
 public sealed class OrchestratorInstructionsService : IOrchestratorInstructionsSignals
 {
+    internal const string NoteHeader = "[orchestrator-instructions]";
+
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     private static readonly UTF8Encoding Utf8 = new(encoderShouldEmitUTF8Identifier: false);
+    private static readonly Regex SinceVersion = new(
+        @"changed more than once since v(?<since>[0-9a-f]{8})|\(v(?<arrow>[0-9a-f]{8}) →",
+        RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
     private readonly IServiceScopeFactory _scopes;
     private readonly SemaphoreSlim _reconcile = new(1, 1);
@@ -202,8 +209,7 @@ public sealed class OrchestratorInstructionsService : IOrchestratorInstructionsS
         return version;
     }
 
-    /// <summary>S3 fills the WhenIdle notice lane. S2 keeps the write path free of delivery.</summary>
-    private Task QueueNoticesAsync(
+    private async Task QueueNoticesAsync(
         IServiceProvider services,
         OrchestratorInstructionsSnapshot? before,
         OrchestratorInstructionsSnapshot after,
@@ -213,8 +219,154 @@ public sealed class OrchestratorInstructionsService : IOrchestratorInstructionsS
         string url,
         CancellationToken ct)
     {
-        _ = (services, before, after, previousVersion, version, path, url, ct);
-        return Task.CompletedTask;
+        var db = services.GetRequiredService<AppDbContext>();
+        var settings = services.GetRequiredService<IOptions<DelegationSettings>>().Value;
+        var queue = services.GetRequiredService<SessionMessageQueueService>();
+        var now = services.GetRequiredService<TimeProvider>().GetUtcNow().UtcDateTime;
+        var population = await LoadPopulationAsync(db, ct).ConfigureAwait(false);
+        var chosen = OrchestratorInstructionsRecipients.Select(
+            population.Agents,
+            population.Sessions,
+            population.Tasks,
+            version,
+            settings.OrchestratorInstructions.Notify);
+        if (chosen.Count == 0)
+            return;
+
+        var delta = OrchestratorInstructionsDelta.Format(before, after);
+        var rows = await db.AgentSessions.Where(session => chosen.Contains(session.Id)).ToListAsync(ct)
+            .ConfigureAwait(false);
+        foreach (var session in rows)
+        {
+            var columnVersion = session.OrchestratorInstructionsVersion;
+            var pending = await db.SessionQueuedMessages
+                .Where(message => message.AgentSessionId == session.Id
+                    && message.Status == QueuedMessageStatus.Pending
+                    && message.NoteHeader == NoteHeader)
+                .ToListAsync(ct)
+                .ConfigureAwait(false);
+            string? since = null;
+            if (pending.Count > 0)
+            {
+                since = ParseSince(pending.Select(message => message.Body));
+                foreach (var message in pending)
+                {
+                    message.Status = QueuedMessageStatus.Canceled;
+                    message.CanceledAt = now;
+                }
+
+                since ??= columnVersion ?? previousVersion;
+            }
+
+            var body = ChannelPreamble.OrchestratorInstructionsChangedBody(
+                delta,
+                path,
+                url,
+                oldVersion: since is null ? columnVersion ?? previousVersion : null,
+                newVersion: since is null ? version : null,
+                changedMoreThanOnceSince: since);
+            session.OrchestratorInstructionsVersion = version;
+            await db.SaveChangesAsync(ct).ConfigureAwait(false);
+
+            await queue.EnqueueAsync(
+                session.Id,
+                body,
+                MessageSendMode.WhenIdle,
+                ct,
+                origin: QueuedMessageOrigin.System,
+                noteHeader: NoteHeader,
+                deliverIfIdle: true).ConfigureAwait(false);
+
+            var sessionText = session.Id.ToString("D");
+            var agentId = session.StandingAgentId ?? await db.Agents.AsNoTracking()
+                .Where(agent => agent.PersistentSessionId == sessionText)
+                .Select(agent => (Guid?)agent.Id)
+                .FirstOrDefaultAsync(ct)
+                .ConfigureAwait(false);
+            db.AgentIncidents.Add(new AgentIncident
+            {
+                Id = Guid.NewGuid(),
+                AgentId = agentId,
+                SessionId = session.Id,
+                Kind = AgentIncidentKind.OrchestratorInstructionsNotified,
+                Severity = AlertSeverity.Info,
+                CreatedAt = now,
+                Message = Clip("orchestrator instructions " + version + " notified", AgentIncident.MessageMaxLength),
+            });
+            await db.SaveChangesAsync(ct).ConfigureAwait(false);
+        }
+    }
+
+    internal static async Task<(
+        List<OrchestratorInstructionsAgent> Agents,
+        List<OrchestratorInstructionsSession> Sessions,
+        List<OrchestratorInstructionsTask> Tasks)> LoadPopulationAsync(AppDbContext db, CancellationToken ct)
+    {
+        var bundleIds = await db.AgentBundleAttachments.AsNoTracking()
+            .Where(attachment => attachment.BundleKey == InstructionBundles.Orchestrator)
+            .Select(attachment => attachment.AgentId)
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+        var bundles = bundleIds.ToHashSet();
+        var agentRows = await db.Agents.AsNoTracking()
+            .Select(agent => new
+            {
+                agent.Id,
+                agent.IsPoolDelegate,
+                agent.StandingSpecialistRole,
+                agent.PersistentSessionId,
+                agent.PolicyRefreshMode,
+            })
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+        var agents = agentRows.Select(agent => new OrchestratorInstructionsAgent(
+            agent.Id,
+            bundles.Contains(agent.Id),
+            agent.IsPoolDelegate,
+            StandingSpecialistSeatPolicy.IsCheck(new Agent { StandingSpecialistRole = agent.StandingSpecialistRole }),
+            Guid.TryParse(agent.PersistentSessionId, out var sessionId) ? sessionId : null,
+            agent.PolicyRefreshMode)).ToList();
+
+        var tasks = await db.AgentTasks.AsNoTracking()
+            .Where(task => task.Status == AgentTaskStatus.Dispatched || task.Status == AgentTaskStatus.Working)
+            .Select(task => new OrchestratorInstructionsTask(task.Kind, task.Status, task.AgentSessionId))
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+
+        var sessionIds = agents.Select(agent => agent.PersistentSessionId).OfType<Guid>()
+            .Concat(tasks.Select(task => task.SessionId).OfType<Guid>())
+            .Distinct()
+            .ToArray();
+        var sessions = sessionIds.Length == 0
+            ? []
+            : await db.AgentSessions.AsNoTracking()
+                .Where(session => sessionIds.Contains(session.Id))
+                .Select(session => new OrchestratorInstructionsSession(
+                    session.Id,
+                    session.StandingAgentId,
+                    session.Status,
+                    session.SessionBackend,
+                    session.CardId,
+                    session.OrchestratorInstructionsVersion))
+                .ToListAsync(ct)
+                .ConfigureAwait(false);
+        return (agents, sessions, tasks);
+    }
+
+    private static string? ParseSince(IEnumerable<string> bodies)
+    {
+        foreach (var body in bodies)
+        {
+            var match = SinceVersion.Match(body);
+            if (!match.Success)
+                continue;
+            if (match.Groups["arrow"].Length == 8)
+                return match.Groups["arrow"].Value;
+            if (match.Groups["since"].Length == 8)
+                return match.Groups["since"].Value;
+        }
+
+        return null;
     }
 
     private async Task RecordWriteFailureAsync(
@@ -284,6 +436,22 @@ public sealed class OrchestratorInstructionsService : IOrchestratorInstructionsS
 
     private static string Clip(string value, int max) =>
         value.Length <= max ? value : value[..max];
+}
+
+internal static class OrchestratorInstructionsLaunch
+{
+    public const string PathVariable = "ANTIPHON_ORCHESTRATOR_INSTRUCTIONS";
+    public const string UrlVariable = "ANTIPHON_ORCHESTRATOR_INSTRUCTIONS_URL";
+
+    public static void Apply(IDictionary<string, string> env, DelegationSettings settings)
+    {
+        if (!settings.OrchestratorInstructions.Enabled)
+            return;
+        env[PathVariable] = AntiphonDataPaths.ResolveOrchestratorInstructionsPath(
+            OrchestratorInstructionsPaths.FromCurrentProcess(),
+            settings.OrchestratorInstructions.Path);
+        env[UrlVariable] = settings.ApiBaseUrl.TrimEnd('/') + "/api/orchestrator-instructions";
+    }
 }
 
 internal static class OrchestratorInstructionsPaths

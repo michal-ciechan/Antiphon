@@ -48,6 +48,9 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
     public required TimeProvider Clock { get; init; }
     public DateTime Now => Clock.GetUtcNow().UtcDateTime;
     public required DelegationSettings Delegation { get; init; }
+
+    /// <summary>Disposed after the harness itself. Isolated schemas use this.</summary>
+    public IAsyncDisposable? AfterDispose { get; set; }
     public ChannelReplyDispatcher Dispatcher => Provider.GetRequiredService<ChannelReplyDispatcher>();
 
     public sealed record HarnessOptions
@@ -677,6 +680,9 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
         {
             // Best-effort.
         }
+
+        if (AfterDispose is not null)
+            await AfterDispose.DisposeAsync();
     }
 
     // All sessions in these tests are runtime-registered fakes. Most only need the empty ListAsync

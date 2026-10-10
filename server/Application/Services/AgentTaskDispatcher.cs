@@ -6980,6 +6980,9 @@ public sealed partial class AgentTaskDispatcher
         if (AgentTaskService.RawTokens.TryRemove(task.Id, out var token))
             env["ANTIPHON_TASK_TOKEN"] = token;
 
+        if (task.Kind == AgentTaskKind.Orchestrator)
+            OrchestratorInstructionsLaunch.Apply(env, _settings);
+
         return env;
     }
 

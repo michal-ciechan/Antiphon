@@ -1,10 +1,13 @@
 using System.Collections.Concurrent;
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Settings;
+using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace Antiphon.Server.Application.Services;
 
@@ -56,6 +59,7 @@ public sealed class CompactionRecoveryService
         _handledSequences[sessionId] = sequence;
 
         string? recoveryBody = null;
+        string? compactionBody = null;
         try
         {
             await using var scope = _scopeFactory.CreateAsyncScope();
@@ -87,6 +91,9 @@ public sealed class CompactionRecoveryService
                     recoveryBody = ChannelPreamble.RecoveryNoteBody;
             }
 
+            if (session.AgentKind != AgentKind.ClaudeCode)
+                compactionBody = await CompactionBodyAsync(scope.ServiceProvider, db, session, ct);
+
             session.CompactionRecoveryWatermark = sequence;
             await db.SaveChangesAsync(ct);
         }
@@ -96,7 +103,7 @@ public sealed class CompactionRecoveryService
             return;
         }
 
-        if (recoveryBody is null)
+        if (recoveryBody is null && compactionBody is null)
             return;
 
         try
@@ -108,14 +115,50 @@ public sealed class CompactionRecoveryService
             // raw typed "/compact …" prompt and the continuation prompt that follow it are activity
             // under that rule, so the note stranded on every real compaction. An AUTO boundary
             // lands mid-turn and is NOT an end: its note waits for the real turn end, as before.
-            await _queue.EnqueueAsync(
-                sessionId, recoveryBody, MessageSendMode.WhenIdle, ct, origin: QueuedMessageOrigin.System);
-            _logger.LogInformation("Compaction recovery note queued for session {SessionId} (seq {Sequence})",
-                sessionId, sequence);
+            if (recoveryBody is not null)
+            {
+                await _queue.EnqueueAsync(
+                    sessionId, recoveryBody, MessageSendMode.WhenIdle, ct, origin: QueuedMessageOrigin.System);
+                _logger.LogInformation("Compaction recovery note queued for session {SessionId} (seq {Sequence})",
+                    sessionId, sequence);
+            }
+
+            if (compactionBody is not null)
+            {
+                await _queue.EnqueueAsync(
+                    sessionId, compactionBody, MessageSendMode.WhenIdle, ct, origin: QueuedMessageOrigin.System);
+                _logger.LogInformation(
+                    "Orchestrator instructions compaction note queued for session {SessionId} (seq {Sequence})",
+                    sessionId, sequence);
+            }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.LogWarning(ex, "Compaction recovery note enqueue failed for session {SessionId}", sessionId);
         }
+    }
+
+    private static async Task<string?> CompactionBodyAsync(
+        IServiceProvider services, AppDbContext db, AgentSession session, CancellationToken ct)
+    {
+        var settings = services.GetRequiredService<IOptions<DelegationSettings>>().Value;
+        if (!settings.OrchestratorInstructions.Enabled)
+            return null;
+
+        var population = await OrchestratorInstructionsService.LoadPopulationAsync(db, ct);
+        var chosen = OrchestratorInstructionsRecipients.Select(
+            population.Agents,
+            population.Sessions,
+            population.Tasks,
+            currentVersion: null,
+            OrchestratorInstructionsNotify.All);
+        if (!chosen.Contains(session.Id))
+            return null;
+
+        var path = AntiphonDataPaths.ResolveOrchestratorInstructionsPath(
+            OrchestratorInstructionsPaths.FromCurrentProcess(),
+            settings.OrchestratorInstructions.Path);
+        var url = settings.ApiBaseUrl.TrimEnd('/') + "/api/orchestrator-instructions";
+        return ChannelPreamble.OrchestratorInstructionsCompactionBody(path, url);
     }
 }

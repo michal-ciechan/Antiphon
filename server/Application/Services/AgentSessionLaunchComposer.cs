@@ -50,8 +50,19 @@ public sealed class AgentSessionLaunchComposer
         };
 
         var attachedKeys = await AgentBundleAttachments.LoadAsync(_db, agent.Id, _logger, ct);
+        string? instructionsVersion = null;
         if (attachedKeys.Contains(InstructionBundles.Orchestrator, StringComparer.Ordinal))
+        {
             extraEnv["ANTIPHON_ORCHESTRATOR"] = "1";
+            OrchestratorInstructionsLaunch.Apply(extraEnv, _delegationSettings);
+            if (_delegationSettings.OrchestratorInstructions.Enabled)
+            {
+                instructionsVersion = await _db.OrchestratorInstructionsStates.AsNoTracking()
+                    .Where(state => state.Id == OrchestratorInstructionsState.FleetId)
+                    .Select(state => state.Version)
+                    .FirstOrDefaultAsync(ct);
+            }
+        }
 
         var profileKind = await PeekProfileKindAsync(agent, ct);
         var isClaudeCode = profileKind == AgentKind.ClaudeCode;
@@ -128,7 +139,7 @@ public sealed class AgentSessionLaunchComposer
             .StampLine;
         return new AgentLaunchComposition(
             extraEnv, extraArgs, delegationTokenHash, composedStamp, instructionFileStamp,
-            rulesPayload, _delegationSettings.CommandLineBudgetChars);
+            rulesPayload, _delegationSettings.CommandLineBudgetChars, instructionsVersion);
     }
 
     public async Task<AgentKind?> PeekProfileKindAsync(Agent agent, CancellationToken ct)
@@ -169,4 +180,5 @@ public sealed record AgentLaunchComposition(
     string? ComposedStamp,
     string? InstructionFileStamp = null,
     GrokRulesPayload? GrokRulesPayload = null,
-    int? CommandLineBudgetChars = null);
+    int? CommandLineBudgetChars = null,
+    string? OrchestratorInstructionsVersion = null);
