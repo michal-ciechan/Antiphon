@@ -27,9 +27,11 @@ public sealed class CheckpointRepeatDocumentationTests : CheckpointTestBase
         stage.All(value => value < 128).ShouldBeTrue("stage-code-ascii");
         // CARD-0884 compresses existing policy to restore real argv headroom.
         // CARD-0479 keeps the binding-only sentence and trims unpinned platform examples
-        // so the 500-char command-line headroom still holds. Pin the resulting bytes.
+        // so the 500-char command-line headroom still holds. CARD-0822's bundle swap is
+        // in the same file, so this pin is the SHA-256 of the merged LF bytes and is
+        // recomputed whenever orchestrator.md changes.
         // Repeat policy remains in Code's bundle and owner docs.
         Convert.ToHexString(SHA256.HashData(orchestrator)).ToLowerInvariant()
-            .ShouldBe("42fd7e6d7bca145bae377ff0f97b460a8e891f15d0fa58724bdb6dbb1f09eedb", "orchestrator-approved-bytes");
+            .ShouldBe("80b0c0be058db4f78ab068c05eeb47deac5966bf2d9aa97a7225a35de1e1f56a", "orchestrator-approved-bytes");
     }
 }

@@ -308,14 +308,18 @@ decides. Reasons on pins, holds and runner defaults are operator prose already v
 routes and are rendered as-is. The file is not a credential and needs no owner-only ACL; the
 directory is created with the same helper the operator token uses.
 
-### D-8: the doc-pin tests stay as they are; one new guidance class pins the additions (amended 2026-10-10)
+### D-8: phrase pins stay; the orchestrator byte pin is recomputed (amended 2026-10-10, master port)
 
 `StandingPipelinePolicyDocumentationTests` is not edited: its thirteen phrases remain in all four
 copies because D-5 only appends to them. `TaskPlatformGuidanceTests`, `RunnerDefaultGuidanceTests`,
-`RepairSourceDocumentationTests`, `CheckpointRepeatDocumentationTests` and `InstructionBundleTests`
-assertions on `orchestrator.md` are unaffected by the swap (the appendix pin list was checked
-against each on `8239e7d1`) and must stay green; the two `InstructionBundleTests` budget methods
-named in R-7 are the proof that the swap was length-neutral. The hook settings test that pins
+`RepairSourceDocumentationTests` and `InstructionBundleTests` assertions on `orchestrator.md` are
+unaffected by the swap (the appendix pin list was checked against each on `8239e7d1`) and must stay
+green; the two `InstructionBundleTests` budget methods named in R-7 are the proof that the swap was
+length-neutral. `CheckpointRepeatDocumentationTests` is not unaffected: it pins the SHA-256 of the
+`orchestrator.md` bytes, so the old "unaffected by the swap" sentence is false for that byte pin.
+Recompute the pin whenever `orchestrator.md` changes, including this swap and any later merge into
+the file, and set it to the final LF bytes. CP-2 names that class. Its honest Min is 99: the prior
+closed run's 98 results plus this class's one method. The hook settings test that pins
 `matcher === 'compact'` changes to the new matcher. The new `OrchestratorInstructionsGuidanceTests`
 (V-14) pins what this card adds and that the three swapped sentences are gone.
 
@@ -457,7 +461,7 @@ the migration and the hook. Code `-ExpectAbout`: 6-7 hours. Estimates allow for 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
 | CP-1 | S1-S4 | `tests/Antiphon.Tests -> bin-c822/` | unit-new | `/*/*/(OrchestratorInstructionsRendererTests*)\|(OrchestratorInstructionsDeltaTests*)\|(OrchestratorInstructionsRecipientTests*)\|(OrchestratorInstructionsPathTests*)\|(OrchestratorInstructionsGuidanceTests*)\|(OrchestratorInstructionsMigrationShapeTests*)/*` | V-1, V-2, V-3, V-4, V-14, R-1, R-8 | all listed, 0 failed/skipped; renderer 8 results, delta 4, recipients 4, path 2, guidance 4, migration 1 | 23 | 12 | false |
-| CP-2 | S1-S4 | CP-1 | doc-pins-existing | `/*/*/(StandingPipelinePolicyDocumentationTests*)\|(TaskPlatformGuidanceTests*)\|(RunnerDefaultGuidanceTests*)\|(InstructionBundleTests*)\|(PolicyRefreshDeltaTests*)/*` | R-7 | all listed, 0 failed/skipped | 59 | 2 | false |
+| CP-2 | S1-S4 | CP-1 | doc-pins-existing | `/*/*/(StandingPipelinePolicyDocumentationTests*)\|(TaskPlatformGuidanceTests*)\|(RunnerDefaultGuidanceTests*)\|(InstructionBundleTests*)\|(PolicyRefreshDeltaTests*)\|(CheckpointRepeatDocumentationTests*)/*` | R-7, byte pin | all listed, 0 failed/skipped | 99 | 2 | false |
 | CP-3 | S1-S4 | CP-1 | refresh-integration | `/*/*/OrchestratorInstructionsRefreshTests/*` | V-5, V-6, V-7, V-8, V-9, V-10, R-2, R-3, R-4, R-5, R-6 | all 11 methods, 16 results, 0 failed/skipped | 16 | 9 | true |
 | CP-4 | S1-S4 | CP-1 | compaction-endpoint | `/*/*/(CompactionRecoveryTests*)\|(OrchestratorInstructionsEndpointTests*)/*` | V-11, V-12, R-8 | all listed, 0 failed/skipped; compaction 8 results, endpoint 2 | 10 | 6 | true |
 | CP-5 | S4 | n/a | hooks | `pwsh -File scripts/test-hooks.ps1` | V-13 | `HOOKS TESTS EXIT CODE: 0`, the 7 new cases and the matcher case listed as passing | n/a | 2 | false |
@@ -470,8 +474,11 @@ a stated reason. If Code finds an existing test class asserting on `BuildEnv` or
 reason "env contract widened by S3" and report it. Serial rows keep the MessageQueue exclusion
 honest; the Unit rows may overlap. CP-2's `InstructionBundleTests*` rows are the budget proof for
 the D-5 swap: a red there is fixed by shortening unpinned bundle prose, never by editing the test,
-the 14 310 cap or `CommandLineBudgetChars`. Under D-10's conditional (CARD-0505 landed before
-Code starts) CP-3 reads 16 results and `Min` 16; otherwise the table runs exactly as printed.
+the 14 310 cap or `CommandLineBudgetChars`. CP-2 also names `CheckpointRepeatDocumentationTests`:
+its SHA-256 pin of `orchestrator.md` is recomputed whenever that file changes, and Min 99 is the
+prior closed run's 98 results plus that class's one method. Under D-10's conditional (CARD-0505
+landed before Code starts) CP-3 reads 16 results and `Min` 16; otherwise the table runs exactly as
+printed.
 
 ## Appendix: the measured bundle swap (D-5, added 2026-10-10)
 
