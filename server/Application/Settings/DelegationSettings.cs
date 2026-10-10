@@ -348,7 +348,9 @@ public sealed class DelegationSettings
         ["Plan"] = new() { Level = AgentModelLevel.Frontier, RecommendedInFlight = 1 },
         ["TestDesign"] = new() { Level = AgentModelLevel.Frontier, RecommendedInFlight = 1 },
         ["Code"] = new() { Level = AgentModelLevel.Frontier, RecommendedInFlight = 2 },
-        ["Mutation"] = new() { Level = AgentModelLevel.Frontier, RecommendedInFlight = 1 },
+        // Low executes a bound pack. EscalateTo is the manual ladder only;
+        // EscalateAfterMinutes stays unset so timed auto-escalation stays disarmed.
+        ["Mutation"] = new() { Level = AgentModelLevel.Low, EscalateTo = AgentModelLevel.High, RecommendedInFlight = 1 },
         ["Review"] = new() { Level = AgentModelLevel.Frontier, RecommendedInFlight = 2 },
         // EscalateTo stays for the manual ladder (/escalate); EscalateAfterMinutes is deliberately
         // unset — the auto-trigger is disarmed by default (CARD-0158). Same pattern as Test below.

@@ -29,11 +29,17 @@ public class MutationRoleContractTests
     public void C470_mutation_policy_is_independent()
     {
         var settings = new DelegationSettings();
+        settings.RolePolicy["Code"].Level.ShouldBe(AgentModelLevel.Frontier);
+        settings.RolePolicy["TestDesign"].Level.ShouldBe(AgentModelLevel.Frontier);
+        settings.RolePolicy["Review"].Level.ShouldBe(AgentModelLevel.Frontier);
+        settings.RolePolicy["Plan"].Level.ShouldBe(AgentModelLevel.Frontier);
         settings.RolePolicy["Code"].Level = AgentModelLevel.Low;
         settings.RolePolicy["Code"].RecommendedInFlight = 9;
         settings.RolePolicy["Code"].TimeoutMinutes = 17;
         var mutation = settings.RolePolicy["Mutation"];
-        mutation.Level.ShouldBe(AgentModelLevel.Frontier);
+        mutation.Level.ShouldBe(AgentModelLevel.Low);
+        mutation.EscalateTo.ShouldBe(AgentModelLevel.High);
+        mutation.EscalateAfterMinutes.ShouldBeNull();
         mutation.RecommendedInFlight.ShouldBe(1);
         TaskDeadlinePolicy.CeilingMinutes(settings, AgentTaskRole.Mutation).ShouldBe(240);
         mutation.TimeoutMinutes = 73;

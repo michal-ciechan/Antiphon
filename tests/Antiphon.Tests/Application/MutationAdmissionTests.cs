@@ -110,6 +110,71 @@ public class MutationAdmissionTests
     }
 
     [Test]
+    public async Task C479_V03a_NoPinMutationCreateResolvesLow()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        using var workspace = new TempWorkspace();
+        var service = CreateService(db);
+        var created = await service.CreateAsync(
+            Request(Unique("nopin"), AgentTaskRole.Mutation), ManualCaller(workspace.Path), default);
+        await using var read = CreateContext(schema);
+        var row = await read.AgentTasks.SingleAsync(t => t.Id == created.Id);
+        row.ModelLevel.ShouldBe(AgentModelLevel.Low);
+        row.AgentKind.ShouldBe(AgentKind.ClaudeCode);
+        row.RoutingPinId.ShouldBeNull();
+        var code = await service.CreateAsync(
+            Request(Unique("code"), AgentTaskRole.Code), ManualCaller(workspace.Path), default);
+        await using var readCode = CreateContext(schema);
+        (await readCode.AgentTasks.SingleAsync(t => t.Id == code.Id)).ModelLevel.ShouldBe(AgentModelLevel.Frontier);
+    }
+
+    [Test]
+    public async Task C479_V03b_ExplicitFrontierMutationCreateStaysFrontier()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        using var workspace = new TempWorkspace();
+        var created = await CreateService(db).CreateAsync(
+            new CreateAgentTaskRequest(
+                Goal: Unique("frontier"),
+                Role: AgentTaskRole.Mutation,
+                ModelLevel: AgentModelLevel.Frontier),
+            ManualCaller(workspace.Path), default);
+        await using var read = CreateContext(schema);
+        var row = await read.AgentTasks.SingleAsync(t => t.Id == created.Id);
+        row.ModelLevel.ShouldBe(AgentModelLevel.Frontier);
+        row.AgentKind.ShouldBe(AgentKind.ClaudeCode);
+        row.RoutingPinId.ShouldBeNull();
+    }
+
+    [Test]
+    public async Task C479_V04_ManualEscalationOfLowMutationTargetsHigh()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        using var workspace = new TempWorkspace();
+        var task = await SeedTaskAsync(
+            db, workspace.Path, AgentTaskRole.Mutation, AgentTaskStatus.Failed, Unique("escalate"));
+        task.ModelLevel = AgentModelLevel.Low;
+        await db.SaveChangesAsync();
+        var service = CreateService(db);
+
+        var high = await service.EscalateAsync(task.Id, null, default);
+        high.ModelLevel.ShouldBe(AgentModelLevel.High);
+        high.EscalatedFrom.ShouldBe(AgentModelLevel.Low);
+        high.Status.ShouldBe(AgentTaskStatus.Queued);
+
+        var frontier = await service.EscalateAsync(task.Id, null, default);
+        frontier.ModelLevel.ShouldBe(AgentModelLevel.Frontier);
+        frontier.EscalatedFrom.ShouldBe(AgentModelLevel.High);
+
+        var ex = await Should.ThrowAsync<ConflictException>(
+            () => service.EscalateAsync(task.Id, null, default));
+        ex.Message.ShouldContain("top of the ladder");
+    }
+
+    [Test]
     [Arguments(AgentTaskStatus.Queued, false)]
     [Arguments(AgentTaskStatus.Dispatched, false)]
     [Arguments(AgentTaskStatus.Working, false)]
