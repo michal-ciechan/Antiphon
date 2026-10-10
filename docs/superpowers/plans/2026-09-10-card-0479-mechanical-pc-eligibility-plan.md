@@ -380,3 +380,75 @@ Bodies read: listed in Inspection. Guards = 24, mapped = 24, missing = 0, duplic
 ## Code handoff
 
 First dispatch: group A. S1 writes `docs/mechanical-pc-contract.md` with the five labelled snippets (`# mechanical-pc-contract v1: preflight|instantiate|apply|oracle|restore` as the first line of each fenced `powershell` block) and the token lists V-6 names; S3 edits `DelegationSettings.cs` and `C470_mutation_policy_is_independent`; S2 trims then edits the four bundles (spare characters: test-design 23, review 19, code 94, mutation 138); S4 edits the five recipe files and both Tiers rows; add `MechanicalPcContractTests` (Unit, `DelegateScriptRunner.RepoRoot`) and the three `MutationAdmissionTests` cases. `checkpoints:` points at this file's `### Checkpoints`, rows CP-1..8. Second dispatch: group B, `scripts/test-mechanical-pc-contract.ps1` and `MechanicalPcRehearsalTests`, rows CP-9..10. Both return `next: review`; PC-1..24 stay pending for a post-land Frontier binding pass, then Low execution, once the operator resumes Mutation.
+
+## Results
+
+Group A only. Code task `020195af` on `feat/card-task-020195af` in `/work/worktrees/task-020195af`. Acceptance run `20261010-144855-f230`, bound (`ANTIPHON_TASK_TOKEN` present). Tested source `68be4213412614fd6fa3a62429ce3513308a4707` (`state=clean`, `buildSource=verified`). Exit 0. 8 green, 0 red. One isolated build `bin-c479-a/` (deleted on green). `bin-c479-b/` was not built. Every row `slot=granted` `waited=0s`. `unlisted: none`. Post-land Mutation was not run. PC-1..24 stay pending. Group B (CP-9, CP-10) was not this dispatch. Restart: none.
+
+An earlier run `20261010-143635-24b0` at `2022160be82a68b30dd0cce9b8b283b200d02fa1` exited 1: CP-2 failed `C479_V03a` and `C479_V03b` (`workspace_default_not_git` on a non-git temp directory), and CP-4 failed the 500-character command-line headroom (Orchestrator/Custom 29836 against 29500). Those two rows were fixed and the closed table was rerun at the SHA above.
+
+CARD-0822 collides on `server/Bundles/orchestrator.md`. The raw SHA-256 pin in `CheckpointRepeatDocumentationTests` is now `42fd7e6d7bca145bae377ff0f97b460a8e891f15d0fa58724bdb6dbb1f09eedb`.
+
+### CP-1
+
+executed=2 passed=2 failed=0 skipped=0
+
+```
+CHECKPOINT CP-1 commit=68be4213412614fd6fa3a62429ce3513308a4707 build=ok filter=/*/*/MutationRoleContractTests/* executed=2 passed=2 failed=0 skipped=0 trx=/work/worktrees/task-020195af/.antiphon/checkpoints/20261010-144855-f230/rows/CP-1/run.trx slot=granted waited=0s dirty=0 source=68be4213412614fd6fa3a62429ce3513308a4707 sourceState=clean buildSource=verified
+```
+
+### CP-2
+
+executed=4 passed=4 failed=0 skipped=0
+
+```
+CHECKPOINT CP-2 commit=68be4213412614fd6fa3a62429ce3513308a4707 build=reused filter=/*/*/MutationAdmissionTests/(C479_V03a_NoPinMutationCreateResolvesLow*)|(C479_V03b_ExplicitFrontierMutationCreateStaysFrontier*)|(C479_V04_ManualEscalationOfLowMutationTargetsHigh*)|(C470_mutation_routing_does_not_inherit_code*) executed=4 passed=4 failed=0 skipped=0 trx=/work/worktrees/task-020195af/.antiphon/checkpoints/20261010-144855-f230/rows/CP-2/run.trx slot=granted waited=0s dirty=0 source=68be4213412614fd6fa3a62429ce3513308a4707 sourceState=clean buildSource=verified
+```
+
+### CP-3
+
+executed=1 passed=1 failed=0 skipped=0
+
+```
+CHECKPOINT CP-3 commit=68be4213412614fd6fa3a62429ce3513308a4707 build=reused filter=/*/*/AgentTaskStallEscalationTests/the_shipped_default_arms_no_role_at_all* executed=1 passed=1 failed=0 skipped=0 trx=/work/worktrees/task-020195af/.antiphon/checkpoints/20261010-144855-f230/rows/CP-3/run.trx slot=granted waited=0s dirty=0 source=68be4213412614fd6fa3a62429ce3513308a4707 sourceState=clean buildSource=verified
+```
+
+### CP-4
+
+executed=74 passed=74 failed=0 skipped=0
+
+```
+CHECKPOINT CP-4 commit=68be4213412614fd6fa3a62429ce3513308a4707 build=reused filter=/*/*/InstructionBundleTests/* executed=74 passed=74 failed=0 skipped=0 trx=/work/worktrees/task-020195af/.antiphon/checkpoints/20261010-144855-f230/rows/CP-4/run.trx slot=granted waited=0s dirty=0 source=68be4213412614fd6fa3a62429ce3513308a4707 sourceState=clean buildSource=verified
+```
+
+### CP-5
+
+executed=30 passed=30 failed=0 skipped=0
+
+```
+CHECKPOINT CP-5 commit=68be4213412614fd6fa3a62429ce3513308a4707 build=reused filter=/*/*/PostLandMutationContractTests/* executed=30 passed=30 failed=0 skipped=0 trx=/work/worktrees/task-020195af/.antiphon/checkpoints/20261010-144855-f230/rows/CP-5/run.trx slot=granted waited=0s dirty=0 source=68be4213412614fd6fa3a62429ce3513308a4707 sourceState=clean buildSource=verified
+```
+
+### CP-6
+
+executed=11 passed=11 failed=0 skipped=0
+
+```
+CHECKPOINT CP-6 commit=68be4213412614fd6fa3a62429ce3513308a4707 build=reused filter=/*/*/MechanicalPcContractTests/* executed=11 passed=11 failed=0 skipped=0 trx=/work/worktrees/task-020195af/.antiphon/checkpoints/20261010-144855-f230/rows/CP-6/run.trx slot=granted waited=0s dirty=0 source=68be4213412614fd6fa3a62429ce3513308a4707 sourceState=clean buildSource=verified
+```
+
+### CP-7
+
+executed=2 passed=2 failed=0 skipped=0
+
+```
+CHECKPOINT CP-7 commit=68be4213412614fd6fa3a62429ce3513308a4707 build=reused filter=/*/*/DelegateBundleLaunchTests/C470_mutation_claude_and_codex_launch_contract* executed=2 passed=2 failed=0 skipped=0 trx=/work/worktrees/task-020195af/.antiphon/checkpoints/20261010-144855-f230/rows/CP-7/run.trx slot=granted waited=0s dirty=0 source=68be4213412614fd6fa3a62429ce3513308a4707 sourceState=clean buildSource=verified
+```
+
+### CP-8
+
+executed=7 passed=7 failed=0 skipped=0
+
+```
+CHECKPOINT CP-8 commit=68be4213412614fd6fa3a62429ce3513308a4707 build=reused filter=/*/*/CheckpointManifestDocumentationTests/* executed=7 passed=7 failed=0 skipped=0 trx=/work/worktrees/task-020195af/.antiphon/checkpoints/20261010-144855-f230/rows/CP-8/run.trx slot=granted waited=0s dirty=0 source=68be4213412614fd6fa3a62429ce3513308a4707 sourceState=clean buildSource=verified
+```
