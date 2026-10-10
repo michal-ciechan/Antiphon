@@ -160,7 +160,7 @@ Worktree at O.VerifiedSourceSha. Follow the full CARD-0478 recipe in docs/orches
 The landing outcome explicitly starts this continuation; do not synthesize a stage report.
 Read parsed next= elsewhere. Mutation next=decide is caller triage of the full finding report,
 not automatically a human question. Preserve the original Done verdict and keep the companion
-open until its explicit disposition; no automatic card creation, tick spend or alert message.
+open until its explicit disposition; no automatic card creation, tick spend or alert message. Commission binding-only at explicit Frontier, then eligible mechanical-execution at Low; one open Mutation per O.
 
 Verification rounds (CARD-0544): omitted -VerificationRound is Final, the full ordinary sweep, and
 is what the first Code and first Review always run. Interim is explicit only: the card's role

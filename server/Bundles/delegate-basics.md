@@ -40,7 +40,7 @@ work itself: each one is here because ignoring it has already cost a real task.
   Avoid tight loops polling the same log with an identical command. Space out status checks and
   use the wait to read/investigate the next planned fix, without editing source under the run.
 
-- MUTATION RUNNER ONLY: KEEP POSITIVE-CONTROL (PC) CYCLES METHOD-SCOPED. For each red-then-green cycle use a precise
+- MUTATION RUNNER ONLY: KEEP POSITIVE-CONTROL (PC) CYCLES METHOD-SCOPED on a bound pack (method-scoped). For each red-then-green cycle use a precise
   `--treenode-filter "/*/*/ClassName/ExactTestMethod"`, never a whole class or suite. Batch
   genuinely independent mutations only when they touch different files and methods: run just
   their specific tests, confirm each expected assertion fails, restore all mutations, then run

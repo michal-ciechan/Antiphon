@@ -61,7 +61,7 @@ to answer one narrow question, carries no stage bundle, and the block is optiona
 | `Plan` | decompose, design, choose an approach (stage) | fable |
 | `TestDesign` | write the `## Verification design` section for a landed plan — separate dispatch by default for `complexity:hard`/`medium`, folded into Plan for `easy` (stage) | fable |
 | `Code` | write or change code; implements tests and runs ordinary V/R; commits/pushes then hands off ordinary Review (stage) | fable |
-| `Mutation` | post-land PCs and missing-control discovery in a fresh SourceLanding snapshot (stage) | Frontier |
+| `Mutation` | post-land PCs and missing-control discovery in a fresh SourceLanding snapshot (stage) | Low |
 | `Review` | ordinary read-only pre-land review for every complexity; judges implementation, ordinary evidence and pending PC design (stage) | fable |
 | `Debug` | find out why something is broken | opus |
 | `Coverage` | check what a change missed | opus |
@@ -70,6 +70,8 @@ to answer one narrow question, carries no stage bundle, and the block is optiona
 | `Commit` | git add/commit/push/branch, PRs; also the CARD-0527 settle child that commits leftover Shared paths through the gated endpoint | sonnet |
 | `Test` | run a suite or build and report what failed | haiku |
 | `Deploy` | run a script, restart a service, check health | haiku |
+
+Commission binding-only at explicit Frontier, then eligible mechanical-execution at Low; one open Mutation per O.
 
 `Test` and `Deploy` are cheap because they RUN things and report what happened. Interpreting a
 failure is a separate `Debug` task — don't ask haiku to work out why the build broke.
@@ -441,8 +443,8 @@ visibility; no tick creates cards or spends quota. Next-card Code may use its ow
 
 Before mutation check exact managed creation, HEAD=L and clean tracked source/index; inventory
 outputs. Await all commands, use exact-method green/compiling-defect/intended-red/restore/fresh-
-build/green cycles and retain nonzero counts/assertions per variant. Run discovery even with
-zero PCs. Missing tests or repairs become findings. Do not reset, substitute latest master,
+build/green cycles and retain nonzero counts/assertions per variant. Higher-tier analysis runs discovery even with
+zero PCs; Low does not locate sites. Missing tests or repairs become findings. Do not reset, substitute latest master,
 commit/push even evidence amendments, merge, land or deploy from the snapshot. Use local
 inherited execution only; never give snapshot access to an external executor, broker, remote
 service or pre-existing process. Preserve full evidence/restoration outside the worktree at
