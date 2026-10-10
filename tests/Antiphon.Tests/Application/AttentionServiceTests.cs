@@ -1348,8 +1348,56 @@ public partial class AttentionServiceTests
         item.Severity.ShouldBe(AlertSeverity.Warning);
         item.AgentId.ShouldBe(agent);
         item.Actions.ShouldBe([AttentionAction.OpenAgent, AttentionAction.OpenDrawer]);
-        item.Evidence.ShouldContain("delivery is not the problem", customMessage:
-            "the row exists to stop the reading that cost CARD-0353 a plan pass");
+        item.Evidence.ShouldContain("No assistant, thinking, tool or turn-end row after boot sequence 1.");
+        AssertNoDeliveryClaim(item.Evidence, "with the seeded UserPrompt");
+    }
+
+    /// <summary>
+    /// CARD-1160. The legacy <c>bootSeq=</c> row re-checks model rows after the incident's sequence
+    /// and does not read a prompt record, so neither a UserPrompt nor its absence is a delivery
+    /// verdict. with-user-prompt: one UserPrompt at sequence 1. without-user-prompt: zero prompt
+    /// records. Both rows state the silence and the sequence.
+    /// </summary>
+    [Test]
+    [Arguments("with-user-prompt")]
+    [Arguments("without-user-prompt")]
+    public async Task C1160_Legacy_boot_row_states_silence_and_no_delivery_verdict(string prompt)
+    {
+        await using var scenario = new Scenario();
+        var session = await scenario.AddSessionAsync();
+        var agent = await scenario.AddAgentAsync(persistentSession: session);
+        if (prompt == "with-user-prompt")
+            await scenario.AddTranscriptAsync(session, (TranscriptKinds.UserPrompt, "the brief", null));
+        await scenario.AddIncidentAsync(
+            agent, session, AgentIncidentKind.LivenessProbeFailed, AlertSeverity.Warning,
+            "open boot episode", minutesAgo: 5, failureReason: BootReplyWatchdogService.EpisodeKey(1));
+
+        await using (var db = CreateContext())
+        {
+            var records = await db.TranscriptEntries.AsNoTracking()
+                .Where(t => t.AgentSessionId == session && t.Kind == TranscriptKinds.UserPrompt)
+                .CountAsync();
+            records.ShouldBe(prompt == "with-user-prompt" ? 1 : 0, $"control: {prompt} prompt records");
+        }
+
+        var item = (await ItemsForAsync(scenario)).Single(i => i.SessionId == session
+            && i.Kind == AttentionKind.LivenessProbeFailed);
+        item.Evidence.ShouldContain(
+            "No assistant, thinking, tool or turn-end row after boot sequence 1.",
+            Case.Sensitive, prompt);
+        AssertNoDeliveryClaim(item.Evidence, prompt);
+    }
+
+    /// <summary>Verdict words only a complete matching UserPrompt may carry (CARD-1160).</summary>
+    private static void AssertNoDeliveryClaim(string text, string moment)
+    {
+        foreach (var claim in new[]
+        {
+            "deliver", "not the problem", "received", "accepted", "reached the", "confirmed",
+        })
+        {
+            text.ShouldNotContain(claim, Case.Insensitive, $"{moment}: no '{claim}' delivery claim");
+        }
     }
 
     [Test]
