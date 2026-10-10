@@ -830,7 +830,7 @@ Mutation. Review checks the pending PC design and ordinary evidence; it does not
 PCs. Follow the companion commissioning and triage recipe in docs/orchestration-loop.md. Sourced
 snapshots never commit/push amendments; keep evidence externally and request separate repair work.
 Use local inherited execution only; never grant snapshot access to an external executor, broker,
-remote service or pre-existing process.
+remote service or pre-existing process. Literal eligibility checks are in docs/mechanical-pc-contract.md.
 
 There are two supported producers (CARD-0604 D-17/D-19). Windows local inherited execution is
 `windows-job-v1`. The persistent server2 runner is `linux-cgroup-v1`: `delegate.ps1 -Role Mutation

@@ -718,7 +718,7 @@ is optional for it (typically `next: none` when present at all).
 
 Code owns implementation and ordinary V/R; ordinary Review follows before land. Post-land
 Mutation owns all deliberate PCs/variants and missing-control discovery in an independent
-snapshot, freeing the Code role slot for another card.
+snapshot, freeing the Code role slot for another card. See docs/mechanical-pc-contract.md.
 
 There are two supported Mutation producers (CARD-0604 D-17/D-19). The default is Windows local
 inherited execution (`windows-job-v1`). The persistent server2 runner is the other:
