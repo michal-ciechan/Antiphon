@@ -380,6 +380,157 @@ public sealed class AgentTaskMidTurnRefineTests
         head.Fx.Runner.KillCalls.ShouldBe(0);
     }
 
+    /// <summary>
+    /// CARD-1169. A screen-only interrupt refinement stays Sent with a null verdict. Once the
+    /// queue clock passes the interrupted-attempt age, the next boundary uses the existing
+    /// recovery: a complete prompt late-confirms, a head-only prompt parks at the attempts cap
+    /// with a truncation verdict, and no prompt either re-presses Enter or reverts and retypes.
+    /// </summary>
+    [Test]
+    [Arguments("complete-prompt")]
+    [Arguments("head-only")]
+    [Arguments("no-prompt-retype")]
+    [Arguments("no-prompt-enter-only")]
+    public async Task C1169_AgedScreenOnlyRefinementFollowsInterruptedSentRecovery(string arm)
+    {
+        using var workspace = new TempWorkspace();
+        var clock = new MonotonicClock();
+        var supervision = RecoverySupervision();
+        var fx = await PrepareAsync(
+            workspace.Path, AgentTaskStatus.Working, AgentKind.Grok, SessionStatus.Running, openQuestion: false,
+            clock, supervision);
+        var summary = await CreateService(fx).RefineAsync(
+            fx.Task.Id, Message, CancellationToken.None, interruptCurrentTurn: true, requestId: Guid.NewGuid());
+        summary.InterruptWritten.ShouldBe("written");
+        summary.RefinementDelivered.ShouldBe("pending");
+        await IngestAsync(fx, TurnEnd(fx.SessionId, 42, TranscriptKinds.StopReasons.Cancelled));
+
+        string body;
+        await using (var sent = CreateContext())
+        {
+            var row = await sent.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == fx.SessionId);
+            row.Status.ShouldBe(QueuedMessageStatus.Sent, arm);
+            row.DeliveryVerdict.ShouldBeNull(arm);
+            row.DeliveryAttempts.ShouldBe(1, arm);
+            row.ConversationKey.ShouldNotBeNull().ShouldStartWith(
+                MidTurnInterruptPolicy.ConversationKeyPrefix, Case.Sensitive, arm);
+            row.LastDeliveryStartedAt.ShouldNotBeNull(arm);
+            row.LastDeliveryBaselineSequence.ShouldNotBeNull(arm);
+            body = row.Body;
+            TypedOnce(fx, body);
+        }
+
+        body.Length.ShouldBeGreaterThan(300, arm);
+        var age = InterruptedAttemptAge(supervision.DeliveryVerification);
+        clock.Advance(age + TimeSpan.FromSeconds(1));
+        await using (var aged = CreateContext())
+        {
+            var started = await aged.SessionQueuedMessages
+                .Where(m => m.AgentSessionId == fx.SessionId)
+                .Select(m => m.LastDeliveryStartedAt)
+                .SingleAsync();
+            started.ShouldNotBeNull(arm);
+            started.Value.ShouldBeLessThanOrEqualTo(clock.GetUtcNow().UtcDateTime - age, arm);
+        }
+
+        var headOnScreen = arm == "no-prompt-enter-only";
+        if (headOnScreen)
+            fx.Runner.RenderedScreen = body;
+        ComposerDeliveryEvidence.HeadFragmentIsVisibleWhole(fx.Runner.RenderedScreen!, body)
+            .ShouldBe(headOnScreen, arm);
+
+        var now = clock.GetUtcNow();
+        if (arm == "complete-prompt")
+        {
+            await IngestAsync(fx,
+                UserPrompt(fx.SessionId, 43, body, now),
+                TurnEnd(fx.SessionId, 44, TranscriptKinds.StopReasons.Cancelled, now));
+        }
+        else if (arm == "head-only")
+        {
+            await IngestAsync(fx,
+                UserPrompt(fx.SessionId, 43, body[..300], now),
+                TurnEnd(fx.SessionId, 44, TranscriptKinds.StopReasons.Cancelled, now));
+        }
+        else
+        {
+            await IngestAsync(fx, TurnEnd(fx.SessionId, 43, TranscriptKinds.StopReasons.Cancelled, now));
+        }
+
+        await using var verify = CreateContext();
+        var after = await verify.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == fx.SessionId);
+        var task = await verify.AgentTasks.SingleAsync(t => t.Id == fx.Task.Id);
+        task.Status.ShouldBe(AgentTaskStatus.Working, arm);
+        (await verify.AgentTaskEvents.CountAsync(e => e.AgentTaskId == fx.Task.Id
+            && (e.Type == AgentTaskEventType.Completed || e.Type == AgentTaskEventType.Failed)))
+            .ShouldBe(0, arm);
+        fx.Runner.KillCalls.ShouldBe(0, arm);
+        AssertNoKillOrBareEscape(fx.Runner);
+
+        if (arm == "complete-prompt")
+        {
+            after.Status.ShouldBe(QueuedMessageStatus.Sent, arm);
+            after.DeliveryVerdict.ShouldBe(DeliveryVerdict.LateConfirmed, arm);
+            after.DeliveryAttempts.ShouldBe(1, arm);
+            MidTurnInterruptPolicy.ReadRefinementDelivered(after.DeliveryVerdict).ShouldBe("delivered", arm);
+            TypedOnce(fx, body);
+            return;
+        }
+
+        if (arm == "head-only")
+        {
+            after.Status.ShouldBe(QueuedMessageStatus.Pending, arm);
+            after.DeliveryVerdict.ShouldBe(DeliveryVerdict.Truncated, arm);
+            after.DeliveryAttempts.ShouldBe(supervision.DeliveryVerification.MaxDeliveryAttempts, arm);
+            MidTurnInterruptPolicy.ReadRefinementDelivered(after.DeliveryVerdict).ShouldBe("pending", arm);
+            TypedOnce(fx, body);
+            return;
+        }
+
+        if (arm == "no-prompt-enter-only")
+        {
+            after.Status.ShouldBe(QueuedMessageStatus.Pending, arm);
+            after.DeliveryVerdict.ShouldBe(DeliveryVerdict.NoTranscriptRecord, arm);
+            after.DeliveryAttempts.ShouldBe(2, arm);
+            MidTurnInterruptPolicy.ReadRefinementDelivered(after.DeliveryVerdict).ShouldBe("pending", arm);
+            fx.Runner.RawInputs.Select(raw => raw.Input).ShouldBe(new[]
+            {
+                PtyInputEncoding.EncodeBody(body),
+                "\r",
+                "\r",
+            }, arm);
+            return;
+        }
+
+        after.Status.ShouldBe(QueuedMessageStatus.Sent, arm);
+        after.DeliveryVerdict.ShouldBeNull(arm);
+        after.DeliveryAttempts.ShouldBe(2, arm);
+        MidTurnInterruptPolicy.ReadRefinementDelivered(after.DeliveryVerdict).ShouldBe("pending", arm);
+        var typed = PtyInputEncoding.EncodeBody(body);
+        fx.Runner.RawInputs.Select(raw => raw.Input).ShouldBe(new[] { typed, "\r", typed, "\r" }, arm);
+    }
+
+    private static SupervisionSettings RecoverySupervision()
+    {
+        var supervision = new SupervisionSettings();
+        var verification = supervision.DeliveryVerification;
+        // The production sum of these three fields is the 80s floor. This fixture shortens the
+        // confirm wait; the test still advances the queue clock past the same sum.
+        verification.TranscriptConfirmTimeoutSeconds = 1;
+        verification.PostFailureConfirmGraceSeconds = 0;
+        verification.UnobservableBaselineConfirmClockToleranceSeconds = 1;
+        verification.PollIntervalMs = 50;
+        verification.ReEnterIntervalSeconds = 30;
+        verification.PostEvidenceSettleMs = 0;
+        return supervision;
+    }
+
+    private static TimeSpan InterruptedAttemptAge(DeliveryVerificationSettings verification) =>
+        TimeSpan.FromSeconds(
+            Math.Max(0, verification.TranscriptConfirmTimeoutSeconds)
+            + Math.Max(0, verification.PostFailureConfirmGraceSeconds)
+            + Math.Max(0, verification.UnobservableBaselineConfirmClockToleranceSeconds));
+
     private static async Task<(Prepared Fx, string Body)> PrepareSentRefinementAsync(string workingDirectory)
     {
         var fx = await PrepareAsync(
@@ -496,8 +647,12 @@ public sealed class AgentTaskMidTurnRefineTests
         TurnEnd(sessionId, 42, TranscriptKinds.StopReasons.EndTurn);
 
     private static SessionRunnerTranscriptEvent TurnEnd(Guid sessionId, long sequence, string stopReason) =>
+        TurnEnd(sessionId, sequence, stopReason, DateTimeOffset.UtcNow);
+
+    private static SessionRunnerTranscriptEvent TurnEnd(
+        Guid sessionId, long sequence, string stopReason, DateTimeOffset now) =>
         new(sessionId, sequence, TranscriptKinds.TurnEnd, Guid.NewGuid().ToString("D"),
-            null, DateTimeOffset.UtcNow, "system", null, null, null, null, null, stopReason);
+            null, now, "system", null, null, null, null, null, stopReason);
 
     private static SessionRunnerTranscriptEvent UserPrompt(
         Guid sessionId, long sequence, string text, DateTimeOffset now) =>
@@ -509,11 +664,13 @@ public sealed class AgentTaskMidTurnRefineTests
             null, now, "assistant", null, "run_terminal_command", "{}", "tool-2", false, null);
 
     private static async Task<Prepared> PrepareAsync(
-        string workingDirectory, AgentTaskStatus status, AgentKind kind, SessionStatus sessionStatus, bool openQuestion)
+        string workingDirectory, AgentTaskStatus status, AgentKind kind, SessionStatus sessionStatus, bool openQuestion,
+        TimeProvider? clock = null, SupervisionSettings? supervision = null)
     {
         var runner = new RecordingInterruptRunner();
         var settings = new DelegationSettings();
-        var scope = new ScopeFactory(runner);
+        clock ??= TimeProvider.System;
+        var scope = new ScopeFactory(runner, clock, supervision);
         var (task, sessionId, started) = await SeedTaskAsync(workingDirectory, status, kind, sessionStatus);
         if (status != AgentTaskStatus.Queued)
             await SeedWorkingAsync(scope.Runtime, sessionId, task.Id, openQuestion);
@@ -523,7 +680,7 @@ public sealed class AgentTaskMidTurnRefineTests
         runner.LastSequence = 41;
         runner.RenderedScreen = File.ReadAllText(Path.Combine(
             DelegateScriptRunner.RepoRoot, "tests", "Antiphon.Tests", "Fixtures", "grok-empty-composer.txt"));
-        return new Prepared(scope, runner, settings, task, sessionId, started);
+        return new Prepared(scope, runner, settings, task, sessionId, started, clock);
     }
 
     private static AgentTaskReplyService CreateService(Prepared fx) =>
@@ -619,16 +776,32 @@ public sealed class AgentTaskMidTurnRefineTests
         DelegationSettings Settings,
         AgentTask Task,
         Guid SessionId,
-        DateTime Started);
+        DateTime Started,
+        TimeProvider Clock);
+
+    /// <summary>Real timers, with <see cref="GetUtcNow"/> moved only by <see cref="Advance"/>.</summary>
+    private sealed class MonotonicClock : TimeProvider
+    {
+        private TimeSpan _offset;
+
+        public override DateTimeOffset GetUtcNow() => DateTimeOffset.UtcNow + _offset;
+
+        public void Advance(TimeSpan delta)
+        {
+            if (delta < TimeSpan.Zero)
+                throw new ArgumentOutOfRangeException(nameof(delta));
+            _offset += delta;
+        }
+    }
 
     private sealed class ScopeFactory : IServiceScopeFactory, IServiceScope, IServiceProvider
     {
         private readonly ServiceProvider _provider;
         public AgentSessionRuntime Runtime => _provider.GetRequiredService<AgentSessionRuntime>();
 
-        public ScopeFactory(RecordingInterruptRunner runner)
+        public ScopeFactory(RecordingInterruptRunner runner, TimeProvider clock, SupervisionSettings? supervision = null)
         {
-            var supervision = new SupervisionSettings();
+            supervision ??= new SupervisionSettings();
             supervision.DeliveryVerification.Enabled = false;
             var services = new ServiceCollection();
             services.AddLogging();
@@ -637,7 +810,7 @@ public sealed class AgentTaskMidTurnRefineTests
             services.AddSingleton(Options.Create(supervision));
             services.AddSingleton(Options.Create(new ChannelBridgeSettings()));
             services.AddSingleton(Options.Create(new DelegationSettings { FinalMessageGraceSeconds = 0 }));
-            services.AddSingleton(TimeProvider.System);
+            services.AddSingleton(clock);
             services.AddSingleton<ISessionRunnerClient>(runner);
             services.AddSingleton<AgentSessionRuntime>();
             services.AddSingleton<SessionMessageQueueService>();
