@@ -1,6 +1,6 @@
 Design verification for the landed plan. Append this structure; do not rewrite the fix design.
 Every guard that protects a safety-critical assertion gets a PC-n positive control.
-Read touched tests/fixtures/helpers before naming cases, the nearest fixture for new files. Record missing setup; cover boundary combinations or justify exclusion.
+Read touched tests/fixtures/helpers before naming cases, the nearest fixture for new files. Require recipe/variant/case/oracle/reachability/classification. Unbound payloads stay binding required after Code.
 
 ## Verification design
 ### Inspection
@@ -25,5 +25,5 @@ One isolated build + one exact filter per row; union = whole ordinary scope. Min
 ### Cost
 - Separate ordinary V/R floor (Code) = sum of CP EstimatedMinutes, and PC floor (Mutation). Name filters/minutes. Total = setup/build + V/R + each PC red/restore/green; label estimated/measured; quantify savings or justify zero.
 
-Before handoff: bodies read; guards=N, mapped=N, missing=0, duplicate PC maps=0; all PCs executable; numeric Cost. No placeholders/TBD.
+Before handoff: guards=N, mapped=N, missing=0, duplicate PC maps=0; all PCs run; numeric Cost.
 next: code only when complete; plan for an unverifiable seam; decide for a human choice. Commit and push the plan doc.

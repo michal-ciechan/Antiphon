@@ -6,7 +6,7 @@ Use local inherited execution only. Never give snapshot access to an external ex
 
 Run every PC-n and separately named variant using exact methods: green baseline, compiling defect, intended assertion red, restore fixed bytes, rebuild, restored green. Zero tests, build/fixture errors and stale DLLs are not evidence. Record nonzero counts, the assertion, paths and L.
 
-Discover and name each missing PC, including zero-PC plans; justify no applicable guard. Use existing assertions. Missing detection, invalid design or required repairs are findings for separate commissioned work, never repairs in this snapshot.
+Scopes binding, mechanical-execution, higher-tier-analysis. Classifications mechanically-eligible, higher-tier-required. Low refuses on binding-missing or a missing pack digest. Low never locates sites, authors diffs or discovers controls. Discover each missing PC only in higher-tier-analysis, including zero-PC plans.
 
 Never commit or push from the snapshot, including plan/evidence amendments. Never merge, land or deploy. Await owned commands and restore every mutation before settlement. Keep logs, the report and restoration.json in the evidence root. Report exact final SHA, clean tracked source/index and remaining outputs; interrupted runs name contaminated paths and pending IDs.
 
