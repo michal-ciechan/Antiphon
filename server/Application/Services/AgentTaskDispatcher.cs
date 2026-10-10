@@ -27,6 +27,8 @@ public sealed partial class AgentTaskDispatcher
     private readonly TerminalRunnerSeatReleaseService? _terminalSeatRelease;
     private readonly BlockedTaskSyncRecoveryService? _blockedTaskSync;
     private readonly SettlementSyncRecoveryService? _settlementSync;
+    private readonly DispatchConcurrencySettingsService? _dispatchConcurrency;
+    private DispatchDecision? _refusedParallel;
     private readonly int _answerReceiptClockToleranceSeconds;
     private readonly AppDbContext _db;
     private readonly AgentRegistry _agentRegistry;
@@ -212,8 +214,10 @@ public sealed partial class AgentTaskDispatcher
         HostBudgetService? hostBudgets = null,
         TerminalRunnerSeatReleaseService? terminalSeatRelease = null,
         BlockedTaskSyncRecoveryService? blockedTaskSync = null,
-        SettlementSyncRecoveryService? settlementSync = null)
+        SettlementSyncRecoveryService? settlementSync = null,
+        DispatchConcurrencySettingsService? dispatchConcurrency = null)
     {
+        _dispatchConcurrency = dispatchConcurrency;
         _terminalSeatRelease = terminalSeatRelease;
         _blockedTaskSync = blockedTaskSync;
         _settlementSync = settlementSync;
@@ -312,12 +316,12 @@ public sealed partial class AgentTaskDispatcher
         /// <summary>CARD-0672 D-3: runner-bound rows held because their runner is full or not eligible.</summary>
         int HeldOnRunner = 0);
 
-    private enum DispatchOneResult { Dispatched, HeldOnLease, HeldForAgent, HeldForRemotePrep, NotClaimed }
+    internal enum DispatchOneResult { Dispatched, HeldOnLease, HeldForAgent, HeldForRemotePrep, NotClaimed, HeldOnParallel }
 
     private enum HoldKind
     {
         Scope, RoutingPin, ModelHeld, CapacityWait, RepairSourceLanding, SiblingLanding, Lease, ConcurrencyCap, PinnedAgent,
-        RemotePrep, RemotePrepBackoff, RunnerUnavailable, RunnerCapacity, RunnerDraining,
+        RemotePrep, RemotePrepBackoff, RunnerUnavailable, RunnerCapacity, RunnerDraining, Parallel,
     }
 
     private sealed class QueuedHoldIndex
@@ -924,6 +928,13 @@ public sealed partial class AgentTaskDispatcher
                             DelegationReportFormatter.Short(task.Id), agentDetail);
                     }
 
+                    continue;
+                }
+
+                if (outcome == DispatchOneResult.HeldOnParallel)
+                {
+                    // The claim transaction already wrote the one deduped Held row.
+                    heldThisTick.Add((task.Id, HoldKind.Parallel));
                     continue;
                 }
 
@@ -5301,8 +5312,11 @@ public sealed partial class AgentTaskDispatcher
         public void Dispose() => gate.Release();
     }
 
+    internal Task<DispatchOneResult> DispatchOneAsync(AgentTask task, CancellationToken ct) =>
+        DispatchOneAsync(task, ct, siblingObservation: null);
+
     private async Task<DispatchOneResult> DispatchOneAsync(
-        AgentTask task, CancellationToken ct, SiblingBaseGuard? siblingObservation = null)
+        AgentTask task, CancellationToken ct, SiblingBaseGuard? siblingObservation)
     {
         // Runner RPCs share one budget and run before any row lock. A pinned profile cannot
         // change the task's kind, so the pre-claim answer is the one the claim applies.
@@ -5338,6 +5352,11 @@ public sealed partial class AgentTaskDispatcher
         // Released-seat continuations claim under the source recipient's gate, in the same
         // order as answer/release (gate, then task row). New-session input uses a different gate.
         using var answerClaim = await AcquireReleasedAnswerClaimAsync(task, ct);
+
+        // Import before the claim transaction. ReadEffective inside that transaction cannot
+        // initialize, and dispatch must not take the create key under the parallel key.
+        if (_dispatchConcurrency is not null && !AgentTaskRoles.IsSpecialist(task.Role))
+            await _dispatchConcurrency.EnsureInitializedAsync(ct);
 
         // Transactional claim: re-read under the concurrency token so a second tick (or another
         // server instance) racing this one loses cleanly instead of double-launching a delegate.
@@ -5480,6 +5499,9 @@ public sealed partial class AgentTaskDispatcher
                 case ReuseOutcome.Reused:
                     await _db.SaveChangesAsync(ct);
                     await transaction.CommitAsync(ct);
+                    // The raw token is discarded only after the reuse commit. A hold or a lost
+                    // commit must leave it with the still-queued task.
+                    AgentTaskService.RawTokens.TryRemove(claimed.Id, out _);
                     await DeliverReuseMessagesAsync(claimed, ct);
                     await _eventBus.PublishToAllAsync(
                         "AgentTaskChanged", new { taskId = claimed.Id, rootId = claimed.RootTaskId }, ct);
@@ -5498,6 +5520,8 @@ public sealed partial class AgentTaskDispatcher
                     // task stays queued and the tick loop traces the wait (CARD-0537).
                     await transaction.RollbackAsync(ct);
                     return DispatchOneResult.HeldForAgent;
+                case ReuseOutcome.HeldOnParallel:
+                    return DispatchOneResult.HeldOnParallel;
             }
         }
 
@@ -5834,6 +5858,9 @@ public sealed partial class AgentTaskDispatcher
                 await ReleaseTaskConsumersAsync(claimed);
             return DispatchOneResult.NotClaimed;
         }
+
+        if (await RefuseParallelAsync(claimed, ct))
+            return await FinishParallelHoldAsync(claimed, ct);
         claimed.Status = AgentTaskStatus.Dispatched;
         claimed.DispatchedAt = now;
         claimed.ConcurrencyToken = Guid.NewGuid();
@@ -7587,6 +7614,140 @@ public sealed partial class AgentTaskDispatcher
         return _workspaceUse?.ReleaseTaskConsumersAsync(task.Id, CancellationToken.None) ?? Task.CompletedTask;
     }
 
+    /// <summary>
+    /// CARD-0505. Takes the parallel advisory key inside the claim transaction and decides
+    /// dispatch. LegacyOpen still takes the key; specialists and a missing service skip it.
+    /// The candidate is still Queued, so it is not part of the parallel population.
+    /// </summary>
+    private async Task<bool> RefuseParallelAsync(AgentTask claimed, CancellationToken ct)
+    {
+        _refusedParallel = null;
+        if (_dispatchConcurrency is null || AgentTaskRoles.IsSpecialist(claimed.Role))
+            return false;
+        if (_db.Database.CurrentTransaction is null)
+            throw new InvalidOperationException("Dispatch concurrency parallel admission requires the claim transaction.");
+        await _db.Database.ExecuteSqlInterpolatedAsync(
+            $"SELECT pg_advisory_xact_lock(hashtext({DispatchConcurrencyPolicy.ParallelAdvisoryKey}))", ct);
+        var policy = await _dispatchConcurrency.ReadEffectiveAsync(claimed.ProjectId, ct);
+        var population = DispatchConcurrencyPolicy.Count(await LoadDispatchPopulationAsync(ct), claimed.ProjectId);
+        var decision = DispatchConcurrencyPolicy.DecideDispatch(policy, population, claimed.Role);
+        if (decision.Admit)
+            return false;
+        _refusedParallel = decision;
+        return true;
+    }
+
+    private async Task<List<TaskPopulationRow>> LoadDispatchPopulationAsync(CancellationToken ct)
+    {
+        var rows = await _db.AgentTasks.AsNoTracking()
+            .Select(t => new
+            {
+                t.Id,
+                t.ProjectId,
+                t.Role,
+                t.Status,
+                t.CreatedAt,
+                t.CapacityWaitRetained,
+                t.Title,
+            })
+            .ToListAsync(ct);
+        return rows.Select(row => new TaskPopulationRow(
+            row.Id,
+            row.ProjectId,
+            row.Role,
+            row.Status,
+            row.CreatedAt,
+            row.CapacityWaitRetained,
+            row.Title)).ToList();
+    }
+
+    private async Task<AgentTask?> LockPreviousTokenOwnerAsync(AgentTask claimed, Guid sessionId, CancellationToken ct)
+    {
+        var previousId = await _db.AgentTasks.AsNoTracking()
+            .Where(t => t.AgentSessionId == sessionId && t.Id != claimed.Id && t.TokenHash != null)
+            .OrderByDescending(t => t.DispatchedAt)
+            .Select(t => (Guid?)t.Id)
+            .FirstOrDefaultAsync(ct);
+        if (previousId is not Guid id)
+            return null;
+        return await _db.AgentTasks
+            .FromSqlInterpolated($"SELECT * FROM \"AgentTasks\" WHERE \"Id\" = {id} FOR UPDATE")
+            .FirstOrDefaultAsync(ct);
+    }
+
+    private static string FormatParallelHold(DispatchDecision decision)
+    {
+        var primary = decision.Exceeded.First(item =>
+            item.Population == decision.Population && item.Axis == decision.Axis);
+        var role = primary.Axis == DispatchConcurrencyPolicy.AxisRole && primary.Role is { Length: > 0 }
+            ? $" role={primary.Role}"
+            : string.Empty;
+        var holders = string.Join(",", decision.ListedOccupantIds.Select(DelegationReportFormatter.Short));
+        return "Held: dispatch concurrency parallel limit"
+            + $" population={decision.Population} axis={decision.Axis}" + role
+            + $" count={decision.Count} limit={decision.Limit} source={primary.Source}"
+            + $" globalRevision={decision.Policy.GlobalRevision} projectRevision={decision.Policy.ProjectRevision}"
+            + $" holders={holders}";
+    }
+
+    private async Task<ReuseOutcome> FinishParallelReuseAsync(AgentTask claimed, CancellationToken ct)
+    {
+        await FinishParallelHoldAsync(claimed, ct);
+        return ReuseOutcome.HeldOnParallel;
+    }
+
+    private async Task<DispatchOneResult> FinishParallelHoldAsync(AgentTask claimed, CancellationToken ct)
+    {
+        var decision = _refusedParallel
+            ?? throw new InvalidOperationException("Parallel hold is missing its decision.");
+        _refusedParallel = null;
+        var detail = FormatParallelHold(decision);
+        var taskId = claimed.Id;
+        var tasks = _db.ChangeTracker.Entries<AgentTask>()
+            .Where(e => e.State != EntityState.Added)
+            .Select(e => e.Entity)
+            .ToList();
+        var agents = _db.ChangeTracker.Entries<Agent>()
+            .Where(e => e.State != EntityState.Added)
+            .Select(e => e.Entity)
+            .ToList();
+        var sessions = _db.ChangeTracker.Entries<AgentSession>()
+            .Where(e => e.State != EntityState.Added)
+            .Select(e => e.Entity)
+            .ToList();
+        var transaction = _db.Database.CurrentTransaction
+            ?? throw new InvalidOperationException("Parallel hold requires the claim transaction.");
+        await transaction.RollbackAsync(ct);
+        await transaction.DisposeAsync();
+        _db.ChangeTracker.Clear();
+        foreach (var tracked in tasks)
+            await _db.Entry(tracked).ReloadAsync(ct);
+        foreach (var tracked in agents)
+            await _db.Entry(tracked).ReloadAsync(ct);
+        foreach (var tracked in sessions)
+            await _db.Entry(tracked).ReloadAsync(ct);
+        var previous = await _db.AgentTaskEvents.AsNoTracking()
+            .Where(e => e.AgentTaskId == taskId && e.Type == AgentTaskEventType.Held)
+            .OrderByDescending(e => e.At)
+            .ThenByDescending(e => e.Id)
+            .Select(e => e.Detail)
+            .FirstOrDefaultAsync(ct);
+        if (!string.Equals(previous, detail, StringComparison.Ordinal))
+        {
+            _db.AgentTaskEvents.Add(new AgentTaskEvent
+            {
+                Id = Guid.NewGuid(),
+                AgentTaskId = taskId,
+                Type = AgentTaskEventType.Held,
+                Detail = detail,
+                At = UtcNow(),
+            });
+            await _db.SaveChangesAsync(ct);
+        }
+
+        return DispatchOneResult.HeldOnParallel;
+    }
+
     internal enum ReuseOutcome
     {
         /// <summary>No warm agent fits — spawn a fresh delegate (the pre-pool path).</summary>
@@ -7598,6 +7759,9 @@ public sealed partial class AgentTaskDispatcher
         /// <summary>The pinned agent is mid-task; leave the task queued until it goes warm.</summary>
         WaitForAgent = 2,
         Expired = 3,
+
+        /// <summary>CARD-0505: the parallel cap refused the claim. The task stays Queued.</summary>
+        HeldOnParallel = 4,
     }
 
     /// <summary>
@@ -7760,6 +7924,11 @@ public sealed partial class AgentTaskDispatcher
         claimed.AgentSessionId = session;
         if (await ExpireClaimedOptionalWorkAsync(claimed, ct))
             return ReuseOutcome.Expired;
+        // Prior-owner row lock, then the parallel key, then the token move. Removal of the
+        // unused raw token waits until the caller commits.
+        var previous = await LockPreviousTokenOwnerAsync(claimed, session, ct);
+        if (await RefuseParallelAsync(claimed, ct))
+            return await FinishParallelReuseAsync(claimed, ct);
         claimed.Status = AgentTaskStatus.Dispatched;
         claimed.DispatchedAt = now;
         claimed.ConcurrencyToken = Guid.NewGuid();
@@ -7768,17 +7937,12 @@ public sealed partial class AgentTaskDispatcher
         // The session's environment still holds the PREVIOUS task's raw token — env can't change
         // on a live process. So the previous task's hash moves to THIS task: the delegate keeps
         // presenting the same bearer, and the server now resolves it to the work it is actually
-        // doing. The task's own unused token is discarded.
-        var previous = await _db.AgentTasks
-            .Where(t => t.AgentSessionId == session && t.Id != claimed.Id && t.TokenHash != null)
-            .OrderByDescending(t => t.DispatchedAt)
-            .FirstOrDefaultAsync(ct);
+        // doing. The task's own unused token is discarded after commit.
         if (previous is not null)
         {
             claimed.TokenHash = previous.TokenHash;
             previous.TokenHash = null;
         }
-        AgentTaskService.RawTokens.TryRemove(claimed.Id, out _);
 
         _db.AgentTaskEvents.Add(new AgentTaskEvent
         {
@@ -7948,6 +8112,8 @@ public sealed partial class AgentTaskDispatcher
 
         if (await ExpireClaimedOptionalWorkAsync(claimed, ct))
             return ReuseOutcome.Expired;
+        if (await RefuseParallelAsync(claimed, ct))
+            return await FinishParallelReuseAsync(claimed, ct);
         WarnIfStandingInheritedEnvDiffers(claimed, standing, now);
 
         claimed.AgentName = standing.Name;
@@ -7971,11 +8137,11 @@ public sealed partial class AgentTaskDispatcher
         claimed.ConcurrencyToken = Guid.NewGuid();
         ArmFirstCheck(claimed, now);
 
-        // The task's own bearer token is discarded rather than rebound: a standing agent's session
-        // was not launched by the dispatcher, so its environment carries no ANTIPHON_TASK_TOKEN and
-        // never can (a live process's env cannot change). Correlation therefore rides the brief's
-        // marker alone — which is all settlement needs, and all a specialist reading a bundle uses.
-        AgentTaskService.RawTokens.TryRemove(claimed.Id, out _);
+        // The task's own bearer token is discarded rather than rebound, and only after the
+        // caller commits: a standing agent's session was not launched by the dispatcher, so its
+        // environment carries no ANTIPHON_TASK_TOKEN and never can (a live process's env cannot
+        // change). Correlation therefore rides the brief's marker alone — which is all settlement
+        // needs, and all a specialist reading a bundle uses.
 
         _db.AgentTaskEvents.Add(new AgentTaskEvent
         {

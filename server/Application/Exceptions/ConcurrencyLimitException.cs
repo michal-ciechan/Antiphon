@@ -33,19 +33,25 @@ public sealed class ConcurrencyLimitException : HttpException
         var scope = concurrency.ProjectId is { } projectId
             ? $" in project {DelegationReportFormatter.Short(projectId)}"
             : string.Empty;
+        var where = concurrency.Population == DispatchConcurrencyPolicy.PopulationQueued
+            ? "queued"
+            : "in flight";
         var axis = concurrency.Axis == "role" && concurrency.Role is { Length: > 0 } role
-            ? $"{concurrency.Count} {role} task{(concurrency.Count == 1 ? "" : "s")} already in flight{scope} (limit {concurrency.Limit})"
-            : $"{concurrency.Count} task{(concurrency.Count == 1 ? "" : "s")} already in flight{scope} (limit {concurrency.Limit})";
+            ? $"{concurrency.Count} {role} task{(concurrency.Count == 1 ? "" : "s")} already {where}{scope} (limit {concurrency.Limit})"
+            : $"{concurrency.Count} task{(concurrency.Count == 1 ? "" : "s")} already {where}{scope} (limit {concurrency.Limit})";
 
         var shown = concurrency.Open.Take(OccupantListCap).Select(FormatOccupant).ToList();
-        var extra = concurrency.Open.Count - shown.Count;
+        var extra = concurrency.OmittedOccupants > 0
+            ? concurrency.OmittedOccupants
+            : concurrency.Open.Count - shown.Count;
         var occupants = shown.Count == 0
             ? string.Empty
             : extra > 0
                 ? ": " + string.Join(", ", shown) + $" and {extra} more"
                 : ": " + string.Join(", ", shown);
 
-        return axis + occupants + ". " + Coda;
+        var text = axis + occupants + ".";
+        return concurrency.CanOverride ? text + " " + Coda : text;
     }
 
     public static string FormatOccupant(ConcurrencyLimitOccupantDto occupant)
@@ -84,7 +90,20 @@ public sealed record ConcurrencyLimitProblemDto(
     int Limit,
     IReadOnlyList<ConcurrencyLimitOccupantDto> Open,
     string Override,
-    Guid? ProjectId);
+    Guid? ProjectId,
+    string Population = DispatchConcurrencyPolicy.PopulationOpen,
+    string? Mode = null,
+    string? LimitSource = null,
+    long? GlobalRevision = null,
+    long? ProjectRevision = null,
+    bool CanOverride = true,
+    IReadOnlyList<DispatchConstraint>? Exceeded = null,
+    int TotalOccupants = 0,
+    int OmittedOccupants = 0,
+    string? MaxParallelSource = null,
+    string? MaxQueuedSource = null,
+    string? RoleParallelSource = null,
+    string? RoleQueuedSource = null);
 
 /// <summary>One occupant named by a 409 <c>concurrency_limit</c>.</summary>
 public sealed record ConcurrencyLimitOccupantDto(

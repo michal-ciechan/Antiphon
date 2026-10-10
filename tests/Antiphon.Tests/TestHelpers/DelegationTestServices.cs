@@ -109,6 +109,17 @@ internal static class DelegationTestServices
         return services;
     }
 
+    /// <summary>
+    /// CARD-0505. Registers the settings service for harnesses that admit through it.
+    /// Not part of <see cref="AddDelegationWorktreeGraph"/>: dispatcher suites that predate the
+    /// service must keep today's null-service path.
+    /// </summary>
+    public static IServiceCollection AddDispatchConcurrencyAdmission(this IServiceCollection services)
+    {
+        services.TryAddScoped<DispatchConcurrencySettingsService>();
+        return services;
+    }
+
     internal static (DelegationWorktreeService Worktrees, WorktreeManager Manager, ILandingGit Git,
         IRepositoryMutationLease Leases, IWorktreeCleanupJournal Journal, IWorktreeLockDiagnostics Diagnostics,
         IWorktreeDeleteAccessProbe Probe) CreateGitGraph(GitSettings settings,

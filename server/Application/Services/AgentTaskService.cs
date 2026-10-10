@@ -56,6 +56,7 @@ public sealed class AgentTaskService
     // CARD-0147. Optional so every harness that predates this card keeps constructing this;
     // absent, create does not consult the fleet/role cap.
     private readonly DelegationOpenGate? _openGate;
+    private readonly DispatchConcurrencySettingsService? _dispatchConcurrency;
     private readonly CapacityRecoveryService? _capacityRecovery;
     private readonly SourceLandingAdmission? _sourceLanding;
     private readonly ILandingGit? _landingGit;
@@ -118,8 +119,10 @@ public sealed class AgentTaskService
         RunnerDefaultSettingsService? runnerDefaults = null,
         AgentTaskWorktreeBaseResolver? baseResolver = null,
         SessionMessageQueueService? messageQueue = null,
-        IServiceScopeFactory? seatReleaseScopes = null)
+        IServiceScopeFactory? seatReleaseScopes = null,
+        DispatchConcurrencySettingsService? dispatchConcurrency = null)
     {
+        _dispatchConcurrency = dispatchConcurrency;
         _seatReleaseScopes = seatReleaseScopes;
         _messageQueue = messageQueue;
         _baseResolver = baseResolver;
@@ -1452,6 +1455,8 @@ public sealed class AgentTaskService
         var gateCreate = _openGate is not null
             && !AgentTaskRoles.IsSpecialist(request.Role)
             && !liveFollowUp;
+        if (gateCreate && _dispatchConcurrency is not null)
+            await _dispatchConcurrency.EnsureInitializedAsync(ct);
         IDbContextTransaction? gateTx = null;
         DelegationOpenGate.Snapshot? openSnapshot = null;
         CardWorktreeBaseSelection? basePreview = null;

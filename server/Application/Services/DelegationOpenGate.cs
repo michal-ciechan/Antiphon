@@ -26,11 +26,16 @@ public sealed class DelegationOpenGate
 
     private readonly AppDbContext _db;
     private readonly DelegationSettings _settings;
+    private readonly DispatchConcurrencySettingsService? _concurrency;
 
-    public DelegationOpenGate(AppDbContext db, IOptions<DelegationSettings> settings)
+    public DelegationOpenGate(
+        AppDbContext db,
+        IOptions<DelegationSettings> settings,
+        DispatchConcurrencySettingsService? concurrency = null)
     {
         _db = db;
         _settings = settings.Value;
+        _concurrency = concurrency;
     }
 
     public sealed record Occupant(
@@ -67,11 +72,25 @@ public sealed class DelegationOpenGate
         CancellationToken ct)
     {
         await TakeLockAsync(ct);
-        var snapshot = await LoadSnapshotAsync(projectId, role, ct);
-        if (ignoreConcurrencyLimit || !snapshot.WouldRefuse)
-            return snapshot;
+        if (_concurrency is null)
+        {
+            var snapshot = await LoadSnapshotAsync(projectId, role, ct);
+            if (ignoreConcurrencyLimit || !snapshot.WouldRefuse)
+                return snapshot;
+            throw new ConcurrencyLimitException(ToProblem(snapshot));
+        }
 
-        throw new ConcurrencyLimitException(ToProblem(snapshot));
+        var population = DispatchConcurrencyPolicy.Count(await LoadPopulationAsync(ct), projectId);
+        var policy = await _concurrency.ReadEffectiveAsync(projectId, ct);
+        var decision = DispatchConcurrencyPolicy.DecideCreate(policy, population, role, ignoreConcurrencyLimit);
+        var open = population.OpenRows
+            .Select(row => new Occupant(row.Id, row.Role, row.Status, row.Title, row.Stuck))
+            .ToList();
+        var admitted = new Snapshot(
+            open, role, policy.MaxParallel, policy.Role(role).MaxParallel, projectId);
+        if (!decision.Admit)
+            throw new ConcurrencyLimitException(ToPolicyProblem(policy, decision, population, projectId));
+        return admitted;
     }
 
     public static ConcurrencyLimitProblemDto ToProblem(Snapshot snapshot)
@@ -116,11 +135,13 @@ public sealed class DelegationOpenGate
             .Where(AgentTaskRoles.NotSpecialist)
             .Where(t => OpenStatuses.Contains(t.Status))
             .Where(t => t.ProjectId == projectId)
-            .Select(t => new { t.Id, t.Role, t.Status, t.Title })
+            .Select(t => new { t.Id, t.Role, t.Status, t.Title, t.CreatedAt })
             .ToListAsync(ct);
 
         var stuck = await LoadStuckLabelsAsync(rows.Select(r => r.Id).ToList(), ct);
         var open = rows
+            .OrderBy(r => r.CreatedAt)
+            .ThenBy(r => r.Id)
             .Select(r => new Occupant(
                 r.Id,
                 r.Role,
@@ -174,5 +195,75 @@ public sealed class DelegationOpenGate
         }
 
         return text.Trim().TrimStart(';').Trim();
+    }
+
+    private async Task<List<TaskPopulationRow>> LoadPopulationAsync(CancellationToken ct)
+    {
+        var rows = await _db.AgentTasks.AsNoTracking()
+            .Select(t => new
+            {
+                t.Id,
+                t.ProjectId,
+                t.Role,
+                t.Status,
+                t.CreatedAt,
+                t.CapacityWaitRetained,
+                t.Title,
+            })
+            .ToListAsync(ct);
+        var stuck = await LoadStuckLabelsAsync(rows.Select(row => row.Id).ToList(), ct);
+        return rows.Select(row => new TaskPopulationRow(
+            row.Id,
+            row.ProjectId,
+            row.Role,
+            row.Status,
+            row.CreatedAt,
+            row.CapacityWaitRetained,
+            row.Title,
+            stuck.GetValueOrDefault(row.Id))).ToList();
+    }
+
+    private static ConcurrencyLimitProblemDto ToPolicyProblem(
+        EffectivePolicy policy,
+        DispatchDecision decision,
+        PopulationSnapshot population,
+        Guid? projectId)
+    {
+        var byId = population.OpenRows
+            .Concat(population.ParallelRows)
+            .Concat(population.QueuedRows)
+            .GroupBy(row => row.Id)
+            .ToDictionary(group => group.Key, group => group.First());
+        var listed = decision.ListedOccupantIds
+            .Select(id => byId[id])
+            .Select(row => ToOccupantDto(new Occupant(row.Id, row.Role, row.Status, row.Title, row.Stuck)))
+            .ToList();
+        var primary = decision.Exceeded.First(item =>
+            item.Population == decision.Population && item.Axis == decision.Axis);
+        var roleName = primary.Axis == DispatchConcurrencyPolicy.AxisRole ? primary.Role : null;
+        ResolvedRole? resolved = roleName is not null && Enum.TryParse<AgentTaskRole>(roleName, out var parsed)
+            ? policy.Role(parsed)
+            : null;
+        return new ConcurrencyLimitProblemDto(
+            primary.Axis,
+            roleName,
+            decision.Count,
+            decision.Limit,
+            listed,
+            ConcurrencyLimitException.OverrideFlag,
+            projectId,
+            decision.Population ?? DispatchConcurrencyPolicy.PopulationOpen,
+            policy.Mode.ToString(),
+            primary.Source,
+            policy.GlobalRevision,
+            policy.ProjectRevision,
+            decision.CanOverride,
+            decision.Exceeded,
+            decision.TotalOccupants,
+            decision.Omitted,
+            policy.ParallelSource,
+            policy.QueuedSource,
+            resolved?.ParallelSource,
+            resolved?.QueuedSource);
     }
 }

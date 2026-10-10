@@ -144,10 +144,11 @@ public sealed record CreateAgentTaskRequest(
     /// </summary>
     bool AutoContinue = false,
     /// <summary>
-    /// Bypass the CARD-0147 create-time 409 <c>concurrency_limit</c>. Default false: a new
-    /// non-specialist task that would push the fleet or this role past the cap is refused.
-    /// True queues anyway and records a Warning naming the counts; it does not raise
-    /// <see cref="Settings.DelegationSettings.MaxConcurrentTasks"/>.
+    /// Bypass the CARD-0147 create-time 409 <c>concurrency_limit</c> for LegacyOpen open caps
+    /// only. Default false. True queues that one request and records a Warning; it does not
+    /// raise <see cref="Settings.DelegationSettings.MaxConcurrentTasks"/>, does not lift a queued
+    /// bound, and does not lift SeparateQueues queue or running limits. <c>canOverride=false</c>
+    /// on the 409 is authoritative. The flag is not stored on the accepted row.
     /// </summary>
     bool IgnoreConcurrencyLimit = false,
     /// <summary>
