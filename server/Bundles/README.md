@@ -30,6 +30,8 @@ accidentally-embedded file fails a test instead of reaching an agent.
   warning count, "slices 1 and 5 already landed" — belongs in the brief for that one dispatch, not
   here. That split is the reason this directory exists.
 
+Live operating settings are not bundle content. The generated file, its path, and why it stays out of this directory are owned by [Generated orchestrator instructions (CARD-0822)](../../docs/agent-instruction-file-contract.md#generated-orchestrator-instructions-card-0822).
+
 ## Which agent carries which bundle
 
 Delegates get theirs from the role map in `InstructionBundles.ForDelegate` (Orchestrator tasks:

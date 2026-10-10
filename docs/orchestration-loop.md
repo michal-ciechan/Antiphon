@@ -441,7 +441,9 @@ is the `orchestrator` bundle; this section carries the reasons.
    `PUT /api/hosts/server2/budget` with `{ "maxInFlight": <n>, "reason": "<why>" }` can
    hold new dispatch, but is an operator-only setting; the orchestrator does not write it on its
    own initiative. The orchestrator still keeps its six-task server2 default when no lower host
-   budget is enforced.
+   budget is enforced. Live operating settings: read the file at ANTIPHON_ORCHESTRATOR_INSTRUCTIONS
+   (or GET /api/orchestrator-instructions) at session start, after compaction and when a
+   settings-changed note arrives; it outranks the numbers in AGENTS.md.
 2. **On every completion, dispatch the named next stage.** Read `next=` and `handoff:` off the
    completion header (§1, CARD-0146). `next=unmarked` goes back to the same delegate for the
    missing block (§0's ladder); it is never guessed from the diff.

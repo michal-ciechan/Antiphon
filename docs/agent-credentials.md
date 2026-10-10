@@ -39,6 +39,11 @@ or the Settings UI).
 authenticates with `ANTHROPIC_API_KEY=<this>`"*; an API key says *"the value called
 `anthropic-default` is `<this>`, and anyone may reference it"*.
 
+The generated orchestrator instructions file is not one of these stores and is not a credential.
+The renderer refuses output that contains `{{key:` or a secret environment or header name, and it
+never reads these stores or launch-environment JSON. See
+[Generated orchestrator instructions (CARD-0822)](agent-instruction-file-contract.md#generated-orchestrator-instructions-card-0822).
+
 Grok's OAuth session lives in `GROK_HOME/auth.json` (default `~/.grok/auth.json`). That file is
 Grok's, never copied into Antiphon, never written by a launch, and never a secret Antiphon
 stores. When it is missing, registry-path pool Grok fails fast (CARD-0324) rather than typing

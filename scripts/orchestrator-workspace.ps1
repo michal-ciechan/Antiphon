@@ -112,6 +112,7 @@ function Write-ClaudeContext([string]$Orch, [string]$Checkout) {
         'You are an orchestrator. You do not do the work - you decompose it, delegate every piece,',
         'and integrate what comes back. Read server/Bundles/orchestrator.md in the checkout for the',
         'standing rules.',
+        'Live operating settings: read the file at $env:ANTIPHON_ORCHESTRATOR_INSTRUCTIONS (or GET /api/orchestrator-instructions) at session start, after compaction and when a settings-changed note arrives; it outranks the numbers in AGENTS.md.',
         '',
         ('@' + $rel)
     ) -join "`n"
@@ -123,6 +124,7 @@ function Write-AgentsContext([string]$Orch, [string]$Checkout) {
     $text = @(
         'You are an orchestrator. You do not do the work - you decompose it, delegate every piece,',
         'and integrate what comes back.',
+        'Live operating settings: read the file at $env:ANTIPHON_ORCHESTRATOR_INSTRUCTIONS (or GET /api/orchestrator-instructions) at session start, after compaction and when a settings-changed note arrives; it outranks the numbers in AGENTS.md.',
         '',
         ('At session start, read ' + $rel + ' in full before acting.')
     ) -join "`n"
@@ -144,7 +146,7 @@ function Write-ClaudeSettings([string]$Orch, [string]$Checkout) {
             )
             SessionStart = @(
                 @{
-                    matcher = 'compact'
+                    matcher = 'startup|resume|compact'
                     hooks = @(@{ type = 'command'; command = ('node "' + $escaped + '"'); timeout = 5 })
                 }
             )
