@@ -541,3 +541,46 @@ blocks, append the Telegram preset rendered with CRLF line endings (2 386 chars)
 `\n\n`, then add `--append-system-prompt` (22) plus six args (`--name`, `task-1a2b3c4d`, `--model`,
 `opus`, `--session-id`, a 36-char GUID) at length plus 3 each, plus 6 for the append flag's own
 quoting. The test's budget is `CommandLineBudgetChars` (30 000) minus 500.
+
+## Results
+
+Closed checkpoint run `20261010-155741-add3` on `feat/card-task-b6ed9f07` at tested source `f4957a16b2e97dd195a984da76a7f51a1b66fd3a` (S4). Verdict GREEN, exit 0. Source state clean, buildSource verified. Wall 4m16s. Token bound. `restart: none`. Post-land Mutation was not run. PC-1 through PC-7 stay pending.
+
+| CP | executed | passed | failed | skipped | slot | waited |
+|---|---|---|---|---|---|---|
+| CP-1 | 23 | 23 | 0 | 0 | granted | 0s |
+| CP-2 | 98 | 98 | 0 | 0 | granted | 0s |
+| CP-3 | 16 | 16 | 0 | 0 | granted | 0s |
+| CP-4 | 10 | 10 | 0 | 0 | granted | 0s |
+| CP-5 | n/a | n/a | n/a | n/a | granted | 0s |
+
+CP-5 command exit 0. Console: `HOOKS TESTS EXIT CODE: 0  (PASS)`, pass 43, fail 0. Passing cases include `SessionStart matcher is startup|resume|compact and reuses the same wrapper`, startup injects, resume injects, compact injects the file then `COMPACT_CONTEXT`, startup silent when the env is missing, startup silent when the file is missing, startup cuts a 40 KiB file at 16384 bytes and adds the marker, and startup silent for a worker even when the file exists.
+
+Unedited CHECKPOINT lines:
+
+```
+CHECKPOINT CP-5 commit=f4957a16b2e97dd195a984da76a7f51a1b66fd3a build=n/a filter=pwsh -File scripts/test-hooks.ps1 executed=n/a passed=n/a failed=n/a skipped=n/a trx=n/a exit=0 slot=granted waited=0s dirty=0 source=f4957a16b2e97dd195a984da76a7f51a1b66fd3a sourceState=clean buildSource=notApplicable
+CHECKPOINT CP-2 commit=f4957a16b2e97dd195a984da76a7f51a1b66fd3a build=reused filter=/*/*/(StandingPipelinePolicyDocumentationTests*)|(TaskPlatformGuidanceTests*)|(RunnerDefaultGuidanceTests*)|(InstructionBundleTests*)|(PolicyRefreshDeltaTests*)/* executed=98 passed=98 failed=0 skipped=0 trx=/work/worktrees/task-b6ed9f07/.antiphon/checkpoints/20261010-155741-add3/rows/CP-2/run.trx slot=granted waited=0s dirty=0 source=f4957a16b2e97dd195a984da76a7f51a1b66fd3a sourceState=clean buildSource=verified
+CHECKPOINT CP-1 commit=f4957a16b2e97dd195a984da76a7f51a1b66fd3a build=ok filter=/*/*/(OrchestratorInstructionsRendererTests*)|(OrchestratorInstructionsDeltaTests*)|(OrchestratorInstructionsRecipientTests*)|(OrchestratorInstructionsPathTests*)|(OrchestratorInstructionsGuidanceTests*)|(OrchestratorInstructionsMigrationShapeTests*)/* executed=23 passed=23 failed=0 skipped=0 trx=/work/worktrees/task-b6ed9f07/.antiphon/checkpoints/20261010-155741-add3/rows/CP-1/run.trx slot=granted waited=0s dirty=0 source=f4957a16b2e97dd195a984da76a7f51a1b66fd3a sourceState=clean buildSource=verified
+CHECKPOINT CP-3 commit=f4957a16b2e97dd195a984da76a7f51a1b66fd3a build=reused filter=/*/*/OrchestratorInstructionsRefreshTests/* executed=16 passed=16 failed=0 skipped=0 trx=/work/worktrees/task-b6ed9f07/.antiphon/checkpoints/20261010-155741-add3/rows/CP-3/run.trx slot=granted waited=0s dirty=0 source=f4957a16b2e97dd195a984da76a7f51a1b66fd3a sourceState=clean buildSource=verified
+CHECKPOINT CP-4 commit=f4957a16b2e97dd195a984da76a7f51a1b66fd3a build=reused filter=/*/*/(CompactionRecoveryTests*)|(OrchestratorInstructionsEndpointTests*)/* executed=10 passed=10 failed=0 skipped=0 trx=/work/worktrees/task-b6ed9f07/.antiphon/checkpoints/20261010-155741-add3/rows/CP-4/run.trx slot=granted waited=0s dirty=0 source=f4957a16b2e97dd195a984da76a7f51a1b66fd3a sourceState=clean buildSource=verified
+```
+
+Evidence: `.antiphon/checkpoints/20261010-155741-add3/report.md`. The tool deleted `bin-c822/`.
+
+Bundle trimmed LF next to CP-2: 13861 before the appendix swap (S3 tree), 13855 after the verbatim swap. That after-swap length is above the plan baseline 13671 because CARD-0505 had already grown the standing-policy paragraph; the swap itself removed 6 characters. The argv estimate at 13855 was 29684 against the 29500 budget. Unpinned prose outside that paragraph, the swap, the autonomy sentence, and the platform paragraph was shortened so the committed file is 13655 and the same formula gives 29484. `the_worst_case_composition_measured_sits_far_under_the_budget` and `orchestrator_bundle_points_to_operational_autonomy_without_growing` passed inside CP-2. Tests and caps were left unchanged.
+
+Ordinary V/R: CP-1 covers V-1, V-2, V-3, V-4, V-14, R-1, R-8 (23 passed). CP-2 covers R-7 (98 passed). CP-3 covers V-5, V-6 (six arguments, including `dispatch-concurrency`), V-7, V-8, V-9, V-10, R-2, R-3, R-4, R-5, R-6 (16 passed). CP-4 covers V-11, V-12, R-8 (10 passed: compaction 8, endpoint 2). CP-5 covers V-13 (exit 0).
+
+Writer signals: `runner-defaults rev {next}` after a successful runner-defaults save (`Same` returns before any signal); `host-budget {hostId}` after the host-budget commit; `hold {kind}/{alias}` on successful hold upsert and clear; `routing-pin {role}` after pin upsert save, after a clear that saves, and once per pin expired and saved; `dispatch-concurrency rev {revision}` only after `PutAsync` commits and `PublishChangedAsync` (global revision when projectId is null, otherwise the project revision); `runner-capacity {id}` from `SetDeclaredCapacityAsync` after the runner confirms persistence; `runner-drain {id}` after Drain and after Clear save; `runner-retire {runnerId}` from `RunnerRetireService.StampAsync` after `SaveAndMirrorAsync`. Heartbeat capacity records `RunnerCapacityChanged` and does not signal; the instructions sweep is the backstop.
+
+`git merge-tree --write-tree` of `f4957a16b2e97dd195a984da76a7f51a1b66fd3a` against fetched `origin/master` `e43508811033e3996cb4739b9168bce1f315f808` exited 0 with tree `2a757e597eeec1428647c480f970ada47d819072`. The branch was not rebased.
+
+Unlisted runs, each through `scripts/build-slot.ps1`:
+
+- `c822-s4-hooks` lease `2ecfb1ee-f6ce-4ff3-84a0-383cdf08b017` waited=0s held=3s. `scripts/test-hooks.ps1` exit 0, pass 43 fail 0. Reason: S4 hook cases before the closed checkpoint.
+- `c822-s4-auth` lease `480ebffc-e8d1-4d43-8935-e03bea1965ec` waited=0s held=177s. `dotnet build tests/Antiphon.Tests` OutputPath `bin-c822-s4a/` UseAppHost=false, 0 errors. Reason: compile the new guidance class and embed the swapped bundle.
+- `c822-s4-auth-run` lease `e1267dec-9442-4e43-8c1c-f76a80d9fea4` waited=0s held=4s. Guidance 4 passed; orchestrator bundle budget and pin filter 8 passed. Same reason.
+- `c822-tool` lease `5b6c69e9-196a-4d59-aae3-4e532f886b62` waited=0s held=5s. Checkpoint tool bootstrap to `tools/Antiphon.Checkpoints/bin-c822-tool/`. The closed run itself was not wrapped in a second slot.
+
+Slice commits: S1 `719a69c1cfbc1c600ac2656066309f19d29ad2e2`, S2 `0eba109542362df7bb93534e5fd185b948008f5a`, S3 `490566660948ed91593ce5965dad1839040cbdc6`, S4 `f4957a16b2e97dd195a984da76a7f51a1b66fd3a`. Worktree `/work/worktrees/task-b6ed9f07`. Landing owner `b6ed9f07`.
