@@ -235,11 +235,19 @@ public sealed class CodexRunnerImageContractTests
         text.ShouldContain("chmod 0700 \"$codex_home\"\n");
         Order(home, "ForeignStateOwner path=$codex_home", "chown \"$uid:$gid\" \"$codex_home\"").ShouldBeTrue();
         foreach (var line in text.Split('\n').Where(line => line.Contains("$codex_home", StringComparison.Ordinal)))
+        {
             Regex.IsMatch(line, @"\b(chown|chmod)\s+-R\b").ShouldBeFalse("recursive over the Codex home: " + line);
+            Regex.IsMatch(line, @"\bown_tree\b").ShouldBeFalse("own_tree over the Codex home: " + line);
+        }
         text.Contains("\nchown -R ", StringComparison.Ordinal).ShouldBeFalse(
             "volume ownership is per path so a vanished file does not fail init");
-        foreach (var root in new[] { "/state", "/work", "/runner-state" })
-            text.ShouldContain("\nown_tree " + root + "\n", customMessage: "the volume sweep never reaches the host home");
+        // Exactly these three calls, in this order. An added own_tree, including
+        // own_tree "$codex_home", would walk the operator's host home.
+        text.Split('\n')
+            .Select(line => line.Trim())
+            .Where(line => line.StartsWith("own_tree ", StringComparison.Ordinal))
+            .ToArray()
+            .ShouldBe(new[] { "own_tree /state", "own_tree /work", "own_tree /runner-state" });
 
         // Only when absent: neither a regular file nor a dangling link is ever replaced.
         text.ShouldContain("codex_config=\"$codex_home/config.toml\"\n");

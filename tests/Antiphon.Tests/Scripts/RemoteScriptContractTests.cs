@@ -6211,6 +6211,33 @@ public sealed class RemoteScriptContractTests
         output.Contains("state-init owned uid=", StringComparison.Ordinal).ShouldBeFalse();
     }
 
+    // A dangling symlink is present. Plain chown follows it and fails state-init when the
+    // target is absent; chown -h owns the link. The denied case above still refuses a path
+    // that remains and cannot be owned.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1168_State_init_owns_a_dangling_symlink()
+    {
+        var output = LinuxShell(C1168Harness("dangling")).Replace("\r\n", "\n");
+        output.ShouldContain("dangling exit=0\n");
+        output.ShouldContain("dangling | state-init owned uid=");
+        output.ShouldContain("link-present=yes\n");
+        output.ShouldContain("link-target-present=no\n");
+        output.ShouldContain("link-visited=yes\n");
+        output.ShouldContain("link-chown=-h\n");
+        output.ShouldContain("link-chown-count=1\n");
+        output.Contains("cannot dereference", StringComparison.Ordinal).ShouldBeFalse();
+
+        var script = DockerStackDocuments.Read("docker/stack/init-state.sh").Replace("\r\n", "\n");
+        var start = script.IndexOf("\nown_tree() {\n", StringComparison.Ordinal);
+        start.ShouldBeGreaterThanOrEqualTo(0);
+        var end = script.IndexOf("\n}\n", start, StringComparison.Ordinal);
+        end.ShouldBeGreaterThan(start);
+        var own = script[start..(end + 2)];
+        Regex.Matches(own, @"chown -h ""\$uid:\$gid"" ""\$path""").Count.ShouldBe(2);
+        Regex.Matches(own, @"\bchown\b").Count.ShouldBe(2);
+    }
+
     [Test]
     public void C1168_Rollout_docs_keep_redeploy_while_temp_holds_the_shared_store()
     {
@@ -6246,6 +6273,11 @@ public sealed class RemoteScriptContractTests
             #!/bin/sh
             set -eu
             real=/usr/bin/chown
+            flags=
+            if [ "${1:-}" = "-h" ]; then
+              flags=-h
+              shift
+            fi
             if [ "${1:-}" = "-R" ]; then
               shift
               spec=$1
@@ -6254,7 +6286,11 @@ public sealed class RemoteScriptContractTests
               CHOWN_FAIL_FILE=$fail
               export CHOWN_FAIL_FILE
               for dir in "$@"; do
-                find "$dir" -ignore_readdir_race -exec "$0" "$spec" {} + || true
+                if [ -n "$flags" ]; then
+                  find "$dir" -ignore_readdir_race -exec "$0" "$flags" "$spec" {} + || true
+                else
+                  find "$dir" -ignore_readdir_race -exec "$0" "$spec" {} + || true
+                fi
               done
               if [ -s "$fail" ]; then rm -f "$fail"; exit 1; fi
               rm -f "$fail"
@@ -6264,22 +6300,37 @@ public sealed class RemoteScriptContractTests
             shift
             status=0
             for path in "$@"; do
+              if [ -n "${CHOWN_TRACE:-}" ]; then
+                printf '%s %s\n' "${flags:--}" "$path" >> "$CHOWN_TRACE"
+              fi
               if [ -n "${CHOWN_FAULT_PATH:-}" ] && [ "$path" = "$CHOWN_FAULT_PATH" ]; then
                 case "${CHOWN_FAULT_MODE:-}" in
                   vanish)
                     rm -f -- "$path"
-                    "$real" "$spec" -- "$path" >/dev/null 2>&1 || status=1
+                    if [ -n "$flags" ]; then
+                      "$real" "$flags" "$spec" -- "$path" >/dev/null 2>&1 || status=1
+                    else
+                      "$real" "$spec" -- "$path" >/dev/null 2>&1 || status=1
+                    fi
                     ;;
                   denied)
                     printf "chown: changing ownership of '%s': Operation not permitted\n" "$path" >&2
                     status=1
                     ;;
                   *)
-                    "$real" "$spec" -- "$path" || status=1
+                    if [ -n "$flags" ]; then
+                      "$real" "$flags" "$spec" -- "$path" || status=1
+                    else
+                      "$real" "$spec" -- "$path" || status=1
+                    fi
                     ;;
                 esac
               else
-                "$real" "$spec" -- "$path" || status=1
+                if [ -n "$flags" ]; then
+                  "$real" "$flags" "$spec" -- "$path" || status=1
+                else
+                  "$real" "$spec" -- "$path" || status=1
+                fi
               fi
             done
             if [ "$status" -ne 0 ] && [ -n "${CHOWN_FAIL_FILE:-}" ]; then
@@ -6299,8 +6350,17 @@ public sealed class RemoteScriptContractTests
             printf work > "$R/work/marker"
             export PATH="$root/bin:$PATH"
             export R
-            export CHOWN_FAULT_MODE={{mode}}
-            export CHOWN_FAULT_PATH="$R/runner-state/grok/victim"
+            if [ "{{mode}}" = dangling ]; then
+              mkdir -p "$R/work/venv/bin"
+              ln -s /opt/codex/missing "$R/work/venv/bin/codex"
+              export CHOWN_TRACE="$root/chown-trace"
+              : > "$CHOWN_TRACE"
+              unset CHOWN_FAULT_MODE
+              unset CHOWN_FAULT_PATH
+            else
+              export CHOWN_FAULT_MODE={{mode}}
+              export CHOWN_FAULT_PATH="$R/runner-state/grok/victim"
+            fi
             sh "$root/init-state.sh" > "$root/log" 2>&1
             echo "{{mode}} exit=$?"
             sed "s/^/{{mode}} | /" "$root/log"
@@ -6311,6 +6371,24 @@ public sealed class RemoteScriptContractTests
               [ "$(stat -c %u "$f")" = "$uid" ] || ok=no
             done
             echo "survivor-owned=$ok"
+            if [ "{{mode}}" = dangling ]; then
+              link="$R/work/venv/bin/codex"
+              if [ -L "$link" ]; then echo link-present=yes; else echo link-present=no; fi
+              if [ -e "$link" ]; then echo link-target-present=yes; else echo link-target-present=no; fi
+              count=0
+              flag=-
+              while IFS=' ' read -r seen rest; do
+                if [ "$rest" = "$link" ]; then
+                  count=$((count + 1))
+                  if [ "$count" -eq 1 ]; then flag=$seen; fi
+                fi
+              done < "$CHOWN_TRACE"
+              if [ "$count" -ge 1 ]; then echo link-visited=yes; else echo link-visited=no; fi
+              echo "link-chown=$flag"
+              echo "link-chown-count=$count"
+              owner=$(stat -c %u "$link" 2>/dev/null || echo missing)
+              if [ "$owner" = "$uid" ]; then echo link-owned=yes; else echo link-owned=no; fi
+            fi
             """;
     }
 
