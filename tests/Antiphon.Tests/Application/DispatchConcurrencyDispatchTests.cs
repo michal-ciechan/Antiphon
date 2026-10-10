@@ -1,4 +1,5 @@
 using System.Data.Common;
+using System.Globalization;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Services;
@@ -9,6 +10,7 @@ using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.EntityFrameworkCore.Storage;
 using Shouldly;
 using TUnit.Core;
 
@@ -427,13 +429,16 @@ public class DispatchConcurrencyDispatchTests
             AgentTaskRole.Code, AgentTaskStatus.Queued, world.Shop.ProjectP, WorkspaceMode.Shared,
             agentId: agentId, ephemeral: false, followUpOf: followUpOf, title: marker);
         var launches = world.Launches.Items.Count;
+        // The live follow-up shares the standing session's earlier UserPrompt.
+        // This watermark is that count: the hold leaves it unchanged, and a fresh session stays at zero.
+        var prompts = await PromptCountAsync(world, sessionId);
         await TickAsync(world);
         var held = await world.ReloadAsync(candidate.Id);
         held.Status.ShouldBe(AgentTaskStatus.Queued, "every-path-gated");
         held.AgentSessionId.ShouldBeNull("held-custody");
         held.TokenHash.ShouldBeNull("held-custody");
         world.Launches.Items.Count.ShouldBe(launches, "every-path-gated");
-        (await PromptCountAsync(world, sessionId)).ShouldBe(0, "every-path-gated");
+        (await PromptCountAsync(world, sessionId)).ShouldBe(prompts, "every-path-gated");
         await AssertAgentUnchangedAsync(world, agentId, before, pool);
 
         await world.SetStatusAsync(occupant.Id, AgentTaskStatus.Succeeded);
@@ -612,6 +617,7 @@ public class DispatchConcurrencyDispatchTests
         {
             await WaitAsync(pause.AtSave.Task);
             world.Launches.ParallelKeyIsFree().ShouldBeFalse("no-external-io-under-key");
+            world.Launches.ClaimBackendPid = await ClaimBackendPidAsync(db);
             var project = await world.Shop.ReadProjectAsync(world.Shop.ProjectP);
             var global = await world.Shop.ReadGlobalAsync();
             var put = Task.Run(async () =>
@@ -797,6 +803,17 @@ public class DispatchConcurrencyDispatchTests
             .OrderByDescending(e => e.At)
             .Select(e => e.Detail)
             .FirstAsync();
+    }
+
+    private static async Task<int> ClaimBackendPidAsync(AppDbContext db)
+    {
+        var connection = db.Database.GetDbConnection();
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT pg_backend_pid()";
+        if (db.Database.CurrentTransaction is { } current)
+            command.Transaction = current.GetDbTransaction();
+        var scalar = await command.ExecuteScalarAsync();
+        return Convert.ToInt32(scalar, CultureInfo.InvariantCulture);
     }
 
     private static async Task<int> PromptCountAsync(ConcurrencyDispatchWorld world, Guid sessionId)
