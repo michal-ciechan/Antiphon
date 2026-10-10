@@ -150,6 +150,38 @@ public class AgentTaskLandApprovalRequestTests
     }
 
     [Test]
+    public async Task C1180_RepairSourceAdoptionNamesTheCarrierRoute()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        var land = CreateLand(db, new AgentTaskLandQueue(), Frozen(DateTime.UtcNow));
+        var cardId = await SeedCardAsync(db);
+        var projectId = await db.Cards.Where(c => c.Id == cardId)
+            .Select(c => c.Board.ProjectId)
+            .SingleAsync();
+        var owner = await SeedSucceededWorktreeAsync(db, cardId);
+        var source = await SeedSucceededWorktreeAsync(db, cardId);
+        owner.ProjectId = projectId;
+        source.ProjectId = projectId;
+        source.RepairSourceTaskId = owner.Id;
+        await db.SaveChangesAsync();
+
+        var error = await Should.ThrowAsync<ConflictException>(() => land.RequestAsync(owner.Id,
+            new LandAgentTaskRequest(ExpectedSourceSha: ShaB, ReviewEvidenceId: Guid.NewGuid(),
+                AdoptFromTaskId: source.Id), CancellationToken.None));
+
+        error.StatusCode.ShouldBe(409);
+        error.Code.ShouldBe("adopt_source_invalid");
+        error.Message.ShouldContain("RepairSourceTaskId");
+        error.Message.ShouldContain("can never be an adoption source");
+        error.Message.ShouldContain("-StartRef");
+        error.Message.ShouldContain("no -RepairSource");
+        error.Message.ShouldContain("at least one commit");
+        error.Message.ShouldContain("-FromTask");
+        (await db.AgentTaskLandRequests.CountAsync()).ShouldBe(0);
+    }
+
+    [Test]
     public async Task C788_OwnerMismatchNamesSiblingAndAdoptionShape()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
