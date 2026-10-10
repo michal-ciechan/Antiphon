@@ -182,4 +182,58 @@ public class CompactionRecoveryTests
         await h.Queue.OnTurnEndAsync(h.SessionId, CancellationToken.None);
         h.Adapter.SubmittedBodies.ShouldBe([ChannelPreamble.RecoveryNoteBody]);
     }
+
+    [Test]
+    public async Task Compact_boundary_on_a_non_claude_orchestrator_session_queues_the_instructions_re_read_note()
+    {
+        var settings = new Antiphon.Server.Application.Settings.DelegationSettings();
+        await using var h = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        {
+            AlwaysOn = true,
+            Delegation = settings,
+            ConfigureServices = services => services.AddSingleton<CompactionRecoveryService>(),
+        });
+        settings.OrchestratorInstructions.Path = Path.Combine(h.TempRoot, "ANTIPHON_ORCHESTRATOR_INSTRUCTIONS.md");
+        await using var db = CreateContext();
+        await db.AgentSessions.Where(session => session.Id == h.SessionId)
+            .ExecuteUpdateAsync(u => u.SetProperty(session => session.AgentKind, AgentKind.Grok));
+        db.AgentBundleAttachments.Add(new Antiphon.Server.Domain.Entities.AgentBundleAttachment
+        {
+            AgentId = h.AgentId,
+            BundleKey = InstructionBundles.Orchestrator,
+            Position = 0,
+            CreatedAt = h.Now,
+        });
+        await db.SaveChangesAsync();
+
+        await h.Runtime.ObserveTranscriptAsync(Boundary(h.SessionId, 6), CancellationToken.None);
+
+        h.Adapter.SubmittedBodies.Count.ShouldBe(1);
+        var body = h.Adapter.SubmittedBodies[0];
+        body.ShouldBe(ChannelPreamble.OrchestratorInstructionsCompactionBody(
+            settings.OrchestratorInstructions.Path,
+            settings.ApiBaseUrl.TrimEnd('/') + "/api/orchestrator-instructions"));
+        body.ShouldContain("GET /api/orchestrator-instructions");
+        body.ShouldContain(settings.OrchestratorInstructions.Path);
+    }
+
+    [Test]
+    public async Task Compact_boundary_on_a_claude_orchestrator_session_does_not_add_a_second_note()
+    {
+        await using var h = await CreateHarnessAsync();
+        await SetPreambleAsync(h);
+        await using var db = CreateContext();
+        db.AgentBundleAttachments.Add(new Antiphon.Server.Domain.Entities.AgentBundleAttachment
+        {
+            AgentId = h.AgentId,
+            BundleKey = InstructionBundles.Orchestrator,
+            Position = 0,
+            CreatedAt = h.Now,
+        });
+        await db.SaveChangesAsync();
+
+        await h.Runtime.ObserveTranscriptAsync(Boundary(h.SessionId, 8), CancellationToken.None);
+
+        h.Adapter.SubmittedBodies.ShouldBe([ChannelPreamble.RecoveryNoteBody]);
+    }
 }

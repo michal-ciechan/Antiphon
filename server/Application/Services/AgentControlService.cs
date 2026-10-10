@@ -605,6 +605,7 @@ public sealed class AgentControlService : ICompactionContinuationResume
                 // leaving the old stamp would keep flagging drift the resume just resolved.
                 previous.ComposedBundleStamp = composition.ComposedStamp;
                 previous.InstructionFileStamp = composition.InstructionFileStamp;
+                previous.OrchestratorInstructionsVersion = composition.OrchestratorInstructionsVersion;
                 // CARD-0186: a PATCH that changed the agent's lane takes effect on the next
                 // crash-restart rather than being silently ignored for the life of this row.
                 previous.SessionBackend = agent.SessionBackend;
@@ -660,6 +661,7 @@ public sealed class AgentControlService : ICompactionContinuationResume
                 EffectiveModelId = resolved.EffectiveModelId,
                 ComposedBundleStamp = composition.ComposedStamp,
                 InstructionFileStamp = composition.InstructionFileStamp,
+                OrchestratorInstructionsVersion = composition.OrchestratorInstructionsVersion,
                 RunnerId = _phoneHome?.BoundRunnerId(agent),
                 RunnerStoreId = _phoneHome?.BoundRunnerId(agent) is { } boundRunner
                     ? await ResolvePhoneHomeStoreIdAsync(boundRunner, ct) : null,
@@ -1022,6 +1024,7 @@ public sealed class AgentControlService : ICompactionContinuationResume
                 session.EffectiveModelId = null;
                 session.ComposedBundleStamp = null;
                 session.InstructionFileStamp = null;
+                session.OrchestratorInstructionsVersion = null;
             }
             else
             {
@@ -1047,6 +1050,7 @@ public sealed class AgentControlService : ICompactionContinuationResume
                     EffectiveModelId = null,
                     ComposedBundleStamp = null,
                     InstructionFileStamp = null,
+                    OrchestratorInstructionsVersion = null,
                 };
                 _db.AgentSessions.Add(session);
             }
