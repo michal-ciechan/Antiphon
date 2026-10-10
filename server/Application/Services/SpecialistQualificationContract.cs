@@ -28,7 +28,9 @@ public static class SpecialistQualificationContract
             [new(1, produced ? TranscriptKinds.AssistantText : TranscriptKinds.UserPrompt, text, now.AddMinutes(-3))],
             produced ? new("C:\\fixture", CheckGitEvidenceScope.TaskBranch, "master..fixture", [$"abc1234 change {nonce}.cs"], 1, 0, null) : null,
             [], [], Deadline: produced ? null : new("BootModelWait", TimeSpan.FromMinutes(2), TimeSpan.FromMinutes(3), true,
-                "The provider has not answered the delivered prompt; the harness kills and retries this boot once."));
+                "The provider has not answered the delivered prompt; the harness only detects the stall "
+                + "(CARD-1151 for a delegate task, CARD-1156 for a taskless AlwaysOn session): it does not "
+                + "kill, fail, retry, stop or release the session."));
         return new(shape, nonce, CheckInterpretation.BuildGoal(checkedTask, 1, RenderDigest(facts))
             + "\nFor this qualification reading, include the distinctive topic identifier from the captured facts.");
     }
