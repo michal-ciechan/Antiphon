@@ -202,8 +202,14 @@ public sealed class AgentTaskLandService
                             throw new ConflictException("A task cannot adopt itself.", "adopt_source_self");
                         source = await _db.AgentTasks.AsNoTracking().SingleOrDefaultAsync(t => t.Id == sourceId, ct)
                             ?? throw new ConflictException("Adoption source task was not found.", "adopt_source_not_found");
+                        if (source.RepairSourceTaskId is not null)
+                            throw new ConflictException(
+                                "A task with RepairSourceTaskId set can never be an adoption source. " +
+                                "Dispatch a fresh Code -Worktree -StartRef <full-sha> task with no -RepairSource " +
+                                "that records at least one commit, Final-review that carrier, then land the owner with -FromTask.",
+                                "adopt_source_invalid");
                         if (source.Workspace != WorkspaceMode.Worktree || source.Role != AgentTaskRole.Code
-                            || source.RepairSourceTaskId is not null || source.SourceLandingOperationId is not null
+                            || source.SourceLandingOperationId is not null
                             || source.WorktreeBranch is null || source.RepoPath is null || task.RepoPath is null
                             || source.CardId is null || source.CardId != task.CardId
                             || source.ProjectId != task.ProjectId)

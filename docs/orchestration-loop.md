@@ -238,6 +238,8 @@ branch into the original Code owner's source under the reviewed recovery contrac
 
 #### Landing a `-StartRef` repair (CARD-0675)
 
+A task dispatched with `-RepairSource` can never be that source: `-FromTask` is refused `adopt_source_invalid` while `RepairSourceTaskId` is set, and the accepted route is a fresh Code worktree started with `-StartRef` and no `-RepairSource` that records at least one commit.
+
 Review the repair's pushed tip with the **repair task** named as `subjectTaskId` in the Review
 brief. Use a Final round with full ordinary scope; Interim evidence cannot approve adoption. Take
 `review-evidence=<id>` from the Review completion header or `delegate.ps1 -Status <review>`.
