@@ -149,16 +149,22 @@ public class DispatchConcurrencyWireTests
         unknown.StatusCode.ShouldBe(HttpStatusCode.NotFound, "invalid-wire-no-write");
         (await FingerprintAsync(shop)).ShouldBe(before, "invalid-wire-no-write");
 
-        foreach (var (body, label) in new[]
-        {
-            ("""{"expectedRevision":1,"overrides":{},"reason":"y","provenance":"Human"}""", "reason-one"),
-            ("{\"expectedRevision\":2,\"overrides\":{},\"reason\":\"" + new string('b', 400) + "\",\"provenance\":\"Human\"}", "reason-400"),
-            ("""{"expectedRevision":3,"overrides":{"maxQueued":null},"reason":"null","provenance":"Human"}""", "explicit-null"),
-        })
-        {
-            var response = await host.SendAsync(HttpMethod.Put, "/api/dispatch-concurrency", body);
-            response.StatusCode.ShouldBe(HttpStatusCode.OK, label);
-        }
+        var reasonOne = await host.SendAsync(HttpMethod.Put, "/api/dispatch-concurrency", """
+            {"expectedRevision":1,"overrides":{},"reason":"y","provenance":"Human"}
+            """);
+        reasonOne.StatusCode.ShouldBe(HttpStatusCode.OK, "reason-one");
+        var reasonBound = await host.SendAsync(
+            HttpMethod.Put,
+            "/api/dispatch-concurrency",
+            "{\"expectedRevision\":2,\"overrides\":{},\"reason\":\"" + new string('b', 400) + "\",\"provenance\":\"Human\"}");
+        reasonBound.StatusCode.ShouldBe(HttpStatusCode.OK, "reason-400");
+        var explicitNull = await host.SendAsync(HttpMethod.Put, "/api/dispatch-concurrency", """
+            {"expectedRevision":2,"overrides":{"maxQueued":null},"reason":"null","provenance":"Human"}
+            """);
+        explicitNull.StatusCode.ShouldBe(HttpStatusCode.OK, "explicit-null");
+        var savedNull = await Json(explicitNull);
+        savedNull.GetProperty("revision").GetInt64().ShouldBe(3, "explicit-null");
+        savedNull.GetProperty("overrides").GetProperty("maxQueued").ValueKind.ShouldBe(JsonValueKind.Null, "explicit-null");
     }
 
     [Test]

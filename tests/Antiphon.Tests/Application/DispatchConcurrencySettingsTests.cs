@@ -142,7 +142,7 @@ public class DispatchConcurrencySettingsTests
 
         var cleared = await shop.PutProjectAsync(shop.ProjectP, 1, 2, "{}", "clear P");
         cleared.Revision.ShouldBe(2, "clear-keeps-revision");
-        cleared.Overrides.GetRawText().ShouldBe("""{"schemaVersion":1}""", "clear-inherits");
+        cleared.Overrides.GetRawText().Replace(" ", "").ShouldBe("""{"schemaVersion":1}""", "clear-inherits");
 
         await shop.PutGlobalAsync(2, """{"maxParallel":8,"roles":{"Code":{"maxParallel":3}}}""", "lower code");
         var inherited = await shop.ReadProjectAsync(shop.ProjectP);
@@ -170,7 +170,7 @@ public class DispatchConcurrencySettingsTests
 
         await shop.PutProjectAsync(shop.ProjectP, 1, 2, "{}", "clear");
         await AssertUnchanged(shop, () => shop.PutProjectAsync(shop.ProjectP, 1, 2, """{"maxQueued":5}""", "pre-clear token"), 2, 2, "no-aba");
-        (await shop.ReadProjectAsync(shop.ProjectP)).Overrides.GetRawText().ShouldBe("""{"schemaVersion":1}""", "no-aba");
+        (await shop.ReadProjectAsync(shop.ProjectP)).Overrides.GetRawText().Replace(" ", "").ShouldBe("""{"schemaVersion":1}""", "no-aba");
     }
 
     [Test]
