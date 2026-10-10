@@ -3,6 +3,7 @@ using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -59,6 +60,8 @@ public sealed class AgentTaskPipelineStatusService
     private readonly HostBudgetService? _budgets;
     private readonly RemoteWorkspacePreparer? _remotePrep;
     private readonly DispatchConcurrencySettingsService? _concurrency;
+    private readonly PhoneHomeRunnerDirectory? _directory;
+    private readonly RunnerDefaultSettingsService? _runnerDefaults;
 
     public AgentTaskPipelineStatusService(
         AppDbContext db,
@@ -67,7 +70,9 @@ public sealed class AgentTaskPipelineStatusService
         TimeProvider timeProvider,
         HostBudgetService? budgets = null,
         RemoteWorkspacePreparer? remotePrep = null,
-        DispatchConcurrencySettingsService? concurrency = null)
+        DispatchConcurrencySettingsService? concurrency = null,
+        PhoneHomeRunnerDirectory? directory = null,
+        RunnerDefaultSettingsService? runnerDefaults = null)
     {
         _db = db;
         _settings = settings.Value;
@@ -76,6 +81,8 @@ public sealed class AgentTaskPipelineStatusService
         _budgets = budgets;
         _remotePrep = remotePrep;
         _concurrency = concurrency;
+        _directory = directory;
+        _runnerDefaults = runnerDefaults;
     }
 
     public Task<AgentTaskPipelineDto> GetAsync(CancellationToken ct) =>
@@ -267,6 +274,13 @@ public sealed class AgentTaskPipelineStatusService
                     : null));
         }
 
+        IReadOnlyList<SessionRunnerCatalogueEntryDto> runners = _directory is null
+            ? []
+            : await SessionRunnerCatalogue.ListAsync(_directory, _db, _settings, _remotePrep, ct);
+        var defaults = _runnerDefaults is null
+            ? null
+            : await _runnerDefaults.ReadAsync(ct);
+
         return new AgentTaskPipelineDto(
             asOf,
             RecommendationsAreAdvisory: true,
@@ -288,6 +302,8 @@ public sealed class AgentTaskPipelineStatusService
             },
             HostSummaryScope = "fleet",
             ConcurrencyScopes = ProjectScopes(policies, policyScopes, open),
+            Runners = runners,
+            RunnerDefaults = defaults,
         };
     }
 
