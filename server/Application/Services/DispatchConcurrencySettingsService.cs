@@ -138,6 +138,67 @@ public sealed class DispatchConcurrencySettingsService
         }
     }
 
+    /// <summary>
+    /// One repeatable-read snapshot of the global policy and each requested project.
+    /// A missing global row returns null and does not import a seed: pipeline reads stay read-only.
+    /// </summary>
+    public async Task<CoherentPolicies?> ReadCoherentAsync(
+        IReadOnlyCollection<Guid?> scopes, CancellationToken ct)
+    {
+        var owns = _db.Database.CurrentTransaction is null;
+        var tx = owns
+            ? await _db.Database.BeginTransactionAsync(System.Data.IsolationLevel.RepeatableRead, ct)
+            : null;
+        try
+        {
+            var global = await GlobalAsync(tracking: false, ct);
+            if (global is null)
+            {
+                if (owns)
+                    await tx!.CommitAsync(ct);
+                return null;
+            }
+
+            var seed = ReadSeed(global.SeedJson, global.UpdatedAt);
+            var globalOverrides = ReadOverrides(global.OverridesJson);
+            var wanted = scopes
+                .Where(id => id is Guid)
+                .Select(id => id!.Value.ToString("D"))
+                .Distinct(StringComparer.Ordinal)
+                .ToArray();
+            var projects = wanted.Length == 0
+                ? []
+                : await _db.DispatchConcurrencySettings.AsNoTracking()
+                    .Where(row => wanted.Contains(row.ScopeKey))
+                    .ToListAsync(ct);
+            var byKey = projects.ToDictionary(row => row.ScopeKey, StringComparer.Ordinal);
+            var resolved = new Dictionary<string, EffectivePolicy>(StringComparer.Ordinal)
+            {
+                [DispatchConcurrencySettings.GlobalScopeKey] = DispatchConcurrencyPolicy.Resolve(
+                    seed, globalOverrides, null, global.Revision, 0),
+            };
+            foreach (var id in scopes.OfType<Guid>().Distinct())
+            {
+                byKey.TryGetValue(id.ToString("D"), out var row);
+                resolved[id.ToString("D")] = DispatchConcurrencyPolicy.Resolve(
+                    seed,
+                    globalOverrides,
+                    row is null ? null : ReadOverrides(row.OverridesJson),
+                    global.Revision,
+                    row?.Revision ?? 0);
+            }
+
+            if (owns)
+                await tx!.CommitAsync(ct);
+            return new CoherentPolicies(resolved);
+        }
+        finally
+        {
+            if (owns && tx is not null)
+                await tx.DisposeAsync();
+        }
+    }
+
     public async Task<DispatchConcurrencyGlobalDto> GetGlobalAsync(CancellationToken ct)
     {
         await EnsureInitializedAsync(ct);
@@ -398,7 +459,12 @@ public sealed class DispatchConcurrencySettingsService
                 task.Id, task.ProjectId, task.Role, task.Status, task.CreatedAt,
                 task.CapacityWaitRetained, task.Title, null))
             .ToListAsync(ct);
-        var population = DispatchConcurrencyPolicy.Count(rows, projectId);
+        return ToOccupancy(policy, DispatchConcurrencyPolicy.Count(rows, projectId));
+    }
+
+    internal static DispatchConcurrencyOccupancyDto ToOccupancy(
+        EffectivePolicy policy, PopulationSnapshot population)
+    {
         var parallelPopulation = policy.Mode == DispatchConcurrencyMode.LegacyOpen
             ? population.Open
             : population.Parallel;
@@ -593,7 +659,7 @@ public sealed class DispatchConcurrencySettingsService
                     pair.Key.ToString(), pair.Value.MaxParallel.Value, pair.Value.MaxQueued.Value))
                 .ToList());
 
-    private static DispatchConcurrencyEffectiveDto ToEffective(EffectivePolicy policy) =>
+    internal static DispatchConcurrencyEffectiveDto ToEffective(EffectivePolicy policy) =>
         new(
             policy.Mode.ToString(),
             policy.ModeSource,
@@ -692,6 +758,22 @@ public sealed class DispatchConcurrencySettingsService
 
         return false;
     }
+}
+
+/// <summary>Policies read together in one repeatable-read transaction.</summary>
+public sealed class CoherentPolicies
+{
+    private readonly IReadOnlyDictionary<string, EffectivePolicy> _byScope;
+
+    public CoherentPolicies(IReadOnlyDictionary<string, EffectivePolicy> byScope) =>
+        _byScope = byScope;
+
+    public EffectivePolicy Global => _byScope[DispatchConcurrencySettings.GlobalScopeKey];
+
+    public EffectivePolicy For(Guid? projectId) =>
+        projectId is Guid id && _byScope.TryGetValue(id.ToString("D"), out var policy)
+            ? policy
+            : Global;
 }
 
 public sealed class DispatchConcurrencyStartup : IHostedService

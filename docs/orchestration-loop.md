@@ -473,7 +473,14 @@ is the `orchestrator` bundle; this section carries the reasons.
    only the axis. `axis: role`, or any listed occupant in the role you are dispatching: defer —
    that is rule 1, and the flag would lift the per-role cap along with the absolute one.
    `axis: absolute` with no occupant in that role: re-send with `-IgnoreConcurrencyLimit`,
-   because rule 1 is the standing request for cross-stage parallelism.
+   because rule 1 is the standing request for cross-stage parallelism. CARD-0505 adds
+   `population` and `canOverride`: the flag is legal only when `population` is `open` and
+   `canOverride` is true. A queued population, `canOverride` false, or a same-stage collision
+   never justifies it. Read `GET /api/agent-tasks/pipeline?projectId=` (or `?unscoped=true` for
+   the null bucket) and `scripts/dispatch-concurrency.ps1` for the effective mode, sources,
+   revisions, and open/parallel/queued counts. The shipped role defaults stay Code 2, Review 2,
+   and other stages 1; the operator's four-per-stage and six-on-server2 instruction still bounds
+   commissioning. An API ceiling is not permission to spend up to it.
 
 Create-time per-project and per-role gates run before host admission (CARD-0654). Passing
 those gates can still leave a task Queued when its assigned host is at its dispatch budget.
@@ -789,15 +796,17 @@ live value is exposed only in a 409 `concurrency_limit` response, `axis: absolut
 Blocked is outside MaxOpenTasks and still occupies a runner seat. A Blocked session keeps its runner seat until parking releases it. At capacity, read GET /api/session-runners/{id}/slots. orphan=true is not a count of free seats: it marks a seat with no live desktop session or no owner task, and a live Blocked child reads orphan=false with its park field. Answer or cancel each Blocked child.
 An accepted Reply changes a live Blocked task to Working; it does not itself free the runner seat. Use -Continue only for a Blocked question with standing authority; -Refine returns 409 on Blocked. While parking is disabled, do not assume an automatic release deadline.
 The role gate
-uses `Delegation:RolePolicy:<role>:RecommendedInFlight`, also reported as `axis: role` on 409.
-The code defaults in `DelegationSettings.cs` are Code 2, Review 2 and other named roles 1.
-These role settings load at startup and have no runtime settings API. Read their effective values
+uses the effective dispatch-concurrency policy (CARD-0505). A fresh database imports
+`Delegation:RolePolicy:<role>:RecommendedInFlight` and `Delegation:MaxOpenTasks` once; later
+values come from `GET/PUT /api/dispatch-concurrency` and the project route, not from a restart.
+The import defaults are Code 2, Review 2 and other named roles 1, mode `LegacyOpen`.
+`SeparateQueues` is an explicit opt-in. Read effective values
 and occupancy from `GET /api/agent-tasks/pipeline` before dispatching;
 the lower of that role limit and the operator's four-task default applies. The route's host block
 also reports per-host count and limit. `GET /api/session-runners` reports capacity, occupied seats
 and eligibility; `GET /api/runner-defaults` reports the global and per-kind runner defaults, with
 no platform default. These three routes are today's read; CARD-0881 will replace them with a single
-effective-settings endpoint, and CARD-0505 will make the limits settable at runtime.
+effective-settings endpoint. CARD-0505 already stores the dispatch limits at runtime.
 There is no enforced server2 six-task cap beyond its seats unless a host budget is set; use
 `GET /api/hosts` to read each host's `effectiveLimit` and `inFlight`. An operator can set
 `PUT /api/hosts/server2/budget` with `{ "maxInFlight": <n>, "reason": "<why>" }` to hold excess
@@ -805,7 +814,8 @@ new dispatch (`hostBudget`); the orchestrator does not write it on its own initi
 desktop delegated-task cap `MaxConcurrentTasks` defaults to 2 and does not
 count phone-home seats. Antiphon's role and absolute 409 limits and dispatcher limits are the
 hard ceiling. On 409 defer; `-IgnoreConcurrencyLimit` is allowed only for the existing absolute-axis
-case with no same-stage occupant. The full rule set is §1's standing pipeline policy.
+case with no same-stage occupant, and only when `population` is `open` and `canOverride` is true.
+The full rule set is §1's standing pipeline policy.
 
 **A `Test` agent runs and reports. It does not repair.** The boundary, stated so it is not a matter
 of taste:

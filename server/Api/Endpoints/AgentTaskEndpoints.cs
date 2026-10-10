@@ -17,6 +17,16 @@ public static class AgentTaskEndpoints
     /// <summary>Header the delegate script sends; matches ANTIPHON_TASK_TOKEN in the agent's env.</summary>
     public const string TokenHeader = "X-Antiphon-Task-Token";
 
+    public static async Task<IResult> ReadPipelineAsync(
+        string? projectId,
+        string? unscoped,
+        AgentTaskPipelineStatusService pipeline,
+        CancellationToken ct)
+    {
+        var scope = AgentTaskPipelineStatusService.ParseScope(projectId, unscoped);
+        return Results.Ok(await pipeline.GetAsync(scope, ct));
+    }
+
     public static void MapAgentTaskEndpoints(this WebApplication app)
     {
         var tasks = app.MapGroup("/api/agent-tasks").WithTags("AgentTasks");
@@ -87,9 +97,7 @@ public static class AgentTaskEndpoints
 
         // CARD-0304. Declared BEFORE /{id} so "pipeline" is never read as a task id. Read-only
         // fleet projection; advisory recommendations never refuse dispatch from here.
-        tasks.MapGet("/pipeline", async (
-            AgentTaskPipelineStatusService pipeline,
-            CancellationToken ct) => Results.Ok(await pipeline.GetAsync(ct)));
+        tasks.MapGet("/pipeline", ReadPipelineAsync);
 
         // The repo's named areas (CARD-0063). Declared BEFORE /{id} so "areas" is never read as a
         // task id. A read-only listing: the caller needs it to write a -Scope, so a missing or

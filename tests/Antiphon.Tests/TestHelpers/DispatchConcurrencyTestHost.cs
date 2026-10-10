@@ -248,6 +248,8 @@ public sealed class DispatchConcurrencyWireHost : IAsyncDisposable
         builder.Services.AddSingleton<IEventBus>(shop.Bus);
         builder.Services.AddSingleton(Options.Create(shop.Settings));
         builder.Services.AddScoped<DispatchConcurrencySettingsService>();
+        builder.Services.AddSingleton<AreaMapLoader>();
+        builder.Services.AddScoped<AgentTaskPipelineStatusService>();
         builder.Services.AddScoped(sp => new AgentTaskService(
             sp.GetRequiredService<AppDbContext>(),
             new DelegationWorkspaceResolver(NullLogger<DelegationWorkspaceResolver>.Instance),
@@ -264,6 +266,7 @@ public sealed class DispatchConcurrencyWireHost : IAsyncDisposable
         var app = builder.Build();
         app.UseMiddleware<ExceptionMiddleware>();
         app.MapDispatchConcurrencyEndpoints();
+        app.MapGet("/api/agent-tasks/pipeline", AgentTaskEndpoints.ReadPipelineAsync);
         await app.StartAsync();
         var client = new HttpClient { BaseAddress = new Uri(app.Urls.Single()) };
         return new DispatchConcurrencyWireHost(app, client, shop);

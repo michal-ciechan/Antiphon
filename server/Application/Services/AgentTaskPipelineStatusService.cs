@@ -1,4 +1,5 @@
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
@@ -31,6 +32,10 @@ public sealed class AgentTaskPipelineStatusService
     /// </summary>
     internal const string QueueReasonConcurrencyCap = "concurrencyCap";
     internal const string QueueReasonHostBudget = "hostBudget";
+    /// <summary>CARD-0505. SeparateQueues project parallel cap. Does not mask lease, sibling land, or a dated pin.</summary>
+    internal const string QueueReasonProjectParallelLimit = "projectParallelLimit";
+    /// <summary>CARD-0505. SeparateQueues role parallel cap.</summary>
+    internal const string QueueReasonRoleParallelLimit = "roleParallelLimit";
     /// <summary>
     /// CARD-1076 D-6: the latest current-stint Held row is a repository-lease sentence.
     /// Read from that row. This projection does not contact Git.
@@ -53,6 +58,7 @@ public sealed class AgentTaskPipelineStatusService
     private readonly TimeProvider _time;
     private readonly HostBudgetService? _budgets;
     private readonly RemoteWorkspacePreparer? _remotePrep;
+    private readonly DispatchConcurrencySettingsService? _concurrency;
 
     public AgentTaskPipelineStatusService(
         AppDbContext db,
@@ -60,7 +66,8 @@ public sealed class AgentTaskPipelineStatusService
         AreaMapLoader areas,
         TimeProvider timeProvider,
         HostBudgetService? budgets = null,
-        RemoteWorkspacePreparer? remotePrep = null)
+        RemoteWorkspacePreparer? remotePrep = null,
+        DispatchConcurrencySettingsService? concurrency = null)
     {
         _db = db;
         _settings = settings.Value;
@@ -68,10 +75,21 @@ public sealed class AgentTaskPipelineStatusService
         _time = timeProvider;
         _budgets = budgets;
         _remotePrep = remotePrep;
+        _concurrency = concurrency;
     }
 
-    public async Task<AgentTaskPipelineDto> GetAsync(CancellationToken ct)
+    public Task<AgentTaskPipelineDto> GetAsync(CancellationToken ct) =>
+        GetAsync(PipelineScope.Fleet, ct);
+
+    public async Task<AgentTaskPipelineDto> GetAsync(PipelineScope scope, CancellationToken ct)
     {
+        if (scope.Kind == PipelineScopeKind.Project)
+        {
+            var projectId = scope.ProjectId!.Value;
+            if (!await _db.Projects.AsNoTracking().AnyAsync(project => project.Id == projectId, ct))
+                throw new NotFoundException("Project", projectId);
+        }
+
         var asOf = _time.GetUtcNow().UtcDateTime;
 
         var open = await _db.AgentTasks.AsNoTracking()
@@ -85,7 +103,7 @@ public sealed class AgentTaskPipelineStatusService
                 t.CreatedAt, t.DispatchedAt, t.CompletedAt, t.AgentSessionId, t.WorkingDirectory,
                 t.RepoPath, t.Scope, t.Workspace, t.WorktreeBranch, t.DeliverablePath,
                 t.DeliverableRef, t.Complexity, t.FailureReason, t.NextStage, t.NextHandoff, t.RoutingPinId,
-                t.RunnerId, t.CapacityWaitRetained))
+                t.RunnerId, t.CapacityWaitRetained, t.ProjectId))
             .ToListAsync(ct);
 
         var boundStages = await _db.AgentTasks.AsNoTracking()
@@ -96,7 +114,7 @@ public sealed class AgentTaskPipelineStatusService
                 t.CreatedAt, t.DispatchedAt, t.CompletedAt, t.AgentSessionId, t.WorkingDirectory,
                 t.RepoPath, t.Scope, t.Workspace, t.WorktreeBranch, t.DeliverablePath,
                 t.DeliverableRef, t.Complexity, t.FailureReason, t.NextStage, t.NextHandoff, t.RoutingPinId,
-                t.RunnerId, t.CapacityWaitRetained))
+                t.RunnerId, t.CapacityWaitRetained, t.ProjectId))
             .ToListAsync(ct);
 
         var cardIds = open.Select(t => t.CardId)
@@ -123,6 +141,16 @@ public sealed class AgentTaskPipelineStatusService
             .Select(c => new BacklogRow(c.Id, c.BoardId, c.Identifier, c.Title,
                 c.Importance, c.Urgency, c.DueAt, c.Position, c.CreatedAt, c.LabelsJson))
             .ToListAsync(ct);
+        var boardIds = cards.Values.Select(c => c.BoardId)
+            .Concat(backlogCards.Select(c => c.BoardId))
+            .Distinct()
+            .ToList();
+        var boardProjects = boardIds.Count == 0
+            ? new Dictionary<Guid, Guid>()
+            : await _db.Boards.AsNoTracking()
+                .Where(b => boardIds.Contains(b.Id))
+                .ToDictionaryAsync(b => b.Id, b => b.ProjectId, ct);
+        var scopedStages = boundStages.Where(task => TaskInScope(scope, task)).ToList();
         var startedCardIds = boundStages
             .Where(t => t.CardId is not null && t.Status is
                 AgentTaskStatus.Queued or AgentTaskStatus.Dispatched or AgentTaskStatus.Working
@@ -130,7 +158,8 @@ public sealed class AgentTaskPipelineStatusService
             .Select(t => t.CardId!.Value)
             .ToHashSet();
         var candidates = backlogCards
-            .Where(c => !startedCardIds.Contains(c.Id)
+            .Where(c => CardInScope(scope, c.BoardId, boardProjects)
+                && !startedCardIds.Contains(c.Id)
                 && !BoardService.ParseLabels(c.LabelsJson).Contains("post-land-verification", StringComparer.Ordinal))
             .OrderBy(c => CardRanking.OrderKey(c.Importance, c.Urgency, c.DueAt,
                 c.Position, c.CreatedAt, asOf))
@@ -157,12 +186,16 @@ public sealed class AgentTaskPipelineStatusService
             .Where(p => p.CardId != null)
             .ToDictionary(p => (p.CardId!.Value, p.Role));
 
-        var ready = BuildReady(boundStages, cards, stagePins, cardPins, asOf);
+        var ready = BuildReady(scopedStages, cards, stagePins, cardPins, asOf);
 
-        var inFlightRows = open
+        var fleetInFlight = open
             .Where(t => t.Status is AgentTaskStatus.Dispatched or AgentTaskStatus.Working)
             .ToList();
-        var localInFlight = inFlightRows.Count(t => string.IsNullOrEmpty(t.RunnerId)
+        var scopedOpen = open.Where(task => TaskInScope(scope, task)).ToList();
+        var inFlightRows = scopedOpen
+            .Where(t => t.Status is AgentTaskStatus.Dispatched or AgentTaskStatus.Working)
+            .ToList();
+        var localInFlight = fleetInFlight.Count(t => string.IsNullOrEmpty(t.RunnerId)
             && !t.CapacityWaitRetained);
         var limits = _budgets is null
             ? new Dictionary<string, HostLimit>(StringComparer.Ordinal)
@@ -182,22 +215,25 @@ public sealed class AgentTaskPipelineStatusService
         }
         var lastActivity = await LoadLastActivityAsync(inFlightRows, ct);
 
-        var holders = inFlightRows
+        var holders = fleetInFlight
             .Where(t => SharedWriterLeaseProjection.Participates(t.Workspace, t.Role))
             .Select(t => SharedWriterLeaseProjection.Holder.From(
                 t.Id, t.Title, t.RepoPath, t.WorkingDirectory, t.Scope, t.Workspace, t.WorktreeBranch,
                 _areas.Load(t.RepoPath)))
             .ToList();
 
-        var queued = open.Where(t => t.Status == AgentTaskStatus.Queued).ToList();
-        var blocked = open.Where(t => t.Status == AgentTaskStatus.Blocked).ToList();
+        var queued = scopedOpen.Where(t => t.Status == AgentTaskStatus.Queued).ToList();
+        var blocked = scopedOpen.Where(t => t.Status == AgentTaskStatus.Blocked).ToList();
         var siblingLands = await LoadSiblingLandHoldersAsync(queued, ct);
         var dispatchHolds = await LoadQueuedDispatchHoldsAsync(queued, ct);
+        var (policies, policyScopes) = await ReadPoliciesAsync(scope, open, scopedStages, boardProjects, ct);
+        var parallelHolds = ParallelHolds(policies, open, queued);
+        var taskTitles = open.ToDictionary(task => task.Id, task => task.Title);
 
         var stages = new List<AgentTaskPipelineStageDto>(VisibleRoles.Length);
         foreach (var role in VisibleRoles)
         {
-            var recommended = _settings.RecommendedInFlightFor(role);
+            var (recommended, atLimitBound) = StageLimit(policies, scope, role);
             var roleInFlight = inFlightRows
                 .Where(t => t.Role == role)
                 .OrderBy(t => t.CreatedAt).ThenBy(t => t.Id)
@@ -207,7 +243,8 @@ public sealed class AgentTaskPipelineStatusService
                 .Where(t => t.Role == role)
                 .OrderBy(t => t.CreatedAt).ThenBy(t => t.Id)
                 .Select(t => ToQueued(t, cards, holders, stagePins, cardPins, asOf,
-                    localInFlight, localLimit, limits, remoteOccupancy, siblingLands, dispatchHolds))
+                    localInFlight, localLimit, limits, remoteOccupancy, siblingLands, dispatchHolds,
+                    parallelHolds, taskTitles))
                 .ToList();
             var roleBlocked = blocked
                 .Where(t => t.Role == role)
@@ -220,7 +257,7 @@ public sealed class AgentTaskPipelineStatusService
                 role,
                 recommended,
                 roleInFlight.Count,
-                recommended is int limit && roleInFlight.Count >= limit,
+                atLimitBound is int limit && roleInFlight.Count >= limit,
                 roleInFlight,
                 roleQueued,
                 roleBlocked,
@@ -241,8 +278,149 @@ public sealed class AgentTaskPipelineStatusService
             Hosts = limits.Values.OrderBy(h => h.HostId, StringComparer.Ordinal)
                 .Select(h => new HostLimitSummaryDto(h.HostId,
                     h.HostId == "local" ? localInFlight : remoteOccupancy.GetValueOrDefault(h.HostId),
-                    h.Effective, h.Configured, h.Declared, h.Source)).ToArray()
+                    h.Effective, h.Configured, h.Declared, h.Source)
+                { Scope = "fleet" }).ToArray(),
+            TaskScope = scope.Kind switch
+            {
+                PipelineScopeKind.Project => "project",
+                PipelineScopeKind.NullBucket => "null",
+                _ => "fleet",
+            },
+            HostSummaryScope = "fleet",
+            ConcurrencyScopes = ProjectScopes(policies, policyScopes, open),
         };
+    }
+
+    public static PipelineScope ParseScope(string? projectId, string? unscoped)
+    {
+        var hasProject = !string.IsNullOrWhiteSpace(projectId);
+        var hasUnscoped = unscoped is not null;
+        if (hasProject && hasUnscoped)
+            throw new ValidationException("projectId", "projectId and unscoped are mutually exclusive.");
+        if (hasUnscoped && !string.Equals(unscoped, "true", StringComparison.OrdinalIgnoreCase))
+            throw new ValidationException("unscoped", "unscoped must be true.");
+        if (!hasProject)
+            return hasUnscoped ? new PipelineScope(PipelineScopeKind.NullBucket, null) : PipelineScope.Fleet;
+        if (!Guid.TryParse(projectId, out var id))
+            throw new ValidationException("projectId", "projectId must be a GUID.");
+        return new PipelineScope(PipelineScopeKind.Project, id);
+    }
+
+    private static bool TaskInScope(PipelineScope scope, TaskRow task) =>
+        scope.Kind switch
+        {
+            PipelineScopeKind.Fleet => true,
+            PipelineScopeKind.Project => task.ProjectId == scope.ProjectId,
+            _ => task.ProjectId is null,
+        };
+
+    private static bool CardInScope(
+        PipelineScope scope, Guid boardId, IReadOnlyDictionary<Guid, Guid> boardProjects)
+    {
+        if (scope.Kind == PipelineScopeKind.Fleet)
+            return true;
+        return boardProjects.TryGetValue(boardId, out var project)
+            && (scope.Kind == PipelineScopeKind.Project
+                ? project == scope.ProjectId
+                : false);
+    }
+
+    private async Task<(CoherentPolicies? Policies, IReadOnlyList<Guid?> Scopes)> ReadPoliciesAsync(
+        PipelineScope scope,
+        List<TaskRow> open,
+        List<TaskRow> scopedStages,
+        IReadOnlyDictionary<Guid, Guid> boardProjects,
+        CancellationToken ct)
+    {
+        var scopes = new List<Guid?>();
+        if (scope.Kind == PipelineScopeKind.Project)
+        {
+            scopes.Add(scope.ProjectId);
+        }
+        else if (scope.Kind == PipelineScopeKind.NullBucket)
+        {
+            scopes.Add(null);
+        }
+        else
+        {
+            scopes.Add(null);
+            foreach (var id in open.Select(task => task.ProjectId)
+                .Concat(scopedStages.Select(task => task.ProjectId))
+                .Concat(boardProjects.Values.Select(id => (Guid?)id)))
+            {
+                if (id is Guid project && !scopes.Contains(project))
+                    scopes.Add(project);
+            }
+        }
+
+        if (_concurrency is null)
+            return (null, scopes);
+        return (await _concurrency.ReadCoherentAsync(scopes, ct), scopes);
+    }
+
+    private (int? Recommended, int? AtLimitBound) StageLimit(
+        CoherentPolicies? policies, PipelineScope scope, AgentTaskRole role)
+    {
+        if (policies is null)
+        {
+            var recommended = _settings.RecommendedInFlightFor(role);
+            return (recommended, recommended);
+        }
+
+        var policy = scope.Kind == PipelineScopeKind.Project
+            ? policies.For(scope.ProjectId)
+            : policies.Global;
+        var resolved = policy.Role(role);
+        var bound = scope.Kind == PipelineScopeKind.Project
+            ? policy.CombinedParallel(role)
+            : resolved.MaxParallel;
+        return (resolved.MaxParallel, bound);
+    }
+
+    private static Dictionary<Guid, DispatchDecision> ParallelHolds(
+        CoherentPolicies? policies, List<TaskRow> open, List<TaskRow> queued)
+    {
+        var holds = new Dictionary<Guid, DispatchDecision>();
+        if (policies is null || queued.Count == 0)
+            return holds;
+        var rows = open.Select(task => new TaskPopulationRow(
+            task.Id, task.ProjectId, task.Role, task.Status, task.CreatedAt,
+            task.CapacityWaitRetained, task.Title)).ToList();
+        foreach (var task in queued)
+        {
+            if (AgentTaskRoles.IsSpecialist(task.Role))
+                continue;
+            var policy = policies.For(task.ProjectId);
+            var population = DispatchConcurrencyPolicy.Count(rows, task.ProjectId);
+            var decision = DispatchConcurrencyPolicy.DecideDispatch(policy, population, task.Role);
+            if (!decision.Admit)
+                holds[task.Id] = decision;
+        }
+
+        return holds;
+    }
+
+    private static IReadOnlyList<AgentTaskPipelineConcurrencyScopeDto> ProjectScopes(
+        CoherentPolicies? policies, IReadOnlyList<Guid?> scopes, List<TaskRow> open)
+    {
+        if (policies is null)
+            return [];
+        var rows = open.Select(task => new TaskPopulationRow(
+            task.Id, task.ProjectId, task.Role, task.Status, task.CreatedAt,
+            task.CapacityWaitRetained, task.Title)).ToList();
+        var result = new List<AgentTaskPipelineConcurrencyScopeDto>(scopes.Count);
+        foreach (var id in scopes)
+        {
+            var policy = id is null ? policies.Global : policies.For(id);
+            result.Add(new AgentTaskPipelineConcurrencyScopeDto(
+                id,
+                id is null,
+                DispatchConcurrencySettingsService.ToEffective(policy),
+                DispatchConcurrencySettingsService.ToOccupancy(
+                    policy, DispatchConcurrencyPolicy.Count(rows, id))));
+        }
+
+        return result;
     }
 
     internal static bool IsVerifiedPlanDeliverable(string? path)
@@ -393,7 +571,9 @@ public sealed class AgentTaskPipelineStatusService
         IReadOnlyDictionary<string, HostLimit> limits,
         IReadOnlyDictionary<string, int> remoteOccupancy,
         Dictionary<Guid, SiblingLandRow> siblingLands,
-        QueuedDispatchHolds dispatchHolds)
+        QueuedDispatchHolds dispatchHolds,
+        IReadOnlyDictionary<Guid, DispatchDecision> parallelHolds,
+        IReadOnlyDictionary<Guid, string> taskTitles)
     {
         IReadOnlyList<AgentTaskPipelineHolderDto> heldBy = [];
         var queueReason = QueueReasonAwaitingDispatch;
@@ -464,6 +644,22 @@ public sealed class AgentTaskPipelineStatusService
                     heldBy = OneHolder(_remotePrep?.Progress(task.Id)?.BehindTaskId, dispatchHolds.Titles);
                     break;
             }
+        }
+
+        // CARD-0505. Lease, sibling land, a dated pin, repository lease and remote prep
+        // already named above keep their reasons. A SeparateQueues parallel refusal is next.
+        if (queueReason == QueueReasonAwaitingDispatch
+            && parallelHolds.TryGetValue(task.Id, out var parallel))
+        {
+            queueReason = parallel.Axis == DispatchConcurrencyPolicy.AxisRole
+                ? QueueReasonRoleParallelLimit
+                : QueueReasonProjectParallelLimit;
+            heldBy = parallel.ListedOccupantIds
+                .Select(id => new AgentTaskPipelineHolderDto(
+                    id,
+                    DelegationReportFormatter.Short(id),
+                    taskTitles.TryGetValue(id, out var title) ? title : ""))
+                .ToList();
         }
 
         // Host budget and the local concurrency cap are last. The dispatcher checks the cap
@@ -746,7 +942,8 @@ public sealed class AgentTaskPipelineStatusService
         string? NextHandoff = null,
         Guid? RoutingPinId = null,
         string? RunnerId = null,
-        bool CapacityWaitRetained = false);
+        bool CapacityWaitRetained = false,
+        Guid? ProjectId = null);
 
     private sealed record SiblingLandRow(Guid Id, string Title, Guid CardId, DateTime LandRequestedAt);
 
@@ -773,4 +970,18 @@ public sealed class AgentTaskPipelineStatusService
         Guid Id, Guid BoardId, string Identifier, string Title,
         CardImportance Importance, CardUrgency Urgency, DateTime? DueAt,
         int? Position, DateTime CreatedAt, string LabelsJson);
+}
+
+public enum PipelineScopeKind
+{
+    Fleet,
+    Project,
+    NullBucket,
+}
+
+public readonly record struct PipelineScope(PipelineScopeKind Kind, Guid? ProjectId)
+{
+    public static PipelineScope Fleet => new(PipelineScopeKind.Fleet, null);
+
+    public static PipelineScope NullBucket => new(PipelineScopeKind.NullBucket, null);
 }
