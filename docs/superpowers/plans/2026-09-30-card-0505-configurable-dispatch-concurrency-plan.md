@@ -948,6 +948,19 @@ The CP-3 filter executed 91 rather than the September census of 77. C557 and the
 
 Follow-up: `DelegationOpenGate.LoadPopulationAsync` and `AgentTaskDispatcher.LoadDispatchPopulationAsync` still scan the population with no status predicate. `DispatchConcurrencyEndpoints.ReadPutAsync` still discards its unused `options` parameter.
 
+Repair task 4b4a88ba on `feat/card-task-4b4a88ba` in `/work/worktrees/task-4b4a88ba`, on top of `fd6b44b667f0ebe7d68893425b6b0ddc40577a89`. The key-free probe captures `pg_current_xact_id()` on the claim connection and reads `pg_xact_status` at enqueue. Both rows below ran on `76af2dc11dfb7110d61dd45c0dd1b7084719923a` with `--total-timeout 70m` so the row's 48 minute budget remained the limit. CP-1 and CP-3 stay the rows above: this repair edits `DispatchConcurrencyDispatchTests`, `DispatchConcurrencyTestHost`, and this plan. Post-land Mutation was not run.
+
+| CP | Run | Commit | Result | Slot |
+|---|---|---|---|---|
+| CP-2 | `20261010-125338-276f` | `76af2dc11dfb7110d61dd45c0dd1b7084719923a` | executed 94, passed 94, failed 0, skipped 0 | granted, waited 0s, build ok, source clean |
+| CP-2 | `20261010-125708-865c` | `76af2dc11dfb7110d61dd45c0dd1b7084719923a` | executed 94, passed 94, failed 0, skipped 0 | granted, waited 0s, build ok, source clean |
+
+CHECKPOINT CP-2 commit=76af2dc11dfb7110d61dd45c0dd1b7084719923a build=ok filter=/*/*/(DispatchConcurrencyAdmissionTests*)|(DispatchConcurrencyDispatchTests*)|(AgentTaskConcurrencyLimitTests*)|(AgentTaskDispatcherPredicateTests*)|(DispatchHoldVisibilityTests*)|(HostBudgetServiceTests*)/* executed=94 passed=94 failed=0 skipped=0 trx=/work/worktrees/task-4b4a88ba/.antiphon/checkpoints/20261010-125338-276f/rows/CP-2/run.trx slot=granted waited=0s dirty=0 source=76af2dc11dfb7110d61dd45c0dd1b7084719923a sourceState=clean buildSource=verified
+
+CHECKPOINT CP-2 commit=76af2dc11dfb7110d61dd45c0dd1b7084719923a build=ok filter=/*/*/(DispatchConcurrencyAdmissionTests*)|(DispatchConcurrencyDispatchTests*)|(AgentTaskConcurrencyLimitTests*)|(AgentTaskDispatcherPredicateTests*)|(DispatchHoldVisibilityTests*)|(HostBudgetServiceTests*)/* executed=94 passed=94 failed=0 skipped=0 trx=/work/worktrees/task-4b4a88ba/.antiphon/checkpoints/20261010-125708-865c/rows/CP-2/run.trx slot=granted waited=0s dirty=0 source=76af2dc11dfb7110d61dd45c0dd1b7084719923a sourceState=clean buildSource=verified
+
+Unlisted, to show the PC-8f detector: the cold-path `CommitAsync` was moved to after `Enqueue`, then `Put_racing_claim_observes_one_complete_policy` failed 1/1 on `external-call-key-free=true`. Slot granted, waited 0s. The dispatcher edit was restored before `76af2dc11`. That build used `bin-c0505-probe/` through `scripts/build-slot.ps1` and was deleted. The checkpoint tool itself was bootstrapped once to `bin-c0505-tool/` (slot granted, waited 0s).
+
 V-1 through V-8 and R-1 through R-5 passed inside those three rows. Unlisted runs, each through `scripts/build-slot.ps1`, slot granted, waited 0s: an isolated `bin-c0505-compile/` build of `tests/Antiphon.Tests` (0 errors) before the S3 commit; a preflight of the eleven new methods (10 passed, the fleet method failed the runner-binding check); a one-method rebuild and rerun of `Fleet_contract_and_host_totals_remain_distinct` (1 passed) after the session row gained `RunnerStoreId` and `RunnerCwd`.
 
 PC-1a, PC-1b, PC-1c, PC-2a, PC-2b, PC-2c, PC-3a, PC-3b, PC-4a, PC-4b, PC-4c, PC-4d, PC-4e, PC-4f, PC-4g, PC-5a, PC-5b, PC-5c, PC-6a, PC-6b, PC-6c, PC-7, PC-8a, PC-8b, PC-8c, PC-8d, PC-8e, PC-8f, PC-9a, PC-9b, PC-10a, PC-10b, PC-11a, PC-11b, PC-12a, PC-12b, PC-13a, PC-13b, PC-13c, PC-13d, PC-14a, PC-14b, PC-14c, and PC-15 stay pending for method-scoped SourceLanding Mutation. None were run.
