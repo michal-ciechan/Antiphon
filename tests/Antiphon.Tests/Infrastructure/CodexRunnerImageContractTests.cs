@@ -239,7 +239,7 @@ public sealed class CodexRunnerImageContractTests
         text.Contains("\nchown -R ", StringComparison.Ordinal).ShouldBeFalse(
             "volume ownership is per path so a vanished file does not fail init");
         foreach (var root in new[] { "/state", "/work", "/runner-state" })
-            text.ShouldContain("\nown_tree " + root + "\n", "the volume sweep never reaches the host home");
+            text.ShouldContain("\nown_tree " + root + "\n", customMessage: "the volume sweep never reaches the host home");
 
         // Only when absent: neither a regular file nor a dangling link is ever replaced.
         text.ShouldContain("codex_config=\"$codex_home/config.toml\"\n");
