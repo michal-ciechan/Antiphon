@@ -40,6 +40,8 @@ public sealed class DelegationSettings
     /// Working, per project scope (<c>AgentTask.ProjectId</c>; tasks with no project scope form
     /// their own bucket). Distinct from <see cref="MaxConcurrentTasks"/> (the desktop
     /// delegated-task cap). Must be a positive integer; there is always an absolute cap.
+    /// CARD-0505 imports this key once into the dispatch-concurrency seed. After that row
+    /// exists, admission reads the audited store; editing this value is not a live override.
     /// </summary>
     public int MaxOpenTasks { get; set; } = 6;
 
@@ -1118,6 +1120,11 @@ public sealed class DelegationSettings
         /// unless <c>ignoreConcurrencyLimit</c>. Does not change
         /// <see cref="DelegationSettings.MaxConcurrentTasks"/> dispatch — the pipeline endpoint
         /// still reports whether the current in-flight count is at or over it.
+        /// </summary>
+        /// <summary>
+        /// CARD-0147 per-role open hint, and the CARD-0505 import seed for that role's parallel
+        /// bound. Custom is absent and imports as unbounded. After the settings row exists this
+        /// is seed history, not a live override. The binding key stays <c>RecommendedInFlight</c>.
         /// </summary>
         public int? RecommendedInFlight { get; set; } = 1;
     }

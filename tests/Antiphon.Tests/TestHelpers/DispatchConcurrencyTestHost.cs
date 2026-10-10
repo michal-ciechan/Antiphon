@@ -1,7 +1,10 @@
+using System.Data.Common;
 using System.Net;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Antiphon.SessionRunner.Contracts;
+using Antiphon.Tests.Agents;
 using Antiphon.Server.Api.Endpoints;
 using Antiphon.Server.Api.Middleware;
 using Antiphon.Server.Application.Dtos;
@@ -43,6 +46,20 @@ public static class DispatchConcurrencyTestHost
         settings.RolePolicy["Code"].RecommendedInFlight = 5;
         settings.RolePolicy["Review"].RecommendedInFlight = 4;
         settings.RolePolicy["Plan"].RecommendedInFlight = 3;
+        return settings;
+    }
+
+    /// <summary>F-D settings. Host capacity stays above the project cap so the project gate is what holds.</summary>
+    public static DelegationSettings DispatchSettings()
+    {
+        var settings = BoundSettings();
+        settings.MaxConcurrentTasks = 32;
+        settings.PoolReservedForCallerMinutes = 0;
+        settings.PoolIdleRetireMinutes = 600;
+        settings.PoolMaxIdlePerDirectory = 8;
+        settings.MaxDepth = 5;
+        settings.MaxTasksPerRoot = 100;
+        settings.MaxCostUsdPerRoot = 1000;
         return settings;
     }
 
@@ -297,5 +314,510 @@ public static class DispatchConcurrencyLockProbe
         }
 
         return false;
+    }
+}
+
+/// <summary>F-D. Real dispatcher over an isolated F-S shop. Launch calls are recorded, not spawned.</summary>
+public sealed class ConcurrencyDispatchWorld : IAsyncDisposable
+{
+    private ServiceProvider _provider;
+    private IServiceScope _scope;
+    private AppDbContext _db;
+    private readonly string _directory;
+
+    private ConcurrencyDispatchWorld(
+        DispatchConcurrencyShop shop,
+        ServiceProvider provider,
+        IServiceScope scope,
+        AppDbContext db,
+        RecordingLaunchSink launches,
+        RecordingSessionStopper stopper,
+        ConcurrencyRunnerDirectory runners,
+        string directory)
+    {
+        Shop = shop;
+        _provider = provider;
+        _scope = scope;
+        _db = db;
+        Launches = launches;
+        Stopper = stopper;
+        Runners = runners;
+        _directory = directory;
+        Dispatcher = scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>();
+        Queue = provider.GetRequiredService<SessionMessageQueueService>();
+        Runtime = provider.GetRequiredService<AgentSessionRuntime>();
+    }
+
+    public DispatchConcurrencyShop Shop { get; }
+    public RecordingLaunchSink Launches { get; }
+    public RecordingSessionStopper Stopper { get; }
+    public ConcurrencyRunnerDirectory Runners { get; }
+    public AgentTaskDispatcher Dispatcher { get; private set; }
+    public SessionMessageQueueService Queue { get; private set; }
+    public AgentSessionRuntime Runtime { get; private set; }
+    public AgentTaskService Tasks => _scope.ServiceProvider.GetRequiredService<AgentTaskService>();
+    public string Directory => _directory;
+    public HostBudgetService Budgets => _scope.ServiceProvider.GetRequiredService<HostBudgetService>();
+
+    public static async Task<ConcurrencyDispatchWorld> Open()
+    {
+        var shop = await DispatchConcurrencyShop.Open(DispatchConcurrencyTestHost.DispatchSettings());
+        var directory = System.IO.Directory.CreateTempSubdirectory("c0505-dispatch").FullName;
+        var launches = new RecordingLaunchSink(shop.ConnectionString);
+        var stopper = new RecordingSessionStopper();
+        var runners = new ConcurrencyRunnerDirectory();
+        var (provider, scope, db) = Build(shop, directory, launches, stopper, runners);
+        return new ConcurrencyDispatchWorld(shop, provider, scope, db, launches, stopper, runners, directory);
+    }
+
+    private static (ServiceProvider Provider, IServiceScope Scope, AppDbContext Db) Build(
+        DispatchConcurrencyShop shop,
+        string directory,
+        RecordingLaunchSink launches,
+        RecordingSessionStopper stopper,
+        ConcurrencyRunnerDirectory runners)
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddDbContext<AppDbContext>(o => o.UseNpgsql(shop.ConnectionString));
+        services.AddSingleton<IEventBus>(shop.Bus);
+        services.AddSingleton<TimeProvider>(shop.Clock);
+        services.AddSingleton(Options.Create(new SupervisionSettings()));
+        services.AddSingleton(Options.Create(new ChannelBridgeSettings()));
+        services.AddOptions<AgentSessionSettings>();
+        services.AddSingleton(Options.Create(shop.Settings));
+        services.AddOptions<AgentRegistrySettings>().Configure(s =>
+        {
+            s.DefaultDefinition = "claude";
+            s.GrokCredentialProbeEnabled = false;
+            s.Definitions["claude"] = new AgentDefinition { Kind = "ClaudeCode", Exe = "claude" };
+        });
+        services.AddSingleton<AgentRegistry>();
+        services.AddSingleton<AgentSessionLaunchQueue>();
+        services.AddSingleton<AgentSessionRuntime>();
+        services.AddSingleton<SessionMessageQueueService>();
+        services.AddSingleton<IDelegateSessionStopper>(stopper);
+        services.AddSingleton<DelegationWorkspaceResolver>();
+        services.AddSingleton<ISessionRunnerDirectory>(runners);
+        services.AddSingleton<IAgentTaskLaunchSink>(launches);
+        services.AddDelegationWorktreeGraph(new GitSettings
+        {
+            WorktreeBasePath = Path.Combine(directory, "worktrees"),
+        });
+        services.AddDispatchConcurrencyAdmission();
+        services.AddScoped<DelegationOpenGate>();
+        services.AddScoped<HostBudgetService>();
+        services.AddScoped<RemoteWorkspaceService>();
+        services.AddScoped<AgentTaskService>();
+        services.AddScoped<AgentTaskDispatcher>();
+        var provider = services.BuildServiceProvider();
+        var scope = provider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        return (provider, scope, db);
+    }
+
+    public async Task InitializeAsync()
+    {
+        await using var db = Shop.Db();
+        await Shop.Service(db).EnsureInitializedAsync(CancellationToken.None);
+    }
+
+    /// <summary>Drops the provider and opens another against the same database. The schema stays.</summary>
+    public async Task RebuildAsync()
+    {
+        Detach();
+        var shop = Shop;
+        var directory = _directory;
+        var launches = Launches;
+        var stopper = Stopper;
+        var runners = Runners;
+        _scope.Dispose();
+        await _provider.DisposeAsync();
+        (_provider, _scope, _db) = Build(shop, directory, launches, stopper, runners);
+        Dispatcher = _scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>();
+        Queue = _provider.GetRequiredService<SessionMessageQueueService>();
+        Runtime = _provider.GetRequiredService<AgentSessionRuntime>();
+    }
+
+    public void Detach() => _db.ChangeTracker.Clear();
+
+    public Task<AgentTaskDispatcher.TickResult> TickAsync() 
+    {
+        Detach();
+        return Dispatcher.TickAsync(CancellationToken.None);
+    }
+
+    public AgentTaskDispatcher DispatcherWith(AppDbContext db, RecordingLaunchSink? launches = null)
+    {
+        var options = Options.Create(Shop.Settings);
+        var concurrency = Shop.Service(db);
+        var gate = new DelegationOpenGate(db, options, concurrency);
+        var tasks = new AgentTaskService(
+            db,
+            new DelegationWorkspaceResolver(NullLogger<DelegationWorkspaceResolver>.Instance),
+            options,
+            Shop.Bus,
+            Stopper,
+            Shop.Clock,
+            NullLogger<AgentTaskService>.Instance,
+            openGate: gate,
+            dispatchConcurrency: concurrency);
+        var remote = new RemoteWorkspaceService(
+            Runners,
+            _provider.GetRequiredService<ILandingGit>(),
+            NullLogger<RemoteWorkspaceService>.Instance,
+            settings: options);
+        return new AgentTaskDispatcher(
+            db,
+            _provider.GetRequiredService<AgentRegistry>(),
+            _provider.GetRequiredService<AgentSessionLaunchQueue>(),
+            Queue,
+            _scope.ServiceProvider.GetRequiredService<DelegationWorktreeService>(),
+            tasks,
+            Stopper,
+            options,
+            Shop.Bus,
+            Shop.Clock,
+            NullLogger<AgentTaskDispatcher>.Instance,
+            runtime: Runtime,
+            runners: Runners,
+            taskLaunchSink: launches ?? Launches,
+            hostBudgets: new HostBudgetService(db, Runners, options, Shop.Clock),
+            remoteWorkspace: remote,
+            dispatchConcurrency: concurrency);
+    }
+
+    public async Task<AgentTask> InsertAsync(
+        AgentTaskRole role,
+        AgentTaskStatus status,
+        Guid? projectId,
+        WorkspaceMode workspace,
+        string? runnerId = null,
+        bool retained = false,
+        Guid? agentId = null,
+        bool ephemeral = true,
+        string? worktreePath = null,
+        string? remoteWorktreePath = null,
+        Guid? followUpOf = null,
+        DateTime? createdAt = null,
+        string? title = null)
+    {
+        var id = Guid.NewGuid();
+        var now = createdAt ?? Shop.Clock.GetUtcNow().UtcDateTime;
+        var directory = workspace == WorkspaceMode.Worktree
+            ? System.IO.Directory.CreateDirectory(Path.Combine(_directory, id.ToString("N"))).FullName
+            : _directory;
+        var task = new AgentTask
+        {
+            Id = id,
+            RootTaskId = id,
+            Title = title ?? $"c0505-{role}-{status}",
+            Goal = title ?? $"c0505-{role}-{status}-{id:N}",
+            Kind = AgentTaskKind.Worker,
+            Role = role,
+            AgentKind = AgentKind.ClaudeCode,
+            ModelLevel = AgentModelLevel.Medium,
+            Workspace = workspace,
+            WorkingDirectory = directory,
+            WorktreePath = worktreePath ?? (workspace == WorkspaceMode.Worktree ? directory : null),
+            RemoteWorktreePath = remoteWorktreePath,
+            Status = status,
+            ProjectId = projectId,
+            RunnerId = runnerId,
+            AgentId = agentId,
+            Ephemeral = ephemeral,
+            CapacityWaitRetained = retained,
+            FollowUpOfTaskId = followUpOf,
+            CreatedAt = now,
+            DispatchedAt = status is AgentTaskStatus.Dispatched or AgentTaskStatus.Working ? now : null,
+            ConcurrencyToken = Guid.NewGuid(),
+        };
+        await using var db = Shop.Db();
+        db.AgentTasks.Add(task);
+        await db.SaveChangesAsync();
+        return task;
+    }
+
+    public async Task<(Guid AgentId, Guid SessionId)> InsertAgentAsync(Guid? projectId, bool pool, string? runnerId = null)
+    {
+        var sessionId = Guid.NewGuid();
+        var agentId = Guid.NewGuid();
+        var now = Shop.Clock.GetUtcNow().UtcDateTime;
+        var name = $"c{agentId:N}"[..12];
+        await using var db = Shop.Db();
+        db.AgentSessions.Add(new AgentSession
+        {
+            Id = sessionId,
+            DefinitionName = "claude",
+            AgentKind = AgentKind.ClaudeCode,
+            Status = SessionStatus.Running,
+            Cwd = _directory,
+            Cols = 120,
+            Rows = 30,
+            CreatedAt = now,
+            StartedAt = now,
+            LastSeenAt = now,
+            RunnerId = runnerId,
+        });
+        db.Agents.Add(new Agent
+        {
+            Id = agentId,
+            Name = name,
+            Slug = name,
+            WorkingDirectory = _directory,
+            Details = "CARD-0505 dispatch fixture.",
+            Status = pool ? AgentStatus.Idle : AgentStatus.Running,
+            ModelLevel = AgentModelLevel.Medium,
+            Kind = AgentKind.ClaudeCode,
+            IsPoolDelegate = pool,
+            PoolIdleSince = pool ? now.AddMinutes(-10) : null,
+            PoolProjectId = projectId,
+            PersistentSessionId = sessionId.ToString("D"),
+            AlwaysOn = false,
+            CreatedAt = now,
+            UpdatedAt = now,
+        });
+        await db.SaveChangesAsync();
+        return (agentId, sessionId);
+    }
+
+    public void BindPrompt(Guid sessionId)
+    {
+        var adapter = new FakeAgentProtocolAdapter { TurnCompleted = true, ReadyResult = true };
+        adapter.OnSubmitted = body => PersistPromptAsync(sessionId, body);
+        Runtime.Register(sessionId, adapter);
+    }
+
+    public async Task<TranscriptEntry?> LatestPromptAsync(Guid sessionId)
+    {
+        await using var db = Shop.Db();
+        return await db.TranscriptEntries.AsNoTracking()
+            .Where(e => e.AgentSessionId == sessionId && e.Kind == TranscriptKinds.UserPrompt)
+            .OrderByDescending(e => e.Sequence)
+            .FirstOrDefaultAsync();
+    }
+
+    public async Task MarkRunningAsync(Guid sessionId)
+    {
+        await using var db = Shop.Db();
+        var session = await db.AgentSessions.SingleAsync(s => s.Id == sessionId);
+        session.Status = SessionStatus.Running;
+        await db.SaveChangesAsync();
+    }
+
+    public async Task<AgentTask> ReloadAsync(Guid id)
+    {
+        await using var db = Shop.Db();
+        return await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == id);
+    }
+
+    public async Task SetStatusAsync(Guid id, AgentTaskStatus status)
+    {
+        await using var db = Shop.Db();
+        var task = await db.AgentTasks.SingleAsync(t => t.Id == id);
+        task.Status = status;
+        if (status is AgentTaskStatus.Succeeded or AgentTaskStatus.Failed or AgentTaskStatus.Canceled)
+            task.CompletedAt = Shop.Clock.GetUtcNow().UtcDateTime;
+        await db.SaveChangesAsync();
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        _scope.Dispose();
+        await _provider.DisposeAsync();
+        await Shop.DisposeAsync();
+        try
+        {
+            System.IO.Directory.Delete(_directory, recursive: true);
+        }
+        catch (IOException)
+        {
+        }
+    }
+
+    private async Task PersistPromptAsync(Guid sessionId, string body)
+    {
+        await using var db = Shop.Db();
+        var sequence = await db.TranscriptEntries.Where(e => e.AgentSessionId == sessionId)
+            .Select(e => (long?)e.Sequence)
+            .MaxAsync() ?? 0;
+        var now = Shop.Clock.GetUtcNow().UtcDateTime;
+        db.TranscriptEntries.Add(new TranscriptEntry
+        {
+            Id = Guid.NewGuid(),
+            AgentSessionId = sessionId,
+            Sequence = sequence + 1,
+            Kind = TranscriptKinds.UserPrompt,
+            Text = body,
+            Timestamp = now,
+            CreatedAt = now,
+        });
+        await db.SaveChangesAsync();
+    }
+}
+
+public sealed class RecordingLaunchSink : IAgentTaskLaunchSink
+{
+    private readonly string _connectionString;
+
+    public RecordingLaunchSink(string connectionString) => _connectionString = connectionString;
+
+    public List<(Guid SessionId, Guid AgentId, AgentLaunchSpec Spec)> Items { get; } = [];
+    public bool? KeyFreeAtLaunch { get; private set; }
+
+    public void Enqueue(Guid sessionId, Guid agentId, DateTime acceptedGeneration, AgentLaunchSpec spec)
+    {
+        Items.Add((sessionId, agentId, spec));
+        KeyFreeAtLaunch = ParallelKeyIsFree();
+    }
+
+    public bool ParallelKeyIsFree()
+    {
+        using var connection = new NpgsqlConnection(_connectionString);
+        connection.Open();
+        using var probe = new NpgsqlCommand(
+            "SELECT pg_try_advisory_lock(hashtext('antiphon.delegation.parallel-tasks'))", connection);
+        var acquired = (bool)(probe.ExecuteScalar() ?? false);
+        if (!acquired)
+            return false;
+        using var unlock = new NpgsqlCommand(
+            "SELECT pg_advisory_unlock(hashtext('antiphon.delegation.parallel-tasks'))", connection);
+        unlock.ExecuteScalar();
+        return true;
+    }
+}
+
+public sealed class ConcurrencyRunnerDirectory : ISessionRunnerDirectory
+{
+    private static readonly Guid StoreId = Guid.Parse("05050000-0000-4000-8000-0000000000b2");
+
+    public ISessionRunnerClient Local => null!;
+    public ISessionRunnerClient Resolve(string? runnerId) => null!;
+    public ISessionRunnerClient ResolveForNewWork(string? runnerId) => null!;
+    public RunnerState? DrainState(string? runnerId) => null;
+    public Task<SessionRunnerOwner?> GetOwnerAsync(Guid sessionId, CancellationToken ct) =>
+        Task.FromResult<SessionRunnerOwner?>(null);
+    public Task<SessionRunnerBinding> GetBindingAsync(Guid sessionId, CancellationToken ct) =>
+        Task.FromResult<SessionRunnerBinding>(SessionRunnerBinding.Local.Instance);
+    public Task<RunnerInventory> GetInventoryAsync(string? runnerId, CancellationToken ct) =>
+        Task.FromResult<RunnerInventory>(new RunnerInventory.Available([]));
+    public IReadOnlyList<string> KnownRunnerIds => ["runner-a", "runner-b"];
+    public Guid? GetLiveStoreId(string? runnerId) =>
+        runnerId is "runner-a" or "runner-b" ? StoreId : null;
+    public int? DeclaredCapacity(string runnerId) => 32;
+}
+
+/// <summary>Pauses the first matching save. A second match sets <see cref="Crossed"/> and does not wait.</summary>
+public sealed class PauseMatchSaveInterceptor : SaveChangesInterceptor
+{
+    private int _hits;
+
+    public bool Crossed { get; private set; }
+    public Func<DbContext, bool> Match { get; init; } = _ => false;
+    public TaskCompletionSource AtSave { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public override async ValueTask<InterceptionResult<int>> SavingChangesAsync(
+        DbContextEventData eventData, InterceptionResult<int> result, CancellationToken cancellationToken = default)
+    {
+        if (eventData.Context is { } context && Match(context))
+        {
+            if (Interlocked.Increment(ref _hits) == 1)
+            {
+                AtSave.TrySetResult();
+                await Release.Task.WaitAsync(cancellationToken);
+            }
+            else
+            {
+                Crossed = true;
+            }
+        }
+
+        return await base.SavingChangesAsync(eventData, result, cancellationToken);
+    }
+
+    public static bool AddedTask(DbContext context) =>
+        context.ChangeTracker.Entries<AgentTask>().Any(entry => entry.State == EntityState.Added);
+
+    public static bool ClaimedDispatch(DbContext context) =>
+        context.ChangeTracker.Entries<AgentTask>().Any(entry =>
+            entry.State == EntityState.Modified
+            && entry.Property(t => t.Status).OriginalValue == AgentTaskStatus.Queued
+            && entry.Property(t => t.Status).CurrentValue == AgentTaskStatus.Dispatched);
+}
+
+/// <summary>Records advisory and row-lock commands, and can pause the candidate FOR UPDATE.</summary>
+public sealed class DispatchCommandInterceptor : DbCommandInterceptor
+{
+    private int _paused;
+    private bool _seenCreateKey;
+    private bool _seenClaim;
+
+    public bool LockOrderBroken { get; private set; }
+    public bool Crossed { get; private set; }
+    public List<string> Commands { get; } = [];
+    public bool PauseClaim { get; init; }
+    public TaskCompletionSource AtCommand { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+        DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result,
+        CancellationToken cancellationToken = default) =>
+        PauseAsync(command, () => base.ReaderExecutingAsync(command, eventData, result, cancellationToken), cancellationToken);
+
+    public override ValueTask<InterceptionResult<object>> ScalarExecutingAsync(
+        DbCommand command, CommandEventData eventData, InterceptionResult<object> result,
+        CancellationToken cancellationToken = default) =>
+        PauseAsync(command, () => base.ScalarExecutingAsync(command, eventData, result, cancellationToken), cancellationToken);
+
+    public override ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(
+        DbCommand command, CommandEventData eventData, InterceptionResult<int> result,
+        CancellationToken cancellationToken = default) =>
+        PauseAsync(command, () => base.NonQueryExecutingAsync(command, eventData, result, cancellationToken), cancellationToken);
+
+    private async ValueTask<T> PauseAsync<T>(DbCommand command, Func<ValueTask<T>> next, CancellationToken cancellationToken)
+    {
+        var text = Describe(command);
+        lock (Commands)
+            Commands.Add(text);
+        if (text.Contains("max-open-tasks", StringComparison.Ordinal))
+            _seenCreateKey = true;
+        if (text.Contains("FOR UPDATE", StringComparison.Ordinal) && text.Contains("AgentTasks", StringComparison.Ordinal))
+            _seenClaim = true;
+        // PUT takes the create key, then the parallel key. Dispatch takes the candidate row lock,
+        // then the parallel key. Either order is legal. Parallel before both is not.
+        if (text.Contains("parallel-tasks", StringComparison.Ordinal) && !_seenCreateKey && !_seenClaim)
+            LockOrderBroken = true;
+
+        var claim = PauseClaim
+            && text.Contains("FOR UPDATE", StringComparison.Ordinal)
+            && text.Contains("AgentTasks", StringComparison.Ordinal);
+        if (claim)
+        {
+            if (Interlocked.Increment(ref _paused) == 1)
+            {
+                AtCommand.TrySetResult();
+                await Release.Task.WaitAsync(cancellationToken);
+            }
+            else
+            {
+                Crossed = true;
+            }
+        }
+
+        return await next();
+    }
+
+    private static string Describe(DbCommand command)
+    {
+        var text = command.CommandText ?? string.Empty;
+        foreach (System.Data.Common.DbParameter parameter in command.Parameters)
+        {
+            if (parameter.Value is null or DBNull)
+                continue;
+            text = text + "\n" + parameter.Value;
+        }
+
+        return text;
     }
 }

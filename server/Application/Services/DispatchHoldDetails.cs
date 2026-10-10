@@ -167,6 +167,8 @@ public static class DispatchHoldDetails
     public static DispatchHoldClass ClassOf(string? detail)
     {
         var reason = Reason(detail);
+        if (reason.StartsWith("Held: dispatch concurrency parallel limit", StringComparison.Ordinal))
+            return DispatchHoldClass.Parallel;
         if (reason.StartsWith("Held: running task ", StringComparison.Ordinal)
             || (reason.StartsWith("Held: '", StringComparison.Ordinal)
                 && reason.Contains("' intersects running task ", StringComparison.Ordinal)))
@@ -295,4 +297,4 @@ public static class DispatchHoldDetails
 /// CARD-0672 D-3: which kind of wait a queued task's hold was. Separate from
 /// <see cref="ExpectationHoldClass"/>, which says whether a hold is expected at all.
 /// </summary>
-public enum DispatchHoldClass { Lease, RemotePrep, Runner, Cap, Scope, Agent, Landing, Routing, Other }
+public enum DispatchHoldClass { Lease, RemotePrep, Runner, Cap, Scope, Agent, Landing, Routing, Other, Parallel }

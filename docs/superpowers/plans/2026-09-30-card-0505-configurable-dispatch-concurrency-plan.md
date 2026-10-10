@@ -592,7 +592,7 @@ Existing exact selected class totals:
 | Class | Methods | Expanded results | Source evidence |
 |---|---:|---:|---|
 | AgentTaskConcurrencyLimitTests | 24 | 25 | `tests/Antiphon.Tests/Application/AgentTaskConcurrencyLimitTests.cs:25`; only zero/negative validation has two arguments (`:35`). The three-open fixtures explicitly set MaxOpenTasks=3 at `:669`; do not misread their names as shipped defaults. |
-| AgentTaskDispatcherPredicateTests | 1 | 8 | `tests/Antiphon.Tests/Application/AgentTaskDispatcherPredicateTests.cs:17`. |
+| AgentTaskDispatcherPredicateTests | 2 | 17 | `tests/Antiphon.Tests/Application/AgentTaskDispatcherPredicateTests.cs:17` (C672, 8 arguments) and `:56` (C1076, 9 arguments). The C1076 method landed after this census; CP-2's floor includes it. |
 | DispatchHoldVisibilityTests | 23 | 28 | `tests/Antiphon.Tests/Application/DispatchHoldVisibilityTests.cs` plus `HostBudgetAdmissionTests.cs`; the latter contributes 9 methods/11 results, not a class named HostBudgetAdmissionTests. |
 | HostBudgetServiceTests | 7 | 8 | `tests/Antiphon.Tests/Application/HostBudgetServiceTests.cs:16`; two invalid-budget arguments. |
 | AgentTaskPipelineStatusTests | 49 | 58 | Three partial files: `AgentTaskPipelineStatusTests.cs`, `AgentTaskPipelineStatusC557Tests.cs`, `HostBudgetPipelineTests.cs` under `tests/Antiphon.Tests/Application/`. Expanded cases: landing evidence x6 (`:27`), specialist roles x3 (`:295`), non-stage handoffs x3 (`:417`) in the first file. |
@@ -601,8 +601,10 @@ Existing exact selected class totals:
 | RunnerDefaultMigrationTests | 5 | 5 | `tests/Antiphon.Tests/Application/RunnerDefaultTests.cs:520`. |
 | StandingPipelinePolicyDocumentationTests | 4 | 4 | `tests/Antiphon.Tests/Application/StandingPipelinePolicyDocumentationTests.cs:31`. |
 
-Total existing selected coverage: **123 methods, 146 expanded results**. Checkpoint
-baseline subtotals are CP-1 **11**, CP-2 **69**, CP-3 **66**. Reproduce with
+Total existing selected coverage: **124 methods, 155 expanded results**. Checkpoint
+baseline subtotals are CP-1 **11**, CP-2 **78**, CP-3 **66**. The CP-2 increase is
+C1076's nine arguments on `AgentTaskDispatcherPredicateTests` (was 1 method / 8 results).
+Reproduce with
 `rg -n '\[Test\]|\[Arguments\(|class ' <the files above>`, counting class membership and
 partial files, not filenames; inspect source for generators before counting. No
 `--list-tests` invocation is execution evidence.
@@ -875,10 +877,10 @@ names with the roster, with no missing/duplicate methods, and all 44 G/PC identi
 with no missing/duplicate mapping. Expanded arithmetic independently reproduced:
 
 - CP-1: 11 existing + 27 proposed = 38, 8 minutes.
-- CP-2: 69 existing + 16 proposed = 85, 16 minutes.
+- CP-2: 78 existing + 16 proposed = 94, 16 minutes. C1076 added 9 results after the original 69.
 - CP-3: 66 existing + 11 proposed = 77, 12 minutes.
-- 17 selected classes; 123 existing methods / 146 expanded results; 54 new methods;
-  200 expected ordinary executions; ordinary time floor 36 minutes.
+- 17 selected classes; 124 existing methods / 155 expanded results; 54 new methods;
+  209 expected ordinary executions; ordinary time floor 36 minutes.
 
 Constructor fixture injection and internal matrix iterations are not extra executions.
 The selected source has no method generators or platform skips. Actual TRX counts and
@@ -888,7 +890,7 @@ all positive-control RED/restore/GREEN evidence remain Code/Mutation obligations
 
 Ordinary Code checkpoint floor is **36 minutes** (8 + 16 + 12), estimated, not measured.
 CP-1's 8 minutes estimates one build/store startup (4) plus 38 settings/wire/migration
-results (4). CP-2's 16 estimates build/startup (4) plus 85 admission/dispatch/race results
+results (4). CP-2's 16 estimates build/startup (4) plus 94 admission/dispatch/race results
 (12). CP-3's 12 estimates build/startup (4) plus 77 pipeline/pwsh results (8). These
 are conservative estimates, not historic timings inferred from test counts. CP-2's
 16-minute estimate makes the importer warn that 3x16 exceeds its 45-minute timeout ceiling;
@@ -904,8 +906,8 @@ cost. No full-suite or native-provider battery is hidden in that budget. Targete
 and single-method mutants avoid repeated full-assembly builds/runs; no measured savings
 claim is made because this task ran neither alternative.
 
-The existing 146 and
-planned new 54 results yield **200 expected ordinary executions**; those counts are not
+The existing 155 and
+planned new 54 results yield **209 expected ordinary executions**; those counts are not
 minutes or internal assertion counts. Code must update the manifest before running a
 changed roster if it changes data expansion, names or coverage.
 
@@ -925,5 +927,5 @@ and the same row rerun, with counts/reruns reported.
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-c0505-s1/` | concurrency-settings | `/*/*/(DispatchConcurrencyPolicyTests*)\|(DispatchConcurrencySettingsTests*)\|(DispatchConcurrencyWireTests*)\|(DispatchConcurrencyMigrationTests*)\|(RunnerDefaultSettingsTests*)\|(RunnerDefaultMigrationTests*)/*` | V-1, V-2, V-3, V-4, R-1 | all named methods: 11 existing + 27 new = 38, 0 failed/skipped | 38 | 8 |
-| CP-2 | S2 | `tests/Antiphon.Tests -> bin-c0505-s2/` | concurrency-admission | `/*/*/(DispatchConcurrencyAdmissionTests*)\|(DispatchConcurrencyDispatchTests*)\|(AgentTaskConcurrencyLimitTests*)\|(AgentTaskDispatcherPredicateTests*)\|(DispatchHoldVisibilityTests*)\|(HostBudgetServiceTests*)/*` | V-5, V-6, R-2, R-3 | all named methods: 69 existing + 16 new = 85, 0 failed/skipped | 85 | 16 |
+| CP-2 | S2 | `tests/Antiphon.Tests -> bin-c0505-s2/` | concurrency-admission | `/*/*/(DispatchConcurrencyAdmissionTests*)\|(DispatchConcurrencyDispatchTests*)\|(AgentTaskConcurrencyLimitTests*)\|(AgentTaskDispatcherPredicateTests*)\|(DispatchHoldVisibilityTests*)\|(HostBudgetServiceTests*)/*` | V-5, V-6, R-2, R-3 | all named methods: 78 existing + 16 new = 94, 0 failed/skipped | 94 | 16 |
 | CP-3 | S3 | `tests/Antiphon.Tests -> bin-c0505-s3/` | concurrency-surface | `/*/*/(DispatchConcurrencyPipelineTests*)\|(DispatchConcurrencyScriptTests*)\|(AgentTaskPipelineStatusTests*)\|(AgentTaskPipelineEndpointTests*)\|(StandingPipelinePolicyDocumentationTests*)/*` | V-7, V-8, R-4, R-5 | all named methods: 66 existing + 11 new = 77, 0 failed/skipped | 77 | 12 |

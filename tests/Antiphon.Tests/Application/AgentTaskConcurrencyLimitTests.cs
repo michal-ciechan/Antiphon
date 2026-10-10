@@ -672,6 +672,7 @@ public class AgentTaskConcurrencyLimitTests
             MaxCostUsdPerRoot = 50.00m,
         };
         var options = Options.Create(resolved);
+        var concurrency = new DispatchConcurrencySettingsService(db, options, TimeProvider.System, new MockEventBus());
         return new AgentTaskService(
             db,
             new DelegationWorkspaceResolver(NullLogger<DelegationWorkspaceResolver>.Instance),
@@ -680,7 +681,8 @@ public class AgentTaskConcurrencyLimitTests
             new RecordingSessionStopper(),
             TimeProvider.System,
             NullLogger<AgentTaskService>.Instance,
-            openGate: new DelegationOpenGate(db, options));
+            openGate: new DelegationOpenGate(db, options, concurrency),
+            dispatchConcurrency: concurrency);
     }
 
     private static AppDbContext CreateContext(IsolatedTestSchema schema) =>
