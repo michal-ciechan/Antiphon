@@ -22,6 +22,12 @@ namespace Antiphon.Server.Application.Services;
 public static class AgentTaskLiveness
 {
     /// <summary>
+    /// CARD-1167. The dead-session failure sentence starts with this. The reconciler uses it
+    /// to find a Failed row whose caller note never landed.
+    /// </summary>
+    internal const string DeadSessionFailurePrefix = "Session died before the task settled:";
+
+    /// <summary>
     /// The five fields of a session row the verdict reads. A <c>null</c> snapshot means the row is
     /// GONE — that is the only way "row missing" is spelled, so no caller can disagree with another
     /// about what a present-but-empty snapshot would mean.
@@ -159,6 +165,6 @@ public static class AgentTaskLiveness
     };
 
     private static string Format(string what, string evidence, Guid? sessionId) =>
-        $"Session died before the task settled: {what} ({evidence}). No report is coming"
+        $"{DeadSessionFailurePrefix} {what} ({evidence}). No report is coming"
         + (sessionId is Guid id ? $"; read session {id} before re-running this task." : ".");
 }

@@ -2880,10 +2880,33 @@ public sealed partial class AgentTaskDispatcher
         if (grace <= TimeSpan.Zero)
             return 0;
 
-        var open = await _db.AgentTasks
-            .Where(t => t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working)
+        // CARD-1167. The same read also picks a Failed dead-session row whose caller note
+        // never landed. FailAndNotifyAsync commits Failed before EnqueueAsync, and a throw
+        // there used to be final because this sweep did not revisit Failed rows.
+        var candidates = await _db.AgentTasks
+            .Where(t => t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working
+                || (t.Status == AgentTaskStatus.Failed
+                    && t.ReplyTo == AgentTaskReplyTo.Session
+                    && t.ParentSessionId != null
+                    && t.CompletionNoteQueuedAt == null
+                    && t.FailureReason != null
+                    && t.FailureReason.StartsWith(AgentTaskLiveness.DeadSessionFailurePrefix)))
             .OrderBy(t => t.Id)
             .ToListAsync(ct);
+        if (candidates.Count == 0)
+            return 0;
+
+        foreach (var owed in candidates)
+        {
+            if (owed.Status != AgentTaskStatus.Failed)
+                continue;
+            ct.ThrowIfCancellationRequested();
+            await RecoverLostDeadSessionFailureNoteAsync(owed, ct);
+        }
+
+        var open = candidates
+            .Where(t => t.Status is AgentTaskStatus.Dispatched or AgentTaskStatus.Working)
+            .ToList();
         if (open.Count == 0)
             return 0;
 
@@ -3049,6 +3072,46 @@ public sealed partial class AgentTaskDispatcher
         }
 
         return failed;
+    }
+
+    /// <summary>
+    /// CARD-1167. One caller note for a dead-session failure whose enqueue threw after the
+    /// Failed commit. A row that already exists is stamped and not inserted again.
+    /// </summary>
+    private async Task RecoverLostDeadSessionFailureNoteAsync(AgentTask task, CancellationToken ct)
+    {
+        var existing = await _db.SessionQueuedMessages.AsNoTracking()
+            .Where(m => m.SourceTaskId == task.Id
+                && m.Origin == QueuedMessageOrigin.Delegation
+                && m.SourceLandNotificationId == null)
+            .OrderBy(m => m.CreatedAt)
+            .Select(m => new { m.CreatedAt, m.ContentDigest })
+            .FirstOrDefaultAsync(ct);
+        if (existing is not null)
+        {
+            await CompletionNoteStamp.ApplyAsync(_db, task.Id, existing.ContentDigest, existing.CreatedAt, ct);
+            return;
+        }
+
+        if (task.ParentSessionId is not Guid parentSession || string.IsNullOrEmpty(task.FailureReason))
+            return;
+
+        var reason = task.FailureReason;
+        var note = DelegationReportFormatter.BuildCompletionNote(
+            task, _settings, reason, land: await LandCompletionFacts.LoadAsync(_db, task, ct));
+        try
+        {
+            await _queue.EnqueueAsync(
+                parentSession, note.Body, MessageSendMode.WhenIdle, ct,
+                QueuedMessageOrigin.Delegation, $"task:{task.RootTaskId:N}",
+                task.Id, DelegationNoteDigest.Compute(reason), note.Header);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(
+                ex, "Could not deliver the dead-session failure of task {ShortId} to parent session {SessionId}",
+                DelegationReportFormatter.Short(task.Id), parentSession);
+        }
     }
 
     private enum AbsentLaunchDecision
