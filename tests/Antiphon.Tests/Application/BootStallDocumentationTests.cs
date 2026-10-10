@@ -214,6 +214,63 @@ public class BootStallDocumentationTests
     }
 
     /// <summary>
+    /// CARD-1164. The task-path boot fact is <c>BootReplyWatch.HasModelReplySinceAsync</c>, which
+    /// ignores Grok rules-turn responses, so those assistant, thinking, tool and turn-end rows can
+    /// exist while the stall still stands. The bundle, the fact comment, the failure-code comments,
+    /// the deadline summary and the Overdue prompt line must defer to a qualifying boot-model reply.
+    /// The legacy <c>bootSeq=</c> excerpt stays an enumeration: that read is <c>IsModelReply</c> over
+    /// every later row, with no rules-window exclusion.
+    /// </summary>
+    [Test]
+    public void C1164_Task_path_boot_wording_names_the_qualifying_reply_and_rules_turn_exclusion()
+    {
+        const string qualifying = "qualifying boot-model reply";
+        const string ignores = "ignores Grok rules-turn responses";
+        const string retired = "assistant, thinking, tool or turn-end";
+
+        var bundleBullet = Section(Read("server/Bundles/check-interpreter.md"),
+            "- A `BOOT TURN` line", "If `DEADLINE:`");
+        bundleBullet.ShouldContain(qualifying, Case.Sensitive, "bundle: qualifying reply");
+        bundleBullet.ShouldContain(ignores, Case.Sensitive, "bundle: rules-turn exclusion");
+        bundleBullet.ShouldNotContain(retired, Case.Sensitive, "bundle: retired row-kind enumeration");
+
+        var fact = Section(Read("server/Application/Services/DelegateCheckProbe.cs"),
+            "<param name=\"BootTurn\">", "</param>");
+        fact.ShouldContain(qualifying, Case.Sensitive, "fact: qualifying reply");
+        fact.ShouldContain("HasModelReplySinceAsync", Case.Sensitive, "fact: names the predicate");
+        fact.ShouldContain(ignores, Case.Sensitive, "fact: rules-turn exclusion");
+        fact.ShouldNotContain(retired, Case.Sensitive, "fact: retired row-kind enumeration");
+        Read("server/Application/Services/DelegateCheckProbe.cs").ShouldContain(
+            "no qualifying boot-model reply since", Case.Sensitive, "digest line defers to the predicate");
+
+        var failure = Section(Read("server/Domain/Enums/AgentTaskEnums.cs"),
+            "CARD-0353 S2. The boot prompt was delivered", "Deliberately absent");
+        failure.ShouldContain(qualifying, Case.Sensitive, "failure code: qualifying reply");
+        failure.ShouldContain(ignores, Case.Sensitive, "failure code: rules-turn exclusion");
+        failure.ShouldNotContain(retired, Case.Sensitive, "failure code: retired row-kind enumeration");
+
+        var incident = Section(Read("server/Domain/Enums/AgentIncidentKind.cs"),
+            "CARD-0353 S2. The provider never answered", "ProviderUnresponsive = 48");
+        incident.ShouldContain(qualifying, Case.Sensitive, "incident: qualifying reply");
+        incident.ShouldContain(ignores, Case.Sensitive, "incident: rules-turn exclusion");
+        incident.ShouldNotContain(retired, Case.Sensitive, "incident: retired row-kind enumeration");
+
+        var deadline = Section(Read("server/Application/Services/TaskDeadlinePolicy.cs"),
+            "phaseKind == DeadlineKind.BootModelWait", "this is a boot turn.");
+        deadline.ShouldContain(qualifying, Case.Sensitive, "deadline summary: qualifying reply");
+        deadline.ShouldContain(ignores, Case.Sensitive, "deadline summary: rules-turn exclusion");
+        deadline.ShouldNotContain("no assistant, thinking or tool row", Case.Sensitive,
+            "deadline summary: retired row-kind enumeration");
+
+        var attention = Read("server/Application/Services/AttentionService.cs");
+        var promptLine = Section(attention, "private AttentionItemDto BootStallItem(", "return new AttentionItemDto(");
+        promptLine.ShouldContain("no qualifying model reply since", Case.Sensitive, "overdue row: qualifying reply");
+        promptLine.ShouldNotContain("turn-end row since", Case.Sensitive, "overdue row: retired row-kind enumeration");
+        // IsModelReply counts every later model row, so this excerpt stays true when it is shown.
+        Section(attention, "No assistant, thinking, tool or turn-end row after boot sequence", "episode.CreatedAt");
+    }
+
+    /// <summary>
     /// CARD-1162 D1: the Windows ConPTY witness name must describe the legacy CARD-0353
     /// kill-and-retry its body still asserts. The false detection-until-explicit-retry name
     /// must not return. CARD-1151 S6 (CP-36) still owns flipping the assertions.

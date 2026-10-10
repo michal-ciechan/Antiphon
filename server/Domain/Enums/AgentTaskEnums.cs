@@ -391,7 +391,8 @@ public enum AgentTaskFailureCode
 
     /// <summary>
     /// CARD-0353 S2. The boot prompt was delivered and transcript-confirmed, and the session then
-    /// produced nothing at all — no assistant, thinking, tool or turn-end row — for
+    /// produced no qualifying boot-model reply — <c>BootReplyWatch.HasModelReplySinceAsync</c>
+    /// ignores Grok rules-turn responses — for
     /// <c>DelegationSettings.BootModelWaitDeadlineMinutes</c>. Measured on 2026-09-03: an xAI
     /// capacity incident left three Grok requests accepted and never answered, with no retry and
     /// no error, because Grok Build 1.0.13 has no first-token timeout.

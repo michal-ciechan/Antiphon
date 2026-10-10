@@ -88,7 +88,7 @@ public class BootStallAttentionTests
         row.Evidence.ShouldContain($"Boot notice due {promptAt.AddMinutes(8):u}.", Case.Sensitive);
         row.Evidence.ShouldContain($"Operator decision due {promptAt.AddMinutes(20):u}.", Case.Sensitive);
         row.Evidence.ShouldContain(
-            $"Prompt #1 at {promptAt:u}, {Duration(offset)} ago; no assistant, thinking, tool or turn-end row since.",
+            $"Prompt #1 at {promptAt:u}, {Duration(offset)} ago; no qualifying model reply since.",
             Case.Sensitive);
         AssertNoDeliveryClaim(visible, moment);
         (await WarningCountAsync(task)).ShouldBe(0, "the row is derived from boot facts, never from a persisted Warning");
@@ -186,7 +186,7 @@ public class BootStallAttentionTests
         var row = await BootRowAsync(scenario, task, new FakeTimeProvider(new DateTimeOffset(now)));
         row.ShouldNotBeNull(prompt);
         row.Headline.ShouldBe("Boot stall detected: no model reply 8m after the prompt.");
-        row.Evidence.ShouldContain($"Prompt #1 at {promptAt:u}, 8m ago; no assistant, thinking, tool or turn-end row since.");
+        row.Evidence.ShouldContain($"Prompt #1 at {promptAt:u}, 8m ago; no qualifying model reply since.");
         row.Evidence.ShouldContain($"Boot notice due {promptAt.AddMinutes(8):u}.");
         row.Evidence.ShouldContain($"Operator decision due {promptAt.AddMinutes(20):u}.");
         var visible = row.Headline + "\n" + row.Evidence;

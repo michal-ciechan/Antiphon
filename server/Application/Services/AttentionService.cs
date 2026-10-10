@@ -3200,7 +3200,7 @@ public sealed partial class AttentionService
     /// explicit Retry, and there is no Escalate, because nothing escalates or reclaims the seat
     /// on its own. Every time shown is derived from the prompt's own timestamp, so the row reads
     /// the same after a restart. The prompt line is that sequence, timestamp and age, plus the
-    /// absence of a model row; the text is not matched to the intended request, so the line is
+    /// absence of a qualifying model reply; the text is not matched to the intended request, so the line is
     /// not a delivery verdict (CARD-1160). The evidence is one fact per line and is not excerpted: the
     /// operator sentence comes first and the due times and later breaches must all survive.
     /// </summary>
@@ -3223,8 +3223,7 @@ public sealed partial class AttentionService
             "Inspect the session, then choose: keep waiting, reply, or explicitly cancel or retry the task.",
             "Detection only: the session keeps running and keeps its seat; nothing is stopped, typed "
             + "or reassigned automatically, and no deadline ends this episode.",
-            $"Prompt #{boot.PromptSequence} at {boot.PromptAt:u}, {age} ago; no assistant, "
-            + "thinking, tool or turn-end row since.",
+            $"Prompt #{boot.PromptSequence} at {boot.PromptAt:u}, {age} ago; no qualifying model reply since.",
             boot.BootDueAt is DateTime bootDue
                 ? $"Boot notice due {bootDue:u}."
                 : "Boot notice disabled (BootModelWaitDeadlineMinutes <= 0).",
