@@ -551,6 +551,10 @@ quoting. The test's budget is `CommandLineBudgetChars` (30 000) minus 500.
 
 ## Results
 
+### Superseded: feat/card-task-b6ed9f07
+
+The CHECKPOINT lines in this subsection are superseded. They record run `20261010-155741-add3` at `f4957a16b2e97dd195a984da76a7f51a1b66fd3a`, before the master port.
+
 Closed checkpoint run `20261010-155741-add3` on `feat/card-task-b6ed9f07` at tested source `f4957a16b2e97dd195a984da76a7f51a1b66fd3a` (S4). Verdict GREEN, exit 0. Source state clean, buildSource verified. Wall 4m16s. Token bound. `restart: none`. Post-land Mutation was not run. PC-1 through PC-7 stay pending.
 
 | CP | executed | passed | failed | skipped | slot | waited |
@@ -591,3 +595,37 @@ Unlisted runs, each through `scripts/build-slot.ps1`:
 - `c822-tool` lease `5b6c69e9-196a-4d59-aae3-4e532f886b62` waited=0s held=5s. Checkpoint tool bootstrap to `tools/Antiphon.Checkpoints/bin-c822-tool/`. The closed run itself was not wrapped in a second slot.
 
 Slice commits: S1 `719a69c1cfbc1c600ac2656066309f19d29ad2e2`, S2 `0eba109542362df7bb93534e5fd185b948008f5a`, S3 `490566660948ed91593ce5965dad1839040cbdc6`, S4 `f4957a16b2e97dd195a984da76a7f51a1b66fd3a`. Worktree `/work/worktrees/task-b6ed9f07`. Landing owner `b6ed9f07`.
+
+### Master port: feat/card-task-1f6681d5
+
+Closed checkpoint run `20261010-164102-f411` on `feat/card-task-1f6681d5` at tested source `d962d8e43f9ee5b465aa2a14df1804d17a3d8f32`. Verdict GREEN, exit 0. Source state clean, buildSource verified. Wall 5m02s. One isolated build `bin-c822/` (deleted on green). Token bound. `restart: none`. Post-land Mutation was not run. PC-1 through PC-7 stay pending. Landing owner `1f6681d5`. Worktree `/work/worktrees/task-1f6681d5`.
+
+| CP | executed | passed | failed | skipped | slot | waited |
+|---|---|---|---|---|---|---|
+| CP-1 | 23 | 23 | 0 | 0 | granted | 0s |
+| CP-2 | 99 | 99 | 0 | 0 | granted | 0s |
+| CP-3 | 16 | 16 | 0 | 0 | granted | 0s |
+| CP-4 | 10 | 10 | 0 | 0 | granted | 0s |
+| CP-5 | n/a | n/a | n/a | n/a | granted | 0s |
+
+CP-5 command exit 0. Console: `HOOKS TESTS EXIT CODE: 0  (PASS)`, pass 43, fail 0. Passing cases include `SessionStart matcher is startup|resume|compact and reuses the same wrapper`, startup injects, resume injects, compact injects the file then `COMPACT_CONTEXT`, startup silent when the env is missing, startup silent when the file is missing, startup cuts a 40 KiB file at 16384 bytes and adds the marker, and startup silent for a worker even when the file exists.
+
+`InstructionBundleTests.the_worst_case_composition_measured_sits_far_under_the_budget` and `orchestrator_bundle_points_to_operational_autonomy_without_growing` passed inside CP-2, so the argv estimate is under 29 500 and the bundle is within the 14 310 cap. `CheckpointRepeatDocumentationTests.repeat_budget_reaches_code_briefs_without_bundle_growth` passed in the same row against pin `80b0c0be058db4f78ab068c05eeb47deac5966bf2d9aa97a7225a35de1e1f56a`. Merged `orchestrator.md` is LF, raw 13 413 bytes, trimmed LF 13 390.
+
+Unedited CHECKPOINT lines:
+
+```
+CHECKPOINT CP-5 commit=d962d8e43f9ee5b465aa2a14df1804d17a3d8f32 build=n/a filter=pwsh -File scripts/test-hooks.ps1 executed=n/a passed=n/a failed=n/a skipped=n/a trx=n/a exit=0 slot=granted waited=0s dirty=0 source=d962d8e43f9ee5b465aa2a14df1804d17a3d8f32 sourceState=clean buildSource=notApplicable
+CHECKPOINT CP-2 commit=d962d8e43f9ee5b465aa2a14df1804d17a3d8f32 build=reused filter=/*/*/(StandingPipelinePolicyDocumentationTests*)|(TaskPlatformGuidanceTests*)|(RunnerDefaultGuidanceTests*)|(InstructionBundleTests*)|(PolicyRefreshDeltaTests*)|(CheckpointRepeatDocumentationTests*)/* executed=99 passed=99 failed=0 skipped=0 trx=/work/worktrees/task-1f6681d5/.antiphon/checkpoints/20261010-164102-f411/rows/CP-2/run.trx slot=granted waited=0s dirty=0 source=d962d8e43f9ee5b465aa2a14df1804d17a3d8f32 sourceState=clean buildSource=verified
+CHECKPOINT CP-1 commit=d962d8e43f9ee5b465aa2a14df1804d17a3d8f32 build=ok filter=/*/*/(OrchestratorInstructionsRendererTests*)|(OrchestratorInstructionsDeltaTests*)|(OrchestratorInstructionsRecipientTests*)|(OrchestratorInstructionsPathTests*)|(OrchestratorInstructionsGuidanceTests*)|(OrchestratorInstructionsMigrationShapeTests*)/* executed=23 passed=23 failed=0 skipped=0 trx=/work/worktrees/task-1f6681d5/.antiphon/checkpoints/20261010-164102-f411/rows/CP-1/run.trx slot=granted waited=0s dirty=0 source=d962d8e43f9ee5b465aa2a14df1804d17a3d8f32 sourceState=clean buildSource=verified
+CHECKPOINT CP-3 commit=d962d8e43f9ee5b465aa2a14df1804d17a3d8f32 build=reused filter=/*/*/OrchestratorInstructionsRefreshTests/* executed=16 passed=16 failed=0 skipped=0 trx=/work/worktrees/task-1f6681d5/.antiphon/checkpoints/20261010-164102-f411/rows/CP-3/run.trx slot=granted waited=0s dirty=0 source=d962d8e43f9ee5b465aa2a14df1804d17a3d8f32 sourceState=clean buildSource=verified
+CHECKPOINT CP-4 commit=d962d8e43f9ee5b465aa2a14df1804d17a3d8f32 build=reused filter=/*/*/(CompactionRecoveryTests*)|(OrchestratorInstructionsEndpointTests*)/* executed=10 passed=10 failed=0 skipped=0 trx=/work/worktrees/task-1f6681d5/.antiphon/checkpoints/20261010-164102-f411/rows/CP-4/run.trx slot=granted waited=0s dirty=0 source=d962d8e43f9ee5b465aa2a14df1804d17a3d8f32 sourceState=clean buildSource=verified
+```
+
+Evidence: `.antiphon/checkpoints/20261010-164102-f411/report.md`. The tool deleted `bin-c822/`.
+
+Ordinary V/R on this tip: CP-1 covers V-1, V-2, V-3, V-4, V-14, R-1, R-8 (23 passed). CP-2 covers R-7 and the orchestrator byte pin (99 passed). CP-3 covers V-5, V-6 (six arguments, including `dispatch-concurrency`), V-7, V-8, V-9, V-10, R-2, R-3, R-4, R-5, R-6 (16 passed). CP-4 covers V-11, V-12, R-8 (10 passed: compaction 8, endpoint 2). CP-5 covers V-13 (exit 0, pass 43).
+
+Cherry-picks of `719a69c1cfbc1c600ac2656066309f19d29ad2e2`, `0eba109542362df7bb93534e5fd185b948008f5a`, `490566660948ed91593ce5965dad1839040cbdc6`, `f4957a16b2e97dd195a984da76a7f51a1b66fd3a`, and `bd43e5f61712c4d356f12f60aed82a854acb639f` are `932a53767bda9d6acd8377c9be7fd146f67b195b`, `ea97cf63acf9eca0dfc8955e11361dac668c1069`, `a64dccaa1ad6d3a36c4f9982a31401e35c8eb43d`, `e27954e5b2b7a6732abcf8fd1adc812be104818e`, and `470f233d8c17fe586b898ebc1586f1f6f4ca0274` on this branch. The pin amendment is `d962d8e43f9ee5b465aa2a14df1804d17a3d8f32`.
+
+Unlisted runs: none inside the closed checkpoint. Tool bootstrap `c822-tool` lease `21c484d7-ed4e-4b26-9653-c892a5973a1d` waited=0s held=11s, `dotnet build tools/Antiphon.Checkpoints` to `bin-c822-tool/`, 0 errors. Reason: the plan bootstraps the checkpoint tool through the slot gate; the closed run was not wrapped in a second slot.
