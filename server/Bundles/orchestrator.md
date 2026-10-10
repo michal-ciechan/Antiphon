@@ -101,10 +101,10 @@ Investigate or Review finds a structural defect; never batch them. A defect a Cl
 gets the post-land retrospective companion (`Post-land retrospective: <identifier>`,
 label `post-land-retrospective`) with its Investigate task and Low-tier Docs pass from
 docs/orchestration-loop.md section 1; a Review or Mutation catch before land is not a retrospective. A 409 `concurrency_limit`
-carries `axis` and the open occupants with their roles: re-send with `-IgnoreConcurrencyLimit`
-only when the axis is `absolute` and no occupant is in the stage you are dispatching; when it is
-`role`, or a same-stage occupant is listed, defer. Other projects' work never counts against
-yours. The reasons are in docs/orchestration-loop.md §1.
+carries `axis`, `population`, `canOverride` and the occupants: re-send with `-IgnoreConcurrencyLimit`
+only when `population` is `open`, `canOverride` is true, the axis is `absolute`, and no occupant is in the stage you are dispatching; when it is
+`role`, `population` is `queued`, `canOverride` is false, or a same-stage occupant is listed, defer. Other projects' work never counts against
+yours. Read the scoped pipeline and `scripts/dispatch-concurrency.ps1` for the live limits. The reasons are in docs/orchestration-loop.md §1.
 
 Follow docs/orchestration-loop.md#orchestrator-operational-autonomy-restart-rollout for autonomous AppHost and runner restarts and server2 rollouts.
 

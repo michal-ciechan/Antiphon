@@ -10,9 +10,12 @@
 # ASCII-only on purpose: daemon/agent scripts must parse under Windows PowerShell 5.1, which reads
 # a no-BOM .ps1 as CP1252 and mangles non-ASCII characters.
 #
-# CARD-0147 / CARD-0366: create is sequential-by-default. A 409 concurrency_limit names the
-# occupants and the cap (counts and occupants are the calling session's project only);
-# re-send with -IgnoreConcurrencyLimit only when the user asked for parallel work.
+# CARD-0147 / CARD-0366 / CARD-0505: create is sequential-by-default. A 409 concurrency_limit
+# names the population (open or queued), axis, occupants and cap. Re-send with
+# -IgnoreConcurrencyLimit only when population is open, canOverride is true, and the axis is
+# absolute with no occupant in the stage you are dispatching. A queued population, canOverride
+# false, or a same-stage collision never justifies the flag. Read the scoped pipeline or
+# scripts/dispatch-concurrency.ps1 before raising a durable limit.
 #
 # CARD-0527: settlement commits a Shared task's own footprint unless you pass -NoCommit.
 # That is the only opt-out an instruction can carry; prose in -Goal is an advisory, not a
@@ -204,11 +207,10 @@ param(
     [Parameter(ParameterSetName = 'Create')]
     [switch]$IgnoreModelDisabled,
 
-    # Bypass the CARD-0147 create-time 409 concurrency_limit. Queues this one task past the
-    # project/role in-flight cap (default 6 absolute; Code and Review 2, other named roles 1).
-    # Counts and occupants are the calling session's project only. One-shot: it does not raise
-    # Delegation:MaxConcurrentTasks, and the dispatcher still skips past 2.
-    # Use only when the user asked for parallel work this turn.
+    # Bypass a LegacyOpen open cap (CARD-0147 / CARD-0505). One-shot: it does not raise a
+    # durable limit, and it does not lift a queued population or a SeparateQueues running hold.
+    # Use it only when the 409 says population=open, canOverride=true, and axis=absolute with
+    # no occupant in the stage you are dispatching. A same-stage collision still defers.
     [Parameter(ParameterSetName = 'Create')]
     [switch]$IgnoreConcurrencyLimit,
 

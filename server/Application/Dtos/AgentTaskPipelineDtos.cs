@@ -20,10 +20,33 @@ public sealed record AgentTaskPipelineDto(
     AgentTaskPipelineBacklogDto InvestigateBacklog)
 {
     public IReadOnlyList<HostLimitSummaryDto> Hosts { get; init; } = [];
+
+    /// <summary>CARD-0505. <c>fleet</c>, <c>project</c>, or <c>null</c>. Host numbers stay fleet-wide.</summary>
+    public string TaskScope { get; init; } = "fleet";
+
+    /// <summary>CARD-0505. Host summaries are fleet totals even when <see cref="TaskScope"/> is not.</summary>
+    public string HostSummaryScope { get; init; } = "fleet";
+
+    /// <summary>CARD-0505. Effective policy and occupancy. Empty when the store has not been imported.</summary>
+    public IReadOnlyList<AgentTaskPipelineConcurrencyScopeDto> ConcurrencyScopes { get; init; } = [];
 }
 
 public sealed record HostLimitSummaryDto(
-    string HostId, int InFlight, int? EffectiveLimit, int? Configured, int? Declared, string Source);
+    string HostId, int InFlight, int? EffectiveLimit, int? Configured, int? Declared, string Source)
+{
+    /// <summary>CARD-0505. Always <c>fleet</c>: a project filter does not add seats.</summary>
+    public string Scope { get; init; } = "fleet";
+}
+
+/// <summary>
+/// CARD-0505. One project's effective dispatch policy and its own open/parallel/queued counts.
+/// A null <see cref="ProjectId"/> is the null bucket.
+/// </summary>
+public sealed record AgentTaskPipelineConcurrencyScopeDto(
+    Guid? ProjectId,
+    bool NullBucket,
+    DispatchConcurrencyEffectiveDto Effective,
+    DispatchConcurrencyOccupancyDto Occupancy);
 
 /// <summary>Fresh Backlog work, ranked for an advisory Investigate glance.</summary>
 public sealed record AgentTaskPipelineBacklogDto(
