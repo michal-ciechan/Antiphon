@@ -625,6 +625,8 @@ public class DispatchConcurrencyPipelineTests
             Status = SessionStatus.Running,
             Cwd = Path.GetTempPath(),
             RunnerId = runnerId,
+            RunnerStoreId = Guid.NewGuid(),
+            RunnerCwd = "/work",
             Cols = 80,
             Rows = 24,
             CreatedAt = now,
