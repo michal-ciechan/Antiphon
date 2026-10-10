@@ -1557,6 +1557,27 @@ public sealed class RemoteScriptContractTests
         edited.Removed.ShouldBeEmpty("c1105-generation: an edited previousSha removes nothing");
     }
 
+    // CARD-1139. image_count=0 is a temp-only allowance. Main with a state-init and no
+    // session-runner still refuses before stop, removal, volume deletion, or a journal.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1105_Main_state_init_without_session_runner_refuses()
+    {
+        C1008HostFixture.RequireNativeLinux();
+        using var main = new C1008HostFixture();
+        var containers = main.Docker["containers"]!.AsArray();
+        var runner = containers.Single(node =>
+            node!["Config"]!["Labels"]!["com.docker.compose.service"]!.GetValue<string>() == "session-runner");
+        containers.Remove(runner);
+        containers.Any(node =>
+            node!["Config"]!["Labels"]!["com.docker.compose.service"]!.GetValue<string>() == "state-init")
+            .ShouldBeTrue("c1139: state-init stays in the main census");
+        containers.Any(node =>
+            node!["Config"]!["Labels"]!["com.docker.compose.service"]!.GetValue<string>() == "session-runner")
+            .ShouldBeFalse("c1139: the session-runner is absent");
+        await C1105AssertFreshRefusal(main, "RecycleGenerationUnknown");
+    }
+
     // CARD-1105 V-5. Apply orders checkout and boot files first; the preview stays read-only.
     [Test]
     public void C1105_Deploy_parent_orders_checkout_and_boot_files_before_recycle()
