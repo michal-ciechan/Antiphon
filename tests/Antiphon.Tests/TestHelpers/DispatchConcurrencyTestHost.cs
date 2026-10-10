@@ -8,6 +8,7 @@ using Antiphon.Tests.Agents;
 using Antiphon.Server.Api.Endpoints;
 using Antiphon.Server.Api.Middleware;
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
@@ -629,7 +630,15 @@ public sealed class ConcurrencyDispatchWorld : IAsyncDisposable
     {
         var adapter = new FakeAgentProtocolAdapter { TurnCompleted = true, ReadyResult = true };
         adapter.OnSubmitted = body => PersistPromptAsync(sessionId, body);
-        Runtime.Register(sessionId, adapter);
+        try
+        {
+            Runtime.Register(sessionId, adapter);
+        }
+        catch (ConflictException)
+        {
+            // A later matrix row reuses this session. The first registration
+            // already persists each submitted prompt.
+        }
     }
 
     public async Task<TranscriptEntry?> LatestPromptAsync(Guid sessionId)
