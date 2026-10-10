@@ -3077,6 +3077,8 @@ public sealed partial class AgentTaskDispatcher
     /// <summary>
     /// CARD-1167. One caller note for a dead-session failure whose enqueue threw after the
     /// Failed commit. A row that already exists is stamped and not inserted again.
+    /// CARD-1182. A missing parent session row cannot take that note. Stamp the task so the
+    /// next sweep does not select it. Any other enqueue failure stays unstamped and is retried.
     /// </summary>
     private async Task RecoverLostDeadSessionFailureNoteAsync(AgentTask task, CancellationToken ct)
     {
@@ -3097,6 +3099,16 @@ public sealed partial class AgentTaskDispatcher
             return;
 
         var reason = task.FailureReason;
+        if (!await _db.AgentSessions.AsNoTracking().AnyAsync(s => s.Id == parentSession, ct))
+        {
+            _logger.LogWarning(
+                "Could not deliver the dead-session failure of task {ShortId} to parent session {SessionId}",
+                DelegationReportFormatter.Short(task.Id), parentSession);
+            await CompletionNoteStamp.ApplyAsync(
+                _db, task.Id, DelegationNoteDigest.Compute(reason), UtcNow(), ct);
+            return;
+        }
+
         var note = DelegationReportFormatter.BuildCompletionNote(
             task, _settings, reason, land: await LandCompletionFacts.LoadAsync(_db, task, ct));
         try
@@ -3105,6 +3117,14 @@ public sealed partial class AgentTaskDispatcher
                 parentSession, note.Body, MessageSendMode.WhenIdle, ct,
                 QueuedMessageOrigin.Delegation, $"task:{task.RootTaskId:N}",
                 task.Id, DelegationNoteDigest.Compute(reason), note.Header);
+        }
+        catch (NotFoundException ex) when (ex.EntityName == nameof(AgentSession))
+        {
+            _logger.LogWarning(
+                ex, "Could not deliver the dead-session failure of task {ShortId} to parent session {SessionId}",
+                DelegationReportFormatter.Short(task.Id), parentSession);
+            await CompletionNoteStamp.ApplyAsync(
+                _db, task.Id, DelegationNoteDigest.Compute(reason), UtcNow(), ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
