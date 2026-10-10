@@ -38,16 +38,19 @@ public sealed class ModelAvailability : IModelAvailability
     private readonly TimeProvider _time;
     private readonly ILogger<ModelAvailability> _logger;
     private readonly TimeSpan _modelCapFallbackHold;
+    private readonly IServiceProvider? _services;
 
     public ModelAvailability(
         AppDbContext db,
         TimeProvider time,
         ILogger<ModelAvailability> logger,
-        IOptions<SupervisionSettings>? settings = null)
+        IOptions<SupervisionSettings>? settings = null,
+        IServiceProvider? services = null)
     {
         _db = db;
         _time = time;
         _logger = logger;
+        _services = services;
         var hours = settings is null
             ? 6
             : settings.Value.ApiErrorRecovery.EffectiveModelCapFallbackHoldHours;
@@ -128,8 +131,20 @@ public sealed class ModelAvailability : IModelAvailability
         }
 
         await _db.SaveChangesAsync(ct);
+        if (cleared > 0)
+        {
+            foreach (var row in rows)
+            {
+                if (row.ClearedAt is not null)
+                    SignalHold(row.Kind, row.ModelAlias);
+            }
+        }
+
         return cleared;
     }
+
+    private void SignalHold(AgentKind kind, string alias) =>
+        OrchestratorInstructionsSignal.Fire(_services, $"hold {kind}/{alias}");
 
     /// <summary>CARD-0412: stamp ClearedAt, ClearCause and ReleasePendingAt exactly once.</summary>
     internal static bool TryClear(
@@ -194,7 +209,10 @@ public sealed class ModelAvailability : IModelAvailability
             };
             _db.ModelAvailabilityHolds.Add(row);
             if (saveChanges)
+            {
                 await _db.SaveChangesAsync(ct);
+                SignalHold(kind, canonical);
+            }
             _logger.LogInformation(
                 "Paused {Kind}/{Alias} until {Until} ({Reason})",
                 kind, canonical, disabledUntil, row.Reason);
@@ -218,7 +236,11 @@ public sealed class ModelAvailability : IModelAvailability
         }
 
         if (saveChanges)
+        {
             await _db.SaveChangesAsync(ct);
+            SignalHold(kind, canonical);
+        }
+
         return existing;
     }
 
@@ -283,6 +305,7 @@ public sealed class ModelAvailability : IModelAvailability
             };
             _db.ModelAvailabilityHolds.Add(row);
             await _db.SaveChangesAsync(ct);
+            SignalHold(parsedKind, canonical);
             _logger.LogInformation(
                 "Manual hold {Kind}/{Alias} until {Until} ({Reason})",
                 parsedKind, canonical, (object?)untilUtc ?? "(until cleared)", row.Reason);
@@ -300,6 +323,7 @@ public sealed class ModelAvailability : IModelAvailability
         existing.Revision++;
         existing.EvidenceRecoveryId = null;
         await _db.SaveChangesAsync(ct);
+        SignalHold(parsedKind, canonical);
         _logger.LogInformation(
             "Manual hold {Kind}/{Alias} until {Until} ({Reason}) — converted in place",
             parsedKind, canonical, (object?)untilUtc ?? "(until cleared)", existing.Reason);
@@ -321,7 +345,10 @@ public sealed class ModelAvailability : IModelAvailability
             return;
 
         if (TryClear(existing, UtcNow(), ModelAvailabilityClearCause.OperatorCleared))
+        {
             await _db.SaveChangesAsync(ct);
+            SignalHold(parsedKind, canonical);
+        }
         _logger.LogInformation("Cleared hold {Kind}/{Alias}", parsedKind, canonical);
     }
 

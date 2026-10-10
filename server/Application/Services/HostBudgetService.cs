@@ -13,7 +13,7 @@ namespace Antiphon.Server.Application.Services;
 /// <summary>Live, persisted admission budgets for the desktop and configured remote runners.</summary>
 public sealed class HostBudgetService(
     AppDbContext db, ISessionRunnerDirectory runners, IOptions<DelegationSettings> settings,
-    TimeProvider clock)
+    TimeProvider clock, IServiceProvider? services = null)
 {
     public IReadOnlyList<string> KnownHostIds =>
         new[] { "local" }.Concat(runners.KnownRunnerIds.Where(id => id != "local"))
@@ -65,6 +65,7 @@ public sealed class HostBudgetService(
         });
         await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
+        OrchestratorInstructionsSignal.Fire(services, $"host-budget {hostId}");
         return result;
     }
 

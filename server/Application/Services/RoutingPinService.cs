@@ -29,18 +29,24 @@ public sealed class RoutingPinService
     private readonly TimeProvider _time;
     private readonly ILogger<RoutingPinService> _logger;
     private readonly ComplexityRoutingService? _complexityRouting;
+    private readonly IServiceProvider? _services;
 
     public RoutingPinService(
         AppDbContext db,
         TimeProvider time,
         ILogger<RoutingPinService> logger,
-        ComplexityRoutingService? complexityRouting = null)
+        ComplexityRoutingService? complexityRouting = null,
+        IServiceProvider? services = null)
     {
         _db = db;
         _time = time;
         _logger = logger;
         _complexityRouting = complexityRouting;
+        _services = services;
     }
+
+    private void SignalPin(AgentTaskRole role) =>
+        OrchestratorInstructionsSignal.Fire(_services, $"routing-pin {role}");
 
     /// <summary>What a create is asking for, before the role policy fills anything in.</summary>
     public sealed record Ask(
@@ -261,6 +267,7 @@ public sealed class RoutingPinService
         existing.UpdatedAt = now;
 
         await _db.SaveChangesAsync(ct);
+        SignalPin(role);
         var identifier = await IdentifierAsync(cardId, ct);
         _logger.LogInformation("Routing pin set: {Pin}", Describe(existing, identifier));
         return ToDto(existing, identifier);
@@ -277,6 +284,7 @@ public sealed class RoutingPinService
 
         pin.ClearedAt = UtcNow();
         await _db.SaveChangesAsync(ct);
+        SignalPin(pin.Role);
         _logger.LogInformation(
             "Routing pin cleared: {Pin}", Describe(pin, await IdentifierAsync(pin.CardId, ct)));
         return true;
@@ -603,6 +611,8 @@ public sealed class RoutingPinService
         foreach (var pin in expired)
             pin.ClearedAt = now;
         await _db.SaveChangesAsync(ct);
+        foreach (var pin in expired)
+            SignalPin(pin.Role);
     }
 
     private async Task<IReadOnlyList<RoutingPinDto>> ToDtosAsync(

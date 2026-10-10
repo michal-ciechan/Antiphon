@@ -16,7 +16,8 @@ public sealed class RunnerRetireService(
     ISessionRunnerDirectory directory,
     PhoneHomeRunnerSettings settings,
     TimeProvider clock,
-    ILogger logger)
+    ILogger logger,
+    IServiceProvider? services = null)
 {
     public async Task<int> RunAsync(CancellationToken ct)
     {
@@ -159,6 +160,7 @@ public sealed class RunnerRetireService(
         row.RetireReason = reason;
         row.UpdatedAt = now;
         await SaveAndMirrorAsync(row, ct);
+        OrchestratorInstructionsSignal.Fire(services, $"runner-retire {row.RunnerId}");
     }
 
     private async Task SaveAndMirrorAsync(SessionRunnerState row, CancellationToken ct)

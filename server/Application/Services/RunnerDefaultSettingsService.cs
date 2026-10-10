@@ -34,19 +34,22 @@ public sealed class RunnerDefaultSettingsService
     private readonly TimeProvider _clock;
     private readonly IEventBus? _events;
     private readonly ISessionRunnerDirectory? _runners;
+    private readonly IServiceProvider? _services;
 
     public RunnerDefaultSettingsService(
         AppDbContext db,
         IOptions<DelegationSettings> settings,
         TimeProvider clock,
         IEventBus? events = null,
-        ISessionRunnerDirectory? runners = null)
+        ISessionRunnerDirectory? runners = null,
+        IServiceProvider? services = null)
     {
         _db = db;
         _settings = settings.Value;
         _clock = clock;
         _events = events;
         _runners = runners;
+        _services = services;
     }
 
     public async Task<RunnerDefaultSnapshot> EnsureInitializedAsync(CancellationToken ct)
@@ -198,6 +201,7 @@ public sealed class RunnerDefaultSettingsService
             }
         }
 
+        OrchestratorInstructionsSignal.Fire(_services, $"runner-defaults rev {next}");
         return await ProjectAsync(ct);
     }
 

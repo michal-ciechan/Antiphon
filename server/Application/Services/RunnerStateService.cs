@@ -49,7 +49,8 @@ public sealed class RunnerStateService(
     IRunnerStateStore store,
     PhoneHomeRunnerDirectory directory,
     IOptions<PhoneHomeRunnerSettings> settings,
-    TimeProvider clock)
+    TimeProvider clock,
+    IServiceProvider? services = null)
 {
     public const int MaxReasonLength = 200;
 
@@ -72,6 +73,7 @@ public sealed class RunnerStateService(
         row.UpdatedAt = now;
         await store.SaveAsync(row, ct);
         directory.ApplyState(id, ToState(row));
+        OrchestratorInstructionsSignal.Fire(services, $"runner-drain {id}");
     }
 
     public async Task ClearAsync(string runnerId, string? reason, Guid? updatedByTaskId, CancellationToken ct)
@@ -92,6 +94,7 @@ public sealed class RunnerStateService(
         row.UpdatedByTaskId = updatedByTaskId;
         await store.SaveAsync(row, ct);
         directory.ApplyState(id, ToState(row));
+        OrchestratorInstructionsSignal.Fire(services, $"runner-drain {id}");
     }
 
     public static RunnerState ToState(SessionRunnerState row) => new(
