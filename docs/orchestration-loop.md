@@ -1102,8 +1102,8 @@ header adds `after reply; dispatched … ago` and the completion note carries bo
 `AgentSession.LaunchResumedAt` (CARD-0340's interrupted-launch clock).
 
 **A session showing only its own prompt, and WORKING, is a provider stall (CARD-0353/CARD-0312).**
-The prompt reached the transcript, so delivery is not the problem; the model has not produced its
-first token. The check digest names it — a `BOOT TURN` line on `SESSION`, and a `DEADLINE:` line
+The Overdue attention row states the prompt's age, the boot-notice and operator thresholds, and the stage.
+The check digest names the stall — a `BOOT TURN` line on `SESSION`, and a `DEADLINE:` line
 naming `BootModelWait` — and the harness only DETECTS it (CARD-1151): it never fails, stops,
 retries or releases the session, and holds no alias.
 A transcript-confirmed boot prompt with no model reply is detection only while the session is Working, runner-listed, or safety evidence is unknown. At eight minutes it records BootStallDetected; at the bounded operator threshold (20 minutes with defaults) it asks for an operator decision without failure, retry, input, stop or seat release.

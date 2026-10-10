@@ -2301,6 +2301,8 @@ public sealed partial class AttentionService
             var actions = episode.AgentId is null
                 ? new[] { AttentionAction.OpenDrawer }
                 : new[] { AttentionAction.OpenAgent, AttentionAction.OpenDrawer };
+            // Model rows after bootSeq were the only read. No prompt record was matched, so this
+            // states that silence and the sequence (CARD-1160).
             items.Add(new AttentionItemDto(
                 AttentionKind.LivenessProbeFailed,
                 episode.Severity,
@@ -2311,9 +2313,7 @@ public sealed partial class AttentionService
                 title,
                 episode.Message,
                 Excerpt(
-                    "The prompt reached the transcript — delivery is not the problem. The model "
-                    + "produced no assistant, thinking, tool or turn-end row within the boot-turn "
-                    + "deadline, which is a provider that has not answered. "
+                    $"No assistant, thinking, tool or turn-end row after boot sequence {bootSequence}. "
                     + (episode.FailureReason ?? "")),
                 episode.CreatedAt,
                 null,
@@ -3199,7 +3199,9 @@ public sealed partial class AttentionService
     /// (inclusive). Actions are OpenDrawer, Reply and Cancel; ordinary task controls supply an
     /// explicit Retry, and there is no Escalate, because nothing escalates or reclaims the seat
     /// on its own. Every time shown is derived from the prompt's own timestamp, so the row reads
-    /// the same after a restart. The evidence is one fact per line and is not excerpted: the
+    /// the same after a restart. The prompt line is that sequence, timestamp and age, plus the
+    /// absence of a model row; the text is not matched to the intended request, so the line is
+    /// not a delivery verdict (CARD-1160). The evidence is one fact per line and is not excerpted: the
     /// operator sentence comes first and the due times and later breaches must all survive.
     /// </summary>
     private AttentionItemDto BootStallItem(
@@ -3221,8 +3223,8 @@ public sealed partial class AttentionService
             "Inspect the session, then choose: keep waiting, reply, or explicitly cancel or retry the task.",
             "Detection only: the session keeps running and keeps its seat; nothing is stopped, typed "
             + "or reassigned automatically, and no deadline ends this episode.",
-            $"Accepted prompt #{boot.PromptSequence} at {boot.PromptAt:u}, {age} ago; no assistant, "
-            + "thinking, tool or turn-end row since, so delivery is not the problem.",
+            $"Prompt #{boot.PromptSequence} at {boot.PromptAt:u}, {age} ago; no assistant, "
+            + "thinking, tool or turn-end row since.",
             boot.BootDueAt is DateTime bootDue
                 ? $"Boot notice due {bootDue:u}."
                 : "Boot notice disabled (BootModelWaitDeadlineMinutes <= 0).",
