@@ -7,6 +7,20 @@ import http from 'node:http';
 import util from 'node:util';
 import {materialize,mountSignature} from './c994-production-compose-model.mjs';
 import {ownedRoot,ownedObject,ownedDaemon,boundedChild} from './c994-real-custody.mjs';
+
+// CARD-1099. c1008_container_census inspects every id from docker ps. A foreign
+// container that exits between those calls fails the census closed. The real-docker
+// shim keeps ps on this fixture's label so that churn is not part of the census.
+function renderDockerPsFilterValue(label, prefix) {
+  if (typeof label !== 'string' || typeof prefix !== 'string' || label.length === 0 || prefix.length === 0 ||
+      /['\\\n\r\0]/.test(label) || /['\\\n\r\0]/.test(prefix)) throw Error('CensusPsShimRefused');
+  return `label=${label}=${prefix}`;
+}
+if (process.env.C1008_EMIT_CENSUS_PS === '1') {
+  process.stdout.write(renderDockerPsFilterValue(process.env.C1008_SHIM_LABEL ?? '', process.env.C1008_SHIM_PREFIX ?? '') + '\n');
+  process.exit(0);
+}
+
 const c994=process.env.C994_REAL==='1';
 
 // Ordinary RD evidence only. This fixture never runs from a SourceLanding snapshot.
@@ -260,7 +274,7 @@ docker() {
   if [ "$1:$2" = image:inspect ]; then
     case "$*" in *antiphon-server2/session-testing:*) printf '%s\n' '${docker('image','inspect','--format','{{.Id}}',image)}' ;; *) command docker "$@" ;; esac
   elif [ "$1" = ps ] && [ '${options.censusError?1:0}' = 1 ]; then return 77
-  elif [ "$1" = ps ]; then command docker "$@" --filter 'label=${label}=${prefix}'
+  elif [ "$1" = ps ]; then command docker "$@" --filter '${renderDockerPsFilterValue(label, prefix)}'
   elif [ "$1:$2" = volume:rm ]; then
     n=0; [ ! -f '${f.root}/rm-count' ] || n="$(cat '${f.root}/rm-count')"
     if [ '${options.failAt||0}' -gt 0 ] && [ "$n" = '${(options.failAt||0)-1}' ]; then return 77; fi
