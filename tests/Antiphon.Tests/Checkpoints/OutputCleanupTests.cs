@@ -530,7 +530,7 @@ public sealed class OutputCleanupTests : CheckpointTestBase
         {
             ResultsRoot = "results",
             Builds = [new BuildSpec { Id = "bin-audit", Project = "proj/App.csproj", OutputPath = "bin-audit/" }],
-            Checkpoints = [new CheckpointSpec { Id = "CP-1", Build = "bin-audit", Filter = "/*/*/ExampleSurfaceTests/*", MinExecuted = 1 }],
+            Checkpoints = [new CheckpointSpec { Id = "CP-1", After = ["S1"], Build = "bin-audit", Filter = "/*/*/ExampleSurfaceTests/*", MinExecuted = 1 }],
         };
 
         var started = await CheckpointApp.StartAsync(manifest, new RunRequest(), root, output,
