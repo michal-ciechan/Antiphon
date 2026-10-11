@@ -229,7 +229,7 @@ timed out, malformed or unstable response, with its cause".
 | **S6 Pre-flight phase and docs** | `scripts/deploy-server2.ps1` (`check-census`, `-Report` mode), `docs/docker-stack.md`, `tests/Antiphon.Tests/Infrastructure/DockerStackDocumentationTests.cs`, `RollingVolumeRecycleScriptTests.cs` | D-8. New `C1087_Check_census_phase_is_read_only`: exits 0 with both `RECYCLE_*` lines, trace has no POST and no `case`, no SSH/verify stub call, bound rows are counted not refused, resolution/read failures still exit 2 with their cause. New `Recycle_census_preflight_is_documented` pins `check-census`, `RecycleProjectUnresolved`, `landPending` and the open-status bound set in the CARD-0934/1008 sections. |
 
 Slices S1-S3 are independent of S4-S6 and are verified together (CP-1, CP-2); S4-S6
-are verified at the final SHA (CP-3..CP-7). A Code task may take S1-S3 or S4-S6 as one
+are verified at the final SHA (CP-3, CP-3b, CP-4, CP-5, CP-5b, CP-6, CP-7). A Code task may take S1-S3 or S4-S6 as one
 dispatch when its budget allows; the checkpoint groups do not change.
 
 ### Operator pre-flight (docs/docker-stack.md, "Before starting")
@@ -293,14 +293,14 @@ Mutation runs after land under the SourceLanding rules (external evidence, no co
 
 Ordinary Code floor is the `EstimatedMinutes` sum, 72 minutes of checkpoint time, plus
 authoring: S1-S3 roughly 90-150 minutes, S4-S6 roughly 120-180 minutes. One checkpoint
-run per committed group (`--rows CP-1,CP-2` after S1-S3; `--rows CP-3,CP-4,CP-5,CP-5b,CP-6,CP-7`
+run per committed group (`--rows CP-1,CP-2` after S1-S3; `--rows CP-3,CP-3b,CP-4,CP-5,CP-5b,CP-6,CP-7`
 after S6), each through `scripts/build-slot.ps1`, each with the exact committed SHA:
 
 ```powershell
 $planPath = 'docs/superpowers/plans/2026-10-06-card-1087-recycle-census-plan.md'
 $candidateSha = git rev-parse HEAD
 pwsh -NoProfile -File scripts/build-slot.ps1 -Label c1087-cp1-2 -- dotnet run --project tools/Antiphon.Checkpoints --property:OutputPath=bin-c1087-tool/ -- run --plan $planPath --rows CP-1,CP-2 --expected-source-sha $candidateSha --row-timeout 15m --total-timeout 40m
-pwsh -NoProfile -File scripts/build-slot.ps1 -Label c1087-cp3-7 -- dotnet run --project tools/Antiphon.Checkpoints --property:OutputPath=bin-c1087-tool/ -- run --plan $planPath --rows CP-3,CP-4,CP-5,CP-5b,CP-6,CP-7 --expected-source-sha $candidateSha --row-timeout 20m --total-timeout 70m
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label c1087-cp3-7 -- dotnet run --project tools/Antiphon.Checkpoints --property:OutputPath=bin-c1087-tool/ -- run --plan $planPath --rows CP-3,CP-3b,CP-4,CP-5,CP-5b,CP-6,CP-7 --expected-source-sha $candidateSha --row-timeout 20m --total-timeout 70m
 ```
 
 Delete every `bin-c1087-*` directory before finishing. The tool bootstrap build is the
@@ -314,12 +314,21 @@ red row is fixed and rerun as the same row.
 |---|---|---|---|---|---|---|---:|---:|---|
 | CP-1 | S1-S3 | `tests/Antiphon.Tests -> bin-c1087-a/` | wrapper-reads-project | `/*/*/RollingVolumeRecycleScriptTests/(C1087_Read_failures_name_their_cause*)\|(C1087_Project_resolves_by_repository_identity*)\|(C1008_Wrapper_refusal_receipts_do_not_leak_secrets*)\|(C1008_Refusal_receipts_do_not_leak_secrets*)` | V-1, V-2, R-1 | exact 4 methods, 0 failed/skipped | 4 | 10 | true |
 | CP-2 | S1-S3 | CP-1 | server-land-pending | `/*/*/AgentTaskScopedListEndpointTests/*` | V-3, R-2 | exact 11 methods (10 existing + Land_pending_filter_selects_pending_rows), 0 failed/skipped | 11 | 6 | true |
-| CP-3 | all | `tests/Antiphon.Tests -> bin-c1087-b/` | wrapper-census | `/*/*/RollingVolumeRecycleScriptTests/*` | V-1, V-2, V-4, V-7, R-1 | exact 16 methods (12 existing + 4 C1087_*), 0 failed/skipped | 16 | 14 | true |
+| CP-3 | all | `tests/Antiphon.Tests -> bin-c1087-b/` | wrapper-census | `/*/*/RollingVolumeRecycleScriptTests/(C1087_Read_failures_name_their_cause*)\|(C1087_Project_resolves_by_repository_identity*)\|(C1087_Census_filters_open_work_and_pending_lands*)\|(C1087_Check_census_phase_is_read_only*)` | V-1, V-2, V-4, V-7 | exact 4 C1087_* methods, 0 failed/skipped | 4 | 6 | true |
+| CP-3b | all | CP-3 | wrapper-census-rest | `/*/*/RollingVolumeRecycleScriptTests/(C1008_Present_or_unknown_temp_keeps_null_refusal*)\|(C1008_Busy_routed_and_land_in_flight_refuse*)\|(C1008_Same_sha_and_partial_retries_are_safe*)\|(C1008_Option_manifest_is_strict*)\|(C1008_Wrapper_option_manifest_is_strict*)\|(C1008_Legacy_rolling_and_jq_rosters_remain*)\|(C1008_Documentation_and_transport_pins_match*)\|(C1008_Transport_scripts_are_ascii*)\|(C1008_Refusal_receipts_do_not_leak_secrets*)\|(C1008_Wrapper_refusal_receipts_do_not_leak_secrets*)\|(C1008_Retired_absent_null_is_accepted*)\|(C1008_Wrapper_retired_absent_null_is_accepted*)` | R-1 | exact 12 existing C1008_* methods, 0 failed/skipped | 12 | 8 | true |
 | CP-4 | all | CP-3 | wrapper-vectors | `/*/*/RetiredTempContainerScriptTests/C994_*` | V-5, R-3 | exact 13 existing methods, 0 failed/skipped | 13 | 6 | true |
 | CP-5 | all | CP-3 | host-census | `/*/*/RemoteScriptContractTests/(C1008_Recycle_resume_requires_matching_receipt*)\|(C1008_Recycle_receipt_records_disk_and_partial_failure*)\|(C1008_Recycle_refuses_references_and_unknown_census*)` | R-4 | exact 3 methods, 0 failed/skipped, native Linux | 3 | 14 | true |
 | CP-5b | all | CP-3 | host-census-rest | `/*/*/RemoteScriptContractTests/(C1008_Recycle_exact_default_volumes*)\|(C1008_Recycle_refuses_uninspectable_git*)\|(C1008_Recycle_refuses_unpublished_and_dirty_work*)\|(C1008_Retire_temp_rechecks_absence_and_retirement*)\|(C1087_Host_census_filters_and_names_cause*)\|(C1008_Recycle_preserves_tmp_copyup*)\|(C1008_Retire_temp_reclaims_below_cache_disk_gate*)\|(C1008_Recycle_audits_work_as_1654*)\|(C1008_Recycle_dry_run_never_mutates*)` | V-6, R-4 | exact 9 methods (8 existing C1008_* + C1087_Host_census_filters_and_names_cause), 0 failed/skipped, native Linux | 9 | 9 | true |
 | CP-6 | all | CP-3 | docs-pins | `/*/*/DockerStackDocumentationTests/*` | R-5 | exact 13 methods (12 existing + Recycle_census_preflight_is_documented), 0 failed/skipped | 13 | 1 | true |
 | CP-7 | all | CP-3 | real-docker | `/*/*/RollingVolumeRecycleDockerTests/C1008_Real_docker_comparison*` | R-6 | 1 result; all RD outcomes as recorded by the fixture, 0 failed/skipped, owned residue=0 | 1 | 12 | true |
+
+CP-3 and CP-3b are the same sixteen wrapper methods. The combined row's tests
+took 1164 seconds at `bda3990189d1b2971abc80f494ff225c7a990ef3` (1125.8 seconds
+at `9c0fa80459cfc60e8c78a069d1d4e987f008ec41`) and one attempt was killed at the
+1200-second row cap with no TRX. CP-3 is the four `C1087_*` methods (V-1, V-2,
+V-4, V-7). CP-3b is the twelve `C1008_*` methods (R-1). EstimatedMinutes 6 and 8
+allocate the previous combined 14; per-method durations for this class were not
+retained. Neither row's timeout is raised.
 
 CP-5 and CP-5b are the same twelve host methods. Isolated TUnit durations at
 `9c0fa80459cfc60e8c78a069d1d4e987f008ec41` sum to 1327 seconds, past the unchanged
