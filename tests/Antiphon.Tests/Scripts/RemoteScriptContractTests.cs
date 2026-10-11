@@ -89,6 +89,66 @@ public sealed class RemoteScriptContractTests
         output.ShouldContain($"PASS warm {variant}");
     }
 
+    // CARD-1189. F-4 used to invoke host pwsh to build C849.Probe.1.0.0.nupkg. The deployment
+    // host has no pwsh; the admitted image does, and the ZipFile script is unchanged.
+    [Test]
+    public void C1189_Fixture_package_zip_does_not_call_host_pwsh()
+    {
+        var race = Block(Remote(), "c849_fixture_nuget_race");
+        race.ShouldContain("[System.IO.Compression.ZipFile]::CreateFromDirectory($Source, $Target)");
+        var zip = Commands(race).Single(command =>
+            command.Contains("C849.Probe.1.0.0.nupkg", StringComparison.Ordinal));
+        zip.ShouldStartWith("docker run ");
+        zip.ShouldContain("--entrypoint pwsh");
+        zip.ShouldContain("--network none");
+        zip.ShouldContain("\"$image\"");
+        zip.ShouldContain("-File /fixture/make-zip.ps1");
+        zip.ShouldContain("/fixture/package");
+        zip.ShouldContain("FixturePackageZipFailed");
+        zip.Contains("$(pwsh", StringComparison.Ordinal).ShouldBeFalse("F-4 zip calls host pwsh");
+        zip.TrimStart().StartsWith("pwsh", StringComparison.Ordinal).ShouldBeFalse("F-4 zip calls host pwsh");
+    }
+
+    // CARD-1189. F-6 hashed the offline tarball with host pwsh -Command, which also swallows
+    // the path on pwsh 7. The digest is still SHA-512 base64, read inside the admitted image.
+    [Test]
+    public void C1189_Fixture_npm_integrity_does_not_call_host_pwsh()
+    {
+        var npm = Block(Remote(), "c849_fixture_npm");
+        npm.ShouldContain("[System.Security.Cryptography.SHA512]::HashData");
+        npm.ShouldContain("[Convert]::ToBase64String($bytes)");
+        var hash = Commands(npm).Single(command =>
+            command.Contains("FixtureNpmIntegrityFailed", StringComparison.Ordinal));
+        hash.ShouldContain("integrity=\"$(docker run ");
+        hash.ShouldContain("--entrypoint pwsh");
+        hash.ShouldContain("--network none");
+        hash.ShouldContain("readonly");
+        hash.ShouldContain("\"$image\"");
+        hash.ShouldContain("-File /fixture/hash-tarball.ps1");
+        hash.Contains("$(pwsh", StringComparison.Ordinal).ShouldBeFalse("F-6 hash calls host pwsh");
+        hash.Contains("pwsh -NoProfile -Command", StringComparison.Ordinal)
+            .ShouldBeFalse("F-6 hash calls host pwsh");
+    }
+
+    // CARD-1189. PC-08's self-link must not still be in CASE_DIR when the case exits.
+    [Test]
+    public void C1189_Fixture_escape_link_is_removed_after_pc08_and_on_exit()
+    {
+        var prepare = Block(Remote(), "c849_fixture_prepare");
+        var fixture = Block(Remote(), "c849_fixture");
+        const string link = "ln -s \"$CASE_DIR\" \"$CASE_DIR/.fixture-escape\"";
+        const string probe = "c849_fixture_control PC-08 CacheTargetInvalid c849_prune_validate_tree \"$CASE_DIR/.fixture-escape\" \"$CASE_DIR/.fixture-escape\"";
+        const string unlink = "rm -f -- \"$CASE_DIR/.fixture-escape\"";
+        Order(prepare, link, probe).ShouldBeTrue("PC-08 still consumes the self-link");
+        Order(prepare, probe, unlink).ShouldBeTrue(".fixture-escape is left behind after PC-08");
+        Order(prepare, unlink, "c849_fixture_control PC-09").ShouldBeTrue(".fixture-escape survives into the next control");
+        var trap = Commands(fixture).Single(command => command.StartsWith("trap ", StringComparison.Ordinal));
+        var unlinkAt = trap.IndexOf(unlink, StringComparison.Ordinal);
+        var cleanupAt = trap.IndexOf("c849_fixture_cleanup", StringComparison.Ordinal);
+        unlinkAt.ShouldBeGreaterThanOrEqualTo(0, ".fixture-escape is left behind on exit");
+        cleanupAt.ShouldBeGreaterThan(unlinkAt);
+    }
+
     private static string C1066FixtureHarness(params string[] functions) => """
         set -euo pipefail
         unset fault tree project output kind image packages scratch code
