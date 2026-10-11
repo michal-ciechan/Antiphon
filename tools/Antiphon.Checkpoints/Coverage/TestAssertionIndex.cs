@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -247,8 +248,15 @@ public sealed class TestAssertionIndex
                 var alias = Alias(id.Identifier.ValueText, method, site, parameters);
                 return alias is null ? [] : Literals(alias, method, site, parameters, seen, depth + 1);
             case InterpolatedStringExpressionSyntax interpolation:
-                // A dynamic interpolation breaks the string. Preserve each literal segment only.
-                return interpolation.Contents.OfType<InterpolatedStringTextSyntax>().Select(t => t.TextToken.ValueText).Where(t => t.Length > 0).ToList();
+                // One message. A hole is unknown text: it splits tokens and is not a colon.
+                // The marker is not a label; MessageLabels drops a leading token that contains it.
+                var text = new System.Text.StringBuilder();
+                foreach (var content in interpolation.Contents)
+                {
+                    if (content is InterpolatedStringTextSyntax literal) text.Append(literal.TextToken.ValueText);
+                    else text.Append(" \u0001 ");
+                }
+                return text.Length == 0 ? [] : [text.ToString()];
             case BinaryExpressionSyntax binary when binary.IsKind(SyntaxKind.AddExpression):
                 var left = Literals(binary.Left, method, site, parameters, new(seen), depth + 1);
                 var right = Literals(binary.Right, method, site, parameters, new(seen), depth + 1);
@@ -273,7 +281,11 @@ public sealed class TestAssertionIndex
         assertion.Messages.Any(message => MessageLabels(message).Any(token => token == label));
     public static IReadOnlyList<string> Labels(IndexedAssertion assertion) =>
         assertion.Messages.SelectMany(MessageLabels).Distinct(StringComparer.Ordinal).ToArray();
-    // A colon closes the label list. Without one, only the leading token is a label so trailing prose stays unlabeled.
+    // Same predicate PlanCoverageReader uses for a hyphenated PC label token.
+    private static bool IsPcLabelShape(string token) =>
+        Regex.IsMatch(token, @"^[a-z][a-z0-9]*(?:-[a-z0-9]+)+$", RegexOptions.CultureInvariant);
+    // A colon closes the label list for the whole message. Every pre-colon token must match
+    // the PC label shape; otherwise only the leading token binds, as a single label does.
     private static IEnumerable<string> MessageLabels(string message)
     {
         var trimmed = message.Trim();
@@ -282,9 +294,9 @@ public sealed class TestAssertionIndex
         var head = colon >= 0 ? trimmed[..colon] : trimmed;
         var tokens = head.Split([' ', '\t', '\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
         if (tokens.Length == 0) yield break;
-        if (colon < 0)
+        if (colon < 0 || tokens.Any(token => token.Contains('\u0001') || !IsPcLabelShape(token)))
         {
-            yield return tokens[0];
+            if (!tokens[0].Contains('\u0001')) yield return tokens[0];
             yield break;
         }
         foreach (var token in tokens) yield return token;

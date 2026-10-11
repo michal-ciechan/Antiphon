@@ -546,10 +546,21 @@ discovery or loads an assembly; malformed manifest/path/source inputs remain exi
 
 Roslyn parses syntax only. Supported Shouldly signatures distinguish the actual,
 expected, Case and custom-message arguments. One custom message binds every
-whitespace-separated token before its first colon (`label-a label-b: detail`), so
-a single assertion can witness several labels. Text after that colon is prose and
-is not a label. A message with no colon still binds only its leading token, so
-trailing words stay prose (`target-label before`). Setup/comments/another method cannot
+whitespace-separated token before its first colon when each token matches the
+plan reader's PC label shape `^[a-z][a-z0-9]*(?:-[a-z0-9]+)+$`
+(`label-a label-b: detail`), so a single assertion can witness several labels.
+If any pre-colon token fails that shape, only the leading token binds, the same
+rule as a single label: prose before the colon (`Expected should: detail` binds
+`Expected` only), a trailing comma, parentheses, a dot, a lowercase word that is
+not the shape, an empty token, or an uppercase-only token. A token that only
+shares a prefix with a label is a different token. Text after the first colon is
+prose and is not a label. That colon is the first colon of the whole message,
+including literal parts of an interpolated, verbatim, or raw interpolated string
+and of `+` concatenation. A colon inside an interpolation hole is not message
+text and does not start another label list. A hole before that colon is unknown
+text, so only the leading literal token binds; a hole after the colon stays prose.
+A message with no colon still binds
+only its leading token, so trailing words stay prose (`target-label before`). Setup/comments/another method cannot
 satisfy an assertion. Literal aliases, interpolated literal segments, literal-array
 loops and uniquely bound local helpers supply bounded evidence; unknown assertion
 syntax/helper dispatch is unmapped. A member must occur in the asserted actual;

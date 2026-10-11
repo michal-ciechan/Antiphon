@@ -78,4 +78,90 @@ public sealed class PlanCoveragePcTests
         boundary.Pcs.ShouldAllBe(p => p.Status == "missing-target", "c1053-label-boundary");
         boundary.ExitCode.ShouldBe(1, "c1053-label-boundary");
     }
+
+    [Test]
+    public void rejects_ill_shaped_tokens_before_the_colon()
+    {
+        var plan = PlanCoverageFixture.Plan(row: "", pc:
+            "| PC-1 | mutation | `Demo.Check`, `c1053-first` |\n"
+            + "| PC-2 | mutation | `Demo.Check`, `c1053-second` |");
+        var prosePlan = PlanCoverageFixture.Plan(row: "", pc: "| PC-1 | mutation | `Demo.Check`, `should` |");
+        var upperPlan = PlanCoverageFixture.Plan(row: "", pc: "| PC-1 | mutation | `Demo.Check`, `SHOULD` |");
+
+        PlanCoverageFixture.Analyze("class Demo { void Check() { x.ShouldBe(1, \"Expected should: detail\"); } }", prosePlan)
+            .Pcs.Single().Status.ShouldBe("missing-target", "c1053-prose-before-colon");
+        PlanCoverageFixture.Analyze("class Demo { void Check() { x.ShouldBe(1, \"should: detail\"); } }", prosePlan)
+            .Pcs.Single().Status.ShouldBe("static-labeled", "c1053-single-lowercase");
+
+        var word = PlanCoverageFixture.Analyze("class Demo { void Check() { x.ShouldBe(1, \"c1053-first should: detail\"); } }", plan);
+        word.Pcs.Single(p => p.Id == "PC-1").Status.ShouldBe("static-labeled", "c1053-lowercase-word");
+        word.Pcs.Single(p => p.Id == "PC-2").Status.ShouldBe("missing-target", "c1053-lowercase-word");
+
+        foreach (var (source, label) in new[]
+        {
+            ("\"c1053-first, c1053-second: detail\"", "c1053-trailing-comma"),
+            ("\"(c1053-first) c1053-second: detail\"", "c1053-parentheses"),
+            ("\"c1053-first. c1053-second: detail\"", "c1053-dots"),
+            ("\"\"", "c1053-empty-message"),
+            ("\": detail\"", "c1053-empty-token"),
+        })
+        {
+            var report = PlanCoverageFixture.Analyze("class Demo { void Check() { x.ShouldBe(1, " + source + "); } }", plan);
+            report.Pcs.ShouldAllBe(p => p.Status == "missing-target", label);
+            report.ExitCode.ShouldBe(1, label);
+        }
+
+        PlanCoverageFixture.Analyze("class Demo { void Check() { x.ShouldBe(1, \"c1053-first SHOULD: detail\"); } }", upperPlan)
+            .Pcs.Single().Status.ShouldBe("missing-target", "c1053-uppercase-only");
+
+        var prefix = PlanCoverageFixture.Analyze("class Demo { void Check() { x.ShouldBe(1, \"c1053-first-extra c1053-second: detail\"); } }", plan);
+        prefix.Pcs.Single(p => p.Id == "PC-1").Status.ShouldBe("missing-target", "c1053-prefix-only");
+        prefix.Pcs.Single(p => p.Id == "PC-2").Status.ShouldBe("static-labeled", "c1053-prefix-only");
+
+        var spaced = PlanCoverageFixture.Analyze("class Demo { void Check() { x.ShouldBe(1, \"c1053-first  c1053-second: detail\"); } }", plan);
+        spaced.Pcs.ShouldAllBe(p => p.Status == "static-labeled", "c1053-blank-token-is-whitespace");
+        spaced.ExitCode.ShouldBe(0, "c1053-blank-token-is-whitespace");
+    }
+
+    [Test]
+    public void keeps_the_colon_boundary_across_interpolation_and_concatenation()
+    {
+        var plan = PlanCoverageFixture.Plan(row: "", pc:
+            "| PC-1 | mutation | `Demo.Check`, `c1053-first` |\n"
+            + "| PC-2 | mutation | `Demo.Check`, `c1053-second` |\n"
+            + "| PC-3 | mutation | `Demo.Check`, `c1053-third` |");
+        PlanCoverageReport Analyze(string message) => PlanCoverageFixture.Analyze(
+            "class Demo { void Check() { int n = 1; x.ShouldBe(1, " + message + "); } }", plan);
+
+        var afterHole = Analyze("$\"c1053-first: detail {n} c1053-second: prose\"");
+        afterHole.Pcs.Single(p => p.Id == "PC-1").Status.ShouldBe("static-labeled", "c1053-hole-after-colon");
+        afterHole.Pcs.Where(p => p.Id != "PC-1").ShouldAllBe(p => p.Status == "missing-target", "c1053-hole-after-colon");
+
+        var formatColon = Analyze("$\"c1053-first {n:0} c1053-second\"");
+        formatColon.Pcs.Single(p => p.Id == "PC-1").Status.ShouldBe("static-labeled", "c1053-colon-in-hole");
+        formatColon.Pcs.Where(p => p.Id != "PC-1").ShouldAllBe(p => p.Status == "missing-target", "c1053-colon-in-hole");
+
+        var ternary = Analyze("$\"c1053-first {(n > 0 ? 1 : 0)} c1053-second: detail\"");
+        ternary.Pcs.Single(p => p.Id == "PC-1").Status.ShouldBe("static-labeled", "c1053-colon-in-expression");
+        ternary.Pcs.Where(p => p.Id != "PC-1").ShouldAllBe(p => p.Status == "missing-target", "c1053-colon-in-expression");
+
+        var verbatim = Analyze("$@\"c1053-first: detail {n} c1053-second: prose\"");
+        verbatim.Pcs.Single(p => p.Id == "PC-1").Status.ShouldBe("static-labeled", "c1053-verbatim");
+        verbatim.Pcs.Where(p => p.Id != "PC-1").ShouldAllBe(p => p.Status == "missing-target", "c1053-verbatim");
+
+        var raw = Analyze("$\"\"\"c1053-first: detail {n} c1053-second: prose\"\"\"");
+        raw.Pcs.Single(p => p.Id == "PC-1").Status.ShouldBe("static-labeled", "c1053-raw");
+        raw.Pcs.Where(p => p.Id != "PC-1").ShouldAllBe(p => p.Status == "missing-target", "c1053-raw");
+
+        var concat = Analyze("\"c1053-first \" + $\"c1053-second: detail {n} c1053-third: prose\"");
+        concat.Pcs.Single(p => p.Id == "PC-1").Status.ShouldBe("static-labeled", "c1053-concatenation");
+        concat.Pcs.Single(p => p.Id == "PC-2").Status.ShouldBe("static-labeled", "c1053-concatenation");
+        concat.Pcs.Single(p => p.Id == "PC-3").Status.ShouldBe("missing-target", "c1053-concatenation");
+
+        var packed = Analyze("$\"c1053-first c1053-second: detail {n}\"");
+        packed.Pcs.Single(p => p.Id == "PC-1").Status.ShouldBe("static-labeled", "c1053-hole-after-packed-colon");
+        packed.Pcs.Single(p => p.Id == "PC-2").Status.ShouldBe("static-labeled", "c1053-hole-after-packed-colon");
+        packed.Pcs.Single(p => p.Id == "PC-3").Status.ShouldBe("missing-target", "c1053-hole-after-packed-colon");
+        packed.ExitCode.ShouldBe(1, "c1053-hole-after-packed-colon");
+    }
 }
