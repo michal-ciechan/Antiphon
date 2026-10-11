@@ -1,3 +1,4 @@
+using System.Data.Common;
 using System.Text.Json;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
@@ -826,10 +827,13 @@ public sealed class RemoteWorkspacePreparerTests
     /// <summary>
     /// The enqueue-boundary fault: the delegation brief's queue row for one task commits, and then
     /// the enqueue call throws, as a transport or process error after the insert would.
+    /// CARD-1150 saves that insert inside an explicit transaction, so SavedChanges runs before
+    /// CommitAsync and a throw there rolls the row back. The fault waits until the commit is
+    /// acknowledged.
     /// </summary>
-    private sealed class BriefEnqueueFault(Guid taskId) : SaveChangesInterceptor
+    private sealed class BriefEnqueueFault(Guid taskId) : SaveChangesInterceptor, IDbTransactionInterceptor
     {
-        private readonly AsyncLocal<bool> _matched = new();
+        private int _armed;
         private int _faulted;
 
         public int Faulted => Volatile.Read(ref _faulted);
@@ -837,21 +841,25 @@ public sealed class RemoteWorkspacePreparerTests
         public override ValueTask<InterceptionResult<int>> SavingChangesAsync(DbContextEventData eventData,
             InterceptionResult<int> result, CancellationToken cancellationToken = default)
         {
-            _matched.Value = Faulted == 0 && eventData.Context!.ChangeTracker.Entries<SessionQueuedMessage>()
+            if (Faulted == 0 && eventData.Context!.ChangeTracker.Entries<SessionQueuedMessage>()
                 .Any(e => e.State == EntityState.Added && e.Entity.ExecutionTaskId == taskId
-                    && e.Entity.Origin == QueuedMessageOrigin.Delegation);
+                    && e.Entity.Origin == QueuedMessageOrigin.Delegation))
+                Volatile.Write(ref _armed, 1);
             return ValueTask.FromResult(result);
         }
 
-        public override ValueTask<int> SavedChangesAsync(SaveChangesCompletedEventData eventData, int result,
+        public Task TransactionCommittedAsync(DbTransaction transaction, TransactionEndEventData eventData,
             CancellationToken cancellationToken = default)
         {
-            if (_matched.Value && Interlocked.CompareExchange(ref _faulted, 1, 0) == 0)
+            var tracked = eventData.Context?.ChangeTracker.Entries<SessionQueuedMessage>()
+                .Any(e => e.Entity.ExecutionTaskId == taskId && e.Entity.Origin == QueuedMessageOrigin.Delegation) == true;
+            if ((Volatile.Read(ref _armed) == 1 || tracked)
+                && Interlocked.CompareExchange(ref _faulted, 1, 0) == 0)
             {
-                _matched.Value = false;
+                Volatile.Write(ref _armed, 0);
                 throw new IOException("injected enqueue-boundary fault: the brief row committed, the enqueue call failed");
             }
-            return ValueTask.FromResult(result);
+            return Task.CompletedTask;
         }
     }
 
