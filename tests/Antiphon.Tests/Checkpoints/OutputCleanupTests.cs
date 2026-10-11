@@ -319,6 +319,222 @@ public sealed class OutputCleanupTests : CheckpointTestBase
         ReportValidator.Validate(model, new string('a', 40)).ShouldBe("cleanup_refused");
     }
 
+    [Test]
+    public void nested_repository_inside_an_owned_output_is_refused()
+    {
+        var root = InitGitRepo();
+        var output = Path.Combine(root, "bin-c1199");
+        var nested = Path.Combine(output, "nested");
+        Directory.CreateDirectory(nested);
+        var kept = Path.Combine(nested, "kept.txt");
+        File.WriteAllText(kept, "tracked-nested");
+        Git(nested, "init", "-q", "-b", "inner");
+        Git(nested, "add", "--", "kept.txt");
+        Git(nested, "-c", "user.email=card-1199@example.invalid", "-c", "user.name=card-1199",
+            "-c", "commit.gpgsign=false", "commit", "-m", "inner", "--no-verify");
+
+        var result = OutputCleanup.CleanOwnedOutputs(root, ["bin-c1199"], 0, false, false, createdPaths: [output]);
+
+        File.ReadAllText(kept).ShouldBe("tracked-nested");
+        result.Deleted.ShouldBeEmpty();
+        result.Refusals.ShouldContain("nested_repository");
+    }
+
+    [Test]
+    public void parent_symlink_does_not_delete_a_tracked_stamp()
+    {
+        if (!OperatingSystem.IsLinux())
+            Skip.Test("Windows junction variant is unverified");
+
+        var root = InitGitRepo();
+        var output = Path.Combine(root, "proj", "bin-stamp");
+        Directory.CreateDirectory(output);
+        var stamp = Path.Combine(output, "checkpoint-build-source.json");
+        File.WriteAllText(stamp, "original-stamp");
+        Git(root, "add", "--", "proj/bin-stamp/checkpoint-build-source.json");
+        Git(root, "-c", "user.email=card-1199@example.invalid", "-c", "user.name=card-1199",
+            "-c", "commit.gpgsign=false", "commit", "-m", "stamp", "--no-verify");
+
+        var linkRoot = Path.Combine(Path.GetTempPath(), "c1199-parent-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(linkRoot);
+        var link = Path.Combine(linkRoot, "parent-link");
+        Directory.CreateSymbolicLink(link, output);
+        var via = Path.Combine(link, "checkpoint-build-source.json");
+        var probe = Path.Combine(Path.GetTempPath(), "c1199-stamp-" + Guid.NewGuid().ToString("N") + ".ps1");
+        try
+        {
+            File.WriteAllText(probe, StampProbe);
+            var scriptPath = Path.Combine(CheckpointFixtures.RepoRoot, "scripts", "run-checkpoint.ps1");
+            var start = new ProcessStartInfo("pwsh")
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+            };
+            start.ArgumentList.Add("-NoProfile");
+            start.ArgumentList.Add("-File");
+            start.ArgumentList.Add(probe);
+            start.Environment["CARD1199_SCRIPT"] = scriptPath;
+            start.Environment["CARD1199_STAMP"] = via;
+            using var process = Process.Start(start);
+            process.ShouldNotBeNull();
+            var stdout = process.StandardOutput.ReadToEnd();
+            var stderr = process.StandardError.ReadToEnd();
+            process.WaitForExit(30_000).ShouldBeTrue(stdout + stderr);
+            process.ExitCode.ShouldBe(0, stdout + stderr);
+            File.ReadAllText(stamp).ShouldBe("original-stamp");
+            stdout.ShouldContain("REFUSED:reparse-point");
+
+            var script = File.ReadAllText(scriptPath);
+            script.ShouldNotContain("if (Test-Path -LiteralPath $stampPath) { $stampRefusal = Test-CheckpointStampRefusal $stampPath }");
+            var check = script.IndexOf("$replaceRefusal = Test-CheckpointStampRefusal $stampPath", StringComparison.Ordinal);
+            var makeDir = script.IndexOf("New-Item -ItemType Directory -Path $stampDirectory", StringComparison.Ordinal);
+            check.ShouldBeGreaterThanOrEqualTo(0);
+            makeDir.ShouldBeGreaterThan(check);
+        }
+        finally
+        {
+            if (Directory.Exists(link))
+                Directory.Delete(link);
+            if (Directory.Exists(linkRoot))
+                Directory.Delete(linkRoot, recursive: true);
+            if (File.Exists(probe))
+                File.Delete(probe);
+        }
+    }
+
+    [Test]
+    public async Task stop_refuses_to_overwrite_tracked_state_json()
+    {
+        var root = InitGitRepo();
+        var run = Path.Combine(root, "run-stop");
+        Directory.CreateDirectory(run);
+        var statePath = Path.Combine(run, "state.json");
+        new RunStateStore().Write(statePath, new RunState { RunId = "run-stop", Phase = "running" });
+        var original = File.ReadAllBytes(statePath);
+        Git(root, "add", "--", "run-stop/state.json");
+        Git(root, "-c", "user.email=card-1199@example.invalid", "-c", "user.name=card-1199",
+            "-c", "commit.gpgsign=false", "commit", "-m", "state", "--no-verify");
+        CheckpointFixtures.MarkRun(run, alive: false);
+
+        var output = new StringWriter();
+        var exit = await Antiphon.Checkpoints.Program.RunAsync(
+            ["stop", "--run", run, "--repo-root", root],
+            new CheckpointApp.Runtime { Output = output });
+
+        exit.ShouldBe(ExitCodes.Invalid);
+        File.ReadAllBytes(statePath).ShouldBe(original);
+        var text = output.ToString();
+        text.ShouldContain("refused: tracked");
+        text.ShouldNotContain("stopped ");
+    }
+
+    [Test]
+    public async Task cleanup_refusal_exits_2_without_claiming_deleted()
+    {
+        var root = InitGitRepo();
+        var results = Path.Combine(root, "results");
+        var run = Path.Combine(results, "20200101-000000-aaaa");
+        var nested = Path.Combine(run, "nested");
+        Directory.CreateDirectory(nested);
+        var kept = Path.Combine(nested, "kept.txt");
+        File.WriteAllText(kept, "tracked-nested");
+        Git(nested, "init", "-q", "-b", "inner");
+        Git(nested, "add", "--", "kept.txt");
+        Git(nested, "-c", "user.email=card-1199@example.invalid", "-c", "user.name=card-1199",
+            "-c", "commit.gpgsign=false", "commit", "-m", "inner", "--no-verify");
+        CheckpointFixtures.MarkRun(run, alive: false);
+        Directory.SetLastWriteTimeUtc(run, DateTime.UtcNow.AddDays(-8));
+
+        var output = new StringWriter();
+        var exit = await Antiphon.Checkpoints.Program.RunAsync(
+            ["clean", "--repo-root", root, "--results-root", results, "--older-than", "7d"],
+            new CheckpointApp.Runtime { Output = output });
+
+        File.ReadAllText(kept).ShouldBe("tracked-nested");
+        exit.ShouldBe(ExitCodes.Invalid);
+        var text = output.ToString();
+        text.ShouldContain("refused: nested_repository");
+        text.ShouldNotContain("deleted ");
+    }
+
+    [Test]
+    [Timeout(45_000)]
+    public void hanging_git_is_refused_and_killed_within_the_bound(CancellationToken cancellationToken)
+    {
+        if (!OperatingSystem.IsLinux())
+            Skip.Test("hanging-git proof runs on Linux");
+        _ = cancellationToken.CanBeCanceled;
+
+        var root = InitGitRepo();
+        var output = Path.Combine(root, "bin-hang");
+        Directory.CreateDirectory(output);
+        var sentinel = Path.Combine(output, "out.dll");
+        File.WriteAllText(sentinel, "keep");
+        var fake = Path.Combine(Path.GetTempPath(), "c1199-hang-" + Guid.NewGuid().ToString("N"));
+        var pidfile = fake + ".pid";
+        File.WriteAllText(fake, "#!/bin/sh\necho $$ > '" + pidfile + "'\nexec sleep 90\n");
+        File.SetUnixFileMode(fake, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        var started = Stopwatch.StartNew();
+        try
+        {
+            var result = OutputCleanup.CleanOwnedOutputs(root, ["bin-hang"], 0, false, false,
+                createdPaths: [output], gitExecutable: fake);
+            started.Elapsed.TotalSeconds.ShouldBeLessThan(25);
+            File.ReadAllText(sentinel).ShouldBe("keep");
+            result.Deleted.ShouldBeEmpty();
+            result.Refusals.ShouldContain("git-timeout");
+            var pidText = File.ReadAllText(pidfile).Trim();
+            int.TryParse(pidText, out var pid).ShouldBeTrue(pidText);
+            Directory.Exists("/proc/" + pid).ShouldBeFalse();
+        }
+        finally
+        {
+            if (File.Exists(pidfile) && int.TryParse(File.ReadAllText(pidfile).Trim(), out var pid))
+            {
+                try
+                {
+                    using var process = Process.GetProcessById(pid);
+                    process.Kill(entireProcessTree: true);
+                    process.WaitForExit(2_000);
+                }
+                catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
+                {
+                }
+
+                File.Delete(pidfile);
+            }
+
+            if (File.Exists(fake))
+                File.Delete(fake);
+        }
+    }
+
+    private const string StampProbe = """
+        $ErrorActionPreference = 'Stop'
+        $tokens = $null
+        $errors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($env:CARD1199_SCRIPT, [ref]$tokens, [ref]$errors)
+        if ($errors -and @($errors).Count -gt 0) { throw (($errors | ForEach-Object { $_.ToString() }) -join "`n") }
+        $names = @('Test-CheckpointComponentLink','Find-CheckpointGitDir','Invoke-CheckpointGit','Test-CheckpointStampRefusal')
+        $chunks = New-Object System.Collections.Generic.List[string]
+        foreach ($name in $names) {
+            $fn = $ast.FindAll({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name }, $true) | Select-Object -First 1
+            if ($null -ne $fn) { $chunks.Add($fn.Extent.Text) }
+        }
+        $invoke = ($chunks -join "`n") + @'
+
+        $reason = Test-CheckpointStampRefusal $env:CARD1199_STAMP
+        if ([string]::IsNullOrEmpty($reason)) {
+            if (Test-Path -LiteralPath $env:CARD1199_STAMP) { [System.IO.File]::Delete($env:CARD1199_STAMP) }
+            Write-Output 'DELETED'
+        } else {
+            Write-Output ('REFUSED:' + $reason)
+        }
+        '@
+        & ([scriptblock]::Create($invoke))
+        """;
+
     private string InitGitRepo()
     {
         var root = TempDir();
