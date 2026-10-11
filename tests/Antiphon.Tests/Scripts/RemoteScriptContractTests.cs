@@ -308,6 +308,127 @@ public sealed class RemoteScriptContractTests
         Fact(output, "control-pc26").ShouldBe("EvidenceNotAllowListed");
     }
 
+    // CARD-1192 S1 repair. The receipt validator uses [[ =~ ]], which /bin/sh rejects.
+    // Run it through the interpreter the production helper actually execs, and keep the
+    // fixture model on that same interpreter so a rewrite back to sh fails this input.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1192_Summary_validator_runs_under_the_production_interpreter()
+    {
+        var output = LinuxShell("""
+            set -u
+            remote="$repo/scripts/c590-remote.sh"
+            fixture="$repo/scripts/fixtures/c1192-workspace-contract.sh"
+            work=$(mktemp -d)
+            trap 'rm -rf -- "$work"' EXIT
+            awk '/^exec_in\(\) \{/ {active=1} active {print} active && /^}$/ {active=0}' "$fixture" > "$work/exec_in.sh"
+            grep -F -q 'bin=sh' "$work/exec_in.sh" || { printf 'FAIL model-sh\n'; exit 1; }
+            grep -F -q 'bin=bash' "$work/exec_in.sh" || { printf 'FAIL model-bash\n'; exit 1; }
+            grep -F -q 'bash -c' "$work/exec_in.sh" && { printf 'FAIL model-rewrites-sh\n'; exit 1; }
+            line=$(awk '/^c849_fixture_volume_receipt\(\)/ {f=1} f && /c849_fixture_helper_exec writer/ {print; exit}' "$remote")
+            interp=$(printf '%s\n' "$line" | awk '{for (i=1;i<=NF;i++) if ($i=="writer") {print $(i+1); exit}}')
+            [ -n "$interp" ] || { printf 'FAIL interpreter-missing\n'; exit 1; }
+            awk '/^c849_fixture_receipt\(\) \{/ {active=1} active {print} active && /^}$/ {active=0}' "$remote" > "$work/fn.sh"
+            # shellcheck disable=SC1091
+            source "$work/fn.sh"
+            input="$work/summary-input.txt"
+            printf 'source-sha=%s\nimage-id=sha256:%s\ninventories=2\ngroups=9\ncontrols=32\nexpected-red=32\nvariants=47\nexpected-red-variants=47\nproduction-mutations=0\n' \
+                aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+                bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb > "$input"
+            run_receipt() {
+                local bin="$1" out="$2" status=0
+                { declare -f c849_fixture_receipt; printf '%s\n' 'c849_fixture_receipt "$1" "$2"'; } \
+                    | "$bin" -s -- "$input" "$out" || status=$?
+                printf '%s' "$status"
+            }
+            status=$(run_receipt "$interp" "$work/summary-output.txt")
+            [ "$status" = 0 ] || { printf 'FAIL production-interpreter=%s status=%s\n' "$interp" "$status"; exit 1; }
+            grep -qx 'groups=9' "$work/summary-output.txt" || { printf 'FAIL groups\n'; exit 1; }
+            sh_status=$(run_receipt /bin/sh "$work/sh-output.txt")
+            [ "$sh_status" != 0 ] || { printf 'FAIL sh-accepted-bash-validator\n'; exit 1; }
+            printf 'PASS validator %s\n' "$interp"
+            """, "repo");
+        output.ShouldContain("PASS validator /bin/bash");
+        output.IndexOf("FAIL ", StringComparison.Ordinal).ShouldBe(-1, output);
+    }
+
+    // CARD-1192 S1 repair. docker volume create adopts a volume that appears after the
+    // absence lookup. Ownership is checked after create; a foreign or unlabeled volume
+    // is not mounted, not registered, and not removed.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1192_Foreign_volume_is_refused_after_create()
+    {
+        var output = C1192Run("foreign");
+        foreach (var kind in new[] { "different", "missing" })
+        {
+            Fact(output, kind + "-diagnosis").ShouldBe("FixtureWorkspaceForeign", kind);
+            Fact(output, kind + "-registered").ShouldBe("0", kind);
+            Fact(output, kind + "-mounted").ShouldBe("0", kind);
+            Fact(output, kind + "-removed").ShouldBe("0", kind);
+        }
+    }
+
+    // CARD-1192 S1 repair. The harness must not rm a fixed /tmp/c849-fixture-$RUN directory.
+    // Cleanup is the private mktemp root, and only after this run's stamp matches.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1192_Harness_cleanup_stays_inside_its_private_directory()
+    {
+        var fixturePath = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/fixtures/c1192-workspace-contract.sh");
+        var fixture = File.ReadAllText(fixturePath).Replace("\r\n", "\n");
+        foreach (var line in fixture.Split('\n'))
+        {
+            if (line.Contains("rm", StringComparison.Ordinal)
+                && line.Contains("/tmp/c849-fixture", StringComparison.Ordinal))
+                throw new InvalidOperationException("fixed /tmp cleanup: " + line.Trim());
+        }
+        fixture.Contains("${private:?}", StringComparison.Ordinal).ShouldBeTrue("private-root");
+        fixture.Contains("cleanup_private", StringComparison.Ordinal).ShouldBeTrue("trap-function");
+        var output = LinuxShell("""
+            set -u
+            sentinel=/tmp/c849-fixture-c1192fixture0001
+            if [ -e "$sentinel" ] && [ ! -f "$sentinel/.c1192-sentinel" ]; then
+                printf 'FAIL sentinel-occupied\n'
+                exit 1
+            fi
+            mkdir -p "$sentinel"
+            printf 'owned\n' > "$sentinel/.c1192-sentinel"
+            log=$(mktemp)
+            bash "$repo/scripts/fixtures/c1192-workspace-contract.sh" register "$repo" > "$log" 2>&1 || true
+            if [ ! -f "$sentinel/.c1192-sentinel" ]; then
+                printf 'FAIL sentinel-removed\n'
+                cat "$log"
+                exit 1
+            fi
+            grep -q 'occupied-name-no-create=1' "$log" || { printf 'FAIL register-output\n'; cat "$log"; exit 1; }
+            grep -q 'C1192_FAIL' "$log" && { printf 'FAIL harness\n'; cat "$log"; exit 1; }
+            target=$sentinel
+            if [ -d "$target" ] && [ ! -L "$target" ] && [ -f "$target/.c1192-sentinel" ]; then
+                stamp=$(cat "$target/.c1192-sentinel")
+                if [ "$stamp" = owned ]; then
+                    rm -rf -- "$target"
+                fi
+            fi
+            rm -f -- "$log"
+            printf 'PASS harness-private\n'
+            """, "repo");
+        output.ShouldContain("PASS harness-private");
+        output.IndexOf("FAIL ", StringComparison.Ordinal).ShouldBe(-1, output);
+    }
+
+    // CARD-1192 S1 repair. Helper create/run argv is recorded whole, so a discarded
+    // --env-file or a credential path later in the argument list still fails the check.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1192_Helper_argv_keeps_discarded_env_file_visible()
+    {
+        var output = C1192Run("argv");
+        Fact(output, "argv-clean").ShouldBe("1");
+        Fact(output, "argv-env-file-refused").ShouldBe("1");
+        Fact(output, "argv-reordered-refused").ShouldBe("1");
+    }
+
     // CARD-1193. NuGet locks $NUGET_SCRATCH/lock/<hash>. The holder and waiter must receive the
     // same HOME and NUGET_SCRATCH the F-4 restore containers pass.
     [Test]
