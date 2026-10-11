@@ -48,24 +48,33 @@ positive control: this roster adds no production behavior to mutate.
 ## Verification design
 
 V-1. `C1155_RosterNamesEveryDispatchWarningE2EMethod` reads this plan and
-`tests/Antiphon.E2E/DispatchBaseWarningDeliveryE2ETests.cs`. Discovery blanks
-`//` comments, `/* */` comments, and ordinary, verbatim, and raw string literals,
-then records a public method when the bracket groups immediately before that
-declaration, separated only by whitespace, contain an attribute named `Test` or
-`TestAttribute`. A later attribute, a comma-combined list such as
-`[Test, Timeout(...)]`, stacked `[Test][Category(...)]`, and `[Arguments(...)]`
-before `[Test]` still record that method, once. A declaration left inside a line
-comment, a block comment, or a string literal is not recorded. The same matcher
-is what `C1155_ExtraAttributeAfterTestIsDiscovered`,
+`tests/Antiphon.E2E/DispatchBaseWarningDeliveryE2ETests.cs`. Discovery parses
+that source with `CSharpSyntaxTree.ParseText` and fails when the parse has a
+syntax error. It records each public, non-static method declared on class
+`DispatchBaseWarningDeliveryE2ETests`, once, when any attribute on that method
+has the simple name `Test` or `TestAttribute`, in any position and any list
+shape. A later attribute, a comma-combined list such as `[Test, Timeout(...)]`,
+stacked `[Test][Category(...)]`, and `[Arguments(...)]` before `[Test]` still
+record that method, once. A declaration inside a line comment, a block comment,
+an ordinary string, a verbatim string, a verbatim string that begins with an
+escaped quote, a `'"'` character literal, a raw string literal, or an
+interpolated string is not recorded, and a following public test method stays
+recorded. The same parser is what `C1155_ExtraAttributeAfterTestIsDiscovered`,
 `C1155_CommentedOutDeclarationIsNotCounted`,
-`C1155_BlockCommentMethodIsNotCounted`, and
-`C1155_RemovedAndRenamedMethodDiffersFromTheRoster` call on a string. The pin
-fails when the recorded names and the `DispatchBaseWarningDeliveryE2ETests`
-filter names in the table below differ, when one of those filter names is
-repeated, when the discharge sentence, the Windows witness sentence, or the
-CARD-0550 CP-24 cost citation is absent, or when the closed batch checkpoint
-section contains this E2E class name. It does not compile the E2E project, a
-non-public method is not a roster row, and a passing pin does not pass V-2.
+`C1155_BlockCommentMethodIsNotCounted`,
+`C1155_RemovedAndRenamedMethodDiffersFromTheRoster`,
+`C1155_VerbatimEscapedQuoteDoesNotHideTheNextTest`,
+`C1155_CharLiteralQuoteDoesNotHideTheNextTest`,
+`C1155_RawStringDoesNotHideTheNextTest`, and
+`C1155_InterpolatedStringDoesNotHideTheNextTest` call. The pin fails when the
+recorded names and the `DispatchBaseWarningDeliveryE2ETests` filter names in
+the table below differ, when one of those filter names is repeated, when this
+plan lacks the discharge sentence or the Windows witness sentence, when the
+`## Cost basis` section lacks its four-minute one-method budget citation (the
+same words in any other section do not count), or when the closed batch
+checkpoint section contains this E2E class name. It does not compile the E2E
+project, a non-public or static method is not a roster row, and a passing pin
+does not pass V-2. CP-2..CP-13 stay unrun on Linux and V-2 stays pending.
 
 V-2. On Windows, a named method stores one complete UserPrompt transcript per
 committed dispatch intent from the real producer to the recipient. Queue insert,
@@ -80,7 +89,7 @@ run on Windows; CP-1 runs the roster class on Linux.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
-| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1155/` | roster-pin | `/*/*/DispatchBaseWarningRosterTests/*` | V-1 | exact 5 results, 0 failed/skipped | 5 | 2 | true |
+| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1155/` | roster-pin | `/*/*/DispatchBaseWarningRosterTests/*` | V-1 | exact 9 results, 0 failed/skipped | 9 | 2 | true |
 | CP-2 | S1 | `tests/Antiphon.E2E -> bin-c1155e/` | e2e-idle | `/*/*/DispatchBaseWarningDeliveryE2ETests/C540_CollapsedWarningsReachIdleCaller*` | V-2 | exact 1 results, 0 failed/skipped | 1 | 8 | true |
 | CP-3 | S1 | `CP-2` | e2e-mismatch-reach | `/*/*/DispatchBaseWarningDeliveryE2ETests/C508_MismatchWarningReachesCaller*` | V-2 | exact 1 results, 0 failed/skipped | 1 | 4 | true |
 | CP-4 | S1 | `CP-2` | e2e-mismatch-wait | `/*/*/DispatchBaseWarningDeliveryE2ETests/C508_MismatchWarningWaitsForCaller*` | V-2 | exact 1 results, 0 failed/skipped | 1 | 4 | true |
