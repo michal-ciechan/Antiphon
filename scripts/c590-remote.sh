@@ -2782,8 +2782,190 @@ EOF
     printf 'PASS F-1\n' >> "$CASE_DIR/fixture-groups.txt"
 }
 
+# Exact current-run cache names plus the two workspace volumes. A forged ledger
+# entry that is only a prefix, another run, or a production cache is not a member.
+c849_fixture_owned_name() {
+    case "$1" in
+        "c849${RUN}-packages"|"c849${RUN}-scratch"|"c849${RUN}-npm"|\
+        "c849${RUN}seed-packages"|"c849${RUN}seed-scratch"|"c849${RUN}seed-npm"|\
+        "c849${RUN}busy-packages"|\
+        "c849${RUN}race-packages"|"c849${RUN}race-scratch"|"c849${RUN}private-scratch"|\
+        "c849${RUN}smoke-packages"|"c849${RUN}smoke-scratch"|\
+        "c849${RUN}npmcache-npm"|"c849${RUN}npmempty-npm"|\
+        "c849${RUN}warm-packages"|"c849${RUN}warm-scratch"|\
+        "c849${RUN}-work"|"c849${RUN}-mask") return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# 0 absent, 1 occupied, 2 unknown. A failed census or inspect is not absence.
+c849_fixture_workspace_lookup() {
+    local name="$1" listed code=0
+    listed="$(docker volume ls -q)" || return 2
+    docker volume inspect "$name" >/dev/null 2>&1 || code=$?
+    if [ "$code" = 0 ]; then return 1; fi
+    if [ "$code" != 1 ]; then return 2; fi
+    if printf '%s\n' "$listed" | grep -Fxq -- "$name"; then return 1; fi
+    return 0
+}
+
+c849_fixture_helper_lookup() {
+    local name="$1" code=0
+    docker container inspect "$name" >/dev/null 2>&1 || code=$?
+    if [ "$code" = 0 ]; then return 1; fi
+    if [ "$code" != 1 ]; then return 2; fi
+    return 0
+}
+
+c849_fixture_controller_init() {
+    local dir="$CASE_DIR/fixture-controller" mode owner
+    if [ -e "$dir" ] || [ -L "$dir" ]; then
+        write_result false FixtureControllerOccupied 2
+    fi
+    mkdir -m 0700 "$dir" || write_result false FixtureControllerCreateFailed 2
+    if [ -L "$dir" ] || [ ! -d "$dir" ]; then
+        write_result false FixtureControllerOccupied 2
+    fi
+    mode="$(stat -c %a "$dir")" || write_result false FixtureControllerMode 2
+    [ "$mode" = 700 ] || write_result false FixtureControllerMode 2
+    owner="$(stat -c %u "$dir")" || write_result false FixtureControllerOwner 2
+    [ "$owner" = "$(id -u)" ] || write_result false FixtureControllerOwner 2
+}
+
+c849_fixture_workspace_create_volume() {
+    local name="$1" role="$2" lookup=0 driver options
+    c849_fixture_workspace_lookup "$name" || lookup=$?
+    case "$lookup" in
+        0) ;;
+        1) write_result false FixtureNamespaceOccupied 2 ;;
+        *) write_result false FixtureNamespaceUnknown 2 ;;
+    esac
+    printf '%s\n' "$name" >> "$CASE_DIR/.fixture-volumes"
+    docker volume create --driver local \
+        --label io.antiphon.owner=c849-fixture \
+        --label "io.antiphon.fixture-run=$RUN" \
+        --label "io.antiphon.fixture-role=$role" \
+        "$name" >/dev/null || write_result false FixtureWorkspaceCreateFailed 2
+    driver="$(docker volume inspect -f '{{.Driver}}' "$name")" || write_result false FixtureNamespaceUnknown 2
+    options="$(docker volume inspect -f '{{json .Options}}' "$name")" || write_result false FixtureNamespaceUnknown 2
+    [ "$driver" = local ] || write_result false FixtureWorkspaceDriver 2
+    [[ "$options" == null || "$options" == '{}' ]] || write_result false FixtureWorkspaceOptions 2
+}
+
+c849_fixture_workspace_init_root() {
+    local work="$1" image="$2"
+    docker run --rm --network none --user 0:0 --entrypoint /bin/sh \
+        --mount "type=volume,source=$work,target=/fixture,volume-nocopy" \
+        "$image" \
+        -c 'chown 1654:1654 /fixture && chmod 0700 /fixture && mkdir -p /fixture/race /fixture/npm-work /fixture/npm-offline /fixture/donor /fixture/apphost /fixture/cache /fixture/probes && chown -R 1654:1654 /fixture && chmod 0700 /fixture/probes'
+}
+
+c849_fixture_helper_acquire() {
+    local role="$1" image="$2" work="$3" mount lookup=0
+    local name="c849-${RUN}-${role}"
+    case "$role" in
+        writer|reader) ;;
+        *) write_result false FixtureHelperRole 2 ;;
+    esac
+    c849_fixture_helper_lookup "$name" || lookup=$?
+    case "$lookup" in
+        0) ;;
+        1) write_result false FixtureNamespaceOccupied 2 ;;
+        *) write_result false FixtureNamespaceUnknown 2 ;;
+    esac
+    printf '%s\n' "$name" >> "$CASE_DIR/.fixture-helpers"
+    mount="type=volume,source=${work},target=/fixture,volume-nocopy"
+    if [ "$role" = reader ]; then mount="${mount},readonly"; fi
+    docker create --name "$name" --network none --user 1654:1654 \
+        --label io.antiphon.owner=c849-fixture \
+        --label "io.antiphon.fixture-run=${RUN}" \
+        --label "io.antiphon.fixture-role=${role}" \
+        --mount "$mount" \
+        --entrypoint sleep \
+        "$image" infinity >/dev/null || write_result false FixtureHelperCreateFailed 2
+    docker start "$name" >/dev/null || write_result false FixtureHelperStartFailed 2
+}
+
+# Positional argv only. The payload path is never interpolated into the script text.
+c849_fixture_helper_exec() {
+    local role="$1" name
+    shift
+    case "$role" in
+        writer|reader) name="c849-${RUN}-${role}" ;;
+        *) return 2 ;;
+    esac
+    docker exec -i "$name" "$@"
+}
+
+c849_fixture_volume_receipt() {
+    local input="$1" output="$2"
+    {
+        declare -f c849_fixture_receipt
+        printf '%s\n' 'c849_fixture_receipt "$1" "$2"'
+    } | c849_fixture_helper_exec writer /bin/sh -s -- "$input" "$output"
+}
+
+c849_fixture_workspace_init() {
+    local image work="c849${RUN}-work" mask="c849${RUN}-mask"
+    image="$(c849_image)" || {
+        if [ "$?" = 11 ]; then write_result false CacheDonorLookupFailed 2; fi
+        write_result false CacheHelperImageMissing 2
+    }
+    c849_fixture_controller_init
+    c849_fixture_workspace_create_volume "$work" work
+    c849_fixture_workspace_create_volume "$mask" mask
+    c849_fixture_workspace_init_root "$work" "$image" || write_result false FixtureWorkspaceInitFailed 2
+    c849_fixture_helper_acquire writer "$image" "$work"
+    c849_fixture_helper_acquire reader "$image" "$work"
+}
+
+# 0 labels match, 1 confirmed absent, 2 unknown lookup, 3 wrong label.
+c849_fixture_workspace_labels_ok() {
+    local name="$1" role="$2" code=0 owner run actual
+    docker volume inspect "$name" >/dev/null 2>&1 || code=$?
+    case "$code" in
+        0) ;;
+        1) return 1 ;;
+        *) return 2 ;;
+    esac
+    owner="$(docker volume inspect -f '{{index .Labels "io.antiphon.owner"}}' "$name")" || return 2
+    run="$(docker volume inspect -f '{{index .Labels "io.antiphon.fixture-run"}}' "$name")" || return 2
+    actual="$(docker volume inspect -f '{{index .Labels "io.antiphon.fixture-role"}}' "$name")" || return 2
+    [ "$owner" = c849-fixture ] || return 3
+    [ "$run" = "$RUN" ] || return 3
+    [ "$actual" = "$role" ] || return 3
+    return 0
+}
+
+c849_fixture_helper_release() {
+    local name="$1" role code=0 owner run actual
+    case "$name" in
+        "c849-${RUN}-writer") role=writer ;;
+        "c849-${RUN}-reader") role=reader ;;
+        *) return 0 ;;
+    esac
+    docker container inspect "$name" >/dev/null 2>&1 || code=$?
+    case "$code" in
+        0) ;;
+        1) return 0 ;;
+        *) printf '%s\n' "$name" >> "$CASE_DIR/fixture-cleanup-residue.txt"; return 0 ;;
+    esac
+    owner="$(docker inspect -f '{{index .Config.Labels "io.antiphon.owner"}}' "$name")" || {
+        printf '%s\n' "$name" >> "$CASE_DIR/fixture-cleanup-residue.txt"; return 0; }
+    run="$(docker inspect -f '{{index .Config.Labels "io.antiphon.fixture-run"}}' "$name")" || {
+        printf '%s\n' "$name" >> "$CASE_DIR/fixture-cleanup-residue.txt"; return 0; }
+    actual="$(docker inspect -f '{{index .Config.Labels "io.antiphon.fixture-role"}}' "$name")" || {
+        printf '%s\n' "$name" >> "$CASE_DIR/fixture-cleanup-residue.txt"; return 0; }
+    [ "$owner" = c849-fixture ] || return 0
+    [ "$run" = "$RUN" ] || return 0
+    [ "$actual" = "$role" ] || return 0
+    docker rm -f "$name" >/dev/null 2>&1 || printf '%s\n' "$name" >> "$CASE_DIR/fixture-cleanup-residue.txt"
+    return 0
+}
+
 c849_fixture_cleanup() {
-    local name
+    local name code=0
+    : > "$CASE_DIR/fixture-cleanup-residue.txt"
     for name in "c849-${RUN}-restore-p1" "c849-${RUN}-restore-p2" "c849-${RUN}-restore-p3" \
         "c849-${RUN}-lock-holder-shared" "c849-${RUN}-lock-waiter-shared" \
         "c849-${RUN}-lock-holder-private" "c849-${RUN}-lock-waiter-private" \
@@ -2791,11 +2973,30 @@ c849_fixture_cleanup() {
         "c849-${RUN}-npm-b" "c849-${RUN}-npm-b-empty"; do
         docker rm -f "$name" >/dev/null 2>&1 || true
     done
+    if [ -f "$CASE_DIR/.fixture-helpers" ]; then
+        while IFS= read -r name; do
+            [ -n "$name" ] || continue
+            c849_fixture_helper_release "$name" || true
+        done < "$CASE_DIR/.fixture-helpers"
+    fi
     [ -f "$CASE_DIR/.fixture-volumes" ] || return 0
-    while read -r name; do
-        [[ "$name" == "c849${RUN}"* ]] && [[ "$name" =~ ^c849[a-z0-9]{1,64}-(packages|scratch|npm)$ ]] || continue
-        docker volume rm "$name" >/dev/null 2>&1 || true
+    while IFS= read -r name; do
+        [ -n "$name" ] || continue
+        c849_fixture_owned_name "$name" || continue
+        case "$name" in
+            "c849${RUN}-work"|"c849${RUN}-mask")
+                c849_fixture_workspace_labels_ok "$name" "${name##*-}" || code=$?
+                case "$code" in
+                    0) docker volume rm "$name" >/dev/null 2>&1 || printf '%s\n' "$name" >> "$CASE_DIR/fixture-cleanup-residue.txt" ;;
+                    1) ;;
+                    *) printf '%s\n' "$name" >> "$CASE_DIR/fixture-cleanup-residue.txt" ;;
+                esac
+                code=0
+                ;;
+            *) docker volume rm "$name" >/dev/null 2>&1 || true ;;
+        esac
     done < "$CASE_DIR/.fixture-volumes"
+    return 0
 }
 
 c849_fixture_volume_fault() {
@@ -2821,7 +3022,18 @@ c849_fixture_prepare() {
     C849_SCRATCH="c849${RUN}-scratch"
     C849_NPM="c849${RUN}-npm"
     C849_READY="$SERVER2_ROOT/cache/fixture-seed-accepted"
-    : > "$CASE_DIR/.fixture-volumes"
+    # Workspace registration happens before prepare. Keep those names; do not truncate them.
+    local kept="$CASE_DIR/.fixture-volumes.workspace"
+    : > "$kept"
+    if [ -f "$CASE_DIR/.fixture-volumes" ]; then
+        while IFS= read -r name; do
+            case "$name" in
+                "c849${RUN}-work"|"c849${RUN}-mask") printf '%s\n' "$name" >> "$kept" ;;
+            esac
+        done < "$CASE_DIR/.fixture-volumes"
+    fi
+    cat "$kept" > "$CASE_DIR/.fixture-volumes"
+    rm -f -- "$kept"
     for name in "$C849_PACKAGES" "$C849_SCRATCH" "$C849_NPM"; do
         [[ "$name" =~ ^c849[a-z0-9]{1,64}-(packages|scratch|npm)$ ]] \
             || write_result false FixtureNamespaceInvalid 2
@@ -3653,26 +3865,43 @@ c849_fixture_receipt() {
     done < "$source"
 }
 
+# Legal aggregate and the toxic probe both stay in the work volume. The allowlisted
+# summary is the only bytes copied back to the case directory.
+c849_fixture_evidence_payloads() {
+    local image_id groups=9 controls=32
+    local legal=/fixture/probes/summary-input.txt legal_out=/fixture/probes/summary-output.txt
+    local toxic=/fixture/probes/toxic-input.txt toxic_out=/fixture/probes/toxic-output.txt
+    local receipt="$CASE_DIR/fixture-summary.txt"
+    image_id="$(docker image inspect -f '{{.Id}}' "$(c849_image)")" \
+        || write_result false FixtureImageMissing 2
+    printf 'source-sha=%s\nimage-id=%s\ninventories=2\ngroups=%s\ncontrols=%s\nexpected-red=%s\nvariants=47\nexpected-red-variants=47\nproduction-mutations=0\n' \
+        "$SHA" "$image_id" "$groups" "$controls" "$controls" \
+        | c849_fixture_helper_exec writer /bin/sh -c 'cat > "$1"' sh "$legal" \
+        || write_result false FixtureEvidenceWriteFailed 2
+    c849_fixture_volume_receipt "$legal" "$legal_out" || write_result false EvidenceNotAllowListed 2
+    c849_fixture_helper_exec reader /bin/sh -c 'cat -- "$1"' sh "$legal_out" > "$receipt" \
+        || write_result false EvidenceNotAllowListed 2
+    printf 'credential=TOKEN_SENTINEL_C849_CONTENT\n' \
+        | c849_fixture_helper_exec writer /bin/sh -c 'cat > "$1"' sh "$toxic" \
+        || write_result false FixtureToxicWriteFailed 2
+    c849_fixture_control PC-26 EvidenceNotAllowListed c849_fixture_volume_receipt "$toxic" "$toxic_out"
+    c849_fixture_helper_exec reader /bin/sh -c 'test -s "$1" && grep -Fq -- "$2" "$1"' sh "$toxic" TOKEN_SENTINEL_C849_CONTENT \
+        || write_result false FixtureToxicUnread 2
+    c849_fixture_helper_exec reader /bin/sh -c 'test ! -s "$1"' sh "$toxic_out" \
+        || write_result false EvidenceNotAllowListed 2
+    if grep -Rq -- 'TOKEN_SENTINEL_C849_CONTENT' "$CASE_DIR"; then
+        write_result false EvidenceNotAllowListed 2
+    fi
+}
+
 c849_fixture_evidence() {
-    local image_id id groups controls receipt="$CASE_DIR/fixture-summary.txt" input="$SERVER2_ROOT/fixture-summary-input.txt"
     ( TEMP_PROJECT=antiphon-runner-temp
       write_result() { printf '%s\n' "$2"; exit "$3"; }
       case_runner_cache_inventory ) >/dev/null \
         || write_result false FixtureInventoryFailed 2
     [ -s "$CASE_DIR/server2-status.json" ] && [ -s "$CASE_DIR/server2-temp-status.json" ] \
         || write_result false FixtureInventoriesMissing 2
-    printf 'credential=TOKEN_SENTINEL_C849_CONTENT\n' > "$SERVER2_ROOT/fixture-toxic-observation.txt"
-    c849_fixture_control PC-26 EvidenceNotAllowListed c849_fixture_receipt \
-        "$SERVER2_ROOT/fixture-toxic-observation.txt" "$SERVER2_ROOT/fixture-toxic-output.txt"
-    [ ! -s "$SERVER2_ROOT/fixture-toxic-output.txt" ] \
-        && ! grep -Rq 'TOKEN_SENTINEL_C849_CONTENT' "$CASE_DIR" \
-        || write_result false EvidenceNotAllowListed 2
-    image_id="$(docker image inspect -f '{{.Id}}' "$(c849_image)")" \
-        || write_result false FixtureImageMissing 2
-    groups=9; controls=32
-    printf 'source-sha=%s\nimage-id=%s\ninventories=2\ngroups=%s\ncontrols=%s\nexpected-red=%s\nvariants=47\nexpected-red-variants=47\nproduction-mutations=0\n' \
-        "$SHA" "$image_id" "$groups" "$controls" "$controls" > "$input"
-    c849_fixture_receipt "$input" "$receipt" || write_result false EvidenceNotAllowListed 2
+    c849_fixture_evidence_payloads
     printf 'PASS F-9\n' >> "$CASE_DIR/fixture-groups.txt"
     c849_fixture_roster
     cat "$CASE_DIR/fixture-groups.txt" "$CASE_DIR/fixture-controls.txt"
@@ -3696,6 +3925,7 @@ c849_fixture() {
     # when that removal succeeded and the name is absent, so a directory cannot redirect the write.
     # A failure that never called write_result still replaces the empty receipt.
     trap 'ec=$?; rm -f -- "$CASE_DIR/.fixture-escape"; if [ -f "$SERVER2_ROOT/compose-retention/shared.yml" ]; then docker compose -p "c849${RUN}temp" -f "$SERVER2_ROOT/compose-retention/shared.yml" down -v >/dev/null 2>&1 || true; docker compose -p "c849${RUN}main" -f "$SERVER2_ROOT/compose-retention/shared.yml" down -v >/dev/null 2>&1 || true; fi; if [ -f "$SERVER2_ROOT/compose-retention/negative.yml" ]; then docker compose -p "c849${RUN}negative" -f "$SERVER2_ROOT/compose-retention/negative.yml" down -v >/dev/null 2>&1 || true; fi; if [ -s "$CASE_DIR/.fixture-prune-smoke" ]; then docker rm -f "$(cat "$CASE_DIR/.fixture-prune-smoke")" >/dev/null 2>&1 || true; fi; if [ -s "$CASE_DIR/.fixture-npm-server" ]; then docker rm -f "$(cat "$CASE_DIR/.fixture-npm-server")" >/dev/null 2>&1 || true; fi; if [ -s "$CASE_DIR/.fixture-apphost" ]; then docker rm -f "$(cat "$CASE_DIR/.fixture-apphost")" >/dev/null 2>&1 || true; fi; if [ -s "$CASE_DIR/.fixture-busy" ]; then docker rm -f "$(cat "$CASE_DIR/.fixture-busy")" >/dev/null 2>&1 || true; fi; if [ -s "$CASE_DIR/.fixture-donor" ]; then docker rm -f "$(cat "$CASE_DIR/.fixture-donor")" >/dev/null 2>&1 || true; fi; c849_fixture_cleanup; if [ -s "$CASE_DIR/.fixture-network" ]; then docker network rm "$(cat "$CASE_DIR/.fixture-network")" >/dev/null 2>&1 || true; fi; if [ -d "$CASE_DIR" ] && [ ! -L "$CASE_DIR" ]; then for name in race-p1.log race-p2.log race-offline.log lock-holder.log lock-waiter.log; do if [ -f "$SERVER2_ROOT/$name" ] && [ ! -L "$SERVER2_ROOT/$name" ]; then if rm -rf -- "$CASE_DIR/$name" && [ ! -e "$CASE_DIR/$name" ] && [ ! -L "$CASE_DIR/$name" ]; then cp -P -T -- "$SERVER2_ROOT/$name" "$CASE_DIR/$name" || true; fi; fi; done; fi; case "$SERVER2_ROOT" in /tmp/c849-fixture-*) sudo -n rm -rf -- "$SERVER2_ROOT" || true ;; esac; if [ "$WROTE" != 1 ] && [ "$ec" != 0 ]; then write_result false "UnhandledExit $ec" "$ec"; fi' EXIT
+    c849_fixture_workspace_init
     c849_fixture_compose
     c849_fixture_prepare
     c849_fixture_seed
