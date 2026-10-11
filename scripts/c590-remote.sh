@@ -2134,7 +2134,7 @@ c849_seed() {
         docker run --rm --network none --user 0:0 --entrypoint /bin/sh \
             --mount "type=bind,source=$stage/$source,target=/seed,readonly" \
             --mount "type=volume,source=$name,target=/cache,volume-nocopy" "$image" \
-            -c 'set -eu; cp -a /seed/. /cache/; chown -R 1654:1654 /cache; find /cache -type d -exec chmod u+rwx {} +; find /cache -type f -exec chmod u+rw {} +' \
+            -c 'set -eu; cp -a /seed/. /cache/; chown -R 1654:1654 /cache; find /cache -type d -exec chmod u+rwx {} +; find /cache -type f -exec chmod u+rw {} +; chmod 0700 /cache' \
             >/dev/null || c849_seed_failure "$donor" CacheSeedImportFailed
     done
     c849_compare_import "$stage" "$image" || c849_seed_failure "$donor" CacheSeedImportChanged
@@ -3200,7 +3200,7 @@ c849_fixture_apphost() {
     docker run --rm --network none --user 0:0 --entrypoint /bin/sh \
         --mount "type=bind,source=$root/packages,target=/seed,readonly" \
         --mount "type=volume,source=$packages,target=/cache,volume-nocopy" "$image" \
-        -c 'set -eu; cp -a /seed/. /cache/; chown -R 1654:1654 /cache' \
+        -c 'set -eu; cp -a /seed/. /cache/; chown -R 1654:1654 /cache; chmod 0700 /cache' \
         || write_result false FixtureOrdinaryImportFailed 2
     printf 'PASS F-5\n' >> "$CASE_DIR/fixture-groups.txt"
 }
@@ -3313,17 +3313,24 @@ c849_fixture_retention() {
 services:
   probe:
     image: $image
+    user: "1654:1654"
     entrypoint: ["sleep", "infinity"]
     volumes:
       - type: volume
         source: packages
         target: /home/app/.nuget/packages
+        volume:
+          nocopy: true
       - type: volume
         source: scratch
         target: /var/cache/antiphon/nuget-scratch
+        volume:
+          nocopy: true
       - type: volume
         source: npm
         target: /home/app/.npm/_cacache
+        volume:
+          nocopy: true
       - runner-tmp:/tmp
       - work:/work
       - runner-state:/state
