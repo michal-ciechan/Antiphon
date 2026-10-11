@@ -181,7 +181,7 @@ public sealed class BlockedTaskSyncRecoveryTests
                     "sequencer" => RemoteSettlementSyncReasons.Sequencer,
                     "diverged" => RemoteSettlementSyncReasons.Diverged,
                     "missing" => RemoteSettlementSyncReasons.BranchNotPushed,
-                    _ => "park_sync_episode_changed"
+                    _ => "park_episode_changed"
                 };
                 after.SyncReasonCode.ShouldBe(reason, scenario);
                 (await w.GitTextAsync(w.LocalPath, "rev-parse", "HEAD")).ShouldBe(head, scenario);
@@ -305,6 +305,49 @@ public sealed class BlockedTaskSyncRecoveryTests
         (await RecoverAsync(w, clock, new SyncEvents(w.Fixture.Db))).ShouldBe(0);
         (await w.RowAsync()).SyncState.ShouldBe(AgentTaskParkSyncState.NotRequired);
         (await GetAsync(w.Fixture.Services, w.Fixture.TaskId)).ParkSync.ShouldBeNull();
+    }
+
+    [Test]
+    public async Task C1089_OtherWriterClaimStaysPendingThenBecomesReady()
+    {
+        // PC-1: collapsing park_other_writer back to Held (null next attempt) fails this claim.
+        await using var w = await TaskParkPublicationTests.PublicationWorld.CreateAsync(remote: true);
+        var sha = await w.CommitAsync("other-writer.txt");
+        (await w.PrepareAsync()).Evidence.ShouldNotBeNull();
+        var park = await w.RowAsync();
+        var head = await w.GitTextAsync(w.LocalPath, "rev-parse", "HEAD");
+        var otherId = Guid.NewGuid();
+        await using (var db = w.Fixture.Db())
+        {
+            db.AgentTasks.Add(new AgentTask
+            {
+                Id = otherId, RootTaskId = otherId, Goal = "Unrelated writer",
+                Status = AgentTaskStatus.Working, Workspace = WorkspaceMode.Worktree,
+                WorkingDirectory = w.LocalPath, CreatedAt = DateTime.UtcNow
+            });
+            await db.SaveChangesAsync();
+        }
+        var clock = new FakeTimeProvider(new DateTimeOffset(park.SyncNextAttemptAt!.Value));
+        var bus = new SyncEvents(w.Fixture.Db);
+        (await RecoverAsync(w, clock, bus)).ShouldBe(0, "a transient refusal does not sync");
+        var pending = await w.RowAsync();
+        pending.SyncState.ShouldBe(AgentTaskParkSyncState.Pending, "PC-1");
+        pending.SyncReasonCode.ShouldBe("park_other_writer", "PC-1");
+        pending.SyncAttempts.ShouldBe(1);
+        pending.SyncNextAttemptAt.ShouldBe(clock.GetUtcNow().UtcDateTime.AddMinutes(1), "PC-1");
+        pending.SyncSourceSha.ShouldBe(sha);
+        (await w.GitTextAsync(w.LocalPath, "rev-parse", "HEAD")).ShouldBe(head);
+        bus.ReadyObserved.ShouldBe(0);
+
+        await using (var db = w.Fixture.Db())
+            await db.AgentTasks.Where(t => t.Id == otherId)
+                .ExecuteUpdateAsync(s => s.SetProperty(t => t.Status, AgentTaskStatus.Succeeded));
+        clock.Advance(TimeSpan.FromMinutes(1));
+        (await RecoverAsync(w, clock, bus)).ShouldBe(1);
+        var ready = await w.RowAsync();
+        ready.SyncState.ShouldBe(AgentTaskParkSyncState.Ready);
+        ready.SyncSourceSha.ShouldBe(sha);
+        (await w.GitTextAsync(w.LocalPath, "rev-parse", "HEAD")).ShouldBe(sha);
     }
 
     private static async Task<int> RecoverAsync(TaskParkPublicationTests.PublicationWorld w, FakeTimeProvider clock,
