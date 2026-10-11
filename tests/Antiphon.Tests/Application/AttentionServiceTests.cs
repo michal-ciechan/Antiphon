@@ -3400,7 +3400,8 @@ public partial class AttentionServiceTests
             return noteId;
         }
 
-        public async Task<Guid> AddLegacyLandEventAsync(Guid taskId, DateTime at)
+        public async Task<Guid> AddLegacyLandEventAsync(
+            Guid taskId, DateTime at, AgentTaskEventType type = AgentTaskEventType.Landed)
         {
             var id = Guid.NewGuid();
             await using var db = CreateContext();
@@ -3408,12 +3409,34 @@ public partial class AttentionServiceTests
             {
                 Id = id,
                 AgentTaskId = taskId,
-                Type = AgentTaskEventType.Landed,
-                Detail = "historical land",
+                Type = type,
+                Detail = type == AgentTaskEventType.LandRefused ? "land refused" : "historical land",
                 At = at,
             });
             await db.SaveChangesAsync();
             return id;
+        }
+
+        public async Task ConfirmLegacyReceiptAsync(Guid taskId, Guid sourceEventId, DateTime at)
+        {
+            await using var db = CreateContext();
+            var noteId = Guid.NewGuid();
+            db.AgentTaskLandNotifications.Add(new AgentTaskLandNotification
+            {
+                Id = noteId,
+                IsLegacy = true,
+                TaskId = taskId,
+                SourceEventId = sourceEventId,
+                Kind = LandNotificationKind.Outcome,
+                ReplyTo = AgentTaskReplyTo.Session,
+                Body = "confirmed land receipt",
+                ContentDigest = noteId.ToString("N"),
+                CreatedAt = at,
+                NextAttemptAt = at,
+                State = LandNotificationState.Confirmed,
+                ConfirmedAt = at,
+            });
+            await db.SaveChangesAsync();
         }
 
         public async Task AddIncidentAsync(
@@ -3681,5 +3704,68 @@ public class AttentionApiTests
         payload.ShouldNotBeNull();
         payload!.Items.ShouldAllBe(i => i.Severity >= AlertSeverity.Critical);
         payload.KindCounts.ShouldNotBeNull();
+    }
+
+    [Test]
+    public async Task C1085_Min_severity_empty_is_400()
+    {
+        using var client = _factory.CreateClient();
+        await ShouldRejectMinSeverityAsync(client, "");
+    }
+
+    [Test]
+    public async Task C1085_Min_severity_whitespace_is_400()
+    {
+        using var client = _factory.CreateClient();
+        await ShouldRejectMinSeverityAsync(client, " ");
+        await ShouldRejectMinSeverityAsync(client, "\t");
+        await ShouldRejectMinSeverityAsync(client, " Warning");
+    }
+
+    [Test]
+    public async Task C1085_Min_severity_numeric_is_400()
+    {
+        using var client = _factory.CreateClient();
+        await ShouldRejectMinSeverityAsync(client, "0");
+        await ShouldRejectMinSeverityAsync(client, "2");
+        await ShouldRejectMinSeverityAsync(client, "4");
+    }
+
+    [Test]
+    public async Task C1085_Min_severity_unknown_is_400()
+    {
+        using var client = _factory.CreateClient();
+        await ShouldRejectMinSeverityAsync(client, "nope");
+        await ShouldRejectMinSeverityAsync(client, "criticality");
+    }
+
+    [Test]
+    public async Task C1085_Min_severity_name_is_accepted()
+    {
+        using var client = _factory.CreateClient();
+        foreach (var name in new[] { "Info", "warning", "ERROR", "Critical" })
+        {
+            var response = await client.GetAsync("/api/attention?minSeverity=" + name);
+            response.StatusCode.ShouldBe(HttpStatusCode.OK, name);
+            response.Content.Headers.ContentType?.MediaType.ShouldBe("application/json", name);
+            var payload = await response.Content.ReadFromJsonAsync<AttentionDto>(Json);
+            payload.ShouldNotBeNull();
+            var floor = Enum.Parse<AlertSeverity>(name, ignoreCase: true);
+            payload!.Items.ShouldAllBe(i => i.Severity >= floor, name);
+            payload.KindCounts.ShouldNotBeNull(name);
+        }
+    }
+
+    private static async Task ShouldRejectMinSeverityAsync(HttpClient client, string queryValue)
+    {
+        var response = await client.GetAsync(
+            "/api/attention?minSeverity=" + Uri.EscapeDataString(queryValue));
+        response.StatusCode.ShouldBe(HttpStatusCode.BadRequest, queryValue);
+        response.Content.Headers.ContentType?.MediaType.ShouldBe("application/problem+json", queryValue);
+        using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        json.RootElement.GetProperty("title").GetString().ShouldBe("Bad Request", queryValue);
+        json.RootElement.GetProperty("status").GetInt32().ShouldBe(400, queryValue);
+        json.RootElement.GetProperty("code").GetString().ShouldBe("bad_request", queryValue);
+        json.RootElement.GetProperty("detail").GetString().ShouldContain("minSeverity", Case.Sensitive, queryValue);
     }
 }

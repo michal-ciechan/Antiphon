@@ -1508,36 +1508,92 @@ public sealed partial class AttentionService
 
         // CARD-1085: one outcome row per task. The newest receipt keeps its identity; the count is
         // the rest of that task's unconfirmed receipts. Unconfirmed outcomes stay until they confirm
-        // (CARD-0467: the row survives the recency window). Historical legacy rows do not.
+        // (CARD-0467: the row survives the recency window). Historical unverified receipts age out;
+        // an unresolved LandRefused does not.
         items = CollapseLandOutcomeReceipts(items);
         items = items
             .GroupBy(i => i.ConditionKey ?? i.Kind + ":" + i.TaskId)
             .Select(g => g.First())
             .ToList();
-        var legacy = await _db.AgentTaskEvents.AsNoTracking().Where(e => e.LandRequestId == null
-            && (e.Type == AgentTaskEventType.Landed || e.Type == AgentTaskEventType.AlreadyPresent || e.Type == AgentTaskEventType.LandedWithResidue
-                || e.Type == AgentTaskEventType.LandingCleanup || e.Type == AgentTaskEventType.LandRefused))
-            .GroupBy(e => e.AgentTaskId)
-            .Select(g => new { Count = g.Count(), Newest = g.OrderByDescending(e => e.At).First() })
-            .ToListAsync(ct);
+        var legacy = await LoadHistoricalLandGroupsAsync(ct,
+            AgentTaskEventType.Landed, AgentTaskEventType.AlreadyPresent,
+            AgentTaskEventType.LandedWithResidue, AgentTaskEventType.LandingCleanup);
         foreach (var group in legacy)
         {
             var source = group.Newest;
-            if (await _db.AgentTaskLandNotifications.AnyAsync(n => n.SourceEventId == source.Id && n.ConfirmedAt != null, ct)) continue;
+            if (await LegacyReceiptConfirmedAsync(source, ct)) continue;
             var task = await _db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == source.AgentTaskId, ct);
             if (task.ReplyTo == AgentTaskReplyTo.None) continue;
             // No new delivery obligation. Once the task is Done (Succeeded) or Canceled, the same
-            // 24h window as the rest of the feed is the lifecycle; there is no acknowledge store.
+            // 24h window as the rest of the feed is the lifecycle of an unverified historical receipt.
             if (task.Status is AgentTaskStatus.Succeeded or AgentTaskStatus.Canceled
                 && now - source.At >= RecencyWindow)
                 continue;
-            items.Add(new AttentionItemDto(AttentionKind.LandLegacyUnverified, AlertSeverity.Info, task.Id, null, task.AgentId, null,
-                task.Title, "Historical Land receipt: LegacyUnverified",
-                $"Historical routing/receipt is unknown; no new message is inferred or replayed. receipts={group.Count}.",
-                source.At, null, [AttentionAction.OpenDrawer], task.CardId, ConditionKey: $"legacy-land:{source.Id:N}"));
+            AddHistoricalLandRow(items, task, source, group.Count);
+        }
+
+        // CARD-1085 repair: task success is not publication. A historical LandRefused stays until
+        // the same confirmation the receipt above already trusts, or a later confirmed publication.
+        var refusals = await LoadHistoricalLandGroupsAsync(ct, AgentTaskEventType.LandRefused);
+        foreach (var group in refusals)
+        {
+            var source = group.Newest;
+            if (await LandRefusalResolvedAsync(source, ct)) continue;
+            var task = await _db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == source.AgentTaskId, ct);
+            if (task.ReplyTo == AgentTaskReplyTo.None) continue;
+            AddHistoricalLandRow(items, task, source, group.Count);
         }
         return items;
     }
+
+    private async Task<List<HistoricalLandGroup>> LoadHistoricalLandGroupsAsync(
+        CancellationToken ct, params AgentTaskEventType[] types)
+    {
+        var typeList = types.ToArray();
+        var rows = await _db.AgentTaskEvents.AsNoTracking()
+            .Where(e => e.LandRequestId == null && typeList.Contains(e.Type))
+            .GroupBy(e => e.AgentTaskId)
+            .Select(g => new { Count = g.Count(), Newest = g.OrderByDescending(e => e.At).First() })
+            .ToListAsync(ct);
+        return rows.Select(g => new HistoricalLandGroup(g.Count, g.Newest)).ToList();
+    }
+
+    /// <summary>The acknowledgment this projection already used: a notification sourced from the event was confirmed.</summary>
+    private Task<bool> LegacyReceiptConfirmedAsync(AgentTaskEvent source, CancellationToken ct) =>
+        _db.AgentTaskLandNotifications.AnyAsync(n => n.SourceEventId == source.Id && n.ConfirmedAt != null, ct);
+
+    /// <summary>
+    /// Resolved when that acknowledgment covers the refusal, a later outcome receipt for the task
+    /// is confirmed, or a later event records a confirmed publication.
+    /// </summary>
+    private async Task<bool> LandRefusalResolvedAsync(AgentTaskEvent source, CancellationToken ct)
+    {
+        if (await LegacyReceiptConfirmedAsync(source, ct))
+            return true;
+        if (await _db.AgentTaskEvents.AnyAsync(e =>
+                e.AgentTaskId == source.AgentTaskId
+                && e.At > source.At
+                && (e.LandingPublication == LandPublicationOutcome.Landed
+                    || e.LandingPublication == LandPublicationOutcome.AlreadyPresent), ct))
+            return true;
+        return await _db.AgentTaskLandNotifications.AnyAsync(n =>
+            n.TaskId == source.AgentTaskId
+            && n.ConfirmedAt != null
+            && n.Kind == LandNotificationKind.Outcome
+            && n.SourceEventId != source.Id
+            && _db.AgentTaskEvents.Any(e => e.Id == n.SourceEventId && e.At > source.At), ct);
+    }
+
+    private static void AddHistoricalLandRow(
+        List<AttentionItemDto> items, AgentTask task, AgentTaskEvent source, int count)
+    {
+        items.Add(new AttentionItemDto(AttentionKind.LandLegacyUnverified, AlertSeverity.Info, task.Id, null, task.AgentId, null,
+            task.Title, "Historical Land receipt: LegacyUnverified",
+            $"Historical routing/receipt is unknown; no new message is inferred or replayed. receipts={count}.",
+            source.At, null, [AttentionAction.OpenDrawer], task.CardId, ConditionKey: $"legacy-land:{source.Id:N}"));
+    }
+
+    private sealed record HistoricalLandGroup(int Count, AgentTaskEvent Newest);
 
     private static List<AttentionItemDto> CollapseLandOutcomeReceipts(List<AttentionItemDto> items)
     {
