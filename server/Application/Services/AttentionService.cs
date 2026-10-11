@@ -1530,21 +1530,27 @@ public sealed partial class AttentionService
                 LandRequestId: null, LandNotificationId: null));
         }
 
-        // CARD-1085: one outcome row per task. The newest receipt keeps its identity; the count is
-        // the rest of that task's unconfirmed receipts. Unconfirmed outcomes stay until they confirm
-        // (CARD-0467: the row survives the recency window). Historical unverified receipts age out;
-        // an unresolved LandRefused does not.
+        // CARD-1085: one outcome row per task. The newest receipt keeps its identity; receipts=N
+        // is the count of that task's unconfirmed outcome receipts, including the newest.
+        // Unconfirmed outcomes stay until they confirm (CARD-0467: the row survives the recency
+        // window). Historical unverified receipts age out; an unresolved LandRefused does not.
         items = CollapseLandOutcomeReceipts(items);
         items = items
             .GroupBy(i => i.ConditionKey ?? i.Kind + ":" + i.TaskId)
             .Select(g => g.First())
             .ToList();
-        // Eligibility stays split. A historical receipt is omitted only when task.Status is
-        // Succeeded or Canceled and now minus the newest receipt event's At is at least
-        // RecencyWindow (24 hours). That At is AgentTaskEvent.At on the newest LandRequestId-null
-        // Landed, AlreadyPresent, LandedWithResidue, or LandingCleanup event. It is not
-        // AgentTask.CompletedAt. An unresolved LandRefused has no age check. When both are
-        // eligible the one row's representative is the refusal; otherwise it is the newest receipt.
+        // Eligibility stays split. EligibleHistoricalReceiptsAsync omits the receipt group when
+        // the newest event's notification is confirmed (SourceEventId matches and ConfirmedAt is
+        // set), when task.ReplyTo is None, or when task.Status is Succeeded or Canceled and now
+        // minus the newest receipt event's At is at least RecencyWindow (24 hours). That At is
+        // AgentTaskEvent.At on the newest LandRequestId-null Landed, AlreadyPresent,
+        // LandedWithResidue, or LandingCleanup event. It is not AgentTask.CompletedAt.
+        // EligibleHistoricalRefusalsAsync omits a LandRefused when LandRefusalResolvedAsync is
+        // true or task.ReplyTo is None. An unresolved LandRefused has no age check.
+        // AppendHistoricalLandRowsAsync emits one row. When both groups are eligible the
+        // representative is refusal.Newest. When only the refusal is eligible the representative
+        // is refusal.Newest, the LandRefused event. When only the receipt is eligible the
+        // representative is the newest receipt event.
         await AppendHistoricalLandRowsAsync(items, now, ct);
         return items;
     }
@@ -1595,8 +1601,10 @@ public sealed partial class AttentionService
     }
 
     /// <summary>
-    /// Task success is not publication. A historical LandRefused stays until the same
-    /// confirmation a receipt already trusts, or a later confirmed publication.
+    /// Task success is not publication. A historical LandRefused is omitted when ReplyTo is
+    /// None, or when its own notification is confirmed, a later outcome receipt for the task is
+    /// confirmed, or a later event records publication Landed or AlreadyPresent. It has no age
+    /// check.
     /// </summary>
     private async Task<Dictionary<Guid, EligibleHistoricalGroup>> EligibleHistoricalRefusalsAsync(
         CancellationToken ct)
@@ -1663,7 +1671,7 @@ public sealed partial class AttentionService
 
     /// <summary>
     /// Resolved when that acknowledgment covers the refusal, a later outcome receipt for the task
-    /// is confirmed, or a later event records a confirmed publication.
+    /// is confirmed, or a later event records publication Landed or AlreadyPresent.
     /// </summary>
     private async Task<bool> LandRefusalResolvedAsync(AgentTaskEvent source, CancellationToken ct)
     {
