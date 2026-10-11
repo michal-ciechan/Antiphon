@@ -164,4 +164,67 @@ public sealed class PlanCoveragePcTests
         packed.Pcs.Single(p => p.Id == "PC-3").Status.ShouldBe("missing-target", "c1053-hole-after-packed-colon");
         packed.ExitCode.ShouldBe(1, "c1053-hole-after-packed-colon");
     }
+
+    [Test]
+    public void unknown_concatenation_operand_ends_the_label_prefix()
+    {
+        var plan = PlanCoverageFixture.Plan(row: "", pc:
+            "| PC-1 | mutation | `Demo.Check`, `c1053-first` |\n"
+            + "| PC-2 | mutation | `Demo.Check`, `c1053-second` |");
+        PlanCoverageReport Analyze(string message) => PlanCoverageFixture.Analyze(
+            "class Demo { void Check() { int n = 1; x.ShouldBe(1, " + message + "); } }", plan);
+
+        foreach (var (source, label) in new[]
+        {
+            ("\"c1053-first \" + 1 + \"c1053-second: detail\"", "c1053-numeric-literal"),
+            ("\"c1053-first \" + n + \"c1053-second: detail\"", "c1053-identifier"),
+            ("\"c1053-first \" + \"\".Length + \"c1053-second: detail\"", "c1053-member-access"),
+            ("\"c1053-first \" + n.ToString() + \"c1053-second: detail\"", "c1053-invocation"),
+            ("\"c1053-first \" + (object)n + \"c1053-second: detail\"", "c1053-cast"),
+            ("\"c1053-first \" + (n > 0 ? \"c1053-second\" : \"c1053-second\") + \": detail\"", "c1053-conditional"),
+            ("\"c1053-first \" + (n) + \"c1053-second: detail\"", "c1053-parentheses"),
+            ("\"c1053-first \" + (missing ?? \"kept\") + \"c1053-second: detail\"", "c1053-null-coalescing"),
+            ("\"c1053-first \" + (\"c1053-mid \" + n) + \"c1053-second: detail\"", "c1053-nested-concatenation"),
+        })
+        {
+            var report = Analyze(source);
+            report.Pcs.Single(p => p.Id == "PC-1").Status.ShouldBe("static-labeled", label);
+            report.Pcs.Single(p => p.Id == "PC-2").Status.ShouldBe("missing-target", label);
+            report.ExitCode.ShouldBe(1, label);
+        }
+    }
+
+    [Test]
+    public void binds_packed_prefix_before_a_concatenation_hole()
+    {
+        var plan = PlanCoverageFixture.Plan(row: "", pc:
+            "| PC-1 | mutation | `Demo.Check`, `c1053-first` |\n"
+            + "| PC-2 | mutation | `Demo.Check`, `c1053-second` |\n"
+            + "| PC-3 | mutation | `Demo.Check`, `c1053-third` |");
+        PlanCoverageReport Analyze(string message) => PlanCoverageFixture.Analyze(
+            "class Demo { void Check() { int n = 1; string packed = \"c1053-first c1053-second: detail\"; x.ShouldBe(1, " + message + "); } }", plan);
+
+        foreach (var (source, label) in new[]
+        {
+            ("\"c1053-first c1053-second: detail\" + n", "c1053-prefix-before-numeric"),
+            ("\"c1053-first \" + \"c1053-second: detail\" + n", "c1053-literal-concatenation-before-hole"),
+            ("@\"c1053-first c1053-second: detail\" + n", "c1053-verbatim-before-hole"),
+            ("\"\"\"c1053-first c1053-second: detail\"\"\" + n", "c1053-raw-before-hole"),
+            ("(\"c1053-first \" + \"c1053-second: detail\") + n", "c1053-parenthesised-literals-before-hole"),
+            ("packed + n", "c1053-literal-alias-before-hole"),
+            ("\"c1053-first \" + (\"c1053-second: detail \" + n)", "c1053-nested-prefix-before-hole"),
+        })
+        {
+            var report = Analyze(source);
+            report.Pcs.Single(p => p.Id == "PC-1").Status.ShouldBe("static-labeled", label);
+            report.Pcs.Single(p => p.Id == "PC-2").Status.ShouldBe("static-labeled", label);
+            report.Pcs.Single(p => p.Id == "PC-3").Status.ShouldBe("missing-target", label);
+        }
+
+        var after = Analyze("\"c1053-first c1053-second: detail\" + n + \" c1053-third\"");
+        after.Pcs.Single(p => p.Id == "PC-1").Status.ShouldBe("static-labeled", "c1053-third-after-hole");
+        after.Pcs.Single(p => p.Id == "PC-2").Status.ShouldBe("static-labeled", "c1053-third-after-hole");
+        after.Pcs.Single(p => p.Id == "PC-3").Status.ShouldBe("missing-target", "c1053-third-after-hole");
+        after.ExitCode.ShouldBe(1, "c1053-third-after-hole");
+    }
 }

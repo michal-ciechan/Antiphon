@@ -237,6 +237,8 @@ public sealed class TestAssertionIndex
         result.AddRange(expression.DescendantNodesAndSelf().OfType<LiteralExpressionSyntax>().Where(l => !l.IsKind(SyntaxKind.StringLiteralExpression)).Select(l => l.Token.ValueText));
         return result.Distinct(StringComparer.Ordinal).ToList();
     }
+    // Unknown concatenation text. MessageLabels refuses a token that contains it.
+    private const string UnknownFragment = " \u0001 ";
     private List<string> Literals(ExpressionSyntax expression, SyntaxNode method, SyntaxNode site, Dictionary<string, ExpressionSyntax> parameters, HashSet<string> seen, int depth)
     {
         if (depth > 8) return [];
@@ -248,19 +250,9 @@ public sealed class TestAssertionIndex
                 var alias = Alias(id.Identifier.ValueText, method, site, parameters);
                 return alias is null ? [] : Literals(alias, method, site, parameters, seen, depth + 1);
             case InterpolatedStringExpressionSyntax interpolation:
-                // One message. A hole is unknown text: it splits tokens and is not a colon.
-                // The marker is not a label; MessageLabels drops a leading token that contains it.
-                var text = new System.Text.StringBuilder();
-                foreach (var content in interpolation.Contents)
-                {
-                    if (content is InterpolatedStringTextSyntax literal) text.Append(literal.TextToken.ValueText);
-                    else text.Append(" \u0001 ");
-                }
-                return text.Length == 0 ? [] : [text.ToString()];
+                return RenderInterpolatedMessage(interpolation);
             case BinaryExpressionSyntax binary when binary.IsKind(SyntaxKind.AddExpression):
-                var left = Literals(binary.Left, method, site, parameters, new(seen), depth + 1);
-                var right = Literals(binary.Right, method, site, parameters, new(seen), depth + 1);
-                return left.Count > 0 && right.Count > 0 ? left.SelectMany(l => right.Select(r => l + r)).ToList() : left.Concat(right).ToList();
+                return Concatenate(binary, method, site, parameters, seen, depth);
             case ConditionalExpressionSyntax conditional:
                 return Literals(conditional.WhenTrue, method, site, parameters, new(seen), depth + 1).Concat(Literals(conditional.WhenFalse, method, site, parameters, new(seen), depth + 1)).ToList();
             case ParenthesizedExpressionSyntax parenthesized: return Literals(parenthesized.Expression, method, site, parameters, seen, depth + 1);
@@ -271,6 +263,54 @@ public sealed class TestAssertionIndex
             case CollectionExpressionSyntax collection:
                 return collection.Elements.OfType<ExpressionElementSyntax>().SelectMany(e => Literals(e.Expression, method, site, parameters, new(seen), depth + 1)).ToList();
             default: return [];
+        }
+    }
+    // One message. A hole is unknown text: it splits tokens and is not a colon.
+    private static List<string> RenderInterpolatedMessage(InterpolatedStringExpressionSyntax interpolation)
+    {
+        var text = new System.Text.StringBuilder();
+        foreach (var content in interpolation.Contents)
+        {
+            if (content is InterpolatedStringTextSyntax literal) text.Append(literal.TextToken.ValueText);
+            else text.Append(UnknownFragment);
+        }
+        return text.Length == 0 ? [] : [text.ToString()];
+    }
+    // Only string literals (regular, verbatim, raw) and their + concatenation extend the prefix.
+    // Every other operand is an unknown fragment, so neighbors cannot join across it.
+    private List<string> Concatenate(BinaryExpressionSyntax binary, SyntaxNode method, SyntaxNode site, Dictionary<string, ExpressionSyntax> parameters, HashSet<string> seen, int depth)
+    {
+        var left = ConcatenationOperand(binary.Left, method, site, parameters, new(seen), depth + 1);
+        var right = ConcatenationOperand(binary.Right, method, site, parameters, new(seen), depth + 1);
+        if (left.Count == 0) left = [UnknownFragment];
+        if (right.Count == 0) right = [UnknownFragment];
+        return left.SelectMany(l => right.Select(r => l + r)).ToList();
+    }
+    private List<string> ConcatenationOperand(ExpressionSyntax expression, SyntaxNode method, SyntaxNode site, Dictionary<string, ExpressionSyntax> parameters, HashSet<string> seen, int depth)
+    {
+        if (depth > 8) return [UnknownFragment];
+        switch (expression)
+        {
+            case LiteralExpressionSyntax literal when literal.IsKind(SyntaxKind.StringLiteralExpression):
+                return [literal.Token.ValueText];
+            case ParenthesizedExpressionSyntax parenthesized:
+                return ConcatenationOperand(parenthesized.Expression, method, site, parameters, seen, depth + 1);
+            case BinaryExpressionSyntax binary when binary.IsKind(SyntaxKind.AddExpression):
+                return Concatenate(binary, method, site, parameters, seen, depth);
+            case InterpolatedStringExpressionSyntax interpolation:
+                var rendered = RenderInterpolatedMessage(interpolation);
+                return rendered.Count > 0 ? rendered : [""];
+            case IdentifierNameSyntax id:
+                if (!seen.Add(id.Identifier.ValueText)) return [UnknownFragment];
+                var alias = Alias(id.Identifier.ValueText, method, site, parameters);
+                return alias is null ? [UnknownFragment] : ConcatenationOperand(alias, method, site, parameters, seen, depth + 1);
+            case ArrayCreationExpressionSyntax array when array.Initializer is not null:
+                return array.Initializer.Expressions.SelectMany(e => ConcatenationOperand(e, method, site, parameters, new(seen), depth + 1)).DefaultIfEmpty(UnknownFragment).ToList();
+            case ImplicitArrayCreationExpressionSyntax array:
+                return array.Initializer.Expressions.SelectMany(e => ConcatenationOperand(e, method, site, parameters, new(seen), depth + 1)).DefaultIfEmpty(UnknownFragment).ToList();
+            case CollectionExpressionSyntax collection:
+                return collection.Elements.OfType<ExpressionElementSyntax>().SelectMany(e => ConcatenationOperand(e.Expression, method, site, parameters, new(seen), depth + 1)).DefaultIfEmpty(UnknownFragment).ToList();
+            default: return [UnknownFragment];
         }
     }
     private static bool IsEmpty(ExpressionSyntax expression) => expression is CollectionExpressionSyntax c && c.Elements.Count == 0

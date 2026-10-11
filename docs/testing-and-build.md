@@ -559,6 +559,13 @@ including literal parts of an interpolated, verbatim, or raw interpolated string
 and of `+` concatenation. A colon inside an interpolation hole is not message
 text and does not start another label list. A hole before that colon is unknown
 text, so only the leading literal token binds; a hole after the colon stays prose.
+A `+` operand extends the prefix only when it is a regular, verbatim, or raw
+string literal, or a concatenation of those literals. Every other operand is an
+unknown fragment and ends the prefix the way an interpolation hole does, so text
+after it cannot witness a label. A numeric literal, an identifier that is not a
+literal alias, member access, an invocation, a cast, a conditional, a parenthesised
+non-literal, a null-coalescing expression, and a nested concatenation that contains
+one are all that kind of fragment. Literal aliases still contribute their literal text.
 A message with no colon still binds
 only its leading token, so trailing words stay prose (`target-label before`). Setup/comments/another method cannot
 satisfy an assertion. Literal aliases, interpolated literal segments, literal-array
