@@ -29,6 +29,7 @@ public sealed class DeleteOwnership
     public bool StampFile { get; init; }
     public bool FileOnly { get; init; }
     public string? GitExecutable { get; init; }
+    public int GitTimeoutMilliseconds { get; init; } = 15_000;
 }
 
 public static class SafeDelete
@@ -128,7 +129,7 @@ public static class SafeDelete
                 return "not-created-by-run";
         }
 
-        var git = GitRefusal(full, ownership.AllowOutsideRepository, ownership.GitExecutable);
+        var git = GitRefusal(full, ownership.AllowOutsideRepository, ownership.GitExecutable, ownership.GitTimeoutMilliseconds);
         if (git is not null)
             return git;
         if (ownership.FileOnly || !Directory.Exists(full))
@@ -156,8 +157,25 @@ public static class SafeDelete
         return null;
     }
 
+    // An existing path may not be replaced until the same tracked-file and link checks a delete uses
+    // have succeeded. A missing path is a create, not an overwrite.
+    public static string? ExistingPathRefusal(string path, string? gitExecutable = null, int? timeoutMs = null)
+    {
+        if (!File.Exists(path) && !Directory.Exists(path))
+            return null;
+        var full = Canonical(path);
+        if (full is null)
+            return "path-unsafe";
+        var reparse = ReparseReason(full, null);
+        if (reparse is not null)
+            return reparse;
+        return GitRefusal(full, allowOutsideRepository: true, gitExecutable, timeoutMs ?? GitTimeoutMs);
+    }
+
     private static string? TreeReason(string root)
     {
+        if (IsGitMetadataName(root))
+            return "nested_repository";
         var pending = new Stack<string>();
         pending.Push(root);
         var seen = 0;
@@ -168,12 +186,19 @@ public static class SafeDelete
                 return "unsafe-tree";
             if (IsReparse(path))
                 return "reparse-point";
+            if (IsGitMetadataName(path))
+                return "nested_repository";
             try
             {
                 if ((File.GetAttributes(path) & FileAttributes.Directory) == 0)
                     continue;
                 foreach (var child in Directory.EnumerateFileSystemEntries(path))
+                {
+                    // Name check before push: do not follow a link, and do not enter .git.
+                    if (IsGitMetadataName(child))
+                        return "nested_repository";
                     pending.Push(child);
+                }
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
@@ -184,9 +209,12 @@ public static class SafeDelete
         return null;
     }
 
+    private static bool IsGitMetadataName(string path) =>
+        string.Equals(Path.GetFileName(path), ".git", StringComparison.Ordinal);
+
     // A git answer is required. No metadata is "not a repository", and that is a refusal
     // unless the caller proved this file sits outside any repository.
-    private static string? GitRefusal(string full, bool allowOutsideRepository, string? gitExecutable)
+    private static string? GitRefusal(string full, bool allowOutsideRepository, string? gitExecutable, int timeoutMs)
     {
         var start = Directory.Exists(full) && !IsReparse(full) ? full : Path.GetDirectoryName(full);
         if (string.IsNullOrEmpty(start))
@@ -196,7 +224,7 @@ public static class SafeDelete
             return allowOutsideRepository ? null : "not-a-repository";
 
         var git = string.IsNullOrWhiteSpace(gitExecutable) ? "git" : gitExecutable;
-        var top = RunGit(git, owner, ["-C", owner, "rev-parse", "--show-toplevel"]);
+        var top = RunGit(git, owner, ["-C", owner, "rev-parse", "--show-toplevel"], timeoutMs);
         if (top.Failure is not null)
             return top.Failure;
         if (top.ExitCode != 0)
@@ -207,7 +235,7 @@ public static class SafeDelete
         if (toplevel.Length == 0)
             return "git-failed";
 
-        var listed = RunGit(git, toplevel, ["-C", toplevel, "ls-files", "-z", "--", full]);
+        var listed = RunGit(git, toplevel, ["-C", toplevel, "ls-files", "-z", "--", full], timeoutMs);
         if (listed.Failure is not null)
             return listed.Failure;
         if (listed.ExitCode != 0)
@@ -236,8 +264,10 @@ public static class SafeDelete
 
     private readonly record struct GitRun(int ExitCode, string Stdout, string Stderr, string? Failure);
 
-    private static GitRun RunGit(string git, string workingDirectory, IReadOnlyList<string> args)
+    private static GitRun RunGit(string git, string workingDirectory, IReadOnlyList<string> args, int timeoutMs)
     {
+        if (timeoutMs < 1)
+            timeoutMs = GitTimeoutMs;
         Process? process = null;
         try
         {
@@ -257,16 +287,24 @@ public static class SafeDelete
             process = Process.Start(start);
             if (process is null)
                 return new GitRun(-1, "", "", "git-unavailable");
-            var errorTask = Task.Run(() => process.StandardError.ReadToEnd());
-            var stdout = process.StandardOutput.ReadToEnd();
-            if (!process.WaitForExit(GitTimeoutMs))
+            // Read both pipes before waiting. A synchronous read ahead of the timeout never reaches WaitForExit
+            // when git leaves stdout open.
+            var stdoutTask = process.StandardOutput.ReadToEndAsync();
+            var stderrTask = process.StandardError.ReadToEndAsync();
+            if (!process.WaitForExit(timeoutMs))
             {
-                try { process.Kill(entireProcessTree: true); } catch (Exception ex) when (ex is InvalidOperationException or Win32Exception) { }
-                return new GitRun(-1, stdout, "", "git-timeout");
+                KillTree(process);
+                Drain(stdoutTask, stderrTask, 2_000);
+                return new GitRun(-1, "", "", "git-timeout");
             }
 
-            var stderr = errorTask.GetAwaiter().GetResult();
-            return new GitRun(process.ExitCode, stdout, stderr, null);
+            if (!Drain(stdoutTask, stderrTask, timeoutMs))
+            {
+                KillTree(process);
+                return new GitRun(-1, "", "", "git-timeout");
+            }
+
+            return new GitRun(process.ExitCode, stdoutTask.Result, stderrTask.Result, null);
         }
         catch (Exception ex) when (ex is Win32Exception or FileNotFoundException or DirectoryNotFoundException)
         {
@@ -275,6 +313,39 @@ public static class SafeDelete
         finally
         {
             process?.Dispose();
+        }
+    }
+
+    private static void KillTree(Process process)
+    {
+        try
+        {
+            if (!process.HasExited)
+                process.Kill(entireProcessTree: true);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or Win32Exception or NotSupportedException)
+        {
+        }
+
+        try
+        {
+            if (!process.HasExited)
+                process.WaitForExit(2_000);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or Win32Exception or SystemException)
+        {
+        }
+    }
+
+    private static bool Drain(Task<string> stdout, Task<string> stderr, int timeoutMs)
+    {
+        try
+        {
+            return Task.WhenAll(stdout, stderr).Wait(timeoutMs);
+        }
+        catch (AggregateException)
+        {
+            return false;
         }
     }
 

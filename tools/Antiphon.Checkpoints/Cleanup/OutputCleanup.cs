@@ -149,11 +149,12 @@ public static class OutputCleanup
         }
     }
 
-    public static List<string> RemoveOlderRuns(string resultsRoot, TimeSpan olderThan, bool dryRun)
+    public static CleanResult RemoveOlderRuns(string resultsRoot, TimeSpan olderThan, bool dryRun)
     {
         var deleted = new List<string>();
+        var refusals = new List<string>();
         if (!Directory.Exists(resultsRoot))
-            return deleted;
+            return new CleanResult { Deleted = deleted, Refusals = refusals };
         var cutoff = DateTime.UtcNow - olderThan;
         foreach (var dir in Directory.EnumerateDirectories(resultsRoot))
         {
@@ -177,11 +178,13 @@ public static class OutputCleanup
             }
 
             var removed = SafeDelete.DeleteCreatedTree(dir);
-            if (removed.Disposition == DeleteDisposition.Deleted)
+            if (removed.Disposition == DeleteDisposition.Deleted && !Directory.Exists(dir) && !File.Exists(dir))
                 deleted.Add(dir);
+            else if (removed.Disposition == DeleteDisposition.Refused || Directory.Exists(dir) || File.Exists(dir))
+                refusals.Add(string.IsNullOrWhiteSpace(removed.Reason) ? "still-present" : removed.Reason);
         }
 
-        return deleted;
+        return new CleanResult { Deleted = deleted, Refusals = refusals };
     }
 
     public static string DeletedLine(bool dryRun, string path) =>
