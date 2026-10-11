@@ -2832,20 +2832,42 @@ c849_fixture_controller_init() {
     [ "$owner" = "$(id -u)" ] || write_result false FixtureControllerOwner 2
 }
 
+# Drop a name from the cleanup ledger. Does not remove the volume.
+c849_fixture_workspace_drop_name() {
+    local name="$1" line kept="$CASE_DIR/.fixture-volumes.drop"
+    : > "$kept"
+    if [ -f "$CASE_DIR/.fixture-volumes" ]; then
+        while IFS= read -r line || [ -n "$line" ]; do
+            [ "$line" = "$name" ] && continue
+            printf '%s\n' "$line" >> "$kept"
+        done < "$CASE_DIR/.fixture-volumes"
+    fi
+    mv -- "$kept" "$CASE_DIR/.fixture-volumes"
+}
+
 c849_fixture_workspace_create_volume() {
-    local name="$1" role="$2" lookup=0 driver options
+    local name="$1" role="$2" lookup=0 driver options owned=0
     c849_fixture_workspace_lookup "$name" || lookup=$?
     case "$lookup" in
         0) ;;
         1) write_result false FixtureNamespaceOccupied 2 ;;
         *) write_result false FixtureNamespaceUnknown 2 ;;
     esac
+    # Intent is recorded before acquisition. Cleanup registration survives only
+    # after create, once the volume carries this run's owner and run labels.
     printf '%s\n' "$name" >> "$CASE_DIR/.fixture-volumes"
     docker volume create --driver local \
         --label io.antiphon.owner=c849-fixture \
         --label "io.antiphon.fixture-run=$RUN" \
         --label "io.antiphon.fixture-role=$role" \
         "$name" >/dev/null || write_result false FixtureWorkspaceCreateFailed 2
+    # docker volume create is idempotent: an existing foreign volume returns
+    # success and keeps its own labels. Refuse before any mount or other use.
+    c849_fixture_workspace_labels_ok "$name" "$role" || owned=$?
+    if [ "$owned" != 0 ]; then
+        c849_fixture_workspace_drop_name "$name"
+        write_result false FixtureWorkspaceForeign 2
+    fi
     driver="$(docker volume inspect -f '{{.Driver}}' "$name")" || write_result false FixtureNamespaceUnknown 2
     options="$(docker volume inspect -f '{{json .Options}}' "$name")" || write_result false FixtureNamespaceUnknown 2
     [ "$driver" = local ] || write_result false FixtureWorkspaceDriver 2
@@ -2902,7 +2924,7 @@ c849_fixture_volume_receipt() {
     {
         declare -f c849_fixture_receipt
         printf '%s\n' 'c849_fixture_receipt "$1" "$2"'
-    } | c849_fixture_helper_exec writer /bin/sh -s -- "$input" "$output"
+    } | c849_fixture_helper_exec writer /bin/bash -s -- "$input" "$output"
 }
 
 c849_fixture_workspace_init() {

@@ -5,12 +5,24 @@ set -euo pipefail
 shopt -s nullglob
 mode="${1:?mode}"
 repo="${2:?repo}"
-root=$(mktemp -d /tmp/c1192-workspace-XXXXXXXX)
+private=$(mktemp -d) || exit 1
+printf '%s\n' "$private" > "${private:?}/.c1192-owned"
+cleanup_private() {
+    local target="${private:?}" stamp
+    if [ -d "$target" ] && [ ! -L "$target" ] && [ -f "$target/.c1192-owned" ]; then
+        stamp=$(cat "$target/.c1192-owned")
+        if [ "$stamp" = "$target" ]; then
+            rm -rf -- "$target"
+        fi
+    fi
+}
+trap cleanup_private EXIT
+root=$(mktemp -d "${private:?}/c1192.XXXXXX") || exit 1
 RUN=c1192fixture0001
 export C1192_ROOT="$root"
+export C1192_FIXTURE_TREE="${root:?}/fixture-tree"
 export C1192_FAULT=
 export C1192_CUT=
-trap 'rm -rf -- "$root" "/tmp/c849-fixture-$RUN"' EXIT
 mkdir -p "$root/bin" "$root/volumes" "$root/containers" "$root/case" "$root/server2/cache"
 printf '#!/bin/sh\nprintf "REAL-DOCKER %%s\\n" "$*" >> "$C1192_ROOT/real-docker"\nexit 97\n' > "$root/bin/docker"
 chmod 755 "$root/bin/docker"
@@ -19,8 +31,17 @@ export PATH="$root/bin:$PATH"
 : > "$root/order"
 : > "$root/chown.log"
 : > "$root/real-docker"
+: > "$root/argv"
 remote="$repo/scripts/c590-remote.sh"
-awk '/^(c849_[a-z_]+|case_runner_cache_inventory)\(\) \{/ { active=1 } active { print } active && /^}$/ { active=0 }' "$remote" > "$root/functions"
+awk '/^(c849_[a-z_]+|case_runner_cache_inventory)\(\) \{/ { active=1 } active { print } active && /^}$/ { active=0 }' "$remote" \
+    | while IFS= read -r line || [ -n "$line" ]; do
+        case "$line" in
+            *'SERVER2_ROOT="/tmp/c849-fixture-$RUN"'*)
+                printf '%s\n' '    SERVER2_ROOT="${C1192_FIXTURE_TREE:?}"'
+                ;;
+            *) printf '%s\n' "$line" ;;
+        esac
+    done > "$root/functions"
 # shellcheck disable=SC1091
 source "$root/functions"
 
@@ -65,11 +86,17 @@ event() { printf '%s\n' "$*" >> "$C1192_ROOT/events"; }
 order_log() { printf '%s\n' "$1" >> "$C1192_ROOT/order"; }
 
 reset_runtime() {
-    rm -rf "$C1192_ROOT/volumes" "$C1192_ROOT/containers" "/tmp/c849-fixture-$RUN"
+    rm -rf -- "${C1192_ROOT:?}/volumes" "${C1192_ROOT:?}/containers"
+    if [ -n "${C1192_FIXTURE_TREE:-}" ] && [ -d "$C1192_FIXTURE_TREE" ] && [ ! -L "$C1192_FIXTURE_TREE" ]; then
+        case "$C1192_FIXTURE_TREE" in
+            "${C1192_ROOT:?}/"*) rm -rf -- "$C1192_FIXTURE_TREE" ;;
+        esac
+    fi
     mkdir -p "$C1192_ROOT/volumes" "$C1192_ROOT/containers"
     : > "$C1192_ROOT/events"
     : > "$C1192_ROOT/order"
     : > "$C1192_ROOT/chown.log"
+    : > "$C1192_ROOT/argv"
     rm -rf "$CASE_DIR/fixture-controller"
     rm -f "$CASE_DIR/.fixture-volumes" "$CASE_DIR/.fixture-helpers" \
         "$CASE_DIR/fixture-cleanup-residue.txt" "$CASE_DIR/fixture-summary.txt" \
@@ -176,17 +203,24 @@ exec_in() {
     data="$C1192_ROOT/volumes/$source/data"
     mkdir -p "$data"
     rewrite_paths "$data" "$@"
-    if [ "${REWRITE[0]:-}" = /bin/sh ] || [ "${REWRITE[0]:-}" = sh ]; then
-        if [ "${REWRITE[1]:-}" = -c ]; then
-            bash -c "${REWRITE[2]}" "${REWRITE[@]:3}"
-            return
-        fi
-        if [ "${REWRITE[1]:-}" = -s ]; then
-            local rest=("${REWRITE[@]:2}")
-            [ "${rest[0]:-}" = -- ] && rest=("${rest[@]:1}")
-            bash -s -- "${rest[@]}"
-            return
-        fi
+    local interp="${REWRITE[0]:-}" bin
+    case "$interp" in
+        /bin/bash|bash) bin=bash ;;
+        /bin/sh|sh) bin=sh ;;
+        *)
+            printf 'UNEXPECTED-EXEC %s\n' "$*" >> "$C1192_ROOT/scenario.err"
+            return 97
+            ;;
+    esac
+    if [ "${REWRITE[1]:-}" = -c ]; then
+        "$bin" -c "${REWRITE[2]}" "${REWRITE[@]:3}"
+        return
+    fi
+    if [ "${REWRITE[1]:-}" = -s ]; then
+        local rest=("${REWRITE[@]:2}")
+        [ "${rest[0]:-}" = -- ] && rest=("${rest[@]:1}")
+        "$bin" -s -- "${rest[@]}"
+        return
     fi
     printf 'UNEXPECTED-EXEC %s\n' "$*" >> "$C1192_ROOT/scenario.err"
     return 97
@@ -224,6 +258,18 @@ docker_volume() {
             fi
             if [ "$C1192_CUT" = work-create ] && [ "$name" = "$WORK" ]; then return 1; fi
             if [ "$C1192_CUT" = mask-create ] && [ "$name" = "$MASK" ]; then return 1; fi
+            # Idempotent create of a volume that appeared after the absence lookup.
+            if [ "$C1192_FAULT" = foreign-create ] || [ "$C1192_FAULT" = foreign-missing ]; then
+                if [ "$C1192_FAULT" = foreign-create ]; then
+                    plant_volume "$name" local null foreign-owner other-run work
+                else
+                    local foreign_dir="$C1192_ROOT/volumes/$name"
+                    mkdir -p "$foreign_dir/data"
+                    printf '%s\n' local > "$foreign_dir/driver"
+                    printf '%s\n' null > "$foreign_dir/options"
+                fi
+                return 0
+            fi
             local owner=c849-fixture run_id="$RUN" role=work item key val
             for item in "${labels[@]}"; do
                 key="${item%%=*}"
@@ -397,7 +443,17 @@ docker_inspect_container() {
     esac
 }
 
+# One invocation: argument count, then each argument, NUL-terminated.
+record_argv() {
+    local arg
+    {
+        printf '%s\0' "$#"
+        for arg in "$@"; do printf '%s\0' "$arg"; done
+    } >> "${C1192_ROOT:?}/argv"
+}
+
 docker() {
+    record_argv "$@"
     local arg
     {
         printf 'DOCKER'
@@ -477,10 +533,64 @@ field_has() {
     esac
 }
 
+# 0 when a create/run argument is --env-file or contains a credential path.
+argv_forbidden() {
+    local count arg i
+    [ -s "${C1192_ROOT:?}/argv" ] || return 1
+    while IFS= read -r -d '' count; do
+        local -a args=()
+        for ((i=0; i<count; i++)); do
+            IFS= read -r -d '' arg || return 0
+            args+=("$arg")
+        done
+        [ "${args[0]:-}" = create ] || [ "${args[0]:-}" = run ] || continue
+        for ((i=0; i<${#args[@]}; i++)); do
+            case "${args[$i]}" in
+                --env-file|*credential*) return 0 ;;
+            esac
+        done
+    done < "${C1192_ROOT:?}/argv"
+    return 1
+}
+
+scan_argv_credentials() {
+    local count arg i name mount value
+    local saw_writer=0 saw_reader=0 saw_init=0
+    credential_ok=0
+    [ -s "${C1192_ROOT:?}/argv" ] || return 0
+    while IFS= read -r -d '' count; do
+        local -a args=()
+        for ((i=0; i<count; i++)); do
+            IFS= read -r -d '' arg || return 0
+            args+=("$arg")
+        done
+        [ "${args[0]:-}" = create ] || [ "${args[0]:-}" = run ] || continue
+        name=""
+        mount=""
+        for ((i=0; i<${#args[@]}; i++)); do
+            if [ "${args[$i]}" = --name ]; then name="${args[$((i+1))]:-}"; fi
+            if [ "${args[$i]}" = --mount ]; then
+                value="${args[$((i+1))]:-}"
+                case "$value" in
+                    *target=/fixture*) mount=$value ;;
+                esac
+            fi
+        done
+        case "$name" in
+            *-writer) saw_writer=1 ;;
+            *-reader) saw_reader=1 ;;
+        esac
+        if [ "${args[0]}" = run ] && [ -n "$mount" ]; then saw_init=1; fi
+    done < "${C1192_ROOT:?}/argv"
+    if [ "$saw_writer" = 1 ] && [ "$saw_reader" = 1 ] && [ "$saw_init" = 1 ]; then
+        argv_forbidden || credential_ok=1
+    fi
+}
+
 scan_happy() {
     network_ok=1
     socket_ok=1
-    credential_ok=1
+    credential_ok=0
     bind_ok=1
     readonly_ok=0
     nocopy_ok=1
@@ -505,7 +615,6 @@ scan_happy() {
                 fi
                 [ "$image" = "$ADMITTED" ] || image_ok=0
                 if field_has "$line" docker.sock || field_has "$line" '/var/run/docker'; then socket_ok=0; fi
-                if field_has "$line" credential; then credential_ok=0; fi
                 if field_has "$mounts" type=bind; then bind_ok=0; fi
                 ;;
             exec)
@@ -526,6 +635,7 @@ scan_happy() {
     [ "$saw_writer" = 1 ] && [ "$saw_reader" = 1 ] || network_ok=0
     [ "$saw_init" = 1 ] || nocopy_ok=0
     [ "$saw_writer" = 1 ] && [ "$saw_reader" = 1 ] && [ "$saw_init" = 1 ] || image_ok=0
+    scan_argv_credentials
 }
 
 emit() { printf '%s=%s\n' "$1" "$2"; }
@@ -734,7 +844,6 @@ mode_cleanup() {
 partial_cut() {
     local cut="$1"
     reset_runtime
-    rm -rf "/tmp/c849-fixture-$RUN"
     C1192_CUT=$cut
     local code=0 out diag cleanup=0 work=0 mask=0 writer=0 reader=0 residue=-
     out=$(c849_fixture 2>>"$C1192_ROOT/scenario.err") || code=$?
@@ -802,11 +911,64 @@ mode_toxic() {
     emit toxic-init-code "$code"
 }
 
+mode_foreign() {
+    local kind fault diag registered mounted removed
+    for kind in different missing; do
+        case "$kind" in
+            different) fault=foreign-create ;;
+            missing) fault=foreign-missing ;;
+        esac
+        reset_runtime
+        : > "$C1192_ROOT/scenario.err"
+        C1192_FAULT=$fault
+        run_init
+        diag=$(diagnosis_of "$C1192_OUT")
+        registered=0
+        if [ -f "$CASE_DIR/.fixture-volumes" ] && grep -Fxq -- "$WORK" "$CASE_DIR/.fixture-volumes"; then
+            registered=1
+        fi
+        mounted=0
+        if grep -q '^init-run	' "$C1192_ROOT/events" || grep -q '^helper-create	' "$C1192_ROOT/events"; then
+            mounted=1
+        fi
+        removed=1
+        volume_exists "$WORK" && removed=0
+        emit "${kind}-diagnosis" "$diag"
+        emit "${kind}-registered" "$registered"
+        emit "${kind}-mounted" "$mounted"
+        emit "${kind}-removed" "$removed"
+    done
+}
+
+mode_argv() {
+    local refused
+    reset_runtime
+    : > "$C1192_ROOT/scenario.err"
+    run_init
+    scan_argv_credentials
+    emit argv-clean "$credential_ok"
+    : > "$C1192_ROOT/argv"
+    docker create --name "${WRITER}-env" --network none --user 1654:1654 \
+        --env-file "${C1192_ROOT:?}/credential" \
+        --mount "type=volume,source=$WORK,target=/fixture,volume-nocopy" \
+        --entrypoint sleep "$ADMITTED" infinity >/dev/null 2>>"$C1192_ROOT/scenario.err" || true
+    if argv_forbidden; then refused=1; else refused=0; fi
+    emit argv-env-file-refused "$refused"
+    : > "$C1192_ROOT/argv"
+    docker create --name "${READER}-env" --network none \
+        --mount "type=volume,source=$WORK,target=/fixture,readonly,volume-nocopy" \
+        "$ADMITTED" --env-file "${C1192_ROOT:?}/credential" >/dev/null 2>>"$C1192_ROOT/scenario.err" || true
+    if argv_forbidden; then refused=1; else refused=0; fi
+    emit argv-reordered-refused "$refused"
+}
+
 case "$mode" in
     register) mode_register ;;
     cleanup) mode_cleanup ;;
     partial) mode_partial ;;
     toxic) mode_toxic ;;
+    foreign) mode_foreign ;;
+    argv) mode_argv ;;
     *) fail "unknown mode $mode" ;;
 esac
 if [ -s "$C1192_ROOT/unexpected" ]; then
