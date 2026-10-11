@@ -58,13 +58,19 @@ internal static class TaskProgressPolicy
     /// lastProgressAt replaces it — the arm can only ever withhold a stall, never create one.
     /// Unavailable workspace information leaves the transcript arm standing alone.
     /// </param>
+    /// <param name="knownWorking">
+    /// CARD-1118. The caller's pre-read of <c>SessionMessageQueueService.IsWorkingAsync</c> for
+    /// this evaluation. Null reads it here. False returns null without a second read. True skips
+    /// the read and continues the transcript check.
+    /// </param>
     internal static async Task<Verdict?> EvaluateAsync(
         AppDbContext db,
         AgentTask task,
         DateTime now,
         DelegationSettings settings,
         CancellationToken ct,
-        WorkspaceProgressArm? workspace = null)
+        WorkspaceProgressArm? workspace = null,
+        bool? knownWorking = null)
     {
         var stall = settings.StallDetection;
         if (!stall.Enabled || stall.StallMinutes <= 0)
@@ -76,7 +82,10 @@ internal static class TaskProgressPolicy
         if (elapsed < TimeSpan.FromMinutes(stall.StallMinutes))
             return null;
 
-        if (!await SessionMessageQueueService.IsWorkingAsync(db, sessionId, ct))
+        if (knownWorking is false)
+            return null;
+        if (knownWorking is not true
+            && !await SessionMessageQueueService.IsWorkingAsync(db, sessionId, ct))
             return null;
 
         var lookBack = TimeSpan.FromMinutes(Math.Max(stall.LookBackMinutes, stall.StallMinutes));

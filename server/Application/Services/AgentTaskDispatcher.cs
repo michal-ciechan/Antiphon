@@ -3889,6 +3889,9 @@ public sealed partial class AgentTaskDispatcher
         var raised = 0;
         // One probe per normalised directory for this tick. A later tick probes again:
         // the arm exists to notice a new file, so it is not cached across ticks.
+        // The cached arm has no SharedCheckout flag; each task applies its own (CARD-1118).
+        // Post-catch-up reuses that arm. A file written in the sub-second gap before the
+        // verdict is seen on the next tick; that window is accepted.
         var probedDirectories = new Dictionary<string, WorkspaceProgressArm?>(ProbeDirectoryComparer);
         foreach (var task in open)
         {
@@ -3917,7 +3920,7 @@ public sealed partial class AgentTaskDispatcher
     {
         var workspace = await ProbeStalledProgressWorkspaceAsync(task, probedDirectories, ct);
         var suspected = await TaskProgressPolicy.EvaluateAsync(
-            _db, task, UtcNow(), _settings, ct, workspace);
+            _db, task, UtcNow(), _settings, ct, workspace.Arm, workspace.KnownWorking);
         if (suspected is null)
             return false;
 
@@ -3925,7 +3928,7 @@ public sealed partial class AgentTaskDispatcher
         await CatchUpTranscriptAsync(sessionId, ct);
         workspace = await ProbeStalledProgressWorkspaceAsync(task, probedDirectories, ct);
         var verdict = await TaskProgressPolicy.EvaluateAsync(
-            _db, task, UtcNow(), _settings, ct, workspace);
+            _db, task, UtcNow(), _settings, ct, workspace.Arm, workspace.KnownWorking);
         if (verdict is null)
         {
             _logger.LogInformation(
@@ -3987,43 +3990,55 @@ public sealed partial class AgentTaskDispatcher
     private static readonly StringComparer ProbeDirectoryComparer =
         OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
 
+    /// <summary>Directory facts from one probe, plus whether this evaluation already read working state.</summary>
+    private readonly record struct StallWorkspaceRead(WorkspaceProgressArm? Arm, bool? KnownWorking);
+
     /// <summary>
     /// CARD-1072. The progress-stall arm can only withhold a stall, so it runs after
     /// <see cref="StallDetectionSettings.StallMinutes"/> and only for a mid-turn session.
     /// A runner-bound row stores the desktop main checkout in <see cref="AgentTask.WorkingDirectory"/>
     /// and has no local tree to read. One completed probe is reused for every task on that
     /// directory during this tick, including the post-catch-up re-evaluation. CARD-1151 removed
-    /// the boot-stall guard, its only other caller.
+    /// the boot-stall guard, its only other caller. CARD-1118 keeps <see cref="WorkspaceProgressArm.SharedCheckout"/>
+    /// off the cache and treats a stale <c>local</c>/<c>desktop</c> <see cref="AgentTask.RunnerId"/> as the desktop.
     /// </summary>
-    private async Task<WorkspaceProgressArm?> ProbeStalledProgressWorkspaceAsync(
+    private async Task<StallWorkspaceRead> ProbeStalledProgressWorkspaceAsync(
         AgentTask task,
         Dictionary<string, WorkspaceProgressArm?> probedDirectories,
         CancellationToken ct)
     {
         var probe = ProgressProbe;
         if (probe is null || task.DispatchedAt is not DateTime dispatched)
-            return null;
+            return new StallWorkspaceRead(null, null);
         if (UtcNow() - dispatched < TimeSpan.FromMinutes(_settings.StallDetection.StallMinutes))
-            return null;
+            return new StallWorkspaceRead(null, null);
         // Remote work is on the runner mirror. Probing the desktop checkout reads the wrong tree.
-        if (!string.IsNullOrWhiteSpace(task.RunnerId))
-            return null;
-        if (task.AgentSessionId is not Guid sessionId
-            || !await SessionMessageQueueService.IsWorkingAsync(_db, sessionId, ct))
-            return null;
+        // Dispatch canonicalises local/desktop to null before claim; a pre-canonicalisation Working
+        // row can still carry the alias and is the desktop checkout (CARD-1118).
+        if (!string.IsNullOrWhiteSpace(task.RunnerId)
+            && !RunnerRequestIntent.IsDesktopAlias(task.RunnerId))
+            return new StallWorkspaceRead(null, null);
+        if (task.AgentSessionId is not Guid sessionId)
+            return new StallWorkspaceRead(null, null);
+        if (!await SessionMessageQueueService.IsWorkingAsync(_db, sessionId, ct))
+            return new StallWorkspaceRead(null, false);
 
+        var shared = task.Workspace == WorkspaceMode.Shared;
         var key = NormaliseProbeDirectory(task.WorkingDirectory);
         if (key is not null && probedDirectories.TryGetValue(key, out var cached))
-            return cached;
+            return new StallWorkspaceRead(ApplySharedCheckout(cached, shared), true);
 
-        var arm = await probe.ProbeProgressAsync(
-            task.WorkingDirectory, dispatched, task.Workspace == WorkspaceMode.Shared, ct);
+        var arm = await probe.ProbeProgressAsync(task.WorkingDirectory, dispatched, shared, ct);
         // Only a completed probe is stored. An earlier task that never probed must not
-        // hide a later task on the same directory.
+        // hide a later task on the same directory. The stored arm has no checkout flag.
+        var stored = arm with { SharedCheckout = false };
         if (key is not null)
-            probedDirectories[key] = arm;
-        return arm;
+            probedDirectories[key] = stored;
+        return new StallWorkspaceRead(ApplySharedCheckout(stored, shared), true);
     }
+
+    private static WorkspaceProgressArm? ApplySharedCheckout(WorkspaceProgressArm? arm, bool sharedCheckout) =>
+        arm is null ? null : arm with { SharedCheckout = sharedCheckout };
 
     private static string? NormaliseProbeDirectory(string? directory)
     {
@@ -4031,6 +4046,10 @@ public sealed partial class AgentTaskDispatcher
             return null;
         try
         {
+            // Lexical only (CARD-1118). GetFullPath does not resolve symlinks. A ".." segment
+            // after a symlink can name a different directory than git would on Linux. No Antiphon
+            // path writer stores ".." segments, and the desktop server is Windows, so this key
+            // stays lexical rather than calling Directory.ResolveLinkTarget.
             return DelegationWorkspaceResolver.NormalizeSeparators(Path.GetFullPath(directory));
         }
         catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)

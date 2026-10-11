@@ -1,3 +1,4 @@
+using System.Data.Common;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
@@ -8,6 +9,7 @@ using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -269,15 +271,131 @@ public class TaskProgressStallSweepTests
         }
     }
 
+    /// <summary>
+    /// CARD-1118. The cached arm used to keep the first task's SharedCheckout flag, so the
+    /// "(shared checkout)" note followed enumeration order.
+    /// </summary>
+    [Test]
+    public async Task shared_and_worktree_tasks_on_one_directory_keep_their_own_checkout_note()
+    {
+        var (harness, _) = CreateHarness();
+        var probe = new CountingProbe();
+        harness.WorkspaceProbeOverride = probe;
+        await using var world = new ProbeWorld();
+
+        var stallMinutes = new DelegationSettings().StallDetection.StallMinutes;
+        var dir = world.Directory("mixed");
+        var quiet = new WorkspaceProgressArm(
+            true, DateTime.UtcNow.AddHours(-5), DateTime.UtcNow.AddHours(-6), false);
+        var shared = await world.SeedWorkingAsync(
+            dir, dispatchedMinutesAgo: stallMinutes + 20, workspace: WorkspaceMode.Shared);
+        var worktree = await world.SeedWorkingAsync(
+            dir, dispatchedMinutesAgo: stallMinutes + 20, workspace: WorkspaceMode.Worktree);
+        probe.Arm(dir, quiet);
+
+        await harness.DetectStalledProgressAsync(CancellationToken.None);
+
+        probe.Count(dir).ShouldBe(1);
+        var sharedIncident = await world.IncidentAsync(shared.SessionId);
+        sharedIncident.ShouldNotBeNull();
+        sharedIncident.Message.ShouldContain("(shared checkout)");
+
+        var worktreeIncident = await world.IncidentAsync(worktree.SessionId);
+        worktreeIncident.ShouldNotBeNull();
+        worktreeIncident.Message.ShouldContain("last file change");
+        worktreeIncident.Message.ShouldNotContain("shared checkout");
+    }
+
+    /// <summary>
+    /// CARD-1118. A stale local/desktop RunnerId is the desktop checkout. A real runner id is not.
+    /// </summary>
+    [Test]
+    public async Task a_desktop_alias_runner_is_probed_and_a_real_runner_is_not()
+    {
+        var (harness, _) = CreateHarness();
+        var probe = new CountingProbe();
+        harness.WorkspaceProbeOverride = probe;
+        await using var world = new ProbeWorld();
+
+        var stallMinutes = new DelegationSettings().StallDetection.StallMinutes;
+        var localDir = world.Directory("alias-local");
+        var desktopDir = world.Directory("alias-desktop");
+        var remoteDir = world.Directory("alias-remote");
+        var quiet = new WorkspaceProgressArm(
+            true, DateTime.UtcNow.AddHours(-5), DateTime.UtcNow.AddHours(-6), false);
+        var local = await world.SeedWorkingAsync(
+            localDir, dispatchedMinutesAgo: stallMinutes + 20, runnerId: "local");
+        var desktop = await world.SeedWorkingAsync(
+            desktopDir, dispatchedMinutesAgo: stallMinutes + 20, runnerId: "desktop");
+        var remote = await world.SeedWorkingAsync(
+            remoteDir, dispatchedMinutesAgo: stallMinutes + 20, runnerId: "server2");
+        probe.Arm(localDir, quiet);
+        probe.Arm(desktopDir, quiet);
+        probe.Arm(remoteDir, quiet);
+
+        await harness.DetectStalledProgressAsync(CancellationToken.None);
+
+        probe.Count(localDir).ShouldBe(1);
+        probe.Count(desktopDir).ShouldBe(1);
+        probe.Count(remoteDir).ShouldBe(0);
+
+        var localIncident = await world.IncidentAsync(local.SessionId);
+        localIncident.ShouldNotBeNull();
+        localIncident.Message.ShouldContain("last file change");
+        localIncident.Message.ShouldNotContain("no workspace arm");
+
+        var desktopIncident = await world.IncidentAsync(desktop.SessionId);
+        desktopIncident.ShouldNotBeNull();
+        desktopIncident.Message.ShouldContain("last file change");
+        desktopIncident.Message.ShouldNotContain("no workspace arm");
+
+        var remoteIncident = await world.IncidentAsync(remote.SessionId);
+        remoteIncident.ShouldNotBeNull();
+        remoteIncident.Message.ShouldContain("no workspace arm");
+    }
+
+    /// <summary>
+    /// CARD-1118. The gate's working read is reused by the policy, including the post-catch-up
+    /// evaluation: two session-state.fallback reads, not four, and still one directory probe.
+    /// </summary>
+    [Test]
+    public async Task a_past_stall_local_task_reads_working_state_once_per_evaluation()
+    {
+        var counter = new FallbackReadCounter();
+        var (harness, _) = CreateHarness(interceptor: counter);
+        harness.CatchUpOverride = (_, _) => Task.CompletedTask;
+        var probe = new CountingProbe();
+        harness.WorkspaceProbeOverride = probe;
+        await using var world = new ProbeWorld();
+
+        var stallMinutes = new DelegationSettings().StallDetection.StallMinutes;
+        var dir = world.Directory("reads");
+        var task = await world.SeedWorkingAsync(dir, dispatchedMinutesAgo: stallMinutes + 20);
+        probe.Arm(dir, new WorkspaceProgressArm(
+            true, DateTime.UtcNow.AddHours(-5), DateTime.UtcNow.AddHours(-6), false));
+
+        await harness.DetectStalledProgressAsync(CancellationToken.None);
+
+        counter.CountFor(task.SessionId).ShouldBe(2);
+        probe.Count(dir).ShouldBe(1);
+        (await world.IncidentAsync(task.SessionId)).ShouldNotBeNull();
+    }
+
     private static (AgentTaskDispatcher Dispatcher, RecordingSessionStopper Stopper) CreateHarness(
-        Action<DelegationSettings>? configure = null)
+        Action<DelegationSettings>? configure = null,
+        DbCommandInterceptor? interceptor = null)
     {
         var stopper = new RecordingSessionStopper();
         var settings = new DelegationSettings();
         configure?.Invoke(settings);
         var services = new ServiceCollection();
         services.AddLogging();
-        services.AddDbContext<AppDbContext>(o => o.UseNpgsql(TestDbFixture.ConnectionString));
+        services.AddDbContext<AppDbContext>(o =>
+        {
+            o.UseNpgsql(TestDbFixture.ConnectionString);
+            if (interceptor is not null)
+                o.AddInterceptors(interceptor);
+        });
         services.AddSingleton<IEventBus, MockEventBus>();
         services.AddSingleton(TimeProvider.System);
         services.AddSingleton(Options.Create(new SupervisionSettings()));
@@ -675,5 +793,34 @@ public class TaskProgressStallSweepTests
 
         private static StringComparer PathComparer { get; } =
             OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+    }
+
+    /// <summary>Counts <c>session-state.fallback</c> reads whose session-id parameter names one session.</summary>
+    private sealed class FallbackReadCounter : DbCommandInterceptor
+    {
+        private readonly List<Guid[]> _sessions = [];
+
+        public int CountFor(Guid sessionId) =>
+            _sessions.Count(ids => ids.Contains(sessionId));
+
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command,
+            CommandEventData eventData,
+            InterceptionResult<DbDataReader> result,
+            CancellationToken cancellationToken = default)
+        {
+            if (command.CommandText.Contains("session-state.fallback", StringComparison.Ordinal))
+            {
+                foreach (DbParameter parameter in command.Parameters)
+                {
+                    if (parameter.Value is Guid[] ids)
+                        _sessions.Add(ids);
+                    else if (parameter.Value is IEnumerable<Guid> typed)
+                        _sessions.Add(typed.ToArray());
+                }
+            }
+
+            return base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
+        }
     }
 }

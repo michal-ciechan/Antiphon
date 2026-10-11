@@ -129,6 +129,25 @@ public class TaskProgressPolicyTests
         }
     }
 
+    /// <summary>
+    /// CARD-1118. A caller that already knows the session is idle must not be overruled by a
+    /// second working read. A caller that already knows it is working still gets the stall.
+    /// </summary>
+    [Test]
+    public async Task A_pre_read_working_flag_is_honoured()
+    {
+        await using var scenario = new Scenario();
+        var task = await scenario.SeedTaskAsync(dispatchedMinutesAgo: 50);
+        await scenario.SeedLoopAsync(rows: 14, spanMinutes: 40);
+
+        (await scenario.EvaluateAsync(task, knownWorking: false)).ShouldBeNull(
+            "the pre-read said idle; a second query must not revive the stall");
+
+        var stalled = await scenario.EvaluateAsync(task, knownWorking: true);
+        stalled.ShouldNotBeNull("the pre-read said working, and the loop is otherwise a stall");
+        stalled.Summary.ShouldContain("no workspace arm");
+    }
+
     [Test]
     public async Task Warm_pool_tail_is_not_this_task()
     {
@@ -289,11 +308,12 @@ public class TaskProgressPolicyTests
         }
 
         public async Task<TaskProgressPolicy.Verdict?> EvaluateAsync(
-            AgentTask task, DelegationSettings? settings = null)
+            AgentTask task, DelegationSettings? settings = null, bool? knownWorking = null)
         {
             await using var db = CreateContext();
             return await TaskProgressPolicy.EvaluateAsync(
-                db, task, DateTime.UtcNow, settings ?? new DelegationSettings(), CancellationToken.None);
+                db, task, DateTime.UtcNow, settings ?? new DelegationSettings(), CancellationToken.None,
+                knownWorking: knownWorking);
         }
 
         public async Task<TaskDeadlinePolicy.Verdict?> EvaluateDeadlineAsync(
