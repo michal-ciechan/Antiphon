@@ -66,6 +66,14 @@ public sealed partial class SessionMessageQueueService
     private readonly CompletionNoteFlushQueue? _completionNotes;
     private readonly SessionStateStore? _states;
 
+    /// <summary>
+    /// Test seam. Runs after the unlocked open-question read and before the
+    /// <see cref="LockAgentSessionRowAsync"/> re-read that decides the insert.
+    /// Production leaves it null. The delegate may commit a question closure
+    /// through transcript ingestion on another connection.
+    /// </summary>
+    internal Func<AppDbContext, Guid, CancellationToken, Task>? OverlayQuestionInsertBoundary { get; set; }
+
     public SessionMessageQueueService(
         IServiceScopeFactory scopeFactory,
         AgentSessionRuntime runtime,
@@ -903,9 +911,11 @@ public sealed partial class SessionMessageQueueService
     /// session is working. Mode:Now stays row-less; this is the overlay-answer path so a later
     /// 409 can late-confirm against the stored baseline. Throws the same
     /// <see cref="ConflictException"/>s Mode:Now does when verification fails.
-    /// When <paramref name="expectedOpenQuestion"/> is set, the question is pulled and re-read
-    /// under this session's queue gate in the same transaction as the insert.
+    /// When <paramref name="expectedOpenQuestion"/> is set, the question is pulled, then read
+    /// once without a database lock. <see cref="LockAgentSessionRowAsync"/> is then held through
+    /// a second read and the insert commit. That second read is the one that decides.
     /// <see cref="OverlayQuestionClosedException"/> means the row was not inserted.
+    /// The in-memory queue gate and the session-state lease do not serialize transcript ingestion.
     /// </summary>
     public async Task<SessionQueueDto> EnqueueDeliveringNowAsync(
         Guid sessionId, string body, CancellationToken ct,
@@ -956,8 +966,10 @@ public sealed partial class SessionMessageQueueService
             if (expectedOpenQuestion is not null)
             {
                 // The caller's recheck already ran. This pull is the one between that recheck
-                // and the insert. Catch-up commits on its own context, so it stays outside the
-                // insert transaction (ingestion refuses an ambient transaction).
+                // and the insert transaction. Catch-up commits on its own context: ingestion
+                // refuses an ambient transaction, and this pull must finish before the session
+                // row lock below (it takes the session-state lease; the lock must not be held
+                // across that lease).
                 await _runtime.CatchUpTranscriptAsync(sessionId, ct);
             }
 
@@ -969,10 +981,24 @@ public sealed partial class SessionMessageQueueService
                 : null;
             try
             {
-                if (expectedOpenQuestion is { } expected
-                    && !await AgentTaskReplyService.StillExpectedOpenQuestionAsync(
-                        db, sessionId, expected, ct))
-                    throw new OverlayQuestionClosedException();
+                if (expectedOpenQuestion is { } expected)
+                {
+                    // Unlocked. A closure can still commit after this returns true.
+                    if (!await AgentTaskReplyService.StillExpectedOpenQuestionAsync(
+                            db, sessionId, expected, ct))
+                        throw new OverlayQuestionClosedException();
+
+                    if (OverlayQuestionInsertBoundary is not null)
+                        await OverlayQuestionInsertBoundary(db, sessionId, ct);
+
+                    // Same AgentSessions row lock ingestion takes before it commits a closure.
+                    // Sessions only: never Agents (CARD-1190 locks Sessions, then Agents).
+                    // Held until this transaction commits or rolls back.
+                    await LockAgentSessionRowAsync(db, sessionId, ct);
+                    if (!await AgentTaskReplyService.StillExpectedOpenQuestionAsync(
+                            db, sessionId, expected, ct))
+                        throw new OverlayQuestionClosedException();
+                }
 
                 var nextSequence = (await db.SessionQueuedMessages
                     .Where(m => m.AgentSessionId == sessionId)
@@ -996,8 +1022,9 @@ public sealed partial class SessionMessageQueueService
                 if (guardTx is not null)
                 {
                     await guardTx.CommitAsync(ct);
-                    // A cancellation that commits only after this insert is a delivery of a
-                    // question that was still the open one. That row stays.
+                    // A closure that blocked on the session row lock until this commit
+                    // observed an open question at the locked read. That row stays.
+                    // A closure that committed before the lock was taken is refused above.
                 }
 
                 if (staged is not null) _remoteSpills?.Ack(sessionId, staged);
@@ -5225,6 +5252,18 @@ public sealed partial class SessionMessageQueueService
     // "Working" on a card must mean mid-turn right now, not merely "session started".
     private Task<bool> ReadWorkingAsync(AppDbContext db, Guid sessionId, CancellationToken ct) =>
         _states is { Enabled: true } ? _states.IsWorkingAsync(sessionId, ct) : IsWorkingAsync(db, sessionId, ct);
+
+    /// <summary>
+    /// Serializes an overlay insert with transcript ingestion of a question closure.
+    /// <c>SELECT "Id" FROM "AgentSessions" … FOR UPDATE</c> in the caller's transaction.
+    /// The caller must already have started that transaction. This locks the session row
+    /// only, never <c>Agents</c>.
+    /// </summary>
+    internal static Task<int> LockAgentSessionRowAsync(
+        AppDbContext db, Guid sessionId, CancellationToken ct) =>
+        db.Database.ExecuteSqlInterpolatedAsync($"""
+            SELECT "Id" FROM "AgentSessions" WHERE "Id" = {sessionId} FOR UPDATE
+            """, ct);
 
     internal static async Task<bool> IsWorkingAsync(AppDbContext db, Guid sessionId, CancellationToken ct) =>
         (await IsWorkingBatchAsync(db, [sessionId], ct))[sessionId];

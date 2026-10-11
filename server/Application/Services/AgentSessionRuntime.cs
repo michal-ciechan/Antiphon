@@ -1068,10 +1068,14 @@ public sealed class AgentSessionRuntime
             if (pending.Count == 0)
                 return PersistResult.Empty with { AcceptedGeneration = session.StartedAt };
 
+            // Closure rows only. Ordinary batches do not take the session row lock.
+            // The lock is the same AgentSessions FOR UPDATE the overlay insert holds
+            // across its deciding read and commit. Sessions only, never Agents.
+            var closesQuestion = await BatchClosesOpenQuestionAsync(db, sessionId, pending);
             try
             {
                 using var save = new RuntimePhase(_logger, _timeProvider, sessionId, "transcript.save", storedSequence: maxSeq);
-                await db.SaveChangesAsync();
+                await SaveTrackedChangesAsync(db, sessionId, closesQuestion);
                 save.Completed();
             }
             catch (DbUpdateException batchFailure)
@@ -1109,7 +1113,7 @@ public sealed class AgentSessionRuntime
             db.TranscriptEntries.Add(row);
             try
             {
-                await db.SaveChangesAsync();
+                await SaveTrackedChangesAsync(db, sessionId, await RowClosesOpenQuestionAsync(db, sessionId, row));
                 committed.Add(row);
                 landed.Add(source);
                 lastStoredSeq = lastStoredSeq is { } seq && seq > row.Sequence ? seq : row.Sequence;
@@ -1144,7 +1148,7 @@ public sealed class AgentSessionRuntime
                 db.TranscriptEntries.Add(row);
                 try
                 {
-                    await db.SaveChangesAsync();
+                    await SaveTrackedChangesAsync(db, sessionId, await RowClosesOpenQuestionAsync(db, sessionId, row));
                     committed.Add(row);
                     landed.Add(source);
                     lastStoredSeq = lastStoredSeq is { } seq && seq > row.Sequence ? seq : row.Sequence;
@@ -1173,6 +1177,100 @@ public sealed class AgentSessionRuntime
         if (!anyStubOrSkip)
             _persistFailures.TryRemove(sessionId, out _);
         return ResultFrom(landed, lastStoredSeq) with { CommittedRows = committed, NeedsReload = needsReload };
+    }
+
+    /// <summary>
+    /// Saves tracked rows. A question closure takes <see cref="SessionMessageQueueService.LockAgentSessionRowAsync"/>
+    /// for the save's transaction so an overlay insert cannot commit between its unlocked read and its insert.
+    /// </summary>
+    private static async Task SaveTrackedChangesAsync(AppDbContext db, Guid sessionId, bool lockSession)
+    {
+        await using var tx = lockSession ? await db.Database.BeginTransactionAsync() : null;
+        if (lockSession)
+            await SessionMessageQueueService.LockAgentSessionRowAsync(db, sessionId, CancellationToken.None);
+        await db.SaveChangesAsync();
+        if (tx is not null)
+            await tx.CommitAsync();
+    }
+
+    private static async Task<bool> BatchClosesOpenQuestionAsync(
+        AppDbContext db,
+        Guid sessionId,
+        List<(TranscriptEntry Row, SessionRunnerTranscriptEvent Source)> pending)
+    {
+        if (pending.Any(p => RowClosesOpenQuestion(p.Row)))
+            return true;
+
+        var newQuestionIds = pending
+            .Where(p => p.Row.Kind == TranscriptKinds.ToolCall
+                && GrokQuestionTool.IsQuestionToolName(p.Row.ToolName)
+                && !string.IsNullOrEmpty(p.Row.ToolUseId))
+            .Select(p => p.Row.ToolUseId!)
+            .ToHashSet(StringComparer.Ordinal);
+        if (pending.Any(p => p.Row.Kind == TranscriptKinds.ToolResult
+                && p.Row.ToolUseId is { } id
+                && newQuestionIds.Contains(id)))
+            return true;
+
+        var resultIds = pending
+            .Where(p => p.Row.Kind == TranscriptKinds.ToolResult && !string.IsNullOrEmpty(p.Row.ToolUseId))
+            .Select(p => p.Row.ToolUseId!)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        if (resultIds.Length == 0)
+            return false;
+
+        var openIds = await OpenQuestionToolUseIdsAsync(db, sessionId, resultIds);
+        return openIds.Count > 0;
+    }
+
+    private static async Task<bool> RowClosesOpenQuestionAsync(AppDbContext db, Guid sessionId, TranscriptEntry row)
+    {
+        if (RowClosesOpenQuestion(row))
+            return true;
+        if (row.Kind != TranscriptKinds.ToolResult || string.IsNullOrEmpty(row.ToolUseId))
+            return false;
+        var openIds = await OpenQuestionToolUseIdsAsync(db, sessionId, [row.ToolUseId]);
+        return openIds.Contains(row.ToolUseId);
+    }
+
+    /// <summary>
+    /// A row that ends the live question: any turn boundary the reply gate treats as current-turn
+    /// end, or a question-tool <c>ToolResult</c>. A <c>ToolResult</c> that only matches by tool id
+    /// is decided by <see cref="OpenQuestionToolUseIdsAsync"/>.
+    /// </summary>
+    private static bool RowClosesOpenQuestion(TranscriptEntry row) =>
+        row.Kind == TranscriptKinds.TurnEnd
+        || row.Kind == TranscriptKinds.SessionRestartBoundary
+        || TranscriptKinds.IsManualCompactBoundary(row.Kind, row.Text)
+        || TranscriptKinds.IsInterruptPrompt(row.Kind, row.Text)
+        || (row.Kind == TranscriptKinds.ToolResult
+            && GrokQuestionTool.IsConfirmingResult(row.ToolName, row.Text));
+
+    private static async Task<HashSet<string>> OpenQuestionToolUseIdsAsync(
+        AppDbContext db, Guid sessionId, IReadOnlyCollection<string> toolUseIds)
+    {
+        var calls = await db.TranscriptEntries.AsNoTracking()
+            .Where(t => t.AgentSessionId == sessionId
+                && t.Kind == TranscriptKinds.ToolCall
+                && t.ToolUseId != null
+                && toolUseIds.Contains(t.ToolUseId))
+            .Select(t => new { t.ToolUseId, t.ToolName, t.Sequence })
+            .ToListAsync();
+        var open = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var call in calls.Where(c => GrokQuestionTool.IsQuestionToolName(c.ToolName)))
+        {
+            var id = call.ToolUseId!;
+            var closed = await db.TranscriptEntries.AnyAsync(t =>
+                t.AgentSessionId == sessionId
+                && t.Kind == TranscriptKinds.ToolResult
+                && t.ToolUseId == id
+                && t.Sequence > call.Sequence);
+            if (!closed)
+                open.Add(id);
+        }
+
+        return open;
     }
 
     private static PersistResult ResultFrom(IEnumerable<SessionRunnerTranscriptEvent> landed, long? lastStoredSeq)
