@@ -219,19 +219,94 @@ public sealed class RemoteScriptContractTests
     }
 
     // CARD-1193. The verifier scp exports CASE_DIR. These logs are written under the private
-    // tree, so the exit trap must copy whichever exist before sudo removes that tree.
+    // tree, so the exit trap must copy regular files before sudo removes that tree.
+    // A symlink source or a symlink CASE_DIR must not be followed, and a symlink destination
+    // must be removed before cp so the write cannot land outside the case directory.
     [Test]
     public void C1193_Fixture_exit_trap_copies_race_logs_before_tree_removal()
     {
         var trap = Commands(Block(Remote(), "c849_fixture"))
             .Single(command => command.StartsWith("trap ", StringComparison.Ordinal));
-        const string copy =
-            "for name in race-p1.log race-p2.log race-offline.log lock-holder.log lock-waiter.log; do if [ -f \"$SERVER2_ROOT/$name\" ]; then cp -- \"$SERVER2_ROOT/$name\" \"$CASE_DIR/$name\" || true; fi; done";
+        const string caseDir = "if [ -d \"$CASE_DIR\" ] && [ ! -L \"$CASE_DIR\" ]; then ";
+        const string source = "if [ -f \"$SERVER2_ROOT/$name\" ] && [ ! -L \"$SERVER2_ROOT/$name\" ]; then ";
+        const string remove = "rm -f -- \"$CASE_DIR/$name\" || true";
+        const string copy = "cp -P -- \"$SERVER2_ROOT/$name\" \"$CASE_DIR/$name\" || true";
+        const string names = "race-p1.log race-p2.log race-offline.log lock-holder.log lock-waiter.log";
+        var guarded = caseDir + "for name in " + names + "; do " + source + remove + "; " + copy + "; fi; done; fi";
         const string removal =
             "case \"$SERVER2_ROOT\" in /tmp/c849-fixture-*) sudo -n rm -rf -- \"$SERVER2_ROOT\" || true ;; esac";
-        trap.ShouldContain(copy);
-        Order(trap, copy, removal).ShouldBeTrue("race logs are copied after the fixture tree is removed");
-        Order(trap, removal, "UnhandledExit").ShouldBeTrue("UnhandledExit receipt runs before the tree removal");
+        foreach (var needle in new[] { caseDir, source, remove, copy, guarded })
+            trap.IndexOf(needle, StringComparison.Ordinal).ShouldBeGreaterThanOrEqualTo(0, needle);
+        trap.IndexOf("cp -p -- \"$SERVER2_ROOT/$name\"", StringComparison.Ordinal).ShouldBe(-1,
+            "the no-dereference flag is -P");
+        Order(trap, guarded, removal).ShouldBeTrue("race logs are copied before the fixture tree is removed");
+        Order(trap, removal, "UnhandledExit").ShouldBeTrue("the saved exit receipt still follows tree removal");
+    }
+
+    // CARD-1193. The copy above is behaviour, not only text: run that snippet in a scratch
+    // directory. No root, sudo, docker, or server2 tree.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1193_Fixture_log_copy_skips_symlinks_and_copies_regular_files()
+    {
+        var trap = Commands(Block(Remote(), "c849_fixture"))
+            .Single(command => command.StartsWith("trap ", StringComparison.Ordinal));
+        var snippet = C1193LogCopySnippet(trap);
+        var output = LinuxShell("set -euo pipefail\ncopy_logs() {\n" + snippet + "\n}\n" + """
+            root="$(mktemp -d)"
+            trap 'rm -rf -- "$root"' EXIT
+            SERVER2_ROOT="$root/tree"
+            CASE_DIR="$root/case"
+            outside="$root/outside"
+            mkdir -p "$SERVER2_ROOT" "$CASE_DIR" "$outside"
+            printf 'regular-p1\n' > "$SERVER2_ROOT/race-p1.log"
+            printf 'source-secret\n' > "$outside/source-secret"
+            ln -s "$outside/source-secret" "$SERVER2_ROOT/race-p2.log"
+            printf 'offline-body\n' > "$SERVER2_ROOT/race-offline.log"
+            printf 'dest-secret\n' > "$outside/dest-secret"
+            ln -s "$outside/dest-secret" "$CASE_DIR/race-offline.log"
+            printf 'waiter-body\n' > "$SERVER2_ROOT/lock-waiter.log"
+            ec=9
+            copy_logs
+            [ "$ec" = 9 ] || { printf 'FAIL exit-status ec=%s\n' "$ec"; exit 1; }
+            [ -f "$CASE_DIR/race-p1.log" ] && [ ! -L "$CASE_DIR/race-p1.log" ] || { printf 'FAIL regular-copy\n'; exit 1; }
+            grep -Fxq 'regular-p1' "$CASE_DIR/race-p1.log" || { printf 'FAIL regular-bytes\n'; exit 1; }
+            [ ! -e "$CASE_DIR/race-p2.log" ] || { printf 'FAIL symlink-source-copied\n'; exit 1; }
+            grep -Fxq 'source-secret' "$outside/source-secret" || { printf 'FAIL symlink-source-mutated\n'; exit 1; }
+            grep -Fxq 'dest-secret' "$outside/dest-secret" || { printf 'FAIL dest-written-through\n'; exit 1; }
+            [ -f "$CASE_DIR/race-offline.log" ] && [ ! -L "$CASE_DIR/race-offline.log" ] || { printf 'FAIL dest-not-regular\n'; exit 1; }
+            grep -Fxq 'offline-body' "$CASE_DIR/race-offline.log" || { printf 'FAIL dest-bytes\n'; exit 1; }
+            [ ! -e "$CASE_DIR/lock-holder.log" ] || { printf 'FAIL missing-created\n'; exit 1; }
+            [ -f "$CASE_DIR/lock-waiter.log" ] && [ ! -L "$CASE_DIR/lock-waiter.log" ] || { printf 'FAIL waiter-copy\n'; exit 1; }
+            grep -Fxq 'waiter-body' "$CASE_DIR/lock-waiter.log" || { printf 'FAIL waiter-bytes\n'; exit 1; }
+            mkdir -p "$outside/case-target"
+            ln -s "$outside/case-target" "$root/case-link"
+            printf 'should-not-land\n' > "$SERVER2_ROOT/lock-holder.log"
+            CASE_DIR="$root/case-link"
+            ec=9
+            copy_logs
+            [ "$ec" = 9 ] || { printf 'FAIL case-link-ec=%s\n' "$ec"; exit 1; }
+            [ ! -e "$outside/case-target/lock-holder.log" ] && [ ! -e "$outside/case-target/race-p1.log" ] || { printf 'FAIL case-link-wrote\n'; exit 1; }
+            printf 'PASS c1193-log-copy\n'
+            """);
+        output.ShouldContain("PASS c1193-log-copy");
+        output.ShouldNotContain("FAIL ");
+    }
+
+    private static string C1193LogCopySnippet(string trap)
+    {
+        const string guard = "if [ -d \"$CASE_DIR\" ] && [ ! -L \"$CASE_DIR\" ]; then ";
+        const string loopStart = "for name in race-p1.log race-p2.log race-offline.log lock-holder.log lock-waiter.log; do ";
+        var loopAt = trap.IndexOf(loopStart, StringComparison.Ordinal);
+        loopAt.ShouldBeGreaterThanOrEqualTo(0, "race-log copy loop is missing");
+        var doneAt = trap.IndexOf("; done", loopAt, StringComparison.Ordinal);
+        doneAt.ShouldBeGreaterThan(loopAt, "race-log copy loop never closes");
+        var loop = trap[loopAt..(doneAt + "; done".Length)];
+        if (loopAt >= guard.Length
+            && string.CompareOrdinal(trap, loopAt - guard.Length, guard, 0, guard.Length) == 0
+            && trap.AsSpan(doneAt + "; done".Length).StartsWith("; fi"))
+            return guard + loop + "; fi";
+        return loop;
     }
 
     private static string C1066FixtureHarness(params string[] functions) => """
