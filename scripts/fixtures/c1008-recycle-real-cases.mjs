@@ -9,8 +9,10 @@ import {materialize,mountSignature} from './c994-production-compose-model.mjs';
 import {ownedRoot,ownedObject,ownedDaemon,boundedChild} from './c994-real-custody.mjs';
 
 // CARD-1099. c1008_container_census inspects every id from docker ps. A foreign
-// container that exits between those calls fails the census closed. The real-docker
-// shim keeps ps on this fixture's label so that churn is not part of the census.
+// container that is removed between the listing and the inspection makes docker
+// inspect fail with no such container, and the census fails closed. An exited
+// container stays inspectable. The real-docker shim keeps ps on this fixture's
+// label so that churn is not part of the census.
 function renderDockerPsFilterValue(label, prefix) {
   if (typeof label !== 'string' || typeof prefix !== 'string' || label.length === 0 || prefix.length === 0 ||
       /['\\\n\r\0]/.test(label) || /['\\\n\r\0]/.test(prefix)) throw Error('CensusPsShimRefused');
