@@ -202,12 +202,18 @@ public sealed class CodexRootExecContractTests
 
         if (at >= tokens.Count)
             return false;
+        var target = tokens[at].Trim('"', '\'', '`');
         at++;
-        if (at >= tokens.Count)
+        if (at >= tokens.Count || !LooksLikeExecTarget(target))
             return false;
         var command = tokens[at].Trim('"', '\'', '`');
         return ProviderCommands.Contains(command) && !userOk;
     }
+
+    // "docker exec with claude" is a sentence. A real target is a variable ($c), a
+    // placeholder (<container>), a hyphenated service, or an id.
+    private static bool LooksLikeExecTarget(string token) =>
+        token.IndexOfAny("$<-/:0123456789".ToCharArray()) >= 0;
 
     private static bool IsDockerExec(List<string> tokens, int execAt)
     {
