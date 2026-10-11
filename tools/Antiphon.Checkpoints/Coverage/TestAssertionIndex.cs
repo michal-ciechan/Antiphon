@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -85,6 +86,7 @@ public sealed class TestAssertionIndex
                     var members = actual is null ? [] : Members(actual, method.Syntax, call, parameters, new HashSet<string>(), 0);
                     var values = expected is null ? [] : Values(expected, method.Syntax, call, parameters, new HashSet<string>(), 0);
                     var messages = message is null ? [] : Literals(message, method.Syntax, call, parameters, new HashSet<string>(), 0);
+                    if (message is not null) AddPackedPrefixes(messages, message);
                     var canaries = name == "ShouldNotContain" && expected is not null ? Literals(expected, method.Syntax, call, parameters, new HashSet<string>(), 0) : [];
                     var empty = name == "ShouldBeEmpty" || name == "ShouldBe" && expected is not null && IsEmpty(expected)
                         || name == "ShouldBe" && values.Contains("0") && actual is MemberAccessExpressionSyntax a && a.Name.Identifier.ValueText is "Count" or "Length";
@@ -269,8 +271,66 @@ public sealed class TestAssertionIndex
         || expression is ArrayCreationExpressionSyntax a && a.Initializer?.Expressions.Count == 0
         || expression is ImplicitArrayCreationExpressionSyntax i && i.Initializer.Expressions.Count == 0
         || expression is InvocationExpressionSyntax call && call.Expression is MemberAccessExpressionSyntax m && m.Expression.ToString() is "Array" or "Enumerable" && m.Name.Identifier.ValueText == "Empty";
-    public static bool HasLabel(IndexedAssertion assertion, string label) => assertion.Messages.Any(message => message == label
-        || message.StartsWith(label + " ", StringComparison.Ordinal) || message.StartsWith(label + ":", StringComparison.Ordinal));
+    public static bool HasLabel(IndexedAssertion assertion, string label) => assertion.Messages.Any(message => MessageHasLabel(message, label));
     public static IReadOnlyList<string> Labels(IndexedAssertion assertion) => assertion.Messages.Select(m => m.Trim()).Where(m => m.Length > 0)
         .Select(m => m.Split([' ', '\t', '\r', '\n'], StringSplitOptions.RemoveEmptyEntries)[0]).Distinct(StringComparer.Ordinal).ToArray();
+    private static bool MessageHasLabel(string message, string label) => message == label
+        || message.StartsWith(label + " ", StringComparison.Ordinal) || message.StartsWith(label + ":", StringComparison.Ordinal);
+    // Known leading text of a message expression. A string, verbatim, or raw literal is complete.
+    // An interpolated string keeps the text before its first hole and is incomplete there.
+    // Parentheses use the inner expression. A conditional yields each branch as its own candidate.
+    // Concatenation appends the right operand while the left candidate is complete.
+    // An identifier, member access, invocation, cast, array or collection creation, object creation,
+    // index, null-coalescing expression, switch expression, or other form contributes no text and
+    // ends the candidate. The prefix is the known text before the first colon. Each token is bound
+    // when every token matches the plan-reader label shape. With no colon in the known text, or a
+    // token outside that shape, the literal-segment messages stay as they are.
+    private readonly record struct LeadingPiece(string Text, bool Complete);
+    private static void AddPackedPrefixes(List<string> messages, ExpressionSyntax message)
+    {
+        foreach (var piece in LeadingCandidates(message, 0))
+        {
+            var colon = piece.Text.IndexOf(':');
+            if (colon < 0) continue;
+            var tokens = piece.Text[..colon].Split([' ', '\t', '\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
+            if (tokens.Length == 0 || !tokens.All(IsPcLabelShape)) continue;
+            foreach (var token in tokens)
+                if (!messages.Any(existing => MessageHasLabel(existing, token))) messages.Add(token);
+        }
+    }
+    private static List<LeadingPiece> LeadingCandidates(ExpressionSyntax expression, int depth)
+    {
+        if (depth > 32) return [new("", false)];
+        switch (expression)
+        {
+            case LiteralExpressionSyntax literal when literal.IsKind(SyntaxKind.StringLiteralExpression):
+                return [new(literal.Token.ValueText, true)];
+            case InterpolatedStringExpressionSyntax interpolation:
+                var text = new System.Text.StringBuilder();
+                foreach (var content in interpolation.Contents)
+                {
+                    if (content is not InterpolatedStringTextSyntax literal) return [new(text.ToString(), false)];
+                    text.Append(literal.TextToken.ValueText);
+                }
+                return [new(text.ToString(), true)];
+            case BinaryExpressionSyntax binary when binary.IsKind(SyntaxKind.AddExpression):
+                var appended = new List<LeadingPiece>();
+                foreach (var piece in LeadingCandidates(binary.Left, depth + 1))
+                {
+                    if (!piece.Complete) { appended.Add(piece); continue; }
+                    foreach (var next in LeadingCandidates(binary.Right, depth + 1))
+                        appended.Add(new(piece.Text + next.Text, next.Complete));
+                }
+                return appended.Count == 0 ? [new("", false)] : appended;
+            case ParenthesizedExpressionSyntax parenthesized:
+                return LeadingCandidates(parenthesized.Expression, depth + 1);
+            case ConditionalExpressionSyntax conditional:
+                return LeadingCandidates(conditional.WhenTrue, depth + 1).Concat(LeadingCandidates(conditional.WhenFalse, depth + 1)).ToList();
+            default:
+                return [new("", false)];
+        }
+    }
+    // Same shape PlanCoverageReader accepts for a hyphenated label token.
+    private static bool IsPcLabelShape(string token) =>
+        Regex.IsMatch(token, "^[a-z][a-z0-9]*(?:-[a-z0-9]+)+$", RegexOptions.CultureInvariant);
 }
