@@ -67,11 +67,11 @@ public sealed class BlockedTaskSyncRecoveryService(AppDbContext db, RemoteWorksp
         // need not still be online for its desktop debt to recover.
         var read = await publication.ReadEvidenceOrRefusalAsync(id, ct);
         var proof = read.Evidence;
-        var refusal = task is null ? read.Refusal ?? "park_task_missing"
-            : proof is null ? read.Refusal ?? "park_sync_episode_changed"
-            : proof.SourceSha != park.SyncSourceSha ? "park_sync_source_changed" : null;
-        if (refusal is not null)
+        if (task is null || proof is null || proof.SourceSha != park.SyncSourceSha)
         {
+            var refusal = task is null ? read.Refusal ?? "park_task_missing"
+                : proof is null ? read.Refusal ?? "park_sync_episode_changed"
+                : "park_sync_source_changed";
             // park_other_writer and park_commit_recovery clear. Held is only a permanent refusal.
             if (refusal is "park_other_writer" or "park_commit_recovery")
             {
