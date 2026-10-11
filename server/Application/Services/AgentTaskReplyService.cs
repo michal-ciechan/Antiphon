@@ -385,9 +385,11 @@ public sealed class AgentTaskReplyService
                     throw new ConflictException("The task moved to another attempt while the answer waited.");
             }
             var tasks = scope.ServiceProvider.GetRequiredService<AgentTaskService>();
-            // CARD-1069: fields stay until a later tick matches the UserPrompt. An open
-            // ask_user_question in that window is this turn's reply, not a second acceptance.
-            if (!await InTurnQuestionDuringReleasedSeatWindowAsync(scope.ServiceProvider, db, task, ct)
+            // CARD-1069: fields stay until a later tick matches the UserPrompt. A live
+            // ask_user_question in the current turn is this turn's reply, not a second acceptance.
+            // The tool-call id captured here is checked again at enqueue.
+            var liveAtDecision = await LiveQuestionInReleasedSeatWindowAsync(scope.ServiceProvider, db, task, ct);
+            if (liveAtDecision is null
                 && await tasks.TryAcceptReleasedSeatAnswerAsync(task, message, origin, round, ct))
             {
                 saved = true;
@@ -482,14 +484,24 @@ public sealed class AgentTaskReplyService
 
                 var runtime = scope.ServiceProvider.GetRequiredService<AgentSessionRuntime>();
                 await runtime.CatchUpTranscriptAsync(sessionId, ct);
-                if (!await HasOpenQuestionToolAsync(db, sessionId, ct))
+                var liveAtEnqueue = await FindLiveQuestionToolAsync(db, sessionId, ct);
+                if (liveAtDecision is { } decided && !SameLiveQuestion(decided, liveAtEnqueue))
                 {
-                    throw new ConflictException(
-                        $"Task {DelegationReportFormatter.Short(taskId)} is not waiting for an answer. "
-                        + "Refine a running task (WhenIdle) to steer it between turns; "
-                        + "reply while Blocked to answer a question; "
-                        + "or reply while an ask_user_question popup is open to answer in-turn.");
+                    await db.Entry(task).ReloadAsync(ct);
+                    if (await tasks.TryAcceptReleasedSeatAnswerAsync(task, message, origin, round, ct))
+                    {
+                        await ReleaseAdmittedAsync(scope.ServiceProvider, admitted);
+                        saved = true;
+                        var racedFamily = await db.AgentTasks.AsNoTracking()
+                            .Where(t => t.RootTaskId == task.RootTaskId).ToListAsync(ct);
+                        return await tasks.GetSummaryAsync(task, racedFamily);
+                    }
+
+                    throw NotWaitingForAnswer(taskId);
                 }
+
+                if (liveAtEnqueue is null)
+                    throw NotWaitingForAnswer(taskId);
 
                 var now = UtcNow();
                 task.RepliedAt = now;
@@ -572,49 +584,78 @@ public sealed class AgentTaskReplyService
 
     /// <summary>
     /// CARD-1069. A released-seat continuation can still hold the six answer fields until the
-    /// dispatcher matches the complete UserPrompt. While it is Dispatched or Working, an open
-    /// in-turn question is answered by the overlay instead of the accepted-answer guard.
+    /// dispatcher matches the complete UserPrompt. While it is Dispatched or Working, a live
+    /// question in the current turn is answered by the overlay instead of the accepted-answer guard.
     /// </summary>
-    private static async Task<bool> InTurnQuestionDuringReleasedSeatWindowAsync(
+    private static async Task<LiveQuestionTool?> LiveQuestionInReleasedSeatWindowAsync(
         IServiceProvider services, AppDbContext db, AgentTask task, CancellationToken ct)
     {
         if (task.Status is not (AgentTaskStatus.Dispatched or AgentTaskStatus.Working))
-            return false;
+            return null;
         if (task.ReleasedSeatAnswerId is null
             || task.ReleasedSeatAnswerTargetAttempt != task.Attempt
             || task.AgentSessionId is not Guid sessionId)
-            return false;
+            return null;
 
         await services.GetRequiredService<AgentSessionRuntime>().CatchUpTranscriptAsync(sessionId, ct);
-        return await HasOpenQuestionToolAsync(db, sessionId, ct);
+        return await FindLiveQuestionToolAsync(db, sessionId, ct);
     }
 
     /// <summary>
-    /// Transcript-grounded: the newest question-tool <c>ToolCall</c> has no later <c>ToolResult</c>
-    /// for that <c>ToolUseId</c>. Screen guesses are not evidence.
+    /// A question tool call is live only in the current turn: after the last persisted turn
+    /// boundary (<see cref="TranscriptWorkingStateQuery.EndPredicate"/>: TurnEnd, session-restart,
+    /// manual compact, or an interrupt prompt) and with no later ToolResult or boundary.
+    /// </summary>
+    private sealed record LiveQuestionTool(long Sequence, string ToolUseId);
+
+    private static bool SameLiveQuestion(LiveQuestionTool decided, LiveQuestionTool? now) =>
+        now is { } live
+        && live.Sequence == decided.Sequence
+        && string.Equals(live.ToolUseId, decided.ToolUseId, StringComparison.Ordinal);
+
+    private static ConflictException NotWaitingForAnswer(Guid taskId) => new(
+        $"Task {DelegationReportFormatter.Short(taskId)} is not waiting for an answer. "
+        + "Refine a running task (WhenIdle) to steer it between turns; "
+        + "reply while Blocked to answer a question; "
+        + "or reply while an ask_user_question popup is open to answer in-turn.");
+
+    /// <summary>
+    /// Transcript-grounded. Screen guesses are not evidence.
     /// </summary>
     internal static async Task<bool> HasOpenQuestionToolAsync(
+        AppDbContext db, Guid sessionId, CancellationToken ct) =>
+        await FindLiveQuestionToolAsync(db, sessionId, ct) is not null;
+
+    private static async Task<LiveQuestionTool?> FindLiveQuestionToolAsync(
         AppDbContext db, Guid sessionId, CancellationToken ct)
     {
-        var calls = await db.TranscriptEntries
-            .AsNoTracking()
-            .Where(t => t.AgentSessionId == sessionId && t.Kind == TranscriptKinds.ToolCall)
+        var entries = db.TranscriptEntries.AsNoTracking().Where(t => t.AgentSessionId == sessionId);
+        var lastBoundary = await entries
+            .Where(t => t.Kind == TranscriptKinds.TurnEnd
+                || t.Kind == TranscriptKinds.SessionRestartBoundary
+                || (t.Kind == TranscriptKinds.CompactBoundary
+                    && t.Text != null
+                    && t.Text.Contains(TranscriptKinds.ManualCompactMarker))
+                || (t.Kind == TranscriptKinds.UserPrompt
+                    && t.Text != null
+                    && t.Text.StartsWith(TranscriptKinds.InterruptedPromptPrefix)))
+            .MaxAsync(t => (long?)t.Sequence, ct) ?? 0;
+
+        var calls = await entries
+            .Where(t => t.Kind == TranscriptKinds.ToolCall && t.Sequence > lastBoundary)
             .OrderByDescending(t => t.Sequence)
             .Select(t => new { t.Sequence, t.ToolName, t.ToolUseId })
             .ToListAsync(ct);
+        var question = calls.FirstOrDefault(c => GrokQuestionTool.IsQuestionToolName(c.ToolName));
+        if (question is null)
+            return null;
+        if (string.IsNullOrEmpty(question.ToolUseId))
+            return new LiveQuestionTool(question.Sequence, "");
 
-        var open = calls.FirstOrDefault(c => GrokQuestionTool.IsQuestionToolName(c.ToolName));
-        if (open is null)
-            return false;
-        if (string.IsNullOrEmpty(open.ToolUseId))
-            return true;
-
-        return !await db.TranscriptEntries
-            .AsNoTracking()
-            .AnyAsync(t => t.AgentSessionId == sessionId
-                && t.Kind == TranscriptKinds.ToolResult
-                && t.ToolUseId == open.ToolUseId
-                && t.Sequence > open.Sequence, ct);
+        var closed = await entries.AnyAsync(t => t.Kind == TranscriptKinds.ToolResult
+            && t.ToolUseId == question.ToolUseId
+            && t.Sequence > question.Sequence, ct);
+        return closed ? null : new LiveQuestionTool(question.Sequence, question.ToolUseId);
     }
 
     /// <summary>
