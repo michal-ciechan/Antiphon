@@ -200,9 +200,9 @@ public sealed class RemoteScriptContractTests
             at.ShouldBeGreaterThanOrEqualTo(0, diagnosis);
             var open = seed.LastIndexOf("\n    (", at, StringComparison.Ordinal);
             open.ShouldBeGreaterThanOrEqualTo(0, diagnosis);
-            var subshell = seed[open..at];
+            var subshell = seed[open..(at + "c849_seed".Length)];
             subshell.ShouldContain(guard, customMessage: diagnosis);
-            Order(subshell, "write_result()", "c849_seed").ShouldBeTrue(diagnosis);
+            Order(subshell, guard, "c849_seed").ShouldBeTrue(diagnosis);
         }
     }
 
