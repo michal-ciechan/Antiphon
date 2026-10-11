@@ -498,7 +498,7 @@ public sealed class RemoteScriptContractTests
             rm -rf -- "$cache"
             mkdir -p "$cache"
             chmod 0700 "$cache"
-            """ + executable + "\n" + """
+            """ + "\n" + executable + "\n" + """
             restored="$(stat -c %a "$cache")"
             [ "$restored" = 700 ] || { printf 'FAIL restored=%s\n' "$restored"; exit 1; }
             [ -f "$cache/nested/file" ] || { printf 'FAIL payload-missing\n'; exit 1; }
