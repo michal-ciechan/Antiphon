@@ -692,8 +692,16 @@ public sealed class OutputCleanupTests : CheckpointTestBase
         File.WriteAllText(kept, "original");
         var link = Path.Combine(linkedRoot, "link");
         Directory.CreateSymbolicLink(link, real);
-        SafeWrite.Text(Path.Combine(link, "keep.txt"), "changed", SafeWrite.Under(linkedRoot)).ShouldBe("link-component");
-        File.ReadAllText(kept).ShouldBe("original");
+        try
+        {
+            SafeWrite.Text(Path.Combine(link, "keep.txt"), "changed", SafeWrite.Under(linkedRoot)).ShouldBe("link-component");
+            File.ReadAllText(kept).ShouldBe("original");
+        }
+        finally
+        {
+            if (Directory.Exists(link))
+                Directory.Delete(link);
+        }
     }
 
     [Test]
