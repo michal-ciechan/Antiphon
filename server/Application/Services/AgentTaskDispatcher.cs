@@ -4046,10 +4046,14 @@ public sealed partial class AgentTaskDispatcher
             return null;
         try
         {
-            // Lexical only (CARD-1118). GetFullPath does not resolve symlinks. A ".." segment
-            // after a symlink can name a different directory than git would on Linux. No Antiphon
-            // path writer stores ".." segments, and the desktop server is Windows, so this key
-            // stays lexical rather than calling Directory.ResolveLinkTarget.
+            // Lexical key (CARD-1118): Path.GetFullPath, then separator normalisation.
+            // GetFullPath collapses ".." and does not resolve symlinks. AgentService
+            // stores the trimmed working directory; the request check rejects a blank
+            // one. Pinned dispatch copies that stored string onto the task, so the
+            // path may contain ".." or a symlink. Two symlink spellings of one
+            // directory can stay two keys, and each miss probes its own path.
+            // Collapsed spellings share the first arm for this tick. The probe opens
+            // the stored path, so ".." through a symlink can reuse another directory's arm.
             return DelegationWorkspaceResolver.NormalizeSeparators(Path.GetFullPath(directory));
         }
         catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
