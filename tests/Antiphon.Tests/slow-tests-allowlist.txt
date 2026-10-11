@@ -21,6 +21,14 @@ Antiphon.Tests.Checkpoints.CheckpointRecoveryWindowsTests
 Antiphon.Tests.Scripts.ScriptHarnessProcessTests
 # CARD-0806: the Linux failsafe proof waits for its independent seven-second deadline.
 Antiphon.Tests.Scripts.ScriptHarnessLinuxOwnershipTests
+# CARD-1042: real Git and PowerShell approved-fixture guard; review TRX measured four methods over 5s.
+Antiphon.Tests.Scripts.EvidenceApprovedFixtureGuardTests
+# CARD-1042: real Git evidence diff guard; review TRX measured two methods over 5s.
+Antiphon.Tests.Scripts.EvidenceDiffGuardTests
+# CARD-1042: real Git legacy evidence deletion; review TRX measured one method at 37s.
+Antiphon.Tests.Scripts.EvidenceDeletionGuardTests
+# CARD-1042: real Git supplemental evidence deletion; review TRX measured one method over 5s.
+Antiphon.Tests.Scripts.EvidenceSupplementalDeletionGuardTests
 # Repository entries are fully-qualified class names. Adjacent reason comments are required.
 # CARD-0701: real pwsh comparison matrices (up to twelve child processes) and isolated SQL classifier.
 Antiphon.Tests.Scripts.MeasureSessionStateCacheScriptTests
