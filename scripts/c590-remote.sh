@@ -2940,7 +2940,10 @@ c849_fixture_seed() {
     docker cp "$npm_work/cache/_cacache/." "$donor:/home/app/.npm/_cacache/" \
         || write_result false FixtureDonorNpmCopyFailed 2
     c849_fixture_control PC-11 CacheDonorIdentityInvalid c849_fixture_wrong_donor
-    ( c849_status_zero() {
+    # c849_seed's success calls write_result, which would publish the case receipt from this
+    # subshell and leave the parent WROTE flag at 0. Print and exit the subshell only.
+    ( write_result() { printf '%s\n' "$2"; exit "$3"; }
+      c849_status_zero() {
           [ "$1" = server2-temp ] || return 1
           [ "$(docker inspect -f '{{.State.Running}}' "$donor")" = true ]
       }
@@ -2962,7 +2965,8 @@ c849_fixture_seed() {
         --mount "type=volume,source=$C849_PACKAGES,target=/cache,volume-nocopy" "$image" \
         -c 'printf "keep-after-rerun\n" > /cache/rerun-sentinel' \
         || write_result false FixtureSeedRerunSetupFailed 2
-    ( c849_status_zero() { [ "$1" = server2-temp ] && [ "$(docker inspect -f '{{.State.Running}}' "$donor")" = true ]; }
+    ( write_result() { printf '%s\n' "$2"; exit "$3"; }
+      c849_status_zero() { [ "$1" = server2-temp ] && [ "$(docker inspect -f '{{.State.Running}}' "$donor")" = true ]; }
       c849_seed ) || write_result false FixtureSeedRerunFailed 2
     docker run --rm --network none --user 1654:1654 --entrypoint /bin/sh \
         --mount "type=volume,source=$C849_PACKAGES,target=/cache,volume-nocopy" "$image" \
@@ -3084,20 +3088,7 @@ set -eu
 cd "$1"
 dotnet restore p3.csproj --configfile /fixture/Offline.Config --no-http-cache -p:NuGetAudit=false -nodeReuse:false -maxcpucount:1 >/dev/null
 SH
-    sudo -n chown -R 1654:1654 "$root"
-    c849_fixture_restore_container "$image" p1 "$packages" "$scratch" "$root" driver.sh > "$SERVER2_ROOT/race-p1.log" 2>&1 & a=$!
-    c849_fixture_restore_container "$image" p2 "$packages" "$scratch" "$root" driver.sh > "$SERVER2_ROOT/race-p2.log" 2>&1 & b=$!
-    c849_fixture_wait_file "$root/p1/ready" && c849_fixture_wait_file "$root/p2/ready" \
-        || write_result false FixtureRestoreBarrierFailed 2
-    sudo -n touch "$root/go"
-    wait "$a" || write_result false FixtureConcurrentRestoreFailed 2
-    wait "$b" || write_result false FixtureConcurrentRestoreFailed 2
-    c849_fixture_restore_container "$image" p3 "$packages" "$scratch" "$root" offline.sh \
-        > "$SERVER2_ROOT/race-offline.log" 2>&1 || write_result false FixtureOfflineRestoreFailed 2
-    docker run --rm --network none --user 1654:1654 --entrypoint /bin/sh \
-        --mount "type=volume,source=$packages,target=/cache,volume-nocopy" "$image" \
-        -c 'test -s /cache/c849.probe/1.0.0/.nupkg.metadata && grep -Fxq C849_PACKAGE_SENTINEL /cache/c849.probe/1.0.0/content/probe.txt' \
-        || write_result false FixturePackageIncomplete 2
+    # mc still owns $root. The probe is read by uid 1654; writing it after the chown dies under set -e.
     cat > "$root/lock-probe.ps1" <<'PS'
 param([ValidateSet('holder','waiter')][string]$Mode, [string]$Generation)
 $assembly = Get-ChildItem /usr/share/dotnet/sdk/*/NuGet.Common.dll | Select-Object -Last 1
@@ -3116,6 +3107,20 @@ $root = '/fixture'
     }
 })
 PS
+    sudo -n chown -R 1654:1654 "$root"
+    c849_fixture_restore_container "$image" p1 "$packages" "$scratch" "$root" driver.sh > "$SERVER2_ROOT/race-p1.log" 2>&1 & a=$!
+    c849_fixture_restore_container "$image" p2 "$packages" "$scratch" "$root" driver.sh > "$SERVER2_ROOT/race-p2.log" 2>&1 & b=$!
+    c849_fixture_wait_file "$root/p1/ready" && c849_fixture_wait_file "$root/p2/ready" \
+        || write_result false FixtureRestoreBarrierFailed 2
+    sudo -n touch "$root/go"
+    wait "$a" || write_result false FixtureConcurrentRestoreFailed 2
+    wait "$b" || write_result false FixtureConcurrentRestoreFailed 2
+    c849_fixture_restore_container "$image" p3 "$packages" "$scratch" "$root" offline.sh \
+        > "$SERVER2_ROOT/race-offline.log" 2>&1 || write_result false FixtureOfflineRestoreFailed 2
+    docker run --rm --network none --user 1654:1654 --entrypoint /bin/sh \
+        --mount "type=volume,source=$packages,target=/cache,volume-nocopy" "$image" \
+        -c 'test -s /cache/c849.probe/1.0.0/.nupkg.metadata && grep -Fxq C849_PACKAGE_SENTINEL /cache/c849.probe/1.0.0/content/probe.txt' \
+        || write_result false FixturePackageIncomplete 2
     c849_fixture_lock_container "$image" "$scratch" "$root" holder shared > "$SERVER2_ROOT/lock-holder.log" 2>&1 & holder=$!
     c849_fixture_wait_file "$root/shared-holder-entered" || write_result false FixtureNuGetLockHolderFailed 2
     c849_fixture_lock_container "$image" "$scratch" "$root" waiter shared > "$SERVER2_ROOT/lock-waiter.log" 2>&1 & waiter=$!
@@ -3639,7 +3644,9 @@ c849_fixture() {
     : > "$CASE_DIR/fixture-controls.txt"
     : > "$CASE_DIR/fixture-control-variants.txt"
     : > "$CASE_DIR/fixture-groups.txt"
-    trap 'rm -f -- "$CASE_DIR/.fixture-escape"; if [ -f "$SERVER2_ROOT/compose-retention/shared.yml" ]; then docker compose -p "c849${RUN}temp" -f "$SERVER2_ROOT/compose-retention/shared.yml" down -v >/dev/null 2>&1 || true; docker compose -p "c849${RUN}main" -f "$SERVER2_ROOT/compose-retention/shared.yml" down -v >/dev/null 2>&1 || true; fi; if [ -f "$SERVER2_ROOT/compose-retention/negative.yml" ]; then docker compose -p "c849${RUN}negative" -f "$SERVER2_ROOT/compose-retention/negative.yml" down -v >/dev/null 2>&1 || true; fi; if [ -s "$CASE_DIR/.fixture-prune-smoke" ]; then docker rm -f "$(cat "$CASE_DIR/.fixture-prune-smoke")" >/dev/null 2>&1 || true; fi; if [ -s "$CASE_DIR/.fixture-npm-server" ]; then docker rm -f "$(cat "$CASE_DIR/.fixture-npm-server")" >/dev/null 2>&1 || true; fi; if [ -s "$CASE_DIR/.fixture-apphost" ]; then docker rm -f "$(cat "$CASE_DIR/.fixture-apphost")" >/dev/null 2>&1 || true; fi; if [ -s "$CASE_DIR/.fixture-busy" ]; then docker rm -f "$(cat "$CASE_DIR/.fixture-busy")" >/dev/null 2>&1 || true; fi; if [ -s "$CASE_DIR/.fixture-donor" ]; then docker rm -f "$(cat "$CASE_DIR/.fixture-donor")" >/dev/null 2>&1 || true; fi; c849_fixture_cleanup; if [ -s "$CASE_DIR/.fixture-network" ]; then docker network rm "$(cat "$CASE_DIR/.fixture-network")" >/dev/null 2>&1 || true; fi; case "$SERVER2_ROOT" in /tmp/c849-fixture-*) rm -rf -- "$SERVER2_ROOT" ;; esac' EXIT
+    # ec is the case exit, saved before cleanup. sudo removes the 1654- and root-owned trees.
+    # A failure that never called write_result still replaces the empty receipt.
+    trap 'ec=$?; rm -f -- "$CASE_DIR/.fixture-escape"; if [ -f "$SERVER2_ROOT/compose-retention/shared.yml" ]; then docker compose -p "c849${RUN}temp" -f "$SERVER2_ROOT/compose-retention/shared.yml" down -v >/dev/null 2>&1 || true; docker compose -p "c849${RUN}main" -f "$SERVER2_ROOT/compose-retention/shared.yml" down -v >/dev/null 2>&1 || true; fi; if [ -f "$SERVER2_ROOT/compose-retention/negative.yml" ]; then docker compose -p "c849${RUN}negative" -f "$SERVER2_ROOT/compose-retention/negative.yml" down -v >/dev/null 2>&1 || true; fi; if [ -s "$CASE_DIR/.fixture-prune-smoke" ]; then docker rm -f "$(cat "$CASE_DIR/.fixture-prune-smoke")" >/dev/null 2>&1 || true; fi; if [ -s "$CASE_DIR/.fixture-npm-server" ]; then docker rm -f "$(cat "$CASE_DIR/.fixture-npm-server")" >/dev/null 2>&1 || true; fi; if [ -s "$CASE_DIR/.fixture-apphost" ]; then docker rm -f "$(cat "$CASE_DIR/.fixture-apphost")" >/dev/null 2>&1 || true; fi; if [ -s "$CASE_DIR/.fixture-busy" ]; then docker rm -f "$(cat "$CASE_DIR/.fixture-busy")" >/dev/null 2>&1 || true; fi; if [ -s "$CASE_DIR/.fixture-donor" ]; then docker rm -f "$(cat "$CASE_DIR/.fixture-donor")" >/dev/null 2>&1 || true; fi; c849_fixture_cleanup; if [ -s "$CASE_DIR/.fixture-network" ]; then docker network rm "$(cat "$CASE_DIR/.fixture-network")" >/dev/null 2>&1 || true; fi; case "$SERVER2_ROOT" in /tmp/c849-fixture-*) sudo -n rm -rf -- "$SERVER2_ROOT" || true ;; esac; if [ "$WROTE" != 1 ] && [ "$ec" != 0 ]; then write_result false "UnhandledExit $ec" "$ec"; fi' EXIT
     c849_fixture_compose
     c849_fixture_prepare
     c849_fixture_seed

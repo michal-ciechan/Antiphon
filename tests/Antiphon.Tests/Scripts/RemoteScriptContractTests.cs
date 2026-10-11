@@ -149,6 +149,63 @@ public sealed class RemoteScriptContractTests
         cleanupAt.ShouldBeGreaterThan(unlinkAt);
     }
 
+    // CARD-1191. F-4 wrote lock-probe.ps1 after chown -R 1654, so the ssh user could not create it.
+    [Test]
+    public void C1191_Lock_probe_heredoc_precedes_race_chown()
+    {
+        var race = Block(Remote(), "c849_fixture_nuget_race");
+        const string heredoc = "cat > \"$root/lock-probe.ps1\" <<'PS'";
+        const string chown = "sudo -n chown -R 1654:1654 \"$root\"";
+        var catAt = race.IndexOf(heredoc, StringComparison.Ordinal);
+        var chownAt = race.IndexOf(chown, StringComparison.Ordinal);
+        catAt.ShouldBeGreaterThanOrEqualTo(0, "lock-probe.ps1 heredoc is missing");
+        chownAt.ShouldBeGreaterThan(catAt, "lock-probe.ps1 is written after the race tree is chowned to 1654");
+        var between = race[catAt..chownAt];
+        between.ShouldContain("[NuGet.Common.ConcurrencyUtilities]::ExecuteWithFileLocked");
+        between.ShouldContain("\nPS\n");
+    }
+
+    // CARD-1191. mc cannot rm the 1654-owned race tree or the root-owned npm cache.
+    [Test]
+    public void C1191_Fixture_exit_trap_removes_private_tree_with_sudo()
+    {
+        var trap = Commands(Block(Remote(), "c849_fixture"))
+            .Single(command => command.StartsWith("trap ", StringComparison.Ordinal));
+        const string removal =
+            "case \"$SERVER2_ROOT\" in /tmp/c849-fixture-*) sudo -n rm -rf -- \"$SERVER2_ROOT\" || true ;; esac";
+        trap.ShouldContain(removal);
+        Regex.IsMatch(trap, @"(^|[;&|(])\s*rm -rf -- ""\$SERVER2_ROOT""").ShouldBeFalse(
+            "the fixture tree is removed without sudo");
+    }
+
+    // CARD-1191. Seed success published accepted:true from a subshell, and the fixture trap
+    // replaced the global UnhandledExit trap, so an F-4 death left an empty diagnosis.
+    [Test]
+    public void C1191_Fixture_failure_records_unhandled_exit_without_seed_receipt()
+    {
+        var trap = Commands(Block(Remote(), "c849_fixture"))
+            .Single(command => command.StartsWith("trap ", StringComparison.Ordinal));
+        trap.ShouldStartWith("trap 'ec=$?;");
+        const string receipt =
+            "if [ \"$WROTE\" != 1 ] && [ \"$ec\" != 0 ]; then write_result false \"UnhandledExit $ec\" \"$ec\"; fi";
+        trap.ShouldContain(receipt);
+        Order(trap, "c849_fixture_cleanup", receipt).ShouldBeTrue("UnhandledExit receipt runs before cleanup");
+
+        var seed = Block(Remote(), "c849_fixture_seed");
+        const string guard = "write_result() { printf '%s\\n' \"$2\"; exit \"$3\"; }";
+        foreach (var diagnosis in new[] { "FixtureSeedFailed", "FixtureSeedRerunFailed" })
+        {
+            var close = "c849_seed ) || write_result false " + diagnosis;
+            var at = seed.IndexOf(close, StringComparison.Ordinal);
+            at.ShouldBeGreaterThanOrEqualTo(0, diagnosis);
+            var open = seed.LastIndexOf("\n    (", at, StringComparison.Ordinal);
+            open.ShouldBeGreaterThanOrEqualTo(0, diagnosis);
+            var subshell = seed[open..at];
+            subshell.ShouldContain(guard, customMessage: diagnosis);
+            Order(subshell, "write_result()", "c849_seed").ShouldBeTrue(diagnosis);
+        }
+    }
+
     private static string C1066FixtureHarness(params string[] functions) => """
         set -euo pipefail
         unset fault tree project output kind image packages scratch code
