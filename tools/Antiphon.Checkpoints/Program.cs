@@ -220,14 +220,27 @@ public static class Program
             }
         }
 
+        var output = runtime?.Output ?? Console.Out;
         if (state is not null)
         {
             state.Phase = "stopped";
-            store.Write(Path.Combine(run, "state.json"), state);
+            var refusal = store.Write(Path.Combine(run, "state.json"), state);
+            if (refusal is not null)
+            {
+                output.WriteLine("refused: " + refusal);
+                return ExitCodes.Invalid;
+            }
         }
 
-        Console.WriteLine(cleanup.Remove(run));
-        Console.WriteLine("stopped " + Path.GetFileName(run));
+        var receipt = cleanup.Remove(run);
+        output.WriteLine(receipt);
+        if (receipt.Outcome == "Refused")
+        {
+            output.WriteLine("refused: " + receipt.Reason);
+            return ExitCodes.Invalid;
+        }
+
+        output.WriteLine("stopped " + Path.GetFileName(run));
         return ExitCodes.Green;
     }
 
@@ -267,8 +280,12 @@ public static class Program
         if (older is TimeSpan age)
         {
             var removed = OutputCleanup.RemoveOlderRuns(ResultsRoot(options, repo), age, options.Has("dry-run"));
-            foreach (var path in removed)
+            foreach (var reason in removed.Refusals)
+                output.WriteLine("refused: " + reason);
+            foreach (var path in removed.Deleted)
                 output.WriteLine(OutputCleanup.DeletedLine(options.Has("dry-run"), path));
+            if (removed.Refusals.Count > 0)
+                exit = ExitCodes.Invalid;
         }
 
         if (options.Get("run") is not null || options.Get("manifest") is not null || options.Positionals.Count > 0)

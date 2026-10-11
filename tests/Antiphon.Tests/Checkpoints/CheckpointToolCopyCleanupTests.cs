@@ -149,7 +149,8 @@ public sealed class CheckpointToolCopyCleanupTests : CheckpointTestBase
         try
         {
             var removed = OutputCleanup.RemoveOlderRuns(results, TimeSpan.FromDays(7), dryRun: false);
-            removed.ShouldBe([dead]);
+            removed.Deleted.ShouldBe([dead]);
+            removed.Refusals.ShouldBeEmpty();
             Directory.Exists(live).ShouldBeTrue();
             Directory.Exists(reused).ShouldBeTrue();
             Directory.Exists(unknown).ShouldBeTrue();

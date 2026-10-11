@@ -10,8 +10,12 @@ public sealed class RunStateStore
         WriteIndented = true,
     };
 
-    public void Write(string path, RunState state)
+    public string? Write(string path, RunState state)
     {
+        var history = Path.Combine(Path.GetDirectoryName(path) ?? ".", "state.history.jsonl");
+        var refusal = SafeDelete.ExistingPathRefusal(path) ?? SafeDelete.ExistingPathRefusal(history);
+        if (refusal is not null)
+            return refusal;
         var directory = Path.GetDirectoryName(Path.GetFullPath(path));
         if (!string.IsNullOrEmpty(directory))
             Directory.CreateDirectory(directory);
@@ -25,17 +29,18 @@ public sealed class RunStateStore
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             TryDelete(tmp);
-            return;
+            return null;
         }
 
         try
         {
-            var history = Path.Combine(Path.GetDirectoryName(path) ?? ".", "state.history.jsonl");
             File.AppendAllText(history, JsonSerializer.Serialize(state, new JsonSerializerOptions(Json) { WriteIndented = false }) + "\n");
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
         }
+
+        return null;
     }
 
     public RunState? TryRead(string path)
