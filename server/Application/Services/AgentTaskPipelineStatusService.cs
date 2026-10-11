@@ -659,8 +659,8 @@ public sealed class AgentTaskPipelineStatusService
                     queueReason = QueueReasonRemotePrep;
                     // CARD-1100: heldBy is the BehindTaskId captured with the title lookup.
                     // A later Progress read can name a different gate holder and leave the title empty.
-                    // BehindTaskId itself is the enqueue-time snapshot (CARD-1093): with three or
-                    // more waiters it can name a pusher that has already finished, or be null.
+                    // BehindTaskId is read from the preparer's Progress at read time (CARD-1093).
+                    // While this task waits for its push turn, BehindTaskId names the task currently holding the gate.
                     dispatchHolds.RemotePrepBehind.TryGetValue(task.Id, out var prepBehind);
                     heldBy = OneHolder(prepBehind, dispatchHolds.Titles);
                     break;
