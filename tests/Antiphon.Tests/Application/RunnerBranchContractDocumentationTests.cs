@@ -45,6 +45,18 @@ public class RunnerBranchContractDocumentationTests
             text.ShouldNotContain("enqueue-time snapshot");
         }
 
+        // CARD-1200: the pipeline route doc names that same current holder.
+        var api = Read("docs/antiphon-api.md");
+        api.ShouldContain(AgentTaskPipelineStatusService.QueueReasonRemotePrep);
+        api.ShouldContain(nameof(RemotePrepProgress.BehindTaskId));
+        api.ShouldContain("current push-gate holder");
+        api.ShouldContain("read under the gate lock");
+        api.ShouldContain("at read time");
+        api.ShouldContain("CARD-1093");
+        api.ShouldContain("CARD-1100");
+        api.ShouldNotContain("enqueue-time BehindTaskId");
+        api.ShouldNotContain("it is not the exact current holder");
+
         loop.ShouldContain(AgentTaskPipelineStatusService.QueueReasonHostBudget);
     }
 
