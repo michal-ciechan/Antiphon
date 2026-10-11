@@ -220,8 +220,9 @@ public sealed class RemoteScriptContractTests
 
     // CARD-1193. The verifier scp exports CASE_DIR. These logs are written under the private
     // tree, so the exit trap must copy regular files before sudo removes that tree.
-    // A symlink source or a symlink CASE_DIR must not be followed, and a symlink destination
-    // must be removed before cp so the write cannot land outside the case directory.
+    // A symlink source or a symlink CASE_DIR must not be followed. A directory or symlink at
+    // the destination is removed without following it, and cp -T runs only when that removal
+    // succeeded and the name is absent, so the write cannot land outside the case directory.
     [Test]
     public void C1193_Fixture_exit_trap_copies_race_logs_before_tree_removal()
     {
@@ -229,22 +230,28 @@ public sealed class RemoteScriptContractTests
             .Single(command => command.StartsWith("trap ", StringComparison.Ordinal));
         const string caseDir = "if [ -d \"$CASE_DIR\" ] && [ ! -L \"$CASE_DIR\" ]; then ";
         const string source = "if [ -f \"$SERVER2_ROOT/$name\" ] && [ ! -L \"$SERVER2_ROOT/$name\" ]; then ";
-        const string remove = "rm -f -- \"$CASE_DIR/$name\" || true";
-        const string copy = "cp -P -- \"$SERVER2_ROOT/$name\" \"$CASE_DIR/$name\" || true";
+        const string gate = "if rm -rf -- \"$CASE_DIR/$name\" && [ ! -e \"$CASE_DIR/$name\" ] && [ ! -L \"$CASE_DIR/$name\" ]; then ";
+        const string copy = "cp -P -T -- \"$SERVER2_ROOT/$name\" \"$CASE_DIR/$name\" || true";
         const string names = "race-p1.log race-p2.log race-offline.log lock-holder.log lock-waiter.log";
-        var guarded = caseDir + "for name in " + names + "; do " + source + remove + "; " + copy + "; fi; done; fi";
+        var guarded = caseDir + "for name in " + names + "; do " + source + gate + copy + "; fi; fi; done; fi";
         const string removal =
             "case \"$SERVER2_ROOT\" in /tmp/c849-fixture-*) sudo -n rm -rf -- \"$SERVER2_ROOT\" || true ;; esac";
-        foreach (var needle in new[] { caseDir, source, remove, copy, guarded })
+        foreach (var needle in new[] { caseDir, source, gate, copy, guarded })
             trap.IndexOf(needle, StringComparison.Ordinal).ShouldBeGreaterThanOrEqualTo(0, needle);
         trap.IndexOf("cp -p -- \"$SERVER2_ROOT/$name\"", StringComparison.Ordinal).ShouldBe(-1,
             "the no-dereference flag is -P");
+        trap.IndexOf("cp -P -- \"$SERVER2_ROOT/$name\"", StringComparison.Ordinal).ShouldBe(-1,
+            "cp -T refuses a directory destination");
+        trap.IndexOf("rm -f -- \"$CASE_DIR/$name\" || true", StringComparison.Ordinal).ShouldBe(-1,
+            "a failed unlink must not fall through into cp");
         Order(trap, guarded, removal).ShouldBeTrue("race logs are copied before the fixture tree is removed");
         Order(trap, removal, "UnhandledExit").ShouldBeTrue("the saved exit receipt still follows tree removal");
     }
 
     // CARD-1193. The copy above is behaviour, not only text: run that snippet in a scratch
-    // directory. No root, sudo, docker, or server2 tree.
+    // directory. No root, sudo, docker, or server2 tree. A directory named like a log, including
+    // one whose same-named symlink points outside, must not receive the write, and a directory
+    // that already has content is replaced by the regular file.
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public void C1193_Fixture_log_copy_skips_symlinks_and_copies_regular_files()
@@ -279,6 +286,23 @@ public sealed class RemoteScriptContractTests
             [ ! -e "$CASE_DIR/lock-holder.log" ] || { printf 'FAIL missing-created\n'; exit 1; }
             [ -f "$CASE_DIR/lock-waiter.log" ] && [ ! -L "$CASE_DIR/lock-waiter.log" ] || { printf 'FAIL waiter-copy\n'; exit 1; }
             grep -Fxq 'waiter-body' "$CASE_DIR/lock-waiter.log" || { printf 'FAIL waiter-bytes\n'; exit 1; }
+            rm -rf -- "$CASE_DIR/race-p1.log"
+            mkdir -p "$CASE_DIR/race-p1.log"
+            printf 'outside-dir-bytes\n' > "$outside/dir-secret"
+            ln -s "$outside/dir-secret" "$CASE_DIR/race-p1.log/race-p1.log"
+            mkdir -p "$CASE_DIR/lock-holder.log/nested"
+            printf 'dir-content\n' > "$CASE_DIR/lock-holder.log/nested/keep"
+            printf 'holder-body\n' > "$SERVER2_ROOT/lock-holder.log"
+            ec=9
+            copy_logs
+            [ "$ec" = 9 ] || { printf 'FAIL dir-ec=%s\n' "$ec"; exit 1; }
+            grep -Fxq 'outside-dir-bytes' "$outside/dir-secret" || { printf 'FAIL dir-written-through\n'; exit 1; }
+            [ ! -e "$CASE_DIR/race-p1.log/race-p1.log" ] && [ ! -L "$CASE_DIR/race-p1.log/race-p1.log" ] || { printf 'FAIL dir-wrote-through\n'; exit 1; }
+            [ -f "$CASE_DIR/race-p1.log" ] && [ ! -L "$CASE_DIR/race-p1.log" ] && [ ! -d "$CASE_DIR/race-p1.log" ] || { printf 'FAIL dir-not-replaced\n'; exit 1; }
+            grep -Fxq 'regular-p1' "$CASE_DIR/race-p1.log" || { printf 'FAIL dir-replaced-bytes\n'; exit 1; }
+            [ -f "$CASE_DIR/lock-holder.log" ] && [ ! -L "$CASE_DIR/lock-holder.log" ] && [ ! -d "$CASE_DIR/lock-holder.log" ] || { printf 'FAIL content-dir-not-replaced\n'; exit 1; }
+            grep -Fxq 'holder-body' "$CASE_DIR/lock-holder.log" || { printf 'FAIL content-dir-bytes\n'; exit 1; }
+            [ ! -e "$CASE_DIR/lock-holder.log/nested" ] || { printf 'FAIL content-dir-kept\n'; exit 1; }
             mkdir -p "$outside/case-target"
             ln -s "$outside/case-target" "$root/case-link"
             printf 'should-not-land\n' > "$SERVER2_ROOT/lock-holder.log"
