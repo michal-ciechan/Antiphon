@@ -561,6 +561,8 @@ trailing arguments) are supported. Captured literal aliases and parameters retai
 lexical ownership and shadowing. Cycles, depth overflow and ambiguous dispatch
 remain findings. Class/partial helper expansion and the test census are unchanged.
 
+A packed PC label prefix is the known leading text of the message expression, up to its first colon. A string literal, a verbatim literal, or a raw literal contributes its value as complete text. An interpolated string contributes the text before its first hole and is incomplete at that hole. Parentheses contribute the inner expression. A conditional contributes each branch as a separate candidate, so an alternative whose prefix is valid binds that alternative's labels. Concatenation appends the next operand while the candidate is complete. An identifier, member access, invocation, cast, array or collection creation, object creation, element access, null-coalescing expression, switch expression, or other form contributes no text and ends the candidate. When every whitespace-separated token of that prefix matches the plan reader's hyphenated label shape `^[a-z][a-z0-9]*(?:-[a-z0-9]+)+$`, each token is bound. When the known text has no colon, or a prefix token does not match that shape, the candidate binds the labels the literal-segment reading binds, including a message such as `target-label before`.
+
 Every PC prints its method/target and predecessor findings. Unlabeled predecessors
 are issues; earlier different stable labels are advisories. Every PC, including
 `static-labeled`, carries `reachability=unproven`. **A static pass means the syntax
