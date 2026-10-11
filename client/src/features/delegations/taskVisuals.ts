@@ -52,10 +52,21 @@ const CODEX_ALIASES: Record<AgentModelLevel, string> = {
  * else takes the Claude ladder in TIER_VISUALS, exactly as the server does, so every pre-CARD-0084
  * chip is byte-identical.
  */
-export function tierAlias(level: AgentModelLevel, kind: AgentKind = 'ClaudeCode'): string {
-  if (kind === 'Grok') return GROK_ALIASES[level]
-  if (kind === 'Codex') return CODEX_ALIASES[level]
-  return TIER_VISUALS[level].alias
+export function tierAlias(
+  level: AgentModelLevel,
+  kind: AgentKind = 'ClaudeCode',
+  effectiveModelId?: string | null,
+): string {
+  const current = kind === 'Grok'
+    ? GROK_ALIASES[level]
+    : kind === 'Codex'
+      ? CODEX_ALIASES[level]
+      : TIER_VISUALS[level].alias
+  // CARD-1009. A historical session keeps the model it actually ran. The current ladder is
+  // only the fallback when nothing was recorded, or when the recorded id is already that alias.
+  const recorded = effectiveModelId?.trim()
+  if (recorded && recorded !== current) return recorded
+  return current
 }
 
 /**
@@ -64,8 +75,12 @@ export function tierAlias(level: AgentModelLevel, kind: AgentKind = 'ClaudeCode'
  * is a stutter. Codex keeps the vendor word (`Frontier tier — Codex gpt-6-astra`) because the
  * slug alone does not name the program. Claude's text is unchanged, byte for byte.
  */
-export function tierTooltip(level: AgentModelLevel, kind: AgentKind = 'ClaudeCode'): string {
-  const alias = tierAlias(level, kind)
+export function tierTooltip(
+  level: AgentModelLevel,
+  kind: AgentKind = 'ClaudeCode',
+  effectiveModelId?: string | null,
+): string {
+  const alias = tierAlias(level, kind, effectiveModelId)
   if (kind === 'Grok') return `${level} tier — ${alias}`
   if (kind === 'Codex') return `${level} tier — Codex ${alias}`
   return `${level} tier — Claude ${alias}`

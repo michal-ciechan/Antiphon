@@ -290,6 +290,57 @@ describe('DelegationsBoard', () => {
     expect(within(claude).getByText('sonnet →')).toBeInTheDocument()
   })
 
+  it('shows a historical Codex session model on the chip and the tree, and the current alias for a new task', async () => {
+    const highId = '12121212-1212-4121-8121-121212121212'
+    const mediumId = '34343434-3434-4343-8343-343434343434'
+    const currentId = '56565656-5656-4565-8565-565656565656'
+    serveTasks([
+      summary({
+        id: highId,
+        title: 'Historical Codex high',
+        agentKind: 'Codex',
+        modelLevel: 'High',
+        effectiveModelId: 'gpt-6-sol',
+        status: 'Working',
+        dispatchedAt: '2026-08-07T10:00:00Z',
+      }),
+      summary({
+        id: mediumId,
+        title: 'Historical Codex medium',
+        agentKind: 'Codex',
+        modelLevel: 'Medium',
+        effectiveModelId: 'gpt-5.6-terra',
+        status: 'Working',
+        dispatchedAt: '2026-08-07T10:00:00Z',
+      }),
+      summary({
+        id: currentId,
+        title: 'Current Codex high',
+        agentKind: 'Codex',
+        modelLevel: 'High',
+        effectiveModelId: 'gpt-6.1-sol',
+        status: 'Working',
+        dispatchedAt: '2026-08-07T10:00:00Z',
+      }),
+    ])
+    renderWithProviders(<DelegationsBoard />)
+
+    const highChip = await screen.findByTestId(`task-chip-${shortId(highId)}`)
+    expect(within(highChip).getByTestId('tier-High')).toHaveTextContent('gpt-6-sol')
+    const highRow = screen.getByTestId(`task-tree-row-${shortId(highId)}`)
+    expect(within(highRow).getByTestId('tier-High')).toHaveTextContent('gpt-6-sol')
+
+    const mediumChip = screen.getByTestId(`task-chip-${shortId(mediumId)}`)
+    expect(within(mediumChip).getByTestId('tier-Medium')).toHaveTextContent('gpt-5.6-terra')
+    const mediumRow = screen.getByTestId(`task-tree-row-${shortId(mediumId)}`)
+    expect(within(mediumRow).getByTestId('tier-Medium')).toHaveTextContent('gpt-5.6-terra')
+
+    const currentChip = screen.getByTestId(`task-chip-${shortId(currentId)}`)
+    expect(within(currentChip).getByTestId('tier-High')).toHaveTextContent('gpt-6.1-sol')
+    const currentRow = screen.getByTestId(`task-tree-row-${shortId(currentId)}`)
+    expect(within(currentRow).getByTestId('tier-High')).toHaveTextContent('gpt-6.1-sol')
+  })
+
   it('carries health and rank at the same time, on separate channels', async () => {
     // The case that proves the two axes are independent: a failing task at the TOP tier must be
     // able to show "in trouble" and "expensive" at once, without either reading as the other.

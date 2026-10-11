@@ -355,7 +355,13 @@ public sealed record AgentTaskSummaryDto(
     /// CARD-0491. Separate from <see cref="InterruptWritten"/>. <c>pending</c> until the queue
     /// row's verdict is a transcript-confirmed UserPrompt, then <c>delivered</c>.
     /// </summary>
-    string? RefinementDelivered = null);
+    string? RefinementDelivered = null,
+    /// <summary>
+    /// CARD-1009. The linked session's persisted <c>EffectiveModelId</c>. Null when the task
+    /// has no session or that session recorded none. The chip prefers it over the current
+    /// tier alias only when the two differ.
+    /// </summary>
+    string? EffectiveModelId = null);
 
 /// <summary>CARD-0515. Echo of the list/summary scope the caller selected.</summary>
 public sealed record AgentTaskScopeEchoDto(

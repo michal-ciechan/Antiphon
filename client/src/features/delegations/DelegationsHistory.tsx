@@ -366,7 +366,7 @@ function HistoryRow({
         status={task.status}
       />
       <Box>
-        <TierBadge level={task.modelLevel} kind={task.agentKind} />
+        <TierBadge level={task.modelLevel} kind={task.agentKind} effectiveModelId={task.effectiveModelId} />
       </Box>
       <Text size="xs" c="dimmed" truncate>
         {task.agentName ?? shortId(task.id)}

@@ -27,16 +27,19 @@ export function TierBadge({
   level,
   kind = 'ClaudeCode',
   size = 'xs',
+  effectiveModelId,
 }: {
   level: AgentModelLevel
   kind?: AgentKind
   size?: string
+  /** Session EffectiveModelId. Shown when it differs from the current tier alias (CARD-1009). */
+  effectiveModelId?: string | null
 }) {
   const tier = TIER_VISUALS[level]
   return (
-    <Tooltip label={tierTooltip(level, kind)} withArrow>
+    <Tooltip label={tierTooltip(level, kind, effectiveModelId)} withArrow>
       <Badge size={size} variant={tier.variant} color={tier.color} data-testid={`tier-${level}`}>
-        {tierAlias(level, kind)}
+        {tierAlias(level, kind, effectiveModelId)}
       </Badge>
     </Tooltip>
   )
@@ -102,7 +105,7 @@ export function TaskChip({
             </Badge>
           </Tooltip>
         )}
-        <TierBadge level={task.modelLevel} kind={task.agentKind} />
+        <TierBadge level={task.modelLevel} kind={task.agentKind} effectiveModelId={task.effectiveModelId} />
         <PlacementBadge
           platform={task.requiredPlatform}
           runnerId={task.runnerId}

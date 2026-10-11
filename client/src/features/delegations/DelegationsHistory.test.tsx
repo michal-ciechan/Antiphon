@@ -178,6 +178,49 @@ describe('DelegationsHistory', () => {
     expect(showAll?.status).toBe('Succeeded,Failed,Canceled')
   })
 
+  it('shows a historical Codex session model, and the current alias when the session matches it', async () => {
+    const highId = '12121212-1212-4121-8121-121212121212'
+    const mediumId = '34343434-3434-4343-8343-343434343434'
+    const currentId = '56565656-5656-4565-8565-565656565656'
+    serveTasks([
+      summary({
+        id: highId,
+        title: 'Historical Codex high',
+        agentKind: 'Codex',
+        modelLevel: 'High',
+        effectiveModelId: 'gpt-6-sol',
+        status: 'Succeeded',
+        completedAt: '2026-08-07T12:00:00Z',
+      }),
+      summary({
+        id: mediumId,
+        title: 'Historical Codex medium',
+        agentKind: 'Codex',
+        modelLevel: 'Medium',
+        effectiveModelId: 'gpt-5.6-terra',
+        status: 'Succeeded',
+        completedAt: '2026-08-07T11:00:00Z',
+      }),
+      summary({
+        id: currentId,
+        title: 'Current Codex high',
+        agentKind: 'Codex',
+        modelLevel: 'High',
+        effectiveModelId: 'gpt-6.1-sol',
+        status: 'Succeeded',
+        completedAt: '2026-08-07T10:00:00Z',
+      }),
+    ])
+    renderWithProviders(<DelegationsHistory />)
+
+    const high = await screen.findByTestId(`history-row-${shortId(highId)}`)
+    expect(within(high).getByTestId('tier-High')).toHaveTextContent('gpt-6-sol')
+    const medium = screen.getByTestId(`history-row-${shortId(mediumId)}`)
+    expect(within(medium).getByTestId('tier-Medium')).toHaveTextContent('gpt-5.6-terra')
+    const current = screen.getByTestId(`history-row-${shortId(currentId)}`)
+    expect(within(current).getByTestId('tier-High')).toHaveTextContent('gpt-6.1-sol')
+  })
+
   it('lists newest-settled first and hides a Working row in the mock', async () => {
     serveTasks()
     renderWithProviders(<DelegationsHistory />)

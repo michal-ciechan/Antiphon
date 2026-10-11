@@ -129,6 +129,24 @@ describe('the tier alias', () => {
     expect(tierTooltip('Frontier', 'Codex')).toBe('Frontier tier — Codex gpt-6-astra')
     expect(tierTooltip('High', 'Codex')).toBe('High tier — Codex gpt-6.1-sol')
   })
+
+  it('shows a historical Codex session model when it differs from the current tier alias', () => {
+    // CARD-0903 moved High and Medium onto gpt-6.1-sol. A session that ran the previous
+    // slug still names that slug (CARD-1009).
+    expect(tierAlias('High', 'Codex', 'gpt-6-sol')).toBe('gpt-6-sol')
+    expect(tierTooltip('High', 'Codex', 'gpt-6-sol')).toBe('High tier — Codex gpt-6-sol')
+    expect(tierAlias('Medium', 'Codex', 'gpt-5.6-terra')).toBe('gpt-5.6-terra')
+    expect(tierTooltip('Medium', 'Codex', 'gpt-5.6-terra')).toBe('Medium tier — Codex gpt-5.6-terra')
+  })
+
+  it('keeps the current tier alias for a new task and when no model was recorded', () => {
+    expect(tierAlias('High', 'Codex', 'gpt-6.1-sol')).toBe('gpt-6.1-sol')
+    expect(tierAlias('Medium', 'Codex', 'gpt-6.1-sol')).toBe('gpt-6.1-sol')
+    expect(tierTooltip('High', 'Codex', 'gpt-6.1-sol')).toBe('High tier — Codex gpt-6.1-sol')
+    expect(tierAlias('High', 'Codex', null)).toBe('gpt-6.1-sol')
+    expect(tierAlias('Medium', 'Codex', '   ')).toBe('gpt-6.1-sol')
+    expect(tierAlias('High', 'Codex')).toBe('gpt-6.1-sol')
+  })
 })
 
 describe('lanes', () => {
