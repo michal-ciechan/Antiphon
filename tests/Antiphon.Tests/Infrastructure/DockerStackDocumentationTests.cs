@@ -303,11 +303,15 @@ public sealed class DockerStackDocumentationTests
             "whose mount set differs from the older roster",
             "c1008_compose_model",
             "error(\"mount set\")",
+            "same expected roster does not take that refusal",
         };
         var missing = new List<string>();
         foreach (var pin in pins)
             if (!text.Contains(pin, StringComparison.Ordinal)) missing.Add(pin);
         missing.ShouldBeEmpty("mount-generation pins missing: " + string.Join(" | ", missing));
+        // CARD-1142: the mount-set refusal is the rendered roster versus the expected block.
+        text.Contains("on-disk Compose file is still the new generation", StringComparison.Ordinal)
+            .ShouldBeFalse("generation alone is not the mount-set refusal");
     }
 
     // CARD-0628 G-17b.

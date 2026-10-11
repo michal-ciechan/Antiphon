@@ -469,9 +469,11 @@ and refuses `RecycleContainerStateUnknown`.
 
 A `redeploy-old` rollback to an older SHA works only when that SHA contains this fix. An older SHA
 runs the pre-fix script, which requires the target mount count of the containers it stops, so a
-container whose mount set differs from the older roster refuses on mount count. The pre-fix script
-also refuses earlier, at `c1008_compose_model` (`error("mount set")`, `RecycleComposeMismatch`),
-because the on-disk Compose file is still the new generation's. Accepting temp remains the live rollback.
+container whose mount set differs from the older roster refuses on mount count. In that script
+`c1008_compose_model` raises `RecycleComposeMismatch` on `error("mount set")` when a rendered
+service volume roster is not an array, differs in length from the expected block, repeats a target,
+or carries configs. A newer generation with the same Compose files and the same expected roster does
+not take that refusal. Accepting temp remains the live rollback.
 
 ## Shared server2 runner caches (CARD-0849)
 
