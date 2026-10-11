@@ -142,6 +142,35 @@ public sealed class WaitCommandTests : CheckpointTestBase
     }
 
     [Test]
+    public async Task dead_exit_rereads_terminal_state_before_reporting_death()
+    {
+        var dir = TempDir();
+        CheckpointFixtures.MarkRun(dir, alive: false);
+        var tool = Path.Combine(dir, "tool");
+        Directory.CreateDirectory(tool);
+        File.WriteAllText(Path.Combine(tool, "Antiphon.Checkpoints.dll"), "x");
+        new RunStateStore().Write(Path.Combine(dir, "state.json"), new RunState
+        {
+            RunId = "race-1",
+            Phase = "running",
+            ExecutorPid = 99,
+            StartedAt = DateTimeOffset.Parse("2026-10-05T19:16:00Z"),
+        });
+        File.WriteAllText(Path.Combine(dir, "report.md"), "--- checkpoint report ---\nverdict: RED exit=1\n");
+        File.WriteAllText(Path.Combine(dir, "executor.log"), "2026-10-05T19:17:02.7348556+00:00 done exit=0\n");
+        var probe = new TerminalOnDeath(Path.Combine(dir, "state.json"));
+        var output = new StringWriter();
+        var code = await new WaitCommand(liveness: new Alive(false), delay: Fast, probe: probe).WaitAsync(
+            dir, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(60), output, CancellationToken.None);
+        var text = output.ToString();
+        code.ShouldBe(1, $"phaseAtDeath={probe.PhaseAtDeath} observations={probe.Observations} output={text}");
+        probe.PhaseAtDeath.ShouldBe("running");
+        text.ShouldContain("verdict: RED exit=1");
+        text.ShouldNotContain("executor died without phase=done");
+        Directory.Exists(tool).ShouldBeFalse();
+    }
+
+    [Test]
     public void running_row_heartbeat_uses_started_at()
     {
         var now = DateTimeOffset.Parse("2026-09-26T12:00:00Z");
@@ -212,5 +241,29 @@ public sealed class WaitCommandTests : CheckpointTestBase
     private sealed class Alive(bool alive) : IProcessLiveness
     {
         public bool IsAlive(int pid) => alive;
+    }
+
+    private sealed class TerminalOnDeath(string statePath) : ProcessIdentityProbe
+    {
+        public string? PhaseAtDeath { get; private set; }
+        public int Observations { get; private set; }
+
+        public override ProcessObservation Observe(ProcessIdentity? expected)
+        {
+            Observations++;
+            var store = new RunStateStore();
+            var state = store.TryRead(statePath);
+            PhaseAtDeath ??= state?.Phase;
+            store.Write(statePath, new RunState
+            {
+                RunId = state?.RunId ?? "",
+                Phase = "done",
+                ExitCode = 1,
+                ExecutorPid = state?.ExecutorPid ?? 0,
+                StartedAt = state?.StartedAt ?? DateTimeOffset.UnixEpoch,
+                EndedAt = state?.StartedAt ?? DateTimeOffset.UnixEpoch,
+            });
+            return new ProcessObservation(ProcessVerdict.Dead, "identity-dead");
+        }
     }
 }
