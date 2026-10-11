@@ -29,11 +29,16 @@ public static class ManifestValidator
         {
             if (string.IsNullOrWhiteSpace(build.Id))
                 throw new ManifestValidationException("id", "build id is empty");
+            if (!OutputCleanup.IsIsolatedOutputId(build.Id))
+                throw new ManifestValidationException("id", $"build id '{build.Id}' is not an isolated output directory");
             if (!ids.Add(build.Id))
                 throw new ManifestValidationException("id", $"duplicate build id '{build.Id}'");
             if (!OutputPathGuard.IsMatch(build.OutputPath ?? ""))
                 throw new ManifestValidationException("outputPath",
                     $"outputPath '{build.OutputPath}' must be bin-<name>/ with a forward slash and no trailing space (CARD-0448)");
+            var outputDirectory = (build.OutputPath ?? "").TrimEnd('/', '\\');
+            if (!string.Equals(build.Id, outputDirectory, StringComparison.Ordinal))
+                throw new ManifestValidationException("id", $"build id '{build.Id}' must match isolated output '{outputDirectory}'");
             if (string.IsNullOrWhiteSpace(build.Project))
                 throw new ManifestValidationException("project", $"build '{build.Id}' has no project");
         }

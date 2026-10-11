@@ -58,6 +58,22 @@ public sealed class CheckpointManifestTests : CheckpointTestBase
     }
 
     [Test]
+    public void rejects_build_ids_that_are_not_isolated_output_directories()
+    {
+        var root = TempDir();
+        var absolute = Path.Combine(Path.GetTempPath(), "c1199-abs-" + Guid.NewGuid().ToString("N"));
+        foreach (var id in new[] { "tests", ".", "..", "src", absolute })
+        {
+            var manifest = ManifestLoader.LoadYaml(CheckpointFixtures.SampleYaml(), root, validate: false);
+            manifest.Builds[0].Id = id;
+            manifest.Checkpoints[0].Build = id;
+            var ex = Should.Throw<ManifestValidationException>(() => ManifestValidator.Validate(manifest, root));
+            ex.Field.ShouldBe("id");
+            ex.Message.ShouldContain(id);
+        }
+    }
+
+    [Test]
     public void rejects_reuse_across_different_after()
     {
         var root = TempDir();

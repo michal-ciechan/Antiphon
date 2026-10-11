@@ -146,7 +146,7 @@ public sealed class BaselineComparer
                         CancellationToken.None).ConfigureAwait(false);
                     try
                     {
-                        if (Directory.Exists(checkout))
+                        if (Directory.Exists(checkout) && CanRemoveBaselineCheckout(worktree, checkout))
                             Directory.Delete(checkout, recursive: true);
                     }
                     catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -164,13 +164,46 @@ public sealed class BaselineComparer
     public static string CheckoutPath(string sourceWorktree, string runId, string buildId)
     {
         var name = string.IsNullOrWhiteSpace(runId) ? "run" : runId;
-        var path = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "antiphon-checkpoints-baseline", name, buildId));
+        if (!OutputCleanup.IsPathSegment(name) || !OutputCleanup.IsIsolatedOutputId(buildId))
+            throw new InvalidOperationException("refusing unsafe baseline checkout path");
+        var baselineRoot = Path.Combine(Path.GetTempPath(), "antiphon-checkpoints-baseline");
+        var path = Path.GetFullPath(Path.Combine(baselineRoot, name, buildId));
+        if (!OutputCleanup.IsStrictlyInside(baselineRoot, path))
+            throw new InvalidOperationException("refusing baseline checkout outside the isolated root");
         var source = Path.GetFullPath(sourceWorktree);
         var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
         var prefix = source.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
         if (path.StartsWith(prefix, comparison))
-            path = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "antiphon-checkpoints-baseline", Guid.NewGuid().ToString("N"), buildId));
+        {
+            path = Path.GetFullPath(Path.Combine(baselineRoot, Guid.NewGuid().ToString("N"), buildId));
+            if (!OutputCleanup.IsStrictlyInside(baselineRoot, path))
+                throw new InvalidOperationException("refusing baseline checkout outside the isolated root");
+        }
+
         return path;
+    }
+
+    private static bool CanRemoveBaselineCheckout(string sourceWorktree, string checkout)
+    {
+        try
+        {
+            var full = Path.GetFullPath(checkout);
+            var baselineRoot = Path.Combine(Path.GetTempPath(), "antiphon-checkpoints-baseline");
+            if (!OutputCleanup.IsStrictlyInside(baselineRoot, full))
+                return false;
+            var source = Path.GetFullPath(sourceWorktree);
+            var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+            var sourcePath = source.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            if (full.Equals(sourcePath, comparison) || OutputCleanup.IsStrictlyInside(source, full))
+                return false;
+            if ((File.GetAttributes(full) & FileAttributes.ReparsePoint) != 0)
+                return false;
+            return ContainedCleanup.SafeAncestors(full);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            return false;
+        }
     }
 
     public static string Classify(string name, TrxParseResult? baseline)
