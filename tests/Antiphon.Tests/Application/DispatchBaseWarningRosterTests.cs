@@ -146,8 +146,11 @@ public class DispatchBaseWarningRosterTests
                 // [Test] public async Task CommentedOut() { }
                 // [Test]
                 public async Task AttributeOnlyCommented() { }
-                const string quoted = "[Test] public async Task Quoted() { }";
-                @"[Test] public async Task Verbatim() { }";
+                public void HoldStrings()
+                {
+                    const string quoted = "[Test] public async Task Quoted() { }";
+                    _ = @"[Test] public async Task Verbatim() { }";
+                }
                 [Test]
                 public async Task Live() { }
             }
