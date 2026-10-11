@@ -6,11 +6,12 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 /// <summary>
-/// CARD-1085. Land outcome receipts collapse to the newest row per task. Historical legacy rows
-/// age out once the task is Succeeded or Canceled and older than the feed's 24h window. Unconfirmed
-/// outcome rows do not: CARD-0467 keeps an unconfirmed receipt until it is confirmed. An unresolved
-/// LandRefused never ages out. A task with both an eligible receipt and an unresolved refusal
-/// contributes one legacy row, represented by the refusal, with the other events folded into evidence.
+/// CARD-1085. Land outcome receipts collapse to the newest row per task. A historical receipt is
+/// omitted when the task is Succeeded or Canceled and the newest receipt event's At is at least 24h
+/// before the read. Unconfirmed outcome rows do not: CARD-0467 keeps an unconfirmed receipt until it
+/// is confirmed. An unresolved LandRefused never ages out. A task with both an eligible receipt and
+/// an unresolved refusal contributes one legacy row, represented by the refusal, with the other
+/// events folded into evidence (three newest, then "N more").
 /// </summary>
 [Category("Integration")]
 public sealed class AttentionFeedNoiseTests
