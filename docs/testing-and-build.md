@@ -545,7 +545,11 @@ without trusted checkpoint selection context is unmapped. Census never executes
 discovery or loads an assembly; malformed manifest/path/source inputs remain exit 2.
 
 Roslyn parses syntax only. Supported Shouldly signatures distinguish the actual,
-expected, Case and custom-message arguments. Setup/comments/another method cannot
+expected, Case and custom-message arguments. One custom message binds every
+whitespace-separated token before its first colon (`label-a label-b: detail`), so
+a single assertion can witness several labels. Text after that colon is prose and
+is not a label. A message with no colon still binds only its leading token, so
+trailing words stay prose (`target-label before`). Setup/comments/another method cannot
 satisfy an assertion. Literal aliases, interpolated literal segments, literal-array
 loops and uniquely bound local helpers supply bounded evidence; unknown assertion
 syntax/helper dispatch is unmapped. A member must occur in the asserted actual;

@@ -269,8 +269,24 @@ public sealed class TestAssertionIndex
         || expression is ArrayCreationExpressionSyntax a && a.Initializer?.Expressions.Count == 0
         || expression is ImplicitArrayCreationExpressionSyntax i && i.Initializer.Expressions.Count == 0
         || expression is InvocationExpressionSyntax call && call.Expression is MemberAccessExpressionSyntax m && m.Expression.ToString() is "Array" or "Enumerable" && m.Name.Identifier.ValueText == "Empty";
-    public static bool HasLabel(IndexedAssertion assertion, string label) => assertion.Messages.Any(message => message == label
-        || message.StartsWith(label + " ", StringComparison.Ordinal) || message.StartsWith(label + ":", StringComparison.Ordinal));
-    public static IReadOnlyList<string> Labels(IndexedAssertion assertion) => assertion.Messages.Select(m => m.Trim()).Where(m => m.Length > 0)
-        .Select(m => m.Split([' ', '\t', '\r', '\n'], StringSplitOptions.RemoveEmptyEntries)[0]).Distinct(StringComparer.Ordinal).ToArray();
+    public static bool HasLabel(IndexedAssertion assertion, string label) =>
+        assertion.Messages.Any(message => MessageLabels(message).Any(token => token == label));
+    public static IReadOnlyList<string> Labels(IndexedAssertion assertion) =>
+        assertion.Messages.SelectMany(MessageLabels).Distinct(StringComparer.Ordinal).ToArray();
+    // A colon closes the label list. Without one, only the leading token is a label so trailing prose stays unlabeled.
+    private static IEnumerable<string> MessageLabels(string message)
+    {
+        var trimmed = message.Trim();
+        if (trimmed.Length == 0) yield break;
+        var colon = trimmed.IndexOf(':');
+        var head = colon >= 0 ? trimmed[..colon] : trimmed;
+        var tokens = head.Split([' ', '\t', '\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
+        if (tokens.Length == 0) yield break;
+        if (colon < 0)
+        {
+            yield return tokens[0];
+            yield break;
+        }
+        foreach (var token in tokens) yield return token;
+    }
 }
