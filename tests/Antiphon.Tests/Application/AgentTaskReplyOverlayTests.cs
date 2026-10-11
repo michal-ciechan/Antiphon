@@ -2,6 +2,7 @@ using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
@@ -9,6 +10,7 @@ using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 using Shouldly;
 using TUnit.Core;
 
@@ -290,6 +292,102 @@ public class AgentTaskReplyOverlayTests
         var runner = await AssertClosedAfterRecheckAsync(accepted, "a different in-turn reply", "call-question-c1069-insert-hook");
         runner.Pulls.ShouldBeGreaterThanOrEqualTo(3);
         runner.ClosedOnOpenPull.ShouldBe(3, "the close is the pull after the service recheck, before the insert");
+    }
+
+    [Test]
+    public async Task C1069_save_boundary_cancellation_identical_resend_is_suppressed()
+    {
+        const string accepted = "retained released-seat answer";
+        foreach (var shape in new[] { "turn-end", "tool-result" })
+            await AssertSaveBoundaryGuardAsync(shape, accepted, accepted);
+    }
+
+    [Test]
+    public async Task C1069_save_boundary_cancellation_different_text_is_answer_already_accepted()
+    {
+        const string accepted = "retained released-seat answer";
+        foreach (var shape in new[] { "turn-end", "tool-result" })
+            await AssertSaveBoundaryGuardAsync(shape, accepted, "a different in-turn reply");
+    }
+
+    /// <summary>
+    /// The closure is committed by <see cref="AgentSessionRuntime.PersistTranscriptAsync"/>
+    /// (the production ingestion write, with the session-state store enabled) after the
+    /// queue's unlocked read and before the locked read that gates the insert.
+    /// </summary>
+    private static async Task AssertSaveBoundaryGuardAsync(string shape, string accepted, string answer)
+    {
+        await using var h = await CreateReplyHarnessAsync(services =>
+        {
+            services.AddSingleton(Options.Create(new SessionStateSettings()));
+            services.AddSingleton<ISessionStateLoader, SessionStateLoader>();
+            services.AddSingleton<SessionStateStore>();
+        });
+        var toolUseId = "call-question-c1069-boundary-" + shape;
+        await h.InsertTranscriptEntryAsync(
+            TranscriptKinds.ToolCall,
+            toolName: GrokQuestionTool.AskUserQuestionName,
+            toolUseId: toolUseId);
+        var task = await SeedTaskAsync(h, AgentTaskStatus.Working);
+        var stamp = await StampReleasedSeatWindowAsync(task.Id, accepted);
+        h.Queue.OverlayQuestionInsertBoundary = async (_, sessionId, _) =>
+        {
+            var closure = shape == "turn-end"
+                ? new SessionRunnerTranscriptEvent(
+                    sessionId, 1000, TranscriptKinds.TurnEnd, "c1069-boundary-" + shape, null,
+                    DateTimeOffset.UtcNow, "assistant", null, null, null, null, null,
+                    TranscriptKinds.StopReasons.Cancelled)
+                : new SessionRunnerTranscriptEvent(
+                    sessionId, 1000, TranscriptKinds.ToolResult, "c1069-boundary-" + shape, null,
+                    DateTimeOffset.UtcNow, "user", "cancelled", GrokQuestionTool.AskUserQuestionName,
+                    null, toolUseId, false, null);
+            var stored = await h.Runtime.PersistTranscriptAsync(sessionId, [closure]);
+            if (stored.LastStoredSeq is null)
+                throw new InvalidOperationException(
+                    "transcript ingestion did not store the " + shape + " question closure");
+        };
+
+        var same = answer == accepted;
+        try
+        {
+            if (same)
+            {
+                await h.Provider.GetRequiredService<AgentTaskReplyService>()
+                    .AnswerAsync(task.Id, answer, CancellationToken.None);
+            }
+            else
+            {
+                var refused = await Should.ThrowAsync<ConflictException>(() =>
+                    h.Provider.GetRequiredService<AgentTaskReplyService>()
+                        .AnswerAsync(task.Id, answer, CancellationToken.None));
+                refused.Code.ShouldBe("answer_already_accepted", shape);
+            }
+        }
+        finally
+        {
+            h.Queue.OverlayQuestionInsertBoundary = null;
+        }
+
+        h.Adapter.SubmittedBodies.ShouldBeEmpty(shape);
+        await using var db = CreateContext();
+        (await db.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == h.SessionId)).ShouldBe(0, shape);
+        (await db.TranscriptEntries.CountAsync(t => t.AgentSessionId == h.SessionId
+            && t.Kind == TranscriptKinds.UserPrompt)).ShouldBe(0, shape);
+        (await db.AgentTaskEvents.CountAsync(
+            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Replied)).ShouldBe(0, shape);
+        if (shape == "turn-end")
+        {
+            (await db.TranscriptEntries.CountAsync(t => t.AgentSessionId == h.SessionId
+                && t.Kind == TranscriptKinds.TurnEnd
+                && t.StopReason == TranscriptKinds.StopReasons.Cancelled)).ShouldBe(1, shape);
+        }
+        else
+        {
+            (await db.TranscriptEntries.CountAsync(t => t.AgentSessionId == h.SessionId
+                && t.Kind == TranscriptKinds.ToolResult && t.ToolUseId == toolUseId)).ShouldBe(1, shape);
+        }
+
+        AssertWindowUnchanged(await db.AgentTasks.SingleAsync(t => t.Id == task.Id), stamp);
     }
 
     [Test]

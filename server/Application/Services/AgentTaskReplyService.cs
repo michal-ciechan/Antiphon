@@ -515,8 +515,12 @@ public sealed class AgentTaskReplyService
 
                 // Same turn as the brief: type the answer only. Prefixing the task marker would fail
                 // option matching and appear inside the completed ToolResult, not as a UserPrompt.
-                // The queue re-checks this question inside the insert. A close that lands after
-                // the recheck above refuses the row; the accepted-answer guard then applies.
+                // The queue reads this question unlocked, then holds the AgentSessions row lock
+                // across a second read and the insert. A closure that commits before that lock,
+                // including one still in flight when the lock is requested, fails the second read
+                // and the accepted-answer guard applies. A closure that waits on the lock until
+                // the insert commits does not retract the row. The queue gate and the session-state
+                // lease do not serialize ingestion; ReadCommitted without the row lock does not either.
                 try
                 {
                     await queue.EnqueueDeliveringNowAsync(
