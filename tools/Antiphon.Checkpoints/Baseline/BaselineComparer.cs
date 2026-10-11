@@ -65,7 +65,9 @@ public sealed class BaselineComparer
             if (build is null)
                 continue;
             var checkout = CheckoutPath(worktree, runId, build.Id);
+            var existedBefore = Directory.Exists(checkout);
             var added = false;
+            var createdByUs = false;
             try
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(checkout)!);
@@ -76,6 +78,7 @@ public sealed class BaselineComparer
                     deadline,
                     cancellationToken).ConfigureAwait(false);
                 added = add.ExitCode == 0 && !add.TimedOut;
+                createdByUs = !existedBefore && added;
                 if (!added)
                     continue;
 
@@ -136,7 +139,7 @@ public sealed class BaselineComparer
             }
             finally
             {
-                if (!cancellationToken.IsCancellationRequested && (added || Directory.Exists(checkout)))
+                if (!cancellationToken.IsCancellationRequested && createdByUs)
                 {
                     await RunLeased(
                         session,
@@ -147,13 +150,13 @@ public sealed class BaselineComparer
                     try
                     {
                         if (Directory.Exists(checkout) && CanRemoveBaselineCheckout(worktree, checkout))
-                            Directory.Delete(checkout, recursive: true);
+                            SafeDelete.DeleteCreatedTree(checkout);
                     }
                     catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                     {
                     }
                 }
-                else if (added || Directory.Exists(checkout))
+                else if (cancellationToken.IsCancellationRequested && (added || Directory.Exists(checkout)))
                     ToolRuns.Add("tool-run: baseline retained canceled workspace " + checkout);
             }
         }
