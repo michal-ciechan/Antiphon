@@ -310,6 +310,13 @@ function record(result,check) {
   results.push(fact); console.log('C1008_REAL '+JSON.stringify({...fact,journal:undefined,elapsedMilliseconds:performance.now()-startedAt}));
 }
 const refused = r => {if(r.exit!==2||r.accepted!==false)throw Error('ExpectedRefusal:'+r.name); for(const n of roles.slice(0,3).map(x=>(r.f.mainReplacement?r.f.main:r.f.temp)+'_'+x)) payload(r.f,n);};
+// c1008_audit_checked refuses as "<code> audit check=..."; the leading code is the verdict.
+function gitRefusal(r) {
+  refused(r);
+  const text=String(r.diagnosis||'');
+  const code=text.split(' ')[0];
+  if(!['RecycleUnpublishedWork','RecycleWorktreeDirty','RecycleGitAuditUnknown'].includes(code)||!text.startsWith(code+' audit check='))throw Error('GitVerdictWrong:'+text);
+}
 const reclaimed = r => {if(r.exit!==0||!r.accepted)throw Error('ExpectedSuccess:'+r.name+':'+r.diagnosis);};
 function assertRemovals(r,count) {if(Object.values(r.journal.volumes).filter(v=>v.outcome==='removed').length!==count)throw Error('RemovalCount:'+r.name);}
 function gitGraph(f,variant,project=f.main) {
@@ -480,7 +487,7 @@ try {
   {const f=fixture();record(await host(f,'C-prefix-neighbours'),reclaimed);}
   for(const variant of ['linked','detached','branch','bare','tag','dirty','uid0','published']) {
     const f=fixture();gitGraph(f,variant);
-    record(await host(f,'C-git-'+variant,'C',{rootAudit:variant==='uid0'}),variant==='published'?reclaimed:r=>{refused(r);if(!['RecycleUnpublishedWork','RecycleWorktreeDirty','RecycleGitAuditUnknown'].includes(r.diagnosis))throw Error('GitVerdictWrong');});
+    record(await host(f,'C-git-'+variant,'C',{rootAudit:variant==='uid0'}),variant==='published'?reclaimed:gitRefusal);
   }
   for(const failAt of [2,3]) {
     const f=fixture();
