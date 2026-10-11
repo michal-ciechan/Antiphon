@@ -98,10 +98,14 @@ public class DispatchBaseWarningRosterTests
 
     private static string Section(string markdown, string heading)
     {
-        var marker = "### " + heading;
-        var start = markdown.IndexOf(marker, StringComparison.Ordinal);
-        start.ShouldBeGreaterThanOrEqualTo(0, marker);
-        var next = markdown.IndexOf("\n##", start + marker.Length, StringComparison.Ordinal);
+        var marker = "\n### " + heading + "\n";
+        var start = markdown.StartsWith("### " + heading + "\n", StringComparison.Ordinal)
+            ? 0
+            : markdown.IndexOf(marker, StringComparison.Ordinal);
+        start.ShouldBeGreaterThanOrEqualTo(0, marker.Trim());
+        if (start > 0)
+            start++;
+        var next = markdown.IndexOf("\n##", start + marker.Trim().Length, StringComparison.Ordinal);
         return next < 0 ? markdown[start..] : markdown[start..next];
     }
 
