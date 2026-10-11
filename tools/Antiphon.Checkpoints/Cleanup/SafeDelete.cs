@@ -1,0 +1,353 @@
+using System.ComponentModel;
+using System.Diagnostics;
+
+namespace Antiphon.Checkpoints;
+
+public enum DeleteDisposition
+{
+    Deleted,
+    DryRun,
+    Skipped,
+    Refused,
+}
+
+public sealed class DeleteResult
+{
+    public DeleteDisposition Disposition { get; init; }
+    public string Path { get; init; } = "";
+    public string? Reason { get; init; }
+}
+
+public sealed class DeleteOwnership
+{
+    public string IsolatedRoot { get; init; } = "";
+    public IReadOnlyCollection<string>? CreatedPaths { get; init; }
+    public bool RequireInventory { get; init; } = true;
+    public bool RequireBinName { get; init; } = true;
+    public bool DryRun { get; init; }
+    public bool AllowOutsideRepository { get; init; }
+    public bool StampFile { get; init; }
+    public bool FileOnly { get; init; }
+    public string? GitExecutable { get; init; }
+}
+
+public static class SafeDelete
+{
+    private const int GitTimeoutMs = 15_000;
+    private const int MaxEntries = 10_000;
+
+    public static DeleteResult Apply(string path, DeleteOwnership ownership, Action? beforeDelete = null)
+    {
+        var full = Canonical(path);
+        var reason = full is null ? "path-unsafe" : Evaluate(full, ownership);
+        if (reason is not null)
+            return new DeleteResult { Disposition = DeleteDisposition.Refused, Path = full ?? path, Reason = reason };
+        if (!Exists(full!))
+            return new DeleteResult { Disposition = DeleteDisposition.Skipped, Path = full!, Reason = null };
+
+        beforeDelete?.Invoke();
+        reason = Evaluate(full!, ownership);
+        if (reason is not null)
+            return new DeleteResult { Disposition = DeleteDisposition.Refused, Path = full!, Reason = reason };
+        if (ownership.DryRun)
+            return new DeleteResult { Disposition = DeleteDisposition.DryRun, Path = full!, Reason = null };
+
+        if (ownership.FileOnly)
+            File.Delete(full!);
+        else
+            Directory.Delete(full!, recursive: true);
+        return new DeleteResult { Disposition = DeleteDisposition.Deleted, Path = full!, Reason = null };
+    }
+
+    public static string? Refusal(string path, DeleteOwnership ownership)
+    {
+        var full = Canonical(path);
+        return full is null ? "path-unsafe" : Evaluate(full, ownership);
+    }
+
+    public static DeleteResult DeleteCreatedFile(string path)
+    {
+        var full = Canonical(path);
+        var parent = full is null ? null : Path.GetDirectoryName(full);
+        if (full is null || parent is null)
+            return new DeleteResult { Disposition = DeleteDisposition.Refused, Path = path, Reason = "path-unsafe" };
+        return Apply(full, Private(parent, full, fileOnly: true));
+    }
+
+    public static DeleteResult DeleteCreatedTree(string path)
+    {
+        var full = Canonical(path);
+        var parent = full is null ? null : Path.GetDirectoryName(full);
+        if (full is null || parent is null)
+            return new DeleteResult { Disposition = DeleteDisposition.Refused, Path = path, Reason = "path-unsafe" };
+        return Apply(full, Private(parent, full, fileOnly: false));
+    }
+
+    public static DeleteOwnership Stamp(string repositoryRoot, string? gitExecutable = null) => new()
+    {
+        IsolatedRoot = repositoryRoot,
+        RequireInventory = false,
+        RequireBinName = false,
+        AllowOutsideRepository = true,
+        StampFile = true,
+        FileOnly = true,
+        GitExecutable = gitExecutable,
+    };
+
+    private static DeleteOwnership Private(string root, string path, bool fileOnly) => new()
+    {
+        IsolatedRoot = root,
+        CreatedPaths = [path],
+        RequireInventory = true,
+        RequireBinName = false,
+        AllowOutsideRepository = true,
+        FileOnly = fileOnly,
+    };
+
+    private static string? Evaluate(string full, DeleteOwnership ownership)
+    {
+        var reparse = ReparseReason(full, ownership.IsolatedRoot);
+        if (reparse is not null)
+            return reparse;
+        if (!string.IsNullOrWhiteSpace(ownership.IsolatedRoot) && !OutputCleanup.IsStrictlyInside(ownership.IsolatedRoot, full))
+            return "outside-isolated-root";
+        if (ownership.StampFile)
+        {
+            var parent = Path.GetFileName(Path.GetDirectoryName(full) ?? "");
+            if (!string.Equals(Path.GetFileName(full), "checkpoint-build-source.json", StringComparison.Ordinal)
+                || !OutputCleanup.IsIsolatedOutputId(parent))
+                return "not-isolated-output";
+        }
+        else if (ownership.RequireBinName && !OutputCleanup.IsIsolatedOutputId(Path.GetFileName(full)))
+            return "not-isolated-output";
+        if (ownership.RequireInventory)
+        {
+            if (ownership.CreatedPaths is null)
+                return "inventory-missing";
+            if (!Listed(ownership.CreatedPaths, full))
+                return "not-created-by-run";
+        }
+
+        var git = GitRefusal(full, ownership.AllowOutsideRepository, ownership.GitExecutable);
+        if (git is not null)
+            return git;
+        if (ownership.FileOnly || !Directory.Exists(full))
+            return null;
+        return TreeReason(full);
+    }
+
+    private static string? ReparseReason(string full, string? isolatedRoot)
+    {
+        for (var current = full; !string.IsNullOrEmpty(current); current = Path.GetDirectoryName(current))
+        {
+            if (!IsReparse(current))
+                continue;
+            var target = LinkTargetOf(current);
+            if (target is not null && !string.IsNullOrWhiteSpace(isolatedRoot))
+            {
+                var resolved = ResolveTarget(current, target);
+                if (resolved is null || !OutputCleanup.IsStrictlyInside(isolatedRoot, resolved))
+                    return "reparse-outside-root";
+            }
+
+            return "reparse-point";
+        }
+
+        return null;
+    }
+
+    private static string? TreeReason(string root)
+    {
+        var pending = new Stack<string>();
+        pending.Push(root);
+        var seen = 0;
+        while (pending.Count > 0)
+        {
+            var path = pending.Pop();
+            if (++seen > MaxEntries)
+                return "unsafe-tree";
+            if (IsReparse(path))
+                return "reparse-point";
+            try
+            {
+                if ((File.GetAttributes(path) & FileAttributes.Directory) == 0)
+                    continue;
+                foreach (var child in Directory.EnumerateFileSystemEntries(path))
+                    pending.Push(child);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                return "unsafe-tree";
+            }
+        }
+
+        return null;
+    }
+
+    // A git answer is required. No metadata is "not a repository", and that is a refusal
+    // unless the caller proved this file sits outside any repository.
+    private static string? GitRefusal(string full, bool allowOutsideRepository, string? gitExecutable)
+    {
+        var start = Directory.Exists(full) && !IsReparse(full) ? full : Path.GetDirectoryName(full);
+        if (string.IsNullOrEmpty(start))
+            return "path-unsafe";
+        var owner = FindOwner(start);
+        if (owner is null)
+            return allowOutsideRepository ? null : "not-a-repository";
+
+        var git = string.IsNullOrWhiteSpace(gitExecutable) ? "git" : gitExecutable;
+        var top = RunGit(git, owner, ["-C", owner, "rev-parse", "--show-toplevel"]);
+        if (top.Failure is not null)
+            return top.Failure;
+        if (top.ExitCode != 0)
+            return top.Stderr.Contains("not a git repository", StringComparison.OrdinalIgnoreCase)
+                ? "not-a-repository"
+                : "git-failed";
+        var toplevel = top.Stdout.Trim();
+        if (toplevel.Length == 0)
+            return "git-failed";
+
+        var listed = RunGit(git, toplevel, ["-C", toplevel, "ls-files", "-z", "--", full]);
+        if (listed.Failure is not null)
+            return listed.Failure;
+        if (listed.ExitCode != 0)
+            return listed.Stderr.Contains("not a git repository", StringComparison.OrdinalIgnoreCase)
+                ? "not-a-repository"
+                : "git-failed";
+        return listed.Stdout.Length == 0 ? null : "tracked";
+    }
+
+    private static string? FindOwner(string start)
+    {
+        var current = start;
+        while (!string.IsNullOrEmpty(current))
+        {
+            var git = Path.Combine(current, ".git");
+            if (Directory.Exists(git) || File.Exists(git))
+                return current;
+            var parent = Path.GetDirectoryName(current);
+            if (string.Equals(parent, current, StringComparison.Ordinal))
+                break;
+            current = parent;
+        }
+
+        return null;
+    }
+
+    private readonly record struct GitRun(int ExitCode, string Stdout, string Stderr, string? Failure);
+
+    private static GitRun RunGit(string git, string workingDirectory, IReadOnlyList<string> args)
+    {
+        Process? process = null;
+        try
+        {
+            var start = new ProcessStartInfo(git)
+            {
+                WorkingDirectory = workingDirectory,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            };
+            start.Environment.Remove("GIT_DIR");
+            start.Environment.Remove("GIT_WORK_TREE");
+            start.Environment.Remove("GIT_INDEX_FILE");
+            foreach (var arg in args)
+                start.ArgumentList.Add(arg);
+            process = Process.Start(start);
+            if (process is null)
+                return new GitRun(-1, "", "", "git-unavailable");
+            var errorTask = Task.Run(() => process.StandardError.ReadToEnd());
+            var stdout = process.StandardOutput.ReadToEnd();
+            if (!process.WaitForExit(GitTimeoutMs))
+            {
+                try { process.Kill(entireProcessTree: true); } catch (Exception ex) when (ex is InvalidOperationException or Win32Exception) { }
+                return new GitRun(-1, stdout, "", "git-timeout");
+            }
+
+            var stderr = errorTask.GetAwaiter().GetResult();
+            return new GitRun(process.ExitCode, stdout, stderr, null);
+        }
+        catch (Exception ex) when (ex is Win32Exception or FileNotFoundException or DirectoryNotFoundException)
+        {
+            return new GitRun(-1, "", "", "git-unavailable");
+        }
+        finally
+        {
+            process?.Dispose();
+        }
+    }
+
+    private static bool Listed(IReadOnlyCollection<string> created, string full)
+    {
+        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        foreach (var candidate in created)
+        {
+            var other = Canonical(candidate);
+            if (other is not null && string.Equals(other, full, comparison))
+                return true;
+        }
+
+        return false;
+    }
+
+    private static string? Canonical(string path)
+    {
+        try
+        {
+            return Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return null;
+        }
+    }
+
+    private static bool Exists(string full) => File.Exists(full) || Directory.Exists(full);
+
+    private static bool IsReparse(string path) => LinkTargetOf(path) is not null || HasReparseAttribute(path);
+
+    private static string? LinkTargetOf(string path)
+    {
+        try
+        {
+            var directory = new DirectoryInfo(path);
+            if (!string.IsNullOrEmpty(directory.LinkTarget))
+                return directory.LinkTarget;
+            var file = new FileInfo(path);
+            return string.IsNullOrEmpty(file.LinkTarget) ? null : file.LinkTarget;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            return null;
+        }
+    }
+
+    private static bool HasReparseAttribute(string path)
+    {
+        try
+        {
+            return (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException
+                                   or NotSupportedException or FileNotFoundException or DirectoryNotFoundException)
+        {
+            return false;
+        }
+    }
+
+    private static string? ResolveTarget(string link, string target)
+    {
+        try
+        {
+            var combined = Path.IsPathRooted(target)
+                ? target
+                : Path.Combine(Path.GetDirectoryName(link) ?? link, target);
+            return Path.GetFullPath(combined);
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return null;
+        }
+    }
+}

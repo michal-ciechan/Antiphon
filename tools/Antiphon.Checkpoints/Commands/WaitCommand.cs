@@ -75,7 +75,10 @@ public sealed class WaitCommand
                     output.Write(File.ReadAllText(reportPath));
                 else
                     output.WriteLine(state.Heartbeat(now));
-                return state.ExitCode ?? ExitCodes.Green;
+                var exit = state.ExitCode ?? ExitCodes.Green;
+                if (exit == ExitCodes.Green && File.Exists(reportPath) && ReportRefused(reportPath))
+                    return ExitCodes.Invalid;
+                return exit;
             }
 
             if (state?.Phase != "done" && observed.Verdict == ProcessVerdict.Dead)
@@ -119,6 +122,17 @@ public sealed class WaitCommand
 
             await _delay(slice, cancellationToken).ConfigureAwait(false);
         }
+    }
+
+    private static bool ReportRefused(string reportPath)
+    {
+        foreach (var line in File.ReadLines(reportPath))
+        {
+            if (line.StartsWith("refused:", StringComparison.Ordinal))
+                return true;
+        }
+
+        return false;
     }
 
     private static void WriteHeartbeat(TextWriter output, string? line)

@@ -51,7 +51,12 @@ public static class ReportWriter
         var red = model.Rows.Count - green - skipped;
         text.AppendLine(
             $"wall: {Format(model.WallSeconds)}  sequential-equivalent: {Format(model.SequentialEquivalentSeconds)}  builds: {model.Builds.Count}  max-concurrent-builds: {model.MaxConcurrentBuilds}  rows: {green} green {red} red {skipped} skipped");
-        if (model.OutputNames.Count == 0)
+        if (model.CleanupRefusals.Count > 0)
+        {
+            foreach (var reason in model.CleanupRefusals)
+                text.AppendLine("refused: " + reason);
+        }
+        else if (model.OutputNames.Count == 0)
             text.AppendLine("outputs: none");
         else if (model.CleanedOutputs)
             text.AppendLine("outputs: deleted " + string.Join(", ", model.OutputNames));

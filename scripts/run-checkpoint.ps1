@@ -80,6 +80,77 @@ function Assert-CheckpointBoundary {
     return $true
 }
 
+function Find-CheckpointGitDir {
+    param([string]$Start)
+    $current = $Start
+    while (-not [string]::IsNullOrWhiteSpace($current)) {
+        $candidate = Join-Path $current '.git'
+        if (Test-Path -LiteralPath $candidate) { return $current }
+        $parent = Split-Path -Parent $current
+        if ([string]::IsNullOrWhiteSpace($parent) -or $parent -eq $current) { break }
+        $current = $parent
+    }
+    return $null
+}
+
+function Invoke-CheckpointGit {
+    param([string]$WorkDir, [string[]]$GitArgs)
+    $psi = [System.Diagnostics.ProcessStartInfo]::new()
+    $psi.FileName = 'git'
+    $psi.WorkingDirectory = $WorkDir
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.CreateNoWindow = $true
+    foreach ($arg in $GitArgs) { [void]$psi.ArgumentList.Add($arg) }
+    foreach ($name in @('GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE')) {
+        if ($psi.Environment.ContainsKey($name)) { [void]$psi.Environment.Remove($name) }
+    }
+    $proc = [System.Diagnostics.Process]::new()
+    $proc.StartInfo = $psi
+    try {
+        try {
+            if (-not $proc.Start()) { return @{ Exit = 128; Stdout = ''; Stderr = ''; Reason = 'git-unavailable' } }
+        } catch {
+            return @{ Exit = 128; Stdout = ''; Stderr = ''; Reason = 'git-unavailable' }
+        }
+        $outTask = $proc.StandardOutput.ReadToEndAsync()
+        $errTask = $proc.StandardError.ReadToEndAsync()
+        if (-not $proc.WaitForExit(15000)) {
+            try { $proc.Kill($true) } catch { }
+            return @{ Exit = 128; Stdout = ''; Stderr = ''; Reason = 'git-timeout' }
+        }
+        $proc.WaitForExit()
+        return @{ Exit = $proc.ExitCode; Stdout = $outTask.GetAwaiter().GetResult(); Stderr = $errTask.GetAwaiter().GetResult(); Reason = $null }
+    } finally {
+        $proc.Dispose()
+    }
+}
+
+function Test-CheckpointStampRefusal {
+    param([string]$StampPath)
+    $parent = Split-Path -Parent $StampPath
+    if ([string]::IsNullOrWhiteSpace($parent)) { return 'path-unsafe' }
+    $owner = Find-CheckpointGitDir $parent
+    if ($null -eq $owner) { return $null }
+    $top = Invoke-CheckpointGit $owner @('-C', $owner, 'rev-parse', '--show-toplevel')
+    if ($top.Reason) { return [string]$top.Reason }
+    if ([int]$top.Exit -ne 0) {
+        if ([string]$top.Stderr -match 'not a git repository') { return 'not-a-repository' }
+        return 'git-failed'
+    }
+    $toplevel = ([string]$top.Stdout).Trim()
+    if ([string]::IsNullOrWhiteSpace($toplevel)) { return 'git-failed' }
+    $listed = Invoke-CheckpointGit $toplevel @('-C', $toplevel, 'ls-files', '-z', '--', $StampPath)
+    if ($listed.Reason) { return [string]$listed.Reason }
+    if ([int]$listed.Exit -ne 0) {
+        if ([string]$listed.Stderr -match 'not a git repository') { return 'not-a-repository' }
+        return 'git-failed'
+    }
+    if (-not [string]::IsNullOrEmpty([string]$listed.Stdout)) { return 'tracked' }
+    return $null
+}
+
 function Get-CheckpointBuildStampPath {
     param([string]$Root, [string]$ProjectPath, [string]$Output)
     return [System.IO.Path]::Combine($Root, $ProjectPath, $Output, 'checkpoint-build-source.json')
@@ -366,18 +437,40 @@ try {
     $script:buildState = $buildState
     $buildExit = 0
     if (-not $NoBuild) {
-        if (Test-Path -LiteralPath $stampPath) { Remove-Item -LiteralPath $stampPath -Force }
-        $buildExit = Invoke-Dotnet -Phase 'build' -Arguments (@('build', $Project, ('--property:OutputPath=' + $OutputPath)) + $propertyArguments + $cpuArguments + @('--nologo'))
-        if ($buildExit -eq 0) { $buildState = 'ok'; $script:buildState = 'ok' }
-        else { $buildState = 'failed'; $script:buildState = 'failed' }
-        if (-not (Assert-CheckpointBoundary 'post_build')) { $buildExit = 2 }
-        if ($buildExit -eq 0) {
-            $stampDirectory = Split-Path -Parent $stampPath
-            New-Item -ItemType Directory -Path $stampDirectory -Force | Out-Null
-            $temporaryStamp = $stampPath + '.' + [guid]::NewGuid().ToString('N') + '.tmp'
-            $expectedBinding | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $temporaryStamp -Encoding utf8
-            Move-Item -LiteralPath $temporaryStamp -Destination $stampPath -Force
-            $script:buildSource = 'verified'
+        $stampRefusal = $null
+        if (Test-Path -LiteralPath $stampPath) { $stampRefusal = Test-CheckpointStampRefusal $stampPath }
+        if ($null -ne $stampRefusal) {
+            Write-Host ('refused: ' + $stampRefusal)
+            $buildExit = 2
+            $buildState = 'failed'
+            $script:buildState = 'failed'
+        } else {
+            if (Test-Path -LiteralPath $stampPath) { [System.IO.File]::Delete($stampPath) }
+            $buildExit = Invoke-Dotnet -Phase 'build' -Arguments (@('build', $Project, ('--property:OutputPath=' + $OutputPath)) + $propertyArguments + $cpuArguments + @('--nologo'))
+            if ($buildExit -eq 0) { $buildState = 'ok'; $script:buildState = 'ok' }
+            else { $buildState = 'failed'; $script:buildState = 'failed' }
+            if (-not (Assert-CheckpointBoundary 'post_build')) { $buildExit = 2 }
+            if ($buildExit -eq 0) {
+                $stampDirectory = Split-Path -Parent $stampPath
+                New-Item -ItemType Directory -Path $stampDirectory -Force | Out-Null
+                $temporaryStamp = $stampPath + '.' + [guid]::NewGuid().ToString('N') + '.tmp'
+                $expectedBinding | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $temporaryStamp -Encoding utf8
+                $replaceRefusal = $null
+                if (Test-Path -LiteralPath $stampPath) { $replaceRefusal = Test-CheckpointStampRefusal $stampPath }
+                if ($null -ne $replaceRefusal) {
+                    Write-Host ('refused: ' + $replaceRefusal)
+                    if ($temporaryStamp.EndsWith('.tmp') -and (Test-Path -LiteralPath $temporaryStamp)) {
+                        [System.IO.File]::Delete($temporaryStamp)
+                    }
+                    $buildExit = 2
+                    $buildState = 'failed'
+                    $script:buildState = 'failed'
+                    $script:buildSource = 'unknown'
+                } else {
+                    Move-Item -LiteralPath $temporaryStamp -Destination $stampPath -Force
+                    $script:buildSource = 'verified'
+                }
+            }
         }
     }
 
