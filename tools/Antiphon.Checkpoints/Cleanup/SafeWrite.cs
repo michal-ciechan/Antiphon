@@ -136,14 +136,14 @@ public static class SafeWrite
 
     public static string? Append(string path, string content, WriteOwnership ownership)
     {
-        var full = Canonical(path);
-        if (full is null)
-            return "path-unsafe";
-        if (!File.Exists(full))
-            return Text(path, content, ownership);
-        var reason = Refusal(full, ownership);
+        var reason = AllowExisting(path, ownership);
         if (reason is not null)
             return reason;
+        var full = Canonical(path)!;
+        if (Directory.Exists(full))
+            return "unrecorded-existing";
+        if (!File.Exists(full))
+            return Text(path, content, ownership);
         File.AppendAllText(full, content);
         Created.TryAdd(full, 0);
         return null;
@@ -219,6 +219,57 @@ public static class SafeWrite
         return null;
     }
 
+    public static string? OpenAppend(string path, WriteOwnership ownership, out FileStream? stream,
+        FileShare share = FileShare.ReadWrite | FileShare.Delete)
+    {
+        stream = null;
+        var reason = AllowExisting(path, ownership);
+        if (reason is not null)
+            return reason;
+        var full = Canonical(path)!;
+        if (Directory.Exists(full))
+            return "unrecorded-existing";
+        var directory = Path.GetDirectoryName(full);
+        if (!string.IsNullOrEmpty(directory))
+        {
+            reason = CreateDirectory(directory, ownership);
+            if (reason is not null)
+                return reason;
+        }
+
+        stream = new FileStream(full, FileMode.Append, FileAccess.Write, share);
+        Created.TryAdd(full, 0);
+        return null;
+    }
+
+    public static string? OpenGate(string path, WriteOwnership ownership, out FileStream? stream)
+    {
+        stream = null;
+        var reason = AllowExisting(path, ownership);
+        if (reason is not null)
+            return reason;
+        var full = Canonical(path)!;
+        if (Directory.Exists(full))
+            return "unrecorded-existing";
+        var directory = Path.GetDirectoryName(full);
+        if (!string.IsNullOrEmpty(directory))
+        {
+            reason = CreateDirectory(directory, ownership);
+            if (reason is not null)
+                return reason;
+        }
+
+        stream = new FileStream(full, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+        Created.TryAdd(full, 0);
+        return null;
+    }
+
+    public static void Require(string? reason)
+    {
+        if (reason is not null)
+            throw new IOException("refused: " + reason);
+    }
+
     public static bool CarriesMarker(string path, string runId)
     {
         try
@@ -268,6 +319,19 @@ public static class SafeWrite
         if (kept.Count > 0)
             return "outputs: refused/kept " + string.Join(", ", kept);
         return "outputs: deleted " + string.Join(", ", deleted);
+    }
+
+    private static string? AllowExisting(string path, WriteOwnership ownership)
+    {
+        var full = Canonical(path);
+        if (full is null)
+            return "path-unsafe";
+        if (!InsideRoots(full, ownership.Roots))
+            return "outside-root";
+        var link = LinkRefusal(full);
+        if (link is not null)
+            return link;
+        return SafeDelete.PreflightRoots(full, [full], ownership.GitExecutable, ownership.GitTimeoutMilliseconds);
     }
 
     private static string? LinkRefusal(string path)

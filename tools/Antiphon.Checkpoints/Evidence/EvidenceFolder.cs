@@ -6,7 +6,8 @@ public static class EvidenceFolder
 {
     public static void Write(string runDirectory, ReportModel model, bool removeToolCopy, string? imageDirectory = null)
     {
-        Directory.CreateDirectory(runDirectory);
+        var ownership = SafeWrite.Under(runDirectory);
+        SafeWrite.Require(SafeWrite.CreateDirectory(runDirectory, ownership));
         if (model.Rows.Any(row => row.Failures.Count > 0))
         {
             var failures = new StringBuilder();
@@ -39,13 +40,13 @@ public static class EvidenceFolder
                 }
 
                 var rowDir = Path.Combine(runDirectory, "rows", row.Id);
-                Directory.CreateDirectory(rowDir);
-                File.WriteAllText(Path.Combine(rowDir, "failures.md"), rowFailures.ToString());
-                File.WriteAllText(Path.Combine(rowDir, "rerun.txt"), rerun.ToString());
+                SafeWrite.Require(SafeWrite.CreateDirectory(rowDir, ownership));
+                SafeWrite.Require(SafeWrite.Text(Path.Combine(rowDir, "failures.md"), rowFailures.ToString(), ownership));
+                SafeWrite.Require(SafeWrite.Text(Path.Combine(rowDir, "rerun.txt"), rerun.ToString(), ownership));
                 failures.Append(rowFailures);
             }
 
-            File.WriteAllText(Path.Combine(runDirectory, "failures.md"), failures.ToString());
+            SafeWrite.Require(SafeWrite.Text(Path.Combine(runDirectory, "failures.md"), failures.ToString(), ownership));
         }
         else
         {

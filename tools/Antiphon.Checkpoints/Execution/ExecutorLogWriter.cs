@@ -11,9 +11,11 @@ internal sealed class FileExecutorLogSink : IExecutorLogSink
     private readonly StreamWriter _writer;
     public FileExecutorLogSink(string path)
     {
-        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
-        _writer = new StreamWriter(new FileStream(path, FileMode.Append, FileAccess.Write,
-            FileShare.ReadWrite | FileShare.Delete));
+        var directory = Path.GetDirectoryName(Path.GetFullPath(path))!;
+        var reason = SafeWrite.OpenAppend(path, SafeWrite.Under(directory), out var stream);
+        if (reason is not null || stream is null)
+            throw new IOException("refused: " + reason);
+        _writer = new StreamWriter(stream);
     }
     public async Task AppendAsync(string line, CancellationToken cancellationToken)
     {

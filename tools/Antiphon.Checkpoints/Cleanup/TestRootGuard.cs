@@ -38,18 +38,18 @@ public static class TestRootGuard
         if (!RunOwnershipStore.SamePath(marker.RootPath, root))
             throw new InvalidOperationException("checkpoint root marker path mismatch");
         var path = Path.Combine(root, MarkerName);
-        var temp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
-        using (var stream = new FileStream(temp, FileMode.CreateNew, FileAccess.Write, FileShare.None))
-        {
-            JsonSerializer.Serialize(stream, marker);
-            stream.Flush(flushToDisk: true);
-        }
-        File.Move(temp, path, true);
+        var reason = SafeWrite.Text(path, JsonSerializer.Serialize(marker), SafeWrite.Under(root));
+        if (reason is not null)
+            throw new IOException("refused: " + reason);
     }
 
     public static FileStream? TryLock(string root)
     {
-        try { return new FileStream(Path.Combine(root, LockName), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None); }
+        try
+        {
+            var reason = SafeWrite.OpenGate(Path.Combine(root, LockName), SafeWrite.Under(root), out var stream);
+            return reason is null ? stream : null;
+        }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
     }
 
@@ -67,10 +67,9 @@ public static class TestRootGuard
         var prefix = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root)) + Path.DirectorySeparatorChar;
         if (!normalized.StartsWith(prefix, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
             throw new IOException("checkpoint run is outside test root");
-        using var index = new FileStream(Path.Combine(root, RunsName), FileMode.Append, FileAccess.Write, FileShare.Read);
-        var bytes = System.Text.Encoding.UTF8.GetBytes(JsonSerializer.Serialize(normalized) + "\n");
-        index.Write(bytes);
-        index.Flush(flushToDisk: true);
+        var recorded = SafeWrite.Append(Path.Combine(root, RunsName), JsonSerializer.Serialize(normalized) + "\n", SafeWrite.Under(root));
+        if (recorded is not null)
+            throw new IOException("refused: " + recorded);
     }
 
     private static string? FindRoot(string path)

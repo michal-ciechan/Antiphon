@@ -34,13 +34,39 @@ public static class CheckpointApp
         public Func<string, IExecutorLogSink>? LogSinkFactory { get; init; }
         public Func<string, Task<int>>? Wait { get; init; }
         public TextWriter? Output { get; init; }
+        public string? GitExecutable { get; init; }
         public Func<string, SourceObservation>? SourceCapture { get; init; }
     }
 
     public static string ToolSource(Runtime? runtime = null) => runtime?.ToolDirectory ?? AppContext.BaseDirectory;
 
+    public static string ReadLatest(string text)
+    {
+        var lines = text.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (lines.Length == 0)
+            return "";
+        if (lines[0].StartsWith(SafeWrite.Marker + " ", StringComparison.Ordinal))
+            return lines.Length > 1 ? lines[^1] : "";
+        return lines[0];
+    }
+
+    private static void WriteRunText(string runDirectory, string name, string content)
+    {
+        var reason = SafeWrite.Text(Path.Combine(runDirectory, name), content, SafeWrite.Under(runDirectory));
+        if (reason is not null)
+            throw new IOException("refused: " + reason);
+    }
+
     public static async Task<int> ExecuteAsync(string runDirectory, CancellationToken cancellationToken, Runtime? runtime = null)
     {
+        runtime ??= new Runtime();
+        var refusal = SafeWrite.Preflight(runDirectory, [Path.GetFullPath(runDirectory)], runtime.GitExecutable);
+        if (refusal is not null)
+        {
+            (runtime.Output ?? Console.Error).WriteLine("refused: " + refusal);
+            return ExitCodes.Invalid;
+        }
+
         try
         {
             return await ExecuteCoreAsync(runDirectory, cancellationToken, runtime).ConfigureAwait(false);
@@ -71,9 +97,9 @@ public static class CheckpointApp
             try
             {
                 ReportWriter.WriteFiles(runDirectory, model);
-                var refusal = store.Write(statePath, state);
-                if (refusal is not null)
-                    Console.Error.WriteLine("refused: " + refusal);
+                var persisted = store.Write(statePath, state);
+                if (persisted is not null)
+                    Console.Error.WriteLine("refused: " + persisted);
             }
             catch (Exception persistence)
             {
@@ -105,8 +131,8 @@ public static class CheckpointApp
         var entryAdmitted = await owner.EnsureLiveAsync(cancellationToken).ConfigureAwait(false);
         if (entryAdmitted)
         {
-            File.WriteAllText(Path.Combine(runDirectory, "host.txt"), HostSnapshot.Capture(BuildSlotClient.DefaultEndpoint(OperatingSystem.IsWindows())));
-            File.WriteAllText(Path.Combine(runDirectory, "git.txt"), GitSnapshot.Capture(repo));
+            WriteRunText(runDirectory, "host.txt", HostSnapshot.Capture(BuildSlotClient.DefaultEndpoint(OperatingSystem.IsWindows())));
+            WriteRunText(runDirectory, "git.txt", GitSnapshot.Capture(repo));
         }
         var store = new RunStateStore();
         var state = new RunState
@@ -281,8 +307,11 @@ public static class CheckpointApp
         }
 
         model.Evidence = Path.Combine(runDirectory, "report.md");
-        File.AppendAllText(Path.Combine(runDirectory, "git.txt"),
-            $"\nsource={SourceEvidence.Token(source.Start)} sourceState={source.State} buildSource={source.BuildSource}\n");
+        var gitAppend = SafeWrite.Append(Path.Combine(runDirectory, "git.txt"),
+            $"\nsource={SourceEvidence.Token(source.Start)} sourceState={source.State} buildSource={source.BuildSource}\n",
+            SafeWrite.Under(runDirectory));
+        if (gitAppend is not null)
+            throw new IOException("refused: " + gitAppend);
         ReportWriter.WriteFiles(runDirectory, model);
         try
         {
@@ -309,6 +338,10 @@ public static class CheckpointApp
             return false;
         }
 
+        model.OutputPaths = manifest.Builds
+            .SelectMany(build => OutputCleanup.MatchingIsolatedDirectories(repo, build.Id))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
         try
         {
             if (owner.Bound && !await owner.EnsureLiveAsync(cancellationToken).ConfigureAwait(false))
@@ -369,6 +402,22 @@ public static class CheckpointApp
         }
         if (owner.Bound && !owner.Ended.IsCancellationRequested)
             await owner.EnsureLiveAsync(cancellationToken).ConfigureAwait(false);
+        if (!request.KeepOutputs)
+        {
+            var remaining = model.OutputPaths.Where(path => Directory.Exists(path) || File.Exists(path)).ToList();
+            if (remaining.Count > 0)
+            {
+                model.CleanedOutputs = false;
+                if (model.CleanupRefusals.Count == 0)
+                    model.CleanupRefusals.Add("still-present");
+                if (model.ExitCode == 0)
+                {
+                    model.ExitCode = ExitCodes.Invalid;
+                    model.Verdict = "RED";
+                    model.Reason = "refused: " + model.CleanupRefusals[0];
+                }
+            }
+        }
         if (owner.Ended.IsCancellationRequested && model.ExitCode != ExitCodes.OwnerEnded)
         {
             state.Reason = owner.Reason;
@@ -410,11 +459,12 @@ public static class CheckpointApp
         if (selected.Count == 0)
             throw new ManifestValidationException("rows", "no checkpoints selected");
         var resultsRoot = Path.GetFullPath(Path.IsPathRooted(manifest.ResultsRoot) ? manifest.ResultsRoot : Path.Combine(repo, manifest.ResultsRoot));
-        Directory.CreateDirectory(resultsRoot);
+        var resultsOwnership = SafeWrite.Under(resultsRoot, gitExecutable: runtime?.GitExecutable);
+        SafeWrite.Require(SafeWrite.CreateDirectory(resultsRoot, resultsOwnership));
         new ToolCopyCleanup().Sweep(resultsRoot);
         var runId = RepoPaths.RunId();
         var runDirectory = Path.Combine(resultsRoot, runId);
-        Directory.CreateDirectory(runDirectory);
+        SafeWrite.Require(SafeWrite.CreateDirectory(runDirectory, resultsOwnership));
         try
         {
             (runtime?.OwnershipWrite ?? RunOwnershipStore.Write)(runDirectory, new RunOwnership
@@ -424,7 +474,7 @@ public static class CheckpointApp
                 Starter = new ProcessIdentityProbe().Current(),
             });
             TestRootGuard.RegisterRun(runDirectory);
-            File.WriteAllText(Path.Combine(runDirectory, "manifest.resolved.yaml"), ManifestLoader.ToYaml(manifest));
+            WriteRunText(runDirectory, "manifest.resolved.yaml", ManifestLoader.ToYaml(manifest));
             request.RepoRoot = repo;
             request.Rows = selected.Select(row => row.Id).ToList();
             var capture = runtime?.SourceCapture ?? new SourceSnapshot().Capture;
@@ -441,7 +491,7 @@ public static class CheckpointApp
                 request.Commit = request.Source.Start.Commit ?? GitSnapshot.Run(repo, "rev-parse", "HEAD");
             if (string.IsNullOrWhiteSpace(request.Branch))
                 request.Branch = GitSnapshot.Run(repo, "rev-parse", "--abbrev-ref", "HEAD");
-            File.WriteAllText(Path.Combine(runDirectory, "request.json"), JsonSerializer.Serialize(request, Json));
+            WriteRunText(runDirectory, "request.json", JsonSerializer.Serialize(request, Json));
             return runDirectory;
         }
         catch
@@ -466,6 +516,23 @@ public static class CheckpointApp
             output.WriteLine("CHECKPOINT owner " + owner.Reason);
             return new StartResult(ExitCodes.OwnerEnded, "");
         }
+
+        var resultsPreview = Path.GetFullPath(Path.IsPathRooted(manifest.ResultsRoot) ? manifest.ResultsRoot : Path.Combine(repo, manifest.ResultsRoot));
+        var writeRoots = new List<string> { resultsPreview };
+        foreach (var build in manifest.Builds)
+        {
+            var project = Path.IsPathRooted(build.Project) ? build.Project : Path.Combine(repo, build.Project);
+            var projectDir = Directory.Exists(project) ? project : Path.GetDirectoryName(project) ?? repo;
+            writeRoots.Add(Path.GetFullPath(Path.Combine(projectDir, build.OutputPath ?? "")));
+        }
+
+        var preflight = SafeWrite.Preflight(repo, writeRoots, runtime.GitExecutable);
+        if (preflight is not null)
+        {
+            output.WriteLine("refused: " + preflight);
+            return new StartResult(ExitCodes.Invalid, "");
+        }
+
         request.OwnerTaskId = owner.TaskId;
         request.OwnerSessionId = owner.SessionId;
         var runDirectory = CreateRun(manifest, request, repo, runtime);
@@ -542,7 +609,19 @@ public static class CheckpointApp
                 return new StartResult(ExitCodes.Invalid, runDirectory);
             }
         }
-        try { (runtime.LatestWrite ?? File.WriteAllText)(Path.Combine(resultsRoot, "latest"), runId); }
+        try
+        {
+            if (runtime.LatestWrite is not null)
+                runtime.LatestWrite(Path.Combine(resultsRoot, "latest"), runId);
+            else
+            {
+                var latestRefusal = SafeWrite.Text(Path.Combine(resultsRoot, "latest"),
+                    SafeWrite.Marker + " latest\n" + runId + "\n",
+                    SafeWrite.Under(resultsRoot, "latest", WriteKind.ToolOwnedReplaceable, runtime.GitExecutable));
+                if (latestRefusal is not null)
+                    throw new IOException("refused: " + latestRefusal);
+            }
+        }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             output.WriteLine("CHECKPOINT latest write failed run=" + runId + " reason=" + ex.GetType().Name);

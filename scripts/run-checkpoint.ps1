@@ -170,6 +170,94 @@ function Test-CheckpointStampRefusal {
     return $null
 }
 
+function Test-CheckpointPreflight {
+    param([string]$Repository, [string[]]$Roots)
+    if ($null -eq $Roots -or @($Roots).Count -eq 0) { return 'git-failed' }
+    foreach ($one in @($Roots)) {
+        $linked = Test-CheckpointComponentLink $one
+        if ($null -ne $linked) { return $linked }
+    }
+    $start = $Repository
+    if (-not [System.IO.Directory]::Exists($start)) {
+        $parent = Split-Path -Parent $start
+        if ([string]::IsNullOrWhiteSpace($parent)) { return 'path-unsafe' }
+        $start = $parent
+    }
+    $owner = Find-CheckpointGitDir $start
+    if ($null -eq $owner) { return $null }
+    $fullRoots = @($Roots | ForEach-Object { [System.IO.Path]::GetFullPath($_).TrimEnd('\', '/') })
+    $gitArgs = @('-C', $owner, 'ls-files', '-z', '--') + $fullRoots
+    $listed = Invoke-CheckpointGit $owner $gitArgs
+    if ($listed.Reason) { return [string]$listed.Reason }
+    if ([int]$listed.Exit -ne 0) { return 'git-failed' }
+    if (-not [string]::IsNullOrEmpty([string]$listed.Stdout)) { return 'tracked' }
+    return $null
+}
+
+function Test-CheckpointWriteRefusal {
+    param([string]$Path, [string]$Root)
+    $linked = Test-CheckpointComponentLink $Path
+    if ($null -ne $linked) { return $linked }
+    try {
+        $full = [System.IO.Path]::GetFullPath($Path).TrimEnd('\', '/')
+        $rootFull = [System.IO.Path]::GetFullPath($Root).TrimEnd('\', '/')
+    } catch { return 'path-unsafe' }
+    $comparison = if ($IsWindows) { [StringComparison]::OrdinalIgnoreCase } else { [StringComparison]::Ordinal }
+    $inside = [string]::Equals($full, $rootFull, $comparison) -or $full.StartsWith($rootFull + [System.IO.Path]::DirectorySeparatorChar, $comparison)
+    if (-not $inside) { return 'outside-root' }
+    return Test-CheckpointPreflight $rootFull @($full)
+}
+
+function Write-CheckpointSafeText {
+    param([string]$Path, [string]$Content, [string]$Root)
+    $reason = Test-CheckpointWriteRefusal $Path $Root
+    if ($null -ne $reason) { return $reason }
+    try { $full = [System.IO.Path]::GetFullPath($Path) } catch { return 'path-unsafe' }
+    if ([System.IO.File]::Exists($full) -or [System.IO.Directory]::Exists($full)) { return 'unrecorded-existing' }
+    $directory = [System.IO.Path]::GetDirectoryName($full)
+    if (-not [string]::IsNullOrEmpty($directory) -and -not [System.IO.Directory]::Exists($directory)) {
+        $dirReason = Test-CheckpointWriteRefusal $directory $Root
+        if ($null -ne $dirReason) { return $dirReason }
+        [void][System.IO.Directory]::CreateDirectory($directory)
+    }
+    $temporary = $full + '.' + [guid]::NewGuid().ToString('N') + '.tmp'
+    try {
+        [System.IO.File]::WriteAllText($temporary, $Content)
+        $again = Test-CheckpointWriteRefusal $full $Root
+        if ($null -ne $again) { return $again }
+        [System.IO.File]::Move($temporary, $full, $true)
+        return $null
+    } finally {
+        if ([System.IO.File]::Exists($temporary)) {
+            try { [System.IO.File]::Delete($temporary) } catch { }
+        }
+    }
+}
+
+function New-CheckpointDirectory {
+    param([string]$Path, [string]$Root)
+    $reason = Test-CheckpointWriteRefusal $Path $Root
+    if ($null -ne $reason) { return $reason }
+    if ([System.IO.Directory]::Exists([System.IO.Path]::GetFullPath($Path))) { return $null }
+    [void][System.IO.Directory]::CreateDirectory($Path)
+    return $null
+}
+
+function Open-CheckpointSafeCreate {
+    param([string]$Path, [string]$Root)
+    $reason = Test-CheckpointWriteRefusal $Path $Root
+    if ($null -ne $reason) { throw "refused: $reason" }
+    $full = [System.IO.Path]::GetFullPath($Path)
+    if ([System.IO.File]::Exists($full) -or [System.IO.Directory]::Exists($full)) { throw 'refused: unrecorded-existing' }
+    $directory = [System.IO.Path]::GetDirectoryName($full)
+    if (-not [string]::IsNullOrEmpty($directory) -and -not [System.IO.Directory]::Exists($directory)) {
+        $dirReason = Test-CheckpointWriteRefusal $directory $Root
+        if ($null -ne $dirReason) { throw "refused: $dirReason" }
+        [void][System.IO.Directory]::CreateDirectory($directory)
+    }
+    return [System.IO.FileStream]::new($full, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::ReadWrite)
+}
+
 function Get-CheckpointBuildStampPath {
     param([string]$Root, [string]$ProjectPath, [string]$Output)
     return [System.IO.Path]::Combine($Root, $ProjectPath, $Output, 'checkpoint-build-source.json')
@@ -242,10 +330,10 @@ function Write-Trailer {
                 repeatReason = $script:repeatReason; timings = $script:phaseTimings
             }
         }
-        $evidence | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath (Join-Path $script:resultsDirectory 'source.json') -Encoding utf8
-        ('commit={0} source={1} sourceState={2} buildSource={3}' -f $commit,
-            (Get-CheckpointSourceToken $start), $state, $script:buildSource) |
-            Set-Content -LiteralPath (Join-Path $script:resultsDirectory 'git.txt') -Encoding utf8
+        $sourceWrite = Write-CheckpointSafeText (Join-Path $script:resultsDirectory 'source.json') (($evidence | ConvertTo-Json -Depth 12) + "`n") $script:resultsDirectory
+        if ($null -ne $sourceWrite) { Write-Host ('refused: ' + $sourceWrite) }
+        $gitWrite = Write-CheckpointSafeText (Join-Path $script:resultsDirectory 'git.txt') (('commit={0} source={1} sourceState={2} buildSource={3}' -f $commit, (Get-CheckpointSourceToken $start), $state, $script:buildSource) + "`n") $script:resultsDirectory
+        if ($null -ne $gitWrite) { Write-Host ('refused: ' + $gitWrite) }
     }
     Write-Host ('CHECKPOINT {0} EXIT CODE: {1}' -f $Name, $Code)
 }
@@ -321,7 +409,9 @@ $resultsDirectory = Join-Path $ResultsRoot ('{0}-{1}' -f $Name, $stamp)
 if (Test-Path -LiteralPath $resultsDirectory) {
     Stop-Invalid ("results directory exists: $resultsDirectory")
 }
-New-Item -ItemType Directory -Path $resultsDirectory -Force | Out-Null
+$resultsParent = Split-Path -Parent $resultsDirectory
+$resultsRefusal = New-CheckpointDirectory $resultsDirectory $resultsParent
+if ($null -ne $resultsRefusal) { Stop-Invalid ("refused: $resultsRefusal") }
 $resultsDirectory = (Resolve-Path -LiteralPath $resultsDirectory).Path
 $script:resultsDirectory = $resultsDirectory
 $script:sourceStart = Get-CheckpointSource
@@ -401,8 +491,7 @@ function Invoke-Dotnet {
     foreach ($token in $tokens) { [void]$psi.ArgumentList.Add([string]$token) }
     if ($Nonce) { $psi.Environment['ANTIPHON_CHECKPOINT_NONCE'] = $Nonce }
     $logPath = Join-Path $resultsDirectory ($Phase + '.log')
-    $stream = [System.IO.FileStream]::new($logPath, [System.IO.FileMode]::CreateNew,
-        [System.IO.FileAccess]::Write, [System.IO.FileShare]::ReadWrite)
+    $stream = Open-CheckpointSafeCreate $logPath $resultsDirectory
     $writer = [System.IO.StreamWriter]::new($stream)
     $writer.AutoFlush = $true
     try {
@@ -456,8 +545,15 @@ try {
     $script:buildState = $buildState
     $buildExit = 0
     if (-not $NoBuild) {
-        $stampRefusal = Test-CheckpointStampRefusal $stampPath
-        if ($null -ne $stampRefusal) {
+        $projectFull = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($root, $Project))
+        $outputFull = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($projectFull, $OutputPath))
+        $outputRefusal = Test-CheckpointPreflight $root @($outputFull)
+        if ($null -ne $outputRefusal) {
+            Write-Host ('refused: ' + $outputRefusal)
+            $buildExit = 2
+            $buildState = 'failed'
+            $script:buildState = 'failed'
+        } elseif ($null -ne ($stampRefusal = Test-CheckpointStampRefusal $stampPath)) {
             Write-Host ('refused: ' + $stampRefusal)
             $buildExit = 2
             $buildState = 'failed'
@@ -479,10 +575,16 @@ try {
                 } else {
                     $stampDirectory = Split-Path -Parent $stampPath
                     New-Item -ItemType Directory -Path $stampDirectory -Force | Out-Null
-                    $temporaryStamp = $stampPath + '.' + [guid]::NewGuid().ToString('N') + '.tmp'
-                    $expectedBinding | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $temporaryStamp -Encoding utf8
-                    Move-Item -LiteralPath $temporaryStamp -Destination $stampPath -Force
-                    $script:buildSource = 'verified'
+                    $stampWrite = Write-CheckpointSafeText $stampPath (($expectedBinding | ConvertTo-Json -Depth 8) + "`n") $stampDirectory
+                    if ($null -ne $stampWrite) {
+                        Write-Host ('refused: ' + $stampWrite)
+                        $buildExit = 2
+                        $buildState = 'failed'
+                        $script:buildState = 'failed'
+                        $script:buildSource = 'unknown'
+                    } else {
+                        $script:buildSource = 'verified'
+                    }
                 }
             }
         }

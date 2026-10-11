@@ -40,24 +40,23 @@ public static class RunOwnershipStore
         if (record.Version != 1 || record.RunId != Path.GetFileName(full) || !SamePath(record.RunDirectory, full))
             throw new InvalidOperationException("run ownership does not bind its directory");
         var path = Path.Combine(full, FileName);
-        var temp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
-        using (var stream = new FileStream(temp, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+        var json = JsonSerializer.Serialize(record, Json);
+        var ownership = SafeWrite.Under(full);
+        for (var attempt = 0; ; attempt++)
         {
-            JsonSerializer.Serialize(stream, record, Json);
-            stream.Flush(flushToDisk: true);
-        }
-        try
-        {
-            for (var attempt = 0; ; attempt++)
+            try
             {
-                try { File.Move(temp, path, true); return; }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException && attempt < 8)
-                { Thread.Sleep(20 * (attempt + 1)); }
+                var reason = SafeWrite.Text(path, json, ownership);
+                if (reason is not null)
+                    throw new IOException("refused: " + reason);
+                return;
             }
-        }
-        finally
-        {
-            if (File.Exists(temp)) SafeDelete.DeleteCreatedFile(temp);
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
+                                       && attempt < 8
+                                       && !ex.Message.StartsWith("refused:", StringComparison.Ordinal))
+            {
+                Thread.Sleep(20 * (attempt + 1));
+            }
         }
     }
 

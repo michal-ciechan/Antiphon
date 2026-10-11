@@ -56,12 +56,11 @@ public static class ReportWriter
             foreach (var reason in model.CleanupRefusals)
                 text.AppendLine("refused: " + reason);
         }
-        else if (model.OutputNames.Count == 0)
+
+        if (model.OutputNames.Count == 0 && model.OutputPaths.Count == 0)
             text.AppendLine("outputs: none");
-        else if (model.CleanedOutputs)
-            text.AppendLine("outputs: deleted " + string.Join(", ", model.OutputNames));
         else
-            text.AppendLine($"outputs: kept {string.Join(", ", model.OutputNames)} -> dotnet run --project tools/Antiphon.Checkpoints -- clean --run {model.RunId}");
+            text.AppendLine(SafeWrite.FormatOutputs(model.OutputNames, model.OutputPaths));
         text.AppendLine("evidence: " + model.Evidence);
         text.AppendLine($"verdict: {model.Verdict} exit={model.ExitCode}" + (model.Reason is null ? "" : " reason=" + model.Reason));
         return text.ToString();
@@ -72,8 +71,11 @@ public static class ReportWriter
     public static void WriteFiles(string runDirectory, ReportModel model)
     {
         var markdown = Markdown(model);
-        File.WriteAllText(Path.Combine(runDirectory, "report.md"), markdown);
-        File.WriteAllText(Path.Combine(runDirectory, "report.json"), JsonText(model));
+        var ownership = SafeWrite.Under(runDirectory);
+        var markdownRefusal = SafeWrite.Text(Path.Combine(runDirectory, "report.md"), markdown, ownership);
+        var jsonRefusal = SafeWrite.Text(Path.Combine(runDirectory, "report.json"), JsonText(model), ownership);
+        if (markdownRefusal is not null || jsonRefusal is not null)
+            throw new IOException("refused: " + (markdownRefusal ?? jsonRefusal));
     }
 
     private static string Format(double seconds)
