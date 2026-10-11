@@ -29,17 +29,20 @@ public sealed class WaitCommand
     private readonly IProcessLiveness _liveness;
     private readonly Func<DateTimeOffset> _clock;
     private readonly Func<TimeSpan, CancellationToken, Task> _delay;
+    private readonly ProcessIdentityProbe _probe;
 
     public WaitCommand(
         RunStateStore? store = null,
         IProcessLiveness? liveness = null,
         Func<DateTimeOffset>? clock = null,
-        Func<TimeSpan, CancellationToken, Task>? delay = null)
+        Func<TimeSpan, CancellationToken, Task>? delay = null,
+        ProcessIdentityProbe? probe = null)
     {
         _store = store ?? new RunStateStore();
         _liveness = liveness ?? new ProcessLiveness();
         _clock = clock ?? (() => DateTimeOffset.UtcNow);
         _delay = delay ?? ((span, token) => Task.Delay(span, token));
+        _probe = probe ?? new ProcessIdentityProbe();
     }
 
     public async Task<int> WaitAsync(
@@ -54,27 +57,28 @@ public sealed class WaitCommand
         var logPath = Path.Combine(runDirectory, "executor.log");
         var started = _clock();
         var nextBeat = started;
-        var cleanup = new ToolCopyCleanup();
+        var cleanup = new ToolCopyCleanup(_probe);
         while (true)
         {
             var now = _clock();
             var state = _store.TryRead(statePath);
-            if (state?.Phase == "done")
+            var observed = cleanup.ObserveExecutor(runDirectory);
+            // Finish publishes phase=done after the "done exit=" log line, and the
+            // process can exit in that window. Re-read once death is observed.
+            if (observed.Verdict == ProcessVerdict.Dead && state?.Phase != "done")
+                state = _store.TryRead(statePath);
+            if (state?.Phase == "done" && observed.Verdict == ProcessVerdict.Dead)
             {
-                if (cleanup.ObserveExecutor(runDirectory).Verdict == ProcessVerdict.Dead)
-                {
-                    var receipt = cleanup.Remove(runDirectory);
-                    output.WriteLine(receipt);
-                    if (File.Exists(reportPath))
-                        output.Write(File.ReadAllText(reportPath));
-                    else
-                        output.WriteLine(state.Heartbeat(now));
-                    return state.ExitCode ?? ExitCodes.Green;
-                }
+                var receipt = cleanup.Remove(runDirectory);
+                output.WriteLine(receipt);
+                if (File.Exists(reportPath))
+                    output.Write(File.ReadAllText(reportPath));
+                else
+                    output.WriteLine(state.Heartbeat(now));
+                return state.ExitCode ?? ExitCodes.Green;
             }
 
-            if (state?.Phase != "done"
-                && cleanup.ObserveExecutor(runDirectory).Verdict == ProcessVerdict.Dead)
+            if (state?.Phase != "done" && observed.Verdict == ProcessVerdict.Dead)
             {
                 output.WriteLine(cleanup.Remove(runDirectory));
                 output.WriteLine("executor died without phase=done");
