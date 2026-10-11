@@ -103,9 +103,18 @@ public sealed partial class AttentionService
     /// Each record is <see cref="Excerpt"/> of its message or detail: line endings become
     /// LF, the text is trimmed, and a value longer than <see cref="EvidenceChars"/> (400)
     /// keeps the first 400 characters plus an ellipsis. Internal LF stays. The excerpts are
-    /// joined with LF. When records remain, "{hidden} more" is appended after an LF, or
-    /// used alone when every excerpt is empty. The cap counts records. It does not count
-    /// LF-separated segments inside one excerpt, and this file does not define a physical line.
+    /// joined with LF. Joining no excerpts, or one empty excerpt, produces an empty string.
+    /// Joining two empty excerpts produces one LF. Joining three empty excerpts produces two
+    /// LFs (<c>\n\n</c>). When hidden records remain, an empty join is replaced by
+    /// "{hidden} more"; any other join is kept and "{hidden} more" is appended after one more
+    /// LF. With one hidden record those tails are <c>1 more</c>, <c>1 more</c>,
+    /// <c>\n\n1 more</c>, and <c>\n\n\n1 more</c> for 0, 1, 2, and 3 empty excerpts. Both
+    /// call sites take at most this many and set hidden to the remainder, so a positive
+    /// hidden count has joined three excerpts. Three empty excerpts and one hidden record
+    /// therefore produce the tail <c>\n\n\n1 more</c>. A historical row then prefixes the
+    /// receipts sentence and one LF when that tail is non-empty; incident evidence is the
+    /// tail itself. The cap counts records. It does not count LF-separated segments inside
+    /// one excerpt, and this file does not define a physical line.
     /// </summary>
     private const int RecentIncidentVisibleLines = 3;
 
