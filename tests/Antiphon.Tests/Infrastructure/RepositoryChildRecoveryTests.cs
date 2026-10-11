@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text.Json;
+using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Infrastructure.Git;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
@@ -311,6 +312,34 @@ public sealed class RepositoryChildRecoveryTests
             Directory.Delete(realCheckout, recursive: false);
             Directory.Delete(aliasParent, recursive: false);
         }
+    }
+
+    // CARD-1092. A tagged journal stores the dashed JSON guid. The preview suffix and the lease
+    // fence sentence both print that same id as 32 hex digits.
+    [Test]
+    public async Task C1092_TaggedJournalPreviewUsesTheFenceTaskGuid()
+    {
+        using var repo = new ScratchGitRepo("antiphon-c1092-suffix");
+        var git = new LandingGit();
+        var taskId = Guid.Parse("a1b2c3d4-e5f6-7890-abcd-ef1234567890");
+        await RepositoryChildJournal.BeginAsync(repo.Path,
+            new RepositoryChildTag(taskId, RepositoryChildPurposes.RemotePrepPush), CancellationToken.None);
+        var common = await git.CommonDirectoryAsync(repo.Path, CancellationToken.None);
+        var recordPath = Directory.EnumerateFiles(Path.Combine(common, "antiphon", "children"), "*.json").Single();
+        var json = await File.ReadAllTextAsync(recordPath);
+        json.ShouldContain(taskId.ToString("D"));
+        json.ShouldNotContain(taskId.ToString("N"));
+
+        var described = await new RepositoryMutationLease(git).DescribeUnavailableAsync(repo.Path, CancellationToken.None);
+        var fenceSuffix = "(purpose=" + RepositoryChildPurposes.RemotePrepPush + " task=" + taskId.ToString("N") + ")";
+        described.ShouldNotBeNull().ShouldContain(fenceSuffix);
+        described.ShouldNotContain(taskId.ToString("D"));
+
+        var preview = await RecoverAsync(repo.Path);
+        preview.Exit.ShouldBe(3, preview.Error + preview.Output);
+        var scriptSuffix = " purpose=" + RepositoryChildPurposes.RemotePrepPush + " task=" + taskId.ToString("N");
+        preview.Output.ShouldContain("retained (unknown): " + recordPath + scriptSuffix);
+        preview.Output.ShouldNotContain(taskId.ToString("D"));
     }
 
     private static Task<(int Exit, string Output, string Error)> RecoverAsync(string repository, params string[] options) =>
