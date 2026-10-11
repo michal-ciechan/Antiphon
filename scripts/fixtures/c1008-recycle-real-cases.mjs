@@ -289,7 +289,11 @@ build_server2_images() {
   write_result ${options.partialUp?'false FixtureVerificationInterrupted 2':"true '' 0"}
 }
 `;
-  const script=f.root+'/'+name+'.sh'; fs.writeFileSync(script,transformed.replace("trap 'ec=$?;",injected+"\ntrap 'ec=$?;"));
+  // CARD-1189 put an earlier trap inside c849_fixture. The main exit trap is the injection point.
+  const anchor="trap 'ec=$?; if [ \"$WROTE\" != 1 ]";
+  const hits=transformed.split(anchor).length-1;
+  if(hits!==1)throw Error('RecycleTrapAnchorMissing:'+hits);
+  const script=f.root+'/'+name+'.sh'; fs.writeFileSync(script,transformed.replace(anchor,injected+'\n'+anchor));
   if(options.prepareOnly)return script;
   const env={...process.env,C590_CASE:hostCase,C590_SHA:source,C590_RUN:'c1008real',C590_REEXEC:'1',C604_SERVER_ORIGIN:originUrl};
   let outcome; try {outcome=await boundedChild('bash',[script],{env},90000);} catch(e){outcome=e;}
