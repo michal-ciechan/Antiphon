@@ -625,7 +625,7 @@ public sealed class OutputCleanupTests : CheckpointTestBase
         CheckpointFixtures.MarkRun(run, alive: false);
         var output = new StringWriter();
 
-        var exit = await Program.RunAsync(["stop", "--run", run, "--repo-root", root],
+        var exit = await Antiphon.Checkpoints.Program.RunAsync(["stop", "--run", run, "--repo-root", root],
             new CheckpointApp.Runtime { Output = output });
 
         exit.ShouldBe(ExitCodes.Invalid);
