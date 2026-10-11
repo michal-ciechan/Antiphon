@@ -289,8 +289,8 @@ public sealed class RemoteScriptContractTests
             [ ! -e "$outside/case-target/lock-holder.log" ] && [ ! -e "$outside/case-target/race-p1.log" ] || { printf 'FAIL case-link-wrote\n'; exit 1; }
             printf 'PASS c1193-log-copy\n'
             """);
-        output.ShouldContain("PASS c1193-log-copy");
-        output.ShouldNotContain("FAIL ");
+        output.IndexOf("PASS c1193-log-copy", StringComparison.Ordinal).ShouldBeGreaterThanOrEqualTo(0, output);
+        output.IndexOf("FAIL ", StringComparison.Ordinal).ShouldBe(-1, output);
     }
 
     private static string C1193LogCopySnippet(string trap)
