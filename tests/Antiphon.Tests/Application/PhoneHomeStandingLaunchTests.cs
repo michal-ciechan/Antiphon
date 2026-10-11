@@ -659,7 +659,7 @@ public class PhoneHomeStandingLaunchTests
 
         public Task AttachAsync(Guid sessionId, CancellationToken ct) => inner.AttachAsync(sessionId, ct);
         public Task<bool> KillAsync(TimeSpan timeout, CancellationToken ct) => inner.KillAsync(timeout, ct);
-        public Task<bool> KillGenerationAsync(DateTime expectedAcceptedStartedAt, TimeSpan timeout, CancellationToken ct) =>
+        public Task<AdapterGenerationKill> KillGenerationAsync(DateTime expectedAcceptedStartedAt, TimeSpan timeout, CancellationToken ct) =>
             inner.KillGenerationAsync(expectedAcceptedStartedAt, timeout, ct);
         public Task SendPromptAsync(string prompt, CancellationToken ct) => inner.SendPromptAsync(prompt, ct);
         public Task<bool> WaitForFirstPromptOutputAsync(TimeSpan timeout, CancellationToken ct) =>

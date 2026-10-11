@@ -4,6 +4,13 @@ using Antiphon.SessionRunner.Contracts;
 namespace Antiphon.Server.Application.Interfaces;
 
 /// <summary>
+/// Result of <see cref="IAgentProtocolAdapter.KillGenerationAsync"/>.
+/// <see cref="Cause"/> is authoritative only when this call observed it.
+/// Unknown and null do not mean the kill produced the exit.
+/// </summary>
+public readonly record struct AdapterGenerationKill(bool Killed, AgentExitReason? Cause);
+
+/// <summary>
 /// Hides protocol-specific behaviour (when ready, when turn complete, response shape)
 /// behind one seam so Codex / Claude / Gemini / Aider / raw shells slot in
 /// without hardcoded quirks at the call site.
@@ -19,10 +26,13 @@ public interface IAgentProtocolAdapter : IAsyncDisposable
     /// <summary>
     /// CARD-0502: kill only if this adapter still represents <paramref name="expectedAcceptedStartedAt"/>.
     /// Default is a non-kill — never an unconditional <see cref="KillAsync"/> fallback.
+    /// <see cref="AdapterGenerationKill.Cause"/> is what this call observed (KilledByRequest versus
+    /// an exit that had already happened). Null is not a cause: the exit watcher updates
+    /// <see cref="ExitReason"/> later and must not authorise a launch-failure rewrite (CARD-1190).
     /// </summary>
-    Task<bool> KillGenerationAsync(
+    Task<AdapterGenerationKill> KillGenerationAsync(
         DateTime expectedAcceptedStartedAt, TimeSpan timeout, CancellationToken ct) =>
-        Task.FromResult(false);
+        Task.FromResult(new AdapterGenerationKill(false, null));
     Task<int> Exited { get; }
     int? Pid { get; }
     AgentExitReason ExitReason { get; }

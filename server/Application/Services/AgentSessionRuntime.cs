@@ -1592,7 +1592,7 @@ public sealed class AgentSessionRuntime
         Guid sessionId, DateTime expectedAcceptedStartedAt, TimeSpan timeout, CancellationToken ct)
     {
         if (_testAdapters.TryGetValue(sessionId, out var adapter))
-            return await adapter.KillGenerationAsync(expectedAcceptedStartedAt, timeout, ct);
+            return (await adapter.KillGenerationAsync(expectedAcceptedStartedAt, timeout, ct)).Killed;
 
         var result = await _runnerClient.KillGenerationAsync(sessionId, expectedAcceptedStartedAt, ct);
         return result.Killed;

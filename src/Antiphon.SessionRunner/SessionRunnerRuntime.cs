@@ -1046,18 +1046,18 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             if (!SessionGeneration.Equal(session.AcceptedStartedAt, expectedAcceptedStartedAt))
             {
                 return new RunnerKillGenerationResult(
-                    sessionId, false, KillGenerationOutcomes.Mismatch, session.AcceptedStartedAt);
+                    sessionId, false, KillGenerationOutcomes.Mismatch, session.AcceptedStartedAt, session.ToDto().ExitReason);
             }
 
             if (session.HasExited)
             {
                 return new RunnerKillGenerationResult(
-                    sessionId, false, KillGenerationOutcomes.AlreadyExited, session.AcceptedStartedAt);
+                    sessionId, false, KillGenerationOutcomes.AlreadyExited, session.AcceptedStartedAt, session.ToDto().ExitReason);
             }
 
             await session.KillAsync(timeout, ct);
             return new RunnerKillGenerationResult(
-                sessionId, true, KillGenerationOutcomes.Killed, session.AcceptedStartedAt);
+                sessionId, true, KillGenerationOutcomes.Killed, session.AcceptedStartedAt, session.ToDto().ExitReason);
         }
         finally { gate.Release(); }
     }
