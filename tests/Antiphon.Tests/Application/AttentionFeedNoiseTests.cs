@@ -8,7 +8,9 @@ namespace Antiphon.Tests.Application;
 /// <summary>
 /// CARD-1085. Land outcome receipts collapse to the newest row per task. Historical legacy rows
 /// age out once the task is Succeeded or Canceled and older than the feed's 24h window. Unconfirmed
-/// outcome rows do not: CARD-0467 keeps an unconfirmed receipt until it is confirmed.
+/// outcome rows do not: CARD-0467 keeps an unconfirmed receipt until it is confirmed. An unresolved
+/// LandRefused never ages out. A task with both an eligible receipt and an unresolved refusal
+/// contributes one legacy row, represented by the refusal, with the other events folded into evidence.
 /// </summary>
 [Category("Integration")]
 public sealed class AttentionFeedNoiseTests
@@ -75,6 +77,7 @@ public sealed class AttentionFeedNoiseTests
         outcome.Evidence.ShouldStartWith("receipts=2\n");
     }
 
+    // Coverage gap: this refusal is cleared by a directly inserted ConfirmedAt, not the producer-to-recipient path.
     [Test]
     public async Task C1085_Unresolved_land_refusal_survives_the_legacy_age_out()
     {
@@ -159,6 +162,118 @@ public sealed class AttentionFeedNoiseTests
         critical.KindCounts.ShouldContain(c => c.Kind == AttentionKind.RecentCriticalIncident && c.Count >= 1);
         critical.Items.ShouldAllBe(i => i.Severity >= AlertSeverity.Critical);
     }
+
+    [Test]
+    public async Task C1085_Mixed_history_prefers_the_unresolved_refusal_and_caps_the_folded_receipts()
+    {
+        await using var scenario = new AttentionServiceTests.Scenario();
+        var session = await scenario.AddSessionAsync();
+        var task = await scenario.AddTaskAsync(session, AgentTaskStatus.Working, dispatchedMinutesAgo: 240);
+        await scenario.AddLegacyLandEventAsync(task, DateTime.UtcNow.AddHours(-5), detail: "receipt-oldest");
+        await scenario.AddLegacyLandEventAsync(task, DateTime.UtcNow.AddHours(-4), detail: "receipt-two");
+        await scenario.AddLegacyLandEventAsync(task, DateTime.UtcNow.AddHours(-3), detail: "receipt-three");
+        await scenario.AddLegacyLandEventAsync(task, DateTime.UtcNow.AddHours(-2), detail: "receipt-newest");
+        var refusal = await scenario.AddLegacyLandEventAsync(
+            task, DateTime.UtcNow.AddMinutes(-30), AgentTaskEventType.LandRefused, detail: "refusal-row");
+
+        var rows = LegacyRows(await ReadOwnedAsync(scenario), task);
+
+        var row = rows.ShouldHaveSingleItem();
+        row.ConditionKey.ShouldBe($"legacy-land:{refusal:N}");
+        row.Evidence.ShouldBe(
+            "Historical routing/receipt is unknown; no new message is inferred or replayed. receipts=5.\n"
+            + "receipt-newest\nreceipt-three\nreceipt-two\n1 more");
+        row.Evidence.ShouldNotContain("receipt-oldest");
+        row.Evidence.ShouldNotContain("refusal-row");
+    }
+
+    [Test]
+    public async Task C1085_Aged_out_receipt_plus_unresolved_refusal_is_only_the_refusal()
+    {
+        await using var scenario = new AttentionServiceTests.Scenario();
+        var session = await scenario.AddSessionAsync();
+        var task = await scenario.AddTaskAsync(
+            session, AgentTaskStatus.Succeeded, dispatchedMinutesAgo: 60 * 24 * 4, completedMinutesAgo: 60 * 24 * 3);
+        await scenario.AddLegacyLandEventAsync(task, DateTime.UtcNow.AddDays(-3), detail: "aged-receipt-marker");
+        var refusal = await scenario.AddLegacyLandEventAsync(
+            task, DateTime.UtcNow.AddDays(-2), AgentTaskEventType.LandRefused);
+
+        var row = LegacyRows(await ReadOwnedAsync(scenario), task).ShouldHaveSingleItem();
+
+        row.ConditionKey.ShouldBe($"legacy-land:{refusal:N}");
+        row.Evidence.ShouldBe(
+            "Historical routing/receipt is unknown; no new message is inferred or replayed. receipts=1.");
+        row.Evidence.ShouldNotContain("aged-receipt-marker");
+    }
+
+    [Test]
+    public async Task C1085_Unconfirmed_receipt_stays_when_a_later_publication_resolves_the_refusal()
+    {
+        await using var scenario = new AttentionServiceTests.Scenario();
+        var session = await scenario.AddSessionAsync();
+        var task = await scenario.AddTaskAsync(
+            session, AgentTaskStatus.Succeeded, dispatchedMinutesAgo: 180, completedMinutesAgo: 30);
+        var refusal = await scenario.AddLegacyLandEventAsync(
+            task, DateTime.UtcNow.AddHours(-3), AgentTaskEventType.LandRefused);
+        var receipt = await scenario.AddLegacyLandEventAsync(
+            task, DateTime.UtcNow.AddMinutes(-30), detail: "live-receipt",
+            publication: LandPublicationOutcome.Landed);
+
+        var row = LegacyRows(await ReadOwnedAsync(scenario), task).ShouldHaveSingleItem();
+
+        row.ConditionKey.ShouldBe($"legacy-land:{receipt:N}");
+        row.ConditionKey.ShouldNotBe($"legacy-land:{refusal:N}");
+        row.Evidence.ShouldBe(
+            "Historical routing/receipt is unknown; no new message is inferred or replayed. receipts=1.");
+    }
+
+    [Test]
+    public async Task C1085_Aged_receipt_and_resolved_refusal_emit_no_legacy_row()
+    {
+        await using var scenario = new AttentionServiceTests.Scenario();
+        var session = await scenario.AddSessionAsync();
+        var task = await scenario.AddTaskAsync(
+            session, AgentTaskStatus.Succeeded, dispatchedMinutesAgo: 60 * 24 * 5, completedMinutesAgo: 60 * 24 * 4);
+        await scenario.AddLegacyLandEventAsync(
+            task, DateTime.UtcNow.AddDays(-4), AgentTaskEventType.LandRefused);
+        await scenario.AddLegacyLandEventAsync(
+            task, DateTime.UtcNow.AddDays(-3), publication: LandPublicationOutcome.Landed);
+
+        LegacyRows(await ReadOwnedAsync(scenario), task).ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task C1085_Two_tasks_with_mixed_histories_emit_two_legacy_rows()
+    {
+        await using var scenario = new AttentionServiceTests.Scenario();
+        var session = await scenario.AddSessionAsync();
+        var first = await scenario.AddTaskAsync(session, AgentTaskStatus.Working, dispatchedMinutesAgo: 240);
+        var second = await scenario.AddTaskAsync(session, AgentTaskStatus.Working, dispatchedMinutesAgo: 240);
+        await scenario.AddLegacyLandEventAsync(first, DateTime.UtcNow.AddHours(-2), detail: "first-receipt");
+        var firstRefusal = await scenario.AddLegacyLandEventAsync(
+            first, DateTime.UtcNow.AddHours(-1), AgentTaskEventType.LandRefused);
+        await scenario.AddLegacyLandEventAsync(second, DateTime.UtcNow.AddHours(-2), detail: "second-receipt");
+        var secondRefusal = await scenario.AddLegacyLandEventAsync(
+            second, DateTime.UtcNow.AddHours(-1), AgentTaskEventType.LandRefused);
+
+        var items = await ReadOwnedAsync(scenario);
+        var rows = items.Where(i => i.Kind == AttentionKind.LandLegacyUnverified).ToList();
+
+        rows.Count.ShouldBe(2);
+        var firstRow = rows.Where(i => i.TaskId == first).ShouldHaveSingleItem();
+        var secondRow = rows.Where(i => i.TaskId == second).ShouldHaveSingleItem();
+        firstRow.ConditionKey.ShouldBe($"legacy-land:{firstRefusal:N}");
+        secondRow.ConditionKey.ShouldBe($"legacy-land:{secondRefusal:N}");
+        firstRow.Evidence.ShouldBe(
+            "Historical routing/receipt is unknown; no new message is inferred or replayed. receipts=2.\n"
+            + "first-receipt");
+        secondRow.Evidence.ShouldBe(
+            "Historical routing/receipt is unknown; no new message is inferred or replayed. receipts=2.\n"
+            + "second-receipt");
+    }
+
+    private static List<AttentionItemDto> LegacyRows(List<AttentionItemDto> items, Guid taskId) =>
+        items.Where(i => i.TaskId == taskId && i.Kind == AttentionKind.LandLegacyUnverified).ToList();
 
     private static async Task<List<AttentionItemDto>> ReadOwnedAsync(AttentionServiceTests.Scenario scenario)
     {

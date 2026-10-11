@@ -97,10 +97,19 @@ public sealed partial class AttentionService
     private const int RecentFailureCap = 20;
 
     /// <summary>
-    /// CARD-1085: a recent-incident group shows this many newest messages, then "N more".
-    /// One row per agent and kind stays the row; the line cap is what a reader sees inside it.
+    /// CARD-1085: a grouped evidence tail shows this many newest lines, then "N more".
+    /// Recent incidents use it per agent and kind. A mixed historical land row uses it for
+    /// the events that did not become that task's one representative.
     /// </summary>
     private const int RecentIncidentVisibleLines = 3;
+
+    private static readonly AgentTaskEventType[] HistoricalReceiptEventTypes =
+    [
+        AgentTaskEventType.Landed,
+        AgentTaskEventType.AlreadyPresent,
+        AgentTaskEventType.LandedWithResidue,
+        AgentTaskEventType.LandingCleanup,
+    ];
 
     private const int EvidenceChars = 400;
     private const int CheckDigestTailLines = 6;
@@ -1515,10 +1524,41 @@ public sealed partial class AttentionService
             .GroupBy(i => i.ConditionKey ?? i.Kind + ":" + i.TaskId)
             .Select(g => g.First())
             .ToList();
-        var legacy = await LoadHistoricalLandGroupsAsync(ct,
-            AgentTaskEventType.Landed, AgentTaskEventType.AlreadyPresent,
-            AgentTaskEventType.LandedWithResidue, AgentTaskEventType.LandingCleanup);
-        foreach (var group in legacy)
+        // Eligibility stays split: a receipt ages out 24h after Succeeded/Canceled, and an
+        // unresolved LandRefused does not. A task that qualifies on both sides still contributes
+        // one row — the refusal when a human still has to look, otherwise the newest receipt.
+        await AppendHistoricalLandRowsAsync(items, now, ct);
+        return items;
+    }
+
+    private async Task AppendHistoricalLandRowsAsync(
+        List<AttentionItemDto> items, DateTime now, CancellationToken ct)
+    {
+        var receipts = await EligibleHistoricalReceiptsAsync(now, ct);
+        var refusals = await EligibleHistoricalRefusalsAsync(ct);
+        foreach (var taskId in receipts.Keys.Union(refusals.Keys).OrderBy(id => id))
+        {
+            receipts.TryGetValue(taskId, out var receipt);
+            refusals.TryGetValue(taskId, out var refusal);
+            if (receipt is not null && refusal is not null)
+            {
+                var folded = await FoldedHistoricalEventsAsync(taskId, refusal.Newest.Id, ct);
+                AddHistoricalLandRow(
+                    items, refusal.Task, refusal.Newest, receipt.Count + refusal.Count,
+                    FoldHistoricalEvidence(receipt.Count + refusal.Count, folded));
+                continue;
+            }
+
+            var only = refusal ?? receipt!;
+            AddHistoricalLandRow(items, only.Task, only.Newest, only.Count);
+        }
+    }
+
+    private async Task<Dictionary<Guid, EligibleHistoricalGroup>> EligibleHistoricalReceiptsAsync(
+        DateTime now, CancellationToken ct)
+    {
+        var result = new Dictionary<Guid, EligibleHistoricalGroup>();
+        foreach (var group in await LoadHistoricalLandGroupsAsync(ct, HistoricalReceiptEventTypes))
         {
             var source = group.Newest;
             if (await LegacyReceiptConfirmedAsync(source, ct)) continue;
@@ -1529,22 +1569,62 @@ public sealed partial class AttentionService
             if (task.Status is AgentTaskStatus.Succeeded or AgentTaskStatus.Canceled
                 && now - source.At >= RecencyWindow)
                 continue;
-            AddHistoricalLandRow(items, task, source, group.Count);
+            result[task.Id] = new EligibleHistoricalGroup(task, group.Count, source);
         }
 
-        // CARD-1085 repair: task success is not publication. A historical LandRefused stays until
-        // the same confirmation the receipt above already trusts, or a later confirmed publication.
-        var refusals = await LoadHistoricalLandGroupsAsync(ct, AgentTaskEventType.LandRefused);
-        foreach (var group in refusals)
+        return result;
+    }
+
+    /// <summary>
+    /// Task success is not publication. A historical LandRefused stays until the same
+    /// confirmation a receipt already trusts, or a later confirmed publication.
+    /// </summary>
+    private async Task<Dictionary<Guid, EligibleHistoricalGroup>> EligibleHistoricalRefusalsAsync(
+        CancellationToken ct)
+    {
+        var result = new Dictionary<Guid, EligibleHistoricalGroup>();
+        foreach (var group in await LoadHistoricalLandGroupsAsync(ct, AgentTaskEventType.LandRefused))
         {
             var source = group.Newest;
             if (await LandRefusalResolvedAsync(source, ct)) continue;
             var task = await _db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == source.AgentTaskId, ct);
             if (task.ReplyTo == AgentTaskReplyTo.None) continue;
-            AddHistoricalLandRow(items, task, source, group.Count);
+            result[task.Id] = new EligibleHistoricalGroup(task, group.Count, source);
         }
-        return items;
+
+        return result;
     }
+
+    private async Task<List<AgentTaskEvent>> FoldedHistoricalEventsAsync(
+        Guid taskId, Guid representativeId, CancellationToken ct)
+    {
+        var typeList = HistoricalReceiptEventTypes.Append(AgentTaskEventType.LandRefused).ToArray();
+        var events = await _db.AgentTaskEvents.AsNoTracking()
+            .Where(e => e.AgentTaskId == taskId && e.LandRequestId == null && typeList.Contains(e.Type))
+            .ToListAsync(ct);
+        return events
+            .Where(e => e.Id != representativeId)
+            .OrderByDescending(e => e.At)
+            .ThenByDescending(e => e.Id)
+            .ToList();
+    }
+
+    private static string FoldHistoricalEvidence(int count, IReadOnlyList<AgentTaskEvent> others)
+    {
+        var summary = HistoricalReceiptSentence(count);
+        if (others.Count == 0)
+            return summary;
+
+        var shown = others.Take(RecentIncidentVisibleLines).ToList();
+        var hidden = others.Count - shown.Count;
+        var lines = string.Join("\n", shown.Select(e => Excerpt(e.Detail)));
+        if (hidden > 0)
+            lines = string.IsNullOrEmpty(lines) ? $"{hidden} more" : lines + $"\n{hidden} more";
+        return string.IsNullOrEmpty(lines) ? summary : summary + "\n" + lines;
+    }
+
+    private static string HistoricalReceiptSentence(int count) =>
+        $"Historical routing/receipt is unknown; no new message is inferred or replayed. receipts={count}.";
 
     private async Task<List<HistoricalLandGroup>> LoadHistoricalLandGroupsAsync(
         CancellationToken ct, params AgentTaskEventType[] types)
@@ -1585,15 +1665,17 @@ public sealed partial class AttentionService
     }
 
     private static void AddHistoricalLandRow(
-        List<AttentionItemDto> items, AgentTask task, AgentTaskEvent source, int count)
+        List<AttentionItemDto> items, AgentTask task, AgentTaskEvent source, int count, string? evidence = null)
     {
         items.Add(new AttentionItemDto(AttentionKind.LandLegacyUnverified, AlertSeverity.Info, task.Id, null, task.AgentId, null,
             task.Title, "Historical Land receipt: LegacyUnverified",
-            $"Historical routing/receipt is unknown; no new message is inferred or replayed. receipts={count}.",
+            evidence ?? HistoricalReceiptSentence(count),
             source.At, null, [AttentionAction.OpenDrawer], task.CardId, ConditionKey: $"legacy-land:{source.Id:N}"));
     }
 
     private sealed record HistoricalLandGroup(int Count, AgentTaskEvent Newest);
+
+    private sealed record EligibleHistoricalGroup(AgentTask Task, int Count, AgentTaskEvent Newest);
 
     private static List<AttentionItemDto> CollapseLandOutcomeReceipts(List<AttentionItemDto> items)
     {
