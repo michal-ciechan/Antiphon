@@ -522,7 +522,7 @@ public sealed partial class AgentTaskDispatcher
 
         // CARD-0481: a new reason deserves a trace even when this task was held before.
         // Repeated ticks with the same reason stay silent inside the current stint.
-        // CARD-0535 / CARD-1100: the stint floor is the latest Dispatched event. HeldAged
+        // CARD-0535 / CARD-1100: the stint floor is the last Dispatched (At, Id). HeldAged
         // prefixes stay on that floor so age escalation is restart-safe without new columns.
         var queuedIds = queued.Select(t => t.Id).ToList();
         var holdIndex = await LoadQueuedHoldIndexAsync(queuedIds, ct);
@@ -1255,6 +1255,12 @@ public sealed partial class AgentTaskDispatcher
         return true;
     }
 
+    /// <summary>
+    /// Strictly after the stint floor. Equal timestamps break by <see cref="Guid.CompareTo(Guid)"/>.
+    /// </summary>
+    private static bool IsAfterStintFloor(DateTime at, Guid id, DateTime floorAt, Guid floorId) =>
+        at > floorAt || (at == floorAt && id.CompareTo(floorId) > 0);
+
     private async Task<QueuedHoldIndex> LoadQueuedHoldIndexAsync(
         IReadOnlyList<Guid> queuedIds, CancellationToken ct)
     {
@@ -1270,33 +1276,51 @@ public sealed partial class AgentTaskDispatcher
             .ToListAsync(ct);
         foreach (var group in rows.GroupBy(e => e.AgentTaskId))
         {
-            var floor = DateTime.MinValue;
+            // Event ids are random guids, not insertion order. The last Dispatched row is
+            // the greatest (At, Id) under Guid.CompareTo, the same tie-break as
+            // ThenByDescending(e => e.Id) on Held. A row is in the stint only when its
+            // pair is strictly greater, so a same-timestamp Held ordered after that id
+            // still dedupes and one ordered before still starts a new row.
+            var floorAt = DateTime.MinValue;
+            var floorId = Guid.Empty;
+            var hasDispatch = false;
             foreach (var row in group)
             {
-                if (row.Type == AgentTaskEventType.Dispatched && row.At > floor)
-                    floor = row.At;
+                if (row.Type != AgentTaskEventType.Dispatched)
+                    continue;
+                if (!hasDispatch || IsAfterStintFloor(row.At, row.Id, floorAt, floorId))
+                {
+                    floorAt = row.At;
+                    floorId = row.Id;
+                    hasDispatch = true;
+                }
             }
+
+            bool InStint(DateTime at, Guid id) =>
+                hasDispatch
+                    ? IsAfterStintFloor(at, id, floorAt, floorId)
+                    : at > DateTime.MinValue;
 
             // CARD-1100: dedupe against this stint only. The same sentence after a
             // re-queue must write a new Held row, or HeldSince and the pipeline reason stay unset.
             var lastHeld = group
-                .Where(e => e.Type == AgentTaskEventType.Held && e.At > floor)
+                .Where(e => e.Type == AgentTaskEventType.Held && InStint(e.At, e.Id))
                 .OrderByDescending(e => e.At).ThenByDescending(e => e.Id)
                 .FirstOrDefault();
             if (lastHeld is not null)
                 index.LastHeld[group.Key] = lastHeld.Detail;
 
             var stint = group
-                .Where(e => e.Type == AgentTaskEventType.Held && e.At > floor)
+                .Where(e => e.Type == AgentTaskEventType.Held && InStint(e.At, e.Id))
                 .OrderBy(e => e.At).ThenBy(e => e.Id)
                 .ToList();
             var firstHeld = stint.FirstOrDefault();
             if (firstHeld is not null)
                 index.HeldSince[group.Key] = firstHeld.At;
-            index.Floor[group.Key] = floor;
+            index.Floor[group.Key] = floorAt;
             index.HeldRows[group.Key] = stint.Select(e => (e.At, e.Detail)).ToList();
 
-            foreach (var aged in group.Where(e => e.Type == AgentTaskEventType.HeldAged && e.At > floor))
+            foreach (var aged in group.Where(e => e.Type == AgentTaskEventType.HeldAged && InStint(e.At, e.Id)))
             {
                 if (aged.Detail.StartsWith(DispatchHoldDetails.WarningPrefix, StringComparison.Ordinal))
                     index.Warned.Add(group.Key);

@@ -403,6 +403,100 @@ public sealed partial class DispatchHoldVisibilityTests
         }
     }
 
+    /// <summary>
+    /// CARD-1100. A Held row that shares the last Dispatched timestamp and sorts after
+    /// its id is inside the stint, so the same sentence is not written again.
+    /// </summary>
+    [Test]
+    public async Task C1100_a_same_timestamp_held_after_the_dispatched_id_is_deduped()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        var t0 = UtcMs();
+        var clock = new FakeTimeProvider(new DateTimeOffset(t0, TimeSpan.Zero));
+        await using var world = CreateWorld(schema.ConnectionString, clock, new FakeLease(), maxConcurrent: 1);
+        var (agentId, _) = await ModelAvailabilityDispatcherTests.SeedWarmAgentAsync(
+            schema.ConnectionString, workspace.Path);
+        await SeedDispatchedAsync(schema, workspace.Path, t0);
+        var queued = await SeedQueuedAsync(schema, workspace.Path, agentId, t0);
+        var sentence = DispatchHoldDetails.ConcurrencyCap(1);
+        var (earlier, later) = StintIdTie();
+        await using (var db = CreateContext(schema))
+        {
+            db.AgentTaskEvents.AddRange(
+                Event(queued.Id, AgentTaskEventType.Held, sentence, t0, later),
+                Event(queued.Id, AgentTaskEventType.Dispatched, "prior dispatch", t0, earlier));
+            await db.SaveChangesAsync();
+        }
+
+        await using (var db = CreateContext(schema))
+        {
+            var rows = await db.AgentTaskEvents.AsNoTracking()
+                .Where(e => e.AgentTaskId == queued.Id)
+                .ToListAsync();
+            var held = rows.Single(e => e.Type == AgentTaskEventType.Held);
+            var dispatched = rows.Single(e => e.Type == AgentTaskEventType.Dispatched);
+            held.At.ShouldBe(dispatched.At);
+            held.Id.CompareTo(dispatched.Id).ShouldBeGreaterThan(0);
+        }
+
+        (await world.Dispatcher.TickAsync(CancellationToken.None)).SkippedConcurrency.ShouldBe(1);
+        await world.Dispatcher.TickAsync(CancellationToken.None);
+
+        await using var verify = CreateContext(schema);
+        var heldRows = await HeldAsync(verify, queued.Id);
+        heldRows.Count.ShouldBe(1);
+        heldRows[0].Id.ShouldBe(later);
+        heldRows[0].Detail.ShouldBe(sentence);
+        heldRows[0].At.ShouldBe(t0);
+    }
+
+    /// <summary>
+    /// CARD-1100. A Held row that shares the last Dispatched timestamp and sorts before
+    /// its id is outside the stint, so the same sentence writes a second Held row.
+    /// </summary>
+    [Test]
+    public async Task C1100_a_same_timestamp_held_before_the_dispatched_id_writes_a_second_row()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        var t0 = UtcMs();
+        var clock = new FakeTimeProvider(new DateTimeOffset(t0, TimeSpan.Zero));
+        await using var world = CreateWorld(schema.ConnectionString, clock, new FakeLease(), maxConcurrent: 1);
+        var (agentId, _) = await ModelAvailabilityDispatcherTests.SeedWarmAgentAsync(
+            schema.ConnectionString, workspace.Path);
+        await SeedDispatchedAsync(schema, workspace.Path, t0);
+        var queued = await SeedQueuedAsync(schema, workspace.Path, agentId, t0);
+        var sentence = DispatchHoldDetails.ConcurrencyCap(1);
+        var (earlier, later) = StintIdTie();
+        await using (var db = CreateContext(schema))
+        {
+            db.AgentTaskEvents.AddRange(
+                Event(queued.Id, AgentTaskEventType.Held, sentence, t0, earlier),
+                Event(queued.Id, AgentTaskEventType.Dispatched, "prior dispatch", t0, later));
+            await db.SaveChangesAsync();
+        }
+
+        await using (var db = CreateContext(schema))
+        {
+            var rows = await db.AgentTaskEvents.AsNoTracking()
+                .Where(e => e.AgentTaskId == queued.Id)
+                .ToListAsync();
+            var held = rows.Single(e => e.Type == AgentTaskEventType.Held);
+            var dispatched = rows.Single(e => e.Type == AgentTaskEventType.Dispatched);
+            held.At.ShouldBe(dispatched.At);
+            held.Id.CompareTo(dispatched.Id).ShouldBeLessThan(0);
+        }
+
+        (await world.Dispatcher.TickAsync(CancellationToken.None)).SkippedConcurrency.ShouldBe(1);
+
+        await using var verify = CreateContext(schema);
+        var heldRows = await HeldAsync(verify, queued.Id);
+        heldRows.Count.ShouldBe(2);
+        heldRows.ShouldAllBe(e => e.At == t0 && e.Detail == sentence);
+        heldRows.ShouldContain(e => e.Id == earlier);
+    }
+
     [Test]
     public async Task a_dated_routing_pin_never_escalates()
     {
@@ -758,15 +852,29 @@ public sealed partial class DispatchHoldVisibilityTests
             .Select(t => t.Id).SingleAsync();
     }
 
-    private static AgentTaskEvent Event(Guid taskId, AgentTaskEventType type, string detail, DateTime at) =>
+    private static AgentTaskEvent Event(
+        Guid taskId, AgentTaskEventType type, string detail, DateTime at, Guid? id = null) =>
         new()
         {
-            Id = Guid.NewGuid(),
+            Id = id ?? Guid.NewGuid(),
             AgentTaskId = taskId,
             Type = type,
             Detail = detail,
             At = at,
         };
+
+    /// <summary>
+    /// Event ids are random guids. The stint tie-break is <see cref="Guid.CompareTo(Guid)"/>,
+    /// not insertion order, so the pair is ordered by that comparer.
+    /// </summary>
+    private static (Guid Earlier, Guid Later) StintIdTie()
+    {
+        var earlier = new Guid("00000000-0000-0000-0000-000000000001");
+        var later = new Guid("ffffffff-ffff-ffff-ffff-ffffffffffff");
+        if (earlier.CompareTo(later) > 0)
+            (earlier, later) = (later, earlier);
+        return (earlier, later);
+    }
 
     private static DateTime UtcMs()
     {
