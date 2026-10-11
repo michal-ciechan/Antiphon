@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Text.RegularExpressions;
 
 namespace Antiphon.Checkpoints;
@@ -6,6 +5,7 @@ namespace Antiphon.Checkpoints;
 public sealed class CleanResult
 {
     public List<string> Deleted { get; init; } = [];
+    public List<string> Refusals { get; init; } = [];
     public bool KeptBecauseRed { get; init; }
 }
 
@@ -47,23 +47,80 @@ public static class OutputCleanup
     }
 
     public static CleanResult CleanOwnedOutputs(string repoRoot, IReadOnlyCollection<string> ownedIds, int exitCode, bool cleanOnRed, bool dryRun,
-        Action? beforeDelete = null, IReadOnlyCollection<string>? createdPaths = null)
+        Action? beforeDelete = null, IReadOnlyCollection<string>? createdPaths = null, string? gitExecutable = null,
+        bool refuseUnrecorded = false)
     {
         if (exitCode != 0 && !cleanOnRed)
             return new CleanResult { KeptBecauseRed = true };
 
         var owned = new HashSet<string>(ownedIds.Where(IsIsolatedOutputId), StringComparer.Ordinal);
         var deleted = new List<string>();
+        var refusals = new List<string>();
         var root = Path.GetFullPath(repoRoot);
-        if (createdPaths is not null)
+        if (createdPaths is null)
         {
-            foreach (var path in createdPaths)
-                TryDelete(root, path, owned, dryRun, deleted, beforeDelete);
-            return new CleanResult { Deleted = deleted };
+            refusals.Add("inventory-missing");
+            return new CleanResult { Deleted = deleted, Refusals = refusals };
         }
 
-        DeleteMatches(root, root, owned, dryRun, deleted, beforeDelete);
-        return new CleanResult { Deleted = deleted };
+        if (refuseUnrecorded)
+        {
+            foreach (var id in owned)
+            {
+                foreach (var match in MatchingIsolatedDirectories(root, id))
+                {
+                    if (!Listed(createdPaths, match))
+                        refusals.Add("not-created-by-run");
+                }
+            }
+        }
+
+        foreach (var path in createdPaths)
+        {
+            string full;
+            try { full = Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar); }
+            catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+            {
+                refusals.Add("path-unsafe");
+                continue;
+            }
+
+            var name = Path.GetFileName(full);
+            var present = Directory.Exists(full) || File.Exists(full);
+            if (!IsStrictlyInside(root, full))
+            {
+                if (present)
+                    refusals.Add("outside-isolated-root");
+                continue;
+            }
+
+            if (!IsIsolatedOutputId(name))
+            {
+                if (present)
+                    refusals.Add("not-isolated-output");
+                continue;
+            }
+
+            if (!owned.Contains(name) || !Directory.Exists(full))
+                continue;
+
+            var result = SafeDelete.Apply(full, new DeleteOwnership
+            {
+                IsolatedRoot = root,
+                CreatedPaths = createdPaths,
+                RequireInventory = true,
+                RequireBinName = true,
+                DryRun = dryRun,
+                AllowOutsideRepository = false,
+                GitExecutable = gitExecutable,
+            }, beforeDelete);
+            if (result.Disposition == DeleteDisposition.Refused)
+                refusals.Add(result.Reason ?? "refused");
+            else if (result.Disposition is DeleteDisposition.Deleted or DeleteDisposition.DryRun)
+                deleted.Add(result.Path);
+        }
+
+        return new CleanResult { Deleted = deleted, Refusals = refusals };
     }
 
     public static List<string> MatchingIsolatedDirectories(string repoRoot, string buildId)
@@ -92,53 +149,6 @@ public static class OutputCleanup
         }
     }
 
-    public static bool ContainsTrackedFiles(string repoRoot, string candidate)
-    {
-        try
-        {
-            var root = Path.GetFullPath(repoRoot);
-            var full = Path.GetFullPath(candidate);
-            if (!Directory.Exists(root))
-                return true;
-            var start = new ProcessStartInfo("git")
-            {
-                WorkingDirectory = root,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            start.Environment.Remove("GIT_DIR");
-            start.Environment.Remove("GIT_WORK_TREE");
-            start.Environment.Remove("GIT_INDEX_FILE");
-            start.ArgumentList.Add("-C");
-            start.ArgumentList.Add(root);
-            start.ArgumentList.Add("ls-files");
-            start.ArgumentList.Add("--");
-            start.ArgumentList.Add(full);
-            using var process = Process.Start(start);
-            if (process is null)
-                return true;
-            var errorTask = Task.Run(() => process.StandardError.ReadToEnd());
-            var stdout = process.StandardOutput.ReadToEnd();
-            if (!process.WaitForExit(15_000))
-            {
-                try { process.Kill(entireProcessTree: true); } catch { /* already gone */ }
-                return true;
-            }
-
-            var stderr = errorTask.GetAwaiter().GetResult();
-            if (process.ExitCode == 0)
-                return !string.IsNullOrWhiteSpace(stdout);
-            return !stderr.Contains("not a git repository", StringComparison.OrdinalIgnoreCase);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception
-                                   or ArgumentException or NotSupportedException)
-        {
-            return true;
-        }
-    }
-
     public static List<string> RemoveOlderRuns(string resultsRoot, TimeSpan olderThan, bool dryRun)
     {
         var deleted = new List<string>();
@@ -160,9 +170,15 @@ public static class OutputCleanup
                 : new ToolCopyCleanup().ObserveExecutor(dir);
             if (observed.Verdict != ProcessVerdict.Dead)
                 continue;
-            deleted.Add(dir);
-            if (!dryRun)
-                Directory.Delete(dir, recursive: true);
+            if (dryRun)
+            {
+                deleted.Add(dir);
+                continue;
+            }
+
+            var removed = SafeDelete.DeleteCreatedTree(dir);
+            if (removed.Disposition == DeleteDisposition.Deleted)
+                deleted.Add(dir);
         }
 
         return deleted;
@@ -171,32 +187,24 @@ public static class OutputCleanup
     public static string DeletedLine(bool dryRun, string path) =>
         (dryRun ? "would delete " : "deleted ") + path;
 
-    private static void TryDelete(string repoRoot, string candidate, HashSet<string> owned, bool dryRun, List<string> deleted, Action? beforeDelete)
+    private static bool Listed(IReadOnlyCollection<string> created, string full)
     {
-        string full;
-        try { full = Path.GetFullPath(candidate); }
-        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException) { return; }
-        var name = Path.GetFileName(full.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
-        if (!owned.Contains(name) || !Directory.Exists(full) || !CanDelete(repoRoot, full))
-            return;
-        beforeDelete?.Invoke();
-        if (!CanDelete(repoRoot, full))
-            return;
-        deleted.Add(full);
-        if (!dryRun)
-            Directory.Delete(full, recursive: true);
-    }
+        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        var trimmed = full.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        foreach (var candidate in created)
+        {
+            try
+            {
+                var other = Path.GetFullPath(candidate).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                if (string.Equals(other, trimmed, comparison))
+                    return true;
+            }
+            catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+            {
+            }
+        }
 
-    private static bool CanDelete(string repoRoot, string candidate)
-    {
-        if (!IsStrictlyInside(repoRoot, candidate))
-            return false;
-        var name = Path.GetFileName(Path.GetFullPath(candidate).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
-        if (!IsIsolatedOutputId(name))
-            return false;
-        if (!ContainedCleanup.SafeAncestors(candidate) || !ContainedCleanup.SafeTree(candidate, 10000))
-            return false;
-        return !ContainsTrackedFiles(repoRoot, candidate);
+        return false;
     }
 
     private static void Collect(string repoRoot, string directory, string buildId, List<string> found)
@@ -221,40 +229,6 @@ public static class OutputCleanup
             if (name.StartsWith("bin-", StringComparison.Ordinal))
                 continue;
             Collect(repoRoot, child, buildId, found);
-        }
-    }
-
-    private static void DeleteMatches(string repoRoot, string directory, HashSet<string> owned, bool dryRun, List<string> deleted, Action? beforeDelete)
-    {
-        IEnumerable<string> children;
-        try { children = Directory.EnumerateDirectories(directory); }
-        catch (IOException) { return; }
-        catch (UnauthorizedAccessException) { return; }
-
-        foreach (var child in children)
-        {
-            var name = Path.GetFileName(child);
-            if (owned.Contains(name))
-            {
-                if (CanDelete(repoRoot, child))
-                {
-                    beforeDelete?.Invoke();
-                    if (!CanDelete(repoRoot, child))
-                        continue;
-                    deleted.Add(child);
-                    if (!dryRun)
-                        Directory.Delete(child, recursive: true);
-                }
-
-                continue;
-            }
-
-            if (PruneNames.Contains(name, StringComparer.OrdinalIgnoreCase))
-                continue;
-            if (name.StartsWith("bin-", StringComparison.Ordinal) && !owned.Contains(name))
-                continue;
-            beforeDelete?.Invoke();
-            DeleteMatches(repoRoot, child, owned, dryRun, deleted, beforeDelete);
         }
     }
 }

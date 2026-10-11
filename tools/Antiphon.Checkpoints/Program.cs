@@ -62,7 +62,7 @@ public static class Program
             case "validate":
                 return Validate(options, repo);
             case "clean":
-                return Clean(options, repo);
+                return Clean(options, repo, runtime?.Output ?? Console.Out);
             case "row":
                 return await Row(options, repo, runtime).ConfigureAwait(false);
             case "execute":
@@ -260,27 +260,48 @@ public static class Program
         return ExitCodes.Green;
     }
 
-    private static int Clean(ArgSet options, string repo)
+    private static int Clean(ArgSet options, string repo, TextWriter output)
     {
+        var exit = ExitCodes.Green;
         var older = ParseDuration(options.Get("older-than"));
         if (older is TimeSpan age)
         {
             var removed = OutputCleanup.RemoveOlderRuns(ResultsRoot(options, repo), age, options.Has("dry-run"));
             foreach (var path in removed)
-                Console.WriteLine(OutputCleanup.DeletedLine(options.Has("dry-run"), path));
+                output.WriteLine(OutputCleanup.DeletedLine(options.Has("dry-run"), path));
         }
 
         if (options.Get("run") is not null || options.Get("manifest") is not null || options.Positionals.Count > 0)
         {
+            string runDirectory;
+            try { runDirectory = ResolveRun(options, repo); }
+            catch (ManifestValidationException)
+            {
+                output.WriteLine("refused: inventory-missing");
+                return ExitCodes.Invalid;
+            }
+
+            var state = new RunStateStore().TryRead(Path.Combine(runDirectory, "state.json"));
+            if (state?.CreatedOutputPaths is null)
+            {
+                output.WriteLine("refused: inventory-missing");
+                return ExitCodes.Invalid;
+            }
+
             var manifest = options.Get("manifest") is string manifestPath
                 ? ManifestLoader.LoadFile(manifestPath, repo)
-                : ManifestLoader.LoadFile(Path.Combine(ResolveRun(options, repo), "manifest.resolved.yaml"), repo);
-            var result = OutputCleanup.CleanOwnedOutputs(repo, manifest.Builds.Select(build => build.Id).ToList(), exitCode: 0, cleanOnRed: true, options.Has("dry-run"));
+                : ManifestLoader.LoadFile(Path.Combine(runDirectory, "manifest.resolved.yaml"), repo);
+            var result = OutputCleanup.CleanOwnedOutputs(repo, manifest.Builds.Select(build => build.Id).ToList(),
+                exitCode: 0, cleanOnRed: true, options.Has("dry-run"), createdPaths: state.CreatedOutputPaths, refuseUnrecorded: true);
+            foreach (var reason in result.Refusals)
+                output.WriteLine("refused: " + reason);
             foreach (var path in result.Deleted)
-                Console.WriteLine(OutputCleanup.DeletedLine(options.Has("dry-run"), path));
+                output.WriteLine(OutputCleanup.DeletedLine(options.Has("dry-run"), path));
+            if (result.Refusals.Count > 0)
+                exit = ExitCodes.Invalid;
         }
 
-        return ExitCodes.Green;
+        return exit;
     }
 
     private static int Validate(ArgSet options, string repo)

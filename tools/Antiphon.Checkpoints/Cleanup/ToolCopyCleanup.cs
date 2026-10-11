@@ -72,7 +72,20 @@ public sealed class ToolCopyCleanup
                 return new("Retained", observed.Reason, tool);
             for (var attempt = 0; ; attempt++)
             {
-                try { _beforeDelete?.Invoke(tool); Directory.Delete(tool, recursive: true); break; }
+                try
+                {
+                    var removed = SafeDelete.Apply(tool, new DeleteOwnership
+                    {
+                        IsolatedRoot = full,
+                        CreatedPaths = [tool],
+                        RequireInventory = true,
+                        RequireBinName = false,
+                        AllowOutsideRepository = true,
+                    }, () => _beforeDelete?.Invoke(tool));
+                    if (removed.Disposition == DeleteDisposition.Refused)
+                        return new("Retained", removed.Reason ?? "refused", tool);
+                    break;
+                }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException && attempt < 9)
                 { Thread.Sleep(50 * (attempt + 1)); }
             }
@@ -125,7 +138,7 @@ public static class ExecutorOwnershipStore
             stream.Flush(flushToDisk: true);
         }
         try { File.Move(temporary, path, true); }
-        finally { if (File.Exists(temporary)) File.Delete(temporary); }
+        finally { if (File.Exists(temporary)) SafeDelete.DeleteCreatedFile(temporary); }
     }
 
     public static ExecutorOwnership? Read(string runDirectory)

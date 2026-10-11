@@ -12,7 +12,8 @@ public sealed class OutputCleanupTests : CheckpointTestBase
     public void deletes_only_this_runs_bin_names()
     {
         var root = Tree();
-        var result = OutputCleanup.CleanOwnedOutputs(root, ["bin-c723a"], 0, false, false);
+        var created = new[] { Path.Combine(root, "bin-c723a"), Path.Combine(root, "src", "bin-c723a") };
+        var result = OutputCleanup.CleanOwnedOutputs(root, ["bin-c723a"], 0, false, false, createdPaths: created);
         Directory.Exists(Path.Combine(root, "bin-c723a")).ShouldBeFalse();
         Directory.Exists(Path.Combine(root, "src", "bin-c723a")).ShouldBeFalse();
         File.Exists(Path.Combine(root, "bin-foreign", "keep.txt")).ShouldBeTrue();
@@ -26,7 +27,8 @@ public sealed class OutputCleanupTests : CheckpointTestBase
         Directory.CreateDirectory(Path.Combine(root, "bin", "bin-c723a"));
         File.WriteAllText(Path.Combine(root, "bin", "bin-c723a", "sentinel"), "keep");
         File.WriteAllText(Path.Combine(root, "bin", "keep.dll"), "keep");
-        OutputCleanup.CleanOwnedOutputs(root, ["bin-c723a"], 0, false, false);
+        OutputCleanup.CleanOwnedOutputs(root, ["bin-c723a"], 0, false, false,
+            createdPaths: [Path.Combine(root, "bin-c723a"), Path.Combine(root, "src", "bin-c723a")]);
         File.Exists(Path.Combine(root, "bin", "keep.dll")).ShouldBeTrue();
         File.Exists(Path.Combine(root, "bin", "bin-c723a", "sentinel")).ShouldBeTrue();
         File.Exists(Path.Combine(root, "obj", "keep.o")).ShouldBeTrue();
@@ -39,10 +41,11 @@ public sealed class OutputCleanupTests : CheckpointTestBase
     public void red_keeps_unless_clean_on_red()
     {
         var root = Tree();
-        var kept = OutputCleanup.CleanOwnedOutputs(root, ["bin-c723a"], 1, false, false);
+        var created = new[] { Path.Combine(root, "bin-c723a"), Path.Combine(root, "src", "bin-c723a") };
+        var kept = OutputCleanup.CleanOwnedOutputs(root, ["bin-c723a"], 1, false, false, createdPaths: created);
         kept.KeptBecauseRed.ShouldBeTrue();
         Directory.Exists(Path.Combine(root, "bin-c723a")).ShouldBeTrue();
-        OutputCleanup.CleanOwnedOutputs(root, ["bin-c723a"], 1, true, false);
+        OutputCleanup.CleanOwnedOutputs(root, ["bin-c723a"], 1, true, false, createdPaths: created);
         Directory.Exists(Path.Combine(root, "bin-c723a")).ShouldBeFalse();
     }
 
@@ -73,12 +76,13 @@ public sealed class OutputCleanupTests : CheckpointTestBase
         var evidence = Path.Combine(root, ".antiphon", "checkpoints", "run", "builds", "bin-c723a");
         Directory.CreateDirectory(evidence);
         File.WriteAllText(Path.Combine(evidence, "build.log"), "log");
-        var dry = OutputCleanup.CleanOwnedOutputs(root, ["bin-c723a"], 0, false, dryRun: true);
+        var created = new[] { Path.Combine(root, "bin-c723a"), Path.Combine(root, "src", "bin-c723a") };
+        var dry = OutputCleanup.CleanOwnedOutputs(root, ["bin-c723a"], 0, false, dryRun: true, createdPaths: created);
         dry.Deleted.ShouldContain(path => path.EndsWith("bin-c723a", StringComparison.Ordinal) && !path.Contains(".antiphon", StringComparison.Ordinal));
         OutputCleanup.DeletedLine(true, dry.Deleted[0]).ShouldStartWith("would delete ");
         OutputCleanup.DeletedLine(false, dry.Deleted[0]).ShouldStartWith("deleted ");
         Directory.Exists(Path.Combine(root, "bin-c723a")).ShouldBeTrue();
-        var deleted = OutputCleanup.CleanOwnedOutputs(root, ["bin-c723a"], 0, false, dryRun: false);
+        var deleted = OutputCleanup.CleanOwnedOutputs(root, ["bin-c723a"], 0, false, dryRun: false, createdPaths: created);
         deleted.Deleted.ShouldAllBe(path => !path.Contains(".antiphon", StringComparison.Ordinal));
         File.Exists(Path.Combine(evidence, "build.log")).ShouldBeTrue();
         Directory.Exists(Path.Combine(root, "bin-c723a")).ShouldBeFalse();
@@ -110,9 +114,11 @@ public sealed class OutputCleanupTests : CheckpointTestBase
         var parent = Directory.GetParent(root)!.FullName;
         try
         {
-            OutputCleanup.CleanOwnedOutputs(root,
+            var result = OutputCleanup.CleanOwnedOutputs(root,
                 ["tests", ".", "..", "src", outside, "bin-tracked", "bin-safe"],
-                0, false, false);
+                0, false, false,
+                createdPaths: [tests, src, outside, trackedBin, safe]);
+            result.Refusals.ShouldContain("tracked");
 
             File.Exists(Path.Combine(tests, "kept.cs")).ShouldBeTrue();
             File.Exists(Path.Combine(src, "kept.cs")).ShouldBeTrue();
@@ -156,6 +162,163 @@ public sealed class OutputCleanupTests : CheckpointTestBase
         Directory.Exists(preexisting).ShouldBeTrue();
     }
 
+    [Test]
+    public void corrupted_git_metadata_refuses_cleanup_and_keeps_the_file()
+    {
+        var root = InitGitRepo();
+        var output = Path.Combine(root, "bin-safe");
+        Directory.CreateDirectory(output);
+        var sentinel = Path.Combine(output, "out.dll");
+        File.WriteAllText(sentinel, "keep");
+        Directory.Delete(Path.Combine(root, ".git", "objects"), recursive: true);
+        Directory.Delete(Path.Combine(root, ".git", "refs"), recursive: true);
+        File.Delete(Path.Combine(root, ".git", "HEAD"));
+
+        var result = OutputCleanup.CleanOwnedOutputs(root, ["bin-safe"], 0, false, false, createdPaths: [output]);
+
+        File.ReadAllText(sentinel).ShouldBe("keep");
+        result.Deleted.ShouldBeEmpty();
+        result.Refusals.ShouldContain("not-a-repository");
+    }
+
+    [Test]
+    public void git_missing_from_path_refuses_cleanup_and_keeps_the_file()
+    {
+        var root = InitGitRepo();
+        var output = Path.Combine(root, "bin-safe");
+        Directory.CreateDirectory(output);
+        var sentinel = Path.Combine(output, "out.dll");
+        File.WriteAllText(sentinel, "keep");
+        var result = OutputCleanup.CleanOwnedOutputs(root, ["bin-safe"], 0, false, false, createdPaths: [output],
+            gitExecutable: Path.Combine(Path.GetTempPath(), "c1199-no-git", "git"));
+        File.ReadAllText(sentinel).ShouldBe("keep");
+        result.Deleted.ShouldBeEmpty();
+        result.Refusals.ShouldContain("git-unavailable");
+    }
+
+    [Test]
+    public void nested_repository_tracked_output_is_owner_checked_and_kept()
+    {
+        var outer = InitGitRepo();
+        var nested = Path.Combine(outer, "nested");
+        Directory.CreateDirectory(nested);
+        Git(nested, "init", "-q", "-b", "inner");
+        var output = Path.Combine(nested, "bin-inner");
+        Directory.CreateDirectory(output);
+        var sentinel = Path.Combine(output, "kept.txt");
+        File.WriteAllText(sentinel, "tracked-inner");
+        Git(nested, "add", "--", "bin-inner/kept.txt");
+        Git(nested, "-c", "user.email=card-1199@example.invalid", "-c", "user.name=card-1199",
+            "-c", "commit.gpgsign=false", "commit", "-m", "inner", "--no-verify");
+
+        var result = OutputCleanup.CleanOwnedOutputs(outer, ["bin-inner"], 0, false, false, createdPaths: [output]);
+
+        File.ReadAllText(sentinel).ShouldBe("tracked-inner");
+        result.Deleted.ShouldBeEmpty();
+        result.Refusals.ShouldContain("tracked");
+    }
+
+    [Test]
+    public void manual_clean_refuses_an_unrecorded_directory()
+    {
+        var root = InitGitRepo();
+        var output = Path.Combine(root, "bin-manual");
+        Directory.CreateDirectory(output);
+        File.WriteAllText(Path.Combine(output, "keep.txt"), "keep");
+        var run = Path.Combine(root, ".antiphon", "checkpoints", "run-manual");
+        Directory.CreateDirectory(run);
+        var manifest = new CheckpointManifest();
+        manifest.Builds.Add(new BuildSpec { Id = "bin-manual", Project = "sample", OutputPath = "bin-manual/" });
+        manifest.Checkpoints.Add(new CheckpointSpec
+        {
+            Id = "CP-1", After = ["all"], Build = "bin-manual", Filter = "/*/*/*/*",
+            EstimatedMinutes = 1, MinExecuted = 1,
+        });
+        File.WriteAllText(Path.Combine(run, "manifest.resolved.yaml"), ManifestLoader.ToYaml(manifest));
+        new RunStateStore().Write(Path.Combine(run, "state.json"), new RunState
+        {
+            RunId = "run-manual",
+            Phase = "done",
+            CreatedOutputPaths = [],
+        });
+        var outputText = new StringWriter();
+        var exit = Antiphon.Checkpoints.Program.RunAsync(["clean", "--repo-root", root, "--run", "run-manual"],
+            new CheckpointApp.Runtime { Output = outputText }).GetAwaiter().GetResult();
+
+        File.Exists(Path.Combine(output, "keep.txt")).ShouldBeTrue();
+        exit.ShouldNotBe(0);
+        var text = outputText.ToString();
+        text.ShouldContain("refused: not-created-by-run");
+        text.ShouldNotContain("deleted ");
+    }
+
+    [Test]
+    public void junction_outside_the_isolated_root_is_refused()
+    {
+        var root = InitGitRepo();
+        var outside = Path.Combine(Path.GetTempPath(), "c1199-junction-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(outside);
+        var sentinel = Path.Combine(outside, "keep.txt");
+        File.WriteAllText(sentinel, "outside");
+        var link = Path.Combine(root, "bin-link");
+        Directory.CreateSymbolicLink(link, outside);
+        try
+        {
+            var result = OutputCleanup.CleanOwnedOutputs(root, ["bin-link"], 0, false, false, createdPaths: [link]);
+            File.ReadAllText(sentinel).ShouldBe("outside");
+            Directory.Exists(link).ShouldBeTrue();
+            result.Deleted.ShouldBeEmpty();
+            result.Refusals.ShouldContain("reparse-outside-root");
+        }
+        finally
+        {
+            if (Directory.Exists(link))
+                Directory.Delete(link);
+            if (Directory.Exists(outside))
+                Directory.Delete(outside, recursive: true);
+        }
+    }
+
+    [Test]
+    public void tracked_build_stamp_is_not_deleted_or_replaced()
+    {
+        var root = InitGitRepo();
+        var binding = new CheckpointBuildBinding
+        {
+            RepositoryRoot = Path.GetFullPath(root),
+            Project = Path.GetFullPath(Path.Combine(root, "sample")),
+            OutputPath = Path.GetFullPath(Path.Combine(root, "sample", "bin-tracked")),
+        };
+        Directory.CreateDirectory(binding.OutputPath);
+        File.WriteAllText(binding.PathName, "original-stamp");
+        Git(root, "add", "--", "sample/bin-tracked/checkpoint-build-source.json");
+        Git(root, "-c", "user.email=card-1199@example.invalid", "-c", "user.name=card-1199",
+            "-c", "commit.gpgsign=false", "commit", "-m", "stamp", "--no-verify");
+
+        binding.Invalidate().ShouldBe("tracked");
+        File.ReadAllText(binding.PathName).ShouldBe("original-stamp");
+        binding.Write().ShouldBe("tracked");
+        File.ReadAllText(binding.PathName).ShouldBe("original-stamp");
+    }
+
+    [Test]
+    public void refusal_report_names_the_reason_and_does_not_claim_deleted()
+    {
+        var model = new ReportModel
+        {
+            RunId = "run",
+            ExitCode = 2,
+            Verdict = "RED",
+            OutputNames = ["bin-safe/"],
+            CleanedOutputs = false,
+            CleanupRefusals = ["tracked"],
+        };
+        var text = ReportWriter.Markdown(model);
+        text.ShouldContain("refused: tracked");
+        text.ShouldNotContain("deleted");
+        ReportValidator.Validate(model, new string('a', 40)).ShouldBe("cleanup_refused");
+    }
+
     private string InitGitRepo()
     {
         var root = TempDir();
@@ -188,6 +351,7 @@ public sealed class OutputCleanupTests : CheckpointTestBase
     private string Tree()
     {
         var root = TempDir();
+        Git(root, "init", "-q", "-b", "card1199");
         Write(root, "bin-c723a", "out.dll");
         Write(root, Path.Combine("src", "bin-c723a"), "out.dll");
         Write(root, "bin-foreign", "keep.txt");

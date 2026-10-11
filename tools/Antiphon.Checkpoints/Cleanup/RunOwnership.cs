@@ -57,7 +57,7 @@ public static class RunOwnershipStore
         }
         finally
         {
-            if (File.Exists(temp)) File.Delete(temp);
+            if (File.Exists(temp)) SafeDelete.DeleteCreatedFile(temp);
         }
     }
 

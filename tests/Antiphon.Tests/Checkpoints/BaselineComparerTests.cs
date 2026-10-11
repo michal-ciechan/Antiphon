@@ -135,6 +135,40 @@ public sealed class BaselineComparerTests : CheckpointTestBase
         comparer.ToolRuns.ShouldContain(item => item.Contains("git fetch", StringComparison.Ordinal));
     }
 
+    [Test]
+    public async Task pre_existing_checkout_survives_when_creation_fails()
+    {
+        var source = TempDir();
+        var run = TempDir();
+        var runId = Path.GetFileName(run.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+        var checkout = BaselineComparer.CheckoutPath(source, runId, "bin-a");
+        Directory.CreateDirectory(checkout);
+        var keep = Path.Combine(checkout, "keep.txt");
+        File.WriteAllText(keep, "preexisting");
+        var driver = new FakeDriver();
+        driver.When(request => request.FileName == "git" && request.Arguments.Contains("rev-parse"),
+            (_, _) => Task.FromResult(new DriverResult(0, new string('a', 40) + "\n", "")));
+        driver.When(request => request.FileName == "git" && request.Arguments.Contains("fetch"),
+            (_, _) => Task.FromResult(new DriverResult(0, "", "")));
+        driver.When(request => request.Arguments.Contains("add"),
+            (_, _) => Task.FromResult(new DriverResult(1, "", "exists")));
+        try
+        {
+            await new BaselineComparer(driver).CompareAsync(
+                source, run, "origin/master",
+                [Failures("CP-1", "bin-a", "N.A.one")],
+                [new BuildSpec { Id = "bin-a", Project = "tests/Antiphon.Tests", OutputPath = "bin-a/" }],
+                CancellationToken.None);
+            File.ReadAllText(keep).ShouldBe("preexisting");
+            Directory.Exists(checkout).ShouldBeTrue();
+        }
+        finally
+        {
+            if (Directory.Exists(checkout))
+                Directory.Delete(checkout, recursive: true);
+        }
+    }
+
     private sealed class RecordingSlots : IBuildSlotClient
     {
         public List<string> Labels { get; } = [];

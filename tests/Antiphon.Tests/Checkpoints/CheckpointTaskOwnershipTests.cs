@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Antiphon.Checkpoints;
 using System.Net;
 using System.Text;
@@ -745,13 +746,36 @@ public sealed class CheckpointTaskOwnershipTests : CheckpointTestBase
     public void ownership_loss_keeps_outputs_and_stops_new_cleanup()
     {
         var repo = TempDir();
+        var init = new ProcessStartInfo("git")
+        {
+            WorkingDirectory = repo,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+        };
+        init.Environment.Remove("GIT_DIR");
+        init.Environment.Remove("GIT_WORK_TREE");
+        init.Environment.Remove("GIT_INDEX_FILE");
+        init.ArgumentList.Add("init");
+        init.ArgumentList.Add("-q");
+        init.ArgumentList.Add("-b");
+        init.ArgumentList.Add("card1199");
+        using (var process = Process.Start(init))
+        {
+            process.ShouldNotBeNull();
+            var stdout = process.StandardOutput.ReadToEnd();
+            var stderr = process.StandardError.ReadToEnd();
+            process.WaitForExit(30_000).ShouldBeTrue(stdout + stderr);
+            process.ExitCode.ShouldBe(0, stdout + stderr);
+        }
         var output = Path.Combine(repo, "bin-owned");
         Directory.CreateDirectory(output);
         var marker = Path.Combine(output, "marker.txt");
         File.WriteAllText(marker, "owned");
         var checks = 0;
         Should.Throw<OperationCanceledException>(() => OutputCleanup.CleanOwnedOutputs(repo, ["bin-owned"], 0, false, false,
-            beforeDelete: () => { checks++; throw new OperationCanceledException("owner-ended"); }));
+            beforeDelete: () => { checks++; throw new OperationCanceledException("owner-ended"); },
+            createdPaths: [output]));
         checks.ShouldBe(1);
         File.Exists(marker).ShouldBeTrue();
     }

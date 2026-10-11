@@ -23,6 +23,8 @@ public static class ReportValidator
 
     public static string? Validate(ReportModel report, string expectedSha, IReadOnlyList<string>? selectedIds = null, int expectedRepeat = 1)
     {
+        if (report.CleanupRefusals.Count > 0)
+            return "cleanup_refused";
         if (expectedRepeat < 1 || report.SchemaVersion is not (2 or 3)
             || report.SchemaVersion == 2 && report.Rows.Any(row => row.Repeat is not null)
             || report.SchemaVersion == 3 && report.Rows.All(row => row.Repeat is null)

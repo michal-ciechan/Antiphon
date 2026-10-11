@@ -23,6 +23,7 @@ public sealed class ReportModel
     public List<string> Unlisted { get; set; } = [];
     public string? Evidence { get; set; }
     public bool CleanedOutputs { get; set; }
+    public List<string> CleanupRefusals { get; set; } = [];
     public List<string> OutputNames { get; set; } = [];
     public int MaxConcurrentRows { get; set; }
     public int MaxConcurrentBuilds { get; set; }
