@@ -118,6 +118,7 @@ function Invoke-CheckpointGit {
         $errTask = $proc.StandardError.ReadToEndAsync()
         if (-not $proc.WaitForExit(15000)) {
             try { $proc.Kill($true) } catch { }
+            try { [void]$proc.WaitForExit(2000) } catch { }
             return @{ Exit = 128; Stdout = ''; Stderr = ''; Reason = 'git-timeout' }
         }
         $proc.WaitForExit()
@@ -127,8 +128,26 @@ function Invoke-CheckpointGit {
     }
 }
 
+function Test-CheckpointComponentLink {
+    param([string]$Path)
+    try { $full = [System.IO.Path]::GetFullPath($Path) }
+    catch { return 'path-unsafe' }
+    $root = [System.IO.Path]::GetPathRoot($full)
+    if ([string]::IsNullOrEmpty($root)) { return 'path-unsafe' }
+    $current = $root
+    $relative = $full.Substring($root.Length)
+    foreach ($part in ($relative -split '[\\/]' | Where-Object { -not [string]::IsNullOrEmpty($_) })) {
+        $current = [System.IO.Path]::Combine($current, $part)
+        try { $attributes = [System.IO.File]::GetAttributes($current) } catch { break }
+        if (($attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) { return 'reparse-point' }
+    }
+    return $null
+}
+
 function Test-CheckpointStampRefusal {
     param([string]$StampPath)
+    $linked = Test-CheckpointComponentLink $StampPath
+    if ($null -ne $linked) { return $linked }
     $parent = Split-Path -Parent $StampPath
     if ([string]::IsNullOrWhiteSpace($parent)) { return 'path-unsafe' }
     $owner = Find-CheckpointGitDir $parent
@@ -437,8 +456,7 @@ try {
     $script:buildState = $buildState
     $buildExit = 0
     if (-not $NoBuild) {
-        $stampRefusal = $null
-        if (Test-Path -LiteralPath $stampPath) { $stampRefusal = Test-CheckpointStampRefusal $stampPath }
+        $stampRefusal = Test-CheckpointStampRefusal $stampPath
         if ($null -ne $stampRefusal) {
             Write-Host ('refused: ' + $stampRefusal)
             $buildExit = 2
@@ -451,22 +469,18 @@ try {
             else { $buildState = 'failed'; $script:buildState = 'failed' }
             if (-not (Assert-CheckpointBoundary 'post_build')) { $buildExit = 2 }
             if ($buildExit -eq 0) {
-                $stampDirectory = Split-Path -Parent $stampPath
-                New-Item -ItemType Directory -Path $stampDirectory -Force | Out-Null
-                $temporaryStamp = $stampPath + '.' + [guid]::NewGuid().ToString('N') + '.tmp'
-                $expectedBinding | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $temporaryStamp -Encoding utf8
-                $replaceRefusal = $null
-                if (Test-Path -LiteralPath $stampPath) { $replaceRefusal = Test-CheckpointStampRefusal $stampPath }
+                $replaceRefusal = Test-CheckpointStampRefusal $stampPath
                 if ($null -ne $replaceRefusal) {
                     Write-Host ('refused: ' + $replaceRefusal)
-                    if ($temporaryStamp.EndsWith('.tmp') -and (Test-Path -LiteralPath $temporaryStamp)) {
-                        [System.IO.File]::Delete($temporaryStamp)
-                    }
                     $buildExit = 2
                     $buildState = 'failed'
                     $script:buildState = 'failed'
                     $script:buildSource = 'unknown'
                 } else {
+                    $stampDirectory = Split-Path -Parent $stampPath
+                    New-Item -ItemType Directory -Path $stampDirectory -Force | Out-Null
+                    $temporaryStamp = $stampPath + '.' + [guid]::NewGuid().ToString('N') + '.tmp'
+                    $expectedBinding | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $temporaryStamp -Encoding utf8
                     Move-Item -LiteralPath $temporaryStamp -Destination $stampPath -Force
                     $script:buildSource = 'verified'
                 }

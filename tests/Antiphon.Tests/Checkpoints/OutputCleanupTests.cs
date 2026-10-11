@@ -61,10 +61,12 @@ public sealed class OutputCleanupTests : CheckpointTestBase
         CheckpointFixtures.MarkRun(young, alive: true);
         Directory.SetLastWriteTimeUtc(old, DateTime.UtcNow.AddDays(-8));
         var dry = OutputCleanup.RemoveOlderRuns(root, TimeSpan.FromDays(7), dryRun: true);
-        dry.Count.ShouldBe(1);
+        dry.Deleted.Count.ShouldBe(1);
+        dry.Refusals.ShouldBeEmpty();
         Directory.Exists(old).ShouldBeTrue();
         var removed = OutputCleanup.RemoveOlderRuns(root, TimeSpan.FromDays(7), dryRun: false);
-        removed.Count.ShouldBe(1);
+        removed.Deleted.Count.ShouldBe(1);
+        removed.Refusals.ShouldBeEmpty();
         Directory.Exists(old).ShouldBeFalse();
         Directory.Exists(young).ShouldBeTrue();
     }

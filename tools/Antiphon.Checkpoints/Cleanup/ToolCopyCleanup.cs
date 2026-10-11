@@ -83,7 +83,7 @@ public sealed class ToolCopyCleanup
                         AllowOutsideRepository = true,
                     }, () => _beforeDelete?.Invoke(tool));
                     if (removed.Disposition == DeleteDisposition.Refused)
-                        return new("Retained", removed.Reason ?? "refused", tool);
+                        return new("Refused", removed.Reason ?? "refused", tool);
                     break;
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException && attempt < 9)

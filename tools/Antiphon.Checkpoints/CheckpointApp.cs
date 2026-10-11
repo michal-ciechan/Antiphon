@@ -71,7 +71,9 @@ public static class CheckpointApp
             try
             {
                 ReportWriter.WriteFiles(runDirectory, model);
-                store.Write(statePath, state);
+                var refusal = store.Write(statePath, state);
+                if (refusal is not null)
+                    Console.Error.WriteLine("refused: " + refusal);
             }
             catch (Exception persistence)
             {
@@ -118,7 +120,12 @@ public static class CheckpointApp
         var statePath = Path.Combine(runDirectory, "state.json");
         void Publish()
         {
-            try { store.Write(statePath, state); }
+            try
+            {
+                var refusal = store.Write(statePath, state);
+                if (refusal is not null)
+                    throw new InvalidOperationException("refused: " + refusal);
+            }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
         }
 
@@ -286,6 +293,22 @@ public static class CheckpointApp
             Note("evidence failed: " + ex.GetType().Name + ": " + ex.Message);
         }
 
+        static bool OwnedOutputRemains(IReadOnlyCollection<string>? created)
+        {
+            if (created is null)
+                return false;
+            foreach (var path in created)
+            {
+                var trimmed = path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                if (!OutputCleanup.IsIsolatedOutputId(Path.GetFileName(trimmed)))
+                    continue;
+                if (Directory.Exists(path) || File.Exists(path))
+                    return true;
+            }
+
+            return false;
+        }
+
         try
         {
             if (owner.Bound && !await owner.EnsureLiveAsync(cancellationToken).ConfigureAwait(false))
@@ -295,7 +318,9 @@ public static class CheckpointApp
                 var clean = OutputCleanup.CleanOwnedOutputs(repo, manifest.Builds.Select(build => build.Id).ToList(), model.ExitCode,
                     request.CleanOnRed, dryRun: false, beforeDelete: owner.Bound ? () => owner.Ended.ThrowIfCancellationRequested() : null,
                     createdPaths: state.CreatedOutputPaths);
-                if (clean.Refusals.Count > 0)
+                if (clean.KeptBecauseRed)
+                    model.CleanedOutputs = false;
+                else if (clean.Refusals.Count > 0)
                 {
                     model.CleanedOutputs = false;
                     model.CleanupRefusals = clean.Refusals;
@@ -304,6 +329,17 @@ public static class CheckpointApp
                         model.ExitCode = ExitCodes.Invalid;
                         model.Verdict = "RED";
                         model.Reason = "refused: " + clean.Refusals[0];
+                    }
+                }
+                else if (OwnedOutputRemains(state.CreatedOutputPaths))
+                {
+                    model.CleanedOutputs = false;
+                    model.CleanupRefusals.Add("still-present");
+                    if (model.ExitCode == 0)
+                    {
+                        model.ExitCode = ExitCodes.Invalid;
+                        model.Verdict = "RED";
+                        model.Reason = "refused: still-present";
                     }
                 }
                 else
@@ -321,6 +357,15 @@ public static class CheckpointApp
         catch (Exception ex)
         {
             Note("cleanup failed: " + ex.GetType().Name + ": " + ex.Message);
+            model.CleanedOutputs = false;
+            if (model.CleanupRefusals.Count == 0)
+                model.CleanupRefusals.Add("cleanup-failed");
+            if (model.ExitCode == 0)
+            {
+                model.ExitCode = ExitCodes.Invalid;
+                model.Verdict = "RED";
+                model.Reason = "refused: " + model.CleanupRefusals[0];
+            }
         }
         if (owner.Bound && !owner.Ended.IsCancellationRequested)
             await owner.EnsureLiveAsync(cancellationToken).ConfigureAwait(false);
@@ -429,8 +474,10 @@ public static class CheckpointApp
         var ownership = RunOwnershipStore.Read(runDirectory)!;
         try
         {
-            new RunStateStore().Write(Path.Combine(runDirectory, "state.json"),
+            var stateRefusal = new RunStateStore().Write(Path.Combine(runDirectory, "state.json"),
                 new RunState { RunId = runId, Phase = "starting", StartedAt = DateTimeOffset.UtcNow });
+            if (stateRefusal is not null)
+                throw new InvalidOperationException("refused: " + stateRefusal);
             (runtime.CopyToolOutput ?? ShadowCopy.CopyToolOutput)(ToolSource(runtime), Path.Combine(runDirectory, "tool"));
         }
         catch

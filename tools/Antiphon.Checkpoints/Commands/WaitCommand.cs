@@ -71,11 +71,15 @@ public sealed class WaitCommand
             {
                 var receipt = cleanup.Remove(runDirectory);
                 output.WriteLine(receipt);
+                if (receipt.Outcome == "Refused")
+                    output.WriteLine("refused: " + receipt.Reason);
                 if (File.Exists(reportPath))
                     output.Write(File.ReadAllText(reportPath));
                 else
                     output.WriteLine(state.Heartbeat(now));
                 var exit = state.ExitCode ?? ExitCodes.Green;
+                if (receipt.Outcome == "Refused" && exit == ExitCodes.Green)
+                    return ExitCodes.Invalid;
                 if (exit == ExitCodes.Green && File.Exists(reportPath) && ReportRefused(reportPath))
                     return ExitCodes.Invalid;
                 return exit;
@@ -83,7 +87,10 @@ public sealed class WaitCommand
 
             if (state?.Phase != "done" && observed.Verdict == ProcessVerdict.Dead)
             {
-                output.WriteLine(cleanup.Remove(runDirectory));
+                var diedReceipt = cleanup.Remove(runDirectory);
+                output.WriteLine(diedReceipt);
+                if (diedReceipt.Outcome == "Refused")
+                    output.WriteLine("refused: " + diedReceipt.Reason);
                 output.WriteLine("executor died without phase=done");
                 output.WriteLine(Tail(logPath));
                 return ExitCodes.ExecutorCrashed;
