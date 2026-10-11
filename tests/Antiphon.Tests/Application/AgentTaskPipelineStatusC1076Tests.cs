@@ -211,6 +211,75 @@ public partial class AgentTaskPipelineStatusTests
         }
     }
 
+    /// <summary>
+    /// CARD-1100. heldBy keeps the BehindTaskId read for the title lookup. A later Progress
+    /// read that names a different holder must not replace that id with an empty title.
+    /// </summary>
+    [Test]
+    public async Task C1100_remote_prep_held_by_keeps_the_first_progress_holder()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        using var workspace = new TempWorkspace();
+        var pushing = await SeedTaskAsync(db, workspace.Path, AgentTaskRole.Code, AgentTaskStatus.Queued,
+            title: "pushing the branch", workspace: WorkspaceMode.Worktree, repoPath: workspace.Path);
+        var waiting = await SeedTaskAsync(db, workspace.Path, AgentTaskRole.Code, AgentTaskStatus.Queued,
+            title: "waiting for the push", workspace: WorkspaceMode.Worktree, repoPath: workspace.Path);
+        var later = await SeedTaskAsync(db, workspace.Path, AgentTaskRole.Code, AgentTaskStatus.Queued,
+            title: "later holder", workspace: WorkspaceMode.Worktree, repoPath: workspace.Path);
+        pushing.WorktreePath = Path.Combine(workspace.Path, "pushing");
+        pushing.WorktreeBranch = "feat/card-1100-pushing";
+        waiting.WorktreePath = Path.Combine(workspace.Path, "waiting");
+        waiting.WorktreeBranch = "feat/card-1100-waiting";
+        var when = DateTime.UtcNow.AddMinutes(-1);
+        AddEvent(db, waiting.Id, AgentTaskEventType.Held,
+            DispatchHoldDetails.RemoteMirrorRequested("server2", when), when);
+        await db.SaveChangesAsync();
+
+        var git = new BlockingPushGit();
+        var services = new ServiceCollection();
+        services.AddSingleton<ILandingGit>(git);
+        services.AddSingleton<ISessionRunnerDirectory>(new UnusedRunnerDirectory());
+        services.AddSingleton<ILogger<RemoteWorkspaceService>>(NullLogger<RemoteWorkspaceService>.Instance);
+        services.AddSingleton(Options.Create(new DelegationSettings()));
+        services.AddScoped(_ => new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString)));
+        services.AddScoped<RemoteWorkspaceService>();
+        await using var provider = services.BuildServiceProvider();
+        await using var preparer = new RemoteWorkspacePreparer(
+            provider.GetRequiredService<IServiceScopeFactory>(),
+            Options.Create(new DelegationSettings()),
+            TimeProvider.System,
+            NullLogger<RemoteWorkspacePreparer>.Instance);
+        try
+        {
+            preparer.TryBegin(pushing.Id, "server2").ShouldBeTrue();
+            await git.PushEntered.Task.WaitAsync(TimeSpan.FromSeconds(15));
+            preparer.TryBegin(waiting.Id, "server2").ShouldBeTrue();
+            var waiterSeen = DateTime.UtcNow + TimeSpan.FromSeconds(15);
+            while (DateTime.UtcNow < waiterSeen
+                && preparer.Progress(waiting.Id)?.BehindTaskId != pushing.Id)
+                await Task.Delay(20);
+            preparer.Progress(waiting.Id)?.BehindTaskId.ShouldBe(pushing.Id);
+
+            var shifted = 0;
+            preparer.AfterProgressRead = id =>
+            {
+                if (id == waiting.Id && Interlocked.Increment(ref shifted) == 1)
+                    preparer.TryRetargetBehind(waiting.Id, later.Id).ShouldBeTrue();
+            };
+
+            var row = await QueuedRowAsync(db, waiting.Id, preparer);
+            row.QueueReason.ShouldBe(AgentTaskPipelineStatusService.QueueReasonRemotePrep);
+            row.HeldBy.Select(h => h.TaskId).ShouldBe([pushing.Id]);
+            row.HeldBy.Single().Title.ShouldBe("pushing the branch");
+        }
+        finally
+        {
+            git.PushHold.TrySetResult();
+            await preparer.WhenIdleAsync().WaitAsync(TimeSpan.FromSeconds(20));
+        }
+    }
+
     private static async Task<AgentTaskPipelineQueuedDto> QueuedRowAsync(
         AppDbContext db, Guid taskId, RemoteWorkspacePreparer? preparer = null)
     {

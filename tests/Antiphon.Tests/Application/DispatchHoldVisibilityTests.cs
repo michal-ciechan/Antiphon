@@ -350,6 +350,59 @@ public sealed partial class DispatchHoldVisibilityTests
         }
     }
 
+    /// <summary>
+    /// CARD-1100. The same hold sentence after a Dispatched floor writes a second Held row
+    /// and arms HeldAged. A repeat tick in that stint stays silent.
+    /// </summary>
+    [Test]
+    public async Task C1100_an_identical_hold_sentence_after_requeue_writes_a_second_held_row()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        var t0 = UtcMs();
+        var clock = new FakeTimeProvider(new DateTimeOffset(t0, TimeSpan.Zero));
+        await using var world = CreateWorld(schema.ConnectionString, clock, new FakeLease(), maxConcurrent: 1);
+        var (agentId, _) = await ModelAvailabilityDispatcherTests.SeedWarmAgentAsync(
+            schema.ConnectionString, workspace.Path);
+        await SeedDispatchedAsync(schema, workspace.Path, t0);
+        var queued = await SeedQueuedAsync(schema, workspace.Path, agentId, t0);
+        var sentence = DispatchHoldDetails.ConcurrencyCap(1);
+        var dispatchedAt = t0.AddSeconds(-1);
+        await using (var db = CreateContext(schema))
+        {
+            db.AgentTaskEvents.AddRange(
+                Event(queued.Id, AgentTaskEventType.Held, sentence, t0.AddSeconds(-2)),
+                Event(queued.Id, AgentTaskEventType.Dispatched, "prior dispatch", dispatchedAt));
+            await db.SaveChangesAsync();
+        }
+
+        (await world.Dispatcher.TickAsync(CancellationToken.None)).SkippedConcurrency.ShouldBe(1);
+        await world.Dispatcher.TickAsync(CancellationToken.None);
+
+        await using (var verify = CreateContext(schema))
+        {
+            var held = await HeldAsync(verify, queued.Id);
+            held.Count.ShouldBe(2);
+            var fresh = held.Where(e => e.At > dispatchedAt).ShouldHaveSingleItem();
+            fresh.Detail.ShouldBe(sentence);
+            fresh.At.ShouldBe(t0);
+            (await AgedAsync(verify, queued.Id)).ShouldBeEmpty();
+        }
+
+        clock.Advance(TimeSpan.FromSeconds(300));
+        await world.Dispatcher.TickAsync(CancellationToken.None);
+        await using (var verify = CreateContext(schema))
+        {
+            var held = await HeldAsync(verify, queued.Id);
+            held.Count.ShouldBe(2);
+            var aged = await AgedAsync(verify, queued.Id);
+            var fresh = aged.ShouldHaveSingleItem();
+            fresh.At.ShouldBeGreaterThan(dispatchedAt);
+            fresh.Detail.ShouldStartWith(DispatchHoldDetails.WarningPrefix);
+            fresh.Detail.ShouldContain(sentence);
+        }
+    }
+
     [Test]
     public async Task a_dated_routing_pin_never_escalates()
     {
