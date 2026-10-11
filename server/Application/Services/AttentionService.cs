@@ -97,9 +97,15 @@ public sealed partial class AttentionService
     private const int RecentFailureCap = 20;
 
     /// <summary>
-    /// CARD-1085: a grouped evidence tail shows this many newest lines, then "N more".
-    /// Recent incidents use it per agent and kind. A mixed historical land row uses it for
-    /// the events that did not become that task's one representative.
+    /// CARD-1085: how many newest records a grouped evidence tail includes before the
+    /// "{n} more" segment. Recent incidents take this many per agent and kind. A mixed
+    /// historical land row takes this many events that are not that task's representative.
+    /// Each record is <see cref="Excerpt"/> of its message or detail: line endings become
+    /// LF, the text is trimmed, and a value longer than <see cref="EvidenceChars"/> (400)
+    /// keeps the first 400 characters plus an ellipsis. Internal LF stays. The excerpts are
+    /// joined with LF. When records remain, "{hidden} more" is appended after an LF, or
+    /// used alone when every excerpt is empty. The cap counts records. It does not count
+    /// LF-separated segments inside one excerpt, and this file does not define a physical line.
     /// </summary>
     private const int RecentIncidentVisibleLines = 3;
 
@@ -1524,9 +1530,12 @@ public sealed partial class AttentionService
             .GroupBy(i => i.ConditionKey ?? i.Kind + ":" + i.TaskId)
             .Select(g => g.First())
             .ToList();
-        // Eligibility stays split: a receipt ages out 24h after Succeeded/Canceled, and an
-        // unresolved LandRefused does not. A task that qualifies on both sides still contributes
-        // one row — the refusal when a human still has to look, otherwise the newest receipt.
+        // Eligibility stays split. A historical receipt is omitted only when task.Status is
+        // Succeeded or Canceled and now minus the newest receipt event's At is at least
+        // RecencyWindow (24 hours). That At is AgentTaskEvent.At on the newest LandRequestId-null
+        // Landed, AlreadyPresent, LandedWithResidue, or LandingCleanup event. It is not
+        // AgentTask.CompletedAt. An unresolved LandRefused has no age check. When both are
+        // eligible the one row's representative is the refusal; otherwise it is the newest receipt.
         await AppendHistoricalLandRowsAsync(items, now, ct);
         return items;
     }
@@ -1564,8 +1573,9 @@ public sealed partial class AttentionService
             if (await LegacyReceiptConfirmedAsync(source, ct)) continue;
             var task = await _db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == source.AgentTaskId, ct);
             if (task.ReplyTo == AgentTaskReplyTo.None) continue;
-            // No new delivery obligation. Once the task is Done (Succeeded) or Canceled, the same
-            // 24h window as the rest of the feed is the lifecycle of an unverified historical receipt.
+            // No new delivery obligation. source is the newest receipt event in this group
+            // (OrderByDescending At). The comparison is now - source.At against RecencyWindow
+            // (24 hours), and only after status is already Succeeded or Canceled.
             if (task.Status is AgentTaskStatus.Succeeded or AgentTaskStatus.Canceled
                 && now - source.At >= RecencyWindow)
                 continue;
