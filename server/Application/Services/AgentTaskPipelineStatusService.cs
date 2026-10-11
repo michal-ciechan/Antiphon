@@ -654,10 +654,12 @@ public sealed class AgentTaskPipelineStatusService
                     break;
                 case DispatchHoldClass.RemotePrep:
                     queueReason = QueueReasonRemotePrep;
-                    // BehindTaskId is the snapshot taken when this task entered the push gate
-                    // (CARD-1093). With three or more waiters it can name a pusher that has
-                    // already finished, or be null. It is not the exact current holder.
-                    heldBy = OneHolder(_remotePrep?.Progress(task.Id)?.BehindTaskId, dispatchHolds.Titles);
+                    // CARD-1100: heldBy is the BehindTaskId captured with the title lookup.
+                    // A later Progress read can name a different gate holder and leave the title empty.
+                    // BehindTaskId itself is the enqueue-time snapshot (CARD-1093): with three or
+                    // more waiters it can name a pusher that has already finished, or be null.
+                    dispatchHolds.RemotePrepBehind.TryGetValue(task.Id, out var prepBehind);
+                    heldBy = OneHolder(prepBehind, dispatchHolds.Titles);
                     break;
             }
         }
@@ -830,6 +832,7 @@ public sealed class AgentTaskPipelineStatusService
                 StringComparer.Ordinal);
 
         var holderIds = new List<Guid>();
+        var prepBehind = new Dictionary<Guid, Guid?>();
         foreach (var task in queued)
         {
             if (!currentHeld.TryGetValue(task.Id, out var detail))
@@ -845,8 +848,10 @@ public sealed class AgentTaskPipelineStatusService
                         holderIds.Add(land.TaskId);
                     break;
                 case DispatchHoldClass.RemotePrep:
-                    if (_remotePrep?.Progress(task.Id)?.BehindTaskId is Guid behind)
-                        holderIds.Add(behind);
+                    var behind = _remotePrep?.Progress(task.Id)?.BehindTaskId;
+                    prepBehind[task.Id] = behind;
+                    if (behind is Guid behindId)
+                        holderIds.Add(behindId);
                     break;
             }
         }
@@ -859,7 +864,7 @@ public sealed class AgentTaskPipelineStatusService
                 .Select(t => new { t.Id, t.Title })
                 .ToDictionaryAsync(t => t.Id, t => t.Title, ct);
 
-        return new QueuedDispatchHolds(currentHeld, runningLands, titles);
+        return new QueuedDispatchHolds(currentHeld, runningLands, titles, prepBehind);
     }
 
     /// <summary>
@@ -969,12 +974,14 @@ public sealed class AgentTaskPipelineStatusService
     private sealed record QueuedDispatchHolds(
         Dictionary<Guid, string> CurrentStintHeld,
         Dictionary<string, RunningLandHolder> RunningLands,
-        Dictionary<Guid, string> Titles)
+        Dictionary<Guid, string> Titles,
+        Dictionary<Guid, Guid?> RemotePrepBehind)
     {
         public static QueuedDispatchHolds Empty { get; } = new(
             new Dictionary<Guid, string>(),
             new Dictionary<string, RunningLandHolder>(StringComparer.Ordinal),
-            new Dictionary<Guid, string>());
+            new Dictionary<Guid, string>(),
+            new Dictionary<Guid, Guid?>());
     }
 
     private sealed record CardRow(

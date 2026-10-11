@@ -145,7 +145,24 @@ public sealed class RemoteWorkspacePreparer : IAsyncDisposable
     {
         if (!_inFlight.TryGetValue(taskId, out var entry))
             return null;
-        return new RemotePrepProgress(entry.Since, entry.Phase, entry.BehindTaskId);
+        var progress = new RemotePrepProgress(entry.Since, entry.Phase, entry.BehindTaskId);
+        AfterProgressRead?.Invoke(taskId);
+        return progress;
+    }
+
+    /// <summary>
+    /// Test seam. Runs after <see cref="Progress"/> has copied the in-flight entry.
+    /// Production leaves this null.
+    /// </summary>
+    internal Action<Guid>? AfterProgressRead { get; set; }
+
+    /// <summary>Test seam. Replaces the holder a later <see cref="Progress"/> read would name.</summary>
+    internal bool TryRetargetBehind(Guid taskId, Guid? behindTaskId)
+    {
+        if (!_inFlight.TryGetValue(taskId, out var entry))
+            return false;
+        entry.BehindTaskId = behindTaskId;
+        return true;
     }
 
     /// <summary>Test seam: completes once no operation is in flight.</summary>

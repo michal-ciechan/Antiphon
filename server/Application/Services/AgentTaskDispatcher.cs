@@ -521,9 +521,9 @@ public sealed partial class AgentTaskDispatcher
             .ToList();
 
         // CARD-0481: a new reason deserves a trace even when this task was held before.
-        // Repeated ticks with the same reason remain silent.
-        // CARD-0535: the same query also yields the queue-stint floor (latest Dispatched)
-        // and HeldAged prefixes so age escalation is restart-safe without new columns.
+        // Repeated ticks with the same reason stay silent inside the current stint.
+        // CARD-0535 / CARD-1100: the stint floor is the latest Dispatched event. HeldAged
+        // prefixes stay on that floor so age escalation is restart-safe without new columns.
         var queuedIds = queued.Select(t => t.Id).ToList();
         var holdIndex = await LoadQueuedHoldIndexAsync(queuedIds, ct);
         var lastHeld = holdIndex.LastHeld;
@@ -1277,8 +1277,10 @@ public sealed partial class AgentTaskDispatcher
                     floor = row.At;
             }
 
+            // CARD-1100: dedupe against this stint only. The same sentence after a
+            // re-queue must write a new Held row, or HeldSince and the pipeline reason stay unset.
             var lastHeld = group
-                .Where(e => e.Type == AgentTaskEventType.Held)
+                .Where(e => e.Type == AgentTaskEventType.Held && e.At > floor)
                 .OrderByDescending(e => e.At).ThenByDescending(e => e.Id)
                 .FirstOrDefault();
             if (lastHeld is not null)
