@@ -206,7 +206,7 @@ public sealed class PlanCoverageBindingTests : CheckpointTestBase
 
     [Test]
     [Timeout(240_000)]
-    public void historical_row_timeout_checklist_binds_the_advisory_method()
+    public Task historical_row_timeout_checklist_binds_the_advisory_method(CancellationToken cancellationToken)
     {
         const string retired = "warns_when_estimate_exceeds_row_timeout";
         const string current = "warns_when_estimate_exceeds_advisory_threshold";
@@ -250,6 +250,7 @@ public sealed class PlanCoverageBindingTests : CheckpointTestBase
 
         void Bind(string plan, string[]? tests, string id, int obligations, string label)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var output = new StringWriter();
             command.Run(root, plan, tests, "json", output: output).ShouldBe(0, label);
             using var document = JsonDocument.Parse(output.ToString());
@@ -270,5 +271,7 @@ public sealed class PlanCoverageBindingTests : CheckpointTestBase
             match.GetProperty("path").GetString().ShouldBe("tests/Antiphon.Tests/Checkpoints/CheckpointImportTests.cs", label);
             match.GetProperty("line").GetInt32().ShouldBeGreaterThan(0, label);
         }
+
+        return Task.CompletedTask;
     }
 }
