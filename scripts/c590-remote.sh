@@ -3423,8 +3423,12 @@ c849_fixture_prune_case() {
 
 # CARD-1194. Field 5 of one observe line is measured bytes. Scale by 5/4 for the
 # fixture budget in base 10, so a leading zero is decimal (010 -> 12, 08 -> 10).
-# An empty, non-integer, negative, or diagnosis field is a refusal. More than 15
-# digits is refused before the multiply, which would overflow signed 64-bit arithmetic.
+# An empty, non-integer, negative, or diagnosis field is a refusal. A digit field
+# longer than 15 digits is refused before the multiply as a conservative bound, so
+# 10#$bytes * 5 stays far below the signed 64-bit maximum. A 15-digit value times
+# 5 is below 5 x 10^15, well under 9.2 x 10^18. Values of 16 to 18 digits would
+# still fit and are refused anyway, because a measured volume size that large
+# indicates a bad observation.
 c849_fixture_scale_budget() {
     local name="$1" role="$2" line="$3" bytes
     bytes="$(printf '%s\n' "$line" | awk 'NR==1 { print $5 }')"
