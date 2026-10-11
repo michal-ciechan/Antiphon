@@ -56,8 +56,6 @@ public static class HostEndpoints
             return Results.BadRequest(new { error = "window_invalid" });
         else
             windowFrom = windowTo.AddHours(-24);
-        if (windowFrom > windowTo)
-            return Results.Ok(new HostOccupancySamplesResponse(applied, windowFrom, windowTo, []));
 
         var rows = await db.HostOccupancySamples.AsNoTracking()
             .Where(row => row.HostId == hostId && row.SampledAt >= windowFrom && row.SampledAt <= windowTo)

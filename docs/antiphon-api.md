@@ -569,7 +569,9 @@ UTC). `limit` defaults to 500 and is clamped to 2000; the applied value is the
 response `limit`. `limit=1` and `limit=2000` are applied as given. A `limit`
 below 1 is 400 `{ "error": "limit_invalid" }`. A non-numeric or overflowing
 `limit` fails model binding and `ExceptionMiddleware` returns 400 problem
-details, not a 500 and not `limit_invalid` (CARD-1111). A `to`
+details, not a 500 and not `limit_invalid` (CARD-1111). The server pins
+`RouteHandlerOptions.ThrowOnBadRequest`, so that problem body does not
+depend on the hosting environment (CARD-1123). A `to`
 within 24 hours of `DateTime.MinValue` with `from` omitted is 400
 `{ "error": "window_invalid" }` (CARD-1101): the default window would otherwise
 underflow `AddHours(-24)` into a sanitized 500. A reversed window (`from`
