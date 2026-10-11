@@ -174,7 +174,14 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter, IAttacha
     public int Rows { get; private set; }
     public int MemoryLimitMb { get; private set; }
     public bool Started { get; private set; }
-    public DateTime? StartedAcceptedGeneration { get; private set; }
+    public DateTime? StartedAcceptedGeneration { get; set; }
+
+    /// <summary>
+    /// CARD-1190: the real runner adapter returns before its exit watcher copies a cause.
+    /// When set, <see cref="KillGenerationAsync"/> reports a kill with a null cause and leaves
+    /// <see cref="ExitReason"/> and <see cref="Exited"/> for the watcher.
+    /// </summary>
+    public bool DelayExitWatcher { get; set; }
     public List<DateTime> KillGenerationCalls { get; } = [];
     public bool Killed { get; private set; }
     public bool Disposed { get; private set; }
@@ -278,19 +285,22 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter, IAttacha
         return Task.FromResult(KillResult);
     }
 
-    public async Task<bool> KillGenerationAsync(DateTime expectedAcceptedStartedAt, TimeSpan timeout, CancellationToken ct)
+    public async Task<AdapterGenerationKill> KillGenerationAsync(DateTime expectedAcceptedStartedAt, TimeSpan timeout, CancellationToken ct)
     {
         KillGenerationCalls.Add(expectedAcceptedStartedAt);
         if (StartedAcceptedGeneration is { } started
             && !SessionGeneration.Equal(started, expectedAcceptedStartedAt))
         {
-            return false;
+            return new AdapterGenerationKill(false, null);
         }
 
         Killed = true;
         _lifecycle.Add("KillGeneration");
         if (OnKillGeneration is not null)
             await OnKillGeneration();
+        // The watcher has not reported a cause yet. A boolean kill is not KilledByRequest.
+        if (DelayExitWatcher)
+            return new AdapterGenerationKill(KillResult, null);
         // A kill that did not observe a reason of its own is the request that ended the process.
         // A callback that already recorded ProcessExited (or any other reason) keeps it, so a
         // natural crash inside the kill window is not relabeled KilledByRequest.
@@ -298,7 +308,8 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter, IAttacha
             ExitReason = AgentExitReason.KilledByRequest;
         if (KillResult)
             _exit.TrySetResult(ExitCode);
-        return KillResult;
+        var cause = ExitReason == AgentExitReason.Unknown ? (AgentExitReason?)null : ExitReason;
+        return new AdapterGenerationKill(KillResult, cause);
     }
 
     public Task SendPromptAsync(string prompt, CancellationToken ct)

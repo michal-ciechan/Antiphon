@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace Antiphon.SessionRunner.Contracts;
 
 /// <summary>
@@ -53,4 +55,5 @@ public sealed record RunnerKillGenerationResult(
     Guid SessionId,
     bool Killed,
     string Outcome,
-    DateTime? AcceptedStartedAt = null);
+    DateTime? AcceptedStartedAt = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ExitReason = null);

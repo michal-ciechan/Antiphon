@@ -1139,6 +1139,101 @@ public class AgentSessionLaunchFailureTests
     }
 
     /// <summary>
+    /// CARD-1190: after the specialist delete commits its locks, Start can resume the same
+    /// session id onto a new generation before the kill. The kill must not hit that generation,
+    /// and the delete aborts instead of removing the agent.
+    /// </summary>
+    [Test]
+    [Timeout(60_000)]
+    public async Task A_ready_gate_delete_does_not_kill_a_generation_started_in_the_unlocked_gap(
+        CancellationToken cancellationToken)
+    {
+        var adapter = new FakeAgentProtocolAdapter();
+        await using var fixture = await LaunchFixture.CreateAsync(adapter, services =>
+            services.AddScoped<IDelegateSessionStopper>(sp => sp.GetRequiredService<AgentSessionService>()));
+        fixture.Runtime.Register(fixture.SessionId, adapter);
+        DateTime originalGeneration;
+        await using (var seed = LaunchFixture.CreateContext())
+        {
+            var agent = await seed.Agents.SingleAsync(a => a.Id == fixture.AgentId);
+            agent.StandingSpecialistRole = AgentTaskRole.Check;
+            agent.StandingSpecialistOwnerId = agent.Id;
+            var session = await seed.AgentSessions.SingleAsync(s => s.Id == fixture.SessionId);
+            session.Status = SessionStatus.Failed;
+            session.EndedAt = DateTime.UtcNow;
+            session.TerminationSource = SessionTerminationSource.ProcessExit;
+            session.ExitCode = 1;
+            session.FailureReason = "Process exited (ProcessExited, code 1).";
+            originalGeneration = session.StartedAt;
+            await seed.SaveChangesAsync();
+        }
+
+        await using var scope = fixture.Services.GetRequiredService<IServiceScopeFactory>().CreateAsyncScope();
+        var agents = scope.ServiceProvider.GetRequiredService<AgentService>();
+        var resumedGeneration = SessionGeneration.Next(originalGeneration, DateTime.UtcNow.AddMinutes(5));
+        agents.SpecialistDeleteBeforeUnlockedKill = async ct =>
+        {
+            await using var db = LaunchFixture.CreateContext();
+            var row = await db.AgentSessions.SingleAsync(s => s.Id == fixture.SessionId, ct);
+            row.StartedAt = resumedGeneration;
+            row.Status = SessionStatus.Starting;
+            row.TerminationSource = SessionTerminationSource.Unknown;
+            row.EndedAt = null;
+            row.ExitCode = null;
+            row.FailureReason = null;
+            await db.SaveChangesAsync(ct);
+            adapter.StartedAcceptedGeneration = resumedGeneration;
+        };
+
+        var conflict = await Should.ThrowAsync<ConflictException>(() =>
+            agents.DeleteAsync(fixture.AgentId, cancellationToken));
+        conflict.Code.ShouldBe("specialist_delete_generation_changed");
+        adapter.Killed.ShouldBeFalse();
+        adapter.KillCount.ShouldBe(0);
+        adapter.Lifecycle.ShouldBeEmpty();
+
+        await using var verify = LaunchFixture.CreateContext();
+        (await verify.Agents.AnyAsync(a => a.Id == fixture.AgentId)).ShouldBeTrue();
+        var kept = await verify.AgentSessions.SingleAsync(s => s.Id == fixture.SessionId);
+        SessionGeneration.Equal(kept.StartedAt, resumedGeneration).ShouldBeTrue();
+        kept.Status.ShouldBe(SessionStatus.Starting);
+        kept.TerminationSource.ShouldBe(SessionTerminationSource.Unknown);
+    }
+
+    /// <summary>
+    /// CARD-1190: a natural exit code 0 can be stamped before the adapter watcher reports a
+    /// cause. The kill's boolean and an Unknown reason must not rewrite that stamp into
+    /// "Agent process did not become ready."
+    /// </summary>
+    [Test]
+    [Timeout(60_000)]
+    public async Task A_ready_gate_kill_leaves_a_natural_zero_exit_when_the_watcher_is_late(
+        CancellationToken cancellationToken)
+    {
+        var adapter = new FakeAgentProtocolAdapter { ReadyResult = false, DelayExitWatcher = true };
+        await using var fixture = await LaunchFixture.CreateAsync(adapter);
+        SessionExitDisposition? observed = null;
+        adapter.OnKillGeneration = async () =>
+        {
+            observed = await SessionExitObservation.ObserveMatchingAsync(
+                fixture.Runtime, fixture.SessionId, exitCode: 0, AgentExitReason.ProcessExited,
+                LaunchFixture.CreateContext);
+        };
+
+        var thrown = await Should.ThrowAsync<Exception>(() => fixture.LaunchInteractiveAsync(ct: cancellationToken));
+        thrown.GetBaseException().Message.ShouldContain(AgentSessionService.NotReadyBase);
+        observed.ShouldBe(SessionExitDisposition.Applied);
+        adapter.ExitReason.ShouldBe(AgentExitReason.Unknown);
+
+        await using var db = LaunchFixture.CreateContext();
+        var session = await db.AgentSessions.SingleAsync(s => s.Id == fixture.SessionId);
+        session.TerminationSource.ShouldBe(SessionTerminationSource.ProcessExit);
+        session.FailureReason.ShouldBeNull();
+        session.ExitCode.ShouldBe(0);
+        session.Status.ShouldBe(SessionStatus.Stopped);
+    }
+
+    /// <summary>
     /// True when another transaction already holds this session row. A granted
     /// <c>SELECT … FOR UPDATE</c> is recorded on the tuple header; pg_locks lists that lock
     /// only while someone is waiting for it, so a global tuple-lock count cannot see it.

@@ -803,11 +803,12 @@ public sealed class AgentSessionService : IDelegateSessionStopper
     {
         var issuedAt = UtcNow();
         bool? killedGeneration = null;
+        AdapterGenerationKill? generationKill = null;
         try
         {
             var grace = TimeSpan.FromMilliseconds(Math.Max(100, _settings.KillGraceMs));
             if (acceptedGeneration is { } generation)
-                killedGeneration = await adapter.KillGenerationAsync(generation, grace, CancellationToken.None);
+                generationKill = await adapter.KillGenerationAsync(generation, grace, CancellationToken.None);
             else
                 await adapter.KillAsync(grace, CancellationToken.None);
         }
@@ -840,12 +841,15 @@ public sealed class AgentSessionService : IDelegateSessionStopper
 
         AgentExitReason? observedReason = null;
         int? observedExitCode = null;
-        if (acceptedGeneration is not null)
+        if (generationKill is { } reported)
         {
-            observedReason = adapter.ExitReason;
-            if (adapter.Exited.IsCompletedSuccessfully)
-                observedExitCode = adapter.Exited.Result;
+            killedGeneration = reported.Killed;
+            // The kill call's cause, not ExitReason: the watcher writes that later.
+            observedReason = reported.Cause;
         }
+
+        if (acceptedGeneration is not null && adapter.Exited.IsCompletedSuccessfully)
+            observedExitCode = adapter.Exited.Result;
 
         await adapter.DisposeAsync();
         return acceptedGeneration is { } killedGenerationId
@@ -856,12 +860,11 @@ public sealed class AgentSessionService : IDelegateSessionStopper
 
     /// <summary>
     /// True when <paramref name="session"/>'s <see cref="SessionTerminationSource.ProcessExit"/>
-    /// is the observer stamp for the kill this cleanup issued. The kill reported this generation
-    /// dead, the row is still that generation, and the stamp does not predate the kill. An
-    /// explicit non-kill reason, a nonzero code the kill did not report, or the observer's
-    /// "ProcessExited" failure text is a natural crash in that window and stays a crash.
-    /// Unknown reason with exit code 0 is still this kill: the production runner often has no
-    /// exit reason yet when the kill call returns.
+    /// is the observer stamp for the kill this cleanup issued. The kill result must name
+    /// <see cref="AgentExitReason.KilledByRequest"/>. Unknown, a missing cause, and a natural
+    /// ProcessExited stay ProcessExit: a real exit-code-0 event can land before the adapter
+    /// watcher updates, and that stamp has no failure text. A stamp that predates the kill
+    /// request stays a process exit too.
     /// </summary>
     private static bool LaunchKillOwnsProcessExit(
         AgentSession session, LaunchCleanupKill? kill, DateTime generation)
@@ -873,8 +876,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             || !SessionGeneration.Equal(owned.Generation, generation)
             || SessionGeneration.Compare(stampedAt, owned.IssuedAt) < 0)
             return false;
-        if (owned.ObservedReason is { } reason
-            && reason is not (AgentExitReason.Unknown or AgentExitReason.KilledByRequest))
+        if (owned.ObservedReason is not AgentExitReason.KilledByRequest)
             return false;
         if (session.FailureReason?.Contains("ProcessExited", StringComparison.Ordinal) == true)
             return false;

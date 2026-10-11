@@ -6,6 +6,7 @@ using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.Logging;
@@ -44,6 +45,14 @@ public sealed class AgentService
     private readonly IDelegateSessionStopper? _sessions;
     private readonly AgentSessionRuntime? _runtime;
     private readonly SessionStateStore? _states;
+
+    /// <summary>
+    /// CARD-1190 test seam. Runs after the specialist delete commits its session-then-agent
+    /// locks and before the unlocked kill. Production leaves it null.
+    /// </summary>
+    internal Func<CancellationToken, Task>? SpecialistDeleteBeforeUnlockedKill { get; set; }
+
+    private readonly record struct DeleteTarget(Guid SessionId, DateTime Generation);
 
     public AgentService(
         AppDbContext db,
@@ -802,23 +811,33 @@ public sealed class AgentService
             ?? throw new NotFoundException(nameof(Agent), id);
         // CARD-1190: a specialist used to hold the agent row across the session kill. Stop holds
         // the session and then waits for the agent, so that order deadlocks (40P01) when the row
-        // is Failed but the runtime is still live. Take session then agent, release both, and
-        // only then write the session. Re-lock in the same order for the delete itself.
-        if (StandingSpecialistSeatPolicy.IsCheck(agent))
+        // is Failed but the runtime is still live. Take session then agent, capture the generation,
+        // release both, and kill only that generation. Re-lock in the same order and refuse when
+        // the pointer or generation moved before deleting the row.
+        DeleteTarget? captured = null;
+        var specialist = StandingSpecialistSeatPolicy.IsCheck(agent);
+        if (specialist)
         {
             await using var gate = await LockSessionThenOwnerAsync(agent, ct);
             if (await SpecialistDeleteIsBusyAsync(agent, ct))
                 throw new ConflictException(
                     "Stop the specialist and let its owned work settle before deleting it.",
                     "specialist_delete_busy");
+            captured = await CaptureDeleteTargetAsync(agent, ct);
             await gate.CommitAsync(ct);
         }
 
-        await StopLiveSessionBeforeDeleteAsync(agent, ct);
+        if (specialist && SpecialistDeleteBeforeUnlockedKill is not null)
+            await SpecialistDeleteBeforeUnlockedKill(ct);
 
-        await using var specialistTransaction = StandingSpecialistSeatPolicy.IsCheck(agent)
+        await StopLiveSessionBeforeDeleteAsync(agent, captured, ct);
+
+        await using var specialistTransaction = specialist
             ? await LockSessionThenOwnerAsync(agent, ct)
             : (IDbContextTransaction?)null;
+        if (specialistTransaction is not null && captured is DeleteTarget locked
+            && !await CapturedTargetMatchesAsync(agent, locked, ct))
+            throw DeleteGenerationChanged();
         if (specialistTransaction is not null && await SpecialistDeleteIsBusyAsync(agent, ct))
             throw new ConflictException(
                 "Stop the specialist and let its owned work settle before deleting it.",
@@ -922,17 +941,77 @@ public sealed class AgentService
     /// refuse with 409 <c>agent_delete_session_live</c> when it is still live afterwards (the stop
     /// threw, did not take, or no stopper is wired) — the row is kept rather than orphaning it.
     /// </summary>
-    private async Task StopLiveSessionBeforeDeleteAsync(Agent agent, CancellationToken ct)
+    private async Task<DeleteTarget?> CaptureDeleteTargetAsync(Agent agent, CancellationToken ct)
     {
+        if (!Guid.TryParse(agent.PersistentSessionId, out var sessionId))
+            return null;
+        var started = await _db.AgentSessions.AsNoTracking()
+            .Where(s => s.Id == sessionId)
+            .Select(s => (DateTime?)s.StartedAt)
+            .SingleOrDefaultAsync(ct);
+        return started is DateTime generation ? new DeleteTarget(sessionId, generation) : null;
+    }
+
+    /// <summary>
+    /// Session then agent, same order as the delete lock. The transaction ends before the caller
+    /// kills, so Start can take those locks; the generation on the kill is what keeps the new life safe.
+    /// </summary>
+    private async Task<bool> CapturedTargetStillHeldAsync(Agent agent, DeleteTarget target, CancellationToken ct)
+    {
+        await using var tx = await _db.Database.BeginTransactionAsync(ct);
+        var session = await _db.AgentSessions.FromSqlInterpolated(
+            $"""SELECT * FROM "AgentSessions" WHERE "Id" = {target.SessionId} FOR UPDATE""")
+            .AsNoTracking().SingleOrDefaultAsync(ct);
+        var ownerId = agent.StandingSpecialistOwnerId ?? agent.Id;
+        await _db.Agents.FromSqlInterpolated(
+            $"""SELECT * FROM "Agents" WHERE "Id" = {ownerId} FOR UPDATE""")
+            .AsNoTracking().SingleOrDefaultAsync(ct);
+        var pointer = await _db.Agents.AsNoTracking()
+            .Where(a => a.Id == agent.Id)
+            .Select(a => a.PersistentSessionId)
+            .SingleOrDefaultAsync(ct);
+        return session is not null
+            && SessionGeneration.Equal(session.StartedAt, target.Generation)
+            && Guid.TryParse(pointer, out var sessionId)
+            && sessionId == target.SessionId;
+    }
+
+    private async Task<bool> CapturedTargetMatchesAsync(Agent agent, DeleteTarget target, CancellationToken ct)
+    {
+        var started = await _db.AgentSessions.AsNoTracking()
+            .Where(s => s.Id == target.SessionId)
+            .Select(s => (DateTime?)s.StartedAt)
+            .SingleOrDefaultAsync(ct);
+        return started is DateTime value
+            && SessionGeneration.Equal(value, target.Generation)
+            && Guid.TryParse(agent.PersistentSessionId, out var pointer)
+            && pointer == target.SessionId;
+    }
+
+    private static ConflictException DeleteGenerationChanged() =>
+        new("The session generation changed while the delete released its locks. Retry the delete.",
+            "specialist_delete_generation_changed");
+
+    private async Task StopLiveSessionBeforeDeleteAsync(Agent agent, DeleteTarget? captured, CancellationToken ct)
+    {
+        if (captured is DeleteTarget target && !await CapturedTargetStillHeldAsync(agent, target, ct))
+            throw DeleteGenerationChanged();
+
         if (!Guid.TryParse(agent.PersistentSessionId, out var sessionId)
             || await PoolDelegateRelease.IsSessionTerminalAsync(_db, sessionId, _runtime, ct))
             return;
+
+        if (captured is DeleteTarget fence && (sessionId != fence.SessionId))
+            throw DeleteGenerationChanged();
 
         if (_sessions is not null)
         {
             try
             {
-                await _sessions.KillAsync(sessionId, SessionTerminationSource.OperatorRequest, ct);
+                if (captured is DeleteTarget kill)
+                    await _sessions.KillGenerationAsync(sessionId, kill.Generation, SessionTerminationSource.OperatorRequest, ct);
+                else
+                    await _sessions.KillAsync(sessionId, SessionTerminationSource.OperatorRequest, ct);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {

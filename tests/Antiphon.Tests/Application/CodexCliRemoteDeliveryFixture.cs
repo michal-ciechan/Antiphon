@@ -368,7 +368,7 @@ internal static partial class CodexCliRemoteDeliveryFixture
         public async Task<RunnerKillGenerationResult> KillGenerationAsync(Guid id, DateTime expected, CancellationToken ct)
         {
             if (!Terminals.ContainsKey(id)) return new(id, true, KillGenerationOutcomes.Killed, DateTime.UtcNow);
-            var killed = await Terminals[id].KillGenerationAsync(expected, TimeSpan.FromSeconds(1), ct);
+            var killed = (await Terminals[id].KillGenerationAsync(expected, TimeSpan.FromSeconds(1), ct)).Killed;
             return new(id, killed, killed ? KillGenerationOutcomes.Killed : KillGenerationOutcomes.Mismatch, DateTime.UtcNow);
         }
         public async Task<RunnerSessionDto> ReleaseSlotAsync(Guid id, string reason, CancellationToken ct)

@@ -71,8 +71,11 @@ public sealed class RunnerCodexAdapter : IAgentProtocolAdapter, IAttachableProto
     public async Task<bool> KillAsync(TimeSpan timeout, CancellationToken ct) =>
         await _terminal.KillAsync(ct);
 
-    public Task<bool> KillGenerationAsync(DateTime expectedAcceptedStartedAt, TimeSpan timeout, CancellationToken ct) =>
-        _terminal.KillGenerationAsync(expectedAcceptedStartedAt, ct);
+    public async Task<AdapterGenerationKill> KillGenerationAsync(DateTime expectedAcceptedStartedAt, TimeSpan timeout, CancellationToken ct)
+    {
+        var killed = await _terminal.KillGenerationAsync(expectedAcceptedStartedAt, ct);
+        return new AdapterGenerationKill(killed, _terminal.GenerationKillCause);
+    }
 
     /// <summary>
     /// Types the prompt and then PROVES it submitted, because for Codex a typed body and a

@@ -21,4 +21,13 @@ public interface IDelegateSessionStopper
     /// </summary>
     Task KillAsync(Guid sessionId, SessionTerminationSource source, CancellationToken ct) =>
         KillAsync(sessionId, ct);
+
+    /// <summary>
+    /// Kill only when the row still holds <paramref name="expectedGeneration"/>. A seam that
+    /// cannot name a generation returns false and must not fall back to <see cref="KillAsync"/>
+    /// (CARD-1190: a session-id kill in the unlocked delete gap hits the replacement generation).
+    /// </summary>
+    Task<bool> KillGenerationAsync(
+        Guid sessionId, DateTime expectedGeneration, SessionTerminationSource source, CancellationToken ct) =>
+        Task.FromResult(false);
 }

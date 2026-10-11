@@ -26,6 +26,12 @@ internal sealed class RunnerTerminalSession
     public DateTime? AcceptedStartedAt => _acceptedGeneration;
     public int? Pid { get; private set; }
     public AgentExitReason ExitReason { get; private set; } = AgentExitReason.Unknown;
+
+    /// <summary>
+    /// Cause observed by the last <see cref="KillGenerationAsync"/>, not by the exit watcher.
+    /// Null when that call did not report one (including <see cref="AgentExitReason.Unknown"/>).
+    /// </summary>
+    public AgentExitReason? GenerationKillCause { get; private set; }
     public Task<int> Exited { get; private set; } = Task.FromResult(0);
 
     public async Task StartAsync(AgentLaunchSpec spec, CancellationToken ct)
@@ -268,12 +274,20 @@ internal sealed class RunnerTerminalSession
 
     public async Task<bool> KillGenerationAsync(DateTime expectedAcceptedStartedAt, CancellationToken ct)
     {
+        GenerationKillCause = null;
         if (_sessionId == Guid.Empty)
             return false;
         if (!SessionGeneration.Equal(_acceptedGeneration, expectedAcceptedStartedAt))
             return false;
 
         var result = await _client.KillGenerationAsync(_sessionId, expectedAcceptedStartedAt, ct);
+        var cause = RunnerContractMapper.MapExitReason(result.ExitReason ?? "");
+        if (cause != AgentExitReason.Unknown)
+        {
+            GenerationKillCause = cause;
+            ExitReason = cause;
+        }
+
         return result.Killed;
     }
 
