@@ -8,6 +8,19 @@ namespace Antiphon.Tests.Checkpoints;
 public sealed class BaselineComparerTests : CheckpointTestBase
 {
     [Test]
+    public void checkout_path_refuses_unsafe_build_ids()
+    {
+        var source = TempDir();
+        var safe = BaselineComparer.CheckoutPath(source, "20260101-000000-abcd", "bin-a");
+        var baselineRoot = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "antiphon-checkpoints-baseline"));
+        var prefix = baselineRoot.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        Path.GetFullPath(safe).StartsWith(prefix, StringComparison.Ordinal).ShouldBeTrue();
+        Path.GetFileName(safe).ShouldBe("bin-a");
+        foreach (var id in new[] { "tests", ".", "..", "src", Path.GetFullPath(source) })
+            Should.Throw<InvalidOperationException>(() => BaselineComparer.CheckoutPath(source, "20260101-000000-abcd", id));
+    }
+
+    [Test]
     public async Task classifies_inherited_introduced_new()
     {
         var driver = Script("""

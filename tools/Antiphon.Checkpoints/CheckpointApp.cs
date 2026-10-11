@@ -293,7 +293,8 @@ public static class CheckpointApp
             if (!request.KeepOutputs)
             {
                 OutputCleanup.CleanOwnedOutputs(repo, manifest.Builds.Select(build => build.Id).ToList(), model.ExitCode,
-                    request.CleanOnRed, dryRun: false, beforeDelete: owner.Bound ? () => owner.Ended.ThrowIfCancellationRequested() : null);
+                    request.CleanOnRed, dryRun: false, beforeDelete: owner.Bound ? () => owner.Ended.ThrowIfCancellationRequested() : null,
+                    createdPaths: state.CreatedOutputPaths);
                 model.CleanedOutputs = model.ExitCode == 0 || request.CleanOnRed;
             }
         }

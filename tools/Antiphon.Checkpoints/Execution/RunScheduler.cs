@@ -311,6 +311,17 @@ public sealed class RunScheduler
         SlotSession session,
         CancellationToken cancellationToken)
     {
+        var before = OutputCleanup.MatchingIsolatedDirectories(request.WorkingDirectory, build.Id);
+        try
+        {
+        if (!OutputCleanup.IsIsolatedOutputId(build.Id))
+        {
+            progress.AdmissionExitCode = ExitCodes.Invalid;
+            progress.SlotReason = "unsafe-build-id";
+            progress.State = "failed";
+            return;
+        }
+
         progress.State = "building";
         progress.StartedAt = DateTimeOffset.UtcNow;
         request.State.MaxConcurrentBuilds = Math.Max(
@@ -369,6 +380,11 @@ public sealed class RunScheduler
         }
 
         Publish(request);
+        }
+        finally
+        {
+            OutputCleanup.RecordCreatedOutputs(request.State, request.WorkingDirectory, build.Id, before);
+        }
     }
 
     private async Task<RowRunResult> RunRowAsync(

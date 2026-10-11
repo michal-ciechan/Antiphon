@@ -315,6 +315,29 @@ public sealed class RunSchedulerTests : CheckpointTestBase
         handler.LiveCount.ShouldBe(0);
     }
 
+    [Test]
+    public async Task records_output_directories_the_build_created()
+    {
+        var driver = InstantDriver(driver => driver.When(CheckpointFixtures.IsBuild, (request, _) =>
+        {
+            if (request.Arguments.Contains("--property:OutputPath=bin-a/"))
+            {
+                Directory.CreateDirectory(Path.Combine(request.WorkingDirectory, "proj", "bin-a"));
+                Directory.CreateDirectory(Path.Combine(request.WorkingDirectory, "tests"));
+            }
+
+            return Task.FromResult(new DriverResult(0, "", ""));
+        }));
+        var manifest = TwoBuildRows();
+        var result = await Schedule(driver, manifest, manifest.Checkpoints, 1, serialAll: true);
+        result.State.CreatedOutputPaths.ShouldContain(path =>
+            path.EndsWith(Path.Combine("proj", "bin-a"), StringComparison.Ordinal));
+        result.State.CreatedOutputPaths.ShouldAllBe(path =>
+            Path.GetFileName(path) == "bin-a" || Path.GetFileName(path) == "bin-b");
+        result.State.CreatedOutputPaths.Any(path => Path.GetFileName(path) == "tests").ShouldBeFalse();
+        result.Rows.Count(row => row.State == "green").ShouldBe(2);
+    }
+
     private static CheckpointManifest OneBuildTwoRows()
     {
         var manifest = new CheckpointManifest();
