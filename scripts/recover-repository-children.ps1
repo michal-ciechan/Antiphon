@@ -106,6 +106,11 @@ function Get-ChildState($Record, [string]$Common) {
     finally { if ($null -ne $recordedProcess) { $recordedProcess.Dispose() } }
 }
 
+function Format-RecoveryTaskId([string]$Value) {
+    # Match the lease fence sentence: 32 hex digits, not the dashed JSON form (CARD-1092).
+    try { return ([guid]$Value).ToString('N') } catch { return $Value }
+}
+
 function Get-ChildTag($Record) {
     $tag = ''
     $purpose = $Record.PSObject.Properties['Purpose']
@@ -114,7 +119,7 @@ function Get-ChildTag($Record) {
     }
     $task = $Record.PSObject.Properties['TaskId']
     if ($null -ne $task -and -not [string]::IsNullOrEmpty([string]$task.Value)) {
-        $tag += ' task=' + [string]$task.Value
+        $tag += ' task=' + (Format-RecoveryTaskId ([string]$task.Value))
     }
     return $tag
 }
