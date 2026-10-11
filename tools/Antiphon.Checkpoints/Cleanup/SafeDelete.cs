@@ -245,6 +245,38 @@ public static class SafeDelete
         return listed.Stdout.Length == 0 ? null : "tracked";
     }
 
+    // One ls-files of every write root. A git failure refuses; a missing repository has nothing tracked.
+    public static string? PreflightRoots(string repository, IReadOnlyCollection<string> roots, string? gitExecutable = null, int? timeoutMs = null)
+    {
+        if (roots.Count == 0)
+            return "git-failed";
+        var start = Canonical(repository);
+        if (start is null)
+            return "path-unsafe";
+        var owner = FindOwner(Directory.Exists(start) ? start : Path.GetDirectoryName(start) ?? start);
+        if (owner is null)
+            return string.IsNullOrWhiteSpace(gitExecutable) ? null : "git-failed";
+        var timeout = timeoutMs ?? GitTimeoutMs;
+        var git = string.IsNullOrWhiteSpace(gitExecutable) ? "git" : gitExecutable;
+        var args = new List<string> { "-C", owner, "ls-files", "-z", "--" };
+        foreach (var root in roots)
+        {
+            var full = Canonical(root);
+            if (full is null)
+                return "path-unsafe";
+            args.Add(full);
+        }
+
+        var listed = RunGit(git, owner, args, timeout);
+        if (listed.Failure is not null)
+            return listed.Failure;
+        if (listed.ExitCode != 0)
+            return listed.Stderr.Contains("not a git repository", StringComparison.OrdinalIgnoreCase)
+                ? "git-failed"
+                : "git-failed";
+        return listed.Stdout.Length == 0 ? null : "tracked";
+    }
+
     private static string? FindOwner(string start)
     {
         var current = start;
