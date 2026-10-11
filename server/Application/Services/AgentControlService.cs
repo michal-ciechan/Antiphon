@@ -522,11 +522,13 @@ public sealed class AgentControlService : ICompactionContinuationResume
         {
             foreach (var queueLock in queueLocks) { await queueLock.WaitAsync(ct); acquired++; }
             await using var reservation = await _db.Database.BeginTransactionAsync(ct);
-            await LockAgentAsync(agent.Id, ct);
-            await _db.Entry(agent).ReloadAsync(ct);
+            // Sessions before the agent. Launch-failure cleanup of one of these conversations
+            // already holds that order; the agent lock first deadlocks it (40P01, CARD-1190).
             foreach (var id in involved)
                 await _db.AgentSessions.FromSqlInterpolated($"SELECT * FROM \"AgentSessions\" WHERE \"Id\" = {id} FOR UPDATE")
                     .AsNoTracking().SingleOrDefaultAsync(ct);
+            await LockAgentAsync(agent.Id, ct);
+            await _db.Entry(agent).ReloadAsync(ct);
             if (agent.PersistentSessionId != expectedPointer)
                 throw new ConflictException("The current conversation changed; refresh and retry.", "standing_resume_current_changed");
             if (previous is not null && previous.Id != sourceId && _launchQueue.Owns(previous.Id))
@@ -1134,32 +1136,63 @@ public sealed class AgentControlService : ICompactionContinuationResume
         {
             // Record human intent before the runner RPC. A launch already queued but not
             // yet started must see the stop even when there is no process to kill yet.
-            await using var transaction = await _db.Database.BeginTransactionAsync(ct);
-            var ownerId = agent.StandingSpecialistOwnerId ?? agent.Id;
-            await _db.Agents.FromSqlInterpolated($"SELECT * FROM \"Agents\" WHERE \"Id\" = {ownerId} FOR UPDATE")
-                .AsNoTracking().SingleOrDefaultAsync(ct);
-            await _db.Entry(agent).ReloadAsync(ct);
-            var intent = await GetOrCreateSupervisionStateAsync(agent.Id, ct);
-            if (!intent.Suspended)
-                _db.AgentIncidents.Add(new AgentIncident
+            // Session before agent, same order as launch-failure cleanup. Locking the agent
+            // first deadlocks that cleanup (40P01, CARD-1190). The pointer is read without
+            // the agent row lock; if it moves before the agent lock lands, retry rather than
+            // taking the new session while the agent lock is already held.
+            const int maxAttempts = 3;
+            for (var attempt = 1; ; attempt++)
+            {
+                await using var transaction = await _db.Database.BeginTransactionAsync(ct);
+                var pointer = await _db.Agents.AsNoTracking()
+                    .Where(a => a.Id == agent.Id)
+                    .Select(a => a.PersistentSessionId)
+                    .SingleAsync(ct);
+                Guid? lockedSession = null;
+                if (Guid.TryParse(pointer, out var sessionToLock))
                 {
-                    Id = Guid.NewGuid(),
-                    AgentId = agent.Id,
-                    Kind = AgentIncidentKind.SuspendedByUser,
-                    Severity = AlertSeverity.Info,
-                    Message = "Stopped by user; always-on supervision suspended until the next manual start.",
-                    CreatedAt = UtcNow()
-                });
-            intent.Suspended = true;
-            intent.NextRestartAt = null;
-            intent.UpdatedAt = UtcNow();
-            agent.Status = AgentStatus.Stopped;
-            agent.UpdatedAt = UtcNow();
-            if (Guid.TryParse(agent.PersistentSessionId, out var stoppingId))
-                await _db.AgentSessions.Where(s => s.Id == stoppingId)
-                    .ExecuteUpdateAsync(s => s.SetProperty(x => x.TerminationSource, SessionTerminationSource.OperatorRequest), ct);
-            await _db.SaveChangesAsync(ct);
-            await transaction.CommitAsync(ct);
+                    await _db.AgentSessions.FromSqlInterpolated(
+                        $"""SELECT * FROM "AgentSessions" WHERE "Id" = {sessionToLock} FOR UPDATE""")
+                        .AsNoTracking().SingleOrDefaultAsync(ct);
+                    lockedSession = sessionToLock;
+                }
+
+                var ownerId = agent.StandingSpecialistOwnerId ?? agent.Id;
+                await _db.Agents.FromSqlInterpolated($"SELECT * FROM \"Agents\" WHERE \"Id\" = {ownerId} FOR UPDATE")
+                    .AsNoTracking().SingleOrDefaultAsync(ct);
+                await _db.Entry(agent).ReloadAsync(ct);
+                if (Guid.TryParse(agent.PersistentSessionId, out var reloadedSession) && reloadedSession != lockedSession)
+                {
+                    if (attempt == maxAttempts)
+                        throw new ConflictException(
+                            "The session changed while the stop was taking its locks.",
+                            "stop_session_lock_order");
+                    continue;
+                }
+
+                var intent = await GetOrCreateSupervisionStateAsync(agent.Id, ct);
+                if (!intent.Suspended)
+                    _db.AgentIncidents.Add(new AgentIncident
+                    {
+                        Id = Guid.NewGuid(),
+                        AgentId = agent.Id,
+                        Kind = AgentIncidentKind.SuspendedByUser,
+                        Severity = AlertSeverity.Info,
+                        Message = "Stopped by user; always-on supervision suspended until the next manual start.",
+                        CreatedAt = UtcNow()
+                    });
+                intent.Suspended = true;
+                intent.NextRestartAt = null;
+                intent.UpdatedAt = UtcNow();
+                agent.Status = AgentStatus.Stopped;
+                agent.UpdatedAt = UtcNow();
+                if (lockedSession is Guid stoppingId)
+                    await _db.AgentSessions.Where(s => s.Id == stoppingId)
+                        .ExecuteUpdateAsync(s => s.SetProperty(x => x.TerminationSource, SessionTerminationSource.OperatorRequest), ct);
+                await _db.SaveChangesAsync(ct);
+                await transaction.CommitAsync(ct);
+                break;
+            }
         }
 
         if (Guid.TryParse(agent.PersistentSessionId, out var sessionId)
