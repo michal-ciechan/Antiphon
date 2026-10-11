@@ -414,8 +414,8 @@ public sealed class CheckpointImportTests : CheckpointTestBase
         census.MinExecuted.ShouldBe(4);
         rest.MinExecuted.ShouldBe(12);
         (census.EstimatedMinutes + rest.EstimatedMinutes).ShouldBe(14);
-        census.EstimatedMinutes.ShouldBeLessThanOrEqualTo(15);
-        rest.EstimatedMinutes.ShouldBeLessThanOrEqualTo(15);
+        census.EstimatedMinutes!.Value.ShouldBeLessThanOrEqualTo(15);
+        rest.EstimatedMinutes!.Value.ShouldBeLessThanOrEqualTo(15);
         manifest.Checkpoints.Sum(row => row.EstimatedMinutes ?? 0).ShouldBe(72);
         census.ExpectText.ShouldContain("0 failed/skipped");
         rest.ExpectText.ShouldContain("0 failed/skipped");
