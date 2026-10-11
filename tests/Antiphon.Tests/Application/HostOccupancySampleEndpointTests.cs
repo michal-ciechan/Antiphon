@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.AspNetCore.Routing;
+using Microsoft.Extensions.Hosting;
 using Antiphon.Server.Api.Endpoints;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
@@ -231,11 +232,11 @@ public sealed class HostOccupancySampleEndpointTests
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var clock = new FakeTimeProvider(Now);
         await using var host = await StartAsync(schema, clock);
-        // Testing is not Development, so the framework default would leave the option false
-        // and this route would answer an empty 400. The body below requires the server pin.
+        // Testing is not Development, so the framework leaves ThrowOnBadRequest false.
+        // The problem body below is this endpoint's own rejection, not a global pin.
         host.App.Environment.EnvironmentName.ShouldBe("Testing");
         host.App.Services.GetRequiredService<IOptions<RouteHandlerOptions>>().Value
-            .ThrowOnBadRequest.ShouldBeTrue();
+            .ThrowOnBadRequest.ShouldBeFalse();
 
         foreach (var limit in new[] { "nope", "2147483648", "999999999999" })
         {
@@ -250,7 +251,37 @@ public sealed class HostOccupancySampleEndpointTests
             body.ShouldNotContain("limit_invalid");
             using var json = JsonDocument.Parse(body);
             json.RootElement.GetProperty("status").GetInt32().ShouldBe(400);
+            json.RootElement.GetProperty("title").GetString().ShouldBe("Bad Request", limit);
         }
+    }
+
+    /// <summary>
+    /// CARD-1123. Production leaves <c>ThrowOnBadRequest</c> false. A non-empty
+    /// <c>POST /api/agents</c> with no Content-Type is an empty 415, and
+    /// <c>GET /api/audit?take=nope</c> is an empty 400. A global pin turns both
+    /// into problem JSON (the 415 one titled Internal Server Error).
+    /// </summary>
+    [Test]
+    [Timeout(180_000)]
+    public async Task C1123_Production_other_routes_keep_the_unpinned_responses()
+    {
+        await using var factory = new ProductionBindingFactory();
+        factory.Services.GetRequiredService<IHostEnvironment>().EnvironmentName.ShouldBe("Production");
+        factory.Services.GetRequiredService<IOptions<RouteHandlerOptions>>().Value
+            .ThrowOnBadRequest.ShouldBeFalse();
+
+        using var client = factory.CreateClient();
+        using var agents = new HttpRequestMessage(HttpMethod.Post, "/api/agents")
+        {
+            Content = new ByteArrayContent("{"u8.ToArray()),
+        };
+        using var agentsResponse = await client.SendAsync(agents);
+        ((int)agentsResponse.StatusCode).ShouldBe(415);
+        (await agentsResponse.Content.ReadAsByteArrayAsync()).Length.ShouldBe(0);
+
+        using var audit = await client.GetAsync("/api/audit?take=nope");
+        audit.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
+        (await audit.Content.ReadAsByteArrayAsync()).Length.ShouldBe(0);
     }
 
     [Test]
@@ -276,6 +307,15 @@ public sealed class HostOccupancySampleEndpointTests
         Instant(json.RootElement, "from").ShouldBe(from);
         Instant(json.RootElement, "to").ShouldBe(to);
         json.RootElement.GetProperty("limit").GetInt32().ShouldBe(500);
+    }
+
+    private sealed class ProductionBindingFactory : AntiphonWebAppFactory
+    {
+        protected override IHost CreateHost(IHostBuilder builder)
+        {
+            builder.UseEnvironment(Environments.Production);
+            return base.CreateHost(builder);
+        }
     }
 
     private static Task<PhoneHomeTestHost> StartAsync(IsolatedTestSchema schema, FakeTimeProvider clock) =>

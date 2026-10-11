@@ -1,3 +1,4 @@
+using System.Globalization;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Enums;
@@ -40,14 +41,25 @@ public static class HostEndpoints
     private const int MaxOccupancySampleLimit = 2000;
 
     private static async Task<IResult> GetOccupancySamplesAsync(
-        string hostId, DateTime? from, DateTime? to, int? limit,
+        string hostId, DateTime? from, DateTime? to, string? limit,
         HostBudgetService budgets, AppDbContext db, TimeProvider clock, CancellationToken ct)
     {
+        // Bind before the host lookup. A malformed limit is a 400 problem body in every
+        // environment; the framework only throws that failure when ThrowOnBadRequest is set,
+        // and that option defaults to true only in Development (CARD-1123).
+        if (!TryParseOccupancyLimit(limit, out var parsedLimit))
+            throw new BadHttpRequestException(string.Format(
+                CultureInfo.InvariantCulture,
+                "Failed to bind parameter \"{0} {1}\" from \"{2}\".",
+                "Nullable<int>",
+                "limit",
+                limit));
+
         await budgets.EffectiveAsync(hostId, ct);
-        if (limit is < 1)
+        if (parsedLimit is < 1)
             return Results.BadRequest(new { error = "limit_invalid" });
 
-        var applied = Math.Min(limit ?? DefaultOccupancySampleLimit, MaxOccupancySampleLimit);
+        var applied = Math.Min(parsedLimit ?? DefaultOccupancySampleLimit, MaxOccupancySampleLimit);
         var windowTo = to is { } rawTo ? AsUtc(rawTo) : clock.GetUtcNow().UtcDateTime;
         DateTime windowFrom;
         if (from is { } rawFrom)
@@ -65,6 +77,29 @@ public static class HostEndpoints
             .ToListAsync(ct);
         return Results.Ok(new HostOccupancySamplesResponse(
             applied, windowFrom, windowTo, rows.Select(ToDto).ToArray()));
+    }
+
+    /// <summary>
+    /// Missing <paramref name="text"/> is the default limit. An empty or non-integer value,
+    /// including one outside <see cref="int"/>, is the same failure the framework reports for
+    /// <c>int?</c> when <c>ThrowOnBadRequest</c> is true.
+    /// </summary>
+    private static bool TryParseOccupancyLimit(string? text, out int? parsed)
+    {
+        if (text is null)
+        {
+            parsed = null;
+            return true;
+        }
+
+        if (int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var value))
+        {
+            parsed = value;
+            return true;
+        }
+
+        parsed = null;
+        return false;
     }
 
     private static HostOccupancySampleDto ToDto(Domain.Entities.HostOccupancySample row) =>
