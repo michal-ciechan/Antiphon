@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -204,6 +205,107 @@ public sealed class RemoteScriptContractTests
             subshell.ShouldContain(guard, customMessage: diagnosis);
             Order(subshell, guard, "c849_seed").ShouldBeTrue(diagnosis);
         }
+    }
+
+    // CARD-1192 S1. Workspace registration is absence-only, labeled, and kept across prepare.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1192_Workspace_registration_is_absent_only_and_survives_prepare()
+    {
+        var output = C1192Run("register");
+        foreach (var label in new[]
+        {
+            "controller-mode-0700",
+            "controller-fresh-nonlink",
+            "controller-host-owner",
+            "occupied-name-no-create",
+            "unknown-lookup-no-create",
+            "intent-before-create",
+            "workspace-local-driver",
+            "workspace-empty-options",
+            "workspace-ledger-retained",
+            "workspace-admitted-image",
+            "workspace-network-none",
+            "workspace-no-socket",
+            "workspace-no-credentials",
+            "workspace-no-host-work-bind",
+            "workspace-reader-readonly",
+            "workspace-nocopy",
+            "workspace-mode-0700",
+            "workspace-owner-1654",
+            "workspace-positional-arguments"
+        })
+            Fact(output, label).ShouldBe("1", label);
+    }
+
+    // CARD-1192 S1. Cleanup removes only the exact current-run set, consumers and helpers first.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1192_Cleanup_releases_only_registered_current_run_resources()
+    {
+        var output = C1192Run("cleanup");
+        foreach (var label in new[]
+        {
+            "unregistered-name-preserved",
+            "foreign-run-preserved",
+            "foreign-owner-preserved",
+            "foreign-label-run-preserved",
+            "wrong-role-preserved",
+            "unknown-resource-preserved",
+            "production-name-preserved",
+            "consumers-before-volumes",
+            "helpers-before-volumes",
+            "finalize-twice-clean"
+        })
+            Fact(output, label).ShouldBe("1", label);
+    }
+
+    // CARD-1192 S1. A failure during acquisition still finalizes the resources already taken.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1192_Partial_workspace_acquisition_is_cleaned()
+    {
+        var output = C1192Run("partial");
+        (Fact(output, "partial-work-create-diagnosis") == "FixtureWorkspaceCreateFailed"
+            && Fact(output, "partial-work-create-cleanup") == "1"
+            && Fact(output, "partial-work-create-work") == "0"
+            && Fact(output, "partial-work-create-mask") == "0"
+            && Fact(output, "partial-work-create-writer") == "0"
+            && Fact(output, "partial-work-create-reader") == "0")
+            .ShouldBeTrue("first-create-failure-cleaned");
+        (Fact(output, "partial-writer-start-diagnosis") == "FixtureHelperStartFailed"
+            && Fact(output, "partial-writer-start-cleanup") == "1"
+            && Fact(output, "partial-writer-start-writer") == "0"
+            && Fact(output, "partial-writer-start-work") == "0"
+            && Fact(output, "partial-writer-start-mask") == "0")
+            .ShouldBeTrue("helper-start-failure-cleaned");
+        (Fact(output, "partial-rm-work-cleanup") == "1"
+            && Fact(output, "partial-rm-work-work") == "1"
+            && Fact(output, "partial-rm-work-mask") == "0"
+            && Fact(output, "partial-rm-work-writer") == "0"
+            && Fact(output, "partial-rm-work-reader") == "0"
+            && Fact(output, "partial-rm-work-residue") == "c849c1192fixture0001-work")
+            .ShouldBeTrue("later-resources-attempted");
+        C1192CutCleaned(output, "mask-create", "FixtureWorkspaceCreateFailed");
+        C1192CutCleaned(output, "root-init", "FixtureWorkspaceInitFailed");
+        C1192CutCleaned(output, "writer-create", "FixtureHelperCreateFailed");
+        C1192CutCleaned(output, "reader-create", "FixtureHelperCreateFailed");
+        C1192CutCleaned(output, "reader-start", "FixtureHelperStartFailed");
+    }
+
+    // CARD-1192 S1. The toxic probe stays in the work volume; only the allowlisted summary is copied back.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1192_Toxic_probe_stays_in_work_volume()
+    {
+        var output = C1192Run("toxic");
+        var expected = Convert.ToHexStringLower(SHA256.HashData(
+            Encoding.UTF8.GetBytes("credential=TOKEN_SENTINEL_C849_CONTENT\n")));
+        (Fact(output, "toxic-volume-sha") == expected && Fact(output, "toxic-case-hits") == "0")
+            .ShouldBeTrue("toxic-input-volume-only");
+        Fact(output, "summary-groups").ShouldBe("9");
+        Fact(output, "summary-inventories").ShouldBe("2");
+        Fact(output, "control-pc26").ShouldBe("EvidenceNotAllowListed");
     }
 
     // CARD-1193. NuGet locks $NUGET_SCRATCH/lock/<hash>. The holder and waiter must receive the
@@ -7120,6 +7222,45 @@ public sealed class RemoteScriptContractTests
                 """ + "\n";
         }
         return prelude + body;
+    }
+
+    private static string C1192Run(string mode)
+    {
+        RequireLinuxPwsh();
+        var output = LinuxShell(
+            "bash \"$repo/scripts/fixtures/c1192-workspace-contract.sh\" " + mode + " \"$repo\"\nprintf 'C1192_EXIT=%s\\n' \"$?\"\n",
+            "repo");
+        output.IndexOf("C1192_FAIL", StringComparison.Ordinal).ShouldBe(-1, output);
+        output.ShouldContain("C1192_EXIT=0", customMessage: output);
+        return output;
+    }
+
+    private static string Fact(string output, string key)
+    {
+        var prefix = key + "=";
+        string? found = null;
+        foreach (var raw in output.Split('\n'))
+        {
+            var line = raw.Trim();
+            if (!line.StartsWith(prefix, StringComparison.Ordinal)) continue;
+            if (found is not null)
+                throw new InvalidOperationException("duplicate " + key);
+            found = line[prefix.Length..];
+        }
+        if (found is null)
+            throw new InvalidOperationException("missing " + key);
+        return found;
+    }
+
+    private static void C1192CutCleaned(string output, string cut, string diagnosis)
+    {
+        (Fact(output, "partial-" + cut + "-diagnosis") == diagnosis
+            && Fact(output, "partial-" + cut + "-cleanup") == "1"
+            && Fact(output, "partial-" + cut + "-work") == "0"
+            && Fact(output, "partial-" + cut + "-mask") == "0"
+            && Fact(output, "partial-" + cut + "-writer") == "0"
+            && Fact(output, "partial-" + cut + "-reader") == "0")
+            .ShouldBeTrue(cut + "-cleaned");
     }
 
     // The remote script only ever runs under Linux bash, and these defects are behaviour (a
