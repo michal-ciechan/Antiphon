@@ -135,7 +135,16 @@ public sealed class RowRunner
         var buildState = request.BuildStateOverride ?? (request.NoBuild ? "reused" : "ok");
         if (!request.NoBuild)
         {
-            binding?.Invalidate();
+            if (binding is not null)
+            {
+                var invalidated = binding.Invalidate();
+                if (invalidated is not null)
+                {
+                    combined.WriteLine($"CHECKPOINT {request.Name} refused: {invalidated}");
+                    combined.WriteLine($"CHECKPOINT {request.Name} EXIT CODE: 2");
+                    return Finish(ExitCodes.Invalid, "failed", "", buffer, 0, [], null, null, false, "build-failed");
+                }
+            }
             if (request.BeforeLaunch is not null)
                 await request.BeforeLaunch(cancellationToken).ConfigureAwait(false);
             var buildArgs = BuildStep.BuildArguments(request.Project!, request.OutputPath!, properties, request.MaxCpuCount);
@@ -154,7 +163,16 @@ public sealed class RowRunner
                 return Finish(ExitCodes.Invalid, "failed", "", buffer, 0, [], null, null, false, "build-failed");
             }
             if (!buildSourceOk) return SourceFailure(request, buffer, combined);
-            binding?.Write();
+            if (binding is not null)
+            {
+                var written = binding.Write();
+                if (written is not null)
+                {
+                    combined.WriteLine($"CHECKPOINT {request.Name} refused: {written}");
+                    combined.WriteLine($"CHECKPOINT {request.Name} EXIT CODE: 2");
+                    return Finish(ExitCodes.Invalid, "failed", "", buffer, 0, [], null, null, false, "build-failed");
+                }
+            }
             request.Source.BuildSource = "verified";
         }
 

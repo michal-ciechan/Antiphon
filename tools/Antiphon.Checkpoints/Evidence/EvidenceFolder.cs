@@ -51,7 +51,7 @@ public static class EvidenceFolder
         {
             var stale = Path.Combine(runDirectory, "failures.md");
             if (File.Exists(stale))
-                File.Delete(stale);
+                SafeDelete.DeleteCreatedFile(stale);
         }
 
         if (removeToolCopy)

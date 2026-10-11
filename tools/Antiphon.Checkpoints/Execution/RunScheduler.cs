@@ -355,7 +355,15 @@ public sealed class RunScheduler
                 progress.Source = request.SourceGuard.Copy("unknown");
                 return;
             }
-            binding.Invalidate();
+            var invalidated = binding.Invalidate();
+            if (invalidated is not null)
+            {
+                progress.AdmissionExitCode = ExitCodes.Invalid;
+                progress.SlotReason = "refused: " + invalidated;
+                progress.State = "failed";
+                Publish(request);
+                return;
+            }
             var cpu = lease.MaxCpuCount > 0 ? lease.MaxCpuCount : 4;
             var args = BuildStep.BuildArguments(build.Project, build.OutputPath, properties, cpu);
             var log = Path.Combine(request.RunDirectory, "builds", build.Id, "build.log");
@@ -370,7 +378,16 @@ public sealed class RunScheduler
             var sourceOk = request.SourceGuard?.Observe() != false;
             progress.Seconds = (DateTimeOffset.UtcNow - started).TotalSeconds;
             progress.State = result.ExitCode == 0 && !result.TimedOut && sourceOk ? "ok" : "failed";
-            if (progress.State == "ok") binding.Write();
+            if (progress.State == "ok")
+            {
+                var written = binding.Write();
+                if (written is not null)
+                {
+                    progress.State = "failed";
+                    progress.AdmissionExitCode = ExitCodes.Invalid;
+                    progress.SlotReason = "refused: " + written;
+                }
+            }
             else if (!sourceOk) { progress.AdmissionExitCode = ExitCodes.Invalid; progress.SlotReason = request.SourceGuard?.Reason; }
             progress.Source = request.SourceGuard?.Copy(progress.State == "ok" ? "verified" : "unknown") ?? new SourceEvidence();
         }

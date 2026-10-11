@@ -292,10 +292,22 @@ public static class CheckpointApp
                 throw new OperationCanceledException(owner.Reason);
             if (!request.KeepOutputs)
             {
-                OutputCleanup.CleanOwnedOutputs(repo, manifest.Builds.Select(build => build.Id).ToList(), model.ExitCode,
+                var clean = OutputCleanup.CleanOwnedOutputs(repo, manifest.Builds.Select(build => build.Id).ToList(), model.ExitCode,
                     request.CleanOnRed, dryRun: false, beforeDelete: owner.Bound ? () => owner.Ended.ThrowIfCancellationRequested() : null,
                     createdPaths: state.CreatedOutputPaths);
-                model.CleanedOutputs = model.ExitCode == 0 || request.CleanOnRed;
+                if (clean.Refusals.Count > 0)
+                {
+                    model.CleanedOutputs = false;
+                    model.CleanupRefusals = clean.Refusals;
+                    if (model.ExitCode == 0)
+                    {
+                        model.ExitCode = ExitCodes.Invalid;
+                        model.Verdict = "RED";
+                        model.Reason = "refused: " + clean.Refusals[0];
+                    }
+                }
+                else
+                    model.CleanedOutputs = model.ExitCode == 0 || request.CleanOnRed;
             }
         }
         catch (OperationCanceledException) when (owner.Ended.IsCancellationRequested)
@@ -390,7 +402,7 @@ public static class CheckpointApp
         catch
         {
             if (ContainedCleanup.SafeAncestors(runDirectory) && ContainedCleanup.SafeTree(runDirectory, 10000))
-                Directory.Delete(runDirectory, true);
+                SafeDelete.DeleteCreatedTree(runDirectory);
             throw;
         }
     }
@@ -424,7 +436,7 @@ public static class CheckpointApp
         catch
         {
             // This starter has not published launch intent; only its exact run can be rolled back.
-            if (ContainedCleanup.SafeTree(runDirectory, 10000)) Directory.Delete(runDirectory, true);
+            if (ContainedCleanup.SafeTree(runDirectory, 10000)) SafeDelete.DeleteCreatedTree(runDirectory);
             throw;
         }
         var dll = Path.Combine(runDirectory, "tool", "Antiphon.Checkpoints.dll");
@@ -435,7 +447,7 @@ public static class CheckpointApp
         {
             // Launch has not been invoked. Only this starter's exact partial run is removed.
             if (ContainedCleanup.SafeAncestors(runDirectory) && ContainedCleanup.SafeTree(runDirectory, 10000))
-                Directory.Delete(runDirectory, recursive: true);
+                SafeDelete.DeleteCreatedTree(runDirectory);
             throw;
         }
         LaunchOutcome outcome;
@@ -449,13 +461,13 @@ public static class CheckpointApp
         {
             // The native API refused to create a process; no executor can use this image.
             if (ContainedCleanup.SafeAncestors(runDirectory) && ContainedCleanup.SafeTree(runDirectory, 10000))
-                Directory.Delete(runDirectory, recursive: true);
+                SafeDelete.DeleteCreatedTree(runDirectory);
             throw;
         }
         if (outcome.Kind == LaunchKind.NotStarted)
         {
             if (ContainedCleanup.SafeAncestors(runDirectory) && ContainedCleanup.SafeTree(runDirectory, 10000))
-                Directory.Delete(runDirectory, recursive: true);
+                SafeDelete.DeleteCreatedTree(runDirectory);
             output.WriteLine("CHECKPOINT native launch refused run=" + runId);
             return new StartResult(ExitCodes.Invalid, runDirectory);
         }

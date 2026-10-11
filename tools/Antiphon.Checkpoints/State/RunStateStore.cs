@@ -79,7 +79,7 @@ public sealed class RunStateStore
         try
         {
             if (File.Exists(path))
-                File.Delete(path);
+                SafeDelete.DeleteCreatedFile(path);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {

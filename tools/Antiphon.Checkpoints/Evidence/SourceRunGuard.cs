@@ -96,16 +96,35 @@ public sealed class CheckpointBuildBinding
         catch (Exception) { return "mismatch"; }
     }
 
-    public void Invalidate()
+    public string? Invalidate()
     {
-        if (File.Exists(PathName)) File.Delete(PathName);
+        if (!File.Exists(PathName))
+            return null;
+        var result = SafeDelete.Apply(PathName, SafeDelete.Stamp(RepositoryRoot));
+        return result.Disposition == DeleteDisposition.Refused ? result.Reason : null;
     }
 
-    public void Write()
+    public string? Write()
     {
+        var ownership = SafeDelete.Stamp(RepositoryRoot);
+        var reason = SafeDelete.Refusal(PathName, ownership);
+        if (reason is not null)
+            return reason;
         Directory.CreateDirectory(OutputPath);
         var temporary = PathName + "." + Guid.NewGuid().ToString("N") + ".tmp";
         File.WriteAllText(temporary, JsonSerializer.Serialize(this, CheckpointApp.Json));
-        File.Move(temporary, PathName, overwrite: true);
+        try
+        {
+            reason = SafeDelete.Refusal(PathName, ownership);
+            if (reason is not null)
+                return reason;
+            File.Move(temporary, PathName, overwrite: true);
+            return null;
+        }
+        finally
+        {
+            if (File.Exists(temporary))
+                SafeDelete.DeleteCreatedFile(temporary);
+        }
     }
 }
