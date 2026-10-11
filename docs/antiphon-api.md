@@ -827,7 +827,7 @@ button, `scripts/github-sync.ps1`, or the Windmill job.
 ### Everything else
 
 ```
-GET    /api/attention                        the one "what needs a human" projection — fleet-global across every board; there is no board filter
+GET    /api/attention                        the one "what needs a human" projection — fleet-global across every board; there is no board filter. Optional `?minSeverity=Info|Warning|Error|Critical` (CARD-1085) drops rows below that floor and returns 400 for any other value. `kindCounts` is the unfiltered count per kind.
 GET    /api/plans  |  /api/plans/content     read-only projection over plan markdown in the repo (git is the store; there is no write path and there will not be one)
 GET    /api/audit  |  /cost-summary  |  /cost-ledger  |  /conversation    DELETE /api/audit/archive
 GET    /api/github/status  |  /repos  |  /repos/{owner}/{repo}/branches   POST /api/github/repos/refresh
