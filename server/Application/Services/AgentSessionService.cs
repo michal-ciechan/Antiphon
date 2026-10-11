@@ -380,10 +380,12 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             _logger.LogWarning(ex, "Failed to start interactive agent session {SessionId}", sessionId);
             await using var evidenceTransaction = _db.Database.CurrentTransaction is null
                 ? await _db.Database.BeginTransactionAsync(CancellationToken.None) : null;
-            await _db.Agents.FromSqlInterpolated($"SELECT * FROM \"Agents\" WHERE \"Id\" = {agentId} FOR UPDATE")
-                .AsNoTracking().SingleOrDefaultAsync(CancellationToken.None);
+            // Session before agent, matching CloseSessionOnExitAsync. The opposite order
+            // deadlocks that observer (40P01) and drops this not-ready error (CARD-1190).
             await _db.AgentSessions.FromSqlInterpolated(
                 $"""SELECT * FROM "AgentSessions" WHERE "Id" = {sessionId} FOR UPDATE""").AsNoTracking().SingleAsync(CancellationToken.None);
+            await _db.Agents.FromSqlInterpolated($"SELECT * FROM \"Agents\" WHERE \"Id\" = {agentId} FOR UPDATE")
+                .AsNoTracking().SingleOrDefaultAsync(CancellationToken.None);
             // Cleanup's exit observer has its own context. Re-read before merging typed
             // evidence so an unrelated catch cannot overwrite its proven timeout.
             await _db.Entry(session).ReloadAsync(CancellationToken.None);
@@ -403,6 +405,14 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             {
                 session.ExitCode = exited.ExitCode;
                 SessionTermination.Record(session, SessionTermination.FromExitReason(exited.ExitReason));
+            }
+            else if (session.TerminationSource == SessionTerminationSource.ProcessExit)
+            {
+                // CARD-1190: this catch already killed the process. The exit observer can commit
+                // ProcessExit for that KilledByRequest (exit code 0 is a clean stop with no failure
+                // text) before this reload. That stamp is the kill, not a self-exit, and the
+                // not-ready error is the reason that must stick.
+                session.TerminationSource = SessionTerminationSource.Unknown;
             }
             SessionTermination.Record(session, SessionTerminationSource.SystemRequest);
             if (ex is AgentLaunchBlockedException blocked)

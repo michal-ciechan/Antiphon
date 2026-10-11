@@ -184,6 +184,13 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter, IAttacha
     public Exception? ThrowOnKill { get; set; }
     public Action? BeforeKill { get; set; }
 
+    /// <summary>
+    /// Runs inside <see cref="KillGenerationAsync"/> after the kill is recorded and before it
+    /// returns. Launch-failure tests use it to start the exit observer while the kill is still
+    /// the caller's current step (CARD-1190).
+    /// </summary>
+    public Func<Task>? OnKillGeneration { get; set; }
+
     // ---- CARD-0056: teardown ORDER, not just teardown ------------------------------------------
     //
     // A failed launch must KILL the process before disposing: DisposeAsync on the production
@@ -271,20 +278,22 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter, IAttacha
         return Task.FromResult(KillResult);
     }
 
-    public Task<bool> KillGenerationAsync(DateTime expectedAcceptedStartedAt, TimeSpan timeout, CancellationToken ct)
+    public async Task<bool> KillGenerationAsync(DateTime expectedAcceptedStartedAt, TimeSpan timeout, CancellationToken ct)
     {
         KillGenerationCalls.Add(expectedAcceptedStartedAt);
         if (StartedAcceptedGeneration is { } started
             && !SessionGeneration.Equal(started, expectedAcceptedStartedAt))
         {
-            return Task.FromResult(false);
+            return false;
         }
 
         Killed = true;
         _lifecycle.Add("KillGeneration");
+        if (OnKillGeneration is not null)
+            await OnKillGeneration();
         if (KillResult)
             _exit.TrySetResult(ExitCode);
-        return Task.FromResult(KillResult);
+        return KillResult;
     }
 
     public Task SendPromptAsync(string prompt, CancellationToken ct)

@@ -1,4 +1,5 @@
-﻿using Antiphon.Agents.Pty;
+﻿using System.Data.Common;
+using Antiphon.Agents.Pty;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
@@ -11,8 +12,10 @@ using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.Agents;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
+using Npgsql;
 using Shouldly;
 using TUnit.Core;
 
@@ -756,6 +759,143 @@ public class AgentSessionLaunchFailureTests
         session.FailureReason.ShouldStartWith("Agent process did not become ready (resuming a session at ");
         session.FailureReason.ShouldContain("168", customMessage:
             "336 000 tokens against the 200 000 default ceiling is 168% — the whole explanation");
+    }
+
+    /// <summary>
+    /// CARD-1190: a ready-gate kill (exit code 0, KilledByRequest) and the launch-failure write
+    /// both lock the session. The launch catch used to lock the agent and then the session,
+    /// opposite CloseSessionOnExitAsync, and Postgres aborted one of them (40P01). The survivor
+    /// was the exit observer, so the reconciler stored StoppedBeforeFirstPrompt / ProcessExit
+    /// instead of the not-ready error. The catch now takes the session first, and a ProcessExit
+    /// stamp left by that kill is cleared so the not-ready error sticks.
+    /// </summary>
+    [Test]
+    [Timeout(60_000)]
+    public async Task A_ready_gate_kill_records_the_not_ready_error_instead_of_ProcessExit(
+        CancellationToken cancellationToken)
+    {
+        var adapter = new FakeAgentProtocolAdapter { ReadyResult = false };
+        var barrier = new ReadyGateLockBarrier();
+        await using var fixture = await LaunchFixture.CreateAsync(adapter, barrier.Configure);
+        Task<SessionExitDisposition>? exit = null;
+        adapter.OnKillGeneration = async () =>
+        {
+            exit = SessionExitObservation.ObserveMatchingAsync(
+                fixture.Runtime, fixture.SessionId, exitCode: 0, AgentExitReason.KilledByRequest,
+                LaunchFixture.CreateContext);
+            // The exit reaches its session lock and blocks before this returns. With both
+            // writers session-first, that block times out and the catch must still replace a
+            // ProcessExit stamp from this kill with the not-ready error.
+            await Task.WhenAny(exit, barrier.OldOrderBlocked);
+        };
+
+        var thrown = await Should.ThrowAsync<Exception>(() => fixture.LaunchInteractiveAsync(ct: cancellationToken));
+        var postgres = FindPostgres(thrown);
+        postgres.ShouldBeNull();
+        thrown.GetBaseException().Message.ShouldContain(AgentSessionService.NotReadyBase);
+
+        exit.ShouldNotBeNull();
+        (await exit!).ShouldBe(SessionExitDisposition.Applied);
+
+        await using var db = LaunchFixture.CreateContext();
+        var session = await db.AgentSessions.SingleAsync(s => s.Id == fixture.SessionId);
+        session.Status.ShouldBe(SessionStatus.Failed);
+        session.FailureReason.ShouldBe(AgentSessionService.NotReadyBase);
+        session.TerminationSource.ShouldBe(SessionTerminationSource.SystemRequest);
+        var verdict = AgentTaskLiveness.ClassifyFailure(
+            fixture.SessionId,
+            new AgentTaskLiveness.SessionSnapshot(
+                session.Status, session.EndedAt, session.FailureReason,
+                session.TerminationSource, session.ExitCode, session.LaunchBlock),
+            hasTranscriptEntries: false);
+        verdict.FailureCode.ShouldNotBe(AgentTaskFailureCode.StoppedBeforeFirstPrompt);
+        verdict.Reason.ShouldContain(AgentSessionService.NotReadyBase);
+        verdict.Reason.ShouldNotContain("ProcessExit");
+        verdict.Reason.ShouldNotContain("exited on its own");
+    }
+
+    private static PostgresException? FindPostgres(Exception exception)
+    {
+        for (Exception? current = exception; current is not null; current = current.InnerException)
+        {
+            if (current is PostgresException postgres)
+                return postgres;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Forces the pre-CARD-1190 lock crossing. An AgentSessions FOR UPDATE on a connection that
+    /// has not locked Agents waits until some connection locks Agents; the session lock on a
+    /// connection that already locked Agents then waits until that first session lock is held.
+    /// Unfixed, the launch locks the agent first and the exit locks the session first, so the
+    /// two waits cross and Postgres reports 40P01. Fixed, both writers lock the session first,
+    /// neither signals the agent gate, and both waits time out before the writers serialize.
+    /// </summary>
+    private sealed class ReadyGateLockBarrier : DbCommandInterceptor
+    {
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<DbConnection, byte> _lockedAgents = new();
+        private readonly TaskCompletionSource _launchHoldsAgent = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _exitHoldsSession = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _oldOrderBlocked = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _oldOrderSessionWaiters;
+
+        public Task OldOrderBlocked => _oldOrderBlocked.Task;
+
+        public void Configure(DbContextOptionsBuilder builder) => builder.AddInterceptors(this);
+
+        public override async ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command,
+            CommandEventData eventData,
+            InterceptionResult<DbDataReader> result,
+            CancellationToken cancellationToken = default)
+        {
+            var text = command.CommandText;
+            var locksAgents = text.Contains("FOR UPDATE", StringComparison.Ordinal)
+                && text.Contains("\"Agents\"", StringComparison.Ordinal);
+            var locksSessions = text.Contains("FOR UPDATE", StringComparison.Ordinal)
+                && text.Contains("\"AgentSessions\"", StringComparison.Ordinal);
+            var connection = command.Connection!;
+            var oldOrder = locksSessions && !_lockedAgents.ContainsKey(connection);
+            if (oldOrder)
+            {
+                Interlocked.Increment(ref _oldOrderSessionWaiters);
+                _oldOrderBlocked.TrySetResult();
+                await WaitAsync(_launchHoldsAgent, cancellationToken);
+            }
+            else if (locksSessions && Volatile.Read(ref _oldOrderSessionWaiters) > 0)
+            {
+                await WaitAsync(_exitHoldsSession, cancellationToken);
+            }
+
+            var executed = await base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
+            if (locksAgents)
+            {
+                _lockedAgents.TryAdd(connection, 0);
+                _launchHoldsAgent.TrySetResult();
+            }
+
+            if (oldOrder)
+                _exitHoldsSession.TrySetResult();
+            return executed;
+        }
+
+        private static async Task WaitAsync(TaskCompletionSource gate, CancellationToken cancellationToken)
+        {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            // Unfixed, the launch signals the agent gate in milliseconds. Fixed, both writers
+            // are session-first, so the gate never opens and this bound is the whole wait.
+            timeout.CancelAfter(TimeSpan.FromSeconds(3));
+            try
+            {
+                await gate.Task.WaitAsync(timeout.Token);
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                // The crossing did not form. The assertions report the row that was stored.
+            }
+        }
     }
 
     // ---- Slice 2: /remote-control is best-effort ------------------------------------------------
@@ -1726,15 +1866,22 @@ public class AgentSessionLaunchFailureTests
         public static Task<LaunchFixture> CreateAsync(
             FakeAgentProtocolAdapter adapter,
             Action<IServiceCollection> extraServices) =>
-            CreateCoreAsync(new QueueAdapterFactory([adapter]), extraServices);
+            CreateCoreAsync(new QueueAdapterFactory([adapter]), extraServices, configureDb: null);
+
+        public static Task<LaunchFixture> CreateAsync(
+            FakeAgentProtocolAdapter adapter,
+            Action<DbContextOptionsBuilder> configureDb) =>
+            CreateCoreAsync(new QueueAdapterFactory([adapter]), extraServices: null, configureDb);
 
         private static async Task<LaunchFixture> CreateCoreAsync(
             IAgentProtocolAdapterFactory adapterFactory,
-            Action<IServiceCollection>? extraServices)
+            Action<IServiceCollection>? extraServices,
+            Action<DbContextOptionsBuilder>? configureDb = null)
         {
             var harness = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
             {
                 AlwaysOn = false,
+                ConfigureDbContext = configureDb,
                 ConfigureServices = s =>
                 {
                     s.AddSingleton(adapterFactory);
