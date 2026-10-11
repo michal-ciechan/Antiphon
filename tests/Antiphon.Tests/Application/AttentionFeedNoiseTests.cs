@@ -76,6 +76,37 @@ public sealed class AttentionFeedNoiseTests
     }
 
     [Test]
+    public async Task C1085_Unresolved_land_refusal_survives_the_legacy_age_out()
+    {
+        await using var scenario = new AttentionServiceTests.Scenario();
+        var session = await scenario.AddSessionAsync();
+        var refused = await scenario.AddTaskAsync(
+            session, AgentTaskStatus.Succeeded, dispatchedMinutesAgo: 60 * 24 * 4, completedMinutesAgo: 60 * 24 * 3);
+        var refusal = await scenario.AddLegacyLandEventAsync(
+            refused, DateTime.UtcNow.AddDays(-3), AgentTaskEventType.LandRefused);
+
+        var canceled = await scenario.AddTaskAsync(
+            session, AgentTaskStatus.Canceled, dispatchedMinutesAgo: 60 * 24 * 4, completedMinutesAgo: 60 * 24 * 3);
+        var canceledRefusal = await scenario.AddLegacyLandEventAsync(
+            canceled, DateTime.UtcNow.AddDays(-3), AgentTaskEventType.LandRefused);
+
+        var cleared = await scenario.AddTaskAsync(
+            session, AgentTaskStatus.Succeeded, dispatchedMinutesAgo: 60 * 24 * 4, completedMinutesAgo: 60 * 24 * 3);
+        await scenario.AddLegacyLandEventAsync(
+            cleared, DateTime.UtcNow.AddDays(-3), AgentTaskEventType.LandRefused);
+        var landed = await scenario.AddLegacyLandEventAsync(cleared, DateTime.UtcNow.AddHours(-2));
+        await scenario.ConfirmLegacyReceiptAsync(cleared, landed, DateTime.UtcNow.AddHours(-2));
+
+        var items = await ReadOwnedAsync(scenario);
+
+        var row = items.Where(i => i.TaskId == refused && i.Kind == AttentionKind.LandLegacyUnverified)
+            .ShouldHaveSingleItem();
+        row.ConditionKey.ShouldBe($"legacy-land:{refusal:N}");
+        items.ShouldContain(i => i.TaskId == canceled && i.ConditionKey == $"legacy-land:{canceledRefusal:N}");
+        items.ShouldNotContain(i => i.TaskId == cleared && i.Kind == AttentionKind.LandLegacyUnverified);
+    }
+
+    [Test]
     public async Task C1085_Recent_incidents_stay_one_row_and_name_the_hidden_tail()
     {
         await using var scenario = new AttentionServiceTests.Scenario();

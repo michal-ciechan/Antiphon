@@ -1,3 +1,4 @@
+using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Enums;
 
@@ -20,14 +21,15 @@ public static class AttentionEndpoints
             string? minSeverity,
             CancellationToken ct) =>
         {
-            // CARD-1085. Bind as text so an unknown floor is a 400 rather than a silent empty filter.
+            // CARD-1085. Omission keeps the unfiltered feed. A present value must be one of the
+            // four names; empty, whitespace, numeric, and unknown values are a validation 400.
             AlertSeverity? floor = null;
-            if (!string.IsNullOrWhiteSpace(minSeverity))
+            if (minSeverity is not null)
             {
-                if (!Enum.TryParse<AlertSeverity>(minSeverity, ignoreCase: true, out var parsed)
-                    || !Enum.IsDefined(parsed))
-                    return Results.BadRequest(new { error = "minSeverity_invalid" });
-                floor = parsed;
+                if (!IsAttentionSeverityName(minSeverity))
+                    throw new BadRequestException(
+                        "minSeverity must be Info, Warning, Error, or Critical.");
+                floor = Enum.Parse<AlertSeverity>(minSeverity, ignoreCase: true);
             }
 
             return Results.Ok(await service.GetAsync(ct, minSeverity: floor));
@@ -37,5 +39,17 @@ public static class AttentionEndpoints
             AttentionService service,
             AttentionSummaryCache cache,
             CancellationToken ct) => Results.Ok(await cache.GetOrCreateAsync(() => service.GetSummaryAsync(ct))));
+    }
+
+    /// <summary>The four <see cref="AlertSeverity"/> names, case-insensitively, with no extra characters.</summary>
+    private static bool IsAttentionSeverityName(string value)
+    {
+        foreach (var name in Enum.GetNames<AlertSeverity>())
+        {
+            if (value.Equals(name, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        return false;
     }
 }
