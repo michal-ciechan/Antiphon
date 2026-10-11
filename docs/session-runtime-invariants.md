@@ -52,10 +52,12 @@ warm-pool fields null. The still-Blocked attempt reserves that identity against 
 reuse and retirement. Neither parking nor terminal automatic release is enabled by
 default; Working, unknown evidence and independent standing owners retain custody.
 
-CARD-1065 S6 persists desktop sync debt with the runner publication receipt and its
-exact source SHA. The dispatcher recovers at most 32 due items per pass, one attempt
-per item, with persisted 1/2/4/5-minute capped backoff. Busy repository leases return
-immediately on this recovery path; ordinary settlement's existing budget is unchanged.
+CARD-1065 S6 persists desktop sync debt with a Published runner receipt and its
+exact source SHA. A NoSourceChanges receipt (null remote SHA) stores NotRequired
+and is not recovered (CARD-1088). The dispatcher recovers at most 32 due items
+per pass, one attempt per item, with persisted 1/2/4/5-minute capped backoff.
+Busy repository leases return immediately on this recovery path; ordinary
+settlement's existing budget is unchanged.
 Recovery uses the captured desktop endpoint and checkout guards, refuses an advanced
 remote tip, and only fast-forwards to the published SHA. It never republishes a mirror,
 resets a checkout, promotes the task verdict, or creates approval/completion evidence.

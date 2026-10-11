@@ -459,6 +459,7 @@ public sealed class TaskParkPublicationTests
     internal sealed class ParkClient(RunnerWorkspaceParkService? runtime) : ISessionRunnerClient
     {
         public int Calls { get; private set; }
+        public Func<WorkspaceParkCommand, WorkspaceParkResult>? Replace { get; set; }
         public List<WorkspaceRepositoryIdentityRequest> IdentityCalls { get; } = [];
         public Func<WorkspaceRepositoryIdentityResult, Task<WorkspaceRepositoryIdentityResult>>? AfterIdentity { get; set; }
         public Func<WorkspaceParkCommand, Task>? BeforePublication { get; set; }
@@ -473,6 +474,7 @@ public sealed class TaskParkPublicationTests
         {
             Calls++;
             if (BeforePublication is not null) await BeforePublication(request);
+            if (Replace is not null) return Replace(request);
             return request.Prepare is { } prepare ? await runtime!.PrepareAsync(prepare, ct) : await runtime!.VerifyAsync(request.Verify!, ct);
         }
         public Task<SessionRunnerSessionDto> StartAsync(Guid sessionId, AgentLaunchSpec spec, CancellationToken ct) => throw new NotSupportedException();
