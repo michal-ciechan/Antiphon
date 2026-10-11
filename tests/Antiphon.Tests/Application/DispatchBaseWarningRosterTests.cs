@@ -10,8 +10,9 @@ namespace Antiphon.Tests.Application;
 /// <summary>
 /// CARD-1155. The roster pin parses the E2E source with Roslyn and records each
 /// public instance method of DispatchBaseWarningDeliveryE2ETests whose attributes
-/// name Test or TestAttribute. Those names must equal the plan's CP-2..CP-13
-/// filters. Queue insert, Sent, or ack does not discharge an E2E row.
+/// name Test or TestAttribute. A conditional compilation directive fails the pin
+/// closed. Those names must equal the plan's CP-2..CP-13 filters. Queue insert,
+/// Sent, or ack does not discharge an E2E row.
 /// </summary>
 [Category("Unit")]
 public class DispatchBaseWarningRosterTests
@@ -64,7 +65,7 @@ public class DispatchBaseWarningRosterTests
         var pin = rows.Single(row => row.Filter == PinFilter);
         pin.Build.ShouldContain("tests/Antiphon.Tests -> ");
         pin.Covers.ShouldContain("V-1");
-        pin.Min.ShouldBe("9");
+        pin.Min.ShouldBe("11");
         int.TryParse(pin.EstimatedMinutes, out var pinMinutes).ShouldBeTrue(pin.Id);
         pinMinutes.ShouldBeGreaterThan(0);
 
@@ -269,6 +270,37 @@ public class DispatchBaseWarningRosterTests
         TestMethods(source).ShouldBe(new[] { "AfterInterpolated" });
     }
 
+    [Test]
+    public void C1155_ConditionalDirectiveFailsClosed()
+    {
+        const string source = """
+            public class DispatchBaseWarningDeliveryE2ETests
+            {
+                #if NET9_0
+                [Test]
+                public async Task HiddenByDirective() { }
+                #endif
+            }
+            """;
+
+        var failure = Should.Throw<InvalidOperationException>(() => TestMethods(source));
+        failure.Message.ShouldBe("Conditional compilation directive on line 3.");
+    }
+
+    [Test]
+    public void C1155_SourceWithoutConditionalDirectiveIsDiscovered()
+    {
+        const string source = """
+            public class DispatchBaseWarningDeliveryE2ETests
+            {
+                [Test]
+                public async Task Visible() { }
+            }
+            """;
+
+        TestMethods(source).ShouldBe(new[] { "Visible" });
+    }
+
     private static string[] SortedNames(IEnumerable<string> names) =>
         names.OrderBy(name => name, StringComparer.Ordinal).ToArray();
 
@@ -280,6 +312,7 @@ public class DispatchBaseWarningRosterTests
             .Select(diagnostic => diagnostic.ToString())
             .ToArray();
         errors.ShouldBeEmpty();
+        RejectConditionalDirectives(tree);
 
         var methods = new List<string>();
         foreach (var type in tree.GetRoot().DescendantNodes().OfType<ClassDeclarationSyntax>())
@@ -303,6 +336,26 @@ public class DispatchBaseWarningRosterTests
         }
 
         return methods;
+    }
+
+    private static void RejectConditionalDirectives(SyntaxTree tree)
+    {
+        var first = tree.GetRoot()
+            .DescendantTrivia(descendIntoTrivia: true)
+            .Select(trivia => trivia.GetStructure())
+            .OfType<DirectiveTriviaSyntax>()
+            .Where(directive => directive
+                is IfDirectiveTriviaSyntax
+                or ElifDirectiveTriviaSyntax
+                or ElseDirectiveTriviaSyntax
+                or EndIfDirectiveTriviaSyntax)
+            .OrderBy(directive => directive.SpanStart)
+            .FirstOrDefault();
+        if (first is null)
+            return;
+
+        var line = tree.GetLineSpan(first.Span).StartLinePosition.Line + 1;
+        throw new InvalidOperationException($"Conditional compilation directive on line {line}.");
     }
 
     private static bool IsTestAttribute(AttributeSyntax attribute)
