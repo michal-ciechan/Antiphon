@@ -385,7 +385,10 @@ public sealed class AgentTaskReplyService
                     throw new ConflictException("The task moved to another attempt while the answer waited.");
             }
             var tasks = scope.ServiceProvider.GetRequiredService<AgentTaskService>();
-            if (await tasks.TryAcceptReleasedSeatAnswerAsync(task, message, origin, round, ct))
+            // CARD-1069: fields stay until a later tick matches the UserPrompt. An open
+            // ask_user_question in that window is this turn's reply, not a second acceptance.
+            if (!await InTurnQuestionDuringReleasedSeatWindowAsync(scope.ServiceProvider, db, task, ct)
+                && await tasks.TryAcceptReleasedSeatAnswerAsync(task, message, origin, round, ct))
             {
                 saved = true;
                 var releasedFamily = await db.AgentTasks.AsNoTracking().Where(t => t.RootTaskId == task.RootTaskId).ToListAsync(ct);
@@ -565,6 +568,25 @@ public sealed class AgentTaskReplyService
             round: null,
             ct,
             BlockedNote.RepliedContinuePrefix);
+    }
+
+    /// <summary>
+    /// CARD-1069. A released-seat continuation can still hold the six answer fields until the
+    /// dispatcher matches the complete UserPrompt. While it is Dispatched or Working, an open
+    /// in-turn question is answered by the overlay instead of the accepted-answer guard.
+    /// </summary>
+    private static async Task<bool> InTurnQuestionDuringReleasedSeatWindowAsync(
+        IServiceProvider services, AppDbContext db, AgentTask task, CancellationToken ct)
+    {
+        if (task.Status is not (AgentTaskStatus.Dispatched or AgentTaskStatus.Working))
+            return false;
+        if (task.ReleasedSeatAnswerId is null
+            || task.ReleasedSeatAnswerTargetAttempt != task.Attempt
+            || task.AgentSessionId is not Guid sessionId)
+            return false;
+
+        await services.GetRequiredService<AgentSessionRuntime>().CatchUpTranscriptAsync(sessionId, ct);
+        return await HasOpenQuestionToolAsync(db, sessionId, ct);
     }
 
     /// <summary>

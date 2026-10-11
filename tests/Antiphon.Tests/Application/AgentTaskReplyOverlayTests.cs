@@ -133,6 +133,155 @@ public class AgentTaskReplyOverlayTests
     }
 
     [Test]
+    public async Task Released_seat_window_open_question_enqueues_different_text()
+    {
+        foreach (var status in new[] { AgentTaskStatus.Working, AgentTaskStatus.Dispatched })
+            await AssertOpenQuestionEnqueuesAsync(status, "retained released-seat answer", "Proceed as planned (Recommended)");
+    }
+
+    [Test]
+    public async Task Released_seat_window_open_question_enqueues_the_same_text()
+    {
+        const string accepted = "retained released-seat answer";
+        foreach (var status in new[] { AgentTaskStatus.Working, AgentTaskStatus.Dispatched })
+            await AssertOpenQuestionEnqueuesAsync(status, accepted, accepted);
+    }
+
+    [Test]
+    public async Task Released_seat_window_without_an_open_question_keeps_the_accepted_answer()
+    {
+        const string accepted = "retained released-seat answer";
+        await AssertAcceptedAnswerGuardAsync(accepted, "a different in-turn reply", closedTool: false);
+        await AssertAcceptedAnswerGuardAsync(accepted, accepted, closedTool: false);
+        await AssertAcceptedAnswerGuardAsync(accepted, "a different in-turn reply", closedTool: true);
+    }
+
+    private static async Task AssertOpenQuestionEnqueuesAsync(
+        AgentTaskStatus status, string accepted, string answer)
+    {
+        await using var h = await CreateReplyHarnessAsync();
+        var toolUseId = "call-question-c1069-" + status;
+        await h.InsertTranscriptEntryAsync(
+            TranscriptKinds.ToolCall,
+            toolName: GrokQuestionTool.AskUserQuestionName,
+            toolUseId: toolUseId);
+        var task = await SeedTaskAsync(h, status);
+        var stamp = await StampReleasedSeatWindowAsync(task.Id, accepted);
+        h.Adapter.OnSubmitted = async submitted =>
+        {
+            await h.InsertTranscriptEntryAsync(
+                TranscriptKinds.ToolResult,
+                $"{GrokQuestionTool.CompletedAnswerPrefix} \"q\"=\"{submitted}\". You can now continue.",
+                toolName: GrokQuestionTool.AskUserQuestionName,
+                toolUseId: toolUseId);
+        };
+
+        await h.Provider.GetRequiredService<AgentTaskReplyService>()
+            .AnswerAsync(task.Id, answer, CancellationToken.None);
+
+        h.Adapter.SubmittedBodies.ShouldBe([answer], status.ToString());
+        await using var db = CreateContext();
+        var queued = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId);
+        queued.Status.ShouldBe(QueuedMessageStatus.Sent, status.ToString());
+        queued.Origin.ShouldBe(QueuedMessageOrigin.Delegation);
+        queued.Body.ShouldBe(answer, status.ToString());
+        queued.Body.ShouldNotContain(DelegationReportFormatter.TaskMarker(task.Id));
+        var stored = await db.AgentTasks.SingleAsync(t => t.Id == task.Id);
+        stored.Status.ShouldBe(status, "overlay reply is not a state change");
+        stored.RepliedAt.ShouldNotBeNull();
+        stored.RepliedAtSequence.ShouldBeNull();
+        AssertWindowUnchanged(stored, stamp);
+        var replied = await db.AgentTaskEvents.SingleAsync(
+            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Replied);
+        replied.Detail.ShouldBe(BlockedQuestion.OverlayRepliedDetail);
+    }
+
+    private static async Task AssertAcceptedAnswerGuardAsync(
+        string accepted, string answer, bool closedTool)
+    {
+        await using var h = await CreateReplyHarnessAsync();
+        if (closedTool)
+        {
+            const string toolUseId = "call-question-c1069-guard";
+            await h.InsertTranscriptEntryAsync(
+                TranscriptKinds.ToolCall,
+                toolName: GrokQuestionTool.AskUserQuestionName,
+                toolUseId: toolUseId);
+            await h.InsertTranscriptEntryAsync(
+                TranscriptKinds.ToolResult,
+                $"{GrokQuestionTool.CompletedAnswerPrefix} already answered",
+                toolName: GrokQuestionTool.AskUserQuestionName,
+                toolUseId: toolUseId);
+        }
+
+        var task = await SeedTaskAsync(h, AgentTaskStatus.Working);
+        var stamp = await StampReleasedSeatWindowAsync(task.Id, accepted);
+        var same = answer == accepted;
+        if (same)
+        {
+            await h.Provider.GetRequiredService<AgentTaskReplyService>()
+                .AnswerAsync(task.Id, answer, CancellationToken.None);
+        }
+        else
+        {
+            var refused = await Should.ThrowAsync<ConflictException>(() =>
+                h.Provider.GetRequiredService<AgentTaskReplyService>()
+                    .AnswerAsync(task.Id, answer, CancellationToken.None));
+            refused.Code.ShouldBe("answer_already_accepted");
+        }
+
+        h.Adapter.SubmittedBodies.ShouldBeEmpty();
+        await using var db = CreateContext();
+        (await db.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == h.SessionId)).ShouldBe(0);
+        (await db.AgentTaskEvents.CountAsync(
+            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Replied)).ShouldBe(0);
+        AssertWindowUnchanged(await db.AgentTasks.SingleAsync(t => t.Id == task.Id), stamp);
+    }
+
+    private sealed record ReleasedSeatWindow(
+        int Attempt,
+        string Answer,
+        Guid AnswerId,
+        Guid RoundId,
+        Guid ReleaseId,
+        int TargetAttempt,
+        DateTime AcceptedAt);
+
+    private static async Task<ReleasedSeatWindow> StampReleasedSeatWindowAsync(Guid taskId, string answer)
+    {
+        await using var db = CreateContext();
+        var stored = await db.AgentTasks.SingleAsync(t => t.Id == taskId);
+        stored.Attempt = 2;
+        stored.ReleasedSeatAnswer = answer;
+        stored.ReleasedSeatAnswerId = Guid.NewGuid();
+        stored.ReleasedSeatAnswerRoundId = Guid.NewGuid();
+        stored.ReleasedSeatAnswerReleaseId = Guid.NewGuid();
+        stored.ReleasedSeatAnswerTargetAttempt = stored.Attempt;
+        stored.ReleasedSeatAnswerAcceptedAt = DateTime.UtcNow;
+        await db.SaveChangesAsync();
+        await db.Entry(stored).ReloadAsync();
+        return new ReleasedSeatWindow(
+            stored.Attempt,
+            stored.ReleasedSeatAnswer!,
+            stored.ReleasedSeatAnswerId!.Value,
+            stored.ReleasedSeatAnswerRoundId!.Value,
+            stored.ReleasedSeatAnswerReleaseId!.Value,
+            stored.ReleasedSeatAnswerTargetAttempt!.Value,
+            stored.ReleasedSeatAnswerAcceptedAt!.Value);
+    }
+
+    private static void AssertWindowUnchanged(AgentTask stored, ReleasedSeatWindow stamp)
+    {
+        stored.Attempt.ShouldBe(stamp.Attempt);
+        stored.ReleasedSeatAnswer.ShouldBe(stamp.Answer);
+        stored.ReleasedSeatAnswerId.ShouldBe(stamp.AnswerId);
+        stored.ReleasedSeatAnswerRoundId.ShouldBe(stamp.RoundId);
+        stored.ReleasedSeatAnswerReleaseId.ShouldBe(stamp.ReleaseId);
+        stored.ReleasedSeatAnswerTargetAttempt.ShouldBe(stamp.TargetAttempt);
+        stored.ReleasedSeatAnswerAcceptedAt.ShouldBe(stamp.AcceptedAt);
+    }
+
+    [Test]
     public async Task Refine_on_Working_is_still_WhenIdle_with_BuildRefinement()
     {
         await using var h = await CreateReplyHarnessAsync();
