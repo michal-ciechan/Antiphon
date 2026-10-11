@@ -17,6 +17,7 @@ public sealed class RunState
     public int MaxConcurrentBuilds { get; set; }
     public List<BuildProgress> Builds { get; set; } = [];
     public List<RowProgress> Rows { get; set; } = [];
+    public List<string> CreatedOutputPaths { get; set; } = [];
 
     public string Heartbeat(DateTimeOffset now)
     {
