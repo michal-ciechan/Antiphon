@@ -65,19 +65,38 @@ public sealed class BlockedTaskSyncRecoveryService(AppDbContext db, RemoteWorksp
         var task = await db.AgentTasks.AsNoTracking().SingleOrDefaultAsync(t => t.Id == park.TaskId, ct);
         // Reuse the stored, digest-bound proof. This is a DB-only check: a released runner
         // need not still be online for its desktop debt to recover.
-        var proof = await publication.ReadEvidenceAsync(id, ct);
-        if (task is null || proof is null || proof.SourceSha != park.SyncSourceSha)
+        var read = await publication.ReadEvidenceOrRefusalAsync(id, ct);
+        var proof = read.Evidence;
+        var refusal = task is null ? read.Refusal ?? "park_task_missing"
+            : proof is null ? read.Refusal ?? "park_sync_episode_changed"
+            : proof.SourceSha != park.SyncSourceSha ? "park_sync_source_changed" : null;
+        if (refusal is not null)
         {
-            await db.AgentTaskParks.Where(p => p.Id == id && p.Revision == park.Revision)
+            // park_other_writer and park_commit_recovery clear. Held is only a permanent refusal.
+            if (refusal is "park_other_writer" or "park_commit_recovery")
+            {
+                var paced = park.SyncAttempts + 1;
+                var pacedChanged = await db.AgentTaskParks.Where(p => p.Id == id && p.Revision == park.Revision)
+                    .ExecuteUpdateAsync(u => u.SetProperty(p => p.SyncState, AgentTaskParkSyncState.Pending)
+                        .SetProperty(p => p.SyncAttempts, paced)
+                        .SetProperty(p => p.SyncNextAttemptAt, NextDue(due, paced))
+                        .SetProperty(p => p.SyncReasonCode, refusal)
+                        .SetProperty(p => p.UpdatedAt, due).SetProperty(p => p.Revision, p => p.Revision + 1), ct);
+                if (pacedChanged != 1) return null;
+                await tx.CommitAsync(ct);
+                return null;
+            }
+            var held = await db.AgentTaskParks.Where(p => p.Id == id && p.Revision == park.Revision)
                 .ExecuteUpdateAsync(u => u.SetProperty(p => p.SyncState, AgentTaskParkSyncState.Held)
-                    .SetProperty(p => p.SyncReasonCode, "park_sync_episode_changed")
+                    .SetProperty(p => p.SyncReasonCode, refusal)
                     .SetProperty(p => p.SyncNextAttemptAt, (DateTime?)null)
                     .SetProperty(p => p.UpdatedAt, due).SetProperty(p => p.Revision, p => p.Revision + 1), ct);
+            if (held != 1) return null;
             await tx.CommitAsync(ct);
             return null;
         }
         var attempts = park.SyncAttempts + 1;
-        var next = due.AddMinutes(attempts switch { 1 => 1, 2 => 2, 3 => 4, _ => 5 });
+        var next = NextDue(due, attempts);
         var changed = await db.AgentTaskParks.Where(p => p.Id == id && p.Revision == park.Revision)
             .ExecuteUpdateAsync(u => u.SetProperty(p => p.SyncAttempts, attempts)
                 .SetProperty(p => p.SyncNextAttemptAt, next).SetProperty(p => p.SyncReasonCode, "park_sync_pending")
@@ -118,6 +137,9 @@ public sealed class BlockedTaskSyncRecoveryService(AppDbContext db, RemoteWorksp
 
     private Task<int> LockTaskAsync(Guid taskId, CancellationToken ct) => db.Database.ExecuteSqlInterpolatedAsync(
         $"""SELECT "Id" FROM "AgentTasks" WHERE "Id" = {taskId} FOR UPDATE""", ct);
+
+    private static DateTime NextDue(DateTime due, int attempts) =>
+        due.AddMinutes(attempts switch { 1 => 1, 2 => 2, 3 => 4, _ => 5 });
 
     private sealed record Claim(AgentTask Task, AgentTaskPark Park);
 }
