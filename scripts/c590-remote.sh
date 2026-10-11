@@ -2861,6 +2861,8 @@ c849_fixture_prepare() {
         -c 'chmod 0700 /cache' || write_result false FixtureControlSetupFailed 2
     ln -s "$CASE_DIR" "$CASE_DIR/.fixture-escape"
     c849_fixture_control PC-08 CacheTargetInvalid c849_prune_validate_tree "$CASE_DIR/.fixture-escape" "$CASE_DIR/.fixture-escape"
+    # The self-link is only the PC-08 probe. Leave it and scp -r walks CASE_DIR forever.
+    rm -f -- "$CASE_DIR/.fixture-escape"
     c849_fixture_control PC-09 CacheVolumeForeign c849_fixture_volume_fault label "$C849_PACKAGES" nuget-packages "$image"
     c849_fixture_control PC-10 CacheVolumeForeign c849_fixture_volume_fault options "$C849_PACKAGES" nuget-packages "$image"
     docker run --rm --network none --user 1654:1654 --entrypoint /bin/sh \
@@ -3057,7 +3059,10 @@ c849_fixture_nuget_race() {
 param([string]$Source, [string]$Target)
 [System.IO.Compression.ZipFile]::CreateFromDirectory($Source, $Target)
 PS
-    pwsh -NoProfile -File "$root/make-zip.ps1" "$root/package" "$root/feed/C849.Probe.1.0.0.nupkg" \
+    # The deployment host has no pwsh. The admitted image does, and it is the same ZipFile call.
+    docker run --rm --network none --user 0:0 --entrypoint pwsh \
+        --mount "type=bind,source=$root,target=/fixture" \
+        "$image" -NoProfile -File /fixture/make-zip.ps1 /fixture/package /fixture/feed/C849.Probe.1.0.0.nupkg \
         || write_result false FixturePackageZipFailed 2
     for name in p1 p2 p3; do
         printf '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net10.0</TargetFramework><NuGetAudit>false</NuGetAudit></PropertyGroup><ItemGroup><PackageReference Include="C849.Probe" Version="1.0.0" /></ItemGroup></Project>\n' \
@@ -3231,7 +3236,15 @@ c849_fixture_npm() {
     printf '{"name":"c849-cache-probe","version":"1.0.0"}\n' > "$root/package/package.json"
     printf 'C849_NPM_OFFLINE\n' > "$root/package/sentinel"
     tar -czf "$root/pkg.tgz" -C "$root" package
-    integrity="$(pwsh -NoProfile -Command '$bytes=[System.Security.Cryptography.SHA512]::HashData([System.IO.File]::ReadAllBytes($args[0])); [Convert]::ToBase64String($bytes)' "$root/pkg.tgz")" \
+    cat > "$root/hash-tarball.ps1" <<'PS'
+param([Parameter(Mandatory)][string]$Path)
+$bytes = [System.Security.Cryptography.SHA512]::HashData([System.IO.File]::ReadAllBytes($Path))
+[Console]::Out.Write([Convert]::ToBase64String($bytes))
+PS
+    # Same host gap as F-4. -File binds the tarball; -Command would swallow the path.
+    integrity="$(docker run --rm --network none --user 0:0 --entrypoint pwsh \
+        --mount "type=bind,source=$root,target=/fixture,readonly" \
+        "$image" -NoProfile -File /fixture/hash-tarball.ps1 -Path /fixture/pkg.tgz)" \
         || write_result false FixtureNpmIntegrityFailed 2
     cat > "$root/server.js" <<'JS'
 const http = require('http'); const fs = require('fs');
@@ -3626,7 +3639,7 @@ c849_fixture() {
     : > "$CASE_DIR/fixture-controls.txt"
     : > "$CASE_DIR/fixture-control-variants.txt"
     : > "$CASE_DIR/fixture-groups.txt"
-    trap 'if [ -f "$SERVER2_ROOT/compose-retention/shared.yml" ]; then docker compose -p "c849${RUN}temp" -f "$SERVER2_ROOT/compose-retention/shared.yml" down -v >/dev/null 2>&1 || true; docker compose -p "c849${RUN}main" -f "$SERVER2_ROOT/compose-retention/shared.yml" down -v >/dev/null 2>&1 || true; fi; if [ -f "$SERVER2_ROOT/compose-retention/negative.yml" ]; then docker compose -p "c849${RUN}negative" -f "$SERVER2_ROOT/compose-retention/negative.yml" down -v >/dev/null 2>&1 || true; fi; if [ -s "$CASE_DIR/.fixture-prune-smoke" ]; then docker rm -f "$(cat "$CASE_DIR/.fixture-prune-smoke")" >/dev/null 2>&1 || true; fi; if [ -s "$CASE_DIR/.fixture-npm-server" ]; then docker rm -f "$(cat "$CASE_DIR/.fixture-npm-server")" >/dev/null 2>&1 || true; fi; if [ -s "$CASE_DIR/.fixture-apphost" ]; then docker rm -f "$(cat "$CASE_DIR/.fixture-apphost")" >/dev/null 2>&1 || true; fi; if [ -s "$CASE_DIR/.fixture-busy" ]; then docker rm -f "$(cat "$CASE_DIR/.fixture-busy")" >/dev/null 2>&1 || true; fi; if [ -s "$CASE_DIR/.fixture-donor" ]; then docker rm -f "$(cat "$CASE_DIR/.fixture-donor")" >/dev/null 2>&1 || true; fi; c849_fixture_cleanup; if [ -s "$CASE_DIR/.fixture-network" ]; then docker network rm "$(cat "$CASE_DIR/.fixture-network")" >/dev/null 2>&1 || true; fi; case "$SERVER2_ROOT" in /tmp/c849-fixture-*) rm -rf -- "$SERVER2_ROOT" ;; esac' EXIT
+    trap 'rm -f -- "$CASE_DIR/.fixture-escape"; if [ -f "$SERVER2_ROOT/compose-retention/shared.yml" ]; then docker compose -p "c849${RUN}temp" -f "$SERVER2_ROOT/compose-retention/shared.yml" down -v >/dev/null 2>&1 || true; docker compose -p "c849${RUN}main" -f "$SERVER2_ROOT/compose-retention/shared.yml" down -v >/dev/null 2>&1 || true; fi; if [ -f "$SERVER2_ROOT/compose-retention/negative.yml" ]; then docker compose -p "c849${RUN}negative" -f "$SERVER2_ROOT/compose-retention/negative.yml" down -v >/dev/null 2>&1 || true; fi; if [ -s "$CASE_DIR/.fixture-prune-smoke" ]; then docker rm -f "$(cat "$CASE_DIR/.fixture-prune-smoke")" >/dev/null 2>&1 || true; fi; if [ -s "$CASE_DIR/.fixture-npm-server" ]; then docker rm -f "$(cat "$CASE_DIR/.fixture-npm-server")" >/dev/null 2>&1 || true; fi; if [ -s "$CASE_DIR/.fixture-apphost" ]; then docker rm -f "$(cat "$CASE_DIR/.fixture-apphost")" >/dev/null 2>&1 || true; fi; if [ -s "$CASE_DIR/.fixture-busy" ]; then docker rm -f "$(cat "$CASE_DIR/.fixture-busy")" >/dev/null 2>&1 || true; fi; if [ -s "$CASE_DIR/.fixture-donor" ]; then docker rm -f "$(cat "$CASE_DIR/.fixture-donor")" >/dev/null 2>&1 || true; fi; c849_fixture_cleanup; if [ -s "$CASE_DIR/.fixture-network" ]; then docker network rm "$(cat "$CASE_DIR/.fixture-network")" >/dev/null 2>&1 || true; fi; case "$SERVER2_ROOT" in /tmp/c849-fixture-*) rm -rf -- "$SERVER2_ROOT" ;; esac' EXIT
     c849_fixture_compose
     c849_fixture_prepare
     c849_fixture_seed
