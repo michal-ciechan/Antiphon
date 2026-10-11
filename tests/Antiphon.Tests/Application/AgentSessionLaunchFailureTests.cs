@@ -775,7 +775,7 @@ public class AgentSessionLaunchFailureTests
         CancellationToken cancellationToken)
     {
         var adapter = new FakeAgentProtocolAdapter { ReadyResult = false };
-        var barrier = new ConfirmedLockBarrier();
+        var barrier = new ConfirmedLockBarrier { HoldConfirmedSession = true };
         await using var fixture = await LaunchFixture.CreateAsync(adapter, barrier.Configure);
         Task<SessionExitDisposition>? exit = null;
         adapter.OnKillGeneration = async () =>
@@ -783,10 +783,13 @@ public class AgentSessionLaunchFailureTests
             exit = SessionExitObservation.ObserveMatchingAsync(
                 fixture.Runtime, fixture.SessionId, exitCode: 0, AgentExitReason.KilledByRequest,
                 LaunchFixture.CreateContext);
-            // SessionLockConfirmed is set only after the observer's SELECT ... FOR UPDATE has
-            // returned, so the transaction holds the row. Then wait for that transaction to commit
-            // before this kill returns and the launch catch reloads the stamp.
+            // SessionLockConfirmed is set from ReaderExecutedAsync, after SELECT ... FOR UPDATE
+            // has returned. HoldConfirmedSession keeps that transaction open for the probe.
             await barrier.SessionLockConfirmed.WaitAsync(TimeSpan.FromSeconds(10));
+            var locked = await SessionTupleLockHeldAsync(fixture.SessionId);
+            barrier.ReleaseSessionHold();
+            locked.ShouldBeTrue(
+                "the session row lock is confirmed only after SELECT ... FOR UPDATE has returned");
             await exit;
         };
 
@@ -850,6 +853,76 @@ public class AgentSessionLaunchFailureTests
         session.EndedAt!.Value.ShouldBe(crashedAt, TimeSpan.FromSeconds(1));
         var agent = await db.Agents.SingleAsync(a => a.Id == fixture.AgentId);
         agent.Status.ShouldBe(AgentStatus.Failed);
+    }
+
+    /// <summary>
+    /// CARD-1190: a kill-shaped ProcessExit stamped in the moment before this cleanup issues
+    /// the kill is still an earlier exit. Dropping the issued-at comparison would rewrite it.
+    /// </summary>
+    [Test]
+    [Timeout(60_000)]
+    public async Task A_ready_gate_kill_leaves_a_stamp_from_just_before_the_kill(CancellationToken cancellationToken)
+    {
+        var adapter = new FakeAgentProtocolAdapter
+        {
+            ReadyResult = false,
+            ExitReason = AgentExitReason.KilledByRequest,
+            ExitCode = 0,
+        };
+        await using var fixture = await LaunchFixture.CreateAsync(adapter);
+        var stampedAt = DateTime.UtcNow.AddMilliseconds(-5);
+        await using (var seed = LaunchFixture.CreateContext())
+        {
+            var row = await seed.AgentSessions.SingleAsync(s => s.Id == fixture.SessionId);
+            row.TerminationSource = SessionTerminationSource.ProcessExit;
+            row.FailureReason = null;
+            row.ExitCode = 0;
+            row.EndedAt = stampedAt;
+            await seed.SaveChangesAsync();
+        }
+
+        var thrown = await Should.ThrowAsync<Exception>(() => fixture.LaunchInteractiveAsync(ct: cancellationToken));
+        thrown.GetBaseException().Message.ShouldContain(AgentSessionService.NotReadyBase);
+
+        await using var db = LaunchFixture.CreateContext();
+        var session = await db.AgentSessions.SingleAsync(s => s.Id == fixture.SessionId);
+        session.TerminationSource.ShouldBe(SessionTerminationSource.ProcessExit);
+        session.FailureReason.ShouldBeNull();
+        session.ExitCode.ShouldBe(0);
+        session.EndedAt.ShouldNotBeNull();
+        session.EndedAt!.Value.ShouldBe(stampedAt, TimeSpan.FromSeconds(1));
+    }
+
+    /// <summary>
+    /// CARD-1190: a natural crash observed while the ready-gate kill is in flight shares the
+    /// kill's generation and is stamped at observation time, which is after the kill was issued.
+    /// The exit code matches the kill result on purpose: ownership has to reject the
+    /// ProcessExited cause, not a code mismatch.
+    /// </summary>
+    [Test]
+    [Timeout(60_000)]
+    public async Task A_ready_gate_kill_leaves_an_in_window_natural_crash(CancellationToken cancellationToken)
+    {
+        var adapter = new FakeAgentProtocolAdapter { ReadyResult = false, ExitCode = 1 };
+        await using var fixture = await LaunchFixture.CreateAsync(adapter);
+        const string crash = "Process exited (ProcessExited, code 1).";
+        adapter.OnKillGeneration = async () =>
+        {
+            adapter.ExitReason = AgentExitReason.ProcessExited;
+            adapter.ExitCode = 1;
+            await SessionExitObservation.ObserveMatchingAsync(
+                fixture.Runtime, fixture.SessionId, exitCode: 1, AgentExitReason.ProcessExited,
+                LaunchFixture.CreateContext);
+        };
+
+        var thrown = await Should.ThrowAsync<Exception>(() => fixture.LaunchInteractiveAsync(ct: cancellationToken));
+        thrown.GetBaseException().Message.ShouldContain(AgentSessionService.NotReadyBase);
+
+        await using var db = LaunchFixture.CreateContext();
+        var session = await db.AgentSessions.SingleAsync(s => s.Id == fixture.SessionId);
+        session.TerminationSource.ShouldBe(SessionTerminationSource.ProcessExit);
+        session.FailureReason.ShouldBe(crash);
+        session.ExitCode.ShouldBe(1);
     }
 
     /// <summary>
@@ -965,6 +1038,111 @@ public class AgentSessionLaunchFailureTests
         session.Status.ShouldBeOneOf(SessionStatus.Failed, SessionStatus.Stopped);
     }
 
+    /// <summary>
+    /// CARD-1190: a specialist delete whose session row is Failed but whose runtime is still
+    /// live used to hold the agent row while KillAsync wrote the session. Stop holds the
+    /// session and then waits for the agent. Start Stop, wait until its session lock has
+    /// returned, then delete. The old order deadlocks (40P01).
+    /// </summary>
+    [Test]
+    [Timeout(60_000)]
+    public async Task A_ready_gate_stop_versus_delete_does_not_deadlock(CancellationToken cancellationToken)
+    {
+        var adapter = new FakeAgentProtocolAdapter();
+        var barrier = new ConfirmedLockBarrier { CrossWait = true };
+        await using var fixture = await LaunchFixture.CreateAsync(adapter, barrier.Configure);
+        fixture.Runtime.Register(fixture.SessionId, adapter);
+        await using (var seed = LaunchFixture.CreateContext())
+        {
+            var agent = await seed.Agents.SingleAsync(a => a.Id == fixture.AgentId);
+            agent.StandingSpecialistRole = AgentTaskRole.Check;
+            agent.StandingSpecialistOwnerId = agent.Id;
+            var session = await seed.AgentSessions.SingleAsync(s => s.Id == fixture.SessionId);
+            session.Status = SessionStatus.Failed;
+            session.EndedAt = DateTime.UtcNow;
+            session.TerminationSource = SessionTerminationSource.ProcessExit;
+            session.ExitCode = 1;
+            session.FailureReason = "Process exited (ProcessExited, code 1).";
+            await seed.SaveChangesAsync();
+        }
+
+        Exception? stopFailure = null;
+        var stop = Task.Run(async () =>
+        {
+            try
+            {
+                await using var scope = fixture.Services.GetRequiredService<IServiceScopeFactory>().CreateAsyncScope();
+                await scope.ServiceProvider.GetRequiredService<AgentControlService>()
+                    .StopAsync(fixture.AgentId, CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                stopFailure = ex;
+            }
+        }, cancellationToken);
+
+        (await Task.WhenAny(barrier.SessionLockConfirmed, Task.Delay(TimeSpan.FromSeconds(15), cancellationToken)))
+            .ShouldBe(barrier.SessionLockConfirmed);
+
+        Exception? deleteFailure = null;
+        var delete = Task.Run(async () =>
+        {
+            try
+            {
+                await using var scope = fixture.Services.GetRequiredService<IServiceScopeFactory>().CreateAsyncScope();
+                await scope.ServiceProvider.GetRequiredService<AgentService>()
+                    .DeleteAsync(fixture.AgentId, CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                deleteFailure = ex;
+            }
+        }, cancellationToken);
+
+        await Task.WhenAll(stop, delete);
+        FindPostgres(stopFailure).ShouldBeNull();
+        FindPostgres(deleteFailure).ShouldBeNull();
+        barrier.ConfirmedSessionAfterExecute.ShouldBeTrue();
+        barrier.ConfirmedAgentAfterExecute.ShouldBeTrue();
+    }
+
+    /// <summary>
+    /// Granted tuple lock on this session row. A global RowShareLock count is shared with every
+    /// other test on the Postgres container, so the probe matches this row's ctid.
+    /// </summary>
+    private static async Task<bool> SessionTupleLockHeldAsync(Guid sessionId)
+    {
+        await using var db = LaunchFixture.CreateContext();
+        await db.Database.OpenConnectionAsync();
+        try
+        {
+            await using var command = db.Database.GetDbConnection().CreateCommand();
+            command.CommandText =
+                """
+                SELECT EXISTS (
+                  SELECT 1
+                  FROM "AgentSessions" s
+                  JOIN pg_locks l
+                    ON l.locktype = 'tuple'
+                   AND l.granted
+                   AND l.relation = '"AgentSessions"'::regclass
+                   AND l.page = split_part(trim(both '()' from s.ctid::text), ',', 1)::integer
+                   AND l.tuple = split_part(trim(both '()' from s.ctid::text), ',', 2)::integer
+                  WHERE s."Id" = @id)
+                """;
+            var id = command.CreateParameter();
+            id.ParameterName = "id";
+            id.Value = sessionId;
+            command.Parameters.Add(id);
+            var result = await command.ExecuteScalarAsync();
+            return result is true;
+        }
+        finally
+        {
+            await db.Database.CloseConnectionAsync();
+        }
+    }
+
     private static PostgresException? FindPostgres(Exception exception)
     {
         for (Exception? current = exception; current is not null; current = current.InnerException)
@@ -998,6 +1176,8 @@ public class AgentSessionLaunchFailureTests
         private readonly TaskCompletionSource _agentLockConfirmed = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly TaskCompletionSource _firstLockConfirmed = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
+        private readonly TaskCompletionSource _sessionHoldRelease = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public Task SessionLockConfirmed => _sessionLockConfirmed.Task;
         public Task FirstLockConfirmed => _firstLockConfirmed.Task;
         public bool ConfirmedSessionAfterExecute { get; private set; }
@@ -1008,6 +1188,14 @@ public class AgentSessionLaunchFailureTests
         /// held by someone. Used by the stop/launch race. Off for the single-observer test.
         /// </summary>
         public bool CrossWait { get; init; }
+
+        /// <summary>
+        /// When set, the session-lock confirmation waits until <see cref="ReleaseSessionHold"/>
+        /// so a probe can see the granted tuple lock before the observer commits.
+        /// </summary>
+        public bool HoldConfirmedSession { get; init; }
+
+        public void ReleaseSessionHold() => _sessionHoldRelease.TrySetResult();
 
         public void Configure(DbContextOptionsBuilder builder) => builder.AddInterceptors(this);
 
@@ -1021,10 +1209,24 @@ public class AgentSessionLaunchFailureTests
             if (kind != Held.None && InExplicitTransaction(eventData))
                 await WaitForOppositeAsync(command, kind, cancellationToken);
 
-            var executed = await base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
+            return await base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
+        }
+
+        public override async ValueTask<DbDataReader> ReaderExecutedAsync(
+            DbCommand command,
+            CommandExecutedEventData eventData,
+            DbDataReader result,
+            CancellationToken cancellationToken = default)
+        {
+            var reader = await base.ReaderExecutedAsync(command, eventData, result, cancellationToken);
+            var kind = Classify(command);
             if (kind != Held.None && InExplicitTransaction(eventData))
+            {
                 NoteConfirmed(command, kind);
-            return executed;
+                await HoldConfirmedSessionAsync(kind, cancellationToken);
+            }
+
+            return reader;
         }
 
         public override async ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(
@@ -1038,10 +1240,24 @@ public class AgentSessionLaunchFailureTests
             if (kind != Held.None && InExplicitTransaction(eventData))
                 await WaitForOppositeAsync(command, kind, cancellationToken);
 
-            var executed = await base.NonQueryExecutingAsync(command, eventData, result, cancellationToken);
+            return await base.NonQueryExecutingAsync(command, eventData, result, cancellationToken);
+        }
+
+        public override async ValueTask<int> NonQueryExecutedAsync(
+            DbCommand command,
+            CommandExecutedEventData eventData,
+            int result,
+            CancellationToken cancellationToken = default)
+        {
+            var rows = await base.NonQueryExecutedAsync(command, eventData, result, cancellationToken);
+            var kind = IsSessionUpdate(command) ? Held.Session : Held.None;
             if (kind != Held.None && InExplicitTransaction(eventData))
+            {
                 NoteConfirmed(command, kind);
-            return executed;
+                await HoldConfirmedSessionAsync(kind, cancellationToken);
+            }
+
+            return rows;
         }
 
         private async Task WaitForOppositeAsync(DbCommand command, Held kind, CancellationToken cancellationToken)
@@ -1084,6 +1300,20 @@ public class AgentSessionLaunchFailureTests
             }
 
             _firstLockConfirmed.TrySetResult();
+        }
+
+        private async Task HoldConfirmedSessionAsync(Held kind, CancellationToken cancellationToken)
+        {
+            if (kind != Held.Session || !HoldConfirmedSession) return;
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeout.CancelAfter(TimeSpan.FromSeconds(10));
+            try
+            {
+                await _sessionHoldRelease.Task.WaitAsync(timeout.Token);
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+            }
         }
 
         private static bool InExplicitTransaction(CommandEventData eventData) =>

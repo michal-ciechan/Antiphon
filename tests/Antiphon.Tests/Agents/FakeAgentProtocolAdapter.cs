@@ -291,6 +291,11 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter, IAttacha
         _lifecycle.Add("KillGeneration");
         if (OnKillGeneration is not null)
             await OnKillGeneration();
+        // A kill that did not observe a reason of its own is the request that ended the process.
+        // A callback that already recorded ProcessExited (or any other reason) keeps it, so a
+        // natural crash inside the kill window is not relabeled KilledByRequest.
+        if (KillResult && ExitReason == AgentExitReason.Unknown)
+            ExitReason = AgentExitReason.KilledByRequest;
         if (KillResult)
             _exit.TrySetResult(ExitCode);
         return KillResult;
