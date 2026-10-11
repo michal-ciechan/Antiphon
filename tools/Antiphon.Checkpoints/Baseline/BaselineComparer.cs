@@ -70,7 +70,9 @@ public sealed class BaselineComparer
             var createdByUs = false;
             try
             {
-                Directory.CreateDirectory(Path.GetDirectoryName(checkout)!);
+                var checkoutParent = Path.GetDirectoryName(checkout)!;
+                if (SafeWrite.CreateDirectory(checkoutParent, SafeWrite.Under(checkoutParent)) is not null)
+                    continue;
                 var add = await RunLeased(
                     session,
                     "tool-run: baseline git worktree add " + build.Id,
@@ -83,6 +85,9 @@ public sealed class BaselineComparer
                     continue;
 
                 var properties = BuildStep.PropertyArguments([], !OperatingSystem.IsWindows() ? false : OperatingSystem.IsWindows());
+                var outputFull = Path.GetFullPath(Path.Combine(checkout, build.Project, build.OutputPath));
+                if (SafeWrite.Preflight(checkout, [outputFull]) is not null)
+                    continue;
                 var buildArgs = BuildStep.BuildArguments(build.Project, build.OutputPath, properties, 4);
                 var buildLog = Path.Combine(runDirectory, "baseline", build.Id, "build.log");
                 var built = await RunLeased(
@@ -115,7 +120,8 @@ public sealed class BaselineComparer
                         continue;
                     var rowId = failures[0].Row.Id;
                     var resultsDir = Path.Combine(runDirectory, "baseline", "rows", rowId, classKey);
-                    Directory.CreateDirectory(resultsDir);
+                    if (SafeWrite.CreateDirectory(resultsDir, SafeWrite.Under(runDirectory)) is not null)
+                        continue;
                     var runArgs = BuildStep.RunArguments(build.Project, build.OutputPath, properties, filters[0], resultsDir, "run.trx");
                     await RunLeased(
                         session,
@@ -133,9 +139,13 @@ public sealed class BaselineComparer
                     }
                 }
 
-                Directory.CreateDirectory(Path.Combine(runDirectory, "baseline"));
                 var classification = string.Join('\n', results.Select(item => item.Name + " " + item.Kind));
-                File.WriteAllText(Path.Combine(runDirectory, "baseline", "classification.txt"), classification);
+                var classificationRefusal = SafeWrite.Text(
+                    Path.Combine(runDirectory, "baseline", "classification.txt"),
+                    classification,
+                    SafeWrite.Under(runDirectory));
+                if (classificationRefusal is not null)
+                    throw new IOException("refused: " + classificationRefusal);
             }
             finally
             {
