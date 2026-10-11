@@ -241,7 +241,11 @@ D-5. `DueAsync` callers are not all in this class; R-1's tick and the aligned
 hold argument are the boundary-suite witnesses that `Advance` still opens the gate.
 The ordinary Failed caller receipt is
 `DelegationDispatchRecoveryBoundaryTests.C1161_Failed_caller_note_has_one_complete_user_prompt`
-(eligible, busy). The enqueue-failure case is open as CARD-1167.
+(eligible, busy, crash). CARD-1167 landed in
+`b3c904bd72d464bee44b453dbf89144929459070` and closed the enqueue-failure
+case; the crash argument is that witness. CARD-1182 landed in
+`a8e007d520bed328daaab415ca5ed498eb297b32`; its missing-parent witness is
+`DelegationDispatchRecoveryBoundaryTests.C1182_Gone_parent_stamps_the_lost_note_once`.
 
 ### Production mutation controls
 
