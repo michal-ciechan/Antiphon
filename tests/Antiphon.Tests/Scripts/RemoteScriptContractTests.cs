@@ -206,6 +206,34 @@ public sealed class RemoteScriptContractTests
         }
     }
 
+    // CARD-1193. NuGet locks $NUGET_SCRATCH/lock/<hash>. The holder and waiter must receive the
+    // same HOME and NUGET_SCRATCH the F-4 restore containers pass.
+    [Test]
+    public void C1193_Lock_probe_passes_home_and_nuget_scratch()
+    {
+        var run = Commands(Block(Remote(), "c849_fixture_lock_container"))
+            .Single(command => command.Contains("docker run ", StringComparison.Ordinal));
+        run.ShouldContain("-e HOME=/home/app");
+        run.ShouldContain("-e NUGET_SCRATCH=/var/cache/antiphon/nuget-scratch");
+        run.ShouldContain("lock-probe.ps1");
+    }
+
+    // CARD-1193. The verifier scp exports CASE_DIR. These logs are written under the private
+    // tree, so the exit trap must copy whichever exist before sudo removes that tree.
+    [Test]
+    public void C1193_Fixture_exit_trap_copies_race_logs_before_tree_removal()
+    {
+        var trap = Commands(Block(Remote(), "c849_fixture"))
+            .Single(command => command.StartsWith("trap ", StringComparison.Ordinal));
+        const string copy =
+            "for name in race-p1.log race-p2.log race-offline.log lock-holder.log lock-waiter.log; do if [ -f \"$SERVER2_ROOT/$name\" ]; then cp -- \"$SERVER2_ROOT/$name\" \"$CASE_DIR/$name\" || true; fi; done";
+        const string removal =
+            "case \"$SERVER2_ROOT\" in /tmp/c849-fixture-*) sudo -n rm -rf -- \"$SERVER2_ROOT\" || true ;; esac";
+        trap.ShouldContain(copy);
+        Order(trap, copy, removal).ShouldBeTrue("race logs are copied after the fixture tree is removed");
+        Order(trap, removal, "UnhandledExit").ShouldBeTrue("UnhandledExit receipt runs before the tree removal");
+    }
+
     private static string C1066FixtureHarness(params string[] functions) => """
         set -euo pipefail
         unset fault tree project output kind image packages scratch code
