@@ -344,13 +344,18 @@ public sealed class RemoteScriptContractTests
             "assign does not evaluate an empty observation as arithmetic");
         assign.ShouldContain("write_result false");
         scale.ShouldContain("FixtureBudgetObservationInvalid");
-        scale.ShouldContain("$((bytes * 5 / 4))");
-        Order(scale, "[[ ! \"$bytes\" =~ ^[0-9]+$ ]]", "$((bytes * 5 / 4))").ShouldBeTrue(
-            "a non-numeric byte field returns before arithmetic");
+        scale.ShouldContain("FixtureBudgetObservationTooLong");
+        scale.ShouldContain("[ \"${#bytes}\" -gt 15 ]");
+        scale.ShouldContain("$((10#$bytes * 5 / 4))");
+        Order(scale, "[[ ! \"$bytes\" =~ ^[0-9]+$ ]]", "[ \"${#bytes}\" -gt 15 ]").ShouldBeTrue(
+            "a non-numeric byte field returns before the digit-length refusal");
+        Order(scale, "[ \"${#bytes}\" -gt 15 ]", "$((10#$bytes * 5 / 4))").ShouldBeTrue(
+            "a field longer than 15 digits returns before base-10 scaling");
     }
 
     // CARD-1194. The scale helper is behaviour: an empty observation and a swallowed
     // DIAGNOSIS= line refuse with the inputs named, and a real six-field line still scales by 5/4.
+    // A leading zero is decimal (010 -> 12, 08 -> 10). Sixteen digits refuse before the multiply.
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public void C1194_Fixture_budget_scale_refuses_empty_observation()
@@ -373,10 +378,22 @@ public sealed class RemoteScriptContractTests
             status=0
             actual="$(c849_fixture_scale_budget vol nuget-scratch 'vol nuget-scratch /var/lib/docker/volumes/vol/_data 1654:1654:700 0 268435456')" || status=$?
             [ "$status" = 0 ] && [ "$actual" = 0 ] || { printf 'FAIL zero status=%s actual=%s\n' "$status" "$actual"; exit 1; }
+            status=0
+            actual="$(c849_fixture_scale_budget vol nuget-packages 'vol nuget-packages /var/lib/docker/volumes/vol/_data 1654:1654:700 010 10737418240')" || status=$?
+            [ "$status" = 0 ] && [ "$actual" = 12 ] || { printf 'FAIL leading-zero status=%s actual=%s\n' "$status" "$actual"; exit 1; }
+            status=0
+            actual="$(c849_fixture_scale_budget vol nuget-scratch 'vol nuget-scratch /var/lib/docker/volumes/vol/_data 1654:1654:700 08 268435456')" || status=$?
+            [ "$status" = 0 ] && [ "$actual" = 10 ] || { printf 'FAIL octal-eight status=%s actual=%s\n' "$status" "$actual"; exit 1; }
+            status=0
+            actual="$(c849_fixture_scale_budget vol npm-content 'vol npm-content /var/lib/docker/volumes/vol/_data 1654:1654:700 1000000000000000 2147483648')" || status=$?
+            [ "$status" = 2 ] || { printf 'FAIL digits-status=%s actual=%s\n' "$status" "$actual"; exit 1; }
+            printf '%s\n' "$actual" | grep -Fq 'FixtureBudgetObservationTooLong name=vol role=npm-content bytes=1000000000000000 line=vol npm-content /var/lib/docker/volumes/vol/_data 1654:1654:700 1000000000000000 2147483648' \
+                || { printf 'FAIL digits-diagnosis=%s\n' "$actual"; exit 1; }
             printf 'PASS c1194-budget-scale\n'
             """);
         output.IndexOf("operand expected", StringComparison.Ordinal).ShouldBe(-1, output);
         output.IndexOf("syntax error", StringComparison.Ordinal).ShouldBe(-1, output);
+        output.IndexOf("value too great for base", StringComparison.Ordinal).ShouldBe(-1, output);
         output.IndexOf("PASS c1194-budget-scale", StringComparison.Ordinal).ShouldBeGreaterThanOrEqualTo(0, output);
         output.IndexOf("FAIL ", StringComparison.Ordinal).ShouldBe(-1, output);
     }
