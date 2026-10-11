@@ -56,6 +56,14 @@ public sealed class AgentSessionService : IDelegateSessionStopper
     private readonly ILogger<AgentSessionService> _logger;
     private readonly ChannelInboundWakeSignal? _channelInboundWake;
 
+    /// <summary>
+    /// Provenance of the kill <see cref="LaunchInteractiveProcessAsync"/> just issued for the
+    /// catch below. Scoped to this service instance; cleared when that catch reads it.
+    /// </summary>
+    private LaunchCleanupKill? _pendingCleanupKill;
+
+    private readonly record struct LaunchCleanupKill(bool KilledThisGeneration, DateTime Generation, DateTime IssuedAt);
+
     public AgentSessionService(
         AppDbContext db,
         IWorktreeManager worktreeManager,
@@ -391,30 +399,39 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             await _db.Entry(session).ReloadAsync(CancellationToken.None);
             // Superseded work has settled. Do not turn its failure into evidence or
             // a queued-launch alert attached to the newer generation.
+            var cleanupKill = _pendingCleanupKill;
+            _pendingCleanupKill = null;
             if (session.StartedAt != generation) return;
             session.RestartFailureKind = new RestartFailurePolicy().Classify(ex);
             HerdrSupervisionFailureEvidence.Record(session, HerdrSupervisionFailureEvidence.FromLaunchFailure(ex));
             var stoppedCheck = session.TerminationSource == SessionTerminationSource.OperatorRequest;
-            session.Status = stoppedCheck ? SessionStatus.Stopped : SessionStatus.Failed;
-            session.FailureReason = ex.Message;
-            session.EndedAt = UtcNow();
-            session.LastSeenAt = session.EndedAt.Value;
-            // R5 repair: the runner ran this generation and it exited on its own; record that exit
-            // rather than a platform stop.
-            if (ex is RemoteLaunchAlreadyExitedException exited)
+            // CARD-1190: clear ProcessExit only when it is the exit observer's stamp for the kill
+            // this cleanup just issued. A stamp from another generation, or one whose time predates
+            // that kill, is a real crash and must not become SystemRequest / "did not become ready".
+            var boundToThisKill = LaunchKillOwnsProcessExit(session, cleanupKill, generation);
+            if (session.TerminationSource == SessionTerminationSource.ProcessExit && !boundToThisKill)
             {
-                session.ExitCode = exited.ExitCode;
-                SessionTermination.Record(session, SessionTermination.FromExitReason(exited.ExitReason));
+                if (session.Status is SessionStatus.Starting or SessionStatus.Running or SessionStatus.Stopping)
+                    session.Status = SessionStatus.Failed;
+                session.LastSeenAt = UtcNow();
             }
-            else if (session.TerminationSource == SessionTerminationSource.ProcessExit)
+            else
             {
-                // CARD-1190: this catch already killed the process. The exit observer can commit
-                // ProcessExit for that KilledByRequest (exit code 0 is a clean stop with no failure
-                // text) before this reload. That stamp is the kill, not a self-exit, and the
-                // not-ready error is the reason that must stick.
-                session.TerminationSource = SessionTerminationSource.Unknown;
+                session.Status = stoppedCheck ? SessionStatus.Stopped : SessionStatus.Failed;
+                session.FailureReason = ex.Message;
+                session.EndedAt = UtcNow();
+                session.LastSeenAt = session.EndedAt.Value;
+                // R5 repair: the runner ran this generation and it exited on its own; record that exit
+                // rather than a platform stop.
+                if (ex is RemoteLaunchAlreadyExitedException exited)
+                {
+                    session.ExitCode = exited.ExitCode;
+                    SessionTermination.Record(session, SessionTermination.FromExitReason(exited.ExitReason));
+                }
+                else if (boundToThisKill)
+                    session.TerminationSource = SessionTerminationSource.Unknown;
+                SessionTermination.Record(session, SessionTerminationSource.SystemRequest);
             }
-            SessionTermination.Record(session, SessionTerminationSource.SystemRequest);
             if (ex is AgentLaunchBlockedException blocked)
             {
                 session.LaunchBlock = GrokSignInIncident.ToSessionBlock(blocked.Block.Kind);
@@ -665,7 +682,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
                 && (IsClaudeSessionNotFound(adapter, ex)
                     || ex is ConflictException { Code: HerdrProblemTypes.GrokNativeSessionMissing });
             if (adapter is not null)
-                await KillAndDisposeAsync(adapter, acceptedGeneration, session);
+                _pendingCleanupKill = await KillAndDisposeAsync(adapter, acceptedGeneration, session);
 
             if (resumeTargetMissing)
             {
@@ -776,20 +793,18 @@ public sealed class AgentSessionService : IDelegateSessionStopper
     /// Killing an already-killed session is harmless — the runner answers false for a session it no
     /// longer knows.
     /// </summary>
-    private async Task KillAndDisposeAsync(
+    private async Task<LaunchCleanupKill?> KillAndDisposeAsync(
         IAgentProtocolAdapter adapter, DateTime? acceptedGeneration = null, AgentSession? session = null)
     {
+        var issuedAt = UtcNow();
+        bool? killedGeneration = null;
         try
         {
             var grace = TimeSpan.FromMilliseconds(Math.Max(100, _settings.KillGraceMs));
             if (acceptedGeneration is { } generation)
-            {
-                await adapter.KillGenerationAsync(generation, grace, CancellationToken.None);
-            }
+                killedGeneration = await adapter.KillGenerationAsync(generation, grace, CancellationToken.None);
             else
-            {
                 await adapter.KillAsync(grace, CancellationToken.None);
-            }
         }
         catch (Exception ex) when (acceptedGeneration is { } generation
             && !string.IsNullOrWhiteSpace(session?.RunnerId)
@@ -819,6 +834,25 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         }
 
         await adapter.DisposeAsync();
+        return acceptedGeneration is { } killedGenerationId
+            ? new LaunchCleanupKill(killedGeneration == true, killedGenerationId, issuedAt)
+            : null;
+    }
+
+    /// <summary>
+    /// True when <paramref name="session"/>'s <see cref="SessionTerminationSource.ProcessExit"/>
+    /// is the observer stamp for the kill this cleanup issued: the kill reported this generation
+    /// dead, the row is still that generation, and the stamp does not predate the kill.
+    /// </summary>
+    private static bool LaunchKillOwnsProcessExit(
+        AgentSession session, LaunchCleanupKill? kill, DateTime generation)
+    {
+        if (kill is not { KilledThisGeneration: true } owned) return false;
+        if (session.TerminationSource != SessionTerminationSource.ProcessExit) return false;
+        if (session.EndedAt is not DateTime stampedAt) return false;
+        return SessionGeneration.Equal(session.StartedAt, owned.Generation)
+            && SessionGeneration.Equal(owned.Generation, generation)
+            && SessionGeneration.Compare(stampedAt, owned.IssuedAt) >= 0;
     }
 
     /// <summary>
