@@ -3091,7 +3091,8 @@ public sealed partial class AgentTaskDispatcher
             // the whole justification for acting is that the session is already gone, so if that
             // evidence is ever wrong a kill would be the CARD-0056 disaster rather than tidiness.
             await FailAndNotifyAsync(
-                task, classifiedReason, "dead-session reconciler", ct, classified.FailureCode, orphaned: pending);
+                task, classifiedReason, CommitRecoveryObligations.DeadSessionReconcilerSweep, ct,
+                classified.FailureCode, orphaned: pending);
 
             _deadSessions.Forget(task.Id);
             failed++;
@@ -3135,8 +3136,13 @@ public sealed partial class AgentTaskDispatcher
             return;
         }
 
+        // CARD-1186. After the existing-note and missing-parent returns. A failed event read
+        // throws here, so the task stays unstamped and the next sweep can retry.
+        var proven = await CommitRecoveryObligations.LoadAbandonedForSavedFailureAsync(_db, task.Id, reason, ct);
+        var guidance = CommitRecoveryObligations.FormatAbandonedGuidance(task.Id, proven);
         var note = DelegationReportFormatter.BuildCompletionNote(
-            task, _settings, reason, land: await LandCompletionFacts.LoadAsync(_db, task, ct));
+            task, _settings, reason, warning: guidance.Warning, git: guidance.Git,
+            land: await LandCompletionFacts.LoadAsync(_db, task, ct));
         try
         {
             await _queue.EnqueueAsync(
@@ -4386,21 +4392,25 @@ public sealed partial class AgentTaskDispatcher
     {
         // CARD-0547 D-3: an unresolved commit-recovery obligation is closed by name in the same
         // transaction as the failure, and the reason, the parent's note and its git= bit carry it.
+        // CARD-1186: the recovered note uses the same order and the same warning/git text.
         string? git = null;
         string? warning = null;
+        IReadOnlyList<CommitRecoveryObligations.Pending>? ordered = null;
         if (orphaned is { Count: > 0 })
         {
-            var ids = string.Join(", ", orphaned.Select(p => $"{p.EventId:D} (settlement {p.Settlement})"));
+            ordered = CommitRecoveryObligations.InGuidanceOrder(orphaned);
+            var ids = string.Join(", ", ordered.Select(p => $"{p.EventId:D} (settlement {p.Settlement})"));
             reason = $"{reason} The task held unresolved commit-recovery obligation(s) {ids}; "
                 + "they were abandoned and any gated commit is local and unpushed.";
-            git = "commit-recovery-abandoned:" + string.Join(",", orphaned.Select(p => p.EventId.ToString("N")[..8]));
-            warning = string.Join("\n\n", orphaned.Select(p => CommitRecoveryObligations.Describe(task.Id, p)));
+            var guidance = CommitRecoveryObligations.FormatAbandonedGuidance(task.Id, ordered);
+            git = guidance.Git;
+            warning = guidance.Warning;
         }
-        if (orphaned is { Count: > 0 })
+        if (ordered is { Count: > 0 })
         {
             // Tracked before FailAsync so its SaveChangesAsync commits them with the Failed status.
             var abandonedAt = UtcNow();
-            foreach (var p in orphaned)
+            foreach (var p in ordered)
                 _db.AgentTaskEvents.Add(CommitRecoveryObligations.Abandon(p, sweep, reason, abandonedAt));
         }
         await FailAsync(task, reason, ct, failureCode);
