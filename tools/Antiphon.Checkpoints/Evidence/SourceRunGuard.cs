@@ -120,21 +120,17 @@ public sealed class CheckpointBuildBinding
         var reason = SafeDelete.Refusal(PathName, ownership);
         if (reason is not null)
             return reason;
-        Directory.CreateDirectory(OutputPath);
-        var temporary = PathName + "." + Guid.NewGuid().ToString("N") + ".tmp";
-        File.WriteAllText(temporary, JsonSerializer.Serialize(this, CheckpointApp.Json));
-        try
+        if (File.Exists(PathName))
         {
-            reason = SafeDelete.Refusal(PathName, ownership);
-            if (reason is not null)
-                return reason;
-            File.Move(temporary, PathName, overwrite: true);
-            return null;
+            var removed = SafeDelete.Apply(PathName, ownership);
+            if (removed.Disposition == DeleteDisposition.Refused)
+                return removed.Reason;
         }
-        finally
-        {
-            if (File.Exists(temporary))
-                SafeDelete.DeleteCreatedFile(temporary);
-        }
+
+        var writeRoot = SafeWrite.Under(OutputPath);
+        reason = SafeWrite.CreateDirectory(OutputPath, writeRoot);
+        if (reason is not null)
+            return reason;
+        return SafeWrite.Text(PathName, JsonSerializer.Serialize(this, CheckpointApp.Json), writeRoot);
     }
 }

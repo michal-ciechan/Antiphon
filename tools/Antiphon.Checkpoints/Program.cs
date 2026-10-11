@@ -132,8 +132,12 @@ public static class Program
         }
 
         var outPath = options.Get("out") ?? Path.Combine(repo, ".antiphon", "checkpoints.yaml");
-        Directory.CreateDirectory(Path.GetDirectoryName(outPath)!);
-        File.WriteAllText(outPath, ManifestLoader.ToYaml(imported.Manifest));
+        var written = SafeWrite.Text(outPath, ManifestLoader.ToYaml(imported.Manifest), SafeWrite.Under(repo));
+        if (written is not null)
+        {
+            Console.Error.WriteLine("refused: " + written);
+            return ExitCodes.Invalid;
+        }
         Console.WriteLine("imported " + imported.Manifest.Checkpoints.Count + " rows -> " + outPath);
         return ExitCodes.Green;
     }
@@ -160,6 +164,12 @@ public static class Program
     private static async Task<int> Wait(ArgSet options, string repo)
     {
         var run = ResolveRun(options, repo);
+        var refusal = SafeWrite.Preflight(repo, [Path.GetFullPath(run)]);
+        if (refusal is not null)
+        {
+            Console.Out.WriteLine("refused: " + refusal);
+            return ExitCodes.Invalid;
+        }
         var max = ParseDuration(options.Get("max-wait"));
         var heartbeat = ParseDuration(options.Get("heartbeat")) ?? TimeSpan.FromSeconds(60);
         return await new WaitCommand().WaitAsync(run, max, heartbeat, Console.Out, CancellationToken.None).ConfigureAwait(false);
@@ -187,7 +197,15 @@ public static class Program
 
     private static int Stop(ArgSet options, string repo, CheckpointApp.Runtime? runtime)
     {
+        var output = runtime?.Output ?? Console.Out;
         var run = ResolveRun(options, repo);
+        var preflight = SafeWrite.Preflight(repo, [Path.GetFullPath(run)], runtime?.GitExecutable);
+        if (preflight is not null)
+        {
+            output.WriteLine("refused: " + preflight);
+            return ExitCodes.Invalid;
+        }
+
         var cleanup = new ToolCopyCleanup(runtime?.ProcessProbe);
         var observed = cleanup.ObserveExecutor(run);
         if (observed.Verdict is ProcessVerdict.Unknown or ProcessVerdict.ReusedPid)
@@ -220,9 +238,15 @@ public static class Program
             }
         }
 
-        var output = runtime?.Output ?? Console.Out;
         if (state is not null)
         {
+            var requested = Path.GetFileName(Path.GetFullPath(run));
+            if (state.ToolOwner != SafeWrite.Marker || !string.Equals(state.RunId, requested, StringComparison.Ordinal))
+            {
+                output.WriteLine("refused: foreign_state");
+                return ExitCodes.Invalid;
+            }
+
             state.Phase = "stopped";
             var refusal = store.Write(Path.Combine(run, "state.json"), state);
             if (refusal is not null)
@@ -275,6 +299,20 @@ public static class Program
 
     private static int Clean(ArgSet options, string repo, TextWriter output)
     {
+        var roots = new List<string> { ResultsRoot(options, repo) };
+        if (options.Get("run") is string runArg && runArg.Length > 0)
+        {
+            try { roots.Add(Path.GetFullPath(ResolveRun(options, repo))); }
+            catch (ManifestValidationException) { }
+        }
+
+        var preflight = SafeWrite.Preflight(repo, roots);
+        if (preflight is not null)
+        {
+            output.WriteLine("refused: " + preflight);
+            return ExitCodes.Invalid;
+        }
+
         var exit = ExitCodes.Green;
         var older = ParseDuration(options.Get("older-than"));
         if (older is TimeSpan age)
@@ -519,7 +557,7 @@ public static class Program
         var latest = Path.Combine(ResultsRoot(options, repo), "latest");
         if (!File.Exists(latest))
             throw new ManifestValidationException("run", "no latest run");
-        return Path.Combine(ResultsRoot(options, repo), File.ReadAllText(latest).Trim());
+        return Path.Combine(ResultsRoot(options, repo), CheckpointApp.ReadLatest(File.ReadAllText(latest)));
     }
 
     private static string ResultsRoot(ArgSet options, string repo)

@@ -512,6 +512,235 @@ public sealed class OutputCleanupTests : CheckpointTestBase
         }
     }
 
+    [Test]
+    public async Task run_refuses_tracked_latest_before_writing()
+    {
+        var root = InitGitRepo();
+        var results = Path.Combine(root, "results");
+        Directory.CreateDirectory(results);
+        var latest = Path.Combine(results, "latest");
+        File.WriteAllText(latest, "original-latest");
+        Git(root, "add", "--", "results/latest");
+        Git(root, "-c", "user.email=card-1199@example.invalid", "-c", "user.name=card-1199",
+            "-c", "commit.gpgsign=false", "commit", "-m", "latest", "--no-verify");
+        var original = File.ReadAllBytes(latest);
+        var launched = 0;
+        var output = new StringWriter();
+        var manifest = new CheckpointManifest
+        {
+            ResultsRoot = "results",
+            Builds = [new BuildSpec { Id = "bin-audit", Project = "proj/App.csproj", OutputPath = "bin-audit/" }],
+            Checkpoints = [new CheckpointSpec { Id = "CP-1", Build = "bin-audit", Filter = "/*/*/ExampleSurfaceTests/*", MinExecuted = 1 }],
+        };
+
+        var started = await CheckpointApp.StartAsync(manifest, new RunRequest(), root, output,
+            new CheckpointApp.Runtime { Launch = _ => { launched++; return 1; } });
+
+        started.ExitCode.ShouldBe(ExitCodes.Invalid);
+        launched.ShouldBe(0);
+        File.ReadAllBytes(latest).ShouldBe(original);
+        output.ToString().ShouldContain("refused: tracked");
+        Directory.GetDirectories(results).ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task execute_refuses_tracked_paths_before_rejecting_input()
+    {
+        var root = InitGitRepo();
+        var run = Path.Combine(root, "run-exec");
+        Directory.CreateDirectory(run);
+        var ownership = Path.Combine(run, "executor-ownership.json");
+        var report = Path.Combine(run, "report.md");
+        var request = Path.Combine(run, "request.json");
+        File.WriteAllText(ownership, "owned-bytes");
+        File.WriteAllText(report, "report-bytes");
+        File.WriteAllText(request, "{not-json");
+        Git(root, "add", "--", "run-exec/executor-ownership.json", "run-exec/report.md", "run-exec/request.json");
+        Git(root, "-c", "user.email=card-1199@example.invalid", "-c", "user.name=card-1199",
+            "-c", "commit.gpgsign=false", "commit", "-m", "tracked-run", "--no-verify");
+        var owned = File.ReadAllBytes(ownership);
+        var reported = File.ReadAllBytes(report);
+        var requested = File.ReadAllBytes(request);
+        var output = new StringWriter();
+
+        var exit = await CheckpointApp.ExecuteAsync(run, CancellationToken.None, new CheckpointApp.Runtime { Output = output });
+
+        exit.ShouldBe(ExitCodes.Invalid);
+        exit.ShouldNotBe(ExitCodes.ExecutorCrashed);
+        File.ReadAllBytes(ownership).ShouldBe(owned);
+        File.ReadAllBytes(report).ShouldBe(reported);
+        File.ReadAllBytes(request).ShouldBe(requested);
+        output.ToString().ShouldContain("refused: tracked");
+    }
+
+    [Test]
+    public async Task build_refuses_tracked_output_before_the_driver()
+    {
+        var root = InitGitRepo();
+        var outputDir = Path.Combine(root, "proj", "bin-audit");
+        Directory.CreateDirectory(outputDir);
+        var dll = Path.Combine(outputDir, "App.dll");
+        File.WriteAllText(dll, "dll-bytes");
+        Git(root, "add", "--", "proj/bin-audit/App.dll");
+        Git(root, "-c", "user.email=card-1199@example.invalid", "-c", "user.name=card-1199",
+            "-c", "commit.gpgsign=false", "commit", "-m", "dll", "--no-verify");
+        var original = File.ReadAllBytes(dll);
+        var driver = new FakeDriver();
+        driver.When(CheckpointFixtures.IsBuild, (_, _) => Task.FromResult(new DriverResult(0, "", "")));
+        var results = Path.Combine(root, "row-results");
+        Directory.CreateDirectory(results);
+        var output = new StringWriter();
+        var result = await new RowRunner(driver, new RuntimePlatform()).RunAsync(new RowRequest
+        {
+            Name = "CP-1",
+            Project = "proj/App.csproj",
+            OutputPath = "bin-audit/",
+            Filter = "/*/*/ExampleSurfaceTests/*",
+            ResultsDirectory = results,
+            WorkingDirectory = root,
+            Source = new SourceEvidence { Start = CheckpointFixtures.CleanSource() },
+        }, output, CancellationToken.None);
+
+        result.ExitCode.ShouldBe(ExitCodes.Invalid);
+        driver.Calls.Count.ShouldBe(0);
+        File.ReadAllBytes(dll).ShouldBe(original);
+        output.ToString().ShouldContain("refused: tracked");
+    }
+
+    [Test]
+    public async Task stop_refuses_foreign_state_without_writing()
+    {
+        var root = InitGitRepo();
+        var run = Path.Combine(root, "run-foreign");
+        Directory.CreateDirectory(run);
+        var statePath = Path.Combine(run, "state.json");
+        File.WriteAllText(statePath, """
+            {
+              "runId": "other-run",
+              "toolOwner": "not-this-tool",
+              "phase": "running"
+            }
+            """);
+        var original = File.ReadAllBytes(statePath);
+        CheckpointFixtures.MarkRun(run, alive: false);
+        var output = new StringWriter();
+
+        var exit = await Program.RunAsync(["stop", "--run", run, "--repo-root", root],
+            new CheckpointApp.Runtime { Output = output });
+
+        exit.ShouldBe(ExitCodes.Invalid);
+        File.ReadAllBytes(statePath).ShouldBe(original);
+        output.ToString().ShouldContain("refused: foreign_state");
+        output.ToString().ShouldNotContain("stopped ");
+    }
+
+    [Test]
+    public void cleanup_report_follows_the_directory_post_condition()
+    {
+        var dir = Path.Combine(TempDir(), "bin-audit");
+        Directory.CreateDirectory(dir);
+        var kept = SafeWrite.FormatOutputs(["bin-audit/"], [dir]);
+        Directory.Exists(dir).ShouldBeTrue();
+        kept.ShouldBe("outputs: refused/kept bin-audit/");
+        kept.ShouldNotContain("deleted");
+        Directory.Delete(dir);
+        Directory.Exists(dir).ShouldBeFalse();
+        SafeWrite.FormatOutputs(["bin-audit/"], [dir]).ShouldBe("outputs: deleted bin-audit/");
+    }
+
+    [Test]
+    public void safe_write_refuses_tracked_linked_unrecorded_and_git_failure()
+    {
+        var trackedRoot = InitGitRepo();
+        var tracked = Path.Combine(trackedRoot, "keep.txt");
+        File.WriteAllText(tracked, "original");
+        Git(trackedRoot, "add", "--", "keep.txt");
+        Git(trackedRoot, "-c", "user.email=card-1199@example.invalid", "-c", "user.name=card-1199",
+            "-c", "commit.gpgsign=false", "commit", "-m", "keep", "--no-verify");
+        SafeWrite.Text(tracked, "changed", SafeWrite.Under(trackedRoot)).ShouldBe("tracked");
+        File.ReadAllText(tracked).ShouldBe("original");
+
+        var plain = TempDir();
+        var existing = Path.Combine(plain, "keep.txt");
+        File.WriteAllText(existing, "original");
+        SafeWrite.Text(existing, "changed", SafeWrite.Under(plain)).ShouldBe("unrecorded-existing");
+        File.ReadAllText(existing).ShouldBe("original");
+
+        var failing = InitGitRepo();
+        var victim = Path.Combine(failing, "keep.txt");
+        File.WriteAllText(victim, "original");
+        var fake = Path.Combine(Path.GetTempPath(), "c1199-git-" + Guid.NewGuid().ToString("N"));
+        File.WriteAllText(fake, "#!/bin/sh\necho fail >&2\nexit 1\n");
+        File.SetUnixFileMode(fake, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        try
+        {
+            SafeWrite.Text(victim, "changed", SafeWrite.Under(failing, gitExecutable: fake)).ShouldBe("git-failed");
+            File.ReadAllText(victim).ShouldBe("original");
+        }
+        finally
+        {
+            if (File.Exists(fake))
+                File.Delete(fake);
+        }
+
+        if (!OperatingSystem.IsLinux())
+            return;
+        var linkedRoot = TempDir();
+        var real = Path.Combine(linkedRoot, "real");
+        Directory.CreateDirectory(real);
+        var kept = Path.Combine(real, "keep.txt");
+        File.WriteAllText(kept, "original");
+        var link = Path.Combine(linkedRoot, "link");
+        Directory.CreateSymbolicLink(link, real);
+        SafeWrite.Text(Path.Combine(link, "keep.txt"), "changed", SafeWrite.Under(linkedRoot)).ShouldBe("link-component");
+        File.ReadAllText(kept).ShouldBe("original");
+    }
+
+    [Test]
+    public async Task preflight_git_failure_exits_2_without_writing()
+    {
+        var root = InitGitRepo();
+        var results = Path.Combine(root, "results");
+        var outputDir = Path.Combine(root, "proj", "bin-audit");
+        Directory.CreateDirectory(results);
+        Directory.CreateDirectory(outputDir);
+        var latest = Path.Combine(results, "latest");
+        var dll = Path.Combine(outputDir, "App.dll");
+        File.WriteAllText(latest, "original-latest");
+        File.WriteAllText(dll, "dll-bytes");
+        var before = new[] { latest, dll }.ToDictionary(path => path, path => (Bytes: File.ReadAllBytes(path), Mtime: File.GetLastWriteTimeUtc(path)));
+        var fake = Path.Combine(Path.GetTempPath(), "c1199-pre-" + Guid.NewGuid().ToString("N"));
+        File.WriteAllText(fake, "#!/bin/sh\necho fail >&2\nexit 1\n");
+        File.SetUnixFileMode(fake, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        var launched = 0;
+        var output = new StringWriter();
+        var manifest = new CheckpointManifest
+        {
+            ResultsRoot = "results",
+            Builds = [new BuildSpec { Id = "bin-audit", Project = "proj/App.csproj", OutputPath = "bin-audit/" }],
+            Checkpoints = [new CheckpointSpec { Id = "CP-1", Build = "bin-audit", Filter = "/*/*/ExampleSurfaceTests/*", MinExecuted = 1 }],
+        };
+        try
+        {
+            var started = await CheckpointApp.StartAsync(manifest, new RunRequest(), root, output,
+                new CheckpointApp.Runtime { GitExecutable = fake, Launch = _ => { launched++; return 1; } });
+            started.ExitCode.ShouldBe(ExitCodes.Invalid);
+            launched.ShouldBe(0);
+            output.ToString().ShouldContain("refused: git-failed");
+            Directory.GetDirectories(results).ShouldBeEmpty();
+            foreach (var (path, snapshot) in before)
+            {
+                File.ReadAllBytes(path).ShouldBe(snapshot.Bytes);
+                File.GetLastWriteTimeUtc(path).ShouldBe(snapshot.Mtime);
+            }
+        }
+        finally
+        {
+            if (File.Exists(fake))
+                File.Delete(fake);
+        }
+    }
+
     private const string StampProbe = """
         $ErrorActionPreference = 'Stop'
         $tokens = $null

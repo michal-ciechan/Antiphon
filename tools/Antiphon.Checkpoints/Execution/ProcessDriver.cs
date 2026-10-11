@@ -78,8 +78,11 @@ public sealed class ProcessDriver : IDriver
         StreamWriter? log = null;
         if (!string.IsNullOrWhiteSpace(request.LogPath))
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(request.LogPath))!);
-            log = new StreamWriter(request.LogPath, append: true) { AutoFlush = true };
+            var logDirectory = Path.GetDirectoryName(Path.GetFullPath(request.LogPath))!;
+            var logReason = SafeWrite.OpenAppend(request.LogPath, SafeWrite.Under(logDirectory), out var logStream);
+            if (logReason is not null || logStream is null)
+                return new DriverResult(ExitCodes.Invalid, "", "refused: " + logReason);
+            log = new StreamWriter(logStream) { AutoFlush = true };
         }
 
         var outputGate = new object();

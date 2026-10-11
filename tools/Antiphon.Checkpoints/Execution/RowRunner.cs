@@ -26,6 +26,7 @@ public sealed class RowRequest
     public int MaxCpuCount { get; init; } = 4;
     public TimeSpan Deadline { get; init; } = TimeSpan.FromMinutes(15);
     public string? DotnetFileName { get; init; }
+    public string? GitExecutable { get; init; }
     public Func<CancellationToken, Task>? BeforeLaunch { get; init; }
     public IReadOnlyDictionary<string, string> Environment { get; init; } = new Dictionary<string, string>();
 }
@@ -75,7 +76,13 @@ public sealed class RowRunner
             return Finish(ExitCodes.Invalid, "failed", "", buffer, 0, [], null, null, false, "invalid");
         }
 
-        Directory.CreateDirectory(request.ResultsDirectory);
+        var resultsRefusal = SafeWrite.CreateDirectory(request.ResultsDirectory, SafeWrite.Under(request.ResultsDirectory, gitExecutable: request.GitExecutable));
+        if (resultsRefusal is not null)
+        {
+            combined.WriteLine($"CHECKPOINT {request.Name} refused: {resultsRefusal}");
+            combined.WriteLine($"CHECKPOINT {request.Name} EXIT CODE: 2");
+            return Finish(ExitCodes.Invalid, "failed", "", buffer, 0, [], null, null, false, "invalid");
+        }
         var fileName = request.DotnetFileName ?? "dotnet";
         var properties = BuildStep.PropertyArguments(request.Properties, _platform.IsWindows, request.Repeat,
             request.Repeat > 1 ? RepeatRequest.CanonicalProject(request.WorkingDirectory, request.Project!) : null);
@@ -147,6 +154,19 @@ public sealed class RowRunner
             }
             if (request.BeforeLaunch is not null)
                 await request.BeforeLaunch(cancellationToken).ConfigureAwait(false);
+            var projectFull = Path.GetFullPath(Path.IsPathRooted(request.Project)
+                ? request.Project!
+                : Path.Combine(request.WorkingDirectory, request.Project!));
+            var projectDir = Directory.Exists(projectFull) ? projectFull : Path.GetDirectoryName(projectFull) ?? request.WorkingDirectory;
+            var outputFull = Path.GetFullPath(Path.Combine(projectDir, request.OutputPath!));
+            var buildRefusal = SafeWrite.Preflight(request.WorkingDirectory, [outputFull], request.GitExecutable);
+            if (buildRefusal is not null)
+            {
+                combined.WriteLine($"CHECKPOINT {request.Name} refused: {buildRefusal}");
+                combined.WriteLine($"CHECKPOINT {request.Name} EXIT CODE: 2");
+                return Finish(ExitCodes.Invalid, "failed", "", buffer, 0, [], null, null, false, "build-failed");
+            }
+
             var buildArgs = BuildStep.BuildArguments(request.Project!, request.OutputPath!, properties, request.MaxCpuCount);
             var built = await RowTimeout.RunWithDeadlineAsync(
                 _driver,

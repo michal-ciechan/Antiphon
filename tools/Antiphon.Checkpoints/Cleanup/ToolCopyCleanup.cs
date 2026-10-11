@@ -50,8 +50,10 @@ public sealed class ToolCopyCleanup
         try
         {
             // The file remains as a lock rendezvous even after a successful removal.
-            using var gate = new FileStream(Path.Combine(full, ".cleanup.lock"), FileMode.OpenOrCreate,
-                FileAccess.ReadWrite, FileShare.None);
+            var gateReason = SafeWrite.OpenGate(Path.Combine(full, ".cleanup.lock"), SafeWrite.Under(full), out var gate);
+            if (gateReason is not null || gate is null)
+                throw new IOException("refused: " + gateReason);
+            using var held = gate!;
             if (!ContainedCleanup.SafeAncestors(full) || !ContainedCleanup.SafeTree(full, _maxEntries))
                 return new("Retained", "inventory-incomplete-or-linked", tool);
             var record = RunOwnershipStore.Read(full);
@@ -131,14 +133,10 @@ public static class ExecutorOwnershipStore
         var record = new ExecutorOwnership { RunId = Path.GetFileName(runDirectory),
             RunDirectory = Path.GetFullPath(runDirectory), Executor = identity };
         var path = Path.Combine(runDirectory, FileName);
-        var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
-        using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
-        {
-            System.Text.Json.JsonSerializer.Serialize(stream, record);
-            stream.Flush(flushToDisk: true);
-        }
-        try { File.Move(temporary, path, true); }
-        finally { if (File.Exists(temporary)) SafeDelete.DeleteCreatedFile(temporary); }
+        var json = System.Text.Json.JsonSerializer.Serialize(record);
+        var reason = SafeWrite.Text(path, json, SafeWrite.Under(Path.GetFullPath(runDirectory)));
+        if (reason is not null)
+            throw new IOException("refused: " + reason);
     }
 
     public static ExecutorOwnership? Read(string runDirectory)

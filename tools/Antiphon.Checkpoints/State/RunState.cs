@@ -3,6 +3,7 @@ namespace Antiphon.Checkpoints;
 public sealed class RunState
 {
     public string RunId { get; set; } = "";
+    public string ToolOwner { get; set; } = "";
     public string Phase { get; set; } = "running";
     public int ExecutorPid { get; set; }
     public DateTimeOffset StartedAt { get; set; } = DateTimeOffset.UtcNow;
