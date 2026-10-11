@@ -200,17 +200,18 @@ public sealed class TaskParkPublicationService(AppDbContext db, LocalTaskParkPub
             return current.Park.PublicationReceiptDigest == Digest(evidence);
         if (current.Park.State != AgentTaskParkState.Requested) return false;
         var now = clock.GetUtcNow().UtcDateTime;
+        // Published remote proof is desktop sync debt. NoSourceChanges has a null remote
+        // SHA: the desktop baseline is already the source, so there is nothing to fast-forward.
+        var syncRequired = remote && evidence.Outcome != TaskParkPublicationOutcome.NoSourceChanges;
         var changed = await db.AgentTaskParks.Where(p => p.Id == parkId && p.Revision == c.Park.Revision
                 && p.State == AgentTaskParkState.Requested && p.PublicationReceiptId == null)
             .ExecuteUpdateAsync(s => s.SetProperty(p => p.PublicationReceiptId, evidence.ReceiptId)
                 .SetProperty(p => p.PublicationReceiptDigest, Digest(evidence))
                 .SetProperty(p => p.SourceSha, evidence.SourceSha).SetProperty(p => p.VerifiedRemoteSha, evidence.RemoteSha)
-                // The runner's immutable proof frees physical custody independently of the
-                // desktop lease. Persist its sync obligation in the same publication commit.
-                .SetProperty(p => p.SyncState, remote ? AgentTaskParkSyncState.Pending : AgentTaskParkSyncState.NotRequired)
-                .SetProperty(p => p.SyncSourceSha, remote ? evidence.SourceSha : null)
-                .SetProperty(p => p.SyncReasonCode, remote ? "park_sync_pending" : null)
-                .SetProperty(p => p.SyncNextAttemptAt, remote ? now : (DateTime?)null)
+                .SetProperty(p => p.SyncState, syncRequired ? AgentTaskParkSyncState.Pending : AgentTaskParkSyncState.NotRequired)
+                .SetProperty(p => p.SyncSourceSha, syncRequired ? evidence.SourceSha : null)
+                .SetProperty(p => p.SyncReasonCode, syncRequired ? "park_sync_pending" : null)
+                .SetProperty(p => p.SyncNextAttemptAt, syncRequired ? now : (DateTime?)null)
                 .SetProperty(p => p.State, AgentTaskParkState.Published).SetProperty(p => p.ReasonCode, fresh.Reason)
                 .SetProperty(p => p.PublishedAt, now).SetProperty(p => p.UpdatedAt, now)
                 .SetProperty(p => p.Revision, p => p.Revision + 1), ct);
@@ -237,11 +238,15 @@ public sealed class TaskParkPublicationService(AppDbContext db, LocalTaskParkPub
         catch (Exception ex) when (ex is IOException or HttpRequestException or OperationCanceledException
             or Antiphon.Server.Application.Exceptions.ServiceUnavailableException)
         { return new(TaskParkPublicationOutcome.Unknown, "park_inspection_unavailable"); }
-        return result.Outcome == WorkspaceParkOutcome.Published && result.Receipt is { HasConsistentSourceMode: true,
-                SourceMode: WorkspaceParkSourceMode.Published } receipt
-            ? new(TaskParkPublicationOutcome.Published, "park_published", TaskParkPublicationEvidence.From(receipt))
-            : new(result.Outcome == WorkspaceParkOutcome.Unknown ? TaskParkPublicationOutcome.Unknown : TaskParkPublicationOutcome.Held,
-                "park_runner_refused");
+        if (result.Outcome == WorkspaceParkOutcome.Published && result.Receipt is { HasConsistentSourceMode: true } receipt
+            && receipt.SourceMode is WorkspaceParkSourceMode.Published or WorkspaceParkSourceMode.NoSourceChanges)
+        {
+            var mapped = TaskParkPublicationEvidence.From(receipt);
+            return new(mapped.Outcome, mapped.Outcome == TaskParkPublicationOutcome.Published
+                ? "park_published" : "park_no_source_changes", mapped);
+        }
+        return new(result.Outcome == WorkspaceParkOutcome.Unknown ? TaskParkPublicationOutcome.Unknown : TaskParkPublicationOutcome.Held,
+            "park_runner_refused");
     }
 
     private async Task<string?> RefusalAsync(AgentTask task, AgentTaskPark park, ProgressSourceBaseline baseline, CancellationToken ct)

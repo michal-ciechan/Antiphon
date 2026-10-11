@@ -8,6 +8,7 @@ using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -266,6 +267,44 @@ public sealed class BlockedTaskSyncRecoveryTests
             (await verify.AgentTaskParks.SingleAsync(p => p.Id == poisonId)).SyncState.ShouldBe(AgentTaskParkSyncState.Held);
             (await w.RowAsync()).SyncState.ShouldBe(AgentTaskParkSyncState.Ready, "G-126: poison debt cannot starve neighbor");
         }
+    }
+
+    [Test]
+    public async Task C1088_RemoteNoSourceChangeStoresNoSyncDebt()
+    {
+        await using var w = await TaskParkPublicationTests.PublicationWorld.CreateAsync(remote: true);
+        w.Directory.Client.Replace = command =>
+        {
+            if (command.Verify is { } prior)
+            {
+                prior.SourceMode.ShouldBe(WorkspaceParkSourceMode.NoSourceChanges);
+                prior.RemoteSha.ShouldBeNull();
+                prior.SourceSha.ShouldBe(w.Baseline);
+                return new WorkspaceParkResult(WorkspaceParkOutcome.Published, "park_verified", prior);
+            }
+            return new WorkspaceParkResult(WorkspaceParkOutcome.Published, "park_no_source_changes", new WorkspaceParkReceipt(
+                Guid.NewGuid(), command.Prepare!, w.Baseline, null, null, true, true,
+                DateTimeOffset.UnixEpoch, WorkspaceParkSourceMode.NoSourceChanges));
+        };
+        var prepared = await w.PrepareAsync();
+        prepared.Outcome.ShouldBe(TaskParkPublicationOutcome.NoSourceChanges, prepared.Reason);
+        prepared.Evidence!.RemoteSha.ShouldBeNull();
+        prepared.Evidence.SourceSha.ShouldBe(w.Baseline);
+        var row = await w.RowAsync();
+        row.State.ShouldBe(AgentTaskParkState.Published);
+        row.SyncState.ShouldBe(AgentTaskParkSyncState.NotRequired);
+        row.SyncSourceSha.ShouldBeNull();
+        row.SyncReasonCode.ShouldBeNull();
+        row.SyncNextAttemptAt.ShouldBeNull();
+        row.VerifiedRemoteSha.ShouldBeNull();
+        row.SourceSha.ShouldBe(w.Baseline);
+        var listed = await w.Git.RunAsync(w.LocalPath, ["ls-remote", "--refs", "--", w.Origin, w.FullRef], default);
+        listed.Output.Trim().ShouldBe("");
+        (await w.GitTextAsync(w.LocalPath, "rev-parse", "HEAD")).ShouldBe(w.Baseline);
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        (await RecoverAsync(w, clock, new SyncEvents(w.Fixture.Db))).ShouldBe(0);
+        (await w.RowAsync()).SyncState.ShouldBe(AgentTaskParkSyncState.NotRequired);
+        (await GetAsync(w.Fixture.Services, w.Fixture.TaskId)).ParkSync.ShouldBeNull();
     }
 
     private static async Task<int> RecoverAsync(TaskParkPublicationTests.PublicationWorld w, FakeTimeProvider clock,
