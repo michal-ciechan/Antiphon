@@ -198,6 +198,12 @@ export interface AgentTaskSummaryDto {
   observedPlatform?: string | null
   runnerDefaultsRevision?: number | null
   runnerSelectionSource?: 'Explicit' | 'ExistingProcess' | 'KindDefault' | 'GlobalDefault' | 'Fallback' | null
+  /**
+   * CARD-1009. The linked session's persisted effective model. Absent on an older server,
+   * and null when no session model was recorded. The chip prefers it over the current tier
+   * alias only when the two differ.
+   */
+  effectiveModelId?: string | null
 }
 
 export type AgentTaskScopeSource = 'Task' | 'Card' | 'None'

@@ -2335,9 +2335,10 @@ public sealed class AgentTaskService
         var candidates = await LoadListCandidatesAsync(rootId, statuses, includeChecks, since, landPending, ct);
         var labels = await LoadScopeLabelsAsync(candidates, scope, ct);
         var (items, excluded) = AgentTaskScope.Partition(candidates, labels, scope);
+        var models = await LoadEffectiveModelIdsAsync(items, ct);
         return new AgentTaskListEnvelopeDto(
             AgentTaskScope.Echo(scope, labels),
-            items.Select(t => ToSummary(t, candidates, labels)).ToList(),
+            items.Select(t => ToSummary(t, candidates, labels, RecordedEffectiveModel(t, models))).ToList(),
             excluded);
     }
 
@@ -2548,7 +2549,7 @@ public sealed class AgentTaskService
             }
         }
         return new AgentTaskDetailDto(
-            ToSummary(task, family, await LoadScopeLabelsAsync([task], scope: null, ct)), task.Goal, task.Result,
+            await ToSummaryAsync(task, family, await LoadScopeLabelsAsync([task], scope: null, ct), ct), task.Goal, task.Result,
             task.ResultFilePath, task.DeliverablePath, task.DeliverableRef,
             task.FailureReason, task.MergeTargetRef, events, task.FailureCode, blocked,
             task.StandingAuthority, task.AutoContinueOnWait, task.NextStage, task.NextHandoff,
@@ -2642,7 +2643,7 @@ public sealed class AgentTaskService
         var family = await _db.AgentTasks.AsNoTracking()
             .Where(t => t.RootTaskId == task.RootTaskId)
             .ToListAsync(ct);
-        return ToSummary(task, family, await LoadScopeLabelsAsync([task], scope: null, ct));
+        return await ToSummaryAsync(task, family, await LoadScopeLabelsAsync([task], scope: null, ct), ct);
     }
 
     public async Task<AgentTaskSummaryDto> CancelAsync(Guid id, CancellationToken ct, string? reason = null)
@@ -4046,14 +4047,14 @@ public sealed class AgentTaskService
     /// carries the subtree cost rollup, which a single row cannot answer.</summary>
     public async Task<AgentTaskSummaryDto> GetSummaryAsync(
         AgentTask task, IReadOnlyList<AgentTask> family, CancellationToken ct = default) =>
-        ToSummary(task, family, await LoadScopeLabelsAsync([task], scope: null, ct));
+        await ToSummaryAsync(task, family, await LoadScopeLabelsAsync([task], scope: null, ct), ct);
 
     /// <summary>The DTO for one task, re-reading its run for the cost rollup.</summary>
     private async Task<AgentTaskSummaryDto> SummaryOfAsync(AgentTask task, CancellationToken ct)
     {
         var family = await _db.AgentTasks.AsNoTracking()
             .Where(t => t.RootTaskId == task.RootTaskId).ToListAsync(ct);
-        return ToSummary(task, family, await LoadScopeLabelsAsync([task], scope: null, ct));
+        return await ToSummaryAsync(task, family, await LoadScopeLabelsAsync([task], scope: null, ct), ct);
     }
 
     internal static bool IsSettled(AgentTaskStatus status) =>
@@ -4148,10 +4149,51 @@ public sealed class AgentTaskService
         };
     }
 
+    /// <summary>
+    /// CARD-1009. One read for every session the projected rows name. A missing row or a null
+    /// column stays null so the chip falls back to the current tier alias.
+    /// </summary>
+    private async Task<Dictionary<Guid, string?>> LoadEffectiveModelIdsAsync(
+        IEnumerable<AgentTask> tasks, CancellationToken ct)
+    {
+        var ids = new List<Guid>();
+        foreach (var task in tasks)
+        {
+            if (task.AgentSessionId is Guid sessionId && !ids.Contains(sessionId))
+                ids.Add(sessionId);
+        }
+
+        if (ids.Count == 0)
+            return new Dictionary<Guid, string?>();
+
+        var rows = await _db.AgentSessions.AsNoTracking()
+            .Where(s => ids.Contains(s.Id))
+            .Select(s => new { s.Id, s.EffectiveModelId })
+            .ToListAsync(ct);
+        var models = new Dictionary<Guid, string?>(rows.Count);
+        foreach (var row in rows)
+            models[row.Id] = row.EffectiveModelId;
+        return models;
+    }
+
+    private static string? RecordedEffectiveModel(AgentTask task, IReadOnlyDictionary<Guid, string?> models) =>
+        task.AgentSessionId is Guid sessionId && models.TryGetValue(sessionId, out var model) ? model : null;
+
+    private async Task<AgentTaskSummaryDto> ToSummaryAsync(
+        AgentTask task,
+        IReadOnlyList<AgentTask> family,
+        AgentTaskScopeLabels labels,
+        CancellationToken ct)
+    {
+        var models = await LoadEffectiveModelIdsAsync([task], ct);
+        return ToSummary(task, family, labels, RecordedEffectiveModel(task, models));
+    }
+
     private static AgentTaskSummaryDto ToSummary(
         AgentTask task,
         IReadOnlyList<AgentTask> family,
-        AgentTaskScopeLabels labels)
+        AgentTaskScopeLabels labels,
+        string? effectiveModelId = null)
     {
         // Walk the parent chain rather than recursing children — the same O(n) pass answers both
         // "my subtree's cost" and "my child count" for every row in a run.
@@ -4196,7 +4238,8 @@ public sealed class AgentTaskService
             task.RequirementSource,
             task.ObservedPlatform,
             task.RunnerDefaultsRevision,
-            task.RunnerSelectionSource);
+            task.RunnerSelectionSource,
+            EffectiveModelId: effectiveModelId);
     }
 
     private static string FormatComplexityCreatedDetail(ComplexityRoutingService.Walk walk)

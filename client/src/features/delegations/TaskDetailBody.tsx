@@ -148,7 +148,12 @@ function TaskDetail({ detail, onClose }: { detail: AgentTaskDetailDto; onClose: 
   return (
     <Stack gap="md">
       <Group gap="xs">
-        <TierBadge level={summary.modelLevel} kind={summary.agentKind} size="sm" />
+        <TierBadge
+          level={summary.modelLevel}
+          kind={summary.agentKind}
+          size="sm"
+          effectiveModelId={summary.effectiveModelId}
+        />
         {summary.escalatedFrom && (
           <Badge size="sm" variant="light" color="warning" leftSection={<TbArrowBigUpLine size={12} />}>
             escalated from {tierAlias(summary.escalatedFrom, summary.agentKind)}
