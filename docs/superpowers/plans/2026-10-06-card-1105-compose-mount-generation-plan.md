@@ -311,9 +311,10 @@ Files: `docs/docker-stack.md`, `tests/Antiphon.Tests/Infrastructure/DockerStackD
   the `image inspect` shim keeps answering the fixture image id for `session-testing:*`. Two new
   changed-script cases: `C-previous-generation-main` (main created from the previous model,
   reclaimed, three removals, replacement carries `/run/antiphon/github-token` read-only) and
-  `C-previous-generation-foreign-mount` (main with an extra bind, refused before stop, volumes
-  retained). The count line becomes `cases=34 base=5 changed=29`; the test's regex and
-  `rows.Count` assertions follow.
+  `C-previous-generation-foreign-mount` (`fixture(true, true)` plus a foreign bind, so the
+  previous roster is 10 mounts; `previousMounts=10 targetMounts=11`; refused
+  `RecycleContainerStateUnknown` before stop; the container stays `State.Running` with the
+  same `StartedAt`; volumes retained). The count line stays `cases=34 base=5 changed=29`.
 
 ## Operator runbook for the live rollout after land
 
@@ -374,7 +375,7 @@ server2-class runners provide.
 | V-4 | `RemoteScriptContractTests.C1105_Dry_run_previews_a_generation_change_without_moving_the_checkout` | Previous-generation fixture with `C1008_DRY_RUN=1`: exit 0, `C1008_GENERATION` and `C1008_PREVIEW` lines, no `MUTATION` marker, no mutating Docker call; the apply afterwards still rechecks changed facts. |
 | V-5 | `RemoteScriptContractTests.C1105_Deploy_parent_orders_checkout_and_boot_files_before_recycle` | Text pins: `Order(case_deploy_parent, ensure_checkout, c1008_recycle)`, `Order(case_deploy_parent, ensure_runner_boot_files, c1008_recycle)`, the `cmp` guard precedes `compose_host up -d`, the dry-run intercept block contains no `ensure_checkout`, `C1008_BIND_KINDS` lists the six targets, `c1008_compose_model` still carries the token roster line, `compose_host`/`compose_temp` use `C1008_COMPOSE_DIR` and `--project-directory`. |
 | V-6 | `RetiredTempContainerHostTests.C1105_Temp_cleanup_uses_previous_generation` | Exited temp containers built from the previous temp model (grok bind, no token bind): cleanup exit 0 and the receipt's session-runner `Topology.mounts` has 14 entries without `/run/antiphon/github-token`; with `temp.env` naming a different SHA the same containers refuse `RecycleGenerationMismatch` with no mutation. |
-| V-7 | `RollingVolumeRecycleDockerTests.C1008_Real_docker_comparison` | Real Docker: `C-previous-generation-main` reclaims a main created from the previous model and the replacement mounts the token directory read-only; `C-previous-generation-foreign-mount` refuses before stop with volumes retained. Count line `cases=34 base=5 changed=29 failures=0`, owned residue absent. |
+| V-7 | `RollingVolumeRecycleDockerTests.C1008_Real_docker_comparison` | Real Docker: `C-previous-generation-main` reclaims a main created from the previous model and the replacement mounts the token directory read-only; `C-previous-generation-foreign-mount` is `fixture(true, true)` plus a foreign bind, prints `previousMounts=10 targetMounts=11`, refuses `RecycleContainerStateUnknown` before stop, stays `State.Running` with the same `StartedAt`, and retains volumes. Count line `cases=34 base=5 changed=29 failures=0`, owned residue absent. The child deadline is 20 minutes. |
 | R-1 | `DockerStackDocumentationTests.Mount_generation_protocol_is_documented` | docker-stack.md carries the CARD-1105 heading, both refusal codes, `SOURCE_REVISION`, `C1008_GENERATION`, the add/remove protocol sentences and the gate 6 sentence. |
 | R-2 | `RollingProductionMountTests.C994_*` (5 methods) | The target proof is unchanged for valid and faulted topologies, including the existing `extra` foreign-bind refusal. |
 | R-3 | `RemoteScriptContractTests.Deploy_parent_creates_the_github_token_directory_without_reading_it` and the other three deploy-parent text pins | Existing ordering pins (`ensure_runner_boot_files` before `seed_runner_checkout` and `compose_host up -d`) and the roster line survive the reordering. |
@@ -408,7 +409,7 @@ next. Zero tests, a build error or a missing tool is not red.
 
 ### Cost
 
-Checkpoint floor is the `EstimatedMinutes` sum, 105 minutes, plus authoring of roughly 165-225
+Checkpoint floor is the `EstimatedMinutes` sum, 111 minutes, plus authoring of roughly 165-225
 minutes across S1-S4. One checkpoint run per committed slice group, each through the build-slot
 gate with the exact committed SHA:
 
@@ -421,11 +422,15 @@ pwsh -NoProfile -File scripts/build-slot.ps1 -Label c1105-cp3-7 -- dotnet run --
 pwsh -NoProfile -File scripts/build-slot.ps1 -Label c1105-cp8-9 -- dotnet run --project tools/Antiphon.Checkpoints --property:OutputPath=bin-c1105-tool/ -- run --plan $planPath --rows CP-8,CP-9 --expected-source-sha $sha --row-timeout 20m --total-timeout 40m
 ```
 
-CARD-1139. The S3 group `--row-timeout` is 30m and CP-7's estimate is 25, so the
-`EstimatedMinutes` floor is 105. `RollingVolumeRecycleScriptTests/*` measured 19m32s,
+CARD-1139. The S3 group `--row-timeout` is 30m and CP-7's estimate is 25.
+`RollingVolumeRecycleScriptTests/*` measured 19m32s,
 19m48s, 1129s and 1277s against the previous 20m row timeout, and host load failed the
-row as a timeout. Deadlines inside the tests are unchanged. PC-15 is the main-lane
+row as a timeout. Deadlines inside those tests are unchanged. PC-15 is the main-lane
 `image_count=0` guard; Mutation runs it.
+
+CARD-1142. `C1008_Real_docker_comparison` measured 618s, 709s and 827s against its
+12-minute child deadline. The child deadline is 20 minutes, matching this group's
+`--row-timeout 20m`. CP-9 `EstimatedMinutes` is 20. The `EstimatedMinutes` floor is 111.
 
 If `run` exits 75, call `wait` until it does not; never edit source while a run is active; exit 4
 from the gate is a slot timeout to report. The tool bootstrap build is the one explained unlisted
@@ -451,7 +456,7 @@ C1008/C1087 12); recount at Code admission. Rows that reuse a build share its `A
 | CP-7 | S3 | CP-3 | wrapper-and-fixture-pins | `/*/*/RollingVolumeRecycleScriptTests/*` | R-6 | exact 16 methods, 0 failed/skipped | 16 | 25 | true |
 | CP-10 | S3 | CP-3 | resume-and-compose-refusals-linux | `/*/*/RemoteScriptContractTests/(C1105_Compose_cmp_refuses_before_removal*)\|(C1105_Resume_identity_refusals*)\|(C1105_Resume_state_init_image_follows_the_journal*)\|(C1105_Resume_foreign_leftover_is_not_an_image_mismatch*)` | CARD-1116, CARD-1117 | exact 4 methods, 0 failed/skipped, native Linux | 4 | 8 | true |
 | CP-8 | S4 | `tests/Antiphon.Tests -> bin-c1105-d/` | docs-pins | `/*/*/DockerStackDocumentationTests/*` | R-1 | exact 14 methods (13 existing + Mount_generation_protocol_is_documented), 0 failed/skipped | 14 | 1 | true |
-| CP-9 | S4 | CP-8 | real-docker-nested-linux | `/*/*/RollingVolumeRecycleDockerTests/C1008_Real_docker_comparison*` | V-7, R-7 | 1 result; `C1008_REAL cases=34 base=5 changed=29 failures=0`, owned residue absent, 0 failed/skipped; needs the runner's nested daemon | 1 | 14 | true |
+| CP-9 | S4 | CP-8 | real-docker-nested-linux | `/*/*/RollingVolumeRecycleDockerTests/C1008_Real_docker_comparison*` | V-7, R-7 | 1 result; `C1008_REAL cases=34 base=5 changed=29 failures=0`, owned residue absent, 0 failed/skipped; needs the runner's nested daemon | 1 | 20 | true |
 
 ## Risks and notes for Code and Review
 

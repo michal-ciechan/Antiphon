@@ -296,6 +296,13 @@ public sealed class DockerStackDocumentationTests
             "A state-init-only temp binds by SOURCE_REVISION alone",
             "Host Compose v2.18.1",
             "scripts/fixtures/c1105-compose-v218-config.json",
+            "For the host project in apply mode",
+            "C1008_PROJECT == HOST_PROJECT",
+            "C1008_DRY_RUN == 0",
+            "C1105_Compose_cmp_refuses_before_removal",
+            "whose mount set differs from the older roster",
+            "c1008_compose_model",
+            "error(\"mount set\")",
         };
         var missing = new List<string>();
         foreach (var pin in pins)
