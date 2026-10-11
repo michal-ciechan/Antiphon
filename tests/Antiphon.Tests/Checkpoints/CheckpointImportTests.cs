@@ -387,6 +387,85 @@ public sealed class CheckpointImportTests : CheckpointTestBase
         }
     }
 
+    [Test]
+    public void C1098_card_1087_wrapper_census_row_is_split_under_the_same_cap()
+    {
+        var path = Path.Combine(
+            CheckpointFixtures.RepoRoot,
+            "docs", "superpowers", "plans", "2026-10-06-card-1087-recycle-census-plan.md");
+        var text = File.ReadAllText(path);
+        var imported = PlanTableImporter.ImportFile(path);
+        imported.ExitCode.ShouldBe(0, imported.Error);
+        foreach (var warning in imported.Warnings)
+            warning.StartsWith("CP-3", StringComparison.Ordinal).ShouldBeFalse(warning);
+
+        var manifest = imported.Manifest.ShouldNotBeNull();
+        manifest.Checkpoints.Count.ShouldBe(9);
+        var census = manifest.Checkpoints.Single(row => row.Id == "CP-3");
+        var rest = manifest.Checkpoints.Single(row => row.Id == "CP-3b");
+        census.Build.ShouldBe("bin-c1087-b");
+        rest.Build.ShouldBe(census.Build);
+        string.Join(",", census.After).ShouldBe("all");
+        string.Join(",", rest.After).ShouldBe("all");
+        census.Serial.ShouldBeTrue();
+        rest.Serial.ShouldBeTrue();
+        census.Group.ShouldBe("wrapper-census");
+        rest.Group.ShouldBe("wrapper-census-rest");
+        census.MinExecuted.ShouldBe(4);
+        rest.MinExecuted.ShouldBe(12);
+        (census.EstimatedMinutes + rest.EstimatedMinutes).ShouldBe(14);
+        census.EstimatedMinutes.ShouldBeLessThanOrEqualTo(15);
+        rest.EstimatedMinutes.ShouldBeLessThanOrEqualTo(15);
+        manifest.Checkpoints.Sum(row => row.EstimatedMinutes ?? 0).ShouldBe(72);
+        census.ExpectText.ShouldContain("0 failed/skipped");
+        rest.ExpectText.ShouldContain("0 failed/skipped");
+        manifest.Checkpoints.Single(row => row.Id == "CP-4").Build.ShouldBe(census.Build);
+        manifest.Checkpoints.Any(row => row.Filter == "/*/*/RollingVolumeRecycleScriptTests/*").ShouldBeFalse();
+
+        var censusMethods = FilterMethods(census.Filter);
+        var restMethods = FilterMethods(rest.Filter);
+        censusMethods.Length.ShouldBe(4);
+        restMethods.Length.ShouldBe(12);
+        censusMethods.ShouldAllBe(name => name.StartsWith("C1087_", StringComparison.Ordinal));
+        restMethods.ShouldAllBe(name => name.StartsWith("C1008_", StringComparison.Ordinal));
+        var selected = censusMethods.Concat(restMethods).Order(StringComparer.Ordinal).ToArray();
+        var declared = DeclaredWrapperCensusMethods();
+        declared.Length.ShouldBe(16);
+        selected.ShouldBe(declared);
+        censusMethods.Intersect(restMethods, StringComparer.Ordinal).ShouldBeEmpty();
+
+        const string rows = "--rows CP-3,CP-3b,CP-4,CP-5,CP-5b,CP-6,CP-7";
+        text.Split(rows).Length.ShouldBe(3);
+        text.Contains("--rows CP-3,CP-4,CP-5,CP-5b,CP-6,CP-7", StringComparison.Ordinal).ShouldBeFalse();
+        text.ShouldContain("--row-timeout 20m --total-timeout 70m");
+    }
+
+    private static string[] FilterMethods(string? filter)
+    {
+        filter.ShouldNotBeNull();
+        return filter.Split('|', StringSplitOptions.RemoveEmptyEntries)
+            .Select(part =>
+            {
+                var open = part.LastIndexOf('(');
+                var star = part.IndexOf('*', open + 1);
+                (open >= 0 && star > open).ShouldBeTrue(part);
+                return part[(open + 1)..star];
+            })
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+    }
+
+    private static string[] DeclaredWrapperCensusMethods()
+    {
+        var source = File.ReadAllText(Path.Combine(
+            CheckpointFixtures.RepoRoot,
+            "tests", "Antiphon.Tests", "Scripts", "RollingVolumeRecycleScriptTests.cs"));
+        return System.Text.RegularExpressions.Regex.Matches(source, @"public (?:async Task|void) ((?:C1087|C1008)_\w+)\(")
+            .Select(match => match.Groups[1].Value)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+    }
+
     private sealed class CapturingFactory : IProcessHandleFactory
     {
         public List<System.Diagnostics.ProcessStartInfo> Starts { get; } = [];
