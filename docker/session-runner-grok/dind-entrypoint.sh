@@ -26,6 +26,44 @@ refuse() {
   exit 3
 }
 
+# CARD-1174. This container's user is root, so docker exec without -u runs codex as root
+# and leaves root-owned names under the app-owned /state/codex/tmp. Give those entries to
+# uid 1654 before the runner starts. This directory only: not the rest of the Codex home
+# and not any other path under /state. A missing directory is skipped (the harness and the
+# base image do not mount this home). A symlink is refused rather than followed.
+heal_codex_tmp() {
+  codex_tmp=/state/codex/tmp
+  if [ -L "$codex_tmp" ]; then
+    return 1
+  fi
+  if [ ! -d "$codex_tmp" ]; then
+    return 0
+  fi
+  owner=$(stat -c %u "$codex_tmp" 2>/dev/null || true)
+  if [ -n "$owner" ] && [ "$owner" != "$APP_UID" ]; then
+    chown -h "$APP_UID:$APP_GID" "$codex_tmp" || return 1
+  fi
+  find "$codex_tmp" -mindepth 1 -ignore_readdir_race -exec sh -c '
+    uid=$1
+    gid=$2
+    shift 2
+    for path do
+      if [ ! -e "$path" ] && [ ! -L "$path" ]; then
+        continue
+      fi
+      owner=$(stat -c %u "$path" 2>/dev/null || true)
+      if [ -z "$owner" ] || [ "$owner" = "$uid" ]; then
+        continue
+      fi
+      chown -h "$uid:$gid" "$path" || {
+        if [ -e "$path" ] || [ -L "$path" ]; then
+          exit 1
+        fi
+      }
+    done
+  ' sh "$APP_UID" "$APP_GID" {} + || return 1
+}
+
 # --- step 1: root and privileged ------------------------------------------------------
 if [ "$(id -u)" -ne 0 ]; then
   refuse NotRoot
@@ -110,6 +148,9 @@ if [ -s "$GITHUB_TOKEN_SOURCE" ]; then
 else
   echo 'C604_ENTRYPOINT_NOTE GithubTokenAbsent' >&2
 fi
+
+# --- step 2e: Codex tmp ownership (CARD-1174) ----------------------------------------
+heal_codex_tmp || refuse CodexTmpUnowned
 
 # --- step 3: cgroup preparation (D-3 step 3, D-17 custody root) -----------------------
 if [ -f /sys/fs/cgroup/cgroup.controllers ]; then

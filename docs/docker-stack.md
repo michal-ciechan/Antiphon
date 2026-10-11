@@ -143,8 +143,10 @@ Codex, PowerShell, and .NET actually execute inside that runner:
 
 ```powershell
 pwsh -NoProfile -File scripts/runner-drain.ps1 status -RunnerId <runner>
-ssh mc@server2 'c=$(docker ps -q --filter label=com.docker.compose.project=<project> --filter label=com.docker.compose.service=session-runner); test -n "$c" && docker exec "$c" codex --version && docker exec "$c" pwsh --version && docker exec "$c" dotnet --version'
+ssh mc@server2 'c=$(docker ps -q --filter label=com.docker.compose.project=<project> --filter label=com.docker.compose.service=session-runner); test -n "$c" && docker exec -u 1654:1654 -e HOME=/home/app -e CODEX_HOME=/state/codex "$c" codex --version && docker exec "$c" pwsh --version && docker exec "$c" dotnet --version'
 ```
+
+Codex must never be exec'd as root in the server2 runner container: use uid 1654, because a root exec leaves root-owned names under `/state/codex/tmp` that the session user cannot remove (CARD-1174).
 
 Use `scripts/delegate.ps1 -Role Plan -Worktree -Runner <runner> -Card <sanctioned-canary-card>
 -Goal <bounded-canary-goal>` for the canary, then `scripts/delegate.ps1 -Status <task-id>` to

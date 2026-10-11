@@ -729,7 +729,7 @@ try {
         } catch { }
         $grokVer = $null
         try {
-            $grokVer = (& docker compose -f $composeFile -p $composeProject exec -T session-runner-grok grok --version 2>$null | Out-String).Trim()
+            $grokVer = (& docker compose -f $composeFile -p $composeProject exec -T --user 1654:1654 session-runner-grok grok --version 2>$null | Out-String).Trim()
         } catch { }
         $sourceSha = (& git -C $repoRoot rev-parse HEAD).Trim()
 
