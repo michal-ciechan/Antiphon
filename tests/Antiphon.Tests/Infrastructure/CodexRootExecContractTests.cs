@@ -25,10 +25,17 @@ public sealed class CodexRootExecContractTests
         var text = Read("docker/session-runner-grok/dind-entrypoint.sh");
         var fn = Function(text);
         fn.ShouldContain("codex_tmp=/state/codex/tmp\n");
-        fn.ShouldContain("chown -h \"$APP_UID:$APP_GID\" \"$codex_tmp\"");
-        fn.ShouldContain("find \"$codex_tmp\" -mindepth 1 -ignore_readdir_race");
-        fn.ShouldContain("chown -h \"$uid:$gid\" \"$path\"");
-        fn.Contains("chown -R ", StringComparison.Ordinal).ShouldBeFalse();
+        fn.ShouldContain("if [ -L \"$codex_tmp\" ]; then\n    return 1\n");
+        fn.ShouldContain("if [ ! -d \"$codex_tmp\" ]; then\n    return 0\n");
+        fn.ShouldContain("chown -R -h \"$APP_UID:$APP_GID\" -- \"$codex_tmp\" || true\n");
+        var linkGuard = fn.IndexOf("[ -L \"$codex_tmp\" ]", StringComparison.Ordinal);
+        var noFollow = fn.IndexOf("chown -R -h ", StringComparison.Ordinal);
+        linkGuard.ShouldBeGreaterThanOrEqualTo(0);
+        noFollow.ShouldBeGreaterThan(linkGuard);
+        Regex.Matches(fn, @"\bchown\b").Count.ShouldBe(1, "one recursive no-follow chown, not a per-name loop");
+        fn.Contains("find ", StringComparison.Ordinal).ShouldBeFalse();
+        fn.Contains("\"$path\"", StringComparison.Ordinal).ShouldBeFalse();
+        fn.Contains("-exec", StringComparison.Ordinal).ShouldBeFalse();
         fn.Contains("auth.json", StringComparison.Ordinal).ShouldBeFalse();
         fn.Contains("/state/grok", StringComparison.Ordinal).ShouldBeFalse();
         fn.Contains("/state/claude", StringComparison.Ordinal).ShouldBeFalse();
@@ -44,86 +51,85 @@ public sealed class CodexRootExecContractTests
 
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
-    public void Entrypoint_heal_chowns_foreign_tmp_entries_and_leaves_the_home()
+    public void Entrypoint_heal_chowns_the_tmp_directory_once()
     {
-        var fn = Function(Read("docker/session-runner-grok/dind-entrypoint.sh"));
-        fn.ShouldContain("codex_tmp=/state/codex/tmp\n");
-        var script = string.Join('\n',
-            "set -eu",
-            "root=\"$(mktemp -d)\"",
-            "trap 'rm -rf \"$root\"' EXIT",
-            "mkdir -p \"$root/bin\" \"$root/fixture/codex/tmp/arg0/codex-arg0DIR\"",
-            "printf 'auth-bytes\\n' > \"$root/fixture/codex/auth.json\"",
-            "printf 'config-bytes\\n' > \"$root/fixture/codex/config.toml\"",
-            "printf 'foreign\\n' > \"$root/fixture/codex/tmp/arg0/codex-arg0FOREIGN\"",
-            "printf 'ours\\n' > \"$root/fixture/codex/tmp/arg0/keep.txt\"",
-            "printf 'nested\\n' > \"$root/fixture/codex/tmp/arg0/codex-arg0DIR/inside\"",
-            "ln -s \"$root/fixture/codex/auth.json\" \"$root/fixture/codex/tmp/arg0/codex-arg0LINK\"",
-            "cat > \"$root/bin/stat\" << 'SHIM'",
-            "#!/bin/sh",
-            "path=",
-            "while [ $# -gt 0 ]; do",
-            "  case \"$1\" in",
-            "    -c) shift 2 ;;",
-            "    *) path=$1; shift ;;",
-            "  esac",
-            "done",
-            "case \"$path\" in",
-            "  *codex-arg0FOREIGN*|*codex-arg0DIR*|*codex-arg0LINK*) printf '0\\n' ;;",
-            "  *) printf '1654\\n' ;;",
-            "esac",
-            "SHIM",
-            "cat > \"$root/bin/chown\" << 'SHIM'",
-            "#!/bin/sh",
-            "printf '%s\\n' \"$*\" >> \"$CHOWN_LOG\"",
-            "exit 0",
-            "SHIM",
-            "chmod 0755 \"$root/bin/stat\" \"$root/bin/chown\"",
-            "cat > \"$root/heal.sh\" << 'HEAL_FN'",
-            fn.TrimEnd('\n'),
-            "HEAL_FN",
-            "unshare --user --map-root-user --mount bash -s \"$root\" << 'RUN'",
-            "set -eu",
-            "root=$1",
-            "mkdir -p /state",
-            "mount --bind \"$root/fixture\" /state",
-            "export PATH=\"$root/bin:$PATH\"",
-            "export CHOWN_LOG=\"$root/chown.log\"",
-            "export APP_UID=1654 APP_GID=1654",
-            ": > \"$CHOWN_LOG\"",
-            ". \"$root/heal.sh\"",
-            "heal_codex_tmp",
-            "echo heal-exit=$?",
-            "echo '--- chown ---'",
-            "cat \"$CHOWN_LOG\"",
-            "echo '--- end ---'",
-            "printf 'auth=%s\\n' \"$(cat /state/codex/auth.json)\"",
-            "printf 'config=%s\\n' \"$(cat /state/codex/config.toml)\"",
-            "rm -rf /state/codex/tmp",
-            "ln -s /tmp /state/codex/tmp",
-            ": > \"$CHOWN_LOG\"",
-            "if heal_codex_tmp; then echo symlink-exit=0; else echo symlink-exit=$?; fi",
-            "echo symlink-lines=$(wc -l < \"$CHOWN_LOG\" | tr -d ' ')",
-            "rm -f /state/codex/tmp",
-            "if heal_codex_tmp; then echo absent-exit=0; else echo absent-exit=$?; fi",
-            "RUN",
-            "") + "\n";
+        const string once = "-R -h 1654:1654 -- /state/codex/tmp";
+        var output = RunExtractedHeal(
+            """
+            mkdir -p "$root/fixture/codex/tmp/nested"
+            printf 'auth-bytes\n' > "$root/fixture/codex/auth.json"
+            printf 'config-bytes\n' > "$root/fixture/codex/config.toml"
+            printf 'keep\n' > "$root/fixture/codex/tmp/keep.txt"
+            printf 'nested\n' > "$root/fixture/codex/tmp/nested/inside"
+            """,
+            """
+            if heal_codex_tmp; then echo heal-exit=0; else echo heal-exit=$?; fi
+            echo '--- chown ---'
+            cat "$CHOWN_LOG"
+            echo '--- end ---'
+            printf 'auth=%s\n' "$(cat /state/codex/auth.json)"
+            printf 'config=%s\n' "$(cat /state/codex/config.toml)"
+            rm -rf /state/codex/tmp
+            ln -s /tmp /state/codex/tmp
+            : > "$CHOWN_LOG"
+            if heal_codex_tmp; then echo symlink-exit=0; else echo symlink-exit=$?; fi
+            echo symlink-lines=$(wc -l < "$CHOWN_LOG" | tr -d ' ')
+            rm -f /state/codex/tmp
+            : > "$CHOWN_LOG"
+            if heal_codex_tmp; then echo absent-exit=0; else echo absent-exit=$?; fi
+            echo absent-lines=$(wc -l < "$CHOWN_LOG" | tr -d ' ')
+            mkdir -p /state/codex/tmp
+            : > "$CHOWN_LOG"
+            export CHOWN_EXIT=1
+            if heal_codex_tmp; then echo vanished-exit=0; else echo vanished-exit=$?; fi
+            echo '--- vanished ---'
+            cat "$CHOWN_LOG"
+            echo '--- vanished-end ---'
+            """);
 
-        var output = RemoteScriptContractTests.LinuxShell(script).Replace("\r\n", "\n");
         output.ShouldContain("heal-exit=0\n");
-        var log = Between(output, "--- chown ---\n", "\n--- end ---\n");
-        log.ShouldContain("codex-arg0FOREIGN");
-        log.ShouldContain("codex-arg0DIR");
-        log.ShouldContain("codex-arg0LINK");
-        log.ShouldContain("/inside");
-        log.Contains("keep.txt", StringComparison.Ordinal).ShouldBeFalse();
-        log.Contains("auth.json", StringComparison.Ordinal).ShouldBeFalse();
-        log.Contains("config.toml", StringComparison.Ordinal).ShouldBeFalse();
+        Between(output, "--- chown ---\n", "\n--- end ---\n").ShouldBe(once);
         output.ShouldContain("auth=auth-bytes\n");
         output.ShouldContain("config=config-bytes\n");
         output.ShouldContain("symlink-exit=1\n");
         output.ShouldContain("symlink-lines=0\n");
         output.ShouldContain("absent-exit=0\n");
+        output.ShouldContain("absent-lines=0\n");
+        output.ShouldContain("vanished-exit=0\n");
+        Between(output, "--- vanished ---\n", "\n--- vanished-end ---\n").ShouldBe(once);
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void Entrypoint_heal_never_names_a_path_outside_tmp()
+    {
+        const string once = "-R -h 1654:1654 -- /state/codex/tmp";
+        var output = RunExtractedHeal(
+            """
+            mkdir -p "$root/fixture/codex/tmp" "$root/fixture/outside"
+            printf 'secret\n' > "$root/fixture/outside/secret"
+            printf 'auth-bytes\n' > "$root/fixture/codex/auth.json"
+            ln -s /state/outside "$root/fixture/codex/tmp/mid"
+            ln -s /state/codex/auth.json "$root/fixture/codex/tmp/leaf"
+            printf 'keep\n' > "$root/fixture/codex/tmp/keep.txt"
+            """,
+            """
+            if heal_codex_tmp; then echo heal-exit=0; else echo heal-exit=$?; fi
+            echo '--- chown ---'
+            cat "$CHOWN_LOG"
+            echo '--- end ---'
+            printf 'secret=%s\n' "$(cat /state/outside/secret)"
+            printf 'auth=%s\n' "$(cat /state/codex/auth.json)"
+            """);
+
+        output.ShouldContain("heal-exit=0\n");
+        var log = Between(output, "--- chown ---\n", "\n--- end ---\n");
+        log.ShouldBe(once);
+        log.Contains("/state/outside", StringComparison.Ordinal).ShouldBeFalse();
+        log.Contains("auth.json", StringComparison.Ordinal).ShouldBeFalse();
+        log.Contains("/state/codex/tmp/", StringComparison.Ordinal).ShouldBeFalse();
+        output.ShouldContain("secret=secret\n");
+        output.ShouldContain("auth=auth-bytes\n");
     }
 
     [Test]
@@ -263,6 +269,42 @@ public sealed class CodexRootExecContractTests
                 yield return relative;
             }
         }
+    }
+
+    // Fake chown records one argv line. No root and no docker: a user namespace
+    // bind-mounts the scratch fixture at the entrypoint's hard-coded path.
+    private static string RunExtractedHeal(string prelude, string body)
+    {
+        var function = Function(Read("docker/session-runner-grok/dind-entrypoint.sh"));
+        var script = string.Join('\n',
+            "set -eu",
+            "root=\"$(mktemp -d)\"",
+            "trap 'rm -rf \"$root\"' EXIT",
+            "mkdir -p \"$root/bin\"",
+            prelude.Trim('\n'),
+            "cat > \"$root/bin/chown\" << 'SHIM'",
+            "#!/bin/sh",
+            "printf '%s\\n' \"$*\" >> \"$CHOWN_LOG\"",
+            "exit \"${CHOWN_EXIT:-0}\"",
+            "SHIM",
+            "chmod 0755 \"$root/bin/chown\"",
+            "cat > \"$root/heal.sh\" << 'HEAL_FN'",
+            function.TrimEnd('\n'),
+            "HEAL_FN",
+            "unshare --user --map-root-user --mount bash -s \"$root\" << 'RUN'",
+            "set -eu",
+            "root=$1",
+            "mkdir -p /state",
+            "mount --bind \"$root/fixture\" /state",
+            "export PATH=\"$root/bin:$PATH\"",
+            "export CHOWN_LOG=\"$root/chown.log\"",
+            "export APP_UID=1654 APP_GID=1654",
+            ": > \"$CHOWN_LOG\"",
+            ". \"$root/heal.sh\"",
+            body.Trim('\n'),
+            "RUN",
+            "") + "\n";
+        return RemoteScriptContractTests.LinuxShell(script).Replace("\r\n", "\n");
     }
 
     private static string Function(string text)

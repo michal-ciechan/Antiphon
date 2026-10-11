@@ -27,10 +27,17 @@ refuse() {
 }
 
 # CARD-1174. This container's user is root, so docker exec without -u runs codex as root
-# and leaves root-owned names under the app-owned /state/codex/tmp. Give those entries to
-# uid 1654 before the runner starts. This directory only: not the rest of the Codex home
-# and not any other path under /state. A missing directory is skipped (the harness and the
-# base image do not mount this home). A symlink is refused rather than followed.
+# and leaves root-owned names under the app-owned /state/codex/tmp. Give that directory
+# to uid 1654 before the runner starts. This directory only: not the rest of the Codex
+# home and not any other path under /state. A missing directory is skipped (the harness
+# and the base image do not mount this home). A symlink at this path is refused rather
+# than followed.
+# The runtime base is Debian bookworm (mcr.microsoft.com/dotnet/aspnet:9.0). Its chown
+# is GNU coreutils 9.1, not busybox. Recursive no-follow chown is fts with FTS_PHYSICAL
+# and FTS_CWDFD: directories are opened with openat and O_NOFOLLOW, and the ownership
+# change is lchownat on that directory fd. It never follows a symlink it meets and does
+# not chdir through an app-controlled name. -h keeps a late swap of the top component
+# to changing the link only (coreutils also forces that for -R -P; -h states it).
 heal_codex_tmp() {
   codex_tmp=/state/codex/tmp
   if [ -L "$codex_tmp" ]; then
@@ -39,29 +46,11 @@ heal_codex_tmp() {
   if [ ! -d "$codex_tmp" ]; then
     return 0
   fi
-  owner=$(stat -c %u "$codex_tmp" 2>/dev/null || true)
-  if [ -n "$owner" ] && [ "$owner" != "$APP_UID" ]; then
-    chown -h "$APP_UID:$APP_GID" "$codex_tmp" || return 1
-  fi
-  find "$codex_tmp" -mindepth 1 -ignore_readdir_race -exec sh -c '
-    uid=$1
-    gid=$2
-    shift 2
-    for path do
-      if [ ! -e "$path" ] && [ ! -L "$path" ]; then
-        continue
-      fi
-      owner=$(stat -c %u "$path" 2>/dev/null || true)
-      if [ -z "$owner" ] || [ "$owner" = "$uid" ]; then
-        continue
-      fi
-      chown -h "$uid:$gid" "$path" || {
-        if [ -e "$path" ] || [ -L "$path" ]; then
-          exit 1
-        fi
-      }
-    done
-  ' sh "$APP_UID" "$APP_GID" {} + || return 1
+  # A name that vanishes during the walk makes the command below exit non-zero.
+  # There is no separate status for that race, so the vanished-entry failure is
+  # ignored and a normal tree still boots. The checks above still refuse a
+  # symlink and skip a missing directory.
+  chown -R -h "$APP_UID:$APP_GID" -- "$codex_tmp" || true
 }
 
 # --- step 1: root and privileged ------------------------------------------------------
