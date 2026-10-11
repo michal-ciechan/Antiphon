@@ -143,4 +143,192 @@ public sealed class CommitRecoveryObligationsTests
         ShouldHold([Aged(720)], hold, now).ShouldBeFalse("at the boundary (720 min exactly)");
         ShouldHold([Aged(10), Aged(800)], hold, now).ShouldBeFalse("oldest of two decides (10 min + 800 min)");
     }
+
+    /// <summary>
+    /// CARD-1186 V-2. Event text is built here, not by <see cref="Abandon"/> or
+    /// <see cref="FormatAbandonedGuidance"/>.
+    /// </summary>
+    [Test]
+    [Arguments("single")]
+    [Arguments("multiple")]
+    [Arguments("foreign-task")]
+    [Arguments("wrong-start-id")]
+    [Arguments("missing-start")]
+    [Arguments("different-failure")]
+    [Arguments("duplicate-abandonment")]
+    [Arguments("truncated-abandonment")]
+    public void C1186_Abandoned_facts_match_the_saved_failure(string shape)
+    {
+        const string DigestA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        const string DigestB = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        const string DigestC = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+        var early = Guid.Parse("00000000-0000-4000-8000-000000000010");
+        var tieLow = Guid.Parse("00000000-0000-4000-8000-000000000020");
+        var tieHigh = Guid.Parse("00000000-0000-4000-8000-000000000030");
+        var tiedAt = T0.AddMinutes(5);
+
+        var facts = shape switch
+        {
+            "single" => Select(Pair(early, DigestA, T0)),
+            "multiple" => Select(Shuffled(
+                Pair(tieHigh, DigestC, tiedAt),
+                Pair(early, DigestA, T0),
+                Pair(tieLow, DigestB, tiedAt))),
+            "foreign-task" => SelectForeign(early, DigestA, T0),
+            "wrong-start-id" => Select(WrongStart(early, DigestA, T0)),
+            "missing-start" => SelectMissing(early, DigestA, T0),
+            "different-failure" => SelectDifferent(early, DigestA, T0),
+            "duplicate-abandonment" => Select(DuplicateAbandonment(early, DigestA, T0)),
+            "truncated-abandonment" => SelectTruncated(early, DigestA, T0),
+            _ => throw new ArgumentOutOfRangeException(nameof(shape), shape, "unknown CARD-1186 shape"),
+        };
+
+        switch (shape)
+        {
+            case "single":
+            case "duplicate-abandonment":
+                facts.Select(f => f.EventId).ShouldBe([early]);
+                facts.Select(f => f.Settlement).ShouldBe([DigestA]);
+                facts.Single().StartedAt.ShouldBe(T0);
+                break;
+            case "multiple":
+                facts.Select(f => f.EventId).ShouldBe([early, tieLow, tieHigh]);
+                facts.Select(f => f.Settlement).ShouldBe([DigestA, DigestB, DigestC]);
+                facts.Select(f => f.StartedAt).ShouldBe([T0, tiedAt, tiedAt]);
+                facts.Select(f => f.EventId).Distinct().Count().ShouldBe(facts.Count);
+                break;
+            case "truncated-abandonment":
+                facts.Select(f => f.EventId).ShouldBe([early]);
+                facts.Select(f => f.Settlement).ShouldBe([DigestA]);
+                break;
+            case "foreign-task":
+            case "wrong-start-id":
+            case "missing-start":
+            case "different-failure":
+                facts.ShouldBeEmpty(shape);
+                break;
+        }
+    }
+
+    private static IReadOnlyList<Pending> Select(IEnumerable<AgentTaskEvent> events, string? reason = null)
+    {
+        var rows = events.ToList();
+        return SelectAbandonedForSavedFailure(rows, Task, reason ?? ReasonFor(rows, Task));
+    }
+
+    private static string ReasonFor(IEnumerable<AgentTaskEvent> events, Guid taskId)
+    {
+        var markers = events
+            .Where(e => e.AgentTaskId == taskId && e.Type == AgentTaskEventType.CommitRecoveryStarted)
+            .Select(e => $"{e.Id:D} (settlement {e.Detail})");
+        return "the pty-host exited (code 1). The task held unresolved commit-recovery obligation(s) "
+            + string.Join(", ", markers) + "; they were abandoned and any gated commit is local and unpushed.";
+    }
+
+    private static IEnumerable<AgentTaskEvent> Pair(Guid id, string settlement, DateTime at, Guid? taskId = null)
+    {
+        var start = StartedRow(id, settlement, at, taskId);
+        var reason = ReasonFor([start], start.AgentTaskId);
+        yield return start;
+        yield return AbandonedRow(start.AgentTaskId, WriterDetail(id, reason), at.AddMinutes(1));
+    }
+
+    private static IEnumerable<AgentTaskEvent> Shuffled(params IEnumerable<AgentTaskEvent>[] pairs)
+    {
+        var rows = pairs.SelectMany(p => p).ToList();
+        var reason = ReasonFor(rows, Task);
+        foreach (var row in rows)
+        {
+            if (row.Type != AgentTaskEventType.CommitRecoveryAbandoned)
+            {
+                yield return row;
+                continue;
+            }
+
+            var startId = Guid.Parse(row.Detail.Split(' ')[0]);
+            yield return AbandonedRow(row.AgentTaskId, WriterDetail(startId, reason), row.At);
+        }
+    }
+
+    private static IEnumerable<AgentTaskEvent> WrongStart(Guid id, string settlement, DateTime at)
+    {
+        var start = StartedRow(id, settlement, at, Task);
+        var reason = ReasonFor([start], Task);
+        var other = Guid.Parse("99999999-9999-4999-8999-999999999999");
+        yield return start;
+        yield return AbandonedRow(Task, WriterDetail(other, reason), at.AddMinutes(1));
+    }
+
+    private static IReadOnlyList<Pending> SelectForeign(Guid id, string settlement, DateTime at)
+    {
+        var foreign = Guid.Parse("ffffffff-ffff-4fff-8fff-ffffffffffff");
+        var rows = Pair(id, settlement, at, foreign).ToList();
+        return SelectAbandonedForSavedFailure(rows, Task, ReasonFor(rows, foreign));
+    }
+
+    private static IReadOnlyList<Pending> SelectMissing(Guid id, string settlement, DateTime at)
+    {
+        var ghost = StartedRow(id, settlement, at, Task);
+        var reason = ReasonFor([ghost], Task);
+        var rows = new[] { AbandonedRow(Task, WriterDetail(id, reason), at.AddMinutes(1)) };
+        return SelectAbandonedForSavedFailure(rows, Task, reason);
+    }
+
+    private static IReadOnlyList<Pending> SelectDifferent(Guid id, string settlement, DateTime at)
+    {
+        var start = StartedRow(id, settlement, at, Task);
+        var saved = ReasonFor([start], Task);
+        var rows = new[] { start, AbandonedRow(Task, WriterDetail(id, saved), at.AddMinutes(1)) };
+        return SelectAbandonedForSavedFailure(rows, Task, saved + " and then a later failure");
+    }
+
+    private static IEnumerable<AgentTaskEvent> DuplicateAbandonment(Guid id, string settlement, DateTime at)
+    {
+        foreach (var row in Pair(id, settlement, at))
+            yield return row;
+        var start = StartedRow(id, settlement, at, Task);
+        var reason = ReasonFor([start], Task);
+        yield return AbandonedRow(Task, WriterDetail(id, reason), at.AddMinutes(2));
+    }
+
+    private static IReadOnlyList<Pending> SelectTruncated(Guid id, string settlement, DateTime at)
+    {
+        var marker = $"{id:D} (settlement {settlement})";
+        var reason = marker + new string('z', 5000);
+        var markerAt = reason.IndexOf(marker, StringComparison.Ordinal);
+        (markerAt >= 0 && markerAt + marker.Length < reason.Length).ShouldBeTrue("obligation sits before the end");
+        var detail = WriterDetail(id, reason);
+        detail.Length.ShouldBe(4000);
+        var rows = new[]
+        {
+            StartedRow(id, settlement, at, Task),
+            AbandonedRow(Task, detail, at.AddMinutes(1)),
+        };
+        return SelectAbandonedForSavedFailure(rows, Task, reason);
+    }
+
+    private static AgentTaskEvent StartedRow(Guid id, string settlement, DateTime at, Guid? taskId) => new()
+    {
+        Id = id,
+        AgentTaskId = taskId ?? Task,
+        Type = AgentTaskEventType.CommitRecoveryStarted,
+        Detail = settlement,
+        At = at,
+    };
+
+    private static AgentTaskEvent AbandonedRow(Guid taskId, string detail, DateTime at) => new()
+    {
+        Id = Guid.NewGuid(),
+        AgentTaskId = taskId,
+        Type = AgentTaskEventType.CommitRecoveryAbandoned,
+        Detail = detail,
+        At = at,
+    };
+
+    /// <summary>The dead-session writer's text, copied here so the fixture does not call <see cref="Abandon"/>.</summary>
+    private static string WriterDetail(Guid startId, string failureReason)
+    {
+        var full = $"{startId:D} dead-session reconciler: {failureReason}";
+        return full.Length <= 4000 ? full : full[..4000];
+    }
 }

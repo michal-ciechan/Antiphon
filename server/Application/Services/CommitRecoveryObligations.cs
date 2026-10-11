@@ -75,6 +75,15 @@ public static class CommitRecoveryObligations
             .ToDictionary(g => g.Key, g => (IReadOnlyList<Pending>)g.ToArray());
     }
 
+    /// <summary>Sweep name the dead-session reconciler passes to <see cref="Abandon"/>.</summary>
+    public const string DeadSessionReconcilerSweep = "dead-session reconciler";
+
+    /// <summary>Type-36 detail limit. A longer writer string is stored as this prefix.</summary>
+    public const int AbandonmentDetailMaxLength = 4000;
+
+    /// <summary>Header value and warning paragraphs for one saved failure. Null when nothing is proven.</summary>
+    public sealed record AbandonedGuidance(string? Git, string? Warning);
+
     /// <summary>The type-36 row. Same <c>"{started id} "</c> prefix convention as NotNeeded.</summary>
     public static AgentTaskEvent Abandon(Pending p, string by, string reason, DateTime now)
     {
@@ -84,9 +93,91 @@ public static class CommitRecoveryObligations
             Id = Guid.NewGuid(),
             AgentTaskId = p.TaskId,
             Type = AgentTaskEventType.CommitRecoveryAbandoned,
-            Detail = detail.Length <= 4000 ? detail : detail[..4000],
+            Detail = detail.Length <= AbandonmentDetailMaxLength ? detail : detail[..AbandonmentDetailMaxLength],
             At = now,
         };
+    }
+
+    /// <summary>
+    /// CARD-1186 D-1. Starts abandoned for this saved failure. The abandonment must name the
+    /// start, the saved reason must name that start and its settlement, and the stored detail
+    /// must equal the dead-session writer's text (or its 4,000-character prefix). Ordered by
+    /// start time, then id. An unproven pair contributes nothing.
+    /// </summary>
+    public static IReadOnlyList<Pending> SelectAbandonedForSavedFailure(
+        IEnumerable<AgentTaskEvent> events, Guid taskId, string? failureReason)
+    {
+        if (string.IsNullOrEmpty(failureReason))
+            return [];
+
+        var rows = events.Where(e => e.AgentTaskId == taskId).ToList();
+        var abandonments = rows
+            .Where(e => e.Type == AgentTaskEventType.CommitRecoveryAbandoned)
+            .ToList();
+        var selected = new Dictionary<Guid, Pending>();
+        foreach (var start in rows.Where(e => e.Type == AgentTaskEventType.CommitRecoveryStarted))
+        {
+            if (selected.ContainsKey(start.Id))
+                continue;
+            if (!failureReason.Contains(ObligationMarker(start.Id, start.Detail), StringComparison.Ordinal))
+                continue;
+
+            var expected = ExpectedDeadSessionAbandonment(start.Id, failureReason);
+            var prefix = $"{start.Id:D} ";
+            var linked = abandonments.Any(abandonment =>
+                abandonment.AgentTaskId == start.AgentTaskId
+                && abandonment.Detail.StartsWith(prefix, StringComparison.Ordinal)
+                && string.Equals(abandonment.Detail, expected, StringComparison.Ordinal));
+            if (!linked)
+                continue;
+
+            selected.Add(start.Id, new Pending(start.AgentTaskId, start.Id, start.Detail, start.At));
+        }
+
+        return InGuidanceOrder(selected.Values);
+    }
+
+    /// <summary>Type-34 starts and type-36 abandonments for one task. A failed read throws.</summary>
+    public static async Task<IReadOnlyList<Pending>> LoadAbandonedForSavedFailureAsync(
+        AppDbContext db, Guid taskId, string failureReason, CancellationToken ct)
+    {
+        var events = await db.AgentTaskEvents.AsNoTracking()
+            .TagWith("CommitRecoveryObligations.LoadAbandonedForSavedFailure")
+            .Where(e => e.AgentTaskId == taskId
+                && (e.Type == AgentTaskEventType.CommitRecoveryStarted
+                    || e.Type == AgentTaskEventType.CommitRecoveryAbandoned))
+            .ToListAsync(ct);
+        return SelectAbandonedForSavedFailure(events, taskId, failureReason);
+    }
+
+    /// <summary>Same order on the initial failure path and the recovered note.</summary>
+    public static IReadOnlyList<Pending> InGuidanceOrder(IEnumerable<Pending> obligations) =>
+        obligations.OrderBy(p => p.StartedAt).ThenBy(p => p.EventId).ToArray();
+
+    /// <summary>
+    /// <c>commit-recovery-abandoned:</c> short ids plus one <see cref="Describe"/> paragraph each.
+    /// </summary>
+    public static AbandonedGuidance FormatAbandonedGuidance(Guid taskId, IReadOnlyList<Pending> obligations)
+    {
+        var ordered = InGuidanceOrder(obligations);
+        if (ordered.Count == 0)
+            return new AbandonedGuidance(null, null);
+
+        var git = "commit-recovery-abandoned:" + string.Join(",",
+            ordered.Select(p => p.EventId.ToString("N")[..8]));
+        var warning = string.Join("\n\n", ordered.Select(p => Describe(taskId, p)));
+        return new AbandonedGuidance(git, warning);
+    }
+
+    private static string ObligationMarker(Guid startId, string settlement) =>
+        $"{startId:D} (settlement {settlement})";
+
+    private static string ExpectedDeadSessionAbandonment(Guid startId, string failureReason)
+    {
+        var canonical = $"{startId:D} {DeadSessionReconcilerSweep}: {failureReason}";
+        return canonical.Length <= AbandonmentDetailMaxLength
+            ? canonical
+            : canonical[..AbandonmentDetailMaxLength];
     }
 
     /// <summary>The recovery recipe settlement itself uses, so a human can find the commit without the server.</summary>
