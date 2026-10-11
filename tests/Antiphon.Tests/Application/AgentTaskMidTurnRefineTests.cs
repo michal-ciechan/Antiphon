@@ -381,6 +381,86 @@ public sealed class AgentTaskMidTurnRefineTests
     }
 
     /// <summary>
+    /// CARD-1188. A stored UserPrompt does not take the per-session queue lock when no Sent
+    /// <c>refine:</c> row is outstanding. An ordinary Sent row with a null verdict is not one.
+    /// </summary>
+    [Test]
+    public async Task C1188_UserPromptDoesNotWaitOnTheQueueLockWithoutASentRefinement()
+    {
+        using var workspace = new TempWorkspace();
+        var fx = await PrepareAsync(
+            workspace.Path, AgentTaskStatus.Working, AgentKind.Grok, SessionStatus.Running, openQuestion: false);
+        await using (var seed = CreateContext())
+        {
+            seed.SessionQueuedMessages.Add(new SessionQueuedMessage
+            {
+                Id = Guid.NewGuid(),
+                AgentSessionId = fx.SessionId,
+                Body = "ordinary delivery still in confirm",
+                Status = QueuedMessageStatus.Sent,
+                Sequence = 1,
+                Origin = QueuedMessageOrigin.Ui,
+                ConversationKey = "channel:not-a-refinement",
+                CreatedAt = DateTime.UtcNow,
+                SentAt = DateTime.UtcNow,
+                DeliveryAttempts = 1,
+                DeliveryVerdict = null,
+            });
+            await seed.SaveChangesAsync();
+        }
+
+        var queue = fx.Scope.ServiceProvider.GetRequiredService<SessionMessageQueueService>();
+        var gate = queue.GetLock(fx.SessionId);
+        await gate.WaitAsync(CancellationToken.None);
+        try
+        {
+            var observe = fx.Scope.Runtime.ObserveTranscriptAsync(
+                UserPrompt(fx.SessionId, 42, "ordinary prompt", DateTimeOffset.UtcNow),
+                CancellationToken.None);
+            var finished = await Task.WhenAny(observe, Task.Delay(TimeSpan.FromSeconds(5)));
+            finished.ShouldBe(observe, "no Sent refinement is outstanding, so the observe path must not wait on the queue lock");
+            await observe;
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    /// <summary>
+    /// CARD-1188. A Sent refinement still confirms from the live UserPrompt, and that confirm
+    /// waits for the queue lock instead of writing the verdict beside another holder.
+    /// </summary>
+    [Test]
+    public async Task C1188_SentRefinementStillWaitsOnTheQueueLockBeforeConfirming()
+    {
+        using var workspace = new TempWorkspace();
+        var prepared = await PrepareSentRefinementAsync(workspace.Path);
+        var queue = prepared.Fx.Scope.ServiceProvider.GetRequiredService<SessionMessageQueueService>();
+        var gate = queue.GetLock(prepared.Fx.SessionId);
+        await gate.WaitAsync(CancellationToken.None);
+        var observe = prepared.Fx.Scope.Runtime.ObserveTranscriptAsync(
+            UserPrompt(prepared.Fx.SessionId, 43, prepared.Body, DateTimeOffset.UtcNow),
+            CancellationToken.None);
+        try
+        {
+            var finished = await Task.WhenAny(observe, Task.Delay(TimeSpan.FromSeconds(5)));
+            finished.ShouldNotBe(observe, "a Sent refinement must take the queue lock before it writes a verdict");
+        }
+        finally
+        {
+            gate.Release();
+        }
+
+        await observe.WaitAsync(TimeSpan.FromSeconds(15));
+        await using var verify = CreateContext();
+        var after = await verify.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == prepared.Fx.SessionId);
+        after.Status.ShouldBe(QueuedMessageStatus.Sent);
+        after.DeliveryVerdict.ShouldBe(DeliveryVerdict.LateConfirmed);
+        MidTurnInterruptPolicy.ReadRefinementDelivered(after.DeliveryVerdict).ShouldBe("delivered");
+    }
+
+    /// <summary>
     /// CARD-1169. A screen-only interrupt refinement stays Sent with a null verdict. Once the
     /// queue clock passes the interrupted-attempt age, the next boundary uses the existing
     /// recovery: a complete prompt late-confirms, a head-only prompt parks at the attempts cap

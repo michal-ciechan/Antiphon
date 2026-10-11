@@ -2654,18 +2654,20 @@ public sealed partial class SessionMessageQueueService
     /// </summary>
     internal async Task ConfirmSentRefinementsAsync(Guid sessionId, CancellationToken ct)
     {
+        // CARD-1188: ObserveTranscriptAsync calls this for every stored UserPrompt. The queue
+        // lock is held across a delivery's confirm poll, so waiting here stalls the event pump
+        // even when this session has nothing to confirm. The unlocked count is the skip; the
+        // locked read below remains the one that writes the verdict.
+        if (!await HasOutstandingSentRefinementAsync(sessionId, ct))
+            return;
+
         var sem = GetLock(sessionId);
         await sem.WaitAsync(ct);
         try
         {
             await using var scope = _scopeFactory.CreateAsyncScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-            var rows = await db.SessionQueuedMessages
-                .Where(m => m.AgentSessionId == sessionId
-                    && m.Status == QueuedMessageStatus.Sent
-                    && m.DeliveryVerdict == null
-                    && (m.ConversationKey ?? "").StartsWith(MidTurnInterruptPolicy.ConversationKeyPrefix))
-                .ToListAsync(ct);
+            var rows = await OutstandingSentRefinements(db, sessionId).ToListAsync(ct);
             var changed = false;
             foreach (var row in rows)
             {
@@ -2687,6 +2689,19 @@ public sealed partial class SessionMessageQueueService
             sem.Release();
         }
     }
+
+    private async Task<bool> HasOutstandingSentRefinementAsync(Guid sessionId, CancellationToken ct)
+    {
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        return await OutstandingSentRefinements(db, sessionId).AsNoTracking().AnyAsync(ct);
+    }
+
+    private static IQueryable<SessionQueuedMessage> OutstandingSentRefinements(AppDbContext db, Guid sessionId) =>
+        db.SessionQueuedMessages.Where(m => m.AgentSessionId == sessionId
+            && m.Status == QueuedMessageStatus.Sent
+            && m.DeliveryVerdict == null
+            && (m.ConversationKey ?? "").StartsWith(MidTurnInterruptPolicy.ConversationKeyPrefix));
 
     /// <summary>
     /// CARD-0055 D3's late-confirm: for every Pending message that has already been typed at least
