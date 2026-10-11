@@ -1,3 +1,4 @@
+using System.Data.Common;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Infrastructure.Data;
@@ -199,16 +200,44 @@ public class SessionStateCommitTests
         }
     }
 
-    private sealed class RacingRow : SaveChangesInterceptor
+    private sealed class RacingRow : DbCommandInterceptor
     {
         private bool _inserted;
-        public override async ValueTask<InterceptionResult<int>> SavingChangesAsync(DbContextEventData eventData,
-            InterceptionResult<int> result, CancellationToken cancellationToken = default)
+
+        public override async ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<int> result,
+            CancellationToken cancellationToken = default)
         {
-            var row = eventData.Context!.ChangeTracker.Entries<TranscriptEntry>().FirstOrDefault()?.Entity;
-            if (_inserted || row is null) return result;
+            await InsertCompetingRowAsync(command, eventData, cancellationToken);
+            return result;
+        }
+
+        public override async ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result,
+            CancellationToken cancellationToken = default)
+        {
+            await InsertCompetingRowAsync(command, eventData, cancellationToken);
+            return result;
+        }
+
+        // The closure save holds AgentSessions FOR UPDATE across SaveChanges. A second
+        // connection that inserts from inside that save cannot commit: the transcript
+        // FK needs a key share of the row this transaction already locked. Commit the
+        // competing row as the lock command starts, which is the last moment it can
+        // still land first. Same database, separate context, no interceptor recursion.
+        private async Task InsertCompetingRowAsync(
+            DbCommand command, CommandEventData eventData, CancellationToken cancellationToken)
+        {
+            if (_inserted || eventData.Context is null)
+                return;
+            var sql = command.CommandText;
+            if (!sql.Contains("FOR UPDATE", StringComparison.Ordinal)
+                || !sql.Contains("AgentSessions", StringComparison.Ordinal))
+                return;
+            var row = eventData.Context.ChangeTracker.Entries<TranscriptEntry>()
+                .Select(e => e.Entity).FirstOrDefault(e => e.Uuid == "race");
+            if (row is null) return;
             _inserted = true;
-            // Same real DB, independent context and transaction. No interception recursion.
             await using var other = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
                 .UseNpgsql(eventData.Context.Database.GetConnectionString()).Options);
             other.TranscriptEntries.Add(new TranscriptEntry { Id = Guid.NewGuid(), AgentSessionId = row.AgentSessionId,
@@ -216,7 +245,6 @@ public class SessionStateCommitTests
             other.TranscriptEntries.Add(new TranscriptEntry { Id = Guid.NewGuid(), AgentSessionId = row.AgentSessionId,
                 Kind = "TurnEnd", Uuid = "other", Sequence = row.Sequence, CreatedAt = DateTime.UtcNow });
             await other.SaveChangesAsync(cancellationToken);
-            return result;
         }
     }
 }
