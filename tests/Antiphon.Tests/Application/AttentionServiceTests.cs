@@ -3401,7 +3401,8 @@ public partial class AttentionServiceTests
         }
 
         public async Task<Guid> AddLegacyLandEventAsync(
-            Guid taskId, DateTime at, AgentTaskEventType type = AgentTaskEventType.Landed)
+            Guid taskId, DateTime at, AgentTaskEventType type = AgentTaskEventType.Landed,
+            string? detail = null, LandPublicationOutcome? publication = null)
         {
             var id = Guid.NewGuid();
             await using var db = CreateContext();
@@ -3410,8 +3411,9 @@ public partial class AttentionServiceTests
                 Id = id,
                 AgentTaskId = taskId,
                 Type = type,
-                Detail = type == AgentTaskEventType.LandRefused ? "land refused" : "historical land",
+                Detail = detail ?? (type == AgentTaskEventType.LandRefused ? "land refused" : "historical land"),
                 At = at,
+                LandingPublication = publication,
             });
             await db.SaveChangesAsync();
             return id;
