@@ -221,12 +221,75 @@ public class AgentTaskReplyOverlayTests
 
         refused.Code.ShouldBe("answer_already_accepted");
         runner.Pulls.ShouldBeGreaterThanOrEqualTo(2);
+        runner.ClosedOnOpenPull.ShouldBe(2);
         h.Adapter.SubmittedBodies.ShouldBeEmpty();
         await using var db = CreateContext();
         (await db.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == h.SessionId)).ShouldBe(0);
         (await db.TranscriptEntries.CountAsync(t => t.AgentSessionId == h.SessionId
             && t.Kind == TranscriptKinds.ToolResult && t.ToolUseId == toolUseId)).ShouldBe(1);
         AssertWindowUnchanged(await db.AgentTasks.SingleAsync(t => t.Id == task.Id), stamp);
+    }
+
+    [Test]
+    public async Task C1069_question_closed_after_recheck_identical_resend_is_suppressed()
+    {
+        await AssertClosedAfterRecheckAsync("retained released-seat answer", "retained released-seat answer");
+    }
+
+    [Test]
+    public async Task C1069_question_closed_after_recheck_different_text_is_answer_already_accepted()
+    {
+        await AssertClosedAfterRecheckAsync("retained released-seat answer", "a different in-turn reply");
+    }
+
+    [Test]
+    public async Task C1069_question_open_through_insert_is_delivered_once()
+    {
+        const string toolUseId = "call-question-c1069-stays-open";
+        const string accepted = "retained released-seat answer";
+        const string answer = "Proceed as planned (Recommended)";
+        var runner = new ClosingOnLaterPullRunner(toolUseId, closeOnOpenPull: int.MaxValue);
+        await using var h = await CreateReplyHarnessAsync(services =>
+            services.AddSingleton<ISessionRunnerClient>(runner));
+        await h.InsertTranscriptEntryAsync(
+            TranscriptKinds.ToolCall,
+            toolName: GrokQuestionTool.AskUserQuestionName,
+            toolUseId: toolUseId);
+        var task = await SeedTaskAsync(h, AgentTaskStatus.Working);
+        var stamp = await StampReleasedSeatWindowAsync(task.Id, accepted);
+        var confirm = h.Adapter.OnSubmitted;
+        h.Adapter.OnSubmitted = async submitted =>
+        {
+            if (confirm is not null)
+                await confirm(submitted);
+            await h.InsertTranscriptEntryAsync(
+                TranscriptKinds.ToolResult,
+                $"{GrokQuestionTool.CompletedAnswerPrefix} \"q\"=\"{submitted}\". You can now continue.",
+                toolName: GrokQuestionTool.AskUserQuestionName,
+                toolUseId: toolUseId);
+        };
+
+        await h.Provider.GetRequiredService<AgentTaskReplyService>()
+            .AnswerAsync(task.Id, answer, CancellationToken.None);
+
+        runner.ClosedOnOpenPull.ShouldBe(0);
+        h.Adapter.SubmittedBodies.ShouldBe([answer]);
+        await using var db = CreateContext();
+        var queued = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId);
+        queued.Status.ShouldBe(QueuedMessageStatus.Sent);
+        queued.Body.ShouldBe(answer);
+        (await db.TranscriptEntries.CountAsync(t => t.AgentSessionId == h.SessionId
+            && t.Kind == TranscriptKinds.UserPrompt)).ShouldBe(1);
+        AssertWindowUnchanged(await db.AgentTasks.SingleAsync(t => t.Id == task.Id), stamp);
+    }
+
+    [Test]
+    public async Task C1069_question_closed_between_recheck_and_insert_takes_the_guard()
+    {
+        const string accepted = "retained released-seat answer";
+        var runner = await AssertClosedAfterRecheckAsync(accepted, "a different in-turn reply", "call-question-c1069-insert-hook");
+        runner.Pulls.ShouldBeGreaterThanOrEqualTo(3);
+        runner.ClosedOnOpenPull.ShouldBe(3, "the close is the pull after the service recheck, before the insert");
     }
 
     [Test]
@@ -303,6 +366,47 @@ public class AgentTaskReplyOverlayTests
         (await db.AgentTaskEvents.CountAsync(
             e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Replied)).ShouldBe(0, shape);
         AssertWindowUnchanged(await db.AgentTasks.SingleAsync(t => t.Id == task.Id), stamp);
+    }
+
+    /// <summary>
+    /// Closes the question on the third open pull: after the decision catch-up and the service
+    /// recheck, on the pull that sits in front of the queue insert.
+    /// </summary>
+    private static async Task<ClosingOnLaterPullRunner> AssertClosedAfterRecheckAsync(
+        string accepted, string answer, string toolUseId = "call-question-c1069-after-recheck")
+    {
+        var runner = new ClosingOnLaterPullRunner(toolUseId, closeOnOpenPull: 3);
+        await using var h = await CreateReplyHarnessAsync(services =>
+            services.AddSingleton<ISessionRunnerClient>(runner));
+        await h.InsertTranscriptEntryAsync(
+            TranscriptKinds.ToolCall,
+            toolName: GrokQuestionTool.AskUserQuestionName,
+            toolUseId: toolUseId);
+        var task = await SeedTaskAsync(h, AgentTaskStatus.Working);
+        var stamp = await StampReleasedSeatWindowAsync(task.Id, accepted);
+        var same = answer == accepted;
+        if (same)
+        {
+            await h.Provider.GetRequiredService<AgentTaskReplyService>()
+                .AnswerAsync(task.Id, answer, CancellationToken.None);
+        }
+        else
+        {
+            var refused = await Should.ThrowAsync<ConflictException>(() =>
+                h.Provider.GetRequiredService<AgentTaskReplyService>()
+                    .AnswerAsync(task.Id, answer, CancellationToken.None));
+            refused.Code.ShouldBe("answer_already_accepted");
+        }
+
+        h.Adapter.SubmittedBodies.ShouldBeEmpty();
+        await using var db = CreateContext();
+        (await db.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == h.SessionId)).ShouldBe(0);
+        (await db.TranscriptEntries.CountAsync(t => t.AgentSessionId == h.SessionId
+            && t.Kind == TranscriptKinds.UserPrompt)).ShouldBe(0);
+        (await db.AgentTaskEvents.CountAsync(
+            e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Replied)).ShouldBe(0);
+        AssertWindowUnchanged(await db.AgentTasks.SingleAsync(t => t.Id == task.Id), stamp);
+        return runner;
     }
 
     private static async Task AssertOpenQuestionEnqueuesAsync(
@@ -483,13 +587,15 @@ public class AgentTaskReplyOverlayTests
     }
 
     /// <summary>
-    /// The decision catch-up sees the question still open. The next pull persists its ToolResult
-    /// before enqueue, which is the closure race.
+    /// Persists the question's ToolResult on open pull <paramref name="closeOnOpenPull"/>.
+    /// 2 is the service recheck (the closure race before enqueue). 3 is the pull the queue
+    /// makes after that recheck and before it inserts.
     /// </summary>
-    private sealed class ClosingOnLaterPullRunner(string toolUseId) : ISessionRunnerClient
+    private sealed class ClosingOnLaterPullRunner(string toolUseId, int closeOnOpenPull = 2) : ISessionRunnerClient
     {
         private int _openPulls;
         public int Pulls { get; private set; }
+        public int ClosedOnOpenPull { get; private set; }
 
         public async Task<SessionRunnerTranscriptDto> GetTranscriptAsync(Guid sessionId, CancellationToken ct)
         {
@@ -503,12 +609,16 @@ public class AgentTaskReplyOverlayTests
                 t => t.AgentSessionId == sessionId
                     && t.Kind == TranscriptKinds.ToolResult
                     && t.ToolUseId == toolUseId, ct);
-            if (!hasCall || hasResult || _openPulls == 0)
+            var openPull = hasCall && !hasResult ? _openPulls + 1 : 0;
+            if (openPull == 0 || openPull < closeOnOpenPull)
             {
-                if (hasCall && !hasResult)
-                    _openPulls++;
+                if (openPull != 0)
+                    _openPulls = openPull;
                 return new SessionRunnerTranscriptDto(sessionId, [], 0);
             }
+
+            _openPulls = openPull;
+            ClosedOnOpenPull = openPull;
 
             var row = new SessionRunnerTranscriptEvent(
                 sessionId,

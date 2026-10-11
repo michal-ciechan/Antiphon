@@ -21,6 +21,24 @@ public sealed record SessionQueueTurnEndResult(
     IReadOnlySet<Guid> LateConfirmedChannelMessageIds);
 
 /// <summary>
+/// The ask_user_question an overlay reply may answer: session, tool-call sequence (its place
+/// in the turn), and tool-call id. Re-checked in the insert transaction.
+/// </summary>
+public readonly record struct ExpectedOpenQuestion(Guid SessionId, long Sequence, string ToolUseId);
+
+/// <summary>
+/// The expected question was no longer the open one, so the overlay insert did not commit.
+/// The caller restores the accepted-answer guard. This is not an HTTP error by itself.
+/// </summary>
+internal sealed class OverlayQuestionClosedException : Exception
+{
+    public OverlayQuestionClosedException()
+        : base("The open question closed before the overlay reply was inserted.")
+    {
+    }
+}
+
+/// <summary>
 /// Manages messages queued to a live agent session. "Send now" delivers immediately; "wait until idle"
 /// holds the message until the agent reaches a turn-end (<c>stop_reason: end_turn</c>), then delivers the
 /// oldest pending message — one per turn. When a turn ends with an empty queue the session is considered
@@ -885,10 +903,14 @@ public sealed partial class SessionMessageQueueService
     /// session is working. Mode:Now stays row-less; this is the overlay-answer path so a later
     /// 409 can late-confirm against the stored baseline. Throws the same
     /// <see cref="ConflictException"/>s Mode:Now does when verification fails.
+    /// When <paramref name="expectedOpenQuestion"/> is set, the question is pulled and re-read
+    /// under this session's queue gate in the same transaction as the insert.
+    /// <see cref="OverlayQuestionClosedException"/> means the row was not inserted.
     /// </summary>
     public async Task<SessionQueueDto> EnqueueDeliveringNowAsync(
         Guid sessionId, string body, CancellationToken ct,
-        QueuedMessageOrigin origin = QueuedMessageOrigin.Ui)
+        QueuedMessageOrigin origin = QueuedMessageOrigin.Ui,
+        ExpectedOpenQuestion? expectedOpenQuestion = null)
     {
         var trimmed = (body ?? string.Empty).Trim();
         if (trimmed.Length == 0)
@@ -931,29 +953,60 @@ public sealed partial class SessionMessageQueueService
             await RequireImmediateAdmissionAsync(await RequireSessionAsync(sessionId, ct), ct);
             await EnsureRulesAllowOrdinaryInputAsync(sessionId, ct);
             await EnsureNoUnconfirmedExpectationBodyAsync(sessionId, ct);
+            if (expectedOpenQuestion is not null)
+            {
+                // The caller's recheck already ran. This pull is the one between that recheck
+                // and the insert. Catch-up commits on its own context, so it stays outside the
+                // insert transaction (ingestion refuses an ambient transaction).
+                await _runtime.CatchUpTranscriptAsync(sessionId, ct);
+            }
+
             await using var scope = _scopeFactory.CreateAsyncScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             var now = UtcNow();
-            var nextSequence = (await db.SessionQueuedMessages
-                .Where(m => m.AgentSessionId == sessionId)
-                .MaxAsync(m => (long?)m.Sequence, ct) ?? 0) + 1;
-
-            row = new SessionQueuedMessage
+            var guardTx = expectedOpenQuestion is not null
+                ? await db.Database.BeginTransactionAsync(ct)
+                : null;
+            try
             {
-                Id = Guid.NewGuid(),
-                AgentSessionId = sessionId,
-                Body = trimmed,
-                Status = QueuedMessageStatus.Pending,
-                Sequence = nextSequence,
-                CreatedAt = now,
-                Origin = origin,
-            };
-            var staged = BindStagedSpill(sessionId, row);
-            if (origin == QueuedMessageOrigin.Channel)
-                row.Body = ChannelPromptCorrelation.Mark(row.Id, row.Body);
-            db.SessionQueuedMessages.Add(row);
-            await db.SaveChangesAsync(ct);
-            if (staged is not null) _remoteSpills?.Ack(sessionId, staged);
+                if (expectedOpenQuestion is { } expected
+                    && !await AgentTaskReplyService.StillExpectedOpenQuestionAsync(
+                        db, sessionId, expected, ct))
+                    throw new OverlayQuestionClosedException();
+
+                var nextSequence = (await db.SessionQueuedMessages
+                    .Where(m => m.AgentSessionId == sessionId)
+                    .MaxAsync(m => (long?)m.Sequence, ct) ?? 0) + 1;
+
+                row = new SessionQueuedMessage
+                {
+                    Id = Guid.NewGuid(),
+                    AgentSessionId = sessionId,
+                    Body = trimmed,
+                    Status = QueuedMessageStatus.Pending,
+                    Sequence = nextSequence,
+                    CreatedAt = now,
+                    Origin = origin,
+                };
+                var staged = BindStagedSpill(sessionId, row);
+                if (origin == QueuedMessageOrigin.Channel)
+                    row.Body = ChannelPromptCorrelation.Mark(row.Id, row.Body);
+                db.SessionQueuedMessages.Add(row);
+                await db.SaveChangesAsync(ct);
+                if (guardTx is not null)
+                {
+                    await guardTx.CommitAsync(ct);
+                    // A cancellation that commits only after this insert is a delivery of a
+                    // question that was still the open one. That row stays.
+                }
+
+                if (staged is not null) _remoteSpills?.Ack(sessionId, staged);
+            }
+            finally
+            {
+                if (guardTx is not null)
+                    await guardTx.DisposeAsync();
+            }
 
             var nowBody = await SpillQueueBodyAsync(
                 sessionId, row.Body, row.Id.ToString("D"),

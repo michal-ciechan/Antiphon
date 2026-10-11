@@ -504,17 +504,43 @@ public sealed class AgentTaskReplyService
                     throw NotWaitingForAnswer(taskId);
 
                 var now = UtcNow();
+                var previousRepliedAt = task.RepliedAt;
                 task.RepliedAt = now;
-                db.AgentTaskEvents.Add(NewEvent(
+                var replyEvent = NewEvent(
                     taskId, AgentTaskEventType.Replied,
-                    "Caller answered an in-turn question-tool popup.", now));
+                    "Caller answered an in-turn question-tool popup.", now);
+                db.AgentTaskEvents.Add(replyEvent);
                 await db.SaveChangesAsync(ct);
                 saved = true;
 
                 // Same turn as the brief: type the answer only. Prefixing the task marker would fail
                 // option matching and appear inside the completed ToolResult, not as a UserPrompt.
-                await queue.EnqueueDeliveringNowAsync(
-                    sessionId, message.Trim(), ct, QueuedMessageOrigin.Delegation);
+                // The queue re-checks this question inside the insert. A close that lands after
+                // the recheck above refuses the row; the accepted-answer guard then applies.
+                try
+                {
+                    await queue.EnqueueDeliveringNowAsync(
+                        sessionId, message.Trim(), ct, QueuedMessageOrigin.Delegation,
+                        new ExpectedOpenQuestion(sessionId, liveAtEnqueue.Sequence, liveAtEnqueue.ToolUseId));
+                }
+                catch (OverlayQuestionClosedException)
+                {
+                    task.RepliedAt = previousRepliedAt;
+                    db.AgentTaskEvents.Remove(replyEvent);
+                    await db.SaveChangesAsync(ct);
+                    saved = false;
+                    await db.Entry(task).ReloadAsync(ct);
+                    if (await tasks.TryAcceptReleasedSeatAnswerAsync(task, message, origin, round, ct))
+                    {
+                        await ReleaseAdmittedAsync(scope.ServiceProvider, admitted);
+                        saved = true;
+                        var closedFamily = await db.AgentTasks.AsNoTracking()
+                            .Where(t => t.RootTaskId == task.RootTaskId).ToListAsync(ct);
+                        return await tasks.GetSummaryAsync(task, closedFamily);
+                    }
+
+                    throw NotWaitingForAnswer(taskId);
+                }
 
                 await PublishAsync(task, ct);
                 var family = await db.AgentTasks.AsNoTracking().Where(t => t.RootTaskId == task.RootTaskId).ToListAsync(ct);
@@ -612,6 +638,19 @@ public sealed class AgentTaskReplyService
         now is { } live
         && live.Sequence == decided.Sequence
         && string.Equals(live.ToolUseId, decided.ToolUseId, StringComparison.Ordinal);
+
+    /// <summary>
+    /// True when <paramref name="expected"/> is still the live question on <paramref name="sessionId"/>.
+    /// Called from the queue insert, under that session's gate.
+    /// </summary>
+    internal static async Task<bool> StillExpectedOpenQuestionAsync(
+        AppDbContext db, Guid sessionId, ExpectedOpenQuestion expected, CancellationToken ct)
+    {
+        if (expected.SessionId != sessionId)
+            return false;
+        var live = await FindLiveQuestionToolAsync(db, sessionId, ct);
+        return SameLiveQuestion(new LiveQuestionTool(expected.Sequence, expected.ToolUseId), live);
+    }
 
     private static ConflictException NotWaitingForAnswer(Guid taskId) => new(
         $"Task {DelegationReportFormatter.Short(taskId)} is not waiting for an answer. "
