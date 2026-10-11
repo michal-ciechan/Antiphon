@@ -299,6 +299,7 @@ public sealed class RemoteWorkspacePreparerTests
     [Arguments("snapshot")]
     [Arguments("interim")]
     [Arguments("rearm")]
+    // PC-7 witness: absent baseline, configuration-identical to unprepared on purpose.
     [Arguments("rearm-no-baseline")]
     public async Task C672_prepared_task_launches_while_a_land_holds_the_lease(string arm)
     {

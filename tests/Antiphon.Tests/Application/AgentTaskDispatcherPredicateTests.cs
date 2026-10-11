@@ -57,6 +57,8 @@ public sealed class AgentTaskDispatcherPredicateTests
     [Arguments("rearm", true)]
     [Arguments("mirror-recorded", false)]
     [Arguments("no-baseline", false)]
+    [Arguments("empty-baseline", false)]
+    [Arguments("empty-mirror", true)]
     [Arguments("local", false)]
     [Arguments("no-worktree", false)]
     [Arguments("repair-source", false)]
@@ -80,6 +82,8 @@ public sealed class AgentTaskDispatcherPredicateTests
         {
             case "mirror-recorded": task.RemoteWorktreePath = "/work/worktrees/task-1"; break;
             case "no-baseline": task.ProgressBaselineJson = null; break;
+            case "empty-baseline": task.ProgressBaselineJson = ""; break;
+            case "empty-mirror": task.RemoteWorktreePath = ""; break;
             case "local": task.RunnerId = null; break;
             case "no-worktree": task.WorktreePath = null; break;
             case "repair-source": task.RepairSourceTaskId = Guid.NewGuid(); break;
