@@ -43,14 +43,18 @@ const CODEX_ALIASES: Record<AgentModelLevel, string> = {
 }
 
 /**
- * The model-family alias for the program the task ACTUALLY runs on — the client mirror of the
- * server's `ModelLevelAliases.For(kind, level)` (CARD-0084 S4). A Grok task whose chip read `fable`
- * was naming a model nobody was paying for, on the one surface an operator scans to decide what to
- * escalate.
+ * Label for a tier. The current alias mirrors `ModelLevelAliases.For(kind, level)`
+ * (CARD-0084 S4): Grok reads `GROK_ALIASES`, Codex reads `CODEX_ALIASES` (CARD-0301), and a
+ * kind other than those two — the default is ClaudeCode — reads the ladder word in
+ * `TIER_VISUALS`. A Grok chip that showed `fable` was naming a model nobody was paying for.
  *
- * Codex takes its own ladder (CARD-0301): without it a Codex chip reads `fable`/`opus`. Anything
- * else takes the Claude ladder in TIER_VISUALS, exactly as the server does, so every pre-CARD-0084
- * chip is byte-identical.
+ * CARD-1009. When `effectiveModelId` trims to a non-blank value that differs from that
+ * current alias, this returns the recorded value. Otherwise it returns the current alias
+ * (omitted, null, blank after trim, or equal to the alias). That recorded check does not
+ * branch on kind. Vitest pins the split for Codex. The Claude cases pass no recorded id
+ * and expect the ladder word (`fable`, `opus`, `sonnet`, `haiku`, and `fable` when kind
+ * is omitted). A Claude call whose recorded id trims to something other than that word
+ * returns the recorded id; the Vitest file has no such call.
  */
 export function tierAlias(
   level: AgentModelLevel,
@@ -62,18 +66,21 @@ export function tierAlias(
     : kind === 'Codex'
       ? CODEX_ALIASES[level]
       : TIER_VISUALS[level].alias
-  // CARD-1009. A historical session keeps the model it actually ran. The current ladder is
-  // only the fallback when nothing was recorded, or when the recorded id is already that alias.
+  // CARD-1009. Prefer a trimmed recorded id when it differs from the current alias.
+  // Otherwise show the alias. Claude takes this same branch.
   const recorded = effectiveModelId?.trim()
   if (recorded && recorded !== current) return recorded
   return current
 }
 
 /**
- * What the tier badge's tooltip says. Claude's aliases are bare family words, so they need the
- * vendor in front to mean anything ("Claude fable"); Grok's already carry it, and "Grok grok-4.7"
- * is a stutter. Codex keeps the vendor word (`Frontier tier — Codex gpt-6-astra`) because the
- * slug alone does not name the program. Claude's text is unchanged, byte for byte.
+ * Tooltip for the tier badge. It uses the string `tierAlias` returned, so a recorded id
+ * the helper preferred is what this text names. Claude, and a kind other than Grok or
+ * Codex, is written `{level} tier — Claude {alias}` because those ladder words are bare
+ * family names (`High tier — Claude opus` is the Vitest case with no recorded id). A
+ * recorded Claude id that differs is prefixed the same way. Grok drops the extra vendor
+ * word (`High tier — grok-4.7`; `Grok grok-4.7` would stutter). Codex keeps it
+ * (`Frontier tier — Codex gpt-6-astra`) because the slug does not name the program.
  */
 export function tierTooltip(
   level: AgentModelLevel,
