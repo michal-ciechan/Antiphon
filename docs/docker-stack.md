@@ -440,8 +440,11 @@ failure or a declaration that is not that roster. Host Compose v2.18.1 `docker c
 omits a default service-secret target and emits secret declarations as name, file, and external
 false. A missing target defaults to the source name, and an explicit relative target is honoured
 under `/run/secrets/`. That shape is pinned by `scripts/fixtures/c1105-compose-v218-config.json`. The same token refuses a byte mismatch between
-the materialized Compose file and `SERVER2_COMPOSE`: that comparison runs before the recycle lock
-and before any removal, and `deploy-parent` compares the same two files again before `compose up`.
+the materialized Compose file and `SERVER2_COMPOSE`. For the host project in apply mode
+(`C1008_PROJECT == HOST_PROJECT` and `C1008_DRY_RUN == 0`), that comparison runs before the recycle lock
+and before any removal. `deploy-parent` compares the same two files again before `compose up`.
+The real-Docker fixture copies `$SERVER2_COMPOSE` byte for byte, so that refusal cannot occur there;
+`C1105_Compose_cmp_refuses_before_removal` covers it.
 The running proof prints
 `C1008_GENERATION project=<p> previous=<sha|none> target=<sha> previousMounts=<n> targetMounts=<n>`.
 
@@ -466,7 +469,9 @@ and refuses `RecycleContainerStateUnknown`.
 
 A `redeploy-old` rollback to an older SHA works only when that SHA contains this fix. An older SHA
 runs the pre-fix script, which requires the target mount count of the containers it stops, so a
-container that lacks the new bind refuses on mount count. Accepting temp remains the live rollback.
+container whose mount set differs from the older roster refuses on mount count. The pre-fix script
+also refuses earlier, at `c1008_compose_model` (`error("mount set")`, `RecycleComposeMismatch`),
+because the on-disk Compose file is still the new generation's. Accepting temp remains the live rollback.
 
 ## Shared server2 runner caches (CARD-0849)
 

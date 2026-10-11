@@ -23,7 +23,8 @@ public sealed class RollingVolumeRecycleDockerTests
         psi.ArgumentList.Add(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/fixtures/c1008-recycle-real-cases.mjs"));
         using var child = Process.Start(psi)!;
         var stdout = child.StandardOutput.ReadToEndAsync(); var stderr = child.StandardError.ReadToEndAsync();
-        using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(12));
+        // CARD-1142: S4 measured 618s, 709s and 827s against a 12-minute kill. 20 minutes matches CP-9's row budget.
+        using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(20));
         try { await child.WaitForExitAsync(deadline.Token); }
         catch {
             if (!child.HasExited) { child.Kill(true); await child.WaitForExitAsync(); }

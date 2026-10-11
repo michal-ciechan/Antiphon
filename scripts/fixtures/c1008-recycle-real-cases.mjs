@@ -516,14 +516,18 @@ try {
     });
   }
   {
-    const f=fixture();
+    const f=fixture(true,true);
     const id=addForeignBind(f);
     record(await host(f,'C-previous-generation-foreign-mount'),r=>{
       refused(r);
       if(r.diagnosis!=='RecycleContainerStateUnknown'||r.journal!==null)throw Error('ForeignMountJournal:'+r.diagnosis);
+      const generationLine='C1008_GENERATION project='+f.main+' previous='+previousSha+' target='+source+' previousMounts=10 targetMounts=11';
+      if(!r.output.includes(generationLine))throw Error('GenerationLine:'+r.name);
       const trace=fs.readFileSync(f.root+'/C-previous-generation-foreign-mount.trace','utf8');
       if(trace.split('\n').some(line=>line.includes(id)&&/(^|[^A-Za-z])stop([^A-Za-z]|$)/.test(line)))throw Error('ForeignMountStopped');
       if(trace.split('\n').some(line=>/\bvolume\b/.test(line)&&/\brm\b/.test(line)&&roles.slice(0,3).some(role=>line.includes(f.main+'_'+role))))throw Error('ForeignMountVolumeRemoved');
+      const inspected=JSON.parse(docker('inspect',id))[0];
+      if(!inspected.State.Running||inspected.State.StartedAt!==f.mainStarted)throw Error('ForeignMountInspect');
     });
   }
   if(results.length!==34||results.filter(r=>r.version==='B').length!==5||results.filter(r=>r.version==='C').length!==29||new Set(results.map(r=>r.name)).size!==34)throw Error('OutcomeCensusWrong');
