@@ -47,26 +47,40 @@ positive control: this roster adds no production behavior to mutate.
 
 ## Verification design
 
-V-1. `DispatchBaseWarningRosterTests.C1155_RosterNamesEveryDispatchWarningE2EMethod`
-reads the current `[Test]` methods and the table below. It fails when any method
-lacks exactly one E2E filter, when a filter names an unknown method, when the
-discharge sentence, the Windows witness sentence, or the CARD-0550 CP-24 cost
-citation is missing, or when the closed batch checkpoint section names this E2E
-class.
+V-1. `C1155_RosterNamesEveryDispatchWarningE2EMethod` reads this plan and
+`tests/Antiphon.E2E/DispatchBaseWarningDeliveryE2ETests.cs`. Discovery blanks
+`//` comments, `/* */` comments, and ordinary, verbatim, and raw string literals,
+then records a public method when the bracket groups immediately before that
+declaration, separated only by whitespace, contain an attribute named `Test` or
+`TestAttribute`. A later attribute, a comma-combined list such as
+`[Test, Timeout(...)]`, stacked `[Test][Category(...)]`, and `[Arguments(...)]`
+before `[Test]` still record that method, once. A declaration left inside a line
+comment, a block comment, or a string literal is not recorded. The same matcher
+is what `C1155_ExtraAttributeAfterTestIsDiscovered`,
+`C1155_CommentedOutDeclarationIsNotCounted`,
+`C1155_BlockCommentMethodIsNotCounted`, and
+`C1155_RemovedAndRenamedMethodDiffersFromTheRoster` call on a string. The pin
+fails when the recorded names and the `DispatchBaseWarningDeliveryE2ETests`
+filter names in the table below differ, when one of those filter names is
+repeated, when the discharge sentence, the Windows witness sentence, or the
+CARD-0550 CP-24 cost citation is absent, or when the closed batch checkpoint
+section contains this E2E class name. It does not compile the E2E project, a
+non-public method is not a roster row, and a passing pin does not pass V-2.
 
-V-2. On Windows, each named method stores one complete UserPrompt transcript per
+V-2. On Windows, a named method stores one complete UserPrompt transcript per
 committed dispatch intent from the real producer to the recipient. Queue insert,
-Sent, or ack alone does not discharge V-2.
+Sent, or ack alone does not discharge V-2. V-2 stays pending: CP-2..CP-13 are
+Windows rows, and this roster-pin repair does not run them or mark V-2 passed.
 
 ### Checkpoints
 
 One isolated build for the unit pin and one isolated E2E build for the Windows
 rows. Reuse the E2E build only inside S1. `Min` is TUnit results. CP-2..CP-13
-run on Windows; CP-1 runs on Linux.
+run on Windows; CP-1 runs the roster class on Linux.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
-| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1155/` | roster-pin | `/*/*/DispatchBaseWarningRosterTests/C1155_RosterNamesEveryDispatchWarningE2EMethod*` | V-1 | exact 1 results, 0 failed/skipped | 1 | 2 | true |
+| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1155/` | roster-pin | `/*/*/DispatchBaseWarningRosterTests/*` | V-1 | exact 5 results, 0 failed/skipped | 5 | 2 | true |
 | CP-2 | S1 | `tests/Antiphon.E2E -> bin-c1155e/` | e2e-idle | `/*/*/DispatchBaseWarningDeliveryE2ETests/C540_CollapsedWarningsReachIdleCaller*` | V-2 | exact 1 results, 0 failed/skipped | 1 | 8 | true |
 | CP-3 | S1 | `CP-2` | e2e-mismatch-reach | `/*/*/DispatchBaseWarningDeliveryE2ETests/C508_MismatchWarningReachesCaller*` | V-2 | exact 1 results, 0 failed/skipped | 1 | 4 | true |
 | CP-4 | S1 | `CP-2` | e2e-mismatch-wait | `/*/*/DispatchBaseWarningDeliveryE2ETests/C508_MismatchWarningWaitsForCaller*` | V-2 | exact 1 results, 0 failed/skipped | 1 | 4 | true |
@@ -84,7 +98,7 @@ run on Windows; CP-1 runs on Linux.
 
 Ordinary Code floor is 54 minutes, the sum of `EstimatedMinutes`. A Windows run
 of CP-2..CP-13 is that floor minus CP-1. A Linux roster-pin run is CP-1 only and
-leaves V-2 pending.
+leaves V-2 pending. This repair does not run CP-2..CP-13, so V-2 stays pending.
 
 ## S1
 
