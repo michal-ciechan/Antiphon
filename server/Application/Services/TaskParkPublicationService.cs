@@ -161,15 +161,37 @@ public sealed class TaskParkPublicationService(AppDbContext db, LocalTaskParkPub
     // Database-only binding check for the short reservation/send transaction. The caller
     // separately performs VerifyAsync before opening it; the runner rechecks at signal.
     internal async Task<TaskParkPublicationEvidence?> ReadEvidenceAsync(Guid parkId, CancellationToken ct)
+        => (await ReadEvidenceOrRefusalAsync(parkId, ct)).Evidence;
+
+    /// <summary>
+    /// Same proof as <see cref="ReadEvidenceAsync"/>. A missing proof carries the refusal
+    /// string instead of a bare null, so claim recovery can pace a transient refusal.
+    /// </summary>
+    internal async Task<TaskParkEvidenceRead> ReadEvidenceOrRefusalAsync(Guid parkId, CancellationToken ct)
     {
         var c = await LoadAsync(parkId, ct);
-        if (c is null || c.Park.PublicationReceiptId is null || await RefusalAsync(c.Task, c.Park, c.Baseline, ct) is not null
-            || c.Park.State is not (AgentTaskParkState.Published or AgentTaskParkState.ReleasePending or AgentTaskParkState.Parked)) return null;
+        if (c is null) return await RefuseUnloadedAsync(parkId, ct);
+        if (c.Park.PublicationReceiptId is null) return TaskParkEvidenceRead.Refused("park_receipt_missing");
+        if (await RefusalAsync(c.Task, c.Park, c.Baseline, ct) is { } refusal) return TaskParkEvidenceRead.Refused(refusal);
+        if (c.Park.State is not (AgentTaskParkState.Published or AgentTaskParkState.ReleasePending or AgentTaskParkState.Parked))
+            return TaskParkEvidenceRead.Refused("park_state_changed");
         var remote = !string.IsNullOrEmpty(c.Park.RemoteWorktreePath);
         var kind = c.Park.VerifiedRemoteSha is null ? TaskParkPublicationOutcome.NoSourceChanges : TaskParkPublicationOutcome.Published;
         var evidence = new TaskParkPublicationEvidence(c.Park.PublicationReceiptId.Value, Request(c.Park, remote),
             c.Park.SourceSha!, c.Park.VerifiedRemoteSha, true, true, kind);
-        return Digest(evidence) == c.Park.PublicationReceiptDigest ? evidence : null;
+        return Digest(evidence) == c.Park.PublicationReceiptDigest
+            ? TaskParkEvidenceRead.Accepted(evidence) : TaskParkEvidenceRead.Refused("park_receipt_digest_mismatch");
+    }
+
+    // LoadAsync collapses a missing task, a changed episode and every other unloadable
+    // coordinate into one null. Claim recovery needs the first two named separately.
+    private async Task<TaskParkEvidenceRead> RefuseUnloadedAsync(Guid parkId, CancellationToken ct)
+    {
+        var park = await db.AgentTaskParks.AsNoTracking().SingleOrDefaultAsync(p => p.Id == parkId, ct);
+        if (park is null) return TaskParkEvidenceRead.Refused("park_episode_changed");
+        var task = await db.AgentTasks.AsNoTracking().SingleOrDefaultAsync(t => t.Id == park.TaskId, ct);
+        if (task is null) return TaskParkEvidenceRead.Refused("park_task_missing");
+        return TaskParkEvidenceRead.Refused(SameEpisode(task, park) ? "park_sync_episode_changed" : "park_episode_changed");
     }
 
     /// <summary>Never trusts a receipt against itself: compare persisted intent, verify real source,
@@ -394,4 +416,11 @@ public sealed class TaskParkPublicationService(AppDbContext db, LocalTaskParkPub
     private bool CanOwnTransaction() => db.Database.CurrentTransaction is null
         && System.Transactions.Transaction.Current is null && !db.ChangeTracker.HasChanges();
     private static TaskParkPublicationResult Held(string reason) => new(TaskParkPublicationOutcome.Held, reason);
+}
+
+/// <summary>Digest-bound park proof, or the refusal that withheld it.</summary>
+internal readonly record struct TaskParkEvidenceRead(TaskParkPublicationEvidence? Evidence, string? Refusal)
+{
+    public static TaskParkEvidenceRead Accepted(TaskParkPublicationEvidence evidence) => new(evidence, null);
+    public static TaskParkEvidenceRead Refused(string reason) => new(null, reason);
 }
