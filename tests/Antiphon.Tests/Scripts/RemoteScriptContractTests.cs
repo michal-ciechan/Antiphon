@@ -400,6 +400,126 @@ public sealed class RemoteScriptContractTests
         output.IndexOf("FAIL ", StringComparison.Ordinal).ShouldBe(-1, output);
     }
 
+    // CARD-1195. cp -a /seed/. /cache/ applies the seed directory mode to the volume root,
+    // so a root created at 0700 becomes 0755. F-8 still requires exactly 1654:1654:700.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1195_Fixture_import_chmod_restores_volume_root()
+    {
+        var observe = Block(Remote(), "c849_observe_volume");
+        observe.IndexOf("mode=\"$(sudo -n stat -c '%u:%g:%a' -- \"$resolved\")\" || write_result false CacheRootInvalid 2", StringComparison.Ordinal)
+            .ShouldBeGreaterThanOrEqualTo(0);
+        observe.IndexOf("[ \"$mode\" = 1654:1654:700 ] || write_result false CacheRootOwnershipInvalid 2", StringComparison.Ordinal)
+            .ShouldBeGreaterThanOrEqualTo(0);
+        C1195AssertImportRestoresRoot("c849_fixture_apphost", seedImport: false);
+    }
+
+    // CARD-1195. The production import's u+rwx leaves other-mode bits from that same copy.
+    // chmod 0700 is only the volume root, and it follows the find.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1195_Seed_import_chmod_restores_volume_root() =>
+        C1195AssertImportRestoresRoot("c849_seed", seedImport: true);
+
+    // CARD-1195. F-7 mounted the three cache volumes with no nocopy and no user, so the
+    // image default root copied image directories onto those roots. The mounts use the
+    // production volume.nocopy shape. The probe is uid 1654 and only stats /tmp or writes
+    // inside those mounts.
+    [Test]
+    public void C1195_Retention_probe_is_app_uid_and_does_not_copy_image_content()
+    {
+        var retention = Block(Remote(), "c849_fixture_retention");
+        var production = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "docker-compose.server2-runner.yml"))
+            .Replace("\r\n", "\n");
+        const string user = "user: \"1654:1654\"";
+        const string nocopy = "        volume:\n          nocopy: true\n";
+        production.IndexOf(user, StringComparison.Ordinal).ShouldBeGreaterThanOrEqualTo(0);
+        production.IndexOf(nocopy, StringComparison.Ordinal).ShouldBeGreaterThanOrEqualTo(0);
+        retention.IndexOf(user, StringComparison.Ordinal).ShouldBeGreaterThanOrEqualTo(0, "the probe runs as root");
+        Order(retention, user, "entrypoint: [\"sleep\", \"infinity\"]").ShouldBeTrue("the probe user is set before it starts");
+        foreach (var (source, target) in new[]
+        {
+            ("packages", "/home/app/.nuget/packages"),
+            ("scratch", "/var/cache/antiphon/nuget-scratch"),
+            ("npm", "/home/app/.npm/_cacache")
+        })
+        {
+            var mount = "      - type: volume\n        source: " + source + "\n        target: " + target + "\n" + nocopy;
+            retention.IndexOf(mount, StringComparison.Ordinal).ShouldBeGreaterThanOrEqualTo(0, source + " is copied from the image");
+        }
+
+        Regex.Matches(retention, Regex.Escape(nocopy)).Count.ShouldBe(3);
+        retention.IndexOf("'printf \"retained\\n\" > \"$1/retention-sentinel\"' sh \"$target\"", StringComparison.Ordinal)
+            .ShouldBeGreaterThanOrEqualTo(0, "the sentinel write is not inside the cache mount");
+        retention.Contains("sudo", StringComparison.Ordinal).ShouldBeFalse("the retention probe elevates");
+    }
+
+    private static void C1195AssertImportRestoresRoot(string function, bool seedImport)
+    {
+        var command = Commands(Block(Remote(), function))
+            .Single(line => line.Contains("cp -a /seed/. /cache/", StringComparison.Ordinal));
+        const string copy = "cp -a /seed/. /cache/";
+        const string own = "chown -R 1654:1654 /cache";
+        const string mode = "chmod 0700 /cache";
+        var snippet = C1195QuotedCommand(command);
+        Order(snippet, copy, own).ShouldBeTrue(function + " owns the imported tree");
+        Order(snippet, own, mode).ShouldBeTrue(function + " restores the volume root after the import");
+        if (seedImport)
+        {
+            const string files = "find /cache -type f -exec chmod u+rw {} +";
+            snippet.IndexOf("find /cache -type d -exec chmod u+rwx {} +", StringComparison.Ordinal)
+                .ShouldBeGreaterThanOrEqualTo(0);
+            snippet.IndexOf(files, StringComparison.Ordinal).ShouldBeGreaterThanOrEqualTo(0);
+            Order(snippet, files, mode).ShouldBeTrue("u+rwx keeps a widened root; chmod 0700 follows it");
+        }
+
+        var executable = snippet
+            .Replace(own, ":", StringComparison.Ordinal)
+            .Replace("/seed", "\"$seed\"", StringComparison.Ordinal)
+            .Replace("/cache", "\"$cache\"", StringComparison.Ordinal);
+        executable.Contains("chown", StringComparison.Ordinal).ShouldBeFalse(function);
+        executable.IndexOf("chmod 0700 \"$cache\"", StringComparison.Ordinal).ShouldBeGreaterThanOrEqualTo(0, function);
+        var label = seedImport ? "c1195-seed-root" : "c1195-fixture-root";
+        var output = LinuxShell("""
+            set -euo pipefail
+            exec 2>&1
+            root="$(mktemp -d)"
+            trap 'rm -rf -- "$root"' EXIT
+            seed="$root/seed"
+            cache="$root/cache"
+            mkdir -p "$seed/nested" "$cache"
+            printf 'payload\n' > "$seed/nested/file"
+            chmod 0755 "$seed" "$seed/nested"
+            chmod 0644 "$seed/nested/file"
+            chmod 0700 "$cache"
+            cp -a "$seed/." "$cache/"
+            widened="$(stat -c %a "$cache")"
+            [ "$widened" = 755 ] || { printf 'FAIL widen=%s\n' "$widened"; exit 1; }
+            rm -rf -- "$cache"
+            mkdir -p "$cache"
+            chmod 0700 "$cache"
+            """ + executable + "\n" + """
+            restored="$(stat -c %a "$cache")"
+            [ "$restored" = 700 ] || { printf 'FAIL restored=%s\n' "$restored"; exit 1; }
+            [ -f "$cache/nested/file" ] || { printf 'FAIL payload-missing\n'; exit 1; }
+            grep -Fxq payload "$cache/nested/file" || { printf 'FAIL payload-bytes\n'; exit 1; }
+            printf 'PASS __LABEL__\n'
+            """.Replace("__LABEL__", label, StringComparison.Ordinal));
+        output.IndexOf("PASS " + label, StringComparison.Ordinal).ShouldBeGreaterThanOrEqualTo(0, output);
+        output.IndexOf("FAIL ", StringComparison.Ordinal).ShouldBe(-1, output);
+    }
+
+    private static string C1195QuotedCommand(string command)
+    {
+        const string marker = "-c '";
+        var start = command.IndexOf(marker, StringComparison.Ordinal);
+        start.ShouldBeGreaterThanOrEqualTo(0, command);
+        start += marker.Length;
+        var end = command.IndexOf('\'', start);
+        end.ShouldBeGreaterThan(start, command);
+        return command[start..end];
+    }
+
     private static string C1193LogCopySnippet(string trap)
     {
         const string guard = "if [ -d \"$CASE_DIR\" ] && [ ! -L \"$CASE_DIR\" ]; then ";
