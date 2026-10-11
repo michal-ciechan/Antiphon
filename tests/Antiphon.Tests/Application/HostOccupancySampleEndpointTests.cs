@@ -231,6 +231,11 @@ public sealed class HostOccupancySampleEndpointTests
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var clock = new FakeTimeProvider(Now);
         await using var host = await StartAsync(schema, clock);
+        // Testing is not Development, so the framework default would leave the option false
+        // and this route would answer an empty 400. The body below requires the server pin.
+        host.App.Environment.EnvironmentName.ShouldBe("Testing");
+        host.App.Services.GetRequiredService<IOptions<RouteHandlerOptions>>().Value
+            .ThrowOnBadRequest.ShouldBeTrue();
 
         foreach (var limit in new[] { "nope", "2147483648", "999999999999" })
         {
@@ -284,10 +289,6 @@ public sealed class HostOccupancySampleEndpointTests
                 services.AddSingleton<IOptions<DelegationSettings>>(
                     Options.Create(new DelegationSettings { MaxConcurrentTasks = 4 }));
                 services.AddScoped<HostBudgetService>();
-                // The AppHost pins Development, where a query bind failure throws and
-                // ExceptionMiddleware writes the 400. An unset environment is Production:
-                // minimal APIs then return an empty 400 and the middleware never runs.
-                services.Configure<RouteHandlerOptions>(options => options.ThrowOnBadRequest = true);
             }, mapEndpoints: app => app.MapHostEndpoints());
 
     private static async Task SeedAsync(PhoneHomeTestHost host, params HostOccupancySample[] rows)

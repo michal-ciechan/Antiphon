@@ -12,6 +12,7 @@ using Antiphon.Resilience;
 using Antiphon.Server.Infrastructure.Resilience;
 using Serilog;
 using Antiphon.Messaging.Client;
+using Antiphon.Server.Api;
 using Antiphon.Server.Api.Endpoints;
 using Antiphon.Server.Api.Middleware;
 using Antiphon.Server.Application.Interfaces;
@@ -360,6 +361,9 @@ try
         options.SerializerOptions.Converters.Add(
             new JsonStringEnumConverter(namingPolicy: null, allowIntegerValues: false));
     });
+
+    // CARD-1123: a malformed query value returns the problem body outside Development.
+    RequestBinding.PinThrowOnBadRequest(builder.Services);
 
     // Health checks (NFR21)
     var healthChecks = builder.Services.AddHealthChecks();

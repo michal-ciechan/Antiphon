@@ -121,6 +121,8 @@ internal sealed class PhoneHomeTestHost : IAsyncDisposable
         else
             builder.Services.AddSingleton<IRunnerStateStore, MemoryRunnerStateStore>();
         builder.Services.AddScoped<RunnerStateService>();
+        // CARD-1123: this host is Testing, where the framework leaves ThrowOnBadRequest false.
+        Antiphon.Server.Api.RequestBinding.PinThrowOnBadRequest(builder.Services);
         configureServices?.Invoke(builder.Services);
         host.App = builder.Build();
         host.Directory = host.App.Services.GetRequiredService<PhoneHomeRunnerDirectory>();
