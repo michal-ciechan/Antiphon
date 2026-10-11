@@ -465,9 +465,15 @@ Compose file still interpolates that path. Moving a host path is a two-generatio
 single-step move renders the previous file with the new path, which does not match the container,
 and refuses `RecycleContainerStateUnknown`.
 
-A `redeploy-old` rollback to an older SHA works only when that SHA contains this fix. An older SHA
-runs the pre-fix script, which requires the target mount count of the containers it stops, so a
-container whose mount set differs from the older roster refuses on mount count. In that script
+A `redeploy-old` rollback to an older SHA runs that SHA's script. An older SHA that lacks the
+previous-generation proof runs the pre-fix script. That script compares the containers it will stop
+with the target roster from `c1008_compose_model`, after the recycle lock and before the recycle
+journal, `docker stop`, or removal. In `c1008_owned_mounts`, a non-tmpfs count that differs from
+that roster, or a repeated destination, is `error("mount count")`. A same-count replacement with
+unique destinations passes that count guard. A missing expected destination is `error("destination")`,
+and a found destination whose type, source, or read-write flag does not match is
+`error("mount identity")`. On the pre-removal call in `c1008_recycle`, those errors refuse
+`RecycleContainerStateUnknown`. In that script
 `c1008_compose_model` raises `RecycleComposeMismatch` on `error("mount set")` when a rendered
 service volume roster is not an array, differs in length from the expected block, repeats a target,
 or carries configs. A newer generation with the same Compose files and the same expected roster does

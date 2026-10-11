@@ -300,7 +300,11 @@ public sealed class DockerStackDocumentationTests
             "C1008_PROJECT == HOST_PROJECT",
             "C1008_DRY_RUN == 0",
             "C1105_Compose_cmp_refuses_before_removal",
-            "whose mount set differs from the older roster",
+            "same-count replacement with unique destinations passes that count guard",
+            "error(\"mount count\")",
+            "error(\"destination\")",
+            "error(\"mount identity\")",
+            "RecycleContainerStateUnknown",
             "c1008_compose_model",
             "error(\"mount set\")",
             "same expected roster does not take that refusal",
@@ -312,6 +316,11 @@ public sealed class DockerStackDocumentationTests
         // CARD-1142: the mount-set refusal is the rendered roster versus the expected block.
         text.Contains("on-disk Compose file is still the new generation", StringComparison.Ordinal)
             .ShouldBeFalse("generation alone is not the mount-set refusal");
+        // CARD-1142 repair 2: same-count unique destinations pass the count guard.
+        text.Contains("whose mount set differs from the older roster", StringComparison.Ordinal)
+            .ShouldBeFalse("a differing mount set is not refused on count");
+        text.Contains("refuses on mount count", StringComparison.Ordinal)
+            .ShouldBeFalse("mount count is one guard, not the refusal for a differing set");
     }
 
     // CARD-0628 G-17b.
