@@ -126,7 +126,7 @@ children, the phone-home test host, vitest), so the Code dispatch needs neither 
   from the row, as CARD-0633 designed).
 - **D-5 A re-arm with a cut worktree and a captured baseline takes no lease.** New
   `AgentTaskDispatcher.RearmsPreparedWorktree(task)`: `RunnerId` set, `Workspace == Worktree`,
-  `WorktreePath` set, `RemoteWorktreePath` **null**, `ProgressBaselineJson` non-empty,
+  `WorktreePath` set, `RemoteWorktreePath` null or empty, `ProgressBaselineJson` non-empty,
   `RepairSourceTaskId` null, `SourceLandingOperationId` null, `VerificationRound != Interim`;
   `needsLease` becomes `... && !LaunchesPreparedMirror(task) && !RearmsPreparedWorktree(task)`.
   `LaunchesPreparedMirror` and its C672 tests are untouched.
@@ -206,7 +206,7 @@ schemas and the phone-home test host; predicate, ledger, settings and docs-pin c
 | V-5 | `RemoteWorkspacePreparerTests.C1076_prep_push_carries_the_task_tag_and_the_configured_budget` | D-2: the production push uses the options overload with the configured minutes and the task tag. |
 | V-6 | `RemoteWorkspacePreparerTests.C1076_pushes_on_one_repository_run_one_at_a_time_and_the_waiter_names_the_pusher` | D-4: one push at a time per repository, the waiter's `Progress` names the pusher, both mirrors complete, no warnings. |
 | V-7 | `RemoteWorkspacePreparerTests.C672_prepared_task_launches_while_a_land_holds_the_lease` (new arms `rearm`, `rearm-no-baseline`) | D-5: a captured-baseline re-arm never asks for the lease and arms the mirror; a re-arm without a baseline still waits for the lease. |
-| V-8 | `AgentTaskDispatcherPredicateTests.C1076_RearmsPreparedWorktree` (9 results) | D-5: the predicate's exact matrix. |
+| V-8 | `AgentTaskDispatcherPredicateTests.C1076_RearmsPreparedWorktree` (11 results; CARD-1095 adds `empty-baseline` false and `empty-mirror` true to the original 9) | D-5: the predicate's exact matrix, null and empty alike. |
 | V-9 | `AgentTaskPipelineStatusTests.C1076_a_dispatcher_lease_hold_is_the_queued_reason_and_names_the_owner` (4 results) | D-6: owner-text, fenced-text, running-land holder, previous-stint floor. |
 | V-10 | `AgentTaskPipelineStatusTests.C1076_remote_preparation_in_flight_or_backing_off_is_the_queued_reason` (3 results) | D-6: in-flight and backoff holds, pin precedence. |
 | V-11 | `AgentTaskPipelineStatusTests.C1076_a_task_waiting_for_its_push_turn_names_the_pushing_task` | D-4/D-6: `heldBy` from the preparer's `Progress`. |
@@ -275,7 +275,7 @@ rebases nothing (the branch is fast-forward-only).
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1076-a/` | lease-journal | `/*/*/(RepositoryMutationLeaseTests*)\|(RepositoryMutationLeaseDescribeTests*)\|(RepositoryChildJournalInspectorTests*)\|(RepositoryFenceObserverTests*)/*` | V-3, V-4, R-2, R-8 | 29 linux / 31 windows executed (18 lease + 4 V-3, 1 describe, 6 + 1 V-4, 1 fence). Linux skips the two pre-existing Windows-only lease tests; 0 failed | 29 linux / 31 windows | 12 | true |
 | CP-2 | S1 | CP-1 | landing-git | `/*/*/LandingGitTests/*` | V-1, V-2, R-3 | exact 57 results (55 existing + 2 C1076_*), 0 failed/skipped | 57 | 8 | true |
 | CP-3 | all | `tests/Antiphon.Tests -> bin-c1076-b/` | remote-prep | `/*/*/(RemoteWorkspacePreparerTests*)\|(DispatcherRemotePrepStarvationTests*)\|(PhoneHomeTaskDispatchProjectionTests*)/*` | V-5, V-6, V-7, R-1, R-7, R-10 | exact 35 results (19 existing + 2 C1076_* + 2 new C672 arms, 4, 8), 0 failed/skipped | 35 | 15 | true |
-| CP-4 | all | CP-3 | predicates-settings-docs | `/*/*/(AgentTaskDispatcherPredicateTests*)\|(DispatchHoldLedgerTests*)\|(DelegationLeaseSettingsTests*)\|(RunnerBranchContractDocumentationTests*)/*` | V-8, V-12, V-13, V-15, R-5, R-6, R-11, R-12 | exact 55 results (8 + 9, 22 + 1, 8 + 3, 3 + 1), 0 failed/skipped | 55 | 5 | true |
+| CP-4 | all | CP-3 | predicates-settings-docs | `/*/*/(AgentTaskDispatcherPredicateTests*)\|(DispatchHoldLedgerTests*)\|(DelegationLeaseSettingsTests*)\|(RunnerBranchContractDocumentationTests*)/*` | V-8, V-12, V-13, V-15, R-5, R-6, R-11, R-12 | landed floor 55 (predicate matrix now 8 + 11 after CARD-1095; 22 + 1, 8 + 3, 3 + 1), 0 failed/skipped | 55 | 5 | true |
 | CP-5 | all | CP-3 | pipeline-reasons | `/*/*/AgentTaskPipelineStatusTests/*` | V-9, V-10, V-11, R-4 | exact 66 results (58 existing across the three partials + 4 + 3 + 1), 0 failed/skipped | 66 | 7 | true |
 | CP-6 | all | CP-3 | hold-visibility-lease | `/*/*/DispatchHoldVisibilityTests/(lease_hold_traces_once_per_holder_and_names_the_running_land*)\|(lease_fence_is_named_from_the_provider*)\|(unknown_lease_holder_is_stable_text*)\|(C672_lease_hold_registers_a_waiter_and_dispatch_clears_it*)\|(C672_held_aged_carries_the_per_class_wait_ledger*)` | R-9 | exact 5 methods, 0 failed/skipped | 5 | 4 | true |
 | CP-7 | all | n/a | client-vitest | `pwsh -File scripts/test-client.ps1 pipelineStageModel homeTasksModel TaskCard` | V-14 | the three files run with the new cases, 0 failed | n/a | 5 | |
