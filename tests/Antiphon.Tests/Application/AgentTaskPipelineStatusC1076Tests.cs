@@ -145,10 +145,8 @@ public partial class AgentTaskPipelineStatusTests
     }
 
     /// <summary>
-    /// CARD-1076 D-4/D-6. heldBy is the preparer's enqueue-time BehindTaskId. With two tasks
-    /// that snapshot is the task holding the push gate. CARD-1093: a third waiter can name a
-    /// pusher that has already finished, or null. This test does not treat the field as a
-    /// live reading of the current holder.
+    /// CARD-1076 D-4/D-6. heldBy is the preparer's BehindTaskId. With two tasks that is the
+    /// task holding the push gate.
     /// </summary>
     [Test]
     public async Task C1076_a_task_waiting_for_its_push_turn_names_the_pushing_task()
@@ -196,7 +194,7 @@ public partial class AgentTaskPipelineStatusTests
             while (DateTime.UtcNow < waiterSeen
                 && preparer.Progress(waiting.Id)?.BehindTaskId != pushing.Id)
                 await Task.Delay(20);
-            // Two tasks: the snapshot recorded when the waiter entered the gate is the pusher.
+            // Two tasks: the waiter names the task holding the turn.
             preparer.Progress(waiting.Id)?.BehindTaskId.ShouldBe(pushing.Id);
 
             var row = await QueuedRowAsync(db, waiting.Id, preparer);

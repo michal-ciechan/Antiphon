@@ -40,8 +40,9 @@ public class RunnerBranchContractDocumentationTests
             text.ShouldContain(AgentTaskPipelineStatusService.QueueReasonRemotePrep);
             text.ShouldContain("does not track origin");
             text.ShouldContain(nameof(RemotePrepProgress.BehindTaskId));
-            text.ShouldContain("enqueue-time snapshot");
+            text.ShouldContain("current push-gate holder");
             text.ShouldContain("CARD-1093");
+            text.ShouldNotContain("enqueue-time snapshot");
         }
 
         loop.ShouldContain(AgentTaskPipelineStatusService.QueueReasonHostBudget);

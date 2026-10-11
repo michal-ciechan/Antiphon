@@ -455,8 +455,12 @@ public sealed class RemoteWorkspacePreparerTests
     }
 
     /// <summary>
-    /// CARD-1076 D-4. One push at a time per repository. The waiter names the pusher, then both
-    /// mirrors complete with no warning.
+    /// CARD-1076 D-4. One push at a time per repository. Each waiter names the task holding the
+    /// turn. CARD-1093: after the first pusher releases, the remaining waiter names the task that
+    /// took the turn, not the holder recorded when that waiter entered the gate.
+    /// PC-1 (pending Mutation): make <c>Progress</c> return the holder captured at entry instead
+    /// of the gate's current holder. This method goes red because the remaining waiter still
+    /// names the finished pusher.
     /// </summary>
     [Test]
     public async Task C1076_pushes_on_one_repository_run_one_at_a_time_and_the_waiter_names_the_pusher()
@@ -465,8 +469,9 @@ public sealed class RemoteWorkspacePreparerTests
         rig.Peer.SilentFor(PhoneHomeOperation.WorkspaceMirror);
         var git = (PushOnlyGit)rig.Provider.GetRequiredService<ILandingGit>();
         git.HoldFirstPush = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        git.HoldSecondPush = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var ids = new List<Guid>();
-        for (var i = 0; i < 2; i++)
+        for (var i = 0; i < 3; i++)
         {
             var worktree = Directory.CreateDirectory(Path.Combine(rig.WorkspacePath, $"wt-{i}")).FullName;
             ids.Add(await rig.SeedAsync(t =>
@@ -476,54 +481,98 @@ public sealed class RemoteWorkspacePreparerTests
             }));
         }
 
-        await rig.TickAsync().WaitAsync(TickBound);
-        foreach (var id in ids)
+        try
         {
-            (await rig.EventsAsync(id, AgentTaskEventType.Held)).Last().Detail
-                .ShouldStartWith(DispatchHoldDetails.RemoteMirrorRequestedPrefix);
-        }
-
-        var deadline = DateTime.UtcNow + TickBound;
-        Guid pusher = Guid.Empty;
-        RemotePrepProgress? waiting = null;
-        while (DateTime.UtcNow < deadline)
-        {
-            var rows = ids.Select(id => (id, progress: rig.Preparer.Progress(id))).ToArray();
-            var pushing = rows.Where(row => row.progress?.Phase == RemotePrepPhase.Pushing).ToArray();
-            var queued = rows.Where(row => row.progress?.Phase == RemotePrepPhase.WaitingForPushTurn).ToArray();
-            if (pushing.Length == 1 && queued.Length == 1
-                && queued[0].progress!.Value.BehindTaskId == pushing[0].id
-                && git.MaxConcurrentPushes == 1 && git.Pushes.Count == 1)
+            await rig.TickAsync().WaitAsync(TickBound);
+            foreach (var id in ids)
             {
-                pusher = pushing[0].id;
-                waiting = queued[0].progress;
-                break;
+                (await rig.EventsAsync(id, AgentTaskEventType.Held)).Last().Detail
+                    .ShouldStartWith(DispatchHoldDetails.RemoteMirrorRequestedPrefix);
             }
 
-            await Task.Delay(20);
+            var deadline = DateTime.UtcNow + TickBound;
+            Guid firstPusher = Guid.Empty;
+            var firstWaiters = 0;
+            string? last = null;
+            while (DateTime.UtcNow < deadline)
+            {
+                var rows = ids.Select(id => (id, progress: rig.Preparer.Progress(id))).ToArray();
+                last = Describe(rows, git);
+                var pushing = rows.Where(row => row.progress?.Phase == RemotePrepPhase.Pushing).ToArray();
+                var queued = rows.Where(row => row.progress?.Phase == RemotePrepPhase.WaitingForPushTurn).ToArray();
+                if (pushing.Length == 1 && queued.Length == 2
+                    && queued.All(row => row.progress!.Value.BehindTaskId == pushing[0].id)
+                    && git.MaxConcurrentPushes == 1 && git.Pushes.Count == 1)
+                {
+                    firstPusher = pushing[0].id;
+                    firstWaiters = queued.Length;
+                    break;
+                }
+
+                await Task.Delay(20);
+            }
+
+            firstWaiters.ShouldBe(2, last);
+            git.MaxConcurrentPushes.ShouldBe(1);
+
+            git.HoldFirstPush.TrySetResult();
+            deadline = DateTime.UtcNow + TickBound;
+            Guid secondPusher = Guid.Empty;
+            RemotePrepProgress? stillWaiting = null;
+            while (DateTime.UtcNow < deadline)
+            {
+                var rows = ids.Select(id => (id, progress: rig.Preparer.Progress(id))).ToArray();
+                last = Describe(rows, git);
+                var pushing = rows.Where(row => row.progress?.Phase == RemotePrepPhase.Pushing).ToArray();
+                var queued = rows.Where(row => row.progress?.Phase == RemotePrepPhase.WaitingForPushTurn).ToArray();
+                if (pushing.Length == 1 && pushing[0].id != firstPusher
+                    && queued.Length == 1
+                    && queued[0].progress!.Value.BehindTaskId == pushing[0].id
+                    && queued[0].progress!.Value.BehindTaskId != firstPusher
+                    && git.MaxConcurrentPushes == 1 && git.Pushes.Count == 2)
+                {
+                    secondPusher = pushing[0].id;
+                    stillWaiting = queued[0].progress;
+                    break;
+                }
+
+                await Task.Delay(20);
+            }
+
+            stillWaiting.ShouldNotBeNull(
+                $"remaining waiter did not name the new pusher; {last}");
+            stillWaiting!.Value.Phase.ShouldBe(RemotePrepPhase.WaitingForPushTurn);
+            stillWaiting.Value.BehindTaskId.ShouldBe(secondPusher);
+            stillWaiting.Value.BehindTaskId.ShouldNotBe(firstPusher);
+
+            git.HoldSecondPush.TrySetResult();
+            for (var n = 1; n <= 3; n++)
+            {
+                var request = await rig.WaitForRequestsAsync(PhoneHomeOperation.WorkspaceMirror, n);
+                await rig.Peer.EmitAsync(MirrorResult(request, "/work/worktrees/c1076-mirror-" + n));
+            }
+
+            await rig.Preparer.WhenIdleAsync().WaitAsync(TickBound);
+            git.MaxConcurrentPushes.ShouldBe(1);
+            git.Pushes.Count.ShouldBe(3);
+            foreach (var id in ids)
+            {
+                (await rig.ReadTaskAsync(id)).RemoteWorktreePath.ShouldNotBeNull();
+                (await rig.EventsAsync(id, AgentTaskEventType.Warning)).ShouldBeEmpty();
+            }
         }
-
-        waiting.ShouldNotBeNull();
-        waiting!.Value.Phase.ShouldBe(RemotePrepPhase.WaitingForPushTurn);
-        waiting.Value.BehindTaskId.ShouldBe(pusher);
-        git.MaxConcurrentPushes.ShouldBe(1);
-
-        git.HoldFirstPush.TrySetResult();
-        for (var n = 1; n <= 2; n++)
+        finally
         {
-            var request = await rig.WaitForRequestsAsync(PhoneHomeOperation.WorkspaceMirror, n);
-            await rig.Peer.EmitAsync(MirrorResult(request, "/work/worktrees/c1076-mirror-" + n));
-        }
-
-        await rig.Preparer.WhenIdleAsync().WaitAsync(TickBound);
-        git.MaxConcurrentPushes.ShouldBe(1);
-        git.Pushes.Count.ShouldBe(2);
-        foreach (var id in ids)
-        {
-            (await rig.ReadTaskAsync(id)).RemoteWorktreePath.ShouldNotBeNull();
-            (await rig.EventsAsync(id, AgentTaskEventType.Warning)).ShouldBeEmpty();
+            git.HoldFirstPush.TrySetResult();
+            git.HoldSecondPush.TrySetResult();
         }
     }
+
+    private static string Describe(
+        IEnumerable<(Guid id, RemotePrepProgress? progress)> rows, PushOnlyGit git) =>
+        $"pushes={git.Pushes.Count} max={git.MaxConcurrentPushes} "
+        + string.Join("; ", rows.Select(row =>
+            $"{row.id:N} phase={row.progress?.Phase} behind={row.progress?.BehindTaskId:N}"));
 
     /// <summary>
     /// Review 3488192e (2): V-1 and V-12 carried to the recipient. The card's timeline for one
@@ -1110,6 +1159,7 @@ public sealed class RemoteWorkspacePreparerTests
         private int _pushOrdinal;
 
         public TaskCompletionSource? HoldFirstPush { get; set; }
+        public TaskCompletionSource? HoldSecondPush { get; set; }
         public int MaxConcurrentPushes { get { lock (_sync) return _maxConcurrent; } }
         public List<RecordedPush> Pushes { get; } = [];
 
@@ -1147,6 +1197,8 @@ public sealed class RemoteWorkspacePreparerTests
             {
                 if (HoldFirstPush is not null && ordinal == 0)
                     await HoldFirstPush.Task.WaitAsync(ct);
+                if (HoldSecondPush is not null && ordinal == 1)
+                    await HoldSecondPush.Task.WaitAsync(ct);
             }
             finally
             {

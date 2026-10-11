@@ -62,7 +62,11 @@ public sealed class RemoteWorkspacePreparer : IAsyncDisposable
         public DateTime Since { get; }
         public TaskCompletionSource Done { get; }
         public RemotePrepPhase Phase { get; set; } = RemotePrepPhase.Pushing;
-        public Guid? BehindTaskId { get; set; }
+        public PushGate? Gate { get; set; }
+
+        /// <summary>Test seam. Production leaves this unset and reads the gate holder.</summary>
+        public bool BehindOverrideSet { get; set; }
+        public Guid? BehindOverride { get; set; }
     }
 
     /// <summary>One push at a time for a repository. The wait is not part of the push budget.</summary>
@@ -137,17 +141,45 @@ public sealed class RemoteWorkspacePreparer : IAsyncDisposable
 
     /// <summary>
     /// CARD-1076 D-4. Null when <paramref name="taskId"/> has no preparation in flight.
-    /// <see cref="RemotePrepProgress.BehindTaskId"/> is the enqueue-time snapshot (CARD-1093):
-    /// with three or more tasks waiting on one repository it can name a pusher that has already
-    /// finished, or be null. It is not the exact current holder.
+    /// <see cref="RemotePrepProgress.BehindTaskId"/> is the gate's current holder while the phase
+    /// is <see cref="RemotePrepPhase.WaitingForPushTurn"/> (CARD-1093), read under the gate lock
+    /// on each call. It is null while this task is pushing or mirroring, and null while the
+    /// holder is empty.
     /// </summary>
     public RemotePrepProgress? Progress(Guid taskId)
     {
         if (!_inFlight.TryGetValue(taskId, out var entry))
             return null;
-        var progress = new RemotePrepProgress(entry.Since, entry.Phase, entry.BehindTaskId);
+
+        var since = entry.Since;
+        RemotePrepPhase phase;
+        Guid? behind;
+        if (entry.Gate is { } gate)
+        {
+            lock (gate.Sync)
+            {
+                phase = entry.Phase;
+                behind = BehindUnderLock(entry, gate);
+            }
+        }
+        else
+        {
+            phase = entry.Phase;
+            behind = entry.BehindOverrideSet ? entry.BehindOverride : null;
+        }
+
+        var progress = new RemotePrepProgress(since, phase, behind);
         AfterProgressRead?.Invoke(taskId);
         return progress;
+    }
+
+    private static Guid? BehindUnderLock(InFlight entry, PushGate gate)
+    {
+        if (entry.BehindOverrideSet)
+            return entry.BehindOverride;
+        if (entry.Phase != RemotePrepPhase.WaitingForPushTurn)
+            return null;
+        return gate.Holder == Guid.Empty ? null : gate.Holder;
     }
 
     /// <summary>
@@ -156,12 +188,25 @@ public sealed class RemoteWorkspacePreparer : IAsyncDisposable
     /// </summary>
     internal Action<Guid>? AfterProgressRead { get; set; }
 
-    /// <summary>Test seam. Replaces the holder a later <see cref="Progress"/> read would name.</summary>
+    /// <summary>Test seam. A later <see cref="Progress"/> read names this holder instead of the gate's.</summary>
     internal bool TryRetargetBehind(Guid taskId, Guid? behindTaskId)
     {
         if (!_inFlight.TryGetValue(taskId, out var entry))
             return false;
-        entry.BehindTaskId = behindTaskId;
+        if (entry.Gate is { } gate)
+        {
+            lock (gate.Sync)
+            {
+                entry.BehindOverride = behindTaskId;
+                entry.BehindOverrideSet = true;
+            }
+        }
+        else
+        {
+            entry.BehindOverride = behindTaskId;
+            entry.BehindOverrideSet = true;
+        }
+
         return true;
     }
 
@@ -215,7 +260,6 @@ public sealed class RemoteWorkspacePreparer : IAsyncDisposable
                 else
                 {
                     entry.Phase = RemotePrepPhase.Mirroring;
-                    entry.BehindTaskId = null;
                     var path = await remote.MirrorAsync(task, push.Sha, push.Repository!, ct);
                     // D-8: keyed by id, not by status, so a mirror that succeeds after a cancel is
                     // still known to retirement and removed rather than left as runner residue.
@@ -301,18 +345,17 @@ public sealed class RemoteWorkspacePreparer : IAsyncDisposable
     /// </summary>
     private async Task EnterPushTurnAsync(PushGate gate, InFlight entry, Guid taskId, CancellationToken ct)
     {
+        entry.Gate = gate;
         lock (gate.Sync)
         {
             if (gate.Holder == Guid.Empty && gate.Turn.CurrentCount > 0 && gate.Turn.Wait(0))
             {
                 gate.Holder = taskId;
                 entry.Phase = RemotePrepPhase.Pushing;
-                entry.BehindTaskId = null;
                 return;
             }
 
             entry.Phase = RemotePrepPhase.WaitingForPushTurn;
-            entry.BehindTaskId = gate.Holder == Guid.Empty ? null : gate.Holder;
         }
 
         await gate.Turn.WaitAsync(ct);
@@ -320,7 +363,6 @@ public sealed class RemoteWorkspacePreparer : IAsyncDisposable
         {
             gate.Holder = taskId;
             entry.Phase = RemotePrepPhase.Pushing;
-            entry.BehindTaskId = null;
         }
     }
 
