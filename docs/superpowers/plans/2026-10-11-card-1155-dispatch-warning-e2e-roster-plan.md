@@ -50,29 +50,38 @@ positive control: this roster adds no production behavior to mutate.
 V-1. `C1155_RosterNamesEveryDispatchWarningE2EMethod` reads this plan and
 `tests/Antiphon.E2E/DispatchBaseWarningDeliveryE2ETests.cs`. Discovery parses
 that source with `CSharpSyntaxTree.ParseText` and fails when the parse has a
-syntax error. It records each public, non-static method declared on class
-`DispatchBaseWarningDeliveryE2ETests`, once, when any attribute on that method
-has the simple name `Test` or `TestAttribute`, in any position and any list
-shape. A later attribute, a comma-combined list such as `[Test, Timeout(...)]`,
-stacked `[Test][Category(...)]`, and `[Arguments(...)]` before `[Test]` still
-record that method, once. A declaration inside a line comment, a block comment,
-an ordinary string, a verbatim string, a verbatim string that begins with an
-escaped quote, a `'"'` character literal, a raw string literal, or an
-interpolated string is not recorded, and a following public test method stays
-recorded. The same parser is what `C1155_ExtraAttributeAfterTestIsDiscovered`,
+syntax error. Discovery reads that named E2E source file only, not a partial
+class in another file and not generated code. It matches attribute simple names
+`Test` and `TestAttribute`. A conditional-compilation directive makes the pin
+fail closed. After parsing, `#if`, `#elif`, `#else`, or `#endif` trivia fails
+the pin with a message that names the first such directive's line, and the pin
+does not supply project preprocessor symbols. It records each public,
+non-static method declared on class `DispatchBaseWarningDeliveryE2ETests` in
+that file, once, when any attribute on that method has one of those simple
+names, in any position and any list shape. A later attribute, a comma-combined
+list such as `[Test, Timeout(...)]`, stacked `[Test][Category(...)]`, and
+`[Arguments(...)]` before `[Test]` still record that method, once. A
+declaration inside a line comment, a block comment, an ordinary string, a
+verbatim string, a verbatim string that begins with an escaped quote, a `'"'`
+character literal, a raw string literal, or an interpolated string is not
+recorded, and a following public test method stays recorded. The same parser
+is what `C1155_ExtraAttributeAfterTestIsDiscovered`,
 `C1155_CommentedOutDeclarationIsNotCounted`,
 `C1155_BlockCommentMethodIsNotCounted`,
 `C1155_RemovedAndRenamedMethodDiffersFromTheRoster`,
 `C1155_VerbatimEscapedQuoteDoesNotHideTheNextTest`,
 `C1155_CharLiteralQuoteDoesNotHideTheNextTest`,
-`C1155_RawStringDoesNotHideTheNextTest`, and
-`C1155_InterpolatedStringDoesNotHideTheNextTest` call. The pin fails when the
-recorded names and the `DispatchBaseWarningDeliveryE2ETests` filter names in
-the table below differ, when one of those filter names is repeated, when this
-plan lacks the discharge sentence or the Windows witness sentence, when the
-`## Cost basis` section lacks its four-minute one-method budget citation (the
-same words in any other section do not count), or when the closed batch
-checkpoint section contains this E2E class name. It does not compile the E2E
+`C1155_RawStringDoesNotHideTheNextTest`,
+`C1155_InterpolatedStringDoesNotHideTheNextTest`,
+`C1155_ConditionalDirectiveFailsClosed`, and
+`C1155_SourceWithoutConditionalDirectiveIsDiscovered` call. The pin fails when
+the recorded names and the `DispatchBaseWarningDeliveryE2ETests` filter names
+in the table below differ, when one of those filter names is repeated, when
+this plan lacks the discharge sentence or the Windows witness sentence, when
+the `## Cost basis` section lacks its four-minute one-method budget citation
+(the same words in any other section do not count), when the closed batch
+checkpoint section contains this E2E class name, or when that E2E source
+contains a conditional-compilation directive. It does not compile the E2E
 project, a non-public or static method is not a roster row, and a passing pin
 does not pass V-2. CP-2..CP-13 stay unrun on Linux and V-2 stays pending.
 
@@ -89,7 +98,7 @@ run on Windows; CP-1 runs the roster class on Linux.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
-| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1155/` | roster-pin | `/*/*/DispatchBaseWarningRosterTests/*` | V-1 | exact 9 results, 0 failed/skipped | 9 | 2 | true |
+| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1155/` | roster-pin | `/*/*/DispatchBaseWarningRosterTests/*` | V-1 | exact 11 results, 0 failed/skipped | 11 | 2 | true |
 | CP-2 | S1 | `tests/Antiphon.E2E -> bin-c1155e/` | e2e-idle | `/*/*/DispatchBaseWarningDeliveryE2ETests/C540_CollapsedWarningsReachIdleCaller*` | V-2 | exact 1 results, 0 failed/skipped | 1 | 8 | true |
 | CP-3 | S1 | `CP-2` | e2e-mismatch-reach | `/*/*/DispatchBaseWarningDeliveryE2ETests/C508_MismatchWarningReachesCaller*` | V-2 | exact 1 results, 0 failed/skipped | 1 | 4 | true |
 | CP-4 | S1 | `CP-2` | e2e-mismatch-wait | `/*/*/DispatchBaseWarningDeliveryE2ETests/C508_MismatchWarningWaitsForCaller*` | V-2 | exact 1 results, 0 failed/skipped | 1 | 4 | true |
