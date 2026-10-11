@@ -681,7 +681,7 @@ of treating static coverage as a executed mutation receipt.
     {"id":"R-4","test":"CheckpointImportTests.command_rows_become_command_checkpoints","kind":"method","name":"CheckpointImportTests.command_rows_become_command_checkpoints","planLine":246},
     {"id":"R-4","test":"CheckpointImportTests.derives_roster_tokens_from_the_filter","kind":"method","name":"CheckpointImportTests.derives_roster_tokens_from_the_filter","planLine":246},
     {"id":"R-4","test":"CheckpointImportTests.refuses_the_legacy_eight_column_table","kind":"method","name":"CheckpointImportTests.refuses_the_legacy_eight_column_table","planLine":246},
-    {"id":"R-4","test":"CheckpointImportTests.warns_when_estimate_exceeds_row_timeout","kind":"method","name":"CheckpointImportTests.warns_when_estimate_exceeds_row_timeout","planLine":246},
+    {"id":"R-4","test":"CheckpointImportTests.warns_when_estimate_exceeds_advisory_threshold","kind":"method","name":"CheckpointImportTests.warns_when_estimate_exceeds_advisory_threshold","planLine":246},
     {"id":"R-4","test":"CheckpointImportTests.imports_the_card_0723_table","kind":"method","name":"CheckpointImportTests.imports_the_card_0723_table","planLine":246},
     {"id":"R-4","test":"CheckpointImportTests.serial_import_round_trips_and_excludes_other_rows","kind":"method","name":"CheckpointImportTests.serial_import_round_trips_and_excludes_other_rows","planLine":246},
     {"id":"R-4","test":"CheckpointImportTests.environment_map_round_trips_without_changing_serial","kind":"method","name":"CheckpointImportTests.environment_map_round_trips_without_changing_serial","planLine":246},

@@ -203,4 +203,72 @@ public sealed class PlanCoverageBindingTests : CheckpointTestBase
             }
         }
     }
+
+    [Test]
+    [Timeout(240_000)]
+    public void historical_row_timeout_checklist_binds_the_advisory_method()
+    {
+        const string retired = "warns_when_estimate_exceeds_row_timeout";
+        const string current = "warns_when_estimate_exceeds_advisory_threshold";
+        const string qualified = "CheckpointImportTests." + current;
+        var root = CheckpointFixtures.RepoRoot;
+        foreach (var relative in new[]
+        {
+            "docs/superpowers/plans/2026-10-01-card-0891-plan-to-test-coverage-check-plan.md",
+            "docs/superpowers/plans/2026-10-03-card-1005-opt-in-class-census-plan.md",
+            "docs/superpowers/plans/2026-09-25-card-0723-checkpoint-runner-plan.md",
+            "docs/superpowers/plans/2026-09-26-checkpoint-tool-hardening-plan.md",
+        })
+        {
+            var text = File.ReadAllText(Path.Combine(root, relative));
+            text.ShouldNotContain(retired, Case.Sensitive, "c1055-retired-name");
+            text.ShouldContain(current, Case.Sensitive, "c1055-advisory-name");
+        }
+
+        var rename = File.ReadAllText(Path.Combine(root, "docs/superpowers/plans/2026-10-04-card-1041-row-timeout-advisory-plan.md"));
+        rename.ShouldContain(retired, Case.Sensitive, "c1055-rename-record");
+        rename.ShouldContain(current, Case.Sensitive, "c1055-rename-record");
+
+        var command = new CoverageCommand();
+        Bind("docs/superpowers/plans/2026-10-01-card-0891-plan-to-test-coverage-check-plan.md", null, "R-1", 72, "c1055-0891");
+        Bind("docs/superpowers/plans/2026-10-03-card-1005-opt-in-class-census-plan.md",
+        [
+            "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
+            "tests/Antiphon.Tests/Checkpoints/PlanCoverageParserTests.cs",
+            "tests/Antiphon.Tests/Checkpoints/PlanCoverageAssertionTests.cs",
+            "tests/Antiphon.Tests/Checkpoints/PlanCoveragePcTests.cs",
+            "tests/Antiphon.Tests/Checkpoints/PlanCoverageGoldenTests.cs",
+            "tests/Antiphon.Tests/Checkpoints/PlanCoverageCommandTests.cs",
+            "tests/Antiphon.Tests/Checkpoints/PlanCoverageHandleTests.cs",
+            "tests/Antiphon.Tests/Checkpoints/PlanCoverageFixture.cs",
+            "tests/Antiphon.Tests/Checkpoints/CheckpointImportTests.cs",
+            "tests/Antiphon.Tests/Checkpoints/CheckpointManifestTests.cs",
+            "tests/Antiphon.Tests/Checkpoints/CheckpointTempUsageTests.cs",
+            "tests/Antiphon.Tests/TestHelpers/TestLaneCategoryGuardTests.cs",
+            "tests/Shared/TestClassificationGuardTests.cs",
+        ], "R-4", 177, "c1055-1005");
+
+        void Bind(string plan, string[]? tests, string id, int obligations, string label)
+        {
+            var output = new StringWriter();
+            command.Run(root, plan, tests, "json", output: output).ShouldBe(0, label);
+            using var document = JsonDocument.Parse(output.ToString());
+            var report = document.RootElement;
+            report.GetProperty("invalid").GetBoolean().ShouldBeFalse(label);
+            var summary = report.GetProperty("summary");
+            summary.GetProperty("result").GetString().ShouldBe("clean", label);
+            summary.GetProperty("obligations").GetInt32().ShouldBe(obligations, label);
+            summary.GetProperty("matched").GetInt32().ShouldBe(obligations, label);
+            summary.GetProperty("missing").GetInt32().ShouldBe(0, label);
+            foreach (var diagnostic in report.GetProperty("diagnostics").EnumerateArray())
+                (diagnostic.GetProperty("test").GetString() ?? "").Contains(retired, StringComparison.Ordinal).ShouldBeFalse(label);
+            var obligation = report.GetProperty("obligations").EnumerateArray().Single(item =>
+                item.GetProperty("id").GetString() == id
+                && item.GetProperty("kind").GetString() == "method"
+                && item.GetProperty("test").GetString() == qualified);
+            var match = obligation.GetProperty("matches").EnumerateArray().Single();
+            match.GetProperty("path").GetString().ShouldBe("tests/Antiphon.Tests/Checkpoints/CheckpointImportTests.cs", label);
+            match.GetProperty("line").GetInt32().ShouldBeGreaterThan(0, label);
+        }
+    }
 }
