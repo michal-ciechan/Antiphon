@@ -454,6 +454,88 @@ public sealed class RemoteScriptContractTests
         retention.Contains("sudo", StringComparison.Ordinal).ShouldBeFalse("the retention probe elevates");
     }
 
+    // CARD-1197. containersRemoved and removing share the recreating/verified compare.
+    // The scratch script is that function plus journal and census JSON. No docker, ssh, or sudo.
+    // A temp-only open set is accepted. A new open task on server2, or a new land row for it,
+    // is refused. stopped and started keep the byte compare.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1197_Post_removal_compare_accepts_temp_churn_and_refuses_bound_work()
+    {
+        var remote = Remote();
+        var match = Block(remote, "c1008_tasks_match_record");
+        var output = LinuxShell("set -u\n" + match + "\n" + """
+            root="$(mktemp -d)"
+            trap 'rm -rf -- "$root"' EXIT
+            C1008_RUNNER=server2
+            project=bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb
+            kept=11111111-1111-1111-1111-111111111111
+            added=22222222-2222-2222-2222-222222222222
+            bound=33333333-3333-3333-3333-333333333333
+            landed=44444444-4444-4444-4444-444444444444
+            row() {
+              jq -nc --arg id "$1" --arg status "$2" --arg runner "$3" --arg project "$project" --arg requested "$4" \
+                '{id:$id,status:$status,runnerId:$runner,projectId:$project,scopeSource:"Task",landRequestedAt:(if $requested=="" then null else $requested end),landStartedAt:null}'
+            }
+            base_row="$(row "$kept" Dispatched server2-temp "")"
+            temp_row="$(row "$added" Blocked server2-temp "")"
+            bound_row="$(row "$bound" Blocked server2 "")"
+            land_row="$(row "$landed" Succeeded server2 "2026-10-11T00:00:00Z")"
+            saved="$(jq -nc --arg id "$kept" --argjson row "$base_row" '{open:{scopes:[],tasks:{($id):$row},land:{($id):null}},land:{scopes:[],tasks:{}}}')"
+            temp="$(jq -nc --arg kept "$kept" --arg added "$added" --argjson base "$base_row" --argjson extra "$temp_row" '{open:{scopes:[],tasks:{($kept):$base,($added):$extra},land:{($kept):null,($added):null}},land:{scopes:[],tasks:{}}}')"
+            bound="$(jq -nc --arg kept "$kept" --arg bound "$bound" --argjson base "$base_row" --argjson hit "$bound_row" '{open:{scopes:[],tasks:{($kept):$base,($bound):$hit},land:{($kept):null,($bound):null}},land:{scopes:[],tasks:{}}}')"
+            land="$(jq -nc --arg kept "$kept" --arg landed "$landed" --argjson base "$base_row" --argjson hit "$land_row" '{open:{scopes:[],tasks:{($kept):$base},land:{($kept):null}},land:{scopes:[],tasks:{($landed):$hit}}}')"
+            printf '%s\n' "$saved" > "$root/saved.json"
+            printf '%s\n' "$temp" > "$root/temp.json"
+            printf '%s\n' "$bound" > "$root/bound.json"
+            printf '%s\n' "$land" > "$root/land.json"
+            for phase in containersRemoved removing stopped started; do
+              jq -nc --arg phase "$phase" --argjson tasks "$saved" '{schema:1,phase:$phase,tasks:$tasks}' > "$root/journal-$phase.json"
+            done
+            fail=0
+            probe() {
+              local name="$1" phase="$2" live="$3" expect="$4" status=0
+              C1008_RECORD="$(cat "$root/journal-$phase.json")"
+              c1008_tasks_match_record "$(cat "$root/$live")" || status=$?
+              if [ "$expect" = accept ] && [ "$status" = 0 ]; then
+                printf 'PASS %s\n' "$name"
+              elif [ "$expect" = refuse ] && [ "$status" != 0 ]; then
+                printf 'PASS %s\n' "$name"
+              else
+                printf 'FAIL %s expect=%s status=%s\n' "$name" "$expect" "$status"
+                fail=1
+              fi
+            }
+            probe a-temp containersRemoved temp.json accept
+            probe b-bound containersRemoved bound.json refuse
+            probe c-land containersRemoved land.json refuse
+            probe d-removing removing temp.json accept
+            probe e-stopped stopped temp.json refuse
+            probe e-started started temp.json refuse
+            probe same-removed containersRemoved saved.json accept
+            probe same-stopped stopped saved.json accept
+            probe same-started started saved.json accept
+            [ "$fail" = 0 ] && printf 'PASS c1197-compare\n'
+            """);
+        output.IndexOf("FAIL ", StringComparison.Ordinal).ShouldBe(-1, output);
+        foreach (var name in new[]
+        {
+            "a-temp", "b-bound", "c-land", "d-removing", "e-stopped", "e-started",
+            "same-removed", "same-stopped", "same-started", "c1197-compare"
+        })
+            output.IndexOf("PASS " + name, StringComparison.Ordinal).ShouldBeGreaterThanOrEqualTo(0, output);
+        const string gate =
+            "if [ \"$phase\" != \"containersRemoved\" ] && [ \"$phase\" != \"removing\" ] && [ \"$phase\" != \"recreating\" ] && [ \"$phase\" != \"verified\" ]; then";
+        match.IndexOf(gate, StringComparison.Ordinal).ShouldBeGreaterThanOrEqualTo(0, "post-removal phases share the relaxed compare");
+        match.IndexOf("select(.value.runnerId==$runner)", StringComparison.Ordinal).ShouldBeGreaterThanOrEqualTo(0,
+            "a new open task bound to the recycled runner is still refused");
+        match.IndexOf("($old.land.tasks|has($id)) and ($old.land.tasks[$id]==$live.land.tasks[$id])", StringComparison.Ordinal)
+            .ShouldBeGreaterThanOrEqualTo(0, "a new land row is still refused");
+        Block(remote, "c1008_tasks_collect").IndexOf(
+            "if [ \"$pass\" = 2 ] && [ \"$snapshot\" != \"$previous\" ]; then C1008_TASK_ERROR='RecycleTaskCensusUnknown cause=Unstable'; return 2; fi",
+            StringComparison.Ordinal).ShouldBeGreaterThanOrEqualTo(0, "two-pass Unstable guard");
+    }
+
     private static void C1195AssertImportRestoresRoot(string function, bool seedImport)
     {
         var command = Commands(Block(Remote(), function))
