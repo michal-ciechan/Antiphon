@@ -26,6 +26,9 @@ public class StandingSessionRecoveryHttpTests(StandingRecoveryWebAppFactory fact
     [Test]
     public async Task History_and_start_preserve_wire_contract_and_revalidate_eligibility()
     {
+        // CARD-1002: -Repeat reuses this PerClass host. A leftover adapter stays Started,
+        // and the one-create guard would reject the next launch.
+        factory.ResetAdapter();
         using var client = factory.CreateClient();
         Guid agentId;
         await using (var scope = factory.Services.CreateAsyncScope())
@@ -107,8 +110,11 @@ public class StandingSessionRecoveryHttpTests(StandingRecoveryWebAppFactory fact
 public sealed class StandingRecoveryWebAppFactory : AntiphonWebAppFactory
 {
     public string RecoveryRoot { get; } = Path.Combine(Path.GetTempPath(), $"c466-http-{Guid.NewGuid():N}");
-    internal FakeAgentProtocolAdapter Adapter { get; } = new() { ReadyResult = false,
-        StartupOutput = "No conversation found with session ID: synthetic missing target" };
+    private readonly CaseAdapter _case = new();
+    internal FakeAgentProtocolAdapter Adapter => _case.Adapter;
+
+    /// <summary>CARD-1002: one fresh adapter and a reset one-create guard for this case.</summary>
+    public void ResetAdapter() => _case.Reset();
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
@@ -127,20 +133,34 @@ public sealed class StandingRecoveryWebAppFactory : AntiphonWebAppFactory
         services.RemoveAll<ISessionRunnerClient>();
         services.AddSingleton<ISessionRunnerClient>(new FakeSessionRunnerClient());
         services.RemoveAll<IAgentProtocolAdapterFactory>();
-        services.AddSingleton<IAgentProtocolAdapterFactory>(new MissingAdapterFactory(Adapter));
+        services.AddSingleton<IAgentProtocolAdapterFactory>(_case);
     }
     public override async ValueTask DisposeAsync()
     {
         await base.DisposeAsync();
         await AgentSupervisionTests.CleanupAsync(RecoveryRoot);
     }
-    private sealed class MissingAdapterFactory(FakeAgentProtocolAdapter adapter) : IAgentProtocolAdapterFactory
+    private sealed class CaseAdapter : IAgentProtocolAdapterFactory
     {
         private int _created;
+        public FakeAgentProtocolAdapter Adapter { get; private set; } = NewAdapter();
+
+        public void Reset()
+        {
+            Adapter = NewAdapter();
+            Interlocked.Exchange(ref _created, 0);
+        }
+
         public IAgentProtocolAdapter Create(AgentKind kind)
         {
             if (Interlocked.Increment(ref _created) != 1) throw new InvalidOperationException("Unexpected second/create attempt");
-            return adapter;
+            return Adapter;
         }
+
+        private static FakeAgentProtocolAdapter NewAdapter() => new()
+        {
+            ReadyResult = false,
+            StartupOutput = "No conversation found with session ID: synthetic missing target"
+        };
     }
 }
