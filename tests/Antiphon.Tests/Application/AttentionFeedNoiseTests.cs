@@ -78,7 +78,10 @@ public sealed class AttentionFeedNoiseTests
         outcome.Evidence.ShouldStartWith("receipts=2\n");
     }
 
-    // Coverage gap: this refusal is cleared by a directly inserted ConfirmedAt, not the producer-to-recipient path.
+    // Coverage gap (CARD-1196): this test clears the refusal by inserting ConfirmedAt.
+    // The end-to-end chain is not covered here. A later live LandRefused creates a
+    // non-legacy Outcome, and a complete UserPrompt receipt of that Outcome can resolve
+    // an older historical refusal. A non-legacy Outcome also accepts a submitted QueuedUserPrompt.
     [Test]
     public async Task C1085_Unresolved_land_refusal_survives_the_legacy_age_out()
     {
