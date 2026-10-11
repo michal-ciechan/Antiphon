@@ -62,7 +62,12 @@ public sealed class AgentSessionService : IDelegateSessionStopper
     /// </summary>
     private LaunchCleanupKill? _pendingCleanupKill;
 
-    private readonly record struct LaunchCleanupKill(bool KilledThisGeneration, DateTime Generation, DateTime IssuedAt);
+    private readonly record struct LaunchCleanupKill(
+        bool KilledThisGeneration,
+        DateTime Generation,
+        DateTime IssuedAt,
+        AgentExitReason? ObservedReason,
+        int? ObservedExitCode);
 
     public AgentSessionService(
         AppDbContext db,
@@ -405,9 +410,9 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             session.RestartFailureKind = new RestartFailurePolicy().Classify(ex);
             HerdrSupervisionFailureEvidence.Record(session, HerdrSupervisionFailureEvidence.FromLaunchFailure(ex));
             var stoppedCheck = session.TerminationSource == SessionTerminationSource.OperatorRequest;
-            // CARD-1190: clear ProcessExit only when it is the exit observer's stamp for the kill
-            // this cleanup just issued. A stamp from another generation, or one whose time predates
-            // that kill, is a real crash and must not become SystemRequest / "did not become ready".
+            // CARD-1190: clear ProcessExit only when it is the exit this cleanup's kill produced.
+            // A stamp from another generation, one whose time predates the kill, or a natural
+            // ProcessExited cause must not become SystemRequest / "did not become ready".
             var boundToThisKill = LaunchKillOwnsProcessExit(session, cleanupKill, generation);
             if (session.TerminationSource == SessionTerminationSource.ProcessExit && !boundToThisKill)
             {
@@ -833,16 +838,30 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             _logger.LogWarning(ex, "Killing the agent process after a failed launch threw; disposing anyway");
         }
 
+        AgentExitReason? observedReason = null;
+        int? observedExitCode = null;
+        if (acceptedGeneration is not null)
+        {
+            observedReason = adapter.ExitReason;
+            if (adapter.Exited.IsCompletedSuccessfully)
+                observedExitCode = adapter.Exited.Result;
+        }
+
         await adapter.DisposeAsync();
         return acceptedGeneration is { } killedGenerationId
-            ? new LaunchCleanupKill(killedGeneration == true, killedGenerationId, issuedAt)
+            ? new LaunchCleanupKill(
+                killedGeneration == true, killedGenerationId, issuedAt, observedReason, observedExitCode)
             : null;
     }
 
     /// <summary>
     /// True when <paramref name="session"/>'s <see cref="SessionTerminationSource.ProcessExit"/>
-    /// is the observer stamp for the kill this cleanup issued: the kill reported this generation
-    /// dead, the row is still that generation, and the stamp does not predate the kill.
+    /// is the observer stamp for the kill this cleanup issued. The kill reported this generation
+    /// dead, the row is still that generation, and the stamp does not predate the kill. An
+    /// explicit non-kill reason, a nonzero code the kill did not report, or the observer's
+    /// "ProcessExited" failure text is a natural crash in that window and stays a crash.
+    /// Unknown reason with exit code 0 is still this kill: the production runner often has no
+    /// exit reason yet when the kill call returns.
     /// </summary>
     private static bool LaunchKillOwnsProcessExit(
         AgentSession session, LaunchCleanupKill? kill, DateTime generation)
@@ -850,9 +869,18 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         if (kill is not { KilledThisGeneration: true } owned) return false;
         if (session.TerminationSource != SessionTerminationSource.ProcessExit) return false;
         if (session.EndedAt is not DateTime stampedAt) return false;
-        return SessionGeneration.Equal(session.StartedAt, owned.Generation)
-            && SessionGeneration.Equal(owned.Generation, generation)
-            && SessionGeneration.Compare(stampedAt, owned.IssuedAt) >= 0;
+        if (!SessionGeneration.Equal(session.StartedAt, owned.Generation)
+            || !SessionGeneration.Equal(owned.Generation, generation)
+            || SessionGeneration.Compare(stampedAt, owned.IssuedAt) < 0)
+            return false;
+        if (owned.ObservedReason is { } reason
+            && reason is not (AgentExitReason.Unknown or AgentExitReason.KilledByRequest))
+            return false;
+        if (session.FailureReason?.Contains("ProcessExited", StringComparison.Ordinal) == true)
+            return false;
+        if (owned.ObservedExitCode is int observedCode)
+            return session.ExitCode == observedCode;
+        return session.ExitCode is null or 0;
     }
 
     /// <summary>

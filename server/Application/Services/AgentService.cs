@@ -7,6 +7,7 @@ using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Npgsql;
@@ -799,22 +800,29 @@ public sealed class AgentService
         var agent = await _db.Agents
             .FirstOrDefaultAsync(a => a.Id == id, ct)
             ?? throw new NotFoundException(nameof(Agent), id);
-        await using var specialistTransaction = StandingSpecialistSeatPolicy.IsCheck(agent)
-            ? await _db.Database.BeginTransactionAsync(ct) : null;
-        if (specialistTransaction is not null)
+        // CARD-1190: a specialist used to hold the agent row across the session kill. Stop holds
+        // the session and then waits for the agent, so that order deadlocks (40P01) when the row
+        // is Failed but the runtime is still live. Take session then agent, release both, and
+        // only then write the session. Re-lock in the same order for the delete itself.
+        if (StandingSpecialistSeatPolicy.IsCheck(agent))
         {
-            var ownerId = agent.StandingSpecialistOwnerId ?? agent.Id;
-            await _db.Agents.FromSqlInterpolated($"SELECT * FROM \"Agents\" WHERE \"Id\" = {ownerId} FOR UPDATE")
-                .AsNoTracking().SingleOrDefaultAsync(ct);
-            await _db.Entry(agent).ReloadAsync(ct);
-            if (await _db.AgentTasks.AnyAsync(t => t.AgentId == id && (t.Status == AgentTaskStatus.Queued
-                || t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working || t.Status == AgentTaskStatus.Blocked), ct)
-                || (Guid.TryParse(agent.PersistentSessionId, out var specialistSession)
-                    && await _db.AgentSessions.AnyAsync(s => s.Id == specialistSession && LiveSessionStatuses.Contains(s.Status), ct)))
-                throw new ConflictException("Stop the specialist and let its owned work settle before deleting it.", "specialist_delete_busy");
+            await using var gate = await LockSessionThenOwnerAsync(agent, ct);
+            if (await SpecialistDeleteIsBusyAsync(agent, ct))
+                throw new ConflictException(
+                    "Stop the specialist and let its owned work settle before deleting it.",
+                    "specialist_delete_busy");
+            await gate.CommitAsync(ct);
         }
 
         await StopLiveSessionBeforeDeleteAsync(agent, ct);
+
+        await using var specialistTransaction = StandingSpecialistSeatPolicy.IsCheck(agent)
+            ? await LockSessionThenOwnerAsync(agent, ct)
+            : (IDbContextTransaction?)null;
+        if (specialistTransaction is not null && await SpecialistDeleteIsBusyAsync(agent, ct))
+            throw new ConflictException(
+                "Stop the specialist and let its owned work settle before deleting it.",
+                "specialist_delete_busy");
 
         // Pipeline runs belong to cards, not to the agent holding a queue position.
         var now = UtcNow();
@@ -841,6 +849,70 @@ public sealed class AgentService
         await _eventBus.PublishToAllAsync("AgentChanged", new AgentChangedEventDto(id), ct);
         foreach (var card in assignedCards)
             await _eventBus.PublishToAllAsync("CardChanged", new { boardId = card.BoardId, cardId = card.Id }, ct);
+    }
+
+    /// <summary>
+    /// Session row, then the specialist owner, retrying when the pointer moves so the agent lock
+    /// is never held across a lock of a different session. Caller commits or disposes.
+    /// </summary>
+    private async Task<IDbContextTransaction> LockSessionThenOwnerAsync(Agent agent, CancellationToken ct)
+    {
+        const int maxAttempts = 3;
+        for (var attempt = 1; ; attempt++)
+        {
+            var transaction = await _db.Database.BeginTransactionAsync(ct);
+            var keep = false;
+            try
+            {
+                var pointer = await _db.Agents.AsNoTracking()
+                    .Where(a => a.Id == agent.Id)
+                    .Select(a => a.PersistentSessionId)
+                    .SingleAsync(ct);
+                Guid? lockedSession = null;
+                if (Guid.TryParse(pointer, out var sessionToLock))
+                {
+                    await _db.AgentSessions.FromSqlInterpolated(
+                        $"""SELECT * FROM "AgentSessions" WHERE "Id" = {sessionToLock} FOR UPDATE""")
+                        .AsNoTracking().SingleOrDefaultAsync(ct);
+                    lockedSession = sessionToLock;
+                }
+
+                var ownerId = agent.StandingSpecialistOwnerId ?? agent.Id;
+                await _db.Agents.FromSqlInterpolated(
+                    $"""SELECT * FROM "Agents" WHERE "Id" = {ownerId} FOR UPDATE""")
+                    .AsNoTracking().SingleOrDefaultAsync(ct);
+                await _db.Entry(agent).ReloadAsync(ct);
+                if (Guid.TryParse(agent.PersistentSessionId, out var reloadedSession)
+                    && reloadedSession != lockedSession)
+                {
+                    if (attempt == maxAttempts)
+                        throw new ConflictException(
+                            "The session changed while the delete was taking its locks.",
+                            "delete_session_lock_order");
+                }
+                else
+                {
+                    keep = true;
+                    return transaction;
+                }
+            }
+            finally
+            {
+                if (!keep)
+                    await transaction.DisposeAsync();
+            }
+        }
+    }
+
+    private async Task<bool> SpecialistDeleteIsBusyAsync(Agent agent, CancellationToken ct)
+    {
+        if (await _db.AgentTasks.AnyAsync(t => t.AgentId == agent.Id && (t.Status == AgentTaskStatus.Queued
+            || t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working
+            || t.Status == AgentTaskStatus.Blocked), ct))
+            return true;
+        return Guid.TryParse(agent.PersistentSessionId, out var specialistSession)
+            && await _db.AgentSessions.AnyAsync(
+                s => s.Id == specialistSession && LiveSessionStatuses.Contains(s.Status), ct);
     }
 
     /// <summary>

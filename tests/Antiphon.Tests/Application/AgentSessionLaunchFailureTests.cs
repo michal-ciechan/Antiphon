@@ -14,6 +14,7 @@ using Antiphon.Tests.Agents;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Npgsql;
@@ -778,6 +779,8 @@ public class AgentSessionLaunchFailureTests
         var barrier = new ConfirmedLockBarrier { HoldConfirmedSession = true };
         await using var fixture = await LaunchFixture.CreateAsync(adapter, barrier.Configure);
         Task<SessionExitDisposition>? exit = null;
+        var sessionLockHeld = false;
+        string? sessionLockDetail = null;
         adapter.OnKillGeneration = async () =>
         {
             exit = SessionExitObservation.ObserveMatchingAsync(
@@ -785,11 +788,23 @@ public class AgentSessionLaunchFailureTests
                 LaunchFixture.CreateContext);
             // SessionLockConfirmed is set from ReaderExecutedAsync, after SELECT ... FOR UPDATE
             // has returned. HoldConfirmedSession keeps that transaction open for the probe.
+            // A throw here is swallowed by launch cleanup, so the result is asserted below.
             await barrier.SessionLockConfirmed.WaitAsync(TimeSpan.FromSeconds(10));
-            var locked = await SessionTupleLockHeldAsync(fixture.SessionId);
-            barrier.ReleaseSessionHold();
-            locked.ShouldBeTrue(
-                "the session row lock is confirmed only after SELECT ... FOR UPDATE has returned");
+            try
+            {
+                sessionLockHeld = await SessionTupleLockHeldAsync(fixture.SessionId);
+                if (!sessionLockHeld)
+                    sessionLockDetail = await DescribeSessionLocksAsync(fixture.SessionId);
+            }
+            catch (Exception ex)
+            {
+                sessionLockDetail = ex.ToString();
+            }
+            finally
+            {
+                barrier.ReleaseSessionHold();
+            }
+
             await exit;
         };
 
@@ -801,6 +816,9 @@ public class AgentSessionLaunchFailureTests
         exit.ShouldNotBeNull();
         (await exit!).ShouldBe(SessionExitDisposition.Applied);
         barrier.ConfirmedSessionAfterExecute.ShouldBeTrue();
+        sessionLockDetail.ShouldBeNull(sessionLockDetail ?? "");
+        sessionLockHeld.ShouldBeTrue(
+            "the session row lock is confirmed only after SELECT ... FOR UPDATE has returned");
 
         await using var db = LaunchFixture.CreateContext();
         var session = await db.AgentSessions.SingleAsync(s => s.Id == fixture.SessionId);
@@ -1050,7 +1068,11 @@ public class AgentSessionLaunchFailureTests
     {
         var adapter = new FakeAgentProtocolAdapter();
         var barrier = new ConfirmedLockBarrier { CrossWait = true };
-        await using var fixture = await LaunchFixture.CreateAsync(adapter, barrier.Configure);
+        // The harness registers AgentSessionService but not IDelegateSessionStopper, so Delete
+        // would skip the kill and 409 while the registered adapter is still live. Production
+        // wires the same factory (Program.cs).
+        await using var fixture = await LaunchFixture.CreateAsync(adapter, barrier.Configure, services =>
+            services.AddScoped<IDelegateSessionStopper>(sp => sp.GetRequiredService<AgentSessionService>()));
         fixture.Runtime.Register(fixture.SessionId, adapter);
         await using (var seed = LaunchFixture.CreateContext())
         {
@@ -1100,17 +1122,58 @@ public class AgentSessionLaunchFailureTests
         }, cancellationToken);
 
         await Task.WhenAll(stop, delete);
+        // KillAsync swallows a 40P01 and Delete then throws agent_delete_session_live. Either
+        // that conflict or a postgres exception on Stop is the cycle. A missing agent after a
+        // successful delete is a NotFound from Stop's refetch, which is not the cycle.
+        if (stopFailure is not null)
+            stopFailure.ShouldBeOfType<NotFoundException>(stopFailure.ToString());
+        deleteFailure.ShouldBeNull(deleteFailure?.ToString() ?? "");
         FindPostgres(stopFailure).ShouldBeNull();
         FindPostgres(deleteFailure).ShouldBeNull();
         barrier.ConfirmedSessionAfterExecute.ShouldBeTrue();
         barrier.ConfirmedAgentAfterExecute.ShouldBeTrue();
+        adapter.Killed.ShouldBeTrue();
+
+        await using var db = LaunchFixture.CreateContext();
+        (await db.Agents.AnyAsync(a => a.Id == fixture.AgentId)).ShouldBeFalse();
     }
 
     /// <summary>
-    /// Granted tuple lock on this session row. A global RowShareLock count is shared with every
-    /// other test on the Postgres container, so the probe matches this row's ctid.
+    /// True when another transaction already holds this session row. A granted
+    /// <c>SELECT … FOR UPDATE</c> is recorded on the tuple header; pg_locks lists that lock
+    /// only while someone is waiting for it, so a global tuple-lock count cannot see it.
+    /// <c>FOR UPDATE NOWAIT</c> on this id conflicts (55P03) exactly when the row is held.
     /// </summary>
     private static async Task<bool> SessionTupleLockHeldAsync(Guid sessionId)
+    {
+        await using var db = LaunchFixture.CreateContext();
+        await using var transaction = await db.Database.BeginTransactionAsync();
+        try
+        {
+            await using var command = db.Database.GetDbConnection().CreateCommand();
+            command.Transaction = db.Database.CurrentTransaction!.GetDbTransaction();
+            command.CommandText = """SELECT "Id" FROM "AgentSessions" WHERE "Id" = @id FOR UPDATE NOWAIT""";
+            var id = command.CreateParameter();
+            id.ParameterName = "id";
+            id.Value = sessionId;
+            command.Parameters.Add(id);
+            try
+            {
+                await command.ExecuteScalarAsync();
+                return false;
+            }
+            catch (Exception ex) when (FindPostgres(ex)?.SqlState == PostgresErrorCodes.LockNotAvailable)
+            {
+                return true;
+            }
+        }
+        finally
+        {
+            await transaction.RollbackAsync();
+        }
+    }
+
+    private static async Task<string> DescribeSessionLocksAsync(Guid sessionId)
     {
         await using var db = LaunchFixture.CreateContext();
         await db.Database.OpenConnectionAsync();
@@ -1119,23 +1182,29 @@ public class AgentSessionLaunchFailureTests
             await using var command = db.Database.GetDbConnection().CreateCommand();
             command.CommandText =
                 """
-                SELECT EXISTS (
-                  SELECT 1
+                SELECT coalesce(string_agg(line, ' | '), '')
+                FROM (
+                  SELECT 'ctid=' || s.ctid::text || ' xmax=' || s.xmax::text AS line
                   FROM "AgentSessions" s
-                  JOIN pg_locks l
-                    ON l.locktype = 'tuple'
-                   AND l.granted
-                   AND l.relation = '"AgentSessions"'::regclass
-                   AND l.page = split_part(trim(both '()' from s.ctid::text), ',', 1)::integer
-                   AND l.tuple = split_part(trim(both '()' from s.ctid::text), ',', 2)::integer
-                  WHERE s."Id" = @id)
+                  WHERE s."Id" = @id
+                  UNION ALL
+                  SELECT l.locktype || ':' || l.mode || ':granted=' || l.granted
+                    || ':state=' || coalesce(a.state, '')
+                    || ':page=' || coalesce(l.page::text, '')
+                    || ':tuple=' || coalesce(l.tuple::text, '')
+                    || ':q=' || left(regexp_replace(coalesce(a.query, ''), '\s+', ' ', 'g'), 80)
+                  FROM pg_locks l
+                  LEFT JOIN pg_stat_activity a ON a.pid = l.pid
+                  LEFT JOIN pg_class c ON c.oid = l.relation
+                  WHERE c.relname = 'AgentSessions'
+                ) probes
                 """;
             var id = command.CreateParameter();
             id.ParameterName = "id";
             id.Value = sessionId;
             command.Parameters.Add(id);
             var result = await command.ExecuteScalarAsync();
-            return result is true;
+            return result as string ?? "";
         }
         finally
         {
@@ -2314,6 +2383,12 @@ public class AgentSessionLaunchFailureTests
             FakeAgentProtocolAdapter adapter,
             Action<DbContextOptionsBuilder> configureDb) =>
             CreateCoreAsync(new QueueAdapterFactory([adapter]), extraServices: null, configureDb);
+
+        public static Task<LaunchFixture> CreateAsync(
+            FakeAgentProtocolAdapter adapter,
+            Action<DbContextOptionsBuilder> configureDb,
+            Action<IServiceCollection> extraServices) =>
+            CreateCoreAsync(new QueueAdapterFactory([adapter]), extraServices, configureDb);
 
         private static async Task<LaunchFixture> CreateCoreAsync(
             IAgentProtocolAdapterFactory adapterFactory,
