@@ -640,9 +640,12 @@ public sealed class AgentTaskPipelineStatusService
             queueReason = QueueReasonRoutingPinNotBefore;
         }
 
-        // CARD-1076 D-6. The latest Held row after the task's last Dispatched event, the same
-        // floor as the dispatcher's LoadQueuedHoldIndexAsync. No Git. A live shared-checkout
-        // holder, a sibling land, and a dated pin already outrank this row.
+        // CARD-1076 D-6. The pipeline admits a Held row only when its timestamp is strictly
+        // greater than the last Dispatched timestamp. The dispatcher's dedupe additionally
+        // breaks an exact timestamp tie by event id (Guid.CompareTo). The two differ only for
+        // a Held row whose timestamp equals the Dispatched timestamp: such a row can be
+        // retained by the dedupe yet omitted from this queue reason and the ledger. No Git.
+        // A live shared-checkout holder, a sibling land, and a dated pin already outrank this row.
         if (queueReason == QueueReasonAwaitingDispatch
             && dispatchHolds.CurrentStintHeld.TryGetValue(task.Id, out var heldDetail))
         {
@@ -782,8 +785,12 @@ public sealed class AgentTaskPipelineStatusService
 
     /// <summary>
     /// CARD-1076 D-6. One Held/Dispatched query for the current stint, one running-land query,
-    /// and one title lookup. The stint floor is the last Dispatched event, matching
-    /// <c>AgentTaskDispatcher.LoadQueuedHoldIndexAsync</c> (<c>At &gt; floor</c>).
+    /// and one title lookup. The pipeline admits a Held row only when its timestamp is strictly
+    /// greater than the last Dispatched timestamp. The dispatcher's dedupe
+    /// (<c>LoadQueuedHoldIndexAsync</c>) additionally breaks an exact timestamp tie by event id
+    /// (<see cref="Guid.CompareTo(Guid)"/>). The two differ only for a Held row whose timestamp
+    /// equals the Dispatched timestamp: such a row can be retained by the dedupe yet omitted
+    /// from the pipeline queue reason and the ledger (<c>DispatchHoldLedger.FromRows</c>).
     /// </summary>
     private async Task<QueuedDispatchHolds> LoadQueuedDispatchHoldsAsync(
         List<TaskRow> queued, CancellationToken ct)
