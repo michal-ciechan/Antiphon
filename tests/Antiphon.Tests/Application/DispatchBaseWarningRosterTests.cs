@@ -30,12 +30,13 @@ public class DispatchBaseWarningRosterTests
         var planPath = Path.Combine(root, PlanRelative.Replace('/', Path.DirectorySeparatorChar));
         File.Exists(planPath).ShouldBeTrue(planPath);
         var plan = File.ReadAllText(planPath).Replace("\r\n", "\n");
-        plan.ShouldContain("complete UserPrompt transcript from the real producer to the recipient");
-        plan.ShouldContain("Queue insert, Sent, or ack alone does not discharge");
-        plan.ShouldContain("LandDeliveryFixture.InitializeAsync requires Windows");
-        plan.ShouldContain("CP-1 does not discharge");
-        plan.ShouldContain("CARD-0550");
-        plan.ShouldContain("CP-24");
+        var collapsed = Regex.Replace(plan.Replace("`", ""), @"\s+", " ");
+        collapsed.ShouldContain("complete UserPrompt transcript from the real producer to the recipient");
+        collapsed.ShouldContain("Queue insert, Sent, or ack alone does not discharge");
+        collapsed.ShouldContain("LandDeliveryFixture.InitializeAsync requires Windows");
+        collapsed.ShouldContain("CP-1 does not discharge");
+        collapsed.ShouldContain("CARD-0550");
+        collapsed.ShouldContain("CP-24");
 
         var batch = File.ReadAllText(Path.Combine(root, BatchPlanRelative.Replace('/', Path.DirectorySeparatorChar)))
             .Replace("\r\n", "\n");
