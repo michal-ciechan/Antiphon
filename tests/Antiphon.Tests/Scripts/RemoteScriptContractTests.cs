@@ -317,6 +317,70 @@ public sealed class RemoteScriptContractTests
         output.IndexOf("FAIL ", StringComparison.Ordinal).ShouldBe(-1, output);
     }
 
+    // CARD-1194. F-8 used to scale measured bytes inside $(( $(c849_observe_volume | awk) * 5 / 4 )).
+    // A failed observation exits only that subshell, so field 5 is empty and bash reports
+    // "operand expected". The fixture trap then replaces the receipt with UnhandledExit.
+    [Test]
+    public void C1194_Fixture_prune_scales_budget_outside_arithmetic_substitution()
+    {
+        var prune = Block(Remote(), "c849_fixture_prune");
+        var assign = Block(Remote(), "c849_fixture_assign_budget");
+        var scale = Block(Remote(), "c849_fixture_scale_budget");
+        foreach (var call in new[]
+        {
+            "c849_fixture_assign_budget C849_FIXTURE_PACKAGES_BUDGET \"$C849_PACKAGES\" nuget-packages 10737418240",
+            "c849_fixture_assign_budget C849_FIXTURE_SCRATCH_BUDGET \"$C849_SCRATCH\" nuget-scratch 268435456",
+            "c849_fixture_assign_budget C849_FIXTURE_NPM_BUDGET \"$C849_NPM\" npm-content 2147483648"
+        })
+            prune.ShouldContain(call);
+        prune.Contains("$(c849_observe_volume", StringComparison.Ordinal).ShouldBeFalse(
+            "observe runs in this shell so write_result is not trapped as UnhandledExit");
+        prune.Contains("* 5 / 4", StringComparison.Ordinal).ShouldBeFalse(
+            "the 5/4 scale is not inside prune's arithmetic substitution");
+        assign.ShouldContain("c1008_capture_json \"$outfile\" c849_observe_volume \"$name\" \"$role\" \"$fallback\"");
+        assign.Contains("$(c849_observe_volume", StringComparison.Ordinal).ShouldBeFalse(
+            "assign does not capture observe in a subshell");
+        assign.Contains("$((", StringComparison.Ordinal).ShouldBeFalse(
+            "assign does not evaluate an empty observation as arithmetic");
+        assign.ShouldContain("write_result false");
+        scale.ShouldContain("FixtureBudgetObservationInvalid");
+        scale.ShouldContain("$((bytes * 5 / 4))");
+        Order(scale, "[[ ! \"$bytes\" =~ ^[0-9]+$ ]]", "$((bytes * 5 / 4))").ShouldBeTrue(
+            "a non-numeric byte field returns before arithmetic");
+    }
+
+    // CARD-1194. The scale helper is behaviour: an empty observation and a swallowed
+    // DIAGNOSIS= line refuse with the inputs named, and a real six-field line still scales by 5/4.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1194_Fixture_budget_scale_refuses_empty_observation()
+    {
+        var scale = Block(Remote(), "c849_fixture_scale_budget");
+        var output = LinuxShell("set -euo pipefail\nexec 2>&1\n" + scale + "\n" + """
+            status=0
+            actual="$(c849_fixture_scale_budget vol nuget-packages '')" || status=$?
+            [ "$status" = 2 ] || { printf 'FAIL empty-status=%s actual=%s\n' "$status" "$actual"; exit 1; }
+            printf '%s\n' "$actual" | grep -Fq 'FixtureBudgetObservationInvalid name=vol role=nuget-packages bytes=empty line=empty' \
+                || { printf 'FAIL empty-diagnosis=%s\n' "$actual"; exit 1; }
+            status=0
+            actual="$(c849_fixture_scale_budget vol nuget-packages 'DIAGNOSIS=CacheRootOwnershipInvalid')" || status=$?
+            [ "$status" = 2 ] || { printf 'FAIL diag-status=%s actual=%s\n' "$status" "$actual"; exit 1; }
+            printf '%s\n' "$actual" | grep -Fq 'FixtureBudgetObservationInvalid name=vol role=nuget-packages bytes=empty line=DIAGNOSIS=CacheRootOwnershipInvalid' \
+                || { printf 'FAIL diag-diagnosis=%s\n' "$actual"; exit 1; }
+            status=0
+            actual="$(c849_fixture_scale_budget vol nuget-packages 'vol nuget-packages /var/lib/docker/volumes/vol/_data 1654:1654:700 100 10737418240')" || status=$?
+            [ "$status" = 0 ] && [ "$actual" = 125 ] || { printf 'FAIL scale status=%s actual=%s\n' "$status" "$actual"; exit 1; }
+            status=0
+            actual="$(c849_fixture_scale_budget vol nuget-scratch 'vol nuget-scratch /var/lib/docker/volumes/vol/_data 1654:1654:700 0 268435456')" || status=$?
+            [ "$status" = 0 ] && [ "$actual" = 0 ] || { printf 'FAIL zero status=%s actual=%s\n' "$status" "$actual"; exit 1; }
+            printf 'PASS c1194-budget-scale\n'
+            """);
+        output.IndexOf("operand expected", StringComparison.Ordinal).ShouldBe(-1, output);
+        output.IndexOf("syntax error", StringComparison.Ordinal).ShouldBe(-1, output);
+        output.IndexOf("PASS c1194-budget-scale", StringComparison.Ordinal).ShouldBeGreaterThanOrEqualTo(0, output);
+        output.IndexOf("FAIL ", StringComparison.Ordinal).ShouldBe(-1, output);
+    }
+
     private static string C1193LogCopySnippet(string trap)
     {
         const string guard = "if [ -d \"$CASE_DIR\" ] && [ ! -L \"$CASE_DIR\" ]; then ";

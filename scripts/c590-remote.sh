@@ -3421,6 +3421,31 @@ c849_fixture_prune_case() {
     [ "$code" -eq 0 ] || { cat "$output"; return "$code"; }
 }
 
+# CARD-1194. Field 5 of one observe line is measured bytes. Scale by 5/4 for the
+# fixture budget. An empty or non-numeric field is a refusal, not arithmetic.
+c849_fixture_scale_budget() {
+    local name="$1" role="$2" line="$3" bytes
+    bytes="$(printf '%s\n' "$line" | awk 'NR==1 { print $5 }')"
+    if [[ ! "$bytes" =~ ^[0-9]+$ ]]; then
+        printf 'FixtureBudgetObservationInvalid name=%s role=%s bytes=%s line=%s\n' \
+            "$name" "$role" "${bytes:-empty}" "${line:-empty}"
+        return 2
+    fi
+    printf '%s\n' "$((bytes * 5 / 4))"
+}
+
+# Observe in this shell. A command substitution swallows write_result's exit, awk
+# then sees an empty field, and the fixture trap reports UnhandledExit.
+c849_fixture_assign_budget() {
+    local dest="$1" name="$2" role="$3" fallback="$4" outfile line scaled status=0
+    outfile="$CASE_DIR/.fixture-budget-$role"
+    c1008_capture_json "$outfile" c849_observe_volume "$name" "$role" "$fallback"
+    line="$(cat "$outfile")"
+    scaled="$(c849_fixture_scale_budget "$name" "$role" "$line")" || status=$?
+    [ "$status" -eq 0 ] || write_result false "${scaled:-FixtureBudgetObservationInvalid name=$name role=$role line=${line:-empty}}" 2
+    printf -v "$dest" '%s' "$scaled"
+}
+
 c849_fixture_prune() {
     local image recovery payload image_id name path mode bytes budget source_root
     image="$(c849_image)" || {
@@ -3443,9 +3468,9 @@ c849_fixture_prune() {
     printf 'schema=3\nkind=full\nsource-sha=%s\nimage=%s\ndonor-type=saved-directory\ndonor=saved\ntime=%s\npackages=%s\nscratch=%s\nnpm=%s\npackage-bytes=0\nnpm-bytes=0\nrecovery=%s\nmanifest-sha256=%s\n' \
         "$SHA" "$image_id" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$C849_PACKAGES" "$C849_SCRATCH" "$C849_NPM" "$recovery" "$payload" > "$C849_READY"
     printf 'runners=idle processes=0 leases=0\n' > "$SERVER2_ROOT/fixture-consumers.txt"
-    C849_FIXTURE_PACKAGES_BUDGET="$(( $(c849_observe_volume "$C849_PACKAGES" nuget-packages 10737418240 | awk '{print $5}') * 5 / 4 ))"
-    C849_FIXTURE_SCRATCH_BUDGET="$(( $(c849_observe_volume "$C849_SCRATCH" nuget-scratch 268435456 | awk '{print $5}') * 5 / 4 ))"
-    C849_FIXTURE_NPM_BUDGET="$(( $(c849_observe_volume "$C849_NPM" npm-content 2147483648 | awk '{print $5}') * 5 / 4 ))"
+    c849_fixture_assign_budget C849_FIXTURE_PACKAGES_BUDGET "$C849_PACKAGES" nuget-packages 10737418240
+    c849_fixture_assign_budget C849_FIXTURE_SCRATCH_BUDGET "$C849_SCRATCH" nuget-scratch 268435456
+    c849_fixture_assign_budget C849_FIXTURE_NPM_BUDGET "$C849_NPM" npm-content 2147483648
     [ "$C849_FIXTURE_PACKAGES_BUDGET" -gt 0 ] && [ "$C849_FIXTURE_NPM_BUDGET" -gt 0 ] \
         || write_result false FixtureBudgetInvalid 2
     ( write_result() { printf '%s\n' "$2"; exit "$3"; }; c849_preview ) \
