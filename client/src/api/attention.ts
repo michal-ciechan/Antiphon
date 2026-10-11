@@ -274,6 +274,11 @@ export interface ZombieCensusCandidate {
   isCandidate: boolean
 }
 
+export interface AttentionKindCountDto {
+  kind: AttentionKind
+  count: number
+}
+
 export interface AttentionDto {
   generatedAt: string
   /**
@@ -283,6 +288,11 @@ export interface AttentionDto {
    */
   runnerConsulted: boolean
   items: AttentionItemDto[]
+  /**
+   * Unfiltered count per kind (CARD-1085). Present on a `minSeverity` read, so the rows that the
+   * floor hid are still visible as counts.
+   */
+  kindCounts?: AttentionKindCountDto[]
 }
 
 export interface AttentionSummaryDto {

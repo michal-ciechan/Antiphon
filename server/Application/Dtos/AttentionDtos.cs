@@ -487,7 +487,12 @@ public sealed record AttentionItemDto(
 public sealed record AttentionDto(
     DateTime GeneratedAt,
     bool RunnerConsulted,
-    IReadOnlyList<AttentionItemDto> Items);
+    IReadOnlyList<AttentionItemDto> Items,
+    // CARD-1085: unfiltered census. A minSeverity read still reports every kind that was built.
+    IReadOnlyList<AttentionKindCountDto>? KindCounts = null);
+
+/// <summary>How many rows of one kind the sweep built, before a severity floor hid any.</summary>
+public sealed record AttentionKindCountDto(AttentionKind Kind, int Count);
 
 /// <summary>Counts for the global navigation badge, without returning the attention rows.</summary>
 public sealed record AttentionSummaryDto(

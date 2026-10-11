@@ -3365,6 +3365,57 @@ public partial class AttentionServiceTests
                     .SetProperty(t => t.CompletedAt, DateTime.UtcNow));
         }
 
+        public async Task<Guid> AddUnconfirmedLandNoteAsync(
+            Guid taskId, Guid? sessionId, DateTime createdAt,
+            LandNotificationKind kind = LandNotificationKind.Outcome,
+            string? lastErrorCode = null, string body = "outcome receipt")
+        {
+            var noteId = Guid.NewGuid();
+            await using var db = CreateContext();
+            var source = new AgentTaskEvent
+            {
+                Id = Guid.NewGuid(),
+                AgentTaskId = taskId,
+                Type = AgentTaskEventType.Completed,
+                Detail = body,
+                At = createdAt,
+            };
+            db.AgentTaskEvents.Add(source);
+            db.AgentTaskLandNotifications.Add(new AgentTaskLandNotification
+            {
+                Id = noteId,
+                TaskId = taskId,
+                SourceEventId = source.Id,
+                Kind = kind,
+                ReplyTo = AgentTaskReplyTo.Session,
+                ParentSessionId = sessionId,
+                Body = body,
+                ContentDigest = noteId.ToString("N"),
+                CreatedAt = createdAt,
+                NextAttemptAt = createdAt,
+                State = LandNotificationState.AwaitingReceipt,
+                LastErrorCode = lastErrorCode,
+            });
+            await db.SaveChangesAsync();
+            return noteId;
+        }
+
+        public async Task<Guid> AddLegacyLandEventAsync(Guid taskId, DateTime at)
+        {
+            var id = Guid.NewGuid();
+            await using var db = CreateContext();
+            db.AgentTaskEvents.Add(new AgentTaskEvent
+            {
+                Id = id,
+                AgentTaskId = taskId,
+                Type = AgentTaskEventType.Landed,
+                Detail = "historical land",
+                At = at,
+            });
+            await db.SaveChangesAsync();
+            return id;
+        }
+
         public async Task AddIncidentAsync(
             Guid agentId, Guid? sessionId, AgentIncidentKind kind, AlertSeverity severity,
             string message, int minutesAgo, string? failureReason = null)
@@ -3422,6 +3473,7 @@ public partial class AttentionServiceTests
             await db.ModelAvailabilityHolds.Where(h => _holds.Contains(h.Id)).ExecuteDeleteAsync();
             await db.TranscriptEntries.Where(e => _sessions.Contains(e.AgentSessionId)).ExecuteDeleteAsync();
             await db.SessionQueuedMessages.Where(m => _sessions.Contains(m.AgentSessionId)).ExecuteDeleteAsync();
+            await db.AgentTaskLandNotifications.Where(n => _tasks.Contains(n.TaskId)).ExecuteDeleteAsync();
             await db.AgentTaskEvents.Where(e => _tasks.Contains(e.AgentTaskId)).ExecuteDeleteAsync();
             await db.AgentIncidents.Where(i => i.AgentId != null && _agents.Contains(i.AgentId.Value)).ExecuteDeleteAsync();
             await db.AgentTasks.Where(t => _tasks.Contains(t.Id)).ExecuteDeleteAsync();
@@ -3613,5 +3665,21 @@ public class AttentionApiTests
         full!.Items.ShouldContain(i => i.TaskId == _taskId);
         summary!.Open.ShouldBeGreaterThanOrEqualTo(1);
         summary.GeneratedAt.ShouldBeGreaterThan(DateTime.UtcNow.AddMinutes(-5));
+    }
+
+    [Test]
+    public async Task the_attention_route_rejects_an_unknown_severity_floor()
+    {
+        var client = _factory.CreateClient();
+
+        var rejected = await client.GetAsync("/api/attention?minSeverity=nope");
+        rejected.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
+
+        var accepted = await client.GetAsync("/api/attention?minSeverity=Critical");
+        accepted.StatusCode.ShouldBe(HttpStatusCode.OK);
+        var payload = await accepted.Content.ReadFromJsonAsync<AttentionDto>(Json);
+        payload.ShouldNotBeNull();
+        payload!.Items.ShouldAllBe(i => i.Severity >= AlertSeverity.Critical);
+        payload.KindCounts.ShouldNotBeNull();
     }
 }

@@ -96,6 +96,12 @@ public sealed partial class AttentionService
     /// <summary>Failures are context, not an alarm — a bounded tail, newest first.</summary>
     private const int RecentFailureCap = 20;
 
+    /// <summary>
+    /// CARD-1085: a recent-incident group shows this many newest messages, then "N more".
+    /// One row per agent and kind stays the row; the line cap is what a reader sees inside it.
+    /// </summary>
+    private const int RecentIncidentVisibleLines = 3;
+
     private const int EvidenceChars = 400;
     private const int CheckDigestTailLines = 6;
 
@@ -164,7 +170,8 @@ public sealed partial class AttentionService
         _attention = attention?.Value ?? new AttentionSettings();
     }
 
-    public async Task<AttentionDto> GetAsync(CancellationToken ct, bool includeProgressProbe = true)
+    public async Task<AttentionDto> GetAsync(
+        CancellationToken ct, bool includeProgressProbe = true, AlertSeverity? minSeverity = null)
     {
         var now = _timeProvider.GetUtcNow().UtcDateTime;
         var since = now - RecencyWindow;
@@ -285,7 +292,18 @@ public sealed partial class AttentionService
             .ThenBy(i => i.SinceUtc ?? DateTime.MaxValue)
             .ToList();
 
-        return new AttentionDto(now, runnerSessions is not null, ordered);
+        var kindCounts = ordered
+            .GroupBy(i => i.Kind)
+            .Select(g => new AttentionKindCountDto(g.Key, g.Count()))
+            .OrderByDescending(c => c.Count)
+            .ThenBy(c => c.Kind)
+            .ToList();
+        // The census is the sweep. The floor only chooses which rows this response carries.
+        var visible = minSeverity is { } floor
+            ? ordered.Where(i => i.Severity >= floor).ToList()
+            : ordered;
+
+        return new AttentionDto(now, runnerSessions is not null, visible, kindCounts);
     }
 
     /// <summary>
@@ -1488,6 +1506,10 @@ public sealed partial class AttentionService
                 LandRequestId: null, LandNotificationId: null));
         }
 
+        // CARD-1085: one outcome row per task. The newest receipt keeps its identity; the count is
+        // the rest of that task's unconfirmed receipts. Unconfirmed outcomes stay until they confirm
+        // (CARD-0467: the row survives the recency window). Historical legacy rows do not.
+        items = CollapseLandOutcomeReceipts(items);
         items = items
             .GroupBy(i => i.ConditionKey ?? i.Kind + ":" + i.TaskId)
             .Select(g => g.First())
@@ -1495,17 +1517,51 @@ public sealed partial class AttentionService
         var legacy = await _db.AgentTaskEvents.AsNoTracking().Where(e => e.LandRequestId == null
             && (e.Type == AgentTaskEventType.Landed || e.Type == AgentTaskEventType.AlreadyPresent || e.Type == AgentTaskEventType.LandedWithResidue
                 || e.Type == AgentTaskEventType.LandingCleanup || e.Type == AgentTaskEventType.LandRefused))
-            .GroupBy(e => e.AgentTaskId).Select(g => g.OrderByDescending(e => e.At).First()).ToListAsync(ct);
-        foreach (var source in legacy)
+            .GroupBy(e => e.AgentTaskId)
+            .Select(g => new { Count = g.Count(), Newest = g.OrderByDescending(e => e.At).First() })
+            .ToListAsync(ct);
+        foreach (var group in legacy)
         {
+            var source = group.Newest;
             if (await _db.AgentTaskLandNotifications.AnyAsync(n => n.SourceEventId == source.Id && n.ConfirmedAt != null, ct)) continue;
             var task = await _db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == source.AgentTaskId, ct);
             if (task.ReplyTo == AgentTaskReplyTo.None) continue;
+            // No new delivery obligation. Once the task is Done (Succeeded) or Canceled, the same
+            // 24h window as the rest of the feed is the lifecycle; there is no acknowledge store.
+            if (task.Status is AgentTaskStatus.Succeeded or AgentTaskStatus.Canceled
+                && now - source.At >= RecencyWindow)
+                continue;
             items.Add(new AttentionItemDto(AttentionKind.LandLegacyUnverified, AlertSeverity.Info, task.Id, null, task.AgentId, null,
-                task.Title, "Historical Land receipt: LegacyUnverified", "Historical routing/receipt is unknown; no new message is inferred or replayed.",
+                task.Title, "Historical Land receipt: LegacyUnverified",
+                $"Historical routing/receipt is unknown; no new message is inferred or replayed. receipts={group.Count}.",
                 source.At, null, [AttentionAction.OpenDrawer], task.CardId, ConditionKey: $"legacy-land:{source.Id:N}"));
         }
         return items;
+    }
+
+    private static List<AttentionItemDto> CollapseLandOutcomeReceipts(List<AttentionItemDto> items)
+    {
+        var outcomes = items.Where(i => i.Kind == AttentionKind.LandOutcomeUnconfirmed).ToList();
+        if (outcomes.Count == 0)
+            return items;
+
+        var rest = items.Where(i => i.Kind != AttentionKind.LandOutcomeUnconfirmed).ToList();
+        foreach (var group in outcomes.GroupBy(i => i.TaskId))
+        {
+            var ordered = group
+                .OrderByDescending(i => i.SinceUtc ?? DateTime.MinValue)
+                .ThenByDescending(i => i.LandNotificationId)
+                .ToList();
+            var newest = ordered[0];
+            var severity = ordered.Max(i => i.Severity);
+            rest.Add(newest with
+            {
+                Severity = severity,
+                Evidence = $"receipts={ordered.Count}\n{newest.Evidence}",
+            });
+        }
+
+        return rest;
     }
 
     private async Task<List<AttentionItemDto>> BuildParkedMessageItemsAsync(CancellationToken ct)
@@ -1845,6 +1901,13 @@ public sealed partial class AttentionService
                 ? agentNames.GetValueOrDefault(agentId) ?? agentId.ToString("N")[..8]
                 : $"session {newest.SessionId?.ToString("N")[..8] ?? "unknown"}";
 
+            var newestFirst = group.OrderByDescending(i => i.CreatedAt).ToList();
+            var shown = newestFirst.Take(RecentIncidentVisibleLines).ToList();
+            var hidden = newestFirst.Count - shown.Count;
+            var evidence = string.Join("\n", shown.Select(i => Excerpt(i.Message)));
+            if (hidden > 0)
+                evidence = string.IsNullOrEmpty(evidence) ? $"{hidden} more" : evidence + $"\n{hidden} more";
+
             items.Add(new AttentionItemDto(
                 AttentionKind.RecentCriticalIncident,
                 severity,
@@ -1857,7 +1920,7 @@ public sealed partial class AttentionService
                     ? $"{severity} {group.Key.Kind} in the last 24h."
                     : $"{group.Count()} x {severity} {group.Key.Kind} in the last 24h, most recently "
                       + $"{Duration(_timeProvider.GetUtcNow().UtcDateTime - newest.CreatedAt)} ago.",
-                Excerpt(newest.Message),
+                evidence,
                 oldest,
                 null,
                 [AttentionAction.OpenAgent]));
