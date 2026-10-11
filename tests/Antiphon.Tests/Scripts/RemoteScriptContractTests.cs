@@ -378,17 +378,19 @@ public sealed class RemoteScriptContractTests
             status=0
             actual="$(c849_fixture_scale_budget vol nuget-scratch 'vol nuget-scratch /var/lib/docker/volumes/vol/_data 1654:1654:700 0 268435456')" || status=$?
             [ "$status" = 0 ] && [ "$actual" = 0 ] || { printf 'FAIL zero status=%s actual=%s\n' "$status" "$actual"; exit 1; }
+            fail=0
             status=0
             actual="$(c849_fixture_scale_budget vol nuget-packages 'vol nuget-packages /var/lib/docker/volumes/vol/_data 1654:1654:700 010 10737418240')" || status=$?
-            [ "$status" = 0 ] && [ "$actual" = 12 ] || { printf 'FAIL leading-zero status=%s actual=%s\n' "$status" "$actual"; exit 1; }
+            [ "$status" = 0 ] && [ "$actual" = 12 ] || { printf 'FAIL leading-zero status=%s actual=%s\n' "$status" "$actual"; fail=1; }
             status=0
             actual="$(c849_fixture_scale_budget vol nuget-scratch 'vol nuget-scratch /var/lib/docker/volumes/vol/_data 1654:1654:700 08 268435456')" || status=$?
-            [ "$status" = 0 ] && [ "$actual" = 10 ] || { printf 'FAIL octal-eight status=%s actual=%s\n' "$status" "$actual"; exit 1; }
+            [ "$status" = 0 ] && [ "$actual" = 10 ] || { printf 'FAIL octal-eight status=%s actual=%s\n' "$status" "$actual"; fail=1; }
             status=0
             actual="$(c849_fixture_scale_budget vol npm-content 'vol npm-content /var/lib/docker/volumes/vol/_data 1654:1654:700 1000000000000000 2147483648')" || status=$?
-            [ "$status" = 2 ] || { printf 'FAIL digits-status=%s actual=%s\n' "$status" "$actual"; exit 1; }
+            [ "$status" = 2 ] || { printf 'FAIL digits-status=%s actual=%s\n' "$status" "$actual"; fail=1; }
             printf '%s\n' "$actual" | grep -Fq 'FixtureBudgetObservationTooLong name=vol role=npm-content bytes=1000000000000000 line=vol npm-content /var/lib/docker/volumes/vol/_data 1654:1654:700 1000000000000000 2147483648' \
-                || { printf 'FAIL digits-diagnosis=%s\n' "$actual"; exit 1; }
+                || { printf 'FAIL digits-diagnosis=%s\n' "$actual"; fail=1; }
+            [ "$fail" = 0 ] || exit 1
             printf 'PASS c1194-budget-scale\n'
             """);
         output.IndexOf("operand expected", StringComparison.Ordinal).ShouldBe(-1, output);
