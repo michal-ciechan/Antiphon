@@ -1,14 +1,17 @@
 using System.Text.RegularExpressions;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Shouldly;
 using TUnit.Core;
 
 namespace Antiphon.Tests.Application;
 
 /// <summary>
-/// CARD-1155. The roster pin records a public E2E method when Test is in the
-/// attribute list on that declaration, after comments and string literals are
-/// blanked, and compares those names to the plan's E2E checkpoint filters.
-/// Queue insert, Sent, or ack does not discharge an E2E row.
+/// CARD-1155. The roster pin parses the E2E source with Roslyn and records each
+/// public instance method of DispatchBaseWarningDeliveryE2ETests whose attributes
+/// name Test or TestAttribute. Those names must equal the plan's CP-2..CP-13
+/// filters. Queue insert, Sent, or ack does not discharge an E2E row.
 /// </summary>
 [Category("Unit")]
 public class DispatchBaseWarningRosterTests
@@ -25,8 +28,10 @@ public class DispatchBaseWarningRosterTests
     private const string PinFilter =
         "/*/*/DispatchBaseWarningRosterTests/*";
 
-    private const string MethodPattern =
-        @"\bpublic(?:\s+(?:static|async|unsafe|partial|virtual|override|sealed|new))*\s+(?<type>[A-Za-z_][A-Za-z0-9_]*(?:\s*<[^;\n{}()]*>)?(?:\s*\[\s*\])?\??(?:\s*\.\s*[A-Za-z_][A-Za-z0-9_]*(?:\s*<[^;\n{}()]*>)?(?:\s*\[\s*\])?\??)*)\s+(?<name>[A-Za-z_][A-Za-z0-9_]*)\s*(?:<[^;\n{}()]*>)?\s*\(";
+    private const string CostCitation =
+        "CARD-0550 CP-24 budgets one DispatchBaseWarningDeliveryE2ETests method at 4 minutes";
+
+    private const string OneMethodBudget = "the CP-24 one-method budget";
 
     [Test]
     public void C1155_RosterNamesEveryDispatchWarningE2EMethod()
@@ -40,8 +45,12 @@ public class DispatchBaseWarningRosterTests
         collapsed.ShouldContain("Queue insert, Sent, or ack alone does not discharge");
         collapsed.ShouldContain("LandDeliveryFixture.InitializeAsync requires Windows");
         collapsed.ShouldContain("CP-1 does not discharge");
-        collapsed.ShouldContain("CARD-0550");
-        collapsed.ShouldContain("CP-24");
+        var cost = Collapse(HeadingSection(plan, "Cost basis", out var costStart, out var costEnd));
+        cost.ShouldContain(CostCitation, Case.Sensitive);
+        cost.ShouldContain(OneMethodBudget, Case.Sensitive);
+        var outsideCost = Collapse(plan.Remove(costStart, costEnd - costStart));
+        outsideCost.Contains(CostCitation, StringComparison.Ordinal).ShouldBeFalse(CostCitation);
+        outsideCost.Contains(OneMethodBudget, StringComparison.Ordinal).ShouldBeFalse(OneMethodBudget);
 
         var batch = File.ReadAllText(Path.Combine(root, BatchPlanRelative.Replace('/', Path.DirectorySeparatorChar)))
             .Replace("\r\n", "\n");
@@ -55,7 +64,7 @@ public class DispatchBaseWarningRosterTests
         var pin = rows.Single(row => row.Filter == PinFilter);
         pin.Build.ShouldContain("tests/Antiphon.Tests -> ");
         pin.Covers.ShouldContain("V-1");
-        pin.Min.ShouldBe("5");
+        pin.Min.ShouldBe("9");
         int.TryParse(pin.EstimatedMinutes, out var pinMinutes).ShouldBeTrue(pin.Id);
         pinMinutes.ShouldBeGreaterThan(0);
 
@@ -94,25 +103,28 @@ public class DispatchBaseWarningRosterTests
     public void C1155_ExtraAttributeAfterTestIsDiscovered()
     {
         const string source = """
-            [Test]
-            [Category("E2E")]
-            public async Task WithFollowingAttribute() { }
+            public class DispatchBaseWarningDeliveryE2ETests
+            {
+                [Test]
+                [Category("E2E")]
+                public async Task WithFollowingAttribute() { }
 
-            [Test, Timeout(1)]
-            public async Task WithCombinedAttribute() { }
+                [Test, Timeout(1)]
+                public async Task WithCombinedAttribute() { }
 
-            [Test][Category("E2E")]
-            public async Task WithStackedAttribute() { }
+                [Test][Category("E2E")]
+                public async Task WithStackedAttribute() { }
 
-            [Arguments(1)]
-            [Test]
-            public async Task WithEarlierAttribute() { }
+                [Arguments(1)]
+                [Test]
+                public async Task WithEarlierAttribute() { }
 
-            [TestAttribute]
-            public async Task WithSpelledAttribute() { }
+                [TestAttribute]
+                public async Task WithSpelledAttribute() { }
 
-            [Latest]
-            public async Task NamedLatest() { }
+                [Latest]
+                public async Task NamedLatest() { }
+            }
             """;
 
         TestMethods(source).ShouldBe(new[]
@@ -129,13 +141,16 @@ public class DispatchBaseWarningRosterTests
     public void C1155_CommentedOutDeclarationIsNotCounted()
     {
         const string source = """
-            // [Test] public async Task CommentedOut() { }
-            // [Test]
-            public async Task AttributeOnlyCommented() { }
-            const string quoted = "[Test] public async Task Quoted() { }";
-            @"[Test] public async Task Verbatim() { }"
-            [Test]
-            public async Task Live() { }
+            public class DispatchBaseWarningDeliveryE2ETests
+            {
+                // [Test] public async Task CommentedOut() { }
+                // [Test]
+                public async Task AttributeOnlyCommented() { }
+                const string quoted = "[Test] public async Task Quoted() { }";
+                @"[Test] public async Task Verbatim() { }";
+                [Test]
+                public async Task Live() { }
+            }
             """;
 
         TestMethods(source).ShouldBe(new[] { "Live" });
@@ -145,13 +160,16 @@ public class DispatchBaseWarningRosterTests
     public void C1155_BlockCommentMethodIsNotCounted()
     {
         const string source = """
-            /*
-            [Test]
-            public async Task Hidden() { }
-            */
-            [Test]
-            public async Task Live() { }
-            /* [Test] public async Task HiddenInline() { } */
+            public class DispatchBaseWarningDeliveryE2ETests
+            {
+                /*
+                [Test]
+                public async Task Hidden() { }
+                */
+                [Test]
+                public async Task Live() { }
+                /* [Test] public async Task HiddenInline() { } */
+            }
             """;
 
         TestMethods(source).ShouldBe(new[] { "Live" });
@@ -161,14 +179,17 @@ public class DispatchBaseWarningRosterTests
     public void C1155_RemovedAndRenamedMethodDiffersFromTheRoster()
     {
         const string source = """
-            [Test]
-            [Category("E2E")]
-            public async Task Renamed() { }
+            public class DispatchBaseWarningDeliveryE2ETests
+            {
+                [Test]
+                [Category("E2E")]
+                public async Task Renamed() { }
 
-            [Test, Timeout(1)]
-            public async Task Kept() { }
+                [Test, Timeout(1)]
+                public async Task Kept() { }
 
-            // [Test] public async Task Removed() { }
+                // [Test] public async Task Removed() { }
+            }
             """;
 
         var discovered = TestMethods(source);
@@ -178,354 +199,145 @@ public class DispatchBaseWarningRosterTests
         SortedNames(discovered).ShouldBe(SortedNames(new[] { "Kept", "Renamed" }));
     }
 
+    [Test]
+    public void C1155_VerbatimEscapedQuoteDoesNotHideTheNextTest()
+    {
+        const string source = """"
+            public class DispatchBaseWarningDeliveryE2ETests
+            {
+                const string escaped = @"""[Test] public async Task HiddenByVerbatim() { }";
+
+                [Test]
+                public async Task AfterVerbatimEscapedQuote() { }
+            }
+            """";
+
+        TestMethods(source).ShouldBe(new[] { "AfterVerbatimEscapedQuote" });
+    }
+
+    [Test]
+    public void C1155_CharLiteralQuoteDoesNotHideTheNextTest()
+    {
+        const string source = """
+            public class DispatchBaseWarningDeliveryE2ETests
+            {
+                const char mark = '"';
+
+                [Test]
+                public async Task AfterCharLiteral() { }
+            }
+            """;
+
+        TestMethods(source).ShouldBe(new[] { "AfterCharLiteral" });
+    }
+
+    [Test]
+    public void C1155_RawStringDoesNotHideTheNextTest()
+    {
+        const string source = """"
+            public class DispatchBaseWarningDeliveryE2ETests
+            {
+                const string hidden = """
+                    [Test]
+                    public async Task HiddenInRaw() { }
+                    """;
+
+                [Test]
+                public async Task AfterRawString() { }
+            }
+            """";
+
+        TestMethods(source).ShouldBe(new[] { "AfterRawString" });
+    }
+
+    [Test]
+    public void C1155_InterpolatedStringDoesNotHideTheNextTest()
+    {
+        const string source = """
+            public class DispatchBaseWarningDeliveryE2ETests
+            {
+                static readonly string Hidden = $"pre { '"' } [Test] public async Task HiddenInInterpolation() {{ }}";
+
+                [Test]
+                public async Task AfterInterpolated() { }
+            }
+            """;
+
+        TestMethods(source).ShouldBe(new[] { "AfterInterpolated" });
+    }
+
     private static string[] SortedNames(IEnumerable<string> names) =>
         names.OrderBy(name => name, StringComparer.Ordinal).ToArray();
 
     private static List<string> TestMethods(string source)
     {
-        var stripped = StripCommentsAndStrings(source);
+        var tree = CSharpSyntaxTree.ParseText(source);
+        var errors = tree.GetDiagnostics()
+            .Where(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error)
+            .Select(diagnostic => diagnostic.ToString())
+            .ToArray();
+        errors.ShouldBeEmpty();
+
         var methods = new List<string>();
-        foreach (Match match in Regex.Matches(stripped, MethodPattern, RegexOptions.CultureInvariant))
+        foreach (var type in tree.GetRoot().DescendantNodes().OfType<ClassDeclarationSyntax>())
         {
-            var type = match.Groups["type"].Value;
-            if (type is "class" or "struct" or "interface" or "enum" or "record" or "delegate" or "event" or "namespace")
+            if (type.Identifier.ValueText != "DispatchBaseWarningDeliveryE2ETests")
                 continue;
-            if (!AttributesContainTest(stripped, match.Index))
+            if (type.Parent is TypeDeclarationSyntax)
                 continue;
-            var name = match.Groups["name"].Value;
-            if (!methods.Contains(name))
-                methods.Add(name);
+            foreach (var method in type.Members.OfType<MethodDeclarationSyntax>())
+            {
+                if (!method.Modifiers.Any(modifier => modifier.IsKind(SyntaxKind.PublicKeyword)))
+                    continue;
+                if (method.Modifiers.Any(modifier => modifier.IsKind(SyntaxKind.StaticKeyword)))
+                    continue;
+                if (!method.AttributeLists.SelectMany(list => list.Attributes).Any(IsTestAttribute))
+                    continue;
+                var name = method.Identifier.ValueText;
+                if (!methods.Contains(name))
+                    methods.Add(name);
+            }
         }
 
         return methods;
     }
 
-    private static bool AttributesContainTest(string source, int methodAt)
+    private static bool IsTestAttribute(AttributeSyntax attribute)
     {
-        var i = methodAt - 1;
-        var found = false;
-        while (i >= 0 && char.IsWhiteSpace(source[i]))
-            i--;
-        while (i >= 0 && source[i] == ']')
+        var name = attribute.Name switch
         {
-            var close = i;
-            var depth = 0;
-            var open = -1;
-            for (var j = i; j >= 0; j--)
+            IdentifierNameSyntax identifier => identifier.Identifier.ValueText,
+            GenericNameSyntax generic => generic.Identifier.ValueText,
+            QualifiedNameSyntax qualified => qualified.Right.Identifier.ValueText,
+            AliasQualifiedNameSyntax alias => alias.Name switch
             {
-                if (source[j] == ']')
-                    depth++;
-                else if (source[j] == '[')
-                {
-                    depth--;
-                    if (depth == 0)
-                    {
-                        open = j;
-                        break;
-                    }
-                }
-            }
-
-            if (open < 0)
-                return false;
-            if (BodyNamesTest(source.Substring(open + 1, close - open - 1)))
-                found = true;
-            i = open - 1;
-            while (i >= 0 && char.IsWhiteSpace(source[i]))
-                i--;
-        }
-
-        return found;
-    }
-
-    private static bool BodyNamesTest(string body)
-    {
-        foreach (var segment in SplitAttributeList(body))
-        {
-            if (IsTestAttribute(segment))
-                return true;
-        }
-
-        return false;
-    }
-
-    private static IEnumerable<string> SplitAttributeList(string body)
-    {
-        var depth = 0;
-        var start = 0;
-        for (var i = 0; i < body.Length; i++)
-        {
-            switch (body[i])
-            {
-                case '(':
-                case '[':
-                case '<':
-                case '{':
-                    depth++;
-                    break;
-                case ')':
-                case ']':
-                case '>':
-                case '}':
-                    if (depth > 0)
-                        depth--;
-                    break;
-                case ',' when depth == 0:
-                    yield return body[start..i];
-                    start = i + 1;
-                    break;
-            }
-        }
-
-        yield return body[start..];
-    }
-
-    private static bool IsTestAttribute(string segment)
-    {
-        var i = 0;
-        SkipSpace(segment, ref i);
-        if (!TryReadIdentifier(segment, ref i, out var name))
-            return false;
-        if (i < segment.Length && segment[i] == ':' && (i + 1 >= segment.Length || segment[i + 1] != ':'))
-        {
-            i++;
-            SkipSpace(segment, ref i);
-            if (!TryReadIdentifier(segment, ref i, out name))
-                return false;
-        }
-
-        while (true)
-        {
-            if (i + 1 < segment.Length && segment[i] == ':' && segment[i + 1] == ':')
-            {
-                i += 2;
-                if (!TryReadIdentifier(segment, ref i, out name))
-                    return false;
-                continue;
-            }
-
-            if (i < segment.Length && segment[i] == '.')
-            {
-                i++;
-                if (!TryReadIdentifier(segment, ref i, out name))
-                    return false;
-                continue;
-            }
-
-            break;
-        }
-
+                IdentifierNameSyntax identifier => identifier.Identifier.ValueText,
+                GenericNameSyntax generic => generic.Identifier.ValueText,
+                _ => null,
+            },
+            _ => null,
+        };
         return name is "Test" or "TestAttribute";
     }
 
-    private static void SkipSpace(string text, ref int i)
+    private static string Collapse(string text) =>
+        Regex.Replace(text.Replace("`", ""), @"\s+", " ").Trim();
+
+    private static string HeadingSection(string markdown, string heading, out int start, out int end)
     {
-        while (i < text.Length && char.IsWhiteSpace(text[i]))
-            i++;
-    }
-
-    private static bool TryReadIdentifier(string text, ref int i, out string name)
-    {
-        name = "";
-        if (i < text.Length && text[i] == '@')
-            i++;
-        var start = i;
-        if (i >= text.Length || !IsIdentStart(text[i]))
-            return false;
-        i++;
-        while (i < text.Length && IsIdentPart(text[i]))
-            i++;
-        name = text[start..i];
-        return true;
-    }
-
-    private static bool IsIdentStart(char c) => c is >= 'A' and <= 'Z' or >= 'a' and <= 'z' or '_';
-
-    private static bool IsIdentPart(char c) => IsIdentStart(c) || c is >= '0' and <= '9';
-
-    private static string StripCommentsAndStrings(string source)
-    {
-        var chars = source.ToCharArray();
-        var n = chars.Length;
-        var i = 0;
-        while (i < n)
-        {
-            if (i + 1 < n && chars[i] == '/' && chars[i + 1] == '/')
-            {
-                chars[i] = ' ';
-                chars[i + 1] = ' ';
-                i += 2;
-                while (i < n && chars[i] != '\n')
-                {
-                    chars[i] = ' ';
-                    i++;
-                }
-
-                continue;
-            }
-
-            if (i + 1 < n && chars[i] == '/' && chars[i + 1] == '*')
-            {
-                chars[i] = ' ';
-                chars[i + 1] = ' ';
-                i += 2;
-                while (i < n)
-                {
-                    if (chars[i] == '*' && i + 1 < n && chars[i + 1] == '/')
-                    {
-                        chars[i] = ' ';
-                        chars[i + 1] = ' ';
-                        i += 2;
-                        break;
-                    }
-
-                    if (chars[i] != '\n')
-                        chars[i] = ' ';
-                    i++;
-                }
-
-                continue;
-            }
-
-            if (TryBlankString(chars, ref i))
-                continue;
-            i++;
-        }
-
-        return new string(chars);
-    }
-
-    private static bool TryBlankString(char[] chars, ref int i)
-    {
-        var n = chars.Length;
-        var start = i;
-        var verbatim = false;
-        if (chars[i] == '@' && i + 1 < n && chars[i + 1] == '$' && i + 2 < n && chars[i + 2] == '"')
-        {
-            verbatim = true;
-            chars[i] = ' ';
-            chars[i + 1] = ' ';
-            i += 2;
-        }
-        else if (chars[i] == '$' && i + 1 < n && chars[i + 1] == '@' && i + 2 < n && chars[i + 2] == '"')
-        {
-            verbatim = true;
-            chars[i] = ' ';
-            chars[i + 1] = ' ';
-            i += 2;
-        }
-        else if (chars[i] == '@' && i + 1 < n && chars[i + 1] == '"')
-        {
-            verbatim = true;
-            chars[i] = ' ';
-            i++;
-        }
-        else if (chars[i] == '$' && i + 1 < n && chars[i + 1] == '"')
-        {
-            chars[i] = ' ';
-            i++;
-        }
-
-        if (i >= n || chars[i] != '"')
-        {
-            i = start;
-            return false;
-        }
-
-        var quotes = 0;
-        while (i + quotes < n && chars[i + quotes] == '"')
-            quotes++;
-        if (quotes >= 3)
-        {
-            for (var k = start; k < i + quotes; k++)
-            {
-                if (chars[k] != '\n')
-                    chars[k] = ' ';
-            }
-
-            i += quotes;
-            while (i < n)
-            {
-                if (chars[i] == '"')
-                {
-                    var run = 0;
-                    while (i + run < n && chars[i + run] == '"')
-                        run++;
-                    if (run >= quotes)
-                    {
-                        for (var k = 0; k < run; k++)
-                            chars[i + k] = ' ';
-                        i += run;
-                        return true;
-                    }
-                }
-
-                if (chars[i] != '\n')
-                    chars[i] = ' ';
-                i++;
-            }
-
-            return true;
-        }
-
-        chars[i] = ' ';
-        i++;
-        if (verbatim)
-        {
-            while (i < n)
-            {
-                if (chars[i] == '"')
-                {
-                    if (i + 1 < n && chars[i + 1] == '"')
-                    {
-                        chars[i] = ' ';
-                        chars[i + 1] = ' ';
-                        i += 2;
-                        continue;
-                    }
-
-                    chars[i] = ' ';
-                    i++;
-                    return true;
-                }
-
-                if (chars[i] != '\n')
-                    chars[i] = ' ';
-                i++;
-            }
-
-            return true;
-        }
-
-        while (i < n)
-        {
-            if (chars[i] == '\\')
-            {
-                chars[i] = ' ';
-                i++;
-                if (i < n)
-                {
-                    if (chars[i] != '\n')
-                        chars[i] = ' ';
-                    i++;
-                }
-
-                continue;
-            }
-
-            if (chars[i] == '"')
-            {
-                chars[i] = ' ';
-                i++;
-                return true;
-            }
-
-            if (chars[i] != '\n')
-                chars[i] = ' ';
-            i++;
-        }
-
-        return true;
+        var title = "## " + heading;
+        var marker = "\n" + title + "\n";
+        start = markdown.StartsWith(title + "\n", StringComparison.Ordinal)
+            ? 0
+            : markdown.IndexOf(marker, StringComparison.Ordinal);
+        start.ShouldBeGreaterThanOrEqualTo(0, title);
+        if (start > 0)
+            start++;
+        end = markdown.IndexOf("\n## ", start + title.Length, StringComparison.Ordinal);
+        end.ShouldBeGreaterThan(start, title);
+        var section = markdown[start..end];
+        section.StartsWith(title + "\n", StringComparison.Ordinal).ShouldBeTrue(title);
+        return section;
     }
 
     private static string Section(string markdown, string heading)
