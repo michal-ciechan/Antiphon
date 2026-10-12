@@ -318,7 +318,78 @@ make_full_marker() {
     manifest=$(sha256sum "$recovery/recovery.manifest" | cut -d' ' -f1)
     printf 'schema=3\nkind=full\nsource-sha=%s\nimage=%s\ndonor-type=live\ndonor=%s\ntime=2026-10-04T00:00:00Z\npackages=%s\nscratch=%s\nnpm=%s\npackage-bytes=123\nnpm-bytes=456\nrecovery=%s\nmanifest-sha256=%s\n' "$SHA" "$image_id" "$donor_id" "$C849_PACKAGES" "$C849_SCRATCH" "$C849_NPM" "$recovery" "$manifest" > "$C849_READY"
 }
+# S5: controller admission and helper filesystem recipients, without a Docker daemon.
+if [ "$mode" = fixture-seed ] || [ "$mode" = volume-recovery ]; then
+    mkdir -p "$CASE_DIR/fixture-controller" "$root/volumes/c849${RUN}-work/_data/cache"
+    printf '%s\n' "c849${RUN}-work" > "$CASE_DIR/.fixture-volumes"
+    c849_payload_own volume
+    c849_fixture_helper_exec() {
+        local role="$1" code arg
+        shift
+        code=$(cat)
+        code="${code//\/fixture/$root/volumes/c849${RUN}-work/_data}"
+        local -a args=()
+        for arg in "$@"; do args+=("${arg//\/fixture/$root/volumes/c849${RUN}-work/_data}"); done
+        bash "${args[@]}" <<< "$code"
+    }
+fi
 case "$mode" in
+ fixture-seed)
+    ordinary "$root/donor"
+    run c849_seed; accept fixture-seed-volume-accepted
+    recovery="$(sed -n 's/^recovery=//p' "$C849_READY")"
+    [ "$recovery" = "/fixture/cache/recovery-$RUN" ] || fail fixture-recovery-volume-path
+    physical="$root/volumes/c849${RUN}-work/_data/cache/recovery-$RUN"
+    for part in packages npm; do diff -r "$root/donor/$part" "$root/volumes/$([ "$part" = packages ] && echo "$C849_PACKAGES" || echo "$C849_NPM")/_data" || fail fixture-recipient-bytes; done
+    [ "$(stat -c %a "$physical/packages/c913.tools/2.0.0/tool")" = 751 ] || fail fixture-recipient-executable
+    [ ! -e "$SERVER2_ROOT/cache/recovery-$RUN" ] || fail fixture-no-host-recovery
+    printf keep > "$root/volumes/$C849_PACKAGES/_data/rerun-sentinel"
+    run c849_seed; accept fixture-rerun-accepted
+    [ "$(cat "$root/volumes/$C849_PACKAGES/_data/rerun-sentinel")" = keep ] || fail fixture-rerun-sentinel-retained
+    pass fixture-rerun-sentinel-retained
+    for FAULT in copy-packages copy-npm npm-verify corrupt-import corrupt-npm-import smoke recovery-save restart donor-id reconnect publication; do
+      rm -f "$C849_READY"; rm -rf -- "$physical"
+      for name in "$C849_PACKAGES" "$C849_NPM"; do find "$root/volumes/$name/_data" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +; done
+      : > "$root/trace"
+      run c849_seed
+      [ "$(cat "$root/exit")" != 0 ] && [ ! -e "$C849_READY" ] || fail "fixture-$FAULT-no-marker"
+      if [ "$FAULT" = npm-verify ]; then ! grep -q '^import$' "$root/trace" || fail fixture-integrity-before-import; fi
+      pass "fixture-$FAULT-no-marker"
+    done
+    ;;
+ volume-recovery)
+    recovery="/fixture/cache/recovery-$RUN"
+    physical="$root/volumes/c849${RUN}-work/_data/cache/recovery-$RUN"
+    ordinary "$physical"
+    c849_manifest_write "$physical" "$physical/recovery.manifest"
+    digest=$(sha256sum "$physical/recovery.manifest" | cut -d' ' -f1)
+    run c849_recovery_check "$recovery" "$digest"; accept volume-recovery-valid
+    for kind in package npm executable manifest; do
+      case "$kind" in
+        package) file="$physical/packages/c913.probe/1.0.0/data" ;;
+        npm) file="$physical/npm/content" ;;
+        executable) file="$physical/packages/c913.tools/2.0.0/tool" ;;
+        manifest) file="$physical/recovery.manifest" ;;
+      esac
+      cp -p "$file" "$root/backup"
+      if [ "$kind" = executable ]; then chmod 600 "$file"; else printf changed >> "$file"; fi
+      run c849_recovery_check "$recovery" "$digest"; refuse "volume-$kind-bound" CacheRecoveryChanged
+      cp -p "$root/backup" "$file"
+      run c849_recovery_check "$recovery" "$digest"; accept "volume-$kind-restored"
+    done
+    mv "$physical" "$physical.missing"
+    run c849_recovery_check "$recovery" "$digest"; refuse volume-tree-required CacheRecoveryMissing
+    ln -s "$physical.missing" "$physical"
+    run c849_recovery_check "$recovery" "$digest"; refuse volume-link-refused CacheRecoveryMissing
+    rm "$physical"; mv "$physical.missing" "$physical"
+    mv "$physical/recovery.manifest" "$physical/manifest.missing"
+    run c849_recovery_check "$recovery" "$digest"; refuse volume-manifest-required CacheRecoveryMissing
+    ln -s manifest.missing "$physical/recovery.manifest"
+    run c849_recovery_check "$recovery" "$digest"; refuse volume-manifest-link-refused CacheRecoveryMissing
+    rm "$physical/recovery.manifest"; mv "$physical/manifest.missing" "$physical/recovery.manifest"
+    run c849_recovery_check /fixture/escape/recovery-other "$digest"; refuse volume-escape-refused CacheRecoveryInvalid
+    run c849_recovery_check "$recovery" "$digest"; accept volume-recovery-restored
+    ;;
  tree)
     ordinary "$root/donor"
     run c849_validate_seed_tree "$root/donor"; accept ordinary-only-accepted

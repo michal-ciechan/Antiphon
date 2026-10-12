@@ -644,6 +644,26 @@ public sealed class RemoteScriptContractTests
             Fact(output, label).ShouldBe("1", label);
     }
 
+    // S5 case -> mutation -> red: host selection leaves recovery outside the volume;
+    // bypassing reuse destroys the sentinel. Reader validation cannot prune incomplete
+    // packages on its read-only mount; transfer acceptance must use the writer.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1192_Fixture_seed_and_rerun_keep_payloads_in_volume()
+    {
+        C913Run("fixture-seed", "fixture-rerun-sentinel-retained");
+        var output = C1192Run("writable-pruning");
+        Fact(output, "reader-cannot-prune").ShouldBe("1", "reader-cannot-prune");
+        Fact(output, "writer-prunes-incomplete-stage").ShouldBe("1", "writer-prunes-incomplete-stage");
+    }
+
+    // S5 case -> mutation -> red: bypassing recovery validation accepts corrupt bytes,
+    // executable modes, manifests, links or missing trees on the volume backend.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1192_Recovery_controls_validate_volume_bytes_modes_and_manifest() =>
+        C913Run("volume-recovery", "volume-recovery-restored");
+
     // CARD-1193. NuGet locks $NUGET_SCRATCH/lock/<hash>. The holder and waiter must receive the
     // same HOME and NUGET_SCRATCH the F-4 restore containers pass.
     [Test]

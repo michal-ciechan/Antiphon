@@ -576,13 +576,13 @@ exec_in() {
             ;;
     esac
     if [ "${REWRITE[1]:-}" = -c ]; then
-        "$bin" -c "${REWRITE[2]}" "${REWRITE[@]:3}"
+        model_mount_exec "$mount" "$data" "$bin" -c "${REWRITE[2]}" "${REWRITE[@]:3}"
         return
     fi
     if [ "${REWRITE[1]:-}" = -s ]; then
         local rest=("${REWRITE[@]:2}")
         [ "${rest[0]:-}" = -- ] && rest=("${rest[@]:1}")
-        "$bin" -s -- "${rest[@]}"
+        model_mount_exec "$mount" "$data" "$bin" -s -- "${rest[@]}"
         return
     fi
     printf 'UNEXPECTED-EXEC %s\n' "$*" >> "$C1192_ROOT/scenario.err"
@@ -2249,7 +2249,43 @@ mode_transfer() {
     refuse_unexpected
 }
 
+# Model readonly mounts with filesystem permissions; the harness runs as non-root.
+model_mount_exec() {
+    local mount="$1" data="$2" status=0
+    shift 2
+    if field_has "$mount" readonly; then
+        [ "$(id -u)" != 0 ] || { printf 'read-only model requires non-root\n' >&2; return 97; }
+        find "$data" -type d -exec chmod a-w {} +
+        "$@" || status=$?
+        find "$data" -type d -exec chmod u+w {} +
+    else
+        "$@" || status=$?
+    fi
+    return "$status"
+}
+
+mode_writable_pruning() {
+    reset_runtime
+    require_init
+    local data="$C1192_ROOT/volumes/$WORK/data" status=0 reader_ok=0 writer_ok=0
+    plant_donor_tree "$data/donor"
+    mkdir -p "$data/donor/packages/incomplete/1.0"
+    printf partial > "$data/donor/packages/incomplete/1.0/data"
+    {
+        declare -f c849_validate_seed_relative c849_validate_seed_tree
+        printf '%s\n' 'c849_validate_seed_tree "$1"'
+    } | c849_fixture_helper_exec reader /bin/bash -s -- /fixture/donor || status=$?
+    [ "$status" != 0 ] && [ -f "$data/donor/packages/incomplete/1.0/data" ] && reader_ok=1
+    status=0
+    c849_payload_accept_transfer "$WRITER" /fixture/donor "$WRITER" /fixture/cache/stage "$CASE_DIR/payload-accepted" "$ADMITTED" || status=$?
+    [ "$status" = 0 ] && [ -f "$CASE_DIR/payload-accepted" ] && [ ! -e "$data/cache/stage/packages/incomplete/1.0" ] && writer_ok=1
+    emit reader-cannot-prune "$reader_ok"
+    emit writer-prunes-incomplete-stage "$writer_ok"
+    refuse_unexpected
+}
+
 case "$mode" in
+    writable-pruning) mode_writable_pruning ;;
     register) mode_register ;;
     cleanup) mode_cleanup ;;
     partial) mode_partial ;;
