@@ -42,8 +42,74 @@ public sealed class ConPtyEnvironmentIsolationGuardTests
         mutators.ShouldContain(method => method.DeclaringType == typeof(SerializedFixture));
     }
 
+    [Test]
+    public void Guard_classifies_async_method_state_machines_by_the_owning_method()
+    {
+        var mutators = FindMutators([typeof(StateMachineFixtures.AsyncMethodFixture),
+            typeof(StateMachineFixtures.SerializedAsyncMethodFixture)]);
+        mutators.Select(method => $"{method.DeclaringType!.Name}.{method.Name}").Order().ToArray().ShouldBe(new[]
+        {
+            "AsyncMethodFixture.Bad",
+            "AsyncMethodFixture.Keyed",
+            "AsyncMethodFixture.SafeMethod",
+            "SerializedAsyncMethodFixture.Safe",
+        });
+        Violations(mutators).ShouldBe(new[]
+        {
+            "AsyncMethodFixture.Bad",
+            "AsyncMethodFixture.Keyed",
+        });
+    }
+
+    [Test]
+    public void Guard_classifies_async_iterator_state_machines_by_the_owning_method()
+    {
+        var mutators = FindMutators([typeof(StateMachineFixtures.AsyncIteratorFixture),
+            typeof(StateMachineFixtures.SerializedAsyncIteratorFixture)]);
+        mutators.Select(method => $"{method.DeclaringType!.Name}.{method.Name}").Order().ToArray().ShouldBe(new[]
+        {
+            "AsyncIteratorFixture.Bad",
+            "AsyncIteratorFixture.Keyed",
+            "AsyncIteratorFixture.SafeMethod",
+            "SerializedAsyncIteratorFixture.Safe",
+        });
+        Violations(mutators).ShouldBe(new[]
+        {
+            "AsyncIteratorFixture.Bad",
+            "AsyncIteratorFixture.Keyed",
+        });
+    }
+
+    [Test]
+    public void Guard_classifies_iterator_state_machines_by_the_owning_method()
+    {
+        var mutators = FindMutators([typeof(StateMachineFixtures.IteratorFixture),
+            typeof(StateMachineFixtures.SerializedIteratorFixture)]);
+        mutators.Select(method => $"{method.DeclaringType!.Name}.{method.Name}").Order().ToArray().ShouldBe(new[]
+        {
+            "IteratorFixture.Bad",
+            "IteratorFixture.Keyed",
+            "IteratorFixture.SafeMethod",
+            "SerializedIteratorFixture.Safe",
+        });
+        Violations(mutators).ShouldBe(new[]
+        {
+            "IteratorFixture.Bad",
+            "IteratorFixture.Keyed",
+        });
+    }
+
+    [Test]
+    public void Guard_refuses_state_machines_without_MoveNext()
+    {
+        var error = Should.Throw<InvalidOperationException>(() =>
+            FindMutators([typeof(StateMachineFixtures.UnknownFixture)]));
+        error.Message.ShouldBe("State machine for UnknownFixture.Unknown has no MoveNext body");
+    }
+
     private static bool IsFixture(Type type) => type == typeof(MutationFixtures)
         || type == typeof(SerializedFixture)
+        || type == typeof(StateMachineFixtures)
         || type.DeclaringType is { } parent && IsFixture(parent);
 
     private static string[] Violations(IEnumerable<MethodBase> mutators) => mutators
@@ -178,5 +244,129 @@ public sealed class ConPtyEnvironmentIsolationGuardTests
             Action mutate = () => Environment.SetEnvironmentVariable(ConPtyRedistributable.DirectoryEnvVar, null);
             mutate();
         }
+    }
+
+    // Like the lambda/helper fixtures above, these are IL inputs only. The literal
+    // and setter live after suspension in generated MoveNext bodies, not the roots.
+    private static class StateMachineFixtures
+    {
+        internal static class AsyncMethodFixture
+        {
+            public static async Task Bad()
+            {
+                await Task.Yield();
+                Environment.SetEnvironmentVariable(ConPtyRedistributable.DirectoryEnvVar, null);
+            }
+
+            [NotInParallel("keyed-is-insufficient")]
+            public static async Task Keyed()
+            {
+                await Task.Yield();
+                Environment.SetEnvironmentVariable(ConPtyRedistributable.DirectoryEnvVar, null);
+            }
+
+            [NotInParallel]
+            public static async Task SafeMethod()
+            {
+                await Task.Yield();
+                Environment.SetEnvironmentVariable(ConPtyRedistributable.DirectoryEnvVar, null);
+            }
+        }
+
+        [NotInParallel]
+        internal static class SerializedAsyncMethodFixture
+        {
+            public static async Task Safe()
+            {
+                await Task.Yield();
+                Environment.SetEnvironmentVariable(ConPtyRedistributable.DirectoryEnvVar, null);
+            }
+        }
+
+        internal static class AsyncIteratorFixture
+        {
+            public static async IAsyncEnumerable<int> Bad()
+            {
+                await Task.Yield();
+                yield return 0;
+                Environment.SetEnvironmentVariable(ConPtyRedistributable.DirectoryEnvVar, null);
+                yield return 1;
+            }
+
+            [NotInParallel("keyed-is-insufficient")]
+            public static async IAsyncEnumerable<int> Keyed()
+            {
+                await Task.Yield();
+                yield return 0;
+                Environment.SetEnvironmentVariable(ConPtyRedistributable.DirectoryEnvVar, null);
+                yield return 1;
+            }
+
+            [NotInParallel]
+            public static async IAsyncEnumerable<int> SafeMethod()
+            {
+                await Task.Yield();
+                yield return 0;
+                Environment.SetEnvironmentVariable(ConPtyRedistributable.DirectoryEnvVar, null);
+                yield return 1;
+            }
+        }
+
+        [NotInParallel]
+        internal static class SerializedAsyncIteratorFixture
+        {
+            public static async IAsyncEnumerable<int> Safe()
+            {
+                await Task.Yield();
+                yield return 0;
+                Environment.SetEnvironmentVariable(ConPtyRedistributable.DirectoryEnvVar, null);
+                yield return 1;
+            }
+        }
+
+        internal static class IteratorFixture
+        {
+            public static IEnumerable<int> Bad()
+            {
+                yield return 0;
+                Environment.SetEnvironmentVariable(ConPtyRedistributable.DirectoryEnvVar, null);
+                yield return 1;
+            }
+
+            [NotInParallel("keyed-is-insufficient")]
+            public static IEnumerable<int> Keyed()
+            {
+                yield return 0;
+                Environment.SetEnvironmentVariable(ConPtyRedistributable.DirectoryEnvVar, null);
+                yield return 1;
+            }
+
+            [NotInParallel]
+            public static IEnumerable<int> SafeMethod()
+            {
+                yield return 0;
+                Environment.SetEnvironmentVariable(ConPtyRedistributable.DirectoryEnvVar, null);
+                yield return 1;
+            }
+        }
+
+        [NotInParallel]
+        internal static class SerializedIteratorFixture
+        {
+            public static IEnumerable<int> Safe()
+            {
+                yield return 0;
+                Environment.SetEnvironmentVariable(ConPtyRedistributable.DirectoryEnvVar, null);
+                yield return 1;
+            }
+        }
+
+        internal static class UnknownFixture
+        {
+            [AsyncStateMachine(typeof(MissingMoveNext))]
+            public static void Unknown() { }
+        }
+
+        internal sealed class MissingMoveNext { }
     }
 }
