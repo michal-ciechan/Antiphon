@@ -25,6 +25,160 @@ namespace Antiphon.Tests.Application;
 public sealed class TaskInputAttentionCostTests
 {
     [Test]
+    [Arguments(1)]
+    [Arguments(3)]
+    public async Task Strong_arm_uses_one_query_without_draining_candidates(int sessions)
+    {
+        var commands = 0;
+        var wireRows = 0;
+        for (var i = 0; i < sessions; i++)
+        {
+            await using var f = await TaskInputSpillFixture.CreateAsync();
+            var row = await SeedInputAsync(f, 10);
+            await AddEntryAsync(f, 11, TranscriptKinds.AssistantText,
+                $"I cannot read {row.RemoteSpillRelativePath}.");
+            await using (var db = f.Db())
+            {
+                for (var sequence = 20; sequence < 220; sequence++)
+                    db.TranscriptEntries.Add(new TranscriptEntry
+                    {
+                        Id = Guid.NewGuid(), AgentSessionId = f.SessionId, Sequence = sequence,
+                        Kind = TranscriptKinds.UserPrompt, Text = row.Body,
+                        CreatedAt = DateTime.UtcNow,
+                    });
+                await db.SaveChangesAsync();
+            }
+            var probe = new TranscriptReadProbe { CountDrainedRows = true };
+            (await ReadBuilderAsync(f, probe)).ShouldBeEmpty("later complete inputs supersede the episode");
+            commands += probe.Commands;
+            wireRows += probe.WireRows;
+        }
+        wireRows.ShouldBeLessThanOrEqualTo(204 * sessions,
+            "wire rows include remaining candidates read at reader disposal");
+        commands.ShouldBe(sessions, "one transcript command per strong-input session");
+    }
+
+    [Test]
+    [Arguments("one-input", 1, 1)]
+    [Arguments("two-inputs", 1, 1)]
+    [Arguments("three-inputs", 1, 1)]
+    [Arguments("mixed-implicit", 0, 2)]
+    [Arguments("shared-receipt", 2, 3)]
+    [Arguments("receipt-at-start", 1, 1)]
+    [Arguments("receipt-at-end", 0, 1)]
+    [Arguments("false-candidate-before-true", 0, 2)]
+    [Arguments("no-complete-receipt", 0, 1)]
+    [Arguments("null-system-prompts", 1, 1)]
+    [Arguments("shared-session-tasks", 1, 1)]
+    public async Task Single_query_boundary_matches_frozen_builder(string scenario, int items, int commands)
+    {
+        await using var f = await TaskInputSpillFixture.CreateAsync();
+        SessionQueuedMessage? weak = null;
+        if (scenario is "mixed-implicit" or "shared-receipt" or "false-candidate-before-true")
+        {
+            weak = await SeedInputAsync(f, 1);
+            await SetShortBodyAsync(f, weak.Id, 1);
+        }
+        var first = await SeedInputAsync(f, scenario == "receipt-at-start" ? 0 : 10);
+        if (scenario is "two-inputs" or "three-inputs" or "shared-session-tasks")
+        {
+            if (scenario == "shared-session-tasks")
+            {
+                await using var db = f.Db();
+                var taskId = Guid.NewGuid();
+                var eventId = Guid.NewGuid();
+                var body = "Separate caller input for another task sharing this session.";
+                db.AgentTasks.Add(new AgentTask
+                {
+                    Id = taskId, RootTaskId = taskId, AgentSessionId = f.SessionId,
+                    Title = "shared owner", Goal = "Check", Kind = AgentTaskKind.Worker,
+                    Role = AgentTaskRole.Code, AgentKind = AgentKind.Codex,
+                    ModelLevel = AgentModelLevel.High, Workspace = WorkspaceMode.Worktree,
+                    WorkingDirectory = f.ServerRoot, Status = AgentTaskStatus.Blocked,
+                    CreatedAt = DateTime.UtcNow.AddMinutes(1),
+                });
+                db.AgentTaskEvents.Add(new AgentTaskEvent
+                {
+                    Id = eventId, AgentTaskId = taskId, AgentSessionId = f.SessionId,
+                    Type = AgentTaskEventType.Replied, InputBody = body, At = DateTime.UtcNow,
+                });
+                db.SessionQueuedMessages.Add(new SessionQueuedMessage
+                {
+                    Id = Guid.NewGuid(), AgentSessionId = f.SessionId, Sequence = 2,
+                    Body = body, Origin = QueuedMessageOrigin.Delegation, CreatedAt = DateTime.UtcNow,
+                    ConversationKey = AgentTaskInputService.ConversationKey(taskId, eventId),
+                });
+                await db.SaveChangesAsync();
+                await AddEntryAsync(f, 20, TranscriptKinds.UserPrompt, body);
+                await AddEntryAsync(f, 21, TranscriptKinds.AssistantText,
+                    $"I cannot read {AgentTaskInputService.Route(taskId, eventId)}.");
+            }
+            else
+            {
+                var last = await SeedInputAsync(f, 20);
+                if (scenario == "three-inputs")
+                    last = await SeedInputAsync(f, 30);
+                await AddEntryAsync(f, 31, TranscriptKinds.AssistantText,
+                    $"I cannot read {last.RemoteSpillRelativePath}.");
+            }
+        }
+        else if (scenario == "receipt-at-end")
+            await AddEntryAsync(f, 2, TranscriptKinds.AssistantText,
+                $"I cannot read {first.RemoteSpillRelativePath}.");
+        else if (scenario is "no-complete-receipt" or "false-candidate-before-true")
+        {
+            // The LIKE subsequence is necessary but this short prefix is never a receipt.
+            var partial = PromptSubmissionMatch.Normalize(first.Body).Replace(" ", "", StringComparison.Ordinal)[..32];
+            if (scenario == "no-complete-receipt")
+            {
+                await using var db = f.Db();
+                await db.TranscriptEntries.Where(t => t.Sequence == 10)
+                    .ExecuteUpdateAsync(s => s.SetProperty(t => t.Text, partial));
+                await AddEntryAsync(f, 11, TranscriptKinds.AssistantText,
+                    $"I cannot read {first.RemoteSpillRelativePath}.");
+            }
+            else
+            {
+                await AddEntryAsync(f, 3, TranscriptKinds.UserPrompt, partial);
+                await AddEntryAsync(f, 4, TranscriptKinds.AssistantText,
+                    $"I cannot read {weak!.RemoteSpillRelativePath}.");
+            }
+        }
+        else
+        {
+            if (scenario == "shared-receipt")
+            {
+                await using var db = f.Db();
+                await db.TranscriptEntries.Where(t => t.Sequence == 1).ExecuteDeleteAsync();
+                await AddEntryAsync(f, 11, TranscriptKinds.AssistantText,
+                    $"I cannot read {weak!.RemoteSpillRelativePath}.");
+            }
+            if (scenario == "null-system-prompts")
+            {
+                await AddEntryAsync(f, 11, TranscriptKinds.UserPrompt, null);
+                await AddEntryAsync(f, 12, "System", first.Body);
+            }
+            await AddEntryAsync(f, 13, TranscriptKinds.AssistantText,
+                scenario == "mixed-implicit" ? "I cannot read the refinement file."
+                    : $"I cannot read {first.RemoteSpillRelativePath}.");
+        }
+        await using (var db = f.Db())
+        {
+            // Latest retry baseline must never hide the original receipt.
+            await db.SessionQueuedMessages.Where(r => r.Id == first.Id)
+                .ExecuteUpdateAsync(s => s.SetProperty(r => r.LastDeliveryBaselineSequence, 100L));
+            var tasks = await db.AgentTasks.AsNoTracking().OrderBy(t => t.CreatedAt).ToListAsync();
+            var reference = await new Pre0993Builder(db).BuildAsync(tasks, CancellationToken.None);
+            reference.Count.ShouldBe(items, "written boundary outcome: " + scenario);
+            var probe = new TranscriptReadProbe();
+            var actual = await ReadBuilderAsync(f, probe);
+            System.Text.Json.JsonSerializer.Serialize(actual)
+                .ShouldBe(System.Text.Json.JsonSerializer.Serialize(reference), scenario);
+            probe.Commands.ShouldBe(commands, "transcript command bound: " + scenario);
+        }
+    }
+
+    [Test]
     public async Task No_input_reads_no_transcripts_despite_large_history()
     {
         await using var f = await TaskInputSpillFixture.CreateAsync();
@@ -362,6 +516,8 @@ public sealed class TaskInputAttentionCostTests
         public int MaxColumns { get; private set; }
         public int TextBytes { get; private set; }
         public bool CountTextBytes { get; init; }
+        public bool CountDrainedRows { get; init; }
+        public int WireRows { get; private set; }
 
         public override ValueTask<DbDataReader> ReaderExecutedAsync(DbCommand command,
             CommandExecutedEventData eventData, DbDataReader result,
@@ -370,7 +526,7 @@ public sealed class TaskInputAttentionCostTests
             if (command.CommandText.Contains("\"TranscriptEntries\"", StringComparison.Ordinal))
             {
                 MaxColumns = Math.Max(MaxColumns, result.FieldCount);
-                if (CountTextBytes)
+                if (CountTextBytes || CountDrainedRows)
                     result = new TextByteReader(result, this);
             }
             return ValueTask.FromResult(result);
@@ -398,7 +554,9 @@ public sealed class TaskInputAttentionCostTests
             public override bool Read()
             {
                 _seen.Clear();
-                return _inner.Read();
+                var read = _inner.Read();
+                if (read) _owner.WireRows++;
+                return read;
             }
 
             public override object GetValue(int ordinal)
@@ -446,18 +604,30 @@ public sealed class TaskInputAttentionCostTests
             public override bool IsDBNull(int ordinal) => _inner.IsDBNull(ordinal);
             public override bool NextResult() => _inner.NextResult();
 
-            public override Task<bool> ReadAsync(CancellationToken cancellationToken)
+            public override async Task<bool> ReadAsync(CancellationToken cancellationToken)
             {
                 _seen.Clear();
-                return _inner.ReadAsync(cancellationToken);
+                var read = await _inner.ReadAsync(cancellationToken);
+                if (read) _owner.WireRows++;
+                return read;
             }
 
-            public override ValueTask DisposeAsync() => _inner.DisposeAsync();
+            public override async ValueTask DisposeAsync()
+            {
+                // Npgsql otherwise drains unread rows internally, outside EF's ReadCount.
+                if (_owner.CountDrainedRows)
+                    while (await _inner.ReadAsync()) _owner.WireRows++;
+                await _inner.DisposeAsync();
+            }
 
             protected override void Dispose(bool disposing)
             {
                 if (disposing)
+                {
+                    if (_owner.CountDrainedRows)
+                        while (_inner.Read()) _owner.WireRows++;
                     _inner.Dispose();
+                }
                 base.Dispose(disposing);
             }
         }
@@ -558,5 +728,285 @@ public sealed class TaskInputAttentionCostTests
         }
         return items;
     }
+
+    // Frozen 227a00a0e pre-CARD-0993 builder; only class/method names and DbContext injection differ.
+private sealed class Pre0993Builder(AppDbContext _db)
+{
+    public async Task<List<AttentionItemDto>> BuildAsync(
+        IReadOnlyList<AgentTask> tasks, CancellationToken ct)
+    {
+        var bound = tasks.Where(t => t.AgentSessionId is not null).ToList();
+        if (bound.Count == 0)
+            return [];
+        var sessionIds = bound.Select(t => t.AgentSessionId!.Value).Distinct().ToArray();
+        var taskIds = bound.Select(t => t.Id).ToArray();
+        var inputEvents = await _db.AgentTaskEvents.AsNoTracking()
+            .Where(e => taskIds.Contains(e.AgentTaskId) && e.InputBody != null
+                && (e.Type == AgentTaskEventType.Refined || e.Type == AgentTaskEventType.Replied))
+            .Select(e => new { e.Id, e.AgentTaskId, e.AgentSessionId, e.Type })
+            .ToDictionaryAsync(e => e.Id, ct);
+        var inputKeys = inputEvents.Values
+            .Select(e => AgentTaskInputService.ConversationKey(e.AgentTaskId, e.Id)).ToArray();
+        var rows = await _db.SessionQueuedMessages.AsNoTracking()
+            .Where(m => sessionIds.Contains(m.AgentSessionId)
+                && m.Origin == QueuedMessageOrigin.Delegation
+                && ((m.ConversationKey != null && inputKeys.Contains(m.ConversationKey))
+                    || (m.ConversationKey == null && m.Body.Contains("REFINEMENT")
+                        && m.Body.Contains(".md"))))
+            .OrderBy(m => m.Sequence)
+            .Select(m => new TaskInputQueueRow(m.Id, m.AgentSessionId, m.Sequence, m.Body,
+                m.ConversationKey, m.RemoteSpillRelativePath)).ToListAsync(ct);
+        var inputs = new Dictionary<Guid, List<TaskInputUnreadableInput>>();
+        foreach (var task in bound)
+        {
+            var sessionId = task.AgentSessionId!.Value;
+            var marker = DelegationReportFormatter.TaskMarker(task.Id);
+            var taskRows = rows.Where(r => r.AgentSessionId == sessionId).Select(r =>
+            {
+                var owned = AgentTaskInputService.TryParseConversationKey(
+                    r.ConversationKey, out var keyedTaskId, out var eventId)
+                    && keyedTaskId == task.Id
+                    && inputEvents.TryGetValue(eventId, out var e)
+                    && e.AgentTaskId == task.Id && e.AgentSessionId == sessionId;
+                var legacy = !owned && r.ConversationKey is null
+                    && r.Body.Contains(marker, StringComparison.Ordinal)
+                    && r.Body.Contains("REFINEMENT", StringComparison.Ordinal)
+                    && TaskInputReadFailure.LegacyLocation(r.Body) is not null;
+                var location = owned
+                    ? r.RemoteSpillRelativePath ?? AgentTaskInputService.Route(task.Id, eventId)
+                    : legacy ? TaskInputReadFailure.LegacyLocation(r.Body) : null;
+                return new TaskInputUnreadableInput(r, location,
+                    owned && inputEvents[eventId].Type == AgentTaskEventType.Replied);
+            }).Where(x => x.Location is not null).ToList();
+            if (taskRows.Count > 0)
+                inputs[task.Id] = taskRows;
+        }
+        if (inputs.Count == 0)
+            return [];
+
+        // The queue stores only the latest retry baseline, not the first attempt. Find the
+        // earliest complete delivered input with the existing matcher. LIKE is a necessary
+        // subsequence filter, not a receipt: ANSI and whitespace normalization remove raw
+        // characters, so a literal Contains(body) would silently lose complete prompts.
+        var transcripts = new Dictionary<Guid, List<TaskInputTranscript>>();
+        var closedWeakSessions = new HashSet<Guid>();
+        foreach (var group in inputs.Values.SelectMany(x => x).GroupBy(x => x.Row.AgentSessionId))
+        {
+            var sessionId = group.Key;
+            var sessionInputs = group.ToList();
+            // A short body matches every prompt, so it must not contribute "%" to this floor.
+            // The latest delivery baseline is only the latest retry, not the first attempt.
+            var strongInputs = sessionInputs.Where(x => PromptSubmissionMatch.RequiresTextMatch(x.Row.Body)).ToList();
+            var weakInputs = sessionInputs.Where(x => !PromptSubmissionMatch.RequiresTextMatch(x.Row.Body)).ToList();
+            if (strongInputs.Count > 0)
+            {
+                var patterns = strongInputs.Select(x => TaskInputPromptPattern(x.Row.Body)).Distinct().ToArray();
+                long? firstPromptSequence = null;
+                var candidates = _db.TranscriptEntries.AsNoTracking()
+                    .Where(t => t.AgentSessionId == sessionId && t.Kind == TranscriptKinds.UserPrompt
+                        && t.Text != null && patterns.Any(pattern => EF.Functions.Like(t.Text, pattern, "!")))
+                    .OrderBy(t => t.Sequence)
+                    .Select(t => new TaskInputTranscript(t.Sequence, t.Kind, t.Text, t.Timestamp ?? t.CreatedAt));
+                await foreach (var prompt in candidates.AsAsyncEnumerable().WithCancellation(ct))
+                {
+                    if (!strongInputs.Any(input => PromptSubmissionMatch.IsCompleteIn(input.Row.Body, prompt.Text)))
+                        continue;
+                    firstPromptSequence = prompt.Sequence;
+                    break;
+                }
+                if (firstPromptSequence is long floor)
+                {
+                    transcripts[sessionId] = await _db.TranscriptEntries.AsNoTracking()
+                        .Where(t => t.AgentSessionId == sessionId && t.Sequence >= floor
+                            && (t.Kind == TranscriptKinds.UserPrompt || t.Kind == TranscriptKinds.AssistantText))
+                        .OrderBy(t => t.Sequence)
+                        .Select(t => new TaskInputTranscript(t.Sequence, t.Kind, t.Text, t.Timestamp ?? t.CreatedAt))
+                        .ToListAsync(ct);
+                }
+            }
+
+            if (weakInputs.Count == 0)
+                continue;
+            var taskLists = inputs.Values
+                .Select(list => (IReadOnlyList<TaskInputUnreadableInput>)list
+                    .Where(x => x.Row.AgentSessionId == sessionId).ToList())
+                .Where(list => list.Count > 0)
+                .ToList();
+            var weakWindow = await LoadWeakArmWindowAsync(sessionId, taskLists, ct);
+            // A second prompt closes the weak episode. Those inputs stay in the list so a later
+            // strong input's soleInput count is the original cardinality, and they are not judged
+            // on a strong floor that starts later.
+            if (weakWindow is null)
+                closedWeakSessions.Add(sessionId);
+            else if (!transcripts.ContainsKey(sessionId))
+                transcripts[sessionId] = weakWindow;
+        }
+        if (transcripts.Count == 0)
+            return [];
+
+        // Any Delegation body can supersede an episode, including a canceled ordinary brief.
+        // Retain that rule while fetching only bodies for sessions with complete input receipts.
+        var relevantSessionIds = transcripts.Keys.ToArray();
+        var delegationBodies = await _db.SessionQueuedMessages.AsNoTracking()
+            .Where(m => relevantSessionIds.Contains(m.AgentSessionId)
+                && m.Origin == QueuedMessageOrigin.Delegation)
+            .Select(m => new { m.AgentSessionId, m.Body }).ToListAsync(ct);
+        var items = new List<AttentionItemDto>();
+        foreach (var task in bound)
+        {
+            var sessionId = task.AgentSessionId!.Value;
+            if (!inputs.TryGetValue(task.Id, out var taskRows)
+                || !transcripts.TryGetValue(sessionId, out var sessionEntries))
+                continue;
+            var prompts = sessionEntries.Where(t => t.Kind == TranscriptKinds.UserPrompt
+                && t.Text is not null).ToList();
+
+            foreach (var input in taskRows)
+            {
+                if (closedWeakSessions.Contains(sessionId)
+                    && !PromptSubmissionMatch.RequiresTextMatch(input.Row.Body))
+                    continue;
+                var prompt = prompts.FirstOrDefault(p =>
+                    PromptSubmissionMatch.IsCompleteIn(input.Row.Body, p.Text));
+                if (prompt is null)
+                    continue;
+                var nextPrompt = prompts.FirstOrDefault(p => p.Sequence > prompt.Sequence);
+                var end = nextPrompt?.Sequence ?? long.MaxValue;
+                var soleInput = taskRows.Count(x => x.Row.Sequence <= input.Row.Sequence) == 1;
+                var complaint = sessionEntries.FirstOrDefault(t => t.Kind == TranscriptKinds.AssistantText
+                    && t.Sequence > prompt.Sequence && t.Sequence < end
+                    && TaskInputReadFailure.Matches(t.Text, input.Location!, input.IsReply, soleInput));
+                if (complaint is null)
+                    continue;
+
+                // A later complete caller input begins a new turn and supersedes this episode.
+                if (prompts.Any(p => p.Sequence > complaint.Sequence && delegationBodies.Any(r =>
+                        r.AgentSessionId == sessionId
+                        && PromptSubmissionMatch.IsCompleteIn(r.Body, p.Text))))
+                    continue;
+
+                items.Add(new AttentionItemDto(
+                    AttentionKind.TaskInputUnreadable, AlertSeverity.Warning,
+                    task.Id, sessionId, task.AgentId, input.Row.Id,
+                    $"Input unreadable: {DelegationReportFormatter.Short(task.Id)}",
+                    "Delegate says it cannot read a caller input",
+                    $"Assistant transcript #{complaint.Sequence}: {(complaint.Text ?? string.Empty)[..Math.Min(240, complaint.Text?.Length ?? 0)]}",
+                    complaint.At, null,
+                    [AttentionAction.OpenDrawer], task.CardId,
+                    ConditionKey: $"task-input-unreadable:{task.Id:D}:{input.Row.Id:D}"));
+            }
+        }
+        return items;
+    }
+
+    private sealed record TaskInputQueueRow(Guid Id, Guid AgentSessionId, long Sequence,
+        string Body, string? ConversationKey, string? RemoteSpillRelativePath);
+    private sealed record TaskInputUnreadableInput(TaskInputQueueRow Row, string? Location, bool IsReply);
+    private sealed record TaskInputTranscript(long Sequence, string Kind, string? Text, DateTime At);
+
+    // Two prompt headers decide a weak episode: the earliest non-null user prompt is the
+    // receipt, and a second one supersedes it because the short body matches every prompt.
+    // Assistant text is read only when that second prompt does not exist. A complaint for
+    // one weak input does not stop the probe while another weak input is still unresolved.
+    private const int WeakArmPromptProbeRows = 2;
+    private const int WeakArmAssistantRowBound = 8;
+    private const int WeakArmPhraseProbeRows = 8;
+
+    private async Task<List<TaskInputTranscript>?> LoadWeakArmWindowAsync(
+        Guid sessionId, IReadOnlyList<IReadOnlyList<TaskInputUnreadableInput>> taskLists, CancellationToken ct)
+    {
+        var prompts = await _db.TranscriptEntries.AsNoTracking()
+            .Where(t => t.AgentSessionId == sessionId && t.Kind == TranscriptKinds.UserPrompt && t.Text != null)
+            .OrderBy(t => t.Sequence)
+            .Select(t => new { t.Sequence, t.Kind, At = t.Timestamp ?? t.CreatedAt })
+            .Take(WeakArmPromptProbeRows)
+            .ToListAsync(ct);
+        if (prompts.Count != 1)
+            return null;
+
+        var receipt = new TaskInputTranscript(prompts[0].Sequence, prompts[0].Kind, "", prompts[0].At);
+        var assistants = await _db.TranscriptEntries.AsNoTracking()
+            .Where(t => t.AgentSessionId == sessionId && t.Kind == TranscriptKinds.AssistantText
+                && t.Sequence > receipt.Sequence)
+            .OrderBy(t => t.Sequence)
+            .Select(t => new TaskInputTranscript(t.Sequence, t.Kind, t.Text, t.Timestamp ?? t.CreatedAt))
+            .Take(WeakArmAssistantRowBound)
+            .ToListAsync(ct);
+        var rows = new List<TaskInputTranscript>(assistants.Count + 1) { receipt };
+        rows.AddRange(assistants);
+        // One resolved weak input does not settle the others. Stop only when every weak input
+        // already has its complaint, or this window did not fill.
+        if (assistants.Count < WeakArmAssistantRowBound || EveryWeakInputResolved(rows, taskLists))
+            return rows;
+
+        var after = assistants[^1].Sequence;
+        var phrases = TaskInputReadFailure.FailurePhrases;
+        var phraseRows = await _db.TranscriptEntries.AsNoTracking()
+            .Where(t => t.AgentSessionId == sessionId && t.Kind == TranscriptKinds.AssistantText
+                && t.Sequence > after && t.Text != null
+                && phrases.Any(phrase => EF.Functions.ILike(t.Text, "%" + phrase + "%")))
+            .OrderBy(t => t.Sequence)
+            .Select(t => new TaskInputTranscript(t.Sequence, t.Kind, t.Text, t.Timestamp ?? t.CreatedAt))
+            .Take(WeakArmPhraseProbeRows)
+            .ToListAsync(ct);
+        foreach (var candidate in phraseRows)
+        {
+            rows.Add(candidate);
+            if (EveryWeakInputResolved(rows, taskLists))
+                return rows;
+        }
+
+        if (phraseRows.Count < WeakArmPhraseProbeRows)
+            return rows;
+
+        // The phrase page is saturated with non-matches. A later true complaint can still exist.
+        return await _db.TranscriptEntries.AsNoTracking()
+            .Where(t => t.AgentSessionId == sessionId && t.Sequence >= receipt.Sequence
+                && (t.Kind == TranscriptKinds.UserPrompt || t.Kind == TranscriptKinds.AssistantText))
+            .OrderBy(t => t.Sequence)
+            .Select(t => new TaskInputTranscript(t.Sequence, t.Kind, t.Text, t.Timestamp ?? t.CreatedAt))
+            .ToListAsync(ct);
+    }
+
+    private static bool EveryWeakInputResolved(
+        List<TaskInputTranscript> rows, IReadOnlyList<IReadOnlyList<TaskInputUnreadableInput>> taskLists)
+    {
+        var sawWeak = false;
+        var prompts = rows.Where(t => t.Kind == TranscriptKinds.UserPrompt && t.Text is not null).ToList();
+        foreach (var taskInputs in taskLists)
+        {
+            foreach (var input in taskInputs)
+            {
+                if (input.Location is null || PromptSubmissionMatch.RequiresTextMatch(input.Row.Body))
+                    continue;
+                sawWeak = true;
+                var prompt = prompts.FirstOrDefault(p => PromptSubmissionMatch.IsCompleteIn(input.Row.Body, p.Text));
+                if (prompt is null)
+                    return false;
+                var next = prompts.FirstOrDefault(p => p.Sequence > prompt.Sequence);
+                var end = next?.Sequence ?? long.MaxValue;
+                var sole = taskInputs.Count(x => x.Row.Sequence <= input.Row.Sequence) == 1;
+                if (!rows.Any(t => t.Kind == TranscriptKinds.AssistantText
+                    && t.Sequence > prompt.Sequence && t.Sequence < end
+                    && TaskInputReadFailure.Matches(t.Text, input.Location, input.IsReply, sole)))
+                    return false;
+            }
+        }
+
+        return sawWeak;
+    }
+
+    private static string TaskInputPromptPattern(string body)
+    {
+        if (!PromptSubmissionMatch.RequiresTextMatch(body))
+            return "%"; // Not a session floor. The weak-arm probe owns short bodies.
+        var characters = PromptSubmissionMatch.Normalize(body).Replace(" ", "", StringComparison.Ordinal)
+            .EnumerateRunes().Take(32).Select(rune => rune.ToString()
+                .Replace("!", "!!", StringComparison.Ordinal)
+                .Replace("%", "!%", StringComparison.Ordinal)
+                .Replace("_", "!_", StringComparison.Ordinal));
+        return "%" + string.Join("%", characters) + "%";
+    }
+}
 
 }
