@@ -105,7 +105,7 @@ Both executors are dead and tool shadow outputs were cleaned by wait. The green
 tool removed both task-owned test output names; the separately owned bootstrap
 output was removed after realpath containment/producer checks. A recursive owned-name
 inventory found no bin-c1205-r4-* directories. Generated TRX/JSON/logs remain ignored
-in the original checkpoint directories; no force-add or payload relocation occurred.
+in the original checkpoint directories; no evidence directory was force-added and no generated payload was relocated. Only this permitted individual Markdown report was explicitly added.
 
 GET /api/runner-defaults and /api/session-runners succeeded with task-bound reads.
 No fleet location or runner/platform pin was introduced. No server/runner restart
