@@ -2354,27 +2354,7 @@ mode_apphost() {
     [ "$(cat "$SERVER2_ROOT/apphost/decoy")" = host-decoy ] \
         && [ "$(find "$SERVER2_ROOT/apphost" -mindepth 1 | wc -l)" = 1 ] && decoy=1
     local name network image mounts cmd
-    while IFS= mode_writable_pruning ;;
-    register) mode_register ;;
-    cleanup) mode_cleanup ;;
-    partial) mode_partial ;;
-    toxic) mode_toxic ;;
-    foreign) mode_foreign ;;
-    argv) mode_argv ;;
-    race) mode_race ;;
-    barriers) mode_barriers ;;
-    locks) mode_locks ;;
-    handoff) mode_handoff ;;
-    npm) mode_npm ;;
-    npm-sentinel) mode_npm_sentinel ;;
-    backend) mode_backend ;;
-    transfer) mode_transfer ;;
-    *) fail "unknown mode $mode" ;;
-esac
-if [ -s "$C1192_ROOT/unexpected" ]; then
-    fail "$(cat "$C1192_ROOT/unexpected")"
-fi
-\t' read -r name network image mounts cmd; do
+    while IFS=$'\t' read -r name network image mounts cmd; do
         case "$cmd" in
             *'cp -a '*)
                 if mount_targets_work "$mounts" && [[ "$mounts" == *'target=/fixture,volume-nocopy,readonly'* ]] \
