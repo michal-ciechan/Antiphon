@@ -966,8 +966,8 @@ remain pending under the parent artifact, not silently discharged here.
 ### Checkpoints
 
 This is the sole importer-visible closed ordinary list in **this** artifact.
-Use this path, not the provisional table in the fix plan. Each row owns a fresh
-isolated build and one exact filter. The twenty-four rows total 130 TUnit executions. CP-21 is the Linux-only S2 phone-home join. CP-22 is the dispatcher registration-store table (10 results) added by the S2 store-identity repair.
+Use this path, not the provisional table in the fix plan. CP-1..CP-22 own fresh isolated builds and one exact filter each; CP-23/24
+reuse the same committed S2 CP-3 build and run their own exact filters. The twenty-four rows total 130 TUnit executions. CP-21 is the Linux-only S2 phone-home join. CP-22 is the dispatcher registration-store table (10 results) added by the S2 store-identity repair.
 Read each fresh TRX's executed class/method roster as well as its count:
 the tool's Min is a floor and its derived Expect tokens alone do not enforce
 the exact roster. Prefix rows select only the enumerated C1032 methods above;
@@ -1047,51 +1047,45 @@ loops, assertions and PC variants do not raise Min.
 
 ### Cost
 
-**Estimated**, not measured. Ordinary Code V/R floor is the CP time sum:
-5+4+5+5+5+5+5+5+5+6+5+6+6+6+7+5+5+5+5+5 = **105 minutes**.
-CP-21 adds one S2 build and 8 minutes and is not inside that sum.
-CP-22 adds 5 minutes inside the S2 floor below. CP-23/24 reuse CP-3 and add two minutes, with no additional build.
-The exact filters are CP-1..CP-22 above; slice floors are S1=9, S2=37,
-S3=5, S4=5, S5=21, S6=11, S7=12, S8=12 minutes.
-This includes **20 isolated builds × 3 = 60** and **45 minutes V/R**.
-Setup/manifest/tool-bootstrap allowance = **3**; S1 EF-generation authoring build allowance =
-**3**. Ordinary setup/build + V/R = **111 minutes**, excluding implementation,
-slot wait and failure-driven reruns. A separately commissioned full Review rerun
-adds the same **105**, not an unreported broad suite.
+**Estimated**, not measured. Ordinary Code V/R floor is the complete CP-1..CP-24
+time sum: **120 minutes**, comprising **22 isolated builds × 3 = 66** and
+**54 minutes V/R**. CP-23/24 reuse CP-3 and add two minutes without another build.
+Slice floors are S1=9, S2=45, S3=5, S4=5, S5=21, S6=11, S7=12, S8=12 minutes.
+Setup/manifest/tool-bootstrap allowance = **3**; S1 EF-generation authoring build
+allowance = **3**. Ordinary setup/build + V/R = **126 minutes**, excluding
+implementation, slot wait and failure-driven reruns. A separately commissioned
+complete Review rerun adds the same **120**, not an unreported broad suite.
 
-Post-land Mutation floor, still paused: **275 method-scoped controls × 7 =
-1,925 minutes**. Each exact filter is in the PC table: baseline green execution
+Post-land Mutation remains pending: **292 method-scoped controls × 7 =
+2,044 minutes**. Each exact filter is in the PC table: baseline green execution
 0.5 + bind/apply/check 0.25 + isolated red build/run 3 + restore/check 0.25 +
 restored isolated green build/run 3 = 7. Shared initial baseline builds for
 the two test projects = **6**; Mutation setup and restoration record = **3**.
-Mutation total = **1,934 minutes**. Combined ordinary setup/build/V/R plus
-the complete PC battery = **2,045 minutes** estimated (34 h 5 min), before
-authoring, slot wait and retries. It is separate staged work, not the duration
+Mutation total = **2,053 minutes**. Combined ordinary setup/build/V/R plus
+the complete PC battery = **2,179 minutes** estimated (36 h 19 min), before
+authoring, slot wait and retries. This is separate staged work, not the duration
 of a single Code dispatch or permission to resume Mutation.
 
-The 281 controls include 33 retained parent controls, 36 legacy regression
-controls and 212 added independent binding/schema/digest/receipt/use/recovery/
-inertness/join predicates. Field-level controls are intentional; sharing a test method
-does not collapse independently bypassable comparisons. CP-21 adds PC-534..PC-539.
-CP-22 adds PC-540..PC-549. Those ten controls stay pending for method-scoped SourceLanding Mutation.
-The 1,925-minute Mutation floor below is the pre-join 275-control estimate.
+The 292 controls include 33 retained parent controls, 36 legacy regression
+controls and 223 added independent binding/schema/digest/receipt/use/recovery/
+inertness/join predicates. Field-level controls are intentional; sharing a test
+method does not collapse independently bypassable comparisons. CP-21 adds
+PC-534..539, CP-22 adds PC-540..549, and CP-23 adds PC-550. All remain pending
+for method-scoped SourceLanding Mutation, including every named vector/variant.
 
-Savings: 18 selected class/group occurrences grouped into 16 builds save
-**2 × 3 = 6 minutes** versus building each class/group separately.
-S2 repair rows CP-17, CP-18, CP-19, CP-20, and CP-22 are separate builds and are not part of that saving.
-The fix plan proposed 75 minutes; this freeze adds **10** (two builds = 6,
-four minutes of added gate/inspection execution) to avoid scheduling destructive
-witnesses before their implementation. Mutation batching savings = **0**:
-no shared-file/guard batching is assumed. Native parent qualification and
-activation costs remain in the parent plan and are not included in this S3 sum.
+CP-23/24's two reused builds save **2 × 3 = 6 minutes** versus separate builds.
+CP-17..22 retain their separate isolated builds. Native parent qualification and
+activation costs remain in the parent plan and are outside this S3 sum.
 
 #### Handoff audit
 
-Static audit at the pre-repair freeze: **guards=281, mapped=281, missing=0, duplicate PC maps=0**.
-S2 store-identity repair adds G-540..G-549, PC-540..PC-549, and CP-22 (10 results). Those controls stay pending and are outside the 281 figure.
-Parent U=21/M=12 are represented once in the ordinary roster; new prerequisite
-methods=47; existing methods=36; total=116 before CP-22. Twenty-two unique CP rows and outputs
-cover the ordinary V/R scope. CP-22 adds one method and 10 results (126 executions). No test/build/mutation execution is asserted.
+Static audit after the S2 decision repair: **guards=292, mapped=292, missing=0,
+duplicate PC maps=0**. The pre-store-identity freeze had 281 guards; CP-22 adds
+G/PC-540..549 and CP-23 adds G/PC-550. All controls remain pending.
+Parent U=21/M=12 remain represented once. The complete ordinary table has
+24 unique CP rows, 22 isolated outputs, and 130 executions: the preceding
+126 plus the explicit legacy contract result and three Workspace smoke results.
+This static census is not test/build/mutation execution evidence.
 PCs: specified=281, executed=0, pending=281, payloads binding required=281.
 The later Mutation acceptance gate requires the named red/restore/green cycles;
 paused controls are not waived and cannot be reported PC-clean.
