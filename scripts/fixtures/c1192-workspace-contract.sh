@@ -1079,7 +1079,14 @@ docker() {
         run) shift; docker_run "$@" ;;
         ps|network) return 0 ;;
         compose)
-            if [ "$mode" = retention ]; then shift; retention_compose "$@"; else return 1; fi
+            if [ "$mode" = retention ]; then shift; retention_compose "$@";
+            elif [ "$mode" = finalization ]; then
+                local previous="" token
+                for token in "$@"; do
+                    if [ "$previous" = -f ]; then [ -f "$token" ] || return 1; order_log compose-input-present; fi
+                    previous=$token
+                done
+            else return 1; fi
             ;;
         cp)
             shift
@@ -2569,7 +2576,131 @@ mode_retention() {
     refuse_unexpected
 }
 
+# S7 exercises the actual fixture wrapper/EXIT/finalizer; group substitutes only
+# provide controller inputs. Payload/export and roster validators remain real.
+s7_groups() {
+    c849_fixture_compose() { :; }
+    c849_fixture_prepare() { :; }
+    c849_fixture_seed() {
+        printf '%s\n' "$SERVER2_ROOT" > "$C1192_ROOT/controller-used"
+        mkdir -p "$SERVER2_ROOT/cache" "$SERVER2_ROOT/compose-retention"
+        printf 'services: {}\n' > "$SERVER2_ROOT/compose-retention/shared.yml"
+        local name
+        for name in race-p1.log race-p2.log race-offline.log lock-holder.log lock-waiter.log; do
+            printf '%s-body\n' "$name" > "$SERVER2_ROOT/$name"
+        done
+        c849_fixture_volume_write /fixture/probes/payload-canary <<'DATA'
+PAYLOAD_CANARY_S7
+DATA
+        ln -s "$CASE_DIR" "$CASE_DIR/.fixture-escape"
+        case "$S7_SCENARIO" in
+            primary) write_result false OriginalFailure 9 ;;
+            unhandled) exit 9 ;;
+            early) WROTE=1 ;;
+            delete) C1192_CUT=rm-work ;;
+            down) C1192_FAULT=volume-inspect-down ;;
+            export) cp() { return 1; } ;;
+            foreign) mv "$SERVER2_ROOT" "$CASE_DIR/owned-away"; mkdir -m 700 "$SERVER2_ROOT"; printf 'FOREIGN\n' > "$SERVER2_ROOT/foreign" ;;
+        esac
+    }
+    c849_fixture_nuget_race() { :; }
+    c849_fixture_apphost() { :; }
+    c849_fixture_npm() { :; }
+    c849_fixture_retention() { :; }
+    c849_fixture_prune() { :; }
+    c849_fixture_contract_controls() { :; }
+    c849_fixture_evidence() { :; }
+    write_result() {
+        local accepted="$1" diagnosis="$2" code="$3"
+        if [ "$WROTE" = 1 ]; then exit "$code"; fi
+        WROTE=1
+        printf '%s %s %s\n' "$accepted" "$diagnosis" "$code" > "$CASE_DIR/result"
+        order_log "result $accepted $diagnosis $code"
+        printf 'DIAGNOSIS=%s\n' "$diagnosis"
+        exit "$code"
+    }
+}
+
+s7_run() {
+    reset_runtime
+    S7_SCENARIO=$1
+    printf 'HOST_DECOY\n' > "$C1192_ROOT/host-decoy"
+    s7_groups
+    S7_CODE=0
+    S7_OUT=$(c849_fixture 2>>"$C1192_ROOT/scenario.err") || S7_CODE=$?
+    S7_CONTROL=$(cat "$C1192_ROOT/controller-used")
+}
+
+mode_finalization() {
+    local good=0 key
+    s7_run success
+    [ ! -e "$S7_CONTROL" ] && good=1; emit success-control-removed "$good"
+    good=0; [ "$S7_CONTROL" = "$CASE_DIR/fixture-controller" ] && good=1; emit success-control-root "$good"
+    good=0; ! grep -q '^SUDO ' "$C1192_ROOT/order" && good=1; emit success-no-sudo "$good"
+    good=0; [ ! -d "$C1192_ROOT/volumes/$WORK" ] && [ ! -d "$C1192_ROOT/volumes/$MASK" ] && [ ! -d "$C1192_ROOT/containers/$WRITER" ] && [ ! -d "$C1192_ROOT/containers/$READER" ] && good=1; emit success-resources-removed "$good"
+    good=0; grep -Fxq HOST_DECOY "$C1192_ROOT/host-decoy" && good=1; emit success-host-decoy "$good"
+    good=0; grep -q 'payload-canary' "$C1192_ROOT/trace" && good=1; emit success-volume-payload "$good"
+    good=0; [ "$S7_CODE" = 0 ] && [ "$(tail -n1 "$C1192_ROOT/order")" = 'result true  0' ] && good=1; emit success-last "$good"
+    good=0; if declare -F c849_fixture_finalize >/dev/null; then ( c849_fixture_finalize ) && good=1; fi; emit success-repeat "$good"
+    good=0; grep -q '^compose-input-present$' "$C1192_ROOT/order" && good=1; emit compose-before-removal "$good"
+    for key in primary unhandled delete export early down foreign; do
+        s7_run "$key"
+        good=0
+        case "$key" in
+            primary) [ "$S7_CODE" = 9 ] && grep -Fxq 'false OriginalFailure 9' "$CASE_DIR/result" && good=1; emit primary-preserved "$good" ;;
+            unhandled) [ "$S7_CODE" = 9 ] && grep -Fxq 'false UnhandledExit 9 9' "$CASE_DIR/result" && good=1; emit unhandled-preserved "$good" ;;
+            delete)
+                [ "$S7_CODE" = 2 ] && grep -Fxq 'false FixtureFinalizationFailed 2' "$CASE_DIR/result" && good=1; emit delete-refuses-success "$good"
+                good=0; grep -Fxq "$WORK" "$CASE_DIR/fixture-cleanup-residue.txt" && good=1; emit delete-exact-residue "$good"
+                good=0; ! volume_exists "$MASK" && good=1; emit delete-continues "$good" ;;
+            export) [ "$S7_CODE" = 2 ] && good=1; emit export-refuses-success "$good" ;;
+            early) [ "$S7_CODE" = 2 ] && grep -q '^false ' "$CASE_DIR/result" && good=1; emit early-success-refused "$good" ;;
+            down) [ "$S7_CODE" = 2 ] && [ -s "$CASE_DIR/fixture-cleanup-residue.txt" ] && good=1; emit docker-unavailable-refused "$good" ;;
+            foreign) [ "$S7_CODE" = 2 ] && grep -Fxq FOREIGN "$S7_CONTROL/foreign" && good=1; emit foreign-controller-preserved "$good" ;;
+        esac
+    done
+}
+
+s7_roster() {
+    local family count ordinal
+    seq 1 9 | sed 's/^/PASS F-/' > "$CASE_DIR/fixture-groups.txt"
+    : > "$CASE_DIR/fixture-controls.txt"; : > "$CASE_DIR/fixture-control-variants.txt"
+    for family in $(seq -w 1 32); do
+        printf 'PASS PC-%s\n' "$family" >> "$CASE_DIR/fixture-controls.txt"
+        count=1; case "$family" in 13|14|29|30) count=2 ;; 15|18|27|31) count=3 ;; 28) count=4 ;; esac
+        for ordinal in $(seq 1 "$count"); do printf 'PC-%s.%02d expected-red\n' "$family" "$ordinal" >> "$CASE_DIR/fixture-control-variants.txt"; done
+    done
+}
+
+mode_evidence() {
+    reset_runtime; require_init
+    SERVER2_ROOT="$CASE_DIR/fixture-controller"
+    c849_fixture_evidence_payloads >/dev/null
+    s7_roster
+    local good=0 fault code=0 out
+    [ "$(wc -l < "$CASE_DIR/fixture-summary.txt")" = 9 ] && good=1; emit summary-nine-lines "$good"
+    printf 'source-sha=%s\nimage-id=%s\ninventories=2\ngroups=9\ncontrols=32\nexpected-red=32\nvariants=47\nexpected-red-variants=47\nproduction-mutations=0\n' "$SHA" "$IMAGE_ID" > "$C1192_ROOT/expected-summary"
+    good=0; cmp -s "$C1192_ROOT/expected-summary" "$CASE_DIR/fixture-summary.txt" && good=1; emit summary-exact-bytes "$good"
+    good=0; ( c849_fixture_roster ) && good=1; emit roster-complete "$good"
+    for fault in missing duplicate family variant; do
+        s7_roster
+        case "$fault" in
+            missing) sed -i '$d' "$CASE_DIR/fixture-groups.txt" ;;
+            duplicate) printf 'PASS F-9\n' >> "$CASE_DIR/fixture-groups.txt" ;;
+            family) sed -i '$d' "$CASE_DIR/fixture-controls.txt" ;;
+            variant) sed -i '$d' "$CASE_DIR/fixture-control-variants.txt" ;;
+        esac
+        code=0; out=$(c849_fixture_roster) || code=$?
+        good=0; [ "$code" = 2 ] && [ "$(diagnosis_of "$out")" = FixtureRosterIncomplete ] && good=1
+        emit "roster-rejects-$fault" "$good"
+    done
+    good=0; ! grep -RqE 'TOKEN_SENTINEL_C849_CONTENT|PAYLOAD_CANARY_S7' "$CASE_DIR" && good=1; emit evidence-no-payload "$good"
+    good=0; if declare -F c849_fixture_finalize >/dev/null; then ( c849_fixture_finalize ) && [ ! -d "$SERVER2_ROOT" ] && good=1; fi; emit evidence-control-removed "$good"
+}
+
 case "$mode" in
+    finalization) mode_finalization ;;
+    evidence) mode_evidence ;;
     retention) mode_retention ;;
     apphost) mode_apphost ;;
     writable-pruning) mode_writable_pruning ;;
