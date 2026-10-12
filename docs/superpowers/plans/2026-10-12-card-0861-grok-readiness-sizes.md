@@ -21,6 +21,7 @@ tests/Antiphon.Tests/Agents/GrokStartupSizeTests.cs;
 tests/Antiphon.Tests/Agents/GrokSizeCaptureTests.cs (explicit manual capture);
 tests/Antiphon.Tests/Agents/Fixtures/card0861/ (retained regression inputs);
 docs/session-runtime-invariants.md (qualified-size contract).
+Unbound Mutation recipe: docs/superpowers/mutations/card-0861/README.md.
 Capture uses owned local PtyAgentRunner children, no model prompt, a fresh cwd,
 current authenticated home for ready/trust and an empty home for welcome sign-in.
 No raw output is exported. Standalone device codes and URL rows are redacted in
@@ -81,3 +82,5 @@ Ordinary floor: 14 minutes, plus about 25 minutes authoring/capture inspection.
 No repeats required after green. Activation requires server restart after landing;
 no restart is performed by this Code task. Review follows ordinary V/R;
 caller lands this original Code task and commissions SourceLanding Mutation.
+Final source review retains the original vertical composer search; qualification
+changes width/height pairs, not the existing relative status/hint geometry.
