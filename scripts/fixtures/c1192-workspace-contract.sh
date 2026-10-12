@@ -83,6 +83,8 @@ c1192_claim_fresh() {
 
 # Delete target only when it is a real directory strictly inside private_root,
 # no symlink is followed, and the marker matches the token recorded after create.
+# Removal stays on the directory identity acquired with that marker. An ancestor
+# replaced afterwards is a refusal and deletes nothing.
 c1192_cleanup_contained() {
     local private_root="${1-}" target="${2-}" token="${3-}"
     local root_canon target_canon marker stamp
@@ -113,7 +115,99 @@ c1192_cleanup_contained() {
         c1192_refuse ownership-mismatch
         return 1
     fi
-    rm -rf -- "$target_canon"
+    # Runs in a subshell so the held cwd cannot leak, and so a path swap cannot
+    # redirect the caller's later commands onto a replaced ancestor.
+    c1192_delete_acquired "$root_canon" "$target_canon" "$token" || return 1
+}
+
+# Hold target, then remove it only through its held parent. Relative names are
+# the only destructive operations. C1192_CLEANUP_AFTER_MARKER, when set, runs
+# after the held marker read and before any removal.
+c1192_delete_acquired() {
+    local root_canon="${1-}" target_canon="${2-}" token="${3-}"
+    local held_pwd held_id root_id root_pwd now_pwd now_id path_id stamp
+    local parent_pwd parent_id child child_id
+    (
+    cd -P -- "$target_canon" || { c1192_refuse identity-unreadable; exit 1; }
+    held_pwd=$(pwd -P) || { c1192_refuse identity-unreadable; exit 1; }
+    held_id=$(stat -c '%d:%i' -- .) || { c1192_refuse identity-unreadable; exit 1; }
+    if [ "$held_pwd" != "$target_canon" ] || [ -z "$held_id" ]; then
+        c1192_refuse identity-changed
+        exit 1
+    fi
+    if [ -L "$root_canon" ] || [ -L "$target_canon" ]; then
+        c1192_refuse identity-changed
+        exit 1
+    fi
+    root_id=$(stat -c '%d:%i' -- "$root_canon") || { c1192_refuse identity-unreadable; exit 1; }
+    root_pwd=$(cd -P -- "$root_canon" && pwd -P) || { c1192_refuse identity-unreadable; exit 1; }
+    if [ "$root_pwd" != "$root_canon" ] || [ -z "$root_id" ]; then
+        c1192_refuse identity-changed
+        exit 1
+    fi
+    cd -P -- "$target_canon" || { c1192_refuse identity-unreadable; exit 1; }
+    now_pwd=$(pwd -P) || { c1192_refuse identity-unreadable; exit 1; }
+    now_id=$(stat -c '%d:%i' -- .) || { c1192_refuse identity-unreadable; exit 1; }
+    if [ "$now_pwd" != "$held_pwd" ] || [ "$now_id" != "$held_id" ]; then
+        c1192_refuse identity-changed
+        exit 1
+    fi
+    if [ -L ./.c1192-owned ] || [ ! -f ./.c1192-owned ]; then
+        c1192_refuse marker-missing
+        exit 1
+    fi
+    stamp=$(cat -- ./.c1192-owned) || { c1192_refuse marker-unreadable; exit 1; }
+    if [ -z "$stamp" ] || [ "$stamp" != "$token" ]; then
+        c1192_refuse ownership-mismatch
+        exit 1
+    fi
+    if [ -n "${C1192_CLEANUP_AFTER_MARKER:-}" ]; then
+        bash -- "$C1192_CLEANUP_AFTER_MARKER" || { c1192_refuse hook-failed; exit 1; }
+    fi
+    now_pwd=$(pwd -P) || { c1192_refuse identity-changed; exit 1; }
+    now_id=$(stat -c '%d:%i' -- .) || { c1192_refuse identity-changed; exit 1; }
+    if [ "$now_pwd" != "$held_pwd" ] || [ "$now_id" != "$held_id" ]; then
+        c1192_refuse identity-changed
+        exit 1
+    fi
+    if [ -L "$root_canon" ] || [ -L "$target_canon" ]; then
+        c1192_refuse identity-changed
+        exit 1
+    fi
+    path_id=$(stat -c '%d:%i' -- "$target_canon") || { c1192_refuse identity-changed; exit 1; }
+    if [ "$path_id" != "$held_id" ]; then
+        c1192_refuse identity-changed
+        exit 1
+    fi
+    find . -mindepth 1 -delete || { c1192_refuse delete-failed; exit 1; }
+    now_pwd=$(pwd -P) || { c1192_refuse identity-changed; exit 1; }
+    now_id=$(stat -c '%d:%i' -- .) || { c1192_refuse identity-changed; exit 1; }
+    if [ "$now_pwd" != "$held_pwd" ] || [ "$now_id" != "$held_id" ]; then
+        c1192_refuse identity-changed
+        exit 1
+    fi
+    cd -P -- .. || { c1192_refuse identity-changed; exit 1; }
+    parent_pwd=$(pwd -P) || { c1192_refuse identity-changed; exit 1; }
+    parent_id=$(stat -c '%d:%i' -- .) || { c1192_refuse identity-changed; exit 1; }
+    if [ "$parent_pwd" != "$root_canon" ] || [ "$parent_id" != "$root_id" ]; then
+        c1192_refuse identity-changed
+        exit 1
+    fi
+    child=${target_canon##*/}
+    case "$child" in
+        ''|.|..|*/*) c1192_refuse identity-changed; exit 1 ;;
+    esac
+    if [ -L "./$child" ] || [ ! -d "./$child" ]; then
+        c1192_refuse identity-changed
+        exit 1
+    fi
+    child_id=$(stat -c '%d:%i' -- "./$child") || { c1192_refuse identity-changed; exit 1; }
+    if [ "$child_id" != "$held_id" ]; then
+        c1192_refuse identity-changed
+        exit 1
+    fi
+    rmdir -- "./$child" || { c1192_refuse delete-failed; exit 1; }
+    )
 }
 
 if [ "${1:-}" = "claim" ]; then
@@ -124,7 +218,7 @@ if [ "${1:-}" = "claim" ]; then
     exit 1
 fi
 if [ "${1:-}" = "cleanup-contained" ]; then
-    if c1192_cleanup_contained "${3-}" "${4-}"; then
+    if c1192_cleanup_contained "${3-}" "${4-}" "${5-}"; then
         exit 0
     fi
     exit 1

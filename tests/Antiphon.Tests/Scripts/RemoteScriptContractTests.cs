@@ -425,6 +425,50 @@ public sealed class RemoteScriptContractTests
         output.IndexOf("FAIL ", StringComparison.Ordinal).ShouldBe(-1, output);
     }
 
+    // CARD-1192 S1 repair 3. C1192_CLEANUP_AFTER_MARKER runs after the held marker
+    // read and before any removal. Swapping an ancestor there must not redirect
+    // deletion: the outside canary and the owned directory stay, and the refusal
+    // is surfaced. No sleep; the hook is the race.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1192_Harness_cleanup_refuses_ancestor_swap()
+    {
+        var output = LinuxShell("""
+            set -u
+            sandbox=$(mktemp -d)
+            trap 'if [ -n "${sandbox:-}" ] && [ ! -L "$sandbox" ] && [ -d "$sandbox" ]; then rm -rf -- "$sandbox"; fi' EXIT
+            mkdir -m 0700 -- "$sandbox/private" "$sandbox/outside"
+            hook="$sandbox/swap-ancestor.sh"
+            cat > "$hook" <<'EOF'
+            #!/bin/bash
+            set -euo pipefail
+            mv -- "$SANDBOX/private" "$SANDBOX/held"
+            ln -s -- "$SANDBOX/outside" "$SANDBOX/private"
+EOF
+            chmod 700 "$hook"
+            claim_log="$sandbox/claim.txt"
+            bash "$repo/scripts/fixtures/c1192-workspace-contract.sh" claim "$repo" "$sandbox/private/scratch" > "$claim_log" 2>&1 || { printf 'FAIL claim\n'; cat "$claim_log"; exit 1; }
+            token=$(cat "$sandbox/private/scratch/.c1192-owned")
+            [ -n "$token" ] || { printf 'FAIL token-missing\n'; exit 1; }
+            printf 'inside\n' > "$sandbox/private/scratch/payload"
+            mkdir -- "$sandbox/outside/scratch"
+            printf 'unrelated-canary\n' > "$sandbox/outside/scratch/canary"
+            export SANDBOX="$sandbox"
+            export C1192_CLEANUP_AFTER_MARKER="$hook"
+            clean_log="$sandbox/clean.txt"
+            status=0
+            bash "$repo/scripts/fixtures/c1192-workspace-contract.sh" cleanup-contained "$repo" "$sandbox/private" "$sandbox/private/scratch" "$token" > "$clean_log" 2>&1 || status=$?
+            [ "$status" != 0 ] || { printf 'FAIL cleanup-accepted-swap\n'; cat "$clean_log"; exit 1; }
+            grep -q 'refuse identity-changed' "$clean_log" || { printf 'FAIL refusal-missing\n'; cat "$clean_log"; exit 1; }
+            grep -Fxq 'unrelated-canary' "$sandbox/outside/scratch/canary" || { printf 'FAIL outside-canary\n'; exit 1; }
+            grep -Fxq 'inside' "$sandbox/held/scratch/payload" || { printf 'FAIL owned-payload\n'; exit 1; }
+            grep -Fxq "$token" "$sandbox/held/scratch/.c1192-owned" || { printf 'FAIL owned-marker\n'; exit 1; }
+            printf 'PASS ancestor-swap\n'
+            """, "repo");
+        output.ShouldContain("PASS ancestor-swap");
+        output.IndexOf("FAIL ", StringComparison.Ordinal).ShouldBe(-1, output);
+    }
+
     // CARD-1192 S1 repair. Helper create/run argv is recorded whole, so a discarded
     // --env-file or a credential path later in the argument list still fails the check.
     [Test]
