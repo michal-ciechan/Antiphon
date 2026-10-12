@@ -549,17 +549,22 @@ public sealed class DockerStackContractTests
     {
         var dockerfile = Text("docker/session-runner-grok/Dockerfile");
         var body = RunnerBody();
-        body.ShouldContain("ARG GROK_VERSION=1.0.41");
+        body.Contains("ARG GROK_VERSION=1.0.41", StringComparison.Ordinal)
+            .ShouldBeTrue("pinned-version");
         System.Text.RegularExpressions.Regex.IsMatch(
                 body,
                 @"ARG GROK_SHA256=9ce03ed23e16ea01072b4496263d6213a27899e1e3e107f008d36edf82e70407\s")
             .ShouldBeTrue("pinned-digest");
         body.Contains("https://x.ai/cli/grok-${GROK_VERSION}-linux-x86_64", StringComparison.Ordinal)
             .ShouldBeTrue("pinned-artifact-url");
-        body.ShouldContain("echo \"${GROK_SHA256}  /tmp/grok-download/grok\" | sha256sum -c -");
-        body.ShouldContain("install -m 0755 /tmp/grok-download/grok /usr/local/bin/grok");
-        body.ShouldContain("/usr/local/bin/grok --version | grep -F \"${GROK_VERSION}\"");
-        body.ShouldContain("rm -rf /tmp/grok-download");
+        body.Contains("echo \"${GROK_SHA256}  /tmp/grok-download/grok\" | sha256sum -c -", StringComparison.Ordinal)
+            .ShouldBeTrue("pinned-checksum-command");
+        body.Contains("install -m 0755 /tmp/grok-download/grok /usr/local/bin/grok", StringComparison.Ordinal)
+            .ShouldBeTrue("pinned-install");
+        body.Contains("/usr/local/bin/grok --version | grep -F \"${GROK_VERSION}\"", StringComparison.Ordinal)
+            .ShouldBeTrue("pinned-version-probe");
+        body.Contains("rm -rf /tmp/grok-download", StringComparison.Ordinal)
+            .ShouldBeTrue("pinned-temp-removed");
         Order(body, "test -n \"${GROK_SHA256}\"", "curl -fsSL -o /tmp/grok-download/grok")
             .ShouldBeTrue("missing-pin-before-fetch");
         Order(body, "printf '%s' \"${GROK_SHA256}\" | grep -Eq '^[0-9a-f]{64}$'", "curl -fsSL -o /tmp/grok-download/grok")
