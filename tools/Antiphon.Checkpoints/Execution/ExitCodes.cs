@@ -10,10 +10,11 @@ public static class ExitCodes
     public const int Timeout = 5;
     public const int ExecutorCrashed = 6;
     public const int OwnerEnded = 7;
+    public const int RestoreFailed = 8;
     public const int StillRunning = 75;
 
-    // Highest precedence first. PC-10 swaps the 1 and 2 entries.
-    private static readonly int[] Precedence = [2, 6, 4, 5, 1, 3, 0];
+    // Highest precedence first. PC-10 swaps the 1 and 2 entries; leave that pair alone.
+    private static readonly int[] Precedence = [8, 2, 6, 4, 5, 1, 3, 0];
 
     public static int FromRowStates(IEnumerable<int> states)
     {

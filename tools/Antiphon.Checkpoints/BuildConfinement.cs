@@ -1,18 +1,19 @@
 using System.Diagnostics;
 using System.Linq;
-using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 
 namespace Antiphon.Checkpoints;
 
-// A real dotnet build is redirected onto one absolute OutputPath owned by the
-// entry project directory. A directory argument is that directory; a project
-// file uses its parent. ArtifactsPath makes the SDK put each project's intermediates
-// and project.assets.json under that directory. A shared BaseIntermediateOutputPath
-// is not passed: global properties are not re-expanded, so $(MSBuildProjectName)
-// would be one literal directory and restore then cycles. The static XML preflight
-// stays in ProjectWriteRoots. A DotnetShim build is left unchanged.
+// Tracked files are protected by a clean baseline and a post-build restore, not by
+// predicting where MSBuild will write. Before a real dotnet build the tree must have
+// no modified, deleted, or staged tracked paths. After the build, on success, failure,
+// timeout, and cancel, paths that changed are restored from that HEAD. Global
+// OutputPath / ArtifactsPath redirection and the static XML preflight only reduce
+// noise. A shared BaseIntermediateOutputPath is not passed: global properties are not
+// re-expanded, so $(MSBuildProjectName) would be one literal directory and restore
+// then cycles. A DotnetShim build is left unchanged. Untracked and ignored files,
+// writes outside the repository, and a row command string are outside this guarantee.
 public static class BuildConfinement
 {
     public const int WalkCap = 500;
@@ -22,16 +23,20 @@ public static class BuildConfinement
         "MSBuildProjectExtensionsPath", "ArtifactsPath", "UseArtifactsOutput",
     };
 
-    public sealed record Snapshot(
-        string Index,
-        Dictionary<string, string> Hashes,
-        List<string> Projects);
+    public sealed record Baseline(
+        string Head,
+        string Repository,
+        Dictionary<string, string> Entries);
+
+    public sealed record Settlement(string? Kind, string Detail, IReadOnlyList<string> Paths);
+
+    public readonly record struct OutputLayout(string Owned, string Artifacts);
 
     public sealed record Prepared(
         string? Refusal,
         string Detail,
         IReadOnlyList<string> Arguments,
-        Snapshot? Before);
+        Baseline? Baseline);
 
     public static string? ReportedRefusal(string? text)
     {
@@ -45,6 +50,16 @@ public static class BuildConfinement
         }
 
         return null;
+    }
+
+    public static OutputLayout LayoutFor(string workingDirectory, string project, string relativeOutput)
+    {
+        var projectFull = Path.GetFullPath(Path.IsPathRooted(project) ? project : Path.Combine(workingDirectory, project));
+        var projectDir = ProjectWriteRoots.DirectoryOf(projectFull);
+        if (string.IsNullOrEmpty(projectDir))
+            projectDir = string.IsNullOrWhiteSpace(workingDirectory) ? Environment.CurrentDirectory : workingDirectory;
+        var owned = AbsoluteOutput(projectDir, relativeOutput);
+        return new OutputLayout(owned, owned.TrimEnd('/') + "/artifacts");
     }
 
     public static Prepared Prepare(
@@ -63,58 +78,110 @@ public static class BuildConfinement
         if (string.IsNullOrEmpty(projectDir))
             return Refuse("graph-unevaluated", "project directory missing");
 
-        var owned = AbsoluteOutput(projectDir, outputValue);
-        var artifacts = owned.TrimEnd('/') + "/artifacts";
-        var rewritten = Rewrite(arguments, owned, artifacts);
+        var repo = Git(workingDirectory, ["rev-parse", "--show-toplevel"]);
+        if (repo.Error is not null || repo.Exit != 0 || string.IsNullOrWhiteSpace(repo.Stdout))
+            return Refuse("tracked-snapshot", repo.Error ?? "git-toplevel");
+        var repository = repo.Stdout.Trim();
+        var status = ReadStatus(repository);
+        if (status.Error is not null)
+            return Refuse("tracked-snapshot", status.Error);
+        if (status.Paths.Count > 0)
+            return new Prepared("dirty-tracked", DirtyText(status.Paths), [], null);
+
+        var captured = Capture(repository);
+        if (captured.Error is not null || captured.Value is null)
+            return Refuse("tracked-snapshot", captured.Error ?? "git-ls-files");
+        var baseline = captured.Value;
+
+        var layout = LayoutFor(workingDirectory, project, outputValue);
+        var rewritten = Rewrite(arguments, layout.Owned, layout.Artifacts);
         var forwarded = Forwarded(arguments);
         WalkResult walked;
         try
         {
-            walked = Walk(projectFull, owned, artifacts, forwarded, workingDirectory, environment, cancellationToken);
+            walked = Walk(projectFull, layout.Owned, layout.Artifacts, forwarded, workingDirectory, environment, cancellationToken);
         }
         catch (OperationCanceledException)
         {
+            var settled = Settle(baseline);
+            if (settled.Kind is not null)
+                return new Prepared(settled.Kind == "restore-failed" ? "restore-failed" : "tampered", settled.Detail, [], baseline);
             throw;
         }
         catch (Exception ex) when (ex is IOException or InvalidOperationException or JsonException)
         {
-            return Refuse("graph-unevaluated", ex.GetType().Name);
+            return PreferSettlement(baseline, Refuse("graph-unevaluated", ex.GetType().Name));
         }
 
         if (walked.Error is not null)
-            return Refuse("graph-unevaluated", walked.Error);
-
-        var shot = Take(workingDirectory, walked.Projects);
-        if (shot.Error is not null)
-            return Refuse("tracked-snapshot", shot.Error);
-        return new Prepared(null, "", rewritten, shot.Value);
+            return PreferSettlement(baseline, Refuse("graph-unevaluated", walked.Error));
+        return new Prepared(null, "", rewritten, baseline);
     }
 
-    public static string? Compare(Snapshot before, string workingDirectory)
+    public static Settlement Settle(Baseline baseline)
     {
-        var after = Take(workingDirectory, before.Projects);
-        if (after.Error is not null || after.Value is null)
-            return TamperText(["snapshot " + (after.Error ?? "missing")]);
-        var changed = new List<string>();
-        var keys = new HashSet<string>(before.Hashes.Keys, StringComparer.Ordinal);
-        keys.UnionWith(after.Value.Hashes.Keys);
-        foreach (var key in keys.Order(StringComparer.Ordinal))
+        var status = ReadStatus(baseline.Repository);
+        if (status.Error is not null)
+            return Failed(baseline, [], status.Error);
+        if (status.Paths.Count == 0)
         {
-            before.Hashes.TryGetValue(key, out var left);
-            after.Value.Hashes.TryGetValue(key, out var right);
-            if (!string.Equals(left, right, StringComparison.Ordinal))
-                changed.Add(key);
+            if (IndexMatches(baseline, out var matchError))
+                return new Settlement(null, "", []);
+            return Failed(baseline, [], matchError ?? "index-mismatch");
         }
 
-        if (!string.Equals(before.Index, after.Value.Index, StringComparison.Ordinal))
-            changed.Add("git index changed");
-        return changed.Count == 0 ? null : TamperText(changed);
+        var restored = Git(baseline.Repository, RestoreArguments(baseline.Head, status.Paths));
+        if (restored.Error is not null || restored.Exit != 0)
+            return Failed(baseline, status.Paths, restored.Error ?? "git-restore");
+        var after = ReadStatus(baseline.Repository);
+        if (after.Error is not null || after.Paths.Count > 0)
+            return Failed(baseline, status.Paths, after.Error ?? "still-dirty");
+        if (!IndexMatches(baseline, out var error))
+            return Failed(baseline, status.Paths, error ?? "index-mismatch");
+        return new Settlement("tampered", TamperText(baseline.Head, status.Paths), status.Paths);
+    }
+
+    private static Prepared PreferSettlement(Baseline baseline, Prepared graphRefusal)
+    {
+        var settled = Settle(baseline);
+        if (settled.Kind == "restore-failed")
+            return new Prepared("restore-failed", settled.Detail, [], baseline);
+        if (settled.Kind == "tampered")
+            return new Prepared("tampered", settled.Detail, [], baseline);
+        return graphRefusal;
     }
 
     private static Prepared Refuse(string reason, string detail) =>
         new(reason, "refused: " + reason + "\n" + detail + "\n", [], null);
 
-    private static string TamperText(IReadOnlyList<string> changed)
+    private static Settlement Failed(Baseline baseline, IReadOnlyList<string> paths, string why)
+    {
+        var builder = new StringBuilder();
+        builder.Append("refused: restore-failed\n");
+        builder.Append(why).Append('\n');
+        builder.Append(ManualRestore(baseline.Repository, baseline.Head, paths)).Append('\n');
+        return new Settlement("restore-failed", builder.ToString(), paths);
+    }
+
+    private static string DirtyText(IReadOnlyList<string> paths)
+    {
+        var builder = new StringBuilder();
+        builder.Append("refused: dirty-tracked\n");
+        var shown = 0;
+        foreach (var path in paths)
+        {
+            if (shown >= 20)
+                break;
+            builder.Append("DIRTY ").Append(path).Append('\n');
+            shown++;
+        }
+
+        if (paths.Count > 20)
+            builder.Append("DIRTY ").Append(paths.Count - 20).Append(" more\n");
+        return builder.ToString();
+    }
+
+    private static string TamperText(string head, IReadOnlyList<string> changed)
     {
         var builder = new StringBuilder();
         builder.Append("refused: tampered\n");
@@ -129,8 +196,28 @@ public static class BuildConfinement
 
         if (changed.Count > 20)
             builder.Append("TAMPERED ").Append(changed.Count - 20).Append(" more\n");
-        builder.Append("tracked files were not restored\n");
+        builder.Append("restored from ").Append(head).Append('\n');
+        builder.Append("lossless because the pre-build tracked tree was clean\n");
         return builder.ToString();
+    }
+
+    private static string ManualRestore(string repository, string head, IReadOnlyList<string> paths)
+    {
+        var builder = new StringBuilder();
+        builder.Append("manual restore: git -C ").Append(Quote(repository));
+        builder.Append(" restore --source=").Append(head).Append(" --staged --worktree --");
+        foreach (var path in paths)
+            builder.Append(' ').Append(Quote(path));
+        return builder.ToString();
+    }
+
+    private static string Quote(string value) => "'" + value.Replace("'", "'\\''", StringComparison.Ordinal) + "'";
+
+    private static List<string> RestoreArguments(string head, IReadOnlyList<string> paths)
+    {
+        var args = new List<string> { "restore", "--source=" + head, "--staged", "--worktree", "--" };
+        args.AddRange(paths);
+        return args;
     }
 
     private static bool TryFindProject(IReadOnlyList<string> arguments, out string project)
@@ -382,88 +469,97 @@ public static class BuildConfinement
         return true;
     }
 
-    private readonly record struct ShotResult(Snapshot? Value, string? Error);
+    private readonly record struct CaptureResult(Baseline? Value, string? Error);
 
-    private static ShotResult Take(string workingDirectory, IReadOnlyList<string> projects)
+    private static CaptureResult Capture(string repository)
     {
-        var top = Git(workingDirectory, ["rev-parse", "--show-toplevel"]);
-        if (top.Error is not null || top.Exit != 0 || string.IsNullOrWhiteSpace(top.Stdout))
-            return new ShotResult(null, top.Error ?? "git-toplevel");
-        var repo = top.Stdout.Trim();
-        var listed = Git(repo, ["ls-files", "-s"]);
+        var head = Git(repository, ["rev-parse", "HEAD"]);
+        if (head.Error is not null || head.Exit != 0 || string.IsNullOrWhiteSpace(head.Stdout))
+            return new CaptureResult(null, head.Error ?? "git-head");
+        var listed = Git(repository, ["ls-files", "-z", "-s"]);
         if (listed.Error is not null || listed.Exit != 0)
-            return new ShotResult(null, listed.Error ?? "git-ls-files");
-        var index = listed.Stdout.Replace("\r\n", "\n", StringComparison.Ordinal).TrimEnd('\n');
-        var roots = new List<string>();
-        foreach (var project in projects)
+            return new CaptureResult(null, listed.Error ?? "git-ls-files");
+        var entries = ParseIndex(listed.Stdout);
+        if (entries.Error is not null || entries.Value is null)
+            return new CaptureResult(null, entries.Error ?? "index-record");
+        return new CaptureResult(new Baseline(head.Stdout.Trim(), repository, entries.Value), null);
+    }
+
+    private readonly record struct IndexResult(Dictionary<string, string>? Value, string? Error);
+
+    private static IndexResult ParseIndex(string text)
+    {
+        var entries = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var record in text.Split('\0', StringSplitOptions.RemoveEmptyEntries))
         {
-            var dir = ProjectWriteRoots.DirectoryOf(project);
-            if (string.IsNullOrEmpty(dir))
-                continue;
-            var rel = Relative(repo, dir);
-            if (rel is null)
-                continue;
-            roots.Add(rel);
+            var tab = record.IndexOf('\t');
+            if (tab < 1 || tab >= record.Length - 1)
+                return new IndexResult(null, "index-record");
+            entries[record[(tab + 1)..]] = record[..tab];
         }
 
-        var hashes = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (var line in index.Split('\n'))
+        return new IndexResult(entries, null);
+    }
+
+    private static bool IndexMatches(Baseline baseline, out string? error)
+    {
+        var listed = Git(baseline.Repository, ["ls-files", "-z", "-s"]);
+        if (listed.Error is not null || listed.Exit != 0)
         {
-            if (line.Length == 0)
-                continue;
-            var tab = line.IndexOf('\t');
-            if (tab < 0 || tab == line.Length - 1)
-                continue;
-            var path = line[(tab + 1)..];
-            if (!Under(path, roots))
-                continue;
-            try
+            error = listed.Error ?? "git-ls-files";
+            return false;
+        }
+
+        var parsed = ParseIndex(listed.Stdout);
+        if (parsed.Error is not null || parsed.Value is null)
+        {
+            error = parsed.Error ?? "index-record";
+            return false;
+        }
+
+        error = null;
+        if (parsed.Value.Count != baseline.Entries.Count)
+            return false;
+        foreach (var pair in baseline.Entries)
+        {
+            if (!parsed.Value.TryGetValue(pair.Key, out var right) || !string.Equals(pair.Value, right, StringComparison.Ordinal))
+                return false;
+        }
+
+        return true;
+    }
+
+    private readonly record struct StatusResult(List<string> Paths, string? Error);
+
+    private static StatusResult ReadStatus(string repository)
+    {
+        var status = Git(repository, ["status", "--porcelain=v1", "-z", "--untracked-files=no"]);
+        if (status.Error is not null || status.Exit != 0)
+            return new StatusResult([], status.Error ?? "git-status");
+        return ParseStatus(status.Stdout);
+    }
+
+    private static StatusResult ParseStatus(string text)
+    {
+        var parts = text.Split('\0', StringSplitOptions.RemoveEmptyEntries);
+        var paths = new List<string>();
+        for (var i = 0; i < parts.Length; i++)
+        {
+            var entry = parts[i];
+            if (entry.Length < 4 || entry[2] != ' ')
+                return new StatusResult([], "status-record");
+            var xy = entry[..2];
+            paths.Add(entry[3..]);
+            if (xy[0] is 'R' or 'C' || xy[1] is 'R' or 'C')
             {
-                hashes[path] = Hash(Path.Combine(repo, path.Replace('/', Path.DirectorySeparatorChar)));
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            {
-                return new ShotResult(null, ex.GetType().Name);
+                i++;
+                if (i >= parts.Length || parts[i].Length == 0)
+                    return new StatusResult([], "status-rename");
+                paths.Add(parts[i]);
             }
         }
 
-        return new ShotResult(new Snapshot(index, hashes, projects.ToList()), null);
-    }
-
-    private static string? Relative(string repo, string directory)
-    {
-        var fullRepo = Path.GetFullPath(repo).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        var fullDir = Path.GetFullPath(directory).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
-        if (fullDir.Equals(fullRepo, comparison))
-            return "";
-        var prefix = fullRepo + Path.DirectorySeparatorChar;
-        if (!fullDir.StartsWith(prefix, comparison))
-            return null;
-        return fullDir[prefix.Length..].Replace('\\', '/');
-    }
-
-    private static bool Under(string path, List<string> roots)
-    {
-        foreach (var root in roots)
-        {
-            if (root.Length == 0)
-                return true;
-            if (path.Equals(root, StringComparison.Ordinal) || path.StartsWith(root + "/", StringComparison.Ordinal))
-                return true;
-        }
-
-        return false;
-    }
-
-    private static string Hash(string path)
-    {
-        if (Directory.Exists(path) && !File.Exists(path))
-            return "directory";
-        if (!File.Exists(path))
-            return "missing";
-        using var stream = File.OpenRead(path);
-        return Convert.ToHexString(SHA256.HashData(stream));
+        return new StatusResult(paths.Distinct(StringComparer.Ordinal).ToList(), null);
     }
 
     private readonly record struct GitResult(int Exit, string Stdout, string? Error);

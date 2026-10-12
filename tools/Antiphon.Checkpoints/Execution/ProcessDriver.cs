@@ -62,7 +62,7 @@ public sealed class ProcessDriver : IDriver
     public async Task<DriverResult> RunAsync(DriverRequest request, CancellationToken cancellationToken)
     {
         var arguments = request.Arguments;
-        BuildConfinement.Snapshot? before = null;
+        BuildConfinement.Baseline? baseline = null;
         var workingDirectory = string.IsNullOrWhiteSpace(request.WorkingDirectory)
             ? Environment.CurrentDirectory
             : request.WorkingDirectory;
@@ -75,11 +75,12 @@ public sealed class ProcessDriver : IDriver
             if (confined.Refusal is not null)
             {
                 AppendLog(request, confined.Detail);
-                return new DriverResult(ExitCodes.Invalid, "", confined.Detail);
+                var code = confined.Refusal == "restore-failed" ? ExitCodes.RestoreFailed : ExitCodes.Invalid;
+                return new DriverResult(code, "", confined.Detail);
             }
 
             arguments = confined.Arguments;
-            before = confined.Before;
+            baseline = confined.Baseline;
         }
 
         var (fileName, resolved) = Resolve(request with { Arguments = arguments });
@@ -104,69 +105,80 @@ public sealed class ProcessDriver : IDriver
         }
 
         var outputGate = new object();
-        string? tamper = null;
-        if (!process.Start())
-        {
-            log?.Dispose();
-            return new DriverResult(ExitCodes.Invalid, "", "process did not start");
-        }
-        _running.TryAdd(process, 0);
-        process.BeginRead(
-            line => { lock (outputGate) Capture(line, stdout, log, request.OnOutput); },
-            line => { lock (outputGate) Capture(line, stderr, log, request.OnOutput); });
+        var started = false;
+        var processExit = 0;
+        string? earlyDetail = null;
+        OperationCanceledException? cancelled = null;
+        BuildConfinement.Settlement? settlement = null;
         try
         {
-            await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
-            if (before is not null)
-                tamper = DescribeTamper(before, workingDirectory);
-            if (tamper is not null)
+            if (!process.Start())
             {
-                lock (outputGate)
-                    log?.Write(tamper);
+                earlyDetail = "process did not start";
+            }
+            else
+            {
+                started = true;
+                _running.TryAdd(process, 0);
+                process.BeginRead(
+                    line => { lock (outputGate) Capture(line, stdout, log, request.OnOutput); },
+                    line => { lock (outputGate) Capture(line, stderr, log, request.OnOutput); });
+                await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
+                processExit = process.ExitCode;
             }
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException ex)
         {
-            KillProcess(process, entireProcessTree: true);
-            // WaitForExitAsync also waits for redirected pipes. A descendant can retain a pipe
-            // after its parent dies, even when the requested tree kill has returned.
-            using var drain = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-            try
+            if (started)
             {
-                await process.WaitForExitAsync(drain.Token).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException) when (drain.IsCancellationRequested)
-            {
-                const string message = "process kill drain timed out after 10s; abandoning redirected output";
-                lock (outputGate)
+                KillProcess(process, entireProcessTree: true);
+                // WaitForExitAsync also waits for redirected pipes. A descendant can retain a pipe
+                // after its parent dies, even when the requested tree kill has returned.
+                using var drain = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                try
                 {
-                    log?.WriteLine(message);
-                    request.OnOutput?.Invoke(message);
+                    await process.WaitForExitAsync(drain.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (drain.IsCancellationRequested)
+                {
+                    const string message = "process kill drain timed out after 10s; abandoning redirected output";
+                    lock (outputGate)
+                    {
+                        log?.WriteLine(message);
+                        request.OnOutput?.Invoke(message);
+                    }
                 }
             }
-            throw;
+
+            cancelled = ex;
         }
         finally
         {
+            if (baseline is not null)
+            {
+                settlement = BuildConfinement.Settle(baseline);
+                if (settlement.Detail.Length > 0)
+                {
+                    lock (outputGate)
+                        log?.Write(settlement.Detail);
+                }
+            }
+
             _running.TryRemove(process, out _);
             log?.Dispose();
         }
 
-        if (tamper is not null)
-            return new DriverResult(ExitCodes.Invalid, stdout.ToString(), tamper + stderr.ToString());
-        return new DriverResult(process.ExitCode, stdout.ToString(), stderr.ToString());
-    }
-
-    private static string? DescribeTamper(BuildConfinement.Snapshot before, string workingDirectory)
-    {
-        try
-        {
-            return BuildConfinement.Compare(before, workingDirectory);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            return "refused: tampered\nTAMPERED snapshot " + ex.GetType().Name + "\ntracked files were not restored\n";
-        }
+        if (settlement?.Kind == "tampered")
+            return new DriverResult(ExitCodes.Invalid, stdout.ToString(), settlement.Detail + stderr.ToString());
+        if (settlement?.Kind == "restore-failed")
+            return new DriverResult(ExitCodes.RestoreFailed, stdout.ToString(), settlement.Detail + stderr.ToString());
+        if (earlyDetail is not null)
+            return new DriverResult(ExitCodes.Invalid, "", earlyDetail);
+        if (cancelled is not null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(cancelled).Throw();
+        if (!started)
+            return new DriverResult(ExitCodes.Invalid, "", "process did not start");
+        return new DriverResult(processExit, stdout.ToString(), stderr.ToString());
     }
 
     private static void AppendLog(DriverRequest request, string text)
