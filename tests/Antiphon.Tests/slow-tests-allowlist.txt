@@ -274,3 +274,5 @@ Antiphon.Tests.Application.TaskParkRunnerIdentityTests
 Antiphon.Tests.Application.BlockedTaskSyncRecoveryTests
 # CARD-1082 S4b: real Git fast-forward, lease backoff and isolated PostgreSQL debt recovery.
 Antiphon.Tests.Application.SettlementSyncRecoveryTests
+# CARD-1033: real Git, isolated PostgreSQL and local CardDone execute/cutoff/settling policy.
+Antiphon.Tests.Application.CardWorktreeCleanupRecoveryTests

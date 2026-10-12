@@ -27,6 +27,14 @@ public sealed class CardWorktreeCleanupExecutor(AppDbContext db, ILandingGit git
             .SingleAsync(e => e.Id == endpointId, ct);
         if (endpoint.State == CardWorktreeCleanupEndpointState.Complete)
             return new(endpoint.RegistrationRemoved == true, endpoint.DirectoryRemoved == true, endpoint.BranchRemoved == true, null);
+        // D-2: Execute, preview and cohort bind every destructive entry, including an already admitted replay.
+        var policyReason = await DestructivePolicyAsync(endpoint, runId, ct);
+        if (policyReason is not null)
+        {
+            if (endpoint.OperationId is not null)
+                return new(false, false, false, policyReason);
+            return await RefuseAsync(endpoint, policyReason, ct);
+        }
         if (endpoint.OperationId is not null && endpoint.Target.RetirementId is Guid prior)
             return await ExecuteAsync(endpoint, await db.TaskWorktreeRetirements.SingleAsync(r => r.Id == prior, ct), runId, ct);
         if (endpoint.OperationId is not null && endpoint.Target.LandingOperationId is not null)
@@ -166,12 +174,25 @@ public sealed class CardWorktreeCleanupExecutor(AppDbContext db, ILandingGit git
         return await ExecuteAsync(endpoint, await db.TaskWorktreeRetirements.SingleAsync(r => r.Id == retirementId, ct), runId, ct);
     }
 
+    private async Task<string?> DestructivePolicyAsync(CardWorktreeCleanupEndpoint endpoint, Guid? runId, CancellationToken ct)
+    {
+        var preview = false;
+        if (runId is Guid id)
+        {
+            preview = await db.WorktreeResidueRuns.AsNoTracking()
+                .Where(r => r.Id == id).Select(r => (bool?)r.Preview).SingleOrDefaultAsync(ct) == true;
+        }
+
+        return CardWorktreeCleanupPolicy.DestructiveAdmissionRefusal(settings.Value, endpoint.Target.Cleanup.DoneAt, preview);
+    }
+
     private async Task<string?> EligibilityAsync(AgentTask task, CardWorktreeCleanupEndpoint endpoint, CancellationToken ct)
     {
         var card = await db.Cards.AsNoTracking().SingleAsync(c => c.Id == endpoint.Target.Cleanup.CardId, ct);
         if (!DoneAuthorizes(card)) return "done_required";
         if (task.Status is not (AgentTaskStatus.Succeeded or AgentTaskStatus.Failed or AgentTaskStatus.Canceled)) return "terminal_required";
-        if (task.CompletedAt is null || clock.GetUtcNow().UtcDateTime - task.CompletedAt < TimeSpan.FromMinutes(settings.Value.MinSettledMinutes)) return "settling";
+        if (CardWorktreeCleanupPolicy.SettlingRefusal(task.CompletedAt, clock.GetUtcNow().UtcDateTime, settings.Value.MinSettledMinutes) is not null)
+            return "settling";
         if (task.CardId != card.Id || task.Attempt != endpoint.Target.TaskAttempt || !CoordinatesMatch(task, endpoint)) return "task_snapshot_changed";
         var ownership = CardWorktreeCleanupService.ClassifyOwnership(task, endpoint.WorktreePath, endpoint.SourceFullRef, ManagedRoot());
         if (ownership is not null) return ownership;
