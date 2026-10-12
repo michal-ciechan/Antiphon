@@ -862,6 +862,21 @@ public sealed class RemoteScriptContractTests
         output.IndexOf("FAIL ", StringComparison.Ordinal).ShouldBe(-1, output);
     }
 
+    // S6: host decoys and independent recipients expose reverted payload binds.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1192_Apphost_mask_is_an_empty_exact_volume_mount()
+    {
+        var output = C1192Run("apphost");
+        foreach (var fact in new[]
+        {
+            "apphost-volume-payload", "apphost-host-decoy", "apphost-import-readonly",
+            "apphost-import-bytes-mode", "mask-exact-three", "mask-empty", "mask-failure-cleaned",
+            "mask-foreign-refused", "apphost-foreign-work-refused", "apphost-foreign-cache-refused"
+        })
+            Fact(output, fact).ShouldBe("1", fact + "\n" + output);
+    }
+
     // CARD-1195. cp -a /seed/. /cache/ applies the seed directory mode to the volume root,
     // so a root created at 0700 becomes 0755. F-8 still requires exactly 1654:1654:700.
     [Test]
