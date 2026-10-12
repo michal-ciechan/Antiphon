@@ -608,6 +608,174 @@ public sealed class OutputCleanupTests : CheckpointTestBase
     }
 
     [Test]
+    public async Task referenced_project_tracked_output_is_refused_before_the_build()
+    {
+        var root = InitGitRepo();
+        WriteProject(root, "Lib/Lib.csproj", """
+            <Project Sdk="Microsoft.NET.Sdk">
+              <PropertyGroup><TargetFramework>net9.0</TargetFramework></PropertyGroup>
+            </Project>
+            """);
+        WriteProject(root, "App/App.csproj", """
+            <Project Sdk="Microsoft.NET.Sdk">
+              <PropertyGroup><TargetFramework>net9.0</TargetFramework></PropertyGroup>
+              <ItemGroup><ProjectReference Include="..\Lib\Lib.csproj" /></ItemGroup>
+            </Project>
+            """);
+        var dll = Path.Combine(root, "Lib", "bin-probe2", "Lib.dll");
+        Directory.CreateDirectory(Path.GetDirectoryName(dll)!);
+        var original = "tracked-lib-dll-bytes!!"u8.ToArray();
+        File.WriteAllBytes(dll, original);
+        CommitAll(root);
+        Directory.CreateDirectory(Path.Combine(root, "results"));
+        var launched = 0;
+        var output = new StringWriter();
+        var manifest = ProbeManifest("App/App.csproj", "bin-probe2");
+
+        var started = await CheckpointApp.StartAsync(manifest, new RunRequest(), root, output,
+            new CheckpointApp.Runtime { Launch = _ => { launched++; return 1; } });
+
+        started.ExitCode.ShouldBe(ExitCodes.Invalid);
+        launched.ShouldBe(0);
+        File.ReadAllBytes(dll).ShouldBe(original);
+        output.ToString().ShouldContain("refused: tracked");
+
+        var broken = InitGitRepo();
+        WriteProject(broken, "App/App.csproj", """
+            <Project Sdk="Microsoft.NET.Sdk">
+              <ItemGroup><ProjectReference Include="..\Missing\Missing.csproj" /></ItemGroup>
+            </Project>
+            """);
+        CommitAll(broken);
+        Directory.CreateDirectory(Path.Combine(broken, "results"));
+        var brokenLaunched = 0;
+        var brokenOutput = new StringWriter();
+        var brokenStart = await CheckpointApp.StartAsync(ProbeManifest("App/App.csproj", "bin-probe2"), new RunRequest(), broken, brokenOutput,
+            new CheckpointApp.Runtime { Launch = _ => { brokenLaunched++; return 1; } });
+        brokenStart.ExitCode.ShouldBe(ExitCodes.Invalid);
+        brokenLaunched.ShouldBe(0);
+        brokenOutput.ToString().ShouldContain("refused: project-closure");
+    }
+
+    [Test]
+    public async Task wrapper_refuses_a_tracked_file_under_a_csproj_output_directory()
+    {
+        var root = InitGitRepo();
+        WriteProject(root, "App/App.csproj", """
+            <Project Sdk="Microsoft.NET.Sdk">
+              <PropertyGroup><TargetFramework>net9.0</TargetFramework></PropertyGroup>
+            </Project>
+            """);
+        var dll = Path.Combine(root, "App", "bin-wrap", "App.dll");
+        Directory.CreateDirectory(Path.GetDirectoryName(dll)!);
+        var original = "tracked-app-dll-21b!!"u8.ToArray();
+        original.Length.ShouldBe(21);
+        File.WriteAllBytes(dll, original);
+        CommitAll(root);
+        var outside = Path.Combine(Path.GetTempPath(), "c1199-wrap-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(outside);
+        var shim = Path.Combine(outside, "dotnet-shim.ps1");
+        var called = Path.Combine(outside, "called.txt");
+        File.WriteAllText(shim, """
+            param()
+            Set-Content -LiteralPath $env:CARD1199_CALLED -Value ($args -join ' ')
+            if ($args -contains 'build') {
+                [System.IO.File]::WriteAllText((Join-Path $env:CARD1199_REPO 'App/bin-wrap/App.dll'), 'OVERWRITTEN')
+            }
+            exit 0
+            """);
+        var output = new StringWriter();
+        var error = new StringWriter();
+        try
+        {
+            var start = new ProcessStartInfo("pwsh")
+            {
+                WorkingDirectory = root,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+            };
+            foreach (var arg in new[]
+            {
+                "-NoProfile", "-NonInteractive", "-File",
+                Path.Combine(CheckpointFixtures.RepoRoot, "scripts", "run-checkpoint.ps1"),
+                "-Name", "wrapper-preflight", "-Project", "App/App.csproj", "-OutputPath", "bin-wrap/",
+                "-Filter", "/*/*/Unused/*", "-ResultsRoot", Path.Combine(outside, "results"),
+                "-MinExecuted", "1", "-NoSlot", "-DotnetShim", shim,
+            })
+                start.ArgumentList.Add(arg);
+            start.Environment["CARD1199_REPO"] = root;
+            start.Environment["CARD1199_CALLED"] = called;
+            using var process = Process.Start(start);
+            process.ShouldNotBeNull();
+            var stdoutTask = process.StandardOutput.ReadToEndAsync();
+            var stderrTask = process.StandardError.ReadToEndAsync();
+            process.WaitForExit(90_000).ShouldBeTrue();
+            var stdout = await stdoutTask;
+            var stderr = await stderrTask;
+            output.Write(stdout);
+            error.Write(stderr);
+            process.ExitCode.ShouldBe(ExitCodes.Invalid, stdout + stderr);
+            File.ReadAllBytes(dll).ShouldBe(original);
+            File.Exists(called).ShouldBeFalse(stdout + stderr);
+            stdout.ShouldContain("refused: tracked");
+        }
+        finally
+        {
+            if (Directory.Exists(outside))
+                Directory.Delete(outside, recursive: true);
+        }
+    }
+
+    [Test]
+    public async Task smoke_detach_refuses_tracked_foreign_and_linked_targets()
+    {
+        var trackedRoot = InitGitRepo();
+        var tracked = Path.Combine(trackedRoot, "victim.txt");
+        File.WriteAllText(tracked, "TRACKED ORIGINAL");
+        CommitAll(trackedRoot);
+        var trackedBytes = File.ReadAllBytes(tracked);
+        var trackedOut = new StringWriter();
+        var trackedExit = await Antiphon.Checkpoints.Program.RunAsync(["smoke-detach", tracked], new CheckpointApp.Runtime { Output = trackedOut });
+        trackedExit.ShouldBe(ExitCodes.Invalid);
+        File.ReadAllBytes(tracked).ShouldBe(trackedBytes);
+        trackedOut.ToString().ShouldContain("refused: tracked");
+
+        var foreign = Path.Combine(TempDir(), "victim.txt");
+        File.WriteAllText(foreign, "FOREIGN ORIGINAL");
+        var foreignBytes = File.ReadAllBytes(foreign);
+        var foreignOut = new StringWriter();
+        var foreignExit = await Antiphon.Checkpoints.Program.RunAsync(["smoke-detach", foreign], new CheckpointApp.Runtime { Output = foreignOut });
+        foreignExit.ShouldBe(ExitCodes.Invalid);
+        File.ReadAllBytes(foreign).ShouldBe(foreignBytes);
+        foreignOut.ToString().ShouldContain("refused: unrecorded-existing");
+
+        if (!OperatingSystem.IsLinux())
+            return;
+        var linkedRoot = TempDir();
+        var real = Path.Combine(linkedRoot, "real");
+        Directory.CreateDirectory(real);
+        var kept = Path.Combine(real, "victim.txt");
+        File.WriteAllText(kept, "LINK ORIGINAL");
+        var link = Path.Combine(linkedRoot, "link");
+        Directory.CreateSymbolicLink(link, real);
+        try
+        {
+            var linkOut = new StringWriter();
+            var linkExit = await Antiphon.Checkpoints.Program.RunAsync(["smoke-detach", Path.Combine(link, "victim.txt")],
+                new CheckpointApp.Runtime { Output = linkOut });
+            linkExit.ShouldBe(ExitCodes.Invalid);
+            File.ReadAllText(kept).ShouldBe("LINK ORIGINAL");
+            linkOut.ToString().ShouldContain("refused: link-component");
+        }
+        finally
+        {
+            if (Directory.Exists(link))
+                Directory.Delete(link);
+        }
+    }
+
+    [Test]
     public async Task stop_refuses_foreign_state_without_writing()
     {
         var root = InitGitRepo();
@@ -669,19 +837,11 @@ public sealed class OutputCleanupTests : CheckpointTestBase
         var failing = InitGitRepo();
         var victim = Path.Combine(failing, "keep.txt");
         File.WriteAllText(victim, "original");
-        var fake = Path.Combine(Path.GetTempPath(), "c1199-git-" + Guid.NewGuid().ToString("N"));
-        File.WriteAllText(fake, "#!/bin/sh\necho fail >&2\nexit 1\n");
-        File.SetUnixFileMode(fake, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
-        try
-        {
-            SafeWrite.Text(victim, "changed", SafeWrite.Under(failing, gitExecutable: fake)).ShouldBe("git-failed");
-            File.ReadAllText(victim).ShouldBe("original");
-        }
-        finally
-        {
-            if (File.Exists(fake))
-                File.Delete(fake);
-        }
+        // A script written and executed in this process is ETXTBSY under parallel load.
+        // RunGit maps that Win32Exception to git-unavailable. /bin/false exits 1 without that race.
+        File.Exists("/bin/false").ShouldBeTrue();
+        SafeWrite.Text(victim, "changed", SafeWrite.Under(failing, gitExecutable: "/bin/false")).ShouldBe("git-failed");
+        File.ReadAllText(victim).ShouldBe("original");
 
         if (!OperatingSystem.IsLinux())
             return;
@@ -717,9 +877,7 @@ public sealed class OutputCleanupTests : CheckpointTestBase
         File.WriteAllText(latest, "original-latest");
         File.WriteAllText(dll, "dll-bytes");
         var before = new[] { latest, dll }.ToDictionary(path => path, path => (Bytes: File.ReadAllBytes(path), Mtime: File.GetLastWriteTimeUtc(path)));
-        var fake = Path.Combine(Path.GetTempPath(), "c1199-pre-" + Guid.NewGuid().ToString("N"));
-        File.WriteAllText(fake, "#!/bin/sh\necho fail >&2\nexit 1\n");
-        File.SetUnixFileMode(fake, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        File.Exists("/bin/false").ShouldBeTrue();
         var launched = 0;
         var output = new StringWriter();
         var manifest = new CheckpointManifest
@@ -728,24 +886,16 @@ public sealed class OutputCleanupTests : CheckpointTestBase
             Builds = [new BuildSpec { Id = "bin-audit", Project = "proj/App.csproj", OutputPath = "bin-audit/" }],
             Checkpoints = [new CheckpointSpec { Id = "CP-1", Build = "bin-audit", Filter = "/*/*/ExampleSurfaceTests/*", MinExecuted = 1 }],
         };
-        try
+        var started = await CheckpointApp.StartAsync(manifest, new RunRequest(), root, output,
+            new CheckpointApp.Runtime { GitExecutable = "/bin/false", Launch = _ => { launched++; return 1; } });
+        started.ExitCode.ShouldBe(ExitCodes.Invalid);
+        launched.ShouldBe(0);
+        output.ToString().ShouldContain("refused: git-failed");
+        Directory.GetDirectories(results).ShouldBeEmpty();
+        foreach (var (path, snapshot) in before)
         {
-            var started = await CheckpointApp.StartAsync(manifest, new RunRequest(), root, output,
-                new CheckpointApp.Runtime { GitExecutable = fake, Launch = _ => { launched++; return 1; } });
-            started.ExitCode.ShouldBe(ExitCodes.Invalid);
-            launched.ShouldBe(0);
-            output.ToString().ShouldContain("refused: git-failed");
-            Directory.GetDirectories(results).ShouldBeEmpty();
-            foreach (var (path, snapshot) in before)
-            {
-                File.ReadAllBytes(path).ShouldBe(snapshot.Bytes);
-                File.GetLastWriteTimeUtc(path).ShouldBe(snapshot.Mtime);
-            }
-        }
-        finally
-        {
-            if (File.Exists(fake))
-                File.Delete(fake);
+            File.ReadAllBytes(path).ShouldBe(snapshot.Bytes);
+            File.GetLastWriteTimeUtc(path).ShouldBe(snapshot.Mtime);
         }
     }
 
@@ -780,6 +930,27 @@ public sealed class OutputCleanupTests : CheckpointTestBase
         Git(root, "init", "-b", "card1199");
         return root;
     }
+
+    private void CommitAll(string root)
+    {
+        Git(root, "add", "-A");
+        Git(root, "-c", "user.email=card-1199@example.invalid", "-c", "user.name=card-1199",
+            "-c", "commit.gpgsign=false", "commit", "-m", "fixture", "--no-verify");
+    }
+
+    private static void WriteProject(string root, string relative, string xml)
+    {
+        var path = Path.Combine(root, relative.Replace('/', Path.DirectorySeparatorChar));
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, xml);
+    }
+
+    private static CheckpointManifest ProbeManifest(string project, string output) => new()
+    {
+        ResultsRoot = "results",
+        Builds = [new BuildSpec { Id = output, Project = project, OutputPath = output + "/" }],
+        Checkpoints = [new CheckpointSpec { Id = "CP-1", Build = output, Filter = "/*/*/Unused/*", MinExecuted = 1 }],
+    };
 
     private static void Git(string root, params string[] args)
     {
