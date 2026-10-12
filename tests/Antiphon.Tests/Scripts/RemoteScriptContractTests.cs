@@ -783,6 +783,7 @@ public sealed class RemoteScriptContractTests
     // A failed observation exits only that subshell, so field 5 is empty and bash reports
     // "operand expected". The fixture trap then replaces the receipt with UnhandledExit.
     [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
     public void C1194_Fixture_prune_scales_budget_outside_arithmetic_substitution()
     {
         var prune = Block(Remote(), "c849_fixture_prune");
@@ -813,6 +814,22 @@ public sealed class RemoteScriptContractTests
             "a non-numeric byte field returns before the digit-length refusal");
         Order(scale, "[ \"${#bytes}\" -gt 15 ]", "$((10#$bytes * 5 / 4))").ShouldBeTrue(
             "a field longer than 15 digits returns before base-10 scaling");
+        var output = LinuxShell("set -u\n" + assign + "\n" + scale + "\n"
+            + Block(Remote(), "c1008_capture_json") + "\n" + """
+            root="$(mktemp -d)"
+            trap 'rm -rf -- "$root"' EXIT
+            CASE_DIR="$root"
+            write_result() { printf 'DIAGNOSIS=%s\n' "$2" >&"${C1008_DIAG_FD:-1}"; exit "$3"; }
+            c849_observe_volume() { write_result false CacheInventoryLookupFailed 2; }
+            code=0
+            (c849_fixture_assign_budget measured vol npm-content 2147483648; printf 'WRONG continuation\n') > "$root/out" 2>&1 || code=$?
+            [ "$code" = 2 ] && grep -Fxq 'DIAGNOSIS=CacheInventoryLookupFailed' "$root/out" \
+                && ! grep -Eq 'WRONG|UnhandledExit|FixtureBudgetObservationInvalid' "$root/out" \
+                || { printf 'FAIL budget-parent-diagnosis code=%s\n' "$code"; cat "$root/out"; exit 1; }
+            printf 'PASS budget-parent-diagnosis\n'
+            """);
+        output.ShouldContain("PASS budget-parent-diagnosis", customMessage: output);
+        output.ShouldNotContain("FAIL ", customMessage: output);
     }
 
     // CARD-1194. The scale helper is behaviour: an empty observation and a swallowed
@@ -871,7 +888,8 @@ public sealed class RemoteScriptContractTests
         foreach (var fact in new[]
         {
             "apphost-volume-payload", "apphost-host-decoy", "apphost-import-readonly",
-            "apphost-import-bytes-mode", "mask-exact-three", "mask-empty", "mask-failure-cleaned",
+            "apphost-import-bytes-mode", "mask-exact-three", "mask-empty", "mask-failure-cleaned", "mask-partial-start-cleaned",
+            "mask-readonly", "mask-nocopy", "mask-exact-pack",
             "mask-foreign-refused", "apphost-foreign-work-refused", "apphost-foreign-cache-refused"
         })
             Fact(output, fact).ShouldBe("1", fact + "\n" + output);
@@ -903,6 +921,7 @@ public sealed class RemoteScriptContractTests
     // production volume.nocopy shape. The probe is uid 1654 and only stats /tmp or writes
     // inside those mounts.
     [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
     public void C1195_Retention_probe_is_app_uid_and_does_not_copy_image_content()
     {
         var retention = Block(Remote(), "c849_fixture_retention");
@@ -929,6 +948,13 @@ public sealed class RemoteScriptContractTests
         retention.IndexOf("'printf \"retained\\n\" > \"$1/retention-sentinel\"' sh \"$target\"", StringComparison.Ordinal)
             .ShouldBeGreaterThanOrEqualTo(0, "the sentinel write is not inside the cache mount");
         retention.Contains("sudo", StringComparison.Ordinal).ShouldBeFalse("the retention probe elevates");
+        var output = C1192Run("retention");
+        foreach (var fact in new[]
+        {
+            "retention-app-uid", "retention-nocopy-three", "retention-external-survives",
+            "retention-private-separation", "retention-recreate-bytes", "retention-negative-lost"
+        })
+            Fact(output, fact).ShouldBe("1", fact + "\n" + output);
     }
 
     // CARD-1197. containersRemoved and removing share the recreating/verified compare.
@@ -1015,7 +1041,7 @@ public sealed class RemoteScriptContractTests
 
     private static void C1195AssertImportRestoresRoot(string function, bool seedImport)
     {
-        var copy = seedImport ? "cp -a \"$1/.\" /cache/" : "cp -a /seed/. /cache/";
+        var copy = "cp -a \"$1/.\" /cache/";
         var command = Commands(Block(Remote(), function))
             .Single(line => line.Contains(copy, StringComparison.Ordinal));
         const string own = "chown -R 1654:1654 /cache";
