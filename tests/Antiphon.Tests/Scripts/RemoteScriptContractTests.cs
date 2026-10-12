@@ -31,7 +31,8 @@ public sealed class RemoteScriptContractTests
     public void C1066_Fixture_tree_fault_reaches_validator_under_nounset(string variant, string diagnosis)
     {
         var output = LinuxShell(C1066FixtureHarness("c849_validate_seed_relative", "c849_validate_seed_tree",
-            "c849_fixture_tree_fault") + $$"""
+            "c849_payload_controller", "c849_payload_fixture_ready", "c849_payload_select", "c849_payload_call",
+            "c849_fixture_tree_mutate", "c849_fixture_tree_fault") + $$"""
             mkdir -p "$SERVER2_ROOT/.donor-tree/packages/c913.probe/1.0.0" \
                 "$SERVER2_ROOT/.donor-tree/packages/c913.tools/2.0.0" "$SERVER2_ROOT/.donor-tree/npm"
             printf complete > "$SERVER2_ROOT/.donor-tree/packages/c913.probe/1.0.0/.nupkg.metadata"
@@ -996,9 +997,9 @@ public sealed class RemoteScriptContractTests
 
     private static void C1195AssertImportRestoresRoot(string function, bool seedImport)
     {
+        var copy = seedImport ? "cp -a \"$1/.\" /cache/" : "cp -a /seed/. /cache/";
         var command = Commands(Block(Remote(), function))
-            .Single(line => line.Contains("cp -a /seed/. /cache/", StringComparison.Ordinal));
-        const string copy = "cp -a /seed/. /cache/";
+            .Single(line => line.Contains(copy, StringComparison.Ordinal));
         const string own = "chown -R 1654:1654 /cache";
         const string mode = "chmod 0700 /cache";
         var snippet = C1195QuotedCommand(command);
@@ -1014,6 +1015,7 @@ public sealed class RemoteScriptContractTests
         }
 
         var executable = snippet
+            .Replace("\"$1/.\"", "\"$seed/.\"", StringComparison.Ordinal)
             .Replace(own, ":", StringComparison.Ordinal)
             .Replace("/seed", "\"$seed\"", StringComparison.Ordinal)
             .Replace("/cache", "\"$cache\"", StringComparison.Ordinal);
