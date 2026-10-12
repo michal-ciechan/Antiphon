@@ -98,11 +98,16 @@ children, the phone-home test host, vitest), so the Code dispatch needs neither 
   `scripts/recover-repository-children.ps1` appends ` purpose=<p> task=<id>` to its
   `retained (<state>)` line when the record has them (state classification unchanged, a live
   record stays retained, exit 3).
-  *Why:* the push writes only `refs/remotes/origin/<task-branch>` and the branch's upstream
-  config, both under git's own ref/config locks with retry; nothing a land or a worktree cut
-  reads-then-writes depends on it, which is the same reasoning CARD-0672 D-1 (I-A) used for the
-  mirror launch. Keeping the record keeps crash visibility: an orphaned push after a server
-  death is still listed and still blocks the recovery script. *Rejected:* not journaling pushes
+  *Why:* CARD-1091 correction (2026-10-12): CARD-1076 S2 removed `-u`; the prep push
+  is `git push origin <task-branch>`. It publishes the branch and may update
+  `refs/remotes/origin/<task-branch>`, but does not install the desktop branch's
+  upstream configuration. The runner mirror receives the branch, SHA, and
+  repository explicitly and does not need that upstream. This removes the
+  shared config write identified by the S1 review. There is no config-lock
+  retry guarantee: a worktree cut from a remote-tracking base can still write
+  shared configuration under Git's normal tracking rules. Keeping the tagged
+  push journal retains crash visibility and the existing recovery behavior.
+  *Rejected:* not journaling pushes
   at all (loses that listing); running the push under a tagged lease (CARD-0809 option a: the
   whole upload would then serialize lands and every first crossing, which is this incident's
   shape with a name on it); a writer-side `FencesWhileAlive` flag in the record (the reader,
