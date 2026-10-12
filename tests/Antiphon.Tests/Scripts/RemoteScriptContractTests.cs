@@ -295,6 +295,82 @@ public sealed class RemoteScriptContractTests
             Fact(output, key).ShouldBe("1", key + "\n" + output);
     }
 
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1192_Cleanup_consumer_requires_positive_absence()
+    {
+        C1192AssertCleanupProbe("consumer");
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1192_Cleanup_helper_requires_positive_absence()
+    {
+        C1192AssertCleanupProbe("helper");
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1192_Cleanup_masked_requires_positive_absence()
+    {
+        C1192AssertCleanupProbe("masked");
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1192_Cleanup_work_requires_positive_absence()
+    {
+        C1192AssertCleanupProbe("work");
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1192_Cleanup_mask_requires_positive_absence()
+    {
+        C1192AssertCleanupProbe("mask");
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1192_Cleanup_cache_requires_positive_absence()
+    {
+        C1192AssertCleanupProbe("cache");
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1192_Cleanup_network_requires_positive_absence()
+    {
+        C1192AssertCleanupProbe("network");
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1192_Daemon_loss_after_compose_refuses_success()
+    {
+        var output = C1192Run("cleanup-probe all");
+        foreach (var key in new[] { "daemon-teardown", "daemon-verdict", "daemon-residue",
+            "daemon-retained", "daemon-ledger", "daemon-all-resources-retained",
+            "daemon-residue-c849c1192fixture0001-work", "daemon-residue-c849c1192fixture0001-mask",
+            "daemon-residue-c849-c1192fixture0001-writer", "daemon-residue-c849-c1192fixture0001-reader" })
+            Fact(output, key).ShouldBe("1", key + "\n" + output);
+    }
+
+    private static void C1192AssertCleanupProbe(string boundary)
+    {
+        var output = C1192Run("cleanup-probe " + boundary);
+        foreach (var outcome in new[] { "absent", "daemon", "exit2", "present", "timeout",
+            "empty", "permission", "socket", "unrecognized", "rm-lie" })
+        {
+            foreach (var assertion in new[] { "teardown", "verdict", "residue" })
+                Fact(output, outcome + "-" + assertion).ShouldBe("1", boundary + " " + outcome + "-" + assertion + "\n" + output);
+            if (outcome == "absent") continue;
+            Fact(output, outcome + "-retained").ShouldBe("1", boundary + " " + outcome + "-retained\n" + output);
+            if (outcome is not ("present" or "rm-lie"))
+                Fact(output, outcome + "-ledger").ShouldBe("1", boundary + " " + outcome + "-ledger\n" + output);
+        }
+    }
+
     // CARD-1191. Seed success published accepted:true from a subshell, and the fixture trap
     // replaced the global UnhandledExit trap, so an F-4 death left an empty diagnosis.
     [Test]

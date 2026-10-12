@@ -928,6 +928,54 @@ CP-27 executes F-5 with independent host decoys and volume recipients. It observ
 
 CP-33 additionally executes the real volume fixture seed and recovery validator, and scans each individual checkout bind for readonly. CP-34 exercises actual EXIT/finalizer behavior, including primary plus secondary failure, replaced-controller export exclusion, early outer publication and foreign registered-helper residue. CP-35 observes actual resource/control disposal without sudo. CP-36 checks exact nine-line receipt bytes and missing/duplicate group, family and variant censuses. CP-38 binds consumer stop/join, five diagnostic bytes, helper and volume order. CP-39 executes failed unlink, remaining destination and directory-creation-before-copy races. CP-43 retains inventory/occupied/control sensitivity and uses the existing strict F-5 volume recipient model after the host recipient was removed. Its stale unregistered cleanup name is replaced with the exact admitted case name. No rollout or deliberate mutation is executed. PC-149..152 are new method-scoped controls, all pending. Every S7 After cell already equals S7.
 
+### S7 F1 repair binding (round 2)
+
+The repair brief's closed Final scope is CP-33..52: existing CP-33..43 remain one execution each, CP-44 remains exactly 19 adjacent executions, and CP-45..52 add eight methods. One S7 isolated build is reused within each committed group. No whole Unit lane/full class/live Docker acceptance is authorized. Added cost estimate: 10 row minutes plus slot contention; two source states are needed for historical red then repaired green.
+
+CP-45..51 use the actual strict-shell wrapper, EXIT, finalizer and JSON publisher, with three successful Compose teardowns before injecting a specific boundary. Each internal table covers exit 1 with exact No such resource/name (absent, success), exit 1 daemon unavailable, exit 2, exit 0 object present with failed removal, timeout exit 124, empty exit 1, permission denied, socket no-such-file, unrecognized error, and exit-zero removal with object still present. Unknown outcomes require named residue, retained resources, accepted:false/nonzero, and an unknown-cleanup-outcome ledger entry. CP-52 answers every Docker operation with daemon-unavailable exit 1 after the last Compose down; both volumes and helpers must remain independently visible and named. These daemon-loss rows must fail against unchanged production at 276e0f30b4ca410ceb641924758fe201f49e7e50 before the fix. Timeout is modeled at the CLI exit boundary; native time/daemon behavior stays W-1.
+
+All PCs and every variant remain pending method-scoped SourceLanding Mutation. Ordinary historical red is not a deliberate PC cycle.
+
+Additional guard inventory:
+
+| Guard | Invariant | Positive control |
+|---|---|---|
+| G-153 | S7 F1: consumer absence must be positively confirmed; successful removal must be rechecked | PC-153 |
+| G-154 | S7 F1: helper absence must be positively confirmed; successful removal must be rechecked | PC-154 |
+| G-155 | S7 F1: masked absence must be positively confirmed; successful removal must be rechecked | PC-155 |
+| G-156 | S7 F1: work absence must be positively confirmed; successful removal must be rechecked | PC-156 |
+| G-157 | S7 F1: mask absence must be positively confirmed; successful removal must be rechecked | PC-157 |
+| G-158 | S7 F1: cache absence must be positively confirmed; successful removal must be rechecked | PC-158 |
+| G-159 | S7 F1: network absence must be positively confirmed; successful removal must be rechecked | PC-159 |
+| G-160 | S7 F1: unknown outcome retains exact identity and ledger diagnosis | PC-160 |
+| G-161 | S7 F1: consumer removal acknowledgement cannot replace positive absence | PC-161 |
+| G-162 | S7 F1: helper removal acknowledgement cannot replace positive absence | PC-162 |
+| G-163 | S7 F1: masked removal acknowledgement cannot replace positive absence | PC-163 |
+| G-164 | S7 F1: work removal acknowledgement cannot replace positive absence | PC-164 |
+| G-165 | S7 F1: mask removal acknowledgement cannot replace positive absence | PC-165 |
+| G-166 | S7 F1: cache removal acknowledgement cannot replace positive absence | PC-166 |
+| G-167 | S7 F1: network removal acknowledgement cannot replace positive absence | PC-167 |
+
+Additional positive controls:
+
+| PC | Break guard | Detecting filter | Expected red assertion |
+|---|---|---|---|
+| PC-153 | G-153: In the consumer cleanup caller, substitute confirmed absence for unknown probe results. | `/*/*/RemoteScriptContractTests/C1192_Cleanup_consumer_requires_positive_absence` | `daemon-verdict` fails after the boundary is reached; all ten variants pending. |
+| PC-154 | G-154: In the helper cleanup caller, substitute confirmed absence for unknown probe results. | `/*/*/RemoteScriptContractTests/C1192_Cleanup_helper_requires_positive_absence` | `daemon-verdict` fails after the boundary is reached; all ten variants pending. |
+| PC-155 | G-155: In the masked cleanup caller, substitute confirmed absence for unknown probe results. | `/*/*/RemoteScriptContractTests/C1192_Cleanup_masked_requires_positive_absence` | `daemon-verdict` fails after the boundary is reached; all ten variants pending. |
+| PC-156 | G-156: In the work cleanup caller, substitute confirmed absence for unknown probe results. | `/*/*/RemoteScriptContractTests/C1192_Cleanup_work_requires_positive_absence` | `daemon-verdict` fails after the boundary is reached; all ten variants pending. |
+| PC-157 | G-157: In the mask cleanup caller, substitute confirmed absence for unknown probe results. | `/*/*/RemoteScriptContractTests/C1192_Cleanup_mask_requires_positive_absence` | `daemon-verdict` fails after the boundary is reached; all ten variants pending. |
+| PC-158 | G-158: In the cache cleanup caller, substitute confirmed absence for unknown probe results. | `/*/*/RemoteScriptContractTests/C1192_Cleanup_cache_requires_positive_absence` | `daemon-verdict` fails after the boundary is reached; all ten variants pending. |
+| PC-159 | G-159: In the network cleanup caller, substitute confirmed absence for unknown probe results. | `/*/*/RemoteScriptContractTests/C1192_Cleanup_network_requires_positive_absence` | `daemon-verdict` fails after the boundary is reached; all ten variants pending. |
+| PC-160 | G-160: Omit unknown-cleanup-outcome ledger append. | `/*/*/RemoteScriptContractTests/C1192_Daemon_loss_after_compose_refuses_success` | `daemon-ledger` fails; all four work/helper identity variants pending. |
+| PC-161 | G-161: Skip the post-removal probe for consumer. | `/*/*/RemoteScriptContractTests/C1192_Cleanup_consumer_requires_positive_absence` | `rm-lie-verdict` fails with exit-zero removal and retained object; pending. |
+| PC-162 | G-162: Skip the post-removal probe for helper. | `/*/*/RemoteScriptContractTests/C1192_Cleanup_helper_requires_positive_absence` | `rm-lie-verdict` fails with exit-zero removal and retained object; pending. |
+| PC-163 | G-163: Skip the post-removal probe for masked. | `/*/*/RemoteScriptContractTests/C1192_Cleanup_masked_requires_positive_absence` | `rm-lie-verdict` fails with exit-zero removal and retained object; pending. |
+| PC-164 | G-164: Skip the post-removal probe for work. | `/*/*/RemoteScriptContractTests/C1192_Cleanup_work_requires_positive_absence` | `rm-lie-verdict` fails with exit-zero removal and retained object; pending. |
+| PC-165 | G-165: Skip the post-removal probe for mask. | `/*/*/RemoteScriptContractTests/C1192_Cleanup_mask_requires_positive_absence` | `rm-lie-verdict` fails with exit-zero removal and retained object; pending. |
+| PC-166 | G-166: Skip the post-removal probe for cache. | `/*/*/RemoteScriptContractTests/C1192_Cleanup_cache_requires_positive_absence` | `rm-lie-verdict` fails with exit-zero removal and retained object; pending. |
+| PC-167 | G-167: Skip the post-removal probe for network. | `/*/*/RemoteScriptContractTests/C1192_Cleanup_network_requires_positive_absence` | `rm-lie-verdict` fails with exit-zero removal and retained object; pending. |
+
 ### Checkpoints
 
 Authoritative closed list: **43 distinct methods, 51 TUnit executions minimum,
@@ -995,6 +1043,16 @@ every promised method/label after Code; unbound payloads remain binding required
 | CP-41 | S7 | `CP-33` | linux-receipt-exclusion | `/*/*/RemoteScriptContractTests/C849_Cache_receipts_exclude_credentials_and_payloads` | R-8 | 1 executed, 0 failed/skipped | 1 | 1 |
 | CP-42 | S7 | `CP-33` | linux-receipt-consumer | `/*/*/RemoteScriptContractTests/C913_Receipts_reject_mixed_digest_types_and_false_smoke_claims` | R-8 | 1 executed, 0 failed/skipped | 1 | 2 |
 | CP-43 | S7 | `CP-33` | linux-fixture-inventory | `/*/*/RemoteScriptContractTests/C913_Fixture_uses_owned_payloads_and_proven_absent_temp` | R-8 | 1 executed, 0 failed/skipped | 1 | 1 |
+
+| CP-44 | S7 | `CP-33` | linux-adjacent | `/*/*/RemoteScriptContractTests/(C1189_*|C1191_*|C1193_*|C1194_*|C1195_*|C1192_Summary_*|C1192_Foreign_*|C1192_Harness_*|C1192_Helper_*)*` | R-1..R-5, R-8 | 19 executed, 0 failed/skipped | 19 | 2 |
+| CP-45 | S7 | `CP-33` | linux-cleanup-consumer | `/*/*/RemoteScriptContractTests/C1192_Cleanup_consumer_requires_positive_absence` | V-2, V-9 | 1 executed, 0 failed/skipped | 1 | 1 |
+| CP-46 | S7 | `CP-33` | linux-cleanup-helper | `/*/*/RemoteScriptContractTests/C1192_Cleanup_helper_requires_positive_absence` | V-2, V-9 | 1 executed, 0 failed/skipped | 1 | 1 |
+| CP-47 | S7 | `CP-33` | linux-cleanup-masked | `/*/*/RemoteScriptContractTests/C1192_Cleanup_masked_requires_positive_absence` | V-2, V-9 | 1 executed, 0 failed/skipped | 1 | 1 |
+| CP-48 | S7 | `CP-33` | linux-cleanup-work | `/*/*/RemoteScriptContractTests/C1192_Cleanup_work_requires_positive_absence` | V-2, V-9 | 1 executed, 0 failed/skipped | 1 | 1 |
+| CP-49 | S7 | `CP-33` | linux-cleanup-mask | `/*/*/RemoteScriptContractTests/C1192_Cleanup_mask_requires_positive_absence` | V-2, V-9 | 1 executed, 0 failed/skipped | 1 | 1 |
+| CP-50 | S7 | `CP-33` | linux-cleanup-cache | `/*/*/RemoteScriptContractTests/C1192_Cleanup_cache_requires_positive_absence` | V-2, V-9 | 1 executed, 0 failed/skipped | 1 | 1 |
+| CP-51 | S7 | `CP-33` | linux-cleanup-network | `/*/*/RemoteScriptContractTests/C1192_Cleanup_network_requires_positive_absence` | V-2, V-9 | 1 executed, 0 failed/skipped | 1 | 1 |
+| CP-52 | S7 | `CP-33` | linux-daemon-loss | `/*/*/RemoteScriptContractTests/C1192_Daemon_loss_after_compose_refuses_success` | V-2, V-9 | 1 executed, 0 failed/skipped | 1 | 1 |
 
 ### Cost
 
