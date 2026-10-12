@@ -294,6 +294,18 @@ function Resolve-CheckpointProjectDirectory {
     return $ProjectFull
 }
 
+function Get-CheckpointOutputLayout {
+    param([string]$Repo, [string]$ProjectPath, [string]$Output)
+    $projectFull = if ([System.IO.Path]::IsPathRooted($ProjectPath)) { [System.IO.Path]::GetFullPath($ProjectPath) } else { [System.IO.Path]::GetFullPath((Join-Path $Repo $ProjectPath)) }
+    $projectDir = Resolve-CheckpointProjectDirectory $projectFull
+    if ([string]::IsNullOrEmpty($projectDir)) { $projectDir = $Repo }
+    if ([System.IO.Path]::IsPathRooted($Output)) { $ownedFull = [System.IO.Path]::GetFullPath($Output) }
+    else { $ownedFull = [System.IO.Path]::GetFullPath((Join-Path $projectDir $Output)) }
+    $owned = ($ownedFull -replace '\\', '/')
+    if (-not $owned.EndsWith('/')) { $owned += '/' }
+    return @{ Owned = $owned; Artifacts = $owned.TrimEnd('/') + '/artifacts' }
+}
+
 function Find-CheckpointProjectFile {
     param([string]$ProjectFull)
     if ([System.IO.File]::Exists($ProjectFull)) {
@@ -771,18 +783,6 @@ function Get-CheckpointRepoRelative {
     $sep = [System.IO.Path]::DirectorySeparatorChar
     if (-not $fullDir.StartsWith($fullRepo + $sep, $comparison)) { return $null }
     return $fullDir.Substring($fullRepo.Length + 1).Replace('\', '/')
-}
-
-function Get-CheckpointOutputLayout {
-    param([string]$Repo, [string]$ProjectPath, [string]$Output)
-    $projectFull = if ([System.IO.Path]::IsPathRooted($ProjectPath)) { [System.IO.Path]::GetFullPath($ProjectPath) } else { [System.IO.Path]::GetFullPath((Join-Path $Repo $ProjectPath)) }
-    $projectDir = Resolve-CheckpointProjectDirectory $projectFull
-    if ([string]::IsNullOrEmpty($projectDir)) { $projectDir = $Repo }
-    if ([System.IO.Path]::IsPathRooted($Output)) { $ownedFull = [System.IO.Path]::GetFullPath($Output) }
-    else { $ownedFull = [System.IO.Path]::GetFullPath((Join-Path $projectDir $Output)) }
-    $owned = ($ownedFull -replace '\\', '/')
-    if (-not $owned.EndsWith('/')) { $owned += '/' }
-    return @{ Owned = $owned; Artifacts = $owned.TrimEnd('/') + '/artifacts' }
 }
 
 function Get-CheckpointTrackedSnapshot {
