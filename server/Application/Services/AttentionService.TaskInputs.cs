@@ -78,27 +78,28 @@ public sealed partial class AttentionService
             if (strongInputs.Count > 0)
             {
                 var patterns = strongInputs.Select(x => TaskInputPromptPattern(x.Row.Body)).Distinct().ToArray();
-                long? firstPromptSequence = null;
-                var candidates = _db.TranscriptEntries.AsNoTracking()
+                // FirstOrDefault stays inside the range expression: PostgreSQL evaluates one
+                // scalar LIMIT 1 floor, with no separate candidate reader to drain on dispose.
+                // LIKE remains necessary evidence only. A partial candidate may precede the
+                // first complete receipt, so discard that prefix after applying the matcher.
+                var candidateFloor = _db.TranscriptEntries.AsNoTracking()
                     .Where(t => t.AgentSessionId == sessionId && t.Kind == TranscriptKinds.UserPrompt
                         && t.Text != null && patterns.Any(pattern => EF.Functions.Like(t.Text, pattern, "!")))
                     .OrderBy(t => t.Sequence)
-                    .Select(t => new TaskInputTranscript(t.Sequence, t.Kind, t.Text, t.Timestamp ?? t.CreatedAt));
-                await foreach (var prompt in candidates.AsAsyncEnumerable().WithCancellation(ct))
-                {
-                    if (!strongInputs.Any(input => PromptSubmissionMatch.IsCompleteIn(input.Row.Body, prompt.Text)))
-                        continue;
-                    firstPromptSequence = prompt.Sequence;
-                    break;
-                }
+                    .Select(t => (long?)t.Sequence);
+                var entries = await _db.TranscriptEntries.AsNoTracking()
+                    .Where(t => t.AgentSessionId == sessionId && t.Sequence >= candidateFloor.FirstOrDefault()
+                        && (t.Kind == TranscriptKinds.UserPrompt || t.Kind == TranscriptKinds.AssistantText))
+                    .OrderBy(t => t.Sequence)
+                    .Select(t => new TaskInputTranscript(t.Sequence, t.Kind, t.Text, t.Timestamp ?? t.CreatedAt))
+                    .ToListAsync(ct);
+                var firstPromptSequence = entries.FirstOrDefault(t => t.Kind == TranscriptKinds.UserPrompt
+                    && t.Text is not null && strongInputs.Any(input =>
+                        PromptSubmissionMatch.IsCompleteIn(input.Row.Body, t.Text)))?.Sequence;
                 if (firstPromptSequence is long floor)
                 {
-                    transcripts[sessionId] = await _db.TranscriptEntries.AsNoTracking()
-                        .Where(t => t.AgentSessionId == sessionId && t.Sequence >= floor
-                            && (t.Kind == TranscriptKinds.UserPrompt || t.Kind == TranscriptKinds.AssistantText))
-                        .OrderBy(t => t.Sequence)
-                        .Select(t => new TaskInputTranscript(t.Sequence, t.Kind, t.Text, t.Timestamp ?? t.CreatedAt))
-                        .ToListAsync(ct);
+                    entries.RemoveAll(t => t.Sequence < floor);
+                    transcripts[sessionId] = entries;
                 }
             }
 
