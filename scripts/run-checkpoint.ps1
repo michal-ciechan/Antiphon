@@ -22,6 +22,19 @@
     Windows, UseAppHost=false is added unless the caller names UseAppHost itself: the extensionless
     fakeclaude apphost collides with the fakeclaude/ directory Antiphon.Tests stages beside it.
 
+    A real dotnet build (no -DotnetShim) rewrites a relative -OutputPath to one absolute
+    global OutputPath under the entry project and adds ArtifactsPath plus
+    UseArtifactsOutput=true, so referenced projects, including ones imported from .props
+    or Directory.Build.props, write into that owned directory. A shared
+    BaseIntermediateOutputPath is not passed, because a global property does not expand
+    $(MSBuildProjectName). The static ProjectReference scan remains defence in depth and
+    does not see imports. If the imported graph cannot be evaluated the row refuses with
+    graph-unevaluated before the build. After the build, tracked files under each
+    evaluated project directory are hashed and git ls-files -s is compared; a change is
+    tampered, exit 2, and nothing is restored. A row command string and a -DotnetShim
+    replacement are not confined. Tracked files outside the evaluated project directories
+    are not part of that hash.
+
     Owner: docs/testing-and-build.md, "Checkpoint manifest (CARD-0585)".
     ASCII-only.
 #>
@@ -297,6 +310,9 @@ function Find-CheckpointProjectFile {
     return $matched[0]
 }
 
+# Defence in depth only: ProjectReference elements in this file. Imports and
+# Directory.Build.props are outside this scan. Invoke-ConfinedCheckpointBuild
+# evaluates that graph before a real dotnet build.
 function Read-CheckpointProjectReferences {
     param([string]$ProjectFile)
     $document = New-Object System.Xml.XmlDocument
@@ -651,6 +667,265 @@ function Invoke-Dotnet {
     } finally { $writer.Dispose() }
 }
 
+function Get-CheckpointPropertyPair {
+    param([string]$Token)
+    $body = $null
+    if ($Token.StartsWith('--property:', [StringComparison]::OrdinalIgnoreCase)) { $body = $Token.Substring(11) }
+    elseif ($Token.StartsWith('-p:', [StringComparison]::OrdinalIgnoreCase)) { $body = $Token.Substring(3) }
+    elseif ($Token.StartsWith('/p:', [StringComparison]::OrdinalIgnoreCase)) { $body = $Token.Substring(3) }
+    if ($null -eq $body) { return $null }
+    $eq = $body.IndexOf('=')
+    if ($eq -lt 1) { return $null }
+    return @{ Key = $body.Substring(0, $eq); Value = $body.Substring($eq + 1) }
+}
+
+function Test-CheckpointIsolationKey {
+    param([string]$Key)
+    foreach ($name in @('OutputPath','OutDir','BaseOutputPath','BaseIntermediateOutputPath','MSBuildProjectExtensionsPath','ArtifactsPath','UseArtifactsOutput')) {
+        if ($Key -eq $name) { return $true }
+    }
+    return $false
+}
+
+function Invoke-CheckpointGraphEval {
+    param([string]$Project, [string]$Owned, [string]$Artifacts, [string[]]$Forwarded)
+    $evalArgs = @(
+        'msbuild', $Project, '-getItem:ProjectReference', '-nologo', '-nodeReuse:false',
+        ('--property:OutputPath=' + $Owned),
+        ('--property:ArtifactsPath=' + $Artifacts),
+        '--property:UseArtifactsOutput=true'
+    )
+    $sawHost = $false
+    foreach ($token in @($Forwarded)) {
+        $evalArgs += $token
+        if ($token.StartsWith('--property:UseAppHost=', [StringComparison]::OrdinalIgnoreCase)) { $sawHost = $true }
+    }
+    if (-not $sawHost) { $evalArgs += '--property:UseAppHost=false' }
+    $psi = [System.Diagnostics.ProcessStartInfo]::new()
+    $psi.FileName = 'dotnet'
+    $psi.WorkingDirectory = $root
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    foreach ($token in $evalArgs) { [void]$psi.ArgumentList.Add([string]$token) }
+    $psi.Environment['MSBUILDDISABLENODEREUSE'] = '1'
+    $psi.Environment['DOTNET_CLI_DO_NOT_USE_MSBUILD_SERVER'] = '1'
+    foreach ($name in @('GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE')) {
+        if ($psi.Environment.ContainsKey($name)) { [void]$psi.Environment.Remove($name) }
+    }
+    $proc = [System.Diagnostics.Process]::new()
+    $proc.StartInfo = $psi
+    try {
+        try {
+            if (-not $proc.Start()) { return @{ Error = 'msbuild did not start'; References = @() } }
+        } catch { return @{ Error = 'msbuild did not start'; References = @() } }
+        $outTask = $proc.StandardOutput.ReadToEndAsync()
+        $errTask = $proc.StandardError.ReadToEndAsync()
+        if (-not $proc.WaitForExit(120000)) {
+            try { $proc.Kill($true) } catch { }
+            return @{ Error = 'msbuild evaluation timed out'; References = @() }
+        }
+        $proc.WaitForExit()
+        $stdout = [string]$outTask.GetAwaiter().GetResult()
+        $null = $errTask.GetAwaiter().GetResult()
+        if ($proc.ExitCode -ne 0) { return @{ Error = ('msbuild exit ' + $proc.ExitCode); References = @() } }
+        $start = $stdout.IndexOf('{')
+        if ($start -lt 0) { return @{ Error = 'msbuild json missing'; References = @() } }
+        try { $doc = $stdout.Substring($start) | ConvertFrom-Json } catch { return @{ Error = 'msbuild json unusable'; References = @() } }
+        if ($null -eq $doc.Items) { return @{ Error = 'msbuild items missing'; References = @() } }
+        $item = $doc.Items.ProjectReference
+        if ($null -eq $item) { return @{ Error = $null; References = @() } }
+        $refs = New-Object System.Collections.Generic.List[string]
+        foreach ($one in @($item)) {
+            if ($null -eq $one) { continue }
+            $full = [string]$one.FullPath
+            if ([string]::IsNullOrWhiteSpace($full)) { return @{ Error = 'project reference FullPath missing'; References = @() } }
+            [void]$refs.Add($full)
+        }
+        return @{ Error = $null; References = $refs.ToArray() }
+    } finally { $proc.Dispose() }
+}
+
+function Get-CheckpointRepoRelative {
+    param([string]$Repo, [string]$Directory)
+    $fullRepo = [System.IO.Path]::GetFullPath($Repo).TrimEnd('\', '/')
+    $fullDir = [System.IO.Path]::GetFullPath($Directory).TrimEnd('\', '/')
+    $comparison = if ($IsWindows) { [StringComparison]::OrdinalIgnoreCase } else { [StringComparison]::Ordinal }
+    if ([string]::Equals($fullDir, $fullRepo, $comparison)) { return '' }
+    $sep = [System.IO.Path]::DirectorySeparatorChar
+    if (-not $fullDir.StartsWith($fullRepo + $sep, $comparison)) { return $null }
+    return $fullDir.Substring($fullRepo.Length + 1).Replace('\', '/')
+}
+
+function Get-CheckpointTrackedSnapshot {
+    param([string[]]$Projects)
+    $top = Invoke-CheckpointGit $root @('rev-parse', '--show-toplevel')
+    if ($top.Reason -or [int]$top.Exit -ne 0) { return @{ Error = 'git-toplevel'; Index = ''; Hashes = $null } }
+    $repo = ([string]$top.Stdout).Trim()
+    $listed = Invoke-CheckpointGit $repo @('ls-files', '-s')
+    if ($listed.Reason -or [int]$listed.Exit -ne 0) { return @{ Error = 'git-ls-files'; Index = ''; Hashes = $null } }
+    $index = (([string]$listed.Stdout) -replace "`r`n", "`n").TrimEnd("`n")
+    $roots = New-Object System.Collections.Generic.List[string]
+    foreach ($project in @($Projects)) {
+        $dir = [System.IO.Path]::GetDirectoryName([string]$project)
+        if ([string]::IsNullOrEmpty($dir)) { continue }
+        $rel = Get-CheckpointRepoRelative $repo $dir
+        if ($null -eq $rel) { continue }
+        [void]$roots.Add($rel)
+    }
+    $hashes = [System.Collections.Generic.Dictionary[string,string]]::new([StringComparer]::Ordinal)
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        foreach ($line in ($index -split "`n", -1)) {
+            if ([string]::IsNullOrEmpty($line)) { continue }
+            $tab = $line.IndexOf("`t")
+            if ($tab -lt 0 -or $tab -ge ($line.Length - 1)) { continue }
+            $path = $line.Substring($tab + 1)
+            $inside = $false
+            foreach ($rel in $roots) {
+                if ($rel -eq '' -or $path -eq $rel -or $path.StartsWith($rel + '/', [StringComparison]::Ordinal)) { $inside = $true; break }
+            }
+            if (-not $inside) { continue }
+            $full = Join-Path $repo ($path.Replace('/', [System.IO.Path]::DirectorySeparatorChar))
+            if (-not [System.IO.File]::Exists($full)) { $hashes[$path] = 'missing'; continue }
+            $stream = [System.IO.File]::OpenRead($full)
+            try {
+                $hashes[$path] = ([System.BitConverter]::ToString($sha.ComputeHash($stream))).Replace('-', '')
+            } finally { $stream.Dispose() }
+        }
+    } finally { $sha.Dispose() }
+    return @{ Error = $null; Index = $index; Hashes = $hashes }
+}
+
+function Test-CheckpointTrackedTamper {
+    param($Before, $After)
+    if ($null -eq $After -or $null -ne $After.Error) {
+        $why = if ($null -eq $After) { 'missing' } else { [string]$After.Error }
+        return ("refused: tampered`nTAMPERED snapshot " + $why + "`ntracked files were not restored")
+    }
+    $changed = New-Object System.Collections.Generic.List[string]
+    $keys = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    if ($null -ne $Before.Hashes) { foreach ($key in @($Before.Hashes.Keys)) { [void]$keys.Add([string]$key) } }
+    if ($null -ne $After.Hashes) { foreach ($key in @($After.Hashes.Keys)) { [void]$keys.Add([string]$key) } }
+    foreach ($key in ($keys | Sort-Object)) {
+        $left = ''
+        $right = ''
+        if ($null -ne $Before.Hashes -and $Before.Hashes.ContainsKey($key)) { $left = [string]$Before.Hashes[$key] }
+        if ($null -ne $After.Hashes -and $After.Hashes.ContainsKey($key)) { $right = [string]$After.Hashes[$key] }
+        if ($left -ne $right) { [void]$changed.Add($key) }
+    }
+    $indexChanged = ([string]$Before.Index) -ne ([string]$After.Index)
+    if ($changed.Count -eq 0 -and -not $indexChanged) { return $null }
+    $lines = New-Object System.Collections.Generic.List[string]
+    [void]$lines.Add('refused: tampered')
+    $shown = 0
+    foreach ($path in $changed) {
+        if ($shown -ge 20) { break }
+        [void]$lines.Add('TAMPERED ' + $path)
+        $shown++
+    }
+    if ($changed.Count -gt 20) { [void]$lines.Add('TAMPERED ' + ($changed.Count - 20) + ' more') }
+    if ($indexChanged) { [void]$lines.Add('TAMPERED git index changed') }
+    [void]$lines.Add('tracked files were not restored')
+    return ($lines -join "`n")
+}
+
+function Invoke-ConfinedCheckpointBuild {
+    param([string[]]$Arguments, [string]$Phase)
+    $outputValue = $null
+    $project = $null
+    foreach ($token in @($Arguments)) {
+        if ($token -eq 'build') { continue }
+        $pair = Get-CheckpointPropertyPair $token
+        if ($null -ne $pair -and $pair.Key -eq 'OutputPath') { $outputValue = [string]$pair.Value; continue }
+        if ($null -eq $project -and -not $token.StartsWith('-') -and -not $token.StartsWith('/p:', [StringComparison]::OrdinalIgnoreCase) -and -not $token.StartsWith('/property:', [StringComparison]::OrdinalIgnoreCase)) { $project = $token }
+    }
+    if ([string]::IsNullOrWhiteSpace($outputValue) -or [string]::IsNullOrWhiteSpace($project)) {
+        return (Invoke-Dotnet -Phase $Phase -Arguments $Arguments)
+    }
+    $projectFull = if ([System.IO.Path]::IsPathRooted($project)) { [System.IO.Path]::GetFullPath($project) } else { [System.IO.Path]::GetFullPath((Join-Path $root $project)) }
+    $projectDir = [System.IO.Path]::GetDirectoryName($projectFull)
+    if ([string]::IsNullOrEmpty($projectDir)) {
+        Write-Host 'refused: graph-unevaluated'
+        Write-Host 'project directory missing'
+        return 2
+    }
+    if ([System.IO.Path]::IsPathRooted($outputValue)) { $ownedFull = [System.IO.Path]::GetFullPath($outputValue) }
+    else { $ownedFull = [System.IO.Path]::GetFullPath((Join-Path $projectDir $outputValue)) }
+    $owned = ($ownedFull -replace '\\', '/')
+    if (-not $owned.EndsWith('/')) { $owned += '/' }
+    $artifacts = $owned.TrimEnd('/') + '/artifacts'
+    $rewritten = New-Object System.Collections.Generic.List[string]
+    $sawArtifacts = $false
+    $sawUse = $false
+    $sawHost = $false
+    foreach ($token in @($Arguments)) {
+        $pair = Get-CheckpointPropertyPair $token
+        if ($null -ne $pair -and $pair.Key -eq 'OutputPath') {
+            [void]$rewritten.Add('--property:OutputPath=' + $owned)
+            continue
+        }
+        if ($null -ne $pair -and $pair.Key -eq 'ArtifactsPath') { $sawArtifacts = $true }
+        if ($null -ne $pair -and $pair.Key -eq 'UseArtifactsOutput') { $sawUse = $true }
+        if ($null -ne $pair -and $pair.Key -eq 'UseAppHost') { $sawHost = $true }
+        [void]$rewritten.Add([string]$token)
+    }
+    if (-not $sawArtifacts) { [void]$rewritten.Add('--property:ArtifactsPath=' + $artifacts) }
+    if (-not $sawUse) { [void]$rewritten.Add('--property:UseArtifactsOutput=true') }
+    if (-not $sawHost) { [void]$rewritten.Add('--property:UseAppHost=false') }
+    $forwarded = New-Object System.Collections.Generic.List[string]
+    foreach ($token in @($Arguments)) {
+        $pair = Get-CheckpointPropertyPair $token
+        if ($null -eq $pair) { continue }
+        if (Test-CheckpointIsolationKey ([string]$pair.Key)) { continue }
+        [void]$forwarded.Add('--property:' + $pair.Key + '=' + $pair.Value)
+    }
+    $projects = New-Object System.Collections.Generic.List[string]
+    $comparer = if ($IsWindows) { [StringComparer]::OrdinalIgnoreCase } else { [StringComparer]::Ordinal }
+    $seen = [System.Collections.Generic.HashSet[string]]::new($comparer)
+    $queue = [System.Collections.Generic.Queue[string]]::new()
+    $queue.Enqueue($projectFull)
+    while ($queue.Count -gt 0) {
+        $current = [System.IO.Path]::GetFullPath($queue.Dequeue())
+        if (-not $seen.Add($current)) { continue }
+        if ($projects.Count -ge 500) {
+            Write-Host 'refused: graph-unevaluated'
+            Write-Host 'walk cap exceeded'
+            return 2
+        }
+        [void]$projects.Add($current)
+        $eval = Invoke-CheckpointGraphEval -Project $current -Owned $owned -Artifacts $artifacts -Forwarded $forwarded.ToArray()
+        if ($null -ne $eval.Error) {
+            Write-Host 'refused: graph-unevaluated'
+            Write-Host ([string]$eval.Error)
+            return 2
+        }
+        foreach ($reference in @($eval.References)) {
+            if ([string]::IsNullOrWhiteSpace([string]$reference)) { continue }
+            if (-not [System.IO.File]::Exists([string]$reference)) {
+                Write-Host 'refused: graph-unevaluated'
+                Write-Host ('referenced project missing: ' + $reference)
+                return 2
+            }
+            $queue.Enqueue([string]$reference)
+        }
+    }
+    $before = Get-CheckpointTrackedSnapshot -Projects $projects.ToArray()
+    if ($null -ne $before.Error) {
+        Write-Host 'refused: tracked-snapshot'
+        Write-Host ([string]$before.Error)
+        return 2
+    }
+    $exit = Invoke-Dotnet -Phase $Phase -Arguments $rewritten.ToArray()
+    $after = Get-CheckpointTrackedSnapshot -Projects $projects.ToArray()
+    $tamper = Test-CheckpointTrackedTamper $before $after
+    if ($null -ne $tamper) {
+        Write-Host $tamper
+        return 2
+    }
+    return $exit
+}
+
 # (3)-(4) run under the slot; it is released however they end (the runner also reaps it if this
 # process dies).
 $trxPath = Join-Path $resultsDirectory 'run.trx'
@@ -687,7 +962,11 @@ try {
                 $buildState = 'failed'
                 $script:buildState = 'failed'
             } else {
-            $buildExit = Invoke-Dotnet -Phase 'build' -Arguments (@('build', $Project, ('--property:OutputPath=' + $OutputPath)) + $propertyArguments + $cpuArguments + @('--nologo'))
+            if ([string]::IsNullOrWhiteSpace($DotnetShim)) {
+                $buildExit = Invoke-ConfinedCheckpointBuild -Phase 'build' -Arguments (@('build', $Project, ('--property:OutputPath=' + $OutputPath)) + $propertyArguments + $cpuArguments + @('--nologo'))
+            } else {
+                $buildExit = Invoke-Dotnet -Phase 'build' -Arguments (@('build', $Project, ('--property:OutputPath=' + $OutputPath)) + $propertyArguments + $cpuArguments + @('--nologo'))
+            }
             if ($buildExit -eq 0) { $buildState = 'ok'; $script:buildState = 'ok' }
             else { $buildState = 'failed'; $script:buildState = 'failed' }
             if (-not (Assert-CheckpointBoundary 'post_build')) { $buildExit = 2 }

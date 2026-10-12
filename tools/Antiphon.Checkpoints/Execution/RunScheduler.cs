@@ -387,6 +387,7 @@ public sealed class RunScheduler
             var sourceOk = request.SourceGuard?.Observe() != false;
             progress.Seconds = (DateTimeOffset.UtcNow - started).TotalSeconds;
             progress.State = result.ExitCode == 0 && !result.TimedOut && sourceOk ? "ok" : "failed";
+            var refusal = BuildConfinement.ReportedRefusal(result.Stderr);
             if (progress.State == "ok")
             {
                 var written = binding.Write();
@@ -396,6 +397,11 @@ public sealed class RunScheduler
                     progress.AdmissionExitCode = ExitCodes.Invalid;
                     progress.SlotReason = "refused: " + written;
                 }
+            }
+            else if (refusal is not null)
+            {
+                progress.AdmissionExitCode = ExitCodes.Invalid;
+                progress.SlotReason = refusal;
             }
             else if (!sourceOk) { progress.AdmissionExitCode = ExitCodes.Invalid; progress.SlotReason = request.SourceGuard?.Reason; }
             progress.Source = request.SourceGuard?.Copy(progress.State == "ok" ? "verified" : "unknown") ?? new SourceEvidence();
