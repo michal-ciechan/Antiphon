@@ -1309,7 +1309,7 @@ public sealed class RemoteScriptContractTests
     {
         RequireLinuxPwsh();
         RequireLinuxJq();
-        var output = LinuxShell("bash \"$repo/scripts/fixtures/c913-seed-contract.sh\" " + mode + " \"$repo\" " + argument + "\nprintf 'C913_EXIT=%s\\n' \"$?\"\n", "repo");
+        var output = LinuxShell("bash \"$repo/scripts/fixtures/c913-seed-contract.sh\" " + mode + " \"$repo\"\nprintf 'C913_EXIT=%s\\n' \"$?\"\n", "repo");
         output.ShouldContain("PASS " + witness, customMessage: witness);
         output.ShouldContain("PASS " + mode + "-complete");
         output.ShouldContain("C913_EXIT=0", customMessage: output);
@@ -7880,7 +7880,7 @@ public sealed class RemoteScriptContractTests
     {
         RequireLinuxPwsh();
         var output = LinuxShell(
-            "bash \"$repo/scripts/fixtures/c1192-workspace-contract.sh\" " + mode + " \"$repo\"\nprintf 'C1192_EXIT=%s\\n' \"$?\"\n",
+            "bash \"$repo/scripts/fixtures/c1192-workspace-contract.sh\" " + mode + " \"$repo\" " + argument + "\nprintf 'C1192_EXIT=%s\\n' \"$?\"\n",
             "repo");
         output.IndexOf("C1192_FAIL", StringComparison.Ordinal).ShouldBe(-1, output);
         output.ShouldContain("C1192_EXIT=0", customMessage: output);
