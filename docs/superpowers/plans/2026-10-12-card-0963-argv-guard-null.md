@@ -14,8 +14,9 @@ still contains these dereferences; CARD-0863 is landed.
 Make the guard accept nullable inputs and inspect only present strings for
 NUL. Do not normalize or quote the caller's vector. Null/empty/whitespace
 executables reach the existing `ArgumentException("Exe must not be empty.")`.
-A valid executable with null args retains the runtime's existing empty-array
-fallback; it must reach subsequent validation rather than acquire a new error.
+A valid executable with null args retains the runtime's existing validation
+precedence (its argv-policy check already has an empty-array fallback); it must
+reach subsequent validation rather than acquire a new error.
 Null elements are absent to this NUL-only guard. Unknown backends keep their
 existing verdict. NUL rejection and its index remain unchanged.
 
