@@ -1,5 +1,7 @@
+using System.Collections;
 using System.Data.Common;
 using System.Reflection;
+using System.Text;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
@@ -218,6 +220,86 @@ public sealed class TaskInputAttentionCostTests
             .ShouldBe(System.Text.Json.JsonSerializer.Serialize(expected), scenario);
     }
 
+    // Hand-written outcomes. The numbers are the bound, not a value copied from production.
+    [Test]
+    [Arguments("closed-by-later-prompt", 0, 3, 256)]
+    [Arguments("complaint-on-last-bounded-row", 1, 16, 8192)]
+    [Arguments("complaint-just-outside-bound", 1, 16, 8192)]
+    public async Task Weak_arm_reads_a_bounded_window(string scenario, int items, int maxRows, int maxTextBytes)
+    {
+        await using var f = await TaskInputSpillFixture.CreateAsync();
+        var row = await SeedWeakArmCaseAsync(f, scenario);
+        var probe = new TranscriptReadProbe { CountTextBytes = true };
+        var actual = await ReadBuilderAsync(f, probe);
+        var detail = $"{scenario} rows={probe.ReadOperations} textBytes={probe.TextBytes}";
+        actual.Count.ShouldBe(items, detail);
+        if (items == 1)
+            actual.Single().MessageId.ShouldBe(row.Id, detail);
+        probe.ReadOperations.ShouldBeLessThanOrEqualTo(maxRows, detail);
+        probe.TextBytes.ShouldBeLessThanOrEqualTo(maxTextBytes, detail);
+    }
+
+    private static async Task<SessionQueuedMessage> SeedWeakArmCaseAsync(TaskInputSpillFixture f, string scenario)
+    {
+        if (scenario == "closed-by-later-prompt")
+        {
+            await SeedHistoryAsync(f);
+            var row = await SeedInputAsync(f, 3000);
+            await SetShortBodyAsync(f, row.Id, 3000);
+            await AddEntryAsync(f, 3001, TranscriptKinds.AssistantText,
+                $"I cannot read {row.RemoteSpillRelativePath}.");
+            return row;
+        }
+
+        var owned = await SeedInputAsync(f, 10);
+        await SetShortBodyAsync(f, owned.Id, 10);
+        var complaintOn = scenario == "complaint-on-last-bounded-row" ? 8 : 9;
+        if (complaintOn != 8 && complaintOn != 9)
+            throw new InvalidOperationException(scenario);
+        for (var offset = 1; offset <= 8; offset++)
+        {
+            var text = offset == complaintOn
+                ? $"I cannot read {owned.RemoteSpillRelativePath}."
+                : "still working on the task";
+            await AddEntryAsync(f, 10 + offset, TranscriptKinds.AssistantText, text);
+        }
+
+        var trailingAt = 19L;
+        if (complaintOn == 9)
+        {
+            await AddEntryAsync(f, 19, TranscriptKinds.AssistantText,
+                $"I cannot read {owned.RemoteSpillRelativePath}.");
+            trailingAt = 20;
+        }
+
+        await SeedTrailingAssistantsAsync(f, trailingAt);
+        return owned;
+    }
+
+    private static async Task SetShortBodyAsync(TaskInputSpillFixture f, Guid rowId, long promptSequence)
+    {
+        await using var db = f.Db();
+        await db.SessionQueuedMessages.Where(r => r.Id == rowId)
+            .ExecuteUpdateAsync(s => s.SetProperty(r => r.Body, "go"));
+        await db.TranscriptEntries.Where(t => t.Sequence == promptSequence)
+            .ExecuteUpdateAsync(s => s.SetProperty(t => t.Text, ""));
+    }
+
+    private static async Task SeedTrailingAssistantsAsync(TaskInputSpillFixture f, long start)
+    {
+        await using var db = f.Db();
+        var now = DateTime.UtcNow;
+        for (var sequence = start; sequence < start + 2000; sequence++)
+            db.TranscriptEntries.Add(new TranscriptEntry
+            {
+                Id = Guid.NewGuid(), AgentSessionId = f.SessionId, Sequence = sequence,
+                Kind = TranscriptKinds.AssistantText,
+                Text = "unrelated trailing transcript " + new string('x', 1000),
+                Timestamp = now, CreatedAt = now,
+            });
+        await db.SaveChangesAsync();
+    }
+
     private static async Task SeedHistoryAsync(TaskInputSpillFixture f)
     {
         await using var db = f.Db();
@@ -278,14 +360,106 @@ public sealed class TaskInputAttentionCostTests
         public int Commands { get; private set; }
         public int ReadOperations { get; private set; }
         public int MaxColumns { get; private set; }
+        public int TextBytes { get; private set; }
+        public bool CountTextBytes { get; init; }
 
         public override ValueTask<DbDataReader> ReaderExecutedAsync(DbCommand command,
             CommandExecutedEventData eventData, DbDataReader result,
             CancellationToken cancellationToken = default)
         {
             if (command.CommandText.Contains("\"TranscriptEntries\"", StringComparison.Ordinal))
+            {
                 MaxColumns = Math.Max(MaxColumns, result.FieldCount);
+                if (CountTextBytes)
+                    result = new TextByteReader(result, this);
+            }
             return ValueTask.FromResult(result);
+        }
+
+        private sealed class TextByteReader : DbDataReader
+        {
+            private readonly DbDataReader _inner;
+            private readonly TranscriptReadProbe _owner;
+            private readonly HashSet<int> _seen = [];
+
+            public TextByteReader(DbDataReader inner, TranscriptReadProbe owner)
+            {
+                _inner = inner;
+                _owner = owner;
+            }
+
+            private void Note(int ordinal, object? value)
+            {
+                if (value is not string text || !_seen.Add(ordinal))
+                    return;
+                _owner.TextBytes += Encoding.UTF8.GetByteCount(text);
+            }
+
+            public override bool Read()
+            {
+                _seen.Clear();
+                return _inner.Read();
+            }
+
+            public override object GetValue(int ordinal)
+            {
+                var value = _inner.GetValue(ordinal);
+                Note(ordinal, value);
+                return value;
+            }
+
+            public override string GetString(int ordinal)
+            {
+                var value = _inner.GetString(ordinal);
+                Note(ordinal, value);
+                return value;
+            }
+
+            public override int Depth => _inner.Depth;
+            public override int FieldCount => _inner.FieldCount;
+            public override bool HasRows => _inner.HasRows;
+            public override bool IsClosed => _inner.IsClosed;
+            public override int RecordsAffected => _inner.RecordsAffected;
+            public override object this[int ordinal] => _inner[ordinal];
+            public override object this[string name] => _inner[name];
+            public override bool GetBoolean(int ordinal) => _inner.GetBoolean(ordinal);
+            public override byte GetByte(int ordinal) => _inner.GetByte(ordinal);
+            public override long GetBytes(int ordinal, long dataOffset, byte[]? buffer, int bufferOffset, int length) =>
+                _inner.GetBytes(ordinal, dataOffset, buffer, bufferOffset, length);
+            public override char GetChar(int ordinal) => _inner.GetChar(ordinal);
+            public override long GetChars(int ordinal, long dataOffset, char[]? buffer, int bufferOffset, int length) =>
+                _inner.GetChars(ordinal, dataOffset, buffer, bufferOffset, length);
+            public override string GetDataTypeName(int ordinal) => _inner.GetDataTypeName(ordinal);
+            public override DateTime GetDateTime(int ordinal) => _inner.GetDateTime(ordinal);
+            public override decimal GetDecimal(int ordinal) => _inner.GetDecimal(ordinal);
+            public override double GetDouble(int ordinal) => _inner.GetDouble(ordinal);
+            public override IEnumerator GetEnumerator() => _inner.GetEnumerator();
+            public override Type GetFieldType(int ordinal) => _inner.GetFieldType(ordinal);
+            public override float GetFloat(int ordinal) => _inner.GetFloat(ordinal);
+            public override Guid GetGuid(int ordinal) => _inner.GetGuid(ordinal);
+            public override short GetInt16(int ordinal) => _inner.GetInt16(ordinal);
+            public override int GetInt32(int ordinal) => _inner.GetInt32(ordinal);
+            public override long GetInt64(int ordinal) => _inner.GetInt64(ordinal);
+            public override string GetName(int ordinal) => _inner.GetName(ordinal);
+            public override int GetOrdinal(string name) => _inner.GetOrdinal(name);
+            public override int GetValues(object[] values) => _inner.GetValues(values);
+            public override bool IsDBNull(int ordinal) => _inner.IsDBNull(ordinal);
+            public override bool NextResult() => _inner.NextResult();
+
+            public override Task<bool> ReadAsync(CancellationToken cancellationToken)
+            {
+                _seen.Clear();
+                return _inner.ReadAsync(cancellationToken);
+            }
+
+            public override ValueTask DisposeAsync() => _inner.DisposeAsync();
+
+            protected override void Dispose(bool disposing)
+            {
+                if (disposing)
+                    _inner.Dispose();
+                base.Dispose(disposing);
+            }
         }
 
         public override InterceptionResult DataReaderDisposing(DbCommand command,

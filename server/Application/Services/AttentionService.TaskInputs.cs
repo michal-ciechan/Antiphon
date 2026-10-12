@@ -70,28 +70,49 @@ public sealed partial class AttentionService
         {
             var sessionId = group.Key;
             var sessionInputs = group.ToList();
-            var patterns = sessionInputs.Select(x => TaskInputPromptPattern(x.Row.Body)).Distinct().ToArray();
-            long? firstPromptSequence = null;
-            var candidates = _db.TranscriptEntries.AsNoTracking()
-                .Where(t => t.AgentSessionId == sessionId && t.Kind == TranscriptKinds.UserPrompt
-                    && t.Text != null && patterns.Any(pattern => EF.Functions.Like(t.Text, pattern, "!")))
-                .OrderBy(t => t.Sequence)
-                .Select(t => new TaskInputTranscript(t.Sequence, t.Kind, t.Text, t.Timestamp ?? t.CreatedAt));
-            await foreach (var prompt in candidates.AsAsyncEnumerable().WithCancellation(ct))
+            // A short body matches every prompt, so it must not contribute "%" to this floor.
+            // The latest delivery baseline is only the latest retry, not the first attempt.
+            var strongInputs = sessionInputs.Where(x => PromptSubmissionMatch.RequiresTextMatch(x.Row.Body)).ToList();
+            var weakInputs = sessionInputs.Where(x => !PromptSubmissionMatch.RequiresTextMatch(x.Row.Body)).ToList();
+            if (strongInputs.Count > 0)
             {
-                if (!sessionInputs.Any(input => PromptSubmissionMatch.IsCompleteIn(input.Row.Body, prompt.Text)))
-                    continue;
-                firstPromptSequence = prompt.Sequence;
-                break;
+                var patterns = strongInputs.Select(x => TaskInputPromptPattern(x.Row.Body)).Distinct().ToArray();
+                long? firstPromptSequence = null;
+                var candidates = _db.TranscriptEntries.AsNoTracking()
+                    .Where(t => t.AgentSessionId == sessionId && t.Kind == TranscriptKinds.UserPrompt
+                        && t.Text != null && patterns.Any(pattern => EF.Functions.Like(t.Text, pattern, "!")))
+                    .OrderBy(t => t.Sequence)
+                    .Select(t => new TaskInputTranscript(t.Sequence, t.Kind, t.Text, t.Timestamp ?? t.CreatedAt));
+                await foreach (var prompt in candidates.AsAsyncEnumerable().WithCancellation(ct))
+                {
+                    if (!strongInputs.Any(input => PromptSubmissionMatch.IsCompleteIn(input.Row.Body, prompt.Text)))
+                        continue;
+                    firstPromptSequence = prompt.Sequence;
+                    break;
+                }
+                if (firstPromptSequence is long floor)
+                {
+                    transcripts[sessionId] = await _db.TranscriptEntries.AsNoTracking()
+                        .Where(t => t.AgentSessionId == sessionId && t.Sequence >= floor
+                            && (t.Kind == TranscriptKinds.UserPrompt || t.Kind == TranscriptKinds.AssistantText))
+                        .OrderBy(t => t.Sequence)
+                        .Select(t => new TaskInputTranscript(t.Sequence, t.Kind, t.Text, t.Timestamp ?? t.CreatedAt))
+                        .ToListAsync(ct);
+                }
             }
-            if (firstPromptSequence is not long floor)
+
+            if (weakInputs.Count == 0)
                 continue;
-            transcripts[sessionId] = await _db.TranscriptEntries.AsNoTracking()
-                .Where(t => t.AgentSessionId == sessionId && t.Sequence >= floor
-                    && (t.Kind == TranscriptKinds.UserPrompt || t.Kind == TranscriptKinds.AssistantText))
-                .OrderBy(t => t.Sequence)
-                .Select(t => new TaskInputTranscript(t.Sequence, t.Kind, t.Text, t.Timestamp ?? t.CreatedAt))
-                .ToListAsync(ct);
+            var taskLists = inputs.Values
+                .Select(list => (IReadOnlyList<TaskInputUnreadableInput>)list
+                    .Where(x => x.Row.AgentSessionId == sessionId).ToList())
+                .Where(list => list.Count > 0)
+                .ToList();
+            var weakWindow = await LoadWeakArmWindowAsync(sessionId, taskLists, ct);
+            if (weakWindow is null)
+                DropWeakInputs(inputs, sessionId);
+            else if (!transcripts.ContainsKey(sessionId))
+                transcripts[sessionId] = weakWindow;
         }
         if (transcripts.Count == 0)
             return [];
@@ -153,10 +174,108 @@ public sealed partial class AttentionService
     private sealed record TaskInputUnreadableInput(TaskInputQueueRow Row, string? Location, bool IsReply);
     private sealed record TaskInputTranscript(long Sequence, string Kind, string? Text, DateTime At);
 
+    // Two prompt headers decide a weak episode: the earliest non-null user prompt is the
+    // receipt, and a second one supersedes it because the short body matches every prompt.
+    // Assistant text is read only when that second prompt does not exist.
+    private const int WeakArmPromptProbeRows = 2;
+    private const int WeakArmAssistantRowBound = 8;
+    private const int WeakArmPhraseProbeRows = 8;
+
+    private async Task<List<TaskInputTranscript>?> LoadWeakArmWindowAsync(
+        Guid sessionId, IReadOnlyList<IReadOnlyList<TaskInputUnreadableInput>> taskLists, CancellationToken ct)
+    {
+        var prompts = await _db.TranscriptEntries.AsNoTracking()
+            .Where(t => t.AgentSessionId == sessionId && t.Kind == TranscriptKinds.UserPrompt && t.Text != null)
+            .OrderBy(t => t.Sequence)
+            .Select(t => new { t.Sequence, t.Kind, At = t.Timestamp ?? t.CreatedAt })
+            .Take(WeakArmPromptProbeRows)
+            .ToListAsync(ct);
+        if (prompts.Count != 1)
+            return null;
+
+        var receipt = new TaskInputTranscript(prompts[0].Sequence, prompts[0].Kind, "", prompts[0].At);
+        var assistants = await _db.TranscriptEntries.AsNoTracking()
+            .Where(t => t.AgentSessionId == sessionId && t.Kind == TranscriptKinds.AssistantText
+                && t.Sequence > receipt.Sequence)
+            .OrderBy(t => t.Sequence)
+            .Select(t => new TaskInputTranscript(t.Sequence, t.Kind, t.Text, t.Timestamp ?? t.CreatedAt))
+            .Take(WeakArmAssistantRowBound)
+            .ToListAsync(ct);
+        var rows = new List<TaskInputTranscript>(assistants.Count + 1) { receipt };
+        rows.AddRange(assistants);
+        if (assistants.Count < WeakArmAssistantRowBound || ContainsWeakComplaint(rows, taskLists))
+            return rows;
+
+        var after = assistants[^1].Sequence;
+        var phrases = TaskInputReadFailure.FailurePhrases;
+        var phraseRows = await _db.TranscriptEntries.AsNoTracking()
+            .Where(t => t.AgentSessionId == sessionId && t.Kind == TranscriptKinds.AssistantText
+                && t.Sequence > after && t.Text != null
+                && phrases.Any(phrase => EF.Functions.ILike(t.Text, "%" + phrase + "%")))
+            .OrderBy(t => t.Sequence)
+            .Select(t => new TaskInputTranscript(t.Sequence, t.Kind, t.Text, t.Timestamp ?? t.CreatedAt))
+            .Take(WeakArmPhraseProbeRows)
+            .ToListAsync(ct);
+        foreach (var candidate in phraseRows)
+        {
+            rows.Add(candidate);
+            if (ContainsWeakComplaint(rows, taskLists))
+                return rows;
+        }
+
+        if (phraseRows.Count < WeakArmPhraseProbeRows)
+            return rows;
+
+        // The phrase page is saturated with non-matches. A later true complaint can still exist.
+        return await _db.TranscriptEntries.AsNoTracking()
+            .Where(t => t.AgentSessionId == sessionId && t.Sequence >= receipt.Sequence
+                && (t.Kind == TranscriptKinds.UserPrompt || t.Kind == TranscriptKinds.AssistantText))
+            .OrderBy(t => t.Sequence)
+            .Select(t => new TaskInputTranscript(t.Sequence, t.Kind, t.Text, t.Timestamp ?? t.CreatedAt))
+            .ToListAsync(ct);
+    }
+
+    private static bool ContainsWeakComplaint(
+        List<TaskInputTranscript> rows, IReadOnlyList<IReadOnlyList<TaskInputUnreadableInput>> taskLists)
+    {
+        var prompts = rows.Where(t => t.Kind == TranscriptKinds.UserPrompt && t.Text is not null).ToList();
+        foreach (var taskInputs in taskLists)
+        {
+            foreach (var input in taskInputs)
+            {
+                if (input.Location is null || PromptSubmissionMatch.RequiresTextMatch(input.Row.Body))
+                    continue;
+                var prompt = prompts.FirstOrDefault(p => PromptSubmissionMatch.IsCompleteIn(input.Row.Body, p.Text));
+                if (prompt is null)
+                    continue;
+                var next = prompts.FirstOrDefault(p => p.Sequence > prompt.Sequence);
+                var end = next?.Sequence ?? long.MaxValue;
+                var sole = taskInputs.Count(x => x.Row.Sequence <= input.Row.Sequence) == 1;
+                if (rows.Any(t => t.Kind == TranscriptKinds.AssistantText
+                    && t.Sequence > prompt.Sequence && t.Sequence < end
+                    && TaskInputReadFailure.Matches(t.Text, input.Location, input.IsReply, sole)))
+                    return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static void DropWeakInputs(Dictionary<Guid, List<TaskInputUnreadableInput>> inputs, Guid sessionId)
+    {
+        foreach (var taskId in inputs.Keys.ToList())
+        {
+            inputs[taskId].RemoveAll(x => x.Row.AgentSessionId == sessionId
+                && !PromptSubmissionMatch.RequiresTextMatch(x.Row.Body));
+            if (inputs[taskId].Count == 0)
+                inputs.Remove(taskId);
+        }
+    }
+
     private static string TaskInputPromptPattern(string body)
     {
         if (!PromptSubmissionMatch.RequiresTextMatch(body))
-            return "%"; // The existing matcher accepts any non-null prompt for short bodies.
+            return "%"; // Not a session floor. The weak-arm probe owns short bodies.
         var characters = PromptSubmissionMatch.Normalize(body).Replace(" ", "", StringComparison.Ordinal)
             .EnumerateRunes().Take(32).Select(rune => rune.ToString()
                 .Replace("!", "!!", StringComparison.Ordinal)
