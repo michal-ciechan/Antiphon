@@ -67,7 +67,9 @@ public sealed class PhoneHomeMirrorJoinTests
         // red: partialBindingLeft.ShouldBeFalse() — the waiting task gains a runner record or a completed server binding.
         await using var world = await JoinWorld.StartAsync(cancellationToken, hook: true);
         var first = await world.SeedAsync();
-        var second = await world.SeedAsync();
+        const string secondBranch = "feat/card-task-join-b";
+        await world.AddBranchAsync(secondBranch, cancellationToken);
+        var second = await world.SeedAsync(branch: secondBranch);
         world.ArmHold();
         world.Begin(first);
         (await world.Entered(cancellationToken)).ShouldBe("x");
@@ -95,9 +97,10 @@ public sealed class PhoneHomeMirrorJoinTests
 
         world.ReleaseHold();
         await world.Idle(cancellationToken);
+        var settledWarnings = await world.WarningsAsync(second);
         var settled = await world.BindingsAsync(second);
         settled.Count.ShouldBe(1);
-        settled[0].BindingId.ShouldNotBe(Guid.Empty);
+        settled[0].BindingId.ShouldNotBe(Guid.Empty, string.Join(" | ", settledWarnings));
         settled[0].PreparationId.ShouldBe(preparationId);
         world.Ledger(preparationId).Kind.ShouldBe(BindingReadKind.Complete);
         var firstRows = await world.BindingsAsync(first);
@@ -289,6 +292,7 @@ public sealed class PhoneHomeMirrorJoinTests
         public string OriginUrl { get; private set; } = "";
         public string Sha { get; private set; } = "";
         public string Clone { get; private set; } = "";
+        private string? _origin;
         public string RunnerId => Host.AllowedRunnerId;
         public int InFlight => Connection.InFlight;
         private RemoteWorkspacePreparer Preparer =>
@@ -309,7 +313,7 @@ public sealed class PhoneHomeMirrorJoinTests
             }
         }
 
-        public async Task<Guid> SeedAsync(Guid? id = null)
+        public async Task<Guid> SeedAsync(Guid? id = null, string? branch = null)
         {
             var taskId = id ?? Guid.NewGuid();
             await using var db = NewDb();
@@ -320,12 +324,15 @@ public sealed class PhoneHomeMirrorJoinTests
                 Kind = AgentTaskKind.Worker, Role = AgentTaskRole.Custom, AgentKind = AgentKind.Grok,
                 ModelLevel = AgentModelLevel.Frontier, Workspace = WorkspaceMode.Worktree,
                 WorkingDirectory = Clone, RepoPath = Clone, WorktreePath = Clone,
-                WorktreeBranch = Branch, RunnerId = RunnerId, Status = AgentTaskStatus.Queued,
+                WorktreeBranch = branch ?? Branch, RunnerId = RunnerId, Status = AgentTaskStatus.Queued,
                 ReplyTo = AgentTaskReplyTo.None, CreatedAt = now, ConcurrencyToken = Guid.NewGuid(),
             });
             await db.SaveChangesAsync();
             return taskId;
         }
+
+        public Task AddBranchAsync(string name, CancellationToken ct) =>
+            GitAsync(_origin!, ct, "branch", name);
 
         public async Task InsertIncompleteAsync(
             Guid taskId, Guid preparationId, RunnerWorkspaceBindingRecord? copy = null)
@@ -411,7 +418,13 @@ public sealed class PhoneHomeMirrorJoinTests
             return _entered.WaitAsync(ct);
         }
 
-        public void ReleaseHold() => Unblock(Path.Combine(_hold!, "release"));
+        public void ReleaseHold()
+        {
+            var marker = Path.Combine(_hold!, "hold");
+            if (File.Exists(marker))
+                File.Delete(marker);
+            Unblock(Path.Combine(_hold!, "release"));
+        }
 
         public async Task DropPreparerAsync()
         {
@@ -476,6 +489,7 @@ public sealed class PhoneHomeMirrorJoinTests
             _hook = hook;
             _root = Directory.CreateTempSubdirectory("c1032-join").FullName;
             var origin = Path.Combine(_root, "origin");
+            _origin = origin;
             Clone = Path.Combine(_root, "clone");
             Directory.CreateDirectory(origin);
             await GitAsync(origin, ct, "init", "-b", "main");
