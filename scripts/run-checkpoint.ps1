@@ -1009,6 +1009,12 @@ function Test-CheckpointIndexEqual {
     return 'equal'
 }
 
+function Test-CheckpointToolEvidence {
+    param([string]$Relative)
+    $path = $Relative.Replace('\', '/')
+    return ($path -ceq '.antiphon/checkpoints') -or $path.StartsWith('.antiphon/checkpoints/', [StringComparison]::Ordinal)
+}
+
 function Test-CheckpointUnderOwned {
     param($Baseline, [string]$Relative)
     $owned = [string]$Baseline.OwnedRelative
@@ -1026,7 +1032,7 @@ function Get-CheckpointUntrackedChanges {
     if ($null -ne $Baseline.Untracked) {
         foreach ($key in @($Baseline.Untracked.Keys)) {
             $name = [string]$key
-            if (Test-CheckpointUnderOwned $Baseline $name) { continue }
+            if ((Test-CheckpointUnderOwned $Baseline $name) -or (Test-CheckpointToolEvidence $name)) { continue }
             $stamp = [string]$Baseline.Untracked[$name]
             if (-not $again.Files.ContainsKey($name) -or ([string]$again.Files[$name]) -cne $stamp) { [void]$paths.Add($name) }
         }
@@ -1037,7 +1043,7 @@ function Get-CheckpointUntrackedChanges {
             $known = $false
             if ($null -ne $Baseline.Ordinary -and $Baseline.Ordinary.Contains($name)) { $known = $true }
             if ($null -ne $Baseline.Untracked -and $Baseline.Untracked.ContainsKey($name)) { $known = $true }
-            if ($known -or (Test-CheckpointUnderOwned $Baseline $name)) { continue }
+            if ($known -or (Test-CheckpointUnderOwned $Baseline $name) -or (Test-CheckpointToolEvidence $name)) { continue }
             [void]$paths.Add($name)
         }
     }

@@ -293,7 +293,7 @@ public static class BuildConfinement
         var paths = new List<string>();
         foreach (var pair in baseline.Untracked)
         {
-            if (UnderOwned(baseline, pair.Key))
+            if (UnderOwned(baseline, pair.Key) || ToolEvidence(pair.Key))
                 continue;
             if (!again.Value.TryGetValue(pair.Key, out var stamp) || !string.Equals(stamp, pair.Value, StringComparison.Ordinal))
                 paths.Add(pair.Key);
@@ -301,12 +301,21 @@ public static class BuildConfinement
 
         foreach (var path in again.Ordinary ?? [])
         {
-            if (baseline.Ordinary?.Contains(path) == true || baseline.Untracked.ContainsKey(path) || UnderOwned(baseline, path))
+            if (baseline.Ordinary?.Contains(path) == true || baseline.Untracked.ContainsKey(path) || UnderOwned(baseline, path) || ToolEvidence(path))
                 continue;
             paths.Add(path);
         }
 
         return new StatusResult(paths, null);
+    }
+
+    // The run appends executor.log under .antiphon/checkpoints while a build is
+    // still going. That file is the tool's evidence, not a user change.
+    private static bool ToolEvidence(string relative)
+    {
+        var path = relative.Replace('\\', '/');
+        return path.Equals(".antiphon/checkpoints", StringComparison.Ordinal)
+            || path.StartsWith(".antiphon/checkpoints/", StringComparison.Ordinal);
     }
 
     private static bool UnderOwned(Baseline baseline, string relative)
