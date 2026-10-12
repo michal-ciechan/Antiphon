@@ -3186,6 +3186,11 @@ c849_fixture_cleanup() {
         "c849-${RUN}-npm-b" "c849-${RUN}-npm-b-empty"; do
         docker rm -f "$name" >/dev/null 2>&1 || true
     done
+    # S6 consumers can remain after a failed start; release them before the
+    # standing workspace reader/writer, still using exact labeled identities.
+    for name in "c849-${RUN}-masked" "c849-${RUN}-apphost"; do
+        c849_fixture_helper_release "$name" || true
+    done
     if [ -f "$CASE_DIR/.fixture-helpers" ]; then
         while IFS= read -r name; do
             [ -n "$name" ] || continue

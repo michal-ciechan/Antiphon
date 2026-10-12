@@ -700,6 +700,7 @@ introduces must gain a distinct row before its handoff.
 | G-145 | S6: Apphost requires current-run work labels | PC-145 |
 | G-146 | S6: Apphost npm mount validates cache labels | PC-146 |
 | G-147 | S6: Failed masked start retains cleanup identity | PC-147 |
+| G-148 | S6: Consumers release before workspace helpers | PC-148 |
 
 ### Positive controls
 
@@ -893,6 +894,7 @@ predicate is unbound coverage.
 | PC-145 | G-145: Skip apphost work mount admission. | `/*/*/RemoteScriptContractTests/C1192_Apphost_mask_is_an_empty_exact_volume_mount` | `apphost-foreign-work-refused` fails after CP-27's boundary is reached. |
 | PC-146 | G-146: Skip npm cache mount admission. | `/*/*/RemoteScriptContractTests/C1192_Apphost_mask_is_an_empty_exact_volume_mount` | `apphost-foreign-cache-refused` fails after CP-27's boundary is reached. |
 | PC-147 | G-147: Move masked helper registration after start. | `/*/*/RemoteScriptContractTests/C1192_Apphost_mask_is_an_empty_exact_volume_mount` | `mask-partial-start-cleaned` fails after CP-27's boundary is reached. |
+| PC-148 | G-148: Delete the early masked/apphost consumer release pass. | `/*/*/RemoteScriptContractTests/C1192_Apphost_mask_is_an_empty_exact_volume_mount` | `mask-consumer-before-workspace` fails after CP-27's boundary is reached. |
 
 S5 Code amendment: CP-21 exercises shared Seed and the actual F-3 wrapper, including rerun, exact fault diagnoses and no outer success publication. Its readonly filesystem model runs as non-root and must preserve an incomplete package through a reader; transfer acceptance prunes through the writer. CP-22 executes the actual F-9 corruption/restoration loop and the shared Prune authority/refusal matrix with volume recovery. Independent warm/inventory/cleanup and npm tool boundaries retain their earlier checkpoint owners. All S5 After cells already equal S5. PC-140 and PC-141 stay pending; ordinary baseline red does not discharge Mutation.
 
@@ -911,7 +913,7 @@ S5 Code amendment: CP-21 exercises shared Seed and the actual F-3 wrapper, inclu
 
 ### S6 implementation binding
 
-CP-27 executes F-5 with independent host decoys and volume recipients. It observes imported ordinary bytes, metadata and executable mode; the empty mask's three exact readonly/nocopy mounts; smoke and failed-start cleanup; and foreign work/mask/npm-label refusal. The model executes the real import and substitutes chown only. It models image pack lookup rather than compiling the image smoke. CP-28 retains the independent real 0755-to-0700 import witness and exact mode admission. CP-29 now executes the real retention orchestration against parsed generated Compose documents; cache sentinel bytes are checked after recreate and down-v, and temp/private separation is observed before main teardown. CP-30 adds the parent-shell diagnosis witness. F-8 refill and F-9 recovery mutation/backup/observation seams already migrated in S3/S5; this slice does not rerun their out-of-scope CPs. W-1 remains rollout-owned. PC-142..147 are additional method-scoped controls, all pending.
+CP-27 executes F-5 with independent host decoys and volume recipients. It observes imported ordinary bytes, metadata and executable mode; the empty mask's three exact readonly/nocopy mounts; smoke and failed-start cleanup, with consumers released before workspace helpers; and foreign work/mask/npm-label refusal. The model executes the real import and substitutes chown only. It models image pack lookup rather than compiling the image smoke. CP-28 retains the independent real 0755-to-0700 import witness and exact mode admission. CP-29 now executes the real retention orchestration against parsed generated Compose documents; cache sentinel bytes are checked after recreate and down-v, and temp/private separation is observed before main teardown. CP-30 adds the parent-shell diagnosis witness. F-8 refill and F-9 recovery mutation/backup/observation seams already migrated in S3/S5; this slice does not rerun their out-of-scope CPs. W-1 remains rollout-owned. PC-142..148 are additional method-scoped controls, all pending.
 
 ### Checkpoints
 
@@ -963,7 +965,7 @@ every promised method/label after Code; unbound payloads remain binding required
 | CP-24 | S5 | `CP-21` | linux-tree-nounset | `/*/*/RemoteScriptContractTests/C1066_Fixture_tree_fault_reaches_validator_under_nounset` | R-6 | 6 executed, 0 failed/skipped | 6 | 1 |
 | CP-25 | S5 | `CP-21` | linux-shared-prune | `/*/*/RemoteScriptContractTests/C913_Prune_validates_recovery_without_refilling_image_packs` | R-7, V-6 | 1 executed, 0 failed/skipped | 1 | 2 |
 | CP-26 | S5 | `CP-21` | linux-seed-root | `/*/*/RemoteScriptContractTests/C1195_Seed_import_chmod_restores_volume_root` | R-5 | 1 executed, 0 failed/skipped | 1 | 1 |
-| CP-27 | S6 | `tests/Antiphon.Tests -> bin-c1192-s6/` | linux-mask-volume | `/*/*/RemoteScriptContractTests/C1192_Apphost_mask_is_an_empty_exact_volume_mount` | V-7 | 1 executed, 0 failed/skipped | 1 | 6 |
+| CP-27 | S6 | `tests/Antiphon.Tests -> bin-c1192-s6/` | linux-mask-volume | `/*/*/RemoteScriptContractTests/C1192_Apphost_mask_is_an_empty_exact_volume_mount` | V-7, V-2 (S6 consumers) | 1 executed, 0 failed/skipped | 1 | 6 |
 | CP-28 | S6 | `CP-27` | linux-apphost-root | `/*/*/RemoteScriptContractTests/C1195_Fixture_import_chmod_restores_volume_root` | R-5, V-7 | 1 executed, 0 failed/skipped | 1 | 1 |
 | CP-29 | S6 | `CP-27` | linux-retention | `/*/*/RemoteScriptContractTests/C1195_Retention_probe_is_app_uid_and_does_not_copy_image_content` | R-5, V-7 | 1 executed, 0 failed/skipped | 1 | 1 |
 | CP-30 | S6 | `CP-27` | linux-budget-observation | `/*/*/RemoteScriptContractTests/C1194_Fixture_prune_scales_budget_outside_arithmetic_substitution` | R-4 | 1 executed, 0 failed/skipped | 1 | 1 |
@@ -991,7 +993,7 @@ Exact filters/minutes are in the table. This includes seven 5-minute isolated
 builds (**35 minutes**) plus **47 minutes** of filter work, including setup.
 C1066 2/6/3 values are executions, not minutes. Slot wait is unknown and additive.
 
-Separate PC floor (Mutation) = **2205 minutes**, all **147 PCs**.
+Separate PC floor (Mutation) = **2220 minutes**, all **148 PCs**.
 Each exact detecting filter above is budgeted 15 minutes: 1 patch/restore/
 boundary inspection + 5 isolated red build + 2 red method + 5 restored build +
 2 green method. Both states rebuild conservatively for provenance; no unvalidated
@@ -999,9 +1001,9 @@ no-build reuse is assumed. All PCs run even when they share a method. Mutation
 discovery/reporting and slot contention add time. Commission bounded packs by
 slice/guard range, preserving all rows and the original Code landing owner.
 
-Total verification floor = 35 setup/build + 47 ordinary V/R + 2205 PC cycles
-= **2287 minutes**. Code authoring remains the separate 335-minute estimate;
-authoring plus verification floor = **2622 minutes**. W-1 is separately
+Total verification floor = 35 setup/build + 47 ordinary V/R + 2220 PC cycles
+= **2302 minutes**. Code authoring remains the separate 335-minute estimate;
+authoring plus verification floor = **2637 minutes**. W-1 is separately
 scheduled rollout work, outside authoring/Mutation, not zero-cost ordinary proof.
 
 Ordinary build reuse saves **180 minutes** versus 43 independent builds:
@@ -1010,10 +1012,10 @@ Mutation batching savings = 0: guards mostly share one source file and require
 independent red/restored-green cycles. This deliberately exposes the true
 control cost rather than hiding an assembly run or omitting guards.
 
-Inventory audit before handoff (S5 adds PC-140/141; S6 adds PC-142..147): **guards=147, mapped=147, missing=0,
-duplicate PC maps=0**. All 147 PCs are scheduled and required; **0 executed
+Inventory audit before handoff (S5 adds PC-140/141; S6 adds PC-142..148): **guards=148, mapped=148, missing=0,
+duplicate PC maps=0**. All 148 PCs are scheduled and required; **0 executed
 during TestDesign**. Code binds implementation/labels, Review judges them before
-land, Mutation reports 147/147 red/restore/green outcomes or explicit findings.
+land, Mutation reports 148/148 red/restore/green outcomes or explicit findings.
 **Post-land Mutation was NOT run.**
 
 ### Operator decisions

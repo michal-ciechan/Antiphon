@@ -889,7 +889,7 @@ public sealed class RemoteScriptContractTests
         {
             "apphost-volume-payload", "apphost-host-decoy", "apphost-import-readonly",
             "apphost-import-bytes-mode", "mask-exact-three", "mask-empty", "mask-failure-cleaned", "mask-partial-start-cleaned",
-            "mask-readonly", "mask-nocopy", "mask-exact-pack",
+            "mask-readonly", "mask-nocopy", "mask-exact-pack", "mask-consumer-before-workspace",
             "mask-foreign-refused", "apphost-foreign-work-refused", "apphost-foreign-cache-refused"
         })
             Fact(output, fact).ShouldBe("1", fact + "\n" + output);
