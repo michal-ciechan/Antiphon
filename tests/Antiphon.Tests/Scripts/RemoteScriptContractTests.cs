@@ -55,19 +55,71 @@ public sealed class RemoteScriptContractTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public void C1066_Fixture_npm_install_uses_argument_log_under_nounset(bool miss)
     {
-        var output = LinuxShell(C1066FixtureHarness("c849_fixture_npm_install") + $$"""
-            mkdir -p "$SERVER2_ROOT/project/b/node_modules/c849-cache-probe"
-            printf C849_NPM_OFFLINE > "$SERVER2_ROOT/project/b/node_modules/c849-cache-probe/sentinel"
-            docker() { printf '{{(miss ? "ENOTCACHED" : "installed")}}\n'; return {{(miss ? 1 : 0)}}; }
+        var output = LinuxShell(C1066FixtureHarness(
+            "c849_fixture_workspace_labels_ok",
+            "c849_fixture_work_mount",
+            "c849_fixture_helper_exec",
+            "c849_fixture_volume_test_file",
+            "c849_fixture_volume_read",
+            "c849_fixture_cache_mount_ok",
+            "c849_fixture_npm_install") + $$"""
+            docker() {
+                if [ "$1" = volume ] && [ "$2" = inspect ]; then
+                    local fmt="" name=""
+                    shift 2
+                    while [ $# -gt 0 ]; do
+                        case "$1" in
+                            -f) fmt="$2"; shift 2 ;;
+                            *) name="$1"; shift ;;
+                        esac
+                    done
+                    [ -n "$fmt" ] || return 0
+                    case "$fmt" in
+                        *Driver*) printf 'local\n' ;;
+                        *Options*) printf 'null\n' ;;
+                        *owner*)
+                            case "$name" in
+                                *-work) printf 'c849-fixture\n' ;;
+                                *) printf 'server2-runner\n' ;;
+                            esac
+                            ;;
+                        *fixture-run*) printf '%s\n' "$RUN" ;;
+                        *fixture-role*) printf 'work\n' ;;
+                        *cache-schema*) printf '1\n' ;;
+                        *cache-role*) printf 'npm-content\n' ;;
+                        *) printf 'unexpected inspect %s\n' "$fmt" >&2; return 1 ;;
+                    esac
+                    return 0
+                fi
+                if [ "$1" = exec ]; then
+                    case "$*" in
+                        *'cat --'*)
+                            printf 'C849_NPM_OFFLINE\n'
+                            printf 'C849_NPM_OFFLINE\n' > "$SERVER2_ROOT/reader-witness"
+                            return 0
+                            ;;
+                        *'test -f'*) return 0 ;;
+                    esac
+                    printf 'unexpected exec %s\n' "$*" >&2
+                    return 1
+                fi
+                if [ "$1" = run ]; then
+                    printf '{{(miss ? "ENOTCACHED" : "installed")}}\n'
+                    return {{(miss ? 1 : 0)}}
+                fi
+                printf 'unexpected docker %s\n' "$1" >&2
+                return 1
+            }
             status=0
-            actual="$(c849_fixture_npm_install fixture-image "$SERVER2_ROOT/project" fixture-cache b)" || status=$?
+            actual="$(c849_fixture_npm_install fixture-image "c849${RUN}fixture-npm" b)" || status=$?
             [ "$status" = {{(miss ? 2 : 0)}} ] && [ "$actual" = '{{(miss ? "NpmOfflineCacheMiss" : "")}}' ] || {
                 printf 'unexpected status=%s diagnosis=%s\n' "$status" "$actual"; exit 1;
             }
             grep -Fxq '{{(miss ? "ENOTCACHED" : "installed")}}' "$SERVER2_ROOT/npm-b.log"
+            {{(miss ? "" : "grep -Fxq C849_NPM_OFFLINE \"$SERVER2_ROOT/reader-witness\" || { printf 'reader-missing\\n'; exit 1; }\n")}}
             printf 'PASS npm {{(miss ? "miss" : "success")}}\n'
             """);
-        output.ShouldContain($"PASS npm {(miss ? "miss" : "success")}");
+        output.ShouldContain($"PASS npm {(miss ? "miss" : "success")}", customMessage: "npm-argument-log");
     }
 
     [Test]
@@ -119,19 +171,20 @@ public sealed class RemoteScriptContractTests
     public void C1189_Fixture_npm_integrity_does_not_call_host_pwsh()
     {
         var npm = Block(Remote(), "c849_fixture_npm");
-        npm.ShouldContain("[System.Security.Cryptography.SHA512]::HashData");
-        npm.ShouldContain("[Convert]::ToBase64String($bytes)");
+        npm.ShouldContain("[System.Security.Cryptography.SHA512]::HashData", customMessage: "hash-sha512-base64");
+        npm.ShouldContain("[Convert]::ToBase64String($bytes)", customMessage: "hash-sha512-base64");
         var hash = Commands(npm).Single(command =>
             command.Contains("FixtureNpmIntegrityFailed", StringComparison.Ordinal));
-        hash.ShouldContain("integrity=\"$(docker run ");
-        hash.ShouldContain("--entrypoint pwsh");
-        hash.ShouldContain("--network none");
-        hash.ShouldContain("readonly");
-        hash.ShouldContain("\"$image\"");
-        hash.ShouldContain("-File /fixture/hash-tarball.ps1");
-        hash.Contains("$(pwsh", StringComparison.Ordinal).ShouldBeFalse("F-6 hash calls host pwsh");
+        hash.ShouldContain("integrity=\"$(docker run ", customMessage: "hash-admitted-image-file");
+        hash.ShouldContain("--entrypoint pwsh", customMessage: "hash-admitted-image-file");
+        hash.ShouldContain("--network none", customMessage: "hash-admitted-image-file");
+        hash.ShouldContain("readonly", customMessage: "hash-admitted-image-file");
+        hash.ShouldContain("\"$image\"", customMessage: "hash-admitted-image-file");
+        hash.ShouldContain("-File /fixture/npm-offline/hash-tarball.ps1", customMessage: "hash-admitted-image-file");
+        hash.ShouldContain("-Path /fixture/npm-offline/pkg.tgz", customMessage: "hash-admitted-image-file");
+        hash.Contains("$(pwsh", StringComparison.Ordinal).ShouldBeFalse("hash-admitted-image-file");
         hash.Contains("pwsh -NoProfile -Command", StringComparison.Ordinal)
-            .ShouldBeFalse("F-6 hash calls host pwsh");
+            .ShouldBeFalse("hash-admitted-image-file");
     }
 
     // CARD-1189. PC-08's self-link must not still be in CASE_DIR when the case exits.
@@ -523,6 +576,34 @@ public sealed class RemoteScriptContractTests
         Fact(output, "private-waiter-already-entered").ShouldBe("1", "private-waiter-already-entered");
         Fact(output, "shared-waiter-after-release").ShouldBe("1", "shared-waiter-after-release");
         Fact(output, "private-lock-not-shared").ShouldBe("NuGetLockNotShared", "private-lock-not-shared");
+    }
+
+    // CARD-1192 S3. npm-work-volume is the seed cache-add mount on this run's work
+    // volume. refill-volume-source is the refill tarball read. offline-network-none
+    // is the npm ci network. Host decoy files at npm-work and npm-offline stay bytes host-decoy.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1192_Npm_seed_install_and_refill_use_work_volume()
+    {
+        var output = C1192Run("npm");
+        Fact(output, "npm-work-volume").ShouldBe("1", "npm-work-volume");
+        Fact(output, "refill-volume-source").ShouldBe("1", "refill-volume-source");
+        Fact(output, "offline-network-none").ShouldBe("1", "offline-network-none");
+    }
+
+    // CARD-1192 S3. missing-sentinel-refused is status 1 when test -f rejects a missing
+    // sentinel before any cat of that path. A later exact-byte compare also rejects an
+    // empty read, so status alone does not prove the existence check. wrong-sentinel-refused
+    // is a present file whose bytes are not C849_NPM_OFFLINE. offline-miss-refused is
+    // status 2 and NpmOfflineCacheMiss only when the npm stdout contains ENOTCACHED.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1192_Npm_volume_sentinel_and_empty_cache_miss_are_observed()
+    {
+        var output = C1192Run("npm-sentinel");
+        Fact(output, "missing-sentinel-refused").ShouldBe("1", "missing-sentinel-refused");
+        Fact(output, "wrong-sentinel-refused").ShouldBe("1", "wrong-sentinel-refused");
+        Fact(output, "offline-miss-refused").ShouldBe("1", "offline-miss-refused");
     }
 
     // CARD-1193. NuGet locks $NUGET_SCRATCH/lock/<hash>. The holder and waiter must receive the
