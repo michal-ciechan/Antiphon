@@ -25,6 +25,7 @@ namespace Antiphon.Tests.Application;
 /// mutation lock, and a scratch git repository, then a fresh server row read.
 /// </summary>
 [Category("Integration")]
+[Category("Slow")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class PhoneHomeMirrorJoinTests
 {
@@ -89,6 +90,20 @@ public sealed class PhoneHomeMirrorJoinTests
         secondRows.Count.ShouldBe(1);
         var secondPath = world.Worktree(second);
         var preparationId = secondRows[0].PreparationId;
+        // A dispatch that is not held by the lock writes its intent on this turn. The lock keeps
+        // the ledger missing for the whole hold, so the bound poll is the observation window.
+        for (var turn = 0; turn < 50
+            && world.Ledger(preparationId).Kind == BindingReadKind.Missing
+            && !Directory.Exists(secondPath)
+            && secondRows[0].BindingId == Guid.Empty
+            && warnings.Count == 0; turn++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            await Task.Delay(20, cancellationToken);
+            warnings = await world.WarningsAsync(second);
+            secondRows = await world.BindingsAsync(second);
+        }
+
         var partialBindingLeft = world.Ledger(preparationId).Kind != BindingReadKind.Missing
             || Directory.Exists(secondPath)
             || secondRows[0].BindingId != Guid.Empty
@@ -113,7 +128,8 @@ public sealed class PhoneHomeMirrorJoinTests
     public async Task C1032_JoinCrashRetry(CancellationToken cancellationToken)
     {
         // case: the server drops its waiter after enqueue and the retry reuses the same preparation.
-        // mutation: always mint a new PreparationId in BeginMirrorPreparationAsync instead of reusing the row.
+        // mutation: replace the stored PreparationId on reuse. A second insert collides with the
+        // task/attempt/store/empty-binding unique index, so the guarded row would stay the original id.
         // red: recoveredPreparationId.ShouldBe(firstPreparationId) — the retry stores a second identity.
         await using var world = await JoinWorld.StartAsync(cancellationToken, hook: true);
         var taskId = await world.SeedAsync();
