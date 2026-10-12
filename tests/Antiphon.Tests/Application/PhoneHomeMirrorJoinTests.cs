@@ -140,9 +140,9 @@ public sealed class PhoneHomeMirrorJoinTests
         await world.Idle(cancellationToken);
 
         var rows = await world.BindingsAsync(taskId);
-        rows.Count.ShouldBe(1);
-        var recoveredPreparationId = rows[0].PreparationId;
+        var recoveredPreparationId = rows[^1].PreparationId;
         recoveredPreparationId.ShouldBe(firstPreparationId);
+        rows.Count.ShouldBe(1);
         var oneCompleted = rows[0].BindingId != Guid.Empty
             && world.Ledger(firstPreparationId).Kind == BindingReadKind.Complete;
         oneCompleted.ShouldBeTrue();
