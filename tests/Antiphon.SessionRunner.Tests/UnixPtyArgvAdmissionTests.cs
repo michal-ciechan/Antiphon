@@ -48,7 +48,7 @@ public sealed class UnixPtyArgvAdmissionTests
             runtime.List().ShouldBeEmpty();
             Directory.Exists(root).ShouldBeFalse("malformed-no-disk-effects");
         }
-        outcomes.ShouldBe(new[]
+        outcomes.ToArray().ShouldBe(new[]
         {
             "null exe: ArgumentException: Exe must not be empty. (Parameter 'request')",
             "empty exe: ArgumentException: Exe must not be empty. (Parameter 'request')",
@@ -58,7 +58,7 @@ public sealed class UnixPtyArgvAdmissionTests
             "empty args: ArgumentException: Terminal size must be positive. (Parameter 'request')",
             "null element: ArgumentException: Terminal size must be positive. (Parameter 'request')",
             "spaces and quotes: ArgumentException: Terminal size must be positive. (Parameter 'request')",
-        }, customMessage: "malformed-existing-validation");
+        }, "malformed-existing-validation");
     }
 
     [Test]
