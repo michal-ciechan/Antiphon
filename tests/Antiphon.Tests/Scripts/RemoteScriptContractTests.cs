@@ -360,7 +360,8 @@ public sealed class RemoteScriptContractTests
     {
         var output = C1192Run("cleanup-probe", boundary);
         foreach (var outcome in new[] { "absent", "daemon", "exit2", "present", "timeout",
-            "empty", "permission", "socket", "unrecognized", "rm-lie" })
+            "empty", "permission", "socket", "unrecognized", "rm-lie", "exit2-absent",
+            "other-name", "other-kind", "mixed" })
         {
             foreach (var assertion in new[] { "teardown", "verdict", "residue" })
                 Fact(output, outcome + "-" + assertion).ShouldBe("1", boundary + " " + outcome + "-" + assertion + "\n" + output);
