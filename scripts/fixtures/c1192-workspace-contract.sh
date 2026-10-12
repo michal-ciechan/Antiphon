@@ -766,6 +766,9 @@ docker_create() {
     if [ "$C1192_CUT" = writer-create ] && [ "$role" = writer ]; then return 1; fi
     if [ "$C1192_CUT" = reader-create ] && [ "$role" = reader ]; then return 1; fi
     store_container "$PARSED_NAME" "$PARSED_IMAGE" "$PARSED_MOUNTS" "$PARSED_LABELS"
+    if [ "$mode" = apphost ]; then
+        printf '%s\t%s\t%s\t%s\t%s\n' "$PARSED_NAME" "$PARSED_NETWORK" "$PARSED_IMAGE" "$PARSED_MOUNTS" "${PARSED_CMD[*]:-}" >> "$C1192_ROOT/run-log"
+    fi
 }
 
 simulate_npm_cache_add() {
@@ -1026,6 +1029,7 @@ docker() {
             order_log "start $name"
             if [ "$C1192_CUT" = writer-start ] && [ "$name" = "$WRITER" ]; then return 1; fi
             if [ "$C1192_CUT" = reader-start ] && [ "$name" = "$READER" ]; then return 1; fi
+            if [ "$C1192_CUT" = masked-start ] && [ "$name" = "c849-${RUN}-masked" ]; then return 1; fi
             [ -d "$C1192_ROOT/containers/$name" ] || return 1
             ;;
         rm)
@@ -1074,7 +1078,9 @@ docker() {
         inspect) shift; docker_inspect_container "$@" ;;
         run) shift; docker_run "$@" ;;
         ps|network) return 0 ;;
-        compose) return 1 ;;
+        compose)
+            if [ "$mode" = retention ]; then shift; retention_compose "$@"; else return 1; fi
+            ;;
         cp)
             shift
             local spec="$1" dash="${2:-}"
@@ -1915,7 +1921,7 @@ classify_npm_runs() {
     offline_bind=0
     hash_ok=0
     payload_bind=0
-    local name network image mounts cmd
+    local name network image mounts cmd mask_readonly=1 mask_nocopy=1 mask_exact=1 mask_seen=0
     while IFS=$'\t' read -r name network image mounts cmd || [ -n "${name:-}" ]; do
         [ -n "${name:-}" ] || continue
         case "$cmd" in
@@ -2353,7 +2359,7 @@ mode_apphost() {
     [ "$code" = 0 ] && [ -f "$data/c913.probe/1.0.0/data" ] && payload=1
     [ "$(cat "$SERVER2_ROOT/apphost/decoy")" = host-decoy ] \
         && [ "$(find "$SERVER2_ROOT/apphost" -mindepth 1 | wc -l)" = 1 ] && decoy=1
-    local name network image mounts cmd
+    local name network image mounts cmd mask_readonly=1 mask_nocopy=1 mask_exact=1 mask_seen=0
     while IFS=$'\t' read -r name network image mounts cmd; do
         case "$cmd" in
             *'cp -a '*)
@@ -2361,7 +2367,20 @@ mode_apphost() {
                     && [[ "$mounts" != *type=bind* ]] && [ "$network" = none ]; then import=1; fi
                 ;;
         esac
+        if [ "$name" = "c849-${RUN}-masked" ]; then
+            mask_seen=$((mask_seen + 1))
+            field_has "$mounts" readonly || mask_readonly=0
+            field_has "$mounts" volume-nocopy || mask_nocopy=0
+            case "$mounts" in
+                "type=volume,source=$MASK,target=/usr/share/dotnet/packs/Microsoft.NETCore.App.Host.linux-x64/9.0.20,readonly,volume-nocopy;"|"type=volume,source=$MASK,target=/usr/share/dotnet/packs/Microsoft.NETCore.App.Ref/9.0.20,readonly,volume-nocopy;"|"type=volume,source=$MASK,target=/usr/share/dotnet/packs/Microsoft.AspNetCore.App.Ref/9.0.20,readonly,volume-nocopy;") ;;
+                *) mask_exact=0 ;;
+            esac
+        fi
     done < "$C1192_ROOT/run-log"
+    [ "$mask_seen" = 3 ] || { mask_readonly=0; mask_nocopy=0; mask_exact=0; }
+    emit mask-readonly "$mask_readonly"
+    emit mask-nocopy "$mask_nocopy"
+    emit mask-exact-pack "$mask_exact"
     if [ -f "$cache/c913.probe/1.0.0/data" ] && [ "$(cat "$cache/c913.probe/1.0.0/data")" = ordinary-payload ] \
         && [ "$(stat -c %a "$cache")" = 700 ] && [ "$(stat -c %a "$cache/c913.tools/2.0.0/tool")" = 751 ] \
         && [ -f "$cache/c913.probe/1.0.0/.nupkg.metadata" ]; then bytes=1; fi
@@ -2401,10 +2420,147 @@ mode_apphost() {
     emit mask-foreign-refused "$foreign"
     emit apphost-foreign-work-refused "$work_foreign"
     emit apphost-foreign-cache-refused "$cache_foreign"
+    printf server2-runner > "$C1192_ROOT/volumes/$C849_NPM/label-owner"
+    C1192_CUT=masked-start
+    code=0
+    out=$(c849_fixture_masked_pack "$ADMITTED" Microsoft.NETCore.App.Ref 2>&1) || code=$?
+    local partial=0
+    if [ "$code" != 0 ] && container_exists "c849-${RUN}-masked" \
+        && grep -Fxq "c849-${RUN}-masked" "$CASE_DIR/.fixture-helpers"; then
+        c849_fixture_cleanup
+        if ! container_exists "c849-${RUN}-masked" && ! volume_exists "$MASK" && ! volume_exists "$WORK"; then
+            partial=1
+        fi
+    fi
+    emit mask-partial-start-cleaned "$partial"
+    refuse_unexpected
+}
+
+# Parse the real Compose control document, so its external/private identities drive deletion.
+retention_cache_name() {
+    local project="$1" file="$2" key="$3" line
+    line=$(sed -n "/^  $key: /p" "$file")
+    if [[ "$line" == *'external: true'* ]]; then
+        printf '%s' "${line##*name: }" | tr -d ' }'
+    else
+        printf '%s_%s' "$project" "$key"
+    fi
+}
+
+retention_compose() {
+    local project="" file="" action="" volume key target arg data
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            -p) project="$2"; shift 2 ;;
+            -f) file="$2"; shift 2 ;;
+            *) action="$1"; shift; break ;;
+        esac
+    done
+    [ -n "$project" ] && [ -f "$file" ] || return 97
+    printf '%s %s %s\n' "$project" "$action" "$*" >> "$C1192_ROOT/compose-actions"
+    case "$action" in
+        up)
+            cp "$file" "$C1192_ROOT/$project.yml"
+            if [[ "$file" == *negative.yml ]]; then
+                plant_volume "${project}_cache" local null test "$RUN" private
+                return 0
+            fi
+            for key in packages scratch npm; do
+                volume=$(retention_cache_name "$project" "$file" "$key")
+                volume_exists "$volume" || plant_volume "$volume" local null test "$RUN" private
+                data="$C1192_ROOT/volumes/$volume/data"
+                # Image content appears on a missing nocopy mount, as on Docker.
+                if ! awk -v key="$key" '/source:/ { selected=($2==key) } selected && /nocopy: true/ {ok=1} END {exit !ok}' "$file"; then
+                    printf image-content > "$data/image-content"
+                    chmod 755 "$data"
+                fi
+            done
+            for key in runner-tmp work runner-state dind-data; do
+                volume="${project}_$key"
+                volume_exists "$volume" || plant_volume "$volume" local null test "$RUN" private
+                [ "$key" != runner-tmp ] || chmod 1777 "$C1192_ROOT/volumes/$volume/data"
+            done
+            if [[ "$project" == *temp ]] && [[ "$*" == *--force-recreate* ]]; then
+                for key in packages scratch npm; do
+                    volume=$(retention_cache_name "$project" "$file" "$key")
+                    [ "$(cat "$C1192_ROOT/volumes/$volume/data/retention-sentinel")" = retained ] || return 1
+                done
+                printf 1 > "$C1192_ROOT/recreate-retained"
+            fi
+            ;;
+        exec)
+            [ "$1" = -T ] && shift
+            [ "$1" = probe ] && shift
+            local args=()
+            for arg in "$@"; do
+                for key in packages scratch npm; do
+                    case "$key" in
+                        packages) target=/home/app/.nuget/packages ;;
+                        scratch) target=/var/cache/antiphon/nuget-scratch ;;
+                        npm) target=/home/app/.npm/_cacache ;;
+                    esac
+                    volume=$(retention_cache_name "$project" "$file" "$key")
+                    data="$C1192_ROOT/volumes/$volume/data"
+                    arg="${arg//$target/$data}"
+                done
+                # Prefix-only argument mapping; generated private path also lives under /tmp.
+                if [ "$arg" = /tmp ]; then arg="$C1192_ROOT/volumes/${project}_runner-tmp/data";
+                else arg="${arg//%a \/tmp/%a $C1192_ROOT/volumes/${project}_runner-tmp/data}"; fi
+                args+=("$arg")
+            done
+            "${args[@]}" || return $?
+            if [[ "$project" == *main ]] && [[ "$*" == *retention-sentinel* ]]; then
+                for key in runner-tmp work runner-state dind-data; do
+                    volume_exists "c849${RUN}temp_$key" && return 1
+                    volume_exists "c849${RUN}main_$key" || return 1
+                done
+                printf 1 > "$C1192_ROOT/retention-before-main-down"
+            fi
+            ;;
+        down)
+            [[ "$*" == *-v* ]] || return 0
+            if [[ "$file" == *negative.yml ]]; then rm -rf -- "$C1192_ROOT/volumes/${project}_cache"; return 0; fi
+            for key in packages scratch npm; do
+                volume=$(retention_cache_name "$project" "$file" "$key")
+                [[ "$volume" != "${project}_"* ]] || rm -rf -- "$C1192_ROOT/volumes/$volume"
+            done
+            for key in runner-tmp work runner-state dind-data; do rm -rf -- "$C1192_ROOT/volumes/${project}_$key"; done
+            ;;
+        *) printf 'UNEXPECTED-COMPOSE %s\n' "$action" >> "$C1192_ROOT/scenario.err"; return 97 ;;
+    esac
+}
+
+mode_retention() {
+    reset_runtime
+    : > "$C1192_ROOT/scenario.err"
+    : > "$C1192_ROOT/compose-actions"
+    C849_PACKAGES="c849${RUN}smoke-packages"; C849_SCRATCH="c849${RUN}smoke-scratch"; C849_NPM="c849${RUN}npmcache-npm"
+    local volume key code=0 out uid=0 nocopy=1 external=1 private=0 recreate=0 negative=0
+    for volume in "$C849_PACKAGES" "$C849_SCRATCH" "$C849_NPM"; do
+        plant_volume "$volume" local null server2-runner "$RUN" cache
+        chmod 700 "$C1192_ROOT/volumes/$volume/data"
+    done
+    out=$(c849_fixture_retention 2>&1) || code=$?
+    [ "$code" = 0 ] || fail "retention code=$code $out"
+    grep -q 'user: "1654:1654"' "$C1192_ROOT/c849${RUN}main.yml" && uid=1
+    for volume in "$C849_PACKAGES" "$C849_SCRATCH" "$C849_NPM"; do
+        [ ! -e "$C1192_ROOT/volumes/$volume/data/image-content" ] && [ "$(stat -c %a "$C1192_ROOT/volumes/$volume/data")" = 700 ] || nocopy=0
+        [ -f "$C1192_ROOT/volumes/$volume/data/retention-sentinel" ] && [ "$(cat "$C1192_ROOT/volumes/$volume/data/retention-sentinel")" = retained ] || external=0
+    done
+    [ -f "$C1192_ROOT/retention-before-main-down" ] && private=1
+    [ -f "$C1192_ROOT/recreate-retained" ] && recreate=1
+    ! volume_exists "c849${RUN}negative_cache" && grep -q '^PC-20.01 ' "$CASE_DIR/fixture-control-variants.txt" && negative=1
+    emit retention-app-uid "$uid"
+    emit retention-nocopy-three "$nocopy"
+    emit retention-external-survives "$external"
+    emit retention-private-separation "$private"
+    emit retention-recreate-bytes "$recreate"
+    emit retention-negative-lost "$negative"
     refuse_unexpected
 }
 
 case "$mode" in
+    retention) mode_retention ;;
     apphost) mode_apphost ;;
     writable-pruning) mode_writable_pruning ;;
     register) mode_register ;;

@@ -3153,6 +3153,8 @@ c849_fixture_helper_release() {
     case "$name" in
         "c849-${RUN}-writer") role=writer ;;
         "c849-${RUN}-reader") role=reader ;;
+        "c849-${RUN}-masked") role=masked ;;
+        "c849-${RUN}-apphost") role=apphost ;;
         *) return 0 ;;
     esac
     docker container inspect "$name" >/dev/null 2>&1 || code=$?
@@ -3697,12 +3699,25 @@ c849_fixture_nuget_race() {
 }
 
 c849_fixture_masked_pack() {
-    local image="$1" pack="$2" root="$3" helper="c849-${RUN}-masked" code=0
-    docker run -d --name "$helper" --network antiphon-build-slots --user 1654:1654 --entrypoint sleep \
+    local image="$1" pack="$2" helper="c849-${RUN}-masked" mask="c849${RUN}-mask" code=0 lookup=0
+    case "$pack" in
+        Microsoft.NETCore.App.Host.linux-x64|Microsoft.NETCore.App.Ref|Microsoft.AspNetCore.App.Ref) ;;
+        *) printf 'FixtureMaskTargetInvalid\n'; return 2 ;;
+    esac
+    c849_fixture_workspace_labels_ok "$mask" mask || { printf 'FixtureWorkspaceForeign\n'; return 2; }
+    docker run --rm --network none --user 1654:1654 --entrypoint /bin/sh \
+        --mount "type=volume,source=$mask,target=/mask,readonly,volume-nocopy" "$image" \
+        -c 'test -z "$(find /mask -mindepth 1 -print -quit)"' || { printf 'FixtureMaskNotEmpty\n'; return 2; }
+    c849_fixture_helper_lookup "$helper" || lookup=$?
+    [ "$lookup" = 0 ] || { printf 'FixtureNamespaceOccupied\n'; return 2; }
+    printf '%s\n' "$helper" >> "$CASE_DIR/.fixture-helpers"
+    docker create --name "$helper" --network antiphon-build-slots --user 1654:1654 --entrypoint sleep \
+        --label io.antiphon.owner=c849-fixture --label "io.antiphon.fixture-run=$RUN" --label io.antiphon.fixture-role=masked \
         -e HOME=/home/app -e NUGET_PACKAGES=/home/app/.nuget/packages \
         -e NUGET_SCRATCH=/var/cache/antiphon/nuget-scratch -e NPM_CONFIG_CACHE=/home/app/.npm \
-        --mount "type=bind,source=$root/mask,target=/usr/share/dotnet/packs/$pack/9.0.20,readonly" \
+        --mount "type=volume,source=$mask,target=/usr/share/dotnet/packs/$pack/9.0.20,readonly,volume-nocopy" \
         "$image" infinity >/dev/null || return 1
+    docker start "$helper" >/dev/null || return 1
     (c849_smoke "$helper" fixture-masked) >/dev/null 2>&1 || code=$?
     docker rm -f "$helper" >/dev/null || return 1
     [ "$code" -ne 0 ] && grep -Fxq "ImagePackMissing:$pack" "$CASE_DIR/smoke.txt" \
@@ -3711,15 +3726,21 @@ c849_fixture_masked_pack() {
 }
 
 c849_fixture_apphost() {
-    local image packages scratch name root helper pack
+    local image packages scratch name root helper pack work_mount lookup=0
     image="$(c849_image)" || write_result false CacheHelperImageMissing 2
-    root="$SERVER2_ROOT/apphost"
-    mkdir -p "$root/mask" "$root/packages/c913.probe/1.0.0" "$root/packages/c913.tools/2.0.0"
-    printf '{}\n' > "$root/packages/c913.probe/1.0.0/.nupkg.metadata"
-    printf 'ordinary-payload\n' > "$root/packages/c913.probe/1.0.0/data"
-    printf '{}\n' > "$root/packages/c913.tools/2.0.0/.nupkg.metadata"
-    printf '#!/bin/sh\nexit 0\n' > "$root/packages/c913.tools/2.0.0/tool"
-    chmod 0751 "$root/packages/c913.tools/2.0.0/tool"
+    work_mount="$(c849_fixture_work_mount)" || write_result false FixtureWorkspaceForeign 2
+    c849_fixture_cache_mount_ok "$C849_NPM" npm-content || write_result false CacheVolumeForeign 2
+    root=/fixture/apphost
+    c849_fixture_helper_exec writer /bin/sh -c '
+        set -eu
+        root="$1"
+        mkdir -p "$root/packages/c913.probe/1.0.0" "$root/packages/c913.tools/2.0.0"
+        printf "{}\n" > "$root/packages/c913.probe/1.0.0/.nupkg.metadata"
+        printf "ordinary-payload\n" > "$root/packages/c913.probe/1.0.0/data"
+        printf "{}\n" > "$root/packages/c913.tools/2.0.0/.nupkg.metadata"
+        printf "#!/bin/sh\nexit 0\n" > "$root/packages/c913.tools/2.0.0/tool"
+        chmod 0751 "$root/packages/c913.tools/2.0.0/tool"
+    ' sh "$root" || write_result false FixtureOrdinarySetupFailed 2
     packages="c849${RUN}smoke-packages"; scratch="c849${RUN}smoke-scratch"
     for name in "$packages" "$scratch"; do
         docker volume inspect "$name" >/dev/null 2>&1 && write_result false FixtureNamespaceOccupied 2
@@ -3731,7 +3752,11 @@ c849_fixture_apphost() {
     c849_empty_volume "$packages" "$image" && c849_empty_volume "$scratch" "$image" \
         || write_result false FixtureEmptyPairRequired 2
     helper="c849-${RUN}-apphost"
-    docker run -d --name "$helper" --network antiphon-build-slots --user 1654:1654 --entrypoint sleep \
+    c849_fixture_helper_lookup "$helper" || lookup=$?
+    [ "$lookup" = 0 ] || write_result false FixtureNamespaceOccupied 2
+    printf '%s\n' "$helper" >> "$CASE_DIR/.fixture-helpers"
+    docker create --name "$helper" --network antiphon-build-slots --user 1654:1654 --entrypoint sleep \
+        --label io.antiphon.owner=c849-fixture --label "io.antiphon.fixture-run=$RUN" --label io.antiphon.fixture-role=apphost \
         -e HOME=/home/app -e NUGET_PACKAGES=/home/app/.nuget/packages \
         -e NUGET_SCRATCH=/var/cache/antiphon/nuget-scratch -e NPM_CONFIG_CACHE=/home/app/.npm \
         -e ANTIPHON_BUILD_SLOTS_URL=http://build-slots:8080/build-slots \
@@ -3741,6 +3766,7 @@ c849_fixture_apphost() {
         --mount "type=bind,source=$CHECKOUT/scripts/build-slot.ps1,target=/work/repos/antiphon/scripts/build-slot.ps1,readonly" \
         --mount "type=bind,source=$CHECKOUT/scripts/lib/build-slot.ps1,target=/work/repos/antiphon/scripts/lib/build-slot.ps1,readonly" \
         "$image" infinity >/dev/null || write_result false FixtureAppHostStartFailed 2
+    docker start "$helper" >/dev/null || write_result false FixtureAppHostStartFailed 2
     printf '%s\n' "$helper" > "$CASE_DIR/.fixture-apphost"
     c849_smoke "$helper" fixture || write_result false FixtureAppHostSmokeFailed 2
     docker rm -f "$helper" >/dev/null || write_result false FixtureAppHostCleanupFailed 2
@@ -3748,13 +3774,13 @@ c849_fixture_apphost() {
     c849_empty_volume "$packages" "$image" && c849_empty_volume "$scratch" "$image" \
         || write_result false FixtureEmptyPairChanged 2
     for pack in Microsoft.NETCore.App.Host.linux-x64 Microsoft.NETCore.App.Ref Microsoft.AspNetCore.App.Ref; do
-        c849_fixture_control PC-18 "ImagePackMissing:$pack" c849_fixture_masked_pack "$image" "$pack" "$root"
+        c849_fixture_control PC-18 "ImagePackMissing:$pack" c849_fixture_masked_pack "$image" "$pack"
     done
     # Ordinary bytes, independent of framework availability, feed the retention/prune cases.
     docker run --rm --network none --user 0:0 --entrypoint /bin/sh \
-        --mount "type=bind,source=$root/packages,target=/seed,readonly" \
+        --mount "${work_mount},readonly" \
         --mount "type=volume,source=$packages,target=/cache,volume-nocopy" "$image" \
-        -c 'set -eu; cp -a /seed/. /cache/; chown -R 1654:1654 /cache; chmod 0700 /cache' \
+        -c 'set -eu; cp -a "$1/." /cache/; chown -R 1654:1654 /cache; chmod 0700 /cache' sh "$root/packages" \
         || write_result false FixtureOrdinaryImportFailed 2
     printf 'PASS F-5\n' >> "$CASE_DIR/fixture-groups.txt"
 }
