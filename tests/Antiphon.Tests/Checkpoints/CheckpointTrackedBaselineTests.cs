@@ -433,10 +433,10 @@ public sealed class CheckpointTrackedBaselineTests : CheckpointTestBase
         var head = GitOut(root, "rev-parse", "HEAD").Trim();
         var tool = await RunToolAsync(root, name + "-tool", cancellationToken);
         AssertTamper(tool, victim);
-        // The tool leaves the build's bytes. Put the committed victim back so the
-        // script detects the same overwrite on a clean tree.
-        Git(root, "checkout", "HEAD", "--", victim.Relative);
-        ClearBuildResidue(root);
+        // The tool leaves the build's bytes and any generated siblings. Return to
+        // the committed tree so the script detects the same overwrite.
+        Git(root, "reset", "--hard", "HEAD");
+        Git(root, "clean", "-fdx", "-e", ".antiphon");
         var script = await RunScriptAsync(root, name + "-script", cancellationToken);
         AssertTamper(script, victim);
         var receipt = Path.Combine(root, ".antiphon", "script-results", name + "-script-fixed", "source.json");
