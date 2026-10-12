@@ -274,7 +274,7 @@ The listed Min values for new families are proposed minimum single-result
 rosters, not assertions or measurements. No test/build was run by this Plan.
 
 Each row has a fresh isolated build and one exact filter. Groups name the lane;
-all these S3 groups are Linux-portable. Select explicit `--rows` per slice, run
+CP-21 and the complete ten-result CP-22 row require Linux; the other groups are portable. Select explicit `--rows` per slice, run
 through the checkpoint tool/build-slot gate after commit/push with exact source
 SHA, and await completion (including exit-75 waits). Never run whole Unit or an
 unrelated assembly. Keep generated evidence ignored and remove only the
@@ -300,9 +300,11 @@ checkpoint-owned alternate outputs after the run.
 | CP-20 | S2 | `tests/Antiphon.Tests -> bin-c1032-store-replacement/` | linux-store-replacement | `/*/*/RemoteWorkspacePreparerTests/C1032_StoreReplacement*` | V-1 | all 1 listed; 0 failed/skipped | 1 | 5 | true |
 | CP-21 | S2 | `tests/Antiphon.Tests -> bin-c1032-join/` | linux-mirror-join | `/*/*/PhoneHomeMirrorJoinTests/C1032_Join*` | V-1 | all 6 listed; 0 failed/skipped | 6 | 8 | true |
 | CP-22 | S2 | `tests/Antiphon.SessionRunner.Tests -> bin-c1032-store-identity/` | linux-store-identity | `/*/*/RunnerWorkspaceBindingTests/C1032_StoreIdentity*` | V-1 | all 10 listed; 0 failed/skipped | 10 | 5 | true |
+| CP-23 | S2 | CP-3 | legacy-unbound-contract | `/*/*/RunnerWorkspaceBindingTests/C1032_LegacyUnboundPathOnlyContract*` | R-2 | all 1 listed; 0 failed/skipped | 1 | 1 | true |
+| CP-24 | S2 | CP-3 | workspace-compatibility | `/*/*/PhoneHomeCommandDispatcherTests/Workspace_*` | R-1, R-2 | all 3 listed; 0 failed/skipped | 3 | 1 | true |
 
 CP-15 through CP-18, and the closed importer list that includes CP-19, CP-20, CP-21, and CP-22, live in `docs/superpowers/plans/2026-10-12-card-1032-test-design.md`.
-CP-21 requires Linux FIFOs and Unix file modes. A Windows skip is not acceptance. Do not replace that fixture with a portable barrier.
+CP-22 requires Linux for ten results with zero skips: its mode-denied registration-file case is Linux-only. CP-21 requires Linux FIFOs and Unix file modes. A Windows skip is not acceptance. Do not replace that fixture with a portable barrier.
 
 ### Windows-only witnesses and deferred activation
 
@@ -316,7 +318,7 @@ skips or run them against a production path to claim S3 acceptance.
 
 At dispatch, read `/api/runner-defaults` and `/api/session-runners` again. Omit
 `-Runner` unless deliberately pinning one host. Omit `-Platform` for portable
-work. CP-21 is the Linux exception above, not a portable row. Use `-Platform Windows` only for native witnesses; `-Platform Any` clears
+work. CP-21 and the complete CP-22 row are the Linux exceptions above. Use `-Platform Windows` only for native witnesses; `-Platform Any` clears
 an inherited pin. No location or current host occupancy is embedded in this plan.
 
 ### Cost and TestDesign handoff

@@ -258,6 +258,28 @@ executed them.
   local Complete does not hide mirrors; busy/ready and each named cut converge
   to recipient facts or the explicitly specified safety hold.
 
+
+#### D-12 — R-2 disclosed legacy-binding decision (2026-10-12)
+
+The orchestrator's operator decision retains the S2 path-only contract. The
+phone-home caller is the authenticated server; omission or nulling of the whole
+binding object deliberately selects legacy creation. This was already reachable
+and is not a new regression. A non-null binding still requires recipient-store
+admission. No trust-context plumbing or production behavior change is authorized.
+No later S1–S8 slice in this plan removes this compatibility path; any retirement
+needs separately commissioned work, not an implied future slice.
+
+CP-23 pins an omitted binding through the actual dispatcher and real scratch Git:
+the registration file is missing, the exact requested worktree/HEAD exists, the
+reply has no binding, no preparation or completion row exists anywhere in the
+runner binding-store directory, and the physical git-dir has no owner stamp.
+Registration admission is bypassed and no registration file is created or required.
+The existing RecipientStoreId helper can best-effort read a present file, then
+fall back to the custody GUID; that read grants no binding or ownership claim.
+This is not a claim that the legacy helper performs no optional filesystem read.
+Case -> mutation -> red: fabricate a binding row from the unbound path and
+`Directory.Exists(ledgerRoot).ShouldBeFalse()` must fail. One result, portable.
+CP-24 preserves the brief's three existing Workspace dispatcher methods.
 ### Guards the regression
 
 - R-1: parent's R-3 S3 selection retained | CP-12's 25
@@ -267,7 +289,7 @@ executed them.
   canonical desktop sync assertions. Exact names, case -> mutation -> red are
   PC-400..435 below. These are existing tests, not expanded counts copied from
   the parent without inspection.
-- R-2: inert composition and ordinary compatibility | CP-3/11/15 |
+- R-2: inert composition and ordinary compatibility | CP-3/11/15/23/24 |
   C1032_BindingLegacyCompatibility preserves ordinary old-peer creation;
   C1032_TransportDefaultInert and C1032_RecoveryInertServerComposition observe
   the unconfigured production graph and populated sweep. No Program-removal
@@ -580,6 +602,7 @@ has not executed any control.
 | G-547 | S2; a readable different registration guid still refuses a request that names the custody guid | PC-547 |
 | G-548 | S2; a readable matching registration guid completes under that guid, not the custody guid | PC-548 |
 | G-549 | S2; an unbound request still creates the mirror when the registration file is missing | PC-549 |
+| G-550 | D-12; legacy creation invents no binding ledger or owner claim | PC-550 |
 
 ### Positive controls
 
@@ -910,6 +933,7 @@ remain pending under the parent artifact, not silently discharged here.
 | PC-547 | RB | readable registration guid differs and the request names custody -> break G-547: compare the request with RunnerStoreId instead of the file. | `/*/*/RunnerWorkspaceBindingTests/C1032_StoreIdentityRefused*` | `custodyAccepted.ShouldBeFalse()` |
 | PC-548 | RB | readable registration guid matches the request and differs from custody -> break G-548: bind RunnerStoreId and refuse the registration guid. | `/*/*/RunnerWorkspaceBindingTests/C1032_StoreIdentityRefused*` | `registeredStoreCompleted.ShouldBeTrue()` |
 | PC-549 | RB | unbound request and missing registration file -> break G-549: require a parsed registration guid before the legacy mirror. | `/*/*/RunnerWorkspaceBindingTests/C1032_StoreIdentityRefused*` | `legacyMirrorExists.ShouldBeTrue()` |
+| PC-550 | RB | omitted binding and missing registration file -> break G-550: fabricate a binding row from the unbound mirror path. | `/*/*/RunnerWorkspaceBindingTests/C1032_LegacyUnboundPathOnlyContract*` | `Directory.Exists(ledgerRoot).ShouldBeFalse()` |
 
 ### Out of scope
 
@@ -943,7 +967,7 @@ remain pending under the parent artifact, not silently discharged here.
 
 This is the sole importer-visible closed ordinary list in **this** artifact.
 Use this path, not the provisional table in the fix plan. Each row owns a fresh
-isolated build and one exact filter. The twenty-two rows total 126 TUnit executions. CP-21 is the Linux-only S2 phone-home join. CP-22 is the dispatcher registration-store table (10 results) added by the S2 store-identity repair.
+isolated build and one exact filter. The twenty-four rows total 130 TUnit executions. CP-21 is the Linux-only S2 phone-home join. CP-22 is the dispatcher registration-store table (10 results) added by the S2 store-identity repair.
 Read each fresh TRX's executed class/method roster as well as its count:
 the tool's Min is a floor and its derived Expect tokens alone do not enforce
 the exact roster. Prefix rows select only the enumerated C1032 methods above;
@@ -955,7 +979,7 @@ is what makes the enumerated methods run (TUnit issue 4580). No other
 C1032 method shares those names, so the star does not add a case.
 
 Select explicit `--rows` after commit/push:
-S1=CP-1,CP-2; S2=CP-3,CP-4,CP-17,CP-18,CP-19,CP-20,CP-21,CP-22; S3=CP-5; S4=CP-6;
+S1=CP-1,CP-2; S2=CP-3,CP-4,CP-17,CP-18,CP-19,CP-20,CP-21,CP-22,CP-23,CP-24; S3=CP-5; S4=CP-6;
 S5=CP-7,CP-8,CP-9,CP-10; S6=CP-11,CP-12;
 S7=CP-13,CP-14; S8=CP-15,CP-16.
 This moves parent destructive witnesses behind S5 implementation and adds
@@ -981,7 +1005,7 @@ procedure, record its SHA and reason, and budget the separate three minutes
 below. Do not hand-author a migration or replace the schema CP with migration
 generation. Additional build/test work needs a stated failure/change reason.
 
-CP-3, CP-4, CP-17, CP-18, CP-19, CP-20, and CP-22 need no platform pin.
+CP-3, CP-4, CP-17, CP-18, CP-19, CP-20, CP-23 and CP-24 need no platform pin. CP-22 requires Linux for its ten-result, zero-skip certification.
 CP-21 requires Linux. Its busy and crash fixtures run `/usr/bin/mkfifo` and
 `/bin/sh` and call `File.SetUnixFileMode`. Those methods skip on Windows with
 that reason; a Windows skip is not acceptance and does not certify the row.
@@ -1018,14 +1042,16 @@ loops, assertions and PC variants do not raise Min.
 | CP-20 | S2 | `tests/Antiphon.Tests -> bin-c1032-store-replacement/` | store-replacement | `/*/*/RemoteWorkspacePreparerTests/C1032_StoreReplacement*` | V-1 | all 1 listed; 0 failed/skipped | 1 | 5 | true |
 | CP-21 | S2 | `tests/Antiphon.Tests -> bin-c1032-join/` | mirror-join | `/*/*/PhoneHomeMirrorJoinTests/C1032_Join*` | V-1 | all 6 listed; 0 failed/skipped | 6 | 8 | true |
 | CP-22 | S2 | `tests/Antiphon.SessionRunner.Tests -> bin-c1032-store-identity/` | store-identity | `/*/*/RunnerWorkspaceBindingTests/C1032_StoreIdentity*` | V-1 | all 10 listed; 0 failed/skipped | 10 | 5 | true |
+| CP-23 | S2 | CP-3 | legacy-unbound-contract | `/*/*/RunnerWorkspaceBindingTests/C1032_LegacyUnboundPathOnlyContract*` | R-2 | all 1 listed; 0 failed/skipped | 1 | 1 | true |
+| CP-24 | S2 | CP-3 | workspace-compatibility | `/*/*/PhoneHomeCommandDispatcherTests/Workspace_*` | R-1, R-2 | all 3 listed; 0 failed/skipped | 3 | 1 | true |
 
 ### Cost
 
 **Estimated**, not measured. Ordinary Code V/R floor is the CP time sum:
 5+4+5+5+5+5+5+5+5+6+5+6+6+6+7+5+5+5+5+5 = **105 minutes**.
 CP-21 adds one S2 build and 8 minutes and is not inside that sum.
-CP-22 adds 5 minutes inside the S2 floor below.
-The exact filters are CP-1..CP-22 above; slice floors are S1=9, S2=35,
+CP-22 adds 5 minutes inside the S2 floor below. CP-23/24 reuse CP-3 and add two minutes, with no additional build.
+The exact filters are CP-1..CP-22 above; slice floors are S1=9, S2=37,
 S3=5, S4=5, S5=21, S6=11, S7=12, S8=12 minutes.
 This includes **20 isolated builds × 3 = 60** and **45 minutes V/R**.
 Setup/manifest/tool-bootstrap allowance = **3**; S1 EF-generation authoring build allowance =

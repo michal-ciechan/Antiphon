@@ -374,6 +374,7 @@ public sealed class RunnerWorkspaceBindingTests
     [Arguments("legacy-missing")]
     public async Task C1032_StoreIdentityRefused(string setup)
     {
+        // CP-22 requires Linux to certify all ten results with zero skips.
         // case: missing, empty, whitespace, garbled, wrong-length, directory, unreadable —
         //   a bound request names this runner and the nonempty custody guid.
         // mutation: substitute RunnerStoreId when StoreIdPath cannot be parsed as a guid.
@@ -543,6 +544,52 @@ public sealed class RunnerWorkspaceBindingTests
     [UnsupportedOSPlatform("windows")]
     private static void RestoreRegistrationRead(string path) =>
         File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+
+    [Test]
+    public async Task C1032_LegacyUnboundPathOnlyContract()
+    {
+        // case: authenticated server omits binding; the registration file is missing.
+        // mutation: write a binding row from the unbound mirror path.
+        // red: Directory.Exists(ledgerRoot).ShouldBeFalse() detects the fabricated row.
+        // Registration admission is deliberately bypassed; RecipientStoreId's historical
+        // best-effort fallback is not a binding prerequisite or ownership evidence.
+        using var scratch = Scratch.Create();
+        var storePath = Path.Combine(scratch.Root, "missing-registration", "runner-store-id");
+        File.Exists(storePath).ShouldBeFalse();
+        var request = new PhoneHomeWorkspaceMirrorRequest(Scratch.Branch, scratch.Sha, "task-deadbeef");
+        var payload = JsonSerializer.SerializeToElement(new { request.Branch, request.Sha, request.Name }, PhoneHomeFraming.Json);
+        payload.TryGetProperty("binding", out _).ShouldBeFalse();
+        var dispatcher = new PhoneHomeCommandDispatcher(new StoreRuntime(Guid.NewGuid()), new PhoneHomeSettings
+        {
+            Enabled = true,
+            RunnerId = "runner-a",
+            AllowedCwd = scratch.Work,
+            RunnerRepository = scratch.Clone.Replace('\\', '/'),
+            Capacity = 1,
+            CapacityStatePath = scratch.Root.Replace('\\', '/') + "/capacity",
+            StoreIdPath = storePath.Replace('\\', '/'),
+            ProbeSecondaryRepositoryPushAccess = false,
+        });
+
+        var reply = await dispatcher.DispatchAsync(new PhoneHomeFrame(
+            PhoneHomeFrameKind.Request, 1, Guid.NewGuid(), PhoneHomeOperation.WorkspaceMirror, payload),
+            CancellationToken.None);
+
+        reply.Kind.ShouldBe(PhoneHomeFrameKind.Result);
+        var mirrored = reply.Payload!.Value.Deserialize<PhoneHomeWorkspaceMirrorResponse>(PhoneHomeFraming.Json)!;
+        var tree = scratch.Work.TrimEnd('/') + "/worktrees/" + request.Name;
+        mirrored.Path.ShouldBe(tree);
+        Directory.Exists(tree).ShouldBeTrue();
+        Scratch.Git(tree, "rev-parse", "HEAD").Trim().ShouldBe(scratch.Sha);
+        mirrored.Binding.ShouldBeNull();
+        var ledgerRoot = scratch.Work.TrimEnd('/') + "/workspace-bindings";
+        Directory.Exists(ledgerRoot).ShouldBeFalse();
+        new RunnerWorkspaceBindingStore(ledgerRoot).Read(Guid.Empty).Kind.ShouldBe(BindingReadKind.Missing);
+        var gitDirectory = Scratch.Git(tree, "rev-parse", "--absolute-git-dir").Trim();
+        File.Exists(RunnerWorkspaceBindingStore.OwnerStampPath(gitDirectory)).ShouldBeFalse();
+        File.Exists(storePath).ShouldBeFalse();
+        Directory.Exists(Path.GetDirectoryName(storePath)).ShouldBeFalse();
+    }
 
     [Test]
     public async Task C1032_BindingLegacyCompatibility()
