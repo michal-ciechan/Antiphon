@@ -940,13 +940,13 @@ Additional guard inventory:
 
 | Guard | Invariant | Positive control |
 |---|---|---|
-| G-153 | S7 F1: consumer absence must be positively confirmed; successful removal must be rechecked | PC-153 |
-| G-154 | S7 F1: helper absence must be positively confirmed; successful removal must be rechecked | PC-154 |
-| G-155 | S7 F1: masked absence must be positively confirmed; successful removal must be rechecked | PC-155 |
-| G-156 | S7 F1: work absence must be positively confirmed; successful removal must be rechecked | PC-156 |
-| G-157 | S7 F1: mask absence must be positively confirmed; successful removal must be rechecked | PC-157 |
-| G-158 | S7 F1: cache absence must be positively confirmed; successful removal must be rechecked | PC-158 |
-| G-159 | S7 F1: network absence must be positively confirmed; successful removal must be rechecked | PC-159 |
+| G-153 | S7 F1: consumer absence must be positively confirmed | PC-153 |
+| G-154 | S7 F1: helper absence must be positively confirmed | PC-154 |
+| G-155 | S7 F1: masked absence must be positively confirmed | PC-155 |
+| G-156 | S7 F1: work absence must be positively confirmed | PC-156 |
+| G-157 | S7 F1: mask absence must be positively confirmed | PC-157 |
+| G-158 | S7 F1: cache absence must be positively confirmed | PC-158 |
+| G-159 | S7 F1: network absence must be positively confirmed | PC-159 |
 | G-160 | S7 F1: unknown outcome retains exact identity and ledger diagnosis | PC-160 |
 | G-161 | S7 F1: consumer removal acknowledgement cannot replace positive absence | PC-161 |
 | G-162 | S7 F1: helper removal acknowledgement cannot replace positive absence | PC-162 |

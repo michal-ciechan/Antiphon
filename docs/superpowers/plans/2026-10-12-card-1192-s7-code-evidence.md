@@ -1,5 +1,7 @@
 # CARD-1192 S7 Code evidence (ce4980da)
 
+Cleanup-success qualification: Review c0d59c0d found F1 on this historical source. Docker daemon loss with exit 1 could publish success while resources remained. The [round-2 repair evidence](2026-10-12-card-1192-s7-repair-code-evidence.md) supersedes that cleanup verdict; unknown outcomes now refuse success and live W-1 remains pending. Original run records below are unchanged.
+
 S7 removes the fixture's host payload root and makes disposal precede success. Its closed Final CP-33..43 group passed 11/11, with zero failures/skips and SHA-qualified clean receipts. Live W-1 acceptance remains pending.
 
 Original Code task / landing owner: ce4980da-9fb7-4ddc-821a-1ae22299bdf6.
