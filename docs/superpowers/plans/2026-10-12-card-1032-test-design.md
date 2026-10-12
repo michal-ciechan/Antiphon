@@ -570,6 +570,16 @@ has not executed any control.
 | G-537 | S2 D1; foreign_mirror_owner through the live queue leaves the foreign tree and ledger untouched | PC-537 |
 | G-538 | S2 D1; stale_mirror_binding through the live queue does not complete the server row | PC-538 |
 | G-539 | S2 D1; runner_store_mismatch through the live queue writes no directory or ledger | PC-539 |
+| G-540 | S2; missing registration file refuses a bound mirror that names the custody guid before any tree or ledger write | PC-540 |
+| G-541 | S2; empty registration file refuses that bound mirror | PC-541 |
+| G-542 | S2; whitespace registration file refuses that bound mirror | PC-542 |
+| G-543 | S2; garbled registration file refuses that bound mirror | PC-543 |
+| G-544 | S2; wrong-length registration guid refuses that bound mirror | PC-544 |
+| G-545 | S2; a directory at the registration path refuses that bound mirror | PC-545 |
+| G-546 | S2; an unreadable registration file refuses that bound mirror | PC-546 |
+| G-547 | S2; a readable different registration guid still refuses a request that names the custody guid | PC-547 |
+| G-548 | S2; a readable matching registration guid completes under that guid, not the custody guid | PC-548 |
+| G-549 | S2; an unbound request still creates the mirror when the registration file is missing | PC-549 |
 
 ### Positive controls
 
@@ -890,6 +900,16 @@ remain pending under the parent artifact, not silently discharged here.
 | PC-537 | JOIN | colliding short id through the live queue -> break G-537: adopt when the owner stamp does not match. | `/*/*/PhoneHomeMirrorJoinTests/C1032_JoinForeignOwner` | `foreignAdopted.ShouldBeFalse()` |
 | PC-538 | JOIN | exact replay after removal through the live queue -> break G-538: return success when the generation directory is absent. | `/*/*/PhoneHomeMirrorJoinTests/C1032_JoinStaleBinding` | `staleCompleted.ShouldBeFalse()` |
 | PC-539 | JOIN | registration store file replaced before the request -> break G-539: bind the requested store and skip the mismatch throw. | `/*/*/PhoneHomeMirrorJoinTests/C1032_JoinStoreMismatch` | `wrongStoreCompleted.ShouldBeFalse()` |
+| PC-540 | RB | missing registration file, request names the nonempty custody guid -> break G-540: substitute RunnerStoreId and accept the bound mirror. | `/*/*/RunnerWorkspaceBindingTests/C1032_StoreIdentityRefused*` | `acceptedCustody.ShouldBeFalse("missing")` |
+| PC-541 | RB | empty registration file, request names the custody guid -> break G-541: substitute RunnerStoreId and accept the bound mirror. | `/*/*/RunnerWorkspaceBindingTests/C1032_StoreIdentityRefused*` | `acceptedCustody.ShouldBeFalse("empty")` |
+| PC-542 | RB | whitespace registration file, request names the custody guid -> break G-542: substitute RunnerStoreId and accept the bound mirror. | `/*/*/RunnerWorkspaceBindingTests/C1032_StoreIdentityRefused*` | `acceptedCustody.ShouldBeFalse("whitespace")` |
+| PC-543 | RB | garbled registration file, request names the custody guid -> break G-543: substitute RunnerStoreId and accept the bound mirror. | `/*/*/RunnerWorkspaceBindingTests/C1032_StoreIdentityRefused*` | `acceptedCustody.ShouldBeFalse("garbled")` |
+| PC-544 | RB | wrong-length registration guid, request names the custody guid -> break G-544: substitute RunnerStoreId and accept the bound mirror. | `/*/*/RunnerWorkspaceBindingTests/C1032_StoreIdentityRefused*` | `acceptedCustody.ShouldBeFalse("wrong-length")` |
+| PC-545 | RB | directory at the registration path, request names the custody guid -> break G-545: substitute RunnerStoreId and accept the bound mirror. | `/*/*/RunnerWorkspaceBindingTests/C1032_StoreIdentityRefused*` | `acceptedCustody.ShouldBeFalse("directory")` |
+| PC-546 | RB | mode-denied registration file, request names the custody guid -> break G-546: substitute RunnerStoreId and accept the bound mirror. | `/*/*/RunnerWorkspaceBindingTests/C1032_StoreIdentityRefused*` | `acceptedCustody.ShouldBeFalse("unreadable")` |
+| PC-547 | RB | readable registration guid differs and the request names custody -> break G-547: compare the request with RunnerStoreId instead of the file. | `/*/*/RunnerWorkspaceBindingTests/C1032_StoreIdentityRefused*` | `custodyAccepted.ShouldBeFalse()` |
+| PC-548 | RB | readable registration guid matches the request and differs from custody -> break G-548: bind RunnerStoreId and refuse the registration guid. | `/*/*/RunnerWorkspaceBindingTests/C1032_StoreIdentityRefused*` | `registeredStoreCompleted.ShouldBeTrue()` |
+| PC-549 | RB | unbound request and missing registration file -> break G-549: require a parsed registration guid before the legacy mirror. | `/*/*/RunnerWorkspaceBindingTests/C1032_StoreIdentityRefused*` | `legacyMirrorExists.ShouldBeTrue()` |
 
 ### Out of scope
 
@@ -923,7 +943,7 @@ remain pending under the parent artifact, not silently discharged here.
 
 This is the sole importer-visible closed ordinary list in **this** artifact.
 Use this path, not the provisional table in the fix plan. Each row owns a fresh
-isolated build and one exact filter. The twenty-one rows total 116 TUnit executions. CP-21 is the S2 phone-home join added after the 105-minute freeze below.
+isolated build and one exact filter. The twenty-two rows total 126 TUnit executions. CP-21 is the Linux-only S2 phone-home join. CP-22 is the dispatcher registration-store table (10 results) added by the S2 store-identity repair.
 Read each fresh TRX's executed class/method roster as well as its count:
 the tool's Min is a floor and its derived Expect tokens alone do not enforce
 the exact roster. Prefix rows select only the enumerated C1032 methods above;
@@ -935,7 +955,7 @@ is what makes the enumerated methods run (TUnit issue 4580). No other
 C1032 method shares those names, so the star does not add a case.
 
 Select explicit `--rows` after commit/push:
-S1=CP-1,CP-2; S2=CP-3,CP-4,CP-17,CP-18,CP-19,CP-20,CP-21; S3=CP-5; S4=CP-6;
+S1=CP-1,CP-2; S2=CP-3,CP-4,CP-17,CP-18,CP-19,CP-20,CP-21,CP-22; S3=CP-5; S4=CP-6;
 S5=CP-7,CP-8,CP-9,CP-10; S6=CP-11,CP-12;
 S7=CP-13,CP-14; S8=CP-15,CP-16.
 This moves parent destructive witnesses behind S5 implementation and adds
@@ -961,9 +981,17 @@ procedure, record its SHA and reason, and budget the separate three minutes
 below. Do not hand-author a migration or replace the schema CP with migration
 generation. Additional build/test work needs a stated failure/change reason.
 
-No platform pin is needed for these portable rows. Resolve runner defaults and
-catalogue again at dispatch. Native parent acceptance alone requests Windows.
-Expect means the full enumerated roster, zero failures and zero skipped tests;
+CP-3, CP-4, CP-17, CP-18, CP-19, CP-20, and CP-22 need no platform pin.
+CP-21 requires Linux. Its busy and crash fixtures run `/usr/bin/mkfifo` and
+`/bin/sh` and call `File.SetUnixFileMode`. Those methods skip on Windows with
+that reason; a Windows skip is not acceptance and does not certify the row.
+On Linux the six methods execute and must not skip, so a Linux repeat of CP-21
+stays valid. Do not replace the fixtures with a portable barrier. CP-22's
+mode-bit denial case also skips off Linux; its other identity cases run on
+either platform. Resolve runner defaults and catalogue again at dispatch.
+Native parent acceptance alone requests Windows.
+Expect means the full enumerated roster, zero failures and zero skipped tests
+on the platform the row requires;
 loops, assertions and PC variants do not raise Min.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
@@ -989,13 +1017,15 @@ loops, assertions and PC variants do not raise Min.
 | CP-19 | S2 | `tests/Antiphon.SessionRunner.Tests -> bin-c1032-store-mismatch/` | store-mismatch | `/*/*/RunnerWorkspaceBindingTests/C1032_StoreMismatch*` | V-1 | all 1 listed; 0 failed/skipped | 1 | 5 | true |
 | CP-20 | S2 | `tests/Antiphon.Tests -> bin-c1032-store-replacement/` | store-replacement | `/*/*/RemoteWorkspacePreparerTests/C1032_StoreReplacement*` | V-1 | all 1 listed; 0 failed/skipped | 1 | 5 | true |
 | CP-21 | S2 | `tests/Antiphon.Tests -> bin-c1032-join/` | mirror-join | `/*/*/PhoneHomeMirrorJoinTests/C1032_Join*` | V-1 | all 6 listed; 0 failed/skipped | 6 | 8 | true |
+| CP-22 | S2 | `tests/Antiphon.SessionRunner.Tests -> bin-c1032-store-identity/` | store-identity | `/*/*/RunnerWorkspaceBindingTests/C1032_StoreIdentity*` | V-1 | all 10 listed; 0 failed/skipped | 10 | 5 | true |
 
 ### Cost
 
 **Estimated**, not measured. Ordinary Code V/R floor is the CP time sum:
 5+4+5+5+5+5+5+5+5+6+5+6+6+6+7+5+5+5+5+5 = **105 minutes**.
 CP-21 adds one S2 build and 8 minutes and is not inside that sum.
-The exact filters are CP-1..CP-21 above; slice floors are S1=9, S2=30,
+CP-22 adds 5 minutes inside the S2 floor below.
+The exact filters are CP-1..CP-22 above; slice floors are S1=9, S2=35,
 S3=5, S4=5, S5=21, S6=11, S7=12, S8=12 minutes.
 This includes **20 isolated builds × 3 = 60** and **45 minutes V/R**.
 Setup/manifest/tool-bootstrap allowance = **3**; S1 EF-generation authoring build allowance =
@@ -1016,12 +1046,13 @@ of a single Code dispatch or permission to resume Mutation.
 The 281 controls include 33 retained parent controls, 36 legacy regression
 controls and 212 added independent binding/schema/digest/receipt/use/recovery/
 inertness/join predicates. Field-level controls are intentional; sharing a test method
-does not collapse independently bypassable comparisons. CP-21 adds PC-534..PC-539;
-the 1,925-minute Mutation floor below is the pre-join 275-control estimate.
+does not collapse independently bypassable comparisons. CP-21 adds PC-534..PC-539.
+CP-22 adds PC-540..PC-549. Those ten controls stay pending for method-scoped SourceLanding Mutation.
+The 1,925-minute Mutation floor below is the pre-join 275-control estimate.
 
 Savings: 18 selected class/group occurrences grouped into 16 builds save
 **2 × 3 = 6 minutes** versus building each class/group separately.
-S2 repair rows CP-17, CP-18, CP-19, and CP-20 are separate builds and are not part of that saving.
+S2 repair rows CP-17, CP-18, CP-19, CP-20, and CP-22 are separate builds and are not part of that saving.
 The fix plan proposed 75 minutes; this freeze adds **10** (two builds = 6,
 four minutes of added gate/inspection execution) to avoid scheduling destructive
 witnesses before their implementation. Mutation batching savings = **0**:
@@ -1030,10 +1061,11 @@ activation costs remain in the parent plan and are not included in this S3 sum.
 
 #### Handoff audit
 
-Static audit: **guards=281, mapped=281, missing=0, duplicate PC maps=0**.
+Static audit at the pre-repair freeze: **guards=281, mapped=281, missing=0, duplicate PC maps=0**.
+S2 store-identity repair adds G-540..G-549, PC-540..PC-549, and CP-22 (10 results). Those controls stay pending and are outside the 281 figure.
 Parent U=21/M=12 are represented once in the ordinary roster; new prerequisite
-methods=47; existing methods=36; total=116. Twenty-one unique CP rows and outputs
-cover the ordinary V/R scope. No test/build/mutation execution is asserted.
+methods=47; existing methods=36; total=116 before CP-22. Twenty-two unique CP rows and outputs
+cover the ordinary V/R scope. CP-22 adds one method and 10 results (126 executions). No test/build/mutation execution is asserted.
 PCs: specified=281, executed=0, pending=281, payloads binding required=281.
 The later Mutation acceptance gate requires the named red/restore/green cycles;
 paused controls are not waived and cannot be reported PC-clean.

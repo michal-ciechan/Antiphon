@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.Versioning;
 using System.Text.Json;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
@@ -17,12 +18,17 @@ using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
 using Shouldly;
 using TUnit.Core;
+using TUnit.Core.Exceptions;
 
 namespace Antiphon.Tests.Application;
 
 /// <summary>
 /// CARD-1032 S2 D1. Preparation goes through a real phone-home socket, the runner
 /// mutation lock, and a scratch git repository, then a fresh server row read.
+/// CP-21 requires Linux: the busy and crash fixtures use Unix FIFOs
+/// (<c>/usr/bin/mkfifo</c>, <c>/bin/sh</c>) and <c>File.SetUnixFileMode</c>.
+/// Windows skips these methods. That skip is not acceptance, and this class
+/// does not supply a portable barrier.
 /// </summary>
 [Category("Integration")]
 [Category("Slow")]
@@ -33,6 +39,7 @@ public sealed class PhoneHomeMirrorJoinTests
     [Timeout(120_000)]
     public async Task C1032_JoinIdleRecipient(CancellationToken cancellationToken)
     {
+        RequireLinuxJoin();
         // case: an idle registered runner accepts the live store and finishes the mirror.
         // mutation: skip StampOwnedCreationAsync's owner-stamp write and still return success.
         // red: stampMatches.ShouldBeTrue() — the worktree git dir has no antiphon-mirror-owner.json for this task.
@@ -63,6 +70,7 @@ public sealed class PhoneHomeMirrorJoinTests
     [Timeout(120_000)]
     public async Task C1032_JoinBusyRecipient(CancellationToken cancellationToken)
     {
+        RequireLinuxJoin();
         // case: a second mirror waits while an earlier git mutation holds the runner lock.
         // mutation: skip MutationLock.WaitAsync so the second request writes a ledger during the first git.
         // red: partialBindingLeft.ShouldBeFalse() — the waiting task gains a runner record or a completed server binding.
@@ -127,6 +135,7 @@ public sealed class PhoneHomeMirrorJoinTests
     [Timeout(120_000)]
     public async Task C1032_JoinCrashRetry(CancellationToken cancellationToken)
     {
+        RequireLinuxJoin();
         // case: the server drops its waiter after enqueue and the retry reuses the same preparation.
         // mutation: replace the stored PreparationId on reuse. A second insert collides with the
         // task/attempt/store/empty-binding unique index, so the guarded row would stay the original id.
@@ -169,6 +178,7 @@ public sealed class PhoneHomeMirrorJoinTests
     [Timeout(120_000)]
     public async Task C1032_JoinForeignOwner(CancellationToken cancellationToken)
     {
+        RequireLinuxJoin();
         // case: a second full task id collides with an owned short worktree through the live queue.
         // mutation: skip the owner-stamp comparison and adopt the existing directory.
         // red: foreignAdopted.ShouldBeFalse() — the foreign task's server row becomes a completed binding.
@@ -229,6 +239,7 @@ public sealed class PhoneHomeMirrorJoinTests
     [Timeout(120_000)]
     public async Task C1032_JoinStaleBinding(CancellationToken cancellationToken)
     {
+        RequireLinuxJoin();
         // case: an exact preparation replay arrives after the runner removed that generation.
         // mutation: return the completed binding from RequireCurrentGenerationAsync without checking the directory.
         // red: staleCompleted.ShouldBeFalse() — the server row is completed while the worktree is gone.
@@ -267,6 +278,7 @@ public sealed class PhoneHomeMirrorJoinTests
     [Timeout(120_000)]
     public async Task C1032_JoinStoreMismatch(CancellationToken cancellationToken)
     {
+        RequireLinuxJoin();
         // case: the registered store file changes before the mirror, so the request names the old live store.
         // mutation: bind the requested store and skip the runner_store_mismatch throw.
         // red: wrongStoreCompleted.ShouldBeFalse() — the recipient creates the tree for the store it no longer is.
@@ -286,6 +298,14 @@ public sealed class PhoneHomeMirrorJoinTests
         rows[0].RunnerStoreId.ShouldBe(world.StoreId.ToString("D"));
         var warnings = await world.WarningsAsync(taskId);
         warnings.ShouldContain(detail => detail.Contains("runner_store_mismatch", StringComparison.Ordinal));
+    }
+
+    /// <summary>CP-21 executes on Linux. A Windows skip is not a passing result.</summary>
+    private static void RequireLinuxJoin()
+    {
+        if (!OperatingSystem.IsLinux())
+            throw new SkipTestException(
+                "CP-21 phone-home join requires Linux FIFOs and Unix file modes.");
     }
 
     private sealed class JoinWorld : IAsyncDisposable
@@ -502,6 +522,7 @@ public sealed class PhoneHomeMirrorJoinTests
 
         private async Task StartCoreAsync(CancellationToken ct, bool hook)
         {
+            RequireLinuxJoin();
             _hook = hook;
             _root = Directory.CreateTempSubdirectory("c1032-join").FullName;
             var origin = Path.Combine(_root, "origin");
@@ -593,7 +614,9 @@ public sealed class PhoneHomeMirrorJoinTests
                 fi
                 exit 0
                 """.Replace("__HOLD__", _hold, StringComparison.Ordinal), ct);
-            File.SetUnixFileMode(hook, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            // CP-21 requires Linux. This is not a portable barrier; Windows skips the join.
+            if (OperatingSystem.IsLinux())
+                MarkHookExecutable(hook);
             await GitAsync(Clone, ct, "config", "core.hooksPath", hooks);
         }
 
@@ -621,6 +644,10 @@ public sealed class PhoneHomeMirrorJoinTests
 
         private AppDbContext NewDb() =>
             new(TestDbFixture.CreateDbContextOptions(Schema.ConnectionString));
+
+        [UnsupportedOSPlatform("windows")]
+        private static void MarkHookExecutable(string hook) =>
+            File.SetUnixFileMode(hook, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
 
         private static void Unblock(string fifo)
         {

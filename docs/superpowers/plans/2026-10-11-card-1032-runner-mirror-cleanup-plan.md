@@ -299,8 +299,10 @@ checkpoint-owned alternate outputs after the run.
 | CP-19 | S2 | `tests/Antiphon.SessionRunner.Tests -> bin-c1032-store-mismatch/` | linux-store-mismatch | `/*/*/RunnerWorkspaceBindingTests/C1032_StoreMismatch*` | V-1 | all 1 listed; 0 failed/skipped | 1 | 5 | true |
 | CP-20 | S2 | `tests/Antiphon.Tests -> bin-c1032-store-replacement/` | linux-store-replacement | `/*/*/RemoteWorkspacePreparerTests/C1032_StoreReplacement*` | V-1 | all 1 listed; 0 failed/skipped | 1 | 5 | true |
 | CP-21 | S2 | `tests/Antiphon.Tests -> bin-c1032-join/` | linux-mirror-join | `/*/*/PhoneHomeMirrorJoinTests/C1032_Join*` | V-1 | all 6 listed; 0 failed/skipped | 6 | 8 | true |
+| CP-22 | S2 | `tests/Antiphon.SessionRunner.Tests -> bin-c1032-store-identity/` | linux-store-identity | `/*/*/RunnerWorkspaceBindingTests/C1032_StoreIdentity*` | V-1 | all 10 listed; 0 failed/skipped | 10 | 5 | true |
 
-CP-15 through CP-18, and the closed importer list that includes CP-19, CP-20, and CP-21, live in `docs/superpowers/plans/2026-10-12-card-1032-test-design.md`.
+CP-15 through CP-18, and the closed importer list that includes CP-19, CP-20, CP-21, and CP-22, live in `docs/superpowers/plans/2026-10-12-card-1032-test-design.md`.
+CP-21 requires Linux FIFOs and Unix file modes. A Windows skip is not acceptance. Do not replace that fixture with a portable barrier.
 
 ### Windows-only witnesses and deferred activation
 
@@ -314,7 +316,7 @@ skips or run them against a production path to claim S3 acceptance.
 
 At dispatch, read `/api/runner-defaults` and `/api/session-runners` again. Omit
 `-Runner` unless deliberately pinning one host. Omit `-Platform` for portable
-work, use `-Platform Windows` only for native witnesses; `-Platform Any` clears
+work. CP-21 is the Linux exception above, not a portable row. Use `-Platform Windows` only for native witnesses; `-Platform Any` clears
 an inherited pin. No location or current host occupancy is embedded in this plan.
 
 ### Cost and TestDesign handoff

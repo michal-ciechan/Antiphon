@@ -1,9 +1,11 @@
 using System.Diagnostics;
+using System.Runtime.Versioning;
 using System.Text.Json;
 using Antiphon.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
 using Shouldly;
 using TUnit.Core;
+using TUnit.Core.Exceptions;
 
 namespace Antiphon.SessionRunner.Tests;
 
@@ -358,6 +360,189 @@ public sealed class RunnerWorkspaceBindingTests
         }).OpenBindingStore().Read(dispatchPreparation);
         dispatchRecord.Kind.ShouldBe(BindingReadKind.Missing);
     }
+
+    [Test]
+    [Arguments("missing")]
+    [Arguments("empty")]
+    [Arguments("whitespace")]
+    [Arguments("garbled")]
+    [Arguments("wrong-length")]
+    [Arguments("directory")]
+    [Arguments("unreadable")]
+    [Arguments("mismatch")]
+    [Arguments("valid")]
+    [Arguments("legacy-missing")]
+    public async Task C1032_StoreIdentityRefused(string setup)
+    {
+        // case: missing, empty, whitespace, garbled, wrong-length, directory, unreadable —
+        //   a bound request names this runner and the nonempty custody guid.
+        // mutation: substitute RunnerStoreId when StoreIdPath cannot be parsed as a guid.
+        // red: acceptedCustody.ShouldBeFalse(setup) — the tree and completed ledger are created for that custody guid.
+        // case: mismatch — the registration file is a different guid and the request names custody.
+        // mutation: compare the request with RunnerStoreId instead of the registration file.
+        // red: custodyAccepted.ShouldBeFalse() — the custody guid is stored while the file says otherwise.
+        // case: valid — the file guid matches the request and differs from custody.
+        // mutation: bind RunnerStoreId and refuse the registration guid.
+        // red: registeredStoreCompleted.ShouldBeTrue() — the mirror is refused or recorded under custody.
+        // case: legacy-missing — an unbound path-only request and no registration file.
+        // mutation: require a parsed registration guid before the legacy mirror.
+        // red: legacyMirrorExists.ShouldBeTrue() — the path-only request is refused.
+        if (setup == "unreadable" && !OperatingSystem.IsLinux())
+            throw new SkipTestException("Mode-bit denial of the registration file is Linux-only.");
+
+        const string registrationText = "11111111-1111-1111-1111-111111111111";
+        const string custodyText = "33333333-3333-3333-3333-333333333333";
+        var custody = Guid.Parse(custodyText);
+        using var scratch = Scratch.Create();
+        var storePath = Path.Combine(scratch.Root, "runner-store-id");
+        try
+        {
+            switch (setup)
+            {
+                case "missing":
+                case "legacy-missing":
+                    break;
+                case "empty":
+                    File.WriteAllText(storePath, "");
+                    break;
+                case "whitespace":
+                    File.WriteAllText(storePath, " \n\t");
+                    break;
+                case "garbled":
+                    File.WriteAllText(storePath, "not-a-guid");
+                    break;
+                case "wrong-length":
+                    File.WriteAllText(storePath, "11111111-1111-1111-1111-11111111111");
+                    break;
+                case "directory":
+                    Directory.CreateDirectory(storePath);
+                    break;
+                case "unreadable":
+                    File.WriteAllText(storePath, custodyText);
+                    if (OperatingSystem.IsLinux())
+                        DenyRegistrationRead(storePath);
+                    var denied = false;
+                    try
+                    {
+                        _ = File.ReadAllText(storePath);
+                    }
+                    catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
+                    {
+                        denied = true;
+                    }
+
+                    denied.ShouldBeTrue("mode bits did not make the registration file unreadable");
+                    break;
+                case "mismatch":
+                case "valid":
+                    File.WriteAllText(storePath, registrationText);
+                    break;
+                default:
+                    throw new InvalidOperationException(setup);
+            }
+
+            var taskId = Guid.Parse("deadbeef-0000-4000-8000-000000000041");
+            var preparationId = Guid.Parse("ffffffff-0000-4000-8000-000000000006");
+            var bound = Request(scratch, taskId, preparationId);
+            var requestedStore = setup is "valid" ? registrationText : custodyText;
+            var request = setup == "legacy-missing"
+                ? new PhoneHomeWorkspaceMirrorRequest(Scratch.Branch, scratch.Sha, "task-deadbeef")
+                : bound with
+                {
+                    Binding = bound.Binding! with { RunnerStoreId = requestedStore },
+                };
+            var dispatcher = new PhoneHomeCommandDispatcher(new StoreRuntime(custody), new PhoneHomeSettings
+            {
+                Enabled = true,
+                RunnerId = "runner-a",
+                AllowedCwd = scratch.Work,
+                RunnerRepository = scratch.Clone.Replace('\\', '/'),
+                Capacity = 1,
+                CapacityStatePath = scratch.Root.Replace('\\', '/') + "/capacity",
+                StoreIdPath = storePath.Replace('\\', '/'),
+                ProbeSecondaryRepositoryPushAccess = false,
+            });
+            var reply = await dispatcher.DispatchAsync(
+                new PhoneHomeFrame(
+                    PhoneHomeFrameKind.Request, 1, Guid.NewGuid(), PhoneHomeOperation.WorkspaceMirror,
+                    JsonSerializer.SerializeToElement(request, PhoneHomeFraming.Json)),
+                CancellationToken.None);
+            var tree = scratch.Work.TrimEnd('/') + "/worktrees/" + request.Name;
+            var ledger = new RunnerWorkspaceBindingStore(scratch.Work.TrimEnd('/') + "/workspace-bindings")
+                .Read(preparationId);
+            PhoneHomeWorkspaceMirrorResponse? mirrored = null;
+            if (reply.Kind == PhoneHomeFrameKind.Result)
+                mirrored = reply.Payload?.Deserialize<PhoneHomeWorkspaceMirrorResponse>(PhoneHomeFraming.Json);
+            var storedStore = mirrored?.Binding?.RunnerStoreId;
+            var treeExists = Directory.Exists(tree);
+            var ledgerComplete = ledger.Kind == BindingReadKind.Complete;
+
+            if (setup is "missing" or "empty" or "whitespace" or "garbled" or "wrong-length" or "directory" or "unreadable")
+            {
+                var acceptedCustody = reply.Kind == PhoneHomeFrameKind.Result
+                    && treeExists
+                    && ledgerComplete
+                    && string.Equals(storedStore, custodyText, StringComparison.Ordinal);
+                acceptedCustody.ShouldBeFalse(setup);
+                var serverRowCompleted = ledgerComplete
+                    || mirrored?.Binding is { BindingId: var bindingId } && bindingId != Guid.Empty;
+                serverRowCompleted.ShouldBeFalse(setup);
+                reply.Kind.ShouldBe(PhoneHomeFrameKind.Error);
+                reply.ErrorDetail.ShouldBe("recipient_store_unreadable");
+                treeExists.ShouldBeFalse();
+                ledger.Kind.ShouldBe(BindingReadKind.Missing);
+                return;
+            }
+
+            if (setup == "mismatch")
+            {
+                var custodyAccepted = reply.Kind == PhoneHomeFrameKind.Result
+                    && treeExists
+                    && ledgerComplete
+                    && string.Equals(storedStore, custodyText, StringComparison.Ordinal);
+                custodyAccepted.ShouldBeFalse();
+                var serverRowCompleted = ledgerComplete
+                    || mirrored?.Binding is { BindingId: var bindingId } && bindingId != Guid.Empty;
+                serverRowCompleted.ShouldBeFalse();
+                reply.Kind.ShouldBe(PhoneHomeFrameKind.Error);
+                reply.ErrorDetail.ShouldBe("runner_store_mismatch");
+                treeExists.ShouldBeFalse();
+                ledger.Kind.ShouldBe(BindingReadKind.Missing);
+                return;
+            }
+
+            if (setup == "valid")
+            {
+                var registeredStoreCompleted = reply.Kind == PhoneHomeFrameKind.Result
+                    && treeExists
+                    && ledgerComplete
+                    && string.Equals(storedStore, registrationText, StringComparison.Ordinal)
+                    && !string.Equals(storedStore, custodyText, StringComparison.Ordinal);
+                registeredStoreCompleted.ShouldBeTrue();
+                mirrored!.Binding!.BindingId.ShouldNotBe(Guid.Empty);
+                return;
+            }
+
+            var legacyMirrorExists = reply.Kind == PhoneHomeFrameKind.Result
+                && treeExists
+                && mirrored?.Binding is null;
+            legacyMirrorExists.ShouldBeTrue();
+            ledger.Kind.ShouldBe(BindingReadKind.Missing);
+        }
+        finally
+        {
+            if (setup == "unreadable" && OperatingSystem.IsLinux() && File.Exists(storePath))
+                RestoreRegistrationRead(storePath);
+        }
+    }
+
+    [UnsupportedOSPlatform("windows")]
+    private static void DenyRegistrationRead(string path) =>
+        File.SetUnixFileMode(path, UnixFileMode.None);
+
+    [UnsupportedOSPlatform("windows")]
+    private static void RestoreRegistrationRead(string path) =>
+        File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
 
     [Test]
     public async Task C1032_BindingLegacyCompatibility()
