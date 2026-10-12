@@ -72,9 +72,12 @@ ARG SOURCE_REVISION=unknown
 ARG GIT_MINIMUM_VERSION
 ARG GIT_VERSION
 # CARD-0989: Grok's raw linux-x64 artifact, pinned by version AND reviewed SHA-256.
-# A missing or non-64-hex pin fails before curl. A re-published binary fails at
-# sha256sum -c, before install and before grok --version. The remedy is a new
-# pinned pair, never install.sh and never executing the download before the check.
+# The whole GROK_SHA256 value must be exactly 64 lowercase hex characters. A missing
+# pin, any other length, or any non-hex character (newline, CR, space, uppercase)
+# fails before curl. printf builds the checksum line; sha256sum --check --strict
+# must print exactly "<artifact>: OK". An empty download or a mismatch fails before
+# install and before grok --version. The remedy is a new pinned pair, never install.sh
+# and never executing the download before the check.
 ARG GROK_VERSION=1.0.41
 ARG GROK_SHA256=9ce03ed23e16ea01072b4496263d6213a27899e1e3e107f008d36edf82e70407
 # CARD-0628 D-2: Claude Code's native linux-x64 binary, pinned by version AND published SHA-256.
@@ -95,10 +98,13 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends curl ca-certificates bash libcurl3-gnutls libexpat1 zlib1g procps \
  && rm -rf /var/lib/apt/lists/* \
  && test -n "${GROK_SHA256}" \
- && printf '%s' "${GROK_SHA256}" | grep -Eq '^[0-9a-f]{64}$' \
+ && [ "${#GROK_SHA256}" -eq 64 ] \
+ && case "${GROK_SHA256}" in *[!0-9a-f]*) false ;; esac \
  && mkdir -p /tmp/grok-download \
  && curl -fsSL -o /tmp/grok-download/grok "https://x.ai/cli/grok-${GROK_VERSION}-linux-x86_64" \
- && echo "${GROK_SHA256}  /tmp/grok-download/grok" | sha256sum -c - \
+ && [ -s /tmp/grok-download/grok ] \
+ && grok_checksum_status="$(printf '%s  %s\n' "${GROK_SHA256}" /tmp/grok-download/grok | sha256sum --check --strict)" \
+ && [ "${grok_checksum_status}" = "/tmp/grok-download/grok: OK" ] \
  && install -m 0755 /tmp/grok-download/grok /usr/local/bin/grok \
  && ln -sf grok /usr/local/bin/agent \
  && /usr/local/bin/grok --version | grep -F "${GROK_VERSION}" \

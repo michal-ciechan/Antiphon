@@ -541,9 +541,10 @@ public sealed class DockerStackContractTests
             .ShouldBeFalse("the token is never an image layer");
     }
 
-    // CARD-0989: the raw linux-x64 Grok artifact, pinned by version and reviewed SHA-256,
-    // verified before install or execution. A missing pin fails before curl. A mismatch
-    // fails at sha256sum -c. install.sh is not a fallback.
+    // CARD-0989: the raw linux-x64 Grok artifact, pinned by version and reviewed SHA-256.
+    // The whole pin is exactly 64 lowercase hex characters, checked before curl.
+    // printf builds one checksum line; sha256sum --check --strict must report exactly
+    // that artifact OK before install or grok --version. install.sh is not a fallback.
     [Test]
     public void Runner_pins_grok_cli_by_version_and_digest()
     {
@@ -557,8 +558,10 @@ public sealed class DockerStackContractTests
             .ShouldBeTrue("pinned-digest");
         body.Contains("https://x.ai/cli/grok-${GROK_VERSION}-linux-x86_64", StringComparison.Ordinal)
             .ShouldBeTrue("pinned-artifact-url");
-        body.Contains("echo \"${GROK_SHA256}  /tmp/grok-download/grok\" | sha256sum -c -", StringComparison.Ordinal)
+        body.Contains("printf '%s  %s\\n' \"${GROK_SHA256}\" /tmp/grok-download/grok | sha256sum --check --strict", StringComparison.Ordinal)
             .ShouldBeTrue("pinned-checksum-command");
+        body.Contains("sha256sum --check --strict", StringComparison.Ordinal)
+            .ShouldBeTrue("strict-checksum");
         body.Contains("install -m 0755 /tmp/grok-download/grok /usr/local/bin/grok", StringComparison.Ordinal)
             .ShouldBeTrue("pinned-install");
         body.Contains("/usr/local/bin/grok --version | grep -F \"${GROK_VERSION}\"", StringComparison.Ordinal)
@@ -567,12 +570,22 @@ public sealed class DockerStackContractTests
             .ShouldBeTrue("pinned-temp-removed");
         Order(body, "test -n \"${GROK_SHA256}\"", "curl -fsSL -o /tmp/grok-download/grok")
             .ShouldBeTrue("missing-pin-before-fetch");
-        Order(body, "printf '%s' \"${GROK_SHA256}\" | grep -Eq '^[0-9a-f]{64}$'", "curl -fsSL -o /tmp/grok-download/grok")
+        Order(body, "[ \"${#GROK_SHA256}\" -eq 64 ]", "curl -fsSL -o /tmp/grok-download/grok")
+            .ShouldBeTrue("whole-string-length");
+        Order(body, "case \"${GROK_SHA256}\" in *[!0-9a-f]*) false ;; esac", "curl -fsSL -o /tmp/grok-download/grok")
             .ShouldBeTrue("malformed-pin-before-fetch");
-        Order(body, "echo \"${GROK_SHA256}  /tmp/grok-download/grok\" | sha256sum -c -", "install -m 0755 /tmp/grok-download/grok")
+        Order(body, "[ -s /tmp/grok-download/grok ]", "install -m 0755 /tmp/grok-download/grok")
+            .ShouldBeTrue("empty-file-before-install");
+        Order(body, "sha256sum --check --strict", "install -m 0755 /tmp/grok-download/grok")
             .ShouldBeTrue("verify-before-install");
-        Order(body, "echo \"${GROK_SHA256}  /tmp/grok-download/grok\" | sha256sum -c -", "/usr/local/bin/grok --version")
+        Order(body, "[ \"${grok_checksum_status}\" = \"/tmp/grok-download/grok: OK\" ]", "install -m 0755 /tmp/grok-download/grok")
+            .ShouldBeTrue("exact-artifact-ok");
+        Order(body, "sha256sum --check --strict", "/usr/local/bin/grok --version")
             .ShouldBeTrue("verify-before-execute");
+        body.Contains("printf '%s' \"${GROK_SHA256}\" | grep -Eq '^[0-9a-f]{64}$'", StringComparison.Ordinal)
+            .ShouldBeFalse("no-line-grep");
+        body.Contains("echo \"${GROK_SHA256}  /tmp/grok-download/grok\"", StringComparison.Ordinal)
+            .ShouldBeFalse("no-spliced-checksum-line");
         dockerfile.Contains("x.ai/cli/install.sh", StringComparison.Ordinal)
             .ShouldBeFalse("no-installer-fallback");
     }
