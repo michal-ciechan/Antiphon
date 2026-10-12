@@ -358,7 +358,7 @@ internal sealed class LandRefusalDeliveryHarness : IAsyncDisposable
             }
             catch (IOException)
             {
-                // The provider is already disposed; a leftover temp directory is removed on the next pass.
+                // Temp-directory cleanup is best effort; a failed delete is left behind (no retry).
             }
         }
 
