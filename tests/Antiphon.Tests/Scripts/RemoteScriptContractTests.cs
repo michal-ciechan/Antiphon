@@ -5735,6 +5735,133 @@ public sealed class RemoteScriptContractTests
 
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
+    public void C0995_Deploy_temp_checks_host_absence_before_checkout()
+    {
+        var remote = Remote();
+        var deploy = Commands(Block(remote, "case_deploy_temp_runner"));
+        var guard = deploy.FindIndex(line => line == "c849_no_temp_containers");
+        var checkout = deploy.FindIndex(line => line == "ensure_checkout");
+        var compose = deploy.FindIndex(line => line.Contains("compose_temp up -d --no-build", StringComparison.Ordinal));
+        guard.ShouldBeGreaterThanOrEqualTo(0, "deploy-temp absence call missing");
+        deploy.Count(line => line == "c849_no_temp_containers").ShouldBe(1, "deploy-temp absence call");
+        checkout.ShouldBeGreaterThan(guard, "absence before ensure_checkout");
+        compose.ShouldBeGreaterThan(guard, "absence before compose_temp up");
+
+        var output = LinuxShell(Block(remote, "c849_no_temp_containers") + "\n" +
+            Block(remote, "case_deploy_temp_runner") + "\n" + """
+            root="$(mktemp -d)"; trap 'rm -rf "$root"' EXIT
+            CASE_DIR="$root/case"; mkdir -p "$CASE_DIR"
+            TEMP_PROJECT=antiphon-runner-temp; LANE=host
+            write_result() { printf 'accepted=%s diagnosis=%s\n' "$1" "$2"; exit "$3"; }
+            require_lane() { :; }
+            c1008_rollout_lock() { :; }
+            ensure_checkout() { printf 'reached=ensure_checkout\n' >> "$root/trace"; write_result true GuardPassed 0; }
+            compose_temp() { printf 'reached=compose_temp\n' >> "$root/trace"; write_result true ComposeReached 0; }
+            docker() {
+                [ "$1" = ps ] || { printf 'unexpected-docker\n' >> "$root/trace"; return 1; }
+                case "$MODE" in
+                    absent) return 0 ;;
+                    present) printf 'abc123\n'; return 0 ;;
+                    stopped) printf 'deadbeef\n'; return 0 ;;
+                    garbage) printf 'not a container id\n'; return 0 ;;
+                    ps-error) return 1 ;;
+                    *) printf 'unmapped-mode\n' >> "$root/trace"; return 2 ;;
+                esac
+            }
+            for MODE in absent present stopped garbage ps-error; do
+                : > "$root/trace"
+                ( case_deploy_temp_runner ) > "$root/out" 2>"$root/err"
+                code=$?
+                checkout=0; compose=0; unexpected=0
+                if grep -qx 'reached=ensure_checkout' "$root/trace"; then checkout=1; fi
+                if grep -qx 'reached=compose_temp' "$root/trace"; then compose=1; fi
+                if grep -qx 'unexpected-docker' "$root/trace"; then unexpected=1; fi
+                verdict="$(head -n 1 "$root/out" | tr -d '\r')"
+                printf 'ROW mode=%s exit=%s checkout=%s compose=%s unexpected=%s verdict=%s\n' \
+                    "$MODE" "$code" "$checkout" "$compose" "$unexpected" "$verdict"
+            done
+            """);
+        RequireExactRows(output,
+            "ROW mode=absent exit=0 checkout=1 compose=0 unexpected=0 verdict=accepted=true diagnosis=GuardPassed",
+            "ROW mode=present exit=2 checkout=0 compose=0 unexpected=0 verdict=accepted=false diagnosis=CacheTempContainerExists",
+            "ROW mode=stopped exit=2 checkout=0 compose=0 unexpected=0 verdict=accepted=false diagnosis=CacheTempContainerExists",
+            "ROW mode=garbage exit=2 checkout=0 compose=0 unexpected=0 verdict=accepted=false diagnosis=CacheTempContainerExists",
+            "ROW mode=ps-error exit=2 checkout=0 compose=0 unexpected=0 verdict=accepted=false diagnosis=CacheDonorLookupFailed");
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C0995_Cold_ready_seed_refuses_a_temp_container()
+    {
+        var remote = Remote();
+        var seed = Block(remote, "c849_seed");
+        var arm = ColdReadyArm(seed);
+        var commands = Commands(arm);
+        var call = commands.FindIndex(line => line == "c849_no_temp_containers");
+        var receipt = commands.FindIndex(line => line.Contains("ready=true kind=cold", StringComparison.Ordinal));
+        var accept = commands.FindIndex(line => line.StartsWith("write_result true", StringComparison.Ordinal));
+        // The empty-donor else also calls the check. Removing only this arm still
+        // refuses, so the arm text is the deletion control.
+        call.ShouldBeGreaterThanOrEqualTo(0, "cold-ready absence call missing");
+        commands.Count(line => line == "c849_no_temp_containers").ShouldBe(1, "cold-ready absence call");
+        receipt.ShouldBeGreaterThan(call, "absence before cold receipt");
+        accept.ShouldBeGreaterThan(call, "absence before cold accept");
+
+        var output = LinuxShell(Block(remote, "c849_no_temp_containers") + "\n" +
+            Block(remote, "c849_contract_receipt") + "\n" + seed + "\n" + """
+            root="$(mktemp -d)"; trap 'rm -rf "$root"' EXIT
+            SERVER2_ROOT="$root/server2"; mkdir -p "$SERVER2_ROOT/cache"
+            CASE_DIR="$root/case"; mkdir -p "$CASE_DIR"
+            C849_READY="$SERVER2_ROOT/cache/seed-accepted"
+            printf 'kind=cold\n' > "$C849_READY"
+            RUN=red; LANE=host; TEMP_PROJECT=antiphon-runner-temp
+            write_result() { printf 'accepted=%s diagnosis=%s\n' "$1" "$2"; exit "$3"; }
+            require_lane() { :; }
+            c849_prepare() { :; }
+            c849_image() { echo image; }
+            c849_optional_donor() { printf 'donor-probed\n' >> "$root/trace"; echo donor; }
+            c849_require_ready() {
+                [ "$1" = allow-cold ] || write_result false CacheFullSeedRequired 2
+                C849_KIND=cold; C849_SCHEMA=2; C849_DIGEST_TYPE=none; C849_DIGEST=none
+            }
+            docker() {
+                [ "$1" = ps ] || { printf 'unexpected-docker\n' >> "$root/trace"; return 1; }
+                case "$MODE" in
+                    absent) return 0 ;;
+                    present) printf 'abc123\n'; return 0 ;;
+                    stopped) printf 'deadbeef\n'; return 0 ;;
+                    garbage) printf 'not a container id\n'; return 0 ;;
+                    ps-error) return 1 ;;
+                    *) printf 'unmapped-mode\n' >> "$root/trace"; return 2 ;;
+                esac
+            }
+            for MODE in absent present stopped garbage ps-error; do
+                : > "$root/trace"
+                rm -f "$CASE_DIR/seed.txt" "$CASE_DIR/seed-contract.txt" "$CASE_DIR/seed-kind.txt"
+                ( c849_seed ) > "$root/out" 2>"$root/err"
+                code=$?
+                receipt=0; body=""; donor=0; unexpected=0
+                if [ -f "$CASE_DIR/seed.txt" ]; then
+                    receipt=1
+                    body="$(awk 'BEGIN{ORS="|"} {print}' "$CASE_DIR/seed.txt")"
+                fi
+                if grep -qx 'donor-probed' "$root/trace"; then donor=1; fi
+                if grep -qx 'unexpected-docker' "$root/trace"; then unexpected=1; fi
+                verdict="$(head -n 1 "$root/out" | tr -d '\r')"
+                printf 'ROW mode=%s exit=%s receipt=%s donor=%s unexpected=%s verdict=%s body=%s\n' \
+                    "$MODE" "$code" "$receipt" "$donor" "$unexpected" "$verdict" "$body"
+            done
+            """);
+        RequireExactRows(output,
+            "ROW mode=absent exit=0 receipt=1 donor=0 unexpected=0 verdict=accepted=true diagnosis= body=ready=true kind=cold writable=3|",
+            "ROW mode=present exit=2 receipt=0 donor=0 unexpected=0 verdict=accepted=false diagnosis=CacheTempContainerExists body=",
+            "ROW mode=stopped exit=2 receipt=0 donor=0 unexpected=0 verdict=accepted=false diagnosis=CacheTempContainerExists body=",
+            "ROW mode=garbage exit=2 receipt=0 donor=0 unexpected=0 verdict=accepted=false diagnosis=CacheTempContainerExists body=",
+            "ROW mode=ps-error exit=2 receipt=0 donor=0 unexpected=0 verdict=accepted=false diagnosis=CacheDonorLookupFailed body=");
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
     public void C849_Deploy_temp_names_saved_import_when_seed_is_missing()
     {
         var remote = Remote();
@@ -7675,6 +7802,48 @@ public sealed class RemoteScriptContractTests
         }
 
         return commands;
+    }
+
+    private static string ColdReadyArm(string seed)
+    {
+        var lines = seed.Replace("\r\n", "\n").Split('\n');
+        var open = Array.FindIndex(lines, line => line.Trim() == "if [ \"$C849_KIND\" = cold ]; then");
+        open.ShouldBeGreaterThanOrEqualTo(0, "cold-ready arm missing");
+        Array.FindIndex(lines, open + 1, line => line.Trim() == "if [ \"$C849_KIND\" = cold ]; then")
+            .ShouldBe(-1, "c849_seed has one cold-ready arm");
+        var close = Array.FindIndex(lines, open + 1, line => line.Trim() == "fi");
+        close.ShouldBeGreaterThan(open, "cold-ready arm never closes");
+        return string.Join('\n', lines[open..(close + 1)]);
+    }
+
+    private static void RequireExactRows(string output, params string[] expected)
+    {
+        var found = new List<string>();
+        foreach (var raw in output.Split('\n'))
+        {
+            var line = raw.Trim();
+            if (line.StartsWith("ROW mode=", StringComparison.Ordinal))
+                found.Add(line);
+        }
+
+        var expectedModes = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var line in expected)
+        {
+            var token = line.Split(' ')[1];
+            if (!token.StartsWith("mode=", StringComparison.Ordinal) || token.Length == "mode=".Length)
+                throw new InvalidOperationException("unknown absence case " + line);
+            if (!expectedModes.Add(token))
+                throw new InvalidOperationException("duplicate absence case " + token);
+        }
+
+        found.Count.ShouldBe(expected.Length, "absence roster " + string.Join(" || ", found));
+        for (var i = 0; i < expected.Length; i++)
+        {
+            var token = found[i].Split(' ')[1];
+            if (!expectedModes.Contains(token))
+                throw new InvalidOperationException("unknown absence case " + token);
+            found[i].ShouldBe(expected[i]);
+        }
     }
 
     private static bool Order(string text, string first, string second)
