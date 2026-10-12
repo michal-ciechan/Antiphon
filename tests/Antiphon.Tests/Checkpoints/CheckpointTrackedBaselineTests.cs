@@ -278,6 +278,11 @@ public sealed class CheckpointTrackedBaselineTests : CheckpointTestBase
             if ($parseErrors -and @($parseErrors).Count -gt 0) { throw ($parseErrors | Out-String) }
             $names = @(
                 'Get-CheckpointTrackedSnapshot',
+                'Get-CheckpointUntrackedManifest',
+                'Join-CheckpointRepoPath',
+                'Get-CheckpointContentStamp',
+                'Get-CheckpointStampLink',
+                'Get-CheckpointSha256',
                 'Get-CheckpointRepoRelative',
                 'Invoke-CheckpointGit',
                 'Resolve-CheckpointProjectDirectory',
