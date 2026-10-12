@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text;
 using Antiphon.Checkpoints;
 using Shouldly;
 using TUnit.Core;
@@ -473,9 +474,17 @@ public sealed class OutputCleanupTests : CheckpointTestBase
         Directory.CreateDirectory(output);
         var sentinel = Path.Combine(output, "out.dll");
         File.WriteAllText(sentinel, "keep");
-        var fake = Path.Combine(Path.GetTempPath(), "c1199-hang-" + Guid.NewGuid().ToString("N"));
-        var pidfile = fake + ".pid";
-        File.WriteAllText(fake, "#!/bin/sh\necho $$ > '" + pidfile + "'\nexec sleep 90\n");
+        // Keep the hanger inside this test's root. A script in the shared temp
+        // directory can fail exec in the same moment the timeout wait starts, and
+        // that start failure was reported as git-unavailable.
+        var fake = Path.Combine(root, "hang-git");
+        var pidfile = Path.Combine(root, "hang-git.pid");
+        var script = "#!/bin/sh\nprintf '%s\\n' \"$$\" > '" + pidfile.Replace("'", "'\\''", StringComparison.Ordinal) + "'\nwhile :; do\n  sleep 30 || true\ndone\n";
+        using (var stream = new FileStream(fake, FileMode.Create, FileAccess.Write, FileShare.None))
+        {
+            stream.Write(Encoding.ASCII.GetBytes(script));
+            stream.Flush(true);
+        }
         File.SetUnixFileMode(fake, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
         var started = Stopwatch.StartNew();
         try
