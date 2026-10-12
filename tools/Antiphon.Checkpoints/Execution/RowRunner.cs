@@ -85,7 +85,15 @@ public sealed class RowRunner
         }
         var fileName = request.DotnetFileName ?? "dotnet";
         var properties = BuildStep.PropertyArguments(request.Properties, _platform.IsWindows, request.Repeat,
-            request.Repeat > 1 ? RepeatRequest.CanonicalProject(request.WorkingDirectory, request.Project!) : null);
+            request.Repeat > 1 ? RepeatRequest.CanonicalProject(request.WorkingDirectory, request.Project!) : null).ToList();
+        var runOutput = request.OutputPath ?? "";
+        if (!string.IsNullOrWhiteSpace(request.Project) && !string.IsNullOrWhiteSpace(request.OutputPath))
+        {
+            var layout = BuildConfinement.LayoutFor(request.WorkingDirectory, request.Project, request.OutputPath);
+            AppendLayoutProperty(properties, "ArtifactsPath", layout.Artifacts);
+            AppendLayoutProperty(properties, "UseArtifactsOutput", "true");
+            runOutput = layout.Owned;
+        }
         if (request.SourceBoundary?.Invoke() == false)
             return SourceFailure(request, buffer, combined);
         CheckpointBuildBinding? binding = null;
@@ -178,9 +186,14 @@ public sealed class RowRunner
             {
                 EchoGuard(combined, built.Stdout);
                 EchoGuard(combined, built.Stderr);
+                var buildText = built.Stdout + "\n" + built.Stderr;
+                var code = built.ExitCode == ExitCodes.RestoreFailed
+                    && buildText.Contains("refused: restore-failed", StringComparison.Ordinal)
+                    ? ExitCodes.RestoreFailed
+                    : ExitCodes.Invalid;
                 combined.WriteLine($"CHECKPOINT {request.Name} build=failed project={request.Project} outputPath={request.OutputPath} exit={built.ExitCode} slot={request.Slot} waited={request.WaitedSeconds}s" + (request.SlotReason is null ? "" : " slot-reason=" + request.SlotReason));
-                combined.WriteLine($"CHECKPOINT {request.Name} EXIT CODE: 2");
-                return Finish(ExitCodes.Invalid, "failed", "", buffer, 0, [], null, null, false, "build-failed");
+                combined.WriteLine($"CHECKPOINT {request.Name} EXIT CODE: {code}");
+                return Finish(code, "failed", "", buffer, 0, [], null, null, false, "build-failed");
             }
             if (!buildSourceOk) return SourceFailure(request, buffer, combined);
             if (binding is not null)
@@ -201,7 +214,7 @@ public sealed class RowRunner
             await request.BeforeLaunch(cancellationToken).ConfigureAwait(false);
         if (request.SourceBoundary?.Invoke() == false)
             return SourceFailure(request, buffer, combined);
-        var runArgs = BuildStep.RunArguments(request.Project!, request.OutputPath!, properties, request.Filter!, request.ResultsDirectory, "run.trx");
+        var runArgs = BuildStep.RunArguments(request.Project!, runOutput, properties, request.Filter!, request.ResultsDirectory, "run.trx");
         var nonce = request.Repeat > 1 ? Guid.NewGuid().ToString("N") : null;
         var runEnvironment = request.Repeat > 1
             ? request.Environment.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.OrdinalIgnoreCase)
@@ -259,7 +272,7 @@ public sealed class RowRunner
                 var rerunName = "rerun-" + (index + 1) + ".trx";
                 var rerunTrx = Path.Combine(request.ResultsDirectory, rerunName);
                 var rerunArgs = BuildStep.RunArguments(
-                    request.Project!, request.OutputPath!, properties, decision.Filters[index], request.ResultsDirectory, rerunName);
+                    request.Project!, runOutput, properties, decision.Filters[index], request.ResultsDirectory, rerunName);
                 if (request.BeforeLaunch is not null)
                     await request.BeforeLaunch(cancellationToken).ConfigureAwait(false);
                 if (request.SourceBoundary?.Invoke() == false) { sourceStable = false; break; }
@@ -432,6 +445,14 @@ public sealed class RowRunner
             State = state,
         };
 
+    private static void AppendLayoutProperty(List<string> properties, string name, string value)
+    {
+        var prefix = "--property:" + name + "=";
+        if (properties.Any(item => item.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)))
+            return;
+        properties.Add(prefix + value);
+    }
+
     private static void EchoGuard(TextWriter writer, string? text)
     {
         if (string.IsNullOrEmpty(text))
@@ -441,7 +462,10 @@ public sealed class RowRunner
             var line = raw.TrimEnd('\r');
             if (line.StartsWith("refused:", StringComparison.Ordinal)
                 || line.StartsWith("TAMPERED ", StringComparison.Ordinal)
-                || line.StartsWith("tracked files were not restored", StringComparison.Ordinal))
+                || line.StartsWith("DIRTY ", StringComparison.Ordinal)
+                || line.StartsWith("restored from ", StringComparison.Ordinal)
+                || line.StartsWith("lossless because ", StringComparison.Ordinal)
+                || line.StartsWith("manual restore:", StringComparison.Ordinal))
                 writer.WriteLine(line);
         }
     }
