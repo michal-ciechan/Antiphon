@@ -89,10 +89,10 @@ public sealed class LandRefusalDeliveryWitnessTests
         await world.ReconcileLiveAsync();
         world.Submissions.Count.ShouldBe(0, "C1196:before-wakeup-submissions");
         (await world.ConsumeWakeupAsync()).ShouldBeTrue("C1196:wakeup-received");
+        world.Submissions.Count.ShouldBe(0, "C1196:busy-submissions");
         var pending = (await world.ReadKeyedAsync(produced.NoteId)).ShouldNotBeNull();
         pending.Status.ShouldBe(QueuedMessageStatus.Pending);
         pending.Attempts.ShouldBe(0);
-        world.Submissions.Count.ShouldBe(0, "C1196:busy-submissions");
         (await world.ReadPromptsAsync(world.SessionId, TranscriptKinds.UserPrompt))
             .ShouldNotContain(p => PromptSubmissionMatch.IsConfirmedBy(produced.Body, p.Text));
         (await world.ReadNoteAsync(produced.NoteId)).ConfirmedAt.ShouldBeNull();
