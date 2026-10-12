@@ -102,13 +102,13 @@ public sealed class RemoteScriptContractTests
         var zip = Commands(materialize).Single(command =>
             command.Contains("C849.Probe.1.0.0.nupkg", StringComparison.Ordinal));
         zip.ShouldStartWith("docker run ", customMessage: "zip-admitted-image");
-        zip.ShouldContain("--entrypoint pwsh", "zip-admitted-image");
-        zip.ShouldContain("--network none", "zip-admitted-image");
-        zip.ShouldContain("\"$image\"", "zip-admitted-image");
-        zip.ShouldContain("-File /fixture/race/make-zip.ps1", "zip-admitted-image");
-        zip.ShouldContain("/fixture/race/package", "zip-admitted-image");
-        zip.ShouldContain("/fixture/race/feed/C849.Probe.1.0.0.nupkg", "zip-admitted-image");
-        zip.ShouldContain("FixturePackageZipFailed", "zip-admitted-image");
+        zip.ShouldContain("--entrypoint pwsh", customMessage: "zip-admitted-image");
+        zip.ShouldContain("--network none", customMessage: "zip-admitted-image");
+        zip.ShouldContain("\"$image\"", customMessage: "zip-admitted-image");
+        zip.ShouldContain("-File /fixture/race/make-zip.ps1", customMessage: "zip-admitted-image");
+        zip.ShouldContain("/fixture/race/package", customMessage: "zip-admitted-image");
+        zip.ShouldContain("/fixture/race/feed/C849.Probe.1.0.0.nupkg", customMessage: "zip-admitted-image");
+        zip.ShouldContain("FixturePackageZipFailed", customMessage: "zip-admitted-image");
         zip.Contains("$(pwsh", StringComparison.Ordinal).ShouldBeFalse("zip-admitted-image");
         zip.TrimStart().StartsWith("pwsh", StringComparison.Ordinal).ShouldBeFalse("zip-admitted-image");
     }
@@ -531,8 +531,8 @@ public sealed class RemoteScriptContractTests
     {
         var run = Commands(Block(Remote(), "c849_fixture_lock_container"))
             .Single(command => command.Contains("docker run ", StringComparison.Ordinal));
-        run.ShouldContain("-e HOME=/home/app", "lock-home");
-        run.ShouldContain("-e NUGET_SCRATCH=/var/cache/antiphon/nuget-scratch", "lock-scratch-env");
+        run.ShouldContain("-e HOME=/home/app", customMessage: "lock-home");
+        run.ShouldContain("-e NUGET_SCRATCH=/var/cache/antiphon/nuget-scratch", customMessage: "lock-scratch-env");
         run.ShouldContain("/fixture/race/lock-probe.ps1");
     }
 
