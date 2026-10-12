@@ -18,7 +18,7 @@ public class GrokSizeCaptureTests
     {
         Environment.GetEnvironmentVariable("C861_CAPTURE").ShouldBe("1");
         Environment.GetEnvironmentVariable("ANTIPHON_PTY_AUDIT").ShouldNotBe("1");
-        var repo = Antiphon.Tests.TestHelpers.DelegateScriptRunner.RepoRoot;
+        var repo = Antiphon.Tests.Application.DelegateScriptRunner.RepoRoot;
         var output = Path.Combine(repo, ".antiphon", "c861-captures");
         Directory.CreateDirectory(output);
         var captured = new List<object>();
