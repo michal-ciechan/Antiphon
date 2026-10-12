@@ -43,7 +43,7 @@ ANSI from the 120x30 fixture and claim it is a native capture.
 |---|---|---|---|---|
 | PC-1 | 80x24, 100x30, 160x50, 200x60 | restore master dimension check | `/*/*/GrokStartupSizeTests/Captured_ready_size_is_qualified` | native-ready is false instead of true |
 | PC-2 | five admitted sizes | remove empty-input check | `/*/*/GrokStartupSizeTests/Captured_ready_size_is_qualified` | changed marker becomes ready |
-| PC-3 | 40x20 | admit its one-cell padding and clipped footer layout | `/*/*/GrokStartupSizeTests/Captured_ready_size_is_qualified` | narrow becomes ready instead of Unknown |
+| PC-3 | 40x20 | return Ready rather than Unknown for the unsupported 20-row screen at the height guard | `/*/*/GrokStartupSizeTests/Captured_ready_size_is_qualified` | narrow becomes ready instead of Unknown |
 | PC-4a | all six sizes | skip sign-in detector | `/*/*/GrokStartupSizeTests/Captured_sign_in_stays_blocked` | reason is not SignIn |
 | PC-4b | all six sizes | skip trust detector | `/*/*/GrokStartupSizeTests/Historical_trust_prompt_replayed_at_size_stays_blocked` | reason is not Trust |
 | PC-5 | four nondefault admitted sizes | restore master geometry | `/*/*/RunnerGrokAdapterReadyTests/Captured_nondefault_size_reaches_ready_without_input` | adapter is false instead of true |
@@ -57,8 +57,11 @@ This slice's binding house rule explicitly prohibits a broad Unit lane. The
 closed scope is the named full classes below, overriding the generic Final
 profile's Unit default. There is no unbounded assembly impact: only the Grok
 startup matcher changes; waiter, delivery, leases and persistence are unchanged.
-CP-2 is intentionally red against unchanged base production, then CP-3/4 qualify
-the implementation at committed HEAD. One isolated build per committed group,
+CP-2/6 ran intentionally red against unchanged base production at 125869409c975f8b85ecb4663e8740aabd87ce6d
+(historical manifest used bin-c861-red/). Rerun those same rows green after S3,
+then run the remaining full affected classes from that one final build.
+Native CP-1's final capture SHA is 2c8cdcbc3eef6b47a177875a420e8d1afcbc3b40;
+no native trust was observed. One isolated build per committed group,
 UseAppHost=false on Linux; reused rows use the same source/build certificate.
 
 ### Checkpoints
@@ -66,14 +69,15 @@ UseAppHost=false on Linux; reused rows use the same source/build certificate.
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
 |---|---|---|---|---|---|---|---:|---:|---|---|
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-c861-capture/` | native-capture | `/*/*/GrokSizeCaptureTests/Capture_native_sizes` | M-1 | all 1 method, 0 failed/skipped | 1 | 5 | true | `C861_CAPTURE=1` |
-| CP-2 | S2 | `tests/Antiphon.Tests -> bin-c861-red/` | pre-fix-red | `/*/*/GrokStartupSizeTests/*` | V-1, V-2, V-3 | intended four V-1 failures on base production; fourteen controls pass | 18 | 4 | true | n/a |
-| CP-6 | S2 | CP-2 | pre-fix-adapter-red | `/*/*/RunnerGrokAdapterReadyTests/Captured_nondefault_size_reaches_ready_without_input` | V-4 | intended four adapter assertion failures on base production | 4 | 1 | true | n/a |
-| CP-3 | S3 | `tests/Antiphon.Tests -> bin-c861-final/` | sizes-and-fixtures | `/*/*/(GrokStartupSizeTests*)\|(GrokStartupReadinessTests*)\|(GrokLinuxStartupReadinessTests*)/*` | V-1, V-2, V-3, R-1 | all 44 results, 0 failed/skipped | 44 | 4 | true | n/a |
-| CP-4 | S3 | CP-3 | adapters | `/*/*/RunnerGrokAdapterReadyTests/*` | V-4, R-2 | all 22 results, 0 failed/skipped | 22 | 2 | true | n/a |
-| CP-5 | S3 | CP-3 | blockers | `/*/*/GrokLinuxBlockingPromptTests/*` | R-1 | all listed, 0 failed/skipped | 11 | 1 | true | n/a |
+| CP-2 | S2-S3 | `tests/Antiphon.Tests -> bin-c861-final/` | size-regressions | `/*/*/GrokStartupSizeTests/*` | V-1, V-2, V-3 | all 18 results, 0 failed/skipped after fix | 18 | 4 | true | n/a |
+| CP-6 | S2-S3 | CP-2 | adapter-regressions | `/*/*/RunnerGrokAdapterReadyTests/Captured_nondefault_size_reaches_ready_without_input` | V-4 | all four results, 0 failed/skipped after fix | 4 | 1 | true | n/a |
+| CP-3 | S2-S3 | CP-2 | existing-fixtures | `/*/*/(GrokStartupReadinessTests*)\|(GrokLinuxStartupReadinessTests*)/*` | R-1 | all 26 results, 0 failed/skipped | 26 | 1 | true | n/a |
+| CP-4 | S2-S3 | CP-2 | adapters | `/*/*/RunnerGrokAdapterReadyTests/*` | V-4, R-2 | all 22 results, 0 failed/skipped | 22 | 2 | true | n/a |
+| CP-5 | S2-S3 | CP-2 | blockers | `/*/*/GrokLinuxBlockingPromptTests/*` | R-1 | all listed, 0 failed/skipped | 11 | 1 | true | n/a |
 
 ### Cost
 
-Ordinary floor: 17 minutes, plus about 25 minutes authoring/capture inspection.
-No repeats required after green. Restart: none. Review follows ordinary V/R;
+Ordinary floor: 14 minutes, plus about 25 minutes authoring/capture inspection.
+No repeats required after green. Activation requires server restart after landing;
+no restart is performed by this Code task. Review follows ordinary V/R;
 caller lands this original Code task and commissions SourceLanding Mutation.
