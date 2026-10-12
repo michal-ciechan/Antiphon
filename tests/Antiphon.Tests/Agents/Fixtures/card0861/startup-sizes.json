@@ -1,0 +1,108 @@
+{
+  "schemaVersion": 1,
+  "consumer": "GrokStartupSizeTests and RunnerGrokAdapterReadyTests",
+  "sourceSha": "2c8cdcbc3eef6b47a177875a420e8d1afcbc3b40",
+  "sourceRun": "20261012-221947-8de9",
+  "cliVersionOutput": "grok 1.0.41 (4220f3b224a6) [stable]",
+  "procedure": "Local owned PtyAgentRunner; native terminal sizes; --always-approve --no-alt-screen --session-id; no model prompt; child exits joined",
+  "signInRedaction": "Standalone device-code letters/digits replaced by X in memory; URL rows blanked; cell widths preserved",
+  "trust": "Not observed in native captures; historical trust prompt replay is separately labelled in tests",
+  "captures": [
+    {
+      "cols": 80,
+      "rows": 24,
+      "mode": "authenticated",
+      "label": "real-rendered",
+      "capturedAt": "2026-10-12T22:22:19.9030587Z",
+      "screen": "\n  /tmp/c861-f41596506dd44e1fbfc310ed4fcdd9f8         2.3K / 256K │ [Dashboard]\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n  ╭──────────────────────────────────────────────────────────────────────────╮\n  │ ❯                                                                        │\n  ╰─────────────── Weekly limit left: 4% · Grok 4.7 (high) · always-approve ─╯\n\n  Shift+Tab:mode  │  Ctrl+x:shortcuts\n"
+    },
+    {
+      "cols": 80,
+      "rows": 24,
+      "mode": "empty-home",
+      "label": "real-rendered-redacted",
+      "capturedAt": "2026-10-12T22:22:22.7954823Z",
+      "screen": "\n  /tmp/c861-15d4b680266b455190e929a78afa4083\n\n\n\n\n                  Approve in your browser to finish signing in.\n\n                                    XXXX-XXXX\n\n                     Make sure your browser shows this code.\n\n                     If it doesn't open, click here to copy.\n\n\n\n                Copying not working? Click here to show full URL.\n\n                             Waiting for approval...\n\n\n                                  ctrl+q  quit\n\n"
+    },
+    {
+      "cols": 100,
+      "rows": 30,
+      "mode": "authenticated",
+      "label": "real-rendered",
+      "capturedAt": "2026-10-12T22:22:26.1102127Z",
+      "screen": "\n  /tmp/c861-052644270f354baf87a3254fbba8859e                             2.3K / 256K │ [Dashboard]\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n  ╭──────────────────────────────────────────────────────────────────────────────────────────────╮\n  │ ❯                                                                                            │\n  ╰─────────────────────────────────── Weekly limit left: 4% · Grok 4.7 (high) · always-approve ─╯\n\n  Shift+Tab:mode  │  Ctrl+x:shortcuts\n"
+    },
+    {
+      "cols": 100,
+      "rows": 30,
+      "mode": "empty-home",
+      "label": "real-rendered-redacted",
+      "capturedAt": "2026-10-12T22:22:28.8485722Z",
+      "screen": "\n  /tmp/c861-65e7fdf2caae43639e49b86e76269455\n\n\n                                           ⠀⠀⠀⠀⠀⠀⣀⣀⡀⠀⠀⠀⢀⠄\n                                           ⠀⠀⠀⣠⣾⠿⠛⠛⠛⠛⢀⡴⠁⠀\n                                           ⠀⠀⣼⡟⠁⠀⠀⠀⢀⡴⠻⣿⡀⠀\n                                           ⠀⠀⣿⡇⠀⠀⠀⠔⠁⠀⠀⣿⡇⠀\n                                           ⠀⠀⢹⣷⠀⠀⠀⠀⠀⢀⣴⡿⠀⠀\n                                           ⠀⢀⠞⠁⠠⢶⣶⣶⣶⠿⠋⠀⠀⠀\n                                           ⠐⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀\n\n\n                            Approve in your browser to finish signing in.\n\n                                              XXXX-XXXX\n\n                               Make sure your browser shows this code.\n\n                               If it doesn't open, click here to copy.\n\n\n\n                          Copying not working? Click here to show full URL.\n\n                                       Waiting for approval...\n\n                                            ctrl+q  quit\n\n"
+    },
+    {
+      "cols": 120,
+      "rows": 30,
+      "mode": "authenticated",
+      "label": "real-rendered",
+      "capturedAt": "2026-10-12T22:22:32.0721185Z",
+      "screen": "\n  /tmp/c861-b74c25bf441544719fc438e557b24ee0                                                 2.3K / 256K │ [Dashboard]\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n  ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮\n  │ ❯                                                                                                                │\n  ╰─────────────────────────────────────────────────────────────────────────────── Grok 4.7 (high) · always-approve ─╯\n\n  Shift+Tab:mode  │  Ctrl+x:shortcuts\n"
+    },
+    {
+      "cols": 120,
+      "rows": 30,
+      "mode": "empty-home",
+      "label": "real-rendered-redacted",
+      "capturedAt": "2026-10-12T22:22:34.8792797Z",
+      "screen": "\n  /tmp/c861-3dbbd6730f9048c48e11e92602b22b9c\n\n\n                                                     ⠀⠀⠀⠀⠀⠀⣀⣀⡀⠀⠀⠀⢀⠄\n                                                     ⠀⠀⠀⣠⣾⠿⠛⠛⠛⠛⢀⡴⠁⠀\n                                                     ⠀⠀⣼⡟⠁⠀⠀⠀⢀⡴⠻⣿⡀⠀\n                                                     ⠀⠀⣿⡇⠀⠀⠀⠔⠁⠀⠀⣿⡇⠀\n                                                     ⠀⠀⢹⣷⠀⠀⠀⠀⠀⢀⣴⡿⠀⠀\n                                                     ⠀⢀⠞⠁⠠⢶⣶⣶⣶⠿⠋⠀⠀⠀\n                                                     ⠐⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀\n\n\n                                      Approve in your browser to finish signing in.\n\n                                                        XXXX-XXXX\n\n                                         Make sure your browser shows this code.\n\n                                         If it doesn't open, click here to copy.\n\n\n\n                                    Copying not working? Click here to show full URL.\n\n                                                 Waiting for approval...\n\n                                                      ctrl+q  quit\n\n"
+    },
+    {
+      "cols": 160,
+      "rows": 50,
+      "mode": "authenticated",
+      "label": "real-rendered",
+      "capturedAt": "2026-10-12T22:22:38.0678815Z",
+      "screen": "\n  /tmp/c861-ac94dadf751c4725909ba21003d5156f                                                                                         2.3K / 256K │ [Dashboard]\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n  ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮\n  │ ❯                                                                                                                                                        │\n  ╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── Grok 4.7 (high) · always-approve ─╯\n\n  Shift+Tab:mode  │  Ctrl+x:shortcuts\n"
+    },
+    {
+      "cols": 160,
+      "rows": 50,
+      "mode": "empty-home",
+      "label": "real-rendered-redacted",
+      "capturedAt": "2026-10-12T22:22:40.7606106Z",
+      "screen": "\n  /tmp/c861-7c737bcaddff4064905d8ed7114f2b28\n\n\n\n\n                                                                         ⠀⠀⠀⠀⠀⠀⣀⣀⡀⠀⠀⠀⢀⠄\n                                                                         ⠀⠀⠀⣠⣾⠿⠛⠛⠛⠛⢀⡴⠁⠀\n                                                                         ⠀⠀⣼⡟⠁⠀⠀⠀⢀⡴⠻⣿⡀⠀\n                                                                         ⠀⠀⣿⡇⠀⠀⠀⠔⠁⠀⠀⣿⡇⠀\n                                                                         ⠀⠀⢹⣷⠀⠀⠀⠀⠀⢀⣴⡿⠀⠀\n                                                                         ⠀⢀⠞⠁⠠⢶⣶⣶⣶⠿⠋⠀⠀⠀\n                                                                         ⠐⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀\n\n\n                                                          Approve in your browser to finish signing in.\n\n                                                                            XXXX-XXXX\n\n                                                             Make sure your browser shows this code.\n\n                                                             If it doesn't open, click here to copy.\n\n\n\n                                                        Copying not working? Click here to show full URL.\n\n                                                                     Waiting for approval...\n\n\n\n\n\n\n\n\n\n\n                                                                          ctrl+q  quit\n\n\n\n\n\n\n\n\n\n\n"
+    },
+    {
+      "cols": 200,
+      "rows": 60,
+      "mode": "authenticated",
+      "label": "real-rendered",
+      "capturedAt": "2026-10-12T22:22:44.1532506Z",
+      "screen": "\n  /tmp/c861-95b9d69282354c38affc8453d0f04405                                                                                                                                 2.3K / 256K │ [Dashboard]\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n  ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮\n  │ ❯                                                                                                                                                                                                │\n  ╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── Grok 4.7 (high) · always-approve ─╯\n\n  Shift+Tab:mode  │  Ctrl+x:shortcuts\n"
+    },
+    {
+      "cols": 200,
+      "rows": 60,
+      "mode": "empty-home",
+      "label": "real-rendered-redacted",
+      "capturedAt": "2026-10-12T22:22:46.8450974Z",
+      "screen": "\n  /tmp/c861-db8bacb57b19486081b99ddff08590b9\n\n\n\n\n\n                                                                                             ⠀⠀⠀⠀⠀⠀⣀⣀⡀⠀⠀⠀⢀⠄\n                                                                                             ⠀⠀⠀⣠⣾⠿⠛⠛⠛⠛⢀⡴⠁⠀\n                                                                                             ⠀⠀⣼⡟⠁⠀⠀⠀⢀⡴⠻⣿⡀⠀\n                                                                                             ⠀⠀⣿⡇⠀⠀⠀⠔⠁⠀⠀⣿⡇⠀\n                                                                                             ⠀⠀⢹⣷⠀⠀⠀⠀⠀⢀⣴⡿⠀⠀\n                                                                                             ⠀⢀⠞⠁⠠⢶⣶⣶⣶⠿⠋⠀⠀⠀\n                                                                                             ⠐⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀\n\n\n                                                                              Approve in your browser to finish signing in.\n\n                                                                                                XXXX-XXXX\n\n                                                                                 Make sure your browser shows this code.\n\n                                                                                 If it doesn't open, click here to copy.\n\n\n\n                                                                            Copying not working? Click here to show full URL.\n\n                                                                                         Waiting for approval...\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n                                                                                              ctrl+q  quit\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n"
+    },
+    {
+      "cols": 40,
+      "rows": 20,
+      "mode": "authenticated",
+      "label": "real-rendered",
+      "capturedAt": "2026-10-12T22:22:50.0271674Z",
+      "screen": " /tmp/c861-2… 2.3K / 256K │ [Dashboard]\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n ╭────────────────────────────────────╮\n │ ❯                                  │\n ╰─ Weekly limit left: 4% · Grok 4.7 ─╯\n Shift+Tab:mode  │  Ctrl+x:shortcuts"
+    },
+    {
+      "cols": 40,
+      "rows": 20,
+      "mode": "empty-home",
+      "label": "real-rendered-redacted",
+      "capturedAt": "2026-10-12T22:22:52.834495Z",
+      "screen": "\n /tmp/c861-5cec87a943ed4ef585c2b88a903…\n\n\n\n       Approve in your browser to\n           finish signing in.\n\n                XXXX-XXXX\n\n      Make sure your browser shows\n               this code.\n\n        If it doesn't open, click\n              here to copy.\n\n\n\n              ctrl+q  quit\n"
+    }
+  ]
+}

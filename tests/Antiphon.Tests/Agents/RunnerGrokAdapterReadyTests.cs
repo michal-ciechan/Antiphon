@@ -22,6 +22,24 @@ public class RunnerGrokAdapterReadyTests
     private const string SignIn = "Approve in your browser to finish signing in.\nWaiting for approval...";
 
     [Test]
+    [Arguments(80, 24)]
+    [Arguments(100, 30)]
+    [Arguments(160, 50)]
+    [Arguments(200, 60)]
+    public async Task Captured_nondefault_size_reaches_ready_without_input(int cols, int rows)
+    {
+        var clock = new JumpClock();
+        var client = new ScriptedClient([GrokStartupSizeFixture.Screen(cols, rows)],
+            onSnapshot: count => { if (count == 3) clock.Advance(TimeSpan.FromSeconds(6)); });
+        await using var adapter = NewAdapter(client, max: 5000, settle: 0, time: clock);
+        await adapter.StartAsync(Spec() with { Cols = cols, Rows = rows }, CancellationToken.None);
+        (await adapter.WaitForReadyAsync(CancellationToken.None)).ShouldBeTrue($"native-adapter:{cols}x{rows}");
+        client.SnapshotReads.ShouldBe(2);
+        client.BufferReads.ShouldBe(0);
+        client.Writes.ShouldBeEmpty();
+    }
+
+    [Test]
     [Arguments("1.0.40")]
     [Arguments("1.0.41")]
     public async Task Captured_linux_frame_reaches_ready_without_startup_input(string version)
