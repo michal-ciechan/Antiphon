@@ -2794,6 +2794,14 @@ mode_cleanup_probe() {
         PROBE_OUTCOME=$outcome
         S7_SCENARIO=success
         s7_groups
+        # Exercise the real evidence marker/census path. Only its external
+        # inventory and payload producers are substituted for this cleanup proof.
+        source <(awk '/^c849_fixture_evidence\(\) \{/ { active=1 } active { print } active && /^}$/ { active=0 }' "$remote")
+        case_runner_cache_inventory() {
+            printf '{}\n' > "$CASE_DIR/server2-status.json"
+            printf '{}\n' > "$CASE_DIR/server2-temp-status.json"
+        }
+        c849_fixture_evidence_payloads() { :; }
         # Execute the real receipt writer, not the older S7 text substitute.
         source <(awk '/^(write_result|json_escape|scrub_file)\(\) \{/ { active=1 } active { print } active && /^}$/ { active=0 }' "$remote")
         source <(declare -f c849_fixture_seed | sed '1s/c849_fixture_seed/c1192_probe_seed/')
@@ -2806,6 +2814,8 @@ mode_cleanup_probe() {
             printf '%s\n' "c849${RUN}-packages" >> "$CASE_DIR/.fixture-volumes"
             printf '%s\n' "c849-${RUN}-npm" > "$CASE_DIR/.fixture-network"
             : > "$C1192_ROOT/network"
+            s7_roster
+            sed -i '$d' "$CASE_DIR/fixture-groups.txt"
             if [ "$PROBE_OUTCOME" = absent ]; then
                 case "$PROBE_KIND" in
                     volume) rm -rf "$C1192_ROOT/volumes/$PROBE_NAME" ;;
@@ -2831,6 +2841,13 @@ mode_cleanup_probe() {
                 && ! grep -qE 'accepted[" ]*:true|result true|C849_FIXTURE ' "$C1192_ROOT/probe-output" && good=1
         fi
         emit "$outcome-verdict" "$good"
+        good=0
+        if [ "$outcome" = absent ]; then
+            grep -q '^C849_FIXTURE ' "$C1192_ROOT/probe-output" && good=1
+        else
+            ! grep -q '^C849_FIXTURE ' "$C1192_ROOT/probe-output" && good=1
+        fi
+        emit "$outcome-marker" "$good"
         good=0
         if [ "$outcome" = absent ]; then
             [ ! -s "$CASE_DIR/fixture-cleanup-residue.txt" ] && good=1
