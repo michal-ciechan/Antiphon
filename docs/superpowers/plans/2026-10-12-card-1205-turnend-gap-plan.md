@@ -510,7 +510,7 @@ expected-red reproduction exception, reported as failed, never relabeled green.
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1205-s1/` | any-pg-reproduction | `/*/*/TurnEndGapReproductionTests/*` | V-1, V-2, R-1 | 2 executed; exactly V-1 assertion fails on baseline; V-2 passes; 0 skipped | 2 | 6 |
-| CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1205-s2/` | any-pg-subscription | `/*/*/(TurnEndGapReproductionTests*)\|(SessionRunnerStreamReadinessTests*)\|(SessionRunnerEventPumpTests*)/*` | V-1, V-2, V-3, V-4, V-5, V-6, V-7, R-1, R-6 | all 15 executions, 0 failed/skipped | 15 | 8 |
+| CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1205-s2/` | any-pg-subscription | `/*/*/(TurnEndGapReproductionTests*)\|(SessionRunnerStreamReadinessTests*)\|(SessionRunnerEventPumpTests*)\|(SessionRunnerHeldEventDeliveryTests*)/*` | V-1, V-2, V-3, V-4, V-5, V-6, V-7, R-1, R-6, T47..T50 | all 34 executions, 0 failed/skipped | 34 | 10 |
 | CP-3 | S3 | `tests/Antiphon.Tests -> bin-c1205-s3/` | any-pg-checked-recovery | `/*/*/(WorkingTranscriptRecoveryTests*)\|(SessionStateCommitTests*)\|(TranscriptWorkingStateQueryTests*)/*` | V-8, V-9, V-10, V-11, V-12, R-2, R-7 | all 31 executions, 0 failed/skipped | 31 | 8 |
 | CP-4 | S4 | `tests/Antiphon.Tests -> bin-c1205-s4/` | any-pg-watchdog | `/*/*/StaleWorkingTranscriptWatchdogTests/*` | V-13, V-14, V-15, V-16, V-17, V-18, V-19, R-3, R-4 | all 13 executions, 0 failed/skipped | 13 | 7 |
 | CP-5 | S5 | `tests/Antiphon.Tests -> bin-c1205-s5/` | any-pg-restart-delivery | `/*/*/TurnEndGapRestartDeliveryTests/*` | V-20, V-21, V-22, V-23, V-24, R-5 | all 6 executions, 0 failed/skipped | 6 | 10 |
