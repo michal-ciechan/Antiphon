@@ -40,6 +40,26 @@ public sealed class WorktreeResidueRunCandidate
     public bool? RegistrationRemoved { get; set; }
     public bool? BranchRemoved { get; set; }
     public DateTime EvaluatedAt { get; set; }
+
+    /// <summary>CARD-1033 D-3. Null on rows written before admission existed. Unique with <see cref="RunId"/> when set.</summary>
+    public string? ActionKey { get; set; }
+
+    /// <summary>CARD-1033 D-3. Null until this run accepts the candidate. A migration must not fill it.</summary>
+    public DateTime? AcceptedAt { get; set; }
+
+    public Guid? CardId { get; set; }
+    public Guid? DoneRevisionId { get; set; }
+    public int? TaskAttempt { get; set; }
+    public Guid? TargetId { get; set; }
+    public Guid? EndpointId { get; set; }
+    public string? EndpointIdentity { get; set; }
+    public string? RunnerId { get; set; }
+    public string? RunnerStoreId { get; set; }
+    public Guid? OperationId { get; set; }
+    public string? RequestDigest { get; set; }
+    public CardWorktreeCleanupEndpointState? EndpointState { get; set; }
+    public bool? Retryable { get; set; }
+    public DateTime? NextAttemptAt { get; set; }
 }
 
 /// <summary>Persisted fairness/cooldown cursor keyed by candidate identity.</summary>
@@ -49,4 +69,7 @@ public sealed class WorktreeResidueCandidateCursor
     public string CandidateKey { get; set; } = "";
     public DateTime LastEvaluatedAt { get; set; }
     public DateTime? NotBefore { get; set; }
+
+    /// <summary>CARD-1033 D-4. Digest of a permanent safety refusal. Null until that refusal is stored.</summary>
+    public string? EvidenceDigest { get; set; }
 }

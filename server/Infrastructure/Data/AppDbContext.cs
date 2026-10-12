@@ -2927,6 +2927,7 @@ public class AppDbContext : DbContext
             entity.Property(r => r.SourceSha).HasMaxLength(64);
             entity.Property(r => r.ReportDigest).HasMaxLength(64);
             entity.Property(r => r.RequestDigest).HasMaxLength(64);
+            entity.Property(r => r.EvidenceDigest).HasMaxLength(64);
             entity.Property(r => r.Reason).HasMaxLength(100);
             entity.Property(r => r.ConcurrencyToken).IsConcurrencyToken();
             entity.HasIndex(r => new { r.TargetId, r.EndpointIdentity }).IsUnique();
@@ -3015,7 +3016,16 @@ public class AppDbContext : DbContext
             entity.Property(c => c.ReasonCode).HasMaxLength(80);
             entity.Property(c => c.Path).HasMaxLength(1000);
             entity.Property(c => c.Branch).HasMaxLength(400);
+            entity.Property(c => c.ActionKey).HasMaxLength(400);
+            entity.Property(c => c.EndpointIdentity).HasMaxLength(64);
+            entity.Property(c => c.RunnerId).HasMaxLength(200);
+            entity.Property(c => c.RunnerStoreId).HasMaxLength(200);
+            entity.Property(c => c.RequestDigest).HasMaxLength(64);
             entity.HasIndex(c => c.RunId).HasDatabaseName("IX_WorktreeResidueRunCandidates_RunId");
+            entity.HasIndex(c => new { c.RunId, c.ActionKey })
+                .IsUnique()
+                .HasFilter("\"ActionKey\" IS NOT NULL")
+                .HasDatabaseName("IX_WorktreeResidueRunCandidates_RunId_ActionKey");
             entity.HasOne<WorktreeResidueRun>().WithMany().HasForeignKey(c => c.RunId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
@@ -3025,6 +3035,7 @@ public class AppDbContext : DbContext
             entity.ToTable("WorktreeResidueCandidateCursors");
             entity.HasKey(c => c.Id);
             entity.Property(c => c.CandidateKey).HasMaxLength(80);
+            entity.Property(c => c.EvidenceDigest).HasMaxLength(64);
             entity.HasIndex(c => c.CandidateKey).IsUnique()
                 .HasDatabaseName("IX_WorktreeResidueCandidateCursors_CandidateKey");
         });

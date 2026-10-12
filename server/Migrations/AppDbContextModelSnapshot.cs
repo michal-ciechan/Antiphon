@@ -4191,6 +4191,10 @@ namespace Antiphon.Server.Migrations
                         .HasMaxLength(64)
                         .HasColumnType("character varying(64)");
 
+                    b.Property<string>("EvidenceDigest")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
                     b.Property<string>("GitDirectory")
                         .HasMaxLength(1000)
                         .HasColumnType("character varying(1000)");
@@ -9367,6 +9371,10 @@ namespace Antiphon.Server.Migrations
                         .HasMaxLength(80)
                         .HasColumnType("character varying(80)");
 
+                    b.Property<string>("EvidenceDigest")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
                     b.Property<DateTime>("LastEvaluatedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -9451,6 +9459,13 @@ namespace Antiphon.Server.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
+                    b.Property<DateTime?>("AcceptedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ActionKey")
+                        .HasMaxLength(400)
+                        .HasColumnType("character varying(400)");
+
                     b.Property<string>("Branch")
                         .HasMaxLength(400)
                         .HasColumnType("character varying(400)");
@@ -9458,8 +9473,24 @@ namespace Antiphon.Server.Migrations
                     b.Property<bool?>("BranchRemoved")
                         .HasColumnType("boolean");
 
+                    b.Property<Guid?>("CardId")
+                        .HasColumnType("uuid");
+
                     b.Property<bool?>("DirectoryRemoved")
                         .HasColumnType("boolean");
+
+                    b.Property<Guid?>("DoneRevisionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("EndpointId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("EndpointIdentity")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<int?>("EndpointState")
+                        .HasColumnType("integer");
 
                     b.Property<DateTime>("EvaluatedAt")
                         .HasColumnType("timestamp with time zone");
@@ -9474,6 +9505,12 @@ namespace Antiphon.Server.Migrations
                         .IsRequired()
                         .HasMaxLength(40)
                         .HasColumnType("character varying(40)");
+
+                    b.Property<DateTime?>("NextAttemptAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("OperationId")
+                        .HasColumnType("uuid");
 
                     b.Property<string>("Outcome")
                         .IsRequired()
@@ -9492,11 +9529,32 @@ namespace Antiphon.Server.Migrations
                     b.Property<bool?>("RegistrationRemoved")
                         .HasColumnType("boolean");
 
+                    b.Property<string>("RequestDigest")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
                     b.Property<Guid?>("RetirementId")
                         .HasColumnType("uuid");
 
+                    b.Property<bool?>("Retryable")
+                        .HasColumnType("boolean");
+
                     b.Property<Guid>("RunId")
                         .HasColumnType("uuid");
+
+                    b.Property<string>("RunnerId")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("RunnerStoreId")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<Guid?>("TargetId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int?>("TaskAttempt")
+                        .HasColumnType("integer");
 
                     b.Property<Guid?>("TaskId")
                         .HasColumnType("uuid");
@@ -9505,6 +9563,11 @@ namespace Antiphon.Server.Migrations
 
                     b.HasIndex("RunId")
                         .HasDatabaseName("IX_WorktreeResidueRunCandidates_RunId");
+
+                    b.HasIndex("RunId", "ActionKey")
+                        .IsUnique()
+                        .HasDatabaseName("IX_WorktreeResidueRunCandidates_RunId_ActionKey")
+                        .HasFilter("\"ActionKey\" IS NOT NULL");
 
                     b.ToTable("WorktreeResidueRunCandidates", (string)null);
                 });

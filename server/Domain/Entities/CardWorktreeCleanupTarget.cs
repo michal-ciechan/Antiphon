@@ -59,6 +59,9 @@ public sealed class CardWorktreeCleanupEndpoint
     /// <summary>CARD-1032. Exact imported runner receipt. Missing bytes are not a completed removal.</summary>
     public byte[]? ImportedReceipt { get; set; }
 
+    /// <summary>CARD-1033 D-4. Digest of a permanent safety refusal. Null until that refusal is stored.</summary>
+    public string? EvidenceDigest { get; set; }
+
     public CardWorktreeCleanupTarget Target { get; set; } = null!;
     public TaskWorktreeMirrorBinding? MirrorBinding { get; set; }
 }
