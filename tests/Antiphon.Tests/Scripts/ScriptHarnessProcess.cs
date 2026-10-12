@@ -185,11 +185,22 @@ internal static class ScriptHarnessProcess
     internal static string ResolvePowerShell()
     {
         var path = Environment.GetEnvironmentVariable("PATH") ?? "";
-        var name = OperatingSystem.IsWindows() ? "pwsh.exe" : "pwsh";
+        return ResolvePowerShell(path, OperatingSystem.IsWindows(), Directory.GetCurrentDirectory(),
+            candidate => File.Exists(candidate)
+                ? new PowerShellFile(File.GetAttributes(candidate), new FileInfo(candidate).Length) : null, []);
+    }
+
+    internal readonly record struct PowerShellFile(FileAttributes Attributes, long Length);
+
+    // Candidate metadata is an external-I/O seam; tests never edit the process PATH.
+    internal static string ResolvePowerShell(string path, bool windows, string workingDirectory,
+        Func<string, PowerShellFile?> inspect, IReadOnlyList<string> fallbackPaths)
+    {
+        var name = windows ? "pwsh.exe" : "pwsh";
         foreach (var directory in path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
         {
             var candidate = Path.Combine(directory, name);
-            if (File.Exists(candidate)) return Path.GetFullPath(candidate);
+            if (inspect(candidate) is not null) return Path.GetFullPath(candidate);
         }
         throw new FileNotFoundException($"A real {name} executable was not found on PATH.");
     }
