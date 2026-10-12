@@ -142,6 +142,16 @@ public sealed class RowRunner
         var buildState = request.BuildStateOverride ?? (request.NoBuild ? "reused" : "ok");
         if (!request.NoBuild)
         {
+            if (!string.IsNullOrWhiteSpace(request.Project) && !string.IsNullOrWhiteSpace(request.OutputPath))
+            {
+                var writeRefusal = ProjectWriteRoots.Preflight(request.WorkingDirectory, request.Project, request.OutputPath, request.GitExecutable);
+                if (writeRefusal is not null)
+                {
+                    combined.WriteLine($"CHECKPOINT {request.Name} refused: {writeRefusal}");
+                    combined.WriteLine($"CHECKPOINT {request.Name} EXIT CODE: 2");
+                    return Finish(ExitCodes.Invalid, "failed", "", buffer, 0, [], null, null, false, "build-failed");
+                }
+            }
             if (binding is not null)
             {
                 var invalidated = binding.Invalidate();
@@ -154,18 +164,6 @@ public sealed class RowRunner
             }
             if (request.BeforeLaunch is not null)
                 await request.BeforeLaunch(cancellationToken).ConfigureAwait(false);
-            var projectFull = Path.GetFullPath(Path.IsPathRooted(request.Project)
-                ? request.Project!
-                : Path.Combine(request.WorkingDirectory, request.Project!));
-            var projectDir = Directory.Exists(projectFull) ? projectFull : Path.GetDirectoryName(projectFull) ?? request.WorkingDirectory;
-            var outputFull = Path.GetFullPath(Path.Combine(projectDir, request.OutputPath!));
-            var buildRefusal = SafeWrite.Preflight(request.WorkingDirectory, [outputFull], request.GitExecutable);
-            if (buildRefusal is not null)
-            {
-                combined.WriteLine($"CHECKPOINT {request.Name} refused: {buildRefusal}");
-                combined.WriteLine($"CHECKPOINT {request.Name} EXIT CODE: 2");
-                return Finish(ExitCodes.Invalid, "failed", "", buffer, 0, [], null, null, false, "build-failed");
-            }
 
             var buildArgs = BuildStep.BuildArguments(request.Project!, request.OutputPath!, properties, request.MaxCpuCount);
             var built = await RowTimeout.RunWithDeadlineAsync(

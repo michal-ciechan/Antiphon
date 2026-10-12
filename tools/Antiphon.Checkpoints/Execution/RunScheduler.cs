@@ -355,6 +355,15 @@ public sealed class RunScheduler
                 progress.Source = request.SourceGuard.Copy("unknown");
                 return;
             }
+            var writeRefusal = ProjectWriteRoots.Preflight(request.WorkingDirectory, build.Project, build.OutputPath);
+            if (writeRefusal is not null)
+            {
+                progress.AdmissionExitCode = ExitCodes.Invalid;
+                progress.SlotReason = "refused: " + writeRefusal;
+                progress.State = "failed";
+                Publish(request);
+                return;
+            }
             var invalidated = binding.Invalidate();
             if (invalidated is not null)
             {

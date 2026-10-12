@@ -85,8 +85,7 @@ public sealed class BaselineComparer
                     continue;
 
                 var properties = BuildStep.PropertyArguments([], !OperatingSystem.IsWindows() ? false : OperatingSystem.IsWindows());
-                var outputFull = Path.GetFullPath(Path.Combine(checkout, build.Project, build.OutputPath));
-                if (SafeWrite.Preflight(checkout, [outputFull]) is not null)
+                if (ProjectWriteRoots.Preflight(checkout, build.Project, build.OutputPath) is not null)
                     continue;
                 var buildArgs = BuildStep.BuildArguments(build.Project, build.OutputPath, properties, 4);
                 var buildLog = Path.Combine(runDirectory, "baseline", build.Id, "build.log");

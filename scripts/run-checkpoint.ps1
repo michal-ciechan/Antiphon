@@ -258,15 +258,133 @@ function Open-CheckpointSafeCreate {
     return [System.IO.FileStream]::new($full, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::ReadWrite)
 }
 
+function Test-CheckpointProjectExtension {
+    param([string]$Extension)
+    return [string]::Equals($Extension, '.csproj', [StringComparison]::OrdinalIgnoreCase) -or
+        [string]::Equals($Extension, '.fsproj', [StringComparison]::OrdinalIgnoreCase) -or
+        [string]::Equals($Extension, '.vbproj', [StringComparison]::OrdinalIgnoreCase)
+}
+
+function Resolve-CheckpointProjectDirectory {
+    param([string]$ProjectFull)
+    if (Test-CheckpointProjectExtension ([System.IO.Path]::GetExtension($ProjectFull))) {
+        $parent = [System.IO.Path]::GetDirectoryName($ProjectFull)
+        if ([string]::IsNullOrEmpty($parent)) { return $ProjectFull }
+        return $parent
+    }
+    return $ProjectFull
+}
+
+function Find-CheckpointProjectFile {
+    param([string]$ProjectFull)
+    if ([System.IO.File]::Exists($ProjectFull)) {
+        if (Test-CheckpointProjectExtension ([System.IO.Path]::GetExtension($ProjectFull))) { return $ProjectFull }
+        return ''
+    }
+    if (-not [System.IO.Directory]::Exists($ProjectFull)) { return $null }
+    $matched = New-Object System.Collections.Generic.List[string]
+    try {
+        foreach ($candidate in [System.IO.Directory]::GetFiles($ProjectFull)) {
+            if (Test-CheckpointProjectExtension ([System.IO.Path]::GetExtension($candidate))) {
+                [void]$matched.Add($candidate)
+            }
+        }
+    } catch {
+        return ''
+    }
+    if ($matched.Count -eq 0) { return $null }
+    if ($matched.Count -ne 1) { return '' }
+    return $matched[0]
+}
+
+function Read-CheckpointProjectReferences {
+    param([string]$ProjectFile)
+    $document = New-Object System.Xml.XmlDocument
+    $document.XmlResolver = $null
+    $document.Load($ProjectFile)
+    $includes = New-Object System.Collections.Generic.List[string]
+    foreach ($node in $document.GetElementsByTagName('ProjectReference')) {
+        $include = ([string]$node.GetAttribute('Include')).Trim()
+        if ([string]::IsNullOrWhiteSpace($include)) { return $null }
+        if ($include.IndexOfAny(@([char]36, [char]42, [char]63)) -ge 0) { return $null }
+        [void]$includes.Add($include)
+    }
+    return ,$includes.ToArray()
+}
+
+function Add-CheckpointWritePair {
+    param($Directories, [string]$ProjectDirectory, [string]$Output)
+    if ([System.IO.Path]::IsPathRooted($Output)) {
+        $outputFull = [System.IO.Path]::GetFullPath($Output)
+    } else {
+        $outputFull = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($ProjectDirectory, $Output))
+    }
+    [void]$Directories.Add($outputFull)
+    [void]$Directories.Add([System.IO.Path]::GetFullPath([System.IO.Path]::Combine($ProjectDirectory, 'obj')))
+}
+
+function Get-CheckpointWriteDirectories {
+    param([string]$Repository, [string]$ProjectPath, [string]$Output)
+    $projectFull = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($Repository, $ProjectPath))
+    $directories = New-Object System.Collections.Generic.List[string]
+    $entry = Find-CheckpointProjectFile $projectFull
+    if ($null -eq $entry) {
+        Add-CheckpointWritePair $directories (Resolve-CheckpointProjectDirectory $projectFull) $Output
+        return [pscustomobject]@{ Refusal = $null; Directories = $directories.ToArray() }
+    }
+    if ($entry -eq '') {
+        return [pscustomobject]@{ Refusal = 'project-closure'; Directories = @() }
+    }
+    $comparer = if ($IsWindows) { [StringComparer]::OrdinalIgnoreCase } else { [StringComparer]::Ordinal }
+    $seen = [System.Collections.Generic.HashSet[string]]::new($comparer)
+    $queue = [System.Collections.Generic.Queue[string]]::new()
+    $queue.Enqueue($entry)
+    while ($queue.Count -gt 0) {
+        $current = [System.IO.Path]::GetFullPath($queue.Dequeue())
+        if (-not $seen.Add($current)) { continue }
+        $projectDir = Resolve-CheckpointProjectDirectory $current
+        Add-CheckpointWritePair $directories $projectDir $Output
+        try {
+            $includes = Read-CheckpointProjectReferences $current
+        } catch {
+            return [pscustomobject]@{ Refusal = 'project-closure'; Directories = @() }
+        }
+        if ($null -eq $includes) {
+            return [pscustomobject]@{ Refusal = 'project-closure'; Directories = @() }
+        }
+        foreach ($include in @($includes)) {
+            $normalized = ([string]$include).Replace('\', [System.IO.Path]::DirectorySeparatorChar)
+            $resolved = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($projectDir, $normalized))
+            if (-not [System.IO.File]::Exists($resolved)) {
+                return [pscustomobject]@{ Refusal = 'project-closure'; Directories = @() }
+            }
+            $queue.Enqueue($resolved)
+        }
+    }
+    return [pscustomobject]@{ Refusal = $null; Directories = $directories.ToArray() }
+}
+
+function Remove-CheckpointCheckedFile {
+    param([string]$Path)
+    if (-not (Test-Path -LiteralPath $Path)) { return $null }
+    $reason = Test-CheckpointStampRefusal $Path
+    if ($null -ne $reason) { return $reason }
+    try { [System.IO.File]::Delete($Path) } catch { return 'git-failed' }
+    return $null
+}
+
 function Get-CheckpointBuildStampPath {
     param([string]$Root, [string]$ProjectPath, [string]$Output)
-    return [System.IO.Path]::Combine($Root, $ProjectPath, $Output, 'checkpoint-build-source.json')
+    $projectFull = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($Root, $ProjectPath))
+    $projectDir = Resolve-CheckpointProjectDirectory $projectFull
+    return [System.IO.Path]::Combine($projectDir, $Output, 'checkpoint-build-source.json')
 }
 
 function Get-CheckpointBuildBinding {
     param([string]$Root, [string]$ProjectPath, [string]$Output, [string[]]$Properties, $Source)
     $projectFull = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($Root, $ProjectPath))
-    $outputFull = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($projectFull, $Output))
+    $projectDir = Resolve-CheckpointProjectDirectory $projectFull
+    $outputFull = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($projectDir, $Output))
     return [pscustomobject]@{
         version = 1
         repositoryRoot = [System.IO.Path]::GetFullPath($Root)
@@ -545,9 +663,12 @@ try {
     $script:buildState = $buildState
     $buildExit = 0
     if (-not $NoBuild) {
-        $projectFull = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($root, $Project))
-        $outputFull = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($projectFull, $OutputPath))
-        $outputRefusal = Test-CheckpointPreflight $root @($outputFull)
+        $graph = Get-CheckpointWriteDirectories $root $Project $OutputPath
+        if ($null -ne $graph.Refusal) {
+            $outputRefusal = $graph.Refusal
+        } else {
+            $outputRefusal = Test-CheckpointPreflight $root @($graph.Directories)
+        }
         if ($null -ne $outputRefusal) {
             Write-Host ('refused: ' + $outputRefusal)
             $buildExit = 2
@@ -559,7 +680,13 @@ try {
             $buildState = 'failed'
             $script:buildState = 'failed'
         } else {
-            if (Test-Path -LiteralPath $stampPath) { [System.IO.File]::Delete($stampPath) }
+            $deleteRefusal = Remove-CheckpointCheckedFile $stampPath
+            if ($null -ne $deleteRefusal) {
+                Write-Host ('refused: ' + $deleteRefusal)
+                $buildExit = 2
+                $buildState = 'failed'
+                $script:buildState = 'failed'
+            } else {
             $buildExit = Invoke-Dotnet -Phase 'build' -Arguments (@('build', $Project, ('--property:OutputPath=' + $OutputPath)) + $propertyArguments + $cpuArguments + @('--nologo'))
             if ($buildExit -eq 0) { $buildState = 'ok'; $script:buildState = 'ok' }
             else { $buildState = 'failed'; $script:buildState = 'failed' }
@@ -574,7 +701,14 @@ try {
                     $script:buildSource = 'unknown'
                 } else {
                     $stampDirectory = Split-Path -Parent $stampPath
-                    New-Item -ItemType Directory -Path $stampDirectory -Force | Out-Null
+                    $made = New-CheckpointDirectory $stampDirectory $stampDirectory
+                    if ($null -ne $made) {
+                        Write-Host ('refused: ' + $made)
+                        $buildExit = 2
+                        $buildState = 'failed'
+                        $script:buildState = 'failed'
+                        $script:buildSource = 'unknown'
+                    } else {
                     $stampWrite = Write-CheckpointSafeText $stampPath (($expectedBinding | ConvertTo-Json -Depth 8) + "`n") $stampDirectory
                     if ($null -ne $stampWrite) {
                         Write-Host ('refused: ' + $stampWrite)
@@ -587,6 +721,8 @@ try {
                     }
                 }
             }
+        }
+        }
         }
     }
 
