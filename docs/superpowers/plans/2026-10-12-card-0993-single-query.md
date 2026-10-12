@@ -12,9 +12,9 @@ S0: this note first. S1: tests and frozen 227a00a0e builder, run CP-0 with uncha
 
 ## Verification design
 
-V-1: `Strong_arm_uses_one_query_without_draining_candidates`, 1 and 3 independent sessions with 200 trailing matching candidates each. Commands equal session count; consumed plus drained rows <= 204 per session. Restore old reader pair: both bounds fail on base. The existing interceptor gets opt-in drain measurement.
+V-1: `Strong_arm_uses_one_query_without_draining_candidates`, 1 and 3 independent sessions in one poll with 200 trailing matching candidates each. Commands equal session count; consumed plus drained rows <= 204 per session. Restore old reader pair: both bounds fail on base. The existing interceptor gets opt-in drain measurement.
 
-V-2: `Single_query_boundary_matches_frozen_builder`: 1/2/3 inputs, mixed weak/strong, shared receipt, first/last receipt, false candidate before true receipt, no complete receipt, null/system prompts, and shared sessions across tasks. Full serialized items equal a frozen pre-slice builder and written counts. Exact command bounds include unchanged weak probes; base goes red on these bounds. Result controls: omit floor trimming, omit complete matcher, omit later input, or change soleInput.
+V-2: `Single_query_boundary_matches_frozen_builder`: 1/2/3 inputs, mixed weak/strong, shared receipt, first/last receipt, false candidate before true receipt, no complete receipt, null/system prompts, and shared sessions across tasks. Full serialized items equal a frozen pre-slice builder and written counts. Exact command bounds include unchanged weak probes; candidate SQL must include LIMIT, so even no-complete-receipt goes red on the base candidate stream. Result controls: omit complete matcher, omit later input/task, or change soleInput.
 
 R-1: full TaskInputAttentionCostTests and TaskInputWeakArmBoundaryTests, retaining every CARD-0992 control. R-2: full AttentionServiceTests, AttentionFeedNoiseTests, TaskInputReadFailureTests, AgentTaskInputSpillTests, AgentTaskInputFallbackTests (212 base cases).
 
@@ -27,8 +27,8 @@ Manual V-3: generated SQL scalar LIMIT 1, fresh TRX counts and source receipts, 
 | PC | Exact method | Mutation | Expected red |
 |---|---|---|---|
 | PC-1 | Strong_arm_uses_one_query_without_draining_candidates | Restore two-query stream/range pair | Commands and drain caps |
-| PC-2 | Single_query_boundary_matches_frozen_builder | Remove true-floor trimming | mixed false-candidate case differs |
-| PC-3 | Single_query_boundary_matches_frozen_builder | Treat LIKE candidate as receipt | no-complete case differs |
+| PC-2 | Single_query_boundary_matches_frozen_builder | Accept first non-null prompt in per-input evaluation | no-complete case emits an item |
+| PC-3 | Single_query_boundary_matches_frozen_builder | Ignore all but first task sharing a session | shared-session-tasks loses item |
 | PC-4 | Single_query_boundary_matches_frozen_builder | Remove closed weak inputs from soleInput count | mixed implicit case differs |
 | PC-5 | Single_query_boundary_matches_frozen_builder | Use latest retry baseline as floor | first receipt loses item |
 
