@@ -512,11 +512,36 @@ public class LandingGit : ILandingGit
                 ["ls-files", "--others", "--ignored", "--exclude-standard", "-z"], ct);
             if (!ignored.Succeeded || ignored.Output.Contains('\uFFFD'))
                 return LandRecoveryCheckoutInspection.Refused();
-            foreach (var relative in ignored.Output.Split('\0', StringSplitOptions.RemoveEmptyEntries))
+            foreach (var record in ignored.Output.Split('\0', StringSplitOptions.RemoveEmptyEntries))
             {
+                // Git reports an ignored independent repository as "dir/" rather than its files.
+                // A terminal slash alone is not authority to bypass strict path validation.
+                var repositoryDirectory = record.EndsWith('/');
+                var relative = repositoryDirectory ? record[..^1] : record;
                 if (relative.Length == 0 || Path.IsPathRooted(relative)
                     || relative.Split('/').Any(x => x is "" or "." or ".."))
                     return LandRecoveryCheckoutInspection.Refused();
+                if (repositoryDirectory)
+                {
+                    var full = Path.Combine(path, relative.Replace('/', Path.DirectorySeparatorChar));
+                    var admin = Path.Combine(full, ".git");
+                    // File-based gitdirs and reparse paths have no authority in this narrow exception.
+                    if (!Directory.Exists(admin)
+                        || (File.GetAttributes(admin) & (FileAttributes.Directory | FileAttributes.ReparsePoint))
+                            != FileAttributes.Directory)
+                        return LandRecoveryCheckoutInspection.Refused();
+                    for (var directory = full; !PathsEqual(directory, path);
+                         directory = Path.GetDirectoryName(directory)!)
+                        if ((File.GetAttributes(directory) & (FileAttributes.Directory | FileAttributes.ReparsePoint))
+                            != FileAttributes.Directory)
+                            return LandRecoveryCheckoutInspection.Refused();
+                    var ignoredByRule = await RunAsync(path,
+                        ["check-ignore", "--no-index", "--quiet", "--", relative], ct);
+                    var tracked = await RunAsync(path,
+                        ["ls-files", "--cached", "-z", "--", ":(literal)" + relative, ":(literal)" + relative + "/"], ct);
+                    if (!ignoredByRule.Succeeded || !tracked.Succeeded || tracked.Output.Length != 0)
+                        return LandRecoveryCheckoutInspection.Refused();
+                }
                 // A tracked file at this path, a tracked file below an ignored file/directory,
                 // or a tracked file above an ignored child can be overwritten by reset --hard.
                 if (reviewedPaths.Contains(relative) || reviewedParents.Contains(relative))
