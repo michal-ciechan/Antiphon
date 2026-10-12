@@ -140,6 +140,29 @@ public class RunnerGrokAdapterReadyTests
     }
 
     [Test]
+    public async Task Late_poll_after_trust_still_records_sign_in_block()
+    {
+        await AssertLateSignIn(TimeSpan.FromMilliseconds(3000), "launchBlockAfterLateTrustPoll");
+        await AssertLateSignIn(TimeSpan.FromMilliseconds(10000), "launchBlockAfterLateDeadlinePoll");
+    }
+
+    private static async Task AssertLateSignIn(TimeSpan lateWake, string label)
+    {
+        var clock = new PollGateClock();
+        var signin = new ScriptedClient([Trust, SignIn]);
+        await using var adapter = NewAdapter(signin, max: 10000, trust: 3000, time: clock);
+        await adapter.StartAsync(Spec(), CancellationToken.None);
+        var wait = adapter.WaitForReadyAsync(CancellationToken.None);
+        await TimerInstalled(clock.PollInstalled(1), label);
+        clock.Advance(lateWake);
+        (await wait.WaitAsync(TimeSpan.FromSeconds(5))).ShouldBeFalse(label);
+        adapter.LaunchBlock.ShouldNotBeNull(label);
+        adapter.LaunchBlock!.Kind.ShouldBe(AgentLaunchBlockKind.ProviderSignInRequired);
+        signin.Writes.ShouldBe(["y"]);
+        signin.SnapshotReads.ShouldBe(2, label);
+    }
+
+    [Test]
     public async Task One_deadline_covers_reads_trust_and_minimum_age()
     {
         var frame = new GrokStartupSnapshot(Ready, "historical", 1, DateTime.UtcNow);
