@@ -296,6 +296,10 @@ checkpoint-owned alternate outputs after the run.
 | CP-12 | S7 | `tests/Antiphon.Tests -> bin-c1032-receipt/` | linux-mirror-receipt | `/*/*/CardWorktreeMirrorCleanupTests/(C1017_ReceiptMustMatch*)\|(C1017_AckIsNotRemoval)\|(C1017_UnsupportedNeverFallsBack)\|(C1032_Receipt*)` | V-2, V-6 | 6 parent + 1 planned digest result; 0 failed/skipped | 7 | 6 | true |
 | CP-13 | S8 | `tests/Antiphon.Tests -> bin-c1032-recovery/` | linux-mirror-recovery | `/*/*/CardWorktreeMirrorCleanupTests/(C1017_MirrorCompletesIndependently)\|(C1017_LocalProgressSurvivesOffline)\|(C1017_LostAckReusesOperation)\|(C1032_Recovery*)` | V-5, V-6 | 3 parent + 3 planned results; 0 failed/skipped | 6 | 7 | true |
 | CP-14 | S8 | `tests/Antiphon.Tests -> bin-c1032-sync/` | linux-legacy-sync | `/*/*/RemoteWorktreeMirrorTests/*` | R-1 | all 8 existing methods; 0 failed/skipped | 8 | 5 | true |
+| CP-19 | S2 | `tests/Antiphon.SessionRunner.Tests -> bin-c1032-store-mismatch/` | linux-store-mismatch | `/*/*/RunnerWorkspaceBindingTests/C1032_StoreMismatch*` | V-1 | all 1 listed; 0 failed/skipped | 1 | 5 | true |
+| CP-20 | S2 | `tests/Antiphon.Tests -> bin-c1032-store-replacement/` | linux-store-replacement | `/*/*/RemoteWorkspacePreparerTests/C1032_StoreReplacement*` | V-1 | all 1 listed; 0 failed/skipped | 1 | 5 | true |
+
+CP-15 through CP-18, and the closed importer list that includes CP-19 and CP-20, live in `docs/superpowers/plans/2026-10-12-card-1032-test-design.md`.
 
 ### Windows-only witnesses and deferred activation
 

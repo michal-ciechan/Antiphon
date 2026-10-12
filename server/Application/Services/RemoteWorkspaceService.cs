@@ -128,7 +128,9 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
     /// <summary>
     /// CARD-1032. Commits the preparation identity before the mirror request is sent. A live store
     /// id is required; without one the caller sends the legacy path-only request. An existing row
-    /// for this task, attempt, and runner is reused so a restarted process repeats the same request.
+    /// for this task, attempt, runner, and store is reused so a restarted process repeats the same
+    /// request. A row recorded for another store is left as debt: it is not completed, deleted, or
+    /// retargeted, and the live store receives its own preparation.
     /// </summary>
     public async Task<MirrorBindingExpectation?> BeginMirrorPreparationAsync(
         AppDbContext db, AgentTask task, string sha, string repository, CancellationToken ct)
@@ -138,9 +140,11 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
         var store = _runners.GetLiveStoreId(task.RunnerId);
         if (store is null)
             return null;
+        var storeId = store.Value.ToString("D");
 
         var existing = await db.TaskWorktreeMirrorBindings.AsNoTracking()
-            .Where(row => row.TaskId == task.Id && row.Attempt == task.Attempt && row.RunnerId == task.RunnerId)
+            .Where(row => row.TaskId == task.Id && row.Attempt == task.Attempt && row.RunnerId == task.RunnerId
+                && row.RunnerStoreId == storeId)
             .OrderBy(row => row.CreatedAt)
             .FirstOrDefaultAsync(ct);
         if (existing is not null)
@@ -153,7 +157,7 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
             Attempt = task.Attempt,
             PreparationId = Guid.NewGuid(),
             RunnerId = task.RunnerId,
-            RunnerStoreId = store.Value.ToString("D"),
+            RunnerStoreId = storeId,
             BindingId = Guid.Empty,
             RepositoryIdentity = repository,
             CommonDirectory = "",
@@ -235,6 +239,7 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
     /// Saves the returned binding, then projects the path only when the task is still on that
     /// runner and attempt. A historical binding is kept when the projection matches nothing.
     /// A repeated preparation with a different binding id or path is left unchanged.
+    /// An existing row whose store is not the returned store is left unchanged.
     /// </summary>
     public static async Task<bool> CaptureMirrorBindingAsync(
         AppDbContext db, CompletedCardWorkspaceBinding binding, CancellationToken ct)
@@ -249,6 +254,10 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
                 CreatedAt = DateTime.UtcNow,
             };
             db.TaskWorktreeMirrorBindings.Add(row);
+        }
+        else if (!string.Equals(row.RunnerStoreId, binding.RunnerStoreId, StringComparison.Ordinal))
+        {
+            return false;
         }
         else if (row.BindingId != Guid.Empty)
         {

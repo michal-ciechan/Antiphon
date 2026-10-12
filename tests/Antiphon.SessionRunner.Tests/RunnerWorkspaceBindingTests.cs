@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Text.Json;
+using Antiphon.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
 using Shouldly;
 using TUnit.Core;
@@ -278,6 +280,86 @@ public sealed class RunnerWorkspaceBindingTests
     }
 
     [Test]
+    public async Task C1032_StoreMismatchRefused()
+    {
+        // case: a bound mirror request names a store, or a runner, that is not this recipient.
+        // mutation: copy RunnerStoreId and RunnerId from the request into a completed binding without comparing them to the recipient.
+        // red: wrongStoreCompleted.ShouldBeFalse() — the recipient creates the tree and stores the foreign store id.
+        using var scratch = Scratch.Create();
+        var foreignStore = Guid.Parse("22222222-2222-2222-2222-222222222222").ToString("D");
+        var serviceTask = Guid.Parse("deadbeef-0000-4000-8000-000000000031");
+        var servicePreparation = Guid.Parse("dddddddd-0000-4000-8000-000000000004");
+        var serviceRequest = Request(scratch, serviceTask, servicePreparation) with
+        {
+            Binding = Request(scratch, serviceTask, servicePreparation).Binding! with { RunnerStoreId = foreignStore },
+        };
+        var service = scratch.Service(scratch.Clone);
+        var wrongStoreCompleted = false;
+        PhoneHomeAdmissionException? serviceRefusal = null;
+        try
+        {
+            var created = await service.MirrorAsync(serviceRequest, CancellationToken.None);
+            wrongStoreCompleted = created.Binding is { } got
+                && string.Equals(got.RunnerStoreId, foreignStore, StringComparison.Ordinal)
+                && Directory.Exists(created.Path);
+        }
+        catch (PhoneHomeAdmissionException ex)
+        {
+            serviceRefusal = ex;
+        }
+
+        var dispatchTask = Guid.Parse("deadbeef-0000-4000-8000-000000000032");
+        var dispatchPreparation = Guid.Parse("eeeeeeee-0000-4000-8000-000000000005");
+        var dispatchRequest = Request(scratch, dispatchTask, dispatchPreparation) with
+        {
+            Binding = Request(scratch, dispatchTask, dispatchPreparation).Binding! with
+            {
+                RunnerId = "runner-b",
+                RunnerStoreId = foreignStore,
+            },
+        };
+        var runtime = new StoreRuntime(Guid.Parse("33333333-3333-3333-3333-333333333333"));
+        var dispatcher = new PhoneHomeCommandDispatcher(runtime, new PhoneHomeSettings
+        {
+            Enabled = true,
+            RunnerId = "runner-a",
+            AllowedCwd = scratch.Work,
+            RunnerRepository = scratch.Clone.Replace('\\', '/'),
+            Capacity = 1,
+            CapacityStatePath = scratch.Root.Replace('\\', '/') + "/capacity",
+        });
+        var reply = await dispatcher.DispatchAsync(
+            new PhoneHomeFrame(
+                PhoneHomeFrameKind.Request, 1, Guid.NewGuid(), PhoneHomeOperation.WorkspaceMirror,
+                JsonSerializer.SerializeToElement(dispatchRequest, PhoneHomeFraming.Json)),
+            CancellationToken.None);
+        var dispatchPath = scratch.Work + "/worktrees/" + dispatchRequest.Name;
+        if (reply.Kind == PhoneHomeFrameKind.Result)
+        {
+            var mirrored = reply.Payload?.Deserialize<PhoneHomeWorkspaceMirrorResponse>(PhoneHomeFraming.Json);
+            if (mirrored?.Binding is { } got
+                && string.Equals(got.RunnerStoreId, foreignStore, StringComparison.Ordinal)
+                && Directory.Exists(dispatchPath))
+                wrongStoreCompleted = true;
+        }
+
+        wrongStoreCompleted.ShouldBeFalse();
+        serviceRefusal.ShouldNotBeNull();
+        serviceRefusal!.Message.ShouldBe("runner_store_mismatch");
+        Directory.Exists(scratch.Work + "/worktrees/" + serviceRequest.Name).ShouldBeFalse();
+        service.OpenBindingStore().Read(servicePreparation).Kind.ShouldBe(BindingReadKind.Missing);
+        reply.Kind.ShouldBe(PhoneHomeFrameKind.Error);
+        reply.ErrorDetail.ShouldBe("runner_store_mismatch");
+        Directory.Exists(dispatchPath).ShouldBeFalse();
+        var dispatchRecord = new RunnerWorkspaceService(scratch.Clone, scratch.Work, scratch.Origin, static psi =>
+        {
+            psi.Environment["GIT_TERMINAL_PROMPT"] = "0";
+            return Process.Start(psi);
+        }).OpenBindingStore().Read(dispatchPreparation);
+        dispatchRecord.Kind.ShouldBe(BindingReadKind.Missing);
+    }
+
+    [Test]
     public async Task C1032_BindingLegacyCompatibility()
     {
         using var scratch = Scratch.Create();
@@ -360,13 +442,15 @@ public sealed class RunnerWorkspaceBindingTests
             if (!File.Exists(emptyConfig))
                 File.WriteAllText(emptyConfig, "");
             Directory.CreateDirectory(Work);
-            return new RunnerWorkspaceService(repository, Work, Origin, psi =>
+            var service = new RunnerWorkspaceService(repository, Work, Origin, psi =>
             {
                 psi.Environment["GIT_CONFIG_NOSYSTEM"] = "1";
                 psi.Environment["GIT_CONFIG_GLOBAL"] = emptyConfig;
                 psi.Environment["GIT_TERMINAL_PROMPT"] = "0";
                 return Process.Start(psi);
             });
+            service.BindRecipient("runner-a", Guid.Parse("11111111-1111-1111-1111-111111111111"));
+            return service;
         }
 
         public void Dispose()
@@ -403,5 +487,24 @@ public sealed class RunnerWorkspaceBindingTests
                 throw new InvalidOperationException($"git {string.Join(' ', args)} failed: {stderr}");
             return stdout;
         }
+    }
+
+    private sealed class StoreRuntime(Guid storeId) : IPhoneHomeRuntimeSurface
+    {
+        public Guid RunnerStoreId { get; } = storeId;
+        public int OwnedSessionCount => 0;
+        public RunnerCapabilitiesDto Capabilities() => new("InboxConhost", "inbox", "test", false);
+        public string Health() => "Healthy";
+        public IReadOnlyList<RunnerSessionDto> List() => [];
+        public Task<RunnerSessionDto> GetAsync(Guid sessionId, CancellationToken ct) => throw new NotSupportedException();
+        public Task<RunnerSessionDto> StartAsync(RunnerLaunchRequest request, CancellationToken ct) => throw new NotSupportedException();
+        public RunnerBufferDto GetBuffer(Guid sessionId) => throw new NotSupportedException();
+        public RunnerSnapshotDto GetSnapshot(Guid sessionId) => throw new NotSupportedException();
+        public RunnerTranscriptDto GetTranscript(Guid sessionId) => throw new NotSupportedException();
+        public Task SendInputAsync(Guid sessionId, string input, CancellationToken ct) => throw new NotSupportedException();
+        public Task<RunnerConditionalInputResult> SendConditionalInputAsync(Guid sessionId, RunnerConditionalInputRequest request, CancellationToken ct) => throw new NotSupportedException();
+        public Task ClearLiveBufferAsync(Guid sessionId, CancellationToken ct) => throw new NotSupportedException();
+        public Task ResizeAsync(Guid sessionId, int cols, int rows, CancellationToken ct) => throw new NotSupportedException();
+        public Task<RunnerKillGenerationResult> KillGenerationAsync(Guid sessionId, DateTime expectedAcceptedStartedAt, CancellationToken ct) => throw new NotSupportedException();
     }
 }
