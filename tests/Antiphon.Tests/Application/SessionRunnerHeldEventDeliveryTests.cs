@@ -97,7 +97,8 @@ public class SessionRunnerHeldEventDeliveryTests
     {
         // PC-172 removes the finally's captured-exception filter: the original
         // catch-up cancellation type/message is lost only on the blocked throw row.
-        // PC-173 removes the late callback observer; the late-fault barrier is missed.
+        // PC-173 waits via Task.WhenAny instead of awaiting the callback: scope cleanup
+        // remains, but its late fault is not observed and the log barrier is missed.
         // PC-174 skips the offer on exceptional unwind; the completed control loses output.
         // PC-175 removes bounded delivery on normal unwind; disconnect stays pending.
         await using var h = new DeliveryHarness(blockCallback, successfulList: !catchupThrows);

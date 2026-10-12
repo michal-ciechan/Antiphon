@@ -34,7 +34,7 @@ not a completed SourceLanding cycle. All PC-1..175 and variants remain pending.
 | PC | Deliberate payload | Exact detecting method filter | Required red | Status |
 |---|---|---|---|---|
 | PC-172 | Remove the captured-exception catch/filter around the finally's preservation/unwind, retaining the existing abandonment TimeoutException. | `/*/*/SessionRunnerHeldEventDeliveryTests/C1205_Catchup_exception_survives_bounded_held_delivery` | throws/blocked: DisconnectException.GetType expected OperationCanceledException, actual TimeoutException. | Pending |
-| PC-173 | Remove ObserveAbandonedOperationAsync for the retained held callback. | `/*/*/SessionRunnerHeldEventDeliveryTests/C1205_Catchup_exception_survives_bounded_held_delivery` | observed.ShouldBeTrue fails after releasing with the literal late fault. | Pending |
+| PC-173 | In ObserveAbandonedOperationAsync replace `await delivery` with `await Task.WhenAny(delivery)`: retain scope disposal but omit observing/logging the later fault. | `/*/*/SessionRunnerHeldEventDeliveryTests/C1205_Catchup_exception_survives_bounded_held_delivery` | observed.ShouldBeTrue fails after releasing with the literal late fault. | Pending |
 | PC-174 | Skip the common offer when catchUpException is non-null. | `/*/*/SessionRunnerHeldEventDeliveryTests/C1205_Catchup_exception_survives_bounded_held_delivery` | offered.ShouldBeTrue fails on exceptional rows; completed control accepts zero. | Pending |
 | PC-175 | Replace bounded held delivery with unbounded CancellationToken.None dispatch. | `/*/*/SessionRunnerHeldEventDeliveryTests/C1205_Catchup_exception_survives_bounded_held_delivery` | disconnected.ShouldBeTrue fails on blocked rows before release. | Pending |
 
