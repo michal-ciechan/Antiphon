@@ -832,6 +832,7 @@ simulate_npm_ci() {
 
 docker_run() {
     parse_run_create "$@"
+    if [ "$mode" = apphost ]; then apphost_run; return; fi
     local kind=other-run
     case "$PARSED_MOUNTS" in
         *target=/fixture*) kind=init-run ;;
@@ -2284,7 +2285,147 @@ mode_writable_pruning() {
     refuse_unexpected
 }
 
+# S6 executes the real import across independently observed mounted volumes.
+apphost_run() {
+    local joined="${PARSED_CMD[*]:-}" source data cache mount arg
+    printf '%s\t%s\t%s\t%s\t%s\n' "${PARSED_NAME:-noname}" "$PARSED_NETWORK" "$PARSED_IMAGE" "$PARSED_MOUNTS" "$joined" >> "$C1192_ROOT/run-log"
+    if [ "$PARSED_ENTRY" = sleep ]; then
+        store_container "$PARSED_NAME" "$PARSED_IMAGE" "$PARSED_MOUNTS" "$PARSED_LABELS"
+        return 0
+    fi
+    case "$joined" in
+        *'cp -a '*)
+            source=$(mount_source_for_target /fixture) || return 1
+            cache=$(volume_data_for_target /cache) || return 1
+            data="$C1192_ROOT/volumes/$source/data"
+            local args=()
+            for arg in "${PARSED_CMD[@]}"; do
+                arg="${arg//\/fixture/$data}"
+                args+=("${arg//\/cache/$cache}")
+            done
+            bash -c 'chown() { :; }; export -f chown; exec bash "$@"' sh "${args[@]}"
+            ;;
+        *)
+            IFS=';' read -r -a mounts <<< "$PARSED_MOUNTS"
+            mount="${mounts[0]:-}"
+            run_script "$mount" "${PARSED_CMD[@]}"
+            ;;
+    esac
+}
+
+# Compiler/image tools have their own tests; this smoke seam observes the mask recipient.
+apphost_smoke() {
+    local helper="$1" mount source target pack
+    [ "$helper" = "c849-${RUN}-masked" ] || return 0
+    mount=$(cat "$C1192_ROOT/containers/$helper/mount")
+    source=$(mount_field "$mount" source)
+    target=$(mount_field "$mount" target)
+    case "$target" in
+        /usr/share/dotnet/packs/Microsoft.NETCore.App.Host.linux-x64/9.0.20|/usr/share/dotnet/packs/Microsoft.NETCore.App.Ref/9.0.20|/usr/share/dotnet/packs/Microsoft.AspNetCore.App.Ref/9.0.20) ;;
+        *) return 1 ;;
+    esac
+    [ "$(mount_field "$mount" type)" = volume ] && [ "$source" = "$MASK" ] \
+        && field_has "$mount" readonly && field_has "$mount" volume-nocopy || return 1
+    [ -z "$(find "$C1192_ROOT/volumes/$MASK/data" -mindepth 1 -print -quit)" ] || return 1
+    pack="${target#/usr/share/dotnet/packs/}"; pack="${pack%/9.0.20}"
+    printf '%s\n' "$pack" >> "$C1192_ROOT/masked-packs"
+    if [ "$C1192_FAULT" = masked-smoke ]; then return 9; fi
+    printf 'ImagePackMissing:%s\n' "$pack" > "$CASE_DIR/smoke.txt"
+    return 2
+}
+
+mode_apphost() {
+    reset_runtime
+    : > "$C1192_ROOT/scenario.err"
+    : > "$C1192_ROOT/masked-packs"
+    require_init
+    C849_NPM="c849${RUN}npmcache-npm"
+    plant_volume "$C849_NPM" local null server2-runner "$RUN" npm-content
+    printf 1 > "$C1192_ROOT/volumes/$C849_NPM/label-schema"
+    printf npm-content > "$C1192_ROOT/volumes/$C849_NPM/label-cache-role"
+    mkdir -p "$SERVER2_ROOT/apphost"
+    printf host-decoy > "$SERVER2_ROOT/apphost/decoy"
+    c849_smoke() { apphost_smoke "$@"; }
+    local code=0 out data cache payload=0 decoy=0 import=0 bytes=0 masks=0 empty=0 clean=0
+    out=$(c849_fixture_apphost 2>&1) || code=$?
+    data="$C1192_ROOT/volumes/$WORK/data/apphost/packages"
+    cache="$C1192_ROOT/volumes/c849${RUN}smoke-packages/data"
+    [ "$code" = 0 ] && [ -f "$data/c913.probe/1.0.0/data" ] && payload=1
+    [ "$(cat "$SERVER2_ROOT/apphost/decoy")" = host-decoy ] \
+        && [ "$(find "$SERVER2_ROOT/apphost" -mindepth 1 | wc -l)" = 1 ] && decoy=1
+    local name network image mounts cmd
+    while IFS= mode_writable_pruning ;;
+    register) mode_register ;;
+    cleanup) mode_cleanup ;;
+    partial) mode_partial ;;
+    toxic) mode_toxic ;;
+    foreign) mode_foreign ;;
+    argv) mode_argv ;;
+    race) mode_race ;;
+    barriers) mode_barriers ;;
+    locks) mode_locks ;;
+    handoff) mode_handoff ;;
+    npm) mode_npm ;;
+    npm-sentinel) mode_npm_sentinel ;;
+    backend) mode_backend ;;
+    transfer) mode_transfer ;;
+    *) fail "unknown mode $mode" ;;
+esac
+if [ -s "$C1192_ROOT/unexpected" ]; then
+    fail "$(cat "$C1192_ROOT/unexpected")"
+fi
+\t' read -r name network image mounts cmd; do
+        case "$cmd" in
+            *'cp -a '*)
+                if mount_targets_work "$mounts" && [[ "$mounts" == *'target=/fixture,volume-nocopy,readonly'* ]] \
+                    && [[ "$mounts" != *type=bind* ]] && [ "$network" = none ]; then import=1; fi
+                ;;
+        esac
+    done < "$C1192_ROOT/run-log"
+    if [ -f "$cache/c913.probe/1.0.0/data" ] && [ "$(cat "$cache/c913.probe/1.0.0/data")" = ordinary-payload ] \
+        && [ "$(stat -c %a "$cache")" = 700 ] && [ "$(stat -c %a "$cache/c913.tools/2.0.0/tool")" = 751 ] \
+        && [ -f "$cache/c913.probe/1.0.0/.nupkg.metadata" ]; then bytes=1; fi
+    if [ "$(sort -u "$C1192_ROOT/masked-packs" | wc -l)" = 3 ] \
+        && [ "$(wc -l < "$C1192_ROOT/masked-packs")" = 3 ] \
+        && [ "$(grep -c '^PC-18\.' "$CASE_DIR/fixture-control-variants.txt")" = 3 ]; then masks=1; fi
+    [ -z "$(find "$C1192_ROOT/volumes/$MASK/data" -mindepth 1 -print -quit)" ] && empty=1
+    C1192_FAULT=masked-smoke
+    code=0
+    out=$(c849_fixture_masked_pack "$ADMITTED" Microsoft.NETCore.App.Ref "$SERVER2_ROOT/apphost" 2>&1) || code=$?
+    [ "$code" = 2 ] && [[ "$out" == *ControlNotSensitive* ]] && ! container_exists "c849-${RUN}-masked" && clean=1
+    emit apphost-volume-payload "$payload"
+    emit apphost-host-decoy "$decoy"
+    emit apphost-import-readonly "$import"
+    emit apphost-import-bytes-mode "$bytes"
+    emit mask-exact-three "$masks"
+    emit mask-empty "$empty"
+    emit mask-failure-cleaned "$clean"
+    C1192_FAULT=
+    local foreign=0 work_foreign=0 cache_foreign=0 before after
+    before=$(wc -l < "$C1192_ROOT/run-log")
+    printf foreign > "$C1192_ROOT/volumes/$MASK/label-owner"
+    code=0
+    out=$(c849_fixture_masked_pack "$ADMITTED" Microsoft.NETCore.App.Ref "$SERVER2_ROOT/apphost" 2>&1) || code=$?
+    after=$(wc -l < "$C1192_ROOT/run-log")
+    [ "$code" != 0 ] && [ "$before" = "$after" ] && foreign=1
+    printf c849-fixture > "$C1192_ROOT/volumes/$MASK/label-owner"
+    printf foreign > "$C1192_ROOT/volumes/$WORK/label-owner"
+    code=0
+    out=$(c849_fixture_apphost 2>&1) || code=$?
+    [ "$code" != 0 ] && [ "$(wc -l < "$C1192_ROOT/run-log")" = "$after" ] && work_foreign=1
+    printf c849-fixture > "$C1192_ROOT/volumes/$WORK/label-owner"
+    printf foreign > "$C1192_ROOT/volumes/$C849_NPM/label-owner"
+    code=0
+    out=$(c849_fixture_apphost 2>&1) || code=$?
+    [ "$code" != 0 ] && [ "$(wc -l < "$C1192_ROOT/run-log")" = "$after" ] && cache_foreign=1
+    emit mask-foreign-refused "$foreign"
+    emit apphost-foreign-work-refused "$work_foreign"
+    emit apphost-foreign-cache-refused "$cache_foreign"
+    refuse_unexpected
+}
+
 case "$mode" in
+    apphost) mode_apphost ;;
     writable-pruning) mode_writable_pruning ;;
     register) mode_register ;;
     cleanup) mode_cleanup ;;
