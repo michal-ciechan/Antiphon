@@ -521,9 +521,14 @@ public static class CheckpointApp
         var writeRoots = new List<string> { resultsPreview };
         foreach (var build in manifest.Builds)
         {
-            var project = Path.IsPathRooted(build.Project) ? build.Project : Path.Combine(repo, build.Project);
-            var projectDir = Directory.Exists(project) ? project : Path.GetDirectoryName(project) ?? repo;
-            writeRoots.Add(Path.GetFullPath(Path.Combine(projectDir, build.OutputPath ?? "")));
+            var closure = ProjectWriteRoots.TryCollect(repo, build.Project, build.OutputPath ?? "", out var directories);
+            if (closure is not null)
+            {
+                output.WriteLine("refused: " + closure);
+                return new StartResult(ExitCodes.Invalid, "");
+            }
+
+            writeRoots.AddRange(directories);
         }
 
         var preflight = SafeWrite.Preflight(repo, writeRoots, runtime.GitExecutable);

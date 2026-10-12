@@ -390,7 +390,7 @@ public sealed class OutputCleanupTests : CheckpointTestBase
             var script = File.ReadAllText(scriptPath);
             script.ShouldNotContain("if (Test-Path -LiteralPath $stampPath) { $stampRefusal = Test-CheckpointStampRefusal $stampPath }");
             var check = script.IndexOf("$replaceRefusal = Test-CheckpointStampRefusal $stampPath", StringComparison.Ordinal);
-            var makeDir = script.IndexOf("New-Item -ItemType Directory -Path $stampDirectory", StringComparison.Ordinal);
+            var makeDir = script.IndexOf("New-CheckpointDirectory $stampDirectory", StringComparison.Ordinal);
             check.ShouldBeGreaterThanOrEqualTo(0);
             makeDir.ShouldBeGreaterThan(check);
         }
