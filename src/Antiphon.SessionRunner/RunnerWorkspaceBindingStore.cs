@@ -12,6 +12,7 @@ public sealed class RunnerWorkspaceBindingStore
     public const string Intent = "intent";
     public const string Added = "added";
     public const string Complete = "complete";
+    public const string OwnerStampFileName = "antiphon-mirror-owner.json";
 
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
@@ -89,6 +90,48 @@ public sealed class RunnerWorkspaceBindingStore
         AtomicWrite(record);
     }
 
+    public static string OwnerStampPath(string gitDirectory) =>
+        gitDirectory.Replace('\\', '/').TrimEnd('/') + "/" + OwnerStampFileName;
+
+    public void WriteOwnerStamp(string gitDirectory, RunnerWorkspaceBindingRecord record)
+    {
+        if (record.CreationGeneration == Guid.Empty || record.CreationGeneration != record.BindingId
+            || record.TaskId == Guid.Empty || record.PreparationId == Guid.Empty)
+            throw new InvalidOperationException("Mirror creation generation is not bound.");
+        Directory.CreateDirectory(gitDirectory);
+        var path = OwnerStampPath(gitDirectory);
+        var temporary = path + ".tmp";
+        File.WriteAllText(temporary, JsonSerializer.Serialize(new MirrorCreationOwnerStamp
+        {
+            TaskId = record.TaskId,
+            CreationGeneration = record.CreationGeneration,
+            PreparationId = record.PreparationId,
+        }, Json));
+        File.Move(temporary, path, overwrite: true);
+    }
+
+    public bool OwnerStampMatches(string gitDirectory, RunnerWorkspaceBindingRecord record)
+    {
+        if (record.TaskId == Guid.Empty || record.PreparationId == Guid.Empty
+            || record.CreationGeneration == Guid.Empty || record.CreationGeneration != record.BindingId)
+            return false;
+        var path = OwnerStampPath(gitDirectory);
+        try
+        {
+            if (Directory.Exists(path) || !File.Exists(path))
+                return false;
+            var stamp = JsonSerializer.Deserialize<MirrorCreationOwnerStamp>(File.ReadAllText(path), Json);
+            return stamp is not null
+                && stamp.TaskId == record.TaskId
+                && stamp.CreationGeneration == record.CreationGeneration
+                && stamp.PreparationId == record.PreparationId;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+        {
+            return false;
+        }
+    }
+
     private void AtomicWrite(RunnerWorkspaceBindingRecord record)
     {
         Directory.CreateDirectory(StateRoot);
@@ -112,7 +155,9 @@ public sealed class RunnerWorkspaceBindingStore
         && !string.IsNullOrWhiteSpace(record.CreationBaselineSha)
         && !string.IsNullOrWhiteSpace(record.WorktreePath)
         && !string.IsNullOrWhiteSpace(record.CommonDirectory)
-        && !string.IsNullOrWhiteSpace(record.GitDirectory);
+        && !string.IsNullOrWhiteSpace(record.GitDirectory)
+        && record.CreationGeneration != Guid.Empty
+        && record.CreationGeneration == record.BindingId;
 }
 
 public enum BindingReadKind
@@ -144,4 +189,15 @@ public sealed class RunnerWorkspaceBindingRecord
     public string CommonDirectory { get; set; } = "";
     public string GitDirectory { get; set; } = "";
     public bool TreeExistedAtIntent { get; set; }
+
+    /// <summary>Creation nonce, equal to <see cref="BindingId"/>, written with the intent before git worktree add.</summary>
+    public Guid CreationGeneration { get; set; }
+}
+
+/// <summary>Physical owner stamp copied from the pre-written creation generation into the worktree git dir.</summary>
+public sealed class MirrorCreationOwnerStamp
+{
+    public Guid TaskId { get; set; }
+    public Guid CreationGeneration { get; set; }
+    public Guid PreparationId { get; set; }
 }

@@ -188,6 +188,96 @@ public sealed class RunnerWorkspaceBindingTests
     }
 
     [Test]
+    public async Task C1032_ForeignOwnerAdoptionRefused()
+    {
+        // case: task A saves its creation intent and is cancelled; task B, whose short id collides, creates the mirror; A retries the same preparation.
+        // mutation: adopt an existing directory when only its presence and HEAD match, ignoring the task id and creation generation written before creation.
+        // red: foreignAdopted.ShouldBeFalse() — the old recovery completes A's binding for B's tree.
+        using var scratch = Scratch.Create();
+        var service = scratch.Service(scratch.Clone);
+        var taskA = Guid.Parse("deadbeef-0000-4000-8000-000000000011");
+        var taskB = Guid.Parse("deadbeef-0000-4000-8000-000000000012");
+        var preparationA = Guid.Parse("aaaaaaaa-0000-4000-8000-000000000001");
+        var preparationB = Guid.Parse("bbbbbbbb-0000-4000-8000-000000000002");
+        var requestA = Request(scratch, taskA, preparationA);
+        var requestB = Request(scratch, taskB, preparationB);
+        requestA.Name.ShouldBe(requestB.Name);
+        service.BindingPhaseCut = phase =>
+        {
+            if (phase == "before-add")
+                throw new InvalidOperationException("cut-before-add");
+        };
+
+        await Should.ThrowAsync<InvalidOperationException>(() => service.MirrorAsync(requestA, CancellationToken.None));
+        var intent = service.OpenBindingStore().Read(preparationA);
+        intent.Kind.ShouldBe(BindingReadKind.Intent);
+        intent.Record!.TreeExistedAtIntent.ShouldBeFalse();
+        Directory.Exists(intent.Record.WorktreePath).ShouldBeFalse();
+
+        service.BindingPhaseCut = null;
+        var createdByB = await service.MirrorAsync(requestB, CancellationToken.None);
+        createdByB.Binding.ShouldNotBeNull();
+        createdByB.Binding!.TaskId.ShouldBe(taskB);
+        Directory.Exists(createdByB.Path).ShouldBeTrue();
+
+        var foreignAdopted = false;
+        PhoneHomeAdmissionException? refusal = null;
+        try
+        {
+            var retry = await service.MirrorAsync(requestA, CancellationToken.None);
+            foreignAdopted = retry.Binding is { } got && got.TaskId == taskA;
+        }
+        catch (PhoneHomeAdmissionException ex)
+        {
+            refusal = ex;
+        }
+
+        foreignAdopted.ShouldBeFalse();
+        refusal.ShouldNotBeNull();
+        refusal!.Message.ShouldBe("foreign_mirror_owner");
+        service.OpenBindingStore().Read(preparationA).Kind.ShouldNotBe(BindingReadKind.Complete);
+        service.OpenBindingStore().Read(preparationB).Kind.ShouldBe(BindingReadKind.Complete);
+        service.OpenBindingStore().Read(preparationB).Record!.BindingId.ShouldBe(createdByB.Binding.BindingId);
+    }
+
+    [Test]
+    public async Task C1032_AbsentMirrorReplayRefused()
+    {
+        // case: a completed binding is replayed exactly after ordinary removal of that worktree.
+        // mutation: return the completed record without checking that this generation's directory, registration, HEAD and owner stamp are still present.
+        // red: staleSuccess.ShouldBeFalse() — the old shortcut returns success for the missing directory.
+        using var scratch = Scratch.Create();
+        var service = scratch.Service(scratch.Clone);
+        var taskId = Guid.Parse("deadbeef-0000-4000-8000-000000000021");
+        var preparationId = Guid.Parse("cccccccc-0000-4000-8000-000000000003");
+        var request = Request(scratch, taskId, preparationId);
+        var original = await service.MirrorAsync(request, CancellationToken.None);
+        var originalBindingId = original.Binding!.BindingId;
+        var removed = await service.RemoveAsync(new PhoneHomeWorkspaceRemoveRequest(original.Path), CancellationToken.None);
+        removed.Removed.ShouldBeTrue();
+        Directory.Exists(original.Path).ShouldBeFalse();
+
+        var staleSuccess = false;
+        PhoneHomeAdmissionException? refusal = null;
+        try
+        {
+            var replay = await service.MirrorAsync(request, CancellationToken.None);
+            staleSuccess = replay.Binding is not null && !Directory.Exists(replay.Path);
+        }
+        catch (PhoneHomeAdmissionException ex)
+        {
+            refusal = ex;
+        }
+
+        staleSuccess.ShouldBeFalse();
+        refusal.ShouldNotBeNull();
+        refusal!.Message.ShouldBe("stale_mirror_binding");
+        var stored = service.OpenBindingStore().Read(preparationId);
+        stored.Kind.ShouldBe(BindingReadKind.Complete);
+        stored.Record!.BindingId.ShouldBe(originalBindingId);
+    }
+
+    [Test]
     public async Task C1032_BindingLegacyCompatibility()
     {
         using var scratch = Scratch.Create();
