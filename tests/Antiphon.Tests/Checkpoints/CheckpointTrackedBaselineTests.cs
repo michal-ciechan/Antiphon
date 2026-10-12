@@ -303,6 +303,121 @@ public sealed class CheckpointTrackedBaselineTests : CheckpointTestBase
             probe.Output.ShouldContain(relative, Case.Sensitive);
     }
 
+    [Test]
+    [Timeout(420_000)]
+    public async Task staged_untracked_file_is_kept_and_unstaged(CancellationToken cancellationToken)
+    {
+        // case: the build runs git add on user-keep.txt, which is absent from HEAD.
+        // mutation: restore that staged path with --worktree, deleting a path HEAD does not contain.
+        // red: user-keep.txt is missing or its bytes differ after the tool or the script row.
+        RequireLinux();
+        var root = BeginRepo();
+        WriteStageProject(root, "git --git-dir=.git --work-tree=. add -- user-keep.txt");
+        var bytes = Encoding.ASCII.GetBytes("USER-KEEP");
+        await AssertStagedUserFileSurvivesAsync(root, "untracked", "user-keep.txt", bytes, cancellationToken);
+    }
+
+    [Test]
+    [Timeout(420_000)]
+    public async Task staged_ignored_file_is_kept_and_unstaged(CancellationToken cancellationToken)
+    {
+        // case: the build runs git add -f on user-ignored.dat, an ignored path absent from HEAD.
+        // mutation: restore that staged path with --worktree, deleting a path HEAD does not contain.
+        // red: user-ignored.dat is missing or its bytes differ after the tool or the script row.
+        RequireLinux();
+        var root = BeginRepo();
+        File.AppendAllText(Path.Combine(root, ".gitignore"), "user-ignored.dat\n");
+        WriteStageProject(root, "git --git-dir=.git --work-tree=. add -f -- user-ignored.dat");
+        var bytes = Encoding.ASCII.GetBytes("IGNORED-KEEP");
+        await AssertStagedUserFileSurvivesAsync(root, "ignored", "user-ignored.dat", bytes, cancellationToken);
+    }
+
+    [Test]
+    [Timeout(420_000)]
+    public async Task index_added_file_is_kept_and_unstaged(CancellationToken cancellationToken)
+    {
+        // case: the build runs git update-index --add on fresh-user.txt, a path absent from HEAD.
+        // mutation: restore that index path with --worktree, deleting a path HEAD does not contain.
+        // red: fresh-user.txt is missing or its bytes differ after the tool or the script row.
+        RequireLinux();
+        var root = BeginRepo();
+        WriteStageProject(root, "git --git-dir=.git --work-tree=. update-index --add -- fresh-user.txt");
+        var bytes = Encoding.ASCII.GetBytes("INDEX-KEEP");
+        await AssertStagedUserFileSurvivesAsync(root, "indexed", "fresh-user.txt", bytes, cancellationToken);
+    }
+
+    private async Task AssertStagedUserFileSurvivesAsync(string root, string name, string relative, byte[] bytes, CancellationToken cancellationToken)
+    {
+        Commit(root);
+        var full = WriteBytes(root, relative, bytes);
+        var head = GitOut(root, "rev-parse", "HEAD").Trim();
+        var tool = await RunToolAsync(root, name + "-tool", cancellationToken);
+        var toolNote = DescribeKept(tool, full, bytes, root, relative);
+        if (!File.Exists(full) || !File.ReadAllBytes(full).AsSpan().SequenceEqual(bytes))
+            File.WriteAllBytes(full, bytes);
+        var marker = Path.Combine(root, "App", "Marker.cs");
+        File.SetLastWriteTimeUtc(marker, DateTime.UtcNow);
+        var built = Path.Combine(root, "App", "bin-probe");
+        if (Directory.Exists(built))
+            Directory.Delete(built, true);
+        var script = await RunScriptAsync(root, name + "-script", cancellationToken);
+        var scriptNote = DescribeKept(script, full, bytes, root, relative);
+        var receipt = Path.Combine(root, ".antiphon", "script-results", name + "-script-fixed", "source.json");
+        var validation = File.Exists(receipt)
+            ? await ValidateReceiptAsync(receipt, head, cancellationToken)
+            : new RunResult(66, "receipt missing\n" + script.Output);
+        var report = "tool: " + toolNote + "\nscript: " + scriptNote + "\nreceiptExit=" + validation.Exit + "\n" + validation.Output;
+        toolNote.ShouldBe("kept", report);
+        scriptNote.ShouldBe("kept", report);
+        validation.Exit.ShouldNotBe(0, report);
+    }
+
+    private string DescribeKept(RunResult result, string full, byte[] bytes, string root, string relative)
+    {
+        if (!File.Exists(full))
+            return "missing exit=" + result.Exit + "\n" + result.Output;
+        if (!File.ReadAllBytes(full).AsSpan().SequenceEqual(bytes))
+            return "bytes-changed exit=" + result.Exit + "\n" + result.Output;
+        var listed = GitOut(root, "ls-files", "--", relative).Trim();
+        if (listed.Length > 0)
+            return "still-indexed " + listed + "\n" + result.Output;
+        if (result.Exit != 2)
+            return "exit=" + result.Exit + "\n" + result.Output;
+        if (!result.Output.Contains("refused: tampered", StringComparison.Ordinal))
+            return "no-tamper\n" + result.Output;
+        if (!result.Output.Contains("TAMPERED " + relative, StringComparison.Ordinal))
+            return "no-path\n" + result.Output;
+        if (!result.Output.Contains("lossless because the pre-build tracked tree was clean", StringComparison.Ordinal))
+            return "no-lossless\n" + result.Output;
+        if (result.Output.Contains("buildSource=verified", StringComparison.Ordinal))
+            return "verified\n" + result.Output;
+        return "kept";
+    }
+
+    private void WriteStageProject(string root, string command)
+    {
+        var xml = """
+            <Project Sdk="Microsoft.NET.Sdk">
+              <PropertyGroup>
+                <TargetFramework>net9.0</TargetFramework>
+                <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+              </PropertyGroup>
+              <Target Name="StageUserPath" BeforeTargets="Build">
+                <Exec WorkingDirectory="__ROOT__" Command="__CMD__" />
+              </Target>
+            </Project>
+            """;
+        xml = xml.Replace("__ROOT__", XmlAttr(root), StringComparison.Ordinal)
+            .Replace("__CMD__", XmlAttr(command), StringComparison.Ordinal);
+        Write(root, "App/App.csproj", xml);
+        Write(root, "App/Marker.cs", "namespace App; public static class Marker { public static int Value => 1; }\n");
+    }
+
+    private static string XmlAttr(string value) =>
+        value.Replace("&", "&amp;", StringComparison.Ordinal)
+            .Replace("\"", "&quot;", StringComparison.Ordinal)
+            .Replace("<", "&lt;", StringComparison.Ordinal);
+
     private async Task AssertRestoredAsync(string root, string name, Victim victim, CancellationToken cancellationToken)
     {
         Commit(root);
