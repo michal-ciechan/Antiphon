@@ -250,6 +250,14 @@ public sealed class PhoneHomeCommandDispatcher
                 }),
                 PhoneHomeOperation.WorkspaceMirror => await MutateAsync(request, async () =>
                 {
+                    var raw = request.Payload?.GetRawText();
+                    if (string.IsNullOrWhiteSpace(raw))
+                        throw new ArgumentException("Workspace mirror body is required.");
+                    var validation = PhoneHomeWorkspaceMirrorContract.ValidateRequest(raw);
+                    if (!validation.IsValid)
+                        throw new PhoneHomeAdmissionException(
+                            PhoneHomeProblemTypes.UnsupportedTarget,
+                            "Mirror request was refused: " + validation.Reason, 409);
                     var body = request.Payload?.Deserialize<PhoneHomeWorkspaceMirrorRequest>(PhoneHomeFraming.Json)
                         ?? throw new ArgumentException("Workspace mirror body is required.");
                     return Result(request, await Workspace().MirrorAsync(body, ct));
