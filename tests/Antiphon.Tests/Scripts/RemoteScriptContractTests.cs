@@ -190,6 +190,7 @@ public sealed class RemoteScriptContractTests
 
     // CARD-1189. PC-08's self-link must not still be in CASE_DIR when the case exits.
     [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
     public void C1189_Fixture_escape_link_is_removed_after_pc08_and_on_exit()
     {
         var prepare = Block(Remote(), "c849_fixture_prepare");
@@ -201,10 +202,13 @@ public sealed class RemoteScriptContractTests
         Order(prepare, probe, unlink).ShouldBeTrue(".fixture-escape is left behind after PC-08");
         Order(prepare, unlink, "c849_fixture_control PC-09").ShouldBeTrue(".fixture-escape survives into the next control");
         var trap = Commands(fixture).Single(command => command.StartsWith("trap ", StringComparison.Ordinal));
-        var unlinkAt = trap.IndexOf(unlink, StringComparison.Ordinal);
-        var cleanupAt = trap.IndexOf("c849_fixture_cleanup", StringComparison.Ordinal);
+        trap.ShouldContain("c849_fixture_exit");
+        var finalizer = Block(Remote(), "c849_fixture_finalize");
+        var unlinkAt = finalizer.IndexOf(unlink, StringComparison.Ordinal);
+        var cleanupAt = finalizer.IndexOf("c849_fixture_export_logs", StringComparison.Ordinal);
         unlinkAt.ShouldBeGreaterThanOrEqualTo(0, ".fixture-escape is left behind on exit");
         cleanupAt.ShouldBeGreaterThan(unlinkAt);
+        Fact(C1192Run("finalization"), "primary-link-removed").ShouldBe("1");
     }
 
     // CARD-1191. Proves lock-probe.ps1 is created before c849_fixture_volume_chown_race,
@@ -288,10 +292,9 @@ public sealed class RemoteScriptContractTests
         var trap = Commands(Block(Remote(), "c849_fixture"))
             .Single(command => command.StartsWith("trap ", StringComparison.Ordinal));
         trap.ShouldStartWith("trap 'ec=$?;");
-        const string receipt =
-            "if [ \"$WROTE\" != 1 ] && [ \"$ec\" != 0 ]; then write_result false \"UnhandledExit $ec\" \"$ec\"; fi";
-        trap.ShouldContain(receipt);
-        Order(trap, "c849_fixture_cleanup", receipt).ShouldBeTrue("UnhandledExit receipt runs before cleanup");
+        var exit = Block(Remote(), "c849_fixture_exit");
+        exit.ShouldContain("write_result false \"UnhandledExit $ec\" \"$ec\"");
+        Order(exit, "c849_fixture_finalize", "UnhandledExit").ShouldBeTrue("failure receipt follows finalization");
 
         var seed = Block(Remote(), "c849_fixture_seed");
         const string guard = "write_result() { printf '%s\\n' \"$2\"; exit \"$3\"; }";
@@ -729,28 +732,16 @@ public sealed class RemoteScriptContractTests
     // the destination is removed without following it, and cp -T runs only when that removal
     // succeeded and the name is absent, so the write cannot land outside the case directory.
     [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
     public void C1193_Fixture_exit_trap_copies_race_logs_before_tree_removal()
     {
-        var trap = Commands(Block(Remote(), "c849_fixture"))
-            .Single(command => command.StartsWith("trap ", StringComparison.Ordinal));
-        const string caseDir = "if [ -d \"$CASE_DIR\" ] && [ ! -L \"$CASE_DIR\" ]; then ";
-        const string source = "if [ -f \"$SERVER2_ROOT/$name\" ] && [ ! -L \"$SERVER2_ROOT/$name\" ]; then ";
-        const string gate = "if rm -rf -- \"$CASE_DIR/$name\" && [ ! -e \"$CASE_DIR/$name\" ] && [ ! -L \"$CASE_DIR/$name\" ]; then ";
-        const string copy = "cp -P -T -- \"$SERVER2_ROOT/$name\" \"$CASE_DIR/$name\" || true";
-        const string names = "race-p1.log race-p2.log race-offline.log lock-holder.log lock-waiter.log";
-        var guarded = caseDir + "for name in " + names + "; do " + source + gate + copy + "; fi; fi; done; fi";
-        const string removal =
-            "case \"$SERVER2_ROOT\" in /tmp/c849-fixture-*) sudo -n rm -rf -- \"$SERVER2_ROOT\" || true ;; esac";
-        foreach (var needle in new[] { caseDir, source, gate, copy, guarded })
-            trap.IndexOf(needle, StringComparison.Ordinal).ShouldBeGreaterThanOrEqualTo(0, needle);
-        trap.IndexOf("cp -p -- \"$SERVER2_ROOT/$name\"", StringComparison.Ordinal).ShouldBe(-1,
-            "the no-dereference flag is -P");
-        trap.IndexOf("cp -P -- \"$SERVER2_ROOT/$name\"", StringComparison.Ordinal).ShouldBe(-1,
-            "cp -T refuses a directory destination");
-        trap.IndexOf("rm -f -- \"$CASE_DIR/$name\" || true", StringComparison.Ordinal).ShouldBe(-1,
-            "a failed unlink must not fall through into cp");
-        Order(trap, guarded, removal).ShouldBeTrue("race logs are copied before the fixture tree is removed");
-        Order(trap, removal, "UnhandledExit").ShouldBeTrue("the saved exit receipt still follows tree removal");
+        var finalizer = Block(Remote(), "c849_fixture_finalize");
+        Order(finalizer, "c849_fixture_consumer_release", "c849_fixture_export_logs").ShouldBeTrue();
+        Order(finalizer, "c849_fixture_export_logs", "c849_fixture_cleanup keep").ShouldBeTrue();
+        Order(finalizer, "c849_fixture_cleanup keep", "c849_fixture_controller_remove").ShouldBeTrue();
+        var output = C1192Run("finalization");
+        foreach (var key in new[] { "success-five-log-bytes", "primary-five-log-bytes", "export-before-helper", "helper-before-volume" })
+            Fact(output, key).ShouldBe("1", key + "\n" + output);
     }
 
     // CARD-1193. The copy above is behaviour, not only text: run that snippet in a scratch
@@ -761,10 +752,8 @@ public sealed class RemoteScriptContractTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public void C1193_Fixture_log_copy_skips_symlinks_and_copies_regular_files()
     {
-        var trap = Commands(Block(Remote(), "c849_fixture"))
-            .Single(command => command.StartsWith("trap ", StringComparison.Ordinal));
-        var snippet = C1193LogCopySnippet(trap);
-        var output = LinuxShell("set -euo pipefail\ncopy_logs() {\n" + snippet + "\n}\n" + """
+        var snippet = Block(Remote(), "c849_fixture_export_logs");
+        var output = LinuxShell("set -euo pipefail\n" + snippet + "\ncopy_logs() { c849_fixture_export_logs; }\n" + """
             root="$(mktemp -d)"
             trap 'rm -rf -- "$root"' EXIT
             SERVER2_ROOT="$root/tree"
@@ -813,9 +802,18 @@ public sealed class RemoteScriptContractTests
             printf 'should-not-land\n' > "$SERVER2_ROOT/lock-holder.log"
             CASE_DIR="$root/case-link"
             ec=9
-            copy_logs
+            if copy_logs; then printf 'FAIL case-link-accepted\n'; exit 1; fi
             [ "$ec" = 9 ] || { printf 'FAIL case-link-ec=%s\n' "$ec"; exit 1; }
             [ ! -e "$outside/case-target/lock-holder.log" ] && [ ! -e "$outside/case-target/race-p1.log" ] || { printf 'FAIL case-link-wrote\n'; exit 1; }
+            CASE_DIR="$root/case"
+            rm() { return 1; }
+            cp() { printf 'copy-after-failed-unlink\n' >> "$root/unsafe-copy"; return 0; }
+            if copy_logs; then printf 'FAIL unlink-failure-accepted\n'; exit 1; fi
+            [ ! -e "$root/unsafe-copy" ] || { printf 'FAIL copy-after-failed-unlink\n'; exit 1; }
+            rm() { return 0; }
+            if copy_logs; then printf 'FAIL remaining-destination-accepted\n'; exit 1; fi
+            [ ! -e "$root/unsafe-copy" ] || { printf 'FAIL copy-into-remaining-destination\n'; exit 1; }
+            unset -f rm cp
             printf 'PASS c1193-log-copy\n'
             """);
         output.IndexOf("PASS c1193-log-copy", StringComparison.Ordinal).ShouldBeGreaterThanOrEqualTo(0, output);

@@ -3017,6 +3017,8 @@ c849_fixture_controller_init() {
     [ "$mode" = 700 ] || write_result false FixtureControllerMode 2
     owner="$(stat -c %u "$dir")" || write_result false FixtureControllerOwner 2
     [ "$owner" = "$(id -u)" ] || write_result false FixtureControllerOwner 2
+    stat -c '%d:%i:%u' -- "$dir" > "$CASE_DIR/.fixture-controller-identity" \
+        || write_result false FixtureControllerOwner 2
 }
 
 # Drop a name from the cleanup ledger. Does not remove the volume.
@@ -3178,7 +3180,7 @@ c849_fixture_helper_release() {
 
 c849_fixture_cleanup() {
     local name code=0
-    : > "$CASE_DIR/fixture-cleanup-residue.txt"
+    [ "${1:-}" = keep ] || : > "$CASE_DIR/fixture-cleanup-residue.txt"
     for name in "c849-${RUN}-restore-p1" "c849-${RUN}-restore-p2" "c849-${RUN}-restore-p3" \
         "c849-${RUN}-lock-holder-shared" "c849-${RUN}-lock-waiter-shared" \
         "c849-${RUN}-lock-holder-private" "c849-${RUN}-lock-waiter-private" \
@@ -3211,7 +3213,10 @@ c849_fixture_cleanup() {
                 esac
                 code=0
                 ;;
-            *) docker volume rm "$name" >/dev/null 2>&1 || true ;;
+            *) docker volume rm "$name" >/dev/null 2>&1 || {
+                code=0; docker volume inspect "$name" >/dev/null 2>&1 || code=$?
+                [ "$code" = 1 ] || printf '%s\n' "$name" >> "$CASE_DIR/fixture-cleanup-residue.txt"
+                code=0; } ;;
         esac
     done < "$CASE_DIR/.fixture-volumes"
     return 0
@@ -4352,24 +4357,150 @@ c849_fixture_evidence() {
     printf 'C849_FIXTURE groups=9 controls=32 expectedRed=32 variants=47 expectedRedVariants=47 inventories=2 failures=0 productionMutations=0\n'
 }
 
+# Safe export is bounded to the existing five regular diagnostic files. Destination
+# removal is a gate: a failed unlink must never fall through to the copy.
+c849_fixture_export_logs() {
+    local name failed=0
+    if [ -d "$CASE_DIR" ] && [ ! -L "$CASE_DIR" ]; then
+        for name in race-p1.log race-p2.log race-offline.log lock-holder.log lock-waiter.log; do
+            if [ -f "$SERVER2_ROOT/$name" ] && [ ! -L "$SERVER2_ROOT/$name" ]; then
+                if rm -rf -- "$CASE_DIR/$name" && [ ! -e "$CASE_DIR/$name" ] && [ ! -L "$CASE_DIR/$name" ]; then
+                    cp -P -T -- "$SERVER2_ROOT/$name" "$CASE_DIR/$name" || failed=1
+                else
+                    failed=1
+                fi
+            fi
+        done
+    else
+        return 2
+    fi
+    [ "$failed" = 0 ]
+}
+
+c849_fixture_controller_owned() {
+    local dir="$CASE_DIR/fixture-controller" identity actual
+    [ -d "$CASE_DIR" ] && [ ! -L "$CASE_DIR" ] || return 1
+    [ -d "$dir" ] && [ ! -L "$dir" ] || return 1
+    [ -f "$CASE_DIR/.fixture-controller-identity" ] && [ ! -L "$CASE_DIR/.fixture-controller-identity" ] || return 1
+    identity="$(cat -- "$CASE_DIR/.fixture-controller-identity")" || return 1
+    actual="$(stat -c '%d:%i:%u' -- "$dir")" || return 1
+    [ "$actual" = "$identity" ] && [ "${actual##*:}" = "$(id -u)" ]
+}
+
+# Delete from inside the acquired directory, anchored to its recorded identity.
+# A replaced controller remains visible; no foreign replacement is traversed.
+c849_fixture_controller_remove() {
+    (
+    local dir="$CASE_DIR/fixture-controller" identity actual
+    c849_fixture_controller_owned || return 2
+    identity="$(cat -- "$CASE_DIR/.fixture-controller-identity")" || return 2
+    cd -P -- "$dir" || return 2
+    actual="$(stat -c '%d:%i:%u' -- .)" || return 2
+    [ "$actual" = "$identity" ] || return 2
+    [ "$(pwd -P)" = "$dir" ] || return 2
+    find . -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + || return 2
+    # Revalidate the path before removing the now-empty acquired directory.
+    [ "$(stat -c '%d:%i:%u' -- "$dir")" = "$identity" ] || return 2
+    rmdir -- "$dir" || return 2
+    rm -f -- "$CASE_DIR/.fixture-controller-identity"
+    )
+}
+
+# Exact names can be absent on repeated finalization. Unknown lookups or failed
+# removals retain a named residue and never count as successful disposal.
+c849_fixture_consumer_release() {
+    local name="$1" code=0 actual
+    docker container inspect "$name" >/dev/null 2>&1 || code=$?
+    case "$code" in 1) return 0 ;; 0) ;; *) printf '%s\n' "$name" >> "$CASE_DIR/fixture-cleanup-residue.txt"; return 0 ;; esac
+    actual="$(docker inspect -f '{{.Name}}' "$name")" || {
+        printf '%s\n' "$name" >> "$CASE_DIR/fixture-cleanup-residue.txt"; return 0; }
+    [ "$actual" = "/$name" ] || { printf '%s\n' "$name" >> "$CASE_DIR/fixture-cleanup-residue.txt"; return 0; }
+    docker rm -f "$name" >/dev/null 2>&1 || printf '%s\n' "$name" >> "$CASE_DIR/fixture-cleanup-residue.txt"
+}
+
+c849_fixture_finalize() {
+    local project file name network="c849-${RUN}-npm" code=0 owned=0
+    [ "${C849_FIXTURE_FINALIZED:-0}" != 1 ] || return "${C849_FIXTURE_FINALIZATION_STATUS:-0}"
+    : > "$CASE_DIR/fixture-cleanup-residue.txt"
+    rm -f -- "$CASE_DIR/.fixture-escape" || printf 'escape-link\n' >> "$CASE_DIR/fixture-cleanup-residue.txt"
+    if c849_fixture_controller_owned; then
+        owned=1
+        for project in temp main negative; do
+            file="$SERVER2_ROOT/compose-retention/shared.yml"
+            [ "$project" != negative ] || file="$SERVER2_ROOT/compose-retention/negative.yml"
+            if [ -f "$file" ] && [ ! -L "$file" ]; then
+                docker compose -p "c849${RUN}${project}" -f "$file" down -v >/dev/null 2>&1 \
+                    || printf 'compose:%s\n' "$project" >> "$CASE_DIR/fixture-cleanup-residue.txt"
+            fi
+        done
+    elif [ -e "$CASE_DIR/fixture-controller" ] || [ -L "$CASE_DIR/fixture-controller" ]; then
+        printf 'fixture-controller\n' >> "$CASE_DIR/fixture-cleanup-residue.txt"
+    fi
+    # Quiesce every known consumer before reading logs or releasing helpers.
+    for name in "c849-${RUN}-restore-p1" "c849-${RUN}-restore-p2" "c849-${RUN}-restore-p3" \
+        "c849-${RUN}-lock-holder-shared" "c849-${RUN}-lock-waiter-shared" \
+        "c849-${RUN}-lock-holder-private" "c849-${RUN}-lock-waiter-private" \
+        "c849-${RUN}-apphost-miss" "c849-${RUN}-npm-fill" "c849-${RUN}-npm-b" \
+        "c849-${RUN}-npm-b-empty" "c849-${RUN}-npm-http" "c849-${RUN}-prune-smoke" \
+        "c849-${RUN}-consumer" "c849-${RUN}-donor"; do
+        c849_fixture_consumer_release "$name"
+    done
+    c849_fixture_helper_release "c849-${RUN}-masked"
+    c849_fixture_helper_release "c849-${RUN}-apphost"
+    local child
+    for child in $(jobs -pr); do wait "$child" || true; done
+    if [ "$owned" = 1 ]; then
+        c849_fixture_export_logs || printf 'diagnostic-export\n' >> "$CASE_DIR/fixture-cleanup-residue.txt"
+    fi
+    c849_fixture_cleanup keep
+    if [ -s "$CASE_DIR/.fixture-network" ]; then
+        if [ "$(cat -- "$CASE_DIR/.fixture-network")" = "$network" ]; then
+            docker network inspect "$network" >/dev/null 2>&1 || code=$?
+            case "$code" in
+                0) docker network rm "$network" >/dev/null 2>&1 || printf '%s\n' "$network" >> "$CASE_DIR/fixture-cleanup-residue.txt" ;;
+                1) ;;
+                *) printf '%s\n' "$network" >> "$CASE_DIR/fixture-cleanup-residue.txt" ;;
+            esac
+        else
+            printf 'fixture-network-identity\n' >> "$CASE_DIR/fixture-cleanup-residue.txt"
+        fi
+    fi
+    if [ "$owned" = 1 ]; then
+        c849_fixture_controller_remove || printf 'fixture-controller\n' >> "$CASE_DIR/fixture-cleanup-residue.txt"
+    fi
+    C849_FIXTURE_FINALIZED=1
+    C849_FIXTURE_FINALIZATION_STATUS=2
+    [ ! -s "$CASE_DIR/fixture-cleanup-residue.txt" ] || return 2
+    C849_FIXTURE_FINALIZATION_STATUS=0
+}
+
+c849_fixture_exit() {
+    local ec="$1" cleanup=0
+    c849_fixture_finalize || cleanup=$?
+    if [ "$ec" != 0 ]; then
+        if [ "$WROTE" != 1 ]; then write_result false "UnhandledExit $ec" "$ec"; fi
+        return "$ec"
+    fi
+    if [ "$cleanup" != 0 ]; then
+        WROTE=0
+        write_result false FixtureFinalizationFailed 2
+    fi
+    return 0
+}
+
 c849_fixture() {
     require_lane host
+    # The maintenance lock belongs to the original live root, before switching to
+    # the fresh host-owned controller. No payload or working bind lives here.
     c849_lock
-    # Keep every stage, marker, preview and recovery below this case's private
-    # evidence tree; only the shared maintenance lock belongs to the live root.
-    SERVER2_ROOT="/tmp/c849-fixture-$RUN"
-    [ ! -e "$SERVER2_ROOT" ] || write_result false FixtureNamespaceOccupied 2
-    mkdir -m 0700 -p "$SERVER2_ROOT/cache"
+    SERVER2_ROOT="$CASE_DIR/fixture-controller"
+    C849_FIXTURE_FINALIZED=0
+    trap 'ec=$?; trap - EXIT; c849_fixture_exit "$ec"; exit "$ec"' EXIT
+    c849_fixture_workspace_init
+    mkdir -m 0700 "$SERVER2_ROOT/cache" || write_result false FixtureControllerCreateFailed 2
     : > "$CASE_DIR/fixture-controls.txt"
     : > "$CASE_DIR/fixture-control-variants.txt"
     : > "$CASE_DIR/fixture-groups.txt"
-    # ec is the case exit, saved before cleanup. sudo removes the 1654- and root-owned trees.
-    # Race logs are on that tree. Copy regular files into a real CASE_DIR before removal.
-    # Remove a directory or symlink at the destination without following it. cp -T runs only
-    # when that removal succeeded and the name is absent, so a directory cannot redirect the write.
-    # A failure that never called write_result still replaces the empty receipt.
-    trap 'ec=$?; rm -f -- "$CASE_DIR/.fixture-escape"; if [ -f "$SERVER2_ROOT/compose-retention/shared.yml" ]; then docker compose -p "c849${RUN}temp" -f "$SERVER2_ROOT/compose-retention/shared.yml" down -v >/dev/null 2>&1 || true; docker compose -p "c849${RUN}main" -f "$SERVER2_ROOT/compose-retention/shared.yml" down -v >/dev/null 2>&1 || true; fi; if [ -f "$SERVER2_ROOT/compose-retention/negative.yml" ]; then docker compose -p "c849${RUN}negative" -f "$SERVER2_ROOT/compose-retention/negative.yml" down -v >/dev/null 2>&1 || true; fi; if [ -s "$CASE_DIR/.fixture-prune-smoke" ]; then docker rm -f "$(cat "$CASE_DIR/.fixture-prune-smoke")" >/dev/null 2>&1 || true; fi; if [ -s "$CASE_DIR/.fixture-npm-server" ]; then docker rm -f "$(cat "$CASE_DIR/.fixture-npm-server")" >/dev/null 2>&1 || true; fi; if [ -s "$CASE_DIR/.fixture-apphost" ]; then docker rm -f "$(cat "$CASE_DIR/.fixture-apphost")" >/dev/null 2>&1 || true; fi; if [ -s "$CASE_DIR/.fixture-busy" ]; then docker rm -f "$(cat "$CASE_DIR/.fixture-busy")" >/dev/null 2>&1 || true; fi; if [ -s "$CASE_DIR/.fixture-donor" ]; then docker rm -f "$(cat "$CASE_DIR/.fixture-donor")" >/dev/null 2>&1 || true; fi; c849_fixture_cleanup; if [ -s "$CASE_DIR/.fixture-network" ]; then docker network rm "$(cat "$CASE_DIR/.fixture-network")" >/dev/null 2>&1 || true; fi; if [ -d "$CASE_DIR" ] && [ ! -L "$CASE_DIR" ]; then for name in race-p1.log race-p2.log race-offline.log lock-holder.log lock-waiter.log; do if [ -f "$SERVER2_ROOT/$name" ] && [ ! -L "$SERVER2_ROOT/$name" ]; then if rm -rf -- "$CASE_DIR/$name" && [ ! -e "$CASE_DIR/$name" ] && [ ! -L "$CASE_DIR/$name" ]; then cp -P -T -- "$SERVER2_ROOT/$name" "$CASE_DIR/$name" || true; fi; fi; done; fi; case "$SERVER2_ROOT" in /tmp/c849-fixture-*) sudo -n rm -rf -- "$SERVER2_ROOT" || true ;; esac; if [ "$WROTE" != 1 ] && [ "$ec" != 0 ]; then write_result false "UnhandledExit $ec" "$ec"; fi' EXIT
-    c849_fixture_workspace_init
     c849_fixture_compose
     c849_fixture_prepare
     c849_fixture_seed
@@ -4380,6 +4511,11 @@ c849_fixture() {
     c849_fixture_prune
     c849_fixture_contract_controls
     c849_fixture_evidence
+    if [ "$WROTE" = 1 ]; then
+        WROTE=0
+        write_result false FixtureEarlyReceipt 2
+    fi
+    c849_fixture_finalize || write_result false FixtureFinalizationFailed 2
     write_result true '' 0
 }
 
