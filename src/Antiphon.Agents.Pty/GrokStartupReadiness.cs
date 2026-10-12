@@ -13,9 +13,10 @@ public sealed record GrokStartupSnapshot(
     string RenderedScreen, string? RawOutput, long Sequence, DateTime CapturedAt);
 
 /// <summary>
-/// Recognizes the captured Grok Build 1.0.41 dashboards at 120x30: Windows ConPTY
-/// uses ASCII '&gt;' and Linux uses U+276F for the empty composer marker.
-/// Other terminal sizes require separate qualification (CARD-0861).
+/// Recognizes the captured Grok Build 1.0.41 dashboards at qualified sizes.
+/// Windows ConPTY uses ASCII '&gt;' and Linux uses U+276F for the empty composer
+/// marker. Width is inferred from the composer border in the rendered screen;
+/// unqualified width/height pairs remain unknown (CARD-0861).
 /// </summary>
 public static class GrokStartupScreen
 {
@@ -29,7 +30,7 @@ public static class GrokStartupScreen
         if (GrokSignInPromptDetector.IsVisibleOnScreen(screen)) return No(GrokStartupReason.SignIn);
         if (GrokTrustPromptDetector.IsVisibleOnScreen(screen)) return No(GrokStartupReason.Trust);
         // TerminalScreen returns exactly one row per terminal row, including blank rows.
-        if (lines.Length != 30 || lines.Any(line => line.Length > 120)) return No(GrokStartupReason.Unknown);
+        if (lines.Length is not (24 or 30 or 50 or 60)) return No(GrokStartupReason.Unknown);
 
         for (var top = lines.Length - 5; top >= 2; top--)
         {
@@ -38,7 +39,11 @@ public static class GrokStartupScreen
             if (left < 0) continue;
             var right = upper.LastIndexOf('╮');
             if (right <= left + 2 || top + 4 >= lines.Length) continue;
-            if (left != 2 || right != 117 || upper.Length != right + 1
+            // Captured layouts have two cells of outer padding and put the composer
+            // six rows from the bottom. A model/quota label may change the lower border.
+            var cols = right + 3;
+            if (left != 2 || top != lines.Length - 6 || !IsQualifiedSize(cols, lines.Length)
+                || lines.Any(line => line.Length > cols) || upper.Length != right + 1
                 || upper[..left].Trim().Length != 0
                 || upper[(left + 1)..right].Any(c => c != '─')) continue;
 
@@ -68,6 +73,9 @@ public static class GrokStartupScreen
         }
         return No(GrokStartupReason.Unknown);
     }
+
+    private static bool IsQualifiedSize(int cols, int rows) => (cols, rows) is
+        (80, 24) or (100, 30) or (120, 30) or (160, 50) or (200, 60);
 }
 
 public sealed class GrokReadyTracker(TimeSpan settle)

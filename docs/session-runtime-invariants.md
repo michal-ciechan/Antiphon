@@ -172,15 +172,20 @@ the transcript mutation gate. Activation requires both server and runner support
   transport errors retain uncertain delivery evidence. A matching assistant complaint
   about an unreadable pointer projects Attention; silence is insufficient.
 
-- **Grok startup readiness is a current-screen input gate (CARD-0778).** At the
-  captured 120x30 Grok Build 1.0.41 layout, the empty boxed composer, enabled
+- **Grok startup readiness is a current-screen input gate (CARD-0778/0861).** At
+  the captured Grok Build 1.0.41 layouts (80x24, 100x30, 120x30, 160x50 and
+  200x60), the empty boxed composer, enabled
   hint and blank status row must settle for one second despite decorative
   header/MCP redraws. `Starting session…` queues work and is not ready. This
   gate authorizes only the first write; the queue's baseline and complete
   normalized `UserPrompt` remain the delivery verdict. Grok 1.0.41 drops the
   LF of a bracketed-paste body, so a single-line nonce or the production
   whitespace-insensitive whole-body matcher is required. Failed startup
-  captures are local diagnostics, not transcript receipts.
+  captures are local diagnostics, not transcript receipts. New size captures
+  qualify Linux; the existing 120x30 Windows fixtures remain unchanged. Width is
+  inferred from the composer border because snapshots do not carry dimensions.
+  Other width/height pairs, including the clipped 40x20 layout, stay Unknown;
+  trust and sign-in detection still take precedence at any size.
 
 - **Runner branch publication (CARD-0779).** A runner task's owned branch is published only as a
   fast-forward of its dispatch baseline. Settlement may publish the runner mirror's fast-forward
