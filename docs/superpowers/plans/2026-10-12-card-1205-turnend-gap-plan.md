@@ -77,7 +77,11 @@ changes a default, revise the corresponding slice and checkpoint before dispatch
   marker per connection, immediately before its first parsed runner event, or
   on its first exact `: keepalive` comment. Both originate after subscription in
   the current runner. The pump handles this marker by awaiting a second catch-up
-  before dispatching any live event from that connection. If a real event proved
+  before dispatching any live event from that connection. If that list times out,
+  the already parsed event is delivered before the iterator is disposed and the
+  existing reconnect follows. Host cancellation delivers it and then stops. A
+  throwing list does not reconnect; the following yield delivers the event.
+  Snapshot coverage is not claimed on any of those three. If a real event proved
   readiness, retain and emit that very event after the marker. This closes the
   gap without upgrading the runner protocol. Reject moving the first catch-up
   below a lazily constructed iterator: construction opens no subscription.
@@ -156,12 +160,21 @@ Add an additive, internal-only readiness flag/factory to
 wire event, session record, transcript row or SignalR publication. The HTTP client
 sets it once within each iterator invocation, on exact keepalive or a successfully
 parsed supported event. `: connected`, arbitrary comments, empty frames and
-iterator construction are not proof. If no qualifying frame arrives, the existing
-stream-idle watchdog reconnects; no coverage claim is made. Cancellation disposes
+iterator construction are not proof. The stream-idle watchdog reconnects only after
+genuine silence. Its deadline resets on every received line, including unrecognized
+comments and unsupported frames, so that traffic keeps the connection alive. It does
+not emit a readiness marker and it is not a readiness deadline. A connection that never
+emits a qualifying frame is not reconnected merely because readiness is absent. No
+coverage claim is made for a stream that never proves subscription. Cancellation disposes
 response, reader and stream. Reset readiness on every reconnect.
 
 In `SessionRunnerEventPump`, handle readiness before session-specific phase/event
-dispatch. Await catch-up, then resume the same enumerator. The first held event
+dispatch. Await catch-up, then resume the same enumerator. On a list timeout,
+deliver the already parsed event before the iterator is disposed, then use the
+existing reconnect path. On host cancellation, deliver it and then stop with the
+host. On a throwing list, leave the exception inside catch-up, do not reconnect,
+and deliver the event from the following yield. Do not wait for another stream
+read and do not extend the list deadline. The first held event
 and all following live events remain in connection order; overlapping transcript
 rows dedupe using the existing runtime. Output/exit/fault/bind/adoption/status events
 must also survive being the first event. Do not synthesize readiness in the routing
@@ -178,8 +191,12 @@ snapshot before publication. A row published before S is available to C2; a row
 published at/after S is in the existing subscriber stream and may also be in C2.
 P proves S already occurred, and the pump completes C2 before consuming the held
 live event. Overlap is idempotent. This argument is conditional on successful
-snapshot/persistence and a surviving stream; failures retain normal reconnect
-recovery and independent watchdog debt. Logs must distinguish “pass attempted”
+snapshot/persistence and a surviving stream. When that list times out, the held
+live event is delivered before the existing reconnect, and snapshot coverage is not
+claimed. Host cancellation delivers it and then stops. A throwing list does not
+reconnect; the following yield delivers the event and snapshot coverage is not
+claimed. Timeout failures retain normal reconnect recovery and independent watchdog
+debt. Logs must distinguish “pass attempted”
 from “all transcripts verified”; the existing void sync cannot certify the latter.
 
 Quiet-stream recovery normally starts on the first runner keepalive (default 15

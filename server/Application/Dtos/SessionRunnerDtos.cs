@@ -156,4 +156,11 @@ public sealed record SessionRunnerEvent(
 
     public static SessionRunnerEvent SubscriptionReadiness() =>
         new(SubscriptionReadyName, Guid.Empty, SubscriptionReady: true);
+
+    /// <summary>
+    /// Marker that still carries the parsed event. The pump delivers this copy when the
+    /// post-proof catch-up fails and abandons the second yield.
+    /// </summary>
+    public static SessionRunnerEvent SubscriptionReadiness(SessionRunnerEvent held) =>
+        held with { EventName = SubscriptionReadyName, SubscriptionReady = true };
 }
