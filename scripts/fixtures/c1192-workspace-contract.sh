@@ -1921,7 +1921,7 @@ classify_npm_runs() {
     offline_bind=0
     hash_ok=0
     payload_bind=0
-    local name network image mounts cmd mask_readonly=1 mask_nocopy=1 mask_exact=1 mask_seen=0
+    local name network image mounts cmd
     while IFS=$'\t' read -r name network image mounts cmd || [ -n "${name:-}" ]; do
         [ -n "${name:-}" ] || continue
         case "$cmd" in

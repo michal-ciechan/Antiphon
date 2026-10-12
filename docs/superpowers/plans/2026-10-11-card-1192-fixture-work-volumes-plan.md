@@ -694,7 +694,6 @@ introduces must gain a distinct row before its handoff.
 | G-139 | R-3: Source logs must be regular files | PC-139 |
 | G-140 | S5: Pruning-capable transfer validation uses the writer; reader cannot prune | PC-140 |
 | G-141 | S5: F-8 recovery copy validates source cache labels before copying | PC-141 |
-
 | G-142 | S6: Ordinary payload stays on the work volume | PC-142 |
 | G-143 | S6: Ordinary import reads work readonly | PC-143 |
 | G-144 | S6: Mask mount validates current-run labels | PC-144 |
