@@ -882,6 +882,9 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
         using var reader = new StreamReader(stream);
         string? eventName = null;
         var data = new System.Text.StringBuilder();
+        // Local to this invocation. Exact `: keepalive`, or the first parsed event, is the
+        // first byte the runner writes after Subscribe. `: connected` is flushed before that.
+        var readinessEmitted = false;
 
         while (!ct.IsCancellationRequested)
         {
@@ -890,8 +893,19 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
                 break;
             idleCts.CancelAfter(idle);
 
+            if (line.Equals(": keepalive", StringComparison.Ordinal))
+            {
+                if (!readinessEmitted)
+                {
+                    readinessEmitted = true;
+                    yield return SessionRunnerEvent.SubscriptionReadiness();
+                }
+
+                continue;
+            }
+
             if (line.StartsWith(':'))
-                continue; // SSE comment — the runner's keepalive; only resets the watchdog
+                continue; // Other SSE comments, including `: connected`, are not subscription proof.
 
             if (line.Length == 0)
             {
@@ -899,7 +913,15 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
                 {
                     var parsed = ParseEvent(eventName, data.ToString());
                     if (parsed is not null)
+                    {
+                        if (!readinessEmitted)
+                        {
+                            readinessEmitted = true;
+                            yield return SessionRunnerEvent.SubscriptionReadiness();
+                        }
+
                         yield return parsed;
+                    }
                 }
 
                 eventName = null;
