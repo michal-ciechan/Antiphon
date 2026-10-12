@@ -702,6 +702,11 @@ introduces must gain a distinct row before its handoff.
 | G-147 | S6: Failed masked start retains cleanup identity | PC-147 |
 | G-148 | S6: Consumers release before workspace helpers | PC-148 |
 
+| G-149 | S7: Replaced controller is neither exported nor removed | PC-149 |
+| G-150 | S7: An early outer receipt cannot bypass finalization | PC-150 |
+| G-151 | S7: Foreign registered helpers remain visible as named residue | PC-151 |
+| G-152 | S7: Legacy consumer cleanup requires its acquisition marker | PC-152 |
+
 ### Positive controls
 
 Reachability requirements for the nontrivial controls:
@@ -895,6 +900,10 @@ predicate is unbound coverage.
 | PC-146 | G-146: Skip npm cache mount admission. | `/*/*/RemoteScriptContractTests/C1192_Apphost_mask_is_an_empty_exact_volume_mount` | `apphost-foreign-cache-refused` fails after CP-27's boundary is reached. |
 | PC-147 | G-147: Move masked helper registration after start. | `/*/*/RemoteScriptContractTests/C1192_Apphost_mask_is_an_empty_exact_volume_mount` | `mask-partial-start-cleaned` fails after CP-27's boundary is reached. |
 | PC-148 | G-148: Delete the early masked/apphost consumer release pass. | `/*/*/RemoteScriptContractTests/C1192_Apphost_mask_is_an_empty_exact_volume_mount` | `mask-consumer-before-workspace` fails after CP-27's boundary is reached. |
+| PC-149 | G-149: Bypass the controller identity comparison before export. | `/*/*/RemoteScriptContractTests/C1192_Finalization_precedes_success_and_preserves_primary_failure` | `foreign-controller-preserved` fails when replacement diagnostic bytes are exported; the removal guard is independent. Pending SourceLanding Mutation. |
+| PC-150 | G-150: Delete the EXIT early-receipt rejection. | `/*/*/RemoteScriptContractTests/C1192_Finalization_precedes_success_and_preserves_primary_failure` | `early-exit-refused` fails: an early true receipt with otherwise clean cleanup stays accepted. Pending SourceLanding Mutation. |
+| PC-151 | G-151: Suppress the foreign registered-helper residue. | `/*/*/RemoteScriptContractTests/C1192_Finalization_precedes_success_and_preserves_primary_failure` | `foreign-helper-residue` fails: the retained writer is omitted from the exact residue and success is accepted. Pending SourceLanding Mutation. |
+| PC-152 | G-152: Release donor by deterministic name without its acquisition marker. | `/*/*/RemoteScriptContractTests/C1192_Finalization_precedes_success_and_preserves_primary_failure` | `unregistered-consumer-preserved` fails: the occupied foreign donor canary is deleted. Pending SourceLanding Mutation. |
 
 S5 Code amendment: CP-21 exercises shared Seed and the actual F-3 wrapper, including rerun, exact fault diagnoses and no outer success publication. Its readonly filesystem model runs as non-root and must preserve an incomplete package through a reader; transfer acceptance prunes through the writer. CP-22 executes the actual F-9 corruption/restoration loop and the shared Prune authority/refusal matrix with volume recovery. Independent warm/inventory/cleanup and npm tool boundaries retain their earlier checkpoint owners. All S5 After cells already equal S5. PC-140 and PC-141 stay pending; ordinary baseline red does not discharge Mutation.
 
@@ -914,6 +923,10 @@ S5 Code amendment: CP-21 exercises shared Seed and the actual F-3 wrapper, inclu
 ### S6 implementation binding
 
 CP-27 executes F-5 with independent host decoys and volume recipients. It observes imported ordinary bytes, metadata and executable mode; the empty mask's three exact readonly/nocopy mounts; smoke and failed-start cleanup, with consumers released before workspace helpers; and foreign work/mask/npm-label refusal. The model executes the real import and substitutes chown only. It models image pack lookup rather than compiling the image smoke. CP-28 retains the independent real 0755-to-0700 import witness and exact mode admission. CP-29 now executes the real retention orchestration against parsed generated Compose documents; cache sentinel bytes are checked after recreate and down-v, and temp/private separation is observed before main teardown. CP-30 adds the parent-shell diagnosis witness. F-8 refill and F-9 recovery mutation/backup/observation seams already migrated in S3/S5; this slice does not rerun their out-of-scope CPs. W-1 remains rollout-owned. PC-142..148 are additional method-scoped controls, all pending.
+
+### S7 Code binding amendment
+
+CP-33 additionally executes the real volume fixture seed and recovery validator, and scans each individual checkout bind for readonly. CP-34 exercises actual EXIT/finalizer behavior, including primary plus secondary failure, replaced-controller export exclusion, early outer publication and foreign registered-helper residue. CP-35 observes actual resource/control disposal without sudo. CP-36 checks exact nine-line receipt bytes and missing/duplicate group, family and variant censuses. CP-38 binds consumer stop/join, five diagnostic bytes, helper and volume order. CP-39 executes failed unlink, remaining destination and directory-creation-before-copy races. CP-43 retains inventory/occupied/control sensitivity and uses the existing strict F-5 volume recipient model after the host recipient was removed. Its stale unregistered cleanup name is replaced with the exact admitted case name. No rollout or deliberate mutation is executed. PC-149..152 are new method-scoped controls, all pending. Every S7 After cell already equals S7.
 
 ### Checkpoints
 
@@ -993,7 +1006,7 @@ Exact filters/minutes are in the table. This includes seven 5-minute isolated
 builds (**35 minutes**) plus **47 minutes** of filter work, including setup.
 C1066 2/6/3 values are executions, not minutes. Slot wait is unknown and additive.
 
-Separate PC floor (Mutation) = **2220 minutes**, all **148 PCs**.
+Separate PC floor (Mutation) = **2280 minutes**, all **152 PCs**.
 Each exact detecting filter above is budgeted 15 minutes: 1 patch/restore/
 boundary inspection + 5 isolated red build + 2 red method + 5 restored build +
 2 green method. Both states rebuild conservatively for provenance; no unvalidated
@@ -1001,9 +1014,9 @@ no-build reuse is assumed. All PCs run even when they share a method. Mutation
 discovery/reporting and slot contention add time. Commission bounded packs by
 slice/guard range, preserving all rows and the original Code landing owner.
 
-Total verification floor = 35 setup/build + 47 ordinary V/R + 2220 PC cycles
-= **2302 minutes**. Code authoring remains the separate 335-minute estimate;
-authoring plus verification floor = **2637 minutes**. W-1 is separately
+Total verification floor = 35 setup/build + 47 ordinary V/R + 2280 PC cycles
+= **2362 minutes**. Code authoring remains the separate 335-minute estimate;
+authoring plus verification floor = **2697 minutes**. W-1 is separately
 scheduled rollout work, outside authoring/Mutation, not zero-cost ordinary proof.
 
 Ordinary build reuse saves **180 minutes** versus 43 independent builds:
@@ -1012,10 +1025,10 @@ Mutation batching savings = 0: guards mostly share one source file and require
 independent red/restored-green cycles. This deliberately exposes the true
 control cost rather than hiding an assembly run or omitting guards.
 
-Inventory audit before handoff (S5 adds PC-140/141; S6 adds PC-142..148): **guards=148, mapped=148, missing=0,
-duplicate PC maps=0**. All 148 PCs are scheduled and required; **0 executed
+Inventory audit before handoff (S5 adds PC-140/141; S6 adds PC-142..148; S7 adds PC-149..152): **guards=152, mapped=152, missing=0,
+duplicate PC maps=0**. All 152 PCs are scheduled and required; **0 executed
 during TestDesign**. Code binds implementation/labels, Review judges them before
-land, Mutation reports 148/148 red/restore/green outcomes or explicit findings.
+land, Mutation reports 152/152 red/restore/green outcomes or explicit findings.
 **Post-land Mutation was NOT run.**
 
 ### Operator decisions

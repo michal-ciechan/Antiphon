@@ -2604,7 +2604,8 @@ DATA
             delete) C1192_CUT=rm-work ;;
             down) C1192_FAULT=volume-inspect-down ;;
             export) cp() { return 1; } ;;
-            foreign) mv "$SERVER2_ROOT" "$CASE_DIR/owned-away"; mkdir -m 700 "$SERVER2_ROOT"; printf 'FOREIGN\n' > "$SERVER2_ROOT/foreign" ;;
+            foreign) mv "$SERVER2_ROOT" "$CASE_DIR/owned-away"; mkdir -m 700 "$SERVER2_ROOT"; printf 'FOREIGN\n' > "$SERVER2_ROOT/foreign"; printf 'FOREIGN_DIAGNOSTIC\n' > "$SERVER2_ROOT/race-p1.log" ;;
+            foreign-consumer) plant_container "c849-${RUN}-donor" intruder "other-run" donor "$ADMITTED" "" ;;
         esac
     }
     c849_fixture_nuget_race() { :; }
@@ -2658,7 +2659,7 @@ mode_finalization() {
     good=0; s7_log_bytes && good=1; emit success-five-log-bytes "$good"
     good=0; [ "$(line_no export-log)" -lt "$(line_no "container $WRITER")" ] && good=1; emit export-before-helper "$good"
     good=0; [ "$(line_no "container $READER")" -lt "$(line_no "volume $WORK")" ] && good=1; emit helper-before-volume "$good"
-    for key in primary unhandled delete export early early-exit helper-foreign primary-delete down foreign; do
+    for key in primary unhandled delete export early early-exit helper-foreign primary-delete down foreign foreign-consumer; do
         s7_run "$key"
         good=0
         case "$key" in
@@ -2680,7 +2681,8 @@ mode_finalization() {
                 emit primary-secondary-preserved "$good" ;;
             early) [ "$S7_CODE" = 2 ] && grep -q '^false ' "$CASE_DIR/result" && good=1; emit early-success-refused "$good" ;;
             down) [ "$S7_CODE" = 2 ] && [ -s "$CASE_DIR/fixture-cleanup-residue.txt" ] && good=1; emit docker-unavailable-refused "$good" ;;
-            foreign) [ "$S7_CODE" = 2 ] && grep -Fxq FOREIGN "$S7_CONTROL/foreign" && good=1; emit foreign-controller-preserved "$good" ;;
+            foreign) [ "$S7_CODE" = 2 ] && grep -Fxq FOREIGN "$S7_CONTROL/foreign" && ! grep -Fq FOREIGN_DIAGNOSTIC "$CASE_DIR/race-p1.log" && good=1; emit foreign-controller-preserved "$good" ;;
+            foreign-consumer) container_exists "c849-${RUN}-donor" && good=1; emit unregistered-consumer-preserved "$good" ;;
         esac
     done
 }
@@ -2706,13 +2708,15 @@ mode_evidence() {
     printf 'source-sha=%s\nimage-id=%s\ninventories=2\ngroups=9\ncontrols=32\nexpected-red=32\nvariants=47\nexpected-red-variants=47\nproduction-mutations=0\n' "$SHA" "$IMAGE_ID" > "$C1192_ROOT/expected-summary"
     good=0; cmp -s "$C1192_ROOT/expected-summary" "$CASE_DIR/fixture-summary.txt" && good=1; emit summary-exact-bytes "$good"
     good=0; ( c849_fixture_roster ) && good=1; emit roster-complete "$good"
-    for fault in missing duplicate family variant; do
+    for fault in missing duplicate family variant family-duplicate variant-duplicate; do
         s7_roster
         case "$fault" in
             missing) sed -i '$d' "$CASE_DIR/fixture-groups.txt" ;;
             duplicate) printf 'PASS F-9\n' >> "$CASE_DIR/fixture-groups.txt" ;;
             family) sed -i '$d' "$CASE_DIR/fixture-controls.txt" ;;
             variant) sed -i '$d' "$CASE_DIR/fixture-control-variants.txt" ;;
+            family-duplicate) printf 'PASS PC-32\n' >> "$CASE_DIR/fixture-controls.txt" ;;
+            variant-duplicate) printf 'PC-32.01 expected-red\n' >> "$CASE_DIR/fixture-control-variants.txt" ;;
         esac
         code=0; out=$(c849_fixture_roster) || code=$?
         good=0; [ "$code" = 2 ] && [ "$(diagnosis_of "$out")" = FixtureRosterIncomplete ] && good=1
