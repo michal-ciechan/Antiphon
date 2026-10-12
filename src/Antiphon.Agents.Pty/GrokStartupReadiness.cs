@@ -39,10 +39,10 @@ public static class GrokStartupScreen
             if (left < 0) continue;
             var right = upper.LastIndexOf('╮');
             if (right <= left + 2 || top + 4 >= lines.Length) continue;
-            // Captured layouts have two cells of outer padding and put the composer
-            // six rows from the bottom. A model/quota label may change the lower border.
+            // Captured layouts have two cells of outer padding. Retain the existing
+            // relative status/hint checks and search for the composer vertically.
             var cols = right + 3;
-            if (left != 2 || top != lines.Length - 6 || !IsQualifiedSize(cols, lines.Length)
+            if (left != 2 || !IsQualifiedSize(cols, lines.Length)
                 || lines.Any(line => line.Length > cols) || upper.Length != right + 1
                 || upper[..left].Trim().Length != 0
                 || upper[(left + 1)..right].Any(c => c != '─')) continue;
