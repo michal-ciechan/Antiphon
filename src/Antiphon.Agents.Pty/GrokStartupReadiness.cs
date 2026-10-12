@@ -122,7 +122,7 @@ public sealed class GrokReadyWaitOptions
 /// One monotonic deadline covers reads, trust, settling and minimum process age.
 /// A snapshot that has already completed is still classified when that budget
 /// elapsed during the preceding poll, so a sign-in screen records its launch block.
-/// A snapshot that is still pending is not awaited past the budget.
+/// A snapshot that is still pending is cancelled and is not awaited past the budget.
 /// </summary>
 public static class GrokReadyWait
 {
@@ -169,8 +169,8 @@ public static class GrokReadyWait
             GrokStartupSnapshot? frame;
             if (outerRemaining <= TimeSpan.Zero || trustExpired)
             {
-                // The poll woke after the budget. Classify only a frame that is already
-                // complete; do not start a wait for one that is still pending.
+                // The poll woke after the budget. Classify a frame that is already complete.
+                // Cancel a read that is still pending; do not await it.
                 if (!TryTakeCompleted(snapshotAsync, ct, out frame, out var faulted))
                     return Fail(faulted
                         ? GrokStartupReason.SnapshotFailure
@@ -257,21 +257,29 @@ public static class GrokReadyWait
     private static bool TryTakeCompleted<T>(Func<CancellationToken, Task<T>> operation, CancellationToken ct,
         out T? value, out bool faulted)
     {
-        var work = operation(ct);
-        if (work.IsCompletedSuccessfully)
+        using var gate = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        try
         {
-            value = work.GetAwaiter().GetResult();
-            faulted = false;
-            return true;
-        }
+            var work = operation(gate.Token);
+            if (work.IsCompletedSuccessfully)
+            {
+                value = work.GetAwaiter().GetResult();
+                faulted = false;
+                return true;
+            }
 
-        if (work.IsFaulted)
-            _ = work.Exception;
-        else if (!work.IsCompleted)
-            _ = work.ContinueWith(static t => _ = t.Exception, TaskContinuationOptions.OnlyOnFaulted);
-        value = default;
-        faulted = work.IsFaulted;
-        return false;
+            if (work.IsFaulted)
+                _ = work.Exception;
+            else if (!work.IsCompleted)
+                _ = work.ContinueWith(static t => _ = t.Exception, TaskContinuationOptions.OnlyOnFaulted);
+            value = default;
+            faulted = work.IsFaulted;
+            return false;
+        }
+        finally
+        {
+            gate.Cancel();
+        }
     }
 
     private static async Task<T> Bounded<T>(Func<CancellationToken, Task<T>> operation,
