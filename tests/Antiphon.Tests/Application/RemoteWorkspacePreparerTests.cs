@@ -496,6 +496,48 @@ public sealed class RemoteWorkspacePreparerTests
     }
 
     [Test]
+    public async Task C1032_StoreReplacementKeepsDebt()
+    {
+        // case: a preparation is recorded against the live store, then that runner's store is replaced and the task retries.
+        // mutation: reuse the task/attempt/runner row even when its store id is not the live store, and send that old store to the replacement runner.
+        // red: reusedOldStore.ShouldBeFalse() — the retry repeats the old preparation and can complete it against the new store.
+        await using var rig = await Rig.StartAsync();
+        rig.Peer.SilentFor(PhoneHomeOperation.WorkspaceMirror);
+        var taskId = await rig.SeedAsync();
+        await rig.TickAsync().WaitAsync(TickBound);
+        var first = await rig.WaitForRequestsAsync(PhoneHomeOperation.WorkspaceMirror, 1);
+        var firstSent = first.Payload!.Value.Deserialize<PhoneHomeWorkspaceMirrorRequest>(PhoneHomeFraming.Json)!;
+        var oldStore = firstSent.Binding!.RunnerStoreId!;
+        var oldPreparation = firstSent.Binding.PreparationId;
+
+        await rig.RestartAsync();
+        var newStore = await rig.ReplaceRunnerStoreAsync();
+        rig.Host.Directory.GetLiveStoreId(rig.RunnerId).ShouldBe(newStore);
+        await rig.TickAsync().WaitAsync(TickBound);
+        var second = await rig.WaitForRequestsAsync(PhoneHomeOperation.WorkspaceMirror, 1);
+        var secondSent = second.Payload!.Value.Deserialize<PhoneHomeWorkspaceMirrorRequest>(PhoneHomeFraming.Json)!;
+
+        await using var read = rig.NewDb();
+        var debt = await read.TaskWorktreeMirrorBindings.AsNoTracking()
+            .SingleOrDefaultAsync(row => row.PreparationId == oldPreparation);
+        var reusedOldStore = secondSent.Binding!.PreparationId == oldPreparation
+            || string.Equals(secondSent.Binding.RunnerStoreId, oldStore, StringComparison.Ordinal)
+            || debt is null
+            || !string.Equals(debt.RunnerStoreId, oldStore, StringComparison.Ordinal)
+            || debt.BindingId != Guid.Empty
+            || debt.WorktreePath.Length > 0;
+        reusedOldStore.ShouldBeFalse();
+        secondSent.Binding.RunnerStoreId.ShouldBe(newStore.ToString("D"));
+        secondSent.Binding.RunnerId.ShouldBe(firstSent.Binding.RunnerId);
+        secondSent.Binding.PreparationId.ShouldNotBe(oldPreparation);
+        var current = await read.TaskWorktreeMirrorBindings.AsNoTracking()
+            .SingleAsync(row => row.PreparationId == secondSent.Binding.PreparationId);
+        current.RunnerStoreId.ShouldBe(newStore.ToString("D"));
+        current.BindingId.ShouldBe(Guid.Empty);
+        (await read.TaskWorktreeMirrorBindings.CountAsync(row => row.TaskId == taskId)).ShouldBe(2);
+    }
+
+    [Test]
     [Arguments("prepared")]
     [Arguments("unprepared")]
     [Arguments("repair-source")]
@@ -1271,6 +1313,28 @@ public sealed class RemoteWorkspacePreparerTests
                 .Where(e => e.AgentTaskId == id && e.Type == type)
                 .OrderBy(e => e.At).ThenBy(e => e.Id)
                 .ToListAsync();
+        }
+
+        /// <summary>
+        /// Authorizes a replacement store the way a cleared retirement does, then reconnects.
+        /// The previous preparation row is left untouched.
+        /// </summary>
+        public async Task<Guid> ReplaceRunnerStoreAsync()
+        {
+            Host.Directory.Disconnect(Live, "store-replaced");
+            await Peer.DisposeAsync();
+            Clock.Advance(TimeSpan.FromSeconds(91));
+            var now = Clock.GetUtcNow();
+            Host.Directory.ApplyState(RunnerId, new RunnerState(
+                true, now, "retire-for-store", null, false, null, now, "store-replaced"));
+            Host.Directory.ApplyState(RunnerId, new RunnerState(
+                false, null, null, null, false, null, null, null));
+            var store = Guid.NewGuid();
+            Peer = await Host.ConnectPeerAsync(bootId: Guid.NewGuid(), storeId: store);
+            Peer.SilentFor(PhoneHomeOperation.WorkspaceMirror);
+            Live = await Host.WaitLiveAsync();
+            Host.Directory.MarkRecovered(Live);
+            return store;
         }
 
         /// <summary>Drops the whole provider (registry included) and builds a new one.</summary>

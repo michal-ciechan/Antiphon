@@ -260,7 +260,17 @@ public sealed class PhoneHomeCommandDispatcher
                             "Mirror request was refused: " + validation.Reason, 409);
                     var body = request.Payload?.Deserialize<PhoneHomeWorkspaceMirrorRequest>(PhoneHomeFraming.Json)
                         ?? throw new ArgumentException("Workspace mirror body is required.");
-                    return Result(request, await Workspace().MirrorAsync(body, ct));
+                    var workspace = Workspace();
+                    workspace.BindRecipient(_settings.RunnerId, _runtime.RunnerStoreId);
+                    if (body.Binding is { } requested
+                        && (!string.Equals(requested.RunnerId, _settings.RunnerId, StringComparison.Ordinal)
+                            || _runtime.RunnerStoreId == Guid.Empty
+                            || !Guid.TryParse(requested.RunnerStoreId, out var requestedStore)
+                            || requestedStore == Guid.Empty
+                            || requestedStore != _runtime.RunnerStoreId))
+                        throw new PhoneHomeAdmissionException(
+                            PhoneHomeProblemTypes.UnsupportedTarget, "runner_store_mismatch", 409);
+                    return Result(request, await workspace.MirrorAsync(body, ct));
                 }),
                 PhoneHomeOperation.WorkspaceRemove => await MutateAsync(request, async () =>
                 {

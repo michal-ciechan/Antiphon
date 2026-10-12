@@ -40,6 +40,9 @@ public sealed partial class RunnerWorkspaceService
     internal const string DefaultCloneSource = "https://github.com/michal-ciechan/Antiphon.git";
     private readonly string _cloneSource;
     private readonly Func<ProcessStartInfo, Process?> _startProcess;
+    // CARD-1032: the process that receives the request, never a value copied from the request.
+    private string? _recipientRunnerId;
+    private Guid _recipientStoreId;
 
     public RunnerWorkspaceService(string repository, string allowedCwd, TimeSpan? timeout = null,
         string publishedBranch = "master")
@@ -87,6 +90,13 @@ public sealed partial class RunnerWorkspaceService
     internal Action<string>? BindingPhaseCut { get; set; }
 
     internal RunnerWorkspaceBindingStore OpenBindingStore() => new(_bindingStateRoot);
+
+    /// <summary>Names this process's runner and store. A bound mirror is refused until both are set.</summary>
+    internal void BindRecipient(string runnerId, Guid runnerStoreId)
+    {
+        _recipientRunnerId = runnerId;
+        _recipientStoreId = runnerStoreId;
+    }
 
     public Task<PhoneHomeWorkspaceMirrorResponse> MirrorAsync(
         PhoneHomeWorkspaceMirrorRequest request, CancellationToken ct) =>
@@ -168,6 +178,8 @@ public sealed partial class RunnerWorkspaceService
     /// is still present, registered, and at the recorded HEAD. A changed preparation is refused
     /// without rewriting the record. An absent or stale generation is <c>stale_mirror_binding</c>;
     /// another task's tree is <c>foreign_mirror_owner</c>. Neither mints a new generation.
+    /// A request whose runner or store is not this recipient is <c>runner_store_mismatch</c>
+    /// before any directory, intent, or completed binding is written.
     /// </summary>
     private async Task<PhoneHomeWorkspaceMirrorResponse> MirrorBoundAsync(
         PhoneHomeWorkspaceMirrorRequest request, CancellationToken ct)
@@ -190,6 +202,12 @@ public sealed partial class RunnerWorkspaceService
             throw Refuse("Mirror binding runner id is required.");
         if (string.IsNullOrWhiteSpace(binding.RunnerStoreId))
             throw Refuse("Mirror binding store id is required.");
+        if (string.IsNullOrWhiteSpace(_recipientRunnerId)
+            || _recipientStoreId == Guid.Empty
+            || !string.Equals(binding.RunnerId, _recipientRunnerId, StringComparison.Ordinal)
+            || !Guid.TryParse(binding.RunnerStoreId, out var requestedStore)
+            || requestedStore != _recipientStoreId)
+            throw Refuse("runner_store_mismatch");
         var sourceRef = string.IsNullOrWhiteSpace(binding.SourceFullRef)
             ? "refs/heads/" + request.Branch
             : binding.SourceFullRef;

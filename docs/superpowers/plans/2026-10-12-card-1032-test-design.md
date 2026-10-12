@@ -133,6 +133,8 @@ No new method lacks a detecting control.
 | S2 / CP-4 | B.`C1032_CaptureDistinctBindings`; P.`C1032_CaptureLateReassignment`; P.`C1032_CaptureAttemptAndCancellation`; P.`C1032_CaptureLostReplyRecovery` | Old binding retained after reassignment/cancel; current path needs current runner and attempt; replay retains preparation identity and validates returned facts. |
 | S2 / CP-17 | K.`C1032_ForeignOwnerAdoptionRefused` | A saves intent and is cancelled; a colliding short id creates the tree; A's retry is `foreign_mirror_owner` and does not complete. |
 | S2 / CP-18 | K.`C1032_AbsentMirrorReplayRefused` | Exact replay after ordinary removal is `stale_mirror_binding`. The same preparation keeps its binding id and does not mint a generation. |
+| S2 / CP-19 | K.`C1032_StoreMismatchRefused` | A request addressed to another store or runner is `runner_store_mismatch` before a directory, ledger entry, or completed binding. |
+| S2 / CP-20 | P.`C1032_StoreReplacementKeepsDebt` | After the live store is replaced, the retry uses a new preparation for the new store and the old row stays incomplete. |
 | S3 / CP-5 | U.`C1032_FenceStartOrders`; U.`C1032_FenceAttachOrders`; U.`C1032_FenceStartupAdoptionOrders`; U.`C1032_FenceHerdrReadoptionOrders`; U.`C1032_FenceCreationOrders`; U.`C1032_FenceUnknownJournal` | Both winner orders through real entry points; startup and pending Herdr arms; cleanup unknown until census; child survives conflict; restored fence remains held. |
 | S4 / CP-6 | U.`C1032_InspectionReadOnlyBound`; U.`C1032_InspectionPolicyParity`; U.`C1032_InspectionSourceProof` | Read-only facts for bound tree, no enrollment; hand-written Protected/Evidence/Disposable witnesses; actual H read independently of request baseline. |
 | S5 / CP-10 | U.`C1032_RemovalEligiblePhysical`; U.`C1032_RemovalComponentRecovery`; U.`C1032_RemovalOriginalReplacement` | Real directory and matching registration removed; refs/sentinels retained; exact set-aside partial work recovers; replacement and unproved absence held. |
@@ -143,8 +145,8 @@ No new method lacks a detecting control.
 
 The 21 parent U and 12 parent M exact names are retained in the PC-52..82,
 PC-108/109 rows and in the CP rosters below. They add **33** methods to these
-**39** new prerequisite methods, making **72 new single-result methods**.
-The existing legacy rosters add **36**, for **108 ordinary results**.
+**41** new prerequisite methods, making **74 new single-result methods**.
+The existing legacy rosters add **36**, for **110 ordinary results**.
 
 Request field names in controls are logical contract members, including nested
 binding/proof/policy members. S1 binds their concrete typed/JSON paths without
@@ -560,6 +562,8 @@ has not executed any control.
 | G-529 | D-3; capture validates returned binding CreationBaselineSha | PC-529 |
 | G-530 | D-2/D-3; interrupted creation does not adopt another task's tree | PC-530 |
 | G-531 | D-3; completed replay refuses an absent generation | PC-531 |
+| G-532 | D-2; a bound mirror whose runner or store is not this recipient is refused before any directory or ledger write | PC-532 |
+| G-533 | D-3; preparation reuse requires the live store and leaves an old-store row as incomplete debt | PC-533 |
 
 ### Positive controls
 
@@ -872,6 +876,8 @@ remain pending under the parent artifact, not silently discharged here.
 | PC-529 | CAP | capture.CreationBaselineSha: one mismatch/missing member in otherwise valid runner creation receipt -> break G-529: omit returned CreationBaselineSha validation. | `/*/*/RemoteWorkspacePreparerTests/C1032_CaptureLostReplyRecovery` | `invalidBindingPersisted.ShouldBeFalse("capture.CreationBaselineSha")` |
 | PC-530 | RB | A writes creation intent and is cancelled; B with the same short id creates the mirror; A retries -> break G-530: adopt a directory when only presence and HEAD match. | `/*/*/RunnerWorkspaceBindingTests/C1032_ForeignOwnerAdoptionRefused` | `foreignAdopted.ShouldBeFalse()` |
 | PC-531 | RB | exact replay after ordinary worktree removal -> break G-531: return the completed binding when that generation's directory is absent. | `/*/*/RunnerWorkspaceBindingTests/C1032_AbsentMirrorReplayRefused` | `staleSuccess.ShouldBeFalse()` |
+| PC-532 | RB | request names another store or runner -> break G-532: copy the request store into a completed binding. | `/*/*/RunnerWorkspaceBindingTests/C1032_StoreMismatchRefused` | `wrongStoreCompleted.ShouldBeFalse()` |
+| PC-533 | CAP | store replaced between preparation and retry -> break G-533: reuse the old-store preparation. | `/*/*/RemoteWorkspacePreparerTests/C1032_StoreReplacementKeepsDebt` | `reusedOldStore.ShouldBeFalse()` |
 
 ### Out of scope
 
@@ -905,7 +911,7 @@ remain pending under the parent artifact, not silently discharged here.
 
 This is the sole importer-visible closed ordinary list in **this** artifact.
 Use this path, not the provisional table in the fix plan. Each row owns a fresh
-isolated build and one exact filter. The eighteen rows total 108 TUnit executions.
+isolated build and one exact filter. The twenty rows total 110 TUnit executions.
 Read each fresh TRX's executed class/method roster as well as its count:
 the tool's Min is a floor and its derived Expect tokens alone do not enforce
 the exact roster. Prefix rows select only the enumerated C1032 methods above;
@@ -917,7 +923,7 @@ is what makes the enumerated methods run (TUnit issue 4580). No other
 C1032 method shares those names, so the star does not add a case.
 
 Select explicit `--rows` after commit/push:
-S1=CP-1,CP-2; S2=CP-3,CP-4,CP-17,CP-18; S3=CP-5; S4=CP-6;
+S1=CP-1,CP-2; S2=CP-3,CP-4,CP-17,CP-18,CP-19,CP-20; S3=CP-5; S4=CP-6;
 S5=CP-7,CP-8,CP-9,CP-10; S6=CP-11,CP-12;
 S7=CP-13,CP-14; S8=CP-15,CP-16.
 This moves parent destructive witnesses behind S5 implementation and adds
@@ -968,37 +974,39 @@ loops, assertions and PC variants do not raise Min.
 | CP-16 | S8 | `tests/Antiphon.Tests -> bin-c1032-sync/` | legacy-sync | `/*/*/RemoteWorktreeMirrorTests/*` | R-1 | all 8 listed; 0 failed/skipped | 8 | 5 | true |
 | CP-17 | S2 | `tests/Antiphon.SessionRunner.Tests -> bin-c1032-foreign-owner/` | foreign-owner | `/*/*/RunnerWorkspaceBindingTests/C1032_ForeignOwnerAdoptionRefused` | V-1 | all 1 listed; 0 failed/skipped | 1 | 5 | true |
 | CP-18 | S2 | `tests/Antiphon.SessionRunner.Tests -> bin-c1032-absent-replay/` | absent-replay | `/*/*/RunnerWorkspaceBindingTests/C1032_AbsentMirrorReplayRefused` | V-1 | all 1 listed; 0 failed/skipped | 1 | 5 | true |
+| CP-19 | S2 | `tests/Antiphon.SessionRunner.Tests -> bin-c1032-store-mismatch/` | store-mismatch | `/*/*/RunnerWorkspaceBindingTests/C1032_StoreMismatch*` | V-1 | all 1 listed; 0 failed/skipped | 1 | 5 | true |
+| CP-20 | S2 | `tests/Antiphon.Tests -> bin-c1032-store-replacement/` | store-replacement | `/*/*/RemoteWorkspacePreparerTests/C1032_StoreReplacement*` | V-1 | all 1 listed; 0 failed/skipped | 1 | 5 | true |
 
 ### Cost
 
 **Estimated**, not measured. Ordinary Code V/R floor is the CP time sum:
-5+4+5+5+5+5+5+5+5+6+5+6+6+6+7+5+5+5 = **95 minutes**.
-The exact filters are CP-1..CP-18 above; slice floors are S1=9, S2=20,
+5+4+5+5+5+5+5+5+5+6+5+6+6+6+7+5+5+5+5+5 = **105 minutes**.
+The exact filters are CP-1..CP-20 above; slice floors are S1=9, S2=30,
 S3=5, S4=5, S5=21, S6=11, S7=12, S8=12 minutes.
-This includes **18 isolated builds × 3 = 54** and **41 minutes V/R**.
+This includes **20 isolated builds × 3 = 60** and **45 minutes V/R**.
 Setup/manifest/tool-bootstrap allowance = **3**; S1 EF-generation authoring build allowance =
-**3**. Ordinary setup/build + V/R = **101 minutes**, excluding implementation,
+**3**. Ordinary setup/build + V/R = **111 minutes**, excluding implementation,
 slot wait and failure-driven reruns. A separately commissioned full Review rerun
-adds the same **95**, not an unreported broad suite.
+adds the same **105**, not an unreported broad suite.
 
-Post-land Mutation floor, still paused: **273 method-scoped controls × 7 =
-1,911 minutes**. Each exact filter is in the PC table: baseline green execution
+Post-land Mutation floor, still paused: **275 method-scoped controls × 7 =
+1,925 minutes**. Each exact filter is in the PC table: baseline green execution
 0.5 + bind/apply/check 0.25 + isolated red build/run 3 + restore/check 0.25 +
 restored isolated green build/run 3 = 7. Shared initial baseline builds for
 the two test projects = **6**; Mutation setup and restoration record = **3**.
-Mutation total = **1,920 minutes**. Combined ordinary setup/build/V/R plus
-the complete PC battery = **2,021 minutes** estimated (33 h 41 min), before
+Mutation total = **1,934 minutes**. Combined ordinary setup/build/V/R plus
+the complete PC battery = **2,045 minutes** estimated (34 h 5 min), before
 authoring, slot wait and retries. It is separate staged work, not the duration
 of a single Code dispatch or permission to resume Mutation.
 
-The 273 controls include 33 retained parent controls, 36 legacy regression
-controls and 204 added independent binding/schema/digest/receipt/use/recovery/
+The 275 controls include 33 retained parent controls, 36 legacy regression
+controls and 206 added independent binding/schema/digest/receipt/use/recovery/
 inertness predicates. Field-level controls are intentional; sharing a test method
 does not collapse independently bypassable comparisons.
 
 Savings: 18 selected class/group occurrences grouped into 16 builds save
 **2 × 3 = 6 minutes** versus building each class/group separately.
-S2 repair rows CP-17 and CP-18 are separate builds and are not part of that saving.
+S2 repair rows CP-17, CP-18, CP-19, and CP-20 are separate builds and are not part of that saving.
 The fix plan proposed 75 minutes; this freeze adds **10** (two builds = 6,
 four minutes of added gate/inspection execution) to avoid scheduling destructive
 witnesses before their implementation. Mutation batching savings = **0**:
@@ -1007,11 +1015,11 @@ activation costs remain in the parent plan and are not included in this S3 sum.
 
 #### Handoff audit
 
-Static audit: **guards=273, mapped=273, missing=0, duplicate PC maps=0**.
+Static audit: **guards=275, mapped=275, missing=0, duplicate PC maps=0**.
 Parent U=21/M=12 are represented once in the ordinary roster; new prerequisite
-methods=39; existing methods=36; total=108. Eighteen unique CP rows and outputs
+methods=41; existing methods=36; total=110. Twenty unique CP rows and outputs
 cover the ordinary V/R scope. No test/build/mutation execution is asserted.
-PCs: specified=273, executed=0, pending=273, payloads binding required=273.
+PCs: specified=275, executed=0, pending=275, payloads binding required=275.
 The later Mutation acceptance gate requires the named red/restore/green cycles;
 paused controls are not waived and cannot be reported PC-clean.
 
