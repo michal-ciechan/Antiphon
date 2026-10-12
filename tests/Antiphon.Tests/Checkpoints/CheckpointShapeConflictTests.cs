@@ -57,28 +57,42 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
     public async Task shape_conflict_rule(string shape, CancellationToken cancellationToken)
     {
         RequireLinux();
-        var root = BeginRepo(shape);
-        PlaceUser(root, shape);
-        var tool = await RunToolAsync(root, shape + "-tool", shape, cancellationToken);
-        var toolNote = Judge(shape, tool, root, receipt: null);
-        ResetWorktree(root);
-        PlaceUser(root, shape);
-        var script = await RunScriptAsync(root, shape + "-script", shape, cancellationToken);
-        RunResult? receipt = null;
-        if (shape != "clean-build")
+        string? root = null;
+        try
         {
-            var receiptPath = Path.Combine(root, ".antiphon", "script-results", shape + "-script-fixed", "source.json");
-            receipt = File.Exists(receiptPath)
-                ? await ValidateReceiptAsync(receiptPath, GitOut(root, "rev-parse", "HEAD").Trim(), cancellationToken)
-                : new RunResult(66, "receipt missing\n" + script.Output);
-        }
+            root = BeginRepo(shape);
+            PlaceUser(root, shape);
+            var tool = await RunToolAsync(root, shape + "-tool", shape, cancellationToken);
+            var toolNote = Judge(shape, tool, root, receipt: null);
+            ResetWorktree(root);
+            PlaceUser(root, shape);
+            var script = await RunScriptAsync(root, shape + "-script", shape, cancellationToken);
+            RunResult? receipt = null;
+            if (shape != "clean-build")
+            {
+                var receiptPath = Path.Combine(root, ".antiphon", "script-results", shape + "-script-fixed", "source.json");
+                receipt = File.Exists(receiptPath)
+                    ? await ValidateReceiptAsync(receiptPath, GitOut(root, "rev-parse", "HEAD").Trim(), cancellationToken)
+                    : new RunResult(66, "receipt missing\n" + script.Output);
+            }
 
-        var scriptNote = Judge(shape, script, root, receipt);
-        var report = "tool: " + toolNote + "\n--- tool output ---\n" + tool.Output
-            + "\nscript: " + scriptNote + "\n--- script output ---\n" + script.Output
-            + (receipt is null ? "" : "\nreceiptExit=" + receipt.Exit + "\n" + receipt.Output);
-        toolNote.ShouldBe("ok", report);
-        scriptNote.ShouldBe("ok", report);
+            var scriptNote = Judge(shape, script, root, receipt);
+            var report = "tool: " + toolNote + "\n--- tool output ---\n" + tool.Output
+                + "\nscript: " + scriptNote + "\n--- script output ---\n" + script.Output
+                + (receipt is null ? "" : "\nreceiptExit=" + receipt.Exit + "\n" + receipt.Output);
+            toolNote.ShouldBe("ok", report);
+            scriptNote.ShouldBe("ok", report);
+        }
+        finally
+        {
+            // ContainedCleanup refuses a linked root. The assertion already observed the link.
+            if (shape == "symlink-on-file" && root is not null)
+            {
+                var link = new FileInfo(Path.Combine(root, "tracked.txt"));
+                if (link.LinkTarget is not null)
+                    link.Delete();
+            }
+        }
     }
 
     private static string Judge(string shape, RunResult result, string root, RunResult? receipt)
