@@ -34,11 +34,11 @@ No non-null user prompt: no receipt and no item, same as today.
 
 ## Tests
 
-Hand-written outcomes. Each case also plants 2,000 trailing or historical rows so a full read is obvious. `ReadOperations` counts transcript rows. `TextBytes` sums UTF-8 bytes of materialized `Text` values.
+Hand-written outcomes. Each case also plants 2,000 trailing or historical rows so a full read is obvious. `ReadOperations` counts transcript reader reads, including the terminal read that returns no row. `TextBytes` sums UTF-8 bytes of every materialized string. The closed case is two prompt headers (the kind name only, 20 bytes) plus that terminal read, so the cap is 3 reads and 256 bytes.
 
 | Case | Setup | Items | Max rows | Max text bytes | Mutation that goes red | Red on today's builder |
 |---|---|---|---|---|---|---|
-| `closed-by-later-prompt` | 2,000-row history, short body `go`, complaint at the late delivery | 0 | 2 | 256 | Put `%` back on the pattern list (PC-1) | Row and byte caps fail |
+| `closed-by-later-prompt` | 2,000-row history, short body `go`, complaint at the late delivery | 0 | 3 | 256 | Put `%` back on the pattern list (PC-1) | Row and byte caps fail |
 | `complaint-on-last-bounded-row` | One user prompt, complaint on assistant row 8, 2,000 trailing assistants | 1 | 16 | 8192 | Do not judge the 8-row window (PC-3) | Row and byte caps fail; the item is present |
 | `complaint-just-outside-bound` | One user prompt, 8 benign assistants, complaint on row 9, 2,000 trailing assistants | 1 | 16 | 8192 | Stop at row 8 with no phrase probe (PC-2) | Row and byte caps fail; the item is present |
 
@@ -50,7 +50,7 @@ The saturated phrase page (8 non-matching phrase hits, real complaint later) is 
 
 | PC | Mutation | Red assertion |
 |---|---|---|
-| PC-1 | Put `%` back into the session pattern list. | `closed-by-later-prompt` exceeds 2 rows or 256 text bytes. |
+| PC-1 | Put `%` back into the session pattern list. | `closed-by-later-prompt` exceeds 3 reads or 256 text bytes. |
 | PC-2 | Return after 8 assistant rows and skip the phrase probe. | `complaint-just-outside-bound` finds 0 items. |
 | PC-3 | Ignore assistant rows inside the 8-row window and start the phrase probe after them. | `complaint-on-last-bounded-row` finds 0 items. |
 

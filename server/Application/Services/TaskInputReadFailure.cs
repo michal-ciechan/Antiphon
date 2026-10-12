@@ -9,6 +9,8 @@ internal static partial class TaskInputReadFailure
         ["cannot read", "can't read", "cannot access", "can't access",
          "not mounted", "no such file", "does not exist", "is inaccessible"];
 
+    internal static IReadOnlyList<string> FailurePhrases => ReadFailures;
+
     public static bool Matches(string? text, string location, bool reply, bool soleInput)
     {
         if (string.IsNullOrWhiteSpace(text)
