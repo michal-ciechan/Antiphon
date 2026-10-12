@@ -296,11 +296,16 @@ public static class SafeDelete
 
     private readonly record struct GitRun(int ExitCode, string Stdout, string Stderr, string? Failure);
 
+    // A start that throws before a child exists is git-unavailable. ETXTBSY, EAGAIN, and a
+    // settle race are retried a few times when the executable is present, then still
+    // reported as git-unavailable. A child that was created and then does not finish is
+    // git-timeout, including a wait or kill exception after that start.
     private static GitRun RunGit(string git, string workingDirectory, IReadOnlyList<string> args, int timeoutMs)
     {
         if (timeoutMs < 1)
             timeoutMs = GitTimeoutMs;
         Process? process = null;
+        var startedChild = false;
         try
         {
             var start = new ProcessStartInfo(git)
@@ -316,9 +321,10 @@ public static class SafeDelete
             start.Environment.Remove("GIT_INDEX_FILE");
             foreach (var arg in args)
                 start.ArgumentList.Add(arg);
-            process = Process.Start(start);
+            process = StartGit(git, start);
             if (process is null)
                 return new GitRun(-1, "", "", "git-unavailable");
+            startedChild = true;
             // Read both pipes before waiting. A synchronous read ahead of the timeout never reaches WaitForExit
             // when git leaves stdout open.
             var stdoutTask = process.StandardOutput.ReadToEndAsync();
@@ -340,12 +346,68 @@ public static class SafeDelete
         }
         catch (Exception ex) when (ex is Win32Exception or FileNotFoundException or DirectoryNotFoundException)
         {
-            return new GitRun(-1, "", "", "git-unavailable");
+            if (startedChild && process is not null)
+                KillTree(process);
+            return new GitRun(-1, "", "", startedChild ? "git-timeout" : "git-unavailable");
         }
         finally
         {
             process?.Dispose();
         }
+    }
+
+    private const int SpawnAttempts = 6;
+
+    private static Process? StartGit(string git, ProcessStartInfo start)
+    {
+        for (var attempt = 1; attempt <= SpawnAttempts; attempt++)
+        {
+            try
+            {
+                var process = Process.Start(start);
+                if (process is not null || attempt >= SpawnAttempts || !ExecutableExists(git))
+                    return process;
+            }
+            catch (Exception ex) when (ex is Win32Exception or FileNotFoundException or DirectoryNotFoundException)
+            {
+                if (attempt >= SpawnAttempts || !IsTransientSpawn(ex, git))
+                    throw;
+            }
+
+            Thread.Sleep(25 << (attempt - 1));
+        }
+
+        return null;
+    }
+
+    private static bool IsTransientSpawn(Exception ex, string git)
+    {
+        if (ex is not Win32Exception win || !ExecutableExists(git))
+            return false;
+        var code = win.NativeErrorCode;
+        if (OperatingSystem.IsWindows())
+            return code is 8 or 1450;
+        return code is 4 or 11 or 12 or 26 or 2 or 13;
+    }
+
+    private static bool ExecutableExists(string git)
+    {
+        if (File.Exists(git))
+            return true;
+        if (git.Contains('/') || git.Contains('\\'))
+            return false;
+        var path = Environment.GetEnvironmentVariable("PATH");
+        if (string.IsNullOrEmpty(path))
+            return false;
+        foreach (var dir in path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (File.Exists(Path.Combine(dir, git)))
+                return true;
+            if (OperatingSystem.IsWindows() && File.Exists(Path.Combine(dir, git + ".exe")))
+                return true;
+        }
+
+        return false;
     }
 
     private static void KillTree(Process process)

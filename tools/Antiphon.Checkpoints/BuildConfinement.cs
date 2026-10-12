@@ -8,12 +8,17 @@ namespace Antiphon.Checkpoints;
 // Tracked files are protected by a clean baseline and a post-build restore, not by
 // predicting where MSBuild will write. Before a real dotnet build the tree must have
 // no modified, deleted, or staged tracked paths. After the build, on success, failure,
-// timeout, and cancel, paths that changed are restored from that HEAD. Global
-// OutputPath / ArtifactsPath redirection and the static XML preflight only reduce
-// noise. A shared BaseIntermediateOutputPath is not passed: global properties are not
-// re-expanded, so $(MSBuildProjectName) would be one literal directory and restore
-// then cycles. A DotnetShim build is left unchanged. Untracked and ignored files,
-// writes outside the repository, and a row command string are outside this guarantee.
+// timeout, and cancel, a path that is in HEAD is restored from that HEAD. A path that
+// is absent from HEAD is removed from the index only, so its worktree bytes stay. A
+// worktree path absent from HEAD is never deleted. A modified or deleted tracked path,
+// and a staged path absent from HEAD, are tampered. The lossless sentence is used only
+// when that restore removed no worktree content. Global OutputPath / ArtifactsPath
+// redirection and the static XML preflight only reduce noise. A shared
+// BaseIntermediateOutputPath is not passed: global properties are not re-expanded, so
+// $(MSBuildProjectName) would be one literal directory and restore then cycles. A
+// DotnetShim build is left unchanged. Untracked and ignored files the build does not
+// stage, writes outside the repository, and a row command string are outside this
+// guarantee.
 public static class BuildConfinement
 {
     public const int WalkCap = 500;
@@ -122,23 +127,46 @@ public static class BuildConfinement
     {
         var status = ReadStatus(baseline.Repository);
         if (status.Error is not null)
-            return Failed(baseline, [], status.Error);
+            return Failed(baseline, [], [], status.Error);
         if (status.Paths.Count == 0)
         {
             if (IndexMatches(baseline, out var matchError))
                 return new Settlement(null, "", []);
-            return Failed(baseline, [], matchError ?? "index-mismatch");
+            return Failed(baseline, [], [], matchError ?? "index-mismatch");
         }
 
-        var restored = Git(baseline.Repository, RestoreArguments(baseline.Head, status.Paths));
-        if (restored.Error is not null || restored.Exit != 0)
-            return Failed(baseline, status.Paths, restored.Error ?? "git-restore");
+        var tracked = new List<string>();
+        var added = new List<string>();
+        foreach (var path in status.Paths)
+        {
+            if (baseline.Entries.ContainsKey(path))
+                tracked.Add(path);
+            else
+                added.Add(path);
+        }
+
+        // Unstage paths absent from HEAD before any --worktree restore. Restoring those
+        // paths from HEAD deletes worktree bytes the commit does not contain.
+        if (added.Count > 0)
+        {
+            var unstaged = Git(baseline.Repository, UnstageArguments(added));
+            if (unstaged.Error is not null || unstaged.Exit != 0)
+                return Failed(baseline, tracked, added, unstaged.Error ?? "git-restore");
+        }
+
+        if (tracked.Count > 0)
+        {
+            var restored = Git(baseline.Repository, RestoreArguments(baseline.Head, tracked));
+            if (restored.Error is not null || restored.Exit != 0)
+                return Failed(baseline, tracked, added, restored.Error ?? "git-restore");
+        }
+
         var after = ReadStatus(baseline.Repository);
         if (after.Error is not null || after.Paths.Count > 0)
-            return Failed(baseline, status.Paths, after.Error ?? "still-dirty");
+            return Failed(baseline, tracked, added, after.Error ?? "still-dirty");
         if (!IndexMatches(baseline, out var error))
-            return Failed(baseline, status.Paths, error ?? "index-mismatch");
-        return new Settlement("tampered", TamperText(baseline.Head, status.Paths), status.Paths);
+            return Failed(baseline, tracked, added, error ?? "index-mismatch");
+        return new Settlement("tampered", TamperText(baseline.Head, status.Paths, claimLossless: true), status.Paths);
     }
 
     private static Prepared PreferSettlement(Baseline baseline, Prepared graphRefusal)
@@ -154,12 +182,15 @@ public static class BuildConfinement
     private static Prepared Refuse(string reason, string detail) =>
         new(reason, "refused: " + reason + "\n" + detail + "\n", [], null);
 
-    private static Settlement Failed(Baseline baseline, IReadOnlyList<string> paths, string why)
+    private static Settlement Failed(Baseline baseline, IReadOnlyList<string> tracked, IReadOnlyList<string> added, string why)
     {
         var builder = new StringBuilder();
         builder.Append("refused: restore-failed\n");
         builder.Append(why).Append('\n');
-        builder.Append(ManualRestore(baseline.Repository, baseline.Head, paths)).Append('\n');
+        builder.Append(ManualCommands(baseline.Repository, baseline.Head, tracked, added)).Append('\n');
+        var paths = new List<string>(tracked.Count + added.Count);
+        paths.AddRange(tracked);
+        paths.AddRange(added);
         return new Settlement("restore-failed", builder.ToString(), paths);
     }
 
@@ -181,7 +212,7 @@ public static class BuildConfinement
         return builder.ToString();
     }
 
-    private static string TamperText(string head, IReadOnlyList<string> changed)
+    private static string TamperText(string head, IReadOnlyList<string> changed, bool claimLossless)
     {
         var builder = new StringBuilder();
         builder.Append("refused: tampered\n");
@@ -197,7 +228,29 @@ public static class BuildConfinement
         if (changed.Count > 20)
             builder.Append("TAMPERED ").Append(changed.Count - 20).Append(" more\n");
         builder.Append("restored from ").Append(head).Append('\n');
-        builder.Append("lossless because the pre-build tracked tree was clean\n");
+        if (claimLossless)
+            builder.Append("lossless because the pre-build tracked tree was clean\n");
+        return builder.ToString();
+    }
+
+    private static string ManualCommands(string repository, string head, IReadOnlyList<string> tracked, IReadOnlyList<string> added)
+    {
+        var builder = new StringBuilder();
+        if (added.Count > 0)
+        {
+            builder.Append("manual restore: git -C ").Append(Quote(repository));
+            builder.Append(" restore --staged --");
+            foreach (var path in added)
+                builder.Append(' ').Append(Quote(path));
+        }
+
+        if (tracked.Count > 0 || added.Count == 0)
+        {
+            if (builder.Length > 0)
+                builder.Append('\n');
+            builder.Append(ManualRestore(repository, head, tracked));
+        }
+
         return builder.ToString();
     }
 
@@ -212,6 +265,13 @@ public static class BuildConfinement
     }
 
     private static string Quote(string value) => "'" + value.Replace("'", "'\\''", StringComparison.Ordinal) + "'";
+
+    private static List<string> UnstageArguments(IReadOnlyList<string> paths)
+    {
+        var args = new List<string> { "restore", "--staged", "--" };
+        args.AddRange(paths);
+        return args;
+    }
 
     private static List<string> RestoreArguments(string head, IReadOnlyList<string> paths)
     {
