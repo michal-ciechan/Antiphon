@@ -39,6 +39,8 @@ public static class BuildStep
 
     // The OutputPath token stays the relative manifest value. ProcessDriver and
     // run-checkpoint.ps1 rewrite a real dotnet build onto one absolute owned path.
+    // That rewrite is defence in depth. The run must receive the same absolute
+    // OutputPath, ArtifactsPath, and UseArtifactsOutput the build and the stamp use.
     public static List<string> BuildArguments(
         string project,
         string outputPath,

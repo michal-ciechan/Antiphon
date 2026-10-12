@@ -33,6 +33,8 @@ public static class RowTimeout
             var result = await driver.RunAsync(request, timeout.Token).ConfigureAwait(false);
             if (timeout.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
             {
+                if (KeepsConfinement(result))
+                    return result;
                 return result with { Killed = true, TimedOut = true, ExitCode = ExitCodes.Timeout };
             }
 
@@ -42,5 +44,14 @@ public static class RowTimeout
         {
             return new DriverResult(ExitCodes.Timeout, "", "", Killed: true, TimedOut: true);
         }
+    }
+
+    private static bool KeepsConfinement(DriverResult result)
+    {
+        if (result.ExitCode != ExitCodes.Invalid && result.ExitCode != ExitCodes.RestoreFailed)
+            return false;
+        var text = result.Stdout + "\n" + result.Stderr;
+        return text.Contains("refused: tampered", StringComparison.Ordinal)
+            || text.Contains("refused: restore-failed", StringComparison.Ordinal);
     }
 }
