@@ -6,8 +6,11 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 /// <summary>
-/// CARD-1205 S1. Production blobs under test match origin/master
-/// a61db0f08448b87421b8dd9334f9f2631691cde7 (pump, HTTP client, runtime, hub, events route).
+/// CARD-1205 S1. Executed components are SessionRunnerHttpClient, SessionRunnerEventPump,
+/// AgentSessionRuntime, and the real SessionRunnerEventHub. The runner GET /events route in
+/// SessionRunner Program.cs was inspected only: it writes ": connected" and flushes it before
+/// runtime.Subscribe. This harness does not call that route; its handler supplies the frames
+/// and subscribes the real hub itself.
 /// CP-1 is the expected-red baseline: T01 fails on the missing end; T02's grace pull passes.
 /// </summary>
 [Category("Integration")]
