@@ -452,6 +452,8 @@ public sealed class RowRunner
                 || line.StartsWith("DIRTY ", StringComparison.Ordinal)
                 || line.StartsWith("restored from ", StringComparison.Ordinal)
                 || line.StartsWith("lossless because ", StringComparison.Ordinal)
+                || line.StartsWith("CONFLICT ", StringComparison.Ordinal)
+                || line.StartsWith("worktree bytes changed", StringComparison.Ordinal)
                 || line.StartsWith("manual restore:", StringComparison.Ordinal))
                 writer.WriteLine(line);
         }
