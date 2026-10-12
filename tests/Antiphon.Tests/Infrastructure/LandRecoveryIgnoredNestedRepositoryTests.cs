@@ -150,7 +150,8 @@ public sealed class LandRecoveryIgnoredNestedRepositoryTests
         var file = Path.Combine(tree, reviewedPath.Replace('/', Path.DirectorySeparatorChar));
         Directory.CreateDirectory(Path.GetDirectoryName(file)!);
         await File.WriteAllTextAsync(file, "reviewed bytes\n");
-        await f.RequiredAsync(tree, "add", "--", reviewedPath);
+        // Linked worktrees share info/exclude; deliberately seed the reviewed obstruction anyway.
+        await f.RequiredAsync(tree, "add", "--force", "--", reviewedPath);
         await f.RequiredAsync(tree, "commit", "-m", "reviewed descendant");
         var reviewed = (await f.RequiredAsync(tree, "rev-parse", "HEAD")).Trim();
         await f.RequiredAsync(f.Repository, "update-ref", "--no-deref", f.SourceRef, reviewed, local);
