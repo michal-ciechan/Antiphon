@@ -429,6 +429,11 @@ Existing unchanged internals beyond these boundaries remain the stated exclusion
 | G-112 | D-2: Held first event survives host cancellation during the second list | PC-112 |
 | G-113 | D-2: A throwing second list does not reconnect before the held event | PC-113 |
 | G-114 | D-2: Readiness marker keeps the parsed event for failed catch-up delivery | PC-114 |
+| G-115 | D-2 repair 3: pending held delivery cannot obstruct shutdown/disposal indefinitely | PC-115 |
+| G-116 | D-2 repair 3: host cancellation ends the held callback wait | PC-116 |
+| G-117 | D-2 repair 3: monotonic deadline ends that wait without host cancellation | PC-117 |
+| G-118 | D-2 repair 3: swallowed final-sync cancellation enters preservation | PC-118 |
+| G-119 | D-2 repair 3: an already-stopping host gets one initial output offer | PC-119 |
 | G-11 | D-7 step 5: RecoveredIdle follows committed persistence | PC-11 |
 | G-12 | D-7 step 1: Pull failure is Unknown | PC-12 |
 | G-13 | D-7 step 5: Failed save cannot certify recovery | PC-13 |
@@ -537,7 +542,7 @@ this design and compiled bindings before land. On unpause after confirmed land,
 Mutation must run the **whole** inventory, method-scoped, as baseline green -> break ->
 expected assertion red -> restore exact source -> restored green. No PC is credited
 here as run. The later completion gate is 119/119 cycles executed with provenance.
-PC-111..PC-114 are the held-event repair controls. This TestDesign handoff is not a
+PC-111..PC-119 are the held-event repair controls. This TestDesign handoff is not a
 claim of verification completion.
 
 Each row below binds a concrete compiling-defect recipe to one named test method.
@@ -678,7 +683,7 @@ a stale mutant DLL.
 | PC-115 | Restore an unbounded await with CancellationToken.None on held-event delivery. | T48: `SessionRunnerHeldEventDeliveryTests.C1205_Blocked_held_callback_stops_on_host_cancellation` | stopped.ShouldBeTrue() fails before fixture release. |
 | PC-116 | Remove the host cancellation registration from bounded delivery. | T48: `SessionRunnerHeldEventDeliveryTests.C1205_Blocked_held_callback_stops_on_host_cancellation` | stopped.ShouldBeTrue() fails without fake deadline advancement. |
 | PC-117 | Remove the monotonic deadline token/timer from bounded delivery. | T49: `SessionRunnerHeldEventDeliveryTests.C1205_Blocked_held_callback_stops_at_monotonic_deadline` | disconnected.ShouldBeTrue() fails at three fake seconds. |
-| PC-118 | Remove the cancellation check after the final SyncTranscriptAsync. | T50: `SessionRunnerHeldEventDeliveryTests.C1205_Last_transcript_pull_cancellation_preserves_one_output` | Bus.Accepted.ShouldBe(1) observes zero. |
+| PC-118 | Remove both post-sync cancellation revalidations: after the awaited sync and at the end of the catch-up pass. Retain the pre-sync check. | T50: `SessionRunnerHeldEventDeliveryTests.C1205_Last_transcript_pull_cancellation_preserves_one_output` | Bus.Accepted.ShouldBe(1) observes zero; deleting just one redundant revalidation is not this mutant. |
 | PC-119 | Propagate an already-cancelled host token before offering the held event. | T50: `SessionRunnerHeldEventDeliveryTests.C1205_Last_transcript_pull_cancellation_preserves_one_output` | Bus.Accepted.ShouldBe(1) observes zero. |
 
 Plan PC crosswalk (this appendix's numbers are authoritative): old 1->1;
@@ -766,8 +771,10 @@ additional ordinary checkpoint table:
 
 This is the **closed ordinary manifest** replacing only the plan's proposed table.
 One isolated build and one exact filter per row; `Min` is TUnit executions.
-The union is 174 distinct ordinary cases; CP-1 executes two again on baseline,
-so the sequential Code total is 176 executions, including the one intended red.
+Repair 3 ordinary scope is 69 executions (67 distinct cases): CP-1 2, CP-2 34,
+ADJ-1 33. Its separate test-first RED-1 has four assertion failures on unchanged
+ff561103 production. The S3-S5 rows below remain future target rosters; they were
+not run by this repair. The original 170-case design estimate predates T47-T50.
 Current existing counts are source-bound, future counts are frozen target rosters
 to bind in Code. Any extra/missing/skip result needs a manifest amendment and
 explanation, not silently treating a floor as the census. No broad Unit lane.
@@ -816,7 +823,7 @@ increase for expanded cases, not an executed slowdown.
 
 Mutation is separately paused. Price **119** method-scoped baseline/red/restored-green
 cycles. The arithmetic below still prices the original 110 (17 H5 controls plus 93);
-PC-111..PC-114 are four additional cycles outside that sum. PC-84..100 (17 H5 controls) each estimate
+PC-111..PC-114 are four additional cycles outside that sum. PC-115..PC-119 add five bounded-drain controls, estimated fifteen further minutes (unmeasured). None has run. PC-84..100 (17 H5 controls) each estimate
 1 minute patch/restore + 3 phases x 3 minutes build-and-method = **10 minutes**
 each, **170 minutes**. The other 93 controls each estimate 1 minute patch/restore +
 3 phases x 2 minutes build-and-method = **7 minutes**, **651 minutes**.
@@ -873,9 +880,11 @@ after this TestDesign settles. No dispatch, scope change or board update was mad
 
 #### Handoff census
 
-Design census: **guards=110, mapped=110, missing=0, duplicate PC maps=0**.
-44 new method reservations / 141 argument-expanded cases, plus 29 existing cases =
-174 fixed-source cases. CP-1 adds 2 baseline executions = 176 across S1..S5.
+Original TestDesign census: **guards=110, mapped=110, missing=0, duplicate PC maps=0**.
+Its historical 44-method / 141-new-case plus 29-existing-case estimate was 170.
+Subsequent repairs add G-111..G-119 and T47-T50. Repair 3's actual ordinary census
+is 69 executions / 67 distinct cases, including all four T48-T50 rows. This is
+not an executed S3-S5 census or a completed positive-control census.
 PC executions in this task: **0**; all 110 remain pending under the explicit paused
 post-land policy. Executable payload binding remains required after Code; Review
 must reject a renamed, unreachable or non-red-capable payload without an amendment.
