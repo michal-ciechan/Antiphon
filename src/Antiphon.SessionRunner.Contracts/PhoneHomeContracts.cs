@@ -109,6 +109,12 @@ public enum PhoneHomeOperation
 
     /// <summary>CARD-1153 D-2: certify and close a prepared, never-created id. Old runners answer unsupported.</summary>
     CertifyAbsence = 39,
+
+    /// <summary>CARD-1032. Read-only inspection of one bound ordinary mirror. Not composed into production here.</summary>
+    CompletedCardWorkspaceInspect = 40,
+
+    /// <summary>CARD-1032. Guarded removal of one bound ordinary mirror. Distinct from <see cref="WorkspaceRemove"/> and has no Force.</summary>
+    CompletedCardWorkspaceRemove = 41,
 }
 
 /// <summary>Exactly one prepare or verify payload; unknown versions fail closed.</summary>

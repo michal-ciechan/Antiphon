@@ -49,5 +49,16 @@ public sealed class CardWorktreeCleanupEndpoint
     public bool? BranchRemoved { get; set; }
     public DateTime UpdatedAt { get; set; }
     public Guid ConcurrencyToken { get; set; } = Guid.NewGuid();
+
+    /// <summary>CARD-1032. Null on every legacy endpoint; cleanup does not adopt an unbound path.</summary>
+    public Guid? MirrorBindingId { get; set; }
+
+    /// <summary>CARD-1032. Exact versioned command persisted before send. Not rebuilt from the task.</summary>
+    public byte[]? ImmutableRequest { get; set; }
+
+    /// <summary>CARD-1032. Exact imported runner receipt. Missing bytes are not a completed removal.</summary>
+    public byte[]? ImportedReceipt { get; set; }
+
     public CardWorktreeCleanupTarget Target { get; set; } = null!;
+    public TaskWorktreeMirrorBinding? MirrorBinding { get; set; }
 }

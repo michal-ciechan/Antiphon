@@ -77,6 +77,7 @@ public class AppDbContext : DbContext
     public DbSet<CardWorktreeCleanup> CardWorktreeCleanups => Set<CardWorktreeCleanup>();
     public DbSet<CardWorktreeCleanupTarget> CardWorktreeCleanupTargets => Set<CardWorktreeCleanupTarget>();
     public DbSet<CardWorktreeCleanupEndpoint> CardWorktreeCleanupEndpoints => Set<CardWorktreeCleanupEndpoint>();
+    public DbSet<TaskWorktreeMirrorBinding> TaskWorktreeMirrorBindings => Set<TaskWorktreeMirrorBinding>();
     public DbSet<TaskWorktreeRetirementAttempt> TaskWorktreeRetirementAttempts => Set<TaskWorktreeRetirementAttempt>();
     public DbSet<WorktreeResidueRun> WorktreeResidueRuns => Set<WorktreeResidueRun>();
     public DbSet<WorktreeResidueRunCandidate> WorktreeResidueRunCandidates => Set<WorktreeResidueRunCandidate>();
@@ -2930,7 +2931,29 @@ public class AppDbContext : DbContext
             entity.Property(r => r.ConcurrencyToken).IsConcurrencyToken();
             entity.HasIndex(r => new { r.TargetId, r.EndpointIdentity }).IsUnique();
             entity.HasIndex(r => r.OperationId).IsUnique();
+            entity.Property(r => r.ImmutableRequest).HasColumnType("bytea");
+            entity.Property(r => r.ImportedReceipt).HasColumnType("bytea");
             entity.HasOne(r => r.Target).WithMany(t => t.Endpoints).HasForeignKey(r => r.TargetId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(r => r.MirrorBinding).WithMany().HasForeignKey(r => r.MirrorBindingId).OnDelete(DeleteBehavior.Restrict);
+        });
+        modelBuilder.Entity<TaskWorktreeMirrorBinding>(entity =>
+        {
+            entity.ToTable("TaskWorktreeMirrorBindings");
+            entity.HasKey(r => r.Id);
+            entity.Property(r => r.RunnerId).IsRequired().HasMaxLength(200);
+            entity.Property(r => r.RunnerStoreId).IsRequired().HasMaxLength(200);
+            entity.Property(r => r.RepositoryIdentity).IsRequired().HasMaxLength(1000);
+            entity.Property(r => r.CommonDirectory).IsRequired().HasMaxLength(1000);
+            entity.Property(r => r.GitDirectory).IsRequired().HasMaxLength(1000);
+            entity.Property(r => r.WorktreePath).IsRequired().HasMaxLength(1000);
+            entity.Property(r => r.SourceFullRef).IsRequired().HasMaxLength(400);
+            entity.Property(r => r.CreationBaselineSha).IsRequired().HasMaxLength(64);
+            entity.Property(r => r.CreatedAt).IsRequired();
+            entity.HasIndex(r => r.PreparationId).IsUnique()
+                .HasDatabaseName("IX_TaskWorktreeMirrorBindings_PreparationId");
+            entity.HasIndex(r => new { r.TaskId, r.Attempt, r.RunnerStoreId, r.BindingId }).IsUnique()
+                .HasDatabaseName("IX_TaskWorktreeMirrorBindings_Task_Attempt_Store_Binding");
+            entity.HasOne<AgentTask>().WithMany().HasForeignKey(r => r.TaskId).OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<TaskWorktreeRetirement>(entity =>
