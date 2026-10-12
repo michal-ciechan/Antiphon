@@ -607,11 +607,11 @@ public sealed class PhoneHomeMirrorJoinTests
         }
 
         private static Task GitAsync(string cwd, CancellationToken ct, params string[] args) =>
-            RunAsync("/usr/bin/git", cwd, ct, args);
+            RunAsync("git", cwd, ct, args);
 
         private static async Task<string> GitOutAsync(string cwd, CancellationToken ct, params string[] args)
         {
-            var (code, stdout, stderr) = await RunCaptureAsync("/usr/bin/git", cwd, ct, args);
+            var (code, stdout, stderr) = await RunCaptureAsync("git", cwd, ct, args);
             if (code != 0)
                 throw new InvalidOperationException($"git {string.Join(' ', args)} failed ({code}): {stderr}");
             return stdout;
