@@ -47,6 +47,9 @@ public sealed class WorktreeResidueSettingsValidator : IValidateOptions<Worktree
         if (options.RunResultPageSize <= 0)
             failures.Add("WorktreeResidue:RunResultPageSize must be positive.");
 
+        if (!WorktreeResidueSettings.TryReadCardDoneAfterUtc(options.CardDoneAfterUtc, out _, out var cutoffFailure))
+            failures.Add(cutoffFailure!);
+
         return failures.Count == 0
             ? ValidateOptionsResult.Success
             : ValidateOptionsResult.Fail(failures);

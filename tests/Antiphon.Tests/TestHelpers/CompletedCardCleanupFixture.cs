@@ -31,7 +31,10 @@ internal sealed class CompletedCardCleanupFixture : IAsyncDisposable
     public Guid TargetId { get; private set; }
     public Guid EndpointId { get; private set; }
 
-    private CompletedCardCleanupFixture()
+    /// <summary>Fixture-only cohort. Shipped configuration stays Execute=false and CardDoneAfterUtc=null.</summary>
+    public WorktreeResidueSettings Residue { get; } = new() { Execute = true, MinSettledMinutes = 120 };
+
+    private CompletedCardCleanupFixture(TimeProvider? clock)
     {
         var checkout = new DirectoryInfo(AppContext.BaseDirectory);
         while (checkout is not null && !File.Exists(Path.Combine(checkout.FullName, "Antiphon.sln"))) checkout = checkout.Parent;
@@ -39,19 +42,20 @@ internal sealed class CompletedCardCleanupFixture : IAsyncDisposable
             ".antiphon", "test-output", "c1017", Guid.NewGuid().ToString("N"));
         Host = new LandingSafetyHarness(root)
         {
+            Clock = clock ?? TimeProvider.System,
             ConfigureServices = services =>
             {
                 services.AddSingleton<CardDoneArtifactPreservation>();
                 services.AddScoped<CardWorktreeCleanupExecutor>();
                 services.AddScoped<CardWorktreeCleanupService>();
-                services.AddSingleton(Options.Create(new WorktreeResidueSettings { MinSettledMinutes = 120 }));
+                services.AddSingleton(Options.Create(Residue));
             }
         };
     }
 
-    public static async Task<CompletedCardCleanupFixture> CreateAsync(string? leaf = null)
+    public static async Task<CompletedCardCleanupFixture> CreateAsync(string? leaf = null, TimeProvider? clock = null)
     {
-        var f = new CompletedCardCleanupFixture();
+        var f = new CompletedCardCleanupFixture(clock);
         await f.Host.InitializeAsync();
         var branch = "feat/card-task-" + f.TaskId.ToString("N")[..8];
         f.Tree = Path.Combine(f.Host.Fixture.Root, "trees", leaf ?? "card-task-" + f.TaskId.ToString("N")[..8]);
@@ -79,10 +83,46 @@ internal sealed class CompletedCardCleanupFixture : IAsyncDisposable
         var task = await db.AgentTasks.SingleAsync(t => t.Id == f.TaskId);
         task.CardId = card.Id; task.Attempt = 1; task.WorktreePath = f.Tree; task.WorkingDirectory = f.Tree;
         task.WorktreeBranch = branch; task.WorktreeBaseSha = f.Host.Fixture.SeedSha;
-        task.CompletedAt = DateTime.UtcNow.AddHours(-3); task.Result = "complete canonical report\n";
+        task.CompletedAt = f.Host.Clock.GetUtcNow().UtcDateTime.AddHours(-3); task.Result = "complete canonical report\n";
         await db.SaveChangesAsync();
         await f.MoveAsync(f.DoneColumnId);
+        await f.OptIntoFixtureCohortAsync();
         return f;
+    }
+
+    /// <summary>One day before the immutable Done revision. Tests that refuse a cohort overwrite this.</summary>
+    public async Task OptIntoFixtureCohortAsync()
+    {
+        await using var db = Host.CreateContext();
+        var doneAt = await db.CardRevisions.AsNoTracking()
+            .Where(r => r.CardId == CardId && r.ToStatus == CardStatus.Done && r.FromStatus != CardStatus.Done)
+            .OrderByDescending(r => r.RevisionNumber)
+            .Select(r => r.CreatedAt)
+            .FirstAsync();
+        Residue.Execute = true;
+        SetCutoff(doneAt.AddDays(-1));
+    }
+
+    public void SetCutoff(DateTime? utc) =>
+        Residue.CardDoneAfterUtc = utc is null ? null : WorktreeResidueSettings.FormatCardDoneAfterUtc(utc.Value);
+
+    public async Task<DateTime> PersistedDoneAtAsync()
+    {
+        if (TargetId == Guid.Empty) await DiscoverAsync();
+        await using var db = Host.CreateContext();
+        return await db.CardWorktreeCleanups.AsNoTracking()
+            .Where(c => c.CardId == CardId)
+            .OrderByDescending(c => c.CreatedAt)
+            .Select(c => c.DoneAt)
+            .FirstAsync();
+    }
+
+    public async Task SetCompletedAgeAsync(TimeSpan? age)
+    {
+        var now = Host.Clock.GetUtcNow().UtcDateTime;
+        await ChangeTaskAsync(t => t.CompletedAt = age is null
+            ? null
+            : DateTime.SpecifyKind(now - age.Value, DateTimeKind.Utc));
     }
 
     public async Task MoveAsync(Guid column, CancellationToken ct = default)
@@ -207,6 +247,14 @@ internal sealed class CompletedCardCleanupFixture : IAsyncDisposable
         configure?.Invoke(scope.ServiceProvider.GetRequiredService<CardWorktreeCleanupExecutor>());
         return await scope.ServiceProvider.GetRequiredService<CardWorktreeCleanupService>()
             .TryCleanupLocalAsync(TargetId, null, CancellationToken.None);
+    }
+
+    public async Task<WorktreeRemoval> CleanupDirectAsync(Guid? runId = null)
+    {
+        if (EndpointId == Guid.Empty) await DiscoverAsync();
+        await using var scope = Host.Services.CreateAsyncScope();
+        return await scope.ServiceProvider.GetRequiredService<CardWorktreeCleanupExecutor>()
+            .TryAsync(EndpointId, runId, CancellationToken.None);
     }
 
     public async Task<string?> SentinelAsync() => File.Exists(Sentinel) ? await File.ReadAllTextAsync(Sentinel) : null;
