@@ -33,7 +33,7 @@ public class GrokSizeCaptureTests
                 var env = new Dictionary<string, string> { ["ANTIPHON_PTY_AUDIT"] = "0" };
                 if (mode == "empty-home") env["GROK_HOME"] = Path.Combine(root, "home");
                 var session = Guid.NewGuid();
-                await using var runner = new PtyAgentRunner();
+                var runner = new PtyAgentRunner();
                 Process? child = null;
                 try
                 {
@@ -55,8 +55,12 @@ public class GrokSizeCaptureTests
                             trustRecorded = true;
                             await runner.WriteAsync("y", deadline.Token);
                         }
+                        var lines = screen.Split('\n');
+                        var top = Array.FindIndex(lines, line => line.Contains('╭'));
                         if (clock.Elapsed >= TimeSpan.FromSeconds(3)
-                            && screen.Contains(GrokStartupScreen.EnabledHint, StringComparison.Ordinal)) break;
+                            && screen.Contains("Ctrl+x:shortcuts", StringComparison.Ordinal)
+                            && top >= 2 && string.IsNullOrWhiteSpace(lines[top - 2])
+                            && string.IsNullOrWhiteSpace(lines[top - 1])) break;
                     }
                     // Sign-in can start a device flow without input. Redact standalone
                     // codes in memory, preserving cell width, before any persistence.
