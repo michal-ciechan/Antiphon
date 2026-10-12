@@ -771,7 +771,7 @@ a stale mutant DLL.
 | PC-115 | Restore an unbounded await with CancellationToken.None on held-event delivery. | T48: `SessionRunnerHeldEventDeliveryTests.C1205_Blocked_held_callback_stops_on_host_cancellation` | stopped.ShouldBeTrue() fails before fixture release. |
 | PC-116 | Remove the host cancellation registration from bounded delivery. | T48: `SessionRunnerHeldEventDeliveryTests.C1205_Blocked_held_callback_stops_on_host_cancellation` | stopped.ShouldBeTrue() fails without fake deadline advancement. |
 | PC-117 | Remove the monotonic deadline token/timer from bounded delivery. | T49: `SessionRunnerHeldEventDeliveryTests.C1205_Blocked_held_callback_stops_at_monotonic_deadline` | disconnected.ShouldBeTrue() fails at three fake seconds. |
-| PC-118 | Remove both post-sync cancellation revalidations: after the awaited sync and at the end of the catch-up pass. Retain the pre-sync check. | T50: `SessionRunnerHeldEventDeliveryTests.C1205_Last_transcript_pull_cancellation_preserves_one_output` | Bus.Accepted.ShouldBe(1) observes zero; deleting just one redundant revalidation is not this mutant. |
+| PC-118 | Skip the common held offer when the host is already cancelled, retaining following-copy suppression (repair 4 binding). | T50: `SessionRunnerHeldEventDeliveryTests.C1205_Last_transcript_pull_cancellation_preserves_one_output` | Bus.Accepted.ShouldBe(1) observes zero. Deleting cancellation checks alone is redundant after repair 4. |
 | PC-119 | Propagate an already-cancelled host token before offering the held event. | T50: `SessionRunnerHeldEventDeliveryTests.C1205_Last_transcript_pull_cancellation_preserves_one_output` | Bus.Accepted.ShouldBe(1) observes zero. |
 
 Plan PC crosswalk (this appendix's numbers are authoritative): old 1->1;

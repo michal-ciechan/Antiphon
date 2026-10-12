@@ -175,8 +175,10 @@ offer the already parsed event once before the iterator is disposed, then use th
 existing reconnect path. On host cancellation, offer it once and then stop waiting
 on a pending consumer. On a throwing list, leave the exception inside catch-up, do not reconnect,
 and offer the event from the common preservation exit. Do not wait for another stream
-read and do not extend the list deadline. The first held event
-and all following live events remain in connection order; overlapping transcript
+read and do not extend the list deadline. Completed held offers
+and following live events preserve order within that connection. An abandoned
+callback may settle later; no ordering across that uncertainty or reconnect is
+promised. Overlapping transcript
 rows dedupe using the existing runtime. Output/exit/fault/bind/adoption/status events
 must also survive being the first event. Do not synthesize readiness in the routing
 facade or phone-home pump. Use injected time for new timing and pump phases. No
