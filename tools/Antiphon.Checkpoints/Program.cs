@@ -33,8 +33,10 @@ public static class Program
             return ExitCodes.Green;
         }
 
+        if (args[0] == "smoke-write")
+            return SmokeWrite(args);
         if (args[0] == "smoke-detach")
-            return SmokeDetach(args);
+            return SmokeDetach(args, runtime);
         if (args[0] == "hold")
             return Hold(args);
 
@@ -101,20 +103,71 @@ public static class Program
         }
     }
 
-    private static int SmokeDetach(string[] args)
+    private static int SmokeWrite(string[] args)
+    {
+        if (args.Length < 2 || string.IsNullOrWhiteSpace(args[1]))
+            return ExitCodes.Invalid;
+        Thread.Sleep(TimeSpan.FromSeconds(1));
+        var full = Path.GetFullPath(args[1]);
+        var directory = Path.GetDirectoryName(full);
+        if (string.IsNullOrEmpty(directory))
+            return ExitCodes.Invalid;
+        var reason = SafeWrite.Text(full, "ok\n", SafeWrite.Under(directory));
+        if (reason is not null)
+        {
+            Console.Error.WriteLine("refused: " + reason);
+            return ExitCodes.Invalid;
+        }
+
+        return ExitCodes.Green;
+    }
+
+    private static int SmokeDetach(string[] args, CheckpointApp.Runtime? runtime)
     {
         var marker = args.Length > 1 ? args[1] : Path.Combine(Path.GetTempPath(), "c723-smoke");
+        var output = runtime?.Output ?? Console.Out;
+        string full;
+        try
+        {
+            full = Path.GetFullPath(marker);
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            output.WriteLine("refused: path-unsafe");
+            return ExitCodes.Invalid;
+        }
+
+        var directory = Path.GetDirectoryName(full);
+        if (string.IsNullOrEmpty(directory))
+        {
+            output.WriteLine("refused: path-unsafe");
+            return ExitCodes.Invalid;
+        }
+
+        var refusal = SafeWrite.Preflight(directory, [full]);
+        if (refusal is not null)
+        {
+            output.WriteLine("refused: " + refusal);
+            return ExitCodes.Invalid;
+        }
+
+        if (File.Exists(full) || Directory.Exists(full))
+        {
+            output.WriteLine("refused: unrecorded-existing");
+            return ExitCodes.Invalid;
+        }
+
+        var dll = typeof(Program).Assembly.Location;
+        if (string.IsNullOrWhiteSpace(dll))
+        {
+            output.WriteLine("refused: path-unsafe");
+            return ExitCodes.Invalid;
+        }
+
         var launcher = new DetachedLauncher(new RuntimePlatform());
-        var script = OperatingSystem.IsWindows()
-            ? $"ping -n 3 127.0.0.1 >NUL & echo ok> \"{marker}\""
-            : $"sleep 1; echo ok > '{marker.Replace("'", "'\\''")}'";
-        var file = OperatingSystem.IsWindows() ? "cmd.exe" : "/bin/sh";
-        var cmd = OperatingSystem.IsWindows()
-            ? new[] { "/d", "/s", "/c", script }
-            : new[] { "-lc", script };
-        var pid = launcher.Start(new LaunchRequest(file, cmd, Path.GetDirectoryName(marker) ?? Path.GetTempPath()));
-        Console.WriteLine("executor=" + pid);
-        Console.Out.Flush();
+        var pid = launcher.Start(new LaunchRequest("dotnet", [dll, "smoke-write", full], directory));
+        output.WriteLine("executor=" + pid);
+        output.Flush();
         Thread.Sleep(TimeSpan.FromMinutes(2));
         return 0;
     }

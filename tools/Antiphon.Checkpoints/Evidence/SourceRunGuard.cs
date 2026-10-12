@@ -65,16 +65,20 @@ public sealed class CheckpointBuildBinding
     public string SourceState { get; set; } = "unknown";
 
     public static CheckpointBuildBinding Expected(string root, string project, string output,
-        IReadOnlyList<string> properties, SourceObservation source) => new()
+        IReadOnlyList<string> properties, SourceObservation source)
+    {
+        var projectFull = Path.GetFullPath(Path.Combine(root, project));
+        return new()
     {
         RepositoryRoot = Path.GetFullPath(root),
-        Project = Path.GetFullPath(Path.Combine(root, project)),
-        OutputPath = Path.GetFullPath(Path.Combine(root, project, output)),
+        Project = projectFull,
+        OutputPath = Path.GetFullPath(Path.Combine(ProjectWriteRoots.DirectoryOf(projectFull), output)),
         Properties = properties.Select(value => value["--property:".Length..]).Order(StringComparer.Ordinal).ToList(),
         Commit = source.Commit,
         Fingerprint = source.Fingerprint,
         SourceState = source.DirtyFiles == 0 ? "clean" : source.CaptureStatus == "known" ? "dirty" : "unknown",
     };
+    }
 
     public string PathName => Path.Combine(OutputPath, "checkpoint-build-source.json");
 
