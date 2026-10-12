@@ -162,8 +162,12 @@ public sealed partial class RunnerWorkspaceService
 
     /// <summary>
     /// CARD-1032. A binding request never adopts a directory that already existed, including one
-    /// that happens to be on the same sha or the same short name. An exact preparation replay
-    /// returns the stored binding. A changed preparation is refused without rewriting the record.
+    /// that happens to be on the same sha or the same short name. Recovery adopts a directory only
+    /// when its git-dir owner stamp matches the task id and creation generation written before
+    /// creation. An exact preparation replay returns the stored binding only while that generation
+    /// is still present, registered, and at the recorded HEAD. A changed preparation is refused
+    /// without rewriting the record. An absent or stale generation is <c>stale_mirror_binding</c>;
+    /// another task's tree is <c>foreign_mirror_owner</c>. Neither mints a new generation.
     /// </summary>
     private async Task<PhoneHomeWorkspaceMirrorResponse> MirrorBoundAsync(
         PhoneHomeWorkspaceMirrorRequest request, CancellationToken ct)
@@ -206,12 +210,19 @@ public sealed partial class RunnerWorkspaceService
             if (!SamePreparation(existing, binding, request, cloneSource, sourceRef))
                 throw Refuse("Mirror binding does not match the stored preparation.");
             if (read.Kind == BindingReadKind.Complete)
+            {
+                await RequireCurrentGenerationAsync(store, existing, ct);
                 return ToBindingResponse(existing);
+            }
             if (existing.TreeExistedAtIntent)
                 throw Refuse("A pre-existing mirror cannot be enrolled.");
             if (read.Kind == BindingReadKind.Added || Directory.Exists(path))
             {
+                if (!await OwnedCreationMatchesAsync(store, existing, path, ct))
+                    throw Refuse("foreign_mirror_owner");
                 await VerifyBoundHeadAsync(path, request.Sha!, ct);
+                if (!await RegisteredOnceAsync(path, ct))
+                    throw Refuse("foreign_mirror_owner");
                 if (read.Kind == BindingReadKind.Intent)
                     store.MarkAdded(binding.PreparationId);
                 BindingPhaseCut?.Invoke("added");
@@ -220,6 +231,7 @@ public sealed partial class RunnerWorkspaceService
 
             BindingPhaseCut?.Invoke("before-add");
             await CreateBoundWorktreeAsync(repository, cloneSource, named, secondary, request, path, ct);
+            await StampOwnedCreationAsync(store, existing, path, ct);
             store.MarkAdded(binding.PreparationId);
             BindingPhaseCut?.Invoke("added");
             return ToBindingResponse(await CompleteBoundAsync(store, existing, path, ct));
@@ -235,6 +247,7 @@ public sealed partial class RunnerWorkspaceService
         store.WriteIntent(created);
         BindingPhaseCut?.Invoke("before-add");
         await CreateBoundWorktreeAsync(repository, cloneSource, named, secondary, request, path, ct);
+        await StampOwnedCreationAsync(store, created, path, ct);
         store.MarkAdded(created.PreparationId);
         BindingPhaseCut?.Invoke("added");
         return ToBindingResponse(await CompleteBoundAsync(store, created, path, ct));
@@ -269,6 +282,71 @@ public sealed partial class RunnerWorkspaceService
         var head = await GitAsync(path, ct, "rev-parse", "HEAD");
         if (head.ExitCode != 0 || head.Stdout.Trim() != sha)
             throw Refuse("Mirror HEAD is not the requested sha.");
+    }
+
+    private async Task StampOwnedCreationAsync(
+        RunnerWorkspaceBindingStore store, RunnerWorkspaceBindingRecord record, string path, CancellationToken ct)
+    {
+        var gitDirectory = await TryGitDirectoryAsync(path, ct) ?? throw Refuse("foreign_mirror_owner");
+        store.WriteOwnerStamp(gitDirectory, record);
+    }
+
+    private async Task<bool> OwnedCreationMatchesAsync(
+        RunnerWorkspaceBindingStore store, RunnerWorkspaceBindingRecord record, string path, CancellationToken ct)
+    {
+        var gitDirectory = await TryGitDirectoryAsync(path, ct);
+        return gitDirectory is not null && store.OwnerStampMatches(gitDirectory, record);
+    }
+
+    /// <summary>
+    /// The completed shortcut is valid only while this creation generation is still the physical
+    /// tree: directory, registration, recorded HEAD and admin paths, and the owner stamp. Absence
+    /// refuses <c>stale_mirror_binding</c> and does not open a new generation for the same preparation.
+    /// </summary>
+    private async Task RequireCurrentGenerationAsync(
+        RunnerWorkspaceBindingStore store, RunnerWorkspaceBindingRecord record, CancellationToken ct)
+    {
+        var path = record.WorktreePath.Replace('\\', '/');
+        if (!Directory.Exists(path)
+            || !await OwnedCreationMatchesAsync(store, record, path, ct)
+            || !await RegisteredOnceAsync(path, ct))
+            throw Refuse("stale_mirror_binding");
+        var head = await GitAsync(path, ct, "rev-parse", "HEAD");
+        if (head.ExitCode != 0 || head.Stdout.Trim() != record.CreationBaselineSha)
+            throw Refuse("stale_mirror_binding");
+        var common = await GitAsync(path, ct, "rev-parse", "--path-format=absolute", "--git-common-dir");
+        var gitDir = await GitAsync(path, ct, "rev-parse", "--path-format=absolute", "--git-dir");
+        if (common.ExitCode != 0 || gitDir.ExitCode != 0
+            || !PathsEqual(common.Stdout.Trim(), record.CommonDirectory)
+            || !PathsEqual(gitDir.Stdout.Trim(), record.GitDirectory))
+            throw Refuse("stale_mirror_binding");
+    }
+
+    private async Task<string?> TryGitDirectoryAsync(string path, CancellationToken ct)
+    {
+        if (!Directory.Exists(path))
+            return null;
+        var gitDir = await GitAsync(path, ct, "rev-parse", "--path-format=absolute", "--git-dir");
+        if (gitDir.ExitCode != 0 || string.IsNullOrWhiteSpace(gitDir.Stdout))
+            return null;
+        return gitDir.Stdout.Trim().Replace('\\', '/');
+    }
+
+    private async Task<bool> RegisteredOnceAsync(string path, CancellationToken ct)
+    {
+        var list = await GitAsync(path, ct, "worktree", "list", "--porcelain");
+        if (list.ExitCode != 0)
+            return false;
+        var count = 0;
+        foreach (var line in list.Stdout.Replace("\r\n", "\n").Split('\n'))
+        {
+            if (!line.StartsWith("worktree ", StringComparison.Ordinal))
+                continue;
+            if (PathsEqual(line["worktree ".Length..].Trim(), path))
+                count++;
+        }
+
+        return count == 1;
     }
 
     private async Task<RunnerWorkspaceBindingRecord> CompleteBoundAsync(
@@ -306,6 +384,7 @@ public sealed partial class RunnerWorkspaceService
         CreationBaselineSha = request.Sha ?? "",
         WorktreePath = path,
         TreeExistedAtIntent = treeExisted,
+        CreationGeneration = bindingId,
     };
 
     private static bool SamePreparation(
