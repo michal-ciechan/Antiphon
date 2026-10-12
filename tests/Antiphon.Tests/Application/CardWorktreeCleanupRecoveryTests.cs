@@ -110,11 +110,28 @@ public sealed class CardWorktreeCleanupRecoveryTests
             await publication.DiscoverAsync();
             await using (var db = publication.Host.CreateContext())
             {
+                var landingId = Guid.NewGuid();
+                var now = DateTime.UtcNow;
+                db.AgentTaskLandings.Add(new AgentTaskLanding
+                {
+                    Id = landingId,
+                    TaskId = publication.TaskId,
+                    Active = false,
+                    Phase = LandPhase.Refused,
+                    CreatedAt = now,
+                    UpdatedAt = now,
+                    RepositoryPath = publication.Host.Fixture.Repository,
+                    WorktreePath = publication.Tree,
+                    SourceFullRef = publication.Host.Fixture.SourceRef,
+                    OriginalSourceSha = new string('a', 40),
+                    TargetFullRef = publication.Host.Fixture.TargetRef,
+                    DestinationFullRef = publication.Host.Fixture.TargetRef,
+                });
                 var endpoint = await db.CardWorktreeCleanupEndpoints.Include(e => e.Target)
                     .SingleAsync(e => e.Id == publication.EndpointId);
                 endpoint.OperationId = Guid.NewGuid();
                 endpoint.State = CardWorktreeCleanupEndpointState.IntentRecorded;
-                endpoint.Target.LandingOperationId = Guid.NewGuid();
+                endpoint.Target.LandingOperationId = landingId;
                 await db.SaveChangesAsync();
             }
             publication.Residue.Execute = false;
@@ -297,7 +314,6 @@ public sealed class CardWorktreeCleanupRecoveryTests
             Instant(doneAt).ShouldBeGreaterThan(cutoff!.Value);
             young.Host.Clock.GetUtcNow().UtcDateTime.ShouldBeLessThan(Instant(doneAt));
             reached.Add("belowFloor");
-            reached.Add("clockIndependentOfCutoff");
         }
 
         await using (var exact = await CreateFrozenAsync())
@@ -316,6 +332,7 @@ public sealed class CardWorktreeCleanupRecoveryTests
             reached.Add("aboveFloor");
         }
 
+        reached.Add("clockIndependentOfCutoff");
         reached.ShouldBe(SettlingVectors);
     }
 
