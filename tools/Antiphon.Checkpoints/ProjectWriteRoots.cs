@@ -3,8 +3,12 @@ using System.Xml.Linq;
 
 namespace Antiphon.Checkpoints;
 
-// The graph is read from project XML. Invoking MSBuild to discover it writes obj before this preflight.
-// OutputPath stays the relative bin-<id>/ beside each project: stamps and dotnet run --no-build use that path.
+// Static XML closure of ProjectReference elements in this project file only.
+// Imports and Directory.Build.props are outside this preflight. BuildConfinement evaluates that
+// graph and redirects a real dotnet build. This scan stays XML-only because invoking MSBuild here
+// would write intermediates before the defence-in-depth check. A relative bin-<id>/ beside each
+// statically visible project is the predicted write pair and is not a complete prediction of the build.
+// Stamps and dotnet run --no-build still use that relative token.
 public static class ProjectWriteRoots
 {
     public const string ClosureRefusal = "project-closure";
