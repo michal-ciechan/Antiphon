@@ -85,7 +85,7 @@ Line references below describe the inspected base, not future offsets.
 - **D-6 — Preserve evidence and the original failure.** Keep the CARD-1189
   unlink and CARD-1191 saved exit/subshell rules. Preserve CARD-1193's regular-file,
   real-directory and destination checks for log export. Result/summary schemas
-  stay unchanged. Finalize before publishing success; a cleanup failure on an
+  stay unchanged. Finalize before publishing success; a detected cleanup failure on an
   otherwise successful run is a refusal, while a failing run retains its first
   diagnosis and separately records exact cleanup residue in a small receipt.
   Do not let `WROTE=1` hide a failed finalization after an early success receipt.
@@ -180,11 +180,17 @@ its original host root, acquired before replacing the fixture controller root.
 Normal completion explicitly finalizes before `write_result true`. The EXIT
 path saves `$?` first, unlinks `.fixture-escape`, and invokes an idempotent
 finalizer without allowing one failed cleanup command to skip later resources.
-Compose teardown still has its control files available. Stop writers before the
+Compose teardown still has its control files available. Workspace/helper
+acquisition and consumer/helper/work/mask/cache/network removal require positive
+confirmation; unknown outcomes retain named residue and refuse success. The
+Compose teardown boundary checks only `docker compose down -v` exit status;
+residual Compose-created volumes after exit zero are not detected by this
+finalizer (inherited limitation, CARD-1207, outside S7). Stop writers before the
 last read/export, release helpers before work/mask volume removal, then remove
 the host-only control directory. Preserve the primary nonzero status and
-`UnhandledExit <code>` fallback. Report removal failures instead of claiming
-resource-free completion; do not add a fleet sweeper or remove unrelated residue.
+`UnhandledExit <code>` fallback. Report detected removal failures; successful
+finalization does not prove absence of Compose-created volumes. Do not add a
+fleet sweeper or remove unrelated residue. Live acceptance W-1 remains pending.
 
 SIGKILL, host loss and an unavailable Docker daemon cannot guarantee immediate
 cleanup. Exact run labels/ledgers make residue attributable for an explicit later
@@ -259,7 +265,7 @@ New guard requirements (the V identifiers below bind the proposed checkpoints):
 - **V-8:** no fixture payload remains in a host work tree; only explicit readonly
   checkout-input binds remain. Export preserves the nine-line summary and complete
   census, excludes toxic/payload content, and retains safe diagnostics on failure.
-- **V-9:** normal success awaits cleanup; cleanup failure refuses success; primary
+- **V-9:** normal success awaits finalization; detected cleanup failure refuses success; primary
   failures and seed-subshell isolation survive secondary export/cleanup failures.
 
 Regression identifiers: R-1 CARD-1189 image tools/unlink; R-2 CARD-1191 ordered
@@ -420,8 +426,10 @@ limits, stays outside authoring checkpoints: run the approved Fixture command
 at the reviewed landed full SHA during rollout only. Require actual installed
 npm/package and retention recipients, shared/private NuGet lock observation,
 9 groups/32 families/47 variants/2 inventories/zero production mutations,
-copied local receipts matching host receipts, and exact-resource absence after
-finalization. Verify host evidence ownership and no new host payload tree.
+copied local receipts matching host receipts, and independently observed
+exact-resource absence after finalization, including Compose-created volumes
+whose absence the finalizer does not check (CARD-1207). W-1 remains pending.
+Verify host evidence ownership and no new host payload tree.
 A success exit or complete producer summary without copied recipient evidence
 leaves live acceptance pending. Observe cleanup on any naturally failed
 rollout attempt; this does not authorize injecting live production failures.
@@ -929,6 +937,15 @@ CP-27 executes F-5 with independent host decoys and volume recipients. It observ
 CP-33 additionally executes the real volume fixture seed and recovery validator, and scans each individual checkout bind for readonly. CP-34 exercises actual EXIT/finalizer behavior, including primary plus secondary failure, replaced-controller export exclusion, early outer publication and foreign registered-helper residue. CP-35 observes actual resource/control disposal without sudo. CP-36 checks exact nine-line receipt bytes and missing/duplicate group, family and variant censuses. CP-38 binds consumer stop/join, five diagnostic bytes, helper and volume order. CP-39 executes failed unlink, remaining destination and directory-creation-before-copy races. CP-43 retains inventory/occupied/control sensitivity and uses the existing strict F-5 volume recipient model after the host recipient was removed. Its stale unregistered cleanup name is replaced with the exact admitted case name. No rollout or deliberate mutation is executed. PC-149..152 are new method-scoped controls, all pending. Every S7 After cell already equals S7.
 
 ### S7 F1 repair binding (round 2)
+
+Round-3 documentation correction (Review 2ec97f2d F1): positive confirmation
+applies to workspace/helper acquisition and consumer/helper/work/mask/cache/network
+removal. Unknown results retain named residue and refuse success. Compose teardown
+checks exit status only; residual Compose-created volumes after successful down -v
+are not detected by this finalizer. That inherited limitation is CARD-1207 and
+remains outside S7. W-1 live acceptance is pending. Round 3 changes docs/comments
+only and reruns CP-33..52 once at committed source, with CP-44 exactly 19 results;
+no historical-red rerun, whole Unit lane or full class run is authorized.
 
 The repair brief's closed Final scope is CP-33..52: existing CP-33..43 remain one execution each, CP-44 remains exactly 19 adjacent executions, and CP-45..52 add eight methods. One S7 isolated build is reused within each committed group. No whole Unit lane/full class/live Docker acceptance is authorized. Added cost estimate: 10 row minutes plus slot contention; two source states are needed for historical red then repaired green.
 
