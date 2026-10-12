@@ -674,7 +674,7 @@ docker_volume() {
                 esac
             done
             local dir="$C1192_ROOT/volumes/$name"
-            [ -d "$dir" ] || return 1
+            [ -d "$dir" ] || { printf 'Error response from daemon: No such volume: %s\n' "$name" >&2; return 1; }
             if [ -z "$fmt" ]; then return 0; fi
             case "$fmt" in
                 *Driver*) label_value "$dir/driver" ;;
@@ -893,7 +893,7 @@ docker_inspect_container() {
         esac
     done
     local dir="$C1192_ROOT/containers/$name"
-    [ -d "$dir" ] || return 1
+    [ -d "$dir" ] || { printf 'Error: No such container: %s\n' "$name" >&2; return 1; }
     [ -n "$fmt" ] || return 0
     case "$fmt" in
         '{{.Name}}') printf '/%s\n' "$name" ;;
@@ -996,6 +996,35 @@ record_argv() {
 
 docker() {
     record_argv "$@"
+    if [ "$mode" = cleanup-probe ] && [ -f "$C1192_ROOT/teardown-done" ]; then
+        if [ "$PROBE_BOUNDARY" = all ]; then
+            printf 'Cannot connect to the Docker daemon at unix:///missing.sock. Is the docker daemon running?\n' >&2
+            return 1
+        fi
+        if [ "${*: -1}" = "$PROBE_NAME" ]; then
+            case "$1:$2" in
+                volume:rm|network:rm|rm:-f)
+                    order_log "probe-remove $PROBE_NAME"
+                    [ "$PROBE_OUTCOME" = rm-lie ] && return 0
+                    printf 'removal did not complete\n' >&2; return 1 ;;
+                volume:inspect|container:inspect|network:inspect|inspect:-f)
+                    order_log "probe-inspect $PROBE_NAME"
+                    case "$PROBE_OUTCOME" in
+                        absent) printf 'Error response from daemon: No such %s: %s\n' "$PROBE_KIND" "$PROBE_NAME" >&2; return 1 ;;
+                        daemon) printf 'Cannot connect to the Docker daemon\n' >&2; return 1 ;;
+                        exit2) printf 'probe error\n' >&2; return 2 ;;
+                        timeout) printf 'probe timed out\n' >&2; return 124 ;;
+                        empty) return 1 ;;
+                        permission) printf 'permission denied\n' >&2; return 1 ;;
+                        socket) printf 'dial unix /missing.sock: no such file or directory\n' >&2; return 1 ;;
+                        unrecognized) printf 'unrecognized failure\n' >&2; return 1 ;;
+                        present|rm-lie) ;;
+                        *) fail "unknown probe outcome $PROBE_OUTCOME" ;;
+                    esac
+                    ;;
+            esac
+        fi
+    fi
     local arg
     {
         printf 'DOCKER'
@@ -1078,15 +1107,28 @@ docker() {
             ;;
         inspect) shift; docker_inspect_container "$@" ;;
         run) shift; docker_run "$@" ;;
-        ps|network) return 0 ;;
+        ps) return 0 ;;
+        network)
+            if [ "$mode" = cleanup-probe ]; then
+                case "$2" in
+                    inspect) [ -f "$C1192_ROOT/network" ] || { printf 'Error response from daemon: No such network: %s\n' "$3" >&2; return 1; } ;;
+                    rm) rm -f "$C1192_ROOT/network" ;;
+                    *) fail "unexpected network command $*" ;;
+                esac
+            fi
+            return 0 ;;
         compose)
             if [ "$mode" = retention ]; then shift; retention_compose "$@";
-            elif [ "$mode" = finalization ]; then
+            elif [ "$mode" = finalization ] || [ "$mode" = cleanup-probe ]; then
                 local previous="" token
                 for token in "$@"; do
                     if [ "$previous" = -f ]; then [ -f "$token" ] || return 1; order_log compose-input-present; fi
                     previous=$token
                 done
+                if [ "$mode" = cleanup-probe ]; then
+                    order_log compose-down
+                    if [[ "$*" == *"c849${RUN}negative"* ]]; then : > "$C1192_ROOT/teardown-done"; fi
+                fi
             else return 1; fi
             ;;
         cp)
@@ -2726,7 +2768,99 @@ mode_evidence() {
     good=0; if declare -F c849_fixture_finalize >/dev/null; then ( c849_fixture_finalize ) && [ ! -d "$SERVER2_ROOT" ] && good=1; fi; emit evidence-control-removed "$good"
 }
 
+mode_cleanup_probe() {
+    PROBE_BOUNDARY="${3:?boundary}"
+    local outcome good expected unknown retained name
+    case "$PROBE_BOUNDARY" in
+        all) PROBE_KIND=container; PROBE_NAME="$WRITER" ;;
+        consumer) PROBE_KIND=container; PROBE_NAME="c849-${RUN}-restore-p1" ;;
+        helper) PROBE_KIND=container; PROBE_NAME="$WRITER" ;;
+        masked) PROBE_KIND=container; PROBE_NAME="c849-${RUN}-masked" ;;
+        work) PROBE_KIND=volume; PROBE_NAME="$WORK" ;;
+        mask) PROBE_KIND=volume; PROBE_NAME="$MASK" ;;
+        cache) PROBE_KIND=volume; PROBE_NAME="c849${RUN}-packages" ;;
+        network) PROBE_KIND=network; PROBE_NAME="c849-${RUN}-npm" ;;
+        *) fail "unknown boundary $PROBE_BOUNDARY" ;;
+    esac
+    local outcomes='absent daemon exit2 present timeout empty permission socket unrecognized rm-lie'
+    [ "$PROBE_BOUNDARY" != all ] || outcomes=daemon
+    for outcome in $outcomes; do
+        reset_runtime
+        rm -f "$C1192_ROOT/teardown-done" "$CASE_DIR/.fixture-network" "$CASE_DIR/c590-result.json" "$CASE_DIR/fixture-cleanup-ledger.txt"
+        PROBE_OUTCOME=$outcome
+        S7_SCENARIO=success
+        s7_groups
+        # Execute the real receipt writer, not the older S7 text substitute.
+        source <(awk '/^(write_result|json_escape|scrub_file)\(\) \{/ { active=1 } active { print } active && /^}$/ { active=0 }' "$remote")
+        eval "$(declare -f c849_fixture_seed | sed '1s/c849_fixture_seed/c1192_probe_seed/')"
+        c849_fixture_seed() {
+            c1192_probe_seed
+            printf 'services: {}\n' > "$SERVER2_ROOT/compose-retention/negative.yml"
+            plant_container "c849-${RUN}-restore-p1" c849-fixture "$RUN" consumer "$ADMITTED" ""
+            plant_container "c849-${RUN}-masked" c849-fixture "$RUN" masked "$ADMITTED" ""
+            plant_volume "c849${RUN}-packages" local null c849-fixture "$RUN" packages
+            printf '%s\n' "c849${RUN}-packages" >> "$CASE_DIR/.fixture-volumes"
+            printf '%s\n' "c849-${RUN}-npm" > "$CASE_DIR/.fixture-network"
+            : > "$C1192_ROOT/network"
+            if [ "$PROBE_OUTCOME" = absent ]; then
+                case "$PROBE_KIND" in
+                    volume) rm -rf "$C1192_ROOT/volumes/$PROBE_NAME" ;;
+                    container) rm -rf "$C1192_ROOT/containers/$PROBE_NAME" ;;
+                    network) rm -f "$C1192_ROOT/network" ;;
+                esac
+            fi
+        }
+        # No conditional call: retain real set -e behavior in the wrapper/EXIT.
+        set +e
+        ( set -e; c849_fixture ) > "$C1192_ROOT/probe-output" 2>&1
+        S7_CODE=$?
+        set -e
+        emit "$outcome-exit" "$S7_CODE"
+        printf '%s receipt=' "$outcome"; cat "$CASE_DIR/c590-result.json"; printf '\n'
+        good=0; [ "$(grep -c '^compose-down$' "$C1192_ROOT/order")" = 3 ] && good=1
+        emit "$outcome-teardown" "$good"
+        good=0
+        if [ "$outcome" = absent ]; then
+            [ "$S7_CODE" = 0 ] && jq -e '.accepted==true and .exit==0' "$CASE_DIR/c590-result.json" >/dev/null && good=1
+        else
+            [ "$S7_CODE" != 0 ] && jq -e '.accepted==false and .exit!=0' "$CASE_DIR/c590-result.json" >/dev/null \
+                && ! grep -qE 'accepted[" ]*:true|result true|C849_FIXTURE ' "$C1192_ROOT/probe-output" && good=1
+        fi
+        emit "$outcome-verdict" "$good"
+        good=0
+        if [ "$outcome" = absent ]; then
+            [ ! -s "$CASE_DIR/fixture-cleanup-residue.txt" ] && good=1
+        else
+            grep -Fxq "$PROBE_NAME" "$CASE_DIR/fixture-cleanup-residue.txt" && good=1
+        fi
+        emit "$outcome-residue" "$good"
+        if [ "$outcome" != absent ]; then
+            good=0
+            case "$PROBE_KIND" in
+                volume) volume_exists "$PROBE_NAME" && good=1 ;;
+                container) container_exists "$PROBE_NAME" && good=1 ;;
+                network) [ -f "$C1192_ROOT/network" ] && good=1 ;;
+            esac
+            emit "$outcome-retained" "$good"
+            case "$outcome" in
+                present|rm-lie) ;;
+                *) good=0; grep -Fxq "unknown-cleanup-outcome $PROBE_KIND $PROBE_NAME" "$CASE_DIR/fixture-cleanup-ledger.txt" 2>/dev/null && good=1
+                    emit "$outcome-ledger" "$good" ;;
+            esac
+        fi
+        if [ "$PROBE_BOUNDARY" = all ]; then
+            for name in "$WORK" "$MASK" "$WRITER" "$READER"; do
+                good=0; grep -Fxq "$name" "$CASE_DIR/fixture-cleanup-residue.txt" && good=1
+                emit "daemon-residue-$name" "$good"
+            done
+            good=0; volume_exists "$WORK" && volume_exists "$MASK" && container_exists "$WRITER" && container_exists "$READER" && good=1
+            emit daemon-all-resources-retained "$good"
+        fi
+    done
+}
+
 case "$mode" in
+    cleanup-probe) mode_cleanup_probe "$@" ;;
     finalization) mode_finalization ;;
     evidence) mode_evidence ;;
     retention) mode_retention ;;
