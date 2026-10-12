@@ -1627,6 +1627,111 @@ c849_empty_volume() {
     [ -z "$listing" ]
 }
 
+# Host filesystem unless this run's initialized fixture controller recorded volume.
+# C849_PAYLOAD_BACKEND is not a selector. Fixture seed does not record volume (S5).
+c849_payload_controller() {
+    printf '%s\n' "$CASE_DIR/fixture-controller"
+}
+
+c849_payload_fixture_ready() {
+    local controller work
+    controller="$(c849_payload_controller)"
+    [ -d "$controller" ] && [ ! -L "$controller" ] || return 1
+    [ -f "$CASE_DIR/.fixture-volumes" ] && [ ! -L "$CASE_DIR/.fixture-volumes" ] || return 1
+    work="c849${RUN}-work"
+    grep -Fxq -- "$work" "$CASE_DIR/.fixture-volumes" || return 1
+}
+
+c849_payload_select() {
+    local controller record=host
+    controller="$(c849_payload_controller)"
+    if c849_payload_fixture_ready \
+        && [ -f "$controller/payload-backend" ] \
+        && [ ! -L "$controller/payload-backend" ]; then
+        record="$(cat -- "$controller/payload-backend")" || record=host
+    fi
+    case "$record" in
+        volume) printf 'volume\n' ;;
+        *) printf 'host\n' ;;
+    esac
+}
+
+# Record host or volume only after workspace init. A symlink record is refused.
+c849_payload_own() {
+    local want="$1" controller
+    case "$want" in
+        host|volume) ;;
+        *) return 2 ;;
+    esac
+    c849_payload_fixture_ready || return 2
+    controller="$(c849_payload_controller)"
+    if [ -L "$controller/payload-backend" ]; then
+        return 2
+    fi
+    printf '%s\n' "$want" > "$controller/payload-backend" || return 2
+}
+
+# First decision of seed, saved copy, cold seed, preview and prune.
+# Volume returns 86 before any host payload operation.
+# .payload-note-only returns 85 after the host decision so the contract can
+# observe the entry point without Seed's donor loop. Production cases do not
+# create that file; a present file fails the entry closed instead of seeding.
+c849_payload_note() {
+    local entry="$1" backend root status=0
+    backend="$(c849_payload_select)"
+    if [ "$backend" = volume ]; then
+        root=/fixture/cache
+        status=86
+    else
+        backend=host
+        root="$SERVER2_ROOT/cache"
+        if [ -f "$CASE_DIR/.payload-note-only" ] && [ ! -L "$CASE_DIR/.payload-note-only" ]; then
+            status=85
+        fi
+    fi
+    mkdir -p -- "$CASE_DIR"
+    printf '%s %s %s\n' "$entry" "$backend" "$root" >> "$CASE_DIR/payload-entries.txt"
+    return "$status"
+}
+
+# Stream src_dir/. into dest_dir on dest_container. Both pipeline ends count.
+# The source spec is the dot directory, not a glob, so dotfiles and modes survive.
+c849_payload_transfer() {
+    local src_container="$1" src_dir="$2" dest_container="$3" dest_dir="$4" status=0
+    case "$src_dir" in
+        /fixture/*) ;;
+        *) return 2 ;;
+    esac
+    case "$dest_dir" in
+        /fixture/*) ;;
+        *) return 2 ;;
+    esac
+    set -o pipefail
+    docker cp "${src_container}:${src_dir}/." - \
+        | docker exec -i --user 0:0 "$dest_container" tar -x -p -C "$dest_dir" \
+        || status=$?
+    return "$status"
+}
+
+# Transfer, validate with the real tree validator, then import and mark.
+# Either failed copy end returns before import and before the marker.
+c849_payload_accept_transfer() {
+    local src_container="$1" src_dir="$2" dest_container="$3" dest_dir="$4" marker="$5" image="$6"
+    if ! c849_payload_transfer "$src_container" "$src_dir" "$dest_container" "$dest_dir"; then
+        return 1
+    fi
+    {
+        declare -f c849_validate_seed_relative c849_validate_seed_tree
+        printf '%s\n' 'c849_validate_seed_tree "$1"'
+    } | c849_fixture_helper_exec reader /bin/bash -s -- "$dest_dir" || return 2
+    docker run --rm --network none --user 0:0 --entrypoint /bin/sh \
+        --mount "type=volume,source=c849${RUN}-work,target=/fixture,volume-nocopy" \
+        "$image" \
+        -c 'cp -a /fixture/cache/stage/. /fixture/cache/imported/' \
+        || return 3
+    printf 'accepted\n' > "$marker" || return 4
+}
+
 c849_seed_failure() {
     local donor="$1" diagnosis="$2"
     if [ -n "${stage:-}" ] && [[ "$stage" == "$SERVER2_ROOT"/cache/stage-"$RUN"-* ]] \
@@ -1784,6 +1889,9 @@ c849_contract_receipt() {
 # The source is an operator-selected host path. Accept only cache payload paths and
 # materialize ordinary files/directories; tarfile.extractall would also create links.
 c849_saved_copy() {
+    if declare -F c849_payload_note >/dev/null 2>&1; then
+        c849_payload_note saved || return $?
+    fi
     local source="$1" stage="$2" image="$3" diagnosis
     source="${source%/}"
     [ -n "$source" ] && [ "${source#/}" != "$source" ] && [ ! -L "$source" ] \
@@ -1979,6 +2087,9 @@ c849_cold_probe() {
 c849_cold_seed() {
     local item name role names
     require_lane host
+    if declare -F c849_payload_note >/dev/null 2>&1; then
+        c849_payload_note cold || return $?
+    fi
     c849_lock
     [ ! -e "$C849_READY" ] && [ ! -L "$C849_READY" ] \
         || write_result false CacheSeedMarkerInvalid 2
@@ -2024,6 +2135,9 @@ c849_cold_seed() {
 
 c849_seed() {
     require_lane host
+    if declare -F c849_payload_note >/dev/null 2>&1; then
+        c849_payload_note seed || return $?
+    fi
     if [ "${C590_COLD_SEED:-0}" = 1 ]; then
         [ -z "${C590_SAVED_DONOR:-}" ] || write_result false CacheDonorSourceConflict 2
         [ ! -e "$C849_READY" ] && [ ! -L "$C849_READY" ] \
@@ -2352,6 +2466,9 @@ c849_headroom_state() {
 
 c849_preview() {
     require_lane host
+    if declare -F c849_payload_note >/dev/null 2>&1; then
+        c849_payload_note preview || return $?
+    fi
     c849_lock
     local roots="$CASE_DIR/volumes.txt" recovery recovery_bytes free_bytes available_kb sha now runner status_code status_file project container active broker occupancy
     : > "$roots"
@@ -2567,6 +2684,9 @@ c849_prune_validate_tree() {
 
 c849_prune() {
     require_lane host
+    if declare -F c849_payload_note >/dev/null 2>&1; then
+        c849_payload_note prune || return $?
+    fi
     [[ "${C590_PREVIEW_RUN:-}" =~ ^c849[0-9a-f]{16}0$ ]] || write_result false CachePreviewInvalid 2
     c849_lock
     c849_require_ready
@@ -2939,6 +3059,8 @@ c849_fixture_workspace_init() {
     c849_fixture_workspace_init_root "$work" "$image" || write_result false FixtureWorkspaceInitFailed 2
     c849_fixture_helper_acquire writer "$image" "$work"
     c849_fixture_helper_acquire reader "$image" "$work"
+    printf '%s\n' host > "$CASE_DIR/fixture-controller/payload-backend" \
+        || write_result false FixturePayloadBackend 2
 }
 
 # 0 labels match, 1 confirmed absent, 2 unknown lookup, 3 wrong label.

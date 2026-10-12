@@ -606,6 +606,44 @@ public sealed class RemoteScriptContractTests
         Fact(output, "offline-miss-refused").ShouldBe("1", "offline-miss-refused");
     }
 
+    // CARD-1192 S4. real-cases-host-backend: Seed, saved copy, cold seed, Preview and Prune
+    // stay on $SERVER2_ROOT/cache when C849_PAYLOAD_BACKEND=volume is exported and when the
+    // fixture controller is absent or records host. fixture-owned-volume is /fixture/cache
+    // only after workspace init and c849_payload_own volume. PC-52 selects the environment
+    // variable without that controller check, so real-cases-host-backend fails.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1192_Real_cache_cases_keep_the_host_payload_backend()
+    {
+        var output = C1192Run("backend");
+        Fact(output, "real-cases-host-backend").ShouldBe("1", "real-cases-host-backend");
+        Fact(output, "fixture-owned-volume").ShouldBe("1", "fixture-owned-volume");
+    }
+
+    // CARD-1192 S4. source-copy-failure-refused: docker cp fails, tar sees no archive, and
+    // neither import nor the marker runs. PC-53 disables pipefail around that pipeline, so
+    // the sink's empty success hides the source failure. sink-copy-failure-refused: tar
+    // returns 1 after consuming the archive. PC-54 ignores that destination exit.
+    // copy-dotfile-retained reads .hidden from the volume recipient. PC-55 archives a glob
+    // instead of the dot directory, so the dotfile is absent. copy-executable-retained is
+    // mode 755 on the recipient tool. PC-56 clears executable bits after transfer.
+    // copy-spaced-path-retained is the spaced filename's bytes on that same recipient.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1192_Volume_transfer_preserves_metadata_and_refuses_partial_copy()
+    {
+        var output = C1192Run("transfer");
+        foreach (var label in new[]
+        {
+            "source-copy-failure-refused",
+            "sink-copy-failure-refused",
+            "copy-dotfile-retained",
+            "copy-executable-retained",
+            "copy-spaced-path-retained"
+        })
+            Fact(output, label).ShouldBe("1", label);
+    }
+
     // CARD-1193. NuGet locks $NUGET_SCRATCH/lock/<hash>. The holder and waiter must receive the
     // same HOME and NUGET_SCRATCH the F-4 restore containers pass.
     [Test]

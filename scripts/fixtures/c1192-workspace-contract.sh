@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# CARD-1192 S1 workspace model, S2 race barriers, and S3 npm volume reads.
+# CARD-1192 S1 workspace model, S2 race barriers, S3 npm volume reads, and S4 payload boundary.
 # Extracted c849_* functions against a filesystem Docker model.
 # Never source dispatch. Never call the host docker daemon.
 set -euo pipefail
@@ -900,6 +900,86 @@ docker_inspect_container() {
     esac
 }
 
+# docker cp container:/fixture/dir/. - streams a tar of that directory.
+# A trailing * is the glob mutation and omits dotfiles. source-copy fails before any bytes.
+payload_cp_stream() {
+    local spec="$1" name path mount source data rel archive
+    name="${spec%%:*}"
+    path="${spec#*:}"
+    [ -d "$C1192_ROOT/containers/$name" ] || return 1
+    if [ "${C1192_FAULT:-}" = source-copy ]; then
+        return 1
+    fi
+    mount=$(cat "$C1192_ROOT/containers/$name/mount")
+    source=$(mount_field "$mount" source)
+    data="$C1192_ROOT/volumes/$source/data"
+    case "$path" in
+        /fixture/*) ;;
+        *) printf 'UNEXPECTED-CP %s\n' "$path" >> "$C1192_ROOT/scenario.err"; return 97 ;;
+    esac
+    if [ "${path##*/}" = "." ]; then
+        rel="${path#/fixture/}"
+        rel="${rel%/.}"
+        archive="$data/$rel"
+        [ -d "$archive" ] || return 1
+        tar -C "$archive" -cf - . || return $?
+        return 0
+    fi
+    if [ "${path##*/}" = "*" ]; then
+        rel="${path#/fixture/}"
+        rel="${rel%/*}"
+        archive="$data/$rel"
+        [ -d "$archive" ] || return 1
+        ( cd -- "$archive" && tar -cf - * ) || return $?
+        return 0
+    fi
+    printf 'UNEXPECTED-CP %s\n' "$path" >> "$C1192_ROOT/scenario.err"
+    return 97
+}
+
+# tar -x -p keeps modes. Without -p the model clears execute bits.
+# An empty archive is success so a failed docker cp is visible only under pipefail.
+# sink-copy consumes the archive and then returns 1.
+payload_tar_exec() {
+    local name="$1" preserve=0 dest="" tmp st=0 mount source data rel
+    shift
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            -x|-f) shift ;;
+            -p|--preserve-permissions) preserve=1; shift ;;
+            -C) dest="$2"; shift 2 ;;
+            *) shift ;;
+        esac
+    done
+    tmp=$(mktemp "$C1192_ROOT/tar.XXXXXX") || return 1
+    cat > "$tmp" || { rm -f -- "$tmp"; return 1; }
+    if [ "${C1192_FAULT:-}" = sink-copy ]; then
+        rm -f -- "$tmp"
+        return 1
+    fi
+    if [ ! -s "$tmp" ]; then
+        rm -f -- "$tmp"
+        return 0
+    fi
+    mount=$(cat "$C1192_ROOT/containers/$name/mount")
+    source=$(mount_field "$mount" source)
+    data="$C1192_ROOT/volumes/$source/data"
+    case "$dest" in
+        /fixture) rel="" ;;
+        /fixture/*) rel="${dest#/fixture/}" ;;
+        *) rm -f -- "$tmp"; printf 'UNEXPECTED-TAR %s\n' "$dest" >> "$C1192_ROOT/scenario.err"; return 97 ;;
+    esac
+    mkdir -p -- "$data/$rel"
+    if [ "$preserve" = 1 ]; then
+        tar -x -p -C "$data/$rel" -f "$tmp" || st=$?
+    else
+        tar -x -C "$data/$rel" -f "$tmp" || st=$?
+        find "$data/$rel" -type f -exec chmod a-x {} + || st=$?
+    fi
+    rm -f -- "$tmp"
+    return "$st"
+}
+
 # One invocation: argument count, then each argument, NUL-terminated.
 record_argv() {
     local arg
@@ -973,6 +1053,10 @@ docker() {
             for part in "$@"; do joined+="$part"$'\x1e'; done
             event "$(printf 'exec\t%s' "$joined")"
             [ -d "$C1192_ROOT/containers/$name" ] || return 1
+            if [ "${1:-}" = tar ]; then
+                payload_tar_exec "$name" "$@"
+                return
+            fi
             if [ "$name" = "c849-${RUN}-donor" ]; then
                 case "$*" in
                     *tar*-xf*)
@@ -990,6 +1074,12 @@ docker() {
         run) shift; docker_run "$@" ;;
         ps|network) return 0 ;;
         compose) return 1 ;;
+        cp)
+            shift
+            local spec="$1" dash="${2:-}"
+            [ "$dash" = - ] || { printf 'UNEXPECTED-CP %s\n' "$*" >> "$C1192_ROOT/scenario.err"; return 97; }
+            payload_cp_stream "$spec"
+            ;;
         *) printf 'UNEXPECTED-DOCKER %s\n' "$1" >> "$C1192_ROOT/scenario.err"; return 97 ;;
     esac
 }
@@ -1993,6 +2083,172 @@ mode_npm_sentinel() {
     refuse_unexpected
 }
 
+# Stop Seed/Preview/Prune after the backend decision. Production cases do not create this file.
+# Without it, exercising those entry points here would enter the donor/reconnect loop.
+backend_stop() {
+    : > "$CASE_DIR/.payload-note-only"
+}
+
+backend_entries() {
+    local entry status
+    : > "$CASE_DIR/payload-entries.txt"
+    for entry in seed saved cold preview prune; do
+        status=0
+        case "$entry" in
+            seed) ( c849_seed ) || status=$? ;;
+            saved) ( c849_saved_copy /not-a-donor "$CASE_DIR/unused-stage" "$ADMITTED" ) || status=$? ;;
+            cold) ( c849_cold_seed ) || status=$? ;;
+            preview) ( c849_preview ) || status=$? ;;
+            prune) ( C590_PREVIEW_RUN=not-valid c849_prune ) || status=$? ;;
+        esac
+        printf '%s\n' "$status" > "$CASE_DIR/status-$entry"
+    done
+}
+
+backend_lines_are() {
+    local expect="$1" entry line status
+    for entry in seed saved cold preview prune; do
+        line=$(grep "^${entry} " "$CASE_DIR/payload-entries.txt" | tail -n 1 || true)
+        status=$(cat "$CASE_DIR/status-$entry")
+        [ "$line" = "$entry $expect" ] || return 1
+        if [ "$expect" = "host $SERVER2_ROOT/cache" ]; then
+            [ "$status" = 85 ] || return 1
+        else
+            [ "$status" = 86 ] || return 1
+        fi
+    done
+}
+
+mode_backend() {
+    local default_host=0 owned=0 own_status=0 line status entry
+    if ! declare -F c849_payload_select >/dev/null 2>&1; then
+        emit real-cases-host-backend 0
+        emit fixture-owned-volume 0
+        return 0
+    fi
+    reset_runtime
+    : > "$C1192_ROOT/scenario.err"
+    backend_stop
+    C849_PAYLOAD_BACKEND=volume
+    export C849_PAYLOAD_BACKEND
+    c849_payload_own volume || own_status=$?
+    backend_entries
+    if [ "$own_status" = 2 ] && backend_lines_are "host $SERVER2_ROOT/cache"; then
+        default_host=1
+    fi
+    unset C849_PAYLOAD_BACKEND
+    backend_entries
+    backend_lines_are "host $SERVER2_ROOT/cache" || default_host=0
+
+    reset_runtime
+    require_init || default_host=0
+    backend_stop
+    C849_PAYLOAD_BACKEND=volume
+    export C849_PAYLOAD_BACKEND
+    if [ -f "$CASE_DIR/fixture-controller/payload-backend" ] \
+        && [ ! -L "$CASE_DIR/fixture-controller/payload-backend" ] \
+        && [ "$(cat -- "$CASE_DIR/fixture-controller/payload-backend")" = host ]; then
+        :
+    else
+        default_host=0
+    fi
+    backend_entries
+    backend_lines_are "host $SERVER2_ROOT/cache" || default_host=0
+    emit real-cases-host-backend "$default_host"
+
+    unset C849_PAYLOAD_BACKEND
+    own_status=0
+    c849_payload_own volume || own_status=$?
+    backend_entries
+    owned=1
+    [ "$own_status" = 0 ] || owned=0
+    backend_lines_are "volume /fixture/cache" || owned=0
+    if compgen -G "$SERVER2_ROOT/cache/stage-*" > /dev/null; then owned=0; fi
+    emit fixture-owned-volume "$owned"
+}
+
+plant_donor_tree() {
+    local donor="$1"
+    mkdir -p "$donor/packages/c913.probe/1.0.0" "$donor/npm"
+    printf '{}\n' > "$donor/packages/c913.probe/1.0.0/.nupkg.metadata"
+    printf 'probe\n' > "$donor/packages/c913.probe/1.0.0/data"
+    printf 'dot\n' > "$donor/packages/c913.probe/1.0.0/.hidden"
+    printf 'spaced\n' > "$donor/packages/c913.probe/1.0.0/my file.txt"
+    printf '#!/bin/sh\n' > "$donor/packages/c913.probe/1.0.0/tool"
+    chmod 755 "$donor/packages/c913.probe/1.0.0/tool"
+    printf 'npm\n' > "$donor/npm/content"
+}
+
+transfer_refused() {
+    local status="$1" trace="$2"
+    [ "$status" != 0 ] || return 1
+    [ ! -e "$CASE_DIR/payload-accepted" ] || return 1
+    [ ! -L "$CASE_DIR/payload-accepted" ] || return 1
+    ! grep -q 'cp -a' "$trace"
+}
+
+transfer_once() {
+    local fault="$1" status=0 data
+    reset_runtime
+    : > "$C1192_ROOT/scenario.err"
+    require_init
+    data="$C1192_ROOT/volumes/$WORK/data"
+    plant_donor_tree "$data/donor"
+    printf 'host-decoy\n' > "$SERVER2_ROOT/donor-decoy"
+    C1192_FAULT=$fault
+    set +o pipefail
+    c849_payload_accept_transfer "$WRITER" /fixture/donor "$WRITER" /fixture/cache/stage \
+        "$CASE_DIR/payload-accepted" "$ADMITTED" || status=$?
+    set -o pipefail
+    C1192_FAULT=
+    printf '%s\n' "$status" > "$C1192_ROOT/transfer-status"
+    cp -- "$C1192_ROOT/trace" "$C1192_ROOT/transfer-trace"
+}
+
+mode_transfer() {
+    local data stage imported source_ok=0 sink_ok=0
+    local dot_ok=0 exec_ok=0 space_ok=0 mode
+    if ! declare -F c849_payload_accept_transfer >/dev/null 2>&1; then
+        emit source-copy-failure-refused 0
+        emit sink-copy-failure-refused 0
+        emit copy-dotfile-retained 0
+        emit copy-executable-retained 0
+        emit copy-spaced-path-retained 0
+        return 0
+    fi
+    transfer_once source-copy
+    transfer_refused "$(cat "$C1192_ROOT/transfer-status")" "$C1192_ROOT/transfer-trace" && source_ok=1
+    transfer_once sink-copy
+    transfer_refused "$(cat "$C1192_ROOT/transfer-status")" "$C1192_ROOT/transfer-trace" && sink_ok=1
+    transfer_once ""
+    data="$C1192_ROOT/volumes/$WORK/data"
+    stage="$data/cache/stage/packages/c913.probe/1.0.0"
+    imported="$data/cache/imported/packages/c913.probe/1.0.0"
+    if [ "$(cat "$C1192_ROOT/transfer-status")" = 0 ] \
+        && [ -f "$CASE_DIR/payload-accepted" ] && [ ! -L "$CASE_DIR/payload-accepted" ] \
+        && [ -f "$stage/.hidden" ] && [ "$(cat -- "$stage/.hidden")" = dot ] \
+        && [ -f "$imported/.hidden" ] && [ "$(cat -- "$imported/.hidden")" = dot ] \
+        && [ "$(cat -- "$SERVER2_ROOT/donor-decoy")" = host-decoy ]; then
+        dot_ok=1
+    fi
+    if [ -f "$stage/tool" ] && [ -f "$imported/tool" ]; then
+        mode=$(stat -c %a -- "$stage/tool")
+        [ "$mode" = 755 ] && [ "$(stat -c %a -- "$imported/tool")" = 755 ] && exec_ok=1
+    fi
+    if [ -f "$stage/my file.txt" ] && [ -f "$imported/my file.txt" ] \
+        && [ "$(cat -- "$stage/my file.txt")" = spaced ] \
+        && [ "$(cat -- "$imported/my file.txt")" = spaced ] \
+        && [ -f "$stage/data" ] && [ "$(cat -- "$stage/data")" = probe ]; then
+        space_ok=1
+    fi
+    emit source-copy-failure-refused "$source_ok"
+    emit sink-copy-failure-refused "$sink_ok"
+    emit copy-dotfile-retained "$dot_ok"
+    emit copy-executable-retained "$exec_ok"
+    emit copy-spaced-path-retained "$space_ok"
+    refuse_unexpected
+}
+
 case "$mode" in
     register) mode_register ;;
     cleanup) mode_cleanup ;;
@@ -2006,6 +2262,8 @@ case "$mode" in
     handoff) mode_handoff ;;
     npm) mode_npm ;;
     npm-sentinel) mode_npm_sentinel ;;
+    backend) mode_backend ;;
+    transfer) mode_transfer ;;
     *) fail "unknown mode $mode" ;;
 esac
 if [ -s "$C1192_ROOT/unexpected" ]; then
