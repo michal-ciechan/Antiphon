@@ -348,7 +348,7 @@ public sealed class RemoteScriptContractTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public void C1192_Daemon_loss_after_compose_refuses_success()
     {
-        var output = C1192Run("cleanup-probe all");
+        var output = C1192Run("cleanup-probe", "all");
         foreach (var key in new[] { "daemon-teardown", "daemon-verdict", "daemon-residue",
             "daemon-retained", "daemon-ledger", "daemon-all-resources-retained",
             "daemon-residue-c849c1192fixture0001-work", "daemon-residue-c849c1192fixture0001-mask",
@@ -358,7 +358,7 @@ public sealed class RemoteScriptContractTests
 
     private static void C1192AssertCleanupProbe(string boundary)
     {
-        var output = C1192Run("cleanup-probe " + boundary);
+        var output = C1192Run("cleanup-probe", boundary);
         foreach (var outcome in new[] { "absent", "daemon", "exit2", "present", "timeout",
             "empty", "permission", "socket", "unrecognized", "rm-lie" })
         {
@@ -1309,7 +1309,7 @@ public sealed class RemoteScriptContractTests
     {
         RequireLinuxPwsh();
         RequireLinuxJq();
-        var output = LinuxShell("bash \"$repo/scripts/fixtures/c913-seed-contract.sh\" " + mode + " \"$repo\"\nprintf 'C913_EXIT=%s\\n' \"$?\"\n", "repo");
+        var output = LinuxShell("bash \"$repo/scripts/fixtures/c913-seed-contract.sh\" " + mode + " \"$repo\" " + argument + "\nprintf 'C913_EXIT=%s\\n' \"$?\"\n", "repo");
         output.ShouldContain("PASS " + witness, customMessage: witness);
         output.ShouldContain("PASS " + mode + "-complete");
         output.ShouldContain("C913_EXIT=0", customMessage: output);
@@ -7876,7 +7876,7 @@ public sealed class RemoteScriptContractTests
         return prelude + body;
     }
 
-    private static string C1192Run(string mode)
+    private static string C1192Run(string mode, string argument = "")
     {
         RequireLinuxPwsh();
         var output = LinuxShell(
