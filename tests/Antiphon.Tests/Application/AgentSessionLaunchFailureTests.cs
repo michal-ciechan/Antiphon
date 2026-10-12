@@ -590,21 +590,41 @@ public class AgentSessionLaunchFailureTests
                 new Dictionary<string, string> { ["GROK_HOME"] = grokHome },
                 fixture.Workspace, 120, 30);
 
-            var ex = await Should.ThrowAsync<ConflictException>(
-                () => fixture.LaunchInteractiveAsync(spec: spec));
-            ex.Code.ShouldBe(GrokRulesArgvPolicy.ProblemCode);
-            adapter.Started.ShouldBeFalse();
+            // CARD-0382 is a Windows argv policy. Off Windows the same payload is delivered
+            // verbatim (GrokRulesArgvPolicy returns null) and the process is allowed to start.
+            if (OperatingSystem.IsWindows())
+            {
+                var ex = await Should.ThrowAsync<ConflictException>(
+                    () => fixture.LaunchInteractiveAsync(spec: spec));
+                ex.Code.ShouldBe(GrokRulesArgvPolicy.ProblemCode);
+                adapter.Started.ShouldBeFalse();
 
-            await using var db = LaunchFixture.CreateContext();
-            var session = await db.AgentSessions.SingleAsync(s => s.Id == fixture.SessionId);
-            session.Status.ShouldBe(SessionStatus.Failed);
-            session.HerdrSupervisionFailureKind.ShouldBe(HerdrSupervisionFailureKind.NonQualifying);
-            session.FailureReason.ShouldNotBeNull();
-            session.FailureReason.ShouldContain(GrokRulesArgvPolicy.ProblemCode);
-            session.FailureReason.ShouldContain("--rules");
-            session.FailureReason.ShouldNotContain(sentinel);
-            session.TerminationSource.ShouldBe(SessionTerminationSource.SystemRequest);
-            session.EndedAt.ShouldNotBeNull();
+                await using var db = LaunchFixture.CreateContext();
+                var session = await db.AgentSessions.SingleAsync(s => s.Id == fixture.SessionId);
+                session.Status.ShouldBe(SessionStatus.Failed);
+                session.HerdrSupervisionFailureKind.ShouldBe(HerdrSupervisionFailureKind.NonQualifying);
+                session.FailureReason.ShouldNotBeNull();
+                session.FailureReason.ShouldContain(GrokRulesArgvPolicy.ProblemCode);
+                session.FailureReason.ShouldContain("--rules");
+                session.FailureReason.ShouldNotContain(sentinel);
+                session.TerminationSource.ShouldBe(SessionTerminationSource.SystemRequest);
+                session.EndedAt.ShouldNotBeNull();
+            }
+            else
+            {
+                await fixture.LaunchInteractiveAsync(spec: spec);
+                adapter.Started.ShouldBeTrue();
+                adapter.StartedArgs.ShouldContain("line one\nline two " + sentinel);
+
+                await using var db = LaunchFixture.CreateContext();
+                var session = await db.AgentSessions.SingleAsync(s => s.Id == fixture.SessionId);
+                session.Status.ShouldBe(SessionStatus.Running);
+                session.HerdrSupervisionFailureKind.ShouldBeNull();
+                (session.FailureReason ?? "").ShouldNotContain(sentinel);
+                session.FailureReason.ShouldBeNull();
+                session.TerminationSource.ShouldBe(SessionTerminationSource.Unknown);
+                session.EndedAt.ShouldBeNull();
+            }
         }
         finally
         {
@@ -631,11 +651,22 @@ public class AgentSessionLaunchFailureTests
                 new Dictionary<string, string> { ["GROK_HOME"] = grokHome },
                 fixture.Workspace, 120, 30);
 
-            var ex = await Should.ThrowAsync<ConflictException>(
-                () => fixture.LaunchInteractiveAsync(resume: true, spec: spec));
-            ex.Code.ShouldBe(GrokRulesArgvPolicy.ProblemCode);
-            resumeAdapter.Started.ShouldBeFalse();
-            freshAdapter.Started.ShouldBeFalse();
+            if (OperatingSystem.IsWindows())
+            {
+                var ex = await Should.ThrowAsync<ConflictException>(
+                    () => fixture.LaunchInteractiveAsync(resume: true, spec: spec));
+                ex.Code.ShouldBe(GrokRulesArgvPolicy.ProblemCode);
+                resumeAdapter.Started.ShouldBeFalse();
+                freshAdapter.Started.ShouldBeFalse();
+            }
+            else
+            {
+                await fixture.LaunchInteractiveAsync(resume: true, spec: spec);
+                resumeAdapter.Started.ShouldBeTrue();
+                freshAdapter.Started.ShouldBeFalse();
+                resumeAdapter.StartedArgs.ShouldContain("line one\nline two " + sentinel);
+                resumeAdapter.StartedArgs.ShouldContain("--resume");
+            }
         }
         finally
         {
@@ -666,13 +697,26 @@ public class AgentSessionLaunchFailureTests
                 fixture.Workspace, 120, 30,
                 Backend: SessionBackend.Herdr);
 
-            var ex = await Should.ThrowAsync<ConflictException>(
-                () => fixture.LaunchInteractiveAsync(spec: spec));
-            ex.Code.ShouldBe(GrokRulesArgvPolicy.ProblemCode);
-            ex.Message.ShouldContain(GrokRulesArgvPolicy.ReasonLineBreak);
-            ex.Message.ShouldContain("GROK_RULES");
-            ex.Message.ShouldNotContain(sentinel);
-            adapter.Started.ShouldBeFalse();
+            if (OperatingSystem.IsWindows())
+            {
+                var ex = await Should.ThrowAsync<ConflictException>(
+                    () => fixture.LaunchInteractiveAsync(spec: spec));
+                ex.Code.ShouldBe(GrokRulesArgvPolicy.ProblemCode);
+                ex.Message.ShouldContain(GrokRulesArgvPolicy.ReasonLineBreak);
+                ex.Message.ShouldContain("GROK_RULES");
+                ex.Message.ShouldNotContain(sentinel);
+                adapter.Started.ShouldBeFalse();
+            }
+            else
+            {
+                // Herdr expands $env:NAME for the scan only. Off Windows that scan allows the
+                // line break, and the launched argv stays the token — the secret is not copied in.
+                await fixture.LaunchInteractiveAsync(spec: spec);
+                adapter.Started.ShouldBeTrue();
+                adapter.StartedArgs.ShouldContain("$env:GROK_RULES");
+                adapter.StartedArgs.ShouldNotContain(sentinel);
+                string.Join('\n', adapter.StartedArgs).ShouldNotContain(GrokRulesArgvPolicy.ProblemCode);
+            }
         }
         finally
         {
@@ -2374,10 +2418,25 @@ public class AgentSessionLaunchFailureTests
                 args,
                 new Dictionary<string, string> { ["GROK_HOME"] = grokHome },
                 fixture.Workspace, 120, 30);
-            var ex = await Should.ThrowAsync<ConflictException>(
-                () => fixture.LaunchInteractiveAsync(spec: spec));
-            ex.Code.ShouldBe(GrokRulesArgvPolicy.ProblemCode);
-            adapter.Started.ShouldBeFalse();
+            if (OperatingSystem.IsWindows())
+            {
+                var ex = await Should.ThrowAsync<ConflictException>(
+                    () => fixture.LaunchInteractiveAsync(spec: spec));
+                ex.Code.ShouldBe(GrokRulesArgvPolicy.ProblemCode);
+                adapter.Started.ShouldBeFalse();
+            }
+            else
+            {
+                await fixture.LaunchInteractiveAsync(spec: spec);
+                adapter.Started.ShouldBeTrue();
+                foreach (var arg in args)
+                    adapter.StartedArgs.ShouldContain(arg);
+                await using var db = LaunchFixture.CreateContext();
+                var session = await db.AgentSessions.SingleAsync(s => s.Id == fixture.SessionId);
+                session.Status.ShouldBe(SessionStatus.Running);
+                (session.FailureReason ?? "").ShouldNotContain(GrokRulesArgvPolicy.ProblemCode);
+                session.FailureReason.ShouldBeNull();
+            }
         }
         finally
         {

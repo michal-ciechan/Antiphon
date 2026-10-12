@@ -659,10 +659,15 @@ public class SessionGenerationExitTests
         var sessionId = Guid.NewGuid();
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(25));
         var events = runtime.Subscribe(cts.Token);
+        // cmd.exe /k stays up until KillAsync on Windows. On Linux that path is not a live
+        // child: the host records ProcessExited before the kill can stamp KilledByRequest.
+        var (exe, args) = OperatingSystem.IsWindows()
+            ? (Path.Combine(Environment.SystemDirectory, "cmd.exe"), new[] { "/d", "/q", "/k", "@echo off & prompt $G" })
+            : ("/bin/sleep", new[] { "120" });
         await runtime.StartAsync(new RunnerLaunchRequest(
             sessionId,
-            Path.Combine(Environment.SystemDirectory, "cmd.exe"),
-            ["/d", "/q", "/k", "@echo off & prompt $G"],
+            exe,
+            args,
             new Dictionary<string, string>(),
             Path.GetTempPath(), 80, 24, AcceptedStartedAt: generation), cts.Token);
         await runtime.KillAsync(sessionId, TimeSpan.FromSeconds(5), cts.Token);
@@ -676,7 +681,11 @@ public class SessionGenerationExitTests
                 var payload = JsonSerializer.Deserialize<RunnerSessionExitedEvent>(evt.Json, WebJson);
                 payload.ShouldNotBeNull();
                 payload!.ExitReason.ShouldBe("KilledByRequest");
-                payload.ExitCode.ShouldNotBe(0);
+                payload.ExitCode.ShouldNotBeNull();
+                // Windows cmd.exe /k dies with a non-zero code. The Linux pty reports 0 for
+                // the same KillAsync; the reason is what proves the frame is a kill.
+                if (OperatingSystem.IsWindows())
+                    payload.ExitCode.ShouldNotBe(0);
                 payload.AcceptedStartedAt.ShouldBe(generation);
                 return (evt.Json, generation);
             }
