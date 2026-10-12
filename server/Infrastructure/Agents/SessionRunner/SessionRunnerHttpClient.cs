@@ -72,8 +72,9 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
     /// <summary>
     /// Named client for the /events SSE stream: registered with an INFINITE timeout, because
     /// HttpClient.Timeout covers the whole response body and the default 100 s tore the stream
-    /// down every 100 s (events in the reconnect gaps were lost). Liveness comes from the runner's
-    /// keepalive comments plus the idle watchdog in <see cref="StreamEventsAsync"/> instead.
+    /// down every 100 s (events in the reconnect gaps were lost). Any received line resets the
+    /// idle watchdog in <see cref="StreamEventsAsync"/>, including unrecognized comments.
+    /// Keepalive comments are the runner's ordinary silence-breaker, not a readiness deadline.
     /// </summary>
     public const string EventStreamClientName = "session-runner-events";
 
@@ -865,9 +866,11 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
     public async IAsyncEnumerable<SessionRunnerEvent> StreamEventsAsync(
         [EnumeratorCancellation] CancellationToken ct)
     {
-        // Idle watchdog: the timer resets on every received line (keepalives count), so it only
-        // fires when the runner has gone genuinely silent — half-open TCP, hung process — and the
-        // pump should reconnect. This replaces HttpClient.Timeout for the stream.
+        // Idle watchdog: the timer resets on every received line, including unrecognized comments
+        // and unsupported frames. That traffic keeps the connection alive and is not readiness.
+        // There is no separate readiness deadline. The timer fires only after genuine silence
+        // (half-open TCP, hung process), and then the pump reconnects. This replaces
+        // HttpClient.Timeout for the stream.
         var idle = TimeSpan.FromSeconds(Math.Max(5, _settings.EventStreamIdleTimeoutSeconds));
         using var idleCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         idleCts.CancelAfter(idle);
@@ -917,7 +920,7 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
                         if (!readinessEmitted)
                         {
                             readinessEmitted = true;
-                            yield return SessionRunnerEvent.SubscriptionReadiness();
+                            yield return SessionRunnerEvent.SubscriptionReadiness(parsed);
                         }
 
                         yield return parsed;

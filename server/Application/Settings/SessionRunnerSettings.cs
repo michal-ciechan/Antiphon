@@ -13,10 +13,13 @@ public sealed class SessionRunnerSettings
     public int ListTimeoutSeconds { get; set; } = 3;
 
     /// <summary>
-    /// /events idle watchdog: reconnect if NOTHING (event or keepalive comment) arrives for this
-    /// long. The stream itself runs with an infinite HttpClient timeout — the default 100 s
-    /// Timeout used to tear the SSE stream down every 100 s and lose events in the reconnect gaps
-    /// (2026-07-23). Must comfortably exceed the runner's Events:KeepAliveSeconds (default 15 s).
+    /// /events idle watchdog: reconnect after genuine silence of this many seconds. The deadline
+    /// resets on every received line, including unrecognized comments and unsupported frames, so
+    /// that traffic keeps the connection alive. It is not a readiness deadline: a stream that
+    /// never emits a qualifying frame is not reconnected merely because readiness is absent. The
+    /// stream itself runs with an infinite HttpClient timeout — the default 100 s Timeout used to
+    /// tear the SSE stream down every 100 s and lose events in the reconnect gaps (2026-07-23).
+    /// Must comfortably exceed the runner's Events:KeepAliveSeconds (default 15 s).
     /// </summary>
     public int EventStreamIdleTimeoutSeconds { get; set; } = 90;
 
