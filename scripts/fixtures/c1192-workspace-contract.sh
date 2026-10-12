@@ -1013,6 +1013,10 @@ docker() {
                         absent) printf 'Error response from daemon: No such %s: %s\n' "$PROBE_KIND" "$PROBE_NAME" >&2; return 1 ;;
                         daemon) printf 'Cannot connect to the Docker daemon\n' >&2; return 1 ;;
                         exit2) printf 'probe error\n' >&2; return 2 ;;
+                        exit2-absent) printf 'Error: No such %s: %s\n' "$PROBE_KIND" "$PROBE_NAME" >&2; return 2 ;;
+                        other-name) printf 'Error: No such %s: foreign-resource\n' "$PROBE_KIND" >&2; return 1 ;;
+                        other-kind) printf 'Error: No such image: %s\n' "$PROBE_NAME" >&2; return 1 ;;
+                        mixed) printf 'Cannot connect to the Docker daemon\nError: No such %s: %s\n' "$PROBE_KIND" "$PROBE_NAME" >&2; return 1 ;;
                         timeout) printf 'probe timed out\n' >&2; return 124 ;;
                         empty) return 1 ;;
                         permission) printf 'permission denied\n' >&2; return 1 ;;
@@ -2782,7 +2786,7 @@ mode_cleanup_probe() {
         network) PROBE_KIND=network; PROBE_NAME="c849-${RUN}-npm" ;;
         *) fail "unknown boundary $PROBE_BOUNDARY" ;;
     esac
-    local outcomes='absent daemon exit2 present timeout empty permission socket unrecognized rm-lie'
+    local outcomes='absent daemon exit2 present timeout empty permission socket unrecognized rm-lie exit2-absent other-name other-kind mixed'
     [ "$PROBE_BOUNDARY" != all ] || outcomes=daemon
     for outcome in $outcomes; do
         reset_runtime
@@ -2792,7 +2796,7 @@ mode_cleanup_probe() {
         s7_groups
         # Execute the real receipt writer, not the older S7 text substitute.
         source <(awk '/^(write_result|json_escape|scrub_file)\(\) \{/ { active=1 } active { print } active && /^}$/ { active=0 }' "$remote")
-        eval "$(declare -f c849_fixture_seed | sed '1s/c849_fixture_seed/c1192_probe_seed/')"
+        source <(declare -f c849_fixture_seed | sed '1s/c849_fixture_seed/c1192_probe_seed/')
         c849_fixture_seed() {
             c1192_probe_seed
             printf 'services: {}\n' > "$SERVER2_ROOT/compose-retention/negative.yml"

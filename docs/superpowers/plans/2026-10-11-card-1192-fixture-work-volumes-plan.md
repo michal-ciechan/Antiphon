@@ -932,9 +932,9 @@ CP-33 additionally executes the real volume fixture seed and recovery validator,
 
 The repair brief's closed Final scope is CP-33..52: existing CP-33..43 remain one execution each, CP-44 remains exactly 19 adjacent executions, and CP-45..52 add eight methods. One S7 isolated build is reused within each committed group. No whole Unit lane/full class/live Docker acceptance is authorized. Added cost estimate: 10 row minutes plus slot contention; two source states are needed for historical red then repaired green.
 
-CP-45..51 use the actual strict-shell wrapper, EXIT, finalizer and JSON publisher, with three successful Compose teardowns before injecting a specific boundary. Each internal table covers exit 1 with exact No such resource/name (absent, success), exit 1 daemon unavailable, exit 2, exit 0 object present with failed removal, timeout exit 124, empty exit 1, permission denied, socket no-such-file, unrecognized error, and exit-zero removal with object still present. Unknown outcomes require named residue, retained resources, accepted:false/nonzero, and an unknown-cleanup-outcome ledger entry. CP-52 answers every Docker operation with daemon-unavailable exit 1 after the last Compose down; both volumes and helpers must remain independently visible and named. These daemon-loss rows must fail against unchanged production at 276e0f30b4ca410ceb641924758fe201f49e7e50 before the fix. Timeout is modeled at the CLI exit boundary; native time/daemon behavior stays W-1.
+CP-45..51 use the actual strict-shell wrapper, EXIT, finalizer and JSON publisher, with three successful Compose teardowns before injecting a specific boundary. Each internal table covers exit 1 with exact No such resource/name (absent, success), exit 1 daemon unavailable, exit 2, exit 0 object present with failed removal, timeout exit 124, empty exit 1, permission denied, socket no-such-file, unrecognized error, exit-zero removal with object still present, exit 2 carrying missing-resource text, wrong resource name/kind, and mixed daemon-error/missing-resource text. Unknown outcomes require named residue, retained resources, accepted:false/nonzero, and an unknown-cleanup-outcome ledger entry. CP-52 answers every Docker operation with daemon-unavailable exit 1 after the last Compose down; both volumes and helpers must remain independently visible and named. These daemon-loss rows must fail against unchanged production at 276e0f30b4ca410ceb641924758fe201f49e7e50 before the fix. Timeout is modeled at the CLI exit boundary; native time/daemon behavior stays W-1.
 
-All PCs and every variant remain pending method-scoped SourceLanding Mutation. Ordinary historical red is not a deliberate PC cycle.
+All PC-1..171 and every variant remain pending method-scoped SourceLanding Mutation. Added guard census: 19 guards/PCs, total 171; CP-45..51 execute fourteen internal cases each (98) plus the global daemon-loss case. Original cost/census figures below describe the pre-repair TestDesign. Ordinary historical red is not a deliberate PC cycle.
 
 Additional guard inventory:
 
@@ -956,11 +956,16 @@ Additional guard inventory:
 | G-166 | S7 F1: cache removal acknowledgement cannot replace positive absence | PC-166 |
 | G-167 | S7 F1: network removal acknowledgement cannot replace positive absence | PC-167 |
 
+| G-168 | S7 F1: Require exit 1 before admitting missing-resource output | PC-168 |
+| G-169 | S7 F1: Missing-resource response identifies the exact resource name | PC-169 |
+| G-170 | S7 F1: Missing-resource response identifies the resource kind | PC-170 |
+| G-171 | S7 F1: Every nonempty non-JSON response line must be recognized | PC-171 |
+
 Additional positive controls:
 
 | PC | Break guard | Detecting filter | Expected red assertion |
 |---|---|---|---|
-| PC-153 | G-153: In the consumer cleanup caller, substitute confirmed absence for unknown probe results. | `/*/*/RemoteScriptContractTests/C1192_Cleanup_consumer_requires_positive_absence` | `daemon-verdict` fails after the boundary is reached; all ten variants pending. |
+| PC-153 | G-153: In the consumer cleanup caller, substitute confirmed absence for unknown probe results. | `/*/*/RemoteScriptContractTests/C1192_Cleanup_consumer_requires_positive_absence` | `daemon-verdict` fails after the boundary is reached; all fourteen variants pending. |
 | PC-154 | G-154: In the helper cleanup caller, substitute confirmed absence for unknown probe results. | `/*/*/RemoteScriptContractTests/C1192_Cleanup_helper_requires_positive_absence` | `daemon-verdict` fails after the boundary is reached; all ten variants pending. |
 | PC-155 | G-155: In the masked cleanup caller, substitute confirmed absence for unknown probe results. | `/*/*/RemoteScriptContractTests/C1192_Cleanup_masked_requires_positive_absence` | `daemon-verdict` fails after the boundary is reached; all ten variants pending. |
 | PC-156 | G-156: In the work cleanup caller, substitute confirmed absence for unknown probe results. | `/*/*/RemoteScriptContractTests/C1192_Cleanup_work_requires_positive_absence` | `daemon-verdict` fails after the boundary is reached; all ten variants pending. |
@@ -976,12 +981,17 @@ Additional positive controls:
 | PC-166 | G-166: Skip the post-removal probe for cache. | `/*/*/RemoteScriptContractTests/C1192_Cleanup_cache_requires_positive_absence` | `rm-lie-verdict` fails with exit-zero removal and retained object; pending. |
 | PC-167 | G-167: Skip the post-removal probe for network. | `/*/*/RemoteScriptContractTests/C1192_Cleanup_network_requires_positive_absence` | `rm-lie-verdict` fails with exit-zero removal and retained object; pending. |
 
+| PC-168 | G-168: Delete the exit-1 predicate in c849_fixture_resource_state. | `/*/*/RemoteScriptContractTests/C1192_Cleanup_consumer_requires_positive_absence` | `exit2-absent-verdict` fails at the post-Compose boundary; pending. |
+| PC-169 | G-169: Replace the exact identity in the accepted response with a wildcard. | `/*/*/RemoteScriptContractTests/C1192_Cleanup_consumer_requires_positive_absence` | `other-name-verdict` fails at the post-Compose boundary; pending. |
+| PC-170 | G-170: Accept any no-such text regardless of kind. | `/*/*/RemoteScriptContractTests/C1192_Cleanup_consumer_requires_positive_absence` | `other-kind-verdict and socket-verdict` fails at the post-Compose boundary; pending. |
+| PC-171 | G-171: Ignore unrecognized lines after a matching absent line. | `/*/*/RemoteScriptContractTests/C1192_Cleanup_consumer_requires_positive_absence` | `mixed-verdict` fails at the post-Compose boundary; pending. |
+
 ### Checkpoints
 
-Authoritative closed list: **43 distinct methods, 51 TUnit executions minimum,
+Authoritative closed list after S7 repair: **52 rows (51 exact methods plus the adjacent OR selection), 78 TUnit executions minimum,
 seven isolated builds**, Linux only. Each row has one build output (new or
 same-slice reuse) and one exact filter. Wildcard namespace segments are retained;
-class/method segments are literal. Method filters still select all Arguments.
+class/method segments are literal except the explicitly required CP-44 adjacent OR selection. Method filters still select all Arguments.
 
 No identical methods were duplicated in the proposal. CP-2 checks scope,
 CP-3 partial acquisition, CP-34 final verdict and CP-35 retired host ownership;
