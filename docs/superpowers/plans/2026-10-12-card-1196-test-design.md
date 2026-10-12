@@ -387,12 +387,14 @@ methods V-1 through V-11: 24 argument-expanded executions. CP-1 selects three of
 those executions on S1; CP-2 reruns them on the final S1-S2 source. R-2 is ten
 methods/results; R-3 is five methods/six results; R-4 is one method/fifteen results.
 Counts are static source/Arguments-derived expectations, not measured discovery.
+CP-3 uses the pinned TUnit 1.44 per-operand form `(ClassA*)|(ClassB*)`. The
+earlier class OR without those wildcards selected zero tests.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1196-s1/` | pg-refusal-eligible-busy | `/*/Antiphon.Tests.Application/LandRefusalDeliveryWitnessTests/(C1196_Eligible_recipient_receipt_resolves_older_refusal*)\|(C1196_Busy_recipient_waits_for_turn_end_before_resolution*)` | V-1, V-2, R-1 | all 3 listed results, 0 failed/skipped | 3 | 8 | true |
 | CP-2 | S1-S2 | `tests/Antiphon.Tests -> bin-c1196-witness/` | pg-refusal-recovery-guards | `/*/Antiphon.Tests.Application/LandRefusalDeliveryWitnessTests/*` | V-1 through V-11, R-1 | all 24 listed results, 0 failed/skipped | 24 | 12 | true |
-| CP-3 | S1-S2 | `tests/Antiphon.Tests -> bin-c1196-regression/` | pg-attention-enqueue | `/*/Antiphon.Tests.Application/(AttentionFeedNoiseTests)\|(AgentTaskLandEnqueueTests)/*` | R-2, R-3 | all 16 listed results, 0 failed/skipped | 16 | 5 | true |
+| CP-3 | S1-S2 | `tests/Antiphon.Tests -> bin-c1196-regression/` | pg-attention-enqueue | `/*/Antiphon.Tests.Application/(AttentionFeedNoiseTests*)\|(AgentTaskLandEnqueueTests*)/*` | R-2, R-3 | all 16 listed results, 0 failed/skipped | 16 | 5 | true |
 | CP-4 | S1-S2 | `tests/Antiphon.Tests -> bin-c1196-receipts/` | pg-receipt-compatibility | `/*/Antiphon.Tests.Application/AgentTaskLandReceiptTests/C467_V11_RejectFalseReceipts*` | R-4 | all 15 listed results, 0 failed/skipped | 15 | 5 | true |
 
 Execution binding: commit/push S1, then checkpoint tool

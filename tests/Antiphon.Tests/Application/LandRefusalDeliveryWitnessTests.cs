@@ -528,7 +528,7 @@ public sealed class LandRefusalDeliveryWitnessTests
         var retried = (await world.ReadKeyedAsync()).ShouldNotBeNull();
         retried.Id.ShouldBe(reverted.Id);
         retried.Attempts.ShouldBe(2);
-        await AssertDeliveredAsync(world, produced, reverted.Id);
+        await AssertSecondAttemptDeliveredAsync(world, produced, reverted.Id);
         await ConfirmResolvedAsync(world, produced);
         ct.ThrowIfCancellationRequested();
     }
@@ -631,6 +631,32 @@ public sealed class LandRefusalDeliveryWitnessTests
         var row = (await world.ReadKeyedAsync(produced.NoteId)).ShouldNotBeNull();
         row.Id.ShouldBe(queueId);
         row.Attempts.ShouldBeGreaterThan(0);
+        row.StartedAt.ShouldNotBeNull();
+        row.Baseline.ShouldNotBeNull();
+        row.Body.ShouldBe(produced.Body);
+        row.Digest.ShouldBe(produced.Digest);
+    }
+
+    /// <summary>
+    /// The stranded retry of a reverted pretyping row is the second durable claim.
+    /// The first-delivery helper stays at attempts=1.
+    /// </summary>
+    private static async Task AssertSecondAttemptDeliveredAsync(
+        LandRefusalDeliveryHarness world, LandRefusalDeliveryHarness.Produced produced, Guid queueId)
+    {
+        var submission = world.Submissions.ShouldHaveSingleItem("C1196:submission-count");
+        (submission.RowFound && submission.Attempts == 2 && submission.Baseline is not null)
+            .ShouldBeTrue("C1196:pretyping-retried");
+        submission.InsertedKind.ShouldBe(TranscriptKinds.UserPrompt);
+        submission.InsertedText.ShouldBe(submission.Text);
+        var prompts = await world.ReadPromptsAsync(world.SessionId, TranscriptKinds.UserPrompt);
+        var prompt = prompts.Where(p => p.Text == submission.Text).ShouldHaveSingleItem();
+        prompt.Sequence.ShouldBeGreaterThan(submission.Baseline!.Value);
+        PromptSubmissionMatch.IsConfirmedBy(produced.Body, prompt.Text).ShouldBeTrue();
+        PromptSubmissionMatch.IsCompleteIn(produced.Body, prompt.Text).ShouldBeTrue();
+        var row = (await world.ReadKeyedAsync(produced.NoteId)).ShouldNotBeNull();
+        row.Id.ShouldBe(queueId);
+        row.Attempts.ShouldBe(2);
         row.StartedAt.ShouldNotBeNull();
         row.Baseline.ShouldNotBeNull();
         row.Body.ShouldBe(produced.Body);
