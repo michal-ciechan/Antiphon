@@ -369,8 +369,10 @@ public sealed class RemoteScriptContractTests
         }
     }
 
-    // CARD-1192 S1 repair. The harness must not rm a fixed /tmp/c849-fixture-$RUN directory.
-    // Cleanup is the private mktemp root, and only after this run's stamp matches.
+    // CARD-1192 S1 repair. Claim creates a fresh directory that must not already exist
+    // and records ownership only after that mkdir. Cleanup deletes only a canonical
+    // path strictly inside the private root, with no symlink following. A pre-existing
+    // directory or marker is refused and left intact, including an unrelated canary.
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public void C1192_Harness_cleanup_stays_inside_its_private_directory()
@@ -387,30 +389,36 @@ public sealed class RemoteScriptContractTests
         fixture.Contains("cleanup_private", StringComparison.Ordinal).ShouldBeTrue("trap-function");
         var output = LinuxShell("""
             set -u
-            sentinel=/tmp/c849-fixture-c1192fixture0001
-            if [ -e "$sentinel" ] && [ ! -f "$sentinel/.c1192-sentinel" ]; then
-                printf 'FAIL sentinel-occupied\n'
-                exit 1
-            fi
-            mkdir -p "$sentinel"
-            printf 'owned\n' > "$sentinel/.c1192-sentinel"
+            parent=$(mktemp -d)
+            trap 'if [ -n "${parent:-}" ] && [ ! -L "$parent" ] && [ -d "$parent" ]; then rm -rf -- "$parent"; fi' EXIT
+            sentinel="$parent/sentinel"
+            mkdir -- "$sentinel"
+            printf 'unrelated-canary\n' > "$sentinel/canary"
+            printf 'owned\n' > "$sentinel/.c1192-owned"
+            ln -s "$sentinel" "$parent/escape"
+            claim_log=$(mktemp)
+            bash "$repo/scripts/fixtures/c1192-workspace-contract.sh" claim "$repo" "$sentinel" > "$claim_log" 2>&1 || true
+            grep -q 'refuse pre-existing-marker' "$claim_log" || { printf 'FAIL refusal-missing\n'; cat "$claim_log"; exit 1; }
+            [ -d "$sentinel" ] && [ ! -L "$sentinel" ] || { printf 'FAIL sentinel-removed\n'; cat "$claim_log"; exit 1; }
+            grep -Fxq 'unrelated-canary' "$sentinel/canary" || { printf 'FAIL canary-lost\n'; exit 1; }
+            grep -Fxq 'owned' "$sentinel/.c1192-owned" || { printf 'FAIL marker-overwritten\n'; exit 1; }
+            clean_log=$(mktemp)
+            bash "$repo/scripts/fixtures/c1192-workspace-contract.sh" cleanup-contained "$repo" "$parent" "$sentinel" > "$clean_log" 2>&1 || true
+            grep -q 'refuse ownership-unrecorded' "$clean_log" || { printf 'FAIL cleanup-refusal-missing\n'; cat "$clean_log"; exit 1; }
+            grep -Fxq 'unrelated-canary' "$sentinel/canary" || { printf 'FAIL cleanup-canary\n'; exit 1; }
+            grep -Fxq 'owned' "$sentinel/.c1192-owned" || { printf 'FAIL cleanup-marker\n'; exit 1; }
+            link_log=$(mktemp)
+            bash "$repo/scripts/fixtures/c1192-workspace-contract.sh" cleanup-contained "$repo" "$parent" "$parent/escape" > "$link_log" 2>&1 || true
+            grep -q 'refuse symlink' "$link_log" || { printf 'FAIL symlink-refusal-missing\n'; cat "$link_log"; exit 1; }
+            grep -Fxq 'unrelated-canary' "$sentinel/canary" || { printf 'FAIL symlink-canary\n'; exit 1; }
+            [ -d "$sentinel" ] && [ ! -L "$sentinel" ] || { printf 'FAIL symlink-followed\n'; exit 1; }
             log=$(mktemp)
             bash "$repo/scripts/fixtures/c1192-workspace-contract.sh" register "$repo" > "$log" 2>&1 || true
-            if [ ! -f "$sentinel/.c1192-sentinel" ]; then
-                printf 'FAIL sentinel-removed\n'
-                cat "$log"
-                exit 1
-            fi
             grep -q 'occupied-name-no-create=1' "$log" || { printf 'FAIL register-output\n'; cat "$log"; exit 1; }
             grep -q 'C1192_FAIL' "$log" && { printf 'FAIL harness\n'; cat "$log"; exit 1; }
-            target=$sentinel
-            if [ -d "$target" ] && [ ! -L "$target" ] && [ -f "$target/.c1192-sentinel" ]; then
-                stamp=$(cat "$target/.c1192-sentinel")
-                if [ "$stamp" = owned ]; then
-                    rm -rf -- "$target"
-                fi
-            fi
-            rm -f -- "$log"
+            grep -Fxq 'unrelated-canary' "$sentinel/canary" || { printf 'FAIL register-canary\n'; exit 1; }
+            grep -Fxq 'owned' "$sentinel/.c1192-owned" || { printf 'FAIL register-marker\n'; exit 1; }
+            rm -f -- "$claim_log" "$clean_log" "$link_log" "$log"
             printf 'PASS harness-private\n'
             """, "repo");
         output.ShouldContain("PASS harness-private");

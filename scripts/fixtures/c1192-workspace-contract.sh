@@ -3,17 +3,156 @@
 # Never source dispatch. Never call the host docker daemon.
 set -euo pipefail
 shopt -s nullglob
+
+c1192_refuse() {
+    printf 'refuse %s\n' "$1"
+}
+
+# Absolute path, no symlink component, no '.' or '..' segment.
+c1192_walk_unlinked() {
+    local path="$1" rest walk part
+    [ -n "$path" ] || return 1
+    case "$path" in
+        /*) ;;
+        *) return 1 ;;
+    esac
+    rest="${path#/}"
+    walk=""
+    while [ -n "$rest" ]; do
+        part="${rest%%/*}"
+        if [ -z "$part" ] || [ "$part" = "." ] || [ "$part" = ".." ]; then
+            return 1
+        fi
+        walk="${walk}/${part}"
+        if [ -L "$walk" ]; then
+            return 1
+        fi
+        if [ ! -e "$walk" ]; then
+            return 1
+        fi
+        case "$rest" in
+            */*) rest="${rest#*/}" ;;
+            *) rest="" ;;
+        esac
+    done
+    return 0
+}
+
+# Fresh mkdir. A path or marker that already exists is refused and left untouched.
+# Ownership is written only after mkdir succeeds.
+c1192_claim_fresh() {
+    local candidate="${1-}" canon token
+    C1192_CLAIM_CANON=
+    C1192_CLAIM_TOKEN=
+    if [ -z "${candidate}" ]; then c1192_refuse empty-path; return 1; fi
+    if [ -L "$candidate" ]; then c1192_refuse symlink; return 1; fi
+    if [ -e "$candidate" ]; then
+        if [ -e "${candidate}/.c1192-owned" ] || [ -L "${candidate}/.c1192-owned" ]; then
+            c1192_refuse pre-existing-marker
+            return 1
+        fi
+        c1192_refuse pre-existing-directory
+        return 1
+    fi
+    if ! mkdir -- "$candidate"; then
+        c1192_refuse mkdir-failed
+        return 1
+    fi
+    if [ -e "${candidate}/.c1192-owned" ] || [ -L "${candidate}/.c1192-owned" ]; then
+        c1192_refuse pre-existing-marker
+        return 1
+    fi
+    if ! canon=$(realpath -s -- "$candidate"); then
+        c1192_refuse canonical
+        return 1
+    fi
+    if ! c1192_walk_unlinked "$canon"; then
+        c1192_refuse symlink
+        return 1
+    fi
+    token=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
+    if [ -z "$token" ]; then
+        c1192_refuse empty-token
+        return 1
+    fi
+    printf '%s\n' "$token" > "${candidate}/.c1192-owned"
+    C1192_CLAIM_CANON=$canon
+    C1192_CLAIM_TOKEN=$token
+    return 0
+}
+
+# Delete target only when it is a real directory strictly inside private_root,
+# no symlink is followed, and the marker matches the token recorded after create.
+c1192_cleanup_contained() {
+    local private_root="${1-}" target="${2-}" token="${3-}"
+    local root_canon target_canon marker stamp
+    if [ -z "${private_root}" ]; then c1192_refuse empty-private; return 1; fi
+    if [ -z "${target}" ]; then c1192_refuse empty-target; return 1; fi
+    if [ -L "$private_root" ] || [ -L "$target" ]; then c1192_refuse symlink; return 1; fi
+    if [ -z "${token}" ]; then c1192_refuse ownership-unrecorded; return 1; fi
+    if [ ! -d "$private_root" ] || [ ! -d "$target" ]; then c1192_refuse not-directory; return 1; fi
+    if ! c1192_walk_unlinked "$private_root" || ! c1192_walk_unlinked "$target"; then
+        c1192_refuse symlink
+        return 1
+    fi
+    if ! root_canon=$(realpath -s -- "$private_root"); then c1192_refuse canonical; return 1; fi
+    if ! target_canon=$(realpath -s -- "$target"); then c1192_refuse canonical; return 1; fi
+    if [ "$target_canon" = "$root_canon" ]; then c1192_refuse not-strictly-under; return 1; fi
+    case "$target_canon/" in
+        "$root_canon/"*) ;;
+        *) c1192_refuse outside-private-root; return 1 ;;
+    esac
+    if ! c1192_walk_unlinked "$root_canon" || ! c1192_walk_unlinked "$target_canon"; then
+        c1192_refuse symlink
+        return 1
+    fi
+    marker="${target_canon}/.c1192-owned"
+    if [ -L "$marker" ] || [ ! -f "$marker" ]; then c1192_refuse marker-missing; return 1; fi
+    stamp=$(cat -- "$marker") || { c1192_refuse marker-unreadable; return 1; }
+    if [ -z "$stamp" ] || [ "$stamp" != "$token" ]; then
+        c1192_refuse ownership-mismatch
+        return 1
+    fi
+    rm -rf -- "$target_canon"
+}
+
+if [ "${1:-}" = "claim" ]; then
+    if c1192_claim_fresh "${3:?candidate}"; then
+        printf '%s\n' "$C1192_CLAIM_CANON"
+        exit 0
+    fi
+    exit 1
+fi
+if [ "${1:-}" = "cleanup-contained" ]; then
+    if c1192_cleanup_contained "${3-}" "${4-}"; then
+        exit 0
+    fi
+    exit 1
+fi
+
 mode="${1:?mode}"
 repo="${2:?repo}"
-private=$(mktemp -d) || exit 1
-printf '%s\n' "$private" > "${private:?}/.c1192-owned"
+private_parent=$(mktemp -d /tmp/c1192-parent.XXXXXX) || exit 1
+private_parent_canon=$(realpath -s -- "$private_parent") || exit 1
+if ! c1192_claim_fresh "${private_parent_canon}/scratch"; then
+    exit 1
+fi
+private=$C1192_CLAIM_CANON
+private_token=$C1192_CLAIM_TOKEN
 cleanup_private() {
-    local target="${private:?}" stamp
-    if [ -d "$target" ] && [ ! -L "$target" ] && [ -f "$target/.c1192-owned" ]; then
-        stamp=$(cat "$target/.c1192-owned")
-        if [ "$stamp" = "$target" ]; then
-            rm -rf -- "$target"
-        fi
+    local target="${private:?}" token="${private_token:?}" parent
+    if [ -z "$target" ] || [ -z "$token" ]; then
+        c1192_refuse empty-path
+        return 0
+    fi
+    parent=$(dirname -- "$target")
+    c1192_cleanup_contained "$parent" "$target" "$token" || true
+    if [ -n "${private_parent_canon:-}" ] \
+        && [ ! -L "$private_parent_canon" ] \
+        && [ -d "$private_parent_canon" ]; then
+        case "$private_parent_canon" in
+            /tmp/c1192-parent.*) rmdir -- "$private_parent_canon" 2>/dev/null || true ;;
+        esac
     fi
 }
 trap cleanup_private EXIT
