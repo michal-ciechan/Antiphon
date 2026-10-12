@@ -430,7 +430,9 @@ public sealed class RemoteScriptContractTests
             Fact(output, label).ShouldBe("1", label);
     }
 
-    // CARD-1192 S1. Cleanup removes only the exact current-run set, consumers and helpers first.
+    // CARD-1192 S1. This cleanup proof covers the registered cache/work/mask set,
+    // consumers and helpers first. Compose down -v checks exit status only; residual
+    // Compose-created volumes after exit zero are not detected (CARD-1207).
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public void C1192_Cleanup_releases_only_registered_current_run_resources()

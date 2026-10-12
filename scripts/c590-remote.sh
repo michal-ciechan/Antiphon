@@ -3018,8 +3018,9 @@ c849_fixture_cleanup_unknown() {
     printf 'Fixture cleanup outcome unknown: %s %s; identity retained in cleanup residue\n' "$kind" "$identity" >&2
 }
 
-# A removal acknowledgement is not absence. Reinspect even after exit zero;
-# repeated removal is successful only when the exact resource is confirmed gone.
+# This resource-removal helper reinspects even after exit zero; repeated removal
+# succeeds only when the exact resource is confirmed gone. Compose down does not
+# use this helper; its exit-status-only teardown is tracked by CARD-1207.
 c849_fixture_resource_remove() {
     local kind="$1" identity="$2" name="${3:-$2}" state=0
     case "$kind" in
@@ -4459,9 +4460,9 @@ c849_fixture_controller_remove() {
     )
 }
 
-# Exact names may be positively absent on repeated finalization. Unknown probes
-# (including daemon loss with exit 1) retain identities and refuse success.
-# This is a refusal contract; native Docker acceptance remains rollout-owned W-1.
+# Consumer release accepts positively absent exact names on repeated finalization.
+# Unknown probes (including daemon loss with exit 1) retain identities and refuse
+# success. Native Docker acceptance remains rollout-owned W-1, pending.
 c849_fixture_consumer_release() {
     local name="$1" identity="${2:-$1}" code=0 actual
     c849_fixture_resource_state container "$identity" || code=$?
@@ -4472,6 +4473,11 @@ c849_fixture_consumer_release() {
     c849_fixture_resource_remove container "$identity" "$name"
 }
 
+# Workspace/helper acquisition and consumer/helper/work/mask/cache/network removal
+# require positive confirmation; unknown outcomes retain named residue and refuse
+# success. Compose teardown checks only the exit status of down -v: residual
+# Compose-created volumes after exit zero are not detected here (CARD-1207,
+# inherited limitation). Native acceptance W-1 remains pending.
 c849_fixture_finalize() {
     local project file name marker identity network="c849-${RUN}-npm" code=0 owned=0
     [ "${C849_FIXTURE_FINALIZED:-0}" != 1 ] || return "${C849_FIXTURE_FINALIZATION_STATUS:-0}"
@@ -4491,7 +4497,7 @@ c849_fixture_finalize() {
     elif [ -e "$CASE_DIR/fixture-controller" ] || [ -L "$CASE_DIR/fixture-controller" ]; then
         printf 'fixture-controller\n' >> "$CASE_DIR/fixture-cleanup-residue.txt"
     fi
-    # Quiesce every known consumer before reading logs or releasing helpers.
+    # Attempt release of the listed consumers before reading logs or releasing helpers.
     for name in "c849-${RUN}-restore-p1" "c849-${RUN}-restore-p2" "c849-${RUN}-restore-p3" \
         "c849-${RUN}-lock-holder-shared" "c849-${RUN}-lock-waiter-shared" \
         "c849-${RUN}-lock-holder-private" "c849-${RUN}-lock-waiter-private" \
