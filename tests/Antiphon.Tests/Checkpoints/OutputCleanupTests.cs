@@ -628,6 +628,24 @@ public sealed class OutputCleanupTests : CheckpointTestBase
         File.WriteAllBytes(dll, original);
         CommitAll(root);
         Directory.CreateDirectory(Path.Combine(root, "results"));
+        var driver = new FakeDriver();
+        driver.When(CheckpointFixtures.IsBuild, (_, _) => Task.FromResult(new DriverResult(0, "", "")));
+        var rowOutput = new StringWriter();
+        var row = await new RowRunner(driver, new RuntimePlatform()).RunAsync(new RowRequest
+        {
+            Name = "CP-1",
+            Project = "App/App.csproj",
+            OutputPath = "bin-probe2/",
+            Filter = "/*/*/Unused/*",
+            ResultsDirectory = Path.Combine(root, "row-results"),
+            WorkingDirectory = root,
+            Source = new SourceEvidence { Start = CheckpointFixtures.CleanSource() },
+        }, rowOutput, CancellationToken.None);
+        driver.Calls.Count.ShouldBe(0);
+        row.ExitCode.ShouldBe(ExitCodes.Invalid);
+        File.ReadAllBytes(dll).ShouldBe(original);
+        rowOutput.ToString().ShouldContain("refused: tracked");
+
         var launched = 0;
         var output = new StringWriter();
         var manifest = ProbeManifest("App/App.csproj", "bin-probe2");
@@ -949,7 +967,7 @@ public sealed class OutputCleanupTests : CheckpointTestBase
     {
         ResultsRoot = "results",
         Builds = [new BuildSpec { Id = output, Project = project, OutputPath = output + "/" }],
-        Checkpoints = [new CheckpointSpec { Id = "CP-1", Build = output, Filter = "/*/*/Unused/*", MinExecuted = 1 }],
+        Checkpoints = [new CheckpointSpec { Id = "CP-1", After = ["S1"], Build = output, Filter = "/*/*/Unused/*", MinExecuted = 1 }],
     };
 
     private static void Git(string root, params string[] args)
