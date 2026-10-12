@@ -12,6 +12,7 @@ public sealed class SessionRunnerEventPump : BackgroundService
     private readonly SessionRunnerSettings _settings;
     private readonly ILogger<SessionRunnerEventPump> _logger;
     private readonly TimeProvider _time;
+    private int _abandonedHeldEvents;
 
     public SessionRunnerEventPump(
         IServiceScopeFactory scopeFactory,
@@ -21,6 +22,7 @@ public sealed class SessionRunnerEventPump : BackgroundService
     {
         _scopeFactory = scopeFactory;
         _settings = settings.Value;
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(_settings.HeldEventDeliveryTimeoutSeconds);
         _logger = logger;
         _time = time ?? TimeProvider.System;
     }
@@ -59,10 +61,9 @@ public sealed class SessionRunnerEventPump : BackgroundService
                         }
                         catch (Exception ex)
                         {
-                            // The marker carries the event held across this yield. Publish that
-                            // copy before the enumerator is disposed, then keep the existing
-                            // reconnect or host-shutdown path. A cancelled host token must not
-                            // block the callback.
+                            // Offer the marker's held payload once before disposing the iterator.
+                            // A pending consumer has a bounded drain; cancellation must neither
+                            // silently reject the initial offer nor obstruct shutdown forever.
                             var hostStopping = ex is OperationCanceledException
                                 && stoppingToken.IsCancellationRequested;
                             if (!hostStopping)
@@ -72,8 +73,7 @@ public sealed class SessionRunnerEventPump : BackgroundService
                                     "Subscription catch-up failed; delivering the held live event without snapshot coverage");
                             }
 
-                            await DispatchEventAsync(
-                                evt, scope.ServiceProvider, runtime, CancellationToken.None);
+                            await PreserveHeldEventAsync(evt, runtime, stoppingToken);
                             throw;
                         }
 
@@ -135,10 +135,81 @@ public sealed class SessionRunnerEventPump : BackgroundService
             // Per-session failures are swallowed (logged) inside SyncTranscriptAsync.
             using var phase = new RuntimePhase(_logger, TimeProvider.System, session.SessionId, "pump.catch-up");
             await runtime.SyncTranscriptAsync(session.SessionId, ct);
+            // Sync is best effort and swallows pull cancellation. In particular the last
+            // pull must not resume the iterator's held event with an already-cancelled token.
+            ct.ThrowIfCancellationRequested();
         }
+
+        ct.ThrowIfCancellationRequested();
 
         if (sessions.Count > 0)
             _logger.LogInformation("Transcript catch-up completed for {Count} runner session(s)", sessions.Count);
+    }
+
+    private async Task PreserveHeldEventAsync(
+        SessionRunnerEvent evt, AgentSessionRuntime runtime, CancellationToken stoppingToken)
+    {
+        using var deadline = new CancellationTokenSource(
+            TimeSpan.FromSeconds(_settings.HeldEventDeliveryTimeoutSeconds), _time);
+        using var hostSignal = new CancellationTokenSource();
+        using var deliveryToken = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token, hostSignal.Token);
+        using var phase = new RuntimePhase(_logger, _time, evt.SessionId, "pump.held-event-delivery");
+        // Own a separate scope: an asynchronous consumer that ignores cancellation can
+        // outlive this bounded wait. Its services stay alive until its task actually settles.
+        var deliveryScope = _scopeFactory.CreateAsyncScope();
+        Task? delivery = null;
+        var scopeTransferred = false;
+        try
+        {
+            // Give even a host already stopping one initial offer through the normal callback
+            // path. Linking that cancelled token before invocation would lose non-replayable
+            // output outright. Register immediately after invocation; Register observes both
+            // an earlier cancellation and one racing the offer. Only a pending task is drained.
+            delivery = DispatchEventAsync(evt, deliveryScope.ServiceProvider, runtime, deliveryToken.Token);
+            using var hostRegistration = stoppingToken.Register(hostSignal.Cancel);
+            await delivery.WaitAsync(deliveryToken.Token);
+            phase.Completed();
+        }
+        catch (OperationCanceledException) when (deliveryToken.IsCancellationRequested)
+        {
+            // The consumer is demonstrably still pending (or cancelled without completing
+            // delivery) at the host/deadline bound. This pump has no held-output redelivery
+            // queue; retrying an uncertain publication could duplicate accepted output.
+            // Explicitly abandon this attempt and unwind the iterator for shutdown/reconnect.
+            // Durable transcript payloads may be recovered by the existing next catch-up.
+            _logger.LogWarning(
+                "Held live event delivery abandoned: consumer did not complete within the cancellation/deadline bound; session={SessionId} event={EventName} reason={Reason} abandonedCount={AbandonedCount}",
+                evt.SessionId, evt.EventName, stoppingToken.IsCancellationRequested ? "host-cancellation" : "deadline",
+                Interlocked.Increment(ref _abandonedHeldEvents));
+            if (delivery is not null)
+            {
+                scopeTransferred = true;
+                _ = ObserveHeldDeliveryCompletionAsync(delivery, deliveryScope);
+            }
+        }
+        finally
+        {
+            if (!scopeTransferred)
+                await deliveryScope.DisposeAsync();
+        }
+    }
+
+    private async Task ObserveHeldDeliveryCompletionAsync(Task delivery, AsyncServiceScope scope)
+    {
+        try
+        {
+            await delivery;
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Abandoned held-event callback later failed");
+        }
+        finally
+        {
+            try { await scope.DisposeAsync(); }
+            catch (Exception ex) { _logger.LogWarning(ex, "Abandoned held-event callback scope disposal failed"); }
+        }
     }
 
     private async Task DispatchEventAsync(

@@ -78,8 +78,9 @@ changes a default, revise the corresponding slice and checkpoint before dispatch
   on its first exact `: keepalive` comment. Both originate after subscription in
   the current runner. The pump handles this marker by awaiting a second catch-up
   before dispatching any live event from that connection. If that list times out,
-  the already parsed event is delivered before the iterator is disposed and the
-  existing reconnect follows. Host cancellation delivers it and then stops. A
+  the already parsed event gets one bounded preservation offer before the iterator
+  is disposed and the existing reconnect follows. Host cancellation also offers
+  it once, then stops waiting on a pending consumer. A
   throwing list does not reconnect; the following yield delivers the event.
   Snapshot coverage is not claimed on any of those three. If a real event proved
   readiness, retain and emit that very event after the marker. This closes the
@@ -170,9 +171,9 @@ response, reader and stream. Reset readiness on every reconnect.
 
 In `SessionRunnerEventPump`, handle readiness before session-specific phase/event
 dispatch. Await catch-up, then resume the same enumerator. On a list timeout,
-deliver the already parsed event before the iterator is disposed, then use the
-existing reconnect path. On host cancellation, deliver it and then stop with the
-host. On a throwing list, leave the exception inside catch-up, do not reconnect,
+offer the already parsed event once before the iterator is disposed, then use the
+existing reconnect path. On host cancellation, offer it once and then stop waiting
+on a pending consumer. On a throwing list, leave the exception inside catch-up, do not reconnect,
 and deliver the event from the following yield. Do not wait for another stream
 read and do not extend the list deadline. The first held event
 and all following live events remain in connection order; overlapping transcript
@@ -181,9 +182,26 @@ must also survive being the first event. Do not synthesize readiness in the rout
 facade or phone-home pump. Use injected time for new timing and pump phases. No
 new polling loop runs on that serial event-consumer task.
 
-Repair round 2 binds the held-event rows at
+Repair round 2 binds the responsive held-event rows at
 `/*/*/SessionRunnerStreamReadinessTests/C1205_Held_event_survives_failed_second_catchup*`
-(success, timeout, throw, cancellation). The test-design CP-2 floor is 30.
+(success, timeout, throw, cancellation). Repair round 3 adds T48-T50 in
+`SessionRunnerHeldEventDeliveryTests`; the test-design CP-2 floor is 34.
+Its committed groups and exact filters are in
+[the repair checkpoint manifest](2026-10-12-card-1205-s2-repair3-checkpoints.md).
+
+Failure-path delivery uses the normal dispatcher with a linked deadline/host
+signal. `SessionRunner:HeldEventDeliveryTimeoutSeconds` defaults to 3 and must be
+positive; its timer uses the injected TimeProvider. An already-stopping host gets
+one initial callback offer before the host link is applied, preserving responsive
+non-replayable output. A consumer still pending at cancellation/deadline is explicitly
+warned once with an abandonment count; its attempt is abandoned, with no duplicate
+retry of an uncertain output publication. Its service scope remains owned until
+the callback task settles, and late faults are observed. The iterator still disposes
+and shutdown/reconnect proceeds. Durable transcript events can be recovered by the
+existing next catch-up; no output replay queue exists. This bounds the asynchronous
+wait, not arbitrary synchronous callback code or normal successful-path callbacks.
+Cancellation swallowed by the final transcript sync is checked before normal
+dispatch resumes and enters the same bounded preservation path.
 
 Coverage argument: let S be subscription registration, P the first qualifying
 frame, and C2 the second snapshot. The producer appends a transcript row to its
@@ -192,8 +210,9 @@ published at/after S is in the existing subscriber stream and may also be in C2.
 P proves S already occurred, and the pump completes C2 before consuming the held
 live event. Overlap is idempotent. This argument is conditional on successful
 snapshot/persistence and a surviving stream. When that list times out, the held
-live event is delivered before the existing reconnect, and snapshot coverage is not
-claimed. Host cancellation delivers it and then stops. A throwing list does not
+live event receives the bounded offer before reconnect, and snapshot coverage is not
+claimed. Host cancellation offers it and then stops waiting on a pending consumer.
+A throwing list does not
 reconnect; the following yield delivers the event and snapshot coverage is not
 claimed. Timeout failures retain normal reconnect recovery and independent watchdog
 debt. Logs must distinguish “pass attempted”

@@ -6,6 +6,14 @@ public sealed class SessionRunnerSettings
     public bool Enabled { get; set; } = true;
     public int EventReconnectDelayMs { get; set; } = 1000;
 
+    /// <summary>
+    /// Maximum monotonic wait for a held live event's callback after subscription catch-up
+    /// fails or is cancelled. Defaults to 3 seconds; must be positive. Host cancellation
+    /// also ends the wait. A still-pending consumer is explicitly warned and abandoned;
+    /// this is a shutdown/reconnect bound, not a delivery or snapshot-coverage guarantee.
+    /// </summary>
+    public int HeldEventDeliveryTimeoutSeconds { get; set; } = 3;
+
     /// <summary>Timeout for ordinary request/response calls to the runner (HttpClient.Timeout).</summary>
     public int RequestTimeoutSeconds { get; set; } = 100;
 

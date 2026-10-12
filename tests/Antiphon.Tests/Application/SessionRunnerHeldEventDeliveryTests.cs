@@ -98,6 +98,7 @@ public class SessionRunnerHeldEventDeliveryTests
     {
         private readonly ServiceProvider _services;
         private readonly HttpClient _http;
+        private readonly TrackedScopeFactory _scopes;
         public CancellationTokenSource Host { get; } = new();
         public FakeTimeProvider Time { get; } = new();
         public DeliveryHandler Handler { get; }
@@ -124,7 +125,8 @@ public class SessionRunnerHeldEventDeliveryTests
             services.AddLogging();
             services.AddSingleton<AgentSessionRuntime>();
             _services = services.BuildServiceProvider();
-            Pump = new SessionRunnerEventPump(_services.GetRequiredService<IServiceScopeFactory>(), settings, Log, Time);
+            _scopes = new TrackedScopeFactory(_services.GetRequiredService<IServiceScopeFactory>());
+            Pump = new SessionRunnerEventPump(_scopes, settings, Log, Time);
         }
 
         public async ValueTask DisposeAsync()
@@ -133,11 +135,38 @@ public class SessionRunnerHeldEventDeliveryTests
             Bus.Release.TrySetResult();
             Host.Cancel();
             await Pump.StopAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(5));
+            // The bounded wait may end before a non-cooperative callback. Join its retained
+            // scope after releasing it, before disposing the root provider (also on red).
+            await Task.WhenAll(_scopes.Disposals).WaitAsync(TimeSpan.FromSeconds(5));
             Pump.Dispose();
             _http.Dispose();
             Handler.Dispose();
             await _services.DisposeAsync();
             Host.Dispose();
+        }
+    }
+
+    private sealed class TrackedScopeFactory(IServiceScopeFactory inner) : IServiceScopeFactory
+    {
+        private readonly List<Task> _disposals = [];
+        public Task[] Disposals { get { lock (_disposals) return _disposals.ToArray(); } }
+        public IServiceScope CreateScope()
+        {
+            var disposed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            lock (_disposals) _disposals.Add(disposed.Task);
+            return new TrackedScope(inner.CreateScope(), disposed);
+        }
+
+        private sealed class TrackedScope(IServiceScope inner, TaskCompletionSource disposed) : IServiceScope, IAsyncDisposable
+        {
+            public IServiceProvider ServiceProvider => inner.ServiceProvider;
+            public void Dispose() { inner.Dispose(); disposed.TrySetResult(); }
+            public async ValueTask DisposeAsync()
+            {
+                if (inner is IAsyncDisposable asyncDisposable) await asyncDisposable.DisposeAsync();
+                else inner.Dispose();
+                disposed.TrySetResult();
+            }
         }
     }
 

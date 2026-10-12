@@ -536,7 +536,7 @@ Existing unchanged internals beyond these boundaries remain the stated exclusion
 this design and compiled bindings before land. On unpause after confirmed land,
 Mutation must run the **whole** inventory, method-scoped, as baseline green -> break ->
 expected assertion red -> restore exact source -> restored green. No PC is credited
-here as run. The later completion gate is 114/114 cycles executed with provenance.
+here as run. The later completion gate is 119/119 cycles executed with provenance.
 PC-111..PC-114 are the held-event repair controls. This TestDesign handoff is not a
 claim of verification completion.
 
@@ -766,8 +766,8 @@ additional ordinary checkpoint table:
 
 This is the **closed ordinary manifest** replacing only the plan's proposed table.
 One isolated build and one exact filter per row; `Min` is TUnit executions.
-The union is 170 distinct ordinary cases; CP-1 executes two again on baseline,
-so the sequential Code total is 172 executions, including the one intended red.
+The union is 174 distinct ordinary cases; CP-1 executes two again on baseline,
+so the sequential Code total is 176 executions, including the one intended red.
 Current existing counts are source-bound, future counts are frozen target rosters
 to bind in Code. Any extra/missing/skip result needs a manifest amendment and
 explanation, not silently treating a floor as the census. No broad Unit lane.
@@ -814,7 +814,7 @@ allocation **65 minutes**. The fixed-source ordinary selection CP-2..CP-6 is
 The plan's original 46-minute proposed floor is replaced by 61, a **15-minute**
 increase for expanded cases, not an executed slowdown.
 
-Mutation is separately paused. Price **114** method-scoped baseline/red/restored-green
+Mutation is separately paused. Price **119** method-scoped baseline/red/restored-green
 cycles. The arithmetic below still prices the original 110 (17 H5 controls plus 93);
 PC-111..PC-114 are four additional cycles outside that sum. PC-84..100 (17 H5 controls) each estimate
 1 minute patch/restore + 3 phases x 3 minutes build-and-method = **10 minutes**
@@ -875,7 +875,7 @@ after this TestDesign settles. No dispatch, scope change or board update was mad
 
 Design census: **guards=110, mapped=110, missing=0, duplicate PC maps=0**.
 44 new method reservations / 141 argument-expanded cases, plus 29 existing cases =
-170 fixed-source cases. CP-1 adds 2 baseline executions = 172 across S1..S5.
+174 fixed-source cases. CP-1 adds 2 baseline executions = 176 across S1..S5.
 PC executions in this task: **0**; all 110 remain pending under the explicit paused
 post-land policy. Executable payload binding remains required after Code; Review
 must reject a renamed, unreachable or non-red-capable payload without an amendment.
