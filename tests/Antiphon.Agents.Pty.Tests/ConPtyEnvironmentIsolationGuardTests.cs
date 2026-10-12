@@ -158,10 +158,17 @@ public sealed class ConPtyEnvironmentIsolationGuardTests
         while (pending.TryPop(out var body))
         {
             if (!visited.Add(body)) continue;
-            var stateMachine = body.GetCustomAttribute<AsyncStateMachineAttribute>()?.StateMachineType
-                ?? body.GetCustomAttribute<IteratorStateMachineAttribute>()?.StateMachineType;
-            if (stateMachine?.GetMethod("MoveNext", BindingFlags.Public | BindingFlags.NonPublic
-                | BindingFlags.Instance) is { } moveNext) pending.Push(moveNext);
+            // The common attribute also covers AsyncIteratorStateMachineAttribute.
+            // A recognized but unreadable shape must never make the census green.
+            var stateMachine = body.GetCustomAttribute<StateMachineAttribute>()?.StateMachineType;
+            if (stateMachine is not null)
+            {
+                var moveNext = stateMachine.GetMethod("MoveNext", BindingFlags.Public | BindingFlags.NonPublic
+                    | BindingFlags.Instance);
+                if (moveNext?.GetMethodBody() is null)
+                    throw new InvalidOperationException($"State machine for {body.DeclaringType!.Name}.{body.Name} has no MoveNext body");
+                pending.Push(moveNext);
+            }
             var il = body.GetMethodBody()?.GetILAsByteArray();
             if (il is null) continue;
             for (var offset = 0; offset < il.Length;)
