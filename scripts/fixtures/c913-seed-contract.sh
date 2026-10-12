@@ -929,7 +929,12 @@ case "$mode" in
     pass foreign-ledger-no-remove
     mkdir -m700 "$CASE_DIR/fixture-controller"
     printf foreign-controller > "$CASE_DIR/fixture-controller/foreign"
-    run c849_fixture; refuse occupied-fixture-refused FixtureControllerOccupied
+    occupied_fixture() {
+      WROTE=0
+      write_result() { WROTE=1; printf 'RESULT %s %s\n' "$1" "$2"; exit "$3"; }
+      c849_fixture
+    }
+    run occupied_fixture; refuse occupied-fixture-refused FixtureControllerOccupied
     [ "$(cat "$CASE_DIR/fixture-controller/foreign")" = foreign-controller ] || fail occupied-controller-preserved
     rm -rf -- "$CASE_DIR/fixture-controller"
     : > "$CASE_DIR/fixture-control-variants.txt"; : > "$CASE_DIR/fixture-controls.txt"

@@ -245,13 +245,17 @@ public sealed class RemoteScriptContractTests
     public void C1192_Fixture_has_no_host_payload_tree_or_payload_bind()
     {
         Block(Remote(), "c849_fixture").ShouldNotContain("/tmp/c849-fixture-");
+        Order(Block(Remote(), "c849_fixture"), "c849_lock", "SERVER2_ROOT=").ShouldBeTrue("lock-before-controller-root");
+        C913Run("fixture-seed", "fixture-rerun-sentinel-retained");
+        C913Run("volume-recovery", "volume-recovery-restored");
         var output = C1192Run("finalization");
         Fact(output, "success-control-root").ShouldBe("1", output);
         Fact(output, "success-volume-payload").ShouldBe("1", output);
         Fact(output, "success-host-decoy").ShouldBe("1", output);
         foreach (var name in new[] { "c849_fixture_restore_container", "c849_fixture_lock_container",
             "c849_fixture_apphost", "c849_fixture_masked_pack", "c849_fixture_npm_work",
-            "c849_fixture_npm_install", "c849_fixture_npm", "c849_fixture_refill_tarball" })
+            "c849_fixture_npm_install", "c849_fixture_npm", "c849_fixture_refill_tarball",
+            "c849_fixture_refill", "c849_fixture_warm_probe" })
         {
             foreach (var command in Commands(Block(Remote(), name)).Where(c => c.Contains("type=bind")))
             {
@@ -269,7 +273,8 @@ public sealed class RemoteScriptContractTests
         foreach (var key in new[] { "success-last", "success-repeat", "primary-preserved",
             "unhandled-preserved", "delete-refuses-success", "delete-exact-residue",
             "delete-continues", "export-refuses-success", "early-success-refused",
-            "docker-unavailable-refused", "compose-before-removal", "foreign-controller-preserved" })
+            "docker-unavailable-refused", "compose-before-removal", "foreign-controller-preserved",
+            "early-exit-refused", "foreign-helper-residue", "primary-secondary-preserved" })
             Fact(output, key).ShouldBe("1", key + "\n" + output);
     }
 
@@ -727,7 +732,7 @@ public sealed class RemoteScriptContractTests
     }
 
     // CARD-1193. The verifier scp exports CASE_DIR. These logs are written under the private
-    // tree, so the exit trap must copy regular files before sudo removes that tree.
+    // controller, so finalization must copy regular files before removing that directory.
     // A symlink source or a symlink CASE_DIR must not be followed. A directory or symlink at
     // the destination is removed without following it, and cp -T runs only when that removal
     // succeeded and the name is absent, so the write cannot land outside the case directory.
@@ -753,6 +758,7 @@ public sealed class RemoteScriptContractTests
     public void C1193_Fixture_log_copy_skips_symlinks_and_copies_regular_files()
     {
         var snippet = Block(Remote(), "c849_fixture_export_logs");
+        snippet.ShouldContain("[ -f \"$SERVER2_ROOT/$name\" ]", customMessage: "nonregular-source-skipped");
         var output = LinuxShell("set -euo pipefail\n" + snippet + "\ncopy_logs() { c849_fixture_export_logs; }\n" + """
             root="$(mktemp -d)"
             trap 'rm -rf -- "$root"' EXIT
