@@ -1016,7 +1016,7 @@ docker() {
                         exit2-absent) printf 'Error: No such %s: %s\n' "$PROBE_KIND" "$PROBE_NAME" >&2; return 2 ;;
                         other-name) printf 'Error: No such %s: foreign-resource\n' "$PROBE_KIND" >&2; return 1 ;;
                         other-kind) printf 'Error: No such image: %s\n' "$PROBE_NAME" >&2; return 1 ;;
-                        mixed) printf 'Cannot connect to the Docker daemon\nError: No such %s: %s\n' "$PROBE_KIND" "$PROBE_NAME" >&2; return 1 ;;
+                        mixed) printf 'Error: No such %s: %s\nCannot connect to the Docker daemon\n' "$PROBE_KIND" "$PROBE_NAME" >&2; return 1 ;;
                         timeout) printf 'probe timed out\n' >&2; return 124 ;;
                         empty) return 1 ;;
                         permission) printf 'permission denied\n' >&2; return 1 ;;
