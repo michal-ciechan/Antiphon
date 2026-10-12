@@ -8,7 +8,7 @@ Weak-arm probes, per-input resolution, original soleInput cardinality and fallba
 
 ## Files and slices
 
-S0: this note first. S1: tests and frozen 227a00a0e builder, run CP-0 with unchanged production expecting guarded assertion failures. S2: merge queries, then ordinary closed rows. Files: `server/Application/Services/AttentionService.TaskInputs.cs`, `tests/Antiphon.Tests/Application/TaskInputAttentionCostTests.cs`. Evidence: ignored `.antiphon/checkpoints/` and `.antiphon/task-a3dcaef9.md`.
+S0: this note first. S1: tests and frozen 227a00a0e builder, run CP-0 with unchanged production expecting guarded assertion failures. S2: merge queries. S3: verification-profile repair after S2's Unit row hit its unchanged 15-minute deadline under global serial execution: cap Unit at four concurrent cases, retaining process-spawn limiters and serial affected database rows. Rerun the ordinary rows on S3's committed HEAD for matching build provenance. No assertion or timeout is changed. Files: `server/Application/Services/AttentionService.TaskInputs.cs`, `tests/Antiphon.Tests/Application/TaskInputAttentionCostTests.cs`. Evidence: ignored `.antiphon/checkpoints/` and `.antiphon/task-a3dcaef9.md`.
 
 ## Verification design
 
@@ -39,10 +39,10 @@ No deliberate mutants run by Code. Restart: none.
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
 |---|---|---|---|---|---|---|---:|---:|---|---|
 | CP-0 | S1 | `tests/Antiphon.Tests -> bin-c0993-red/` | base-red | `/*/*/TaskInputAttentionCostTests/(Strong_arm_uses_one_query_without_draining_candidates*)\|(Single_query_boundary_matches_frozen_builder*)` | V-1, V-2 red | 13 guarded assertion failures expected | 13 | 5 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-1 | S2 | `tests/Antiphon.Tests -> bin-c0993/` | single-query-and-weak | `/*/*/(TaskInputAttentionCostTests*)\|(TaskInputWeakArmBoundaryTests*)/*` | V-1, V-2, R-1 | all listed, 0 failed | 52 | 8 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-2 | S2 | `CP-1` | attention-adjacent | `/*/*/(AttentionServiceTests*)\|(AttentionFeedNoiseTests*)\|(TaskInputReadFailureTests*)\|(AgentTaskInputSpillTests*)\|(AgentTaskInputFallbackTests*)/*` | R-2 | all listed, 0 failed | 212 | 10 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-3 | S2 | `CP-1` | final-unit | `/*/*/*/*[Category=Unit]` | R-3 | >= 1900 executed, 0 failed | 1900 | 5 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-1 | S3 | `tests/Antiphon.Tests -> bin-c0993/` | single-query-and-weak | `/*/*/(TaskInputAttentionCostTests*)\|(TaskInputWeakArmBoundaryTests*)/*` | V-1, V-2, R-1 | all listed, 0 failed | 52 | 8 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-2 | S3 | `CP-1` | attention-adjacent | `/*/*/(AttentionServiceTests*)\|(AttentionFeedNoiseTests*)\|(TaskInputReadFailureTests*)\|(AgentTaskInputSpillTests*)\|(AgentTaskInputFallbackTests*)/*` | R-2 | all listed, 0 failed | 212 | 10 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-3 | S3 | `CP-1` | final-unit | `/*/*/*/*[Category=Unit]` | R-3 | >= 1900 executed, 0 failed | 1900 | 5 | true | `TUNIT_MAX_PARALLEL_TESTS=4` |
 
 ### Cost
 
-Ordinary estimate 23 minutes plus authoring; pre-slice red 5 minutes. One isolated build per committed group, UseAppHost=false, forward-slash output. Run checkpoint tool with `--after S1` or `--after S2` and committed `--expected-source-sha`; wait until exit is not 75. Bind if ANTIPHON_TASK_TOKEN is present, otherwise state unbound. No repeats after green.
+Ordinary estimate 23 minutes plus authoring; pre-slice red 5 minutes. One isolated build per committed group, UseAppHost=false, forward-slash output. Run checkpoint tool with `--after S1` or `--after S3` and committed `--expected-source-sha`; wait until exit is not 75. Bind if ANTIPHON_TASK_TOKEN is present, otherwise state unbound. S2's CP-1/CP-2 were green; their S3 rerun solely qualifies the new committed manifest/source SHA after CP-3's execution-profile repair. No further repeats after green.
