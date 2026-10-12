@@ -19,6 +19,7 @@ CASE=runner-cache-seed; C604_SERVER_ORIGIN=https://example.invalid
 image_id=sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 donor_id=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
 FAULT=none; SOURCE=live; CRASH=''
+C913_RECOVERY="$SERVER2_ROOT/cache/recovery-$RUN"
 mkdir -p "$SERVER2_ROOT/cache" "$CASE_DIR" "$root/bin" "$root/donor/packages" "$root/donor/npm"
 for name in "$C849_PACKAGES" "$C849_SCRATCH" "$C849_NPM"; do mkdir -m 700 -p "$root/volumes/$name/_data"; done
 printf outside > "$root/outside"
@@ -295,7 +296,7 @@ mv() {
     if [ "$FAULT" = publication ] && [[ "$*" == *"$C849_READY.tmp-"* ]]; then return 1; fi
     local step=''
     if [[ "$*" == *"$C849_READY.tmp-"* ]]; then step=publication; barrier before-publication
-    elif [[ "$1" == "$SERVER2_ROOT/cache/stage-"* ]]; then step=recovery; fi
+    elif [[ "$1" == *"/cache/stage-"* ]]; then step=recovery; fi
     command mv "$@" || return $?
     [ -z "$step" ] || barrier "after-$step"
 }
@@ -312,7 +313,7 @@ run() { local status=0; ( export root SERVER2_ROOT C849_READY RUN FAULT CRASH; e
 accept() { [ "$(cat "$root/exit")" = 0 ] || fail "$1"; pass "$1"; }
 refuse() { [ "$(cat "$root/exit")" = 2 ] && grep -Fq "$2" "$root/out" || fail "$1"; [ "$(cat "$root/outside")" = outside ] || fail sibling-changed; pass "$1"; }
 make_full_marker() {
-    local recovery="$SERVER2_ROOT/cache/recovery-$RUN" manifest
+    local recovery="$C913_RECOVERY" manifest
     mkdir -p "$recovery"; ordinary "$recovery"
     # Independent serializer used to set up readiness before the new writer exists.
     {
@@ -325,13 +326,61 @@ make_full_marker() {
       done < <(cd "$recovery"; find packages npm -print | LC_ALL=C sort)
     } > "$recovery/recovery.manifest"
     manifest=$(sha256sum "$recovery/recovery.manifest" | cut -d' ' -f1)
-    printf 'schema=3\nkind=full\nsource-sha=%s\nimage=%s\ndonor-type=live\ndonor=%s\ntime=2026-10-04T00:00:00Z\npackages=%s\nscratch=%s\nnpm=%s\npackage-bytes=123\nnpm-bytes=456\nrecovery=%s\nmanifest-sha256=%s\n' "$SHA" "$image_id" "$donor_id" "$C849_PACKAGES" "$C849_SCRATCH" "$C849_NPM" "$recovery" "$manifest" > "$C849_READY"
+    printf 'schema=3\nkind=full\nsource-sha=%s\nimage=%s\ndonor-type=live\ndonor=%s\ntime=2026-10-04T00:00:00Z\npackages=%s\nscratch=%s\nnpm=%s\npackage-bytes=123\nnpm-bytes=456\nrecovery=%s\nmanifest-sha256=%s\n' "$SHA" "$image_id" "$donor_id" "$C849_PACKAGES" "$C849_SCRATCH" "$C849_NPM" "$([ "$mode" = volume-prune ] && printf '/fixture/cache/recovery-%s' "$RUN" || printf '%s' "$recovery")" "$manifest" > "$C849_READY"
 }
+# The wrapper's npm/smoke tools have their own earlier slice recipients. Here Docker
+# models donor process state and tar transport while F-3 and shared Seed remain real.
+c913_fixture_wrapper() (
+    declare -f docker | sed '1s/docker/c913_docker/' > "$root/docker-function"
+    source "$root/docker-function"
+    docker() {
+        case "$1:${2:-}" in
+            create:*)
+                printf '%s\n' "$TEMP_PROJECT" > "$root/donor-project"
+                rm -rf "$root/donor"; mkdir -p "$root/donor/packages" "$root/donor/npm"
+                printf '%s\n' "$donor_id"; return ;;
+            start:*) c913_docker "$@"; printf true > "$root/donor-running"; return ;;
+            stop:*) c913_docker "$@"; printf false > "$root/donor-running"; return ;;
+            inspect:*)
+                if [[ "$3" == *'.State.Running'* ]]; then cat "$root/donor-running"; return; fi
+                if [[ "$3" == *'com.docker.compose.project'* ]]; then cat "$root/donor-project"; return; fi ;;
+            cp:*)
+                if [[ "$2" == "c849-${RUN}-writer:/fixture/"* ]]; then
+                    local path="${2#*:}"; path="${path%/.}"; path="$root/volumes/c849${RUN}-work/_data${path#/fixture}"
+                    tar -C "$path" -cf - .; return
+                fi ;;
+            exec:*)
+                if [[ "$*" == *"$donor_id mkdir"* ]]; then return; fi
+                if [[ "$*" == *"$donor_id tar"* ]]; then
+                    local dest="${@: -1}"
+                    case "$dest" in /home/app/.nuget/packages) dest="$root/donor/packages";; *) return 94;; esac
+                    tar -x -p -C "$dest"; return
+                fi ;;
+        esac
+        c913_docker "$@"
+    }
+    c849_prepare() {
+        local n
+        for n in "$C849_PACKAGES" "$C849_SCRATCH" "$C849_NPM"; do mkdir -m700 -p "$root/volumes/$n/_data"; done
+    }
+    c849_fixture_npm_work() { printf npm > "$root/donor/npm/content"; }
+    declare -f c849_fixture_control | sed '1s/c849_fixture_control/c913_wrapper_control/' > "$root/wrapper-control"
+    source "$root/wrapper-control"
+    c849_fixture_control() {
+        if [ "$1" = PC-16 ]; then printf busy-helper > "$CASE_DIR/.fixture-busy"; return; fi
+        c913_wrapper_control "$@"
+    }
+    write_result() { printf '%s %s\n' "$1" "$2" >> "$root/outer-results"; printf '%s\n' "$2"; exit "$3"; }
+    : > "$CASE_DIR/fixture-controls.txt"; : > "$CASE_DIR/fixture-control-variants.txt"
+    c849_fixture_seed
+)
+
 # S5: controller admission and helper filesystem recipients, without a Docker daemon.
-if [ "$mode" = fixture-seed ] || [ "$mode" = volume-recovery ]; then
+if [ "$mode" = fixture-seed ] || [ "$mode" = volume-recovery ] || [ "$mode" = volume-prune ]; then
     mkdir -p "$CASE_DIR/fixture-controller" "$root/volumes/c849${RUN}-work/_data/cache"
     printf '%s\n' "c849${RUN}-work" > "$CASE_DIR/.fixture-volumes"
     c849_payload_own volume
+    if [ "$mode" = volume-prune ]; then C913_RECOVERY="$root/volumes/c849${RUN}-work/_data/cache/recovery-$RUN"; fi
     c849_fixture_work_mount() { printf 'type=volume,source=c849%s-work,target=/fixture,volume-nocopy\n' "$RUN"; }
     c849_fixture_helper_exec() {
         local role="$1" code arg
@@ -347,14 +396,20 @@ if [ "$mode" = fixture-seed ] || [ "$mode" = volume-recovery ]; then
             script="${script//\/fixture/$root/volumes/c849${RUN}-work/_data}"
             shift 3
             local -a args=()
-            for arg in "$@"; do args+=("${arg//\/fixture/$root/volumes/c849${RUN}-work/_data}"); done
+            for arg in "$@"; do
+            case "$arg" in /fixture|/fixture/*) arg="$root/volumes/c849${RUN}-work/_data${arg#/fixture}" ;; esac
+            args+=("$arg")
+        done
             bash -c "$script" "${args[@]}"
             return
         fi
         code=$(cat)
         code="${code//\/fixture/$root/volumes/c849${RUN}-work/_data}"
         local -a args=()
-        for arg in "$@"; do args+=("${arg//\/fixture/$root/volumes/c849${RUN}-work/_data}"); done
+        for arg in "$@"; do
+            case "$arg" in /fixture|/fixture/*) arg="$root/volumes/c849${RUN}-work/_data${arg#/fixture}" ;; esac
+            args+=("$arg")
+        done
         "${args[@]}" <<< "$code"
     }
 fi
@@ -367,25 +422,63 @@ case "$mode" in
     physical="$root/volumes/c849${RUN}-work/_data/cache/recovery-$RUN"
     for part in packages npm; do diff -r "$root/donor/$part" "$root/volumes/$([ "$part" = packages ] && echo "$C849_PACKAGES" || echo "$C849_NPM")/_data" || fail fixture-recipient-bytes; done
     [ "$(stat -c %a "$physical/packages/c913.tools/2.0.0/tool")" = 751 ] || fail fixture-recipient-executable
-    [ ! -e "$SERVER2_ROOT/cache/recovery-$RUN" ] || fail fixture-no-host-recovery
+    [ ! -e "$C913_RECOVERY" ] || fail fixture-no-host-recovery
     printf keep > "$root/volumes/$C849_PACKAGES/_data/rerun-sentinel"
     run c849_seed; accept fixture-rerun-accepted
     [ "$(cat "$root/volumes/$C849_PACKAGES/_data/rerun-sentinel")" = keep ] || fail fixture-rerun-sentinel-retained
     pass fixture-rerun-sentinel-retained
-    for FAULT in copy-packages copy-npm npm-verify corrupt-import corrupt-npm-import smoke recovery-save restart donor-id reconnect publication; do
+    awk '/barrier after-recovery/{recovery=NR} /barrier before-publication/{if(recovery && recovery<NR) ok=1} END {exit !ok}' "$root/trace" || fail fixture-publication-last
+    pass fixture-publication-last
+    for FAULT in unsafe-tree copy-packages copy-npm npm-verify corrupt-import corrupt-npm-import smoke recovery-save restart donor-id reconnect publication; do
       rm -f "$C849_READY"; rm -rf -- "$physical"
       for name in "$C849_PACKAGES" "$C849_NPM"; do find "$root/volumes/$name/_data" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +; done
       : > "$root/trace"
+      if [ "$FAULT" = unsafe-tree ]; then ln -s "$root/outside" "$root/donor/packages/escape"; fi
       run c849_seed
-      [ "$(cat "$root/exit")" != 0 ] && [ ! -e "$C849_READY" ] || fail "fixture-$FAULT-no-marker"
+      case "$FAULT" in
+        unsafe-tree) diagnosis=CacheDonorUnsafeEntry ;;
+        copy-packages) diagnosis=CacheDonorPackageCopyFailed ;;
+        copy-npm) diagnosis=CacheDonorNpmCopyFailed ;;
+        npm-verify) diagnosis=NpmStagedIntegrityFailed ;;
+        corrupt-import|corrupt-npm-import) diagnosis=CacheSeedImportChanged ;;
+        smoke) diagnosis=CacheSeedSmokeFailed ;;
+        recovery-save) diagnosis=CacheRecoverySaveFailed ;;
+        restart) diagnosis=CacheDonorRestartFailed ;;
+        donor-id) diagnosis=CacheDonorIdentityChanged ;;
+        reconnect) diagnosis=CacheDonorReconnectFailed ;;
+        publication) diagnosis=CacheSeedMarkerInvalid ;;
+      esac
+      refuse "fixture-$FAULT-no-marker" "$diagnosis"
+      if [ "$FAULT" = unsafe-tree ]; then rm "$root/donor/packages/escape"; ! grep -q '^import$' "$root/trace" || fail fixture-unsafe-tree-refused; fi
+      [ ! -e "$C849_READY" ] || fail "fixture-$FAULT-no-marker"
       if [ "$FAULT" = npm-verify ]; then ! grep -q '^import$' "$root/trace" || fail fixture-integrity-before-import; fi
-      pass "fixture-$FAULT-no-marker"
     done
+    FAULT=none
+    rm -rf "$root/volumes/c849${RUN}-work/_data/cache" "$root/volumes/c849${RUN}-work/_data/donor"
+    mkdir -p "$root/volumes/c849${RUN}-work/_data/cache" "$root/volumes/c849${RUN}-work/_data/donor"
+    : > "$root/outer-results"
+    run c913_fixture_wrapper; accept fixture-wrapper-accepted
+    grep -Fxq 'PASS F-3' "$CASE_DIR/fixture-groups.txt" || fail fixture-wrapper-group-required
+    ! grep -q '^true ' "$root/outer-results" || fail fixture-wrapper-no-outer-publication
+    [ "$(cat "$root/volumes/c849${RUN}seed-packages/_data/rerun-sentinel")" = keep-after-rerun ] || fail fixture-wrapper-rerun-sentinel
+    [ "$(cat "$root/volumes/c849${RUN}-work/_data/cache/recovery-$RUN/packages/c913.tools/2.0.0/tool")" = fixture-native-host ] || fail fixture-wrapper-recovery-bytes
+    pass fixture-wrapper-no-outer-publication
+    for name in "c849${RUN}seed-packages" "c849${RUN}seed-scratch" "c849${RUN}seed-npm"; do rm -rf "$root/volumes/$name"; done
+    rm -f "$SERVER2_ROOT/cache/fixture-seed-ready"
+    rm -rf "$root/volumes/c849${RUN}-work/_data/cache" "$root/volumes/c849${RUN}-work/_data/donor"
+    mkdir -p "$root/volumes/c849${RUN}-work/_data/cache" "$root/volumes/c849${RUN}-work/_data/donor"
+    printf '%s\n' "c849${RUN}-work" > "$CASE_DIR/.fixture-volumes"
+    : > "$root/outer-results"
+    FAULT=smoke
+    run c913_fixture_wrapper; refuse fixture-wrapper-failure-no-success FixtureSeedFailed
+    ! grep -q '^true ' "$root/outer-results" || fail fixture-wrapper-failure-no-success
+    [ ! -e "$SERVER2_ROOT/cache/fixture-seed-ready" ] || fail fixture-wrapper-failure-no-marker
     ;;
  volume-recovery)
     recovery="/fixture/cache/recovery-$RUN"
     physical="$root/volumes/c849${RUN}-work/_data/cache/recovery-$RUN"
     ordinary "$physical"
+    printf npm-content > "$physical/npm/fixture-content"
     c849_manifest_write "$physical" "$physical/recovery.manifest"
     digest=$(sha256sum "$physical/recovery.manifest" | cut -d' ' -f1)
     run c849_recovery_check "$recovery" "$digest"; accept volume-recovery-valid
@@ -413,6 +506,25 @@ case "$mode" in
     run c849_recovery_check "$recovery" "$digest"; refuse volume-manifest-link-refused CacheRecoveryMissing
     rm "$physical/recovery.manifest"; mv "$physical/manifest.missing" "$physical/recovery.manifest"
     run c849_recovery_check /fixture/escape/recovery-other "$digest"; refuse volume-escape-refused CacheRecoveryInvalid
+    # Execute the actual F-9 mutation/restoration loop, retaining the real control reader.
+    # Warm/inventory/cleanup controls are independent scopes; their existing CPs own them.
+    declare -f c849_fixture_control | sed '1s/c849_fixture_control/c913_recovery_control/' > "$root/control-function"
+    source "$root/control-function"
+    c849_fixture_control() {
+        case "$1" in PC-27|PC-31|PC-32) return 0 ;; esac
+        c913_recovery_control "$@"
+    }
+    c849_volume() { mkdir -m700 -p "$root/volumes/$1/_data"; }
+    : > "$CASE_DIR/fixture-controls.txt"; : > "$CASE_DIR/fixture-control-variants.txt"
+    printf 'recovery=%s\nmanifest-sha256=%s\n' "$recovery" "$digest" > "$C849_READY"
+    cp "$physical/recovery.manifest" "$root/golden-recovery-manifest"
+    run c849_fixture_contract_controls; accept volume-recovery-controls
+    [ "$(grep -c '^PC-28\.' "$CASE_DIR/fixture-control-variants.txt")" = 4 ] || fail recovery-four-corruptions-reached
+    [ "$(grep -c '^PC-29\.' "$CASE_DIR/fixture-control-variants.txt")" = 2 ] || fail recovery-two-missing-reached
+    [ "$(cat "$physical/packages/c913.probe/1.0.0/data")" = probe ] || fail recovery-package-restored
+    [ "$(cat "$physical/npm/fixture-content")" = npm-content ] || fail recovery-npm-restored
+    [ "$(stat -c %a "$physical/packages/c913.tools/2.0.0/tool")" = 751 ] || fail recovery-mode-restored
+    cmp -s "$root/golden-recovery-manifest" "$physical/recovery.manifest" || fail recovery-manifest-restored
     run c849_recovery_check "$recovery" "$digest"; accept volume-recovery-restored
     ;;
  tree)
@@ -455,10 +567,10 @@ case "$mode" in
     [ "$(cat "$root/exit")" = 0 ] && grep -Fxq schema=3 "$C849_READY" || fail schema3-published
     pass schema3-published
     for part in packages npm; do diff -r "$root/donor/$part" "$root/volumes/$([ "$part" = packages ] && echo "$C849_PACKAGES" || echo "$C849_NPM")/_data" || fail recipient-bytes; done
-    [ "$(stat -c %a "$SERVER2_ROOT/cache/recovery-$RUN/packages/c913.tools/2.0.0/tool")" = 751 ] || fail recipient-executable
-    printf 'MANIFEST_BASE64='; base64 -w0 "$SERVER2_ROOT/cache/recovery-$RUN/recovery.manifest"; printf '\n'
-    printf 'MANIFEST_DIGEST=%s\n' "$(sha256sum "$SERVER2_ROOT/cache/recovery-$RUN/recovery.manifest" | cut -d' ' -f1)"
-    cp "$SERVER2_ROOT/cache/recovery-$RUN/recovery.manifest" "$root/golden"
+    [ "$(stat -c %a "$C913_RECOVERY/packages/c913.tools/2.0.0/tool")" = 751 ] || fail recipient-executable
+    printf 'MANIFEST_BASE64='; base64 -w0 "$C913_RECOVERY/recovery.manifest"; printf '\n'
+    printf 'MANIFEST_DIGEST=%s\n' "$(sha256sum "$C913_RECOVERY/recovery.manifest" | cut -d' ' -f1)"
+    cp "$C913_RECOVERY/recovery.manifest" "$root/golden"
     mkdir -p "$root/reordered/npm/empty" "$root/reordered/packages/c913.tools/2.0.0" "$root/reordered/packages/c913.probe/1.0.0"
     cp -a "$root/donor/npm/." "$root/reordered/npm/"
     cp -a "$root/donor/packages/c913.tools/." "$root/reordered/packages/c913.tools/"
@@ -484,7 +596,7 @@ case "$mode" in
       pass "manifest-$change-bound"
     done
     for FAULT in stop copy-packages copy-npm npm-verify import-packages import-npm corrupt-import corrupt-npm-import smoke recovery-save restart donor-id reconnect marker-write publication busy busy-runner busy-queue unknown unknown-sessions unknown-runner process-error writer; do
-      rm -f "$C849_READY"; rm -rf -- "$SERVER2_ROOT/cache/recovery-$RUN"
+      rm -f "$C849_READY"; rm -rf -- "$C913_RECOVERY"
       for name in "$C849_PACKAGES" "$C849_NPM"; do find "$root/volumes/$name/_data" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +; done
       : > "$root/trace"
       run c849_seed
@@ -498,7 +610,7 @@ case "$mode" in
     done
     FAULT=none
     for CRASH in before-stop after-stop after-copy-packages after-copy-npm after-npm-verify after-import-packages after-import-npm after-comparison before-smoke after-smoke after-recovery before-restart after-restart donor-id reconnect marker-write after-marker-write before-publication after-publication; do
-      rm -f "$C849_READY" "$C849_READY.tmp-$RUN"; rm -rf -- "$SERVER2_ROOT/cache/recovery-$RUN"
+      rm -f "$C849_READY" "$C849_READY.tmp-$RUN"; rm -rf -- "$C913_RECOVERY"
       for name in "$C849_PACKAGES" "$C849_NPM"; do find "$root/volumes/$name/_data" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +; done
       : > "$root/trace"
       run c849_seed
@@ -525,14 +637,14 @@ case "$mode" in
       if [ "$saved_kind" = directory ]; then C590_SAVED_DONOR="$root/donor"; else C590_SAVED_DONOR="$root/saved.tar"; fi
       for saved_fault in none smoke saved-temp-present saved-late-busy saved-late-attachment; do
         FAULT="$saved_fault"
-        rm -f "$C849_READY"; rm -rf -- "$SERVER2_ROOT/cache/recovery-$RUN"
+        rm -f "$C849_READY"; rm -rf -- "$C913_RECOVERY"
         for name in "$C849_PACKAGES" "$C849_NPM"; do find "$root/volumes/$name/_data" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +; done
         : > "$root/trace"; : > "$root/docker-trace"
         run c849_seed
         if [ "$FAULT" = none ]; then
           accept "ordinary-saved-$saved_kind-accepted"
           grep -Fxq "donor-type=saved-$saved_kind" "$C849_READY" || fail saved-donor-type
-          [ ! -e "$SERVER2_ROOT/cache/recovery-$RUN/packages/incomplete/1.0.0" ] || fail incomplete-stage-only
+          [ ! -e "$C913_RECOVERY/packages/incomplete/1.0.0" ] || fail incomplete-stage-only
         else
           [ "$(cat "$root/exit")" != 0 ] && [ ! -e "$C849_READY" ] || fail saved-smoke-failure-no-marker
         fi
@@ -546,7 +658,7 @@ case "$mode" in
       done
     done
     SOURCE=live; FAULT=busy-main; C590_SAVED_DONOR=''
-    rm -f "$C849_READY"; rm -rf -- "$SERVER2_ROOT/cache/recovery-$RUN"
+    rm -f "$C849_READY"; rm -rf -- "$C913_RECOVERY"
     for name in "$C849_PACKAGES" "$C849_NPM"; do find "$root/volumes/$name/_data" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +; done
     : > "$root/trace"
     run c849_seed; accept busy-main-live-donor-accepted
@@ -555,7 +667,7 @@ case "$mode" in
     make_full_marker
     run c849_require_ready allow-cold; accept schema3-valid
     cp "$C849_READY" "$root/marker"
-    recovery="$SERVER2_ROOT/cache/recovery-$RUN"
+    recovery="$C913_RECOVERY"
     cp "$recovery/recovery.manifest" "$root/manifest"
     for bad in duplicate absolute type truncated unsorted; do
       cp "$root/manifest" "$root/bad-manifest"
@@ -588,12 +700,12 @@ case "$mode" in
     done
     cp "$root/marker" "$C849_READY"
     for part in packages/c913.probe/1.0.0/data npm/content packages/c913.tools/2.0.0/tool; do
-      path="$SERVER2_ROOT/cache/recovery-$RUN/$part"; cp -p "$path" "$root/backup"
+      path="$C913_RECOVERY/$part"; cp -p "$path" "$root/backup"
       printf mutation >> "$path"
       run c849_require_ready allow-cold; refuse recovery-bytes-changed CacheRecoveryChanged
       cp -p "$root/backup" "$path"
     done
-    path="$SERVER2_ROOT/cache/recovery-$RUN/packages/c913.tools/2.0.0/tool"
+    path="$C913_RECOVERY/packages/c913.tools/2.0.0/tool"
     chmod 644 "$path"; run c849_require_ready allow-cold; refuse recovery-execute-changed CacheRecoveryChanged; chmod 751 "$path"
     mv "$C849_READY" "$root/valid-marker"; ln -s "$root/valid-marker" "$C849_READY"
     run c849_require_ready allow-cold; refuse marker-symlink CacheSeedMarkerInvalid
@@ -632,7 +744,7 @@ case "$mode" in
     run c849_require_ready allow-cold; accept cold-valid-with-cache-churn
     run c849_require_ready; refuse cold-full-context-refused CacheFullSeedRequired
     ;;
- prune|maintenance)
+ prune|maintenance|volume-prune)
     CASE=runner-cache-prune
     C590_PREVIEW_RUN="$RUN"; receipt="$SERVER2_ROOT/cache/previews/$RUN"; mkdir -p "$receipt"
     # Volume size and disk facts are external boundaries; execute all authority,
@@ -645,7 +757,7 @@ case "$mode" in
     }
     reset_prune() {
       FAULT=none; PERCENT=100; SELECT_ROLE=all
-      rm -rf "$SERVER2_ROOT/cache/recovery-$RUN"; make_full_marker
+      rm -rf "$C913_RECOVERY"; make_full_marker
       for name in "$C849_PACKAGES" "$C849_SCRATCH" "$C849_NPM"; do
         rm -rf "$root/volumes/$name/_data"; mkdir -m700 "$root/volumes/$name/_data"
       done
@@ -663,16 +775,16 @@ case "$mode" in
       grep -Fxq "C849_SMOKE runner=$runner uid=1654 restore=0 build=0 run=0 stdout=CARD0849_APPHOST_OK" "$CASE_DIR/smoke-summary.txt" || fail prune-smoke-required
     done
     grep -Fq admission=held "$CASE_DIR/prune.txt" || fail admission-held
-    [ -d "$root/volumes/$C849_PACKAGES/_data" ] && [ -d "$SERVER2_ROOT/cache/recovery-$RUN" ] || fail roots-and-recovery-retained
+    [ -d "$root/volumes/$C849_PACKAGES/_data" ] && [ -d "$C913_RECOVERY" ] || fail roots-and-recovery-retained
     [ ! -e "$root/volumes/$C849_PACKAGES/_data/ordinary/1.0.0/data" ] && [ ! -e "$root/volumes/$C849_NPM/_data/sentinel" ] || fail selected-contents-cleared
     ! grep -q 'for p in microsoft.netcore' "$root/docker-trace" || fail schema3-no-framework-copy
     for bad in missing-recovery missing-manifest changed-recovery image-missing source run age-future age-expired preview-digest volume-facts second-target nested-mount busy unknown writer process-error attachment broker-busy broker-error; do
       reset_prune
       diagnosis=CachePreviewStale
       case "$bad" in
-        missing-recovery) rm -rf "$SERVER2_ROOT/cache/recovery-$RUN"; diagnosis=CacheRecoveryMissing ;;
-        missing-manifest) rm "$SERVER2_ROOT/cache/recovery-$RUN/recovery.manifest"; diagnosis=CacheRecoveryMissing ;;
-        changed-recovery) printf changed >> "$SERVER2_ROOT/cache/recovery-$RUN/npm/content"; diagnosis=CacheRecoveryChanged ;;
+        missing-recovery) rm -rf "$C913_RECOVERY"; diagnosis=CacheRecoveryMissing ;;
+        missing-manifest) rm "$C913_RECOVERY/recovery.manifest"; diagnosis=CacheRecoveryMissing ;;
+        changed-recovery) printf changed >> "$C913_RECOVERY/npm/content"; diagnosis=CacheRecoveryChanged ;;
         image-missing) FAULT=image-missing; diagnosis=CacheRecoveryImageMissing ;;
         source) sed -i 's/^source-sha=.*/source-sha=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/' "$receipt/preview.txt" ;;
         run) sed -i 's/^run=.*/run=c84900000000000000000/' "$receipt/preview.txt" ;;
@@ -693,7 +805,7 @@ case "$mode" in
       ! grep -q 'rm -rf --' "$root/docker-trace" || fail "$bad-no-delete-trace"
       [ ! -e "$CASE_DIR/prune.txt" ] || fail "$bad-no-success"
     done
-    if [ "$mode" = maintenance ]; then [ ! -e "$root/denied" ] || fail unexpected-external-call; pass maintenance-complete; exit 0; fi
+    if [ "$mode" = maintenance ] || [ "$mode" = volume-prune ]; then [ ! -e "$root/denied" ] || fail unexpected-external-call; pass "$mode-complete"; exit 0; fi
     for FAULT_CASE in refill refill-receipt main-smoke budget; do
       reset_prune; FAULT="$FAULT_CASE"
       case "$FAULT" in refill) diagnosis=CacheRefillFailed;; refill-receipt) diagnosis=CacheRefillReceiptMissing;; main-smoke) diagnosis=CacheSmokeFailed;; budget) diagnosis=CacheBudgetExceeded;; esac
@@ -734,7 +846,7 @@ case "$mode" in
       done
     done
     reset_prune
-    recovery="$SERVER2_ROOT/cache/recovery-$RUN"
+    recovery="$C913_RECOVERY"
     for base in "$recovery/packages" "$root/volumes/$C849_PACKAGES/_data"; do
       mkdir -p "$base/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native" "$base/microsoft.netcore.app.ref/9.0.20"
       printf '{}' > "$base/microsoft.netcore.app.host.linux-x64/9.0.20/.nupkg.metadata"
