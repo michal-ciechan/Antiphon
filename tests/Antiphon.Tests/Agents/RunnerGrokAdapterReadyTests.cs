@@ -163,6 +163,69 @@ public class RunnerGrokAdapterReadyTests
     }
 
     [Test]
+    public async Task Expired_trust_budget_cancels_pending_read()
+    {
+        await AssertPendingReadCancelled(
+            TimeSpan.FromSeconds(10), TimeSpan.FromMilliseconds(500), TimeSpan.FromMilliseconds(500),
+            new GrokStartupSnapshot(Trust, Trust, 1, DateTime.UtcNow), answerTrust: true,
+            GrokStartupReason.Trust, "pendingTrustReadCancelled");
+    }
+
+    [Test]
+    public async Task Expired_outer_deadline_cancels_pending_read()
+    {
+        await AssertPendingReadCancelled(
+            TimeSpan.FromMilliseconds(500), TimeSpan.FromSeconds(15), TimeSpan.FromMilliseconds(500),
+            new GrokStartupSnapshot("not-ready", "", 1, DateTime.UtcNow), answerTrust: false,
+            GrokStartupReason.Deadline, "pendingDeadlineReadCancelled");
+    }
+
+    private static async Task AssertPendingReadCancelled(
+        TimeSpan maxWait, TimeSpan trustSettle, TimeSpan lateWake, GrokStartupSnapshot first,
+        bool answerTrust, GrokStartupReason expected, string label)
+    {
+        var clock = new PollGateClock();
+        var pending = new TaskCompletionSource<GrokStartupSnapshot?>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var observed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var reads = 0;
+        var sawCancel = false;
+        GrokStartupReason? outcome = null;
+        var wait = GrokReadyWait.WaitAsync(token =>
+            {
+                if (++reads == 1)
+                    return Task.FromResult<GrokStartupSnapshot?>(first);
+                token.Register(() =>
+                {
+                    sawCancel = token.IsCancellationRequested;
+                    observed.TrySetResult();
+                    pending.TrySetCanceled(token);
+                });
+                return pending.Task;
+            },
+            new GrokReadyWaitOptions
+            {
+                MaxWait = maxWait,
+                TrustSettle = trustSettle,
+                Settle = TimeSpan.Zero,
+                PollInterval = TimeSpan.FromMilliseconds(1),
+                TimeProvider = clock,
+                OnFailure = (reason, _, _, _, _, _, _) => outcome = reason,
+            },
+            answerTrust ? (_, _) => Task.CompletedTask : null);
+
+        await TimerInstalled(clock.PollInstalled(1), label);
+        clock.Advance(lateWake);
+        var ready = await wait.WaitAsync(TimeSpan.FromSeconds(5));
+        ready.ShouldBeFalse(label);
+        reads.ShouldBe(2, label);
+        outcome.ShouldBe(expected, label);
+        sawCancel.ShouldBeTrue(label);
+        observed.Task.IsCompleted.ShouldBeTrue(label);
+        pending.Task.IsCanceled.ShouldBeTrue(label);
+    }
+
+    [Test]
     public async Task One_deadline_covers_reads_trust_and_minimum_age()
     {
         var frame = new GrokStartupSnapshot(Ready, "historical", 1, DateTime.UtcNow);
