@@ -2425,6 +2425,7 @@ mode_apphost() {
     grep -Fxv "c849-${RUN}-masked" "$CASE_DIR/.fixture-helpers" > "$CASE_DIR/.fixture-helpers.fresh"
     mv "$CASE_DIR/.fixture-helpers.fresh" "$CASE_DIR/.fixture-helpers"
     C1192_CUT=masked-start
+    : > "$C1192_ROOT/order"
     code=0
     out=$(c849_fixture_masked_pack "$ADMITTED" Microsoft.NETCore.App.Ref 2>&1) || code=$?
     local partial=0
@@ -2436,6 +2437,12 @@ mode_apphost() {
         fi
     fi
     emit mask-partial-start-cleaned "$partial"
+    local consumer_first=0
+    if awk -v consumer="container c849-${RUN}-masked" -v writer="container $WRITER" '
+        $0==consumer { c=NR } $0==writer { w=NR }
+        END { exit !(c>0 && w>c) }
+    ' "$C1192_ROOT/order"; then consumer_first=1; fi
+    emit mask-consumer-before-workspace "$consumer_first"
     refuse_unexpected
 }
 
