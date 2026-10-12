@@ -37,6 +37,28 @@ public static class BuildStep
         return copy.Select(pair => "--property:" + pair.Key + "=" + pair.Value).ToList();
     }
 
+    // Scheduler stamps and no-build checks both call this, so the recorded
+    // properties stay the ones the run command receives.
+    public static BuildConfinement.OutputLayout AppendSharedLayout(
+        List<string> properties,
+        string workingDirectory,
+        string project,
+        string relativeOutput)
+    {
+        var layout = BuildConfinement.LayoutFor(workingDirectory, project, relativeOutput);
+        AppendMissing(properties, "ArtifactsPath", layout.Artifacts);
+        AppendMissing(properties, "UseArtifactsOutput", "true");
+        return layout;
+    }
+
+    private static void AppendMissing(List<string> properties, string name, string value)
+    {
+        var prefix = "--property:" + name + "=";
+        if (properties.Any(item => item.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)))
+            return;
+        properties.Add(prefix + value);
+    }
+
     // The OutputPath token stays the relative manifest value. ProcessDriver and
     // run-checkpoint.ps1 rewrite a real dotnet build onto one absolute owned path.
     // That rewrite is defence in depth. The run must receive the same absolute
