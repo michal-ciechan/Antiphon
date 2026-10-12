@@ -61,8 +61,8 @@ tracked-file count and clean status. Preserve original checkpoint lines in the e
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
-| CP-1 | S2 | `tests/Antiphon.Tests -> bin-c971-base/` | nested-baseline | `/*/*/LandRecoveryIgnoredNestedRepositoryTests/*` | V-1..V-9 | V-1 intentional assertion failure; every refusal control green | 7 | 4 | true |
-| CP-2 | S3 | `tests/Antiphon.Tests -> bin-c971-final/` | nested-final | `/*/*/LandRecoveryIgnoredNestedRepositoryTests/*` | V-1..V-9 | all listed, 0 failed/skipped | 7 | 4 | true |
+| CP-1 | S2 | `tests/Antiphon.Tests -> bin-c971-base/` | nested-baseline | `/*/*/LandRecoveryIgnoredNestedRepositoryTests/*` | V-1..V-9 | V-1 intentional assertion failure; every refusal control green | 15 | 4 | true |
+| CP-2 | S3 | `tests/Antiphon.Tests -> bin-c971-final/` | nested-final | `/*/*/LandRecoveryIgnoredNestedRepositoryTests/*` | V-1..V-9 | all listed, 0 failed/skipped | 15 | 4 | true |
 | CP-3 | S3 | CP-2 | checkout-proof | `/*/*/LandRecoveryCheckoutTests/*` | R-1 | all listed, 0 failed | 12 | 2 | true |
 | CP-4 | S3 | CP-2 | ignored-obstructions | `/*/*/LandRecoveryIgnoredObstructionTests/*` | R-2 | all listed, 0 failed; Windows alias rows skip on Linux | 6 | 2 | true |
 | CP-5 | S3 | CP-2 | registration-proof | `/*/*/LandingRegistrationFreshnessTests/*` | R-3 | all listed, 0 failed/skipped | 4 | 2 | true |
