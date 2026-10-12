@@ -543,8 +543,10 @@ public sealed class DockerStackContractTests
 
     // CARD-0989: the raw linux-x64 Grok artifact, pinned by version and reviewed SHA-256.
     // The whole pin is exactly 64 lowercase hex characters, checked before curl.
-    // printf builds one checksum line; sha256sum --check --strict must report exactly
-    // that artifact OK before install or grok --version. install.sh is not a fallback.
+    // printf builds one checksum line. sha256sum --check --strict must exit 0, and
+    // its output, after command substitution strips trailing newlines, must equal
+    // exactly "/tmp/grok-download/grok: OK" before install or grok --version.
+    // install.sh is not a fallback.
     [Test]
     public void Runner_pins_grok_cli_by_version_and_digest()
     {

@@ -74,10 +74,11 @@ ARG GIT_VERSION
 # CARD-0989: Grok's raw linux-x64 artifact, pinned by version AND reviewed SHA-256.
 # The whole GROK_SHA256 value must be exactly 64 lowercase hex characters. A missing
 # pin, any other length, or any non-hex character (newline, CR, space, uppercase)
-# fails before curl. printf builds the checksum line; sha256sum --check --strict
-# must print exactly "<artifact>: OK". An empty download or a mismatch fails before
-# install and before grok --version. The remedy is a new pinned pair, never install.sh
-# and never executing the download before the check.
+# fails before curl. printf builds the checksum line. The strict checksum command
+# must exit 0 and its output, after command substitution strips trailing newlines,
+# must equal exactly "/tmp/grok-download/grok: OK". An empty download or a real
+# checksum mismatch fails before install and before grok --version. The remedy is
+# a new pinned pair, never install.sh and never executing the download before the check.
 ARG GROK_VERSION=1.0.41
 ARG GROK_SHA256=9ce03ed23e16ea01072b4496263d6213a27899e1e3e107f008d36edf82e70407
 # CARD-0628 D-2: Claude Code's native linux-x64 binary, pinned by version AND published SHA-256.
