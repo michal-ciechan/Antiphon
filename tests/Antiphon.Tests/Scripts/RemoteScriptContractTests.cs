@@ -439,12 +439,9 @@ public sealed class RemoteScriptContractTests
             trap 'if [ -n "${sandbox:-}" ] && [ ! -L "$sandbox" ] && [ -d "$sandbox" ]; then rm -rf -- "$sandbox"; fi' EXIT
             mkdir -m 0700 -- "$sandbox/private" "$sandbox/outside"
             hook="$sandbox/swap-ancestor.sh"
-            cat > "$hook" <<'EOF'
-            #!/bin/bash
-            set -euo pipefail
-            mv -- "$SANDBOX/private" "$SANDBOX/held"
-            ln -s -- "$SANDBOX/outside" "$SANDBOX/private"
-EOF
+            printf '%s\n' '#!/bin/bash' 'set -euo pipefail' \
+                'mv -- "$SANDBOX/private" "$SANDBOX/held"' \
+                'ln -s -- "$SANDBOX/outside" "$SANDBOX/private"' > "$hook"
             chmod 700 "$hook"
             claim_log="$sandbox/claim.txt"
             bash "$repo/scripts/fixtures/c1192-workspace-contract.sh" claim "$repo" "$sandbox/private/scratch" > "$claim_log" 2>&1 || { printf 'FAIL claim\n'; cat "$claim_log"; exit 1; }
