@@ -919,19 +919,19 @@ case "$mode" in
     }
     run tmp_mode_probe; refuse tmp-mode-refused RunnerTmpModeInvalid
     : > "$root/cleanup-trace"
-    printf 'c849%sowned-packages\nc849foreign-packages\n' "$RUN" > "$CASE_DIR/.fixture-volumes"
+    printf 'c849%s-packages\nc849foreign-packages\n' "$RUN" > "$CASE_DIR/.fixture-volumes"
     (
       docker() { printf '%s\n' "$*" >> "$C913_ROOT/cleanup-trace"; }
       c849_fixture_cleanup
     )
-    grep -Fq "volume rm c849${RUN}owned-packages" "$root/cleanup-trace" || fail owned-ledger-removed
+    grep -Fq "volume rm c849${RUN}-packages" "$root/cleanup-trace" || fail owned-ledger-removed
     ! grep -Fq c849foreign-packages "$root/cleanup-trace" && [ "$(cat "$root/outside")" = outside ] || fail foreign-ledger-no-remove
     pass foreign-ledger-no-remove
-    fixture_body="$(declare -f c849_fixture)"
-    fixture_body="${fixture_body//\/tmp\/c849-fixture-/$root/fixture-}"
-    eval "$fixture_body"
-    mkdir "$root/fixture-$RUN"
-    run c849_fixture; refuse occupied-fixture-refused FixtureNamespaceOccupied
+    mkdir -m700 "$CASE_DIR/fixture-controller"
+    printf foreign-controller > "$CASE_DIR/fixture-controller/foreign"
+    run c849_fixture; refuse occupied-fixture-refused FixtureControllerOccupied
+    [ "$(cat "$CASE_DIR/fixture-controller/foreign")" = foreign-controller ] || fail occupied-controller-preserved
+    rm -rf -- "$CASE_DIR/fixture-controller"
     : > "$CASE_DIR/fixture-control-variants.txt"; : > "$CASE_DIR/fixture-controls.txt"
     intended_refusal() { printf 'ExpectedRefusal\n'; return 2; }
     run c849_fixture_control PC-01 ExpectedRefusal intended_refusal; accept intended-control-red
@@ -939,11 +939,14 @@ case "$mode" in
     run c849_fixture_control PC-02 ExpectedRefusal setup_failure; refuse setup-error-not-control-red ControlNotSensitive
     SOURCE=saved; FAULT=none
     : > "$root/docker-trace"; : > "$CASE_DIR/fixture-controls.txt"; : > "$CASE_DIR/fixture-control-variants.txt"
-    run c849_fixture_apphost
-    ! grep -Eq '^cp [0-9a-f]{12,64}:|^exec [0-9a-f]{12,64} .*\.nuget/packages' "$root/docker-trace" || fail no-production-payload-read
+    # The old host recipient is gone. Run the shared strict volume Docker model
+    # against the actual F-5 algorithm and independently require its recipient facts.
+    run bash "$repo/scripts/fixtures/c1192-workspace-contract.sh" apphost "$repo"
     accept fixture-owned-native-payload
-    grep -Fxq 'PASS F-5' "$CASE_DIR/fixture-groups.txt" || fail fixture-native-recipient
-    [ "$(cat "$SERVER2_ROOT/apphost/packages/c913.probe/1.0.0/data")" = ordinary-payload ] || fail fixture-generated-ordinary-payload
+    for fact in apphost-volume-payload apphost-host-decoy apphost-import-readonly mask-empty mask-nocopy mask-readonly mask-exact-pack mask-metadata-and-mode mask-smoke-failure-cleaned; do
+      grep -Fxq "$fact=1" "$root/out" || fail "fixture-native-recipient-$fact"
+    done
+    ! grep -q '^C1192_FAIL' "$root/out" || fail no-production-payload-read
     pass no-production-payload-read
     ;;
  *) fail unknown-mode ;;

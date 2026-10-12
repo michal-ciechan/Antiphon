@@ -340,10 +340,11 @@ reset_runtime() {
     rm -f "$C1192_ROOT/probe-at-handoff" "$C1192_ROOT/shared-before" "$C1192_ROOT/private-before-release"
     rm -rf "$CASE_DIR/fixture-controller"
     rm -f "$CASE_DIR/.fixture-volumes" "$CASE_DIR/.fixture-helpers" \
-        "$CASE_DIR/fixture-cleanup-residue.txt" "$CASE_DIR/fixture-summary.txt" \
+        "$CASE_DIR/fixture-cleanup-residue.txt" "$CASE_DIR/fixture-summary.txt" "$CASE_DIR/.fixture-controller-identity" "$CASE_DIR/result" \
         "$CASE_DIR/.control-PC-26" "$CASE_DIR/.fixture-volumes.workspace"
     : > "$CASE_DIR/fixture-controls.txt"
     : > "$CASE_DIR/fixture-control-variants.txt"
+    C849_FIXTURE_FINALIZED=0
     C1192_FAULT=
     C1192_CUT=
 }
@@ -2626,9 +2627,17 @@ s7_run() {
     S7_SCENARIO=$1
     printf 'HOST_DECOY\n' > "$C1192_ROOT/host-decoy"
     s7_groups
+    cp() { order_log export-log; command cp "$@"; }
     S7_CODE=0
     S7_OUT=$(c849_fixture 2>>"$C1192_ROOT/scenario.err") || S7_CODE=$?
     S7_CONTROL=$(cat "$C1192_ROOT/controller-used")
+}
+
+s7_log_bytes() {
+    local name
+    for name in race-p1.log race-p2.log race-offline.log lock-holder.log lock-waiter.log; do
+        [ -f "$CASE_DIR/$name" ] && [ ! -L "$CASE_DIR/$name" ] && grep -Fxq "$name-body" "$CASE_DIR/$name" || return 1
+    done
 }
 
 mode_finalization() {
@@ -2643,11 +2652,16 @@ mode_finalization() {
     good=0; [ "$S7_CODE" = 0 ] && [ "$(tail -n1 "$C1192_ROOT/order")" = 'result true  0' ] && good=1; emit success-last "$good"
     good=0; if declare -F c849_fixture_finalize >/dev/null; then ( c849_fixture_finalize ) && good=1; fi; emit success-repeat "$good"
     good=0; grep -q '^compose-input-present$' "$C1192_ROOT/order" && good=1; emit compose-before-removal "$good"
+    good=0; s7_log_bytes && good=1; emit success-five-log-bytes "$good"
+    good=0; [ "$(line_no export-log)" -lt "$(line_no "container $WRITER")" ] && good=1; emit export-before-helper "$good"
+    good=0; [ "$(line_no "container $READER")" -lt "$(line_no "volume $WORK")" ] && good=1; emit helper-before-volume "$good"
     for key in primary unhandled delete export early down foreign; do
         s7_run "$key"
         good=0
         case "$key" in
-            primary) [ "$S7_CODE" = 9 ] && grep -Fxq 'false OriginalFailure 9' "$CASE_DIR/result" && good=1; emit primary-preserved "$good" ;;
+            primary) [ "$S7_CODE" = 9 ] && grep -Fxq 'false OriginalFailure 9' "$CASE_DIR/result" && good=1; emit primary-preserved "$good"
+                good=0; [ ! -L "$CASE_DIR/.fixture-escape" ] && good=1; emit primary-link-removed "$good"
+                good=0; s7_log_bytes && good=1; emit primary-five-log-bytes "$good" ;;
             unhandled) [ "$S7_CODE" = 9 ] && grep -Fxq 'false UnhandledExit 9 9' "$CASE_DIR/result" && good=1; emit unhandled-preserved "$good" ;;
             delete)
                 [ "$S7_CODE" = 2 ] && grep -Fxq 'false FixtureFinalizationFailed 2' "$CASE_DIR/result" && good=1; emit delete-refuses-success "$good"

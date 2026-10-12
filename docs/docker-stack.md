@@ -704,6 +704,25 @@ the production cache names are outside its namespace. A nonzero case or missing
 receipt leaves the checkpoint pending. CP-3/4/5 are operational gates after Review,
 not Code-stage repo tests.
 
+CARD-1192 Fixture storage uses case-owned local Docker work/mask volumes. Generated
+packages, feeds, programs, npm working files, recovery trees and mutation backups
+stay in the work volume; the mask volume stays empty. Readers mount work readonly
+with volume-nocopy. Only readonly checkout inputs use host binds. Small controller
+documents and command logs live in a fresh mode-0700, host-owned
+`CASE_DIR/fixture-controller` directory; the maintenance lock stays on the original
+host root. Finalization quiesces consumers, exports the five safe race/lock logs,
+releases helpers, removes exact owned volumes and removes the identity-checked
+controller before publishing success. A cleanup/export failure refuses success
+and records exact residue; a primary failure retains its diagnosis and exit code.
+No fixture payload cleanup depends on host sudo or mixed file ownership.
+
+S1-S7 repo-contract evidence does not establish native Docker/UID/archive/NuGet-lock
+acceptance. W-1 remains pending with the rollout owner after Review and land, using
+`verify-card0849-caches.ps1 -Case Fixture -Sha <landed-sha>` and the unchanged
+9-group/32-family/47-variant/two-inventory receipt above. SIGKILL, host loss or an
+unavailable Docker daemon can leave attributable residue; this storage contract
+does not authorize removing earlier failed runs.
+
 Each front-door invocation copies filtered host evidence into its printed local
 directory. The fixture summary contains source/image identity, group/control counts
 and no package data. Both stores separate status, mount, seed-hash and apphost smoke
