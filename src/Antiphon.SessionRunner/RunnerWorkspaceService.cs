@@ -28,6 +28,9 @@ public sealed partial class RunnerWorkspaceService
     // CARD-0604 D-19: schema-2 creation metadata lives beside the worktree root, never inside a
     // snapshot -- the snapshot is the thing being removed, and its own record cannot go with it.
     private readonly string _verificationMetadataRoot;
+    // CARD-1032: creation identity lives beside the worktrees, never inside one and never at a
+    // path the mirror request names.
+    private readonly string _bindingStateRoot;
     private readonly TimeSpan _timeout;
     // CARD-0604 D-19: the published branch a verification sha must be reachable from. Production
     // is master; it is a parameter only so the runner-side tests can stand up a scratch repo.
@@ -71,13 +74,25 @@ public sealed partial class RunnerWorkspaceService
         _repository = policy.PrimaryPath;
         _worktreeRoot = allowedCwd.TrimEnd('/') + "/worktrees";
         _verificationMetadataRoot = allowedCwd.TrimEnd('/') + "/verification-creations";
+        _bindingStateRoot = allowedCwd.TrimEnd('/') + "/workspace-bindings";
         _timeout = timeout ?? TimeSpan.FromMinutes(10);
         _publishedBranch = publishedBranch;
     }
 
     public string WorktreeRoot => _worktreeRoot;
 
-    public async Task<PhoneHomeWorkspaceMirrorResponse> MirrorAsync(
+    internal string BindingStateRoot => _bindingStateRoot;
+
+    /// <summary>Test seam. "before-add" runs after the intent file is visible and before git worktree add. "added" runs after the owned add is recorded.</summary>
+    internal Action<string>? BindingPhaseCut { get; set; }
+
+    internal RunnerWorkspaceBindingStore OpenBindingStore() => new(_bindingStateRoot);
+
+    public Task<PhoneHomeWorkspaceMirrorResponse> MirrorAsync(
+        PhoneHomeWorkspaceMirrorRequest request, CancellationToken ct) =>
+        request.Binding is null ? MirrorUnboundAsync(request, ct) : MirrorBoundAsync(request, ct);
+
+    private async Task<PhoneHomeWorkspaceMirrorResponse> MirrorUnboundAsync(
         PhoneHomeWorkspaceMirrorRequest request, CancellationToken ct)
     {
         if (!NamePattern.IsMatch(request.Name ?? ""))
@@ -144,6 +159,183 @@ public sealed partial class RunnerWorkspaceService
 
         return new PhoneHomeWorkspaceMirrorResponse(path);
     }
+
+    /// <summary>
+    /// CARD-1032. A binding request never adopts a directory that already existed, including one
+    /// that happens to be on the same sha or the same short name. An exact preparation replay
+    /// returns the stored binding. A changed preparation is refused without rewriting the record.
+    /// </summary>
+    private async Task<PhoneHomeWorkspaceMirrorResponse> MirrorBoundAsync(
+        PhoneHomeWorkspaceMirrorRequest request, CancellationToken ct)
+    {
+        if (!NamePattern.IsMatch(request.Name ?? ""))
+            throw Refuse("Mirror name must be task-<8 hex>.");
+        if (!ShaPattern.IsMatch(request.Sha ?? ""))
+            throw Refuse("Mirror sha must be 40 lowercase hex characters.");
+        if (!BranchPattern.IsMatch(request.Branch ?? "") || request.Branch!.Contains("..", StringComparison.Ordinal))
+            throw Refuse("Mirror branch name is not admitted.");
+
+        var binding = request.Binding ?? throw Refuse("Mirror binding is required.");
+        if (binding.TaskId == Guid.Empty)
+            throw Refuse("Mirror binding task id is required.");
+        if (binding.PreparationId == Guid.Empty)
+            throw Refuse("Mirror binding preparation id is required.");
+        if (binding.Attempt < 1)
+            throw Refuse("Mirror binding attempt is required.");
+        if (string.IsNullOrWhiteSpace(binding.RunnerId))
+            throw Refuse("Mirror binding runner id is required.");
+        if (string.IsNullOrWhiteSpace(binding.RunnerStoreId))
+            throw Refuse("Mirror binding store id is required.");
+        var sourceRef = string.IsNullOrWhiteSpace(binding.SourceFullRef)
+            ? "refs/heads/" + request.Branch
+            : binding.SourceFullRef;
+        if (!string.Equals(sourceRef, "refs/heads/" + request.Branch, StringComparison.Ordinal))
+            throw Refuse("Mirror binding source ref does not match the branch.");
+        var expectedName = "task-" + binding.TaskId.ToString("N")[..8];
+        if (!string.Equals(request.Name, expectedName, StringComparison.Ordinal))
+            throw Refuse("Mirror name does not match the task id.");
+
+        var (repository, cloneSource, named, secondary) = ResolveRepository(request.Repository);
+        var store = OpenBindingStore();
+        var path = (_worktreeRoot + "/" + request.Name).Replace('\\', '/');
+        var read = store.Read(binding.PreparationId);
+        if (read.Kind == BindingReadKind.Unreadable)
+            throw Refuse("Mirror binding record is unreadable.");
+        if (read.Record is { } existing)
+        {
+            if (!SamePreparation(existing, binding, request, cloneSource, sourceRef))
+                throw Refuse("Mirror binding does not match the stored preparation.");
+            if (read.Kind == BindingReadKind.Complete)
+                return ToBindingResponse(existing);
+            if (existing.TreeExistedAtIntent)
+                throw Refuse("A pre-existing mirror cannot be enrolled.");
+            if (read.Kind == BindingReadKind.Added || Directory.Exists(path))
+            {
+                await VerifyBoundHeadAsync(path, request.Sha!, ct);
+                if (read.Kind == BindingReadKind.Intent)
+                    store.MarkAdded(binding.PreparationId);
+                BindingPhaseCut?.Invoke("added");
+                return ToBindingResponse(await CompleteBoundAsync(store, existing, path, ct));
+            }
+
+            BindingPhaseCut?.Invoke("before-add");
+            await CreateBoundWorktreeAsync(repository, cloneSource, named, secondary, request, path, ct);
+            store.MarkAdded(binding.PreparationId);
+            BindingPhaseCut?.Invoke("added");
+            return ToBindingResponse(await CompleteBoundAsync(store, existing, path, ct));
+        }
+
+        if (Directory.Exists(path))
+        {
+            store.WriteIntent(NewBindingRecord(binding, request, cloneSource, sourceRef, path, Guid.NewGuid(), treeExisted: true));
+            throw Refuse("A pre-existing mirror cannot be enrolled.");
+        }
+
+        var created = NewBindingRecord(binding, request, cloneSource, sourceRef, path, Guid.NewGuid(), treeExisted: false);
+        store.WriteIntent(created);
+        BindingPhaseCut?.Invoke("before-add");
+        await CreateBoundWorktreeAsync(repository, cloneSource, named, secondary, request, path, ct);
+        store.MarkAdded(created.PreparationId);
+        BindingPhaseCut?.Invoke("added");
+        return ToBindingResponse(await CompleteBoundAsync(store, created, path, ct));
+    }
+
+    private async Task CreateBoundWorktreeAsync(
+        string repository, string cloneSource, bool named, bool secondary,
+        PhoneHomeWorkspaceMirrorRequest request, string path, CancellationToken ct)
+    {
+        await EnsureRepositoryAsync(repository, cloneSource, ct);
+        if (named)
+            await VerifyOriginAsync(repository, cloneSource, ct);
+        if (secondary && _policy.ProbeSecondaryPushAccess)
+            await ProbePushAccessAsync(repository, cloneSource, ct);
+
+        var fetch = await GitAsync(repository, ct, "fetch", "origin", request.Branch!);
+        if (fetch.ExitCode != 0)
+            throw Refuse("Mirror fetch failed: " + Tail(fetch.Stderr));
+        var tip = await GitAsync(repository, ct, "rev-parse", "FETCH_HEAD");
+        if (tip.ExitCode != 0 || tip.Stdout.Trim() != request.Sha)
+            throw Refuse($"Fetched tip of {request.Branch} is not {request.Sha}.");
+
+        Filesystem("create the worktree root", () => Directory.CreateDirectory(_worktreeRoot));
+        var add = await GitAsync(repository, ct, "worktree", "add", "-B", request.Branch!, path, request.Sha!);
+        if (add.ExitCode != 0)
+            throw Refuse("Mirror creation failed: " + Tail(add.Stderr));
+        await VerifyBoundHeadAsync(path, request.Sha!, ct);
+    }
+
+    private async Task VerifyBoundHeadAsync(string path, string sha, CancellationToken ct)
+    {
+        var head = await GitAsync(path, ct, "rev-parse", "HEAD");
+        if (head.ExitCode != 0 || head.Stdout.Trim() != sha)
+            throw Refuse("Mirror HEAD is not the requested sha.");
+    }
+
+    private async Task<RunnerWorkspaceBindingRecord> CompleteBoundAsync(
+        RunnerWorkspaceBindingStore store, RunnerWorkspaceBindingRecord record, string path, CancellationToken ct)
+    {
+        var common = await GitAsync(path, ct, "rev-parse", "--path-format=absolute", "--git-common-dir");
+        var gitDir = await GitAsync(path, ct, "rev-parse", "--path-format=absolute", "--git-dir");
+        var commonText = common.ExitCode == 0 ? common.Stdout.Trim().Replace('\\', '/') : "";
+        var gitText = gitDir.ExitCode == 0 ? gitDir.Stdout.Trim().Replace('\\', '/') : "";
+        if (commonText.Length == 0 || gitText.Length == 0)
+            throw Refuse("Mirror binding directories could not be read.");
+        record.WorktreePath = path.Replace('\\', '/');
+        record.CommonDirectory = commonText;
+        record.GitDirectory = gitText;
+        record.Phase = RunnerWorkspaceBindingStore.Complete;
+        record.TreeExistedAtIntent = false;
+        store.WriteComplete(record);
+        return record;
+    }
+
+    private static RunnerWorkspaceBindingRecord NewBindingRecord(
+        PhoneHomeWorkspaceMirrorBinding binding, PhoneHomeWorkspaceMirrorRequest request, string repositoryIdentity,
+        string sourceRef, string path, Guid bindingId, bool treeExisted) => new()
+    {
+        TaskId = binding.TaskId,
+        Attempt = binding.Attempt,
+        PreparationId = binding.PreparationId,
+        RunnerId = binding.RunnerId,
+        RunnerStoreId = binding.RunnerStoreId ?? "",
+        BindingId = bindingId,
+        RepositoryIdentity = repositoryIdentity,
+        Branch = request.Branch ?? "",
+        Name = request.Name ?? "",
+        SourceFullRef = sourceRef,
+        CreationBaselineSha = request.Sha ?? "",
+        WorktreePath = path,
+        TreeExistedAtIntent = treeExisted,
+    };
+
+    private static bool SamePreparation(
+        RunnerWorkspaceBindingRecord stored, PhoneHomeWorkspaceMirrorBinding binding,
+        PhoneHomeWorkspaceMirrorRequest request, string repositoryIdentity, string sourceRef) =>
+        stored.TaskId == binding.TaskId
+        && stored.Attempt == binding.Attempt
+        && stored.PreparationId == binding.PreparationId
+        && string.Equals(stored.RunnerId, binding.RunnerId, StringComparison.Ordinal)
+        && string.Equals(stored.RunnerStoreId, binding.RunnerStoreId, StringComparison.Ordinal)
+        && string.Equals(stored.Branch, request.Branch, StringComparison.Ordinal)
+        && string.Equals(stored.CreationBaselineSha, request.Sha, StringComparison.Ordinal)
+        && string.Equals(stored.SourceFullRef, sourceRef, StringComparison.Ordinal)
+        && string.Equals(stored.Name, request.Name, StringComparison.Ordinal)
+        && string.Equals(stored.RepositoryIdentity, repositoryIdentity, StringComparison.Ordinal);
+
+    private static PhoneHomeWorkspaceMirrorResponse ToBindingResponse(RunnerWorkspaceBindingRecord record) =>
+        new(record.WorktreePath.Replace('\\', '/'), new CompletedCardWorkspaceBinding(
+            record.TaskId,
+            record.Attempt,
+            record.BindingId,
+            record.PreparationId,
+            record.RunnerId,
+            record.RunnerStoreId,
+            record.RepositoryIdentity,
+            record.CommonDirectory.Replace('\\', '/'),
+            record.GitDirectory.Replace('\\', '/'),
+            record.WorktreePath.Replace('\\', '/'),
+            record.SourceFullRef,
+            record.CreationBaselineSha));
 
     /// <summary>
     /// CARD-0631 D-6/D-7. A fresh runner volume has no repository at all, so the first mirror

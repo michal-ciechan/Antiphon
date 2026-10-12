@@ -6,7 +6,9 @@ using Antiphon.Server.Domain;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Agents.SessionRunner;
+using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -124,15 +126,183 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
     }
 
     /// <summary>
-    /// Asks the runner for a mirror of the pushed branch at the exact sha. Returns the POSIX path
-    /// the session's cwd becomes.
+    /// CARD-1032. Commits the preparation identity before the mirror request is sent. A live store
+    /// id is required; without one the caller sends the legacy path-only request. An existing row
+    /// for this task, attempt, and runner is reused so a restarted process repeats the same request.
     /// </summary>
-    public async Task<string> MirrorAsync(AgentTask task, string sha, string repository, CancellationToken ct)
+    public async Task<MirrorBindingExpectation?> BeginMirrorPreparationAsync(
+        AppDbContext db, AgentTask task, string sha, string repository, CancellationToken ct)
     {
+        if (task.Attempt < 1 || string.IsNullOrWhiteSpace(task.RunnerId) || string.IsNullOrWhiteSpace(task.WorktreeBranch))
+            return null;
+        var store = _runners.GetLiveStoreId(task.RunnerId);
+        if (store is null)
+            return null;
+
+        var existing = await db.TaskWorktreeMirrorBindings.AsNoTracking()
+            .Where(row => row.TaskId == task.Id && row.Attempt == task.Attempt && row.RunnerId == task.RunnerId)
+            .OrderBy(row => row.CreatedAt)
+            .FirstOrDefaultAsync(ct);
+        if (existing is not null)
+            return ExpectationFrom(existing);
+
+        var row = new TaskWorktreeMirrorBinding
+        {
+            Id = Guid.NewGuid(),
+            TaskId = task.Id,
+            Attempt = task.Attempt,
+            PreparationId = Guid.NewGuid(),
+            RunnerId = task.RunnerId,
+            RunnerStoreId = store.Value.ToString("D"),
+            BindingId = Guid.Empty,
+            RepositoryIdentity = repository,
+            CommonDirectory = "",
+            GitDirectory = "",
+            WorktreePath = "",
+            SourceFullRef = "refs/heads/" + task.WorktreeBranch,
+            CreationBaselineSha = sha,
+            CreatedAt = DateTime.UtcNow,
+        };
+        db.TaskWorktreeMirrorBindings.Add(row);
+        await db.SaveChangesAsync(ct);
+        return ExpectationFrom(row);
+    }
+
+    /// <summary>
+    /// Asks the runner for a mirror of the pushed branch. When <paramref name="expectation"/> is
+    /// set, the request carries that stored preparation and the caller keeps the returned binding.
+    /// </summary>
+    public async Task<RemoteWorkspaceMirrorResult> MirrorAsync(
+        AgentTask task, string sha, string repository, MirrorBindingExpectation? expectation, CancellationToken ct)
+    {
+        var branch = task.WorktreeBranch!;
+        var sentSha = sha;
+        var sentRepository = repository;
+        PhoneHomeWorkspaceMirrorBinding? binding = null;
+        if (expectation is not null)
+        {
+            sentSha = expectation.CreationBaselineSha;
+            sentRepository = expectation.RepositoryIdentity;
+            if (expectation.SourceFullRef.StartsWith("refs/heads/", StringComparison.Ordinal))
+                branch = expectation.SourceFullRef["refs/heads/".Length..];
+            binding = new PhoneHomeWorkspaceMirrorBinding(
+                expectation.TaskId,
+                expectation.Attempt,
+                expectation.PreparationId,
+                expectation.RunnerId,
+                expectation.RunnerStoreId,
+                expectation.SourceFullRef);
+        }
+
         var client = Remote(task.RunnerId);
         var response = await client.MirrorWorkspaceAsync(
-            new PhoneHomeWorkspaceMirrorRequest(task.WorktreeBranch!, sha, MirrorName(task.Id), repository), ct);
-        return response.Path;
+            new PhoneHomeWorkspaceMirrorRequest(branch, sentSha, MirrorName(task.Id), sentRepository, binding), ct);
+        return new RemoteWorkspaceMirrorResult(response.Path, response.Binding, expectation);
+    }
+
+    /// <summary>
+    /// The returned binding matches the committed preparation. This does not look at the desktop filesystem.
+    /// </summary>
+    public static bool ReturnedBindingMatches(
+        MirrorBindingExpectation expectation, string path, CompletedCardWorkspaceBinding returned)
+    {
+        if (returned.TaskId == Guid.Empty || returned.PreparationId == Guid.Empty || returned.BindingId == Guid.Empty)
+            return false;
+        if (returned.Attempt < 1)
+            return false;
+        if (string.IsNullOrWhiteSpace(returned.RunnerId)
+            || string.IsNullOrWhiteSpace(returned.RunnerStoreId)
+            || string.IsNullOrWhiteSpace(returned.RepositoryIdentity)
+            || string.IsNullOrWhiteSpace(returned.SourceFullRef)
+            || string.IsNullOrWhiteSpace(returned.CreationBaselineSha)
+            || string.IsNullOrWhiteSpace(returned.WorktreePath)
+            || string.IsNullOrWhiteSpace(returned.CommonDirectory)
+            || string.IsNullOrWhiteSpace(returned.GitDirectory))
+            return false;
+        if (!string.Equals(returned.WorktreePath, path, StringComparison.Ordinal))
+            return false;
+        return returned.TaskId == expectation.TaskId
+            && returned.Attempt == expectation.Attempt
+            && returned.PreparationId == expectation.PreparationId
+            && string.Equals(returned.RunnerId, expectation.RunnerId, StringComparison.Ordinal)
+            && string.Equals(returned.RunnerStoreId, expectation.RunnerStoreId, StringComparison.Ordinal)
+            && string.Equals(returned.RepositoryIdentity, expectation.RepositoryIdentity, StringComparison.Ordinal)
+            && string.Equals(returned.SourceFullRef, expectation.SourceFullRef, StringComparison.Ordinal)
+            && string.Equals(returned.CreationBaselineSha, expectation.CreationBaselineSha, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Saves the returned binding, then projects the path only when the task is still on that
+    /// runner and attempt. A historical binding is kept when the projection matches nothing.
+    /// A repeated preparation with a different binding id or path is left unchanged.
+    /// </summary>
+    public static async Task<bool> CaptureMirrorBindingAsync(
+        AppDbContext db, CompletedCardWorkspaceBinding binding, CancellationToken ct)
+    {
+        var row = await db.TaskWorktreeMirrorBindings
+            .FirstOrDefaultAsync(candidate => candidate.PreparationId == binding.PreparationId, ct);
+        if (row is null)
+        {
+            row = new TaskWorktreeMirrorBinding
+            {
+                Id = Guid.NewGuid(),
+                CreatedAt = DateTime.UtcNow,
+            };
+            db.TaskWorktreeMirrorBindings.Add(row);
+        }
+        else if (row.BindingId != Guid.Empty)
+        {
+            if (row.BindingId != binding.BindingId)
+                return false;
+            if (!string.Equals(row.WorktreePath, binding.WorktreePath, StringComparison.Ordinal))
+                return false;
+            if (row.TaskId != binding.TaskId
+                || row.Attempt != binding.Attempt
+                || !string.Equals(row.RunnerId, binding.RunnerId, StringComparison.Ordinal)
+                || !string.Equals(row.RunnerStoreId, binding.RunnerStoreId, StringComparison.Ordinal)
+                || !string.Equals(row.RepositoryIdentity, binding.RepositoryIdentity, StringComparison.Ordinal)
+                || !string.Equals(row.CommonDirectory, binding.CommonDirectory, StringComparison.Ordinal)
+                || !string.Equals(row.GitDirectory, binding.GitDirectory, StringComparison.Ordinal)
+                || !string.Equals(row.SourceFullRef, binding.SourceFullRef, StringComparison.Ordinal)
+                || !string.Equals(row.CreationBaselineSha, binding.CreationBaselineSha, StringComparison.Ordinal))
+                return false;
+        }
+
+        ApplyBinding(row, binding);
+        await db.SaveChangesAsync(ct);
+        await db.AgentTasks
+            .Where(task => task.Id == binding.TaskId && task.RunnerId == binding.RunnerId && task.Attempt == binding.Attempt)
+            .ExecuteUpdateAsync(setters => setters
+                .SetProperty(task => task.RemoteWorktreePath, binding.WorktreePath)
+                .SetProperty(task => task.RemotePrepFailures, 0)
+                .SetProperty(task => task.DispatchNotBeforeAt, (DateTime?)null), ct);
+        return true;
+    }
+
+    private static MirrorBindingExpectation ExpectationFrom(TaskWorktreeMirrorBinding row) => new(
+        row.TaskId,
+        row.Attempt,
+        row.PreparationId,
+        row.RunnerId,
+        row.RunnerStoreId,
+        row.RepositoryIdentity,
+        row.SourceFullRef,
+        row.CreationBaselineSha);
+
+    private static void ApplyBinding(TaskWorktreeMirrorBinding row, CompletedCardWorkspaceBinding binding)
+    {
+        row.TaskId = binding.TaskId;
+        row.Attempt = binding.Attempt;
+        row.PreparationId = binding.PreparationId;
+        row.RunnerId = binding.RunnerId;
+        row.RunnerStoreId = binding.RunnerStoreId;
+        row.BindingId = binding.BindingId;
+        row.RepositoryIdentity = binding.RepositoryIdentity;
+        row.CommonDirectory = binding.CommonDirectory;
+        row.GitDirectory = binding.GitDirectory;
+        row.WorktreePath = binding.WorktreePath;
+        row.SourceFullRef = binding.SourceFullRef;
+        row.CreationBaselineSha = binding.CreationBaselineSha;
     }
 
     public async Task<bool> SupportsRepositoryMirrorsAsync(string? runnerId, CancellationToken ct)

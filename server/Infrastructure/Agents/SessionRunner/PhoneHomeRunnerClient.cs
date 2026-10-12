@@ -358,7 +358,14 @@ public sealed class PhoneHomeRunnerClient : ISessionRunnerClient, IVerificationW
         PhoneHomeWorkspaceMirrorRequest request, CancellationToken ct)
     {
         var frame = await _connection.RequestAsync(PhoneHomeOperation.WorkspaceMirror, request, ct);
-        return Read<PhoneHomeWorkspaceMirrorResponse>(frame) ?? throw Missing("workspace-mirror");
+        ThrowIfError(frame);
+        if (frame.Payload is null)
+            throw Missing("workspace-mirror");
+        var validation = PhoneHomeWorkspaceMirrorContract.ValidateResponse(frame.Payload.Value.GetRawText());
+        if (!validation.IsValid)
+            throw new InvalidOperationException("mirror binding refused: " + validation.Reason);
+        return frame.Payload.Value.Deserialize<PhoneHomeWorkspaceMirrorResponse>(PhoneHomeFraming.Json)
+            ?? throw Missing("workspace-mirror");
     }
 
     public async Task<PhoneHomeWorkspacePublishResponse> PublishWorkspaceAsync(

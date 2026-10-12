@@ -294,6 +294,208 @@ public sealed class RemoteWorkspacePreparerTests
     }
 
     [Test]
+    public async Task C1032_CaptureLateReassignment()
+    {
+        await using var rig = await Rig.StartAsync();
+        rig.Peer.SilentFor(PhoneHomeOperation.WorkspaceMirror);
+        var taskId = await rig.SeedAsync();
+        var runnerBPath = "/work/worktrees/runner-b-" + RemoteWorkspaceService.MirrorName(taskId);
+        await rig.TickAsync().WaitAsync(TickBound);
+        var request = await rig.WaitForRequestsAsync(PhoneHomeOperation.WorkspaceMirror, 1);
+        var sent = request.Payload!.Value.Deserialize<PhoneHomeWorkspaceMirrorRequest>(PhoneHomeFraming.Json);
+        sent.ShouldNotBeNull();
+        sent.Binding.ShouldNotBeNull();
+
+        await using (var db = rig.NewDb())
+        {
+            await db.AgentTasks.Where(row => row.Id == taskId).ExecuteUpdateAsync(setters => setters
+                .SetProperty(row => row.RunnerId, "runner-b")
+                .SetProperty(row => row.RemoteWorktreePath, runnerBPath));
+        }
+
+        var path = "/work/worktrees/" + sent.Name;
+        var bindingId = Guid.NewGuid();
+        await rig.Peer.EmitAsync(BoundResult(request, ValidBinding(sent, bindingId, path), path));
+        await rig.Preparer.WhenIdleAsync().WaitAsync(TickBound);
+
+        await using var read = rig.NewDb();
+        var saved = await read.TaskWorktreeMirrorBindings.AsNoTracking()
+            .SingleAsync(row => row.TaskId == taskId && row.RunnerId == sent.Binding.RunnerId);
+        var oldRunnerBindingPersisted = saved.BindingId == bindingId;
+        oldRunnerBindingPersisted.ShouldBeTrue();
+        var currentPath = (await rig.ReadTaskAsync(taskId)).RemoteWorktreePath;
+        currentPath.ShouldBe(runnerBPath);
+    }
+
+    [Test]
+    public async Task C1032_CaptureAttemptAndCancellation()
+    {
+        var newAttemptPath = "/work/worktrees/attempt-2";
+        await using (var attemptRig = await Rig.StartAsync())
+        {
+            attemptRig.Peer.SilentFor(PhoneHomeOperation.WorkspaceMirror);
+            var taskId = await attemptRig.SeedAsync();
+            await attemptRig.TickAsync().WaitAsync(TickBound);
+            var request = await attemptRig.WaitForRequestsAsync(PhoneHomeOperation.WorkspaceMirror, 1);
+            var sent = request.Payload!.Value.Deserialize<PhoneHomeWorkspaceMirrorRequest>(PhoneHomeFraming.Json)!;
+            await using (var db = attemptRig.NewDb())
+            {
+                await db.AgentTasks.Where(row => row.Id == taskId).ExecuteUpdateAsync(setters => setters
+                    .SetProperty(row => row.Attempt, 2)
+                    .SetProperty(row => row.RemoteWorktreePath, newAttemptPath));
+            }
+
+            var path = "/work/worktrees/" + sent.Name;
+            await attemptRig.Peer.EmitAsync(BoundResult(request, ValidBinding(sent, Guid.NewGuid(), path), path));
+            await attemptRig.Preparer.WhenIdleAsync().WaitAsync(TickBound);
+            var currentPath = (await attemptRig.ReadTaskAsync(taskId)).RemoteWorktreePath;
+            currentPath.ShouldBe(newAttemptPath);
+        }
+
+        await using var cancelRig = await Rig.StartAsync();
+        cancelRig.Peer.SilentFor(PhoneHomeOperation.WorkspaceMirror);
+        var canceledTask = await cancelRig.SeedAsync();
+        var tick = cancelRig.TickAsync();
+        var cancelRequest = await cancelRig.WaitForRequestsAsync(PhoneHomeOperation.WorkspaceMirror, 1);
+        var cancelSent = cancelRequest.Payload!.Value.Deserialize<PhoneHomeWorkspaceMirrorRequest>(PhoneHomeFraming.Json)!;
+        using (var scope = cancelRig.Provider.CreateScope())
+        {
+            await scope.ServiceProvider.GetRequiredService<AgentTaskService>()
+                .CancelAsync(canceledTask, CancellationToken.None)
+                .WaitAsync(TimeSpan.FromSeconds(5));
+        }
+
+        await tick.WaitAsync(TickBound);
+        var bindingId = Guid.NewGuid();
+        var cancelPath = "/work/worktrees/" + cancelSent.Name;
+        await cancelRig.Peer.EmitAsync(BoundResult(cancelRequest, ValidBinding(cancelSent, bindingId, cancelPath), cancelPath));
+        await cancelRig.Preparer.WhenIdleAsync().WaitAsync(TickBound);
+        await using var read = cancelRig.NewDb();
+        var canceledAttemptBindingPersisted = await read.TaskWorktreeMirrorBindings.AsNoTracking()
+            .AnyAsync(row => row.TaskId == canceledTask && row.BindingId == bindingId);
+        canceledAttemptBindingPersisted.ShouldBeTrue();
+    }
+
+    [Test]
+    public async Task C1032_CaptureLostReplyRecovery()
+    {
+        await using var rig = await Rig.StartAsync(settings =>
+        {
+            settings.RemotePrepBackoffBaseSeconds = 1;
+            settings.RemotePrepBackoffMaxSeconds = 1;
+        });
+        rig.Peer.SilentFor(PhoneHomeOperation.WorkspaceMirror);
+        var taskId = await rig.SeedAsync();
+        await rig.TickAsync().WaitAsync(TickBound);
+        var first = await rig.WaitForRequestsAsync(PhoneHomeOperation.WorkspaceMirror, 1);
+        var firstSent = first.Payload!.Value.Deserialize<PhoneHomeWorkspaceMirrorRequest>(PhoneHomeFraming.Json)!;
+        var firstPreparationId = firstSent.Binding!.PreparationId;
+
+        await rig.RestartAsync();
+        await rig.TickAsync().WaitAsync(TickBound);
+        var second = await rig.WaitForRequestsAsync(PhoneHomeOperation.WorkspaceMirror, 2);
+        var secondSent = second.Payload!.Value.Deserialize<PhoneHomeWorkspaceMirrorRequest>(PhoneHomeFraming.Json)!;
+        var recoveryPreparationId = secondSent.Binding!.PreparationId;
+        recoveryPreparationId.ShouldBe(firstPreparationId);
+
+        var current = second;
+        var count = 2;
+        async Task RejectAsync(CompletedCardWorkspaceBinding returned, string responsePath, string label)
+        {
+            await rig.Peer.EmitAsync(BoundResult(current, returned, responsePath));
+            await rig.Preparer.WhenIdleAsync().WaitAsync(TickBound);
+            await using var db = rig.NewDb();
+            var pending = await db.TaskWorktreeMirrorBindings.AsNoTracking()
+                .SingleAsync(row => row.PreparationId == firstPreparationId);
+            var leaked = pending.BindingId != Guid.Empty || pending.WorktreePath.Length > 0 || pending.CommonDirectory.Length > 0;
+            var foreignId = returned.BindingId != Guid.Empty
+                && await db.TaskWorktreeMirrorBindings.AnyAsync(row => row.BindingId == returned.BindingId);
+            var foreignPreparation = returned.PreparationId != firstPreparationId
+                && await db.TaskWorktreeMirrorBindings.AnyAsync(row => row.PreparationId == returned.PreparationId);
+            var invalidBindingPersisted = leaked || foreignId || foreignPreparation;
+            invalidBindingPersisted.ShouldBeFalse(label);
+            await rig.AdvanceAsync(TimeSpan.FromSeconds(1));
+            await rig.TickAsync().WaitAsync(TickBound);
+            count++;
+            current = await rig.WaitForRequestsAsync(PhoneHomeOperation.WorkspaceMirror, count);
+        }
+
+        var basis = secondSent;
+        var path = "/work/worktrees/" + basis.Name;
+        var valid = ValidBinding(basis, Guid.NewGuid(), path);
+        await RejectAsync(valid with { TaskId = Guid.NewGuid() }, path, "capture.TaskId");
+        basis = current.Payload!.Value.Deserialize<PhoneHomeWorkspaceMirrorRequest>(PhoneHomeFraming.Json)!;
+        valid = ValidBinding(basis, Guid.NewGuid(), path);
+        await RejectAsync(valid with { Attempt = basis.Binding!.Attempt + 1 }, path, "capture.Attempt");
+        basis = current.Payload!.Value.Deserialize<PhoneHomeWorkspaceMirrorRequest>(PhoneHomeFraming.Json)!;
+        valid = ValidBinding(basis, Guid.NewGuid(), path);
+        await RejectAsync(valid with { PreparationId = Guid.NewGuid() }, path, "capture.PreparationId");
+        basis = current.Payload!.Value.Deserialize<PhoneHomeWorkspaceMirrorRequest>(PhoneHomeFraming.Json)!;
+        valid = ValidBinding(basis, Guid.NewGuid(), path);
+        await RejectAsync(valid with { RunnerId = "runner-other" }, path, "capture.RunnerId");
+        basis = current.Payload!.Value.Deserialize<PhoneHomeWorkspaceMirrorRequest>(PhoneHomeFraming.Json)!;
+        valid = ValidBinding(basis, Guid.NewGuid(), path);
+        await RejectAsync(valid with { RunnerStoreId = Guid.NewGuid().ToString("D") }, path, "capture.RunnerStoreId");
+        basis = current.Payload!.Value.Deserialize<PhoneHomeWorkspaceMirrorRequest>(PhoneHomeFraming.Json)!;
+        valid = ValidBinding(basis, Guid.Empty, path);
+        await RejectAsync(valid, path, "capture.BindingId");
+        basis = current.Payload!.Value.Deserialize<PhoneHomeWorkspaceMirrorRequest>(PhoneHomeFraming.Json)!;
+        valid = ValidBinding(basis, Guid.NewGuid(), path);
+        await RejectAsync(valid with { RepositoryIdentity = "https://github.com/other/repo.git" }, path, "capture.RepositoryIdentity");
+        basis = current.Payload!.Value.Deserialize<PhoneHomeWorkspaceMirrorRequest>(PhoneHomeFraming.Json)!;
+        valid = ValidBinding(basis, Guid.NewGuid(), "");
+        await RejectAsync(valid, "", "capture.WorktreePath");
+        basis = current.Payload!.Value.Deserialize<PhoneHomeWorkspaceMirrorRequest>(PhoneHomeFraming.Json)!;
+        valid = ValidBinding(basis, Guid.NewGuid(), path);
+        await RejectAsync(valid with { SourceFullRef = "refs/heads/other" }, path, "capture.SourceFullRef");
+        basis = current.Payload!.Value.Deserialize<PhoneHomeWorkspaceMirrorRequest>(PhoneHomeFraming.Json)!;
+        valid = ValidBinding(basis, Guid.NewGuid(), path);
+        await RejectAsync(valid with { CreationBaselineSha = new string('a', 40) }, path, "capture.CreationBaselineSha");
+
+        basis = current.Payload!.Value.Deserialize<PhoneHomeWorkspaceMirrorRequest>(PhoneHomeFraming.Json)!;
+        var acceptedId = Guid.NewGuid();
+        var accepted = ValidBinding(basis, acceptedId, path);
+        await rig.Peer.EmitAsync(BoundResult(current, accepted, path));
+        await rig.Preparer.WhenIdleAsync().WaitAsync(TickBound);
+        await using (var saved = rig.NewDb())
+        {
+            var row = await saved.TaskWorktreeMirrorBindings.AsNoTracking()
+                .SingleAsync(candidate => candidate.PreparationId == firstPreparationId);
+            row.BindingId.ShouldBe(acceptedId);
+            await saved.AgentTasks.Where(candidate => candidate.Id == taskId).ExecuteUpdateAsync(setters => setters
+                .SetProperty(candidate => candidate.RemoteWorktreePath, (string?)null));
+        }
+
+        await rig.TickAsync().WaitAsync(TickBound);
+        count++;
+        current = await rig.WaitForRequestsAsync(PhoneHomeOperation.WorkspaceMirror, count);
+        basis = current.Payload!.Value.Deserialize<PhoneHomeWorkspaceMirrorRequest>(PhoneHomeFraming.Json)!;
+        basis.Binding!.PreparationId.ShouldBe(firstPreparationId);
+        var changedId = Guid.NewGuid();
+        await rig.Peer.EmitAsync(BoundResult(current, ValidBinding(basis, changedId, path), path));
+        await rig.Preparer.WhenIdleAsync().WaitAsync(TickBound);
+        await using (var afterId = rig.NewDb())
+        {
+            var invalidBindingPersisted = await afterId.TaskWorktreeMirrorBindings.AnyAsync(row => row.BindingId == changedId);
+            invalidBindingPersisted.ShouldBeFalse("capture.BindingId");
+            (await afterId.TaskWorktreeMirrorBindings.SingleAsync(row => row.PreparationId == firstPreparationId))
+                .BindingId.ShouldBe(acceptedId);
+        }
+
+        await rig.AdvanceAsync(TimeSpan.FromSeconds(1));
+        await rig.TickAsync().WaitAsync(TickBound);
+        count++;
+        current = await rig.WaitForRequestsAsync(PhoneHomeOperation.WorkspaceMirror, count);
+        basis = current.Payload!.Value.Deserialize<PhoneHomeWorkspaceMirrorRequest>(PhoneHomeFraming.Json)!;
+        var changedPath = path + "-changed";
+        await rig.Peer.EmitAsync(BoundResult(current, ValidBinding(basis, acceptedId, changedPath), changedPath));
+        await rig.Preparer.WhenIdleAsync().WaitAsync(TickBound);
+        await using var afterPath = rig.NewDb();
+        var pathPersisted = await afterPath.TaskWorktreeMirrorBindings.AnyAsync(row => row.WorktreePath == changedPath);
+        pathPersisted.ShouldBeFalse("capture.WorktreePath");
+    }
+
+    [Test]
     [Arguments("prepared")]
     [Arguments("unprepared")]
     [Arguments("repair-source")]
@@ -875,6 +1077,29 @@ public sealed class RemoteWorkspacePreparerTests
     private static PhoneHomeFrame MirrorResult(PhoneHomeFrame request, string path) =>
         new(PhoneHomeFrameKind.Result, request.Epoch, request.RequestId, request.Operation,
             JsonSerializer.SerializeToElement(new PhoneHomeWorkspaceMirrorResponse(path), PhoneHomeFraming.Json));
+
+    private static PhoneHomeFrame BoundResult(PhoneHomeFrame request, CompletedCardWorkspaceBinding binding, string path) =>
+        new(PhoneHomeFrameKind.Result, request.Epoch, request.RequestId, request.Operation,
+            JsonSerializer.SerializeToElement(new PhoneHomeWorkspaceMirrorResponse(path, binding), PhoneHomeFraming.Json));
+
+    private static CompletedCardWorkspaceBinding ValidBinding(
+        PhoneHomeWorkspaceMirrorRequest sent, Guid bindingId, string path)
+    {
+        var binding = sent.Binding!;
+        return new CompletedCardWorkspaceBinding(
+            binding.TaskId,
+            binding.Attempt,
+            bindingId,
+            binding.PreparationId,
+            binding.RunnerId,
+            binding.RunnerStoreId!,
+            sent.Repository!,
+            "/common/c1032",
+            "/git/c1032",
+            path,
+            binding.SourceFullRef!,
+            sent.Sha);
+    }
 
     private sealed class Rig : IAsyncDisposable
     {

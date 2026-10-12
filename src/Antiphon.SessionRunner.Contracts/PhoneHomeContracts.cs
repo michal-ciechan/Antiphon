@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 
 namespace Antiphon.SessionRunner.Contracts;
@@ -208,9 +209,224 @@ public sealed record RunnerProviderAuthDto(
 /// <paramref name="Branch"/> and refuses unless its tip is exactly <paramref name="Sha"/>: a
 /// mirror at a different commit would run the session against source the desktop never produced.
 /// </summary>
-public sealed record PhoneHomeWorkspaceMirrorRequest(string Branch, string Sha, string Name, string? Repository = null);
+/// <summary>
+/// CARD-1032. Optional creation identity sent with a mirror. Absent on a legacy create.
+/// <paramref name="RequestedStateRoot"/> is never the runner's binding ledger location.
+/// </summary>
+public sealed record PhoneHomeWorkspaceMirrorBinding(
+    Guid TaskId,
+    int Attempt,
+    Guid PreparationId,
+    string RunnerId,
+    string? RunnerStoreId = null,
+    string? SourceFullRef = null,
+    string? RequestedStateRoot = null);
 
-public sealed record PhoneHomeWorkspaceMirrorResponse(string Path);
+public sealed record PhoneHomeWorkspaceMirrorRequest(
+    string Branch,
+    string Sha,
+    string Name,
+    string? Repository = null,
+    PhoneHomeWorkspaceMirrorBinding? Binding = null);
+
+public sealed record PhoneHomeWorkspaceMirrorResponse(
+    string Path,
+    CompletedCardWorkspaceBinding? Binding = null);
+
+/// <summary>
+/// CARD-1032. Fail-closed wire check for mirror create. A missing or null binding is the legacy
+/// path-only create. Duplicate names, unknown names, Force, and a non-object binding are refused.
+/// Field emptiness is a semantic refusal, not a wire refusal.
+/// </summary>
+public static class PhoneHomeWorkspaceMirrorContract
+{
+    private static readonly HashSet<string> RequestRoot = new(StringComparer.Ordinal)
+    {
+        "branch", "sha", "name", "repository", "binding",
+    };
+
+    private static readonly HashSet<string> RequestBinding = new(StringComparer.Ordinal)
+    {
+        "taskId", "attempt", "preparationId", "runnerId", "runnerStoreId", "sourceFullRef", "requestedStateRoot",
+    };
+
+    private static readonly HashSet<string> ResponseRoot = new(StringComparer.Ordinal)
+    {
+        "path", "binding",
+    };
+
+    private static readonly HashSet<string> ResponseBinding = new(StringComparer.Ordinal)
+    {
+        "taskId", "attempt", "bindingId", "preparationId", "runnerId", "runnerStoreId",
+        "repositoryIdentity", "commonDirectory", "gitDirectory", "worktreePath", "sourceFullRef",
+        "creationBaselineSha",
+    };
+
+    public static CompletedCardWorkspaceValidation ValidateRequest(string? json) =>
+        Validate(json, RequestRoot, response: false);
+
+    public static CompletedCardWorkspaceValidation ValidateResponse(string? json) =>
+        Validate(json, ResponseRoot, response: true);
+
+    private static CompletedCardWorkspaceValidation Validate(string? json, HashSet<string> rootNames, bool response)
+    {
+        if (!TryDocument(json, out var document, out var failure) || document is null)
+            return CompletedCardWorkspaceValidation.Reject(failure ?? "malformed");
+        using (document)
+        {
+            var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object)
+                return CompletedCardWorkspaceValidation.Reject("malformed");
+            if (ContainsForce(root))
+                return CompletedCardWorkspaceValidation.Reject("unknown.force");
+            if (Unknown(root, rootNames) is { } rootName)
+                return CompletedCardWorkspaceValidation.Reject("unknown." + rootName);
+            if (root.TryGetProperty("binding", out var binding))
+            {
+                if (binding.ValueKind == JsonValueKind.Null)
+                {
+                    // Legacy create: no binding object.
+                }
+                else if (binding.ValueKind != JsonValueKind.Object)
+                {
+                    return CompletedCardWorkspaceValidation.Reject("malformed");
+                }
+                else if (Unknown(binding, response ? ResponseBinding : RequestBinding) is { } bindingName)
+                {
+                    return CompletedCardWorkspaceValidation.Reject("unknown." + bindingName);
+                }
+            }
+
+            if (response)
+            {
+                if (!root.TryGetProperty("path", out var path) || path.ValueKind != JsonValueKind.String)
+                    return CompletedCardWorkspaceValidation.Reject("required.Path");
+            }
+            else
+            {
+                if (RequireString(root, "branch", "Branch") is { } branch)
+                    return CompletedCardWorkspaceValidation.Reject(branch);
+                if (RequireString(root, "sha", "Sha") is { } sha)
+                    return CompletedCardWorkspaceValidation.Reject(sha);
+                if (RequireString(root, "name", "Name") is { } name)
+                    return CompletedCardWorkspaceValidation.Reject(name);
+                if (root.TryGetProperty("repository", out var repository)
+                    && repository.ValueKind is not (JsonValueKind.String or JsonValueKind.Null))
+                    return CompletedCardWorkspaceValidation.Reject("malformed");
+            }
+
+            return CompletedCardWorkspaceValidation.Ok;
+        }
+    }
+
+    private static bool TryDocument(string? json, out JsonDocument? document, out string? failure)
+    {
+        document = null;
+        failure = null;
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            failure = "malformed";
+            return false;
+        }
+
+        var utf8 = Encoding.UTF8.GetBytes(json);
+        try
+        {
+            if (HasDuplicateProperty(utf8))
+            {
+                failure = "duplicate";
+                return false;
+            }
+
+            document = JsonDocument.Parse(utf8, new JsonDocumentOptions
+            {
+                CommentHandling = JsonCommentHandling.Disallow,
+                AllowTrailingCommas = false,
+            });
+            return true;
+        }
+        catch (JsonException)
+        {
+            failure = "malformed";
+            return false;
+        }
+    }
+
+    private static bool HasDuplicateProperty(ReadOnlySpan<byte> utf8)
+    {
+        var reader = new Utf8JsonReader(utf8, new JsonReaderOptions
+        {
+            CommentHandling = JsonCommentHandling.Disallow,
+            AllowTrailingCommas = false,
+        });
+        var names = new Stack<HashSet<string>>();
+        while (reader.Read())
+        {
+            switch (reader.TokenType)
+            {
+                case JsonTokenType.StartObject:
+                    names.Push(new HashSet<string>(StringComparer.Ordinal));
+                    break;
+                case JsonTokenType.EndObject:
+                    if (names.Count == 0)
+                        return false;
+                    names.Pop();
+                    break;
+                case JsonTokenType.PropertyName:
+                    if (names.Count == 0 || !names.Peek().Add(reader.GetString() ?? ""))
+                        return true;
+                    break;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool ContainsForce(JsonElement element)
+    {
+        switch (element.ValueKind)
+        {
+            case JsonValueKind.Object:
+                foreach (var property in element.EnumerateObject())
+                {
+                    if (property.Name.Equals("force", StringComparison.OrdinalIgnoreCase))
+                        return true;
+                    if (ContainsForce(property.Value))
+                        return true;
+                }
+
+                return false;
+            case JsonValueKind.Array:
+                foreach (var item in element.EnumerateArray())
+                {
+                    if (ContainsForce(item))
+                        return true;
+                }
+
+                return false;
+            default:
+                return false;
+        }
+    }
+
+    private static string? Unknown(JsonElement obj, HashSet<string> allowed)
+    {
+        foreach (var property in obj.EnumerateObject())
+        {
+            if (!allowed.Contains(property.Name))
+                return property.Name;
+        }
+
+        return null;
+    }
+
+    private static string? RequireString(JsonElement obj, string name, string logical)
+    {
+        if (!obj.TryGetProperty(name, out var value) || value.ValueKind != JsonValueKind.String)
+            return "required." + logical;
+        return null;
+    }
+}
 
 /// <summary>Remove a mirror created by <see cref="PhoneHomeOperation.WorkspaceMirror"/>.</summary>
 public sealed record PhoneHomeWorkspaceRemoveRequest(string Path, bool Force = false, string? PublishedSha = null);

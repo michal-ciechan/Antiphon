@@ -28,12 +28,13 @@ public readonly record struct RemotePrepProgress(DateTime Since, RemotePrepPhase
 /// outside any claim transaction. A silent runner used to hold the tick for the whole mirror budget
 /// per task, per tick, with the task row locked (CARD-0629).
 ///
-/// Each operation runs on its own service scope and writes its outcome keyed by task id only:
-/// success records <see cref="AgentTask.RemoteWorktreePath"/> and resets the backoff; failure adds
-/// a Warning event and pushes <see cref="AgentTask.DispatchNotBeforeAt"/> out by
-/// <see cref="Backoff"/>. The in-flight registry is memory-only on purpose: a restart loses it,
-/// the next tick re-arms, and the runner's mirror of the same sha is idempotent. Shutdown
-/// cancellation writes nothing.
+/// Each operation runs on its own service scope. A path-only mirror records
+/// <see cref="AgentTask.RemoteWorktreePath"/> when the task's runner and attempt are still the
+/// ones that started the operation, and resets the backoff. A returned binding is saved even when
+/// that path update matches nothing. Failure adds a Warning event and pushes
+/// <see cref="AgentTask.DispatchNotBeforeAt"/> out by <see cref="Backoff"/>. The in-flight registry
+/// is memory-only: a restart loses it, the next tick re-arms, and the preparation row keeps the
+/// same PreparationId. Shutdown cancellation writes nothing.
 /// </summary>
 public sealed class RemoteWorkspacePreparer : IAsyncDisposable
 {
@@ -260,30 +261,54 @@ public sealed class RemoteWorkspacePreparer : IAsyncDisposable
                 else
                 {
                     entry.Phase = RemotePrepPhase.Mirroring;
-                    var path = await remote.MirrorAsync(task, push.Sha, push.Repository!, ct);
-                    // D-8: keyed by id, not by status, so a mirror that succeeds after a cancel is
-                    // still known to retirement and removed rather than left as runner residue.
-                    // The runner id is part of the key: a drain that moved the task while this
-                    // mirror was in flight must not record a path that exists only on the old runner.
-                    var runnerId = entry.RunnerId;
-                    var recorded = await db.AgentTasks
-                        .Where(t => t.Id == taskId && t.RunnerId == runnerId)
-                        .ExecuteUpdateAsync(s => s
-                            .SetProperty(t => t.RemoteWorktreePath, path)
-                            .SetProperty(t => t.RemotePrepFailures, 0)
-                            .SetProperty(t => t.DispatchNotBeforeAt, (DateTime?)null), CancellationToken.None);
-                    if (recorded == 0)
+                    var originatingRunner = task.RunnerId;
+                    var originatingAttempt = task.Attempt;
+                    var expectation = await remote.BeginMirrorPreparationAsync(
+                        db, task, push.Sha, push.Repository!, ct);
+                    var mirrored = await remote.MirrorAsync(task, push.Sha, push.Repository!, expectation, ct);
+                    if (mirrored.Binding is { } returned)
                     {
-                        _logger.LogWarning(
-                            "Remote workspace for task {ShortId} was mirrored on runner {RunnerId} after the task left that runner; the path was not recorded",
-                            DelegationReportFormatter.Short(taskId), entry.RunnerId);
+                        var captured = mirrored.Expectation is not null
+                            && RemoteWorkspaceService.ReturnedBindingMatches(
+                                mirrored.Expectation, mirrored.Path, returned)
+                            && await RemoteWorkspaceService.CaptureMirrorBindingAsync(
+                                db, returned, CancellationToken.None);
+                        if (!captured)
+                        {
+                            failure = "The runner returned a mirror binding that does not match the preparation; the task stays Queued.";
+                        }
+                        else
+                        {
+                            _logger.LogInformation(
+                                "Remote workspace binding for task {ShortId} was saved",
+                                DelegationReportFormatter.Short(taskId));
+                            return;
+                        }
+                    }
+                    else
+                    {
+                        // Path-only success, including a legacy runner that ignored a binding extension.
+                        // Runner and attempt both have to match: a drain or a new attempt must not
+                        // take this path, and a cancel of the same attempt still records it.
+                        var recorded = await db.AgentTasks
+                            .Where(t => t.Id == taskId && t.RunnerId == originatingRunner && t.Attempt == originatingAttempt)
+                            .ExecuteUpdateAsync(s => s
+                                .SetProperty(t => t.RemoteWorktreePath, mirrored.Path)
+                                .SetProperty(t => t.RemotePrepFailures, 0)
+                                .SetProperty(t => t.DispatchNotBeforeAt, (DateTime?)null), CancellationToken.None);
+                        if (recorded == 0)
+                        {
+                            _logger.LogWarning(
+                                "Remote workspace for task {ShortId} was mirrored on runner {RunnerId} after the task left that runner; the path was not recorded",
+                                DelegationReportFormatter.Short(taskId), originatingRunner);
+                            return;
+                        }
+
+                        _logger.LogInformation(
+                            "Remote workspace for task {ShortId} is ready at {Path}",
+                            DelegationReportFormatter.Short(taskId), mirrored.Path);
                         return;
                     }
-
-                    _logger.LogInformation(
-                        "Remote workspace for task {ShortId} is ready at {Path}",
-                        DelegationReportFormatter.Short(taskId), path);
-                    return;
                 }
             }
             catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)

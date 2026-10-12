@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
@@ -224,6 +225,52 @@ public sealed class CardWorktreeMirrorBindingTests
         await db.SaveChangesAsync();
         return revision.Id;
     }
+
+    [Test]
+    public async Task C1032_CaptureDistinctBindings()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var options = TestDbFixture.CreateDbContextOptions(schema.ConnectionString);
+        var taskId = Guid.NewGuid();
+        var pathB = "/mirrors/runner-b";
+        await using (var setup = new AppDbContext(options))
+        {
+            var task = TaskRow(taskId, AgentTaskStatus.Queued, pathB);
+            task.Attempt = 2;
+            task.RunnerId = "runner-b";
+            setup.AgentTasks.Add(task);
+            await setup.SaveChangesAsync();
+        }
+
+        var bindingA = CaptureBinding(taskId, 1, "runner-a", "store-a", "/mirrors/runner-a");
+        var bindingB = CaptureBinding(taskId, 2, "runner-b", "store-b", pathB);
+        await using (var db = new AppDbContext(options))
+        {
+            (await RemoteWorkspaceService.CaptureMirrorBindingAsync(db, bindingA, CancellationToken.None)).ShouldBeTrue();
+            (await RemoteWorkspaceService.CaptureMirrorBindingAsync(db, bindingB, CancellationToken.None)).ShouldBeTrue();
+        }
+
+        await using var after = new AppDbContext(options);
+        var capturedBindingCount = await after.TaskWorktreeMirrorBindings.CountAsync(row => row.TaskId == taskId);
+        capturedBindingCount.ShouldBe(2);
+        var currentPath = (await after.AgentTasks.SingleAsync(row => row.Id == taskId)).RemoteWorktreePath;
+        currentPath.ShouldBe(pathB);
+    }
+
+    private static CompletedCardWorkspaceBinding CaptureBinding(
+        Guid taskId, int attempt, string runner, string store, string path) => new(
+        taskId,
+        attempt,
+        Guid.NewGuid(),
+        Guid.NewGuid(),
+        runner,
+        store,
+        "https://github.com/michal-ciechan/antiphon.git",
+        "/common/" + store,
+        "/git/" + store,
+        path,
+        "refs/heads/feat",
+        Sha);
 
     private static AgentTask TaskRow(Guid id, AgentTaskStatus status, string remotePath) => new()
     {
