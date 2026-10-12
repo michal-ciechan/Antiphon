@@ -991,13 +991,21 @@ function Get-CheckpointConflictReason {
     return $null
 }
 
+function Test-CheckpointPathPrefix {
+    param([string]$Value, [string]$Prefix)
+    if ([string]::IsNullOrEmpty($Prefix)) { return $false }
+    $needle = $Prefix + '/'
+    if ($Value.Length -lt $needle.Length) { return $false }
+    return ($Value.Substring(0, $needle.Length) -ceq $needle)
+}
+
 function Test-CheckpointHeldConflict {
-    param([string]$Path, $Conflicts)
-    foreach ($conflict in @($Conflicts)) {
+    param([string]$Path, [System.Collections.Generic.List[object]]$Conflicts)
+    foreach ($conflict in $Conflicts) {
         $name = [string]$conflict.Path
         if ($Path -ceq $name) { return $true }
-        if ($Path.StartsWith($name + '/', [StringComparison]::Ordinal)) { return $true }
-        if ($name.StartsWith($Path + '/', [StringComparison]::Ordinal)) { return $true }
+        if (Test-CheckpointPathPrefix $Path $name) { return $true }
+        if (Test-CheckpointPathPrefix $name $Path) { return $true }
     }
     return $false
 }
