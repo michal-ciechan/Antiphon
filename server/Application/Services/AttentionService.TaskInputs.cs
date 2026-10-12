@@ -66,6 +66,7 @@ public sealed partial class AttentionService
         // subsequence filter, not a receipt: ANSI and whitespace normalization remove raw
         // characters, so a literal Contains(body) would silently lose complete prompts.
         var transcripts = new Dictionary<Guid, List<TaskInputTranscript>>();
+        var closedWeakSessions = new HashSet<Guid>();
         foreach (var group in inputs.Values.SelectMany(x => x).GroupBy(x => x.Row.AgentSessionId))
         {
             var sessionId = group.Key;
@@ -109,8 +110,11 @@ public sealed partial class AttentionService
                 .Where(list => list.Count > 0)
                 .ToList();
             var weakWindow = await LoadWeakArmWindowAsync(sessionId, taskLists, ct);
+            // A second prompt closes the weak episode. Those inputs stay in the list so a later
+            // strong input's soleInput count is the original cardinality, and they are not judged
+            // on a strong floor that starts later.
             if (weakWindow is null)
-                DropWeakInputs(inputs, sessionId);
+                closedWeakSessions.Add(sessionId);
             else if (!transcripts.ContainsKey(sessionId))
                 transcripts[sessionId] = weakWindow;
         }
@@ -136,6 +140,9 @@ public sealed partial class AttentionService
 
             foreach (var input in taskRows)
             {
+                if (closedWeakSessions.Contains(sessionId)
+                    && !PromptSubmissionMatch.RequiresTextMatch(input.Row.Body))
+                    continue;
                 var prompt = prompts.FirstOrDefault(p =>
                     PromptSubmissionMatch.IsCompleteIn(input.Row.Body, p.Text));
                 if (prompt is null)
@@ -176,7 +183,8 @@ public sealed partial class AttentionService
 
     // Two prompt headers decide a weak episode: the earliest non-null user prompt is the
     // receipt, and a second one supersedes it because the short body matches every prompt.
-    // Assistant text is read only when that second prompt does not exist.
+    // Assistant text is read only when that second prompt does not exist. A complaint for
+    // one weak input does not stop the probe while another weak input is still unresolved.
     private const int WeakArmPromptProbeRows = 2;
     private const int WeakArmAssistantRowBound = 8;
     private const int WeakArmPhraseProbeRows = 8;
@@ -203,7 +211,9 @@ public sealed partial class AttentionService
             .ToListAsync(ct);
         var rows = new List<TaskInputTranscript>(assistants.Count + 1) { receipt };
         rows.AddRange(assistants);
-        if (assistants.Count < WeakArmAssistantRowBound || ContainsWeakComplaint(rows, taskLists))
+        // One resolved weak input does not settle the others. Stop only when every weak input
+        // already has its complaint, or this window did not fill.
+        if (assistants.Count < WeakArmAssistantRowBound || EveryWeakInputResolved(rows, taskLists))
             return rows;
 
         var after = assistants[^1].Sequence;
@@ -219,7 +229,7 @@ public sealed partial class AttentionService
         foreach (var candidate in phraseRows)
         {
             rows.Add(candidate);
-            if (ContainsWeakComplaint(rows, taskLists))
+            if (EveryWeakInputResolved(rows, taskLists))
                 return rows;
         }
 
@@ -235,9 +245,10 @@ public sealed partial class AttentionService
             .ToListAsync(ct);
     }
 
-    private static bool ContainsWeakComplaint(
+    private static bool EveryWeakInputResolved(
         List<TaskInputTranscript> rows, IReadOnlyList<IReadOnlyList<TaskInputUnreadableInput>> taskLists)
     {
+        var sawWeak = false;
         var prompts = rows.Where(t => t.Kind == TranscriptKinds.UserPrompt && t.Text is not null).ToList();
         foreach (var taskInputs in taskLists)
         {
@@ -245,31 +256,21 @@ public sealed partial class AttentionService
             {
                 if (input.Location is null || PromptSubmissionMatch.RequiresTextMatch(input.Row.Body))
                     continue;
+                sawWeak = true;
                 var prompt = prompts.FirstOrDefault(p => PromptSubmissionMatch.IsCompleteIn(input.Row.Body, p.Text));
                 if (prompt is null)
-                    continue;
+                    return false;
                 var next = prompts.FirstOrDefault(p => p.Sequence > prompt.Sequence);
                 var end = next?.Sequence ?? long.MaxValue;
                 var sole = taskInputs.Count(x => x.Row.Sequence <= input.Row.Sequence) == 1;
-                if (rows.Any(t => t.Kind == TranscriptKinds.AssistantText
+                if (!rows.Any(t => t.Kind == TranscriptKinds.AssistantText
                     && t.Sequence > prompt.Sequence && t.Sequence < end
                     && TaskInputReadFailure.Matches(t.Text, input.Location, input.IsReply, sole)))
-                    return true;
+                    return false;
             }
         }
 
-        return false;
-    }
-
-    private static void DropWeakInputs(Dictionary<Guid, List<TaskInputUnreadableInput>> inputs, Guid sessionId)
-    {
-        foreach (var taskId in inputs.Keys.ToList())
-        {
-            inputs[taskId].RemoveAll(x => x.Row.AgentSessionId == sessionId
-                && !PromptSubmissionMatch.RequiresTextMatch(x.Row.Body));
-            if (inputs[taskId].Count == 0)
-                inputs.Remove(taskId);
-        }
+        return sawWeak;
     }
 
     private static string TaskInputPromptPattern(string body)
