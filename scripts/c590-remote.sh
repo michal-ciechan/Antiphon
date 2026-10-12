@@ -3171,9 +3171,10 @@ c849_fixture_helper_release() {
         printf '%s\n' "$name" >> "$CASE_DIR/fixture-cleanup-residue.txt"; return 0; }
     actual="$(docker inspect -f '{{index .Config.Labels "io.antiphon.fixture-role"}}' "$name")" || {
         printf '%s\n' "$name" >> "$CASE_DIR/fixture-cleanup-residue.txt"; return 0; }
-    [ "$owner" = c849-fixture ] || return 0
-    [ "$run" = "$RUN" ] || return 0
-    [ "$actual" = "$role" ] || return 0
+    if [ "$owner" != c849-fixture ] || [ "$run" != "$RUN" ] || [ "$actual" != "$role" ]; then
+        printf '%s\n' "$name" >> "$CASE_DIR/fixture-cleanup-residue.txt"
+        return 0
+    fi
     docker rm -f "$name" >/dev/null 2>&1 || printf '%s\n' "$name" >> "$CASE_DIR/fixture-cleanup-residue.txt"
     return 0
 }
@@ -4391,35 +4392,35 @@ c849_fixture_controller_owned() {
 # A replaced controller remains visible; no foreign replacement is traversed.
 c849_fixture_controller_remove() {
     (
-    local dir="$CASE_DIR/fixture-controller" identity actual
-    c849_fixture_controller_owned || return 2
-    identity="$(cat -- "$CASE_DIR/.fixture-controller-identity")" || return 2
-    cd -P -- "$dir" || return 2
-    actual="$(stat -c '%d:%i:%u' -- .)" || return 2
-    [ "$actual" = "$identity" ] || return 2
-    [ "$(pwd -P)" = "$dir" ] || return 2
-    find . -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + || return 2
-    # Revalidate the path before removing the now-empty acquired directory.
-    [ "$(stat -c '%d:%i:%u' -- "$dir")" = "$identity" ] || return 2
-    rmdir -- "$dir" || return 2
-    rm -f -- "$CASE_DIR/.fixture-controller-identity"
+        local dir="$CASE_DIR/fixture-controller" identity actual
+        c849_fixture_controller_owned || return 2
+        identity="$(cat -- "$CASE_DIR/.fixture-controller-identity")" || return 2
+        cd -P -- "$dir" || return 2
+        actual="$(stat -c '%d:%i:%u' -- .)" || return 2
+        [ "$actual" = "$identity" ] || return 2
+        [ "$(pwd -P)" = "$dir" ] || return 2
+        find . -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + || return 2
+        # Revalidate the path before removing the now-empty acquired directory.
+        [ "$(stat -c '%d:%i:%u' -- "$dir")" = "$identity" ] || return 2
+        rmdir -- "$dir" || return 2
+        rm -f -- "$CASE_DIR/.fixture-controller-identity"
     )
 }
 
 # Exact names can be absent on repeated finalization. Unknown lookups or failed
 # removals retain a named residue and never count as successful disposal.
 c849_fixture_consumer_release() {
-    local name="$1" code=0 actual
-    docker container inspect "$name" >/dev/null 2>&1 || code=$?
+    local name="$1" identity="${2:-$1}" code=0 actual
+    docker container inspect "$identity" >/dev/null 2>&1 || code=$?
     case "$code" in 1) return 0 ;; 0) ;; *) printf '%s\n' "$name" >> "$CASE_DIR/fixture-cleanup-residue.txt"; return 0 ;; esac
-    actual="$(docker inspect -f '{{.Name}}' "$name")" || {
+    actual="$(docker inspect -f '{{.Name}}' "$identity")" || {
         printf '%s\n' "$name" >> "$CASE_DIR/fixture-cleanup-residue.txt"; return 0; }
     [ "$actual" = "/$name" ] || { printf '%s\n' "$name" >> "$CASE_DIR/fixture-cleanup-residue.txt"; return 0; }
-    docker rm -f "$name" >/dev/null 2>&1 || printf '%s\n' "$name" >> "$CASE_DIR/fixture-cleanup-residue.txt"
+    docker rm -f "$identity" >/dev/null 2>&1 || printf '%s\n' "$name" >> "$CASE_DIR/fixture-cleanup-residue.txt"
 }
 
 c849_fixture_finalize() {
-    local project file name network="c849-${RUN}-npm" code=0 owned=0
+    local project file name marker identity network="c849-${RUN}-npm" code=0 owned=0
     [ "${C849_FIXTURE_FINALIZED:-0}" != 1 ] || return "${C849_FIXTURE_FINALIZATION_STATUS:-0}"
     : > "$CASE_DIR/fixture-cleanup-residue.txt"
     rm -f -- "$CASE_DIR/.fixture-escape" || printf 'escape-link\n' >> "$CASE_DIR/fixture-cleanup-residue.txt"
@@ -4441,9 +4442,25 @@ c849_fixture_finalize() {
         "c849-${RUN}-lock-holder-shared" "c849-${RUN}-lock-waiter-shared" \
         "c849-${RUN}-lock-holder-private" "c849-${RUN}-lock-waiter-private" \
         "c849-${RUN}-apphost-miss" "c849-${RUN}-npm-fill" "c849-${RUN}-npm-b" \
-        "c849-${RUN}-npm-b-empty" "c849-${RUN}-npm-http" "c849-${RUN}-prune-smoke" \
-        "c849-${RUN}-consumer" "c849-${RUN}-donor"; do
+        "c849-${RUN}-npm-b-empty"; do
         c849_fixture_consumer_release "$name"
+    done
+    # These legacy consumers carry the acquired ID/name in their existing marker.
+    # Never substitute an unregistered same-name container for that acquisition.
+    for marker in prune-smoke npm-server busy donor; do
+        [ -f "$CASE_DIR/.fixture-$marker" ] && [ ! -L "$CASE_DIR/.fixture-$marker" ] || continue
+        case "$marker" in
+            prune-smoke) name="c849-${RUN}-prune-smoke" ;;
+            npm-server) name="c849-${RUN}-npm-http" ;;
+            busy) name="c849-${RUN}-consumer" ;;
+            donor) name="c849-${RUN}-donor" ;;
+        esac
+        identity="$(cat -- "$CASE_DIR/.fixture-$marker")" || identity=''
+        if [ "$identity" = "$name" ] || [[ "$identity" =~ ^[0-9a-f]{12,64}$ ]]; then
+            c849_fixture_consumer_release "$name" "$identity"
+        else
+            printf '%s\n' "$name" >> "$CASE_DIR/fixture-cleanup-residue.txt"
+        fi
     done
     c849_fixture_helper_release "c849-${RUN}-masked"
     c849_fixture_helper_release "c849-${RUN}-apphost"
@@ -4475,11 +4492,15 @@ c849_fixture_finalize() {
 }
 
 c849_fixture_exit() {
-    local ec="$1" cleanup=0
+    local ec="$1" cleanup=0 finished="${C849_FIXTURE_FINALIZED:-0}"
     c849_fixture_finalize || cleanup=$?
     if [ "$ec" != 0 ]; then
         if [ "$WROTE" != 1 ]; then write_result false "UnhandledExit $ec" "$ec"; fi
         return "$ec"
+    fi
+    if [ "$finished" != 1 ] && [ "$WROTE" = 1 ]; then
+        WROTE=0
+        write_result false FixtureEarlyReceipt 2
     fi
     if [ "$cleanup" != 0 ]; then
         WROTE=0

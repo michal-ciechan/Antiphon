@@ -257,10 +257,15 @@ public sealed class RemoteScriptContractTests
             "c849_fixture_npm_install", "c849_fixture_npm", "c849_fixture_refill_tarball",
             "c849_fixture_refill", "c849_fixture_warm_probe" })
         {
-            foreach (var command in Commands(Block(Remote(), name)).Where(c => c.Contains("type=bind")))
+            foreach (var command in Commands(Block(Remote(), name)))
             {
-                command.ShouldContain("source=$CHECKOUT/scripts");
-                command.ShouldContain("readonly");
+                foreach (Match bind in Regex.Matches(command, @"type=bind,[^""]+"))
+                {
+                    (bind.Value.Contains("source=$CHECKOUT/scripts/", StringComparison.Ordinal)
+                        || bind.Value.Contains("source=$CHECKOUT/docker/session-runner-grok/verify-codex-image.sh", StringComparison.Ordinal))
+                        .ShouldBeTrue("checkout-input-only: " + bind.Value);
+                    bind.Value.ShouldContain("readonly", customMessage: "checkout-bind-readonly");
+                }
             }
         }
     }
@@ -274,7 +279,8 @@ public sealed class RemoteScriptContractTests
             "unhandled-preserved", "delete-refuses-success", "delete-exact-residue",
             "delete-continues", "export-refuses-success", "early-success-refused",
             "docker-unavailable-refused", "compose-before-removal", "foreign-controller-preserved",
-            "early-exit-refused", "foreign-helper-residue", "primary-secondary-preserved" })
+            "early-exit-refused", "foreign-helper-residue", "primary-secondary-preserved",
+            "unregistered-consumer-preserved" })
             Fact(output, key).ShouldBe("1", key + "\n" + output);
     }
 
@@ -285,7 +291,7 @@ public sealed class RemoteScriptContractTests
         var output = C1192Run("evidence");
         foreach (var key in new[] { "summary-nine-lines", "summary-exact-bytes", "roster-complete",
             "roster-rejects-missing", "roster-rejects-duplicate", "roster-rejects-family",
-            "roster-rejects-variant", "evidence-no-payload", "evidence-control-removed" })
+            "roster-rejects-variant", "roster-rejects-family-duplicate", "roster-rejects-variant-duplicate", "evidence-no-payload", "evidence-control-removed" })
             Fact(output, key).ShouldBe("1", key + "\n" + output);
     }
 
@@ -742,6 +748,7 @@ public sealed class RemoteScriptContractTests
     {
         var finalizer = Block(Remote(), "c849_fixture_finalize");
         Order(finalizer, "c849_fixture_consumer_release", "c849_fixture_export_logs").ShouldBeTrue();
+        Order(finalizer, "wait \"$child\"", "c849_fixture_export_logs").ShouldBeTrue("writers-before-export");
         Order(finalizer, "c849_fixture_export_logs", "c849_fixture_cleanup keep").ShouldBeTrue();
         Order(finalizer, "c849_fixture_cleanup keep", "c849_fixture_controller_remove").ShouldBeTrue();
         var output = C1192Run("finalization");
@@ -820,6 +827,15 @@ public sealed class RemoteScriptContractTests
             if copy_logs; then printf 'FAIL remaining-destination-accepted\n'; exit 1; fi
             [ ! -e "$root/unsafe-copy" ] || { printf 'FAIL copy-into-remaining-destination\n'; exit 1; }
             unset -f rm cp
+            cp() {
+                local dest="${@: -1}" source="${@: -2:1}"
+                mkdir -p "$dest"
+                ln -s "$outside/dir-secret" "$dest/$(basename "$source")"
+                command cp "$@" 2>/dev/null
+            }
+            if copy_logs; then printf 'FAIL directory-race-accepted\n'; exit 1; fi
+            grep -Fxq 'outside-dir-bytes' "$outside/dir-secret" || { printf 'FAIL directory-race-write-through\n'; exit 1; }
+            unset -f cp
             printf 'PASS c1193-log-copy\n'
             """);
         output.IndexOf("PASS c1193-log-copy", StringComparison.Ordinal).ShouldBeGreaterThanOrEqualTo(0, output);
@@ -1151,22 +1167,6 @@ public sealed class RemoteScriptContractTests
         var end = command.IndexOf('\'', start);
         end.ShouldBeGreaterThan(start, command);
         return command[start..end];
-    }
-
-    private static string C1193LogCopySnippet(string trap)
-    {
-        const string guard = "if [ -d \"$CASE_DIR\" ] && [ ! -L \"$CASE_DIR\" ]; then ";
-        const string loopStart = "for name in race-p1.log race-p2.log race-offline.log lock-holder.log lock-waiter.log; do ";
-        var loopAt = trap.IndexOf(loopStart, StringComparison.Ordinal);
-        loopAt.ShouldBeGreaterThanOrEqualTo(0, "race-log copy loop is missing");
-        var doneAt = trap.IndexOf("; done", loopAt, StringComparison.Ordinal);
-        doneAt.ShouldBeGreaterThan(loopAt, "race-log copy loop never closes");
-        var loop = trap[loopAt..(doneAt + "; done".Length)];
-        if (loopAt >= guard.Length
-            && string.CompareOrdinal(trap, loopAt - guard.Length, guard, 0, guard.Length) == 0
-            && trap.AsSpan(doneAt + "; done".Length).StartsWith("; fi"))
-            return guard + loop + "; fi";
-        return loop;
     }
 
     private static string C1066FixtureHarness(params string[] functions) => """

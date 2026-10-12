@@ -948,7 +948,7 @@ case "$mode" in
     # against the actual F-5 algorithm and independently require its recipient facts.
     run bash "$repo/scripts/fixtures/c1192-workspace-contract.sh" apphost "$repo"
     accept fixture-owned-native-payload
-    for fact in apphost-volume-payload apphost-host-decoy apphost-import-readonly mask-empty mask-nocopy mask-readonly mask-exact-pack mask-metadata-and-mode mask-smoke-failure-cleaned; do
+    for fact in apphost-volume-payload apphost-host-decoy apphost-import-readonly mask-empty mask-nocopy mask-readonly mask-exact-pack apphost-import-bytes-mode mask-failure-cleaned; do
       grep -Fxq "$fact=1" "$root/out" || fail "fixture-native-recipient-$fact"
     done
     ! grep -q '^C1192_FAIL' "$root/out" || fail no-production-payload-read
