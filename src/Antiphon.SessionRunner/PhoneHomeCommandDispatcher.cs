@@ -130,8 +130,8 @@ public sealed class PhoneHomeCommandDispatcher
     private RunnerWorkspaceService Workspace() =>
         _workspace ??= new RunnerWorkspaceService(_settings.RepositoryPolicy(), _settings.AllowedCwd);
 
-    // CARD-1032: mirror admission uses the registration store the connection loaded from
-    // StoreIdPath. The custody ledger id is a different guid and is not this recipient.
+    // CARD-1032: an unbound mirror still uses this historical fallback, including the
+    // custody ledger guid when StoreIdPath cannot be parsed. A bound mirror never does.
     private Guid RecipientStoreId()
     {
         var path = _settings.StoreIdPath;
@@ -147,6 +147,31 @@ public sealed class PhoneHomeCommandDispatcher
         }
 
         return _runtime.RunnerStoreId;
+    }
+
+    // A bound mirror may use only a guid read from StoreIdPath. Missing, empty,
+    // whitespace, garbled, wrong-length, directory, and unreadable paths
+    // are recipient_store_unreadable. The custody ledger id is not a substitute.
+    private bool TryReadRegistrationStore(out Guid store)
+    {
+        store = Guid.Empty;
+        var path = _settings.StoreIdPath;
+        if (string.IsNullOrWhiteSpace(path))
+            return false;
+        try
+        {
+            if (Directory.Exists(path) || !File.Exists(path))
+                return false;
+            return Guid.TryParse(File.ReadAllText(path).Trim(), out store) && store != Guid.Empty;
+        }
+        catch (IOException)
+        {
+            return false;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return false;
+        }
     }
 
     private async Task WriteSpillIfPresentAsync(PhoneHomeFrame request, CancellationToken ct)
@@ -280,16 +305,27 @@ public sealed class PhoneHomeCommandDispatcher
                     var body = request.Payload?.Deserialize<PhoneHomeWorkspaceMirrorRequest>(PhoneHomeFraming.Json)
                         ?? throw new ArgumentException("Workspace mirror body is required.");
                     var workspace = Workspace();
-                    var recipientStore = RecipientStoreId();
-                    workspace.BindRecipient(_settings.RunnerId, recipientStore);
-                    if (body.Binding is { } requested
-                        && (!string.Equals(requested.RunnerId, _settings.RunnerId, StringComparison.Ordinal)
-                            || recipientStore == Guid.Empty
-                            || !Guid.TryParse(requested.RunnerStoreId, out var requestedStore)
+                    if (body.Binding is { } requested)
+                    {
+                        // A foreign runner id stays runner_store_mismatch when the registration
+                        // file is absent. C1032_StoreMismatchRefused dispatches that shape.
+                        if (!string.Equals(requested.RunnerId, _settings.RunnerId, StringComparison.Ordinal))
+                            throw new PhoneHomeAdmissionException(
+                                PhoneHomeProblemTypes.UnsupportedTarget, "runner_store_mismatch", 409);
+                        if (!TryReadRegistrationStore(out var recipientStore))
+                            throw new PhoneHomeAdmissionException(
+                                PhoneHomeProblemTypes.UnsupportedTarget, "recipient_store_unreadable", 409);
+                        workspace.BindRecipient(_settings.RunnerId, recipientStore);
+                        if (!Guid.TryParse(requested.RunnerStoreId, out var requestedStore)
                             || requestedStore == Guid.Empty
-                            || requestedStore != recipientStore))
-                        throw new PhoneHomeAdmissionException(
-                            PhoneHomeProblemTypes.UnsupportedTarget, "runner_store_mismatch", 409);
+                            || requestedStore != recipientStore)
+                            throw new PhoneHomeAdmissionException(
+                                PhoneHomeProblemTypes.UnsupportedTarget, "runner_store_mismatch", 409);
+                    }
+                    else
+                    {
+                        workspace.BindRecipient(_settings.RunnerId, RecipientStoreId());
+                    }
                     return Result(request, await workspace.MirrorAsync(body, ct));
                 }),
                 PhoneHomeOperation.WorkspaceRemove => await MutateAsync(request, async () =>
