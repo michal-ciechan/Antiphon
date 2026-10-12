@@ -37,6 +37,8 @@ public static class BuildStep
         return copy.Select(pair => "--property:" + pair.Key + "=" + pair.Value).ToList();
     }
 
+    // The OutputPath token stays the relative manifest value. ProcessDriver and
+    // run-checkpoint.ps1 rewrite a real dotnet build onto one absolute owned path.
     public static List<string> BuildArguments(
         string project,
         string outputPath,

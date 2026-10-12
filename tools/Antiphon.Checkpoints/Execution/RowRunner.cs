@@ -176,6 +176,8 @@ public sealed class RowRunner
                 return TimeoutResult(request, "failed", buffer, combined);
             if (built.ExitCode != 0)
             {
+                EchoGuard(combined, built.Stdout);
+                EchoGuard(combined, built.Stderr);
                 combined.WriteLine($"CHECKPOINT {request.Name} build=failed project={request.Project} outputPath={request.OutputPath} exit={built.ExitCode} slot={request.Slot} waited={request.WaitedSeconds}s" + (request.SlotReason is null ? "" : " slot-reason=" + request.SlotReason));
                 combined.WriteLine($"CHECKPOINT {request.Name} EXIT CODE: 2");
                 return Finish(ExitCodes.Invalid, "failed", "", buffer, 0, [], null, null, false, "build-failed");
@@ -429,6 +431,20 @@ public sealed class RowRunner
             TimedOut = timedOut,
             State = state,
         };
+
+    private static void EchoGuard(TextWriter writer, string? text)
+    {
+        if (string.IsNullOrEmpty(text))
+            return;
+        foreach (var raw in text.Split('\n'))
+        {
+            var line = raw.TrimEnd('\r');
+            if (line.StartsWith("refused:", StringComparison.Ordinal)
+                || line.StartsWith("TAMPERED ", StringComparison.Ordinal)
+                || line.StartsWith("tracked files were not restored", StringComparison.Ordinal))
+                writer.WriteLine(line);
+        }
+    }
 
     private static RowRunResult SourceFailure(RowRequest request, StringWriter buffer, TextWriter output,
         string reason = "source_changed")

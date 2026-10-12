@@ -61,12 +61,30 @@ public sealed class ProcessDriver : IDriver
 
     public async Task<DriverResult> RunAsync(DriverRequest request, CancellationToken cancellationToken)
     {
-        var (fileName, arguments) = Resolve(request);
+        var arguments = request.Arguments;
+        BuildConfinement.Snapshot? before = null;
         var workingDirectory = string.IsNullOrWhiteSpace(request.WorkingDirectory)
             ? Environment.CurrentDirectory
             : request.WorkingDirectory;
+        if (string.IsNullOrWhiteSpace(DotnetShim)
+            && request.FileName.Equals("dotnet", StringComparison.OrdinalIgnoreCase)
+            && request.Arguments.Count > 0
+            && request.Arguments[0].Equals("build", StringComparison.OrdinalIgnoreCase))
+        {
+            var confined = BuildConfinement.Prepare(workingDirectory, request.Arguments, request.Environment, cancellationToken);
+            if (confined.Refusal is not null)
+            {
+                AppendLog(request, confined.Detail);
+                return new DriverResult(ExitCodes.Invalid, "", confined.Detail);
+            }
+
+            arguments = confined.Arguments;
+            before = confined.Before;
+        }
+
+        var (fileName, resolved) = Resolve(request with { Arguments = arguments });
         var psi = CreateStartInfo(fileName, workingDirectory);
-        foreach (var argument in arguments)
+        foreach (var argument in resolved)
             psi.ArgumentList.Add(argument);
         if (request.Environment is not null)
             foreach (var (name, value) in request.Environment)
@@ -86,6 +104,7 @@ public sealed class ProcessDriver : IDriver
         }
 
         var outputGate = new object();
+        string? tamper = null;
         if (!process.Start())
         {
             log?.Dispose();
@@ -98,6 +117,13 @@ public sealed class ProcessDriver : IDriver
         try
         {
             await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
+            if (before is not null)
+                tamper = DescribeTamper(before, workingDirectory);
+            if (tamper is not null)
+            {
+                lock (outputGate)
+                    log?.Write(tamper);
+            }
         }
         catch (OperationCanceledException)
         {
@@ -126,7 +152,42 @@ public sealed class ProcessDriver : IDriver
             log?.Dispose();
         }
 
+        if (tamper is not null)
+            return new DriverResult(ExitCodes.Invalid, stdout.ToString(), tamper + stderr.ToString());
         return new DriverResult(process.ExitCode, stdout.ToString(), stderr.ToString());
+    }
+
+    private static string? DescribeTamper(BuildConfinement.Snapshot before, string workingDirectory)
+    {
+        try
+        {
+            return BuildConfinement.Compare(before, workingDirectory);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return "refused: tampered\nTAMPERED snapshot " + ex.GetType().Name + "\ntracked files were not restored\n";
+        }
+    }
+
+    private static void AppendLog(DriverRequest request, string text)
+    {
+        if (string.IsNullOrWhiteSpace(request.LogPath) || string.IsNullOrEmpty(text))
+            return;
+        try
+        {
+            var logDirectory = Path.GetDirectoryName(Path.GetFullPath(request.LogPath))!;
+            var reason = SafeWrite.OpenAppend(request.LogPath, SafeWrite.Under(logDirectory), out var stream);
+            if (reason is not null || stream is null)
+                return;
+            using var writer = new StreamWriter(stream) { AutoFlush = true };
+            writer.Write(text);
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
     }
 
     public void Kill(bool entireProcessTree)
