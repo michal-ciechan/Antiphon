@@ -109,7 +109,8 @@ internal sealed class TurnEndGapReadiness : IAsyncDisposable
         _pump = new SessionRunnerEventPump(
             scopes,
             Options.Create(settings),
-            loggerFactory.CreateLogger<SessionRunnerEventPump>());
+            loggerFactory.CreateLogger<SessionRunnerEventPump>(),
+            _time);
     }
 
     public static TurnEndGapReadiness CreateStream() => new(null, null, null, 60_000);

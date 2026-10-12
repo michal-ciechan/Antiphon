@@ -11,15 +11,18 @@ public sealed class SessionRunnerEventPump : BackgroundService
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly SessionRunnerSettings _settings;
     private readonly ILogger<SessionRunnerEventPump> _logger;
+    private readonly TimeProvider _time;
 
     public SessionRunnerEventPump(
         IServiceScopeFactory scopeFactory,
         IOptions<SessionRunnerSettings> settings,
-        ILogger<SessionRunnerEventPump> logger)
+        ILogger<SessionRunnerEventPump> logger,
+        TimeProvider? time = null)
     {
         _scopeFactory = scopeFactory;
         _settings = settings.Value;
         _logger = logger;
+        _time = time ?? TimeProvider.System;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -45,6 +48,14 @@ public sealed class SessionRunnerEventPump : BackgroundService
 
                 await foreach (var evt in client.StreamEventsAsync(stoppingToken))
                 {
+                    if (evt.SubscriptionReady)
+                    {
+                        using var ready = new RuntimePhase(
+                            _logger, _time, evt.SessionId, "pump.subscription-catch-up");
+                        await CatchUpTranscriptsAsync(client, runtime, stoppingToken);
+                        continue;
+                    }
+
                     using var phase = new RuntimePhase(_logger, TimeProvider.System,
                         evt.SessionId, "pump.event", producerTimestamp: evt.Transcript?.Timestamp,
                         producerSequence: evt.Transcript?.Sequence, transcriptUuid: evt.Transcript?.Uuid);
