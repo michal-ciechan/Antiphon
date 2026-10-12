@@ -564,6 +564,12 @@ has not executed any control.
 | G-531 | D-3; completed replay refuses an absent generation | PC-531 |
 | G-532 | D-2; a bound mirror whose runner or store is not this recipient is refused before any directory or ledger write | PC-532 |
 | G-533 | D-3; preparation reuse requires the live store and leaves an old-store row as incomplete debt | PC-533 |
+| G-534 | S2 D1; idle join writes the owner stamp and a fresh server read shows the completed binding | PC-534 |
+| G-535 | S2 D1; a busy recipient leaves no partial binding or ledger for the waiting request | PC-535 |
+| G-536 | S2 D1; enqueue-then-crash retry reuses the same preparation and completes one binding | PC-536 |
+| G-537 | S2 D1; foreign_mirror_owner through the live queue leaves the foreign tree and ledger untouched | PC-537 |
+| G-538 | S2 D1; stale_mirror_binding through the live queue does not complete the server row | PC-538 |
+| G-539 | S2 D1; runner_store_mismatch through the live queue writes no directory or ledger | PC-539 |
 
 ### Positive controls
 
@@ -878,6 +884,12 @@ remain pending under the parent artifact, not silently discharged here.
 | PC-531 | RB | exact replay after ordinary worktree removal -> break G-531: return the completed binding when that generation's directory is absent. | `/*/*/RunnerWorkspaceBindingTests/C1032_AbsentMirrorReplayRefused` | `staleSuccess.ShouldBeFalse()` |
 | PC-532 | RB | request names another store or runner -> break G-532: copy the request store into a completed binding. | `/*/*/RunnerWorkspaceBindingTests/C1032_StoreMismatchRefused` | `wrongStoreCompleted.ShouldBeFalse()` |
 | PC-533 | CAP | store replaced between preparation and retry -> break G-533: reuse the old-store preparation. | `/*/*/RemoteWorkspacePreparerTests/C1032_StoreReplacementKeepsDebt` | `reusedOldStore.ShouldBeFalse()` |
+| PC-534 | JOIN | idle registered recipient -> break G-534: skip the owner-stamp write and still return success. | `/*/*/PhoneHomeMirrorJoinTests/C1032_JoinIdleRecipient` | `stampMatches.ShouldBeTrue()` |
+| PC-535 | JOIN | second mirror while the mutation lock is held -> break G-535: skip MutationLock.WaitAsync. | `/*/*/PhoneHomeMirrorJoinTests/C1032_JoinBusyRecipient` | `partialBindingLeft.ShouldBeFalse()` |
+| PC-536 | JOIN | server drops the waiter after enqueue -> break G-536: mint a new PreparationId on retry. | `/*/*/PhoneHomeMirrorJoinTests/C1032_JoinCrashRetry` | `recoveredPreparationId.ShouldBe(firstPreparationId)` |
+| PC-537 | JOIN | colliding short id through the live queue -> break G-537: adopt when the owner stamp does not match. | `/*/*/PhoneHomeMirrorJoinTests/C1032_JoinForeignOwner` | `foreignAdopted.ShouldBeFalse()` |
+| PC-538 | JOIN | exact replay after removal through the live queue -> break G-538: return success when the generation directory is absent. | `/*/*/PhoneHomeMirrorJoinTests/C1032_JoinStaleBinding` | `staleCompleted.ShouldBeFalse()` |
+| PC-539 | JOIN | registration store file replaced before the request -> break G-539: bind the requested store and skip the mismatch throw. | `/*/*/PhoneHomeMirrorJoinTests/C1032_JoinStoreMismatch` | `wrongStoreCompleted.ShouldBeFalse()` |
 
 ### Out of scope
 
@@ -911,7 +923,7 @@ remain pending under the parent artifact, not silently discharged here.
 
 This is the sole importer-visible closed ordinary list in **this** artifact.
 Use this path, not the provisional table in the fix plan. Each row owns a fresh
-isolated build and one exact filter. The twenty rows total 110 TUnit executions.
+isolated build and one exact filter. The twenty-one rows total 116 TUnit executions. CP-21 is the S2 phone-home join added after the 105-minute freeze below.
 Read each fresh TRX's executed class/method roster as well as its count:
 the tool's Min is a floor and its derived Expect tokens alone do not enforce
 the exact roster. Prefix rows select only the enumerated C1032 methods above;
@@ -923,7 +935,7 @@ is what makes the enumerated methods run (TUnit issue 4580). No other
 C1032 method shares those names, so the star does not add a case.
 
 Select explicit `--rows` after commit/push:
-S1=CP-1,CP-2; S2=CP-3,CP-4,CP-17,CP-18,CP-19,CP-20; S3=CP-5; S4=CP-6;
+S1=CP-1,CP-2; S2=CP-3,CP-4,CP-17,CP-18,CP-19,CP-20,CP-21; S3=CP-5; S4=CP-6;
 S5=CP-7,CP-8,CP-9,CP-10; S6=CP-11,CP-12;
 S7=CP-13,CP-14; S8=CP-15,CP-16.
 This moves parent destructive witnesses behind S5 implementation and adds
@@ -976,12 +988,14 @@ loops, assertions and PC variants do not raise Min.
 | CP-18 | S2 | `tests/Antiphon.SessionRunner.Tests -> bin-c1032-absent-replay/` | absent-replay | `/*/*/RunnerWorkspaceBindingTests/C1032_AbsentMirrorReplayRefused` | V-1 | all 1 listed; 0 failed/skipped | 1 | 5 | true |
 | CP-19 | S2 | `tests/Antiphon.SessionRunner.Tests -> bin-c1032-store-mismatch/` | store-mismatch | `/*/*/RunnerWorkspaceBindingTests/C1032_StoreMismatch*` | V-1 | all 1 listed; 0 failed/skipped | 1 | 5 | true |
 | CP-20 | S2 | `tests/Antiphon.Tests -> bin-c1032-store-replacement/` | store-replacement | `/*/*/RemoteWorkspacePreparerTests/C1032_StoreReplacement*` | V-1 | all 1 listed; 0 failed/skipped | 1 | 5 | true |
+| CP-21 | S2 | `tests/Antiphon.Tests -> bin-c1032-join/` | mirror-join | `/*/*/PhoneHomeMirrorJoinTests/C1032_Join*` | V-1 | all 6 listed; 0 failed/skipped | 6 | 8 | true |
 
 ### Cost
 
 **Estimated**, not measured. Ordinary Code V/R floor is the CP time sum:
 5+4+5+5+5+5+5+5+5+6+5+6+6+6+7+5+5+5+5+5 = **105 minutes**.
-The exact filters are CP-1..CP-20 above; slice floors are S1=9, S2=30,
+CP-21 adds one S2 build and 8 minutes and is not inside that sum.
+The exact filters are CP-1..CP-21 above; slice floors are S1=9, S2=30,
 S3=5, S4=5, S5=21, S6=11, S7=12, S8=12 minutes.
 This includes **20 isolated builds × 3 = 60** and **45 minutes V/R**.
 Setup/manifest/tool-bootstrap allowance = **3**; S1 EF-generation authoring build allowance =
@@ -999,10 +1013,11 @@ the complete PC battery = **2,045 minutes** estimated (34 h 5 min), before
 authoring, slot wait and retries. It is separate staged work, not the duration
 of a single Code dispatch or permission to resume Mutation.
 
-The 275 controls include 33 retained parent controls, 36 legacy regression
-controls and 206 added independent binding/schema/digest/receipt/use/recovery/
-inertness predicates. Field-level controls are intentional; sharing a test method
-does not collapse independently bypassable comparisons.
+The 281 controls include 33 retained parent controls, 36 legacy regression
+controls and 212 added independent binding/schema/digest/receipt/use/recovery/
+inertness/join predicates. Field-level controls are intentional; sharing a test method
+does not collapse independently bypassable comparisons. CP-21 adds PC-534..PC-539;
+the 1,925-minute Mutation floor below is the pre-join 275-control estimate.
 
 Savings: 18 selected class/group occurrences grouped into 16 builds save
 **2 × 3 = 6 minutes** versus building each class/group separately.
@@ -1015,11 +1030,11 @@ activation costs remain in the parent plan and are not included in this S3 sum.
 
 #### Handoff audit
 
-Static audit: **guards=275, mapped=275, missing=0, duplicate PC maps=0**.
+Static audit: **guards=281, mapped=281, missing=0, duplicate PC maps=0**.
 Parent U=21/M=12 are represented once in the ordinary roster; new prerequisite
-methods=41; existing methods=36; total=110. Twenty unique CP rows and outputs
+methods=47; existing methods=36; total=116. Twenty-one unique CP rows and outputs
 cover the ordinary V/R scope. No test/build/mutation execution is asserted.
-PCs: specified=275, executed=0, pending=275, payloads binding required=275.
+PCs: specified=281, executed=0, pending=281, payloads binding required=281.
 The later Mutation acceptance gate requires the named red/restore/green cycles;
 paused controls are not waived and cannot be reported PC-clean.
 
