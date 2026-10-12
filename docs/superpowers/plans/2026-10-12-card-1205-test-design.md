@@ -777,8 +777,9 @@ green. Repair round 2 runs CP-1, CP-2, and ADJ-1 on one S2 output. All rows requ
 Dispatch checkpoint reference:
 `checkpoints: docs/superpowers/plans/2026-10-12-card-1205-test-design.md@<this pushed commit> section "### Checkpoints"`.
 
-Commit/push the slice, freeze source, then use the checkpoint tool with this plan,
-`--after S1` (then S2, S3, S4, S5), `--serial`, and
+Commit/push the slice, freeze source, then use the checkpoint tool with this plan.
+Repair round 2 selects `--after S2` because CP-1, CP-2, and ADJ-1 share that
+output. Later slices use `--after S3`, `S4`, and `S5`. Pass `--serial` and
 `--expected-source-sha <slice-commit>`. Await owned `wait` calls until exit !=75.
 Use the existing verified tool binary, or the plan's disclosed build-slot bootstrap
 with `OutputPath=bin-c1205-tool/`; an implicit unleased dotnet build is not allowed.
