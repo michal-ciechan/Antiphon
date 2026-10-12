@@ -324,6 +324,10 @@ public sealed class PhoneHomeCommandDispatcher
                     }
                     else
                     {
+                        // The authenticated server request decides binding presence. Omission
+                        // deliberately selects legacy path-only creation, without registration
+                        // admission, a binding receipt, a preparation ledger or an owner claim.
+                        // No later slice in the CARD-1032 plan removes this compatibility path.
                         workspace.BindRecipient(_settings.RunnerId, RecipientStoreId());
                     }
                     return Result(request, await workspace.MirrorAsync(body, ct));
