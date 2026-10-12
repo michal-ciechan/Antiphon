@@ -274,7 +274,7 @@ public sealed class CheckpointTrackedBaselineTests : CheckpointTestBase
             $ErrorActionPreference = 'Stop'
             $tokens = $null
             $parseErrors = $null
-            $ast = [System.Management.Automation.Language.Parser]::ParseFile {{Quote(script)}} ([ref]$tokens) ([ref]$parseErrors)
+            $ast = [System.Management.Automation.Language.Parser]::ParseFile({{Quote(script)}}, [ref]$tokens, [ref]$parseErrors)
             if ($parseErrors -and @($parseErrors).Count -gt 0) { throw ($parseErrors | Out-String) }
             $names = @(
                 'Get-CheckpointTrackedSnapshot',
