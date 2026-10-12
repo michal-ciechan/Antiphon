@@ -130,6 +130,25 @@ public sealed class PhoneHomeCommandDispatcher
     private RunnerWorkspaceService Workspace() =>
         _workspace ??= new RunnerWorkspaceService(_settings.RepositoryPolicy(), _settings.AllowedCwd);
 
+    // CARD-1032: mirror admission uses the registration store the connection loaded from
+    // StoreIdPath. The custody ledger id is a different guid and is not this recipient.
+    private Guid RecipientStoreId()
+    {
+        var path = _settings.StoreIdPath;
+        if (!string.IsNullOrWhiteSpace(path) && File.Exists(path))
+        {
+            try
+            {
+                if (Guid.TryParse(File.ReadAllText(path).Trim(), out var stored) && stored != Guid.Empty)
+                    return stored;
+            }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
+
+        return _runtime.RunnerStoreId;
+    }
+
     private async Task WriteSpillIfPresentAsync(PhoneHomeFrame request, CancellationToken ct)
     {
         if (request.Payload is not { } payload
@@ -261,13 +280,14 @@ public sealed class PhoneHomeCommandDispatcher
                     var body = request.Payload?.Deserialize<PhoneHomeWorkspaceMirrorRequest>(PhoneHomeFraming.Json)
                         ?? throw new ArgumentException("Workspace mirror body is required.");
                     var workspace = Workspace();
-                    workspace.BindRecipient(_settings.RunnerId, _runtime.RunnerStoreId);
+                    var recipientStore = RecipientStoreId();
+                    workspace.BindRecipient(_settings.RunnerId, recipientStore);
                     if (body.Binding is { } requested
                         && (!string.Equals(requested.RunnerId, _settings.RunnerId, StringComparison.Ordinal)
-                            || _runtime.RunnerStoreId == Guid.Empty
+                            || recipientStore == Guid.Empty
                             || !Guid.TryParse(requested.RunnerStoreId, out var requestedStore)
                             || requestedStore == Guid.Empty
-                            || requestedStore != _runtime.RunnerStoreId))
+                            || requestedStore != recipientStore))
                         throw new PhoneHomeAdmissionException(
                             PhoneHomeProblemTypes.UnsupportedTarget, "runner_store_mismatch", 409);
                     return Result(request, await workspace.MirrorAsync(body, ct));
