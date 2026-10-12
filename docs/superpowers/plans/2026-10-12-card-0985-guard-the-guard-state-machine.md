@@ -34,6 +34,16 @@ Deliberate mutants belong to the subsequent Mutation stage under the standing Co
 contract. Its scratch red/restore/green controls below remain pending; ordinary
 pre-repair failure reproduction is Code work, not PC discharge.
 
+Baseline at test-only commit `7d3ced5847549d08059c87a05500ac129c834d29`:
+CP-1 executed 6, passed 4, failed 2, skipped 0. V-2 found an empty owner list
+instead of the four named async-iterator roots; V-4 did not throw. V-1/V-3 and
+both unchanged R-1 tests passed. The scanner is byte-for-byte pre-slice except
+the fixture exclusion. V-1/V-3 add regression coverage for already-correct edges;
+their deliberate red controls remain pending Mutation, not claimed baseline red.
+Repair uses the shared `StateMachineAttribute` to include all three compiler
+attributes, and refuses a discovered state-machine type with no readable MoveNext.
+Evidence: `.antiphon/checkpoints/20261012-231412-f5f1/report.json` and its fresh TRX.
+
 ## Verification design
 
 S1: commit this note. S2: commit fixtures/tests, run CP-1 test-first against the
