@@ -29,33 +29,71 @@ public sealed class TaskInputAttentionCostTests
     [Arguments(3)]
     public async Task Strong_arm_uses_one_query_without_draining_candidates(int sessions)
     {
-        var commands = 0;
-        var wireRows = 0;
+        await using var f = await TaskInputSpillFixture.CreateAsync();
+        var first = await SeedInputAsync(f, 10);
+        await using var db = f.Db();
         for (var i = 0; i < sessions; i++)
         {
-            await using var f = await TaskInputSpillFixture.CreateAsync();
-            var row = await SeedInputAsync(f, 10);
-            await AddEntryAsync(f, 11, TranscriptKinds.AssistantText,
-                $"I cannot read {row.RemoteSpillRelativePath}.");
-            await using (var db = f.Db())
+            var sessionId = i == 0 ? f.SessionId : Guid.NewGuid();
+            var body = first.Body;
+            var location = first.RemoteSpillRelativePath;
+            if (i > 0)
             {
-                for (var sequence = 20; sequence < 220; sequence++)
-                    db.TranscriptEntries.Add(new TranscriptEntry
-                    {
-                        Id = Guid.NewGuid(), AgentSessionId = f.SessionId, Sequence = sequence,
-                        Kind = TranscriptKinds.UserPrompt, Text = row.Body,
-                        CreatedAt = DateTime.UtcNow,
-                    });
-                await db.SaveChangesAsync();
+                var taskId = Guid.NewGuid();
+                var eventId = Guid.NewGuid();
+                body = $"Independent session {i}: " + first.Body;
+                location = AgentTaskInputService.Route(taskId, eventId);
+                db.AgentSessions.Add(new AgentSession
+                {
+                    Id = sessionId, DefinitionName = "cost probe", AgentKind = AgentKind.Codex,
+                    Status = SessionStatus.Running, Cwd = f.ServerRoot, CreatedAt = DateTime.UtcNow,
+                });
+                db.AgentTasks.Add(new AgentTask
+                {
+                    Id = taskId, RootTaskId = taskId, AgentSessionId = sessionId,
+                    Title = "cost probe", Goal = "Check", Kind = AgentTaskKind.Worker,
+                    Role = AgentTaskRole.Code, AgentKind = AgentKind.Codex,
+                    ModelLevel = AgentModelLevel.High, Workspace = WorkspaceMode.Worktree,
+                    WorkingDirectory = f.ServerRoot, Status = AgentTaskStatus.Working,
+                    CreatedAt = DateTime.UtcNow,
+                });
+                db.AgentTaskEvents.Add(new AgentTaskEvent
+                {
+                    Id = eventId, AgentTaskId = taskId, AgentSessionId = sessionId,
+                    Type = AgentTaskEventType.Refined, InputBody = body, At = DateTime.UtcNow,
+                });
+                db.SessionQueuedMessages.Add(new SessionQueuedMessage
+                {
+                    Id = Guid.NewGuid(), AgentSessionId = sessionId, Sequence = 1,
+                    Body = body, Origin = QueuedMessageOrigin.Delegation, CreatedAt = DateTime.UtcNow,
+                    ConversationKey = AgentTaskInputService.ConversationKey(taskId, eventId),
+                });
+                db.TranscriptEntries.Add(new TranscriptEntry
+                {
+                    Id = Guid.NewGuid(), AgentSessionId = sessionId, Sequence = 10,
+                    Kind = TranscriptKinds.UserPrompt, Text = body, CreatedAt = DateTime.UtcNow,
+                });
             }
-            var probe = new TranscriptReadProbe { CountDrainedRows = true };
-            (await ReadBuilderAsync(f, probe)).ShouldBeEmpty("later complete inputs supersede the episode");
-            commands += probe.Commands;
-            wireRows += probe.WireRows;
+            db.TranscriptEntries.Add(new TranscriptEntry
+            {
+                Id = Guid.NewGuid(), AgentSessionId = sessionId, Sequence = 11,
+                Kind = TranscriptKinds.AssistantText, Text = $"I cannot read {location}.",
+                CreatedAt = DateTime.UtcNow,
+            });
+            for (var sequence = 20; sequence < 220; sequence++)
+                db.TranscriptEntries.Add(new TranscriptEntry
+                {
+                    Id = Guid.NewGuid(), AgentSessionId = sessionId, Sequence = sequence,
+                    Kind = TranscriptKinds.UserPrompt, Text = body, CreatedAt = DateTime.UtcNow,
+                });
         }
-        wireRows.ShouldBeLessThanOrEqualTo(204 * sessions,
-            "wire rows include remaining candidates read at reader disposal");
-        commands.ShouldBe(sessions, "one transcript command per strong-input session");
+        await db.SaveChangesAsync();
+        var probe = new TranscriptReadProbe { CountDrainedRows = true };
+        (await ReadBuilderAsync(f, probe)).ShouldBeEmpty("later complete inputs supersede the episode");
+        probe.WireRows.ShouldBeLessThanOrEqualTo(204 * sessions,
+            $"wire rows include remaining candidates read at disposal; commands={probe.Commands}");
+        probe.Commands.ShouldBe(sessions, "one transcript command per strong-input session in one poll");
+        probe.UnboundedCandidateCommands.ShouldBe(0, "candidate discovery must be SQL-bounded");
     }
 
     [Test]
@@ -174,6 +212,7 @@ public sealed class TaskInputAttentionCostTests
             var actual = await ReadBuilderAsync(f, probe);
             System.Text.Json.JsonSerializer.Serialize(actual)
                 .ShouldBe(System.Text.Json.JsonSerializer.Serialize(reference), scenario);
+            probe.UnboundedCandidateCommands.ShouldBe(0, "bounded candidate SQL: " + scenario);
             probe.Commands.ShouldBe(commands, "transcript command bound: " + scenario);
         }
     }
@@ -518,6 +557,7 @@ public sealed class TaskInputAttentionCostTests
         public bool CountTextBytes { get; init; }
         public bool CountDrainedRows { get; init; }
         public int WireRows { get; private set; }
+        public int UnboundedCandidateCommands { get; private set; }
 
         public override ValueTask<DbDataReader> ReaderExecutedAsync(DbCommand command,
             CommandExecutedEventData eventData, DbDataReader result,
@@ -525,6 +565,9 @@ public sealed class TaskInputAttentionCostTests
         {
             if (command.CommandText.Contains("\"TranscriptEntries\"", StringComparison.Ordinal))
             {
+                if (command.CommandText.Contains(" LIKE ", StringComparison.Ordinal)
+                    && !command.CommandText.Contains("LIMIT", StringComparison.Ordinal))
+                    UnboundedCandidateCommands++;
                 MaxColumns = Math.Max(MaxColumns, result.FieldCount);
                 if (CountTextBytes || CountDrainedRows)
                     result = new TextByteReader(result, this);
@@ -615,7 +658,7 @@ public sealed class TaskInputAttentionCostTests
             public override async ValueTask DisposeAsync()
             {
                 // Npgsql otherwise drains unread rows internally, outside EF's ReadCount.
-                if (_owner.CountDrainedRows)
+                if (_owner.CountDrainedRows && !_inner.IsClosed)
                     while (await _inner.ReadAsync()) _owner.WireRows++;
                 await _inner.DisposeAsync();
             }
@@ -624,7 +667,7 @@ public sealed class TaskInputAttentionCostTests
             {
                 if (disposing)
                 {
-                    if (_owner.CountDrainedRows)
+                    if (_owner.CountDrainedRows && !_inner.IsClosed)
                         while (_inner.Read()) _owner.WireRows++;
                     _inner.Dispose();
                 }
