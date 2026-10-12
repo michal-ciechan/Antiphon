@@ -148,4 +148,12 @@ public sealed record SessionRunnerEvent(
     SessionRunnerAdoptedEvent? Adopted = null,
     SessionRunnerTranscriptFaultEvent? TranscriptFault = null,
     SessionRunnerTranscriptBoundEvent? TranscriptBound = null,
-    SessionRunnerAgentStatusEvent? AgentStatus = null);
+    SessionRunnerAgentStatusEvent? AgentStatus = null,
+    bool SubscriptionReady = false)
+{
+    /// <summary>Internal iterator signal. Not a wire name, transcript row, or publication.</summary>
+    public const string SubscriptionReadyName = "subscription-ready";
+
+    public static SessionRunnerEvent SubscriptionReadiness() =>
+        new(SubscriptionReadyName, Guid.Empty, SubscriptionReady: true);
+}
