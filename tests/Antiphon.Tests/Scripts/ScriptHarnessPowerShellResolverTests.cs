@@ -18,6 +18,7 @@ public sealed class ScriptHarnessPowerShellResolverTests
         var second = Exe("second");
         var alias = Exe("Microsoft/WindowsApps");
         var upperAlias = Exe("Microsoft/wInDoWsApPs");
+        var package = Exe("WindowsApps/PowerShell-package");
         var empty = Exe("empty");
         var reparse = Exe("linked");
         var emptyReparse = Exe("alias-outside");
@@ -31,6 +32,7 @@ public sealed class ScriptHarnessPowerShellResolverTests
             [second] = new(FileAttributes.Normal, 200),
             [alias] = new(FileAttributes.ReparsePoint, 0),
             [upperAlias] = new(FileAttributes.ReparsePoint, 0),
+            [package] = new(FileAttributes.Normal, 100),
             [empty] = new(FileAttributes.Normal, 0),
             [reparse] = new(FileAttributes.ReparsePoint, 100),
             [emptyReparse] = new(FileAttributes.ReparsePoint, 0),
@@ -52,6 +54,7 @@ public sealed class ScriptHarnessPowerShellResolverTests
             ("quoted", " \"" + Dir(real) + Path.DirectorySeparatorChar + "\" ", real, [], true),
             ("missing", Join(Dir(Exe("absent")), Dir(real)), real, [], true),
             ("case-alias", Join(Dir(upperAlias), Dir(real)), real, [], true),
+            ("windowsapps-package", Join(Dir(package), Dir(real)), real, [], true),
             ("lookalike", Dir(lookalike), lookalike, [], true),
             ("empty-regular", Join(Dir(empty), Dir(real)), real, [], true),
             ("empty-reparse-outside", Join(Dir(emptyReparse), Dir(real)), real, [], true),
@@ -75,7 +78,7 @@ public sealed class ScriptHarnessPowerShellResolverTests
             }
             catch (FileNotFoundException error) when (row.Expected is null)
             {
-                try { error.Message.ShouldContain("ScriptHarnessPowerShellNotFound", row.Name); }
+                try { error.Message.ShouldContain("ScriptHarnessPowerShellNotFound", Case.Sensitive, row.Name); }
                 catch (Exception assertion) { failures.Add(row.Name + ": " + assertion.Message); }
             }
             catch (Exception error) { failures.Add(row.Name + ": " + error.Message); }
