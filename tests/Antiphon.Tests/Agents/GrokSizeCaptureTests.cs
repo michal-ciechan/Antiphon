@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text.Json;
 using Antiphon.Agents.Pty;
+using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
 

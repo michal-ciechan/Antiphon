@@ -33,7 +33,7 @@ ANSI from the 120x30 fixture and claim it is a native capture.
 | V-2 | 120x30 and 40x20 -> remove empty-input guard / admit narrow geometry -> changed composer becomes ready / narrow becomes ready. Handwritten Ready and Unknown oracles; existing 120x30 expectations unchanged. |
 | V-3 | Captured trust/sign-in at each size if observable -> skip corresponding blocker -> receives Ready or Unknown instead of named blocker. No synthetic frame is described as real. Unobserved trust capture is reported as a split rather than fabricated. |
 | V-4 | Runner adapter consumes each admitted nondefault ready capture without input -> retain master dimensions -> bounded waiter false instead of true. |
-| R-1 | Full GrokStartupReadinessTests and GrokLinuxBlockingPromptTests preserve default fixture semantics, precedence and CARD-0988 expired-read/fault behavior. |
+| R-1 | Full GrokStartupReadinessTests, GrokLinuxStartupReadinessTests and GrokLinuxBlockingPromptTests preserve default fixture semantics, precedence and CARD-0988 expired-read/fault behavior. |
 | R-2 | Full RunnerGrokAdapterReadyTests preserve coherent snapshots, trust, cancellation, deadlines and launch blocks. |
 | M-1 | Explicit native capture records actual size, CLI version, zero model input, screen and joined child exit. Inspect geometry and prompt wrapping manually before implementing. |
 
@@ -61,7 +61,7 @@ UseAppHost=false on Linux; reused rows use the same source/build certificate.
 |---|---|---|---|---|---|---|---:|---:|---|---|
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-c861-capture/` | native-capture | `/*/*/GrokSizeCaptureTests/Capture_native_sizes` | M-1 | all 1 method, 0 failed/skipped | 1 | 5 | true | `C861_CAPTURE=1` |
 | CP-2 | S2 | `tests/Antiphon.Tests -> bin-c861-red/` | pre-fix-red | `/*/*/GrokStartupSizeTests/*` | V-1, V-2, V-3 | intended V-1 failures on base production; other rows inspected | 1 | 4 | true | n/a |
-| CP-3 | S3 | `tests/Antiphon.Tests -> bin-c861-final/` | sizes-and-fixtures | `/*/*/(GrokStartupSizeTests\|GrokStartupReadinessTests)/*` | V-1, V-2, V-3, R-1 | all listed, 0 failed/skipped | 10 | 4 | true | n/a |
+| CP-3 | S3 | `tests/Antiphon.Tests -> bin-c861-final/` | sizes-and-fixtures | `/*/*/(GrokStartupSizeTests\|GrokStartupReadinessTests\|GrokLinuxStartupReadinessTests)/*` | V-1, V-2, V-3, R-1 | all listed, 0 failed/skipped | 30 | 4 | true | n/a |
 | CP-4 | S3 | CP-3 | adapters-and-blockers | `/*/*/(RunnerGrokAdapterReadyTests\|GrokLinuxBlockingPromptTests)/*` | V-4, R-1, R-2 | all listed, 0 failed/skipped | 30 | 3 | true | n/a |
 
 ### Cost
