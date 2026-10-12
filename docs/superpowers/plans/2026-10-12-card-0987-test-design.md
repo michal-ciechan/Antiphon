@@ -9,6 +9,17 @@ no build, test listing, test execution, mutation, deployment or deletion ran her
 Authenticated card/task reads were **bound**: ANTIPHON_TASK_TOKEN was present and used without printing it.
 Source census is not executed/discovered coverage. A read-only Node census counted declarations/Arguments; the checkpoint importer was not executed. New payloads and PC recipes remain **binding required after Code**.
 
+**Amendment 2026-10-12 (Plan task `04839ba2-4569-48eb-9870-445321244f5e`, from `c7e8ff5bbbad2956ec4a7d5fe37f73cd0b123930`).**
+Findings 6 and 7 are resolved in the fix design (D-10..D-12): S1 is split into S1a (tool seam, the 14 tool-only ports)
+and S1b (the unmoved sweep over the port, the 2 sweep-backed ports); S6 is split into S6a (maintenance closure) and S6b
+(delivery verification after S5, S6a and S7). Rows changed by that amendment and nothing else: **CP-17 added**
+(After S1a, 14 tool-only executions, own build, inserted before CP-1); **CP-1** After S1 -> S1b; **CP-8** After S6 -> S6a
+and moved before CP-7; **CP-7** and **CP-9** After S6 -> S6b; the Checkpoints preamble; the Collision resolution rows for
+S1/S2 and S6; the safe-order line; the R-1 guard row (adds CP-17); the Cost sums (137 -> 145, 149 -> 157, 1224 -> 1232,
+15 -> 16 builds); and the Handoff audit's last-but-one bullet. The method ledger, the 54/60/30 census, every V/R
+identifier, every G/PC binding and the 260-control roster are untouched. `After` tokens with suffixes are literal in
+`AfterSelector`; select rows with `--rows CP-n`.
+
 ## Freeze findings and dispatch conditions
 
 1. Compatibility source: **45 methods / 54 results** (21/27 sweep, 11/11 scope, 13/16 tool-copy).
@@ -55,17 +66,17 @@ The task detail reads are more specific: CARD-1032 S2 repair `cac7e685` and CARD
 
 | CARD-0987 slice | Prior owner that must land / exact collision | Safe dispatch gate |
 |---|---|---|
-| S1/S2 | CARD-1199 active repair `71060864`: Checkpoints build/deletion confinement and run-checkpoint driver | Its round-10 brief names BuildConfinement.cs and run-checkpoint.ps1; the repaired checkpoint caller graph is an integration dependency. Wait for its reviewed landing and re-read the changed caller graph before extracting. Resolve finding 6 first. |
+| S1a/S1b/S2 | CARD-1199 active repair `71060864`: Checkpoints build/deletion confinement and run-checkpoint driver; its build-output cleanup path (`OutputCleanup.cs`, `CheckpointApp.cs`, `Program.cs`) is S1a's threading target | Its round-10 brief names BuildConfinement.cs and run-checkpoint.ps1; the repaired checkpoint caller graph is an integration dependency. Wait for its reviewed landing and re-read the changed caller graph before threading or extracting. Finding 6 is resolved by the S1a/S1b split (amendment). |
 | S3/S4 | CARD-1017 foundation is already source-visible; inventory only names its owner | No authority transfer. If CARD-0692 scratch integration lands, bind to its exact released-scratch entry rather than add another deletion stage. |
 | S5 | CARD-1033 **S17**: server/Program.cs and Infrastructure/Agents/HangfireConfiguration.cs; CARD-1017 foundation's composition first | Wait for the composition slice's reviewed landing, not merely current S3 completion. No AppDbContext/migration edit is planned here. |
-| S6 | CARD-1033 **S7 and S11**: Application/Services/AgentTaskLandService.cs; CARD-1017 local/publication owner | Wait for both shared-file slices' land and no newer land-service owner. S5 and S7 of CARD-0987 must be in its start tree. |
+| S6a / S6b | CARD-1033 **S7 and S11**: Application/Services/AgentTaskLandService.cs (S6a only); CARD-1017 local/publication owner | S6a: wait for both shared-file slices' land and no newer land-service owner; it needs nothing from S5 or S7. S6b: S5, S6a and S7 of CARD-0987 must be in its start tree (amendment). |
 | S7 | CARD-1032 runner/mirror slices: SessionRunnerContracts.cs, PhoneHomeContracts.cs, PhoneHomeCommandDispatcher.cs, runner Program.cs, PhoneHomeRunnerClient.cs | S2 repair alone is insufficient: wait for later runner removal/fence/transport owners touching these paths to land. Re-read capability/operation allocations. CARD-1017's remote-owner work is carried by CARD-1032. |
 | S8 | Relevant CARD-1199 driver repair; exact deployment/script/bundle owners at dispatch | CARD-1042 Review `defe909e` names four evidence test files + allowlist only: no source collision with this slice. Empty task scope is not absence; read any new owner brief, including CARD-1196 if active. |
 
-After the seam repair and these gates, safe order is **S1 -> S2 pre-move -> S2 move -> S3 -> S4 -> S7 -> S5 -> S6 -> S8 -> S9 -> S10**.
+After the seam repair and these gates, safe order is **S1a -> S1b -> S2 pre-move -> S2 move -> S3 -> S4 -> S7 -> S5 -> S6a -> S6b -> S8 -> S9 -> S10** (amended).
 The S7/S5 relative order is deliberately conservative. Each starts from a source containing its prerequisites;
 no rebase/reset of this fast-forward-only TestDesign branch is needed. Read fresh active footprints before each Code dispatch.
-No human choice is needed for the OD defaults; the next stage is **Plan**, to make the S1 seam verifiable and adopt the dependency order.
+No human choice is needed for the OD defaults; the next stage is **Plan**, to make the S1 seam verifiable and adopt the dependency order. Done by the amendment above; the next stage is now Code (S1a, CP-17).
 
 ## Verification design
 
@@ -480,7 +491,7 @@ are DTO setup checks, not an expiry/auto-clear guard; that safety proof stays in
 
 | ID | Regression | Test and decisive assertion |
 |---|---|---|
-| R-1 | Extraction loses source custody/lock/marker/evidence/teardown semantics | 54 ports before/after move, CP-1/2/4; source-specific oracles above. Adapter shared-caller entry counters and current-image retention close remaining bypasses. |
+| R-1 | Extraction loses source custody/lock/marker/evidence/teardown semantics | 54 ports before/after move, CP-17/1/2/4; source-specific oracles above. Adapter shared-caller entry counters and current-image retention close remaining bypasses. |
 | R-2 | Daily graph gains repository/worktree authority | Full_run_never_acquires_repository_lease: tagged/untagged counters 0 with one eligible virtual scratch removal; Daily_graph_has_no_direct_lease_or_lock_escape: forbidden reachable calls empty; CP-5/9/13. |
 | R-3 | Extra scheduler/deleter or unsafe maintenance/cutover | Registration snapshots unchanged; wrapper remover counters 0; maintenance intent/commit/drain strictly precede stop/lease; CP-4/6/8/11/16. |
 | R-4 | Delivery stops at ACK/queue, replay deletes again or stale report clears attention | Complete producer join tuple in authenticated report/attention GET, execute count 1 across each crash; PC-121/122 immutable/stale oracles; CP-7/9/10/12. |
@@ -1052,12 +1063,12 @@ a mutation. Zero selected results, build error, fixture exception or timeout is 
 ### Checkpoints
 
 Closed future ordinary list; each TUnit row has its own isolated build and exactly one filter.
-The physical table order follows dispatch prerequisites; original CP IDs remain stable (CP-10 precedes CP-6).
-This manifest is ready to be adopted by the seam-repair Plan; finding 6 currently prevents dispatch of CP-1.
+The physical table order follows dispatch prerequisites; original CP IDs remain stable (CP-17 precedes CP-1, CP-10 precedes CP-6, CP-8 precedes CP-7).
+Adopted by the seam-repair Plan amendment (task 04839ba2): CP-17 (S1a, the 14 tool-only ports) precedes CP-1 (S1b, all 16); finding 6 no longer blocks CP-1.
 CP-2 is the single declared preparatory exception to once-per-row: run at pre-move SHA and post-move SHA,
 each with a fresh build/output inventory and evidence directory; preserve both receipts.
 All remaining rows run once per committed slice; failures trigger only the same corrected row and are counted.
-CP-9 at the composed S6 tip includes S7 and reruns the full 60-case service union.
+CP-9 at the composed S6b tip includes S5, S6a and S7 and reruns the full 60-case service union.
 CP-15/CP-16 are **Windows rows**, dispatched separately with -Platform Windows. Other rows use the Linux
 default lane without a Runner/Platform pin; adapter fakes otherwise need no OS claim.
 
@@ -1071,16 +1082,17 @@ Remove only producer-owned isolated outputs after joined runs; logs/TRX/JSON sta
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
 |---|---|---|---|---|---|---|---:|---:|---|---|
-| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c987-compat-tool/`| linux-compat-toolcopy | `/*/*/HostCleanupCheckpointCompatibilityTests*/(nested_live_executor_vetoes_whole_root*)\|(unknown_nested_custody_vetoes_whole_root*)\|(wait_uses_custody_not_progress_pid*)\|(next_start_uses_the_shared_veto*)\|(stop_validates_generation_before_signaling*)\|(stop_waits_for_confirmed_exit*)\|(age_clean_cannot_bypass_live_custody*)\|(evidence_write_has_no_raw_delete_bypass*)\|(automatic_recovery_preserves_all_evidence*)\|(sweep_never_signals_a_process*)\|(failed_delete_receipt_is_truthful_and_retryable*)\|(completed_wait_removes_only_tool*)\|(already_absent_is_idempotent*)` | R-1a | all listed, 0 failed/skipped; 16 executions | 16 | 8 | true | `C804_ORPHAN_SWEEP_ROOT=c826-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-17 | S1a | `tests/Antiphon.Tests -> bin-c987-compat-toolonly/` | linux-compat-toolonly | `/*/*/HostCleanupCheckpointCompatibilityTests*/(wait_uses_custody_not_progress_pid*)\|(next_start_uses_the_shared_veto*)\|(stop_validates_generation_before_signaling*)\|(stop_waits_for_confirmed_exit*)\|(age_clean_cannot_bypass_live_custody*)\|(evidence_write_has_no_raw_delete_bypass*)\|(automatic_recovery_preserves_all_evidence*)\|(sweep_never_signals_a_process*)\|(failed_delete_receipt_is_truthful_and_retryable*)\|(completed_wait_removes_only_tool*)\|(already_absent_is_idempotent*)` | R-1a (tool-only 14) | all listed, 0 failed/skipped; 14 executions (11 methods; `completed_wait_removes_only_tool` is 4 rows) | 14 | 8 | true | `C804_ORPHAN_SWEEP_ROOT=c826-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-1 | S1b | `tests/Antiphon.Tests -> bin-c987-compat-tool/`| linux-compat-toolcopy | `/*/*/HostCleanupCheckpointCompatibilityTests*/(nested_live_executor_vetoes_whole_root*)\|(unknown_nested_custody_vetoes_whole_root*)\|(wait_uses_custody_not_progress_pid*)\|(next_start_uses_the_shared_veto*)\|(stop_validates_generation_before_signaling*)\|(stop_waits_for_confirmed_exit*)\|(age_clean_cannot_bypass_live_custody*)\|(evidence_write_has_no_raw_delete_bypass*)\|(automatic_recovery_preserves_all_evidence*)\|(sweep_never_signals_a_process*)\|(failed_delete_receipt_is_truthful_and_retryable*)\|(completed_wait_removes_only_tool*)\|(already_absent_is_idempotent*)` | R-1a | all listed, 0 failed/skipped; 16 executions | 16 | 8 | true | `C804_ORPHAN_SWEEP_ROOT=c826-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-2 | S2 | `tests/Antiphon.Tests -> bin-c987-compat-sweep/`| linux-compat-sweep-scope | `/*/*/HostCleanupCheckpointCompatibilityTests*/*` | R-1a, R-1b | all listed, 0 failed/skipped; 54 executions (run once pre-move, once post-move, reported separately) | 54 | 12 | true | `C804_ORPHAN_SWEEP_ROOT=c826-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-3 | S3 | `tests/Antiphon.Tests -> bin-c987-adapter/`| linux-checkpoint-adapter | `/*/*/HostCleanupCheckpointAdapterTests*/*` | V-4 | all 14 listed executions, 0 failed/skipped | 14 | 6 | true | `C804_ORPHAN_SWEEP_ROOT=c826-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-4 | S3 | `tests/Antiphon.Tests -> bin-c987-custody-union/` | linux-cleanup-custody-union | `/*/*/(HostCleanupOwnershipTests*)\|(HostCleanupCheckpointAdapterTests*)\|(HostCleanupCheckpointCompatibilityTests*)/*` | V-3, V-4, R-1, R-3 | all listed, 0 failed/skipped; 12 + 14 + 54 | 80 | 8 | true | `C804_ORPHAN_SWEEP_ROOT=c826-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-5 | S4 | `tests/Antiphon.Tests -> bin-c987-inventory/`| linux-worktree-inventory | `/*/*/HostCleanupWorktreeInventoryTests*/*` | V-13, R-2 | all 12 listed executions, 0 failed/skipped | 12 | 10 | true | `C804_ORPHAN_SWEEP_ROOT=c826-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-10 | S7 | `tests/Antiphon.SessionRunner.Tests -> bin-c987-runner/`| linux-cleanup-runner | `/*/*/HostCleanupCommandTests*/*` | V-8, R-4 | all 12 listed executions, 0 failed/skipped | 12 | 10 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-6 | S5 | `tests/Antiphon.Tests -> bin-c987-orchestration/`| linux-orchestration | `/*/*/HostCleanupOrchestrationTests*/*` | V-5, R-3 | all listed, 0 failed/skipped; 14 + 2 schema | 16 | 12 | true | `C804_ORPHAN_SWEEP_ROOT=c826-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-7 | S6 | `tests/Antiphon.Tests -> bin-c987-delivery/`| linux-report-delivery | `/*/*/HostCleanupReportTests*/*` | V-6, R-4 | all listed, 0 failed/skipped; 20 + 2 landed | 22 | 10 | true | `C804_ORPHAN_SWEEP_ROOT=c826-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-8 | S6 | `tests/Antiphon.Tests -> bin-c987-maintenance/` | linux-maintenance-gate | `/*/*/HostCleanupMaintenanceTests*/*` | V-7, R-2 | all listed, 0 failed | 10 | 6 | true | `C804_ORPHAN_SWEEP_ROOT=c826-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-9 | S6 | `tests/Antiphon.Tests -> bin-c987-service/`| linux-cleanup-service-union | `/*/*/(HostCleanupOrchestrationTests*)\|(HostCleanupReportTests*)\|(HostCleanupMaintenanceTests*)\|(HostCleanupWorktreeInventoryTests*)/*` | V-5, V-6, V-7, V-13, R-2, R-3, R-4 | all listed, 0 failed/skipped; 16 + 22 + 10 + 12 | 60 | 15 | true | `C804_ORPHAN_SWEEP_ROOT=c826-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-8 | S6a | `tests/Antiphon.Tests -> bin-c987-maintenance/` | linux-maintenance-gate | `/*/*/HostCleanupMaintenanceTests*/*` | V-7, R-2 | all listed, 0 failed | 10 | 6 | true | `C804_ORPHAN_SWEEP_ROOT=c826-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-7 | S6b | `tests/Antiphon.Tests -> bin-c987-delivery/`| linux-report-delivery | `/*/*/HostCleanupReportTests*/*` | V-6, R-4 | all listed, 0 failed/skipped; 20 + 2 landed | 22 | 10 | true | `C804_ORPHAN_SWEEP_ROOT=c826-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-9 | S6b | `tests/Antiphon.Tests -> bin-c987-service/`| linux-cleanup-service-union | `/*/*/(HostCleanupOrchestrationTests*)\|(HostCleanupReportTests*)\|(HostCleanupMaintenanceTests*)\|(HostCleanupWorktreeInventoryTests*)/*` | V-5, V-6, V-7, V-13, R-2, R-3, R-4 | all listed, 0 failed/skipped; 16 + 22 + 10 + 12 | 60 | 15 | true | `C804_ORPHAN_SWEEP_ROOT=c826-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-11 | S8 | `tests/Antiphon.Tests -> bin-c987-scripts/`| linux-cleanup-scripts | `/*/*/HostCleanupScriptTests*/*` | V-9, R-3 | all 12 listed executions, 0 failed/skipped | 12 | 10 | true | `C804_ORPHAN_SWEEP_ROOT=c826-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-12 | S8 | n/a| linux-attention-client | `pwsh -NoProfile -File scripts/test-client.ps1 src/features/attention/attentionVisuals.test.ts` | V-12, R-4 | 30 = 24 plain + 6 Arguments; 0 failed/skipped | n/a | 2 | true | n/a |
 | CP-13 | S8 | `tests/Antiphon.Tests -> bin-c987-policy/`| linux-cleanup-policy-rerun | `/*/*/(HostCleanupPolicyTests*)\|(HostCleanupExecutionTests*)/*` | V-1, V-2, R-2 (regression after S3 registry change) | all 42 listed executions, 0 failed/skipped | 42 | 8 | true | `C804_ORPHAN_SWEEP_ROOT=c826-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
@@ -1091,12 +1103,12 @@ Remove only producer-owned isolated outputs after joined runs; logs/TRX/JSON sta
 ### Cost
 
 All numbers are **estimates**, not measured in this task. Each row's minutes includes its isolated build.
-Ordinary V/R floor (Code) = sum CP EstimatedMinutes = **137 minutes**: Linux CP-1..14 **123**,
+Ordinary V/R floor (Code) = sum CP EstimatedMinutes = **145 minutes** (amended; was 137 before CP-17): Linux CP-17 and CP-1..14 **131**,
 Windows CP-15/16 **14**. The required pre-move extra CP-2 invocation adds **12** minutes,
-so mandatory ordinary verification with extraction preparation is **149** minutes.
+so mandatory ordinary verification with extraction preparation is **157** minutes.
 One-time setup/tool bootstrap allowance **5** minutes, gated and explicitly reported if needed.
-For accounting, the 137-minute row sum budgets 15 TUnit builds at approximately 2 minutes each
-(**30 build minutes**) and **107 filter minutes**, including the CP-12 client command.
+For accounting, the 145-minute row sum budgets 16 TUnit builds at approximately 2 minutes each
+(**32 build minutes**) and **113 filter minutes**, including the CP-12 client command.
 Do not add those 30 minutes a second time. The separate pre-move build is already in its 12-minute allowance.
 
 PC floor (Mutation, paused) = **260 controls x 4 minutes = 1040**, plus **30** setup/binding/
@@ -1104,8 +1116,8 @@ restoration-report minutes = **1070 minutes**. Each 4-minute method cycle estima
 apply/red rebuild and assertion 1.3, restoration/rebuild/green 1.3, inspection 0.2.
 Each named PC filter above owns 4 minutes; argument-expanded methods use the same method filter and
 retain their actual count. UI cycles are included conservatively at the same allowance.
-Complete commissioned verification estimate = setup 5 + ordinary 137 + pre-move 12 + Mutation 1070
-= **1224 minutes**, excluding implementation and operational qualification.
+Complete commissioned verification estimate = setup 5 + ordinary 145 + pre-move 12 + Mutation 1070
+= **1232 minutes**, excluding implementation and operational qualification.
 No savings are claimed for independent build-per-row requirements (**0 minutes**); narrow method filters
 avoid a whole-class Mutation multiplier, but no comparable measured baseline exists to quantify that saving.
 Code red-first authoring may rerun its own row; report actual additional time separately, not as executed PCs.
@@ -1120,5 +1132,6 @@ Code red-first authoring may rerun its own row; report actual additional time se
   Client 30 present. No ordinary/PC evidence was manufactured from this read-only census.
 - Findings 6 and 7 require a Plan amendment before a Code handoff. Proposed first Code slice remains S1
   after that amendment and CARD-1199 land. Subsequent shared-file gates are in Collision resolution.
+  Amended by Plan task 04839ba2: the first Code slice is S1a (CP-17) after CARD-1199's reviewed landing, then S1b (CP-1).
 - PC payload binding remains required after Code at the exact slice SHA, including existing tests whose
   fixture does not yet reach the asserted boundary. A later Review cannot mark those bindings complete by name alone.
