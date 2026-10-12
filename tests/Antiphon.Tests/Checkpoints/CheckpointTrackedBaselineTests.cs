@@ -7,8 +7,9 @@ using TUnit.Core;
 namespace Antiphon.Tests.Checkpoints;
 
 // Real dotnet builds in scratch git repositories. The guarantee is a clean tracked
-// baseline plus a post-build restore, so these cases must stay red when a build
-// can leave a tracked file overwritten.
+// baseline plus detection after the build. The tool must not restore or unstage.
+// A build that changes tracked state stays on disk, exits 2, and must not say
+// lossless or restored.
 [Category("Unit")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class CheckpointTrackedBaselineTests : CheckpointTestBase
@@ -33,7 +34,7 @@ public sealed class CheckpointTrackedBaselineTests : CheckpointTestBase
             """);
         Write(root, "App/Marker.cs", "namespace App; public static class Marker { public static int Value => 1; }\n");
         var victim = Plant(root, "App/legacy/App.dll");
-        await AssertRestoredAsync(root, "local-output", victim, cancellationToken);
+        await AssertDetectedAsync(root, "local-output", victim, cancellationToken);
     }
 
     [Test]
@@ -53,7 +54,7 @@ public sealed class CheckpointTrackedBaselineTests : CheckpointTestBase
             """);
         Write(root, "App/Marker.cs", "namespace App; public static class Marker { public static int Value => 1; }\n");
         var victim = Plant(root, "App/generated/App.AssemblyInfo.cs");
-        await AssertRestoredAsync(root, "intermediate", victim, cancellationToken);
+        await AssertDetectedAsync(root, "intermediate", victim, cancellationToken);
     }
 
     [Test]
@@ -75,7 +76,7 @@ public sealed class CheckpointTrackedBaselineTests : CheckpointTestBase
             """);
         Write(root, "App/Marker.cs", "namespace App; public static class Marker { public static int Value => 1; }\n");
         var victim = Plant(root, "App/GeneratedVersion.txt");
-        await AssertRestoredAsync(root, "generated", victim, cancellationToken);
+        await AssertDetectedAsync(root, "generated", victim, cancellationToken);
     }
 
     [Test]
@@ -112,7 +113,7 @@ public sealed class CheckpointTrackedBaselineTests : CheckpointTestBase
             """);
         Write(root, "App/Marker.cs", "namespace App; public static class Marker { public static int Use() => Lib.Marker.Value; }\n");
         var victim = Plant(root, "Lib/legacy/Lib.dll");
-        await AssertRestoredAsync(root, "imported-ref", victim, cancellationToken);
+        await AssertDetectedAsync(root, "imported-ref", victim, cancellationToken);
     }
 
     [Test]
@@ -152,7 +153,7 @@ public sealed class CheckpointTrackedBaselineTests : CheckpointTestBase
             """);
         Write(root, "App/Marker.cs", "namespace App; public static class Marker { public static int Use() => Mid.M.Use(); }\n");
         var victim = Plant(root, "Lib/legacy/Lib.dll");
-        await AssertRestoredAsync(root, "transitive", victim, cancellationToken);
+        await AssertDetectedAsync(root, "transitive", victim, cancellationToken);
     }
 
     [Test]
@@ -313,8 +314,8 @@ public sealed class CheckpointTrackedBaselineTests : CheckpointTestBase
     public async Task staged_untracked_file_is_kept_and_unstaged(CancellationToken cancellationToken)
     {
         // case: the build runs git add on user-keep.txt, which is absent from HEAD.
-        // mutation: restore that staged path with --worktree, deleting a path HEAD does not contain.
-        // red: user-keep.txt is missing or its bytes differ after the tool or the script row.
+        // mutation: git restore --staged unstages a path the tool must leave indexed.
+        // red: user-keep.txt is missing, no longer indexed, or the row says lossless or restored.
         RequireLinux();
         var root = BeginRepo();
         WriteStageProject(root, "git --git-dir=.git --work-tree=. add -- user-keep.txt");
@@ -327,8 +328,8 @@ public sealed class CheckpointTrackedBaselineTests : CheckpointTestBase
     public async Task staged_ignored_file_is_kept_and_unstaged(CancellationToken cancellationToken)
     {
         // case: the build runs git add -f on user-ignored.dat, an ignored path absent from HEAD.
-        // mutation: restore that staged path with --worktree, deleting a path HEAD does not contain.
-        // red: user-ignored.dat is missing or its bytes differ after the tool or the script row.
+        // mutation: git restore --staged unstages a path the tool must leave indexed.
+        // red: user-ignored.dat is missing, no longer indexed, or the row says lossless or restored.
         RequireLinux();
         var root = BeginRepo();
         File.AppendAllText(Path.Combine(root, ".gitignore"), "user-ignored.dat\n");
@@ -342,8 +343,8 @@ public sealed class CheckpointTrackedBaselineTests : CheckpointTestBase
     public async Task index_added_file_is_kept_and_unstaged(CancellationToken cancellationToken)
     {
         // case: the build runs git update-index --add on fresh-user.txt, a path absent from HEAD.
-        // mutation: restore that index path with --worktree, deleting a path HEAD does not contain.
-        // red: fresh-user.txt is missing or its bytes differ after the tool or the script row.
+        // mutation: git restore --staged unstages a path the tool must leave indexed.
+        // red: fresh-user.txt is missing, no longer indexed, or the row says lossless or restored.
         RequireLinux();
         var root = BeginRepo();
         WriteStageProject(root, "git --git-dir=.git --work-tree=. update-index --add -- fresh-user.txt");
@@ -384,16 +385,18 @@ public sealed class CheckpointTrackedBaselineTests : CheckpointTestBase
         if (!File.ReadAllBytes(full).AsSpan().SequenceEqual(bytes))
             return "bytes-changed exit=" + result.Exit + "\n" + result.Output;
         var listed = GitOut(root, "ls-files", "--", relative).Trim();
-        if (listed.Length > 0)
-            return "still-indexed " + listed + "\n" + result.Output;
+        if (listed.Length == 0)
+            return "unstaged\n" + result.Output;
         if (result.Exit != 2)
             return "exit=" + result.Exit + "\n" + result.Output;
         if (!result.Output.Contains("refused: tampered", StringComparison.Ordinal))
             return "no-tamper\n" + result.Output;
         if (!result.Output.Contains("TAMPERED " + relative, StringComparison.Ordinal))
             return "no-path\n" + result.Output;
-        if (!result.Output.Contains("lossless because the pre-build tracked tree was clean", StringComparison.Ordinal))
-            return "no-lossless\n" + result.Output;
+        if (!result.Output.Contains("nothing was modified by the tool", StringComparison.Ordinal))
+            return "no-honest\n" + result.Output;
+        if (result.Output.Contains("lossless", StringComparison.Ordinal) || result.Output.Contains("restored", StringComparison.Ordinal))
+            return "claimed-restore\n" + result.Output;
         if (result.Output.Contains("buildSource=verified", StringComparison.Ordinal))
             return "verified\n" + result.Output;
         return "kept";
@@ -423,30 +426,33 @@ public sealed class CheckpointTrackedBaselineTests : CheckpointTestBase
             .Replace("\"", "&quot;", StringComparison.Ordinal)
             .Replace("<", "&lt;", StringComparison.Ordinal);
 
-    private async Task AssertRestoredAsync(string root, string name, Victim victim, CancellationToken cancellationToken)
+    private async Task AssertDetectedAsync(string root, string name, Victim victim, CancellationToken cancellationToken)
     {
         Commit(root);
         var head = GitOut(root, "rev-parse", "HEAD").Trim();
         var tool = await RunToolAsync(root, name + "-tool", cancellationToken);
-        AssertTamper(tool, victim, head);
-        // The tool restore leaves this tracked output newer than its inputs, so the
-        // next build can skip the write. Age the file; git does not track mtime.
-        File.SetLastWriteTimeUtc(victim.FullPath, DateTime.UnixEpoch);
+        AssertTamper(tool, victim);
+        if (File.Exists(victim.FullPath))
+            File.SetLastWriteTimeUtc(victim.FullPath, DateTime.UnixEpoch);
         var script = await RunScriptAsync(root, name + "-script", cancellationToken);
-        AssertTamper(script, victim, head);
+        AssertTamper(script, victim);
         var receipt = Path.Combine(root, ".antiphon", "script-results", name + "-script-fixed", "source.json");
         File.Exists(receipt).ShouldBeTrue(script.Output);
         var validation = await ValidateReceiptAsync(receipt, head, cancellationToken);
         validation.Exit.ShouldNotBe(0, validation.Output);
+        validation.Output.ShouldContain("CHECKPOINT SOURCE INVALID", Case.Sensitive);
     }
 
-    private static void AssertTamper(RunResult result, Victim victim, string head)
+    // Removed: bytes equal the pre-build payload. That asserted git restore wrote HEAD
+    // back over the build. The tool now leaves the build's bytes and only reports them.
+    private static void AssertTamper(RunResult result, Victim victim)
     {
-        File.ReadAllBytes(victim.FullPath).ShouldBe(victim.Bytes, result.Output);
         result.Exit.ShouldBe(2, result.Output);
         result.Output.ShouldContain("refused: tampered", Case.Sensitive);
         result.Output.ShouldContain("TAMPERED " + victim.Relative, Case.Sensitive);
-        result.Output.ShouldContain(head, Case.Sensitive);
+        result.Output.ShouldContain("nothing was modified by the tool", Case.Sensitive);
+        result.Output.ShouldNotContain("lossless", Case.Sensitive);
+        result.Output.ShouldNotContain("restored", Case.Sensitive);
         result.Output.ShouldNotContain("buildSource=verified", Case.Sensitive);
     }
 
