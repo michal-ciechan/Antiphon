@@ -126,6 +126,13 @@ public sealed class GrokReadyWaitOptions
 /// </summary>
 public static class GrokReadyWait
 {
+    /// <summary>
+    /// Test-only fault injection. Production leaves this unset. The regression
+    /// test faults the snapshot after <c>IsFaulted</c> was false and before
+    /// <c>IsCompleted</c> is read.
+    /// </summary>
+    internal static readonly AsyncLocal<Action<Task>?> SnapshotFaultGate = new();
+
     public static async Task<bool> WaitAsync(
         Func<CancellationToken, Task<GrokStartupSnapshot?>> snapshotAsync,
         GrokReadyWaitOptions options,
@@ -270,8 +277,14 @@ public static class GrokReadyWait
 
             if (work.IsFaulted)
                 _ = work.Exception;
-            else if (!work.IsCompleted)
-                _ = work.ContinueWith(static t => _ = t.Exception, TaskContinuationOptions.OnlyOnFaulted);
+            else
+            {
+                // Faults here miss both observers: IsFaulted was already false,
+                // and a faulted task is completed so the continuation is skipped.
+                SnapshotFaultGate.Value?.Invoke(work);
+                if (!work.IsCompleted)
+                    _ = work.ContinueWith(static t => _ = t.Exception, TaskContinuationOptions.OnlyOnFaulted);
+            }
             value = default;
             faulted = work.IsFaulted;
             return false;

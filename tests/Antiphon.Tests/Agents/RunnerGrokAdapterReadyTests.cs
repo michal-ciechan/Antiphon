@@ -172,6 +172,85 @@ public class RunnerGrokAdapterReadyTests
     }
 
     [Test]
+    public void Expired_budget_observes_fault_between_status_checks()
+    {
+        var unobserved = 0;
+        void OnUnobserved(object? _, UnobservedTaskExceptionEventArgs args)
+        {
+            if (!args.Exception.Flatten().InnerExceptions.OfType<UnobservedSnapshotException>().Any())
+                return;
+            Interlocked.Increment(ref unobserved);
+            args.SetObserved();
+        }
+
+        TaskScheduler.UnobservedTaskException += OnUnobserved;
+        try
+        {
+            var (ready, outcome) = FaultBetweenStatusChecks();
+            ready.ShouldBeFalse("faultedSnapshotReady");
+            outcome.ShouldBe(GrokStartupReason.SnapshotFailure, "faultedSnapshotOutcome");
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            unobserved.ShouldBe(0, "unobservedSnapshotFault");
+        }
+        finally
+        {
+            TaskScheduler.UnobservedTaskException -= OnUnobserved;
+            GrokReadyWait.SnapshotFaultGate.Value = null;
+        }
+    }
+
+    private static (bool Ready, GrokStartupReason? Outcome) FaultBetweenStatusChecks()
+    {
+        var pending = new TaskCompletionSource<GrokStartupSnapshot?>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var marker = new UnobservedSnapshotException();
+        GrokReadyWait.SnapshotFaultGate.Value = task =>
+        {
+            if (ReferenceEquals(task, pending.Task))
+                pending.TrySetException(marker);
+        };
+        GrokStartupReason? outcome = null;
+        var ready = GrokReadyWait.WaitAsync(
+            _ => pending.Task,
+            new GrokReadyWaitOptions
+            {
+                MaxWait = TimeSpan.FromMilliseconds(1),
+                Settle = TimeSpan.Zero,
+                TrustSettle = TimeSpan.Zero,
+                PollInterval = TimeSpan.FromMilliseconds(1),
+                TimeProvider = new AlreadyExpiredClock(),
+                OnFailure = (reason, _, _, _, _, _, _) => outcome = reason,
+            }).GetAwaiter().GetResult();
+        GrokReadyWait.SnapshotFaultGate.Value = null;
+        return (ready, outcome);
+    }
+
+    private sealed class UnobservedSnapshotException()
+        : InvalidOperationException("CARD-0988-unobserved-snapshot");
+
+    private sealed class AlreadyExpiredClock : TimeProvider
+    {
+        private long _origin;
+        private int _calls;
+
+        public override long TimestampFrequency => Stopwatch.Frequency;
+
+        public override long GetTimestamp()
+        {
+            if (Interlocked.Increment(ref _calls) == 1)
+            {
+                _origin = Stopwatch.GetTimestamp();
+                return _origin;
+            }
+
+            return _origin + Stopwatch.Frequency;
+        }
+    }
+
+    [Test]
     public async Task Expired_outer_deadline_cancels_pending_read()
     {
         await AssertPendingReadCancelled(
