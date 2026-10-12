@@ -982,9 +982,9 @@ no-build reuse is assumed. All PCs run even when they share a method. Mutation
 discovery/reporting and slot contention add time. Commission bounded packs by
 slice/guard range, preserving all rows and the original Code landing owner.
 
-Total verification floor = 35 setup/build + 47 ordinary V/R + 2085 PC cycles
-= **2167 minutes**. Code authoring remains the separate 335-minute estimate;
-authoring plus verification floor = **2502 minutes**. W-1 is separately
+Total verification floor = 35 setup/build + 47 ordinary V/R + 2100 PC cycles
+= **2182 minutes**. Code authoring remains the separate 335-minute estimate;
+authoring plus verification floor = **2517 minutes**. W-1 is separately
 scheduled rollout work, outside authoring/Mutation, not zero-cost ordinary proof.
 
 Ordinary build reuse saves **180 minutes** versus 43 independent builds:
