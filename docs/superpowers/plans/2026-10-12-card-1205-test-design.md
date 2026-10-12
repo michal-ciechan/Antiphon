@@ -17,6 +17,94 @@ Retain the plan's latent-race attribution, server-only subscription proof, 120-s
 default evidence interval, local-only scope and logs-first visibility. Neither an
 elapsed deadline nor a successful HTTP connection certifies idle.
 
+## Repair 4 matrix binding (T51/T52)
+
+The current execution manifest is
+[repair 4](2026-10-12-card-1205-s2-repair4-checkpoints.md). T51's exact ordinary
+filter is `/*/*/SessionRunnerHeldEventExitMatrixTests*/C1205_Every_held_exit_has_an_explicit_outcome*`
+(48 literal Arguments results); T52's is
+`/*/*/SessionRunnerHeldEventExitMatrixTests*/C1205_Iterator_failure_after_preservation_does_not_redeliver*`
+(two literal results). CP-2 includes the whole new class: 34 existing + 50 = 84.
+T01 remains unchanged. The matrix has literal expected accepted/abandoned counts;
+the common finally makes an offer, not an unconditional exactly-once receipt guarantee.
+Unavailable Cartesian phases and their explicit final-held-boundary substitution
+are documented in the executable manifest and fixture. No nonexistent transcript
+pull/error handler is claimed as exercised.
+
+Test-first proof at b68aadec0603152bafbab1faf95d4111eca42fe4 preserves production
+byte-for-byte from 115b4fbef85cb493e06cc0e36dd2d711124c9dfa. RED-1 executes 50:
+28 pass, 22 assertion failures, no skipped/build/fixture failures. F1's actual
+throws/error-handler/responsive row fails Accepted expected 1 actual 0.
+All twelve never rows fail offered; seven blocked success/throws rows fail disposal;
+three responsive boundary-cancellation rows fail accepted output. T52 controls pass.
+Fresh TRX remains in the ignored checkpoint store; full per-row output belongs in
+the task report. This is baseline proof, not a deliberate post-land mutation cycle.
+
+PC-118's former deletion of two cancellation checks is redundant after the common
+finally. Its revised payload skips the common offer on an already-cancelled host
+while retaining iterator-copy suppression; T50 fails Accepted.ShouldBe(1).
+PC-111/112 now target the common offer; their bound original tests remain required.
+PC-1..119 and all existing variants are still pending. Additive PC-120..171 below
+are also pending for method-scoped SourceLanding Mutation. Repeated matrix rows
+share two payloads; a single method-scoped red/restore/green cycle can record each
+row's decisive outcome for a shared payload rather than repeat an unchanged proof.
+This does not authorize deliberate mutants in Code or discharge any PC here.
+
+| PC | Literal matrix case / variant | Deliberate payload | Exact detecting method filter | Required red | Status |
+|---|---|---|---|---|---|
+| PC-120 | success / none / responsive | Omit the common offer while retaining suppression of the following iterator copy. | `/*/*/SessionRunnerHeldEventExitMatrixTests/C1205_Every_held_exit_has_an_explicit_outcome` | offered.ShouldBeTrue() or Accepted.ShouldBe(1) fails with zero. | Pending |
+| PC-121 | success / none / blocked | Replace the common offer with CancellationToken.None and an unbounded dispatch await. | `/*/*/SessionRunnerHeldEventExitMatrixTests/C1205_Every_held_exit_has_an_explicit_outcome` | disposed.ShouldBeTrue() fails before fixture release; no warning. | Pending |
+| PC-122 | success / before-list / responsive | Omit the common offer while retaining suppression of the following iterator copy. | `/*/*/SessionRunnerHeldEventExitMatrixTests/C1205_Every_held_exit_has_an_explicit_outcome` | offered.ShouldBeTrue() or Accepted.ShouldBe(1) fails with zero. | Pending |
+| PC-123 | success / before-list / blocked | Replace the common offer with CancellationToken.None and an unbounded dispatch await. | `/*/*/SessionRunnerHeldEventExitMatrixTests/C1205_Every_held_exit_has_an_explicit_outcome` | disposed.ShouldBeTrue() fails before fixture release; no warning. | Pending |
+| PC-124 | success / during-list / responsive | Omit the common offer while retaining suppression of the following iterator copy. | `/*/*/SessionRunnerHeldEventExitMatrixTests/C1205_Every_held_exit_has_an_explicit_outcome` | offered.ShouldBeTrue() or Accepted.ShouldBe(1) fails with zero. | Pending |
+| PC-125 | success / during-list / blocked | Replace the common offer with CancellationToken.None and an unbounded dispatch await. | `/*/*/SessionRunnerHeldEventExitMatrixTests/C1205_Every_held_exit_has_an_explicit_outcome` | disposed.ShouldBeTrue() fails before fixture release; no warning. | Pending |
+| PC-126 | success / error-handler / responsive | Omit the common offer while retaining suppression of the following iterator copy. | `/*/*/SessionRunnerHeldEventExitMatrixTests/C1205_Every_held_exit_has_an_explicit_outcome` | offered.ShouldBeTrue() or Accepted.ShouldBe(1) fails with zero. | Pending |
+| PC-127 | success / error-handler / blocked | Replace the common offer with CancellationToken.None and an unbounded dispatch await. | `/*/*/SessionRunnerHeldEventExitMatrixTests/C1205_Every_held_exit_has_an_explicit_outcome` | disposed.ShouldBeTrue() fails before fixture release; no warning. | Pending |
+| PC-128 | success / final-pull / responsive | Omit the common offer while retaining suppression of the following iterator copy. | `/*/*/SessionRunnerHeldEventExitMatrixTests/C1205_Every_held_exit_has_an_explicit_outcome` | offered.ShouldBeTrue() or Accepted.ShouldBe(1) fails with zero. | Pending |
+| PC-129 | success / final-pull / blocked | Replace the common offer with CancellationToken.None and an unbounded dispatch await. | `/*/*/SessionRunnerHeldEventExitMatrixTests/C1205_Every_held_exit_has_an_explicit_outcome` | disposed.ShouldBeTrue() fails before fixture release; no warning. | Pending |
+| PC-130 | success / callback / responsive | Omit the common offer while retaining suppression of the following iterator copy. | `/*/*/SessionRunnerHeldEventExitMatrixTests/C1205_Every_held_exit_has_an_explicit_outcome` | offered.ShouldBeTrue() or Accepted.ShouldBe(1) fails with zero. | Pending |
+| PC-131 | success / callback / blocked | Replace the common offer with CancellationToken.None and an unbounded dispatch await. | `/*/*/SessionRunnerHeldEventExitMatrixTests/C1205_Every_held_exit_has_an_explicit_outcome` | disposed.ShouldBeTrue() fails before fixture release; no warning. | Pending |
+| PC-132 | timeout / none / responsive | Omit the common offer while retaining suppression of the following iterator copy. | `/*/*/SessionRunnerHeldEventExitMatrixTests/C1205_Every_held_exit_has_an_explicit_outcome` | offered.ShouldBeTrue() or Accepted.ShouldBe(1) fails with zero. | Pending |
+| PC-133 | timeout / none / blocked | Replace the common offer with CancellationToken.None and an unbounded dispatch await. | `/*/*/SessionRunnerHeldEventExitMatrixTests/C1205_Every_held_exit_has_an_explicit_outcome` | disposed.ShouldBeTrue() fails before fixture release; no warning. | Pending |
+| PC-134 | timeout / before-list / responsive | Omit the common offer while retaining suppression of the following iterator copy. | `/*/*/SessionRunnerHeldEventExitMatrixTests/C1205_Every_held_exit_has_an_explicit_outcome` | offered.ShouldBeTrue() or Accepted.ShouldBe(1) fails with zero. | Pending |
+| PC-135 | timeout / before-list / blocked | Replace the common offer with CancellationToken.None and an unbounded dispatch await. | `/*/*/SessionRunnerHeldEventExitMatrixTests/C1205_Every_held_exit_has_an_explicit_outcome` | disposed.ShouldBeTrue() fails before fixture release; no warning. | Pending |
+| PC-136 | timeout / during-list / responsive | Omit the common offer while retaining suppression of the following iterator copy. | `/*/*/SessionRunnerHeldEventExitMatrixTests/C1205_Every_held_exit_has_an_explicit_outcome` | offered.ShouldBeTrue() or Accepted.ShouldBe(1) fails with zero. | Pending |
+| PC-137 | timeout / during-list / blocked | Replace the common offer with CancellationToken.None and an unbounded dispatch await. | `/*/*/SessionRunnerHeldEventExitMatrixTests/C1205_Every_held_exit_has_an_explicit_outcome` | disposed.ShouldBeTrue() fails before fixture release; no warning. | Pending |
+| PC-138 | timeout / error-handler / responsive | Omit the common offer while retaining suppression of the following iterator copy. | `/*/*/SessionRunnerHeldEventExitMatrixTests/C1205_Every_held_exit_has_an_explicit_outcome` | offered.ShouldBeTrue() or Accepted.ShouldBe(1) fails with zero. | Pending |
+| PC-139 | timeout / error-handler / blocked | Replace the common offer with CancellationToken.None and an unbounded dispatch await. | `/*/*/SessionRunnerHeldEventExitMatrixTests/C1205_Every_held_exit_has_an_explicit_outcome` | disposed.ShouldBeTrue() fails before fixture release; no warning. | Pending |
+| PC-140 | timeout / final-pull / responsive | Omit the common offer while retaining suppression of the following iterator copy. | `/*/*/SessionRunnerHeldEventExitMatrixTests/C1205_Every_held_exit_has_an_explicit_outcome` | offered.ShouldBeTrue() or Accepted.ShouldBe(1) fails with zero. | Pending |
+| PC-141 | timeout / final-pull / blocked | Replace the common offer with CancellationToken.None and an unbounded dispatch await. | `/*/*/SessionRunnerHeldEventExitMatrixTests/C1205_Every_held_exit_has_an_explicit_outcome` | disposed.ShouldBeTrue() fails before fixture release; no warning. | Pending |
+| PC-142 | timeout / callback / responsive | Omit the common offer while retaining suppression of the following iterator copy. | `/*/*/SessionRunnerHeldEventExitMatrixTests/C1205_Every_held_exit_has_an_explicit_outcome` | offered.ShouldBeTrue() or Accepted.ShouldBe(1) fails with zero. | Pending |
+| PC-143 | timeout / callback / blocked | Replace the common offer with CancellationToken.None and an unbounded dispatch await. | `/*/*/SessionRunnerHeldEventExitMatrixTests/C1205_Every_held_exit_has_an_explicit_outcome` | disposed.ShouldBeTrue() fails before fixture release; no warning. | Pending |
+| PC-144 | throws / none / responsive | Omit the common offer while retaining suppression of the following iterator copy. | `/*/*/SessionRunnerHeldEventExitMatrixTests/C1205_Every_held_exit_has_an_explicit_outcome` | offered.ShouldBeTrue() or Accepted.ShouldBe(1) fails with zero. | Pending |
+| PC-145 | throws / none / blocked | Replace the common offer with CancellationToken.None and an unbounded dispatch await. | `/*/*/SessionRunnerHeldEventExitMatrixTests/C1205_Every_held_exit_has_an_explicit_outcome` | disposed.ShouldBeTrue() fails before fixture release; no warning. | Pending |
+| PC-146 | throws / before-list / responsive | Omit the common offer while retaining suppression of the following iterator copy. | `/*/*/SessionRunnerHeldEventExitMatrixTests/C1205_Every_held_exit_has_an_explicit_outcome` | offered.ShouldBeTrue() or Accepted.ShouldBe(1) fails with zero. | Pending |
+| PC-147 | throws / before-list / blocked | Replace the common offer with CancellationToken.None and an unbounded dispatch await. | `/*/*/SessionRunnerHeldEventExitMatrixTests/C1205_Every_held_exit_has_an_explicit_outcome` | disposed.ShouldBeTrue() fails before fixture release; no warning. | Pending |
+| PC-148 | throws / during-list / responsive | Omit the common offer while retaining suppression of the following iterator copy. | `/*/*/SessionRunnerHeldEventExitMatrixTests/C1205_Every_held_exit_has_an_explicit_outcome` | offered.ShouldBeTrue() or Accepted.ShouldBe(1) fails with zero. | Pending |
+| PC-149 | throws / during-list / blocked | Replace the common offer with CancellationToken.None and an unbounded dispatch await. | `/*/*/SessionRunnerHeldEventExitMatrixTests/C1205_Every_held_exit_has_an_explicit_outcome` | disposed.ShouldBeTrue() fails before fixture release; no warning. | Pending |
+| PC-150 | throws / error-handler / responsive | Omit the common offer while retaining suppression of the following iterator copy. | `/*/*/SessionRunnerHeldEventExitMatrixTests/C1205_Every_held_exit_has_an_explicit_outcome` | offered.ShouldBeTrue() or Accepted.ShouldBe(1) fails with zero. | Pending |
+| PC-151 | throws / error-handler / blocked | Replace the common offer with CancellationToken.None and an unbounded dispatch await. | `/*/*/SessionRunnerHeldEventExitMatrixTests/C1205_Every_held_exit_has_an_explicit_outcome` | disposed.ShouldBeTrue() fails before fixture release; no warning. | Pending |
+| PC-152 | throws / final-pull / responsive | Omit the common offer while retaining suppression of the following iterator copy. | `/*/*/SessionRunnerHeldEventExitMatrixTests/C1205_Every_held_exit_has_an_explicit_outcome` | offered.ShouldBeTrue() or Accepted.ShouldBe(1) fails with zero. | Pending |
+| PC-153 | throws / final-pull / blocked | Replace the common offer with CancellationToken.None and an unbounded dispatch await. | `/*/*/SessionRunnerHeldEventExitMatrixTests/C1205_Every_held_exit_has_an_explicit_outcome` | disposed.ShouldBeTrue() fails before fixture release; no warning. | Pending |
+| PC-154 | throws / callback / responsive | Omit the common offer while retaining suppression of the following iterator copy. | `/*/*/SessionRunnerHeldEventExitMatrixTests/C1205_Every_held_exit_has_an_explicit_outcome` | offered.ShouldBeTrue() or Accepted.ShouldBe(1) fails with zero. | Pending |
+| PC-155 | throws / callback / blocked | Replace the common offer with CancellationToken.None and an unbounded dispatch await. | `/*/*/SessionRunnerHeldEventExitMatrixTests/C1205_Every_held_exit_has_an_explicit_outcome` | disposed.ShouldBeTrue() fails before fixture release; no warning. | Pending |
+| PC-156 | never / none / responsive | Omit the common offer while retaining suppression of the following iterator copy. | `/*/*/SessionRunnerHeldEventExitMatrixTests/C1205_Every_held_exit_has_an_explicit_outcome` | offered.ShouldBeTrue() or Accepted.ShouldBe(1) fails with zero. | Pending |
+| PC-157 | never / none / blocked | Replace the common offer with CancellationToken.None and an unbounded dispatch await. | `/*/*/SessionRunnerHeldEventExitMatrixTests/C1205_Every_held_exit_has_an_explicit_outcome` | disposed.ShouldBeTrue() fails before fixture release; no warning. | Pending |
+| PC-158 | never / before-list / responsive | Omit the common offer while retaining suppression of the following iterator copy. | `/*/*/SessionRunnerHeldEventExitMatrixTests/C1205_Every_held_exit_has_an_explicit_outcome` | offered.ShouldBeTrue() or Accepted.ShouldBe(1) fails with zero. | Pending |
+| PC-159 | never / before-list / blocked | Replace the common offer with CancellationToken.None and an unbounded dispatch await. | `/*/*/SessionRunnerHeldEventExitMatrixTests/C1205_Every_held_exit_has_an_explicit_outcome` | disposed.ShouldBeTrue() fails before fixture release; no warning. | Pending |
+| PC-160 | never / during-list / responsive | Omit the common offer while retaining suppression of the following iterator copy. | `/*/*/SessionRunnerHeldEventExitMatrixTests/C1205_Every_held_exit_has_an_explicit_outcome` | offered.ShouldBeTrue() or Accepted.ShouldBe(1) fails with zero. | Pending |
+| PC-161 | never / during-list / blocked | Replace the common offer with CancellationToken.None and an unbounded dispatch await. | `/*/*/SessionRunnerHeldEventExitMatrixTests/C1205_Every_held_exit_has_an_explicit_outcome` | disposed.ShouldBeTrue() fails before fixture release; no warning. | Pending |
+| PC-162 | never / error-handler / responsive | Omit the common offer while retaining suppression of the following iterator copy. | `/*/*/SessionRunnerHeldEventExitMatrixTests/C1205_Every_held_exit_has_an_explicit_outcome` | offered.ShouldBeTrue() or Accepted.ShouldBe(1) fails with zero. | Pending |
+| PC-163 | never / error-handler / blocked | Replace the common offer with CancellationToken.None and an unbounded dispatch await. | `/*/*/SessionRunnerHeldEventExitMatrixTests/C1205_Every_held_exit_has_an_explicit_outcome` | disposed.ShouldBeTrue() fails before fixture release; no warning. | Pending |
+| PC-164 | never / final-pull / responsive | Omit the common offer while retaining suppression of the following iterator copy. | `/*/*/SessionRunnerHeldEventExitMatrixTests/C1205_Every_held_exit_has_an_explicit_outcome` | offered.ShouldBeTrue() or Accepted.ShouldBe(1) fails with zero. | Pending |
+| PC-165 | never / final-pull / blocked | Replace the common offer with CancellationToken.None and an unbounded dispatch await. | `/*/*/SessionRunnerHeldEventExitMatrixTests/C1205_Every_held_exit_has_an_explicit_outcome` | disposed.ShouldBeTrue() fails before fixture release; no warning. | Pending |
+| PC-166 | never / callback / responsive | Omit the common offer while retaining suppression of the following iterator copy. | `/*/*/SessionRunnerHeldEventExitMatrixTests/C1205_Every_held_exit_has_an_explicit_outcome` | offered.ShouldBeTrue() or Accepted.ShouldBe(1) fails with zero. | Pending |
+| PC-167 | never / callback / blocked | Replace the common offer with CancellationToken.None and an unbounded dispatch await. | `/*/*/SessionRunnerHeldEventExitMatrixTests/C1205_Every_held_exit_has_an_explicit_outcome` | disposed.ShouldBeTrue() fails before fixture release; no warning. | Pending |
+| PC-168 | T52 read-fault | Omit the held offer/copy and defer dispatch until a later ordinary event. | `/*/*/SessionRunnerHeldEventExitMatrixTests/C1205_Iterator_failure_after_preservation_does_not_redeliver` | Accepted.ShouldBe(1) sees zero when the next read faults. | Pending |
+| PC-169 | T52 dispose-fault | Same delayed-dispatch payload; EOF/disposal occurs before any later event. | `/*/*/SessionRunnerHeldEventExitMatrixTests/C1205_Iterator_failure_after_preservation_does_not_redeliver` | Accepted.ShouldBe(1) sees zero when disposal faults. | Pending |
+| PC-170 | T51 success/none/responsive | Remove the skipHeldCopy suppression, retaining the common offer. | `/*/*/SessionRunnerHeldEventExitMatrixTests/C1205_Every_held_exit_has_an_explicit_outcome` | Attempts.ShouldBe(1) sees two (Accepted also sees two) before next-read barrier. | Pending |
+| PC-171 | T51 never/none/responsive and blocked | Replace the bounded subscription list wait with a direct ListAsync await. | `/*/*/SessionRunnerHeldEventExitMatrixTests/C1205_Every_held_exit_has_an_explicit_outcome` | offered.ShouldBeTrue() fails before teardown release; request remains pending. | Pending |
+
 ## Verification design
 
 ### Inspection
@@ -785,7 +873,7 @@ green. Repair round 2 runs CP-1, CP-2, and ADJ-1 on one S2 output. All rows requ
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
 | CP-1 | S2 | `tests/Antiphon.Tests -> bin-c1205-s2/` | gap-baseline | `/*/Antiphon.Tests.Application/TurnEndGapReproductionTests*/*` | V-1,V-2,R-1 | 2 executed, both green; T01 preGraceEndCount.ShouldBe(1) unchanged; 0 skipped | 2 | 6 |
-| CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1205-s2/` | subscription | `/*/Antiphon.Tests.Application/(TurnEndGapReproductionTests*)\|(SessionRunnerStreamReadinessTests*)\|(SessionRunnerEventPumpTests*)\|(SessionRunnerHeldEventDeliveryTests*)/*` | V-1..7,R-1,R-6,T47..T50 | Exactly 34 executed, all named cases green | 34 | 10 |
+| CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1205-s2/` | subscription | `/*/Antiphon.Tests.Application/(TurnEndGapReproductionTests*)\|(SessionRunnerStreamReadinessTests*)\|(SessionRunnerEventPumpTests*)\|(SessionRunnerHeldEventDeliveryTests*)\|(SessionRunnerHeldEventExitMatrixTests*)/*` | V-1..7,R-1,R-6,T47..T52 | Exactly 84 executed, all named cases green | 84 | 10 |
 | ADJ-1 | S2 | `tests/Antiphon.Tests -> bin-c1205-s2/` | adjacent | `/*/*/(SessionRunnerHttpClientHostStatsTests*)\|(SessionRunnerGenerationWireTests*)\|(SessionRunnerSettingsTests*)\|(SessionStateCommitTests*)\|(TranscriptWorkingStateQueryTests*)/*` | wire and working-state compatibility | Exactly 33 executed, all green | 33 | 3 |
 | CP-3 | S3 | `tests/Antiphon.Tests -> bin-c1205-s3/` | checked-recovery | `/*/Antiphon.Tests.Application/(WorkingTranscriptRecoveryTests*)\|(SessionStateCommitTests*)\|(TranscriptWorkingStateQueryTests*)/*` | V-8..12,V-25,V-26,R-2,R-7 | Exactly 62 executed, all named cases green | 62 | 11 |
 | CP-4 | S4 | `tests/Antiphon.Tests -> bin-c1205-s4/` | watchdog | `/*/Antiphon.Tests.Application/StaleWorkingTranscriptWatchdogTests*/*` | V-13..19,V-27..35,R-3,R-4 | Exactly 48 executed, all named cases green | 48 | 12 |
