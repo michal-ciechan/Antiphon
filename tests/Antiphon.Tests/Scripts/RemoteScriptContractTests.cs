@@ -356,6 +356,22 @@ public sealed class RemoteScriptContractTests
             Fact(output, key).ShouldBe("1", key + "\n" + output);
     }
 
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1192_Acquisition_unknown_ownership_retains_registration_and_residue()
+    {
+        var output = C1192Run("acquisition-probe");
+        foreach (var role in new[] { "work", "mask" })
+        foreach (var outcome in new[] { "daemon", "label-once" })
+        {
+            foreach (var assertion in new[] { "verdict", "registered", "residue", "ledger", "create-registered" })
+                Fact(output, role + "-" + outcome + "-" + assertion).ShouldBe("1",
+                    role + "-" + outcome + "-" + assertion + "\n" + output);
+            if (outcome == "daemon")
+                Fact(output, role + "-" + outcome + "-retained").ShouldBe("1", "unknown-volume-retained\n" + output);
+        }
+    }
+
     private static void C1192AssertCleanupProbe(string boundary)
     {
         var output = C1192Run("cleanup-probe", boundary);

@@ -675,6 +675,15 @@ docker_volume() {
             done
             local dir="$C1192_ROOT/volumes/$name"
             [ -d "$dir" ] || { printf 'Error response from daemon: No such volume: %s\n' "$name" >&2; return 1; }
+            if [ "$mode" = acquisition-probe ] && [ "$name" = "$ACQUIRE_NAME" ]; then
+                if [ "$ACQUIRE_OUTCOME" = daemon ]; then
+                    printf 'Cannot connect to the Docker daemon\n' >&2; return 1
+                fi
+                if [[ "$fmt" == *io.antiphon.owner* ]] && [ ! -f "$C1192_ROOT/acquire-probed" ]; then
+                    : > "$C1192_ROOT/acquire-probed"
+                    printf 'Cannot connect to the Docker daemon\n' >&2; return 1
+                fi
+            fi
             if [ -z "$fmt" ]; then return 0; fi
             case "$fmt" in
                 *Driver*) label_value "$dir/driver" ;;
@@ -2772,6 +2781,45 @@ mode_evidence() {
     good=0; if declare -F c849_fixture_finalize >/dev/null; then ( c849_fixture_finalize ) && [ ! -d "$SERVER2_ROOT" ] && good=1; fi; emit evidence-control-removed "$good"
 }
 
+# Only Docker inspect is faulted; acquisition, EXIT, finalization and the JSON
+# recipient are production functions. A one-probe outage tests that later
+# successful cleanup does not erase the acquisition's unknown record.
+mode_acquisition_probe() {
+    local role outcome good key code
+    for role in work mask; do
+        ACQUIRE_NAME="c849${RUN}-$role"
+        for outcome in daemon label-once; do
+            reset_runtime
+            rm -f "$C1192_ROOT/acquire-probed" "$CASE_DIR/c590-result.json" "$CASE_DIR/fixture-cleanup-ledger.txt"
+            ACQUIRE_OUTCOME=$outcome
+            S7_SCENARIO=success
+            s7_groups
+            source <(awk '/^(write_result|json_escape|scrub_file)\(\) \{/ { active=1 } active { print } active && /^}$/ { active=0 }' "$remote")
+            set +e
+            ( set -e; c849_fixture ) > "$C1192_ROOT/acquire-output" 2>&1
+            code=$?
+            set -e
+            key="$role-$outcome"
+            printf '%s exit=%s receipt=' "$key" "$code"; cat "$CASE_DIR/c590-result.json"; printf '\n'
+            good=0; [ "$code" != 0 ] && jq -e '.accepted==false and .exit!=0' "$CASE_DIR/c590-result.json" >/dev/null \
+                && ! grep -qE 'accepted[" ]*:true|result true|C849_FIXTURE ' "$C1192_ROOT/acquire-output" && good=1
+            emit "$key-verdict" "$good"
+            good=0; grep -Fxq "$ACQUIRE_NAME" "$CASE_DIR/.fixture-volumes" && good=1
+            emit "$key-registered" "$good"
+            good=0; grep -Fxq "$ACQUIRE_NAME" "$CASE_DIR/fixture-cleanup-residue.txt" && good=1
+            emit "$key-residue" "$good"
+            good=0; grep -Fxq "unknown-cleanup-outcome volume $ACQUIRE_NAME" "$CASE_DIR/fixture-cleanup-ledger.txt" && good=1
+            emit "$key-ledger" "$good"
+            good=0; grep -Fq volume-create "$C1192_ROOT/events" && [ "$(cat "$C1192_ROOT/intent-$ACQUIRE_NAME")" = 1 ] && good=1
+            emit "$key-create-registered" "$good"
+            if [ "$outcome" = daemon ]; then
+                good=0; volume_exists "$ACQUIRE_NAME" && good=1
+                emit "$key-retained" "$good"
+            fi
+        done
+    done
+}
+
 mode_cleanup_probe() {
     PROBE_BOUNDARY="${3:?boundary}"
     local outcome good expected unknown retained name
@@ -2881,6 +2929,7 @@ mode_cleanup_probe() {
 }
 
 case "$mode" in
+    acquisition-probe) mode_acquisition_probe ;;
     cleanup-probe) mode_cleanup_probe "$@" ;;
     finalization) mode_finalization ;;
     evidence) mode_evidence ;;

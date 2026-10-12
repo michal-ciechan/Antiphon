@@ -1005,7 +1005,7 @@ Additional positive controls:
 
 ### Checkpoints
 
-Authoritative closed list after S7 repair: **52 rows (51 exact methods plus the adjacent OR selection), 78 TUnit executions minimum,
+Authoritative closed list after S7 repair: **53 rows (52 exact methods plus the adjacent OR selection), 79 TUnit executions minimum,
 seven isolated builds**, Linux only. Each row has one build output (new or
 same-slice reuse) and one exact filter. Wildcard namespace segments are retained;
 class/method segments are literal except the explicitly required CP-44 adjacent OR selection. Method filters still select all Arguments.
@@ -1079,6 +1079,7 @@ every promised method/label after Code; unbound payloads remain binding required
 | CP-50 | S7 | `CP-33` | linux-cleanup-cache | `/*/*/RemoteScriptContractTests/C1192_Cleanup_cache_requires_positive_absence` | V-2, V-9 | 1 executed, 0 failed/skipped | 1 | 1 |
 | CP-51 | S7 | `CP-33` | linux-cleanup-network | `/*/*/RemoteScriptContractTests/C1192_Cleanup_network_requires_positive_absence` | V-2, V-9 | 1 executed, 0 failed/skipped | 1 | 1 |
 | CP-52 | S7 | `CP-33` | linux-daemon-loss | `/*/*/RemoteScriptContractTests/C1192_Daemon_loss_after_compose_refuses_success` | V-2, V-9 | 1 executed, 0 failed/skipped | 1 | 1 |
+| CP-53 | S7 | `CP-33` | linux-acquisition-unknown | `/*/*/RemoteScriptContractTests/C1192_Acquisition_unknown_ownership_retains_registration_and_residue` | V-1, V-2, V-9 | 1 executed, 0 failed/skipped | 1 | 1 |
 
 ### Cost
 
