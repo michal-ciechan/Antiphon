@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
@@ -65,15 +66,20 @@ internal sealed class TurnEndGapReadiness : IAsyncDisposable
         }
     }
 
+    private readonly PumpLog _pumpLog = new();
+
     private TurnEndGapReadiness(
         SessionStateTestFixture? fixture,
         SecondTranscriptSaveGate? gate,
         SignalingBus? bus,
-        int reconnectDelayMs)
+        int reconnectDelayMs,
+        int listTimeoutSeconds = 30)
     {
         _fixture = fixture;
         Gate = gate;
         Bus = bus;
+        if (bus is not null)
+            bus.OnDelta = () => Note("live-callback");
         SessionId = fixture?.SessionId ?? Guid.NewGuid();
         var settings = new Antiphon.Server.Application.Settings.SessionRunnerSettings
         {
@@ -81,7 +87,7 @@ internal sealed class TurnEndGapReadiness : IAsyncDisposable
             Enabled = true,
             EventReconnectDelayMs = reconnectDelayMs,
             EventStreamIdleTimeoutSeconds = 600,
-            ListTimeoutSeconds = 30,
+            ListTimeoutSeconds = listTimeoutSeconds,
             RequestTimeoutSeconds = 60,
         };
         _handler = new GapHandler(this, SessionId);
@@ -109,19 +115,30 @@ internal sealed class TurnEndGapReadiness : IAsyncDisposable
         _pump = new SessionRunnerEventPump(
             scopes,
             Options.Create(settings),
-            loggerFactory.CreateLogger<SessionRunnerEventPump>(),
+            _pumpLog,
             _time);
     }
 
-    public static TurnEndGapReadiness CreateStream() => new(null, null, null, 60_000);
+    public static TurnEndGapReadiness CreateStream() => new(null, null, null, 60_000, 30);
 
-    public static async Task<TurnEndGapReadiness> CreatePumpAsync(bool holdSecondSave = false, int reconnectDelayMs = 60_000)
+    public SecondListFault SecondListFault { get; set; }
+    public Task SecondListEntered => _handler.SecondListEntered.Task;
+    public int ListCalls => _handler.ListCalls;
+    public IReadOnlyCollection<string> PumpWarnings => _pumpLog.Lines.ToArray();
+    public Task Disconnected => _pumpLog.Disconnected.Task;
+
+    public void CancelPump() => _stop.Cancel();
+
+    public Task StopPumpAsync() => _pump!.StopAsync(CancellationToken.None);
+
+    public static async Task<TurnEndGapReadiness> CreatePumpAsync(
+        bool holdSecondSave = false, int reconnectDelayMs = 60_000, int listTimeoutSeconds = 30)
     {
         var gate = holdSecondSave ? new SecondTranscriptSaveGate() : null;
         var fixture = await SessionStateTestFixture.CreateAsync(fault: gate);
         try
         {
-            return new TurnEndGapReadiness(fixture, gate, new SignalingBus(), reconnectDelayMs);
+            return new TurnEndGapReadiness(fixture, gate, new SignalingBus(), reconnectDelayMs, listTimeoutSeconds);
         }
         catch
         {
@@ -417,6 +434,7 @@ internal sealed class TurnEndGapReadiness : IAsyncDisposable
         private readonly object _snapshotGate = new();
         private readonly TaskCompletionSource _opened = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private int _callerGets;
+        private int _listCalls;
         private int _subscribeCount;
         private int _connections;
         private Task? _producer;
@@ -437,6 +455,8 @@ internal sealed class TurnEndGapReadiness : IAsyncDisposable
 
         public SessionRunnerEventHub Hub { get; }
         public TaskCompletionSource ReadEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource SecondListEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public int ListCalls => Volatile.Read(ref _listCalls);
         public int CallerGets => Volatile.Read(ref _callerGets);
         public int SubscribeCount => Volatile.Read(ref _subscribeCount);
         public bool HeadersRecorded { get; private set; }
@@ -471,16 +491,30 @@ internal sealed class TurnEndGapReadiness : IAsyncDisposable
 
         public void EndAll() => _frames?.End();
 
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             var path = request.RequestUri?.AbsolutePath ?? "";
             if (path == "/sessions")
-                return Task.FromResult(Json(new[] { Session(_sessionId) }));
+            {
+                var call = Interlocked.Increment(ref _listCalls);
+                _owner.Note($"list-{call}");
+                if (call == 2 && _owner.SecondListFault != SecondListFault.None)
+                {
+                    SecondListEntered.TrySetResult();
+                    _owner.Note("list-2-entered");
+                    if (_owner.SecondListFault == SecondListFault.Throw)
+                        throw new HttpRequestException("c1205-second-list-fault");
+                    await Task.Delay(Timeout.Infinite, cancellationToken);
+                }
+
+                _owner.Note($"list-{call}-ok");
+                return Json(new[] { Session(_sessionId) });
+            }
             if (path == $"/sessions/{_sessionId:D}/transcript")
             {
                 Interlocked.Increment(ref _callerGets);
                 _owner.Note("caller-transcript");
-                return Task.FromResult(Json(Snapshot()));
+                return Json(Snapshot());
             }
 
             if (path == "/events")
@@ -499,15 +533,19 @@ internal sealed class TurnEndGapReadiness : IAsyncDisposable
                 var content = new TrackingContent(frames);
                 content.Headers.ContentType = new MediaTypeHeaderValue("text/event-stream");
                 response.Content = content;
-                response.OnDisposed = () => ResponseDisposed = true;
+                response.OnDisposed = () =>
+                {
+                    ResponseDisposed = true;
+                    _owner.Note("iterator-disposed");
+                };
                 content.OnDisposed = () => ContentDisposed = true;
                 HeadersRecorded = true;
                 HeaderStatus = (int)response.StatusCode;
                 HeaderContentType = content.Headers.ContentType?.MediaType;
-                return Task.FromResult<HttpResponseMessage>(response);
+                return response;
             }
 
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
         }
 
         protected override void Dispose(bool disposing)
@@ -743,6 +781,36 @@ internal sealed class SecondTranscriptSaveGate : SaveChangesInterceptor
     }
 }
 
+internal enum SecondListFault
+{
+    None,
+    Timeout,
+    Throw,
+    Cancel,
+}
+
+internal sealed class PumpLog : ILogger<SessionRunnerEventPump>
+{
+    public ConcurrentQueue<string> Lines { get; } = new();
+    public TaskCompletionSource Disconnected { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(LogLevel logLevel) => true;
+
+    public void Log<TState>(LogLevel level, EventId id, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+    {
+        if (level < LogLevel.Warning)
+            return;
+        var text = formatter(state, exception);
+        Lines.Enqueue(text + " " + exception?.GetType().Name);
+        if (text.Contains("event stream disconnected", StringComparison.Ordinal))
+            Disconnected.TrySetResult();
+    }
+
+    public void Dispose()
+    {
+    }
+}
+
 internal sealed class SignalingBus : IEventBus
 {
     private readonly MockEventBus _inner = new();
@@ -752,11 +820,17 @@ internal sealed class SignalingBus : IEventBus
     public IReadOnlyList<MockEventBus.PublishedEvent> Deltas() =>
         PublishedEvents.Where(evt => evt.EventName == "AgentTextDelta").ToList();
 
+    public Action? OnDelta { get; set; }
+
     public Task PublishToGroupAsync(string group, string eventName, object payload, CancellationToken ct = default)
     {
         var task = _inner.PublishToGroupAsync(group, eventName, payload, ct);
         if (eventName == "AgentTextDelta")
+        {
+            OnDelta?.Invoke();
             Seen.TrySetResult();
+        }
+
         return task;
     }
 

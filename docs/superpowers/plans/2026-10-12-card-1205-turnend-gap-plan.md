@@ -168,6 +168,10 @@ must also survive being the first event. Do not synthesize readiness in the rout
 facade or phone-home pump. Use injected time for new timing and pump phases. No
 new polling loop runs on that serial event-consumer task.
 
+Repair round 2 binds the held-event rows at
+`/*/*/SessionRunnerStreamReadinessTests/C1205_Held_event_survives_failed_second_catchup*`
+(success, timeout, throw, cancellation). The test-design CP-2 floor is 30.
+
 Coverage argument: let S be subscription registration, P the first qualifying
 frame, and C2 the second snapshot. The producer appends a transcript row to its
 snapshot before publication. A row published before S is available to C2; a row
