@@ -293,6 +293,7 @@ production predicate as the expected-value factory.
 | T07 / V-6 | `SessionRunnerStreamReadinessTests.C1205_Reconnect_rearms_readiness` / 1 | H1/H2; two distinct enumerator connections | One marker and second catch-up on each connection; second gap end saved. Reach: Cancel/dispose first stream; hold second subscription and publish a second UUID. | PC-7; exact compiling defect and red below. |
 | T08 / V-7 | `SessionRunnerStreamReadinessTests.C1205_Stream_failure_and_cancellation_release_owned_resources` / 2 | H2; read-fault, caller cancellation | Response/content/stream disposed; subscriber closed; owned tasks joined. Reach: Fault/cancel at pending ReadAsync; count disposal before releasing teardown fallback. | PC-8; exact compiling defect and red below. |
 | T09 / V-5/R-1 | `SessionRunnerStreamReadinessTests.C1205_Catchup_finishes_before_live_dispatch` / 1 | H1; first live output held behind second snapshot | Trace order C1 < subscribe < proof < C2 commit < live callback. Reach: EF save barrier holds C2; callback spy must remain empty at barrier. | PC-9; exact compiling defect and red below. |
+| T47 / V-5 | `SessionRunnerStreamReadinessTests.C1205_Held_event_survives_failed_second_catchup` / 4 | H2; success, list timeout, throwing list, host cancellation | Exactly one callback carrying the original output. Timeout and cancellation dispose the iterator only after that callback. Timeout reconnects; throw and cancellation do not. Reach: Gate the second GET /sessions; success returns, timeout waits on ListAsync's own deadline, throw faults the handler, cancellation cancels the pump token. | PC-111, PC-112, PC-113, PC-114; exact compiling defect and red below. |
 | T10 / V-8/R-2 | `WorkingTranscriptRecoveryTests.C1205_Complete_idle_snapshot_recovers_once` / 2 | H3; cache enabled, disabled | RecoveredIdle; one committed end; SQL idle; enabled cache agrees; replay adds 0. Reach: New checked entry point, valid generation and current runner frontier; invoke twice. | PC-11, PC-38; exact compiling defect and red below. |
 | T11 / V-9 | `WorkingTranscriptRecoveryTests.C1205_Uncertain_probe_does_not_certify_idle` / 15 | H3; pull-fault, persist-fault, state-read-fault, empty, wrong-generation, missing-generation, wrong-session, mixed-entry-session, missing-frontier, null-uuid-frontier-mismatch, retained-failure, needs-reload, absent-store, canceled-pull, truncated-tail | Unknown; no idle certification; no new end for precommit refusals; actual committed rows disclosed for partial failure. Reach: One flip from T10; record boundary hit/fault count = 1; successful pull/persist cannot be assumed from completed Task. | PC-12, PC-13, PC-14, PC-15, PC-16, PC-17, PC-18, PC-19, PC-20, PC-21, PC-22, PC-23, PC-24, PC-25; exact compiling defect and red below. |
 | T12 / V-10 | `WorkingTranscriptRecoveryTests.C1205_Newer_runner_activity_keeps_working` / 2 | H3; cache enabled, disabled | CheckedWorking; missing old end still absent; new turn Working. Reach: Runner has old missing end then current prompt already durable; otherwise valid complete snapshot. | PC-26; exact compiling defect and red below. |
@@ -421,6 +422,10 @@ Existing unchanged internals beyond these boundaries remain the stated exclusion
 | G-8 | D-2/D-10: Cancellation/fault releases HTTP resource ownership | PC-8 |
 | G-9 | D-2: C2 is awaited before first live dispatch | PC-9 |
 | G-10 | D-2: Internal marker is not transcript/publication | PC-10 |
+| G-111 | D-2: Held first event survives a second-list timeout | PC-111 |
+| G-112 | D-2: Held first event survives host cancellation during the second list | PC-112 |
+| G-113 | D-2: A throwing second list does not reconnect before the held event | PC-113 |
+| G-114 | D-2: Readiness marker keeps the parsed event for failed catch-up delivery | PC-114 |
 | G-11 | D-7 step 5: RecoveredIdle follows committed persistence | PC-11 |
 | G-12 | D-7 step 1: Pull failure is Unknown | PC-12 |
 | G-13 | D-7 step 5: Failed save cannot certify recovery | PC-13 |
@@ -528,8 +533,9 @@ Existing unchanged internals beyond these boundaries remain the stated exclusion
 this design and compiled bindings before land. On unpause after confirmed land,
 Mutation must run the **whole** inventory, method-scoped, as baseline green -> break ->
 expected assertion red -> restore exact source -> restored green. No PC is credited
-here as run. The later completion gate is 110/110 cycles executed with provenance;
-this TestDesign handoff is not a claim of verification completion.
+here as run. The later completion gate is 114/114 cycles executed with provenance.
+PC-111..PC-114 are the held-event repair controls. This TestDesign handoff is not a
+claim of verification completion.
 
 Each row below binds a concrete compiling-defect recipe to one named test method.
 Method filters are `/*/*/<Class>/<ExactMethod>*` (trailing wildcard includes the
@@ -662,6 +668,10 @@ a stale mutant DLL.
 | PC-108 | G-108: Reuse last-success stamp across accepted-generation change. | T30: `StaleWorkingTranscriptWatchdogTests.C1205_Discovery_requires_positive_local_working_evidence` | newGenerationProbeOnFirstPass.ShouldBeTrue(). |
 | PC-109 | G-109: Add SendInputAsync call on RecoveredIdle before ordinary wakeup. | T35: `StaleWorkingTranscriptWatchdogTests.C1205_Recovery_does_not_manufacture_idle_or_release` | directInputCalls.ShouldBeEmpty(). |
 | PC-110 | G-110: Hardcode IntervalSeconds=120 in due-age comparison. | T18: `StaleWorkingTranscriptWatchdogTests.C1205_Interval_boundary_controls_probe_and_log` | probeCountAt120Seconds.ShouldBe(0) in the 180-second row. |
+| PC-111 | G-111: Remove the pump's failure-path dispatch and rethrow immediately. | T47: `SessionRunnerStreamReadinessTests.C1205_Held_event_survives_failed_second_catchup` | deltas.Count.ShouldBe(1) on the timeout row. |
+| PC-112 | G-112: Skip that dispatch when the host stopping token is cancelled. | T47: `SessionRunnerStreamReadinessTests.C1205_Held_event_survives_failed_second_catchup` | deltas.Count.ShouldBe(1) on the cancellation row. |
+| PC-113 | G-113: Rethrow a non-cancellation second-list fault from CatchUpTranscriptsAsync. | T47: `SessionRunnerStreamReadinessTests.C1205_Held_event_survives_failed_second_catchup` | disconnected.ShouldBeFalse() on the throw row. |
+| PC-114 | G-114: Yield a payload-free readiness marker before the held parsed event. | T47: `SessionRunnerStreamReadinessTests.C1205_Held_event_survives_failed_second_catchup` | deltas.Count.ShouldBe(1) on the timeout row. |
 
 Plan PC crosswalk (this appendix's numbers are authoritative): old 1->1;
 2->2; 3->3,4; 4->5,10; 5->6,9; 6->7; 7->8; 8->11,38;
@@ -686,6 +696,7 @@ additional ordinary checkpoint table:
 | T07 | `/*/*/SessionRunnerStreamReadinessTests/C1205_Reconnect_rearms_readiness*` | 1 |
 | T08 | `/*/*/SessionRunnerStreamReadinessTests/C1205_Stream_failure_and_cancellation_release_owned_resources*` | 2 |
 | T09 | `/*/*/SessionRunnerStreamReadinessTests/C1205_Catchup_finishes_before_live_dispatch*` | 1 |
+| T47 | `/*/*/SessionRunnerStreamReadinessTests/C1205_Held_event_survives_failed_second_catchup*` | 4 |
 | T10 | `/*/*/WorkingTranscriptRecoveryTests/C1205_Complete_idle_snapshot_recovers_once*` | 2 |
 | T11 | `/*/*/WorkingTranscriptRecoveryTests/C1205_Uncertain_probe_does_not_certify_idle*` | 15 |
 | T12 | `/*/*/WorkingTranscriptRecoveryTests/C1205_Newer_runner_activity_keeps_working*` | 2 |
@@ -749,13 +760,15 @@ so the sequential Code total is 172 executions, including the one intended red.
 Current existing counts are source-bound, future counts are frozen target rosters
 to bind in Code. Any extra/missing/skip result needs a manifest amendment and
 explanation, not silently treating a floor as the census. No broad Unit lane.
-CP-1 is an expected-red stopping gate, not a green certificate; CP-2 supplies its
-fixed green. All other rows require 0 failed/0 skipped.
+S1 recorded CP-1 as the expected-red reproduction. After S2, T01 is green and stays
+green. Repair round 2 runs CP-1, CP-2, and ADJ-1 on one S2 output. All rows require
+0 failed/0 skipped.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1205-s1/` | gap-baseline | `/*/Antiphon.Tests.Application/TurnEndGapReproductionTests*/*` | V-1,V-2,R-1 | 2 executed; T01 missing-end assertion red, T02 green; 0 skipped | 2 | 6 |
-| CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1205-s2/` | subscription | `/*/Antiphon.Tests.Application/(TurnEndGapReproductionTests*)\|(SessionRunnerStreamReadinessTests*)\|(SessionRunnerEventPumpTests*)/*` | V-1..7,R-1,R-6 | Exactly 26 executed, all named cases green | 26 | 9 |
+| CP-1 | S2 | `tests/Antiphon.Tests -> bin-c1205-s2/` | gap-baseline | `/*/Antiphon.Tests.Application/TurnEndGapReproductionTests*/*` | V-1,V-2,R-1 | 2 executed, both green; T01 preGraceEndCount.ShouldBe(1) unchanged; 0 skipped | 2 | 6 |
+| CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1205-s2/` | subscription | `/*/Antiphon.Tests.Application/(TurnEndGapReproductionTests*)\|(SessionRunnerStreamReadinessTests*)\|(SessionRunnerEventPumpTests*)/*` | V-1..7,R-1,R-6,T47 | Exactly 30 executed, all named cases green | 30 | 10 |
+| ADJ-1 | S2 | `tests/Antiphon.Tests -> bin-c1205-s2/` | adjacent | `/*/*/(SessionRunnerHttpClientHostStatsTests*)\|(SessionRunnerGenerationWireTests*)\|(SessionRunnerSettingsTests*)\|(SessionStateCommitTests*)\|(TranscriptWorkingStateQueryTests*)/*` | wire and working-state compatibility | Exactly 33 executed, all green | 33 | 3 |
 | CP-3 | S3 | `tests/Antiphon.Tests -> bin-c1205-s3/` | checked-recovery | `/*/Antiphon.Tests.Application/(WorkingTranscriptRecoveryTests*)\|(SessionStateCommitTests*)\|(TranscriptWorkingStateQueryTests*)/*` | V-8..12,V-25,V-26,R-2,R-7 | Exactly 62 executed, all named cases green | 62 | 11 |
 | CP-4 | S4 | `tests/Antiphon.Tests -> bin-c1205-s4/` | watchdog | `/*/Antiphon.Tests.Application/StaleWorkingTranscriptWatchdogTests*/*` | V-13..19,V-27..35,R-3,R-4 | Exactly 48 executed, all named cases green | 48 | 12 |
 | CP-5 | S5 | `tests/Antiphon.Tests -> bin-c1205-s5/` | restart-receipts | `/*/Antiphon.Tests.Application/TurnEndGapRestartDeliveryTests*/*` | V-20..24,V-36..40,R-5 | Exactly 30 executed, all named cases green | 30 | 16 |
@@ -789,8 +802,9 @@ allocation **65 minutes**. The fixed-source ordinary selection CP-2..CP-6 is
 The plan's original 46-minute proposed floor is replaced by 61, a **15-minute**
 increase for expanded cases, not an executed slowdown.
 
-Mutation is separately paused. Price **110** method-scoped baseline/red/restored-green
-cycles, not the plan's old 21 labels. PC-84..100 (17 H5 controls) each estimate
+Mutation is separately paused. Price **114** method-scoped baseline/red/restored-green
+cycles. The arithmetic below still prices the original 110 (17 H5 controls plus 93);
+PC-111..PC-114 are four additional cycles outside that sum. PC-84..100 (17 H5 controls) each estimate
 1 minute patch/restore + 3 phases x 3 minutes build-and-method = **10 minutes**
 each, **170 minutes**. The other 93 controls each estimate 1 minute patch/restore +
 3 phases x 2 minutes build-and-method = **7 minutes**, **651 minutes**.

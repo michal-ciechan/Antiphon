@@ -257,6 +257,72 @@ public class SessionRunnerStreamReadinessTests
             "live-callback");
     }
 
+    [Test]
+    [Timeout(90_000)]
+    [Arguments("success")]
+    [Arguments("timeout")]
+    [Arguments("throw")]
+    [Arguments("cancellation")]
+    public async Task C1205_Held_event_survives_failed_second_catchup(string mode, CancellationToken ct)
+    {
+        // V-5 repair. The first parsed output is held across the readiness yield while the
+        // second /sessions list runs. The successful catch-up is the control: one callback,
+        // after that list returns. A list timeout, a throwing list, and host cancellation
+        // must deliver that same output once. PC-111 drops the failure-path dispatch:
+        // the timeout row's deltas.Count.ShouldBe(1) fails. PC-112 skips it on host
+        // cancellation. PC-113 rethrows the list fault: the throw row disconnects.
+        // PC-114 yields a payload-free marker: the timeout row loses the only delivered copy.
+        const string text = "c1205-held-output";
+        await using var harness = await TurnEndGapReadiness.CreatePumpAsync(
+            reconnectDelayMs: 60_000,
+            listTimeoutSeconds: mode == "timeout" ? 1 : 30);
+        harness.SecondListFault = mode switch
+        {
+            "timeout" => SecondListFault.Timeout,
+            "throw" => SecondListFault.Throw,
+            "cancellation" => SecondListFault.Cancel,
+            _ => SecondListFault.None,
+        };
+        harness.OnConnection = async (connection, token) =>
+        {
+            connection.Subscribe();
+            var output = new RunnerOutputEvent(harness.SessionId, 4, text);
+            var json = JsonSerializer.Serialize(output, Web);
+            await connection.WriteFrameAsync(
+                $"event: {SessionRunnerEventNames.SessionOutput}\ndata: {json}\n\n",
+                armNextRead: false,
+                token,
+                "proof-consumed");
+        };
+        await harness.StartPumpAsync(ct);
+        if (mode == "cancellation")
+        {
+            await harness.SecondListEntered.WaitAsync(ct);
+            harness.CancelPump();
+            await harness.StopPumpAsync();
+        }
+        else
+        {
+            await Task.WhenAny(harness.Bus!.Seen.Task, harness.Disconnected).WaitAsync(ct);
+            if (mode == "timeout")
+                await harness.Disconnected.WaitAsync(ct);
+        }
+
+        var deltas = harness.Bus!.Deltas();
+        deltas.Count.ShouldBe(1, mode);
+        JsonSerializer.Serialize(deltas[0].Payload).ShouldContain(text);
+        AssertChronological(harness.Order, "proof-consumed", "live-callback");
+        harness.ListCalls.ShouldBe(2, mode);
+        var disconnected = harness.Disconnected.IsCompleted;
+        disconnected.ShouldBe(mode == "timeout", mode);
+        if (mode == "success")
+            AssertChronological(harness.Order, "list-2-ok", "live-callback");
+        if (mode is "timeout" or "cancellation")
+            AssertChronological(harness.Order, "live-callback", "iterator-disposed");
+        if (mode == "timeout")
+            harness.PumpWarnings.ShouldContain(line => line.Contains("without snapshot coverage", StringComparison.Ordinal));
+    }
+
     private static SessionRunnerEvent ExpectedEvent(string variant, out string frame)
     {
         var id = Guid.Parse("12051205-0006-4000-8000-000000000006");
