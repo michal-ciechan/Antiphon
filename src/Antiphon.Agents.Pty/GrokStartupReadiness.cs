@@ -123,13 +123,14 @@ public sealed class GrokReadyWaitOptions
 /// A snapshot that has already completed is still classified when that budget
 /// elapsed during the preceding poll, so a sign-in screen records its launch block.
 /// A snapshot that is still pending is cancelled and is not awaited past the budget.
+/// A snapshot that is not consumed has its fault observed before any completion test.
 /// </summary>
 public static class GrokReadyWait
 {
     /// <summary>
     /// Test-only fault injection. Production leaves this unset. The regression
-    /// test faults the snapshot after <c>IsFaulted</c> was false and before
-    /// <c>IsCompleted</c> is read.
+    /// test faults the snapshot after the observer is attached and before the
+    /// completion test, which is the gap that used to skip both observers.
     /// </summary>
     internal static readonly AsyncLocal<Action<Task>?> SnapshotFaultGate = new();
 
@@ -177,7 +178,8 @@ public static class GrokReadyWait
             if (outerRemaining <= TimeSpan.Zero || trustExpired)
             {
                 // The poll woke after the budget. Classify a frame that is already complete.
-                // Cancel a read that is still pending; do not await it.
+                // A fault is observed before that test. Cancel a read that is still
+                // pending; do not await it.
                 if (!TryTakeCompleted(snapshotAsync, ct, out frame, out var faulted))
                     return Fail(faulted
                         ? GrokStartupReason.SnapshotFailure
@@ -268,6 +270,12 @@ public static class GrokReadyWait
         try
         {
             var work = operation(gate.Token);
+            // Before any completion test. OnlyOnFaulted still runs when the task
+            // has already faulted, so a fault between the old IsFaulted and
+            // IsCompleted reads cannot stay unobserved. A consumed success is
+            // observed by GetResult. The test gate faults in that old gap.
+            ObserveAbandonedSnapshot(work);
+            SnapshotFaultGate.Value?.Invoke(work);
             if (work.IsCompletedSuccessfully)
             {
                 value = work.GetAwaiter().GetResult();
@@ -275,16 +283,6 @@ public static class GrokReadyWait
                 return true;
             }
 
-            if (work.IsFaulted)
-                _ = work.Exception;
-            else
-            {
-                // Faults here miss both observers: IsFaulted was already false,
-                // and a faulted task is completed so the continuation is skipped.
-                SnapshotFaultGate.Value?.Invoke(work);
-                if (!work.IsCompleted)
-                    _ = work.ContinueWith(static t => _ = t.Exception, TaskContinuationOptions.OnlyOnFaulted);
-            }
             value = default;
             faulted = work.IsFaulted;
             return false;
@@ -294,6 +292,13 @@ public static class GrokReadyWait
             gate.Cancel();
         }
     }
+
+    private static void ObserveAbandonedSnapshot(Task work) =>
+        _ = work.ContinueWith(
+            static t => _ = t.Exception,
+            CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
 
     private static async Task<T> Bounded<T>(Func<CancellationToken, Task<T>> operation,
         TimeSpan remaining, TimeProvider time, CancellationToken caller)
