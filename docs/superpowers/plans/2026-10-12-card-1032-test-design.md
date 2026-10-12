@@ -1086,7 +1086,7 @@ Parent U=21/M=12 remain represented once. The complete ordinary table has
 24 unique CP rows, 22 isolated outputs, and 130 executions: the preceding
 126 plus the explicit legacy contract result and three Workspace smoke results.
 This static census is not test/build/mutation execution evidence.
-PCs: specified=281, executed=0, pending=281, payloads binding required=281.
+PCs: specified=292, executed=0, pending=292, payloads binding required=292.
 The later Mutation acceptance gate requires the named red/restore/green cycles;
 paused controls are not waived and cannot be reported PC-clean.
 
