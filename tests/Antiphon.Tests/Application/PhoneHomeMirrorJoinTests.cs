@@ -18,7 +18,6 @@ using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
 using Shouldly;
 using TUnit.Core;
-using TUnit.Core.Exceptions;
 
 namespace Antiphon.Tests.Application;
 
@@ -304,7 +303,7 @@ public sealed class PhoneHomeMirrorJoinTests
     private static void RequireLinuxJoin()
     {
         if (!OperatingSystem.IsLinux())
-            throw new SkipTestException(
+            throw new TUnit.Core.Exceptions.SkipTestException(
                 "CP-21 phone-home join requires Linux FIFOs and Unix file modes.");
     }
 
