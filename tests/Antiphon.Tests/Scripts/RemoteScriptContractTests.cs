@@ -349,7 +349,7 @@ public sealed class RemoteScriptContractTests
     public void C1192_Daemon_loss_after_compose_refuses_success()
     {
         var output = C1192Run("cleanup-probe", "all");
-        foreach (var key in new[] { "daemon-teardown", "daemon-verdict", "daemon-residue",
+        foreach (var key in new[] { "daemon-teardown", "daemon-verdict", "daemon-marker", "daemon-residue",
             "daemon-retained", "daemon-ledger", "daemon-all-resources-retained",
             "daemon-residue-c849c1192fixture0001-work", "daemon-residue-c849c1192fixture0001-mask",
             "daemon-residue-c849-c1192fixture0001-writer", "daemon-residue-c849-c1192fixture0001-reader" })
@@ -363,7 +363,7 @@ public sealed class RemoteScriptContractTests
             "empty", "permission", "socket", "unrecognized", "rm-lie", "exit2-absent",
             "other-name", "other-kind", "mixed" })
         {
-            foreach (var assertion in new[] { "teardown", "verdict", "residue" })
+            foreach (var assertion in new[] { "teardown", "verdict", "marker", "residue" })
                 Fact(output, outcome + "-" + assertion).ShouldBe("1", boundary + " " + outcome + "-" + assertion + "\n" + output);
             if (outcome == "absent") continue;
             Fact(output, outcome + "-retained").ShouldBe("1", boundary + " " + outcome + "-retained\n" + output);
