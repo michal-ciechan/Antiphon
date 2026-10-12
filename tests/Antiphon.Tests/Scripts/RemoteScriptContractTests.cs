@@ -96,18 +96,21 @@ public sealed class RemoteScriptContractTests
     public void C1189_Fixture_package_zip_does_not_call_host_pwsh()
     {
         var race = Block(Remote(), "c849_fixture_nuget_race");
-        race.ShouldContain("[System.IO.Compression.ZipFile]::CreateFromDirectory($Source, $Target)");
-        var zip = Commands(race).Single(command =>
+        race.ShouldContain("c849_fixture_race_materialize \"$image\"");
+        var materialize = Block(Remote(), "c849_fixture_race_materialize");
+        materialize.ShouldContain("[System.IO.Compression.ZipFile]::CreateFromDirectory($Source, $Target)");
+        var zip = Commands(materialize).Single(command =>
             command.Contains("C849.Probe.1.0.0.nupkg", StringComparison.Ordinal));
-        zip.ShouldStartWith("docker run ");
-        zip.ShouldContain("--entrypoint pwsh");
-        zip.ShouldContain("--network none");
-        zip.ShouldContain("\"$image\"");
-        zip.ShouldContain("-File /fixture/make-zip.ps1");
-        zip.ShouldContain("/fixture/package");
-        zip.ShouldContain("FixturePackageZipFailed");
-        zip.Contains("$(pwsh", StringComparison.Ordinal).ShouldBeFalse("F-4 zip calls host pwsh");
-        zip.TrimStart().StartsWith("pwsh", StringComparison.Ordinal).ShouldBeFalse("F-4 zip calls host pwsh");
+        zip.ShouldStartWith("docker run ", customMessage: "zip-admitted-image");
+        zip.ShouldContain("--entrypoint pwsh", "zip-admitted-image");
+        zip.ShouldContain("--network none", "zip-admitted-image");
+        zip.ShouldContain("\"$image\"", "zip-admitted-image");
+        zip.ShouldContain("-File /fixture/race/make-zip.ps1", "zip-admitted-image");
+        zip.ShouldContain("/fixture/race/package", "zip-admitted-image");
+        zip.ShouldContain("/fixture/race/feed/C849.Probe.1.0.0.nupkg", "zip-admitted-image");
+        zip.ShouldContain("FixturePackageZipFailed", "zip-admitted-image");
+        zip.Contains("$(pwsh", StringComparison.Ordinal).ShouldBeFalse("zip-admitted-image");
+        zip.TrimStart().StartsWith("pwsh", StringComparison.Ordinal).ShouldBeFalse("zip-admitted-image");
     }
 
     // CARD-1189. F-6 hashed the offline tarball with host pwsh -Command, which also swallows
@@ -150,20 +153,20 @@ public sealed class RemoteScriptContractTests
         cleanupAt.ShouldBeGreaterThan(unlinkAt);
     }
 
-    // CARD-1191. F-4 wrote lock-probe.ps1 after chown -R 1654, so the ssh user could not create it.
+    // CARD-1191. The lock probe is a volume file. It must exist before the uid handoff, or 1654 cannot read it.
     [Test]
-    public void C1191_Lock_probe_heredoc_precedes_race_chown()
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1191_Lock_probe_is_created_before_uid_handoff()
     {
-        var race = Block(Remote(), "c849_fixture_nuget_race");
-        const string heredoc = "cat > \"$root/lock-probe.ps1\" <<'PS'";
-        const string chown = "sudo -n chown -R 1654:1654 \"$root\"";
-        var catAt = race.IndexOf(heredoc, StringComparison.Ordinal);
-        var chownAt = race.IndexOf(chown, StringComparison.Ordinal);
-        catAt.ShouldBeGreaterThanOrEqualTo(0, "lock-probe.ps1 heredoc is missing");
-        chownAt.ShouldBeGreaterThan(catAt, "lock-probe.ps1 is written after the race tree is chowned to 1654");
-        var between = race[catAt..chownAt];
-        between.ShouldContain("[NuGet.Common.ConcurrencyUtilities]::ExecuteWithFileLocked");
-        between.ShouldContain("\nPS\n");
+        var materialize = Block(Remote(), "c849_fixture_race_materialize");
+        const string write = "c849_fixture_volume_write /fixture/race/lock-probe.ps1";
+        const string handoff = "c849_fixture_volume_chown_race";
+        Order(materialize, write, handoff).ShouldBeTrue("probe-before-handoff");
+        var writeAt = materialize.IndexOf(write, StringComparison.Ordinal);
+        var handoffAt = materialize.IndexOf(handoff, StringComparison.Ordinal);
+        materialize[writeAt..handoffAt].ShouldContain("[NuGet.Common.ConcurrencyUtilities]::ExecuteWithFileLocked");
+        var output = C1192Run("handoff");
+        Fact(output, "probe-before-handoff").ShouldBe("1", "probe-before-handoff");
     }
 
     // CARD-1191. mc cannot rm the 1654-owned race tree or the root-owned npm cache.
@@ -478,6 +481,49 @@ public sealed class RemoteScriptContractTests
         Fact(output, "argv-reordered-refused").ShouldBe("1");
     }
 
+    // CARD-1192 S2. Feed, projects, zip, driver and lock programs share the work volume.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1192_Race_programs_and_feed_share_the_work_volume()
+    {
+        var output = C1192Run("race");
+        Fact(output, "race-boundary").ShouldBe("1", "race-boundary");
+        Fact(output, "race-work-volume-mount").ShouldBe("1", "race-work-volume-mount");
+        Fact(output, "race-feed-recipient").ShouldBe("1", "race-feed-recipient");
+    }
+
+    // CARD-1192 S2. Ready, go and release are volume observations. A host decoy cannot satisfy them.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1192_Race_barriers_observe_volume_state()
+    {
+        var output = C1192Run("barriers");
+        foreach (var label in new[]
+        {
+            "volume-ready-not-host-decoy",
+            "delayed-ready",
+            "missing-ready-refused",
+            "ready-poll-contract",
+            "volume-go-observed",
+            "volume-release-observed",
+            "child-failure-refused",
+            "release-failure-refused"
+        })
+            Fact(output, label).ShouldBe("1", label);
+    }
+
+    // CARD-1192 S2. Shared scratch blocks the waiter until release. Private scratch is already eligible.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1192_Lock_probe_distinguishes_shared_and_private_scratch()
+    {
+        var output = C1192Run("locks");
+        Fact(output, "shared-waiter-blocked").ShouldBe("1", "shared-waiter-blocked");
+        Fact(output, "private-waiter-already-entered").ShouldBe("1", "private-waiter-already-entered");
+        Fact(output, "shared-waiter-after-release").ShouldBe("1", "shared-waiter-after-release");
+        Fact(output, "private-lock-not-shared").ShouldBe("NuGetLockNotShared", "private-lock-not-shared");
+    }
+
     // CARD-1193. NuGet locks $NUGET_SCRATCH/lock/<hash>. The holder and waiter must receive the
     // same HOME and NUGET_SCRATCH the F-4 restore containers pass.
     [Test]
@@ -485,9 +531,9 @@ public sealed class RemoteScriptContractTests
     {
         var run = Commands(Block(Remote(), "c849_fixture_lock_container"))
             .Single(command => command.Contains("docker run ", StringComparison.Ordinal));
-        run.ShouldContain("-e HOME=/home/app");
-        run.ShouldContain("-e NUGET_SCRATCH=/var/cache/antiphon/nuget-scratch");
-        run.ShouldContain("lock-probe.ps1");
+        run.ShouldContain("-e HOME=/home/app", "lock-home");
+        run.ShouldContain("-e NUGET_SCRATCH=/var/cache/antiphon/nuget-scratch", "lock-scratch-env");
+        run.ShouldContain("/fixture/race/lock-probe.ps1");
     }
 
     // CARD-1193. The verifier scp exports CASE_DIR. These logs are written under the private
