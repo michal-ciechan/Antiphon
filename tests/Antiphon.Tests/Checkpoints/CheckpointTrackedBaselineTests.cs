@@ -309,6 +309,9 @@ public sealed class CheckpointTrackedBaselineTests : CheckpointTestBase
         var head = GitOut(root, "rev-parse", "HEAD").Trim();
         var tool = await RunToolAsync(root, name + "-tool", cancellationToken);
         AssertTamper(tool, victim, head);
+        // The tool restore leaves this tracked output newer than its inputs, so the
+        // next build can skip the write. Age the file; git does not track mtime.
+        File.SetLastWriteTimeUtc(victim.FullPath, DateTime.UnixEpoch);
         var script = await RunScriptAsync(root, name + "-script", cancellationToken);
         AssertTamper(script, victim, head);
         var receipt = Path.Combine(root, ".antiphon", "script-results", name + "-script-fixed", "source.json");
