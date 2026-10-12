@@ -7,7 +7,8 @@ using System.Text.Json;
 namespace Antiphon.Checkpoints;
 
 // A real dotnet build is redirected onto one absolute OutputPath owned by the
-// entry project. ArtifactsPath makes the SDK put each project's intermediates
+// entry project directory. A directory argument is that directory; a project
+// file uses its parent. ArtifactsPath makes the SDK put each project's intermediates
 // and project.assets.json under that directory. A shared BaseIntermediateOutputPath
 // is not passed: global properties are not re-expanded, so $(MSBuildProjectName)
 // would be one literal directory and restore then cycles. The static XML preflight
@@ -58,7 +59,7 @@ public static class BuildConfinement
             return Refuse("graph-unevaluated", "build command has no project path");
 
         var projectFull = Path.GetFullPath(Path.IsPathRooted(project) ? project : Path.Combine(workingDirectory, project));
-        var projectDir = Path.GetDirectoryName(projectFull);
+        var projectDir = ProjectWriteRoots.DirectoryOf(projectFull);
         if (string.IsNullOrEmpty(projectDir))
             return Refuse("graph-unevaluated", "project directory missing");
 
@@ -396,7 +397,7 @@ public static class BuildConfinement
         var roots = new List<string>();
         foreach (var project in projects)
         {
-            var dir = Path.GetDirectoryName(project);
+            var dir = ProjectWriteRoots.DirectoryOf(project);
             if (string.IsNullOrEmpty(dir))
                 continue;
             var rel = Relative(repo, dir);
