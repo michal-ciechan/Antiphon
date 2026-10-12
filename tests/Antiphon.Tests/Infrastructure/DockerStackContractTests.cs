@@ -541,6 +541,36 @@ public sealed class DockerStackContractTests
             .ShouldBeFalse("the token is never an image layer");
     }
 
+    // CARD-0989: the raw linux-x64 Grok artifact, pinned by version and reviewed SHA-256,
+    // verified before install or execution. A missing pin fails before curl. A mismatch
+    // fails at sha256sum -c. install.sh is not a fallback.
+    [Test]
+    public void Runner_pins_grok_cli_by_version_and_digest()
+    {
+        var dockerfile = Text("docker/session-runner-grok/Dockerfile");
+        var body = RunnerBody();
+        body.ShouldContain("ARG GROK_VERSION=1.0.41");
+        System.Text.RegularExpressions.Regex.IsMatch(
+                body,
+                @"ARG GROK_SHA256=9ce03ed23e16ea01072b4496263d6213a27899e1e3e107f008d36edf82e70407\s")
+            .ShouldBeTrue("pinned-digest");
+        body.ShouldContain("https://x.ai/cli/grok-${GROK_VERSION}-linux-x86_64", "pinned-artifact-url");
+        body.ShouldContain("echo \"${GROK_SHA256}  /tmp/grok-download/grok\" | sha256sum -c -");
+        body.ShouldContain("install -m 0755 /tmp/grok-download/grok /usr/local/bin/grok");
+        body.ShouldContain("/usr/local/bin/grok --version | grep -F \"${GROK_VERSION}\"");
+        body.ShouldContain("rm -rf /tmp/grok-download");
+        Order(body, "test -n \"${GROK_SHA256}\"", "curl -fsSL -o /tmp/grok-download/grok")
+            .ShouldBeTrue("missing-pin-before-fetch");
+        Order(body, "printf '%s' \"${GROK_SHA256}\" | grep -Eq '^[0-9a-f]{64}$'", "curl -fsSL -o /tmp/grok-download/grok")
+            .ShouldBeTrue("malformed-pin-before-fetch");
+        Order(body, "echo \"${GROK_SHA256}  /tmp/grok-download/grok\" | sha256sum -c -", "install -m 0755 /tmp/grok-download/grok")
+            .ShouldBeTrue("verify-before-install");
+        Order(body, "echo \"${GROK_SHA256}  /tmp/grok-download/grok\" | sha256sum -c -", "/usr/local/bin/grok --version")
+            .ShouldBeTrue("verify-before-execute");
+        dockerfile.Contains("x.ai/cli/install.sh", StringComparison.Ordinal)
+            .ShouldBeFalse("no-installer-fallback");
+    }
+
     // CARD-0628: the --settings file Claude is given on a runner-bound launch is this image
     // path, and its bytes are the server's one-key constant.
     [Test]

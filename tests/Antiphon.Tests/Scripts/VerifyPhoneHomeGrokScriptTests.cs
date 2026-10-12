@@ -36,7 +36,8 @@ public sealed class VerifyPhoneHomeGrokScriptTests
             .ShouldBeFalse();
         dockerfile.ShouldNotContain("17202");
         dockerfile.ShouldContain("1.0.41");
-        dockerfile.ShouldContain("x.ai/cli/install.sh");
+        dockerfile.ShouldContain("https://x.ai/cli/grok-${GROK_VERSION}-linux-x86_64");
+        dockerfile.ShouldNotContain("x.ai/cli/install.sh");
         System.Text.RegularExpressions.Regex.IsMatch(
             dockerfile, @"COPY\s+[^\n]*auth\.json",
             System.Text.RegularExpressions.RegexOptions.IgnoreCase)
