@@ -71,6 +71,12 @@ FROM mcr.microsoft.com/dotnet/aspnet:9.0 AS runtime-base
 ARG SOURCE_REVISION=unknown
 ARG GIT_MINIMUM_VERSION
 ARG GIT_VERSION
+# CARD-0989: Grok's raw linux-x64 artifact, pinned by version AND reviewed SHA-256.
+# A missing or non-64-hex pin fails before curl. A re-published binary fails at
+# sha256sum -c, before install and before grok --version. The remedy is a new
+# pinned pair, never install.sh and never executing the download before the check.
+ARG GROK_VERSION=1.0.41
+ARG GROK_SHA256=9ce03ed23e16ea01072b4496263d6213a27899e1e3e107f008d36edf82e70407
 # CARD-0628 D-2: Claude Code's native linux-x64 binary, pinned by version AND published SHA-256.
 # A re-published 2.1.280 fails the build at sha256sum -c; the remedy is a new pinned pair, never
 # dropping the check.
@@ -88,13 +94,15 @@ USER root
 RUN apt-get update \
  && apt-get install -y --no-install-recommends curl ca-certificates bash libcurl3-gnutls libexpat1 zlib1g procps \
  && rm -rf /var/lib/apt/lists/* \
- && mkdir -p /tmp/grok-install \
- && curl -fsSL https://x.ai/cli/install.sh | env HOME=/tmp/grok-install GROK_BIN_DIR=/usr/local/bin bash -s 1.0.41 \
- && install -m 0755 /tmp/grok-install/.grok/downloads/grok-linux-x86_64 /usr/local/bin/grok \
+ && test -n "${GROK_SHA256}" \
+ && printf '%s' "${GROK_SHA256}" | grep -Eq '^[0-9a-f]{64}$' \
+ && mkdir -p /tmp/grok-download \
+ && curl -fsSL -o /tmp/grok-download/grok "https://x.ai/cli/grok-${GROK_VERSION}-linux-x86_64" \
+ && echo "${GROK_SHA256}  /tmp/grok-download/grok" | sha256sum -c - \
+ && install -m 0755 /tmp/grok-download/grok /usr/local/bin/grok \
  && ln -sf grok /usr/local/bin/agent \
- && /usr/local/bin/grok --version \
- && /usr/local/bin/grok --version | grep -F '1.0.41' \
- && rm -rf /tmp/grok-install \
+ && /usr/local/bin/grok --version | grep -F "${GROK_VERSION}" \
+ && rm -rf /tmp/grok-download \
  && mkdir -p /tmp/claude-install \
  && curl -fsSL -o /tmp/claude-install/claude "https://downloads.claude.ai/claude-code-releases/${CLAUDE_CODE_VERSION}/linux-x64/claude" \
  && echo "${CLAUDE_CODE_SHA256}  /tmp/claude-install/claude" | sha256sum -c - \
