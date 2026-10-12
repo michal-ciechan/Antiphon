@@ -336,18 +336,195 @@ public sealed class CardWorktreeCleanupRecoveryTests
         reached.ShouldBe(SettlingVectors);
     }
 
+    /// <summary>
+    /// CARD-1033 repair. The JSON configuration provider binds a JSON null to an empty string.
+    /// That shipped value is absence: startup succeeds and destruction stays withheld.
+    /// </summary>
+    [Test]
+    public void C1033_ShippedJsonNullPassesStartup()
+    {
+        var path = Path.Combine(CheckoutRoot(), "server", "appsettings.json");
+        var section = new ConfigurationBuilder().AddJsonFile(path, optional: false, reloadOnChange: false)
+            .Build().GetSection("WorktreeResidue");
+        var raw = section["CardDoneAfterUtc"];
+        raw.ShouldBe(string.Empty);
+        var bound = new WorktreeResidueSettings();
+        section.Bind(bound);
+        bound.Execute.ShouldBeFalse();
+        bound.CardDoneAfterUtc.ShouldBe(string.Empty);
+        var validation = new WorktreeResidueSettingsValidator().Validate(null, bound);
+        validation.Succeeded.ShouldBeTrue(string.Join(" ", validation.Failures ?? []));
+        using var provider = new ServiceCollection()
+            .AddSingleton<IValidateOptions<WorktreeResidueSettings>, WorktreeResidueSettingsValidator>()
+            .AddOptions<WorktreeResidueSettings>().Bind(section).ValidateOnStart()
+            .Services.BuildServiceProvider();
+        foreach (var startup in provider.GetServices<IStartupValidator>())
+            startup.Validate();
+        WorktreeResidueSettings.TryReadCardDoneAfterUtc(bound.CardDoneAfterUtc, out var cutoff, out var failure).ShouldBeTrue();
+        failure.ShouldBeNull();
+        cutoff.ShouldBeNull();
+        CardWorktreeCleanupPolicy.DestructiveAdmissionRefusal(
+            new WorktreeResidueSettings { Execute = true, CardDoneAfterUtc = bound.CardDoneAfterUtc },
+            new DateTime(2026, 10, 12, 1, 0, 0, DateTimeKind.Utc), false).ShouldBe("cutoff_absent");
+    }
+
+    /// <summary>
+    /// One change from 2026-10-12T00:00:00Z. Expected instants and admission codes are written out,
+    /// not derived from <see cref="DateTime.Parse(string)"/>.
+    /// </summary>
+    [Test]
+    public void C1033_CutoffGrammarWithholdsDestruction()
+    {
+        var problems = new List<string>();
+        foreach (var row in CutoffGrammar)
+        {
+            var notes = DescribeCutoffRow(row);
+            if (notes.Count > 0) problems.Add(row.Name + ": " + string.Join("; ", notes));
+        }
+
+        problems.ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task C1033_TimeOnlyCutoffAdmitsNothing()
+    {
+        await using var fixture = await CompletedCardCleanupFixture.CreateAsync();
+        foreach (var raw in new[] { "00:00Z", "00:00+00:00" })
+        {
+            fixture.Residue.Execute = true;
+            fixture.Residue.CardDoneAfterUtc = raw;
+            var result = await fixture.CleanupAsync();
+            result.Residue.ShouldBe("cutoff_invalid");
+            Directory.Exists(fixture.Tree).ShouldBeTrue();
+            (await fixture.IntentsAsync()).ShouldBe(0);
+            (await fixture.SentinelAsync()).ShouldBe(fixture.OriginalBytes);
+        }
+    }
+
+    private static List<string> DescribeCutoffRow(CutoffGrammarCase row)
+    {
+        var notes = new List<string>();
+        var result = BindAndValidate(row.Raw);
+        if (result.Succeeded != row.StartupSucceeds)
+            notes.Add("validation succeeded=" + result.Succeeded + " failures=" + string.Join(" ", result.Failures ?? []));
+        if (!row.StartupSucceeds)
+        {
+            var failures = string.Join(" ", result.Failures ?? []);
+            if (!failures.Contains(row.FailureFragment!, StringComparison.Ordinal))
+                notes.Add("fragment [" + row.FailureFragment + "] missing from [" + failures + "]");
+        }
+
+        using var provider = BuildOptions(row.Raw);
+        var thrown = false;
+        try
+        {
+            foreach (var startup in provider.GetServices<IStartupValidator>())
+                startup.Validate();
+        }
+        catch (OptionsValidationException)
+        {
+            thrown = true;
+        }
+
+        if (thrown == row.StartupSucceeds)
+            notes.Add("startup threw=" + thrown);
+
+        var read = WorktreeResidueSettings.TryReadCardDoneAfterUtc(row.Raw, out var cutoff, out var parseFailure);
+        if (read != row.StartupSucceeds)
+            notes.Add("parse accepted=" + read + " failure=" + parseFailure + " cutoff=" + FormatInstant(cutoff));
+        if (cutoff != row.ExpectedCutoff)
+            notes.Add("cutoff " + FormatInstant(cutoff) + " expected " + FormatInstant(row.ExpectedCutoff));
+        var refusal = CardWorktreeCleanupPolicy.DestructiveAdmissionRefusal(
+            new WorktreeResidueSettings { Execute = true, CardDoneAfterUtc = row.Raw }, row.DoneAt, false);
+        if (refusal != row.Admission)
+            notes.Add("admission [" + refusal + "] expected [" + row.Admission + "]");
+        return notes;
+    }
+
+    private static string FormatInstant(DateTime? value) => value is null ? "null" : value.Value.ToString("o");
+
+    private readonly record struct CutoffGrammarCase(
+        string Name, string? Raw, bool StartupSucceeds, string? FailureFragment, string? Admission,
+        DateTime DoneAt, DateTime? ExpectedCutoff);
+
+    private static readonly CutoffGrammarCase[] CutoffGrammar =
+    [
+        new("complete-z", "2026-10-12T00:00:00Z", true, null, null,
+            Utc(2026, 10, 12, 0, 0, 1), Utc(2026, 10, 12, 0, 0, 0)),
+        new("complete-offset", "2026-10-12T00:00:00+00:00", true, null, null,
+            Utc(2026, 10, 12, 0, 0, 1), Utc(2026, 10, 12, 0, 0, 0)),
+        new("complete-compact-offset", "2026-10-12T00:00:00+0000", true, null, null,
+            Utc(2026, 10, 12, 0, 0, 1), Utc(2026, 10, 12, 0, 0, 0)),
+        new("complete-fraction", "2026-10-12T00:00:00.1Z", true, null, null,
+            Utc(2026, 10, 12, 0, 0, 1), Utc(2026, 10, 12, 0, 0, 0).AddTicks(1_000_000)),
+        new("complete-tick", "2026-10-12T00:00:00.0000001Z", true, null, null,
+            Utc(2026, 10, 12, 0, 0, 1), Utc(2026, 10, 12, 0, 0, 0).AddTicks(1)),
+        new("complete-fraction-offset", "2026-10-12T00:00:00.1+00:00", true, null, null,
+            Utc(2026, 10, 12, 0, 0, 1), Utc(2026, 10, 12, 0, 0, 0).AddTicks(1_000_000)),
+        new("equal-boundary", "2026-10-12T00:00:00Z", true, null, "historical_cohort",
+            Utc(2026, 10, 12, 0, 0, 0), Utc(2026, 10, 12, 0, 0, 0)),
+        new("absent-null", null, true, null, "cutoff_absent",
+            Utc(2026, 10, 12, 1, 0, 0), null),
+        new("absent-empty", "", true, null, "cutoff_absent",
+            Utc(2026, 10, 12, 1, 0, 0), null),
+        new("absent-whitespace", " \t ", true, null, "cutoff_absent",
+            Utc(2026, 10, 12, 1, 0, 0), null),
+        new("time-only-z", "00:00Z", false, "malformed.", "cutoff_invalid",
+            Utc(2026, 10, 12, 1, 0, 0), null),
+        new("time-only-offset", "00:00+00:00", false, "malformed.", "cutoff_invalid",
+            Utc(2026, 10, 12, 1, 0, 0), null),
+        new("time-only-seconds", "00:00:00Z", false, "malformed.", "cutoff_invalid",
+            Utc(2026, 10, 12, 1, 0, 0), null),
+        new("missing-seconds", "2026-10-12T00:00Z", false, "malformed.", "cutoff_invalid",
+            Utc(2026, 10, 12, 1, 0, 0), null),
+        new("date-only", "2026-10-12", false, "malformed.", "cutoff_invalid",
+            Utc(2026, 10, 12, 1, 0, 0), null),
+        new("date-only-z", "2026-10-12Z", false, "malformed.", "cutoff_invalid",
+            Utc(2026, 10, 12, 1, 0, 0), null),
+        new("no-zone", "2026-10-12T00:00:00", false, "must be UTC.", "cutoff_invalid",
+            Utc(2026, 10, 12, 1, 0, 0), null),
+        new("local-offset", "2026-10-12T00:00:00+01:00", false, "must be UTC.", "cutoff_invalid",
+            Utc(2026, 10, 12, 1, 0, 0), null),
+        new("negative-zero-offset", "2026-10-12T00:00:00-00:00", false, "must be UTC.", "cutoff_invalid",
+            Utc(2026, 10, 12, 1, 0, 0), null),
+        new("out-of-range-day", "2026-02-31T00:00:00Z", false, "malformed.", "cutoff_invalid",
+            Utc(2026, 10, 12, 1, 0, 0), null),
+        new("out-of-range-month", "2026-13-01T00:00:00Z", false, "malformed.", "cutoff_invalid",
+            Utc(2026, 10, 12, 1, 0, 0), null),
+        new("year-zero", "0000-01-01T00:00:00Z", false, "malformed.", "cutoff_invalid",
+            Utc(2026, 10, 12, 1, 0, 0), null),
+        new("space-separator", "2026-10-12 00:00:00Z", false, "malformed.", "cutoff_invalid",
+            Utc(2026, 10, 12, 1, 0, 0), null),
+        new("month-first", "10/12/2026 00:00:00Z", false, "malformed.", "cutoff_invalid",
+            Utc(2026, 10, 12, 1, 0, 0), null),
+        new("extra-fraction-digit", "2026-10-12T00:00:00.12345678Z", false, "malformed.", "cutoff_invalid",
+            Utc(2026, 10, 12, 1, 0, 0), null),
+        new("lowercase-z", "2026-10-12T00:00:00z", false, "malformed.", "cutoff_invalid",
+            Utc(2026, 10, 12, 1, 0, 0), null),
+        new("lowercase-t", "2026-10-12t00:00:00Z", false, "malformed.", "cutoff_invalid",
+            Utc(2026, 10, 12, 1, 0, 0), null),
+    ];
+
+    private static DateTime Utc(int year, int month, int day, int hour, int minute, int second) =>
+        new(year, month, day, hour, minute, second, DateTimeKind.Utc);
+
     private static async Task<CompletedCardCleanupFixture> CreateFrozenAsync() =>
         await CompletedCardCleanupFixture.CreateAsync(clock: new FakeTimeProvider(
             new DateTimeOffset(2026, 10, 1, 12, 0, 0, TimeSpan.Zero)));
+
+    private static string CheckoutRoot()
+    {
+        var root = new DirectoryInfo(AppContext.BaseDirectory);
+        while (root is not null && !File.Exists(Path.Combine(root.FullName, "Antiphon.sln"))) root = root.Parent;
+        root.ShouldNotBeNull();
+        return root!.FullName;
+    }
 
     private static async Task AssertShippedDefaultsAsync()
     {
         new WorktreeResidueSettings().Execute.ShouldBeFalse();
         new WorktreeResidueSettings().CardDoneAfterUtc.ShouldBeNull();
-        var root = new DirectoryInfo(AppContext.BaseDirectory);
-        while (root is not null && !File.Exists(Path.Combine(root.FullName, "Antiphon.sln"))) root = root.Parent;
-        root.ShouldNotBeNull();
-        var json = await File.ReadAllTextAsync(Path.Combine(root!.FullName, "server", "appsettings.json"));
+        var json = await File.ReadAllTextAsync(Path.Combine(CheckoutRoot(), "server", "appsettings.json"));
         json.Contains("\"Execute\": false", StringComparison.Ordinal).ShouldBeTrue();
         json.Contains("\"CardDoneAfterUtc\": null", StringComparison.Ordinal).ShouldBeTrue();
     }

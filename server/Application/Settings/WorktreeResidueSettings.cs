@@ -27,7 +27,7 @@ public sealed class WorktreeResidueSettings
 
     /// <summary>
     /// CARD-1033 D-2. UTC instant. A Done revision is eligible only when its immutable
-    /// revision time is strictly later. Null, equality, and a missing value stay inventory-only.
+    /// revision time is strictly later. Null, empty, whitespace, equality, and a missing value stay inventory-only.
     /// Never default this from process start, migration time, or the epoch.
     /// </summary>
     public string? CardDoneAfterUtc { get; set; }
@@ -61,36 +61,56 @@ public sealed class WorktreeResidueSettings
     }
 
     /// <summary>
-    /// Null and missing mean no cohort (inventory only). Any other text must be an explicit UTC timestamp.
+    /// Null, empty, and whitespace mean no cohort (inventory only). The JSON provider binds a
+    /// JSON null to an empty string, so the shipped value is absence. Any other text must be a
+    /// complete UTC timestamp: calendar date, time of day to the second, and Z or a zero offset.
     /// </summary>
     public static bool TryReadCardDoneAfterUtc(string? text, out DateTime? cutoffUtc, out string? failure)
     {
         cutoffUtc = null;
         failure = null;
-        if (text is null) return true;
-        if (string.IsNullOrWhiteSpace(text))
-        {
-            failure = "WorktreeResidue:CardDoneAfterUtc is malformed.";
-            return false;
-        }
+        if (string.IsNullOrWhiteSpace(text)) return true;
 
         var trimmed = text.Trim();
-        var explicitUtc = trimmed.EndsWith('Z')
-            || trimmed.EndsWith("+00:00", StringComparison.Ordinal)
-            || trimmed.EndsWith("+0000", StringComparison.Ordinal);
-        if (!DateTimeOffset.TryParse(trimmed, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var parsed))
+        if (DateTime.TryParseExact(trimmed, CompleteUtcFormats, CultureInfo.InvariantCulture, DateTimeStyles.None, out var utc))
         {
-            failure = "WorktreeResidue:CardDoneAfterUtc is malformed.";
-            return false;
+            cutoffUtc = DateTime.SpecifyKind(utc, DateTimeKind.Utc);
+            return true;
         }
 
-        if (!explicitUtc || parsed.Offset != TimeSpan.Zero)
+        if (DateTime.TryParseExact(trimmed, UnzonedFormats, CultureInfo.InvariantCulture, DateTimeStyles.None, out _)
+            || DateTimeOffset.TryParseExact(trimmed, OffsetFormats, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out _))
         {
             failure = "WorktreeResidue:CardDoneAfterUtc must be UTC.";
             return false;
         }
 
-        cutoffUtc = parsed.UtcDateTime;
-        return true;
+        failure = "WorktreeResidue:CardDoneAfterUtc is malformed.";
+        return false;
     }
+
+    // Exact formats only. DateTime.Parse / TryParse fill a missing date from today and a missing time from midnight.
+    private static readonly string[] CompleteUtcFormats =
+    [
+        "yyyy-MM-dd'T'HH:mm:ss'Z'",
+        "yyyy-MM-dd'T'HH:mm:ss.FFFFFFF'Z'",
+        "yyyy-MM-dd'T'HH:mm:ss'+00:00'",
+        "yyyy-MM-dd'T'HH:mm:ss.FFFFFFF'+00:00'",
+        "yyyy-MM-dd'T'HH:mm:ss'+0000'",
+        "yyyy-MM-dd'T'HH:mm:ss.FFFFFFF'+0000'",
+    ];
+
+    private static readonly string[] UnzonedFormats =
+    [
+        "yyyy-MM-dd'T'HH:mm:ss",
+        "yyyy-MM-dd'T'HH:mm:ss.FFFFFFF",
+    ];
+
+    private static readonly string[] OffsetFormats =
+    [
+        "yyyy-MM-dd'T'HH:mm:ssK",
+        "yyyy-MM-dd'T'HH:mm:ss.FFFFFFFK",
+        "yyyy-MM-dd'T'HH:mm:ss zzz",
+        "yyyy-MM-dd'T'HH:mm:ss.FFFFFFF zzz",
+    ];
 }
