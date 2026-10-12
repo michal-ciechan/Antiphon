@@ -28,18 +28,23 @@
     predicting where MSBuild writes. Before a real dotnet build (no -DotnetShim) the row
     refuses dirty-tracked, exit 2, unless git status --porcelain=v1 -z --untracked-files=no
     is empty, and records HEAD plus git ls-files -z -s for the whole tracked set. After
-    the build, on success, failure, timeout, and cancel, tracked paths that changed are
-    restored with git restore --source=<HEAD> --staged --worktree and checked against that
-    baseline. A restored change is refused: tampered, exit 2, and the row receipt is never
-    green. Restore is lossless because the pre-build tracked tree was clean. If restore or
-    the recheck fails, the row exits 8 and prints the manual restore command. A relative
-    -OutputPath is still rewritten to one absolute OutputPath under the entry project
-    directory, and that same OutputPath, ArtifactsPath, and UseArtifactsOutput are used for
-    the build, the dotnet run --no-build, and the build-source stamp. The rewrite and the
-    static project-XML preflight only reduce noise. A shared BaseIntermediateOutputPath is
-    not passed, because a global property does not expand $(MSBuildProjectName). Untracked
-    and ignored files, writes outside the repository, a row command string, and a
-    -DotnetShim replacement are outside this guarantee.
+    the build, on success, failure, timeout, and cancel, a path that is in HEAD is
+    restored with git restore --source=<HEAD> --staged --worktree. A path absent from
+    HEAD (a staged untracked file, a staged ignored file, or a new index path) is removed
+    from the index with git restore --staged, and its worktree bytes stay. A worktree
+    path absent from HEAD is never deleted. A modified or deleted tracked path, and a
+    staged path absent from HEAD, are refused: tampered, exit 2, and the row receipt is
+    never green. That restore is lossless because the pre-build tracked tree was clean
+    and no worktree content was removed. If restore or the recheck fails, the row exits
+    8 and prints the manual restore command: --staged alone for a path absent from HEAD,
+    and --source/--staged/--worktree for a path in HEAD. A relative -OutputPath is still
+    rewritten to one absolute OutputPath under the entry project directory, and that same
+    OutputPath, ArtifactsPath, and UseArtifactsOutput are used for the build, the dotnet
+    run --no-build, and the build-source stamp. The rewrite and the static project-XML
+    preflight only reduce noise. A shared BaseIntermediateOutputPath is not passed,
+    because a global property does not expand $(MSBuildProjectName). Untracked and
+    ignored files that the build does not stage, writes outside the repository, a row
+    command string, and a -DotnetShim replacement are outside this guarantee.
 
     Owner: docs/testing-and-build.md, "Checkpoint manifest (CARD-0585)".
     ASCII-only.
@@ -838,10 +843,21 @@ function Format-CheckpointGitQuote {
 }
 
 function Format-CheckpointManualRestore {
-    param([string]$Repository, [string]$Head, [string[]]$Paths)
-    $text = 'manual restore: git -C ' + (Format-CheckpointGitQuote $Repository) + ' restore --source=' + $Head + ' --staged --worktree --'
-    foreach ($path in @($Paths)) { $text += ' ' + (Format-CheckpointGitQuote ([string]$path)) }
-    return $text
+    param([string]$Repository, [string]$Head, [string[]]$Tracked, [string[]]$Added)
+    $lines = New-Object System.Collections.Generic.List[string]
+    $addedList = @($Added)
+    $trackedList = @($Tracked)
+    if ($addedList.Count -gt 0) {
+        $text = 'manual restore: git -C ' + (Format-CheckpointGitQuote $Repository) + ' restore --staged --'
+        foreach ($path in $addedList) { $text += ' ' + (Format-CheckpointGitQuote ([string]$path)) }
+        [void]$lines.Add($text)
+    }
+    if ($trackedList.Count -gt 0 -or $addedList.Count -eq 0) {
+        $text = 'manual restore: git -C ' + (Format-CheckpointGitQuote $Repository) + ' restore --source=' + $Head + ' --staged --worktree --'
+        foreach ($path in $trackedList) { $text += ' ' + (Format-CheckpointGitQuote ([string]$path)) }
+        [void]$lines.Add($text)
+    }
+    return ($lines -join "`n")
 }
 
 function Format-CheckpointDirty {
@@ -875,8 +891,8 @@ function Format-CheckpointTamper {
 }
 
 function Format-CheckpointRestoreFailed {
-    param($Baseline, [string[]]$Paths, [string]$Why)
-    $manual = Format-CheckpointManualRestore ([string]$Baseline.Repository) ([string]$Baseline.Head) @($Paths)
+    param($Baseline, [string[]]$Tracked, [string[]]$Added, [string]$Why)
+    $manual = Format-CheckpointManualRestore ([string]$Baseline.Repository) ([string]$Baseline.Head) @($Tracked) @($Added)
     return ('refused: restore-failed' + "`n" + $Why + "`n" + $manual)
 }
 
@@ -896,23 +912,41 @@ function Test-CheckpointIndexEqual {
 function Complete-CheckpointBaseline {
     param($Baseline)
     $status = Get-CheckpointTrackedStatus ([string]$Baseline.Repository)
-    if ($null -ne $status.Error) { return @{ Kind = 'restore-failed'; Detail = (Format-CheckpointRestoreFailed $Baseline @() ([string]$status.Error)) } }
+    if ($null -ne $status.Error) { return @{ Kind = 'restore-failed'; Detail = (Format-CheckpointRestoreFailed $Baseline @() @() ([string]$status.Error)) } }
     if (@($status.Paths).Count -eq 0) {
         if (Test-CheckpointIndexEqual $Baseline) { return @{ Kind = $null; Detail = '' } }
-        return @{ Kind = 'restore-failed'; Detail = (Format-CheckpointRestoreFailed $Baseline @() 'index-mismatch') }
+        return @{ Kind = 'restore-failed'; Detail = (Format-CheckpointRestoreFailed $Baseline @() @() 'index-mismatch') }
     }
-    $restoreArgs = @('restore', ('--source=' + [string]$Baseline.Head), '--staged', '--worktree', '--') + @($status.Paths)
-    $restored = Invoke-CheckpointGit ([string]$Baseline.Repository) $restoreArgs
-    $restoreWhy = $restored.Reason
-    if ([string]::IsNullOrEmpty($restoreWhy)) { $restoreWhy = 'git-restore' }
-    if ($restored.Reason -or [int]$restored.Exit -ne 0) { return @{ Kind = 'restore-failed'; Detail = (Format-CheckpointRestoreFailed $Baseline @($status.Paths) $restoreWhy) } }
+    $tracked = New-Object System.Collections.Generic.List[string]
+    $added = New-Object System.Collections.Generic.List[string]
+    foreach ($path in @($status.Paths)) {
+        $name = [string]$path
+        if ($null -ne $Baseline.Hashes -and $Baseline.Hashes.ContainsKey($name)) { [void]$tracked.Add($name) }
+        else { [void]$added.Add($name) }
+    }
+    # Unstage paths absent from HEAD first. Restoring them from HEAD with --worktree
+    # deletes worktree bytes the commit does not contain.
+    if ($added.Count -gt 0) {
+        $unstageArgs = @('restore', '--staged', '--') + $added.ToArray()
+        $unstaged = Invoke-CheckpointGit ([string]$Baseline.Repository) $unstageArgs
+        $unstageWhy = $unstaged.Reason
+        if ([string]::IsNullOrEmpty($unstageWhy)) { $unstageWhy = 'git-restore' }
+        if ($unstaged.Reason -or [int]$unstaged.Exit -ne 0) { return @{ Kind = 'restore-failed'; Detail = (Format-CheckpointRestoreFailed $Baseline $tracked.ToArray() $added.ToArray() $unstageWhy) } }
+    }
+    if ($tracked.Count -gt 0) {
+        $restoreArgs = @('restore', ('--source=' + [string]$Baseline.Head), '--staged', '--worktree', '--') + $tracked.ToArray()
+        $restored = Invoke-CheckpointGit ([string]$Baseline.Repository) $restoreArgs
+        $restoreWhy = $restored.Reason
+        if ([string]::IsNullOrEmpty($restoreWhy)) { $restoreWhy = 'git-restore' }
+        if ($restored.Reason -or [int]$restored.Exit -ne 0) { return @{ Kind = 'restore-failed'; Detail = (Format-CheckpointRestoreFailed $Baseline $tracked.ToArray() $added.ToArray() $restoreWhy) } }
+    }
     $after = Get-CheckpointTrackedStatus ([string]$Baseline.Repository)
     if ($null -ne $after.Error -or @($after.Paths).Count -gt 0) {
         $why = 'still-dirty'
         if ($null -ne $after.Error) { $why = [string]$after.Error }
-        return @{ Kind = 'restore-failed'; Detail = (Format-CheckpointRestoreFailed $Baseline @($status.Paths) $why) }
+        return @{ Kind = 'restore-failed'; Detail = (Format-CheckpointRestoreFailed $Baseline $tracked.ToArray() $added.ToArray() $why) }
     }
-    if (-not (Test-CheckpointIndexEqual $Baseline)) { return @{ Kind = 'restore-failed'; Detail = (Format-CheckpointRestoreFailed $Baseline @($status.Paths) 'index-mismatch') } }
+    if (-not (Test-CheckpointIndexEqual $Baseline)) { return @{ Kind = 'restore-failed'; Detail = (Format-CheckpointRestoreFailed $Baseline $tracked.ToArray() $added.ToArray() 'index-mismatch') } }
     return @{ Kind = 'tampered'; Detail = (Format-CheckpointTamper ([string]$Baseline.Head) @($status.Paths)) }
 }
 
