@@ -175,7 +175,7 @@ docker() {
           case "$4" in
             *'.Driver'*) echo local ;;
             *'.Options'*) echo '{}' ;;
-            *'io.antiphon.owner'*) echo server2-runner ;;
+            *'io.antiphon.owner'*) if [ "$FAULT" = foreign-source-cache ]; then echo foreign; else echo server2-runner; fi ;;
             *'io.antiphon.cache-schema'*) echo 1 ;;
             *'io.antiphon.cache-role'*) echo "$role" ;;
             *'.Mountpoint'*) echo "$root/volumes/$name/_data" ;;
@@ -326,7 +326,7 @@ make_full_marker() {
       done < <(cd "$recovery"; find packages npm -print | LC_ALL=C sort)
     } > "$recovery/recovery.manifest"
     manifest=$(sha256sum "$recovery/recovery.manifest" | cut -d' ' -f1)
-    printf 'schema=3\nkind=full\nsource-sha=%s\nimage=%s\ndonor-type=live\ndonor=%s\ntime=2026-10-04T00:00:00Z\npackages=%s\nscratch=%s\nnpm=%s\npackage-bytes=123\nnpm-bytes=456\nrecovery=%s\nmanifest-sha256=%s\n' "$SHA" "$image_id" "$donor_id" "$C849_PACKAGES" "$C849_SCRATCH" "$C849_NPM" "$([ "$mode" = volume-prune ] && printf '/fixture/cache/recovery-%s' "$RUN" || printf '%s' "$recovery")" "$manifest" > "$C849_READY"
+    printf 'schema=3\nkind=full\nsource-sha=%s\nimage=%s\ndonor-type=live\ndonor=%s\ntime=2026-10-04T00:00:00Z\npackages=%s\nscratch=%s\nnpm=%s\npackage-bytes=123\nnpm-bytes=456\nrecovery=%s\nmanifest-sha256=%s\n' "$SHA" "$image_id" "$donor_id" "$C849_PACKAGES" "$C849_SCRATCH" "$C849_NPM" "$([ "$(c849_payload_select)" = volume ] && printf '/fixture/cache/recovery-%s' "$RUN" || printf '%s' "$recovery")" "$manifest" > "$C849_READY"
 }
 # The wrapper's npm/smoke tools have their own earlier slice recipients. Here Docker
 # models donor process state and tar transport while F-3 and shared Seed remain real.
@@ -477,7 +477,21 @@ case "$mode" in
  volume-recovery)
     recovery="/fixture/cache/recovery-$RUN"
     physical="$root/volumes/c849${RUN}-work/_data/cache/recovery-$RUN"
-    ordinary "$physical"
+    C849_PACKAGES="c849${RUN}smoke-packages"
+    mkdir -p "$root/volumes/$C849_PACKAGES/_data" "$physical/packages" "$physical/npm"
+    ordinary "$root/recovery-source"
+    cp -a "$root/recovery-source/packages/." "$root/volumes/$C849_PACKAGES/_data/"
+    run c849_fixture_recovery_copy "$image_id" "$recovery"; accept recovery-volume-source-copy
+    [ "$(cat "$physical/packages/c913.probe/1.0.0/data")" = probe ] || fail recovery-volume-source-bytes
+    printf protected > "$physical/packages/c913.probe/1.0.0/data"
+    FAULT=foreign-source-cache
+    run c849_fixture_recovery_copy "$image_id" "$recovery"
+    [ "$(cat "$root/exit")" = 2 ] && [ "$(cat "$physical/packages/c913.probe/1.0.0/data")" = protected ] || fail recovery-foreign-cache-refused
+    pass recovery-foreign-cache-refused
+    FAULT=none
+    run c849_fixture_recovery_copy "$image_id" "$recovery"; accept recovery-source-restored
+    mkdir -p "$physical/npm/empty"
+    printf npm > "$physical/npm/content"
     printf npm-content > "$physical/npm/fixture-content"
     c849_manifest_write "$physical" "$physical/recovery.manifest"
     digest=$(sha256sum "$physical/recovery.manifest" | cut -d' ' -f1)
@@ -516,7 +530,10 @@ case "$mode" in
     }
     c849_volume() { mkdir -m700 -p "$root/volumes/$1/_data"; }
     : > "$CASE_DIR/fixture-controls.txt"; : > "$CASE_DIR/fixture-control-variants.txt"
-    printf 'recovery=%s\nmanifest-sha256=%s\n' "$recovery" "$digest" > "$C849_READY"
+    C913_RECOVERY="$physical"
+    chmod 0700 "$root/volumes/$C849_PACKAGES/_data"
+    make_full_marker
+    run c849_require_ready; accept recovery-marker-valid-before-controls
     cp "$physical/recovery.manifest" "$root/golden-recovery-manifest"
     run c849_fixture_contract_controls; accept volume-recovery-controls
     [ "$(grep -c '^PC-28\.' "$CASE_DIR/fixture-control-variants.txt")" = 4 ] || fail recovery-four-corruptions-reached

@@ -4080,6 +4080,16 @@ c849_fixture_assign_budget() {
     printf -v "$dest" '%s' "$scaled"
 }
 
+c849_fixture_recovery_copy() {
+    local image="$1" recovery="$2" work_mount
+    c849_fixture_cache_mount_ok "$C849_PACKAGES" nuget-packages || return 2
+    work_mount="$(c849_fixture_work_mount)" || return 2
+    docker run --rm --network none --user 0:0 --entrypoint /bin/sh \
+        --mount "$work_mount" \
+        --mount "type=volume,source=$C849_PACKAGES,target=/source,readonly,volume-nocopy" "$image" \
+        -c 'cp -a /source/. "$1/packages/"' sh "$recovery"
+}
+
 c849_fixture_prune() {
     local image recovery payload image_id name path mode bytes budget source_root
     image="$(c849_image)" || {
@@ -4093,13 +4103,7 @@ c849_fixture_prune() {
     recovery="$(c849_payload_root)/recovery-$RUN-prune"
     c849_payload_fs writer '[ ! -e "$1" ] && [ ! -L "$1" ] && mkdir -p "$1/packages" "$1/npm"' bash "$recovery" \
         || write_result false CacheRecoveryExists 2
-    local work_mount
-    work_mount="$(c849_fixture_work_mount)" || write_result false FixtureWorkspaceUnknown 2
-    docker run --rm --network none --user 0:0 --entrypoint /bin/sh \
-        --mount "$work_mount" \
-        --mount "type=volume,source=$C849_PACKAGES,target=/source,readonly,volume-nocopy" "$image" \
-        -c 'cp -a /source/. "$1/packages/"' sh "$recovery" \
-        || write_result false CacheRecoveryMissing 2
+    c849_fixture_recovery_copy "$image" "$recovery" || write_result false CacheRecoveryMissing 2
     c849_payload_fs writer 'printf npm-content > "$1/npm/fixture-content"' bash "$recovery" || write_result false CacheRecoveryMissing 2
     c849_payload_call writer c849_manifest_write "$recovery" "$recovery/recovery.manifest" || write_result false CacheManifestFailed 2
     payload="$(c849_payload_fs reader 'sha256sum "$1"' bash "$recovery/recovery.manifest" | cut -d' ' -f1)"

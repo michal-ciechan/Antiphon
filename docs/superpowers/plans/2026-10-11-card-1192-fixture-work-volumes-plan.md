@@ -693,6 +693,7 @@ introduces must gain a distinct row before its handoff.
 | G-138 | R-3: All five diagnostic logs retained | PC-138 |
 | G-139 | R-3: Source logs must be regular files | PC-139 |
 | G-140 | S5: Pruning-capable transfer validation uses the writer; reader cannot prune | PC-140 |
+| G-141 | S5: F-8 recovery copy validates source cache labels before copying | PC-141 |
 
 ### Positive controls
 
@@ -878,10 +879,10 @@ predicate is unbound coverage.
 | PC-137 | G-137: Replace controller root before taking maintenance lock. | `/*/*/RemoteScriptContractTests/C1192_Fixture_has_no_host_payload_tree_or_payload_bind` | `lock-before-controller-root` fails after CP-33's boundary is reached. |
 | PC-138 | G-138: Remove lock-waiter.log from export list. | `/*/*/RemoteScriptContractTests/C1193_Fixture_exit_trap_copies_race_logs_before_tree_removal` | `five-logs-exported` fails after CP-38's boundary is reached. |
 | PC-139 | G-139: Remove source regular-file predicate (T-class body assertion; a directory-copy failure alone is not red). | `/*/*/RemoteScriptContractTests/C1193_Fixture_log_copy_skips_symlinks_and_copies_regular_files` | `nonregular-source-skipped` fails after CP-39's boundary is reached. |
-
 | PC-140 | G-140: Change c849_payload_accept_transfer validation from writer to reader. | `/*/*/RemoteScriptContractTests/C1192_Fixture_seed_and_rerun_keep_payloads_in_volume` | `writer-prunes-incomplete-stage` fails after reader-cannot-prune proves the incomplete package survives the read-only mount. Pending SourceLanding Mutation. |
+| PC-141 | G-141: Bypass c849_fixture_cache_mount_ok in c849_fixture_recovery_copy. | `/*/*/RemoteScriptContractTests/C1192_Recovery_controls_validate_volume_bytes_modes_and_manifest` | `recovery-foreign-cache-refused` fails: the protected recipient is overwritten from the foreign-labeled cache. Pending SourceLanding Mutation. |
 
-S5 Code amendment: CP-21 exercises shared Seed and the actual F-3 wrapper, including rerun, exact fault diagnoses and no outer success publication. Its readonly filesystem model runs as non-root and must preserve an incomplete package through a reader; transfer acceptance prunes through the writer. CP-22 executes the actual F-9 corruption/restoration loop and the shared Prune authority/refusal matrix with volume recovery. Independent warm/inventory/cleanup and npm tool boundaries retain their earlier checkpoint owners. All S5 After cells already equal S5. PC-140 stays pending; ordinary baseline red does not discharge Mutation.
+S5 Code amendment: CP-21 exercises shared Seed and the actual F-3 wrapper, including rerun, exact fault diagnoses and no outer success publication. Its readonly filesystem model runs as non-root and must preserve an incomplete package through a reader; transfer acceptance prunes through the writer. CP-22 executes the actual F-9 corruption/restoration loop and the shared Prune authority/refusal matrix with volume recovery. Independent warm/inventory/cleanup and npm tool boundaries retain their earlier checkpoint owners. All S5 After cells already equal S5. PC-140 and PC-141 stay pending; ordinary baseline red does not discharge Mutation.
 
 ### Out of scope
 
@@ -974,7 +975,7 @@ Exact filters/minutes are in the table. This includes seven 5-minute isolated
 builds (**35 minutes**) plus **47 minutes** of filter work, including setup.
 C1066 2/6/3 values are executions, not minutes. Slot wait is unknown and additive.
 
-Separate PC floor (Mutation) = **2100 minutes**, all **140 PCs**.
+Separate PC floor (Mutation) = **2115 minutes**, all **141 PCs**.
 Each exact detecting filter above is budgeted 15 minutes: 1 patch/restore/
 boundary inspection + 5 isolated red build + 2 red method + 5 restored build +
 2 green method. Both states rebuild conservatively for provenance; no unvalidated
@@ -982,9 +983,9 @@ no-build reuse is assumed. All PCs run even when they share a method. Mutation
 discovery/reporting and slot contention add time. Commission bounded packs by
 slice/guard range, preserving all rows and the original Code landing owner.
 
-Total verification floor = 35 setup/build + 47 ordinary V/R + 2100 PC cycles
-= **2182 minutes**. Code authoring remains the separate 335-minute estimate;
-authoring plus verification floor = **2517 minutes**. W-1 is separately
+Total verification floor = 35 setup/build + 47 ordinary V/R + 2115 PC cycles
+= **2197 minutes**. Code authoring remains the separate 335-minute estimate;
+authoring plus verification floor = **2532 minutes**. W-1 is separately
 scheduled rollout work, outside authoring/Mutation, not zero-cost ordinary proof.
 
 Ordinary build reuse saves **180 minutes** versus 43 independent builds:
@@ -993,10 +994,10 @@ Mutation batching savings = 0: guards mostly share one source file and require
 independent red/restored-green cycles. This deliberately exposes the true
 control cost rather than hiding an assembly run or omitting guards.
 
-Inventory audit before handoff (S5 amendment adds G-140/PC-140): **guards=140, mapped=140, missing=0,
-duplicate PC maps=0**. All 140 PCs are scheduled and required; **0 executed
+Inventory audit before handoff (S5 amendment adds G-140/PC-140 and G-141/PC-141): **guards=141, mapped=141, missing=0,
+duplicate PC maps=0**. All 141 PCs are scheduled and required; **0 executed
 during TestDesign**. Code binds implementation/labels, Review judges them before
-land, Mutation reports 140/140 red/restore/green outcomes or explicit findings.
+land, Mutation reports 141/141 red/restore/green outcomes or explicit findings.
 **Post-land Mutation was NOT run.**
 
 ### Operator decisions
