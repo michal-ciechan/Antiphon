@@ -83,6 +83,15 @@ red against unchanged master selection plus mechanical seam; it is not passed
 coverage. Final Review runs CP-2..CP-6 at its reviewed SHA. Every reused row has the
 same After group and isolated build provenance. No zero-test row counts as proof.
 
+Baseline CP-1 run 20261013-005253-ea8d at
+dcc031de4d2e85a70a3780d7438cc8c131f3acb5 executed 1, passed 0, failed 1:
+21 internal rows were exercised and 13 failed. In particular alias-first expected
+c1171-working\installed\pwsh.exe but returned
+c1171-working\Microsoft\WindowsApps\pwsh.exe. The production selection loop
+was mechanically extracted unchanged from master (base equals fetched master).
+First attempt 20261013-005012-78ab did not execute tests because the new diagnostic
+assertion used the wrong Shouldly overload; corrected without weakening it.
+
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
 | CP-1 | S2 | `tests/Antiphon.Tests -> bin-c1171-baseline/` | resolver-baseline | `/*/*/ScriptHarnessPowerShellResolverTests/*` | V-1 baseline | 1 executed, expected alias-first assertion red | 1 | 5 | true |

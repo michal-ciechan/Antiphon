@@ -185,9 +185,21 @@ internal static class ScriptHarnessProcess
     internal static string ResolvePowerShell()
     {
         var path = Environment.GetEnvironmentVariable("PATH") ?? "";
-        return ResolvePowerShell(path, OperatingSystem.IsWindows(), Directory.GetCurrentDirectory(),
-            candidate => File.Exists(candidate)
-                ? new PowerShellFile(File.GetAttributes(candidate), new FileInfo(candidate).Length) : null, []);
+        var windows = OperatingSystem.IsWindows();
+        var fallbackPaths = windows
+            ? new[] { Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+                Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86) }
+                .Where(directory => !string.IsNullOrWhiteSpace(directory))
+                .Select(directory => Path.Combine(directory, "PowerShell", "7", "pwsh.exe")).ToArray()
+            : [];
+        return ResolvePowerShell(path, windows, Directory.GetCurrentDirectory(), candidate =>
+        {
+            if (!File.Exists(candidate)) return null;
+            var attributes = File.GetAttributes(candidate);
+            // Do not follow Windows alias/reparse targets to read their length.
+            return new PowerShellFile(attributes, windows && (attributes & FileAttributes.ReparsePoint) != 0
+                ? 0 : new FileInfo(candidate).Length);
+        }, fallbackPaths);
     }
 
     internal readonly record struct PowerShellFile(FileAttributes Attributes, long Length);
@@ -199,9 +211,41 @@ internal static class ScriptHarnessProcess
         var name = windows ? "pwsh.exe" : "pwsh";
         foreach (var directory in path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
         {
-            var candidate = Path.Combine(directory, name);
-            if (inspect(candidate) is not null) return Path.GetFullPath(candidate);
+            var normalized = directory.Trim().Trim('"');
+            if (normalized.Length == 0) continue;
+            var resolved = TryCandidate(Path.Combine(normalized, name));
+            if (resolved is not null) return resolved;
         }
-        throw new FileNotFoundException($"A real {name} executable was not found on PATH.");
+        if (windows)
+        {
+            foreach (var candidate in fallbackPaths)
+            {
+                var resolved = TryCandidate(candidate);
+                if (resolved is not null) return resolved;
+            }
+        }
+        throw new FileNotFoundException($"ScriptHarnessPowerShellNotFound: a real {name} executable was not found " +
+            "on PATH or in the supported PowerShell 7 install locations. Windows PowerShell 5.1 is not supported.", name);
+
+        string? TryCandidate(string candidate)
+        {
+            try
+            {
+                candidate = Path.GetFullPath(candidate, workingDirectory);
+                // Match a component, not similarly named directories such as WindowsAppsTools.
+                if (windows && candidate.Split(['\\', '/']).Any(component =>
+                        component.Equals("WindowsApps", StringComparison.OrdinalIgnoreCase))) return null;
+                var file = inspect(candidate);
+                if (file is null || file.Value.Length <= 0 ||
+                    (windows && (file.Value.Attributes & FileAttributes.ReparsePoint) != 0)) return null;
+                return candidate;
+            }
+            catch (Exception error) when (error is ArgumentException or NotSupportedException or
+                                          IOException or UnauthorizedAccessException)
+            {
+                // An invalid, vanished or unreadable entry must not hide a later installed shell.
+                return null;
+            }
+        }
     }
 }
