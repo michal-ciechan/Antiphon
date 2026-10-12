@@ -4408,7 +4408,6 @@ c849_fixture_evidence() {
     printf 'PASS F-9\n' >> "$CASE_DIR/fixture-groups.txt"
     c849_fixture_roster
     cat "$CASE_DIR/fixture-groups.txt" "$CASE_DIR/fixture-controls.txt"
-    printf 'C849_FIXTURE groups=9 controls=32 expectedRed=32 variants=47 expectedRedVariants=47 inventories=2 failures=0 productionMutations=0\n'
 }
 
 # Safe export is bounded to the existing five regular diagnostic files. Destination
@@ -4592,6 +4591,7 @@ c849_fixture() {
         write_result false FixtureEarlyReceipt 2
     fi
     c849_fixture_finalize || write_result false FixtureFinalizationFailed 2
+    printf 'C849_FIXTURE groups=9 controls=32 expectedRed=32 variants=47 expectedRedVariants=47 inventories=2 failures=0 productionMutations=0\n'
     write_result true '' 0
 }
 
