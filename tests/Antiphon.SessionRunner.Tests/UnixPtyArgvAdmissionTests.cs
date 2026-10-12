@@ -22,6 +22,85 @@ namespace Antiphon.SessionRunner.Tests;
 public sealed class UnixPtyArgvAdmissionTests
 {
     [Test]
+    public async Task Malformed_inputs_reach_existing_runtime_validation()
+    {
+        RequireUnix();
+        var root = Root();
+        await using var runtime = Runtime(Settings(root));
+        var launch = Launch(root);
+        (string Name, RunnerLaunchRequest Request)[] cases =
+        [
+            ("null exe", launch with { SessionId = Guid.NewGuid(), Exe = null! }),
+            ("empty exe", launch with { SessionId = Guid.NewGuid(), Exe = "" }),
+            ("whitespace exe", launch with { SessionId = Guid.NewGuid(), Exe = " \t " }),
+            ("null args empty exe", launch with { SessionId = Guid.NewGuid(), Exe = "", Args = null! }),
+            ("null args valid exe", launch with { SessionId = Guid.NewGuid(), Args = null!, Cols = 0 }),
+            ("empty args", launch with { SessionId = Guid.NewGuid(), Args = [], Cols = 0 }),
+            ("null element", launch with { SessionId = Guid.NewGuid(), Args = ["before", null!, "after"], Cols = 0 }),
+            ("spaces and quotes", launch with { SessionId = Guid.NewGuid(), Args = ["a b", "\"quoted\"", "a\\\"b"], Cols = 0 }),
+        ];
+        var outcomes = new List<string>();
+        foreach (var (name, request) in cases)
+        {
+            var error = await CaptureAsync(() => runtime.StartAsync(request, CancellationToken.None));
+            outcomes.Add($"{name}: {error?.GetType().Name}: {error?.Message}");
+            runtime.StartCoreSessionRegistrations.ShouldBe(0, "malformed-no-registration");
+            runtime.List().ShouldBeEmpty();
+            Directory.Exists(root).ShouldBeFalse("malformed-no-disk-effects");
+        }
+        outcomes.ShouldBe(new[]
+        {
+            "null exe: ArgumentException: Exe must not be empty. (Parameter 'request')",
+            "empty exe: ArgumentException: Exe must not be empty. (Parameter 'request')",
+            "whitespace exe: ArgumentException: Exe must not be empty. (Parameter 'request')",
+            "null args empty exe: ArgumentException: Exe must not be empty. (Parameter 'request')",
+            "null args valid exe: ArgumentException: Terminal size must be positive. (Parameter 'request')",
+            "empty args: ArgumentException: Terminal size must be positive. (Parameter 'request')",
+            "null element: ArgumentException: Terminal size must be positive. (Parameter 'request')",
+            "spaces and quotes: ArgumentException: Terminal size must be positive. (Parameter 'request')",
+        }, "malformed-existing-validation");
+    }
+
+    [Test]
+    [Arguments("ordinary")]
+    [Arguments("platform_constrained")]
+    public async Task Null_exe_keeps_existing_validation_message_on_launch_routes(string route)
+    {
+        RequireUnix();
+        var root = Root();
+        await using var runtime = Runtime(Settings(root));
+        var builder = WebApplication.CreateBuilder(new WebApplicationOptions { Args = [], EnvironmentName = "Development" });
+        builder.WebHost.UseUrls("http://127.0.0.1:0");
+        builder.Logging.ClearProviders();
+        builder.Services.AddSingleton(runtime);
+        await using var app = builder.Build();
+        // Expose only this isolated fixture's exception text; production handling is unchanged.
+        app.UseDeveloperExceptionPage();
+        app.MapSessionLaunchRoute();
+        app.MapPlatformConstrainedLaunchRoute();
+        await app.StartAsync();
+        try
+        {
+            var address = app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single();
+            new Uri(address).Port.ShouldNotBe(17204);
+            using var http = new HttpClient { BaseAddress = new Uri(address), Timeout = TimeSpan.FromSeconds(20) };
+            http.DefaultRequestHeaders.Accept.ParseAdd("text/plain");
+            var request = Launch(root) with { Exe = null!,
+                RequiredPlatform = route == "platform_constrained" ? RunnerPlatformWire.Linux : null };
+            using var reply = await http.PostAsJsonAsync(route == "ordinary" ? "/sessions" : "/sessions/platform-constrained", request);
+            reply.StatusCode.ShouldBe(HttpStatusCode.InternalServerError, "null-exe-existing-http-status");
+            var body = await reply.Content.ReadAsStringAsync();
+            body.ShouldContain("System.ArgumentException: Exe must not be empty. (Parameter 'request')",
+                customMessage: "null-exe-existing-http-validation");
+            body.ShouldNotContain("NullReferenceException", customMessage: "null-exe-no-http-nre");
+            runtime.StartCoreSessionRegistrations.ShouldBe(0);
+            runtime.List().ShouldBeEmpty();
+            Directory.Exists(root).ShouldBeFalse();
+        }
+        finally { await app.StopAsync(); }
+    }
+
+    [Test]
     [Arguments("plain")]
     [Arguments("grok")]
     [Arguments("grok_payload")]
