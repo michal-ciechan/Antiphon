@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# CARD-1192 S1. Extracted c849_* functions against a filesystem Docker model.
-# Never source dispatch. Never call the host docker daemon.
+# CARD-1192 S1 workspace model and S2 race barriers. Extracted c849_* functions
+# against a filesystem Docker model. Never source dispatch. Never call the host docker daemon.
 set -euo pipefail
 shopt -s nullglob
 
@@ -265,6 +265,8 @@ export PATH="$root/bin:$PATH"
 : > "$root/chown.log"
 : > "$root/real-docker"
 : > "$root/argv"
+: > "$root/race-mounts"
+: > "$root/sleeps"
 remote="$repo/scripts/c590-remote.sh"
 awk '/^(c849_[a-z_]+|case_runner_cache_inventory)\(\) \{/ { active=1 } active { print } active && /^}$/ { active=0 }' "$remote" \
     | while IFS= read -r line || [ -n "$line" ]; do
@@ -330,6 +332,9 @@ reset_runtime() {
     : > "$C1192_ROOT/order"
     : > "$C1192_ROOT/chown.log"
     : > "$C1192_ROOT/argv"
+    : > "$C1192_ROOT/race-mounts"
+    : > "$C1192_ROOT/sleeps"
+    rm -f "$C1192_ROOT/probe-at-handoff" "$C1192_ROOT/shared-before" "$C1192_ROOT/private-before-release"
     rm -rf "$CASE_DIR/fixture-controller"
     rm -f "$CASE_DIR/.fixture-volumes" "$CASE_DIR/.fixture-helpers" \
         "$CASE_DIR/fixture-cleanup-residue.txt" "$CASE_DIR/fixture-summary.txt" \
@@ -423,18 +428,140 @@ run_script() {
         return 97
     fi
     script="${2//${target}/${data}}"
+    # Cache admission reads a uid the model cannot enforce. The lie is only the stat line.
+    if [ "$target" = /cache ]; then
+        script="stat() { printf '1654:1654:700\n'; }; $script"
+    fi
     shift 2
     bash -c "$script" "$@"
+}
+
+mount_source_for_target() {
+    local want="$1" mount
+    local IFS=';'
+    local -a mounts=()
+    read -r -a mounts <<< "$PARSED_MOUNTS"
+    for mount in "${mounts[@]}"; do
+        [ -n "$mount" ] || continue
+        if [ "$(mount_field "$mount" target)" = "$want" ]; then
+            mount_field "$mount" source
+            return 0
+        fi
+    done
+    return 1
+}
+
+volume_data_for_target() {
+    local source
+    source=$(mount_source_for_target "$1") || return 1
+    printf '%s' "$C1192_ROOT/volumes/$source/data"
+}
+
+wait_for_volume_file() {
+    local path="$1" i
+    for i in $(seq 1 200); do
+        [ -f "$path" ] && return 0
+        command sleep 0.02
+    done
+    return 1
+}
+
+simulate_zip() {
+    local data
+    data=$(volume_data_for_target /fixture) || return 97
+    mkdir -p "$data/race/feed"
+    printf 'nupkg\n' > "$data/race/feed/C849.Probe.1.0.0.nupkg"
+}
+
+plant_restored_package() {
+    local packages data
+    packages=$(mount_source_for_target /home/app/.nuget/packages) || return 1
+    data="$C1192_ROOT/volumes/$packages/data"
+    mkdir -p "$data/c849.probe/1.0.0/content"
+    printf 'meta\n' > "$data/c849.probe/1.0.0/.nupkg.metadata"
+    printf 'C849_PACKAGE_SENTINEL\n' > "$data/c849.probe/1.0.0/content/probe.txt"
+}
+
+simulate_restore() {
+    local n driver project data
+    n=${#PARSED_CMD[@]}
+    [ "$n" -ge 2 ] || return 97
+    driver="${PARSED_CMD[$((n - 2))]}"
+    project="${PARSED_CMD[$((n - 1))]}"
+    data=$(volume_data_for_target /fixture) || return 97
+    if [ "$driver" = offline.sh ]; then
+        plant_restored_package || return 97
+        return 0
+    fi
+    mkdir -p "$data/race/$project"
+    printf '1\n' > "$data/race/$project/ready"
+    wait_for_volume_file "$data/race/go" || return 1
+    if [ "${C1192_FAULT:-}" = "restore-$project" ]; then
+        return 1
+    fi
+    plant_restored_package || return 97
+    return 0
+}
+
+simulate_lock() {
+    local mode="" generation="" i scratch data entered release
+    for ((i = 0; i < ${#PARSED_CMD[@]}; i++)); do
+        case "${PARSED_CMD[$i]}" in
+            -Mode) mode="${PARSED_CMD[$((i + 1))]:-}" ;;
+            -Generation) generation="${PARSED_CMD[$((i + 1))]:-}" ;;
+        esac
+    done
+    [ -n "$mode" ] && [ -n "$generation" ] || return 97
+    scratch=$(mount_source_for_target /var/cache/antiphon/nuget-scratch) || return 97
+    data=$(volume_data_for_target /fixture) || return 97
+    mkdir -p "$data/race"
+    entered="$data/race/${generation}-${mode}-entered"
+    release="$data/race/${generation}-release"
+    if [ "$mode" = holder ]; then
+        printf '1\n' > "$entered"
+        wait_for_volume_file "$release"
+        return
+    fi
+    case "$scratch" in
+        *private*)
+            printf '1\n' > "$entered"
+            return 0
+            ;;
+    esac
+    wait_for_volume_file "$release" || return 1
+    if [ "${C1192_FAULT:-}" = waiter-no-entry ]; then
+        return 0
+    fi
+    printf '1\n' > "$entered"
 }
 
 exec_in() {
     local name="$1"
     shift
-    local mount source data
+    local mount source data arg script_text=""
     mount=$(cat "$C1192_ROOT/containers/$name/mount")
     source=$(mount_field "$mount" source)
     data="$C1192_ROOT/volumes/$source/data"
     mkdir -p "$data"
+    if [ "${C1192_FAULT:-}" = touch-release ]; then
+        for arg in "$@"; do
+            if [ "$arg" = /fixture/race/shared-release ]; then
+                return 1
+            fi
+        done
+    fi
+    for arg in "$@"; do
+        script_text+="$arg"$'\n'
+    done
+    if printf '%s\n' "$script_text" | grep -q 'chown -R 1654:1654' \
+        && printf '%s\n' "$script_text" | grep -qx '/fixture/race'; then
+        local probe="$data/race/lock-probe.ps1"
+        if [ -f "$probe" ] && grep -q 'ExecuteWithFileLocked' "$probe" && grep -q '/fixture/race' "$probe"; then
+            printf '1\n' > "$C1192_ROOT/probe-at-handoff"
+        else
+            printf '0\n' > "$C1192_ROOT/probe-at-handoff"
+        fi
+    fi
     rewrite_paths "$data" "$@"
     local interp="${REWRITE[0]:-}" bin
     case "$interp" in
@@ -647,6 +774,17 @@ docker_run() {
     esac
     event "$(printf '%s\t-\t%s\t%s\t%s' "$kind" "$PARSED_NETWORK" "$PARSED_IMAGE" "$PARSED_MOUNTS")"
     if [ "$C1192_CUT" = root-init ] && [ "$kind" = init-run ]; then return 1; fi
+    local joined="${PARSED_CMD[*]:-}"
+    # Parallel restore/lock containers append one line each. flock keeps those lines intact.
+    {
+        flock -x 9
+        printf '%s\t%s\t%s\n' "${PARSED_NAME:-noname}" "$PARSED_MOUNTS" "$joined" >> "$C1192_ROOT/race-mounts"
+    } 9>>"$C1192_ROOT/race-mounts.lock"
+    case "$joined" in
+        *make-zip.ps1*) simulate_zip; return ;;
+        *lock-probe.ps1*) simulate_lock; return ;;
+        *c849-fixture-restore*) simulate_restore; return ;;
+    esac
     if [ "$PARSED_ENTRY" = sleep ]; then
         printf 'UNEXPECTED-SLEEP\n' >> "$C1192_ROOT/scenario.err"
         return 97
@@ -1195,6 +1333,383 @@ mode_argv() {
     emit argv-reordered-refused "$refused"
 }
 
+# 150 x 0.2s stays the production bound. The model yields instead of burning 30s.
+enable_synthetic_clock() {
+    sleep() {
+        printf '%s\n' "$*" >> "$C1192_ROOT/sleeps"
+        if [ -n "${C1192_DELAY_READY:-}" ]; then
+            local n
+            n=$(grep -c '^0\.2$' "$C1192_ROOT/sleeps" || true)
+            if [ "$n" = "$C1192_DELAY_READY" ]; then
+                mkdir -p "$C1192_ROOT/volumes/$WORK/data/race/p1"
+                printf '1\n' > "$C1192_ROOT/volumes/$WORK/data/race/p1/ready"
+            fi
+        fi
+        command sleep 0.01
+    }
+}
+
+plant_cache() {
+    local name="$1" role="$2" dir
+    plant_volume "$name" local null server2-runner "$RUN" "$role"
+    dir="$C1192_ROOT/volumes/$name"
+    printf '1\n' > "$dir/label-schema"
+    printf '%s\n' "$role" > "$dir/label-cache-role"
+}
+
+sleeps_named() {
+    local want="$1"
+    grep -c "^${want}$" "$C1192_ROOT/sleeps" || true
+}
+
+require_init() {
+    run_init
+    if [ "$C1192_CODE" != 0 ]; then
+        fail "init ${C1192_CODE} $(diagnosis_of "$C1192_OUT")"
+    fi
+}
+
+refuse_unexpected() {
+    if [ -s "$C1192_ROOT/scenario.err" ] && grep -q 'UNEXPECTED' "$C1192_ROOT/scenario.err"; then
+        fail "unexpected $(tail -n 8 "$C1192_ROOT/scenario.err")"
+    fi
+}
+
+# 0 when the /fixture mount is this run's work volume and not a payload bind.
+mount_targets_work() {
+    local mounts="$1" mount target typ source saw=0
+    local IFS=';'
+    local -a parts=()
+    read -r -a parts <<< "$mounts"
+    for mount in "${parts[@]}"; do
+        [ -n "$mount" ] || continue
+        target=$(mount_field "$mount" target)
+        [ "$target" = /fixture ] || continue
+        saw=$((saw + 1))
+        typ=$(mount_field "$mount" type)
+        source=$(mount_field "$mount" source)
+        [ "$typ" = volume ] || return 1
+        [ "$source" = "$WORK" ] || return 1
+        case "$mount" in
+            *volume-nocopy*) ;;
+            *) return 1 ;;
+        esac
+    done
+    [ "$saw" = 1 ]
+}
+
+classify_race_mounts() {
+    zip_seen=0; p1_seen=0; p2_seen=0; p3_seen=0
+    lh_seen=0; lw_seen=0; ph_seen=0; pw_seen=0
+    zip_ok=0; p1_ok=0; p2_ok=0; p3_ok=0
+    lh_ok=0; lw_ok=0; ph_ok=0; pw_ok=0
+    local name mounts cmd key good
+    while IFS=$'\t' read -r name mounts cmd || [ -n "${name:-}" ]; do
+        [ -n "${name:-}" ] || continue
+        key=""
+        case "$cmd" in
+            *make-zip.ps1*) key=zip ;;
+            *lock-probe.ps1*)
+                case "$name" in
+                    *-lock-holder-shared) key=lh ;;
+                    *-lock-waiter-shared) key=lw ;;
+                    *-lock-holder-private) key=ph ;;
+                    *-lock-waiter-private) key=pw ;;
+                esac
+                ;;
+            *c849-fixture-restore*)
+                case "$name" in
+                    *-restore-p1) key=p1 ;;
+                    *-restore-p2) key=p2 ;;
+                    *-restore-p3) key=p3 ;;
+                esac
+                ;;
+        esac
+        [ -n "$key" ] || continue
+        good=0
+        if mount_targets_work "$mounts"; then good=1; fi
+        case "$key" in
+            zip) zip_seen=1; zip_ok=$good ;;
+            p1) p1_seen=1; p1_ok=$good ;;
+            p2) p2_seen=1; p2_ok=$good ;;
+            p3) p3_seen=1; p3_ok=$good ;;
+            lh) lh_seen=1; lh_ok=$good ;;
+            lw) lw_seen=1; lw_ok=$good ;;
+            ph) ph_seen=1; ph_ok=$good ;;
+            pw) pw_seen=1; pw_ok=$good ;;
+        esac
+    done < "$C1192_ROOT/race-mounts"
+}
+
+race_files_present() {
+    local data="$C1192_ROOT/volumes/$WORK/data"
+    [ -s "$data/race/feed/C849.Probe.1.0.0.nupkg" ] || return 1
+    [ -s "$data/race/p1/p1.csproj" ] || return 1
+    [ -s "$data/race/p2/p2.csproj" ] || return 1
+    [ -s "$data/race/p3/p3.csproj" ] || return 1
+    [ -s "$data/race/make-zip.ps1" ] || return 1
+    [ -s "$data/race/package/content/probe.txt" ] || return 1
+    [ ! -e "$SERVER2_ROOT/race" ] || return 1
+    grep -q 'PASS F-4' "$CASE_DIR/fixture-groups.txt"
+}
+
+race_paths_match() {
+    local data="$C1192_ROOT/volumes/$WORK/data"
+    [ -f "$data/race/NuGet.Config" ] || return 1
+    grep -q 'value="/fixture/race/feed"' "$data/race/NuGet.Config" || return 1
+    if grep -q 'value="/fixture/feed"' "$data/race/NuGet.Config"; then return 1; fi
+    grep -q '/fixture/race/NuGet.Config' "$data/race/driver.sh" || return 1
+    grep -q '/fixture/race/go' "$data/race/driver.sh" || return 1
+    grep -q '/fixture/race/Offline.Config' "$data/race/offline.sh" || return 1
+    grep -q 'value="/fixture/race/empty"' "$data/race/Offline.Config" || return 1
+    if grep -q 'value="/fixture/empty"' "$data/race/Offline.Config"; then return 1; fi
+    grep -F -q "\$root = '/fixture/race'" "$data/race/lock-probe.ps1" || return 1
+    grep -q '/fixture/race/feed/C849.Probe.1.0.0.nupkg' "$C1192_ROOT/race-mounts"
+}
+
+decoy_untouched() {
+    [ -f "$1" ] && [ "$(cat -- "$1")" = host-decoy ]
+}
+
+plant_host_decoys() {
+    mkdir -p "$SERVER2_ROOT/race/p1" "$CASE_DIR/fixture-controller"
+    printf 'host-decoy\n' > "$SERVER2_ROOT/race/p1/ready"
+    printf 'host-decoy\n' > "$CASE_DIR/fixture-controller/go"
+    printf 'host-decoy\n' > "$CASE_DIR/fixture-controller/shared-release"
+}
+
+mode_race() {
+    local code=0 out boundary=0 mounts_ok=0 feed_ok=0 all_seen=0
+    enable_synthetic_clock
+    reset_runtime
+    : > "$C1192_ROOT/scenario.err"
+    require_init
+    out=$(c849_fixture_nuget_race 2>>"$C1192_ROOT/scenario.err") || code=$?
+    refuse_unexpected
+    classify_race_mounts
+    if [ "$zip_seen" = 1 ] && [ "$p1_seen" = 1 ] && [ "$p2_seen" = 1 ] && [ "$p3_seen" = 1 ] \
+        && [ "$lh_seen" = 1 ] && [ "$lw_seen" = 1 ] && [ "$ph_seen" = 1 ] && [ "$pw_seen" = 1 ]; then
+        all_seen=1
+    fi
+    if [ "$all_seen" = 1 ] && [ "$zip_ok" = 1 ] && [ "$p1_ok" = 1 ] && [ "$p2_ok" = 1 ] && [ "$p3_ok" = 1 ] \
+        && [ "$lh_ok" = 1 ] && [ "$lw_ok" = 1 ] && [ "$ph_ok" = 1 ] && [ "$pw_ok" = 1 ]; then
+        mounts_ok=1
+    fi
+    if race_paths_match; then feed_ok=1; fi
+    if [ "$code" = 0 ] && [ "$all_seen" = 1 ] && race_files_present; then boundary=1; fi
+    emit race-code "$code"
+    emit race-diagnosis "$(diagnosis_of "$out")"
+    emit race-boundary "$boundary"
+    if [ "$boundary" = 1 ] && [ "$mounts_ok" = 1 ]; then
+        emit race-work-volume-mount 1
+    else
+        emit race-work-volume-mount 0
+    fi
+    if [ "$boundary" = 1 ] && [ "$feed_ok" = 1 ]; then
+        emit race-feed-recipient 1
+    else
+        emit race-feed-recipient 0
+    fi
+}
+
+mode_barriers() {
+    local packages="c849${RUN}race-packages" scratch="c849${RUN}race-scratch"
+    local private_scratch="c849${RUN}private-scratch"
+    local vol="$C1192_ROOT/volumes/$WORK/data"
+    local already=0 delayed=0 never=0 dcount=0 ncount=0
+    local ready_decoy=0 ready_absent=0 go_ok=0 release_ok=0
+    local go_code=0 go_out rel_happy=0 rel_happy_out
+    local child_code=0 child_out child_diag rel_code=0 rel_out rel_diag
+    enable_synthetic_clock
+    reset_runtime
+    : > "$C1192_ROOT/scenario.err"
+    unset C1192_DELAY_READY
+    require_init
+    plant_cache "$packages" nuget-packages
+    plant_cache "$scratch" nuget-scratch
+    plant_cache "$private_scratch" nuget-scratch
+    plant_host_decoys
+    c849_fixture_volume_mkdir /fixture/race/p1
+    c849_fixture_volume_touch /fixture/race/p1/ready
+    : > "$C1192_ROOT/sleeps"
+    c849_fixture_wait_file /fixture/race/p1/ready || already=$?
+    rm -f -- "$vol/race/p1/ready"
+    : > "$C1192_ROOT/sleeps"
+    C1192_DELAY_READY=3
+    c849_fixture_wait_file /fixture/race/p1/ready || delayed=$?
+    dcount=$(sleeps_named '0.2')
+    unset C1192_DELAY_READY
+    rm -f -- "$vol/race/p1/ready"
+    : > "$C1192_ROOT/sleeps"
+    c849_fixture_wait_file /fixture/race/p1/ready || never=$?
+    ncount=$(sleeps_named '0.2')
+    decoy_untouched "$SERVER2_ROOT/race/p1/ready" && ready_decoy=1
+    [ ! -e "$vol/race/p1/ready" ] && ready_absent=1
+    # Go and release are the barrier's and lock probe's own writes, checked against host decoys.
+    go_out=$(c849_fixture_race_restore_barrier "$ADMITTED" "$packages" "$scratch" 2>>"$C1192_ROOT/scenario.err") || go_code=$?
+    if [ "$go_code" = 0 ] && [ -f "$vol/race/go" ] && decoy_untouched "$CASE_DIR/fixture-controller/go"; then
+        go_ok=1
+    fi
+    rel_happy_out=$(c849_fixture_race_lock_probe "$ADMITTED" "$scratch" "$private_scratch" 2>>"$C1192_ROOT/scenario.err") || rel_happy=$?
+    if [ "$rel_happy" = 0 ] && [ -f "$vol/race/shared-release" ] \
+        && decoy_untouched "$CASE_DIR/fixture-controller/shared-release"; then
+        release_ok=1
+    fi
+    C1192_FAULT=restore-p2
+    child_out=$(c849_fixture_race_restore_barrier "$ADMITTED" "$packages" "$scratch" 2>>"$C1192_ROOT/scenario.err") || child_code=$?
+    C1192_FAULT=
+    child_diag=$(diagnosis_of "$child_out")
+    rm -f -- "$vol/race/shared-release" "$vol/race/shared-holder-entered" "$vol/race/shared-waiter-entered" \
+        "$vol/race/private-holder-entered" "$vol/race/private-waiter-entered" "$vol/race/private-release"
+    C1192_FAULT=touch-release
+    rel_out=$(c849_fixture_race_lock_probe "$ADMITTED" "$scratch" "$private_scratch" 2>>"$C1192_ROOT/scenario.err") || rel_code=$?
+    C1192_FAULT=
+    rel_diag=$(diagnosis_of "$rel_out")
+    refuse_unexpected
+    if [ "$already" = 0 ] && [ "$never" = 1 ] && [ "$ready_decoy" = 1 ] && [ "$ready_absent" = 1 ]; then
+        emit volume-ready-not-host-decoy 1
+    else
+        emit volume-ready-not-host-decoy 0
+    fi
+    if [ "$delayed" = 0 ] && [ "$dcount" = 3 ]; then
+        emit delayed-ready 1
+    else
+        emit delayed-ready 0
+    fi
+    if [ "$never" = 1 ] && [ "$ncount" = 150 ]; then
+        emit missing-ready-refused 1
+    else
+        emit missing-ready-refused 0
+    fi
+    local poll=0
+    if declare -f c849_fixture_wait_file | grep -q 'seq 1 150' \
+        && declare -f c849_fixture_wait_file | grep -q 'sleep 0.2' \
+        && [ "$ncount" = 150 ]; then
+        poll=1
+    fi
+    emit ready-poll-contract "$poll"
+    emit volume-go-observed "$go_ok"
+    emit volume-release-observed "$release_ok"
+    if [ "$child_code" != 0 ] && [ "$child_diag" = FixtureConcurrentRestoreFailed ]; then
+        emit child-failure-refused 1
+    else
+        emit child-failure-refused 0
+    fi
+    if [ "$rel_code" != 0 ] && [ "$rel_diag" = FixtureNuGetLockProbeFailed ] \
+        && [ ! -e "$vol/race/shared-release" ]; then
+        emit release-failure-refused 1
+    else
+        emit release-failure-refused 0
+    fi
+    emit already-status "$already"
+    emit never-status "$never"
+    emit child-diagnosis "$child_diag"
+    emit release-diagnosis "$rel_diag"
+}
+
+install_lock_wrappers() {
+    eval "$(declare -f c849_fixture_lock_assert | sed '1s/c849_fixture_lock_assert/c849_fixture_lock_assert_impl/')"
+    eval "$(declare -f c849_fixture_wait_file | sed '1s/c849_fixture_wait_file/c849_fixture_wait_file_impl/')"
+    c849_fixture_lock_assert() {
+        if [ "$1" = /fixture/race/shared-waiter-entered ]; then
+            if c849_fixture_volume_test_exists "$1"; then
+                printf 'present\n' > "$C1192_ROOT/shared-before"
+            else
+                printf 'absent\n' > "$C1192_ROOT/shared-before"
+            fi
+        fi
+        c849_fixture_lock_assert_impl "$@"
+    }
+    c849_fixture_wait_file() {
+        local status=0
+        c849_fixture_wait_file_impl "$@" || status=$?
+        if [ "$status" = 0 ] && [ "$1" = /fixture/race/private-waiter-entered ]; then
+            if ! c849_fixture_volume_test_exists /fixture/race/private-release; then
+                printf '1\n' > "$C1192_ROOT/private-before-release"
+            fi
+        fi
+        return "$status"
+    }
+}
+
+mode_locks() {
+    local packages="c849${RUN}race-packages" scratch="c849${RUN}race-scratch"
+    local private_scratch="c849${RUN}private-scratch"
+    local vol code=0 out happy_entered=0 shared_state=missing private_early=0
+    local control_line=missing fault_code=0 fault_out fault_diag
+    enable_synthetic_clock
+    install_lock_wrappers
+    reset_runtime
+    : > "$C1192_ROOT/scenario.err"
+    require_init
+    plant_cache "$packages" nuget-packages
+    plant_cache "$scratch" nuget-scratch
+    plant_cache "$private_scratch" nuget-scratch
+    vol="$C1192_ROOT/volumes/$WORK/data"
+    out=$(c849_fixture_race_lock_probe "$ADMITTED" "$scratch" "$private_scratch" 2>>"$C1192_ROOT/scenario.err") || code=$?
+    if [ -f "$vol/race/shared-waiter-entered" ]; then happy_entered=1; fi
+    if [ -f "$C1192_ROOT/shared-before" ]; then shared_state=$(cat -- "$C1192_ROOT/shared-before"); fi
+    if [ -f "$C1192_ROOT/private-before-release" ]; then private_early=1; fi
+    if [ -f "$CASE_DIR/.control-PC-17" ] && grep -Fxq 'NuGetLockNotShared' "$CASE_DIR/.control-PC-17"; then
+        control_line=NuGetLockNotShared
+    fi
+    reset_runtime
+    require_init
+    plant_cache "$packages" nuget-packages
+    plant_cache "$scratch" nuget-scratch
+    plant_cache "$private_scratch" nuget-scratch
+    vol="$C1192_ROOT/volumes/$WORK/data"
+    C1192_FAULT=waiter-no-entry
+    fault_out=$(c849_fixture_race_lock_probe "$ADMITTED" "$scratch" "$private_scratch" 2>>"$C1192_ROOT/scenario.err") || fault_code=$?
+    C1192_FAULT=
+    fault_diag=$(diagnosis_of "$fault_out")
+    refuse_unexpected
+    if [ "$shared_state" = absent ]; then
+        emit shared-waiter-blocked 1
+    else
+        emit shared-waiter-blocked 0
+    fi
+    emit private-waiter-already-entered "$private_early"
+    if [ "$code" = 0 ] && [ "$happy_entered" = 1 ] && [ "$fault_code" != 0 ] \
+        && [ "$fault_diag" = FixtureNuGetLockProbeFailed ]; then
+        emit shared-waiter-after-release 1
+    else
+        emit shared-waiter-after-release 0
+    fi
+    emit private-lock-not-shared "$control_line"
+    emit lock-code "$code"
+    emit lock-diagnosis "$(diagnosis_of "$out")"
+    emit fault-diagnosis "$fault_diag"
+}
+
+# Missing probe is not "already written". The same predicate must become true only after both markers exist.
+handoff_countercase() {
+    local probe="$C1192_ROOT/countercase/lock-probe.ps1"
+    mkdir -p "$C1192_ROOT/countercase"
+    rm -f -- "$probe"
+    if [ -f "$probe" ] && grep -q 'ExecuteWithFileLocked' "$probe" && grep -q '/fixture/race' "$probe"; then
+        return 1
+    fi
+    printf '%s\n' 'ExecuteWithFileLocked' '/fixture/race' > "$probe"
+    grep -q 'ExecuteWithFileLocked' "$probe" && grep -q '/fixture/race' "$probe"
+}
+
+mode_handoff() {
+    local code=0 out snap=0 fact=0
+    enable_synthetic_clock
+    reset_runtime
+    : > "$C1192_ROOT/scenario.err"
+    require_init
+    out=$(c849_fixture_race_materialize "$ADMITTED" 2>>"$C1192_ROOT/scenario.err") || code=$?
+    refuse_unexpected
+    if [ -f "$C1192_ROOT/probe-at-handoff" ]; then snap=$(cat -- "$C1192_ROOT/probe-at-handoff"); fi
+    if [ "$code" = 0 ] && [ "$snap" = 1 ] && handoff_countercase; then fact=1; fi
+    emit probe-before-handoff "$fact"
+    emit handoff-code "$code"
+    emit handoff-snapshot "$snap"
+    emit handoff-diagnosis "$(diagnosis_of "$out")"
+}
+
 case "$mode" in
     register) mode_register ;;
     cleanup) mode_cleanup ;;
@@ -1202,6 +1717,10 @@ case "$mode" in
     toxic) mode_toxic ;;
     foreign) mode_foreign ;;
     argv) mode_argv ;;
+    race) mode_race ;;
+    barriers) mode_barriers ;;
+    locks) mode_locks ;;
+    handoff) mode_handoff ;;
     *) fail "unknown mode $mode" ;;
 esac
 if [ -s "$C1192_ROOT/unexpected" ]; then

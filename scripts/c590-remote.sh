@@ -3233,52 +3233,239 @@ c849_fixture_unmarked_consumer() {
     c849_volume "$name" nuget-packages yes "$image"
 }
 
+# Cache volumes are mounted only when this run's name and admission labels still match.
+c849_fixture_cache_mount_ok() {
+    local name="$1" role="$2" driver options owner schema actual
+    case "$name" in
+        "c849${RUN}"*) ;;
+        *) return 1 ;;
+    esac
+    driver="$(docker volume inspect -f '{{.Driver}}' "$name")" || return 1
+    options="$(docker volume inspect -f '{{json .Options}}' "$name")" || return 1
+    owner="$(docker volume inspect -f '{{index .Labels "io.antiphon.owner"}}' "$name")" || return 1
+    schema="$(docker volume inspect -f '{{index .Labels "io.antiphon.cache-schema"}}' "$name")" || return 1
+    actual="$(docker volume inspect -f '{{index .Labels "io.antiphon.cache-role"}}' "$name")" || return 1
+    [ "$driver" = local ] || return 1
+    [[ "$options" == null || "$options" == '{}' ]] || return 1
+    [ "$owner" = server2-runner ] || return 1
+    [ "$schema" = 1 ] || return 1
+    [ "$actual" = "$role" ] || return 1
+}
+
+# Work mount is the labeled current-run volume. A failed lookup is not a mount string.
+c849_fixture_work_mount() {
+    local work="c849${RUN}-work" code=0
+    c849_fixture_workspace_labels_ok "$work" work || code=$?
+    [ "$code" = 0 ] || return 1
+    printf 'type=volume,source=%s,target=/fixture,volume-nocopy' "$work"
+}
+
+c849_fixture_volume_mkdir() {
+    local path
+    [ "$#" -ge 1 ] || return 2
+    for path in "$@"; do
+        case "$path" in
+            /fixture/*) ;;
+            *) return 2 ;;
+        esac
+    done
+    docker exec -u 0:0 "c849-${RUN}-writer" /bin/sh -c 'mkdir -p -- "$@"' sh "$@"
+}
+
+# Stdin is the file body. The path stays an argument so it is never pasted into the script.
+c849_fixture_volume_write() {
+    local path="$1"
+    case "$path" in
+        /fixture/*) ;;
+        *) return 2 ;;
+    esac
+    docker exec -i -u 0:0 "c849-${RUN}-writer" /bin/sh -c 'cat > "$1"' sh "$path"
+}
+
+# Programs are written as root. Consumers run as 1654, so this handoff is after the probe exists.
+c849_fixture_volume_chown_race() {
+    docker exec -u 0:0 "c849-${RUN}-writer" /bin/sh -c 'chown -R 1654:1654 -- "$1"' sh /fixture/race
+}
+
+c849_fixture_volume_touch() {
+    local path="$1"
+    case "$path" in
+        /fixture/*) ;;
+        *) return 2 ;;
+    esac
+    c849_fixture_helper_exec writer /bin/sh -c 'touch -- "$1"' sh "$path"
+}
+
+c849_fixture_volume_test_file() {
+    local path="$1"
+    case "$path" in
+        /fixture/*) ;;
+        *) return 1 ;;
+    esac
+    c849_fixture_helper_exec reader /bin/sh -c 'test -f "$1"' sh "$path"
+}
+
+c849_fixture_volume_test_exists() {
+    local path="$1"
+    case "$path" in
+        /fixture/*) ;;
+        *) return 1 ;;
+    esac
+    c849_fixture_helper_exec reader /bin/sh -c 'test -e "$1"' sh "$path"
+}
+
 c849_fixture_restore_container() {
-    local image="$1" project="$2" packages="$3" scratch="$4" root="$5" driver="$6"
+    local image="$1" project="$2" packages="$3" scratch="$4" driver="$5" work_mount
+    c849_fixture_cache_mount_ok "$packages" nuget-packages || write_result false CacheVolumeForeign 2
+    c849_fixture_cache_mount_ok "$scratch" nuget-scratch || write_result false CacheVolumeForeign 2
+    work_mount="$(c849_fixture_work_mount)" || write_result false FixtureWorkspaceForeign 2
     docker run --rm --name "c849-${RUN}-restore-$project" --network antiphon-build-slots --user 1654:1654 --entrypoint /bin/sh \
         -e HOME=/home/app -e NUGET_PACKAGES=/home/app/.nuget/packages \
         -e NUGET_SCRATCH=/var/cache/antiphon/nuget-scratch \
         -e ANTIPHON_BUILD_SLOTS_URL=http://build-slots:8080/build-slots \
         --mount "type=volume,source=$packages,target=/home/app/.nuget/packages,volume-nocopy" \
         --mount "type=volume,source=$scratch,target=/var/cache/antiphon/nuget-scratch,volume-nocopy" \
-        --mount "type=bind,source=$root,target=/fixture" \
+        --mount "$work_mount" \
         --mount "type=bind,source=$CHECKOUT/scripts/build-slot.ps1,target=/scripts/build-slot.ps1,readonly" \
         --mount "type=bind,source=$CHECKOUT/scripts/lib/build-slot.ps1,target=/scripts/lib/build-slot.ps1,readonly" \
-        "$image" -c 'pwsh -NoProfile -File /scripts/build-slot.ps1 -Label c849-fixture-restore -- /bin/sh "/fixture/$1" "/fixture/$2"' \
+        "$image" -c 'pwsh -NoProfile -File /scripts/build-slot.ps1 -Label c849-fixture-restore -- /bin/sh "/fixture/race/$1" "/fixture/race/$2"' \
         sh "$driver" "$project"
 }
 
 c849_fixture_lock_container() {
-    local image="$1" scratch="$2" root="$3" mode="$4" generation="$5"
+    local image="$1" scratch="$2" mode="$3" generation="$4" work_mount
     # NuGet locks $NUGET_SCRATCH/lock/<hash>. The same HOME and NUGET_SCRATCH as the restore
     # containers; without them the holder and waiter each lock a private /tmp.
+    c849_fixture_cache_mount_ok "$scratch" nuget-scratch || write_result false CacheVolumeForeign 2
+    work_mount="$(c849_fixture_work_mount)" || write_result false FixtureWorkspaceForeign 2
     docker run --rm --name "c849-${RUN}-lock-$mode-$generation" --network none --user 1654:1654 --entrypoint pwsh \
         -e HOME=/home/app -e NUGET_SCRATCH=/var/cache/antiphon/nuget-scratch \
         --mount "type=volume,source=$scratch,target=/var/cache/antiphon/nuget-scratch,volume-nocopy" \
-        --mount "type=bind,source=$root,target=/fixture" \
-        "$image" -NoProfile -File /fixture/lock-probe.ps1 -Mode "$mode" -Generation "$generation"
+        --mount "$work_mount" \
+        "$image" -NoProfile -File /fixture/race/lock-probe.ps1 -Mode "$mode" -Generation "$generation"
 }
 
+# 150 iterations of 0.2s is the 30-second marker bound. Observation is the volume reader,
+# so a host file at the same logical path cannot satisfy it.
 c849_fixture_wait_file() {
     local path="$1" i
     for i in $(seq 1 150); do
-        [ -f "$path" ] && return 0
+        c849_fixture_volume_test_file "$path" && return 0
         sleep 0.2
     done
     return 1
 }
 
 c849_fixture_lock_assert() {
-    [ ! -e "$1" ] || { printf 'NuGetLockNotShared\n'; return 2; }
+    c849_fixture_volume_test_exists "$1" && { printf 'NuGetLockNotShared\n'; return 2; }
+    return 0
+}
+
+c849_fixture_race_materialize() {
+    local image="$1" name work_mount
+    c849_fixture_volume_mkdir /fixture/race/package/lib/net10.0 /fixture/race/package/content \
+        /fixture/race/feed /fixture/race/empty /fixture/race/p1 /fixture/race/p2 /fixture/race/p3 \
+        || write_result false FixtureRaceWriteFailed 2
+    printf '%s\n' '<?xml version="1.0"?><package><metadata><id>C849.Probe</id><version>1.0.0</version><authors>Antiphon</authors><description>Offline fixture</description></metadata></package>' \
+        | c849_fixture_volume_write /fixture/race/package/C849.Probe.nuspec \
+        || write_result false FixtureRaceWriteFailed 2
+    printf '' | c849_fixture_volume_write /fixture/race/package/lib/net10.0/_._ \
+        || write_result false FixtureRaceWriteFailed 2
+    printf 'C849_PACKAGE_SENTINEL\n' | c849_fixture_volume_write /fixture/race/package/content/probe.txt \
+        || write_result false FixtureRaceWriteFailed 2
+    c849_fixture_volume_write /fixture/race/make-zip.ps1 <<'PS' || write_result false FixtureRaceWriteFailed 2
+param([string]$Source, [string]$Target)
+[System.IO.Compression.ZipFile]::CreateFromDirectory($Source, $Target)
+PS
+    for name in p1 p2 p3; do
+        printf '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net10.0</TargetFramework><NuGetAudit>false</NuGetAudit></PropertyGroup><ItemGroup><PackageReference Include="C849.Probe" Version="1.0.0" /></ItemGroup></Project>\n' \
+            | c849_fixture_volume_write "/fixture/race/$name/$name.csproj" \
+            || write_result false FixtureRaceWriteFailed 2
+    done
+    printf '<configuration><packageSources><clear/><add key="fixture" value="/fixture/race/feed"/></packageSources></configuration>\n' \
+        | c849_fixture_volume_write /fixture/race/NuGet.Config \
+        || write_result false FixtureRaceWriteFailed 2
+    printf '<configuration><packageSources><clear/><add key="empty" value="/fixture/race/empty"/></packageSources></configuration>\n' \
+        | c849_fixture_volume_write /fixture/race/Offline.Config \
+        || write_result false FixtureRaceWriteFailed 2
+    c849_fixture_volume_write /fixture/race/driver.sh <<'SH' || write_result false FixtureRaceWriteFailed 2
+#!/bin/sh
+set -eu
+cd "$1"
+: > ready
+while [ ! -e /fixture/race/go ]; do sleep 0.1; done
+dotnet restore "$(basename "$1").csproj" --configfile /fixture/race/NuGet.Config --no-http-cache -p:NuGetAudit=false -nodeReuse:false -maxcpucount:1 >/dev/null
+SH
+    c849_fixture_volume_write /fixture/race/offline.sh <<'SH' || write_result false FixtureRaceWriteFailed 2
+#!/bin/sh
+set -eu
+cd "$1"
+dotnet restore p3.csproj --configfile /fixture/race/Offline.Config --no-http-cache -p:NuGetAudit=false -nodeReuse:false -maxcpucount:1 >/dev/null
+SH
+    # The probe is written before the uid handoff. 1654 reads it; a later create would be root-owned.
+    c849_fixture_volume_write /fixture/race/lock-probe.ps1 <<'PS' || write_result false FixtureRaceWriteFailed 2
+param([ValidateSet('holder','waiter')][string]$Mode, [string]$Generation)
+$assembly = Get-ChildItem /usr/share/dotnet/sdk/*/NuGet.Common.dll | Select-Object -Last 1
+if (-not $assembly) { throw 'NuGetLockPrimitiveMissing' }
+[void][System.Reflection.Assembly]::LoadFrom($assembly.FullName)
+$path = '/var/cache/antiphon/nuget-scratch/' + $Generation + '.lock'
+$root = '/fixture/race'
+[NuGet.Common.ConcurrencyUtilities]::ExecuteWithFileLocked($path, [Action]{
+    [System.IO.File]::WriteAllText("$root/$Generation-$Mode-entered", '1')
+    if ($Mode -eq 'holder') {
+        $until = [DateTime]::UtcNow.AddSeconds(30)
+        while (-not [System.IO.File]::Exists("$root/$Generation-release")) {
+            if ([DateTime]::UtcNow -gt $until) { throw 'FixtureLockReleaseTimeout' }
+            Start-Sleep -Milliseconds 100
+        }
+    }
+})
+PS
+    # The deployment host has no pwsh. The admitted image does, and it is the same ZipFile call.
+    work_mount="$(c849_fixture_work_mount)" || write_result false FixtureWorkspaceForeign 2
+    docker run --rm --network none --user 0:0 --entrypoint pwsh \
+        --mount "$work_mount" \
+        "$image" -NoProfile -File /fixture/race/make-zip.ps1 /fixture/race/package /fixture/race/feed/C849.Probe.1.0.0.nupkg \
+        || write_result false FixturePackageZipFailed 2
+    c849_fixture_volume_chown_race || write_result false FixtureRaceWriteFailed 2
+}
+
+c849_fixture_race_restore_barrier() {
+    local image="$1" packages="$2" scratch="$3" a b
+    c849_fixture_restore_container "$image" p1 "$packages" "$scratch" driver.sh > "$SERVER2_ROOT/race-p1.log" 2>&1 & a=$!
+    c849_fixture_restore_container "$image" p2 "$packages" "$scratch" driver.sh > "$SERVER2_ROOT/race-p2.log" 2>&1 & b=$!
+    c849_fixture_wait_file /fixture/race/p1/ready && c849_fixture_wait_file /fixture/race/p2/ready \
+        || write_result false FixtureRestoreBarrierFailed 2
+    c849_fixture_volume_touch /fixture/race/go || write_result false FixtureRestoreBarrierFailed 2
+    wait "$a" || write_result false FixtureConcurrentRestoreFailed 2
+    wait "$b" || write_result false FixtureConcurrentRestoreFailed 2
+}
+
+c849_fixture_race_lock_probe() {
+    local image="$1" scratch="$2" private_scratch="$3" holder waiter
+    c849_fixture_lock_container "$image" "$scratch" holder shared > "$SERVER2_ROOT/lock-holder.log" 2>&1 & holder=$!
+    c849_fixture_wait_file /fixture/race/shared-holder-entered || write_result false FixtureNuGetLockHolderFailed 2
+    c849_fixture_lock_container "$image" "$scratch" waiter shared > "$SERVER2_ROOT/lock-waiter.log" 2>&1 & waiter=$!
+    sleep 2
+    c849_fixture_lock_assert /fixture/race/shared-waiter-entered || write_result false NuGetLockNotShared 2
+    c849_fixture_volume_touch /fixture/race/shared-release || write_result false FixtureNuGetLockProbeFailed 2
+    wait "$holder" && wait "$waiter" && c849_fixture_volume_test_exists /fixture/race/shared-waiter-entered \
+        || write_result false FixtureNuGetLockProbeFailed 2
+    c849_fixture_lock_container "$image" "$scratch" holder private > "$SERVER2_ROOT/private-holder.log" 2>&1 & holder=$!
+    c849_fixture_wait_file /fixture/race/private-holder-entered || write_result false FixtureNuGetLockHolderFailed 2
+    c849_fixture_lock_container "$image" "$private_scratch" waiter private > "$SERVER2_ROOT/private-waiter.log" 2>&1 & waiter=$!
+    c849_fixture_wait_file /fixture/race/private-waiter-entered || write_result false ControlNotSensitive 2
+    c849_fixture_control PC-17 NuGetLockNotShared c849_fixture_lock_assert /fixture/race/private-waiter-entered
+    c849_fixture_volume_touch /fixture/race/private-release || write_result false FixtureNuGetLockProbeFailed 2
+    wait "$holder" && wait "$waiter" || write_result false FixtureNuGetLockProbeFailed 2
 }
 
 c849_fixture_nuget_race() {
-    local image root packages scratch private_scratch name a b holder waiter
+    local image packages scratch private_scratch name
     image="$(c849_image)" || {
         if [ "$?" = 11 ]; then write_result false CacheDonorLookupFailed 2; fi
         write_result false CacheHelperImageMissing 2
     }
-    root="$SERVER2_ROOT/race"
     packages="c849${RUN}race-packages"
     scratch="c849${RUN}race-scratch"
     private_scratch="c849${RUN}private-scratch"
@@ -3292,87 +3479,15 @@ c849_fixture_nuget_race() {
     C849_SCRATCH="$private_scratch"
     c849_volume "$private_scratch" nuget-scratch yes "$image"
     C849_SCRATCH="$scratch"
-    mkdir -p "$root/package/lib/net10.0" "$root/package/content" "$root/feed" "$root/empty" "$root/p1" "$root/p2" "$root/p3"
-    printf '%s\n' '<?xml version="1.0"?><package><metadata><id>C849.Probe</id><version>1.0.0</version><authors>Antiphon</authors><description>Offline fixture</description></metadata></package>' > "$root/package/C849.Probe.nuspec"
-    : > "$root/package/lib/net10.0/_._"
-    printf 'C849_PACKAGE_SENTINEL\n' > "$root/package/content/probe.txt"
-    cat > "$root/make-zip.ps1" <<'PS'
-param([string]$Source, [string]$Target)
-[System.IO.Compression.ZipFile]::CreateFromDirectory($Source, $Target)
-PS
-    # The deployment host has no pwsh. The admitted image does, and it is the same ZipFile call.
-    docker run --rm --network none --user 0:0 --entrypoint pwsh \
-        --mount "type=bind,source=$root,target=/fixture" \
-        "$image" -NoProfile -File /fixture/make-zip.ps1 /fixture/package /fixture/feed/C849.Probe.1.0.0.nupkg \
-        || write_result false FixturePackageZipFailed 2
-    for name in p1 p2 p3; do
-        printf '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net10.0</TargetFramework><NuGetAudit>false</NuGetAudit></PropertyGroup><ItemGroup><PackageReference Include="C849.Probe" Version="1.0.0" /></ItemGroup></Project>\n' \
-            > "$root/$name/$name.csproj"
-    done
-    printf '<configuration><packageSources><clear/><add key="fixture" value="/fixture/feed"/></packageSources></configuration>\n' > "$root/NuGet.Config"
-    printf '<configuration><packageSources><clear/><add key="empty" value="/fixture/empty"/></packageSources></configuration>\n' > "$root/Offline.Config"
-    cat > "$root/driver.sh" <<'SH'
-#!/bin/sh
-set -eu
-cd "$1"
-: > ready
-while [ ! -e /fixture/go ]; do sleep 0.1; done
-dotnet restore "$(basename "$1").csproj" --configfile /fixture/NuGet.Config --no-http-cache -p:NuGetAudit=false -nodeReuse:false -maxcpucount:1 >/dev/null
-SH
-    cat > "$root/offline.sh" <<'SH'
-#!/bin/sh
-set -eu
-cd "$1"
-dotnet restore p3.csproj --configfile /fixture/Offline.Config --no-http-cache -p:NuGetAudit=false -nodeReuse:false -maxcpucount:1 >/dev/null
-SH
-    # mc still owns $root. The probe is read by uid 1654; writing it after the chown dies under set -e.
-    cat > "$root/lock-probe.ps1" <<'PS'
-param([ValidateSet('holder','waiter')][string]$Mode, [string]$Generation)
-$assembly = Get-ChildItem /usr/share/dotnet/sdk/*/NuGet.Common.dll | Select-Object -Last 1
-if (-not $assembly) { throw 'NuGetLockPrimitiveMissing' }
-[void][System.Reflection.Assembly]::LoadFrom($assembly.FullName)
-$path = '/var/cache/antiphon/nuget-scratch/' + $Generation + '.lock'
-$root = '/fixture'
-[NuGet.Common.ConcurrencyUtilities]::ExecuteWithFileLocked($path, [Action]{
-    [System.IO.File]::WriteAllText("$root/$Generation-$Mode-entered", '1')
-    if ($Mode -eq 'holder') {
-        $until = [DateTime]::UtcNow.AddSeconds(30)
-        while (-not [System.IO.File]::Exists("$root/$Generation-release")) {
-            if ([DateTime]::UtcNow -gt $until) { throw 'FixtureLockReleaseTimeout' }
-            Start-Sleep -Milliseconds 100
-        }
-    }
-})
-PS
-    sudo -n chown -R 1654:1654 "$root"
-    c849_fixture_restore_container "$image" p1 "$packages" "$scratch" "$root" driver.sh > "$SERVER2_ROOT/race-p1.log" 2>&1 & a=$!
-    c849_fixture_restore_container "$image" p2 "$packages" "$scratch" "$root" driver.sh > "$SERVER2_ROOT/race-p2.log" 2>&1 & b=$!
-    c849_fixture_wait_file "$root/p1/ready" && c849_fixture_wait_file "$root/p2/ready" \
-        || write_result false FixtureRestoreBarrierFailed 2
-    sudo -n touch "$root/go"
-    wait "$a" || write_result false FixtureConcurrentRestoreFailed 2
-    wait "$b" || write_result false FixtureConcurrentRestoreFailed 2
-    c849_fixture_restore_container "$image" p3 "$packages" "$scratch" "$root" offline.sh \
+    c849_fixture_race_materialize "$image"
+    c849_fixture_race_restore_barrier "$image" "$packages" "$scratch"
+    c849_fixture_restore_container "$image" p3 "$packages" "$scratch" offline.sh \
         > "$SERVER2_ROOT/race-offline.log" 2>&1 || write_result false FixtureOfflineRestoreFailed 2
     docker run --rm --network none --user 1654:1654 --entrypoint /bin/sh \
         --mount "type=volume,source=$packages,target=/cache,volume-nocopy" "$image" \
         -c 'test -s /cache/c849.probe/1.0.0/.nupkg.metadata && grep -Fxq C849_PACKAGE_SENTINEL /cache/c849.probe/1.0.0/content/probe.txt' \
         || write_result false FixturePackageIncomplete 2
-    c849_fixture_lock_container "$image" "$scratch" "$root" holder shared > "$SERVER2_ROOT/lock-holder.log" 2>&1 & holder=$!
-    c849_fixture_wait_file "$root/shared-holder-entered" || write_result false FixtureNuGetLockHolderFailed 2
-    c849_fixture_lock_container "$image" "$scratch" "$root" waiter shared > "$SERVER2_ROOT/lock-waiter.log" 2>&1 & waiter=$!
-    sleep 2
-    c849_fixture_lock_assert "$root/shared-waiter-entered" || write_result false NuGetLockNotShared 2
-    sudo -n touch "$root/shared-release"
-    wait "$holder" && wait "$waiter" && [ -e "$root/shared-waiter-entered" ] \
-        || write_result false FixtureNuGetLockProbeFailed 2
-    c849_fixture_lock_container "$image" "$scratch" "$root" holder private > "$SERVER2_ROOT/private-holder.log" 2>&1 & holder=$!
-    c849_fixture_wait_file "$root/private-holder-entered" || write_result false FixtureNuGetLockHolderFailed 2
-    c849_fixture_lock_container "$image" "$private_scratch" "$root" waiter private > "$SERVER2_ROOT/private-waiter.log" 2>&1 & waiter=$!
-    c849_fixture_wait_file "$root/private-waiter-entered" || write_result false ControlNotSensitive 2
-    c849_fixture_control PC-17 NuGetLockNotShared c849_fixture_lock_assert "$root/private-waiter-entered"
-    sudo -n touch "$root/private-release"
-    wait "$holder" && wait "$waiter" || write_result false FixtureNuGetLockProbeFailed 2
+    c849_fixture_race_lock_probe "$image" "$scratch" "$private_scratch"
     printf 'PASS F-4\n' >> "$CASE_DIR/fixture-groups.txt"
 }
 
