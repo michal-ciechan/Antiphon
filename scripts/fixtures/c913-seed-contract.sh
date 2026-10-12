@@ -213,7 +213,8 @@ docker() {
       cp:*)
         if [[ "$2" == *'/packages/.' ]]; then source=packages; else source=npm; fi
         [ "$FAULT" != "copy-$source" ] || return 1
-        cp -a "$root/donor/$source/." "$3/"; barrier "after-copy-$source" ;;
+        if [ "$3" = - ]; then tar -C "$root/donor/$source" -cf - .; else cp -a "$root/donor/$source/." "$3/"; fi
+        barrier "after-copy-$source" ;;
       exec:*)
         if [[ "$*" == *'ps -eo uid,comm'* ]]; then
           [ "$FAULT" != process-error ] || return 1
@@ -250,7 +251,7 @@ docker() {
           "$pwsh_path" -NoProfile -File "$repo/scripts/c849-import-saved-donor.ps1" -Source "$C590_SAVED_DONOR" -Stage "$stage" || return $?; barrier after-saved-copy; return
         fi
         if [ "$entrypoint" = sha256sum ]; then code="sha256sum ${!#}"; fi
-        if [ -z "$code" ]; then code=$(cat); fi
+        if [ -z "$code" ]; then code=$(cat); if [ "${@: -2:1}" = -- ]; then script_args=("bash" "${@: -1}"); fi; fi
         if [[ "$code" == *'c849_manifest_compare /import '* ]]; then
           rm -rf -- "$root/import-view"
           mkdir -p "$root/import-view"
@@ -269,7 +270,12 @@ docker() {
           else [ "$FAULT" != import-npm ] || return 1; fi
           printf 'import\n' >> "$root/trace"
         fi
-        bash -c "$code" "${script_args[@]}" || return $?
+        local -a mapped_args=()
+        for arg in "${script_args[@]}"; do
+          for mapping in "${mappings[@]}"; do target="${mapping%%|*}"; arg="${arg//"$target"/"${mapping#*|}"}"; done
+          mapped_args+=("$arg")
+        done
+        bash -c "$code" "${mapped_args[@]}" || return $?
         if [[ "$code" == *'cp -a '* ]]; then
           if [[ "$code" == *"$root/volumes/$C849_PACKAGES/_data"* ]]; then barrier after-import-packages; else barrier after-import-npm; fi
         fi
@@ -282,7 +288,7 @@ docker() {
     esac
 }
 mv() {
-    if [ "$FAULT" = recovery-save ] && [[ "$1" == "$SERVER2_ROOT/cache/stage-"* ]]; then return 1; fi
+    if [ "$FAULT" = recovery-save ] && [[ "$1" == *"/cache/stage-"* ]]; then return 1; fi
     if [ "$FAULT" = publication ] && [[ "$*" == *"$C849_READY.tmp-"* ]]; then return 1; fi
     local step=''
     if [[ "$*" == *"$C849_READY.tmp-"* ]]; then step=publication; barrier before-publication
@@ -299,7 +305,7 @@ ordinary() {
     chmod 751 "$1/packages/c913.tools/2.0.0/tool"
     printf npm > "$1/npm/content"
 }
-run() { local status=0; ( C913_CHILD="$BASHPID"; "$@" ) > "$root/out" 2>&1 || status=$?; printf '%s' "$status" > "$root/exit"; }
+run() { local status=0; ( export root SERVER2_ROOT C849_READY RUN FAULT CRASH; export -f mv barrier; export C913_CHILD="$BASHPID"; "$@" ) > "$root/out" 2>&1 || status=$?; printf '%s' "$status" > "$root/exit"; }
 accept() { [ "$(cat "$root/exit")" = 0 ] || fail "$1"; pass "$1"; }
 refuse() { [ "$(cat "$root/exit")" = 2 ] && grep -Fq "$2" "$root/out" || fail "$1"; [ "$(cat "$root/outside")" = outside ] || fail sibling-changed; pass "$1"; }
 make_full_marker() {
@@ -323,9 +329,25 @@ if [ "$mode" = fixture-seed ] || [ "$mode" = volume-recovery ]; then
     mkdir -p "$CASE_DIR/fixture-controller" "$root/volumes/c849${RUN}-work/_data/cache"
     printf '%s\n' "c849${RUN}-work" > "$CASE_DIR/.fixture-volumes"
     c849_payload_own volume
+    c849_fixture_work_mount() { printf 'type=volume,source=c849%s-work,target=/fixture,volume-nocopy\n' "$RUN"; }
     c849_fixture_helper_exec() {
         local role="$1" code arg
         shift
+        if [ "$1" = tar ]; then
+            local dest="${@: -1}"
+            dest="${dest//\/fixture/$root/volumes/c849${RUN}-work/_data}"
+            tar -x -p -C "$dest"
+            return
+        fi
+        if [ "${2:-}" = -c ]; then
+            local script="$3"
+            script="${script//\/fixture/$root/volumes/c849${RUN}-work/_data}"
+            shift 3
+            local -a args=()
+            for arg in "$@"; do args+=("${arg//\/fixture/$root/volumes/c849${RUN}-work/_data}"); done
+            bash -c "$script" "${args[@]}"
+            return
+        fi
         code=$(cat)
         code="${code//\/fixture/$root/volumes/c849${RUN}-work/_data}"
         local -a args=()
