@@ -111,11 +111,12 @@ function Get-Snapshot([string]$temp) {
 # other OS's native cases; the skip set is matched by name against the actual roster.
 function Get-NamespaceCensus {
     [ordered]@{
-        selected = 459
+        selected = 468
         windowsSkips = @(
             'Antiphon.Tests.Checkpoints.CheckpointRecoveryLinuxTests.*'
             'Antiphon.Tests.Checkpoints.DetachedLauncherTests.executor_survives_its_starter'
             'Antiphon.Tests.Checkpoints.CheckpointOutputConfinementTests.*'
+            'Antiphon.Tests.Checkpoints.CheckpointTrackedBaselineTests.*'
         )
         linuxSkips = @(
             'Antiphon.Tests.Checkpoints.EvidenceFolderTests.tool_copy_removal_retries_while_a_file_is_still_held_open'
