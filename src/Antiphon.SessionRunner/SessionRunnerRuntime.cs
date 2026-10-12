@@ -496,6 +496,13 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         }
 
         var useHerdr = string.Equals(backend, SessionBackends.Herdr, StringComparison.OrdinalIgnoreCase);
+        // JSON can supply absent argv despite the contract's non-null annotations. Refuse
+        // malformed Grok input before rules scanning, file materialization or native launch.
+        var isGrok = string.Equals(request.TranscriptFormat, TranscriptFormats.Grok, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(request.Herdr?.AgentKind, HerdrAgentKinds.Grok, StringComparison.OrdinalIgnoreCase);
+        if (isGrok && (request.Args is null || request.Args.Any(arg => arg is null)))
+            throw new ArgumentException("Args must not be null or contain null elements.", nameof(request));
+
         EnsureGrokRulesArgvSafe(request, useHerdr);
         if (!useHerdr && string.Equals(request.TranscriptFormat, TranscriptFormats.Grok, StringComparison.OrdinalIgnoreCase))
             HerdrGrokResumeGuard.Require(request.SessionId, request, HerdrAgentKinds.Grok, _logger);
