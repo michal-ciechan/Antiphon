@@ -2411,16 +2411,19 @@ mode_apphost() {
     printf foreign > "$C1192_ROOT/volumes/$WORK/label-owner"
     code=0
     out=$(c849_fixture_apphost 2>&1) || code=$?
-    [ "$code" != 0 ] && [ "$(wc -l < "$C1192_ROOT/run-log")" = "$after" ] && work_foreign=1
+    [ "$code" != 0 ] && [ "$(diagnosis_of "$out")" = FixtureWorkspaceForeign ] && [ "$(wc -l < "$C1192_ROOT/run-log")" = "$after" ] && work_foreign=1
     printf c849-fixture > "$C1192_ROOT/volumes/$WORK/label-owner"
     printf foreign > "$C1192_ROOT/volumes/$C849_NPM/label-owner"
     code=0
     out=$(c849_fixture_apphost 2>&1) || code=$?
-    [ "$code" != 0 ] && [ "$(wc -l < "$C1192_ROOT/run-log")" = "$after" ] && cache_foreign=1
+    [ "$code" != 0 ] && [ "$(diagnosis_of "$out")" = CacheVolumeForeign ] && [ "$(wc -l < "$C1192_ROOT/run-log")" = "$after" ] && cache_foreign=1
     emit mask-foreign-refused "$foreign"
     emit apphost-foreign-work-refused "$work_foreign"
     emit apphost-foreign-cache-refused "$cache_foreign"
     printf server2-runner > "$C1192_ROOT/volumes/$C849_NPM/label-owner"
+    # Previous successful masks must not supply the failed-start registration witness.
+    grep -Fxv "c849-${RUN}-masked" "$CASE_DIR/.fixture-helpers" > "$CASE_DIR/.fixture-helpers.fresh"
+    mv "$CASE_DIR/.fixture-helpers.fresh" "$CASE_DIR/.fixture-helpers"
     C1192_CUT=masked-start
     code=0
     out=$(c849_fixture_masked_pack "$ADMITTED" Microsoft.NETCore.App.Ref 2>&1) || code=$?
