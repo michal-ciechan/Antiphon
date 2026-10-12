@@ -4195,8 +4195,17 @@ namespace Antiphon.Server.Migrations
                         .HasMaxLength(1000)
                         .HasColumnType("character varying(1000)");
 
+                    b.Property<byte[]>("ImmutableRequest")
+                        .HasColumnType("bytea");
+
+                    b.Property<byte[]>("ImportedReceipt")
+                        .HasColumnType("bytea");
+
                     b.Property<DateTime?>("IntentAt")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("MirrorBindingId")
+                        .HasColumnType("uuid");
 
                     b.Property<DateTime?>("NextAttemptAt")
                         .HasColumnType("timestamp with time zone");
@@ -4259,6 +4268,8 @@ namespace Antiphon.Server.Migrations
                         .HasColumnType("character varying(1000)");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("MirrorBindingId");
 
                     b.HasIndex("OperationId")
                         .IsUnique();
@@ -8327,6 +8338,80 @@ namespace Antiphon.Server.Migrations
                     b.ToTable("SubscriptionUsageSamples", (string)null);
                 });
 
+            modelBuilder.Entity("Antiphon.Server.Domain.Entities.TaskWorktreeMirrorBinding", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Attempt")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("BindingId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("CommonDirectory")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("CreationBaselineSha")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("GitDirectory")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<Guid>("PreparationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("RepositoryIdentity")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<string>("RunnerId")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("RunnerStoreId")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("SourceFullRef")
+                        .IsRequired()
+                        .HasMaxLength(400)
+                        .HasColumnType("character varying(400)");
+
+                    b.Property<Guid>("TaskId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("WorktreePath")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PreparationId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_TaskWorktreeMirrorBindings_PreparationId");
+
+                    b.HasIndex("TaskId", "Attempt", "RunnerStoreId", "BindingId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_TaskWorktreeMirrorBindings_Task_Attempt_Store_Binding");
+
+                    b.ToTable("TaskWorktreeMirrorBindings", (string)null);
+                });
+
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.TaskWorktreeRetirement", b =>
                 {
                     b.Property<Guid>("Id")
@@ -10015,11 +10100,18 @@ namespace Antiphon.Server.Migrations
 
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.CardWorktreeCleanupEndpoint", b =>
                 {
+                    b.HasOne("Antiphon.Server.Domain.Entities.TaskWorktreeMirrorBinding", "MirrorBinding")
+                        .WithMany()
+                        .HasForeignKey("MirrorBindingId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.HasOne("Antiphon.Server.Domain.Entities.CardWorktreeCleanupTarget", "Target")
                         .WithMany("Endpoints")
                         .HasForeignKey("TargetId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
+
+                    b.Navigation("MirrorBinding");
 
                     b.Navigation("Target");
                 });
@@ -10513,6 +10605,15 @@ namespace Antiphon.Server.Migrations
                     b.Navigation("Stage");
 
                     b.Navigation("Workflow");
+                });
+
+            modelBuilder.Entity("Antiphon.Server.Domain.Entities.TaskWorktreeMirrorBinding", b =>
+                {
+                    b.HasOne("Antiphon.Server.Domain.Entities.AgentTask", null)
+                        .WithMany()
+                        .HasForeignKey("TaskId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.TaskWorktreeRetirement", b =>

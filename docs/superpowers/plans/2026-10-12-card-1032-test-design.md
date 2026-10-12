@@ -905,6 +905,11 @@ the tool's Min is a floor and its derived Expect tokens alone do not enforce
 the exact roster. Prefix rows select only the enumerated C1032 methods above;
 an extra or missing result requires reconciliation rather than an inflated count.
 
+S1's CP-1 and CP-2 method alternatives end in `*`. Microsoft Testing Platform
+matches an OR of bare method names to zero tests; one wildcard in the group
+is what makes the enumerated methods run (TUnit issue 4580). No other
+C1032 method shares those names, so the star does not add a case.
+
 Select explicit `--rows` after commit/push:
 S1=CP-1,CP-2; S2=CP-3,CP-4; S3=CP-5; S4=CP-6;
 S5=CP-7,CP-8,CP-9,CP-10; S6=CP-11,CP-12;
@@ -939,8 +944,8 @@ loops, assertions and PC variants do not raise Min.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
-| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1032-schema/` | binding-schema | `/*/*/CardWorktreeMirrorBindingTests/(C1032_SchemaUniqueBindings)\|(C1032_SchemaLegacyUpgrade)\|(C1032_SchemaRequestAndReceiptPersistence)` | V-1, V-2 | all 3 listed; 0 failed/skipped | 3 | 5 | true |
-| CP-2 | S1 | `tests/Antiphon.SessionRunner.Tests -> bin-c1032-contract/` | wire-contract | `/*/*/CompletedCardWorkspaceContractTests/(C1032_WireRoundTrip)\|(C1032_WireRequiredFieldsAndVersion)\|(C1032_WireDigestFieldCoverage)` | V-2 | all 3 listed; 0 failed/skipped | 3 | 4 | true |
+| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1032-schema/` | binding-schema | `/*/*/CardWorktreeMirrorBindingTests/(C1032_SchemaUniqueBindings*)\|(C1032_SchemaLegacyUpgrade*)\|(C1032_SchemaRequestAndReceiptPersistence*)` | V-1, V-2 | all 3 listed; 0 failed/skipped | 3 | 5 | true |
+| CP-2 | S1 | `tests/Antiphon.SessionRunner.Tests -> bin-c1032-contract/` | wire-contract | `/*/*/CompletedCardWorkspaceContractTests/(C1032_WireRoundTrip*)\|(C1032_WireRequiredFieldsAndVersion*)\|(C1032_WireDigestFieldCoverage*)` | V-2 | all 3 listed; 0 failed/skipped | 3 | 4 | true |
 | CP-3 | S2 | `tests/Antiphon.SessionRunner.Tests -> bin-c1032-binding/` | runner-binding | `/*/*/RunnerWorkspaceBindingTests/C1032_Binding*` | V-1, R-2 | all 5 listed; 0 failed/skipped | 5 | 5 | true |
 | CP-4 | S2 | `tests/Antiphon.Tests -> bin-c1032-capture/` | server-binding | `/*/*/(CardWorktreeMirrorBindingTests*)\|(RemoteWorkspacePreparerTests*)/C1032_Capture*` | V-1 | all 4 listed; 0 failed/skipped | 4 | 5 | true |
 | CP-5 | S3 | `tests/Antiphon.SessionRunner.Tests -> bin-c1032-fence/` | use-fence | `/*/*/CompletedCardWorkspaceRemovalTests/C1032_Fence*` | V-4 | all 6 listed; 0 failed/skipped | 6 | 5 | true |
