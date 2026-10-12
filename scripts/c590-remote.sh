@@ -1628,7 +1628,7 @@ c849_empty_volume() {
 }
 
 # Host filesystem unless this run's initialized fixture controller recorded volume.
-# C849_PAYLOAD_BACKEND is not a selector. Fixture seed does not record volume (S5).
+# C849_PAYLOAD_BACKEND is not a selector. Only initialized fixture seed records volume.
 c849_payload_controller() {
     printf '%s\n' "$CASE_DIR/fixture-controller"
 }
@@ -1672,7 +1672,7 @@ c849_payload_own() {
 }
 
 # First decision of seed, saved copy, cold seed, preview and prune.
-# Volume returns 86 before any host payload operation.
+# The diagnostic note-only boundary returns 86 for volume before any payload operation.
 # .payload-note-only returns 85 after the host decision so the contract can
 # observe the entry point without Seed's donor loop. Production cases do not
 # create that file; a present file fails the entry closed instead of seeding.
@@ -2199,6 +2199,7 @@ c849_seed() {
         donor="$(c849_optional_donor)" || write_result false CacheDonorLookupFailed 2
     fi
     saved="${C590_SAVED_DONOR:-}"
+    if [ "$backend" = volume ] && [ -n "$saved" ]; then write_result false CacheDonorSourceConflict 2; fi
     if [ -e "$C849_READY" ] || [ -L "$C849_READY" ]; then
         if [ -n "$saved" ]; then
             c849_require_ready
@@ -2409,6 +2410,7 @@ c849_require_ready() {
         C849_SCHEMA=3; C849_DIGEST_TYPE=manifest-sha256; C849_DIGEST="$expected"
         return 0
     fi
+    if [ "$(c849_payload_select)" = volume ]; then write_result false CacheSeedMarkerInvalid 2; fi
     if grep -Eq '^(schema|kind|cold)=' "$C849_READY"; then
         [ "$(wc -l < "$C849_READY")" -eq 8 ] \
             && [ "$(cut -d= -f1 "$C849_READY" | sort -u | wc -l)" -eq 8 ] \

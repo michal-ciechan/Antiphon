@@ -662,8 +662,11 @@ public sealed class RemoteScriptContractTests
     // executable modes, manifests, links or missing trees on the volume backend.
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
-    public void C1192_Recovery_controls_validate_volume_bytes_modes_and_manifest() =>
+    public void C1192_Recovery_controls_validate_volume_bytes_modes_and_manifest()
+    {
         C913Run("volume-recovery", "volume-recovery-restored");
+        C913Run("volume-prune", "schema3-prune-success");
+    }
 
     // CARD-1193. NuGet locks $NUGET_SCRATCH/lock/<hash>. The holder and waiter must receive the
     // same HOME and NUGET_SCRATCH the F-4 restore containers pass.
