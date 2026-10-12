@@ -344,7 +344,9 @@ public sealed class RunScheduler
 
             var repeat = request.Rows.First(row => row.Build == build.Id).Repeat;
             var properties = BuildStep.PropertyArguments(request.Manifest.Build.Properties, _platform.IsWindows, repeat,
-                repeat > 1 ? RepeatRequest.CanonicalProject(request.WorkingDirectory, build.Project) : null);
+                repeat > 1 ? RepeatRequest.CanonicalProject(request.WorkingDirectory, build.Project) : null).ToList();
+            if (!string.IsNullOrWhiteSpace(build.Project) && !string.IsNullOrWhiteSpace(build.OutputPath))
+                BuildStep.AppendSharedLayout(properties, request.WorkingDirectory, build.Project, build.OutputPath);
             var binding = CheckpointBuildBinding.Expected(request.WorkingDirectory, build.Project, build.OutputPath,
                 properties, request.State.Source.Start);
             if (request.SourceGuard?.Observe() == false)
