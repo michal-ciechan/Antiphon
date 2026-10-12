@@ -187,9 +187,13 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
                 async Task<bool> RestoreRegisteredTreeAsync()
                 {
                     directoryGone = IsAbsent(source.WorktreePath);
+                    // The caller token is often already cancelled: that is the outage, not an
+                    // unreadable registration. Observe without it so a registration that was never
+                    // dropped is put back. A failed read still keeps the set-aside tree.
+                    var observe = ct.IsCancellationRequested ? CancellationToken.None : ct;
                     try
                     {
-                        var current = await RegistrationsAsync(source.RepositoryPath, ct);
+                        var current = await RegistrationsAsync(source.RepositoryPath, observe);
                         unregistered = !current.Any(r => LandingGit.PathsEqual(r.Path, source.WorktreePath));
                     }
                     catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException
@@ -202,7 +206,7 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
                     directoryGone = false;
                     setAsideDetail = null;
                     WorktreeSetAside.TryClear(request.CommonDirectory, source.WorktreePath);
-                    await git.LiveRegistrationsAsync(source.RepositoryPath, ct);
+                    await git.LiveRegistrationsAsync(source.RepositoryPath, observe);
                     return true;
                 }
             }
