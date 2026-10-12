@@ -74,7 +74,11 @@ No full-assembly run, no loaded repetitions, no known-red exclusions predeclared
 
 ### Checkpoints
 
-Every build uses UseAppHost=false via --msbuild-property. CP-1 is expected diagnostic
+Every build uses UseAppHost=false. The run verb does not forward --msbuild-property
+(the row verb does); import this exact table to ignored .antiphon/c1171.yaml, set
+only build.properties.UseAppHost to false, then run that manifest with --rows and
+--expected-source-sha. This is the same closed selection, with explicit properties
+recorded in build provenance. CP-1 is expected diagnostic
 red against unchanged master selection plus mechanical seam; it is not passed
 coverage. Final Review runs CP-2..CP-6 at its reviewed SHA. Every reused row has the
 same After group and isolated build provenance. No zero-test row counts as proof.
