@@ -86,7 +86,9 @@ public sealed class GrokSha256PinTests
     [Test]
     public async Task Runner_grok_sha_rejects_empty_download()
     {
-        var result = await Run(ReviewedPin, "");
+        // The empty-file digest is itself 64 lowercase hex. Length and character checks
+        // accept it; only the non-empty-file gate rejects it before install.
+        var result = await Run(EmptySha, "");
         RejectAfterFetch(result, "empty-download-before-install");
     }
 
