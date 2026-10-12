@@ -58,7 +58,7 @@ public sealed class UnixPtyArgvAdmissionTests
             "empty args: ArgumentException: Terminal size must be positive. (Parameter 'request')",
             "null element: ArgumentException: Terminal size must be positive. (Parameter 'request')",
             "spaces and quotes: ArgumentException: Terminal size must be positive. (Parameter 'request')",
-        }, "malformed-existing-validation");
+        }, customMessage: "malformed-existing-validation");
     }
 
     [Test]
