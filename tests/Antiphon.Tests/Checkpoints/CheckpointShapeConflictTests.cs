@@ -6,9 +6,8 @@ using TUnit.Core;
 
 namespace Antiphon.Tests.Checkpoints;
 
-// One shape rule for both entry points. Restoration may replace a tracked path only
-// when the worktree object is the expected regular file or is absent. Every other
-// shape stays on disk, exits 2, and must not be called lossless.
+// Detect only: the build's resulting bytes and index must survive both entry points.
+// Each row guards against automatic restore/delete or a false preservation claim.
 [Category("Unit")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class CheckpointShapeConflictTests : CheckpointTestBase
@@ -16,43 +15,30 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
     private const string OutputPath = "bin-probe/";
     private const string TrackedBytes = "TRACKED-ORIGINAL";
 
-    // case: a build moves a pre-existing user directory onto a tracked file and stages its contents.
-    // mutation: git restore --worktree of that tracked ancestor deletes the newly unstaged descendants.
-    // red: tracked.txt/secret.txt is missing or its bytes differ, or the row says lossless.
+    // case: build changes the named shape; mutation: automatic recovery; red: bytes/index or claim changes.
     [Test]
     [Arguments("directory-on-file")]
-    // case: a build replaces a tracked directory with a pre-existing user file.
-    // mutation: restoring the tracked child removes the file now sitting on the directory path.
-    // red: the user file is missing or its bytes differ, or the row says lossless.
+    // case: build changes the named shape; mutation: automatic recovery; red: bytes/index or claim changes.
     [Arguments("file-on-directory")]
-    // case: a symlink replaces a tracked file.
-    // mutation: restoring the tracked file replaces the symlink.
-    // red: tracked.txt is no longer a symlink to link-target.txt, or the row says lossless.
+    // case: build changes the named shape; mutation: automatic recovery; red: bytes/index or claim changes.
     [Arguments("symlink-on-file")]
-    // case: an untracked descendant sits under a path HEAD tracks as a file.
-    // mutation: restoring the tracked file deletes the directory and the untracked descendant.
-    // red: tracked.txt/user.txt is missing or its bytes differ, or the row says lossless.
+    // case: build changes the named shape; mutation: automatic recovery; red: bytes/index or claim changes.
     [Arguments("untracked-descendant")]
-    // case: an ignored descendant sits under a path HEAD tracks as a file.
-    // mutation: restoring the tracked file deletes the directory and the ignored descendant.
-    // red: tracked.txt/user.dat is missing or its bytes differ, or the row says lossless.
+    // case: build changes the named shape; mutation: automatic recovery; red: bytes/index or claim changes.
     [Arguments("ignored-descendant")]
-    // case: the build stages a file that is absent from HEAD (round 10).
-    // mutation: git restore --worktree of that path deletes bytes HEAD does not contain.
-    // red: user-keep.txt is missing, still indexed, or the row omits the lossless sentence.
+    // case: build changes the named shape; mutation: automatic recovery; red: bytes/index or claim changes.
     [Arguments("staged-untracked")]
-    // case: the build modifies a tracked regular file and leaves the path a regular file.
-    // mutation: the restore writes something other than the HEAD bytes, or skips the tamper refusal.
-    // red: tracked.txt is not TRACKED-ORIGINAL, the exit is not 2, or the lossless sentence is absent.
+    // case: build changes the named shape; mutation: automatic recovery; red: bytes/index or claim changes.
     [Arguments("modified-tracked")]
-    // case: the build deletes a tracked regular file.
-    // mutation: the path stays absent, or the restored bytes differ from HEAD.
-    // red: tracked.txt is missing or is not TRACKED-ORIGINAL, or the lossless sentence is absent.
+    // case: build changes the named shape; mutation: automatic recovery; red: bytes/index or claim changes.
     [Arguments("deleted-tracked")]
-    // case: a clean build does not touch tracked or pre-existing untracked bytes.
-    // mutation: the row restores, refuses, or rewrites a file the build did not need to change.
-    // red: the exit is not 0, side.txt or keep.txt changed, or the row says tampered or lossless.
+    // case: build changes the named shape; mutation: automatic recovery; red: bytes/index or claim changes.
     [Arguments("clean-build")]
+    [Arguments("regular-user-move")]
+    [Arguments("existing-stamp")]
+    [Arguments("compiler-collision")]
+    [Arguments("existing-output-directory")]
+    [Arguments("existing-output-symlink")]
     [Timeout(600_000)]
     public async Task shape_conflict_rule(string shape, CancellationToken cancellationToken)
     {
@@ -86,6 +72,8 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
         finally
         {
             // ContainedCleanup refuses a linked root. The assertion already observed the link.
+            if (shape == "existing-output-symlink" && root is not null)
+                new DirectoryInfo(Path.Combine(root, "App/bin-probe")).Delete();
             if (shape == "symlink-on-file" && root is not null)
             {
                 var link = new FileInfo(Path.Combine(root, "tracked.txt"));
@@ -123,16 +111,16 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
                 var full = Path.Combine(root, "user-keep.txt");
                 if (!File.Exists(full) || Encoding.ASCII.GetString(File.ReadAllBytes(full)) != "USER-KEEP")
                     return "missing-or-changed exit=" + result.Exit;
-                if (GitOut(root, "ls-files", "--", "user-keep.txt").Trim().Length > 0)
-                    return "still-indexed";
+                if (GitOut(root, "ls-files", "--", "user-keep.txt").Trim().Length == 0)
+                    return "index-was-modified";
                 if (result.Exit != 2)
                     return "exit=" + result.Exit;
                 if (!output.Contains("refused: tampered", StringComparison.Ordinal))
                     return "no-tamper";
                 if (!output.Contains("TAMPERED user-keep.txt", StringComparison.Ordinal))
                     return "no-path";
-                if (!output.Contains("lossless because the pre-build tracked tree was clean", StringComparison.Ordinal))
-                    return "no-lossless";
+                if (output.Contains("lossless", StringComparison.Ordinal) || output.Contains("restored", StringComparison.Ordinal))
+                    return "false-preservation-claim";
                 if (output.Contains("buildSource=verified", StringComparison.Ordinal))
                     return "verified";
                 return Receipt(receipt);
@@ -141,18 +129,35 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
             case "deleted-tracked":
             {
                 var full = Path.Combine(root, "tracked.txt");
-                if (!File.Exists(full) || Encoding.ASCII.GetString(File.ReadAllBytes(full)) != TrackedBytes)
-                    return "not-restored exit=" + result.Exit;
+                if (shape == "modified-tracked" && (!File.Exists(full) || File.ReadAllText(full) != "MUTATED"))
+                    return "tool-rewrote-build-bytes exit=" + result.Exit;
+                if (shape == "deleted-tracked" && File.Exists(full))
+                    return "tool-recreated-deleted-file";
                 if (result.Exit != 2)
                     return "exit=" + result.Exit;
                 if (!output.Contains("refused: tampered", StringComparison.Ordinal))
                     return "no-tamper";
                 if (!output.Contains("TAMPERED tracked.txt", StringComparison.Ordinal))
                     return "no-path";
-                if (!output.Contains("lossless because the pre-build tracked tree was clean", StringComparison.Ordinal))
-                    return "no-lossless";
+                if (output.Contains("lossless", StringComparison.Ordinal) || output.Contains("restored", StringComparison.Ordinal))
+                    return "false-preservation-claim";
                 if (output.Contains("buildSource=verified", StringComparison.Ordinal))
                     return "verified";
+                return Receipt(receipt);
+            }
+            case "regular-user-move":
+                return FinishConflict(ConflictFile(result, Path.Combine(root, "tracked.txt"), "USER-MOVED", "tracked.txt", output), receipt);
+            case "existing-stamp":
+            case "compiler-collision":
+            case "existing-output-directory":
+            case "existing-output-symlink":
+            {
+                var file = shape == "existing-stamp" ? "checkpoint-build-source.json" : "App.dll";
+                if (shape != "existing-output-directory" && (!File.Exists(Path.Combine(root, "App", "bin-probe", file)) || File.ReadAllText(Path.Combine(root, "App", "bin-probe", file)) != "USER-OUTPUT"))
+                    return "pre-existing-user-output-lost";
+                if (result.Exit != 2 || !output.Contains("refused:", StringComparison.Ordinal)) return "collision-not-refused";
+                if (output.Contains("Build succeeded", StringComparison.Ordinal)) return "build-ran-on-collision";
+                if (output.Contains("lossless", StringComparison.Ordinal) || output.Contains("restored", StringComparison.Ordinal)) return "false-preservation-claim";
                 return Receipt(receipt);
             }
             case "clean-build":
@@ -206,6 +211,10 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
 
     private static string FinishConflict(string note, RunResult? receipt) =>
         note == "ok" ? Receipt(receipt) : note;
+
+    // F3 control: removing the emitted receipt must not qualify a negative validation.
+    [Test]
+    public void missing_receipt_is_not_negative_success() => Receipt(null).ShouldNotBe("ok");
 
     private static string Receipt(RunResult? receipt)
     {
@@ -263,6 +272,8 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
                 "staged-untracked" => "git --git-dir=.git --work-tree=. add -- user-keep.txt",
                 "modified-tracked" => "printf '%s' MUTATED > tracked.txt",
                 "deleted-tracked" => "rm -f -- tracked.txt",
+                "regular-user-move" => "mv -f -- user-move.txt tracked.txt",
+                "existing-stamp" or "compiler-collision" or "existing-output-directory" or "existing-output-symlink" => "printf %s MUTATED > tracked.txt",
                 _ => throw new InvalidOperationException(shape),
             };
             WriteProject(root, command);
@@ -294,6 +305,22 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
                 break;
             case "staged-untracked":
                 Write(root, "user-keep.txt", "USER-KEEP");
+                break;
+            case "regular-user-move":
+                Write(root, "user-move.txt", "USER-MOVED");
+                break;
+            case "existing-stamp":
+                Write(root, "App/bin-probe/checkpoint-build-source.json", "USER-OUTPUT");
+                break;
+            case "compiler-collision":
+                Write(root, "App/bin-probe/App.dll", "USER-OUTPUT");
+                break;
+            case "existing-output-directory":
+                Directory.CreateDirectory(Path.Combine(root, "App/bin-probe"));
+                break;
+            case "existing-output-symlink":
+                Write(root, "outside/App.dll", "USER-OUTPUT");
+                Directory.CreateSymbolicLink(Path.Combine(root, "App/bin-probe"), Path.Combine(root, "outside"));
                 break;
             case "clean-build":
                 Write(root, "side.txt", "SIDE-KEEP");
