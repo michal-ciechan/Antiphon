@@ -71,8 +71,9 @@ public class SessionRunnerHeldEventExitMatrixTests
         string list, string cancellation, bool blocked, int expectedAccepted, int expectedAbandoned)
     {
         // PC-120..PC-167 bind these 48 literal outcome rows in declaration order.
-        // Responsive: remove the common finally (silent loss) or skip (duplicate).
+        // Responsive: drop the common offer while still suppressing its copy (silent loss).
         // Blocked: bypass bounded preservation for this exit (no disposal/warning).
+        // PC-170 removes following-copy suppression. PC-171 removes the list wait bound.
         await using var h = new Harness(list, cancellation, blocked);
         await h.Pump.StartAsync(h.Host.Token);
         await h.Handler.ListEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -124,7 +125,8 @@ public class SessionRunnerHeldEventExitMatrixTests
     [Arguments("dispose-fault")]
     public async Task C1205_Iterator_failure_after_preservation_does_not_redeliver(string fault)
     {
-        // PC-168/169 defer dispatch until the next iterator pull / disposal.
+        // PC-168/169 drop the offer/copy and defer dispatch until a later ordinary event;
+        // the next read/disposal faults before that event, leaving Accepted at zero.
         await using var h = new Harness("success", "none", false, fault);
         await h.Pump.StartAsync(h.Host.Token);
         await h.Handler.ListEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));

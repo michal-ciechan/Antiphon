@@ -81,7 +81,7 @@ changes a default, revise the corresponding slice and checkpoint before dispatch
   the already parsed event gets one bounded preservation offer before the iterator
   is disposed and the existing reconnect follows. Host cancellation also offers
   it once, then stops waiting on a pending consumer. A
-  throwing list does not reconnect; the following yield delivers the event.
+  throwing list does not reconnect; the common preservation exit offers the event.
   Snapshot coverage is not claimed on any of those three. If a real event proved
   readiness, retain and emit that very event after the marker. This closes the
   gap without upgrading the runner protocol. Reject moving the first catch-up
@@ -174,7 +174,7 @@ dispatch. Await catch-up, then resume the same enumerator. On a list timeout,
 offer the already parsed event once before the iterator is disposed, then use the
 existing reconnect path. On host cancellation, offer it once and then stop waiting
 on a pending consumer. On a throwing list, leave the exception inside catch-up, do not reconnect,
-and deliver the event from the following yield. Do not wait for another stream
+and offer the event from the common preservation exit. Do not wait for another stream
 read and do not extend the list deadline. The first held event
 and all following live events remain in connection order; overlapping transcript
 rows dedupe using the existing runtime. Output/exit/fault/bind/adoption/status events
@@ -185,11 +185,14 @@ new polling loop runs on that serial event-consumer task.
 Repair round 2 binds the responsive held-event rows at
 `/*/*/SessionRunnerStreamReadinessTests/C1205_Held_event_survives_failed_second_catchup*`
 (success, timeout, throw, cancellation). Repair round 3 adds T48-T50 in
-`SessionRunnerHeldEventDeliveryTests`; the test-design CP-2 floor is 34.
+`SessionRunnerHeldEventDeliveryTests`. Repair 4 adds the 48-row T51 exit matrix
+and two T52 iterator-fault controls in `SessionRunnerHeldEventExitMatrixTests`;
+CP-2 is now exactly 84 executions.
 Its committed groups and exact filters are in
-[the repair checkpoint manifest](2026-10-12-card-1205-s2-repair3-checkpoints.md).
+[the current repair checkpoint manifest](2026-10-12-card-1205-s2-repair4-checkpoints.md).
 
-Failure-path delivery uses the normal dispatcher with a linked deadline/host
+Every marker-held payload uses one finally-owned offer through the normal dispatcher
+with a linked deadline/host
 signal. `SessionRunner:HeldEventDeliveryTimeoutSeconds` defaults to 3 and must be
 positive; its timer uses the injected TimeProvider. An already-stopping host gets
 one initial callback offer before the host link is applied, preserving responsive
@@ -199,9 +202,14 @@ retry of an uncertain output publication. Its service scope remains owned until
 the callback task settles, and late faults are observed. The iterator still disposes
 and shutdown/reconnect proceeds. Durable transcript events can be recovered by the
 existing next catch-up; no output replay queue exists. This bounds the asynchronous
-wait, not arbitrary synchronous callback code or normal successful-path callbacks.
-Cancellation swallowed by the final transcript sync is checked before normal
-dispatch resumes and enters the same bounded preservation path.
+wait, not arbitrary synchronous callback code or later ordinary live callbacks.
+The successful-catch-up held callback has the same bound. The pump suppresses the
+iterator's following copy after a completed offer; abandonment unwinds it without
+replaying an uncertain attempt. Cancellation during any catch-up exit reaches this
+same finally, including the swallowed list-error handler and final pull. The C2
+list wait also uses the existing ListTimeoutSeconds with monotonic injected time,
+independently of a non-cooperative request. Its retained scope/late task remain
+observed until completion; the bound does not force request termination.
 
 Coverage argument: let S be subscription registration, P the first qualifying
 frame, and C2 the second snapshot. The producer appends a transcript row to its
@@ -213,7 +221,7 @@ snapshot/persistence and a surviving stream. When that list times out, the held
 live event receives the bounded offer before reconnect, and snapshot coverage is not
 claimed. Host cancellation offers it and then stops waiting on a pending consumer.
 A throwing list does not
-reconnect; the following yield delivers the event and snapshot coverage is not
+reconnect; the common exit offers the event and snapshot coverage is not
 claimed. Timeout failures retain normal reconnect recovery and independent watchdog
 debt. Logs must distinguish “pass attempted”
 from “all transcripts verified”; the existing void sync cannot certify the latter.
@@ -510,7 +518,7 @@ expected-red reproduction exception, reported as failed, never relabeled green.
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1205-s1/` | any-pg-reproduction | `/*/*/TurnEndGapReproductionTests/*` | V-1, V-2, R-1 | 2 executed; exactly V-1 assertion fails on baseline; V-2 passes; 0 skipped | 2 | 6 |
-| CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1205-s2/` | any-pg-subscription | `/*/*/(TurnEndGapReproductionTests*)\|(SessionRunnerStreamReadinessTests*)\|(SessionRunnerEventPumpTests*)\|(SessionRunnerHeldEventDeliveryTests*)/*` | V-1, V-2, V-3, V-4, V-5, V-6, V-7, R-1, R-6, T47..T50 | all 34 executions, 0 failed/skipped | 34 | 10 |
+| CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1205-s2/` | any-pg-subscription | `/*/*/(TurnEndGapReproductionTests*)\|(SessionRunnerStreamReadinessTests*)\|(SessionRunnerEventPumpTests*)\|(SessionRunnerHeldEventDeliveryTests*)\|(SessionRunnerHeldEventExitMatrixTests*)/*` | V-1, V-2, V-3, V-4, V-5, V-6, V-7, R-1, R-6, T47..T52 | all 84 executions, 0 failed/skipped | 84 | 10 |
 | CP-3 | S3 | `tests/Antiphon.Tests -> bin-c1205-s3/` | any-pg-checked-recovery | `/*/*/(WorkingTranscriptRecoveryTests*)\|(SessionStateCommitTests*)\|(TranscriptWorkingStateQueryTests*)/*` | V-8, V-9, V-10, V-11, V-12, R-2, R-7 | all 31 executions, 0 failed/skipped | 31 | 8 |
 | CP-4 | S4 | `tests/Antiphon.Tests -> bin-c1205-s4/` | any-pg-watchdog | `/*/*/StaleWorkingTranscriptWatchdogTests/*` | V-13, V-14, V-15, V-16, V-17, V-18, V-19, R-3, R-4 | all 13 executions, 0 failed/skipped | 13 | 7 |
 | CP-5 | S5 | `tests/Antiphon.Tests -> bin-c1205-s5/` | any-pg-restart-delivery | `/*/*/TurnEndGapRestartDeliveryTests/*` | V-20, V-21, V-22, V-23, V-24, R-5 | all 6 executions, 0 failed/skipped | 6 | 10 |

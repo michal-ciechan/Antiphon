@@ -50,5 +50,5 @@ Run --after RepairTests then --after RepairFix, --serial, full committed
 --expected-source-sha. Wait to final exit and inspect fresh per-case TRX.
 No repeat required after green. No required manual acceptance for S1/S2.
 V-8..40, R-2..5/R-8/R-9 deferred to S3-S5; R-7 does not discharge CP-3.
-Post-land Mutation NOT run; PC-1..169 and every variant pending. Restart: none.
+Post-land Mutation NOT run; PC-1..171 and every variant pending. Restart: none.
 
