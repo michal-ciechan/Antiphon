@@ -1,4 +1,4 @@
-using Antiphon.Server.Infrastructure.Git;
+using Antiphon.Server.Application.Dtos;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
@@ -167,8 +167,8 @@ public sealed class LandRecoveryIgnoredNestedRepositoryTests
         var proof = await f.Git.InspectRecoveryCheckoutAsync(f.Coordinates, local, reviewed, CancellationToken.None);
         proof.Accepted.ShouldBe(expected, "N." + label + ".ExpectedProof");
         if (!expected) proof.Reason.ShouldNotBeNull("N." + label + ".RefusalReason");
-        f.Git.Commands.ShouldNotContain(x => x.Arguments[0] is "reset" or "clean" or "checkout"
-            or "checkout-index" or "add" or "update-index" or "update-ref" or "push", "N.InspectionReadOnly");
+        f.Git.Commands.ShouldNotContain(x => new[] { "reset", "clean", "checkout", "checkout-index",
+            "add", "update-index", "update-ref", "push" }.Contains(x.Arguments[0]), "N.InspectionReadOnly");
         (await File.ReadAllBytesAsync(sentinel)).ShouldBe(bytes, "N.NestedBytesPreserved");
         (await f.RequiredAsync(f.Source, "write-tree")).Trim().ShouldBe(index, "N.OuterIndexPreserved");
         (await f.RequiredAsync(f.Source, "rev-parse", "HEAD")).Trim().ShouldBe(reviewed, "N.OuterHeadPreserved");
