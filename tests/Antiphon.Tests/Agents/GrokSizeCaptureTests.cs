@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Antiphon.Agents.Pty;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
@@ -47,8 +48,7 @@ public class GrokSizeCaptureTests
                     {
                         await Task.Delay(100, deadline.Token);
                         screen = runner.SnapshotScreen();
-                        // Welcome has no device code; never export OAuth approval screens.
-                        if (GrokSignInPromptDetector.IsVisibleOnScreen(screen)) break;
+                    if (GrokSignInPromptDetector.IsVisibleOnScreen(screen)) break;
                         if (GrokTrustPromptDetector.IsVisibleOnScreen(screen) && !trustRecorded)
                         {
                             captured.Add(new { cols, rows, mode, kind = "trust", screen, session, capturedAt = DateTime.UtcNow });
@@ -58,10 +58,10 @@ public class GrokSizeCaptureTests
                         if (clock.Elapsed >= TimeSpan.FromSeconds(3)
                             && screen.Contains(GrokStartupScreen.EnabledHint, StringComparison.Ordinal)) break;
                     }
-                    // No auth interaction occurs in the empty home. Reject any unexpected
-                    // device approval screen before writing even a rendered frame to disk.
-                    screen.ShouldNotContain("Waiting for approval", customMessage: "no-device-flow");
-                    screen.ShouldNotContain("browser shows this code", customMessage: "no-device-code");
+                    // Sign-in can start a device flow without input. Redact standalone
+                    // codes in memory, preserving cell width, before any persistence.
+                    if (GrokSignInPromptDetector.IsVisibleOnScreen(screen))
+                        screen = RedactSignIn(screen);
                     screen.Split('\n').Length.ShouldBe(rows, "native row count");
                     captured.Add(new { cols, rows, mode, kind = "final", screen, session, capturedAt = DateTime.UtcNow });
                 }
@@ -83,4 +83,14 @@ public class GrokSizeCaptureTests
         }
         captured.Count.ShouldBeGreaterThanOrEqualTo(12);
     }
+
+    private static string RedactSignIn(string screen) => string.Join('\n', screen.Split('\n').Select(row =>
+    {
+        var text = row.Trim();
+        if (Regex.IsMatch(text, @"\A[A-Za-z0-9-]{6,}\z", RegexOptions.CultureInvariant))
+            return Regex.Replace(row, "[A-Za-z0-9]", "X", RegexOptions.CultureInvariant);
+        if (row.Contains("https://", StringComparison.Ordinal))
+            return new string(' ', row.Length);
+        return row;
+    }));
 }

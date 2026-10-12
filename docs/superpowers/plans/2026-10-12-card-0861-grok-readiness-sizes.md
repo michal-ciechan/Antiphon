@@ -22,7 +22,8 @@ tests/Antiphon.Tests/Agents/GrokSizeCaptureTests.cs (explicit manual capture);
 tests/Antiphon.Tests/Agents/Fixtures/card0861/ (retained regression inputs).
 Capture uses owned local PtyAgentRunner children, no model prompt, a fresh cwd,
 current authenticated home for ready/trust and an empty home for welcome sign-in.
-No raw output is exported. Record actual observations, never resize fixed-width
+No raw output is exported. Standalone device codes and URL rows are redacted in
+memory before persistence, preserving rendered width. Record actual observations, never resize fixed-width
 ANSI from the 120x30 fixture and claim it is a native capture.
 
 ## Verification design
@@ -61,8 +62,9 @@ UseAppHost=false on Linux; reused rows use the same source/build certificate.
 |---|---|---|---|---|---|---|---:|---:|---|---|
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-c861-capture/` | native-capture | `/*/*/GrokSizeCaptureTests/Capture_native_sizes` | M-1 | all 1 method, 0 failed/skipped | 1 | 5 | true | `C861_CAPTURE=1` |
 | CP-2 | S2 | `tests/Antiphon.Tests -> bin-c861-red/` | pre-fix-red | `/*/*/GrokStartupSizeTests/*` | V-1, V-2, V-3 | intended V-1 failures on base production; other rows inspected | 1 | 4 | true | n/a |
-| CP-3 | S3 | `tests/Antiphon.Tests -> bin-c861-final/` | sizes-and-fixtures | `/*/*/(GrokStartupSizeTests\|GrokStartupReadinessTests\|GrokLinuxStartupReadinessTests)/*` | V-1, V-2, V-3, R-1 | all listed, 0 failed/skipped | 30 | 4 | true | n/a |
-| CP-4 | S3 | CP-3 | adapters-and-blockers | `/*/*/(RunnerGrokAdapterReadyTests\|GrokLinuxBlockingPromptTests)/*` | V-4, R-1, R-2 | all listed, 0 failed/skipped | 30 | 3 | true | n/a |
+| CP-3 | S3 | `tests/Antiphon.Tests -> bin-c861-final/` | sizes-and-fixtures | `/*/*/(GrokStartupSizeTests*)\|(GrokStartupReadinessTests*)\|(GrokLinuxStartupReadinessTests*)/*` | V-1, V-2, V-3, R-1 | all listed, 0 failed/skipped | 30 | 4 | true | n/a |
+| CP-4 | S3 | CP-3 | adapters | `/*/*/RunnerGrokAdapterReadyTests/*` | V-4, R-2 | all listed, 0 failed/skipped | 18 | 2 | true | n/a |
+| CP-5 | S3 | CP-3 | blockers | `/*/*/GrokLinuxBlockingPromptTests/*` | R-1 | all listed, 0 failed/skipped | 11 | 1 | true | n/a |
 
 ### Cost
 
