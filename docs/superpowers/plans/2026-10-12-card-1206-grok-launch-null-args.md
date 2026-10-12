@@ -30,7 +30,7 @@ tests/Antiphon.SessionRunner.Tests/GrokLaunchArgsValidationTests.cs.
 ## Slices
 
 S1: commit/push this design. S2: commit/push tests with unchanged production;
-CP-1 proves null rows red on base production. S3: commit/push repair; CP-2/CP-3
+CP-1 proves null rows red on base production. S3: commit/push repair; CP-2..CP-5
 verify green. Evidence is ignored; store a concise Markdown report separately.
 
 ## Verification design
@@ -57,7 +57,9 @@ The brief explicitly excludes the broad Unit lane. Final covers every named
 full affected class above and every V/R; no full assembly or live acceptance.
 Invariant: malformed Grok argv is refused before registration, file writes or
 spawn; valid argv and prior validation keep their behavior. No unbounded class
-selection. No repeat required after green.
+selection. No repeat required after green. The first CP-2 combined-class filter
+selected zero tests (exit 3), so split it into literal class rows CP-2/CP-4/CP-5.
+CP-3 already passed at the repair SHA; retain that receipt without repetition.
 
 ## Positive controls pending SourceLanding Mutation
 
@@ -71,14 +73,16 @@ Every PC/variant stays pending; Code does no deliberate mutation cycles.
 
 ### Cost
 
-Red floor 6 minutes, ordinary green floor 6 + 6 = 12 minutes, authoring/report
-10-15 minutes. Each group uses isolated output and UseAppHost=false. CP-2
-shares one runner build for its three full classes; CP-3 runs sequentially.
+Red floor 6 minutes, ordinary green floor 4 + 6 + 2 + 4 = 16 minutes,
+authoring/report 10-15 minutes. Each group uses isolated output and
+UseAppHost=false. CP-2/CP-4/CP-5 share one runner build; CP-3 runs sequentially.
 
 ### Checkpoints
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
 | CP-1 | S2 | `tests/Antiphon.SessionRunner.Tests -> bin-c1206-red/` | grok-baseline | `/*/*/GrokLaunchArgsValidationTests/*` | V-1, V-2 | 6 executed; null list/element intentional NRE red, four controls green | 6 | 6 | true |
-| CP-2 | S3 | `tests/Antiphon.SessionRunner.Tests -> bin-c1206-runner/` | grok-validation | `/*/*/(GrokLaunchArgsValidationTests)\|(UnixPtyArgvAdmissionTests)\|(GrokRulesFileLaunchTests)/*` | V-1, V-2, R-1, R-3 | 42 executed, zero failed/skipped | 42 | 6 | true |
+| CP-2 | S3 | `tests/Antiphon.SessionRunner.Tests -> bin-c1206-runner/` | grok-validation | `/*/*/GrokLaunchArgsValidationTests/*` | V-1, V-2 | 6 executed, zero failed/skipped | 6 | 4 | true |
 | CP-3 | S3 | `tests/Antiphon.Agents.Pty.Tests -> bin-c1206-native/` | grok-native | `/*/*/UnixPtyArgvTests/*` | R-2 | 17 executed, zero failed/skipped | 17 | 6 | true |
+| CP-4 | S3 | `tests/Antiphon.SessionRunner.Tests -> bin-c1206-runner/` | argv-admission | `/*/*/UnixPtyArgvAdmissionTests/*` | R-1 | 15 executed, zero failed/skipped | 15 | 2 | true |
+| CP-5 | S3 | `tests/Antiphon.SessionRunner.Tests -> bin-c1206-runner/` | grok-rules-launch | `/*/*/GrokRulesFileLaunchTests/*` | R-3 | 21 executed, zero failed/skipped | 21 | 4 | true |
