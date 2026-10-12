@@ -955,7 +955,6 @@ Additional guard inventory:
 | G-165 | S7 F1: mask removal acknowledgement cannot replace positive absence | PC-165 |
 | G-166 | S7 F1: cache removal acknowledgement cannot replace positive absence | PC-166 |
 | G-167 | S7 F1: network removal acknowledgement cannot replace positive absence | PC-167 |
-
 | G-168 | S7 F1: Require exit 1 before admitting missing-resource output | PC-168 |
 | G-169 | S7 F1: Missing-resource response identifies the exact resource name | PC-169 |
 | G-170 | S7 F1: Missing-resource response identifies the resource kind | PC-170 |
@@ -966,12 +965,12 @@ Additional positive controls:
 | PC | Break guard | Detecting filter | Expected red assertion |
 |---|---|---|---|
 | PC-153 | G-153: In the consumer cleanup caller, substitute confirmed absence for unknown probe results. | `/*/*/RemoteScriptContractTests/C1192_Cleanup_consumer_requires_positive_absence` | `daemon-verdict` fails after the boundary is reached; all fourteen variants pending. |
-| PC-154 | G-154: In the helper cleanup caller, substitute confirmed absence for unknown probe results. | `/*/*/RemoteScriptContractTests/C1192_Cleanup_helper_requires_positive_absence` | `daemon-verdict` fails after the boundary is reached; all ten variants pending. |
-| PC-155 | G-155: In the masked cleanup caller, substitute confirmed absence for unknown probe results. | `/*/*/RemoteScriptContractTests/C1192_Cleanup_masked_requires_positive_absence` | `daemon-verdict` fails after the boundary is reached; all ten variants pending. |
-| PC-156 | G-156: In the work cleanup caller, substitute confirmed absence for unknown probe results. | `/*/*/RemoteScriptContractTests/C1192_Cleanup_work_requires_positive_absence` | `daemon-verdict` fails after the boundary is reached; all ten variants pending. |
-| PC-157 | G-157: In the mask cleanup caller, substitute confirmed absence for unknown probe results. | `/*/*/RemoteScriptContractTests/C1192_Cleanup_mask_requires_positive_absence` | `daemon-verdict` fails after the boundary is reached; all ten variants pending. |
-| PC-158 | G-158: In the cache cleanup caller, substitute confirmed absence for unknown probe results. | `/*/*/RemoteScriptContractTests/C1192_Cleanup_cache_requires_positive_absence` | `daemon-verdict` fails after the boundary is reached; all ten variants pending. |
-| PC-159 | G-159: In the network cleanup caller, substitute confirmed absence for unknown probe results. | `/*/*/RemoteScriptContractTests/C1192_Cleanup_network_requires_positive_absence` | `daemon-verdict` fails after the boundary is reached; all ten variants pending. |
+| PC-154 | G-154: In the helper cleanup caller, substitute confirmed absence for unknown probe results. | `/*/*/RemoteScriptContractTests/C1192_Cleanup_helper_requires_positive_absence` | `daemon-verdict` fails after the boundary is reached; all fourteen variants pending. |
+| PC-155 | G-155: In the masked cleanup caller, substitute confirmed absence for unknown probe results. | `/*/*/RemoteScriptContractTests/C1192_Cleanup_masked_requires_positive_absence` | `daemon-verdict` fails after the boundary is reached; all fourteen variants pending. |
+| PC-156 | G-156: In the work cleanup caller, substitute confirmed absence for unknown probe results. | `/*/*/RemoteScriptContractTests/C1192_Cleanup_work_requires_positive_absence` | `daemon-verdict` fails after the boundary is reached; all fourteen variants pending. |
+| PC-157 | G-157: In the mask cleanup caller, substitute confirmed absence for unknown probe results. | `/*/*/RemoteScriptContractTests/C1192_Cleanup_mask_requires_positive_absence` | `daemon-verdict` fails after the boundary is reached; all fourteen variants pending. |
+| PC-158 | G-158: In the cache cleanup caller, substitute confirmed absence for unknown probe results. | `/*/*/RemoteScriptContractTests/C1192_Cleanup_cache_requires_positive_absence` | `daemon-verdict` fails after the boundary is reached; all fourteen variants pending. |
+| PC-159 | G-159: In the network cleanup caller, substitute confirmed absence for unknown probe results. | `/*/*/RemoteScriptContractTests/C1192_Cleanup_network_requires_positive_absence` | `daemon-verdict` fails after the boundary is reached; all fourteen variants pending. |
 | PC-160 | G-160: Omit unknown-cleanup-outcome ledger append. | `/*/*/RemoteScriptContractTests/C1192_Daemon_loss_after_compose_refuses_success` | `daemon-ledger` fails; all four work/helper identity variants pending. |
 | PC-161 | G-161: Skip the post-removal probe for consumer. | `/*/*/RemoteScriptContractTests/C1192_Cleanup_consumer_requires_positive_absence` | `rm-lie-verdict` fails with exit-zero removal and retained object; pending. |
 | PC-162 | G-162: Skip the post-removal probe for helper. | `/*/*/RemoteScriptContractTests/C1192_Cleanup_helper_requires_positive_absence` | `rm-lie-verdict` fails with exit-zero removal and retained object; pending. |
@@ -980,7 +979,6 @@ Additional positive controls:
 | PC-165 | G-165: Skip the post-removal probe for mask. | `/*/*/RemoteScriptContractTests/C1192_Cleanup_mask_requires_positive_absence` | `rm-lie-verdict` fails with exit-zero removal and retained object; pending. |
 | PC-166 | G-166: Skip the post-removal probe for cache. | `/*/*/RemoteScriptContractTests/C1192_Cleanup_cache_requires_positive_absence` | `rm-lie-verdict` fails with exit-zero removal and retained object; pending. |
 | PC-167 | G-167: Skip the post-removal probe for network. | `/*/*/RemoteScriptContractTests/C1192_Cleanup_network_requires_positive_absence` | `rm-lie-verdict` fails with exit-zero removal and retained object; pending. |
-
 | PC-168 | G-168: Delete the exit-1 predicate in c849_fixture_resource_state. | `/*/*/RemoteScriptContractTests/C1192_Cleanup_consumer_requires_positive_absence` | `exit2-absent-verdict` fails at the post-Compose boundary; pending. |
 | PC-169 | G-169: Replace the exact identity in the accepted response with a wildcard. | `/*/*/RemoteScriptContractTests/C1192_Cleanup_consumer_requires_positive_absence` | `other-name-verdict` fails at the post-Compose boundary; pending. |
 | PC-170 | G-170: Accept any no-such text regardless of kind. | `/*/*/RemoteScriptContractTests/C1192_Cleanup_consumer_requires_positive_absence` | `other-kind-verdict and socket-verdict` fails at the post-Compose boundary; pending. |

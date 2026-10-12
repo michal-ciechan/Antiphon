@@ -2985,11 +2985,63 @@ c849_fixture_owned_name() {
     esac
 }
 
+# 0 present, 1 positively absent, 2 unknown. Docker also returns 1 for an
+# unavailable daemon. Only an exact daemon missing-resource response is absence;
+# an empty nonzero result, socket error, timeout or other output is unknown.
+c849_fixture_resource_state() {
+    local kind="$1" identity="$2" raw code=0 line missing=0
+    raw="$(docker "$kind" inspect "$identity" 2>&1)" || code=$?
+    [ "$code" != 0 ] || return 0
+    [ "$code" = 1 ] || return 2
+    while IFS= read -r line || [ -n "$line" ]; do
+        case "$line" in
+            ''|'[]') ;;
+            "Error response from daemon: No such $kind: $identity"|"Error: No such $kind: $identity"|"No such $kind: $identity") missing=1 ;;
+            "Error response from daemon: get $identity: no such volume")
+                [ "$kind" = volume ] || return 2; missing=1 ;;
+            "Error response from daemon: network $identity not found")
+                [ "$kind" = network ] || return 2; missing=1 ;;
+            "Error: No such object: $identity")
+                [ "$kind" = container ] || return 2; missing=1 ;;
+            *) return 2 ;;
+        esac
+    done <<< "$raw"
+    [ "$missing" = 1 ] || return 2
+    return 1
+}
+
+c849_fixture_cleanup_unknown() {
+    local kind="$1" identity="$2" name="${3:-$2}"
+    printf '%s\n' "$name" >> "$CASE_DIR/fixture-cleanup-residue.txt"
+    [ "$name" = "$identity" ] || printf '%s\n' "$identity" >> "$CASE_DIR/fixture-cleanup-residue.txt"
+    printf 'unknown-cleanup-outcome %s %s\n' "$kind" "$identity" >> "$CASE_DIR/fixture-cleanup-ledger.txt"
+    printf 'Fixture cleanup outcome unknown: %s %s; identity retained in cleanup residue\n' "$kind" "$identity" >&2
+}
+
+# A removal acknowledgement is not absence. Reinspect even after exit zero;
+# repeated removal is successful only when the exact resource is confirmed gone.
+c849_fixture_resource_remove() {
+    local kind="$1" identity="$2" name="${3:-$2}" state=0
+    case "$kind" in
+        container) docker rm -f "$identity" >/dev/null 2>&1 || true ;;
+        volume|network) docker "$kind" rm "$identity" >/dev/null 2>&1 || true ;;
+    esac
+    c849_fixture_resource_state "$kind" "$identity" || state=$?
+    case "$state" in
+        1) ;;
+        0) printf '%s\n' "$name" >> "$CASE_DIR/fixture-cleanup-residue.txt"
+            [ "$name" = "$identity" ] || printf '%s\n' "$identity" >> "$CASE_DIR/fixture-cleanup-residue.txt"
+            printf 'cleanup-object-present %s %s\n' "$kind" "$identity" >> "$CASE_DIR/fixture-cleanup-ledger.txt" ;;
+        *) c849_fixture_cleanup_unknown "$kind" "$identity" "$name" ;;
+    esac
+    return 0
+}
+
 # 0 absent, 1 occupied, 2 unknown. A failed census or inspect is not absence.
 c849_fixture_workspace_lookup() {
     local name="$1" listed code=0
     listed="$(docker volume ls -q)" || return 2
-    docker volume inspect "$name" >/dev/null 2>&1 || code=$?
+    c849_fixture_resource_state volume "$name" || code=$?
     if [ "$code" = 0 ]; then return 1; fi
     if [ "$code" != 1 ]; then return 2; fi
     if printf '%s\n' "$listed" | grep -Fxq -- "$name"; then return 1; fi
@@ -2998,7 +3050,7 @@ c849_fixture_workspace_lookup() {
 
 c849_fixture_helper_lookup() {
     local name="$1" code=0
-    docker container inspect "$name" >/dev/null 2>&1 || code=$?
+    c849_fixture_resource_state container "$name" || code=$?
     if [ "$code" = 0 ]; then return 1; fi
     if [ "$code" != 1 ]; then return 2; fi
     return 0
@@ -3135,7 +3187,7 @@ c849_fixture_workspace_init() {
 # 0 labels match, 1 confirmed absent, 2 unknown lookup, 3 wrong label.
 c849_fixture_workspace_labels_ok() {
     local name="$1" role="$2" code=0 owner run actual
-    docker volume inspect "$name" >/dev/null 2>&1 || code=$?
+    c849_fixture_resource_state volume "$name" || code=$?
     case "$code" in
         0) ;;
         1) return 1 ;;
@@ -3159,35 +3211,38 @@ c849_fixture_helper_release() {
         "c849-${RUN}-apphost") role=apphost ;;
         *) return 0 ;;
     esac
-    docker container inspect "$name" >/dev/null 2>&1 || code=$?
+    c849_fixture_resource_state container "$name" || code=$?
     case "$code" in
         0) ;;
         1) return 0 ;;
-        *) printf '%s\n' "$name" >> "$CASE_DIR/fixture-cleanup-residue.txt"; return 0 ;;
+        *) c849_fixture_cleanup_unknown container "$name"; return 0 ;;
     esac
     owner="$(docker inspect -f '{{index .Config.Labels "io.antiphon.owner"}}' "$name")" || {
-        printf '%s\n' "$name" >> "$CASE_DIR/fixture-cleanup-residue.txt"; return 0; }
+        c849_fixture_cleanup_unknown container "$name"; return 0; }
     run="$(docker inspect -f '{{index .Config.Labels "io.antiphon.fixture-run"}}' "$name")" || {
-        printf '%s\n' "$name" >> "$CASE_DIR/fixture-cleanup-residue.txt"; return 0; }
+        c849_fixture_cleanup_unknown container "$name"; return 0; }
     actual="$(docker inspect -f '{{index .Config.Labels "io.antiphon.fixture-role"}}' "$name")" || {
-        printf '%s\n' "$name" >> "$CASE_DIR/fixture-cleanup-residue.txt"; return 0; }
+        c849_fixture_cleanup_unknown container "$name"; return 0; }
     if [ "$owner" != c849-fixture ] || [ "$run" != "$RUN" ] || [ "$actual" != "$role" ]; then
         printf '%s\n' "$name" >> "$CASE_DIR/fixture-cleanup-residue.txt"
         return 0
     fi
-    docker rm -f "$name" >/dev/null 2>&1 || printf '%s\n' "$name" >> "$CASE_DIR/fixture-cleanup-residue.txt"
+    c849_fixture_resource_remove container "$name"
     return 0
 }
 
 c849_fixture_cleanup() {
     local name code=0
-    [ "${1:-}" = keep ] || : > "$CASE_DIR/fixture-cleanup-residue.txt"
+    if [ "${1:-}" != keep ]; then
+        : > "$CASE_DIR/fixture-cleanup-residue.txt"
+        : > "$CASE_DIR/fixture-cleanup-ledger.txt"
+    fi
     for name in "c849-${RUN}-restore-p1" "c849-${RUN}-restore-p2" "c849-${RUN}-restore-p3" \
         "c849-${RUN}-lock-holder-shared" "c849-${RUN}-lock-waiter-shared" \
         "c849-${RUN}-lock-holder-private" "c849-${RUN}-lock-waiter-private" \
         "c849-${RUN}-apphost-miss" "c849-${RUN}-npm-fill" \
         "c849-${RUN}-npm-b" "c849-${RUN}-npm-b-empty"; do
-        docker rm -f "$name" >/dev/null 2>&1 || true
+        c849_fixture_consumer_release "$name"
     done
     # S6 consumers can remain after a failed start; release them before the
     # standing workspace reader/writer, still using exact labeled identities.
@@ -3208,16 +3263,14 @@ c849_fixture_cleanup() {
             "c849${RUN}-work"|"c849${RUN}-mask")
                 c849_fixture_workspace_labels_ok "$name" "${name##*-}" || code=$?
                 case "$code" in
-                    0) docker volume rm "$name" >/dev/null 2>&1 || printf '%s\n' "$name" >> "$CASE_DIR/fixture-cleanup-residue.txt" ;;
+                    0) c849_fixture_resource_remove volume "$name" ;;
                     1) ;;
+                    2) c849_fixture_cleanup_unknown volume "$name" ;;
                     *) printf '%s\n' "$name" >> "$CASE_DIR/fixture-cleanup-residue.txt" ;;
                 esac
                 code=0
                 ;;
-            *) docker volume rm "$name" >/dev/null 2>&1 || {
-                code=0; docker volume inspect "$name" >/dev/null 2>&1 || code=$?
-                [ "$code" = 1 ] || printf '%s\n' "$name" >> "$CASE_DIR/fixture-cleanup-residue.txt"
-                code=0; } ;;
+            *) c849_fixture_resource_remove volume "$name" ;;
         esac
     done < "$CASE_DIR/.fixture-volumes"
     return 0
@@ -4407,22 +4460,24 @@ c849_fixture_controller_remove() {
     )
 }
 
-# Exact names can be absent on repeated finalization. Unknown lookups or failed
-# removals retain a named residue and never count as successful disposal.
+# Exact names may be positively absent on repeated finalization. Unknown probes
+# (including daemon loss with exit 1) retain identities and refuse success.
+# This is a refusal contract; native Docker acceptance remains rollout-owned W-1.
 c849_fixture_consumer_release() {
     local name="$1" identity="${2:-$1}" code=0 actual
-    docker container inspect "$identity" >/dev/null 2>&1 || code=$?
-    case "$code" in 1) return 0 ;; 0) ;; *) printf '%s\n' "$name" >> "$CASE_DIR/fixture-cleanup-residue.txt"; return 0 ;; esac
+    c849_fixture_resource_state container "$identity" || code=$?
+    case "$code" in 1) return 0 ;; 0) ;; *) c849_fixture_cleanup_unknown container "$identity" "$name"; return 0 ;; esac
     actual="$(docker inspect -f '{{.Name}}' "$identity")" || {
-        printf '%s\n' "$name" >> "$CASE_DIR/fixture-cleanup-residue.txt"; return 0; }
+        c849_fixture_cleanup_unknown container "$identity" "$name"; return 0; }
     [ "$actual" = "/$name" ] || { printf '%s\n' "$name" >> "$CASE_DIR/fixture-cleanup-residue.txt"; return 0; }
-    docker rm -f "$identity" >/dev/null 2>&1 || printf '%s\n' "$name" >> "$CASE_DIR/fixture-cleanup-residue.txt"
+    c849_fixture_resource_remove container "$identity" "$name"
 }
 
 c849_fixture_finalize() {
     local project file name marker identity network="c849-${RUN}-npm" code=0 owned=0
     [ "${C849_FIXTURE_FINALIZED:-0}" != 1 ] || return "${C849_FIXTURE_FINALIZATION_STATUS:-0}"
     : > "$CASE_DIR/fixture-cleanup-residue.txt"
+    : > "$CASE_DIR/fixture-cleanup-ledger.txt"
     rm -f -- "$CASE_DIR/.fixture-escape" || printf 'escape-link\n' >> "$CASE_DIR/fixture-cleanup-residue.txt"
     if c849_fixture_controller_owned; then
         owned=1
@@ -4472,11 +4527,11 @@ c849_fixture_finalize() {
     c849_fixture_cleanup keep
     if [ -s "$CASE_DIR/.fixture-network" ]; then
         if [ "$(cat -- "$CASE_DIR/.fixture-network")" = "$network" ]; then
-            docker network inspect "$network" >/dev/null 2>&1 || code=$?
+            c849_fixture_resource_state network "$network" || code=$?
             case "$code" in
-                0) docker network rm "$network" >/dev/null 2>&1 || printf '%s\n' "$network" >> "$CASE_DIR/fixture-cleanup-residue.txt" ;;
+                0) c849_fixture_resource_remove network "$network" ;;
                 1) ;;
-                *) printf '%s\n' "$network" >> "$CASE_DIR/fixture-cleanup-residue.txt" ;;
+                *) c849_fixture_cleanup_unknown network "$network" ;;
             esac
         else
             printf 'fixture-network-identity\n' >> "$CASE_DIR/fixture-cleanup-residue.txt"
