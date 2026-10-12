@@ -71,8 +71,8 @@ public class SessionRunnerHeldEventDeliveryTests
     [Timeout(30_000)]
     public async Task C1205_Last_transcript_pull_cancellation_preserves_one_output()
     {
-        // PC-118 removes the post-sync cancellation check. Normal dispatch then supplies
-        // a cancelled token, and this cancellation-aware consumer accepts zero outputs.
+        // PC-118 skips the common offer when the host is already cancelled, leaving
+        // following-copy suppression unchanged. Accepted.ShouldBe(1) then observes zero.
         // PC-119 links the already-cancelled host before the initial preservation offer.
         await using var h = new DeliveryHarness(blockCallback: false, holdLastPull: true);
         await h.Pump.StartAsync(h.Host.Token);
@@ -95,7 +95,7 @@ public class SessionRunnerHeldEventDeliveryTests
     [Arguments(false, true)]
     public async Task C1205_Catchup_exception_survives_bounded_held_delivery(bool catchupThrows, bool blockCallback)
     {
-        // PC-172 restores the finally's unconditional TimeoutException: the original
+        // PC-172 removes the finally's captured-exception filter: the original
         // catch-up cancellation type/message is lost only on the blocked throw row.
         // PC-173 removes the late callback observer; the late-fault barrier is missed.
         // PC-174 skips the offer on exceptional unwind; the completed control loses output.
@@ -104,9 +104,11 @@ public class SessionRunnerHeldEventDeliveryTests
         await h.Pump.StartAsync(h.Host.Token);
         await h.Handler.SecondListEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
         h.Handler.FailList.TrySetResult();
-        await h.Bus.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var offered = await FinishesAsync(h.Bus.Entered.Task);
+        offered.ShouldBeTrue("exceptional unwind must offer the held output before disposing its iterator");
         if (blockCallback) h.Time.Advance(TimeSpan.FromSeconds(3));
-        await h.Log.Disconnected.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var disconnected = await FinishesAsync(h.Log.Disconnected.Task);
+        disconnected.ShouldBeTrue("bounded preservation must unwind before callback release");
 
         h.Handler.Stream.Disposed.ShouldBeTrue();
         h.Bus.Attempts.ShouldBe(1);
@@ -128,7 +130,8 @@ public class SessionRunnerHeldEventDeliveryTests
             h.Bus.Release.Task.IsCompleted.ShouldBeFalse();
             h.Bus.Accepted.ShouldBe(0);
             h.Bus.Release.TrySetException(new InvalidOperationException("controlled late callback fault"));
-            await h.Log.LateFault.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var observed = await FinishesAsync(h.Log.LateFault.Task);
+            observed.ShouldBeTrue("the retained callback's late fault must be observed");
             h.Log.LateFaultException.ShouldBeOfType<InvalidOperationException>();
             h.Log.LateFaultException!.Message.ShouldBe("controlled late callback fault");
             await Task.WhenAll(h.ScopeDisposals).WaitAsync(TimeSpan.FromSeconds(5));
