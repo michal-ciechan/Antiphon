@@ -357,11 +357,20 @@ public sealed class CardWorktreeCleanupRecoveryTests
 
     private static ValidateOptionsResult BindAndValidate(string? raw)
     {
-        var bound = BuildOptions(raw).GetRequiredService<IOptions<WorktreeResidueSettings>>().Value;
+        var bound = new WorktreeResidueSettings();
+        BuildConfiguration(raw).GetSection("WorktreeResidue").Bind(bound);
         return new WorktreeResidueSettingsValidator().Validate(null, bound);
     }
 
     private static ServiceProvider BuildOptions(string? raw)
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton<IValidateOptions<WorktreeResidueSettings>, WorktreeResidueSettingsValidator>();
+        services.AddOptions<WorktreeResidueSettings>().Bind(BuildConfiguration(raw).GetSection("WorktreeResidue")).ValidateOnStart();
+        return services.BuildServiceProvider();
+    }
+
+    private static IConfiguration BuildConfiguration(string? raw)
     {
         var values = new Dictionary<string, string?>
         {
@@ -375,11 +384,7 @@ public sealed class CardWorktreeCleanupRecoveryTests
             ["WorktreeResidue:LaunchGraceMinutes"] = "15",
         };
         if (raw is not null) values["WorktreeResidue:CardDoneAfterUtc"] = raw;
-        var config = new ConfigurationBuilder().AddInMemoryCollection(values).Build();
-        var services = new ServiceCollection();
-        services.AddSingleton<IValidateOptions<WorktreeResidueSettings>, WorktreeResidueSettingsValidator>();
-        services.AddOptions<WorktreeResidueSettings>().Bind(config.GetSection("WorktreeResidue")).ValidateOnStart();
-        return services.BuildServiceProvider();
+        return new ConfigurationBuilder().AddInMemoryCollection(values).Build();
     }
 
     private static async Task PinCardUpdatedAtAsync(CompletedCardCleanupFixture fixture, DateTime doneAt)
