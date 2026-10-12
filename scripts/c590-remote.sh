@@ -3122,7 +3122,7 @@ c849_fixture_tree_fault() {
 }
 
 c849_fixture_seed() {
-    local image donor tree name before after recovery npm_work
+    local image donor tree name before after recovery npm_status=0
     image="$(c849_image)" || {
         if [ "$?" = 11 ]; then write_result false CacheDonorLookupFailed 2; fi
         write_result false CacheHelperImageMissing 2
@@ -3162,17 +3162,12 @@ c849_fixture_seed() {
         || write_result false FixtureDonorSetupFailed 2
     docker cp "$tree/packages/." "$donor:/home/app/.nuget/packages/" \
         || write_result false FixtureDonorCopyFailed 2
-    npm_work="$SERVER2_ROOT/npm-work"
-    mkdir -p "$npm_work/package" "$npm_work/cache"
-    printf '{"name":"c849-fixture","version":"1.0.0"}\n' > "$npm_work/package/package.json"
-    printf 'C849_NPM_SEED\n' > "$npm_work/package/sentinel"
-    tar -czf "$npm_work/package.tgz" -C "$npm_work" package
-    docker run --rm --network none --user 0:0 --entrypoint npm \
-        --mount "type=bind,source=$npm_work,target=/fixture" "$image" \
-        cache add /fixture/package.tgz --cache /fixture/cache >/dev/null \
-        || write_result false FixtureNpmCacheCreateFailed 2
-    docker cp "$npm_work/cache/_cacache/." "$donor:/home/app/.npm/_cacache/" \
-        || write_result false FixtureDonorNpmCopyFailed 2
+    c849_fixture_npm_work "$image" "$donor" || npm_status=$?
+    case "$npm_status" in
+        0) ;;
+        3) write_result false FixtureDonorNpmCopyFailed 2 ;;
+        *) write_result false FixtureNpmCacheCreateFailed 2 ;;
+    esac
     c849_fixture_control PC-11 CacheDonorIdentityInvalid c849_fixture_wrong_donor
     # c849_seed's success calls write_result, which would publish the case receipt from this
     # subshell and leave the parent WROTE flag at 0. Print and exit the subshell only.
@@ -3312,6 +3307,16 @@ c849_fixture_volume_test_exists() {
         *) return 1 ;;
     esac
     c849_fixture_helper_exec reader /bin/sh -c 'test -e "$1"' sh "$path"
+}
+
+# Reader stdout is the file body. The path stays an argument.
+c849_fixture_volume_read() {
+    local path="$1"
+    case "$path" in
+        /fixture/*) ;;
+        *) return 2 ;;
+    esac
+    c849_fixture_helper_exec reader /bin/sh -c 'cat -- "$1"' sh "$path"
 }
 
 c849_fixture_restore_container() {
@@ -3555,32 +3560,71 @@ c849_fixture_apphost() {
     printf 'PASS F-5\n' >> "$CASE_DIR/fixture-groups.txt"
 }
 
-c849_fixture_npm_install() {
-    local image="$1"
-    local root="$2"
-    local cache="$3"
-    local project="$4"
-    local output="$SERVER2_ROOT/npm-$project.log"
-    local code=0
-    docker run --rm --name "c849-${RUN}-npm-$project" --network none --user 1654:1654 \
-        --entrypoint /bin/sh -e HOME=/home/app -e NPM_CONFIG_CACHE=/home/app/.npm \
-        --mount "type=volume,source=$cache,target=/home/app/.npm/_cacache,volume-nocopy" \
-        --mount "type=bind,source=$root,target=/fixture" "$image" \
-        -c 'cd "/fixture/$1"; npm ci --offline --ignore-scripts --no-audit --no-fund' sh "$project" \
-        > "$output" 2>&1 || code=$?
-    [ "$code" -eq 0 ] || { grep -Fq ENOTCACHED "$output" && { printf 'NpmOfflineCacheMiss\n'; return 2; }; return 1; }
-    [ -s "$root/$project/node_modules/c849-cache-probe/sentinel" ] \
-        && [ "$(cat "$root/$project/node_modules/c849-cache-probe/sentinel")" = C849_NPM_OFFLINE ] \
+# Seed cache is built on the work volume, then streamed to the donor. Return 3
+# is a donor-copy failure. Any earlier failure is cache creation.
+c849_fixture_npm_work() {
+    local image="$1" donor="$2" work_mount
+    work_mount="$(c849_fixture_work_mount)" || return 1
+    c849_fixture_volume_mkdir /fixture/npm-work/package /fixture/npm-work/cache || return 1
+    printf '{"name":"c849-fixture","version":"1.0.0"}\n' \
+        | c849_fixture_volume_write /fixture/npm-work/package/package.json || return 1
+    printf 'C849_NPM_SEED\n' \
+        | c849_fixture_volume_write /fixture/npm-work/package/sentinel || return 1
+    docker exec -u 0:0 "c849-${RUN}-writer" /bin/sh -c \
+        'tar -czf "$1" -C "$2" package' sh /fixture/npm-work/package.tgz /fixture/npm-work \
+        || return 1
+    docker run --rm --network none --user 0:0 --entrypoint npm \
+        --mount "$work_mount" "$image" \
+        cache add /fixture/npm-work/package.tgz --cache /fixture/npm-work/cache >/dev/null \
+        || return 2
+    c849_fixture_copy_npm_cache_to_donor "$donor" || return 3
+}
+
+# Name and compose project are checked before the cache stream is written.
+c849_fixture_copy_npm_cache_to_donor() {
+    local donor="$1" name project
+    name="$(docker inspect -f '{{.Name}}' "$donor")" || return 1
+    [ "$name" = "/c849-${RUN}-donor" ] || return 1
+    project="$(docker inspect -f '{{index .Config.Labels "com.docker.compose.project"}}' "$donor")" || return 1
+    [ "$project" = "c849${RUN}temp" ] || return 1
+    docker exec -u 0:0 "c849-${RUN}-writer" /bin/sh -c 'tar -C "$1" -cf - .' sh /fixture/npm-work/cache/_cacache \
+        | docker exec -i -u 0:0 "$donor" /bin/sh -c 'tar -C "$1" -xf -' sh /home/app/.npm/_cacache \
         || return 1
 }
 
+c849_fixture_npm_install() {
+    local image="$1"
+    local cache="$2"
+    local project="$3"
+    # The log path is assigned after project is local. One local statement would
+    # expand project while it is still unset under set -u.
+    local output="$SERVER2_ROOT/npm-$project.log"
+    local code=0
+    local path="/fixture/npm-offline/$project/node_modules/c849-cache-probe/sentinel"
+    local work_mount bytes
+    work_mount="$(c849_fixture_work_mount)" || return 1
+    c849_fixture_cache_mount_ok "$cache" npm-content || return 1
+    docker run --rm --name "c849-${RUN}-npm-$project" --network none --user 1654:1654 \
+        --entrypoint /bin/sh -e HOME=/home/app -e NPM_CONFIG_CACHE=/home/app/.npm \
+        --mount "$work_mount" \
+        --mount "type=volume,source=$cache,target=/home/app/.npm/_cacache,volume-nocopy" \
+        "$image" \
+        -c 'cd "/fixture/npm-offline/$1"; npm ci --offline --ignore-scripts --no-audit --no-fund' sh "$project" \
+        > "$output" 2>&1 || code=$?
+    [ "$code" -eq 0 ] || { grep -Fq ENOTCACHED "$output" && { printf 'NpmOfflineCacheMiss\n'; return 2; }; return 1; }
+    # Missing is test -f. Exact bytes are a second check. ENOTCACHED is the only
+    # stdout that becomes NpmOfflineCacheMiss.
+    c849_fixture_volume_test_file "$path" || return 1
+    bytes="$(c849_fixture_volume_read "$path")" || return 1
+    [ "$bytes" = C849_NPM_OFFLINE ] || return 1
+}
+
 c849_fixture_npm() {
-    local image root cache empty_cache network integrity name
+    local image cache empty_cache network integrity name work_mount
     image="$(c849_image)" || {
         if [ "$?" = 11 ]; then write_result false CacheDonorLookupFailed 2; fi
         write_result false CacheHelperImageMissing 2
     }
-    root="$SERVER2_ROOT/npm-offline"
     cache="c849${RUN}npmcache-npm"; empty_cache="c849${RUN}npmempty-npm"
     network="c849-${RUN}-npm"
     for name in "$cache" "$empty_cache"; do
@@ -3590,38 +3634,53 @@ c849_fixture_npm() {
     C849_NPM="$cache"; c849_volume "$cache" npm-content yes "$image"
     C849_NPM="$empty_cache"; c849_volume "$empty_cache" npm-content yes "$image"
     C849_NPM="$cache"
-    mkdir -p "$root/package" "$root/b" "$root/b-empty"
-    printf '{"name":"c849-cache-probe","version":"1.0.0"}\n' > "$root/package/package.json"
-    printf 'C849_NPM_OFFLINE\n' > "$root/package/sentinel"
-    tar -czf "$root/pkg.tgz" -C "$root" package
-    cat > "$root/hash-tarball.ps1" <<'PS'
+    work_mount="$(c849_fixture_work_mount)" || write_result false FixtureWorkspaceForeign 2
+    c849_fixture_volume_mkdir /fixture/npm-offline/package /fixture/npm-offline/b /fixture/npm-offline/b-empty \
+        || write_result false FixtureNpmOfflineSetupFailed 2
+    printf '{"name":"c849-cache-probe","version":"1.0.0"}\n' \
+        | c849_fixture_volume_write /fixture/npm-offline/package/package.json \
+        || write_result false FixtureNpmOfflineSetupFailed 2
+    printf 'C849_NPM_OFFLINE\n' \
+        | c849_fixture_volume_write /fixture/npm-offline/package/sentinel \
+        || write_result false FixtureNpmOfflineSetupFailed 2
+    docker exec -u 0:0 "c849-${RUN}-writer" /bin/sh -c \
+        'tar -czf "$1" -C "$2" package' sh /fixture/npm-offline/pkg.tgz /fixture/npm-offline \
+        || write_result false FixtureNpmOfflineSetupFailed 2
+    c849_fixture_volume_write /fixture/npm-offline/hash-tarball.ps1 <<'PS' || write_result false FixtureNpmOfflineSetupFailed 2
 param([Parameter(Mandatory)][string]$Path)
 $bytes = [System.Security.Cryptography.SHA512]::HashData([System.IO.File]::ReadAllBytes($Path))
 [Console]::Out.Write([Convert]::ToBase64String($bytes))
 PS
-    # Same host gap as F-4. -File binds the tarball; -Command would swallow the path.
+    # -File passes the tarball path. -Command would swallow it.
     integrity="$(docker run --rm --network none --user 0:0 --entrypoint pwsh \
-        --mount "type=bind,source=$root,target=/fixture,readonly" \
-        "$image" -NoProfile -File /fixture/hash-tarball.ps1 -Path /fixture/pkg.tgz)" \
+        --mount "${work_mount},readonly" \
+        "$image" -NoProfile -File /fixture/npm-offline/hash-tarball.ps1 -Path /fixture/npm-offline/pkg.tgz)" \
         || write_result false FixtureNpmIntegrityFailed 2
-    cat > "$root/server.js" <<'JS'
+    c849_fixture_volume_write /fixture/npm-offline/server.js <<'JS' || write_result false FixtureNpmOfflineSetupFailed 2
 const http = require('http'); const fs = require('fs');
 http.createServer((req, res) => {
   if (req.url !== '/pkg.tgz') { res.writeHead(404); res.end(); return; }
   res.writeHead(200, {'Content-Type': 'application/octet-stream'});
-  fs.createReadStream('/fixture/pkg.tgz').pipe(res);
+  fs.createReadStream('/fixture/npm-offline/pkg.tgz').pipe(res);
 }).listen(8080, '0.0.0.0');
 JS
-    printf '{"name":"c849-consumer","version":"1.0.0","dependencies":{"c849-cache-probe":"1.0.0"}}\n' > "$root/b/package.json"
+    printf '{"name":"c849-consumer","version":"1.0.0","dependencies":{"c849-cache-probe":"1.0.0"}}\n' \
+        | c849_fixture_volume_write /fixture/npm-offline/b/package.json \
+        || write_result false FixtureNpmOfflineSetupFailed 2
     printf '{"name":"c849-consumer","version":"1.0.0","lockfileVersion":3,"requires":true,"packages":{"":{"name":"c849-consumer","version":"1.0.0","dependencies":{"c849-cache-probe":"1.0.0"}},"node_modules/c849-cache-probe":{"version":"1.0.0","resolved":"http://c849-npm-http:8080/pkg.tgz","integrity":"sha512-%s"}}}\n' \
-        "$integrity" > "$root/b/package-lock.json"
-    cp "$root/b/package.json" "$root/b/package-lock.json" "$root/b-empty/"
-    sudo -n chown -R 1654:1654 "$root"
+        "$integrity" | c849_fixture_volume_write /fixture/npm-offline/b/package-lock.json \
+        || write_result false FixtureNpmOfflineSetupFailed 2
+    docker exec -u 0:0 "c849-${RUN}-writer" /bin/sh -c 'cp -- "$1" "$2" "$3/"' sh \
+        /fixture/npm-offline/b/package.json /fixture/npm-offline/b/package-lock.json /fixture/npm-offline/b-empty \
+        || write_result false FixtureNpmOfflineSetupFailed 2
+    # Files just written above are root-owned. npm ci and the server run as 1654.
+    docker exec -u 0:0 "c849-${RUN}-writer" /bin/sh -c 'chown -R 1654:1654 -- "$1"' sh /fixture/npm-offline \
+        || write_result false FixtureNpmOfflineSetupFailed 2
     docker network create "$network" >/dev/null || write_result false FixtureNpmNetworkFailed 2
     printf '%s\n' "$network" > "$CASE_DIR/.fixture-network"
     docker run -d --name "c849-${RUN}-npm-http" --network "$network" --network-alias c849-npm-http \
         --user 1654:1654 --entrypoint node \
-        --mount "type=bind,source=$root,target=/fixture,readonly" "$image" /fixture/server.js >/dev/null \
+        --mount "${work_mount},readonly" "$image" /fixture/npm-offline/server.js >/dev/null \
         || write_result false FixtureNpmServerFailed 2
     printf 'c849-%s-npm-http\n' "$RUN" > "$CASE_DIR/.fixture-npm-server"
     docker run --rm --network "$network" --entrypoint /bin/sh "$image" \
@@ -3634,9 +3693,9 @@ JS
         || write_result false FixtureNpmFillFailed 2
     docker rm -f "c849-${RUN}-npm-http" >/dev/null || write_result false FixtureNpmServerCleanupFailed 2
     rm -f "$CASE_DIR/.fixture-npm-server"
-    c849_fixture_npm_install "$image" "$root" "$cache" b \
+    c849_fixture_npm_install "$image" "$cache" b \
         || write_result false FixtureNpmOfflineFailed 2
-    c849_fixture_control PC-19 NpmOfflineCacheMiss c849_fixture_npm_install "$image" "$root" "$empty_cache" b-empty
+    c849_fixture_control PC-19 NpmOfflineCacheMiss c849_fixture_npm_install "$image" "$empty_cache" b-empty
     printf 'PASS F-6\n' >> "$CASE_DIR/fixture-groups.txt"
 }
 
@@ -3748,13 +3807,21 @@ EOF
     printf 'PASS F-7\n' >> "$CASE_DIR/fixture-groups.txt"
 }
 
-c849_fixture_refill() {
-    local image="$1" helper="c849-${RUN}-prune-smoke" npm_work="$SERVER2_ROOT/npm-offline"
+# Refill reads the offline tarball from the work volume. Checkout script binds stay below.
+c849_fixture_refill_tarball() {
+    local image="$1" work_mount
+    c849_fixture_cache_mount_ok "$C849_NPM" npm-content || return 1
+    work_mount="$(c849_fixture_work_mount)" || return 1
     docker run --rm --network none --user 1654:1654 --entrypoint npm \
         -e HOME=/home/app -e NPM_CONFIG_CACHE=/home/app/.npm \
-        --mount "type=bind,source=$npm_work,target=/fixture,readonly" \
+        --mount "${work_mount},readonly" \
         --mount "type=volume,source=$C849_NPM,target=/home/app/.npm/_cacache,volume-nocopy" \
-        "$image" cache add /fixture/pkg.tgz >/dev/null \
+        "$image" cache add /fixture/npm-offline/pkg.tgz
+}
+
+c849_fixture_refill() {
+    local image="$1" helper="c849-${RUN}-prune-smoke"
+    c849_fixture_refill_tarball "$image" >/dev/null \
         || write_result false CacheRefillFailed 2
     docker run -d --name "$helper" --network antiphon-build-slots --user 1654:1654 --entrypoint sleep \
         -e HOME=/home/app -e NUGET_PACKAGES=/home/app/.nuget/packages \

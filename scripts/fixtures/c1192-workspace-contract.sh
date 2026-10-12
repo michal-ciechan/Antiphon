@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# CARD-1192 S1 workspace model and S2 race barriers. Extracted c849_* functions
-# against a filesystem Docker model. Never source dispatch. Never call the host docker daemon.
+# CARD-1192 S1 workspace model, S2 race barriers, and S3 npm volume reads.
+# Extracted c849_* functions against a filesystem Docker model.
+# Never source dispatch. Never call the host docker daemon.
 set -euo pipefail
 shopt -s nullglob
 
@@ -266,6 +267,7 @@ export PATH="$root/bin:$PATH"
 : > "$root/real-docker"
 : > "$root/argv"
 : > "$root/race-mounts"
+: > "$root/run-log"
 : > "$root/sleeps"
 remote="$repo/scripts/c590-remote.sh"
 awk '/^(c849_[a-z_]+|case_runner_cache_inventory)\(\) \{/ { active=1 } active { print } active && /^}$/ { active=0 }' "$remote" \
@@ -333,6 +335,7 @@ reset_runtime() {
     : > "$C1192_ROOT/chown.log"
     : > "$C1192_ROOT/argv"
     : > "$C1192_ROOT/race-mounts"
+    : > "$C1192_ROOT/run-log"
     : > "$C1192_ROOT/sleeps"
     rm -f "$C1192_ROOT/probe-at-handoff" "$C1192_ROOT/shared-before" "$C1192_ROOT/private-before-release"
     rm -rf "$CASE_DIR/fixture-controller"
@@ -711,7 +714,7 @@ parse_run_create() {
     while [ $# -gt 0 ]; do
         case "$1" in
             --rm|-d|-i|-t|-q) shift ;;
-            --name|--network|--user|--entrypoint|-u|-w|--workdir|-e|--env|--env-file)
+            --name|--network|--user|--entrypoint|-u|-w|--workdir|-e|--env|--env-file|--network-alias)
                 local flag="$1" value="$2"
                 shift 2
                 case "$flag" in
@@ -765,6 +768,68 @@ docker_create() {
     store_container "$PARSED_NAME" "$PARSED_IMAGE" "$PARSED_MOUNTS" "$PARSED_LABELS"
 }
 
+simulate_npm_cache_add() {
+    local joined="${PARSED_CMD[*]:-}" data cache_data
+    if [[ "$joined" == *'/fixture/npm-work/package.tgz'* ]]; then
+        data=$(volume_data_for_target /fixture) || return 97
+        [ -f "$data/npm-work/package.tgz" ] || return 1
+        mkdir -p "$data/npm-work/cache/_cacache"
+        printf 'entry\n' > "$data/npm-work/cache/_cacache/entry"
+        return 0
+    fi
+    if [[ "$joined" == *'/fixture/npm-offline/pkg.tgz'* ]]; then
+        data=$(volume_data_for_target /fixture) || return 97
+        [ -f "$data/npm-offline/pkg.tgz" ] || return 1
+        cache_data=$(volume_data_for_target /home/app/.npm/_cacache) || return 97
+        mkdir -p "$cache_data"
+        printf 'entry\n' > "$cache_data/entry"
+        return 0
+    fi
+    if [[ "$joined" == *'http://c849-npm-http:8080/pkg.tgz'* ]]; then
+        cache_data=$(volume_data_for_target /home/app/.npm/_cacache) || return 97
+        mkdir -p "$cache_data"
+        printf 'entry\n' > "$cache_data/entry"
+        return 0
+    fi
+    printf 'UNEXPECTED-NPM %s\n' "$joined" >> "$C1192_ROOT/scenario.err"
+    return 97
+}
+
+simulate_npm_ci() {
+    local project data cache_source
+    project="${PARSED_CMD[-1]:-}"
+    [ -n "$project" ] || return 97
+    data=$(volume_data_for_target /fixture) || return 97
+    cache_source=$(mount_source_for_target /home/app/.npm/_cacache) || return 97
+    case "${C1192_FAULT:-}" in
+        npm-enotcached)
+            printf 'ENOTCACHED\n'
+            return 1
+            ;;
+        npm-other)
+            printf 'other-failure\n'
+            return 1
+            ;;
+    esac
+    case "$cache_source" in
+        *npmempty*)
+            printf 'ENOTCACHED\n'
+            return 1
+            ;;
+    esac
+    case "${C1192_FAULT:-}" in
+        npm-missing) return 0 ;;
+        npm-wrong)
+            mkdir -p "$data/npm-offline/$project/node_modules/c849-cache-probe"
+            printf 'WRONG\n' > "$data/npm-offline/$project/node_modules/c849-cache-probe/sentinel"
+            return 0
+            ;;
+    esac
+    mkdir -p "$data/npm-offline/$project/node_modules/c849-cache-probe"
+    printf 'C849_NPM_OFFLINE\n' > "$data/npm-offline/$project/node_modules/c849-cache-probe/sentinel"
+    return 0
+}
+
 docker_run() {
     parse_run_create "$@"
     local kind=other-run
@@ -780,10 +845,24 @@ docker_run() {
         flock -x 9
         printf '%s\t%s\t%s\n' "${PARSED_NAME:-noname}" "$PARSED_MOUNTS" "$joined" >> "$C1192_ROOT/race-mounts"
     } 9>>"$C1192_ROOT/race-mounts.lock"
+    printf '%s\t%s\t%s\t%s\t%s\n' \
+        "${PARSED_NAME:-noname}" "${PARSED_NETWORK:-}" "${PARSED_IMAGE:-}" \
+        "${PARSED_MOUNTS:-}" "$joined" >> "$C1192_ROOT/run-log"
     case "$joined" in
         *make-zip.ps1*) simulate_zip; return ;;
         *lock-probe.ps1*) simulate_lock; return ;;
         *c849-fixture-restore*) simulate_restore; return ;;
+        *hash-tarball.ps1*) printf 'FIXTUREHASH'; return 0 ;;
+        *server.js*) return 0 ;;
+        *'cache add'*)
+            simulate_npm_cache_add || return $?
+            return 0
+            ;;
+        *'npm ci --offline'*)
+            simulate_npm_ci || return $?
+            return 0
+            ;;
+        *c849-npm-http:8080*) return 0 ;;
     esac
     if [ "$PARSED_ENTRY" = sleep ]; then
         printf 'UNEXPECTED-SLEEP\n' >> "$C1192_ROOT/scenario.err"
@@ -792,6 +871,11 @@ docker_run() {
     local mount
     IFS=';' read -r -a mounts <<< "$PARSED_MOUNTS"
     mount="${mounts[0]:-}"
+    # A curl wait has no mount. run_script would rewrite an empty target globally.
+    if [ -z "$mount" ]; then
+        printf 'UNEXPECTED-COMMAND %s\n' "$joined" >> "$C1192_ROOT/scenario.err"
+        return 97
+    fi
     run_script "$mount" "${PARSED_CMD[@]}"
 }
 
@@ -807,6 +891,8 @@ docker_inspect_container() {
     [ -d "$dir" ] || return 1
     [ -n "$fmt" ] || return 0
     case "$fmt" in
+        '{{.Name}}') printf '/%s\n' "$name" ;;
+        *compose.project*) label_value "$dir/label-project" ;;
         *io.antiphon.owner*) label_value "$dir/label-owner" ;;
         *fixture-run*) label_value "$dir/label-run" ;;
         *fixture-role*) label_value "$dir/label-role" ;;
@@ -887,6 +973,17 @@ docker() {
             for part in "$@"; do joined+="$part"$'\x1e'; done
             event "$(printf 'exec\t%s' "$joined")"
             [ -d "$C1192_ROOT/containers/$name" ] || return 1
+            if [ "$name" = "c849-${RUN}-donor" ]; then
+                case "$*" in
+                    *tar*-xf*)
+                        mkdir -p "$C1192_ROOT/donor-npm"
+                        tar -C "$C1192_ROOT/donor-npm" -xf - || return 1
+                        return 0
+                        ;;
+                esac
+                printf 'UNEXPECTED-DONOR %s\n' "$*" >> "$C1192_ROOT/scenario.err"
+                return 97
+            fi
             exec_in "$name" "$@"
             ;;
         inspect) shift; docker_inspect_container "$@" ;;
@@ -1710,6 +1807,192 @@ mode_handoff() {
     emit handoff-diagnosis "$(diagnosis_of "$out")"
 }
 
+npm_run_bind() {
+    case "$1" in
+        *type=bind*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+classify_npm_runs() {
+    npm_add_ok=0
+    npm_add_bind=0
+    refill_ok=0
+    refill_bind=0
+    offline_seen=0
+    offline_ok=1
+    offline_bind=0
+    hash_ok=0
+    payload_bind=0
+    local name network image mounts cmd
+    while IFS=$'\t' read -r name network image mounts cmd || [ -n "${name:-}" ]; do
+        [ -n "${name:-}" ] || continue
+        case "$cmd" in
+            *'cache add /fixture/npm-work/package.tgz'*)
+                if [ "$network" = none ] && mount_targets_work "$mounts"; then npm_add_ok=1; fi
+                npm_run_bind "$mounts" && npm_add_bind=1
+                ;;
+            *'cache add /fixture/npm-offline/pkg.tgz'*)
+                if [ "$network" = none ] && mount_targets_work "$mounts" && [[ "$mounts" == *readonly* ]] \
+                    && [[ "$cmd" == *'/fixture/npm-offline/pkg.tgz'* ]]; then
+                    refill_ok=1
+                fi
+                npm_run_bind "$mounts" && refill_bind=1
+                ;;
+            *'npm ci --offline'*)
+                offline_seen=1
+                if [ "$network" != none ] || ! mount_targets_work "$mounts"; then offline_ok=0; fi
+                npm_run_bind "$mounts" && offline_bind=1
+                ;;
+            *hash-tarball.ps1*)
+                if [ "$network" = none ] && [ "$image" = "$ADMITTED" ] && mount_targets_work "$mounts" \
+                    && [[ "$mounts" == *readonly* ]] \
+                    && [[ "$cmd" == *'-File /fixture/npm-offline/hash-tarball.ps1'* ]] \
+                    && [[ "$cmd" == *'-Path /fixture/npm-offline/pkg.tgz'* ]]; then
+                    hash_ok=1
+                fi
+                ;;
+        esac
+        case "$cmd" in
+            # The refill tarball read is refill_bind. Counting it here would make a
+            # refill bind fail npm-work-volume before refill-volume-source.
+            *'cache add /fixture/npm-offline/pkg.tgz'*)
+                ;;
+            *hash-tarball.ps1*|*server.js*|*'cache add'*|*'npm ci --offline'*)
+                npm_run_bind "$mounts" && payload_bind=1
+                ;;
+        esac
+    done < "$C1192_ROOT/run-log"
+    # The last body command is often "not a bind" (status 1). A bare caller
+    # would treat that status as a harness failure under set -e.
+    return 0
+}
+
+mode_npm() {
+    local code=0 refill_status=0 out data files=0 decoys=0
+    enable_synthetic_clock
+    reset_runtime
+    : > "$C1192_ROOT/scenario.err"
+    require_init
+    printf 'host-decoy\n' > "$SERVER2_ROOT/npm-work"
+    printf 'host-decoy\n' > "$SERVER2_ROOT/npm-offline"
+    plant_container "c849-${RUN}-donor" c849-fixture "$RUN" donor "$ADMITTED" ""
+    printf '%s\n' "c849${RUN}temp" > "$C1192_ROOT/containers/c849-${RUN}-donor/label-project"
+    out=$(c849_fixture_npm_work "$ADMITTED" "c849-${RUN}-donor" 2>>"$C1192_ROOT/scenario.err") || code=$?
+    if [ "$code" = 0 ]; then
+        # c849_volume's admission case expands every cache name. Prepare would
+        # have assigned the nuget names before npm runs.
+        C849_PACKAGES="c849${RUN}unset-packages"
+        C849_SCRATCH="c849${RUN}unset-scratch"
+        out=$(c849_fixture_npm 2>>"$C1192_ROOT/scenario.err") || code=$?
+    fi
+    if [ "$code" = 0 ]; then
+        C849_NPM="c849${RUN}npmcache-npm"
+        c849_fixture_refill_tarball "$ADMITTED" >/dev/null 2>>"$C1192_ROOT/scenario.err" || refill_status=$?
+    fi
+    classify_npm_runs
+    data="$C1192_ROOT/volumes/$WORK/data"
+    if [ -s "$data/npm-work/package.tgz" ] && [ -s "$data/npm-work/cache/_cacache/entry" ] \
+        && [ -s "$C1192_ROOT/donor-npm/entry" ] \
+        && [ -s "$data/npm-offline/pkg.tgz" ] \
+        && grep -q 'sha512-FIXTUREHASH' "$data/npm-offline/b/package-lock.json" \
+        && [ "$hash_ok" = 1 ]; then
+        files=1
+    fi
+    if decoy_untouched "$SERVER2_ROOT/npm-work" && decoy_untouched "$SERVER2_ROOT/npm-offline"; then
+        decoys=1
+    fi
+    if [ "$npm_add_ok" = 1 ] && [ "$npm_add_bind" = 0 ] && [ "$files" = 1 ] && [ "$decoys" = 1 ] \
+        && [ "$payload_bind" = 0 ]; then
+        emit npm-work-volume 1
+    else
+        emit npm-work-volume 0
+    fi
+    if [ "$refill_ok" = 1 ] && [ "$refill_bind" = 0 ] && [ "$refill_status" = 0 ] && [ "$decoys" = 1 ]; then
+        emit refill-volume-source 1
+    else
+        emit refill-volume-source 0
+    fi
+    if [ "$offline_seen" = 1 ] && [ "$offline_ok" = 1 ] && [ "$offline_bind" = 0 ] \
+        && [ -f "$data/npm-offline/b/node_modules/c849-cache-probe/sentinel" ] \
+        && [ "$(cat -- "$data/npm-offline/b/node_modules/c849-cache-probe/sentinel")" = $'C849_NPM_OFFLINE' ]; then
+        emit offline-network-none 1
+    else
+        emit offline-network-none 0
+    fi
+    emit npm-code "$code"
+    emit npm-refill-code "$refill_status"
+    emit npm-hash-ok "$hash_ok"
+    refuse_unexpected
+}
+
+npm_status_of() { cat -- "$C1192_ROOT/status-$1"; }
+npm_out_of() { cat -- "$C1192_ROOT/out-$1"; }
+npm_bytes_of() { cat -- "$C1192_ROOT/bytes-$1"; }
+
+mode_npm_sentinel() {
+    local cache="c849${RUN}npmcache-npm"
+    local data modules sentinel good=0 missing=0 wrong=0 miss=0
+    reset_runtime
+    : > "$C1192_ROOT/scenario.err"
+    require_init
+    plant_cache "$cache" npm-content
+    data="$C1192_ROOT/volumes/$WORK/data"
+    modules="$data/npm-offline/b/node_modules"
+    sentinel="$modules/c849-cache-probe/sentinel"
+    case "$modules" in
+        "$C1192_ROOT/volumes/$WORK/data/npm-offline/"*) ;;
+        *) fail "sentinel path" ;;
+    esac
+    run_npm_install() {
+        local fault="$1" tag="$2" status=0 actual
+        rm -rf -- "$modules"
+        : > "$C1192_ROOT/events"
+        C1192_FAULT=$fault
+        actual=$(c849_fixture_npm_install "$ADMITTED" "$cache" b 2>>"$C1192_ROOT/scenario.err") || status=$?
+        C1192_FAULT=
+        printf '%s\n' "$status" > "$C1192_ROOT/status-$tag"
+        printf '%s\n' "$actual" > "$C1192_ROOT/out-$tag"
+        cp -- "$C1192_ROOT/events" "$C1192_ROOT/events-$tag"
+        if [ -f "$sentinel" ]; then
+            printf '%s\n' "$(cat -- "$sentinel")" > "$C1192_ROOT/bytes-$tag"
+        else
+            printf 'ABSENT\n' > "$C1192_ROOT/bytes-$tag"
+        fi
+    }
+    run_npm_install "" good
+    run_npm_install npm-missing missing
+    run_npm_install npm-wrong wrong
+    run_npm_install npm-enotcached miss
+    run_npm_install npm-other other
+    if [ "$(npm_status_of good)" = 0 ] && [ "$(npm_out_of good)" = "" ] \
+        && [ "$(npm_bytes_of good)" = C849_NPM_OFFLINE ] \
+        && grep -q 'cat --' "$C1192_ROOT/events-good"; then
+        good=1
+    fi
+    # test -f is the missing-file refusal. A later byte compare also rejects an
+    # empty read, so status 1 alone does not show that existence was checked.
+    if [ "$good" = 1 ] && [ "$(npm_status_of missing)" = 1 ] && [ "$(npm_bytes_of missing)" = ABSENT ] \
+        && grep -q 'test -f' "$C1192_ROOT/events-missing" \
+        && ! grep -q 'cat --' "$C1192_ROOT/events-missing"; then
+        missing=1
+    fi
+    if [ "$good" = 1 ] && [ "$(npm_status_of wrong)" != 0 ] && [ "$(npm_bytes_of wrong)" = WRONG ] \
+        && grep -q 'cat --' "$C1192_ROOT/events-wrong" \
+        && [ "$(npm_out_of wrong)" != NpmOfflineCacheMiss ]; then
+        wrong=1
+    fi
+    if [ "$good" = 1 ] && [ "$(npm_status_of miss)" = 2 ] && [ "$(npm_out_of miss)" = NpmOfflineCacheMiss ] \
+        && [ "$(npm_status_of other)" = 1 ] && [ "$(npm_out_of other)" != NpmOfflineCacheMiss ]; then
+        miss=1
+    fi
+    emit missing-sentinel-refused "$missing"
+    emit wrong-sentinel-refused "$wrong"
+    emit offline-miss-refused "$miss"
+    emit exact-sentinel-accepted "$good"
+    refuse_unexpected
+}
+
 case "$mode" in
     register) mode_register ;;
     cleanup) mode_cleanup ;;
@@ -1721,6 +2004,8 @@ case "$mode" in
     barriers) mode_barriers ;;
     locks) mode_locks ;;
     handoff) mode_handoff ;;
+    npm) mode_npm ;;
+    npm-sentinel) mode_npm_sentinel ;;
     *) fail "unknown mode $mode" ;;
 esac
 if [ -s "$C1192_ROOT/unexpected" ]; then
