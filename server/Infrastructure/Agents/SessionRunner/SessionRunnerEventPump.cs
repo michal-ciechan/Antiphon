@@ -92,15 +92,19 @@ public sealed class SessionRunnerEventPump : BackgroundService
     {
         // Exit-path table while this marker owns a parsed payload:
         // success / swallowed list error -> one bounded offer; skip the following copy.
-        // list timeout / iterator-independent list fault -> same offer, then reconnect.
-        // host cancellation anywhere (including inside a caught-error log or final pull)
-        // -> same initial offer, then unwind; a pending callback is explicitly abandoned.
+        // list deadline / catch-up exception -> same offer, then propagate that ORIGINAL
+        // exception even if delivery is abandoned or preservation/disposal itself throws.
+        // host cancellation anywhere (including caught-error log or final pull) -> same
+        // initial offer, then original cancellation; pending callback explicitly abandoned.
         // non-cooperative list -> deadline ends our wait; retain/observe its owned scope.
-        // callback pending/cancelled/faulted -> explicit abandonment, unwind, never replay.
-        // subsequent iterator read fault / disposal -> no held payload remains to offer.
-        // A fault before parsing/receiving a marker supplies no payload to this region.
-        // Only PreserveHeldEventAsync decides completion versus abandonment. No exit,
-        // including a return/exception in catch-up, bypasses this finally.
+        // callback pending/cancelled/faulted -> warn once, observe late fault, never replay;
+        // with no catch-up exception, retain the existing shutdown/reconnect unwind.
+        // payload-free marker -> no offer; subsequent iterator read/disposal -> no held
+        // payload remains. A fault before receiving a marker supplies no payload here.
+        // Preservation setup/logging/disposal failures cannot replace a catch-up exception.
+        // Only PreserveHeldEventAsync decides completion versus abandonment. No catch-up
+        // return or exception bypasses this finally; no unwind offers the same event twice.
+        Exception? catchUpException = null;
         try
         {
             using var ready = new RuntimePhase(
@@ -109,19 +113,38 @@ public sealed class SessionRunnerEventPump : BackgroundService
         }
         catch (Exception ex)
         {
-            if (ex is not OperationCanceledException || !stoppingToken.IsCancellationRequested)
-                _logger.LogWarning(
-                    ex, "Subscription catch-up failed; delivering the held live event without snapshot coverage");
+            catchUpException = ex;
+            try
+            {
+                if (ex is not OperationCanceledException || !stoppingToken.IsCancellationRequested)
+                    _logger.LogWarning(
+                        ex, "Subscription catch-up failed; delivering the held live event without snapshot coverage");
+            }
+            catch { /* Logging must not replace the original catch-up exception. */ }
             throw;
         }
         finally
         {
-            if (HasPayload(held) && !await PreserveHeldEventAsync(held, runtime, stoppingToken))
+            try
             {
-                // Do not resume the iterator after abandoning an uncertain offer.
-                // Host cancellation takes the normal stop path; deadline/fault reconnects.
-                stoppingToken.ThrowIfCancellationRequested();
-                throw new TimeoutException("Held live event delivery did not complete");
+                if (HasPayload(held) && !await PreserveHeldEventAsync(held, runtime, stoppingToken))
+                {
+                    // Never resume the iterator after an uncertain offer. This failure
+                    // controls normal unwind; the filter below preserves exceptional unwind.
+                    stoppingToken.ThrowIfCancellationRequested();
+                    throw new TimeoutException("Held live event delivery did not complete");
+                }
+            }
+            catch (Exception ex) when (catchUpException is not null)
+            {
+                // The original throw is still in flight. Secondary delivery, cancellation,
+                // logging or scope-disposal failures must never change what its caller sees.
+                try
+                {
+                    _logger.LogWarning(ex,
+                        "Held live event preservation failed during catch-up unwind; retaining the original catch-up exception");
+                }
+                catch { /* Even a failing logger must leave the original throw intact. */ }
             }
         }
     }
@@ -242,15 +265,17 @@ public sealed class SessionRunnerEventPump : BackgroundService
             // queue; retrying an uncertain publication could duplicate accepted output.
             // Explicitly abandon this attempt and unwind the iterator for shutdown/reconnect.
             // Durable transcript payloads may be recovered by the existing next catch-up.
-            _logger.LogWarning(
-                "Held live event delivery abandoned: consumer did not complete within the cancellation/deadline bound; session={SessionId} event={EventName} reason={Reason} abandonedCount={AbandonedCount}",
-                evt.SessionId, evt.EventName, stoppingToken.IsCancellationRequested ? "host-cancellation" : "deadline",
-                Interlocked.Increment(ref _abandonedHeldEvents));
             if (delivery is not null)
             {
                 scopeTransferred = true;
                 _ = ObserveAbandonedOperationAsync(delivery, deliveryScope, "held-event callback");
             }
+            // Transfer task/scope custody before diagnostics: a logger failure cannot
+            // strand an abandoned callback or leave its later fault unobserved.
+            _logger.LogWarning(
+                "Held live event delivery abandoned: consumer did not complete within the cancellation/deadline bound; session={SessionId} event={EventName} reason={Reason} abandonedCount={AbandonedCount}",
+                evt.SessionId, evt.EventName, stoppingToken.IsCancellationRequested ? "host-cancellation" : "deadline",
+                Interlocked.Increment(ref _abandonedHeldEvents));
             return false;
         }
         catch (Exception ex)

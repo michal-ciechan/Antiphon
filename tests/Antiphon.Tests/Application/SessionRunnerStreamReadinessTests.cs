@@ -268,8 +268,8 @@ public class SessionRunnerStreamReadinessTests
         // V-5 repair. The first parsed output is held across the readiness yield while the
         // second /sessions list runs. The successful catch-up is the control: one callback,
         // after that list returns. A list timeout, a throwing list, and host cancellation
-        // must deliver that same output once. PC-111 drops the failure-path dispatch:
-        // the timeout row's deltas.Count.ShouldBe(1) fails. PC-112 skips it on host
+        // must deliver that same output once. PC-111 omits the common held offer on exceptional catch-up unwind:
+        // the timeout row's deltas.Count.ShouldBe(1) fails. PC-112 skips the common offer on host
         // cancellation. PC-113 rethrows the list fault: the throw row disconnects.
         // PC-114 yields a payload-free marker: the timeout row loses the only delivered copy.
         const string text = "c1205-held-output";

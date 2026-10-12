@@ -34,7 +34,8 @@ This requested diagnostic is not a discharged positive-control cycle.
 
 ### Cost
 
-Baseline six minutes, ordinary nineteen, F2 scratch six; authoring and setup within
+Baseline six minutes, ordinary nineteen, F2 scratch six; the accidental baseline
+T50 run added one isolated build and one green execution, disclosed separately; authoring and setup within
 45-minute brief budget. One isolated build per committed group; UseAppHost=false,
 forward slash OutputPath. Slot-gated tool bootstrap separately disclosed if needed.
 Run --after RepairTests or RepairFix, --serial, full committed --expected-source-sha.

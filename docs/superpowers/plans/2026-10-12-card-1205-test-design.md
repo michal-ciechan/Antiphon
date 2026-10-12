@@ -17,6 +17,27 @@ Retain the plan's latent-race attribution, server-only subscription proof, 120-s
 default evidence interval, local-only scope and logs-first visibility. Neither an
 elapsed deadline nor a successful HTTP connection certifies idle.
 
+## Repair 5 exception binding (T53)
+
+The current execution manifest is [repair 5](2026-10-12-card-1205-s2-repair5-checkpoints.md).
+Its T53 exact filter is
+`/*/*/SessionRunnerHeldEventDeliveryTests*/C1205_Catchup_exception_survives_bounded_held_delivery*`
+(three literal rows). CP-2 is 84 existing + 3 = 87. The throws/blocked baseline
+fails on unchanged 5d451ca4c production: expected OperationCanceledException,
+actual TimeoutException. Completed-throw and blocked-normal controls pass there.
+The new row retains exact exception type/message, one warning, disposal before
+release and the observer's exact later fault. T01 and T51/T52 are unchanged.
+PC-118 is the cancelled-host common-offer omission; a requested scratch diagnostic
+proved T50 assertion-red (Accepted expected 1, actual 0). This is binding evidence,
+not a completed SourceLanding cycle. All PC-1..175 and variants remain pending.
+
+| PC | Deliberate payload | Exact detecting method filter | Required red | Status |
+|---|---|---|---|---|
+| PC-172 | Remove the captured-exception catch/filter around the finally's preservation/unwind, retaining the existing abandonment TimeoutException. | `/*/*/SessionRunnerHeldEventDeliveryTests/C1205_Catchup_exception_survives_bounded_held_delivery` | throws/blocked: DisconnectException.GetType expected OperationCanceledException, actual TimeoutException. | Pending |
+| PC-173 | Remove ObserveAbandonedOperationAsync for the retained held callback. | `/*/*/SessionRunnerHeldEventDeliveryTests/C1205_Catchup_exception_survives_bounded_held_delivery` | observed.ShouldBeTrue fails after releasing with the literal late fault. | Pending |
+| PC-174 | Skip the common offer when catchUpException is non-null. | `/*/*/SessionRunnerHeldEventDeliveryTests/C1205_Catchup_exception_survives_bounded_held_delivery` | offered.ShouldBeTrue fails on exceptional rows; completed control accepts zero. | Pending |
+| PC-175 | Replace bounded held delivery with unbounded CancellationToken.None dispatch. | `/*/*/SessionRunnerHeldEventDeliveryTests/C1205_Catchup_exception_survives_bounded_held_delivery` | disconnected.ShouldBeTrue fails on blocked rows before release. | Pending |
+
 ## Repair 4 matrix binding (T51/T52)
 
 The current execution manifest is
@@ -384,7 +405,8 @@ production predicate as the expected-value factory.
 | T47 / V-5 | `SessionRunnerStreamReadinessTests.C1205_Held_event_survives_failed_second_catchup` / 4 | H2; success, list timeout, throwing list, host cancellation | A responsive consumer accepts the original output once. Failed catch-up gives a bounded preservation offer; a pending consumer at cancellation/deadline is explicitly warned and abandoned. Timeout reconnects; throw and cancellation do not. Reach: Gate the second GET /sessions; success returns, timeout waits on ListAsync's own deadline, throw faults the handler, cancellation cancels the pump token. | PC-111, PC-112, PC-113, PC-114; exact compiling defect and red below. |
 | T48 / V-5,V-7 | `SessionRunnerHeldEventDeliveryTests.C1205_Blocked_held_callback_stops_on_host_cancellation` / 2 | Cancellation during second list, or after list deadline and callback entry; non-cooperative consumer has an unreleased gate | ExecuteTask finishes and stream is disposed before release; one abandonment warning, one offer, cancellable callback token. | PC-115 restores unbounded None dispatch; PC-116 omits host linkage: stopped.ShouldBeTrue fails. |
 | T49 / V-5,V-7 | `SessionRunnerHeldEventDeliveryTests.C1205_Blocked_held_callback_stops_at_monotonic_deadline` / 1 | Second-list deadline followed by blocked consumer; advance FakeTimeProvider exactly 3 seconds without cancelling host | Reconnect reached and stream disposed before release; callback token cancelled; one warning and one offer. | PC-117 removes deadline: disconnected.ShouldBeTrue fails. |
-| T50 / V-5 | `SessionRunnerHeldEventDeliveryTests.C1205_Last_transcript_pull_cancellation_preserves_one_output` / 1 | Real HTTP/runtime final pull swallows host cancellation; consumer rejects cancelled tokens | Exactly one accepted output with original text, exactly one attempt and disposed iterator. | PC-118 removes post-sync cancellation check; PC-119 pre-cancels preservation token: Accepted.ShouldBe(1) fails. |
+| T53 / V-5,V-7 | `SessionRunnerHeldEventDeliveryTests.C1205_Catchup_exception_survives_bounded_held_delivery` / 3 | Catch-up throws plus deadline-abandoned/completed callback; normal catch-up plus abandoned callback | Exact original exception type/message; one offer/warning; iterator disposed before release; literal late fault observed and retained scopes disposed. | PC-172..175; method-scoped SourceLanding pending. |
+| T50 / V-5 | `SessionRunnerHeldEventDeliveryTests.C1205_Last_transcript_pull_cancellation_preserves_one_output` / 1 | Real HTTP/runtime final pull swallows host cancellation; consumer rejects cancelled tokens | Exactly one accepted output with original text, exactly one attempt and disposed iterator. | PC-118 skips the common offer on an already-cancelled host, retaining following-copy suppression; PC-119 pre-cancels preservation token: Accepted.ShouldBe(1) fails. |
 | T10 / V-8/R-2 | `WorkingTranscriptRecoveryTests.C1205_Complete_idle_snapshot_recovers_once` / 2 | H3; cache enabled, disabled | RecoveredIdle; one committed end; SQL idle; enabled cache agrees; replay adds 0. Reach: New checked entry point, valid generation and current runner frontier; invoke twice. | PC-11, PC-38; exact compiling defect and red below. |
 | T11 / V-9 | `WorkingTranscriptRecoveryTests.C1205_Uncertain_probe_does_not_certify_idle` / 15 | H3; pull-fault, persist-fault, state-read-fault, empty, wrong-generation, missing-generation, wrong-session, mixed-entry-session, missing-frontier, null-uuid-frontier-mismatch, retained-failure, needs-reload, absent-store, canceled-pull, truncated-tail | Unknown; no idle certification; no new end for precommit refusals; actual committed rows disclosed for partial failure. Reach: One flip from T10; record boundary hit/fault count = 1; successful pull/persist cannot be assumed from completed Task. | PC-12, PC-13, PC-14, PC-15, PC-16, PC-17, PC-18, PC-19, PC-20, PC-21, PC-22, PC-23, PC-24, PC-25; exact compiling defect and red below. |
 | T12 / V-10 | `WorkingTranscriptRecoveryTests.C1205_Newer_runner_activity_keeps_working` / 2 | H3; cache enabled, disabled | CheckedWorking; missing old end still absent; new turn Working. Reach: Runner has old missing end then current prompt already durable; otherwise valid complete snapshot. | PC-26; exact compiling defect and red below. |
@@ -520,7 +542,7 @@ Existing unchanged internals beyond these boundaries remain the stated exclusion
 | G-115 | D-2 repair 3: pending held delivery cannot obstruct shutdown/disposal indefinitely | PC-115 |
 | G-116 | D-2 repair 3: host cancellation ends the held callback wait | PC-116 |
 | G-117 | D-2 repair 3: monotonic deadline ends that wait without host cancellation | PC-117 |
-| G-118 | D-2 repair 3: swallowed final-sync cancellation enters preservation | PC-118 |
+| G-118 | D-2 repair 5: swallowed final-sync cancellation still receives the common initial offer | PC-118 |
 | G-119 | D-2 repair 3: an already-stopping host gets one initial output offer | PC-119 |
 | G-11 | D-7 step 5: RecoveredIdle follows committed persistence | PC-11 |
 | G-12 | D-7 step 1: Pull failure is Unknown | PC-12 |
@@ -764,8 +786,8 @@ a stale mutant DLL.
 | PC-108 | G-108: Reuse last-success stamp across accepted-generation change. | T30: `StaleWorkingTranscriptWatchdogTests.C1205_Discovery_requires_positive_local_working_evidence` | newGenerationProbeOnFirstPass.ShouldBeTrue(). |
 | PC-109 | G-109: Add SendInputAsync call on RecoveredIdle before ordinary wakeup. | T35: `StaleWorkingTranscriptWatchdogTests.C1205_Recovery_does_not_manufacture_idle_or_release` | directInputCalls.ShouldBeEmpty(). |
 | PC-110 | G-110: Hardcode IntervalSeconds=120 in due-age comparison. | T18: `StaleWorkingTranscriptWatchdogTests.C1205_Interval_boundary_controls_probe_and_log` | probeCountAt120Seconds.ShouldBe(0) in the 180-second row. |
-| PC-111 | G-111: Remove the pump's failure-path dispatch and rethrow immediately. | T47: `SessionRunnerStreamReadinessTests.C1205_Held_event_survives_failed_second_catchup` | deltas.Count.ShouldBe(1) on the timeout row. |
-| PC-112 | G-112: Skip that dispatch when the host stopping token is cancelled. | T47: `SessionRunnerStreamReadinessTests.C1205_Held_event_survives_failed_second_catchup` | deltas.Count.ShouldBe(1) on the cancellation row. |
+| PC-111 | G-111: Omit the common held offer on exceptional catch-up unwind. | T47: `SessionRunnerStreamReadinessTests.C1205_Held_event_survives_failed_second_catchup` | deltas.Count.ShouldBe(1) on the timeout row. |
+| PC-112 | G-112: Skip the common held offer when the host stopping token is cancelled. | T47: `SessionRunnerStreamReadinessTests.C1205_Held_event_survives_failed_second_catchup` | deltas.Count.ShouldBe(1) on the cancellation row. |
 | PC-113 | G-113: Rethrow a non-cancellation second-list fault from CatchUpTranscriptsAsync. | T47: `SessionRunnerStreamReadinessTests.C1205_Held_event_survives_failed_second_catchup` | disconnected.ShouldBeFalse() on the throw row. |
 | PC-114 | G-114: Yield a payload-free readiness marker before the held parsed event. | T47: `SessionRunnerStreamReadinessTests.C1205_Held_event_survives_failed_second_catchup` | deltas.Count.ShouldBe(1) on the timeout row. |
 | PC-115 | Restore an unbounded await with CancellationToken.None on held-event delivery. | T48: `SessionRunnerHeldEventDeliveryTests.C1205_Blocked_held_callback_stops_on_host_cancellation` | stopped.ShouldBeTrue() fails before fixture release. |
@@ -873,7 +895,7 @@ green. Repair round 2 runs CP-1, CP-2, and ADJ-1 on one S2 output. All rows requ
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
 | CP-1 | S2 | `tests/Antiphon.Tests -> bin-c1205-s2/` | gap-baseline | `/*/Antiphon.Tests.Application/TurnEndGapReproductionTests*/*` | V-1,V-2,R-1 | 2 executed, both green; T01 preGraceEndCount.ShouldBe(1) unchanged; 0 skipped | 2 | 6 |
-| CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1205-s2/` | subscription | `/*/Antiphon.Tests.Application/(TurnEndGapReproductionTests*)\|(SessionRunnerStreamReadinessTests*)\|(SessionRunnerEventPumpTests*)\|(SessionRunnerHeldEventDeliveryTests*)\|(SessionRunnerHeldEventExitMatrixTests*)/*` | V-1..7,R-1,R-6,T47..T52 | Exactly 84 executed, all named cases green | 84 | 10 |
+| CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1205-s2/` | subscription | `/*/Antiphon.Tests.Application/(TurnEndGapReproductionTests*)\|(SessionRunnerStreamReadinessTests*)\|(SessionRunnerEventPumpTests*)\|(SessionRunnerHeldEventDeliveryTests*)\|(SessionRunnerHeldEventExitMatrixTests*)/*` | V-1..7,R-1,R-6,T47..T53 | Exactly 87 executed, all named cases green | 87 | 10 |
 | ADJ-1 | S2 | `tests/Antiphon.Tests -> bin-c1205-s2/` | adjacent | `/*/*/(SessionRunnerHttpClientHostStatsTests*)\|(SessionRunnerGenerationWireTests*)\|(SessionRunnerSettingsTests*)\|(SessionStateCommitTests*)\|(TranscriptWorkingStateQueryTests*)/*` | wire and working-state compatibility | Exactly 33 executed, all green | 33 | 3 |
 | CP-3 | S3 | `tests/Antiphon.Tests -> bin-c1205-s3/` | checked-recovery | `/*/Antiphon.Tests.Application/(WorkingTranscriptRecoveryTests*)\|(SessionStateCommitTests*)\|(TranscriptWorkingStateQueryTests*)/*` | V-8..12,V-25,V-26,R-2,R-7 | Exactly 62 executed, all named cases green | 62 | 11 |
 | CP-4 | S4 | `tests/Antiphon.Tests -> bin-c1205-s4/` | watchdog | `/*/Antiphon.Tests.Application/StaleWorkingTranscriptWatchdogTests*/*` | V-13..19,V-27..35,R-3,R-4 | Exactly 48 executed, all named cases green | 48 | 12 |
