@@ -215,6 +215,7 @@ public sealed class CheckpointTrackedBaselineTests : CheckpointTestBase
         tool.Output.ShouldContain("no TRX", Case.Sensitive);
         Directory.Exists(Path.Combine(root, "App", "bin-probe")).ShouldBeTrue(tool.Output);
 
+        ClearBuildResidue(root);
         var script = await RunScriptAsync(root, "clean-script", cancellationToken);
         File.ReadAllBytes(Path.Combine(root, "keep.txt")).ShouldBe(keep, script.Output);
         script.Output.ShouldNotContain("refused: tampered", Case.Sensitive);
@@ -255,6 +256,7 @@ public sealed class CheckpointTrackedBaselineTests : CheckpointTestBase
         tool.Output.ShouldContain("executed=1", Case.Sensitive);
         tool.Output.ShouldContain("buildSource=verified", Case.Sensitive);
 
+        ClearBuildResidue(root);
         var script = await RunScriptAsync(root, "fresh-script", "/*/*/FreshProbe/*", "1", cancellationToken);
         script.Exit.ShouldBe(0, script.Output);
         script.Output.ShouldContain("executed=1", Case.Sensitive);
@@ -361,11 +363,10 @@ public sealed class CheckpointTrackedBaselineTests : CheckpointTestBase
         var toolNote = DescribeKept(tool, full, bytes, root, relative);
         if (!File.Exists(full) || !File.ReadAllBytes(full).AsSpan().SequenceEqual(bytes))
             File.WriteAllBytes(full, bytes);
-        var marker = Path.Combine(root, "App", "Marker.cs");
-        File.SetLastWriteTimeUtc(marker, DateTime.UtcNow);
-        var built = Path.Combine(root, "App", "bin-probe");
-        if (Directory.Exists(built))
-            Directory.Delete(built, true);
+        // The tool leaves the build's index entry. The script has to start from
+        // the same unstaged tree the tool started from.
+        Git(root, "restore", "--staged", "--", relative);
+        ClearBuildResidue(root);
         var script = await RunScriptAsync(root, name + "-script", cancellationToken);
         var scriptNote = DescribeKept(script, full, bytes, root, relative);
         var receipt = Path.Combine(root, ".antiphon", "script-results", name + "-script-fixed", "source.json");
@@ -432,8 +433,10 @@ public sealed class CheckpointTrackedBaselineTests : CheckpointTestBase
         var head = GitOut(root, "rev-parse", "HEAD").Trim();
         var tool = await RunToolAsync(root, name + "-tool", cancellationToken);
         AssertTamper(tool, victim);
-        if (File.Exists(victim.FullPath))
-            File.SetLastWriteTimeUtc(victim.FullPath, DateTime.UnixEpoch);
+        // The tool leaves the build's bytes. Put the committed victim back so the
+        // script detects the same overwrite on a clean tree.
+        Git(root, "checkout", "HEAD", "--", victim.Relative);
+        ClearBuildResidue(root);
         var script = await RunScriptAsync(root, name + "-script", cancellationToken);
         AssertTamper(script, victim);
         var receipt = Path.Combine(root, ".antiphon", "script-results", name + "-script-fixed", "source.json");
@@ -454,6 +457,16 @@ public sealed class CheckpointTrackedBaselineTests : CheckpointTestBase
         result.Output.ShouldNotContain("lossless", Case.Sensitive);
         result.Output.ShouldNotContain("restored", Case.Sensitive);
         result.Output.ShouldNotContain("buildSource=verified", Case.Sensitive);
+    }
+
+    private static void ClearBuildResidue(string root)
+    {
+        foreach (var relative in new[] { "App/bin-probe", "App/obj", "Lib/obj", "Mid/obj" })
+        {
+            var path = Path.Combine(root, relative.Replace('/', Path.DirectorySeparatorChar));
+            if (Directory.Exists(path))
+                Directory.Delete(path, true);
+        }
     }
 
     private static void AssertDirtyRefused(string output, string keep, byte[] dirty, string marker, byte[] markerBytes)

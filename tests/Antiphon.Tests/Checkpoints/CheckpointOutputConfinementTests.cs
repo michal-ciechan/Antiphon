@@ -75,6 +75,9 @@ public sealed class CheckpointOutputConfinementTests : CheckpointTestBase
         var tool = await RunToolAsync(root, "confine-unevaluable", cancellationToken);
         AssertUnevaluable(tool.Output, sentinel, root);
 
+        // The tool creates bin-probe before the graph refusal. The script is a
+        // second run and refuses a directory it did not create.
+        RemoveUntrackedOutput(root);
         var script = await RunScriptAsync(root, "confine-unevaluable-script", cancellationToken);
         AssertUnevaluable(script, sentinel, root);
     }
@@ -84,6 +87,7 @@ public sealed class CheckpointOutputConfinementTests : CheckpointTestBase
         var tool = await RunToolAsync(fixture.Root, name + "-tool", cancellationToken);
         AssertOwnedAndUnchanged(fixture, tool.Output, "tool");
         Restore(fixture);
+        RemoveUntrackedOutput(fixture.Root);
         var script = await RunScriptAsync(fixture.Root, name + "-script", cancellationToken);
         AssertOwnedAndUnchanged(fixture, script, "script");
     }
@@ -262,7 +266,20 @@ public sealed class CheckpointOutputConfinementTests : CheckpointTestBase
         Git(root, "add", "-A");
         Git(root, "add", "-f", "--", "Lib/bin-probe/Lib.dll", "Lib/obj/project.assets.json");
         CommitAll(root);
+        // The seed build's App and Mid output is untracked. A checkpoint refuses
+        // that directory before it can preserve the tracked Lib bytes.
+        RemoveUntrackedOutput(root);
         return new Fixture(root, dll, File.ReadAllBytes(dll), assets, File.ReadAllBytes(assets));
+    }
+
+    private static void RemoveUntrackedOutput(string root)
+    {
+        foreach (var relative in new[] { "App/bin-probe", "App/obj", "Mid/bin-probe", "Mid/obj" })
+        {
+            var path = Path.Combine(root, relative.Replace('/', Path.DirectorySeparatorChar));
+            if (Directory.Exists(path))
+                Directory.Delete(path, true);
+        }
     }
 
     private static void SeedBuild(string root)
