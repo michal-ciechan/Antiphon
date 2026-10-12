@@ -75,7 +75,7 @@ public sealed class ProcessDriver : IDriver
             if (confined.Refusal is not null)
             {
                 AppendLog(request, confined.Detail);
-                var code = confined.Refusal == "restore-failed" ? ExitCodes.RestoreFailed : ExitCodes.Invalid;
+                var code = confined.Refusal == "git-failed" ? ExitCodes.RestoreFailed : ExitCodes.Invalid;
                 return new DriverResult(code, "", confined.Detail);
             }
 
@@ -170,7 +170,7 @@ public sealed class ProcessDriver : IDriver
 
         if (settlement?.Kind == "tampered")
             return new DriverResult(ExitCodes.Invalid, stdout.ToString(), settlement.Detail + stderr.ToString());
-        if (settlement?.Kind == "restore-failed")
+        if (settlement?.Kind == "git-failed")
             return new DriverResult(ExitCodes.RestoreFailed, stdout.ToString(), settlement.Detail + stderr.ToString());
         if (earlyDetail is not null)
             return new DriverResult(ExitCodes.Invalid, "", earlyDetail);

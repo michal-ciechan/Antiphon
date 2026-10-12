@@ -247,7 +247,7 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
             return "no-path";
         if (!output.Contains(Honest, StringComparison.Ordinal))
             return "no-honest";
-        if (!output.Contains("git -C ", StringComparison.Ordinal) || !output.Contains(" restore -- ", StringComparison.Ordinal))
+        if (!output.Contains("git -C ", StringComparison.Ordinal) || !output.Contains("restore --", StringComparison.Ordinal))
             return "no-command";
         var wording = Wording(output);
         if (wording is not null)
@@ -340,7 +340,10 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
                 }
                 """);
             if (shape == "clean-build")
+            {
                 Write(root, "keep.txt", "KEEP");
+                Write(root, "side.txt", "SIDE-KEEP");
+            }
         }
         else if (shape == "file-on-directory")
         {
@@ -390,9 +393,6 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
                 break;
             case "staged-untracked":
                 Write(root, "user-keep.txt", "USER-KEEP");
-                break;
-            case "clean-build":
-                Write(root, "side.txt", "SIDE-KEEP");
                 break;
             case "stamp-exists":
                 Write(root, "App/bin-probe/checkpoint-build-source.json", "USER-STAMP");

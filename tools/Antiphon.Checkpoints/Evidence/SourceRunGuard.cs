@@ -102,24 +102,22 @@ public sealed class CheckpointBuildBinding
 
     public string? Invalidate()
     {
-        if (!File.Exists(PathName))
+        var link = new FileInfo(PathName).LinkTarget;
+        if (!File.Exists(PathName) && link is null)
             return null;
-        var result = SafeDelete.Apply(PathName, SafeDelete.Stamp(RepositoryRoot));
-        return result.Disposition == DeleteDisposition.Refused ? result.Reason : null;
+        var reason = SafeDelete.Refusal(PathName, SafeDelete.Stamp(RepositoryRoot));
+        if (reason is not null)
+            return reason;
+        return "stamp-exists";
     }
 
     public string? Write()
     {
-        var ownership = SafeDelete.Stamp(RepositoryRoot);
-        var reason = SafeDelete.Refusal(PathName, ownership);
+        var reason = SafeDelete.Refusal(PathName, SafeDelete.Stamp(RepositoryRoot));
         if (reason is not null)
             return reason;
-        if (File.Exists(PathName))
-        {
-            var removed = SafeDelete.Apply(PathName, ownership);
-            if (removed.Disposition == DeleteDisposition.Refused)
-                return removed.Reason;
-        }
+        if (File.Exists(PathName) || new FileInfo(PathName).LinkTarget is not null)
+            return "stamp-exists";
 
         var writeRoot = SafeWrite.Under(OutputPath);
         reason = SafeWrite.CreateDirectory(OutputPath, writeRoot);

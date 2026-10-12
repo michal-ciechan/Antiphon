@@ -52,6 +52,6 @@ public static class RowTimeout
             return false;
         var text = result.Stdout + "\n" + result.Stderr;
         return text.Contains("refused: tampered", StringComparison.Ordinal)
-            || text.Contains("refused: restore-failed", StringComparison.Ordinal);
+            || text.Contains("refused: git-failed", StringComparison.Ordinal);
     }
 }

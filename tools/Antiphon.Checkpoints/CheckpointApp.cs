@@ -348,6 +348,15 @@ public static class CheckpointApp
                 throw new OperationCanceledException(owner.Reason);
             if (!request.KeepOutputs)
             {
+                if (state.CreatedOutputPaths is not null)
+                {
+                    foreach (var created in state.CreatedOutputPaths)
+                    {
+                        if (Directory.Exists(created))
+                            OutputCleanup.WriteLedger(created);
+                    }
+                }
+
                 var clean = OutputCleanup.CleanOwnedOutputs(repo, manifest.Builds.Select(build => build.Id).ToList(), model.ExitCode,
                     request.CleanOnRed, dryRun: false, beforeDelete: owner.Bound ? () => owner.Ended.ThrowIfCancellationRequested() : null,
                     createdPaths: state.CreatedOutputPaths);

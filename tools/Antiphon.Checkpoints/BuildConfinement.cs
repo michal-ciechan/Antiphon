@@ -5,23 +5,18 @@ using System.Text.Json;
 
 namespace Antiphon.Checkpoints;
 
-// Tracked files are protected by a clean baseline and a post-build restore, not by
-// predicting where MSBuild will write. Before a real dotnet build the tree must have
-// no modified, deleted, or staged tracked paths. After the build, on success, failure,
-// timeout, and cancel, a changed path is restored only when its worktree object is the
-// expected regular file, or is absent under real directory ancestors. A path absent
-// from HEAD is removed from the index only when that shape is not part of a conflict,
-// so its worktree bytes stay. A directory where HEAD has a file, a file where HEAD has
-// a directory, a symlink or junction, a submodule or nested repo, untracked or ignored
-// descendants, a different file type, or an unreadable path is left untouched, index
-// included. Those paths are conflicts: exit 2, refused: tampered, manual restore
-// required, and the receipt stays invalid. The lossless sentence is printed only when
-// every non-tracked path captured before the build still exists with the same bytes.
+// Tracked files are protected by a clean baseline and a post-build comparison, not by
+// predicting where MSBuild will write and not by putting the tree back. Before a real
+// dotnet build the tree must have no modified, deleted, or staged tracked paths. After
+// the build, on success, failure, timeout, and cancel, a changed path is only reported.
+// The tool does not check out, restore, reset, unstage, or delete anything outside the
+// output directory it created for the run. Exit 2, refused: tampered, lists each path
+// and the git command a person can run by hand. The receipt stays invalid.
 // Global OutputPath / ArtifactsPath redirection and the static XML preflight only
 // reduce noise. A shared BaseIntermediateOutputPath is not passed: global properties
-// are not re-expanded, so $(MSBuildProjectName) would be one literal directory and
-// restore then cycles. A DotnetShim build is left unchanged. Writes outside the
-// repository and a row command string are outside this guarantee.
+// are not re-expanded, so $(MSBuildProjectName) would be one literal directory.
+// A DotnetShim build is left unchanged. Writes outside the repository and a row
+// command string are outside this guarantee.
 public static class BuildConfinement
 {
     public const int WalkCap = 500;
@@ -35,7 +30,9 @@ public static class BuildConfinement
         string Head,
         string Repository,
         Dictionary<string, string> Entries,
-        Dictionary<string, string> Untracked);
+        Dictionary<string, string> Untracked,
+        string OwnedRelative = "",
+        HashSet<string>? Ordinary = null);
 
     public sealed record Settlement(string? Kind, string Detail, IReadOnlyList<string> Paths);
 
@@ -103,6 +100,10 @@ public static class BuildConfinement
         var baseline = captured.Value;
 
         var layout = LayoutFor(workingDirectory, project, outputValue);
+        baseline = baseline with { OwnedRelative = OwnedRelativePath(repository, layout.Owned) };
+        var claimed = ClaimOwned(layout.Owned);
+        if (claimed is not null)
+            return RefuseOwned(claimed);
         var rewritten = Rewrite(arguments, layout.Owned, layout.Artifacts);
         var forwarded = Forwarded(arguments);
         WalkResult walked;
@@ -114,7 +115,7 @@ public static class BuildConfinement
         {
             var settled = Settle(baseline);
             if (settled.Kind is not null)
-                return new Prepared(settled.Kind == "restore-failed" ? "restore-failed" : "tampered", settled.Detail, [], baseline);
+                return new Prepared(settled.Kind == "git-failed" ? "git-failed" : "tampered", settled.Detail, [], baseline);
             throw;
         }
         catch (Exception ex) when (ex is IOException or InvalidOperationException or JsonException)
@@ -127,199 +128,103 @@ public static class BuildConfinement
         return new Prepared(null, "", rewritten, baseline);
     }
 
-    public static Settlement Settle(Baseline baseline)
+    public static string? OutputSymlink(string ownedAbsolute)
     {
-        var status = ReadStatus(baseline.Repository);
-        if (status.Error is not null)
-            return Failed(baseline, [], [], status.Error);
-        if (status.Paths.Count == 0)
+        var owned = ownedAbsolute.TrimEnd('/', '\\');
+        var root = Path.GetPathRoot(owned) ?? "";
+        var current = root;
+        var relative = owned.Length > root.Length ? owned[root.Length..] : "";
+        foreach (var part in relative.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries))
         {
-            if (IndexMatches(baseline, out var matchError))
-                return new Settlement(null, "", []);
-            return Failed(baseline, [], [], matchError ?? "index-mismatch");
-        }
-
-        var tracked = new List<string>();
-        var added = new List<string>();
-        foreach (var path in status.Paths)
-        {
-            if (baseline.Entries.ContainsKey(path))
-                tracked.Add(path);
-            else
-                added.Add(path);
-        }
-
-        var conflicts = new List<(string Path, string Reason)>();
-        var safeTracked = new List<string>();
-        foreach (var path in tracked)
-        {
-            var reason = ConflictReason(baseline, path);
-            if (reason is null)
-                safeTracked.Add(path);
-            else
-                conflicts.Add((path, reason));
-        }
-
-        var safeAdded = new List<string>();
-        foreach (var path in added)
-        {
-            if (!HeldByConflict(path, conflicts))
-                safeAdded.Add(path);
-        }
-
-        // Unstage paths absent from HEAD before any --worktree restore, and only when
-        // they are not part of a shape conflict. Restoring a conflicting ancestor from
-        // HEAD deletes worktree bytes the commit does not contain.
-        if (safeAdded.Count > 0)
-        {
-            var unstaged = Git(baseline.Repository, UnstageArguments(safeAdded));
-            if (unstaged.Error is not null || unstaged.Exit != 0)
-                return Failed(baseline, safeTracked, safeAdded, unstaged.Error ?? "git-restore");
-        }
-
-        if (safeTracked.Count > 0)
-        {
-            var restored = Git(baseline.Repository, RestoreArguments(baseline.Head, safeTracked));
-            if (restored.Error is not null || restored.Exit != 0)
-                return Failed(baseline, safeTracked, safeAdded, restored.Error ?? "git-restore");
-        }
-
-        var after = ReadStatus(baseline.Repository);
-        if (after.Error is not null)
-            return Failed(baseline, safeTracked, safeAdded, after.Error);
-        if (conflicts.Count > 0)
-        {
-            foreach (var path in after.Paths)
-            {
-                if (!HeldByConflict(path, conflicts))
-                    return Failed(baseline, safeTracked, safeAdded, "still-dirty");
-            }
-
-            return new Settlement("tampered", TamperText(baseline.Head, safeTracked.Concat(safeAdded).ToList(), conflicts, claimLossless: false), status.Paths);
-        }
-
-        if (after.Paths.Count > 0)
-            return Failed(baseline, safeTracked, safeAdded, "still-dirty");
-        if (!IndexMatches(baseline, out var error))
-            return Failed(baseline, safeTracked, safeAdded, error ?? "index-mismatch");
-        var lossless = ManifestMatches(baseline);
-        return new Settlement("tampered", TamperText(baseline.Head, status.Paths, conflicts, lossless), status.Paths);
-    }
-
-    private static bool HeldByConflict(string path, List<(string Path, string Reason)> conflicts)
-    {
-        foreach (var conflict in conflicts)
-        {
-            if (string.Equals(path, conflict.Path, StringComparison.Ordinal)
-                || path.StartsWith(conflict.Path + "/", StringComparison.Ordinal)
-                || conflict.Path.StartsWith(path + "/", StringComparison.Ordinal))
-                return true;
-        }
-
-        return false;
-    }
-
-    private static string? ConflictReason(Baseline baseline, string path)
-    {
-        if (!baseline.Entries.TryGetValue(path, out var record))
-            return "unreadable; manual restore required";
-        var mode = ModeOf(record);
-        if (mode is "120000")
-            return "symlink; manual restore required";
-        if (mode is "160000")
-            return "submodule; manual restore required";
-        if (mode is not ("100644" or "100755"))
-            return "different file type; manual restore required";
-
-        var full = Combine(baseline.Repository, path);
-        switch (KindOf(full))
-        {
-            case NodeKind.Unreadable:
-                return "unreadable; manual restore required";
-            case NodeKind.Symlink:
-                return "symlink; manual restore required";
-            case NodeKind.Other:
-                return "different file type; manual restore required";
-            case NodeKind.Directory:
-                if (NestedRepository(full))
-                    return "nested repo; manual restore required";
-                return DirectoryReason(baseline.Repository, path);
-            case NodeKind.Absent:
-                return AncestorConflict(baseline.Repository, path);
-            default:
-                return null;
-        }
-    }
-
-    private static string? AncestorConflict(string repository, string relative)
-    {
-        var normalized = relative.Replace('\\', '/');
-        var slash = normalized.LastIndexOf('/');
-        while (slash > 0)
-        {
-            var parent = normalized[..slash];
-            switch (KindOf(Combine(repository, parent)))
-            {
-                case NodeKind.Directory:
-                    return null;
-                case NodeKind.Absent:
-                    slash = parent.LastIndexOf('/');
-                    continue;
-                case NodeKind.Symlink:
-                    return "symlink; manual restore required";
-                case NodeKind.Unreadable:
-                    return "unreadable; manual restore required";
-                default:
-                    return "file where a directory is tracked; manual restore required";
-            }
+            current = Path.Combine(current, part);
+            if (KindOf(current) == NodeKind.Symlink)
+                return "output-symlink";
         }
 
         return null;
     }
 
-    private static string DirectoryReason(string repository, string relative)
+    public static string? ClaimOwned(string ownedAbsolute)
     {
-        var status = Git(repository, ["status", "--porcelain=v1", "-z", "--ignored", "--untracked-files=all", "--", relative]);
-        if (status.Error is not null || status.Exit != 0)
-            return "unreadable; manual restore required";
-        var ignored = false;
-        var untracked = false;
-        var parts = status.Stdout.Split('\0', StringSplitOptions.RemoveEmptyEntries);
-        for (var i = 0; i < parts.Length; i++)
+        var link = OutputSymlink(ownedAbsolute);
+        if (link is not null)
+            return link;
+        var owned = ownedAbsolute.TrimEnd('/', '\\');
+        var stamp = Path.Combine(owned, "checkpoint-build-source.json");
+        if (KindOf(stamp) is NodeKind.File or NodeKind.Symlink)
+            return "stamp-exists";
+        var kind = KindOf(owned);
+        if (kind == NodeKind.File)
+            return "output-exists";
+        if (kind == NodeKind.Directory)
         {
-            var entry = parts[i];
-            if (entry.Length < 4 || entry[2] != ' ')
-                continue;
-            var xy = entry[..2];
-            if (xy == "??")
-                untracked = true;
-            else if (xy == "!!")
-                ignored = true;
-            if (xy[0] is 'R' or 'C' || xy[1] is 'R' or 'C')
-                i++;
+            try
+            {
+                if (Directory.EnumerateFileSystemEntries(owned).Any())
+                    return "compiler-output-exists";
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                return "compiler-output-exists";
+            }
+
+            return "output-exists";
         }
 
-        if (untracked && ignored)
-            return "untracked or ignored descendant; manual restore required";
-        if (ignored)
-            return "ignored descendant; manual restore required";
-        if (untracked)
-            return "untracked descendant; manual restore required";
-        return "directory where a file is tracked; manual restore required";
+        try
+        {
+            if (Directory.Exists(owned) || File.Exists(owned))
+                return "output-exists";
+            Directory.CreateDirectory(owned);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return "output-exists";
+        }
+
+        return null;
     }
 
-    private static bool NestedRepository(string full)
+    public static Settlement Settle(Baseline baseline)
     {
-        var git = Path.Combine(full, ".git");
-        var kind = KindOf(git);
-        return kind is NodeKind.Directory or NodeKind.File or NodeKind.Symlink;
+        var status = ReadStatus(baseline.Repository);
+        if (status.Error is not null)
+            return GitFailed(status.Error);
+        var untracked = DiffUntracked(baseline);
+        if (untracked.Error is not null)
+            return GitFailed(untracked.Error);
+
+        var changes = new List<(string Path, string? Command)>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var path in status.Paths)
+        {
+            if (UnderOwned(baseline, path) || !seen.Add(path))
+                continue;
+            var command = baseline.Entries.ContainsKey(path)
+                ? WorktreeCommand(baseline, path)
+                : UnstageCommand(baseline, path);
+            changes.Add((path, command));
+        }
+
+        foreach (var path in untracked.Paths)
+        {
+            if (UnderOwned(baseline, path) || !seen.Add(path))
+                continue;
+            changes.Add((path, null));
+        }
+
+        if (changes.Count == 0)
+        {
+            if (IndexMatches(baseline, out var matchError))
+                return new Settlement(null, "", []);
+            if (matchError is not null)
+                return GitFailed(matchError);
+            changes.Add(("(index)", IndexCommand(baseline)));
+        }
+
+        return new Settlement("tampered", TamperText(changes), changes.Select(change => change.Path).ToList());
     }
 
-    private static string ModeOf(string record)
-    {
-        var space = record.IndexOf(' ');
-        return space > 0 ? record[..space] : "";
-    }
 
     private enum NodeKind { Absent, File, Directory, Symlink, Other, Unreadable }
 
@@ -353,30 +258,70 @@ public static class BuildConfinement
         return full;
     }
 
-    private static bool ManifestMatches(Baseline baseline)
-    {
-        foreach (var pair in baseline.Untracked)
-        {
-            if (pair.Value == "unreadable")
-                return false;
-            if (!string.Equals(Stamp(Combine(baseline.Repository, pair.Key)), pair.Value, StringComparison.Ordinal))
-                return false;
-        }
-
-        return true;
-    }
-
-    private readonly record struct ManifestResult(Dictionary<string, string>? Value, string? Error);
+    private readonly record struct ManifestResult(Dictionary<string, string>? Value, HashSet<string>? Ordinary, string? Error);
 
     private static ManifestResult CaptureUntracked(string repository)
     {
-        var listed = Git(repository, ["ls-files", "-z", "--others", "--ignored", "--exclude-standard"]);
-        if (listed.Error is not null || listed.Exit != 0)
-            return new ManifestResult(null, listed.Error ?? "git-ls-files");
+        var ignored = Git(repository, ["ls-files", "-z", "--others", "--ignored", "--exclude-standard"]);
+        if (ignored.Error is not null || ignored.Exit != 0)
+            return new ManifestResult(null, null, ignored.Error ?? "git-ls-files");
+        var ordinary = Git(repository, ["ls-files", "-z", "--others", "--exclude-standard"]);
+        if (ordinary.Error is not null || ordinary.Exit != 0)
+            return new ManifestResult(null, null, ordinary.Error ?? "git-ls-files");
         var files = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (var relative in listed.Stdout.Split('\0', StringSplitOptions.RemoveEmptyEntries))
+        var ordinarySet = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var relative in ordinary.Stdout.Split('\0', StringSplitOptions.RemoveEmptyEntries))
+        {
+            ordinarySet.Add(relative);
             files[relative] = Stamp(Combine(repository, relative));
-        return new ManifestResult(files, null);
+        }
+
+        foreach (var relative in ignored.Stdout.Split('\0', StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (!files.ContainsKey(relative))
+                files[relative] = Stamp(Combine(repository, relative));
+        }
+
+        return new ManifestResult(files, ordinarySet, null);
+    }
+
+    private static StatusResult DiffUntracked(Baseline baseline)
+    {
+        var again = CaptureUntracked(baseline.Repository);
+        if (again.Error is not null || again.Value is null)
+            return new StatusResult([], again.Error ?? "git-ls-files");
+        var paths = new List<string>();
+        foreach (var pair in baseline.Untracked)
+        {
+            if (UnderOwned(baseline, pair.Key))
+                continue;
+            if (!again.Value.TryGetValue(pair.Key, out var stamp) || !string.Equals(stamp, pair.Value, StringComparison.Ordinal))
+                paths.Add(pair.Key);
+        }
+
+        foreach (var path in again.Ordinary ?? [])
+        {
+            if (baseline.Ordinary?.Contains(path) == true || baseline.Untracked.ContainsKey(path) || UnderOwned(baseline, path))
+                continue;
+            paths.Add(path);
+        }
+
+        return new StatusResult(paths, null);
+    }
+
+    private static bool UnderOwned(Baseline baseline, string relative)
+    {
+        if (string.IsNullOrEmpty(baseline.OwnedRelative))
+            return false;
+        var owned = baseline.OwnedRelative.TrimEnd('/');
+        var path = relative.Replace('\\', '/');
+        return path.Equals(owned, StringComparison.Ordinal) || path.StartsWith(owned + "/", StringComparison.Ordinal);
+    }
+
+    private static string OwnedRelativePath(string repository, string owned)
+    {
+        var relative = Path.GetRelativePath(repository, owned.TrimEnd('/', '\\'));
+        return relative.Replace('\\', '/').TrimEnd('/');
     }
 
     private static string Stamp(string full)
@@ -414,8 +359,8 @@ public static class BuildConfinement
     private static Prepared PreferSettlement(Baseline baseline, Prepared graphRefusal)
     {
         var settled = Settle(baseline);
-        if (settled.Kind == "restore-failed")
-            return new Prepared("restore-failed", settled.Detail, [], baseline);
+        if (settled.Kind == "git-failed")
+            return new Prepared("git-failed", settled.Detail, [], baseline);
         if (settled.Kind == "tampered")
             return new Prepared("tampered", settled.Detail, [], baseline);
         return graphRefusal;
@@ -424,16 +369,16 @@ public static class BuildConfinement
     private static Prepared Refuse(string reason, string detail) =>
         new(reason, "refused: " + reason + "\n" + detail + "\n", [], null);
 
-    private static Settlement Failed(Baseline baseline, IReadOnlyList<string> tracked, IReadOnlyList<string> added, string why)
+    private static Prepared RefuseOwned(string reason) =>
+        new(reason, "refused: " + reason + "\nnothing was modified by the tool\n", [], null);
+
+    private static Settlement GitFailed(string why)
     {
         var builder = new StringBuilder();
-        builder.Append("refused: restore-failed\n");
+        builder.Append("refused: git-failed\n");
         builder.Append(why).Append('\n');
-        builder.Append(ManualCommands(baseline.Repository, baseline.Head, tracked, added)).Append('\n');
-        var paths = new List<string>(tracked.Count + added.Count);
-        paths.AddRange(tracked);
-        paths.AddRange(added);
-        return new Settlement("restore-failed", builder.ToString(), paths);
+        builder.Append("nothing was modified by the tool\n");
+        return new Settlement("git-failed", builder.ToString(), []);
     }
 
     private static string DirtyText(IReadOnlyList<string> paths)
@@ -454,89 +399,41 @@ public static class BuildConfinement
         return builder.ToString();
     }
 
-    private static string TamperText(
-        string head,
-        IReadOnlyList<string> restored,
-        IReadOnlyList<(string Path, string Reason)> conflicts,
-        bool claimLossless)
+    private static string TamperText(IReadOnlyList<(string Path, string? Command)> changes)
     {
         var builder = new StringBuilder();
         builder.Append("refused: tampered\n");
         var shown = 0;
-        foreach (var path in restored)
+        foreach (var change in changes)
         {
             if (shown >= 20)
                 break;
-            builder.Append("TAMPERED ").Append(path).Append('\n');
+            builder.Append("TAMPERED ").Append(change.Path).Append('\n');
             shown++;
         }
 
-        foreach (var conflict in conflicts)
+        if (changes.Count > 20)
+            builder.Append("TAMPERED ").Append(changes.Count - 20).Append(" more\n");
+        builder.Append("nothing was modified by the tool\n");
+        foreach (var change in changes)
         {
-            if (shown >= 20)
-                break;
-            builder.Append("CONFLICT ").Append(conflict.Path).Append(' ').Append(conflict.Reason).Append('\n');
-            shown++;
-        }
-
-        var total = restored.Count + conflicts.Count;
-        if (total > 20)
-            builder.Append("TAMPERED ").Append(total - 20).Append(" more\n");
-        if (restored.Count > 0)
-            builder.Append("restored from ").Append(head).Append('\n');
-        if (claimLossless)
-            builder.Append("lossless because the pre-build tracked tree was clean\n");
-        else
-            builder.Append("worktree bytes changed; manual restore required\n");
-        return builder.ToString();
-    }
-
-    private static string ManualCommands(string repository, string head, IReadOnlyList<string> tracked, IReadOnlyList<string> added)
-    {
-        var builder = new StringBuilder();
-        if (added.Count > 0)
-        {
-            builder.Append("manual restore: git -C ").Append(Quote(repository));
-            builder.Append(" restore --staged --");
-            foreach (var path in added)
-                builder.Append(' ').Append(Quote(path));
-        }
-
-        if (tracked.Count > 0 || added.Count == 0)
-        {
-            if (builder.Length > 0)
-                builder.Append('\n');
-            builder.Append(ManualRestore(repository, head, tracked));
+            if (change.Command is not null)
+                builder.Append(change.Command).Append('\n');
         }
 
         return builder.ToString();
     }
 
-    private static string ManualRestore(string repository, string head, IReadOnlyList<string> paths)
-    {
-        var builder = new StringBuilder();
-        builder.Append("manual restore: git -C ").Append(Quote(repository));
-        builder.Append(" restore --source=").Append(head).Append(" --staged --worktree --");
-        foreach (var path in paths)
-            builder.Append(' ').Append(Quote(path));
-        return builder.ToString();
-    }
+    private static string WorktreeCommand(Baseline baseline, string path) =>
+        "git -C " + Quote(baseline.Repository) + " restore --source=" + baseline.Head + " --staged --worktree -- " + Quote(path);
+
+    private static string UnstageCommand(Baseline baseline, string path) =>
+        "git -C " + Quote(baseline.Repository) + " restore --staged -- " + Quote(path);
+
+    private static string IndexCommand(Baseline baseline) =>
+        "git -C " + Quote(baseline.Repository) + " restore --staged --source=" + baseline.Head + " :/";
 
     private static string Quote(string value) => "'" + value.Replace("'", "'\\''", StringComparison.Ordinal) + "'";
-
-    private static List<string> UnstageArguments(IReadOnlyList<string> paths)
-    {
-        var args = new List<string> { "restore", "--staged", "--" };
-        args.AddRange(paths);
-        return args;
-    }
-
-    private static List<string> RestoreArguments(string head, IReadOnlyList<string> paths)
-    {
-        var args = new List<string> { "restore", "--source=" + head, "--staged", "--worktree", "--" };
-        args.AddRange(paths);
-        return args;
-    }
 
     private static bool TryFindProject(IReadOnlyList<string> arguments, out string project)
     {
@@ -803,7 +700,7 @@ public static class BuildConfinement
         var untracked = CaptureUntracked(repository);
         if (untracked.Error is not null || untracked.Value is null)
             return new CaptureResult(null, untracked.Error ?? "git-ls-files");
-        return new CaptureResult(new Baseline(head.Stdout.Trim(), repository, entries.Value, untracked.Value), null);
+        return new CaptureResult(new Baseline(head.Stdout.Trim(), repository, entries.Value, untracked.Value, "", untracked.Ordinary), null);
     }
 
     private readonly record struct IndexResult(Dictionary<string, string>? Value, string? Error);

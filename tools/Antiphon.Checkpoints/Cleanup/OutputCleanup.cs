@@ -28,8 +28,85 @@ public static class OutputCleanup
         return !Path.IsPathRooted(value);
     }
 
+    public const string LedgerName = "checkpoint-output-ledger.txt";
+
     public static bool IsIsolatedOutputId(string value) =>
         IsPathSegment(value) && IsolatedOutputId.IsMatch(value);
+
+    public static string? WriteLedger(string directory)
+    {
+        if (!Directory.Exists(directory))
+            return null;
+        var names = ScanLedger(directory);
+        if (names is null)
+            return "ledger-mismatch";
+        names.Add(LedgerName);
+        File.WriteAllText(Path.Combine(directory, LedgerName), string.Join('\n', names.OrderBy(name => name, StringComparer.Ordinal)) + "\n");
+        return null;
+    }
+
+    public static string? LedgerAgrees(string directory)
+    {
+        var path = Path.Combine(directory, LedgerName);
+        if (!File.Exists(path))
+            return null;
+        var recorded = new HashSet<string>(File.ReadAllLines(path).Where(line => line.Length > 0), StringComparer.Ordinal);
+        var live = ScanLedger(directory);
+        if (live is null || !recorded.SetEquals(live))
+            return "ledger-mismatch";
+        return null;
+    }
+
+    private static HashSet<string>? ScanLedger(string directory)
+    {
+        var root = Path.GetFullPath(directory);
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        return ScanLedger(root, root, names) ? names : null;
+    }
+
+    private static bool ScanLedger(string root, string current, HashSet<string> names)
+    {
+        IEnumerable<string> entries;
+        try
+        {
+            entries = Directory.EnumerateFileSystemEntries(current);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+
+        foreach (var entry in entries)
+        {
+            if (IsLedgerLink(entry))
+                return false;
+            var relative = Path.GetRelativePath(root, entry).Replace('\\', '/');
+            if (Directory.Exists(entry))
+            {
+                names.Add(relative + "/");
+                if (!ScanLedger(root, entry, names))
+                    return false;
+            }
+            else
+                names.Add(relative);
+        }
+
+        return true;
+    }
+
+    private static bool IsLedgerLink(string path)
+    {
+        try
+        {
+            if (!string.IsNullOrEmpty(new DirectoryInfo(path).LinkTarget) || !string.IsNullOrEmpty(new FileInfo(path).LinkTarget))
+                return true;
+            return (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            return true;
+        }
+    }
 
     public static bool IsStrictlyInside(string root, string candidate)
     {
@@ -103,6 +180,13 @@ public static class OutputCleanup
 
             if (!owned.Contains(name) || !Directory.Exists(full))
                 continue;
+
+            var ledger = LedgerAgrees(full);
+            if (ledger is not null)
+            {
+                refusals.Add(ledger);
+                continue;
+            }
 
             var result = SafeDelete.Apply(full, new DeleteOwnership
             {

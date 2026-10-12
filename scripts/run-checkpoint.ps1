@@ -8,10 +8,10 @@
     no delegate re-derives TRX parsing or opens the file. It runs one row, never the table.
 
     Exit codes: 0 green; 1 one or more failed tests; 2 invalid input, a dirty tracked tree,
-    a restored tracked change, a failed build, or no TRX; 3 fewer than -MinExecuted executed
-    tests, or an -Expect token that matched no executed name; 4 no host build slot within
-    -SlotWaitMinutes (nothing was built or run); 8 a tracked change whose restore or recheck
-    failed (the manual git restore command is printed; the row is not green).
+    a tracked change the build left behind, a failed build, or no TRX; 3 fewer than -MinExecuted
+    executed tests, or an -Expect token that matched no executed name; 4 no host build slot within
+    -SlotWaitMinutes (nothing was built or run); 8 git could not be read while detecting that
+    change (the row is not green; nothing was put back).
 
     Build slot (CARD-0589): after input validation and the fresh results directory, the row takes a
     lease from the session runner's /build-slots broker (scripts/lib/build-slot.ps1), waits for it
@@ -24,26 +24,18 @@
     Windows, UseAppHost=false is added unless the caller names UseAppHost itself: the extensionless
     fakeclaude apphost collides with the fakeclaude/ directory Antiphon.Tests stages beside it.
 
-    Tracked files are protected by a clean baseline and a post-build restore, not by
-    predicting where MSBuild writes. Before a real dotnet build (no -DotnetShim) the row
-    refuses dirty-tracked, exit 2, unless git status --porcelain=v1 -z --untracked-files=no
-    is empty, and records HEAD, git ls-files -z -s for the whole tracked set, and a
-    stamp of every non-tracked path. After the build, on success, failure, timeout, and
-    cancel, a changed path is restored only when its worktree object is the expected
-    regular file, or is absent under real directory ancestors. A path in HEAD with that
-    shape is restored with git restore --source=<HEAD> --staged --worktree. A path
-    absent from HEAD is removed from the index with git restore --staged only when it
-    is not part of a shape conflict, and its worktree bytes stay. A directory where
-    HEAD has a file, a file where HEAD has a directory, a symlink or junction, a
-    submodule or nested repo, untracked or ignored descendants, a different file type,
-    or an unreadable path is left untouched, index included. Those paths are conflicts:
-    refused: tampered, exit 2, manual restore required, and the receipt stays invalid.
-    The lossless sentence is printed only when every non-tracked path captured before
-    the build still exists with the same bytes. Otherwise the row says worktree bytes
-    changed and does not say lossless. If restore or the recheck fails, the row exits
-    8 and prints the manual restore command for the safe paths only: --staged alone
-    for a path absent from HEAD, and --source/--staged/--worktree for a path in HEAD.
-    A relative -OutputPath is still
+    Tracked files are protected by a clean baseline and a post-build comparison, not by
+    predicting where MSBuild writes and not by putting the tree back. Before a real
+    dotnet build (no -DotnetShim) the row refuses dirty-tracked, exit 2, unless
+    git status --porcelain=v1 -z --untracked-files=no is empty, and records HEAD,
+    git ls-files -z -s for the whole tracked set, and a stamp of every ordinary and
+    ignored untracked path. After the build, on success, failure, timeout, and cancel,
+    a changed path is only reported. The row does not check out, restore, reset, unstage,
+    or delete anything outside the output directory it created for that run. Exit 2 and
+    refused: tampered list each path and the git command a person can run by hand, and
+    the receipt stays invalid. A pre-existing output directory, symlink, build-source
+    stamp, or compiler output is refused before the build, and those bytes stay. If git
+    cannot be read, the row exits 8. A relative -OutputPath is still
     rewritten to one absolute OutputPath under the entry project directory, and that same
     OutputPath, ArtifactsPath, and UseArtifactsOutput are used for the build, the dotnet
     run --no-build, and the build-source stamp. The rewrite and the static project-XML
@@ -409,12 +401,66 @@ function Get-CheckpointWriteDirectories {
     return [pscustomobject]@{ Refusal = $null; Directories = $directories.ToArray() }
 }
 
-function Remove-CheckpointCheckedFile {
-    param([string]$Path)
-    if (-not (Test-Path -LiteralPath $Path)) { return $null }
-    $reason = Test-CheckpointStampRefusal $Path
-    if ($null -ne $reason) { return $reason }
-    try { [System.IO.File]::Delete($Path) } catch { return 'git-failed' }
+function Get-CheckpointOutputSymlink {
+    param([string]$Owned)
+    try { $full = [System.IO.Path]::GetFullPath($Owned.TrimEnd('\', '/')) } catch { return 'output-symlink' }
+    $rootPath = [System.IO.Path]::GetPathRoot($full)
+    if ([string]::IsNullOrEmpty($rootPath)) { return 'output-symlink' }
+    $relative = ''
+    if ($full.Length -gt $rootPath.Length) { $relative = $full.Substring($rootPath.Length) }
+    $current = $rootPath
+    foreach ($part in ($relative -split '[\\/]' | Where-Object { -not [string]::IsNullOrEmpty($_) })) {
+        $current = [System.IO.Path]::Combine($current, $part)
+        try {
+            $file = [System.IO.FileInfo]::new($current)
+            if ($null -ne $file.LinkTarget) { return 'output-symlink' }
+            $directory = [System.IO.DirectoryInfo]::new($current)
+            if ($null -ne $directory.LinkTarget) { return 'output-symlink' }
+            if ([System.IO.File]::Exists($current) -or [System.IO.Directory]::Exists($current)) {
+                $attributes = [System.IO.File]::GetAttributes($current)
+                if (($attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) { return 'output-symlink' }
+            }
+        } catch {
+            return 'output-symlink'
+        }
+    }
+    return $null
+}
+
+function Get-CheckpointOwnedRefusal {
+    param([string]$Owned, [string]$StampPath)
+    if (Test-Path -LiteralPath $StampPath) {
+        $stampRefusal = Test-CheckpointStampRefusal $StampPath
+        if ($null -ne $stampRefusal) { return $stampRefusal }
+        return 'stamp-exists'
+    }
+    $linked = Get-CheckpointOutputSymlink $Owned
+    if ($null -ne $linked) { return $linked }
+    try { $full = [System.IO.Path]::GetFullPath($Owned.TrimEnd('\', '/')) } catch { return 'output-exists' }
+    $directory = [System.IO.DirectoryInfo]::new($full)
+    if ($null -ne $directory.LinkTarget) { return 'output-symlink' }
+    $file = [System.IO.FileInfo]::new($full)
+    if ($null -ne $file.LinkTarget) { return 'output-symlink' }
+    if ($file.Exists -and -not $directory.Exists) { return 'output-exists' }
+    if (-not $directory.Exists) { return $null }
+    try {
+        foreach ($one in [System.IO.Directory]::EnumerateFileSystemEntries($full)) {
+            $null = $one
+            return 'compiler-output-exists'
+        }
+    } catch {
+        return 'compiler-output-exists'
+    }
+    return 'output-exists'
+}
+
+function New-CheckpointOwnedDirectory {
+    param([string]$Owned)
+    $linked = Get-CheckpointOutputSymlink $Owned
+    if ($null -ne $linked) { return $linked }
+    try { $full = [System.IO.Path]::GetFullPath($Owned.TrimEnd('\', '/')) } catch { return 'output-exists' }
+    if (Test-Path -LiteralPath $full) { return 'output-exists' }
+    try { $null = New-Item -ItemType Directory -Path $full -ErrorAction Stop } catch { return 'output-exists' }
     return $null
 }
 
@@ -815,10 +861,10 @@ function Get-CheckpointTrackedSnapshot {
         if ($tab -lt 1 -or $tab -ge ($record.Length - 1)) { return @{ Error = 'index-record'; Index = ''; Hashes = $null; Head = $head; Repository = $repo; Untracked = $null } }
         $hashes[$record.Substring($tab + 1)] = $record.Substring(0, $tab)
     }
-    if ($IndexOnly) { return @{ Error = $null; Index = $raw; Hashes = $hashes; Head = $head; Repository = $repo; Untracked = $null } }
+    if ($IndexOnly) { return @{ Error = $null; Index = $raw; Hashes = $hashes; Head = $head; Repository = $repo; Untracked = $null; Ordinary = $null; OwnedRelative = '' } }
     $manifest = Get-CheckpointUntrackedManifest $repo
-    if ($null -ne $manifest.Error) { return @{ Error = [string]$manifest.Error; Index = ''; Hashes = $null; Head = $head; Repository = $repo; Untracked = $null } }
-    return @{ Error = $null; Index = $raw; Hashes = $hashes; Head = $head; Repository = $repo; Untracked = $manifest.Files }
+    if ($null -ne $manifest.Error) { return @{ Error = [string]$manifest.Error; Index = ''; Hashes = $null; Head = $head; Repository = $repo; Untracked = $null; Ordinary = $null; OwnedRelative = '' } }
+    return @{ Error = $null; Index = $raw; Hashes = $hashes; Head = $head; Repository = $repo; Untracked = $manifest.Files; Ordinary = $manifest.Ordinary; OwnedRelative = '' }
 }
 
 function Get-CheckpointTrackedStatus {
@@ -890,159 +936,27 @@ function Get-CheckpointContentStamp {
 
 function Get-CheckpointUntrackedManifest {
     param([string]$Repo)
-    $listed = Invoke-CheckpointGit $Repo @('ls-files', '-z', '--others', '--ignored', '--exclude-standard')
-    if ($listed.Reason -or [int]$listed.Exit -ne 0) { return @{ Error = 'git-ls-files'; Files = $null } }
+    $ignored = Invoke-CheckpointGit $Repo @('ls-files', '-z', '--others', '--ignored', '--exclude-standard')
+    if ($ignored.Reason -or [int]$ignored.Exit -ne 0) { return @{ Error = 'git-ls-files'; Files = $null; Ordinary = $null } }
+    $ordinary = Invoke-CheckpointGit $Repo @('ls-files', '-z', '--others', '--exclude-standard')
+    if ($ordinary.Reason -or [int]$ordinary.Exit -ne 0) { return @{ Error = 'git-ls-files'; Files = $null; Ordinary = $null } }
     $files = [System.Collections.Generic.Dictionary[string,string]]::new([StringComparer]::Ordinal)
-    foreach ($relative in ([string]$listed.Stdout).Split([char]0, [System.StringSplitOptions]::RemoveEmptyEntries)) {
+    $ordinarySet = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($relative in ([string]$ordinary.Stdout).Split([char]0, [System.StringSplitOptions]::RemoveEmptyEntries)) {
+        [void]$ordinarySet.Add($relative)
         $files[$relative] = Get-CheckpointContentStamp (Join-CheckpointRepoPath $Repo $relative)
     }
-    return @{ Error = $null; Files = $files }
-}
-
-function Get-CheckpointNodeKind {
-    param([string]$Full)
-    try {
-        $file = [System.IO.FileInfo]::new($Full)
-        if ($null -ne $file.LinkTarget) { return 'Symlink' }
-        $directory = [System.IO.DirectoryInfo]::new($Full)
-        if ($null -ne $directory.LinkTarget) { return 'Symlink' }
-        if ($directory.Exists) { return 'Directory' }
-        if ($file.Exists) { return 'File' }
-        return 'Absent'
-    } catch [System.IO.IOException] {
-        return 'Unreadable'
-    } catch [System.UnauthorizedAccessException] {
-        return 'Unreadable'
-    } catch [System.Security.SecurityException] {
-        return 'Unreadable'
-    }
-}
-
-function Get-CheckpointIndexMode {
-    param([string]$Record)
-    $space = $Record.IndexOf(' ')
-    if ($space -gt 0) { return $Record.Substring(0, $space) }
-    return ''
-}
-
-function Test-CheckpointNestedRepo {
-    param([string]$Full)
-    $kind = Get-CheckpointNodeKind ([System.IO.Path]::Combine($Full, '.git'))
-    return ($kind -eq 'Directory' -or $kind -eq 'File' -or $kind -eq 'Symlink')
-}
-
-function Get-CheckpointAncestorConflict {
-    param([string]$Repository, [string]$Relative)
-    $normalized = $Relative.Replace('\', '/')
-    $slash = $normalized.LastIndexOf('/')
-    while ($slash -gt 0) {
-        $parent = $normalized.Substring(0, $slash)
-        $kind = Get-CheckpointNodeKind (Join-CheckpointRepoPath $Repository $parent)
-        if ($kind -eq 'Directory') { return $null }
-        if ($kind -eq 'Absent') {
-            $slash = $parent.LastIndexOf('/')
-            continue
+    foreach ($relative in ([string]$ignored.Stdout).Split([char]0, [System.StringSplitOptions]::RemoveEmptyEntries)) {
+        if (-not $files.ContainsKey($relative)) {
+            $files[$relative] = Get-CheckpointContentStamp (Join-CheckpointRepoPath $Repo $relative)
         }
-        if ($kind -eq 'Symlink') { return 'symlink; manual restore required' }
-        if ($kind -eq 'Unreadable') { return 'unreadable; manual restore required' }
-        return 'file where a directory is tracked; manual restore required'
     }
-    return $null
-}
-
-function Get-CheckpointDirectoryReason {
-    param([string]$Repository, [string]$Relative)
-    $status = Invoke-CheckpointGit $Repository @('status', '--porcelain=v1', '-z', '--ignored', '--untracked-files=all', '--', $Relative)
-    if ($status.Reason -or [int]$status.Exit -ne 0) { return 'unreadable; manual restore required' }
-    $ignored = $false
-    $untracked = $false
-    $parts = ([string]$status.Stdout).Split([char]0, [System.StringSplitOptions]::RemoveEmptyEntries)
-    for ($i = 0; $i -lt $parts.Length; $i++) {
-        $entry = [string]$parts[$i]
-        if ($entry.Length -lt 4 -or $entry[2] -ne ' ') { continue }
-        $xy = $entry.Substring(0, 2)
-        if ($xy -eq '??') { $untracked = $true }
-        elseif ($xy -eq '!!') { $ignored = $true }
-        if ($xy[0] -eq 'R' -or $xy[0] -eq 'C' -or $xy[1] -eq 'R' -or $xy[1] -eq 'C') { $i++ }
-    }
-    if ($untracked -and $ignored) { return 'untracked or ignored descendant; manual restore required' }
-    if ($ignored) { return 'ignored descendant; manual restore required' }
-    if ($untracked) { return 'untracked descendant; manual restore required' }
-    return 'directory where a file is tracked; manual restore required'
-}
-
-function Get-CheckpointConflictReason {
-    param($Baseline, [string]$Path)
-    if ($null -eq $Baseline.Hashes -or -not $Baseline.Hashes.ContainsKey($Path)) { return 'unreadable; manual restore required' }
-    $mode = Get-CheckpointIndexMode ([string]$Baseline.Hashes[$Path])
-    if ($mode -eq '120000') { return 'symlink; manual restore required' }
-    if ($mode -eq '160000') { return 'submodule; manual restore required' }
-    if ($mode -ne '100644' -and $mode -ne '100755') { return 'different file type; manual restore required' }
-    $kind = Get-CheckpointNodeKind (Join-CheckpointRepoPath ([string]$Baseline.Repository) $Path)
-    if ($kind -eq 'Unreadable') { return 'unreadable; manual restore required' }
-    if ($kind -eq 'Symlink') { return 'symlink; manual restore required' }
-    if ($kind -eq 'Other') { return 'different file type; manual restore required' }
-    if ($kind -eq 'Directory') {
-        $full = Join-CheckpointRepoPath ([string]$Baseline.Repository) $Path
-        if (Test-CheckpointNestedRepo $full) { return 'nested repo; manual restore required' }
-        return (Get-CheckpointDirectoryReason ([string]$Baseline.Repository) $Path)
-    }
-    if ($kind -eq 'Absent') { return (Get-CheckpointAncestorConflict ([string]$Baseline.Repository) $Path) }
-    return $null
-}
-
-function Test-CheckpointPathPrefix {
-    param([string]$Value, [string]$Prefix)
-    if ([string]::IsNullOrEmpty($Prefix)) { return $false }
-    $needle = $Prefix + '/'
-    if ($Value.Length -lt $needle.Length) { return $false }
-    return ($Value.Substring(0, $needle.Length) -ceq $needle)
-}
-
-function Test-CheckpointHeldConflict {
-    param([string]$Path, [System.Collections.Generic.List[object]]$Conflicts)
-    foreach ($conflict in $Conflicts) {
-        $name = [string]$conflict.Path
-        if ($Path -ceq $name) { return $true }
-        if (Test-CheckpointPathPrefix $Path $name) { return $true }
-        if (Test-CheckpointPathPrefix $name $Path) { return $true }
-    }
-    return $false
-}
-
-function Test-CheckpointManifest {
-    param($Baseline)
-    if ($null -eq $Baseline.Untracked) { return $false }
-    foreach ($key in @($Baseline.Untracked.Keys)) {
-        $stamp = [string]$Baseline.Untracked[$key]
-        if ($stamp -eq 'unreadable') { return $false }
-        $again = Get-CheckpointContentStamp (Join-CheckpointRepoPath ([string]$Baseline.Repository) ([string]$key))
-        if ($again -cne $stamp) { return $false }
-    }
-    return $true
+    return @{ Error = $null; Files = $files; Ordinary = $ordinarySet }
 }
 
 function Format-CheckpointGitQuote {
     param([string]$Value)
     return "'" + ($Value -replace "'", "'\''") + "'"
-}
-
-function Format-CheckpointManualRestore {
-    param([string]$Repository, [string]$Head, [string[]]$Tracked, [string[]]$Added)
-    $lines = New-Object System.Collections.Generic.List[string]
-    $addedList = @($Added)
-    $trackedList = @($Tracked)
-    if ($addedList.Count -gt 0) {
-        $text = 'manual restore: git -C ' + (Format-CheckpointGitQuote $Repository) + ' restore --staged --'
-        foreach ($path in $addedList) { $text += ' ' + (Format-CheckpointGitQuote ([string]$path)) }
-        [void]$lines.Add($text)
-    }
-    if ($trackedList.Count -gt 0 -or $addedList.Count -eq 0) {
-        $text = 'manual restore: git -C ' + (Format-CheckpointGitQuote $Repository) + ' restore --source=' + $Head + ' --staged --worktree --'
-        foreach ($path in $trackedList) { $text += ' ' + (Format-CheckpointGitQuote ([string]$path)) }
-        [void]$lines.Add($text)
-    }
-    return ($lines -join "`n")
 }
 
 function Format-CheckpointDirty {
@@ -1060,117 +974,113 @@ function Format-CheckpointDirty {
 }
 
 function Format-CheckpointTamper {
-    param([string]$Head, [string[]]$Restored, [string[]]$ConflictLines, [bool]$ClaimLossless)
+    param($Changes)
     $lines = New-Object System.Collections.Generic.List[string]
     [void]$lines.Add('refused: tampered')
-    $restoredList = @($Restored)
-    $conflictList = @($ConflictLines)
     $shown = 0
-    foreach ($path in $restoredList) {
+    foreach ($change in @($Changes)) {
         if ($shown -ge 20) { break }
-        [void]$lines.Add('TAMPERED ' + $path)
+        [void]$lines.Add('TAMPERED ' + [string]$change.Path)
         $shown++
     }
-    foreach ($conflict in $conflictList) {
-        if ($shown -ge 20) { break }
-        [void]$lines.Add('CONFLICT ' + $conflict)
-        $shown++
+    if (@($Changes).Count -gt 20) { [void]$lines.Add('TAMPERED ' + (@($Changes).Count - 20) + ' more') }
+    [void]$lines.Add('nothing was modified by the tool')
+    foreach ($change in @($Changes)) {
+        if (-not [string]::IsNullOrEmpty([string]$change.Command)) { [void]$lines.Add([string]$change.Command) }
     }
-    $total = $restoredList.Count + $conflictList.Count
-    if ($total -gt 20) { [void]$lines.Add('TAMPERED ' + ($total - 20) + ' more') }
-    if ($restoredList.Count -gt 0) { [void]$lines.Add('restored from ' + $Head) }
-    if ($ClaimLossless) { [void]$lines.Add('lossless because the pre-build tracked tree was clean') }
-    else { [void]$lines.Add('worktree bytes changed; manual restore required') }
     return ($lines -join "`n")
 }
 
-function Format-CheckpointRestoreFailed {
-    param($Baseline, [string[]]$Tracked, [string[]]$Added, [string]$Why)
-    $manual = Format-CheckpointManualRestore ([string]$Baseline.Repository) ([string]$Baseline.Head) @($Tracked) @($Added)
-    return ('refused: restore-failed' + "`n" + $Why + "`n" + $manual)
+function Format-CheckpointGitCommand {
+    param([string]$Repository, [string]$Arguments)
+    return ('git -C ' + (Format-CheckpointGitQuote $Repository) + ' ' + $Arguments)
 }
 
 function Test-CheckpointIndexEqual {
     param($Baseline)
     $again = Get-CheckpointTrackedSnapshot -Projects @() -IndexOnly
-    if ($null -eq $again -or $null -ne $again.Error -or $null -eq $again.Hashes -or $null -eq $Baseline.Hashes) { return $false }
-    if ($again.Hashes.Count -ne $Baseline.Hashes.Count) { return $false }
+    if ($null -eq $again -or $null -ne $again.Error -or $null -eq $again.Hashes -or $null -eq $Baseline.Hashes) { return 'git-failed' }
+    if ($again.Hashes.Count -ne $Baseline.Hashes.Count) { return 'mismatch' }
     foreach ($key in @($Baseline.Hashes.Keys)) {
         $name = [string]$key
-        if (-not $again.Hashes.ContainsKey($name)) { return $false }
-        if ([string]$again.Hashes[$name] -cne [string]$Baseline.Hashes[$name]) { return $false }
+        if (-not $again.Hashes.ContainsKey($name)) { return 'mismatch' }
+        if ([string]$again.Hashes[$name] -cne [string]$Baseline.Hashes[$name]) { return 'mismatch' }
     }
-    return $true
+    return 'equal'
+}
+
+function Test-CheckpointUnderOwned {
+    param($Baseline, [string]$Relative)
+    $owned = [string]$Baseline.OwnedRelative
+    if ([string]::IsNullOrEmpty($owned)) { return $false }
+    $owned = $owned.TrimEnd('/')
+    $path = $Relative.Replace('\', '/')
+    return ($path -ceq $owned) -or $path.StartsWith($owned + '/', [StringComparison]::Ordinal)
+}
+
+function Get-CheckpointUntrackedChanges {
+    param($Baseline)
+    $again = Get-CheckpointUntrackedManifest ([string]$Baseline.Repository)
+    if ($null -ne $again.Error -or $null -eq $again.Files) { return @{ Error = 'git-ls-files'; Paths = @() } }
+    $paths = New-Object System.Collections.Generic.List[string]
+    if ($null -ne $Baseline.Untracked) {
+        foreach ($key in @($Baseline.Untracked.Keys)) {
+            $name = [string]$key
+            if (Test-CheckpointUnderOwned $Baseline $name) { continue }
+            $stamp = [string]$Baseline.Untracked[$name]
+            if (-not $again.Files.ContainsKey($name) -or ([string]$again.Files[$name]) -cne $stamp) { [void]$paths.Add($name) }
+        }
+    }
+    if ($null -ne $again.Ordinary) {
+        foreach ($path in @($again.Ordinary)) {
+            $name = [string]$path
+            $known = $false
+            if ($null -ne $Baseline.Ordinary -and $Baseline.Ordinary.Contains($name)) { $known = $true }
+            if ($null -ne $Baseline.Untracked -and $Baseline.Untracked.ContainsKey($name)) { $known = $true }
+            if ($known -or (Test-CheckpointUnderOwned $Baseline $name)) { continue }
+            [void]$paths.Add($name)
+        }
+    }
+    return @{ Error = $null; Paths = $paths.ToArray() }
 }
 
 function Complete-CheckpointBaseline {
     param($Baseline)
-    $status = Get-CheckpointTrackedStatus ([string]$Baseline.Repository)
-    if ($null -ne $status.Error) { return @{ Kind = 'restore-failed'; Detail = (Format-CheckpointRestoreFailed $Baseline @() @() ([string]$status.Error)) } }
-    if (@($status.Paths).Count -eq 0) {
-        if (Test-CheckpointIndexEqual $Baseline) { return @{ Kind = $null; Detail = '' } }
-        return @{ Kind = 'restore-failed'; Detail = (Format-CheckpointRestoreFailed $Baseline @() @() 'index-mismatch') }
-    }
-    $tracked = New-Object System.Collections.Generic.List[string]
-    $added = New-Object System.Collections.Generic.List[string]
+    $repo = [string]$Baseline.Repository
+    $status = Get-CheckpointTrackedStatus $repo
+    if ($null -ne $status.Error) { return @{ Kind = 'git-failed'; Detail = ("refused: git-failed`n" + [string]$status.Error + "`nnothing was modified by the tool") } }
+    $untracked = Get-CheckpointUntrackedChanges $Baseline
+    if ($null -ne $untracked.Error) { return @{ Kind = 'git-failed'; Detail = ("refused: git-failed`n" + [string]$untracked.Error + "`nnothing was modified by the tool") } }
+    $changes = New-Object System.Collections.Generic.List[object]
+    $seen = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     foreach ($path in @($status.Paths)) {
         $name = [string]$path
-        if ($null -ne $Baseline.Hashes -and $Baseline.Hashes.ContainsKey($name)) { [void]$tracked.Add($name) }
-        else { [void]$added.Add($name) }
-    }
-    $conflicts = New-Object System.Collections.Generic.List[object]
-    $safeTracked = New-Object System.Collections.Generic.List[string]
-    foreach ($path in $tracked) {
-        $reason = Get-CheckpointConflictReason $Baseline ([string]$path)
-        if ([string]::IsNullOrEmpty([string]$reason)) { [void]$safeTracked.Add([string]$path) }
-        else { [void]$conflicts.Add(@{ Path = [string]$path; Reason = [string]$reason }) }
-    }
-    $safeAdded = New-Object System.Collections.Generic.List[string]
-    foreach ($path in $added) {
-        if (-not (Test-CheckpointHeldConflict ([string]$path) $conflicts)) { [void]$safeAdded.Add([string]$path) }
-    }
-    # Unstage paths absent from HEAD before any --worktree restore, and only when
-    # they are not part of a shape conflict. Restoring a conflicting ancestor from
-    # HEAD deletes worktree bytes the commit does not contain.
-    if ($safeAdded.Count -gt 0) {
-        $unstageArgs = @('restore', '--staged', '--') + $safeAdded.ToArray()
-        $unstaged = Invoke-CheckpointGit ([string]$Baseline.Repository) $unstageArgs
-        $unstageWhy = $unstaged.Reason
-        if ([string]::IsNullOrEmpty($unstageWhy)) { $unstageWhy = 'git-restore' }
-        if ($unstaged.Reason -or [int]$unstaged.Exit -ne 0) { return @{ Kind = 'restore-failed'; Detail = (Format-CheckpointRestoreFailed $Baseline $safeTracked.ToArray() $safeAdded.ToArray() $unstageWhy) } }
-    }
-    if ($safeTracked.Count -gt 0) {
-        $restoreArgs = @('restore', ('--source=' + [string]$Baseline.Head), '--staged', '--worktree', '--') + $safeTracked.ToArray()
-        $restored = Invoke-CheckpointGit ([string]$Baseline.Repository) $restoreArgs
-        $restoreWhy = $restored.Reason
-        if ([string]::IsNullOrEmpty($restoreWhy)) { $restoreWhy = 'git-restore' }
-        if ($restored.Reason -or [int]$restored.Exit -ne 0) { return @{ Kind = 'restore-failed'; Detail = (Format-CheckpointRestoreFailed $Baseline $safeTracked.ToArray() $safeAdded.ToArray() $restoreWhy) } }
-    }
-    $after = Get-CheckpointTrackedStatus ([string]$Baseline.Repository)
-    if ($null -ne $after.Error) { return @{ Kind = 'restore-failed'; Detail = (Format-CheckpointRestoreFailed $Baseline $safeTracked.ToArray() $safeAdded.ToArray() ([string]$after.Error)) } }
-    if ($conflicts.Count -gt 0) {
-        foreach ($path in @($after.Paths)) {
-            if (-not (Test-CheckpointHeldConflict ([string]$path) $conflicts)) {
-                return @{ Kind = 'restore-failed'; Detail = (Format-CheckpointRestoreFailed $Baseline $safeTracked.ToArray() $safeAdded.ToArray() 'still-dirty') }
-            }
+        if ((Test-CheckpointUnderOwned $Baseline $name) -or -not $seen.Add($name)) { continue }
+        $command = if ($null -ne $Baseline.Hashes -and $Baseline.Hashes.ContainsKey($name)) {
+            Format-CheckpointGitCommand $repo ('restore --source=' + [string]$Baseline.Head + ' --staged --worktree -- ' + (Format-CheckpointGitQuote $name))
+        } else {
+            Format-CheckpointGitCommand $repo ('restore --staged -- ' + (Format-CheckpointGitQuote $name))
         }
-        $restoredPaths = New-Object System.Collections.Generic.List[string]
-        foreach ($path in $safeTracked) { [void]$restoredPaths.Add([string]$path) }
-        foreach ($path in $safeAdded) { [void]$restoredPaths.Add([string]$path) }
-        $conflictLines = New-Object System.Collections.Generic.List[string]
-        foreach ($conflict in $conflicts) { [void]$conflictLines.Add(([string]$conflict.Path) + ' ' + ([string]$conflict.Reason)) }
-        return @{ Kind = 'tampered'; Detail = (Format-CheckpointTamper ([string]$Baseline.Head) $restoredPaths.ToArray() $conflictLines.ToArray() $false) }
+        [void]$changes.Add(@{ Path = $name; Command = $command })
     }
-    if (@($after.Paths).Count -gt 0) { return @{ Kind = 'restore-failed'; Detail = (Format-CheckpointRestoreFailed $Baseline $safeTracked.ToArray() $safeAdded.ToArray() 'still-dirty') } }
-    if (-not (Test-CheckpointIndexEqual $Baseline)) { return @{ Kind = 'restore-failed'; Detail = (Format-CheckpointRestoreFailed $Baseline $safeTracked.ToArray() $safeAdded.ToArray() 'index-mismatch') } }
-    $lossless = Test-CheckpointManifest $Baseline
-    return @{ Kind = 'tampered'; Detail = (Format-CheckpointTamper ([string]$Baseline.Head) @($status.Paths) @() ([bool]$lossless)) }
+    foreach ($path in @($untracked.Paths)) {
+        $name = [string]$path
+        if ((Test-CheckpointUnderOwned $Baseline $name) -or -not $seen.Add($name)) { continue }
+        [void]$changes.Add(@{ Path = $name; Command = '' })
+    }
+    if ($changes.Count -eq 0) {
+        $index = Test-CheckpointIndexEqual $Baseline
+        if ($index -eq 'equal') { return @{ Kind = $null; Detail = '' } }
+        if ($index -eq 'git-failed') { return @{ Kind = 'git-failed'; Detail = ("refused: git-failed`ngit-ls-files`nnothing was modified by the tool") } }
+        [void]$changes.Add(@{ Path = '(index)'; Command = (Format-CheckpointGitCommand $repo ('restore --staged --source=' + [string]$Baseline.Head + ' :/')) })
+    }
+    return @{ Kind = 'tampered'; Detail = (Format-CheckpointTamper $changes.ToArray()) }
 }
 
 function Publish-CheckpointSettlement {
     param($Baseline, [string]$FallbackReason, [string]$FallbackDetail)
     $settled = Complete-CheckpointBaseline $Baseline
-    if ($settled.Kind -eq 'restore-failed') {
+    if ($settled.Kind -eq 'git-failed') {
         Write-Host ([string]$settled.Detail)
         return 8
     }
@@ -1221,6 +1131,15 @@ function Invoke-ConfinedCheckpointBuild {
     if ($null -ne $before.Error) {
         Write-Host 'refused: tracked-snapshot'
         Write-Host ([string]$before.Error)
+        return 2
+    }
+    $ownedFull = $layout.Owned.TrimEnd('/')
+    $ownedRelative = Get-CheckpointRepoRelative $root $ownedFull
+    if ($null -ne $ownedRelative) { $before.OwnedRelative = $ownedRelative }
+    $created = New-CheckpointOwnedDirectory $layout.Owned
+    if ($null -ne $created) {
+        Write-Host ('refused: ' + $created)
+        Write-Host 'nothing was modified by the tool'
         return 2
     }
     $rewritten = New-Object System.Collections.Generic.List[string]
@@ -1306,6 +1225,14 @@ try {
     $script:buildState = $buildState
     $buildExit = 0
     if (-not $NoBuild) {
+        $outputLink = Get-CheckpointOutputSymlink $layout.Owned
+        if ($null -ne $outputLink) {
+            Write-Host ('refused: ' + $outputLink)
+            Write-Host 'nothing was modified by the tool'
+            $buildExit = 2
+            $buildState = 'failed'
+            $script:buildState = 'failed'
+        } else {
         $graph = Get-CheckpointWriteDirectories $root $Project $OutputPath
         if ($null -ne $graph.Refusal) {
             $outputRefusal = $graph.Refusal
@@ -1319,13 +1246,15 @@ try {
             $script:buildState = 'failed'
         } elseif ($null -ne ($stampRefusal = Test-CheckpointStampRefusal $stampPath)) {
             Write-Host ('refused: ' + $stampRefusal)
+            Write-Host 'nothing was modified by the tool'
             $buildExit = 2
             $buildState = 'failed'
             $script:buildState = 'failed'
         } else {
-            $deleteRefusal = Remove-CheckpointCheckedFile $stampPath
-            if ($null -ne $deleteRefusal) {
-                Write-Host ('refused: ' + $deleteRefusal)
+            $ownedRefusal = Get-CheckpointOwnedRefusal $layout.Owned $stampPath
+            if ($null -ne $ownedRefusal) {
+                Write-Host ('refused: ' + $ownedRefusal)
+                Write-Host 'nothing was modified by the tool'
                 $buildExit = 2
                 $buildState = 'failed'
                 $script:buildState = 'failed'
@@ -1368,6 +1297,7 @@ try {
                     }
                 }
             }
+        }
         }
         }
         }

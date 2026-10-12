@@ -147,6 +147,16 @@ public sealed class RowRunner
         {
             if (!string.IsNullOrWhiteSpace(request.Project) && !string.IsNullOrWhiteSpace(request.OutputPath))
             {
+                var owned = BuildConfinement.LayoutFor(request.WorkingDirectory, request.Project, request.OutputPath).Owned;
+                var link = BuildConfinement.OutputSymlink(owned);
+                if (link is not null)
+                {
+                    combined.WriteLine($"CHECKPOINT {request.Name} refused: {link}");
+                    combined.WriteLine("nothing was modified by the tool");
+                    combined.WriteLine($"CHECKPOINT {request.Name} EXIT CODE: 2");
+                    return Finish(ExitCodes.Invalid, "failed", "", buffer, 0, [], null, null, false, "build-failed");
+                }
+
                 var writeRefusal = ProjectWriteRoots.Preflight(request.WorkingDirectory, request.Project, request.OutputPath, request.GitExecutable);
                 if (writeRefusal is not null)
                 {
@@ -161,6 +171,7 @@ public sealed class RowRunner
                 if (invalidated is not null)
                 {
                     combined.WriteLine($"CHECKPOINT {request.Name} refused: {invalidated}");
+                    combined.WriteLine("nothing was modified by the tool");
                     combined.WriteLine($"CHECKPOINT {request.Name} EXIT CODE: 2");
                     return Finish(ExitCodes.Invalid, "failed", "", buffer, 0, [], null, null, false, "build-failed");
                 }
@@ -183,7 +194,7 @@ public sealed class RowRunner
                 EchoGuard(combined, built.Stderr);
                 var buildText = built.Stdout + "\n" + built.Stderr;
                 var code = built.ExitCode == ExitCodes.RestoreFailed
-                    && buildText.Contains("refused: restore-failed", StringComparison.Ordinal)
+                    && buildText.Contains("refused: git-failed", StringComparison.Ordinal)
                     ? ExitCodes.RestoreFailed
                     : ExitCodes.Invalid;
                 combined.WriteLine($"CHECKPOINT {request.Name} build=failed project={request.Project} outputPath={request.OutputPath} exit={built.ExitCode} slot={request.Slot} waited={request.WaitedSeconds}s" + (request.SlotReason is null ? "" : " slot-reason=" + request.SlotReason));
@@ -450,11 +461,8 @@ public sealed class RowRunner
             if (line.StartsWith("refused:", StringComparison.Ordinal)
                 || line.StartsWith("TAMPERED ", StringComparison.Ordinal)
                 || line.StartsWith("DIRTY ", StringComparison.Ordinal)
-                || line.StartsWith("restored from ", StringComparison.Ordinal)
-                || line.StartsWith("lossless because ", StringComparison.Ordinal)
-                || line.StartsWith("CONFLICT ", StringComparison.Ordinal)
-                || line.StartsWith("worktree bytes changed", StringComparison.Ordinal)
-                || line.StartsWith("manual restore:", StringComparison.Ordinal))
+                || line.StartsWith("nothing was modified by the tool", StringComparison.Ordinal)
+                || line.StartsWith("git -C ", StringComparison.Ordinal))
                 writer.WriteLine(line);
         }
     }

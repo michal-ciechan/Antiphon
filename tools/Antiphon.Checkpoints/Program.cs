@@ -530,7 +530,51 @@ public static class Program
             WaitedSeconds = lease.WaitedSeconds,
             MaxCpuCount = lease.MaxCpuCount > 0 ? lease.MaxCpuCount : 4,
         }, output, CancellationToken.None).ConfigureAwait(false);
+        if (Directory.Exists(results))
+        {
+            guard.Observe();
+            WriteRowReceipt(results, name, source, result);
+        }
+
         return result.ExitCode;
+    }
+
+    private static void WriteRowReceipt(string resultsDirectory, string name, SourceEvidence source, RowRunResult result)
+    {
+        var executed = result.Trx?.Executed ?? 0;
+        var passed = result.Trx?.Passed ?? 0;
+        var failed = result.Trx?.Failed ?? 0;
+        var skipped = result.Trx?.Skipped ?? 0;
+        var line = string.IsNullOrEmpty(result.Line)
+            ? CheckpointLine.Format(new CheckpointLineModel
+            {
+                Name = name,
+                Commit = source.Start.Commit ?? "unknown",
+                Build = string.IsNullOrEmpty(result.BuildState) ? "failed" : result.BuildState,
+                Executed = executed.ToString(),
+                Passed = passed.ToString(),
+                Failed = failed.ToString(),
+                Skipped = skipped.ToString(),
+                Source = source,
+            })
+            : result.Line;
+        var evidence = new
+        {
+            version = 1,
+            name,
+            start = source.Start,
+            end = source.End,
+            state = source.State,
+            buildSource = source.BuildSource,
+            receipt = line,
+            exitCode = result.ExitCode,
+            executed,
+            passed,
+            failed,
+            skipped,
+        };
+        var path = Path.Combine(resultsDirectory, "source.json");
+        _ = SafeWrite.Text(path, JsonSerializer.Serialize(evidence, CheckpointApp.Json) + "\n", SafeWrite.Under(resultsDirectory));
     }
 
     private static (CheckpointManifest Manifest, RunRequest Request) LoadSelection(ArgSet options, string repo)
