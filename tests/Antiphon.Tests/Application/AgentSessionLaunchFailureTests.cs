@@ -711,10 +711,15 @@ public class AgentSessionLaunchFailureTests
             {
                 // Herdr expands $env:NAME for the scan only. Off Windows that scan allows the
                 // line break, and the launched argv stays the token — the secret is not copied in.
+                // ShouldNotContain compares whole arguments, so exclusion is an ordinal substring.
                 await fixture.LaunchInteractiveAsync(spec: spec);
                 adapter.Started.ShouldBeTrue();
                 adapter.StartedArgs.ShouldContain("$env:GROK_RULES");
-                adapter.StartedArgs.ShouldNotContain(sentinel);
+                var secretArgument = adapter.StartedArgs.FirstOrDefault(
+                    argument => argument.Contains(sentinel, StringComparison.Ordinal));
+                adapter.StartedArgs
+                    .Any(argument => argument.Contains(sentinel, StringComparison.Ordinal))
+                    .ShouldBeFalse("argv copied the rules secret into an argument: " + secretArgument);
                 string.Join('\n', adapter.StartedArgs).ShouldNotContain(GrokRulesArgvPolicy.ProblemCode);
             }
         }
