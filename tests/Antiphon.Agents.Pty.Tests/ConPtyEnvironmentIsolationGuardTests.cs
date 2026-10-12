@@ -128,7 +128,8 @@ public sealed class ConPtyEnvironmentIsolationGuardTests
         foreach (var type in types)
         {
             // Generated bodies are reached through call/delegate/state-machine edges below.
-            // Scheduling always belongs to the outer user method, never a lambda or MoveNext.
+            // For the traversed lambda and state-machine fixture edges, scheduling is
+            // checked on the owning user method rather than the generated body.
             if (type.IsDefined(typeof(CompilerGeneratedAttribute), inherit: false)) continue;
             // TUnit's generated launchers invoke tests under the original test's metadata;
             // their __Invoke/.cctor methods are not separate scheduling owners.
@@ -159,7 +160,9 @@ public sealed class ConPtyEnvironmentIsolationGuardTests
         {
             if (!visited.Add(body)) continue;
             // The common attribute also covers AsyncIteratorStateMachineAttribute.
-            // A recognized but unreadable shape must never make the census green.
+            // Discovered, non-null state-machine types require a readable MoveNext body;
+            // the missing-method fixture verifies rejection. A null StateMachineType
+            // passes silently, an inherited limitation disclosed in the plan's R-2.
             var stateMachine = body.GetCustomAttribute<StateMachineAttribute>()?.StateMachineType;
             if (stateMachine is not null)
             {
@@ -190,8 +193,8 @@ public sealed class ConPtyEnvironmentIsolationGuardTests
                     {
                         callsEnvironmentSetter = true;
                         // A parameterised setter can receive the directory name at runtime.
-                        // Fail conservatively for EVERY caller, even without a literal in it;
-                        // a scheduling attribute on the helper cannot serialize its callers.
+                        // Flag callers reached by these IL edges, even without a literal;
+                        // the helper's scheduling attribute does not serialize those callers.
                         parameterisedSetter |= body.GetParameters().Any(p => p.ParameterType == typeof(string));
                     }
                     if (called?.Module.Assembly == method.Module.Assembly) pending.Push(called);

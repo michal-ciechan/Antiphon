@@ -1,12 +1,14 @@
 # CARD-0985: guard-the-guard state-machine fixtures
 
-Task/landing owner: Code `8da91605`, branch `feat/card-task-8da91605`.
+Task/landing owner: repair Code `71d0c64a`, branch `feat/card-task-71d0c64a`.
+Original implementation: Code `8da91605-c82f-48ca-ae26-b177d622cd67`, branch
+`feat/card-task-8da91605`; repair base `d660f784c5546d3e2a49ef59547c8f54ffa12fa9`.
 Base: `0973be4121b89249f092a6a5f4e9542797b86a2c`. Final, bounded Pty-only slice;
 the brief explicitly excludes the broad Unit lane. No production or runtime changes.
 
 ## Decision and files
 
-The environment census requires every owner of a ConPTY-directory mutation to have
+The environment census requires each discovered owner of a ConPTY-directory mutation to have
 unkeyed `[NotInParallel]` on its method or class. The self-test protects the census
 from silently losing IL edges. Its existing lambda/helper assertions remain intact.
 Current HEAD contains CARD-0978's guard but no state-machine self-test fixtures;
@@ -27,8 +29,11 @@ exclusion for the real census. First commit and run the new rows against the
 pre-slice scanner. Async/iterator traversal already exists, so those controls may
 pass; do not invent a baseline failure. Async iterators currently have an unhandled
 `AsyncIteratorStateMachineAttribute`; repair that test-only traversal if red confirms
-it. A recognized state-machine attribute without a discoverable `MoveNext` throws
-instead of letting an unknown shape make the guard green.
+it. A discovered, non-null state-machine type without a readable `MoveNext` body
+throws, as demonstrated by V-4's missing-method fixture. A null `StateMachineType`
+(for example, `[AsyncStateMachine(null)]`) passes silently: the attribute alone
+produces no owners, violations or exception. This is an inherited scanner limitation
+disclosed under R-2; this documentation repair does not add null rejection.
 
 Deliberate mutants belong to the subsequent Mutation stage under the standing Code
 contract. Its scratch red/restore/green controls below remain pending; ordinary
@@ -41,7 +46,8 @@ both unchanged R-1 tests passed. The scanner is byte-for-byte pre-slice except
 the fixture exclusion. V-1/V-3 add regression coverage for already-correct edges;
 their deliberate red controls remain pending Mutation, not claimed baseline red.
 Repair uses the shared `StateMachineAttribute` to include all three compiler
-attributes, and refuses a discovered state-machine type with no readable MoveNext.
+attributes exercised by V-1/V-2/V-3, and refuses a discovered, non-null
+state-machine type with no readable MoveNext body (V-4's missing-method fixture).
 Evidence: `.antiphon/checkpoints/20261012-231412-f5f1/report.json` and its fresh TRX.
 
 ## Verification design
@@ -56,9 +62,9 @@ class and compiled IL fixtures; no delivery, landing, lease or persistence chang
 | V-1 | `Guard_classifies_async_method_state_machines_by_the_owning_method` | mutation after await; skip state-machine traversal -> exact owner list loses all four roots |
 | V-2 | `Guard_classifies_async_iterator_state_machines_by_the_owning_method` | mutation after await/yield; omit async-iterator attribute -> exact owner list loses all four roots |
 | V-3 | `Guard_classifies_iterator_state_machines_by_the_owning_method` | mutation after yield; skip iterator attribute -> exact owner list loses all four roots |
-| V-4 | `Guard_refuses_state_machines_without_MoveNext` | recognized attribute with missing body; silently ignore missing MoveNext -> required exception absent |
+| V-4 | `Guard_refuses_state_machines_without_MoveNext` | discovered, non-null state-machine type with missing MoveNext; silently ignore missing MoveNext -> required exception absent |
 | R-1 | `ConPty_environment_mutators_are_unkeyed_not_in_parallel` and `Guard_detects_lambdas_closures_and_parameter_helpers_by_the_owning_method` | unchanged census floor and lambda/helper owner assertions |
-| R-2 | Windows qualification disclosure | native Windows execution not required by this portable IL-only slice; disclose that it was not run |
+| R-2 | qualification and inherited limitation disclosure | native Windows execution not required by this portable IL-only slice; disclose that it was not run and that a null StateMachineType passes silently (no owners, violations or exception from the attribute alone) |
 | R-3 | manual source/publication checks | fixtures never invoked; old assertions unchanged; full-range evidence policy; merge-tree against fetched master; remote SHA equals HEAD; tracked file count; clean tree |
 
 ### Positive controls (pending Mutation)
@@ -71,7 +77,7 @@ scratch mutations, assertion-red validation, exact restoration and rebuilt green
 | PC-1 / async | V-1 | stop pushing generated MoveNext bodies |
 | PC-2 / async-iterator | V-2 | omit AsyncIteratorStateMachineAttribute traversal |
 | PC-3 / iterator | V-3 | omit IteratorStateMachineAttribute traversal |
-| PC-4 / missing-body | V-4 | silently continue when a recognized state machine lacks MoveNext |
+| PC-4 / missing-body | V-4 | silently continue when a discovered, non-null state-machine type lacks MoveNext |
 | PC-5 / method-control | V-1 | reject unkeyed method serialization |
 | PC-6 / class-control | V-2 | reject unkeyed class serialization |
 | PC-7 / keyed-control | V-3 | accept keyed serialization |
