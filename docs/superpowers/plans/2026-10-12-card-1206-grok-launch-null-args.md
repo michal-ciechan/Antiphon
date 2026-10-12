@@ -80,5 +80,5 @@ shares one runner build for its three full classes; CP-3 runs sequentially.
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
 | CP-1 | S2 | `tests/Antiphon.SessionRunner.Tests -> bin-c1206-red/` | grok-baseline | `/*/*/GrokLaunchArgsValidationTests/*` | V-1, V-2 | 6 executed; null list/element intentional NRE red, four controls green | 6 | 6 | true |
-| CP-2 | S3 | `tests/Antiphon.SessionRunner.Tests -> bin-c1206-runner/` | grok-validation | `/*/*/(GrokLaunchArgsValidationTests)|(UnixPtyArgvAdmissionTests)|(GrokRulesFileLaunchTests)/*` | V-1, V-2, R-1, R-3 | 42 executed, zero failed/skipped | 42 | 6 | true |
+| CP-2 | S3 | `tests/Antiphon.SessionRunner.Tests -> bin-c1206-runner/` | grok-validation | `/*/*/(GrokLaunchArgsValidationTests)\|(UnixPtyArgvAdmissionTests)\|(GrokRulesFileLaunchTests)/*` | V-1, V-2, R-1, R-3 | 42 executed, zero failed/skipped | 42 | 6 | true |
 | CP-3 | S3 | `tests/Antiphon.Agents.Pty.Tests -> bin-c1206-native/` | grok-native | `/*/*/UnixPtyArgvTests/*` | R-2 | 17 executed, zero failed/skipped | 17 | 6 | true |
