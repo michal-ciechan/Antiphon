@@ -554,7 +554,8 @@ public sealed class DockerStackContractTests
                 body,
                 @"ARG GROK_SHA256=9ce03ed23e16ea01072b4496263d6213a27899e1e3e107f008d36edf82e70407\s")
             .ShouldBeTrue("pinned-digest");
-        body.ShouldContain("https://x.ai/cli/grok-${GROK_VERSION}-linux-x86_64", "pinned-artifact-url");
+        body.Contains("https://x.ai/cli/grok-${GROK_VERSION}-linux-x86_64", StringComparison.Ordinal)
+            .ShouldBeTrue("pinned-artifact-url");
         body.ShouldContain("echo \"${GROK_SHA256}  /tmp/grok-download/grok\" | sha256sum -c -");
         body.ShouldContain("install -m 0755 /tmp/grok-download/grok /usr/local/bin/grok");
         body.ShouldContain("/usr/local/bin/grok --version | grep -F \"${GROK_VERSION}\"");
