@@ -1043,7 +1043,7 @@ every promised method/label after Code; unbound payloads remain binding required
 | CP-41 | S7 | `CP-33` | linux-receipt-exclusion | `/*/*/RemoteScriptContractTests/C849_Cache_receipts_exclude_credentials_and_payloads` | R-8 | 1 executed, 0 failed/skipped | 1 | 1 |
 | CP-42 | S7 | `CP-33` | linux-receipt-consumer | `/*/*/RemoteScriptContractTests/C913_Receipts_reject_mixed_digest_types_and_false_smoke_claims` | R-8 | 1 executed, 0 failed/skipped | 1 | 2 |
 | CP-43 | S7 | `CP-33` | linux-fixture-inventory | `/*/*/RemoteScriptContractTests/C913_Fixture_uses_owned_payloads_and_proven_absent_temp` | R-8 | 1 executed, 0 failed/skipped | 1 | 1 |
-| CP-44 | S7 | `CP-33` | linux-adjacent | `/*/*/RemoteScriptContractTests/(C1189_*|C1191_*|C1193_*|C1194_*|C1195_*|C1192_Summary_*|C1192_Foreign_*|C1192_Harness_*|C1192_Helper_*)*` | R-1..R-5, R-8 | 19 executed, 0 failed/skipped | 19 | 2 |
+| CP-44 | S7 | `CP-33` | linux-adjacent | `/*/*/RemoteScriptContractTests/(C1189_*\|C1191_*\|C1193_*\|C1194_*\|C1195_*\|C1192_Summary_*\|C1192_Foreign_*\|C1192_Harness_*\|C1192_Helper_*)*` | R-1..R-5, R-8 | 19 executed, 0 failed/skipped | 19 | 2 |
 | CP-45 | S7 | `CP-33` | linux-cleanup-consumer | `/*/*/RemoteScriptContractTests/C1192_Cleanup_consumer_requires_positive_absence` | V-2, V-9 | 1 executed, 0 failed/skipped | 1 | 1 |
 | CP-46 | S7 | `CP-33` | linux-cleanup-helper | `/*/*/RemoteScriptContractTests/C1192_Cleanup_helper_requires_positive_absence` | V-2, V-9 | 1 executed, 0 failed/skipped | 1 | 1 |
 | CP-47 | S7 | `CP-33` | linux-cleanup-masked | `/*/*/RemoteScriptContractTests/C1192_Cleanup_masked_requires_positive_absence` | V-2, V-9 | 1 executed, 0 failed/skipped | 1 | 1 |
