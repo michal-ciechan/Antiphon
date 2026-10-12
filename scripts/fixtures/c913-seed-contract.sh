@@ -272,7 +272,10 @@ docker() {
         fi
         local -a mapped_args=()
         for arg in "${script_args[@]}"; do
-          for mapping in "${mappings[@]}"; do target="${mapping%%|*}"; arg="${arg//"$target"/"${mapping#*|}"}"; done
+          for mapping in "${mappings[@]}"; do
+            target="${mapping%%|*}"
+            case "$arg" in "$target"|"$target"/*) arg="${mapping#*|}${arg#"$target"}"; break ;; esac
+          done
           mapped_args+=("$arg")
         done
         bash -c "$code" "${mapped_args[@]}" || return $?
@@ -352,7 +355,7 @@ if [ "$mode" = fixture-seed ] || [ "$mode" = volume-recovery ]; then
         code="${code//\/fixture/$root/volumes/c849${RUN}-work/_data}"
         local -a args=()
         for arg in "$@"; do args+=("${arg//\/fixture/$root/volumes/c849${RUN}-work/_data}"); done
-        bash "${args[@]}" <<< "$code"
+        "${args[@]}" <<< "$code"
     }
 fi
 case "$mode" in
