@@ -88,12 +88,7 @@ public sealed class RowRunner
             request.Repeat > 1 ? RepeatRequest.CanonicalProject(request.WorkingDirectory, request.Project!) : null).ToList();
         var runOutput = request.OutputPath ?? "";
         if (!string.IsNullOrWhiteSpace(request.Project) && !string.IsNullOrWhiteSpace(request.OutputPath))
-        {
-            var layout = BuildConfinement.LayoutFor(request.WorkingDirectory, request.Project, request.OutputPath);
-            AppendLayoutProperty(properties, "ArtifactsPath", layout.Artifacts);
-            AppendLayoutProperty(properties, "UseArtifactsOutput", "true");
-            runOutput = layout.Owned;
-        }
+            runOutput = BuildStep.AppendSharedLayout(properties, request.WorkingDirectory, request.Project, request.OutputPath).Owned;
         if (request.SourceBoundary?.Invoke() == false)
             return SourceFailure(request, buffer, combined);
         CheckpointBuildBinding? binding = null;
@@ -444,14 +439,6 @@ public sealed class RowRunner
             TimedOut = timedOut,
             State = state,
         };
-
-    private static void AppendLayoutProperty(List<string> properties, string name, string value)
-    {
-        var prefix = "--property:" + name + "=";
-        if (properties.Any(item => item.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)))
-            return;
-        properties.Add(prefix + value);
-    }
 
     private static void EchoGuard(TextWriter writer, string? text)
     {

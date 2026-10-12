@@ -54,7 +54,7 @@ public sealed class RunSchedulerTests : CheckpointTestBase
         try { await CheckpointFixtures.WaitUntil(() => driver.Count(CheckpointFixtures.IsRun) == 1); }
         finally { second.TrySetResult(); }
         var result = await task;
-        driver.Starts.Single(start => CheckpointFixtures.IsRun(start.Request) && start.Request.Arguments.Contains("--property:OutputPath=bin-a/"))
+        driver.Starts.Single(start => CheckpointFixtures.IsRun(start.Request) && HasOutput(start.Request, "bin-a/"))
             .InFlight.Any(CheckpointFixtures.IsBuild).ShouldBeTrue();
         result.Rows.Count(row => row.State == "green").ShouldBe(2);
     }
@@ -77,7 +77,7 @@ public sealed class RunSchedulerTests : CheckpointTestBase
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var driver = InstantDriver(driver => driver.When(CheckpointFixtures.IsRun, async (request, token) =>
         {
-            if (request.Arguments.Contains("--property:OutputPath=bin-a/")) await release.Task.WaitAsync(token);
+            if (HasOutput(request, "bin-a/")) await release.Task.WaitAsync(token);
             CheckpointFixtures.WriteResults(CheckpointFixtures.TrxFile(request), ("Antiphon.Tests.Sample.alpha", "Passed"));
             return new DriverResult(0, "", "");
         }));
@@ -173,6 +173,12 @@ public sealed class RunSchedulerTests : CheckpointTestBase
         await Schedule(driver, manifest, manifest.Checkpoints, width: 2);
         driver.Count(CheckpointFixtures.IsBuild).ShouldBe(1);
         driver.Count(CheckpointFixtures.IsRun).ShouldBe(2);
+        var buildArgs = driver.Starts.Single(start => CheckpointFixtures.IsBuild(start.Request)).Request.Arguments;
+        var runArgs = driver.Starts.First(start => CheckpointFixtures.IsRun(start.Request)).Request.Arguments;
+        var artifacts = buildArgs.Single(arg => arg.StartsWith("--property:ArtifactsPath=", StringComparison.Ordinal));
+        runArgs.ShouldContain(artifacts);
+        buildArgs.ShouldContain("--property:UseArtifactsOutput=true");
+        runArgs.ShouldContain("--property:UseArtifactsOutput=true");
     }
 
     [Test]
@@ -414,9 +420,14 @@ public sealed class RunSchedulerTests : CheckpointTestBase
             State = new RunState { RunId = "test", StartedAt = DateTimeOffset.UtcNow },
             Slots = new FixedSlotClient("unavailable"),
             Commit = new string('a', 40),
+            ExpectedSourceSha = new string('a', 40),
             Width = width,
             SerialAll = serialAll,
             TotalTimeout = TimeSpan.FromMinutes(5),
         }, CancellationToken.None);
     }
+
+    private static bool HasOutput(DriverRequest request, string output) =>
+        request.Arguments.Any(arg => arg.StartsWith("--property:OutputPath=", StringComparison.Ordinal)
+            && arg.Replace('\\', '/').EndsWith(output, StringComparison.Ordinal));
 }
