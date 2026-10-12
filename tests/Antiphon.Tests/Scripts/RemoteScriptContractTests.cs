@@ -224,17 +224,60 @@ public sealed class RemoteScriptContractTests
         Fact(output, "probe-before-handoff").ShouldBe("1", "probe-before-handoff");
     }
 
-    // CARD-1191. mc cannot rm the 1654-owned race tree or the root-owned npm cache.
+    // S7 case -> regression -> red: a host work root or early success leaves the
+    // independently observed controller present and/or publishes before disposal.
     [Test]
-    public void C1191_Fixture_exit_trap_removes_private_tree_with_sudo()
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1191_Fixture_exit_removes_owned_workspace_without_host_sudo()
     {
-        var trap = Commands(Block(Remote(), "c849_fixture"))
-            .Single(command => command.StartsWith("trap ", StringComparison.Ordinal));
-        const string removal =
-            "case \"$SERVER2_ROOT\" in /tmp/c849-fixture-*) sudo -n rm -rf -- \"$SERVER2_ROOT\" || true ;; esac";
-        trap.ShouldContain(removal);
-        Regex.IsMatch(trap, @"(^|[;&|(])\s*rm -rf -- ""\$SERVER2_ROOT""").ShouldBeFalse(
-            "the fixture tree is removed without sudo");
+        var output = C1192Run("finalization");
+        Fact(output, "success-control-removed").ShouldBe("1", output);
+        Fact(output, "success-no-sudo").ShouldBe("1", output);
+        Fact(output, "success-resources-removed").ShouldBe("1", output);
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1192_Fixture_has_no_host_payload_tree_or_payload_bind()
+    {
+        Block(Remote(), "c849_fixture").ShouldNotContain("/tmp/c849-fixture-");
+        var output = C1192Run("finalization");
+        Fact(output, "success-control-root").ShouldBe("1", output);
+        Fact(output, "success-volume-payload").ShouldBe("1", output);
+        Fact(output, "success-host-decoy").ShouldBe("1", output);
+        foreach (var name in new[] { "c849_fixture_restore_container", "c849_fixture_lock_container",
+            "c849_fixture_apphost", "c849_fixture_masked_pack", "c849_fixture_npm_work",
+            "c849_fixture_npm_install", "c849_fixture_npm", "c849_fixture_refill_tarball" })
+        {
+            foreach (var command in Commands(Block(Remote(), name)).Where(c => c.Contains("type=bind")))
+            {
+                command.ShouldContain("source=$CHECKOUT/scripts");
+                command.ShouldContain("readonly");
+            }
+        }
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1192_Finalization_precedes_success_and_preserves_primary_failure()
+    {
+        var output = C1192Run("finalization");
+        foreach (var key in new[] { "success-last", "success-repeat", "primary-preserved",
+            "unhandled-preserved", "delete-refuses-success", "delete-exact-residue",
+            "delete-continues", "export-refuses-success", "early-success-refused",
+            "docker-unavailable-refused", "compose-before-removal", "foreign-controller-preserved" })
+            Fact(output, key).ShouldBe("1", key + "\n" + output);
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1192_Evidence_export_preserves_fixture_roster_without_payloads()
+    {
+        var output = C1192Run("evidence");
+        foreach (var key in new[] { "summary-nine-lines", "summary-exact-bytes", "roster-complete",
+            "roster-rejects-missing", "roster-rejects-duplicate", "roster-rejects-family",
+            "roster-rejects-variant", "evidence-no-payload", "evidence-control-removed" })
+            Fact(output, key).ShouldBe("1", key + "\n" + output);
     }
 
     // CARD-1191. Seed success published accepted:true from a subshell, and the fixture trap
