@@ -3282,7 +3282,7 @@ c849_fixture_volume_write() {
     docker exec -i -u 0:0 "c849-${RUN}-writer" /bin/sh -c 'cat > "$1"' sh "$path"
 }
 
-# Programs are written as root. Consumers run as 1654, so this handoff is after the probe exists.
+# Programs are written as root. The chown runs after the probe exists so the ownership change covers it.
 c849_fixture_volume_chown_race() {
     docker exec -u 0:0 "c849-${RUN}-writer" /bin/sh -c 'chown -R 1654:1654 -- "$1"' sh /fixture/race
 }
@@ -3402,7 +3402,8 @@ set -eu
 cd "$1"
 dotnet restore p3.csproj --configfile /fixture/race/Offline.Config --no-http-cache -p:NuGetAudit=false -nodeReuse:false -maxcpucount:1 >/dev/null
 SH
-    # The probe is written before the uid handoff. 1654 reads it; a later create would be root-owned.
+    # The probe is created before the uid handoff so that ownership change covers it.
+    # A root-owned 0644 file remains readable by uid 1654.
     c849_fixture_volume_write /fixture/race/lock-probe.ps1 <<'PS' || write_result false FixtureRaceWriteFailed 2
 param([ValidateSet('holder','waiter')][string]$Mode, [string]$Generation)
 $assembly = Get-ChildItem /usr/share/dotnet/sdk/*/NuGet.Common.dll | Select-Object -Last 1

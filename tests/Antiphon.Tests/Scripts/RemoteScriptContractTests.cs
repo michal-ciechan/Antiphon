@@ -153,7 +153,8 @@ public sealed class RemoteScriptContractTests
         cleanupAt.ShouldBeGreaterThan(unlinkAt);
     }
 
-    // CARD-1191. The lock probe is a volume file. It must exist before the uid handoff, or 1654 cannot read it.
+    // CARD-1191. Proves lock-probe.ps1 is created before c849_fixture_volume_chown_race,
+    // so that handoff's ownership change covers it. A root-owned 0644 file remains readable by uid 1654.
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public void C1191_Lock_probe_is_created_before_uid_handoff()
