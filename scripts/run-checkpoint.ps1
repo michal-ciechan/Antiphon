@@ -23,7 +23,8 @@
     fakeclaude apphost collides with the fakeclaude/ directory Antiphon.Tests stages beside it.
 
     A real dotnet build (no -DotnetShim) rewrites a relative -OutputPath to one absolute
-    global OutputPath under the entry project and adds ArtifactsPath plus
+    global OutputPath under the entry project directory (a directory argument is that
+    directory; a project file uses its parent) and adds ArtifactsPath plus
     UseArtifactsOutput=true, so referenced projects, including ones imported from .props
     or Directory.Build.props, write into that owned directory. A shared
     BaseIntermediateOutputPath is not passed, because a global property does not expand
@@ -767,7 +768,7 @@ function Get-CheckpointTrackedSnapshot {
     $index = (([string]$listed.Stdout) -replace "`r`n", "`n").TrimEnd("`n")
     $roots = New-Object System.Collections.Generic.List[string]
     foreach ($project in @($Projects)) {
-        $dir = [System.IO.Path]::GetDirectoryName([string]$project)
+        $dir = Resolve-CheckpointProjectDirectory ([string]$project)
         if ([string]::IsNullOrEmpty($dir)) { continue }
         $rel = Get-CheckpointRepoRelative $repo $dir
         if ($null -eq $rel) { continue }
@@ -844,7 +845,7 @@ function Invoke-ConfinedCheckpointBuild {
         return (Invoke-Dotnet -Phase $Phase -Arguments $Arguments)
     }
     $projectFull = if ([System.IO.Path]::IsPathRooted($project)) { [System.IO.Path]::GetFullPath($project) } else { [System.IO.Path]::GetFullPath((Join-Path $root $project)) }
-    $projectDir = [System.IO.Path]::GetDirectoryName($projectFull)
+    $projectDir = Resolve-CheckpointProjectDirectory $projectFull
     if ([string]::IsNullOrEmpty($projectDir)) {
         Write-Host 'refused: graph-unevaluated'
         Write-Host 'project directory missing'
