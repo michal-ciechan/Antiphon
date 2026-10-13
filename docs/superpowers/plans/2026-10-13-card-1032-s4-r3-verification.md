@@ -26,7 +26,7 @@ V-5/V-6/R-3 and parent native Windows acceptance remain deferred, never passed.
 | CP-6 | S4-r3 | CP-28 | inspection | `/*/*/CompletedCardWorkspaceRemovalTests/C1032_Inspection*` | V-2, V-3 | all 60; zero failed/skipped after fix | 60 | 3 | true |
 | CP-5 | S4-r3 | CP-28 | fence | `/*/*/CompletedCardWorkspaceRemovalTests/C1032_Fence*` | V-4 | all 6; zero failed/skipped | 6 | 2 | true |
 | CP-29 | S4-r3 | CP-28 | affected-classes | `/*/*/(CompletedCardWorkspaceRemovalTests*)\|(RunnerWorkspaceServiceTests*)\|(LegacyWorkspaceRemovalGateTests*)/*` | V-3, V-4, R-1, R-2 | all 110; zero failed/skipped | 110 | 4 | true |
-| CP-30 | S4-r3 | CP-28 | binding | `/*/*/RunnerWorkspaceBindingTests/*` | V-1, R-2 | all 21; zero failed/skipped | 21 | 2 | true |
+| CP-30 | S4-r3 | CP-28 | binding | `/*/*/RunnerWorkspaceBindingTests/*` | V-1, R-2 | all 19; zero failed/skipped | 19 | 2 | true |
 | CP-24 | S4-r3 | CP-28 | compatibility | `/*/*/PhoneHomeCommandDispatcherTests/Workspace_*` | R-1, R-2 | all 3; zero failed/skipped | 3 | 1 | true |
 
 ## Mutation handoff
