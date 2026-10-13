@@ -26,9 +26,9 @@ public sealed class CheckpointStampSafetyTests : CheckpointTestBase
     {
         if (!OperatingSystem.IsLinux()) Skip.Test("Linux source-shape qualification");
         var root = TempDir();
-        var script = CheckpointFixtures.RepoFile("scripts/test-checkpoint-stamp.ps1");
+        var script = Path.Combine(CheckpointFixtures.RepoRoot, "scripts/test-checkpoint-stamp.ps1");
         var psi = new ProcessStartInfo("pwsh") { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
-        foreach (var arg in new[] { "-NoProfile", "-File", script, "-Root", root, "-Repository", CheckpointFixtures.RepoRoot(),
+        foreach (var arg in new[] { "-NoProfile", "-File", script, "-Root", root, "-Repository", CheckpointFixtures.RepoRoot,
             "-ToolDll", typeof(Antiphon.Checkpoints.Program).Assembly.Location, "-Entry", entry, "-Shape", shape }) psi.ArgumentList.Add(arg);
         using var process = Process.Start(psi)!;
         RegisterCheckpointChild(process);
