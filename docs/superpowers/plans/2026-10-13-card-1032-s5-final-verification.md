@@ -1,4 +1,12 @@
-# CARD-1032 S5 Final supplement
+# CARD-1032 S5 historical Final supplement
+
+Caller refinement aa033f53-c7b7-4c3d-a7fe-7d7425827b8b supersedes the execution
+scope of this supplement: no further Unit/whole-project run; CP-7..10 are S5
+acceptance. Retain CP-28's green and CP-29/30's failed/incomplete data as disclosed
+historical evidence. Neither Unit row is marked passed and this table is not an
+instruction to repeat it. Review uses the closed S5 artifact and recorded scope.
+
+Historical rationale for the already-executed supplement follows.
 
 The higher-priority Code stage contract requires Unit and full affected classes
 for Final. These supplement the caller's CP-7..10 selection; they do not add

@@ -23,6 +23,13 @@ fixture variant move explicitly to S7 CP-13 C1032_AdmissionBoundRebaseProof.
 S5 pins Rebased refusal and retains direct-containment positives. Process-death
 recovery, evidence disposal and richer vectors remain S5 acceptance obligations.
 
+Caller final refinement aa033f53-c7b7-4c3d-a7fe-7d7425827b8b reaffirms this closed
+CP-7..10 selection as S5 acceptance and stops additional Unit/whole-project runs.
+The recorded Unit results remain disclosed, not newly passed or a S5 blocker.
+All 23 methods are green at e5d8efc179f9a0ed083f534396606f36e10e216f; documentation-only
+scope/evidence amendments require no new unchanged proof repetition after green.
+Next: Review, with every PC/variant still pending for SourceLanding Mutation.
+
 ### Checkpoints
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |

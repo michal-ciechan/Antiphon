@@ -1,7 +1,8 @@
 # CARD-1032 S5 unbound Mutation candidate
 
-Status: pending, not commissioned. Ordinary Final Unit verification is still
-incomplete; Review and caller landing of original Code task
+Status: pending, not commissioned. The caller-refined closed S5 verification is
+complete; supplementary Unit results are disclosed and unqualified, not a S5
+blocker. No further Unit run is requested. Review and caller landing of original Code task
 `a7f248c0-cf34-455c-b4ac-bdc4fc638e19` must precede SourceLanding Mutation.
 
 Plan and complete controls/variants:

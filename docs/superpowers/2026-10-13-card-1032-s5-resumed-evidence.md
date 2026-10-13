@@ -1,9 +1,12 @@
 # CARD-1032 S5 resumed Code evidence
 
-S5 implementation and its closed CP-7..10 verification are complete. Overall
-Final verification is **incomplete**: the supplementary server Unit category
-reached its unchanged 15-minute timeout twice without a TRX. Do not mark that
-row passed. No production composition, activation or restart was performed.
+S5 implementation and its commissioned closed CP-7..10 verification are complete.
+Caller refinement aa033f53-c7b7-4c3d-a7fe-7d7425827b8b stops further Unit/whole-project
+runs, confirms the closed S5 rows as acceptance, and directs Review. Supplementary
+Unit results remain disclosed and unqualified: server Unit reached its unchanged
+15-minute timeout twice without a TRX. No Unit row is newly marked passed and no
+aggregate Unit-green claim is made. Unit qualification is not a S5 blocker under
+this refinement. No production composition, activation or restart was performed.
 
 Code/landing owner: a7f248c0-cf34-455c-b4ac-bdc4fc638e19.
 Branch: feat/card-task-a7f248c0.
@@ -155,8 +158,11 @@ are retained below; supplement CP-29 waited 15s and CP-30 waited 90s.
 The caller narrowed ordinary verification to CP-7..10 and forbade Unit/full-class
 runs. The higher-priority stage Final/SCOPE contract requires those selections;
 that conflict and the additional cost/scope were recorded before CP-28..30.
-No full assembly or namespace-wide run was used. That requirement remains
-unsatisfied for server Unit; the task must not claim overall Final green.
+No full assembly or namespace-wide run was used. Server Unit remains unqualified;
+no aggregate Unit-green claim is made. The later caller refinement explicitly
+makes the closed S5 rows acceptance and the incomplete Unit data non-blocking.
+The supplementary rows below are historical diagnostic disclosure, not a request
+to repeat them or expand this task's verification scope.
 
 The following extra work had explicit failure/diagnostic reasons:
 
@@ -187,11 +193,11 @@ The following extra work had explicit failure/diagnostic reasons:
 
 Two normal unchanged server Unit selections ran (checkpoint and diagnostic),
 within the 3 normal / 2 loaded repetition cap. No timeout was widened, no loaded
-repetition or further broad retry is claimed. Future work must bound the still
-unexecuted slow Unit cases with fresh TRX rather than claim the incomplete row
-passed. Pending Final IDs: CP-30, and clean aggregate Unit qualification after
-accounting for the confirmed inherited CP-29 rows. Exact resolved CP-32 is green;
-CP-29's original red remains in the report. No S5 CP-7..10 rerun is required
+repetition or further broad retry is claimed. No further Unit run is authorized by the refined brief. Disclosed, not passed:
+CP-30 and clean aggregate Unit qualification after the confirmed inherited CP-29
+rows. They are excluded from S5 acceptance by the caller refinement; a separate
+future qualification must use its own commissioned scope. Exact resolved CP-32
+is green; CP-29's original red remains in the report. No S5 CP-7..10 rerun is required
 merely because it is green. Budget overrun came from the required extra Unit work.
 
 All owned runs completed/stopped and their foreground results were inspected.
@@ -212,7 +218,7 @@ unedited baseline evidence at .antiphon/unit-baseline-receipts/20261013-095347-a
 | R-1 | adjacent full legacy/workspace classes 44 results passed; later CP-12/16 still outside S5 |
 | R-2 | existing unbound legacy paths preserved; default composition untouched; later S6 dispatcher capability proof remains pending |
 | R-3 | all 23 named S5 methods passed at one source SHA; richer vector loops included |
-| Final Unit | incomplete as detailed above; no green claim |
+| Supplementary Unit | disclosed incomplete/unqualified; non-blocking under caller refinement; no green claim |
 
 S5 PC-53..70, PC-108/109, PC-240..266, new PC-578/579/580/582 and every variant
 remain pending for method-scoped SourceLanding Mutation. Moved S7 PC-581 is
@@ -226,8 +232,24 @@ discharge this task's PCs. Mutation owns payload binding and missing-control
 discovery after ordinary verification, Review and caller landing.
 
 Unbound candidate: docs/superpowers/mutations/2026-10-13-card-1032-s5-candidate.md.
-Restart: none. Next: Code for remaining Final verification; then Review. The
-original Code task remains the landing owner; never land a verification task.
+Restart: none. Next: Review of completed S5 implementation and CP-7..10 evidence,
+using the caller-refined scope. The original Code task remains the landing owner;
+never land a verification task. All PCs/variants stay pending for SourceLanding
+Mutation after Review and caller landing.
+
+## Final refinement — 2026-10-13
+
+Input aa033f53-c7b7-4c3d-a7fe-7d7425827b8b explicitly directs: stop Unit-lane and
+whole-project runs; treat the existing Unit results as disclosed rather than a
+blocker; commit/push; run merge-tree and full evidence checks; hand off to Review.
+This amendment changes report/scope documentation only. It changes no production
+or test code, assertion, timeout, count or unedited CHECKPOINT line. No additional
+build/test driver ran after this refinement. The closed S5 row selection remains
+CP-7/8/9/10, with 5/9/4/5 executed/passed and zero failures/skips at the qualified
+source SHA e5d8efc179f9a0ed083f534396606f36e10e216f. Every ordinary S5 V-3/V-4/V-5
+and R-3 obligation in the amended design is complete; the bound-rebase positive
+and its named variant remain explicitly moved to S7, never passed here. The
+supplementary 133 affected-class results also remain green as recorded.
 
 ## Unedited checkpoint reports
 
