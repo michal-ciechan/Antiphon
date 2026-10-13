@@ -16,6 +16,7 @@ public sealed class PhoneHomeRuntimeAdapter : IPhoneHomeRuntimeSurface
         RunnerCapabilityFeatures.TerminalSeatDeliveryEvidenceV1,
         RunnerCapabilityFeatures.WorkspaceRepositoryV1,
         RunnerCapabilityFeatures.WorkspacePublishV1,
+        RunnerCapabilityFeatures.WorkspaceCardBranchV1,
         CodexCliVersionProbe.Capability,
     ];
     private readonly SessionRunnerRuntime _runtime;
