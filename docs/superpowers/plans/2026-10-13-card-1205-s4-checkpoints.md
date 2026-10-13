@@ -22,8 +22,10 @@ No native runner, deployment, live message or server restart is required.
 |---|---|---|---|---|---|---|---:|---:|
 | S4-BASE | Tests | `tests/Antiphon.Tests -> bin-c1205-s4-base/` | registration-baseline | `/*/Antiphon.Tests.Application/StaleWorkingTranscriptWatchdogTests*/C1205_Hosted_restart_discovers_working_sessions_immediately*` | PC-57 baseline only | Exactly one assertion red on unchanged pre-S4 production | 1 | 6 |
 | S4-CASES-BASE | Cases | `tests/Antiphon.Tests -> bin-c1205-s4-cases-base/` | scheduling-baseline | `/*/Antiphon.Tests.Application/StaleWorkingTranscriptWatchdogTests*/*` | T18..T35 test-first | Exactly 48 executed; missing watchdog probes/options/logs assertion red on unchanged production | 48 | 12 |
-| S4-T33 | S4 | `tests/Antiphon.Tests -> bin-c1205-s4/` | queue-fixture-repair | `/*/Antiphon.Tests.Application/StaleWorkingTranscriptWatchdogTests*/C1205_Recovered_idle_schedules_only_coalesced_work*` | V-33,R-3 unresolved T33 | Exactly 1 green before final full-class CP-4 | 1 | 6 |
-| CP-4 | S4 | `tests/Antiphon.Tests -> bin-c1205-s4/` | watchdog | `/*/Antiphon.Tests.Application/StaleWorkingTranscriptWatchdogTests*/*` | V-13..19,V-27..35,R-3,R-4 | Exactly 48 green; frozen T18..T35 roster | 48 | 12 |
+| S4-T33 | Repair | `tests/Antiphon.Tests -> bin-c1205-s4-repair/` | queue-fixture-repair | `/*/Antiphon.Tests.Application/StaleWorkingTranscriptWatchdogTests*/C1205_Recovered_idle_schedules_only_coalesced_work*` | V-33,R-3 unresolved T33 | Exactly 1 green before final full-class CP-4 | 1 | 6 |
+| S4-F1 | Repair | `tests/Antiphon.Tests -> bin-c1205-s4-repair/` | reconciliation-wakeup | `/*/Antiphon.Tests.Application/StaleWorkingTranscriptWatchdogTests*/C1205_Reconciliation_preserves_owned_recovery_wakeup*` | F1,V-33,R-3 | Four variants; after-commit/two-probes red on b02129ed9, four green after repair | 4 | 6 |
+| S4-F2 | Repair | `tests/Antiphon.Tests -> bin-c1205-s4-repair/` | hosted-backlog | `/*/Antiphon.Tests.Application/StaleWorkingTranscriptWatchdogTests*/C1205_Hosted_backlog_bound_includes_poll_refill*` | F2,V-27,V-28,R-3 | One hosted fake-clock witness | 1 | 6 |
+| CP-4 | Repair | `tests/Antiphon.Tests -> bin-c1205-s4-repair/` | watchdog | `/*/Antiphon.Tests.Application/StaleWorkingTranscriptWatchdogTests*/*` | V-13..19,V-27..35,R-3,R-4 | Exactly 53 green; T18..T35 plus F1/F2 repair witnesses | 53 | 12 |
 
 All S4 PCs remain pending for method-scoped SourceLanding Mutation:
 PC-41..83, PC-101..110 and any additional implementation variants.
@@ -162,3 +164,14 @@ The final artifact commit changes documentation only; one final CP-4 run certifi
 that exact committed HEAD with the unchanged strengthened 48-case selection.
 This source-qualification run is the last ordinary repetition; none is required
 after green. No full assembly, Unit or S5 selection is added.
+
+## F1/F2 repair admission
+
+Repair/landing owner: 0ced9d05-9c38-478e-81ba-3dc9c9375223,
+branch feat/card-task-0ced9d05, based on b02129ed95d1389f7b43c7ed5d77db46b062e0a3.
+Original S4 Code task: 902bc6d6-3b26-465f-bdef-ff32f5920dd5.
+Run S4-F1,S4-F2 test-first, then S4-T33,S4-F1,S4-F2,CP-4 after repair.
+One isolated build per committed group, exact HEAD, serial rows. NO Unit or S5.
+The tool bootstrap is an additional gated setup build because this worktree has no executable.
+No restart or live manual work. CP-4 now has 53 executions (48 inherited + 4 F1 + 1 F2).
+All existing S4 PCs plus PC-146/147 remain pending, including their variants.
