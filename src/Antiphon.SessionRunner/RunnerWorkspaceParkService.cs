@@ -229,7 +229,7 @@ public sealed class RunnerWorkspaceParkService
         if (!_workspace!.IsUnderRoot(request.Path)) return "park_path_unowned";
         var name = "task-" + request.Binding.TaskId.ToString("N")[..8];
         if (Path.GetFileName(request.Path.TrimEnd('/', '\\')) != name
-            || request.Binding.FullRef != "refs/heads/feat/card-" + name
+            || (!request.Binding.FullRef.StartsWith("refs/heads/", StringComparison.Ordinal) || !DelegateBranchName.IsOwned(request.Binding.FullRef, request.Binding.TaskId))
             || !IsObjectId(request.Binding.BaselineSha)) return "park_invalid_target";
         return null;
     }

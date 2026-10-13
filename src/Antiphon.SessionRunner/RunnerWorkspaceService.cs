@@ -586,7 +586,7 @@ public sealed partial class RunnerWorkspaceService
         var path = request.Path ?? "";
         var name = Path.GetFileName(path.TrimEnd('/', '\\'));
         if (!IsUnderRoot(path) || !NamePattern.IsMatch(name)
-            || !string.Equals(request.Branch, "feat/card-task-" + name[5..], StringComparison.Ordinal)
+            || (!DelegateBranchName.TryParse(request.Branch, out var parsed) || parsed.Branch != request.Branch || parsed.ShortId != name[5..])
             || !ShaPattern.IsMatch(request.BaselineSha ?? "")
             || (request.RemoteSha is not null && !ShaPattern.IsMatch(request.RemoteSha)))
             throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedTarget,
