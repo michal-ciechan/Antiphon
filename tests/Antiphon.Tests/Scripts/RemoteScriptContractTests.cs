@@ -890,7 +890,9 @@ public sealed class RemoteScriptContractTests
     public void C1193_Lock_probe_passes_home_and_nuget_scratch()
     {
         var run = Commands(Block(Remote(), "c849_fixture_lock_container"))
-            .Single(command => command.Contains("docker run ", StringComparison.Ordinal));
+            .Single(command => command.StartsWith("c849_fixture_launch run ", StringComparison.Ordinal));
+        run.ShouldContain("--rm --name", customMessage: "acquired-lock-container");
+        Block(Remote(), "c849_fixture_launch").ShouldContain("docker \"$verb\" --cidfile \"$file\"", customMessage: "lock-id-recorded-at-create");
         run.ShouldContain("-e HOME=/home/app", customMessage: "lock-home");
         run.ShouldContain("-e NUGET_SCRATCH=/var/cache/antiphon/nuget-scratch", customMessage: "lock-scratch-env");
         run.ShouldContain("/fixture/race/lock-probe.ps1");
@@ -899,7 +901,7 @@ public sealed class RemoteScriptContractTests
     // CARD-1193. The verifier scp exports CASE_DIR. These logs are written under the private
     // controller, so finalization must copy regular files before removing that directory.
     // A symlink source or a symlink CASE_DIR must not be followed. A directory or symlink at
-    // the destination is removed without following it, and cp -T runs only when that removal
+    // the destination is unlinked only as a file/link; directories refuse export. cp -T runs after unlink
     // succeeded and the name is absent, so the write cannot land outside the case directory.
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]

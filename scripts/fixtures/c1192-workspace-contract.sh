@@ -3008,13 +3008,34 @@ mode_deletion_audit() {
                 && ! grep -Fxq "$name" "$CASE_DIR/.fixture-volumes" \
                 && grep -Fq "foreign: left untouched volume $name" "$CASE_DIR/fixture-cleanup-ledger.txt" && good=1
             ;;
-        replacement-container|legacy-owned|unknown)
+        replacement-container)
+            local fault all=1
+            for fault in owner run role; do
+                reset_runtime
+                code=0; good=0
+                name="c849-${RUN}-donor"
+                printf '%s\n' "$name" > "$CASE_DIR/.fixture-donor"
+                plant_container "$name" c849-fixture "$RUN" donor "$ADMITTED" ""
+                case "$fault" in
+                    owner) printf foreign > "$C1192_ROOT/containers/$name/label-owner" ;;
+                    run) printf other-run > "$C1192_ROOT/containers/$name/label-run" ;;
+                    role) printf consumer > "$C1192_ROOT/containers/$name/label-role" ;;
+                esac
+                c849_fixture_finalize || code=$?
+                container_exists "$name" && ! grep -q '^container ' "$C1192_ROOT/order" \
+                    && [ "$code" = 2 ] && grep -Fxq "$name" "$CASE_DIR/fixture-cleanup-residue.txt" \
+                    && [ ! -e "$CASE_DIR/.fixture-donor" ] && good=1
+                printf 'replacement-%s=%s\n' "$fault" "$good"
+                [ "$good" = 1 ] || all=0
+            done
+            good=$all
+            ;;
+        legacy-owned|unknown)
             name="c849-${RUN}-donor"
             printf '%s\n' "$name" > "$CASE_DIR/.fixture-donor"
             plant_container "$name" c849-fixture "$RUN" donor "$ADMITTED" ""
-            if [ "$row" = replacement-container ]; then
-                plant_container "$name" foreign other-run donor "$ADMITTED" ""
-            elif [ "$row" = unknown ]; then
+            if [ "$row" = unknown ]; then
+                declare -f docker_inspect_container > "$C1192_ROOT/inspect-original"
                 docker_inspect_container() { printf 'Cannot connect to the Docker daemon\n' >&2; return 1; }
             fi
             id=$(cat "$C1192_ROOT/containers/$name/id")
@@ -3030,8 +3051,37 @@ mode_deletion_audit() {
                 container_exists "$name" && ! grep -q '^container ' "$C1192_ROOT/order" \
                     && [ "$code" = 2 ] && grep -Fxq "$name" "$CASE_DIR/fixture-cleanup-residue.txt" && good=1
             fi
+            if [ "$row" = unknown ]; then
+                source "$C1192_ROOT/inspect-original"
+                local invalid all="$good"
+                for invalid in empty malformed symlink; do
+                    reset_runtime
+                    code=0; good=0
+                    plant_container "$name" c849-fixture "$RUN" donor "$ADMITTED" ""
+                    printf '%s\n' "$name" > "$CASE_DIR/.fixture-donor"
+                    case "$invalid" in
+                        empty) : > "$CASE_DIR/.fixture-id-$name" ;;
+                        malformed) printf invalid > "$CASE_DIR/.fixture-id-$name" ;;
+                        symlink) ln -s "$C1192_ROOT/events" "$CASE_DIR/.fixture-id-$name" ;;
+                    esac
+                    c849_fixture_finalize || code=$?
+                    container_exists "$name" && [ "$code" = 2 ] \
+                        && ! grep -q '^container ' "$C1192_ROOT/order" \
+                        && grep -Fxq "$name" "$CASE_DIR/fixture-cleanup-residue.txt" \
+                        && grep -Fxq "unknown-cleanup-outcome container $name" "$CASE_DIR/fixture-cleanup-ledger.txt" && good=1
+                    printf 'invalid-%s=%s\n' "$invalid" "$good"
+                    [ "$good" = 1 ] || all=0
+                done
+                good=$all
+            fi
             ;;
         replacement-network)
+            local fault all=1 fixture_owner fixture_run fixture_role
+            for fault in owner run role; do
+            reset_runtime
+            code=0; good=0
+            fixture_owner=c849-fixture; fixture_run="$RUN"; fixture_role=npm-network
+            case "$fault" in owner) fixture_owner=foreign ;; run) fixture_run=other-run ;; role) fixture_role=consumer ;; esac
             printf '%s\n' "$network" > "$CASE_DIR/.fixture-network"
             : > "$C1192_ROOT/network"
             docker() {
@@ -3040,7 +3090,13 @@ mode_deletion_audit() {
                     network:inspect)
                         [ -f "$C1192_ROOT/network" ] || { printf 'Error: No such network: %s\n' "${*: -1}" >&2; return 1; }
                         if [ "${3:-}" = -f ]; then
-                            if [ "$4" = '{{.Id}}' ]; then printf 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\n'; else printf 'foreign\n'; fi
+                            case "$4" in
+                                *Id*) printf 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\n' ;;
+                                *io.antiphon.owner*) printf '%s\n' "$fixture_owner" ;;
+                                *fixture-run*) printf '%s\n' "$fixture_run" ;;
+                                *fixture-role*) printf '%s\n' "$fixture_role" ;;
+                                *) return 97 ;;
+                            esac
                         fi ;;
                     network:rm) order_log "network ${*: -1}"; rm -f "$C1192_ROOT/network" ;;
                     *) return 97 ;;
@@ -3048,7 +3104,12 @@ mode_deletion_audit() {
             }
             c849_fixture_finalize || code=$?
             [ -f "$C1192_ROOT/network" ] && ! grep -q '^network ' "$C1192_ROOT/order" \
-                && [ "$code" = 2 ] && [ -s "$CASE_DIR/fixture-cleanup-residue.txt" ] && good=1
+                && [ "$code" = 2 ] && [ -s "$CASE_DIR/fixture-cleanup-residue.txt" ] \
+                && [ ! -e "$CASE_DIR/.fixture-network" ] && good=1
+            printf 'network-%s=%s\n' "$fault" "$good"
+            [ "$good" = 1 ] || all=0
+            done
+            good=$all
             ;;
         unacquired)
             ln -s "$C1192_ROOT/events" "$CASE_DIR/.fixture-escape"

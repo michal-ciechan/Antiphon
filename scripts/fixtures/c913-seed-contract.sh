@@ -163,6 +163,11 @@ docker() {
     local name role format arg entrypoint='' code='' target source payload='' i j
     local -a mappings=() script_args=()
     case "$1:${2:-}" in
+      container:inspect)
+        name="${@: -1}"
+        if { [ "$name" = dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd ] && [ -f "$root/seed-helper" ]; } \
+            || { [ "$name" = "$donor_id" ] && [ -f "$root/donor-project" ]; }; then return 0; fi
+        printf 'Error: No such container: %s\n' "$name" >&2; return 1 ;;
       image:inspect) [ "$FAULT" != image-missing ] || return 1; printf '%s\n' "$image_id" ;;
       info:*) printf '%s\n' "$root" ;;
       volume:ls) printf '%s\n' "$C849_PACKAGES" "$C849_SCRATCH" "$C849_NPM" ;;
@@ -178,6 +183,7 @@ docker() {
             *'io.antiphon.owner'*) if [ "$FAULT" = foreign-source-cache ]; then echo foreign; else echo server2-runner; fi ;;
             *'io.antiphon.cache-schema'*) echo 1 ;;
             *'io.antiphon.cache-role'*) echo "$role" ;;
+            *'io.antiphon.fixture-run'*) echo "$RUN" ;;
             *'.Mountpoint'*) echo "$root/volumes/$name/_data" ;;
             *) return 94 ;;
           esac
@@ -210,7 +216,7 @@ docker() {
         esac ;;
       stop:*) barrier before-stop; [ "$FAULT" != stop ] || return 1; printf 'stop\n' >> "$root/trace"; barrier after-stop ;;
       start:*) barrier before-restart; [ "$FAULT" != restart ] || return 1; printf 'restart\n' >> "$root/trace"; barrier after-restart ;;
-      rm:*) return 0 ;;
+      rm:*) if [ "${@: -1}" = dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd ]; then rm -f "$root/seed-helper"; fi; return 0 ;;
       cp:*)
         if [[ "$2" == *'/packages/.' ]]; then source=packages; else source=npm; fi
         [ "$FAULT" != "copy-$source" ] || return 1
@@ -232,6 +238,7 @@ docker() {
         for ((i=2; i<=$#; i++)); do
           arg="${!i}"
           case "$arg" in
+            --cidfile) i=$((i+1)); printf 'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\n' > "${!i}"; : > "$root/seed-helper" ;;
             --entrypoint) i=$((i+1)); entrypoint="${!i}" ;;
             --mount)
               i=$((i+1)); arg="${!i}"; source="${arg#*source=}"; source="${source%%,*}"
@@ -336,6 +343,11 @@ c913_fixture_wrapper() (
     docker() {
         case "$1:${2:-}" in
             create:*)
+                local previous='' arg
+                for arg in "$@"; do
+                    [ "$previous" != --cidfile ] || printf '%s\n' "$donor_id" > "$arg"
+                    previous="$arg"
+                done
                 printf '%s\n' "$TEMP_PROJECT" > "$root/donor-project"
                 rm -rf "$root/donor"; mkdir -p "$root/donor/packages" "$root/donor/npm"
                 printf '%s\n' "$donor_id"; return ;;
@@ -921,7 +933,26 @@ case "$mode" in
     : > "$root/cleanup-trace"
     printf 'c849%s-packages\nc849foreign-packages\n' "$RUN" > "$CASE_DIR/.fixture-volumes"
     (
-      docker() { printf '%s\n' "$*" >> "$C913_ROOT/cleanup-trace"; }
+      docker() {
+        printf '%s\n' "$*" >> "$C913_ROOT/cleanup-trace"
+        local name="${@: -1}"
+        if [ "$1" = volume ] && [ "$2" = rm ]; then : > "$C913_ROOT/cleanup-removed"; return 0; fi
+        if [ "$1" = volume ] && [ "$2" = inspect ]; then
+          if [ -f "$C913_ROOT/cleanup-removed" ]; then printf 'Error: No such volume: %s\n' "$name" >&2; return 1; fi
+          [ "${3:-}" = -f ] || return 0
+          case "$4" in
+            *Driver*) printf 'local\n' ;;
+            *Options*) printf 'null\n' ;;
+            *io.antiphon.owner*) printf 'server2-runner\n' ;;
+            *cache-schema*) printf '1\n' ;;
+            *cache-role*) printf 'nuget-packages\n' ;;
+            *fixture-run*) printf '%s\n' "$RUN" ;;
+            *) return 94 ;;
+          esac
+          return 0
+        fi
+        return 94
+      }
       c849_fixture_cleanup
     )
     grep -Fq "volume rm c849${RUN}-packages" "$root/cleanup-trace" || fail owned-ledger-removed
