@@ -174,3 +174,9 @@ index 6263e7454..be5665cf8 100644
    if(Test-Path -LiteralPath $resolved){throw 'Target remains after removal'}
    $i.outcome='deleted';$i.reason='exact path deleted; no links followed';$n++
 ```
+
+## Worktree chunk result
+
+The first continuation chunk completed with exit 0. Additional A removals: 434; logical bytes removed: 62528522239 (62.529 GB). Current A keeps: 284; A pending: 194; failures: 0. C: free at chunk completion: 436648968192 bytes. B/C execution remains pending. D counts overlap A and are never added to its bytes.
+
+Execution log: C:\Users\lndco\Documents\antiphon-reports\desktop-cleanup-dfaf5740-A1.log. Fresh audit log: C:\Users\lndco\Documents\antiphon-reports\desktop-cleanup-dfaf5740-audit.log.
