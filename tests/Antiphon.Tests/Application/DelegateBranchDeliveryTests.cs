@@ -199,7 +199,8 @@ public sealed class DelegateBranchDeliveryTests
                 (await park.RowAsync()).PublicationReceiptId.ShouldBeNull("lost-reply: no saved proof");
             park.BeforeReceiptSave = null;
             if (cut is "before-send" or "received" or "effect") await wire.ReconnectAsync(ct);
-            result = await park.PrepareAsync();
+            var saved = await park.RowAsync();
+            result = saved.PublicationReceiptId is null ? await park.PrepareAsync() : await park.VerifyAsync();
             result.Outcome.ShouldBe(TaskParkPublicationOutcome.Published, "recovered-ref: " + result.Reason);
             (await park.RemoteShaAsync()).ShouldBe(tip);
             var row = await park.RowAsync(); row.Id.ShouldBe(park.ParkId); row.PublicationReceiptId.ShouldNotBeNull();
