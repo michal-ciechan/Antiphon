@@ -3005,7 +3005,7 @@ EOF
 # foreground --rm consumer. C1208_Unacquired_roster_is_untouched guards absence
 # of this record; C1208_Recorded_container_id_does_not_delete_replacement guards ID use.
 c849_fixture_launch() {
-    local verb="$1" name='' previous='' arg file state=0 identity role=consumer code=0
+    local verb="$1" name='' previous='' arg file fingerprint_file state=0 identity role=consumer code=0
     shift
     for arg in "$@"; do
         [ "$previous" != --name ] || name="$arg"
@@ -3013,13 +3013,20 @@ c849_fixture_launch() {
     done
     case "$name" in "c849-${RUN}-"*|"c849-seed-${RUN}") ;; *) return 2 ;; esac
     file="$CASE_DIR/.fixture-id-$name"
+    fingerprint_file="$CASE_DIR/.fixture-fingerprint-$name"
+    # A CID's absence (or an absent old container) does not grant ownership of
+    # an existing fingerprint path. Never replace or write through that path.
+    if [ -e "$fingerprint_file" ] || [ -L "$fingerprint_file" ]; then
+        c849_fixture_fingerprint_refuse "$name"
+        return 2
+    fi
     if [ -e "$file" ] || [ -L "$file" ]; then
         [ -f "$file" ] && [ ! -L "$file" ] || return 2
         identity="$(cat -- "$file")" || return 2
         [[ "$identity" =~ ^[0-9a-f]{64}$ ]] || return 2
         c849_fixture_resource_state container "$identity" || state=$?
         [ "$state" = 1 ] || return 2
-        rm -f -- "$file" "$CASE_DIR/.fixture-fingerprint-$name" || return 2
+        rm -f -- "$file" || return 2
     fi
     state=0
     c849_fixture_helper_lookup "$name" || state=$?
@@ -3036,7 +3043,10 @@ c849_fixture_launch() {
                 0) local fingerprint
                     fingerprint="$(c849_fixture_container_fingerprint "$identity")" || {
                         c849_fixture_cleanup_unknown container "$name"; return 2; }
-                    printf '%s\n' "$fingerprint" > "$CASE_DIR/.fixture-fingerprint-$name" || return 2 ;;
+                    # noclobber opens exclusively, closing the gap after the
+                    # initial absence check, including a newly planted link.
+                    ( set -o noclobber; printf '%s\n' "$fingerprint" > "$fingerprint_file" ) || {
+                        c849_fixture_fingerprint_refuse "$name"; return 2; } ;;
                 1) ;;
                 *) c849_fixture_cleanup_unknown container "$name"; return 2 ;;
             esac
@@ -3046,6 +3056,13 @@ c849_fixture_launch() {
     c849_fixture_cleanup_unknown container "$name"
     [ "$code" != 0 ] || code=2
     return "$code"
+}
+
+c849_fixture_fingerprint_refuse() {
+    local name="$1"
+    printf 'FixtureFingerprintAcquisitionRefused container %s\n' "$name" >> "$CASE_DIR/fixture-cleanup-ledger.txt"
+    printf 'FixtureFingerprintAcquisitionRefused: %s\n' "$name" >&2
+    c849_fixture_cleanup_unknown container "$name"
 }
 
 c849_fixture_foreign_volume() {
