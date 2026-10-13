@@ -9,7 +9,7 @@ namespace Antiphon.Tests.Checkpoints;
 
 // Real dotnet builds. Each preservation case reaches Lib through a graph the static
 // project-XML scan does not see, then requires the tracked Lib bytes to survive and
-// the build output to land under App/bin-probe/.
+// the build output to land under App/bin-confined/ (tool) or App/bin-script-confined/ (script).
 [Category("Unit")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class CheckpointOutputConfinementTests : CheckpointTestBase

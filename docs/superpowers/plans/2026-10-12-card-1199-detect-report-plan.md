@@ -36,16 +36,15 @@ Closed scope overrides broad Unit profile per repair brief. Linux only. One isol
 | CP-14 | S2 | CP-1 | receipt-json-shapes | `/*/*/CheckpointReceiptSafetyTests/malformed_collection_and_string_shapes_return_named_refusals*` | V-6 F2 | required collection/string shapes refuse; state unchanged | 1 | 2 |
 | CP-15 | S2 | CP-1 | shared-verified-reader | `/*/*/PlanCoverageHandleTests/*` | R-4 V-5 | full affected reader class, all sixteen cases | 16 | 1 |
 | CP-16 | S2 | CP-1 | master-path-binding | `/*/*/CheckpointBuildBindingPathTests/*` | R-1 | all three retained master cases, 0 failed/skipped | 3 | 1 |
-
 | CP-17 | S2 | CP-1 | nonempty-receipt-identities | `/*/*/CheckpointReceiptSafetyTests/receipt_row_and_build_identities_refuse_blank_without_writing*` | V-6 F1 | four handwritten input rows; all receipt-consuming verbs, no writes on refusal | 4 | 2 |
 
 ### Mutation handoff
 
-No deliberate mutants run by Code. All PCs/variants and missing-control discovery, including this zero-PC plan, remain pending method-scoped SourceLanding Mutation after ordinary Review and caller landing. Candidate documentation: docs/superpowers/mutations/. Restart: none.
+No deliberate mutants run by Code. All PCs/variants and missing-control discovery, including plans with zero enumerated controls, remain pending method-scoped SourceLanding Mutation after ordinary Review and caller landing. Candidate documentation: docs/superpowers/mutations/. Restart: none.
 
 ### Cost
 
-Ordinary floor 42 minutes plus implementation (41 original rows plus the one-minute master regression row). Authoritative task budget 75 minutes. No broad assembly or unbounded classes selected.
+Repair 13g estimated ordinary floor 44 minutes plus implementation (42 inherited minutes plus CP-17's two minutes). Authoritative repair 13g task budget is 50 minutes. No broad assembly or unbounded classes selected.
 
 The continuation sections below record historical source-qualified outcomes and obligations. Repair 13g is the current selection; earlier unresolved states and budgets describe their named historical sources.
 
@@ -102,3 +101,5 @@ CP-RED selects CP-17 against unchanged base production. Final selects CP-1..CP-1
 V-1..V-6 and R-1/R-3/R-4 retain their full closed selection. R-2 native Windows qualification and every inherited/new PC remain pending. Post-land Mutation has not run. Restart: none.
 
 Tests-first proof at 8ce2bf272fb902f296d258c69fe8a87b98dcf749, unchanged c30634df6 production: CP-RED ran four argument cases and failed four. Empty and whitespace controls each caught success exits for invalid state/report row/build IDs; null caught two state wait exits 6 instead of 2. The valid control separately exposed a fixture-only row/line mismatch in validate (row_receipt_missing); it is not defect-red evidence. The repaired valid argument uses the existing CP-fixture ID so the receipt line agrees without weakening assertions. Final verification remains pending until the complete CP-1..CP-17 run.
+
+The first post-fix launcher selected only CP-1..CP-16 because a blank line separated CP-17 from the table. Run 20261013-121650-b488 was stopped during its build and supplies no qualifying test evidence. The table is now contiguous and the required replacement run selects all seventeen rows.
