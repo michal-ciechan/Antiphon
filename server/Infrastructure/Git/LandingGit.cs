@@ -508,8 +508,9 @@ public class LandingGit : ILandingGit
                 if (!result.Succeeded) return LandRecoveryCheckoutInspection.Refused();
                 if (result.Output.Length != 0) return LandRecoveryCheckoutInspection.Refused("source_dirty");
             }
-            // Unlike a nested .git checkout, Git can enumerate a bare repository's private
-            // files as ordinary ignored output. Preservation is not reset authority.
+            // Git can enumerate an exposed bare repository as ignored files (V-7).
+            // This census stops at .git boundaries; enclosed bare repos keep the
+            // existing nested admission (V-10). Cleanup's HEAD-only heuristic is separate.
             if (WorktreeNestedRepositories.Find(path, bareOnly: true).Length != 0)
                 return LandRecoveryCheckoutInspection.Refused();
             var ignored = await RunAsync(path,
