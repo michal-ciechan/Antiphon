@@ -16,6 +16,29 @@ public sealed class RunnerWorkspaceUseGate(RunnerWorkspaceRemovalJournal journal
     private volatile bool _censusReady;
     private volatile bool _censusUnknown;
 
+    internal async Task<IAsyncDisposable> AcquireRemovalAsync(string path, string registrationRoot, CancellationToken ct)
+    {
+        // Lock order: dispatcher MutationLock (if present) -> workspace admission -> journal/
+        // binding registration store -> session/custody/pane locks. Never reacquire MutationLock
+        // from an admitted callback. Owner checks are synchronous; no await under _ownerSync.
+        // Legacy removal refuses competing admission rather than waiting for a live use lease.
+        if (!await _admission.WaitAsync(0, ct))
+            throw new PhoneHomeAdmissionException("workspace_in_use", "Workspace admission is in use.", 409);
+        try
+        {
+            var records = journal.Read();
+            if (!_censusReady || _censusUnknown || Normalize(path) is null || records is null
+                || records.Any(i => Overlaps(i.Command.Binding.WorktreePath, registrationRoot)))
+                throw new PhoneHomeAdmissionException("workspace_retiring_or_unknown", "Workspace removal is held.", 409);
+            // Both legacy removers prune repository-wide registrations. Protect retained owners
+            // throughout that root, including an absent sibling whose registration is still used.
+            if (HasOwner(registrationRoot))
+                throw new PhoneHomeAdmissionException("workspace_in_use", "Workspace ownership is in use.", 409);
+            return new Lease(_admission);
+        }
+        catch { _admission.Release(); throw; }
+    }
+
     public async Task<IAsyncDisposable> AcquireUseAsync(string path, CancellationToken ct)
     {
         await _admission.WaitAsync(ct);

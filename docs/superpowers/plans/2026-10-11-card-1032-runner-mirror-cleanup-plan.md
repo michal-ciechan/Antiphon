@@ -337,7 +337,7 @@ post-land Mutation stage. No checkpoint-tool implementation changes belong here.
 S3 round-2 repair extends the optional shared admission boundary to existing
 legacy remove/prune and verification create/remove entry points. Execution of
 CompletedCard cleanup remains inert. The authoritative test design adds
-CP-25..27 with wildcard tree-node filters and PC-551..559, all pending for
+CP-25..27 with wildcard tree-node filters and PC-551..560, all pending for
 SourceLanding Mutation. Preserve the unconfigured legacy behavior. Dispatcher
 mutation admission precedes workspace admission, then journal/binding-store
 and session/custody/pane operations; no callback reacquires dispatcher mutation

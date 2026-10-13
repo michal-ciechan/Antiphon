@@ -966,8 +966,12 @@ remain pending under the parent artifact, not silently discharged here.
 ### Checkpoints
 
 This is the sole importer-visible closed ordinary list in **this** artifact.
-Use this path, not the provisional table in the fix plan. CP-1..CP-22 own fresh isolated builds and one exact filter each; CP-23/24
-reuse the same committed S2 CP-3 build and run their own exact filters. The twenty-four rows total 130 TUnit executions. CP-21 is the Linux-only S2 phone-home join. CP-22 is the dispatcher registration-store table (10 results) added by the S2 store-identity repair.
+Use this path, not the provisional table in the fix plan. Each row has one exact
+filter. Round-2 repair shares CP-3's S2 runner build with CP-17/18/19/22/23/24
+and CP-4's S2 server build with CP-20/21. CP-26/27 reuse CP-25's repair build.
+All reuse is within the same After group, committed SHA and project. The old
+24-row roster remains 130 executions; repair CP-25..27 adds 46 results.
+CP-21 is Linux-only phone-home join; CP-22 has ten registration-store results.
 Read each fresh TRX's executed class/method roster as well as its count:
 the tool's Min is a floor and its derived Expect tokens alone do not enforce
 the exact roster. Prefix rows select only the enumerated C1032 methods above;
@@ -1036,17 +1040,17 @@ loops, assertions and PC variants do not raise Min.
 | CP-14 | S7 | `tests/Antiphon.Tests -> bin-c1032-receipt/` | mirror-receipt | `/*/*/CardWorktreeMirrorCleanupTests/(C1017_ReceiptMustMatchOperation)\|(C1017_ReceiptMustMatchEndpoint)\|(C1017_ReceiptMustMatchStore)\|(C1017_ReceiptMustMatchTaskAttempt)\|(C1017_AckIsNotRemoval)\|(C1017_UnsupportedNeverFallsBack)\|(C1032_Receipt*)` | V-2, V-6, R-3 | all 7 listed; 0 failed/skipped | 7 | 6 | true |
 | CP-15 | S8 | `tests/Antiphon.Tests -> bin-c1032-recovery/` | mirror-recovery | `/*/*/CardWorktreeMirrorCleanupTests/(C1017_MirrorCompletesIndependently)\|(C1017_LocalProgressSurvivesOffline)\|(C1017_LostAckReusesOperation)\|(C1032_Recovery*)` | V-1, V-2, V-5, V-6, R-2, R-3 | all 6 listed; 0 failed/skipped | 6 | 7 | true |
 | CP-16 | S8 | `tests/Antiphon.Tests -> bin-c1032-sync/` | legacy-sync | `/*/*/RemoteWorktreeMirrorTests/*` | R-1 | all 8 listed; 0 failed/skipped | 8 | 5 | true |
-| CP-17 | S2 | `tests/Antiphon.SessionRunner.Tests -> bin-c1032-foreign-owner/` | foreign-owner | `/*/*/RunnerWorkspaceBindingTests/C1032_ForeignOwnerAdoptionRefused` | V-1 | all 1 listed; 0 failed/skipped | 1 | 5 | true |
-| CP-18 | S2 | `tests/Antiphon.SessionRunner.Tests -> bin-c1032-absent-replay/` | absent-replay | `/*/*/RunnerWorkspaceBindingTests/C1032_AbsentMirrorReplayRefused` | V-1 | all 1 listed; 0 failed/skipped | 1 | 5 | true |
-| CP-19 | S2 | `tests/Antiphon.SessionRunner.Tests -> bin-c1032-store-mismatch/` | store-mismatch | `/*/*/RunnerWorkspaceBindingTests/C1032_StoreMismatch*` | V-1 | all 1 listed; 0 failed/skipped | 1 | 5 | true |
-| CP-20 | S2 | `tests/Antiphon.Tests -> bin-c1032-store-replacement/` | store-replacement | `/*/*/RemoteWorkspacePreparerTests/C1032_StoreReplacement*` | V-1 | all 1 listed; 0 failed/skipped | 1 | 5 | true |
-| CP-21 | S2 | `tests/Antiphon.Tests -> bin-c1032-join/` | mirror-join | `/*/*/PhoneHomeMirrorJoinTests/C1032_Join*` | V-1 | all 6 listed; 0 failed/skipped | 6 | 8 | true |
-| CP-22 | S2 | `tests/Antiphon.SessionRunner.Tests -> bin-c1032-store-identity/` | store-identity | `/*/*/RunnerWorkspaceBindingTests/C1032_StoreIdentity*` | V-1 | all 10 listed; 0 failed/skipped | 10 | 5 | true |
+| CP-17 | S2 | CP-3 | foreign-owner | `/*/*/RunnerWorkspaceBindingTests/C1032_ForeignOwnerAdoptionRefused` | V-1 | all 1 listed; 0 failed/skipped | 1 | 1 | true |
+| CP-18 | S2 | CP-3 | absent-replay | `/*/*/RunnerWorkspaceBindingTests/C1032_AbsentMirrorReplayRefused` | V-1 | all 1 listed; 0 failed/skipped | 1 | 1 | true |
+| CP-19 | S2 | CP-3 | store-mismatch | `/*/*/RunnerWorkspaceBindingTests/C1032_StoreMismatch*` | V-1 | all 1 listed; 0 failed/skipped | 1 | 1 | true |
+| CP-20 | S2 | CP-4 | store-replacement | `/*/*/RemoteWorkspacePreparerTests/C1032_StoreReplacement*` | V-1 | all 1 listed; 0 failed/skipped | 1 | 1 | true |
+| CP-21 | S2 | CP-4 | mirror-join | `/*/*/PhoneHomeMirrorJoinTests/C1032_Join*` | V-1 | all 6 listed; 0 failed/skipped | 6 | 3 | true |
+| CP-22 | S2 | CP-3 | store-identity | `/*/*/RunnerWorkspaceBindingTests/C1032_StoreIdentity*` | V-1 | all 10 listed; 0 failed/skipped | 10 | 1 | true |
 | CP-23 | S2 | CP-3 | legacy-unbound-contract | `/*/*/RunnerWorkspaceBindingTests/C1032_LegacyUnboundPathOnlyContract*` | R-2 | all 1 listed; 0 failed/skipped | 1 | 1 | true |
 | CP-24 | S2 | CP-3 | workspace-compatibility | `/*/*/PhoneHomeCommandDispatcherTests/Workspace_*` | R-1, R-2 | all 3 listed; 0 failed/skipped | 3 | 1 | true |
 | CP-25 | S3-repair | `tests/Antiphon.SessionRunner.Tests -> bin-c1032-removal-repair/` | held-removal-baseline | `/*/*/LegacyWorkspaceRemovalGateTests/(C1032_LegacyRemoveHeldLease*)\|(C1032_LegacyPruneHeldLease*)` | V-4 | both held-lease refusals; 0 failed/skipped after repair | 2 | 3 | true |
-| CP-26 | S3-repair | CP-25 | removal-repair-class | `/*/*/LegacyWorkspaceRemovalGateTests/*` | V-4, R-1, R-2 | all 10 results; 0 failed/skipped | 10 | 2 | true |
-| CP-27 | S3-repair | CP-25 | workspace-service-class | `/*/*/RunnerWorkspaceServiceTests/*` | R-1, R-2 | full affected class; 0 failed/skipped | 1 | 3 | true |
+| CP-26 | S3-repair | CP-25 | removal-repair-class | `/*/*/LegacyWorkspaceRemovalGateTests/*` | V-4, R-1, R-2 | all 11 results; 0 failed/skipped | 11 | 2 | true |
+| CP-27 | S3-repair | CP-25 | workspace-service-class | `/*/*/RunnerWorkspaceServiceTests/*` | R-1, R-2 | all 33 full-class results; 0 failed/skipped | 33 | 3 | true |
 
 #### S3 round-2 removal repair
 
@@ -1076,17 +1080,28 @@ before Git. All races use deterministic admission barriers or Git entry seams.
 | PC-554 | Release removal admission before Git removal/prune | `/*/*/LegacyWorkspaceRemovalGateTests/C1032_LegacyRemovalCreationOrders*` | creation must wait through removal and prune | pending |
 | PC-555 | Require a configured gate on legacy remove | `/*/*/LegacyWorkspaceRemovalGateTests/C1032_LegacyUnconfiguredRemoval*` | legacy real removal must succeed | pending |
 | PC-556 | Leak removal admission on exception/cancellation | `/*/*/LegacyWorkspaceRemovalGateTests/C1032_LegacyRemovalReleaseOnFailure*` | next admission/removal must succeed; bind exception and cancellation variants separately | pending |
-| PC-557 | Ignore retained owners | `/*/*/LegacyWorkspaceRemovalGateTests/C1032_LegacyRemovalRetainedOwner*` | expected PhoneHomeAdmissionException is missing | pending |
+| PC-557 | Ignore retained owners | `/*/*/LegacyWorkspaceRemovalGateTests/C1032_LegacyRemovalRetainedOwner*` | expected PhoneHomeAdmissionException is missing; same-path and absent-sibling prune variants | pending |
 | PC-558 | Omit verification removal admission | `/*/*/LegacyWorkspaceRemovalGateTests/C1032_VerificationRemovalHeldLease*` | expected PhoneHomeAdmissionException is missing; bind present and absent variants separately | pending |
 | PC-559 | Omit verification creation admission | `/*/*/LegacyWorkspaceRemovalGateTests/C1032_VerificationCreationAdmission*` | GitStarts increases while lease held | pending |
+| PC-560 | Omit journal/census hold checks | `/*/*/LegacyWorkspaceRemovalGateTests/C1032_LegacyRemovalJournalFence*` | expected PhoneHomeAdmissionException is missing; retiring, torn and incomplete-census variants | pending |
 
-All original 292 PCs and these nine new IDs remain pending for method-scoped
+All original 292 PCs and these ten new IDs remain pending for method-scoped
 SourceLanding Mutation. These baseline regressions are ordinary defect proof,
 not deliberate mutant cycles. Legacy removals carry no CompletedCard command
 identity and do not write that journal; they must honor its existing fences.
 Only TryRetireAsync journals immutable cleanup intent before its callback.
 
 ### Cost
+
+**Round-2 amendment:** the original estimates below describe the prior freeze.
+Sharing six S2 builds preserves every filter/result and removes duplicate
+build work. The current 27-row table sums to 103 estimated minutes with 17
+distinct outputs and 176 ordinary executions. The repair dispatch selects only
+the 33-result S2 group, CP-5 (six results repeated three times), and CP-25..27
+(46 results): 97 executions. This bounded repair selection is estimated at
+35 minutes including builds/repeated CP-5, excluding slot wait. CP-551..560
+increase the pending control inventory to 302 IDs; their named variants need
+separate method-scoped Mutation proof. No earlier PC is discharged.
 
 **Estimated**, not measured. Ordinary Code V/R floor is the complete CP-1..CP-24
 time sum: **120 minutes**, comprising **22 isolated builds × 3 = 66** and
