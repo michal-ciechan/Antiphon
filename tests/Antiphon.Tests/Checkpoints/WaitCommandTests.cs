@@ -24,12 +24,15 @@ public sealed class WaitCommandTests : CheckpointTestBase
             var dir = Path.Combine(root, "run");
             Directory.CreateDirectory(dir);
             CheckpointFixtures.MarkRun(dir, alive: false);
-            var source = new SourceEvidence();
+            var observed = new SourceObservation(new string('a', 40), 0, new string('1', 64),
+                DateTimeOffset.UnixEpoch, "known");
+            var source = new SourceEvidence
+            { Start = observed, End = observed, State = "clean", BuildSource = "verified" };
             var statePath = Path.Combine(dir, "state.json");
             SafeWrite.Require(new RunStateStore().Write(statePath, new RunState
             { Source = source, RunId = Path.GetFileName(dir), Phase = "done", ExitCode = 0 }));
             ReportWriter.WriteFiles(dir, new ReportModel
-            { Source = source, RunId = Path.GetFileName(dir), ExitCode = 0, Verdict = "GREEN" });
+            { Source = source, Commit = observed.Commit!, RunId = Path.GetFileName(dir), ExitCode = 0, Verdict = "GREEN" });
             var markdown = Path.Combine(dir, "report.md");
             var json = Path.Combine(dir, "report.json");
             if (mode is "missing-md" or "missing-both") File.Delete(markdown);
