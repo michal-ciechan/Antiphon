@@ -63,15 +63,38 @@ public sealed class WindowsUnitPlatformAdmissionTests
     [Test]
     public void C1210_Roster_closure_matches_source_gates()
     {
-        var methods = SourceMethods();
+        var roots = SourceRoots();
         var expected = WindowsUnitSkipRoster.Native.Concat(WindowsUnitSkipRoster.Existing).ToArray();
+        AssertClosure(roots, expected, true);
+        Entry[] vectorRoster = [new("Antiphon.Tests.Scripts", "Probe", "Case", 1, "literal")];
+        const string healthy = "namespace Antiphon.Tests.Scripts; class Probe { void Case() { C1008HostFixture.RequireNativeLinux(); } }";
+        AssertClosure([CSharpSyntaxTree.ParseText(healthy).GetRoot()], vectorRoster, false);
+        foreach (var source in new[]
+        {
+            healthy.Replace("void Case()", "void Unknown()", StringComparison.Ordinal),
+            healthy.Replace("C1008HostFixture.RequireNativeLinux()", "global::Antiphon.Tests.TestHelpers.NativeLinuxGate.Require("reason")", StringComparison.Ordinal).Replace("void Case()", "void Unknown()", StringComparison.Ordinal),
+            "using Gate = Antiphon.Tests.TestHelpers.NativeLinuxGate; namespace Antiphon.Tests.Scripts; class Probe { void Unknown() { Gate.Require(\"reason\"); } }",
+            "using static Antiphon.Tests.TestHelpers.NativeLinuxGate; namespace Antiphon.Tests.Scripts; class Probe { void Unknown() { Require(\"reason\"); } }",
+            "namespace Antiphon.Tests.Scripts; class Probe { System.Action Property => () => NativeLinuxGate.Require(\"reason\"); }",
+        })
+            Should.Throw<ShouldAssertException>(() => AssertClosure([CSharpSyntaxTree.ParseText(source).GetRoot()], vectorRoster, false))
+                .Message.ShouldContain("c1210-unrostered-gate");
+        Should.Throw<ShouldAssertException>(() => AssertClosure([CSharpSyntaxTree.ParseText(
+            healthy.Replace("C1008HostFixture.RequireNativeLinux();", "", StringComparison.Ordinal)).GetRoot()], vectorRoster, false))
+            .Message.ShouldContain("c1210-roster-without-gate");
+    }
+
+    private static void AssertClosure(SyntaxNode[] roots, Entry[] expected, bool requireLegacyHelper)
+    {
+        var methods = roots.SelectMany(root => root.DescendantNodes().OfType<MethodDeclarationSyntax>()).ToArray();
         expected.Select(entry => entry.Identity).Distinct().Count().ShouldBe(expected.Length, "c1210-duplicate-roster");
         var actual = new List<string>();
-        foreach (var method in methods)
-        foreach (var call in method.DescendantNodes().OfType<InvocationExpressionSyntax>())
+        foreach (var call in roots.SelectMany(root => root.DescendantNodes().OfType<InvocationExpressionSyntax>()))
         {
-            var name = call.Expression.ToString();
-            if (name is not ("NativeLinuxGate.Require" or "C1008HostFixture.RequireNativeLinux" or "C1105AuditContract")) continue;
+            var name = GateName(call);
+            if (name is null) continue;
+            var method = call.Ancestors().OfType<MethodDeclarationSyntax>().FirstOrDefault();
+            method.ShouldNotBeNull("c1210-unrostered-gate: call outside a method");
             var identity = Identity(method);
             if (identity == "Antiphon.Tests.Scripts.WindowsUnitPlatformAdmissionTests.C1210_Guard_matches_native_platform"
                 && name == "NativeLinuxGate.Require") continue;
@@ -95,16 +118,44 @@ public sealed class WindowsUnitPlatformAdmissionTests
         }
         actual.Order(StringComparer.Ordinal).ToArray().ShouldBe(
             expected.Select(entry => entry.Identity).Order(StringComparer.Ordinal).ToArray(), "c1210-roster-without-gate");
-        methods.Count(method => Identity(method) == "Antiphon.Tests.Scripts.RemoteScriptContractTests.C1105AuditContract"
+        if (requireLegacyHelper) methods.Count(method => Identity(method) == "Antiphon.Tests.Scripts.RemoteScriptContractTests.C1105AuditContract"
             && method.DescendantNodes().OfType<InvocationExpressionSyntax>().Any(call => call.Expression.ToString() == "C1008HostFixture.RequireNativeLinux"))
             .ShouldBe(1, "c1210-roster-without-gate: helper implementation");
     }
 
-    private static MethodDeclarationSyntax[] SourceMethods() => Directory.EnumerateFiles(
+    private static string? GateName(InvocationExpressionSyntax call)
+    {
+        var expression = call.Expression;
+        if (expression is IdentifierNameSyntax identifier && identifier.Identifier.ValueText == "C1105AuditContract") return "C1105AuditContract";
+        if (expression is not MemberAccessExpressionSyntax { Name.Identifier.ValueText: "Require" or "RequireNativeLinux" }
+            && expression is not IdentifierNameSyntax { Identifier.ValueText: "Require" or "RequireNativeLinux" }) return null;
+        var root = call.SyntaxTree.GetRoot();
+        var uses = root.DescendantNodes().OfType<UsingDirectiveSyntax>().ToArray();
+        foreach (var (type, member, canonical) in new[] { ("NativeLinuxGate", "Require", "NativeLinuxGate.Require"),
+                     ("C1008HostFixture", "RequireNativeLinux", "C1008HostFixture.RequireNativeLinux") })
+        {
+            if (expression is MemberAccessExpressionSyntax access && access.Name.Identifier.ValueText == member)
+            {
+                var receiver = access.Expression.ToString();
+                if (receiver == type || receiver.EndsWith("." + type, StringComparison.Ordinal)
+                    || uses.Any(use => use.Alias?.Name.Identifier.ValueText == receiver
+                        && (use.Name?.ToString() == type || use.Name?.ToString().EndsWith("." + type, StringComparison.Ordinal) == true))) return canonical;
+            }
+            if (expression is IdentifierNameSyntax unqualified && unqualified.Identifier.ValueText == member
+                && uses.Any(use => use.StaticKeyword.RawKind != 0
+                    && (use.Name?.ToString() == type || use.Name?.ToString().EndsWith("." + type, StringComparison.Ordinal) == true))) return canonical;
+        }
+        return null;
+    }
+
+    private static MethodDeclarationSyntax[] SourceMethods() => SourceRoots()
+        .SelectMany(root => root.DescendantNodes().OfType<MethodDeclarationSyntax>()).ToArray();
+
+    private static SyntaxNode[] SourceRoots() => Directory.EnumerateFiles(
             Path.Combine(DelegateScriptRunner.RepoRoot, "tests/Antiphon.Tests"), "*.cs", SearchOption.AllDirectories)
         .Where(path => !Path.GetRelativePath(DelegateScriptRunner.RepoRoot, path).Split(Path.DirectorySeparatorChar)
             .Any(part => part == "obj" || part == "bin" || part.StartsWith("bin-", StringComparison.Ordinal)))
-        .SelectMany(path => CSharpSyntaxTree.ParseText(File.ReadAllText(path)).GetRoot().DescendantNodes().OfType<MethodDeclarationSyntax>()).ToArray();
+        .Select(path => CSharpSyntaxTree.ParseText(File.ReadAllText(path)).GetRoot()).ToArray();
 
     private static string Identity(MethodDeclarationSyntax method) =>
         (method.Ancestors().OfType<BaseNamespaceDeclarationSyntax>().FirstOrDefault()?.Name.ToString() ?? "") + "."
