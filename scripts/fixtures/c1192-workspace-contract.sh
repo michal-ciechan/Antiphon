@@ -340,6 +340,7 @@ reset_runtime() {
     rm -f "$C1192_ROOT/probe-at-handoff" "$C1192_ROOT/shared-before" "$C1192_ROOT/private-before-release"
     rm -rf "$CASE_DIR/fixture-controller"
     rm -f "$CASE_DIR/.fixture-escape" "$CASE_DIR/.fixture-escape-identity"
+    rm -f "$CASE_DIR"/.fixture-fingerprint-*
     rm -f "$CASE_DIR"/.fixture-id-* "$CASE_DIR/.fixture-network" "$CASE_DIR/.fixture-donor" "$CASE_DIR/.fixture-busy" "$CASE_DIR/.fixture-npm-server" "$CASE_DIR/.fixture-prune-smoke"
     rm -f "$CASE_DIR/.fixture-volumes" "$CASE_DIR/.fixture-helpers" \
         "$CASE_DIR/fixture-cleanup-residue.txt" "$CASE_DIR/fixture-summary.txt" "$CASE_DIR/.fixture-controller-identity" "$CASE_DIR/result" \
@@ -370,6 +371,8 @@ plant_container() {
     printf '%s\n' "$owner" > "$dir/label-owner"
     printf '%s\n' "$run_id" > "$dir/label-run"
     printf '%s\n' "$role" > "$dir/label-role"
+    printf '/%s\n' "$name" > "$dir/name"
+    printf '2026-10-13T00:00:00Z\n' > "$dir/created"
     printf '%s\n' "$image" > "$dir/image"
     printf '%s\n' "$mount" > "$dir/mount"
 }
@@ -935,7 +938,9 @@ docker_inspect_container() {
     [ -n "$fmt" ] || return 0
     case "$fmt" in
         '{{.Id}}') cat "$dir/id" ;;
-        '{{.Name}}') printf '/%s\n' "$name" ;;
+        '{{.Name}}') cat "$dir/name" ;;
+        '{{.Image}}') cat "$dir/image" ;;
+        '{{.Created}}') cat "$dir/created" ;;
         *compose.project*) label_value "$dir/label-project" ;;
         *io.antiphon.owner*) label_value "$dir/label-owner" ;;
         *fixture-run*) label_value "$dir/label-run" ;;
@@ -2997,9 +3002,14 @@ mode_deletion_audit() {
     local row="${3:?row}" name="c849-${RUN}-restore-p1" network="c849-${RUN}-npm" id good=0 code=0 out
     : > "$CASE_DIR/fixture-cleanup-ledger.txt"
     case "$row" in
-        wrong-cid|changed-labels|id-inspect-failure|wrong-helper-id)
-            c849_fixture_launch create --name "$name" --entrypoint sleep "$ADMITTED" infinity >/dev/null
-            id=$(cat "$CASE_DIR/.fixture-id-$name")
+        wrong-cid|changed-labels|changed-owner|changed-role|id-inspect-failure|wrong-helper-id|fingerprint-name|fingerprint-image|fingerprint-created)
+            if [ "$row" = wrong-helper-id ]; then
+                plant_container "$name" c849-fixture "$RUN" consumer "$ADMITTED" ""
+                id=$(cat "$C1192_ROOT/containers/$name/id")
+            else
+                c849_fixture_launch create --name "$name" --entrypoint sleep "$ADMITTED" infinity >/dev/null
+                id=$(cat "$CASE_DIR/.fixture-id-$name")
+            fi
             local original="$name" foreign="c849-${RUN}-foreign"
             if [ "$row" = wrong-cid ] || [ "$row" = wrong-helper-id ]; then
                 plant_container "$foreign" foreign other-run consumer "$ADMITTED" ""
@@ -3011,6 +3021,17 @@ mode_deletion_audit() {
                 printf '%s\n' "$id" > "$CASE_DIR/.fixture-id-$name"
             elif [ "$row" = changed-labels ]; then
                 printf other-run > "$C1192_ROOT/containers/$name/label-run"
+            elif [ "$row" = changed-owner ]; then
+                printf foreign > "$C1192_ROOT/containers/$name/label-owner"
+            elif [ "$row" = changed-role ]; then
+                printf donor > "$C1192_ROOT/containers/$name/label-role"
+            elif [[ "$row" = fingerprint-* ]]; then
+                printf '/%s|%s|2026-10-13T00:00:00Z\n' "$name" "$ADMITTED" > "$CASE_DIR/.fixture-fingerprint-$name"
+                case "$row" in
+                    fingerprint-name) printf '/other-acquisition\n' > "$C1192_ROOT/containers/$name/name" ;;
+                    fingerprint-image) printf 'sha256:other-image\n' > "$C1192_ROOT/containers/$name/image" ;;
+                    fingerprint-created) printf '2026-10-13T01:00:00Z\n' > "$C1192_ROOT/containers/$name/created" ;;
+                esac
             else
                 docker_inspect_container() { printf 'Cannot connect to the Docker daemon\n' >&2; return 1; }
             fi
@@ -3064,6 +3085,10 @@ mode_deletion_audit() {
             }
             c849_fixture_control PC-09 CacheVolumeForeign c849_fixture_volume_fault label "$name" nuget-packages "$ADMITTED"
             c849_fixture_control PC-10 CacheVolumeForeign c849_fixture_volume_fault options "$name" nuget-packages "$ADMITTED"
+            printf 'pre-existing-uncertainty\n' > "$CASE_DIR/fixture-cleanup-residue.txt"
+            c849_fixture_control PC-32 FixtureCleanupScopeHeld c849_fixture_cleanup_scope
+            emit residue-after-scope-control "$(grep -Fxq pre-existing-uncertainty "$CASE_DIR/fixture-cleanup-residue.txt" && echo 1 || echo 0)"
+            rm -f "$CASE_DIR/fixture-cleanup-residue.txt"
             emit registered-after-controls "$(grep -Fxq "$name" "$CASE_DIR/.fixture-volumes" && echo 1 || echo 0)"
             c849_fixture_finalize || code=$?
             emit finalization-exit "$code"

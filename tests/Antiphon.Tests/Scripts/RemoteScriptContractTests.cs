@@ -452,11 +452,14 @@ public sealed class RemoteScriptContractTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public void C1208_Recorded_id_with_changed_labels_is_untouched()
     {
-        var output = C1192Run("deletion-audit", "changed-labels");
-        Fact(output, "finalization-exit").ShouldBe("2", output);
-        Fact(output, "deletion-count").ShouldBe("0", output);
-        Fact(output, "residue").ShouldBe("1", output);
-        Fact(output, "owned-survived").ShouldBe("1", output);
+        foreach (var variant in new[] { "changed-labels", "changed-owner", "changed-role" })
+        {
+            var output = C1192Run("deletion-audit", variant);
+            Fact(output, "finalization-exit").ShouldBe("2", output);
+            Fact(output, "deletion-count").ShouldBe("0", output);
+            Fact(output, "residue").ShouldBe("1", output);
+            Fact(output, "owned-survived").ShouldBe("1", output);
+        }
     }
 
     [Test]
@@ -510,6 +513,7 @@ public sealed class RemoteScriptContractTests
     {
         var output = C1192Run("deletion-audit", "owned-volume-controls");
         Fact(output, "registered-after-controls").ShouldBe("1", output);
+        Fact(output, "residue-after-scope-control").ShouldBe("1", output);
         Fact(output, "finalization-exit").ShouldBe("0", output);
         Fact(output, "volume-survived").ShouldBe("0", output);
         Fact(output, "removal-recorded").ShouldBe("1", output);
@@ -545,6 +549,20 @@ public sealed class RemoteScriptContractTests
         Fact(output, "record-retained").ShouldBe("0", output);
         Fact(output, "residue").ShouldBe("0", output);
         Fact(output, "absence-receipt").ShouldBe("1", output);
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1208_Recorded_creation_fingerprint_is_reverified()
+    {
+        foreach (var field in new[] { "name", "image", "created" })
+        {
+            var output = C1192Run("deletion-audit", "fingerprint-" + field);
+            Fact(output, "finalization-exit").ShouldBe("2", output);
+            Fact(output, "deletion-count").ShouldBe("0", output);
+            Fact(output, "residue").ShouldBe("1", output);
+            Fact(output, "owned-survived").ShouldBe("1", output);
+        }
     }
 
     private static void C1192AssertCleanupProbe(string boundary)

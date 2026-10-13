@@ -88,6 +88,7 @@ PC-1 foreign drop/receipt/removal guard (cache variants); PC-2 legacy container 
 | CP-69 | Fixed | `CP-33` | repair-69 | `/*/*/RemoteScriptContractTests/C1208_Dangling_network_record_retains_residue*` | V-16 | 1 executed, 0 failed/skipped | 1 | 1 |
 | CP-70 | Fixed | `CP-33` | repair-70 | `/*/*/RemoteScriptContractTests/C1208_Invalid_network_record_retains_text*` | V-17 | 1 executed, 0 failed/skipped | 1 | 1 |
 | CP-71 | Fixed | `CP-33` | repair-71 | `/*/*/RemoteScriptContractTests/C1208_Confirmed_absent_network_record_is_cleared*` | V-18 | 1 executed, 0 failed/skipped | 1 | 1 |
+| CP-72 | Fixed | `CP-33` | repair-72 | `/*/*/RemoteScriptContractTests/C1208_Recorded_creation_fingerprint_is_reverified*` | V-19 | 1 executed, 0 failed/skipped | 1 | 1 |
 
 ### Cost
 
@@ -114,6 +115,8 @@ All CP-33..61 now have passing ordinary receipts: 29 rows, 47 executions, 43 dis
 
 ## Round 2 repair binding
 
-Repair Code/landing owner: 8c713d0c-fe3f-4097-894b-9fc892a709ae; predecessor b1b731e0-1d07-4589-8c85-94b420b101bd. Base 7ed60feb0d088bf0c7368f90e989ae0d467e31ae. Closed Final scope CP-33..71; no Unit or whole class, per repair brief. V-9..18 map in order to CP-62..71: wrong foreign CID, changed labels on an ID, container inspect outage, wrong helper ID, wrong network ID, network inspect outage, owned packages through actual PC-09/10 controls, dangling network marker, invalid network text, positively absent marker. Each has hand-written survival/deletion/refusal/registration or receipt expectations. First run selects CP-62..71 before production edits; then all 39 rows (57 executions; CP-44 exactly 19).
+Repair Code/landing owner: 8c713d0c-fe3f-4097-894b-9fc892a709ae; predecessor b1b731e0-1d07-4589-8c85-94b420b101bd. Base 7ed60feb0d088bf0c7368f90e989ae0d467e31ae. Closed Final scope CP-33..72; no Unit or whole class, per repair brief. V-9..18 map in order to CP-62..71: wrong foreign CID, changed labels on an ID, container inspect outage, wrong helper ID, wrong network ID, network inspect outage, owned packages through actual PC-09/10 controls, dangling network marker, invalid network text, positively absent marker. Each has hand-written survival/deletion/refusal/registration or receipt expectations. First run selects CP-62..71 before production edits; then all 40 rows (58 executions; CP-44 exactly 19).
 
 PC-9 wrong CID/owner/run/role; PC-10 helper wrong ID; PC-11 network wrong ID/owner/run/role; PC-12 container/network inspect outage; PC-13 authoritative packages ledger isolation through PC-09/10 and PC-32; PC-14 dangling/malformed network record and text residue; PC-15 positive-absence clearing/receipt. All variants PENDING method-scoped SourceLanding Mutation, alongside PC-1..8 and CARD-1192 PC-1..174. No Mutation claimed. W-1 and CARD-1207 excluded. Restart: none.
+
+V-19/CP-72 verifies each recorded container name/image/Created fingerprint field against the inspected ID. PC-16 name/image/created compare bypass is PENDING, filter `/*/*/RemoteScriptContractTests/C1208_Recorded_creation_fingerprint_is_reverified*`. CP-68 also runs real PC-32 and requires pre-existing residue to survive its private mock. Legacy acquisitions without fingerprints require recorded name plus owner/run/role; no image/creation fingerprint is inferred for them.
