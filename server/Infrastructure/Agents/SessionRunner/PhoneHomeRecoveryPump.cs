@@ -414,9 +414,9 @@ public sealed class PhoneHomeRecoveryPump : BackgroundService
                 // CARD-0679 D-2: one event that cannot be observed must not end the pump, or every
                 // later event on the connection stays pending until the cap closes the socket. A
                 // persisted transcript entry is still in the runner's transcript, and the next
-                // connection's catch-up re-reads it. A transcript fault or bound notification is
-                // live-only: catch-up does not reconstruct it (CARD-1219 D-8), and its replay-guard
-                // admission is not undone.
+                // connection's catch-up re-reads it. Catch-up does not re-read a transcript fault or
+                // bound notification (CARD-1219 D-8), and this catch does not undo its replay-guard
+                // admission.
                 var failures = Interlocked.Increment(ref StateFor(live).EventFailures);
                 _logger.LogWarning(
                     ex, "Phone-home event {EventName} for session {SessionId} on runner {RunnerId} epoch {Epoch} "
