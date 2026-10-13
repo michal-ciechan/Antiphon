@@ -4773,7 +4773,15 @@ c849_fixture_consumer_release() {
     esac
     resolved="$(c849_fixture_container_identity "$name" "$identity" "$role")" || code=$?
     case "$code" in
-        0) c849_fixture_resource_remove container "$resolved" "$name" ;;
+        0) c849_fixture_resource_remove container "$resolved" "$name"
+            # Identity (including any fingerprint) was authorized before removal.
+            # Retire its records only after positive absence, so a later genuine
+            # acquisition can use exclusive creation without replacing a record.
+            local released=0
+            c849_fixture_resource_state container "$resolved" || released=$?
+            if [ "$released" = 1 ]; then
+                rm -f -- "$file" "$CASE_DIR/.fixture-fingerprint-$name" || c849_fixture_cleanup_unknown container "$name"
+            fi ;;
         1) ;;
         3) printf '%s\n' "$name" >> "$CASE_DIR/fixture-cleanup-residue.txt"
             printf 'foreign: left untouched container %s\n' "$name" >> "$CASE_DIR/fixture-cleanup-ledger.txt"
