@@ -157,7 +157,7 @@ public sealed class RowRunner
             }
             if (binding is not null)
             {
-                var invalidated = binding.Invalidate();
+                var invalidated = binding.Invalidate() ?? SafeWrite.CreateFreshDirectory(binding.OutputPath, SafeWrite.Under(binding.OutputPath));
                 if (invalidated is not null)
                 {
                     combined.WriteLine($"CHECKPOINT {request.Name} refused: {invalidated}");
@@ -450,8 +450,8 @@ public sealed class RowRunner
             if (line.StartsWith("refused:", StringComparison.Ordinal)
                 || line.StartsWith("TAMPERED ", StringComparison.Ordinal)
                 || line.StartsWith("DIRTY ", StringComparison.Ordinal)
-                || line.StartsWith("restored from ", StringComparison.Ordinal)
-                || line.StartsWith("lossless because ", StringComparison.Ordinal)
+                || line.StartsWith("manual command:", StringComparison.Ordinal)
+                || line.StartsWith("manual restore required", StringComparison.Ordinal)
                 || line.StartsWith("CONFLICT ", StringComparison.Ordinal)
                 || line.StartsWith("worktree bytes changed", StringComparison.Ordinal)
                 || line.StartsWith("manual restore:", StringComparison.Ordinal))
