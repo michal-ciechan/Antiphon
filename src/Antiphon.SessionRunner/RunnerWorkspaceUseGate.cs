@@ -12,7 +12,7 @@ public sealed class RunnerWorkspaceUseGate(RunnerWorkspaceRemovalJournal journal
     // One runner-local admission lane also serializes Git registration changes in a common repository.
     private readonly SemaphoreSlim _admission = new(1, 1);
     private readonly object _ownerSync = new();
-    private readonly Dictionary<Guid, Owner> _owners = [];
+    private readonly List<Owner> _owners = [];
     private volatile bool _censusReady;
     private volatile bool _censusUnknown;
 
@@ -53,7 +53,17 @@ public sealed class RunnerWorkspaceUseGate(RunnerWorkspaceRemovalJournal journal
     {
         var normalized = path is null ? null : Normalize(path);
         if (normalized is null) { MarkCensusUnknown(); return; }
-        lock (_ownerSync) _owners[id] = new(normalized, stillOwned);
+        lock (_ownerSync)
+        {
+            // Retain older generations/paths when the same session id is reused. Prune only a
+            // positively absent owner, keeping unreadable process observations as debt.
+            _owners.RemoveAll(owner =>
+            {
+                try { return !owner.StillOwned(); }
+                catch { return false; }
+            });
+            _owners.Add(new(normalized, stillOwned));
+        }
     }
 
     public bool IsRetiring(string? path)
@@ -69,7 +79,7 @@ public sealed class RunnerWorkspaceUseGate(RunnerWorkspaceRemovalJournal journal
     {
         lock (_ownerSync)
         {
-            foreach (var owner in _owners.Values)
+            foreach (var owner in _owners)
             {
                 if (!Overlaps(owner.Path, path)) continue;
                 try { if (owner.StillOwned()) return true; }
