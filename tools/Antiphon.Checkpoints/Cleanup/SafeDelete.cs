@@ -302,89 +302,64 @@ public static class SafeDelete
 
     private readonly record struct GitRun(int ExitCode, string Stdout, string Stderr, string? Failure);
 
-    // A start that throws before a child exists is git-unavailable. ETXTBSY, EAGAIN, and a
-    // settle race are retried a few times when the executable is present, then still
-    // reported as git-unavailable. A child that was created and then does not finish is
-    // git-timeout, including a wait or kill exception after that start.
+    // The shared CheckpointProcessRunner owns one deadline for Git config inspection, process
+    // exit and both output drains. Expiry kills the owned Linux process group (Windows job), so an
+    // exited child's descendant cannot keep a pipe open, and Git runs with fsmonitor, hooks,
+    // optional locks, global/system config and named filter/textconv drivers disabled.
+    // A start that fails before a child exists is git-unavailable. ETXTBSY, EAGAIN, and a
+    // settle race are retried a few times inside that deadline when the executable is present,
+    // then still reported as git-unavailable. A child that was created and then does not finish
+    // is git-timeout, including a custody failure after that start.
     private static GitRun RunGit(string git, string workingDirectory, IReadOnlyList<string> args, int timeoutMs)
     {
         if (timeoutMs < 1)
             timeoutMs = GitTimeoutMs;
-        Process? process = null;
-        var startedChild = false;
-        try
+        var clock = Stopwatch.StartNew();
+        for (var attempt = 1; ; attempt++)
         {
-            var start = new ProcessStartInfo(git)
-            {
-                WorkingDirectory = workingDirectory,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            start.Environment.Remove("GIT_DIR");
-            start.Environment.Remove("GIT_WORK_TREE");
-            start.Environment.Remove("GIT_INDEX_FILE");
+            var remaining = timeoutMs - (int)Math.Min(clock.ElapsedMilliseconds, timeoutMs);
+            if (remaining < 1)
+                return new GitRun(-1, "", "", "git-unavailable");
+            var start = new ProcessStartInfo(git) { WorkingDirectory = workingDirectory };
             foreach (var arg in args)
                 start.ArgumentList.Add(arg);
-            process = StartGit(git, start);
-            if (process is null)
-                return new GitRun(-1, "", "", "git-unavailable");
-            startedChild = true;
-            // Read both pipes before waiting. A synchronous read ahead of the timeout never reaches WaitForExit
-            // when git leaves stdout open.
-            var stdoutTask = process.StandardOutput.ReadToEndAsync();
-            var stderrTask = process.StandardError.ReadToEndAsync();
-            if (!process.WaitForExit(timeoutMs))
+            CheckpointProcessRunner.Result result;
+            try
             {
-                KillTree(process);
-                Drain(stdoutTask, stderrTask, 2_000);
+                result = CheckpointProcessRunner.Run(start, remaining, git: true);
+            }
+            catch (Exception ex) when (ex is Win32Exception or FileNotFoundException or DirectoryNotFoundException)
+            {
+                if (attempt >= SpawnAttempts || !IsTransientSpawn(ex, git))
+                    return new GitRun(-1, "", "", "git-unavailable");
+                Thread.Sleep(25 << (attempt - 1));
+                continue;
+            }
+            catch (InvalidOperationException)
+            {
                 return new GitRun(-1, "", "", "git-timeout");
             }
 
-            if (!Drain(stdoutTask, stderrTask, timeoutMs))
-            {
-                KillTree(process);
+            if (result.TimedOut)
                 return new GitRun(-1, "", "", "git-timeout");
+            // Linux starts Git through setsid; its exec failure is a start failure, not a Git answer.
+            if (StartFailed(result))
+            {
+                if (attempt >= SpawnAttempts || !ExecutableExists(git))
+                    return new GitRun(-1, "", "", "git-unavailable");
+                Thread.Sleep(25 << (attempt - 1));
+                continue;
             }
 
-            return new GitRun(process.ExitCode, stdoutTask.Result, stderrTask.Result, null);
-        }
-        catch (Exception ex) when (ex is Win32Exception or FileNotFoundException or DirectoryNotFoundException)
-        {
-            if (startedChild && process is not null)
-                KillTree(process);
-            return new GitRun(-1, "", "", startedChild ? "git-timeout" : "git-unavailable");
-        }
-        finally
-        {
-            process?.Dispose();
+            return new GitRun(result.Exit, result.Stdout, result.Stderr, null);
         }
     }
 
     private const int SpawnAttempts = 6;
 
-    private static Process? StartGit(string git, ProcessStartInfo start)
-    {
-        for (var attempt = 1; attempt <= SpawnAttempts; attempt++)
-        {
-            try
-            {
-                var process = Process.Start(start);
-                if (process is not null || attempt >= SpawnAttempts || !ExecutableExists(git))
-                    return process;
-            }
-            catch (Exception ex) when (ex is Win32Exception or FileNotFoundException or DirectoryNotFoundException)
-            {
-                if (attempt >= SpawnAttempts || !IsTransientSpawn(ex, git))
-                    throw;
-            }
-
-            Thread.Sleep(25 << (attempt - 1));
-        }
-
-        return null;
-    }
+    private static bool StartFailed(CheckpointProcessRunner.Result result) =>
+        OperatingSystem.IsLinux() && result.Exit is (126 or 127)
+        && result.Stderr.StartsWith("setsid: failed to execute ", StringComparison.Ordinal);
 
     private static bool IsTransientSpawn(Exception ex, string git)
     {
@@ -414,39 +389,6 @@ public static class SafeDelete
         }
 
         return false;
-    }
-
-    private static void KillTree(Process process)
-    {
-        try
-        {
-            if (!process.HasExited)
-                process.Kill(entireProcessTree: true);
-        }
-        catch (Exception ex) when (ex is InvalidOperationException or Win32Exception or NotSupportedException)
-        {
-        }
-
-        try
-        {
-            if (!process.HasExited)
-                process.WaitForExit(2_000);
-        }
-        catch (Exception ex) when (ex is InvalidOperationException or Win32Exception or SystemException)
-        {
-        }
-    }
-
-    private static bool Drain(Task<string> stdout, Task<string> stderr, int timeoutMs)
-    {
-        try
-        {
-            return Task.WhenAll(stdout, stderr).Wait(timeoutMs);
-        }
-        catch (AggregateException)
-        {
-            return false;
-        }
     }
 
     private static bool Listed(IReadOnlyCollection<string> created, string full)
