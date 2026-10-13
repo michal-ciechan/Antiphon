@@ -287,6 +287,184 @@ public sealed class CardWorktreeMirrorCleanupTests
         }
         await using var positive = await CompletedCardMirrorFixture.CreateAsync(); await positive.RemovedAsync();
     }
+    // F4/VP-09: an internally consistent active landing owned by a foreign task, store path,
+    // repository or earlier generation must not map H onto P; mutation: select active landings
+    // without the task predicate; red: rebased removal completes. Restored row is the positive.
+    [Test] public async Task C1032_WitnessLandingOwnership()
+    {
+        await using var f = await CompletedCardMirrorFixture.CreateAsync();
+        var id = await RebasedLandingAsync(f); var original = await LandingAsync(f, id);
+        var foreignTask = Guid.NewGuid();
+        await using (var db = f.Card.Host.CreateContext())
+        {
+            db.AgentTasks.Add(new AgentTask { Id = foreignTask, Title = "foreign", Goal = "fixture", Status = AgentTaskStatus.Succeeded,
+                Workspace = WorkspaceMode.Worktree, CreatedAt = DateTime.UtcNow });
+            await db.SaveChangesAsync();
+        }
+        var bindingCreated = f.Card.Host.Clock.GetUtcNow().UtcDateTime.AddHours(-4);
+        foreach (var (vector, change) in new (string, Action<AgentTaskLanding>)[]
+        {
+            ("foreign-task", o => { o.TaskId = foreignTask; o.RecoveryRefPrefix = $"refs/antiphon/land/{foreignTask:N}/{o.Id:N}"; }),
+            ("foreign-store-path", o => o.WorktreePath = f.Card.Tree + "-foreign"),
+            ("foreign-repository", o => o.RepositoryPath = f.Card.Tree + "-foreign-repository"),
+            ("earlier-generation", o => o.CreatedAt = bindingCreated.AddMinutes(-1)),
+        })
+        {
+            await ChangeLandingAsync(f, original, change);
+            await WithheldAsync(f, vector);
+            await ChangeLandingAsync(f, original, null);
+        }
+        await f.RemovedAsync();
+        (await f.CommandAsync()).Proof.ProofIdentity.ShouldStartWith("landed-v1:" + id.ToString("D") + ":");
+    }
+    // F4/VP-10: each missing/empty landing-evidence field outside the narrower eligibility
+    // checks must refuse; mutation: drop HasPublication; red: rebased removal completes.
+    [Test] public async Task C1032_WitnessLandingCompleteness()
+    {
+        await using var f = await CompletedCardMirrorFixture.CreateAsync();
+        var id = await RebasedLandingAsync(f); var original = await LandingAsync(f, id);
+        foreach (var (field, change) in new (string, Action<AgentTaskLanding>)[]
+        {
+            ("observedRemoteTargetSha:null", o => o.ObservedRemoteTargetSha = null),
+            ("observedRemoteTargetSha:empty", o => o.ObservedRemoteTargetSha = ""),
+            ("verifiedAt:null", o => o.VerifiedAt = null),
+            ("confirmationMethod:null", o => o.ConfirmationMethod = null),
+            ("confirmationMethod:empty", o => o.ConfirmationMethod = ""),
+            ("recoveryRefPrefix:empty", o => o.RecoveryRefPrefix = ""),
+            ("commonDirectory:empty", o => o.CommonDirectory = ""),
+            ("gitDirectory:empty", o => o.GitDirectory = ""),
+            ("targetBeforeSha:empty", o => o.TargetBeforeSha = ""),
+            ("destinationFullRef:empty", o => o.DestinationFullRef = ""),
+            ("sourcePinned:false", o => o.SourcePinned = false),
+            ("targetPinned:false", o => o.TargetPinned = false),
+            ("preparedPinned:false", o => o.PreparedPinned = false),
+        })
+        {
+            await ChangeLandingAsync(f, original, change);
+            await WithheldAsync(f, field);
+            await ChangeLandingAsync(f, original, null);
+        }
+        await f.RemovedAsync(); (await f.CommandAsync()).Proof.ProofKind.ShouldBe("Rebased");
+    }
+    // F4/VP-13: a durable intent whose persisted request bytes change after writing is held
+    // before any recipient request; mutation: replay on schema validity alone; red: tampered
+    // command reaches the runner. Restored original bytes replay to real removal.
+    [Test] public async Task C1032_WitnessPersistedReplayTamper()
+    {
+        await using var f = await CompletedCardMirrorFixture.CreateAsync();
+        f.AfterIntent = _ => throw new IOException("fixture stop after durable intent");
+        await Should.ThrowAsync<IOException>(() => f.TryAsync());
+        f.AfterIntent = null; f.RemovalRequests.ShouldBe(0);
+        var written = await f.EndpointAsync();
+        written.State.ShouldBe(CardWorktreeCleanupEndpointState.IntentRecorded);
+        var original = written.ImmutableRequest.ShouldNotBeNull();
+        foreach (var (field, tamper) in new (string, Action<System.Text.Json.Nodes.JsonObject>)[]
+        {
+            ("reportDigest", n => n["reportDigest"] = new string('a', 64)),
+            ("disposalPolicyDigest", n => n["disposalPolicyDigest"] = new string('c', 64)),
+            ("binding.worktreePath", n => n["binding"]!["worktreePath"] = f.Mirror + "-other"),
+            ("proof.expectedHeadSha", n => n["proof"]!["expectedHeadSha"] = new string('d', 40)),
+        })
+        {
+            var node = System.Text.Json.Nodes.JsonNode.Parse(original)!.AsObject(); tamper(node);
+            var json = node.ToJsonString(); var bytes = System.Text.Encoding.UTF8.GetBytes(json);
+            CompletedCardWorkspaceContract.Validate(json).IsValid.ShouldBeTrue(field);
+            CompletedCardWorkspaceContract.CanonicalDigest(json).ShouldNotBe(written.RequestDigest, field);
+            await SetRequestAsync(f, bytes);
+            var result = await f.TryAsync();
+            result.Complete.ShouldBeFalse(field); result.Reason.ShouldBe("immutable_request_unreadable", field);
+            f.RemovalRequests.ShouldBe(0, field); f.Journal.Read()!.Count.ShouldBe(0, field);
+            Directory.Exists(f.Binding.GitDirectory).ShouldBeTrue(field);
+            (await File.ReadAllTextAsync(f.Sentinel)).ShouldBe("mirror evidence\n", field);
+            var row = await f.EndpointAsync();
+            row.ImmutableRequest.ShouldBe(bytes, field); row.RequestDigest.ShouldBe(written.RequestDigest, field);
+            row.OperationId.ShouldBe(written.OperationId, field); row.ImportedReceipt.ShouldBeNull(field);
+            row.State.ShouldBe(CardWorktreeCleanupEndpointState.IntentRecorded, field);
+        }
+        await SetRequestAsync(f, original);
+        await f.RemovedAsync(); f.RemovalRequests.ShouldBe(1);
+        (await f.CommandAsync()).OperationId.ShouldBe(written.OperationId!.Value);
+    }
+    // F4/VP-15: after a real successful inspection and durable intent, unsupported, unknown
+    // and absent removal replies keep everything and never complete; mutation: treat
+    // unsupported removal as success; red: Complete=true. Restored runtime replays to removal.
+    [Test] public async Task C1032_WitnessUnsupportedRemovalAfterInspection()
+    {
+        await using var f = await CompletedCardMirrorFixture.CreateAsync();
+        var service = f.Runtime.CompletedCardWorkspace.ShouldNotBeNull();
+        f.AfterIntent = _ => { f.Runtime.CompletedCardWorkspace = null; return Task.CompletedTask; };
+        await UnsupportedHeldAsync(f, "runtime-unsupported", PhoneHomeProblemTypes.UnsupportedOperation, 1);
+        f.AfterIntent = null; f.Runtime.CompletedCardWorkspace = service;
+        var issued = (await f.EndpointAsync()).OperationId.ShouldNotBeNull();
+        var requests = 1;
+        foreach (var (vector, reply, reason) in new (string, CompletedCardWorkspaceRemovalResponse, string)[]
+        {
+            ("reply-unsupported", new(false, PhoneHomeProblemTypes.UnsupportedOperation, null), PhoneHomeProblemTypes.UnsupportedOperation),
+            ("reply-unknown", new(false, "unknown_removal_outcome", null), "unknown_removal_outcome"),
+            ("reply-absent", new(false, null, null), "receipt_mismatch"),
+        })
+        {
+            f.InterceptRemoval = _ => reply;
+            await UnsupportedHeldAsync(f, vector, reason, ++requests);
+            (await f.EndpointAsync()).OperationId.ShouldBe(issued, vector);
+        }
+        f.InterceptRemoval = null;
+        await f.RemovedAsync(); f.RemovalRequests.ShouldBe(requests + 1);
+    }
+    private static async Task UnsupportedHeldAsync(CompletedCardMirrorFixture f, string vector, string reason, int requests)
+    {
+        var result = await f.TryAsync();
+        result.Complete.ShouldBeFalse(vector); result.Reason.ShouldBe(reason, vector); result.Receipt.ShouldBeNull(vector);
+        f.RemovalRequests.ShouldBe(requests, vector);
+        Directory.Exists(f.Mirror).ShouldBeTrue(vector); Directory.Exists(f.Binding.GitDirectory).ShouldBeTrue(vector);
+        (await File.ReadAllTextAsync(f.Sentinel)).ShouldBe("mirror evidence\n", vector); f.Journal.Read()!.Count.ShouldBe(0, vector);
+        var row = await f.EndpointAsync();
+        row.OperationId.ShouldNotBeNull(vector); row.ImportedReceipt.ShouldBeNull(vector);
+        row.State.ShouldBe(CardWorktreeCleanupEndpointState.Refused, vector); row.Reason.ShouldBe(reason, vector);
+    }
+    // Actual server landing maps mirror H onto rebased P after an independent target move.
+    private static async Task<Guid> RebasedLandingAsync(CompletedCardMirrorFixture f)
+    {
+        var g = f.Card.Host.Fixture;
+        await File.WriteAllTextAsync(Path.Combine(f.Card.Tree, "feature.txt"), "feature\n");
+        await g.RequiredAsync(f.Card.Tree, "add", "feature.txt"); await g.RequiredAsync(f.Card.Tree, "commit", "-m", "feature");
+        var head = (await g.RequiredAsync(f.Card.Tree, "rev-parse", "HEAD")).Trim();
+        await g.RequiredAsync(f.Card.Tree, "push", "origin", "HEAD:" + f.Binding.SourceFullRef);
+        await g.RequiredAsync(f.Binding.CommonDirectory, "fetch", "origin", f.Binding.SourceFullRef);
+        await g.RequiredAsync(f.Mirror, "reset", "--hard", head);
+        await g.PushIndependentAsync("target-moved");
+        await f.Card.Host.RequestAsync(expectedSourceSha: head); await f.Card.Host.RunAsync();
+        var op = (await f.Card.Host.OperationAsync()).ShouldNotBeNull();
+        new AgentTaskLandingState().HasPublication(op).ShouldBeTrue(); op.OriginalSourceSha.ShouldBe(head); op.VerifiedSourceSha.ShouldNotBe(head);
+        (await f.TaskAsync()).ActiveLandingId.ShouldBe(op.Id);
+        await g.RequiredAsync(f.Binding.CommonDirectory, "fetch", "origin", "master");
+        return op.Id;
+    }
+    // Applies one vector; a null change restores the captured original row.
+    private static async Task ChangeLandingAsync(CompletedCardMirrorFixture f, AgentTaskLanding original, Action<AgentTaskLanding>? change)
+    {
+        await using var db = f.Card.Host.CreateContext();
+        var row = await db.AgentTaskLandings.SingleAsync(o => o.Id == original.Id);
+        if (change is null) db.Entry(row).CurrentValues.SetValues(original); else change(row);
+        await db.SaveChangesAsync();
+    }
+    private static async Task<AgentTaskLanding> LandingAsync(CompletedCardMirrorFixture f, Guid id)
+    { await using var db = f.Card.Host.CreateContext(); return await db.AgentTaskLandings.AsNoTracking().SingleAsync(o => o.Id == id); }
+    private static async Task WithheldAsync(CompletedCardMirrorFixture f, string vector)
+    {
+        var result = await f.TryAsync();
+        result.Complete.ShouldBeFalse(vector); result.Reason.ShouldBe("unlanded_work", vector);
+        f.RemovalRequests.ShouldBe(0, vector); f.Journal.Read()!.Count.ShouldBe(0, vector);
+        Directory.Exists(f.Binding.GitDirectory).ShouldBeTrue(vector);
+        (await File.ReadAllTextAsync(f.Sentinel)).ShouldBe("mirror evidence\n", vector);
+        var row = await f.EndpointAsync(); row.OperationId.ShouldBeNull(vector); row.ImportedReceipt.ShouldBeNull(vector);
+    }
+    private static async Task SetRequestAsync(CompletedCardMirrorFixture f, byte[] bytes)
+    {
+        await using var db = f.Card.Host.CreateContext();
+        (await db.CardWorktreeCleanupEndpoints.Where(e => e.Id == f.EndpointId)
+            .ExecuteUpdateAsync(s => s.SetProperty(e => e.ImmutableRequest, bytes))).ShouldBe(1);
+    }
     private static async Task ReceiptVectorsAsync(params string[] fields)
     {
         foreach (var field in fields)
