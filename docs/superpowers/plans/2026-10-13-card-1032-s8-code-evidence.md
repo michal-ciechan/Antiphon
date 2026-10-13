@@ -88,7 +88,7 @@ readback is asserted in each removal), and the PC-512 monotonic elapsed budget
 (no coordinator budget exists; the transport timer is the phone-home
 connection's).
 
-## Checkpoints
+### Checkpoints
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
