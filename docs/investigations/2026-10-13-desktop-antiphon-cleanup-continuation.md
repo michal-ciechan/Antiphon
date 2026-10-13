@@ -221,4 +221,3 @@ pwsh -NoProfile -File C:\Users\lndco\Documents\antiphon-reports\desktop-cleanup-
 next: decide
 handoff: Cleanup reached its time cap with zero failures; continue 194 A, 341 B and 24 C candidates under the same fresh guards, or inspect the 118 missing-origin and three unproven branch identities in the manifest. Guarded keeps and branches remain intact.
 artifact: docs/investigations/2026-10-13-desktop-antiphon-cleanup-continuation.md
-
