@@ -24,3 +24,35 @@ No native runner, deployment, live message or server restart is required.
 
 All S4 PCs remain pending for method-scoped SourceLanding Mutation:
 PC-41..83, PC-101..110 and any additional implementation variants.
+
+## Blocked baseline, 2026-10-13
+
+Test-only source e8e4948b2a5422e10e1a873affc86dd19d062580 was pushed before
+the baseline invocation. The tool's bound owner admission returned exit 7:
+
+```text
+CHECKPOINT owner owner-unverified
+```
+
+No run directory, row build, test execution or TRX was created. S4-BASE is
+**not run**, not an assertion red. CP-4 is not run. All assigned V/R outcomes
+remain unverified. The production registration and scheduler are not implemented.
+Do not land this test-only slice alone.
+
+The bound task-detail GET timed out independently at 15 and 20 seconds. The
+card, runner-defaults and session-runners reads succeeded. The checkpoint owner
+guard uses a 12-second read deadline and its existing three-minute uncertainty
+budget; no deadline was changed and no unbound bypass was attempted.
+
+Bootstrap succeeded through build-slot (0 errors, one pre-existing CS8602 warning
+in TaskOwnerGuard.cs), slot=granted, waited=0s. Its alternate output was
+bin-c1205-s4-tool/. An earlier launcher with an incorrect expected SHA was stopped
+before owner admission completed and before it created any checkpoint directory;
+it is excluded from proof. The correct-SHA invocation above also launched no rows.
+
+Resume Code after task-detail reads can validate the owning task/session. Rebuild
+the disclosed tool output if needed and run --after Tests --serial with the exact
+committed HEAD as --expected-source-sha. Establish the registration assertion red
+before adding production code. Extend T26 to prove cold boot reconstruction and
+complete all 48 frozen T18..T35 cases, their test-first evidence, production S4,
+and CP-4. S5 remains outside this task.
