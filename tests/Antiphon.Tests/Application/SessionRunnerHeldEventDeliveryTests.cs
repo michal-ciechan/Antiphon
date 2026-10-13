@@ -147,6 +147,116 @@ public class SessionRunnerHeldEventDeliveryTests
         catch (TimeoutException) { return false; }
     }
 
+    [Test]
+    [Timeout(30_000)]
+    [Arguments(false, false, "async")]
+    [Arguments(false, true, "async")]
+    [Arguments(true, false, "async")]
+    [Arguments(true, true, "async")]
+    [Arguments(false, false, "sync")]
+    [Arguments(false, true, "sync")]
+    [Arguments(true, false, "sync")]
+    [Arguments(true, true, "sync")]
+    [Arguments(false, false, "host")]
+    [Arguments(false, true, "host")]
+    [Arguments(true, false, "host")]
+    [Arguments(true, true, "host")]
+    [Arguments(false, false, "deadline")]
+    [Arguments(false, true, "deadline")]
+    [Arguments(true, false, "deadline")]
+    [Arguments(true, true, "deadline")]
+    public async Task C1205_Callback_fault_preserves_original_identity(
+        bool catchupThrows, bool callbackCancels, string timing)
+    {
+        // T54 / PC-176..179: a callback fault is not an abandoned offer. Calling the
+        // actual readiness handler directly exposes even OCE under host cancellation,
+        // which BackgroundService's outer shutdown catch intentionally consumes.
+        await using var h = new DeliveryHarness(blockCallback: true, successfulList: !catchupThrows);
+        Exception callbackFault = callbackCancels
+            ? new OperationCanceledException("independent callback cancellation", new CancellationToken(true))
+            : new InvalidOperationException("controlled callback fault");
+        if (timing != "async")
+        {
+            h.Bus.BeforeReturn = () =>
+            {
+                if (timing == "host") h.Host.Cancel();
+                if (timing == "deadline") h.Time.Advance(TimeSpan.FromSeconds(3));
+                throw callbackFault;
+            };
+        }
+        var delivery = h.RunHeldAsync();
+        await h.Handler.SecondListEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        h.Handler.FailList.TrySetResult();
+        await h.Bus.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        if (timing == "async") h.Bus.Release.TrySetException(callbackFault);
+        Exception? observed = null;
+        try { await delivery.WaitAsync(TimeSpan.FromSeconds(5)); }
+        catch (Exception ex) { observed = ex; }
+
+        observed.ShouldBeSameAs(catchupThrows ? h.Handler.CatchupFault : callbackFault);
+        observed!.StackTrace.ShouldContain(catchupThrows ? nameof(DeliveryHandler)
+            : timing == "async" ? nameof(AgentSessionRuntime.ObserveOutputAsync)
+            : nameof(C1205_Callback_fault_preserves_original_identity));
+        h.Bus.Attempts.ShouldBe(1);
+        h.Bus.Accepted.ShouldBe(0);
+        h.Handler.Stream.Disposed.ShouldBeTrue();
+        h.Log.Lines.Count(line => line.Contains("Held live event delivery abandoned")).ShouldBe(0);
+        if (catchupThrows) h.Log.Exceptions.ShouldContain(callbackFault);
+        await Task.WhenAll(h.ScopeDisposals).WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Test]
+    [Timeout(30_000)]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task C1205_Completed_callback_has_no_abandonment(bool catchupThrows)
+    {
+        // T55 / PC-180: a responsive callback keeps one completed offer.
+        await using var h = new DeliveryHarness(blockCallback: false, successfulList: !catchupThrows);
+        var delivery = h.RunHeldAsync();
+        await h.Handler.SecondListEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        h.Handler.FailList.TrySetResult();
+        Exception? observed = null;
+        try { await delivery.WaitAsync(TimeSpan.FromSeconds(5)); }
+        catch (Exception ex) { observed = ex; }
+        observed.ShouldBeSameAs(catchupThrows ? h.Handler.CatchupFault : null);
+        h.Bus.Accepted.ShouldBe(1);
+        h.Bus.AcceptedText.ShouldContain("c1205-final-pull-output");
+        h.Bus.Attempts.ShouldBe(1);
+        h.Handler.Stream.Disposed.ShouldBeTrue();
+        h.Log.Lines.Count(line => line.Contains("Held live event delivery abandoned")).ShouldBe(0);
+    }
+
+    [Test]
+    [Timeout(30_000)]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task C1205_Deadline_before_late_fault_retains_abandonment(bool catchupThrows)
+    {
+        // T56 / PC-181: once abandonment is decided a later fault is observed,
+        // without replacing the earlier catch-up exception or replaying output.
+        await using var h = new DeliveryHarness(blockCallback: true, successfulList: !catchupThrows);
+        var delivery = h.RunHeldAsync();
+        await h.Handler.SecondListEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        h.Handler.FailList.TrySetResult();
+        await h.Bus.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        h.Time.Advance(TimeSpan.FromSeconds(3));
+        Exception? observed = null;
+        try { await delivery.WaitAsync(TimeSpan.FromSeconds(5)); }
+        catch (Exception ex) { observed = ex; }
+        if (catchupThrows) observed.ShouldBeSameAs(h.Handler.CatchupFault);
+        else observed.ShouldBeOfType<TimeoutException>(); // Existing deadline-only reconnect signal.
+        h.Log.Lines.Count(line => line.Contains("Held live event delivery abandoned")).ShouldBe(1);
+        h.Handler.Stream.Disposed.ShouldBeTrue();
+        h.Bus.Attempts.ShouldBe(1);
+        h.Bus.Accepted.ShouldBe(0);
+        var lateFault = new InvalidOperationException("fault after abandonment decision");
+        h.Bus.Release.TrySetException(lateFault);
+        await h.Log.LateFault.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        h.Log.LateFaultException.ShouldBeSameAs(lateFault);
+        await Task.WhenAll(h.ScopeDisposals).WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
     private sealed class DeliveryHarness : IAsyncDisposable
     {
         private readonly ServiceProvider _services;
@@ -159,6 +269,23 @@ public class SessionRunnerHeldEventDeliveryTests
         public DeliveryLog Log { get; } = new();
         public Task[] ScopeDisposals => _scopes.Disposals;
         public SessionRunnerEventPump Pump { get; }
+
+        public async Task RunHeldAsync()
+        {
+            // Real HTTP iterator plus actual production handler/runtime; awaiting the
+            // returned Task exposes its original exception without reflection wrapping.
+            var client = _services.GetRequiredService<ISessionRunnerClient>();
+            await client.ListAsync(Host.Token);
+            await foreach (var evt in client.StreamEventsAsync(Host.Token))
+            {
+                if (!evt.SubscriptionReady) continue;
+                var method = typeof(SessionRunnerEventPump).GetMethod("HandleSubscriptionReadyAsync",
+                    System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+                await (Task)method.Invoke(Pump, [evt, client,
+                    _services.GetRequiredService<AgentSessionRuntime>(), Host.Token])!;
+                break;
+            }
+        }
 
         public DeliveryHarness(bool blockCallback, bool holdLastPull = false, bool successfulList = false)
         {
@@ -231,6 +358,7 @@ public class SessionRunnerHeldEventDeliveryTests
 
     private sealed class DeliveryHandler(bool holdLastPull, bool successfulList) : HttpMessageHandler
     {
+        public OperationCanceledException CatchupFault { get; } = new("controlled second-list deadline");
         public int Lists, Pulls;
         public TaskCompletionSource SecondListEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource FailList { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -249,7 +377,7 @@ public class SessionRunnerHeldEventDeliveryTests
                     SecondListEntered.TrySetResult();
                     await FailList.Task.WaitAsync(ct);
                     // Precisely the list deadline exception, without a real timer or sleep.
-                    if (!successfulList) throw new OperationCanceledException("controlled second-list deadline");
+                    if (!successfulList) throw CatchupFault;
                 }
                 var body = call == 1 || successfulList ? "[]" : "[{\"sessionId\":\"12051205-1205-4120-8120-120512051205\",\"pid\":1,\"startedAt\":\"2026-10-12T00:00:00Z\",\"status\":\"Running\",\"lastSequence\":4,\"exitReason\":\"Unknown\"}]";
                 return new(HttpStatusCode.OK) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
@@ -275,6 +403,7 @@ public class SessionRunnerHeldEventDeliveryTests
 
     private sealed class DeliveryBus(bool blockCallback) : IEventBus
     {
+        public Action? BeforeReturn { get; set; }
         public int Attempts, Accepted;
         public string AcceptedText { get; private set; } = "";
         public CancellationToken Token { get; private set; }
@@ -287,6 +416,7 @@ public class SessionRunnerHeldEventDeliveryTests
             Interlocked.Increment(ref Attempts);
             Token = ct;
             Entered.TrySetResult();
+            BeforeReturn?.Invoke();
             if (blockCallback) return Release.Task; // Deliberately ignores cancellation.
             ct.ThrowIfCancellationRequested();
             Interlocked.Increment(ref Accepted);
@@ -298,6 +428,7 @@ public class SessionRunnerHeldEventDeliveryTests
     }
     private sealed class DeliveryLog : ILogger<SessionRunnerEventPump>
     {
+        public ConcurrentQueue<Exception> Exceptions { get; } = new();
         public ConcurrentQueue<string> Lines { get; } = new();
         public TaskCompletionSource Disconnected { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource LateFault { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -310,6 +441,7 @@ public class SessionRunnerHeldEventDeliveryTests
             if (level < LogLevel.Warning) return;
             var text = formatter(state, exception);
             Lines.Enqueue(text + " " + exception?.GetType().Name);
+            if (exception is not null) Exceptions.Enqueue(exception);
             if (text.Contains("event stream disconnected", StringComparison.Ordinal))
             {
                 DisconnectException = exception;
