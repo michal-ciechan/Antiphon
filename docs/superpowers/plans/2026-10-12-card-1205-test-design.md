@@ -17,7 +17,54 @@ Retain the plan's latent-race attribution, server-only subscription proof, 120-s
 default evidence interval, local-only scope and logs-first visibility. Neither an
 elapsed deadline nor a successful HTTP connection certifies idle.
 
-## Repair 6 callback exception binding (T54-T56)
+## Repair 7 single classification table (T57-T60)
+
+Use [repair 7](2026-10-12-card-1205-s2-repair7-checkpoints.md) as the closed
+executable manifest, superseding repair 6. CP-2 is 107 existing + 104 new = 211.
+T57 has 42 settled rows; T58 has 32 pending-then-late rows; T59 has four completed
+host/deadline race controls; T60 independently preserves Review dab30ee3's exact
+26-case battery. Hand-written expectations and controlled stimuli are bound in
+the manifest. The real HTTP iterator, runtime and readiness handler execute;
+fake monotonic time and explicit gates drive the bounds; every callback/scope
+is joined. T01/T53 and all pre-existing assertions/timeouts remain unchanged.
+
+Against unchanged a9256bed2 production, the initial 78-row test-only checkpoint
+at 687ba862b executed 78: 22 assertion failures / 56 green. The extended baseline
+at 0b44b9276865f33000af838acaef38250979944a executed 104: 28 assertion failures /
+76 green, zero skipped or fixture/build failures. T60 reproduces precisely the
+six failing Review rows and twenty green controls. Four failures are settled
+delivery-token OCE (success/failure x host/deadline); two are late independent OCE
+(success/failure). T57/T58 also expose missing primary independent/tokenless
+warnings and other silently discarded late OCE. These are ordinary baseline
+proofs, not deliberately mutated or discharged PCs. Production diff from
+a9256bed2 to both baseline commits is empty.
+
+The table selects original E with EDI, original X precedence plus E warning,
+completed/no fault, or genuine pending abandonment with the existing timeout/
+host signal. Token equality never changes settled E into abandonment. The normal
+outer pump host-cancellation catch remains unchanged. Independent/tokenless OCE
+is logged, including when that outer shutdown catch consumes it; owned late
+delivery/host OCE during host shutdown follows normal cancellation without a
+fault warning. Every other late fault is warned, preserving the frozen primary.
+
+| PC | Deliberate payload | Exact detecting method filter | Required red | Status |
+|---|---|---|---|---|
+| PC-183 | Classify settled delivery-token OCE as Abandoned whenever its token is cancelled. | `/*/*/SessionRunnerHeldEventDeliveryTests/C1205_Settled_callback_classification_table` | Success delivery/host or delivery/deadline loses original identity; failure rows log abandonment. | Pending |
+| PC-184 | Suppress the table's secondary callback warning when catch-up X is present. | `/*/*/SessionRunnerHeldEventDeliveryTests/C1205_Settled_callback_classification_table` | Failed-catch-up rows lack original E warning. | Pending |
+| PC-185 | Replace surfaced independent/tokenless OCE with a fresh host OCE. | `/*/*/SessionRunnerHeldEventDeliveryTests/C1205_Settled_callback_classification_table` | Original object identity fails. | Pending |
+| PC-186 | Suppress primary independent/tokenless cancellation warnings. | `/*/*/SessionRunnerHeldEventDeliveryTests/C1205_Settled_callback_classification_table` | Literal primary-warning assertions fail. | Pending |
+| PC-187 | Suppress every late OCE regardless of token identity or host state. | `/*/*/SessionRunnerHeldEventDeliveryTests/C1205_Late_callback_classification_table` | Independent/tokenless and deadline-owned late faults lack original E warning. | Pending |
+| PC-188 | Warn only for late InvalidOperationException, retaining observer join/disposal. | `/*/*/SessionRunnerHeldEventDeliveryTests/C1205_Late_callback_classification_table` | Aggregate/custom late faults lack original E warning. | Pending |
+| PC-189 | Warn owned late delivery/host OCE during cancelled-host shutdown. | `/*/*/SessionRunnerHeldEventDeliveryTests/C1205_Late_callback_classification_table` | Literal no-warning cancellation controls fail. | Pending |
+| PC-190 | Prefer cancelled wait token over an already-completed callback. | `/*/*/SessionRunnerHeldEventDeliveryTests/C1205_Completed_callback_wins_cancelled_wait` | Completed success loses null outcome or logs abandonment. | Pending |
+
+All PC-1..190 and every variant pending for method-scoped SourceLanding Mutation.
+Mutation owns deliberate mutants, red/restore/green and missing-control discovery.
+No SourceLanding Mutation was run. Unbound index:
+[repair 7 candidate](../mutations/2026-10-12-card-1205-s2-repair7-candidate.md).
+
+
+## Repair 6 callback exception binding (T54-T56, historical)
 
 Use [repair 6](2026-10-12-card-1205-s2-repair6-checkpoints.md) for this repair's
 closed executable manifest. CP-2 is 87 existing + 20 new = 107. T54's sixteen
@@ -36,8 +83,8 @@ abandonment uses the caller's existing deadline-only reconnect TimeoutException
 (required by T53), or host shutdown cancellation. Callback faults propagate through
 ExceptionDispatchInfo, including unrelated OCE when host/deadline is cancelled.
 A settled callback wins when the bounded wait observes cancellation; a pending
-one is abandoned, with later faults only observed. A delivery-token OCE caused by
-that cancelled token is abandonment. No arbitrary synchronous callback termination
+one is abandoned, with later faults only observed. Repair 7 removes the historical
+delivery-token exemption: settled OCE always retains original identity. No arbitrary synchronous callback termination
 or ordering across an abandoned callback/reconnect is promised.
 
 | PC | Deliberate payload | Exact detecting method filter | Required red | Status |

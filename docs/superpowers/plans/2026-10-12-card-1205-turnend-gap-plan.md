@@ -190,9 +190,10 @@ Repair round 2 binds the responsive held-event rows at
 `SessionRunnerHeldEventDeliveryTests`. Repair 4 adds the 48-row T51 exit matrix
 and two T52 iterator-fault controls in `SessionRunnerHeldEventExitMatrixTests`;
 Repair 5 adds T53's three exception/late-fault rows. Repair 6 adds T54-T56's twenty
-callback-fault/completed/deadline-race rows; CP-2 is now exactly 107 executions.
+callback-fault/completed/deadline-race rows. Repair 7 adds T57-T60's 104 literal
+classification/Review-control rows; CP-2 is now exactly 211 executions.
 Its committed groups and exact filters are in
-[the current repair checkpoint manifest](2026-10-12-card-1205-s2-repair6-checkpoints.md).
+[the current repair checkpoint manifest](2026-10-12-card-1205-s2-repair7-checkpoints.md).
 
 Every marker-held payload uses one finally-owned offer through the normal dispatcher
 with a linked deadline/host
@@ -210,7 +211,15 @@ callback-faulted and abandoned; only abandonment logs an abandonment warning and
 uses the caller's existing deadline-only reconnect timeout or host shutdown signal.
 If a callback is settled when the bounded wait observes cancellation, its outcome
 wins; if still pending, abandonment wins and a later fault is only observed/logged.
-A callback OCE caused by the cancelled delivery token counts as abandonment.
+Only a callback still pending when the bounded wait observes cancellation counts as
+abandonment. A settled delivery-token OCE retains its original object and stack.
+One classification table selects the surfaced exception and warning for the handler
+and late observer. Catch-up X retains precedence and logs settled callback E.
+Independent/tokenless OCE is a warning fault. A settled delivery/host-token OCE
+under host cancellation reaches the normal pump shutdown catch; the same owned
+cancellation arriving late during shutdown is observed without a fault warning.
+Other late exceptions are warned with their original object, without changing the
+already-selected timeout/catch-up result.
 Its service scope remains owned until
 the callback task settles, and late faults are observed. The iterator still disposes
 and shutdown/reconnect proceeds. Durable transcript events can be recovered by the
