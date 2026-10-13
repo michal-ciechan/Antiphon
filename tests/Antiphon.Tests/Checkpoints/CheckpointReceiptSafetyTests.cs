@@ -67,9 +67,12 @@ public sealed class CheckpointReceiptSafetyTests : CheckpointTestBase
         {
             ["report.json"] = ["outputPaths", "builds", "rows", "unlisted", "cleanupRefusals", "outputNames",
                 "runId", "manifestHash", "commit", "branch", "worktree", "verdict", "markdownSha256",
-                "host.os", "host.loadAvg", "source.state", "source.buildSource"],
+                "host.os", "host.loadAvg", "source.state", "source.buildSource", "source.start.captureStatus", "source.end.captureStatus",
+                "builds.0.id", "builds.0.project", "builds.0.state", "builds.0.slot",
+                "rows.0.id", "rows.0.state", "rows.0.failures", "rows.0.rerunLines", "rows.0.slowClasses"],
             ["state.json"] = ["builds", "rows", "createdOutputPaths", "runId", "toolOwner", "phase", "marker",
-                "source.state", "source.buildSource"],
+                "source.state", "source.buildSource", "source.start.captureStatus", "source.end.captureStatus",
+                "builds.0.id", "builds.0.state", "builds.0.slot", "rows.0.id", "rows.0.state", "rows.0.slot"],
         };
         foreach (var pair in fields)
         foreach (var field in pair.Value)
@@ -80,8 +83,9 @@ public sealed class CheckpointReceiptSafetyTests : CheckpointTestBase
             var path = Path.Combine(run, pair.Key);
             var json = JsonNode.Parse(File.ReadAllText(path))!.AsObject();
             var parts = field.Split('.');
-            var parent = parts.Length == 1 ? json : json[parts[0]]!.AsObject();
-            if (shape == "missing") parent.Remove(parts[^1]);
+            JsonNode parent = json;
+            foreach (var part in parts[..^1]) parent = int.TryParse(part, out var index) ? parent[index]! : parent[part]!;
+            if (shape == "missing") parent.AsObject().Remove(parts[^1]);
             else parent[parts[^1]] = shape == "null" ? null : JsonValue.Create(42);
             File.WriteAllText(path, json.ToJsonString());
             var before = File.ReadAllBytes(Path.Combine(run, "state.json"));
@@ -93,7 +97,28 @@ public sealed class CheckpointReceiptSafetyTests : CheckpointTestBase
                     failures.Add($"{pair.Key}/{field}/{shape}/{verb}: exit={code} {output}");
             }
             catch (Exception ex) { failures.Add($"{pair.Key}/{field}/{shape}/{verb}: {ex.GetType().Name}: {ex.Message}"); }
-            File.ReadAllBytes(Path.Combine(run, "state.json")).ShouldBe(before, field + " state unchanged");
+            if (!File.ReadAllBytes(Path.Combine(run, "state.json")).SequenceEqual(before))
+                failures.Add($"{pair.Key}/{field}/{shape}/{verb}: state changed");
+        }
+        foreach (var field in new[] { "outputPaths", "builds", "rows", "unlisted", "cleanupRefusals", "outputNames" })
+        foreach (var variant in new[] { "null-element", "empty-element", "required-empty" })
+        foreach (var verb in new[] { "report", "report-json", "stop" })
+        {
+            if (variant != "null-element" && field != "outputPaths") continue;
+            var (root, run) = Fixture();
+            var path = Path.Combine(run, "report.json");
+            var json = JsonNode.Parse(File.ReadAllText(path))!.AsObject();
+            json[field] = variant == "null-element" ? new JsonArray((JsonNode?)null)
+                : variant == "empty-element" ? new JsonArray(JsonValue.Create("")) : new JsonArray();
+            if (variant == "required-empty") json["outputNames"] = new JsonArray(JsonValue.Create("owned/"));
+            File.WriteAllText(path, json.ToJsonString());
+            var output = new StringWriter();
+            try
+            {
+                var code = await Antiphon.Checkpoints.Program.RunAsync(Args(root, run, verb), new CheckpointApp.Runtime { Output = output });
+                if (code != 2 || !output.ToString().Contains("refused:", StringComparison.Ordinal)) failures.Add($"{field}/{variant}/{verb}: exit={code} {output}");
+            }
+            catch (Exception ex) { failures.Add($"{field}/{variant}/{verb}: {ex.GetType().Name}"); }
         }
         failures.ShouldBeEmpty(string.Join('\n', failures));
     }
@@ -107,8 +132,12 @@ public sealed class CheckpointReceiptSafetyTests : CheckpointTestBase
         var observation = new SourceObservation(new string('a', 40), 0, new string('1', 64), DateTimeOffset.UnixEpoch, "known");
         var source = new SourceEvidence { Start = observation, End = observation, State = "clean", BuildSource = "verified" };
         SafeWrite.Require(new RunStateStore().Write(Path.Combine(run, "state.json"), new RunState
-        { RunId = "run", Phase = "done", ExitCode = 0, Source = source }));
-        ReportWriter.WriteFiles(run, new ReportModel { RunId = "run", Commit = observation.Commit!, Source = source });
+        { RunId = "run", Phase = "done", ExitCode = 0, Source = source,
+            Builds = [new BuildProgress { Id = "owned", State = "built", Slot = "granted" }],
+            Rows = [new RowProgress { Id = "CP-fixture", State = "green", Slot = "granted" }] }));
+        ReportWriter.WriteFiles(run, new ReportModel { RunId = "run", Commit = observation.Commit!, Source = source,
+            Builds = [new ReportBuild { Id = "owned", Project = "fixture", State = "built", Slot = "granted", Source = source }],
+            Rows = [new ReportRow { Id = "CP-fixture", State = "green", Source = source }] });
         return (root, run);
     }
 
@@ -116,7 +145,7 @@ public sealed class CheckpointReceiptSafetyTests : CheckpointTestBase
         verb == "report-json" ? ["report", "--json", "--repo-root", root, "--run", run, "--results-root", root]
         : [verb, "--repo-root", root, "--run", run, "--results-root", root];
 
-    private static async Task<(int Exit, string Output)> Child(string root, string run, string verb)
+    private async Task<(int Exit, string Output)> Child(string root, string run, string verb)
     {
         using var process = new Process { StartInfo = new ProcessStartInfo("dotnet")
         { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true } };
@@ -125,6 +154,7 @@ public sealed class CheckpointReceiptSafetyTests : CheckpointTestBase
             "--depsfile", Path.ChangeExtension(testAssembly, ".deps.json"), typeof(Antiphon.Checkpoints.Program).Assembly.Location }.Concat(Args(root, run, verb)))
             process.StartInfo.ArgumentList.Add(arg);
         process.Start();
+        RegisterCheckpointChild(process);
         var stdout = process.StandardOutput.ReadToEndAsync();
         var stderr = process.StandardError.ReadToEndAsync();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(4));
