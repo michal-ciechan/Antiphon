@@ -443,7 +443,8 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
         public ConcurrentQueue<Guid> Rejected { get; } = new();
         public bool Hold;
         public bool DropHeld;
-        public TaskCompletionSource Held { get; } = Signal(), ReleaseHold { get; } = Signal();
+        public TaskCompletionSource Held { get; } = Signal();
+        public TaskCompletionSource ReleaseHold { get; } = Signal();
         public int PendingCount => ((System.Collections.IDictionary)typeof(CompletionNoteFlushQueue)
             .GetField("_pending", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(this)!).Count;
         public void ClearAudit() { Accepted.Clear(); Rejected.Clear(); }
@@ -463,7 +464,8 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
         public string? ThrowOnce;
         public string? HoldAt;
         public int Throws;
-        public TaskCompletionSource Held { get; } = Signal(), Release { get; } = Signal();
+        public TaskCompletionSource Held { get; } = Signal();
+        public TaskCompletionSource Release { get; } = Signal();
         public int Count(string boundary) => _reached.Count(b => b == boundary);
         public Task Observe(string boundary)
         { var signal = Signal(); _observations[boundary] = signal; return signal.Task; }
