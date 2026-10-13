@@ -76,7 +76,7 @@ public static class ReportWriter
         var markdownRefusal = SafeWrite.Text(Path.Combine(runDirectory, "report.md"), markdown, ownership);
         var jsonRefusal = SafeWrite.Text(Path.Combine(runDirectory, "report.json"), JsonText(model), ownership);
         if (markdownRefusal is not null || jsonRefusal is not null)
-            throw new IOException("refused: required report receipt write failed: " + (markdownRefusal ?? jsonRefusal));
+            throw new IOException("refused: required " + (markdownRefusal is not null ? "report.md" : "report.json") + " receipt-write-failed: " + (markdownRefusal ?? jsonRefusal));
         if (File.ReadAllText(Path.Combine(runDirectory, "report.md")) != markdown
             || File.ReadAllText(Path.Combine(runDirectory, "report.json")) != JsonText(model))
             throw new IOException("refused: required report receipt readback mismatching");
