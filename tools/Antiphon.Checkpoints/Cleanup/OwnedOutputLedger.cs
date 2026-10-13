@@ -25,13 +25,43 @@ public static class OwnedOutputLedger
             var preflight = SafeWrite.Preflight(root, [root]);
             if (preflight is not null) return preflight;
             if (!File.Exists(Path.Combine(root, Ledger))) return "output-ledger-missing";
-            var recorded = JsonSerializer.Deserialize<Dictionary<string, string>>(File.ReadAllText(Path.Combine(root, Ledger)));
+            if (!SafeWrite.WasCreated(root)) return "output-memory-authority-missing; left in place: " + root + "; remove it manually";
             var actual = Inventory(root);
-            return recorded is not null && recorded.Count == actual.Count && recorded.All(pair => actual.TryGetValue(pair.Key, out var value) && value == pair.Value)
-                ? null : "output-ledger-mismatch";
+            foreach (var path in actual.Keys.Append(Ledger))
+                if (!SafeWrite.MatchesCreation(Path.Combine(root, path)))
+                    return "output-ledger-mismatch; left in place: " + Path.Combine(root, path);
+            return null;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
         { return "output-inventory-failed"; }
+    }
+
+    public static string? Remove(string root, bool dryRun = false)
+    {
+        try
+        {
+            var refusal = Check(root);
+            if (refusal is not null || dryRun) return refusal;
+            // No recursive deletion: an unrecorded late addition keeps its directory alive.
+            var entries = Inventory(root).Keys.Append(Ledger).OrderByDescending(path => path.Count(c => c == '/')).ToList();
+            foreach (var relative in entries.Where(path => !Directory.Exists(Path.Combine(root, path))))
+            {
+                var full = Path.Combine(root, relative);
+                var linked = SafeWrite.Preflight(root, [full]);
+                if (linked is not null || !SafeWrite.MatchesCreation(full)) return "left in place: " + full;
+                File.Delete(full);
+            }
+            foreach (var relative in entries.Where(path => Directory.Exists(Path.Combine(root, path))))
+            {
+                var full = Path.Combine(root, relative);
+                if (SafeWrite.Preflight(root, [full]) is not null || !SafeWrite.MatchesCreation(full)) return "left in place: " + full;
+                Directory.Delete(full, recursive: false);
+            }
+            Directory.Delete(root, recursive: false);
+            return null;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        { return "left in place: " + root + "; " + ex.GetType().Name; }
     }
 
     private static Dictionary<string, string> Inventory(string root)
@@ -48,7 +78,7 @@ public static class OwnedOutputLedger
                 var relative = Path.GetRelativePath(root, path).Replace('\\', '/');
                 if (relative == Ledger) continue;
                 if (Directory.Exists(path)) { entries.Add(relative, "directory"); queue.Enqueue(path); }
-                else { using var stream = File.OpenRead(path); entries.Add(relative, Convert.ToHexString(SHA256.HashData(stream))); }
+                else { entries.Add(relative, "file-size:" + new FileInfo(path).Length); }
             }
         }
         return entries;

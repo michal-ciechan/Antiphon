@@ -184,6 +184,13 @@ public sealed class RowRunnerTests : CheckpointTestBase
     {
         var workingDirectory = TempDir();
         Directory.CreateDirectory(Path.Combine(workingDirectory, "tests/Antiphon.Tests"));
+        if (noBuild)
+        {
+            var args = BuildStep.PropertyArguments(properties ?? [], windows).ToList();
+            var layout = BuildStep.AppendSharedLayout(args, workingDirectory, "tests/Antiphon.Tests", "bin-ex/");
+            SafeWrite.Require(SafeWrite.CreateFreshDirectory(layout.Owned, SafeWrite.Under(workingDirectory)));
+            SafeWrite.Require(CheckpointBuildBinding.Expected(workingDirectory, "tests/Antiphon.Tests", "bin-ex/", args, new SourceObservation()).Write());
+        }
         var runner = new RowRunner(driver, new FakePlatform { IsWindows = windows });
         return runner.RunAsync(new RowRequest
         {

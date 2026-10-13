@@ -50,7 +50,8 @@ public sealed class WaitCommand
         TimeSpan? maxWait,
         TimeSpan heartbeat,
         TextWriter output,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? expectedSourceSha = null)
     {
         var statePath = Path.Combine(runDirectory, "state.json");
         var reportPath = Path.Combine(runDirectory, "report.md");
@@ -69,6 +70,13 @@ public sealed class WaitCommand
                 state = _store.TryRead(statePath);
             if (state?.Phase == "done" && observed.Verdict == ProcessVerdict.Dead)
             {
+                var required = expectedSourceSha is not null && state.Source.Start.Commit != expectedSourceSha
+                    ? "receipt-source-SHA-mismatching" : ReportWriter.RequiredReceiptRefusal(runDirectory, state);
+                if (required is not null)
+                {
+                    output.WriteLine("refused: " + required);
+                    return ExitCodes.Invalid;
+                }
                 var receipt = cleanup.Remove(runDirectory);
                 output.WriteLine(receipt);
                 if (receipt.Outcome == "Refused")
@@ -77,8 +85,8 @@ public sealed class WaitCommand
                     output.Write(File.ReadAllText(reportPath));
                 else
                     output.WriteLine(state.Heartbeat(now));
-                var exit = state.ExitCode ?? ExitCodes.Green;
-                if (receipt.Outcome == "Refused" && exit == ExitCodes.Green)
+                var exit = state.ExitCode!.Value;
+                if (!receipt.Removed && exit == ExitCodes.Green)
                     return ExitCodes.Invalid;
                 if (exit == ExitCodes.Green && File.Exists(reportPath) && ReportRefused(reportPath))
                     return ExitCodes.Invalid;

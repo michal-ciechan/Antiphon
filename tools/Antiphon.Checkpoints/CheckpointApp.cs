@@ -152,7 +152,8 @@ public static class CheckpointApp
                 if (refusal is not null)
                     throw new InvalidOperationException("refused: " + refusal);
             }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            { throw new IOException("required state.json receipt-write-failed", ex); }
         }
 
         Publish();
