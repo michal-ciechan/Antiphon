@@ -287,7 +287,7 @@ public sealed class RunnerSettlementSyncTests
         var other = "feat/card-task-" + Guid.NewGuid().ToString("N")[..8];
         await world.PublishForeignBranchAsync(other, "foreign.txt");
 
-        foreach (var branch in new[] { other, "master", "--upload-pack=true", "refs/heads/master:refs/heads/x" })
+        foreach (var branch in new[] { other, "feat/card-1213-code-ffffffff", "feat/card-1213-Code-" + world.TaskId.ToString("N")[..8], "feat/card-1213-code-" + world.TaskId.ToString("N")[..8] + "\n", "master", "--upload-pack=true", "refs/heads/master:refs/heads/x" })
         {
             world.Git.Clear();
             var task = world.TaskWith(t => t.WorktreeBranch = branch);
