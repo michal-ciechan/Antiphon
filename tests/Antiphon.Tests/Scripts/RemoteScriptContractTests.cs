@@ -5736,6 +5736,51 @@ public sealed class RemoteScriptContractTests
 
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
+    public void C849_Closure_preflight_names_a_missing_dependency()
+    {
+        foreach (var missing in new[] { "c849_payload_controller", "c849_payload_fixture_ready",
+            "c849_payload_select", "c849_payload_root", "c849_payload_fs", "c849_payload_call", "c849_payload_note" })
+        {
+            var harness = CacheSeedTreeHarness() + """
+                SERVER2_ROOT="$root/server2"; CASE_DIR="$root/case"; RUN=c1210
+                mkdir -p "$SERVER2_ROOT/cache" "$CASE_DIR"
+                """ + "\n";
+            var body = """
+                # C1210_PREFLIGHT
+                [ "$(c849_payload_select)" = host ] || exit 98
+                [ "$(c849_payload_root)" = "$SERVER2_ROOT/cache" ] || exit 98
+                c849_payload_fs writer 'printf fs-reached' bash || exit 98
+                c849_payload_call writer c849_validate_seed_relative packages/probe || exit 98
+                c849_payload_note probe || exit 98
+                grep -Fxq "probe host $SERVER2_ROOT/cache" "$CASE_DIR/payload-entries.txt" || exit 98
+                [ ! -s "$root/volume-calls" ] || exit 98
+                printf '\nbackend=host volume-calls=0\nBODY-REACHED\n'
+                """;
+            var healthy = C849ExtractedShell(harness + body, captureExit: true);
+            healthy.ShouldContain("C1210_EXIT=0", customMessage: "c1210-closure-complete " + missing);
+            healthy.ShouldContain("backend=host volume-calls=0");
+            healthy.ShouldContain("BODY-REACHED");
+            var refused = C849ExtractedShell(harness + "unset -f " + missing + "\n" + body, captureExit: true);
+            refused.ShouldContain("C1210_EXIT=97", customMessage: "c1210-preflight-refusal " + missing);
+            refused.Split('\n').Count(line => line == "MISSING " + missing).ShouldBe(1);
+            refused.ShouldNotContain("BODY-REACHED");
+            refused.ShouldNotContain("command not found");
+        }
+    }
+
+    private static string C849ExtractedShell(string body, string? repositoryVariable = null, bool captureExit = false)
+    {
+        var names = Regex.Matches(body, @"\bc849_[a-z_]+\b")
+            .Select(match => match.Value).Distinct().Order(StringComparer.Ordinal);
+        var preflight = string.Join('\n', names.Select(name =>
+            "declare -F " + name + " >/dev/null || { printf 'MISSING " + name + "\\n'; exit 97; }"));
+        var script = body.Replace("# C1210_PREFLIGHT", preflight, StringComparison.Ordinal);
+        if (captureExit) script = "(\n" + script + "\n)\nprintf 'C1210_EXIT=%s\\n' \"$?\"\n";
+        return LinuxShell(script, repositoryVariable);
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
     public void C849_Seed_publishes_complete_payloads_before_its_marker()
     {
         RequireLinuxPwsh();
