@@ -54,6 +54,8 @@ public sealed class CompletedCardWorkspaceRemovalTests
         await Should.ThrowAsync<FenceEffectException>(first);
         await second;
         inverse.Effects.ShouldBe(1);
+
+
     }
 
     // PC-224: bypass explicit attach fence -> provider effect at the retiring path.
@@ -95,6 +97,33 @@ public sealed class CompletedCardWorkspaceRemovalTests
         await Should.ThrowAsync<FenceEffectException>(first);
         await second;
         inverse.Effects.ShouldBe(1);
+
+        // PC-224/cwd-changed: the pane moves after read-only inspect. Skipping the fresh
+        // cwd comparison would persist an attached sidecar outside the admitted workspace.
+        await using var moved = new CompletedCardRunnerFixture();
+        moved.InstallGate();
+        var movedRuntime = moved.NewRuntime(new HerdrClient(new HerdrSettings
+            { Enabled = true, Session = fake.Session, SocketPath = fake.EndpointPath }));
+        movedRuntime.CreationEffectForTest = null;
+        moved.Bind(movedRuntime);
+        await movedRuntime.AdoptOrphanedHostsAsync(new SystemProcessLivenessProbe(), CancellationToken.None);
+        pane.Cwd = moved.Checkout;
+        fake.SetPaneProcessInfo(pane.PaneId, 1, [(child.Id, "claude", new[] { "claude" }, moved.Checkout)]);
+        var reads = 0;
+        fake.BeforeRequest = method =>
+        {
+            if (method == "pane.process_info" && Interlocked.Increment(ref reads) == 2)
+                fake.SetPaneProcessInfo(pane.PaneId, 1, [(child.Id, "claude", new[] { "claude" }, f.Checkout)]);
+        };
+        var movedId = Guid.NewGuid();
+        var changed = await Should.ThrowAsync<PhoneHomeAdmissionException>(
+            movedRuntime.AttachHerdrAsync(attach with { SessionId = movedId }, CancellationToken.None));
+        changed.Code.ShouldBe("workspace_owner_changed");
+        reads.ShouldBe(2);
+        File.Exists(HerdrPaneSidecar.PathFor(moved.Settings.SessionLogPath, movedId)).ShouldBeFalse();
+        movedRuntime.List().ShouldBeEmpty();
+        child.HasExited.ShouldBeFalse();
+        fake.BeforeRequest = null;
     }
 
     // PC-225/231/232: publish census early, kill or hide contradictory retained child -> named witnesses fail.

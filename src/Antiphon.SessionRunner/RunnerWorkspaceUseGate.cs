@@ -38,18 +38,18 @@ public sealed class RunnerWorkspaceUseGate(RunnerWorkspaceRemovalJournal journal
         return new Lease(_admission);
     }
 
-    internal async Task<IAsyncDisposable> AcquireRetainedUseAsync(string? path, Guid id,
+    internal async Task<IAsyncDisposable> AcquireRetainedUseAsync(string? path, Guid id, string generation,
         Func<bool> stillOwned, CancellationToken ct)
     {
         await _admission.WaitAsync(ct);
-        RecordOwner(path, id, stillOwned);
+        RecordOwner(path, id, stillOwned, generation);
         return new Lease(_admission);
     }
 
     public void CompleteCensus() => _censusReady = !_censusUnknown;
     public void MarkCensusUnknown() => _censusUnknown = true;
 
-    public void RecordOwner(string? path, Guid id, Func<bool> stillOwned)
+    public void RecordOwner(string? path, Guid id, Func<bool> stillOwned, string? generation = null)
     {
         var normalized = path is null ? null : Normalize(path);
         if (normalized is null) { MarkCensusUnknown(); return; }
@@ -62,7 +62,9 @@ public sealed class RunnerWorkspaceUseGate(RunnerWorkspaceRemovalJournal journal
                 try { return !owner.StillOwned(); }
                 catch { return false; }
             });
-            _owners.Add(new(normalized, stillOwned));
+            if (generation is not null && _owners.Any(o => o.SessionId == id && o.Path == normalized && o.Generation == generation))
+                return;
+            _owners.Add(new(normalized, id, generation, stillOwned));
         }
     }
 
@@ -122,7 +124,7 @@ public sealed class RunnerWorkspaceUseGate(RunnerWorkspaceRemovalJournal journal
             || b.StartsWith(a + Path.DirectorySeparatorChar, comparison);
     }
 
-    private sealed record Owner(string Path, Func<bool> StillOwned);
+    private sealed record Owner(string Path, Guid SessionId, string? Generation, Func<bool> StillOwned);
     private sealed class Lease(SemaphoreSlim admission) : IAsyncDisposable
     {
         private int _released;
