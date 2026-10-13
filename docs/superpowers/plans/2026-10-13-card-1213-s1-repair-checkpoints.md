@@ -11,7 +11,8 @@ Companion to [the test design](2026-10-13-card-1213-test-design.md). Review 6f91
   changes its approved-bytes pin, so the bundle hash, size and composition-budget tests and the
   repair-route documentation tests that read the edited paragraphs are rerun.
 
-The S1 ordinary rows CP-1..CP-8 are run unchanged from the test design (`--after S1`). The rows
+The S1 ordinary rows CP-1..CP-8 are run from the test design (`--after S1`), with CP-4 as
+amended there to exclude the inherited-red C1017_TerminalTaskRequired by exact name. The rows
 below are the only additions. Build each row to its own isolated OutputPath; remove only the
 outputs these runs create.
 
