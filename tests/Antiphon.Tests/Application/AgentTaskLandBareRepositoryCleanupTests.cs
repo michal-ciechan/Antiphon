@@ -149,12 +149,19 @@ public sealed class AgentTaskLandBareRepositoryCleanupTests
         var admin = gitFile ? Path.Combine(h.Fixture.Root, "private-admin") : Path.Combine(nested, ".git");
         var adminBytes = await TreeBytesAsync(admin);
         await IgnoreObjAsync(h.Fixture);
+        if (gitFile)
+            await h.Fixture.RequiredAsync(h.Fixture.Repository, "update-ref", "--no-deref",
+                h.Fixture.SourceRef, reviewed, local);
+        (await h.Fixture.RequiredAsync(h.Fixture.Source, "rev-parse", "HEAD")).Trim().ShouldBe(reviewed,
+            "F1.ProofUsesHalfResetCheckout");
         var proof = await h.Fixture.Git.InspectRecoveryCheckoutAsync(h.Fixture.Coordinates, local, reviewed, default);
         if (gitFile)
         {
             proof.Accepted.ShouldBeFalse("F1.GitFileRecoveryStillRefused");
             proof.Reason.ShouldBe("recovery_checkout_unproven");
             // Ordinary reviewed adoption supplies cleanup authority for the file-pointer case.
+            await h.Fixture.RequiredAsync(h.Fixture.Repository, "update-ref", "--no-deref",
+                h.Fixture.SourceRef, local, reviewed);
         }
         else
         {
