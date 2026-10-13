@@ -1835,7 +1835,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                         WorkspaceUseGate.MarkCensusUnknown();
                     else WorkspaceUseGate.RecordOwner(retained.Cwd, retained.SessionId,
                         () => retained.ChildPid is not int pid || probe.IsAlive(pid,
-                            retained.ChildStartedAtUtc ?? retained.LaunchedAtUtc));
+                            retained.ChildStartedAtUtc ?? retained.LaunchedAtUtc), HerdrOwnerGeneration(retained));
                 }
         }
         var hasCustodyLedger = HasCustodyLedger;
@@ -1904,7 +1904,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 WorkspaceUseGate.RecordOwner(manifest.Cwd, manifest.SessionId,
                     () => probe.IsAlive(manifest.HostPid, manifest.HostStartTimeUtc)
                         || (manifest.ChildPid is int pid && probe.IsAlive(pid,
-                            manifest.ChildStartTimeUtc ?? manifest.CreatedAtUtc)));
+                            manifest.ChildStartTimeUtc ?? manifest.CreatedAtUtc)),
+                    $"{manifest.HostPid}:{manifest.HostStartTimeUtc.Ticks}:{manifest.ChildPid}:{manifest.ChildStartTimeUtc?.Ticks}");
                 if (WorkspaceUseGate.IsRetiring(manifest.Cwd))
                 {
                     // A retained process is observed ownership, not a newly authorized launch.
@@ -2011,8 +2012,12 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         var childStart = dto.Pid is int child ? _processLiveness.TryGetStartTimeUtc(child) : null;
         WorkspaceUseGate.RecordOwner(path, sessionId, () => !session.HasExited
             || (dto.HostPid is int h && (hostStart is null || _processLiveness.IsAlive(h, hostStart.Value)))
-            || (dto.Pid is int p && (childStart is null || _processLiveness.IsAlive(p, childStart.Value))));
+            || (dto.Pid is int p && (childStart is null || _processLiveness.IsAlive(p, childStart.Value))),
+            $"{dto.HostPid}:{hostStart?.Ticks}:{dto.Pid}:{childStart?.Ticks}:{dto.StartedAt.Ticks}");
     }
+
+    private static string HerdrOwnerGeneration(HerdrPaneSidecar sidecar) =>
+        $"{sidecar.ChildPid}:{(sidecar.ChildStartedAtUtc ?? sidecar.LaunchedAtUtc).Ticks}";
 
     /// <summary>
     /// CARD-0160 §6A + CARD-0186 S2 OS-pid axis: adopt or mark-exited each
@@ -2030,7 +2035,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             {
                 WorkspaceUseGate.RecordOwner(candidate.Cwd, candidate.SessionId,
                     () => candidate.ChildPid is not int pid || probe.IsAlive(pid,
-                        candidate.ChildStartedAtUtc ?? candidate.LaunchedAtUtc));
+                        candidate.ChildStartedAtUtc ?? candidate.LaunchedAtUtc), HerdrOwnerGeneration(candidate));
                 if (WorkspaceUseGate.IsRetiring(candidate.Cwd))
                 {
                     _sessions.TryAdd(candidate.SessionId, RunnerSession.CreatePendingHerdr(
@@ -2149,7 +2154,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             return;
 
         await using var workspace = WorkspaceUseGate is null ? null :
-            await WorkspaceUseGate.AcquireRetainedUseAsync(sidecar.Cwd, sidecar.SessionId,
+            await WorkspaceUseGate.AcquireRetainedUseAsync(sidecar.Cwd, sidecar.SessionId, HerdrOwnerGeneration(sidecar),
                 () => sidecar.ChildPid is not int pid || probe.IsAlive(pid,
                     sidecar.ChildStartedAtUtc ?? sidecar.LaunchedAtUtc), ct);
         if (WorkspaceUseGate?.IsRetiring(sidecar.Cwd) == true) return;

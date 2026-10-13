@@ -45,7 +45,7 @@ internal sealed class CompletedCardRunnerFixture : IAsyncDisposable
         Git(Origin, "branch", "feat/card-task-deadbeef");
         Git(Root, "clone", Origin, Repository);
         MirrorRequest = new("feat/card-task-deadbeef", Sha, "task-deadbeef", Binding:
-            new(Guid.NewGuid(), 1, Guid.NewGuid(), "fixture-runner", StoreId));
+            new(Guid.Parse("deadbeef-0000-4000-8000-000000000001"), 1, Guid.NewGuid(), "fixture-runner", StoreId));
         var creator = Workspace(gated: false);
         var mirror = creator.MirrorAsync(MirrorRequest, CancellationToken.None).GetAwaiter().GetResult();
         Binding = mirror.Binding!;
