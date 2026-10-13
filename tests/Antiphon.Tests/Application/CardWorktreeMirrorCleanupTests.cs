@@ -4,6 +4,7 @@ using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.SessionRunner.Contracts;
+using Antiphon.SessionRunner;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Shouldly;
@@ -83,7 +84,7 @@ public sealed class CardWorktreeMirrorCleanupTests
         await using var positive = await CompletedCardMirrorFixture.CreateAsync();
         await positive.Card.SetCompletedAgeAsync(TimeSpan.FromMinutes(120)); await positive.RemovedAsync();
     }
-    // case matrix: external canonical report and deliverables must survive all deletion roots;
+    // case matrix: missing, changed and internal artifact pointers refuse admission;
     // mutation: use existence only/reuse stale pointer proof; red: no-intent and exact bytes fail.
     [Test] public async Task C1032_AdmissionArtifactSurvival()
     {
@@ -99,6 +100,88 @@ public sealed class CardWorktreeMirrorCleanupTests
             if (vector == "changed-pointer") f.BeforeIntent = async _ => await f.Card.ChangeTaskAsync(t => t.DeliverablePath = f.Sentinel);
             await f.HeldAsync(vector == "changed-pointer" ? "artifact_changed" : "artifact_unpreserved");
         }
+    }
+    // Literal shape table pins runner evidence recognition; real producer/recipient
+    // cases must retain unique report bytes before issuing a removal command.
+    [Test] public async Task C1032_ReportRecognitionCaseTable()
+    {
+        var classifier = new RunnerWorkspaceIgnoredContent();
+        foreach (var (path, evidence) in new (string, bool)[]
+        {
+            (".antiphon/task-deadbeef.md", true), (".antiphon/TASK-DEADBEEF.MD", true),
+            (".antiphon/TaSk-dEaDbEeF.mD", true), (".ANTIPHON/task-deadbeef.md", true),
+            ("./.antiphon/task-deadbeef.md", true), (".antiphon\\task-deadbeef.md", true),
+            (".antiphon/task-zzzzzzzz.md", true), (".antiphon/task-ｄeadbeef.md", true),
+            (".antiphon/task-deadbeef.txt", false), (".antiphon/task-deadbeef.md/", false),
+            (".antiphon/task-deadbeef.md/child", false), (".antiphon/task-deadbeef.md:stream", false),
+            (".antiphon/task-deadbeef.md.", false), (".antiphon/task-deadbeef.md ", false),
+            (".antiphon/task-deadbee.md", false), (".antiphon/task-deadbeeff.md", false),
+            (".antiphon/task-deadbeef-brief.md", false), (".antiphon/task-deadbeef.mｄ", false),
+            (".antiphon/ｔask-deadbeef.md", false), (".antiphοn/task-deadbeef.md", false),
+            ("nested/.antiphon/task-deadbeef.md", false), ("../.antiphon/task-deadbeef.md", false),
+        })
+            (classifier.Classify(path) == RunnerIgnoredContentKind.Evidence).ShouldBe(evidence, path);
+
+        foreach (var name in new[] { "task-deadbeef.md", "TASK-DEADBEEF.MD", "TaSk-dEaDbEeF.mD", "task-zzzzzzzz.md", "task-ｄeadbeef.md" })
+        {
+            await using var f = await CompletedCardMirrorFixture.CreateAsync();
+            var path = Path.Combine(f.Mirror, ".antiphon", name);
+            var bytes = "unique report " + Guid.NewGuid().ToString("D") + "\n";
+            await File.WriteAllTextAsync(path, bytes);
+            var result = await f.TryAsync();
+            // Assert survival first: historical red describes physical report loss.
+            File.Exists(path).ShouldBeTrue("report bytes must survive: " + name);
+            (await File.ReadAllTextAsync(path)).ShouldBe(bytes);
+            result.Complete.ShouldBeFalse(name); result.Reason.ShouldBe("artifact_unpreserved", name);
+            Directory.Exists(f.Binding.GitDirectory).ShouldBeTrue();
+            (await File.ReadAllTextAsync(f.Sentinel)).ShouldBe("mirror evidence\n");
+            f.Journal.Read()!.Count.ShouldBe(0);
+            var endpoint = await f.EndpointAsync();
+            endpoint.OperationId.ShouldBeNull(); endpoint.ImportedReceipt.ShouldBeNull();
+        }
+    }
+
+    // Gate after committed producer intent, before real phone-home removal: the
+    // recipient must refuse a report absent from the producer's earlier inventory.
+    [Test] public async Task C1032_ReportAddedAfterProducerInspection()
+    {
+        foreach (var name in new[] { "task-deadbeef.md", "TASK-DEADBEEF.MD", "TaSk-dEaDbEeF.mD" })
+        {
+            await using var f = await CompletedCardMirrorFixture.CreateAsync();
+            var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            f.AfterIntent = async ct => { entered.SetResult(); await release.Task.WaitAsync(ct); };
+            var path = Path.Combine(f.Mirror, ".antiphon", name);
+            var bytes = "late unique report " + Guid.NewGuid().ToString("D") + "\n";
+            var pending = f.TryAsync();
+            try
+            {
+                await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                (await f.EndpointAsync()).ImmutableRequest.ShouldNotBeNull();
+                File.Exists(path).ShouldBeFalse();
+                await File.WriteAllTextAsync(path, bytes);
+            }
+            finally { release.TrySetResult(); }
+            var result = await pending;
+            File.Exists(path).ShouldBeTrue("late report bytes must survive: " + name);
+            (await File.ReadAllTextAsync(path)).ShouldBe(bytes);
+            result.Complete.ShouldBeFalse(name); result.Reason.ShouldBe("artifact_unpreserved", name);
+            Directory.Exists(f.Binding.GitDirectory).ShouldBeTrue();
+            (await File.ReadAllTextAsync(f.Sentinel)).ShouldBe("mirror evidence\n");
+            var endpoint = await f.EndpointAsync();
+            endpoint.OperationId.ShouldNotBeNull(); endpoint.ImportedReceipt.ShouldBeNull();
+            endpoint.State.ShouldNotBe(CardWorktreeCleanupEndpointState.Complete);
+            f.Journal.Read()!.Any(i => i.Receipt is not null || i.SetAsidePath is not null).ShouldBeFalse();
+        }
+    }
+
+    // Positive control: generic admitted TRX evidence remains disposable when no
+    // remote task report exists; assert actual removal and independently read receipt.
+    [Test] public async Task C1032_ReportAbsentAllowsCleanup()
+    {
+        await using var f = await CompletedCardMirrorFixture.CreateAsync();
+        Directory.GetFiles(Path.Combine(f.Mirror, ".antiphon"), "*", SearchOption.TopDirectoryOnly).ShouldBeEmpty();
+        await f.RemovedAsync();
     }
     // case: committed intent observed before real socket send; reopen wins either side;
     // mutation: send inside admission transaction or revoke issued command; red: independent writer/receipt fails.
