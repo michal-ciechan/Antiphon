@@ -370,6 +370,29 @@ including a 30s build-slot wait, and base confirmation measured 3m28s. Allow abo
 load; these are estimates, not permission to omit any remaining S1 row.
 
 
+S2 Code binding amendment (2026-10-13, task bf9ffadd). S2 rows are CP-9 and CP-10 of this
+table (the parent plan's CP-8/CP-9 numbering is superseded). CP-13 is added for S2 because S2 edits
+delegate-basics, stage-review and orchestrator text, the composer and the stamp line, and these
+classes pin that text, its size, its bytes or a composition: AgentBundleAttachmentTests,
+GrokRulesCompositionTests and CheckpointRepeatDocumentationTests change in place (expanded
+render instead of raw render; orchestrator byte pin), the others are unchanged regressions.
+GrokRulesLaunchRefusalTests is left out (its budget method skips off Windows);
+GrokRulesDispatchAcceptanceTests and DelegateLaunchArgvIntegrityTests are Explicit or
+Windows-headed and are not run: their one changed assertion is review-only. CP-13's Min is the
+method count, a lower bound; the run's TRX is the result count.
+Brief-directed grammar: a `{{` that does not open a well-formed known placeholder throws
+(malformed: one-character name, lowercase, underscore, 33-character name, unterminated, nested,
+inner space); a well-formed unknown name throws (unknown). C1213_ExpansionScope carries those rows;
+the operator append and the brief stay literal.
+D-8 placement: stage-review is 2,475 of its 2,500-character cap and every other line is pinned
+verbatim (TaskPlatformGuidanceTests, C1015), so stage-review gains only `{{GIT-COMMON}}` before its
+INVARIANTS line (2,490) and the subject-branch restriction is a git-common sentence that Review
+reads first (C1213_ReviewOverrideFollowsFragment, C1213_StageExceptionsRemain).
+Budget: the orchestrator worst case (the_worst_case_composition_measured_sits_far_under_the_budget)
+had 243 characters of headroom, so delegate-basics replaces its git sentences (commit/push slice,
+evidence-diff, commit before a long run) with the placeholder and shortens unpinned wording, 7,084 to
+5,997 characters, for a 1,163-character fragment plus one orchestrator sentence.
+
 Closed ordinary scope below replaces parent §6's provisional execution list. Build each row to its own isolated OutputPath; no build reuse is assumed. Use the checkpoint tool through the host build-slot gate, one run per committed slice group, and wait to a terminal exit (75 means still running). The exact command shape is `pwsh -NoProfile -File scripts/build-slot.ps1 -Label card1213-checkpoints -- dotnet run --project tools/Antiphon.Checkpoints --property:OutputPath=bin-c1213-tool/ -- run --plan docs/superpowers/plans/2026-10-13-card-1213-test-design.md --after S1 --expected-source-sha <committed-sha>`; substitute S2/S3. Tool bootstrap is included in setup below; row builds take their own slots. Record unedited CP lines, counts, full SHA, clean source/build receipts. Exit 4 is not-run; zero tests is wrong selection. No hand-run build, test or widened filter. Remove only the producer-owned bin-c1213-cpN/ and bin-c1213-tool/ outputs after their runs.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
@@ -386,6 +409,7 @@ Closed ordinary scope below replaces parent §6's provisional execution list. Bu
 | CP-10 | S2 | `tests/Antiphon.Tests -> bin-c1213-cp10/` | launch | `/*/*/(DelegateBundleLaunchTests*)\|(DelegateScriptKindTests*)/*` | V-9/R-9 | 70 executed; 0 failed; 0 skipped; named roster | 70 | 3 | true |
 | CP-11 | S3 | `tests/Antiphon.Tests -> bin-c1213-cp11/` | brief | `/*/*/DelegationReportFormatterTests*/*` | V-10/R-10 | 93 executed; 0 failed; 0 skipped; named roster | 93 | 5 | true |
 | CP-12 | S3 | `tests/Antiphon.Tests -> bin-c1213-cp12/` | contract | `/*/*/InstructionBundleTests*/*` | V-9/R-9 | 78 executed; 0 failed; 0 skipped; named roster | 78 | 3 | true |
+| CP-13 | S2 | `tests/Antiphon.Tests -> bin-c1213-cp13/` | affected | `/*/*/(AgentBundleAttachmentTests*)\|(GrokRulesCompositionTests*)\|(CheckpointRepeatDocumentationTests*)\|(TaskPlatformGuidanceTests*)\|(ScopedVerificationInstructionTests*)\|(PostLandMutationContractTests*)\|(VerificationRoundInstructionTests*)\|(MechanicalPcContractTests*)\|(CheckpointManifestDocumentationTests*)\|(OrchestratorInstructionsGuidanceTests*)\|(RepairSourceDocumentationTests*)\|(BlockedTaskParkProjectionTests*)\|(OutboundConversionTaskTests*)\|(PostLandRetrospectiveContractTests*)\|(AgentReplyStyleTests*)\|(AgentPinnedInstructionCompositionTests*)\|(InstructionFileStampTests*)\|(PolicyRefreshDeltaTests*)\|(CodexDelegateDispatchTests*)\|(PinnedCodexProfileDispatchLaunchTests*)\|(StandingPipelinePolicyDocumentationTests*)\|(DelegationCapabilityContractTests*)\|(SpecialistQualificationContractTests*)\|(CardFilePrivacyDocumentationTests*)\|(BootStallDocumentationTests*)/*` | V-9/R-9 | named roster; at least 191 executed (one per method); 0 failed; 0 skipped | 191 | 6 | true |
 
 Code binding: the census adds 46 new methods and changes the existing parser/foreign-ref/formatter and raw-bundle assertions in place. Each C1213 method must include its hand-written table, target assertion label and reachable production call; do not add placeholder tests to hit Min. Frozen names/IDs/filters stay fixed; a necessary count change requires an explicit design amendment and renewed census before its run. Additional test-only files: Application/DelegateBranchDeliveryTests.cs (nearest topology TaskParkProofWire/PhoneHomeMirrorJoinTests), plus the two new test files already in the parent. Minimal branch/gate parameters may be added to the inspected helpers; unchanged defaults preserve existing fixtures. Bind TaskParkPublicationTests to the local OwnedBranch consumer (missing from parent's test list).
 

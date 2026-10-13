@@ -168,7 +168,7 @@ public sealed class GrokRulesDispatchAcceptanceTests
             brief.CreatedAt.ShouldBeGreaterThanOrEqualTo(refresh.RulesAcknowledgedAt!.Value);
             var spec = h.Runner.SpecFor(sessionId).ShouldNotBeNull();
             var rules = spec.GrokRulesPayload.ShouldNotBeNull().Content;
-            rules.ShouldContain(InstructionBundles.Get(InstructionBundles.DelegateBasics).Text);
+            rules.ShouldContain(C1213Expected.FirstUse(InstructionBundles.Get(InstructionBundles.DelegateBasics).Text));
             rules.ShouldContain(InstructionBundles.Get(InstructionBundles.StageKeyFor(AgentTaskRole.Code)).Text);
             spec.Args.ShouldNotContain("--agent"); spec.Args.ShouldNotContain("--rules");
             var all = captured.ToArray();

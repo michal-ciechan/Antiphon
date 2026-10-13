@@ -46,7 +46,8 @@ public class DelegateBundleLaunchTests
             text.ShouldBe(normal[normal.IndexOf("--append-system-prompt") + 1]);
             foreach (var key in new[] { InstructionBundles.StageCode, InstructionBundles.DelegateBasics })
             {
-                text.ShouldContain(InstructionBundles.TextOf(key));
+                // CARD-1213: delegate-basics holds Code's first {{GIT-COMMON}}.
+                text.ShouldContain(C1213Expected.FirstUse(InstructionBundles.TextOf(key)));
                 text.Split("[bundle:" + key).Length.ShouldBe(2);
             }
             text.ShouldNotContain("style-phone");
@@ -144,7 +145,7 @@ public class DelegateBundleLaunchTests
         // faithful on the path that actually uses it. Before the move this text was a const inlined
         // here; the launch must still carry it verbatim.
         append.ShouldContain(DelegationReportFormatter.OrchestratorContract);
-        append.ShouldContain(InstructionBundles.TextOf(InstructionBundles.DelegateBasics));
+        append.ShouldContain(C1213Expected.FirstUse(InstructionBundles.TextOf(InstructionBundles.DelegateBasics)));
         append.IndexOf("[bundle:delegate-basics", basics + 1, StringComparison.Ordinal)
             .ShouldBe(-1, "each bundle exactly once");
     }
@@ -198,7 +199,7 @@ public class DelegateBundleLaunchTests
         var brief = DelegationReportFormatter.BuildBrief(task, settings);
 
         brief.ShouldNotContain("[bundle:");
-        brief.ShouldNotContain(InstructionBundles.TextOf(InstructionBundles.DelegateBasics));
+        brief.ShouldNotContain(C1213Expected.FirstUse(InstructionBundles.TextOf(InstructionBundles.DelegateBasics)));
         brief.ShouldContain(task.Goal, customMessage: "the brief carries the goal and the ephemeral state");
     }
 
@@ -318,6 +319,29 @@ public class DelegateBundleLaunchTests
         value.ShouldContain($"[bundle:stage-investigate v{bundle.Version}]");
         value.ShouldContain(bundle.Text);
         value.ShouldContain("[bundle:delegate-basics v");
+    }
+
+    /// <summary>CARD-1213 S2 (V-9): every provider transport carries the expanded composition.</summary>
+    [Test]
+    public void C1213_ProvidersReceiveExpandedInstructions()
+    {
+        var (dispatcher, provider) = CreateHarness();
+        using var owned = provider;
+        var fragment = InstructionFragments.Get(InstructionFragments.GitCommon);
+        var task = TaskFor(AgentTaskKind.Worker, AgentTaskRole.Code);
+        var expected = InstructionBundleComposer.Compose(InstructionBundles.ForDelegate(task.Kind, task.Role)).Text;
+        expected.ShouldContain(fragment.Render(), Case.Sensitive, "provider-payload-expected");
+
+        var claude = AppendedSystemPrompt(dispatcher, task);
+        var codex = ConfigValue(ArgsOf(dispatcher, task, kind: AgentKind.Codex), "developer_instructions").ShouldNotBeNull();
+        var grok = SpecOf(dispatcher, task, kind: AgentKind.Grok).GrokRulesPayload.ShouldNotBeNull().Content;
+        foreach (var (label, payload) in new[] { ("claude", claude), ("codex", codex), ("grok", grok) })
+        {
+            payload.ShouldContain(fragment.Render(), Case.Sensitive, "provider-payload " + label);
+            payload.ShouldNotContain("{{", Case.Sensitive, "provider-payload-no-token " + label);
+        }
+        claude.ShouldBe(expected, "provider-payload-claude-exact");
+        grok.ShouldBe(expected, "provider-payload-grok-exact");
     }
 
     // ---- harness -------------------------------------------------------------------------------
