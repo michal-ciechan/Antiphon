@@ -16,6 +16,12 @@ public sealed record ComposedInstructions(string Text, IReadOnlyList<Instruction
     public AgentPinSnapshot? PinSnapshot { get; init; }
     public static ComposedInstructions Empty { get; } = new(string.Empty, []);
 
+    /// <summary>
+    /// Fragments expanded into <see cref="Text"/> (CARD-1213), in first-use order, each once.
+    /// Their stamps follow the bundle stamps (InstructionFragmentTests.C1213_FragmentStampsChangeWithText).
+    /// </summary>
+    public IReadOnlyList<InstructionFragment> Fragments { get; init; } = [];
+
     /// <summary>Nothing to append: no bundles, no style, no agent contract. The flag is then omitted entirely.</summary>
     public bool IsEmpty => Text.Length == 0;
 
@@ -78,7 +84,22 @@ public static class InstructionBundleComposer
     public static ComposedInstructions Compose(
         IEnumerable<string>? bundleKeys = null,
         string? styleBundleKey = null,
-        string? systemPromptAppend = null)
+        string? systemPromptAppend = null) =>
+        Compose(bundleKeys, styleBundleKey, systemPromptAppend,
+            InstructionBundles.Get, [.. InstructionFragments.All.Values]);
+
+    /// <summary>
+    /// The composition with its catalogs passed in (CARD-1213): the public overload passes the
+    /// embedded catalogs, and InstructionFragmentTests passes synthetic ones. Each rendered bundle's
+    /// <c>{{NAME}}</c> placeholders expand through <see cref="InstructionFragments.Expand"/>; the
+    /// append is added after expansion and is not scanned (C1213_ExpansionScope).
+    /// </summary>
+    internal static ComposedInstructions Compose(
+        IEnumerable<string>? bundleKeys,
+        string? styleBundleKey,
+        string? systemPromptAppend,
+        Func<string, InstructionBundle> bundleFor,
+        IReadOnlyCollection<InstructionFragment> fragments)
     {
         var keys = new List<string>();
         if (bundleKeys is not null)
@@ -95,15 +116,16 @@ public static class InstructionBundleComposer
                 continue;
             if (!seen.Add(key))
                 continue;
-            bundles.Add(InstructionBundles.Get(key));
+            bundles.Add(bundleFor(key));
         }
 
         var text = new StringBuilder();
+        var used = new List<InstructionFragment>();
         foreach (var bundle in bundles)
         {
             if (text.Length > 0)
                 text.Append(BlockSeparator);
-            text.Append(bundle.Render());
+            text.Append(InstructionFragments.Expand(bundle.Key, bundle.Render(), fragments, used));
         }
 
         if (!string.IsNullOrWhiteSpace(systemPromptAppend))
