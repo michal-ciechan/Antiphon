@@ -15,6 +15,7 @@ using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.Agents;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Shouldly;
 
@@ -27,6 +28,9 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
     public C544World World { get; private set; } = null!;
     public ControlledTimeProvider Clock { get; } = new(DateTimeOffset.UtcNow);
     public FakeAgentProtocolAdapter Caller { get; } = new();
+    private readonly RecordingLogger<SessionRunnerEventPump> _pumpLog = new();
+    private readonly RecordingLogger<AgentSessionRuntime> _runtimeLog = new();
+    private readonly RecordingLogger<SessionMessageQueueService> _queueLog = new();
     private readonly RunnerHandler _handler = new();
     private readonly HttpClient _http;
     private readonly bool _cache;
@@ -67,6 +71,9 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
     private void Configure(IServiceCollection services)
     {
         services.AddSingleton<TimeProvider>(Clock);
+        services.AddSingleton<ILogger<SessionRunnerEventPump>>(_pumpLog);
+        services.AddSingleton<ILogger<AgentSessionRuntime>>(_runtimeLog);
+        services.AddSingleton<ILogger<SessionMessageQueueService>>(_queueLog);
         services.AddSingleton(Options.Create(new SessionStateSettings { Enabled = _cache }));
         services.AddSingleton<ISessionStateLoader, SessionStateLoader>();
         services.AddSingleton<SessionStateStore>();
@@ -177,6 +184,15 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
 
     public async Task AssertReceiptsAsync(List<AgentTaskLandNotification> before, List<SessionQueuedMessage> queued)
     {
+        if (Caller.SubmittedBodies.Count != 5)
+        {
+            await using var evidence = World.CreateContext();
+            var ends = await evidence.TranscriptEntries.CountAsync(t => t.AgentSessionId == Id && t.Kind == TranscriptKinds.TurnEnd, Token);
+            var working = await SessionMessageQueueService.IsWorkingAsync(evidence, Id, Token);
+            Console.WriteLine($"C1205 recipient diagnostic: ends={ends} sqlWorking={working} pulls={_handler.Pulls} submissions={Caller.SubmittedBodies.Count}");
+            foreach (var entry in _pumpLog.Entries.Concat(_runtimeLog.Entries).Concat(_queueLog.Entries))
+                Console.WriteLine($"C1205 {entry.Level} {entry.Message} exception={entry.Exception?.GetType().Name}");
+        }
         for (var scan = 0; scan < 2; scan++)
         {
             foreach (var note in before)
@@ -245,6 +261,7 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
         private bool _gap;
         public Guid Id;
         public DateTime Generation;
+        public int Pulls;
         public TaskCompletionSource GapCaptured = Signal(), ReleaseGap = Signal(), Drained = Signal();
         public void ArmGap() { _gap = true; GapCaptured = Signal(); ReleaseGap = Signal(); Drained = Signal(); }
         public void Append(string kind, string text, bool publish)
@@ -267,6 +284,7 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
             if (path == $"/sessions/{Id:D}") return Json(session);
             if (path == $"/sessions/{Id:D}/transcript")
             {
+                Interlocked.Increment(ref Pulls);
                 RunnerTranscriptDto snapshot;
                 lock (_gate) snapshot = new(Id, _entries.ToArray(), _entries.Count, AcceptedStartedAt: Generation);
                 if (_gap)
@@ -279,7 +297,8 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
             }
             if (path == "/events")
             {
-                var stream = new HubStream(_hub.Subscribe(ct), Drained);
+                var lifetime = new CancellationTokenSource();
+                var stream = new HubStream(_hub.Subscribe(lifetime.Token), Drained, lifetime);
                 return new(HttpStatusCode.OK) { Content = new StreamContent(stream) };
             }
             return new(HttpStatusCode.NotFound) { Content = new StringContent(path) };
@@ -290,7 +309,8 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
 
     private static TaskCompletionSource Signal() => new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-    private sealed class HubStream(ChannelReader<RunnerServerSentEvent> reader, TaskCompletionSource drained) : Stream
+    private sealed class HubStream(ChannelReader<RunnerServerSentEvent> reader, TaskCompletionSource drained,
+        CancellationTokenSource lifetime) : Stream
     {
         private byte[]? _bytes = Encoding.UTF8.GetBytes(": keepalive\n\n");
         private int _offset;
@@ -319,5 +339,10 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
         public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
         public override void SetLength(long value) => throw new NotSupportedException();
         public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing) lifetime.Cancel();
+            base.Dispose(disposing);
+        }
     }
 }
