@@ -62,6 +62,7 @@ $PSNativeCommandUseErrorActionPreference = $false
 . (Join-Path $PSScriptRoot (Join-Path 'lib' 'checkpoint-source.ps1'))
 . (Join-Path $PSScriptRoot (Join-Path 'lib' 'checkpoint-repeat.ps1'))
 . (Join-Path $PSScriptRoot (Join-Path 'lib' 'checkpoint-owned-output.ps1'))
+. (Join-Path $PSScriptRoot (Join-Path 'lib' 'checkpoint-process-runner.ps1'))
 $script:sourceStart = $null
 $script:sourceEnd = $null
 $script:buildSource = 'unknown'
@@ -122,26 +123,10 @@ function Invoke-CheckpointGit {
     foreach ($name in @('GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE')) {
         if ($psi.Environment.ContainsKey($name)) { [void]$psi.Environment.Remove($name) }
     }
-    $proc = [System.Diagnostics.Process]::new()
-    $proc.StartInfo = $psi
-    try {
-        try {
-            if (-not $proc.Start()) { return @{ Exit = 128; Stdout = ''; Stderr = ''; Reason = 'git-unavailable' } }
-        } catch {
-            return @{ Exit = 128; Stdout = ''; Stderr = ''; Reason = 'git-unavailable' }
-        }
-        $outTask = $proc.StandardOutput.ReadToEndAsync()
-        $errTask = $proc.StandardError.ReadToEndAsync()
-        if (-not $proc.WaitForExit(15000)) {
-            try { $proc.Kill($true) } catch { }
-            try { [void]$proc.WaitForExit(2000) } catch { }
-            return @{ Exit = 128; Stdout = ''; Stderr = ''; Reason = 'git-timeout' }
-        }
-        $proc.WaitForExit()
-        return @{ Exit = $proc.ExitCode; Stdout = $outTask.GetAwaiter().GetResult(); Stderr = $errTask.GetAwaiter().GetResult(); Reason = $null }
-    } finally {
-        $proc.Dispose()
-    }
+    try { $result = [Antiphon.Checkpoints.CheckpointProcessRunner]::Run($psi, 15000, $true, [Threading.CancellationToken]::None) }
+    catch { return @{ Exit = 128; Stdout = ''; Stderr = ''; Reason = 'git-unavailable' } }
+    if ($result.TimedOut) { return @{ Exit = 128; Stdout = ''; Stderr = ''; Reason = 'git-timeout' } }
+    return @{ Exit = $result.Exit; Stdout = $result.Stdout; Stderr = $result.Stderr; Reason = $null }
 }
 
 function Test-CheckpointComponentLink {
@@ -332,7 +317,7 @@ function Read-CheckpointProjectReferences {
     param([string]$ProjectFile)
     $document = New-Object System.Xml.XmlDocument
     $document.XmlResolver = $null
-    $document.Load($ProjectFile)
+    $document.LoadXml((Read-CheckpointText $ProjectFile))
     $includes = New-Object System.Collections.Generic.List[string]
     foreach ($node in $document.GetElementsByTagName('ProjectReference')) {
         $include = ([string]$node.GetAttribute('Include')).Trim()
@@ -750,22 +735,12 @@ function Invoke-CheckpointGraphEval {
     foreach ($name in @('GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE')) {
         if ($psi.Environment.ContainsKey($name)) { [void]$psi.Environment.Remove($name) }
     }
-    $proc = [System.Diagnostics.Process]::new()
-    $proc.StartInfo = $psi
     try {
-        try {
-            if (-not $proc.Start()) { return @{ Error = 'msbuild did not start'; References = @() } }
-        } catch { return @{ Error = 'msbuild did not start'; References = @() } }
-        $outTask = $proc.StandardOutput.ReadToEndAsync()
-        $errTask = $proc.StandardError.ReadToEndAsync()
-        if (-not $proc.WaitForExit(120000)) {
-            try { $proc.Kill($true) } catch { }
-            return @{ Error = 'msbuild evaluation timed out'; References = @() }
-        }
-        $proc.WaitForExit()
-        $stdout = [string]$outTask.GetAwaiter().GetResult()
-        $null = $errTask.GetAwaiter().GetResult()
-        if ($proc.ExitCode -ne 0) { return @{ Error = ('msbuild exit ' + $proc.ExitCode); References = @() } }
+        try { $result = [Antiphon.Checkpoints.CheckpointProcessRunner]::Run($psi, 120000, $false, [Threading.CancellationToken]::None) }
+        catch { return @{ Error = 'msbuild did not start'; References = @() } }
+        if ($result.TimedOut) { return @{ Error = 'msbuild evaluation timed out'; References = @() } }
+        $stdout = $result.Stdout
+        if ($result.Exit -ne 0) { return @{ Error = ('msbuild exit ' + $result.Exit); References = @() } }
         $start = $stdout.IndexOf('{')
         if ($start -lt 0) { return @{ Error = 'msbuild json missing'; References = @() } }
         try { $doc = $stdout.Substring($start) | ConvertFrom-Json } catch { return @{ Error = 'msbuild json unusable'; References = @() } }
@@ -780,7 +755,7 @@ function Invoke-CheckpointGraphEval {
             [void]$refs.Add($full)
         }
         return @{ Error = $null; References = $refs.ToArray() }
-    } finally { $proc.Dispose() }
+    } finally { }
 }
 
 function Get-CheckpointRepoRelative {

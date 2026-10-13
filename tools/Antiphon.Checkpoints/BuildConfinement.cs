@@ -396,32 +396,13 @@ public static class BuildConfinement
         foreach (var name in new[] { "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE" })
             psi.Environment.Remove(name);
 
-        using var process = new Process { StartInfo = psi };
-        try
-        {
-            if (!process.Start())
-                return new EvalResult([], "msbuild did not start");
-        }
+        CheckpointProcessRunner.Result result;
+        try { result = CheckpointProcessRunner.Run(psi, 120_000, false, cancellationToken); }
         catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
-        {
-            return new EvalResult([], ex.GetType().Name);
-        }
-
-        var stdout = process.StandardOutput.ReadToEndAsync(cancellationToken);
-        var stderr = process.StandardError.ReadToEndAsync(cancellationToken);
-        if (!process.WaitForExit(120_000))
-        {
-            try { process.Kill(entireProcessTree: true); } catch (InvalidOperationException) { }
-            try { process.WaitForExit(2_000); } catch (InvalidOperationException) { }
-            return new EvalResult([], "msbuild evaluation timed out");
-        }
-
-        process.WaitForExit();
-        var outText = stdout.GetAwaiter().GetResult();
-        var errText = stderr.GetAwaiter().GetResult();
-        if (process.ExitCode != 0)
-            return new EvalResult([], "msbuild exit " + process.ExitCode);
-        return ParseReferences(outText, errText);
+        { return new EvalResult([], ex.GetType().Name); }
+        if (result.TimedOut) return new EvalResult([], "msbuild evaluation timed out");
+        if (result.Exit != 0) return new EvalResult([], "msbuild exit " + result.Exit);
+        return ParseReferences(result.Stdout, result.Stderr);
     }
 
     private static EvalResult ParseReferences(string stdout, string stderr)
@@ -590,30 +571,12 @@ public static class BuildConfinement
             psi.ArgumentList.Add(arg);
         foreach (var name in new[] { "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE" })
             psi.Environment.Remove(name);
-        using var process = new Process { StartInfo = psi };
-        try
-        {
-            if (!process.Start())
-                return new GitResult(128, "", "git-unavailable");
-        }
+        CheckpointProcessRunner.Result result;
+        try { result = CheckpointProcessRunner.Run(psi, 30_000, true); }
         catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
-        {
-            return new GitResult(128, "", "git-unavailable");
-        }
-
-        var stdout = process.StandardOutput.ReadToEndAsync();
-        var stderr = process.StandardError.ReadToEndAsync();
-        if (!process.WaitForExit(30_000))
-        {
-            try { process.Kill(entireProcessTree: true); } catch (InvalidOperationException) { }
-            return new GitResult(128, "", "git-timeout");
-        }
-
-        process.WaitForExit();
-        _ = stderr.GetAwaiter().GetResult();
-        if (process.ExitCode != 0)
-            return new GitResult(process.ExitCode, "", "git-failed");
-        return new GitResult(0, stdout.GetAwaiter().GetResult(), null);
+        { return new GitResult(128, "", "git-unavailable"); }
+        if (result.TimedOut) return new GitResult(128, "", "git-timeout");
+        return result.Exit == 0 ? new GitResult(0, result.Stdout, null) : new GitResult(result.Exit, "", "git-failed");
     }
 
     private static bool TryReadProperty(string token, out string key, out string value)

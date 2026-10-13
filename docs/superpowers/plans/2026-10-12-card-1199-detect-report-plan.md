@@ -40,6 +40,7 @@ Closed scope overrides broad Unit profile per repair brief. Linux only. One isol
 | CP-18 | S2 | CP-1 | source-stamp-shapes | `/*/*/CheckpointStampSafetyTests/tracked_stamp_shapes_are_bounded_and_leave_results_in_place*` | V-1 V-5 F3 | ten tool/script shape rows, four-second child watchdog | 10 | 1 |
 | CP-19 | S2 | CP-1 | importer-identities | `/*/*/CheckpointStampSafetyTests/import_and_coverage_refuse_blank_identities_without_writes*` | V-6 F1 | four handwritten identities, import/coverage no-write refusals | 4 | 1 |
 | CP-20 | S2 | CP-1 | malformed-state-verbs | `/*/*/CheckpointReceiptSafetyTests/malformed_state_shape_by_verb_table_matches_documented_exits*` | V-6 F2 | five shapes x two collections x nine verbs with documented reasons | 1 | 1 |
+| CP-21 | S2 | CP-1 | changed-reader-deadlines | `/*/*/CheckpointBoundedReaderTests/*` | V-7 F1 F3 | ten ordinary/FIFO/held-pipe controls, no surviving descendant | 10 | 6 |
 
 ### Mutation handoff
 
@@ -49,7 +50,7 @@ No deliberate mutants run by Code. All PCs/variants and missing-control discover
 
 Repair 13g estimated ordinary floor 44 minutes plus implementation (42 inherited minutes plus CP-17's two minutes). Authoritative repair 13g task budget is 50 minutes. No broad assembly or unbounded classes selected.
 
-The continuation sections below record historical source-qualified outcomes and obligations. Repair 13g is the current selection; earlier unresolved states and budgets describe their named historical sources.
+The continuation sections below record historical source-qualified outcomes and obligations. Repair 13i is the current selection; earlier unresolved states and budgets describe their named historical sources.
 
 ### Historical repair 12c result (superseded; not repair 13 evidence)
 
@@ -126,3 +127,7 @@ The complete CP-1..CP-20 run at 0ad1c58b4aaf234f399e7a545b470f9e41229b05 execute
 Required repair verification: CP-18 and CP-19 at the committed fixture SHA, covering the full fourteen-case CheckpointStampSafetyTests class with one fresh isolated build. Unaffected green rows retain their actual 0ad1c58b4aaf234f399e7a545b470f9e41229b05 provenance; no receipt merge/relabeling across SHAs. This genuine fixture repair requires an additional build beyond the original one-build/60-minute target. All ordinary IDs remain pending until the red row is requalified; R-2 and every PC remain pending as before.
 
 Repair 13h ordinary qualification completed: full CP-1..CP-20 at 0ad1c58b4aaf234f399e7a545b470f9e41229b05 retained 238 passes, seven CP-18 fixture failures and the planned Windows skip; corrected full fourteen-case class CP-18/CP-19 passed at ddcb90c76bce034b83e41ef2c0e7bce099d780b2. Effective closed selection: 245 passed, zero unresolved failed, one planned native-Windows skip. Source/test production is unchanged by the fixture-only slice; no receipt SHA was relabeled or merged. Both validators pass their respective eligible selections and reject the original CP-11/CP-18 red/skip rows. All Linux V/R complete; R-2 and PC-1..PC-7/all inherited variants remain pending. Full report and unedited CHECKPOINT lines: .antiphon/task-a8b33bf7.md. Restart none; next ordinary Review, then caller landing and SourceLanding Mutation.
+
+### Repair 13i authoritative scope
+
+Landing owner Code dbb9a32f-0026-4af8-ab19-1f4baae9d28b, branch feat/card-task-dbb9a32f, base d13387548b88ac3a6b37dc046370f40d880cae32; add commits, no rebase. V-7: the admitted file/process readers added or changed by CARD-1199 refuse nonregular files before open and bound process exit plus output drain at their existing 3/15/30/120-second limits. Inherited readers and accepted diagnostic/staging/execution-loader exclusions are listed in 2026-10-13-card-1199-inherited-readers.md and retain their limitations. CP-21 adds ten cases; native tests-first execution uses the identical handwritten child supervisor against unchanged base production, without a test-assembly build. Final closed scope CP-1..CP-21 expects 255 passes plus one disclosed Windows skip; namespace census 536. No Unit lane or full assembly. Budget 75 minutes; one isolated test build plus small gated tool bootstraps. All previous PCs and PC-21-project/tool-git/script-git/tool-eval/script-eval (FIFO or pipe deadline bypass variants) remain pending method-scoped SourceLanding Mutation. Restart: none.
