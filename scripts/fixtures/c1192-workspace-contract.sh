@@ -755,6 +755,8 @@ store_container() {
     local dir="$C1192_ROOT/containers/$name"
     mkdir -p "$dir"
     [ -f "$dir/id" ] || printf '%s\n' "$(printf '%s:%s' "$name" "$(date +%s%N)" | sha256sum | cut -d' ' -f1)" > "$dir/id"
+    printf '/%s\n' "$name" > "$dir/name"
+    printf '2026-10-13T00:00:00Z\n' > "$dir/created"
     printf '%s\n' "$image" > "$dir/image"
     printf '%s\n' "${mounts%%;}" > "$dir/mount"
     : > "$dir/label-owner"
