@@ -1138,7 +1138,7 @@ public sealed class DelegationSettings
         /// <c>Delegation:RolePolicy:&lt;Role&gt;:Bundles</c>. Empty on every shipped role
         /// (RolePolicyToolBundleTests.shipped_role_policy_lists_no_tool_bundles_on_any_role).
         /// </summary>
-        public List<string> Bundles { get => []; set { } }
+        public List<string> Bundles { get; set; } = [];
     }
 
     /// <summary>One complete pair in <see cref="DelegationSettings.ComplexityChains"/>.</summary>
