@@ -24,7 +24,7 @@ public static class TestRootGuard
     {
         try
         {
-            var marker = JsonSerializer.Deserialize<CheckpointRootMarker>(File.ReadAllText(Path.Combine(root, MarkerName)));
+            var marker = JsonSerializer.Deserialize<CheckpointRootMarker>(ReceiptFile.ReadText(Path.Combine(root, MarkerName)));
             return marker is { Version: 1, Owner: not null }
                 && marker.RootId == Path.GetFileName(Path.GetFullPath(root))["c723-".Length..]
                 && RunOwnershipStore.SamePath(marker.RootPath, root) ? marker : null;
