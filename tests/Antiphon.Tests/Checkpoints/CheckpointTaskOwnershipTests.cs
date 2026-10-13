@@ -773,7 +773,9 @@ public sealed class CheckpointTaskOwnershipTests : CheckpointTestBase
         var output = Path.Combine(repo, "bin-owned");
         SafeWrite.Require(SafeWrite.CreateFreshDirectory(output, SafeWrite.Under(repo)));
         var marker = Path.Combine(output, "marker.txt");
-        File.WriteAllText(marker, "owned");
+        // Reach the deletion boundary with a genuinely tool-created payload;
+        // an unrecorded external file correctly refuses before this callback.
+        SafeWrite.Require(SafeWrite.Text(marker, "owned", SafeWrite.Under(output)));
         SafeWrite.Require(OwnedOutputLedger.Seal(output));
         var checks = 0;
         Should.Throw<OperationCanceledException>(() => OutputCleanup.CleanOwnedOutputs(repo, ["bin-owned"], 0, false, false,
