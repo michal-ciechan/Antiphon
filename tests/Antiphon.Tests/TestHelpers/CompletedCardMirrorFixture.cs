@@ -146,7 +146,7 @@ internal sealed class CompletedCardMirrorFixture : IAsyncDisposable
             .ShouldNotBeNull().SetValue(dispatcher, Workspace);
         Connection = new(Options.Create(_settings), adoption, dispatcher,
             Runtime, new HttpFactory(), TimeProvider.System, new Microsoft.Extensions.Logging.Logger<PhoneHomeConnectionService>(
-                Microsoft.Extensions.Logging.LoggerFactory.Create(b => b.AddProvider(Wire.Logs))));
+                new Microsoft.Extensions.Logging.LoggerFactory([Wire.Logs])));
         await Connection.StartAsync(_stop.Token); adoption.SignalReady();
         PhoneHomeLiveConnection live;
         try { live = await Wire.WaitLiveAsync(TimeSpan.FromSeconds(45)); }
