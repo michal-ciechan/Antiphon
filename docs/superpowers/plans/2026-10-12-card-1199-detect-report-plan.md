@@ -37,6 +37,9 @@ Closed scope overrides broad Unit profile per repair brief. Linux only. One isol
 | CP-15 | S2 | CP-1 | shared-verified-reader | `/*/*/PlanCoverageHandleTests/*` | R-4 V-5 | full affected reader class, all sixteen cases | 16 | 1 |
 | CP-16 | S2 | CP-1 | master-path-binding | `/*/*/CheckpointBuildBindingPathTests/*` | R-1 | all three retained master cases, 0 failed/skipped | 3 | 1 |
 | CP-17 | S2 | CP-1 | nonempty-receipt-identities | `/*/*/CheckpointReceiptSafetyTests/receipt_row_and_build_identities_refuse_blank_without_writing*` | V-6 F1 | four handwritten input rows; all receipt-consuming verbs, no writes on refusal | 4 | 2 |
+| CP-18 | S2 | CP-1 | source-stamp-shapes | `/*/*/CheckpointStampSafetyTests/tracked_stamp_shapes_are_bounded_and_leave_results_in_place*` | V-1 V-5 F3 | ten tool/script shape rows, four-second child watchdog | 10 | 1 |
+| CP-19 | S2 | CP-1 | importer-identities | `/*/*/CheckpointStampSafetyTests/import_and_coverage_refuse_blank_identities_without_writes*` | V-6 F1 | four handwritten identities, import/coverage no-write refusals | 4 | 1 |
+| CP-20 | S2 | CP-1 | malformed-state-verbs | `/*/*/CheckpointReceiptSafetyTests/malformed_state_shape_by_verb_table_matches_documented_exits*` | V-6 F2 | five shapes x two collections x nine verbs with documented reasons | 1 | 1 |
 
 ### Mutation handoff
 
@@ -105,3 +108,13 @@ Tests-first proof at 8ce2bf272fb902f296d258c69fe8a87b98dcf749, unchanged c30634d
 The first post-fix launcher selected only CP-1..CP-16 because a blank line separated CP-17 from the table. Run 20261013-121650-b488 was stopped during its build and supplies no qualifying test evidence. The table is now contiguous and the required replacement run selects all seventeen rows.
 
 Repair 13g Final completed at 7170c837cf8c91f1a45dbc403d60e30b3d2b50ab, run 20261013-121925-72cc: CP-1..CP-17 recorded 230 passed, zero failed and one planned Windows sharing skip. Fresh TRX inspection confirmed every selected class/method, independent census 511 and exactly three nonoverlapping hanging-Git executions under --serial. Both exact-SHA validators passed all rows outside CP-11; strict zero-skip validation correctly rejected CP-11 alone and the full selection with row_failed. The separate terminal wait returned 2 only for retained shadow-copy cleanup; stored verdict GREEN, exit 0. F1 nonempty identities and F2 corrected comments are ordinarily qualified. R-2 and PC-1..PC-4/all inherited variants remain pending. Full report with unedited CHECKPOINT lines: .antiphon/task-2a33144d.md. The report-only commit preserves the actual tested SHA. Next: ordinary Review, then caller landing of Code 2a33144d and SourceLanding Mutation. Restart: none.
+
+### Repair 13h verification design
+
+Landing owner Code a8b33bf7-3165-49e8-8151-2e217d7f6b16, branch feat/card-task-a8b33bf7, base f3f96e7dbe4a2e8dd67dc715dd3636a92574bdd4; no rebase. CP-18 guards tool Settle and script stamping against FIFO hangs with four-second child bounds, symlink/directory/dangling/regular controls and surviving result/index checks. CP-19 enforces missing/empty/whitespace checkpoint identities in import and coverage; build identities derive from nonblank isolated output syntax. CP-20 pins the documented wait exception: malformed state collections return 6 on confirmed executor death; malformed row/build identities return immediate named 2; validate reads report only. Other table consumers return named 2. Final CP-1..CP-20, serial, expected 245 passed plus one planned Windows skip; independent census 526. No Unit/full assembly. Budget 60 minutes; one isolated full test build plus gated tool bootstrap/native tests-first driver, which compile no test assembly. Native tests-first probes execute the committed handwritten child against unchanged base production. All PCs remain pending SourceLanding Mutation.
+
+| PC | Detecting method/filter | Variant | Status |
+|---|---|---|---|
+| PC-5 | `/*/*/CheckpointStampSafetyTests/tracked_stamp_shapes_are_bounded_and_leave_results_in_place` | tool/script precheck, nonblocking open and cap/cancellation removal; FIFO/symlink/directory/dangling/regular | pending method-scoped SourceLanding Mutation |
+| PC-6 | `/*/*/CheckpointStampSafetyTests/import_and_coverage_refuse_blank_identities_without_writes` | import/coverage identity guard removal; null/missing/empty/whitespace and derived build syntax | pending method-scoped SourceLanding Mutation |
+| PC-7 | `/*/*/CheckpointReceiptSafetyTests/malformed_state_shape_by_verb_table_matches_documented_exits` | malformed state x verb exception/identity guard removal | pending method-scoped SourceLanding Mutation |

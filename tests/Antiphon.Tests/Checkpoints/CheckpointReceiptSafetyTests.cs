@@ -169,6 +169,38 @@ public sealed class CheckpointReceiptSafetyTests : CheckpointTestBase
         failures.ShouldBeEmpty(string.Join('\n', failures));
     }
 
+    [Test]
+    public async Task malformed_state_shape_by_verb_table_matches_documented_exits()
+    {
+        var failures = new List<string>();
+        foreach (var collection in new[] { "rows", "builds" })
+        foreach (var shape in new[] { "null", "missing", "wrong-type", "null-element", "blank-identity" })
+        foreach (var verb in new[] { "report", "report-json", "report-merge", "report-merge-json", "status", "stop", "wait", "clean", "validate" })
+        {
+            var (root, run) = Fixture();
+            var path = Path.Combine(run, "state.json");
+            var json = JsonNode.Parse(File.ReadAllText(path))!.AsObject();
+            if (shape == "missing") json.Remove(collection);
+            else if (shape == "null") json[collection] = null;
+            else if (shape == "wrong-type") json[collection] = 42;
+            else if (shape == "null-element") json[collection] = new JsonArray((JsonNode?)null);
+            else json[collection]![0]!["id"] = " ";
+            File.WriteAllText(path, json.ToJsonString());
+            var before = Directory.GetFiles(run).ToDictionary(p => p, File.ReadAllBytes);
+            var result = await Child(root, run, verb);
+            // validate accepts report only; malformed-state wait retains the documented dead-executor exit 6.
+            var expected = verb == "validate" ? 0 : verb == "wait" && shape != "blank-identity" ? 6 : 2;
+            var reason = verb == "validate" ? "CHECKPOINT SOURCE VALID" : expected == 6 ? "executor died without phase=done" : "refused:";
+            if (result.Exit != expected || !result.Output.Contains(reason, StringComparison.Ordinal))
+                failures.Add($"{collection}/{shape}/{verb}: expected={expected} reason={reason}, exit={result.Exit} {result.Output}");
+            if (expected == 2 && verb == "clean" && !result.Output.Contains("receipt-", StringComparison.Ordinal))
+                failures.Add($"{collection}/{shape}/{verb}: missing receipt refusal");
+            foreach (var pair in before)
+                if (!File.Exists(pair.Key) || !File.ReadAllBytes(pair.Key).SequenceEqual(pair.Value)) failures.Add($"{collection}/{shape}/{verb}: bytes changed");
+        }
+        failures.ShouldBeEmpty(string.Join('\n', failures));
+    }
+
     private (string Root, string Run) Fixture()
     {
         var root = TempDir();
