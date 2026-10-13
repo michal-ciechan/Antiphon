@@ -4458,8 +4458,8 @@ c849_fixture_nonexternal_loss() {
     local root="$SERVER2_ROOT/compose-retention" project="c849${RUN}negative" volume
     docker compose -p "$project" -f "$root/negative.yml" up -d >/dev/null || return 1
     volume="${project}_cache"
-    docker compose -p "$project" -f "$root/negative.yml" down >/dev/null || return 1
     c849_fixture_compose_record "$project" "${project}_cache" || return 2
+    docker compose -p "$project" -f "$root/negative.yml" down >/dev/null || return 1
     docker compose -p "$project" -f "$root/negative.yml" down -v >/dev/null || return 1
     if docker volume inspect "$volume" >/dev/null 2>&1; then return 1; fi
     printf 'ExternalCacheLost\n'; return 2

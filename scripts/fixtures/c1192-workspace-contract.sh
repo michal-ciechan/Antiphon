@@ -2694,7 +2694,10 @@ retention_compose() {
 # CARD-1207 modeled project lists and post-teardown observations.
 c1207_docker() {
     local kind="$1" name="${*: -1}" scoped=0 project='' path item
-    [[ "$*" != *'label=com.docker.compose.project='* ]] || { scoped=1; project="${*##*label=com.docker.compose.project=}"; project="${project%% *}"; }
+    local token
+    for token in "$@"; do
+        case "$token" in label=com.docker.compose.project=*) scoped=1; project="${token#label=com.docker.compose.project=}" ;; esac
+    done
     case "$kind:${2:-}" in
         volume:ls|network:ls|ps:*)
             if [ "$COMPOSE_CASE" = recording ] && [ "$scoped" = 1 ] && [[ "$project" == *main ]]; then printf 'Cannot connect to the Docker daemon\n' >&2; return 1; fi

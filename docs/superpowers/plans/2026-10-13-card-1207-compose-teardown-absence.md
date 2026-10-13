@@ -5,7 +5,7 @@ Code/landing owner: 2be1191d. Base: 3cea97716b3567d9240d3df52b50cc96053c8fe4. Br
 Root cause: finalization accepts Compose down -v by exit status and discards controller documents without probing private resources.
 Decision: before teardown, persist project volume/network/container names from successful project-label censuses, plus private volume names created by the retention producer. Preserve earlier records across producer and finalizer teardown. Recording failure refuses teardown. After down, confirm each exact name absent only by a successful list omitting it or exit-1 exact missing-resource text through the S7 parser. Present objects and unknown outcomes retain named residue/ledger and refuse success. Use c849_fixture_write for every new case-directory metadata publication; no bypass writer.
 
-Files: scripts/c590-remote.sh; scripts/fixtures/c1192-workspace-contract.sh; tests/Antiphon.Tests/Scripts/RemoteScriptContractTests.cs; this plan.
+Files: docs/docker-stack.md; scripts/c590-remote.sh; scripts/fixtures/c1192-workspace-contract.sh; tests/Antiphon.Tests/Scripts/RemoteScriptContractTests.cs; this plan.
 
 ## Verification design
 
@@ -86,3 +86,5 @@ PC-1 residual volume/container/network confirmation bypass; PC-2 failed list/ins
 ## Inherited limitations (disclosure only)
 
 S7 Review 2ec97f2d report /tmp/antiphon-review-2ec97f2d/report.md lists S1-S6 cache namespace prechecks (old c590 lines 3396/3744/3810/3920/4295) treating failed raw inspect as permission to proceed to acquisition checks; and F-7 negative/private-volume observations (old lines 3997/4088) treating raw nonzero inspect as absence. These observations remain unchanged here and need follow-up cards. Native Docker W-1 stays pending.
+
+S7 also disclosed older mid-group acknowledged removals (old lines 3471/3786/3836/3983/4127), including retirement of legacy markers without their own absence probe, and raw-exit/default/best-effort patterns in other c590 cases (image acquisition, interrupted cleanup, retirement, seed/cold-seed, retired caches and nested residue). Those are follow-up scope; CARD-1208 improved acquired-object deletion but this slice makes no whole-file cleanup guarantee.
