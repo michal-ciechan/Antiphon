@@ -47,7 +47,8 @@ public sealed class CardWorktreeMirrorCleanupService(AppDbContext db, ISessionRu
         if (await EligibilityAsync(task, endpoint, row, ct) is { } eligibilityReason) return await RefuseAsync(endpoint, eligibilityReason, ct);
         var binding = Binding(row);
         var inspection = await client.InspectCompletedCardWorkspaceAsync(new(1, binding), ct);
-        if (inspection.Reason is not null) return await RefuseAsync(endpoint, inspection.Reason, ct);
+        if (inspection.Reason is not null && inspection.Reason != "evidence_requires_admission")
+            return await RefuseAsync(endpoint, inspection.Reason, ct);
         if (inspection.SourceFullRef != binding.SourceFullRef || !Oid(inspection.HeadSha))
             return await RefuseAsync(endpoint, "source_changed", ct);
         // The read-only recipient inventory has no report bytes. Remote-only task reports

@@ -198,13 +198,15 @@ public sealed class CardWorktreeMirrorCleanupTests
     private static async Task ReceiptVectorsAsync(params string[] fields)
     {
         foreach (var field in fields)
+        foreach (var shape in new[] { "altered", "missing" })
         {
             await using var f = await CompletedCardMirrorFixture.CreateAsync();
             f.AlterReceipt = r =>
             {
                 var json = System.Text.Json.JsonSerializer.SerializeToNode(r.Receipt, PhoneHomeFraming.Json)!.AsObject();
                 var old = json[field]!.ToJsonString();
-                json[field] = old == "true" ? System.Text.Json.Nodes.JsonValue.Create(false)
+                if (shape == "missing") json.Remove(field);
+                else json[field] = old == "true" ? System.Text.Json.Nodes.JsonValue.Create(false)
                     : old.StartsWith('"') ? System.Text.Json.Nodes.JsonValue.Create(field.EndsWith("Id") && Guid.TryParse(json[field]!.GetValue<string>(), out _) ? Guid.NewGuid().ToString("D") : "mismatch")
                     : System.Text.Json.Nodes.JsonValue.Create(999);
                 return r with { Receipt = json.Deserialize<CompletedCardWorkspaceReceipt>(PhoneHomeFraming.Json) };
