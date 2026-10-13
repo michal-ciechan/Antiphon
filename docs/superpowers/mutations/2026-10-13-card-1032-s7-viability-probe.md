@@ -1,8 +1,8 @@
 # CARD-1032 S7 witness viability probe
 
-In progress: 5 family mutations detected; 0 survived (witness gaps); 10 not yet run.
+In progress: 7 family mutations detected; 3 survived (witness gaps); 5 not yet run.
 
-Production source: `cfd114a6d2b64a19cf3d4f8f62eda2ac03172a1c`. Probe executions below use the documentation-only descendant `1f870536edfcca5bc40ee48c11251746a639c7a6`; production and test sources are otherwise unchanged. Every production edit is throw-away and restored with `git checkout -- .`. No production change is committed.
+Production source: `cfd114a6d2b64a19cf3d4f8f62eda2ac03172a1c`. Reporting HEAD when this evidence was written is the documentation-only descendant `9c7eabadab9c525fb4ac41c980d0c4471b1be895`; production and test sources are otherwise unchanged. Each per-family entry below records its actual execution commit. The baseline test-host binary was built at 1f870536edfcca5bc40ee48c11251746a639c7a6. Every production edit is throw-away and restored with `git checkout -- .`. No production change is committed.
 
 Baseline: corrected exact-method OR selection executed all 14 CP-13/14 methods, 14 passed, zero failed/skipped. The initial OR without suffix wildcards executed zero tests (driver exit 3); it is invalid evidence. A single-method diagnostic reused that build and passed 1/1.
 
@@ -14,31 +14,47 @@ All formal PCs, per-field variants, SourceLanding Mutation, native Windows quali
 |---|---|---|---|---|
 | VP-01 Mirror HEAD | new CompletedCardWorkspaceProof(inspection.HeadSha, → new CompletedCardWorkspaceProof(observed.Sha!, | `C1017_MirrorBehindPushedTip` | RED | C1017_MirrorBehindPushedTip: ShouldAssertException: await TryAsync(); result.Complete<br>    should be<br>True<br>    but was<br>False<br><br>Additional Info:<br>    head_mismatch |
 | VP-02 Done generation | if (card.Status != CardStatus.Done \|\| revision != endpoint.Target.Cleanup.DoneRevisionId) return "done_generation_revoked"; → // scratch: omit Done-generation admission | `C1017_ReopenBetweenEndpoints` | RED | C1017_ReopenBetweenEndpoints: ShouldAssertException: await TryAsync(); result.Complete<br>    should be<br>False<br>    but was<br>True |
-| VP-03 Distinct mirror bindings | bindings.Where(b => b.TaskId == task.Id) → bindings.Where(b => b.TaskId == task.Id).OrderBy(b => b.WorktreePath.Length).Take(1) | `C1017_MultipleMirrorsRemainDistinct` | Pending | Not run |
+| VP-03 Distinct mirror bindings | bindings.Where(b => b.TaskId == task.Id) → bindings.Where(b => b.TaskId == task.Id).OrderBy(b => b.WorktreePath.Length).Take(1) | `C1017_MultipleMirrorsRemainDistinct` | RED | C1017_MultipleMirrorsRemainDistinct: ShouldAssertException: rows.Count<br>    should be<br>2<br>    but was<br>1 |
 | VP-04 Current task eligibility | if (task.Status is not (AgentTaskStatus.Succeeded or AgentTaskStatus.Failed or AgentTaskStatus.Canceled)) return "terminal_required"; → // scratch: omit terminal status predicate | `C1032_AdmissionCurrentEligibility` | RED | C1032_AdmissionCurrentEligibility: ShouldAssertException: await TryAsync(); result.Complete<br>    should be<br>False<br>    but was<br>True |
 | VP-05 External artifact bytes | if (pointer == task.ResultFilePath && !bytes.AsSpan().SequenceEqual(Encoding.UTF8.GetBytes(task.Result))) → if (false) | `C1032_AdmissionArtifactSurvival` | RED | C1032_AdmissionArtifactSurvival: ShouldAssertException: await TryAsync(); result.Complete<br>    should be<br>False<br>    but was<br>True |
 | VP-06 Commit intent before send | await db.SaveChangesAsync(ct); await tx.CommitAsync(ct); → await db.SaveChangesAsync(ct); // scratch: transaction rolls back without commit | `C1032_AdmissionIntentOrdering` | RED | C1032_AdmissionIntentOrdering: ShouldAssertException: await f.EndpointAsync(); row.OperationId<br>    should not be null but was |
-| VP-07 Forged/unsigned certificate refusal | !CompletedCardWorkspaceLandingAuthority.Verify(command, landingMapKey) → false | `C1032_AdmissionBoundRebaseProof` | Pending | Not run |
-| VP-08 Certificate covers task identity | var digest = CompletedCardWorkspaceContract.CanonicalDigest(JsonSerializer.Serialize(command, → command = command with { Binding = command.Binding with { TaskId = Guid.Empty } };<br>        var digest = CompletedCardWorkspaceContract.CanonicalDigest(JsonSerializer.Serialize(command, | `C1032_AdmissionBoundRebaseProof` | Pending | Not run |
-| VP-09 Publication belongs to task | o => o.TaskId == task.Id && o.Active → o => o.Active | `C1032_AdmissionBoundRebaseProof` | Pending | Not run |
-| VP-10 Landing evidence required | op.Id == id && new AgentTaskLandingState().HasPublication(op) → op.Id == id | `C1032_AdmissionBoundRebaseProof` | Pending | Not run |
+| VP-07 Forged/unsigned certificate refusal | !CompletedCardWorkspaceLandingAuthority.Verify(command, landingMapKey) → false | `C1032_AdmissionBoundRebaseProof` | RED | C1032_AdmissionBoundRebaseProof: ShouldAssertException: refusal.Complete<br>    should be<br>False<br>    but was<br>True |
+| VP-08 Certificate covers task identity | var digest = CompletedCardWorkspaceContract.CanonicalDigest(JsonSerializer.Serialize(command, → command = command with { Binding = command.Binding with { TaskId = Guid.Empty } };<br>        var digest = CompletedCardWorkspaceContract.CanonicalDigest(JsonSerializer.Serialize(command, | `C1032_AdmissionBoundRebaseProof` | **GREEN: FINDING** | None; all selected witnesses passed under the mutation. |
+| VP-09 Publication belongs to task | o => o.TaskId == task.Id && o.Active → o => o.Active | `C1032_AdmissionBoundRebaseProof` | **GREEN: FINDING** | None; all selected witnesses passed under the mutation. |
+| VP-10 Landing evidence required | op.Id == id && new AgentTaskLandingState().HasPublication(op) → op.Id == id | `C1032_AdmissionBoundRebaseProof` | **GREEN: FINDING** | None; all selected witnesses passed under the mutation. |
 | VP-11 Admission-required inspection continues | inspection.Reason is not null && inspection.Reason != "evidence_requires_admission" → inspection.Reason is not null | `C1017_MirrorBehindPushedTip` | Pending | Not run |
 | VP-12 Valid bound-rebase path succeeds | if (rebased) command = CompletedCardWorkspaceLandingAuthority.Sign(command, publication!.Id, phoneHome!.Value.SharedSecret); → if (rebased) return Hold("preservation_proof_unsupported"); | `C1032_AdmissionBoundRebaseProof` | Pending | Not run |
 | VP-13 Immutable persisted request digest | !CompletedCardWorkspaceContract.Validate(json).IsValid \|\| CompletedCardWorkspaceContract.CanonicalDigest(json) != endpoint.RequestDigest → !CompletedCardWorkspaceContract.Validate(json).IsValid | `C1032_AdmissionIntentOrdering`, `C1032_ReceiptCompleteBoundReceipt` | Pending | Not run |
 | VP-14 Exact receipt plus ACK-only refusal | response.Reason is not null \|\| response.Receipt != expected → response.Reason is not null | `C1017_ReceiptMustMatchOperation`, `C1017_ReceiptMustMatchEndpoint`, `C1017_ReceiptMustMatchStore`, `C1017_ReceiptMustMatchTaskAttempt`, `C1017_AckIsNotRemoval`, `C1032_ReceiptCompleteBoundReceipt` | Pending | Not run |
 | VP-15 Unsupported peer fails closed | if (!response.Complete) return await RefuseAsync(endpoint, response.Reason ?? "receipt_mismatch", ct); → if (!response.Complete) return response.Reason == PhoneHomeProblemTypes.UnsupportedOperation ? new(true, null, null) : await RefuseAsync(endpoint, response.Reason ?? "receipt_mismatch", ct); | `C1017_UnsupportedNeverFallsBack` | Pending | Not run |
 
+Finding VP-08: The MAC normalizes binding.TaskId to Guid.Empty before hashing. The nine tampering vectors change other fields, so this method does not detect loss of TaskId signature coverage. Separate binding validation may still refuse a changed TaskId; no exploit is claimed. Add a direct certificate Verify negative for this omitted field.
+
+Finding VP-09: PublicationAsync no longer scopes active landing records by TaskId. The method creates only a valid same-task publication, with no foreign-task negative vector.
+
+Finding VP-10: PublicationAsync no longer requires AgentTaskLandingState.HasPublication. Eligibility retains its narrower publication outcome/timestamp checks, but the full identity/verification/certificate evidence predicate is no longer required. The method exercises only genuine complete landing evidence.
+
 GREEN is a gap in these S7 witnesses, not evidence of a defect in the restored production guard. The original code retains every guard. A surviving mutation needs a negative vector before its safety claim can be qualified.
 
-VP-01: 1 executed, 0 passed, 1 failed, zero skipped; native test exit 2; build exit 0. Filter: `/*/*/CardWorktreeMirrorCleanupTests/C1017_MirrorBehindPushedTip`. Production path: `server/Application/Services/CardWorktreeMirrorCleanupService.cs`.
+VP-01: 1 executed, 0 passed, 1 failed, zero skipped; native test exit 2; build exit 0. Filter: `/*/*/CardWorktreeMirrorCleanupTests/C1017_MirrorBehindPushedTip`. Production path: `server/Application/Services/CardWorktreeMirrorCleanupService.cs`. Execution commit: `1f870536edfcca5bc40ee48c11251746a639c7a6`.
 
-VP-02: 1 executed, 0 passed, 1 failed, zero skipped; native test exit 2; build exit 0. Filter: `/*/*/CardWorktreeMirrorCleanupTests/C1017_ReopenBetweenEndpoints`. Production path: `server/Application/Services/CardWorktreeMirrorCleanupService.cs`.
+VP-02: 1 executed, 0 passed, 1 failed, zero skipped; native test exit 2; build exit 0. Filter: `/*/*/CardWorktreeMirrorCleanupTests/C1017_ReopenBetweenEndpoints`. Production path: `server/Application/Services/CardWorktreeMirrorCleanupService.cs`. Execution commit: `1f870536edfcca5bc40ee48c11251746a639c7a6`.
 
-VP-04: 1 executed, 0 passed, 1 failed, zero skipped; native test exit 2; build exit 0. Filter: `/*/*/CardWorktreeMirrorCleanupTests/C1032_AdmissionCurrentEligibility`. Production path: `server/Application/Services/CardWorktreeMirrorCleanupService.cs`.
+VP-03: 1 executed, 0 passed, 1 failed, zero skipped; native test exit 2; build exit 0. Filter: `/*/*/CardWorktreeMirrorCleanupTests/C1017_MultipleMirrorsRemainDistinct`. Production path: `server/Application/Services/CardWorktreeCleanupService.cs`. Execution commit: `9c7eabadab9c525fb4ac41c980d0c4471b1be895`.
 
-VP-05: 1 executed, 0 passed, 1 failed, zero skipped; native test exit 2; build exit 0. Filter: `/*/*/CardWorktreeMirrorCleanupTests/C1032_AdmissionArtifactSurvival`. Production path: `server/Infrastructure/Files/CardDoneArtifactPreservation.cs`.
+VP-04: 1 executed, 0 passed, 1 failed, zero skipped; native test exit 2; build exit 0. Filter: `/*/*/CardWorktreeMirrorCleanupTests/C1032_AdmissionCurrentEligibility`. Production path: `server/Application/Services/CardWorktreeMirrorCleanupService.cs`. Execution commit: `1f870536edfcca5bc40ee48c11251746a639c7a6`.
 
-VP-06: 1 executed, 0 passed, 1 failed, zero skipped; native test exit 2; build exit 0. Filter: `/*/*/CardWorktreeMirrorCleanupTests/C1032_AdmissionIntentOrdering`. Production path: `server/Application/Services/CardWorktreeMirrorCleanupService.cs`.
+VP-05: 1 executed, 0 passed, 1 failed, zero skipped; native test exit 2; build exit 0. Filter: `/*/*/CardWorktreeMirrorCleanupTests/C1032_AdmissionArtifactSurvival`. Production path: `server/Infrastructure/Files/CardDoneArtifactPreservation.cs`. Execution commit: `1f870536edfcca5bc40ee48c11251746a639c7a6`.
+
+VP-06: 1 executed, 0 passed, 1 failed, zero skipped; native test exit 2; build exit 0. Filter: `/*/*/CardWorktreeMirrorCleanupTests/C1032_AdmissionIntentOrdering`. Production path: `server/Application/Services/CardWorktreeMirrorCleanupService.cs`. Execution commit: `1f870536edfcca5bc40ee48c11251746a639c7a6`.
+
+VP-07: 1 executed, 0 passed, 1 failed, zero skipped; native test exit 2; build exit 0. Filter: `/*/*/CardWorktreeMirrorCleanupTests/C1032_AdmissionBoundRebaseProof`. Production path: `src/Antiphon.SessionRunner/RunnerCompletedCardWorkspaceRemoval.cs`. Execution commit: `9c7eabadab9c525fb4ac41c980d0c4471b1be895`.
+
+VP-08: 1 executed, 1 passed, 0 failed, zero skipped; native test exit 0; build exit 0. Filter: `/*/*/CardWorktreeMirrorCleanupTests/C1032_AdmissionBoundRebaseProof`. Production path: `src/Antiphon.SessionRunner.Contracts/CompletedCardWorkspaceLandingAuthority.cs`. Execution commit: `9c7eabadab9c525fb4ac41c980d0c4471b1be895`.
+
+VP-09: 1 executed, 1 passed, 0 failed, zero skipped; native test exit 0; build exit 0. Filter: `/*/*/CardWorktreeMirrorCleanupTests/C1032_AdmissionBoundRebaseProof`. Production path: `server/Application/Services/CardWorktreeMirrorCleanupService.cs`. Execution commit: `9c7eabadab9c525fb4ac41c980d0c4471b1be895`.
+
+VP-10: 1 executed, 1 passed, 0 failed, zero skipped; native test exit 0; build exit 0. Filter: `/*/*/CardWorktreeMirrorCleanupTests/C1032_AdmissionBoundRebaseProof`. Production path: `server/Application/Services/CardWorktreeMirrorCleanupService.cs`. Execution commit: `9c7eabadab9c525fb4ac41c980d0c4471b1be895`.
 
 Exact minimal source changes (full context diffs retained as VP-nn `.diff` files):
 
@@ -54,6 +70,13 @@ VP-02, `server/Application/Services/CardWorktreeMirrorCleanupService.cs`:
 ```diff
 -if (card.Status != CardStatus.Done || revision != endpoint.Target.Cleanup.DoneRevisionId) return "done_generation_revoked";
 +// scratch: omit Done-generation admission
+```
+
+VP-03, `server/Application/Services/CardWorktreeCleanupService.cs`:
+
+```diff
+-bindings.Where(b => b.TaskId == task.Id)
++bindings.Where(b => b.TaskId == task.Id).OrderBy(b => b.WorktreePath.Length).Take(1)
 ```
 
 VP-04, `server/Application/Services/CardWorktreeMirrorCleanupService.cs`:
@@ -75,6 +98,35 @@ VP-06, `server/Application/Services/CardWorktreeMirrorCleanupService.cs`:
 ```diff
 -await db.SaveChangesAsync(ct); await tx.CommitAsync(ct);
 +await db.SaveChangesAsync(ct); // scratch: transaction rolls back without commit
+```
+
+VP-07, `src/Antiphon.SessionRunner/RunnerCompletedCardWorkspaceRemoval.cs`:
+
+```diff
+-!CompletedCardWorkspaceLandingAuthority.Verify(command, landingMapKey)
++false
+```
+
+VP-08, `src/Antiphon.SessionRunner.Contracts/CompletedCardWorkspaceLandingAuthority.cs`:
+
+```diff
+-var digest = CompletedCardWorkspaceContract.CanonicalDigest(JsonSerializer.Serialize(command,
++command = command with { Binding = command.Binding with { TaskId = Guid.Empty } };
++        var digest = CompletedCardWorkspaceContract.CanonicalDigest(JsonSerializer.Serialize(command,
+```
+
+VP-09, `server/Application/Services/CardWorktreeMirrorCleanupService.cs`:
+
+```diff
+-o => o.TaskId == task.Id && o.Active
++o => o.Active
+```
+
+VP-10, `server/Application/Services/CardWorktreeMirrorCleanupService.cs`:
+
+```diff
+-op.Id == id && new AgentTaskLandingState().HasPublication(op)
++op.Id == id
 ```
 
 Unedited baseline CHECKPOINT lines:
