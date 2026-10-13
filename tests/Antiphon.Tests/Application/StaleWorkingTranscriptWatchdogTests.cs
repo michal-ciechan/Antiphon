@@ -451,6 +451,115 @@ public class StaleWorkingTranscriptWatchdogTests
         (await h.WorkingAsync(h.Id)).ShouldBe(outcome != "idle");
     }
 
+    [Test, Arguments("before-commit"), Arguments("after-commit"), Arguments("after-return"), Arguments("two-probes")]
+    public async Task C1205_Reconciliation_preserves_owned_recovery_wakeup(string interleaving)
+    {
+        await using var h = await Harness.CreateAsync();
+        h.Idle(h.Id);
+        var adapter = new FakeAgentProtocolAdapter();
+        h.Runtime.Register(h.Id, adapter);
+        var submitted = Signal(); var releaseInput = Signal();
+        adapter.OnSubmitted = async _ => { submitted.TrySetResult(); await releaseInput.Task; };
+        await h.Queue.EnqueueAsync(h.Id, "C1205 reconciliation note", MessageSendMode.WhenIdle, default, deliverIfIdle: false);
+        h.Commit.Hold = interleaving is "after-commit" or "two-probes";
+        if (interleaving == "before-commit") h.Handler.Held.Add(h.Id);
+        try
+        {
+            await h.PassAsync();
+            if (interleaving == "before-commit")
+            {
+                await h.Handler.WaitForAsync(h.Id);
+                // Removal before validation must invalidate the operation, not certify idle.
+                await h.SetStatusAsync(h.Id, SessionStatus.Stopped);
+                await h.PassAsync(); h.Entries.ShouldBeEmpty();
+                h.Handler.Release.TrySetResult(); await h.JoinAsync();
+                h.Flush.Accepted.ShouldBeEmpty();
+                (await h.RowsAsync(h.Id)).ShouldNotContain(row => row.Kind == "TurnEnd");
+                adapter.SubmittedBodies.ShouldBeEmpty();
+                return;
+            }
+            if (h.Commit.Hold)
+            {
+                await h.Commit.Reached.Task.WaitAsync(TimeSpan.FromSeconds(15));
+                (await h.WorkingAsync(h.Id)).ShouldBeFalse("the end is committed before reconciliation");
+                h.Active.Length.ShouldBe(1);
+                await h.PassAsync(); h.Entries.ShouldBeEmpty();
+                if (interleaving == "two-probes")
+                {
+                    await h.PassAsync();
+                    h.Active.Length.ShouldBe(1);
+                    h.Handler.GetsFor(h.Id).ShouldBe(1, "a second scheduling pass cannot duplicate the owned probe");
+                }
+                h.Commit.Release.TrySetResult();
+            }
+            await h.JoinAsync();
+            if (interleaving == "after-return") { await h.PassAsync(); h.Entries.ShouldBeEmpty(); }
+            h.Flush.Accepted.ShouldBe(new[] { h.Id }, "successful checked recovery owns exactly one wakeup across removal");
+            (await h.RowsAsync(h.Id)).Count(row => row.Kind == "TurnEnd").ShouldBe(1);
+            // Consume the real coalesced queue and run its production idle recheck/delivery.
+            using var readStop = new CancellationTokenSource();
+            await using var wake = h.Flush.ReadAllAsync(readStop.Token).GetAsyncEnumerator();
+            (await wake.MoveNextAsync()).ShouldBeTrue(); wake.Current.ShouldBe(h.Id);
+            var delivery = h.Queue.FlushIfIdleAsync(wake.Current, default);
+            await h.Clock.Inner.WaitForTimerAsync(e => e.Action == "create" && e.DueTime == TimeSpan.FromMilliseconds(20))
+                .WaitAsync(TimeSpan.FromSeconds(15));
+            h.Clock.Advance(TimeSpan.FromMilliseconds(20));
+            await submitted.Task.WaitAsync(TimeSpan.FromSeconds(15));
+            adapter.SubmittedBodies.Count.ShouldBe(1);
+            // Further passes while the input is held must neither reprobe nor resubmit it.
+            await h.PassAsync(); await h.JoinAsync();
+            h.Flush.Accepted.ShouldBe(new[] { h.Id }); h.HttpGets.ShouldBe(1);
+            adapter.SubmittedBodies.Count.ShouldBe(1);
+            releaseInput.TrySetResult(); await delivery.WaitAsync(TimeSpan.FromSeconds(15));
+        }
+        finally { h.Commit.Release.TrySetResult(); h.Handler.Release.TrySetResult(); releaseInput.TrySetResult(); }
+    }
+
+    [Test]
+    public async Task C1205_Hosted_backlog_bound_includes_poll_refill()
+    {
+        var settings = new StaleWorkingTranscriptSettings();
+        var count = settings.MaxConcurrentProbes * 3;
+        await using var h = await Harness.CreateAsync(count: count);
+        foreach (var id in h.Ids) h.Idle(id);
+        foreach (var id in h.Ids.Skip(count - settings.MaxConcurrentProbes)) h.Handler.Held.Add(id);
+        using var host = new Antiphon.Server.Infrastructure.Supervision.StaleWorkingTranscriptHostedService(
+            (StaleWorkingTranscriptRecovery)h.Recovery, Options.Create(settings), Options.Create(new SessionRunnerSettings { Enabled = true }),
+            h.Clock, NullLogger<Antiphon.Server.Infrastructure.Supervision.StaleWorkingTranscriptHostedService>.Instance);
+        var start = h.Clock.GetTimestamp();
+        var sequence = h.Clock.Inner.Events.Count;
+        try
+        {
+            await host.StartAsync(default);
+            await ((Task)Property(host, "FirstPass")!).WaitAsync(TimeSpan.FromSeconds(15));
+            for (var batch = 1; batch <= 3; batch++)
+            {
+                await h.Handler.WaitForCountAsync(batch * settings.MaxConcurrentProbes);
+                if (batch < 3) await h.JoinAsync();
+                var timer = await h.Clock.Inner.WaitForTimerAsync(e => e.Action == "create"
+                    && e.DueTime == TimeSpan.FromSeconds(settings.PollSeconds), sequence).WaitAsync(TimeSpan.FromSeconds(15));
+                sequence = timer.Sequence;
+                h.Clock.GetElapsedTime(start).ShouldBe(TimeSpan.FromSeconds((batch - 1) * settings.PollSeconds));
+                h.HttpGets.ShouldBe(batch * settings.MaxConcurrentProbes, "completed workers refill only on a host poll");
+                if (batch < 3) h.Clock.Advance(TimeSpan.FromSeconds(settings.PollSeconds));
+            }
+            h.Clock.Advance(TimeSpan.FromSeconds(settings.ProbeTimeoutSeconds - 1));
+            h.Handler.Release.TrySetResult(); await h.JoinAsync();
+            var elapsed = h.Clock.GetElapsedTime(start);
+            var batches = (int)Math.Ceiling((double)count / settings.MaxConcurrentProbes);
+            // Conservative admitted-backlog completion allowance, excluding pass/commit delay:
+            // (batches-1)*(probe budget+poll) + probe budget. Each full pass adds its actual duration.
+            var allowance = TimeSpan.FromSeconds((batches - 1) * (settings.ProbeTimeoutSeconds + settings.PollSeconds)
+                + settings.ProbeTimeoutSeconds);
+            elapsed.ShouldBeGreaterThan(TimeSpan.FromSeconds(batches * settings.ProbeTimeoutSeconds),
+                "the obsolete timeout-only bound is violated by the real hosted schedule");
+            elapsed.ShouldBeLessThanOrEqualTo(allowance);
+            h.Flush.Accepted.Count.ShouldBe(count);
+            foreach (var id in h.Ids) (await h.WorkingAsync(id)).ShouldBeFalse();
+        }
+        finally { h.Handler.Release.TrySetResult(); await host.StopAsync(default); }
+    }
+
     private static Type RecoveryType => typeof(StaleWorkingTranscriptRecovery);
     private static Type SettingsType => typeof(StaleWorkingTranscriptSettings);
     private static object? Property(object value, string name) => value.GetType().GetProperty(name,
@@ -495,6 +604,7 @@ public class StaleWorkingTranscriptWatchdogTests
         public required RecordingFlushes Flush;
         public required LogProvider LogProvider;
         public required Faults Fault;
+        public required CommitGate Commit;
         public object Recovery = null!;
         public readonly CancellationTokenSource Stop = new();
         public Guid[] Ids = [];
@@ -515,11 +625,11 @@ public class StaleWorkingTranscriptWatchdogTests
             .Cast<object>().Select(e => new Entry((Guid)Property(e, "SessionId")!, (DateTime)Property(e, "Generation")!,
                 (long?)Property(e, "LastSuccess"), (long?)Property(e, "LastAttempt"), (long)Property(e, "DiscoveredAt")!)).ToArray();
         public AppDbContext Db() => new(new DbContextOptionsBuilder<AppDbContext>().UseNpgsql(Schema.ConnectionString)
-            .AddInterceptors(Fault).Options);
+            .AddInterceptors(Fault, Commit).Options);
         public static async Task<Harness> CreateAsync(int count = 1, int interval = 120, int page = 128, int workers = 4, bool resilient = false)
         {
             var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-            var clock = new OffsetClock(); var fault = new Faults(); var log = new LogProvider(); var flush = new RecordingFlushes();
+            var clock = new OffsetClock(); var fault = new Faults(); var commit = new CommitGate(); var log = new LogProvider(); var flush = new RecordingFlushes();
             var handler = new ProbeHandler(); var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
                 { ["Resilience:AttemptTimeoutSeconds"] = "30", ["Resilience:CircuitBreaker:SamplingDurationSeconds"] = "60",
                     ["Resilience:MaxDelayMilliseconds"] = "30000" }).Build();
@@ -528,7 +638,7 @@ public class StaleWorkingTranscriptWatchdogTests
             services.AddAntiphonResilience(config);
             services.AddHttpClient(ResilienceClientNames.RunnerRead).ConfigurePrimaryHttpMessageHandler(() => handler)
                 .ConfigureAdditionalHttpMessageHandlers((handlers, _) => handlers.Insert(0, new BudgetObserver(handler)));
-            services.AddDbContext<AppDbContext>(o => o.UseNpgsql(schema.ConnectionString).AddInterceptors(fault));
+            services.AddDbContext<AppDbContext>(o => o.UseNpgsql(schema.ConnectionString).AddInterceptors(fault, commit));
             services.AddSingleton(Options.Create(new AgentSessionSettings()));
             services.AddSingleton(Options.Create(new SessionStateSettings()));
             services.AddSingleton<ISessionStateLoader, SessionStateLoader>(); services.AddSingleton<SessionStateStore>();
@@ -540,7 +650,7 @@ public class StaleWorkingTranscriptWatchdogTests
             services.AddSingleton<AgentSessionRuntime>(); services.AddSingleton<SessionMessageQueueService>();
             var provider = services.BuildServiceProvider();
             var h = new Harness { Schema = schema, Provider = provider, Handler = handler, Http = http, Client = (SessionRunnerHttpClient)provider.GetRequiredService<ISessionRunnerClient>(),
-                Clock = clock, Flush = flush, Fault = fault, LogProvider = log };
+                Clock = clock, Flush = flush, Fault = fault, Commit = commit, LogProvider = log };
             try
             {
                 h.Ids = Enumerable.Range(1, count).Select(i => Guid.Parse($"00000000-0000-0000-0000-{i:D12}")).ToArray();
@@ -594,7 +704,7 @@ public class StaleWorkingTranscriptWatchdogTests
         { await using var db = Db(); return await db.TranscriptEntries.Where(t => t.AgentSessionId == id).OrderBy(t => t.Sequence).ToListAsync(); }
         public async ValueTask DisposeAsync()
         {
-            Stop.Cancel(); Handler.Release.TrySetResult(); Fault.SaveRelease.TrySetResult();
+            Stop.Cancel(); Handler.Release.TrySetResult(); Fault.SaveRelease.TrySetResult(); Commit.Release.TrySetResult();
             if (Recovery is IAsyncDisposable owned) await owned.DisposeAsync();
             Stop.Dispose(); Http.Dispose(); await Provider.DisposeAsync(); await Schema.DisposeAsync();
         }
@@ -645,6 +755,17 @@ public class StaleWorkingTranscriptWatchdogTests
         public IDisposable? BeginScope<TState>(TState state) where TState : notnull => _inner.BeginScope(state);
         public bool IsEnabled(LogLevel level) => _inner.IsEnabled(level);
         public void Log<TState>(LogLevel level, EventId id, TState state, Exception? ex, Func<TState, Exception?, string> formatter) => _inner.Log(level, id, state, ex, formatter);
+    }
+    private sealed class CommitGate : DbTransactionInterceptor
+    {
+        public bool Hold;
+        public TaskCompletionSource Reached { get; } = Signal();
+        public TaskCompletionSource Release { get; } = Signal();
+        public override async Task TransactionCommittedAsync(DbTransaction transaction, TransactionEndEventData data, CancellationToken ct = default)
+        {
+            if (Hold && data.Context!.ChangeTracker.Entries<TranscriptEntry>().Any(e => e.Entity.Kind == "TurnEnd"))
+            { Reached.TrySetResult(); await Release.Task; }
+        }
     }
     private sealed class Faults : DbCommandInterceptor, ISaveChangesInterceptor
     {
