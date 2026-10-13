@@ -334,6 +334,16 @@ post-land Mutation stage. No checkpoint-tool implementation changes belong here.
 
 ## Risks
 
+S3 round-2 repair extends the optional shared admission boundary to existing
+legacy remove/prune and verification create/remove entry points. Execution of
+CompletedCard cleanup remains inert. The authoritative test design adds
+CP-25..27 with wildcard tree-node filters and PC-551..559, all pending for
+SourceLanding Mutation. Preserve the unconfigured legacy behavior. Dispatcher
+mutation admission precedes workspace admission, then journal/binding-store
+and session/custody/pane operations; no callback reacquires dispatcher mutation
+while holding workspace admission. Legacy removal has no typed cleanup intent,
+so it honors existing journal fences without fabricating a CompletedCard command.
+
 - The new binding prerequisite makes historical unbound mirrors visible debt;
   it intentionally cannot promise to remove every existing mirror. A future
   audited historical-binding procedure is separate work, not a fallback here.

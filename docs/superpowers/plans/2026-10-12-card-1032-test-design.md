@@ -1044,6 +1044,47 @@ loops, assertions and PC variants do not raise Min.
 | CP-22 | S2 | `tests/Antiphon.SessionRunner.Tests -> bin-c1032-store-identity/` | store-identity | `/*/*/RunnerWorkspaceBindingTests/C1032_StoreIdentity*` | V-1 | all 10 listed; 0 failed/skipped | 10 | 5 | true |
 | CP-23 | S2 | CP-3 | legacy-unbound-contract | `/*/*/RunnerWorkspaceBindingTests/C1032_LegacyUnboundPathOnlyContract*` | R-2 | all 1 listed; 0 failed/skipped | 1 | 1 | true |
 | CP-24 | S2 | CP-3 | workspace-compatibility | `/*/*/PhoneHomeCommandDispatcherTests/Workspace_*` | R-1, R-2 | all 3 listed; 0 failed/skipped | 3 | 1 | true |
+| CP-25 | S3-repair | `tests/Antiphon.SessionRunner.Tests -> bin-c1032-removal-repair/` | held-removal-baseline | `/*/*/LegacyWorkspaceRemovalGateTests/(C1032_LegacyRemoveHeldLease*)\|(C1032_LegacyPruneHeldLease*)` | V-4 | both held-lease refusals; 0 failed/skipped after repair | 2 | 3 | true |
+| CP-26 | S3-repair | CP-25 | removal-repair-class | `/*/*/LegacyWorkspaceRemovalGateTests/*` | V-4, R-1, R-2 | all 10 results; 0 failed/skipped | 10 | 2 | true |
+| CP-27 | S3-repair | CP-25 | workspace-service-class | `/*/*/RunnerWorkspaceServiceTests/*` | R-1, R-2 | full affected class; 0 failed/skipped | 1 | 3 | true |
+
+#### S3 round-2 removal repair
+
+CP-25 runs first with tests committed over unchanged production from
+`91974075f4a04a10ea98d9e06e4e599a10b29c3b`: both methods must fail because
+RemoveAsync succeeds while its competing use lease is held. After repair,
+CP-25/26/27 run once. CP-5 retains six methods and runs three times; the
+unchanged S2 regression group remains 33 results. No Unit lane is assigned
+by the repair brief. Additional cost: one isolated runner build plus about
+five minutes of scoped Git tests; no full assembly run is needed.
+
+New method witnesses: held present removal and missing-path pruning refuse
+`workspace_in_use` before Git, preserve the directory/registration respectively;
+released lease permits real removal; creation-first refuses removal and
+removal-first queues actual fresh creation until removal/prune finish;
+unconfigured removal retains present/absent legacy success even under a held
+gate elsewhere; exceptions and cancellation permit the next admission;
+retained owners refuse until positively absent. Verification removal has
+present/absent variants (two results), and fresh verification creation waits
+before Git. All races use deterministic admission barriers or Git entry seams.
+
+| PC | Defect to bind after landing | Exact method filter | Expected red witness | Status |
+|---|---|---|---|---|
+| PC-551 | Omit present legacy removal admission | `/*/*/LegacyWorkspaceRemovalGateTests/C1032_LegacyRemoveHeldLease*` | expected PhoneHomeAdmissionException is missing | pending |
+| PC-552 | Move admission after missing-path prune | `/*/*/LegacyWorkspaceRemovalGateTests/C1032_LegacyPruneHeldLease*` | expected PhoneHomeAdmissionException is missing | pending |
+| PC-553 | Keep admission held after disposal | `/*/*/LegacyWorkspaceRemovalGateTests/C1032_LegacyRemoveReleasedLease*` | actual removal refuses workspace_in_use | pending |
+| PC-554 | Release removal admission before Git removal/prune | `/*/*/LegacyWorkspaceRemovalGateTests/C1032_LegacyRemovalCreationOrders*` | creation must wait through removal and prune | pending |
+| PC-555 | Require a configured gate on legacy remove | `/*/*/LegacyWorkspaceRemovalGateTests/C1032_LegacyUnconfiguredRemoval*` | legacy real removal must succeed | pending |
+| PC-556 | Leak removal admission on exception/cancellation | `/*/*/LegacyWorkspaceRemovalGateTests/C1032_LegacyRemovalReleaseOnFailure*` | next admission/removal must succeed; bind exception and cancellation variants separately | pending |
+| PC-557 | Ignore retained owners | `/*/*/LegacyWorkspaceRemovalGateTests/C1032_LegacyRemovalRetainedOwner*` | expected PhoneHomeAdmissionException is missing | pending |
+| PC-558 | Omit verification removal admission | `/*/*/LegacyWorkspaceRemovalGateTests/C1032_VerificationRemovalHeldLease*` | expected PhoneHomeAdmissionException is missing; bind present and absent variants separately | pending |
+| PC-559 | Omit verification creation admission | `/*/*/LegacyWorkspaceRemovalGateTests/C1032_VerificationCreationAdmission*` | GitStarts increases while lease held | pending |
+
+All original 292 PCs and these nine new IDs remain pending for method-scoped
+SourceLanding Mutation. These baseline regressions are ordinary defect proof,
+not deliberate mutant cycles. Legacy removals carry no CompletedCard command
+identity and do not write that journal; they must honor its existing fences.
+Only TryRetireAsync journals immutable cleanup intent before its callback.
 
 ### Cost
 

@@ -25,6 +25,7 @@ internal sealed class CompletedCardRunnerFixture : IAsyncDisposable
     public CompletedCardWorkspaceBinding Binding { get; }
     public PhoneHomeWorkspaceMirrorRequest MirrorRequest { get; }
     public int GitStarts { get; private set; }
+    public Action<ProcessStartInfo>? BeforeGitStart { get; set; }
     private readonly List<SessionRunnerRuntime> _runtimes = [];
     private readonly List<Process> _children = [];
 
@@ -124,17 +125,18 @@ internal sealed class CompletedCardRunnerFixture : IAsyncDisposable
         return sidecar;
     }
 
-    public RunnerWorkspaceService Workspace(bool gated = true)
+    public RunnerWorkspaceService Workspace(bool gated = true, string publishedBranch = "master")
     {
         var config = Path.Combine(Root, "empty.gitconfig");
         File.WriteAllText(config, "");
         var service = new RunnerWorkspaceService(Repository, Path.Combine(Root, "work"), Origin, psi =>
         {
             GitStarts++;
+            BeforeGitStart?.Invoke(psi);
             psi.Environment["GIT_CONFIG_NOSYSTEM"] = "1";
             psi.Environment["GIT_CONFIG_GLOBAL"] = config;
             return Process.Start(psi);
-        });
+        }, publishedBranch: publishedBranch);
         service.BindRecipient("fixture-runner", Guid.Parse(StoreId));
         if (gated) Bind(service);
         return service;
