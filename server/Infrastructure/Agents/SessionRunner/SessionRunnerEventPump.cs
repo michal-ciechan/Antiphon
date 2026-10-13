@@ -3,6 +3,7 @@ using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Microsoft.Extensions.Options;
+using System.Runtime.ExceptionServices;
 
 namespace Antiphon.Server.Infrastructure.Agents.SessionRunner;
 
@@ -97,12 +98,17 @@ public sealed class SessionRunnerEventPump : BackgroundService
         // host cancellation anywhere (including caught-error log or final pull) -> same
         // initial offer, then original cancellation; pending callback explicitly abandoned.
         // non-cooperative list -> deadline ends our wait; retain/observe its owned scope.
-        // callback pending/cancelled/faulted -> warn once, observe late fault, never replay;
-        // with no catch-up exception, retain the existing shutdown/reconnect unwind.
+        // callback completes -> completed offer, no abandonment warning.
+        // callback faults (including unrelated OCE under host cancellation) -> propagate
+        // its original object/stack; if catch-up failed first, log callback fault and retain X.
+        // pending callback / delivery-token cancellation -> warn once, observe late fault,
+        // never replay; with no catch-up exception, existing shutdown/reconnect unwind.
+        // deadline + fault race -> a callback settled when the wait observes cancellation
+        // wins; still pending at that observation -> abandon, later fault only observed.
         // payload-free marker -> no offer; subsequent iterator read/disposal -> no held
         // payload remains. A fault before receiving a marker supplies no payload here.
         // Preservation setup/logging/disposal failures cannot replace a catch-up exception.
-        // Only PreserveHeldEventAsync decides completion versus abandonment. No catch-up
+        // Only PreserveHeldEventAsync decides completed/faulted/abandoned. No catch-up
         // return or exception bypasses this finally; no unwind offers the same event twice.
         Exception? catchUpException = null;
         try
@@ -127,12 +133,17 @@ public sealed class SessionRunnerEventPump : BackgroundService
         {
             try
             {
-                if (HasPayload(held) && !await PreserveHeldEventAsync(held, runtime, stoppingToken))
+                if (HasPayload(held))
                 {
-                    // Never resume the iterator after an uncertain offer. This failure
-                    // controls normal unwind; the filter below preserves exceptional unwind.
-                    stoppingToken.ThrowIfCancellationRequested();
-                    throw new TimeoutException("Held live event delivery did not complete");
+                    var result = await PreserveHeldEventAsync(held, runtime, stoppingToken);
+                    result.Fault?.Throw();
+                    if (result.Outcome == HeldEventOutcome.Abandoned)
+                    {
+                        // Only an uncertain offer uses the existing bound's reconnect signal.
+                        // A real callback fault above must never be replaced with this timeout.
+                        stoppingToken.ThrowIfCancellationRequested();
+                        throw new TimeoutException("Held live event delivery did not complete");
+                    }
                 }
             }
             catch (Exception ex) when (catchUpException is not null)
@@ -233,7 +244,12 @@ public sealed class SessionRunnerEventPump : BackgroundService
         }
     }
 
-    private async Task<bool> PreserveHeldEventAsync(
+    private enum HeldEventOutcome { Completed, CallbackFaulted, Abandoned }
+
+    private readonly record struct HeldEventResult(
+        HeldEventOutcome Outcome, ExceptionDispatchInfo? Fault = null);
+
+    private async Task<HeldEventResult> PreserveHeldEventAsync(
         SessionRunnerEvent evt, AgentSessionRuntime runtime, CancellationToken stoppingToken)
     {
         using var deadline = new CancellationTokenSource(
@@ -246,6 +262,7 @@ public sealed class SessionRunnerEventPump : BackgroundService
         var deliveryScope = _scopeFactory.CreateAsyncScope();
         Task? delivery = null;
         var scopeTransferred = false;
+        ExceptionDispatchInfo? callbackFault = null;
         try
         {
             // Give even a host already stopping one initial offer through the normal callback
@@ -254,11 +271,23 @@ public sealed class SessionRunnerEventPump : BackgroundService
             // an earlier cancellation and one racing the offer. Only a pending task is drained.
             delivery = DispatchEventAsync(evt, deliveryScope.ServiceProvider, runtime, deliveryToken.Token);
             using var hostRegistration = stoppingToken.Register(hostSignal.Cancel);
-            await delivery.WaitAsync(deliveryToken.Token);
+            try
+            {
+                await delivery.WaitAsync(deliveryToken.Token);
+            }
+            catch (OperationCanceledException) when (deliveryToken.IsCancellationRequested)
+            {
+                // WaitAsync can observe cancellation concurrently with a settled callback.
+                // Inspect the actual task before deciding abandonment so its own fault/OCE
+                // retains precedence. A still-pending task is transferred to the observer.
+                if (delivery.IsCompleted) await delivery;
+                else throw;
+            }
             phase.Completed();
-            return true;
+            return new(HeldEventOutcome.Completed);
         }
-        catch (OperationCanceledException) when (deliveryToken.IsCancellationRequested)
+        catch (OperationCanceledException ex) when (deliveryToken.IsCancellationRequested
+            && ex.CancellationToken == deliveryToken.Token)
         {
             // The consumer is demonstrably still pending (or cancelled without completing
             // delivery) at the host/deadline bound. This pump has no held-output redelivery
@@ -276,20 +305,26 @@ public sealed class SessionRunnerEventPump : BackgroundService
                 "Held live event delivery abandoned: consumer did not complete within the cancellation/deadline bound; session={SessionId} event={EventName} reason={Reason} abandonedCount={AbandonedCount}",
                 evt.SessionId, evt.EventName, stoppingToken.IsCancellationRequested ? "host-cancellation" : "deadline",
                 Interlocked.Increment(ref _abandonedHeldEvents));
-            return false;
+            return new(HeldEventOutcome.Abandoned);
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(
-                ex,
-                "Held live event delivery abandoned: consumer failed; session={SessionId} event={EventName} reason=consumer-fault abandonedCount={AbandonedCount}",
-                evt.SessionId, evt.EventName, Interlocked.Increment(ref _abandonedHeldEvents));
-            return false;
+            callbackFault = ExceptionDispatchInfo.Capture(ex);
+            return new(HeldEventOutcome.CallbackFaulted, callbackFault);
         }
         finally
         {
             if (!scopeTransferred)
-                await deliveryScope.DisposeAsync();
+            {
+                try { await deliveryScope.DisposeAsync(); }
+                catch (Exception ex) when (callbackFault is not null)
+                {
+                    // Cleanup must not overwrite a callback fault either. The caller owns
+                    // logging that primary fault (or retaining the earlier catch-up fault).
+                    try { _logger.LogWarning(ex, "Held live event scope disposal failed after callback fault"); }
+                    catch { /* Retain the captured primary callback fault. */ }
+                }
+            }
         }
     }
 
