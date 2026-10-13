@@ -724,6 +724,8 @@ try
     builder.Services.AddScoped<IModelAvailability>(sp => sp.GetRequiredService<ModelAvailability>());
     // CARD-0305: per-card/stage routing pins. Scoped like the availability reader it hands off to.
     builder.Services.AddScoped<RoutingPinService>();
+    // CARD-0097: GET /api/role-policy reads RolePolicy beside the stage pins.
+    builder.Services.AddScoped<RolePolicyReadService>();
     builder.Services.AddScoped<StandingSpecialistRoutingService>();
     builder.Services.AddScoped<StandingSpecialistSeatService>();
     builder.Services.AddScoped<StandingSpecialistHealthService>();
@@ -1142,6 +1144,7 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
     app.MapModelAvailabilityEndpoints();
     app.MapSubscriptionUsageEndpoints();
     app.MapRoutingPinEndpoints();
+    app.MapRolePolicyEndpoints();
     app.MapRunnerDefaultEndpoints();
     app.MapDispatchConcurrencyEndpoints();
     app.MapOrchestratorInstructionsEndpoints();
