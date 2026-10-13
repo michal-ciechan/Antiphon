@@ -37,6 +37,7 @@ import {
   ComplexityChainCellEditor,
   type ComplexityChainEditorTarget,
 } from './ComplexityChainCellEditor'
+import { RolePolicySection } from './RolePolicySection'
 import { RunnerDefaultsSection } from './RunnerDefaultsSection'
 import {
   CARD_PIN_SCOPE,
@@ -71,13 +72,14 @@ export function RoutingSettingsTab() {
       <div>
         <Title order={4}>Routing</Title>
         <Text size="sm" c="dimmed">
-          Global model availability, subscription usage observations, routing pins, and the role ×
-          complexity matrix.
+          Global model availability, subscription usage observations, runner defaults, role policy,
+          routing pins, and the role × complexity matrix.
         </Text>
       </div>
       <AvailabilitySection />
       <UsageSection />
       <RunnerDefaultsSection />
+      <RolePolicySection />
       <MatrixSection />
     </Stack>
   )
