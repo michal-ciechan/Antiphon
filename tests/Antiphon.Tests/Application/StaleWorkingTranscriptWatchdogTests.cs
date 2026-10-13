@@ -369,6 +369,9 @@ public class StaleWorkingTranscriptWatchdogTests
             flushWork = (Task)typeof(Antiphon.Server.Infrastructure.Orchestration.CompletionNoteWorkHostedService)
                 .GetMethod("FlushAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(worker, [workerStop.Token])!;
             await h.PassAndJoinAsync(); h.HttpGets.ShouldBe(2);
+            await h.Clock.Inner.WaitForTimerAsync(e => e.Action == "create" && e.DueTime == TimeSpan.FromMilliseconds(20))
+                .WaitAsync(TimeSpan.FromSeconds(15));
+            h.Clock.Advance(TimeSpan.FromMilliseconds(20));
             await submitted.Task.WaitAsync(TimeSpan.FromSeconds(15));
             using (await h.Store.BeginWriteAsync(h.Id, default)) { }
             h.Flush.Accepted.ShouldContain(h.Id);
