@@ -19,6 +19,7 @@ using Antiphon.Tests.Agents;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using Shouldly;
 
@@ -47,6 +48,7 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
     private readonly bool _cache;
     private SessionRunnerEventPump? _pump;
     private CompletionNoteWorkHostedService? _worker;
+    private OwnedLoop? _workerLoop, _pumpLoop;
     private EpochAdapter? _adapter;
     private readonly WorkerScopeGate _workerScopes = new();
     private readonly ContinuationQueue _continuations = new();
@@ -193,8 +195,8 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
         _worker = new CompletionNoteWorkHostedService(new ObservedScopes(World.Services.GetRequiredService<IServiceScopeFactory>(), _workerScopes),
             Flushes, World.Services.GetRequiredService<SpecialistFailureQueue>(), Clock,
             World.Services.GetRequiredService<ILogger<CompletionNoteWorkHostedService>>());
-        if (ConcurrentScopeBarriers) await _worker.StartAsync(Token);
-        else await _continuations.InvokeAsync(() => _worker.StartAsync(Token));
+        _workerLoop = new OwnedLoop(_worker, Token);
+        await _workerLoop.StartAsync(ConcurrentScopeBarriers ? null : _continuations);
         // The boot sweep has enumerated its durable work before its 15-minute wait.
         await Clock.WaitForTimerAsync(e => e.Action == "create" && e.DueTime >= TimeSpan.FromMinutes(14), after, Token);
         await JoinDeliveryAsync(WaitForQuiescenceAsync());
@@ -242,7 +244,8 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
     {
         _handler.ArmGap();
         _pump = ActivatorUtilities.CreateInstance<SessionRunnerEventPump>(World.Services);
-        await _continuations.InvokeAsync(() => _pump.StartAsync(Token));
+        _pumpLoop = new OwnedLoop(_pump, Token);
+        await _pumpLoop.StartAsync(_continuations);
         await GapCaptured.WaitAsync(Token);
     }
 
@@ -320,16 +323,14 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
     {
         if (_pump is null) return;
         _handler.ReleaseGap.TrySetResult();
-        await _pump.StopAsync(CancellationToken.None);
-        _pump.Dispose();
+        await _pumpLoop!.DisposeAsync(); _pumpLoop = null;
         _pump = null;
     }
 
     private async Task StopWorkerAsync()
     {
         if (_worker is null) return;
-        await _worker.StopAsync(CancellationToken.None);
-        _worker.Dispose();
+        await _workerLoop!.DisposeAsync(); _workerLoop = null;
         _worker = null;
     }
 
@@ -388,7 +389,8 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
     {
         _handler.Drained = Signal();
         _pump = ActivatorUtilities.CreateInstance<SessionRunnerEventPump>(World.Services);
-        await _continuations.InvokeAsync(() => _pump.StartAsync(Token));
+        _pumpLoop = new OwnedLoop(_pump, Token);
+        await _pumpLoop.StartAsync(_continuations);
         await JoinDeliveryAsync(_handler.Drained.Task);
     }
     public async Task KeepaliveAsync()
@@ -685,6 +687,34 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
             }
         }
         public async ValueTask DisposeAsync() { _queue.Writer.TryComplete(); await _runner; }
+    }
+
+    // T37..T44 drive the actual ExecuteAsync loops under owned scheduling. This
+    // proves service reconstruction, not the framework's launcher scheduling.
+    private sealed class OwnedLoop(BackgroundService service, CancellationToken fixtureToken) : IAsyncDisposable
+    {
+        private readonly CancellationTokenSource _stop = CancellationTokenSource.CreateLinkedTokenSource(fixtureToken);
+        private Task? _run;
+        public async Task StartAsync(ContinuationQueue? continuations)
+        {
+            if (continuations is null) { await service.StartAsync(_stop.Token); return; }
+            await continuations.InvokeAsync(() =>
+            {
+                _run = (Task)service.GetType().GetMethod("ExecuteAsync", BindingFlags.Instance | BindingFlags.NonPublic)!
+                    .Invoke(service, [_stop.Token])!;
+                return Task.CompletedTask;
+            });
+        }
+        public async ValueTask DisposeAsync()
+        {
+            _stop.Cancel();
+            try
+            {
+                if (_run is null) await service.StopAsync(CancellationToken.None);
+                else try { await _run; } catch (OperationCanceledException) when (_stop.IsCancellationRequested) { }
+            }
+            finally { service.Dispose(); _stop.Dispose(); }
+        }
     }
     private sealed class ObservedScopes(IServiceScopeFactory inner, WorkerScopeGate gate) : IServiceScopeFactory
     {
