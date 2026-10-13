@@ -42,7 +42,8 @@ public sealed class ShellFixtureLineEndingContractTests
             if (row.Problem is null)
                 problems.ShouldBeEmpty(row.Name);
             else
-                problems.ShouldContain(problem => problem.Contains(row.Problem, StringComparison.Ordinal), row.Name);
+                problems.ShouldContain(problem => problem.Contains(row.Problem, StringComparison.Ordinal),
+                    "c1210-effective-eol: " + row.Name);
         }
 
         var actual = await AttributeProblems(root, attributes, paths);
@@ -91,9 +92,11 @@ public sealed class ShellFixtureLineEndingContractTests
             File.WriteAllBytes(destination, File.ReadAllBytes(Path.Combine(root, fixture)));
         }
         await Git(scratch.Root, "-c", "core.autocrlf=true", "add", "--", ".gitattributes", "scripts/fixtures");
+        await Git(scratch.Root, "-c", "user.name=Shell fixture contract", "-c", "user.email=test@antiphon.local",
+            "-c", "commit.gpgsign=false", "commit", "--quiet", "--no-verify", "-m", "LF checkout fixture");
         foreach (var fixture in FormerlyCrLfFixtures)
             File.Delete(Path.Combine(scratch.Root, fixture));
-        await Git(scratch.Root, "-c", "core.autocrlf=true", "checkout-index", "--force", "--all");
+        await Git(scratch.Root, "-c", "core.autocrlf=true", "restore", "--source=HEAD", "--worktree", "--", "scripts/fixtures/*.sh");
         AssertNoCarriageReturns(scratch.Root, FormerlyCrLfFixtures);
     }
 
@@ -182,8 +185,14 @@ public sealed class ShellFixtureLineEndingContractTests
         {
             await Git(Root, "init", "--quiet");
             await Git(Root, "config", "core.safecrlf", "false");
+            await Git(Root, "config", "core.hooksPath", Path.Combine(Root, "no-hooks"));
         }
 
-        public void Dispose() => Directory.Delete(Root, recursive: true);
+        public void Dispose()
+        {
+            foreach (var file in Directory.EnumerateFiles(Root, "*", SearchOption.AllDirectories))
+                File.SetAttributes(file, FileAttributes.Normal);
+            Directory.Delete(Root, recursive: true);
+        }
     }
 }
