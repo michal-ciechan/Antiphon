@@ -106,7 +106,9 @@ public sealed class OutputCleanupTests : CheckpointTestBase
         File.WriteAllText(Path.Combine(tests, "kept.cs"), "tracked");
         File.WriteAllText(Path.Combine(src, "kept.cs"), "tracked");
         File.WriteAllText(Path.Combine(trackedBin, "kept.txt"), "tracked");
-        File.WriteAllText(Path.Combine(safe, "out.dll"), "untracked");
+        // This positive cleanup control needs the same in-process creation
+        // custody as the tool's own payloads; an external writer is retained.
+        SafeWrite.Require(SafeWrite.Text(Path.Combine(safe, "out.dll"), "untracked", SafeWrite.Under(safe)));
         SafeWrite.Require(OwnedOutputLedger.Seal(safe));
         Git(root, "add", "--", "tests/kept.cs", "src/kept.cs", "bin-tracked/kept.txt");
         Git(root, "-c", "user.email=card-1199@example.invalid", "-c", "user.name=card-1199",
@@ -460,7 +462,11 @@ public sealed class OutputCleanupTests : CheckpointTestBase
         File.ReadAllText(kept).ShouldBe("tracked-nested");
         exit.ShouldBe(ExitCodes.Invalid);
         var text = output.ToString();
-        text.ShouldContain("refused: nested_repository");
+        // A separate clean invocation has no creation custody and therefore
+        // refuses without traversing or deleting any older run.
+        text.ShouldContain("refused: not-created-by-run; cleanup requires current-process creation records");
+        text.ShouldContain("left in place: " + results + "; remove it manually");
+        Directory.Exists(run).ShouldBeTrue();
         text.ShouldNotContain("deleted ");
     }
 
