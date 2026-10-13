@@ -23,6 +23,7 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 [Category("Integration")]
+[Category("Slow")]
 public class WorkingTranscriptRecoveryTests
 {
     [Test, Arguments(true), Arguments(false)]
@@ -205,13 +206,13 @@ public class WorkingTranscriptRecoveryTests
             competing.IsCompleted.ShouldBeFalse("competing ingest has reached the held session gate");
             (await h.RowsAsync()).Count.ShouldBe(1);
             fault.Release.TrySetResult();
-            (await probe).Outcome.ToString().ShouldBe("RecoveredIdle");
             using (var published = await reader)
             {
                 published.Snapshot.Working.ShouldBeFalse();
                 published.Snapshot.Count.ShouldBe(2);
             }
             reader = null;
+            (await probe).Outcome.ToString().ShouldBe("RecoveredIdle");
             await competing;
             (await h.WorkingAsync()).ShouldBeTrue();
             if (cache) (await h.F.Store.ReadAsync(h.Id, default)).Working.ShouldBeTrue();
