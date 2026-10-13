@@ -3488,7 +3488,116 @@ mode_metadata_write() {
     done
 }
 
+# Publication-time links live inside the owned directory. Update rename replaces
+# the link, never follows it; create publication still refuses an occupied name.
+mode_publication_link() {
+    local writer="${3:?writer}" target code=0 id expected
+    id=$(printf '%064d' 1)
+    printf 'outside victim\n' > "$C1192_ROOT/victim"
+    cp "$C1192_ROOT/victim" "$C1192_ROOT/before"
+    case "$writer" in
+        network|network-acquisition) target="$CASE_DIR/.fixture-network"; expected="$id" ;;
+        helpers) target="$CASE_DIR/.fixture-helpers"; expected='' ;;
+        volumes) target="$CASE_DIR/.fixture-volumes"; expected=keep ;;
+        ledger*) target="$CASE_DIR/fixture-cleanup-ledger.txt"; expected='old
+foreign: left untouched volume example' ;;
+        residue*) target="$CASE_DIR/fixture-cleanup-residue.txt"; expected='old
+example' ;;
+        diagnostic) target="$CASE_DIR/race-p1.log"; expected='diagnostic bytes' ;;
+        control) target="$CASE_DIR/.control-PC-99"; expected=ExpectedFailure ;;
+        escape) target="$CASE_DIR/.fixture-escape-identity" ;;
+        cid-acquisition|cid-migration) target="$CASE_DIR/.fixture-id-c849-${RUN}-donor"; expected="$id" ;;
+        *) fail "unknown publication writer $writer" ;;
+    esac
+    case "$writer" in
+        network) printf 'c849-%s-npm\n' "$RUN" > "$target" ;;
+        helpers) printf 'c849-%s-writer\n' "$RUN" > "$target" ;;
+        volumes) printf 'c849%s-packages\nkeep\n' "$RUN" > "$target" ;;
+        *-ensure) printf 'old\n' > "$target"; expected=old ;;
+        *-reset) printf 'old\n' > "$target"; expected='' ;;
+        ledger|residue) printf 'old\n' > "$target" ;;
+        diagnostic|control) printf 'old\n' > "$target" ;;
+    esac
+    mv() {
+        if [ "${*: -1}" = "${target##*/}" ]; then
+            # This is precisely after the publisher's last destination check.
+            rm -f -- "${target##*/}"
+            ln -s "$C1192_ROOT/victim" "${target##*/}"
+            printf 'rename-boundary\n' >> "$C1192_ROOT/publication-seam"
+        fi
+        command mv "$@"
+    }
+    docker() {
+        if [ "$1" = create ]; then printf '%s\n' "$id" > "$3"; return 0; fi
+        case "${*: -2:1}" in
+            '{{.Id}}') printf '%s\n' "$id" ;;
+            *io.antiphon.owner*) if [ "$writer" = helpers ]; then printf foreign; else printf c849-fixture; fi ;;
+            *fixture-run*) printf '%s\n' "$RUN" ;;
+            *fixture-role*) if [ "$writer" = network ]; then printf npm-network; else printf donor; fi ;;
+            '{{.Name}}') if [ "$writer" = network ]; then printf 'c849-%s-npm\n' "$RUN"; else printf '/c849-%s-donor\n' "$RUN"; fi ;;
+            *) return 97 ;;
+        esac
+    }
+    c849_fixture_resource_state() { return 0; }
+    c849_fixture_resource_remove() { :; }
+    c849_fixture_helper_lookup() { return 0; }
+    case "$writer" in
+        network) c849_fixture_network_release || code=$? ;;
+        helpers) c849_fixture_helper_release "c849-${RUN}-writer" || code=$? ;;
+        volumes) c849_fixture_workspace_drop_name "c849${RUN}-packages" || code=$? ;;
+        ledger) c849_fixture_foreign_volume example || code=$? ;;
+        residue) c849_fixture_cleanup_unknown container example || code=$? ;;
+        *-ensure) c849_fixture_write "$target" ensure true || code=$? ;;
+        *-reset) c849_fixture_write "$target" replace true || code=$? ;;
+        diagnostic) printf 'diagnostic bytes\n' > "$SERVER2_ROOT/race-p1.log"; c849_fixture_export_logs || code=$? ;;
+        control) c849_fixture_control PC-99 ExpectedFailure bash -c 'printf "ExpectedFailure\n"; exit 2' || code=$? ;;
+        network-acquisition) c849_fixture_network_record "$id" || code=$? ;;
+        cid-acquisition) c849_fixture_launch create --name "c849-${RUN}-donor" image || code=$? ;;
+        cid-migration) c849_fixture_container_identity "c849-${RUN}-donor" "c849-${RUN}-donor" donor || code=$? ;;
+        escape) ln -s "$CASE_DIR" "$CASE_DIR/.fixture-escape"; c849_fixture_escape_record || code=$? ;;
+    esac
+    [ "$(cat "$C1192_ROOT/publication-seam")" = rename-boundary ] || fail 'rename seam not reached exactly once'
+    cmp -s "$C1192_ROOT/before" "$C1192_ROOT/victim" || fail 'publication wrote outside case'
+    case "$writer" in
+        *-acquisition|cid-migration|escape)
+            [ "$code" = 2 ] && [ -L "$target" ] && [ "$(readlink "$target")" = "$C1192_ROOT/victim" ] || fail "create did not refuse $writer code=$code"
+            emit publication-exit "$code" ;;
+        *)
+            [ "$code" = 0 ] && [ -f "$target" ] && [ ! -L "$target" ] && [ "$(stat -c '%h:%u' "$target")" = "1:$(id -u)" ] || fail "update did not publish regular owned file $writer code=$code"
+            printf '%s' "$expected" > "$C1192_ROOT/expected"
+            [ -z "$expected" ] || printf '\n' >> "$C1192_ROOT/expected"
+            cmp -s "$C1192_ROOT/expected" "$target" || fail "wrong publication bytes $writer"
+            emit publication-exit "$code" ;;
+    esac
+    emit victim-preserved 1
+}
+
+# Model observations remain live filesystem reads. External cat per candidate or
+# field is needless process work, and this guard fails on that old seam.
+mode_model_inspection() {
+    plant_container first owner-a run-a role-a image-a ''
+    plant_container second owner-b run-b role-b image-b ''
+    local identity observed
+    identity=$(cat "$C1192_ROOT/containers/second/id")
+    cat() { printf 'external-cat\n' >> "$C1192_ROOT/model-spawns"; command cat "$@"; }
+    observed=$(docker_inspect_container -f '{{.Name}}' "$identity")
+    [ "$observed" = /second ] || fail 'ID lookup changed'
+    observed=$(docker_inspect_container -f '{{.Image}}' "$identity")
+    [ "$observed" = image-b ] || fail 'image lookup changed'
+    printf 'changed-owner\n' > "$C1192_ROOT/containers/second/label-owner"
+    observed=$(docker_inspect_container -f '{{index .Config.Labels "io.antiphon.owner"}}' "$identity")
+    [ "$observed" = changed-owner ] || fail 'stale owner observation'
+    : > "$C1192_ROOT/containers/second/label-run"
+    observed=$(docker_inspect_container -f '{{index .Config.Labels "io.antiphon.fixture-run"}}' "$identity")
+    [ -z "$observed" ] || fail 'empty field observation'
+    [ ! -s "$C1192_ROOT/model-spawns" ] || fail "model inspection spawned $(wc -l < "$C1192_ROOT/model-spawns") cat processes"
+    emit live-fields-preserved 1
+    emit external-reader-spawns 0
+}
+
 case "$mode" in
+    publication-link) mode_publication_link "$@" ;;
+    model-inspection) mode_model_inspection ;;
     metadata-write) mode_metadata_write "$@" ;;
     fingerprint-acquisition) mode_fingerprint_acquisition "$@" ;;
     deletion-audit) mode_deletion_audit "$@" ;;

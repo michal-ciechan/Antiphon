@@ -608,6 +608,39 @@ public sealed class RemoteScriptContractTests
             Fact(output, writer + "-" + variant).ShouldBe("1", output);
     }
 
+    // A link introduced by the rename seam is replaced by update publication;
+    // links seen at admission/inspection still use the existing refusal tests.
+    [Test]
+${['network','helpers','volumes','ledger','residue','diagnostic','control','ledger-ensure','residue-ensure','ledger-reset','residue-reset'].map(x=>'    [Arguments("'+x+'")]').join('
+')}
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1208_Update_publication_replaces_link_without_writing_victim(string writer)
+    {
+        var output = C1192Run("publication-link", writer);
+        Fact(output, "publication-exit").ShouldBe("0", output);
+        Fact(output, "victim-preserved").ShouldBe("1", output);
+    }
+
+    [Test]
+${['cid-acquisition','cid-migration','network-acquisition','escape'].map(x=>'    [Arguments("'+x+'")]').join('
+')}
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1208_Create_publication_refuses_link_without_writing_victim(string writer)
+    {
+        var output = C1192Run("publication-link", writer);
+        Fact(output, "publication-exit").ShouldBe("2", output);
+        Fact(output, "victim-preserved").ShouldBe("1", output);
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1208_Model_inspection_reads_live_fields_without_external_reader_processes()
+    {
+        var output = C1192Run("model-inspection");
+        Fact(output, "live-fields-preserved").ShouldBe("1", output);
+        Fact(output, "external-reader-spawns").ShouldBe("0", output);
+    }
+
     private static void C1192AssertCleanupProbe(string boundary)
     {
         var output = C1192Run("cleanup-probe", boundary);

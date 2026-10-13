@@ -91,6 +91,9 @@ PC-1 foreign drop/receipt/removal guard (cache variants); PC-2 legacy container 
 | CP-72 | Fixed | `CP-33` | repair-72 | `/*/*/RemoteScriptContractTests/C1208_Recorded_creation_fingerprint_is_reverified*` | V-19 | 1 executed, 0 failed/skipped | 1 | 1 |
 | CP-73 | Fixed | `CP-33` | repair-fingerprint-acquisition | `/*/*/RemoteScriptContractTests/C1208_Fingerprint_acquisition_refuses_unowned_paths*` | V-20 | 12 executed, 0 failed/skipped | 12 | 1 |
 | CP-74 | Fixed | `CP-33` | repair-safe-metadata | `/*/*/RemoteScriptContractTests/C1208_Metadata_writers_refuse_file_type_changes*` | V-21 | 11 executed, 0 failed/skipped; 99 internal writer/type cases | 11 | 2 |
+| CP-75 | Fixed | `CP-33` | publication-update | `/*/*/RemoteScriptContractTests/C1208_Update_publication_replaces_link_without_writing_victim*` | V-22 | 11 executed, 0 failed/skipped | 11 | 1 |
+| CP-76 | Fixed | `CP-33` | publication-create | `/*/*/RemoteScriptContractTests/C1208_Create_publication_refuses_link_without_writing_victim*` | V-23 | 4 executed, 0 failed/skipped | 4 | 1 |
+| CP-77 | Fixed | `CP-33` | model-inspection-cost | `/*/*/RemoteScriptContractTests/C1208_Model_inspection_reads_live_fields_without_external_reader_processes` | V-24 | 1 executed, 0 failed/skipped | 1 | 1 |
 
 ### Cost
 
