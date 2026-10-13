@@ -515,3 +515,11 @@ The S7 repair's CP-32 pins the affected S5 physical-positive recipe: remote task
 reports require HOLD because the command has no per-report preservation manifest;
 admitted TRX evidence still reaches real physical removal. Its full runner row
 remains 144 results. PC-582 and PC-592 variants remain pending.
+
+S7 F4 (Review 75a50129) adds five negative witnesses for the scratch-probe
+survivors VP-08/09/10/13/15: TaskId landing-signature coverage, foreign
+landing ownership, landing-evidence completeness, tampered persisted-request
+replay and unsupported/unknown/absent removal replies after real inspection.
+Closed selection: `2026-10-13-card-1032-s7-f4-verification.md` (CP-33..37
+plus the repair rows; CP-F2 63, CP-F3 145). Production unchanged and inert.
+PC-595..599 remain pending with every earlier PC/variant.

@@ -1317,3 +1317,16 @@ Report HOLD is now a separate lower/upper/mixed vector, and the eligible positiv
 uses `complete.trx` with every physical deletion/receipt/ref assertion retained.
 Runner full-class count remains 144. PC-592 gains these exact recipient variants;
 PC-582 retains all four absent-authority variants. No assertion is loosened.
+
+#### S7 F4 negative witnesses
+
+| CP | Filter | Min | Oracle |
+|---|---|---:|---|
+| CP-33 | `/*/*/CompletedCardWorkspaceContractTests/C1032_LandingSignatureCoversTaskId*` | 1 | signed command verifies; only Binding.TaskId changed (other, empty) refuses |
+| CP-34 | `/*/*/CardWorktreeMirrorCleanupTests/C1032_WitnessLandingOwnership*` | 1 | foreign task/store path/repository/earlier generation landing: `unlanded_work`, no intent/request/journal; restored row removes |
+| CP-35 | `/*/*/CardWorktreeMirrorCleanupTests/C1032_WitnessLandingCompleteness*` | 1 | 13 missing/empty landing-evidence fields refuse as above; restored row removes |
+| CP-36 | `/*/*/CardWorktreeMirrorCleanupTests/C1032_WitnessPersistedReplayTamper*` | 1 | four valid-shaped tampered persisted requests hold `immutable_request_unreadable` before any recipient request; original bytes replay to removal |
+| CP-37 | `/*/*/CardWorktreeMirrorCleanupTests/C1032_WitnessUnsupportedRemovalAfterInspection*` | 1 | after real inspection/intent: real unsupported, intercepted unsupported/unknown/absent keep everything, no receipt; restored runtime replays to removal |
+
+These witnesses use Witness/LandingSignature names, so CP-13/14 stay seven;
+CP-F2 becomes 63 and CP-F3 145. PC-595..599 in the F4 selection are pending.
