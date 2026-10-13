@@ -4482,12 +4482,9 @@ c849_fixture_consumer_release() {
 }
 
 # CP-45..52 cover registered finalizer resources after Compose; CP-53 covers
-# work/mask post-create unknown probes, including a one-probe outage. Confirmed
-# foreign work/mask acquisition labels drop registration and leave those volumes untouched.
-# Known exceptions: a cache volume positively identified as foreign by acquisition (CacheVolumeForeign) remains registered and is deleted by finalization: inherited from before S7, tracked as CARD-1208; no S7 test covers it
-# Compose down -v is exit-status-only (CARD-1207); older cache
-# namespace/F-7 checks use raw inspect status, and mid-group removals use command
-# status. Anonymous --rm helpers are outside these named-resource tests. W-1 is pending.
+# work/mask post-create unknown probes, including a one-probe outage.
+# C1192_Foreign_volume_is_refused_after_create checks foreign work/mask volumes.
+# Fixture finalizer deletion is protected only where a named S7 test says so (work and mask volume acquisition ownership; unknown outcomes retained as residue). The inherited finalizer also deletes some objects by name or fixed roster (foreign cache volumes, same-name replacements behind legacy name-only markers, unacquired fixed-name consumers, and possibly others): the complete audit and fix are CARD-1208; Compose teardown is exit-status-only (CARD-1207); live Docker acceptance (W-1) is pending.
 c849_fixture_finalize() {
     local project file name marker identity network="c849-${RUN}-npm" code=0 owned=0
     [ "${C849_FIXTURE_FINALIZED:-0}" != 1 ] || return "${C849_FIXTURE_FINALIZATION_STATUS:-0}"
@@ -4516,7 +4513,7 @@ c849_fixture_finalize() {
         c849_fixture_consumer_release "$name"
     done
     # These legacy consumers carry the acquired ID/name in their existing marker.
-    # Never substitute an unregistered same-name container for that acquisition.
+    # Release by the marker value when it is the expected name or a container ID.
     for marker in prune-smoke npm-server busy donor; do
         [ -f "$CASE_DIR/.fixture-$marker" ] && [ ! -L "$CASE_DIR/.fixture-$marker" ] || continue
         case "$marker" in

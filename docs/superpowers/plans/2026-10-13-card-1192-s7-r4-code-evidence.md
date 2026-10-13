@@ -24,18 +24,14 @@ CP-53 executes production acquisition, strict wrapper, EXIT, finalizer and JSON 
 Acquisition audit (grep plus surrounding code):
 - Work and mask share workspace_create_volume: fixed the unknown-result drop, registration precedes creation/verification.
 - Writer/reader helper_acquire and S6 masked/apphost helpers register .fixture-helpers before docker create/start; helper release keeps unknown names in residue. No same post-verification drop.
-- Prepare/seed/race/apphost/npm/contract-control cache names, including the busy cache, enter .fixture-volumes before c849_volume creates/verifies them. Their registries are not dropped on failed verification; CacheVolumeForeign refusal can therefore be followed by foreign-cache deletion in finalization (CARD-1208), which no S7 test covers.
+- Prepare/seed/race/apphost/npm/contract-control cache names, including the busy cache, enter .fixture-volumes before c849_volume creates/verifies them. Their registries are not dropped on failed verification; the finalizer scope statement applies.
 - npm network writes .fixture-network immediately after successful create, before its finalizer inspect. npm-http, donor, busy consumer and prune-smoke markers precede their subsequent start/admission/smoke checks. There is no ownership probe between create acknowledgement and those registrations. These older acknowledgement-dependent acquisitions were inspected, not recast as positive-absence proof.
 - Fixed-name restore/lock/npm consumers have an explicit finalizer name roster. Anonymous --rm helpers and Compose-created objects are outside the newly modeled acquisition proof.
 No other instance of the work/mask post-ownership-registration drop was found; no unrelated acquisition semantics were changed.
 
-Replaced broad claims in docker-stack.md, the plan, all three historical S7 evidence notes, shell comments and the cleanup-test comment with named CP scopes and known exceptions. The final documentation commit labels old scope/census text historical and narrows D-5 to workspace/helper acquisition. Historical CHECKPOINT records remain untouched.
+Replaced broad claims in docker-stack.md, the plan, all three historical S7 evidence notes, shell comments and the cleanup-test comment with named CP scopes and known exceptions. The round-4 documentation commit labels old scope/census text historical and narrows D-5 to workspace/helper acquisition. Historical CHECKPOINT records remain untouched.
 
-Known exceptions:
-- a cache volume positively identified as foreign by acquisition (CacheVolumeForeign) remains registered and is deleted by finalization: inherited from before S7, tracked as CARD-1208; no S7 test covers it
-- Compose down -v teardown checks exit status only; exit-zero residual Compose volumes are not detected (CARD-1207).
-- Older prepare/seed/race/apphost/npm/contract-control namespace prechecks, shared c849_volume admission and F-7 private/nonexternal absence checks use raw inspect status. Mid-group removals rely on acknowledgement; anonymous --rm helpers are outside the named finalizer roster. These are the limits disclosed by Reviews 2ec97f2d/0a3d75f7.
-- W-1 native Docker/UID/archive/NuGet-lock and copied rollout acceptance remains pending with the rollout owner after Review/land.
+Fixture finalizer deletion is protected only where a named S7 test says so (work and mask volume acquisition ownership; unknown outcomes retained as residue). The inherited finalizer also deletes some objects by name or fixed roster (foreign cache volumes, same-name replacements behind legacy name-only markers, unacquired fixed-name consumers, and possibly others): the complete audit and fix are CARD-1208; Compose teardown is exit-status-only (CARD-1207); live Docker acceptance (W-1) is pending.
 
 ## Guarded-defect red
 

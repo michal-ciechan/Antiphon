@@ -16,22 +16,16 @@ Restart: none. No land, deployment, live Fixture, old-run cleanup or deliberate 
 
 ## Changed claims and manual audit
 
-- docs/docker-stack.md: CP-44 confirmed-foreign refusal/drop/untouched and confirmed-owned continuation explicitly cover work/mask. Finalization describes label-checked work/mask and registered caches subject to CARD-1208.
+- docs/docker-stack.md: C1192_Foreign_volume_is_refused_after_create (CP-44) checks the work/mask refusal/drop/no-mount/no-delete outcome. Finalization describes label-checked work/mask and registered caches subject to CARD-1208.
 - Plan: D-5, resource lifetime, V-1/V-2, R-8, CP-2/43 recipes and G-9..11/PC-9..10 are scoped to work/mask ownership protection or allowed names. The universal no-untested-guard claim is replaced with the precise untested foreign-cache exception. The checkpoint table, test filters, assertions and timeouts are unchanged.
 - Four historical S7 evidence notes (s7-code, s7-repair-code, s7-doc-repair, s7-r4-code): known-exception lists include CARD-1208; owned-volume/foreign-preservation descriptions now name work/mask/helpers where applicable. Cache acquisition audit explicitly discloses retained registration and foreign deletion. Historical CHECKPOINT lines are byte-identical to base.
 - c590-remote.sh comments: work/mask registration and foreign-acquisition claims name the resource class; finalizer comments include the exact exception.
 - c1192-workspace-contract.sh comments: foreign-acquisition checks cover work/mask, and named limits are stated. Unknown-probe comment names work/mask.
-- RemoteScriptContractTests comments: cleanup label protection and foreign-create behavior cover work/mask, with CacheVolumeForeign finalization excluded.
+- RemoteScriptContractTests comments: C1192_Foreign_volume_is_refused_after_create checks work/mask acquisition; the finalizer scope statement applies.
 
-Final near-context search for every/all/always/never/cannot/guarantee/any/none/confirmed/positively/untouched around ownership/foreign/cleanup/acquisition produced 79 matches. Read the surrounding S7 claims, named-controller/helper contracts and historical diagnostic context. Unrelated rollout/recycling/host-lane policies retain their own scope. Search records remain ignored at .antiphon/s7-r5-final-wording-audit.txt. Bash syntax and git diff --check pass. No executable lines, test assertions or deadlines changed; no new test or guarded-defect red is claimed for this documentation-only repair.
+Historical round-5 near-context search for every/all/always/never/cannot/guarantee/any/none/confirmed/positively/untouched around ownership/foreign/cleanup/acquisition produced 79 matches. Read the surrounding S7 claims, named-controller/helper contracts and historical diagnostic context. Unrelated rollout/recycling/host-lane policies retain their own scope. Search records remain ignored at .antiphon/s7-r5-final-wording-audit.txt. Bash syntax and git diff --check pass. No executable lines, test assertions or deadlines changed; no new test or guarded-defect red is claimed for this documentation-only repair.
 
-## Final known-exceptions list
-
-- a cache volume positively identified as foreign by acquisition (CacheVolumeForeign) remains registered and is deleted by finalization: inherited from before S7, tracked as CARD-1208; no S7 test covers it
-- Compose teardown checks down -v exit status only; exit-zero residual Compose-created volumes are undetected (CARD-1207).
-- Older prepare/seed/race/apphost/npm/contract-control cache namespace checks, shared c849_volume admission and F-7 private/nonexternal absence checks use raw inspect status.
-- Mid-group removals rely on command acknowledgement; anonymous --rm helpers remain outside the named finalizer roster. These are additional limits, not proof of foreign-cache ownership.
-- W-1 native Docker/UID/archive/NuGet-lock and copied rollout acceptance remains pending with the rollout owner after Review/land.
+Fixture finalizer deletion is protected only where a named S7 test says so (work and mask volume acquisition ownership; unknown outcomes retained as residue). The inherited finalizer also deletes some objects by name or fixed roster (foreign cache volumes, same-name replacements behind legacy name-only markers, unacquired fixed-name consumers, and possibly others): the complete audit and fix are CARD-1208; Compose teardown is exit-status-only (CARD-1207); live Docker acceptance (W-1) is pending.
 
 ## Executable-line proof against task base
 
