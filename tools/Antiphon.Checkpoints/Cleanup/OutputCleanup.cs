@@ -104,6 +104,8 @@ public static class OutputCleanup
             if (!owned.Contains(name) || !Directory.Exists(full))
                 continue;
 
+            var ledgerRefusal = SafeDelete.Refusal(full, new DeleteOwnership { IsolatedRoot = root, CreatedPaths = createdPaths, RequireInventory = true, RequireBinName = true, AllowOutsideRepository = false, GitExecutable = gitExecutable }) ?? OwnedOutputLedger.Check(full);
+            if (ledgerRefusal is not null) { refusals.Add(ledgerRefusal); continue; }
             var result = SafeDelete.Apply(full, new DeleteOwnership
             {
                 IsolatedRoot = root,
@@ -113,7 +115,7 @@ public static class OutputCleanup
                 DryRun = dryRun,
                 AllowOutsideRepository = false,
                 GitExecutable = gitExecutable,
-            }, beforeDelete);
+            }, beforeDelete, () => OwnedOutputLedger.Check(full));
             if (result.Disposition == DeleteDisposition.Refused)
                 refusals.Add(result.Reason ?? "refused");
             else if (result.Disposition is DeleteDisposition.Deleted or DeleteDisposition.DryRun)

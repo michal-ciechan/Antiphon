@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text;
+using System.Text.Json;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
@@ -35,6 +36,8 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
     // case: build changes the named shape; mutation: automatic recovery; red: bytes/index or claim changes.
     [Arguments("clean-build")]
     [Arguments("regular-user-move")]
+    [Arguments("deleted-untracked")]
+    [Arguments("changed-untracked")]
     [Arguments("existing-stamp")]
     [Arguments("compiler-collision")]
     [Arguments("existing-output-directory")]
@@ -49,17 +52,24 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
             root = BeginRepo(shape);
             PlaceUser(root, shape);
             var tool = await RunToolAsync(root, shape + "-tool", shape, cancellationToken);
-            var toolNote = Judge(shape, tool, root, receipt: null);
-            ResetWorktree(root);
+            var toolReceipt = ReadReceipt(Path.Combine(root, ".antiphon/tool-results"), shape + "-tool", tool.Exit, GitOut(root, "rev-parse", "HEAD").Trim());
+            var toolNote = Judge(shape, tool, root, toolReceipt);
+            if (shape == "symlink-on-file") new FileInfo(Path.Combine(root, "tracked.txt")).Delete();
+            if (shape == "existing-output-symlink") new DirectoryInfo(Path.Combine(root, "App/bin-probe")).Delete();
+            root = BeginRepo(shape);
             PlaceUser(root, shape);
             var script = await RunScriptAsync(root, shape + "-script", shape, cancellationToken);
             RunResult? receipt = null;
             if (shape != "clean-build")
             {
                 var receiptPath = Path.Combine(root, ".antiphon", "script-results", shape + "-script-fixed", "source.json");
-                receipt = File.Exists(receiptPath)
-                    ? await ValidateReceiptAsync(receiptPath, GitOut(root, "rev-parse", "HEAD").Trim(), cancellationToken)
-                    : new RunResult(66, "receipt missing\n" + script.Output);
+                receipt = ReadReceipt(Path.GetDirectoryName(receiptPath)!, shape + "-script", script.Exit, GitOut(root, "rev-parse", "HEAD").Trim());
+                if (receipt.Exit == 2)
+                {
+                    var validation = await ValidateReceiptAsync(receiptPath, GitOut(root, "rev-parse", "HEAD").Trim(), cancellationToken);
+                    validation.Exit.ShouldBe(2, validation.Output);
+                    validation.Output.ShouldContain("CHECKPOINT SOURCE INVALID reason=source_ineligible");
+                }
             }
 
             var scriptNote = Judge(shape, script, root, receipt);
@@ -89,6 +99,9 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
         switch (shape)
         {
             case "directory-on-file":
+                if (File.ReadAllText(Path.Combine(root, "tracked.txt/unstaged.txt")) != "USER-UNSTAGED") return "unstaged-bytes-lost";
+                if (GitOut(root, "ls-files", "--", "tracked.txt/secret.txt").Trim().Length == 0) return "staged-index-changed";
+                if (GitOut(root, "ls-files", "--", "tracked.txt/unstaged.txt").Trim().Length != 0) return "unstaged-index-changed";
                 return FinishConflict(ConflictFile(result, Path.Combine(root, "tracked.txt", "secret.txt"), "USER-SECRET", "tracked.txt", output), receipt);
             case "file-on-directory":
                 return FinishConflict(ConflictFile(result, Path.Combine(root, "dir"), "USER-FILE", "dir/a.txt", output), receipt);
@@ -145,6 +158,11 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
                     return "verified";
                 return Receipt(receipt);
             }
+            case "deleted-untracked":
+            case "changed-untracked":
+                if (shape == "deleted-untracked" && File.Exists(Path.Combine(root, "user-move.txt"))) return "tool-recreated-user-file";
+                if (shape == "changed-untracked" && File.ReadAllText(Path.Combine(root, "user-move.txt")) != "CHANGED-USER") return "tool-rewrote-user-file";
+                return FinishConflict(ConflictText(result, "user-move.txt", output), receipt);
             case "regular-user-move":
                 return FinishConflict(ConflictFile(result, Path.Combine(root, "tracked.txt"), "USER-MOVED", "tracked.txt", output), receipt);
             case "existing-stamp":
@@ -202,7 +220,7 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
             return "no-path";
         if (!output.Contains("manual restore required", StringComparison.Ordinal))
             return "no-manual";
-        if (output.Contains("lossless", StringComparison.Ordinal))
+        if (output.Contains("lossless", StringComparison.Ordinal) || output.Contains("restored", StringComparison.Ordinal))
             return "claimed-lossless";
         if (output.Contains("buildSource=verified", StringComparison.Ordinal))
             return "verified";
@@ -214,13 +232,39 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
 
     // F3 control: removing the emitted receipt must not qualify a negative validation.
     [Test]
-    public void missing_receipt_is_not_negative_success() => Receipt(null).ShouldNotBe("ok");
+    public void missing_receipt_is_not_negative_success() { RequireLinux(); Receipt(null).ShouldNotBe("ok"); }
 
     private static string Receipt(RunResult? receipt)
     {
-        if (receipt is null)
-            return "ok";
-        return receipt.Exit == 0 ? "receipt-valid" : "ok";
+        if (receipt is null) return "receipt-missing";
+        return receipt.Exit == 2 && receipt.Output == "source_ineligible" ? "ok" : "receipt-invalid: " + receipt.Output;
+    }
+
+    private static RunResult ReadReceipt(string directory, string name, int expectedExit, string head)
+    {
+        var path = name.EndsWith("-tool", StringComparison.Ordinal)
+            ? Directory.GetFiles(directory, "report.json", SearchOption.AllDirectories).SingleOrDefault()
+            : Path.Combine(directory, "source.json");
+        if (path is null || !File.Exists(path)) return new RunResult(66, "receipt missing");
+        using var doc = JsonDocument.Parse(File.ReadAllText(path));
+        var receipt = doc.RootElement;
+        var source = name.EndsWith("-tool", StringComparison.Ordinal) ? receipt.GetProperty("source") : receipt;
+        if (source.GetProperty("start").GetProperty("commit").GetString() != head) return new RunResult(66, "receipt source mismatch");
+        if (receipt.GetProperty("exitCode").GetInt32() != expectedExit) return new RunResult(66, "receipt exit mismatch");
+        if (name.EndsWith("-tool", StringComparison.Ordinal))
+        {
+            if (expectedExit == 2)
+            {
+                if (receipt.GetProperty("verdict").GetString() != "INVALID" || receipt.GetProperty("reason").GetString() != "source_ineligible") return new RunResult(66, "receipt verdict mismatch");
+                var model = JsonSerializer.Deserialize<Antiphon.Checkpoints.ReportModel>(File.ReadAllText(path), Antiphon.Checkpoints.ReportWriter.Json)!;
+                if (Antiphon.Checkpoints.ReportValidator.Validate(model, head, [name]) != "report_source_ineligible") return new RunResult(66, "negative qualification mismatch");
+            }
+            if (!receipt.GetProperty("runId").GetString()!.StartsWith(name + "-", StringComparison.Ordinal)
+                || receipt.GetProperty("rows")[0].GetProperty("id").GetString() != name)
+                return new RunResult(66, "receipt identity mismatch");
+        }
+        else if (receipt.GetProperty("name").GetString() != name) return new RunResult(66, "receipt identity mismatch");
+        return new RunResult(expectedExit, expectedExit == 2 ? "source_ineligible" : "valid");
     }
 
     private string BeginRepo(string shape)
@@ -265,7 +309,7 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
         {
             var command = shape switch
             {
-                "directory-on-file" => "rm -f -- tracked.txt && mv -- user-dir tracked.txt && git --git-dir=.git --work-tree=. add -A -- tracked.txt",
+                "directory-on-file" => "rm -f -- tracked.txt && mv -- user-dir tracked.txt && git --git-dir=.git --work-tree=. add -A -- tracked.txt && git --git-dir=.git --work-tree=. restore --staged -- tracked.txt/unstaged.txt",
                 "symlink-on-file" => "ln -sfn -- link-target.txt tracked.txt && git --git-dir=.git --work-tree=. add -- tracked.txt",
                 "untracked-descendant" => "rm -f -- tracked.txt && mv -- user-dir tracked.txt",
                 "ignored-descendant" => "rm -f -- tracked.txt && mv -- user-dir tracked.txt",
@@ -273,6 +317,8 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
                 "modified-tracked" => "printf '%s' MUTATED > tracked.txt",
                 "deleted-tracked" => "rm -f -- tracked.txt",
                 "regular-user-move" => "mv -f -- user-move.txt tracked.txt",
+                "deleted-untracked" => "rm -f -- user-move.txt && printf %s MUTATED > tracked.txt",
+                "changed-untracked" => "printf %s CHANGED-USER > user-move.txt && printf %s MUTATED > tracked.txt",
                 "existing-stamp" or "compiler-collision" or "existing-output-directory" or "existing-output-symlink" => "printf %s MUTATED > tracked.txt",
                 _ => throw new InvalidOperationException(shape),
             };
@@ -290,6 +336,7 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
         {
             case "directory-on-file":
                 Write(root, "user-dir/secret.txt", "USER-SECRET");
+                Write(root, "user-dir/unstaged.txt", "USER-UNSTAGED");
                 break;
             case "file-on-directory":
                 Write(root, "payload.dat", "USER-FILE");
@@ -306,6 +353,8 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
             case "staged-untracked":
                 Write(root, "user-keep.txt", "USER-KEEP");
                 break;
+            case "deleted-untracked":
+            case "changed-untracked":
             case "regular-user-move":
                 Write(root, "user-move.txt", "USER-MOVED");
                 break;
@@ -357,12 +406,6 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
         value.Replace("&", "&amp;", StringComparison.Ordinal)
             .Replace("\"", "&quot;", StringComparison.Ordinal)
             .Replace("<", "&lt;", StringComparison.Ordinal);
-
-    private void ResetWorktree(string root)
-    {
-        Git(root, "reset", "--hard", "HEAD");
-        Git(root, "clean", "-fdx", "-e", ".antiphon");
-    }
 
     private void Commit(string root)
     {

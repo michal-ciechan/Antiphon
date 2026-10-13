@@ -91,10 +91,11 @@ public sealed class CheckpointOutputConfinementTests : CheckpointTestBase
     private static void AssertOwnedAndUnchanged(Fixture fixture, string output, string entry)
     {
         var detail = entry + " output:\n" + output;
+        var directory = entry == "tool" ? "bin-probe" : "bin-script-probe";
         File.ReadAllBytes(fixture.Dll).ShouldBe(fixture.DllBytes, detail);
         File.ReadAllBytes(fixture.Assets).ShouldBe(fixture.AssetBytes, detail);
-        File.Exists(Path.Combine(fixture.Root, "App", "bin-probe", "Lib.dll")).ShouldBeTrue(detail);
-        File.Exists(Path.Combine(fixture.Root, "App", "bin-probe", "artifacts", "obj", "Lib", "project.assets.json")).ShouldBeTrue(detail);
+        File.Exists(Path.Combine(fixture.Root, "App", directory, "Lib.dll")).ShouldBeTrue(detail);
+        File.Exists(Path.Combine(fixture.Root, "App", directory, "artifacts", "obj", "Lib", "project.assets.json")).ShouldBeTrue(detail);
         output.ShouldNotContain("source_changed", Case.Sensitive);
         output.ShouldNotContain("refused: tampered", Case.Sensitive);
         output.ShouldNotContain("refused: graph-unevaluated", Case.Sensitive);
@@ -134,7 +135,7 @@ public sealed class CheckpointOutputConfinementTests : CheckpointTestBase
         {
             "-NoProfile", "-NonInteractive", "-File",
             Path.Combine(CheckpointFixtures.RepoRoot, "scripts", "run-checkpoint.ps1"),
-            "-Name", name, "-Project", "App/App.csproj", "-OutputPath", OutputPath,
+            "-Name", name, "-Project", "App/App.csproj", "-OutputPath", "bin-script-probe/",
             "-Filter", "/*/*/Unused/*", "-ResultsRoot", ".antiphon/script-results",
             "-MinExecuted", "1", "-NoSlot",
         })
