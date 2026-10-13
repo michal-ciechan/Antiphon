@@ -136,3 +136,21 @@ capacity was advertised. No runner or OS pin is introduced. A build-slot-gated
 isolated checkpoint-tool bootstrap is the only additional setup build because
 this new worktree has no tool executable. No restart or manual live acceptance
 is required for S4.
+
+## Continuation T32 fixture repair
+
+The first continuation run 20261013-080440-6e09 passed S4-T33=1/1 and
+CP-4=48/48 on 2bfb8433934c6c1b0353c28a332b3cbd82be8db2. During source
+inspection, T32's backoff response was found to request 30 seconds while the
+fixture admitted only the default five-second maximum delay. Its observed
+30-second timer could therefore be the attempt timer, leaving backoff unproved.
+
+The fixture now admits that 30-second delay without changing any timeout, requires
+the actual retry log and a live delay timer, and records the logical read token
+outside the retry pipeline. All three T32 variants assert token cancellation
+synchronously at the exact ten-second watchdog budget before joining. Teardown
+releases controlled I/O and expires the unchanged inner budget if an assertion
+fails. PC-77's headers/body/backoff variants remain pending for Mutation.
+Run the unchanged whole-class CP-4 on this committed repair; the additional run
+is justified by the strengthened source, not unchanged proof repetition. S4-T33's
+successful method run remains evidence and its case is also present in CP-4.
