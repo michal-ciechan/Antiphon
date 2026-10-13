@@ -53,6 +53,9 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
     private readonly WorkerScopeGate _workerScopes = new();
     private readonly ContinuationQueue _continuations = new();
     public bool ConcurrentScopeBarriers { get; set; }
+    private int _postRestartDeliveryWorkerCycles;
+    private bool _restarted;
+    public int PostRestartDeliveryWorkerCycles => Volatile.Read(ref _postRestartDeliveryWorkerCycles);
     private readonly CancellationTokenSource _stop = new(TimeSpan.FromSeconds(90));
     public List<Guid> Tasks { get; } = [];
     public Guid Id => World.CallerSessionId;
@@ -187,12 +190,25 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
         if (_adapter is not null) await _adapter.DisposeAsync();
         await World.RestartAsync(keepInterceptor: true);
         Attach();
+        _restarted = true;
+        Interlocked.Exchange(ref _postRestartDeliveryWorkerCycles, 0);
+    }
+
+    // Exercise the fresh worker even when boot discovery has no unattempted rows.
+    // The existing interrupted-attempt age is 3+3+30 seconds in C544World.
+    public async Task RecoverDeliveryAfterRestartAsync()
+    {
+        Clock.Advance(TimeSpan.FromSeconds(37));
+        Flushes.TryEnqueue(Id).ShouldBeTrue();
+        await StartCompletionWorkerAsync(minimumScans: 0);
+        await JoinOwnedWorkAsync();
     }
 
     public async Task StartCompletionWorkerAsync(int? minimumScans = null)
     {
         var after = Clock.Events.LastOrDefault()?.Sequence ?? 0;
-        _worker = new CompletionNoteWorkHostedService(new ObservedScopes(World.Services.GetRequiredService<IServiceScopeFactory>(), _workerScopes),
+        _worker = new CompletionNoteWorkHostedService(new ObservedScopes(World.Services.GetRequiredService<IServiceScopeFactory>(), _workerScopes,
+            () => { if (_restarted) Interlocked.Increment(ref _postRestartDeliveryWorkerCycles); }),
             Flushes, World.Services.GetRequiredService<SpecialistFailureQueue>(), Clock,
             World.Services.GetRequiredService<ILogger<CompletionNoteWorkHostedService>>());
         _workerLoop = new OwnedLoop(_worker, Token);
@@ -742,20 +758,33 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
             finally { service.Dispose(); _stop.Dispose(); }
         }
     }
-    private sealed class ObservedScopes(IServiceScopeFactory inner, WorkerScopeGate gate) : IServiceScopeFactory
+    private sealed class ObservedScopes(IServiceScopeFactory inner, WorkerScopeGate gate, Action completed) : IServiceScopeFactory
     {
-        public IServiceScope CreateScope() => new Scope(inner.CreateScope(), gate);
-        private sealed class Scope(IServiceScope inner, WorkerScopeGate gate) : IServiceScope, IAsyncDisposable
+        public IServiceScope CreateScope() => new Scope(inner.CreateScope(), gate, completed);
+        private sealed class Scope(IServiceScope inner, WorkerScopeGate gate, Action completed) : IServiceScope, IAsyncDisposable
         {
-            public IServiceProvider ServiceProvider { get; } = new Provider(inner.ServiceProvider, gate);
-            public void Dispose() => inner.Dispose();
+            private readonly Provider _provider = new(inner.ServiceProvider, gate);
+            public IServiceProvider ServiceProvider => _provider;
+            public void Dispose() { inner.Dispose(); RecordCycle(); }
             public async ValueTask DisposeAsync()
-            { if (inner is IAsyncDisposable owned) await owned.DisposeAsync(); else inner.Dispose(); }
+            {
+                if (inner is IAsyncDisposable owned) await owned.DisposeAsync(); else inner.Dispose();
+                RecordCycle();
+            }
+            private void RecordCycle() { if (_provider.DeliveryCycle) completed(); }
         }
         private sealed class Provider(IServiceProvider inner, WorkerScopeGate gate) : IServiceProvider
         {
+            private bool _resolved;
+            public bool DeliveryCycle { get; private set; }
             public object? GetService(Type type)
-            { if (type == typeof(SessionMessageQueueService)) gate.Enter(); return inner.GetService(type); }
+            {
+                // FlushAsync resolves the queue first; recovery scopes resolve
+                // AppDbContext first. Count completed delivery scopes, not scans.
+                if (!_resolved) { DeliveryCycle = type == typeof(SessionMessageQueueService); _resolved = true; }
+                if (type == typeof(SessionMessageQueueService)) gate.Enter();
+                return inner.GetService(type);
+            }
         }
     }
 
