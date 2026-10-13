@@ -109,6 +109,7 @@ public sealed class CodexRootExecContractTests
     public void Entrypoint_heal_never_names_a_path_outside_tmp()
     {
         NativeLinuxGate.Require(NativeLinuxReason);
+        AssertPrerequisiteRefusal("state", "PREREQ /state", 98, "c1210-prereq-state");
         const string once = "-R -h 1654:1654 -- /state/codex/tmp";
         var output = RunExtractedHeal(
             """

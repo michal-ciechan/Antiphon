@@ -292,6 +292,13 @@ public sealed class WindowsUnitPlatformAdmissionTests
         };
         var safe = PrepareChildLaunch(true, true, inherited);
         ValidateLaunch(safe);
+        foreach (var key in new[] { "ANTIPHON_C1050_WORKER", "antiphon_c1210_worker" })
+            safe.Environment.ContainsKey(key).ShouldBeFalse("c1210-negative: child-worker");
+        safe.Environment.ContainsKey("C885_REPEAT").ShouldBeFalse("c1210-negative: child-repeat");
+        safe.Environment.ContainsKey("ANTIPHON_CHECKPOINT_NONCE").ShouldBeFalse("c1210-negative: child-nonce");
+        safe.Environment[ProductionRunnerGuard.BaseUrlEnvVar].ShouldBe("http://127.0.0.1:1", "c1210-negative: child-runner");
+        safe.Environment[ProductionRunnerGuard.CheckInterpreterEnvVar].ShouldBe("false", "c1210-negative: child-interpreter");
+        AssertSourceStampVectors();
         safe.Environment["C1210_KEEP"].ShouldBe("sentinel", "c1210-child-environment-preserved");
         foreach (var (spec, label) in new[] { (safe with { AppHostExists = false }, "c1210-child-apphost"),
                      (safe with { SourceVerified = false }, "c1210-child-source-stamp") })
@@ -305,6 +312,37 @@ public sealed class WindowsUnitPlatformAdmissionTests
             Should.Throw<ShouldAssertException>(() => ValidateLaunch(safe with { Environment = changed }), "c1210-negative: " + label)
                 .Message.ShouldContain(label);
         }
+    }
+
+    private static void AssertSourceStampVectors()
+    {
+        var root = Directory.CreateTempSubdirectory("c1210-stamp-").FullName;
+        try
+        {
+            var expected = new Antiphon.Checkpoints.CheckpointBuildBinding
+            {
+                RepositoryRoot = root, Project = Path.Combine(root, "tests"), OutputPath = Path.Combine(root, "bin-c1210-fixture"),
+                Commit = new string('a', 40), Fingerprint = "literal-clean-fingerprint", SourceState = "clean", Properties = [],
+            };
+            expected.Check().ShouldBe("unknown", "c1210-negative: source-stamp-missing");
+            Should.Throw<ShouldAssertException>(() => ValidateLaunch(PrepareChildLaunch(true, expected.Check() == "verified",
+                new Dictionary<string, string?>())), "c1210-negative: source-stamp").Message.ShouldContain("c1210-child-source-stamp");
+            expected.Write();
+            expected.Check().ShouldBe("verified", "c1210-source-stamp-healthy");
+            foreach (var (field, value) in new[] { ("version", "2"), ("repositoryRoot", "\"wrong\""), ("project", "\"wrong\""),
+                         ("outputPath", "\"wrong\""), ("commit", "\"wrong\""), ("fingerprint", "\"wrong\""),
+                         ("sourceState", "\"dirty\""), ("properties", "[\"UseAppHost=false\"]") })
+            {
+                expected.Write();
+                var json = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(expected.PathName))!;
+                json[field] = System.Text.Json.Nodes.JsonNode.Parse(value);
+                File.WriteAllText(expected.PathName, json.ToJsonString());
+                expected.Check().ShouldBe("mismatch", "c1210-negative: source-stamp-" + field);
+                Should.Throw<ShouldAssertException>(() => ValidateLaunch(PrepareChildLaunch(true, expected.Check() == "verified",
+                    new Dictionary<string, string?>())), "c1210-negative: source-stamp").Message.ShouldContain("c1210-child-source-stamp");
+            }
+        }
+        finally { Directory.Delete(root, recursive: true); }
     }
 
     [Test, ParallelLimiter<ProcessSpawnLimit>]
