@@ -362,10 +362,26 @@ validator cannot mask the poll upper-bound mutant. Resolve and invoke the real
 registered startup options validator before starting timers: an incidental timer
 argument exception must not substitute for the expected options rejection.
 
-With defaults, the nominal single-session check allowance is 120+15+10 = 145
-seconds, excluding measured commit delay. Stable N-session discovery adds up to
-ceil(N/128)*15 seconds and admitted backlog up to ceil(N/4)*10 seconds; held or
-non-cooperative I/O changes the outcome to visible debt. Log due/result metadata
+For an already tracked session with a free worker, the nominal allowance is
+I + P + D + B (145 seconds plus pass/commit delay with defaults). Here I is
+IntervalSeconds, P is PollSeconds, D bounds the duration of one complete scheduler
+pass, and B is ProbeTimeoutSeconds plus a bounded extra commit/join delay C.
+Workers are replenished only once per pass, followed by the host's P-second delay.
+For stable admitted N <= 1024 sessions with no generation churn, overflow or
+non-cooperative owned operations, let K = ceil(N / MaxConcurrentProbes).
+The conservative backlog completion allowance after its first admission is
+(K-1)*(B+P+D)+B, not K*ProbeTimeoutSeconds. With defaults and D=C=0 this is
+(K-1)*25+10 seconds. Discovery of L local Running candidates (including idle
+candidates) adds M*(P+D), where M=ceil(L/PageSize) from an empty startup cursor,
+or ceil(L/PageSize)+1 for a full arbitrary-cursor cycle. A conservative combined
+allowance is I + M*(P+D) + (K-1)*(B+P+D) + B; cold startup need not wait I.
+These formulas assume bounded successful scans and cooperative probes with a
+bounded commit delay. Without finite D/C, or above directory capacity without a
+free slot, there is no finite completion bound: retain and log visible debt.
+T62's real hosted fake clock checks the poll-refill term using the actual defaults;
+it does not certify arbitrary I/O latency or complete recipient delivery.
+
+Log due/result metadata
 (session, generation, server epoch, reason, elapsed age, pre/post stored sequence,
 added count, duration) and separate unknown, discovery, overflow, capacity and
 overdue warnings. T18/T21/T22/T24/T25/T31 assert these at controlled poll boundaries.
@@ -993,7 +1009,7 @@ green. Repair round 2 runs CP-1, CP-2, and ADJ-1 on one S2 output. All rows requ
 | CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1205-s2/` | subscription | `/*/Antiphon.Tests.Application/(TurnEndGapReproductionTests*)\|(SessionRunnerStreamReadinessTests*)\|(SessionRunnerEventPumpTests*)\|(SessionRunnerHeldEventDeliveryTests*)\|(SessionRunnerHeldEventExitMatrixTests*)/*` | V-1..7,R-1,R-6,T47..T56 | Exactly 107 executed, all named cases green | 107 | 10 |
 | ADJ-1 | S2 | `tests/Antiphon.Tests -> bin-c1205-s2/` | adjacent | `/*/*/(SessionRunnerHttpClientHostStatsTests*)\|(SessionRunnerGenerationWireTests*)\|(SessionRunnerSettingsTests*)\|(SessionStateCommitTests*)\|(TranscriptWorkingStateQueryTests*)/*` | wire and working-state compatibility | Exactly 33 executed, all green | 33 | 3 |
 | CP-3 | S3 | `tests/Antiphon.Tests -> bin-c1205-s3/` | checked-recovery | `/*/Antiphon.Tests.Application/(WorkingTranscriptRecoveryTests*)\|(SessionStateCommitTests*)\|(TranscriptWorkingStateQueryTests*)/*` | V-8..12,V-25,V-26,R-2,R-7 | Exactly 62 executed, all named cases green | 62 | 11 |
-| CP-4 | S4 | `tests/Antiphon.Tests -> bin-c1205-s4/` | watchdog | `/*/Antiphon.Tests.Application/StaleWorkingTranscriptWatchdogTests*/*` | V-13..19,V-27..35,R-3,R-4 | Exactly 48 executed, all named cases green | 48 | 12 |
+| CP-4 | S4 | `tests/Antiphon.Tests -> bin-c1205-s4/` | watchdog | `/*/Antiphon.Tests.Application/StaleWorkingTranscriptWatchdogTests*/*` | V-13..19,V-27..35,R-3,R-4 | Exactly 53 executed (48 inherited + T61 four + T62 one), all named cases green | 53 | 12 |
 | CP-5 | S5 | `tests/Antiphon.Tests -> bin-c1205-s5/` | restart-receipts | `/*/Antiphon.Tests.Application/TurnEndGapRestartDeliveryTests*/*` | V-20..24,V-36..40,R-5 | Exactly 30 executed, all named cases green | 30 | 16 |
 | CP-6 | S5 | `tests/Antiphon.Tests -> bin-c1205-receipts/` | receipt-compatibility | `/*/*/(VerificationRoundDeliveryTests*)\|(TestClassificationGuardTests*)/(C544_CompletionReceipt*)\|(C544_StampIsNotReceipt*)\|(Registry_matches_compiled_metadata*)` | R-8,R-9 | Exactly the 4 named methods green | 4 | 7 |
 
@@ -1150,5 +1166,5 @@ that ignores cancellation. CP-4 includes all 53 rows.
 
 | PC | Pending mutant | Method-scoped binding | Intended red | Status |
 |---|---|---|---|---|
-| PC-191 | Restore directory-membership condition on successful wakeup; duplicate the wakeup; remove generation/single-flight protection | `/*/*/StaleWorkingTranscriptWatchdogTests/C1205_Reconciliation_preserves_owned_recovery_wakeup` | after-commit/two-probes Accepted must be exactly one; before-commit cannot wake; held submission count exactly one | Pending, each independent variant |
+| PC-191 | Restore directory-membership condition on successful wakeup; duplicate the wakeup | `/*/*/StaleWorkingTranscriptWatchdogTests/C1205_Reconciliation_preserves_owned_recovery_wakeup` | after-commit/two-probes Accepted must be exactly one; before-commit cannot wake; held submission count exactly one | Pending, each independent variant |
 | PC-192 | Ignore configured poll cadence or refill immediately after a probe completes | `/*/*/StaleWorkingTranscriptWatchdogTests/C1205_Hosted_backlog_bound_includes_poll_refill` | exact observed admission timestamps/counts and elapsed bound | Pending, each independent variant |

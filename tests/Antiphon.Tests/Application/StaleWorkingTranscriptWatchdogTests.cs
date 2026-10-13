@@ -462,11 +462,19 @@ public class StaleWorkingTranscriptWatchdogTests
         adapter.OnSubmitted = async _ => { submitted.TrySetResult(); await releaseInput.Task; };
         await h.Queue.EnqueueAsync(h.Id, "C1205 reconciliation note", MessageSendMode.WhenIdle, default, deliverIfIdle: false);
         h.Commit.Hold = interleaving is "after-commit" or "two-probes";
-        if (interleaving == "before-commit") h.Handler.Held.Add(h.Id);
+        if (interleaving is "before-commit" or "two-probes") h.Handler.Held.Add(h.Id);
         Task? delivery = null;
         try
         {
             await h.PassAsync();
+            if (interleaving == "two-probes")
+            {
+                await h.Handler.WaitForAsync(h.Id);
+                await Task.WhenAll(h.PassAsync(), h.PassAsync());
+                h.Entries.Length.ShouldBe(1); h.Active.Length.ShouldBe(1);
+                h.HttpGets.ShouldBe(1, "overlapping admission attempts retain one owned probe");
+                h.Handler.Release.TrySetResult();
+            }
             if (interleaving == "before-commit")
             {
                 await h.Handler.WaitForAsync(h.Id);

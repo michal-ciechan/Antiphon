@@ -8,7 +8,7 @@ using Microsoft.Extensions.Options;
 
 namespace Antiphon.Server.Application.Services;
 
-/// <summary>T18..T35 bind the bounded scheduler, checked recovery and wakeup behavior.</summary>
+/// <summary>T18..T35 and T61/T62 bind scheduling, checked recovery and owned wakeups.</summary>
 public sealed class StaleWorkingTranscriptRecovery(
     IServiceScopeFactory scopes, AgentSessionRuntime runtime, CompletionNoteFlushQueue flushes,
     IOptions<StaleWorkingTranscriptSettings> options, TimeProvider clock,
@@ -161,6 +161,8 @@ public sealed class StaleWorkingTranscriptRecovery(
 
     private void Admit(CancellationToken ct)
     {
+        // Workers refill once per Tick, not on probe completion. T62 binds the host
+        // poll cadence; backlog timing includes both probe budget and the next poll.
         Reap();
         foreach (var entry in _directory.Values)
         {
@@ -212,7 +214,12 @@ public sealed class StaleWorkingTranscriptRecovery(
             {
                 var current = _directory.TryGetValue(entry.SessionId, out var tracked) && ReferenceEquals(tracked, entry);
                 if (current && result.Outcome != TranscriptRecoveryOutcome.Unknown) entry.LastSuccess = clock.GetTimestamp();
-                wake = current && result.Outcome == TranscriptRecoveryOutcome.RecoveredIdle;
+                // Reconciliation may observe the committed idle verdict and remove
+                // this entry before the checked probe returns. Directory membership
+                // controls future scheduling, never this operation's owned wakeup.
+                // The accepted-generation check above still gates success; the
+                // ordinary coalesced flush rechecks current idle before delivery.
+                wake = result.Outcome == TranscriptRecoveryOutcome.RecoveredIdle;
             }
             logger.LogInformation("Stale Working probe result session {SessionId}, generation {Generation}, epoch {ServerEpoch}, reason {Reason}, outcome {Outcome}, elapsed {ElapsedAgeSeconds}, pre {PreStoredSequence}, post {PostStoredSequence}, added {AddedCount}, duration {DurationMs}",
                 entry.SessionId, entry.Generation, _epoch, result.Reason, result.Outcome.ToString(), age,

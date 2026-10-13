@@ -29,6 +29,9 @@ public sealed class StaleWorkingTranscriptHostedService(
                 catch (Exception ex) when (!stoppingToken.IsCancellationRequested)
                 { logger.LogWarning(ex, "Stale Working scheduler pass failed; continuing at configured poll"); }
                 finally { _firstPass.TrySetResult(); }
+                // This delay follows the whole pass. Completed probe slots are
+                // replenished on the next pass, so the backlog allowance includes
+                // poll cadence and pass/commit duration (T62), not timeout alone.
                 await Task.Delay(TimeSpan.FromSeconds(settings.PollSeconds), clock, stoppingToken);
             }
         }

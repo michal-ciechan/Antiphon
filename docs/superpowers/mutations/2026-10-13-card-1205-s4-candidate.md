@@ -1,11 +1,12 @@
 # CARD-1205 S4 — unbound Mutation candidate
 
 Status: pending; no SourceLanding Mutation has run. Code/landing owner:
-902bc6d6-3b26-465f-bdef-ff32f5920dd5, branch `feat/card-task-902bc6d6`.
+0ced9d05-9c38-478e-81ba-3dc9c9375223, branch `feat/card-task-0ced9d05`.
+Original S4 Code task: 902bc6d6-3b26-465f-bdef-ff32f5920dd5.
 Continuation base: ab32d51ad1a71c87e3098993bfe2f07365c04f01; predecessor
 7b7d644a-a776-42e8-bc12-3d57e5df5ace. S1-S3 are inherited; S5 is outside this slice.
 
-All 53 S4 IDs, PC-41..83 and PC-101..110, and every variant below remain
+All 55 S4 IDs, PC-41..83, PC-101..110 and PC-191..192, and every variant below remain
 pending. Ordinary CP-4 green and the missing-feature baseline reds discharge
 none. Payloads, guard IDs and intended assertion reds are owned by the frozen
 [test design](../plans/2026-10-12-card-1205-test-design.md#positive-controls).
@@ -48,7 +49,14 @@ generation replacement, wakeup failure/recovery sweep, cancellation/shutdown
 ownership and fallback ownership reads. Any missing control remains its finding;
 no unexecuted additional variant is claimed passed here.
 
-Caller commissions Review, lands original Code task 902bc6d6 after a clean Review,
+Caller commissions Review, lands repair Code/landing owner 0ced9d05 after a clean Review,
 then commissions method-scoped SourceLanding Mutation. Run only local inherited
 children in the landed snapshot; retain red/restore/green evidence externally.
 No timeout or assertion relaxation. Restart: none.
+
+F1/F2 repair controls (all pending, no deliberate mutant executed by Code):
+
+| Pending PCs | Method-scoped selection | Pending variants / intended red |
+|---|---|---|
+| PC-191 | `/*/*/StaleWorkingTranscriptWatchdogTests/C1205_Reconciliation_preserves_owned_recovery_wakeup` | Restore directory-membership wake guard: post-commit removal loses the one wake. Duplicate TryEnqueue: exact Accepted list must fail; held adapter submission remains one. Four interleavings: before-commit, after-commit, after-return, two admission attempts. |
+| PC-192 | `/*/*/StaleWorkingTranscriptWatchdogTests/C1205_Hosted_backlog_bound_includes_poll_refill` | Ignore configured host poll or continuously refill after probe completion: measured admission counts/timestamps must fail. This is a scheduler witness, not proof of arbitrary DB/commit latency. |
