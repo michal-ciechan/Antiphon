@@ -300,3 +300,7 @@ Antiphon.Tests.Application.PhoneHomeCompletedCardTransportTests
 
 # CARD-1032 S7: real PostgreSQL, scratch Git, phone-home recipient and receipt refusal matrices.
 Antiphon.Tests.Application.CardWorktreeMirrorCleanupTests
+
+
+# CARD-1213 S1: real runner WebSocket, real Git recipients and isolated PostgreSQL recovery cuts; review CP-7 measured 65s for 3 methods.
+Antiphon.Tests.Application.DelegateBranchDeliveryTests
