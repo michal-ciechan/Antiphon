@@ -8,7 +8,7 @@ namespace Antiphon.SessionRunner.Tests;
 [Category("Integration"), Category("Slow")]
 [NotInParallel("SessionLiveness")]
 [ParallelLimiter<ProcessSpawnLimit>]
-public sealed class CompletedCardWorkspaceRemovalTests
+public sealed partial class CompletedCardWorkspaceRemovalTests
 {
     // PC-223/230: bypass normalization or take session before workspace -> concurrent entry or held session lock.
     [Test]
