@@ -37,6 +37,8 @@ Closed scope overrides broad Unit profile per repair brief. Linux only. One isol
 | CP-15 | S2 | CP-1 | shared-verified-reader | `/*/*/PlanCoverageHandleTests/*` | R-4 V-5 | full affected reader class, all sixteen cases | 16 | 1 |
 | CP-16 | S2 | CP-1 | master-path-binding | `/*/*/CheckpointBuildBindingPathTests/*` | R-1 | all three retained master cases, 0 failed/skipped | 3 | 1 |
 
+| CP-17 | S2 | CP-1 | nonempty-receipt-identities | `/*/*/CheckpointReceiptSafetyTests/receipt_row_and_build_identities_refuse_blank_without_writing*` | V-6 F1 | four handwritten input rows; all receipt-consuming verbs, no writes on refusal | 4 | 2 |
+
 ### Mutation handoff
 
 No deliberate mutants run by Code. All PCs/variants and missing-control discovery, including this zero-PC plan, remain pending method-scoped SourceLanding Mutation after ordinary Review and caller landing. Candidate documentation: docs/superpowers/mutations/. Restart: none.
@@ -84,3 +86,15 @@ Budget-stopped at source 89bf1e2fda1787f00bd8c41091a2c3ea862b7022, run 20261013-
 Task f3302b7a starts at master 6e36b695f9ead5f16e9bb05a7f4033cd0c432cf2. All CARD-1199 commits absent from master are replayed, including prerequisites before 3dffd8d2c that the requested continuation range assumes. The SourceRunGuard conflict combines master's NormalizeDirectory producer/comparison behavior with candidate ProjectWriteRoots.DirectoryOf project-file handling. No rebase or merge commits.
 
 The inherited plan requires census 504, not the earlier brief's 501. Preserve that 504-case CARD-1199 roster and the three master CheckpointBuildBindingPathTests; the merged independent census therefore requires 507. CP-16 explicitly verifies those existing master methods, reusing the CP-1 build. This additional row is required by the replay brief's master-behavior proof, not an extra repeat or broad selection. CP-1..CP-15 remain unchanged. Expected combined total: 226 passed plus one disclosed Windows sharing skip. All V-1..V-6/R-1..R-4 obligations and pending PC variants remain as above; native R-2 remains pending on Linux.
+
+### Repair 13g verification design
+
+Landing owner Code 2a33144d-0f31-4ca1-a086-bbde8fee6edd, branch feat/card-task-2a33144d; repair base c30634df617dd2b31f0b2e8271f18c7faa786a44. F1 is enforced: row and build identities in state/report receipts must be nonempty, including whitespace-only refusal. CP-17 is tests-first with handwritten empty, whitespace, null and valid argument rows. It exercises report, report --json, report --merge, report --merge --json, status, terminal stop, wait, explicit clean, and report validate. The valid clean control retains its documented exit 2; validate consumes report only. Invalid controls assert named refusals and unchanged complete run-file inventories/bytes.
+
+CP-RED selects CP-17 against unchanged base production. Final selects CP-1..CP-17 with --serial so CP-1, CP-7 and CP-8 hanging-Git passes cannot overlap. Each run owns one isolated build with UseAppHost=false and a trailing forward-slash OutputPath. The tests-first build is necessary to prove the guarded defect; the fix needs a fresh build because source changed. No Unit lane or full assembly. Expected Final total: 230 passed, zero failed, one planned Windows sharing skip. Independent census: 511 (507 inherited plus four argument rows). Budget 50 minutes; bounded affected classes only.
+
+| PC | Detecting method/filter | Variant | Status |
+|---|---|---|---|
+| PC-4 | `/*/*/CheckpointReceiptSafetyTests/receipt_row_and_build_identities_refuse_blank_without_writing` | row/build identity guard removal; state/report x empty/whitespace/null x each admitted receipt consumer; valid controls and no-write checks | pending method-scoped SourceLanding Mutation |
+
+V-1..V-6 and R-1/R-3/R-4 retain their full closed selection. R-2 native Windows qualification and every inherited/new PC remain pending. Post-land Mutation has not run. Restart: none.
