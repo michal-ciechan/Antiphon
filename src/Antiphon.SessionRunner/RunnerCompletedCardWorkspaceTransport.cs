@@ -11,13 +11,16 @@ public sealed class RunnerCompletedCardWorkspaceTransport
     internal RunnerCompletedCardWorkspaceRemoval Removal { get; }
 
     public RunnerCompletedCardWorkspaceTransport(RunnerWorkspaceService workspace,
-        RunnerWorkspaceRemovalJournal journal, RunnerWorkspaceUseGate gate)
+        RunnerWorkspaceRemovalJournal journal, RunnerWorkspaceUseGate gate) : this(workspace, journal, gate, null) { }
+
+    public RunnerCompletedCardWorkspaceTransport(RunnerWorkspaceService workspace,
+        RunnerWorkspaceRemovalJournal journal, RunnerWorkspaceUseGate gate, string? landingMapKey)
     {
         if (!ReferenceEquals(workspace.WorkspaceUseGate, gate) || !ReferenceEquals(gate.RemovalJournal, journal))
             throw new ArgumentException("Completed-card transport requires the shared workspace gate and journal.");
         _journal = journal;
         Gate = gate;
-        Removal = new(workspace);
+        Removal = new(workspace, landingMapKey);
     }
 
     public async Task<CompletedCardWorkspaceInspectionResponse> InspectAsync(

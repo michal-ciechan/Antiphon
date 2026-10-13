@@ -36,7 +36,7 @@ public sealed partial class RunnerCompletedCardWorkspaceRemoval
                 return "protected_content";
         }
         if (inspected.HeadSha != command.Proof.ExpectedHeadSha) return "head_mismatch";
-        return await CheckRemoteProofAsync(binding, command.Proof, binding.WorktreePath, ct);
+        return await CheckRemoteProofAsync(binding, command.Proof, binding.WorktreePath, command, ct);
     }
 
     private static bool EvidenceAuthority(CompletedCardWorkspaceCommand command) =>
@@ -112,7 +112,7 @@ public sealed partial class RunnerCompletedCardWorkspaceRemoval
         var aside = intent.SetAsidePath!;
         if (!UnlinkedPath(Path.GetDirectoryName(aside)!) || !UnlinkedPath(binding.CommonDirectory)) return Hold("linked_content");
         if (gate.HasOwnershipConflict(binding.WorktreePath)) return Hold("workspace_in_use");
-        if (await CheckRemoteProofAsync(binding, command.Proof, binding.CommonDirectory, ct) is { } replayProofReason)
+        if (await CheckRemoteProofAsync(binding, command.Proof, binding.CommonDirectory, command, ct) is { } replayProofReason)
             return Hold(replayProofReason);
         if (intent.Phase == "Prepared")
         {

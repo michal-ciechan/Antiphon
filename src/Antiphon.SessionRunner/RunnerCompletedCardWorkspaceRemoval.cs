@@ -6,8 +6,9 @@ namespace Antiphon.SessionRunner;
 /// Read-only inspector with explicit S5 removal in the companion partial.
 /// C1032_InspectionReadOnlyBound checks repository/tree/store bytes.
 /// </summary>
-public sealed partial class RunnerCompletedCardWorkspaceRemoval(RunnerWorkspaceService workspace)
+public sealed partial class RunnerCompletedCardWorkspaceRemoval(RunnerWorkspaceService workspace, string? landingMapKey)
 {
+    public RunnerCompletedCardWorkspaceRemoval(RunnerWorkspaceService workspace) : this(workspace, null) { }
     public async Task<RunnerCompletedCardWorkspaceInspection> InspectAsync(
         CompletedCardWorkspaceInspectRequest request, CancellationToken ct)
     {
@@ -85,7 +86,8 @@ public sealed partial class RunnerCompletedCardWorkspaceRemoval(RunnerWorkspaceS
 
     /// <summary>
     /// Read-only direct-containment proof; C1032_InspectionSourceProof covers live ref drift.
-    /// S5 refuses Rebased; caller decision 2026-10-13 assigns the positive to S7.
+    /// Direct proof inspection refuses Rebased. C1032_AdmissionBoundRebaseProof covers
+    /// the S7 signed command path in explicitly composed transport.
     /// </summary>
     public async Task<string?> CheckProofAsync(CompletedCardWorkspaceBinding binding,
         CompletedCardWorkspaceProof proof, CancellationToken ct)
@@ -93,16 +95,19 @@ public sealed partial class RunnerCompletedCardWorkspaceRemoval(RunnerWorkspaceS
         var inspected = await InspectAsync(new(1, binding), ct);
         if (inspected.Reason is not null) return inspected.Reason;
         if (inspected.HeadSha != proof.ExpectedHeadSha) return "head_mismatch";
-        return await CheckRemoteProofAsync(binding, proof, binding.WorktreePath, ct);
+        return await CheckRemoteProofAsync(binding, proof, binding.WorktreePath, null, ct);
     }
 
     private async Task<string?> CheckRemoteProofAsync(CompletedCardWorkspaceBinding binding,
-        CompletedCardWorkspaceProof proof, string repositoryPath, CancellationToken ct)
+        CompletedCardWorkspaceProof proof, string repositoryPath, CompletedCardWorkspaceCommand? command, CancellationToken ct)
     {
         if (proof.DestinationFingerprint != binding.RepositoryIdentity
             || proof.DestinationRef != workspace.InspectionPublishedRef) return "preservation_destination_mismatch";
-        if (proof.ProofKind != CompletedCardWorkspaceProtocol.ProofContained
-            || proof.RebasedSourceSha is not null || string.IsNullOrWhiteSpace(proof.ProofIdentity))
+        var rebased = proof.ProofKind == CompletedCardWorkspaceProtocol.ProofRebased;
+        if (string.IsNullOrWhiteSpace(proof.ProofIdentity)
+            || rebased && (command is null || !CompletedCardWorkspaceLandingAuthority.Verify(command, landingMapKey)
+                || proof.RebasedSourceSha != proof.PreservedSourceSha || !IsSha(proof.RebasedSourceSha))
+            || !rebased && (proof.ProofKind != CompletedCardWorkspaceProtocol.ProofContained || proof.RebasedSourceSha is not null))
             return "preservation_proof_unsupported";
         if (!IsSha(proof.ObservedTargetSha) || !IsSha(proof.PreservedSourceSha)) return "preservation_proof_invalid";
         try
@@ -114,7 +119,8 @@ public sealed partial class RunnerCompletedCardWorkspaceRemoval(RunnerWorkspaceS
                 return "stale_preservation_proof";
             // No fetch: read-only inspection may hold if the fresh remote objects are not local.
             // Both H and the supplied preserved P must be contained in that exact fresh target.
-            foreach (var source in new[] { proof.ExpectedHeadSha, proof.PreservedSourceSha })
+            foreach (var source in rebased ? new[] { proof.RebasedSourceSha!, proof.PreservedSourceSha }
+                : new[] { proof.ExpectedHeadSha, proof.PreservedSourceSha })
             {
                 var ancestor = await workspace.InspectionGitAsync(repositoryPath, ct, "merge-base", "--is-ancestor", source, proof.ObservedTargetSha);
                 if (ancestor.ExitCode != 0) return "source_not_preserved";
