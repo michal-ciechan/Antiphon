@@ -77,6 +77,21 @@ describe('rolePolicyModel', () => {
       input: row({ configured: false, kind: null, level: 'High', alias: 'opus' }),
       expected: 'not configured — DefaultLevel High (opus)',
     },
+    {
+      name: 'configured-level-null',
+      input: row({ configured: true, kind: null, level: null, alias: '' }),
+      expected: 'unknown',
+    },
+    {
+      name: 'unconfigured-default-level-null',
+      input: row({ configured: false, kind: null, level: null, alias: '' }),
+      expected: 'not configured — DefaultLevel unknown',
+    },
+    {
+      name: 'configured-kind-undefined',
+      input: row({ configured: true, kind: null, level: 'Medium', alias: '' }),
+      expected: 'unknown/Medium ()',
+    },
   ]))('C097 V05 %s', (_name, { input, expected }) => {
     expect(defaultLabel(input)).toBe(expected)
   })

@@ -75,9 +75,9 @@ returns `[]`) or a **partial** head (`RoutingCandidateRequest` fields are nullab
 Property names camelCase; enums as strings; nullable fields present explicitly.
 
 ```
-RolePolicyDto      { defaultLevel: AgentModelLevel, defaultTimeoutMinutes: number, roles: RolePolicyRowDto[] }   // 14 rows, RoutableRoles order
+RolePolicyDto      { defaultLevel: AgentModelLevel | null, defaultTimeoutMinutes: number, roles: RolePolicyRowDto[] }   // 14 rows, RoutableRoles order
 RolePolicyRowDto   { role: AgentTaskRole, configured: boolean,
-                     level: AgentModelLevel,            // non-null; DefaultLevel when !configured
+                     level: AgentModelLevel | null,     // DefaultLevel when !configured; null when undefined (S1 R3)
                      kind: AgentKind | null,            // null = ClaudeCode (not resolved here)
                      alias: string,                     // For(kind ?? ClaudeCode, level); non-null
                      escalateTo: AgentModelLevel | null, escalateAfterMinutes: number | null,
@@ -103,18 +103,20 @@ holds; the row shows the server's per-candidate verdict). Card pins never popula
 
 **F-1 unsupported values (S1 R2, review 738e05a2).** A kind is supported when it is null or in
 `AgentTaskService.DelegatableKinds` (ClaudeCode, Grok, Codex); a level when it is a defined `AgentModelLevel`.
-Configuration validation admits Raw/OpenCode kinds and undefined (999) enum values, so the reader guards itself;
-field names and nullability are unchanged:
+Configuration validation admits Raw/OpenCode kinds and undefined (999) enum values, so the reader guards itself.
+S1 R3 (review 6cb28e72 F1) makes row `level` and `defaultLevel` nullable; other field names and nullability are
+unchanged:
 
 | value | wire |
 |---|---|
 | policy kind or level unsupported, or head kind/level (after filling from the policy) unsupported | `effective` `agentKind`, `modelLevel`, `alias` null; `source` and `strength` kept |
 | policy kind unsupported | row `alias` `""` (no alias is invented); row `kind` as configured when defined (`"Raw"`), null when undefined |
-| policy level, `DefaultLevel` undefined | row `level` / `defaultLevel` `High`, row `alias` `""` |
+| policy level, `DefaultLevel` undefined | row `level` / `defaultLevel` null (no tier is invented), row `alias` `""` |
 | `escalateTo` undefined | null |
 | `stagePin` (and head mirror) kind or level undefined | null; that candidate's `alias` (`modelAlias`) null when its kind or level is unsupported |
 
-The other rows are unaffected (V-28, V-29).
+The other rows are unaffected (V-28, V-29). Clients show a null `level` as `unknown` (V-5) and the modal falls back to
+the constant with the fallback note (V-30).
 
 #### F-2 Default msw handler and fixture (S2 adds to `client/src/test/mocks/handlers.ts`; S4 reuses)
 
@@ -225,29 +227,36 @@ fixture timestamps (`updatedAt`) are display data, not clocks.
   `CandidateCount 0`, Required → `effective {source "pin", agentKind null, modelLevel null, alias null, strength
   Required}`. Mutation: fall through to the policy when there is no head → `source "rolePolicy"` → red.
 
-- V-28 `Compose_withholds_the_target_for_unsupported_or_undefined_values` | U, `[MethodDataSource]` 15 rows | the
+- V-28 `Compose_withholds_the_target_for_unsupported_or_undefined_values` | U, `[MethodDataSource]` 16 rows | the
   DTO is serialised with the API options (web + `JsonStringEnumConverter(allowIntegerValues: false)`) and read as
   JSON; literal expectations per row: `valid-control`, `policy-kind-Raw`, `policy-kind-OpenCode`, `policy-kind-999`,
-  `policy-level-999`, `policy-escalateTo-999`, `default-level-999` (Custom row), `pin-valid-control`,
+  `policy-level-999`, `policy-escalateTo-999`, `default-level-999` (Custom row), `default-level-999-configured-row`
+  (Docs keeps `Medium`/`sonnet`; `defaultLevel` null), `pin-valid-control`,
   `pin-head-kind-Raw`, `pin-head-kind-999`, `pin-head-level-999` (each with a valid second candidate that must not
   be used), `pin-grok-level-999`, `pin-grok-inherits-policy-level-999`, `pin-level-inherits-policy-kind-Raw`,
   `prototype-role-names` (`__proto__`, `constructor`, `toString` keys); every row: 14 roles, Mutation effective
   `ClaudeCode/Low/haiku`, Code alias `fable`, every other row's effective alias non-empty. Red at `d138b99ef`:
-  invented `sonnet`/`opus` aliases and `JsonException` for 999.
+  invented `sonnet`/`opus` aliases and `JsonException` for 999. S1 R3: `policy-level-999`, `default-level-999` and
+  `pin-grok-inherits-policy-level-999` expect row `level` null (was `"High"`); `default-level-999` and the new row
+  expect `defaultLevel` null. Red at `9330f6bcd`: those four rows read `"High"`.
 - V-29 `RolePolicyEndpointTests.Get_serialises_every_row_when_one_role_has_unsupported_values` | A, own factory bound
   with `Delegation:RolePolicy:Docs:Level=999`, `Commit:Kind=Raw`, `Deploy:Kind=999` → 200, 14 rows; Docs `level
-  "High", kind null, alias ""`, Commit `kind "Raw", level "Medium", alias ""`, Deploy `kind null, level "Low",
+  null, kind null, alias ""`, Commit `kind "Raw", level "Medium", alias ""`, Deploy `kind null, level "Low",
   alias ""`, each `effective {rolePolicy, null, null, null, null}`; Mutation `ClaudeCode/Low/haiku`, Test alias
-  `haiku`. Red at `d138b99ef`: 500 from the serializer.
+  `haiku`. Red at test-only `dcf1a2835` (production code of `d138b99ef`): HTTP 400, expected 200. S1 R3 red at
+  `9330f6bcd`: Docs `level` `"High"`, expected null.
 
 **S2 — `client/src/features/settings/rolePolicyModel.test.ts` (M)**
 
-- V-5 `C097 V05 $name` over `defaultLabel(row)` (4 rows) | M | `null-kind-low` `{configured true, kind null, level
+- V-5 `C097 V05 $name` over `defaultLabel(row)` (7 rows) | M | `null-kind-low` `{configured true, kind null, level
   'Low', alias 'haiku'}` → `ClaudeCode/Low (haiku)`; `grok-frontier` `{kind 'Grok', 'Frontier', 'grok-4.7'}` →
   `Grok/Frontier (grok-4.7)`; `codex-medium` `{kind 'Codex', 'Medium', 'gpt-6.1-sol'}` → `Codex/Medium
   (gpt-6.1-sol)`; `unconfigured` `{configured false, kind null, 'High', 'opus'}` → `not configured — DefaultLevel
   High (opus)`. Mutations: drop the null → ClaudeCode branch → row 1 `null/Low (haiku)` → red; ignore `configured` →
-  row 4 renders the configured form → red.
+  row 4 renders the configured form → red. S1 R3 rows: `configured-level-null` `{configured true, kind null, level
+  null, alias ''}` → `unknown`; `unconfigured-default-level-null` `{configured false, level null, alias ''}` → `not
+  configured — DefaultLevel unknown`; `configured-kind-undefined` `{configured true, kind null, 'Medium', alias ''}` →
+  `unknown/Medium ()` (an empty alias beside a null kind is the server's NoAlias for an undefined kind).
 - V-6 `C097 V06 $name` over `effectiveLabel(row)` (5 rows) | M | `pin-required-human` (stagePin provenance Human,
   effective `{pin, Codex, Frontier, 'gpt-6-astra', Required}`) → `Required Human pin → Codex/Frontier (gpt-6-astra)`;
   `pin-preferred-auto` (provenance Auto, `{pin, ClaudeCode, High, 'opus', Preferred}`) → `Preferred Auto pin →
@@ -309,6 +318,10 @@ fixture timestamps (`updatedAt`) are display data, not clocks.
 - V-27 `C097 V27 orchestrator-floor-on-server-level` | E | default fixture (Mutation `Low`) → click radio
   `Sub-orchestrator`, then radio `Mutation` → `findByTestId('tier-High')`, no `tier-Low`. Mutation: apply the
   Medium/Low → High floor to the constant only and render the raw server level → `Low` → red.
+- V-30 `C097 V30 undefined-policy-level-falls-back-to-constant` | E | Mutation row `level null, alias ''`, effective
+  `{rolePolicy, null, null, null, null}` (the S1 R3 wire for Level=999) → click radio `Mutation` →
+  `findByTestId('delegate-tier-source-fallback')`, no `delegate-tier-source-rolePolicy`, `tier-Low`. Green at
+  `9330f6bcd`: the modal's level check already rejects null; the S1 R3 red is server-side (V-28, V-29). PC-35.
 
 **S5 — docs (manual, no checkpoint)**
 
@@ -362,12 +375,16 @@ fixture timestamps (`updatedAt`) are display data, not clocks.
 | G-26 | existing floor: a sub-orchestrator floors a Low/Medium server level at High (V-27) | PC-26 |
 | G-27 | D-8: while loading, the constant renders synchronously (R-4 existing test) | PC-27 |
 | G-28 | F-1 unsupported: an unsupported policy kind withholds the target and invents no alias (V-28 `policy-kind-Raw`) | PC-28 |
-| G-29 | F-1 unsupported: an undefined policy level never reaches the serializer (V-28 `policy-level-999`, V-29) | PC-29 |
+| G-29 | F-1 unsupported: an undefined policy level is written as null (V-28 `policy-level-999`, V-29) | PC-29 |
 | G-30 | F-1 unsupported: an unsupported head kind/level withholds the pin target (V-28 `pin-head-kind-Raw`) | PC-30 |
 | G-31 | F-1 unsupported: undefined values in `stagePin` are written as null (V-28 `pin-head-kind-999`) | PC-31 |
 | G-32 | F-1 unsupported: an undefined `escalateTo` is written as null (V-28 `policy-escalateTo-999`) | PC-32 |
+| G-33 | S1 R3: an undefined `DefaultLevel` is written as null (V-28 `default-level-999-configured-row`) | PC-33 |
+| G-34 | S1 R3: `defaultLabel` shows a null level as `unknown` (V-5 `configured-level-null`) | PC-34 |
+| G-35 | S1 R3: the modal falls back when the role-policy level is null (V-30) | PC-35 |
+| G-36 | S1 R3: `defaultLabel` shows an undefined kind as `unknown`, not ClaudeCode (V-5 `configured-kind-undefined`) | PC-36 |
 
-Audit: **guards=32, mapped=32, missing=0, duplicate PC maps=0**. The polling cadence (15 s) and the tab subtitle
+Audit: **guards=36, mapped=36, missing=0, duplicate PC maps=0**. The polling cadence (15 s) and the tab subtitle
 copy are not guards (no behaviour an operator relies on; same untested status as `useRoutingPins`).
 
 ### Positive controls
@@ -410,10 +427,14 @@ and PC-5–PC-10 (same `Compose` method) run one at a time; PC-4 (`ReadAsync`) m
 | PC-26 | floor applied to the constant only | E `C097 V27 orchestrator-floor-on-server-level`: `tier-High` expected |
 | PC-27 | render no `TierBadge` until the query resolves | E existing `lets the role carry the tier rather than asking for one`: synchronous `tier-Low` expected |
 | PC-28 | treat every defined kind as supported (drop the `DelegatableKinds` check) | `RolePolicyReadServiceTests.Compose_withholds_the_target_for_unsupported_or_undefined_values` row `policy-kind-Raw`: `alias` expected `""`, read `"sonnet"` |
-| PC-29 | pass the configured level through without the defined check | `RolePolicyEndpointTests.Get_serialises_every_row_when_one_role_has_unsupported_values`: GET status expected 200 |
+| PC-29 | write an undefined level as `High` | `RolePolicyEndpointTests.Get_serialises_every_row_when_one_role_has_unsupported_values`: Docs `level` expected null |
 | PC-30 | build the pin target without the head guard | `RolePolicyReadServiceTests.Compose_withholds_the_target_for_unsupported_or_undefined_values` row `pin-head-kind-Raw`: effective `agentKind` expected null |
 | PC-31 | return `stagePin` unsanitised | same method, row `pin-head-kind-999`: serialisation expected to succeed |
 | PC-32 | pass `EscalateTo` through unchecked | same method, row `policy-escalateTo-999`: serialisation expected to succeed |
+| PC-33 | write an undefined `DefaultLevel` as `High` | `RolePolicyReadServiceTests.Compose_withholds_the_target_for_unsupported_or_undefined_values` row `default-level-999-configured-row`: `defaultLevel` expected null |
+| PC-34 | `defaultLabel` prints `row.level` without the null branch | M `rolePolicyModel C097 V05 configured-level-null`: expected `unknown` |
+| PC-35 | modal reads `row.level ?? 'High'` for `rolePolicy` | E `DelegateModal C097 V30 undefined-policy-level-falls-back-to-constant`: `delegate-tier-source-fallback` expected |
+| PC-36 | `defaultLabel` maps a null kind to ClaudeCode unconditionally | M `rolePolicyModel C097 V05 configured-kind-undefined`: expected `unknown/Medium ()` |
 
 ### Out of scope
 
@@ -452,11 +473,11 @@ to restore, which NU1605 prevents until CARD-1229 lands; run them after it, repo
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
-| CP-1 | S2 | n/a | client-role-policy | `pwsh -NoProfile -File scripts/test-client.ps1 src/features/settings/rolePolicyModel.test.ts src/features/settings/RolePolicySection.test.tsx src/features/settings/RoutingSettingsTab.test.tsx src/features/settings/routingSettingsModel.test.ts` | V-5, V-6, V-24, V-8, V-25, V-9, V-10, R-2 | 4 files, exactly 41 results (14 + 2 + 16 + 9), 0 failed/skipped, `CLIENT TESTS EXIT CODE: 0` | n/a | 5 | false |
-| CP-2 | S4 | n/a | client-delegate-modal | `pwsh -NoProfile -File scripts/test-client.ps1 src/features/delegations/DelegateModal.test.tsx src/api/agentTasks.test.tsx` | V-16, V-17, V-18, V-27, R-4 | 2 files, exactly 30 results (23 + 7), 0 failed/skipped, `CLIENT TESTS EXIT CODE: 0` | n/a | 5 | false |
+| CP-1 | S2 | n/a | client-role-policy | `pwsh -NoProfile -File scripts/test-client.ps1 src/features/settings/rolePolicyModel.test.ts src/features/settings/RolePolicySection.test.tsx src/features/settings/RoutingSettingsTab.test.tsx src/features/settings/routingSettingsModel.test.ts` | V-5, V-6, V-24, V-8, V-25, V-9, V-10, R-2 | 4 files, exactly 44 results (17 + 2 + 16 + 9), 0 failed/skipped, `CLIENT TESTS EXIT CODE: 0` | n/a | 5 | false |
+| CP-2 | S4 | n/a | client-delegate-modal | `pwsh -NoProfile -File scripts/test-client.ps1 src/features/delegations/DelegateModal.test.tsx src/api/agentTasks.test.tsx` | V-16, V-17, V-18, V-27, V-30, R-4 | 2 files, exactly 31 results (24 + 7), 0 failed/skipped, `CLIENT TESTS EXIT CODE: 0` | n/a | 5 | false |
 | CP-3 | S1 | `tests/Antiphon.Tests -> bin-c097-red/` | role-policy-red | `/*/*/RolePolicyEndpointTests/*` | V-1, V-2, V-3 red-first | 3 executed, 3 failed at the GET status assertion (404 ≠ 200), 0 skipped; intended red, test file committed before the endpoint | 3 | 8 | false |
 | CP-4 | S1 | `tests/Antiphon.Tests -> bin-c097-api/` | role-policy-api | `/*/*/RolePolicyEndpointTests/*` | V-1, V-2, V-3, V-29 | 4 executed, 0 failed/skipped | 4 | 8 | false |
-| CP-5 | S1 | `CP-4` | role-policy-compose | `/*/*/RolePolicyReadServiceTests/*` | V-4, V-19, V-20, V-21, V-22, V-23, V-28 | 21 executed (6 + 15 V-28 rows), 0 failed/skipped | 21 | 3 | false |
+| CP-5 | S1 | `CP-4` | role-policy-compose | `/*/*/RolePolicyReadServiceTests/*` | V-4, V-19, V-20, V-21, V-22, V-23, V-28 | 22 executed (6 + 16 V-28 rows), 0 failed/skipped | 22 | 3 | false |
 | CP-6 | S4 | n/a | client-full | `pwsh -NoProfile -File scripts/test-client.ps1` | R-1, V-5–V-10, V-16–V-18, V-24–V-27 | 118 files, exactly 1198 results, 0 failed; skipped 0 when `client/dist` exists, else exactly 1 (the App bundle `skipIf`, report which); lint case green; `CLIENT TESTS EXIT CODE: 0` | n/a | 10 | true |
 
 CP-6's `After` is S4 because S4 follows S2 by construction (S4 imports S2's files); S1 is not a prerequisite of
@@ -464,7 +485,9 @@ the client suite and S3 has no row. Run rows through the checkpoint tool (`dotne
 tools/Antiphon.Checkpoints -- run --plan <this path> --rows <CP-list> --expected-source-sha <slice sha>`), one run
 per committed slice group: `--rows CP-1` after S2, `--rows CP-2,CP-6` after S4, `--rows CP-3` at the S1 test-only
 commit, `--rows CP-4,CP-5` at the S1 code commit. S1 R2 runs `--rows CP-4,CP-5` at its test-only commit (intended red: V-29 and the
-12 V-28 rows other than the three controls) and again at its fix commit. Builds and any direct driver go through
+12 V-28 rows other than the three controls) and again at its fix commit. S1 R3 runs `--rows CP-1,CP-2,CP-4,CP-5` at its
+test-only commit (intended red: V-29, four V-28 rows, V-5 `configured-level-null`, `unconfigured-default-level-null`,
+`configured-kind-undefined`; V-30 green, see its entry) and again at its fix commit. Builds and any direct driver go through
 `scripts/build-slot.ps1`; slot exit 4 is a row not run. Preserve unedited `CHECKPOINT` lines; keep TRX/JSON/logs
 ignored; delete owned `bin-c097-*` directories before settlement; Code and Review run
 `scripts/check-evidence-diff.ps1` over the full task range.
