@@ -1,122 +1,215 @@
 using Antiphon.SessionRunner.Contracts;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using Microsoft.Win32.SafeHandles;
 
 namespace Antiphon.SessionRunner;
 
-// S5 local deletion primitive. C1017_RunnerNoFollow exercises a listed child swap.
+// Inventory and disposition use the same native type/identity facts. No special
+// file is read, and each regular file is hashed through its held no-follow handle.
 internal static class RunnerWorkspaceNoFollowDelete
 {
-    internal sealed record Entry(string Path, bool Directory, string? Hash);
+    internal sealed record Entry(string Path, bool Directory, string? Hash, string? Identity = null, long Size = -1);
+    internal sealed class Refusal(string reason, string path) : IOException(reason + ": " + path)
+    {
+        internal string Reason { get; } = reason;
+    }
+    private sealed record Metadata(string Identity, bool Directory, bool Regular, long Size, string WriteStamp);
+    private sealed class InventoryBudget
+    {
+        internal int Entries;
+        internal long Bytes;
+        internal void Add(Metadata info, string path)
+        {
+            if (++Entries > 100_000 || (Bytes += info.Size) > 1_073_741_824)
+                throw new Refusal("unproven_content", path + " (inventory limit)");
+        }
+    }
 
     internal static string Identity(string path)
     {
         if (OperatingSystem.IsWindows())
         {
+            using var ancestors = PinWindowsParents(path);
             using var handle = OpenNoFollow(path);
-            if (!GetFileInformationByHandle(handle, out var info)) throw Failure("identity", path);
-            if ((info.FileAttributes & 0x400) != 0) throw new IOException("linked_identity");
-            return $"{info.VolumeSerialNumber:x}:{info.FileIndexHigh:x}:{info.FileIndexLow:x}";
+            return WindowsMetadata(handle, path).Identity;
         }
         using var fd = OpenLinuxPath(path);
-        return LinuxIdentity(fd.DangerousGetHandle().ToInt32());
+        return LinuxMetadata(fd.DangerousGetHandle().ToInt32()).Identity;
     }
 
-    internal static Entry[] Inventory(string root)
+    internal static async Task<Entry[]> InventoryAsync(string root, CancellationToken ct, string? expectedIdentity = null)
     {
-        var entries = new List<Entry>();
-        Walk(root, "", entries);
-        return entries.OrderBy(e => e.Path, StringComparer.Ordinal).ToArray();
-    }
-
-    private static void Walk(string root, string relative, List<Entry> entries)
-    {
-        var path = Path.Combine(root, relative);
-        if (!RunnerCompletedCardWorkspaceRemoval.UnlinkedPath(path)) throw new IOException("linked_inventory");
-        foreach (var child in Directory.EnumerateFileSystemEntries(path))
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        deadline.CancelAfter(TimeSpan.FromSeconds(30));
+        var entries = new List<Entry>(); var budget = new InventoryBudget();
+        try
         {
-            var rel = Path.GetRelativePath(root, child);
-            var attrs = File.GetAttributes(child);
-            if (attrs.HasFlag(FileAttributes.ReparsePoint)) throw new IOException("linked_inventory");
-            var directory = attrs.HasFlag(FileAttributes.Directory);
-            entries.Add(new(rel, directory, directory ? null : Hash(child)));
-            if (directory) Walk(root, rel, entries);
+            if (OperatingSystem.IsWindows())
+            {
+                using var ancestors = PinWindowsParents(root);
+                using var handle = OpenNoFollow(root);
+                var info = WindowsMetadata(handle, root);
+                if (!info.Directory || expectedIdentity is not null && info.Identity != expectedIdentity) Changed(root);
+                await WalkWindowsAsync(root, "", entries, budget, deadline.Token);
+            }
+            else
+            {
+                using var handle = OpenLinuxPath(root);
+                var info = LinuxMetadata(handle.DangerousGetHandle().ToInt32());
+                if (expectedIdentity is not null && info.Identity != expectedIdentity) Changed(root);
+                await WalkLinuxAsync(handle.DangerousGetHandle().ToInt32(), "", entries, budget, deadline.Token);
+            }
+            return entries.OrderBy(e => e.Path, StringComparer.Ordinal).ToArray();
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        { throw new Refusal("unproven_content", root + " (inventory deadline)"); }
+    }
+
+    private static async Task WalkLinuxAsync(int parent, string relative, List<Entry> entries,
+        InventoryBudget budget, CancellationToken ct)
+    {
+        if (relative.Count(c => c == Path.DirectorySeparatorChar) >= 128) throw new Refusal("unproven_content", relative);
+        foreach (var child in ListChildren("/proc/self/fd/" + parent, ct))
+        {
+            ct.ThrowIfCancellationRequested();
+            var name = Path.GetFileName(child); var rel = Path.Combine(relative, name);
+            // AT_SYMLINK_NOFOLLOW is lstat-equivalent and never opens a FIFO,
+            // socket, device or symlink. Record its type as unproven and refuse.
+            var listed = LinuxMetadata(parent, name);
+            RequireSupported(listed, rel); budget.Add(listed, rel);
+            using var handle = OpenLinuxEntry(parent, name);
+            var opened = LinuxMetadata(handle.DangerousGetHandle().ToInt32());
+            if (listed != opened) Changed(rel);
+            var hash = opened.Directory ? null : await HashAsync(handle, opened, rel, ct);
+            entries.Add(new(rel, opened.Directory, hash, opened.Identity, opened.Size));
+            if (opened.Directory) await WalkLinuxAsync(handle.DangerousGetHandle().ToInt32(), rel, entries, budget, ct);
         }
     }
 
-    internal static void ValidateRemaining(string root, IReadOnlyList<Entry> expected)
+    private static async Task WalkWindowsAsync(string root, string relative, List<Entry> entries,
+        InventoryBudget budget, CancellationToken ct)
     {
-        var allowed = expected.ToDictionary(e => e.Path, StringComparer.Ordinal);
-        foreach (var entry in Inventory(root))
-            if (!allowed.TryGetValue(entry.Path, out var original) || original != entry)
-                throw new IOException("changed_owned_content");
+        if (relative.Count(c => c == Path.DirectorySeparatorChar) >= 128) throw new Refusal("unproven_content", relative);
+        foreach (var child in ListChildren(Path.Combine(root, relative), ct))
+        {
+            ct.ThrowIfCancellationRequested();
+            var rel = Path.GetRelativePath(root, child);
+            RequireWindowsAttributes(child); // metadata only, before any data handle
+            using var handle = OpenNoFollow(child);
+            var info = WindowsMetadata(handle, child); RequireSupported(info, rel); budget.Add(info, rel);
+            var hash = info.Directory ? null : await HashAsync(handle, info, rel, ct);
+            entries.Add(new(rel, info.Directory, hash, info.Identity, info.Size));
+            if (info.Directory) await WalkWindowsAsync(root, rel, entries, budget, ct);
+        }
     }
 
-    private static string Hash(string path) => Convert.ToHexString(
-        System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(path)));
+    internal static async Task ValidateRemainingAsync(string root, IReadOnlyList<Entry> expected, CancellationToken ct)
+    {
+        var allowed = expected.ToDictionary(e => e.Path, StringComparer.Ordinal);
+        foreach (var entry in await InventoryAsync(root, ct))
+            if (!allowed.TryGetValue(entry.Path, out var original) || original != entry) Changed(entry.Path);
+    }
 
-    internal static void DeleteOwned(string root, string identity, IReadOnlyList<Entry> entries,
+    private static void RequireSupported(Metadata info, string path)
+    {
+        if (!info.Directory && !info.Regular) throw new Refusal("unproven_content", path + " (non-regular)");
+    }
+    private static void Changed(string path) => throw new Refusal("changed_since_inventory", path);
+    private static async Task<string> HashAsync(SafeFileHandle handle, Metadata before, string path, CancellationToken ct)
+    {
+        RequireSupported(before, path);
+        if (!before.Regular || before.Size > 268_435_456) throw new Refusal("unproven_content", path + " (file limit)");
+        using var borrowed = new SafeFileHandle(handle.DangerousGetHandle(), ownsHandle: false);
+        using var stream = new FileStream(borrowed, FileAccess.Read);
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        var buffer = new byte[64 * 1024]; long read = 0;
+        while (true)
+        {
+            ct.ThrowIfCancellationRequested();
+            var count = await stream.ReadAsync(buffer, ct);
+            if (count == 0) break;
+            read += count;
+            if (read > before.Size) Changed(path);
+            hash.AppendData(buffer, 0, count);
+        }
+        var after = OperatingSystem.IsWindows() ? WindowsMetadata(handle, path) : LinuxMetadata(handle.DangerousGetHandle().ToInt32());
+        if (before != after || read != before.Size) Changed(path);
+        return Convert.ToHexString(hash.GetHashAndReset());
+    }
+
+    internal static async Task DeleteOwnedAsync(string root, string identity, IReadOnlyList<Entry> entries,
         Action<string>? beforeEntry, CancellationToken ct)
     {
-        if (Identity(root) != identity) throw new IOException("changed_owned_directory");
-        ValidateRemaining(root, entries);
+        if (Identity(root) != identity) Changed(root);
+        await ValidateRemainingAsync(root, entries, ct);
         var allowed = entries.ToDictionary(e => e.Path, StringComparer.Ordinal);
-        if (OperatingSystem.IsWindows()) DeleteWindows(root, null, root, allowed, beforeEntry, ct);
+        if (OperatingSystem.IsWindows())
+        {
+            using var ancestors = PinWindowsParents(root);
+            await DeleteWindowsAsync(root, root, allowed, beforeEntry, ct, identity);
+        }
         else
         {
             var full = Path.GetFullPath(root);
             using var parent = OpenLinuxPath(Path.GetDirectoryName(full)!);
-            DeleteLinux(parent.DangerousGetHandle().ToInt32(), Path.GetFileName(full), "", root,
+            await DeleteLinuxAsync(parent.DangerousGetHandle().ToInt32(), Path.GetFileName(full), "", root,
                 allowed, beforeEntry, ct, identity);
         }
     }
 
-    // Linux descendants are opened relative to a pinned parent descriptor with O_NOFOLLOW.
-    // Enumeration uses that same descriptor; unlinkat removes the entry under that parent.
-    private static void DeleteLinux(int parent, string name, string relative, string root,
-        Dictionary<string, Entry> allowed, Action<string>? beforeEntry, CancellationToken ct,
-        string? expectedIdentity = null)
+    private static async Task DeleteLinuxAsync(int parent, string name, string relative, string root,
+        Dictionary<string, Entry> allowed, Action<string>? beforeEntry, CancellationToken ct, string? rootIdentity = null)
     {
         ct.ThrowIfCancellationRequested();
-        if (relative.Length != 0 && !allowed.ContainsKey(relative)) throw new IOException("unknown_delete_entry");
+        if (relative.Length != 0 && !allowed.ContainsKey(relative)) Changed(relative);
         beforeEntry?.Invoke(Path.Combine(root, relative));
-        var raw = openat(parent, name, 0x20000 | 0x800 | 0x80000); // NOFOLLOW | NONBLOCK | CLOEXEC
-        if (raw < 0)
+        var listed = LinuxMetadata(parent, name);
+        // Preserve the existing late-link contract: unlink only the link itself.
+        // No other non-regular replacement may be read or deleted.
+        if (!listed.Directory && !listed.Regular)
         {
-            var error = Marshal.GetLastPInvokeError();
-            if (error == 2) return;
-            if (error == 40 && relative.Length != 0)
+            if (relative.Length != 0 && LinuxIsLink(parent, name))
             {
                 if (unlinkat(parent, name, 0) != 0) throw Failure("unlink", name);
                 return;
             }
-            throw Failure("open", name, error);
+            throw new Refusal("unproven_content", relative + " (non-regular)");
         }
-        using var fd = new SafeFileHandle((IntPtr)raw, ownsHandle: true);
-        if (expectedIdentity is not null && LinuxIdentity(raw) != expectedIdentity) throw new IOException("changed_owned_directory");
-        var mode = LinuxMode(raw);
-        if ((mode & 0xf000) == 0x4000)
+        using var handle = OpenLinuxEntry(parent, name);
+        var info = LinuxMetadata(handle.DangerousGetHandle().ToInt32());
+        if (listed != info) Changed(relative);
+        if (relative.Length == 0)
         {
-            var pinnedPath = "/proc/self/fd/" + raw;
-            // Entries outside the frozen manifest refuse before unlink. The admin
-            // manifest legitimately includes logs/HEAD; it is not a nested repository.
-            foreach (var child in Directory.EnumerateFileSystemEntries(pinnedPath).Order(StringComparer.Ordinal).ToArray())
-            {
-                var childName = Path.GetFileName(child);
-                DeleteLinux(raw, childName, Path.Combine(relative, childName), root, allowed, beforeEntry, ct);
-            }
-            if (unlinkat(parent, name, 0x200) != 0) throw Failure("rmdir", name);
+            if (!info.Directory || info.Identity != rootIdentity) Changed(root);
         }
         else
         {
-            if (relative.Length == 0 || allowed[relative].Directory) throw new IOException("changed_delete_entry");
-            using var borrowed = new SafeFileHandle((IntPtr)raw, ownsHandle: false);
-            using var stream = new FileStream(borrowed, FileAccess.Read);
-            if (Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(stream)) != allowed[relative].Hash)
-                throw new IOException("changed_owned_content");
-            if (unlinkat(parent, name, 0) != 0) throw Failure("unlink", name);
+            var entry = allowed[relative];
+            if (entry.Identity != info.Identity || entry.Directory != info.Directory || entry.Size != info.Size) Changed(relative);
+            if (info.Regular && await HashAsync(handle, info, relative, ct) != entry.Hash) Changed(relative);
         }
+        if (info.Directory)
+            foreach (var child in ListChildren("/proc/self/fd/" + handle.DangerousGetHandle().ToInt32(), ct))
+            {
+                var childName = Path.GetFileName(child);
+                await DeleteLinuxAsync(handle.DangerousGetHandle().ToInt32(), childName, Path.Combine(relative, childName),
+                    root, allowed, beforeEntry, ct);
+            }
+        ct.ThrowIfCancellationRequested();
+        // Linux cannot exclude arbitrary writers with Windows sharing semantics.
+        // Recheck the held object and the name immediately before descriptor-relative unlink.
+        var current = LinuxMetadata(handle.DangerousGetHandle().ToInt32());
+        if ((!info.Directory && current != info) || LinuxMetadata(parent, name).Identity != info.Identity) Changed(relative);
+        if (unlinkat(parent, name, info.Directory ? 0x200 : 0) != 0) throw Failure("unlink", name);
+    }
+
+    private static SafeFileHandle OpenLinuxEntry(int parent, string name)
+    {
+        var raw = openat(parent, name, 0x20000 | 0x800 | 0x80000); // NOFOLLOW | NONBLOCK | CLOEXEC
+        if (raw < 0) throw Failure("open", name);
+        return new SafeFileHandle((IntPtr)raw, ownsHandle: true);
     }
 
     private static SafeFileHandle OpenLinuxPath(string path)
@@ -138,68 +231,134 @@ internal static class RunnerWorkspaceNoFollowDelete
         catch { current.Dispose(); throw; }
     }
 
-    private static string LinuxIdentity(int fd)
+    private static Metadata LinuxMetadata(int fd, string? name = null)
     {
         var buffer = Marshal.AllocHGlobal(256);
         try
         {
-            if (fstat(fd, buffer) != 0) throw Failure("stat", "owned descriptor");
-            return $"{Marshal.ReadInt64(buffer, 0):x}:{Marshal.ReadInt64(buffer, 8):x}";
+            if ((name is null ? fstat(fd, buffer) : fstatat(fd, name, buffer, 0x100)) != 0) throw Failure("stat", name ?? "owned descriptor");
+            var mode = Marshal.ReadInt32(buffer, 24) & 0xf000;
+            var directory = mode == 0x4000; var regular = mode == 0x8000;
+            return new($"{Marshal.ReadInt64(buffer, 0):x}:{Marshal.ReadInt64(buffer, 8):x}", directory, regular,
+                regular ? Marshal.ReadInt64(buffer, 48) : 0,
+                $"{Marshal.ReadInt64(buffer, 88):x}:{Marshal.ReadInt64(buffer, 96):x}:{Marshal.ReadInt64(buffer, 104):x}:{Marshal.ReadInt64(buffer, 112):x}");
         }
         finally { Marshal.FreeHGlobal(buffer); }
     }
-    private static int LinuxMode(int fd)
+    private static bool LinuxIsLink(int parent, string name)
     {
         var buffer = Marshal.AllocHGlobal(256);
         try
         {
-            if (fstat(fd, buffer) != 0) throw Failure("stat", "owned descriptor");
-            return Marshal.ReadInt32(buffer, 24);
+            if (fstatat(parent, name, buffer, 0x100) != 0) throw Failure("stat", name);
+            return (Marshal.ReadInt32(buffer, 24) & 0xf000) == 0xa000;
         }
         finally { Marshal.FreeHGlobal(buffer); }
     }
     [DllImport("libc", SetLastError = true)] private static extern int openat(int fd, string path, int flags);
     [DllImport("libc", SetLastError = true)] private static extern int unlinkat(int fd, string path, int flags);
     [DllImport("libc", SetLastError = true)] private static extern int fstat(int fd, IntPtr stat);
+    [DllImport("libc", SetLastError = true)] private static extern int fstatat(int fd, string path, IntPtr stat, int flags);
 
-    private static void DeleteWindows(string path, string? protectedRoot, string root, Dictionary<string, Entry> allowed, Action<string>? beforeEntry, CancellationToken ct)
+    private static async Task DeleteWindowsAsync(string path, string root, Dictionary<string, Entry> allowed,
+        Action<string>? beforeEntry, CancellationToken ct, string? rootIdentity = null)
     {
         ct.ThrowIfCancellationRequested();
         var relative = Path.GetRelativePath(root, path);
-        if (relative != "." && !allowed.ContainsKey(relative)) throw new IOException("unknown_delete_entry");
+        if (relative != "." && !allowed.ContainsKey(relative)) Changed(relative);
         beforeEntry?.Invoke(path);
-        using var handle = OpenNoFollow(path);
-        if (!GetFileInformationByHandle(handle, out var info)) throw Failure("inspect", path);
-        const uint directory = 0x10, reparsePoint = 0x400;
-        if ((info.FileAttributes & reparsePoint) == 0 && (info.FileAttributes & directory) != 0)
+        using var handle = OpenNoFollow(path, deleting: true);
+        if (!GetFileInformationByHandle(handle, out var raw)) throw Failure("inspect", path);
+        if ((raw.FileAttributes & 0x400) != 0)
         {
-            if (relative != "." && !allowed[relative].Directory) throw new IOException("changed_delete_entry");
-            // The held handle pins this directory, so the listing below resolves through it.
-            foreach (var child in Directory.EnumerateFileSystemEntries(path, "*", ListOnly).ToList())
-            {
-                if (relative != "." && !allowed[relative].Directory) throw new IOException("changed_delete_entry");
-                DeleteWindows(child, protectedRoot, root, allowed, beforeEntry, ct);
-            }
-            if (relative != "." && !allowed[relative].Directory) throw new IOException("changed_delete_entry");
+            if (relative == ".") Changed(path);
+            MarkDeleted(handle, path); // disposition of the reparse entry itself
+            return;
         }
+        var info = WindowsMetadata(handle, path); RequireSupported(info, path);
+        if (relative == ".")
+        {
+            if (!info.Directory || info.Identity != rootIdentity) Changed(path);
+        }
+        else
+        {
+            var entry = allowed[relative];
+            if (entry.Identity != info.Identity || entry.Directory != info.Directory || entry.Size != info.Size) Changed(relative);
+            if (info.Regular && await HashAsync(handle, info, path, ct) != entry.Hash) Changed(relative);
+        }
+        if (info.Directory)
+            foreach (var child in ListChildren(path, ct))
+                await DeleteWindowsAsync(child, root, allowed, beforeEntry, ct);
+        ct.ThrowIfCancellationRequested();
+        // This very handle denies write and delete sharing until disposition;
+        // ancestor handles likewise prevent replacement of the traversed chain.
         MarkDeleted(handle, path);
     }
 
-    private static SafeFileHandle OpenNoFollow(string path)
+    private static Metadata WindowsMetadata(SafeFileHandle handle, string path)
     {
-        // DELETE | FILE_READ_ATTRIBUTES; share read and write but not delete, so while this handle is
-        // open nobody can rename, delete or replace the entry. FILE_FLAG_OPEN_REPARSE_POINT opens a
-        // link itself; FILE_FLAG_BACKUP_SEMANTICS allows a directory handle. A scanner or indexer may
-        // hold an entry for a moment; a lasting sharing violation is residue.
+        if (!GetFileInformationByHandle(handle, out var info)) throw Failure("inspect", path);
+        if ((info.FileAttributes & (0x400 | 0x40)) != 0 || GetFileType(handle) != 1)
+            throw new Refusal("unproven_content", path + " (non-regular/reparse)");
+        var directory = (info.FileAttributes & 0x10) != 0;
+        return new($"{info.VolumeSerialNumber:x}:{info.FileIndexHigh:x}:{info.FileIndexLow:x}", directory, !directory,
+            directory ? 0 : ((long)info.FileSizeHigh << 32) | info.FileSizeLow,
+            $"{info.LastWriteTimeHigh:x}:{info.LastWriteTimeLow:x}");
+    }
+    private static void RequireWindowsAttributes(string path)
+    {
+        if ((File.GetAttributes(path) & (FileAttributes.ReparsePoint | FileAttributes.Device)) != 0)
+            throw new Refusal("unproven_content", path + " (non-regular/reparse)");
+    }
+    private sealed class WindowsParents : IDisposable
+    {
+        internal List<SafeFileHandle> Handles { get; } = [];
+        public void Dispose() { foreach (var handle in Handles.AsEnumerable().Reverse()) handle.Dispose(); }
+    }
+    private static WindowsParents PinWindowsParents(string path)
+    {
+        var parents = new WindowsParents();
+        try
+        {
+            var full = Path.GetFullPath(path); var current = Path.GetPathRoot(full)!;
+            var components = full[current.Length..].Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries);
+            for (var i = 0; i < components.Length; i++)
+            {
+                var handle = OpenNoFollow(current); parents.Handles.Add(handle);
+                if (!WindowsMetadata(handle, current).Directory) Changed(current);
+                current = Path.Combine(current, components[i]);
+            }
+            return parents;
+        }
+        catch { parents.Dispose(); throw; }
+    }
+
+    private static SafeFileHandle OpenNoFollow(string path, bool deleting = false)
+    {
+        // GENERIC_READ plus DELETE only for disposition. Share READ only:
+        // concurrent write/delete/rename cannot race validation and disposition.
+        // Existing conflicting writers cause a bounded refusal, never a bypass.
         for (var attempt = 1; ; attempt++)
         {
-            var handle = CreateFileW(path, 0x00010000 | 0x80, 0x1 | 0x2, IntPtr.Zero, 3, 0x00200000 | 0x02000000, IntPtr.Zero);
+            var handle = CreateFileW(path, 0x80000000 | (deleting ? 0x10000u : 0u), 0x1,
+                IntPtr.Zero, 3, 0x00200000 | 0x02000000, IntPtr.Zero);
             if (!handle.IsInvalid) return handle;
-            var error = Marshal.GetLastPInvokeError();
-            handle.Dispose();
+            var error = Marshal.GetLastPInvokeError(); handle.Dispose();
             if (error != 32 || attempt == 5) throw Failure("open", path, error);
             Thread.Sleep(100);
         }
+    }
+
+    private static IReadOnlyList<string> ListChildren(string path, CancellationToken ct)
+    {
+        var children = new List<string>();
+        foreach (var child in Directory.EnumerateFileSystemEntries(path, "*", ListOnly))
+        {
+            ct.ThrowIfCancellationRequested();
+            if (children.Count >= 100_000) throw new Refusal("unproven_content", path + " (entry limit)");
+            children.Add(child);
+        }
+        children.Sort(StringComparer.Ordinal); return children;
     }
 
     private static void MarkDeleted(SafeFileHandle handle, string path)
@@ -244,6 +403,9 @@ internal static class RunnerWorkspaceNoFollowDelete
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern SafeFileHandle CreateFileW(string name, uint access, uint share,
         IntPtr securityAttributes, uint disposition, uint flags, IntPtr template);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern uint GetFileType(SafeFileHandle handle);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]

@@ -38,7 +38,6 @@ Next: Review, with every PC/variant still pending for SourceLanding Mutation.
 | CP-8 | S5 | CP-7 | removal-identity | `/*/*/CompletedCardWorkspaceRemovalTests/(C1017_RunnerTaskIdentity*)\|(C1017_RunnerAttemptIdentity*)\|(C1017_RunnerStoreIdentity*)\|(C1017_RunnerRepositoryIdentity*)\|(C1017_RunnerPathIdentity*)\|(C1017_RunnerBranchIdentity*)\|(C1017_RunnerHeadIdentity*)\|(C1017_RunnerPreservationProof*)\|(C1017_RunnerSourceLandingExcluded*)` | V-3, V-5, R-3 | all 9 listed; 0 failed/skipped | 9 | 5 | true |
 | CP-9 | S5 | CP-7 | removal-content | `/*/*/CompletedCardWorkspaceRemovalTests/(C1017_RunnerDirtySource*)\|(C1017_RunnerIgnoredPolicy*)\|(C1017_RunnerFreshFinalInspection*)\|(C1017_RunnerNoForceBypass*)` | V-3, V-5, R-3 | all 4 listed; 0 failed/skipped | 4 | 5 | true |
 | CP-10 | S5 | CP-7 | removal-components | `/*/*/CompletedCardWorkspaceRemovalTests/(C1017_RunnerNoFollow*)\|(C1017_RunnerDigestReplay*)\|(C1032_Removal*)` | V-5, R-3 | all 9 listed; Linux 0 failed/skipped | 9 | 6 | true |
-
 | CP-28 | S5 | CP-7 | affected-full-classes | `/*/*/(CompletedCardWorkspaceRemovalTests*)\|(LegacyWorkspaceRemovalGateTests*)\|(RunnerWorkspaceServiceTests*)/*` | V-3, V-4, V-5, R-1, R-2, R-3 | all 137 full-class results; Linux 0 failed/skipped | 137 | 4 | true |
 
 S5 repair round 2 adds four exact methods selected by CP-10's C1032_Removal*:
