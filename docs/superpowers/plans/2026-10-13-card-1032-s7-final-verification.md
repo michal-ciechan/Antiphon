@@ -70,7 +70,7 @@ Restart: none.
 
 ### Checkpoints
 
-| Id | After | Build | Land | Filter | Invariants | Expect | Min | EstimatedMinutes | Serial |
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
 | CP-13 | S7 | `tests/Antiphon.Tests -> bin-c1032-admission/` | mirror-admission | `/*/*/CardWorktreeMirrorCleanupTests/(C1017_MirrorBehindPushedTip)\|(C1017_ReopenBetweenEndpoints)\|(C1017_MultipleMirrorsRemainDistinct)\|(C1032_Admission*)` | V-1, V-3, V-6, R-3 | all 7 listed including C1032_AdmissionBoundRebaseProof; 0 failed/skipped | 7 | 6 | true |
 | CP-14 | S7 | `tests/Antiphon.Tests -> bin-c1032-receipt/` | mirror-receipt | `/*/*/CardWorktreeMirrorCleanupTests/(C1017_ReceiptMustMatchOperation)\|(C1017_ReceiptMustMatchEndpoint)\|(C1017_ReceiptMustMatchStore)\|(C1017_ReceiptMustMatchTaskAttempt)\|(C1017_AckIsNotRemoval)\|(C1017_UnsupportedNeverFallsBack)\|(C1032_Receipt*)` | V-2, V-6, R-3 | all 7 listed; 0 failed/skipped | 7 | 6 | true |
