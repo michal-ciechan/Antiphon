@@ -8,20 +8,63 @@ namespace Antiphon.Tests.Checkpoints;
 public sealed class WaitCommandTests : CheckpointTestBase
 {
 
-    // case: completed state with lost reports; mutation: fall back to heartbeat and green;
-    // red: wait returns zero without the mandatory receipts.
+    // case: completed state with lost/corrupt receipts; red: any reader or stop
+    // returns success, or omits its named receipt refusal. Native report/stop
+    // probes returned zero on the missing-report cases before this repair.
     [Test]
     public async Task completed_wait_requires_report_receipts()
     {
-        var fixtureSource = new SourceEvidence();
-        var dir = TempDir();
-        CheckpointFixtures.MarkRun(dir, alive: false);
-        new RunStateStore().Write(Path.Combine(dir, "state.json"), new RunState { Source = fixtureSource, RunId = Path.GetFileName(dir), Phase = "done", ExitCode = 0, StartedAt = DateTimeOffset.UtcNow });
-        var output = new StringWriter();
-        var exit = await new WaitCommand(liveness: new Alive(false), delay: Fast).WaitAsync(
-            dir, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(60), output, CancellationToken.None);
-        exit.ShouldBe(2, output.ToString());
-        output.ToString().ShouldContain("receipt");
+        foreach (var mode in new[] { "control", "missing-md", "missing-json", "missing-both", "malformed-json", "wrong-source", "missing-state" })
+        foreach (var verb in new[] { "report-json", "report", "report-merge", "stop", "status", "wait" })
+        {
+            // Missing terminal state has the existing wait executor-death verdict;
+            // the other entry points must refuse the required state receipt.
+            if (mode == "missing-state" && verb == "wait") continue;
+            var root = TempDir();
+            var dir = Path.Combine(root, "run");
+            Directory.CreateDirectory(dir);
+            CheckpointFixtures.MarkRun(dir, alive: false);
+            var source = new SourceEvidence();
+            var statePath = Path.Combine(dir, "state.json");
+            SafeWrite.Require(new RunStateStore().Write(statePath, new RunState
+            { Source = source, RunId = Path.GetFileName(dir), Phase = "done", ExitCode = 0 }));
+            ReportWriter.WriteFiles(dir, new ReportModel
+            { Source = source, RunId = Path.GetFileName(dir), ExitCode = 0, Verdict = "GREEN" });
+            var markdown = Path.Combine(dir, "report.md");
+            var json = Path.Combine(dir, "report.json");
+            if (mode is "missing-md" or "missing-both") File.Delete(markdown);
+            if (mode is "missing-json" or "missing-both") File.Delete(json);
+            if (mode == "malformed-json") File.WriteAllText(json, "{");
+            if (mode == "wrong-source")
+            {
+                var report = System.Text.Json.JsonSerializer.Deserialize<ReportModel>(File.ReadAllText(json), ReportWriter.Json)!;
+                report.Commit = new string('f', 40);
+                File.WriteAllText(json, ReportWriter.JsonText(report));
+            }
+            if (mode == "missing-state") File.Delete(statePath);
+            var originalState = File.Exists(statePath) ? File.ReadAllBytes(statePath) : null;
+            var output = new StringWriter();
+            int exit;
+            if (verb == "wait")
+                exit = await new WaitCommand(liveness: new Alive(false), delay: Fast).WaitAsync(
+                    dir, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(60), output, CancellationToken.None);
+            else
+            {
+                var args = new List<string> { verb.StartsWith("report", StringComparison.Ordinal) ? "report" : verb,
+                    "--repo-root", root, "--run", dir };
+                if (verb == "report-json") args.Add("--json");
+                if (verb == "report-merge") args.AddRange(["--merge", "--results-root", root]);
+                exit = await Antiphon.Checkpoints.Program.RunAsync(args.ToArray(), new CheckpointApp.Runtime { Output = output });
+            }
+            var label = mode + " " + verb + ": " + output;
+            exit.ShouldBe(mode == "control" ? 0 : 2, label);
+            if (mode != "control")
+            {
+                output.ToString().ShouldContain("receipt", label);
+                if (originalState is null) File.Exists(statePath).ShouldBeFalse(label);
+                else File.ReadAllBytes(statePath).ShouldBe(originalState, label);
+            }
+        }
     }
 
 
