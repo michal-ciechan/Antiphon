@@ -86,7 +86,8 @@ PC-4: same method, git-file -> permit `.git` file.
 PC-5: `C971_IgnoredNestedRepositoryCollision`, exact/parent/child -> skip collision checks.
 PC-6: `C971_IgnoredNestedRepositoryEvidenceRefused`, ignore/tracked/git-symlink -> accept unknown evidence.
 All PCs/variants pending method-scoped SourceLanding Mutation; no Code green discharges them.
-Restart: none. Next stage: Review; caller lands original Code task then commissions Mutation.
+Restart: none. Next stage: Review after ordinary verification completes; while R-5 is
+incomplete, next stage is Code. Caller lands original Code task then commissions Mutation.
 
 ## Verification findings / S4
 
@@ -120,3 +121,10 @@ assertions were altered. Required next stage stays Code while R-5 is incomplete.
 Continuation must complete the original Unit scope and confirm/triage the sampled script
 case using bounded committed checkpoint selections. Never widen the existing deadline.
 All PCs remain pending for SourceLanding Mutation after ordinary Code, Review and land.
+
+S4 outcomes: CP-4 rerun at `c451672030617f5f19ad6eef8bc2ae60cc37e01c`
+passed all 5 executed cases, 2 Windows-only skips, zero failures. CP-8 and CP-9
+each executed exactly 1 method at the original base and reproduced the same assertion
+failure, confirming those two failures are inherited. R-5 is still incomplete because
+the full Unit selection timed out without TRX; the sampled script wait is not yet
+confirmed inherited. No production or test source changed after the green feature runs.
