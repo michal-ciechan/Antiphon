@@ -79,7 +79,7 @@ public sealed partial class RunnerCompletedCardWorkspaceRemoval
                 if (intent.Phase == "Intent") AfterJournalStateForTest?.Invoke("Intent");
                 if (intent.SetAsidePath is null)
                 {
-                    if (await CheckProofAsync(command.Binding, command.Proof, ct) is { } reason) { result = Hold(reason); return; }
+                    if (await CheckRemovalProofAsync(command, ct) is { } reason) { result = Hold(reason); return; }
                     if (gate.HasOwnershipConflict(command.Binding.WorktreePath)) { result = Hold("workspace_in_use"); return; }
                     var aside = RunnerWorkspaceRemovalJournal.SetAsideFor(command);
                     if (Exists(aside)) { result = Hold("set_aside_occupied"); return; }
