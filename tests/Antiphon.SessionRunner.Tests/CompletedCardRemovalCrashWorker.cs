@@ -44,6 +44,16 @@ internal sealed class CompletedCardRemovalCrashWorker
             runtime.WorkspaceUseGate = gate;
             await runtime.AdoptOrphanedHostsAsync(new SystemProcessLivenessProbe(), CancellationToken.None);
             var remover = new RunnerCompletedCardWorkspaceRemoval(workspace);
+            if (input.Cut == "fifo-refusal")
+            {
+                using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+                var result = await remover.RemoveAsync(input.Command, journal, gate, cancellation.Token);
+                // An unrelated use proves the shared admission semaphore was released;
+                // the refused workspace itself deliberately retains its durable fence.
+                await using var lease = await gate.AcquireUseAsync(Path.Combine(root, "outside"), cancellation.Token);
+                File.WriteAllText(inputPath + ".result", JsonSerializer.Serialize(new { result.Complete, result.Reason, admissionReleased = true }));
+                Environment.Exit(0);
+            }
             void Pause(string cut)
             {
                 if (cut != input.Cut) return;

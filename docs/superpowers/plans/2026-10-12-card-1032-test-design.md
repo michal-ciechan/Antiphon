@@ -1221,3 +1221,26 @@ Historical whole-plan cost/count paragraphs above are earlier freezes; this
 amendment adds one S7 method and these five control IDs, without waiving any
 prior row or named variant. SourceLanding Mutation owns red/restore/green and
 further missing-control discovery.
+
+### S5 repair round 2 — F1/F2
+
+Plan D-8 and parent D-5 refuse unknown ignored content and links. Inventory must
+classify special files without reading them and return unproven_content before
+rename/unregistration, honoring cancellation. The FIFO test runs the real
+executor in an inherited owned child with a 12-second hard bound, kill/join,
+and an unrelated gate acquisition proving admission release.
+Before disposition pin root/ancestors/files, compare recorded identity and regular
+file size/hash; mismatch leaves changed bytes and returns changed_since_inventory.
+Four new methods are bound by the S5 verification artifact's CP-10 wildcard;
+CP-28 covers all three affected classes, 137 results. CP-7/8/9 stay 5/9/4.
+Windows late-file/root and sharing qualification remains pending native Review.
+S6-S8 and the moved S7 bound-rebase positive remain outside this repair.
+
+| PC | Defect | Exact method filter | Expected red | Status |
+|---|---|---|---|---|
+| PC-583 | Read ignored FIFO as a regular file | `/*/*/CompletedCardWorkspaceRemovalTests/C1032_RemovalLinuxIgnoredFifoRefuses` | owned-child hard bound fails or unproven_content/admission release missing | pending SourceLanding Mutation |
+| PC-584 | Omit per-file identity comparison | `/*/*/CompletedCardWorkspaceRemovalTests/C1032_RemovalLateFileIdentityRefuses` | changed_since_inventory or same-byte replacement preservation fails | pending; Linux and Windows variants |
+| PC-585 | Omit per-file size/hash comparison | `/*/*/CompletedCardWorkspaceRemovalTests/C1032_RemovalLateFileContentRefuses` | changed_since_inventory or foreign bytes preservation fails | pending; Linux and Windows variants |
+| PC-586 | Omit opened-root identity comparison | `/*/*/CompletedCardWorkspaceRemovalTests/C1032_RemovalLateRootIdentityRefuses` | changed_since_inventory or replacement-root preservation fails | pending; Linux and Windows variants |
+
+All existing PCs/variants remain pending; ordinary defect red is not Mutation.

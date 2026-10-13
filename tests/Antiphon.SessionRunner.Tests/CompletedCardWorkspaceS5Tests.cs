@@ -547,4 +547,91 @@ public sealed partial class CompletedCardWorkspaceRemovalTests
         (await r.Remove()).GetProperty("complete").GetBoolean().ShouldBeTrue();
         File.ReadAllText(Path.Combine(f.Root, "outside", "sentinel")).ShouldBe("preserve");
     }
+    // PC-583: ignored FIFO must refuse without reading it or retaining shared admission.
+    [Test] public async Task C1032_RemovalLinuxIgnoredFifoRefuses()
+    {
+        if (!OperatingSystem.IsLinux()) Skip.Test("Linux named-pipe inventory witness; native FIFO required");
+        await using var r = new RemovalRig(); var f = r.Fixture;
+        Directory.CreateDirectory(Path.Combine(f.Checkout, "bin"));
+        var fifo = Path.Combine(f.Checkout, "bin", "pipe");
+        CreateFifo(fifo, 0x180).ShouldBe(0);
+        var inputPath = Path.Combine(f.Root, "fifo-input.json");
+        File.WriteAllText(inputPath, JsonSerializer.Serialize(new CompletedCardRemovalCrashWorker.Input(
+            f.Root, f.State, f.StoreId, f.Repository, f.Origin, r.Command, "fifo-refusal")));
+        var psi = new ProcessStartInfo("dotnet") { RedirectStandardOutput = true, RedirectStandardError = true,
+            UseShellExecute = false, WorkingDirectory = f.Root };
+        psi.ArgumentList.Add("exec"); psi.ArgumentList.Add(typeof(CompletedCardWorkspaceRemovalTests).Assembly.Location);
+        psi.Environment[CompletedCardRemovalCrashWorker.InputEnvironment] = inputPath;
+        using var child = Process.Start(psi)!;
+        var stdout = child.StandardOutput.ReadToEndAsync(); var stderr = child.StandardError.ReadToEndAsync();
+        var hung = false;
+        try
+        {
+            try { await child.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(12)); }
+            catch (TimeoutException) { hung = true; }
+        }
+        finally
+        {
+            if (!child.HasExited) child.Kill(entireProcessTree: true);
+            await child.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+            await Task.WhenAll(stdout, stderr);
+        }
+        hung.ShouldBeFalse("ignored FIFO pinned inventory beyond cancellation; owned child killed and joined");
+        child.ExitCode.ShouldBe(0, await stderr);
+        var result = JsonSerializer.Deserialize<JsonElement>(File.ReadAllText(inputPath + ".result"));
+        result.GetProperty("Reason").GetString().ShouldBe("unproven_content");
+        result.GetProperty("Complete").GetBoolean().ShouldBeFalse();
+        result.GetProperty("admissionReleased").GetBoolean().ShouldBeTrue();
+        r.Journal.Read()!.Single().Phase.ShouldBe("Intent");
+        File.GetAttributes(fifo); r.Preserved();
+    }
+
+    [System.Runtime.InteropServices.DllImport("libc", EntryPoint = "mkfifo", SetLastError = true)]
+    private static extern int CreateFifo(string path, uint mode);
+
+    // PC-584: same bytes under a replacement identity must remain on disk.
+    [Test] public Task C1032_RemovalLateFileIdentityRefuses() => LateFileRefuses(replace: true);
+    // PC-585: changed bytes after the final inventory must remain on disk.
+    [Test] public Task C1032_RemovalLateFileContentRefuses() => LateFileRefuses(replace: false);
+    private static async Task LateFileRefuses(bool replace)
+    {
+        await using var r = new RemovalRig(); var changed = false; string? target = null;
+        r.Hook("BeforeDeleteEntryForTest", (Action<string>)(path =>
+        {
+            if (Path.GetFileName(path) != "source") return;
+            target = path;
+            if (replace)
+            {
+                // Keep the old inode alive to prevent reuse from masking replacement.
+                File.Move(path, Path.Combine(r.Fixture.Root, "old-source"));
+                File.WriteAllText(path, "source");
+            }
+            else File.WriteAllText(path, "foreign bytes");
+            changed = true;
+        }));
+        Held(await r.Remove(), "changed_since_inventory"); changed.ShouldBeTrue();
+        File.ReadAllText(target!).ShouldBe(replace ? "source" : "foreign bytes");
+        r.Journal.Read()!.Single().Receipt.ShouldBeNull();
+        await using var lease = await r.Gate.AcquireUseAsync(Path.Combine(r.Fixture.Root, "outside"), CancellationToken.None);
+        File.ReadAllText(r.Command.ArtifactPointers[0]).ShouldBe("external result");
+    }
+
+    // PC-586: replacement root with identical names/bytes cannot inherit removal authority.
+    [Test] public async Task C1032_RemovalLateRootIdentityRefuses()
+    {
+        await using var r = new RemovalRig(); var changed = false; string? target = null;
+        r.Hook("BeforeDeleteEntryForTest", (Action<string>)(path =>
+        {
+            if (changed || path != r.Journal.Read()!.Single().SetAsidePath) return;
+            target = path; Directory.Move(path, Path.Combine(r.Fixture.Root, "old-root"));
+            Directory.CreateDirectory(path);
+            foreach (var file in Directory.EnumerateFiles(Path.Combine(r.Fixture.Root, "old-root")))
+                File.Copy(file, Path.Combine(path, Path.GetFileName(file)));
+            changed = true;
+        }));
+        Held(await r.Remove(), "changed_since_inventory"); changed.ShouldBeTrue();
+        File.ReadAllText(Path.Combine(target!, "source")).ShouldBe("source");
+        r.Journal.Read()!.Single().Receipt.ShouldBeNull();
+    }
+
 }
