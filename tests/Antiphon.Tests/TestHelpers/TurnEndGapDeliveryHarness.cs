@@ -9,6 +9,7 @@ using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Agents.SessionRunner;
+using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.Agents;
@@ -69,7 +70,7 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
         services.AddSingleton(Options.Create(new SessionStateSettings { Enabled = _cache }));
         services.AddSingleton<ISessionStateLoader, SessionStateLoader>();
         services.AddSingleton<SessionStateStore>();
-        var settings = Options.Create(new SessionRunnerSettings
+        var settings = Options.Create(new Antiphon.Server.Application.Settings.SessionRunnerSettings
         {
             Enabled = true, BaseUrl = "http://runner.invalid", EventStreamIdleTimeoutSeconds = 600,
             EventReconnectDelayMs = 60000,
