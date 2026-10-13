@@ -8,7 +8,7 @@ namespace Antiphon.Tests.Application;
 [NotInParallel("MessageQueue"), ParallelLimiter<ProcessSpawnLimit>]
 public sealed class TurnEndGapRestartDeliveryTests
 {
-    // T37 / V-20 / R-5 -> PC-84 removes subscription catch-up.
+    // T37 / V-20 / R-5 -> PC-84 suppresses Sync's recovered-boundary wakeup.
     // Red oracle: five complete recipient prompts and Confirmed notifications,
     // after the finite captured-gap / keepalive / queue-timer schedule.
     [Test, Arguments(true), Arguments(false)]

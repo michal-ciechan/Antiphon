@@ -159,7 +159,8 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
         {
             using var pending = CancellationTokenSource.CreateLinkedTokenSource(Token);
             var timer = Clock.WaitForTimerAsync(e => e.Action == "create"
-                && e.DueTime == TimeSpan.FromMilliseconds(20)
+                && (e.DueTime == TimeSpan.FromMilliseconds(20)
+                    || e.DueTime == TimeSpan.FromMilliseconds(500))
                 && Clock.TimerStates[e.TimerId] != "dispose", after, pending.Token);
             if (await Task.WhenAny(operation, timer) == operation)
             {
