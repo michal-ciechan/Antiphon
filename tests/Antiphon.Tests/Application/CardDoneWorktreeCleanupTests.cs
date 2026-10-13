@@ -17,6 +17,31 @@ namespace Antiphon.Tests.Application;
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class CardDoneWorktreeCleanupTests
 {
+
+    [Test]
+    public void C1213_OwnershipBothForms()
+    {
+        // restore legacy literal -> owner-classification fails for new ref; omit tail -> foreign-owner fails.
+        var task = new Antiphon.Server.Domain.Entities.AgentTask { Id = Guid.Parse("deadbeef-0000-0000-0000-000000000001"), Workspace = WorkspaceMode.Worktree, RepoPath = "/repo" };
+        foreach (var branch in new[] { "refs/heads/feat/card-task-deadbeef", "refs/heads/feat/card-1213-code-deadbeef" })
+            CardWorktreeCleanupService.ClassifyOwnership(task, "/trees/card-task-deadbeef", branch, "/trees").ShouldBeNull("owner-classification");
+        foreach (var branch in new[] { "refs/heads/feat/card-task-cafebabe", "refs/heads/feat/card-1213-code-cafebabe", "refs/heads/feat/card-1213-Code-deadbeef", "refs/heads/feat/card-1213-code-deadbeef\n" })
+            CardWorktreeCleanupService.ClassifyOwnership(task, "/trees/card-task-deadbeef", branch, "/trees").ShouldBe("ordinary_owner_required", "foreign-owner");
+    }
+    [Test]
+    public void C1213_OwnershipPathGuards()
+    {
+        // drop leaf/root/canonical exclusion -> unsafe-path admitted.
+        foreach (var branch in new[] { "refs/heads/feat/card-task-deadbeef", "refs/heads/feat/card-1213-code-deadbeef" })
+        foreach (var vector in new[] { ("/trees/card-task-cafebabe", "/repo", "/trees"), ("/outside/card-task-deadbeef", "/repo", "/trees"), ("/trees/card-task-deadbeef", "/trees/card-task-deadbeef", "/trees") })
+        {
+            var task = new Antiphon.Server.Domain.Entities.AgentTask { Id = Guid.Parse("deadbeef-0000-0000-0000-000000000001"), Workspace = WorkspaceMode.Worktree, RepoPath = vector.Item2 };
+            CardWorktreeCleanupService.ClassifyOwnership(task, vector.Item1, branch, vector.Item3).ShouldBe("ordinary_owner_required", "unsafe-path");
+        }
+        var owned = new Antiphon.Server.Domain.Entities.AgentTask { Id = Guid.Parse("deadbeef-0000-0000-0000-000000000001"), Workspace = WorkspaceMode.Worktree, RepoPath = "/repo" };
+        CardWorktreeCleanupService.ClassifyOwnership(owned, "/trees/card-task-deadbeef", "refs/heads/feat/card-1213-code-deadbeef", "/trees").ShouldBeNull("admitted-path-control");
+    }
+
     [Test]
     public async Task C1017_OnlyDoneAuthorizes()
     {

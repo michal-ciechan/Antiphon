@@ -18,6 +18,25 @@ namespace Antiphon.Tests.Application;
 [Category("Unit")]
 public sealed class RemoteWorktreeMirrorTests
 {
+
+    [Test]
+    public void C1213_OwnedBranchUsesStoredIdentity()
+    {
+        // recompute legacy from Guid -> owned-branch differs; omit tail/envelope -> invalid accepted.
+        var method = typeof(RemoteWorkspaceService).GetMethod("OwnedBranch", [typeof(AgentTask)]).ShouldNotBeNull("stored ownership API");
+        var task = new AgentTask { Id = Guid.Parse("deadbeef-0000-0000-0000-000000000001") };
+        foreach (var branch in new[] { "feat/card-task-deadbeef", "feat/card-1213-code-deadbeef" })
+        {
+            task.WorktreeBranch = branch;
+            method.Invoke(null, [task]).ShouldBe(branch, "owned-branch");
+        }
+        foreach (var branch in new string?[] { null, "feat/card-task-cafebabe", "feat/card-1213-code-cafebabe", "feat/card-1213-Code-deadbeef", "feat/card-task-deadbeef\n", "refs/tags/feat/card-task-deadbeef" })
+        {
+            task.WorktreeBranch = branch;
+            method.Invoke(null, [task]).ShouldBeNull("invalid-owned-branch");
+        }
+    }
+
     private const string Baseline = "1111111111111111111111111111111111111111";
     private const string Sha = "2222222222222222222222222222222222222222";
     private const string Diverged = "3333333333333333333333333333333333333333";

@@ -21,6 +21,28 @@ namespace Antiphon.Tests.Application;
 [Category("Integration")]
 public sealed class WorktreeHealthServiceTests
 {
+
+    [Test]
+    public async Task C1213_SweepBothFormsPreservesIdentity()
+    {
+        // legacy-only DTO parser -> orphan-short-id null for modern branch.
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        using var repo = new TempRepo();
+        var manager = new RecordingWorktreeManager { KnownRepos = [repo.Path] };
+        foreach (var branch in new[] { "feat/card-task-deadbeef", "feat/card-1213-code-deadbeef" })
+            manager.Scan.Add(new(repo.Path, "", branch, "deadbeef", false, false, null, false, false));
+        var known = Guid.Parse("cafebabe-0000-0000-0000-000000000001");
+        db.AgentTasks.Add(new AgentTask { Id = known, RootTaskId = known, Goal = "healthy", Status = AgentTaskStatus.Working, Workspace = WorkspaceMode.Worktree, RepoPath = repo.Path, WorkingDirectory = repo.Path, WorktreePath = repo.Path, WorktreeBranch = "feat/card-1213-code-cafebabe", CreatedAt = DateTime.UtcNow });
+        manager.Scan.Add(new(repo.Path, repo.Path, "feat/card-1213-code-cafebabe", "cafebabe", true, false, null, true, true));
+        await db.SaveChangesAsync();
+        var report = await CreateService(db, manager).SweepAsync(default);
+        report.Findings.Count.ShouldBe(2);
+        report.Findings.ShouldAllBe(x => x.TaskId == null && x.ShortId == "deadbeef", "orphan-short-id");
+        report.Findings.ShouldNotContain(x => x.TaskId == known, "known-healthy");
+        manager.RemoveCalls.ShouldBe(0); manager.PruneCalls.ShouldBe(0);
+    }
+
     [Test]
     public void classify_locked_missing_open_task_emits_locked_and_unhealthy()
     {

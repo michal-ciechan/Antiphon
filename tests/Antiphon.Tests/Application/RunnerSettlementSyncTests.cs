@@ -27,6 +27,25 @@ namespace Antiphon.Tests.Application;
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class RunnerSettlementSyncTests
 {
+
+    [Test]
+    public async Task C1213_SyncUsesStoredOwnedBranch()
+    {
+        // derive legacy fullRef -> desktop-receipt fails with new ref.
+        foreach (var modern in new[] { false, true })
+        {
+            await using var world = await SyncWorld.CreateAsync(cardBranch: modern);
+            var tip = await world.RunnerPushAsync("work.txt", "exact new branch bytes");
+            var sibling = await world.PublishForeignBranchAsync("feat/card-1213-code-ffffffff", "canary.txt");
+            var answer = await world.Service().SyncAsync(world.Task, default);
+            answer.State.ShouldBe(RemoteSettlementSyncState.Synchronized, "desktop-receipt: " + answer.Reason);
+            answer.FullRef.ShouldBe(world.FullRef, "stored-ref");
+            (await world.HeadAsync()).ShouldBe(tip, "desktop-receipt");
+            File.ReadAllText(Path.Combine(world.Worktree, "work.txt")).ShouldBe("exact new branch bytes");
+            (await world.RunAsync(world.Origin, "rev-parse", "feat/card-1213-code-ffffffff")).ShouldBe(sibling, "unrelated-ref-canary");
+        }
+    }
+
     [Test]
     public async Task Unpushed_runner_commit_is_published_and_desktop_fast_forwards()
     {
@@ -1143,7 +1162,8 @@ public sealed class RunnerSettlementSyncTests
         public string Worktree => Path.Combine(Root, "wt");
         public string Runner => Path.Combine(Root, "runner");
         public Guid TaskId { get; } = Guid.NewGuid();
-        public string Branch => "feat/card-task-" + TaskId.ToString("N")[..8];
+        private bool _cardBranch;
+        public string Branch => (_cardBranch ? "feat/card-1213-code-" : "feat/card-task-") + TaskId.ToString("N")[..8];
         public string FullRef => "refs/heads/" + Branch;
         public string Baseline { get; private set; } = "";
         public RepositoryMutationLease Leases { get; } = new(new LandingGit());
@@ -1159,9 +1179,9 @@ public sealed class RunnerSettlementSyncTests
         }
 
         public static async Task<SyncWorld> CreateAsync(
-            bool pushBranch = true, bool extraMasterCommit = false, bool withSubmodule = false)
+            bool pushBranch = true, bool extraMasterCommit = false, bool withSubmodule = false, bool cardBranch = false)
         {
-            var world = new SyncWorld();
+            var world = new SyncWorld { _cardBranch = cardBranch };
             Directory.CreateDirectory(world.Root);
             await world.RunAsync(world.Root, "init", "--bare", "-b", "master", world.Origin);
             Directory.CreateDirectory(world.Desktop);

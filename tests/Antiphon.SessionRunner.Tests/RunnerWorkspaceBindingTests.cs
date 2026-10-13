@@ -14,6 +14,27 @@ namespace Antiphon.SessionRunner.Tests;
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class RunnerWorkspaceBindingTests
 {
+
+    [Test]
+    public async Task C1213_BindingBothBranchForms()
+    {
+        // rewriting requested branch -> binding-branch/SourceFullRef differs.
+        foreach (var branch in new[] { Scratch.Branch, "feat/card-1213-code-deadbeef" })
+        {
+            using var scratch = Scratch.Create();
+            if (branch != Scratch.Branch) Scratch.Git(scratch.Clone, "branch", branch, scratch.Sha);
+            var taskId = Guid.Parse("deadbeef-0000-0000-0000-000000000001");
+            var request = Request(scratch, taskId, Guid.NewGuid(), branch: branch);
+            var service = scratch.Service(scratch.Clone);
+            var result = await service.MirrorAsync(request, default);
+            Path.GetFileName(result.Path).ShouldBe("task-deadbeef", "mirror-directory");
+            Scratch.Git(result.Path, "symbolic-ref", "HEAD").Trim().ShouldBe("refs/heads/" + branch, "binding-branch");
+            var record = service.OpenBindingStore().Read(request.Binding!.PreparationId).Record!;
+            record.SourceFullRef.ShouldBe("refs/heads/" + branch, "binding-branch");
+            (await scratch.Service(scratch.Clone).MirrorAsync(request, default)).Binding!.BindingId.ShouldBe(result.Binding!.BindingId, "idempotent-binding");
+        }
+    }
+
     [Test]
     public async Task C1032_BindingFullIdentityCollision()
     {

@@ -24,6 +24,28 @@ namespace Antiphon.Tests.Application;
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class WorktreeResidueSweepTests
 {
+
+    [Test]
+    public async Task C1213_ResidueBothFormsKeepsDirectory()
+    {
+        // legacy-only scan or derive directory from card -> residue-path disappears/changes.
+        using var repo = new ScratchGitRepo("c1213-residue");
+        await repo.CommitFileAsync("seed.txt", "seed");
+        foreach (var branch in new[] { "feat/card-task-deadbeef", "feat/card-1213-code-cafebabe", "feat/card-1213" }) await repo.GitAsync("branch", branch);
+        var manager = new WorktreeManager(Options.Create(new GitSettings { WorktreeBasePath = repo.WorktreeRoot }), TimeProvider.System, NullLogger<WorktreeManager>.Instance);
+        var scan = await manager.ScanResidueCandidatesAsync([repo.Path], default);
+        scan.Select(x => x.Branch).Order().ShouldBe(new[] { "feat/card-task-deadbeef", "feat/card-1213-code-cafebabe" }.Order(), "delegate-set");
+        foreach (var row in scan)
+            row.Path.ShouldBe(Path.Combine(repo.WorktreeRoot, "card-task-" + (row.Branch.Contains("cafebabe") ? "cafebabe" : "deadbeef")), "residue-path");
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var service = new WorktreeResidueSweepService(db, manager, Options.Create(new WorktreeResidueSettings()), Options.Create(new GitSettings { DefaultBranch = "master" }), TimeProvider.System, NullLogger<WorktreeResidueSweepService>.Instance);
+        db.AgentTasks.Add(new AgentTask { Id = Guid.NewGuid(), Goal = "repo scan", WorkingDirectory = repo.Path, RepoPath = repo.Path, CreatedAt = DateTime.UtcNow });
+        await db.SaveChangesAsync();
+        var preview = await service.PreviewAsync(null, null, default);
+        preview.Rows.ShouldAllBe(x => x.Keep, "scan-is-not-cleanup-authority");
+    }
+
     private static readonly DateTime Now = new(2026, 9, 4, 12, 0, 0, DateTimeKind.Utc);
     private static readonly WorktreeResidueSettings Settings = new() { MinSettledMinutes = 120 };
 
