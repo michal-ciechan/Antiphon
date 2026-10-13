@@ -1829,7 +1829,14 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             var herdrRoot = HerdrPaneSidecar.DirectoryFor(_settings.SessionLogPath);
             if (Directory.Exists(herdrRoot))
                 foreach (var file in Directory.EnumerateFiles(herdrRoot, "*.json"))
-                    if (HerdrPaneSidecar.TryLoad(file) is null) WorkspaceUseGate.MarkCensusUnknown();
+                {
+                    var retained = HerdrPaneSidecar.TryLoad(file);
+                    if (retained is null || retained.SessionId == Guid.Empty || retained.SchemaVersion != 1)
+                        WorkspaceUseGate.MarkCensusUnknown();
+                    else WorkspaceUseGate.RecordOwner(retained.Cwd, retained.SessionId,
+                        () => retained.ChildPid is not int pid || probe.IsAlive(pid,
+                            retained.ChildStartedAtUtc ?? retained.LaunchedAtUtc));
+                }
         }
         var hasCustodyLedger = HasCustodyLedger;
         if (hasCustodyLedger)
@@ -1889,11 +1896,15 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 continue;
             }
 
-            if (WorkspaceUseGate is not null && manifest.HostPid > 0
+            if (WorkspaceUseGate is not null && ((manifest.HostPid > 0
                 && probe.IsAlive(manifest.HostPid, manifest.HostStartTimeUtc))
+                || (manifest.ChildPid is int child && probe.IsAlive(child,
+                    manifest.ChildStartTimeUtc ?? manifest.CreatedAtUtc))))
             {
                 WorkspaceUseGate.RecordOwner(manifest.Cwd, manifest.SessionId,
-                    () => probe.IsAlive(manifest.HostPid, manifest.HostStartTimeUtc));
+                    () => probe.IsAlive(manifest.HostPid, manifest.HostStartTimeUtc)
+                        || (manifest.ChildPid is int pid && probe.IsAlive(pid,
+                            manifest.ChildStartTimeUtc ?? manifest.CreatedAtUtc)));
                 if (WorkspaceUseGate.IsRetiring(manifest.Cwd))
                 {
                     // A retained process is observed ownership, not a newly authorized launch.

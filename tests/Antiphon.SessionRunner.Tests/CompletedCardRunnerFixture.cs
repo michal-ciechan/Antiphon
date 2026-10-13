@@ -14,6 +14,7 @@ internal sealed class CompletedCardRunnerFixture : IAsyncDisposable
     public string Checkout => Path.Combine(Root, "work", "worktrees", "task-deadbeef");
     public string State => Path.Combine(Root, "state", "retirements");
     public string Repository => Path.Combine(Root, "repository");
+    public string Origin => Path.Combine(Root, "origin");
     public string StoreId { get; } = Guid.NewGuid().ToString("D");
     public SessionRunnerSettings Settings { get; }
     public SessionRunnerRuntime Runtime { get; private set; }
@@ -21,23 +22,34 @@ internal sealed class CompletedCardRunnerFixture : IAsyncDisposable
     public int Effects { get; private set; }
     public Func<Task>? EffectBarrier { get; set; }
     public string Sha { get; }
+    public CompletedCardWorkspaceBinding Binding { get; }
+    public PhoneHomeWorkspaceMirrorRequest MirrorRequest { get; }
+    public int GitStarts { get; private set; }
     private readonly List<SessionRunnerRuntime> _runtimes = [];
     private readonly List<Process> _children = [];
 
     public CompletedCardRunnerFixture()
     {
-        Directory.CreateDirectory(Checkout);
-        Directory.CreateDirectory(Repository);
+        Directory.CreateDirectory(Path.GetDirectoryName(Checkout)!);
+        Directory.CreateDirectory(Origin);
         Directory.CreateDirectory(Path.Combine(Root, "outside"));
+        Directory.CreateDirectory(Path.Combine(Root, "reports"));
         File.WriteAllText(Path.Combine(Root, "outside", "sentinel"), "preserve");
-        Git(Repository, "init", "--initial-branch=main");
-        Git(Repository, "config", "user.name", "c1032");
-        Git(Repository, "config", "user.email", "c1032@localhost");
-        File.WriteAllText(Path.Combine(Repository, "source"), "source");
-        Git(Repository, "add", "source");
-        Git(Repository, "commit", "-m", "fixture");
-        Sha = Git(Repository, "rev-parse", "HEAD").Trim();
-        Git(Repository, "branch", "feat/card-task-deadbeef");
+        Git(Origin, "init", "--initial-branch=main");
+        Git(Origin, "config", "user.name", "c1032");
+        Git(Origin, "config", "user.email", "c1032@localhost");
+        File.WriteAllText(Path.Combine(Origin, "source"), "source");
+        Git(Origin, "add", "source");
+        Git(Origin, "commit", "-m", "fixture");
+        Sha = Git(Origin, "rev-parse", "HEAD").Trim();
+        Git(Origin, "branch", "feat/card-task-deadbeef");
+        Git(Root, "clone", Origin, Repository);
+        MirrorRequest = new("feat/card-task-deadbeef", Sha, "task-deadbeef", Binding:
+            new(Guid.NewGuid(), 1, Guid.NewGuid(), "fixture-runner", StoreId));
+        var creator = Workspace(gated: false);
+        var mirror = creator.MirrorAsync(MirrorRequest, CancellationToken.None).GetAwaiter().GetResult();
+        Binding = mirror.Binding!;
+        creator.OpenBindingStore().Read(Binding.PreparationId).Kind.ShouldBe(BindingReadKind.Complete);
         Settings = new() { SessionLogPath = Path.Combine(Root, "logs") };
         Runtime = NewRuntime();
     }
@@ -80,8 +92,7 @@ internal sealed class CompletedCardRunnerFixture : IAsyncDisposable
 
     public CompletedCardWorkspaceCommand Command() => new(1, Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(),
         Guid.NewGuid(), Guid.NewGuid(), "CardDone",
-        new(Guid.NewGuid(), 1, Guid.NewGuid(), Guid.NewGuid(), "fixture-runner", StoreId, Repository,
-            Repository, Path.Combine(Repository, ".git"), Checkout, "refs/heads/feat/card-task-deadbeef", Sha),
+        Binding,
         new(Sha, "fixture", "refs/heads/main", Sha, "Contained", "fixture-proof", Sha, null),
         "report", "artifacts", "policy", [], []);
 
@@ -113,17 +124,19 @@ internal sealed class CompletedCardRunnerFixture : IAsyncDisposable
         return sidecar;
     }
 
-    public RunnerWorkspaceService Workspace()
+    public RunnerWorkspaceService Workspace(bool gated = true)
     {
         var config = Path.Combine(Root, "empty.gitconfig");
         File.WriteAllText(config, "");
-        var service = new RunnerWorkspaceService(Repository, Path.Combine(Root, "work"), Repository, psi =>
+        var service = new RunnerWorkspaceService(Repository, Path.Combine(Root, "work"), Origin, psi =>
         {
+            GitStarts++;
             psi.Environment["GIT_CONFIG_NOSYSTEM"] = "1";
             psi.Environment["GIT_CONFIG_GLOBAL"] = config;
             return Process.Start(psi);
         });
-        Bind(service);
+        service.BindRecipient("fixture-runner", Guid.Parse(StoreId));
+        if (gated) Bind(service);
         return service;
     }
 

@@ -18,7 +18,15 @@ public sealed class CompletedCardWorkspaceRemovalTests
         f.InstallGate();
         await f.Runtime.AdoptOrphanedHostsAsync(new SystemProcessLivenessProbe(), CancellationToken.None);
         var entered = NewBarrier(); var release = NewBarrier();
-        var retire = f.Retire(effect: async () => { entered.SetResult(); await release.Task; });
+        var command = f.Command();
+        var retire = f.Retire(command, async () =>
+        {
+            using var intent = System.Text.Json.JsonDocument.Parse(File.ReadAllText(Path.Combine(f.State, "journal.json")));
+            var persisted = intent.RootElement.GetProperty("intents")[0].GetProperty("command");
+            persisted.GetProperty("operationId").GetGuid().ShouldBe(command.OperationId);
+            persisted.GetProperty("binding").GetProperty("bindingId").GetGuid().ShouldBe(f.Binding.BindingId);
+            entered.SetResult(); await release.Task;
+        });
         await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
         var id = Guid.NewGuid();
         var launch = f.Runtime.StartAsync(f.Launch(id, Path.Combine(f.Checkout, "..", "task-deadbeef")), CancellationToken.None);
@@ -165,23 +173,26 @@ public sealed class CompletedCardWorkspaceRemovalTests
         f.InstallGate(); await f.Runtime.AdoptOrphanedHostsAsync(new SystemProcessLivenessProbe(), CancellationToken.None);
         (await f.Retire()).ShouldBeTrue();
         var service = f.Workspace();
-        await Should.ThrowAsync<PhoneHomeAdmissionException>(service.MirrorAsync(
-            new("feat/card-task-deadbeef", f.Sha, "task-deadbeef"), CancellationToken.None));
-        File.Exists(Path.Combine(f.Checkout, ".git")).ShouldBeFalse("mirrorCreatesAtRetiringPath");
+        var starts = f.GitStarts;
+        var before = File.ReadAllBytes(Path.Combine(f.Checkout, ".git"));
+        var refusal = await Should.ThrowAsync<PhoneHomeAdmissionException>(service.MirrorAsync(f.MirrorRequest, CancellationToken.None));
+        refusal.Code.ShouldBe("workspace_retiring_or_unknown");
+        (f.GitStarts - starts).ShouldBe(0, "mirrorCreatesAtRetiringPath");
+        File.ReadAllBytes(Path.Combine(f.Checkout, ".git")).ShouldBe(before);
 
         await using var inverse = new CompletedCardRunnerFixture();
-        Directory.Delete(inverse.Checkout);
         inverse.InstallGate(); await inverse.Runtime.AdoptOrphanedHostsAsync(new SystemProcessLivenessProbe(), CancellationToken.None);
         var creating = inverse.Workspace();
         var entered = NewBarrier(); var release = NewBarrier();
         creating.GetType().GetProperty("WorkspaceAdmissionForTest", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
             .SetValue(creating, (Func<Task>)(async () => { entered.SetResult(); await release.Task; }));
-        var first = creating.MirrorAsync(new("feat/card-task-deadbeef", inverse.Sha, "task-deadbeef"), CancellationToken.None);
+        var first = creating.MirrorAsync(inverse.MirrorRequest, CancellationToken.None);
         await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
         var second = inverse.Retire();
         try { second.IsCompleted.ShouldBeFalse(); }
         finally { release.TrySetResult(); }
         var mirror = await first; mirror.Path.ShouldBe(inverse.Checkout.Replace('\\', '/'));
+        mirror.Binding!.BindingId.ShouldBe(inverse.Binding.BindingId);
         await second;
         CompletedCardRunnerFixture.Git(mirror.Path, "rev-parse", "HEAD").Trim().ShouldBe(inverse.Sha);
     }
