@@ -60,7 +60,7 @@ public sealed class CompletedCardWorkspaceRemovalTests
         fake.SetPaneProcessInfo(pane.PaneId, 1, [(child.Id, "claude", new[] { "claude" }, f.Checkout)]);
         fake.Start(); await fake.WaitUntilListeningAsync();
         f.InstallGate();
-        var runtime = f.NewRuntime(new HerdrClient(new() { Enabled = true, Session = fake.Session, SocketPath = fake.EndpointPath }));
+        var runtime = f.NewRuntime(new HerdrClient(new HerdrSettings { Enabled = true, Session = fake.Session, SocketPath = fake.EndpointPath }));
         f.Bind(runtime);
         await runtime.AdoptOrphanedHostsAsync(new SystemProcessLivenessProbe(), CancellationToken.None);
         (await f.Retire()).ShouldBeTrue();
@@ -74,7 +74,7 @@ public sealed class CompletedCardWorkspaceRemovalTests
         inverse.InstallGate();
         pane.Cwd = inverse.Checkout;
         fake.SetPaneProcessInfo(pane.PaneId, 1, [(child.Id, "claude", new[] { "claude" }, inverse.Checkout)]);
-        var inverseRuntime = inverse.NewRuntime(new HerdrClient(new() { Enabled = true, Session = fake.Session, SocketPath = fake.EndpointPath }));
+        var inverseRuntime = inverse.NewRuntime(new HerdrClient(new HerdrSettings { Enabled = true, Session = fake.Session, SocketPath = fake.EndpointPath }));
         inverse.Bind(inverseRuntime);
         await inverseRuntime.AdoptOrphanedHostsAsync(new SystemProcessLivenessProbe(), CancellationToken.None);
         var entered = NewBarrier(); var release = NewBarrier();
@@ -124,7 +124,7 @@ public sealed class CompletedCardWorkspaceRemovalTests
         await using var endpoint = new FakeHerdrEndpoint();
         var child = f.Child(); var id = Guid.NewGuid(); f.SeedSidecar(child, id);
         f.InstallGate();
-        var runtime = f.NewRuntime(new HerdrClient(new() { Enabled = true, Session = endpoint.Session,
+        var runtime = f.NewRuntime(new HerdrClient(new HerdrSettings { Enabled = true, Session = endpoint.Session,
             SocketPath = endpoint.Path, ConnectTimeoutMs = 250 }));
         runtime.CreationEffectForTest = null;
         f.Bind(runtime);
@@ -145,7 +145,7 @@ public sealed class CompletedCardWorkspaceRemovalTests
         (await conflict.Retire()).ShouldBeTrue();
         var owner = conflict.Child(); conflict.SeedSidecar(owner, Guid.NewGuid());
         conflict.InstallGate(restart: true);
-        var restarted = conflict.NewRuntime(new HerdrClient(new() { Enabled = true, Session = fake.Session, SocketPath = fake.EndpointPath }));
+        var restarted = conflict.NewRuntime(new HerdrClient(new HerdrSettings { Enabled = true, Session = fake.Session, SocketPath = fake.EndpointPath }));
         restarted.CreationEffectForTest = null; conflict.Bind(restarted);
         fake.SetPaneProcessInfo(pane.PaneId, 1, [(owner.Id, "claude", new[] { "claude" }, conflict.Checkout)]);
         await restarted.AdoptOrphanedHostsAsync(new SystemProcessLivenessProbe(), CancellationToken.None);
