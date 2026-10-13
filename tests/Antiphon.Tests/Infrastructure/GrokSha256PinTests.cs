@@ -14,6 +14,8 @@ namespace Antiphon.Tests.Infrastructure;
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class GrokSha256PinTests
 {
+    internal const string NativeLinuxReason = "CARD-1210: Grok SHA pin contracts require native Linux (/bin/sh and POSIX executable semantics); Windows skips explicitly.";
+
     private const string ReviewedPin = "9ce03ed23e16ea01072b4496263d6213a27899e1e3e107f008d36edf82e70407";
     private const string EmptySha = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
     private static readonly object Gate = new();
@@ -21,6 +23,7 @@ public sealed class GrokSha256PinTests
     [Test]
     public async Task Runner_grok_sha_rejects_multiline_pin()
     {
+        NativeLinuxGate.Require(NativeLinuxReason);
         var result = await Run(ReviewedPin + "\n" + "extra", "tampered");
         RejectBeforeFetch(result, "multiline-pin-before-fetch");
     }
@@ -28,6 +31,7 @@ public sealed class GrokSha256PinTests
     [Test]
     public async Task Runner_grok_sha_rejects_trailing_newline()
     {
+        NativeLinuxGate.Require(NativeLinuxReason);
         var result = await Run(ReviewedPin + "\n", "tampered");
         RejectBeforeFetch(result, "trailing-newline-before-fetch");
     }
@@ -35,6 +39,7 @@ public sealed class GrokSha256PinTests
     [Test]
     public async Task Runner_grok_sha_rejects_devnull_second_line()
     {
+        NativeLinuxGate.Require(NativeLinuxReason);
         var result = await Run(ReviewedPin + "\n" + EmptySha + "  /dev/null\n", "tampered");
         RejectBeforeFetch(result, "devnull-line-before-fetch");
     }
@@ -42,6 +47,7 @@ public sealed class GrokSha256PinTests
     [Test]
     public async Task Runner_grok_sha_rejects_embedded_newline()
     {
+        NativeLinuxGate.Require(NativeLinuxReason);
         var pin = ReviewedPin[..32] + "\n" + ReviewedPin[32..63];
         pin.Length.ShouldBe(64);
         var result = await Run(pin, "tampered");
@@ -51,6 +57,7 @@ public sealed class GrokSha256PinTests
     [Test]
     public async Task Runner_grok_sha_rejects_uppercase_pin()
     {
+        NativeLinuxGate.Require(NativeLinuxReason);
         var result = await Run(ReviewedPin.ToUpperInvariant(), "tampered");
         RejectBeforeFetch(result, "uppercase-pin-before-fetch");
     }
@@ -58,6 +65,7 @@ public sealed class GrokSha256PinTests
     [Test]
     public async Task Runner_grok_sha_rejects_short_pin()
     {
+        NativeLinuxGate.Require(NativeLinuxReason);
         var result = await Run(ReviewedPin[..63], "tampered");
         RejectBeforeFetch(result, "short-pin-before-fetch");
     }
@@ -65,6 +73,7 @@ public sealed class GrokSha256PinTests
     [Test]
     public async Task Runner_grok_sha_rejects_long_pin()
     {
+        NativeLinuxGate.Require(NativeLinuxReason);
         var result = await Run(ReviewedPin + "0", "tampered");
         RejectBeforeFetch(result, "long-pin-before-fetch");
     }
@@ -72,6 +81,7 @@ public sealed class GrokSha256PinTests
     [Test]
     public async Task Runner_grok_sha_rejects_empty_pin()
     {
+        NativeLinuxGate.Require(NativeLinuxReason);
         var result = await Run("", "tampered");
         RejectBeforeFetch(result, "empty-pin-before-fetch");
     }
@@ -79,6 +89,7 @@ public sealed class GrokSha256PinTests
     [Test]
     public async Task Runner_grok_sha_rejects_tampered_file()
     {
+        NativeLinuxGate.Require(NativeLinuxReason);
         var result = await Run(ReviewedPin, "tampered");
         RejectAfterFetch(result, "tampered-file-before-install");
     }
@@ -86,6 +97,7 @@ public sealed class GrokSha256PinTests
     [Test]
     public async Task Runner_grok_sha_rejects_empty_download()
     {
+        NativeLinuxGate.Require(NativeLinuxReason);
         // The empty-file digest is itself 64 lowercase hex. Length and character checks
         // accept it; only the non-empty-file gate rejects it before install.
         var result = await Run(EmptySha, "");
@@ -95,6 +107,7 @@ public sealed class GrokSha256PinTests
     [Test]
     public async Task Runner_grok_sha_accepts_matching_file()
     {
+        NativeLinuxGate.Require(NativeLinuxReason);
         const string body = "grok-pin-ok";
         var result = await Run(Sha(body), body);
         Console.Error.WriteLine(result.Detail);
