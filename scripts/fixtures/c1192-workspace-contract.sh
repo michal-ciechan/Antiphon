@@ -2746,7 +2746,9 @@ mode_compose_absence() {
             chmod 700 "$C1192_ROOT/volumes/$volume/data"
         done
         s7_roster
-        sed -i '$d' "$CASE_DIR/fixture-groups.txt"
+        sed -i '$d; /^PASS F-7$/d' "$CASE_DIR/fixture-groups.txt"
+        sed -i '/^PASS PC-20$/d' "$CASE_DIR/fixture-controls.txt"
+        sed -i '/^PC-20[.]01 /d' "$CASE_DIR/fixture-control-variants.txt"
     }
     local code=0 key name good expected
     set +e
@@ -3751,7 +3753,7 @@ case "$mode" in
     deletion-audit) mode_deletion_audit "$@" ;;
     acquisition-probe) mode_acquisition_probe ;;
     cleanup-probe) mode_cleanup_probe "$@" ;;
-    compose-absence) mode_compose_absence ;;
+    compose-absence) mode_compose_absence "$@" ;;
     finalization) mode_finalization ;;
     evidence) mode_evidence ;;
     retention) mode_retention ;;
