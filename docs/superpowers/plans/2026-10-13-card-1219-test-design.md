@@ -185,8 +185,10 @@ instead of `ValidateGlobal` -> row 5 red.
 
 After the Preserved Gotcha #40 (CARD-0006) paragraph in `docs/session-runtime-invariants.md`, one
 sentence: "Remote (phone-home) runners deliver the same two events through `RunnerContractMapper`
-and `PhoneHomeRecoveryPump`, recorded through the same service after the owner check and a
-per-runner replay guard (CARD-1219); pinned by `RunnerContractMapperTranscriptEventTests`,
+and `PhoneHomeRecoveryPump`, which passes them to the same service after the owner check and a
+bounded, in-memory per-runner replay guard; the guard stamps a record before the service call and
+refuses an equal record only while that key is held inside the window, and these live-only events
+are not reconstructed by catch-up (CARD-1219); pinned by `RunnerContractMapperTranscriptEventTests`,
 `TranscriptIncidentReplayGuardTests` and `PhoneHomeTranscriptIncidentTests`."
 
 ## Verification design
@@ -219,7 +221,7 @@ which the recipient row carries as `SessionId`, `Kind`, `FailureReason` and `Mes
 |---|---|---|---|---|---|
 | 1 | Runner tailer `_events.Publish` (hub, default JSON) | `PhoneHomeConnectionService.SendEventAsync` -> WebSocket event frame | none (live only; the hub keeps no history) | fault: the runner's five-minute repeat re-publishes with `Repeat + 1`; bound: not re-sent | the frame on the server socket (not a receipt of anything) |
 | 2 | `PhoneHomeLiveConnection` receive loop (`_pendingEvents++`, channel write) | `PhoneHomeRecoveryPump.PumpEventsAsync` (single FIFO reader per connection) | none; `PendingEvents` returns to 0 in the pump's `finally` | a handler exception is caught per event and the event released (CARD-0679 D-2, R-2); a socket drop ends the channel and the next connection gets a fresh pump (R-2) | `PendingEvents == 0` paired with the row or log evidence below, not on its own |
-| 3 | pump arm (after `OwnerMatchesAsync`, after `guard.Admit`) | `TranscriptBindingIncidentService.OnTranscriptFaultAsync` / `OnHeuristicBindAsync` | `db.SaveChangesAsync` in the service scope: `AgentIncidents` row (+ `Alerts` row for the fault) | the service's write-failure backstop raises a standalone alert (R-3, `A_fault_whose_incident_cannot_be_written...`); an unowned session raises the unowned alert (R-3) | the `AgentIncidents` row read back with `AsNoTracking` on the isolated schema; the `Alerts` row for the fault |
+| 3 | pump arm (after `OwnerMatchesAsync`, after `guard.Admit`) | `TranscriptBindingIncidentService.OnTranscriptFaultAsync` / `OnHeuristicBindAsync` | `db.SaveChangesAsync` in the service scope: `AgentIncidents` row (+ `Alerts` row for the fault) | the service's write-failure backstop raises a standalone alert (R-3, `A_fault_whose_incident_cannot_be_written...`); an unowned session raises the unowned alert (R-3); the guard stamped the record before this call and a failed write keeps that stamp, so an equal record inside the window is refused, not retried | the `AgentIncidents` row read back with `AsNoTracking` on the isolated schema; the `Alerts` row for the fault |
 
 Producer-to-recipient tests through the real queue (a real Kestrel WebSocket host, the real
 `PhoneHomeLiveConnection` channel, the real pump, the real service, a real Postgres schema):
@@ -247,9 +249,9 @@ only as an ordering fence; the delivery verdict in each test is the recipient ro
 
 - V-1: both frames map into the SSE parser's records under both JSON spellings with each field passed through and the other slots null | Unit | `RunnerContractMapperTranscriptEventTests.Fault_frame_round_trips_every_field`, `.Bound_frame_round_trips_every_field` | record equality against the hand-written records; the other slots null
 - V-2: an old-runner fault payload defaults `UnboundSeconds 0`, `Repeat 1`, null candidate; an unknown member is ignored on both events; unknown names and null payloads return null; a corrupt payload throws `JsonException` | Unit | `.Old_runner_fault_without_repeat_fields_defaults_to_first_report`, `.Fault_frame_with_unknown_future_field_still_parses`, `.Unknown_event_name_still_returns_null`, `.Malformed_payload_throws_like_the_other_branches` | as tabled
-- V-3: the guard admits a record once per window, admits a record that differs in any field, re-admits at the window on the connection clock, keys bound events on the whole record, and is bounded | Unit | the five `TranscriptIncidentReplayGuardTests` methods | the expected bool at each step
+- V-3: the guard refuses a record equal to one it admitted while the key is held inside the window, admits a record that differs in any field, re-admits at the window on the connection clock, keys bound events on the whole record, and is bounded (an evicted key is admitted again) | Unit | the five `TranscriptIncidentReplayGuardTests` methods | the expected bool at each step
 - V-4: a remote fault for an owned session records the local `TranscriptBindFailed` row and alert; a remote bound records the Info `TranscriptBoundByDiscovery` row with no alert; the text equals the local lane's | Integration | `PhoneHomeTranscriptIncidentTests.Remote_fault_frame_records_the_local_incident_row`, `.Remote_bound_frame_records_an_info_incident_without_alert`, `.Incident_text_matches_the_local_lane` | row fields and `FaultMessage` / `BoundMessage`
-- V-5: identical frames on the same epoch or after a reconnect record once and are logged as refused; a genuine repeat records again | Integration | `.Replayed_frames_across_a_reconnect_record_once` | `FaultRows` 1 then 2, `Refused()` 4
+- V-5: with the clock frozen inside the window and the key held, identical frames on the same epoch or after a reconnect record once and are logged as refused; a genuine repeat records again | Integration | `.Replayed_frames_across_a_reconnect_record_once` | `FaultRows` 1 then 2, `Refused()` 4
 - V-6: frames for a session owned by another runner, another store, or no row record nothing and raise nothing | Integration | `.Foreign_owner_transcript_events_never_record` | zero rows and zero alerts behind the sentinel
 - V-7: the window setting is validated in both configuration modes and defaults to 900 | Unit | `PhoneHomeRunnerSettingsValidatorTests.Replay_window_below_one_second_is_refused` | the exact message, the default
 

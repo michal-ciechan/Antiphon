@@ -19,9 +19,12 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 /// <summary>
-/// CARD-1219: a remote (phone-home) runner's transcript-fault and transcript-bound frames record
-/// the same incidents the local SSE lane records, after the owner check and once per identical
-/// record per runner (a replay across a reconnect records nothing new). Every wait is fenced on a
+/// CARD-1219: a remote (phone-home) runner's transcript-fault and transcript-bound frames reach the
+/// incident service the local SSE lane calls, after the owner check and the per-runner replay guard,
+/// and write the same rows. The clock stays frozen inside the replay window, so an equal frame
+/// re-sent on the same or a new connection is refused while the guard holds its key; window expiry
+/// and eviction are TranscriptIncidentReplayGuardTests' cases, and no test here fails an incident
+/// write after admission or restarts the pump. Every wait is fenced on a
 /// positive observable for the frame of interest (its row, its refused-replay Debug line, or an
 /// ordering sentinel behind it on the single FIFO reader), never on PendingEvents alone.
 /// </summary>
@@ -134,7 +137,8 @@ public class PhoneHomeTranscriptIncidentTests
         var liveB = f.Host.Directory.SnapshotLive()!;
         var pumpingB = f.Pump.PumpEventsAsync(liveB, cts.Token);
 
-        // (c) the identical frames again, on the new epoch.
+        // (c) the identical frames again, on the new epoch; the frozen clock keeps both keys inside
+        // the window, and the same pump instance still holds them.
         await EmitAsync(peerB, liveB.Epoch, SessionRunnerEventNames.SessionTranscriptFault, f1);
         await EmitAsync(peerB, liveB.Epoch, SessionRunnerEventNames.SessionTranscriptBound, b);
         await WaitUntilAsync("both replays refused",

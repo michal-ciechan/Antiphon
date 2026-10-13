@@ -7,9 +7,11 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 /// <summary>
-/// CARD-1219 D-2: the phone-home pump records a transcript fault/bound incident once per identical
-/// record per window per runner. A genuine runner repeat differs in Repeat/UnboundSeconds and must
-/// always record, exactly as the local lane does.
+/// CARD-1219 D-2: the guard refuses a record equal to one it admitted while that key is held and
+/// its window has not elapsed, and admits everything else: a record differing in any field (a
+/// runner repeat with a higher Repeat/UnboundSeconds included), the same record once the window has
+/// elapsed, and a record whose key was evicted at capacity. It answers admission only; whether an
+/// incident is then written is the incident service's concern, not tested here.
 /// </summary>
 [Category("Unit")]
 public class TranscriptIncidentReplayGuardTests
