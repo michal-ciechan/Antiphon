@@ -270,6 +270,7 @@ public sealed class CheckpointTrackedBaselineTests : CheckpointTestBase
         var script = Path.Combine(CheckpointFixtures.RepoRoot, "scripts", "run-checkpoint.ps1");
         var probe = await RunPwshAsync(root, $$"""
             $ErrorActionPreference = 'Stop'
+            . {{Quote(Path.Combine(CheckpointFixtures.RepoRoot, "scripts", "lib", "checkpoint-process-runner.ps1"))}}
             $tokens = $null
             $parseErrors = $null
             $ast = [System.Management.Automation.Language.Parser]::ParseFile({{Quote(script)}}, [ref]$tokens, [ref]$parseErrors)
