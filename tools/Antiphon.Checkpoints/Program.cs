@@ -498,6 +498,14 @@ public static class Program
         var resultsRoot = options.Get("results-root") ?? ".antiphon/checkpoints";
         var stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss") + "-" + Guid.NewGuid().ToString("N")[..4];
         var results = Path.Combine(repo, resultsRoot, name + "-" + stamp);
+        var parent = Path.GetDirectoryName(results)!;
+        var resultRefusal = SafeWrite.CreateDirectory(parent, SafeWrite.Under(parent))
+            ?? SafeWrite.CreateFreshDirectory(results, SafeWrite.Under(parent));
+        if (resultRefusal is not null)
+        {
+            output.WriteLine("CHECKPOINT " + name + " refused: " + resultRefusal);
+            return ExitCodes.Invalid;
+        }
         var properties = (options.GetAll("msbuild-property"))
             .SelectMany(value => value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
             .Select(token =>

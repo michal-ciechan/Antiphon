@@ -251,6 +251,7 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
             ? Directory.GetFiles(directory, "report.json", SearchOption.AllDirectories).SingleOrDefault()
             : Path.Combine(directory, "source.json");
         if (path is null || !File.Exists(path)) return new RunResult(66, "receipt missing");
+        if (!File.Exists(Path.Combine(Path.GetDirectoryName(path)!, ".checkpoint-output-owner.json"))) return new RunResult(66, "receipt directory not freshly owned");
         using var doc = JsonDocument.Parse(File.ReadAllText(path));
         var receipt = doc.RootElement;
         var source = name.EndsWith("-tool", StringComparison.Ordinal) ? receipt.GetProperty("source") : receipt;
