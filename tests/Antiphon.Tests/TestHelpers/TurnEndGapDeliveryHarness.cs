@@ -664,9 +664,11 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
         public Task InvokeAsync(Func<Task> action)
         {
             var done = Signal();
-            Post(async _ => { try { await action(); done.TrySetResult(); } catch (Exception ex) { done.TrySetException(ex); } }, null);
+            Post(_ => { _ = CompleteAsync(action, done); }, null);
             return done.Task;
         }
+        private static async Task CompleteAsync(Func<Task> action, TaskCompletionSource done)
+        { try { await action(); done.TrySetResult(); } catch (Exception ex) { done.TrySetException(ex); } }
         public Task<(bool Quiet, long Sequence)> ObserveAsync(Func<bool> read)
         {
             var done = new TaskCompletionSource<(bool, long)>(TaskCreationOptions.RunContinuationsAsynchronously);
