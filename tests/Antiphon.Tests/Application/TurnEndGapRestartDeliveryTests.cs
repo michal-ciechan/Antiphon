@@ -21,9 +21,12 @@ public sealed class TurnEndGapRestartDeliveryTests
         var rows = await h.RowsAsync();
         await h.RestartAsync();
         await h.AssertHeldAsync();
+        await h.StartCompletionWorkerAsync();
+        await h.AssertHeldAsync();
         await h.StartGapAsync();
         h.ReleaseGapWithEnd();
         await h.JoinDeliveryAsync(h.PumpDrained);
+        await h.JoinOwnedWorkAsync();
         await h.AssertReceiptsAsync(notes, rows);
         await h.RestartAsync();
         await h.AssertReceiptsAsync(notes, rows);

@@ -1,4 +1,5 @@
 using System.Net;
+using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Channels;
@@ -10,6 +11,7 @@ using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.Server.Infrastructure.Orchestration;
 using Antiphon.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.Agents;
@@ -35,6 +37,9 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
     private readonly HttpClient _http;
     private readonly bool _cache;
     private SessionRunnerEventPump? _pump;
+    private CompletionNoteWorkHostedService? _worker;
+    private EpochAdapter? _adapter;
+    private readonly C544Boundary _boundary = new();
     private readonly CancellationTokenSource _stop = new(TimeSpan.FromSeconds(90));
     public List<Guid> Tasks { get; } = [];
     public Guid Id => World.CallerSessionId;
@@ -87,11 +92,14 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
             _http, new Factory(_handler), settings, time: Clock));
         services.AddSingleton(Options.Create(new StaleWorkingTranscriptSettings()));
         services.AddSingleton<StaleWorkingTranscriptRecovery>();
+        services.AddSingleton<SpecialistFailureQueue>();
+        services.AddSingleton<LandDeliveryBoundary>(_boundary);
     }
 
     private void Attach()
     {
-        Runtime.Register(Id, Caller);
+        _adapter = new EpochAdapter(Caller);
+        Runtime.Register(Id, _adapter);
         Caller.OnSubmitted = body =>
         {
             _handler.Append(TranscriptKinds.UserPrompt, body.ReplaceLineEndings("\n"), publish: true);
@@ -139,9 +147,41 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
 
     public async Task RestartAsync()
     {
+        await StopWorkerAsync();
         await StopPumpAsync();
+        if (_adapter is not null) await _adapter.DisposeAsync();
         await World.RestartAsync();
         Attach();
+    }
+
+    public async Task StartCompletionWorkerAsync()
+    {
+        var after = Clock.Events.LastOrDefault()?.Sequence ?? 0;
+        _worker = ActivatorUtilities.CreateInstance<CompletionNoteWorkHostedService>(World.Services);
+        await _worker.StartAsync(Token);
+        // The boot sweep has enumerated its durable work before its 15-minute wait.
+        await Clock.WaitForTimerAsync(e => e.Action == "create" && e.DueTime >= TimeSpan.FromMinutes(14), after, Token);
+        await JoinDeliveryAsync(WaitForQuiescenceAsync());
+        _boundary.Reached.Count(b => b == "completion-scan").ShouldBeGreaterThanOrEqualTo(5);
+    }
+
+    public Task JoinOwnedWorkAsync() => JoinDeliveryAsync(WaitForQuiescenceAsync());
+
+    private async Task WaitForQuiescenceAsync()
+    {
+        var flushes = World.Services.GetRequiredService<CompletionNoteFlushQueue>();
+        var pending = (System.Collections.IDictionary)typeof(CompletionNoteFlushQueue)
+            .GetField("_pending", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(flushes)!;
+        while (true)
+        {
+            Token.ThrowIfCancellationRequested();
+            var backstop = Clock.Events.LastOrDefault(e => e.Action == "create" && e.DueTime >= TimeSpan.FromMinutes(14));
+            var recoveryWaiting = backstop is not null && Clock.TimerStates[backstop.TimerId] != "dispose";
+            if (pending.Count == 0 && recoveryWaiting && (_pump is null || _handler.Stream?.Quiescent == true)) return;
+            // This waits for owned work/state, never an elapsed-time absence window.
+            // Queue Complete is synchronous and has no observer hook; no timer is fabricated.
+            await Task.Yield();
+        }
     }
 
     public async Task StartGapAsync()
@@ -238,11 +278,21 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
         _pump = null;
     }
 
+    private async Task StopWorkerAsync()
+    {
+        if (_worker is null) return;
+        await _worker.StopAsync(CancellationToken.None);
+        _worker.Dispose();
+        _worker = null;
+    }
+
     public async ValueTask DisposeAsync()
     {
         _stop.Cancel();
         _handler.ReleaseGap.TrySetResult();
+        await StopWorkerAsync();
         await StopPumpAsync();
+        if (_adapter is not null) await _adapter.DisposeAsync();
         if (World is not null) await World.DisposeAsync();
         await Caller.DisposeAsync();
         _http.Dispose();
@@ -262,6 +312,7 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
         public Guid Id;
         public DateTime Generation;
         public int Pulls;
+        public HubStream? Stream;
         public TaskCompletionSource GapCaptured = Signal(), ReleaseGap = Signal(), Drained = Signal();
         public void ArmGap() { _gap = true; GapCaptured = Signal(); ReleaseGap = Signal(); Drained = Signal(); }
         public void Append(string kind, string text, bool publish)
@@ -300,8 +351,8 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
             if (path == "/events")
             {
                 var lifetime = new CancellationTokenSource();
-                var stream = new HubStream(_hub.Subscribe(lifetime.Token), Drained, lifetime);
-                return new(HttpStatusCode.OK) { Content = new StreamContent(stream) };
+                Stream = new HubStream(_hub.Subscribe(lifetime.Token), Drained, lifetime);
+                return new(HttpStatusCode.OK) { Content = new StreamContent(Stream) };
             }
             return new(HttpStatusCode.NotFound) { Content = new StringContent(path) };
         }
@@ -317,15 +368,23 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
         private byte[]? _bytes = Encoding.UTF8.GetBytes(": keepalive\n\n");
         private int _offset;
         private int _disposed;
+        private int _readingEvent;
+        private int _waiting;
+        public bool Quiescent => Volatile.Read(ref _waiting) != 0 && Volatile.Read(ref _readingEvent) == 0
+            && (!reader.CanCount || reader.Count == 0);
         public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken ct = default)
         {
             if (_bytes is null)
             {
+                Volatile.Write(ref _readingEvent, 0);
                 if (!reader.TryRead(out var frame))
                 {
+                    Volatile.Write(ref _waiting, 1);
                     drained.TrySetResult();
                     frame = await reader.ReadAsync(ct);
                 }
+                Volatile.Write(ref _waiting, 0);
+                Volatile.Write(ref _readingEvent, 1);
                 _bytes = Encoding.UTF8.GetBytes($"event: {frame.EventName}\ndata: {frame.Json}\n\n");
                 _offset = 0;
             }
@@ -354,5 +413,31 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
             }
             base.Dispose(disposing);
         }
+    }
+
+    // The provider/tailer and composer survive; only the old server's output
+    // subscription is disposed at the graph cut in T37.
+    private sealed class EpochAdapter : IAgentProtocolAdapter
+    {
+        private readonly FakeAgentProtocolAdapter _inner;
+        public EpochAdapter(FakeAgentProtocolAdapter inner) { _inner = inner; inner.OnTextDelta += Forward; }
+        private void Forward(string text) => OnTextDelta?.Invoke(text);
+        public event Action<string>? OnTextDelta;
+        public Task<int> Exited => _inner.Exited;
+        public int? Pid => _inner.Pid;
+        public AgentExitReason ExitReason => _inner.ExitReason;
+        public string? AuditDirectory => _inner.AuditDirectory;
+        public Task StartAsync(AgentLaunchSpec spec, CancellationToken ct) => _inner.StartAsync(spec, ct);
+        public Task<bool> KillAsync(TimeSpan timeout, CancellationToken ct) => _inner.KillAsync(timeout, ct);
+        public Task SendPromptAsync(string prompt, CancellationToken ct) => _inner.SendPromptAsync(prompt, ct);
+        public Task<bool> WaitForFirstPromptOutputAsync(TimeSpan timeout, CancellationToken ct) => _inner.WaitForFirstPromptOutputAsync(timeout, ct);
+        public Task SendInputAsync(string input, CancellationToken ct) => _inner.SendInputAsync(input, ct);
+        public Task ResizeAsync(int cols, int rows, CancellationToken ct) => _inner.ResizeAsync(cols, rows, ct);
+        public Task<bool> WaitForReadyAsync(CancellationToken ct) => _inner.WaitForReadyAsync(ct);
+        public Task<AgentTurnResult> WaitForTurnCompleteAsync(CancellationToken ct) => _inner.WaitForTurnCompleteAsync(ct);
+        public string SnapshotRawOutput() => _inner.SnapshotRawOutput();
+        public Task<string> SnapshotRawOutputAsync(CancellationToken ct) => _inner.SnapshotRawOutputAsync(ct);
+        public string SnapshotRenderedScreen() => _inner.SnapshotRenderedScreen();
+        public ValueTask DisposeAsync() { _inner.OnTextDelta -= Forward; return ValueTask.CompletedTask; }
     }
 }
