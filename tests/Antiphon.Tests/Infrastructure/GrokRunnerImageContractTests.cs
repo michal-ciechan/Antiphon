@@ -10,17 +10,32 @@ namespace Antiphon.Tests.Infrastructure;
 public sealed class GrokRunnerImageContractTests
 {
     private const string Version = "1.0.41";
+    private const string Sha256 = "9ce03ed23e16ea01072b4496263d6213a27899e1e3e107f008d36edf82e70407";
 
     [Test]
     public void Qualified_pin_agrees_with_install_assertion_docs_fixtures_and_verifiers()
     {
         var image = Read("docker/session-runner-grok/Dockerfile");
         var runtime = DockerStackDocuments.Stages(image).Single(stage => stage.Name == "runtime-base").Body;
-        var installed = Regex.Match(runtime, @"https://x\.ai/cli/install\.sh \| env HOME=/tmp/grok-install GROK_BIN_DIR=/usr/local/bin bash -s (\d+\.\d+\.\d+)");
+        var installed = Regex.Match(runtime, @"(?m)^ARG GROK_VERSION=(\d+\.\d+\.\d+)$");
         installed.Success.ShouldBeTrue();
         installed.Groups[1].Value.ShouldBe(Version, "only the captured 120x30 dashboard version is qualified");
-        runtime.ShouldContain("/usr/local/bin/grok --version | grep -F '" + Version + "'");
-        runtime.ShouldContain("install -m 0755 /tmp/grok-install/.grok/downloads/grok-linux-x86_64 /usr/local/bin/grok");
+        var digest = Regex.Match(runtime, @"(?m)^ARG GROK_SHA256=([0-9a-f]{64})$");
+        digest.Success.ShouldBeTrue();
+        digest.Groups[1].Value.ShouldBe(Sha256, "the qualified artifact retains its reviewed digest");
+        runtime.ShouldNotContain("x.ai/cli/install.sh");
+        runtime.ShouldContain("curl -fsSL -o /tmp/grok-download/grok \"https://x.ai/cli/grok-${GROK_VERSION}-linux-x86_64\"");
+        const string checksum = "printf '%s  %s\\n' \"${GROK_SHA256}\" /tmp/grok-download/grok | sha256sum --check --strict";
+        const string install = "install -m 0755 /tmp/grok-download/grok /usr/local/bin/grok";
+        const string versionProbe = "/usr/local/bin/grok --version | grep -F \"${GROK_VERSION}\"";
+        runtime.ShouldContain(checksum);
+        runtime.ShouldContain("[ \"${grok_checksum_status}\" = \"/tmp/grok-download/grok: OK\" ]");
+        runtime.ShouldContain(install);
+        runtime.ShouldContain(versionProbe);
+        runtime.IndexOf(checksum, StringComparison.Ordinal).ShouldBeLessThan(runtime.IndexOf(install, StringComparison.Ordinal));
+        runtime.IndexOf(install, StringComparison.Ordinal).ShouldBeLessThan(runtime.IndexOf(versionProbe, StringComparison.Ordinal));
+        Read("docs/docker-stack.md").ShouldContain("SHA-256 `" + Sha256 + "`");
+        Read("docs/testing-and-build.md").ShouldContain("SHA-256 `" + Sha256 + "`");
 
         foreach (var path in new[] { "docs/docker-stack.md", "docs/bootstrap.md", "docs/testing-and-build.md", "docs/agent-kinds.md", "docs/ai-agent-tui-configuration.md", "tests/fixtures/card0490-linux/README.md" })
         {
