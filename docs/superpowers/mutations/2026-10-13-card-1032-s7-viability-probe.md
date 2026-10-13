@@ -1,20 +1,94 @@
 # CARD-1032 S7 witness viability probe
 
-In progress; no witness verdict yet. Scratch production mutations will never be committed.
+In progress: 5 family mutations detected; 0 survived (witness gaps); 10 not yet run.
 
-Source: `cfd114a6d2b64a19cf3d4f8f62eda2ac03172a1c`. Task: `045e9719`.
-Frozen CP-13/14 design and S7 code evidence read; CARD-1032 read from board Antiphon.
+Production source: `cfd114a6d2b64a19cf3d4f8f62eda2ac03172a1c`. Probe executions below use the documentation-only descendant `1f870536edfcca5bc40ee48c11251746a639c7a6`; production and test sources are otherwise unchanged. Every production edit is throw-away and restored with `git checkout -- .`. No production change is committed.
 
-Planned families: mirror HEAD, Done generation, distinct bindings, current eligibility,
-artifact preservation, intent persistence/order, signed certificate validation,
-signature field coverage, authoritative publication identity, inspection admission,
-immutable command send, complete receipt validation, ACK-only refusal, unsupported peer refusal.
-Every mutated state receives one isolated leased build and only exact family methods.
-Baseline and restored green select exactly the 14 CP-13/14 methods. No Unit lane.
-Generated diffs, logs and TRX remain under `.antiphon/s7-viability-045e9719/`.
-Formal PCs and constant-time comparison qualification remain pending.
+Baseline: corrected exact-method OR selection executed all 14 CP-13/14 methods, 14 passed, zero failed/skipped. The initial OR without suffix wildcards executed zero tests (driver exit 3); it is invalid evidence. A single-method diagnostic reused that build and passed 1/1.
+
+Each mutated state gets exactly one isolated affected-production-project build through `scripts/build-slot.ps1`, `UseAppHost=false`, `OutputPath=bin-s7vp045e9719/`. The existing baseline test host is reused without compiling it; the changed module DLL/PDB is copied from its just-built output. SHA-256 of the production DLL and loaded test-host DLL are equal and differ from baseline. The other two relevant production modules are restored from baseline before/after every family. Only method bodies change, with no public API change. Tests run through a second leased `build-slot.ps1 -- dotnet run --no-build` call, source frozen throughout both drivers. Exact commands, hashes, full diffs, logs and fresh TRX are ignored under `.antiphon/s7-viability-045e9719/`; these are scratch evidence, not clean-source checkpoint receipts.
+
+All formal PCs, per-field variants, SourceLanding Mutation, native Windows qualification and S8 remain pending. This narrowly commissioned family probe discharges none of them. Constant-time comparison cannot be established by these witnesses and is skipped. Caller proof fields are not an input to the current producer API; server-record guard mutations below test the relevant authority boundary.
+
+| Family | Mutation | Witness method(s) | RED/GREEN | Exact assertion message |
+|---|---|---|---|---|
+| VP-01 Mirror HEAD | new CompletedCardWorkspaceProof(inspection.HeadSha, → new CompletedCardWorkspaceProof(observed.Sha!, | `C1017_MirrorBehindPushedTip` | RED | C1017_MirrorBehindPushedTip: ShouldAssertException: await TryAsync(); result.Complete<br>    should be<br>True<br>    but was<br>False<br><br>Additional Info:<br>    head_mismatch |
+| VP-02 Done generation | if (card.Status != CardStatus.Done \|\| revision != endpoint.Target.Cleanup.DoneRevisionId) return "done_generation_revoked"; → // scratch: omit Done-generation admission | `C1017_ReopenBetweenEndpoints` | RED | C1017_ReopenBetweenEndpoints: ShouldAssertException: await TryAsync(); result.Complete<br>    should be<br>False<br>    but was<br>True |
+| VP-03 Distinct mirror bindings | bindings.Where(b => b.TaskId == task.Id) → bindings.Where(b => b.TaskId == task.Id).OrderBy(b => b.WorktreePath.Length).Take(1) | `C1017_MultipleMirrorsRemainDistinct` | Pending | Not run |
+| VP-04 Current task eligibility | if (task.Status is not (AgentTaskStatus.Succeeded or AgentTaskStatus.Failed or AgentTaskStatus.Canceled)) return "terminal_required"; → // scratch: omit terminal status predicate | `C1032_AdmissionCurrentEligibility` | RED | C1032_AdmissionCurrentEligibility: ShouldAssertException: await TryAsync(); result.Complete<br>    should be<br>False<br>    but was<br>True |
+| VP-05 External artifact bytes | if (pointer == task.ResultFilePath && !bytes.AsSpan().SequenceEqual(Encoding.UTF8.GetBytes(task.Result))) → if (false) | `C1032_AdmissionArtifactSurvival` | RED | C1032_AdmissionArtifactSurvival: ShouldAssertException: await TryAsync(); result.Complete<br>    should be<br>False<br>    but was<br>True |
+| VP-06 Commit intent before send | await db.SaveChangesAsync(ct); await tx.CommitAsync(ct); → await db.SaveChangesAsync(ct); // scratch: transaction rolls back without commit | `C1032_AdmissionIntentOrdering` | RED | C1032_AdmissionIntentOrdering: ShouldAssertException: await f.EndpointAsync(); row.OperationId<br>    should not be null but was |
+| VP-07 Forged/unsigned certificate refusal | !CompletedCardWorkspaceLandingAuthority.Verify(command, landingMapKey) → false | `C1032_AdmissionBoundRebaseProof` | Pending | Not run |
+| VP-08 Certificate covers task identity | var digest = CompletedCardWorkspaceContract.CanonicalDigest(JsonSerializer.Serialize(command, → command = command with { Binding = command.Binding with { TaskId = Guid.Empty } };<br>        var digest = CompletedCardWorkspaceContract.CanonicalDigest(JsonSerializer.Serialize(command, | `C1032_AdmissionBoundRebaseProof` | Pending | Not run |
+| VP-09 Publication belongs to task | o => o.TaskId == task.Id && o.Active → o => o.Active | `C1032_AdmissionBoundRebaseProof` | Pending | Not run |
+| VP-10 Landing evidence required | op.Id == id && new AgentTaskLandingState().HasPublication(op) → op.Id == id | `C1032_AdmissionBoundRebaseProof` | Pending | Not run |
+| VP-11 Admission-required inspection continues | inspection.Reason is not null && inspection.Reason != "evidence_requires_admission" → inspection.Reason is not null | `C1017_MirrorBehindPushedTip` | Pending | Not run |
+| VP-12 Valid bound-rebase path succeeds | if (rebased) command = CompletedCardWorkspaceLandingAuthority.Sign(command, publication!.Id, phoneHome!.Value.SharedSecret); → if (rebased) return Hold("preservation_proof_unsupported"); | `C1032_AdmissionBoundRebaseProof` | Pending | Not run |
+| VP-13 Immutable persisted request digest | !CompletedCardWorkspaceContract.Validate(json).IsValid \|\| CompletedCardWorkspaceContract.CanonicalDigest(json) != endpoint.RequestDigest → !CompletedCardWorkspaceContract.Validate(json).IsValid | `C1032_AdmissionIntentOrdering`, `C1032_ReceiptCompleteBoundReceipt` | Pending | Not run |
+| VP-14 Exact receipt plus ACK-only refusal | response.Reason is not null \|\| response.Receipt != expected → response.Reason is not null | `C1017_ReceiptMustMatchOperation`, `C1017_ReceiptMustMatchEndpoint`, `C1017_ReceiptMustMatchStore`, `C1017_ReceiptMustMatchTaskAttempt`, `C1017_AckIsNotRemoval`, `C1032_ReceiptCompleteBoundReceipt` | Pending | Not run |
+| VP-15 Unsupported peer fails closed | if (!response.Complete) return await RefuseAsync(endpoint, response.Reason ?? "receipt_mismatch", ct); → if (!response.Complete) return response.Reason == PhoneHomeProblemTypes.UnsupportedOperation ? new(true, null, null) : await RefuseAsync(endpoint, response.Reason ?? "receipt_mismatch", ct); | `C1017_UnsupportedNeverFallsBack` | Pending | Not run |
+
+GREEN is a gap in these S7 witnesses, not evidence of a defect in the restored production guard. The original code retains every guard. A surviving mutation needs a negative vector before its safety claim can be qualified.
+
+VP-01: 1 executed, 0 passed, 1 failed, zero skipped; native test exit 2; build exit 0. Filter: `/*/*/CardWorktreeMirrorCleanupTests/C1017_MirrorBehindPushedTip`. Production path: `server/Application/Services/CardWorktreeMirrorCleanupService.cs`.
+
+VP-02: 1 executed, 0 passed, 1 failed, zero skipped; native test exit 2; build exit 0. Filter: `/*/*/CardWorktreeMirrorCleanupTests/C1017_ReopenBetweenEndpoints`. Production path: `server/Application/Services/CardWorktreeMirrorCleanupService.cs`.
+
+VP-04: 1 executed, 0 passed, 1 failed, zero skipped; native test exit 2; build exit 0. Filter: `/*/*/CardWorktreeMirrorCleanupTests/C1032_AdmissionCurrentEligibility`. Production path: `server/Application/Services/CardWorktreeMirrorCleanupService.cs`.
+
+VP-05: 1 executed, 0 passed, 1 failed, zero skipped; native test exit 2; build exit 0. Filter: `/*/*/CardWorktreeMirrorCleanupTests/C1032_AdmissionArtifactSurvival`. Production path: `server/Infrastructure/Files/CardDoneArtifactPreservation.cs`.
+
+VP-06: 1 executed, 0 passed, 1 failed, zero skipped; native test exit 2; build exit 0. Filter: `/*/*/CardWorktreeMirrorCleanupTests/C1032_AdmissionIntentOrdering`. Production path: `server/Application/Services/CardWorktreeMirrorCleanupService.cs`.
+
+Exact minimal source changes (full context diffs retained as VP-nn `.diff` files):
+
+VP-01, `server/Application/Services/CardWorktreeMirrorCleanupService.cs`:
+
+```diff
+-new CompletedCardWorkspaceProof(inspection.HeadSha,
++new CompletedCardWorkspaceProof(observed.Sha!,
+```
+
+VP-02, `server/Application/Services/CardWorktreeMirrorCleanupService.cs`:
+
+```diff
+-if (card.Status != CardStatus.Done || revision != endpoint.Target.Cleanup.DoneRevisionId) return "done_generation_revoked";
++// scratch: omit Done-generation admission
+```
+
+VP-04, `server/Application/Services/CardWorktreeMirrorCleanupService.cs`:
+
+```diff
+-if (task.Status is not (AgentTaskStatus.Succeeded or AgentTaskStatus.Failed or AgentTaskStatus.Canceled)) return "terminal_required";
++// scratch: omit terminal status predicate
+```
+
+VP-05, `server/Infrastructure/Files/CardDoneArtifactPreservation.cs`:
+
+```diff
+-if (pointer == task.ResultFilePath && !bytes.AsSpan().SequenceEqual(Encoding.UTF8.GetBytes(task.Result)))
++if (false)
+```
+
+VP-06, `server/Application/Services/CardWorktreeMirrorCleanupService.cs`:
+
+```diff
+-await db.SaveChangesAsync(ct); await tx.CommitAsync(ct);
++await db.SaveChangesAsync(ct); // scratch: transaction rolls back without commit
+```
+
+Unedited baseline CHECKPOINT lines:
+
+```text
+CHECKPOINT VP-baseline-corrected commit=1f870536edfcca5bc40ee48c11251746a639c7a6 build=reused filter=/*/*/CardWorktreeMirrorCleanupTests/(C1017_MirrorBehindPushedTip*)|(C1017_ReopenBetweenEndpoints*)|(C1017_MultipleMirrorsRemainDistinct*)|(C1032_AdmissionCurrentEligibility*)|(C1032_AdmissionArtifactSurvival*)|(C1032_AdmissionIntentOrdering*)|(C1032_AdmissionBoundRebaseProof*)|(C1017_ReceiptMustMatchOperation*)|(C1017_ReceiptMustMatchEndpoint*)|(C1017_ReceiptMustMatchStore*)|(C1017_ReceiptMustMatchTaskAttempt*)|(C1017_AckIsNotRemoval*)|(C1017_UnsupportedNeverFallsBack*)|(C1032_ReceiptCompleteBoundReceipt*) executed=14 passed=14 failed=0 skipped=0 trx=/work/worktrees/task-045e9719/.antiphon/s7-viability-045e9719/baseline-corrected/VP-baseline-corrected-20261013-153852-49eb/run.trx slot=granted waited=15s dirty=0 source=1f870536edfcca5bc40ee48c11251746a639c7a6 sourceState=clean buildSource=verified
+CHECKPOINT VP-baseline-corrected EXIT CODE: 0
+```
+
+The initial VP-03 runner-key collapse removed the current binding during fixture discovery and failed with `InvalidOperationException: Sequence contains no matching element`. This is an invalid fixture failure, not witness red; evidence is preserved under `03-invalid`. The corrected mutation retains the shortest/current mirror path and drops the historical path, so the endpoint-count oracle is reachable.
+
+Restored-green and final cleanup: pending.
 
 --- next stage ---
 next: decide
-handoff: Await viability outcomes; no production activation is authorized by this probe.
+handoff: Commission focused witness repairs for surviving guard mutations before claiming S7 authority coverage; keep every systematic PC pending.
 artifact: docs/superpowers/mutations/2026-10-13-card-1032-s7-viability-probe.md
