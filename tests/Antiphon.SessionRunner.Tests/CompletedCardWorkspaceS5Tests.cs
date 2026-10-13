@@ -179,7 +179,13 @@ public sealed partial class CompletedCardWorkspaceRemovalTests
             await using var r = new RemovalRig(); Held(await r.Remove(r.Command with { Proof = vector.Change(r.Command.Proof) }), vector.Reason); r.Preserved();
         }
         await using var good = new RemovalRig();
-        (await good.Remove()).GetProperty("complete").GetBoolean().ShouldBeTrue();
+        File.WriteAllText(Path.Combine(good.Fixture.Origin, "source"), "advanced published target");
+        CompletedCardRunnerFixture.Git(good.Fixture.Origin, "commit", "-am", "advance preserved P");
+        var published = CompletedCardRunnerFixture.Git(good.Fixture.Origin, "rev-parse", "HEAD").Trim();
+        published.ShouldNotBe(good.Command.Proof.ExpectedHeadSha);
+        CompletedCardRunnerFixture.Git(good.Fixture.Repository, "fetch", "origin", "main");
+        var behind = good.Command with { Proof = good.Command.Proof with { ObservedTargetSha = published, PreservedSourceSha = published } };
+        (await good.Remove(behind)).GetProperty("complete").GetBoolean().ShouldBeTrue("inspected H behind preserved P is eligible");
     }
     // PC-108: forged ordinary fields over a verification/unknown creation have no binding authority.
     [Test] public async Task C1017_RunnerSourceLandingExcluded()
@@ -270,7 +276,13 @@ public sealed partial class CompletedCardWorkspaceRemovalTests
         foreach (var unknownCensus in new[] { false, true })
         {
             await using var r = new RemovalRig();
-            if (unknownCensus) r.Gate.MarkCensusUnknown();
+            if (unknownCensus)
+            {
+                var root = HerdrPaneSidecar.DirectoryFor(r.Fixture.Settings.SessionLogPath); Directory.CreateDirectory(root);
+                File.WriteAllText(Path.Combine(root, "torn.json"), "{");
+                r.Fixture.Runtime.WorkspaceUseGate = r.Gate;
+                await r.Fixture.Runtime.AdoptOrphanedHostsAsync(new SystemProcessLivenessProbe(), CancellationToken.None);
+            }
             else r.Gate.RecordOwner(r.Fixture.Checkout, Guid.NewGuid(), () => throw new IOException("unknown"));
             Held(await r.Remove(), "workspace_in_use"); r.Preserved();
         }
@@ -348,6 +360,16 @@ public sealed partial class CompletedCardWorkspaceRemovalTests
     // PC-258..260: returning a DTO or pruning all registrations or deleting refs breaks physical/ref oracles.
     [Test] public async Task C1032_RemovalEligiblePhysical()
     {
+        foreach (var missing in new[] { "report", "artifacts", "policy", "pointers" })
+        {
+            await using var held = new RemovalRig();
+            Directory.CreateDirectory(Path.Combine(held.Fixture.Checkout, ".antiphon"));
+            var evidence = Path.Combine(held.Fixture.Checkout, ".antiphon", "run.trx"); File.WriteAllText(evidence, "held evidence");
+            var request = missing switch { "report" => held.Command with { ReportDigest = "opaque" },
+                "artifacts" => held.Command with { ArtifactProofDigest = "opaque" },
+                "policy" => held.Command with { DisposalPolicyDigest = "opaque" }, _ => held.Command with { ArtifactPointers = [] } };
+            Held(await held.Remove(request), "evidence_requires_admission"); File.ReadAllText(evidence).ShouldBe("held evidence"); held.Preserved();
+        }
         await using var r = new RemovalRig(); var f = r.Fixture;
         Directory.CreateDirectory(Path.Combine(f.Checkout, "bin")); File.WriteAllText(Path.Combine(f.Checkout, "bin", "cache"), "disposable");
         var stale = Path.Combine(f.Root, "stale");
@@ -421,6 +443,7 @@ public sealed partial class CompletedCardWorkspaceRemovalTests
             psi.ArgumentList.Add("exec"); psi.ArgumentList.Add(typeof(CompletedCardWorkspaceRemovalTests).Assembly.Location);
             psi.Environment[CompletedCardRemovalCrashWorker.InputEnvironment] = inputPath;
             using var child = Process.Start(psi)!;
+            var childStartIdentity = CompletedCardRemovalCrashWorker.StartIdentity(child);
             var stdout = child.StandardOutput.ReadToEndAsync(); var stderr = child.StandardError.ReadToEndAsync();
             JsonElement marker = default;
             try
@@ -432,7 +455,7 @@ public sealed partial class CompletedCardWorkspaceRemovalTests
                 File.Exists(inputPath + ".ready").ShouldBeTrue("worker cut " + cut);
                 marker = JsonSerializer.Deserialize<JsonElement>(File.ReadAllText(inputPath + ".ready"));
                 marker.GetProperty("pid").GetInt32().ShouldBe(child.Id);
-                marker.GetProperty("started").GetDateTime().ShouldBe(child.StartTime.ToUniversalTime());
+                marker.GetProperty("startIdentity").GetString().ShouldBe(childStartIdentity, "exact kernel birth identity");
                 marker.GetProperty("operationId").GetGuid().ShouldBe(r.Command.OperationId);
             }
             finally

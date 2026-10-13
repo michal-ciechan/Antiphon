@@ -13,6 +13,13 @@ internal sealed class CompletedCardRemovalCrashWorker
     internal sealed record Input(string Root, string State, string StoreId, string Repository, string Origin,
         CompletedCardWorkspaceCommand Command, string Cut);
 
+    internal static string StartIdentity(Process process)
+    {
+        if (!OperatingSystem.IsLinux()) return process.StartTime.ToUniversalTime().Ticks.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var stat = File.ReadAllText("/proc/" + process.Id + "/stat");
+        return stat[(stat.LastIndexOf(')') + 2)..].Split(' ', StringSplitOptions.RemoveEmptyEntries)[19];
+    }
+
     [Before(Assembly)]
     public static async Task RunOwnedWorkerAsync()
     {
@@ -44,7 +51,7 @@ internal sealed class CompletedCardRemovalCrashWorker
                 using var process = Process.GetCurrentProcess();
                 File.WriteAllText(inputPath + ".ready.tmp", JsonSerializer.Serialize(new
                 {
-                    pid = process.Id, started = process.StartTime.ToUniversalTime(), intent.Phase,
+                    pid = process.Id, startIdentity = StartIdentity(process), intent.Phase,
                     operationId = intent.Command.OperationId, intent.RemainingAllowance,
                     originalExists = Directory.Exists(input.Command.Binding.WorktreePath),
                     asideExists = intent.SetAsidePath is not null && Directory.Exists(intent.SetAsidePath),
