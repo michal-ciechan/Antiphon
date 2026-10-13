@@ -2,6 +2,8 @@ using System.Collections.Frozen;
 using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
+using Antiphon.Server.Application.Exceptions;
+using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Enums;
 
 namespace Antiphon.Server.Application.Services;
@@ -154,6 +156,17 @@ public static class InstructionBundles
     /// </summary>
     public static bool Exists(string key) => All.ContainsKey(key);
 
+    /// <summary>CARD-0507 D-2: a role-policy tool bundle key is this prefix and in the catalog.</summary>
+    public const string ToolPrefix = "tool-";
+
+    /// <summary>The 422 code a role-policy bundle key that is not a tool bundle refuses with.</summary>
+    public const string StageToolBundleUnknownCode = "stage_tool_bundle_unknown";
+
+    public static bool IsToolBundleKey(string? key) => false;
+
+    public static IReadOnlyList<string> ResolveRoleToolBundles(AgentTaskRole role, DelegationSettings settings) =>
+        settings.RolePolicy.TryGetValue(role.ToString(), out var policy) ? policy.Bundles : [];
+
     public static bool IsStageBundleKey(string key) =>
         key.StartsWith("stage-", StringComparison.Ordinal) && All.ContainsKey(key);
 
@@ -189,7 +202,8 @@ public static class InstructionBundles
     /// by the composer, so a bundle reachable both ways appears exactly once.
     /// </param>
     public static IReadOnlyList<string> ForDelegate(
-        AgentTaskKind kind, AgentTaskRole role, IReadOnlyList<string>? attachedBundleKeys = null)
+        AgentTaskKind kind, AgentTaskRole role, IReadOnlyList<string>? attachedBundleKeys = null,
+        IReadOnlyList<string>? roleBundleKeys = null)
     {
         // STRUCTURAL CARVE-OUT, not incidental. A specialist task is pinned to a standing seat
         // whose own contract is reconciled onto its row and rendered by AgentControlService; it
