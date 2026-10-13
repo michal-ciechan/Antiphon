@@ -1,4 +1,53 @@
 import { HttpResponse, http, type HttpHandler } from 'msw';
+import type { AgentModelLevel } from '../../api/agents';
+import type { AgentTaskRole } from '../../api/agentTasks';
+import type { RolePolicyDto, RolePolicyRowDto } from '../../api/rolePolicy';
+
+function policyRow(
+  role: AgentTaskRole,
+  level: AgentModelLevel,
+  alias: string,
+  escalateTo: AgentModelLevel | null,
+  configured = true,
+): RolePolicyRowDto {
+  return {
+    role,
+    configured,
+    level,
+    kind: null,
+    alias,
+    escalateTo,
+    escalateAfterMinutes: null,
+    timeoutMinutes: 240,
+    stagePin: null,
+    effective: { source: 'rolePolicy', agentKind: 'ClaudeCode', modelLevel: level, alias, strength: null },
+  };
+}
+
+/**
+ * CARD-0097 F-2: GET /api/role-policy as the server ships it with no pins — the 14 routable roles
+ * in server order. Tests that need another row spread this fixture.
+ */
+export const ROLE_POLICY_FIXTURE: RolePolicyDto = {
+  defaultLevel: 'High',
+  defaultTimeoutMinutes: 240,
+  roles: [
+    policyRow('Investigate', 'High', 'opus', 'Frontier'),
+    policyRow('Plan', 'Frontier', 'fable', null),
+    policyRow('TestDesign', 'Frontier', 'fable', null),
+    policyRow('Code', 'Frontier', 'fable', null),
+    policyRow('Mutation', 'Low', 'haiku', 'High'),
+    policyRow('Review', 'Frontier', 'fable', null),
+    policyRow('Debug', 'High', 'opus', 'Frontier'),
+    policyRow('Coverage', 'High', 'opus', null),
+    policyRow('Docs', 'Medium', 'sonnet', null),
+    policyRow('Commit', 'Medium', 'sonnet', null),
+    policyRow('Test', 'Low', 'haiku', 'Medium'),
+    policyRow('Deploy', 'Low', 'haiku', null),
+    policyRow('Merge', 'High', 'opus', null),
+    policyRow('Custom', 'High', 'opus', null, false),
+  ],
+};
 
 /**
  * Default MSW request handlers.
@@ -32,6 +81,7 @@ export const handlers: HttpHandler[] = [
     }),
   ),
   http.get('/api/routing-pins', () => HttpResponse.json({ pins: [] })),
+  http.get('/api/role-policy', () => HttpResponse.json(ROLE_POLICY_FIXTURE)),
   http.get('/api/session-runners', () => HttpResponse.json([
     {
       runnerId: 'desktop',
