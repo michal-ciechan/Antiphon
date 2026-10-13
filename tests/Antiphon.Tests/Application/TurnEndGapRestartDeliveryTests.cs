@@ -336,7 +336,16 @@ public sealed class TurnEndGapRestartDeliveryTests
         else if (invalid == "wrong-destination")
         { sibling = await h.AddSiblingAsync(); h.SubmitDestination = sibling; }
         else h.SubmitTransform = body => invalid == "header-only" ? body.Split('\n')[0] : body[..(body.Length / 2)];
-        await h.MakeIdleAsync(); await h.DeliverExplicitlyAsync();
+        await h.MakeIdleAsync();
+        // Inspect the first real submitted attempt before failure handling can
+        // retype a truncated body or start its later grace/recovery policy.
+        h.Boundary.HoldAt = "queue-before-verdict";
+        using var deliveryStop = CancellationTokenSource.CreateLinkedTokenSource(h.Token);
+        var deliveryAttempt = h.JoinDeliveryAsync(h.Queue.FlushIfIdleAsync(h.Id, deliveryStop.Token));
+        try
+        {
+        await h.Boundary.Held.Task.WaitAsync(h.Token);
+        await h.PullAsync(h.Id);
         if (sibling is not null) await h.PullAsync(sibling.Value);
         await h.ReconcileAsync(2);
         var unconfirmed = (await h.NotesAsync()).Single();
@@ -362,6 +371,12 @@ public sealed class TurnEndGapRestartDeliveryTests
                     "the foreign complete prompt must satisfy the floor so destination filtering is the decisive guard");
             }
             else (await h.PromptsAsync()).Any(p => p.Text == h.SubmitTransform!(h.Caller.SubmittedBodies.Single())).ShouldBeTrue();
+        }
+        }
+        finally
+        {
+            deliveryStop.Cancel(); h.Boundary.Release.TrySetResult();
+            try { await deliveryAttempt; } catch (OperationCanceledException) when (deliveryStop.IsCancellationRequested) { }
         }
     }
 }
