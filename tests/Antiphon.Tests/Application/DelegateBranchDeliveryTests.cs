@@ -294,6 +294,7 @@ public sealed class DelegateBranchDeliveryTests
         private readonly string _allowed;
         private readonly string _origin;
         private readonly Guid _store;
+        private readonly Guid _boot = Guid.NewGuid();
         private readonly bool _old;
         private readonly ReadySignal _ready = new();
         private SessionRunnerRuntime _runtime = null!;
@@ -345,7 +346,7 @@ public sealed class DelegateBranchDeliveryTests
                 await Task.WhenAll(_children); _children.Clear(); _socket.Dispose(); _stop.Dispose(); _stop = new();
             }
             _ready.Reset();
-            var ticket = await Host.RegisterAsync(storeId: _store, bootId: Guid.NewGuid(), capabilities: Surface.Capabilities());
+            var ticket = await Host.RegisterAsync(storeId: _store, bootId: _boot, capabilities: Surface.Capabilities());
             _socket = new(); _socket.Options.SetRequestHeader(PhoneHomeProtocol.TicketHeader, ticket.Ticket);
             await _socket.ConnectAsync(Host.ConnectUri, ct);
             var storePath = Path.Combine(_root, "store-id"); await File.WriteAllTextAsync(storePath, _store.ToString("D"), ct);
