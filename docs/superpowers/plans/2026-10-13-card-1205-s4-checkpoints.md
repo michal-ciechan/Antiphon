@@ -85,3 +85,15 @@ The cleanup fixture's cursor after three two-row discovery passes selects the
 fifth tracked ID: its next confirmed terminal page removes one, leaving four.
 Host log capture explicitly injects the recovery host logger because Program's
 Serilog setup does not provide the same provider capture as the service fixture.
+
+## First fixed-source CP-4 and repairs
+
+CP-4 on 7adb09c79ac24982042e48d85638f0cbc5103623 executed 48: 46 passed,
+two failed, zero skipped (run 20261013-073557-ba40). T26 reached both real
+host epochs and both checked Working probes, then exposed repeated Stop after
+service disposal. Shutdown now shares one owned completion task, with cancellation
+outside the monitor and the probe join in its finally. T25 still requires joining
+the non-cooperative save; T26 requires successful host/provider teardown.
+T33 was missing the production queue's 20ms pre-Enter timer advance. It now waits
+for that actual timer registration, advances exactly 20ms and observes the held
+adapter submission. No timeout, production queue assertion or receipt rule changed.

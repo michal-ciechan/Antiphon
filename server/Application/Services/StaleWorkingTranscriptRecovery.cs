@@ -26,6 +26,7 @@ public sealed class StaleWorkingTranscriptRecovery(
     private Guid? _discoveryCursor, _reconcileCursor;
     private int _passes, _discovered, _reconciled;
     private bool _stopping, _disposed;
+    private Task? _stopTask;
 
     private sealed class Entry(Guid sessionId, DateTime generation, long discoveredAt)
     {
@@ -231,13 +232,35 @@ public sealed class StaleWorkingTranscriptRecovery(
         }
     }
 
-    public async Task StopAsync(CancellationToken ct)
+    public Task StopAsync(CancellationToken ct)
     {
-        lock (_gate) _stopping = true;
-        await _lifetime.CancelAsync();
-        await _ticks.WaitAsync(CancellationToken.None);
-        try { await JoinCurrentProbesAsync(); }
-        finally { lock (_gate) Reap(); _ticks.Release(); }
+        TaskCompletionSource? start = null;
+        Task stopped;
+        lock (_gate)
+        {
+            if (_stopTask is null)
+            {
+                _stopping = true;
+                start = new TaskCompletionSource();
+                _stopTask = StopCoreAsync(start.Task);
+            }
+            stopped = _stopTask;
+        }
+        // Start outside the monitor. T25 holds a save at the owned join, and T26
+        // calls shutdown through both host and provider disposal on two epochs.
+        start?.TrySetResult();
+        return stopped;
+    }
+    private async Task StopCoreAsync(Task admission)
+    {
+        await admission.ConfigureAwait(false);
+        try { _lifetime.Cancel(); }
+        finally
+        {
+            await _ticks.WaitAsync(CancellationToken.None);
+            try { await JoinCurrentProbesAsync(); }
+            finally { lock (_gate) Reap(); _ticks.Release(); }
+        }
     }
     public async ValueTask DisposeAsync()
     {
