@@ -42,8 +42,13 @@ public sealed class CheckpointFixtureProcessTests : CheckpointTestBase
         }
         finally
         {
-            ReleaseFifo(fifo);
-            await Task.WhenAny(call, Task.Delay(5_000));
+            // An unbounded reader reopens the config; keep releasing until it finishes.
+            var release = Stopwatch.StartNew();
+            while (!call.IsCompleted && release.ElapsedMilliseconds < 5_000)
+            {
+                ReleaseFifo(fifo);
+                await Task.WhenAny(call, Task.Delay(50));
+            }
         }
     }
 

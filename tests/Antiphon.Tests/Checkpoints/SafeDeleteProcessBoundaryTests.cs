@@ -115,7 +115,7 @@ public sealed class SafeDeleteProcessBoundaryTests : CheckpointTestBase
         File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
     }
 
-    // Every fixture child has a hard ten-second bound.
+    // Every fixture step fails within twelve seconds (ten for exit, two for the drains); the kill reaches the live tree only.
     private static void Run(string root, string file, params string[] args)
     {
         var start = new ProcessStartInfo(file)
