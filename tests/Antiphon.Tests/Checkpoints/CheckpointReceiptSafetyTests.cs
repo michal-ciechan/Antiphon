@@ -2,13 +2,14 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text.Json.Nodes;
 using Antiphon.Checkpoints;
+using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
 
 namespace Antiphon.Tests.Checkpoints;
 
 [Category("Unit")]
-[NotInParallel]
+[ParallelLimiter<ProcessSpawnLimit>]
 public sealed class CheckpointReceiptSafetyTests : CheckpointTestBase
 {
     [Test]
