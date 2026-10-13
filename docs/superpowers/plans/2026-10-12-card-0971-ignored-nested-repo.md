@@ -70,6 +70,11 @@ tracked-file count and clean status. Preserve original checkpoint lines in the e
 | CP-7 | S3 | CP-2 | final-unit | `/*/*/*/*[Category=Unit]` | R-5 | >= 1 executed, 0 failed | 1 | 8 | true |
 | CP-8 | S4 | `tests/Antiphon.Tests -> bin-c971-inherited/` | base-channel-contract | `/*/*/ChannelOutboundContractTests/Server_and_gateway_keep_source_and_transport_boundaries` | R-5 finding 1 | 1 executed; confirm observed assertion failure at original base | 1 | 4 | true |
 | CP-9 | S4 | CP-8 | base-grok-pin | `/*/*/GrokRunnerImageContractTests/Qualified_pin_agrees_with_install_assertion_docs_fixtures_and_verifiers` | R-5 finding 2 | 1 executed; confirm observed assertion failure at original base | 1 | 1 | true |
+| CP-10 | Repair-tests | `tests/Antiphon.Tests -> bin-c971-repair-base/` | cleanup-baseline | `/*/*/AgentTaskLandNestedRepositoryCleanupTests/*` | V-10..V-13 | vulnerable preservation rows intentionally red; controls green | 7 | 4 | true |
+| CP-11 | Repair-fix | `tests/Antiphon.Tests -> bin-c971-repair-final/` | cleanup-final | `/*/*/AgentTaskLandNestedRepositoryCleanupTests/*` | V-10..V-13 | 7 passed | 7 | 4 | true |
+| CP-12 | Repair-fix | CP-11 | guarded-cleanup | `/*/*/WorktreeGuardedCleanupTests/*` | R-6 | full class green | 1 | 3 | true |
+| CP-13 | Repair-fix | CP-11 | retirement | `/*/*/TaskWorktreeRetirementTests/*` | R-7 | full class green | 1 | 3 | true |
+| CP-14 | Repair-fix | CP-11 | retirement-races | `/*/*/WorktreeRetirementRaceTests/*` | R-8 | full class green | 1 | 3 | true |
 
 Higher-priority Final stage contract requires R-5 despite the brief's narrower Unit exclusion.
 Named integration classes bound this Git-only impact. No unbounded integration class or assembly
@@ -121,6 +126,48 @@ assertions were altered. Required next stage stays Code while R-5 is incomplete.
 Continuation must complete the original Unit scope and confirm/triage the sampled script
 case using bounded committed checkpoint selections. Never widen the existing deadline.
 All PCs remain pending for SourceLanding Mutation after ordinary Code, Review and land.
+
+## CARD-0971 repair round 2 (520a9bf3)
+
+The repair brief expressly excludes Unit (R-5/CP-7 and historical CP-8/9),
+tracked independently as CARD-1209/CARD-1210. Historical statements above describe
+the original round only. Final repair selects CP-2..6 and CP-11..14; CP-10 first
+proves the defect with tests only on 46fe27d2 production. No assembly run or
+unbounded class impact is proposed. Cleanup and retirement are bounded by the
+full named classes. No green repetitions are required.
+
+Preservation uses the existing fail-closed ignored-content policy: publication
+succeeds, the owner worktree/registration/branch remain, cleanup reports Refused
+with ignored_content_preserved and protected paths. This is intentional preserved
+residue. No private Git/config/filter executes. A directory with any .git entry
+(directory, file pointer, or link) is protected before descent, regardless of
+ignored disposable ancestor names. Managed deletion must apply the same check,
+including set-aside resumes and retirement.
+
+| ID | Ordinary verification | Expected |
+|---|---|---|
+| V-10 | C971_PublicationPreservesNestedRepository: obj/nested, ignored/nested, obj/deeper/cache/nested | Durable half-reset recovery publishes; all .git/sentinel bytes survive |
+| V-11 | same method: obj/nested with .git file | Ordinary reviewed adoption publishes; pointer/sentinel bytes survive; strict recovery remains refused |
+| V-12 | C971_PlainDisposableOutputIsCleaned | Queue publication cleans plain obj output |
+| V-13 | C971_UnsupportedNestedRecoveryIsRefused: nonignored directory, ignored .git file | source_dirty / recovery_checkout_unproven before publication; bytes survive |
+| R-6 | whole WorktreeGuardedCleanupTests | unchanged cleanup safety |
+| R-7 | whole TaskWorktreeRetirementTests | unchanged retirement authority/preservation |
+| R-8 | whole WorktreeRetirementRaceTests | unchanged retirement races |
+
+The non-obj preservation control already passes on base; it cannot honestly be
+reported red. Obj/deeper/file-pointer publication rows must fail on missing .git
+after confirmed publication. Original V-4 file-pointer proof refusal stays.
+
+PC-7 pending: C971_PublicationPreservesNestedRepository / obj, deeper, git-file;
+omit repository classification protection.
+PC-8 pending: same method / non-obj; remove protected ignored residue gate.
+PC-9 pending: C971_PlainDisposableOutputIsCleaned; protect all ignored output.
+PC-10 pending: C971_UnsupportedNestedRecoveryIsRefused / both; bypass outer
+untracked guard or permit .git file strict proof respectively. Detecting filters:
+/*/*/AgentTaskLandNestedRepositoryCleanupTests/<ExactMethod>.
+All PC-1..10/variants pending SourceLanding Mutation. Restart: none. Next: Review.
+Landing owner: 520a9bf3-d0ab-427b-a036-88323a621750; original Code task
+bc957ed9-9a6a-4503-a99d-fce2f677d4ec remains in the lineage.
 
 S4 outcomes: CP-4 rerun at `c451672030617f5f19ad6eef8bc2ae60cc37e01c`
 passed all 5 executed cases, 2 Windows-only skips, zero failures. CP-8 and CP-9
