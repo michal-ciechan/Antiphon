@@ -89,7 +89,9 @@ PC-1 foreign drop/receipt/removal guard (cache variants); PC-2 legacy container 
 | CP-70 | Fixed | `CP-33` | repair-70 | `/*/*/RemoteScriptContractTests/C1208_Invalid_network_record_retains_text*` | V-17 | 1 executed, 0 failed/skipped | 1 | 1 |
 | CP-71 | Fixed | `CP-33` | repair-71 | `/*/*/RemoteScriptContractTests/C1208_Confirmed_absent_network_record_is_cleared*` | V-18 | 1 executed, 0 failed/skipped | 1 | 1 |
 | CP-72 | Fixed | `CP-33` | repair-72 | `/*/*/RemoteScriptContractTests/C1208_Recorded_creation_fingerprint_is_reverified*` | V-19 | 1 executed, 0 failed/skipped | 1 | 1 |
-| CP-73 | Fixed | `CP-33` | repair-fingerprint-acquisition | `/*/*/RemoteScriptContractTests/C1208_Fingerprint_acquisition_refuses_unowned_paths*` | V-20 | 6 executed, 0 failed/skipped | 6 | 1 |
+| CP-73 | Fixed | `CP-33` | repair-fingerprint-acquisition | `/*/*/RemoteScriptContractTests/C1208_Fingerprint_acquisition_refuses_unowned_paths*` | V-20 | 11 executed, 0 failed/skipped | 11 | 1 |
+
+| CP-74 | Fixed | `CP-33` | repair-safe-metadata | `/*/*/RemoteScriptContractTests/C1208_Metadata_writers_refuse_file_type_changes*` | V-21 | 9 executed, 0 failed/skipped; 81 internal writer/type cases | 9 | 2 |
 
 ### Cost
 
@@ -162,3 +164,9 @@ V-20/CP-73 binds `C1208_Fingerprint_acquisition_refuses_unowned_paths`: hand-wri
 PC-17 variants: remove pre-existing-path refusal (file/directory/dangling links and regular), restore following/truncating redirection (including inspection-time collision), omit fresh fingerprint publication; detecting method `/*/*/RemoteScriptContractTests/C1208_Fingerprint_acquisition_refuses_unowned_paths`. Every variant PENDING method-scoped SourceLanding Mutation. PC-1..16 and inherited CARD-1192 PC-1..174 remain pending; post-land Mutation was NOT run. W-1 native Docker acceptance remains pending with rollout owner. Other cards out of scope.
 
 F4 lifecycle refinement: the existing CP-33 fixture-seed diagnostic went red after blanket collision refusal because successful helper disposal retained its acquired fingerprint. Authorized consumer release now retires CID/fingerprint records only after reverified identity, removal and positively confirmed absence. This permits legitimate repeated acquisition without replacing an occupied fingerprint in launch. The existing CP-33 guard binds this behavior; unknown/foreign outcomes retain their established refusal behavior. A stopped preflight run and the specific fixture-seed red diagnostic are disclosed in the round 3 report; no result from a stopped run is credited.
+
+## Round 4 shared metadata writer repair
+
+Code/landing owner b80e5c9e-cdcb-4f3d-9d09-a4c612bf0a08; predecessor 15a9381e-0e9d-46a0-a49b-9534d34f3eb4. Repair base 42525c75b9ba104365e6b6d28d78ef742aaea8c3; complete card base 9f89cc427dca7030cfc93a45ec36e4375d894213. Specific brief overrides generic Final: CP-33..74, no Unit/full-class. CP-73 now 11 results (adds FIFO, FIFO link, late FIFO link, hard link and directory). CP-74/V-21 covers nine writer entry points, each with eight occupied/type-change cases and a legitimate publication, 81 internal cases. Full ordinary floor 65 row minutes by the historical estimates; actual previous complete run was 11 minutes. One shared isolated build per committed selection. Tests-first CP-73/74 must show F4 late-FIFO and F5 CID preservation red before production repair. No repetition after green.
+
+PC-18: every CP-73 new variant, remove type/publication guard. PC-19: each of CP-74's nine writers and all file-type/during-inspection variants, bypass shared safe publication. Detecting method respectively `/*/*/RemoteScriptContractTests/C1208_Fingerprint_acquisition_refuses_unowned_paths` and `/*/*/RemoteScriptContractTests/C1208_Metadata_writers_refuse_file_type_changes`. All PC-1..19/variants and CARD-1192 PC-1..174 remain PENDING method-scoped SourceLanding Mutation. W-1 native Docker remains PENDING.
