@@ -1085,6 +1085,9 @@ docker() {
             esac
         fi
     fi
+    if [ "$mode" = compose-absence ]; then
+        if c1207_docker "$@"; then return 0; else local handled=$?; [ "$handled" = 98 ] || return "$handled"; fi
+    fi
     local arg
     {
         printf 'DOCKER'
@@ -1195,7 +1198,7 @@ docker() {
             fi
             return 0 ;;
         compose)
-            if [ "$mode" = retention ]; then shift; retention_compose "$@";
+            if [ "$mode" = retention ] || [ "$mode" = compose-absence ]; then shift; retention_compose "$@";
             elif [ "$mode" = finalization ] || [ "$mode" = cleanup-probe ]; then
                 local previous="" token
                 for token in "$@"; do
@@ -2601,6 +2604,11 @@ retention_compose() {
     printf '%s %s %s\n' "$project" "$action" "$*" >> "$C1192_ROOT/compose-actions"
     case "$action" in
         up)
+            if [ "$mode" = compose-absence ]; then
+                mkdir -p "$C1192_ROOT/compose-networks/$project"
+                plant_container "${project}-probe-1" test "$RUN" private "$ADMITTED" ""
+                printf '%s\n' "$project" > "$C1192_ROOT/containers/${project}-probe-1/label-project"
+            fi
             cp "$file" "$C1192_ROOT/$project.yml"
             if [[ "$file" == *negative.yml ]]; then
                 plant_volume "${project}_cache" local null test "$RUN" private
@@ -2660,15 +2668,121 @@ retention_compose() {
             ;;
         down)
             [[ "$*" == *-v* ]] || return 0
+            if [ "$mode" = compose-absence ]; then
+                printf '%s\n' "$project" >> "$C1192_ROOT/teardowns"
+                if [[ "$project" == *main ]] && [ "$COMPOSE_CASE" = residual ]; then return 0; fi
+                rm -rf -- "$C1192_ROOT/compose-networks/$project" "$C1192_ROOT/containers/${project}-probe-1"
+                if [[ "$project" == *main ]]; then : > "$C1192_ROOT/main-down"; fi
+            fi
             if [[ "$file" == *negative.yml ]]; then rm -rf -- "$C1192_ROOT/volumes/${project}_cache"; return 0; fi
             for key in packages scratch npm; do
                 volume=$(retention_cache_name "$project" "$file" "$key")
                 [[ "$volume" != "${project}_"* ]] || rm -rf -- "$C1192_ROOT/volumes/$volume"
             done
-            for key in runner-tmp work runner-state dind-data; do rm -rf -- "$C1192_ROOT/volumes/${project}_$key"; done
+            for key in runner-tmp work runner-state dind-data; do
+                if [ "$mode" = compose-absence ] && [[ "$project" == *main ]] && [ "$COMPOSE_CASE" = mixed ] && [ "$key" = work ]; then continue; fi
+                rm -rf -- "$C1192_ROOT/volumes/${project}_$key"
+            done
             ;;
         *) printf 'UNEXPECTED-COMPOSE %s\n' "$action" >> "$C1192_ROOT/scenario.err"; return 97 ;;
     esac
+}
+
+# CARD-1207 modeled project lists and post-teardown observations.
+c1207_docker() {
+    local kind="$1" name="\${*: -1}" scoped=0 project='' path item
+    [[ "$*" != *'label=com.docker.compose.project='* ]] || { scoped=1; project="\${*##*label=com.docker.compose.project=}"; project="\${project%% *}"; }
+    case "$kind:\${2:-}" in
+        volume:ls|network:ls|ps:*)
+            if [ "$COMPOSE_CASE" = recording ] && [ "$scoped" = 1 ] && [[ "$project" == *main ]]; then printf 'Cannot connect to the Docker daemon\n' >&2; return 1; fi
+            if [ -f "$C1192_ROOT/main-down" ] && [ "$scoped" = 0 ] && [ "$COMPOSE_CASE" = daemon ]; then printf 'Cannot connect to the Docker daemon\n' >&2; return 1; fi
+            if [ -f "$C1192_ROOT/main-down" ] && [ "$scoped" = 0 ] && [ "$COMPOSE_CASE" = mixed ] && [ "$kind" = volume ]; then return 1; fi
+            case "$kind" in
+                volume) for path in "$C1192_ROOT/volumes"/*; do
+                    item="\${path##*/}"; [ "$scoped" = 0 ] || [[ "$item" == "\${project}_"* ]] || continue
+                    printf '%s\n' "$item"
+                done ;;
+                network) for path in "$C1192_ROOT/compose-networks"/*; do
+                    item="\${path##*/}"; [ "$scoped" = 0 ] || [ "$item" = "$project" ] || continue
+                    printf '%s_default\n' "$item"
+                done ;;
+                ps) for path in "$C1192_ROOT/containers"/*; do
+                    if [ "$scoped" = 1 ]; then [ -f "$path/label-project" ] && [ "$(< "$path/label-project")" = "$project" ] || continue; fi
+                    printf '%s\n' "\${path##*/}"
+                done ;;
+            esac; return 0 ;;
+        volume:inspect|container:inspect|network:inspect)
+            if [[ "$name" == "c849\${RUN}main"* ]] && [ -f "$C1192_ROOT/main-down" ]; then
+                if [ "$COMPOSE_CASE" = daemon ] || { [ "$COMPOSE_CASE" = mixed ] && [ "$name" = "c849\${RUN}main_work" ]; }; then
+                    printf 'Cannot connect to the Docker daemon\n' >&2; return 1
+                fi
+            fi
+            if [ "$kind" = network ]; then
+                [ -d "$C1192_ROOT/compose-networks/\${name%_default}" ] && return 0
+                printf 'Error response from daemon: No such network: %s\n' "$name" >&2; return 1
+            fi ;;
+    esac
+    return 98
+}
+
+mode_compose_absence() {
+    reset_runtime
+    COMPOSE_CASE="\${3:?case}"
+    mkdir -p "$C1192_ROOT/compose-networks"
+    : > "$C1192_ROOT/teardowns"
+    : > "$C1192_ROOT/compose-actions"
+    S7_SCENARIO=compose
+    s7_groups
+    source <(awk '/^(c849_fixture_retention|c849_fixture_evidence|write_result|json_escape|scrub_file)\(\) \{/ { active=1 } active { print } active && /^}$/ { active=0 }' "$remote")
+    case_runner_cache_inventory() { printf '{}\n' > "$CASE_DIR/server2-status.json"; printf '{}\n' > "$CASE_DIR/server2-temp-status.json"; }
+    c849_fixture_evidence_payloads() { :; }
+    source <(declare -f c849_fixture_seed | sed '1s/c849_fixture_seed/c1207_seed/')
+    c849_fixture_seed() {
+        c1207_seed
+        C849_PACKAGES="c849\${RUN}smoke-packages"; C849_SCRATCH="c849\${RUN}smoke-scratch"; C849_NPM="c849\${RUN}npmcache-npm"
+        local volume
+        for volume in "$C849_PACKAGES" "$C849_SCRATCH" "$C849_NPM"; do
+            plant_volume "$volume" local null server2-runner "$RUN" cache
+            chmod 700 "$C1192_ROOT/volumes/$volume/data"
+        done
+        s7_roster
+        sed -i '$d' "$CASE_DIR/fixture-groups.txt"
+    }
+    local code=0 key name good expected
+    set +e
+    ( set -e; c849_fixture ) > "$C1192_ROOT/compose-output" 2>&1
+    code=$?
+    set -e
+    cat "$C1192_ROOT/compose-output"
+    cat "$CASE_DIR/c590-result.json"
+    printf '\n'
+    expected=false; [ "$COMPOSE_CASE" != absent ] || expected=true
+    good=0; jq -e --argjson expected "$expected" '.accepted==$expected' "$CASE_DIR/c590-result.json" >/dev/null && good=1
+    emit verdict "$good"
+    good=0
+    if [ "$expected" = true ]; then [ "$code" = 0 ] && grep -q '^C849_FIXTURE ' "$C1192_ROOT/compose-output" && good=1
+    else [ "$code" != 0 ] && ! grep -q '^C849_FIXTURE ' "$C1192_ROOT/compose-output" && good=1; fi
+    emit marker "$good"
+    if [ "$COMPOSE_CASE" = recording ]; then
+        good=0; ! grep -Fxq "c849\${RUN}main" "$C1192_ROOT/teardowns" && good=1; emit no-unrecorded-down "$good"
+        good=0; grep -Fxq "unknown-cleanup-outcome compose c849\${RUN}main" "$CASE_DIR/fixture-cleanup-ledger.txt" && good=1; emit recording-ledger "$good"
+    else
+        for key in runner-tmp work runner-state dind-data; do
+            name="c849\${RUN}main_$key"; expected=confirmed-absent
+            case "$COMPOSE_CASE:$key" in residual:*) expected=cleanup-object-present ;; daemon:*|mixed:work) expected=unknown-cleanup-outcome ;; esac
+            good=0; grep -Fxq "$expected volume $name" "$CASE_DIR/fixture-cleanup-ledger.txt" && good=1; emit "ledger-$key" "$good"
+            good=0
+            if [ "$expected" = confirmed-absent ]; then ! grep -Fxq "$name" "$CASE_DIR/fixture-cleanup-residue.txt" && good=1
+            else grep -Fxq "$name" "$CASE_DIR/fixture-cleanup-residue.txt" && good=1; fi
+            emit "residue-$key" "$good"
+        done
+        if [ "$COMPOSE_CASE" = residual ]; then
+            for key in runner-tmp work runner-state dind-data; do good=0; volume_exists "c849\${RUN}main_$key" && good=1; emit "retained-$key" "$good"; done
+            good=0; container_exists "c849\${RUN}main-probe-1" && grep -Fxq "cleanup-object-present container c849\${RUN}main-probe-1" "$CASE_DIR/fixture-cleanup-ledger.txt" && good=1; emit retained-container "$good"
+            good=0; [ -d "$C1192_ROOT/compose-networks/c849\${RUN}main" ] && grep -Fxq "cleanup-object-present network c849\${RUN}main_default" "$CASE_DIR/fixture-cleanup-ledger.txt" && good=1; emit retained-network "$good"
+        fi
+    fi
+    refuse_unexpected
 }
 
 mode_retention() {
@@ -3637,6 +3751,7 @@ case "$mode" in
     deletion-audit) mode_deletion_audit "$@" ;;
     acquisition-probe) mode_acquisition_probe ;;
     cleanup-probe) mode_cleanup_probe "$@" ;;
+    compose-absence) mode_compose_absence ;;
     finalization) mode_finalization ;;
     evidence) mode_evidence ;;
     retention) mode_retention ;;
