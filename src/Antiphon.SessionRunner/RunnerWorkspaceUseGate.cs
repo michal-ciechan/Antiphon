@@ -114,12 +114,21 @@ public sealed class RunnerWorkspaceUseGate(RunnerWorkspaceRemovalJournal journal
         }
     }
 
-    public async Task<bool> TryRetireAsync(CompletedCardWorkspaceCommand command, Func<Task> admitted,
-        CancellationToken ct)
+    public Task<bool> TryRetireAsync(CompletedCardWorkspaceCommand command, Func<Task> admitted,
+        CancellationToken ct) => RetireAsync(command, admitted, waitForAdmission: true, ct);
+
+    // C1017_RunnerProcessOwnerHolds includes a held use lease. Cleanup refuses that
+    // admission; S3's deterministic gate-order callbacks keep their waiting contract.
+    internal Task<bool> TryRetireRemovalAsync(CompletedCardWorkspaceCommand command, Func<Task> admitted,
+        CancellationToken ct) => RetireAsync(command, admitted, waitForAdmission: false, ct);
+
+    private async Task<bool> RetireAsync(CompletedCardWorkspaceCommand command, Func<Task> admitted,
+        bool waitForAdmission, CancellationToken ct)
     {
         // A census in progress returns a safety hold, rather than waiting behind its external I/O.
         if (!_censusReady || _censusUnknown) return false;
-        await _admission.WaitAsync(ct);
+        if (waitForAdmission) await _admission.WaitAsync(ct);
+        else if (!await _admission.WaitAsync(0, ct)) return false;
         try
         {
             if (!_censusReady || _censusUnknown || HasOwner(command.Binding.WorktreePath)

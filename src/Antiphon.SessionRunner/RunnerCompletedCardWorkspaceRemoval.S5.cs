@@ -33,7 +33,7 @@ public sealed partial class RunnerCompletedCardWorkspaceRemoval
         RunnerCompletedCardWorkspaceRemovalResult result = Hold("workspace_in_use");
         try
         {
-            var admitted = await gate.TryRetireAsync(command, async () =>
+            var admitted = await gate.TryRetireRemovalAsync(command, async () =>
             {
                 if (gate.HasOwnershipConflict(command.Binding.WorktreePath)) { result = Hold("workspace_in_use"); return; }
                 var intent = journal.Read()!.Single(r => r.Command.OperationId == command.OperationId);

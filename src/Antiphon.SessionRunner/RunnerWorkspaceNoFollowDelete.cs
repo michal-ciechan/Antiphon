@@ -1,3 +1,4 @@
+using Antiphon.SessionRunner.Contracts;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
@@ -214,7 +215,7 @@ internal static class RunnerWorkspaceNoFollowDelete
             throw Failure("delete", path);
     }
 
-    private static readonly EnumerationOptions ListOnly = new()
+    private static EnumerationOptions ListOnly => new()
     {
         RecurseSubdirectories = false, AttributesToSkip = 0, IgnoreInaccessible = false, ReturnSpecialDirectories = false,
     };

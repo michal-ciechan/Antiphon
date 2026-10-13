@@ -180,6 +180,11 @@ public sealed partial class CompletedCardWorkspaceRemovalTests
     // PC-64/253: retained live/pooled owner cannot be inferred absent from terminal task status.
     [Test] public async Task C1017_RunnerProcessOwnerHolds()
     {
+        await using (var leased = new RemovalRig())
+        {
+            await using var use = await leased.Gate.AcquireUseAsync(leased.Fixture.Checkout, CancellationToken.None);
+            Held(await leased.Remove().WaitAsync(TimeSpan.FromSeconds(10)), "workspace_in_use"); leased.Preserved();
+        }
         foreach (var pooled in new[] { false, true })
         {
             await using var r = new RemovalRig(); var child = r.Fixture.Child();
