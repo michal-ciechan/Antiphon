@@ -31,23 +31,34 @@ internal static class WorktreeNoFollowDelete
     }
 
     /// <summary>Deletes <paramref name="path"/> and everything below it without following a link.</summary>
-    public static void Delete(string path)
+    public static void Delete(string path, bool preserveNestedRepositories = false)
     {
         var full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
-        if (OperatingSystem.IsWindows()) DeleteWindows(full);
-        else DeletePortable(full);
+        var protectedRoot = preserveNestedRepositories ? full : null;
+        if (preserveNestedRepositories)
+        {
+            var repositories = WorktreeNestedRepositories.Find(full);
+            if (repositories.Length != 0) throw new NestedRepositoryPreservedException(repositories);
+        }
+        if (OperatingSystem.IsWindows()) DeleteWindows(full, protectedRoot);
+        else DeletePortable(full, protectedRoot);
     }
 
-    private static void DeleteWindows(string path)
+    private static void DeleteWindows(string path, string? protectedRoot)
     {
         using var handle = OpenNoFollow(path);
         if (!GetFileInformationByHandle(handle, out var info)) throw Failure("inspect", path);
         const uint directory = 0x10, reparsePoint = 0x400;
         if ((info.FileAttributes & reparsePoint) == 0 && (info.FileAttributes & directory) != 0)
         {
+            WorktreeNestedRepositories.ThrowIfRepository(path, protectedRoot);
             // The held handle pins this directory, so the listing below resolves through it.
             foreach (var child in Directory.EnumerateFileSystemEntries(path, "*", ListOnly).ToList())
-                DeleteWindows(child);
+            {
+                WorktreeNestedRepositories.ThrowIfRepository(path, protectedRoot);
+                DeleteWindows(child, protectedRoot);
+            }
+            WorktreeNestedRepositories.ThrowIfRepository(path, protectedRoot);
         }
         MarkDeleted(handle, path);
     }
@@ -83,14 +94,19 @@ internal static class WorktreeNoFollowDelete
             throw Failure("delete", path);
     }
 
-    private static void DeletePortable(string path)
+    private static void DeletePortable(string path, string? protectedRoot)
     {
         // Unix has no handle-pinned walk here; lstat each entry and unlink a link without descending.
         var info = new FileInfo(path);
         if (info.LinkTarget is not null || info.Attributes.HasFlag(FileAttributes.ReparsePoint)) { File.Delete(path); return; }
         if (!info.Attributes.HasFlag(FileAttributes.Directory)) { File.Delete(path); return; }
+        WorktreeNestedRepositories.ThrowIfRepository(path, protectedRoot);
         foreach (var child in Directory.EnumerateFileSystemEntries(path, "*", ListOnly).ToList())
-            DeletePortable(child);
+        {
+            WorktreeNestedRepositories.ThrowIfRepository(path, protectedRoot);
+            DeletePortable(child, protectedRoot);
+        }
+        WorktreeNestedRepositories.ThrowIfRepository(path, protectedRoot);
         Directory.Delete(path, recursive: false);
     }
 

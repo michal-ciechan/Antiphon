@@ -270,8 +270,15 @@ remote endpoint. The index and actual tracked bytes must still equal the pinned 
 untracked non-ignored files or unsupported checkout transforms. Unrelated ignored residue
 (`.antiphon/inbox`, `bin-*/`, `obj/`) is permitted. An ignored path is refused as `source_dirty`
 if it matches a path the reviewed tip S tracks, is an ignored file or symlink at a parent of an
-S-tracked path, or lies below an S-tracked file. An ignored nested Git repository (listed by Git
-as `dir/`) still fails closed as `recovery_checkout_unproven`. This strict proof is implemented by
+S-tracked path, or lies below an S-tracked file. An ignored independent nested Git repository
+(listed by Git as `dir/`) is admitted only with a real, non-reparse `.git` directory,
+positive outer ignore evidence, no outer tracked content and no reviewed-path collision.
+File-based administrative pointers and unknown evidence still fail closed as
+`recovery_checkout_unproven`. Publication cleanup and retirement preserve directories
+with their own `.git` entry, even beneath disposable ignored output names: the owner tree,
+registration and branch remain with `ignored_content_preserved`. A repository discovered
+after unregistering is preserved in the recorded set-aside tree; later resumes preserve it
+there too. No private Git command executes. This strict proof is implemented by
 [`LandingGit.InspectRecoveryCheckoutAsync`](../server/Infrastructure/Git/LandingGit.cs), with
 residue and obstruction coverage in
 [`AgentTaskLandHalfResetTests`](../tests/Antiphon.Tests/Application/AgentTaskLandHalfResetTests.cs)
