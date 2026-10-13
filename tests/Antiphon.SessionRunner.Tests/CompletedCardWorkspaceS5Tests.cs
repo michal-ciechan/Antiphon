@@ -370,6 +370,19 @@ public sealed partial class CompletedCardWorkspaceRemovalTests
                 "policy" => held.Command with { DisposalPolicyDigest = "opaque" }, _ => held.Command with { ArtifactPointers = [] } };
             Held(await held.Remove(request), "evidence_requires_admission"); File.ReadAllText(evidence).ShouldBe("held evidence"); held.Preserved();
         }
+        // S7 report-loss repair: generic external artifact authority has no
+        // per-report manifest, so these remote task-report bytes are not covered.
+        foreach (var name in new[] { "task-deadbeef.md", "TASK-DEADBEEF.MD", "TaSk-dEaDbEeF.mD" })
+        {
+            await using var held = new RemovalRig();
+            Directory.CreateDirectory(Path.Combine(held.Fixture.Checkout, ".antiphon"));
+            var report = Path.Combine(held.Fixture.Checkout, ".antiphon", name);
+            const string bytes = "complete evidence";
+            File.WriteAllText(report, bytes);
+            Held(await held.Remove(), "artifact_unpreserved");
+            File.ReadAllText(report).ShouldBe(bytes); held.Preserved();
+            held.Journal.Read()!.Any(i => i.Receipt is not null || i.SetAsidePath is not null).ShouldBeFalse();
+        }
         await using var r = new RemovalRig(); var f = r.Fixture;
         Directory.CreateDirectory(Path.Combine(f.Checkout, "bin")); File.WriteAllText(Path.Combine(f.Checkout, "bin", "cache"), "disposable");
         var stale = Path.Combine(f.Root, "stale");
@@ -377,7 +390,8 @@ public sealed partial class CompletedCardWorkspaceRemovalTests
         var staleAdmin = CompletedCardRunnerFixture.Git(stale, "rev-parse", "--path-format=absolute", "--git-dir").Trim(); Directory.Delete(stale, true);
         var refs = CompletedCardRunnerFixture.Git(f.Repository, "show-ref"); var originRefs = CompletedCardRunnerFixture.Git(f.Origin, "show-ref");
         Directory.CreateDirectory(Path.Combine(f.Checkout, ".antiphon", "checkpoints", "owned"));
-        File.WriteAllText(Path.Combine(f.Checkout, ".antiphon", "task-deadbeef.md"), "complete evidence");
+        // Eligible evidence-disposal positive has no unpreserved task report.
+        File.WriteAllText(Path.Combine(f.Checkout, ".antiphon", "complete.trx"), "complete evidence");
         File.WriteAllText(Path.Combine(f.Checkout, ".antiphon", "checkpoints", "owned", "run.trx"), "scratch evidence");
         var answer = await r.Remove(); answer.GetProperty("complete").GetBoolean().ShouldBeTrue(answer.GetRawText());
         var receipt = answer.GetProperty("receipt");

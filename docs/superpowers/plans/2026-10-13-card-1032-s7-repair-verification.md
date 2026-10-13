@@ -16,7 +16,14 @@ No Unit lane: the repair brief explicitly excludes it. No full assembly or
 namespace run is needed. Two isolated builds are necessary because the named
 server and runner test classes live in separate test projects; server rows reuse
 one build, runner rows use one build. The checkpoint bootstrap is the sole
-unlisted build, necessary to run the tool, through the host slot gate.
+setup build outside the table, necessary to run the tool, through the host slot gate.
+After the first Final run, CP-32 closes the corrected S5 positive fixture:
+its unpreserved task report now belongs to explicit HOLD vectors; the genuine
+eligible cleanup uses TRX evidence with the same physical-removal assertions.
+The additional base diagnostic selection lives at
+/work/evidence/task-60025819/base-probe.md. It checks the setup failure at the
+exact pre-repair commit and the old report-disposal positive; it is disclosed
+extra verification, not a broad run or Mutation.
 
 F1 pins a hand-written shape/case table and real unique-byte preservation for
 lowercase, uppercase, mixed-case, nonhex and Unicode identifier characters,
@@ -61,7 +68,8 @@ for method-scoped SourceLanding Mutation; ordinary defect red is not Mutation.
 | CP-13 | S7-repair | CP-29 | mirror-admission | `/*/*/CardWorktreeMirrorCleanupTests/(C1017_MirrorBehindPushedTip)\|(C1017_ReopenBetweenEndpoints)\|(C1017_MultipleMirrorsRemainDistinct)\|(C1032_Admission*)` | V-1, V-3, V-6, R-3 | all 7 listed; 0 failed/skipped | 7 | 2 | true |
 | CP-14 | S7-repair | CP-29 | mirror-receipt | `/*/*/CardWorktreeMirrorCleanupTests/(C1017_ReceiptMustMatchOperation)\|(C1017_ReceiptMustMatchEndpoint)\|(C1017_ReceiptMustMatchStore)\|(C1017_ReceiptMustMatchTaskAttempt)\|(C1017_AckIsNotRemoval)\|(C1017_UnsupportedNeverFallsBack)\|(C1032_Receipt*)` | V-2, V-6, R-3 | all 7 listed; 0 failed/skipped | 7 | 3 | true |
 | CP-F2 | S7-repair | CP-29 | local-adjacent | `/*/*/(CardWorktreeCleanupRecoveryTests*)\|(CompletedCardWorktreeRemovalTests*)\|(CardWorktreeMirrorCleanupTests*)/*` | V-1..6, R-1..3 | all three complete classes, 59 results; 0 failed/skipped | 59 | 4 | true |
-| CP-F3 | S7-repair | `tests/Antiphon.SessionRunner.Tests -> bin-c60025819-runner/` | runner-adjacent | `/*/*/(CompletedCardWorkspaceRemovalTests*)\|(CompletedCardWorkspaceContractTests*)\|(RunnerWorkspaceServiceTests*)\|(LegacyWorkspaceRemovalGateTests*)/*` | V-2..5, R-1, R-2 | all four complete classes, 144 results; 0 failed/skipped | 144 | 5 | true |
+| CP-32 | S7-repair | `tests/Antiphon.SessionRunner.Tests -> bin-c60025819-runner/` | report-and-evidence | `/*/*/CompletedCardWorkspaceRemovalTests/C1032_RemovalEligiblePhysical*` | V-3, V-5, R-3 | explicit report HOLD plus actual eligible TRX disposal; 0 failed/skipped | 1 | 3 | true |
+| CP-F3 | S7-repair | CP-32 | runner-adjacent | `/*/*/(CompletedCardWorkspaceRemovalTests*)\|(CompletedCardWorkspaceContractTests*)\|(RunnerWorkspaceServiceTests*)\|(LegacyWorkspaceRemovalGateTests*)/*` | V-2..5, R-1, R-2 | all four complete classes, 144 results; 0 failed/skipped | 144 | 3 | true |
 | CP-RG1 | S7-repair | CP-29 | classification-guard | `/*/*/TestClassificationGuardTests/Registry_matches_compiled_metadata*` | metadata | exact guard; 0 failed/skipped | 1 | 1 | true |
 
 ### Pending Mutation additions
@@ -71,3 +79,8 @@ for method-scoped SourceLanding Mutation; ordinary defect red is not Mutation.
 | PC-591 | Producer uses lowercase-only report recognition or mismatched shape | `/*/*/CardWorktreeMirrorCleanupTests/C1032_ReportRecognitionCaseTable` | uppercase, mixed-case, nonhex, Unicode identifier, terminal LF; report bytes absent or no-intent refusal missing; literal 24-row classifier table variants |
 | PC-592 | Recipient omits fresh report-preservation hold | `/*/*/CardWorktreeMirrorCleanupTests/C1032_ReportAddedAfterProducerInspection` | lowercase, uppercase, mixed-case late report; unique bytes/registration absent or imported Complete receipt present |
 | PC-593 | Refuse generic admitted evidence when no remote task report exists | `/*/*/CardWorktreeMirrorCleanupTests/C1032_ReportAbsentAllowsCleanup` | real tree/registration removal and imported durable receipt missing |
+
+PC-592 additionally binds lower/upper/mixed report HOLD under the exact
+`/*/*/CompletedCardWorkspaceRemovalTests/C1032_RemovalEligiblePhysical` method.
+Its unchanged physical positive now uses TRX evidence; PC-582 retains its
+missing report/artifact/policy/pointer authority variants. All remain pending.
