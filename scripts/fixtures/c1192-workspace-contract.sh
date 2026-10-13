@@ -399,7 +399,7 @@ run_init() {
 
 label_value() {
     local file="$1"
-    if [ -f "$file" ]; then cat "$file"; else printf '\n'; fi
+    if [ -f "$file" ]; then printf '%s\n' "$(< "$file")"; else printf '\n'; fi
 }
 
 rewrite_paths() {
@@ -922,6 +922,8 @@ docker_run_payload() {
     run_script "$mount" "${PARSED_CMD[@]}"
 }
 
+# Single-line model fields use live Bash reads; do not fork cat for each ID
+# candidate and field. No identity, fault scenario or observation is cached.
 docker_inspect_container() {
     local fmt="" name=""
     while [ $# -gt 0 ]; do
@@ -933,17 +935,17 @@ docker_inspect_container() {
     local requested="$name" candidate
     if [[ "$name" =~ ^[0-9a-f]{64}$ ]]; then
         for candidate in "$C1192_ROOT/containers"/*; do
-            [ -f "$candidate/id" ] && [ "$(cat "$candidate/id")" = "$name" ] && name="${candidate##*/}" && break
+            [ -f "$candidate/id" ] && [ "$(< "$candidate/id")" = "$name" ] && name="${candidate##*/}" && break
         done
     fi
     local dir="$C1192_ROOT/containers/$name"
     [ -d "$dir" ] || { printf 'Error: No such container: %s\n' "$name" >&2; return 1; }
     [ -n "$fmt" ] || return 0
     case "$fmt" in
-        '{{.Id}}') cat "$dir/id" ;;
-        '{{.Name}}') cat "$dir/name" ;;
-        '{{.Image}}') cat "$dir/image" ;;
-        '{{.Created}}') cat "$dir/created" ;;
+        '{{.Id}}') printf '%s\n' "$(< "$dir/id")" ;;
+        '{{.Name}}') printf '%s\n' "$(< "$dir/name")" ;;
+        '{{.Image}}') printf '%s\n' "$(< "$dir/image")" ;;
+        '{{.Created}}') printf '%s\n' "$(< "$dir/created")" ;;
         *compose.project*) label_value "$dir/label-project" ;;
         *io.antiphon.owner*) label_value "$dir/label-owner" ;;
         *fixture-run*) label_value "$dir/label-run" ;;
@@ -1051,7 +1053,7 @@ docker() {
         local probe_target="${*: -1}" candidate
         if [[ "$probe_target" =~ ^[0-9a-f]{64}$ ]]; then
             for candidate in "$C1192_ROOT/containers"/*; do
-                [ -f "$candidate/id" ] && [ "$(cat "$candidate/id")" = "$probe_target" ] && probe_target="${candidate##*/}" && break
+                [ -f "$candidate/id" ] && [ "$(< "$candidate/id")" = "$probe_target" ] && probe_target="${candidate##*/}" && break
             done
             [ "$probe_target" != "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" ] || probe_target="c849-${RUN}-npm"
         fi
@@ -1133,7 +1135,7 @@ docker() {
             local requested="$name" candidate
             if [[ "$name" =~ ^[0-9a-f]{64}$ ]]; then
                 for candidate in "$C1192_ROOT/containers"/*; do
-                    [ -f "$candidate/id" ] && [ "$(cat "$candidate/id")" = "$name" ] && name="${candidate##*/}" && break
+                    [ -f "$candidate/id" ] && [ "$(< "$candidate/id")" = "$name" ] && name="${candidate##*/}" && break
                 done
             fi
             [ "$name" = "$requested" ] || order_log "container $name"

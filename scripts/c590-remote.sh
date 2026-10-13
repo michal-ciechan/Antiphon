@@ -3070,6 +3070,10 @@ c849_fixture_write() {
             mv -T -n -- "$metadata_temp" "$metadata_leaf" || exit 2
             [ ! -e "$metadata_temp" ] && [ ! -L "$metadata_temp" ] || exit 2
         else
+            # Update modes replace the owned file atomically; a link swapped in
+            # at publication time inside the owned directory is replaced, never
+            # followed; out-of-case files are never written. The destination
+            # guard above rechecks the expected regular owned file before rename.
             mv -T -- "$metadata_temp" "$metadata_leaf" || exit 2
         fi
         c849_fixture_metadata_regular "$metadata_leaf" && [ "$(stat -c '%d:%i:%u:%h' -- "$metadata_leaf")" = "$metadata_stamp" ] \
