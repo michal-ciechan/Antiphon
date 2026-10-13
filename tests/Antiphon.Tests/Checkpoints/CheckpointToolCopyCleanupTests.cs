@@ -56,7 +56,7 @@ public sealed class CheckpointToolCopyCleanupTests : CheckpointTestBase
     }
 
     [Test]
-    public void next_start_uses_the_shared_veto()
+    public void next_start_preserves_all_pre_existing_sibling_tools()
     {
         var repo = TempDir();
         var results = Path.Combine(repo, ".antiphon", "checkpoints");
@@ -75,7 +75,7 @@ public sealed class CheckpointToolCopyCleanupTests : CheckpointTestBase
         try
         {
             CheckpointApp.CreateRun(Manifest(), new RunRequest(), repo);
-            Directory.Exists(Path.Combine(dead, "tool")).ShouldBeFalse();
+            Directory.Exists(Path.Combine(dead, "tool")).ShouldBeTrue();
             Directory.Exists(Path.Combine(unknown, "tool")).ShouldBeTrue();
             Directory.Exists(other).ShouldBeTrue();
         }
@@ -149,8 +149,9 @@ public sealed class CheckpointToolCopyCleanupTests : CheckpointTestBase
         try
         {
             var removed = OutputCleanup.RemoveOlderRuns(results, TimeSpan.FromDays(7), dryRun: false);
-            removed.Deleted.ShouldBe([dead]);
-            removed.Refusals.ShouldBeEmpty();
+            removed.Deleted.ShouldBeEmpty();
+            removed.Refusals.ShouldContain("output-ledger-missing");
+            Directory.Exists(dead).ShouldBeTrue();
             Directory.Exists(live).ShouldBeTrue();
             Directory.Exists(reused).ShouldBeTrue();
             Directory.Exists(unknown).ShouldBeTrue();
