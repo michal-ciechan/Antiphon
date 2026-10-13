@@ -17,9 +17,46 @@ Retain the plan's latent-race attribution, server-only subscription proof, 120-s
 default evidence interval, local-only scope and logs-first visibility. Neither an
 elapsed deadline nor a successful HTTP connection certifies idle.
 
+## Repair 6 callback exception binding (T54-T56)
+
+Use [repair 6](2026-10-12-card-1205-s2-repair6-checkpoints.md) for this repair's
+closed executable manifest. CP-2 is 87 existing + 20 new = 107. T54's sixteen
+literal rows cross catch-up success/failure, callback InvalidOperationException/
+unrelated OperationCanceledException and async/sync/host/deadline timing. Assert
+the exact original exception object and stack provenance; failed catch-up wins
+and logs the callback object. Every fault row asserts no abandonment warning.
+T55's two controls assert a completed original output offer. T56's two controls
+decide deadline abandonment before releasing a literal late fault, then join its
+observer and scope. The actual readiness handler is directly awaited with the real
+HTTP iterator/runtime so even the host-shutdown OCE is observable. T01 and every
+existing assertion/timeout remain unchanged.
+
+The helper has three outcomes and never synthesizes an exception. Only genuine
+abandonment uses the caller's existing deadline-only reconnect TimeoutException
+(required by T53), or host shutdown cancellation. Callback faults propagate through
+ExceptionDispatchInfo, including unrelated OCE when host/deadline is cancelled.
+A settled callback wins when the bounded wait observes cancellation; a pending
+one is abandoned, with later faults only observed. A delivery-token OCE caused by
+that cancelled token is abandonment. No arbitrary synchronous callback termination
+or ordering across an abandoned callback/reconnect is promised.
+
+| PC | Deliberate payload | Exact detecting method filter | Required red | Status |
+|---|---|---|---|---|
+| PC-176 | Return Abandoned instead of CallbackFaulted with captured EDI. | `/*/*/SessionRunnerHeldEventDeliveryTests/C1205_Callback_fault_preserves_original_identity` | Successful catch-up IOE/OCE async and sync variants lose original identity. | Pending |
+| PC-177 | Remove catchUpException's finally filter so callback Y replaces catch-up X. | `/*/*/SessionRunnerHeldEventDeliveryTests/C1205_Callback_fault_preserves_original_identity` | All failed-catch-up variants lose CatchupFault object identity. | Pending |
+| PC-178 | Log/increment abandonment on CallbackFaulted while still returning its EDI. | `/*/*/SessionRunnerHeldEventDeliveryTests/C1205_Callback_fault_preserves_original_identity` | Zero-abandonment assertion fails on every fault variant. | Pending |
+| PC-179 | If deliveryToken is cancelled, abandon before inspecting the settled callback task. | `/*/*/SessionRunnerHeldEventDeliveryTests/C1205_Callback_fault_preserves_original_identity` | Host/deadline variants lose fault identity or log abandonment. | Pending |
+| PC-180 | Return Abandoned for successful callback completion. | `/*/*/SessionRunnerHeldEventDeliveryTests/C1205_Completed_callback_has_no_abandonment` | Successful catch-up control observes an unexpected timeout instead of null. | Pending |
+| PC-181 | Replace the observer's `await delivery` with `await Task.WhenAny(delivery)`; keep scope disposal but omit observing/logging the task fault. | `/*/*/SessionRunnerHeldEventDeliveryTests/C1205_Deadline_before_late_fault_retains_abandonment` | LateFault wait fails after literal fault release; fixture teardown still joins scope custody. | Pending |
+| PC-182 | Classify every callback OCE as abandonment whenever deliveryToken is cancelled, ignoring exception-token identity. | `/*/*/SessionRunnerHeldEventDeliveryTests/C1205_Callback_fault_preserves_original_identity` | Unrelated OCE host/deadline variants lose identity or log abandonment. | Pending |
+
+PC-1..182 and every variant remain pending for SourceLanding Mutation. Code runs
+no deliberate mutants; the unchanged-production test-first baseline is ordinary
+defect evidence, not a discharged PC cycle.
+
 ## Repair 5 exception binding (T53)
 
-The current execution manifest is [repair 5](2026-10-12-card-1205-s2-repair5-checkpoints.md).
+The historical execution manifest is [repair 5](2026-10-12-card-1205-s2-repair5-checkpoints.md).
 Its T53 exact filter is
 `/*/*/SessionRunnerHeldEventDeliveryTests*/C1205_Catchup_exception_survives_bounded_held_delivery*`
 (three literal rows). CP-2 is 84 existing + 3 = 87. The throws/blocked baseline
@@ -40,7 +77,7 @@ not a completed SourceLanding cycle. All PC-1..175 and variants remain pending.
 
 ## Repair 4 matrix binding (T51/T52)
 
-The current execution manifest is
+The historical execution manifest is
 [repair 4](2026-10-12-card-1205-s2-repair4-checkpoints.md). T51's exact ordinary
 filter is `/*/*/SessionRunnerHeldEventExitMatrixTests*/C1205_Every_held_exit_has_an_explicit_outcome*`
 (48 literal Arguments results); T52's is
@@ -406,6 +443,9 @@ production predicate as the expected-value factory.
 | T48 / V-5,V-7 | `SessionRunnerHeldEventDeliveryTests.C1205_Blocked_held_callback_stops_on_host_cancellation` / 2 | Cancellation during second list, or after list deadline and callback entry; non-cooperative consumer has an unreleased gate | ExecuteTask finishes and stream is disposed before release; one abandonment warning, one offer, cancellable callback token. | PC-115 restores unbounded None dispatch; PC-116 omits host linkage: stopped.ShouldBeTrue fails. |
 | T49 / V-5,V-7 | `SessionRunnerHeldEventDeliveryTests.C1205_Blocked_held_callback_stops_at_monotonic_deadline` / 1 | Second-list deadline followed by blocked consumer; advance FakeTimeProvider exactly 3 seconds without cancelling host | Reconnect reached and stream disposed before release; callback token cancelled; one warning and one offer. | PC-117 removes deadline: disconnected.ShouldBeTrue fails. |
 | T53 / V-5,V-7 | `SessionRunnerHeldEventDeliveryTests.C1205_Catchup_exception_survives_bounded_held_delivery` / 3 | Catch-up throws plus deadline-abandoned/completed callback; normal catch-up plus abandoned callback | Exact original exception type/message; one offer/warning; iterator disposed before release; literal late fault observed and retained scopes disposed. | PC-172..175; method-scoped SourceLanding pending. |
+| T54 / V-5,V-7 | `SessionRunnerHeldEventDeliveryTests.C1205_Callback_fault_preserves_original_identity` / 16 | Success/failure catch-up x IOE/unrelated OCE x async/sync/host/deadline callback fault | Original object/stack, earlier catch-up exception wins and logs callback fault; one offer, zero abandonment, disposed iterator/scopes. | PC-176..179,PC-182; all variants pending. |
+| T55 / V-5 | `SessionRunnerHeldEventDeliveryTests.C1205_Completed_callback_has_no_abandonment` / 2 | Success/failure catch-up x completed callback | Original output accepted once, no abandonment, catch-up exception identity retained. | PC-180 pending. |
+| T56 / V-5,V-7 | `SessionRunnerHeldEventDeliveryTests.C1205_Deadline_before_late_fault_retains_abandonment` / 2 | Success/failure catch-up x pending callback then deadline then late fault | One warning, disposed iterator before release, exact late fault observed, no replay, catch-up exception first. | PC-181 pending. |
 | T50 / V-5 | `SessionRunnerHeldEventDeliveryTests.C1205_Last_transcript_pull_cancellation_preserves_one_output` / 1 | Real HTTP/runtime final pull swallows host cancellation; consumer rejects cancelled tokens | Exactly one accepted output with original text, exactly one attempt and disposed iterator. | PC-118 skips the common offer on an already-cancelled host, retaining following-copy suppression; PC-119 pre-cancels preservation token: Accepted.ShouldBe(1) fails. |
 | T10 / V-8/R-2 | `WorkingTranscriptRecoveryTests.C1205_Complete_idle_snapshot_recovers_once` / 2 | H3; cache enabled, disabled | RecoveredIdle; one committed end; SQL idle; enabled cache agrees; replay adds 0. Reach: New checked entry point, valid generation and current runner frontier; invoke twice. | PC-11, PC-38; exact compiling defect and red below. |
 | T11 / V-9 | `WorkingTranscriptRecoveryTests.C1205_Uncertain_probe_does_not_certify_idle` / 15 | H3; pull-fault, persist-fault, state-read-fault, empty, wrong-generation, missing-generation, wrong-session, mixed-entry-session, missing-frontier, null-uuid-frontier-mismatch, retained-failure, needs-reload, absent-store, canceled-pull, truncated-tail | Unknown; no idle certification; no new end for precommit refusals; actual committed rows disclosed for partial failure. Reach: One flip from T10; record boundary hit/fault count = 1; successful pull/persist cannot be assumed from completed Task. | PC-12, PC-13, PC-14, PC-15, PC-16, PC-17, PC-18, PC-19, PC-20, PC-21, PC-22, PC-23, PC-24, PC-25; exact compiling defect and red below. |
@@ -823,6 +863,10 @@ additional ordinary checkpoint table:
 | T48 | `/*/*/SessionRunnerHeldEventDeliveryTests/C1205_Blocked_held_callback_stops_on_host_cancellation*` | 2 |
 | T49 | `/*/*/SessionRunnerHeldEventDeliveryTests/C1205_Blocked_held_callback_stops_at_monotonic_deadline*` | 1 |
 | T50 | `/*/*/SessionRunnerHeldEventDeliveryTests/C1205_Last_transcript_pull_cancellation_preserves_one_output*` | 1 |
+| T53 | `/*/*/SessionRunnerHeldEventDeliveryTests/C1205_Catchup_exception_survives_bounded_held_delivery*` | 3 |
+| T54 | `/*/*/SessionRunnerHeldEventDeliveryTests/C1205_Callback_fault_preserves_original_identity*` | 16 |
+| T55 | `/*/*/SessionRunnerHeldEventDeliveryTests/C1205_Completed_callback_has_no_abandonment*` | 2 |
+| T56 | `/*/*/SessionRunnerHeldEventDeliveryTests/C1205_Deadline_before_late_fault_retains_abandonment*` | 2 |
 | T10 | `/*/*/WorkingTranscriptRecoveryTests/C1205_Complete_idle_snapshot_recovers_once*` | 2 |
 | T11 | `/*/*/WorkingTranscriptRecoveryTests/C1205_Uncertain_probe_does_not_certify_idle*` | 15 |
 | T12 | `/*/*/WorkingTranscriptRecoveryTests/C1205_Newer_runner_activity_keeps_working*` | 2 |
@@ -881,7 +925,11 @@ additional ordinary checkpoint table:
 
 This is the **closed ordinary manifest** replacing only the plan's proposed table.
 One isolated build and one exact filter per row; `Min` is TUnit executions.
-Repair 3 ordinary scope is 69 executions (67 distinct cases): CP-1 2, CP-2 34,
+Current repair 6 ordinary scope is 142 executions (140 distinct cases): CP-1 2,
+CP-2 107, ADJ-1 33. Its separate baseline executes twenty new rows with sixteen
+intended assertion failures and four green controls against 744d68d57 production.
+Use the repair 6 manifest for the current dispatch. Historical
+repair 3 ordinary scope is 69 executions (67 distinct cases): CP-1 2, CP-2 34,
 ADJ-1 33. Its separate test-first RED-1 has four assertion failures on unchanged
 ff561103 production. The S3-S5 rows below remain future target rosters; they were
 not run by this repair. The original 170-case design estimate predates T47-T50.
@@ -895,7 +943,7 @@ green. Repair round 2 runs CP-1, CP-2, and ADJ-1 on one S2 output. All rows requ
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
 | CP-1 | S2 | `tests/Antiphon.Tests -> bin-c1205-s2/` | gap-baseline | `/*/Antiphon.Tests.Application/TurnEndGapReproductionTests*/*` | V-1,V-2,R-1 | 2 executed, both green; T01 preGraceEndCount.ShouldBe(1) unchanged; 0 skipped | 2 | 6 |
-| CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1205-s2/` | subscription | `/*/Antiphon.Tests.Application/(TurnEndGapReproductionTests*)\|(SessionRunnerStreamReadinessTests*)\|(SessionRunnerEventPumpTests*)\|(SessionRunnerHeldEventDeliveryTests*)\|(SessionRunnerHeldEventExitMatrixTests*)/*` | V-1..7,R-1,R-6,T47..T53 | Exactly 87 executed, all named cases green | 87 | 10 |
+| CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1205-s2/` | subscription | `/*/Antiphon.Tests.Application/(TurnEndGapReproductionTests*)\|(SessionRunnerStreamReadinessTests*)\|(SessionRunnerEventPumpTests*)\|(SessionRunnerHeldEventDeliveryTests*)\|(SessionRunnerHeldEventExitMatrixTests*)/*` | V-1..7,R-1,R-6,T47..T56 | Exactly 107 executed, all named cases green | 107 | 10 |
 | ADJ-1 | S2 | `tests/Antiphon.Tests -> bin-c1205-s2/` | adjacent | `/*/*/(SessionRunnerHttpClientHostStatsTests*)\|(SessionRunnerGenerationWireTests*)\|(SessionRunnerSettingsTests*)\|(SessionStateCommitTests*)\|(TranscriptWorkingStateQueryTests*)/*` | wire and working-state compatibility | Exactly 33 executed, all green | 33 | 3 |
 | CP-3 | S3 | `tests/Antiphon.Tests -> bin-c1205-s3/` | checked-recovery | `/*/Antiphon.Tests.Application/(WorkingTranscriptRecoveryTests*)\|(SessionStateCommitTests*)\|(TranscriptWorkingStateQueryTests*)/*` | V-8..12,V-25,V-26,R-2,R-7 | Exactly 62 executed, all named cases green | 62 | 11 |
 | CP-4 | S4 | `tests/Antiphon.Tests -> bin-c1205-s4/` | watchdog | `/*/Antiphon.Tests.Application/StaleWorkingTranscriptWatchdogTests*/*` | V-13..19,V-27..35,R-3,R-4 | Exactly 48 executed, all named cases green | 48 | 12 |

@@ -28,7 +28,7 @@ the caller remains required by unchanged T53. No timeout replaces a callback fau
 
 RED-1 executes all twenty rows against unchanged base production: fault identity or
 zero-abandonment assertions fail on all sixteen T54 rows; four controls pass.
-All PC-1..181 and variants remain pending for method-scoped SourceLanding Mutation.
+All PC-1..182 and variants remain pending for method-scoped SourceLanding Mutation.
 
 ### Checkpoints
 
@@ -47,3 +47,13 @@ Run --after RepairTests then --after RepairFix, --serial, full committed
 --expected-source-sha. Wait to final exit; inspect fresh TRX per method/argument.
 No repeats required. No manual acceptance for S1/S2. V-8..40 and R-2..5/R-8/R-9
 are deferred to S3-S5; R-7 does not discharge CP-3. Post-land Mutation NOT run.
+
+### Executed baseline
+
+Production diff from 744d68d57 to e76a094f897cd39e2dd3a216884d5f3174e3c429 is empty.
+Fresh TRX: twenty executions; sixteen intended assertion failures, four green controls.
+Successful catch-up fault rows lose identity (TimeoutException or host OCE); failed
+catch-up rows report one false abandonment warning instead of zero. No fixture/build
+errors, skips or timeouts. Ordinary fixed-source checkpoints pending at this commit.
+
+CHECKPOINT RED-1 commit=e76a094f897cd39e2dd3a216884d5f3174e3c429 build=ok filter=/*/*/SessionRunnerHeldEventDeliveryTests*/(C1205_Callback_fault_preserves_original_identity*)|(C1205_Completed_callback_has_no_abandonment*)|(C1205_Deadline_before_late_fault_retains_abandonment*) executed=20 passed=4 failed=16 skipped=0 trx=/work/worktrees/task-cbce1a3f/.antiphon/checkpoints/20261013-001445-ddb7/rows/RED-1/run.trx slot=granted waited=75s dirty=0 source=e76a094f897cd39e2dd3a216884d5f3174e3c429 sourceState=clean buildSource=verified

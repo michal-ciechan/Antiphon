@@ -189,9 +189,10 @@ Repair round 2 binds the responsive held-event rows at
 (success, timeout, throw, cancellation). Repair round 3 adds T48-T50 in
 `SessionRunnerHeldEventDeliveryTests`. Repair 4 adds the 48-row T51 exit matrix
 and two T52 iterator-fault controls in `SessionRunnerHeldEventExitMatrixTests`;
-Repair 5 adds T53's three exception/late-fault rows; CP-2 is now exactly 87 executions.
+Repair 5 adds T53's three exception/late-fault rows. Repair 6 adds T54-T56's twenty
+callback-fault/completed/deadline-race rows; CP-2 is now exactly 107 executions.
 Its committed groups and exact filters are in
-[the current repair checkpoint manifest](2026-10-12-card-1205-s2-repair5-checkpoints.md).
+[the current repair checkpoint manifest](2026-10-12-card-1205-s2-repair6-checkpoints.md).
 
 Every marker-held payload uses one finally-owned offer through the normal dispatcher
 with a linked deadline/host
@@ -202,8 +203,15 @@ non-replayable output. A consumer still pending at cancellation/deadline is expl
 warned once with an abandonment count; its attempt is abandoned, with no duplicate
 retry of an uncertain output publication. An in-flight catch-up exception retains its original type, message and stack even
 when preservation or its unwind fails. Secondary failures are logged without
-replacing that exception. With no original failure, normal shutdown/reconnect is
-unchanged. Its service scope remains owned until
+replacing that exception. With successful catch-up, callback faults (including
+unrelated OperationCanceledException under host cancellation) retain their original
+object, type and stack via ExceptionDispatchInfo. The helper distinguishes completed,
+callback-faulted and abandoned; only abandonment logs an abandonment warning and
+uses the caller's existing deadline-only reconnect timeout or host shutdown signal.
+If a callback is settled when the bounded wait observes cancellation, its outcome
+wins; if still pending, abandonment wins and a later fault is only observed/logged.
+A callback OCE caused by the cancelled delivery token counts as abandonment.
+Its service scope remains owned until
 the callback task settles, and late faults are observed. The iterator still disposes
 and shutdown/reconnect proceeds. Durable transcript events can be recovered by the
 existing next catch-up; no output replay queue exists. This bounds the asynchronous
@@ -523,7 +531,7 @@ expected-red reproduction exception, reported as failed, never relabeled green.
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1205-s1/` | any-pg-reproduction | `/*/*/TurnEndGapReproductionTests/*` | V-1, V-2, R-1 | 2 executed; exactly V-1 assertion fails on baseline; V-2 passes; 0 skipped | 2 | 6 |
-| CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1205-s2/` | any-pg-subscription | `/*/*/(TurnEndGapReproductionTests*)\|(SessionRunnerStreamReadinessTests*)\|(SessionRunnerEventPumpTests*)\|(SessionRunnerHeldEventDeliveryTests*)\|(SessionRunnerHeldEventExitMatrixTests*)/*` | V-1, V-2, V-3, V-4, V-5, V-6, V-7, R-1, R-6, T47..T53 | all 87 executions, 0 failed/skipped | 87 | 10 |
+| CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1205-s2/` | any-pg-subscription | `/*/*/(TurnEndGapReproductionTests*)\|(SessionRunnerStreamReadinessTests*)\|(SessionRunnerEventPumpTests*)\|(SessionRunnerHeldEventDeliveryTests*)\|(SessionRunnerHeldEventExitMatrixTests*)/*` | V-1, V-2, V-3, V-4, V-5, V-6, V-7, R-1, R-6, T47..T56 | all 107 executions, 0 failed/skipped | 107 | 10 |
 | CP-3 | S3 | `tests/Antiphon.Tests -> bin-c1205-s3/` | any-pg-checked-recovery | `/*/*/(WorkingTranscriptRecoveryTests*)\|(SessionStateCommitTests*)\|(TranscriptWorkingStateQueryTests*)/*` | V-8, V-9, V-10, V-11, V-12, R-2, R-7 | all 31 executions, 0 failed/skipped | 31 | 8 |
 | CP-4 | S4 | `tests/Antiphon.Tests -> bin-c1205-s4/` | any-pg-watchdog | `/*/*/StaleWorkingTranscriptWatchdogTests/*` | V-13, V-14, V-15, V-16, V-17, V-18, V-19, R-3, R-4 | all 13 executions, 0 failed/skipped | 13 | 7 |
 | CP-5 | S5 | `tests/Antiphon.Tests -> bin-c1205-s5/` | any-pg-restart-delivery | `/*/*/TurnEndGapRestartDeliveryTests/*` | V-20, V-21, V-22, V-23, V-24, R-5 | all 6 executions, 0 failed/skipped | 6 | 10 |
