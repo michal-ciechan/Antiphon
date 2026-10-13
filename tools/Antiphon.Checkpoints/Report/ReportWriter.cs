@@ -116,7 +116,7 @@ public static class ReportWriter
             return null;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
-        { return "receipt-unreadable: " + ex.GetType().Name; }
+        { return "receipt-unreadable: " + ex.GetType().Name + ": " + ex.Message; }
     }
 
     private static string Format(double seconds)

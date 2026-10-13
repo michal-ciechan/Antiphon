@@ -42,8 +42,8 @@ public static class SafeWrite
     {
         if (!CreatedContent.TryGetValue(Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar), out var recorded)) return false;
         if (Directory.Exists(path)) return recorded == "directory";
-        using var stream = File.OpenRead(path);
-        return recorded == stream.Length + ":" + Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(stream));
+        var bytes = ReceiptFile.ReadBytes(path);
+        return recorded == bytes.LongLength + ":" + Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes));
     }
 
     public static string? Preflight(string repository, IReadOnlyCollection<string> roots, string? gitExecutable = null, int? timeoutMs = null)
