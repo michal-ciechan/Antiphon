@@ -104,7 +104,7 @@ Independent XML audit verified exact per-row rosters, 21 distinct TestRun IDs, 3
 | V-6 | PASS CP-33 recovery validation; earlier full recovery-control matrix excluded. |
 | V-7 | PASS CP-44 C1195 root/import/retention; full CP-27 matrix excluded. |
 | V-8 | PASS CP-33/36/41/42 payload/evidence/census/privacy. |
-| V-9 | PASS CP-34/45..53 actual finalization/primary failure/strict EXIT/JSON/marker; detected failures only, known exceptions above. |
+| V-9 | PASS CP-34/45..53 actual finalization/primary failure/strict EXIT/JSON/marker; detected failures only, finalizer scope statement above. |
 | R-1 | PASS CP-37/44 C1189 image-tool/unlink guards. |
 | R-2 | PASS CP-35/44 C1191 ordering/failure/disposal guards. |
 | R-3 | PASS CP-38/39/44 C1193 environment/log guards. |
