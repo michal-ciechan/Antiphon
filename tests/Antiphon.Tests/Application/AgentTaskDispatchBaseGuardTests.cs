@@ -1231,7 +1231,14 @@ public partial class AgentTaskDispatchBaseGuardTests
         services.AddSingleton(TimeProvider.System);
         services.AddSingleton(Options.Create(new SupervisionSettings()));
         services.AddSingleton(Options.Create(new ChannelBridgeSettings()));
-        services.AddSingleton(Options.Create(new DelegationSettings { MaxConcurrentTasks = 512 }));
+        var delegation = new DelegationSettings { MaxConcurrentTasks = 512 };
+        if (cardBranchNames is bool enabled) typeof(DelegationSettings).GetProperty("CardBranchNames")?.SetValue(delegation, enabled);
+        services.AddSingleton(Options.Create(delegation));
+        if (runners is not null)
+        {
+            services.AddSingleton(runners);
+            services.AddScoped<SourceLandingAdmission>();
+        }
         services.AddOptions<AgentRegistrySettings>().Configure(s =>
         {
             s.DefaultDefinition = "claude";
@@ -1752,7 +1759,8 @@ public partial class AgentTaskDispatchBaseGuardTests
         ILandingGit? git = null,
         TimeProvider? clock = null,
         int? maxCandidates = null,
-        int? maxGitCommands = null)
+        int? maxGitCommands = null,
+        ISessionRunnerDirectory? runners = null, bool? cardBranchNames = null)
     {
         var services = new ServiceCollection();
         services.AddLogging();
