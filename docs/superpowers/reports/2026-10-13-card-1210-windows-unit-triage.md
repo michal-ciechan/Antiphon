@@ -113,3 +113,11 @@ The diagnostic run overrides row timeout to 3 minutes and total timeout to 40 mi
 - Antiphon.Tests.Scripts.RemoteScriptContractTests.C849_Seed_refuses_invalid_donors_and_partial_payloads
 - Antiphon.Tests.Scripts.RemoteScriptContractTests.C913_Fixture_uses_owned_payloads_and_proven_absent_temp
 - Antiphon.Tests.Scripts.RemoteScriptContractTests.C913_Seed_accepts_complete_ordinary_packages_without_framework_packs
+
+## First diagnostic result and bounded follow-up
+
+Run 20261013-030351-6bb2 at a7dc8596b082b524bd76074a05223d164d4bf255: CP-1 4/2, CP-2 2/0, CP-3 30/2, CP-4 2/2, CP-5 10/3, CP-6 26/0, CP-7 0/11, CP-8 0/39, CP-9 2/16 (passed/failed); CP-10 timeout at 3 minutes without TRX; CP-11 exact C983 passed 1/0 in 34 seconds. All completed rows have clean source and verified build binding.
+
+Heap dump identifies C973_Cold_marker_readers_accept_pruned_seed_image_and_refuse_invalid_markers in LinuxShell/Process.WaitForExit and semaphore wait nodes. C983 is not proven to hang. Extra narrow diagnostics are required because the full remote class could not finish.
+
+Follow-up CP-12 selects exactly the inherited RemoteScriptContractTests methods (26); CP-13 selects exactly C973_Cold_marker_readers_accept_pruned_seed_image_and_refuse_invalid_markers (6 argument cases), bounded at 7 minutes. CP-14 requalifies full C1008PlatformContractTests with a real Windows apphost. The first diagnostic manifest intentionally reproduced CARD-1171 UseAppHost=false; its two apphost refusals are not product defects. No assertion/deadline or source implementation changes.
