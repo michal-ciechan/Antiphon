@@ -3,6 +3,7 @@ import { expect, it } from 'vitest'
 import { renderHookWithProviders, waitFor } from '../test/utils'
 import { server } from '../test/mocks/server'
 import {
+  dispatchConcurrencyKeys,
   isProjectScope,
   useDispatchConcurrency,
   useDispatchConcurrencyRevisions,
@@ -393,4 +394,39 @@ it('C506 V06 project', async () => {
   expect(ids.every((id) => id === P)).toBe(true)
   expect(view.queryClient.getQueryData(['unrelated'])).toBe('kept')
   expect(view.queryClient.getQueryState(['unrelated'])?.isInvalidated).toBe(false)
+})
+
+// ---- F1 sweep (Review ef9c0e6b): server- and caller-provided strings are data ----
+
+it('C506 F1 keys-project-named-global', () => {
+  expect(dispatchConcurrencyKeys.scope(null)).toStrictEqual(['dispatchConcurrency', 'scope', null])
+  expect(dispatchConcurrencyKeys.scope('global')).toStrictEqual(['dispatchConcurrency', 'scope', 'global'])
+  expect(dispatchConcurrencyKeys.revisions(undefined)).toStrictEqual(['dispatchConcurrency', 'revisions', null])
+  expect(dispatchConcurrencyKeys.revisions('global')).toStrictEqual(['dispatchConcurrency', 'revisions', 'global'])
+})
+
+it('C506 F1 project-scope-own-property', () => {
+  const inherited = Object.create({ projectId: P }) as DispatchConcurrencyGlobalDto
+  expect(isProjectScope(inherited)).toBe(false)
+  expect(isProjectScope(P0)).toBe(true)
+})
+
+it('C506 F1 project-id-path-encoded', async () => {
+  const paths: string[] = []
+  server.use(
+    http.get(/\/api\/projects\/.+\/dispatch-concurrency(\/revisions)?$/, ({ request }) => {
+      const url = new URL(request.url)
+      paths.push(url.pathname + url.search)
+      return HttpResponse.json(url.pathname.endsWith('/revisions') ? historyR3(P, P) : P0)
+    }),
+  )
+  const view = renderHookWithProviders(() => ({
+    scope: useDispatchConcurrency('a/b?c'),
+    history: useDispatchConcurrencyRevisions('a/b?c'),
+  }))
+  await waitFor(() => expect(view.result.current.scope.isSuccess && view.result.current.history.isSuccess).toBe(true))
+  expect(paths.sort()).toStrictEqual([
+    '/api/projects/a%2Fb%3Fc/dispatch-concurrency',
+    '/api/projects/a%2Fb%3Fc/dispatch-concurrency/revisions?limit=10',
+  ])
 })

@@ -4,6 +4,7 @@ import {
   draftFromOverrides,
   isCleared,
   overridesFromDraft,
+  sourceLabel,
   validateDraft,
   type ConcurrencyDraft,
   type LimitDraft,
@@ -276,4 +277,121 @@ it('C506 V04 hidden-unspecified', () => {
   const saved = blankDraft()
   saved.roles.Code.maxQueued = { specified: false, value: 9 }
   expect(diffDrafts(draft, saved)).toStrictEqual([])
+})
+
+// ---- F1 (Review ef9c0e6b): Object.prototype member names are role and source data ----
+// Role and source names come from the server document and the server's source strings. A name
+// that is also an Object.prototype member must behave exactly like any other unknown name: an own
+// key that decodes, encodes, round-trips, diffs and labels as itself. Expected outcomes are literal.
+
+function draftWithRole(name: string, row: { maxParallel: LimitDraft; maxQueued: LimitDraft }): ConcurrencyDraft {
+  const roles: ConcurrencyDraft['roles'] = {}
+  // defineProperty, because `roles['__proto__'] = row` would replace the prototype instead.
+  Object.defineProperty(roles, name, { value: row, enumerable: true, writable: true, configurable: true })
+  return { maxParallel: { ...UNSET }, maxQueued: { ...UNSET }, roles }
+}
+
+function ownValue(container: object, key: string): unknown {
+  return Object.getOwnPropertyDescriptor(container, key)?.value
+}
+
+const PROTO_DECODE_CASES = [
+  { name: 'constructor', doc: '{"schemaVersion":1,"roles":{"constructor":{"maxParallel":2}}}' },
+  { name: 'toString', doc: '{"schemaVersion":1,"roles":{"toString":{"maxParallel":2}}}' },
+  { name: '__proto__', doc: '{"schemaVersion":1,"roles":{"__proto__":{"maxParallel":2}}}' },
+  { name: 'hasOwnProperty', doc: '{"schemaVersion":1,"roles":{"hasOwnProperty":{"maxParallel":2}}}' },
+  { name: 'valueOf', doc: '{"schemaVersion":1,"roles":{"valueOf":{"maxParallel":2}}}' },
+]
+
+it.each(PROTO_DECODE_CASES)('C506 F1 decode-document-role $name', ({ name, doc }) => {
+  const draft = draftFromOverrides(JSON.parse(doc), ['Code'])
+  expect(Object.keys(draft.roles)).toStrictEqual(['Code', name])
+  expect(Object.getPrototypeOf(draft.roles)).toBe(Object.prototype)
+  expect(ownValue(draft.roles, name)).toStrictEqual({
+    maxParallel: { specified: true, value: 2 },
+    maxQueued: { specified: false, value: null },
+  })
+})
+
+it.each(['constructor', 'toString', '__proto__', 'hasOwnProperty', 'valueOf'])('C506 F1 decode-supported-role %s', (name) => {
+  const draft = draftFromOverrides({ schemaVersion: 1 }, [name])
+  expect(Object.keys(draft.roles)).toStrictEqual([name])
+  expect(ownValue(draft.roles, name)).toStrictEqual({
+    maxParallel: { specified: false, value: null },
+    maxQueued: { specified: false, value: null },
+  })
+})
+
+const PROTO_ENCODE_CASES = [
+  { name: 'constructor', json: '{"roles":{"constructor":{"maxParallel":2,"maxQueued":null}}}' },
+  { name: 'toString', json: '{"roles":{"toString":{"maxParallel":2,"maxQueued":null}}}' },
+  { name: '__proto__', json: '{"roles":{"__proto__":{"maxParallel":2,"maxQueued":null}}}' },
+  { name: 'hasOwnProperty', json: '{"roles":{"hasOwnProperty":{"maxParallel":2,"maxQueued":null}}}' },
+  { name: 'valueOf', json: '{"roles":{"valueOf":{"maxParallel":2,"maxQueued":null}}}' },
+]
+
+it.each(PROTO_ENCODE_CASES)('C506 F1 encode-role $name', ({ name, json }) => {
+  const out = overridesFromDraft(draftWithRole(name, { maxParallel: set(2), maxQueued: set(null) }))
+  expect(JSON.stringify(out)).toBe(json)
+  expect(Object.keys(out.roles as object)).toStrictEqual([name])
+})
+
+const PROTO_ROUNDTRIP_CASES = [
+  { name: 'constructor', json: '{"roles":{"constructor":{"maxQueued":0}}}' },
+  { name: 'toString', json: '{"roles":{"toString":{"maxQueued":0}}}' },
+  { name: '__proto__', json: '{"roles":{"__proto__":{"maxQueued":0}}}' },
+  { name: 'hasOwnProperty', json: '{"roles":{"hasOwnProperty":{"maxQueued":0}}}' },
+  { name: 'valueOf', json: '{"roles":{"valueOf":{"maxQueued":0}}}' },
+]
+
+it.each(PROTO_ROUNDTRIP_CASES)('C506 F1 roundtrip-role $name', ({ json }) => {
+  expect(JSON.stringify(overridesFromDraft(draftFromOverrides(JSON.parse(json), [])))).toBe(json)
+})
+
+const PROTO_SAVED_ONLY_CASES = [
+  { name: 'constructor', path: 'roles.constructor.maxParallel', label: 'constructor max parallel' },
+  { name: 'toString', path: 'roles.toString.maxParallel', label: 'toString max parallel' },
+  { name: '__proto__', path: 'roles.__proto__.maxParallel', label: '__proto__ max parallel' },
+  { name: 'hasOwnProperty', path: 'roles.hasOwnProperty.maxParallel', label: 'hasOwnProperty max parallel' },
+  { name: 'valueOf', path: 'roles.valueOf.maxParallel', label: 'valueOf max parallel' },
+]
+
+it.each(PROTO_SAVED_ONLY_CASES)('C506 F1 diff-saved-only $name', ({ name, path, label }) => {
+  const draft: ConcurrencyDraft = { maxParallel: { ...UNSET }, maxQueued: { ...UNSET }, roles: {} }
+  const saved = draftWithRole(name, { maxParallel: set(2), maxQueued: { ...UNSET } })
+  expect(diffDrafts(draft, saved)).toStrictEqual([
+    { path, label, draft: { specified: false, value: null }, saved: { specified: true, value: 2 } },
+  ])
+})
+
+const PROTO_DRAFT_ONLY_CASES = [
+  { name: 'constructor', path: 'roles.constructor.maxQueued', label: 'constructor max queued' },
+  { name: 'toString', path: 'roles.toString.maxQueued', label: 'toString max queued' },
+  { name: '__proto__', path: 'roles.__proto__.maxQueued', label: '__proto__ max queued' },
+  { name: 'hasOwnProperty', path: 'roles.hasOwnProperty.maxQueued', label: 'hasOwnProperty max queued' },
+  { name: 'valueOf', path: 'roles.valueOf.maxQueued', label: 'valueOf max queued' },
+]
+
+it.each(PROTO_DRAFT_ONLY_CASES)('C506 F1 diff-draft-only $name', ({ name, path, label }) => {
+  const draft = draftWithRole(name, { maxParallel: { ...UNSET }, maxQueued: set(null) })
+  const saved: ConcurrencyDraft = { maxParallel: { ...UNSET }, maxQueued: { ...UNSET }, roles: {} }
+  expect(diffDrafts(draft, saved)).toStrictEqual([
+    { path, label, draft: { specified: true, value: null }, saved: { specified: false, value: null } },
+  ])
+})
+
+const SOURCE_LABEL_CASES = [
+  { source: 'project', label: 'Project override' },
+  { source: 'global', label: 'Global override' },
+  { source: 'default', label: 'Built-in default' },
+  { source: 'future-source', label: 'future-source' },
+  { source: 'constructor', label: 'constructor' },
+  { source: 'toString', label: 'toString' },
+  { source: '__proto__', label: '__proto__' },
+  { source: 'hasOwnProperty', label: 'hasOwnProperty' },
+  { source: 'valueOf', label: 'valueOf' },
+]
+
+it.each(SOURCE_LABEL_CASES)('C506 F1 source-label $source', ({ source, label }) => {
+  expect(sourceLabel(source)).toBe(label)
 })
