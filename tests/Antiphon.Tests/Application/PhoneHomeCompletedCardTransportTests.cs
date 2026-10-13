@@ -26,10 +26,38 @@ public sealed class PhoneHomeCompletedCardTransportTests
         using var bound = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         var response = await Call(w.Client, "RemoveCompletedCardWorkspaceAsync", w.Command, bound.Token);
         response.GetProperty("complete").GetBoolean().ShouldBeFalse();
-        response.GetProperty("reason").GetString().ShouldBe("unsupported_operation");
+        response.GetProperty("reason").GetString().ShouldBe(PhoneHomeProblemTypes.UnsupportedOperation);
         w.Journal.Read()!.Count.ShouldBe(0);
         File.ReadAllText(Path.Combine(w.F.Checkout, "source")).ShouldBe("source");
         Directory.Exists(w.F.Binding.GitDirectory).ShouldBeTrue();
+        await using var host = await PhoneHomeTestHost.StartAsync();
+        await using var peer = await host.ConnectPeerAsync();
+        var live = await host.WaitLiveAsync();
+        var client = new PhoneHomeRunnerClient(live);
+        var advertise = false; var ack = false;
+        peer.Reply = frame => frame.Operation == PhoneHomeOperation.Capabilities
+            ? new(PhoneHomeFrameKind.Result, frame.Epoch, frame.RequestId, frame.Operation,
+                JsonSerializer.SerializeToElement(new RunnerCapabilitiesDto("test", "test", "test", false,
+                    Features: advertise ? [RunnerCapabilityFeatures.CompletedCardWorkspaceV1] : []), PhoneHomeFraming.Json))
+            : ack ? new(PhoneHomeFrameKind.Result, frame.Epoch, frame.RequestId, frame.Operation,
+                JsonSerializer.SerializeToElement(new { complete = true }, PhoneHomeFraming.Json))
+            : new(PhoneHomeFrameKind.Error, frame.Epoch, frame.RequestId, frame.Operation,
+                ErrorCode: PhoneHomeProblemTypes.UnsupportedOperation, StatusCode: 400);
+        foreach (var supported in new[] { false, true })
+        {
+            advertise = supported;
+            var removal = await Call(client, "RemoveCompletedCardWorkspaceAsync", w.Command, bound.Token);
+            removal.GetProperty("complete").GetBoolean().ShouldBeFalse();
+            removal.GetProperty("reason").GetString().ShouldBe(PhoneHomeProblemTypes.UnsupportedOperation);
+            var inspection = await Call(client, "InspectCompletedCardWorkspaceAsync", new CompletedCardWorkspaceInspectRequest(1, w.Command.Binding), bound.Token);
+            inspection.GetProperty("reason").GetString().ShouldBe(PhoneHomeProblemTypes.UnsupportedOperation);
+            peer.RequestCount(PhoneHomeOperation.WorkspaceRemove).ShouldBe(0);
+        }
+        peer.RequestCount(PhoneHomeOperation.CompletedCardWorkspaceRemove).ShouldBe(1);
+        ack = true;
+        var incomplete = await Call(client, "RemoveCompletedCardWorkspaceAsync", w.Command, bound.Token);
+        incomplete.GetProperty("complete").GetBoolean().ShouldBeFalse();
+        incomplete.GetProperty("reason").GetString().ShouldBe("recipient_receipt_unreadable");
     }
 
     // PC-589: bypass MutationLock or reply before durable receipt -> busy ordering/durable/physical oracles fail.

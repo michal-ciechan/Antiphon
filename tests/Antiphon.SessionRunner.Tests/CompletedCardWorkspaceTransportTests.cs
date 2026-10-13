@@ -88,6 +88,7 @@ public sealed partial class CompletedCardWorkspaceRemovalTests
         await using var r = new RemovalRig();
         var d = TransportDispatcher(r, true);
         var raw = JsonSerializer.SerializeToNode(r.Command, PhoneHomeFraming.Json)!.AsObject();
+        var starts = r.Fixture.GitStarts;
         foreach (var field in raw.Select(p => p.Key).ToArray())
         {
             var changed = raw.DeepClone().AsObject(); changed.Remove(field);
@@ -111,7 +112,52 @@ public sealed partial class CompletedCardWorkspaceRemovalTests
             var response = await d.DispatchAsync(TransportFrame(PhoneHomeOperation.CompletedCardWorkspaceInspect, changed), CancellationToken.None);
             response.ErrorCode.ShouldBe("invalid_completed_card_workspace", field);
         }
+        foreach (var json in new[] { "null", "[]", "{\"schemaVersion\":1,\"schemaVersion\":1}",
+            "{\"force\":true}", "{\"schemaVersion\":2}", "{\"unexpected\":true}" })
+        {
+            using var doc = JsonDocument.Parse(json);
+            foreach (var op in new[] { PhoneHomeOperation.CompletedCardWorkspaceInspect, PhoneHomeOperation.CompletedCardWorkspaceRemove })
+            {
+                var response = await d.DispatchAsync(TransportFrame(op, doc.RootElement), CancellationToken.None);
+                response.ErrorCode.ShouldBe("invalid_completed_card_workspace", json);
+            }
+        }
+        foreach (var binding in new[] { r.Command.Binding with { RunnerId = "foreign-runner" },
+            r.Command.Binding with { RunnerStoreId = Guid.NewGuid().ToString("D") },
+            r.Command.Binding with { TaskId = Guid.NewGuid() } })
+        {
+            var reply = await d.DispatchAsync(TransportFrame(PhoneHomeOperation.CompletedCardWorkspaceRemove,
+                r.Command with { Binding = binding }), CancellationToken.None);
+            if (binding.TaskId != r.Command.Binding.TaskId)
+                reply.Payload!.Value.GetProperty("reason").GetString().ShouldBe("foreign_mirror_owner");
+            else reply.ErrorDetail.ShouldBe("runner_store_mismatch");
+        }
+        var storePath = Path.Combine(r.Fixture.Root, "registration-store");
+        foreach (var value in new[] { "", "garbled", Guid.Empty.ToString("D"), new string('x', 129) })
+        {
+            File.WriteAllText(storePath, value);
+            var reply = await d.DispatchAsync(TransportFrame(PhoneHomeOperation.CompletedCardWorkspaceRemove, r.Command), CancellationToken.None);
+            reply.ErrorDetail.ShouldBe("recipient_store_unreadable");
+        }
+        File.Delete(storePath);
+        Directory.CreateDirectory(storePath);
+        var directoryReply = await d.DispatchAsync(TransportFrame(PhoneHomeOperation.CompletedCardWorkspaceRemove, r.Command), CancellationToken.None);
+        directoryReply.ErrorDetail.ShouldBe("recipient_store_unreadable");
+        Directory.Delete(storePath);
+        if (OperatingSystem.IsLinux())
+        {
+            var target = storePath + "-target"; File.WriteAllText(target, r.Fixture.StoreId);
+            File.CreateSymbolicLink(storePath, target);
+            var linkReply = await d.DispatchAsync(TransportFrame(PhoneHomeOperation.CompletedCardWorkspaceRemove, r.Command), CancellationToken.None);
+            linkReply.ErrorDetail.ShouldBe("recipient_store_unreadable");
+            File.ReadAllText(target).ShouldBe(r.Fixture.StoreId); File.Delete(storePath);
+        }
+        r.Fixture.GitStarts.ShouldBe(starts, "malformed and foreign transport must refuse before Git");
         r.Preserved(); r.Journal.Read()!.Count.ShouldBe(0);
+        var wrongGate = new RunnerWorkspaceUseGate(new RunnerWorkspaceRemovalJournal(r.Fixture.State + "-other", r.Fixture.StoreId));
+        var type = typeof(SessionRunnerRuntime).Assembly.GetType("Antiphon.SessionRunner.RunnerCompletedCardWorkspaceTransport")!;
+        Should.Throw<TargetInvocationException>(() => Activator.CreateInstance(type, r.Workspace, r.Journal, wrongGate))
+            .InnerException.ShouldBeOfType<ArgumentException>();
     }
 
     // PC-270: allocate receipt/repeat effects on a new transport request -> durable byte identity fails.
@@ -119,6 +165,14 @@ public sealed partial class CompletedCardWorkspaceRemovalTests
     {
         await using var r = new RemovalRig();
         var d = TransportDispatcher(r, true);
+        await using (var holder = await r.Gate.AcquireUseAsync(r.Fixture.Checkout, CancellationToken.None))
+        {
+            var held = await d.DispatchAsync(TransportFrame(PhoneHomeOperation.CompletedCardWorkspaceRemove, r.Command), CancellationToken.None);
+            held.Payload!.Value.GetProperty("reason").GetString().ShouldBe("workspace_in_use");
+            var legacy = await d.DispatchAsync(TransportFrame(PhoneHomeOperation.WorkspaceRemove,
+                new PhoneHomeWorkspaceRemoveRequest(r.Fixture.Checkout, true)), CancellationToken.None);
+            legacy.ErrorCode.ShouldBe("workspace_in_use"); r.Preserved(); r.Journal.Read()!.Count.ShouldBe(0);
+        }
         var first = await d.DispatchAsync(TransportFrame(PhoneHomeOperation.CompletedCardWorkspaceRemove, r.Command), CancellationToken.None);
         first.Kind.ShouldBe(PhoneHomeFrameKind.Result); first.Payload!.Value.GetProperty("complete").GetBoolean().ShouldBeTrue();
         var saved = new RunnerWorkspaceRemovalJournal(r.Fixture.State, r.Fixture.StoreId).Read()!.Single().Receipt;

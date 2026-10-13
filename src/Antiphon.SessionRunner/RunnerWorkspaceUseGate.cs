@@ -9,6 +9,7 @@ namespace Antiphon.SessionRunner;
 /// </summary>
 public sealed class RunnerWorkspaceUseGate(RunnerWorkspaceRemovalJournal journal)
 {
+    internal RunnerWorkspaceRemovalJournal RemovalJournal => journal;
     // One runner-local admission lane also serializes Git registration changes in a common repository.
     private readonly SemaphoreSlim _admission = new(1, 1);
     private readonly object _ownerSync = new();
