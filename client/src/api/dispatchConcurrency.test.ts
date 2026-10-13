@@ -218,7 +218,9 @@ it('C506 V05 project-zero', async () => {
     reason: 'first override',
   })
   await waitFor(() => expect(parsed).not.toBeNull())
-  expect(getIds).toStrictEqual([P])
+  // The success invalidation may already have refetched the scope; every GET must still name P.
+  expect(getIds.length).toBeGreaterThanOrEqual(1)
+  expect(getIds.every((id) => id === P)).toBe(true)
   expect(putIds).toStrictEqual([P])
   expect(parsed).toStrictEqual({
     expectedRevision: 0,
