@@ -3,6 +3,7 @@ using System.IO.Compression;
 using System.Text.Json;
 using Antiphon.Messaging;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Infrastructure.Files;
 using Shouldly;
 using TUnit.Core;
@@ -93,6 +94,7 @@ public sealed class ChannelOutboundStorageTests
         {
             (new IOException("sharing violation", unchecked((int)0x80070020)), false),
             (new IOException("unknown I/O"), false),
+            (new IOException("non-Win32 HRESULT", 1314), false),
             (new FileNotFoundException("missing target"), false),
             (new System.ComponentModel.Win32Exception(5), false),
             (new System.ComponentModel.Win32Exception(1314), true),
@@ -847,9 +849,15 @@ public sealed class ChannelOutboundStorageTests
         var original = "trusted output"u8.ToArray();
         var sentinel = Path.Combine(root, "unrelated-sentinel.pdf");
         var reached = false;
+        FileLink? swappedLink = null;
         try
         {
             await File.WriteAllBytesAsync(sentinel, "malicious bytes"u8.ToArray());
+            using (var capability = FileLink.TryCreate(Path.Combine(root, "capability-probe"), sentinel))
+            {
+                if (!OperatingSystem.IsWindows()) capability.ShouldNotBeNull("c1210-filelink-native-required");
+                if (capability is null) throw new TUnit.Core.Exceptions.SkipTestException(FileLink.PrivilegeReason);
+            }
             var snapshot = await store.StageAsync(id, new ChannelReply
             {
                 Channel = "slack", ConversationId = "C1", Text = "source",
@@ -870,20 +878,30 @@ public sealed class ChannelOutboundStorageTests
                 {
                     reached = true;
                     File.Move(output, Path.Combine(snapshot.OutputDirectory, "trusted-backup.pdf"));
-                    File.CreateSymbolicLink(output, sentinel);
+                    swappedLink = FileLink.TryCreate(output, sentinel);
+                    swappedLink.ShouldNotBeNull("c1210-filelink-swap-required");
                 }
                 return Task.CompletedTask;
             };
 
-            var sealedReply = await store.ValidateAndSealAsync(id, snapshot.ReplyPath,
-                snapshot.ReplySha256, 20 * 1024 * 1024, CancellationToken.None);
+            ChannelOutboundSealed? sealedReply = null;
+            await Should.NotThrowAsync(async () =>
+            {
+                sealedReply = await store.ValidateAndSealAsync(id, snapshot.ReplyPath,
+                    snapshot.ReplySha256, 20 * 1024 * 1024, CancellationToken.None);
+            }, "c1210-retained-read-completes");
             reached.ShouldBeTrue();
+            sealedReply.ShouldNotBeNull();
             var reply = await store.ReadReplyAsync(sealedReply.ReplyPath,
                 sealedReply.ReplySha256, CancellationToken.None);
             reply.Attachments.ShouldHaveSingleItem().Content.ShouldBe(original);
             (await File.ReadAllBytesAsync(sentinel)).ShouldBe("malicious bytes"u8.ToArray());
         }
-        finally { Directory.Delete(root, recursive: true); }
+        finally
+        {
+            swappedLink?.Dispose();
+            Directory.Delete(root, recursive: true);
+        }
     }
 
     [Test]

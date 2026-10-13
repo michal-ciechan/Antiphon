@@ -19,7 +19,7 @@ namespace Antiphon.Tests.Scripts;
 public sealed class WindowsUnitPlatformAdmissionTests
 {
     private static readonly XNamespace Trx = "http://microsoft.com/schemas/VisualStudio/TeamTest/2010";
-    private const string ChildFilter = "/*/*/(HostJqPrerequisiteScriptTests*)|(JqRunnerImageContractTests*)|(GrokSha256PinTests*)|(CodexRootExecContractTests*)/*";
+    private const string ChildFilter = "/*/*/(HostJqPrerequisiteScriptTests*)|(JqRunnerImageContractTests*)|(GrokSha256PinTests*)|(CodexRootExecContractTests*)|(ChannelOutboundStorageTests*)/*";
 
     [Test]
     public void C1210_Guard_matches_native_platform()
@@ -251,6 +251,11 @@ public sealed class WindowsUnitPlatformAdmissionTests
             new("Antiphon.Tests.Application", "ChannelOutboundStorageTests", "Output_manifest_cannot_override_frozen_routing", 1, ""),
             new("Antiphon.Tests.Application", "ChannelOutboundStorageTests", "Complete_source_stamp_requires_every_manifested_attachment", 1, ""),
         ];
+        WindowsUnitSkipRoster.Conditional.ShouldBe(capabilities, "c1210-conditional-roster: frozen identities and reasons");
+        WindowsUnitSkipRoster.StoragePortable.ShouldBe(storagePortable, "c1210-portable-roster: frozen storage identities");
+        FileLink.PrivilegeReason.ShouldBe(capabilities[0].Reason, "c1210-filelink-exact-reason");
+        ChildFilter.ShouldBe("/*/*/(HostJqPrerequisiteScriptTests*)|(JqRunnerImageContractTests*)|(GrokSha256PinTests*)|(CodexRootExecContractTests*)|(ChannelOutboundStorageTests*)/*",
+            "c1210-child-storage-selection");
         foreach (var (conditional, skipped) in new[] { (Array.Empty<Entry>(), false), (capabilities, false), (capabilities, true) })
         {
             var portable = conditional.Length == 0 ? WindowsUnitSkipRoster.Portable : WindowsUnitSkipRoster.Portable.Concat(storagePortable).ToArray();
@@ -475,7 +480,8 @@ public sealed class WindowsUnitPlatformAdmissionTests
         Hash(binding.PathName).ShouldBe(stampHash, "c1210-child-source-stamp");
         File.Exists(Path.Combine(root, "raw.trx")).ShouldBeTrue("c1210-trx-root: child receipt");
         Audit(XDocument.Load(Path.Combine(root, "raw.trx")), WindowsUnitSkipRoster.Native,
-            WindowsUnitSkipRoster.Portable, WindowsUnitSkipRoster.Conditional, process.ExitCode);
+            WindowsUnitSkipRoster.Portable.Concat(WindowsUnitSkipRoster.StoragePortable).ToArray(),
+            WindowsUnitSkipRoster.Conditional, process.ExitCode);
     }
 
     private static string Hash(string path) => Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(path)));

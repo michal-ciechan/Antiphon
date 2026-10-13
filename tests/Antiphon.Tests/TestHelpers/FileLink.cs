@@ -16,7 +16,13 @@ internal sealed class FileLink : IDisposable
     internal static FileLink? TryCreate(string path, string target, bool isWindows,
         Action<string, string> create)
     {
-        create(path, target);
+        try { create(path, target); }
+        catch (Exception error) when (isWindows && (error is UnauthorizedAccessException
+            || error is System.ComponentModel.Win32Exception { NativeErrorCode: 1314 }
+            || error is IOException { HResult: unchecked((int)0x80070522) }))
+        {
+            return null;
+        }
         if (!File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint))
             throw new InvalidDataException("The file-link fixture did not create a reparse point.");
         return new FileLink(path);
