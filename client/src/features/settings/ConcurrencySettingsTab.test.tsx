@@ -278,3 +278,92 @@ it('C506 V15 missing-project', async () => {
   expect(calls.puts).toHaveLength(0)
   expect(search().get('project')).toBe(U)
 })
+
+// CARD-0506 S3 Review eabc896f F1: a tab click changes only `tab`; `project` and unrelated parameters stay.
+function serveProjectsTab() {
+  server.use(
+    http.get('/api/boards', () => HttpResponse.json([])),
+    http.get('/api/github/repos', () => HttpResponse.json([])),
+    http.get('/api/projects/readiness', () => HttpResponse.json([])),
+  )
+}
+
+it('C506 S3F1 active-tab-click', async () => {
+  const calls = serveScopes()
+  window.history.pushState({}, '', `/settings?tab=concurrency&project=${P}&keep=value`)
+
+  renderWithProviders(<SettingsPage />)
+
+  expect(await screen.findByTestId('dispatch-concurrency-subtitle')).toHaveTextContent('Revision 4')
+  await waitFor(() => expect(screen.getByRole('textbox', { name: 'Scope' })).toHaveValue('P'))
+  await userEvent.type(screen.getByRole('textbox', { name: /Reason/ }), 'p draft')
+
+  await userEvent.click(screen.getByRole('tab', { name: 'Concurrency' }))
+
+  expect(search().get('tab')).toBe('concurrency')
+  expect(search().get('project')).toBe(P)
+  expect(search().get('keep')).toBe('value')
+  expect(screen.getByRole('textbox', { name: 'Scope' })).toHaveValue('P')
+  expect(screen.getByRole('textbox', { name: /Reason/ })).toHaveValue('p draft')
+  expect(screen.getByTestId('dispatch-concurrency-subtitle')).toHaveTextContent('Revision 4')
+  expect(calls.projectGets).toEqual([P])
+  expect(calls.globalGets).toBe(0)
+})
+
+it('C506 S3F1 away-and-back', async () => {
+  const calls = serveScopes()
+  serveProjectsTab()
+  window.history.pushState({}, '', `/settings?tab=concurrency&project=${P}&keep=value`)
+
+  renderWithProviders(<SettingsPage />)
+
+  expect(await screen.findByTestId('dispatch-concurrency-subtitle')).toHaveTextContent('Revision 4')
+  await userEvent.click(screen.getByRole('tab', { name: 'Projects' }))
+  expect(await screen.findByRole('cell', { name: 'Q' })).toBeInTheDocument()
+  expect(search().get('tab')).toBe('projects')
+  expect(search().get('project')).toBe(P)
+  expect(search().get('keep')).toBe('value')
+
+  await userEvent.click(screen.getByRole('tab', { name: 'Concurrency' }))
+
+  expect(await screen.findByTestId('dispatch-concurrency-subtitle')).toHaveTextContent('Revision 4 · Human · project operator')
+  expect(within(screen.getByTestId('dispatch-concurrency-section')).getByText('Project concurrency')).toBeInTheDocument()
+  await waitFor(() => expect(screen.getByRole('textbox', { name: 'Scope' })).toHaveValue('P'))
+  expect(search().get('tab')).toBe('concurrency')
+  expect(search().get('project')).toBe(P)
+  expect(search().get('keep')).toBe('value')
+  expect(calls.globalGets).toBe(0)
+
+  // Scope selector: Global defaults drops only `project` and is labelled as global.
+  await chooseScope('Global defaults')
+
+  await waitFor(() => expect(screen.getByTestId('dispatch-concurrency-subtitle')).toHaveTextContent('Revision 7 · Human · operator'))
+  expect(within(screen.getByTestId('dispatch-concurrency-section')).getByText('Global concurrency defaults')).toBeInTheDocument()
+  expect(search().get('tab')).toBe('concurrency')
+  expect(search().has('project')).toBe(false)
+  expect(search().get('keep')).toBe('value')
+  expect(calls.puts).toHaveLength(0)
+})
+
+it('C506 S3F1 unknown-tab', async () => {
+  const calls = serveScopes()
+  server.use(
+    http.get('/api/settings/templates', () => HttpResponse.json([])),
+    http.get('/api/settings/providers', () => HttpResponse.json([])),
+    http.get('/api/settings/template-groups', () => HttpResponse.json([])),
+  )
+  window.history.pushState({}, '', `/settings?tab=bogus&project=${P}&keep=value`)
+
+  renderWithProviders(<SettingsPage />)
+
+  expect(screen.getByRole('tab', { name: 'Templates' })).toHaveAttribute('aria-selected', 'true')
+  await userEvent.click(screen.getByRole('tab', { name: 'Concurrency' }))
+
+  expect(await screen.findByTestId('dispatch-concurrency-subtitle')).toHaveTextContent('Revision 4')
+  await waitFor(() => expect(screen.getByRole('textbox', { name: 'Scope' })).toHaveValue('P'))
+  expect(search().get('tab')).toBe('concurrency')
+  expect(search().get('project')).toBe(P)
+  expect(search().get('keep')).toBe('value')
+  expect(calls.projectGets).toEqual([P])
+  expect(calls.globalGets).toBe(0)
+})
