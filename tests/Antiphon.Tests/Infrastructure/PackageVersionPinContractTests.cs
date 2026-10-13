@@ -5,12 +5,17 @@ using TUnit.Core;
 namespace Antiphon.Tests.Infrastructure;
 
 /// <summary>
-/// CARD-1229: every NuGet reference in a project, props or targets file is an exact version. A
-/// floating version (<c>9.*</c>, <c>9.0.*</c>, <c>4.*</c>) made restore depend on the feed's
-/// publication timing: nuget.org listed Microsoft.Extensions.Logging.Console 9.0.21 before
-/// Microsoft.Extensions.Options.ConfigurationExtensions 9.0.21, the transitive floor then
-/// resolved 10.0.0, and every server-project restore failed with NU1605. Pins are bumped
-/// deliberately (docs/testing-and-build.md, "NuGet version pins"), never by the feed.
+/// CARD-1229: no PackageReference, PackageVersion or GlobalPackageReference in a .csproj, .props
+/// or .targets file has a Version or VersionOverride (attribute or child element) containing a
+/// literal <c>*</c>. A floating version (<c>9.*</c>, <c>9.0.*</c>, <c>4.*</c>) made restore depend
+/// on the feed's publication timing: nuget.org listed Microsoft.Extensions.Logging.Console 9.0.21
+/// before Microsoft.Extensions.Options.ConfigurationExtensions 9.0.21, the transitive floor then
+/// resolved 10.0.0, and server-project restore failed with NU1605.
+/// This is not an exact-version check. A bracketed range without a star passes (Confluent.Kafka
+/// <c>[2.6.0,3.0.0)</c> resolves to its lowest applicable version, 2.6.0, while that is on the
+/// feed), and MSBuild properties are read as raw text, not evaluated: <c>$(Name)</c> passes unless
+/// its own text has a star, so a property defined as <c>9.*</c> is not caught. The boundary and the
+/// deliberate bump procedure are in docs/testing-and-build.md, "NuGet version pins (CARD-1229)".
 /// </summary>
 [Category("Unit")]
 public sealed class PackageVersionPinContractTests
