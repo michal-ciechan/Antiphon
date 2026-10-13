@@ -2698,7 +2698,7 @@ c1207_docker() {
     case "$kind:${2:-}" in
         volume:ls|network:ls|ps:*)
             if [ "$COMPOSE_CASE" = recording ] && [ "$scoped" = 1 ] && [[ "$project" == *main ]]; then printf 'Cannot connect to the Docker daemon\n' >&2; return 1; fi
-            if [ -f "$C1192_ROOT/main-down" ] && [ "$scoped" = 0 ] && [ "$COMPOSE_CASE" = daemon ]; then printf 'Cannot connect to the Docker daemon\n' >&2; return 1; fi
+            if [ -f "$C1192_ROOT/main-down" ] && [ "$COMPOSE_CASE" = daemon ]; then printf 'Cannot connect to the Docker daemon\n' >&2; return 1; fi
             if [ -f "$C1192_ROOT/main-down" ] && [ "$scoped" = 0 ] && [ "$COMPOSE_CASE" = mixed ] && [ "$kind" = volume ]; then return 1; fi
             case "$kind" in
                 volume) for path in "$C1192_ROOT/volumes"/*; do
