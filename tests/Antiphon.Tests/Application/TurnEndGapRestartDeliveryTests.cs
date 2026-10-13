@@ -339,12 +339,14 @@ public sealed class TurnEndGapRestartDeliveryTests
         await h.MakeIdleAsync();
         // Inspect the first real submitted attempt before failure handling can
         // retype a truncated body or start its later grace/recovery policy.
-        h.Boundary.HoldAt = "queue-before-verdict";
         using var deliveryStop = CancellationTokenSource.CreateLinkedTokenSource(h.Token);
+        var accepted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var response = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        h.AfterSubmitted = () => { accepted.TrySetResult(); return response.Task.WaitAsync(deliveryStop.Token); };
         var deliveryAttempt = h.JoinDeliveryAsync(h.Queue.FlushIfIdleAsync(h.Id, deliveryStop.Token));
         try
         {
-        await h.Boundary.Held.Task.WaitAsync(h.Token);
+        await accepted.Task.WaitAsync(h.Token);
         await h.PullAsync(h.Id);
         if (sibling is not null) await h.PullAsync(sibling.Value);
         await h.ReconcileAsync(2);
@@ -375,7 +377,7 @@ public sealed class TurnEndGapRestartDeliveryTests
         }
         finally
         {
-            deliveryStop.Cancel(); h.Boundary.Release.TrySetResult();
+            deliveryStop.Cancel(); response.TrySetResult();
             try { await deliveryAttempt; } catch (OperationCanceledException) when (deliveryStop.IsCancellationRequested) { }
         }
     }
