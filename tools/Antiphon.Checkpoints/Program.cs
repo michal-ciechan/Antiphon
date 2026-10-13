@@ -70,7 +70,7 @@ public static class Program
             case "stop":
                 return Stop(options, repo, runtime);
             case "report":
-                return Report(options, repo);
+                return Report(options, repo, runtime?.Output ?? Console.Out);
             case "validate":
                 return Validate(options, repo);
             case "clean":
@@ -248,7 +248,7 @@ public static class Program
         {
             var state = store.TryRead(Path.Combine(dir, "state.json"));
             if (state is null) { output.WriteLine("refused: state-receipt-unreadable: " + dir); return ExitCodes.Invalid; }
-            if (options.Get("expected-source-sha") is string expected && state.Source.Start.Commit != expected)
+            if (options.Get("expected-source-sha") is string expected && state.Source?.Start?.Commit != expected)
             { output.WriteLine("refused: receipt-source-SHA-mismatching"); return ExitCodes.Invalid; }
             if (state.Phase == "done" && ReportWriter.RequiredReceiptRefusal(dir, state) is string required)
             { output.WriteLine("refused: " + required); return ExitCodes.Invalid; }
@@ -281,6 +281,30 @@ public static class Program
         }
         var store = new RunStateStore();
         var state = store.TryRead(Path.Combine(run, "state.json"));
+        if (state is null)
+        {
+            output.WriteLine("refused: state-receipt-unreadable: " + run);
+            return ExitCodes.Invalid;
+        }
+        if (state.ToolOwner != SafeWrite.Marker || state.RunId != Path.GetFileName(Path.GetFullPath(run)))
+        {
+            output.WriteLine("refused: foreign_state");
+            return ExitCodes.Invalid;
+        }
+        if (state.Source?.Start is null)
+        {
+            output.WriteLine("refused: state-receipt-source-unreadable");
+            return ExitCodes.Invalid;
+        }
+        if (state.Phase == "done")
+        {
+            var required = RequiredRunReceiptRefusal(run, state, options.Get("expected-source-sha"));
+            if (required is not null)
+            {
+                output.WriteLine("refused: " + required);
+                return ExitCodes.Invalid;
+            }
+        }
         if (observed.Verdict == ProcessVerdict.AliveSame)
         {
             try
@@ -334,32 +358,58 @@ public static class Program
         return ExitCodes.Green;
     }
 
-    private static int Report(ArgSet options, string repo)
+    private static string? RequiredRunReceiptRefusal(string run, RunState state, string? expectedSha)
     {
+        if (expectedSha is not null && state.Source?.Start?.Commit != expectedSha)
+            return "receipt-source-SHA-mismatching";
+        return ReportWriter.RequiredReceiptRefusal(run, state);
+    }
+
+    private static int Report(ArgSet options, string repo, TextWriter output)
+    {
+        ReportModel? ReadRequired(string run)
+        {
+            var preflight = SafeWrite.Preflight(repo, [Path.GetFullPath(run)]);
+            var state = preflight is null ? new RunStateStore().TryRead(Path.Combine(run, "state.json")) : null;
+            var reason = preflight ?? (state is null ? "state-receipt-unreadable: " + run
+                : RequiredRunReceiptRefusal(run, state, options.Get("expected-source-sha")));
+            if (reason is not null) { output.WriteLine("refused: " + reason); return null; }
+            return JsonSerializer.Deserialize<ReportModel>(File.ReadAllText(Path.Combine(run, "report.json")), ReportWriter.Json);
+        }
+
         if (options.Has("merge"))
         {
             var root = ResultsRoot(options, repo);
-            var models = Directory.Exists(root)
-                ? Directory.EnumerateDirectories(root)
-                    .Select(dir => Path.Combine(dir, "report.json"))
-                    .Where(File.Exists)
-                    .Select(path => JsonSerializer.Deserialize<ReportModel>(File.ReadAllText(path), ReportWriter.Json)!)
-                    .Where(model => model is not null)
-                    .ToList()
-                : [];
+            var models = new List<ReportModel>();
+            if (Directory.Exists(root))
+                foreach (var dir in Directory.EnumerateDirectories(root).Where(dir =>
+                    new[] { "state.json", "report.json", "report.md" }.Any(name => File.Exists(Path.Combine(dir, name)))))
+                {
+                    var model = ReadRequired(dir);
+                    if (model is null) return ExitCodes.Invalid;
+                    models.Add(model);
+                }
             if (models.Count == 0)
+            {
+                output.WriteLine("refused: receipt-missing: " + root);
                 return ExitCodes.Invalid;
+            }
             var hash = models[0].ManifestHash;
-            var merged = ReportMerger.Merge(models.Where(model => model.ManifestHash == hash).ToList());
-            Console.Write(options.Has("json") ? ReportWriter.JsonText(merged) : ReportWriter.Markdown(merged));
+            ReportModel merged;
+            try { merged = ReportMerger.Merge(models.Where(model => model.ManifestHash == hash).ToList()); }
+            catch (InvalidOperationException ex)
+            {
+                output.WriteLine("refused: receipt-merge-ineligible: " + ex.Message);
+                return ExitCodes.Invalid;
+            }
+            output.Write(options.Has("json") ? ReportWriter.JsonText(merged) : ReportWriter.Markdown(merged));
             return ExitCodes.Green;
         }
 
         var run = ResolveRun(options, repo);
+        if (ReadRequired(run) is null) return ExitCodes.Invalid;
         var report = Path.Combine(run, options.Has("json") ? "report.json" : "report.md");
-        if (!File.Exists(report))
-            return ExitCodes.Invalid;
-        Console.Write(File.ReadAllText(report));
+        output.Write(File.ReadAllText(report));
         return ExitCodes.Green;
     }
 

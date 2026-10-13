@@ -70,7 +70,7 @@ public sealed class WaitCommand
                 state = _store.TryRead(statePath);
             if (state?.Phase == "done" && observed.Verdict == ProcessVerdict.Dead)
             {
-                var required = expectedSourceSha is not null && state.Source.Start.Commit != expectedSourceSha
+                var required = expectedSourceSha is not null && state.Source?.Start?.Commit != expectedSourceSha
                     ? "receipt-source-SHA-mismatching" : ReportWriter.RequiredReceiptRefusal(runDirectory, state);
                 if (required is not null)
                 {
