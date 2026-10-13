@@ -409,8 +409,11 @@ public sealed class CheckpointTrackedBaselineTests : CheckpointTestBase
         return path;
     }
 
-    private static void Write(string root, string relative, string content) =>
+    private static void Write(string root, string relative, string content)
+    {
+        if (relative.EndsWith(".csproj", StringComparison.Ordinal)) content = content.Replace("<PropertyGroup>", "<PropertyGroup><DefaultItemExcludes>$(DefaultItemExcludes);bin-*/**</DefaultItemExcludes>", StringComparison.Ordinal);
         WriteBytes(root, relative, Encoding.UTF8.GetBytes(content));
+    }
 
     private static string GitOut(string root, params string[] args)
     {
