@@ -335,12 +335,26 @@ probe budget must include admitted HTTP retries/body reads; an inner 100/120-sec
 client/resilience timeout does not override the caller token. Do not add retries
 around SaveChanges. Source: `docs/resilience.md`.
 
-The normal single-session bound is interval + one poll + one probe deadline
-(145 seconds with the defaults), excluding a measured database commit delay.
-For N stable eligible sessions, discovery can take `ceil(N / PageSize) * PollSeconds`
-and a due backlog can add `ceil(N / MaxConcurrentProbes) * ProbeTimeoutSeconds`.
-Report these load terms; do not claim that four workers can repair arbitrary N
-sessions within 120 seconds. Once admitted, age crossing the interval must be
+For an already tracked session with a free worker, the nominal allowance is
+I + P + D + B (145 seconds plus pass/commit delay with defaults). Here I is
+IntervalSeconds, P is PollSeconds, D bounds the duration of one complete scheduler
+pass, and B is ProbeTimeoutSeconds plus a bounded extra commit/join delay C.
+Workers are replenished only once per pass, followed by the host's P-second delay.
+For stable admitted N <= 1024 sessions with no generation churn, overflow or
+non-cooperative owned operations, let K = ceil(N / MaxConcurrentProbes).
+The conservative backlog completion allowance after its first admission is
+(K-1)*(B+P+D)+B, not K*ProbeTimeoutSeconds. With defaults and D=C=0 this is
+(K-1)*25+10 seconds. Discovery of L local Running candidates (including idle
+candidates) adds M*(P+D), where M=ceil(L/PageSize) from an empty startup cursor,
+or ceil(L/PageSize)+1 for a full arbitrary-cursor cycle. A conservative combined
+allowance is I + M*(P+D) + (K-1)*(B+P+D) + B; cold startup need not wait I.
+These formulas assume bounded successful scans and cooperative probes with a
+bounded commit delay. Without finite D/C, or above directory capacity without a
+free slot, there is no finite completion bound: retain and log visible debt.
+T62's real hosted fake clock checks the poll-refill term using the actual defaults;
+it does not certify arbitrary I/O latency or complete recipient delivery.
+
+Once admitted, age crossing the interval must be
 logged within one poll even when its worker is occupied. Discovery failure,
 overflow and an overdue active operation are separately logged by that independent
 loop. A non-cooperative DB operation can exceed its cancellation budget: retain
@@ -611,3 +625,13 @@ session was changed by Plan.
 next: test-design
 handoff: Audit the deterministic baseline-red gap reproduction, post-subscription proof, checked recovery/frontier guards and bounded watchdog; bind exact tests and all pending PC variants before sequential S1-S5 Code dispatches. Preserve latent-race attribution and real five-note restart/receipt evidence.
 artifact: docs/superpowers/plans/2026-10-12-card-1205-turnend-gap-plan.md
+
+## S4 F1/F2 repair (2026-10-13)
+
+The successful generation-checked operation owns exactly one coalesced wakeup;
+directory removal controls future scheduling only. T61 gates real SQL commit,
+removes the directory entry before probe return, and requires the wake plus one
+held adapter submission. Neighbouring before-commit, after-return and overlapping
+probe-admission attempts are separate rows. T62 checks the hosted poll/backlog
+allowance above. TestDesign's T61/T62 and the S4 checkpoint manifest supersede
+this plan's original proposed S4 execution census. S5 remains out of scope.

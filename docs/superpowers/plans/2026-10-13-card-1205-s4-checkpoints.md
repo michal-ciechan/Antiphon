@@ -1,7 +1,7 @@
 # CARD-1205 S4 independent recovery watchdog
 
-Code/landing owner: continuation task 902bc6d6 (assigned branch
-`feat/card-task-902bc6d6`); predecessor 7b7d644a-a776-42e8-bc12-3d57e5df5ace.
+Code/landing owner: repair task 0ced9d05-9c38-478e-81ba-3dc9c9375223
+(branch `feat/card-task-0ced9d05`). Original S4 Code task: 902bc6d6-3b26-465f-bdef-ff32f5920dd5; predecessor 7b7d644a-a776-42e8-bc12-3d57e5df5ace.
 Task base: 7f8448798955a24427bc2279138bf9fb64bc4195.
 Scope: S4 only. S3 checked recovery and SQL generation fence remain unchanged.
 The explicit brief excludes the broad Unit lane. S5 receipt tests are deferred.
@@ -84,7 +84,7 @@ The production group removes the temporary cache-warmup adapter and calls the
 concrete scheduler. No S3 or queue-service source was changed.
 The capacity fixture allows 275 explicit scheduling passes for 1025 sessions;
 four workers require 257 admission rounds plus discovery/reconciliation pages.
-This is the load term from the frozen design, not a timeout increase.
+This is an explicit pass budget, not an elapsed-time upper bound or a timeout increase. T62 separately binds the hosted poll-refill allowance.
 The cleanup fixture's cursor after three two-row discovery passes selects the
 fifth tracked ID: its next confirmed terminal page removes one, leaving four.
 Host log capture explicitly injects the recovery host logger because Program's
@@ -175,3 +175,23 @@ One isolated build per committed group, exact HEAD, serial rows. NO Unit or S5.
 The tool bootstrap is an additional gated setup build because this worktree has no executable.
 No restart or live manual work. CP-4 now has 53 executions (48 inherited + 4 F1 + 1 F2).
 All existing S4 PCs plus PC-191/192 remain pending, including their variants.
+### Repair source and bound audit
+
+F1 test-only source 6d88088bf160604312eddf381fcd7cc3f03ffb6d retains production
+exactly from b02129ed95d1389f7b43c7ed5d77db46b062e0a3. Run
+20261013-090627-4855 executes four F1 rows: before-commit and after-return pass;
+after-commit and two-probes fail at Accepted expected [session], actual [].
+These are assertion reds, not build/fixture errors. The first baseline build
+(20261013-090330-b077) failed from an invalid Shouldly overload and executed zero;
+the overload was corrected without changing the exact assertion or timeout.
+An earlier launcher refused an incorrectly transcribed expected SHA before any run.
+
+F2 corrects the timeout-only statement in session-runtime-invariants, the S4 plan
+and test design; updates the historical manifest pass-budget wording and the
+scheduler/host comments; and adds the hosted T62 row. Discovery counts all local
+Running candidates, including idle, and allows cursor wrap. Finite timing requires
+N<=1024, stable ownership, bounded successful scans and bounded commit/join delay.
+Worker refill is poll-driven. Overflow/non-cooperative I/O remains visible debt.
+The corrected formulas are in the plan, design and runtime owner; no timeout,
+assertion or retry policy is relaxed. New PC-191 wake-membership/duplicate variants
+and PC-192 poll-cadence/continuous-refill variants remain pending for Mutation.

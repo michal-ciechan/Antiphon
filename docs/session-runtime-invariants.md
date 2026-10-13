@@ -18,14 +18,27 @@ Due/result logs identify the session, generation and server epoch; warnings expo
 Unknown, discovery failure, overflow, deferred capacity and overdue owned work
 (T18/T21..T25/T31). T25 binds shutdown joining a non-cooperative save.
 
-The nominal single-session allowance is interval + poll + probe budget: 145
-seconds with defaults, excluding commit delay. For stable N eligible sessions,
-discovery adds up to ceil(N/128)*15 seconds and a due backlog adds up to
-ceil(N/4)*10 seconds. Those are load terms, not an arbitrary-population 120-second
-delivery promise. Unavailable evidence leaves Working/debt visible.
+For an already tracked session with a free worker, the nominal allowance is
+I + P + D + B (145 seconds plus pass/commit delay with defaults). Here I is
+IntervalSeconds, P is PollSeconds, D bounds the duration of one complete scheduler
+pass, and B is ProbeTimeoutSeconds plus a bounded extra commit/join delay C.
+Workers are replenished only once per pass, followed by the host's P-second delay.
+For stable admitted N <= 1024 sessions with no generation churn, overflow or
+non-cooperative owned operations, let K = ceil(N / MaxConcurrentProbes).
+The conservative backlog completion allowance after its first admission is
+(K-1)*(B+P+D)+B, not K*ProbeTimeoutSeconds. With defaults and D=C=0 this is
+(K-1)*25+10 seconds. Discovery of L local Running candidates (including idle
+candidates) adds M*(P+D), where M=ceil(L/PageSize) from an empty startup cursor,
+or ceil(L/PageSize)+1 for a full arbitrary-cursor cycle. A conservative combined
+allowance is I + M*(P+D) + (K-1)*(B+P+D) + B; cold startup need not wait I.
+These formulas assume bounded successful scans and cooperative probes with a
+bounded commit delay. Without finite D/C, or above directory capacity without a
+free slot, there is no finite completion bound: retain and log visible debt.
+T62's real hosted fake clock checks the poll-refill term using the actual defaults;
+it does not certify arbitrary I/O latency or complete recipient delivery.
 
 Recovery uses the S3 checked generation/frontier operation. Checked idle schedules
-the existing coalesced completion flush outside the commit lease (T33); the normal
+the existing coalesced completion flush outside the commit lease (T33/T61), even if reconciliation removed the directory entry before the probe returned; the normal
 worker rechecks idle. T35 checks durable boundary/status and runner operation
 spies for Working, Unknown and evidence-backed idle. This backstop does not create
 a seat-release policy. T27 binds the explicit disabled-bound warning when either
