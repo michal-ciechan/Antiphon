@@ -361,7 +361,7 @@ public class StaleWorkingTranscriptWatchdogTests
         using var workerStop = new CancellationTokenSource();
         var worker = new Antiphon.Server.Infrastructure.Orchestration.CompletionNoteWorkHostedService(
             h.Provider.GetRequiredService<IServiceScopeFactory>(), h.Flush, new SpecialistFailureQueue(),
-            h.Clock, NullLogger<Antiphon.Server.Infrastructure.Orchestration.CompletionNoteWorkHostedService>.Instance);
+            h.Clock, new TypedLog<Antiphon.Server.Infrastructure.Orchestration.CompletionNoteWorkHostedService>(h.LogProvider));
         Task? flushWork = null;
         try
         {
@@ -664,6 +664,15 @@ public class StaleWorkingTranscriptWatchdogTests
         {
             if (request.RequestUri!.AbsolutePath == "/events")
             { Keepalives++; return new(HttpStatusCode.OK) { Content = new StringContent(": keepalive\n\n", Encoding.UTF8, "text/event-stream") }; }
+            if (request.RequestUri.AbsolutePath == "/sessions")
+            {
+                // The real queue's local-liveness read precedes its adapter input.
+                var sessions = Snapshots.Values.Select(s => new Antiphon.SessionRunner.Contracts.RunnerSessionDto(
+                    s.SessionId, 1234, s.AcceptedStartedAt!.Value, "Running", null, "Unknown", s.LastSequence,
+                    AcceptedStartedAt: s.AcceptedStartedAt));
+                return new(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(sessions,
+                    new JsonSerializerOptions(JsonSerializerDefaults.Web)), Encoding.UTF8, "application/json") };
+            }
             if (request.Method != HttpMethod.Get) { Posts.Enqueue(request.RequestUri.AbsolutePath); return new(HttpStatusCode.OK) { Content = new StringContent("{}") }; }
             var id = Guid.Parse(request.RequestUri.AbsolutePath.Split('/')[2]);
             var snapshot = Snapshots[id];
