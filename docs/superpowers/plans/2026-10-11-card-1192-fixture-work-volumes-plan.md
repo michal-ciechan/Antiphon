@@ -478,7 +478,7 @@ The recipes below bind exact methods, variants, cases, oracles and reachability.
 - R-7: host seed/ready/prune and saved donor | CP-17..20/25 | existing
   case matrices and independent manifest oracle retained through new seam.
 - R-8: lane/evidence | CP-40..43 | no nested sudo/python, toxic receipts
-  rejected, schema/digest/smoke/roster consumer refusals, work/mask ownership-checked cleanup; cache exception CARD-1208.
+  rejected, schema/digest/smoke/roster consumer refusals; the finalizer scope statement applies.
 
 #### Recipes, variants, cases, oracles and reachability
 
@@ -944,7 +944,7 @@ Round-4 repair (Review 0a3d75f7 F1) separates unknown post-create ownership from
 confirmed foreign work/mask labels. CP-53 adds work/mask persistent daemon loss and a one-probe
 label outage. The name stays in .fixture-volumes and acquisition uncertainty stays
 in both cleanup files through finalization. The confirmed-own/foreign rows remain
-unchanged; the resource-lifetime section lists known exceptions explicitly.
+unchanged; the resource-lifetime section states finalizer scope explicitly.
 The closed Final round-4 selection is CP-33..53: CP-44 exactly 19, every other
 row exactly 1 (39 executions). No broad Unit lane/full class/live Fixture run.
 Base-production red precedes the fix; one S7 build per committed test/fix group.

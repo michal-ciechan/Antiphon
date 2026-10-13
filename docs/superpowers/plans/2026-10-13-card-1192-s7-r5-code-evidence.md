@@ -1,6 +1,6 @@
 # CARD-1192 S7 round-5 Code documentation repair evidence (4ede83bf)
 
-Fixed Review c0c7c3e0 F1 documentation: foreign-acquisition preservation is scoped to work/mask volumes; the inherited foreign-cache finalizer deletion is disclosed as CARD-1208. Executable source is unchanged. Explicit Final repair scope passed 39/39, zero failures/skips. W-1 live acceptance is NOT claimed.
+Historical round-5 repair of Review c0c7c3e0 F1: C1192_Foreign_volume_is_refused_after_create checks work/mask acquisition preservation; the finalizer scope statement below applies. Executable source is unchanged. Explicit Final repair scope passed 39/39, zero failures/skips. W-1 live acceptance is NOT claimed.
 
 Landing owner / original Code task for this repair: 4ede83bf-a652-450a-865b-e8063143be27, transferred by the brief from 16459e79-5010-458e-adf4-0e03b65b98ee.
 Branch: feat/card-task-4ede83bf.
@@ -17,7 +17,7 @@ Restart: none. No land, deployment, live Fixture, old-run cleanup or deliberate 
 ## Changed claims and manual audit
 
 - docs/docker-stack.md: C1192_Foreign_volume_is_refused_after_create (CP-44) checks the work/mask refusal/drop/no-mount/no-delete outcome. Finalization describes label-checked work/mask and registered caches subject to CARD-1208.
-- Plan: D-5, resource lifetime, V-1/V-2, R-8, CP-2/43 recipes and G-9..11/PC-9..10 are scoped to work/mask ownership protection or allowed names. The universal no-untested-guard claim is replaced with the precise untested foreign-cache exception. The checkpoint table, test filters, assertions and timeouts are unchanged.
+- Plan: D-5, resource lifetime, V-1/V-2, R-8, CP-2/43 recipes and G-9..11/PC-9..10 are scoped to work/mask ownership protection or allowed names. Round 5 originally qualified the no-untested-guard claim; the stable finalizer scope statement now replaces its exception list. The checkpoint table, test filters, assertions and timeouts are unchanged.
 - Four historical S7 evidence notes (s7-code, s7-repair-code, s7-doc-repair, s7-r4-code): known-exception lists include CARD-1208; owned-volume/foreign-preservation descriptions now name work/mask/helpers where applicable. Cache acquisition audit explicitly discloses retained registration and foreign deletion. Historical CHECKPOINT lines are byte-identical to base.
 - c590-remote.sh comments: work/mask registration and foreign-acquisition claims name the resource class; finalizer comments include the exact exception.
 - c1192-workspace-contract.sh comments: foreign-acquisition checks cover work/mask, and named limits are stated. Unknown-probe comment names work/mask.
@@ -72,14 +72,14 @@ CHECKPOINT SOURCE VALID source=8567e3be0aeccb9b25b02387044dbdf512aeb951 rows=21.
 | ID | Actual outcome |
 |---|---|
 | V-1 | PASS CP-33 acquisition and CP-53 work/mask unknown registration/records; full S1 excluded. |
-| V-2 | PASS CP-35/45..53 disposal/uncertainty/refusal; foreign-cache deletion is untested CARD-1208 and Compose residue detection excluded CARD-1207. |
+| V-2 | PASS CP-35/45..53 disposal/uncertainty/refusal; the finalizer scope statement applies. |
 | V-3 | NOT RERUN: full S2 matrix outside explicit brief. |
 | V-4 | NOT RERUN: full S3 matrix outside explicit brief. |
 | V-5 | PASS CP-33 actual seed filesystem recipients; full backend matrix excluded. |
 | V-6 | PASS CP-33 actual recovery validator; earlier full control matrix excluded. |
 | V-7 | PASS CP-44 C1195 root/import/retention; full CP-27 excluded. |
 | V-8 | PASS CP-33/36/41/42 payload/receipts/census/privacy. |
-| V-9 | PASS CP-34/45..53 detected refusal, primary failure, EXIT, actual JSON/marker; known exceptions above. |
+| V-9 | PASS CP-34/45..53 detected refusal, primary failure, EXIT, actual JSON/marker; finalizer scope statement above. |
 | R-1 | PASS CP-37/44 C1189 tools/unlink. |
 | R-2 | PASS CP-35/44 C1191 ordering/failure/disposal. |
 | R-3 | PASS CP-38/39/44 C1193 environment/log paths/bytes. |
