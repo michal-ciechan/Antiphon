@@ -117,7 +117,8 @@ public sealed class RunnerWorkspaceRemovalJournal
     private static bool ValidEntries(IReadOnlyList<RunnerWorkspaceNoFollowDelete.Entry> entries) =>
         entries.Select(e => e.Path).Distinct(StringComparer.Ordinal).Count() == entries.Count
         && entries.All(e => !Path.IsPathRooted(e.Path) && !e.Path.Split(Path.DirectorySeparatorChar).Contains("..")
-            && !string.IsNullOrWhiteSpace(e.Path) && (e.Directory ? e.Hash is null : e.Hash is { Length: 64 }));
+            && !string.IsNullOrWhiteSpace(e.Path) && !string.IsNullOrWhiteSpace(e.Identity)
+            && (e.Directory ? e.Hash is null && e.Size == 0 : e.Hash is { Length: 64 } && e.Size >= 0));
 
     private bool Valid(CompletedCardWorkspaceCommand command)
     {

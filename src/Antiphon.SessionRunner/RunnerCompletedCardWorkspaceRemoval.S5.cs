@@ -85,11 +85,12 @@ public sealed partial class RunnerCompletedCardWorkspaceRemoval
                     if (Exists(aside)) { result = Hold("set_aside_occupied"); return; }
                     if (command.ArtifactPointers.Any(p => RunnerWorkspaceUseGate.Overlaps(p, command.Binding.WorktreePath)
                         || RunnerWorkspaceUseGate.Overlaps(p, aside))) { result = Hold("artifact_inside_cleanup_root"); return; }
+                    var directoryIdentity = RunnerWorkspaceNoFollowDelete.Identity(command.Binding.WorktreePath);
+                    var registrationIdentity = RunnerWorkspaceNoFollowDelete.Identity(command.Binding.GitDirectory);
                     intent = intent with { SetAsidePath = aside,
-                        DirectoryIdentity = RunnerWorkspaceNoFollowDelete.Identity(command.Binding.WorktreePath),
-                        RegistrationIdentity = RunnerWorkspaceNoFollowDelete.Identity(command.Binding.GitDirectory),
-                        DirectoryEntries = RunnerWorkspaceNoFollowDelete.Inventory(command.Binding.WorktreePath),
-                        RegistrationEntries = RunnerWorkspaceNoFollowDelete.Inventory(command.Binding.GitDirectory), Phase = "Prepared" };
+                        DirectoryIdentity = directoryIdentity, RegistrationIdentity = registrationIdentity,
+                        DirectoryEntries = await RunnerWorkspaceNoFollowDelete.InventoryAsync(command.Binding.WorktreePath, ct, directoryIdentity),
+                        RegistrationEntries = await RunnerWorkspaceNoFollowDelete.InventoryAsync(command.Binding.GitDirectory, ct, registrationIdentity), Phase = "Prepared" };
                     Save(journal, intent);
                 }
                 result = await ResumeAsync(command, journal, gate, intent, ct);
@@ -99,7 +100,7 @@ public sealed partial class RunnerCompletedCardWorkspaceRemoval
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PhoneHomeAdmissionException
             or PlatformNotSupportedException)
         {
-            return Hold("removal_interrupted");
+            return Hold(ex is RunnerWorkspaceNoFollowDelete.Refusal refusal ? refusal.Reason : "removal_interrupted");
         }
     }
 
@@ -123,7 +124,7 @@ public sealed partial class RunnerCompletedCardWorkspaceRemoval
                 if (!Directory.Exists(binding.WorktreePath)) return Hold("absence_without_receipt");
                 if (RunnerWorkspaceNoFollowDelete.Identity(binding.WorktreePath) != intent.DirectoryIdentity) return Hold("replacement_original");
                 if (await CheckRemovalProofAsync(command, ct) is { } reason) return Hold(reason);
-                RunnerWorkspaceNoFollowDelete.ValidateRemaining(binding.WorktreePath, intent.DirectoryEntries!);
+                await RunnerWorkspaceNoFollowDelete.ValidateRemainingAsync(binding.WorktreePath, intent.DirectoryEntries!, ct);
                 intent = Spend(journal, intent, "rename");
                 BeforeMutationForTest?.Invoke("rename");
                 Directory.Move(binding.WorktreePath, aside);
@@ -135,7 +136,7 @@ public sealed partial class RunnerCompletedCardWorkspaceRemoval
         {
             if (!Directory.Exists(aside) || RunnerWorkspaceNoFollowDelete.Identity(aside) != intent.DirectoryIdentity)
                 return Hold("absence_without_receipt");
-            RunnerWorkspaceNoFollowDelete.ValidateRemaining(aside, intent.DirectoryEntries!);
+            await RunnerWorkspaceNoFollowDelete.ValidateRemainingAsync(aside, intent.DirectoryEntries!, ct);
             if (Exists(binding.GitDirectory))
             {
                 // The exact recorded admin inode/manifest is the target. There is no repository
@@ -144,7 +145,7 @@ public sealed partial class RunnerCompletedCardWorkspaceRemoval
                     return Hold("registration_replaced");
                 intent = Spend(journal, intent with { Phase = "Unregistering" }, "unregister");
                 BeforeMutationForTest?.Invoke("unregister");
-                RunnerWorkspaceNoFollowDelete.DeleteOwned(binding.GitDirectory, intent.RegistrationIdentity!,
+                await RunnerWorkspaceNoFollowDelete.DeleteOwnedAsync(binding.GitDirectory, intent.RegistrationIdentity!,
                     intent.RegistrationEntries!, null, ct);
                 AfterMutationForTest?.Invoke("unregister");
             }
@@ -158,7 +159,7 @@ public sealed partial class RunnerCompletedCardWorkspaceRemoval
             {
                 intent = Spend(journal, intent with { Phase = "Deleting" }, "delete");
                 BeforeMutationForTest?.Invoke("delete");
-                RunnerWorkspaceNoFollowDelete.DeleteOwned(aside, intent.DirectoryIdentity!, intent.DirectoryEntries!,
+                await RunnerWorkspaceNoFollowDelete.DeleteOwnedAsync(aside, intent.DirectoryIdentity!, intent.DirectoryEntries!,
                     BeforeDeleteEntryForTest, ct);
                 AfterMutationForTest?.Invoke("delete");
             }
