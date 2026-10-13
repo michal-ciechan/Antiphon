@@ -7,6 +7,9 @@ TestDesign task `a9928e5d`, branch `feat/card-task-a9928e5d`, written against th
 design (D-1…D-9 stand at the plan's defaults). No production or test code, no build and no test run was made here; every
 count below is a census from source (`[Test]` methods with their `[Arguments]` rows), and the checkpoint tool was not
 executed. The task token was present in this session, so the design is marked **bound**; the token is not reproduced.
+**Amended by the S1 repair (Code `920adf8b`, Review `d88d4eec` F1/F2):** the delivery inventory and D-2 persistence
+boundary are corrected, V-3d (4 executions), G-15b/G-21, PC-15b/PC-21a/PC-21b are added, PC-10's assertion is corrected,
+and CP-1's census is 27 (19 + 8).
 
 Slice shape frozen here: **S0** (read-only `ocr` probe on server2, no key, no checkpoint), **S1** (role-policy tool bundles),
 **S2** (the `tool-open-code-review` bundle, docs, the Custom-role settlement pin), **S3 HELD** (appendix A, operator-gated by
@@ -76,7 +79,7 @@ Bodies read (at `67d7f8598`):
 
 Boundaries and their IDs: role-key merge order (V-1), specialist carve-out (V-1b), dedupe (V-2), refusal of unknown or
 non-tool keys at the resolver (V-3), at create over the service (V-3a) and over HTTP (V-3b), at dispatch before any launch
-(V-3c), the key whitelist (V-4, V-4b), shipped defaults and binding (V-5, V-5b), the bundle's own pins (V-6a…V-6d),
+(V-3c), the refusal's caller note from producer to recipient UserPrompt (V-3d), the key whitelist (V-4, V-4b), shipped defaults and binding (V-5, V-5b), the bundle's own pins (V-6a…V-6d),
 launch composition (V-6e, V-6g), create acceptance of the shipped key (V-6f), Custom-role evidence binds nothing (V-7),
 Grok warm reuse (V-11). Excluded with reasons under *Out of scope*.
 
@@ -98,15 +101,35 @@ it is never dropped the way attachments are).
 This plan adds no asynchronous delivery path: no queue, no event, no message, no session input. The one "handoff" is the
 role's bundle keys reaching the delegate's launch argument (`ComposeDelegateArgs` -> `--append-system-prompt`), a
 synchronous composition inside the existing launch spec. Producer: `InstructionBundles.ForDelegate` fed by
-`DelegationSettings.RolePolicy[role].Bundles`; destination: the `AgentLaunchSpec` args; persistence boundary: the
-`AgentSession.ComposedBundleStamp` the launch records (existing); recovery: none new (a relaunch recomposes from config, as
-today); observable receipt: the rendered `[bundle:tool-open-code-review v<hash8>]` header present exactly once in the spec
-args (V-6g) and in the session stamp. Declared substitute: V-6g observes the launch spec the dispatcher enqueues, not the
+`DelegationSettings.RolePolicy[role].Bundles`; destination: the `AgentLaunchSpec` args; persistence boundary: none stored
+today. A delegate launch does not persist `AgentSession.ComposedBundleStamp`: the dispatcher creates the session without it
+and `ComposeDelegateArgs` (`AgentTaskDispatcher.cs:7048-7077`) only places the text in the launch argument and logs
+`composed.Stamps`; only `AgentControlService` and `OrchestratorService` assign the field (corrected after Review `d88d4eec`
+F1). S2 adds the dispatcher assignment (plan D-2) and V-6g's session-stamp assertion tests it (PC-15b); until S2 lands the
+revision a Review ran with is in a log line and the launch argument only, not a stored receipt. Recovery: none new (a
+relaunch recomposes from config, as today); observable receipt: the rendered `[bundle:tool-open-code-review v<hash8>]`
+header present exactly once in the spec args (V-6g) and, after S2, in the session stamp. Declared substitute: V-6g observes the launch spec the dispatcher enqueues, not the
 TUI process's system prompt; what it cannot prove is that the process consumed the argument. That half is the unchanged
 launch path, already covered by `AgentSystemPromptLaunchTests.Start_with_system_prompt_append_passes_flag_on_fresh_launch`
 and `C1083_EmbeddedBundlesMatchSourceAndRenderedHeaders`, and is out of this card's scope. No UserPrompt transcript claim
 is made anywhere in this design; the `advisory-tool:` report line (D-4) is written by the reviewer in its own last turn,
 and its parsing (S4) is pure text.
+
+Refusal caller note (Review `d88d4eec` F2). The dispatcher refusal (V-3c) produces a caller note through the existing
+`FailAndNotifyAsync`, no new path. Producer: the tick's catch -> `FailAndNotifyAsync`; recipient: `ParentSessionId` when
+`ReplyTo = Session`; identity: `SourceTaskId`, `task:<root N>`, `DelegationNoteDigest(reason)`, header
+`[task <short> failed]`, reason naming `stage_tool_bundle_unknown`, the role key path and the key. Persistence: `FailAsync`
+commits Failed, the reason and the Failed event; a second save commits the CARD-0231 reminder (`NextCheckAt`, only with
+`Delegation:CheckEnabled` and a non-specialist role); the queue then writes its row and the task's
+`CompletionNoteQueuedAt` stamp in one transaction. Recovery: a failed insert is re-sent by the reminder tick; a committed
+row that crashed before typing is typed by a restarted queue's stranded flush, and the reminder tick adds nothing beside a
+Pending or Sent note. Receipt: one complete matching UserPrompt (V-3d, four paths). Not covered, stated as gaps rather
+than tested: (1) a process death after `FailAsync`'s commit and before the reminder save leaves no recovery, because this
+arm passes no `deliveryFailureNotificationId` (the durable `DeliveryFailure` obligation the delivery watchdog uses),
+`CompletionNoteWorkHostedService.RecoverMissingAsync` needs `SourceLandingOperationId` and `Result`, and
+`FailDeadSessionTasksAsync` recovers only the dead-session prefix; (2) with `CheckEnabled = false` a failed insert is not
+re-sent; (3) V-3d's recipient is the `BridgeQueueHarness` fake adapter that records the typed body as a transcript
+UserPrompt; ConPTY typing is not exercised on the Linux runner.
 
 ### Proves it works now
 
@@ -125,7 +148,7 @@ Test classes and methods are exact; expected outcomes are hand-written below, ne
 - V-5: `shipped_role_policy_lists_no_tool_bundles_on_any_role` | U | `new DelegationSettings().RolePolicy.Values.ShouldAllBe(p => p.Bundles.Count == 0)` and `RolePolicy.ContainsKey("Review")`. Mutation: seed Review with `"tool-open-code-review"` -> red.
 - V-5b: `bundles_bind_from_configuration_per_role_without_disturbing_the_rest` | U | in-memory configuration `{"Delegation:RolePolicy:Review:Bundles:0" = "tool-open-code-review"}` bound onto a fresh `DelegationSettings` (`ConfigurationBuilder().AddInMemoryCollection(...).Build().GetSection("Delegation").Bind(settings)`) -> `RolePolicy["Review"].Bundles == ["tool-open-code-review"]`, `RolePolicy["Review"].Level == Frontier` (still), `RolePolicy["Code"].Bundles` empty. Mutation: property renamed (`BundleKeys`) -> `Bundles` empty, red.
 
-**S1 — `tests/Antiphon.Tests/Application/RolePolicyToolBundleDispatchTests.cs` (I/H, new; 4 methods / 4 executions).**
+**S1 — `tests/Antiphon.Tests/Application/RolePolicyToolBundleDispatchTests.cs` (I/H, new; 5 methods / 8 executions; V-3d added by the S1 repair).**
 Fixture: `AgentTaskAgentKindTests` siblings (`[Category("Integration")]`, `[NotInParallel("AgentQueue")]`, `CreateContext()`,
 `CreateService(db, configure)`, `TempWorkspace`, `ManualCaller`) for V-3a/V-4b; for V-3b a file-local Kestrel host
 modelled on `RunnerDefaultTests.DefaultsHost` (`tests/Antiphon.Tests/Application/RunnerDefaultTests.cs:692-752`: real
@@ -138,6 +161,7 @@ shape (own `DelegationSettings` with `RolePolicy = { ["Review"] = new() { Level 
 - V-3a: `create_refuses_a_review_whose_role_names_an_unknown_tool_bundle_and_writes_nothing` | I | `CreateService(db, s => s.RolePolicy["Review"].Bundles = ["tool-does-not-exist"])`; `CreateAsync(new CreateAgentTaskRequest(Goal: "review", Role: Review, Workspace: Shared), ManualCaller(ws), ct)` (the `a_task_created_without_a_kind_runs_on_ClaudeCode` shape) throws `ValidationException` with `Code == "stage_tool_bundle_unknown"`; afterwards `db.AgentTasks.Count() == 0` and `db.AgentSessions.Count() == 0`; a second call with Role Docs on the same service succeeds (one-flip: only the configured role is refused). Mutation: `CreateAsync` no longer calls the resolver -> no throw, red.
 - V-3b: `post_agent_tasks_returns_422_stage_tool_bundle_unknown_as_problem_details` | H | `PostAsJsonAsync("/api/agent-tasks", new CreateAgentTaskRequest("review", Role: Review, Workspace: Worktree, WorkingDirectory: host.RepoRoot), Json)` (the `RunnerDefaultTests` request shape) -> status 422, `Content-Type: application/problem+json`, `code == "stage_tool_bundle_unknown"`, `status == 422`, `errors.RolePolicy[0]` contains `"Review"` and `"tool-does-not-exist"`; the same request with `Role: Docs` -> 201 (`AgentTaskCreatedDto`). Mutation: same as V-3a (the HTTP shape is the existing middleware, R-6) -> 201 for Review, red.
 - V-3c: `the_dispatcher_refuses_a_queued_review_before_the_claim_and_launches_nothing` | I | seed a Queued `Worker/Review` task directly (as a task queued before the configuration changed), `TickAsync` -> no `AgentSession` row for the task, no launch enqueued on the queue, and the task's `AgentTaskEvents` contain a `Failed` (or, if the existing pre-claim refusal path records differently, the event the Code names with its reason) whose `Detail` contains `stage_tool_bundle_unknown`, `Review` and `tool-does-not-exist`; `task.Status` is not Dispatched. Mutation: the dispatcher's resolver call removed -> a session row exists, red.
+- V-3d: `the_dispatcher_refusal_reaches_the_caller_as_one_complete_user_prompt(string path)` | I | rows `eligible`, `busy`, `enqueue-failure`, `crash-after-enqueue`; isolated schema; parent is a `BridgeQueueHarness` (its real `SessionMessageQueueService` and runtime are the dispatcher's), the dispatcher on a `FakeTimeProvider` that only drives the reminder ramp; seed a Queued `Worker/Review` task with `ReplyTo = Session` and `ParentSessionId` = the harness session; `TickAsync` -> task Failed with no session and no launch; then per path: eligible, one row typed inline; busy (`MarkWorkingAsync` before the tick), the row stays Pending with no prompt until a TurnEnd and `OnTurnEndAsync` type it once; enqueue-failure (`ReadyGateFailureNoticeDeliveryTests.NoticeFault` Insert cut), no row and no stamp, `NextCheckAt` armed, the clock moved past it and the next tick's reminder types one row whose body says the first note did not reach the caller, and a later tick disarms (`NextCheckAt` null); crash-after-enqueue (SentStamp cut), the committed row is Pending with zero attempts and the task stamped, the harness and dispatcher are rebuilt on the preserved session, a due reminder tick adds nothing, `FlushStrandedQueuesAsync` types it once and a second flush returns 0. Every path ends at the same receipt: exactly one row, Sent, `Delivered`, `Origin = Delegation`, `SourceTaskId`, `task:<id N>`, the `[task <short> failed]` header, a body naming `stage_tool_bundle_unknown`, `Delegation:RolePolicy:Review:Bundles` and the key, the task's `CompletionNoteDigest` equal to `DelegationNoteDigest.Compute(FailureReason)` and to the row's digest, exactly one transcript UserPrompt carrying that body completely (`PromptSubmissionMatch.IsCompleteIn`) and one matching adapter submission; a replay (turn end, later tick) changes none of it. Mutation: the `FailAndNotifyAsync` enqueue skipped -> red (scratch run below).
 - V-4b: `create_refuses_a_known_key_without_the_tool_prefix` | I | `Bundles = ["stage-code"]` -> `ValidationException` `Code == "stage_tool_bundle_unknown"`, error text names `"stage-code"` and `"tool-"`. Mutation: resolver checks `Exists(key)` only -> no throw, red.
 
 **S2 — `tests/Antiphon.Tests/Application/ToolOpenCodeReviewBundleTests.cs` (U, new; 5 methods / 5 executions).** Placed in a
@@ -156,7 +180,7 @@ C1083 list in `InstructionBundleTests` are edited (R-1) without changing its cou
 fixtures as `RolePolicyToolBundleDispatchTests`, now with the real key.
 
 - V-6f: `create_accepts_a_review_whose_role_lists_the_shipped_tool_bundle` | I | `Bundles = ["tool-open-code-review"]`, `CreateAsync(Review, Shared)` -> a Queued task row, no exception; the same with `["tool-open-code-review","tool-open-code-review"]` (duplicate in config) also accepted (dedupe is the composer's). Mutation: resolver treats every key as unknown -> throws, red (the positive control of the refusal).
-- V-6g: `a_review_launch_spec_carries_the_role_tool_bundle_once_after_the_basics` | I | `BuildProvider` settings `RolePolicy["Review"].Bundles = [key]`; seed a Queued `Worker/Review` ClaudeCode task; `TickAsync`; the enqueued `AgentLaunchSpec` args contain the `--append-system-prompt` value in which `[bundle:stage-review v` precedes `[bundle:delegate-basics v` precedes `[bundle:tool-open-code-review v`, the tool header appears exactly once, and the session row's `ComposedBundleStamp` contains `tool-open-code-review v`. Mutation: the `ComposeDelegateArgs` call site passes no role keys -> header absent, red.
+- V-6g: `a_review_launch_spec_carries_the_role_tool_bundle_once_after_the_basics` | I | `BuildProvider` settings `RolePolicy["Review"].Bundles = [key]`; seed a Queued `Worker/Review` ClaudeCode task; `TickAsync`; the enqueued `AgentLaunchSpec` args contain the `--append-system-prompt` value in which `[bundle:stage-review v` precedes `[bundle:delegate-basics v` precedes `[bundle:tool-open-code-review v`, the tool header appears exactly once, and the session row's `ComposedBundleStamp` contains `tool-open-code-review v` (needs S2's dispatcher assignment, plan D-2; the dispatcher does not store it before S2). Mutation: the `ComposeDelegateArgs` call site passes no role keys -> header absent, red.
 - V-11: `a_warm_grok_delegate_launched_without_the_role_tool_bundle_is_not_reused` | I | seed a Grok pool agent with a live session whose `GrokRulesReceiptJson` (`GrokRulesRefreshService.Receipt`) was computed from `Compose(ForDelegate(Worker, Review))` **without** the tool key; settings now list it for Review; `TickAsync` a Queued Grok Review task -> the task's `AgentSessionId` is **not** the warm session (SpawnFresh). Mutation: the reuse check at `AgentTaskDispatcher.cs:8054` composes without role keys -> warm session reused, red.
 
 **S2 — `tests/Antiphon.Tests/Application/AdvisoryTaskSettlementTests.cs` (S, new; 1 method / 1 execution).** Fixture:
@@ -210,13 +234,15 @@ report, not automated.
 - G-13: D-2 — the code-level role map does not hard-wire the tool bundle (V-6d) | PC-13
 - G-14: D-2 — the shipped bundle is a tool key (prefix, catalog, attachable, bounded) (V-6a) | PC-14
 - G-15: D-2 — the dispatcher's launch composition carries the role tool bundle (V-6g) | PC-15
+- G-15b (S2): D-2 as corrected — the dispatcher stores the composition's stamp on the delegate session (V-6g stamp assertion) | PC-15b
 - G-16: warm Grok reuse compares a composition that includes role tool bundles (V-11) | PC-16
 - G-17: §5 — a Custom-role task that emits review evidence binds no outcome (V-7) | PC-17
 - G-18 (appendix B, S4): `AdvisoryToolLine.TryParse` ignores fenced, quoted or indented lines (V-8b) | PC-18
 - G-19 (appendix B, S4): the completion header carries `advisory=` only when a line parsed (V-9b) | PC-19
 - G-20 (appendix A, S3 HELD): the image installs the probe's exact bytes (V-10) | PC-20
+- G-21: D-2 refusal note — the dispatcher refusal's caller note reaches the parent once, including after an insert failure (V-3d) | PC-21a, PC-21b
 
-Guards 20, mapped 20, missing 0, duplicate PC maps 0. G-7 and G-8 are split because the resolver can bypass `IsToolBundleKey`
+Guards 22, mapped 22, missing 0, duplicate PC maps 0. G-7 and G-8 are split because the resolver can bypass `IsToolBundleKey`
 for one condition without the other (G-4 is the predicate itself). G-9 and G-10 are two call sites either of which can be
 removed while the resolver stays correct.
 
@@ -235,14 +261,17 @@ namespace); red must be the named assertion, then restore, then green on the sam
 - PC-7: break G-7 by `continue` (with a log) on `!Exists(key)` in the resolver; expect `RolePolicyToolBundleTests.the_resolver_refuses_unknown_and_non_tool_keys` row `"tool-does-not-exist"` red at `Should.Throw<ValidationException>` (no exception).
 - PC-8: break G-8 by validating `Exists(key)` instead of `IsToolBundleKey(key)` in the resolver; expect `RolePolicyToolBundleDispatchTests.create_refuses_a_known_key_without_the_tool_prefix` red at `Should.Throw` (task created).
 - PC-9: break G-9 by removing the resolver call from `AgentTaskService.CreateAsync`; expect `RolePolicyToolBundleDispatchTests.create_refuses_a_review_whose_role_names_an_unknown_tool_bundle_and_writes_nothing` red at `Should.Throw` (and V-3b red at `StatusCode.ShouldBe(422)`, observed 201).
-- PC-10: break G-10 by removing the resolver call from the dispatcher's pre-claim path; expect `RolePolicyToolBundleDispatchTests.the_dispatcher_refuses_a_queued_review_before_the_claim_and_launches_nothing` red at `AgentSessions.Count().ShouldBe(0)` (a session row exists).
+- PC-10: break G-10 by removing the resolver call from the dispatcher's pre-claim path; expect `RolePolicyToolBundleDispatchTests.the_dispatcher_refuses_a_queued_review_before_the_claim_and_launches_nothing` red at `reviewRow.AgentSessionId.ShouldBeNull("nothing launched for the refused task")` (expected: the claim proceeds and stamps a session before the launch-time resolver call in `ComposeDelegateArgs` refuses; not run here); if the mutant leaves the task non-Failed, the preceding `reviewRow.Status.ShouldBe(AgentTaskStatus.Failed)` fires first. The test has no zero-session assertion; its `AgentSessions.CountAsync().ShouldBe(1)` counts the accepted Docs task's session (corrected after Review `d88d4eec` F1).
 - PC-11: break G-11 by deleting the sentence `never report clean because the tool found nothing` from `tool-open-code-review.md`; expect `ToolOpenCodeReviewBundleTests.the_tool_bundle_pins_untrusted_output_never_clean_and_the_advisory_line` red at that `ShouldContain`.
 - PC-12: break G-12 by adding the line `Use {{key:OCR_API_KEY}} for provider mode.` to the bundle; expect `ToolOpenCodeReviewBundleTests.the_tool_bundle_carries_no_secret_placeholder_and_no_runtime_install` red at `ShouldNotContain("{{")`.
 - PC-13: break G-13 by returning `[StageReview, DelegateBasics, ToolOpenCodeReview]` for Review in `ForDelegate`; expect `ToolOpenCodeReviewBundleTests.the_tool_bundle_is_on_no_role_by_default` red at the Review/Worker iteration.
 - PC-14: break G-14 by renaming `server/Bundles/tool-open-code-review.md` to `ocr-review.md` (and the constant to match); expect `ToolOpenCodeReviewBundleTests.the_tool_bundle_ships_as_an_attachable_tool_key_under_the_size_cap` red at `IsToolBundleKey(...).ShouldBeTrue()`.
 - PC-15: break G-15 by passing `roleBundleKeys: null` at the `ForDelegate` call in `ComposeDelegateArgs` (`AgentTaskDispatcher.cs:7044`); expect `RolePolicyToolBundleShippedTests.a_review_launch_spec_carries_the_role_tool_bundle_once_after_the_basics` red at `ShouldContain("[bundle:tool-open-code-review v")`.
+- PC-15b (S2): break G-15b by removing the dispatcher's `ComposedBundleStamp` assignment; expect `RolePolicyToolBundleShippedTests.a_review_launch_spec_carries_the_role_tool_bundle_once_after_the_basics` red at the session-stamp `ShouldContain("tool-open-code-review v")`.
 - PC-16: break G-16 by passing no role keys at the reuse composition (`AgentTaskDispatcher.cs:8054`); expect `RolePolicyToolBundleShippedTests.a_warm_grok_delegate_launched_without_the_role_tool_bundle_is_not_reused` red at `AgentSessionId.ShouldNotBe(warmSession)`.
 - PC-17: break G-17 by changing `OrchestrationStages.DefaultFor`'s default arm to `OrchestrationStage.Review`; expect `AdvisoryTaskSettlementTests.a_custom_role_worktree_task_that_emits_review_evidence_settles_without_binding_anything` red at `StageOutcomes.Count(...).ShouldBe(0)` (observed 1).
+- PC-21a: break G-21 by skipping the enqueue in `FailAndNotifyAsync` (`if (false && task.ReplyTo == …)`); expect `RolePolicyToolBundleDispatchTests.the_dispatcher_refusal_reaches_the_caller_as_one_complete_user_prompt` row `eligible` red at `RowsAsync(...).ShouldHaveSingleItem("an idle parent takes the note inline")` (observed 0). Code ran this as a scratch red for all four rows (see the Code report); Mutation owns the method-scoped control.
+- PC-21b: break G-21's recovery by removing the `ArmFailureReminder` call in `FailAndNotifyAsync`; expect the same method's row `enqueue-failure` red at `failed.NextCheckAt.ShouldNotBeNull("the reminder is armed with the Failed status")`.
 - PC-18 (pending with S4): break G-18 by trimming leading whitespace before matching in `AdvisoryToolLine.TryParse`; expect `AdvisoryToolLineTests.a_fenced_quoted_or_indented_line_is_ignored` row `indent` red at `ShouldBeNull`.
 - PC-19 (pending with S4): break G-19 by emitting `advisory=` unconditionally in `BuildCompletionNote`; expect `AdvisoryToolLineTests.the_completion_header_omits_advisory_when_no_line_parsed` red at `ShouldNotContain("advisory=")`.
 - PC-20 (HELD with S3): break G-20 by changing one hex digit of the pinned SHA-256 in the Dockerfile; expect the image build to fail at the checksum step before `ocr --version` runs (`verify-card0507-ocr-image.ps1` not reached).
@@ -267,7 +296,7 @@ or the server-project restore fails with NU1605 before any row builds. Review re
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c507-s1/` | role-bundles | `/*/Antiphon.Tests.Application/(RolePolicyToolBundleTests*)\|(RolePolicyToolBundleDispatchTests*)/*` | V-1, V-1b, V-2, V-3, V-3x, V-3a, V-3b, V-3c, V-4, V-4b, V-5, V-5b | exactly 23 executed (19 + 4), 0 failed/skipped | 23 | 8 |
+| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c507-s1/` | role-bundles | `/*/Antiphon.Tests.Application/(RolePolicyToolBundleTests*)\|(RolePolicyToolBundleDispatchTests*)/*` | V-1, V-1b, V-2, V-3, V-3x, V-3a, V-3b, V-3c, V-3d, V-4, V-4b, V-5, V-5b | exactly 27 executed (19 + 8), 0 failed/skipped | 27 | 9 |
 | CP-2 | S1 | `CP-1` | bundle-pins | `/*/Antiphon.Tests.Application/(InstructionBundleTests*)\|(AgentBundleAttachmentTests*)/*` | R-1, R-3 | exactly 98 executed (74 + 24), 0 failed/skipped; same count after S2 | 98 | 2 |
 | CP-3 | S1 | `CP-1` | kind-allowlist | `/*/*/(AgentTaskAgentKindTests*)\|(TestLaneCategoryGuardTests*)/*` | R-2, R-4 (lane tags) | exactly 27 executed (26 + 1), 0 failed/skipped | 27 | 3 |
 | CP-4 | S2 | `tests/Antiphon.Tests -> bin-c507-s2/` | tool-bundle | `/*/Antiphon.Tests.Application/ToolOpenCodeReviewBundleTests/*` | V-6a, V-6b, V-6c, V-6d, V-6e | exactly 5 executed, 0 failed/skipped | 5 | 7 |
@@ -280,21 +309,22 @@ false, the resolver returning the raw list, `Bundles` declared) and runs CP-1 on
 V-2, V-3 (6 rows), V-3a, V-3b, V-3c, V-4b and V-5b failing at their named assertions, and V-1b, V-3x, V-4, V-5 passing
 (they hold on the stub too). Then it implements and runs CP-1 green; a compile failure is not a red run. S2 runs CP-4 red
 by committing `ToolOpenCodeReviewBundleTests` before the bundle file (expected 5 executed, 5 failed, the first at
-`All.ContainsKey`), then green. Counts in `Expect` are frozen; a zero-test result means the filter is wrong, never that
+`All.ContainsKey`), then green. The S1 repair added V-3d after the S1 red/green, so its red is a scratch mutation (PC-21a's, never committed) run
+once by Code on the new method; CP-1's frozen count moves from 23 to 27 with it. Counts in `Expect` are frozen; a zero-test result means the filter is wrong, never that
 the row passed.
 
 ### Cost
 
-- Ordinary V/R floor (Code): sum of `EstimatedMinutes` = **27 minutes** (CP-1 8, CP-2 2, CP-3 3, CP-4 7, CP-5 3, CP-6 4;
+- Ordinary V/R floor (Code): sum of `EstimatedMinutes` = **28 minutes** (CP-1 9, CP-2 2, CP-3 3, CP-4 7, CP-5 3, CP-6 4;
   two isolated `Antiphon.Tests` builds of about 6 minutes each are inside CP-1 and CP-4). Estimated, not measured.
   `-ExpectAbout` for S1 about 90 minutes (authoring + CP-1…CP-3 + red/green), for S2 about 75 minutes (bundle, docs,
   CP-4…CP-6), for S0 about 60 minutes (no rows).
-- PC floor (Mutation, pending): 17 PCs over 10 files. Batched by file (PC-1/2/4/13 in `InstructionBundles.cs` cannot share a
-  batch with each other but can with PC-3 composer, PC-5/6 settings, PC-7/8 resolver, PC-9 service, PC-10/15/16 dispatcher,
-  PC-11/12 bundle, PC-14 rename, PC-17 enum): at most 6 build cycles of red + restore + green, about 6 × (6 + 1 + 6 + 1) =
-  **84 minutes** estimated, plus 17 method-scoped runs of under a minute each = about 100 minutes. PC-18/19 (S4) and
+- PC floor (Mutation, pending): 20 PCs (PC-1…PC-17, PC-15b, PC-21a, PC-21b) over 10 files. Batched by file (PC-1/2/4/13 in `InstructionBundles.cs` cannot share a
+  batch with each other but can with PC-3 composer, PC-5/6 settings, PC-7/8 resolver, PC-9 service, PC-10/15/15b/16/21a dispatcher (PC-21b shares `FailAndNotifyAsync` with PC-21a and takes its own cycle),
+  PC-11/12 bundle, PC-14 rename, PC-17 enum): at most 7 build cycles of red + restore + green, about 7 × (6 + 1 + 6 + 1) =
+  **98 minutes** estimated, plus 20 method-scoped runs of under a minute each = about 118 minutes. PC-18/19 (S4) and
   PC-20 (S3) are outside this floor.
-- Total estimated: setup/build (first restore about 3 minutes) + 27 (V/R) + about 100 (PCs) = about 130 minutes, against
+- Total estimated: setup/build (first restore about 3 minutes) + 28 (V/R) + about 118 (PCs) = about 149 minutes, against
   about 3 × 25.5 = 77 minutes for three whole-assembly runs that would prove less (no per-mutation red); savings come from
   the closed list and build reuse (two builds for six rows instead of six).
 
