@@ -392,6 +392,6 @@ CHECKPOINT CP-1 commit=dbe003007fdeffffaa76da9b1e80ab47b07fbd04 build=ok filter=
 
 --- next stage ---
 next: review
-handoff: Review Code owner dbb9a32f on its pushed tip. Five added readers use shared bounds; six unchanged-master gaps and script whitespace admission are disclosed. Effective CP-1..CP-21 is qualified at actual recorded SHAs after exact red-row fixture requalification; run fresh Final Review. R-2 and all PC-1..PC-8 variants stay pending; after Review caller lands dbb9a32f and commissions SourceLanding Mutation.
+handoff: Review the pushed dbb9a32f Code owner with fresh CP-1..CP-21. Five added readers are repaired; six inherited gaps and script whitespace admission are documented. Recorded ordinary results retain their actual SHAs. R-2 and PC-1..PC-8/all variants remain pending. After Review, caller lands dbb9a32f and commissions SourceLanding Mutation.
 artifact: docs/superpowers/plans/2026-10-12-card-1199-detect-report-plan.md
 [antiphon-report:dbb9a32f done]
