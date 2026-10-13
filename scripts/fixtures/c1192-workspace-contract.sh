@@ -3299,7 +3299,7 @@ mode_deletion_audit() {
 
 # Real production acquisition writes; only Docker observations are modeled.
 mode_fingerprint_acquisition() {
-    local variant="${1:?variant}" name="c849-${RUN}-donor" fingerprint code=0
+    local variant="${3:?variant}" name="c849-${RUN}-donor" fingerprint code=0
     fingerprint="$CASE_DIR/.fixture-fingerprint-$name"
     printf 'foreign victim bytes\n' > "$C1192_ROOT/victim"
     cp -- "$C1192_ROOT/victim" "$C1192_ROOT/victim-before"
