@@ -9,7 +9,7 @@ namespace Antiphon.SessionRunner.Tests;
 
 public sealed partial class CompletedCardWorkspaceRemovalTests
 {
-    private static readonly RunnerBuildDto TransportBuild = new("test", null, DateTime.UtcNow, DateTime.UtcNow);
+    private static RunnerBuildDto TransportBuild => new("test", null, DateTime.UtcNow, DateTime.UtcNow);
 
     private static PhoneHomeFrame TransportFrame(PhoneHomeOperation operation, object? body) =>
         new(PhoneHomeFrameKind.Request, 1, Guid.NewGuid(), operation,
@@ -17,6 +17,8 @@ public sealed partial class CompletedCardWorkspaceRemovalTests
 
     private static PhoneHomeCommandDispatcher TransportDispatcher(RemovalRig r, bool configured)
     {
+        var storePath = Path.Combine(r.Fixture.Root, "registration-store");
+        File.WriteAllText(storePath, r.Fixture.StoreId);
         if (configured)
         {
             // Baseline must compile and fail at the missing S6 composition seam.
@@ -29,7 +31,7 @@ public sealed partial class CompletedCardWorkspaceRemovalTests
         }
         return new(new PhoneHomeRuntimeAdapter(r.Fixture.Runtime, TransportBuild), new PhoneHomeSettings
         {
-            RunnerId = "fixture-runner", AllowedCwd = Path.Combine(r.Fixture.Root, "work"),
+            StoreIdPath = storePath, RunnerId = "fixture-runner", AllowedCwd = Path.Combine(r.Fixture.Root, "work"),
             RunnerRepository = r.Fixture.Repository, RunnerCloneSource = r.Fixture.Origin,
             LaunchGenerationsPath = Path.Combine(r.Fixture.Root, "transport-launch"),
             CapacityStatePath = Path.Combine(r.Fixture.Root, "transport-capacity"),
