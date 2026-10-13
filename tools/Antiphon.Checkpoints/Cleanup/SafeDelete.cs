@@ -37,7 +37,7 @@ public static class SafeDelete
     private const int GitTimeoutMs = 15_000;
     private const int MaxEntries = 10_000;
 
-    public static DeleteResult Apply(string path, DeleteOwnership ownership, Action? beforeDelete = null)
+    public static DeleteResult Apply(string path, DeleteOwnership ownership, Action? beforeDelete = null, Func<string?>? inventoryCheck = null)
     {
         var full = Canonical(path);
         var reason = full is null ? "path-unsafe" : Evaluate(full, ownership);
@@ -47,7 +47,7 @@ public static class SafeDelete
             return new DeleteResult { Disposition = DeleteDisposition.Skipped, Path = full!, Reason = null };
 
         beforeDelete?.Invoke();
-        reason = Evaluate(full!, ownership);
+        reason = Evaluate(full!, ownership) ?? inventoryCheck?.Invoke();
         if (reason is not null)
             return new DeleteResult { Disposition = DeleteDisposition.Refused, Path = full!, Reason = reason };
         if (ownership.DryRun)

@@ -366,7 +366,7 @@ public sealed class RunScheduler
                 Publish(request);
                 return;
             }
-            var invalidated = binding.Invalidate();
+            var invalidated = binding.Invalidate() ?? SafeWrite.CreateFreshDirectory(binding.OutputPath, SafeWrite.Under(binding.OutputPath));
             if (invalidated is not null)
             {
                 progress.AdmissionExitCode = ExitCodes.Invalid;

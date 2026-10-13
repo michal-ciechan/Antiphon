@@ -461,10 +461,10 @@ public static class CheckpointApp
         var resultsRoot = Path.GetFullPath(Path.IsPathRooted(manifest.ResultsRoot) ? manifest.ResultsRoot : Path.Combine(repo, manifest.ResultsRoot));
         var resultsOwnership = SafeWrite.Under(resultsRoot, gitExecutable: runtime?.GitExecutable);
         SafeWrite.Require(SafeWrite.CreateDirectory(resultsRoot, resultsOwnership));
-        new ToolCopyCleanup().Sweep(resultsRoot);
+        // Runs do not reclaim any older repository paths.
         var runId = RepoPaths.RunId();
         var runDirectory = Path.Combine(resultsRoot, runId);
-        SafeWrite.Require(SafeWrite.CreateDirectory(runDirectory, resultsOwnership));
+        SafeWrite.Require(SafeWrite.CreateFreshDirectory(runDirectory, resultsOwnership));
         try
         {
             (runtime?.OwnershipWrite ?? RunOwnershipStore.Write)(runDirectory, new RunOwnership
@@ -497,7 +497,7 @@ public static class CheckpointApp
         catch
         {
             if (ContainedCleanup.SafeAncestors(runDirectory) && ContainedCleanup.SafeTree(runDirectory, 10000))
-                SafeDelete.DeleteCreatedTree(runDirectory);
+                _ = runDirectory; // retain partial run evidence
             throw;
         }
     }
@@ -555,7 +555,7 @@ public static class CheckpointApp
         catch
         {
             // This starter has not published launch intent; only its exact run can be rolled back.
-            if (ContainedCleanup.SafeTree(runDirectory, 10000)) SafeDelete.DeleteCreatedTree(runDirectory);
+            if (ContainedCleanup.SafeTree(runDirectory, 10000)) _ = runDirectory; // retain partial run evidence
             throw;
         }
         var dll = Path.Combine(runDirectory, "tool", "Antiphon.Checkpoints.dll");
@@ -566,7 +566,7 @@ public static class CheckpointApp
         {
             // Launch has not been invoked. Only this starter's exact partial run is removed.
             if (ContainedCleanup.SafeAncestors(runDirectory) && ContainedCleanup.SafeTree(runDirectory, 10000))
-                SafeDelete.DeleteCreatedTree(runDirectory);
+                _ = runDirectory; // retain partial run evidence
             throw;
         }
         LaunchOutcome outcome;
@@ -580,13 +580,13 @@ public static class CheckpointApp
         {
             // The native API refused to create a process; no executor can use this image.
             if (ContainedCleanup.SafeAncestors(runDirectory) && ContainedCleanup.SafeTree(runDirectory, 10000))
-                SafeDelete.DeleteCreatedTree(runDirectory);
+                _ = runDirectory; // retain partial run evidence
             throw;
         }
         if (outcome.Kind == LaunchKind.NotStarted)
         {
             if (ContainedCleanup.SafeAncestors(runDirectory) && ContainedCleanup.SafeTree(runDirectory, 10000))
-                SafeDelete.DeleteCreatedTree(runDirectory);
+                _ = runDirectory; // retain partial run evidence
             output.WriteLine("CHECKPOINT native launch refused run=" + runId);
             return new StartResult(ExitCodes.Invalid, runDirectory);
         }
@@ -614,24 +614,7 @@ public static class CheckpointApp
                 return new StartResult(ExitCodes.Invalid, runDirectory);
             }
         }
-        try
-        {
-            if (runtime.LatestWrite is not null)
-                runtime.LatestWrite(Path.Combine(resultsRoot, "latest"), runId);
-            else
-            {
-                var latestRefusal = SafeWrite.Text(Path.Combine(resultsRoot, "latest"),
-                    SafeWrite.Marker + " latest\n" + runId + "\n",
-                    SafeWrite.Under(resultsRoot, "latest", WriteKind.ToolOwnedReplaceable, runtime.GitExecutable));
-                if (latestRefusal is not null)
-                    throw new IOException("refused: " + latestRefusal);
-            }
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            output.WriteLine("CHECKPOINT latest write failed run=" + runId + " reason=" + ex.GetType().Name);
-            return new StartResult(ExitCodes.Invalid, runDirectory);
-        }
+        // No shared latest file is written; the run id identifies fresh evidence.
         // An executor can already be running or done; the starter does not publish progress.
         output.WriteLine($"RUN {runId} started rows={request.Rows.Count} executor={pid}");
         return new StartResult(ExitCodes.Green, runDirectory);

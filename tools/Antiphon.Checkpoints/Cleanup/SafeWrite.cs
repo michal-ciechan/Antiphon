@@ -199,6 +199,19 @@ public static class SafeWrite
         return null;
     }
 
+    public static bool WasCreated(string path) => Created.ContainsKey(Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+
+    public static string? CreateFreshDirectory(string path, WriteOwnership ownership)
+    {
+        var reason = Refusal(path, ownership);
+        if (reason is not null) return reason;
+        var full = Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        reason = ExclusiveDirectory.Create(full);
+        if (reason is not null) return reason;
+        Created.TryAdd(full, 0);
+        return Text(Path.Combine(full, ".checkpoint-output-owner.json"), Guid.NewGuid().ToString("N"), Under(full));
+    }
+
     public static string? OpenCreate(string path, WriteOwnership ownership, out FileStream? stream)
     {
         stream = null;

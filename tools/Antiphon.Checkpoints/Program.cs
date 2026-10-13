@@ -530,6 +530,16 @@ public static class Program
             WaitedSeconds = lease.WaitedSeconds,
             MaxCpuCount = lease.MaxCpuCount > 0 ? lease.MaxCpuCount : 4,
         }, output, CancellationToken.None).ConfigureAwait(false);
+        result.Source = source;
+        ReportWriter.WriteFiles(results, new ReportModel
+        {
+            SchemaVersion = 2, RunId = name + "-" + stamp, Commit = commit, Worktree = repo,
+            Source = source, ExitCode = result.ExitCode, Verdict = result.ExitCode == 0 ? "GREEN" : "INVALID",
+            Reason = result.ExitCode == 0 ? null : "source_ineligible",
+            Rows = [new ReportRow { Id = name, Filter = Required(options, "filter"), State = result.State,
+                ExitCode = result.ExitCode, Source = result.Source, Line = result.Line, Trx = result.TrxPath,
+                Executed = result.Trx?.Executed, Passed = result.Trx?.Passed, Failed = result.Trx?.Failed, Skipped = result.Trx?.Skipped }],
+        });
         return result.ExitCode;
     }
 
@@ -607,10 +617,10 @@ public static class Program
             return Path.IsPathRooted(token) ? token : Path.Combine(ResultsRoot(options, repo), token);
         }
 
-        var latest = Path.Combine(ResultsRoot(options, repo), "latest");
-        if (!File.Exists(latest))
-            throw new ManifestValidationException("run", "no latest run");
-        return Path.Combine(ResultsRoot(options, repo), CheckpointApp.ReadLatest(File.ReadAllText(latest)));
+        var newest = Directory.Exists(ResultsRoot(options, repo))
+            ? Directory.EnumerateDirectories(ResultsRoot(options, repo)).Where(path => File.Exists(Path.Combine(path, "request.json"))).OrderDescending(StringComparer.Ordinal).FirstOrDefault()
+            : null;
+        return newest ?? throw new ManifestValidationException("run", "no latest run");
     }
 
     private static string ResultsRoot(ArgSet options, string repo)

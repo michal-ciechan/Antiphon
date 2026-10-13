@@ -146,7 +146,9 @@ public sealed class OutputCleanupTests : CheckpointTestBase
         var nested = Path.Combine(root, "src", "bin-c723a");
         var before = OutputCleanup.MatchingIsolatedDirectories(root, "bin-c723a");
         var fresh = Path.Combine(root, "fresh", "bin-c723a");
-        Directory.CreateDirectory(fresh);
+        Directory.CreateDirectory(Path.GetDirectoryName(fresh)!);
+        SafeWrite.Require(SafeWrite.CreateFreshDirectory(fresh, SafeWrite.Under(root)));
+        SafeWrite.Require(OwnedOutputLedger.Seal(fresh));
         Directory.CreateDirectory(Path.Combine(root, "tests"));
         var state = new RunState();
         OutputCleanup.RecordCreatedOutputs(state, root, "bin-c723a", before);
@@ -1005,8 +1007,13 @@ public sealed class OutputCleanupTests : CheckpointTestBase
     {
         var root = TempDir();
         Git(root, "init", "-q", "-b", "card1199");
+        SafeWrite.Require(SafeWrite.CreateFreshDirectory(Path.Combine(root, "bin-c723a"), SafeWrite.Under(root)));
+        Directory.CreateDirectory(Path.Combine(root, "src"));
+        SafeWrite.Require(SafeWrite.CreateFreshDirectory(Path.Combine(root, "src/bin-c723a"), SafeWrite.Under(root)));
         Write(root, "bin-c723a", "out.dll");
         Write(root, Path.Combine("src", "bin-c723a"), "out.dll");
+        SafeWrite.Require(OwnedOutputLedger.Seal(Path.Combine(root, "bin-c723a")));
+        SafeWrite.Require(OwnedOutputLedger.Seal(Path.Combine(root, "src/bin-c723a")));
         Write(root, "bin-foreign", "keep.txt");
         Write(root, "obj", "keep.o");
         Write(root, "workspace", "keep.txt");

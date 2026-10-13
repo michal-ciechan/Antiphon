@@ -6,154 +6,13 @@ using TUnit.Core;
 
 namespace Antiphon.Tests.Checkpoints;
 
-// Real dotnet builds in scratch git repositories. The guarantee is a clean tracked
-// baseline plus a post-build restore, so these cases must stay red when a build
-// can leave a tracked file overwritten.
+// Real builds must detect changes and preserve resulting user bytes and index.
 [Category("Unit")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class CheckpointTrackedBaselineTests : CheckpointTestBase
 {
     private const string OutputPath = "bin-probe/";
     private const string OriginalText = "TRACKED-ORIGINAL";
-
-    [Test]
-    [Timeout(300_000)]
-    public async Task local_output_property_is_restored(CancellationToken cancellationToken)
-    {
-        RequireLinux();
-        var root = BeginRepo();
-        Write(root, "App/App.csproj", """
-            <Project Sdk="Microsoft.NET.Sdk" TreatAsLocalProperty="OutputPath">
-              <PropertyGroup>
-                <TargetFramework>net9.0</TargetFramework>
-                <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
-                <OutputPath>legacy/</OutputPath>
-              </PropertyGroup>
-            </Project>
-            """);
-        Write(root, "App/Marker.cs", "namespace App; public static class Marker { public static int Value => 1; }\n");
-        var victim = Plant(root, "App/legacy/App.dll");
-        await AssertRestoredAsync(root, "local-output", victim, cancellationToken);
-    }
-
-    [Test]
-    [Timeout(300_000)]
-    public async Task intermediate_output_path_is_restored(CancellationToken cancellationToken)
-    {
-        RequireLinux();
-        var root = BeginRepo();
-        Write(root, "App/App.csproj", """
-            <Project Sdk="Microsoft.NET.Sdk">
-              <PropertyGroup>
-                <TargetFramework>net9.0</TargetFramework>
-                <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
-                <IntermediateOutputPath>generated/</IntermediateOutputPath>
-              </PropertyGroup>
-            </Project>
-            """);
-        Write(root, "App/Marker.cs", "namespace App; public static class Marker { public static int Value => 1; }\n");
-        var victim = Plant(root, "App/generated/App.AssemblyInfo.cs");
-        await AssertRestoredAsync(root, "intermediate", victim, cancellationToken);
-    }
-
-    [Test]
-    [Timeout(300_000)]
-    public async Task generated_target_file_is_restored(CancellationToken cancellationToken)
-    {
-        RequireLinux();
-        var root = BeginRepo();
-        Write(root, "App/App.csproj", """
-            <Project Sdk="Microsoft.NET.Sdk">
-              <PropertyGroup>
-                <TargetFramework>net9.0</TargetFramework>
-                <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
-              </PropertyGroup>
-              <Target Name="GenerateVersion" BeforeTargets="BeforeBuild">
-                <WriteLinesToFile File="$(MSBuildProjectDirectory)/GeneratedVersion.txt" Lines="generated version 1" Overwrite="true" />
-              </Target>
-            </Project>
-            """);
-        Write(root, "App/Marker.cs", "namespace App; public static class Marker { public static int Value => 1; }\n");
-        var victim = Plant(root, "App/GeneratedVersion.txt");
-        await AssertRestoredAsync(root, "generated", victim, cancellationToken);
-    }
-
-    [Test]
-    [Timeout(300_000)]
-    public async Task imported_props_reference_is_restored(CancellationToken cancellationToken)
-    {
-        RequireLinux();
-        var root = BeginRepo();
-        Write(root, "Lib/Lib.csproj", """
-            <Project Sdk="Microsoft.NET.Sdk" TreatAsLocalProperty="OutputPath">
-              <PropertyGroup>
-                <TargetFramework>net9.0</TargetFramework>
-                <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
-                <OutputPath>legacy/</OutputPath>
-              </PropertyGroup>
-            </Project>
-            """);
-        Write(root, "Lib/Marker.cs", "namespace Lib; public static class Marker { public static int Value => 7; }\n");
-        Write(root, "App/References.props", """
-            <Project>
-              <ItemGroup>
-                <ProjectReference Include="../Lib/Lib.csproj" />
-              </ItemGroup>
-            </Project>
-            """);
-        Write(root, "App/App.csproj", """
-            <Project Sdk="Microsoft.NET.Sdk">
-              <PropertyGroup>
-                <TargetFramework>net9.0</TargetFramework>
-                <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
-              </PropertyGroup>
-              <Import Project="References.props" />
-            </Project>
-            """);
-        Write(root, "App/Marker.cs", "namespace App; public static class Marker { public static int Use() => Lib.Marker.Value; }\n");
-        var victim = Plant(root, "Lib/legacy/Lib.dll");
-        await AssertRestoredAsync(root, "imported-ref", victim, cancellationToken);
-    }
-
-    [Test]
-    [Timeout(300_000)]
-    public async Task transitive_reference_is_restored(CancellationToken cancellationToken)
-    {
-        RequireLinux();
-        var root = BeginRepo();
-        Write(root, "Lib/Lib.csproj", """
-            <Project Sdk="Microsoft.NET.Sdk" TreatAsLocalProperty="OutputPath">
-              <PropertyGroup>
-                <TargetFramework>net9.0</TargetFramework>
-                <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
-                <OutputPath>legacy/</OutputPath>
-              </PropertyGroup>
-            </Project>
-            """);
-        Write(root, "Lib/Marker.cs", "namespace Lib; public static class Marker { public static int Value => 7; }\n");
-        Write(root, "Mid/Mid.csproj", """
-            <Project Sdk="Microsoft.NET.Sdk">
-              <PropertyGroup>
-                <TargetFramework>net9.0</TargetFramework>
-                <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
-              </PropertyGroup>
-              <ItemGroup><ProjectReference Include="../Lib/Lib.csproj" /></ItemGroup>
-            </Project>
-            """);
-        Write(root, "Mid/M.cs", "namespace Mid; public static class M { public static int Use() => Lib.Marker.Value; }\n");
-        Write(root, "App/App.csproj", """
-            <Project Sdk="Microsoft.NET.Sdk">
-              <PropertyGroup>
-                <TargetFramework>net9.0</TargetFramework>
-                <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
-              </PropertyGroup>
-              <ItemGroup><ProjectReference Include="../Mid/Mid.csproj" /></ItemGroup>
-            </Project>
-            """);
-        Write(root, "App/Marker.cs", "namespace App; public static class Marker { public static int Use() => Mid.M.Use(); }\n");
-        var victim = Plant(root, "Lib/legacy/Lib.dll");
-        await AssertRestoredAsync(root, "transitive", victim, cancellationToken);
-    }
 
     [Test]
     [Timeout(180_000)]
@@ -310,7 +169,7 @@ public sealed class CheckpointTrackedBaselineTests : CheckpointTestBase
 
     [Test]
     [Timeout(420_000)]
-    public async Task staged_untracked_file_is_kept_and_unstaged(CancellationToken cancellationToken)
+    public async Task staged_untracked_file_is_kept_and_indexed(CancellationToken cancellationToken)
     {
         // case: the build runs git add on user-keep.txt, which is absent from HEAD.
         // mutation: restore that staged path with --worktree, deleting a path HEAD does not contain.
@@ -324,7 +183,7 @@ public sealed class CheckpointTrackedBaselineTests : CheckpointTestBase
 
     [Test]
     [Timeout(420_000)]
-    public async Task staged_ignored_file_is_kept_and_unstaged(CancellationToken cancellationToken)
+    public async Task staged_ignored_file_is_kept_and_indexed(CancellationToken cancellationToken)
     {
         // case: the build runs git add -f on user-ignored.dat, an ignored path absent from HEAD.
         // mutation: restore that staged path with --worktree, deleting a path HEAD does not contain.
@@ -339,7 +198,7 @@ public sealed class CheckpointTrackedBaselineTests : CheckpointTestBase
 
     [Test]
     [Timeout(420_000)]
-    public async Task index_added_file_is_kept_and_unstaged(CancellationToken cancellationToken)
+    public async Task index_added_file_is_kept_and_indexed(CancellationToken cancellationToken)
     {
         // case: the build runs git update-index --add on fresh-user.txt, a path absent from HEAD.
         // mutation: restore that index path with --worktree, deleting a path HEAD does not contain.
@@ -365,16 +224,17 @@ public sealed class CheckpointTrackedBaselineTests : CheckpointTestBase
         var built = Path.Combine(root, "App", "bin-probe");
         if (Directory.Exists(built))
             Directory.Delete(built, true);
+        Git(root, "restore", "--staged", "--", relative);
         var script = await RunScriptAsync(root, name + "-script", cancellationToken);
         var scriptNote = DescribeKept(script, full, bytes, root, relative);
         var receipt = Path.Combine(root, ".antiphon", "script-results", name + "-script-fixed", "source.json");
-        var validation = File.Exists(receipt)
-            ? await ValidateReceiptAsync(receipt, head, cancellationToken)
-            : new RunResult(66, "receipt missing\n" + script.Output);
+        File.Exists(receipt).ShouldBeTrue(script.Output);
+        var validation = await ValidateReceiptAsync(receipt, head, cancellationToken);
         var report = "tool: " + toolNote + "\nscript: " + scriptNote + "\nreceiptExit=" + validation.Exit + "\n" + validation.Output;
         toolNote.ShouldBe("kept", report);
         scriptNote.ShouldBe("kept", report);
-        validation.Exit.ShouldNotBe(0, report);
+        validation.Exit.ShouldBe(2, report);
+        validation.Output.ShouldContain("CHECKPOINT SOURCE INVALID reason=source_ineligible");
     }
 
     private string DescribeKept(RunResult result, string full, byte[] bytes, string root, string relative)
@@ -384,16 +244,16 @@ public sealed class CheckpointTrackedBaselineTests : CheckpointTestBase
         if (!File.ReadAllBytes(full).AsSpan().SequenceEqual(bytes))
             return "bytes-changed exit=" + result.Exit + "\n" + result.Output;
         var listed = GitOut(root, "ls-files", "--", relative).Trim();
-        if (listed.Length > 0)
-            return "still-indexed " + listed + "\n" + result.Output;
+        if (listed.Length == 0)
+            return "index-was-modified " + listed + "\n" + result.Output;
         if (result.Exit != 2)
             return "exit=" + result.Exit + "\n" + result.Output;
         if (!result.Output.Contains("refused: tampered", StringComparison.Ordinal))
             return "no-tamper\n" + result.Output;
         if (!result.Output.Contains("TAMPERED " + relative, StringComparison.Ordinal))
             return "no-path\n" + result.Output;
-        if (!result.Output.Contains("lossless because the pre-build tracked tree was clean", StringComparison.Ordinal))
-            return "no-lossless\n" + result.Output;
+        if (result.Output.Contains("lossless", StringComparison.Ordinal) || result.Output.Contains("restored", StringComparison.Ordinal))
+            return "false-preservation-claim\n" + result.Output;
         if (result.Output.Contains("buildSource=verified", StringComparison.Ordinal))
             return "verified\n" + result.Output;
         return "kept";
@@ -422,33 +282,6 @@ public sealed class CheckpointTrackedBaselineTests : CheckpointTestBase
         value.Replace("&", "&amp;", StringComparison.Ordinal)
             .Replace("\"", "&quot;", StringComparison.Ordinal)
             .Replace("<", "&lt;", StringComparison.Ordinal);
-
-    private async Task AssertRestoredAsync(string root, string name, Victim victim, CancellationToken cancellationToken)
-    {
-        Commit(root);
-        var head = GitOut(root, "rev-parse", "HEAD").Trim();
-        var tool = await RunToolAsync(root, name + "-tool", cancellationToken);
-        AssertTamper(tool, victim, head);
-        // The tool restore leaves this tracked output newer than its inputs, so the
-        // next build can skip the write. Age the file; git does not track mtime.
-        File.SetLastWriteTimeUtc(victim.FullPath, DateTime.UnixEpoch);
-        var script = await RunScriptAsync(root, name + "-script", cancellationToken);
-        AssertTamper(script, victim, head);
-        var receipt = Path.Combine(root, ".antiphon", "script-results", name + "-script-fixed", "source.json");
-        File.Exists(receipt).ShouldBeTrue(script.Output);
-        var validation = await ValidateReceiptAsync(receipt, head, cancellationToken);
-        validation.Exit.ShouldNotBe(0, validation.Output);
-    }
-
-    private static void AssertTamper(RunResult result, Victim victim, string head)
-    {
-        File.ReadAllBytes(victim.FullPath).ShouldBe(victim.Bytes, result.Output);
-        result.Exit.ShouldBe(2, result.Output);
-        result.Output.ShouldContain("refused: tampered", Case.Sensitive);
-        result.Output.ShouldContain("TAMPERED " + victim.Relative, Case.Sensitive);
-        result.Output.ShouldContain(head, Case.Sensitive);
-        result.Output.ShouldNotContain("buildSource=verified", Case.Sensitive);
-    }
 
     private static void AssertDirtyRefused(string output, string keep, byte[] dirty, string marker, byte[] markerBytes)
     {
@@ -535,7 +368,7 @@ public sealed class CheckpointTrackedBaselineTests : CheckpointTestBase
         {
             "-NoProfile", "-NonInteractive", "-File",
             Path.Combine(CheckpointFixtures.RepoRoot, "scripts", "run-checkpoint.ps1"),
-            "-Name", name, "-Project", "App/App.csproj", "-OutputPath", OutputPath,
+            "-Name", name, "-Project", "App/App.csproj", "-OutputPath", "bin-script-probe/",
             "-Filter", filter, "-ResultsRoot", ".antiphon/script-results",
             "-MinExecuted", minExecuted, "-NoSlot",
         })

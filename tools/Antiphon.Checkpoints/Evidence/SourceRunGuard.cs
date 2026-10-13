@@ -102,29 +102,16 @@ public sealed class CheckpointBuildBinding
 
     public string? Invalidate()
     {
-        if (!File.Exists(PathName))
-            return null;
-        var result = SafeDelete.Apply(PathName, SafeDelete.Stamp(RepositoryRoot));
-        return result.Disposition == DeleteDisposition.Refused ? result.Reason : null;
+        var reason = SafeWrite.Preflight(RepositoryRoot, [OutputPath]);
+        if (reason is not null) return reason;
+        if (File.Exists(PathName)) return "pre-existing-build-source";
+        return Directory.Exists(OutputPath) || File.Exists(OutputPath) ? "pre-existing-output" : null;
     }
 
     public string? Write()
     {
-        var ownership = SafeDelete.Stamp(RepositoryRoot);
-        var reason = SafeDelete.Refusal(PathName, ownership);
-        if (reason is not null)
-            return reason;
-        if (File.Exists(PathName))
-        {
-            var removed = SafeDelete.Apply(PathName, ownership);
-            if (removed.Disposition == DeleteDisposition.Refused)
-                return removed.Reason;
-        }
-
-        var writeRoot = SafeWrite.Under(OutputPath);
-        reason = SafeWrite.CreateDirectory(OutputPath, writeRoot);
-        if (reason is not null)
-            return reason;
-        return SafeWrite.Text(PathName, JsonSerializer.Serialize(this, CheckpointApp.Json), writeRoot);
+        if (File.Exists(PathName)) return "pre-existing-build-source";
+        var reason = SafeWrite.Text(PathName, JsonSerializer.Serialize(this, CheckpointApp.Json), SafeWrite.Under(OutputPath));
+        return reason ?? OwnedOutputLedger.Seal(OutputPath);
     }
 }
