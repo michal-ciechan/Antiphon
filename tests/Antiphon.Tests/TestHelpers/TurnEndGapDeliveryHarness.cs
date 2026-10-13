@@ -167,7 +167,7 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
             using var pending = CancellationTokenSource.CreateLinkedTokenSource(Token);
             var timer = Clock.WaitForTimerAsync(e => e.Action == "create"
                 && (e.DueTime == TimeSpan.FromMilliseconds(20)
-                    || e.DueTime == TimeSpan.FromMilliseconds(500))
+                    || e.DueTime == TimeSpan.FromMilliseconds(50))
                 && Clock.TimerStates[e.TimerId] != "dispose", after, pending.Token);
             if (await Task.WhenAny(operation, timer) == operation)
             {
@@ -271,7 +271,9 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
             {
                 var seq = _entries.Count + 1;
                 entry = new(Id, seq, kind, Guid.NewGuid().ToString(), null,
-                    new DateTimeOffset(Generation, TimeSpan.Zero).AddTicks(seq), "user", text, null, null, null, null, null);
+                    new DateTimeOffset(Generation, TimeSpan.Zero).AddMilliseconds(seq),
+                    kind == TranscriptKinds.UserPrompt ? "user" : "assistant", text, null, null, null, null,
+                    kind == TranscriptKinds.TurnEnd ? TranscriptKinds.StopReasons.EndTurn : null);
                 _entries.Add(entry);
             }
             if (publish) _hub.Publish(SessionRunnerEventNames.SessionTranscript, entry);
@@ -314,12 +316,16 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
     {
         private byte[]? _bytes = Encoding.UTF8.GetBytes(": keepalive\n\n");
         private int _offset;
+        private int _disposed;
         public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken ct = default)
         {
             if (_bytes is null)
             {
-                drained.TrySetResult();
-                var frame = await reader.ReadAsync(ct);
+                if (!reader.TryRead(out var frame))
+                {
+                    drained.TrySetResult();
+                    frame = await reader.ReadAsync(ct);
+                }
                 _bytes = Encoding.UTF8.GetBytes($"event: {frame.EventName}\ndata: {frame.Json}\n\n");
                 _offset = 0;
             }
@@ -341,7 +347,11 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
         public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
         protected override void Dispose(bool disposing)
         {
-            if (disposing) lifetime.Cancel();
+            if (disposing && Interlocked.Exchange(ref _disposed, 1) == 0)
+            {
+                lifetime.Cancel();
+                lifetime.Dispose();
+            }
             base.Dispose(disposing);
         }
     }
