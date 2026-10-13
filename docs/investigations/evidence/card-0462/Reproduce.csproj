@@ -9,7 +9,7 @@
   </PropertyGroup>
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
-    <PackageReference Include="Shouldly" Version="4.*" />
+    <PackageReference Include="Shouldly" Version="4.3.0" />
     <ProjectReference Include="../../../../src/Antiphon.SessionRunner/Antiphon.SessionRunner.csproj" />
     <Compile Include="../../../../tests/Antiphon.SessionRunner.Tests/FakeHerdrServer.cs" Link="FakeHerdrServer.cs" />
     <Compile Include="../../../../tests/Antiphon.SessionRunner.Tests/PowershellProcessProbe.cs" Link="PowershellProcessProbe.cs" />

@@ -9,7 +9,7 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="TUnit" Version="1.44.0" />
-    <PackageReference Include="Shouldly" Version="4.*" />
+    <PackageReference Include="Shouldly" Version="4.3.0" />
     <ProjectReference Include="../../tools/Antiphon.MarkdownPdf/Antiphon.MarkdownPdf.csproj" />
     <ProjectReference Include="../Antiphon.MarkdownPdf.FakeBrowser/Antiphon.MarkdownPdf.FakeBrowser.csproj"
                       ReferenceOutputAssembly="false" />
