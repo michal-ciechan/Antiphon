@@ -508,6 +508,10 @@ public class LandingGit : ILandingGit
                 if (!result.Succeeded) return LandRecoveryCheckoutInspection.Refused();
                 if (result.Output.Length != 0) return LandRecoveryCheckoutInspection.Refused("source_dirty");
             }
+            // Unlike a nested .git checkout, Git can enumerate a bare repository's private
+            // files as ordinary ignored output. Preservation is not reset authority.
+            if (WorktreeNestedRepositories.Find(path, bareOnly: true).Length != 0)
+                return LandRecoveryCheckoutInspection.Refused();
             var ignored = await RunAsync(path,
                 ["ls-files", "--others", "--ignored", "--exclude-standard", "-z"], ct);
             if (!ignored.Succeeded || ignored.Output.Contains('\uFFFD'))
