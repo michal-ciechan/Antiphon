@@ -72,6 +72,8 @@ public sealed class ToolCopyCleanup
                 return new("Retained", "launch-outcome-unknown", tool);
             if (observed.Verdict != ProcessVerdict.Dead)
                 return new("Retained", observed.Reason, tool);
+            var ledger = OwnedOutputLedger.Check(tool);
+            if (ledger is not null) return new("Refused", ledger, tool);
             for (var attempt = 0; ; attempt++)
             {
                 try
@@ -83,7 +85,7 @@ public sealed class ToolCopyCleanup
                         RequireInventory = true,
                         RequireBinName = false,
                         AllowOutsideRepository = true,
-                    }, () => _beforeDelete?.Invoke(tool));
+                    }, () => _beforeDelete?.Invoke(tool), () => OwnedOutputLedger.Check(tool));
                     if (removed.Disposition == DeleteDisposition.Refused)
                         return new("Refused", removed.Reason ?? "refused", tool);
                     break;
