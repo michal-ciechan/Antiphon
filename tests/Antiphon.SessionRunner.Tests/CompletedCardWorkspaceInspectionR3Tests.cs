@@ -115,6 +115,19 @@ public sealed partial class CompletedCardWorkspaceRemovalTests
         result.Reason.ShouldBe(variant == "changed" ? "dirty_source" : null, variant);
         result.Eligible.ShouldBe(variant == "unchanged");
         InspectionDigest(f.Root).ShouldBe(before);
+        if (variant == "unchanged")
+        {
+            // A repository-configured foreign remote helper must not participate in proof reads.
+            CompletedCardRunnerFixture.Git(f.Checkout, "config", "remote.origin.vcs", "inspection-forbidden-helper");
+            var proofBefore = InspectionDigest(f.Root);
+            var actual = CompletedCardRunnerFixture.Git(f.Checkout, "rev-parse", "HEAD").Trim();
+            var proof = f.Command().Proof with { ExpectedHeadSha = actual, PreservedSourceSha = actual,
+                DestinationFingerprint = f.Binding.RepositoryIdentity };
+            (await new RunnerCompletedCardWorkspaceRemoval(f.Workspace(false, "main")).CheckProofAsync(f.Binding, proof,
+                CancellationToken.None)).ShouldBe("source_not_preserved", "configured remote helper bypassed; actual unpublished source refused");
+            File.Exists(marker).ShouldBeFalse();
+            InspectionDigest(f.Root).ShouldBe(proofBefore);
+        }
         Directory.Exists(f.State).ShouldBeFalse();
     }
 }

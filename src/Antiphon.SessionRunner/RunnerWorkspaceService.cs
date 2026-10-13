@@ -963,6 +963,10 @@ public sealed partial class RunnerWorkspaceService
             // Read-only eligibility must never execute repository/user-configured commands,
             // consult a redirected index, lazily fetch, or trust replacement ancestry.
             psi.ArgumentList.Add("--no-replace-objects");
+            // ls-remote needs no local repository. An explicit null git-dir prevents
+            // remote.<name>.vcs, include files and URL rewrites from running helpers.
+            if (args[0] == "ls-remote")
+                psi.ArgumentList.Add("--git-dir=" + (OperatingSystem.IsWindows() ? "NUL" : "/dev/null"));
             foreach (var key in psi.Environment.Keys.Where(key => key.StartsWith("GIT_CONFIG_KEY_", StringComparison.Ordinal)
                 || key.StartsWith("GIT_CONFIG_VALUE_", StringComparison.Ordinal)).ToArray()) psi.Environment.Remove(key);
             foreach (var key in new[] { "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT", "GIT_CONFIG", "GIT_DIR",

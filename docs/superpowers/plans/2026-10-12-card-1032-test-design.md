@@ -1162,3 +1162,11 @@ activation, native qualification and pending Mutation are carried forward.
 These rows are included in CP-6's existing prefix (46 total results), not extra
 checkpoint executions. The repair selection names all required S2/S3 and full-class
 regressions. Every added PC and variant remains pending for SourceLanding Mutation.
+
+### S4 repair round 3
+
+The [round-3 verification](2026-10-13-card-1032-s4-r3-verification.md)
+supersedes the S4 ordinary selection for Code owner 4da2d6db. It adds 14
+regressions for mode changes, damaged/case-varied bare shapes, replacement/graft
+ancestry and configured commands. CP-6 now has 60 results. PC-573..577 and all
+variants are pending; S5–S8 and native acceptance remain deferred.
