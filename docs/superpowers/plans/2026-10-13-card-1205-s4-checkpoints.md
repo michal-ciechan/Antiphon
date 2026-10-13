@@ -1,6 +1,7 @@
 # CARD-1205 S4 independent recovery watchdog
 
-Code/landing owner: 7b7d644a-a776-42e8-bc12-3d57e5df5ace.
+Code/landing owner: continuation task 902bc6d6 (assigned branch
+`feat/card-task-902bc6d6`); predecessor 7b7d644a-a776-42e8-bc12-3d57e5df5ace.
 Task base: 7f8448798955a24427bc2279138bf9fb64bc4195.
 Scope: S4 only. S3 checked recovery and SQL generation fence remain unchanged.
 The explicit brief excludes the broad Unit lane. S5 receipt tests are deferred.
@@ -111,3 +112,27 @@ build: --rows S4-T33,CP-4 --serial --expected-source-sha HEAD. The method row
 precedes the full class in the manifest and does not discharge any additional PC.
 Both rows have After=S4 because the checkpoint importer requires matching After
 for a shared build. The first mismatched-After attempt was refused before any driver.
+
+## Continuation admission, 2026-10-13
+
+Task 902bc6d6 starts at ab32d51ad1a71c87e3098993bfe2f07365c04f01,
+which already contains S4 production and the T33 inventory repair. The predecessor
+remote tip is the same SHA; no cherry-pick is needed. Final S4 scope is the
+explicit slice selection: S4-T33 followed by the whole 48-case CP-4 class, covering
+V-13..19, V-27..35, R-3 and R-4. The brief excludes Unit and S5.
+
+Preserved baseline runs 20261013-070708-9cf5 and 20261013-072438-ff86
+are inspected in the predecessor's checkpoint store. The latter tests committed
+6979735a1bbe7e9ff16a1edf167193f8d234e06e, with unchanged pre-S4 production:
+48 assertion failures (missing probes, registration, validation and disabled logs),
+zero passed/skipped. These are expected defect reds, not fixture/build failures;
+the green-only receipt validator rejects them as `row_failed`. Their source
+envelopes and actual TRX counts must be checked directly. Independent guard PCs
+remain pending for Mutation. No full assembly run or additional proof repetition
+is needed after CP-4 is green.
+
+Runner defaults/catalogue were refreshed at admission; eligible Linux and Windows
+capacity was advertised. No runner or OS pin is introduced. A build-slot-gated
+isolated checkpoint-tool bootstrap is the only additional setup build because
+this new worktree has no tool executable. No restart or manual live acceptance
+is required for S4.
