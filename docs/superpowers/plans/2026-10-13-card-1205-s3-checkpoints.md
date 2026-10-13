@@ -17,6 +17,7 @@ All PC-11..40 and variants remain pending for method-scoped SourceLanding Mutati
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
+| F1-BASE | Tests | `tests/Antiphon.Tests -> bin-c1205-f1-base/` | late-generation-baseline | `/*/Antiphon.Tests.Application/WorkingTranscriptRecoveryTests*/C1205_Generation_changed_after_validation_must_not_append_old_end*` | F1 | One guarded assertion red on unchanged 742e3404 production | 1 | 6 |
 | CP-3 | S3 | `tests/Antiphon.Tests -> bin-c1205-s3/` | checked-recovery | `/*/Antiphon.Tests.Application/(WorkingTranscriptRecoveryTests*)\|(SessionStateCommitTests*)\|(TranscriptWorkingStateQueryTests*)/*` | V-8..12,V-25,V-26,R-2,R-7 | Exactly 62 executed; baseline expected guarded assertion reds; implementation all green | 62 | 11 |
 
 ## Test-first baseline
