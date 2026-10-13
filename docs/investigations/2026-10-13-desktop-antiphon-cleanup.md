@@ -1,5 +1,9 @@
 # Desktop Antiphon cleanup - 2026-10-13
 
+The caller refinement arrived and superseded the initial residue-policy holds. It extended cleanup to 16:20 local, with removal authorized for old terminal worktrees after tracked-change and live origin-containment guards. A fresh persisted audit found 748 worktree candidates, 282 retained paths, and one already-absent path; retirement is in progress. Individual fresh facts are in C:\Users\lndco\Documents\antiphon-reports\desktop-cleanup-worktree-audit-29f3946d. The tracked-state limitation and all-worktrees-held counts below describe the initial 40-minute phase and are superseded by this refresh.
+
+## Initial 40-minute phase (historical)
+
 Partial cleanup: three old verifier directories were removed, containing **7.156 GB of logical files**. Cleanup stopped cleanly at the task's 40-minute limit. There were **zero deletion failures**. Another **383 candidates, 224.699 GB logical**, remain pending; they have not been removed or verified as completed.
 
 Task/Code owner: `29f3946d-24ca-453b-b6ef-991c8fbf74f3`. Branch: `feat/card-task-29f3946d`. Worktree: `C:\Antiphon\worktrees\card-task-29f3946d`. Source base: `63b2e70479c846cacd01af6b20190e845f8258e4`. This commit changes only this summary. The standing operator cleanup authority was used without another approval request.
@@ -56,3 +60,4 @@ Verification: manual scope/age/process/handle/deletion checks only. The cleanup 
 next: decide
 handoff: Resolve the owner retirement holds while preserving unpublished work, and resume the 383 pending B/C scratch candidates from the saved manifest with fresh guards.
 artifact: docs/investigations/2026-10-13-desktop-antiphon-cleanup.md
+
