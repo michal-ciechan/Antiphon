@@ -42,3 +42,45 @@ truncated-history detection is claimed by this slice.
 Implementation verification: run CP-3 with the exact committed HEAD as expected
 source SHA. Preserve receipts and all expanded method/argument counts in
 .antiphon/task-3e736c72.md.
+
+## F1 repair decision and precondition audit
+
+Use the existing session-row FOR UPDATE idiom, with a checked-only transaction
+in PersistTranscriptCoreAsync spanning the deciding read and every append save.
+This is the SQL-fence form of option (2): validate under the row lock in the same
+transaction that appends, rather than change every lifecycle writer. An UPDATE
+or DELETE by resume/restart/start/kill/replace conflicts with this lock. If it
+commits first, the reread rejects; if recovery locks first, the writer follows
+recovery's durable commit. Publication follows the committed SQL transaction and
+represents those committed rows, under the still-held state lease. A later
+lifecycle update is ordered after that durable append, not a failed precommit
+fence; the existing fresh observation may conservatively return Unknown.
+No Agents or registration locks are acquired; no I/O occurs inside a monitor.
+Lock order: optional existing queue lock -> state async lease -> SQL session row;
+probe takes no queue lock and calls no queue callback. The overlay's row lock
+uses the same fence. Checked batch/individual/stub saves reuse the outer SQL
+transaction and EF savepoint rollback; ordinary ingestion retains its existing
+transaction path. Missing/deleted session, generation, owner, status or frontier
+fence rejection returns Unknown, zero added rows, no publication, one Warning.
+No retained persistence failure is cleared by rejection.
+
+| S3 read -> action | Fenced by / audit result |
+|---|---|
+| Initial session/generation/rows/stamp -> HTTP fetch | Observation only, lease released before HTTP; final stamp/row comparison plus SQL fence before idle append. |
+| Snapshot session/generation/completeness/frontier -> runner classification | Immutable fetched DTO; no durable mutation; checked against captured durable identity. |
+| Final generation/status/runner binding -> idle append | Previously unfenced lifecycle writer; fixed by session-row lock and same-transaction reread of all predicates before INSERT. |
+| Final row identities/revision/reset/epoch -> idle append | State lease holds ordinary ingest/retention; SQL fence rereads complete row identities/content to cover late DB/overlay change. |
+| Runner Working + final observation -> CheckedWorking | Same lease and final full observation; no append/publication/callback. This is an observation at that read, not future idle permission. |
+| Dedupe/max sequence/closure decision -> batch/fallback/stub save | Staging creates no durable row; fence reread precedes INSERT; row lock spans all checked saves; state lease serializes transcript writers; existing unique conflicts still disclose uncertainty. |
+| Committed rows -> state publication | SQL commit precedes PublishCommittedAsync; state lease remains held; fence rejection bypasses publication entirely. |
+| Postcommit ownership/SQL/cache verdict -> returned RecoveredIdle | State lease serializes transcript projection; fresh durable reads and retained-failure/NeedsReload vetoes; no queue action in S3. Later lifecycle changes cannot retroactively invalidate a prior correctly ordered durable commit. |
+| Result -> future flush/receipt | S4/S5 outside scope; callers must reread ordinary Working/destination receipt evidence. No delivery claim here. |
+
+Repair ordinary run: select `--rows CP-1,CP-2,ADJ-1,CP-3 --serial` with exact
+committed `--expected-source-sha`; one shared isolated build, UseAppHost=false,
+OutputPath `bin-c1205-f1-final/`. Baseline F1-BASE is separately selected before
+the fix, not included as an expected-red row in Final. The tool bootstrap is the
+only extra build: build-slot gated, `bin-c1205-f1-tool/`, needed because this
+checkout had no executable checkpoint tool. Both alternate outputs are owned.
+No Unit/full-assembly run or repetition is required by this explicit repair brief.
+No S3 manual acceptance is required. All PCs remain pending.
