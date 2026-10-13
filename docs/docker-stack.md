@@ -705,6 +705,7 @@ followed by unknown ownership, with persistent daemon loss and a one-probe outag
 registration and both cleanup records remain, and the wrapper refuses success.
 C1192_Foreign_volume_is_refused_after_create (CP-44) checks confirmed-foreign work/mask refusal: registration drops, and those volumes are neither mounted nor deleted.
 C1208_Foreign_cache_is_dropped_and_untouched checks foreign cache refusal, ledger removal and untouched volume; C1208_Legacy_container_replacement_is_untouched and C1208_Legacy_network_replacement_is_untouched check legacy replacement retention/refusal; C1208_Unacquired_roster_is_untouched checks unacquired consumer/helper retention; C1208_Acquired_objects_are_removed and C1208_Recorded_container_id_does_not_delete_replacement check acquired disposal and ID-only removal; C1208_Legacy_owned_markers_are_migrated checks verified legacy migration, and C1208_Unknown_identity_retains_residue checks unknown refusal/residue. CP-45..53 retain positive-absence checks. Compose teardown remains exit-status-only (CARD-1207); live Docker W-1 is pending.
+C1208_Wrong_cidfile_preserves_foreign_container and C1208_Recorded_id_with_changed_labels_is_untouched check full-ID owner/run/role validation. C1208_Recorded_creation_fingerprint_is_reverified checks recorded container name/image/Created fields. C1208_Wrong_helper_id_preserves_foreign_container and C1208_Wrong_network_id_is_untouched check foreign helper/network IDs. C1208_Recorded_container_inspect_failure_refuses_cleanup and C1208_Recorded_network_inspect_failure_refuses_cleanup check ownership-probe failure. C1208_Owned_packages_registration_survives_production_controls checks authoritative registration through production PC-09/10 and residue through PC-32. C1208_Dangling_network_record_retains_residue, C1208_Invalid_network_record_retains_text and C1208_Confirmed_absent_network_record_is_cleared check invalid-record refusal/text and positive-absence clearing/receipt. These are modeled contracts; native Docker W-1 remains pending.
 
 The production cache names are
 outside its namespace. A nonzero case or missing
@@ -721,7 +722,7 @@ host root. Finalization attempts consumer release, exports the five safe race/lo
 releases helpers, removes label-checked work/mask volumes and registered cache
 volumes (subject to CARD-1208 above), and removes the identity-checked
 controller before publishing success (CP-34/35/38). The shared resource-removal
-helper probes the exact name after removal; CP-45..51 distinguish recognized
+helper checks ownership on the inspected ID (or registered volume name), then probes that identity after removal; CP-45..51 distinguish recognized
 absence from daemon/socket, timeout, empty and unrecognized probe results.
 Unknown registered-finalizer outcomes name residue in `fixture-cleanup-residue.txt`
 and `unknown-cleanup-outcome` in `fixture-cleanup-ledger.txt`. CP-53 preserves

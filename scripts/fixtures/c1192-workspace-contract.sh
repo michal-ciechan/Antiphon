@@ -1181,6 +1181,7 @@ docker() {
                                 *fixture-run*) printf '%s\n' "$RUN" ;;
                                 *fixture-role*) printf 'npm-network\n' ;;
                                 *Id*) printf 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\n' ;;
+                                *Name*) printf 'c849-%s-npm\n' "$RUN" ;;
                             esac
                         fi ;;
                     rm) order_log "network ${*: -1}"; rm -f "$C1192_ROOT/network" ;;
@@ -3167,7 +3168,8 @@ mode_deletion_audit() {
                 printf '%s\n' "$network" > "$CASE_DIR/.fixture-network"
                 : > "$C1192_ROOT/network"
                 c849_fixture_network_release
-                [ ! -f "$C1192_ROOT/network" ] && [ "$(cat "$CASE_DIR/.fixture-network")" = eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee ] \
+                [ ! -f "$C1192_ROOT/network" ] && [ ! -e "$CASE_DIR/.fixture-network" ] \
+                    && grep -Fxq "confirmed-absent network eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" "$CASE_DIR/fixture-cleanup-ledger.txt" \
                     && grep -Fxq 'network eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee' "$C1192_ROOT/order" || good=0
             else
                 container_exists "$name" && ! grep -q '^container ' "$C1192_ROOT/order" \

@@ -1,6 +1,8 @@
-# CARD-1208 Code evidence — Final ordinary verification
+# CARD-1208 round 1 Code evidence — historical ordinary verification
 
-Implemented the deletion audit; every required checkpoint now has a passing ordinary result. Review is next. SourceLanding Mutation and live Docker W-1 remain pending.
+Round 2 Review 80f776ce found foreign full-ID deletion, production-control registration loss and a dangling network record gap. This historical green is not a claim that those contracts held. Repair Code/landing owner: 8c713d0c-fe3f-4097-894b-9fc892a709ae. Current repair design: 2026-10-13-card-1208-finalizer-deletion-audit.md; round 2 results: 2026-10-13-card-1208-finalizer-repair-evidence.md.
+
+The round 1 closed checkpoint selection passed; the subsequent Review findings above supersede its contract conclusions. Review is next. SourceLanding Mutation and live Docker W-1 remain pending.
 
 Original Code / landing owner: b1b731e0-1d07-4589-8c85-94b420b101bd. Branch: feat/card-task-b1b731e0. Worktree: /work/worktrees/task-b1b731e0. Task base: 9f89cc427dca7030cfc93a45ec36e4375d894213. Implementation tip: 4c675e64588c5e3f39a875c203cc34447bc98b39. Restart: none.
 
@@ -8,7 +10,7 @@ Plan: docs/superpowers/plans/2026-10-13-card-1208-finalizer-deletion-audit.md. S
 
 ## Result and scope
 
-Named fixture acquisitions record Docker cidfiles at creation. Consumer/helper/network teardown uses acquired IDs or migrates legacy records after checking run labels on the resolved ID. Registered cache volumes require full current-run identity; positively foreign volumes are dropped immediately and recorded as "foreign: left untouched". Unacquired roster objects remain untouched. Unknown/invalid records produce named residue and refuse success, including standalone symlink/directory cidfiles. Escape links use recorded inode identity; diagnostic directories are retained rather than recursively removed. Controller identity/containment guards remain.
+Named fixture acquisitions record Docker cidfiles at creation. Consumer/helper/network teardown uses acquired IDs or migrates legacy records after checking run labels on the resolved ID. Registered cache volumes require full current-run identity; positively foreign volumes are dropped immediately and recorded as "foreign: left untouched". Unacquired roster objects remain untouched. C1208_Unknown_identity_retains_residue checked the modeled unknown legacy container and malformed/standalone cidfile cases; it did not cover wrong well-formed IDs or dangling network markers (Review F1/F3). Escape links use recorded inode identity; diagnostic directories are retained rather than recursively removed. Controller identity/containment guards remain.
 
 Changed: scripts/c590-remote.sh; scripts/fixtures/c1192-workspace-contract.sh; scripts/fixtures/c913-seed-contract.sh (seed/inventory acquisition models); tests/Antiphon.Tests/Scripts/RemoteScriptContractTests.cs; docs/docker-stack.md; the CARD-1192 stable S7 plan statement; the CARD-1208 plan/evidence. Existing HOME/scratch/path assertions were retained and bound to the acquired launch wrapper. No timeout, retry, Repeat setting or safety assertion was loosened.
 

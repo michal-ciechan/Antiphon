@@ -206,6 +206,11 @@ docker() {
       inspect:*)
         if [ "$FAULT" = inspect-error ] && [ "${@: -1}" = "$donor_id" ]; then return 1; fi
         case "$3" in
+          *'io.antiphon.owner'*) echo c849-fixture ;;
+          *'io.antiphon.fixture-run'*) echo "$RUN" ;;
+          *'io.antiphon.fixture-role'*) if [ "${@: -1}" = "$donor_id" ]; then echo donor; else echo consumer; fi ;;
+          *'.Name'*) if [ "${@: -1}" = "$donor_id" ]; then printf '/c849-%s-donor\n' "$RUN"; else printf '/c849-seed-%s\n' "$RUN"; fi ;;
+          *'.Created'*) echo '2026-10-13T00:00:00Z' ;;
           *'.Image'*) echo "$image_id" ;;
           *'.Id'*) if grep -q '^restart$' "$root/trace" 2>/dev/null; then barrier donor-id; fi; if [ "$FAULT" = donor-id ] && grep -q '^restart$' "$root/trace"; then echo changed; else echo "$donor_id"; fi ;;
           *'.State.Running'*) if [ "$FAULT" = retired-running ] && [ "${@: -1}" = "$donor_id" ]; then echo true; else echo false; fi ;;
