@@ -369,6 +369,7 @@ public static class Program
         if (options.Get("run") is not null || options.Get("manifest") is not null || options.Positionals.Count > 0)
         {
             var run = ResolveRun(options, repo);
+            output.WriteLine("left in place: " + run + "; remove it manually");
             var state = new RunStateStore().TryRead(Path.Combine(run, "state.json"));
             var required = state is null ? "state-receipt-unreadable" : ReportWriter.RequiredReceiptRefusal(run, state);
             if (required is not null) output.WriteLine("refused: " + required);
