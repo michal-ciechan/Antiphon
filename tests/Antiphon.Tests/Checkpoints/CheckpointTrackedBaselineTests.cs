@@ -15,6 +15,145 @@ public sealed class CheckpointTrackedBaselineTests : CheckpointTestBase
     private const string OriginalText = "TRACKED-ORIGINAL";
 
     [Test]
+    [Timeout(300_000)]
+    public async Task local_output_property_tampering_is_reported(CancellationToken cancellationToken)
+    {
+        RequireLinux();
+        var root = BeginRepo();
+        Write(root, "App/App.csproj", """
+            <Project Sdk="Microsoft.NET.Sdk" TreatAsLocalProperty="OutputPath">
+              <PropertyGroup>
+                <TargetFramework>net9.0</TargetFramework>
+                <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+                <OutputPath>legacy/</OutputPath>
+              </PropertyGroup>
+            </Project>
+            """);
+        Write(root, "App/Marker.cs", "namespace App; public static class Marker { public static int Value => 1; }\n");
+        var victim = Plant(root, "App/legacy/App.dll");
+        await AssertDetectedAsync(root, "local-output", victim, cancellationToken);
+    }
+
+    [Test]
+    [Timeout(300_000)]
+    public async Task intermediate_output_path_tampering_is_reported(CancellationToken cancellationToken)
+    {
+        RequireLinux();
+        var root = BeginRepo();
+        Write(root, "App/App.csproj", """
+            <Project Sdk="Microsoft.NET.Sdk">
+              <PropertyGroup>
+                <TargetFramework>net9.0</TargetFramework>
+                <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+                <IntermediateOutputPath>generated/</IntermediateOutputPath>
+              </PropertyGroup>
+            </Project>
+            """);
+        Write(root, "App/Marker.cs", "namespace App; public static class Marker { public static int Value => 1; }\n");
+        var victim = Plant(root, "App/generated/App.AssemblyInfo.cs");
+        await AssertDetectedAsync(root, "intermediate", victim, cancellationToken);
+    }
+
+    [Test]
+    [Timeout(300_000)]
+    public async Task generated_target_file_tampering_is_reported(CancellationToken cancellationToken)
+    {
+        RequireLinux();
+        var root = BeginRepo();
+        Write(root, "App/App.csproj", """
+            <Project Sdk="Microsoft.NET.Sdk">
+              <PropertyGroup>
+                <TargetFramework>net9.0</TargetFramework>
+                <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+              </PropertyGroup>
+              <Target Name="GenerateVersion" BeforeTargets="BeforeBuild">
+                <WriteLinesToFile File="$(MSBuildProjectDirectory)/GeneratedVersion.txt" Lines="generated version 1" Overwrite="true" />
+              </Target>
+            </Project>
+            """);
+        Write(root, "App/Marker.cs", "namespace App; public static class Marker { public static int Value => 1; }\n");
+        var victim = Plant(root, "App/GeneratedVersion.txt");
+        await AssertDetectedAsync(root, "generated", victim, cancellationToken);
+    }
+
+    [Test]
+    [Timeout(300_000)]
+    public async Task imported_props_reference_tampering_is_reported(CancellationToken cancellationToken)
+    {
+        RequireLinux();
+        var root = BeginRepo();
+        Write(root, "Lib/Lib.csproj", """
+            <Project Sdk="Microsoft.NET.Sdk" TreatAsLocalProperty="OutputPath">
+              <PropertyGroup>
+                <TargetFramework>net9.0</TargetFramework>
+                <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+                <OutputPath>legacy/</OutputPath>
+              </PropertyGroup>
+            </Project>
+            """);
+        Write(root, "Lib/Marker.cs", "namespace Lib; public static class Marker { public static int Value => 7; }\n");
+        Write(root, "App/References.props", """
+            <Project>
+              <ItemGroup>
+                <ProjectReference Include="../Lib/Lib.csproj" />
+              </ItemGroup>
+            </Project>
+            """);
+        Write(root, "App/App.csproj", """
+            <Project Sdk="Microsoft.NET.Sdk">
+              <PropertyGroup>
+                <TargetFramework>net9.0</TargetFramework>
+                <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+              </PropertyGroup>
+              <Import Project="References.props" />
+            </Project>
+            """);
+        Write(root, "App/Marker.cs", "namespace App; public static class Marker { public static int Use() => Lib.Marker.Value; }\n");
+        var victim = Plant(root, "Lib/legacy/Lib.dll");
+        await AssertDetectedAsync(root, "imported-ref", victim, cancellationToken);
+    }
+
+    [Test]
+    [Timeout(300_000)]
+    public async Task transitive_reference_tampering_is_reported(CancellationToken cancellationToken)
+    {
+        RequireLinux();
+        var root = BeginRepo();
+        Write(root, "Lib/Lib.csproj", """
+            <Project Sdk="Microsoft.NET.Sdk" TreatAsLocalProperty="OutputPath">
+              <PropertyGroup>
+                <TargetFramework>net9.0</TargetFramework>
+                <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+                <OutputPath>legacy/</OutputPath>
+              </PropertyGroup>
+            </Project>
+            """);
+        Write(root, "Lib/Marker.cs", "namespace Lib; public static class Marker { public static int Value => 7; }\n");
+        Write(root, "Mid/Mid.csproj", """
+            <Project Sdk="Microsoft.NET.Sdk">
+              <PropertyGroup>
+                <TargetFramework>net9.0</TargetFramework>
+                <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+              </PropertyGroup>
+              <ItemGroup><ProjectReference Include="../Lib/Lib.csproj" /></ItemGroup>
+            </Project>
+            """);
+        Write(root, "Mid/M.cs", "namespace Mid; public static class M { public static int Use() => Lib.Marker.Value; }\n");
+        Write(root, "App/App.csproj", """
+            <Project Sdk="Microsoft.NET.Sdk">
+              <PropertyGroup>
+                <TargetFramework>net9.0</TargetFramework>
+                <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+              </PropertyGroup>
+              <ItemGroup><ProjectReference Include="../Mid/Mid.csproj" /></ItemGroup>
+            </Project>
+            """);
+        Write(root, "App/Marker.cs", "namespace App; public static class Marker { public static int Use() => Mid.M.Use(); }\n");
+        var victim = Plant(root, "Lib/legacy/Lib.dll");
+        await AssertDetectedAsync(root, "transitive", victim, cancellationToken);
+    }
+
+    [Test]
     [Timeout(180_000)]
     public async Task dirty_tracked_tree_is_refused_and_unmodified(CancellationToken cancellationToken)
     {
@@ -282,6 +421,66 @@ public sealed class CheckpointTrackedBaselineTests : CheckpointTestBase
         value.Replace("&", "&amp;", StringComparison.Ordinal)
             .Replace("\"", "&quot;", StringComparison.Ordinal)
             .Replace("<", "&lt;", StringComparison.Ordinal);
+
+
+    // The five historical MSBuild routes retain detection/receipt/path assertions.
+    // Automatic worktree/index restoration assertions are deliberately retired.
+    private async Task AssertDetectedAsync(string root, string name, Victim victim, CancellationToken cancellationToken)
+    {
+        Commit(root);
+        var head = GitOut(root, "rev-parse", "HEAD").Trim();
+        var tool = await RunToolAsync(root, name + "-tool", cancellationToken);
+        AssertDetected(tool, victim, head);
+        var report = Directory.GetFiles(Path.Combine(root, ".antiphon", "tool-results"), "report.json", SearchOption.AllDirectories).Single();
+        (await ValidateReceiptAsync(report, head, cancellationToken)).Exit.ShouldBe(2);
+        // Reset this fixture ourselves so the second entry sees the same clean baseline.
+        File.WriteAllBytes(victim.FullPath, victim.Bytes);
+        File.SetLastWriteTimeUtc(victim.FullPath, DateTime.UnixEpoch);
+        var script = await RunScriptAsync(root, name + "-script", cancellationToken);
+        AssertDetected(script, victim, head);
+        var receipt = Path.Combine(root, ".antiphon", "script-results", name + "-script-fixed", "source.json");
+        File.Exists(receipt).ShouldBeTrue(script.Output);
+        (await ValidateReceiptAsync(receipt, head, cancellationToken)).Exit.ShouldBe(2);
+    }
+
+    private static void AssertDetected(RunResult result, Victim victim, string head)
+    {
+        result.Exit.ShouldBe(2, result.Output);
+        result.Output.ShouldContain("refused: tampered", Case.Sensitive);
+        result.Output.ShouldContain("TAMPERED " + victim.Relative, Case.Sensitive);
+        result.Output.ShouldContain("manual command:", Case.Sensitive);
+        result.Output.ShouldContain(head, Case.Sensitive);
+        result.Output.ShouldNotContain("buildSource=verified", Case.Sensitive);
+        var bytes = File.ReadAllBytes(victim.FullPath);
+        bytes.ShouldNotBe(victim.Bytes, "the tool must leave the build-result bytes in place");
+        if (victim.Relative.EndsWith(".dll")) { bytes[0].ShouldBe((byte)'M'); bytes[1].ShouldBe((byte)'Z'); }
+        else System.Text.Encoding.UTF8.GetString(bytes).ShouldContain(victim.Relative.EndsWith(".txt") ? "generated version 1" : "AssemblyVersion");
+    }
+
+    // case: source.json collides with a directory made during a passing build;
+    // mutation: log receipt failure but preserve exit 0; red: missing receipt reports green.
+    [Test]
+    [Timeout(420_000)]
+    public async Task passing_script_requires_writable_source_receipt(CancellationToken cancellationToken)
+    {
+        RequireLinux();
+        var root = BeginRepo();
+        Write(root, "App/App.csproj", """
+            <Project Sdk="Microsoft.NET.Sdk">
+              <PropertyGroup><TargetFramework>net9.0</TargetFramework></PropertyGroup>
+              <ItemGroup><PackageReference Include="TUnit" Version="1.44.0" /></ItemGroup>
+              <Target Name="ReceiptCollision" BeforeTargets="Build">
+                <MakeDir Directories="$(MSBuildProjectDirectory)/../.antiphon/script-results/receipt-script-fixed/source.json" />
+              </Target>
+            </Project>
+            """);
+        Write(root, "App/Probe.cs", "public sealed class ReceiptProbe { [TUnit.Core.Test] public void one() {} }");
+        Commit(root);
+        var result = await RunScriptAsync(root, "receipt-script", "/*/*/ReceiptProbe/*", "1", cancellationToken);
+        result.Exit.ShouldBe(2, result.Output);
+        result.Output.ShouldContain("source.json", Case.Sensitive);
+        File.Exists(Path.Combine(root, ".antiphon/script-results/receipt-script-fixed/source.json")).ShouldBeFalse();
+    }
 
     private static void AssertDirtyRefused(string output, string keep, byte[] dirty, string marker, byte[] markerBytes)
     {
