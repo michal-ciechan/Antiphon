@@ -13,11 +13,11 @@ using TUnit.Core;
 using SkipTestException = TUnit.Core.Exceptions.SkipTestException;
 
 namespace Antiphon.Tests.Scripts;
+[Timeout(600_000)]
 
 // This class contains text guards and behavioral Linux-shell models for the remote script's
 // two lanes. Behavioral models use WSL on Windows and require their declared prerequisites;
 // live Docker rows remain separate. Historical CARD-0604 S3 live rows were CP-5 through CP-13.
-[Timeout(600_000)]
 [Category("Unit")]
 public sealed class RemoteScriptContractTests
 {
