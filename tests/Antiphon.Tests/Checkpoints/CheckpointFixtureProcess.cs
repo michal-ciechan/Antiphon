@@ -4,11 +4,15 @@ using Shouldly;
 
 namespace Antiphon.Tests.Checkpoints;
 
-// CARD-1199 review 6b8368dc F1: the CARD-added fixture children that capture output run here,
-// so one stated limit covers them. The shared CheckpointProcessRunner applies that limit to
-// process exit and both output drains together and, on Linux, kills the child's process group on
-// expiry, so a child blocked before exit or a descendant holding a pipe fails the fixture step
-// instead of hanging it. Git hardening is off: fixtures keep the installed Git behaviour.
+// CARD-1199 review 6b8368dc F1: eight repaired fixture sites run here: OutputCleanupTests.Git and
+// its parent-symlink and wrapper-preflight pwsh probes, CheckpointTaskOwnershipTests ownership-loss
+// git init, CheckpointOutputConfinementTests.Git and SeedBuild, CheckpointShapeConflictTests.GitOut/Git
+// and CheckpointTrackedBaselineTests.GitOut/Git. Other fixture launches and their gaps are in the
+// repair 13k census of docs/superpowers/plans/2026-10-13-card-1199-inherited-readers.md.
+// The shared CheckpointProcessRunner applies the caller's limit to process exit and both output
+// drains together and, on Linux, kills the child's process group on expiry, so a child blocked
+// before exit or a descendant holding a pipe fails the fixture step (CP-23). Git hardening is off:
+// these sites keep the installed Git behaviour.
 internal static class CheckpointFixtureProcess
 {
     public sealed record Output(int Exit, string Stdout, string Stderr);

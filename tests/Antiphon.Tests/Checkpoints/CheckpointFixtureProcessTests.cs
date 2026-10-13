@@ -7,7 +7,7 @@ using TUnit.Core;
 
 namespace Antiphon.Tests.Checkpoints;
 
-// CARD-1199 review 6b8368dc F1: a fixture child blocked before exit or holding a pipe after exit
+// CARD-1199 review 6b8368dc F1: a CheckpointFixtureProcess child blocked before exit or holding a pipe after exit
 // must fail its fixture step within the stated limit, not hang the test host.
 [Category("Unit")]
 [ParallelLimiter<ProcessSpawnLimit>]
