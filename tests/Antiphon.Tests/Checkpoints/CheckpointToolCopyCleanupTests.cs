@@ -246,8 +246,9 @@ public sealed class CheckpointToolCopyCleanupTests : CheckpointTestBase
         var run = TempDir();
         CheckpointFixtures.MarkRun(run, alive: false);
         var tool = Path.Combine(run, "tool");
-        Directory.CreateDirectory(tool);
+        SafeWrite.Require(SafeWrite.CreateFreshDirectory(tool, SafeWrite.Under(run)));
         File.WriteAllText(Path.Combine(tool, "sentinel.dll"), "keep");
+        SafeWrite.Require(OwnedOutputLedger.Seal(tool));
         return run;
     }
 

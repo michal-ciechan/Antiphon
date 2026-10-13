@@ -173,7 +173,10 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
                 var file = shape == "existing-stamp" ? "checkpoint-build-source.json" : "App.dll";
                 if (shape != "existing-output-directory" && (!File.Exists(Path.Combine(root, "App", "bin-probe", file)) || File.ReadAllText(Path.Combine(root, "App", "bin-probe", file)) != "USER-OUTPUT"))
                     return "pre-existing-user-output-lost";
-                if (result.Exit != 2 || !output.Contains("refused:", StringComparison.Ordinal)) return "collision-not-refused";
+                if (File.ReadAllText(Path.Combine(root, "tracked.txt")) != TrackedBytes) return "build-changed-source-on-collision";
+                var reason = shape == "existing-stamp" ? "pre-existing-build-source" : shape == "existing-output-symlink" ? "reparse-point" : "pre-existing-output";
+                if (result.Exit != 2 || !output.Contains("refused: " + reason, StringComparison.Ordinal)) return "collision-not-refused-with-reason " + reason;
+                if (shape == "existing-output-symlink" && new DirectoryInfo(Path.Combine(root, "App/bin-probe")).LinkTarget is null) return "output-link-changed";
                 if (output.Contains("Build succeeded", StringComparison.Ordinal)) return "build-ran-on-collision";
                 if (output.Contains("lossless", StringComparison.Ordinal) || output.Contains("restored", StringComparison.Ordinal)) return "false-preservation-claim";
                 return Receipt(receipt);
