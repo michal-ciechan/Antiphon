@@ -3024,7 +3024,7 @@ mode_deletion_audit() {
         *) fail "unknown audit $row" ;;
     esac
     emit audit "$good"
-    printf 'audit=%s exit=%s\n' "$row" "$code"
+    printf 'scenario=%s exit=%s\n' "$row" "$code"
     cat "$C1192_ROOT/order"
     cat "$CASE_DIR/fixture-cleanup-ledger.txt"
 }
