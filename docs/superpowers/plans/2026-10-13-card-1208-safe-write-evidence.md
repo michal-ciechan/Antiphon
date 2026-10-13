@@ -1,6 +1,6 @@
 # CARD-1208 safe metadata publication (round 5 contract correction)
 
-Code/landing owner b80e5c9e-cdcb-4f3d-9d09-a4c612bf0a08, branch feat/card-task-b80e5c9e, worktree /work/worktrees/task-b80e5c9e. Predecessor Code owner 15a9381e-0e9d-46a0-a49b-9534d34f3eb4. Repair base 42525c75b9ba104365e6b6d28d78ef742aaea8c3; complete candidate base 9f89cc427dca7030cfc93a45ec36e4375d894213. Plan: docs/superpowers/plans/2026-10-13-card-1208-finalizer-deletion-audit.md. Restart: none.
+Historical round-4 Code/landing owner b80e5c9e-cdcb-4f3d-9d09-a4c612bf0a08, branch feat/card-task-b80e5c9e, worktree /work/worktrees/task-b80e5c9e. Predecessor Code owner 15a9381e-0e9d-46a0-a49b-9534d34f3eb4. Repair base 42525c75b9ba104365e6b6d28d78ef742aaea8c3; complete candidate base 9f89cc427dca7030cfc93a45ec36e4375d894213. Plan: docs/superpowers/plans/2026-10-13-card-1208-finalizer-deletion-audit.md. Restart: none.
 
 ## Defect proof before production repair
 
@@ -35,7 +35,7 @@ The following metadata writers exist on the complete card base and their publica
 
 ## Ordinary verification and remaining ownership
 
-The brief's specific Final scope is CP-33..74, with no Unit or whole-class run. R-1..21 map to CP-33..53; V-1..21 to CP-54..74; V-22..25 to CP-75..77. Final results and unedited CHECKPOINT lines reside in the stored task report, with actual tested SHAs and receipt/TRX audit. Generated payloads stay in their original ignored checkpoint trees.
+Round-5 specific Final scope is CP-33..78, with no Unit or whole-class run. R-1..21 map to CP-33..53; V-1..21 to CP-54..74; V-22..25 to CP-75..78. Final results and unedited CHECKPOINT lines reside in the stored task report, with actual tested SHAs and receipt/TRX audit. Generated payloads stay in their original ignored checkpoint trees.
 
 All CARD-1208 PC-1..19 and variants remain PENDING method-scoped SourceLanding Mutation, including every new fingerprint/file-type writer variant. CARD-1192 PC-1..174 remain pending. Mutation owns deliberate mutants, red/restore/green and missing-control discovery. Post-land Mutation was NOT run. W-1 native Docker remains pending with the rollout owner. No Docker host calls, land, deploy or restart were performed.
 
@@ -54,3 +54,5 @@ The shell deadline stays 60,000ms. Four modeled ID/field observations in CP-77 s
 Final closed selection is CP-33..78: 46 rows / 98 executions; CP-44=19, CP-73=12, CP-74=11 (99 internal file-type cases), CP-75=11, CP-76=4, CP-77=1. No Unit/full class per the specific brief. One isolated test build per committed selection; tool bootstrap and direct harness timing/red diagnostics are explained slot-gated extras. Every PC-1..19/variant remains pending method-scoped SourceLanding Mutation, including all new publication and model-reader controls; inherited CARD-1192 PC-1..174 and native Docker W-1 remain pending.
 
 Loaded deadline refinement: the first round-5 Final selection at abf644bb13227a91502352a77425396fc03e6d39 passed CP-34 but CP-35 hit the same unchanged 60-second finalization deadline. The run was explicitly stopped and awaited (exit 6); no partial result is represented as a full certificate. Test-only 5f4e06de5 adds CP-78/V-25: inspect actual diagnostic setup files for success/primary (five required) and delete/cleanup outcome (zero unrelated), hand-written expectations. Its pre-fix direct slot-gated fixture must fail with delete actual=5 expected=0. The fixture then keeps diagnostic files in success/primary/export/foreign scenarios and omits setup for the remaining finalization cases and all fourteen cleanup outcomes. All original log byte/order/export/refusal/receipt assertions and every scenario stay intact. This removes needless safe-publisher work, without changing production writers, timeouts or assertions. Restart complete CP-33..78 once against the new committed SHA because S7 finalization setup is shared. CP-78=1; final total 46 rows / 98 executions / 60 methods. All PCs including this deadline-setup guard stay pending Mutation.
+
+Final round-5 ordinary selection at 2e3b71d737f9aad5ea7687b4d5d49e7796921958 passed all 46 rows / 98 executions, with zero failed/skipped. R-1..21 and V-1..25 completed. CP-34 test duration 14.592s; CP-45 37.833s, unchanged shell deadline. This later documentation-only correction updates the summary V-range/owner label; production, fixtures, tests and checkpoint table are unchanged. Full actual receipts/TRX audit remain bound to the tested SHA, never relabeled. Every PC/variant and W-1 remain pending as stated above.
