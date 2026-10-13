@@ -36,7 +36,7 @@ import {
   TbRefresh,
   TbAdjustments,
 } from 'react-icons/tb'
-import { useNavigate } from 'react-router'
+import { useLocation, useNavigate } from 'react-router'
 import {
   useProjects,
   useUpdateProject,
@@ -87,6 +87,7 @@ function ProjectList({ projects }: { projects: ProjectDto[] }) {
   const { data: githubRepos } = useGitHubRepos()
   const refreshReposMutation = useRefreshGitHubRepos()
   const navigate = useNavigate()
+  const { search: currentSearch } = useLocation()
   const [editModalOpen, setEditModalOpen] = useState(false)
   const [setupModalOpen, setSetupModalOpen] = useState(false)
   const [editingProject, setEditingProject] = useState<ProjectDto | null>(null)
@@ -303,9 +304,13 @@ function ProjectList({ projects }: { projects: ProjectDto[] }) {
                         <ActionIcon
                           variant="subtle"
                           aria-label="Project concurrency"
-                          onClick={() =>
-                            navigate(`/settings?${new URLSearchParams({ tab: 'concurrency', project: project.id })}`)
-                          }
+                          onClick={() => {
+                            // Keeps unrelated parameters (`C506 S3F1 row-link-keeps-params`).
+                            const next = new URLSearchParams(currentSearch)
+                            next.set('tab', 'concurrency')
+                            next.set('project', project.id)
+                            navigate(`/settings?${next}`)
+                          }}
                         >
                           <TbAdjustments />
                         </ActionIcon>
