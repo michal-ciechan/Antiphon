@@ -300,7 +300,7 @@ public class WorkingTranscriptRecoveryTests
             F.Services.GetRequiredService<ILoggerFactory>().CreateLogger<AgentSessionRuntime>(), states: store);
         public void SetEntries(params SessionRunnerTranscriptEvent[] entries) => Snapshot = Snapshot with
             { Entries = entries, LastSequence = entries[^1].Sequence };
-        public Task<LegacyRecoveryResult> ProbeAsync() => Runtime.ProbeWorkingTranscriptAsync(Id, default);
+        public Task<TranscriptRecoveryResult> ProbeAsync() => Runtime.ProbeWorkingTranscriptAsync(Id, default);
         public Task<List<TranscriptEntry>> RowsAsync() => F.RowsAsync();
         public async Task<bool> WorkingAsync()
         {
@@ -392,19 +392,3 @@ public class WorkingTranscriptRecoveryTests
     }
 }
 
-// Test-first compatibility adapter: exercise the existing receipt pull/persist path before
-// S3 adds the checked entry point. Outcomes come from that path's real committed observation.
-internal sealed record LegacyRecoveryResult(string Outcome, long AddedCount);
-internal static class C1205LegacyProbe
-{
-    internal static async Task<LegacyRecoveryResult> ProbeWorkingTranscriptAsync(this AgentSessionRuntime runtime,
-        Guid id, CancellationToken ct)
-    {
-        var before = await runtime.ObserveReceiptStateAsync(id, ct);
-        LandReceiptScanCache.Observation after;
-        try { after = await runtime.CatchUpForReceiptAsync(id, false, ct); }
-        catch (OperationCanceledException) { return new("Unknown", 0); }
-        return new(after.Snapshot is null ? "Unknown" : after.Snapshot.Working ? "CheckedWorking" : "RecoveredIdle",
-            after.Snapshot is null ? 0 : after.Snapshot.Count - (before.Snapshot?.Count ?? 0));
-    }
-}
