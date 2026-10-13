@@ -42,6 +42,20 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
+/**
+ * Role and source names are server data, and some of them may be Object.prototype member names
+ * (`constructor`, `__proto__`, …). Every name-keyed read below is an own-property read and every
+ * name-keyed write defines an own property, so such a name behaves like any other unknown name and
+ * the dictionaries stay ordinary objects (Review ef9c0e6b F1).
+ */
+function ownValue(container: object, key: string): unknown {
+  return Object.hasOwn(container, key) ? (container as Record<string, unknown>)[key] : undefined
+}
+
+function setOwn<T>(container: Record<string, T>, key: string, value: T) {
+  Object.defineProperty(container, key, { value, enumerable: true, writable: true, configurable: true })
+}
+
 function decodeLimit(container: Record<string, unknown>, key: string): LimitDraft {
   if (!Object.hasOwn(container, key)) return { ...UNSPECIFIED }
   const value = container[key]
@@ -54,19 +68,22 @@ function decodeLimit(container: Record<string, unknown>, key: string): LimitDraf
  */
 export function draftFromOverrides(overrides: unknown, supportedRoles: readonly string[]): ConcurrencyDraft {
   const doc = isRecord(overrides) ? overrides : {}
-  const docRoles = isRecord(doc.roles) ? doc.roles : {}
-  const roleNames = [...supportedRoles, ...Object.keys(docRoles).filter((role) => !supportedRoles.includes(role))]
+  const docRolesValue = ownValue(doc, 'roles')
+  const docRoles = isRecord(docRolesValue) ? docRolesValue : {}
+  const roleNames = [...new Set([...supportedRoles, ...Object.keys(docRoles)])]
   const roles: Record<string, RoleLimitDraft> = {}
   for (const role of roleNames) {
-    const row = isRecord(docRoles[role]) ? docRoles[role] : {}
-    roles[role] = { maxParallel: decodeLimit(row, 'maxParallel'), maxQueued: decodeLimit(row, 'maxQueued') }
+    const rowValue = ownValue(docRoles, role)
+    const row = isRecord(rowValue) ? rowValue : {}
+    setOwn(roles, role, { maxParallel: decodeLimit(row, 'maxParallel'), maxQueued: decodeLimit(row, 'maxQueued') })
   }
   const draft: ConcurrencyDraft = {
     maxParallel: decodeLimit(doc, 'maxParallel'),
     maxQueued: decodeLimit(doc, 'maxQueued'),
     roles,
   }
-  if (typeof doc.mode === 'string') draft.mode = doc.mode
+  const mode = ownValue(doc, 'mode')
+  if (typeof mode === 'string') draft.mode = mode
   return draft
 }
 
@@ -85,7 +102,7 @@ export function overridesFromDraft(draft: ConcurrencyDraft): DispatchConcurrency
     const encoded: Record<string, number | null> = {}
     if (row.maxParallel.specified) encoded.maxParallel = row.maxParallel.value
     if (row.maxQueued.specified) encoded.maxQueued = row.maxQueued.value
-    if (Object.keys(encoded).length > 0) roles[role] = encoded
+    if (Object.keys(encoded).length > 0) setOwn(roles, role, encoded)
   }
   if (Object.keys(roles).length > 0) out.roles = roles
   return out
@@ -143,10 +160,11 @@ export function diffDrafts(draft: ConcurrencyDraft, saved: ConcurrencyDraft): Dr
   const diffs: DraftDiff[] = []
   pushDiff(diffs, 'maxParallel', 'Overall max parallel', draft.maxParallel, saved.maxParallel)
   pushDiff(diffs, 'maxQueued', 'Overall max queued', draft.maxQueued, saved.maxQueued)
-  const roles = [...Object.keys(draft.roles), ...Object.keys(saved.roles).filter((role) => !(role in draft.roles))]
+  const unspecifiedRow: RoleLimitDraft = { maxParallel: UNSPECIFIED, maxQueued: UNSPECIFIED }
+  const roles = [...new Set([...Object.keys(draft.roles), ...Object.keys(saved.roles)])]
   for (const role of roles) {
-    const left = draft.roles[role] ?? { maxParallel: UNSPECIFIED, maxQueued: UNSPECIFIED }
-    const right = saved.roles[role] ?? { maxParallel: UNSPECIFIED, maxQueued: UNSPECIFIED }
+    const left = (ownValue(draft.roles, role) as RoleLimitDraft | undefined) ?? unspecifiedRow
+    const right = (ownValue(saved.roles, role) as RoleLimitDraft | undefined) ?? unspecifiedRow
     pushDiff(diffs, `roles.${role}.maxParallel`, `${role} max parallel`, left.maxParallel, right.maxParallel)
     pushDiff(diffs, `roles.${role}.maxQueued`, `${role} max queued`, left.maxQueued, right.maxQueued)
   }
@@ -167,5 +185,5 @@ const SOURCE_LABELS: Record<string, string> = {
 
 /** Source badge text (D-5); an unknown source string is shown as itself rather than guessed. */
 export function sourceLabel(source: string): string {
-  return SOURCE_LABELS[source] ?? source
+  return Object.hasOwn(SOURCE_LABELS, source) ? SOURCE_LABELS[source] : source
 }

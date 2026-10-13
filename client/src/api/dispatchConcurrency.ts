@@ -113,7 +113,7 @@ export interface DispatchConcurrencyProjectDto {
 export type DispatchConcurrencyScopeDto = DispatchConcurrencyGlobalDto | DispatchConcurrencyProjectDto
 
 export function isProjectScope(dto: DispatchConcurrencyScopeDto): dto is DispatchConcurrencyProjectDto {
-  return 'projectId' in dto
+  return Object.hasOwn(dto, 'projectId')
 }
 
 export interface DispatchConcurrencyRevisionDto {
@@ -154,14 +154,17 @@ export interface PutDispatchConcurrencyRequest extends PutDispatchConcurrencyInp
 const HISTORY_LIMIT = 10
 
 function scopePath(projectId: string | null | undefined): string {
-  return projectId ? `/projects/${projectId}/dispatch-concurrency` : '/dispatch-concurrency'
+  return projectId ? `/projects/${encodeURIComponent(projectId)}/dispatch-concurrency` : '/dispatch-concurrency'
 }
 
-/** Every key shares the `dispatchConcurrency` prefix so one invalidation reaches all of them. */
+/**
+ * Every key shares the `dispatchConcurrency` prefix so one invalidation reaches all of them. The
+ * global scope is `null`, not a sentinel string, so no project id can share its cache entry.
+ */
 export const dispatchConcurrencyKeys = {
   all: ['dispatchConcurrency'] as const,
-  scope: (projectId: string | null | undefined) => ['dispatchConcurrency', 'scope', projectId ?? 'global'] as const,
-  revisions: (projectId: string | null | undefined) => ['dispatchConcurrency', 'revisions', projectId ?? 'global'] as const,
+  scope: (projectId: string | null | undefined) => ['dispatchConcurrency', 'scope', projectId || null] as const,
+  revisions: (projectId: string | null | undefined) => ['dispatchConcurrency', 'revisions', projectId || null] as const,
 }
 
 export function useDispatchConcurrency(projectId?: string | null) {
