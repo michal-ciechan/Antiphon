@@ -64,10 +64,12 @@ tracked-file count and clean status. Preserve original checkpoint lines in the e
 | CP-1 | S2 | `tests/Antiphon.Tests -> bin-c971-base/` | nested-baseline | `/*/*/LandRecoveryIgnoredNestedRepositoryTests/*` | V-1..V-9 | V-1 intentional assertion failure; every refusal control green | 15 | 4 | true |
 | CP-2 | S3 | `tests/Antiphon.Tests -> bin-c971-final/` | nested-final | `/*/*/LandRecoveryIgnoredNestedRepositoryTests/*` | V-1..V-9 | all listed, 0 failed/skipped | 15 | 4 | true |
 | CP-3 | S3 | CP-2 | checkout-proof | `/*/*/LandRecoveryCheckoutTests/*` | R-1 | all listed, 0 failed | 12 | 2 | true |
-| CP-4 | S3 | CP-2 | ignored-obstructions | `/*/*/LandRecoveryIgnoredObstructionTests/*` | R-2 | all listed, 0 failed; Windows alias rows skip on Linux | 6 | 2 | true |
+| CP-4 | S3 | CP-2 | ignored-obstructions | `/*/*/LandRecoveryIgnoredObstructionTests/*` | R-2 | all 5 Linux cases, 0 failed; 2 Windows alias rows skip on Linux | 5 | 2 | true |
 | CP-5 | S3 | CP-2 | registration-proof | `/*/*/LandingRegistrationFreshnessTests/*` | R-3 | all listed, 0 failed/skipped | 4 | 2 | true |
 | CP-6 | S3 | CP-2 | half-reset-publication | `/*/*/AgentTaskLandHalfResetTests/*` | R-4 | all listed, 0 failed/skipped | 20 | 6 | true |
 | CP-7 | S3 | CP-2 | final-unit | `/*/*/*/*[Category=Unit]` | R-5 | >= 1 executed, 0 failed | 1 | 8 | true |
+| CP-8 | S4 | `tests/Antiphon.Tests -> bin-c971-inherited/` | base-channel-contract | `/*/*/ChannelOutboundContractTests/Server_and_gateway_keep_source_and_transport_boundaries` | R-5 finding 1 | 1 executed; confirm observed assertion failure at original base | 1 | 4 | true |
+| CP-9 | S4 | CP-8 | base-grok-pin | `/*/*/GrokRunnerImageContractTests/Qualified_pin_agrees_with_install_assertion_docs_fixtures_and_verifiers` | R-5 finding 2 | 1 executed; confirm observed assertion failure at original base | 1 | 1 | true |
 
 Higher-priority Final stage contract requires R-5 despite the brief's narrower Unit exclusion.
 Named integration classes bound this Git-only impact. No unbounded integration class or assembly
@@ -79,9 +81,42 @@ this infrastructure build is reported separately from the test manifest builds.
 
 PC-1: exact method `C971_NestedRepositoryMatrix`, variant ignored -> restore trailing-slash refusal.
 PC-2: same method, nonignored/dirty/symlink/lookalike -> remove outer untracked refusal.
-PC-3: same method, gitlink -> remove gitlink mode refusal.
+PC-3: same method, gitlink -> accept gitlink before unsupported index/tree/blob checks.
 PC-4: same method, git-file -> permit `.git` file.
 PC-5: `C971_IgnoredNestedRepositoryCollision`, exact/parent/child -> skip collision checks.
 PC-6: `C971_IgnoredNestedRepositoryEvidenceRefused`, ignore/tracked/git-symlink -> accept unknown evidence.
 All PCs/variants pending method-scoped SourceLanding Mutation; no Code green discharges them.
 Restart: none. Next stage: Review; caller lands original Code task then commissions Mutation.
+
+## Verification findings / S4
+
+CP-1 corrected baseline: 15 executed, 14 passed, only `N.ignored.ExpectedProof`
+failed (True expected, False observed); every refusal control green. Production
+`LandingGit.cs` was identical to original master at that test-only commit.
+CP-2..CP-6: 116 passed, 2 Windows-only skips at implementation SHA
+`8af6e504024f88fe05c70652264b3e8819bfe13d`.
+CP-4's original Min=6 mistakenly counted a Windows-only method as Linux-executed.
+Fresh TRX proves exactly 5 passes + 2 Windows skips across the whole class. S4
+corrects the arithmetic to 5; selection and source assertions are unchanged.
+Rerun CP-4 at S4 committed HEAD. This is a manifest repair, not an assertion relaxation.
+
+CP-7 timed out at its unchanged 24-minute deadline without TRX. R-5 remains incomplete;
+no Unit counts or full ordinary-scope pass may be claimed. Console observed two failures:
+`ChannelOutboundContractTests.Server_and_gateway_keep_source_and_transport_boundaries`
+(missing "configured channel step"), and
+`GrokRunnerImageContractTests.Qualified_pin_agrees_with_install_assertion_docs_fixtures_and_verifiers`
+(installed.Success False). CP-8/CP-9 run only those exact methods in a detached checkout
+at original base `02275c3ba8ec6969a6c7bbec8dbe48609367d045`, using this committed
+plan by absolute path and expected source SHA equal to that base. This adds no repairs
+outside CARD-0971. Retain base-confirmation receipts externally in the task's ignored
+checkpoint root; never commit in the detached baseline checkout.
+
+Async dump identifies a live wait in
+`RemoteScriptContractTests.C983_Required_jq_driver_rejects_successful_false_probe`
+via `C983Fixture.Run -> Process.WaitForExitAsync`, with tests queued behind a semaphore.
+This identifies the sampled wait, not a proven root cause or inherited hang.
+Stack/dump tooling was installed through the slot gate for diagnosis only; no tests or
+assertions were altered. Required next stage stays Code while R-5 is incomplete.
+Continuation must complete the original Unit scope and confirm/triage the sampled script
+case using bounded committed checkpoint selections. Never widen the existing deadline.
+All PCs remain pending for SourceLanding Mutation after ordinary Code, Review and land.
