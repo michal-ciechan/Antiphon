@@ -436,6 +436,117 @@ public sealed class RemoteScriptContractTests
         Fact(output, "audit").ShouldBe("1", "unknown\n" + output);
     }
 
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1208_Wrong_cidfile_preserves_foreign_container()
+    {
+        var output = C1192Run("deletion-audit", "wrong-cid");
+        Fact(output, "finalization-exit").ShouldBe("2", output);
+        Fact(output, "deletion-count").ShouldBe("0", output);
+        Fact(output, "residue").ShouldBe("1", output);
+        Fact(output, "owned-survived").ShouldBe("1", output);
+        Fact(output, "foreign-survived").ShouldBe("1", output);
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1208_Recorded_id_with_changed_labels_is_untouched()
+    {
+        var output = C1192Run("deletion-audit", "changed-labels");
+        Fact(output, "finalization-exit").ShouldBe("2", output);
+        Fact(output, "deletion-count").ShouldBe("0", output);
+        Fact(output, "residue").ShouldBe("1", output);
+        Fact(output, "owned-survived").ShouldBe("1", output);
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1208_Recorded_container_inspect_failure_refuses_cleanup()
+    {
+        var output = C1192Run("deletion-audit", "id-inspect-failure");
+        Fact(output, "finalization-exit").ShouldBe("2", output);
+        Fact(output, "deletion-count").ShouldBe("0", output);
+        Fact(output, "residue").ShouldBe("1", output);
+        Fact(output, "owned-survived").ShouldBe("1", output);
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1208_Wrong_helper_id_preserves_foreign_container()
+    {
+        var output = C1192Run("deletion-audit", "wrong-helper-id");
+        Fact(output, "finalization-exit").ShouldBe("2", output);
+        Fact(output, "deletion-count").ShouldBe("0", output);
+        Fact(output, "residue").ShouldBe("1", output);
+        Fact(output, "owned-survived").ShouldBe("1", output);
+        Fact(output, "foreign-survived").ShouldBe("1", output);
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1208_Wrong_network_id_is_untouched()
+    {
+        var output = C1192Run("deletion-audit", "wrong-network-id");
+        Fact(output, "finalization-exit").ShouldBe("2", output);
+        Fact(output, "deletion-count").ShouldBe("0", output);
+        Fact(output, "residue").ShouldBe("1", output);
+        Fact(output, "network-survived").ShouldBe("1", output);
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1208_Recorded_network_inspect_failure_refuses_cleanup()
+    {
+        var output = C1192Run("deletion-audit", "network-id-inspect-failure");
+        Fact(output, "finalization-exit").ShouldBe("2", output);
+        Fact(output, "deletion-count").ShouldBe("0", output);
+        Fact(output, "residue").ShouldBe("1", output);
+        Fact(output, "network-survived").ShouldBe("1", output);
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1208_Owned_packages_registration_survives_production_controls()
+    {
+        var output = C1192Run("deletion-audit", "owned-volume-controls");
+        Fact(output, "registered-after-controls").ShouldBe("1", output);
+        Fact(output, "finalization-exit").ShouldBe("0", output);
+        Fact(output, "volume-survived").ShouldBe("0", output);
+        Fact(output, "removal-recorded").ShouldBe("1", output);
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1208_Dangling_network_record_retains_residue()
+    {
+        var output = C1192Run("deletion-audit", "dangling-network-record");
+        Fact(output, "finalization-exit").ShouldBe("2", output);
+        Fact(output, "record-retained").ShouldBe("1", output);
+        Fact(output, "residue").ShouldBe("1", output);
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1208_Invalid_network_record_retains_text()
+    {
+        var output = C1192Run("deletion-audit", "invalid-network-record");
+        Fact(output, "finalization-exit").ShouldBe("2", output);
+        Fact(output, "record-retained").ShouldBe("1", output);
+        Fact(output, "residue").ShouldBe("1", output);
+        Fact(output, "record-text-residue").ShouldBe("1", output);
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1208_Confirmed_absent_network_record_is_cleared()
+    {
+        var output = C1192Run("deletion-audit", "absent-network-record");
+        Fact(output, "finalization-exit").ShouldBe("0", output);
+        Fact(output, "record-retained").ShouldBe("0", output);
+        Fact(output, "residue").ShouldBe("0", output);
+        Fact(output, "absence-receipt").ShouldBe("1", output);
+    }
+
     private static void C1192AssertCleanupProbe(string boundary)
     {
         var output = C1192Run("cleanup-probe", boundary);
