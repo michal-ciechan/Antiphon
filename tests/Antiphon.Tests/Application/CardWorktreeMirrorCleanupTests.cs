@@ -70,8 +70,12 @@ public sealed class CardWorktreeMirrorCleanupTests
                 if (vector == "consumer") db.AgentTasks.Add(new AgentTask { Id = Guid.NewGuid(), Title = "consumer", Goal = "fixture", Status = AgentTaskStatus.Working,
                     Workspace = WorkspaceMode.Worktree, WorktreePath = f.Mirror, WorktreeBranch = f.Binding.SourceFullRef, CreatedAt = DateTime.UtcNow });
                 if (vector == "recovery") db.AgentTaskLandRequests.Add(new AgentTaskLandRequest { Id = Guid.NewGuid(), TaskId = f.Card.TaskId, IsPending = true, RequestedAt = DateTime.UtcNow });
-                if (vector == "store") await db.CardWorktreeCleanupEndpoints.Where(e => e.Id == f.EndpointId)
-                    .ExecuteUpdateAsync(s => s.SetProperty(e => e.RunnerStoreId, Guid.NewGuid().ToString("D")));
+                if (vector == "store")
+                {
+                    var replacementStore = Guid.NewGuid().ToString("D");
+                    await db.CardWorktreeCleanupEndpoints.Where(e => e.Id == f.EndpointId)
+                        .ExecuteUpdateAsync(s => s.SetProperty(e => e.RunnerStoreId, replacementStore));
+                }
                 await db.SaveChangesAsync();
             }
             await f.HeldAsync(reason);
@@ -89,7 +93,7 @@ public sealed class CardWorktreeMirrorCleanupTests
             var task = await f.TaskAsync();
             if (vector == "missing") File.Delete(task.ResultFilePath!);
             if (vector == "truncated") await File.WriteAllTextAsync(task.ResultFilePath!, "truncated");
-            if (vector == "inside") { var path = Path.Combine(f.Mirror, ".antiphon", "task.md"); await File.WriteAllTextAsync(path, task.Result); await f.Card.ChangeTaskAsync(t => t.ResultFilePath = path); }
+            if (vector == "inside") { var path = Path.Combine(f.Mirror, ".antiphon", "checkpoints", "canonical.trx"); await File.WriteAllTextAsync(path, task.Result); await f.Card.ChangeTaskAsync(t => t.ResultFilePath = path); }
             if (vector == "deliverable") await f.Card.ChangeTaskAsync(t => t.DeliverablePath = f.Sentinel);
             if (vector == "remote-report") await File.WriteAllTextAsync(Path.Combine(f.Mirror, ".antiphon", "task-" + task.Id.ToString("N")[..8] + ".md"), "remote-only report");
             if (vector == "changed-pointer") f.BeforeIntent = async _ => await f.Card.ChangeTaskAsync(t => t.DeliverablePath = f.Sentinel);
