@@ -1753,9 +1753,10 @@ public partial class AgentTaskDispatchBaseGuardTests
         TimeProvider? clock = null,
         int? maxCandidates = null,
         int? maxGitCommands = null,
-        ISessionRunnerDirectory? runners = null, bool? cardBranchNames = null)
+        ISessionRunnerDirectory? runners = null, bool? cardBranchNames = null, IVerificationWorkspaceDirectory? verificationWorkspaces = null)
     {
         var services = new ServiceCollection();
+        if (verificationWorkspaces is not null) services.AddSingleton(verificationWorkspaces);
         services.AddLogging();
         if (git is not null) services.AddSingleton(git);
         if (onLeaseAcquired is not null)
