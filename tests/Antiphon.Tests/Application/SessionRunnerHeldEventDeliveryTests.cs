@@ -257,6 +257,197 @@ public class SessionRunnerHeldEventDeliveryTests
         await Task.WhenAll(h.ScopeDisposals).WaitAsync(TimeSpan.FromSeconds(5));
     }
 
+    [Test]
+    [Timeout(30_000)]
+    [Arguments(false, "host", "invalid", false)]
+    [Arguments(false, "host", "independent", true)]
+    [Arguments(false, "host", "host", false)]
+    [Arguments(false, "host", "delivery", false)]
+    [Arguments(false, "host", "aggregate", false)]
+    [Arguments(false, "host", "custom", false)]
+    [Arguments(false, "host", "none", true)]
+    [Arguments(false, "deadline", "invalid", false)]
+    [Arguments(false, "deadline", "independent", true)]
+    [Arguments(false, "deadline", "host", false)]
+    [Arguments(false, "deadline", "delivery", false)]
+    [Arguments(false, "deadline", "aggregate", false)]
+    [Arguments(false, "deadline", "custom", false)]
+    [Arguments(false, "deadline", "none", true)]
+    [Arguments(false, "none", "invalid", false)]
+    [Arguments(false, "none", "independent", true)]
+    [Arguments(false, "none", "host", false)]
+    [Arguments(false, "none", "delivery", false)]
+    [Arguments(false, "none", "aggregate", false)]
+    [Arguments(false, "none", "custom", false)]
+    [Arguments(false, "none", "none", true)]
+    [Arguments(true, "host", "invalid", true)]
+    [Arguments(true, "host", "independent", true)]
+    [Arguments(true, "host", "host", true)]
+    [Arguments(true, "host", "delivery", true)]
+    [Arguments(true, "host", "aggregate", true)]
+    [Arguments(true, "host", "custom", true)]
+    [Arguments(true, "host", "none", true)]
+    [Arguments(true, "deadline", "invalid", true)]
+    [Arguments(true, "deadline", "independent", true)]
+    [Arguments(true, "deadline", "host", true)]
+    [Arguments(true, "deadline", "delivery", true)]
+    [Arguments(true, "deadline", "aggregate", true)]
+    [Arguments(true, "deadline", "custom", true)]
+    [Arguments(true, "deadline", "none", true)]
+    [Arguments(true, "none", "invalid", true)]
+    [Arguments(true, "none", "independent", true)]
+    [Arguments(true, "none", "host", true)]
+    [Arguments(true, "none", "delivery", true)]
+    [Arguments(true, "none", "aggregate", true)]
+    [Arguments(true, "none", "custom", true)]
+    [Arguments(true, "none", "none", true)]
+    public async Task C1205_Settled_callback_classification_table(
+        bool catchupThrows, string timing, string kind, bool expectedCallbackLog)
+    {
+        // T57 / PC-183..186. Literal expectations cover the 24 Review controls/failures
+        // and tokenless/no-cancellation cells. Actual callback and real iterator execute.
+        await using var h = new DeliveryHarness(blockCallback: true, successfulList: !catchupThrows);
+        Exception? callbackFault = null;
+        h.Bus.BeforeReturn = () =>
+        {
+            if (timing == "host") h.Host.Cancel();
+            if (timing == "deadline") h.Time.Advance(TimeSpan.FromSeconds(3));
+            callbackFault = CallbackException(kind, h.Bus.Token, h.Host.Token);
+            throw callbackFault;
+        };
+        var delivery = h.RunHeldAsync();
+        await h.Handler.SecondListEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        h.Handler.FailList.TrySetResult();
+        Exception? observed = null;
+        try { await delivery.WaitAsync(TimeSpan.FromSeconds(5)); }
+        catch (Exception ex) { observed = ex; }
+        callbackFault.ShouldNotBeNull();
+        observed.ShouldBeSameAs(catchupThrows ? h.Handler.CatchupFault : callbackFault);
+        observed!.StackTrace.ShouldContain(catchupThrows ? nameof(DeliveryHandler)
+            : nameof(C1205_Settled_callback_classification_table));
+        h.Log.Exceptions.Contains(callbackFault).ShouldBe(expectedCallbackLog,
+            "literal table expectation for original callback warning");
+        h.Log.Lines.Count(line => line.Contains("Held live event delivery abandoned")).ShouldBe(0);
+        h.Bus.Attempts.ShouldBe(1);
+        h.Bus.Accepted.ShouldBe(0);
+        h.Handler.Stream.Disposed.ShouldBeTrue();
+        await Task.WhenAll(h.ScopeDisposals).WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Test]
+    [Timeout(30_000)]
+    [Arguments(false, "host", "invalid", true)]
+    [Arguments(false, "host", "independent", true)]
+    [Arguments(false, "host", "host", false)]
+    [Arguments(false, "host", "delivery", false)]
+    [Arguments(false, "host", "aggregate", true)]
+    [Arguments(false, "host", "custom", true)]
+    [Arguments(false, "host", "none", true)]
+    [Arguments(false, "host", "completed", false)]
+    [Arguments(false, "deadline", "invalid", true)]
+    [Arguments(false, "deadline", "independent", true)]
+    [Arguments(false, "deadline", "host", true)]
+    [Arguments(false, "deadline", "delivery", true)]
+    [Arguments(false, "deadline", "aggregate", true)]
+    [Arguments(false, "deadline", "custom", true)]
+    [Arguments(false, "deadline", "none", true)]
+    [Arguments(false, "deadline", "completed", false)]
+    [Arguments(true, "host", "invalid", true)]
+    [Arguments(true, "host", "independent", true)]
+    [Arguments(true, "host", "host", false)]
+    [Arguments(true, "host", "delivery", false)]
+    [Arguments(true, "host", "aggregate", true)]
+    [Arguments(true, "host", "custom", true)]
+    [Arguments(true, "host", "none", true)]
+    [Arguments(true, "host", "completed", false)]
+    [Arguments(true, "deadline", "invalid", true)]
+    [Arguments(true, "deadline", "independent", true)]
+    [Arguments(true, "deadline", "host", true)]
+    [Arguments(true, "deadline", "delivery", true)]
+    [Arguments(true, "deadline", "aggregate", true)]
+    [Arguments(true, "deadline", "custom", true)]
+    [Arguments(true, "deadline", "none", true)]
+    [Arguments(true, "deadline", "completed", false)]
+    public async Task C1205_Late_callback_classification_table(
+        bool catchupThrows, string timing, string kind, bool expectedCallbackLog)
+    {
+        // T58 / PC-187..189. Join the observer's scope before checking warnings,
+        // so an absent log is deterministic rather than a log-barrier timeout.
+        await using var h = new DeliveryHarness(blockCallback: true, successfulList: !catchupThrows);
+        var delivery = h.RunHeldAsync();
+        await h.Handler.SecondListEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        h.Handler.FailList.TrySetResult();
+        await h.Bus.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        if (timing == "host") h.Host.Cancel();
+        else h.Time.Advance(TimeSpan.FromSeconds(3));
+        Exception? observed = null;
+        try { await delivery.WaitAsync(TimeSpan.FromSeconds(5)); }
+        catch (Exception ex) { observed = ex; }
+        if (catchupThrows) observed.ShouldBeSameAs(h.Handler.CatchupFault);
+        else if (timing == "host") observed.ShouldBeOfType<OperationCanceledException>();
+        else observed.ShouldBeOfType<TimeoutException>(); // Unchanged T53 reconnect signal.
+        h.Log.Lines.Count(line => line.Contains("Held live event delivery abandoned")).ShouldBe(1);
+        h.Handler.Stream.Disposed.ShouldBeTrue();
+        h.Bus.Release.Task.IsCompleted.ShouldBeFalse();
+        Exception? lateFault = null;
+        if (kind == "completed") h.Bus.Release.TrySetResult();
+        else
+        {
+            lateFault = CallbackException(kind, h.Bus.Token, h.Host.Token);
+            h.Bus.Release.TrySetException(lateFault);
+        }
+        await Task.WhenAll(h.ScopeDisposals).WaitAsync(TimeSpan.FromSeconds(5));
+        h.Log.Exceptions.Any(ex => ReferenceEquals(ex, lateFault)).ShouldBe(expectedCallbackLog,
+            "literal table expectation for original late callback warning");
+        if (expectedCallbackLog) h.Log.LateFaultException.ShouldBeSameAs(lateFault);
+        h.Bus.Attempts.ShouldBe(1);
+        h.Bus.Accepted.ShouldBe(0);
+    }
+
+    [Test]
+    [Timeout(30_000)]
+    [Arguments(false, "host")]
+    [Arguments(true, "host")]
+    [Arguments(false, "deadline")]
+    [Arguments(true, "deadline")]
+    public async Task C1205_Completed_callback_wins_cancelled_wait(bool catchupThrows, string timing)
+    {
+        // T59 / PC-190. Settle successfully before the bound is observed.
+        await using var h = new DeliveryHarness(blockCallback: true, successfulList: !catchupThrows);
+        h.Bus.BeforeReturn = () =>
+        {
+            h.Bus.Release.TrySetResult();
+            if (timing == "host") h.Host.Cancel();
+            else h.Time.Advance(TimeSpan.FromSeconds(3));
+        };
+        var delivery = h.RunHeldAsync();
+        await h.Handler.SecondListEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        h.Handler.FailList.TrySetResult();
+        Exception? observed = null;
+        try { await delivery.WaitAsync(TimeSpan.FromSeconds(5)); }
+        catch (Exception ex) { observed = ex; }
+        observed.ShouldBeSameAs(catchupThrows ? h.Handler.CatchupFault : null);
+        h.Log.Lines.Count(line => line.Contains("Held live event delivery abandoned")).ShouldBe(0);
+        h.Bus.Attempts.ShouldBe(1);
+        h.Handler.Stream.Disposed.ShouldBeTrue();
+        await Task.WhenAll(h.ScopeDisposals).WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    private static Exception CallbackException(string kind, CancellationToken delivery, CancellationToken host) => kind switch
+    {
+        "invalid" => new InvalidOperationException("original callback fault"),
+        "independent" => new OperationCanceledException("independent callback cancellation", new CancellationToken(true)),
+        "host" => new OperationCanceledException("host callback cancellation", host),
+        "delivery" => new OperationCanceledException("delivery callback cancellation", delivery),
+        "none" => new OperationCanceledException("tokenless callback cancellation"),
+        "aggregate" => new AggregateException("aggregate callback fault", new InvalidOperationException("inner")),
+        "custom" => new HeldCallbackException("custom callback fault"),
+        _ => throw new ArgumentOutOfRangeException(nameof(kind))
+    };
+
+    private sealed class HeldCallbackException(string message) : Exception(message);
+
+
     private sealed class DeliveryHarness : IAsyncDisposable
     {
         private readonly ServiceProvider _services;
