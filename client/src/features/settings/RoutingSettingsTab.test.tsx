@@ -273,11 +273,17 @@ describe('RoutingSettingsTab', () => {
       return HttpResponse.json(chain('Hard', { role: 'Mutation' }))
     }))
     renderWithProviders(<RoutingSettingsTab />)
-    await userEvent.click(await screen.findByRole('button', { name: 'Configure Mutation / Hard' }))
-    await userEvent.click(screen.getByRole('button', { name: 'Add candidate' }))
-    await userEvent.click(screen.getByRole('button', { name: 'Save' }))
+    // The Mutation cell exists only after the list and then the Mutation effective query load;
+    // await that cheap testid, then scope the role lookup to the cell. A whole-document findByRole
+    // here re-scanned the full tab on every poll and spent its 1 s budget under load (CARD-0097 D2).
+    const mutationHard = await screen.findByTestId('routing-matrix-cell-Mutation-Hard')
+    await userEvent.click(within(mutationHard).getByRole('button', { name: 'Configure Mutation / Hard' }))
+    const editor = await screen.findByTestId('routing-cell-editor')
+    await userEvent.click(within(editor).getByRole('button', { name: 'Add candidate' }))
+    await userEvent.click(within(editor).getByRole('button', { name: 'Save' }))
     await waitFor(() => expect(put).toHaveBeenCalledTimes(1))
     expect(put).toHaveBeenCalledWith('Mutation', expect.objectContaining({ provenance: 'Human' }))
+    await screen.findByTestId('routing-pin-banner-Code')
     expect(screen.getByTestId('routing-matrix-row-Code')).toHaveTextContent('Required Human pin: Code')
   })
 
@@ -287,7 +293,7 @@ describe('RoutingSettingsTab', () => {
     renderWithProviders(<RoutingSettingsTab />)
     expect(await screen.findByRole('heading', { name: 'Role × complexity matrix' })).toBeInTheDocument()
     expect(await screen.findByText(/Could not load runner defaults/)).toBeInTheDocument()
-    expect(screen.getByTestId('routing-matrix-row-Code')).toBeInTheDocument()
+    expect(await screen.findByTestId('routing-matrix-row-Code')).toBeInTheDocument()
   })
 
   it('renders the three headed sections with availability, usage, and the matrix', async () => {
@@ -331,7 +337,7 @@ describe('RoutingSettingsTab', () => {
     expect(within(planRow).getByText('Plan')).toBeInTheDocument()
     expect(within(codeRow).getByText('Code')).toBeInTheDocument()
 
-    const planHard = screen.getByTestId('routing-matrix-cell-Plan-Hard')
+    const planHard = await screen.findByTestId('routing-matrix-cell-Plan-Hard')
     expect(within(planHard).getByText('Own rule')).toBeInTheDocument()
     expect(within(planHard).getByText(/Codex\/Frontier \(gpt-6-astra\)/)).toBeInTheDocument()
 
@@ -347,7 +353,7 @@ describe('RoutingSettingsTab', () => {
     const planMedium = await screen.findByTestId('routing-matrix-cell-Plan-Medium')
     expect(within(planMedium).getByText('Inherits Any role')).toBeInTheDocument()
 
-    const codeHard = screen.getByTestId('routing-matrix-cell-Code-Hard')
+    const codeHard = await screen.findByTestId('routing-matrix-cell-Code-Hard')
     expect(within(codeHard).getByText('Configuration fallback')).toBeInTheDocument()
 
     const planEasy = screen.getByTestId('routing-matrix-cell-Plan-Easy')
@@ -375,7 +381,7 @@ describe('RoutingSettingsTab', () => {
     expect(within(codeRow).getByText(/bypasses the matrix cells for Code/)).toBeInTheDocument()
 
     const planRow = screen.getByTestId('routing-matrix-row-Plan')
-    expect(within(planRow).getByText(/Preferred Human pin: Plan → ClaudeCode\/Frontier/)).toBeInTheDocument()
+    expect(await within(planRow).findByText(/Preferred Human pin: Plan → ClaudeCode\/Frontier/)).toBeInTheDocument()
     expect(within(planRow).getByText(/prepends to the matrix candidates/)).toBeInTheDocument()
     expect(within(planRow).getByText(/falls through to this row/)).toBeInTheDocument()
   })
@@ -384,12 +390,15 @@ describe('RoutingSettingsTab', () => {
     serveRouting()
     renderWithProviders(<RoutingSettingsTab />)
 
+    // The card-pins list renders its empty state before the pins query answers; await the pin.
     const cardPins = await screen.findByTestId('routing-card-pins')
+    expect(await within(cardPins).findByText(/CARD-0332/)).toBeInTheDocument()
     expect(within(cardPins).getByText('Card-specific pins')).toBeInTheDocument()
     expect(within(cardPins).getByText(CARD_PIN_SCOPE)).toBeInTheDocument()
-    expect(within(cardPins).getByText(/CARD-0332/)).toBeInTheDocument()
     expect(within(cardPins).getByText(/Applies only to this card, not to every Code task/)).toBeInTheDocument()
 
+    // The absence checks below only mean something once the Code row has rendered its pins.
+    await screen.findByTestId('routing-pin-banner-Code')
     const codeRow = screen.getByTestId('routing-matrix-row-Code')
     expect(within(codeRow).queryByText(/CARD-0332/)).not.toBeInTheDocument()
     expect(within(codeRow).queryByText(/not to every Code task/)).not.toBeInTheDocument()
@@ -457,7 +466,7 @@ describe('RoutingSettingsTab', () => {
     expect(await screen.findByText('Could not load Plan effective cells.')).toBeInTheDocument()
     expect(screen.getByTestId('routing-matrix-row-any')).toBeInTheDocument()
     const codeRow = await screen.findByTestId('routing-matrix-row-Code')
-    expect(within(codeRow).getByText('Configuration fallback')).toBeInTheDocument()
+    expect(await within(codeRow).findByText('Configuration fallback')).toBeInTheDocument()
     expect(screen.queryByTestId('routing-matrix-cell-Plan-Hard')).not.toBeInTheDocument()
   })
 
