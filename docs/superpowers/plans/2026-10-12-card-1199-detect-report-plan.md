@@ -30,7 +30,11 @@ Closed scope overrides broad Unit profile per repair brief. Linux only. One isol
 | CP-8 | S2 | CP-1 | hanging-git-third | `/*/*/OutputCleanupTests/hanging_git_is_refused_and_killed_within_the_bound*` | R-3 | 1 passed | 1 | 1 |
 | CP-9 | S2 | CP-1 | row-runner | `/*/*/RowRunnerTests/*` | R-1 V-3 | full 13 cases, 0 failed/skipped | 13 | 1 |
 | CP-10 | S2 | CP-1 | required-script-receipt | `/*/*/CheckpointTrackedBaselineTests/passing_script_requires_writable_source_receipt*` | V-3 F2 | missing receipt is nonzero | 1 | 2 |
-| CP-11 | S2 | CP-1 | receipt-and-source-regression | `/*/*/(ReportWriterTests*\|CheckpointSourceStateTests*\|CheckpointSourceExecutionTests*\|EvidenceFolderTests*)/*` | V-3 R-1 | full affected receipt/source classes; Windows sharing case disclosed under R-2 | 1 | 3 |
+| CP-11 | S2 | CP-1 | receipt-and-source-regression | `/*/*/(ReportWriterTests*\|CheckpointSourceStateTests*\|CheckpointSourceExecutionTests*\|EvidenceFolderTests*)/*` | V-3 R-1 | full affected receipt/source classes; Windows sharing case disclosed under R-2 | 25 | 3 |
+
+| CP-12 | S4 | CP-1 | linux-fifo-receipts | `/*/*/CheckpointReceiptSafetyTests/linux_fifo_receipts_refuse_within_four_seconds*` | V-5 F1 | nine combinations promptly exit 2, Linux gated | 1 | 1 |
+| CP-13 | S4 | CP-1 | receipt-file-types | `/*/*/CheckpointReceiptSafetyTests/symlink_and_directory_receipts_refuse_within_four_seconds*` | V-5 F1 | eighteen combinations refuse, linked target unchanged | 1 | 1 |
+| CP-14 | S4 | CP-1 | receipt-json-shapes | `/*/*/CheckpointReceiptSafetyTests/malformed_collection_and_string_shapes_return_named_refusals*` | V-6 F2 | required collection/string shapes refuse; state unchanged | 1 | 2 |
 
 ### Mutation handoff
 
@@ -57,3 +61,13 @@ The uninterrupted full closed run at b4b281abff6830b9addf9b60ff15452014ddf668 pa
 This finish-line brief requires the complete CP-1..CP-11 manifest after S3, superseding the previous continuation's narrower rerun instruction. Budget: 60 minutes; no Unit lane or full assembly. Tests-first commit 06cc44d900ee71decbe08cc55d359ab122191813 supplied eligible merge source; its first run exposed a status fixture root error and is not credited as defect red. Commit 5de862c47e7bea2fa144d231a199a38fb9c4236a corrected the root. Its method-scoped CP-RED at 20261013-081424-7aa8 executed one case, failed one assertion: missing-md report-json returned 0 instead of required 2. Production remained unchanged. The S3 fix is cherry-picked from 5b58ed50bbb866d5f93eeb4b23a78b79ec180644; the already-proved local fixture is retained. Ordinary verification remains pending at this source slice. All PCs remain pending SourceLanding Mutation.
 
 Repair 13c Final completed at f58eae39576ce4e48719029ec12595715d07e3b6, run 20261013-082401-bb7d: CP-1..CP-11 recorded 204 passed, zero failed and one planned Windows sharing skip. All named classes and required methods had fresh TRX results; census 501 and chronological hanging-Git CP-1/7/8 passed. Strict receipt validation passed CP-1..CP-10; the full zero-skip validator correctly refused CP-11 (row_failed), whose source/build/digest/count facts were inspected separately without modifying its receipt. Separate wait exited 2 because a new process cannot delete the retained tool shadow copy; stored checkpoint verdict is GREEN, exit 0. Ordinary Linux verification is complete; R-2 and all SourceLanding Mutation controls remain pending. Full report and unedited checkpoint lines: .antiphon/task-b56c49d8.md. Next: ordinary Review, then caller landing and SourceLanding Mutation. Restart: none.
+
+### Repair 13d verification design
+
+Landing owner Code 6284d6ec-03f7-4a88-b9f5-12a601bfe017, branch feat/card-task-6284d6ec; repair base 77fc640757f1cd87f8d7d4e512053f65a84aaf1c. V-5: required state/report/build receipt reads inspect paths without following links, refuse nonregular files before open, and recheck opened handles; Linux open is nonblocking. V-6: deserialized collection/string shapes are validated before verb dereferences, missing required facts cannot hide behind defaults, and malformed input yields named exit 2. CP-RED selects the new full class with unchanged base production; CP-1..14 is Final closed scope, no Unit/full assembly. Original counts remain 204 passes plus Windows skip; additive rows total 207 passes plus that skip. Independent census is 504 (501 original plus three methods). Budget 50 minutes, expected two isolated builds (tests-first and fix) plus small tool bootstraps; no unbounded classes. R-2 and existing qualification limits remain pending.
+
+| PC | Detecting method/filter | Variant | Status |
+|---|---|---|---|
+| PC-1 | `/*/*/CheckpointReceiptSafetyTests/linux_fifo_receipts_refuse_within_four_seconds` | nine verb/path pairs; precheck or nonblocking-open removal | pending SourceLanding Mutation |
+| PC-2 | `/*/*/CheckpointReceiptSafetyTests/symlink_and_directory_receipts_refuse_within_four_seconds` | eighteen verb/path/type pairs; type/link guard removal | pending SourceLanding Mutation |
+| PC-3 | `/*/*/CheckpointReceiptSafetyTests/malformed_collection_and_string_shapes_return_named_refusals` | required field null/wrong-type/missing and element/empty variants; shape guard removal | pending SourceLanding Mutation |
