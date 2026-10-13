@@ -67,9 +67,9 @@ public sealed class CheckpointBuildBinding
     public static CheckpointBuildBinding Expected(string root, string project, string output,
         IReadOnlyList<string> properties, SourceObservation source) => new()
     {
-        RepositoryRoot = Path.GetFullPath(root),
-        Project = Path.GetFullPath(Path.Combine(root, project)),
-        OutputPath = Path.GetFullPath(Path.Combine(root, project, output)),
+        RepositoryRoot = NormalizeDirectory(root),
+        Project = NormalizeDirectory(Path.Combine(root, project)),
+        OutputPath = NormalizeDirectory(Path.Combine(root, project, output)),
         Properties = properties.Select(value => value["--property:".Length..]).Order(StringComparer.Ordinal).ToList(),
         Commit = source.Commit,
         Fingerprint = source.Fingerprint,
@@ -77,6 +77,16 @@ public sealed class CheckpointBuildBinding
     };
 
     public string PathName => Path.Combine(OutputPath, "checkpoint-build-source.json");
+
+    public static string NormalizeDirectory(string path)
+    {
+        var full = Path.GetFullPath(path);
+        // Preserve filesystem roots, including drive and UNC roots, while removing
+        // all optional trailing separators from ordinary directory paths.
+        return full.Length > Path.GetPathRoot(full)!.Length
+            ? full.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+            : full;
+    }
 
     public string Check()
     {
@@ -86,9 +96,9 @@ public sealed class CheckpointBuildBinding
             var actual = JsonSerializer.Deserialize<CheckpointBuildBinding>(File.ReadAllText(PathName), CheckpointApp.Json);
             if (actual is null || actual.Version != 1) return "mismatch";
             var rootComparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
-            if (!string.Equals(actual.RepositoryRoot, RepositoryRoot, rootComparison) ||
-                !string.Equals(actual.Project, Project, rootComparison) ||
-                !string.Equals(actual.OutputPath, OutputPath, rootComparison) ||
+            if (!string.Equals(NormalizeDirectory(actual.RepositoryRoot), NormalizeDirectory(RepositoryRoot), rootComparison) ||
+                !string.Equals(NormalizeDirectory(actual.Project), NormalizeDirectory(Project), rootComparison) ||
+                !string.Equals(NormalizeDirectory(actual.OutputPath), NormalizeDirectory(OutputPath), rootComparison) ||
                 actual.Commit != Commit || actual.Fingerprint != Fingerprint || actual.SourceState != SourceState ||
                 !actual.Properties.SequenceEqual(Properties, StringComparer.Ordinal)) return "mismatch";
             return "verified";
