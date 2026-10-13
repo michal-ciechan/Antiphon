@@ -1309,3 +1309,11 @@ hold and PC-593 absent-report positive are specified in the repair selection.
 All are pending method-scoped SourceLanding Mutation, along with PC-588..590
 and every earlier PC and variant. Ordinary baseline red does not discharge PCs.
 Mutation must discover missing controls for individual pre-effect/replay checks.
+
+CP-32 additionally selects
+`/*/*/CompletedCardWorkspaceRemovalTests/C1032_RemovalEligiblePhysical*` (1).
+The old positive wrote unpreserved `task-deadbeef.md` bytes and expected removal.
+Report HOLD is now a separate lower/upper/mixed vector, and the eligible positive
+uses `complete.trx` with every physical deletion/receipt/ref assertion retained.
+Runner full-class count remains 144. PC-592 gains these exact recipient variants;
+PC-582 retains all four absent-authority variants. No assertion is loosened.

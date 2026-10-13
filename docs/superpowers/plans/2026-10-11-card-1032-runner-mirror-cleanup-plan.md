@@ -510,3 +510,8 @@ PC-591 recognition (case/shape variants), PC-592 late report (lower/upper/mixed)
 and PC-593 absent-report positive remain pending with every existing PC/variant.
 Mutation owns per-boundary missing-control discovery and deliberate mutants.
 Execution remains inert; no S8, deployment, restart or activation is commissioned.
+
+The S7 repair's CP-32 pins the affected S5 physical-positive recipe: remote task
+reports require HOLD because the command has no per-report preservation manifest;
+admitted TRX evidence still reaches real physical removal. Its full runner row
+remains 144 results. PC-582 and PC-592 variants remain pending.

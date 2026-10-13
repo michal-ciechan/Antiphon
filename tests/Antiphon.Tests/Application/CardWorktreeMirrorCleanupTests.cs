@@ -188,7 +188,7 @@ public sealed class CardWorktreeMirrorCleanupTests
         Directory.GetFiles(Path.Combine(f.Mirror, ".antiphon"), "*", SearchOption.TopDirectoryOnly).ShouldBeEmpty();
         await f.RemovedAsync();
     }
-    // case: committed intent observed before real socket send; reopen wins either side;
+    // case: reopen before intent blocks issuance; reopen after intent permits the issued command;
     // mutation: send inside admission transaction or revoke issued command; red: independent writer/receipt fails.
     [Test] public async Task C1032_AdmissionIntentOrdering()
     {
