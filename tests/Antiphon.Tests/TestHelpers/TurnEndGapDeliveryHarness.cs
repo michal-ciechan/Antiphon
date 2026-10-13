@@ -49,6 +49,8 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
     private CompletionNoteWorkHostedService? _worker;
     private EpochAdapter? _adapter;
     private readonly WorkerScopeGate _workerScopes = new();
+    private readonly ContinuationQueue _continuations = new();
+    public bool ConcurrentScopeBarriers { get; set; }
     private readonly CancellationTokenSource _stop = new(TimeSpan.FromSeconds(90));
     public List<Guid> Tasks { get; } = [];
     public Guid Id => World.CallerSessionId;
@@ -191,7 +193,8 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
         _worker = new CompletionNoteWorkHostedService(new ObservedScopes(World.Services.GetRequiredService<IServiceScopeFactory>(), _workerScopes),
             Flushes, World.Services.GetRequiredService<SpecialistFailureQueue>(), Clock,
             World.Services.GetRequiredService<ILogger<CompletionNoteWorkHostedService>>());
-        await _worker.StartAsync(Token);
+        if (ConcurrentScopeBarriers) await _worker.StartAsync(Token);
+        else await _continuations.InvokeAsync(() => _worker.StartAsync(Token));
         // The boot sweep has enumerated its durable work before its 15-minute wait.
         await Clock.WaitForTimerAsync(e => e.Action == "create" && e.DueTime >= TimeSpan.FromMinutes(14), after, Token);
         await JoinDeliveryAsync(WaitForQuiescenceAsync());
@@ -211,17 +214,27 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
         while (true)
         {
             Token.ThrowIfCancellationRequested();
-            var backstop = Clock.Events.LastOrDefault(e => e.Action == "create" && e.DueTime >= TimeSpan.FromMinutes(14));
-            var recoveryWaiting = backstop is not null && Clock.TimerStates[backstop.TimerId] != "dispose";
-            bool noHints;
-            lock (recoveryGate)
-                noHints = !(bool)recovery.GetType().GetField("_sweep", flags)!.GetValue(recovery)!
-                    && ((HashSet<Guid>)recovery.GetType().GetField("_tasks", flags)!.GetValue(recovery)!).Count == 0
-                    && ((Dictionary<Guid, DateTime>)recovery.GetType().GetField("_sessions", flags)!.GetValue(recovery)!).Count == 0;
-            if (pending.Count == 0 && noHints && recoveryWaiting && (_pump is null || _handler.Stream?.Quiescent == true)) return;
-            // This waits for owned work/state, never an elapsed-time absence window.
-            // Queue Complete is synchronous and has no observer hook; no timer is fabricated.
-            await Task.Yield();
+            bool Quiet()
+            {
+                var backstop = Clock.Events.LastOrDefault(e => e.Action == "create" && e.DueTime >= TimeSpan.FromMinutes(14));
+                var recoveryWaiting = backstop is not null && Clock.TimerStates[backstop.TimerId] != "dispose";
+                bool noHints;
+                lock (recoveryGate)
+                    noHints = !(bool)recovery.GetType().GetField("_sweep", flags)!.GetValue(recovery)!
+                        && ((HashSet<Guid>)recovery.GetType().GetField("_tasks", flags)!.GetValue(recovery)!).Count == 0
+                        && ((Dictionary<Guid, DateTime>)recovery.GetType().GetField("_sessions", flags)!.GetValue(recovery)!).Count == 0;
+                return pending.Count == 0 && noHints && recoveryWaiting && (_pump is null || _handler.Stream?.Quiescent == true);
+            }
+            if (ConcurrentScopeBarriers)
+            { if (Quiet()) return; await Task.Yield(); }
+            else
+            {
+                // Observe between owned continuations, never inside Complete's
+                // synchronous remove/re-enqueue publication. No delay is an oracle.
+                var observation = await _continuations.ObserveAsync(Quiet);
+                if (observation.Quiet) return;
+                await _continuations.WaitForProgressAsync(observation.Sequence, Token);
+            }
         }
     }
 
@@ -229,7 +242,7 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
     {
         _handler.ArmGap();
         _pump = ActivatorUtilities.CreateInstance<SessionRunnerEventPump>(World.Services);
-        await _pump.StartAsync(Token);
+        await _continuations.InvokeAsync(() => _pump.StartAsync(Token));
         await GapCaptured.WaitAsync(Token);
     }
 
@@ -331,6 +344,7 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
         await StopPumpAsync();
         if (_adapter is not null) await _adapter.DisposeAsync();
         if (World is not null) await World.DisposeAsync();
+        await _continuations.DisposeAsync();
         await Caller.DisposeAsync();
         _http.Dispose();
         _handler.Dispose();
@@ -374,7 +388,7 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
     {
         _handler.Drained = Signal();
         _pump = ActivatorUtilities.CreateInstance<SessionRunnerEventPump>(World.Services);
-        await _pump.StartAsync(Token);
+        await _continuations.InvokeAsync(() => _pump.StartAsync(Token));
         await JoinDeliveryAsync(_handler.Drained.Task);
     }
     public async Task KeepaliveAsync()
@@ -622,6 +636,53 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
             if (Interlocked.Increment(ref _entered) == 4) AllEntered.TrySetResult();
             Release.Task.GetAwaiter().GetResult();
         }
+    }
+
+    private sealed class ContinuationQueue : SynchronizationContext, IAsyncDisposable
+    {
+        private readonly Channel<(SendOrPostCallback Callback, object? State)> _queue = Channel.CreateUnbounded<(SendOrPostCallback, object?)>();
+        private readonly object _gate = new();
+        private TaskCompletionSource _changed = Signal();
+        private long _sequence;
+        private readonly Task _runner;
+        public ContinuationQueue() => _runner = Task.Run(RunAsync);
+        public override void Post(SendOrPostCallback callback, object? state)
+        { if (!_queue.Writer.TryWrite((callback, state))) throw new ObjectDisposedException(nameof(ContinuationQueue)); }
+        private async Task RunAsync()
+        {
+            await foreach (var item in _queue.Reader.ReadAllAsync())
+            {
+                SetSynchronizationContext(this);
+                try { item.Callback(item.State); }
+                finally
+                {
+                    SetSynchronizationContext(null);
+                    lock (_gate) { _sequence++; _changed.TrySetResult(); _changed = Signal(); }
+                }
+            }
+        }
+        public Task InvokeAsync(Func<Task> action)
+        {
+            var done = Signal();
+            Post(async _ => { try { await action(); done.TrySetResult(); } catch (Exception ex) { done.TrySetException(ex); } }, null);
+            return done.Task;
+        }
+        public Task<(bool Quiet, long Sequence)> ObserveAsync(Func<bool> read)
+        {
+            var done = new TaskCompletionSource<(bool, long)>(TaskCreationOptions.RunContinuationsAsynchronously);
+            Post(_ => { try { lock (_gate) done.TrySetResult((read(), _sequence + 1)); } catch (Exception ex) { done.TrySetException(ex); } }, null);
+            return done.Task;
+        }
+        public async Task WaitForProgressAsync(long after, CancellationToken ct)
+        {
+            while (true)
+            {
+                Task changed;
+                lock (_gate) { if (_sequence > after) return; changed = _changed.Task; }
+                await changed.WaitAsync(ct);
+            }
+        }
+        public async ValueTask DisposeAsync() { _queue.Writer.TryComplete(); await _runner; }
     }
     private sealed class ObservedScopes(IServiceScopeFactory inner, WorkerScopeGate gate) : IServiceScopeFactory
     {
