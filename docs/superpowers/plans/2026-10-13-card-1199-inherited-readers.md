@@ -22,7 +22,7 @@ Whitespace identity scope: tool import/coverage and strict receipt consumers ref
 
 ## Repair 13j process-launch sweep
 
-Every Process.Start, ProcessStartInfo, new Process and Git/dotnet call-operator site in tools/Antiphon.Checkpoints, scripts/run-checkpoint.ps1, scripts/lib/checkpoint-*.ps1, the checkpoint verification scripts and tests/Antiphon.Tests/Checkpoints, at the repair 13j source. Origin is git blame against merge-base 6e36b695f9ead5f16e9bb05a7f4033cd0c432cf2. "Shared runner" means CheckpointProcessRunner with one deadline over config inspection, exit and both drains and Linux process-group kill; it is proved per site only by the named rows.
+The Process.Start, ProcessStartInfo, new Process and Git/dotnet call-operator sites repair 13j found in tools/Antiphon.Checkpoints, scripts/run-checkpoint.ps1, scripts/lib/checkpoint-*.ps1, the checkpoint verification scripts and tests/Antiphon.Tests/Checkpoints, at the repair 13j source. This list was not complete (Review 6b8368dc F2): it omitted scripts/verify-checkpoint-orphan-usage.ps1, scripts/test-run-checkpoint.ps1 and the BaselineComparer/GitWorktree Git requests. The repair 13k census below adds them and states the command that produced it. Origin is git blame against merge-base 6e36b695f9ead5f16e9bb05a7f4033cd0c432cf2. "Shared runner" means CheckpointProcessRunner with one deadline over config inspection, exit and both drains and Linux process-group kill; it is proved per site only by the named rows.
 
 | Site | Origin | Class | Bound / proof |
 | --- | --- | --- | --- |
@@ -42,6 +42,54 @@ Every Process.Start, ProcessStartInfo, new Process and Git/dotnet call-operator 
 | tools/Antiphon.Checkpoints/Slots/LeaseHolder.cs | master | slot holder launcher | not a reader |
 | tools/Antiphon.Checkpoints/Evidence/GitSnapshot.cs, HostSnapshot.cs | master | accepted diagnostic exclusion (above) | not certified |
 | scripts/test-checkpoint-stamp.ps1, test-checkpoint-bounded-reader.ps1, test-checkpoint-bounded-readers.mjs | CARD-1199 | test harness; fixture Git/dotnet stubs in scratch roots | enclosing test child watchdog (CP-18 four seconds, CP-21 node supervisor) |
-| tests/Antiphon.Tests/Checkpoints fixture launches (git init/add/commit, pwsh/dotnet/node harness children; CARD-added in CheckpointOutputConfinementTests, CheckpointShapeConflictTests, CheckpointStampSafetyTests, CheckpointTrackedBaselineTests, CheckpointOwnedOutputTests, CheckpointReceiptSafetyTests, CheckpointBoundedReaderTests, OutputCleanupTests, CheckpointTaskOwnershipTests, SafeDeleteProcessBoundaryTests) | CARD-1199 and master | test fixture children, not admitted readers; not routed through the shared runner | the CARD-added sites inspected in 13j wait under a test Timeout token, an explicit watchdog or a WaitForExit limit; master fixture sites were not re-audited, and a WaitForExit limit alone does not kill the child, so none is certified as descendant-custody bounded |
+| tests/Antiphon.Tests/Checkpoints fixture launches (git init/add/commit, pwsh/dotnet/node harness children; CARD-added in CheckpointOutputConfinementTests, CheckpointShapeConflictTests, CheckpointStampSafetyTests, CheckpointTrackedBaselineTests, CheckpointOwnedOutputTests, CheckpointReceiptSafetyTests, CheckpointBoundedReaderTests, OutputCleanupTests, CheckpointTaskOwnershipTests, SafeDeleteProcessBoundaryTests) | CARD-1199 and master | test fixture children, not admitted readers | superseded by the repair 13k fixture table below. The 13j wording was wrong: seven CARD-added sites read both redirected streams synchronously before WaitForExit, so a blocked child never reached that limit (Review 6b8368dc F1). |
 
 No bypass remains among admitted product readers in this list. The table makes no claim about launches outside these paths.
+
+## Repair 13k census and fixture qualification
+
+This replaces the 13j scope statement and the 13j fixture row (Review 6b8368dc F1/F2). It makes no universal claim beyond what the census command below prints. A reviewer can rerun the command at any SHA and compare the result line by line.
+
+Census command, run from the repository root. It matches every `Process.Start(`, `[Diagnostics.Process]::Start`, `ProcessStartInfo`, `new Process`, `Start-Process`, `DriverRequest(`, `new("git"|"dotnet"`, node `spawn`/`execFile`/`execSync`, a call operator before git/dotnet/pwsh/node/setsid, a bare `git -`/`dotnet -`/`pwsh -` statement, and `FileName =`:
+
+```sh
+git ls-files -- 'tools/Antiphon.Checkpoints/*.cs' 'scripts/*checkpoint*.ps1' 'scripts/*checkpoint*.mjs' \
+  'scripts/lib/*checkpoint*.ps1' 'scripts/lib/CheckpointProcessRunner.cs' 'tests/Antiphon.Tests/Checkpoints/*.cs' |
+  xargs grep -nE 'Process\.Start\(|Process\]::Start|ProcessStartInfo|new Process( |\(|\{|$)|Start-Process|DriverRequest\(|new\("(git|dotnet)"|spawn(Sync)?\(|execFile|execSync|& *(git|dotnet|pwsh|node|setsid)( |$)|(^|[(=|;] *)(git|dotnet|pwsh) +-|FileName *= *'
+```
+
+Origin of each hit: `git blame -L <line>,<line> --porcelain HEAD -- <file>`, then the hit is master when `git merge-base --is-ancestor <commit> 6e36b695f9ead5f16e9bb05a7f4033cd0c432cf2` succeeds, CARD otherwise. This classifies the matched line only. A file-level `git diff --numstat 6e36b695f..HEAD -- <file>` is recorded where a master expression sits in a CARD-changed file.
+
+Limits of the method: it finds launches spelled in these forms in these files. It does not find launches through other helpers or other files (for example DirectoryLinkHelper's `cmd.exe` is found; a launch hidden in an unlisted script is not). Strings passed to a shell (for example `git` inside a CheckpointShapeConflictTests project command) appear as hits, and the table classifies them by the launch that runs them.
+
+The census and the 13j table give the following. Rows marked "13k" were missing from 13j.
+
+| Site (census hits) | Origin | Class | Bound / limitation |
+| --- | --- | --- | --- |
+| scripts/verify-checkpoint-orphan-usage.ps1:6 `& git -C $repo rev-parse HEAD` (13k) | master; file unchanged from merge-base | inherited-unchanged | call operator, no local deadline or Git hardening; not natively reproduced |
+| scripts/verify-checkpoint-orphan-usage.ps1:83/89 owner pwsh (13k) | master; file unchanged | inherited-unchanged verification launch | three-minute readiness poll, then Kill(true) and an untimed WaitForExit; async drains |
+| scripts/verify-checkpoint-orphan-usage.ps1:117/120 protected `dotnet hold` child (13k) | master; file unchanged | inherited-unchanged verification launch | no output redirection; lifetime managed by the script |
+| scripts/verify-checkpoint-orphan-usage.ps1:161/173 native sweeper (13k) | master; file unchanged | inherited-unchanged verification launch | 30-s WaitForExit, then Kill(true) and untimed WaitForExit; async drains awaited without a limit |
+| scripts/test-run-checkpoint.ps1:140-147 and :667-696 pwsh children (13k) | master; file unchanged | inherited-unchanged legacy acceptance harness | as master; not re-audited |
+| tools/Antiphon.Checkpoints/Baseline/BaselineComparer.cs:45 fetch, :54 rev-parse, :79 worktree add, :156 worktree remove; :95/:128 dotnet build/run (13k) | master expressions; file changed by CARD elsewhere (55+/10-) | baseline execution through ProcessDriver | ProcessDriver row deadline by cancellation, then master post-kill drain; no Git hardening |
+| tools/Antiphon.Checkpoints/Baseline/GitWorktree.cs:7/:10 request factories (13k) | master; file unchanged | baseline execution through ProcessDriver | as above |
+| tools/Antiphon.Checkpoints/Execution/RowRunner.cs:119/174/223/282, RunScheduler.cs:386 DriverRequest | master expressions; files changed by CARD (build confinement) | row/build execution through ProcessDriver | row deadline; CP-9 RowRunnerTests |
+| tools/Antiphon.Checkpoints/Slots/LeaseHolder.cs:47/59 | master; file unchanged | slot holder launcher | not a reader |
+| scripts/lib/CheckpointProcessRunner.cs:33/87 | CARD-1199 | the shared runner itself | CP-21, CP-22, CP-23 |
+| all other non-test hits | as in the 13j table above | as in the 13j table above | as in the 13j table above |
+
+CARD-added test fixture launches (tests/Antiphon.Tests/Checkpoints; census hits with CARD blame):
+
+| Fixture site | Bound after 13k | Not bounded / not certified |
+| --- | --- | --- |
+| CheckpointFixtureProcess.Run/Git, used by OutputCleanupTests.Git, the OutputCleanupTests parent-symlink stamp probe (pwsh, 30 s) and wrapper-preflight (pwsh, 90 s), CheckpointTaskOwnershipTests ownership-loss `git init`, CheckpointOutputConfinementTests.Git and SeedBuild (dotnet build, 120 s), CheckpointShapeConflictTests.GitOut/Git and CheckpointTrackedBaselineTests.GitOut/Git (30 s) | CheckpointProcessRunner (Git hardening off): one deadline covers exit and both drains. Expiry kills the Linux process group and fails the fixture step. CP-23 proves this: a FIFO-blocked config open and a pipe-holding descendant each fail within 4 s against a 2-s limit, and the descendant dies. Both cases have ordinary controls. Red at the 13k tests-first commit. | Windows custody, R-2 |
+| CheckpointOutputConfinementTests:127-148, CheckpointShapeConflictTests WaitAsync, CheckpointTrackedBaselineTests WaitAsync (pwsh run-checkpoint/tool children) | Exit wait and both drains take the caller's CancellationToken (the test Timeout token where the method declares one), so cancellation ends the step | On cancellation the helper does not kill the child. RegisterCheckpointChild kills the registered tree at scope teardown. A descendant that has left the tree is not killed. No native held-pipe control. |
+| CheckpointStampSafetyTests (pwsh harness) and CheckpointReceiptSafetyTests.Child (dotnet tool) | Four-second exit deadline, then Kill(entireProcessTree) | Drains are awaited after exit or kill with no separate limit, so a descendant that left the tree and still holds a pipe would block it. Not reproduced. |
+| SafeDeleteProcessBoundaryTests.Run | 10-s exit limit, Kill(entireProcessTree), then a 2-s drain wait asserted | Kill(entireProcessTree) only reaches descendants that are still in the tree |
+| CheckpointBoundedReaderTests (node supervisor) | The supervisor script owns the hard child watchdog and group kill (CP-21) | The test's own WaitForExitAsync has no token or limit, and the method has no Timeout. The supervisor and the outer row deadline are the only bounds. |
+| CheckpointOwnedOutputTests.InitRepo `git init` | No redirected output. WaitForExit(30_000) fails the step, and RegisterCheckpointChild kills the tree at teardown. | The child is not killed when the wait expires, only at teardown |
+| scripts/test-checkpoint-stamp.ps1, test-checkpoint-bounded-reader.ps1, test-checkpoint-bounded-readers.mjs (CARD-added harness scripts) | Enclosing test child watchdog (CP-18 four seconds, CP-21 node supervisor) | The script-internal `& git` calls have no own deadline |
+
+Master test fixture launches (census hits with master blame: BaselineComparerTests, CheckpointImportTests, CheckpointRecovery*Tests, CheckpointRepeat*, CheckpointSource*Tests, CheckpointTaskOwnershipTests apart from the 13k change, CheckpointTemp*Tests, DetachedLauncherTests, DirectoryLinkHelper, PlanCoverageHandleTests, RerunFilterHostTests, TimeoutTests) are inherited and were not re-audited. DirectoryLinkHelper (Windows `mklink`) and TimeoutTests (Windows powershell) keep master's synchronous reads before their wait.
+
+The outer checkpoint row deadline still applies to every test above. It is the only bound for the sites the table says have none.

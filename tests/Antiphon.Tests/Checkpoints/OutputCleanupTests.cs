@@ -715,13 +715,7 @@ public sealed class OutputCleanupTests : CheckpointTestBase
         var error = new StringWriter();
         try
         {
-            var start = new ProcessStartInfo("pwsh")
-            {
-                WorkingDirectory = root,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-            };
+            var start = new ProcessStartInfo("pwsh") { WorkingDirectory = root };
             foreach (var arg in new[]
             {
                 "-NoProfile", "-NonInteractive", "-File",
@@ -733,16 +727,12 @@ public sealed class OutputCleanupTests : CheckpointTestBase
                 start.ArgumentList.Add(arg);
             start.Environment["CARD1199_REPO"] = root;
             start.Environment["CARD1199_CALLED"] = called;
-            using var process = Process.Start(start);
-            process.ShouldNotBeNull();
-            var stdoutTask = process.StandardOutput.ReadToEndAsync();
-            var stderrTask = process.StandardError.ReadToEndAsync();
-            process.WaitForExit(90_000).ShouldBeTrue();
-            var stdout = await stdoutTask;
-            var stderr = await stderrTask;
+            var result = CheckpointFixtureProcess.Run(start, 90_000);
+            var stdout = result.Stdout;
+            var stderr = result.Stderr;
             output.Write(stdout);
             error.Write(stderr);
-            process.ExitCode.ShouldBe(ExitCodes.Invalid, stdout + stderr);
+            result.Exit.ShouldBe(ExitCodes.Invalid, stdout + stderr);
             File.ReadAllBytes(dll).ShouldBe(original);
             File.Exists(called).ShouldBeFalse(stdout + stderr);
             stdout.ShouldContain("refused: tracked");

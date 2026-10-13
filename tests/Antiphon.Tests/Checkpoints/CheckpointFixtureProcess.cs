@@ -1,25 +1,24 @@
 using System.Diagnostics;
+using Antiphon.Checkpoints;
 using Shouldly;
 
 namespace Antiphon.Tests.Checkpoints;
 
 // CARD-1199 review 6b8368dc F1: the CARD-added fixture children that capture output run here,
-// so one stated limit covers them.
+// so one stated limit covers them. The shared CheckpointProcessRunner applies that limit to
+// process exit and both output drains together and, on Linux, kills the child's process group on
+// expiry, so a child blocked before exit or a descendant holding a pipe fails the fixture step
+// instead of hanging it. Git hardening is off: fixtures keep the installed Git behaviour.
 internal static class CheckpointFixtureProcess
 {
     public sealed record Output(int Exit, string Stdout, string Stderr);
 
     public static Output Run(ProcessStartInfo start, int timeoutMs)
     {
-        start.RedirectStandardOutput = true;
-        start.RedirectStandardError = true;
-        start.UseShellExecute = false;
-        using var process = Process.Start(start);
-        process.ShouldNotBeNull();
-        var stdout = process.StandardOutput.ReadToEnd();
-        var stderr = process.StandardError.ReadToEnd();
-        process.WaitForExit(timeoutMs).ShouldBeTrue(stdout + stderr);
-        return new Output(process.ExitCode, stdout, stderr);
+        var name = start.FileName;
+        var result = CheckpointProcessRunner.Run(start, timeoutMs, git: false);
+        result.TimedOut.ShouldBeFalse(name + " fixture step exceeded " + timeoutMs + " ms (exit and output drains)");
+        return new Output(result.Exit, result.Stdout, result.Stderr);
     }
 
     // Installed Git in a scratch repository; exit 0 is required.
