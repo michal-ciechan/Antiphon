@@ -22,7 +22,10 @@ public sealed class RunnerCompletedCardWorkspaceRemoval(RunnerWorkspaceService w
             if (await workspace.InspectionPhysicalIdentityReasonAsync(binding, ct) is { } identityReason)
                 return Held(identityReason);
             var head = await ReadAsync(binding.WorktreePath, ct, "rev-parse", "HEAD");
-            var sourceRef = await ReadAsync(binding.WorktreePath, ct, "symbolic-ref", "-q", "HEAD");
+            var symbolic = await workspace.GitAsync(binding.WorktreePath, ct, "symbolic-ref", "-q", "HEAD");
+            if (symbolic.ExitCode == 1) return Held("source_ref_mismatch", head);
+            if (symbolic.ExitCode != 0) return Held("inspection_unreadable", head);
+            var sourceRef = symbolic.Stdout.Trim();
             if (sourceRef != binding.SourceFullRef) return Held("source_ref_mismatch", head);
             var registrations = await ReadAsync(binding.WorktreePath, ct, "worktree", "list", "--porcelain", "-z");
             var blocks = registrations.Split("\0\0", StringSplitOptions.RemoveEmptyEntries);
@@ -34,6 +37,27 @@ public sealed class RunnerCompletedCardWorkspaceRemoval(RunnerWorkspaceService w
                 return Held("locked_registration", head);
             if (exact[0].Split('\0').Any(line => line == "prunable" || line.StartsWith("prunable ", StringComparison.Ordinal)))
                 return Held("stale_mirror_binding", head);
+            foreach (var gitDirectory in new[] { binding.GitDirectory, binding.CommonDirectory }.Distinct(StringComparer.Ordinal))
+                if (RepositoryStateReason(gitDirectory, ct) is { } stateReason) return Held(stateReason, head);
+            var sparse = await workspace.GitAsync(binding.WorktreePath, ct, "config", "--bool", "--get", "core.sparseCheckout");
+            if (sparse.ExitCode == 0 && sparse.Stdout.Trim() == "true") return Held("sparse_checkout", head);
+            if (sparse.ExitCode != 1 && (sparse.ExitCode != 0 || sparse.Stdout.Trim() != "false"))
+                return Held("inspection_unreadable", head);
+            var shallow = await ReadAsync(binding.WorktreePath, ct, "rev-parse", "--is-shallow-repository");
+            if (shallow == "true") return Held("shallow_repository", head);
+            if (shallow != "false") return Held("inspection_unreadable", head);
+            var tracked = await ReadAsync(binding.WorktreePath, ct, "ls-files", "-v", "-z");
+            var flaggedPaths = new List<string>();
+            foreach (var entry in tracked.Split('\0', StringSplitOptions.RemoveEmptyEntries))
+            {
+                if (entry.Length < 3 || entry[1] != ' ') return Held("inspection_unreadable", head);
+                if (char.IsLower(entry[0]) || entry[0] == 'S') flaggedPaths.Add(entry[2..]);
+            }
+            if (flaggedPaths.Count != 0) return Held("tracked_index_flags", head) with
+            { HeldPaths = flaggedPaths.Order(StringComparer.Ordinal).ToArray() };
+            var staged = await ReadAsync(binding.WorktreePath, ct, "ls-files", "--stage", "-z");
+            if (staged.Split('\0').Any(entry => entry.StartsWith("160000 ", StringComparison.Ordinal)))
+                return Held("submodule_content", head);
             var structural = StructuralReason(binding.WorktreePath, ct);
             if (structural is not null) return Held(structural, head);
             var status = await ReadAsync(binding.WorktreePath, ct, "status", "--porcelain=v1", "-z", "--untracked-files=all");
@@ -100,15 +124,44 @@ public sealed class RunnerCompletedCardWorkspaceRemoval(RunnerWorkspaceService w
     internal static bool UnlinkedPath(string path) => RunnerWorkspaceService.TryResolveFinal(path) is { } resolved
         && RunnerWorkspaceService.InspectionPathsEqual(Path.GetFullPath(path), resolved);
 
+    // C1032_InspectionHoldShapes supplies admin/common lock and operation markers.
+    private static string? RepositoryStateReason(string root, CancellationToken ct)
+    {
+        foreach (var marker in new[] { "MERGE_HEAD", "rebase-merge", "rebase-apply", "CHERRY_PICK_HEAD",
+            "REVERT_HEAD", "BISECT_LOG", "sequencer" })
+            if (RepositoryDirectoryShape.Attributes(Path.Combine(root, marker)) is not null)
+                return "unfinished_operation";
+        var pending = new Stack<string>(); pending.Push(root);
+        while (pending.TryPop(out var directory))
+        {
+            ct.ThrowIfCancellationRequested();
+            if (File.GetAttributes(directory).HasFlag(FileAttributes.ReparsePoint)) return "linked_content";
+            foreach (var entry in Directory.EnumerateFileSystemEntries(directory))
+            {
+                var name = Path.GetFileName(entry);
+                if (name.EndsWith(".lock", StringComparison.OrdinalIgnoreCase)
+                    || name.Equals("gc.pid", StringComparison.OrdinalIgnoreCase)) return "repository_locked";
+                var attributes = File.GetAttributes(entry);
+                if (attributes.HasFlag(FileAttributes.ReparsePoint)) return "linked_content";
+                if (attributes.HasFlag(FileAttributes.Directory)) pending.Push(entry);
+            }
+        }
+        return null;
+    }
+
     private static string? StructuralReason(string root, CancellationToken ct)
     {
         var pending = new Stack<string>(); pending.Push(root);
         while (pending.TryPop(out var directory))
         {
             ct.ThrowIfCancellationRequested();
+            if (File.GetAttributes(directory).HasFlag(FileAttributes.ReparsePoint)) return "linked_content";
+            if (directory != root && RepositoryDirectoryShape.HasRepositoryMarker(directory)) return "nested_repository";
+            var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var entry in Directory.EnumerateFileSystemEntries(directory))
             {
                 var name = Path.GetFileName(entry);
+                if (!names.Add(name)) return "case_ambiguous_content";
                 if (name.Equals(".git", StringComparison.OrdinalIgnoreCase))
                 {
                     if (directory != root) return "nested_repository";
@@ -131,4 +184,5 @@ public sealed record RunnerCompletedCardWorkspaceInspection(string HeadSha, stri
     IReadOnlyList<RunnerIgnoredContentEntry> IgnoredContent, string? Reason)
 {
     public bool Eligible => Reason is null;
+    public IReadOnlyList<string> HeldPaths { get; init; } = [];
 }

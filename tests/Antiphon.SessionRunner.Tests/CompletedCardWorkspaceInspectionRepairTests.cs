@@ -132,7 +132,9 @@ public sealed partial class CompletedCardWorkspaceRemovalTests
             case "detached": CompletedCardRunnerFixture.Git(f.Checkout, "checkout", "--detach"); break;
             case "unborn":
                 CompletedCardRunnerFixture.Git(f.Checkout, "update-ref", "-d", f.Binding.SourceFullRef); break;
-            case "shallow": File.WriteAllText(Path.Combine(f.Binding.CommonDirectory, "shallow"), f.Sha + "\n"); break;
+            case "shallow":
+                CompletedCardRunnerFixture.Git(f.Repository, "fetch", "--depth=1", "origin", "main");
+                CompletedCardRunnerFixture.Git(f.Checkout, "rev-parse", "--is-shallow-repository").Trim().ShouldBe("true"); break;
             case "other-repository":
                 File.WriteAllText(Path.Combine(f.Checkout, ".git"), "gitdir: " + Path.Combine(f.Origin, ".git") + "\n"); break;
             case "case-twin":
@@ -145,17 +147,21 @@ public sealed partial class CompletedCardWorkspaceRemovalTests
         var service = f.Workspace(gated: false, publishedBranch: "main");
         var calls = new List<string[]>();
         f.BeforeGitStart = psi => { AssertInspectionGitRead(psi); calls.Add(psi.ArgumentList.ToArray()); };
+        var actualHead = shape is "unborn" or "other-repository" or "prunable-registration" ? null
+            : CompletedCardRunnerFixture.Git(f.Checkout, "rev-parse", "HEAD").Trim();
         var before = InspectionDigest(f.Root);
         dynamic result = await Inspector(service).InspectAsync(new CompletedCardWorkspaceInspectRequest(1, f.Binding), CancellationToken.None);
         InspectionDigest(f.Root).ShouldBe(before, shape + " files/index/refs/store unchanged");
         ((string?)result.Reason).ShouldBe(expectedReason, shape);
         ((bool)result.Eligible).ShouldBeFalse(shape);
+        if (actualHead is not null) ((string)result.HeadSha).ShouldBe(actualHead, "report actual inspected HEAD");
         if (expectedReason == "tracked_index_flags")
         {
             var paths = (IReadOnlyList<string>)result.HeldPaths;
             paths.ShouldContain(flaggedPath, "flagged paths must be reported without splitting filenames");
         }
         calls.Count.ShouldBeGreaterThan(0);
+        Directory.Exists(f.State).ShouldBeFalse("inspection must not persist a retirement intent");
     }
 
     [Test]
