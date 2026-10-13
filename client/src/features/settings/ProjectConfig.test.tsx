@@ -318,3 +318,34 @@ it('C506 V17 project-row-link', async () => {
     window.history.pushState({}, '', '/')
   }
 })
+
+// CARD-0506 S3 Review eabc896f F1 sweep: the row link sets tab and project, keeping unrelated parameters.
+it('C506 S3F1 row-link-keeps-params', async () => {
+  const P = '05060000-0000-4000-8000-000000000001'
+  const Q = '05060000-0000-4000-8000-000000000002'
+  const rows: ProjectDto[] = [
+    { ...project, id: P, name: 'P', gitRepositoryUrl: 'https://example.test/p.git', localRepositoryPath: '/repos/p' },
+    { ...project, id: Q, name: 'Q', gitRepositoryUrl: 'https://example.test/q.git', localRepositoryPath: '/repos/q' },
+  ]
+  server.use(
+    http.get('/api/projects', () => HttpResponse.json(rows)),
+    http.get('/api/boards', () => HttpResponse.json([])),
+    http.get('/api/github/repos', () => HttpResponse.json([])),
+    http.get('/api/projects/readiness', () => HttpResponse.json([])),
+  )
+  window.history.pushState({}, '', `/settings?tab=projects&project=${Q}&keep=value`)
+  try {
+    renderWithProviders(<ProjectConfig />)
+
+    const cell = await screen.findByRole('cell', { name: 'P' })
+    await userEvent.click(within(cell.closest('tr') as HTMLElement).getByRole('button', { name: 'Project concurrency' }))
+
+    expect(window.location.pathname).toBe('/settings')
+    const search = new URLSearchParams(window.location.search)
+    expect(search.get('tab')).toBe('concurrency')
+    expect(search.get('project')).toBe(P)
+    expect(search.get('keep')).toBe('value')
+  } finally {
+    window.history.pushState({}, '', '/')
+  }
+})
