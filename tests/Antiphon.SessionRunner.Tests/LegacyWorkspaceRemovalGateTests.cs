@@ -73,7 +73,9 @@ public sealed class LegacyWorkspaceRemovalGateTests
         f.BeforeGitStart = psi =>
         {
             if (!psi.ArgumentList.Contains("remove")) return;
+            var starts = f.GitStarts;
             recreating = service.MirrorAsync(f.MirrorRequest with { Binding = null }, CancellationToken.None);
+            f.GitStarts.ShouldBe(starts, "creation must start no Git under removal admission");
             recreating.IsCompleted.ShouldBeFalse("creation must wait through removal and prune");
         };
         (await service.RemoveAsync(new(f.Checkout, false), CancellationToken.None)).Removed.ShouldBeTrue();
@@ -97,17 +99,25 @@ public sealed class LegacyWorkspaceRemovalGateTests
     [Test]
     public async Task C1032_LegacyRemovalReleaseOnFailure()
     {
-        await using var f = await Ready();
-        var service = f.Workspace();
-        f.BeforeGitStart = _ => throw new FenceEffectException();
-        await Should.ThrowAsync<FenceEffectException>(service.RemoveAsync(new(f.Checkout, true), CancellationToken.None));
-        f.BeforeGitStart = null;
-        await using (await ((RunnerWorkspaceUseGate)f.Gate).AcquireUseAsync(f.Checkout, CancellationToken.None)) { }
-        using var cancellation = new CancellationTokenSource();
-        f.BeforeGitStart = _ => { cancellation.Cancel(); throw new OperationCanceledException(cancellation.Token); };
-        await Should.ThrowAsync<OperationCanceledException>(service.RemoveAsync(new(f.Checkout, true), cancellation.Token));
-        f.BeforeGitStart = null;
-        (await service.RemoveAsync(new(f.Checkout, false), CancellationToken.None)).Removed.ShouldBeTrue();
+        foreach (var cancel in new[] { false, true })
+        {
+            await using var f = await Ready();
+            var service = f.Workspace();
+            using var cancellation = new CancellationTokenSource();
+            f.BeforeGitStart = _ =>
+            {
+                if (!cancel) throw new FenceEffectException();
+                cancellation.Cancel();
+                throw new OperationCanceledException(cancellation.Token);
+            };
+            if (cancel)
+                await Should.ThrowAsync<OperationCanceledException>(service.RemoveAsync(new(f.Checkout, true), cancellation.Token));
+            else
+                await Should.ThrowAsync<FenceEffectException>(service.RemoveAsync(new(f.Checkout, true), cancellation.Token));
+            f.BeforeGitStart = null;
+            // The nonblocking next removal fails immediately if the exceptional exit leaked its lease.
+            (await service.RemoveAsync(new(f.Checkout, false), CancellationToken.None)).Removed.ShouldBeTrue();
+        }
     }
 
     [Test]
