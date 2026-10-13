@@ -321,6 +321,7 @@ public sealed class TaskParkPublicationTests
         public ParkGit Git { get; } = new();
         public RepositoryMutationLease Leases { get; private set; } = null!;
         public ParkDirectory Directory { get; private set; } = null!;
+        internal ISessionRunnerDirectory? RemoteDirectoryOverride { get; set; }
         public Func<TaskParkPublicationEvidence, Task>? BeforeReceiptSave { get; set; }
         public IWorkspaceReservationJournal Reservations { get; private set; } = null!;
         public WorkspaceReservationKey Key => WorkspaceReservationKey.For(LocalPath, FullRef, Repository);
@@ -391,7 +392,7 @@ public sealed class TaskParkPublicationTests
             catch { await w.DisposeAsync(); throw; }
         }
 
-        internal TaskParkPublicationService Service(AppDbContext db) => new(db, new(Git, Leases), Directory,
+        internal TaskParkPublicationService Service(AppDbContext db) => new(db, new(Git, Leases), RemoteDirectoryOverride ?? Directory,
             Reservations, TimeProvider.System, Options.Create(Fixture.Options))
             { BeforeReceiptSaveAsync = BeforeReceiptSave is null ? null : (proof, _) => BeforeReceiptSave(proof) };
         public async Task RestartAsync()
