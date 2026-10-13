@@ -208,8 +208,11 @@ function rebaseDraft(draft: ConcurrencyDraft, was: ConcurrencyDraft, now: Concur
 
 /**
  * Sets `base` to `next` (a query snapshot or the conflict reload) without comparing revision order
- * (`C506 S2R3 rollback-*`, `reused-revision`, `same-revision-new-content`); with edits the draft is
- * rebased and the banner shown (D-7, `rollback-dirty-*`).
+ * (`C506 S2R3 rollback-*`, `reused-revision`, `same-revision-new-content`). When revisions, mode or an
+ * override cell changed, the draft is rebased and, with edits, the banner shown (D-7, `rollback-dirty-*`).
+ * An unchanged document keeps the draft and raises no banner (no committed test; Review 7826b06f
+ * diagnostic `R4 occupancy-only refresh of dirty form updates occupancy without banner`).
+ * The conflict reload forces the banner (`V12 conflict-*`).
  */
 function adoptServer(state: Synced, next: DispatchConcurrencyScopeDto, forceBanner = false): Synced {
   if (next === state.base) return forceBanner ? { ...state, banner: true } : state
