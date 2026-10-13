@@ -372,6 +372,36 @@ public sealed class RemoteScriptContractTests
         }
     }
 
+ [Test]
+    [Arguments("residual")]
+    [Arguments("daemon")]
+    [Arguments("absent")]
+    [Arguments("mixed")]
+    [Arguments("recording")]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1207_Compose_teardown_requires_recorded_positive_absence(string scenario)
+    {
+        var output = C1192Run("compose-absence", scenario);
+        foreach (var key in new[] { "verdict", "marker" })
+            Fact(output, key).ShouldBe("1", scenario + " " + key + "\n" + output);
+        if (scenario == "recording")
+        {
+            Fact(output, "no-unrecorded-down").ShouldBe("1", output);
+            Fact(output, "recording-ledger").ShouldBe("1", output);
+        }
+        else
+        {
+            foreach (var resource in new[] { "runner-tmp", "work", "runner-state", "dind-data" })
+            foreach (var check in new[] { "ledger", "residue" })
+                Fact(output, check + "-" + resource).ShouldBe("1", scenario + " " + check + " " + resource + "\n" + output);
+            if (scenario == "residual")
+            {
+                foreach (var resource in new[] { "runner-tmp", "work", "runner-state", "dind-data", "container", "network" })
+                    Fact(output, "retained-" + resource).ShouldBe("1", output);
+            }
+        }
+    }
+
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public void C1208_Foreign_cache_is_dropped_and_untouched()
