@@ -1,6 +1,7 @@
 using System.Reflection;
 using System.Diagnostics;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Antiphon.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
 using Shouldly;
@@ -103,7 +104,7 @@ public sealed partial class CompletedCardWorkspaceRemovalTests
             b => b with { WorktreePath = b.WorktreePath + "-foreign" }, b => b with { WorktreePath = Path.GetTempPath() },
             b => b with { WorktreePath = Path.Combine(Path.GetDirectoryName(b.WorktreePath)!, "slot") });
         await using var r = new RemovalRig(); var f = r.Fixture;
-        CompletedCardRunnerFixture.Git(f.Repository, "branch", "feat/card-task-cafebabe", f.Sha);
+        CompletedCardRunnerFixture.Git(f.Origin, "branch", "feat/card-task-cafebabe", f.Sha);
         var second = await r.Workspace.MirrorAsync(new("feat/card-task-cafebabe", f.Sha, "task-cafebabe"), CancellationToken.None);
         var source = File.ReadAllBytes(Path.Combine(second.Path, "source"));
         Held(await r.Remove(r.Command with { Binding = r.Command.Binding with { WorktreePath = second.Path } }), "foreign_mirror_owner");
@@ -374,6 +375,25 @@ public sealed partial class CompletedCardWorkspaceRemovalTests
         first.GetProperty("complete").GetBoolean().ShouldBeTrue();
         Held(await r.Remove(r.Command with { ReportDigest = "changed" }), "operation_digest_mismatch");
         (await r.Remove()).GetProperty("receipt").GetRawText().ShouldBe(first.GetProperty("receipt").GetRawText());
+        var saved = File.ReadAllText(r.Journal.JournalPath);
+        var receipt = JsonNode.Parse(saved)!["intents"]![0]!["receipt"]!.AsObject();
+        foreach (var field in receipt.Select(p => p.Key).ToArray())
+        {
+            var altered = JsonNode.Parse(saved)!;
+            var value = altered["intents"]![0]!["receipt"]![field]!;
+            altered["intents"]![0]!["receipt"]![field] = value.GetValueKind() switch
+            {
+                JsonValueKind.String => JsonValue.Create(Guid.TryParse(value.GetValue<string>(), out _) ? Guid.NewGuid().ToString() : "foreign"),
+                JsonValueKind.Number => JsonValue.Create(value.GetValue<int>() + 1),
+                JsonValueKind.True or JsonValueKind.False => JsonValue.Create(!value.GetValue<bool>()),
+                _ => throw new InvalidOperationException(field),
+            };
+            File.WriteAllText(r.Journal.JournalPath, altered.ToJsonString());
+            Held(await r.Remove(), "recipient_store_unreadable");
+            Directory.Exists(r.Fixture.Checkout).ShouldBeFalse();
+        }
+        File.WriteAllText(r.Journal.JournalPath, saved);
+        (await r.Remove()).GetProperty("complete").GetBoolean().ShouldBeTrue();
     }
     // PC-261..263: parent kills/joins its worker at each durable state/effect,
     // then fresh objects recover the exact command; remaining action allowance cannot reset.
