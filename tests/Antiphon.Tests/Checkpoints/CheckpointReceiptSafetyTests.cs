@@ -127,6 +127,48 @@ public sealed class CheckpointReceiptSafetyTests : CheckpointTestBase
         failures.ShouldBeEmpty(string.Join('\n', failures));
     }
 
+    [Test]
+    [Arguments("")]
+    [Arguments(" \t\r\n")]
+    [Arguments(null)]
+    [Arguments("CP-valid")]
+    public async Task receipt_row_and_build_identities_refuse_blank_without_writing(string? identity)
+    {
+        var valid = identity == "CP-valid";
+        var failures = new List<string>();
+        // Each entry gets its own complete receipt pair; only the selected identity changes.
+        foreach (var receipt in new[] { "state.json", "report.json" })
+        foreach (var collection in new[] { "rows", "builds" })
+        foreach (var verb in new[] { "report", "report-json", "report-merge", "report-merge-json", "status", "stop", "wait", "clean", "validate" })
+        {
+            if (verb == "validate" && receipt == "state.json") continue; // validate accepts a report, not state.
+            var (root, run) = Fixture();
+            var path = Path.Combine(run, receipt);
+            var json = JsonNode.Parse(File.ReadAllText(path))!;
+            json[collection]![0]!["id"] = identity;
+            File.WriteAllText(path, json.ToJsonString(new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
+            var before = Directory.GetFiles(run).ToDictionary(file => file, File.ReadAllBytes);
+            var result = await Child(root, run, verb);
+            var expected = valid && verb != "clean" ? 0 : 2;
+            if (result.Exit != expected)
+                failures.Add($"{receipt}/{collection}/{verb}: expected={expected} exit={result.Exit} {result.Output}");
+            if (!valid && !(result.Output.Contains("refused:", StringComparison.Ordinal)
+                || verb == "validate" && result.Output.Contains("CHECKPOINT SOURCE INVALID reason=", StringComparison.Ordinal)))
+                failures.Add($"{receipt}/{collection}/{verb}: missing named refusal: {result.Output}");
+            if (!valid && verb == "clean" && !result.Output.Contains("receipt-", StringComparison.Ordinal))
+                failures.Add($"{receipt}/{collection}/{verb}: refused only by cleanup policy, identity was accepted: {result.Output}");
+            if (!valid)
+            {
+                if (!Directory.GetFiles(run).Order().SequenceEqual(before.Keys.Order()))
+                    failures.Add($"{receipt}/{collection}/{verb}: file inventory changed");
+                foreach (var file in before)
+                    if (!File.Exists(file.Key) || !File.ReadAllBytes(file.Key).SequenceEqual(file.Value))
+                        failures.Add($"{receipt}/{collection}/{verb}: bytes changed: {file.Key}");
+            }
+        }
+        failures.ShouldBeEmpty(string.Join('\n', failures));
+    }
+
     private (string Root, string Run) Fixture()
     {
         var root = TempDir();
@@ -141,13 +183,18 @@ public sealed class CheckpointReceiptSafetyTests : CheckpointTestBase
             Rows = [new RowProgress { Id = "CP-fixture", State = "green", Slot = "granted" }] }));
         ReportWriter.WriteFiles(run, new ReportModel { RunId = "run", Commit = observation.Commit!, Source = source,
             Builds = [new ReportBuild { Id = "owned", Project = "fixture", State = "built", Slot = "granted", Source = source }],
-            Rows = [new ReportRow { Id = "CP-fixture", State = "green", Source = source }] });
+            Rows = [new ReportRow { Id = "CP-fixture", State = "green", Source = source, Executed = 1, Passed = 1, Failed = 0, Skipped = 0,
+                Line = "CHECKPOINT CP-fixture commit=" + observation.Commit + " source=" + observation.Commit
+                    + " dirty=0 sourceState=clean buildSource=verified executed=1" }] });
         return (root, run);
     }
 
     private static string[] Args(string root, string run, string verb) =>
-        verb == "report-json" ? ["report", "--json", "--repo-root", root, "--run", run, "--results-root", root]
-        : [verb, "--repo-root", root, "--run", run, "--results-root", root];
+        verb == "validate" ? ["validate", "--evidence", Path.Combine(run, "report.json"), "--expected-source-sha", new string('a', 40), "--repo-root", root]
+        : (verb.StartsWith("report", StringComparison.Ordinal)
+            ? new[] { "report" }.Concat(verb.Contains("json", StringComparison.Ordinal) ? new[] { "--json" } : [])
+                .Concat(verb.Contains("merge", StringComparison.Ordinal) ? new[] { "--merge" } : [])
+            : new[] { verb }).Concat(new[] { "--repo-root", root, "--run", run, "--results-root", root }).ToArray();
 
     private async Task<(int Exit, string Output)> Child(string root, string run, string verb)
     {
