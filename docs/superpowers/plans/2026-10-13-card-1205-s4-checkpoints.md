@@ -20,6 +20,7 @@ No native runner, deployment, live message or server restart is required.
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
 | S4-BASE | Tests | `tests/Antiphon.Tests -> bin-c1205-s4-base/` | registration-baseline | `/*/Antiphon.Tests.Application/StaleWorkingTranscriptWatchdogTests*/C1205_Hosted_restart_discovers_working_sessions_immediately*` | PC-57 baseline only | Exactly one assertion red on unchanged pre-S4 production | 1 | 6 |
+| S4-CASES-BASE | Cases | `tests/Antiphon.Tests -> bin-c1205-s4-cases-base/` | scheduling-baseline | `/*/Antiphon.Tests.Application/StaleWorkingTranscriptWatchdogTests*/*` | T18..T35 test-first | Exactly 48 executed; missing watchdog probes/options/logs assertion red on unchanged production | 48 | 12 |
 | CP-4 | S4 | `tests/Antiphon.Tests -> bin-c1205-s4/` | watchdog | `/*/Antiphon.Tests.Application/StaleWorkingTranscriptWatchdogTests*/*` | V-13..19,V-27..35,R-3,R-4 | Exactly 48 green; frozen T18..T35 roster | 48 | 12 |
 
 All S4 PCs remain pending for method-scoped SourceLanding Mutation:
@@ -56,3 +57,16 @@ committed HEAD as --expected-source-sha. Establish the registration assertion re
 before adding production code. Extend T26 to prove cold boot reconstruction and
 complete all 48 frozen T18..T35 cases, their test-first evidence, production S4,
 and CP-4. S5 remains outside this task.
+
+## Resumed test-first group
+
+The registration baseline ran on f3238dec1a8751f228ec89aba20bf269ca28f6f2:
+one executed, one assertion failure (expected hosts.Length 1, actual 0), no skip.
+Run 20261013-070708-9cf5 has clean source and verified build provenance.
+The 48 frozen cases are now authored before S4 production changes. A temporary
+card-local reflection adapter lets unchanged production exercise its real cache
+warmup when the scheduler is absent. Missing recovery is observed through actual
+HTTP counts, missing disabled logs and missing startup options rejection. It does
+not fake a recovery result. Remove the adapter in the implementation group.
+Independent cap/fairness/fence guards still require their pending Mutation PCs;
+baseline absence of the feature is not an independent mutation proof for each guard.
