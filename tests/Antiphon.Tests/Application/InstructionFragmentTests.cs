@@ -27,8 +27,8 @@ public class InstructionFragmentTests
             .Where(r => r.StartsWith("Antiphon.Server.Bundles.Fragments.", StringComparison.Ordinal))
             .Order(StringComparer.Ordinal).ToArray();
         resources.ShouldBe(["Antiphon.Server.Bundles.Fragments.git-common.md"], "fragment-resources");
-        InstructionFragments.All.Keys.Order(StringComparer.Ordinal).ShouldBe(["git-common"], "fragment-keys");
-        InstructionBundles.All.Keys.Order(StringComparer.Ordinal).ShouldBe([
+        InstructionFragments.All.Keys.Order(StringComparer.Ordinal).ToArray().ShouldBe(["git-common"], "fragment-keys");
+        InstructionBundles.All.Keys.Order(StringComparer.Ordinal).ToArray().ShouldBe([
             "board-api", "check-interpreter", "delegate-basics", "diagnose", "orchestrator", "output-distiller",
             "stage-code", "stage-investigate", "stage-mutation", "stage-plan", "stage-review", "stage-test-design",
             "standing-instructions",
