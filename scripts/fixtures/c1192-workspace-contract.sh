@@ -3297,7 +3297,69 @@ mode_deletion_audit() {
     cat "$CASE_DIR/fixture-cleanup-ledger.txt"
 }
 
+# Real production acquisition writes; only Docker observations are modeled.
+mode_fingerprint_acquisition() {
+    local variant="${1:?variant}" name="c849-${RUN}-donor" fingerprint code=0
+    fingerprint="$CASE_DIR/.fixture-fingerprint-$name"
+    printf 'foreign victim bytes\n' > "$C1192_ROOT/victim"
+    cp -- "$C1192_ROOT/victim" "$C1192_ROOT/victim-before"
+    mkdir "$C1192_ROOT/victim-directory"
+    printf 'directory sentinel\n' > "$C1192_ROOT/victim-directory/sentinel"
+    case "$variant" in
+        file-link) ln -s "$C1192_ROOT/victim" "$fingerprint" ;;
+        directory-link) ln -s "$C1192_ROOT/victim-directory" "$fingerprint" ;;
+        dangling-link) ln -s "$C1192_ROOT/missing-victim" "$fingerprint" ;;
+        regular) printf 'foreign record bytes\n' > "$fingerprint" ;;
+        fresh) ;;
+        *) fail "unknown fingerprint variant $variant" ;;
+    esac
+    docker() {
+        case "$1" in
+            create)
+                [ "$2" = --cidfile ] || return 97
+                printf '%064d\n' 1 > "$3"
+                printf 'create\n' >> "$C1192_ROOT/events"
+                ;;
+            inspect)
+                case "$3" in
+                    '{{.Name}}') printf '/c849-%s-donor\n' "$RUN" ;;
+                    '{{.Image}}') printf 'sha256:owned-image\n' ;;
+                    '{{.Created}}') printf '2026-10-13T00:00:00Z\n' ;;
+                    *) return 97 ;;
+                esac ;;
+            *) return 97 ;;
+        esac
+    }
+    c849_fixture_helper_lookup() { return 0; }
+    c849_fixture_resource_state() { return 0; }
+    c849_fixture_launch create --name "$name" image || code=$?
+    printf 'launch-exit=%s\n' "$code"
+    local preserved=0 diagnosis=0
+    cmp -s -- "$C1192_ROOT/victim-before" "$C1192_ROOT/victim" && preserved=1
+    printf 'victim-preserved=%s\n' "$preserved"
+    if grep -Fq 'FixtureFingerprintAcquisitionRefused' "$CASE_DIR/fixture-cleanup-ledger.txt" 2>/dev/null; then diagnosis=1; fi
+    printf 'named-refusal=%s\n' "$diagnosis"
+    [ "$preserved" = 1 ] || fail 'fingerprint overwrote out-of-case victim'
+    case "$variant" in
+        fresh)
+            [ "$code" = 0 ] && [ -f "$fingerprint" ] && [ ! -L "$fingerprint" ] || fail 'fresh fingerprint not acquired'
+            [ "$(cat -- "$fingerprint")" = "/$name|sha256:owned-image|2026-10-13T00:00:00Z" ] || fail 'fresh fingerprint wrong bytes'
+            [ -s "$CASE_DIR/.fixture-id-$name" ] || fail 'fresh acquisition lost CID'
+            ;;
+        *)
+            [ "$code" = 2 ] && [ "$diagnosis" = 1 ] || fail 'fingerprint collision was not a named refusal'
+            case "$variant" in
+                regular) [ "$(cat -- "$fingerprint")" = 'foreign record bytes' ] || fail 'foreign regular record changed' ;;
+                file-link) [ -L "$fingerprint" ] && [ "$(readlink -- "$fingerprint")" = "$C1192_ROOT/victim" ] || fail 'victim link changed' ;;
+                directory-link) [ -L "$fingerprint" ] && [ "$(cat -- "$C1192_ROOT/victim-directory/sentinel")" = 'directory sentinel' ] || fail 'directory victim changed' ;;
+                dangling-link) [ -L "$fingerprint" ] && [ ! -e "$C1192_ROOT/missing-victim" ] || fail 'dangling target created' ;;
+            esac
+            ;;
+    esac
+}
+
 case "$mode" in
+    fingerprint-acquisition) mode_fingerprint_acquisition "$@" ;;
     deletion-audit) mode_deletion_audit "$@" ;;
     acquisition-probe) mode_acquisition_probe ;;
     cleanup-probe) mode_cleanup_probe "$@" ;;

@@ -565,6 +565,21 @@ public sealed class RemoteScriptContractTests
         }
     }
 
+    [Test]
+    [Arguments("file-link", "2", "1")]
+    [Arguments("directory-link", "2", "1")]
+    [Arguments("dangling-link", "2", "1")]
+    [Arguments("regular", "2", "1")]
+    [Arguments("fresh", "0", "0")]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1208_Fingerprint_acquisition_refuses_unowned_paths(string variant, string expectedExit, string expectedRefusal)
+    {
+        var output = C1192Run("fingerprint-acquisition", variant);
+        Fact(output, "victim-preserved").ShouldBe("1", output);
+        Fact(output, "launch-exit").ShouldBe(expectedExit, output);
+        Fact(output, "named-refusal").ShouldBe(expectedRefusal, output);
+    }
+
     private static void C1192AssertCleanupProbe(string boundary)
     {
         var output = C1192Run("cleanup-probe", boundary);
