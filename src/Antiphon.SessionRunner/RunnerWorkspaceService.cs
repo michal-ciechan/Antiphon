@@ -937,9 +937,18 @@ public sealed partial class RunnerWorkspaceService
         string workingDirectory, CancellationToken ct, params string[] args) =>
         RunGitAsync(workingDirectory, _startProcess, _timeout, ct, args);
 
-    internal static async Task<(int ExitCode, string Stdout, string Stderr)> RunGitAsync(
+    internal Task<(int ExitCode, string Stdout, string Stderr)> InspectionGitAsync(
+        string workingDirectory, CancellationToken ct, params string[] args) =>
+        RunGitCoreAsync(workingDirectory, _startProcess, _timeout, ct, args, inspection: true);
+
+    internal static Task<(int ExitCode, string Stdout, string Stderr)> RunGitAsync(
         string workingDirectory, Func<ProcessStartInfo, Process?> startProcess, TimeSpan budget,
-        CancellationToken ct, params string[] args)
+        CancellationToken ct, params string[] args) =>
+        RunGitCoreAsync(workingDirectory, startProcess, budget, ct, args, inspection: false);
+
+    private static async Task<(int ExitCode, string Stdout, string Stderr)> RunGitCoreAsync(
+        string workingDirectory, Func<ProcessStartInfo, Process?> startProcess, TimeSpan budget,
+        CancellationToken ct, string[] args, bool inspection)
     {
         var psi = new ProcessStartInfo
         {
@@ -949,6 +958,40 @@ public sealed partial class RunnerWorkspaceService
             RedirectStandardError = true,
             UseShellExecute = false,
         };
+        if (inspection)
+        {
+            // Read-only eligibility must never execute repository/user-configured commands,
+            // consult a redirected index, lazily fetch, or trust replacement ancestry.
+            psi.ArgumentList.Add("--no-replace-objects");
+            foreach (var key in psi.Environment.Keys.Where(key => key.StartsWith("GIT_CONFIG_KEY_", StringComparison.Ordinal)
+                || key.StartsWith("GIT_CONFIG_VALUE_", StringComparison.Ordinal)).ToArray()) psi.Environment.Remove(key);
+            foreach (var key in new[] { "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT", "GIT_CONFIG", "GIT_DIR",
+                "GIT_COMMON_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY",
+                "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE", "GIT_REPLACE_REF_BASE",
+                "GIT_EXTERNAL_DIFF", "GIT_SSH", "GIT_SSH_COMMAND", "GIT_PROXY_COMMAND" }) psi.Environment.Remove(key);
+            var nullFile = OperatingSystem.IsWindows() ? "NUL" : "/dev/null";
+            psi.Environment["GIT_CONFIG_NOSYSTEM"] = "1";
+            psi.Environment["GIT_CONFIG_SYSTEM"] = nullFile;
+            psi.Environment["GIT_CONFIG_GLOBAL"] = nullFile;
+            psi.Environment["GIT_NO_REPLACE_OBJECTS"] = "1";
+            psi.Environment["GIT_GRAFT_FILE"] = nullFile;
+            psi.Environment["GIT_NO_LAZY_FETCH"] = "1";
+            var overrides = new (string Key, string Value)[]
+            {
+                ("core.fsmonitor", "false"), ("core.hooksPath", nullFile), ("core.attributesFile", nullFile),
+                ("core.untrackedCache", "false"), ("diff.external", ""), ("credential.helper", ""),
+                ("core.sshCommand", "ssh"), ("remote.origin.uploadpack", "git-upload-pack"),
+                ("protocol.allow", "never"), ("protocol.file.allow", "always"), ("protocol.ssh.allow", "always"),
+                ("protocol.http.allow", "always"), ("protocol.https.allow", "always"),
+                ("maintenance.auto", "false"), ("gc.auto", "0"), ("submodule.recurse", "false"),
+            };
+            psi.Environment["GIT_CONFIG_COUNT"] = overrides.Length.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            for (var i = 0; i < overrides.Length; i++)
+            {
+                psi.Environment["GIT_CONFIG_KEY_" + i] = overrides[i].Key;
+                psi.Environment["GIT_CONFIG_VALUE_" + i] = overrides[i].Value;
+            }
+        }
         foreach (var arg in args)
             psi.ArgumentList.Add(arg);
         // No interactive credential prompt can ever block this process: the deploy key is the only
