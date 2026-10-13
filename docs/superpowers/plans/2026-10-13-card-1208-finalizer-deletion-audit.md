@@ -1,0 +1,71 @@
+# CARD-1208 finalizer deletion audit
+
+Task base: 9f89cc427dca7030cfc93a45ec36e4375d894213. Original Code/landing owner: b1b731e0. Branch feat/card-task-b1b731e0. Restart: none.
+
+## Deletion inventory and decision
+
+| Deletion call/site | Object | Base identity / acquisition registration | Applied rule |
+|---|---|---|---|
+| consumer_release/resource_remove via finalize and cleanup | fixed roster containers | name; no acquisition record | Require acquired record; remove durable ID. |
+| helper_release/resource_remove | writer, reader, masked, apphost | .fixture-helpers name; masked/apphost also roster | Require registration and labels; resolve ID. |
+| finalize prune-smoke/npm-server/busy/donor | legacy containers | marker name or ID | ID release; name migration with verified current-run labels or refusal. |
+| finalize network/resource_remove | npm network | name-only .fixture-network | Record create ID; verify legacy labels or refuse. |
+| cleanup/resource_remove volume | work, mask | .fixture-volumes plus owner/run/role labels | Registration and full labels; foreign dropped; unknown residue. |
+| cleanup/resource_remove volume | packages/scratch/npm, seed/busy/race/private/smoke/warm variants | .fixture-volumes; name alone | Add run labels at acquisition; verify full cache identity before deletion. |
+| immediate busy/masked/apphost/npm-http/prune-smoke docker rm | acquired containers | name or marker | Same durable acquired identity release. |
+| finalize docker compose down -v temp/main/negative | Compose resources | project + owned controller file | CARD-1207 excluded; exit-status-only teardown. |
+| controller_remove find rm -rf/rmdir | controller content/directory | recorded device/inode/uid | Preserve cwd/path/identity checks and replacement refusal. |
+| export_logs rm -rf destination | five diagnostic files | CASE_DIR names | Unlink files/symlinks only; refuse directories. |
+| finalize escape unlink; controller identity unlink; prepare/drop temporary ledgers; marker unlink | control files | bounded CASE_DIR paths | Unlink only; identity record removed after controller disposal. |
+| wrapper reset_runtime; model volume/container rm; simulated compose down; module setup rm | model objects | fresh private root with nonce | Remain inside acquired private root; model IDs address exact objects. |
+| wrapper contained-cleanup find/unlink/rmdir; cleanup_private EXIT | scratch tree | nonce, containment, ancestor/held-directory identity | Preserve named replacement/symlink canaries. |
+| fixture EXIT -> fixture_exit -> finalize | traps/receipts | primary exit status + named residue | Preserve primary failure; unknown refuses success; foreign disposition retained. |
+| anonymous docker run --rm | ephemeral acquisition helpers | Docker allocated ID | Docker owns automatic disposal; no finalizer ownership inferred. |
+
+Decision: delete only this run's recorded durable ID, or registered complete identity including run labels. A name or roster entry confers no ownership. Drop positively foreign objects immediately and record "foreign: left untouched". Resolve legacy names to IDs only after verifying current-run labels; unknown identity retains named residue and refuses success. Volumes lack durable IDs, so use owner/run/role/driver/options. Concurrent privileged relabeling is outside this Docker identity contract.
+
+## Verification design
+
+Specific brief overrides generic Final: no Unit lane or full class. CP-33..53 preserve S7, including CP-44's 19 earlier adjacent methods once. V-1 foreign cache; V-2 legacy container replacement; V-3 legacy network replacement; V-4 unacquired consumer/helper; V-5 legitimately acquired objects; V-6 recorded ID; V-7 verified legacy migration; V-8 unknown identity. R-1..R-21 map respectively to CP-33..53's named obligations. New stub tests execute production acquisition/finalization and assert actual object survival/removal calls/refusal. CP-54..57 must be red before production fixes against the landed base. W-1 pending rollout owner; Compose teardown CARD-1207 excluded.
+
+### Positive controls (pending Mutation)
+
+PC-1 foreign drop/receipt/removal guard (cache variants); PC-2 legacy container label checks; PC-3 legacy network label checks; PC-4 acquisition requirement (consumer/helper); PC-5 omitted legitimate release (work/mask/cache/helper/consumer/network); PC-6 ID replaced by name; PC-7 migration skipped/name deletion restored; PC-8 unknown treated as owned/absent (container/network/volume). Every PC/variant is pending method-scoped SourceLanding Mutation; Mutation owns deliberate red/restore/green and missing-control discovery. Existing CARD-1192 PC-1..174 remain pending.
+
+### Checkpoints
+
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
+|---|---|---|---|---|---|---|---:|---:|
+| CP-33 | Fixed | `tests/Antiphon.Tests -> bin-c1208/` | linux-no-host-payload | `/*/*/RemoteScriptContractTests/C1192_Fixture_has_no_host_payload_tree_or_payload_bind` | V-8 | 1 executed, 0 failed/skipped | 1 | 6 |
+| CP-34 | Fixed | `CP-33` | linux-finalization | `/*/*/RemoteScriptContractTests/C1192_Finalization_precedes_success_and_preserves_primary_failure` | V-9 | 1 executed, 0 failed/skipped | 1 | 1 |
+| CP-35 | Fixed | `CP-33` | linux-workspace-disposal | `/*/*/RemoteScriptContractTests/C1191_Fixture_exit_removes_owned_workspace_without_host_sudo` | R-2, V-2 | 1 executed, 0 failed/skipped | 1 | 1 |
+| CP-36 | Fixed | `CP-33` | linux-evidence-roster | `/*/*/RemoteScriptContractTests/C1192_Evidence_export_preserves_fixture_roster_without_payloads` | V-8 | 1 executed, 0 failed/skipped | 1 | 1 |
+| CP-37 | Fixed | `CP-33` | linux-escape-unlink | `/*/*/RemoteScriptContractTests/C1189_Fixture_escape_link_is_removed_after_pc08_and_on_exit` | R-1 | 1 executed, 0 failed/skipped | 1 | 1 |
+| CP-38 | Fixed | `CP-33` | linux-log-order | `/*/*/RemoteScriptContractTests/C1193_Fixture_exit_trap_copies_race_logs_before_tree_removal` | R-3 | 1 executed, 0 failed/skipped | 1 | 1 |
+| CP-39 | Fixed | `CP-33` | linux-log-paths | `/*/*/RemoteScriptContractTests/C1193_Fixture_log_copy_skips_symlinks_and_copies_regular_files` | R-3 | 1 executed, 0 failed/skipped | 1 | 1 |
+| CP-40 | Fixed | `CP-33` | linux-lane | `/*/*/RemoteScriptContractTests/Nested_lane_never_uses_sudo_or_python` | R-8 | 1 executed, 0 failed/skipped | 1 | 1 |
+| CP-41 | Fixed | `CP-33` | linux-receipt-exclusion | `/*/*/RemoteScriptContractTests/C849_Cache_receipts_exclude_credentials_and_payloads` | R-8 | 1 executed, 0 failed/skipped | 1 | 1 |
+| CP-42 | Fixed | `CP-33` | linux-receipt-consumer | `/*/*/RemoteScriptContractTests/C913_Receipts_reject_mixed_digest_types_and_false_smoke_claims` | R-8 | 1 executed, 0 failed/skipped | 1 | 2 |
+| CP-43 | Fixed | `CP-33` | linux-fixture-inventory | `/*/*/RemoteScriptContractTests/C913_Fixture_uses_owned_payloads_and_proven_absent_temp` | R-8 | 1 executed, 0 failed/skipped | 1 | 1 |
+| CP-44 | Fixed | `CP-33` | linux-adjacent | `/*/*/RemoteScriptContractTests/(C1189_*\|C1191_*\|C1193_*\|C1194_*\|C1195_*\|C1192_Summary_*\|C1192_Foreign_*\|C1192_Harness_*\|C1192_Helper_*)*` | R-1..R-5, R-8 | 19 executed, 0 failed/skipped | 19 | 2 |
+| CP-45 | Fixed | `CP-33` | linux-cleanup-consumer | `/*/*/RemoteScriptContractTests/C1192_Cleanup_consumer_requires_positive_absence` | V-2, V-9 | 1 executed, 0 failed/skipped | 1 | 1 |
+| CP-46 | Fixed | `CP-33` | linux-cleanup-helper | `/*/*/RemoteScriptContractTests/C1192_Cleanup_helper_requires_positive_absence` | V-2, V-9 | 1 executed, 0 failed/skipped | 1 | 1 |
+| CP-47 | Fixed | `CP-33` | linux-cleanup-masked | `/*/*/RemoteScriptContractTests/C1192_Cleanup_masked_requires_positive_absence` | V-2, V-9 | 1 executed, 0 failed/skipped | 1 | 1 |
+| CP-48 | Fixed | `CP-33` | linux-cleanup-work | `/*/*/RemoteScriptContractTests/C1192_Cleanup_work_requires_positive_absence` | V-2, V-9 | 1 executed, 0 failed/skipped | 1 | 1 |
+| CP-49 | Fixed | `CP-33` | linux-cleanup-mask | `/*/*/RemoteScriptContractTests/C1192_Cleanup_mask_requires_positive_absence` | V-2, V-9 | 1 executed, 0 failed/skipped | 1 | 1 |
+| CP-50 | Fixed | `CP-33` | linux-cleanup-cache | `/*/*/RemoteScriptContractTests/C1192_Cleanup_cache_requires_positive_absence` | V-2, V-9 | 1 executed, 0 failed/skipped | 1 | 1 |
+| CP-51 | Fixed | `CP-33` | linux-cleanup-network | `/*/*/RemoteScriptContractTests/C1192_Cleanup_network_requires_positive_absence` | V-2, V-9 | 1 executed, 0 failed/skipped | 1 | 1 |
+| CP-52 | Fixed | `CP-33` | linux-daemon-loss | `/*/*/RemoteScriptContractTests/C1192_Daemon_loss_after_compose_refuses_success` | V-2, V-9 | 1 executed, 0 failed/skipped | 1 | 1 |
+| CP-53 | Fixed | `CP-33` | linux-acquisition-unknown | `/*/*/RemoteScriptContractTests/C1192_Acquisition_unknown_ownership_retains_registration_and_residue` | V-1, V-2, V-9 | 1 executed, 0 failed/skipped | 1 | 1 |
+| CP-54 | Fixed | `CP-33` | audit-54 | `/*/*/RemoteScriptContractTests/C1208_Foreign_cache_is_dropped_and_untouched*` | V-1 | 1 executed, 0 failed/skipped | 1 | 1 |
+| CP-55 | Fixed | `CP-33` | audit-55 | `/*/*/RemoteScriptContractTests/C1208_Legacy_container_replacement_is_untouched*` | V-2 | 1 executed, 0 failed/skipped | 1 | 1 |
+| CP-56 | Fixed | `CP-33` | audit-56 | `/*/*/RemoteScriptContractTests/C1208_Legacy_network_replacement_is_untouched*` | V-3 | 1 executed, 0 failed/skipped | 1 | 1 |
+| CP-57 | Fixed | `CP-33` | audit-57 | `/*/*/RemoteScriptContractTests/C1208_Unacquired_roster_is_untouched*` | V-4 | 1 executed, 0 failed/skipped | 1 | 1 |
+| CP-58 | Fixed | `CP-33` | audit-58 | `/*/*/RemoteScriptContractTests/C1208_Acquired_objects_are_removed*` | V-5 | 1 executed, 0 failed/skipped | 1 | 1 |
+| CP-59 | Fixed | `CP-33` | audit-59 | `/*/*/RemoteScriptContractTests/C1208_Recorded_container_id_does_not_delete_replacement*` | V-6 | 1 executed, 0 failed/skipped | 1 | 1 |
+| CP-60 | Fixed | `CP-33` | audit-60 | `/*/*/RemoteScriptContractTests/C1208_Legacy_owned_markers_are_migrated*` | V-7 | 1 executed, 0 failed/skipped | 1 | 1 |
+| CP-61 | Fixed | `CP-33` | audit-61 | `/*/*/RemoteScriptContractTests/C1208_Unknown_identity_retains_residue*` | V-8 | 1 executed, 0 failed/skipped | 1 | 1 |
+
+### Cost
+
+Ordinary floor 37 row minutes, plus authoring/slot contention. Before-fix selection CP-54..57 shares one isolated build; repaired selection all rows shares one isolated build. Checkpoint-tool bootstrap is an explained unlisted build through build-slot, UseAppHost=false, bin-c1208-tool/. No repeats after green.
