@@ -13,6 +13,47 @@ namespace Antiphon.SessionRunner.Tests;
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class RunnerWorkspaceServiceTests
 {
+
+    [Test]
+    public async Task C1213_PublishBothFormsChecksTail()
+    {
+        // legacy-only equality -> new publish throws; omit tail -> foreign-publish reaches Git.
+        foreach (var branch in new[] { Scratch.Branch, "feat/card-1213-code-deadbeef" })
+        {
+            using var scratch = Scratch.Create();
+            Scratch.Git(scratch.Clone, "branch", branch == Scratch.Branch ? "canary" : branch, scratch.Sha);
+            var starts = new List<ProcessStartInfo>();
+            var service = scratch.Service(scratch.Clone, starts);
+            var mirror = (await service.MirrorAsync(new(branch, scratch.Sha, "task-deadbeef"), default)).Path;
+            File.WriteAllText(Path.Combine(mirror, "work.txt"), "owned branch");
+            Scratch.Git(mirror, "add", "work.txt"); Scratch.Git(mirror, "commit", "-m", "work");
+            var tip = Scratch.Git(mirror, "rev-parse", "HEAD").Trim();
+            var result = await service.PublishAsync(new(mirror, branch, scratch.Sha, branch == Scratch.Branch ? scratch.Sha : null, true), default);
+            result.Pushed.ShouldBeTrue("publish-receipt");
+            Scratch.Git(scratch.Origin, "rev-parse", branch).Trim().ShouldBe(tip, "publish-receipt");
+            foreach (var foreign in new[] { "feat/card-task-cafebabe", "feat/card-1213-code-cafebabe", branch + "\n" })
+            {
+                starts.Clear();
+                var error = await Should.ThrowAsync<PhoneHomeAdmissionException>(() => service.PublishAsync(new(mirror, foreign, scratch.Sha, null, true), default));
+                error.Code.ShouldBe(PhoneHomeProblemTypes.UnsupportedTarget, "foreign-publish");
+                starts.ShouldBeEmpty("foreign-publish: no Git starts");
+            }
+        }
+    }
+    [Test]
+    public async Task C1213_AdvertisesCardBranchCapability()
+    {
+        // omit static feature -> advertised-feature red on real runtime surface.
+        var root = Path.Combine(Path.GetTempPath(), "c1213-cap-" + Guid.NewGuid().ToString("N"));
+        await using var runtime = new SessionRunnerRuntime(Microsoft.Extensions.Options.Options.Create(new SessionRunnerSettings { SessionLogPath = root }), Microsoft.Extensions.Logging.Abstractions.NullLogger<SessionRunnerRuntime>.Instance);
+        try
+        {
+            var adapter = new PhoneHomeRuntimeAdapter(runtime, RunnerBuildIdentity.Resolve());
+            adapter.Capabilities().Features.ShouldContain("workspaceCardBranchV1", "advertised-feature");
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+    }
+
     [Test]
     public async Task Publish_pushes_only_own_fast_forward_branch()
     {
