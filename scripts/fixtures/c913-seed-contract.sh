@@ -496,6 +496,7 @@ case "$mode" in
     recovery="/fixture/cache/recovery-$RUN"
     physical="$root/volumes/c849${RUN}-work/_data/cache/recovery-$RUN"
     C849_PACKAGES="c849${RUN}smoke-packages"
+    printf '%s\n' "$C849_PACKAGES" >> "$CASE_DIR/.fixture-volumes"
     mkdir -p "$root/volumes/$C849_PACKAGES/_data" "$physical/packages" "$physical/npm"
     ordinary "$root/recovery-source"
     cp -a "$root/recovery-source/packages/." "$root/volumes/$C849_PACKAGES/_data/"
@@ -507,6 +508,9 @@ case "$mode" in
     [ "$(cat "$root/exit")" = 2 ] && [ "$(cat "$physical/packages/c913.probe/1.0.0/data")" = protected ] || fail recovery-foreign-cache-refused
     pass recovery-foreign-cache-refused
     FAULT=none
+    # Restore the modeled current-run acquisition after the foreign-label fault.
+    c849_fixture_cache_identity "$C849_PACKAGES" nuget-packages || fail recovery-readmission-identity
+    printf '%s\n' "$C849_PACKAGES" >> "$CASE_DIR/.fixture-volumes"
     run c849_fixture_recovery_copy "$image_id" "$recovery"; accept recovery-source-restored
     mkdir -p "$physical/npm/empty"
     printf npm > "$physical/npm/content"
