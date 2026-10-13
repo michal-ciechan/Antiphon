@@ -111,3 +111,59 @@ build: --rows S4-T33,CP-4 --serial --expected-source-sha HEAD. The method row
 precedes the full class in the manifest and does not discharge any additional PC.
 Both rows have After=S4 because the checkpoint importer requires matching After
 for a shared build. The first mismatched-After attempt was refused before any driver.
+
+## Final verification blocked by terminal task ownership
+
+The T33 inventory fixture repair is committed, but not yet executed. The final
+combined group on ab32d51ad1a71c87e3098993bfe2f07365c04f01 was refused before
+creating a run or launching a driver:
+
+```text
+CHECKPOINT owner owner-ended
+```
+
+A direct task-detail read confirmed task
+7b7d644a-a776-42e8-bc12-3d57e5df5ace has status **Failed**, while its bound
+session 9d16f51d-6cc9-4fcb-a954-3f1bbb4eae4c has status **Running**.
+The existing checkpoint TaskOwnerGuard rejects a terminal task even with a live
+session. No token was cleared, no ownership binding was changed, and no unbound
+bypass or build-slot test substitute was attempted.
+
+Latest executed CP-4 remains 47 passed / 1 failed / 0 skipped at
+b9f34b5294c96080de4f68d11c97f380d032f215. Fresh TRX inspection confirms all
+18 intended methods with their frozen argument counts (48 executions).
+V-13,V-14,V-15,V-16,V-17,V-18,V-19,V-27,V-28,V-29,V-30,V-31,V-32,V-34,V-35
+passed on that source; V-33 failed at the missing queue fixture inventory/timer
+path, and its committed repair is unverified. R-4 passed; R-3 is partial because
+T33 remains unverified after repair. These are not a Final green on the current tip.
+S4-T33: not run. Required final CP-4: not run on the repaired source.
+No Unit lane or manual production/deployment operation was run.
+
+Caller must provide a live bound Code owner before executing the two final rows.
+Rebuild the disclosed checkpoint tool if its owned output has been cleaned, then
+run --rows S4-T33,CP-4 --serial with exact committed HEAD as expected source SHA;
+wait until exit is not 75, inspect 1/48 exact counts and repair any remaining red.
+No implementation decision is requested. Next stage remains Code, not Review.
+Restart: none. All S4 PCs and variants remain pending for SourceLanding Mutation.
+
+### Retained unedited checkpoint lines
+
+Source report: .antiphon/checkpoints/20261013-070708-9cf5/report.md
+```text
+CHECKPOINT S4-BASE commit=f3238dec1a8751f228ec89aba20bf269ca28f6f2 build=ok filter=/*/Antiphon.Tests.Application/StaleWorkingTranscriptWatchdogTests*/C1205_Hosted_restart_discovers_working_sessions_immediately* executed=1 passed=0 failed=1 skipped=0 trx=/work/worktrees/task-7b7d644a/.antiphon/checkpoints/20261013-070708-9cf5/rows/S4-BASE/run.trx slot=granted waited=15s dirty=0 source=f3238dec1a8751f228ec89aba20bf269ca28f6f2 sourceState=clean buildSource=verified
+```
+
+Source report: .antiphon/checkpoints/20261013-072438-ff86/report.md
+```text
+CHECKPOINT S4-CASES-BASE commit=6979735a1bbe7e9ff16a1edf167193f8d234e06e build=ok filter=/*/Antiphon.Tests.Application/StaleWorkingTranscriptWatchdogTests*/* executed=48 passed=0 failed=48 skipped=0 trx=/work/worktrees/task-7b7d644a/.antiphon/checkpoints/20261013-072438-ff86/rows/S4-CASES-BASE/run.trx slot=granted waited=30s dirty=0 source=6979735a1bbe7e9ff16a1edf167193f8d234e06e sourceState=clean buildSource=verified
+```
+
+Source report: .antiphon/checkpoints/20261013-073557-ba40/report.md
+```text
+CHECKPOINT CP-4 commit=7adb09c79ac24982042e48d85638f0cbc5103623 build=ok filter=/*/Antiphon.Tests.Application/StaleWorkingTranscriptWatchdogTests*/* executed=48 passed=46 failed=2 skipped=0 trx=/work/worktrees/task-7b7d644a/.antiphon/checkpoints/20261013-073557-ba40/rows/CP-4/run.trx slot=granted waited=0s dirty=0 source=7adb09c79ac24982042e48d85638f0cbc5103623 sourceState=clean buildSource=verified
+```
+
+Source report: .antiphon/checkpoints/20261013-074506-49bc/report.md
+```text
+CHECKPOINT CP-4 commit=b9f34b5294c96080de4f68d11c97f380d032f215 build=ok filter=/*/Antiphon.Tests.Application/StaleWorkingTranscriptWatchdogTests*/* executed=48 passed=47 failed=1 skipped=0 trx=/work/worktrees/task-7b7d644a/.antiphon/checkpoints/20261013-074506-49bc/rows/CP-4/run.trx slot=granted waited=0s dirty=0 source=b9f34b5294c96080de4f68d11c97f380d032f215 sourceState=clean buildSource=verified
+```
