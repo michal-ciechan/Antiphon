@@ -704,7 +704,7 @@ work/mask/cache volumes and the fixture network. CP-53 models work/mask creation
 followed by unknown ownership, with persistent daemon loss and a one-probe outage:
 registration and both cleanup records remain, and the wrapper refuses success.
 C1192_Foreign_volume_is_refused_after_create (CP-44) checks confirmed-foreign work/mask refusal: registration drops, and those volumes are neither mounted nor deleted.
-Fixture finalizer deletion is protected only where a named S7 test says so (work and mask volume acquisition ownership; unknown outcomes retained as residue). The inherited finalizer also deletes some objects by name or fixed roster (foreign cache volumes, same-name replacements behind legacy name-only markers, unacquired fixed-name consumers, and possibly others): the complete audit and fix are CARD-1208; Compose teardown is exit-status-only (CARD-1207); live Docker acceptance (W-1) is pending.
+C1208_Foreign_cache_is_dropped_and_untouched checks foreign cache refusal, ledger removal and untouched volume; C1208_Legacy_container_replacement_is_untouched and C1208_Legacy_network_replacement_is_untouched check legacy replacement retention/refusal; C1208_Unacquired_roster_is_untouched checks unacquired consumer/helper retention; C1208_Acquired_objects_are_removed and C1208_Recorded_container_id_does_not_delete_replacement check acquired disposal and ID-only removal; C1208_Legacy_owned_markers_are_migrated checks verified legacy migration, and C1208_Unknown_identity_retains_residue checks unknown refusal/residue. CP-45..53 retain positive-absence checks. Compose teardown remains exit-status-only (CARD-1207); live Docker W-1 is pending.
 
 The production cache names are
 outside its namespace. A nonzero case or missing
