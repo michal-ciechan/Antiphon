@@ -127,15 +127,25 @@ Do not widen existing assertion or execution deadlines.
 |---|---|---|---|---|---|---|---:|---:|---|
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1042-repair-d7a4f178/` | classification | `/*/*/TestClassificationGuardTests/*` | V-1 | exactly 1 passed, 0 failed/skipped | 1 | 4 | true |
 | CP-2 | S1 | CP-1 | evidence-policy | `/*/*/(EvidenceApprovedFixtureGuardTests*)\|(EvidenceDiffGuardTests*)\|(EvidenceDeletionGuardTests*)\|(EvidenceSupplementalDeletionGuardTests*)/(Allows_approved_json_fixtures*)\|(Rejects_run_output_in_fixture_directory*)\|(Approved_fixtures_obey_checkpoint_exclusion*)\|(Approved_fixtures_obey_regular_mode_constraint*)\|(Approved_fixtures_obey_one_mib_limit*)\|(Deletion_inventory_preserves_approved_fixtures*)\|(Rejects_checkpoint_paths*)\|(Rejects_non_markdown_outputs*)\|(Rejects_non_regular_modes*)\|(Enforces_one_mib_blob_limit*)\|(Allows_small_markdown_and_other_source*)\|(Grandfathers_unchanged_legacy_and_allows_deletion*)\|(Rechecks_modified_and_renamed_legacy_paths*)\|(Checks_intermediate_commits_even_when_tip_is_clean*)\|(Checks_merge_side_history*)\|(Reads_pinned_git_objects_not_index_or_worktree*)\|(Refuses_failed_or_malformed_git_results*)\|(Resolves_refs_once_and_stays_read_only*)\|(Ci_selects_cumulative_feature_push_range*)\|(Ci_selects_complete_default_branch_push_range*)\|(Ci_requires_valid_manual_range*)\|(Ci_refuses_invalid_events_and_missing_history*)\|(Verifies_exact_legacy_deletion*)\|(Rejects_wrong_inventory*)\|(Rejects_ambiguous_or_merge_deletion*)\|(Rejects_missing_extra_or_non_deletions*)\|(Rejects_changed_legacy_or_resurrected_paths*)\|(Verifies_later_cleanup_without_original_anchor_entries*)\|(Rejects_extra_deletion*)\|(Rejects_missing_deletion*)\|(Rejects_changed_kept_markdown*)\|(Rejects_wrong_inventory_or_cleanup_label*)\|(Rejects_wrong_ambiguous_or_merge_marker*)\|(Rejects_non_deletion_changes*)\|(Rejects_changed_inventory_entries*)\|(Rejects_resurrection_and_new_final_artifacts*)` | V-2 | exactly the 36 Selected roster pairs, 0 failed/skipped | 36 | 19 | true |
-| CP-3 | S1 | n/a | duration-tripwire | `for /f %r in (.antiphon\checkpoints\latest) do pwsh -NoProfile -File scripts\test-duration-tripwire.ps1 -Trx .antiphon\checkpoints\%r\rows\CP-2\run.trx` | R-1 | exit 0; expanded rows=36; 0 unlisted tests >= 5 s | n/a | 1 | true |
+| CP-3 | S1 | n/a | duration-tripwire | `for /f %r in (.antiphon\checkpoints\c1042-cp2-run) do pwsh -NoProfile -File scripts\test-duration-tripwire.ps1 -Trx .antiphon\checkpoints\%r\rows\CP-2\run.trx` | R-1 | exit 0; expanded rows=36; 0 unlisted tests >= 5 s | n/a | 1 | true |
 
 ## Execution and handoff
 
 Commit S1 before execution, pass that full HEAD as --expected-source-sha, and keep
 source frozen until every row finishes. Run the table once through the checkpoint
-tool with --serial; keep waiting while exit is 75. CP-3 resolves the fresh run ID
-from the tool-owned latest pointer written by this invocation; do not start another
-checkpoint run in this worktree concurrently. Inspect both TRX files and CP-3 log.
+tool with --serial --rows CP-1,CP-2; keep waiting while exit is 75.
+The tool schedules a command row before a pending test build even with --serial,
+so CP-3 must run in a second invocation after CP-2 has completed. After checking
+the first report's SHA and CP-2 TRX, copy its latest run ID into the ignored
+.antiphon\checkpoints\c1042-cp2-run pointer; then run --rows CP-3 through the tool.
+This pointer binds CP-3 to the fresh CP-2 run and is not overwritten by CP-3.
+The two sequential invocations are a necessary scheduler workaround, with only
+one test-project build and one successful execution per row. Validate both
+reports against the same committed SHA (CP-1,CP-2 and CP-3 respectively).
+The initial attempt at 5a041114756df4b8ba6066ffd9e3bd7d497d4492 ran CP-3 early:
+tripwire exit 2 for missing CP-2 TRX; the run was stopped before proof completed.
+This is an execution-order repair, not a loosened assertion or timeout.
+Inspect both TRX files and CP-3 log.
 Validate both receipt implementations; record unedited CHECKPOINT lines and actual
 tested SHA in the ignored stored task report after qualification. Delete only
 producer-owned alternate outputs, keeping ignored TRX/receipts/logs as evidence.
