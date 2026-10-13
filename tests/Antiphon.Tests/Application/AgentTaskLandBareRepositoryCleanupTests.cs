@@ -129,6 +129,121 @@ public sealed class AgentTaskLandBareRepositoryCleanupTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task C1211_NestedTrackedHeadKeepsExistingAdmission(bool gitFile)
+    {
+        await using var fixture = new LandHalfResetFixture();
+        var h = fixture.Harness;
+        var (local, reviewed, evidence) = await fixture.SeedReviewedDescendantAsync();
+        var request = await h.RequestAsync(expectedSourceSha: reviewed, reviewEvidenceId: evidence,
+            recoverReviewedSource: true);
+        fixture.Interceptor.RequestId = request.RequestId;
+        if (!gitFile)
+            await Should.ThrowAsync<DbUpdateConcurrencyException>(() => h.RunQueuedAsync());
+        else
+            fixture.Boundary.ThrowConflict = false;
+        var nested = Path.Combine(h.Fixture.Source, "obj", "nested-head");
+        await SeedNestedAsync(h.Fixture, nested, gitFile, trackedHead: true);
+        var bytes = await TreeBytesAsync(nested);
+        var admin = gitFile ? Path.Combine(h.Fixture.Root, "private-admin") : Path.Combine(nested, ".git");
+        var adminBytes = await TreeBytesAsync(admin);
+        await IgnoreObjAsync(h.Fixture);
+        var proof = await h.Fixture.Git.InspectRecoveryCheckoutAsync(h.Fixture.Coordinates, local, reviewed, default);
+        if (gitFile)
+        {
+            proof.Accepted.ShouldBeFalse("F1.GitFileRecoveryStillRefused");
+            proof.Reason.ShouldBe("recovery_checkout_unproven");
+            // Ordinary reviewed adoption supplies cleanup authority for the file-pointer case.
+        }
+        else
+        {
+            proof.Accepted.ShouldBeTrue("F1.GitDirectoryWithTrackedHeadAccepted");
+            await h.SweepAsync();
+        }
+        await h.RunQueuedAsync();
+        await AssertPreservedPublicationAsync(h, nested, bytes);
+        (await TreeBytesAsync(admin)).ShouldBe(adminBytes, "F1.PrivateAdministrationUnchanged");
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task C1211_BareInsideAcceptedNestedRepositoryIsPreserved(bool trackedHead)
+    {
+        await using var fixture = new LandHalfResetFixture();
+        var h = fixture.Harness;
+        var (local, reviewed, evidence) = await fixture.SeedReviewedDescendantAsync();
+        var request = await h.RequestAsync(expectedSourceSha: reviewed, reviewEvidenceId: evidence,
+            recoverReviewedSource: true);
+        fixture.Interceptor.RequestId = request.RequestId;
+        await Should.ThrowAsync<DbUpdateConcurrencyException>(() => h.RunQueuedAsync());
+        var nested = Path.Combine(h.Fixture.Source, "obj", "enclosing");
+        await SeedNestedAsync(h.Fixture, nested, gitFile: false, trackedHead);
+        var bare = Path.Combine(nested, "private.git");
+        await SeedBareAsync(h.Fixture, bare);
+        await File.WriteAllTextAsync(Path.Combine(bare, "private-sentinel.txt"), "private bare bytes\n");
+        var bytes = await TreeBytesAsync(nested);
+        await IgnoreObjAsync(h.Fixture);
+        var proof = await h.Fixture.Git.InspectRecoveryCheckoutAsync(h.Fixture.Coordinates, local, reviewed, default);
+        proof.Accepted.ShouldBeTrue("F2.EnclosingRepositoryAdmissionDoesNotDescend");
+        await h.SweepAsync();
+        await h.RunQueuedAsync();
+        await AssertPreservedPublicationAsync(h, nested, bytes);
+        File.Exists(Path.Combine(bare, "HEAD")).ShouldBeTrue("F2.EnclosedBareHeadSurvivesCleanup");
+    }
+
+    [Test]
+    public async Task C1211_HeadOnlyOutputIsPreservedWithoutBareProofRefusal()
+    {
+        await using var fixture = new LandHalfResetFixture();
+        var h = fixture.Harness;
+        var (local, reviewed, evidence) = await fixture.SeedReviewedDescendantAsync();
+        var request = await h.RequestAsync(expectedSourceSha: reviewed, reviewEvidenceId: evidence,
+            recoverReviewedSource: true);
+        fixture.Interceptor.RequestId = request.RequestId;
+        await Should.ThrowAsync<DbUpdateConcurrencyException>(() => h.RunQueuedAsync());
+        var output = Path.Combine(h.Fixture.Source, "obj", "head-only");
+        Directory.CreateDirectory(output);
+        await File.WriteAllTextAsync(Path.Combine(output, "HEAD"), "ordinary output, not bare administration\n");
+        var bytes = await TreeBytesAsync(output);
+        await IgnoreObjAsync(h.Fixture);
+        var proof = await h.Fixture.Git.InspectRecoveryCheckoutAsync(h.Fixture.Coordinates, local, reviewed, default);
+        proof.Accepted.ShouldBeTrue("F1.HeadOnlyIsNotStrictBareSignature");
+        await h.SweepAsync();
+        await h.RunQueuedAsync();
+        await AssertPreservedPublicationAsync(h, output, bytes);
+    }
+
+    private static async Task SeedNestedAsync(LandingGitFixture fixture, string nested, bool gitFile, bool trackedHead)
+    {
+        Directory.CreateDirectory(nested);
+        if (gitFile)
+            await fixture.RequiredAsync(nested, "init", "--separate-git-dir", Path.Combine(fixture.Root, "private-admin"));
+        else
+            await fixture.RequiredAsync(nested, "init");
+        var name = trackedHead ? "HEAD" : "committed.txt";
+        await File.WriteAllTextAsync(Path.Combine(nested, name), "tracked private worktree bytes\n");
+        await fixture.RequiredAsync(nested, "add", "--", name);
+        await fixture.RequiredAsync(nested, "commit", "-m", "private tracked worktree file");
+        await File.WriteAllTextAsync(Path.Combine(nested, "sentinel.txt"), "uncommitted private bytes\n");
+    }
+
+    private static async Task AssertPreservedPublicationAsync(LandingSafetyHarness h, string nested, string[] bytes)
+    {
+        var op = await h.OperationAsync();
+        op.ShouldNotBeNull();
+        new AgentTaskLandingState().HasPublication(op).ShouldBeTrue("F.PublicationConfirmed");
+        Directory.Exists(nested).ShouldBeTrue("F.NestedDirectorySurvivesCleanup");
+        (await TreeBytesAsync(nested)).ShouldBe(bytes, "F.PrivateBytesUnchanged");
+        op.Cleanup.ShouldBe(LandCleanupStatus.Refused);
+        op.LastReason.ShouldBe("ignored_content_preserved");
+        op.DirectoryRemoved.ShouldBeFalse();
+        op.RegistrationRemoved.ShouldBeFalse();
+        op.BranchRemoved.ShouldBeFalse();
+    }
+
+    [Test]
     public async Task C1211_LateBareRepositorySurvivesSetAsideResume()
     {
         await using var h = await WorktreeGuardedCleanupTests.RemovalHarness.CreateAsync();
