@@ -7,6 +7,7 @@ import { StatusTab } from './StatusTab'
 import { AgentTuiConfig } from './AgentTuiConfig'
 import { ApiKeysSection } from './ApiKeysSection'
 import { RoutingSettingsTab } from './RoutingSettingsTab'
+import { ConcurrencySettingsTab } from './ConcurrencySettingsTab'
 
 const SETTINGS_TABS = [
   'templates',
@@ -15,11 +16,12 @@ const SETTINGS_TABS = [
   'api-keys',
   'agent-tui',
   'routing',
+  'concurrency',
   'status',
 ] as const
 
 export function SettingsPage() {
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const requested = searchParams.get('tab') ?? 'templates'
   const tab = (SETTINGS_TABS as readonly string[]).includes(requested) ? requested : 'templates'
   return (
@@ -28,7 +30,14 @@ export function SettingsPage() {
         Settings
       </Title>
       <Paper p="md" radius="md" withBorder>
-        <Tabs defaultValue={tab} keepMounted={false}>
+        {/* Controlled by `?tab=` so later navigation switches the panel (`C506 V16 controlled-tab`). */}
+        <Tabs
+          value={tab}
+          onChange={(value) => {
+            if (value !== null) setSearchParams({ tab: value })
+          }}
+          keepMounted={false}
+        >
           <Tabs.List>
             <Tabs.Tab value="templates">Templates</Tabs.Tab>
             <Tabs.Tab value="llm-providers">LLM Providers</Tabs.Tab>
@@ -36,6 +45,7 @@ export function SettingsPage() {
             <Tabs.Tab value="api-keys">API Keys</Tabs.Tab>
             <Tabs.Tab value="agent-tui">AI Agent TUI</Tabs.Tab>
             <Tabs.Tab value="routing">Routing</Tabs.Tab>
+            <Tabs.Tab value="concurrency">Concurrency</Tabs.Tab>
             <Tabs.Tab value="status">Status</Tabs.Tab>
           </Tabs.List>
 
@@ -61,6 +71,10 @@ export function SettingsPage() {
 
           <Tabs.Panel value="routing" pt="md">
             <RoutingSettingsTab />
+          </Tabs.Panel>
+
+          <Tabs.Panel value="concurrency" pt="md">
+            <ConcurrencySettingsTab />
           </Tabs.Panel>
 
           <Tabs.Panel value="status" pt="md">

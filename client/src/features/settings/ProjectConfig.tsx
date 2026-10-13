@@ -34,7 +34,9 @@ import {
   TbCheck,
   TbX,
   TbRefresh,
+  TbAdjustments,
 } from 'react-icons/tb'
+import { useNavigate } from 'react-router'
 import {
   useProjects,
   useUpdateProject,
@@ -84,6 +86,7 @@ function ProjectList({ projects }: { projects: ProjectDto[] }) {
   const { data: boards } = useBoards()
   const { data: githubRepos } = useGitHubRepos()
   const refreshReposMutation = useRefreshGitHubRepos()
+  const navigate = useNavigate()
   const [editModalOpen, setEditModalOpen] = useState(false)
   const [setupModalOpen, setSetupModalOpen] = useState(false)
   const [editingProject, setEditingProject] = useState<ProjectDto | null>(null)
@@ -267,7 +270,7 @@ function ProjectList({ projects }: { projects: ProjectDto[] }) {
                 <Table.Th>Boards</Table.Th>
                 <Table.Th>Default Context</Table.Th>
                 <Table.Th>Readiness</Table.Th>
-                <Table.Th w={100}>Actions</Table.Th>
+                <Table.Th w={130}>Actions</Table.Th>
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
@@ -295,7 +298,18 @@ function ProjectList({ projects }: { projects: ProjectDto[] }) {
                     />
                   </Table.Td>
                   <Table.Td>
-                    <Group gap="xs">
+                    <Group gap="xs" wrap="nowrap">
+                      <Tooltip label="Concurrency limits">
+                        <ActionIcon
+                          variant="subtle"
+                          aria-label="Project concurrency"
+                          onClick={() =>
+                            navigate(`/settings?${new URLSearchParams({ tab: 'concurrency', project: project.id })}`)
+                          }
+                        >
+                          <TbAdjustments />
+                        </ActionIcon>
+                      </Tooltip>
                       <Tooltip label="Edit">
                         <ActionIcon
                           variant="subtle"
