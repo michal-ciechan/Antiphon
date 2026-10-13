@@ -7,6 +7,23 @@ namespace Antiphon.Tests.Checkpoints;
 [Category("Unit")]
 public sealed class WaitCommandTests : CheckpointTestBase
 {
+
+    // case: completed state with lost reports; mutation: fall back to heartbeat and green;
+    // red: wait returns zero without the mandatory receipts.
+    [Test]
+    public async Task completed_wait_requires_report_receipts()
+    {
+        var dir = TempDir();
+        CheckpointFixtures.MarkRun(dir, alive: false);
+        new RunStateStore().Write(Path.Combine(dir, "state.json"), new RunState
+        { RunId = Path.GetFileName(dir), Phase = "done", ExitCode = 0, StartedAt = DateTimeOffset.UtcNow });
+        var output = new StringWriter();
+        var exit = await new WaitCommand(liveness: new Alive(false), delay: Fast).WaitAsync(
+            dir, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(60), output, CancellationToken.None);
+        exit.ShouldBe(2, output.ToString());
+        output.ToString().ShouldContain("receipt");
+    }
+
     [Test]
     public void heartbeat_lists_a_queued_build_after_the_building_one()
     {
