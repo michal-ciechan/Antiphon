@@ -1,3 +1,4 @@
+using Antiphon.Tests.Application;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -124,14 +125,14 @@ public sealed class ProcessSpawnTimeoutPolicyTests
 
     private static (ClassDeclarationSyntax Declaration, SemanticModel Model) Probe(string classAttributes, string methodAttributes)
     {
-        var tree = CSharpSyntaxTree.ParseText($"""
+        var tree = CSharpSyntaxTree.ParseText($$"""
             using TUnit.Core;
-            {classAttributes}
+            {{classAttributes}}
             public class Probe
             {
                 private const int Minute = 60_000;
-                {methodAttributes}
-                public void Test() {{ }}
+                {{methodAttributes}}
+                public void Test() { }
             }
             """);
         var compilation = Compile([tree]);
