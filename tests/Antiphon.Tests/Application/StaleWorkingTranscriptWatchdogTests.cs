@@ -30,7 +30,7 @@ using TUnit.Core;
 
 namespace Antiphon.Tests.Application;
 
-[Category("Integration"), Category("Slow")]
+[Category("Integration"), Category("Slow"), NotInParallel]
 public class StaleWorkingTranscriptWatchdogTests
 {
     // Frozen case -> mutation -> red bindings: T18..T35 / PC-41..83,101..110
@@ -438,9 +438,9 @@ public class StaleWorkingTranscriptWatchdogTests
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
             base.ConfigureWebHost(builder);
-            builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(
-                new Dictionary<string, string?> { ["SessionRunner:Enabled"] = "true" }
-                    .Concat(values ?? []).ToDictionary(p => p.Key, p => p.Value)));
+            var configuration = new Dictionary<string, string?> { ["SessionRunner:Enabled"] = "true" };
+            foreach (var pair in values ?? []) configuration[pair.Key] = pair.Value;
+            builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(configuration));
         }
         protected override void ApplyTestOverrides(IServiceCollection services)
         {
