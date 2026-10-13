@@ -62,7 +62,7 @@ Message a child's session directly only to steer already-dispatched work.
 
 To start a child at another base, pass `-Worktree -StartRef <full-sha>`;
 never put `git checkout -B <branch> <sha>` in its goal. The child gets its own
-`feat/card-task-<id>` branch at that commit; the source branch stays.
+task branch at that commit; use its reported `WorktreeBranch`. The source branch stays.
 `-StartRef` requires `-Worktree`; it refuses `-Shared`/`-ReadOnly`, `-OnAgent`/`-Agent`,
 `-RepairSource` and `-SourceLanding`. It selects only a BASE: no merge target or land
 authority. `-RepairSource` instead attributes commits on another task's branch.

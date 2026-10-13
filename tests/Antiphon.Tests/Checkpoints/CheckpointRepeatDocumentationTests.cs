@@ -32,7 +32,8 @@ public sealed class CheckpointRepeatDocumentationTests : CheckpointTestBase
         // recomputed whenever orchestrator.md changes.
         // CARD-0881 swaps the three-route policy for the effective-settings route.
         // Repeat policy remains in Code's bundle and owner docs.
+        // CARD-1213 points -StartRef children at their reported WorktreeBranch.
         Convert.ToHexString(SHA256.HashData(orchestrator)).ToLowerInvariant()
-            .ShouldBe("cc5dfdfc6fd462fd162d21d1de5a07f982e94c068d7db578856e30fa0c4bf057", "orchestrator-approved-bytes");
+            .ShouldBe("f0d2f4d671026c2646f50024d0bbba3a096c4bdaa7afe8488cbefba3aed8c0ab", "orchestrator-approved-bytes");
     }
 }
