@@ -9,6 +9,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Shouldly;
 using TUnit.Core;
+using TUnit.Core.Exceptions;
 
 namespace Antiphon.Tests.Application;
 
@@ -94,11 +95,11 @@ public sealed class PhoneHomeCompletedCardTransportTests
 
     private sealed class World : IAsyncDisposable
     {
-        public CompletedCardRunnerFixture F { get; } = new();
+        public CompletedCardRunnerFixture F { get; } = new("grok-linux");
         public RunnerWorkspaceRemovalJournal Journal { get; }
         public RunnerWorkspaceUseGate Gate { get; }
         public RunnerWorkspaceService Workspace { get; }
-        public RunnerCompletedCardWorkspaceRemoval Executor { get; }
+        public RunnerCompletedCardWorkspaceRemoval Executor { get; private set; }
         public CompletedCardWorkspaceCommand Command { get; }
         public PhoneHomeTestHost Host { get; private set; } = null!;
         public PhoneHomeConnectionService Connection { get; private set; } = null!;
@@ -138,7 +139,7 @@ public sealed class PhoneHomeCompletedCardTransportTests
                 type.ShouldNotBeNull("S6 explicit runner transport");
                 var transport = Activator.CreateInstance(type!, Workspace, Journal, Gate)!;
                 // Reuse the concrete executor only to hold the real removal at the deterministic seam.
-                type!.GetProperty("Removal", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(transport, Executor);
+                Executor = (RunnerCompletedCardWorkspaceRemoval)type!.GetProperty("Removal", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(transport)!;
                 typeof(SessionRunnerRuntime).GetProperty("CompletedCardWorkspace", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(runtime, transport);
             }
             var adoption = new PhoneHomeAdoptionGate();

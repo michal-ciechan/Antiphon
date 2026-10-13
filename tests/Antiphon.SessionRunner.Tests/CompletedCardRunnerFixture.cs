@@ -15,6 +15,7 @@ internal sealed class CompletedCardRunnerFixture : IAsyncDisposable
     public string State => Path.Combine(Root, "state", "retirements");
     public string Repository => Path.Combine(Root, "repository");
     public string Origin => Path.Combine(Root, "origin");
+    public string RunnerId { get; }
     public string StoreId { get; } = Guid.NewGuid().ToString("D");
     public SessionRunnerSettings Settings { get; }
     public SessionRunnerRuntime Runtime { get; private set; }
@@ -29,8 +30,9 @@ internal sealed class CompletedCardRunnerFixture : IAsyncDisposable
     private readonly List<SessionRunnerRuntime> _runtimes = [];
     private readonly List<Process> _children = [];
 
-    public CompletedCardRunnerFixture()
+    public CompletedCardRunnerFixture(string runnerId = "fixture-runner")
     {
+        RunnerId = runnerId;
         Directory.CreateDirectory(Path.GetDirectoryName(Checkout)!);
         Directory.CreateDirectory(Origin);
         Directory.CreateDirectory(Path.Combine(Root, "outside"));
@@ -46,7 +48,7 @@ internal sealed class CompletedCardRunnerFixture : IAsyncDisposable
         Git(Origin, "branch", "feat/card-task-deadbeef");
         Git(Root, "clone", Origin, Repository);
         MirrorRequest = new("feat/card-task-deadbeef", Sha, "task-deadbeef", Binding:
-            new(Guid.Parse("deadbeef-0000-4000-8000-000000000001"), 1, Guid.NewGuid(), "fixture-runner", StoreId));
+            new(Guid.Parse("deadbeef-0000-4000-8000-000000000001"), 1, Guid.NewGuid(), runnerId, StoreId));
         var creator = Workspace(gated: false);
         var mirror = creator.MirrorAsync(MirrorRequest, CancellationToken.None).GetAwaiter().GetResult();
         Binding = mirror.Binding!;
@@ -137,7 +139,7 @@ internal sealed class CompletedCardRunnerFixture : IAsyncDisposable
             psi.Environment["GIT_CONFIG_GLOBAL"] = config;
             return Process.Start(psi);
         }, publishedBranch: publishedBranch);
-        service.BindRecipient("fixture-runner", Guid.Parse(StoreId));
+        service.BindRecipient(RunnerId, Guid.Parse(StoreId));
         if (gated) Bind(service);
         return service;
     }
