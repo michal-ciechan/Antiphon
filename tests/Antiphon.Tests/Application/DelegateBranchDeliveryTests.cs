@@ -151,8 +151,23 @@ public sealed class DelegateBranchDeliveryTests
             if (cut is "received" or "effect") wire.Cut = (PhoneHomeOperation.WorkspacePublish, cut);
             var restoredTask = await ReadTaskAsync(schema, world.TaskId, ct);
             restoredTask.WorktreeBranch.ShouldBe(world.Branch, "persisted-recovery-ref");
+            world.Git.Clear();
             var result = await world.Service(publisher: new PhoneHomeRunnerMirrorPublisher(wire.Host.Directory)).SyncAsync(restoredTask, ct);
-            if (cut is "before-send" or "received" or "effect") result.Confirmed.ShouldBeFalse("enqueue-failure/lost-reply");
+            if (cut is "before-send" or "received")
+            {
+                result.State.ShouldNotBe(RemoteSettlementSyncState.Synchronized, "unsent work cannot be synchronized");
+                result.DesktopAfterSha.ShouldNotBe(tip, "no confirmation of recipient tip");
+                (await world.HeadAsync()).ShouldBe(world.Baseline, "canonical baseline retained");
+                (await world.RunAsync(world.Origin, "rev-parse", world.Branch)).ShouldBe(world.Baseline, "origin baseline retained");
+            }
+            if (cut == "effect" && result.State == RemoteSettlementSyncState.Synchronized)
+            {
+                result.FullRef.ShouldBe(world.FullRef, "lost-reply reobserved exact ref");
+                result.DesktopAfterSha.ShouldBe(tip, "lost-reply requires full Git receipt");
+                (await world.HeadAsync()).ShouldBe(tip);
+                (await world.RunAsync(world.Origin, "rev-parse", world.Branch)).ShouldBe(tip);
+                world.Git.Commands.Count(c => c.StartsWith("ls-remote ", StringComparison.Ordinal)).ShouldBeGreaterThanOrEqualTo(2, "lost-reply fresh observation");
+            }
             if (cut == "reply-before-save")
             {
                 await Should.ThrowAsync<IOException>(() => PersistSyncEvidenceAsync(schema, world.TaskId, result, true, ct));
