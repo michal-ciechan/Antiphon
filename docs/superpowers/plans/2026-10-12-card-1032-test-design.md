@@ -139,7 +139,7 @@ No new method lacks a detecting control.
 | S4 / CP-6 | U.`C1032_InspectionReadOnlyBound`; U.`C1032_InspectionPolicyParity`; U.`C1032_InspectionSourceProof` | Read-only facts for bound tree, no enrollment; hand-written Protected/Evidence/Disposable witnesses; actual H read independently of request baseline. |
 | S5 / CP-10 | U.`C1032_RemovalEligiblePhysical`; U.`C1032_RemovalComponentRecovery`; U.`C1032_RemovalOriginalReplacement` | Real directory and matching registration removed; refs/sentinels retained; exact set-aside partial work recovers; replacement and unproved absence held. |
 | S6 / CP-11 | U.`C1032_TransportDefaultInert`; U.`C1032_TransportRequiredPayload`; U.`C1032_TransportDispatchReplay` | Unconfigured dispatcher refuses; explicitly configured dispatcher reaches real removal; typed complete replay receipt persists before reply. |
-| S7 / CP-13 | M.`C1032_AdmissionCurrentEligibility`; M.`C1032_AdmissionArtifactSurvival`; M.`C1032_AdmissionIntentOrdering`; M.`C1032_AdmissionBoundRebaseProof` | Explicit bound-rebase positive plus fresh generation/attempt/use/source/artifacts at intent; intent and reopen winner orders; fresh observer proves commit before send and no row lock across I/O. |
+| S7 / CP-13 | M.`C1032_AdmissionCurrentEligibility`; M.`C1032_AdmissionArtifactSurvival`; M.`C1032_AdmissionIntentOrdering`; M.`C1032_AdmissionBoundRebaseProof` | Explicit bound-rebase positive plus fresh generation/attempt/use/source/artifacts at intent; intent and reopen winner orders; fresh observer checks commit before send and no row lock across I/O. |
 | S7 / CP-14 | M.`C1032_ReceiptCompleteBoundReceipt` | Genuine complete receipt positive, one-field mismatch/missing-field vectors, digest mismatch and import failure; fresh observer does not see false Complete. |
 | S8 / CP-15 | M.`C1032_RecoveryQueuesBusyAndReady`; M.`C1032_RecoveryCrashHandoffs`; M.`C1032_RecoveryInertServerComposition` | Real preparation/inspection/removal transport in busy/ready states and each cut; fresh receipt plus recipient files; default server/sweep/route cannot execute removal even with fixture Execute=true. |
 
@@ -1297,26 +1297,26 @@ A directory entry is not a regular report file.
 | CP-30 | `/*/*/CardWorktreeMirrorCleanupTests/C1032_ReportAddedAfterProducerInspection*` | 1 | explicit post-intent gate; lower/upper/mixed report arrival; recipient artifact_unpreserved, exact bytes/registration, no imported Complete receipt |
 | CP-31 | `/*/*/CardWorktreeMirrorCleanupTests/C1032_ReportAbsentAllowsCleanup*` | 1 | report absent, real physical cleanup and independently read durable receipt |
 
-CP-13/14 remain seven results; CP-F2 now includes all 17 mirror methods plus
+CP-13/14 remain seven results; CP-F2 now includes the 17 mirror methods plus
 the two full adjacent classes (59 total). CP-F3 remains 144; CP-RG1 is 1.
-The repair brief excludes Unit. All V-1..6/R-1..3 outcomes must be reported at
+The repair brief excludes Unit. V-1..6/R-1..3 outcomes are reported at
 the scope stated in the repair selection; adjacent regression is not new native
 or S8 qualification. F3 changes only the false safety comment, preserving the
 real signed-rebase positive. No assertion/timeout is relaxed.
 
 PC-591 producer/shared case/shape recognition, PC-592 recipient late-report
 hold and PC-593 absent-report positive are specified in the repair selection.
-All are pending method-scoped SourceLanding Mutation, along with PC-588..590
-and every earlier PC and variant. Ordinary baseline red does not discharge PCs.
+PC-591..593 are pending method-scoped SourceLanding Mutation, along with PC-588..590
+and the earlier PCs and variants. Ordinary baseline red does not discharge PCs.
 Mutation must discover missing controls for individual pre-effect/replay checks.
 
 CP-32 additionally selects
 `/*/*/CompletedCardWorkspaceRemovalTests/C1032_RemovalEligiblePhysical*` (1).
 The old positive wrote unpreserved `task-deadbeef.md` bytes and expected removal.
 Report HOLD is now a separate lower/upper/mixed vector, and the eligible positive
-uses `complete.trx` with every physical deletion/receipt/ref assertion retained.
+uses `complete.trx` with the existing physical deletion/receipt/ref assertions retained.
 Runner full-class count remains 144. PC-592 gains these exact recipient variants;
-PC-582 retains all four absent-authority variants. No assertion is loosened.
+PC-582 retains its four absent-authority variants. No assertion is loosened.
 
 #### S7 F4 negative witnesses
 
@@ -1324,7 +1324,7 @@ PC-582 retains all four absent-authority variants. No assertion is loosened.
 |---|---|---:|---|
 | CP-33 | `/*/*/CompletedCardWorkspaceContractTests/C1032_LandingSignatureCoversTaskId*` | 1 | in-memory signed command verifies with its key (another key refuses); only Binding.TaskId changed (other, empty) refuses; no removal |
 | CP-34 | `/*/*/CardWorktreeMirrorCleanupTests/C1032_WitnessLandingOwnership*` | 1 | foreign task/store path/repository/earlier generation landing: `unlanded_work` after the real inspection; no intent, no removal request, empty journal; restored row removes |
-| CP-35 | `/*/*/CardWorktreeMirrorCleanupTests/C1032_WitnessLandingCompleteness*` | 1 | 13 null/empty/false vectors across 11 landing-evidence fields refuse as above (not every publication-predicate field; see the F4 selection disclosure); restored row removes |
+| CP-35 | `/*/*/CardWorktreeMirrorCleanupTests/C1032_WitnessLandingCompleteness*` | 1 | 13 null/empty/false vectors across 11 landing-evidence fields refuse as above (fields not varied: F4 selection disclosure); restored row removes |
 | CP-36 | `/*/*/CardWorktreeMirrorCleanupTests/C1032_WitnessPersistedReplayTamper*` | 1 | four valid-shaped tampered persisted requests hold `immutable_request_unreadable` with no removal request; original bytes replay to removal |
 | CP-37 | `/*/*/CardWorktreeMirrorCleanupTests/C1032_WitnessUnsupportedRemovalAfterInspection*` | 1 | after real inspection/intent: capability withdrawal yields a client-preflight unsupported result (no recipient removal reply), then injected unsupported/unknown/no-reason refusals; each keeps mirror, admin and sentinel with an empty journal, ends Refused, no receipt; restored runtime completes real removal |
 

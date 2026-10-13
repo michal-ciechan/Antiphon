@@ -10,14 +10,11 @@ VP-08, VP-09, VP-10, VP-13 and VP-15.
 ## Verification design
 
 Five negative witnesses, one per surviving family. Each pairs its refusal
-vectors with a positive control in the same method. The four server
-witnesses (CP-34..CP-37) end with real physical removal (`RemovedAsync`:
-`Complete`, mirror and admin directory gone, endpoint `Complete` with an
-imported receipt equal to the runner journal receipt), so a fixture that never
-reaches real removal fails that method rather than passing as a guard. CP-33
-is a unit witness with no removal: its positive control is that the same
-in-memory signed command verifies true with its key, beside the refusal
-vectors.
+vectors with a positive control in the same method. CP-34..CP-37 end with
+`RemovedAsync` (`Complete`, mirror and admin directory gone, endpoint
+`Complete` with an imported receipt equal to the runner journal receipt).
+CP-33 has no removal: its positive control is that the in-memory signed
+command verifies true with its key.
 
 - CP-33 `C1032_LandingSignatureCoversTaskId` (VP-08): sign an in-memory
   rebased command with `CompletedCardWorkspaceLandingAuthority.Sign` (its
@@ -34,8 +31,8 @@ vectors.
   inspects before the publication lookup). The refusal comes from the later
   observation step: with no qualifying publication the service observes H
   itself, which the target does not contain. The method does not separately
-  assert which publication predicate rejected each vector. What each vector
-  asserts is no operation id (no durable intent), no removal request (fixture
+  assert which publication predicate rejected each vector. Each vector
+  asserts no operation id (no durable intent), no removal request (fixture
   `RemovalRequests` = 0), an empty journal, the admin directory and sentinel
   intact and no imported receipt. The restored row then completes real
   rebased removal with a `landed-v1:<landing>:` proof identity.
@@ -48,17 +45,16 @@ vectors.
   `unlanded_work` at the same observation step as CP-34, after the real
   inspection, with the same per-vector assertions as CP-34; the restored row
   completes real rebased removal.
-  Disclosure: the table does not vary every field of the publication
-  predicate. Fields of the evidence type it does not vary include
-  ApprovalLandRequestId, Id, LandWorktreePath, LocalTargetBeforeSha,
-  OriginalSourceSha, PreparationInputSha, PreviousPreparationOperationId,
-  Publication, RebasedSourceSha, RemoteConfirmedAt, RemoteFingerprint,
-  RepositoryPath, ReviewedSourceSha, SchemaVersion, SourceFullRef,
-  SourceLocalSha, TargetFullRef, TaskId, VerificationFilter,
-  VerificationPassed, VerificationSkipReason, VerifiedSourceSha and
-  WorktreePath (Review 87af7b11 inventory). TaskId, RepositoryPath and
-  WorktreePath are varied by CP-34; the rest are disclosed gaps, not
-  witnessed here.
+  Disclosure: the table varies 11 fields. Publication-predicate fields of
+  the evidence type it does not vary include ApprovalLandRequestId, Id,
+  LandWorktreePath, LocalTargetBeforeSha, OriginalSourceSha,
+  PreparationInputSha, PreviousPreparationOperationId, Publication,
+  RebasedSourceSha, RemoteConfirmedAt, RemoteFingerprint, RepositoryPath,
+  ReviewedSourceSha, SchemaVersion, SourceFullRef, SourceLocalSha,
+  TargetFullRef, TaskId, VerificationFilter, VerificationPassed,
+  VerificationSkipReason, VerifiedSourceSha and WorktreePath (Review 87af7b11
+  inventory). TaskId, RepositoryPath and WorktreePath are varied by CP-34;
+  the rest are disclosed gaps, not witnessed here.
 - CP-36 `C1032_WitnessPersistedReplayTamper` (VP-13): a real durable intent
   (stop after commit), then four valid-shaped persisted-request edits
   (report digest, policy digest, binding worktree path, expected HEAD) without
@@ -75,9 +71,9 @@ vectors.
   SupportsCompletedCardWorkspaceAsync, a fresh Capabilities request, and
   returns UnsupportedOperation before sending CompletedCardWorkspaceRemove);
   no recipient removal handler answers it. The fixture counter increments at
-  the client-wrapper seam before that preflight, so it counts this attempt
-  without proving a recipient removal command. This vector is proved by
-  the `runtime-unsupported` step of this method; it tests the server's
+  the client-wrapper seam before that preflight, so it counts this attempt;
+  it is not a recipient removal-command counter. This vector is the
+  `runtime-unsupported` step of this method; it exercises the server's
   handling of an unsupported removal result, not a recipient refusal. Then
   three refusals are injected at the fixture client seam (unsupported,
   unknown, and a no-reason `Complete=false` response with null reason and
@@ -92,26 +88,19 @@ The fixture gains only a removal-request counter (it counts entries to the
 fixture's removal-client wrapper, including intercepted and
 capability-preflight refusals) and a refusal-only removal interceptor (it
 asserts the intercepted reply is not Complete; CP-37, its only user, clears
-it before the positive). Production is unchanged: each witness was green on unchanged
-production, so these witnesses found no production hole. Production
-composition remains inert.
+it before the positive). Production is unchanged and its composition inert;
+each witness was green on unchanged production.
 
 New method names avoid the Admission/Receipt/Report prefixes, so CP-13/14
 stay seven and CP-29..31 stay one. CP-F2 grows by four (63); CP-F3 by one
 (145). Two isolated builds are needed because the server and runner classes
-live in separate test projects; each is reused by its rows. For the checkpoint
-run, the checkpoint tool bootstrap is the only build outside the table
-(Code-only sanity and scratch drivers are listed in the F4 Code evidence). No Unit lane: the
+live in separate test projects; each is reused by its rows. Code-only sanity
+and scratch drivers are listed in the F4 Code evidence. No Unit lane: the
 brief excludes it.
 
-Coverage: V-1 (CP-13, F2, 34); V-2 (CP-14, F3, 33, 36, 37); V-3 (CP-13,
-29..32, 34, 35, F3); V-4 adjacent (CP-F3); V-5 adjacent (CP-F3, 32); V-6 (CP-13, 14, 30, 36,
-F2). R-1/R-2 adjacent (CP-F2, F3); R-3 (CP-13, 14, 29..37, F2).
-Restart: none. Every PC stays pending for method-scoped SourceLanding
-Mutation. Code task 55328335 did build and execute the probe's scratch
-mutants against these witnesses (red recorded in the F4 Code evidence); that
-is Code evidence, not formal post-land SourceLanding Mutation qualification,
-and it discharges no PC.
+Coverage: the Covers column of the table below. Restart: none. PC-595..599
+and the earlier PCs/variants stay pending for method-scoped SourceLanding
+Mutation; Code's scratch-mutant runs (F4 Code evidence) discharge no PC.
 
 ### Checkpoints
 

@@ -1,12 +1,12 @@
 # CARD-1032 S7 F4 negative-witness Code evidence
 
-All five required negative witnesses were added. Each was green on unchanged
-production. This Code task built and executed each probe scratch mutant, which
-turned its witness red on the first vector reached, and reverted it without
-committing. That scratch execution is Code evidence, not formal post-land
-SourceLanding Mutation qualification; no PC is discharged. The full 14-row F4 selection is GREEN with 232
-executions at afafe9c6604d4578db7b1ce2ef4ad3f189209a5d. Production is unchanged
-and inert. Next: Review. Restart: none.
+Five negative witnesses were added (CP-33..37 in the selection). Each was
+green on unchanged production. This Code task built and executed each probe
+scratch mutant, which turned its witness red on the first vector reached, and
+reverted it without committing. That scratch execution is Code evidence, not
+formal post-land SourceLanding Mutation qualification; no PC is discharged.
+Ordinary results: the provenance table below. Production is unchanged and
+inert. Next: Review. Restart: none.
 
 Code task: 55328335-fca8-474e-a307-7a5fc84b37ff; landing owner Code
 60025819-39c5-49e6-8951-817cdeeff5fc. Branch feat/card-task-55328335, worktree
@@ -44,7 +44,7 @@ reverted with git checkout. Diffs and logs: /work/evidence/task-55328335/.
 Batches: A = VP-09 + VP-13 and B = VP-10 + VP-15, each pairing mutations in
 different production members with witnesses in different test methods; each
 red named the expected witness and vector. Interaction between the paired
-mutations was not separately excluded. VP-08 ran alone on the runner project. Each red names its vector.
+mutations was not separately excluded. VP-08 ran alone on the runner project.
 Only the first red vector per witness was observed; per-vector red belongs to
 Mutation (PC-595..599).
 
@@ -62,25 +62,32 @@ witnesses passed 4/4 (one leased build and run). The first selection attempt
 used exact names in an OR group without wildcards and selected zero tests. It
 was rerun with `*` suffixes, and the F4 witness filters CP-33..37 each end in `*`.
 
-## Ordinary verification
+## Checkpoint provenance
 
-Checkpoint run 20261013-174707-f33f, one run of all 14 rows, GREEN exit 0.
-CP-29, 30, 31 and 34..37 were 1/1 each. CP-13 was 7/7, CP-14 7/7, CP-F2
-63/63, CP-RG1 1/1, CP-32 1/1, CP-33 1/1 and CP-F3 145/145, for 232 executions
-including deliberate overlap. The TRX census shows one exact method each in
-CP-33..37; CP-F2 contains the four server witnesses and CP-F3 the signature
-witness. validate-checkpoint-receipt.ps1 exited 0:
+Copied from each run's unedited CHECKPOINT lines (report.md under the named
+worktree's `.antiphon/checkpoints/<run>/`; Review 15eb44a6's copy is also in
+/work/evidence/task-15eb44a6/review.md). Executed/passed are the sums of the
+listed rows.
+
+| Run | Commit | Task | Rows executed | Executed | Passed | Verdict |
+|---|---|---|---|---:|---:|---|
+| 20261013-174707-f33f | afafe9c6604d4578db7b1ce2ef4ad3f189209a5d | Code 55328335 | CP-29..31, CP-13, CP-14, CP-34..37, CP-F2, CP-RG1, CP-32, CP-33, CP-F3 | 232 | 232 | GREEN exit=0 |
+| 20261013-184851-0e9e | e21c499d246e751e9a0b5888923b6a11b3d4bc6d | Code 1167283e | CP-32, CP-33, CP-F3 (other 11 rows: build=failed executed=n/a) | 147 | 147 | RED exit=2 |
+| 20261013-185750-550a | 07d3bd180e405cd97ec73123f233a47e645e34b1 | Review bd49988a | CP-32, CP-33, CP-F3 (other 11 rows: build=failed executed=n/a) | 147 | 147 | RED exit=2 |
+| 20261013-190814-ebef | 07d3bd180e405cd97ec73123f233a47e645e34b1 | Review bd49988a | CP-29..31, CP-13, CP-14, CP-34..37, CP-F2, CP-RG1 | 85 | 85 | GREEN exit=0 |
+| 20261013-195303-73a5 | 5e74999de3f25cfacf7e2fa785b3376406e9e9dc | Review 15eb44a6 | CP-29..31, CP-13, CP-14, CP-34..37, CP-F2, CP-RG1, CP-32, CP-33, CP-F3 | 232 | 232 | GREEN exit=0 |
+
+Run 20261013-174707-f33f: validate-checkpoint-receipt.ps1 exited 0,
 `CHECKPOINT SOURCE VALID source=afafe9c6604d4578db7b1ce2ef4ad3f189209a5d rows=14`.
-Every row had slot=granted, dirty=0, sourceState=clean and buildSource=verified.
+Its unedited lines are at the end of this document.
 
-V-1, V-2, V-3 and V-6 PASS at the stated scope. V-4 and V-5 PASS at adjacent
-scope only. R-1 and R-2 PASS at adjacent scope; R-3 PASS for the
-regressions named in the selection. Native Windows and S8 work remain deferred
-with their owners and are not reported passed. No Unit lane was run because the
-brief excludes it. Manual composition inspection found no production diff, no
-Program registration, residue caller or route, and no Execute/cutoff change.
+V-n/R-n outcomes: the selection's Covers column, read with the row results
+above. Native Windows and S8 work remain deferred with their owners and are
+not reported passed. No Unit lane was run because the brief excludes it.
+Manual composition inspection found no production diff, no Program
+registration, residue caller or route, and no Execute/cutoff change.
 
-Extra leased drivers outside the table, all through build-slot: one sanity
+Extra leased drivers outside the table, each through build-slot: one sanity
 server build and run, two scratch server builds and four runs (including the
 setup-failure rerun and the zero-test filter attempt), one runner build and run,
 and the checkpoint-tool bootstrap. No proof selection on unchanged source exceeded three
@@ -90,15 +97,15 @@ checkpoint tool deleted its own outputs.
 
 ## Pending
 
-Post-land SourceLanding Mutation was NOT run. PC-595..599 (F4) and every earlier
-PC/variant (PC-52..PC-594 as censused in the repair evidence) remain pending.
+Post-land SourceLanding Mutation was NOT run. PC-595..599 (F4) and the earlier
+PCs/variants (PC-52..PC-594 as censused in the repair evidence) remain pending.
 
 ## Closing checks
 
 Fetched origin/master b5653d5832aac66c5ac1ff1a0012efb33b54de79; `git merge-tree
 --write-tree origin/master HEAD` exit 0 at the tested code tip (tree
-3b61f2f04bbf45b0163a7429aa3aaae3578ec1c3). The final documentation tip is
-checked again in the caller report.
+3b61f2f04bbf45b0163a7429aa3aaae3578ec1c3). Later documentation tips are
+checked in their caller reports.
 
 Unedited checkpoint lines:
 
@@ -125,117 +132,8 @@ outputs: deleted bin-c55328335-server/, bin-c55328335-runner/
 verdict: GREEN exit=0
 ```
 
-## F5 wording repair (Code task 1167283e)
+## Wording repairs
 
-Final Review 87af7b11 F5a-F5d; branch feat/card-task-1167283e from
-7c5c6badc4fd49eb5b5624b2189a3d5277fbd0cb, commits added without rebase. Comments
-and Markdown only: no production change, no test body, assertion, timeout or
-method name change.
-
-- F5a: CP-37's first `unsupported` is produced by the client capability
-  preflight (PhoneHomeRunnerClient.RemoveCompletedCardWorkspaceAsync, after
-  `Runtime.CompletedCardWorkspace` is withdrawn) before any removal frame; no
-  recipient removal handler answers it. The `runtime-unsupported` step of
-  C1032_WitnessUnsupportedRemovalAfterInspection proves the server's handling
-  of that result. The fixture counter counts entries to its client wrapper.
-- F5b: CP-34/CP-35 run the real inspection and assert no removal request; they
-  were not refused at removal. CP-36 holds with no removal request.
-- F5c: CP-35 is 13 vectors across 11 fields; the verification design now
-  discloses the evidence-type fields the table does not vary (Review 87af7b11
-  inventory).
-- F5d: the scratch mutants were built and executed by Code task 55328335 as
-  Code evidence; formal post-land SourceLanding Mutation is pending and no PC
-  is discharged.
-
-Sweep of every F4-added or touched sentence: this document, the verification
-design and pending-PC table, the test-design F4 table, the plan's F4
-paragraph, the mutation-candidate F4 section, the five `F4/VP-*` test
-comments, the three F4 helper comments and the fixture interceptor comment.
-Changed beyond F5a-d: "a broken fixture cannot pass" (now, as corrected by
-F6: for CP-34..37 one that never reaches real removal fails the method; CP-33
-has no removal and pairs its refusals with a successful signature
-verification); "no hole was found" (now: these
-witnesses found no production hole); batch rationale "never reaches/never
-replays" and "red before any other path" (unproven; replaced with what was
-observed); VP-13 "tampered request reached the recipient" and PC-598
-"reaches recipient" (the later refusal point was not traced); "the same
-unreproduced failure" (now: same symptom, cause not established); "every
-checkpoint filter uses wildcards" (now: CP-33..37 end in `*`); fixture
-"replaces the real reply ... never synthesizes" (now: returns a refusal
-instead of the inner call, asserted Complete=false); "absent" reply (now: a
-no-reason Complete=false response). Kept as accurate: VP-08 comment, the
-landing helper comments, test counts, PC filters, and the ordinary
-verification paragraphs above (F6 later qualified R-1/R-2/R-3 and extended
-the VP-08 comment).
-
-F5 verification: NOT complete. Checkpoint run 20261013-184851-0e9e at
-e21c499d246e751e9a0b5888923b6a11b3d4bc6d (one run, all 14 rows) ended RED
-exit 2 on the server build, not on any test: `tests/Antiphon.Tests` restore
-failed with NU1605 package downgrades (Microsoft.AspNetCore.Mvc.Testing `9.*`
-now resolves 9.0.21, whose Microsoft.Extensions.* 9.0.21 conflict with
-10.0.0 reached through Microsoft.EntityFrameworkCore.Relational `9.*` =
-9.0.20; nuget.org lists Mvc.Testing and Extensions.Logging 9.0.21 but no
-EntityFrameworkCore.Relational 9.0.21). The 11 server rows (CP-29..31, 13,
-14, 34..37, F2, RG1) therefore have no result. This branch changes no
-project, props or NuGet file; Review 87af7b11 built the same project files
-green at 18:14. Runner rows passed: CP-32 1/1, CP-33 1/1, CP-F3 145/145.
-The server rows must be rerun once the feed is consistent (or after a
-separate change pins the floating versions).
-
-## F6 wording repair (Code task 9bbebbf5)
-
-Final Review bd49988a F6; branch feat/card-task-9bbebbf5 from
-07d3bd180e405cd97ec73123f233a47e645e34b1, commits added without rebase.
-Markdown and // comments only: no production change, no test body, assertion,
-timeout or method name change. Review bd49988a's retry run 20261013-190814-ebef
-executed all 14 rows green (232 passed) at 07d3bd180; the code is unchanged
-since, so the selection was not rerun.
-
-F6: the verification design no longer says every witness ends in physical
-removal. CP-34..37 end with `RemovedAsync` (real removal, imported receipt equal
-to the runner journal receipt); CP-33 signs an in-memory command, asserts it
-verifies true with its key and false with another key, then that changing only
-Binding.TaskId (other GUID, empty) fails verification. It removes nothing.
-
-One complete sweep, checked against the method bodies, the fixture and
-CardWorktreeMirrorCleanupService.TryAsync: every sentence of the verification
-design (intro, five witness bullets, fixture, counts, coverage, PC table), every
-sentence of this document, the plan's S7 F4 paragraph, the test-design S7 F4
-table, the mutation-candidate F4 section, the five F4/VP-* test comments, the
-landing helper comments and the fixture interceptor comment. Corrected:
-
-- physical removal limited to CP-34..37; CP-33's positive control stated
-  (verification design, this document's F5 sweep, test-design CP-33, VP-08
-  comment);
-- refusal origin: CP-34/35 `unlanded_work` comes from the observation step
-  after PublicationAsync finds no qualifying landing (H is observed and the
-  target lacks it), and the methods do not assert which publication
-  predicate rejected each vector; "internally consistent" dropped (only the
-  foreign-task vector also changes the recovery prefix) (verification design,
-  VP-09 comment);
-- vector shape: CP-35 is 13 null/empty/false vectors, not "missing/empty"
-  (verification design, test-design, VP-10 comment);
-- CP-37: "keeps ... journal" and "keeps everything" replaced by the asserted
-  items (mirror, admin directory, sentinel, empty journal, Refused, reason, no
-  receipt); "replays the same operation to real removal" replaced, because the
-  operation id is asserted only through the injected vectors, not on the final
-  removal (verification design, test-design, VP-15 comment);
-- CP-34/36 per-vector assertions listed in full (admin directory, sentinel,
-  no imported receipt; CP-36 also the same operation and one removal request
-  on replay);
-- interceptor "is cleared before the positive" attributed to CP-37, its only
-  user; "only setup build outside the table" limited to the checkpoint run;
-- coverage prose matched to the Covers column: V-4 is CP-F3 only (CP-32
-  covers V-5), R-3 does not include CP-F3; the ordinary verification above
-  now says R-1/R-2 PASS at adjacent scope and R-3 for the named regressions;
-- PC variants stated as the per-vector red Mutation must establish (scratch
-  observed only the first red vector per method).
-
-Checked and kept: the CP-36 claims and VP-13 comment, CP-37 preflight origin
-and counter seam (F5a), the CP-35 field list and disclosure (F5c), the
-scratch-red table, batches and setup-failure disclosure, counts (CP-13/14
-seven, CP-F2 63, CP-F3 145, 232), the plan paragraph, the mutation-candidate F4
-section, the `RebasedLandingAsync`/`ChangeLandingAsync` comments and the
-fixture comment.
-
-PC-595..599 and every earlier PC/variant remain pending; Mutation was not run.
+- F5 (Final Review 87af7b11 F5a-F5d): Code task 1167283e, commits e21c499d246e751e9a0b5888923b6a11b3d4bc6d and 07d3bd180e405cd97ec73123f233a47e645e34b1.
+- F6 (Final Review bd49988a F6): Code task 9bbebbf5, commit 5e74999de3f25cfacf7e2fa785b3376406e9e9dc.
+- F7 (Final Review 15eb44a6 F7a, F7b): Code task a7e957ae, provenance and coverage reduced to the table above and the selection's Covers column.
