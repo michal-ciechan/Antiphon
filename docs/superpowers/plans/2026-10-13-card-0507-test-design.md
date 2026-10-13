@@ -9,7 +9,8 @@ count below is a census from source (`[Test]` methods with their `[Arguments]` r
 executed. The task token was present in this session, so the design is marked **bound**; the token is not reproduced.
 **Amended by the S1 repair (Code `920adf8b`, Review `d88d4eec` F1/F2):** the delivery inventory and D-2 persistence
 boundary are corrected, V-3d (4 executions), G-15b/G-21, PC-15b/PC-21a/PC-21b are added, PC-10's assertion is corrected,
-and CP-1's census is 27 (19 + 8).
+and CP-1's count is 27 (19 + 8). **Round 3 (Code `385fb72d`, Review `bf6d81b3` F1):** the delivery inventory is reduced to a
+test table, a delegate-launch storage table and three gap lines; the census in R-4 and the Handoff is recounted.
 
 Slice shape frozen here: **S0** (read-only `ocr` probe on server2, no key, no checkpoint), **S1** (role-policy tool bundles),
 **S2** (the `tool-open-code-review` bundle, docs, the Custom-role settlement pin), **S3 HELD** (appendix A, operator-gated by
@@ -43,9 +44,10 @@ Bodies read (at `67d7f8598`):
   from `ValidationException.Errors`), `server/Api/Endpoints/AgentTaskEndpoints.cs:56` (`Results.Created` on success) -> V-3b.
 - `server/Application/Services/AgentTaskDispatcher.cs:6085-6090` (first dispatch: attachments loaded after the claim commit,
   `FinishDispatchedLaunchSpecAsync` -> `BuildLaunchSpecAsync` -> `ComposeDelegateArgs`), `:6470-6530` (boot-wedge relaunch: a
-  thrown launch-spec error is caught and logged), `:6975-7050` (`ComposeDelegateArgs`: composed bundles become the
-  append-system-prompt argument; `EnsureWithinCommandLineBudget` for non-Grok), `:8050-8058` (warm Grok reuse compares
-  `Compose(ForDelegate(...))` text to the installed `GrokRulesReceipt`) -> V-3c, V-6g, V-11.
+  thrown launch-spec error is caught and logged), `:6975-7050` (`ComposeDelegateArgs`: composed bundles go to Claude
+  `--append-system-prompt`, Codex `-c developer_instructions=` or a Grok `GrokRulesPayload`, see *Delivery inventory*;
+  `EnsureWithinCommandLineBudget` for non-Grok), `:8050-8058` (warm Grok reuse compares the hash of
+  `Compose(ForDelegate(...))` text with the session's stored `GrokRulesReceipt`) -> V-3c, V-6g, V-11.
 - `server/Application/Services/AgentBundleAttachments.cs:23-75` (unknown ATTACHMENT keys are dropped with a Warning — the
   behaviour role bundles must NOT share) -> V-3 contrast, R-3.
 - `server/Domain/Enums/OrchestrationStage.cs:30-40` (`DefaultFor`: Review/Test/Merge/Deploy, else null),
@@ -83,53 +85,47 @@ non-tool keys at the resolver (V-3), at create over the service (V-3a) and over 
 launch composition (V-6e, V-6g), create acceptance of the shipped key (V-6f), Custom-role evidence binds nothing (V-7),
 Grok warm reuse (V-11). Excluded with reasons under *Out of scope*.
 
-**Binding seam note (resolution of a plan ambiguity, not a redesign).** D-2 says an unknown key "refuses the dispatch with
-422 `stage_tool_bundle_unknown`", and S1's file list places the `ValidationException` "at dispatch before any launch" in
-`AgentTaskDispatcher`. A 422 is only observable on the create path (`POST /api/agent-tasks` through `ExceptionMiddleware`);
-the dispatcher runs in a background tick where an exception becomes a failed task or a log line, never an HTTP status. This
-design therefore freezes one validating resolver (the design calls it `InstructionBundles.ResolveRoleToolBundles(role,
-settings)`; Code may name it otherwise, the tests bind to behaviour) that returns the role's validated keys or throws
-`ValidationException("RolePolicy", "<role> lists instruction bundle '<key>' …", "stage_tool_bundle_unknown")`, called from
-**both** `AgentTaskService.CreateAsync` (next to `ResolveAgentKind`, which already refuses a role-policy misconfiguration
-there -> the 422) **and** the dispatcher before the claim transaction (-> the plan's "before any launch", covering a task
-queued before a configuration change). A startup `IValidateOptions` refusal was rejected: a typo would stop the server
-rather than one dispatch. The composer's `InstructionBundles.Get` remains the last backstop (an unknown key throws at launch;
-it is never dropped the way attachments are).
+**Binding seam.** One validating resolver, `InstructionBundles.ResolveRoleToolBundles(role, settings)`, returns the role's
+keys or throws `ValidationException("RolePolicy", …, "stage_tool_bundle_unknown")`. Call sites: `AgentTaskService.CreateAsync`
+(HTTP 422 through `ExceptionMiddleware`) and the dispatcher before the claim (task Failed plus caller note; no HTTP status).
+Startup validation: rejected. Launch backstop: `InstructionBundles.Get` throws on an unknown key.
 
 ### Delivery inventory
 
-This plan adds no asynchronous delivery path: no queue, no event, no message, no session input. The one "handoff" is the
-role's bundle keys reaching the delegate's launch argument (`ComposeDelegateArgs` -> `--append-system-prompt`), a
-synchronous composition inside the existing launch spec. Producer: `InstructionBundles.ForDelegate` fed by
-`DelegationSettings.RolePolicy[role].Bundles`; destination: the `AgentLaunchSpec` args; persistence boundary: none stored
-today. A delegate launch does not persist `AgentSession.ComposedBundleStamp`: the dispatcher creates the session without it
-and `ComposeDelegateArgs` (`AgentTaskDispatcher.cs:7048-7077`) only places the text in the launch argument and logs
-`composed.Stamps`; only `AgentControlService` and `OrchestratorService` assign the field (corrected after Review `d88d4eec`
-F1). S2 adds the dispatcher assignment (plan D-2) and V-6g's session-stamp assertion tests it (PC-15b); until S2 lands the
-revision a Review ran with is in a log line and the launch argument only, not a stored receipt. Recovery: none new (a
-relaunch recomposes from config, as today); observable receipt: the rendered `[bundle:tool-open-code-review v<hash8>]`
-header present exactly once in the spec args (V-6g) and, after S2, in the session stamp. Declared substitute: V-6g observes the launch spec the dispatcher enqueues, not the
-TUI process's system prompt; what it cannot prove is that the process consumed the argument. That half is the unchanged
-launch path, already covered by `AgentSystemPromptLaunchTests.Start_with_system_prompt_append_passes_flag_on_fresh_launch`
-and `C1083_EmbeddedBundlesMatchSourceAndRenderedHeaders`, and is out of this card's scope. No UserPrompt transcript claim
-is made anywhere in this design; the `advisory-tool:` report line (D-4) is written by the reviewer in its own last turn,
-and its parsing (S4) is pure text.
+Tests that observe a delivery or a launch composition (S1 rows run in CP-1; S2 rows are pending with S2):
 
-Refusal caller note (Review `d88d4eec` F2). The dispatcher refusal (V-3c) produces a caller note through the existing
-`FailAndNotifyAsync`, no new path. Producer: the tick's catch -> `FailAndNotifyAsync`; recipient: `ParentSessionId` when
-`ReplyTo = Session`; identity: `SourceTaskId`, `task:<root N>`, `DelegationNoteDigest(reason)`, header
-`[task <short> failed]`, reason naming `stage_tool_bundle_unknown`, the role key path and the key. Persistence: `FailAsync`
-commits Failed, the reason and the Failed event; a second save commits the CARD-0231 reminder (`NextCheckAt`, only with
-`Delegation:CheckEnabled` and a non-specialist role); the queue then writes its row and the task's
-`CompletionNoteQueuedAt` stamp in one transaction. Recovery: a failed insert is re-sent by the reminder tick; a committed
-row that crashed before typing is typed by a restarted queue's stranded flush, and the reminder tick adds nothing beside a
-Pending or Sent note. Receipt: one complete matching UserPrompt (V-3d, four paths). Not covered, stated as gaps rather
-than tested: (1) a process death after `FailAsync`'s commit and before the reminder save leaves no recovery, because this
-arm passes no `deliveryFailureNotificationId` (the durable `DeliveryFailure` obligation the delivery watchdog uses),
-`CompletionNoteWorkHostedService.RecoverMissingAsync` needs `SourceLandingOperationId` and `Result`, and
-`FailDeadSessionTasksAsync` recovers only the dead-session prefix; (2) with `CheckEnabled = false` a failed insert is not
-re-sent; (3) V-3d's recipient is the `BridgeQueueHarness` fake adapter that records the typed body as a transcript
-UserPrompt; ConPTY typing is not exercised on the Linux runner.
+| Test | What it asserts | Mutation |
+|---|---|---|
+| `RolePolicyToolBundleDispatchTests.the_dispatcher_refusal_reaches_the_caller_as_one_complete_user_prompt("eligible")` | idle parent: one queue row typed inline; Sent, `Delivered`, one transcript `UserPrompt` containing the complete row body, one adapter submission | PC-21a (skip the `FailAndNotifyAsync` enqueue) |
+| `…one_complete_user_prompt("busy")` | parent mid-turn: row Pending, zero attempts, no prompt until TurnEnd; `OnTurnEndAsync` types it once; same receipt | PC-21a |
+| `…one_complete_user_prompt("enqueue-failure")` | insert fault: no row, no `CompletionNoteQueuedAt`, `NextCheckAt` armed; after the clock passes it the reminder types one row saying the first note did not reach the caller; a later tick sets `NextCheckAt` null; same receipt | PC-21b (drop `ArmFailureReminder`) |
+| `…one_complete_user_prompt("crash-after-enqueue")` | Sent-save fault after the insert: row Pending, zero attempts, task stamped; rebuilt harness and dispatcher; due reminder adds no row; `FlushStrandedQueuesAsync` types it once, a second flush returns 0; same receipt | PC-21a |
+| `RolePolicyToolBundleDispatchTests.the_dispatcher_refuses_a_queued_review_before_the_claim_and_launches_nothing` | refused task Failed, `AgentSessionId` null, Failed event names the code, role and key | PC-10 |
+| `RolePolicyToolBundleShippedTests.a_review_launch_spec_carries_the_role_tool_bundle_once_after_the_basics` (S2) | ClaudeCode launch spec `--append-system-prompt` value holds the three rendered headers in order, the tool header once; session `ComposedBundleStamp` contains `tool-open-code-review v` | PC-15, PC-15b |
+| `RolePolicyToolBundleShippedTests.a_warm_grok_delegate_launched_without_the_role_tool_bundle_is_not_reused` (S2) | a warm Grok session whose rules receipt hash lacks the tool bundle is not reused | PC-16 |
+| `AgentSystemPromptLaunchTests.Start_with_system_prompt_append_passes_flag_on_fresh_launch` (existing) | a named-agent start puts `--append-system-prompt <rendered>` in `FakeAgentProtocolAdapter.StartedArgs` and submits the bootstrap body once (`SubmittedBodies`); the fake adapter records arguments and typed text, no TUI reads the argument | not a CARD-0507 control |
+| `InstructionBundleTests.C1083_EmbeddedBundlesMatchSourceAndRenderedHeaders` (existing) | embedded bundle bytes equal the source files; the pure composer renders their headers | not a CARD-0507 control |
+
+Instruction storage for a delegate launch (read at `c9f1b6e27`):
+
+| Kind | Fact | Code |
+|---|---|---|
+| ClaudeCode | composed text is the `--append-system-prompt` argument | `AgentTaskDispatcher.ComposeDelegateArgs` (`AgentTaskDispatcher.cs:7066-7069`) |
+| Codex | composed text is a `-c developer_instructions=` argument | `AgentTaskDispatcher.ComposeDelegateArgs` (`:7066-7068`) |
+| Grok | composed text becomes a `GrokRulesPayload`, not an argument | `AgentTaskDispatcher.ComposeDelegateArgs` (`:7064-7065`) |
+| Grok | session row gets rules generation, expected SHA-256 and byte count | `GrokRulesRefreshService.PrepareLaunchAsync` (`GrokRulesRefreshService.cs:115-133`), called from `AgentSessionService.cs:2447-2451` |
+| Grok | runner writes the encoded text (rendered `[bundle:<key> v<hash8>]` headers included) to `<SessionLogPath>/instructions/grok/<session>/rules.md`; argv carries only a read-this-file bootstrap | `SessionRunnerRuntime` launch (`SessionRunnerRuntime.cs:561-579`), `GrokRulesFileStore.PathFor`/`WriteAsync` |
+| Grok | session row stores the runner's file receipt (`GrokRulesReceiptJson`: path, hash, byte count, generation) | `GrokRulesRefreshService.CaptureReceiptAsync` (`:135-147`) |
+| any kind | stamps (`<key> v<hash8>`, comma-joined) are logged at Information; the args are not stored | `AgentTaskDispatcher.ComposeDelegateArgs` (`:7072-7074`) |
+| any kind | `AgentSession.ComposedBundleStamp` is not assigned on a delegate launch; S2 adds it (G-15b) | assigned only in `AgentControlService.cs:608`, `:664` and `OrchestratorService.cs:687` |
+
+A rendered header (`[bundle:<key> v<hash8>]`) is in composed text; a stamp (`<key> v<hash8>`) is in the log line and `ComposedBundleStamp` (`ComposedInstructions.StampLine`). The Grok receipt binds the whole rules file, not each bundle, and shows the file was written, not that the model followed it.
+
+Disclosed gaps:
+
+- Process death after `FailAsync` commits Failed and before the reminder save: no recovery for this refusal (CARD-1232).
+- `Delegation:CheckEnabled = false`: a failed caller-note insert is not retried (CARD-1232).
+- V-3d's recipient is the `BridgeQueueHarness` fake adapter; real ConPTY or provider TUI typing and consumption of the system instruction are not exercised.
 
 ### Proves it works now
 
@@ -161,7 +157,7 @@ shape (own `DelegationSettings` with `RolePolicy = { ["Review"] = new() { Level 
 - V-3a: `create_refuses_a_review_whose_role_names_an_unknown_tool_bundle_and_writes_nothing` | I | `CreateService(db, s => s.RolePolicy["Review"].Bundles = ["tool-does-not-exist"])`; `CreateAsync(new CreateAgentTaskRequest(Goal: "review", Role: Review, Workspace: Shared), ManualCaller(ws), ct)` (the `a_task_created_without_a_kind_runs_on_ClaudeCode` shape) throws `ValidationException` with `Code == "stage_tool_bundle_unknown"`; afterwards `db.AgentTasks.Count() == 0` and `db.AgentSessions.Count() == 0`; a second call with Role Docs on the same service succeeds (one-flip: only the configured role is refused). Mutation: `CreateAsync` no longer calls the resolver -> no throw, red.
 - V-3b: `post_agent_tasks_returns_422_stage_tool_bundle_unknown_as_problem_details` | H | `PostAsJsonAsync("/api/agent-tasks", new CreateAgentTaskRequest("review", Role: Review, Workspace: Worktree, WorkingDirectory: host.RepoRoot), Json)` (the `RunnerDefaultTests` request shape) -> status 422, `Content-Type: application/problem+json`, `code == "stage_tool_bundle_unknown"`, `status == 422`, `errors.RolePolicy[0]` contains `"Review"` and `"tool-does-not-exist"`; the same request with `Role: Docs` -> 201 (`AgentTaskCreatedDto`). Mutation: same as V-3a (the HTTP shape is the existing middleware, R-6) -> 201 for Review, red.
 - V-3c: `the_dispatcher_refuses_a_queued_review_before_the_claim_and_launches_nothing` | I | seed a Queued `Worker/Review` task directly (as a task queued before the configuration changed), `TickAsync` -> no `AgentSession` row for the task, no launch enqueued on the queue, and the task's `AgentTaskEvents` contain a `Failed` (or, if the existing pre-claim refusal path records differently, the event the Code names with its reason) whose `Detail` contains `stage_tool_bundle_unknown`, `Review` and `tool-does-not-exist`; `task.Status` is not Dispatched. Mutation: the dispatcher's resolver call removed -> a session row exists, red.
-- V-3d: `the_dispatcher_refusal_reaches_the_caller_as_one_complete_user_prompt(string path)` | I | rows `eligible`, `busy`, `enqueue-failure`, `crash-after-enqueue`; isolated schema; parent is a `BridgeQueueHarness` (its real `SessionMessageQueueService` and runtime are the dispatcher's), the dispatcher on a `FakeTimeProvider` that only drives the reminder ramp; seed a Queued `Worker/Review` task with `ReplyTo = Session` and `ParentSessionId` = the harness session; `TickAsync` -> task Failed with no session and no launch; then per path: eligible, one row typed inline; busy (`MarkWorkingAsync` before the tick), the row stays Pending with no prompt until a TurnEnd and `OnTurnEndAsync` type it once; enqueue-failure (`ReadyGateFailureNoticeDeliveryTests.NoticeFault` Insert cut), no row and no stamp, `NextCheckAt` armed, the clock moved past it and the next tick's reminder types one row whose body says the first note did not reach the caller, and a later tick disarms (`NextCheckAt` null); crash-after-enqueue (SentStamp cut), the committed row is Pending with zero attempts and the task stamped, the harness and dispatcher are rebuilt on the preserved session, a due reminder tick adds nothing, `FlushStrandedQueuesAsync` types it once and a second flush returns 0. Every path ends at the same receipt: exactly one row, Sent, `Delivered`, `Origin = Delegation`, `SourceTaskId`, `task:<id N>`, the `[task <short> failed]` header, a body naming `stage_tool_bundle_unknown`, `Delegation:RolePolicy:Review:Bundles` and the key, the task's `CompletionNoteDigest` equal to `DelegationNoteDigest.Compute(FailureReason)` and to the row's digest, exactly one transcript UserPrompt carrying that body completely (`PromptSubmissionMatch.IsCompleteIn`) and one matching adapter submission; a replay (turn end, later tick) changes none of it. Mutation: the `FailAndNotifyAsync` enqueue skipped -> red (scratch run below).
+- V-3d: `the_dispatcher_refusal_reaches_the_caller_as_one_complete_user_prompt(string path)` | I | rows `eligible`, `busy`, `enqueue-failure`, `crash-after-enqueue`; isolated schema; parent is a `BridgeQueueHarness` (its real `SessionMessageQueueService` and runtime are the dispatcher's), the dispatcher on a `FakeTimeProvider` that only drives the reminder ramp; seed a Queued `Worker/Review` task with `ReplyTo = Session` and `ParentSessionId` = the harness session; `TickAsync` -> task Failed with no session and no launch; then per path: eligible, one row typed inline; busy (`MarkWorkingAsync` before the tick), the row stays Pending with no prompt until a TurnEnd and `OnTurnEndAsync` type it once; enqueue-failure (`ReadyGateFailureNoticeDeliveryTests.NoticeFault` Insert cut), no row and no stamp, `NextCheckAt` armed, the clock moved past it and the next tick's reminder types one row whose body says the first note did not reach the caller, and a later tick disarms (`NextCheckAt` null); crash-after-enqueue (SentStamp cut), the committed row is Pending with zero attempts and the task stamped, the harness and dispatcher are rebuilt on the preserved session, a due reminder tick adds nothing, `FlushStrandedQueuesAsync` types it once and a second flush returns 0. Each row ends at the same receipt: exactly one row, Sent, `Delivered`, `Origin = Delegation`, `SourceTaskId`, `task:<id N>`, the `[task <short> failed]` header, a body naming `stage_tool_bundle_unknown`, `Delegation:RolePolicy:Review:Bundles` and the key, the task's `CompletionNoteDigest` equal to `DelegationNoteDigest.Compute(FailureReason)` and to the row's digest, exactly one transcript UserPrompt carrying that body completely (`PromptSubmissionMatch.IsCompleteIn`) and one matching adapter submission; a replay (turn end, later tick) changes none of it. Mutation: the `FailAndNotifyAsync` enqueue skipped -> red (scratch run below).
 - V-4b: `create_refuses_a_known_key_without_the_tool_prefix` | I | `Bundles = ["stage-code"]` -> `ValidationException` `Code == "stage_tool_bundle_unknown"`, error text names `"stage-code"` and `"tool-"`. Mutation: resolver checks `Exists(key)` only -> no throw, red.
 
 **S2 — `tests/Antiphon.Tests/Application/ToolOpenCodeReviewBundleTests.cs` (U, new; 5 methods / 5 executions).** Placed in a
@@ -212,7 +208,7 @@ report, not automated.
 - R-1: `InstructionBundleTests` — `the_catalog_holds_exactly_the_bundles_that_ship` (S2 adds `"tool-open-code-review"` after `"style-terse"`, nothing else changes), `C1083_EmbeddedBundlesMatchSourceAndRenderedHeaders` (S2 adds the key to its list; embedded text equals the source file byte-for-byte after LF normalisation), `a_stage_worker_carries_its_stage_bundle_then_the_basics` (6 rows: the new optional parameter leaves every existing call unchanged), `a_specialist_task_carries_nothing`, `the_board_api_bundle_is_on_no_role_by_default`, `every_bundle_summarises_itself_in_its_opening_sentence`, `no_bundle_carries_a_channel_preamble_placeholder`, `the_version_is_the_content_hash_so_two_bundles_never_share_one`, `an_unknown_key_throws_and_names_the_ones_that_exist` (the launch-time backstop), `C1015_Review_remains_read_only_and_checks_history` (stage-review untouched), `the_worst_case_composition_measured_sits_far_under_the_budget` (a 1,800-char bundle on a Review composition stays under `CommandLineBudgetChars`). Decisive: the pinned key list equals the catalog; 74 executions, 0 failed, at both S1 and S2 states.
 - R-2: `AgentTaskAgentKindTests` — `the_allowlist_is_exactly_ClaudeCode_Grok_and_Codex`, `every_delegatable_kind_has_its_own_model_ladder`, `the_role_policy_kind_ships_unset_on_every_role`, `a_role_configured_to_an_undelegatable_kind_fails_loudly_and_names_the_role` (the create-path refusal this card's refusal sits beside). Decisive: no kind was added; 26 executions, 0 failed.
 - R-3: `AgentBundleAttachmentTests` — `a_role_default_and_an_attachment_naming_the_same_bundle_compose_it_once`, `a_stored_key_whose_bundle_file_was_renamed_is_dropped_rather_than_failing_the_launch` (attachments keep their drop-with-warning; role bundles never share it), `every_bundle_except_the_reply_styles_can_be_attached` (the tool bundle becomes attachable too). Decisive: 24 executions, 0 failed.
-- R-4: `TestLaneCategoryGuardTests.every_test_class_is_tagged_unit_xor_integration` (the four new classes are tagged) and `TestClassificationPolicyTests` (the new Slow class is registered). Decisive: 1 + 25 executions, 0 failed.
+- R-4: `TestLaneCategoryGuardTests.every_test_class_is_tagged_unit_xor_integration` (the five new classes, two S1 and three S2, are tagged) and `TestClassificationPolicyTests` (the new Slow class is registered). Decisive: 1 + 25 executions, 0 failed.
 - R-5 (conditional, CARD-0097): if `tests/Antiphon.Tests/Application/RolePolicyReadServiceTests.cs` exists at the Code base (CARD-0097 S1 landed), its 6 methods `Compose_lists_RoutableRoles_in_order_and_marks_Custom_unconfigured`, `Compose_resolves_alias_from_kind`, `Compose_effective_prefers_the_first_stage_pin_candidate_and_excludes_card_pins`, `Compose_fills_a_missing_pin_level_from_the_policy`, `Compose_fills_a_missing_pin_kind_from_the_policy`, `Compose_withholds_the_target_for_a_candidate_free_pin` and `RolePolicyEndpointTests` (`Get_lists_every_routable_role_in_order_with_policy_fields`, `Get_overlays_the_active_stage_pin_as_effective`, `Get_ignores_card_pins_and_cleared_pins`) must stay green: they build Custom from `new RolePolicyEntry()` and read `Level/Kind/EscalateTo/TimeoutMinutes`; a list property defaulting to empty is invisible to them. At `50cbb6803` neither file exists on master (only CARD-0097's client-side S2 branch `feat/card-task-fc7927ca` was found), so the row is not in the closed list; the S1 Code brief adds it as `CP-7 | S1 | CP-1 | role-policy-readers | /*/*/(RolePolicyReadServiceTests*)\|(RolePolicyEndpointTests*)/* | R-5 | exactly 9 executed, 0 failed | 9 | 3` only when the file is present.
 - R-6: `AgentTaskRetryCommitRecoveryEndpointTests.Retry_without_the_abandon_flag_is_a_409_commit_recovery_pending_problem` already pins the problem+json `code` shape; V-3b relies on it and does not re-prove the middleware. Not in the table (unchanged code, named for traceability).
 - R-7: `ReviewEvidenceParserTests` (21), `ReviewEvidenceSettlementTests` (11), `PipelineHandoffParseTests` (42): evidence and handoff parsing are untouched by S0–S2; not in the closed list (no source file they cover changes). Named so Review can confirm the diff does not touch `ReviewEvidence.cs`, `PipelineHandoff.cs`, `AgentTaskReplyService.cs` (S4 would touch the last; appendix B adds them then).
@@ -279,7 +275,7 @@ namespace); red must be the named assertion, then restore, then green on the sam
 ### Out of scope
 
 - Whole `Antiphon.Tests`, whole Unit lane, `Antiphon.Agents.Pty.Tests`, client Vitest, E2E: no pty, runner-process, client or browser surface changes in S0–S2.
-- The TUI process consuming the append argument: unchanged launch path (see *Delivery inventory*).
+- A real TUI consuming the composed system instruction (Claude/Codex argument, Grok rules file): not exercised by any S1 or S2 test (gap line in *Delivery inventory*).
 - `ReviewEvidence`, `PipelineHandoff`, `StageOutcomeService` behaviour: untouched by S0–S2 (R-7 names the classes for the diff check); S4 reopens `AgentTaskReplyService`/`DelegationReportFormatter` only.
 - Operator configuration of `Delegation:RolePolicy:Review:Bundles` on the live host: an operator action after S2 (M-1 observes it), not a test.
 - S3 image pin and rollout, Windows/desktop `ocr`, per-task bundle selection, option B, a UI knob: appendix A / plan §8.
@@ -361,7 +357,7 @@ If the operator takes D-8, this Code dispatch adds `tests/Antiphon.Tests/Applica
 
 ## Handoff
 
-Before handoff: guards = 20, mapped = 20, missing = 0, duplicate PC maps = 0; PCs specified (17 ordinary, 2 S4, 1 S3) and
+Before handoff: guards = 22, mapped = 22, missing = 0, duplicate PC maps = 0; PCs specified (20 ordinary, 2 S4, 1 S3) and
 pending per the brief (post-land Mutation paused); Cost numeric. First Code slice: **S1** (`RolePolicyEntry.Bundles`, the
 validating resolver called from `CreateAsync` and the dispatcher, `ForDelegate(kind, role, attachedBundleKeys, roleBundleKeys)`,
 `IsToolBundleKey`, the two new test classes; rows CP-1…CP-3), dispatched from master at or above `50cbb6803`, in parallel
