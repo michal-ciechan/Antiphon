@@ -341,7 +341,8 @@ Pending; no run authorized in this task. Mutation runs break → intended red �
 Code runs ordinary V/R; Review judges before land. Each PC uses a compiling production defect, never a changed
 expectation or removed test; a build failure, fixture error or zero-execution run is not red. TUnit detectors are
 method-scoped `--treenode-filter "/*/*/<Class>/<Method>"` with `-Expect <Class>.<Method> -MinExecuted 1`; Vitest
-detectors are `pwsh -NoProfile -File scripts/test-client.ps1 <file> -t '^<exact title>$'`. PC-1–PC-4 (same class)
+detectors are `pwsh -NoProfile -File scripts/test-client.ps1 <file> -t '^<describe> <exact title>$'`: Vitest's `-t`
+matches the full name with the `describe` prefix, so the M/E cells below name it (a bare title selects zero cases). PC-1–PC-4 (same class)
 and PC-5–PC-10 (same `Compose` method) run one at a time; PC-4 (`ReadAsync`) may batch with one `Compose` PC.
 
 | PC | Break G by compiling defect | Exact detecting method / intended red assertion |
@@ -356,17 +357,17 @@ and PC-5–PC-10 (same `Compose` method) run one at a time; PC-4 (`ReadAsync`) m
 | PC-8 | leave `modelLevel` null when the head has none | `RolePolicyReadServiceTests.Compose_fills_a_missing_pin_level_from_the_policy`: `modelLevel` expected `Medium` |
 | PC-9 | default a missing head kind to ClaudeCode ignoring `row.kind` | `RolePolicyReadServiceTests.Compose_fills_a_missing_pin_kind_from_the_policy`: Grok case `alias` expected `"grok-4.7"` |
 | PC-10 | fall through to `rolePolicy` when the pin has no head | `RolePolicyReadServiceTests.Compose_withholds_the_target_for_a_candidate_free_pin`: `source` expected `"pin"` |
-| PC-11 | `defaultLabel` prints `kind` raw | M `C097 V05 null-kind-low`: expected `ClaudeCode/Low (haiku)` |
-| PC-12 | `defaultLabel` ignores `configured` | M `C097 V05 unconfigured`: expected `not configured — DefaultLevel High (opus)` |
-| PC-13 | `effectiveLabel` ignores `source` | M `C097 V06 role-policy`: expected `default → ClaudeCode/Low (haiku)` |
-| PC-14 | `effectiveLabel` treats any non-`rolePolicy` source as a pin | M `C097 V06 unknown-source`: expected `unknown` |
-| PC-15 | `escalateLabel` renders the timed form when minutes are null | M `C097 V24 escalate-manual`: expected `High (manual)` |
-| PC-16 | `timeoutLabel` renders `0 min` | M `C097 V24 timeout-off`: expected `off` |
-| PC-17 | section reads `level` from `AGENT_TASK_ROLES` | E `C097 V08 rows-from-dto-not-mirror`: Mutation row expected `ClaudeCode/Low (haiku)` |
+| PC-11 | `defaultLabel` prints `kind` raw | M `rolePolicyModel C097 V05 null-kind-low`: expected `ClaudeCode/Low (haiku)` |
+| PC-12 | `defaultLabel` ignores `configured` | M `rolePolicyModel C097 V05 unconfigured`: expected `not configured — DefaultLevel High (opus)` |
+| PC-13 | `effectiveLabel` ignores `source` | M `rolePolicyModel C097 V06 role-policy`: expected `default → ClaudeCode/Low (haiku)` |
+| PC-14 | `effectiveLabel` treats any non-`rolePolicy` source as a pin | M `rolePolicyModel C097 V06 unknown-source`: expected `unknown` |
+| PC-15 | `escalateLabel` renders the timed form when minutes are null | M `rolePolicyModel C097 V24 escalate-manual`: expected `High (manual)` |
+| PC-16 | `timeoutLabel` renders `0 min` | M `rolePolicyModel C097 V24 timeout-off`: expected `off` |
+| PC-17 | section reads `level` from `AGENT_TASK_ROLES` | E `RolePolicySection C097 V08 rows-from-dto-not-mirror`: Mutation row expected `ClaudeCode/Low (haiku)` |
 | PC-18 | section iterates `AGENT_TASK_ROLES` | same case: `role-policy-row-FutureRole` expected present, 15 rows |
-| PC-19 | candidate rendered without `unavailableReason` | E `C097 V25 stage-pin-column-and-effective`: held reason expected present |
-| PC-20 | remove the section's error branch | E `C097 V09 role-policy-failure-keeps-siblings`: `Could not load role policy.` expected |
-| PC-21 | remove `<RolePolicySection />` from the tab | E `C097 V10 section-order`: `role-policy-section` expected present |
+| PC-19 | candidate rendered without `unavailableReason` | E `RolePolicySection C097 V25 stage-pin-column-and-effective`: held reason expected present |
+| PC-20 | remove the section's error branch | E `RoutingSettingsTab C097 V09 role-policy-failure-keeps-siblings`: `Could not load role policy.` expected |
+| PC-21 | remove `<RolePolicySection />` from the tab | E `RoutingSettingsTab C097 V10 section-order`: `role-policy-section` expected present |
 | PC-22 | modal keeps `AGENT_TASK_ROLES` level when data is loaded | E `C097 V16 server-level-preselects`: `tier-High` expected |
 | PC-23 | modal uses `row.level` when `stagePin` exists | E `C097 V17 stage-pin-wins`: `tier-High` expected |
 | PC-24 | revert `agentTasks.ts:696` to `'Frontier'` | E `C097 V18 route-failure-falls-back-to-constant`: `tier-Low` expected |
