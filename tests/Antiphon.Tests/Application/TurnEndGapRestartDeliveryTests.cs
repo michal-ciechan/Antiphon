@@ -35,8 +35,43 @@ public sealed class TurnEndGapRestartDeliveryTests
         await h.JoinDeliveryAsync(h.PumpDrained);
         await h.JoinOwnedWorkAsync();
         await h.AssertReceiptsAsync(notes, rows);
+        var submitted = h.Caller.SubmittedBodies.ToArray();
+        var attempted = await h.RowsAsync();
         await h.RestartAsync();
+        await h.RecoverDeliveryAfterRestartAsync();
+        h.PostRestartDeliveryWorkerCycles.ShouldBeGreaterThanOrEqualTo(1);
+        h.Caller.SubmittedBodies.ShouldBe(submitted);
+        AssertAttemptIdentities(await h.RowsAsync(), attempted);
         await h.AssertReceiptsAsync(notes, rows);
+    }
+
+    // F1 oracle adequacy: a boot scanner alone cannot satisfy this guard.
+    [Test]
+    public async Task C1205_Restart_recovery_worker_executes_queue_cycle()
+    {
+        await using var h = await TurnEndGapDeliveryHarness.CreateAsync();
+        await h.ProduceAsync(); await h.RestartAsync();
+        h.PostRestartDeliveryWorkerCycles.ShouldBe(0);
+        await h.RecoverDeliveryAfterRestartAsync();
+        h.PostRestartDeliveryWorkerCycles.ShouldBeGreaterThanOrEqualTo(1);
+        await h.AssertHeldAsync();
+    }
+
+    private static void AssertAttemptIdentities(
+        IReadOnlyList<Antiphon.Server.Domain.Entities.SessionQueuedMessage> actual,
+        IReadOnlyList<Antiphon.Server.Domain.Entities.SessionQueuedMessage> before)
+    {
+        actual.Count.ShouldBe(before.Count);
+        foreach (var row in actual)
+        {
+            var original = before.Single(r => r.Id == row.Id);
+            row.SourceTaskId.ShouldBe(original.SourceTaskId);
+            row.SourceLandNotificationId.ShouldBe(original.SourceLandNotificationId);
+            row.DeliveryAttempts.ShouldBe(original.DeliveryAttempts);
+            row.LastDeliveryStartedAt.ShouldBe(original.LastDeliveryStartedAt);
+            row.LastDeliveryGeneration.ShouldBe(original.LastDeliveryGeneration);
+            row.LastDeliveryBaselineSequence.ShouldBe(original.LastDeliveryBaselineSequence);
+        }
     }
 
     // T38 -> PC-85: removing admission leaves zero receipts at the joined due pass.
@@ -88,7 +123,15 @@ public sealed class TurnEndGapRestartDeliveryTests
     {
         await using var h = await TurnEndGapDeliveryHarness.CreateAsync();
         await h.ProduceAsync(); var notes = await h.NotesAsync(); var rows = await h.RowsAsync();
-        await h.MakeIdleAsync(); await h.DeliverExplicitlyAsync();
+        await h.MakeIdleAsync(); await h.StartStreamAsync();
+        h.AfterSubmitted = h.WaitForSubmittedPromptAsync;
+        h.Fault.TaskId = h.Tasks.Single(); h.Fault.Cut = "attempt-committed";
+        try { await h.DeliverExplicitlyAsync(); }
+        catch (IOException ex) when (ex.Message == "c544 completion persistence cut: attempt-committed") { }
+        h.Fault.Throws.ShouldBe(1);
+        var attempted = (await h.RowsAsync()).ShouldHaveSingleItem();
+        attempted.Status.ShouldBe(QueuedMessageStatus.Sent);
+        attempted.DeliveryAttempts.ShouldBe(1); attempted.DeliveryVerdict.ShouldBeNull();
         h.Boundary.ThrowOnce = "receipt-before-save";
         await h.ReconcileAsync(); h.Boundary.Throws.ShouldBe(1);
         var interrupted = (await h.NotesAsync()).Single();
@@ -96,7 +139,16 @@ public sealed class TurnEndGapRestartDeliveryTests
         var delivery = TaskCompletionNotification.TryReadDelivery(interrupted.CompletionDeliveryJson).ShouldNotBeNull();
         var sequence = (await h.PromptsAsync()).Single(p => p.Text?.ReplaceLineEndings("\n") == delivery.WireText.ReplaceLineEndings("\n")).Sequence;
         h.Caller.SubmittedBodies.Count.ShouldBe(1);
-        await h.RestartAsync(); await h.AssertReceiptsAsync(notes, rows);
+        var submitted = h.Caller.SubmittedBodies.ToArray();
+        await h.RestartAsync(); h.AfterSubmitted = null;
+        await h.RecoverDeliveryAfterRestartAsync();
+        h.PostRestartDeliveryWorkerCycles.ShouldBeGreaterThanOrEqualTo(1);
+        h.Caller.SubmittedBodies.ShouldBe(submitted);
+        var settled = (await h.RowsAsync()).ShouldHaveSingleItem();
+        settled.Status.ShouldBe(QueuedMessageStatus.Sent);
+        settled.DeliveryVerdict.ShouldBe(DeliveryVerdict.LateConfirmed);
+        AssertAttemptIdentities([settled], [attempted]);
+        await h.AssertReceiptsAsync(notes, rows);
         (await h.NotesAsync()).Single().ConfirmingPromptSequence.ShouldBe(sequence);
         await h.ReconcileAsync(2); h.Caller.SubmittedBodies.Count.ShouldBe(1);
         (await h.NotesAsync()).Single().ConfirmingPromptSequence.ShouldBe(sequence);
@@ -268,6 +320,15 @@ public sealed class TurnEndGapRestartDeliveryTests
             if (busy) await h.MakeIdleAsync();
             await h.StartCompletionWorkerAsync(minimumScans: 0); await h.JoinOwnedWorkAsync();
         }
+        var attemptsBeforeRecovery = await h.RowsAsync();
+        var bodiesBeforeRecovery = h.Caller.SubmittedBodies.ToArray();
+        await h.StopCompletionWorkerAsync();
+        await h.RecoverDeliveryAfterRestartAsync();
+        h.PostRestartDeliveryWorkerCycles.ShouldBeGreaterThanOrEqualTo(1);
+        h.Caller.SubmittedBodies.ShouldBe(bodiesBeforeRecovery);
+        AssertAttemptIdentities(await h.RowsAsync(), attemptsBeforeRecovery);
+        if (cut == "attempt-committed")
+            (await h.RowsAsync()).Single().DeliveryVerdict.ShouldBe(DeliveryVerdict.LateConfirmed);
         await h.AssertReceiptsAsync(before, queued, expectedAttempts: cut == "render-committed" ? 2 : 1);
         if (frozen is not null) (await h.NotesAsync()).Single().CompletionDeliveryJson.ShouldBe(frozen);
         if (receiptSequence is not null) (await h.NotesAsync()).Single().ConfirmingPromptSequence.ShouldBe(receiptSequence);

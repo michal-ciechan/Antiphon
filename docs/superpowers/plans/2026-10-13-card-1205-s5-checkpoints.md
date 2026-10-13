@@ -28,7 +28,7 @@ bin-c1205-s5-tool/, UseAppHost=false. No full-assembly, deployment or native PTY
 |---|---|---|---|---|---|---|---:|---:|
 | S5-BASE | Tests | `tests/Antiphon.Tests -> bin-c1205-s5-base/` | five-note-baseline | `/*/Antiphon.Tests.Application/TurnEndGapRestartDeliveryTests*/C1205_Restart_delivers_five_gap_held_completions_once*` | T37,V-20,R-5 | Two executed on unchanged pre-S5 production; report actual outcome | 2 | 6 |
 | S5-A | Resume | `tests/Antiphon.Tests -> bin-c1205-s5-resume/` | recovery-restart | `/*/Antiphon.Tests.Application/TurnEndGapRestartDeliveryTests*/(C1205_Restart_delivers*)\|(C1205_Watchdog_delivers*)\|(C1205_Restart_after_transcript*)\|(C1205_Receipt_restart*)\|(C1205_Busy_tail*)\|(C1205_Already_eligible*)\|(C1205_Unknown_probe*)\|(C1205_Flush_rechecks*)` | T37..42,T44,T46 | Exactly ten cases, excluding T43/T45 | 10 | 12 |
-| CP-5 | S5 | `tests/Antiphon.Tests -> bin-c1205-s5/` | restart-receipts | `/*/Antiphon.Tests.Application/TurnEndGapRestartDeliveryTests*/*` | V-20..24,V-36..40,R-5 | Exactly 30 executed, all named cases green | 30 | 16 |
+| CP-5 | S5 | `tests/Antiphon.Tests -> bin-c1205-s5/` | restart-receipts | `/*/Antiphon.Tests.Application/TurnEndGapRestartDeliveryTests*/*` | V-20..24,V-36..40,R-5,F1-guard | Exactly 31 executed, all named cases green | 31 | 16 |
 | CP-6 | S5 | `tests/Antiphon.Tests -> bin-c1205-receipts/` | receipt-compatibility | `/*/*/(VerificationRoundDeliveryTests*)\|(TestClassificationGuardTests*)/(C544_CompletionReceipt*)\|(C544_StampIsNotReceipt*)\|(Registry_matches_compiled_metadata*)` | R-8,R-9 | Exactly four named methods green | 4 | 7 |
 
 All PC-84..100 variants remain pending. The caller authorizes scratch-family
@@ -306,3 +306,42 @@ infrastructure sync delay requires no decision from this delegate.
 next: review
 handoff: Review ordinary S5 acceptance: CP-5 30/30 and CP-6 4/4 with clean/verified receipts. Caller assigned FC-1..FC-6 scratch-family proofs to a separate probe task; none are claimed passed here. All systematic PC-84..100 variants remain pending for Mutation after original Code owner landing.
 artifact: docs/superpowers/plans/2026-10-13-card-1205-s5-checkpoints.md
+
+## S5 F1 repair, task 3280a044
+
+Repair base: 4114cd5fc43df17a22d5d84c85b34f8077f89799. New landing owner:
+3280a044-57d9-40e5-a1dc-c3c72ed31db1; prior Code task
+c0e86d50-00e6-4942-b303-7bc44122c640. Branch feat/card-task-3280a044.
+
+The repair adds one oracle-adequacy execution:
+`/*/Antiphon.Tests.Application/TurnEndGapRestartDeliveryTests*/C1205_Restart_recovery_worker_executes_queue_cycle*`.
+CP-5's full-class selection includes it: 31 executions; CP-6 remains four.
+Run only CP-5/CP-6, serial, against committed HEAD. No broad Unit lane,
+production change, timeout increase, full-assembly or live/manual run.
+
+T37's second restart and T40 now enqueue the recipient into the fresh real
+CompletionNoteWorkHostedService, advance only the fake clock beyond the established
+36-second interrupted-attempt boundary, and join its real queue cycles. T40 cuts
+the existing verdict save after complete prompt ingestion, asserts Sent/null
+verdict before restart, and requires LateConfirmed after recovery. Both preserve
+submission bodies, note/queue identities and the attempt identity fields
+(DeliveryAttempts, LastDeliveryStartedAt, generation and baseline sequence).
+The new guard requires at least one completed post-restart delivery scope; boot
+recovery scopes alone do not increment it.
+
+Audit: T38, T42, T45, T46 have no restart/reconnect; T39 runs the fresh boot
+worker; T41 runs the worker plus explicit queue flush; T44 runs the worker
+before its negative assertions and later actual delivery. T43's attempt-committed
+and receipt-before-save cuts also had stopped delivery workers after restart;
+all eight cuts in both modes now finish with a fresh queue recovery cycle, stable
+submitted bodies and attempt identities. Render-cut still invokes the real
+stranded primitive first. Full-channel restart already runs its fresh worker.
+Earlier T1..T36/T47..T62 witnesses cover stream/recovery/watchdog semantics;
+reconnect methods assert markers/ingested event identities, not no-retyping,
+and do not share this oracle.
+
+Verification results are pending in the task report until CP-5/CP-6 finish.
+All PC-84..100 variants and inherited controls remain pending SourceLanding
+Mutation. The requested throw-away retyping mutant is also pending: the binding
+Code-stage developer contract reserves deliberate mutants and red/restore/green
+to Mutation. Ordinary green does not discharge that proof.
