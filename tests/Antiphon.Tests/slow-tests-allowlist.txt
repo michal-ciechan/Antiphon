@@ -59,6 +59,8 @@ Antiphon.Tests.Application.DelegationWorktreeTests
 Antiphon.Tests.Application.WorktreeBaseSelectionTests
 # CARD-0540: real dispatcher/Git/schema checks; 20-tip probe census measured 59.3s, ordinary rows 3-39s.
 Antiphon.Tests.Application.AgentTaskDispatchBaseGuardTests
+# CARD-1213 S1: real runner WebSocket, real Git recipients and isolated PostgreSQL recovery cuts; review CP-7 measured 65s for 3 methods.
+Antiphon.Tests.Application.DelegateBranchDeliveryTests
 # CARD-0508: real dispatcher claim capture against a real Git repo.
 Antiphon.Tests.Application.DispatchBaseNotificationTests
 # CARD-0487: historical allowance, session Git/PTY integration.
@@ -297,5 +299,3 @@ Antiphon.Tests.Application.WorkingTranscriptRecoveryTests
 Antiphon.Tests.Application.StaleWorkingTranscriptWatchdogTests
 # CARD-1032 S6: real loopback phone-home queue with scratch Git, durable receipt and reconnect.
 Antiphon.Tests.Application.PhoneHomeCompletedCardTransportTests
-# CARD-1213 S1: real runner WebSocket, real Git recipients and isolated PostgreSQL recovery cuts; review CP-7 measured 65s for 3 methods.
-Antiphon.Tests.Application.DelegateBranchDeliveryTests
