@@ -7,9 +7,7 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 /// <summary>
-/// CARD-1219 D-2: admission only, one case per method: an equal record refused inside the window,
-/// a record differing in one field admitted, the equal record admitted after the window, bound keys,
-/// and eviction at capacity. Whether an incident is then written is not tested here.
+/// CARD-1219 D-2: TranscriptIncidentReplayGuard admission cases.
 /// </summary>
 [Category("Unit")]
 public class TranscriptIncidentReplayGuardTests

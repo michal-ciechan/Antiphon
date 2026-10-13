@@ -57,8 +57,7 @@ public class PhoneHomeEventPumpTests
                && !await db.TranscriptEntries.AnyAsync(t => t.AgentSessionId == ours.Id))
             await Task.Delay(50);
         (await db.TranscriptEntries.CountAsync(t => t.AgentSessionId == ours.Id && t.Text == "owner-body")).ShouldBe(1);
-        // CARD-1219 sweep: the single FIFO reader handled the foreign frame before the owner frame,
-        // so this absence is read after the foreign frame was processed, not before it arrived.
+        // CARD-1219 sweep: read after the owner frame's row is counted.
         (await db.TranscriptEntries.AsNoTracking().CountAsync(t => t.AgentSessionId == foreign.Id)).ShouldBe(0);
         cts.Cancel();
         try { await pumping; } catch (OperationCanceledException) { /* expected */ }
@@ -85,8 +84,7 @@ public class PhoneHomeEventPumpTests
         var live = await host.WaitLiveAsync();
         peer.Transcripts[session.Id] = new RunnerTranscriptDto(session.Id, [Prompt(session.Id, "catchup-prompt", "cu-1")], 1);
         peer.Sessions.Add(new RunnerSessionDto(session.Id, 1, DateTime.UtcNow, "Running", null, "", 1));
-        // CARD-1219 sweep: the recovery cycle, not the test, decides when the pump starts. Calling
-        // CatchUpAsync and then starting the pump by hand made the held check true by construction.
+        // CARD-1219 sweep: RunCycleAsync starts the pump; the test does not.
         using var cts = new CancellationTokenSource();
         var cycle = pump.RunCycleAsync(cts.Token);
         await peer.EmitTranscriptAsync(Prompt(session.Id, "live-later", "live-1", sequence: 2), live.Epoch);
@@ -121,8 +119,7 @@ public class PhoneHomeEventPumpTests
     [Test]
     public async Task Live_buffer_overflow_withholds_ready_and_recovers()
     {
-        // CARD-1219 R2-F3: the connection is made eligible first, so the withdrawal is the overflow's
-        // doing; the old oracle passed on the initial false and on any exception.
+        // CARD-1219 R2-F3: eligible before the overflow, not eligible after it.
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var h = await BridgeQueueHarness.CreateAsync(new() { ConnectionString = schema.ConnectionString });
         await using var host = await PhoneHomeTestHost.StartAsync(
@@ -133,7 +130,7 @@ public class PhoneHomeEventPumpTests
         host.Directory.MarkRecovered(live);
         live.DispatchEligible.ShouldBeTrue("precondition: eligible before the overflow");
 
-        // No pump reads the channel, so the third pending event exceeds MaxPendingEvents.
+        // No pump reads the channel; MaxPendingEvents is 2.
         for (var i = 0; i < 4; i++)
         {
             try
