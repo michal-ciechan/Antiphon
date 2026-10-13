@@ -19,8 +19,10 @@ public sealed class CompletedCardWorkspaceRemovalTests
         await f.Runtime.AdoptOrphanedHostsAsync(new SystemProcessLivenessProbe(), CancellationToken.None);
         var entered = NewBarrier(); var release = NewBarrier();
         var command = f.Command();
+        var retirementAdmissions = 0;
         var retire = f.Retire(command, async () =>
         {
+            Interlocked.Increment(ref retirementAdmissions);
             using var intent = System.Text.Json.JsonDocument.Parse(File.ReadAllText(Path.Combine(f.State, "journal.json")));
             var persisted = intent.RootElement.GetProperty("intents")[0].GetProperty("command");
             persisted.GetProperty("operationId").GetGuid().ShouldBe(command.OperationId);
@@ -32,8 +34,10 @@ public sealed class CompletedCardWorkspaceRemovalTests
         var launch = f.Runtime.StartAsync(f.Launch(id, Path.Combine(f.Checkout, "..", "task-deadbeef")), CancellationToken.None);
         try
         {
-            f.Runtime.LaunchGateForTest(id).CurrentCount.ShouldBe(1, "sessionGateHeldBeforeWorkspace");
-            f.Effects.ShouldBe(0, "simultaneousAdmissions");
+            var sessionGateHeldBeforeWorkspace = f.Runtime.LaunchGateForTest(id).CurrentCount == 0;
+            sessionGateHeldBeforeWorkspace.ShouldBeFalse();
+            var simultaneousAdmissions = f.Effects + Volatile.Read(ref retirementAdmissions);
+            simultaneousAdmissions.ShouldBe(1);
         }
         finally { release.TrySetResult(); }
         (await retire).ShouldBeTrue();
@@ -142,14 +146,16 @@ public sealed class CompletedCardWorkspaceRemovalTests
             .SetValue(f.Runtime, (Func<Task>)(async () => { entered.SetResult(); await release.Task; }));
         var adoption = f.Runtime.AdoptOrphanedHostsAsync(new SystemProcessLivenessProbe(), CancellationToken.None);
         await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var earlyCleanup = f.Retire();
         try
         {
-            (await f.Retire()).ShouldBeFalse("cleanupAdmittedBeforeCensus");
+            earlyCleanup.IsCompleted.ShouldBeTrue("an unfinished census gives an immediate hold");
+            var cleanupAdmittedBeforeCensus = await earlyCleanup;
+            cleanupAdmittedBeforeCensus.ShouldBeFalse();
             child.HasExited.ShouldBeFalse("ownedChildStillAlive");
         }
-        finally { release.TrySetResult(); }
-        await adoption;
-        child.HasExited.ShouldBeFalse();
+        finally { release.TrySetResult(); await adoption; await earlyCleanup; }
+        child.WaitForExit(100).ShouldBeFalse("ownedChildStillAlive");
         ((bool)f.Gate.HasOwnershipConflict(f.Checkout)).ShouldBeTrue("retainedOwnerVisible");
         f.Runtime.Get(id).Pending.ShouldBe("workspace_ownership_conflict");
         (await f.Retire()).ShouldBeFalse();
@@ -175,7 +181,14 @@ public sealed class CompletedCardWorkspaceRemovalTests
         var pane = fake.SeedDetectedAgent("fixture:p1", HerdrAgentKinds.Claude); pane.Cwd = f.Checkout;
         fake.SetPaneProcessInfo(pane.PaneId, 1, [(child.Id, "claude", new[] { "claude" }, f.Checkout)]);
         fake.Start(); await fake.WaitUntilListeningAsync();
-        await runtime.SweepVanishedSessionsAsync(new SystemProcessLivenessProbe(), CancellationToken.None);
+        var adopting = NewBarrier(); var finishAdoption = NewBarrier();
+        runtime.BeforePendingHerdrPublicationAsync = async () => { adopting.SetResult(); await finishAdoption.Task; };
+        var pendingSweep = runtime.SweepVanishedSessionsAsync(new SystemProcessLivenessProbe(), CancellationToken.None);
+        await adopting.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var pendingCleanup = f.Retire();
+        try { pendingCleanup.IsCompleted.ShouldBeFalse("retirement must wait behind pending readoption admission"); }
+        finally { finishAdoption.TrySetResult(); await pendingSweep; await pendingCleanup; }
+        (await pendingCleanup).ShouldBeFalse();
         runtime.Get(id).Status.ShouldBe("Running");
         (await f.Retire()).ShouldBeFalse();
         child.HasExited.ShouldBeFalse();
@@ -183,14 +196,15 @@ public sealed class CompletedCardWorkspaceRemovalTests
         await using var conflict = new CompletedCardRunnerFixture();
         conflict.InstallGate(); await conflict.Runtime.AdoptOrphanedHostsAsync(new SystemProcessLivenessProbe(), CancellationToken.None);
         (await conflict.Retire()).ShouldBeTrue();
-        var owner = conflict.Child(); conflict.SeedSidecar(owner, Guid.NewGuid());
+        var owner = conflict.Child(); var conflictId = Guid.NewGuid(); conflict.SeedSidecar(owner, conflictId);
         conflict.InstallGate(restart: true);
         var restarted = conflict.NewRuntime(new HerdrClient(new HerdrSettings { Enabled = true, Session = fake.Session, SocketPath = fake.EndpointPath }));
         restarted.CreationEffectForTest = null; conflict.Bind(restarted);
         fake.SetPaneProcessInfo(pane.PaneId, 1, [(owner.Id, "claude", new[] { "claude" }, conflict.Checkout)]);
         await restarted.AdoptOrphanedHostsAsync(new SystemProcessLivenessProbe(), CancellationToken.None);
         ((bool)conflict.Gate.HasOwnershipConflict(conflict.Checkout)).ShouldBeTrue("ownershipConflictVisible");
-        owner.HasExited.ShouldBeFalse();
+        owner.WaitForExit(100).ShouldBeFalse();
+        restarted.Get(conflictId).Pending.ShouldBe("workspace_ownership_conflict");
         restarted.List().Count.ShouldBe(1);
     }
 

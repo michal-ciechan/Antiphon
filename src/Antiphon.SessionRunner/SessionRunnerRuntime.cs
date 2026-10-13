@@ -2031,23 +2031,24 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         foreach (var candidate in HerdrPaneSidecar.LoadAll(_settings.SessionLogPath))
         {
             ct.ThrowIfCancellationRequested();
-            if (WorkspaceUseGate is not null)
-            {
-                WorkspaceUseGate.RecordOwner(candidate.Cwd, candidate.SessionId,
-                    () => candidate.ChildPid is not int pid || probe.IsAlive(pid,
-                        candidate.ChildStartedAtUtc ?? candidate.LaunchedAtUtc), HerdrOwnerGeneration(candidate));
-                if (WorkspaceUseGate.IsRetiring(candidate.Cwd))
-                {
-                    _sessions.TryAdd(candidate.SessionId, RunnerSession.CreatePendingHerdr(
-                        candidate, _settings, _events, _logger, _processLiveness, _placement,
-                        "workspace_ownership_conflict"));
-                    continue;
-                }
-            }
             using var attempt = _startup.Begin("herdr-adoption", candidate.SessionId);
             await using var paneLease = await _placement.LockPaneAsync(candidate.PaneId, ct);
             var sidecar = HerdrPaneSidecar.TryLoad(HerdrPaneSidecar.PathFor(_settings.SessionLogPath, candidate.SessionId));
             if (sidecar is null || sidecar.PaneId != candidate.PaneId) continue;
+            if (WorkspaceUseGate is not null)
+            {
+                if (sidecar.Cwd != candidate.Cwd || HerdrOwnerGeneration(sidecar) != HerdrOwnerGeneration(candidate))
+                    WorkspaceUseGate.RecordOwner(sidecar.Cwd, sidecar.SessionId,
+                        () => sidecar.ChildPid is not int pid || probe.IsAlive(pid,
+                            sidecar.ChildStartedAtUtc ?? sidecar.LaunchedAtUtc), HerdrOwnerGeneration(sidecar));
+                if (WorkspaceUseGate.IsRetiring(sidecar.Cwd))
+                {
+                    _sessions.TryAdd(sidecar.SessionId, RunnerSession.CreatePendingHerdr(
+                        sidecar, _settings, _events, _logger, _processLiveness, _placement,
+                        "workspace_ownership_conflict"));
+                    continue;
+                }
+            }
             if (_sessions.TryGetValue(sidecar.SessionId, out var existingHerdr))
             {
                 if (sidecar.AcceptedStartedAt is { } sidecarGeneration
