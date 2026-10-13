@@ -110,9 +110,11 @@ public sealed class CheckpointTaskOwnershipTests : CheckpointTestBase
         Checkpoints = [new CheckpointSpec { Id = "CP-1", After = ["S1"], Command = "true", EstimatedMinutes = 1 }],
     };
 
-    private static string CreateFixtureRun(CheckpointManifest manifest, RunRequest request, string repo) =>
-        CheckpointApp.CreateRun(manifest, request, repo,
+    private static string CreateFixtureRun(CheckpointManifest manifest, RunRequest request, string repo) {
+        foreach (var build in manifest.Builds) Directory.CreateDirectory(ProjectWriteRoots.DirectoryOf(Path.GetFullPath(Path.Combine(repo, build.Project))));
+        return CheckpointApp.CreateRun(manifest, request, repo,
             new CheckpointApp.Runtime { SourceCapture = _ => CheckpointFixtures.CleanSource() });
+    }
 
     private string NewBoundRun(CheckpointManifest? manifest = null)
     {
@@ -769,9 +771,10 @@ public sealed class CheckpointTaskOwnershipTests : CheckpointTestBase
             process.ExitCode.ShouldBe(0, stdout + stderr);
         }
         var output = Path.Combine(repo, "bin-owned");
-        Directory.CreateDirectory(output);
+        SafeWrite.Require(SafeWrite.CreateFreshDirectory(output, SafeWrite.Under(repo)));
         var marker = Path.Combine(output, "marker.txt");
         File.WriteAllText(marker, "owned");
+        SafeWrite.Require(OwnedOutputLedger.Seal(output));
         var checks = 0;
         Should.Throw<OperationCanceledException>(() => OutputCleanup.CleanOwnedOutputs(repo, ["bin-owned"], 0, false, false,
             beforeDelete: () => { checks++; throw new OperationCanceledException("owner-ended"); },

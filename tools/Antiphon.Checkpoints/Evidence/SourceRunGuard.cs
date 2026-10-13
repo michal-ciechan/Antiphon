@@ -110,6 +110,8 @@ public sealed class CheckpointBuildBinding
 
     public string? Write()
     {
+        var preflight = SafeWrite.Preflight(RepositoryRoot, [PathName]);
+        if (preflight is not null) return preflight;
         if (File.Exists(PathName)) return "pre-existing-build-source";
         var reason = SafeWrite.Text(PathName, JsonSerializer.Serialize(this, CheckpointApp.Json), SafeWrite.Under(OutputPath));
         return reason ?? OwnedOutputLedger.Seal(OutputPath);
