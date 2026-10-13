@@ -3065,7 +3065,13 @@ c849_fixture_write() {
         fi
         [ "$metadata_current" = "$metadata_before" ] && [ ! -L "$CASE_DIR" ] \
             && [ "$(stat -c '%d:%i:%u' -- "$CASE_DIR")" = "$C849_CASE_ID" ] || exit 2
-        mv -T -- "$metadata_temp" "$metadata_leaf" || exit 2
+        if [ "$metadata_mode" = create ]; then
+            # A new record must not replace a name introduced after inspection.
+            mv -T -n -- "$metadata_temp" "$metadata_leaf" || exit 2
+            [ ! -e "$metadata_temp" ] && [ ! -L "$metadata_temp" ] || exit 2
+        else
+            mv -T -- "$metadata_temp" "$metadata_leaf" || exit 2
+        fi
         c849_fixture_metadata_regular "$metadata_leaf" && [ "$(stat -c '%d:%i:%u:%h' -- "$metadata_leaf")" = "$metadata_stamp" ] \
             && [ "$(stat -c '%d:%i:%u' -- "$CASE_DIR")" = "$C849_CASE_ID" ] || exit 2
         trap - EXIT
