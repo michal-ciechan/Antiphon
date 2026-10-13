@@ -684,7 +684,10 @@ export interface AgentTaskCreatedDto {
   } | null
 }
 
-/** Role → tier, mirroring the server's default RolePolicy. Shown next to each role in the picker. */
+/**
+ * Role → tier, the fallback for the server's RolePolicy while GET /api/role-policy is loading or has
+ * failed (CARD-0097 D-8; C097 V18). The delegate modal reads the server row once it loads.
+ */
 export const AGENT_TASK_ROLES: Array<{
   value: AgentTaskRole
   label: string
@@ -693,7 +696,7 @@ export const AGENT_TASK_ROLES: Array<{
 }> = [
   { value: 'Investigate', label: 'Investigate', use: 'measure, reproduce, confirm a mechanism', level: 'High' },
   { value: 'Plan', label: 'Plan', use: 'decompose, design, choose an approach', level: 'Frontier' },
-  { value: 'Mutation', label: 'Mutation', use: 'run positive controls against committed code', level: 'Frontier' },
+  { value: 'Mutation', label: 'Mutation', use: 'run positive controls against committed code', level: 'Low' },
   { value: 'TestDesign', label: 'Test design', use: 'name the assertions and positive controls', level: 'Frontier' },
   { value: 'Code', label: 'Code', use: 'write or change code', level: 'Frontier' },
   { value: 'Review', label: 'Review', use: 'judge whether logic is correct', level: 'Frontier' },

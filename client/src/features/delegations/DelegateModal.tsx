@@ -24,10 +24,34 @@ import {
   type WorkspaceMode,
 } from '../../api/agentTasks'
 import { getApiErrorMessage } from '../../api/client'
+import { useRolePolicy, type RolePolicyDto } from '../../api/rolePolicy'
 import { useRunnerDefaults } from '../../api/runnerDefaults'
 import { useSessionRunners } from '../../api/sessionRunners'
 import { TierBadge } from './TaskChip'
 import type { RequiredPlatformName } from './placement'
+
+type TierSource = 'pin' | 'rolePolicy' | 'fallback'
+
+const TIER_SOURCE_LABEL: Record<TierSource, string> = {
+  pin: 'from the stage pin',
+  rolePolicy: 'from the role policy',
+  fallback: 'built-in default — no usable role policy',
+}
+
+/**
+ * The server's level for a role: the stage pin's head (C097 V17), else the RolePolicy level (C097 V16).
+ * Null sends the caller to AGENT_TASK_ROLES (C097 V18).
+ */
+function serverRoleLevel(
+  policy: RolePolicyDto | undefined,
+  role: AgentTaskRole,
+): { level: AgentModelLevel; source: 'pin' | 'rolePolicy' } | null {
+  const row = Array.isArray(policy?.roles) ? policy.roles.find((r) => r.role === role) : undefined
+  const source = row?.effective?.source
+  const level = source === 'pin' ? row?.effective.modelLevel : source === 'rolePolicy' ? row?.level : null
+  if (!source || !AGENT_MODEL_LEVEL_OPTIONS.some((option) => option.value === level)) return null
+  return { level: level as AgentModelLevel, source }
+}
 
 export interface DelegatePrefill {
   /** Seeds the goal — the files view passes the path it is looking at. */
@@ -79,10 +103,13 @@ function DelegateForm({ onClose, prefill }: { onClose: () => void; prefill?: Del
   const [runnerChoice, setRunnerChoice] = useState('automatic')
   const runners = useSessionRunners()
   const defaults = useRunnerDefaults()
+  const rolePolicy = useRolePolicy()
 
+  const serverLevel = serverRoleLevel(rolePolicy.data, role)
+  const tierSource: TierSource | null = serverLevel ? serverLevel.source : rolePolicy.isPending ? null : 'fallback'
   // A sub-orchestrator decomposes, which is the expensive kind of thinking — the server floors it
-  // at High, so showing anything cheaper here would be a lie.
-  const roleLevel = AGENT_TASK_ROLES.find((r) => r.value === role)?.level ?? 'High'
+  // at High, so showing anything cheaper here would be a lie (C097 V27 on the server level).
+  const roleLevel = serverLevel?.level ?? AGENT_TASK_ROLES.find((r) => r.value === role)?.level ?? 'High'
   const effectiveLevel: AgentModelLevel =
     level ?? (kind === 'Orchestrator' && (roleLevel === 'Medium' || roleLevel === 'Low') ? 'High' : roleLevel)
 
@@ -184,6 +211,11 @@ function DelegateForm({ onClose, prefill }: { onClose: () => void; prefill?: Del
       <Group gap="xs">
         <Text size="sm">Runs at</Text>
         <TierBadge level={effectiveLevel} size="sm" />
+        {!level && tierSource && (
+          <Text size="xs" c="dimmed" data-testid={`delegate-tier-source-${tierSource}`}>
+            {TIER_SOURCE_LABEL[tierSource]}
+          </Text>
+        )}
         {level ? (
           <Button variant="subtle" size="compact-xs" onClick={() => setLevel(null)}>
             use the role’s tier
