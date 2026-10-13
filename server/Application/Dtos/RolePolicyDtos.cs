@@ -7,7 +7,8 @@ namespace Antiphon.Server.Application.Dtos;
 /// entry, in that order. Read-only.
 /// </summary>
 public sealed record RolePolicyDto(
-    AgentModelLevel DefaultLevel,
+    /// <summary>Null when the configured value is not a defined level.</summary>
+    AgentModelLevel? DefaultLevel,
     int DefaultTimeoutMinutes,
     IReadOnlyList<RolePolicyRowDto> Roles);
 
@@ -19,7 +20,8 @@ public sealed record RolePolicyDto(
 public sealed record RolePolicyRowDto(
     AgentTaskRole Role,
     bool Configured,
-    AgentModelLevel Level,
+    /// <summary>Null when the configured value is not a defined level.</summary>
+    AgentModelLevel? Level,
     /// <summary>Null means ClaudeCode.</summary>
     AgentKind? Kind,
     string Alias,

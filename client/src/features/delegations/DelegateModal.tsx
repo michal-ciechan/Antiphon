@@ -40,7 +40,7 @@ const TIER_SOURCE_LABEL: Record<TierSource, string> = {
 
 /**
  * The server's level for a role: the stage pin's head (C097 V17), else the RolePolicy level (C097 V16).
- * Null sends the caller to AGENT_TASK_ROLES (C097 V18).
+ * Null sends the caller to AGENT_TASK_ROLES (C097 V18), as does a null policy level (C097 V30).
  */
 function serverRoleLevel(
   policy: RolePolicyDto | undefined,

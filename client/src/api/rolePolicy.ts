@@ -19,7 +19,8 @@ export interface RolePolicyEffectiveDto {
 export interface RolePolicyRowDto {
   role: AgentTaskRole
   configured: boolean
-  level: AgentModelLevel
+  /** null when the configured level is not a defined level (S1 R3); no tier is invented. */
+  level: AgentModelLevel | null
   /** null means ClaudeCode. */
   kind: AgentKind | null
   alias: string
@@ -32,7 +33,8 @@ export interface RolePolicyRowDto {
 }
 
 export interface RolePolicyDto {
-  defaultLevel: AgentModelLevel
+  /** null when the configured DefaultLevel is not a defined level. */
+  defaultLevel: AgentModelLevel | null
   defaultTimeoutMinutes: number
   roles: RolePolicyRowDto[]
 }
