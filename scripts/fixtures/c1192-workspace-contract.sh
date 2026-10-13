@@ -3597,7 +3597,32 @@ mode_model_inspection() {
     emit external-reader-spawns 0
 }
 
+# Pin which scenarios need diagnostic setup; existing full behavior assertions
+# still own export bytes, ordering, failure and controller replacement.
+mode_deadline_setup() {
+    local key count name code expected
+    for key in finalization-success finalization-primary finalization-delete cleanup-probe-success; do
+        reset_runtime; require_init
+        mode="${key%-*}"; S7_SCENARIO="${key##*-}"
+        SERVER2_ROOT="$CASE_DIR/setup-$key"
+        s7_groups
+        code=0
+        ( c849_fixture_seed ) > "$C1192_ROOT/setup-output" 2>&1 || code=$?
+        expected=0; [ "$S7_SCENARIO" != primary ] || expected=9
+        [ "$code" = "$expected" ] || { command cat "$C1192_ROOT/setup-output"; fail "setup exit $key code=$code"; }
+        count=0
+        for name in race-p1.log race-p2.log race-offline.log lock-holder.log lock-waiter.log; do
+            [ ! -f "$SERVER2_ROOT/$name" ] || count=$((count + 1))
+        done
+        expected=0
+        case "$key" in finalization-success|finalization-primary) expected=5 ;; esac
+        [ "$count" = "$expected" ] || fail "unrelated diagnostic setup $key actual=$count expected=$expected"
+        emit "$key-logs" "$count"
+    done
+}
+
 case "$mode" in
+    deadline-setup) mode_deadline_setup ;;
     publication-link) mode_publication_link "$@" ;;
     model-inspection) mode_model_inspection ;;
     metadata-write) mode_metadata_write "$@" ;;

@@ -652,6 +652,17 @@ public sealed class RemoteScriptContractTests
         Fact(output, "external-reader-spawns").ShouldBe("0", output);
     }
 
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1208_Deadline_fixture_keeps_required_logs_and_omits_unrelated_setup()
+    {
+        var output = C1192Run("deadline-setup");
+        Fact(output, "finalization-success-logs").ShouldBe("5", output);
+        Fact(output, "finalization-primary-logs").ShouldBe("5", output);
+        Fact(output, "finalization-delete-logs").ShouldBe("0", output);
+        Fact(output, "cleanup-probe-success-logs").ShouldBe("0", output);
+    }
+
     private static void C1192AssertCleanupProbe(string boundary)
     {
         var output = C1192Run("cleanup-probe", boundary);
