@@ -3,7 +3,7 @@ using Antiphon.SessionRunner.Contracts;
 
 namespace Antiphon.SessionRunner;
 
-/// <summary>S3 admission intent only; component disposal and receipts belong to S5.</summary>
+/// <summary>External command/fence and S5 component progress; C1032_RemovalComponentRecovery reads it afresh.</summary>
 public sealed class RunnerWorkspaceRemovalJournal
 {
     private readonly JsonSerializerOptions _json = new(JsonSerializerDefaults.Web);
@@ -43,7 +43,7 @@ public sealed class RunnerWorkspaceRemovalJournal
                 return null;
             foreach (var intent in journal.Intents)
             {
-                if (!Valid(intent.Command) || Digest(intent.Command) != intent.Digest)
+                if (!Valid(intent.Command) || Digest(intent.Command) != intent.Digest || !ValidProgress(intent))
                     return null;
             }
             return journal.Intents;
@@ -74,6 +74,35 @@ public sealed class RunnerWorkspaceRemovalJournal
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return false; }
     }
 
+    internal bool Save(RemovalIntent intent)
+    {
+        var records = Read();
+        if (records is null || !ValidProgress(intent)) return false;
+        var index = records.ToList().FindIndex(i => i.Command.OperationId == intent.Command.OperationId);
+        if (index < 0 || records[index].Digest != intent.Digest || Digest(intent.Command) != intent.Digest) return false;
+        var updated = records.ToArray(); updated[index] = intent;
+        try { AtomicWrite(JournalPath, JsonSerializer.Serialize(new Journal(1, RunnerStoreId, updated.ToList()), _json)); return true; }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return false; }
+    }
+
+    internal static string SetAsideFor(CompletedCardWorkspaceCommand command) =>
+        command.Binding.WorktreePath + ".cleanup-" + command.OperationId.ToString("N");
+
+    private bool ValidProgress(RemovalIntent intent)
+    {
+        if (intent.SetAsidePath is null) return intent.Phase == "Intent" && intent.Receipt is null;
+        if (intent.SetAsidePath != SetAsideFor(intent.Command) || intent.DirectoryIdentity is null
+            || intent.RegistrationIdentity is null || intent.DirectoryEntries is null || intent.RegistrationEntries is null
+            || intent.RemainingAllowance is < 0 or > 8 || intent.Phase is not
+                ("Prepared" or "Moved" or "Unregistering" or "Unregistered" or "Deleting" or "Deleted" or "Complete")) return false;
+        if (!ValidEntries(intent.DirectoryEntries) || !ValidEntries(intent.RegistrationEntries)) return false;
+        return (intent.Phase == "Complete") == (intent.Receipt is not null);
+    }
+    private static bool ValidEntries(IReadOnlyList<RunnerWorkspaceNoFollowDelete.Entry> entries) =>
+        entries.Select(e => e.Path).Distinct(StringComparer.Ordinal).Count() == entries.Count
+        && entries.All(e => !Path.IsPathRooted(e.Path) && !e.Path.Split(Path.DirectorySeparatorChar).Contains("..")
+            && !string.IsNullOrWhiteSpace(e.Path) && (e.Directory ? e.Hash is null : e.Hash is { Length: 64 }));
+
     private bool Valid(CompletedCardWorkspaceCommand command)
     {
         var serialized = JsonSerializer.Serialize(command, _json);
@@ -103,6 +132,18 @@ public sealed class RunnerWorkspaceRemovalJournal
         finally { if (File.Exists(temporary)) File.Delete(temporary); }
     }
 
-    public sealed record RemovalIntent(CompletedCardWorkspaceCommand Command, string Digest);
+    public sealed record RemovalIntent(CompletedCardWorkspaceCommand Command, string Digest)
+    {
+        public string? SetAsidePath { get; init; }
+        public string? DirectoryIdentity { get; init; }
+        public string? RegistrationIdentity { get; init; }
+        [System.Text.Json.Serialization.JsonInclude]
+        internal IReadOnlyList<RunnerWorkspaceNoFollowDelete.Entry>? DirectoryEntries { get; init; }
+        [System.Text.Json.Serialization.JsonInclude]
+        internal IReadOnlyList<RunnerWorkspaceNoFollowDelete.Entry>? RegistrationEntries { get; init; }
+        public string Phase { get; init; } = "Intent";
+        public int RemainingAllowance { get; init; } = 8;
+        public CompletedCardWorkspaceReceipt? Receipt { get; init; }
+    }
     private sealed record Journal(int SchemaVersion, string RunnerStoreId, List<RemovalIntent> Intents);
 }
