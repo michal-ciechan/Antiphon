@@ -537,6 +537,8 @@ public sealed partial class RunnerWorkspaceService
         if (!IsUnderRoot(path))
             throw new PhoneHomeAdmissionException(
                 PhoneHomeProblemTypes.UnsupportedTarget, "Only a mirror under the worktree root may be removed.", 409);
+        await using var workspace = WorkspaceUseGate is null ? null :
+            await WorkspaceUseGate.AcquireRemovalAsync(path, _worktreeRoot, ct);
         if (!Directory.Exists(path))
         {
             await PruneRepositoriesAsync(ct);
@@ -674,6 +676,8 @@ public sealed partial class RunnerWorkspaceService
 
     private async Task PruneRepositoriesAsync(CancellationToken ct)
     {
+        // RemoveAsync holds the optional shared admission through this repository-wide prune.
+        // Do not acquire it again here: the present-path branch uses the same outer lease.
         var repositories = new List<string> { _repository };
         try
         {

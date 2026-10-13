@@ -121,6 +121,9 @@ public sealed class LegacyWorkspaceRemovalGateTests
             f.Workspace().RemoveAsync(new(f.Checkout, true), CancellationToken.None));
         refusal.Code.ShouldBe("workspace_in_use");
         Directory.Exists(f.Checkout).ShouldBeTrue();
+        // Prune is repository-wide: a request for an absent sibling must not bypass this owner.
+        await Should.ThrowAsync<PhoneHomeAdmissionException>(f.Workspace().RemoveAsync(
+            new(Path.Combine(Path.GetDirectoryName(f.Checkout)!, "task-aabbccdd"), true), CancellationToken.None));
         owned = false;
         (await f.Workspace().RemoveAsync(new(f.Checkout, false), CancellationToken.None)).Removed.ShouldBeTrue();
     }
@@ -171,5 +174,23 @@ public sealed class LegacyWorkspaceRemovalGateTests
         }
         finally { await use.DisposeAsync(); await create; }
         Directory.Exists(path).ShouldBeTrue();
+    }
+
+    [Test]
+    public async Task C1032_LegacyRemovalJournalFence()
+    {
+        foreach (var scenario in new[] { "retiring", "torn", "census" })
+        {
+            await using var f = await Ready();
+            if (scenario == "retiring") (await f.Retire()).ShouldBeTrue();
+            else if (scenario == "torn") File.WriteAllText(Path.Combine(f.State, "journal.json"), "{");
+            else f.InstallGate(restart: true);
+            var starts = f.GitStarts;
+            var refusal = await Should.ThrowAsync<PhoneHomeAdmissionException>(
+                f.Workspace().RemoveAsync(new(f.Checkout, true), CancellationToken.None));
+            refusal.Code.ShouldBe("workspace_retiring_or_unknown");
+            f.GitStarts.ShouldBe(starts, scenario);
+            Directory.Exists(f.Checkout).ShouldBeTrue();
+        }
     }
 }

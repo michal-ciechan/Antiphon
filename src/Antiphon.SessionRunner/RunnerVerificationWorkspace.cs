@@ -43,6 +43,8 @@ public sealed partial class RunnerWorkspaceService
             throw Refuse("Verification branch must be feat/card-" + identifier + ".");
 
         var path = _worktreeRoot + "/" + identifier;
+        await using var workspace = WorkspaceUseGate is null ? null :
+            await WorkspaceUseGate.AcquireUseAsync(path, ct);
         var metadataPath = VerificationMetadataPath(identifier);
         if (File.Exists(metadataPath))
         {
@@ -184,6 +186,8 @@ public sealed partial class RunnerWorkspaceService
         var identifier = LastSegment(coordinates.WorktreePath);
         if (!NamePattern.IsMatch(identifier)) throw Refuse("Verification identifier must be task-<8 hex>.");
         var path = coordinates.WorktreePath;
+        await using var workspace = WorkspaceUseGate is null ? null :
+            await WorkspaceUseGate.AcquireRemovalAsync(path, _worktreeRoot, ct);
         if (!Directory.Exists(path))
         {
             await GitAsync(_repository, ct, "worktree", "prune");
