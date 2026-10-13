@@ -9,6 +9,32 @@ namespace Antiphon.SessionRunner.Tests;
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class WorkspaceParkPublicationTests
 {
+
+    [Test]
+    public async Task C1213_ParkBothFormsChecksTail()
+    {
+        // legacy-only FullRef -> new park held; omit tail -> foreign-park proceeds.
+        foreach (var branch in new[] { World.Branch, "feat/card-1213-code-deadbeef" })
+        {
+            using var world = await World.CreateAsync();
+            if (branch != World.Branch) await world.GitAsync(world.Mirror, "branch", "-m", branch);
+            var request = world.Request with { Binding = world.Request.Binding with { FullRef = "refs/heads/" + branch } };
+            var tip = await world.CommitAsync("work.txt", "owned park");
+            var publisher = world.Publisher();
+            var result = await publisher.PrepareAsync(request, default);
+            result.Outcome.ShouldBe(WorkspaceParkOutcome.Published, "park-receipt: " + result.Reason);
+            (await world.GitAsync(world.Origin, "rev-parse", "refs/heads/" + branch)).Trim().ShouldBe(tip, "park-receipt");
+            (await publisher.VerifyAsync(result.Receipt!, default)).Outcome.ShouldBe(WorkspaceParkOutcome.Published);
+            foreach (var fullRef in new[] { "refs/heads/feat/card-task-cafebabe", "refs/heads/feat/card-1213-code-cafebabe", "refs/heads/" + branch + "\n" })
+            {
+                world.Commands.Clear();
+                var refused = await publisher.PrepareAsync(request with { Binding = request.Binding with { FullRef = fullRef } }, default);
+                refused.Reason.ShouldBe("park_invalid_target", "foreign-park");
+                world.Commands.ShouldBeEmpty("foreign-park: before Git");
+            }
+        }
+    }
+
     [Test]
     public async Task C1065_CleanCommittedTipIsPublishedExactly()
     {

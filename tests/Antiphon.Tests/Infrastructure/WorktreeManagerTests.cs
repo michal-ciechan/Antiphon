@@ -149,6 +149,39 @@ public class WorktreeManagerSafetyTests
 [Category("Slow")]
 public class WorktreeManagerGitIntegrationTests
 {
+
+    [Test]
+    public async Task C1213_ExplicitBranchKeepsDirectoryIdentity()
+    {
+        // case -> mutation -> red: new branch; ignore explicit branch -> symbolic-head differs.
+        foreach (var branch in new[] { "feat/card-task-deadbeef", "feat/card-1213-code-deadbeef" })
+        {
+            using var env = await GitTestEnvironment.CreateAsync();
+            var manager = BuildManager(env.WorktreeRoot);
+            var method = typeof(WorktreeManager).GetMethod("CreateAsync", [typeof(string), typeof(string), typeof(string), typeof(string), typeof(CancellationToken)])
+                .ShouldNotBeNull("explicit branch creation API");
+            var info = await (Task<Antiphon.Server.Application.Dtos.WorktreeInfo>)method.Invoke(manager, [env.RepoPath, "task-deadbeef", "HEAD", branch, CancellationToken.None])!;
+            (await GitTestEnvironment.RunGitAsync(info.Path, "symbolic-ref", "HEAD")).Trim().ShouldBe("refs/heads/" + branch, "symbolic-head");
+            info.Path.ShouldBe(Path.Combine(env.WorktreeRoot, "card-task-deadbeef"), "directory-identity");
+            info.CardId.ShouldBe("task-deadbeef", "metadata-identity");
+            (await manager.ListAsync(env.RepoPath, default)).Single().Branch.ShouldBe(branch);
+        }
+    }
+    [Test]
+    public async Task C1213_ScanBothFormsAndExcludeCardSpawn()
+    {
+        // restore legacy-only glob -> dangling-set loses modern ref; bypass parser -> canary included.
+        using var env = await GitTestEnvironment.CreateAsync();
+        var branches = new[] { "feat/card-task-deadbeef", "feat/card-1213-code-cafebabe", "feat/card-task-aabbccdd", "feat/card-1213-review-11223344", "feat/card-1213", "feat/card-E03-003", "feat/card-1213-Code-12345678" };
+        foreach (var branch in branches) await GitTestEnvironment.RunGitAsync(env.RepoPath, "branch", branch);
+        foreach (var branch in branches.Skip(2))
+            await GitTestEnvironment.RunGitAsync(env.RepoPath, "worktree", "add", Path.Combine(env.WorktreeRoot, "card-task-" + branch.Split('-').Last()), branch);
+        var scan = await BuildManager(env.WorktreeRoot).ScanDelegateWorktreesAsync(env.RepoPath, default);
+        scan.Select(x => x.Branch).Order().ShouldBe(branches.Take(4).Order(), "scan-excludes-canary");
+        scan.Where(x => !x.Registered).Select(x => x.Branch).Order().ShouldBe(branches.Take(2).Order(), "dangling-set");
+        scan.Select(x => x.ShortId).Order().ShouldBe(new[] { "deadbeef", "cafebabe", "aabbccdd", "11223344" }.Order());
+    }
+
     [Test]
     public async Task WorktreeManager_create_produces_worktree_under_root()
     {

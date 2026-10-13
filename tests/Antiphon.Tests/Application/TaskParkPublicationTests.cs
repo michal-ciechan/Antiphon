@@ -23,6 +23,29 @@ namespace Antiphon.Tests.Application;
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class TaskParkPublicationTests
 {
+
+    [Test]
+    public async Task C1213_LocalParkBothForms()
+    {
+        // legacy-only local publisher target -> new park held; omit tail -> foreign accepted.
+        foreach (var modern in new[] { false, true })
+        {
+            await using var w = await PublicationWorld.CreateAsync(cardBranch: modern);
+            var tip = await w.CommitAsync("work.txt");
+            var result = await w.PrepareAsync();
+            result.Outcome.ShouldBe(TaskParkPublicationOutcome.Published, "local-park: " + result.Reason);
+            (await w.RemoteShaAsync()).ShouldBe(tip, "local-park");
+            result.Evidence!.Request.Binding.FullRef.ShouldBe(w.FullRef);
+            (await w.VerifyAsync()).Evidence!.SourceSha.ShouldBe(tip);
+            var local = new LocalTaskParkPublisher(w.Git, w.Leases);
+            foreach (var foreign in new[] { "refs/heads/feat/card-task-ffffffff", "refs/heads/feat/card-1213-code-ffffffff" })
+            {
+                var request = result.Evidence.Request with { Binding = result.Evidence.Request.Binding with { FullRef = foreign } };
+                (await local.InspectAsync(request, WorkspaceMode.Worktree, w.Repository, null, default)).Reason.ShouldBe("park_invalid_target", "foreign-local-park");
+            }
+        }
+    }
+
     [Test]
     public async Task C1065_WorkspaceModesPreservePublicationAuthority()
     {
@@ -290,7 +313,9 @@ public sealed class TaskParkPublicationTests
         public string LocalPath => System.IO.Path.Combine(Root, "worktrees", "task-" + Fixture.TaskId.ToString("N")[..8]);
         public string Path { get; private set; } = "";
         public string Baseline { get; private set; } = "";
-        public string FullRef => "refs/heads/" + RemoteWorkspaceService.OwnedBranch(Fixture.TaskId);
+        private bool _cardBranch;
+        public string Branch => (_cardBranch ? "feat/card-1213-code-" : "feat/card-task-") + Fixture.TaskId.ToString("N")[..8];
+        public string FullRef => "refs/heads/" + Branch;
         public Guid ParkId { get; private set; }
         public ProgressSourceBaseline Source { get; private set; } = null!;
         public ParkGit Git { get; } = new();
@@ -301,9 +326,9 @@ public sealed class TaskParkPublicationTests
         public WorkspaceReservationKey Key => WorkspaceReservationKey.For(LocalPath, FullRef, Repository);
 
         public static async Task<PublicationWorld> CreateAsync(WorkspaceMode mode = WorkspaceMode.Worktree, bool remote = false,
-            bool sourceLanding = false)
+            bool sourceLanding = false, bool cardBranch = false)
         {
-            var w = new PublicationWorld();
+            var w = new PublicationWorld { _cardBranch = cardBranch };
             try
             {
                 System.IO.Directory.CreateDirectory(w.Root);
@@ -320,7 +345,7 @@ public sealed class TaskParkPublicationTests
                 await w.GitTextAsync(w.Repository, "remote", "add", "origin", w.Origin);
                 await w.GitTextAsync(w.Repository, "push", "origin", "master");
                 w.Baseline = await w.GitTextAsync(w.Repository, "rev-parse", "HEAD");
-                await w.GitTextAsync(w.Repository, "worktree", "add", "-b", RemoteWorkspaceService.OwnedBranch(w.Fixture.TaskId), w.LocalPath, w.Baseline);
+                await w.GitTextAsync(w.Repository, "worktree", "add", "-b", w.Branch, w.LocalPath, w.Baseline);
                 w.Path = w.LocalPath;
                 var common = await w.Git.CommonDirectoryAsync(w.Repository, default);
                 w.Source = new(w.Repository, common, w.Fixture.TaskId, w.LocalPath, w.FullRef, w.Baseline,
@@ -333,7 +358,7 @@ public sealed class TaskParkPublicationTests
                     w.Path = System.IO.Path.Combine(allowed, "worktrees", "task-" + w.Fixture.TaskId.ToString("N")[..8]);
                     await w.GitTextAsync(w.Root, "clone", w.Origin, repo);
                     await w.ConfigureAsync(repo);
-                    await w.GitTextAsync(repo, "worktree", "add", "-b", RemoteWorkspaceService.OwnedBranch(w.Fixture.TaskId), w.Path, w.Baseline);
+                    await w.GitTextAsync(repo, "worktree", "add", "-b", w.Branch, w.Path, w.Baseline);
                     runtime = new(new RunnerWorkspaceService(repo, allowed, w.Origin, start =>
                     {
                         ParkGit.Isolate(start);
@@ -349,7 +374,7 @@ public sealed class TaskParkPublicationTests
                     task.WorkingDirectory = w.Repository;
                     task.RepoPath = w.Repository;
                     task.WorktreeBaseSha = w.Baseline;
-                    task.WorktreeBranch = RemoteWorkspaceService.OwnedBranch(task.Id);
+                    task.WorktreeBranch = w.Branch;
                     task.RemoteWorktreePath = remote ? w.Path : null;
                     task.ProgressBaselineJson = TaskProgressJson.SerializeBaseline(new(1, DateTime.UtcNow, DateTime.UtcNow, w.Source, null));
                     var session = await db.AgentSessions.SingleAsync(s => s.Id == w.Fixture.SessionId);
