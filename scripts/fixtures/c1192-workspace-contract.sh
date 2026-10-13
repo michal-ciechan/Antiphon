@@ -2465,6 +2465,7 @@ mode_apphost() {
     : > "$C1192_ROOT/masked-packs"
     require_init
     C849_NPM="c849${RUN}npmcache-npm"
+    printf '%s\n' "$C849_NPM" >> "$CASE_DIR/.fixture-volumes"
     plant_volume "$C849_NPM" local null server2-runner "$RUN" npm-content
     printf 1 > "$C1192_ROOT/volumes/$C849_NPM/label-schema"
     printf npm-content > "$C1192_ROOT/volumes/$C849_NPM/label-cache-role"

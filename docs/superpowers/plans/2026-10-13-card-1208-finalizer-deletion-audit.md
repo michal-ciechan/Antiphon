@@ -90,3 +90,5 @@ Named create/run uses Docker cidfiles at creation, including foreground --rm con
 ## Ordinary verification repair
 
 The first full run at e15865e025850492c2dfb7ac97f5678b78a88646 ran all 29 rows: CP-33/43 exposed older c913 seed/inventory Docker models without cidfile/identity support; CP-44 exposed the lock argument test selecting only a literal docker-run command. Update those models and bind the argument test to the acquired launch wrapper without removing its HOME/scratch/path assertions. All production code stays unchanged. Container/network replacement tests now vary owner/run/role independently; unknown identity adds empty/malformed/symlink CID records. Rerun CP-33, CP-43, CP-44, CP-55, CP-56, CP-61 after this committed verification repair. No assertion, deadline or retry is weakened.
+
+Second repair: CP-33 exposed its next wrapper scenario reusing a still-acquired donor; release the predecessor through production ID cleanup before reacquisition. CP-43 exposed the apphost model mounting its planted npm cache without registering acquisition; record that legitimate fixture acquisition. Rerun only CP-33/43. Production code and assertions remain unchanged.
