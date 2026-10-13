@@ -388,7 +388,7 @@ public sealed class DelegateBranchDeliveryTests
                     _children.Add(ReplyAsync(frame, pending, ct));
                 }
             }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested || _socket?.State == WebSocketState.Aborted) { }
             catch (WebSocketException) { }
         }
         private async Task ReplyAsync(PhoneHomeFrame request, Task<PhoneHomeFrame> pending, CancellationToken ct)
@@ -401,7 +401,7 @@ public sealed class DelegateBranchDeliveryTests
                 try { await PhoneHomeFraming.WriteFrameAsync(_socket!, response, 16 * 1024 * 1024, ct); }
                 finally { _write.Release(); }
             }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested || _socket?.State == WebSocketState.Aborted) { }
             catch (WebSocketException) { }
         }
         public async ValueTask DisposeAsync()
