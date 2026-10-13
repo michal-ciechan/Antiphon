@@ -538,6 +538,12 @@ is 422 `worktree_base_source_invalid`. Detail records `worktreeBaseRequestedRef`
 GET    /api/runner-defaults
 PUT    /api/runner-defaults                           expectedRevision, globalRunnerId, kindDefaults, reason, provenance
 GET    /api/runner-defaults/revisions?beforeRevision=&limit=
+GET    /api/dispatch-concurrency                      seed, overrides, effective, nullProject, supportedRoles, ranges, revision, occupancy
+PUT    /api/dispatch-concurrency                      expectedRevision, overrides, reason, provenance; expectedGlobalRevision optional
+GET    /api/dispatch-concurrency/revisions?beforeRevision=&limit=
+GET    /api/projects/{projectId}/dispatch-concurrency  overrides, inherited, effective, revision (0 without a row), globalRevision, occupancy
+PUT    /api/projects/{projectId}/dispatch-concurrency  expectedRevision, expectedGlobalRevision, overrides, reason, provenance
+GET    /api/projects/{projectId}/dispatch-concurrency/revisions?beforeRevision=&limit=
 GET    /api/session-runners                           desktop plus every configured runner
 GET    /api/hosts                                     local and configured runner budgets, occupancy, availability and revision
 PUT    /api/hosts/{hostId}/budget                     maxInFlight (0–512 or null to clear), reason (required)
@@ -547,6 +553,19 @@ GET    /api/hosts/stats                               latest per-host sample, ro
 GET    /api/hosts/{hostId}/stats/series?metric=cpu&window=30m
 GET    /api/hosts/{hostId}/occupancy-samples?from=&to=&limit=   read-only occupancy audit, newest first (CARD-1079)
 ```
+
+Dispatch concurrency routes (CARD-0505; Settings → Concurrency UI, CARD-0506, in
+[orchestration-loop.md](orchestration-loop.md#concurrency-settings-tab-card-0506)). Each row names
+the `DispatchConcurrencyWireTests` method that asserts it:
+
+| Behaviour | Test |
+|---|---|
+| Global GET then PUT round trip | `Global_get_put_roundtrip` |
+| Project GET (`revision` 0 without a row), PUT, clear with `overrides: {}`; unknown project 404 | `Project_get_put_clear_roundtrip` |
+| A missing, duplicate or unknown body field, or a bad `overrides`, is 422 `validation_failed` and writes nothing | `Missing_fields_invalid_body_and_unknown_project_write_nothing` |
+| A stale `expectedRevision` is 409 `dispatch_concurrency_revision_conflict` with `globalRevision` | `Revision_conflict_returns_current_revisions` |
+| `/revisions`: default page 50, `limit` 1–100, `beforeRevision` cursor, read-only | `Revision_routes_are_readonly_and_bounded` |
+| A committed PUT publishes `DispatchConcurrencyChanged` | `Human_reason_and_server_caller_are_audited` |
 
 Host stats are sampled by each session runner every five seconds and held in a 30-minute memory
 ring. `GET /api/hosts/stats` gives `HostStatsDto[]` for desktop and configured runners. `state`

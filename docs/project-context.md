@@ -143,6 +143,7 @@ All AI agents and developers MUST follow these 13 rules:
 | `ArtifactUpdated` | `['workflow', id, 'artifacts']` | New artifact version created |
 | `CascadeTriggered` | `['workflow', id, 'stages']`, `['workflow', id]` | Course correction cascade initiated |
 | `ScheduleChanged` | `['schedules']`, `['schedules', 'agent', agentId]`, `['schedules', 'card', cardId]`, `['attention']` | Schedule created, patched, deleted, or a fire completed |
+| `DispatchConcurrencyChanged` | `['dispatchConcurrency']`, `['agentTasks', 'pipeline']` | Dispatch-concurrency PUT committed (CARD-0506; `C506 V07 changed-event`) |
 
 ## The record
 

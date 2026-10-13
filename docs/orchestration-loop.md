@@ -827,7 +827,8 @@ An accepted Reply changes a live Blocked task to Working; it does not itself fre
 The role gate
 uses the effective dispatch-concurrency policy (CARD-0505). A fresh database imports
 `Delegation:RolePolicy:<role>:RecommendedInFlight` and `Delegation:MaxOpenTasks` once; later
-values come from `GET/PUT /api/dispatch-concurrency` and the project route, not from a restart.
+values come from `GET/PUT /api/dispatch-concurrency` and the project route, or the Settings →
+Concurrency tab ([below](#concurrency-settings-tab-card-0506)), not from a restart.
 The import defaults are Code 2, Review 2 and other named roles 1, mode `LegacyOpen`.
 `SeparateQueues` is an explicit opt-in. Read effective values, occupancy, hosts, runners and runner defaults from the
 effective-settings route, `GET /api/agent-tasks/pipeline?projectId=<id>` (CARD-0881), before
@@ -941,6 +942,61 @@ zero-progress Block are follow-on slices of the same card.
 
 The best single result of this period came from a `Debug` agent; the cheapest useful one was a haiku
 check at **$0.12**.
+
+### Concurrency settings tab (CARD-0506)
+
+`/settings?tab=concurrency` edits the CARD-0505 dispatch limits through the routes in
+[antiphon-api.md](antiphon-api.md) (Dispatch concurrency routes). The tab shows `mode` read-only;
+`scripts/dispatch-concurrency.ps1` changes it. Tests are Vitest titles, run with
+`pwsh -NoProfile -File scripts/test-client.ps1 <file>`.
+
+Navigation:
+
+| Behaviour | Test (file) |
+|---|---|
+| The Concurrency tab sits between Routing and Status; a later `?tab=` change switches the panel | `C506 V16 controlled-tab` (`SettingsPage.test.tsx`) |
+| `?tab=concurrency&project=<id>` opens that project's scope and requests only its route | `C506 V15 project-deeplink` (`ConcurrencySettingsTab.test.tsx`) |
+| The Scope selector sets `project` for a project and removes it for Global defaults; a scope change drops the unsaved draft and reason | `C506 V15 scope-selector` |
+| A `project` id with no project row shows `Unknown project (<id>)`, a load error with Retry, and no Save | `C506 V15 missing-project` |
+| A tab click changes only `tab`; `project` and unrelated parameters stay | `C506 S3F1 active-tab-click`, `C506 S3F1 away-and-back`, `C506 S3F1 unknown-tab` |
+| The Projects table row button `Project concurrency` opens `/settings?tab=concurrency&project=<id>` and keeps unrelated parameters | `C506 V17 project-row-link`, `C506 S3F1 row-link-keeps-params` (`ProjectConfig.test.tsx`) |
+
+Editing (`DispatchConcurrencyEditor.test.tsx` unless named):
+
+| Behaviour | Test |
+|---|---|
+| One row per DTO `supportedRoles` entry plus Overall, with inherited value and source label | `C506 V08 rows-and-sources`, `C506 V08 dto-only-role` |
+| PUT body is `expectedRevision`, `expectedGlobalRevision`, `overrides`, `reason`, `provenance: Human`, revisions from the loaded DTO | `C506 V05 global`, `C506 V05 project-zero`, `C506 V05 project-existing` (`dispatchConcurrency.test.ts`) |
+| Save sends only the switched-on overrides | `C506 V09 sparse-project`, `C506 V09 sparse-global` |
+| No limit sends `null`; Revert omits the row's fields; Overall max parallel has no No limit | `C506 V10 overall-queued`, `C506 V10 review-parallel`, `C506 V10 review-queued` |
+| Clear all overrides sends `overrides: {}` after a confirm; Cancel sends nothing; disabled on a schema-only document, enabled on a mode-only one | `C506 V11 global`, `C506 V11 project`, `C506 V11 cancel`, `C506 V11 schema-only-disabled` |
+| A 422 field message is shown on its input and in an alert | `C506 V13 field-error` |
+| Notification `No change` when the returned revision equals the sent one, else `Saved revision N` | `C506 V14 no-change`, `C506 V14 saved` |
+
+Revision conflict (409 `dispatch_concurrency_revision_conflict`):
+
+| Behaviour | Test |
+|---|---|
+| Draft and reason kept; the scope GET is requested again; the alert shows `now global r<g>, project r<p>` and the per-field diff; one PUT, no automatic retry; the next Save sends the refetched revisions | `C506 V12 conflict-project`, `C506 V12 conflict-global` |
+| The refetch fails: Save disabled, draft kept, `Reload saved settings` retries | `C506 V12 refresh-fails` |
+
+Live updates: `DispatchConcurrencyChanged` invalidates `['dispatchConcurrency']` and
+`['agentTasks', 'pipeline']` (`C506 V07 changed-event`, `useSignalRInvalidation.test.ts`).
+
+| Editor state when the refetch lands | Result | Test |
+|---|---|---|
+| Edited draft | Draft kept, conflict alert with diff, next Save uses the new revisions | `C506 V12 live-dirty` |
+| No edits | New document adopted, no alert | `C506 V12 live-clean` |
+| Project override over a changed inherited value | Inherited value updates, override kept | `C506 V12 inherited-change` |
+
+Known limitations, not covered by a test (Review 24d4e81c diagnostics; `DispatchConcurrencyEditor.tsx`
+comments on `settleSave` and the render fold; `.antiphon/task-87938db0.md` Residuals):
+
+| Limitation | Evidence |
+|---|---|
+| Restore during a pending PUT: a lower or reused-revision read seen while the PUT is held is replaced by the late reply | Diagnostics `R3 restore during PUT lower read remains current after late reply`, `R3 restore during PUT reused read remains current after late reply` |
+| Timestamp collision: after a Save whose refresh failed, a read with the same data object and `dataUpdatedAt` is not adopted | Diagnostic `R3 same store time equal read after failed save refresh is current` |
+| Late Save after unmount: the continuation still invalidates the shared query cache and shows the success notification | `C506 S2R3 unmount-pending` waits for that notification; the invalidation is not asserted |
 
 ### Launching an agent
 
