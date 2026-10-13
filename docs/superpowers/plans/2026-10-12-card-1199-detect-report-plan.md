@@ -1,6 +1,6 @@
 # CARD-1199 repair 12: detect and report only
 
-Operator decision 2026-10-12. Base 6e8b9cc231ea90981888e5ccdab4d519b4451ad2. Landing owner Code 6c9fe082-cfe7-48bc-9d40-a9a58918da4f, branch feat/card-task-6c9fe082.
+Operator decision 2026-10-12. Base 6e8b9cc231ea90981888e5ccdab4d519b4451ad2. Landing owner Code 1baae4ee-3a02-495f-925b-345b0630c01c, branch feat/card-task-1baae4ee, superseding Code 6c9fe082-cfe7-48bc-9d40-a9a58918da4f under the repair 12c brief.
 
 S1: failing F1/F2/F3 tests, committed before redesign. S2: remove automatic worktree/index recovery, exclusively create output, refuse existing collisions, qualify actual invalid receipts, ledger-bound cleanup, update census/docs.
 
@@ -37,3 +37,7 @@ No deliberate mutants run by Code. All PCs/variants and missing-control discover
 ### Cost
 
 Ordinary floor 31 minutes plus implementation. Authoritative task budget 75 minutes. No broad assembly or unbounded classes selected.
+
+### Repair 12c ordinary result
+
+The inherited fixture repairs at 8bb2b2dfab02f0ca89f1d39024cb28f2c84bc1a3 passed all nine closed rows in one uninterrupted run on 2026-10-13: 165 executed, 165 passed, zero failed or skipped. Every named class/method had nonzero fresh TRX results. The hanging-Git method passed consecutively in CP-1, CP-7 and CP-8; the compiled namespace census independently confirmed the literal 488. The clean source receipt validated against that exact tested SHA. No further production/test changes, timeout changes, assertion removals or deliberate mutants were needed in repair 12c. Windows junctions remain unqualified as R-2 requires. This ownership/result note and the repair report are documentation added after the run; its receipts retain the actual tested SHA. Full evidence and unedited checkpoint lines: [.antiphon/task-1baae4ee.md](../../../.antiphon/task-1baae4ee.md). Next: ordinary Review, then caller landing and method-scoped SourceLanding Mutation.
