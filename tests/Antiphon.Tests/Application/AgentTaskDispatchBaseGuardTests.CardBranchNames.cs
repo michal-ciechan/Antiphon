@@ -96,17 +96,23 @@ public partial class AgentTaskDispatchBaseGuardTests
     {
         // replace adopted coordinates with newly minted branch -> adopted-branch or HEAD/file red.
         foreach (var modern in new[] { false, true })
+        foreach (var race in new[] { false, true })
         {
             using var repo = new ScratchGitRepo("c1213-adopt"); await repo.CommitFileAsync("seed.txt", "seed");
             await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync(); await using var db = CreateContext(schema);
             var card = await SeedCardAsync(db, "CARD-1213"); var task = await SeedQueuedWorktreeTaskAsync(db, repo.Path, card.Id, null);
             var branch = (modern ? "feat/card-1213-code-" : "feat/card-task-") + task.Id.ToString("N")[..8];
             var path = Path.Combine(repo.WorktreeRoot, "card-task-" + task.Id.ToString("N")[..8]);
-            await repo.GitAsync("worktree", "add", "-b", branch, path, "HEAD");
-            await File.WriteAllTextAsync(Path.Combine(path, "sentinel.txt"), "retained retry bytes");
-            var before = (await ScratchGitRepo.GitInAsync(path, "rev-parse", "HEAD")).StdOut.Trim();
+            async Task CreateExistingAsync()
+            {
+                await repo.GitAsync("worktree", "add", "-b", branch, path, "HEAD");
+                await File.WriteAllTextAsync(Path.Combine(path, "sentinel.txt"), "retained retry bytes");
+            }
+            if (!race) await CreateExistingAsync();
+            var before = (await repo.GitReadAsync("rev-parse", "HEAD")).Trim();
             task.WorktreeBaseRef = "refs/heads/expired";
-            await using var provider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot, runners: new C1213Directory("empty"), cardBranchNames: !modern);
+            await using var provider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot, runners: new C1213Directory("empty"), cardBranchNames: !modern, worktreeFactory: race ? sp => new C1213RaceWorktrees(
+                new WorktreeManager(sp.GetRequiredService<IOptions<GitSettings>>(), TimeProvider.System, Microsoft.Extensions.Logging.Abstractions.NullLogger<WorktreeManager>.Instance, leases: sp.GetRequiredService<IRepositoryMutationLease>(), landingGit: sp.GetRequiredService<ILandingGit>()), CreateExistingAsync) : null);
             await using var scope = provider.CreateAsyncScope();
             await scope.ServiceProvider.GetRequiredService<DelegationWorktreeService>().CreateForTaskAsync(task, default);
             task.WorktreeBranch.ShouldBe(branch, "adopted-branch"); task.WorktreePath.ShouldBe(path);
@@ -200,6 +206,23 @@ public partial class AgentTaskDispatchBaseGuardTests
         }
         finally { Directory.Delete(remoteRoot, true); }
 
+    }
+
+    private sealed class C1213RaceWorktrees(IWorktreeManager inner, Func<Task> create) : IWorktreeManager
+    {
+        private int _lists;
+        public async Task<IReadOnlyList<WorktreeInfo>> ListAsync(string repo, CancellationToken ct)
+        {
+            var observed = await inner.ListAsync(repo, ct);
+            if (_lists++ == 0) await create();
+            return observed;
+        }
+        public Task<WorktreeInfo> CreateAsync(string repo, string id, string @base, CancellationToken ct) => inner.CreateAsync(repo, id, @base, ct);
+        public Task<WorktreeInfo> CreateAsync(string repo, string id, string @base, RepositoryLease lease, CancellationToken ct) => inner.CreateAsync(repo, id, @base, lease, ct);
+        public Task<WorktreeInfo> CreateAsync(string repo, string id, string @base, RepositoryLease lease, string? branch, CancellationToken ct) => inner.CreateAsync(repo, id, @base, lease, branch, ct);
+        public Task RemoveAsync(string repo, string path, CancellationToken ct) => throw new NotSupportedException();
+        public Task TouchAsync(string path, CancellationToken ct) => throw new NotSupportedException();
+        public Task<int> PruneStaleAsync(CancellationToken ct) => throw new NotSupportedException();
     }
 
     private sealed class C1213SnapshotDirectory(IVerificationWorkspace workspace) : IVerificationWorkspaceDirectory
