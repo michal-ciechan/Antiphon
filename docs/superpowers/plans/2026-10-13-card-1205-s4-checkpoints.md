@@ -167,3 +167,18 @@ Source report: .antiphon/checkpoints/20261013-074506-49bc/report.md
 ```text
 CHECKPOINT CP-4 commit=b9f34b5294c96080de4f68d11c97f380d032f215 build=ok filter=/*/Antiphon.Tests.Application/StaleWorkingTranscriptWatchdogTests*/* executed=48 passed=47 failed=1 skipped=0 trx=/work/worktrees/task-7b7d644a/.antiphon/checkpoints/20261013-074506-49bc/rows/CP-4/run.trx slot=granted waited=0s dirty=0 source=b9f34b5294c96080de4f68d11c97f380d032f215 sourceState=clean buildSource=verified
 ```
+
+## Ceiling refinement handoff, 2026-10-13 08:10 UTC
+
+The caller's ceiling refinement requires a pushed-state handoff with next: code
+at fifteen minutes before the Code ceiling, with no Unit lane. Production and
+all subsequent fixes had already been committed/pushed before this refinement
+was read. A fresh task-detail GET at 08:10 UTC still returned task Failed and
+bound session Running. The terminal-owner checkpoint refusal therefore remains
+applicable; no new build or test was attempted to bypass it.
+
+Continuation state: production is implemented; test-first 48 assertion reds are
+retained; latest executed class is 47/48 green at b9f34b5294c96080de4f68d11c97f380d032f215.
+The GET /sessions fixture repair is pushed and unverified. S4-T33 and final CP-4
+must run on a live bound Code owner, exact committed HEAD, with 1 and 48 required
+executions. This handoff contains no additional test result or Final green claim.
