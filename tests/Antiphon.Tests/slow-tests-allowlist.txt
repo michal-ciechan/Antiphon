@@ -157,6 +157,8 @@ Antiphon.Tests.Application.HerdrLaunchContextResolverTests
 Antiphon.Tests.Application.HerdrPlacementPreflightTests
 # CARD-0544: V-4 real settlement/queue/scanner delivery matrix (restart and cut rows, ~4 min).
 Antiphon.Tests.Application.VerificationRoundDeliveryTests
+# CARD-1205 T37 composes real settlement, PostgreSQL, scratch Git and recipient ingestion.
+Antiphon.Tests.Application.TurnEndGapRestartDeliveryTests
 # CARD-0515: isolated-schema clone per case (same CreateIsolatedSchemaAsync cost as sibling list tests).
 Antiphon.Tests.Application.AgentTaskScopedListTests
 # CARD-0515: factory-cloned database per HTTP case; same isolated-store inheritance as sibling endpoint tests.
