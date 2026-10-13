@@ -95,7 +95,9 @@ public sealed class PhoneHomeCompletedCardTransportTests
             CompletedCardRunnerFixture.Git(w.F.Repository, "rev-parse", w.Command.Binding.SourceFullRef).Trim().ShouldBe(w.F.Sha);
             File.ReadAllText(Path.Combine(w.F.Root, "outside", "sentinel")).ShouldBe("preserve");
             // A new recipient connection/runtime uses the same external journal and immutable command.
+            var epoch = w.Connection.Epoch;
             await w.Reconnect();
+            w.Connection.Epoch.ShouldBeGreaterThan(epoch);
             Directory.CreateDirectory(w.F.Checkout); File.WriteAllText(Path.Combine(w.F.Checkout, "replacement"), "keep");
             var restarted = await Call(w.Client, "RemoveCompletedCardWorkspaceAsync", w.Command, bound.Token);
             restarted.GetRawText().ShouldBe(result.GetRawText());
@@ -124,15 +126,16 @@ public sealed class PhoneHomeCompletedCardTransportTests
     private sealed class World : IAsyncDisposable
     {
         public CompletedCardRunnerFixture F { get; } = new("grok-linux");
-        public RunnerWorkspaceRemovalJournal Journal { get; }
-        public RunnerWorkspaceUseGate Gate { get; }
-        public RunnerWorkspaceService Workspace { get; }
+        public RunnerWorkspaceRemovalJournal Journal { get; private set; }
+        public RunnerWorkspaceUseGate Gate { get; private set; }
+        public RunnerWorkspaceService Workspace { get; private set; }
         public RunnerCompletedCardWorkspaceRemoval Executor { get; private set; }
         public CompletedCardWorkspaceCommand Command { get; }
         public PhoneHomeTestHost Host { get; private set; } = null!;
         public PhoneHomeConnectionService Connection { get; private set; } = null!;
         public PhoneHomeRunnerClient Client { get; private set; } = null!;
         private CancellationTokenSource _stop = new();
+        private readonly PhoneHomeProcessIdentity _identity = new();
         private bool _configured;
         private World()
         {
@@ -172,8 +175,8 @@ public sealed class PhoneHomeCompletedCardTransportTests
             }
             var adoption = new PhoneHomeAdoptionGate();
             Connection = new(Options.Create(settings), adoption,
-                new PhoneHomeCommandDispatcher(new PhoneHomeRuntimeAdapter(runtime, new RunnerBuildDto("test", null, DateTime.UtcNow, DateTime.UtcNow)), settings),
-                runtime, new Factory(), TimeProvider.System, NullLogger<PhoneHomeConnectionService>.Instance);
+                new PhoneHomeCommandDispatcher(new PhoneHomeRuntimeAdapter(runtime, new RunnerBuildDto("test", null, DateTime.UtcNow, DateTime.UtcNow)), settings, identity: _identity),
+                runtime, new Factory(), TimeProvider.System, NullLogger<PhoneHomeConnectionService>.Instance, identity: _identity);
             await Connection.StartAsync(_stop.Token); adoption.SignalReady();
             var live = await Host.WaitLiveAsync(TimeSpan.FromSeconds(30));
             Client = new(live);
@@ -182,6 +185,8 @@ public sealed class PhoneHomeCompletedCardTransportTests
         {
             _stop.Cancel(); await Connection.StopAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10));
             _stop.Dispose(); _stop = new(); Executor.AfterInitialInspectionForTest = null;
+            Journal = new(F.State, F.StoreId); Gate = new(Journal); Gate.CompleteCensus();
+            Workspace = F.Workspace(false, "main"); Workspace.WorkspaceUseGate = Gate;
             await Connect();
         }
         public async ValueTask DisposeAsync()
