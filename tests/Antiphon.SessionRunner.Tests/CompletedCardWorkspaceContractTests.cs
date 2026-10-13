@@ -116,6 +116,29 @@ public sealed class CompletedCardWorkspaceContractTests
         await Task.CompletedTask;
     }
 
+    // F4/VP-08: the landing certificate covers Binding.TaskId. Changing only that field,
+    // including to the empty identity, must refuse; mutation: normalize TaskId before the MAC.
+    [Test]
+    public async Task C1032_LandingSignatureCoversTaskId()
+    {
+        const string key = "landing-map-key";
+        var landing = Guid.Parse("44444444-4444-4444-4444-444444444444");
+        var signed = CompletedCardWorkspaceLandingAuthority.Sign(Sample(CompletedCardWorkspaceProtocol.ProofRebased, Sha), landing, key);
+        signed.Proof.ProofIdentity.ShouldStartWith("landed-v1:" + landing.ToString("D") + ":");
+        CompletedCardWorkspaceLandingAuthority.Verify(signed, key).ShouldBeTrue();
+        CompletedCardWorkspaceLandingAuthority.Verify(signed, "other-key").ShouldBeFalse();
+
+        foreach (var taskId in new[] { Guid.Parse("55555555-5555-5555-5555-555555555555"), Guid.Empty })
+        {
+            var changed = signed with { Binding = signed.Binding with { TaskId = taskId } };
+            changed.Binding.TaskId.ShouldNotBe(signed.Binding.TaskId);
+            (changed with { Binding = signed.Binding }).ShouldBe(signed);
+            CompletedCardWorkspaceLandingAuthority.Verify(changed, key).ShouldBeFalse(taskId.ToString("D"));
+        }
+
+        await Task.CompletedTask;
+    }
+
     private static async Task RoundTripAsync<T>(PhoneHomeOperation operation, T body)
     {
         var frame = new PhoneHomeFrame(

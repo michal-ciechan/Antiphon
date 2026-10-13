@@ -35,6 +35,10 @@ internal sealed class CompletedCardMirrorFixture : IAsyncDisposable
     public Func<CancellationToken, Task>? AfterIntent { get; set; }
     public Func<CancellationToken, Task>? BeforeInspection { get; set; }
     public bool FailReceiptImport { get; set; }
+    // Replaces the real removal reply with a refusal; never synthesizes a deletion.
+    public Func<CompletedCardWorkspaceCommand, CompletedCardWorkspaceRemovalResponse?>? InterceptRemoval { get; set; }
+    public int RemovalRequests => _removalRequests;
+    private int _removalRequests;
 
     public static async Task<CompletedCardMirrorFixture> CreateAsync(CancellationToken ct = default)
     {
@@ -184,6 +188,11 @@ internal sealed class CompletedCardMirrorFixture : IAsyncDisposable
             return await inner.InspectCompletedCardWorkspaceAsync(request, ct);
         }
         public async Task<CompletedCardWorkspaceRemovalResponse> RemoveCompletedCardWorkspaceAsync(CompletedCardWorkspaceCommand command, CancellationToken ct)
-        { var result = await inner.RemoveCompletedCardWorkspaceAsync(command, ct); return world.AlterReceipt?.Invoke(result) ?? result; }
+        {
+            Interlocked.Increment(ref world._removalRequests);
+            if (world.InterceptRemoval?.Invoke(command) is { } refusal)
+            { refusal.Complete.ShouldBeFalse("fixture may only intercept with a refusal"); return refusal; }
+            var result = await inner.RemoveCompletedCardWorkspaceAsync(command, ct); return world.AlterReceipt?.Invoke(result) ?? result;
+        }
     }
 }
