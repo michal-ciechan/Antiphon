@@ -77,7 +77,36 @@ internal static class WindowsUnitSkipRoster
         new("Antiphon.Tests.Infrastructure", "CodexRootExecContractTests", "Entrypoint_heals_only_the_codex_tmp_directory", 1, ""),
         new("Antiphon.Tests.Infrastructure", "CodexRootExecContractTests", "Provider_exec_into_the_runner_names_uid_1654", 1, ""),
     ];
-    internal static readonly Entry[] Conditional = [];
+    internal static readonly Entry[] Conditional =
+    [
+        new("Antiphon.Tests.Application", "ChannelOutboundStorageTests", "C1059_Source_reads_reject_file_links", 1,
+            "CARD-1210: file-link controls require symbolic-link creation privilege on Windows; capability unavailable."),
+        new("Antiphon.Tests.Application", "ChannelOutboundStorageTests", "Output_rename_and_link_swap_after_inspection_seals_the_opened_file", 1,
+            "CARD-1210: file-link controls require symbolic-link creation privilege on Windows; capability unavailable."),
+    ];
+
+    internal static readonly Entry[] StoragePortable =
+    [
+        new("Antiphon.Tests.Application", "ChannelOutboundStorageTests", "C1059_Source_reads_require_captured_roots_without_traversal", 1, ""),
+        new("Antiphon.Tests.Application", "ChannelOutboundStorageTests", "C1059_Source_reads_reject_directory_links", 1, ""),
+        new("Antiphon.Tests.Application", "ChannelOutboundStorageTests", "C1059_Source_length_is_checked_before_reading_with_a_finite_budget", 1, ""),
+        new("Antiphon.Tests.Application", "ChannelOutboundStorageTests", "C1059_Source_reads_refuse_nonregular_files_without_blocking", 1, ""),
+        new("Antiphon.Tests.Application", "ChannelOutboundStorageTests", "Failed_staging_never_exposes_a_partial_snapshot", 5, ""),
+        new("Antiphon.Tests.Application", "ChannelOutboundStorageTests", "Frozen_reply_and_input_bytes_survive_source_mutation", 1, ""),
+        new("Antiphon.Tests.Application", "ChannelOutboundStorageTests", "Oversized_reply_never_exposes_snapshot_directory", 1, ""),
+        new("Antiphon.Tests.Application", "ChannelOutboundStorageTests", "Exactly_fourteen_mebibytes_of_original_bytes_can_be_staged", 1, ""),
+        new("Antiphon.Tests.Application", "ChannelOutboundStorageTests", "Serialized_limit_counts_unicode_metadata_and_base64_at_exact_boundary", 1, ""),
+        new("Antiphon.Tests.Application", "ChannelOutboundStorageTests", "Near_default_wire_cap_accepts_exact_serialized_size_and_refuses_one_more_byte", 1, ""),
+        new("Antiphon.Tests.Application", "ChannelOutboundStorageTests", "Converted_files_are_sealed_with_original_sources_and_frozen_routing", 1, ""),
+        new("Antiphon.Tests.Application", "ChannelOutboundStorageTests", "Manifested_zip_sources_are_expanded_from_attached_bytes", 1, ""),
+        new("Antiphon.Tests.Application", "ChannelOutboundStorageTests", "Source_zip_expansion_accepts_exact_budget_and_refuses_one_extra_byte", 1, ""),
+        new("Antiphon.Tests.Application", "ChannelOutboundStorageTests", "Inline_and_zip_sources_share_the_expanded_budget", 1, ""),
+        new("Antiphon.Tests.Application", "ChannelOutboundStorageTests", "Attachment_source_url_does_not_supply_worker_input", 1, ""),
+        new("Antiphon.Tests.Application", "ChannelOutboundStorageTests", "Source_zip_manifest_rejects_unsafe_or_ambiguous_members", 9, ""),
+        new("Antiphon.Tests.Application", "ChannelOutboundStorageTests", "Worker_created_sealed_reply_cannot_bypass_manifest_validation_on_recovery", 1, ""),
+        new("Antiphon.Tests.Application", "ChannelOutboundStorageTests", "Output_manifest_cannot_override_frozen_routing", 1, ""),
+        new("Antiphon.Tests.Application", "ChannelOutboundStorageTests", "Complete_source_stamp_requires_every_manifested_attachment", 1, ""),
+    ];
 
     // Legacy call sites are source-closure accounting, outside the S1 child runtime roster.
     internal static readonly Entry[] Existing =
