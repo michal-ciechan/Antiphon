@@ -940,3 +940,230 @@ it('C506 V14 history-empty', async () => {
   await userEvent.click(saveButton())
   await waitFor(() => expect(state.puts).toHaveLength(1))
 })
+
+// ---- Review e9c9efa5 repair: read-only mode, save versus older query data, pending submission ----
+
+/** Global G7 overrides with an optional `mode` key and its effective projection. */
+function globalWithMode(revision: number, mode: string | undefined): DispatchConcurrencyGlobalDto {
+  const effective = mode === undefined ? g7Effective(revision, 0) : { ...g7Effective(revision, 0), mode, modeSource: 'global' }
+  return global(revision, mode === undefined ? G7_OVERRIDES : { ...G7_OVERRIDES, mode }, effective)
+}
+
+const MODE_TRANSITIONS = [
+  { transition: 'changed', from: 'LegacyOpen', to: 'SeparateQueues', shown: 'SeparateQueues' },
+  { transition: 'added', from: undefined, to: 'SeparateQueues', shown: 'SeparateQueues' },
+  { transition: 'removed', from: 'SeparateQueues', to: undefined, shown: 'LegacyOpen' },
+] as const
+
+it.each(MODE_TRANSITIONS.flatMap((row) => (['live', 'conflict'] as const).map((entry) => ({ entry, ...row }))))(
+  'C506 S2F1 $entry mode-$transition',
+  async ({ entry, from, to, shown: shownMode }) => {
+    // Another writer changes only the read-only mode at r8 while Code max parallel is being edited.
+    const initial = globalWithMode(7, from)
+    const fresh = globalWithMode(8, to)
+    const hub = fakeHub()
+    const state = serve(null, initial, (put, index) => {
+      if (entry === 'conflict' && index === 0) {
+        state.get = fresh
+        return F409(8, 0)
+      }
+      return accept(state, fresh)(put)
+    })
+    renderWithProviders(entry === 'live' ? <LiveEditor connection={hub.ref} projectId={null} /> : <DispatchConcurrencyEditor projectId={null} />)
+    await loaded()
+    expect(screen.getByTestId('dispatch-concurrency-mode')).toHaveTextContent(from ?? 'LegacyOpen')
+
+    await setValue('Code max parallel', '1')
+    await typeReason('code only')
+    if (entry === 'live') {
+      state.get = fresh
+      hub.emit('DispatchConcurrencyChanged', { scope: 'global', revision: 8, globalRevision: 8, projectRevision: 0 })
+    } else {
+      await userEvent.click(saveButton())
+    }
+    expect(await screen.findByTestId('dispatch-concurrency-conflict')).toHaveTextContent('now global r8, project r0')
+    expect(screen.getByTestId('dispatch-concurrency-mode')).toHaveTextContent(shownMode)
+    expect(num('Code max parallel')).toHaveValue('1')
+
+    const before = state.puts.length
+    await userEvent.click(saveButton())
+    await waitFor(() => expect(state.puts).toHaveLength(before + 1))
+    expect(state.puts[before].body).toStrictEqual({
+      expectedRevision: 8,
+      expectedGlobalRevision: 8,
+      // The mode is exactly what r8 saved: present with its value, or absent.
+      overrides: { ...(to === undefined ? {} : { mode: to }), maxParallel: 4, maxQueued: 12, roles: { Code: { maxParallel: 1 }, Review: { maxQueued: 5 } } },
+      reason: 'code only',
+      provenance: 'Human',
+    })
+  },
+)
+
+/** P4 saved as r5 with Code parallel 2 (the operator's edit). */
+const P4_SAVED_R5 = project(5, 7, { schemaVersion: 1, roles: { Code: { maxParallel: 2 }, Review: { maxQueued: null } } }, g7Effective(7, 5),
+  withRole(withRole(g7Effective(7, 5), 'Code', { maxParallel: 2, maxParallelSource: 'project', combinedParallel: 2 }),
+    'Review', { maxQueued: null, maxQueuedSource: 'project' }))
+
+it('C506 S2F2 refresh-fails', async () => {
+  // The PUT commits r5; the refresh that follows it fails, so the query keeps its older r4 data.
+  const state = serve(P, P4, (put, index) => {
+    if (index === 0) {
+      state.get = new HttpResponse(null, { status: 503 })
+      return HttpResponse.json(P4_SAVED_R5)
+    }
+    return accept(state, P4_SAVED_R5)(put)
+  })
+  const { queryClient } = renderWithProviders(<DispatchConcurrencyEditor projectId={P} />)
+  await loaded()
+
+  await setValue('Code max parallel', '2')
+  await typeReason('two now')
+  await userEvent.click(saveButton())
+  await waitFor(() => expect(successes().map((options) => options.message)).toStrictEqual(['Saved revision 5']))
+  await waitFor(() => expect(queryClient.getQueryState(['dispatchConcurrency', 'scope', P])?.status).toBe('error'))
+  expect(state.gets).toBe(2)
+  expect(num('Code max parallel')).toHaveValue('2')
+  expect(screen.getByTestId('dispatch-concurrency-subtitle')).toHaveTextContent('Revision 5')
+  expect(screen.getByTestId('dispatch-concurrency-effective-parallel-Code')).toHaveTextContent(/^2$/)
+  expect(screen.queryByTestId('dispatch-concurrency-conflict')).toBeNull()
+
+  await typeReason('confirm current')
+  await userEvent.click(saveButton())
+  await waitFor(() => expect(state.puts).toHaveLength(2))
+  expect(state.puts[1].body).toStrictEqual({
+    expectedRevision: 5,
+    expectedGlobalRevision: 7,
+    overrides: { roles: { Code: { maxParallel: 2 }, Review: { maxQueued: null } } },
+    reason: 'confirm current',
+    provenance: 'Human',
+  })
+})
+
+it('C506 S2F2 refresh-pending', async () => {
+  // The refresh after the PUT is held: the r4 query data stays in the cache until it is released.
+  const { gate, release } = hold()
+  const state = serve(P, P4, () => {
+    state.get = (async () => {
+      await gate
+      return HttpResponse.json(P4_SAVED_R5)
+    })()
+    return HttpResponse.json(P4_SAVED_R5)
+  })
+  try {
+    renderWithProviders(<DispatchConcurrencyEditor projectId={P} />)
+    await loaded()
+    await setValue('Code max parallel', '2')
+    await typeReason('two now')
+    await userEvent.click(saveButton())
+    await waitFor(() => expect(successes()).toHaveLength(1))
+    await waitFor(() => expect(state.gets).toBe(2))
+    expect(num('Code max parallel')).toHaveValue('2')
+    expect(screen.getByTestId('dispatch-concurrency-subtitle')).toHaveTextContent('Revision 5')
+  } finally {
+    release()
+  }
+  await waitFor(() => expect(screen.getByTestId('dispatch-concurrency-effective-parallel-Code')).toHaveTextContent(/^2$/))
+  expect(num('Code max parallel')).toHaveValue('2')
+  expect(screen.getByTestId('dispatch-concurrency-subtitle')).toHaveTextContent('Revision 5')
+})
+
+it('C506 S2F2 newer-after-save', async () => {
+  // Control for the monotonic rule: after the r5 save, another writer's r6 still replaces the clean form.
+  const hub = fakeHub()
+  const p6 = project(6, 7, { schemaVersion: 1, roles: { Code: { maxParallel: 3 } } }, g7Effective(7, 6),
+    withRole(g7Effective(7, 6), 'Code', { maxParallel: 3, maxParallelSource: 'project', combinedParallel: 3 }))
+  const state = serve(P, P4, (put) => accept(state, P4)(put))
+  renderWithProviders(<LiveEditor connection={hub.ref} projectId={P} />)
+  await loaded()
+  await setValue('Code max parallel', '2')
+  await typeReason('two now')
+  await userEvent.click(saveButton())
+  await waitFor(() => expect(successes()).toHaveLength(1))
+  await waitFor(() => expect(state.gets).toBe(2))
+
+  state.get = p6
+  hub.emit('DispatchConcurrencyChanged', { scope: P, revision: 6, globalRevision: 7, projectRevision: 6 })
+  await waitFor(() => expect(num('Code max parallel')).toHaveValue('3'))
+  expect(sw('Review max queued override')).not.toBeChecked()
+  expect(screen.getByTestId('dispatch-concurrency-subtitle')).toHaveTextContent('Revision 6')
+  expect(screen.queryByTestId('dispatch-concurrency-conflict')).toBeNull()
+})
+
+/** Every control that changes the draft or the reason, for P4 (Code and Review rows specified). */
+function draftControls() {
+  return [
+    num('Code max parallel'),
+    sw('Code max parallel override'),
+    sw('Plan max parallel override'),
+    sw('Overall max queued override'),
+    screen.getByRole('checkbox', { name: 'Review max queued no limit' }),
+    screen.getByRole('button', { name: 'Revert Code to inherited' }),
+    screen.getByRole('button', { name: 'Revert Review to inherited' }),
+    screen.getByTestId('dispatch-concurrency-reason'),
+  ]
+}
+
+it.each(['save', 'clear'] as const)('C506 S2F3 pending-%s', async (trigger) => {
+  const { gate, release } = hold()
+  const state = serve(P, P4, async (put) => {
+    await gate
+    return accept(state, P4)(put)
+  })
+  try {
+    renderWithProviders(<DispatchConcurrencyEditor projectId={P} />)
+    await loaded()
+    await setValue('Code max parallel', '2')
+    await typeReason('first edit')
+    if (trigger === 'save') {
+      await userEvent.click(saveButton())
+    } else {
+      await userEvent.click(screen.getByRole('button', { name: 'Clear all overrides' }))
+      await userEvent.click(await screen.findByRole('button', { name: 'Clear overrides' }))
+    }
+    await waitFor(() => expect(state.puts).toHaveLength(1))
+    expect(screen.getByTestId('dispatch-concurrency-section')).toHaveAttribute('aria-busy', 'true')
+    for (const control of draftControls()) expect(control).toBeDisabled()
+    await userEvent.type(num('Code max parallel'), '3')
+    expect(num('Code max parallel')).toHaveValue('2')
+  } finally {
+    release()
+  }
+  await waitFor(() => expect(successes()).toHaveLength(1))
+  expect(screen.getByTestId('dispatch-concurrency-section')).toHaveAttribute('aria-busy', 'false')
+  expect(state.puts[0].body.overrides).toStrictEqual(
+    trigger === 'save' ? { roles: { Code: { maxParallel: 2 }, Review: { maxQueued: null } } } : {},
+  )
+  expect(screen.getByTestId('dispatch-concurrency-reason')).toHaveValue('')
+  if (trigger === 'save') {
+    expect(num('Code max parallel')).toHaveValue('2')
+    for (const control of draftControls()) expect(control).toBeEnabled()
+  } else {
+    expect(sw('Code max parallel override')).not.toBeChecked()
+    expect(sw('Code max parallel override')).toBeEnabled()
+  }
+})
+
+it('C506 S2F3 pending-error', async () => {
+  const { gate, release } = hold()
+  const state = serve(P, P4, async () => {
+    await gate
+    return new HttpResponse(null, { status: 503 })
+  })
+  try {
+    renderWithProviders(<DispatchConcurrencyEditor projectId={P} />)
+    await loaded()
+    await setValue('Code max parallel', '2')
+    await typeReason('first edit')
+    await userEvent.click(saveButton())
+    await waitFor(() => expect(state.puts).toHaveLength(1))
+    for (const control of draftControls()) expect(control).toBeDisabled()
+  } finally {
+    release()
+  }
+  expect(await screen.findByTestId('dispatch-concurrency-error')).toBeInTheDocument()
+  for (const control of draftControls()) expect(control).toBeEnabled()
+  expect(num('Code max parallel')).toHaveValue('2')
+  expect(screen.getByTestId('dispatch-concurrency-reason')).toHaveValue('first edit')
+  await setValue('Code max parallel', '3')
+  expect(num('Code max parallel')).toHaveValue('3')
+})
