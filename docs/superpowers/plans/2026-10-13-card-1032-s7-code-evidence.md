@@ -1,5 +1,11 @@
 # CARD-1032 S7 Code evidence
 
+Historical round-1 evidence. Final Review e0b648d4 found report-loss gaps F1/F2
+at cfd114a6d: uppercase report names and reports added after producer inspection
+were not held. The repair and its new evidence are owned by Code task 60025819;
+use [the repair selection](2026-10-13-card-1032-s7-repair-verification.md).
+The historical CHECKPOINT lines below are retained unchanged.
+
 Caller refinement d78b38f0-bde1-4a74-90c9-29f32859c508 arrived after the
 whole-Unit row timed out: no Unit row remained active to interrupt, and no
 further whole-Unit run was started. S7 implementation and scoped ordinary V/R
@@ -40,9 +46,10 @@ Production remains inert: no Program registration, sweep caller, cleanup route,
 Execute/cohort configuration change, daemon restart, or live workspace deletion.
 S8 scheduling and recovery-cut methods are not implemented by this task.
 Artifact proof reads existing external regular files through
-ChannelReplyAttachmentReader. Remote task-report inventory and directory bundle
-pointers stay held because this proof has no remote bytes/directory manifest.
-These conservative limitations are not claims of full artifact qualification.
+ChannelReplyAttachmentReader. The initial producer held lowercase task-report
+names from its first inventory; it missed case variants and later arrivals
+(Review F1/F2). Directory bundle pointers were held by the regular-file reader.
+This historical run did not establish remote task-report preservation.
 
 Files changed: discovery and the new producer in `server/Application/Services/`;
 `server/Infrastructure/Files/CardDoneArtifactPreservation.cs`; the landing

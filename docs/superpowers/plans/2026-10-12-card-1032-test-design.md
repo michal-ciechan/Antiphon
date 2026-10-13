@@ -1275,3 +1275,37 @@ Windows ancestor pins use read-attributes access and read/write sharing while
 still denying delete/rename sharing; owned root/files keep the stricter content
 handle. This avoids requiring data-read access or write exclusion on unrelated
 volume/temp ancestors. All Async signatures keep cancellation last.
+
+## S7 F1-F3 report-loss repair amendment
+
+The [repair verification](2026-10-13-card-1032-s7-repair-verification.md)
+is the authoritative closed list for Code task 60025819. CP-29/30 must be red
+against cfd114a6d production with tests added, while CP-31 is a real cleanup
+positive. The shared recognition table is hand-written, not generated from the
+predicate. Twenty-four literal paths cover case, shape, extension, directories,
+ADS-like suffixes, trailing dot/space and Unicode lookalikes. Real lowercase,
+uppercase, mixed-case, nonhex, Unicode-identifier and terminal-LF report files must retain
+their unique bytes, registration and evidence sentinel with no imported receipt.
+The producer and runner share one predicate; its eight non-separator identifier
+characters preserve the runner's prior wildcard policy rather than narrowing it
+to hex. The previous regex's terminal-LF match is retained conservatively.
+A directory entry is not a regular report file.
+
+| CP | Exact ordinary detecting filter | Results | Oracle |
+|---|---|---:|---|
+| CP-29 | `/*/*/CardWorktreeMirrorCleanupTests/C1032_ReportRecognitionCaseTable*` | 1 | literal case/shape expectations and real producer-held report bytes/no intent/no receipt |
+| CP-30 | `/*/*/CardWorktreeMirrorCleanupTests/C1032_ReportAddedAfterProducerInspection*` | 1 | explicit post-intent gate; lower/upper/mixed report arrival; recipient artifact_unpreserved, exact bytes/registration, no imported Complete receipt |
+| CP-31 | `/*/*/CardWorktreeMirrorCleanupTests/C1032_ReportAbsentAllowsCleanup*` | 1 | report absent, real physical cleanup and independently read durable receipt |
+
+CP-13/14 remain seven results; CP-F2 now includes all 17 mirror methods plus
+the two full adjacent classes (59 total). CP-F3 remains 144; CP-RG1 is 1.
+The repair brief excludes Unit. All V-1..6/R-1..3 outcomes must be reported at
+the scope stated in the repair selection; adjacent regression is not new native
+or S8 qualification. F3 changes only the false safety comment, preserving the
+real signed-rebase positive. No assertion/timeout is relaxed.
+
+PC-591 producer/shared case/shape recognition, PC-592 recipient late-report
+hold and PC-593 absent-report positive are specified in the repair selection.
+All are pending method-scoped SourceLanding Mutation, along with PC-588..590
+and every earlier PC and variant. Ordinary baseline red does not discharge PCs.
+Mutation must discover missing controls for individual pre-effect/replay checks.

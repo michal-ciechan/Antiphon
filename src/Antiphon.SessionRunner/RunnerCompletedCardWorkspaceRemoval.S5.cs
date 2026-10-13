@@ -88,9 +88,11 @@ public sealed partial class RunnerCompletedCardWorkspaceRemoval
                         || RunnerWorkspaceUseGate.Overlaps(p, aside))) { result = Hold("artifact_inside_cleanup_root"); return; }
                     var directoryIdentity = RunnerWorkspaceNoFollowDelete.Identity(command.Binding.WorktreePath);
                     var registrationIdentity = RunnerWorkspaceNoFollowDelete.Identity(command.Binding.GitDirectory);
+                    var directoryEntries = await RunnerWorkspaceNoFollowDelete.InventoryAsync(command.Binding.WorktreePath, directoryIdentity, ct);
+                    RequireReportPreservation(directoryEntries);
                     intent = intent with { SetAsidePath = aside,
                         DirectoryIdentity = directoryIdentity, RegistrationIdentity = registrationIdentity,
-                        DirectoryEntries = await RunnerWorkspaceNoFollowDelete.InventoryAsync(command.Binding.WorktreePath, directoryIdentity, ct),
+                        DirectoryEntries = directoryEntries,
                         RegistrationEntries = await RunnerWorkspaceNoFollowDelete.InventoryAsync(command.Binding.GitDirectory, registrationIdentity, ct), Phase = "Prepared" };
                     Save(journal, intent);
                 }
@@ -125,6 +127,7 @@ public sealed partial class RunnerCompletedCardWorkspaceRemoval
                 if (!Directory.Exists(binding.WorktreePath)) return Hold("absence_without_receipt");
                 if (RunnerWorkspaceNoFollowDelete.Identity(binding.WorktreePath) != intent.DirectoryIdentity) return Hold("replacement_original");
                 if (await CheckRemovalProofAsync(command, ct) is { } reason) return Hold(reason);
+                await CheckReportPreservationAsync(binding.WorktreePath, intent.DirectoryIdentity!, ct);
                 await RunnerWorkspaceNoFollowDelete.ValidateRemainingAsync(binding.WorktreePath, intent.DirectoryEntries!, ct);
                 intent = Spend(journal, intent, "rename");
                 BeforeMutationForTest?.Invoke("rename");
@@ -137,6 +140,7 @@ public sealed partial class RunnerCompletedCardWorkspaceRemoval
         {
             if (!Directory.Exists(aside) || RunnerWorkspaceNoFollowDelete.Identity(aside) != intent.DirectoryIdentity)
                 return Hold("absence_without_receipt");
+            await CheckReportPreservationAsync(aside, intent.DirectoryIdentity!, ct);
             await RunnerWorkspaceNoFollowDelete.ValidateRemainingAsync(aside, intent.DirectoryEntries!, ct);
             if (Exists(binding.GitDirectory))
             {
@@ -158,6 +162,7 @@ public sealed partial class RunnerCompletedCardWorkspaceRemoval
             if (Exists(binding.GitDirectory)) return Hold("registration_replaced");
             if (Exists(aside))
             {
+                await CheckReportPreservationAsync(aside, intent.DirectoryIdentity!, ct);
                 intent = Spend(journal, intent with { Phase = "Deleting" }, "delete");
                 BeforeMutationForTest?.Invoke("delete");
                 await RunnerWorkspaceNoFollowDelete.DeleteOwnedAsync(aside, intent.DirectoryIdentity!, intent.DirectoryEntries!,
@@ -173,6 +178,19 @@ public sealed partial class RunnerCompletedCardWorkspaceRemoval
         Save(journal, intent with { Phase = "Complete", Receipt = receipt });
         AfterMutationForTest?.Invoke("receipt");
         return new(true, null, receipt);
+    }
+
+    private static async Task CheckReportPreservationAsync(string root, string identity, CancellationToken ct) =>
+        RequireReportPreservation(await RunnerWorkspaceNoFollowDelete.InventoryAsync(root, identity, ct));
+
+    private static void RequireReportPreservation(IReadOnlyList<RunnerWorkspaceNoFollowDelete.Entry> entries)
+    {
+        // The admitted command has no remote task-report byte manifest. Generic
+        // external artifact pointers therefore cover none of these report files.
+        // Check fresh S5 no-follow entries before prepare/rename/unregister/delete,
+        // including replay; later entry changes still meet S5's identity/hash checks.
+        var report = entries.FirstOrDefault(e => CompletedCardWorkspaceReport.IsTaskReportPath(e.Path, e.Directory));
+        if (report is not null) throw new RunnerWorkspaceNoFollowDelete.Refusal("artifact_unpreserved", report.Path);
     }
 
     private RunnerWorkspaceRemovalJournal.RemovalIntent Spend(RunnerWorkspaceRemovalJournal journal,

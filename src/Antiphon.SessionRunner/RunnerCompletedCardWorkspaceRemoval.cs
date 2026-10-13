@@ -118,7 +118,9 @@ public sealed partial class RunnerCompletedCardWorkspaceRemoval(RunnerWorkspaceS
             if (lines.Length != 1 || lines[0].TrimEnd('\r') != proof.ObservedTargetSha + "\t" + proof.DestinationRef)
                 return "stale_preservation_proof";
             // No fetch: read-only inspection may hold if the fresh remote objects are not local.
-            // Both H and the supplied preserved P must be contained in that exact fresh target.
+            // Direct proof checks H and preserved P ancestry in that exact fresh target.
+            // Rebased proof authenticates H-to-P via the signed command above, then
+            // checks P ancestry; it does not require H ancestry after the rebase.
             foreach (var source in rebased ? new[] { proof.RebasedSourceSha!, proof.PreservedSourceSha }
                 : new[] { proof.ExpectedHeadSha, proof.PreservedSourceSha })
             {

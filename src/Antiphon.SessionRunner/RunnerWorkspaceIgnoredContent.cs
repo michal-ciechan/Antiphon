@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.RegularExpressions;
+using Antiphon.SessionRunner.Contracts;
 
 namespace Antiphon.SessionRunner;
 
@@ -20,7 +21,7 @@ public sealed class RunnerWorkspaceIgnoredContent
             "**/.antiphon/report.md", "**/.antiphon/deliverables/**", "**/.env*", "**/.env*/**",
             "logs/**", "backups/**", ".superpowers/**", ".memsearch/**", "tests/Antiphon.E2E/TestOutput/**",
         ]);
-        _evidence = Compile([".antiphon/task-????????.md", ".antiphon/**/*.trx", ".antiphon/*checkpoints*/**"]);
+        _evidence = Compile([".antiphon/**/*.trx", ".antiphon/*checkpoints*/**"]);
         var patterns = disposablePatterns ?? [
             "**/bin/**", "**/obj/**", "**/bin-*/**", "**/node_modules/**", "**/dist/**",
             "**/storybook-static/**", "**/.tmp/**", "**/out/**", ".antiphon-cache/**",
@@ -35,7 +36,8 @@ public sealed class RunnerWorkspaceIgnoredContent
         var path = Normalize(raw);
         if (string.IsNullOrWhiteSpace(path) || Escapes(path) || _protected.IsMatch(path))
             return RunnerIgnoredContentKind.Protected;
-        if (_evidence.IsMatch(path)) return RunnerIgnoredContentKind.Evidence;
+        if (CompletedCardWorkspaceReport.IsTaskReportPath(path) || _evidence.IsMatch(path))
+            return RunnerIgnoredContentKind.Evidence;
         if ((NamesAntiphon(path) ? _antiphonDisposable : _disposable).IsMatch(path))
             return RunnerIgnoredContentKind.Disposable;
         return RunnerIgnoredContentKind.Protected;

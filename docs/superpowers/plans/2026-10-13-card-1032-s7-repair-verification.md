@@ -19,7 +19,8 @@ one build, runner rows use one build. The checkpoint bootstrap is the sole
 unlisted build, necessary to run the tool, through the host slot gate.
 
 F1 pins a hand-written shape/case table and real unique-byte preservation for
-lowercase, uppercase, mixed-case, nonhex and Unicode identifier characters.
+lowercase, uppercase, mixed-case, nonhex and Unicode identifier characters,
+and the previous regex's single terminal-LF match.
 The existing runner wildcard accepts eight non-separator characters, not only
 hex; preserve that conservative evidence policy. Unicode lookalikes in the
 directory, prefix or extension, ADS suffixes, trailing dot/space, other
@@ -67,6 +68,6 @@ for method-scoped SourceLanding Mutation; ordinary defect red is not Mutation.
 
 | PC | Deliberate defect | Detecting method filter | Variants / expected red |
 |---|---|---|---|
-| PC-591 | Producer uses lowercase-only report recognition or mismatched shape | `/*/*/CardWorktreeMirrorCleanupTests/C1032_ReportRecognitionCaseTable` | uppercase, mixed-case, nonhex, Unicode identifier; report bytes absent or no-intent refusal missing; literal 22-row classifier table variants |
+| PC-591 | Producer uses lowercase-only report recognition or mismatched shape | `/*/*/CardWorktreeMirrorCleanupTests/C1032_ReportRecognitionCaseTable` | uppercase, mixed-case, nonhex, Unicode identifier, terminal LF; report bytes absent or no-intent refusal missing; literal 24-row classifier table variants |
 | PC-592 | Recipient omits fresh report-preservation hold | `/*/*/CardWorktreeMirrorCleanupTests/C1032_ReportAddedAfterProducerInspection` | lowercase, uppercase, mixed-case late report; unique bytes/registration absent or imported Complete receipt present |
 | PC-593 | Refuse generic admitted evidence when no remote task report exists | `/*/*/CardWorktreeMirrorCleanupTests/C1032_ReportAbsentAllowsCleanup` | real tree/registration removal and imported durable receipt missing |

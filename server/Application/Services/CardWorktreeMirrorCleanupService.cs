@@ -51,10 +51,9 @@ public sealed class CardWorktreeMirrorCleanupService(AppDbContext db, ISessionRu
             return await RefuseAsync(endpoint, inspection.Reason, ct);
         if (inspection.SourceFullRef != binding.SourceFullRef || !Oid(inspection.HeadSha))
             return await RefuseAsync(endpoint, "source_changed", ct);
-        // The read-only recipient inventory has no report bytes. Remote-only task reports
-        // stay held rather than being certified by a same-looking desktop path.
-        if (inspection.IgnoredContent.Any(e => e.Path.Replace('\\', '/').StartsWith(".antiphon/task-", StringComparison.Ordinal)
-            && e.Path.EndsWith(".md", StringComparison.OrdinalIgnoreCase)))
+        // Inspection supplies names, not remote report bytes. Hold recognized task
+        // reports here; the recipient repeats the hold on fresh no-follow inventories.
+        if (inspection.IgnoredContent.Any(e => CompletedCardWorkspaceReport.IsTaskReportPath(e.Path)))
             return await RefuseAsync(endpoint, "artifact_unpreserved", ct);
         var targetRef = WorkspaceReservationKey.NormalizeRef(task.MergeTargetRef ?? "master");
         var destination = await git.DestinationAsync(endpoint.Target.RepositoryPath, targetRef, ct);
@@ -172,7 +171,7 @@ public sealed class CardWorktreeMirrorCleanupService(AppDbContext db, ISessionRu
         if (publications.Count != 1) return null;
         var op = publications[0];
         // No mapping is inferred from a caller SHA, equal path or task-branch push. An ambiguous
-        // historical attempt stays unproved: publication must postdate this binding and terminal execution.
+        // historical attempt stays unproved: publication must be at or after binding and terminal execution.
         return op.Id == id && new AgentTaskLandingState().HasPublication(op)
             && op.CreatedAt >= binding.CreatedAt && task.CompletedAt is { } completed && op.CreatedAt >= completed
             && op.SourceFullRef == binding.SourceFullRef && op.TargetFullRef == WorkspaceReservationKey.NormalizeRef(task.MergeTargetRef ?? "master")

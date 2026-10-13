@@ -1,5 +1,9 @@
 # CARD-1032 S7 Code Final selection
 
+Historical round-1 selection, superseded for repair by
+[S7 F1-F3 verification](2026-10-13-card-1032-s7-repair-verification.md).
+The repair brief excludes the Unit lane and names full affected classes.
+
 Original Code / landing owner: f2b2ece7-37bf-4c83-9b74-cfb9e78c1eae.
 Base: 63b2e70479c846cacd01af6b20190e845f8258e4.
 
@@ -17,9 +21,9 @@ Implementation remains uncomposed: no Program registration, sweep caller, public
 route, Execute setting change, or live workspace deletion is assigned.
 S8 CP-15/16 and recovery cut methods remain outside this slice.
 
-The higher-priority Final profile requires the complete Unit lane and affected
-integration classes in addition to the caller's CP-13/14. These additional rows
-are declared here before execution; their presence does not commission S8 code.
+The initial Final profile added Unit and affected-class rows to CP-13/14.
+The caller refinement above subsequently excluded further Unit execution;
+CP-F1 remains historical timeout evidence. These rows do not commission S8 code.
 No full assembly or namespace run is needed. Estimated additional cost is one
 runner build plus 8 minutes tests, excluding slot wait. CP-13/14 retain the
 frozen test-design filters and counts. Build outputs remain isolated, UseAppHost
@@ -39,17 +43,19 @@ only its internally assembled complete command with configured phone-home
 credentials. No key is carried in the wire payload. Three-argument transport
 and one-argument inspector constructors retain their inert rebase default.
 C1032_AdmissionArtifactSurvival uses safe regular-file reads through the existing
-ChannelReplyAttachmentReader. Remote task-report inventory is held because the
-inspection contract supplies no remote report bytes. Directory deliverable
-pointers are conservatively held by this regular-file proof; they are not copied.
+ChannelReplyAttachmentReader. Review F1/F2 disproved the original task-report
+hold claim: the initial lowercase prefix check missed case variants and the
+recipient admitted later arrivals. The repair selection supplies those missing
+witnesses. Directory deliverable pointers are held by the regular-file proof.
 
 Deletion paths touched: server discovery/admission, signer and artifact proof
 have no filesystem deletion. Transport calls RemoveAsync, whose pre-effect
 binding/source/proof/inventory checks precede TryRetireAsync (shared gate and
 journal-before-effect). Its S5 resume path validates recorded root/file identities
 before rename, exact admin deletion and exact aside deletion. Rebased proof now
-also requires the configured certificate key; fresh destination containment of
-P and exact inspected H remain required. No branch deletion or repository prune
+also requires the configured certificate key. Direct proof checks H and P
+containment; rebased proof checks signed H-to-P authority and P containment,
+with expected H compared to the inspected mirror HEAD. No branch deletion or repository prune
 is added. Test disposal calls the existing fixture-owner-checked no-follow root
 cleanup; explicit report deletion affects only a fixture's external report.
 
