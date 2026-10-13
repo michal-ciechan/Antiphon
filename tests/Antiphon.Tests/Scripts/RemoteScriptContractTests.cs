@@ -1128,8 +1128,9 @@ public sealed class RemoteScriptContractTests
     // CARD-1193. The verifier scp exports CASE_DIR. These logs are written under the private
     // controller, so finalization must copy regular files before removing that directory.
     // A symlink source or a symlink CASE_DIR must not be followed. A directory or symlink at
-    // the destination refuses export. Publication writes a private file and verifies the renamed
-    // regular destination, so a replaced path cannot receive writes through a link.
+    // the destination at admission/recheck refuses export. Publication writes a private file,
+    // atomically renames it and verifies the regular destination. A link introduced at the rename
+    // boundary inside the owned directory is replaced, never followed; out-of-case files are never written.
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public void C1193_Fixture_exit_trap_copies_race_logs_before_tree_removal()
