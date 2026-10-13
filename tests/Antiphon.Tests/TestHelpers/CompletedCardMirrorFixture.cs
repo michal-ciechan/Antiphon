@@ -60,8 +60,8 @@ internal sealed class CompletedCardMirrorFixture : IAsyncDisposable
     public const string BusyBranch = "c1032-busy-holder";
     private PhoneHomeSettings _settings = null!;
     private string _storePath = "";
-    // One runner process: a reconnect keeps its boot identity.
-    private readonly PhoneHomeProcessIdentity _identity = new();
+    // A reconnect keeps the runner boot identity; a store replacement is a new boot.
+    private PhoneHomeProcessIdentity _identity = new();
     private int _holdArmed;
     private TaskCompletionSource _holderEntered = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private TaskCompletionSource _holderRelease = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -69,15 +69,17 @@ internal sealed class CompletedCardMirrorFixture : IAsyncDisposable
     public static async Task<CompletedCardMirrorFixture> CreateAsync(CancellationToken ct = default) =>
         await CreateAsync(MirrorPreparation.Direct, ct);
 
-    public static async Task<CompletedCardMirrorFixture> CreateAsync(MirrorPreparation preparation, CancellationToken ct = default)
+    // hostClock drives the server phone-home directory (owner lease) for a store-replacement cut.
+    public static async Task<CompletedCardMirrorFixture> CreateAsync(MirrorPreparation preparation, CancellationToken ct = default,
+        TimeProvider? hostClock = null)
     {
         if (!OperatingSystem.IsLinux()) Skip.Test("S7 real phone-home recipient fixture requires Linux; Windows handle qualification is separate.");
         var f = new CompletedCardMirrorFixture();
-        try { await f.InitializeAsync(preparation, ct); return f; }
+        try { await f.InitializeAsync(preparation, hostClock, ct); return f; }
         catch { await f.DisposeAsync(); throw; }
     }
 
-    private async Task InitializeAsync(MirrorPreparation preparation, CancellationToken ct)
+    private async Task InitializeAsync(MirrorPreparation preparation, TimeProvider? hostClock, CancellationToken ct)
     {
         Card = await CompletedCardCleanupFixture.CreateAsync(clock: new Microsoft.Extensions.Time.Testing.FakeTimeProvider(DateTimeOffset.UtcNow));
         var g = Card.Host.Fixture;
@@ -86,7 +88,7 @@ internal sealed class CompletedCardMirrorFixture : IAsyncDisposable
         await g.RequiredAsync(Card.Tree, "push", "origin", "HEAD:refs/heads/" + BusyBranch);
         var repo = Path.Combine(g.Root, "runner-repository");
         await g.RequiredAsync(g.Root, "clone", g.Remote, repo);
-        Wire = await PhoneHomeTestHost.StartAsync();
+        Wire = await PhoneHomeTestHost.StartAsync(clock: hostClock);
         var state = Path.Combine(g.Root, "runner-state"); Directory.CreateDirectory(state);
         var allowed = Path.Combine(g.Root, "runner-cwd"); Directory.CreateDirectory(allowed);
         var store = Guid.NewGuid();
@@ -174,7 +176,7 @@ internal sealed class CompletedCardMirrorFixture : IAsyncDisposable
     // A replacement store id is written where the runner reads its persistent store before registering.
     public async Task ReconnectAsync(Guid? replacementStore = null)
     {
-        if (replacementStore is Guid store) await File.WriteAllTextAsync(_storePath, store.ToString("D"));
+        if (replacementStore is Guid store) { await File.WriteAllTextAsync(_storePath, store.ToString("D")); _identity = new(); }
         await ConnectAsync();
     }
 

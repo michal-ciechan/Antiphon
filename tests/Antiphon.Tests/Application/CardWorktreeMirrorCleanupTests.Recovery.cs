@@ -148,7 +148,10 @@ public sealed partial class CardWorktreeMirrorCleanupTests
     {
         foreach (var cut in new[] { "I0", "D1", "D9", "D11-frozen", "D11-store" })
         {
-            await using var f = await CompletedCardMirrorFixture.CreateAsync(); await f.DiscoverAsync();
+            var hostClock = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(DateTimeOffset.UtcNow);
+            await using var f = await CompletedCardMirrorFixture.CreateAsync(MirrorPreparation.Direct,
+                hostClock: cut == "D11-store" ? hostClock : null);
+            await f.DiscoverAsync();
             if (cut == "I0")
             {
                 f.BeforeInspection = _ => { f.BeforeInspection = null;
@@ -191,7 +194,9 @@ public sealed partial class CardWorktreeMirrorCleanupTests
             if (cut == "D11-store")
             {
                 var original = (await f.EndpointAsync()).OperationId;
-                await f.DisconnectAsync(); await f.ReconnectAsync(Guid.NewGuid());
+                // A new runner boot with a replaced store registers after the old owner lease (90 s) expires.
+                await f.DisconnectAsync(); hostClock.Advance(TimeSpan.FromSeconds(91)); await f.ReconnectAsync(Guid.NewGuid());
+                f.Wire.Directory.GetLiveStoreId(f.Binding.RunnerId).ShouldNotBe(Guid.Parse(f.Binding.RunnerStoreId), cut);
                 var refused = await f.TryAsync();
                 refused.Complete.ShouldBeFalse(cut); refused.Reason.ShouldBe("runner_store_mismatch", cut);
                 var oldEndpointComplete = (await f.EndpointAsync()).State == CardWorktreeCleanupEndpointState.Complete;
