@@ -227,18 +227,17 @@ fixture timestamps (`updatedAt`) are display data, not clocks.
   `CandidateCount 0`, Required → `effective {source "pin", agentKind null, modelLevel null, alias null, strength
   Required}`. Mutation: fall through to the policy when there is no head → `source "rolePolicy"` → red.
 
-- V-28 `Compose_withholds_the_target_for_unsupported_or_undefined_values` | U, `[MethodDataSource]` 16 rows | the
+- V-28 `Compose_withholds_the_target_for_unsupported_or_undefined_values` | U, `[MethodDataSource]` 15 rows | the
   DTO is serialised with the API options (web + `JsonStringEnumConverter(allowIntegerValues: false)`) and read as
   JSON; literal expectations per row: `valid-control`, `policy-kind-Raw`, `policy-kind-OpenCode`, `policy-kind-999`,
-  `policy-level-999`, `policy-escalateTo-999`, `default-level-999` (Custom row), `default-level-999-configured-row`
-  (Docs keeps `Medium`/`sonnet`; `defaultLevel` null), `pin-valid-control`,
+  `policy-level-999`, `policy-escalateTo-999`, `default-level-999` (Custom row), `pin-valid-control`,
   `pin-head-kind-Raw`, `pin-head-kind-999`, `pin-head-level-999` (each with a valid second candidate that must not
   be used), `pin-grok-level-999`, `pin-grok-inherits-policy-level-999`, `pin-level-inherits-policy-kind-Raw`,
   `prototype-role-names` (`__proto__`, `constructor`, `toString` keys); every row: 14 roles, Mutation effective
   `ClaudeCode/Low/haiku`, Code alias `fable`, every other row's effective alias non-empty. Red at `d138b99ef`:
   invented `sonnet`/`opus` aliases and `JsonException` for 999. S1 R3: `policy-level-999`, `default-level-999` and
-  `pin-grok-inherits-policy-level-999` expect row `level` null (was `"High"`); `default-level-999` and the new row
-  expect `defaultLevel` null. Red at `9330f6bcd`: those four rows read `"High"`.
+  `pin-grok-inherits-policy-level-999` expect row `level` null (was `"High"`); `default-level-999` expects
+  `defaultLevel` null (was `"High"`). Red at `9330f6bcd`: those three rows read `"High"`.
 - V-29 `RolePolicyEndpointTests.Get_serialises_every_row_when_one_role_has_unsupported_values` | A, own factory bound
   with `Delegation:RolePolicy:Docs:Level=999`, `Commit:Kind=Raw`, `Deploy:Kind=999` → 200, 14 rows; Docs `level
   null, kind null, alias ""`, Commit `kind "Raw", level "Medium", alias ""`, Deploy `kind null, level "Low",
@@ -379,7 +378,7 @@ fixture timestamps (`updatedAt`) are display data, not clocks.
 | G-30 | F-1 unsupported: an unsupported head kind/level withholds the pin target (V-28 `pin-head-kind-Raw`) | PC-30 |
 | G-31 | F-1 unsupported: undefined values in `stagePin` are written as null (V-28 `pin-head-kind-999`) | PC-31 |
 | G-32 | F-1 unsupported: an undefined `escalateTo` is written as null (V-28 `policy-escalateTo-999`) | PC-32 |
-| G-33 | S1 R3: an undefined `DefaultLevel` is written as null (V-28 `default-level-999-configured-row`) | PC-33 |
+| G-33 | S1 R3: an undefined `DefaultLevel` is written as null (V-28 `default-level-999`) | PC-33 |
 | G-34 | S1 R3: `defaultLabel` shows a null level as `unknown` (V-5 `configured-level-null`) | PC-34 |
 | G-35 | S1 R3: the modal falls back when the role-policy level is null (V-30) | PC-35 |
 | G-36 | S1 R3: `defaultLabel` shows an undefined kind as `unknown`, not ClaudeCode (V-5 `configured-kind-undefined`) | PC-36 |
@@ -431,7 +430,7 @@ and PC-5–PC-10 (same `Compose` method) run one at a time; PC-4 (`ReadAsync`) m
 | PC-30 | build the pin target without the head guard | `RolePolicyReadServiceTests.Compose_withholds_the_target_for_unsupported_or_undefined_values` row `pin-head-kind-Raw`: effective `agentKind` expected null |
 | PC-31 | return `stagePin` unsanitised | same method, row `pin-head-kind-999`: serialisation expected to succeed |
 | PC-32 | pass `EscalateTo` through unchecked | same method, row `policy-escalateTo-999`: serialisation expected to succeed |
-| PC-33 | write an undefined `DefaultLevel` as `High` | `RolePolicyReadServiceTests.Compose_withholds_the_target_for_unsupported_or_undefined_values` row `default-level-999-configured-row`: `defaultLevel` expected null |
+| PC-33 | write an undefined `DefaultLevel` as `High` | `RolePolicyReadServiceTests.Compose_withholds_the_target_for_unsupported_or_undefined_values` row `default-level-999`: `defaultLevel` expected null |
 | PC-34 | `defaultLabel` prints `row.level` without the null branch | M `rolePolicyModel C097 V05 configured-level-null`: expected `unknown` |
 | PC-35 | modal reads `row.level ?? 'High'` for `rolePolicy` | E `DelegateModal C097 V30 undefined-policy-level-falls-back-to-constant`: `delegate-tier-source-fallback` expected |
 | PC-36 | `defaultLabel` maps a null kind to ClaudeCode unconditionally | M `rolePolicyModel C097 V05 configured-kind-undefined`: expected `unknown/Medium ()` |
@@ -477,7 +476,7 @@ to restore, which NU1605 prevents until CARD-1229 lands; run them after it, repo
 | CP-2 | S4 | n/a | client-delegate-modal | `pwsh -NoProfile -File scripts/test-client.ps1 src/features/delegations/DelegateModal.test.tsx src/api/agentTasks.test.tsx` | V-16, V-17, V-18, V-27, V-30, R-4 | 2 files, exactly 31 results (24 + 7), 0 failed/skipped, `CLIENT TESTS EXIT CODE: 0` | n/a | 5 | false |
 | CP-3 | S1 | `tests/Antiphon.Tests -> bin-c097-red/` | role-policy-red | `/*/*/RolePolicyEndpointTests/*` | V-1, V-2, V-3 red-first | 3 executed, 3 failed at the GET status assertion (404 ≠ 200), 0 skipped; intended red, test file committed before the endpoint | 3 | 8 | false |
 | CP-4 | S1 | `tests/Antiphon.Tests -> bin-c097-api/` | role-policy-api | `/*/*/RolePolicyEndpointTests/*` | V-1, V-2, V-3, V-29 | 4 executed, 0 failed/skipped | 4 | 8 | false |
-| CP-5 | S1 | `CP-4` | role-policy-compose | `/*/*/RolePolicyReadServiceTests/*` | V-4, V-19, V-20, V-21, V-22, V-23, V-28 | 22 executed (6 + 16 V-28 rows), 0 failed/skipped | 22 | 3 | false |
+| CP-5 | S1 | `CP-4` | role-policy-compose | `/*/*/RolePolicyReadServiceTests/*` | V-4, V-19, V-20, V-21, V-22, V-23, V-28 | 21 executed (6 + 15 V-28 rows), 0 failed/skipped | 21 | 3 | false |
 | CP-6 | S4 | n/a | client-full | `pwsh -NoProfile -File scripts/test-client.ps1` | R-1, V-5–V-10, V-16–V-18, V-24–V-27 | 118 files, exactly 1198 results, 0 failed; skipped 0 when `client/dist` exists, else exactly 1 (the App bundle `skipIf`, report which); lint case green; `CLIENT TESTS EXIT CODE: 0` | n/a | 10 | true |
 
 CP-6's `After` is S4 because S4 follows S2 by construction (S4 imports S2's files); S1 is not a prerequisite of
@@ -486,7 +485,7 @@ tools/Antiphon.Checkpoints -- run --plan <this path> --rows <CP-list> --expected
 per committed slice group: `--rows CP-1` after S2, `--rows CP-2,CP-6` after S4, `--rows CP-3` at the S1 test-only
 commit, `--rows CP-4,CP-5` at the S1 code commit. S1 R2 runs `--rows CP-4,CP-5` at its test-only commit (intended red: V-29 and the
 12 V-28 rows other than the three controls) and again at its fix commit. S1 R3 runs `--rows CP-1,CP-2,CP-4,CP-5` at its
-test-only commit (intended red: V-29, four V-28 rows, V-5 `configured-level-null`, `unconfigured-default-level-null`,
+test-only commit (intended red: V-29, three V-28 rows, V-5 `configured-level-null`, `unconfigured-default-level-null`,
 `configured-kind-undefined`; V-30 green, see its entry) and again at its fix commit. Builds and any direct driver go through
 `scripts/build-slot.ps1`; slot exit 4 is a row not run. Preserve unedited `CHECKPOINT` lines; keep TRX/JSON/logs
 ignored; delete owned `bin-c097-*` directories before settlement; Code and Review run

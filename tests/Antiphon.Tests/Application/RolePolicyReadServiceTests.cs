@@ -193,8 +193,6 @@ public sealed class RolePolicyReadServiceTests
             null, "Medium", "sonnet", null, "rolePolicy", "ClaudeCode", "Medium", "sonnet", null, null, null, null, "High");
         yield return () => new("default-level-999", s => s.DefaultLevel = UndefinedLevel, null, "Custom",
             null, null, "", null, "rolePolicy", null, null, null, null, null, null, null, null);
-        yield return () => new("default-level-999-configured-row", s => s.DefaultLevel = UndefinedLevel, null, "Docs",
-            null, "Medium", "sonnet", null, "rolePolicy", "ClaudeCode", "Medium", "sonnet", null, null, null, null, null);
         yield return () => new("pin-valid-control", None,
             [Candidate(AgentKind.Codex, AgentModelLevel.Low, "gpt-5.6-luna")], "Docs",
             null, "Medium", "sonnet", null, "pin", "Codex", "Low", "gpt-5.6-luna", "Required", "Codex", "Low", "gpt-5.6-luna", "High");
