@@ -3012,7 +3012,7 @@ EOF
 # Named acquisitions use Docker's cidfile, written at creation even for a running
 # foreground --rm consumer. C1208_Unacquired_roster_is_untouched guards absence
 # of this record; C1208_Recorded_container_id_does_not_delete_replacement guards ID use.
-# All card metadata publication holds the admitted directory and only writes a
+# Metadata publication through c849_fixture_write holds the admitted directory and only writes a
 # private exclusive temporary file. Existing records are read, never opened for writing.
 c849_fixture_case_bind() {
     [ -d "$CASE_DIR" ] && [ ! -L "$CASE_DIR" ] \
@@ -4808,8 +4808,11 @@ c849_fixture_evidence() {
     cat "$CASE_DIR/fixture-groups.txt" "$CASE_DIR/fixture-controls.txt"
 }
 
-# Safe export is bounded to the existing five regular diagnostic files. Destination
-# removal is a gate: a failed unlink must never fall through to the copy.
+# Safe export is bounded to the existing five regular diagnostic files. Admission
+# and destination recheck refuse unsafe paths before publication. Bytes are written
+# to a private temporary file and published by the shared atomic update rename. A link swapped in at the rename
+# boundary inside the owned directory is replaced, never followed; out-of-case files
+# are never written.
 c849_fixture_export_logs() {
     local name failed=0
     if [ -d "$CASE_DIR" ] && [ ! -L "$CASE_DIR" ]; then
