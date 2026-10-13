@@ -54,9 +54,9 @@ public sealed class WaitCommandTests : CheckpointTestBase
             else
             {
                 var args = new List<string> { verb.StartsWith("report", StringComparison.Ordinal) ? "report" : verb,
-                    "--repo-root", root, "--run", dir };
+                    "--repo-root", root, "--run", dir, "--results-root", root };
                 if (verb == "report-json") args.Add("--json");
-                if (verb == "report-merge") args.AddRange(["--merge", "--results-root", root]);
+                if (verb == "report-merge") args.Add("--merge");
                 exit = await Antiphon.Checkpoints.Program.RunAsync(args.ToArray(), new CheckpointApp.Runtime { Output = output });
             }
             var label = mode + " " + verb + ": " + output;
