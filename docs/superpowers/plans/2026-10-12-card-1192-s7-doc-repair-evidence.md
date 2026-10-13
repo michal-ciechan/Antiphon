@@ -1,6 +1,6 @@
 # CARD-1192 S7 round-3 documentation repair evidence (d25ba49f)
 
-Historical round-3 wording was rejected by Review 0a3d75f7 F1: post-create unknown ownership lost registration and residue. Round 4 adds CP-53 and repairs that path. Known exceptions: Compose exit-status-only teardown (CARD-1207), older raw cache namespace/F-7 checks, mid-group acknowledgements and anonymous --rm helpers; W-1 is pending. The historical CHECKPOINT records below are unchanged.
+Historical round-3 wording was rejected by Review 0a3d75f7 F1: post-create unknown ownership lost registration and residue. Round 4 adds CP-53 and repairs that path. Known exceptions: a cache volume positively identified as foreign by acquisition (CacheVolumeForeign) remains registered and is deleted by finalization: inherited from before S7, tracked as CARD-1208; no S7 test covers it. Compose exit-status-only teardown (CARD-1207), older raw cache namespace/F-7 checks, mid-group acknowledgements and anonymous --rm helpers; W-1 is pending. The historical CHECKPOINT records below are unchanged.
 
 Review 2ec97f2d F1 documentation claim was narrowed. The executable Compose
 limitation remains inherited and separately owned by CARD-1207. Closed repair

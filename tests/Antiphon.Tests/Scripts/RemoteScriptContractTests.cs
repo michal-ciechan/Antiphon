@@ -447,6 +447,8 @@ public sealed class RemoteScriptContractTests
     }
 
     // CP-2 checks the registered cache/work/mask set and consumer/helper order.
+    // Foreign-label cleanup guards cover work/mask, not cache volumes.
+    // Known exceptions: a cache volume positively identified as foreign by acquisition (CacheVolumeForeign) remains registered and is deleted by finalization: inherited from before S7, tracked as CARD-1208; no S7 test covers it
     // Known exceptions: Compose exit-status-only teardown (CARD-1207), older raw
     // cache namespace/F-7 checks and mid-group removal acknowledgements; W-1 is pending.
     [Test]
@@ -563,8 +565,9 @@ public sealed class RemoteScriptContractTests
     }
 
     // CARD-1192 S1 repair. docker volume create adopts a volume that appears after the
-    // absence lookup. Ownership is checked after create; a foreign or unlabeled volume
-    // is not mounted, not registered, and not removed.
+    // absence lookup. Work/mask ownership is checked after create; a foreign or unlabeled
+    // work/mask volume is not mounted, is dropped from registration, and is not removed.
+    // CacheVolumeForeign finalization is excluded (CARD-1208).
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public void C1192_Foreign_volume_is_refused_after_create()

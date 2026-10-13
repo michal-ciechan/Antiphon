@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # CARD-1192 S1 workspace model, S2 race barriers, S3 npm volume reads, and S4 payload boundary.
 # Extracted c849_* functions against a filesystem Docker model.
+# Foreign-acquisition drop/untouched checks cover work/mask volumes, not cache volumes.
+# Known exceptions: a cache volume positively identified as foreign by acquisition (CacheVolumeForeign) remains registered and is deleted by finalization: inherited from before S7, tracked as CARD-1208; no S7 test covers it
+# Compose exit-status-only teardown (CARD-1207), older raw inspect checks,
+# mid-group acknowledgements and anonymous --rm helpers remain limits; W-1 is pending.
 # Never source dispatch. Never call the host docker daemon.
 set -euo pipefail
 shopt -s nullglob
@@ -2781,7 +2785,7 @@ mode_evidence() {
     good=0; if declare -F c849_fixture_finalize >/dev/null; then ( c849_fixture_finalize ) && [ ! -d "$SERVER2_ROOT" ] && good=1; fi; emit evidence-control-removed "$good"
 }
 
-# Only Docker inspect is faulted; acquisition, EXIT, finalization and the JSON
+# Only work/mask Docker inspect is faulted; acquisition, EXIT, finalization and the JSON
 # recipient are production functions. A one-probe outage tests that later
 # successful cleanup does not erase the acquisition's unknown record.
 mode_acquisition_probe() {
