@@ -5,6 +5,8 @@ CP-5=30/30 and CP-6=4/4, zero failures/skips, on
 `52e9463282afe6c1c782a061753a1b044800c60e`. The later artifact commit updates
 documentation only. The historical holds below are superseded by the final
 results at the end. Every deliberate PC/family control remains pending Mutation.
+The later caller refinement makes scratch-family proof mandatory before acceptance;
+that additional requirement is blocked by the binding Code-stage ownership rule.
 
 Code/landing owner: c0e86d50-00e6-4942-b303-7bc44122c640.
 Branch: feat/card-task-c0e86d50. Base: 6e36b695f9ead5f16e9bb05a7f4033cd0c432cf2.
@@ -29,7 +31,8 @@ bin-c1205-s5-tool/, UseAppHost=false. No full-assembly, deployment or native PTY
 | CP-5 | S5 | `tests/Antiphon.Tests -> bin-c1205-s5/` | restart-receipts | `/*/Antiphon.Tests.Application/TurnEndGapRestartDeliveryTests*/*` | V-20..24,V-36..40,R-5 | Exactly 30 executed, all named cases green | 30 | 16 |
 | CP-6 | S5 | `tests/Antiphon.Tests -> bin-c1205-receipts/` | receipt-compatibility | `/*/*/(VerificationRoundDeliveryTests*)\|(TestClassificationGuardTests*)/(C544_CompletionReceipt*)\|(C544_StampIsNotReceipt*)\|(Registry_matches_compiled_metadata*)` | R-8,R-9 | Exactly four named methods green | 4 | 7 |
 
-All PC-84..100 variants remain pending. No deliberate mutant is authorized here.
+All PC-84..100 variants remain pending. The caller authorizes scratch-family
+mutants, but the binding Code-stage contract reserves their execution to Mutation.
 
 ## Historical first Code hold, 2026-10-13 (superseded)
 
@@ -266,7 +269,32 @@ uncommitted scratch-copy mutations. The unbound candidate names the family
 selections for caller commission; it makes no red-capability/PC-clean claim.
 All PC-84..100/variants and inherited S1..S4 controls stay pending for Mutation.
 
+### Refinement disposition, 2026-10-13
+
+The refinement in
+`.antiphon/inbox/3f1bc8b8-7cc6-41e0-a18e-d8fbf7898783.md` reaffirms that one
+throw-away scratch mutation per witness family is required and says Mutation is
+paused. It changes the requested acceptance status: **ordinary S5 verification
+is complete, but the newly reaffirmed family-proof requirement is not complete**.
+FC-1..FC-6 remain unexecuted; there is no failing output for any family and no
+claim that the acceptance witnesses have demonstrated defect sensitivity.
+
+The active developer-provided `stage-code` bundle explicitly says: “Mutation
+owns deliberate mutants, red/restore/green and missing-control discovery.” This
+is a binding instruction, not a default in a repository document. An uncommitted
+scratch-copy edit disabling production behavior is still a deliberate mutant.
+The caller refinement does not change that higher-priority stage instruction.
+No scratch source was created or modified and no additional build/test was run.
+The final source receipt remains the exact tested SHA above; this amendment is
+documentation only and does not require repeating the green ordinary selections.
+
+Continuation needs either a higher-priority stage-contract amendment permitting
+these six Code-stage family cycles, or caller commission of their execution to
+Mutation. This delegate cannot change its role or sub-delegate. The complete
+ordinary implementation remains available for Review, with all systematic
+PC-84..100 variants pending after original-owner landing as before.
+
 --- next stage ---
-next: review
-handoff: Review completed S5 test-only acceptance on the published branch: CP-5 30/30 and CP-6 4/4 pass with clean/verified source receipts. All PCs and caller-requested scratch family cycles remain Mutation-owned and unexecuted. Review then caller lands original Code owner and commissions SourceLanding Mutation.
+next: decide
+handoff: Ordinary S5 is complete: CP-5 30/30 and CP-6 4/4. The refinement requires FC-1..FC-6 scratch-family reds, but the binding developer Code-stage contract assigns deliberate mutants to Mutation. Resolve the stage-contract conflict or commission Mutation; no family red is claimed. Systematic PC-84..100 variants remain pending.
 artifact: docs/superpowers/plans/2026-10-13-card-1205-s5-checkpoints.md

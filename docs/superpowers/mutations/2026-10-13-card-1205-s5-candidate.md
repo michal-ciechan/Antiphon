@@ -45,6 +45,10 @@ by Code: the binding stage contract assigns all deliberate mutations and
 red/restore/green to Mutation. The caller may commission a Mutation task with
 these exact method-scoped controls; zero tests, fixture/build errors and hangs
 are never acceptable red. All rows below are **pending/unbound**, not proved.
+The later refinement reaffirms these controls as mandatory and says Mutation is
+paused. Code has returned this instruction conflict for caller triage; the active
+developer stage contract must change before Code can execute deliberate scratch
+mutants. Ordinary green does not prove these witnesses can detect their defects.
 
 | Family | One proposed decisive control | Exact method-scoped selection | Expected assertion red |
 |---|---|---|---|
