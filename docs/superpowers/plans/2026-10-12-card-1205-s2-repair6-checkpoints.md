@@ -57,3 +57,39 @@ catch-up rows report one false abandonment warning instead of zero. No fixture/b
 errors, skips or timeouts. Ordinary fixed-source checkpoints pending at this commit.
 
 CHECKPOINT RED-1 commit=e76a094f897cd39e2dd3a216884d5f3174e3c429 build=ok filter=/*/*/SessionRunnerHeldEventDeliveryTests*/(C1205_Callback_fault_preserves_original_identity*)|(C1205_Completed_callback_has_no_abandonment*)|(C1205_Deadline_before_late_fault_retains_abandonment*) executed=20 passed=4 failed=16 skipped=0 trx=/work/worktrees/task-cbce1a3f/.antiphon/checkpoints/20261013-001445-ddb7/rows/RED-1/run.trx slot=granted waited=75s dirty=0 source=e76a094f897cd39e2dd3a216884d5f3174e3c429 sourceState=clean buildSource=verified
+
+### Executed ordinary verification
+
+Tested source: 61d7517349427a4098597c66de9fd246233f3572, clean with verified build
+provenance. CP-1 2/2, CP-2 107/107, ADJ-1 33/33; zero failures/skips. All 87
+existing CP-2 cases plus twenty new rows passed. Fresh TRX definition/result joins
+were audited per class/method/argument: 142 green executions, plus twenty baseline
+executions, with 162 distinct nonempty execution IDs and four distinct run IDs.
+CP-2 census: reproduction 2, readiness 23, existing pump 5, held delivery 27, exit
+matrix 50. ADJ-1 census: host stats 3, generation wire 9, settings 1, state commit 8,
+working query 12. All V-1,V-2,V-3,V-4,V-5,V-6,V-7,R-1,R-6 passed. R-7 passed
+for its named adjacent full classes; CP-3 remains deferred. No required manual work
+for S1/S2; Unit excluded by explicit brief; no repeat or deliberate mutant was run.
+
+One isolated build per group; both UseAppHost=false. Tool bootstrap: one separately
+disclosed leased setup build, one nullable warning, zero errors, waited=0s. Baseline
+build waited=0s, row waited=75s. Ordinary build waited=45s; every row waited=0s
+and slot=granted. Ordinary build: 705 warnings, zero errors. Tool source validation
+passed for all three rows. Owner-read transient 502/timeouts recovered without
+unbinding. Both executors exited and their tool shadows were removed; the green
+run removed only the task-created red/green outputs. No unlisted test/build beyond
+the disclosed bootstrap. No source edits occurred during a run. Restart: none.
+
+Unbound Mutation candidate: docs/superpowers/mutations/2026-10-12-card-1205-s2-repair6-candidate.md.
+PC-1..182 and every variant pending; post-land Mutation NOT run. The final report
+and candidate-index commit changes Markdown only after this source qualification.
+These receipts remain pinned to the actual tested SHA above; they are not relabelled.
+
+CHECKPOINT CP-1 commit=61d7517349427a4098597c66de9fd246233f3572 build=ok filter=/*/Antiphon.Tests.Application/TurnEndGapReproductionTests*/* executed=2 passed=2 failed=0 skipped=0 trx=/work/worktrees/task-cbce1a3f/.antiphon/checkpoints/20261013-002143-d7e7/rows/CP-1/run.trx slot=granted waited=0s dirty=0 source=61d7517349427a4098597c66de9fd246233f3572 sourceState=clean buildSource=verified
+PHASES CP-1 slotWait=45s build=133.9570221s startup=45.3999443s testsWall=5.5275245s teardown=1.5310958s hostWall=52.4585834s
+CHECKPOINT CP-2 commit=61d7517349427a4098597c66de9fd246233f3572 build=reused filter=/*/Antiphon.Tests.Application/(TurnEndGapReproductionTests*)|(SessionRunnerStreamReadinessTests*)|(SessionRunnerEventPumpTests*)|(SessionRunnerHeldEventDeliveryTests*)|(SessionRunnerHeldEventExitMatrixTests*)/* executed=107 passed=107 failed=0 skipped=0 trx=/work/worktrees/task-cbce1a3f/.antiphon/checkpoints/20261013-002143-d7e7/rows/CP-2/run.trx slot=granted waited=0s dirty=0 source=61d7517349427a4098597c66de9fd246233f3572 sourceState=clean buildSource=verified
+PHASES CP-2 slotWait=0s build=0s startup=49.0576602s testsWall=40.8781491s teardown=1.8544507s hostWall=91.7902611s
+CHECKPOINT ADJ-1 commit=61d7517349427a4098597c66de9fd246233f3572 build=reused filter=/*/*/(SessionRunnerHttpClientHostStatsTests*)|(SessionRunnerGenerationWireTests*)|(SessionRunnerSettingsTests*)|(SessionStateCommitTests*)|(TranscriptWorkingStateQueryTests*)/* executed=33 passed=33 failed=0 skipped=0 trx=/work/worktrees/task-cbce1a3f/.antiphon/checkpoints/20261013-002143-d7e7/rows/ADJ-1/run.trx slot=granted waited=0s dirty=0 source=61d7517349427a4098597c66de9fd246233f3572 sourceState=clean buildSource=verified
+PHASES ADJ-1 slotWait=0s build=0s startup=69.8918302s testsWall=11.6708142s teardown=1.9505107s hostWall=83.513155s
+
+CHECKPOINT SOURCE VALID source=61d7517349427a4098597c66de9fd246233f3572 rows=3

@@ -1,5 +1,9 @@
 # CARD-1205 repair 5 — unbound Mutation candidate
 
+Historical index, superseded by [repair 6](2026-10-12-card-1205-s2-repair6-candidate.md).
+Current landing owner is cbce1a3f-5d59-47d2-a8a3-859ca571c16f; the ownership below
+records repair 5's original lineage. Its four controls remain pending.
+
 Status: pending; no SourceLanding Mutation was run. Landing owner is
 `d3cc8360-d502-4525-8f0b-b161e1adc4b4`; inherited Code lineage is
 `54ad209e-df48-4ac1-9fe8-e05fd928c3ba`. S1 lands with S2 after Final Review.
