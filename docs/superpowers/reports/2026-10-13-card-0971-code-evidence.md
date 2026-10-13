@@ -1,5 +1,11 @@
 # CARD-0971 Code evidence and continuation
 
+Historical first-round report. Repair round 2 is owned by Code task 520a9bf3;
+its brief expressly excludes Unit (CARD-1209/CARD-1210) and repairs Review F1's
+publication-cleanup data loss. See [repair evidence](2026-10-13-card-0971-repair-evidence.md)
+and its stored task report for current verification/handoff; the statuses below
+remain the original observations, not the repair's current verdict.
+
 Implemented and pushed the ignored nested-repository exception; Final verification is incomplete because the mandatory Unit lane timed out without TRX.
 
 Original Code / landing owner: bc957ed9-9a6a-4503-a99d-fce2f677d4ec.
