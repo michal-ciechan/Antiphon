@@ -1,5 +1,11 @@
 # CARD-1205 S5 recipient acceptance
 
+**Ordinary S5 implementation and Final slice verification are complete:**
+CP-5=30/30 and CP-6=4/4, zero failures/skips, on
+`52e9463282afe6c1c782a061753a1b044800c60e`. The later artifact commit updates
+documentation only. The historical holds below are superseded by the final
+results at the end. Every deliberate PC/family control remains pending Mutation.
+
 Code/landing owner: c0e86d50-00e6-4942-b303-7bc44122c640.
 Branch: feat/card-task-c0e86d50. Base: 6e36b695f9ead5f16e9bb05a7f4033cd0c432cf2.
 S5 only; the explicit brief excludes the Unit lane. No production or shared-fixture
@@ -25,7 +31,7 @@ bin-c1205-s5-tool/, UseAppHost=false. No full-assembly, deployment or native PTY
 
 All PC-84..100 variants remain pending. No deliberate mutant is authorized here.
 
-## Partial Code handoff, 2026-10-13
+## Historical first Code hold, 2026-10-13 (superseded)
 
 **S5 is incomplete and must not land.** The first two T37 cases and CP-6 pass.
 T38..T46 (28 executions) are not authored. CP-5's full 30-case selection was not
@@ -142,11 +148,6 @@ T38..T46 without broadening production scope, commit/push, then run CP-5 (30)
 followed by CP-6 (4) through the tool at exact committed HEAD. Any necessary
 unlanded production dependency must be returned to the caller, not repaired here.
 
---- next stage ---
-next: decide
-handoff: Reconcile pre-S5 defect-red requirements with test-only S5 on already repaired production and Mutation ownership; then resume Code for T38..T46 and full CP-5=30 followed by CP-6=4. T37=2 and CP-6=4 pass, but S5 and Final verification remain incomplete. Do not land this partial branch.
-artifact: docs/superpowers/plans/2026-10-13-card-1205-s5-checkpoints.md
-
 ## Caller continuation decision
 
 The 2026-10-13 reply in
@@ -161,3 +162,111 @@ before the original 240-minute task ceiling if incomplete.
 S5-A is a disclosed committed test-first group: T37/T38/T39/T40/T41/T42/T44/T46,
 ten executions, on unchanged production. T43/T45 follow in the next test slice.
 The extra leased bootstrap rebuilds the tool output removed at the previous hold.
+
+## Final ordinary verification, 2026-10-13
+
+T37..T46 are all implemented in the card-specific harness/class. All witnesses
+are green on pre-S5 production by construction; defect-red proof by Mutation:
+PC-84..100. No production/shared-fixture/checkpoint-infrastructure edit was made.
+The named metadata entry is updated for the full delivery matrix.
+
+| Witness | Ordinary IDs | Executions / actual outcome | Pending defect-red proof |
+|---|---|---|---|
+| T37 five-note restart | V-20, R-5 | 2 passed (cache enabled/disabled) | PC-84, both variants |
+| T38 healthy-stream watchdog | V-21 | 1 passed | PC-85 |
+| T39 committed transcript/lost wakeup | V-22 | 1 passed | PC-86 |
+| T40 receipt restart/no retyping | V-23 | 1 passed | PC-87, PC-88 |
+| T41 busy authoritative tail | V-24 | 1 passed | PC-89 |
+| T42 eligible producer-to-recipient | V-36 | 1 passed | PC-90 |
+| T43 handoff cuts | V-37 | 16 passed: eight cuts, busy/eligible | PC-91..95, all independent variants |
+| T44 uncertain probe/valid recovery | V-38 | 2 passed: wrong generation/pull fault | PC-96, both variants |
+| T45 invalid receipts | V-39 | 4 passed: header/truncated/destination/floor | PC-97..99, all variants |
+| T46 newer turn before wake consumption | V-40 | 1 passed | PC-100 |
+| Named existing receipt compatibility | R-8 | 3 passed | Existing defect controls remain Mutation work |
+| Named metadata guard | R-9 | 1 passed | Registry compatibility, no commissioned systematic PC |
+
+There are no deferred ordinary S5 IDs. Unit lane is excluded by the explicit
+brief; CP-6 includes only the single named metadata case. No full assembly,
+native terminal, live broker, AppHost deployment or manual live acceptance was
+run. Restart: server=none, runner=none. Fresh providers prove service reconstruction.
+
+T38 drives real checked probes with acknowledged healthy keepalives. T39 holds
+the owned successful probe before base TryEnqueue, observes committed SQL idle,
+cancels/joins the old service, and requires the real fresh completion-scan producer.
+T40/T43 observe actual committed prompts before confirmation faults. T41/T44
+retain immutable obligations without attempts/receipts while Working/Unknown.
+T46 consumes the real wake channel only after a new prompt commits, then invokes
+the normal worker's concrete idle-recheck primitive.
+
+T43 reaches each armed cut once before restart, keeps committed keys/frozen wires,
+replays rolled-back settlement, observes actual notification scanner recovery,
+and invokes the established stranded primitive after the existing 36-second
+interrupted-attempt age. The full-channel rows first prove a same-epoch requested
+sweep with four blocked real worker scopes and a full 128-entry channel, then
+use a distinct obligation for crash/full-channel restart recovery. T45 holds the
+actual accepted provider response for an independent explicit flusher; the
+notifier scans real HTTP/runtime-ingested invalid evidence before retry effects.
+Wrong-destination evidence is above the attempt floor; below-floor evidence is
+actual earlier provider input, not direct SQL receipt insertion.
+
+The fixture's controlled continuation queue observes the real production
+ExecuteAsync loops between continuations so a synchronous coalesced
+remove/re-enqueue cannot look quiescent. It owns cancellation/join for those loops.
+Hosting.Abstractions 10.0.2 is resolved in project.assets.json; its launcher
+[runs ExecuteAsync on a background task](https://learn.microsoft.com/en-us/dotnet/core/compatibility/extensions/10.0/backgroundservice-executeasync-task).
+This fixture substitute does not certify framework launcher scheduling. The
+full-channel barrier uses normal framework launch to permit four independently
+blocked scopes; all gates are released and workers joined at teardown.
+
+Fresh TRX roster inspection verified every intended method and argument count.
+Both rows passed `validate-checkpoint-receipt.ps1` with exact committed source
+`52e9463282afe6c1c782a061753a1b044800c60e`. Essential unedited lines:
+
+```text
+CHECKPOINT CP-5 commit=52e9463282afe6c1c782a061753a1b044800c60e build=ok filter=/*/Antiphon.Tests.Application/TurnEndGapRestartDeliveryTests*/* executed=30 passed=30 failed=0 skipped=0 trx=/work/worktrees/task-c0e86d50/.antiphon/checkpoints/20261013-121816-d02e/rows/CP-5/run.trx slot=granted waited=0s dirty=0 source=52e9463282afe6c1c782a061753a1b044800c60e sourceState=clean buildSource=verified
+CHECKPOINT CP-6 commit=52e9463282afe6c1c782a061753a1b044800c60e build=ok filter=/*/*/(VerificationRoundDeliveryTests*)|(TestClassificationGuardTests*)/(C544_CompletionReceipt*)|(C544_StampIsNotReceipt*)|(Registry_matches_compiled_metadata*) executed=4 passed=4 failed=0 skipped=0 trx=/work/worktrees/task-c0e86d50/.antiphon/checkpoints/20261013-121816-d02e/rows/CP-6/run.trx slot=granted waited=0s dirty=0 source=52e9463282afe6c1c782a061753a1b044800c60e sourceState=clean buildSource=verified
+```
+
+Measured final run: 10m04s; one isolated build per row, serial CP-5 then CP-6.
+CP-5: build 207.53s, startup 53.95s, tests wall 123.47s, teardown 11.44s.
+CP-6: build 124.47s, startup 41.95s, tests wall 37.52s, teardown 1.49s.
+Every selected build/row had slot=granted, waited=0s. The sole extra resumed setup
+build was the disclosed leased tool bootstrap (4s, same pre-existing CS8602 warning).
+No green full-class proof was repeated; no flake or Review repetition exemption
+is claimed. Source fixes were pushed before changed-fixture runs.
+
+### Continuation repair evidence, not production-defect reds
+
+| Run / tested source | Outcome |
+|---|---|
+| 20261013-111105-878c / a1cbc929da800aeb2047bfa4141df9a8e134143a | Build failed before tests: two invalid property declarations; corrected |
+| 20261013-111537-2df7 / 6c7c874cf81027a258d5c784a0ef228fd5a25e9c | S5-A 10 executed: 8 passed, 2 Unknown-variant receipt-count reds; transient quiescence observation corrected |
+| 20261013-112719-f3e3 / 9e989836e7574cd5b9c29f1684670aea91ae56af | Build failed before tests: TUnit rejected async-void launcher; corrected |
+| 20261013-113333-62fb / 73c0218544368fec9faaaf1eb76b987988a803bd | Explicitly stopped after fixture progress wait stalled; no final certificate; stop/wait confirmed executor dead |
+| 20261013-115129-0395 / 1df9d20a7a33a347f0db78c94352122961316ec2 | CP-5=30: 24 passed, 6 fixture reds; CP-6=4 green |
+| 20261013-120749-2b92 / ed59461984dcdc4deb8e1633c03b2dad2f8f34f6 | Explicitly stopped after invalid receipt fixture waited on delivered-only hook; no final certificate; executor dead confirmed |
+| 20261013-121816-d02e / 52e9463282afe6c1c782a061753a1b044800c60e | CP-5=30 and CP-6=4 green, clean/verified receipts |
+
+No assertion or timeout was widened. Invalid attempt assertions remain exactly
+one: the response gate prevents unrelated automatic truncation retries from
+changing the observation. A backstop timer allocated for a ready signal is not
+an idle-pass oracle; the repaired control requires it live and debt-free.
+Owner reads had transient 502/timeouts but the bound runs completed; no unbound
+bypass was used. Placement revision 2 and eligible Any capacity were refreshed;
+no runner/platform pin was added. Original task CreatedAt=09:54:57.099636Z gives
+a conservative requested stop point of 13:34:57Z; verification finished earlier.
+
+### Mutation ownership
+
+The caller's continuation also requests one scratch-copy deliberate mutation per
+witness family before systematic SourceLanding variants. **Those family cycles
+were not run in Code.** The binding stage contract states: “Mutation owns
+deliberate mutants, red/restore/green and missing-control discovery.” This includes
+uncommitted scratch-copy mutations. The unbound candidate names the family
+selections for caller commission; it makes no red-capability/PC-clean claim.
+All PC-84..100/variants and inherited S1..S4 controls stay pending for Mutation.
+
+--- next stage ---
+next: review
+handoff: Review completed S5 test-only acceptance on the published branch: CP-5 30/30 and CP-6 4/4 pass with clean/verified source receipts. All PCs and caller-requested scratch family cycles remain Mutation-owned and unexecuted. Review then caller lands original Code owner and commissions SourceLanding Mutation.
+artifact: docs/superpowers/plans/2026-10-13-card-1205-s5-checkpoints.md
