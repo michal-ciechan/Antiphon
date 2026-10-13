@@ -1100,3 +1100,27 @@ not “PCs specified.” No green runtime claim is made by this document.
 next: code
 handoff: Start S1 only: implement the two barrier-driven reproduction methods and card-specific HTTP/real-hub fixture; commit/push before CP-1. Require the exact missing-end baseline red plus green grace control, then sequential S2-S5 with this frozen checkpoint roster. Recheck collision scopes; post-land PCs stay paused.
 artifact: docs/superpowers/plans/2026-10-12-card-1205-test-design.md
+
+## S3 repair F1 — retained transaction-fence witnesses (2026-10-13)
+
+Review 6c3dfed9 demonstrated one old-generation end persisted after final
+validation. The retained first row failed on unchanged 742e3404 production in
+commit 84820cacb9e4fd64fb3635614a559ae5a934f9a8: expected end count 0, actual 1,
+ShouldAssertException; executed 1, failed 1, no fixture/build error.
+The repair checkpoint plan owns the explicit Final S3 selection: no Unit lane,
+CP-1=2, CP-2=211, ADJ-1=33, CP-3=74 (original 62 plus 12 below).
+All filters retain tree-node wildcards. No sleeps, relaxed assertions or retries.
+
+| ID | Exact tree-node filter | Rows | Witness |
+|---|---|---:|---|
+| V-F1 | `/*/Antiphon.Tests.Application/WorkingTranscriptRecoveryTests*/C1205_Generation_changed_after_validation_must_not_append_old_end*` | 1 | Hold identity read after final validation; lifecycle generation update commits first; zero end/added rows, Unknown, cache still Working/count 1. |
+| V-F2 | `/*/Antiphon.Tests.Application/WorkingTranscriptRecoveryTests*/C1205_Late_precondition_change_rejects_without_publication*` | 4 | Generation update during transaction before fence lock; owner, terminal status and frontier updates after validation; zero stale end/added rows, unchanged publication, exactly one Warning. |
+| V-F3 | `/*/Antiphon.Tests.Application/WorkingTranscriptRecoveryTests*/C1205_Generation_changes_before_validation_are_rejected*` | 1 | HTTP barrier; lifecycle update before final validation; Unknown, zero end/added rows, Working retained. |
+| V-F4 | `/*/Antiphon.Tests.Application/WorkingTranscriptRecoveryTests*/C1205_Unchanged_generation_publishes_only_committed_rows_once*` | 2 | Both cache modes; held save, warmed reader waits, SQL end absent before save; reader sees persisted end and idle publication; replay adds zero. |
+| V-F5 | `/*/Antiphon.Tests.Application/WorkingTranscriptRecoveryTests*/C1205_Concurrent_recoveries_commit_one_end_and_converge*` | 2 | Both pulls held after capturing same frontier; one idle commit and one Unknown, total additions/end count one; next probe converges idle. |
+| V-F6 | `/*/Antiphon.Tests.Application/WorkingTranscriptRecoveryTests*/C1205_Recovery_commit_fences_lifecycle_writer_then_allows_new_generation*` | 2 | Both cache modes; held save, independent lifecycle SELECT FOR UPDATE NOWAIT fails 55P03; recovery commits, lifecycle update succeeds, old snapshot then Unknown. |
+
+The first row is a demonstrated baseline red. Other new compatibility controls
+are outcome/durable-state checks; their deliberate defect proofs remain pending
+for SourceLanding Mutation. The lifecycle writer uses a separate production-shaped
+DbContext update; these tests do not boot a native session or prove recipient delivery.
