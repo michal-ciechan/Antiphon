@@ -117,7 +117,7 @@ public class RolePolicyToolBundleTests
         policy.Values.ShouldAllBe(p => p.Bundles.Count == 0);
     }
 
-    // V-5b. Mutation: property renamed (BundleKeys) -> Bundles empty, red.
+    // V-5b. Mutation: [ConfigurationKeyName("BundleKeys")] on RolePolicyEntry.Bundles (PC-6).
     [Test]
     public void bundles_bind_from_configuration_per_role_without_disturbing_the_rest()
     {
