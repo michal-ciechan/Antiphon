@@ -489,6 +489,17 @@ public sealed partial class CompletedCardWorkspaceRemovalTests
             Held(await occupied.Remove(), "set_aside_occupied");
             File.ReadAllText(Path.Combine(aside, "foreign")).ShouldBe("foreign sibling"); occupied.Preserved();
         }
+        await using (var stale = new RemovalRig())
+        {
+            stale.Hook("BeforeMutationForTest", (Action<string>)(step => { if (step == "unregister") throw new IOException("cut"); }));
+            Held(await stale.Remove(), "removal_interrupted");
+            var aside = stale.Journal.Read()!.Single().SetAsidePath!;
+            CompletedCardRunnerFixture.Git(stale.Fixture.Origin, "update-ref", "-d", "refs/heads/main");
+            stale.Hook("BeforeMutationForTest", (Action<string>)(_ => { }));
+            Held(await stale.Remove(), "stale_preservation_proof");
+            File.ReadAllText(Path.Combine(aside, "source")).ShouldBe("source");
+            Directory.Exists(stale.Fixture.Binding.GitDirectory).ShouldBeTrue();
+        }
         await using var r = new RemovalRig(); var f = r.Fixture;
         r.Hook("BeforeMutationForTest", (Action<string>)(step => { if (step == "unregister") throw new IOException("cut after rename"); }));
         Held(await r.Remove(), "removal_interrupted"); Directory.CreateDirectory(f.Checkout);
