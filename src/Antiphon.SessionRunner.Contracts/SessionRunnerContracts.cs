@@ -144,6 +144,7 @@ public static class RunnerCapabilityFeatures
     public const string TerminalSeatReleaseV1 = "terminalSeatReleaseV1";
     public const string TerminalSeatDeliveryEvidenceV1 = "terminalSeatDeliveryEvidenceV1";
 
+    public const string WorkspaceCardBranchV1 = "workspaceCardBranchV1";
     public const string WorkspacePublishV1 = "workspacePublishV1";
     public const string WorkspaceParkV1 = "workspaceParkV1";
     public const string WorkspaceRepositoryIdentityV1 = "workspaceRepositoryIdentityV1";

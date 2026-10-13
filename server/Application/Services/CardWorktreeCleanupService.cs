@@ -1,3 +1,4 @@
+using Antiphon.SessionRunner.Contracts;
 using System.Security.Cryptography;
 using System.Text;
 using Antiphon.Server.Application.Dtos;
@@ -189,7 +190,7 @@ public sealed class CardWorktreeCleanupService(AppDbContext db, TimeProvider clo
         if (task.Workspace != WorkspaceMode.Worktree) return "shared_or_borrowed_workspace";
         if (string.IsNullOrWhiteSpace(task.RepoPath) || string.IsNullOrWhiteSpace(path)) return "identity_unknown";
         var shortId = task.Id.ToString("N")[..8];
-        if (Path.GetFileName(path) != "card-task-" + shortId || branch != "refs/heads/feat/card-task-" + shortId)
+        if (Path.GetFileName(path) != "card-task-" + shortId || !DelegateBranchName.IsOwned(branch, task.Id))
             return "ordinary_owner_required";
         if (WorkspaceReservationKey.PathsEqual(path, task.RepoPath)
             || managedRoot is not null && !WorkspaceReservationKey.PathsEqual(Path.GetDirectoryName(path) ?? "", managedRoot))

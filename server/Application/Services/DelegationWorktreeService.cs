@@ -1,3 +1,4 @@
+using Antiphon.SessionRunner.Contracts;
 using System.Diagnostics;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
@@ -34,6 +35,8 @@ public sealed class DelegationWorktreeService
     private readonly GitSettings? _gitSettings;
     private readonly AppDbContext? _db;
     private readonly IVerificationWorkspaceDirectory? _verificationWorkspaces;
+    private readonly ISessionRunnerDirectory? _runners;
+    private readonly DelegationSettings? _delegation;
 
     public DelegationWorktreeService(
         IWorktreeManager worktrees,
@@ -45,9 +48,12 @@ public sealed class DelegationWorktreeService
         IOptions<GitSettings>? gitSettings = null,
         AppDbContext? db = null,
         GatedCommitService? gatedCommit = null,
-        IVerificationWorkspaceDirectory? verificationWorkspaces = null)
+        IVerificationWorkspaceDirectory? verificationWorkspaces = null,
+        ISessionRunnerDirectory? runners = null, IOptions<DelegationSettings>? delegationSettings = null)
     {
         _verificationWorkspaces = verificationWorkspaces;
+        _runners = runners;
+        _delegation = delegationSettings?.Value;
         _leases = leases;
         _sourceLanding = sourceLanding;
         _landingGit = landingGit;
@@ -277,6 +283,50 @@ public sealed class DelegationWorktreeService
         && (DelegationWorkspaceResolver.IsWithinRoot(left, right)
             || DelegationWorkspaceResolver.IsWithinRoot(right, left));
 
+    private async Task<string> CardBranchAsync(AgentTask task, CancellationToken ct)
+    {
+        var stage = task.Kind == AgentTaskKind.Orchestrator ? "orch"
+            : Enum.IsDefined(task.Role) ? task.Role.ToString().ToLowerInvariant() : null;
+        var identifier = _db is not null && task.CardId is Guid cardId
+            ? await _db.Cards.AsNoTracking().Where(c => c.Id == cardId).Select(c => c.Identifier).SingleOrDefaultAsync(ct)
+            : null;
+        return DelegateBranchName.Build(task.Id, identifier, stage);
+    }
+
+    internal async Task<string> MintBranchAsync(AgentTask task, CancellationToken ct)
+    {
+        var legacy = DelegateBranchName.Legacy(task.Id);
+        if (_delegation?.CardBranchNames != true || task.SourceLandingOperationId is not null) return legacy;
+        if (task.RunnerId is not null)
+        {
+            if (_runners is null) return legacy;
+            try
+            {
+                var descriptor = await _runners.DescribeAsync(task.RunnerId, ct);
+                if (descriptor?.Capabilities?.Features?.Contains(RunnerCapabilityFeatures.WorkspaceCardBranchV1, StringComparer.Ordinal) != true)
+                    return legacy;
+                var liveCapabilities = await _runners.Resolve(task.RunnerId).GetCapabilitiesAsync(ct);
+                if (liveCapabilities?.Features?.Contains(RunnerCapabilityFeatures.WorkspaceCardBranchV1, StringComparer.Ordinal) != true)
+                    return legacy;
+            }
+            catch (Exception ex) when (!ct.IsCancellationRequested && ex is not OutOfMemoryException)
+            {
+                _logger.LogWarning("Runner branch capability unavailable for task {TaskId}; using legacy name", task.Id);
+                return legacy;
+            }
+        }
+        return await CardBranchAsync(task, ct);
+    }
+
+    internal async Task<bool> HasKeptTaskBranchAsync(AgentTask task, CancellationToken ct)
+    {
+        if (task.RepoPath is null) return false;
+        if (task.WorktreeBranch is not null) return await KeptBranchExistsAsync(task.RepoPath, task.WorktreeBranch, ct);
+        if (await KeptBranchExistsAsync(task.RepoPath, DelegateBranchName.Legacy(task.Id), ct)) return true;
+        var cardBranch = await CardBranchAsync(task, ct);
+        return cardBranch != DelegateBranchName.Legacy(task.Id) && await KeptBranchExistsAsync(task.RepoPath, cardBranch, ct);
+    }
+
     public sealed record KeptBranchInfo(string Tip, int CommitsAbove, string Subject);
 
     /// <summary>Create or reuse the task's managed checkout; never infer publication here.</summary>
@@ -365,7 +415,8 @@ public sealed class DelegationWorktreeService
         Dtos.WorktreeInfo info;
         try
         {
-            info = await _worktrees.CreateAsync(repoPath, identifier, baseRef, lease, ct);
+            var branch = await MintBranchAsync(task, ct);
+            info = await _worktrees.CreateAsync(repoPath, identifier, baseRef, lease, branch, ct);
         }
         catch (ConflictException ex)
         {

@@ -198,7 +198,15 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
                 expectation.SourceFullRef);
         }
 
+        if (!DelegateBranchName.TryParse(branch, out var selected) || selected.ShortId != task.Id.ToString("N")[..8])
+            throw new ConflictException("delegate_branch_identity_mismatch");
         var client = Remote(task.RunnerId);
+        if (selected.CardNumber is not null)
+        {
+            var recipient = await client.GetCapabilitiesAsync(ct);
+            if (recipient?.Features?.Contains(RunnerCapabilityFeatures.WorkspaceCardBranchV1, StringComparer.Ordinal) != true)
+                throw new ConflictException("runner_card_branch_unsupported");
+        }
         var response = await client.MirrorWorkspaceAsync(
             new PhoneHomeWorkspaceMirrorRequest(branch, sentSha, MirrorName(task.Id), sentRepository, binding), ct);
         return new RemoteWorkspaceMirrorResult(response.Path, response.Binding, expectation);
@@ -330,8 +338,11 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
         && task.Role != AgentTaskRole.Mutation
         && task.SourceLandingOperationId is null;
 
-    /// <summary>CARD-0657 D-2. The only branch a task may be synchronized from, derived from its id.</summary>
-    public static string OwnedBranch(Guid taskId) => "feat/card-task-" + taskId.ToString("N")[..8];
+    public static string OwnedBranch(Guid taskId) => DelegateBranchName.Legacy(taskId);
+
+    public static string? OwnedBranch(AgentTask task) =>
+        DelegateBranchName.TryParse(task.WorktreeBranch, out var parsed)
+        && parsed.ShortId == task.Id.ToString("N")[..8] ? parsed.Branch : null;
 
     /// <summary>
     /// CARD-0657 D-1..D-3. Settlement sync: confirm the canonical desktop worktree at the commit the
@@ -396,9 +407,9 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
         if (!IsEligible(task))
             return RemoteSettlementSyncResult.NotApplicable;
 
-        var branch = OwnedBranch(task.Id);
+        var branch = OwnedBranch(task);
         var fullRef = "refs/heads/" + branch;
-        if (!string.Equals(task.WorktreeBranch, branch, StringComparison.Ordinal))
+        if (branch is null)
             return Outcome(RemoteSettlementSyncState.Refused, RemoteSettlementSyncReasons.BranchMismatch, fullRef);
         if (_progressGit is null || _leases is null)
             return Outcome(RemoteSettlementSyncState.Unavailable, RemoteSettlementSyncReasons.DependencyUnavailable, fullRef);

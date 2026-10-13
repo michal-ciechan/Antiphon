@@ -4,7 +4,7 @@ namespace Antiphon.Server.Domain.Entities;
 
 /// <summary>
 /// CARD-0147 S3: one uncleared (or recently cleared) mismatch between git's
-/// <c>feat/card-task-*</c> registrations and <see cref="AgentTask"/> rows.
+/// delegate branch (legacy or card/stage form) registrations and <see cref="AgentTask"/> rows.
 /// Upserted by the health sweep; create-time concurrency 409 reads uncleared rows
 /// for occupant <c>stuck:</c> labels. Never auto-healed.
 /// </summary>

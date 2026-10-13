@@ -8,7 +8,7 @@ using Microsoft.Extensions.Options;
 namespace Antiphon.Server.Infrastructure.Git;
 
 /// <summary>
-/// CARD-0147 S3: periodic detection-only sweep of <c>feat/card-task-*</c> worktrees.
+/// CARD-0147 S3: periodic detection-only sweep of delegate (legacy or card/stage) worktrees.
 /// Never prune, heal, cancel, or re-dispatch.
 /// </summary>
 public sealed class WorktreeHealthHostedService : BackgroundService
@@ -54,7 +54,7 @@ public sealed class WorktreeHealthHostedService : BackgroundService
                 if (report.FindingCount > 0)
                 {
                     _logger.LogWarning(
-                        "Worktree health sweep found {Count} uncleared feat/card-task-* mismatches (detection only; nothing pruned)",
+                        "Worktree health sweep found {Count} uncleared delegate worktree mismatches (detection only; nothing pruned)",
                         report.FindingCount);
                 }
             }

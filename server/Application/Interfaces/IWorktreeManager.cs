@@ -15,6 +15,16 @@ public interface IWorktreeManager
     Task<WorktreeInfo> CreateAsync(string repoPath, string cardId, string baseRef, RepositoryLease lease, CancellationToken ct)
         => CreateAsync(repoPath, cardId, baseRef, ct);
 
+    Task<WorktreeInfo> CreateAsync(string repoPath, string cardId, string baseRef, string? branch, CancellationToken ct)
+        => branch is null || branch == "feat/card-" + cardId
+            ? CreateAsync(repoPath, cardId, baseRef, ct)
+            : throw new NotSupportedException("Explicit delegate branches are unavailable.");
+
+    Task<WorktreeInfo> CreateAsync(string repoPath, string cardId, string baseRef, RepositoryLease lease, string? branch, CancellationToken ct)
+        => branch is null || branch == "feat/card-" + cardId
+            ? CreateAsync(repoPath, cardId, baseRef, lease, ct)
+            : throw new NotSupportedException("Explicit delegate branches are unavailable.");
+
     Task<IReadOnlyList<WorktreeInfo>> ListAsync(string repoPath, CancellationToken ct);
 
     Task RemoveAsync(string repoPath, string worktreePath, CancellationToken ct);
@@ -32,7 +42,7 @@ public interface IWorktreeManager
     Task<int> PruneStaleAsync(CancellationToken ct);
 
     /// <summary>
-    /// CARD-0147 S3: porcelain plus <c>git branch --list feat/card-task-*</c> for one repo.
+    /// CARD-0147 S3: porcelain plus <c>git branch --list feat/card-*</c>, filtered by the shared delegate parser for one repo.
     /// Default empty so existing test fakes compile unchanged. Detection only — never prune.
     /// </summary>
     Task<IReadOnlyList<DelegateWorktreeScanEntry>> ScanDelegateWorktreesAsync(
@@ -48,7 +58,7 @@ public interface IWorktreeManager
 
     /// <summary>
     /// CARD-0328 S3: registered worktrees under <c>Git:WorktreeBasePath</c>, leftover
-    /// <c>card-task-*</c> directories, and local <c>feat/card-task-*</c> branches.
+    /// <c>card-task-*</c> directories, and local delegate branch (legacy or card/stage form) branches.
     /// <paramref name="extraRepoPaths"/> are task <c>RepoPath</c> values the metadata may miss.
     /// Default empty so existing test fakes compile unchanged.
     /// </summary>

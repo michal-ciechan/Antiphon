@@ -1,3 +1,4 @@
+using Antiphon.SessionRunner.Contracts;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Settings;
@@ -11,7 +12,7 @@ using Microsoft.Extensions.Options;
 namespace Antiphon.Server.Application.Services;
 
 /// <summary>
-/// CARD-0147 S3: cross-reference git's <c>feat/card-task-*</c> registrations against
+/// CARD-0147 S3: cross-reference git's delegate (legacy or card/stage) registrations against
 /// <see cref="AgentTask"/> rows. Detection only — never prune, heal, cancel, or re-dispatch.
 /// </summary>
 public sealed class WorktreeHealthService
@@ -262,14 +263,8 @@ public sealed class WorktreeHealthService
             finding.FirstSeenAt,
             finding.LastSeenAt);
 
-    private static string? TryShortFromBranch(string branch)
-    {
-        const string prefix = "feat/card-task-";
-        if (!branch.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
-            return null;
-        var rest = branch[prefix.Length..];
-        return rest.Length == 8 ? rest : null;
-    }
+    private static string? TryShortFromBranch(string branch) =>
+        DelegateBranchName.TryParse(branch, out var parsed) ? parsed.ShortId : null;
 
     private static string Truncate(string value, int max) =>
         value.Length <= max ? value : value[..max];
