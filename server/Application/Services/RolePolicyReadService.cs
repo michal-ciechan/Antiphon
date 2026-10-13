@@ -32,6 +32,9 @@ public sealed class RolePolicyReadService
     /// <summary>
     /// One row per <see cref="ComplexityRoutingService.RoutableRoles"/> entry. Card pins are
     /// skipped (RolePolicyReadServiceTests.Compose_effective_prefers_the_first_stage_pin_candidate_and_excludes_card_pins).
+    /// Unsupported or undefined kinds and levels never reach the alias map or the serializer
+    /// (RolePolicyReadServiceTests.Compose_withholds_the_target_for_unsupported_or_undefined_values,
+    /// RolePolicyEndpointTests.Get_serialises_every_row_when_one_role_has_unsupported_values).
     /// </summary>
     public static RolePolicyDto Compose(DelegationSettings settings, IReadOnlyList<RoutingPinDto> pins)
     {
@@ -41,7 +44,7 @@ public sealed class RolePolicyReadService
                 role,
                 pins.FirstOrDefault(p => p.CardId is null && p.Role == role)))
             .ToList();
-        return new RolePolicyDto(settings.DefaultLevel, settings.DefaultTimeoutMinutes, rows);
+        return new RolePolicyDto(Writable(settings.DefaultLevel), settings.DefaultTimeoutMinutes, rows);
     }
 
     private static RolePolicyRowDto Row(DelegationSettings settings, AgentTaskRole role, RoutingPinDto? stagePin)
@@ -49,37 +52,42 @@ public sealed class RolePolicyReadService
         var configured = settings.RolePolicy.TryGetValue(role.ToString(), out var entry) && entry is not null;
         var level = configured ? entry!.Level : settings.DefaultLevel;
         var kind = configured ? entry!.Kind : null;
-        var alias = ModelLevelAliases.For(kind ?? AgentKind.ClaudeCode, level);
+        var supported = Supported(kind) && Enum.IsDefined(level);
+        var alias = supported ? ModelLevelAliases.For(kind ?? AgentKind.ClaudeCode, level) : null;
+        var escalateTo = configured ? entry!.EscalateTo : null;
         return new RolePolicyRowDto(
             role,
             configured,
-            level,
-            kind,
-            alias,
-            configured ? entry!.EscalateTo : null,
+            Writable(level),
+            kind is { } k && Enum.IsDefined(k) ? k : null,
+            alias ?? NoAlias,
+            escalateTo is { } e && Enum.IsDefined(e) ? e : null,
             configured ? entry!.EscalateAfterMinutes : null,
             configured ? entry!.TimeoutMinutes : settings.DefaultTimeoutMinutes,
-            stagePin,
+            stagePin is null ? null : Writable(stagePin),
             Effective(stagePin, kind, level, alias));
     }
 
     /// <summary>
     /// The pin's head candidate fills from the policy where it is partial; a pin with no candidate
-    /// withholds the target (RolePolicyReadServiceTests.Compose_fills_a_missing_pin_level_from_the_policy,
-    /// Compose_fills_a_missing_pin_kind_from_the_policy, Compose_withholds_the_target_for_a_candidate_free_pin).
+    /// or an unsupported head withholds the target (RolePolicyReadServiceTests.Compose_fills_a_missing_pin_level_from_the_policy,
+    /// Compose_fills_a_missing_pin_kind_from_the_policy, Compose_withholds_the_target_for_a_candidate_free_pin,
+    /// Compose_withholds_the_target_for_unsupported_or_undefined_values).
     /// </summary>
     private static RolePolicyEffectiveDto Effective(
-        RoutingPinDto? stagePin, AgentKind? kind, AgentModelLevel level, string alias)
+        RoutingPinDto? stagePin, AgentKind? kind, AgentModelLevel level, string? alias)
     {
         if (stagePin is null)
-            return new RolePolicyEffectiveDto(SourceRolePolicy, kind ?? AgentKind.ClaudeCode, level, alias, null);
+            return alias is null
+                ? new RolePolicyEffectiveDto(SourceRolePolicy, null, null, null, null)
+                : new RolePolicyEffectiveDto(SourceRolePolicy, kind ?? AgentKind.ClaudeCode, level, alias, null);
 
         var head = stagePin.Candidates is { Count: > 0 } candidates ? candidates[0] : null;
-        if (head is null)
+        var effectiveKind = head?.AgentKind ?? kind ?? AgentKind.ClaudeCode;
+        var effectiveLevel = head?.ModelLevel ?? level;
+        if (head is null || !Supported(effectiveKind) || !Enum.IsDefined(effectiveLevel))
             return new RolePolicyEffectiveDto(SourcePin, null, null, null, stagePin.Strength);
 
-        var effectiveKind = head.AgentKind ?? kind ?? AgentKind.ClaudeCode;
-        var effectiveLevel = head.ModelLevel ?? level;
         return new RolePolicyEffectiveDto(
             SourcePin,
             effectiveKind,
@@ -87,4 +95,47 @@ public sealed class RolePolicyReadService
             ModelLevelAliases.For(effectiveKind, effectiveLevel),
             stagePin.Strength);
     }
+
+    /// <summary>A row whose policy kind or level is unsupported names no alias.</summary>
+    public const string NoAlias = "";
+
+    /// <summary>Null (ClaudeCode) or a kind delegation launches (<see cref="AgentTaskService.DelegatableKinds"/>).</summary>
+    private static bool Supported(AgentKind? kind) =>
+        kind is null || AgentTaskService.DelegatableKinds.Contains(kind.Value);
+
+    /// <summary>The non-null level fields cannot carry an undefined value; it is written as High.</summary>
+    private static AgentModelLevel Writable(AgentModelLevel level) =>
+        Enum.IsDefined(level) ? level : AgentModelLevel.High;
+
+    /// <summary>
+    /// Undefined kinds and levels in the pin become null, and an alias beside an unsupported kind or
+    /// level is dropped (RolePolicyReadServiceTests.Compose_withholds_the_target_for_unsupported_or_undefined_values
+    /// rows pin-head-kind-Raw, pin-head-kind-999, pin-head-level-999).
+    /// </summary>
+    private static RoutingPinDto Writable(RoutingPinDto pin)
+    {
+        var candidates = pin.Candidates?.Select(c => c with
+        {
+            AgentKind = Defined(c.AgentKind),
+            ModelLevel = Defined(c.ModelLevel),
+            Alias = Usable(c.AgentKind, c.ModelLevel) ? c.Alias : null,
+        }).ToList();
+        var unchanged = Usable(pin.AgentKind, pin.ModelLevel)
+            && (pin.Candidates is null || pin.Candidates.All(c => Usable(c.AgentKind, c.ModelLevel)));
+        return unchanged
+            ? pin
+            : pin with
+            {
+                AgentKind = Defined(pin.AgentKind),
+                ModelLevel = Defined(pin.ModelLevel),
+                ModelAlias = Usable(pin.AgentKind, pin.ModelLevel) ? pin.ModelAlias : null,
+                Candidates = candidates,
+            };
+    }
+
+    private static bool Usable(AgentKind? kind, AgentModelLevel? level) =>
+        Supported(kind) && (level is null || Enum.IsDefined(level.Value));
+
+    private static T? Defined<T>(T? value) where T : struct, Enum =>
+        value is { } v && Enum.IsDefined(v) ? v : null;
 }
