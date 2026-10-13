@@ -382,3 +382,14 @@ Static document checks confirmed 14 correctly shaped checkpoint rows, the
 21 runner and 12 mirror methods. This is roster validation, not executed tests.
 Publication and merge-tree results belong in the final task report so this
 artifact does not claim checks before they happen. Post-land Mutation was NOT run.
+
+## S4 fail-closed repair (2026-10-13)
+
+The repair selection and hand-written HOLD table live in
+[the S4 repair verification](2026-10-13-card-1032-s4-repair-verification.md).
+C1032_InspectionHoldShapes covers index flags, bare repositories, admin/common
+locks and unfinished-operation markers; C1032_InspectionReadOnlyGitCalls checks
+read-only arguments, optional-lock suppression and captured file preservation.
+The frozen TestDesign CP-6 prefix includes these additional 43 results.
+PC-561..572 and their named variants remain pending for SourceLanding Mutation.
+S5–S8 and native Windows acceptance remain deferred; S4 adds no removal caller.
