@@ -22,7 +22,7 @@ Branch feat/card-task-ac6333be, runner mirror /work/worktrees/task-ac6333be. It 
 ## Other text removed or shrunk
 - **Editor.**
   - `rebaseDraft` and `adoptServer` docs: dropped "every", "never re-sends" and "the same document again only refreshes base (occupancy)", which had no test. Each doc is now one sentence plus its test pointers.
-    - *Correction (Review 7826b06f F1, Code task f67f2811):* the `adoptServer` doc still said edits always rebase and show the banner; an unchanged document does neither. Corrected in the editor and in task-87938db0.md.
+    - *Correction (Review 7826b06f F1, Code task f67f2811):* the `adoptServer` doc still said edits always rebase and show the banner. An unchanged document preserves the draft and any existing banner; the conflict reload can force the banner. Corrected in the editor and in task-87938db0.md.
   - `base` comment: dropped "treats as current".
   - Pending-gate comment: dropped "no edit can be made"; the gate list and its S2F3 tests remain.
   - Conflict reload comment: dropped "current"; it now points at `V12 conflict-*`.
