@@ -127,14 +127,16 @@ Test classes and methods are exact; expected outcomes are hand-written below, ne
 
 **S1 — `tests/Antiphon.Tests/Application/RolePolicyToolBundleDispatchTests.cs` (I/H, new; 4 methods / 4 executions).**
 Fixture: `AgentTaskAgentKindTests` siblings (`[Category("Integration")]`, `[NotInParallel("AgentQueue")]`, `CreateContext()`,
-`CreateService(db, configure)`, `TempWorkspace`, `ManualCaller`) for V-3a/V-4b; a file-local
-`sealed class RolePolicyToolBundleApiWebAppFactory : AntiphonWebAppFactory` overriding `ConfigureWebHost` to call the base
-then add `["Delegation:RolePolicy:Review:Bundles:0"] = "tool-does-not-exist"` for V-3b; the `PinnedProfileLaunchSpecTests.BuildProvider`
+`CreateService(db, configure)`, `TempWorkspace`, `ManualCaller`) for V-3a/V-4b; for V-3b a file-local Kestrel host
+modelled on `RunnerDefaultTests.DefaultsHost` (`tests/Antiphon.Tests/Application/RunnerDefaultTests.cs:692-752`: real
+`ExceptionMiddleware`, real `AgentTaskService`, the same `MapPost("/api/agent-tasks")` shape returning `Results.Created`,
+`DelegationSettings { AllowedRoots = [repo] }` built in code, here with `RolePolicy["Review"].Bundles = ["tool-does-not-exist"]`);
+the `PinnedProfileLaunchSpecTests.BuildProvider`
 shape (own `DelegationSettings` with `RolePolicy = { ["Review"] = new() { Level = Frontier, Bundles = ["tool-does-not-exist"] } }`,
 `AgentTaskDispatcher.TickAsync`) for V-3c.
 
-- V-3a: `create_refuses_a_review_whose_role_names_an_unknown_tool_bundle_and_writes_nothing` | I | `CreateService(db, s => s.RolePolicy["Review"].Bundles = ["tool-does-not-exist"])`; `CreateAsync(new CreateAgentTaskRequest(Goal: "review", Role: Review, Workspace: ReadOnly), ManualCaller(ws), ct)` throws `ValidationException` with `Code == "stage_tool_bundle_unknown"`; afterwards `db.AgentTasks.Count() == 0` and `db.AgentSessions.Count() == 0`; a second call with Role Docs on the same service succeeds (one-flip: only the configured role is refused). Mutation: `CreateAsync` no longer calls the resolver -> no throw, red.
-- V-3b: `post_agent_tasks_returns_422_stage_tool_bundle_unknown_as_problem_details` | H | `POST /api/agent-tasks` body `{ "goal": "review", "role": "Review", "workspace": "ReadOnly", "workingDirectory": <factory workspace> }` -> status 422, `Content-Type: application/problem+json`, `code == "stage_tool_bundle_unknown"`, `status == 422`, `errors.RolePolicy[0]` contains `"Review"` and `"tool-does-not-exist"`; the same body with `"role": "Docs"` -> 201. Mutation: same as V-3a (the HTTP shape is the existing middleware, R-6) -> 201 for Review, red.
+- V-3a: `create_refuses_a_review_whose_role_names_an_unknown_tool_bundle_and_writes_nothing` | I | `CreateService(db, s => s.RolePolicy["Review"].Bundles = ["tool-does-not-exist"])`; `CreateAsync(new CreateAgentTaskRequest(Goal: "review", Role: Review, Workspace: Shared), ManualCaller(ws), ct)` (the `a_task_created_without_a_kind_runs_on_ClaudeCode` shape) throws `ValidationException` with `Code == "stage_tool_bundle_unknown"`; afterwards `db.AgentTasks.Count() == 0` and `db.AgentSessions.Count() == 0`; a second call with Role Docs on the same service succeeds (one-flip: only the configured role is refused). Mutation: `CreateAsync` no longer calls the resolver -> no throw, red.
+- V-3b: `post_agent_tasks_returns_422_stage_tool_bundle_unknown_as_problem_details` | H | `PostAsJsonAsync("/api/agent-tasks", new CreateAgentTaskRequest("review", Role: Review, Workspace: Worktree, WorkingDirectory: host.RepoRoot), Json)` (the `RunnerDefaultTests` request shape) -> status 422, `Content-Type: application/problem+json`, `code == "stage_tool_bundle_unknown"`, `status == 422`, `errors.RolePolicy[0]` contains `"Review"` and `"tool-does-not-exist"`; the same request with `Role: Docs` -> 201 (`AgentTaskCreatedDto`). Mutation: same as V-3a (the HTTP shape is the existing middleware, R-6) -> 201 for Review, red.
 - V-3c: `the_dispatcher_refuses_a_queued_review_before_the_claim_and_launches_nothing` | I | seed a Queued `Worker/Review` task directly (as a task queued before the configuration changed), `TickAsync` -> no `AgentSession` row for the task, no launch enqueued on the queue, and the task's `AgentTaskEvents` contain a `Failed` (or, if the existing pre-claim refusal path records differently, the event the Code names with its reason) whose `Detail` contains `stage_tool_bundle_unknown`, `Review` and `tool-does-not-exist`; `task.Status` is not Dispatched. Mutation: the dispatcher's resolver call removed -> a session row exists, red.
 - V-4b: `create_refuses_a_known_key_without_the_tool_prefix` | I | `Bundles = ["stage-code"]` -> `ValidationException` `Code == "stage_tool_bundle_unknown"`, error text names `"stage-code"` and `"tool-"`. Mutation: resolver checks `Exists(key)` only -> no throw, red.
 
@@ -153,7 +155,7 @@ C1083 list in `InstructionBundleTests` are edited (R-1) without changing its cou
 **S2 — `tests/Antiphon.Tests/Application/RolePolicyToolBundleShippedTests.cs` (I, new; 3 methods / 3 executions).** Same
 fixtures as `RolePolicyToolBundleDispatchTests`, now with the real key.
 
-- V-6f: `create_accepts_a_review_whose_role_lists_the_shipped_tool_bundle` | I | `Bundles = ["tool-open-code-review"]`, `CreateAsync(Review, ReadOnly)` -> a Queued task row, no exception; the same with `["tool-open-code-review","tool-open-code-review"]` (duplicate in config) also accepted (dedupe is the composer's). Mutation: resolver treats every key as unknown -> throws, red (the positive control of the refusal).
+- V-6f: `create_accepts_a_review_whose_role_lists_the_shipped_tool_bundle` | I | `Bundles = ["tool-open-code-review"]`, `CreateAsync(Review, Shared)` -> a Queued task row, no exception; the same with `["tool-open-code-review","tool-open-code-review"]` (duplicate in config) also accepted (dedupe is the composer's). Mutation: resolver treats every key as unknown -> throws, red (the positive control of the refusal).
 - V-6g: `a_review_launch_spec_carries_the_role_tool_bundle_once_after_the_basics` | I | `BuildProvider` settings `RolePolicy["Review"].Bundles = [key]`; seed a Queued `Worker/Review` ClaudeCode task; `TickAsync`; the enqueued `AgentLaunchSpec` args contain the `--append-system-prompt` value in which `[bundle:stage-review v` precedes `[bundle:delegate-basics v` precedes `[bundle:tool-open-code-review v`, the tool header appears exactly once, and the session row's `ComposedBundleStamp` contains `tool-open-code-review v`. Mutation: the `ComposeDelegateArgs` call site passes no role keys -> header absent, red.
 - V-11: `a_warm_grok_delegate_launched_without_the_role_tool_bundle_is_not_reused` | I | seed a Grok pool agent with a live session whose `GrokRulesReceiptJson` (`GrokRulesRefreshService.Receipt`) was computed from `Compose(ForDelegate(Worker, Review))` **without** the tool key; settings now list it for Review; `TickAsync` a Queued Grok Review task -> the task's `AgentSessionId` is **not** the warm session (SpawnFresh). Mutation: the reuse check at `AgentTaskDispatcher.cs:8054` composes without role keys -> warm session reused, red.
 
@@ -272,12 +274,14 @@ or the server-project restore fails with NU1605 before any row builds. Review re
 | CP-5 | S2 | `CP-4` | tool-bundle-dispatch | `/*/Antiphon.Tests.Application/RolePolicyToolBundleShippedTests/*` | V-6f, V-6g, V-11 | exactly 3 executed, 0 failed/skipped | 3 | 3 |
 | CP-6 | S2 | `CP-4` | advisory-settles-nothing | `/*/*/(AdvisoryTaskSettlementTests*)\|(TestClassificationPolicyTests*)/*` | V-7, R-4 (Slow registry) | exactly 26 executed (1 + 25), 0 failed/skipped | 26 | 4 |
 
-Red-first evidence (CARD-0585 stub rule): the S1 Code dispatch commits the four new test classes' S1 cases before the
-production change and runs CP-1 once red (expected 23 executed, 19 failed at compile-free assertions is not achievable
-because `roleBundleKeys` and `ResolveRoleToolBundles` do not exist yet; the red run therefore is the build failure naming the
-missing members, reported as such), then green; S2 runs CP-4 red by committing the test class before the bundle file
-(expected 5 executed, 5 failed at `All.ContainsKey`), then green. Counts in `Expect` are frozen; a zero-test result means the
-filter is wrong, never that the row passed.
+Red-first evidence (CARD-0585 stub rule, CARD-0097 `f379c149f` precedent): the S1 Code dispatch first commits the two new
+test classes together with declaration-only stubs (the `roleBundleKeys` parameter ignored, `IsToolBundleKey` returning
+false, the resolver returning the raw list, `Bundles` declared) and runs CP-1 once red: expected 23 executed, with V-1,
+V-2, V-3 (6 rows), V-3a, V-3b, V-3c, V-4b and V-5b failing at their named assertions, and V-1b, V-3x, V-4, V-5 passing
+(they hold on the stub too). Then it implements and runs CP-1 green; a compile failure is not a red run. S2 runs CP-4 red
+by committing `ToolOpenCodeReviewBundleTests` before the bundle file (expected 5 executed, 5 failed, the first at
+`All.ContainsKey`), then green. Counts in `Expect` are frozen; a zero-test result means the filter is wrong, never that
+the row passed.
 
 ### Cost
 
