@@ -50,7 +50,11 @@ public static class ReceiptJson
         });
         var strict = new JsonSerializerOptions(options)
         { RespectNullableAnnotations = true, TypeInfoResolver = resolver };
-        var value = JsonSerializer.Deserialize<T>(text, strict) ?? throw new JsonException("receipt-shape: empty object");
+        T value;
+        try { value = JsonSerializer.Deserialize<T>(text, strict) ?? throw new JsonException("receipt-shape: empty object"); }
+        catch (JsonException ex) when (ex.Path?.EndsWith(".id", StringComparison.OrdinalIgnoreCase) == true
+            || ex.Message.Contains("'id'", StringComparison.Ordinal))
+        { throw new JsonException("receipt-identity: invalid id at " + ex.Path, ex); }
         Validate(value);
         return value;
     }
@@ -86,6 +90,8 @@ public static class ReceiptJson
             if (property.SetMethod is null || property.GetIndexParameters().Length != 0) continue;
             var item = property.GetValue(value);
             var name = path + "." + property.Name;
+            if (property.Name == "Id" && (item is null || item is string identity && string.IsNullOrWhiteSpace(identity)))
+                throw new JsonException("receipt-identity: empty " + name);
             if (item is null)
             {
                 if (nullable.Create(property).ReadState == NullabilityState.NotNull)

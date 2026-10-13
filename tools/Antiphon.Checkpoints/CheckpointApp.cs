@@ -555,7 +555,7 @@ public static class CheckpointApp
         }
         catch
         {
-            // This starter has not published launch intent; only its exact run can be rolled back.
+            // This starter has not published launch intent; its partial run evidence remains in place.
             if (ContainedCleanup.SafeTree(runDirectory, 10000)) _ = runDirectory; // retain partial run evidence
             throw;
         }
@@ -565,7 +565,7 @@ public static class CheckpointApp
         try { (runtime.OwnershipWrite ?? RunOwnershipStore.Write)(runDirectory, ownership); }
         catch
         {
-            // Launch has not been invoked. Only this starter's exact partial run is removed.
+            // Launch has not been invoked. This starter's partial run evidence remains in place.
             if (ContainedCleanup.SafeAncestors(runDirectory) && ContainedCleanup.SafeTree(runDirectory, 10000))
                 _ = runDirectory; // retain partial run evidence
             throw;

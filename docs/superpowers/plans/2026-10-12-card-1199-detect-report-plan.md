@@ -6,7 +6,7 @@ S1: forged-ledger and missing-receipt regressions plus five recovered MSBuild sc
 
 ### Invariants
 
-- V-1: both entry points preserve the build's resulting user bytes, deleted paths, links, and index; no recovery or preservation claim. Every tampered path is listed with a manual command. Clean builds still execute.
+- V-1: both entry points leave the build's resulting user bytes, deleted paths, links, and index untouched during settlement; no source recovery or preservation claim. Every detected tampered path is listed with a manual command. Clean builds still execute.
 - V-2: existing stamps, output files/directories and linked components refuse before build; bytes unchanged. Build and stamp use fresh owned output.
 - V-3: negative receipt exists, binds the intended source/run/row and has exact invalid exit; missing receipt fails the test.
 - V-4: cleanup authority is the in-memory record of entries created by this process, with size/hash at creation; a disk ledger cannot authorize deletion. External compiler payloads and separate-invocation outputs require manual removal; extra files/directories, changed files and links refuse.
@@ -46,6 +46,8 @@ No deliberate mutants run by Code. All PCs/variants and missing-control discover
 ### Cost
 
 Ordinary floor 42 minutes plus implementation (41 original rows plus the one-minute master regression row). Authoritative task budget 75 minutes. No broad assembly or unbounded classes selected.
+
+The continuation sections below record historical source-qualified outcomes and obligations. Repair 13g is the current selection; earlier unresolved states and budgets describe their named historical sources.
 
 ### Historical repair 12c result (superseded; not repair 13 evidence)
 
@@ -98,3 +100,5 @@ CP-RED selects CP-17 against unchanged base production. Final selects CP-1..CP-1
 | PC-4 | `/*/*/CheckpointReceiptSafetyTests/receipt_row_and_build_identities_refuse_blank_without_writing` | row/build identity guard removal; state/report x empty/whitespace/null x each admitted receipt consumer; valid controls and no-write checks | pending method-scoped SourceLanding Mutation |
 
 V-1..V-6 and R-1/R-3/R-4 retain their full closed selection. R-2 native Windows qualification and every inherited/new PC remain pending. Post-land Mutation has not run. Restart: none.
+
+Tests-first proof at 8ce2bf272fb902f296d258c69fe8a87b98dcf749, unchanged c30634df6 production: CP-RED ran four argument cases and failed four. Empty and whitespace controls each caught success exits for invalid state/report row/build IDs; null caught two state wait exits 6 instead of 2. The valid control separately exposed a fixture-only row/line mismatch in validate (row_receipt_missing); it is not defect-red evidence. The repaired valid argument uses the existing CP-fixture ID so the receipt line agrees without weakening assertions. Final verification remains pending until the complete CP-1..CP-17 run.

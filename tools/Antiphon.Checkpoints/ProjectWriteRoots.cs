@@ -8,7 +8,7 @@ namespace Antiphon.Checkpoints;
 // graph and redirects a real dotnet build. This scan stays XML-only because invoking MSBuild here
 // would write intermediates before the defence-in-depth check. A relative bin-<id>/ beside each
 // statically visible project is the predicted write pair and is not a complete prediction of the build.
-// Stamps and dotnet run --no-build still use that relative token.
+// Build stamps and dotnet run --no-build use the shared layout's absolute owned output path.
 public static class ProjectWriteRoots
 {
     public const string ClosureRefusal = "project-closure";
