@@ -6,14 +6,21 @@ import type { RoutingPinCandidateDto } from '../../api/routingPins'
 /** CARD-0097 F-1: a stage pin whose head has no candidate keeps `source: pin` and withholds the target. */
 export const NO_PIN_CANDIDATE = 'no candidate (agent-only or forbid-only; see the pin)'
 
-function targetLabel(kind: AgentKind, level: AgentModelLevel, alias: string): string {
+function targetLabel(kind: AgentKind | 'unknown', level: AgentModelLevel, alias: string): string {
   return `${kind}/${level} (${alias})`
 }
 
-/** The RolePolicy default; a null kind is ClaudeCode (C097 V05). */
+/**
+ * The RolePolicy default; a null kind is ClaudeCode (C097 V05). A null level is shown as unknown
+ * (C097 V05 configured-level-null). An empty alias beside a null kind is the server's answer for an
+ * undefined kind (C097 V05 configured-kind-undefined).
+ */
 export function defaultLabel(row: RolePolicyRowDto): string {
-  if (!row.configured) return `not configured — DefaultLevel ${row.level} (${row.alias})`
-  return targetLabel(row.kind ?? 'ClaudeCode', row.level, row.alias)
+  if (!row.configured) {
+    return row.level ? `not configured — DefaultLevel ${row.level} (${row.alias})` : 'not configured — DefaultLevel unknown'
+  }
+  if (!row.level) return 'unknown'
+  return targetLabel(row.kind ?? (row.alias ? 'ClaudeCode' : 'unknown'), row.level, row.alias)
 }
 
 /**

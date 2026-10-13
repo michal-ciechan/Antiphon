@@ -32,9 +32,10 @@ public sealed class RolePolicyReadService
     /// <summary>
     /// One row per <see cref="ComplexityRoutingService.RoutableRoles"/> entry. Card pins are
     /// skipped (RolePolicyReadServiceTests.Compose_effective_prefers_the_first_stage_pin_candidate_and_excludes_card_pins).
-    /// Unsupported or undefined kinds and levels never reach the alias map or the serializer
-    /// (RolePolicyReadServiceTests.Compose_withholds_the_target_for_unsupported_or_undefined_values,
-    /// RolePolicyEndpointTests.Get_serialises_every_row_when_one_role_has_unsupported_values).
+    /// A defined but non-delegatable kind (Raw, OpenCode) stays in the row's kind field and gets no alias
+    /// (RolePolicyReadServiceTests.Compose_withholds_the_target_for_unsupported_or_undefined_values row policy-kind-Raw).
+    /// An undefined kind or level is written as null
+    /// (RolePolicyEndpointTests.Get_serialises_every_row_when_one_role_has_unsupported_values).
     /// </summary>
     public static RolePolicyDto Compose(DelegationSettings settings, IReadOnlyList<RoutingPinDto> pins)
     {
@@ -44,7 +45,7 @@ public sealed class RolePolicyReadService
                 role,
                 pins.FirstOrDefault(p => p.CardId is null && p.Role == role)))
             .ToList();
-        return new RolePolicyDto(Writable(settings.DefaultLevel), settings.DefaultTimeoutMinutes, rows);
+        return new RolePolicyDto(Defined<AgentModelLevel>(settings.DefaultLevel), settings.DefaultTimeoutMinutes, rows);
     }
 
     private static RolePolicyRowDto Row(DelegationSettings settings, AgentTaskRole role, RoutingPinDto? stagePin)
@@ -58,10 +59,10 @@ public sealed class RolePolicyReadService
         return new RolePolicyRowDto(
             role,
             configured,
-            Writable(level),
-            kind is { } k && Enum.IsDefined(k) ? k : null,
+            Defined<AgentModelLevel>(level),
+            Defined(kind),
             alias ?? NoAlias,
-            escalateTo is { } e && Enum.IsDefined(e) ? e : null,
+            Defined(escalateTo),
             configured ? entry!.EscalateAfterMinutes : null,
             configured ? entry!.TimeoutMinutes : settings.DefaultTimeoutMinutes,
             stagePin is null ? null : Writable(stagePin),
@@ -102,10 +103,6 @@ public sealed class RolePolicyReadService
     /// <summary>Null (ClaudeCode) or a kind delegation launches (<see cref="AgentTaskService.DelegatableKinds"/>).</summary>
     private static bool Supported(AgentKind? kind) =>
         kind is null || AgentTaskService.DelegatableKinds.Contains(kind.Value);
-
-    /// <summary>The non-null level fields cannot carry an undefined value; it is written as High.</summary>
-    private static AgentModelLevel Writable(AgentModelLevel level) =>
-        Enum.IsDefined(level) ? level : AgentModelLevel.High;
 
     /// <summary>
     /// Undefined kinds and levels in the pin become null, and an alias beside an unsupported kind or
