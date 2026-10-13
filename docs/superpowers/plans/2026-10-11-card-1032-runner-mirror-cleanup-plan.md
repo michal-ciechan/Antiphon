@@ -484,3 +484,29 @@ Windows ancestor pins use read-attributes access and read/write sharing while
 still denying delete/rename sharing; owned root/files keep the stricter content
 handle. This avoids requiring data-read access or write exclusion on unrelated
 volume/temp ancestors. All Async signatures keep cancellation last.
+
+## S7 repair round 2 — report-loss F1-F3
+
+Code owner / landing owner: 60025819-39c5-49e6-8951-817cdeeff5fc, continuing
+without rebase from cfd114a6d2b64a19cf3d4f8f62eda2ac03172a1c.
+The closed repair checkpoint table is
+[S7 repair verification](2026-10-13-card-1032-s7-repair-verification.md#checkpoints):
+CP-29..31 add exact wildcard method filters, CP-13/14 stay seven results each,
+CP-F2 includes the three full server classes (59), CP-F3 the four full runner
+classes (144), CP-RG1 the exact registry guard (1). No Unit lane in this repair.
+
+Producer and runner use CompletedCardWorkspaceReport.IsTaskReportPath. It keeps
+the existing case-insensitive eight-character report shape, including nonhex
+identifier characters. The producer cannot certify remote report bytes; the
+recipient holds recognized report files in fresh S5 no-follow inventories before
+prepare/rename/unregister/delete, including replay. The command has no manifest
+proving those files are in its admitted external artifacts. Other inventory
+changes retain S5 identity/hash refusal. This is a boundary check, not an atomic
+filesystem snapshot against arbitrary writers; native Windows qualifications
+remain pending. The signed-rebase comment now describes H-to-P authentication
+and P ancestry, while direct containment checks H and P.
+
+PC-591 recognition (case/shape variants), PC-592 late report (lower/upper/mixed)
+and PC-593 absent-report positive remain pending with every existing PC/variant.
+Mutation owns per-boundary missing-control discovery and deliberate mutants.
+Execution remains inert; no S8, deployment, restart or activation is commissioned.

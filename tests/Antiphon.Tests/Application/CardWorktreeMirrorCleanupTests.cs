@@ -112,6 +112,7 @@ public sealed class CardWorktreeMirrorCleanupTests
             (".antiphon/TaSk-dEaDbEeF.mD", true), (".ANTIPHON/task-deadbeef.md", true),
             ("./.antiphon/task-deadbeef.md", true), (".antiphon\\task-deadbeef.md", true),
             (".antiphon/task-zzzzzzzz.md", true), (".antiphon/task-ｄeadbeef.md", true),
+            (".antiphon/task-deadbeef.md\n", true), (".antiphon/task-deadbeef.md\r\n", false),
             (".antiphon/task-deadbeef.txt", false), (".antiphon/task-deadbeef.md/", false),
             (".antiphon/task-deadbeef.md/child", false), (".antiphon/task-deadbeef.md:stream", false),
             (".antiphon/task-deadbeef.md.", false), (".antiphon/task-deadbeef.md ", false),
@@ -120,9 +121,13 @@ public sealed class CardWorktreeMirrorCleanupTests
             (".antiphon/ｔask-deadbeef.md", false), (".antiphοn/task-deadbeef.md", false),
             ("nested/.antiphon/task-deadbeef.md", false), ("../.antiphon/task-deadbeef.md", false),
         })
+        {
             (classifier.Classify(path) == RunnerIgnoredContentKind.Evidence).ShouldBe(evidence, path);
+            CompletedCardWorkspaceReport.IsTaskReportPath(path).ShouldBe(evidence, path);
+            CompletedCardWorkspaceReport.IsTaskReportPath(path, isDirectory: true).ShouldBeFalse(path);
+        }
 
-        foreach (var name in new[] { "task-deadbeef.md", "TASK-DEADBEEF.MD", "TaSk-dEaDbEeF.mD", "task-zzzzzzzz.md", "task-ｄeadbeef.md" })
+        foreach (var name in new[] { "task-deadbeef.md", "TASK-DEADBEEF.MD", "TaSk-dEaDbEeF.mD", "task-zzzzzzzz.md", "task-ｄeadbeef.md", "task-deadbeef.md\n" })
         {
             await using var f = await CompletedCardMirrorFixture.CreateAsync();
             var path = Path.Combine(f.Mirror, ".antiphon", name);
