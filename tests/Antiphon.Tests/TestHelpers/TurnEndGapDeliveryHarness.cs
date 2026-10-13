@@ -172,12 +172,20 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
         var flushes = World.Services.GetRequiredService<CompletionNoteFlushQueue>();
         var pending = (System.Collections.IDictionary)typeof(CompletionNoteFlushQueue)
             .GetField("_pending", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(flushes)!;
+        var recovery = flushes.Recovery;
+        var flags = BindingFlags.Instance | BindingFlags.NonPublic;
+        var recoveryGate = recovery.GetType().GetField("_gate", flags)!.GetValue(recovery)!;
         while (true)
         {
             Token.ThrowIfCancellationRequested();
             var backstop = Clock.Events.LastOrDefault(e => e.Action == "create" && e.DueTime >= TimeSpan.FromMinutes(14));
             var recoveryWaiting = backstop is not null && Clock.TimerStates[backstop.TimerId] != "dispose";
-            if (pending.Count == 0 && recoveryWaiting && (_pump is null || _handler.Stream?.Quiescent == true)) return;
+            bool noHints;
+            lock (recoveryGate)
+                noHints = !(bool)recovery.GetType().GetField("_sweep", flags)!.GetValue(recovery)!
+                    && ((HashSet<Guid>)recovery.GetType().GetField("_tasks", flags)!.GetValue(recovery)!).Count == 0
+                    && ((Dictionary<Guid, DateTime>)recovery.GetType().GetField("_sessions", flags)!.GetValue(recovery)!).Count == 0;
+            if (pending.Count == 0 && noHints && recoveryWaiting && (_pump is null || _handler.Stream?.Quiescent == true)) return;
             // This waits for owned work/state, never an elapsed-time absence window.
             // Queue Complete is synchronous and has no observer hook; no timer is fabricated.
             await Task.Yield();
