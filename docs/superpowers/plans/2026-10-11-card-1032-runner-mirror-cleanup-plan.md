@@ -497,7 +497,7 @@ classes (144), CP-RG1 the exact registry guard (1). No Unit lane in this repair.
 
 Producer and runner use CompletedCardWorkspaceReport.IsTaskReportPath. It keeps
 the existing case-insensitive eight-character report shape, including nonhex
-identifier characters. The producer cannot certify remote report bytes; the
+identifier characters. The producer does not certify remote report bytes; the
 recipient holds recognized report files in fresh S5 no-follow inventories before
 prepare/rename/unregister/delete, including replay. The command has no manifest
 proving those files are in its admitted external artifacts. Other inventory
@@ -507,7 +507,7 @@ remain pending. The signed-rebase comment now describes H-to-P authentication
 and P ancestry, while direct containment checks H and P.
 
 PC-591 recognition (case/shape variants), PC-592 late report (lower/upper/mixed)
-and PC-593 absent-report positive remain pending with every existing PC/variant.
+and PC-593 absent-report positive remain pending with the existing PCs/variants.
 Mutation owns per-boundary missing-control discovery and deliberate mutants.
 Execution remains inert; no S8, deployment, restart or activation is commissioned.
 
@@ -525,4 +525,4 @@ real inspection.
 Closed selection: `2026-10-13-card-1032-s7-f4-verification.md` (CP-33..37
 plus the repair rows; CP-F2 63, CP-F3 145). Production unchanged and inert.
 The scratch mutants were executed by Code as Code evidence; formal SourceLanding
-Mutation was not run, and PC-595..599 remain pending with every earlier PC/variant.
+Mutation was not run, and PC-595..599 remain pending with the earlier PCs/variants.

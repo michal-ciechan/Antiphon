@@ -320,7 +320,7 @@ public sealed class CardWorktreeMirrorCleanupTests
         (await f.CommandAsync()).Proof.ProofIdentity.ShouldStartWith("landed-v1:" + id.ToString("D") + ":");
     }
     // F4/VP-10: 13 null/empty/false vectors across 11 landing-evidence fields outside the narrower
-    // eligibility checks (not every publication-predicate field) refuse after real inspection with
+    // eligibility checks (unvaried fields: F4 selection disclosure) refuse after real inspection with
     // no removal request; mutation: drop HasPublication; red: rebased removal completes.
     [Test] public async Task C1032_WitnessLandingCompleteness()
     {
@@ -351,7 +351,7 @@ public sealed class CardWorktreeMirrorCleanupTests
     }
     // F4/VP-13: a durable intent whose persisted request bytes change after writing is held
     // with no removal request; mutation: replay on schema validity alone; red: the hold is passed
-    // (scratch run saw receipt_mismatch). Restored original bytes replay to real removal.
+    // (scratch red: F4 Code evidence). Restored original bytes replay to real removal.
     [Test] public async Task C1032_WitnessPersistedReplayTamper()
     {
         await using var f = await CompletedCardMirrorFixture.CreateAsync();
