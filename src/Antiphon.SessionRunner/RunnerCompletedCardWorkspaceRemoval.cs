@@ -101,7 +101,7 @@ public sealed class RunnerCompletedCardWorkspaceRemoval(RunnerWorkspaceService w
         if (!IsSha(proof.ObservedTargetSha) || !IsSha(proof.PreservedSourceSha)) return "preservation_proof_invalid";
         try
         {
-            var remote = await workspace.InspectionGitAsync(binding.WorktreePath, ct, "ls-remote", "--refs", "origin", proof.DestinationRef);
+            var remote = await workspace.InspectionGitAsync(binding.WorktreePath, ct, "ls-remote", "--refs", binding.RepositoryIdentity, proof.DestinationRef);
             if (remote.ExitCode != 0) return "preservation_unreadable";
             var lines = remote.Stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries);
             if (lines.Length != 1 || lines[0].TrimEnd('\r') != proof.ObservedTargetSha + "\t" + proof.DestinationRef)

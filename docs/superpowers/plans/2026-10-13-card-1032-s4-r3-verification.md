@@ -42,3 +42,8 @@ Every existing PC and variant stays pending. Added method-scoped controls:
 
 SourceLanding Mutation owns deliberate mutants and exact method red/restore/green.
 New regression reds on unchanged production do not discharge these controls.
+
+PC-577: repository-configured remote helper isolation;
+C1032_InspectionR3Filter (unchanged) and C1032_InspectionReadOnlyGitCalls
+require a repository-independent ls-remote against the exact bound endpoint.
+State: pending. See the [unbound candidates](../mutations/2026-10-13-card-1032-s4-r3-candidates.md).
