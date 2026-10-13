@@ -35,6 +35,13 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
         string? setAsideDetail = null;
         WorktreeDirectoryPass Finish(string? reason, string? detail = null) => new(new(unregistered, directoryGone, false, reason)
             { Detail = detail ?? (reason is null ? retainedDetail : setAsideDetail) }, outcome, failedAt);
+        WorktreeDirectoryPass Preserve(NestedRepositoryPreservedException preserved, string aside)
+        {
+            directoryGone = IsAbsent(source.WorktreePath);
+            outcome = null; // Intentional preservation needs no delete-failure diagnostics or retry.
+            return Finish("ignored_content_preserved", WorktreeCleanupPresentation.Clip(
+                WorktreeIgnoredContentGate.ProtectedDetail(preserved.Paths) + "; set-aside: " + aside, 400));
+        }
         try
         {
             if ((request.CleanupContext is not null || request.Purpose == WorktreeRemovalPurpose.SettledTask)
@@ -78,7 +85,8 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
                 }
                 else
                 {
-                    try { WorktreeNoFollowDelete.Delete(aside); }
+                    try { WorktreeNoFollowDelete.Delete(aside, preserveNestedRepositories: true); }
+                    catch (NestedRepositoryPreservedException preserved) { return Preserve(preserved, aside); }
                     catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                     {
                         failedAt = clock.GetTimestamp();
@@ -171,7 +179,8 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
                     var restored = await RestoreRegisteredTreeAsync();
                     return restored ? Finish(failure) : Finish("worktree_removal_incomplete", "set-aside: " + aside);
                 }
-                try { WorktreeNoFollowDelete.Delete(aside); }
+                try { WorktreeNoFollowDelete.Delete(aside, preserveNestedRepositories: true); }
+                catch (NestedRepositoryPreservedException preserved) { return Preserve(preserved, aside); }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                 {
                     // The record stays, so a later pass resumes this deletion.
@@ -411,8 +420,16 @@ public sealed class GuardedWorktreeRemoval(ILandingGit git, IRepositoryMutationL
         && LandingGit.PathsEqual(result.Snapshot.GitDirectory, expected.GitDirectory);
 
     /// <summary>CARD-0665 D-6: without a gate every ignored path is protected, as before.</summary>
-    private WorktreeIgnoredContent Classify(LandSourceSnapshot snapshot) => ignored?.Classify(snapshot)
-        ?? new([], [], [.. snapshot.IgnoredPaths.Order(StringComparer.Ordinal)]);
+    private WorktreeIgnoredContent Classify(LandSourceSnapshot snapshot)
+    {
+        var content = ignored?.Classify(snapshot)
+            ?? new([], [], [.. snapshot.IgnoredPaths.Order(StringComparer.Ordinal)]);
+        // Git may collapse an ignored repository to dir/, hiding its private files from globs.
+        // Filesystem evidence always overrides disposable/evidence ancestor rules at both readings.
+        var repositories = WorktreeNestedRepositories.Find(snapshot.Coordinates.WorktreePath);
+        return content with { Protected = [.. content.Protected.Concat(repositories)
+            .Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)] };
+    }
 
     /// <summary>A stale list row for the tree just unregistered is not a checkout that still holds the branch.</summary>
     private static bool LiveCheckout(LandingRegistration row, WorktreeRemovalRequest request) =>
