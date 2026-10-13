@@ -929,7 +929,7 @@ function Complete-CheckpointBaseline {
         elseif ($again.Hashes.ContainsKey($path)) { [void]$lines.Add('manual command: git restore --staged -- ' + $quoted) }
         else { [void]$lines.Add('manual command: git status --short -- ' + $quoted + '; inspect and recover user bytes from your backup') }
     }
-    [void]$lines.Add('manual restore required; NOTHING in the worktree or index was modified by the tool.')
+    [void]$lines.Add('manual restore required; NOTHING outside tool-owned output/evidence directories was modified by the tool.')
     return @{ Kind = 'tampered'; Detail = ($lines -join "`n") }
 }
 
