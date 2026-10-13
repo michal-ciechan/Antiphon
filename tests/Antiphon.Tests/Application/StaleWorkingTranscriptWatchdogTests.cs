@@ -335,17 +335,41 @@ public class StaleWorkingTranscriptWatchdogTests
         await using var h = await Harness.CreateAsync(resilient: true);
         h.Handler.Mode = mode;
         var timersBefore = h.Clock.Inner.Events.Count;
-        await h.PassAsync(); await h.Handler.WaitForAsync(h.Id);
-        h.HttpGets.ShouldBe(1);
-        if (mode == "body") await h.Handler.BodyReached.Task.WaitAsync(TimeSpan.FromSeconds(15));
-        if (mode == "backoff")
-            await h.Clock.Inner.WaitForTimerAsync(e => e.DueTime == TimeSpan.FromSeconds(30), timersBefore)
-                .WaitAsync(TimeSpan.FromSeconds(15));
-        h.Clock.Advance(TimeSpan.FromSeconds(10)); await h.JoinAsync();
-        h.Active.ShouldBeEmpty(); h.Flush.Accepted.ShouldBeEmpty();
-        h.Entry(h.Id).Success.ShouldBeNull(); h.HttpGets.ShouldBe(1);
-        h.Logs.ShouldContain(e => e.Message.Contains("probe result") && Equals(e.State["Outcome"], "Unknown"));
-        if (mode is "headers" or "body") h.Handler.Cancellations.ShouldBe(1);
+        try
+        {
+            await h.PassAsync(); await h.Handler.WaitForAsync(h.Id);
+            h.HttpGets.ShouldBe(1);
+            if (mode == "body") await h.Handler.BodyReached.Task.WaitAsync(TimeSpan.FromSeconds(15));
+            if (mode == "backoff")
+            {
+                // The attempt timer is also 30s. Require a live retry-delay timer
+                // after an actual admitted retry, rather than mistaking that timer
+                // for backoff or accepting an oversized Retry-After fail-fast.
+                await h.Clock.Inner.WaitForTimerAsync(e => e.Action == "create"
+                    && e.DueTime == TimeSpan.FromSeconds(30)
+                    && h.Clock.Inner.TimerStates[e.TimerId] != "dispose"
+                    && h.Logs.Any(log => log.Message.Contains("Resilience retry")), timersBefore)
+                    .WaitAsync(TimeSpan.FromSeconds(15));
+                h.Logs.ShouldContain(e => e.Message.Contains("Resilience retry")
+                    && Equals(e.State["DelayMs"], 30_000L));
+            }
+            h.Active.Length.ShouldBe(1);
+            h.Handler.LogicalReadToken.IsCancellationRequested.ShouldBeFalse();
+            h.Clock.Advance(TimeSpan.FromSeconds(10));
+            h.Handler.LogicalReadToken.IsCancellationRequested.ShouldBeTrue("probe budget must cancel the logical read, including backoff");
+            await h.JoinAsync();
+            h.Active.ShouldBeEmpty(); h.Flush.Accepted.ShouldBeEmpty();
+            h.Entry(h.Id).Success.ShouldBeNull(); h.HttpGets.ShouldBe(1);
+            h.Logs.ShouldContain(e => e.Message.Contains("probe result") && Equals(e.State["Outcome"], "Unknown"));
+            if (mode is "headers" or "body") h.Handler.Cancellations.ShouldBe(1);
+        }
+        finally
+        {
+            // Release and expire the inherited inner budget even when a guarded
+            // cancellation defect makes an assertion red; never orphan a probe.
+            h.Handler.Mode = "normal"; h.Handler.Release.TrySetResult();
+            h.Clock.Advance(TimeSpan.FromSeconds(120)); await h.JoinAsync();
+        }
     }
 
     [Test]
@@ -497,11 +521,13 @@ public class StaleWorkingTranscriptWatchdogTests
             var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
             var clock = new OffsetClock(); var fault = new Faults(); var log = new LogProvider(); var flush = new RecordingFlushes();
             var handler = new ProbeHandler(); var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
-                { ["Resilience:AttemptTimeoutSeconds"] = "30", ["Resilience:CircuitBreaker:SamplingDurationSeconds"] = "60" }).Build();
+                { ["Resilience:AttemptTimeoutSeconds"] = "30", ["Resilience:CircuitBreaker:SamplingDurationSeconds"] = "60",
+                    ["Resilience:MaxDelayMilliseconds"] = "30000" }).Build();
             var services = new ServiceCollection().AddLogging(b => b.AddProvider(log));
             services.AddSingleton<TimeProvider>(clock); services.AddSingleton<IResilienceJitter>(new FixedResilienceJitter(0.5));
             services.AddAntiphonResilience(config);
-            services.AddHttpClient(ResilienceClientNames.RunnerRead).ConfigurePrimaryHttpMessageHandler(() => handler);
+            services.AddHttpClient(ResilienceClientNames.RunnerRead).ConfigurePrimaryHttpMessageHandler(() => handler)
+                .ConfigureAdditionalHttpMessageHandlers((handlers, _) => handlers.Insert(0, new BudgetObserver(handler)));
             services.AddDbContext<AppDbContext>(o => o.UseNpgsql(schema.ConnectionString).AddInterceptors(fault));
             services.AddSingleton(Options.Create(new AgentSessionSettings()));
             services.AddSingleton(Options.Create(new SessionStateSettings()));
@@ -586,6 +612,14 @@ public class StaleWorkingTranscriptWatchdogTests
     }
     private sealed class PlainFactory(HttpMessageHandler handler) : IHttpClientFactory
     { public HttpClient CreateClient(string name) => new(handler, false) { Timeout = Timeout.InfiniteTimeSpan }; }
+    private sealed class BudgetObserver(ProbeHandler handler) : DelegatingHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            handler.LogicalReadToken = ct;
+            return base.SendAsync(request, ct);
+        }
+    }
     private sealed class RecordingFlushes : CompletionNoteFlushQueue
     {
         public ConcurrentQueue<Guid> Accepted { get; } = new();
@@ -646,6 +680,7 @@ public class StaleWorkingTranscriptWatchdogTests
         private int _active;
         private TaskCompletionSource _changed = Signal();
         public int Peak, Keepalives, Cancellations;
+        public CancellationToken LogicalReadToken;
         public string Mode = "normal";
         public TaskCompletionSource Release { get; } = Signal();
         public TaskCompletionSource BodyReached { get; } = Signal();
