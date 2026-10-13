@@ -463,6 +463,7 @@ public class StaleWorkingTranscriptWatchdogTests
         await h.Queue.EnqueueAsync(h.Id, "C1205 reconciliation note", MessageSendMode.WhenIdle, default, deliverIfIdle: false);
         h.Commit.Hold = interleaving is "after-commit" or "two-probes";
         if (interleaving == "before-commit") h.Handler.Held.Add(h.Id);
+        Task? delivery = null;
         try
         {
             await h.PassAsync();
@@ -494,13 +495,13 @@ public class StaleWorkingTranscriptWatchdogTests
             }
             await h.JoinAsync();
             if (interleaving == "after-return") { await h.PassAsync(); h.Entries.ShouldBeEmpty(); }
-            h.Flush.Accepted.ShouldBe(new[] { h.Id }, "successful checked recovery owns exactly one wakeup across removal");
+            h.Flush.Accepted.ShouldBe(new[] { h.Id });
             (await h.RowsAsync(h.Id)).Count(row => row.Kind == "TurnEnd").ShouldBe(1);
             // Consume the real coalesced queue and run its production idle recheck/delivery.
             using var readStop = new CancellationTokenSource();
             await using var wake = h.Flush.ReadAllAsync(readStop.Token).GetAsyncEnumerator();
             (await wake.MoveNextAsync()).ShouldBeTrue(); wake.Current.ShouldBe(h.Id);
-            var delivery = h.Queue.FlushIfIdleAsync(wake.Current, default);
+            delivery = h.Queue.FlushIfIdleAsync(wake.Current, default);
             await h.Clock.Inner.WaitForTimerAsync(e => e.Action == "create" && e.DueTime == TimeSpan.FromMilliseconds(20))
                 .WaitAsync(TimeSpan.FromSeconds(15));
             h.Clock.Advance(TimeSpan.FromMilliseconds(20));
@@ -512,7 +513,11 @@ public class StaleWorkingTranscriptWatchdogTests
             adapter.SubmittedBodies.Count.ShouldBe(1);
             releaseInput.TrySetResult(); await delivery.WaitAsync(TimeSpan.FromSeconds(15));
         }
-        finally { h.Commit.Release.TrySetResult(); h.Handler.Release.TrySetResult(); releaseInput.TrySetResult(); }
+        finally
+        {
+            h.Commit.Release.TrySetResult(); h.Handler.Release.TrySetResult(); releaseInput.TrySetResult();
+            if (delivery is not null) await delivery.WaitAsync(TimeSpan.FromSeconds(15));
+        }
     }
 
     [Test]
