@@ -629,11 +629,11 @@ public sealed partial class CompletedCardWorkspaceRemovalTests
                 File.Move(path, Path.Combine(r.Fixture.Root, "old-source"));
                 File.WriteAllText(path, "source");
             }
-            else File.WriteAllText(path, "foreign bytes");
+            else File.WriteAllText(path, "CHANGE"); // same length; size guard cannot mask hash guard
             changed = true;
         }));
         Held(await r.Remove(), "changed_since_inventory"); changed.ShouldBeTrue();
-        File.ReadAllText(target!).ShouldBe(replace ? "source" : "foreign bytes");
+        File.ReadAllText(target!).ShouldBe(replace ? "source" : "CHANGE");
         r.Journal.Read()!.Single().Receipt.ShouldBeNull();
         await using var lease = await r.Gate.AcquireUseAsync(Path.Combine(r.Fixture.Root, "outside"), CancellationToken.None);
         File.ReadAllText(r.Command.ArtifactPointers[0]).ShouldBe("external result");
@@ -649,7 +649,7 @@ public sealed partial class CompletedCardWorkspaceRemovalTests
             target = path; Directory.Move(path, Path.Combine(r.Fixture.Root, "old-root"));
             Directory.CreateDirectory(path);
             foreach (var file in Directory.EnumerateFiles(Path.Combine(r.Fixture.Root, "old-root")))
-                File.Copy(file, Path.Combine(path, Path.GetFileName(file)));
+                File.Move(file, Path.Combine(path, Path.GetFileName(file))); // preserve child inodes; isolate root identity
             changed = true;
         }));
         Held(await r.Remove(), "changed_since_inventory"); changed.ShouldBeTrue();

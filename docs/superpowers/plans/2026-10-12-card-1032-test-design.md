@@ -1265,3 +1265,13 @@ it is never invoked by the Linux test branch and is not Linux qualification.
 | PC | Defect | Exact method filter | Expected red | Status |
 |---|---|---|---|---|
 | PC-587 | Admit a writer or rename after Windows handle validation | `/*/*/CompletedCardWorkspaceRemovalTests/C1032_RemovalLateFileContentRefuses` | native IOException sharing oracle missing | write-share and delete-share variants; pending Windows SourceLanding Mutation |
+
+Final fixture strengthening: late changed file bytes are the same length as
+source, isolating the content hash from the size check; root replacement moves
+children into the new directory, preserving every child inode/hash so only the
+root identity guard can detect it. PC-585 bypasses the hash comparison; PC-586
+bypasses the opened-root identity comparison. No assertion/timeout is weakened.
+Windows ancestor pins use read-attributes access and read/write sharing while
+still denying delete/rename sharing; owned root/files keep the stricter content
+handle. This avoids requiring data-read access or write exclusion on unrelated
+volume/temp ancestors. All Async signatures keep cancellation last.

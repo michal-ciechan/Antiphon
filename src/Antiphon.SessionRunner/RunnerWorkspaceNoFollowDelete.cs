@@ -39,7 +39,7 @@ internal static class RunnerWorkspaceNoFollowDelete
         return LinuxMetadata(fd.DangerousGetHandle().ToInt32()).Identity;
     }
 
-    internal static async Task<Entry[]> InventoryAsync(string root, CancellationToken ct, string? expectedIdentity = null)
+    internal static async Task<Entry[]> InventoryAsync(string root, string? expectedIdentity, CancellationToken ct)
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
         deadline.CancelAfter(TimeSpan.FromSeconds(30));
@@ -108,7 +108,7 @@ internal static class RunnerWorkspaceNoFollowDelete
     internal static async Task ValidateRemainingAsync(string root, IReadOnlyList<Entry> expected, CancellationToken ct)
     {
         var allowed = expected.ToDictionary(e => e.Path, StringComparer.Ordinal);
-        foreach (var entry in await InventoryAsync(root, ct))
+        foreach (var entry in await InventoryAsync(root, null, ct))
             if (!allowed.TryGetValue(entry.Path, out var original) || original != entry) Changed(entry.Path);
     }
 
@@ -140,7 +140,7 @@ internal static class RunnerWorkspaceNoFollowDelete
     }
 
     internal static async Task DeleteOwnedAsync(string root, string identity, IReadOnlyList<Entry> entries,
-        Action<string>? beforeEntry, CancellationToken ct, Action<string>? afterValidation = null)
+        Action<string>? beforeEntry, Action<string>? afterValidation, CancellationToken ct)
     {
         if (Identity(root) != identity) Changed(root);
         await ValidateRemainingAsync(root, entries, ct);
@@ -148,19 +148,19 @@ internal static class RunnerWorkspaceNoFollowDelete
         if (OperatingSystem.IsWindows())
         {
             using var ancestors = PinWindowsParents(root);
-            await DeleteWindowsAsync(root, root, allowed, beforeEntry, ct, identity, afterValidation);
+            await DeleteWindowsAsync(root, root, allowed, beforeEntry, identity, afterValidation, ct);
         }
         else
         {
             var full = Path.GetFullPath(root);
             using var parent = OpenLinuxPath(Path.GetDirectoryName(full)!);
             await DeleteLinuxAsync(parent.DangerousGetHandle().ToInt32(), Path.GetFileName(full), "", root,
-                allowed, beforeEntry, ct, identity);
+                allowed, beforeEntry, identity, ct);
         }
     }
 
     private static async Task DeleteLinuxAsync(int parent, string name, string relative, string root,
-        Dictionary<string, Entry> allowed, Action<string>? beforeEntry, CancellationToken ct, string? rootIdentity = null)
+        Dictionary<string, Entry> allowed, Action<string>? beforeEntry, string? rootIdentity, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
         if (relative.Length != 0 && !allowed.ContainsKey(relative)) Changed(relative);
@@ -195,7 +195,7 @@ internal static class RunnerWorkspaceNoFollowDelete
             {
                 var childName = Path.GetFileName(child);
                 await DeleteLinuxAsync(handle.DangerousGetHandle().ToInt32(), childName, Path.Combine(relative, childName),
-                    root, allowed, beforeEntry, ct);
+                    root, allowed, beforeEntry, null, ct);
             }
         ct.ThrowIfCancellationRequested();
         // Linux cannot exclude arbitrary writers with Windows sharing semantics.
@@ -261,7 +261,7 @@ internal static class RunnerWorkspaceNoFollowDelete
     [DllImport("libc", SetLastError = true)] private static extern int fstatat(int fd, string path, IntPtr stat, int flags);
 
     private static async Task DeleteWindowsAsync(string path, string root, Dictionary<string, Entry> allowed,
-        Action<string>? beforeEntry, CancellationToken ct, string? rootIdentity = null, Action<string>? afterValidation = null)
+        Action<string>? beforeEntry, string? rootIdentity, Action<string>? afterValidation, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
         var relative = Path.GetRelativePath(root, path);
@@ -289,7 +289,7 @@ internal static class RunnerWorkspaceNoFollowDelete
         afterValidation?.Invoke(path);
         if (info.Directory)
             foreach (var child in ListChildren(path, ct))
-                await DeleteWindowsAsync(child, root, allowed, beforeEntry, ct, afterValidation: afterValidation);
+                await DeleteWindowsAsync(child, root, allowed, beforeEntry, null, afterValidation, ct);
         ct.ThrowIfCancellationRequested();
         // This very handle denies write and delete sharing until disposition;
         // ancestor handles likewise prevent replacement of the traversed chain.
@@ -325,7 +325,7 @@ internal static class RunnerWorkspaceNoFollowDelete
             var components = full[current.Length..].Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries);
             for (var i = 0; i < components.Length; i++)
             {
-                var handle = OpenNoFollow(current); parents.Handles.Add(handle);
+                var handle = OpenNoFollow(current, pinOnly: true); parents.Handles.Add(handle);
                 if (!WindowsMetadata(handle, current).Directory) Changed(current);
                 current = Path.Combine(current, components[i]);
             }
@@ -334,14 +334,14 @@ internal static class RunnerWorkspaceNoFollowDelete
         catch { parents.Dispose(); throw; }
     }
 
-    private static SafeFileHandle OpenNoFollow(string path, bool deleting = false)
+    private static SafeFileHandle OpenNoFollow(string path, bool deleting = false, bool pinOnly = false)
     {
         // GENERIC_READ plus DELETE only for disposition. Share READ only:
         // concurrent write/delete/rename cannot race validation and disposition.
         // Existing conflicting writers cause a bounded refusal, never a bypass.
         for (var attempt = 1; ; attempt++)
         {
-            var handle = CreateFileW(path, 0x80000000 | (deleting ? 0x10000u : 0u), 0x1,
+            var handle = CreateFileW(path, (pinOnly ? 0x80u : 0x80000000u) | (deleting ? 0x10000u : 0u), pinOnly ? 0x3u : 0x1u,
                 IntPtr.Zero, 3, 0x00200000 | 0x02000000, IntPtr.Zero);
             if (!handle.IsInvalid) return handle;
             var error = Marshal.GetLastPInvokeError(); handle.Dispose();
