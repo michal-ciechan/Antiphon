@@ -273,9 +273,7 @@ describe('RoutingSettingsTab', () => {
       return HttpResponse.json(chain('Hard', { role: 'Mutation' }))
     }))
     renderWithProviders(<RoutingSettingsTab />)
-    // The Mutation cell exists only after the list and then the Mutation effective query load;
-    // await that cheap testid, then scope the role lookup to the cell. A whole-document findByRole
-    // here re-scanned the full tab on every poll and spent its 1 s budget under load (CARD-0097 D2).
+    // Wait for the data-loaded test id before clicking; the original C470 failure cause is a hypothesis, not established (CARD-0097 D2).
     const mutationHard = await screen.findByTestId('routing-matrix-cell-Mutation-Hard')
     await userEvent.click(within(mutationHard).getByRole('button', { name: 'Configure Mutation / Hard' }))
     const editor = await screen.findByTestId('routing-cell-editor')
