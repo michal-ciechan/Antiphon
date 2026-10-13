@@ -76,6 +76,11 @@ public sealed class CardWorktreeCleanupService(AppDbContext db, TimeProvider clo
         var existing = await db.CardWorktreeCleanupTargets
             .Where(t => t.CleanupId == cleanup.Id).ToListAsync(ct);
         var tasks = await db.AgentTasks.AsNoTracking().Where(t => t.CardId == cardId).ToListAsync(ct);
+        var taskIds = tasks.Select(t => t.Id).ToArray();
+        var bindings = await db.TaskWorktreeMirrorBindings.AsNoTracking()
+            .Where(b => taskIds.Contains(b.TaskId) && b.BindingId != Guid.Empty).ToListAsync(ct);
+        var mirrorEndpoints = await db.CardWorktreeCleanupEndpoints
+            .Where(e => e.Target.CleanupId == cleanup.Id && e.MirrorBindingId != null).ToListAsync(ct);
         var current = new List<Guid>();
         foreach (var task in tasks)
         {
@@ -105,6 +110,41 @@ public sealed class CardWorktreeCleanupService(AppDbContext db, TimeProvider clo
                 // creation. Guarded mirror discovery must provide that independent binding.
             }
             current.Add(target.Id);
+            // C1017_MultipleMirrorsRemainDistinct: binding rows, including historical stores,
+            // own endpoint identity; local completion does not suppress their discovery.
+            foreach (var binding in bindings.Where(b => b.TaskId == task.Id))
+            {
+                var mirrorTarget = target;
+                if (binding.Attempt != task.Attempt)
+                {
+                    mirrorTarget = existing.SingleOrDefault(t => t.TaskId == task.Id
+                        && t.TaskAttempt == binding.Attempt && t.WorkspaceIdentity == identity);
+                    if (mirrorTarget is null)
+                    {
+                        mirrorTarget = new CardWorktreeCleanupTarget
+                        {
+                            Id = Guid.NewGuid(), CleanupId = cleanup.Id, TaskId = task.Id,
+                            TaskAttempt = binding.Attempt, WorkspaceIdentity = identity,
+                            RepositoryPath = repository, WorktreePath = path, SourceFullRef = branch,
+                            CreatedAt = now, ExclusionReason = ClassifyOwnership(task, path, branch)
+                        };
+                        existing.Add(mirrorTarget);
+                        db.CardWorktreeCleanupTargets.Add(mirrorTarget);
+                    }
+                }
+                if (mirrorEndpoints.Any(e => e.TargetId == mirrorTarget.Id && e.MirrorBindingId == binding.Id)) continue;
+                var mirror = new CardWorktreeCleanupEndpoint
+                {
+                    Id = Guid.NewGuid(), TargetId = mirrorTarget.Id, EndpointIdentity = "mirror:" + binding.Id.ToString("D"),
+                    MirrorBindingId = binding.Id, RunnerId = binding.RunnerId, RunnerStoreId = binding.RunnerStoreId,
+                    RepositoryPath = binding.RepositoryIdentity, WorktreePath = binding.WorktreePath,
+                    SourceFullRef = binding.SourceFullRef, CommonDirectory = binding.CommonDirectory,
+                    GitDirectory = binding.GitDirectory, UpdatedAt = now,
+                    State = CardWorktreeCleanupEndpointState.Pending
+                };
+                mirrorEndpoints.Add(mirror);
+                db.CardWorktreeCleanupEndpoints.Add(mirror);
+            }
         }
         cleanup.LastDiscoveredAt = now;
         if (BeforeInventorySaveAsync is not null) await BeforeInventorySaveAsync(ct);

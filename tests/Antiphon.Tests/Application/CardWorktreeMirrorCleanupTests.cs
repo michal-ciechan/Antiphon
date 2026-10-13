@@ -143,7 +143,7 @@ public sealed class CardWorktreeMirrorCleanupTests
     {
         await using var f = await CompletedCardMirrorFixture.CreateAsync();
         f.Runtime.CompletedCardWorkspace = null;
-        await f.HeldAsync("unsupported_operation");
+        await f.HeldAsync(PhoneHomeProblemTypes.UnsupportedOperation);
     }
     // case: genuine receipt positive and digest/component/missing identity vectors;
     // mutation: skip one receipt comparison; red: fresh DB observer false completion/import.

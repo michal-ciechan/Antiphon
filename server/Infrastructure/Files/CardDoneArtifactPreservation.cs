@@ -8,6 +8,33 @@ namespace Antiphon.Server.Infrastructure.Files;
 /// <summary>Preserves the full report; never copies raw worktree evidence.</summary>
 public sealed class CardDoneArtifactPreservation(IAgentReportStore reports)
 {
+    // C1032_AdmissionArtifactSurvival: verify existing external bytes without copying or
+    // opening remote paths. ChannelReplyAttachmentReader retains no-follow regular-file handles.
+    public async Task<(bool Preserved, string Digest, IReadOnlyList<string> Pointers)> VerifyMirrorAsync(
+        AgentTask task, IReadOnlyList<string> roots, CancellationToken ct)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(task.Result) || task.ResultFilePath is null) return (false, "", []);
+            var pointers = new[] { task.ResultFilePath, task.DeliverablePath, task.DeliverablePdfPath, task.DeliverableBundleDir }
+                .Where(p => !string.IsNullOrWhiteSpace(p)).Cast<string>().ToArray();
+            var reader = new ChannelReplyAttachmentReader();
+            var facts = new List<string>();
+            foreach (var pointer in pointers)
+            {
+                if (!Outside(pointer, roots) || roots.Any(root => pointer.StartsWith(root + ".cleanup-", StringComparison.Ordinal)))
+                    return (false, "", []);
+                var bytes = await reader.ReadAttachmentAsync(pointer, [Path.GetDirectoryName(pointer)!], 20 * 1024 * 1024, ct);
+                if (pointer == task.ResultFilePath && !bytes.AsSpan().SequenceEqual(Encoding.UTF8.GetBytes(task.Result)))
+                    return (false, "", []);
+                facts.Add(pointer + "\n" + Convert.ToHexStringLower(SHA256.HashData(bytes)));
+            }
+            return (true, Digest(string.Join("\n", facts)), pointers);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException
+            or ChannelReplyFileTooLargeException) { return (false, "", []); }
+    }
+
     public async Task<string?> EnsureAsync(AgentTask task, IReadOnlyList<string> roots, bool missingReviewed, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(task.Result)) return missingReviewed && await CheckDeliverablesAsync(task, roots, ct) ? null : "artifact_unpreserved";

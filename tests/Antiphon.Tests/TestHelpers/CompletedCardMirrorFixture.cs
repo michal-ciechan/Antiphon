@@ -44,7 +44,7 @@ internal sealed class CompletedCardMirrorFixture : IAsyncDisposable
 
     private async Task InitializeAsync(CancellationToken ct)
     {
-        Card = await CompletedCardCleanupFixture.CreateAsync();
+        Card = await CompletedCardCleanupFixture.CreateAsync(clock: new Microsoft.Extensions.Time.Testing.FakeTimeProvider(DateTimeOffset.UtcNow));
         var g = Card.Host.Fixture;
         var task = await TaskAsync();
         await g.RequiredAsync(Card.Tree, "push", "origin", "HEAD:refs/heads/" + task.WorktreeBranch);
@@ -67,7 +67,7 @@ internal sealed class CompletedCardMirrorFixture : IAsyncDisposable
         Runtime = new(Options.Create(new SessionRunnerSettings { SessionLogPath = Path.Combine(state, "sessions") }),
             NullLogger<SessionRunnerRuntime>.Instance);
         Runtime.WorkspaceUseGate = Gate;
-        Runtime.CompletedCardWorkspace = new(Workspace, Journal, Gate);
+        Runtime.CompletedCardWorkspace = new(Workspace, Journal, Gate, Wire.Secret);
         Directory.CreateDirectory(Path.GetDirectoryName(Sentinel)!);
         await File.WriteAllTextAsync(Sentinel, "mirror evidence\n", ct);
         var settings = new PhoneHomeSettings
@@ -122,7 +122,7 @@ internal sealed class CompletedCardMirrorFixture : IAsyncDisposable
         await using var scope = Card.Host.Services.CreateAsyncScope();
         var producer = Activator.CreateInstance(type!, db, new ClientDirectory(Wire.Directory, this), Card.Host.Fixture.Git,
             Card.Host.Services.GetRequiredService<CardDoneArtifactPreservation>(),
-            scope.ServiceProvider.GetRequiredService<WorkspaceUseAdmission>(), Card.Host.Clock, Options.Create(Card.Residue), new FaultClient((ICompletedCardWorkspaceClient)Wire.Directory.Resolve(Binding.RunnerId), this))!;
+            scope.ServiceProvider.GetRequiredService<WorkspaceUseAdmission>(), Card.Host.Clock, Options.Create(Card.Residue), new FaultClient((ICompletedCardWorkspaceClient)Wire.Directory.Resolve(Binding.RunnerId), this), Options.Create(new Antiphon.Server.Application.Settings.PhoneHomeRunnerSettings { Enabled = true, AllowedRunnerId = Binding.RunnerId, SharedSecret = Wire.Secret }))!;
         type!.GetProperty("BeforeIntentAsync", BindingFlags.NonPublic | BindingFlags.Instance)?.SetValue(producer, BeforeIntent);
         type.GetProperty("AfterIntentAsync", BindingFlags.NonPublic | BindingFlags.Instance)?.SetValue(producer, AfterIntent);
         return await (Task<CompletedCardWorkspaceRemovalResponse>)type.GetMethod("TryAsync")!.Invoke(producer, [EndpointId, null, ct])!;
