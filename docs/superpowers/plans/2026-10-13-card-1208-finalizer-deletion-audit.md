@@ -12,11 +12,13 @@ Task base: 9f89cc427dca7030cfc93a45ec36e4375d894213. Original Code/landing owner
 | finalize network/resource_remove | npm network | name-only .fixture-network | Record create ID; verify legacy labels or refuse. |
 | cleanup/resource_remove volume | work, mask | .fixture-volumes plus owner/run/role labels | Registration and full labels; foreign dropped; unknown residue. |
 | cleanup/resource_remove volume | packages/scratch/npm, seed/busy/race/private/smoke/warm variants | .fixture-volumes; name alone | Add run labels at acquisition; verify full cache identity before deletion. |
+| shared c849_seed smoke helper run/rm when payload backend=volume | seed helper | base name c849-seed-RUN | Record cidfile and use acquired release; finalizer includes recorded consumers beyond roster. |
+| fixture_tree_mutate metadata/reference rm -rf; payload shell rm/mv/chmod probes | payload subtrees/canaries | acquired labeled work-volume helper mounts | Confined to the acquired payload volume; CP-33 validates the payload recipient. |
 | immediate busy/masked/apphost/npm-http/prune-smoke docker rm | acquired containers | name or marker | Same durable acquired identity release. |
 | finalize docker compose down -v temp/main/negative | Compose resources | project + owned controller file | CARD-1207 excluded; exit-status-only teardown. |
 | controller_remove find rm -rf/rmdir | controller content/directory | recorded device/inode/uid | Preserve cwd/path/identity checks and replacement refusal. |
 | export_logs rm -rf destination | five diagnostic files | CASE_DIR names | Unlink files/symlinks only; refuse directories. |
-| finalize escape unlink; controller identity unlink; prepare/drop temporary ledgers; marker unlink | control files | bounded CASE_DIR paths | Unlink only; identity record removed after controller disposal. |
+| finalize escape unlink; controller identity unlink; prepare/drop temporary ledgers; marker unlink | control files | bounded CASE_DIR paths | Escape symlink gets device/inode/uid acquisition record and revalidation (CP-37, CP-57); remaining temporary control records are unlink-only inside the case namespace; controller identity removed after disposal. |
 | wrapper reset_runtime; model volume/container rm; simulated compose down; module setup rm | model objects | fresh private root with nonce | Remain inside acquired private root; model IDs address exact objects. |
 | wrapper contained-cleanup find/unlink/rmdir; cleanup_private EXIT | scratch tree | nonce, containment, ancestor/held-directory identity | Preserve named replacement/symlink canaries. |
 | fixture EXIT -> fixture_exit -> finalize | traps/receipts | primary exit status + named residue | Preserve primary failure; unknown refuses success; foreign disposition retained. |
@@ -68,4 +70,8 @@ PC-1 foreign drop/receipt/removal guard (cache variants); PC-2 legacy container 
 
 ### Cost
 
-Ordinary floor 37 row minutes, plus authoring/slot contention. Before-fix selection CP-54..57 shares one isolated build; repaired selection all rows shares one isolated build. Checkpoint-tool bootstrap is an explained unlisted build through build-slot, UseAppHost=false, bin-c1208-tool/. No repeats after green.
+Ordinary floor 36 row minutes, plus authoring/slot contention. Before-fix selection CP-54..57 shares one isolated build; repaired selection all rows shares one isolated build. Checkpoint-tool bootstrap is an explained unlisted build through build-slot, UseAppHost=false, bin-c1208-tool/. No repeats after green.
+
+## Implementation binding
+
+Named create/run uses Docker cidfiles at creation, including foreground --rm consumers. Cleanup accepts recorded full IDs, and verifies legacy names by resolving ID first then probing labels on that ID. Registered helpers preserve their label checks; volumes require the recorded roster and complete current-run identity. Empty, malformed and symlinked ID records refuse cleanup. CP-57 also checks an unacquired escape symlink; CP-39 now checks retained diagnostic directories rather than recursively replacing them. SourceLanding PCs remain pending. The isolated scratch-model diagnostic is an explained extra build-slot run, not ordinary TRX evidence.

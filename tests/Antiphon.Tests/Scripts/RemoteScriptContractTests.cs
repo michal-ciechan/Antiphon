@@ -512,7 +512,7 @@ public sealed class RemoteScriptContractTests
 
     // CP-2 checks the registered cache/work/mask set and consumer/helper order.
     // C1192_Cleanup_releases_only_registered_current_run_resources checks work/mask labels.
-    // Fixture finalizer deletion is protected only where a named S7 test says so (work and mask volume acquisition ownership; unknown outcomes retained as residue). The inherited finalizer also deletes some objects by name or fixed roster (foreign cache volumes, same-name replacements behind legacy name-only markers, unacquired fixed-name consumers, and possibly others): the complete audit and fix are CARD-1208; Compose teardown is exit-status-only (CARD-1207); live Docker acceptance (W-1) is pending.
+    // C1208_Foreign_cache_is_dropped_and_untouched checks foreign cache refusal, ledger removal and untouched volume; C1208_Legacy_container_replacement_is_untouched and C1208_Legacy_network_replacement_is_untouched check legacy replacement retention/refusal; C1208_Unacquired_roster_is_untouched checks unacquired consumer/helper retention; C1208_Acquired_objects_are_removed and C1208_Recorded_container_id_does_not_delete_replacement check acquired disposal and ID-only removal; C1208_Legacy_owned_markers_are_migrated checks verified legacy migration, and C1208_Unknown_identity_retains_residue checks unknown refusal/residue. CP-45..53 retain positive-absence checks. Compose teardown remains exit-status-only (CARD-1207); live Docker W-1 is pending.
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public void C1192_Cleanup_releases_only_registered_current_run_resources()
@@ -918,7 +918,7 @@ public sealed class RemoteScriptContractTests
     // CARD-1193. The copy above is behaviour, not only text: run that snippet in a scratch
     // directory. No root, sudo, docker, or server2 tree. A directory named like a log, including
     // one whose same-named symlink points outside, must not receive the write, and a directory
-    // that already has content is replaced by the regular file.
+    // that already has content is retained and refuses export.
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public void C1193_Fixture_log_copy_skips_symlinks_and_copies_regular_files()
@@ -960,15 +960,11 @@ public sealed class RemoteScriptContractTests
             printf 'dir-content\n' > "$CASE_DIR/lock-holder.log/nested/keep"
             printf 'holder-body\n' > "$SERVER2_ROOT/lock-holder.log"
             ec=9
-            copy_logs
+            if copy_logs; then printf 'FAIL directory-destination-accepted\n'; exit 1; fi
             [ "$ec" = 9 ] || { printf 'FAIL dir-ec=%s\n' "$ec"; exit 1; }
             grep -Fxq 'outside-dir-bytes' "$outside/dir-secret" || { printf 'FAIL dir-written-through\n'; exit 1; }
-            [ ! -e "$CASE_DIR/race-p1.log/race-p1.log" ] && [ ! -L "$CASE_DIR/race-p1.log/race-p1.log" ] || { printf 'FAIL dir-wrote-through\n'; exit 1; }
-            [ -f "$CASE_DIR/race-p1.log" ] && [ ! -L "$CASE_DIR/race-p1.log" ] && [ ! -d "$CASE_DIR/race-p1.log" ] || { printf 'FAIL dir-not-replaced\n'; exit 1; }
-            grep -Fxq 'regular-p1' "$CASE_DIR/race-p1.log" || { printf 'FAIL dir-replaced-bytes\n'; exit 1; }
-            [ -f "$CASE_DIR/lock-holder.log" ] && [ ! -L "$CASE_DIR/lock-holder.log" ] && [ ! -d "$CASE_DIR/lock-holder.log" ] || { printf 'FAIL content-dir-not-replaced\n'; exit 1; }
-            grep -Fxq 'holder-body' "$CASE_DIR/lock-holder.log" || { printf 'FAIL content-dir-bytes\n'; exit 1; }
-            [ ! -e "$CASE_DIR/lock-holder.log/nested" ] || { printf 'FAIL content-dir-kept\n'; exit 1; }
+            [ -L "$CASE_DIR/race-p1.log/race-p1.log" ] || { printf 'FAIL directory-link-deleted\n'; exit 1; }
+            grep -Fxq 'dir-content' "$CASE_DIR/lock-holder.log/nested/keep" || { printf 'FAIL directory-content-deleted\n'; exit 1; }
             mkdir -p "$outside/case-target"
             ln -s "$outside/case-target" "$root/case-link"
             printf 'should-not-land\n' > "$SERVER2_ROOT/lock-holder.log"

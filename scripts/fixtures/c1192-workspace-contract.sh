@@ -2,7 +2,7 @@
 # CARD-1192 S1 workspace model, S2 race barriers, S3 npm volume reads, and S4 payload boundary.
 # Extracted c849_* functions against a filesystem Docker model.
 # C1192_Foreign_volume_is_refused_after_create checks work/mask acquisition.
-# Fixture finalizer deletion is protected only where a named S7 test says so (work and mask volume acquisition ownership; unknown outcomes retained as residue). The inherited finalizer also deletes some objects by name or fixed roster (foreign cache volumes, same-name replacements behind legacy name-only markers, unacquired fixed-name consumers, and possibly others): the complete audit and fix are CARD-1208; Compose teardown is exit-status-only (CARD-1207); live Docker acceptance (W-1) is pending.
+# C1208_Foreign_cache_is_dropped_and_untouched checks foreign cache refusal, ledger removal and untouched volume; C1208_Legacy_container_replacement_is_untouched and C1208_Legacy_network_replacement_is_untouched check legacy replacement retention/refusal; C1208_Unacquired_roster_is_untouched checks unacquired consumer/helper retention; C1208_Acquired_objects_are_removed and C1208_Recorded_container_id_does_not_delete_replacement check acquired disposal and ID-only removal; C1208_Legacy_owned_markers_are_migrated checks verified legacy migration, and C1208_Unknown_identity_retains_residue checks unknown refusal/residue. CP-45..53 retain positive-absence checks. Compose teardown remains exit-status-only (CARD-1207); live Docker W-1 is pending.
 # Never source dispatch. Never call the host docker daemon.
 set -euo pipefail
 shopt -s nullglob
@@ -339,6 +339,8 @@ reset_runtime() {
     : > "$C1192_ROOT/sleeps"
     rm -f "$C1192_ROOT/probe-at-handoff" "$C1192_ROOT/shared-before" "$C1192_ROOT/private-before-release"
     rm -rf "$CASE_DIR/fixture-controller"
+    rm -f "$CASE_DIR/.fixture-escape" "$CASE_DIR/.fixture-escape-identity"
+    rm -f "$CASE_DIR"/.fixture-id-* "$CASE_DIR/.fixture-network" "$CASE_DIR/.fixture-donor" "$CASE_DIR/.fixture-busy" "$CASE_DIR/.fixture-npm-server" "$CASE_DIR/.fixture-prune-smoke"
     rm -f "$CASE_DIR/.fixture-volumes" "$CASE_DIR/.fixture-helpers" \
         "$CASE_DIR/fixture-cleanup-residue.txt" "$CASE_DIR/fixture-summary.txt" "$CASE_DIR/.fixture-controller-identity" "$CASE_DIR/result" \
         "$CASE_DIR/.control-PC-26" "$CASE_DIR/.fixture-volumes.workspace"
@@ -714,6 +716,7 @@ docker_volume() {
 }
 
 parse_run_create() {
+    PARSED_CIDFILE=""
     PARSED_NAME=""
     PARSED_NETWORK=""
     PARSED_USER=""
@@ -725,10 +728,11 @@ parse_run_create() {
     while [ $# -gt 0 ]; do
         case "$1" in
             --rm|-d|-i|-t|-q) shift ;;
-            --name|--network|--user|--entrypoint|-u|-w|--workdir|-e|--env|--env-file|--network-alias)
+            --cidfile|--name|--network|--user|--entrypoint|-u|-w|--workdir|-e|--env|--env-file|--network-alias)
                 local flag="$1" value="$2"
                 shift 2
                 case "$flag" in
+                    --cidfile) PARSED_CIDFILE="$value" ;;
                     --name) PARSED_NAME="$value" ;;
                     --network) PARSED_NETWORK="$value" ;;
                     --user|-u) PARSED_USER="$value" ;;
@@ -747,7 +751,7 @@ store_container() {
     local name="$1" image="$2" mounts="$3" labels="$4"
     local dir="$C1192_ROOT/containers/$name"
     mkdir -p "$dir"
-    printf '%s\n' "$(printf '%s:%s' "$name" "$(date +%s%N)" | sha256sum | cut -d' ' -f1)" > "$dir/id"
+    [ -f "$dir/id" ] || printf '%s\n' "$(printf '%s:%s' "$name" "$(date +%s%N)" | sha256sum | cut -d' ' -f1)" > "$dir/id"
     printf '%s\n' "$image" > "$dir/image"
     printf '%s\n' "${mounts%%;}" > "$dir/mount"
     : > "$dir/label-owner"
@@ -778,9 +782,11 @@ docker_create() {
     if [ "$C1192_CUT" = writer-create ] && [ "$role" = writer ]; then return 1; fi
     if [ "$C1192_CUT" = reader-create ] && [ "$role" = reader ]; then return 1; fi
     store_container "$PARSED_NAME" "$PARSED_IMAGE" "$PARSED_MOUNTS" "$PARSED_LABELS"
+    [ -z "$PARSED_CIDFILE" ] || cat "$C1192_ROOT/containers/$PARSED_NAME/id" > "$PARSED_CIDFILE"
     if [ "$mode" = apphost ]; then
         printf '%s\t%s\t%s\t%s\t%s\n' "$PARSED_NAME" "$PARSED_NETWORK" "$PARSED_IMAGE" "$PARSED_MOUNTS" "${PARSED_CMD[*]:-}" >> "$C1192_ROOT/run-log"
     fi
+    cat "$C1192_ROOT/containers/$PARSED_NAME/id"
 }
 
 simulate_npm_cache_add() {
@@ -847,6 +853,21 @@ simulate_npm_ci() {
 
 docker_run() {
     parse_run_create "$@"
+    local acquired_name="$PARSED_NAME" auto=0 arg code=0
+    for arg in "$@"; do [ "$arg" != --rm ] || auto=1; done
+    docker_run_payload "$@" || code=$?
+    if [ "$auto" = 1 ] && [ -n "$acquired_name" ]; then
+        rm -rf -- "$C1192_ROOT/containers/$acquired_name"
+    fi
+    return "$code"
+}
+
+docker_run_payload() {
+    parse_run_create "$@"
+    if [ -n "$PARSED_NAME" ]; then
+        store_container "$PARSED_NAME" "$PARSED_IMAGE" "$PARSED_MOUNTS" "$PARSED_LABELS"
+        [ -z "$PARSED_CIDFILE" ] || cat "$C1192_ROOT/containers/$PARSED_NAME/id" > "$PARSED_CIDFILE"
+    fi
     if [ "$mode" = apphost ]; then apphost_run; return; fi
     local kind=other-run
     case "$PARSED_MOUNTS" in
@@ -1019,7 +1040,14 @@ docker() {
             printf 'Cannot connect to the Docker daemon at unix:///missing.sock. Is the docker daemon running?\n' >&2
             return 1
         fi
-        if [ "${*: -1}" = "$PROBE_NAME" ]; then
+        local probe_target="${*: -1}" candidate
+        if [[ "$probe_target" =~ ^[0-9a-f]{64}$ ]]; then
+            for candidate in "$C1192_ROOT/containers"/*; do
+                [ -f "$candidate/id" ] && [ "$(cat "$candidate/id")" = "$probe_target" ] && probe_target="${candidate##*/}" && break
+            done
+            [ "$probe_target" != "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" ] || probe_target="c849-${RUN}-npm"
+        fi
+        if [ "$probe_target" = "$PROBE_NAME" ]; then
             case "$1:$2" in
                 volume:rm|network:rm|rm:-f)
                     order_log "probe-remove $PROBE_NAME"
@@ -1094,12 +1122,13 @@ docker() {
                 esac
             done
             order_log "container $name"
-            local candidate
+            local requested="$name" candidate
             if [[ "$name" =~ ^[0-9a-f]{64}$ ]]; then
                 for candidate in "$C1192_ROOT/containers"/*; do
                     [ -f "$candidate/id" ] && [ "$(cat "$candidate/id")" = "$name" ] && name="${candidate##*/}" && break
                 done
             fi
+            [ "$name" = "$requested" ] || order_log "container $name"
             rm -rf -- "$C1192_ROOT/containers/$name"
             ;;
         exec)
@@ -1137,10 +1166,19 @@ docker() {
         run) shift; docker_run "$@" ;;
         ps) return 0 ;;
         network)
-            if [ "$mode" = cleanup-probe ]; then
+            if [ "$mode" = cleanup-probe ] || [ "$mode" = deletion-audit ]; then
                 case "$2" in
-                    inspect) [ -f "$C1192_ROOT/network" ] || { printf 'Error response from daemon: No such network: %s\n' "$3" >&2; return 1; } ;;
-                    rm) rm -f "$C1192_ROOT/network" ;;
+                    inspect)
+                        [ -f "$C1192_ROOT/network" ] || { printf 'Error response from daemon: No such network: %s\n' "${*: -1}" >&2; return 1; }
+                        if [ "${3:-}" = -f ]; then
+                            case "$4" in
+                                *io.antiphon.owner*) printf 'c849-fixture\n' ;;
+                                *fixture-run*) printf '%s\n' "$RUN" ;;
+                                *fixture-role*) printf 'npm-network\n' ;;
+                                *Id*) printf 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\n' ;;
+                            esac
+                        fi ;;
+                    rm) order_log "network ${*: -1}"; rm -f "$C1192_ROOT/network" ;;
                     *) fail "unexpected network command $*" ;;
                 esac
             fi
@@ -1416,6 +1454,8 @@ mode_cleanup() {
     plant_volume "$WORK" local null c849-fixture "$RUN" work
     plant_volume "$MASK" local null c849-fixture "$RUN" mask
     plant_volume "$packages" local null server2-runner "$RUN" nuget-packages
+    printf '1\n' > "$C1192_ROOT/volumes/$packages/label-schema"
+    printf 'nuget-packages\n' > "$C1192_ROOT/volumes/$packages/label-cache-role"
     plant_volume "$junk" local null c849-fixture "$RUN" work
     plant_volume "$foreign" local null c849-fixture "$RUN" work
     plant_volume "$production" local null server2-runner production nuget-packages
@@ -1423,6 +1463,7 @@ mode_cleanup() {
     plant_container "$READER" c849-fixture "$RUN" reader "$ADMITTED" "type=volume,source=$WORK,target=/fixture,volume-nocopy,readonly"
     plant_container "c849-${RUN}-restore-p1" c849-fixture "$RUN" consumer "$ADMITTED" ""
     printf '%s\n' "$WORK" "$MASK" "$packages" "$junk" "$foreign" "$production" > "$CASE_DIR/.fixture-volumes"
+    printf '%s\n' "$(cat "$C1192_ROOT/containers/c849-${RUN}-restore-p1/id")" > "$CASE_DIR/.fixture-id-c849-${RUN}-restore-p1"
     printf '%s\n' "$WRITER" "$READER" > "$CASE_DIR/.fixture-helpers"
     local code=0
     ( c849_fixture_cleanup ) || code=$?
@@ -2664,6 +2705,7 @@ s7_groups() {
 PAYLOAD_CANARY_S7
 DATA
         ln -s "$CASE_DIR" "$CASE_DIR/.fixture-escape"
+        stat -c '%d:%i:%u' -- "$CASE_DIR/.fixture-escape" > "$CASE_DIR/.fixture-escape-identity"
         case "$S7_SCENARIO" in
             primary) write_result false OriginalFailure 9 ;;
             unhandled) exit 9 ;;
@@ -2872,8 +2914,12 @@ mode_cleanup_probe() {
             c1192_probe_seed
             printf 'services: {}\n' > "$SERVER2_ROOT/compose-retention/negative.yml"
             plant_container "c849-${RUN}-restore-p1" c849-fixture "$RUN" consumer "$ADMITTED" ""
+            printf '%s\n' "$(cat "$C1192_ROOT/containers/c849-${RUN}-restore-p1/id")" > "$CASE_DIR/.fixture-id-c849-${RUN}-restore-p1"
             plant_container "c849-${RUN}-masked" c849-fixture "$RUN" masked "$ADMITTED" ""
-            plant_volume "c849${RUN}-packages" local null c849-fixture "$RUN" packages
+            printf '%s\n' "c849-${RUN}-masked" >> "$CASE_DIR/.fixture-helpers"
+            plant_volume "c849${RUN}-packages" local null server2-runner "$RUN" nuget-packages
+            printf '1\n' > "$C1192_ROOT/volumes/c849${RUN}-packages/label-schema"
+            printf 'nuget-packages\n' > "$C1192_ROOT/volumes/c849${RUN}-packages/label-cache-role"
             printf '%s\n' "c849${RUN}-packages" >> "$CASE_DIR/.fixture-volumes"
             printf '%s\n' "c849-${RUN}-npm" > "$CASE_DIR/.fixture-network"
             : > "$C1192_ROOT/network"
@@ -2975,6 +3021,11 @@ mode_deletion_audit() {
             c849_fixture_finalize || code=$?
             if [ "$row" = legacy-owned ]; then
                 ! container_exists "$name" && grep -Fxq "container $id" "$C1192_ROOT/order" && good=1
+                printf '%s\n' "$network" > "$CASE_DIR/.fixture-network"
+                : > "$C1192_ROOT/network"
+                c849_fixture_network_release
+                [ ! -f "$C1192_ROOT/network" ] && [ "$(cat "$CASE_DIR/.fixture-network")" = eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee ] \
+                    && grep -Fxq 'network eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee' "$C1192_ROOT/order" || good=0
             else
                 container_exists "$name" && ! grep -q '^container ' "$C1192_ROOT/order" \
                     && [ "$code" = 2 ] && grep -Fxq "$name" "$CASE_DIR/fixture-cleanup-residue.txt" && good=1
@@ -2988,7 +3039,9 @@ mode_deletion_audit() {
                 case "$1:$2" in
                     network:inspect)
                         [ -f "$C1192_ROOT/network" ] || { printf 'Error: No such network: %s\n' "${*: -1}" >&2; return 1; }
-                        if [ "${3:-}" = -f ]; then printf 'foreign\n'; fi ;;
+                        if [ "${3:-}" = -f ]; then
+                            if [ "$4" = '{{.Id}}' ]; then printf 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\n'; else printf 'foreign\n'; fi
+                        fi ;;
                     network:rm) order_log "network ${*: -1}"; rm -f "$C1192_ROOT/network" ;;
                     *) return 97 ;;
                 esac
@@ -2998,10 +3051,13 @@ mode_deletion_audit() {
                 && [ "$code" = 2 ] && [ -s "$CASE_DIR/fixture-cleanup-residue.txt" ] && good=1
             ;;
         unacquired)
+            ln -s "$C1192_ROOT/events" "$CASE_DIR/.fixture-escape"
             plant_container "$name" c849-fixture "$RUN" consumer "$ADMITTED" ""
             plant_container "c849-${RUN}-masked" c849-fixture "$RUN" masked "$ADMITTED" ""
             c849_fixture_finalize || code=$?
             container_exists "$name" && container_exists "c849-${RUN}-masked" \
+                && [ -L "$CASE_DIR/.fixture-escape" ] && [ "$code" = 2 ] \
+                && grep -Fxq escape-link "$CASE_DIR/fixture-cleanup-residue.txt" \
                 && ! grep -q '^container ' "$C1192_ROOT/order" && good=1
             ;;
         recorded-id)
@@ -3017,9 +3073,16 @@ mode_deletion_audit() {
             ;;
         acquired)
             c849_fixture_workspace_init
+            C849_PACKAGES="c849${RUN}-packages"; C849_SCRATCH="c849${RUN}-scratch"; C849_NPM="c849${RUN}-npm"
+            printf '%s\n' "$C849_PACKAGES" >> "$CASE_DIR/.fixture-volumes"
+            c849_volume "$C849_PACKAGES" nuget-packages yes "$ADMITTED"
+            c849_fixture_launch create --name "$name" --entrypoint sleep "$ADMITTED" infinity >/dev/null
+            printf 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\n' > "$CASE_DIR/.fixture-network"
+            : > "$C1192_ROOT/network"
             c849_fixture_finalize || code=$?
             [ "$code" = 0 ] && ! volume_exists "$WORK" && ! volume_exists "$MASK" \
-                && ! container_exists "$WRITER" && ! container_exists "$READER" && good=1
+                && ! container_exists "$WRITER" && ! container_exists "$READER" \
+                && ! container_exists "$name" && ! volume_exists "$C849_PACKAGES" && [ ! -f "$C1192_ROOT/network" ] && good=1
             ;;
         *) fail "unknown audit $row" ;;
     esac
