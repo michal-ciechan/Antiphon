@@ -307,7 +307,12 @@ public class WorkingTranscriptRecoveryTests
             {
                 var session = await db.AgentSessions.SingleAsync(s => s.Id == h.Id);
                 if (variant == "transaction-generation") session.StartedAt = h.Generation.AddSeconds(1);
-                if (variant == "owner") session.RunnerId = "foreign";
+                if (variant == "owner")
+                {
+                    session.RunnerId = "foreign";
+                    session.RunnerStoreId = Guid.NewGuid();
+                    session.RunnerCwd = "/foreign";
+                }
                 if (variant == "terminal") session.Status = SessionStatus.Stopped;
                 if (variant == "frontier") db.TranscriptEntries.Add(new TranscriptEntry
                 {
