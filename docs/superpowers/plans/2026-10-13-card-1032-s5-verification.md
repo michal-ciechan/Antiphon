@@ -50,3 +50,24 @@ Linux FIFO skips explicitly on other OSs; Windows qualification uses exact
 `/*/*/CompletedCardWorkspaceRemovalTests/C1032_RemovalLateRootIdentityRefuses*`.
 Windows sharing/native semantics remain pending desktop Final Review.
 No Unit or server class run; caller repair selection controls.
+
+Exact additional ordinary method filters (each is included in CP-10 and CP-28):
+
+| Case | Filter | Native qualification |
+|---|---|---|
+| F1 FIFO | `/*/*/CompletedCardWorkspaceRemovalTests/C1032_RemovalLinuxIgnoredFifoRefuses*` | Linux only; explicit skip elsewhere |
+| F2 same-byte identity | `/*/*/CompletedCardWorkspaceRemovalTests/C1032_RemovalLateFileIdentityRefuses*` | Windows pending |
+| F2 changed bytes and held writer/rename | `/*/*/CompletedCardWorkspaceRemovalTests/C1032_RemovalLateFileContentRefuses*` | Windows pending; PC-587 write/delete sharing variants |
+| F2 opened root | `/*/*/CompletedCardWorkspaceRemovalTests/C1032_RemovalLateRootIdentityRefuses*` | Windows pending |
+
+Inventory refuses beyond 100,000 entries, 128 descendant levels, 1 GiB total,
+256 MiB per regular file or its 30-second deadline. Chunk reads honor cancellation;
+these are fail-closed work limits, not weakened test deadlines. Prepared journals
+without recorded entry identity/size are refused as unreadable; execution remains
+uncomposed, so no live cleanup journal is migrated or activated by this repair.
+The Windows sharing test's post-validation seam observes real held-handle effects;
+it is never invoked by the Linux test branch and is not Linux qualification.
+
+| PC | Defect | Exact method filter | Expected red | Status |
+|---|---|---|---|---|
+| PC-587 | Admit a writer or rename after Windows handle validation | `/*/*/CompletedCardWorkspaceRemovalTests/C1032_RemovalLateFileContentRefuses` | native IOException sharing oracle missing | write-share and delete-share variants; pending Windows SourceLanding Mutation |

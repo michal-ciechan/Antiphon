@@ -592,7 +592,30 @@ public sealed partial class CompletedCardWorkspaceRemovalTests
     // PC-584: same bytes under a replacement identity must remain on disk.
     [Test] public Task C1032_RemovalLateFileIdentityRefuses() => LateFileRefuses(replace: true);
     // PC-585: changed bytes after the final inventory must remain on disk.
-    [Test] public Task C1032_RemovalLateFileContentRefuses() => LateFileRefuses(replace: false);
+    [Test] public async Task C1032_RemovalLateFileContentRefuses()
+    {
+        await LateFileRefuses(replace: false);
+        if (!OperatingSystem.IsWindows()) return;
+        // Native PC-587 variants: a gate callback runs after hash/identity validation
+        // while the disposition handle is still held. No sleep selects the writer.
+        foreach (var effect in new[] { "write", "rename" })
+        {
+            await using var r = new RemovalRig(); var attempted = false;
+            r.Hook("AfterDeleteValidationForTest", (Action<string>)(path =>
+            {
+                if (Path.GetFileName(path) != "source") return;
+                if (effect == "write")
+                    Should.Throw<IOException>(() => { using var writer = File.Open(path, FileMode.Open,
+                        FileAccess.Write, FileShare.ReadWrite | FileShare.Delete); });
+                else Should.Throw<IOException>(() => File.Move(path, path + ".foreign"));
+                attempted = true;
+            }));
+            (await r.Remove()).GetProperty("complete").GetBoolean().ShouldBeTrue();
+            attempted.ShouldBeTrue("native writer/rename must attempt the held validated file");
+            Directory.Exists(r.Fixture.Checkout).ShouldBeFalse();
+            File.ReadAllText(r.Command.ArtifactPointers[0]).ShouldBe("external result");
+        }
+    }
     private static async Task LateFileRefuses(bool replace)
     {
         await using var r = new RemovalRig(); var changed = false; string? target = null;
