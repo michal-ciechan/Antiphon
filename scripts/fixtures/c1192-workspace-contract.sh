@@ -3310,7 +3310,7 @@ mode_fingerprint_acquisition() {
         directory-link) ln -s "$C1192_ROOT/victim-directory" "$fingerprint" ;;
         dangling-link) ln -s "$C1192_ROOT/missing-victim" "$fingerprint" ;;
         regular) printf 'foreign record bytes\n' > "$fingerprint" ;;
-        fresh) ;;
+        fresh|inspection-link) ;;
         *) fail "unknown fingerprint variant $variant" ;;
     esac
     docker() {
@@ -3324,7 +3324,11 @@ mode_fingerprint_acquisition() {
                 case "$3" in
                     '{{.Name}}') printf '/c849-%s-donor\n' "$RUN" ;;
                     '{{.Image}}') printf 'sha256:owned-image\n' ;;
-                    '{{.Created}}') printf '2026-10-13T00:00:00Z\n' ;;
+                    '{{.Created}}')
+                        if [ "$variant" = inspection-link ]; then
+                            ln -s "$C1192_ROOT/victim" "$CASE_DIR/.fixture-fingerprint-c849-${RUN}-donor"
+                        fi
+                        printf '2026-10-13T00:00:00Z\n' ;;
                     *) return 97 ;;
                 esac ;;
             *) return 97 ;;
@@ -3350,7 +3354,7 @@ mode_fingerprint_acquisition() {
             [ "$code" = 2 ] && [ "$diagnosis" = 1 ] || fail 'fingerprint collision was not a named refusal'
             case "$variant" in
                 regular) [ "$(cat -- "$fingerprint")" = 'foreign record bytes' ] || fail 'foreign regular record changed' ;;
-                file-link) [ -L "$fingerprint" ] && [ "$(readlink -- "$fingerprint")" = "$C1192_ROOT/victim" ] || fail 'victim link changed' ;;
+                file-link|inspection-link) [ -L "$fingerprint" ] && [ "$(readlink -- "$fingerprint")" = "$C1192_ROOT/victim" ] || fail 'victim link changed' ;;
                 directory-link) [ -L "$fingerprint" ] && [ "$(cat -- "$C1192_ROOT/victim-directory/sentinel")" = 'directory sentinel' ] || fail 'directory victim changed' ;;
                 dangling-link) [ -L "$fingerprint" ] && [ ! -e "$C1192_ROOT/missing-victim" ] || fail 'dangling target created' ;;
             esac
