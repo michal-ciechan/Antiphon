@@ -29,7 +29,8 @@ Two further corrections to the plan's test sketches:
 
 - The plan's red signal for the foreign-owner case ("incident rows for the foreign session") is wrong
   as written: a session with no owning agent takes the service's unowned branch, which writes no
-  incident row and raises a standalone alert instead (`TranscriptBindingIncidentService.cs:55-83`).
+  incident row (for the fault arm it attempts a best-effort standalone alert; the bound arm only
+  logs; `TranscriptBindingIncidentService.cs:55-83`, `:291-328`).
   The foreign sessions below are seeded with an owning task row, so a bypassed owner check writes
   a real incident row, and the test also asserts zero alerts for those session ids.
 - `live.PendingEvents` is incremented when the receive loop accepts a frame
@@ -59,8 +60,10 @@ Two further corrections to the plan's test sketches:
   on the isolated schema, which is what the service resolves through its scope factory. Read the
   schema with `new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString))`,
   not `BridgeQueueHarness.CreateContext()` (that one opens the shared database).
-- `AlertService.RaiseAsync` inserts one `Alerts` row per raise (`AlertService.cs:35-60`); dedup is
-  the router's concern. Alert counts therefore track incident counts one to one for alerting kinds.
+- `AlertService.RaiseAsync` does not dedup (`AlertService.cs:35-60`; dedup is the router's). In the
+  successful ordinary fixture writes below, one fault incident comes with one alert row, as
+  `Remote_fault_frame_records_the_local_incident_row` and `Replayed_frames_across_a_reconnect_record_once`
+  assert; that is not a general property of `RaiseAsync` or of write-failure paths.
 - Fault incident text with no channel binding (`TranscriptBindingIncidentService.cs:90-122`):
   `No transcript is bound to this session. {Kind}: {Detail} (candidate {CandidatePath})`,
   `FailureReason = Kind`, `Severity = Warning`; the alert carries
@@ -121,7 +124,7 @@ sequence of `Admit` calls with a hand-written expected bool; the assertion names
 | Method | Sequence (expected) | Mutation -> red |
 |---|---|---|
 | `First_fault_is_admitted_and_identical_replay_is_refused` | `F` (true); `F with { }` (false; a distinct instance with equal value); `F` (false); `B` (true); `B with { }` (false) | PC-6 `Admit` returns true unconditionally -> red at step 2 |
-| `A_genuine_repeat_with_higher_repeat_count_is_admitted` | `F` (true); then one flip each from `F`, each expected true: `{ Repeat = 2, UnboundSeconds = 300 }` (the runner's five-minute repeat), `{ Kind = "TranscriptMissing" }`, `{ Detail = "other detail" }`, `{ CandidatePath = null }`, `{ SessionId = <other guid> }`; then `F` (false) | PC-7 key faults on `(SessionId, Kind)` only -> red at the first flip |
+| `A_genuine_repeat_with_higher_repeat_count_is_admitted` | `F` (true); then one flip each from `F`, each expected true: `{ Repeat = 2, UnboundSeconds = 300 }` (the refusal-path five-minute repeat shape), `{ Kind = "TranscriptMissing" }`, `{ Detail = "other detail" }`, `{ CandidatePath = null }`, `{ SessionId = <other guid> }`; then `F` (false) | PC-7 key faults on `(SessionId, Kind)` only -> red at the first flip |
 | `Replay_after_the_window_is_admitted_again` | `F` (true); `clock.Advance(899 s)`; `F` (false); `clock.Advance(1 s)` (elapsed 900); `F` (true); `F` (false). Rule: refused while elapsed < window | PC-9 ignore elapsed time (treat a seen key as inside the window) -> red at step 3 |
 | `Bound_identical_replay_is_refused_and_a_different_path_is_admitted` | `B` (true); `B` (false); `B with { TranscriptPath = "/home/a/.codex/sessions/2026/10/13/rollout-def.jsonl" }` (true); `B with { How = "fork" }` (true); `F` (true; same session id, different record type); `B` (false) | PC-16 key bound events on `SessionId` only -> red at step 3 |
 | `Guard_evicts_the_oldest_key_past_capacity` | capacity 3; `F1..F4` differ only in `Repeat` 1..4: `F1` (true), `F2` (true), `F3` (true), `F4` (true, evicts `F1`), `F1` (true, evicts `F2`), `F4` (false), `F2` (true, evicts `F3`), `F3` (true, evicts `F4`), `F1` (false) | PC-17 remove eviction -> red at step 5 |
@@ -184,16 +187,11 @@ instead of `ValidateGlobal` -> row 5 red.
 
 ### Docs sentence (Code, S2)
 
-After the Preserved Gotcha #40 (CARD-0006) paragraph in `docs/session-runtime-invariants.md`, one
-sentence: "Remote (phone-home) runners deliver the same two events through `RunnerContractMapper`
-and `PhoneHomeRecoveryPump`, which passes them to the same service after the owner check and a
-bounded, in-memory per-runner replay guard; the guard stamps a record before the service call and
-refuses an equal record only while that key is held inside the window; that key is a volatile
-admission identity lost on restart or eviction, while the incident row's persisted identity is its
-generated `AgentIncident.Id` and the row does not store the whole key (so a refusal does not prove
-the first admission was recorded, and an absent row does not prove the event never arrived), and
-these live-only events are not reconstructed by catch-up (CARD-1219); pinned by `RunnerContractMapperTranscriptEventTests`,
-`TranscriptIncidentReplayGuardTests` and `PhoneHomeTranscriptIncidentTests`."
+After the Preserved Gotcha #40 (CARD-0006) paragraph in `docs/session-runtime-invariants.md`, a
+short paragraph naming the remote lane (`RunnerContractMapper`, `PhoneHomeRecoveryPump`, owner
+check, per-runner replay guard) and pointing at `RunnerContractMapperTranscriptEventTests`,
+`TranscriptIncidentReplayGuardTests` and `PhoneHomeTranscriptIncidentTests` for its behaviour; the
+paragraph itself is the source of its wording.
 
 ## Verification design
 
@@ -221,20 +219,21 @@ One changed asynchronous delivery path. Two identities, kept apart:
 
 - Volatile admission identity: the parsed record
   (`SessionId, Kind, Detail, CandidatePath, UnboundSeconds, Repeat` or `SessionId, TranscriptPath, How`),
-  the replay guard's in-memory key in one pump instance. It disappears with that instance (a
-  server restart starts empty) and when evicted at capacity; the guard does not persist it.
-- Persisted row identity: `AgentIncident.Id`, generated by the write. The row carries
-  `SessionId`, `Kind`, `FailureReason` and `Message` as correlation/receipt fields only: the
-  ordinary fault row stores neither `Repeat` nor `UnboundSeconds`, `RecordIncidentAsync` clips
-  long text, and two genuine repeats with the same `Detail` produce rows with equal descriptive
-  fields. The complete event key is not persisted, and there is no durable transport-event or
-  dedup identity.
+  the replay guard's in-memory key in one pump instance (eviction: `Guard_evicts_the_oldest_key_past_capacity`;
+  no test restarts the pump).
+- Persisted row identity: `AgentIncident.Id`, generated by the write. The ordinary fault row's
+  message omits `Repeat` and `UnboundSeconds` (`Remote_fault_frame_records_the_local_incident_row`
+  asserts it for a `Repeat 3` record), so they cannot serve as a durable transport identity. Two
+  distinct repeat records can produce equal descriptive fields when the other event fields, the
+  resolved owner and the channel binding are unchanged; a channel binding added between them
+  changes `Severity` and `Message` (`TranscriptBindingIncidentService.cs:114-122`). Not covered by
+  a test in this card.
 
 | Hop | Producer | Destination | Persistence boundary | Recovery | Observable receipt |
 |---|---|---|---|---|---|
-| 1 | Runner tailer `_events.Publish` (hub, default JSON) | `PhoneHomeConnectionService.SendEventAsync` -> WebSocket event frame | none (live only; the hub keeps no history) | fault: the runner's five-minute repeat re-publishes with `Repeat + 1`; bound: not re-sent | the frame on the server socket (not a receipt of anything) |
+| 1 | Runner tailer `_events.Publish` (hub, default JSON) | `PhoneHomeConnectionService.SendEventAsync` -> WebSocket event frame | none (live only; the hub keeps no history) | by producer path (plan ground-truth row 5; not covered by a test here): refusal/no-candidate faults repeat with advanced `Repeat`/`UnboundSeconds`; `ReportRootFault` repeats an equal record, which the guard refuses inside the window; child-exit faults and bound events are not re-sent | the frame on the server socket (not a receipt of anything) |
 | 2 | `PhoneHomeLiveConnection` receive loop (`_pendingEvents++`, channel write) | `PhoneHomeRecoveryPump.PumpEventsAsync` (single FIFO reader per connection) | none; `PendingEvents` returns to 0 in the pump's `finally` | a handler exception is caught per event and the event released (CARD-0679 D-2, R-2); a socket drop ends the channel and the next connection gets a fresh pump (R-2) | `PendingEvents == 0` paired with the row or log evidence below, not on its own |
-| 3 | pump arm (after `OwnerMatchesAsync`, after `guard.Admit`) | `TranscriptBindingIncidentService.OnTranscriptFaultAsync` / `OnHeuristicBindAsync` | `db.SaveChangesAsync` in the service scope: `AgentIncidents` row (+ `Alerts` row for the fault) | no retry. Fault arm: a failed write is logged at Error and the handler attempts a best-effort standalone alert, whose own failure is caught and logged (R-3, `A_fault_whose_incident_cannot_be_written...`, a direct service call); an unowned session raises the unowned standalone alert (R-3). Bound arm: a failed write and an unowned session are only logged; no alert. The guard stamped the record before this call and a failed write keeps that stamp, so while this pump instance still holds the key inside the window an equal record is refused, not retried; after window expiry, eviction at capacity or a new pump instance it is admitted again | the `AgentIncidents` row read back with `AsNoTracking` on the isolated schema; the `Alerts` row for the fault |
+| 3 | pump arm (after `OwnerMatchesAsync`, after `guard.Admit`) | `TranscriptBindingIncidentService.OnTranscriptFaultAsync` / `OnHeuristicBindAsync` | `db.SaveChangesAsync` in the service scope: `AgentIncidents` row (+ `Alerts` row for the fault) | no retry. Write-failure and unowned handling are the service's (R-3; `A_fault_whose_incident_cannot_be_written_names_the_database_error_and_still_alerts` is a direct fault-method call; no test fails a bound write). The guard stamps the record before this call; an equal record inside the window is then refused (V-3), whether or not this write succeeded | the `AgentIncidents` row read back with `AsNoTracking` on the isolated schema; the `Alerts` row for the fault |
 
 Producer-to-recipient tests through the real queue (a real Kestrel WebSocket host, the real
 `PhoneHomeLiveConnection` channel, the real pump, the real service, a real Postgres schema):
