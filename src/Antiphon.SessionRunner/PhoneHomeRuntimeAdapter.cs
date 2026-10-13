@@ -38,6 +38,8 @@ public sealed class PhoneHomeRuntimeAdapter : IPhoneHomeRuntimeSurface
         var decision = _runtime.BackendDecision;
         IReadOnlyList<string> backends = [SessionBackends.PtyHost];
         IReadOnlyList<string> features = StaticFeatures;
+        if (_runtime.SupportsCompletedCardWorkspace)
+            features = [.. features, RunnerCapabilityFeatures.CompletedCardWorkspaceV1];
         if (_runtime.SupportsWorkspacePark)
             features = [.. features, RunnerCapabilityFeatures.WorkspaceParkV1,
                 RunnerCapabilityFeatures.WorkspaceRepositoryIdentityV1];
@@ -76,6 +78,13 @@ public sealed class PhoneHomeRuntimeAdapter : IPhoneHomeRuntimeSurface
             ? VerificationCustodyBackends.LinuxCgroup : null;
 
     public Guid RunnerStoreId => _runtime.RunnerStoreId;
+    public RunnerWorkspaceUseGate? WorkspaceUseGate => _runtime.WorkspaceUseGate;
+    public Task<CompletedCardWorkspaceInspectionResponse> InspectCompletedCardWorkspaceAsync(
+        CompletedCardWorkspaceInspectRequest request, CancellationToken ct) =>
+        _runtime.InspectCompletedCardWorkspaceAsync(request, ct);
+    public Task<CompletedCardWorkspaceRemovalResponse> RemoveCompletedCardWorkspaceAsync(
+        CompletedCardWorkspaceCommand command, CancellationToken ct) =>
+        _runtime.RemoveCompletedCardWorkspaceAsync(command, ct);
     public Task<RunnerAbsenceOutcome<RunnerAbsencePrepared>> PrepareAbsenceEvidenceAsync(RunnerAbsenceRequest request, CancellationToken ct) =>
         _runtime.PrepareAbsenceEvidenceAsync(request, ct);
     public Task<RunnerAbsenceOutcome<RunnerAbsenceCertificate>> CertifyAbsenceAsync(RunnerAbsenceRequest request, CancellationToken ct) =>

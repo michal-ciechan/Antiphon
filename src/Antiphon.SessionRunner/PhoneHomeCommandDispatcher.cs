@@ -6,6 +6,13 @@ namespace Antiphon.SessionRunner;
 
 public interface IPhoneHomeRuntimeSurface
 {
+    RunnerWorkspaceUseGate? WorkspaceUseGate => null;
+    Task<CompletedCardWorkspaceInspectionResponse> InspectCompletedCardWorkspaceAsync(
+        CompletedCardWorkspaceInspectRequest request, CancellationToken ct) =>
+        throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedOperation, "unsupported_operation", 501);
+    Task<CompletedCardWorkspaceRemovalResponse> RemoveCompletedCardWorkspaceAsync(
+        CompletedCardWorkspaceCommand command, CancellationToken ct) =>
+        throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedOperation, "unsupported_operation", 501);
     Task<WorkspaceRepositoryIdentityResult> ReadWorkspaceRepositoryIdentityAsync(WorkspaceRepositoryIdentityRequest request, CancellationToken ct) =>
         Task.FromResult(new WorkspaceRepositoryIdentityResult(WorkspaceRepositoryIdentityOutcome.Held, "identity_unsupported"));
     Task<WorkspaceParkResult> ParkWorkspaceAsync(WorkspaceParkCommand request, CancellationToken ct) =>
@@ -127,8 +134,12 @@ public sealed class PhoneHomeCommandDispatcher
         _lifetime?.StopApplication();
     }
 
-    private RunnerWorkspaceService Workspace() =>
+    private RunnerWorkspaceService Workspace()
+    {
         _workspace ??= new RunnerWorkspaceService(_settings.RepositoryPolicy(), _settings.AllowedCwd);
+        _workspace.WorkspaceUseGate = _runtime.WorkspaceUseGate;
+        return _workspace;
+    }
 
     // CARD-1032: an unbound mirror still uses this historical fallback, including the
     // custody ledger guid when StoreIdPath cannot be parsed. A bound mirror never does.
@@ -172,6 +183,33 @@ public sealed class PhoneHomeCommandDispatcher
         {
             return false;
         }
+    }
+
+    private void RequireCompletedCardCapability()
+    {
+        if (_runtime.Capabilities().Features?.Contains(RunnerCapabilityFeatures.CompletedCardWorkspaceV1,
+            StringComparer.Ordinal) != true)
+            throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedOperation, "unsupported_operation", 501);
+    }
+
+    private static void RequireCompletedCardBody(CompletedCardWorkspaceValidation validation)
+    {
+        if (!validation.IsValid)
+            throw new PhoneHomeAdmissionException("invalid_completed_card_workspace", validation.Reason!, 400);
+    }
+
+    private void RequireCompletedCardRecipient(CompletedCardWorkspaceBinding binding)
+    {
+        if (binding.RunnerId != _settings.RunnerId)
+            throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedTarget, "runner_store_mismatch", 409);
+        Guid store;
+        try { store = RunnerWorkspaceNoFollowDelete.ReadStoreGuid(_settings.StoreIdPath); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or PlatformNotSupportedException)
+        {
+            throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedTarget, "recipient_store_unreadable", 409);
+        }
+        if (!Guid.TryParse(binding.RunnerStoreId, out var requested) || requested == Guid.Empty || store != requested)
+            throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedTarget, "runner_store_mismatch", 409);
     }
 
     private async Task WriteSpillIfPresentAsync(PhoneHomeFrame request, CancellationToken ct)
@@ -268,6 +306,24 @@ public sealed class PhoneHomeCommandDispatcher
             return request.Operation.Value switch
             {
                 PhoneHomeOperation.Capabilities => Result(request, _runtime.Capabilities()),
+                PhoneHomeOperation.CompletedCardWorkspaceInspect => await MutateAsync(request, async () =>
+                {
+                    RequireCompletedCardCapability();
+                    var raw = request.Payload?.GetRawText() ?? "";
+                    RequireCompletedCardBody(CompletedCardWorkspaceContract.ValidateInspect(raw));
+                    var body = request.Payload!.Value.Deserialize<CompletedCardWorkspaceInspectRequest>(PhoneHomeFraming.Json)!;
+                    RequireCompletedCardRecipient(body.Binding);
+                    return Result(request, await _runtime.InspectCompletedCardWorkspaceAsync(body, ct));
+                }),
+                PhoneHomeOperation.CompletedCardWorkspaceRemove => await MutateAsync(request, async () =>
+                {
+                    RequireCompletedCardCapability();
+                    var raw = request.Payload?.GetRawText() ?? "";
+                    RequireCompletedCardBody(CompletedCardWorkspaceContract.Validate(raw));
+                    var body = request.Payload!.Value.Deserialize<CompletedCardWorkspaceCommand>(PhoneHomeFraming.Json)!;
+                    RequireCompletedCardRecipient(body.Binding);
+                    return Result(request, await _runtime.RemoveCompletedCardWorkspaceAsync(body, ct));
+                }),
                 PhoneHomeOperation.CodexCliVersion => Result(request, await _runtime.GetCodexCliVersionAsync(
                     request.Payload?.Deserialize<RunnerCodexCliProbeRequest>(PhoneHomeFraming.Json)
                         ?? throw new ArgumentException("Version descriptor is required."), ct)),

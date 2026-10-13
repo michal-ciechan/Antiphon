@@ -39,6 +39,46 @@ internal static class RunnerWorkspaceNoFollowDelete
         return LinuxMetadata(fd.DangerousGetHandle().ToInt32()).Identity;
     }
 
+    // C1032_TransportRequiredPayload exercises unreadable registration and a Linux link.
+    // The read is bounded to 128 bytes and shares S5's pinned path/type metadata.
+    internal static Guid ReadStoreGuid(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path) || !Path.IsPathFullyQualified(path)) throw new IOException("registration path");
+        if (OperatingSystem.IsWindows())
+        {
+            using var parents = PinWindowsParents(path);
+            using var handle = OpenNoFollow(path);
+            var metadata = WindowsMetadata(handle, path);
+            return ReadGuid(handle, metadata, () => WindowsMetadata(handle, path));
+        }
+        using var parent = OpenLinuxPath(Path.GetDirectoryName(path)!);
+        var fd = parent.DangerousGetHandle().ToInt32(); var name = Path.GetFileName(path);
+        var listed = LinuxMetadata(fd, name);
+        if (!listed.Regular || listed.Size > 128) throw new IOException("registration type or size");
+        using var file = OpenLinuxEntry(fd, name);
+        var opened = LinuxMetadata(file.DangerousGetHandle().ToInt32());
+        if (opened != listed) throw new IOException("registration changed");
+        return ReadGuid(file, opened, () => LinuxMetadata(file.DangerousGetHandle().ToInt32()));
+    }
+
+    private static Guid ReadGuid(SafeFileHandle file, Metadata before, Func<Metadata> after)
+    {
+        if (!before.Regular || before.Size is < 1 or > 128) throw new IOException("registration type or size");
+        // FileStream owns the supplied handle; callers also dispose it on failure before this point.
+        using var stream = new FileStream(file, FileAccess.Read);
+        var bytes = new byte[129]; var count = 0;
+        while (count < bytes.Length)
+        {
+            var read = stream.Read(bytes, count, bytes.Length - count);
+            if (read == 0) break;
+            count += read;
+        }
+        if (count > 128 || count != before.Size || after() != before
+            || !Guid.TryParse(System.Text.Encoding.ASCII.GetString(bytes, 0, count).Trim(), out var store) || store == Guid.Empty)
+            throw new IOException("registration invalid or changed");
+        return store;
+    }
+
     internal static async Task<Entry[]> InventoryAsync(string root, string? expectedIdentity, CancellationToken ct)
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);

@@ -8,8 +8,39 @@ using Antiphon.SessionRunner.Contracts;
 
 namespace Antiphon.Server.Infrastructure.Agents.SessionRunner;
 
-public sealed class PhoneHomeRunnerClient : ISessionRunnerClient, IVerificationWorkspaceTransport
+public sealed class PhoneHomeRunnerClient : ISessionRunnerClient, IVerificationWorkspaceTransport, ICompletedCardWorkspaceClient
 {
+    public async Task<CompletedCardWorkspaceInspectionResponse> InspectCompletedCardWorkspaceAsync(
+        CompletedCardWorkspaceInspectRequest request, CancellationToken ct)
+    {
+        var validation = CompletedCardWorkspaceContract.ValidateInspect(JsonSerializer.Serialize(request, PhoneHomeFraming.Json));
+        if (!validation.IsValid) return new("", "", [], validation.Reason);
+        if (!await SupportsCompletedCardWorkspaceAsync(ct)) return new("", "", [], PhoneHomeProblemTypes.UnsupportedOperation);
+        var frame = await _connection.RequestAsync(PhoneHomeOperation.CompletedCardWorkspaceInspect, request, ct);
+        if (frame.Kind == PhoneHomeFrameKind.Error && frame.ErrorCode == PhoneHomeProblemTypes.UnsupportedOperation)
+            return new("", "", [], PhoneHomeProblemTypes.UnsupportedOperation);
+        return Read<CompletedCardWorkspaceInspectionResponse>(frame) ?? throw Missing("completed-card-workspace-inspect");
+    }
+
+    public async Task<CompletedCardWorkspaceRemovalResponse> RemoveCompletedCardWorkspaceAsync(
+        CompletedCardWorkspaceCommand command, CancellationToken ct)
+    {
+        var validation = CompletedCardWorkspaceContract.Validate(JsonSerializer.Serialize(command, PhoneHomeFraming.Json));
+        if (!validation.IsValid) return new(false, validation.Reason, null);
+        if (!await SupportsCompletedCardWorkspaceAsync(ct)) return new(false, PhoneHomeProblemTypes.UnsupportedOperation, null);
+        var frame = await _connection.RequestAsync(PhoneHomeOperation.CompletedCardWorkspaceRemove, command, ct);
+        if (frame.Kind == PhoneHomeFrameKind.Error && frame.ErrorCode == PhoneHomeProblemTypes.UnsupportedOperation)
+            return new(false, PhoneHomeProblemTypes.UnsupportedOperation, null);
+        var result = Read<CompletedCardWorkspaceRemovalResponse>(frame) ?? throw Missing("completed-card-workspace-remove");
+        if (result.Complete && result.Receipt is not { DirectoryRemoved: true, RegistrationRemoved: true })
+            return new(false, "recipient_receipt_unreadable", null);
+        return result;
+    }
+
+    private async Task<bool> SupportsCompletedCardWorkspaceAsync(CancellationToken ct) =>
+        (await GetCapabilitiesAsync(ct))?.Features?.Contains(RunnerCapabilityFeatures.CompletedCardWorkspaceV1,
+            StringComparer.Ordinal) == true;
+
     public async Task<WorkspaceRepositoryIdentityResult> ReadWorkspaceRepositoryIdentityAsync(WorkspaceRepositoryIdentityRequest request, CancellationToken ct)
     {
         if (request.Version != 1 || !WorkspaceRepositoryIdentityRequest.Supported(await GetCapabilitiesAsync(ct)))

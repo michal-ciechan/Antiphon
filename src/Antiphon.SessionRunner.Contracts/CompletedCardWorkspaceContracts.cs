@@ -48,6 +48,17 @@ public sealed record CompletedCardWorkspaceInspectRequest(
     int SchemaVersion,
     CompletedCardWorkspaceBinding Binding);
 
+public sealed record CompletedCardWorkspaceInspectionEntry(string Path, string Kind);
+
+public sealed record CompletedCardWorkspaceInspectionResponse(string HeadSha, string SourceFullRef,
+    IReadOnlyList<CompletedCardWorkspaceInspectionEntry> IgnoredContent, string? Reason)
+{
+    public IReadOnlyList<string> HeldPaths { get; init; } = [];
+}
+
+public sealed record CompletedCardWorkspaceRemovalResponse(bool Complete, string? Reason,
+    CompletedCardWorkspaceReceipt? Receipt);
+
 /// <summary>
 /// CARD-1032. Immutable guarded remove command. There is no Force member; operation 15 stays the legacy remover.
 /// </summary>
@@ -111,6 +122,30 @@ public readonly record struct CompletedCardWorkspaceValidation(bool IsValid, str
 /// </summary>
 public static class CompletedCardWorkspaceContract
 {
+    public static CompletedCardWorkspaceValidation ValidateInspect(string json)
+    {
+        if (!TryDocument(json, out var document, out var failure))
+            return CompletedCardWorkspaceValidation.Reject(failure!);
+        using (document)
+        {
+            var root = document!.RootElement;
+            if (ContainsForce(root)) return CompletedCardWorkspaceValidation.Reject("force_forbidden");
+            if (root.ValueKind != JsonValueKind.Object) return CompletedCardWorkspaceValidation.Reject("malformed");
+            foreach (var property in root.EnumerateObject())
+                if (property.Name is not ("schemaVersion" or "binding"))
+                    return CompletedCardWorkspaceValidation.Reject("unknown." + property.Name);
+            if (!TryInt(root, "schemaVersion", out var version) || version != CompletedCardWorkspaceProtocol.SchemaVersion)
+                return CompletedCardWorkspaceValidation.Reject("schema_version");
+            if (RequireObject(root, "binding", "Binding") is { } missing)
+                return CompletedCardWorkspaceValidation.Reject(missing);
+            var binding = root.GetProperty("binding");
+            if (Unknown(binding, BindingNames) is { } unknown)
+                return CompletedCardWorkspaceValidation.Reject("unknown." + unknown);
+            return ValidateBinding(binding) is { } reason
+                ? CompletedCardWorkspaceValidation.Reject(reason) : CompletedCardWorkspaceValidation.Ok;
+        }
+    }
+
     private static readonly HashSet<string> RootNames = new(StringComparer.Ordinal)
     {
         "schemaVersion", "cardId", "doneRevisionId", "targetId", "endpointId", "operationId",

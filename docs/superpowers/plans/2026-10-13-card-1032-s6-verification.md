@@ -32,3 +32,27 @@ without the S7 coordinator. Two exact methods: unsupported client refusal and
 Linux ready inspection/busy removal/queued exact replay/reconnection. Additional
 cost: one isolated server build and two bounded loopback cases (5 minutes).
 
+The S6 added parser/registration vectors live inside C1032_TransportRequiredPayload:
+missing root and binding members, null/array/duplicate/Force/version/unknown bodies,
+foreign runner/store/full task, empty/garbled/oversize/directory/linked registration,
+and a mismatched composition gate. C1032_TransportDispatchReplay holds a real use
+lease before typed and legacy removal, releases it, and checks complete replay
+against the separately re-read journal and replacement bytes.
+
+C1032_TransportClientUnsupported covers absent capability, advertised-but-unsupported
+inspect/remove and a bare completion ACK without a receipt. The latter is protocol
+refusal evidence; the real queue method owns physical removal/reconnect proof.
+New response DTOs carry existing recipient facts; no server endpoint is marked Complete.
+
+Deletion/removal paths touched by S6:
+- CompletedCardWorkspaceRemove dispatch -> capability + strict command parser +
+  current registered runner/store -> explicit transport -> existing S5 remover,
+  TryRetireRemovalAsync journal-before-effect and held-handle delete gates.
+- WorkspaceRemove -> existing RunnerWorkspaceService.RemoveAsync; explicit
+  composition now supplies the same optional gate before remove/prune.
+- VerificationWorkspaceRemove -> existing workspace service and its optional gate.
+  Verification authority and legacy payloads are unchanged by the S6 parser.
+- Transport/client/parser/registration reader contain no deletion or pruning calls.
+- Test fixture teardown removes only its owned scratch root after connection/runtime
+  shutdown; scripted peers close their owned socket. No production Program registration,
+  scheduler, route, setting activation, deployment or restart is added.

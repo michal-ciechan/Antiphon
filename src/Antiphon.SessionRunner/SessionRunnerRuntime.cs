@@ -213,6 +213,25 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
     /// </summary>
     internal Func<Guid, string, Task>? CreationEffectForTest { get; set; }
     internal RunnerWorkspaceUseGate? WorkspaceUseGate { get; set; }
+    private RunnerCompletedCardWorkspaceTransport? _completedCardWorkspace;
+    internal RunnerCompletedCardWorkspaceTransport? CompletedCardWorkspace
+    {
+        get => _completedCardWorkspace;
+        set
+        {
+            _completedCardWorkspace = value;
+            if (value is not null) WorkspaceUseGate = value.Gate;
+        }
+    }
+    internal bool SupportsCompletedCardWorkspace => CompletedCardWorkspace is not null;
+    internal Task<CompletedCardWorkspaceInspectionResponse> InspectCompletedCardWorkspaceAsync(
+        CompletedCardWorkspaceInspectRequest request, CancellationToken ct) =>
+        CompletedCardWorkspace is { } service ? service.InspectAsync(request, ct)
+            : throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedOperation, "unsupported_operation", 501);
+    internal Task<CompletedCardWorkspaceRemovalResponse> RemoveCompletedCardWorkspaceAsync(
+        CompletedCardWorkspaceCommand command, CancellationToken ct) =>
+        CompletedCardWorkspace is { } service ? service.RemoveAsync(command, ct)
+            : throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedOperation, "unsupported_operation", 501);
     internal Func<Task>? WorkspaceCensusForTest { get; set; }
 
     /// <summary>CARD-1153 S2 test seam: inside the launch gate, before a prepare/certify decision.</summary>
@@ -965,6 +984,9 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             : features.Append(RunnerCapabilityFeatures.RequiredPlatformV1).ToArray();
         advertised = advertised.Contains(CodexCliVersionProbe.Capability)
             ? advertised : advertised.Append(CodexCliVersionProbe.Capability).ToArray();
+        advertised = advertised.Where(f => f != RunnerCapabilityFeatures.CompletedCardWorkspaceV1).ToArray();
+        if (SupportsCompletedCardWorkspace)
+            advertised = [.. advertised, RunnerCapabilityFeatures.CompletedCardWorkspaceV1];
         var cli = CodexCliProbe?.Snapshot;
         return new RunnerCapabilitiesDto(
             decision.Backend.ToString(), decision.Requested, decision.Reason, decision.FellBack,
