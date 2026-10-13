@@ -63,7 +63,8 @@ public sealed class WaitCommand
         {
             var now = _clock();
             var state = _store.TryRead(statePath, out var stateRefusal);
-            if (stateRefusal is not null && (stateRefusal.Contains("not regular", StringComparison.Ordinal) || stateRefusal.Contains("nonregular", StringComparison.Ordinal)))
+            if (stateRefusal is not null && (stateRefusal.Contains("not regular", StringComparison.Ordinal) || stateRefusal.Contains("nonregular", StringComparison.Ordinal)
+                || stateRefusal.Contains("receipt-identity:", StringComparison.Ordinal)))
             { output.WriteLine("refused: " + stateRefusal); return ExitCodes.Invalid; }
             var observed = cleanup.ObserveExecutor(runDirectory);
             // Finish publishes phase=done after the "done exit=" log line, and the

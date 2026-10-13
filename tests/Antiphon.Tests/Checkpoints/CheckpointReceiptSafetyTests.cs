@@ -131,10 +131,10 @@ public sealed class CheckpointReceiptSafetyTests : CheckpointTestBase
     [Arguments("")]
     [Arguments(" \t\r\n")]
     [Arguments(null)]
-    [Arguments("CP-valid")]
+    [Arguments("CP-fixture")]
     public async Task receipt_row_and_build_identities_refuse_blank_without_writing(string? identity)
     {
-        var valid = identity == "CP-valid";
+        var valid = identity == "CP-fixture";
         var failures = new List<string>();
         // Each entry gets its own complete receipt pair; only the selected identity changes.
         foreach (var receipt in new[] { "state.json", "report.json" })
