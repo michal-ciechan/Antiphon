@@ -5,8 +5,8 @@ CP-5=30/30 and CP-6=4/4, zero failures/skips, on
 `52e9463282afe6c1c782a061753a1b044800c60e`. The later artifact commit updates
 documentation only. The historical holds below are superseded by the final
 results at the end. Every deliberate PC/family control remains pending Mutation.
-The later caller refinement makes scratch-family proof mandatory before acceptance;
-that additional requirement is blocked by the binding Code-stage ownership rule.
+The caller has assigned the scratch-family proofs to a separate probe task;
+they remain pending and no longer block this ordinary Code handoff to Review.
 
 Code/landing owner: c0e86d50-00e6-4942-b303-7bc44122c640.
 Branch: feat/card-task-c0e86d50. Base: 6e36b695f9ead5f16e9bb05a7f4033cd0c432cf2.
@@ -294,7 +294,15 @@ Mutation. This delegate cannot change its role or sub-delegate. The complete
 ordinary implementation remains available for Review, with all systematic
 PC-84..100 variants pending after original-owner landing as before.
 
+### Caller closure decision
+
+The caller confirmed that a separate probe task will execute the scratch-family
+proofs and requested clean closure. This resolves the Code handoff hold without
+claiming any family red or systematic PC as passed. Ordinary S5 is complete;
+all existing tested-source receipts remain unchanged. The previously reported
+infrastructure sync delay requires no decision from this delegate.
+
 --- next stage ---
-next: decide
-handoff: Ordinary S5 is complete: CP-5 30/30 and CP-6 4/4. The refinement requires FC-1..FC-6 scratch-family reds, but the binding developer Code-stage contract assigns deliberate mutants to Mutation. Resolve the stage-contract conflict or commission Mutation; no family red is claimed. Systematic PC-84..100 variants remain pending.
+next: review
+handoff: Review ordinary S5 acceptance: CP-5 30/30 and CP-6 4/4 with clean/verified receipts. Caller assigned FC-1..FC-6 scratch-family proofs to a separate probe task; none are claimed passed here. All systematic PC-84..100 variants remain pending for Mutation after original Code owner landing.
 artifact: docs/superpowers/plans/2026-10-13-card-1205-s5-checkpoints.md

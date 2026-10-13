@@ -49,6 +49,9 @@ The later refinement reaffirms these controls as mandatory and says Mutation is
 paused. Code has returned this instruction conflict for caller triage; the active
 developer stage contract must change before Code can execute deliberate scratch
 mutants. Ordinary green does not prove these witnesses can detect their defects.
+The caller subsequently assigned the scratch-family proofs to a separate probe
+task and requested Code closure. That resolves this handoff hold; every family
+row below remains pending until the probe supplies its actual failing output.
 
 | Family | One proposed decisive control | Exact method-scoped selection | Expected assertion red |
 |---|---|---|---|
