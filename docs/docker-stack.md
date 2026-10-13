@@ -703,17 +703,19 @@ CP-45..52 model post-Compose finalizer probes for registered consumers, helpers,
 work/mask/cache volumes and the fixture network. CP-53 models work/mask creation
 followed by unknown ownership, with persistent daemon loss and a one-probe outage:
 registration and both cleanup records remain, and the wrapper refuses success.
-CP-44 retains the confirmed-foreign refusal row: drop the registration, leave the
-volume unmounted and do not delete it. Confirmed-owned creation continues normally.
+CP-44 retains the work/mask confirmed-foreign refusal row: drop the registration,
+leave the work/mask volume unmounted and do not delete it. Confirmed-owned
+work/mask creation continues normally. This does not cover cache-volume acquisition.
 Known exceptions:
 
+- a cache volume positively identified as foreign by acquisition (CacheVolumeForeign) remains registered and is deleted by finalization: inherited from before S7, tracked as CARD-1208; no S7 test covers it
 - Compose teardown checks only `docker compose down -v` exit status; residual
   Compose-created volumes after exit zero are not detected (CARD-1207).
 - Older cache namespace prechecks in prepare/seed/race/apphost/npm/contract-controls,
   the shared `c849_volume` admission lookup and F-7 private/nonexternal absence
   checks still use raw inspect status. Mid-group removals still rely on command
   acknowledgement; anonymous `--rm` helpers are outside the named finalizer roster.
-  These are the non-finalizer limits disclosed by Reviews 2ec97f2d/0a3d75f7.
+  These are additional limits disclosed by Reviews 2ec97f2d/0a3d75f7.
 - W-1 native Docker/UID/archive/NuGet-lock and copied rollout acceptance is pending.
 
 The production cache names are
@@ -728,7 +730,8 @@ with volume-nocopy. Only readonly checkout inputs use host binds. Small controll
 documents and command logs live in a fresh mode-0700, host-owned
 `CASE_DIR/fixture-controller` directory; the maintenance lock stays on the original
 host root. Finalization attempts consumer release, exports the five safe race/lock logs,
-releases helpers, removes exact owned volumes and removes the identity-checked
+releases helpers, removes label-checked work/mask volumes and registered cache
+volumes (subject to CARD-1208 above), and removes the identity-checked
 controller before publishing success (CP-34/35/38). The shared resource-removal
 helper probes the exact name after removal; CP-45..51 distinguish recognized
 absence from daemon/socket, timeout, empty and unrecognized probe results.

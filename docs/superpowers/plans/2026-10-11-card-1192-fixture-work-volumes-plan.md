@@ -79,8 +79,9 @@ Line references below describe the inspected base, not future offsets.
   proving namespace absence, before acquisition; validate work/mask run/role
   labels before mounting. Unknown workspace/helper lookups refuse acquisition
   (CP-1); unknown post-create work/mask probes retain registration (CP-53). Stop consumers,
-  preserve allowed evidence, stop workspace helpers, then remove volumes by
-  exact identity. Use the existing cleanup entry point, not `docker volume prune`.
+  preserve allowed evidence, stop workspace helpers, then remove work/mask volumes
+  after label checks. Cache deletion lacks those ownership checks (CARD-1208 below).
+  Use the existing cleanup entry point, not `docker volume prune`.
   A workspace creation failure, mid-group failure and normal success all use
   the same finalizer. Do not reuse an occupied case namespace.
 - **D-6 — Preserve evidence and the original failure.** Keep the CARD-1189
@@ -172,8 +173,9 @@ including the masked-pack and seed-smoke helpers on their failure paths.
 
 `c849_fixture_cleanup` must accept the exact current-run cache-name set generated
 by prepare/seed/race/apphost/npm/contract-controls plus the two new workspace
-names. A foreign run, a same-prefix unregistered suffix, a production cache name,
-or a mislabeled pre-existing resource must not become removable via ledger input.
+names. Foreign-run names, same-prefix unregistered suffixes and production cache
+names are outside the allowed cleanup roster. Mislabeled work/mask volumes are
+protected by label checks; registered cache volumes lack that protection (CARD-1208).
 The work ledger must not be truncated later by `c849_fixture_prepare` after
 workspace initialization has registered entries. Keep the maintenance lock on
 its original host root, acquired before replacing the fixture controller root.
@@ -185,7 +187,8 @@ Compose teardown still has its control files available. CP-34/35/38 cover the
 listed consumer-release attempts, log export, helper/volume removal and controller
 disposal order. CP-45..52 cover post-Compose registered finalizer probes; CP-53
 covers retained work/mask registration and records after unknown ownership probes.
-Confirmed foreign acquisition labels drop registration without mounting/deleting.
+Confirmed foreign work/mask acquisition labels drop registration without
+mounting/deleting those work/mask volumes; this claim excludes cache volumes.
 The known exceptions below delimit these modeled proofs. Preserve the primary nonzero status and
 `UnhandledExit <code>` fallback. Report detected removal failures; successful
 finalization does not prove absence of Compose-created volumes. Do not add a
@@ -193,13 +196,14 @@ fleet sweeper or remove unrelated residue. Live acceptance W-1 remains pending.
 
 Known exceptions:
 
+- a cache volume positively identified as foreign by acquisition (CacheVolumeForeign) remains registered and is deleted by finalization: inherited from before S7, tracked as CARD-1208; no S7 test covers it
 - Compose teardown checks only `docker compose down -v` exit status; residual
   Compose-created volumes after exit zero are not detected (CARD-1207).
 - Older cache namespace prechecks in prepare/seed/race/apphost/npm/contract-controls,
   the shared `c849_volume` admission lookup and F-7 private/nonexternal absence
   checks still use raw inspect status. Mid-group removals still rely on command
   acknowledgement; anonymous `--rm` helpers are outside the named finalizer roster.
-  These are the non-finalizer limits disclosed by Reviews 2ec97f2d/0a3d75f7.
+  These are additional limits disclosed by Reviews 2ec97f2d/0a3d75f7.
 - W-1 native Docker/UID/archive/NuGet-lock and copied rollout acceptance is pending.
 
 SIGKILL, host loss and an unavailable Docker daemon cannot guarantee immediate
@@ -257,10 +261,12 @@ the existing bounded wait. Receipt tests must assert exit status and content.
 
 New guard requirements (the V identifiers below bind the proposed checkpoints):
 
-- **V-1:** absent-only exact registration, no later ledger truncation, label/run
-  validation, occupied/unknown lookup refusal, and cleanup after partial acquisition.
-- **V-2:** cleanup removes consumers/helpers before exact owned volumes, tolerates
-  repeated finalization, and refuses foreign, production and same-prefix junk names.
+- **V-1:** work/mask absent-only exact registration, no later ledger truncation,
+  label/run validation, occupied/unknown lookup refusal, and workspace/helper
+  cleanup after partial acquisition. Cache foreign-finalization is not covered.
+- **V-2:** cleanup removes consumers/helpers before registered volumes, tolerates
+  repeated finalization, and refuses foreign work/mask labels, foreign-run names,
+  production names and same-prefix junk names. Cache ownership is excepted (CARD-1208).
 - **V-3:** F-4 mount/path agreement, program creation before ownership handoff,
   volume-backed readiness/go/release, shared exclusion and private-scratch expected red.
 - **V-4:** F-3/F-6 npm and refill have no host payload bind/read; positive install
@@ -486,7 +492,7 @@ The recipes below bind exact methods, variants, cases, oracles and reachability.
 - R-7: host seed/ready/prune and saved donor | CP-17..20/25 | existing
   case matrices and independent manifest oracle retained through new seam.
 - R-8: lane/evidence | CP-40..43 | no nested sudo/python, toxic receipts
-  rejected, schema/digest/smoke/roster consumer refusals, owned-only cleanup.
+  rejected, schema/digest/smoke/roster consumer refusals, work/mask ownership-checked cleanup; cache exception CARD-1208.
 
 #### Recipes, variants, cases, oracles and reachability
 
@@ -515,7 +521,7 @@ New C1192 methods are single TUnit executions with internal variant matrices.
 | CP / exact method | Recipe | Case / variants | Oracle and reached boundary |
 |---|---|---|---|
 | CP-1: `C1192_Workspace_registration_is_absent_only_and_survives_prepare` | M | Absent/occupied/unknown; labels/driver/options; controller fresh/nonlink/private/host-owned; prepare after init | Independently read ledger/census; absence then intent then acquisition; helpers' argv/security and root mode. |
-| CP-2: `C1192_Cleanup_releases_only_registered_current_run_resources` | M | Exact set, foreign run/production/same-prefix forged ledger, altered labels; repeat | Foreign canaries intact; acquired set gone; consumer/helper release precedes volumes; second finalization harmless. |
+| CP-2: `C1192_Cleanup_releases_only_registered_current_run_resources` | M | Exact set, foreign run/production/same-prefix forged ledger, altered labels; repeat | Foreign-run/name and work/mask-label canaries intact; acquired set gone; consumer/helper release precedes volumes; second finalization harmless. CacheVolumeForeign finalization excluded (CARD-1208). |
 | CP-3: `C1192_Partial_workspace_acquisition_is_cleaned` | M | Before/after each work/mask and writer/reader create/start; delete failure | Cut reached; exact acquired set cleaned or residue named; later resources attempted; EXIT already armed. |
 | CP-4: `C1192_Toxic_probe_stays_in_work_volume` | M | Toxic credential input and legal aggregate through volume helper | Actual receipt validator; volume files observed, toxic content absent recursively from CASE_DIR. |
 | CP-5: `C1192_Race_programs_and_feed_share_the_work_volume` | M+T | Feed, three projects, generated zip/driver/lock programs and configs | Run writer then open each consumer's actual path; mount/argument agreement, no payload bind. |
@@ -556,14 +562,15 @@ New C1192 methods are single TUnit executions with internal variant matrices.
 | CP-40: `Nested_lane_never_uses_sudo_or_python` | T | Existing nested-lane scan | No nested sudo/python in moved definitions; saved-import exclusion unchanged. |
 | CP-41: `C849_Cache_receipts_exclude_credentials_and_payloads` | F | Aggregate/toxic key/malformed value | Actual receipt function retains aggregate, refuses invalid input without exporting bytes. |
 | CP-42: `C913_Receipts_reject_mixed_digest_types_and_false_smoke_claims` | P | All existing schema/digest/smoke/Fixture roster faults | Actual front-door rejection/privacy with shim receipts; no scp claim. |
-| CP-43: `C913_Fixture_uses_owned_payloads_and_proven_absent_temp` | H | Existing inventory/occupied/cleanup/control/apphost cases | Adapt removed host paths only: occupied resource refused, recipient bytes read, foreign preserved, setup error not expected red. |
+| CP-43: `C913_Fixture_uses_owned_payloads_and_proven_absent_temp` | H | Existing inventory/occupied/cleanup/control/apphost cases | Adapt removed host paths only: occupied resource refused, recipient bytes read, occupied-name canary preserved, setup error not expected red; CacheVolumeForeign finalization excluded (CARD-1208). |
 
 ### Guard inventory
 
 Every row is an independently bypassable safety assertion with a distinct PC.
 These plan PC numbers are separate from live Fixture PC-01..PC-32 families.
-Shared detecting methods do not merge controls. No safety guard is intentionally
-untested; native strength remains limited until W-1. Unchanged internal parser/
+Shared detecting methods do not merge controls. The ownership guards cover
+work/mask and named helpers; foreign-cache finalization has no S7 guard (CARD-1208).
+Native strength remains limited until W-1. Unchanged internal parser/
 importer guards keep all existing R-7 cases; this migration commissions mutation
 at the changed seam and the explicitly retained assertions below, not every
 historical mutation in transitive dependencies. Any extra safety guard Code
@@ -579,9 +586,9 @@ introduces must gain a distinct row before its handoff.
 | G-6 | D-2: Workspace driver options empty | PC-6 |
 | G-7 | D-5: Removal requires exact registered name | PC-7 |
 | G-8 | D-5: Removal requires current-run name | PC-8 |
-| G-9 | D-5: Removal requires owner label | PC-9 |
-| G-10 | D-5: Removal requires run label | PC-10 |
-| G-11 | D-5: Removal requires role label | PC-11 |
+| G-9 | D-5: Work/mask removal requires owner label | PC-9 |
+| G-10 | D-5: Work/mask removal requires run label | PC-10 |
+| G-11 | D-5: Work/mask removal requires role label | PC-11 |
 | G-12 | D-5: Unknown removal lookup refuses | PC-12 |
 | G-13 | D-5: Production names excluded even in forged ledger | PC-13 |
 | G-14 | D-5: Consumers release before volumes | PC-14 |
@@ -777,8 +784,8 @@ predicate is unbound coverage.
 | PC-6 | G-6: Remove Options emptiness predicate. | `/*/*/RemoteScriptContractTests/C1192_Workspace_registration_is_absent_only_and_survives_prepare` | `workspace-empty-options` fails after CP-1's boundary is reached. |
 | PC-7 | G-7: Replace exact membership with prefix match. | `/*/*/RemoteScriptContractTests/C1192_Cleanup_releases_only_registered_current_run_resources` | `unregistered-name-preserved` fails after CP-2's boundary is reached. |
 | PC-8 | G-8: Drop current-run name comparison. | `/*/*/RemoteScriptContractTests/C1192_Cleanup_releases_only_registered_current_run_resources` | `foreign-run-preserved` fails after CP-2's boundary is reached. |
-| PC-9 | G-9: Drop owner comparison only. | `/*/*/RemoteScriptContractTests/C1192_Cleanup_releases_only_registered_current_run_resources` | `foreign-owner-preserved` fails after CP-2's boundary is reached. |
-| PC-10 | G-10: Drop fixture-run label comparison only. | `/*/*/RemoteScriptContractTests/C1192_Cleanup_releases_only_registered_current_run_resources` | `foreign-label-run-preserved` fails after CP-2's boundary is reached. |
+| PC-9 | G-9: Drop work/mask owner comparison only. | `/*/*/RemoteScriptContractTests/C1192_Cleanup_releases_only_registered_current_run_resources` | `foreign-owner-preserved` fails after CP-2's boundary is reached. |
+| PC-10 | G-10: Drop work/mask fixture-run label comparison only. | `/*/*/RemoteScriptContractTests/C1192_Cleanup_releases_only_registered_current_run_resources` | `foreign-label-run-preserved` fails after CP-2's boundary is reached. |
 | PC-11 | G-11: Drop role comparison only. | `/*/*/RemoteScriptContractTests/C1192_Cleanup_releases_only_registered_current_run_resources` | `wrong-role-preserved` fails after CP-2's boundary is reached. |
 | PC-12 | G-12: Treat inspect failure as owned. | `/*/*/RemoteScriptContractTests/C1192_Cleanup_releases_only_registered_current_run_resources` | `unknown-resource-preserved` fails after CP-2's boundary is reached. |
 | PC-13 | G-13: Bypass namespace guard for registered production name. | `/*/*/RemoteScriptContractTests/C1192_Cleanup_releases_only_registered_current_run_resources` | `production-name-preserved` fails after CP-2's boundary is reached. |
@@ -949,7 +956,7 @@ CP-33 additionally executes the real volume fixture seed and recovery validator,
 ### S7 F1 repair binding (round 2)
 
 Round-4 repair (Review 0a3d75f7 F1) separates unknown post-create ownership from
-confirmed foreign labels. CP-53 adds work/mask persistent daemon loss and a one-probe
+confirmed foreign work/mask labels. CP-53 adds work/mask persistent daemon loss and a one-probe
 label outage. The name stays in .fixture-volumes and acquisition uncertainty stays
 in both cleanup files through finalization. The confirmed-own/foreign rows remain
 unchanged; the resource-lifetime section lists known exceptions explicitly.

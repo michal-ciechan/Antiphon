@@ -3095,16 +3095,16 @@ c849_fixture_workspace_create_volume() {
         1) write_result false FixtureNamespaceOccupied 2 ;;
         *) write_result false FixtureNamespaceUnknown 2 ;;
     esac
-    # Register before create and verification. Only confirmed foreign labels
-    # drop this name; an unknown probe keeps it for finalization without a mount.
+    # Register work/mask before create and verification. Confirmed foreign work/mask
+    # labels drop this name; an unknown probe keeps it for finalization without a mount.
     printf '%s\n' "$name" >> "$CASE_DIR/.fixture-volumes"
     docker volume create --driver local \
         --label io.antiphon.owner=c849-fixture \
         --label "io.antiphon.fixture-run=$RUN" \
         --label "io.antiphon.fixture-role=$role" \
         "$name" >/dev/null || write_result false FixtureWorkspaceCreateFailed 2
-    # docker volume create is idempotent: an existing foreign volume returns
-    # success and keeps its own labels. Refuse before any mount or other use.
+    # docker volume create is idempotent: an existing foreign work/mask volume returns
+    # success and keeps its own labels. Refuse this work/mask before any mount or other use.
     c849_fixture_workspace_labels_ok "$name" "$role" || owned=$?
     case "$owned" in
         0) ;;
@@ -4483,8 +4483,9 @@ c849_fixture_consumer_release() {
 
 # CP-45..52 cover registered finalizer resources after Compose; CP-53 covers
 # work/mask post-create unknown probes, including a one-probe outage. Confirmed
-# foreign acquisition labels drop registration and leave the volume unmounted.
-# Known exceptions: Compose down -v is exit-status-only (CARD-1207); older cache
+# foreign work/mask acquisition labels drop registration and leave those volumes untouched.
+# Known exceptions: a cache volume positively identified as foreign by acquisition (CacheVolumeForeign) remains registered and is deleted by finalization: inherited from before S7, tracked as CARD-1208; no S7 test covers it
+# Compose down -v is exit-status-only (CARD-1207); older cache
 # namespace/F-7 checks use raw inspect status, and mid-group removals use command
 # status. Anonymous --rm helpers are outside these named-resource tests. W-1 is pending.
 c849_fixture_finalize() {
