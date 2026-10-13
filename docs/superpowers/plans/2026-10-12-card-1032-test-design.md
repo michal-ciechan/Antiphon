@@ -1200,7 +1200,7 @@ independent controls and Mutation must identify the specific failing field.
 
 | PC | Defect | Exact method filter | Expected red | Variants / status |
 |---|---|---|---|---|
-| PC-578 | Accept a saved receipt whose field differs from immutable command/progress identity | `/*/*/CompletedCardWorkspaceRemovalTests/C1017_RunnerDigestReplay` | expected recipient_store_unreadable is missing, labeled by altered receipt field | all 27 receipt fields; pending |
+| PC-578 | Accept a saved receipt whose field differs from immutable command/progress identity | `/*/*/CompletedCardWorkspaceRemovalTests/C1017_RunnerDigestReplay` | expected recipient_store_unreadable is missing for the independently altered receipt field | all 27 receipt fields; pending |
 | PC-579 | Skip fresh remote containment after set-aside on replay | `/*/*/CompletedCardWorkspaceRemovalTests/C1032_RemovalOriginalReplacement` | stale_preservation_proof is missing and preserved aside/admin oracle fails | after-rename destination loss; pending |
 | PC-580 | Reset or recharge a previously spent physical action on replay | `/*/*/CompletedCardWorkspaceRemovalTests/C1032_RemovalComponentRecovery` | remaining allowance differs from independently read pre-restart allowance | Deleting, Deleted, Complete, post-delete and partial-file cuts; pending |
 | PC-581 | Reject an authoritative valid bound-rebase admission | `/*/*/CardWorktreeMirrorCleanupTests/C1032_AdmissionBoundRebaseProof` | eligible bound-rebase mirror directory must be gone | moved S7 positive; implementation/binding pending S7 |
