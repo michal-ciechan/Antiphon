@@ -6,6 +6,10 @@ using Antiphon.Server.Application.Services;
 using Antiphon.Server.Infrastructure.Files;
 using Shouldly;
 using TUnit.Core;
+using Antiphon.Tests.TestHelpers;
+using Antiphon.Tests.Scripts;
+using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 
 namespace Antiphon.Tests.Application;
 
@@ -31,23 +35,60 @@ public sealed class ChannelOutboundStorageTests
     }
 
     [Test]
-    public async Task C1059_Source_reads_reject_file_and_directory_links()
+    public async Task C1059_Source_reads_reject_directory_links()
     {
+        RequireLinkFixtureRoute(nameof(C1059_Source_reads_reject_directory_links), "DirectoryLink.TryCreate");
         var root = Directory.CreateTempSubdirectory("c1059-links-").FullName;
         try
         {
             var real = Directory.CreateDirectory(Path.Combine(root, "real")).FullName;
             var file = Path.Combine(real, "source.txt");
             await File.WriteAllTextAsync(file, "valid companion");
-            File.CreateSymbolicLink(Path.Combine(root, "file-link"), file);
             Directory.CreateSymbolicLink(Path.Combine(root, "dir-link"), real);
             var reader = new ChannelReplyAttachmentReader();
             (await reader.ReadTextAsync(file, [root], 64, default)).ShouldBe("valid companion");
-            await Should.ThrowAsync<InvalidDataException>(() => reader.ReadAttachmentAsync(Path.Combine(root, "file-link"), [root], 64, default));
-            await Should.ThrowAsync<InvalidDataException>(() => reader.ReadTextAsync(Path.Combine(root, "dir-link", "source.txt"), [root], 64, default));
-            await Should.ThrowAsync<InvalidDataException>(() => reader.ReadTextAsync(Path.Combine(root, "dir-link", "source.txt"), [Path.Combine(root, "dir-link")], 64, default));
+            var linked = Path.Combine(root, "dir-link", "source.txt");
+            foreach (var roots in new[] { new[] { root }, new[] { Path.Combine(root, "dir-link") } })
+            {
+                Should.Throw<InvalidDataException>(() => ChannelReplyAttachmentReader.ValidatePath(linked, roots),
+                    "c1210-directory-path-rejected").Message.ShouldBe("Linked paths and devices are not source files.");
+                await Should.ThrowAsync<InvalidDataException>(() => reader.ReadTextAsync(linked, roots, 64, default));
+            }
         }
         finally { Directory.Delete(root, true); }
+    }
+
+    [Test]
+    public async Task C1059_Source_reads_reject_file_links()
+    {
+        RequireLinkFixtureRoute(nameof(C1059_Source_reads_reject_file_links), "FileLink.TryCreate");
+        var root = Directory.CreateTempSubdirectory("c1059-file-links-").FullName;
+        try
+        {
+            var file = Path.Combine(root, "source.txt");
+            var linked = Path.Combine(root, "file-link");
+            await File.WriteAllTextAsync(file, "valid companion");
+            File.CreateSymbolicLink(linked, file);
+            var reader = new ChannelReplyAttachmentReader();
+            (await reader.ReadTextAsync(file, [root], 64, default)).ShouldBe("valid companion");
+            Should.Throw<InvalidDataException>(() => ChannelReplyAttachmentReader.ValidatePath(linked, [root]),
+                "c1210-file-path-rejected").Message.ShouldBe("Linked paths and devices are not source files.");
+            await Should.ThrowAsync<InvalidDataException>(() => reader.ReadAttachmentAsync(linked, [root], 64, default));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    private static void RequireLinkFixtureRoute(string methodName, string route)
+    {
+        var source = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot,
+            "tests/Antiphon.Tests/Application/ChannelOutboundStorageTests.cs"));
+        var method = CSharpSyntaxTree.ParseText(source).GetRoot().DescendantNodes()
+            .OfType<MethodDeclarationSyntax>().Single(method => method.Identifier.ValueText == methodName);
+        method.DescendantNodes().OfType<InvocationExpressionSyntax>()
+            .Count(call => call.Expression.ToString() == route).ShouldBe(1, "c1210-link-fixture-route: " + methodName);
+        method.DescendantNodes().OfType<InvocationExpressionSyntax>()
+            .Any(call => call.Expression.ToString() is "File.CreateSymbolicLink" or "Directory.CreateSymbolicLink")
+            .ShouldBeFalse("c1210-link-fixture-route: direct privileged creation");
     }
 
     [Test]
