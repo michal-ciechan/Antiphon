@@ -43,7 +43,9 @@ public sealed class WorktreeResidueSweepTests
         db.AgentTasks.Add(new AgentTask { Id = Guid.NewGuid(), Goal = "repo scan", WorkingDirectory = repo.Path, RepoPath = repo.Path, CreatedAt = DateTime.UtcNow });
         await db.SaveChangesAsync();
         var preview = await service.PreviewAsync(null, null, default);
-        preview.Rows.ShouldAllBe(x => x.Keep, "scan-is-not-cleanup-authority");
+        preview.Removed.ShouldBe(0, "scan-is-not-cleanup-authority");
+        foreach (var row in scan)
+            WorktreeResidueSweepService.ClassifyOne(new(row.Path, row.Branch, row.RepoPath, "master", null, row.DirectoryExists, true, true, 0, false, false), Settings, Now).Keep.ShouldBeTrue("orphan-retained");
     }
 
     private static readonly DateTime Now = new(2026, 9, 4, 12, 0, 0, DateTimeKind.Utc);
