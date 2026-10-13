@@ -3311,6 +3311,10 @@ mode_fingerprint_acquisition() {
         dangling-link) ln -s "$C1192_ROOT/missing-victim" "$fingerprint" ;;
         regular) printf 'foreign record bytes\n' > "$fingerprint" ;;
         fresh|inspection-link) ;;
+        inspection-fifo-link) mkfifo "$C1192_ROOT/victim-pipe"; exec 8<> "$C1192_ROOT/victim-pipe" ;;
+        hard-link) ln "$C1192_ROOT/victim" "$fingerprint" ;;
+        directory) mkdir "$fingerprint" ;;
+        fifo|fifo-link) mkfifo "$C1192_ROOT/victim-pipe"; exec 8<> "$C1192_ROOT/victim-pipe"; if [ "$variant" = fifo ]; then mkfifo "$fingerprint"; exec 9<> "$fingerprint"; else ln -s "$C1192_ROOT/victim-pipe" "$fingerprint"; fi ;;
         *) fail "unknown fingerprint variant $variant" ;;
     esac
     docker() {
@@ -3327,6 +3331,9 @@ mode_fingerprint_acquisition() {
                     '{{.Created}}')
                         if [ "$variant" = inspection-link ]; then
                             ln -s "$C1192_ROOT/victim" "$CASE_DIR/.fixture-fingerprint-c849-${RUN}-donor"
+                        fi
+                        if [ "$variant" = inspection-fifo-link ]; then
+                            ln -s "$C1192_ROOT/victim-pipe" "$CASE_DIR/.fixture-fingerprint-c849-${RUN}-donor"
                         fi
                         printf '2026-10-13T00:00:00Z\n' ;;
                     *) return 97 ;;
@@ -3362,7 +3369,108 @@ mode_fingerprint_acquisition() {
     esac
 }
 
+
+# Exercise the metadata sinks through production functions, with independent victims.
+mode_metadata_write() {
+    local writer="${3:?writer}" variant name="c849-${RUN}-donor" target code log id
+    id=$(printf '%064d' 1)
+    for variant in file-link fifo-link dangling-link directory-link hard-link directory fifo late-link fresh; do
+        local sandbox="$C1192_ROOT/write-$variant"
+        mkdir -m 0700 "$sandbox"
+        CASE_DIR="$sandbox/case"; mkdir -m 0700 "$CASE_DIR"
+        C849_CASE_ID=$(stat -c '%d:%i:%u' "$CASE_DIR")
+        printf 'out-of-case victim bytes\n' > "$sandbox/victim"
+        cp "$sandbox/victim" "$sandbox/before"
+        mkdir "$sandbox/directory"; printf 'directory sentinel\n' > "$sandbox/directory/sentinel"
+        mkfifo "$sandbox/pipe"; exec 8<> "$sandbox/pipe"
+        case "$writer" in
+            cid) target="$CASE_DIR/.fixture-id-$name" ;;
+            network) target="$CASE_DIR/.fixture-network" ;;
+            helpers) target="$CASE_DIR/.fixture-helpers" ;;
+            ledger) target="$CASE_DIR/fixture-cleanup-ledger.txt" ;;
+            residue) target="$CASE_DIR/fixture-cleanup-residue.txt" ;;
+            escape) target="$CASE_DIR/.fixture-escape-identity" ;;
+            volumes) target="$CASE_DIR/.fixture-volumes" ;;
+            diagnostic) target="$CASE_DIR/race-p1.log" ;;
+            control) target="$CASE_DIR/.control-PC-99" ;;
+        esac
+        # Legitimate records are inspected before modeled observations may change them.
+        case "$writer" in
+            cid) printf '%s\n' "$id" > "$target" ;;
+            network) printf 'c849-%s-npm\n' "$RUN" > "$target" ;;
+            helpers) printf 'c849-%s-writer\n' "$RUN" > "$target" ;;
+            volumes) printf 'c849%s-packages\nkeep\n' "$RUN" > "$target" ;;
+        esac
+        plant_metadata_type() {
+            rm -f -- "$target"
+            case "$variant" in
+                file-link|late-link) ln -s "$sandbox/victim" "$target" ;;
+                fifo-link) ln -s "$sandbox/pipe" "$target" ;;
+                dangling-link) ln -s "$sandbox/missing" "$target" ;;
+                directory-link) ln -s "$sandbox/directory" "$target" ;;
+                hard-link) ln "$sandbox/victim" "$target" ;;
+                directory) mkdir "$target" ;;
+                fifo) mkfifo "$target"; exec 9<> "$target" ;;
+            esac
+        }
+        [ "$variant" = fresh ] || [ "$variant" = late-link ] || plant_metadata_type
+        docker() {
+            case "${*: -2:1}" in
+                '{{.Id}}') printf '%s\n' "$id" ;;
+                *io.antiphon.owner*) if [ "$writer" = helpers ]; then printf foreign; else printf c849-fixture; fi ;;
+                *fixture-run*) printf '%s\n' "$RUN" ;;
+                *fixture-role*) if [ "$writer" = network ]; then printf npm-network; else printf donor; fi ;;
+                '{{.Name}}')
+                    [ "$variant" != late-link ] || [ -L "$target" ] || plant_metadata_type
+                    if [ "$writer" = network ]; then printf 'c849-%s-npm\n' "$RUN"; else printf '/%s\n' "$name"; fi ;;
+                *) return 97 ;;
+            esac
+        }
+        c849_fixture_resource_state() { return 0; }
+        c849_fixture_resource_remove() { :; }
+        code=0; log="$sandbox/out"
+        if [ "$variant" = late-link ]; then
+            case "$writer" in cid|network) ;; *) plant_metadata_type ;; esac
+        fi
+        case "$writer" in
+            cid) c849_fixture_container_identity "$name" "$id" donor > "$log" 2>&1 || code=$? ;;
+            network) c849_fixture_network_release > "$log" 2>&1 || code=$? ;;
+            helpers) c849_fixture_helper_release "c849-${RUN}-writer" > "$log" 2>&1 || code=$? ;;
+            ledger) c849_fixture_workspace_drop_name() { :; }; c849_fixture_foreign_volume example > "$log" 2>&1 || code=$? ;;
+            residue) c849_fixture_cleanup_unknown container example > "$log" 2>&1 || code=$? ;;
+            escape) ln -s "$CASE_DIR" "$CASE_DIR/.fixture-escape"; c849_fixture_escape_record > "$log" 2>&1 || code=$? ;;
+            volumes) c849_fixture_workspace_drop_name "c849${RUN}-packages" > "$log" 2>&1 || code=$? ;;
+            diagnostic) SERVER2_ROOT="$sandbox/source"; mkdir "$SERVER2_ROOT"; printf 'diagnostic bytes\n' > "$SERVER2_ROOT/race-p1.log"; c849_fixture_export_logs > "$log" 2>&1 || code=$? ;;
+            control) c849_fixture_control PC-99 ExpectedFailure bash -c 'printf "ExpectedFailure\n"; exit 2' > "$log" 2>&1 || code=$? ;;
+        esac
+        cmp -s "$sandbox/before" "$sandbox/victim" || fail "$writer/$variant victim changed"
+        [ ! -e "$sandbox/missing" ] || fail "$writer/$variant dangling victim created"
+        [ "$(cat "$sandbox/directory/sentinel")" = 'directory sentinel' ] || fail "$writer/$variant directory changed"
+        local pipe_bytes=''
+        if IFS= read -r -t 0.05 -u 8 pipe_bytes; then fail "$writer/$variant wrote FIFO: $pipe_bytes"; fi
+        if [ "$variant" = fresh ]; then
+            [ "$code" = 0 ] && [ -f "$target" ] && [ ! -L "$target" ] && [ "$(stat -c %h "$target")" = 1 ] || { cat "$log"; fail "$writer fresh failed code=$code"; }
+            case "$writer" in
+                cid) [ "$(cat "$target")" = "$id" ] || fail 'CID bytes' ;;
+                network) [ "$(cat "$target")" = "$id" ] || fail 'network bytes' ;;
+                helpers) [ ! -s "$target" ] || fail 'helper not dropped' ;;
+                volumes) [ "$(cat "$target")" = keep ] || fail 'volume ledger bytes' ;;
+                diagnostic) [ "$(cat "$target")" = 'diagnostic bytes' ] || fail 'diagnostic bytes' ;;
+                control) [ "$(cat "$target")" = ExpectedFailure ] || fail 'control bytes' ;;
+                escape) [ "$(cat "$target")" = "$(stat -c '%d:%i:%u' "$CASE_DIR/.fixture-escape")" ] || fail 'escape bytes' ;;
+                ledger) grep -Fxq 'foreign: left untouched volume example' "$target" || fail 'ledger bytes' ;;
+                residue) grep -Fxq example "$target" || fail 'residue bytes' ;;
+            esac
+        else
+            [ "$code" != 0 ] && grep -q FixtureMetadataWriteRefused "$log" || { cat "$log"; fail "$writer/$variant missing named refusal code=$code"; }
+        fi
+        printf '%s-%s=1\n' "$writer" "$variant"
+        exec 8>&-; exec 9>&-
+    done
+}
+
 case "$mode" in
+    metadata-write) mode_metadata_write "$@" ;;
     fingerprint-acquisition) mode_fingerprint_acquisition "$@" ;;
     deletion-audit) mode_deletion_audit "$@" ;;
     acquisition-probe) mode_acquisition_probe ;;

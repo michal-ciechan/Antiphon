@@ -571,6 +571,11 @@ public sealed class RemoteScriptContractTests
     [Arguments("dangling-link", "2", "1")]
     [Arguments("regular", "2", "1")]
     [Arguments("inspection-link", "2", "1")]
+    [Arguments("inspection-fifo-link", "2", "1")]
+    [Arguments("fifo-link", "2", "1")]
+    [Arguments("fifo", "2", "1")]
+    [Arguments("hard-link", "2", "1")]
+    [Arguments("directory", "2", "1")]
     [Arguments("fresh", "0", "0")]
     [ParallelLimiter<ProcessSpawnLimit>]
     public void C1208_Fingerprint_acquisition_refuses_unowned_paths(string variant, string expectedExit, string expectedRefusal)
@@ -579,6 +584,25 @@ public sealed class RemoteScriptContractTests
         Fact(output, "victim-preserved").ShouldBe("1", output);
         Fact(output, "launch-exit").ShouldBe(expectedExit, output);
         Fact(output, "named-refusal").ShouldBe(expectedRefusal, output);
+    }
+
+    [Test]
+    [Arguments("cid")]
+    [Arguments("network")]
+    [Arguments("helpers")]
+    [Arguments("ledger")]
+    [Arguments("residue")]
+    [Arguments("escape")]
+    [Arguments("volumes")]
+    [Arguments("diagnostic")]
+    [Arguments("control")]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1208_Metadata_writers_refuse_file_type_changes(string writer)
+    {
+        var output = C1192Run("metadata-write", writer);
+        foreach (var variant in new[] { "file-link", "fifo-link", "dangling-link", "directory-link",
+            "hard-link", "directory", "fifo", "late-link", "fresh" })
+            Fact(output, writer + "-" + variant).ShouldBe("1", output);
     }
 
     private static void C1192AssertCleanupProbe(string boundary)
