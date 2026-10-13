@@ -97,13 +97,13 @@ public sealed class WaitCommandTests : CheckpointTestBase
         var dir = TempDir();
         CheckpointFixtures.MarkRun(dir, alive: false);
         new RunStateStore().Write(Path.Combine(dir, "state.json"), new RunState { Source = fixtureSource,
-            RunId = "done-1",
+            RunId = Path.GetFileName(dir),
             Phase = "done",
             ExitCode = 1,
             ExecutorPid = 9,
             StartedAt = DateTimeOffset.UtcNow,
         });
-        ReportWriter.WriteFiles(dir, new ReportModel { Source = fixtureSource, RunId = "done-1", ExitCode = 1, Verdict = "RED" });
+        ReportWriter.WriteFiles(dir, new ReportModel { Source = fixtureSource, RunId = Path.GetFileName(dir), ExitCode = 1, Verdict = "RED" });
         var output = new StringWriter();
         var code = await new WaitCommand(liveness: new Alive(false), delay: Fast).WaitAsync(
             dir, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(60), output, CancellationToken.None);
@@ -121,9 +121,9 @@ public sealed class WaitCommandTests : CheckpointTestBase
         SafeWrite.Require(SafeWrite.CreateFreshDirectory(tool, SafeWrite.Under(dir)));
         SafeWrite.Require(SafeWrite.Text(Path.Combine(tool, "Antiphon.Checkpoints.dll"), "x", SafeWrite.Under(tool)));
         SafeWrite.Require(OwnedOutputLedger.Seal(tool));
-        ReportWriter.WriteFiles(dir, new ReportModel { Source = fixtureSource, RunId = "done-tool", ExitCode = 0, Verdict = "GREEN" });
+        ReportWriter.WriteFiles(dir, new ReportModel { Source = fixtureSource, RunId = Path.GetFileName(dir), ExitCode = 0, Verdict = "GREEN" });
         var state = new RunState { Source = fixtureSource,
-            RunId = "done-tool",
+            RunId = Path.GetFileName(dir),
             Phase = "running",
             ExecutorPid = 42,
             ExitCode = 0,
@@ -156,13 +156,13 @@ public sealed class WaitCommandTests : CheckpointTestBase
         SafeWrite.Require(SafeWrite.Text(Path.Combine(tool, "Antiphon.Checkpoints.dll"), "x", SafeWrite.Under(tool)));
         SafeWrite.Require(OwnedOutputLedger.Seal(tool));
         new RunStateStore().Write(Path.Combine(dir, "state.json"), new RunState { Source = fixtureSource,
-            RunId = "exiting",
+            RunId = Path.GetFileName(dir),
             Phase = "done",
             ExitCode = 0,
             ExecutorPid = 42,
             StartedAt = DateTimeOffset.UtcNow,
         });
-        ReportWriter.WriteFiles(dir, new ReportModel { Source = fixtureSource, RunId = "exiting", ExitCode = 0, Verdict = "GREEN" });
+        ReportWriter.WriteFiles(dir, new ReportModel { Source = fixtureSource, RunId = Path.GetFileName(dir), ExitCode = 0, Verdict = "GREEN" });
         var output = new StringWriter();
         var code = await new WaitCommand(liveness: new Alive(true), delay: Fast).WaitAsync(
             dir, TimeSpan.FromMilliseconds(30), TimeSpan.FromSeconds(60), output, CancellationToken.None);
@@ -194,12 +194,12 @@ public sealed class WaitCommandTests : CheckpointTestBase
         SafeWrite.Require(SafeWrite.Text(Path.Combine(tool, "Antiphon.Checkpoints.dll"), "x", SafeWrite.Under(tool)));
         SafeWrite.Require(OwnedOutputLedger.Seal(tool));
         new RunStateStore().Write(Path.Combine(dir, "state.json"), new RunState { Source = fixtureSource,
-            RunId = "race-1",
+            RunId = Path.GetFileName(dir),
             Phase = "running",
             ExecutorPid = 99,
             StartedAt = DateTimeOffset.Parse("2026-10-05T19:16:00Z"),
         });
-        ReportWriter.WriteFiles(dir, new ReportModel { Source = fixtureSource, RunId = "race-1", ExitCode = 1, Verdict = "RED" });
+        ReportWriter.WriteFiles(dir, new ReportModel { Source = fixtureSource, RunId = Path.GetFileName(dir), ExitCode = 1, Verdict = "RED" });
         File.WriteAllText(Path.Combine(dir, "executor.log"), "2026-10-05T19:17:02.7348556+00:00 done exit=0\n");
         var probe = new TerminalOnDeath(Path.Combine(dir, "state.json"));
         var output = new StringWriter();
