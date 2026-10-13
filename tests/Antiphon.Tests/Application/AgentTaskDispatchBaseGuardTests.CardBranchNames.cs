@@ -1,0 +1,174 @@
+using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Exceptions;
+using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Settings;
+using Antiphon.Server.Domain.Entities;
+using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Infrastructure.Data;
+using Antiphon.Server.Infrastructure.Git;
+using Antiphon.SessionRunner;
+using Antiphon.SessionRunner.Contracts;
+using Antiphon.Tests.TestHelpers;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
+using Shouldly;
+using TUnit.Core;
+
+namespace Antiphon.Tests.Application;
+
+public partial class AgentTaskDispatchBaseGuardTests
+{
+    [Test]
+    public async Task C1213_MintUsesCardRoleAndRunnerCapability()
+    {
+        // treat missing/wrong-case capability as supported -> old-runner-branch red.
+        foreach (var vector in new[] { "local", "capable", "empty", "null-features", "null-capabilities", "unknown", "near", "case", "fault", "disabled" })
+        {
+            using var repo = new ScratchGitRepo("c1213-mint");
+            await repo.CommitFileAsync("seed.txt", "seed");
+            await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+            await using var db = CreateContext(schema);
+            var card = await SeedCardAsync(db, "CARD-1213");
+            var task = await SeedQueuedWorktreeTaskAsync(db, repo.Path, card.Id, null, AgentTaskRole.TestDesign);
+            task.RunnerId = vector == "local" ? null : "fixture";
+            await db.SaveChangesAsync();
+            var directory = new C1213Directory(vector);
+            await using var provider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot, runners: directory, cardBranchNames: vector != "disabled");
+            await using var scope = provider.CreateAsyncScope();
+            await scope.ServiceProvider.GetRequiredService<DelegationWorktreeService>().CreateForTaskAsync(task, default);
+            var expected = (vector is "local" or "capable" ? "feat/card-1213-testdesign-" : "feat/card-task-") + task.Id.ToString("N")[..8];
+            task.WorktreeBranch.ShouldBe(expected, "old-runner-branch " + vector);
+            db.Update(task); await db.SaveChangesAsync(); db.ChangeTracker.Clear();
+            (await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id)).WorktreeBranch.ShouldBe(expected, "persisted-branch");
+            (await ScratchGitRepo.GitInAsync(task.WorktreePath!, "symbolic-ref", "HEAD")).StdOut.Trim().ShouldBe("refs/heads/" + expected);
+            Path.GetFileName(task.WorktreePath!).ShouldBe("card-task-" + task.Id.ToString("N")[..8]);
+        }
+    }
+
+    [Test]
+    public async Task C1213_UnboundAndUnknownMintLegacy()
+    {
+        // force a new name for missing metadata/role -> fallback-branch red.
+        foreach (var vector in new[] { "valid", "unbound", "missing-row", "foreign-card", "long-card", "unicode-card", "unknown-role" })
+        {
+            using var repo = new ScratchGitRepo("c1213-unbound"); await repo.CommitFileAsync("seed.txt", "seed");
+            await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+            await using var db = CreateContext(schema);
+            var card = await SeedCardAsync(db, vector switch { "foreign-card" => "E03-003", "long-card" => "CARD-123456789", "unicode-card" => "CARD-１２１３", _ => "CARD-1213" });
+            var task = await SeedQueuedWorktreeTaskAsync(db, repo.Path, card.Id, null);
+            if (vector == "unbound") task.CardId = null;
+            if (vector == "missing-row") task.CardId = Guid.NewGuid();
+            if (vector == "unknown-role") task.Role = (AgentTaskRole)999;
+            await using var provider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot, cardBranchNames: true);
+            await using var scope = provider.CreateAsyncScope();
+            await scope.ServiceProvider.GetRequiredService<DelegationWorktreeService>().CreateForTaskAsync(task, default);
+            task.WorktreeBranch.ShouldBe((vector == "valid" ? "feat/card-1213-code-" : "feat/card-task-") + task.Id.ToString("N")[..8], "fallback-branch " + vector);
+        }
+    }
+
+    [Test]
+    public async Task C1213_RetryAdoptsRecordedBranch()
+    {
+        // replace adopted coordinates with newly minted branch -> adopted-branch or HEAD/file red.
+        foreach (var modern in new[] { false, true })
+        {
+            using var repo = new ScratchGitRepo("c1213-adopt"); await repo.CommitFileAsync("seed.txt", "seed");
+            await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync(); await using var db = CreateContext(schema);
+            var card = await SeedCardAsync(db, "CARD-1213"); var task = await SeedQueuedWorktreeTaskAsync(db, repo.Path, card.Id, null);
+            var branch = (modern ? "feat/card-1213-code-" : "feat/card-task-") + task.Id.ToString("N")[..8];
+            var path = Path.Combine(repo.WorktreeRoot, "card-task-" + task.Id.ToString("N")[..8]);
+            await repo.GitAsync("worktree", "add", "-b", branch, path, "HEAD");
+            await File.WriteAllTextAsync(Path.Combine(path, "sentinel.txt"), "retained retry bytes");
+            var before = (await ScratchGitRepo.GitInAsync(path, "rev-parse", "HEAD")).StdOut.Trim();
+            task.WorktreeBaseRef = "refs/heads/expired";
+            await using var provider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot, runners: new C1213Directory("empty"), cardBranchNames: !modern);
+            await using var scope = provider.CreateAsyncScope();
+            await scope.ServiceProvider.GetRequiredService<DelegationWorktreeService>().CreateForTaskAsync(task, default);
+            task.WorktreeBranch.ShouldBe(branch, "adopted-branch"); task.WorktreePath.ShouldBe(path);
+            (await ScratchGitRepo.GitInAsync(path, "rev-parse", "HEAD")).StdOut.Trim().ShouldBe(before);
+            File.ReadAllText(Path.Combine(path, "sentinel.txt")).ShouldBe("retained retry bytes");
+        }
+    }
+
+    [Test]
+    public async Task C1213_NullBranchFindsEitherKeptCandidate(CancellationToken ct)
+    {
+        // probe only one form -> dispatcher reselects an expired source instead of adoption.
+        foreach (var modern in new[] { false, true })
+        {
+            using var repo = new ScratchGitRepo("c1213-null"); await repo.CommitFileAsync("seed.txt", "seed");
+            await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync(); await using var db = CreateContext(schema);
+            var card = await SeedCardAsync(db, "CARD-1213");
+            var source = await SeedKeptSiblingAsync(db, repo, card.Id, "source"); await db.SaveChangesAsync(ct);
+            AgentTaskCreatedDto created;
+            await using (var provider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot, cardBranchNames: true))
+            await using (var scope = provider.CreateAsyncScope())
+                created = await scope.ServiceProvider.GetRequiredService<AgentTaskService>().CreateAsync(
+                    new CreateAgentTaskRequest("adopt retry", Role: AgentTaskRole.Code, Workspace: WorkspaceMode.Worktree, Card: card.Id.ToString("D"), WorktreeBaseTask: source.Id.ToString("D")), new(null, null, repo.Path), ct);
+            var branch = (modern ? "feat/card-1213-code-" : "feat/card-task-") + created.Id.ToString("N")[..8];
+            var path = Path.Combine(repo.WorktreeRoot, "card-task-" + created.Id.ToString("N")[..8]);
+            var sha = (await repo.GitReadAsync("rev-parse", source.WorktreeBranch!)).Trim();
+            await repo.GitAsync("worktree", "add", "-b", branch, path, source.WorktreeBranch!);
+            await repo.GitAsync("branch", "-D", source.WorktreeBranch!);
+            await using (var provider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot, cardBranchNames: true))
+            await using (var scope = provider.CreateAsyncScope()) await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(ct);
+            db.ChangeTracker.Clear(); var task = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id, ct);
+            task.Status.ShouldBe(AgentTaskStatus.Dispatched, "kept-adopted: " + task.FailureReason);
+            task.WorktreeBranch.ShouldBe(branch); task.WorktreePath.ShouldBe(path);
+            (await ScratchGitRepo.GitInAsync(path, "rev-parse", "HEAD")).StdOut.Trim().ShouldBe(sha);
+        }
+    }
+
+    [Test]
+    public async Task C1213_SourceLandingKeepsLegacyIdentity()
+    {
+        // routing snapshot through ordinary mint -> snapshot creation/identity validation refuses.
+        using var repo = new ScratchGitRepo("c1213-snapshot"); await repo.CommitFileAsync("seed.txt", "seed");
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync(); await using var db = CreateContext(schema);
+        var sourceCard = await SeedCardAsync(db, "CARD-1213");
+        var companion = new Card { Id = Guid.NewGuid(), BoardId = sourceCard.BoardId, BoardColumnId = sourceCard.BoardColumnId, Identifier = "CARD-1214", Title = "companion", CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
+        db.Cards.Add(companion);
+        var source = await SeedQueuedWorktreeTaskAsync(db, repo.Path, sourceCard.Id, null);
+        source.Status = AgentTaskStatus.Succeeded;
+        var sha = (await repo.GitReadAsync("rev-parse", "HEAD")).Trim();
+        var opId = Guid.NewGuid(); var common = Path.Combine(repo.Path, ".git");
+        var publication = new AgentTaskLanding { Id = opId, TaskId = source.Id, SchemaVersion = 1, Publication = LandPublicationOutcome.Landed,
+            RepositoryPath = repo.Path, CommonDirectory = common, WorktreePath = repo.Path, GitDirectory = common, SourceFullRef = "refs/heads/source", TargetFullRef = "refs/heads/master", DestinationFullRef = "refs/heads/master", OriginalSourceSha = sha, TargetBeforeSha = sha, VerifiedSourceSha = sha, ObservedRemoteTargetSha = sha,
+            RemoteFingerprint = new string('a', 64), RemoteConfirmedAt = DateTime.UtcNow, VerifiedAt = DateTime.UtcNow, SourcePinned = true, TargetPinned = true, VerificationSkipReason = "exact_remote_containment", ConfirmationMethod = "push-endpoint-read-fetch-ancestry", RecoveryRefPrefix = $"refs/antiphon/land/{source.Id:N}/{opId:N}" };
+        new AgentTaskLandingState().HasPublication(publication).ShouldBeTrue(); db.AgentTaskLandings.Add(publication); await db.SaveChangesAsync();
+        await using var provider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot, runners: new C1213Directory("capable"), cardBranchNames: true);
+        await using var scope = provider.CreateAsyncScope();
+        var service = scope.ServiceProvider.GetRequiredService<DelegationWorktreeService>();
+        var ordinary = new AgentTask { Id = Guid.NewGuid(), CardId = sourceCard.Id, RepoPath = repo.Path, Role = AgentTaskRole.Code };
+        await service.CreateForTaskAsync(ordinary, default);
+        ordinary.WorktreeBranch.ShouldBe("feat/card-1213-code-" + ordinary.Id.ToString("N")[..8], "ordinary-new-control");
+        var task = new AgentTask { Id = Guid.NewGuid(), CardId = companion.Id, RepoPath = repo.Path, Role = AgentTaskRole.Mutation, Workspace = WorkspaceMode.Worktree, SourceLandingOperationId = opId, SourceLandingSha = sha };
+        await service.CreateForTaskAsync(task, default);
+        task.WorktreeBranch.ShouldBe("feat/card-task-" + task.Id.ToString("N")[..8], "snapshot-created");
+        await using var lease = (await scope.ServiceProvider.GetRequiredService<IRepositoryMutationLease>().TryAcquireAsync(repo.Path, default)).ShouldNotBeNull();
+        await service.ValidateVerificationAsync(task, lease, default);
+        task.WorktreeBranch = "feat/card-1214-mutation-" + task.Id.ToString("N")[..8];
+        await Should.ThrowAsync<ConflictException>(() => service.ValidateVerificationAsync(task, lease, default));
+    }
+
+    private sealed class C1213Directory(string vector) : ISessionRunnerDirectory
+    {
+        private readonly FakeSessionRunnerClient _client = new() { VerificationStoreId = Guid.NewGuid() };
+        public ISessionRunnerClient Local => _client;
+        public ISessionRunnerClient Resolve(string? runnerId) => _client;
+        public IReadOnlyList<string> KnownRunnerIds => ["fixture"];
+        public Guid? GetLiveStoreId(string? runnerId) => _client.VerificationStoreId;
+        public Task<SessionRunnerOwner?> GetOwnerAsync(Guid sessionId, CancellationToken ct) => Task.FromResult<SessionRunnerOwner?>(null);
+        public Task<SessionRunnerBinding> GetBindingAsync(Guid sessionId, CancellationToken ct) => Task.FromResult<SessionRunnerBinding>(SessionRunnerBinding.Local.Instance);
+        public Task<RunnerInventory> GetInventoryAsync(string? runnerId, CancellationToken ct) => Task.FromResult<RunnerInventory>(new RunnerInventory.Available([]));
+        public Task<RunnerDescriptor?> DescribeAsync(string? runnerId, CancellationToken ct)
+        {
+            if (vector == "fault") throw new IOException("capability unavailable");
+            if (vector == "unknown") return Task.FromResult<RunnerDescriptor?>(null);
+            RunnerCapabilitiesDto? caps = vector == "null-capabilities" ? null : new("test", "test", "test", false, Features: vector switch { "capable" => ["workspaceCardBranchV1"], "near" => ["workspaceCardBranchV10"], "case" => ["WorkspaceCardBranchV1"], "null-features" => null, _ => [] });
+            return Task.FromResult<RunnerDescriptor?>(new("fixture", "fixture", "linux", null, true, true, false, 2, caps));
+        }
+    }
+}
