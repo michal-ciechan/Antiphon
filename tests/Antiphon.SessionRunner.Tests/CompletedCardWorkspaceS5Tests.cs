@@ -30,6 +30,9 @@ public sealed partial class CompletedCardWorkspaceRemovalTests
             Command = f.Command() with { Proof = f.Command().Proof with { DestinationFingerprint = f.Binding.RepositoryIdentity },
                 ArtifactPointers = [Path.Combine(f.Root, "reports", "result")] };
             File.WriteAllText(Command.ArtifactPointers[0], "external result");
+            var reportHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(Command.ArtifactPointers[0]))).ToLowerInvariant();
+            Command = Command with { ReportDigest = reportHash, ArtifactProofDigest = reportHash,
+                DisposalPolicyDigest = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes("fixture CardDone policy"))).ToLowerInvariant() };
             File.AppendAllText(Path.Combine(f.Binding.CommonDirectory, "info", "exclude"), "\nbin/\n.antiphon/\n");
         }
         public async Task<JsonElement> Remove(CompletedCardWorkspaceCommand? command = null)

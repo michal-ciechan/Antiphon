@@ -93,11 +93,27 @@ public sealed class RunnerWorkspaceRemovalJournal
         if (intent.SetAsidePath is null) return intent.Phase == "Intent" && intent.Receipt is null;
         if (intent.SetAsidePath != SetAsideFor(intent.Command) || intent.DirectoryIdentity is null
             || intent.RegistrationIdentity is null || intent.DirectoryEntries is null || intent.RegistrationEntries is null
-            || intent.RemainingAllowance is < 0 or > 8 || intent.Phase is not
+            || intent.RemainingAllowance is < 0 or > 8 || intent.ChargedSteps is null
+            || intent.ChargedSteps.Distinct(StringComparer.Ordinal).Count() != intent.ChargedSteps.Count
+            || intent.ChargedSteps.Any(s => s is not ("rename" or "unregister" or "delete"))
+            || intent.RemainingAllowance != 8 - intent.ChargedSteps.Count || intent.Phase is not
                 ("Prepared" or "Moved" or "Unregistering" or "Unregistered" or "Deleting" or "Deleted" or "Complete")) return false;
         if (!ValidEntries(intent.DirectoryEntries) || !ValidEntries(intent.RegistrationEntries)) return false;
-        return (intent.Phase == "Complete") == (intent.Receipt is not null);
+        return intent.Phase == "Complete" ? intent.Receipt == ExpectedReceipt(intent) : intent.Receipt is null;
     }
+    internal static CompletedCardWorkspaceReceipt ExpectedReceipt(RemovalIntent intent)
+    {
+        var command = intent.Command; var binding = command.Binding;
+        var proofDigest = CompletedCardWorkspaceContract.CanonicalDigest(JsonSerializer.Serialize(command.Proof,
+            new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+        return new(command.SchemaVersion, command.CardId, command.DoneRevisionId, command.TargetId, command.EndpointId,
+            command.OperationId, binding.TaskId, binding.Attempt, binding.BindingId, binding.PreparationId,
+            binding.RunnerId, binding.RunnerStoreId, binding.RepositoryIdentity, binding.CommonDirectory,
+            binding.GitDirectory, binding.WorktreePath, binding.SourceFullRef, binding.CreationBaselineSha,
+            command.Proof.ExpectedHeadSha, proofDigest, command.ArtifactProofDigest, command.DisposalPolicyDigest,
+            command.Disposition, intent.SetAsidePath!, command.OperationId.ToString("D") + ":" + intent.Digest, true, true);
+    }
+
     private static bool ValidEntries(IReadOnlyList<RunnerWorkspaceNoFollowDelete.Entry> entries) =>
         entries.Select(e => e.Path).Distinct(StringComparer.Ordinal).Count() == entries.Count
         && entries.All(e => !Path.IsPathRooted(e.Path) && !e.Path.Split(Path.DirectorySeparatorChar).Contains("..")
@@ -143,6 +159,7 @@ public sealed class RunnerWorkspaceRemovalJournal
         internal IReadOnlyList<RunnerWorkspaceNoFollowDelete.Entry>? RegistrationEntries { get; init; }
         public string Phase { get; init; } = "Intent";
         public int RemainingAllowance { get; init; } = 8;
+        public IReadOnlyList<string> ChargedSteps { get; init; } = [];
         public CompletedCardWorkspaceReceipt? Receipt { get; init; }
     }
     private sealed record Journal(int SchemaVersion, string RunnerStoreId, List<RemovalIntent> Intents);
