@@ -229,6 +229,7 @@ Inventory audit: **guards=49, mapped=49, missing=0, duplicate PC maps=0**. All 4
 - Backend admission, settings transaction/locking, durable session queue delivery and transcript receipt: no implementation change. Client tests cannot prove these. Existing SignalR publish failure/restart replay is not asserted; authoritative GET recovery is tested.
 - Crash recovery of an unsaved browser draft is not promised. Invalid project/query state withholds writes; it does not choose a scope for the operator.
 - No standalone full Antiphon.Tests, whole-Unit or broad E2E runs. The full client run remains because App routing, shared query invalidation and lint are in the accepted plan.
+- S2 editor, not covered / known limitations (Review 24d4e81c diagnostics, same result on base 29e70fefa): `R3 restore during PUT lower read remains current after late reply`, `R3 restore during PUT reused read remains current after late reply`, `R3 same store time equal read after failed save refresh is current`; a Save continuation after unmount still invalidates the shared query cache and shows the global notification.
 - JSDOM does not prove layout or wire transport. V-18 covers narrow viewport reachability and actual browser/server consumption; it is not a screenshot baseline or an accessibility certification.
 
 ### Checkpoints

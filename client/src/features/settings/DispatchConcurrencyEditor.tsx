@@ -89,12 +89,7 @@ function revisionKey(dto: DispatchConcurrencyScopeDto): string {
   return `${revisions.global}:${revisions.project}`
 }
 
-/**
- * Revision order is only used between this form's own PUT reply and a read that completed while that
- * PUT was in flight (`C506 S2R3 late-put-newer-get`): both come from the server history the PUT
- * wrote into. It is NOT used for query data in general: a database restore resets both counters, so
- * a later read can carry lower revisions and is still current (`C506 S2R3 rollback-*`).
- */
+/** Either revision of `dto` is lower than `than`'s. Called by `settleSave`. */
 function isOlder(dto: DispatchConcurrencyScopeDto, than: DispatchConcurrencyScopeDto): boolean {
   const left = revisionsOf(dto)
   const right = revisionsOf(than)
@@ -156,7 +151,7 @@ export function DispatchConcurrencyEditor({ projectId }: { projectId: string | n
 
   return (
     <EditorForm
-      // The draft belongs to one scope; a scope change starts a fresh form (D-7: keyed on scope only).
+      // Keyed on scope (D-7): a scope change mounts a new form.
       key={projectId === null ? 'global' : `project:${projectId}`}
       projectId={projectId}
       title={title}
@@ -193,10 +188,8 @@ interface Synced {
 const ROLE_FIELDS: readonly Field[] = ['maxParallel', 'maxQueued']
 
 /**
- * Moves a draft from the saved state it was built on (`was`) to a newer one (`now`): every cell the
- * operator edited (it differs from `was`) keeps the operator's value, every other cell and the
- * read-only mode take `now`, so a later Save never re-sends a value only an older document held
- * (`C506 S2R3 rollback-dirty-*`). Returns the edited paths with the draft.
+ * Rebases `draft` from saved state `was` onto `now`: cells that differ from `was` keep the draft
+ * value; the other cells and the mode come from `now` (`C506 S2R3 rollback-dirty-*`).
  */
 function rebaseDraft(draft: ConcurrencyDraft, was: ConcurrencyDraft, now: ConcurrencyDraft) {
   const edited = new Set(diffDrafts(draft, was).map((diff) => diff.path))
@@ -214,11 +207,9 @@ function rebaseDraft(draft: ConcurrencyDraft, was: ConcurrencyDraft, now: Concur
 }
 
 /**
- * A server document this form treats as current (a query read, or the conflict reload) replaces the
- * saved state whatever its revisions: a database restore can lower them (`C506 S2R3 rollback-*`), and
- * a reused revision can carry a different document (`reused-revision`, `same-revision-new-content`).
- * With no edits the draft becomes the new saved state; with edits it is rebased and the banner lists
- * where it still differs (D-7). The same document again only refreshes `base` (occupancy).
+ * Sets `base` to `next` (a query snapshot or the conflict reload) without comparing revision order
+ * (`C506 S2R3 rollback-*`, `reused-revision`, `same-revision-new-content`); with edits the draft is
+ * rebased and the banner shown (D-7, `rollback-dirty-*`).
  */
 function adoptServer(state: Synced, next: DispatchConcurrencyScopeDto, forceBanner = false): Synced {
   if (next === state.base) return forceBanner ? { ...state, banner: true } : state
@@ -233,9 +224,11 @@ function adoptServer(state: Synced, next: DispatchConcurrencyScopeDto, forceBann
 }
 
 /**
- * This form's own successful PUT reply. A read that completed while the PUT was in flight can already
- * show a later revision of the history the PUT wrote into; the late reply does not replace it
- * (`C506 S2R3 late-put-newer-get`). Either way the submitted draft is settled: the form is clean.
+ * This form's own PUT reply: kept unless `isOlder(reply, state.base)`, whichever read or earlier Save
+ * reply `base` came from. The comparison assumes one revision history; tested with an increasing
+ * counter (`C506 S2R3 late-put-newer-get`). Not covered / known limitation: a restore during the PUT
+ * (Review 24d4e81c diagnostics `R3 restore during PUT lower read remains current after late reply`
+ * and `R3 restore during PUT reused read remains current after late reply` fail: the late reply shows).
  */
 function settleSave(state: Synced, result: DispatchConcurrencyScopeDto): Synced {
   const kept = isOlder(result, state.base) ? state.base : result
@@ -262,9 +255,8 @@ function EditorForm({
   historyFailed: boolean
 }) {
   const save = usePutDispatchConcurrency(projectId)
-  // `base` is the saved state this form treats as current (query data, its own Save reply or the
-  // conflict reload). The next Save targets its revisions and mode, and the saved values on screen
-  // (subtitle, mode, inherited, effective, occupancy) are read from it (`C506 S2F2 refresh-fails`).
+  // `base`: the document the next Save targets (revisions, mode); the saved values on screen are read
+  // from it (`C506 S2F2 refresh-fails`).
   const [base, setBase] = useState(latest)
   const [draft, setDraft] = useState(() => draftOf(latest))
   const [inputs, setInputs] = useState<Map<string, number | string>>(() => new Map())
@@ -283,14 +275,13 @@ function EditorForm({
 
   const savedDraft = draftOf(base)
 
-  // Server results are folded in while rendering (adjusting state), in arrival order: this form's
-  // Save reply, then its conflict reload, then a query cache entry it has not seen yet. A cache entry
-  // is identified by its data object AND its update time, because an equal document read again
-  // keeps the same object (`C506 S2R3 after-failed-refresh-equal-data`). Every new entry is current,
-  // whatever its revisions, except the one a Save superseded: the entry already cached when the PUT
-  // reply arrived. The Save's own invalidation cancels any read still in flight and starts one after
-  // the PUT, so only that entry predates the Save, and it stays on screen until a later read
-  // replaces it or fails (`C506 S2F2 refresh-fails`/`refresh-pending`; `S2R3 after-save-lower`).
+  // Folded in during render in this fixed order (not arrival order): Save reply, conflict reload,
+  // then a query snapshot (data object + dataUpdatedAt) not yet seen (`C506 S2R3
+  // after-failed-refresh-equal-data`). `superseded`, the cache state read after `mutateAsync`
+  // resolves, is not adopted (`C506 S2F2 refresh-fails`/`refresh-pending`). S1's onSuccess calls
+  // invalidateQueries before `mutateAsync` resolves but does not await the GET.
+  // Not covered / known limitation: an equal read with the same dataUpdatedAt as `superseded` is not
+  // adopted (Review 24d4e81c diagnostic `R3 same store time equal read after failed save refresh is current`).
   const fresh = latest !== seen.data || latestAt !== seen.at
   if (saved !== null || reloaded !== null || fresh) {
     let next: Synced = { base, draft, inputs, banner }
@@ -314,8 +305,7 @@ function EditorForm({
 
   const errors = validateDraft(draft, base.ranges, reason)
   const reasonValid = !Object.hasOwn(errors, 'reason')
-  // The single pending gate: Save, Clear, the limit switches, inputs and No limit boxes, Revert and
-  // Reason share it, so no edit can be made during a submission for its response to discard
+  // `idle` gates Save, Clear, the limit switches, inputs, No limit boxes, Revert and Reason
   // (`C506 S2F3 pending-save`/`pending-clear`/`pending-error`).
   const idle = !submitting && refresh === 'idle'
   const canSave = idle && Object.keys(errors).length === 0
@@ -331,7 +321,7 @@ function EditorForm({
       setRefresh('failed')
       return
     }
-    // A read begun after the 409: current, adopted with the banner shown (D-7).
+    // Adopted with the banner forced on (D-7, `C506 V12 conflict-*`).
     setReloaded(fresh)
     setRefresh('idle')
   }
