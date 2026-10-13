@@ -500,6 +500,8 @@ public static class Program
             ? new SlotSession("off", 4)
             : await slots.ProbeAsync(CancellationToken.None).ConfigureAwait(false);
         var name = Required(options, "name");
+        if (string.IsNullOrWhiteSpace(name))
+        { output.WriteLine("refused: manifest-identity: row name is empty"); return ExitCodes.Invalid; }
         await using var lease = await slots.AcquireAsync(session, name, CancellationToken.None).ConfigureAwait(false);
         if (lease.ExitCode != 0)
         {

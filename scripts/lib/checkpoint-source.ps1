@@ -1,5 +1,6 @@
 #requires -Version 7.0
 # CARD-0835 source identity. Keep this file ASCII-only.
+. (Join-Path $PSScriptRoot 'checkpoint-file-reader.ps1')
 
 function Get-CheckpointGitBytes {
     param([string]$Repository, [string[]]$Arguments)
@@ -97,9 +98,7 @@ function Get-CheckpointSourceOnce {
             } else {
                 $beforeLength = $info.Length
                 $beforeWrite = $info.LastWriteTimeUtc
-                $stream = [System.IO.FileStream]::new($full, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)
-                try { [byte[]]$digest = [System.Security.Cryptography.SHA256]::HashData($stream) }
-                finally { $stream.Dispose() }
+                [byte[]]$digest = [System.Security.Cryptography.SHA256]::HashData([byte[]](Read-CheckpointBytes $full))
                 $info.Refresh()
                 if ($info.Length -ne $beforeLength -or $info.LastWriteTimeUtc -ne $beforeWrite) { throw 'file_changed' }
             }

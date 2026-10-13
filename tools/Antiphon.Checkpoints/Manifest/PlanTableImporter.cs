@@ -19,7 +19,7 @@ public static class PlanTableImporter
     private const int RowTimeoutAdvisoryMinutes = 45;
 
     public static ImportResult ImportFile(string path, string? planProvenance = null, bool? isWindows = null) =>
-        ImportMarkdown(File.ReadAllText(path), planProvenance ?? path, isWindows);
+        ImportMarkdown(ReceiptFile.ReadText(path), planProvenance ?? path, isWindows);
 
     public static ImportResult ImportMarkdown(string markdown, string? planProvenance = null, bool? isWindows = null)
     {
@@ -84,6 +84,7 @@ public static class PlanTableImporter
                 return Fail($"checkpoint row {cells.FirstOrDefault() ?? "?"} has {cells.Count} columns, expected {header.Count}; escape a literal Filter pipe as \\|");
 
             var id = cells[0].Trim();
+            if (string.IsNullOrWhiteSpace(id)) return Fail("refused: manifest-identity: checkpoint id is empty");
             var after = AfterSelector.Expand(cells[1]).ToList();
             var buildCell = StripWrappingBackticks(cells[2].Trim());
             var group = cells[3].Trim();
@@ -212,7 +213,7 @@ public static class PlanTableImporter
             {
                 var match = Regex.Match(buildCell, @"^(?<project>.+?)\s*->\s*(?<output>bin-[A-Za-z0-9._-]+/)\s*$");
                 if (!match.Success)
-                    return Fail($"{id}: Build '{buildCell}' is not '<project> -> <bin-x/>', CP-n, or n/a");
+                    return Fail($"refused: manifest-identity: {id}: Build '{buildCell}' is not '<project> -> <bin-x/>', CP-n, or n/a");
                 var output = match.Groups["output"].Value;
                 var buildId = output.TrimEnd('/');
                 var project = match.Groups["project"].Value.Trim().Trim('`');

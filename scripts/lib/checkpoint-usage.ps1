@@ -1,3 +1,4 @@
+. (Join-Path $PSScriptRoot 'checkpoint-file-reader.ps1')
 # CARD-0804 usage acceptance: native allocated-byte sampling and the roster/TRX/event gates.
 # Dot-sourced by scripts/verify-checkpoint-temp-usage.ps1 and by CheckpointTempUsageTests, which
 # drive these functions with supplied inputs. ASCII only.
@@ -145,14 +146,14 @@ function Test-UsageEvidence([string]$Phase, [string]$RosterPath, [string]$TrxPat
 
     $selected = @()
     if (Test-Path -LiteralPath $RosterPath) {
-        try { $selected = @(Get-Content -LiteralPath $RosterPath -Raw | ConvertFrom-Json) }
+        try { $selected = @(Read-CheckpointText $RosterPath | ConvertFrom-Json) }
         catch { $errors.Add('selection roster malformed') }
     }
     $results = @()
     $definitions = @{}
     if (Test-Path -LiteralPath $TrxPath) {
         try {
-            [xml]$doc = Get-Content -LiteralPath $TrxPath -Raw
+            [xml]$doc = Read-CheckpointText $TrxPath
             $manager = [Xml.XmlNamespaceManager]::new($doc.NameTable)
             $manager.AddNamespace('t', $doc.DocumentElement.NamespaceURI)
             foreach ($unit in $doc.SelectNodes('//t:UnitTest', $manager)) {
@@ -205,7 +206,7 @@ function Test-UsageEvidence([string]$Phase, [string]$RosterPath, [string]$TrxPat
     $activeBytes = @{}
     [long]$eventPeakBytes = 0
     if (Test-Path -LiteralPath $EventsPath) {
-        $raw = [IO.File]::ReadAllText($EventsPath)
+        $raw = (Read-CheckpointText $EventsPath)
         if ($raw.Length -eq 0 -or -not $raw.EndsWith("`n")) { $errors.Add('event tail incomplete') }
         foreach ($line in $raw.Split("`n")) {
             if (-not $line) { continue }
@@ -258,7 +259,7 @@ function Compare-UsagePass([string]$PriorPath, [string]$RosterHash, [long]$PeakB
     $delta = $null
     if (-not (Test-Path -LiteralPath $PriorPath)) { $errors.Add('pass-1 accepted report missing') }
     else {
-        $prior = Get-Content -LiteralPath $PriorPath -Raw | ConvertFrom-Json
+        $prior = Read-CheckpointText $PriorPath | ConvertFrom-Json
         if ($prior.rosterHash -cne $RosterHash) { $errors.Add('pass rosters differ') }
         $delta = [ordered]@{ peakAllocatedBytes = $PeakBytes - [long]$prior.peakAllocatedBytes;
             finalAllocatedBytes = $FinalBytes - [long]$prior.finalAllocatedBytes;

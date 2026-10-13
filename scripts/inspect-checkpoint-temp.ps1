@@ -6,6 +6,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'lib/checkpoint-file-reader.ps1')
 if ($MaxEntries -lt 1 -or $MaxEntries -gt 10000 -or $MaxDescendants -lt 1 -or $MaxDescendants -gt 100000) {
     throw 'Inspection bounds are outside the supported range.'
 }
@@ -31,7 +32,7 @@ foreach ($entry in $entries) {
     $marker = $null
     if (Test-Path -LiteralPath $markerPath -PathType Leaf) {
         try {
-            $marker = Get-Content -LiteralPath $markerPath -Raw | ConvertFrom-Json
+            $marker = Read-CheckpointText $markerPath | ConvertFrom-Json
             if ($marker.Version -eq 1 -and $marker.RootId -ceq $entry.Name.Substring(5) -and
                 [IO.Path]::GetFullPath([string]$marker.RootPath) -ceq [IO.Path]::GetFullPath($entry.FullName)) {
                 $reason = 'marked-identity-unverified'

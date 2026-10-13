@@ -450,7 +450,7 @@ function Write-Trailer {
     param([int]$Code)
     if ($Code -eq 0 -and $null -ne $script:expectedBinding) {
         try {
-            $presentStamp = Get-Content -LiteralPath $script:stampPath -Raw | ConvertFrom-Json
+            $presentStamp = Read-CheckpointText $script:stampPath | ConvertFrom-Json
             if (-not (Test-CheckpointBuildBinding $presentStamp $script:expectedBinding)) { throw 'stamp-mismatch' }
         } catch { Write-Host ('refused: checkpoint-build-source.json receipt-missing-or-mismatching'); $Code = 2; $script:buildSource = 'mismatch' }
     }
@@ -489,7 +489,7 @@ function Write-Trailer {
         try { $sourceWrite = Write-CheckpointSafeText (Join-Path $script:resultsDirectory 'source.json') (($evidence | ConvertTo-Json -Depth 12) + "`n") $script:resultsDirectory }
         catch { Write-Host ('refused: source.json receipt-write-failed: ' + $_.Exception.GetType().Name); exit 2 }
         if ($null -ne $sourceWrite) { Write-Host ('refused: source.json receipt-write-failed: ' + $sourceWrite); exit 2 }
-        try { $readBack = Get-Content -LiteralPath (Join-Path $script:resultsDirectory 'source.json') -Raw | ConvertFrom-Json; if ($readBack.receipt -cne $line) { throw 'receipt-mismatch' } }
+        try { $readBack = Read-CheckpointText (Join-Path $script:resultsDirectory 'source.json') | ConvertFrom-Json; if ($readBack.receipt -cne $line) { throw 'receipt-mismatch' } }
         catch { Write-Host ('refused: source.json receipt-unreadable-or-mismatching'); exit 2 }
         $gitWrite = Write-CheckpointSafeText (Join-Path $script:resultsDirectory 'git.txt') (('commit={0} source={1} sourceState={2} buildSource={3}' -f $commit, (Get-CheckpointSourceToken $start), $state, $script:buildSource) + "`n") $script:resultsDirectory
         if ($null -ne $gitWrite) { Write-Host ('refused: ' + $gitWrite) }
@@ -539,7 +539,7 @@ if ($Repeat -gt 1) {
     if (-not [System.IO.File]::Exists($repeatProject) -or -not $repeatProject.EndsWith('.csproj', [StringComparison]::OrdinalIgnoreCase)) {
         Stop-Invalid 'Repeat project must resolve to exactly one csproj'
     }
-    [xml]$repeatProjectXml = [System.IO.File]::ReadAllText($repeatProject)
+    [xml]$repeatProjectXml = (Read-CheckpointText $repeatProject)
     $tunit = @($repeatProjectXml.SelectNodes('//*[local-name()="PackageReference"]') | Where-Object { $_.GetAttribute('Include') -eq 'TUnit' })
     if ($tunit.Count -ne 1) { Stop-Invalid 'Repeat project must reference TUnit directly' }
     $propertyTokens = @($propertyTokens) + @("AntiphonCheckpointRepeat=$Repeat", "AntiphonCheckpointRepeatProject=$repeatProject")
@@ -599,7 +599,7 @@ $stampPath = Get-CheckpointBuildStampPath $root $Project $OutputPath
 $expectedBinding = Get-CheckpointBuildBinding $root $Project $OutputPath $propertyTokens $script:sourceStart
 if ($NoBuild) {
     $stampValue = $null
-    try { $stampValue = Get-Content -Raw -LiteralPath $stampPath | ConvertFrom-Json }
+    try { $stampValue = Read-CheckpointText $stampPath | ConvertFrom-Json }
     catch { }
     $script:buildSource = if (Test-CheckpointBuildBinding $stampValue $expectedBinding) { 'verified' } elseif ($null -eq $stampValue) { 'unknown' } else { 'mismatch' }
     if (($ExpectedSourceSha -or $Repeat -gt 1) -and $script:buildSource -ne 'verified') {
@@ -879,13 +879,9 @@ function Get-CheckpointContentStamp {
         if ($null -ne $directory.LinkTarget) { return (Get-CheckpointStampLink ([string]$directory.LinkTarget)) }
         if ($directory.Exists) { return 'directory|0|' }
         if (-not $file.Exists) { return 'absent|0|' }
-        $bytes = [System.IO.File]::ReadAllBytes($Full)
+        $bytes = Read-CheckpointBytes $Full
         return 'file|' + $bytes.Length + '|' + (Get-CheckpointSha256 $bytes)
-    } catch [System.IO.IOException] {
-        return 'unreadable'
-    } catch [System.UnauthorizedAccessException] {
-        return 'unreadable'
-    } catch [System.Security.SecurityException] {
+    } catch {
         return 'unreadable'
     }
 }
@@ -1190,7 +1186,7 @@ if (-not (Test-Path -LiteralPath $trxPath)) {
 }
 
 try {
-    [xml]$doc = Get-Content -Raw -LiteralPath $trxPath
+    [xml]$doc = Read-CheckpointText $trxPath
 } catch {
     Write-Host ('CHECKPOINT {0} malformed TRX {1}: {2}' -f $Name, $trxPath, $_.Exception.Message)
     Write-Trailer -Code 2

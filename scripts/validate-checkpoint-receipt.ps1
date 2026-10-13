@@ -47,7 +47,7 @@ function Assert-RepeatReceipt {
         throw 'repeat_summary_invalid'
     }
     if (-not (Test-Path -LiteralPath $TrxPath)) { throw 'repeat_trx_missing' }
-    [xml]$trx = Get-Content -Raw -LiteralPath $TrxPath
+    [xml]$trx = Read-CheckpointText $TrxPath
     $actual = Get-CheckpointRepeatEvidence -Document $trx -Requested $ExpectedRepeat -Nonce ([string]$Repeat.nonce) -MinExecuted 1 -Expect @()
     if (($actual | ConvertTo-Json -Compress -Depth 20) -cne ($Repeat | ConvertTo-Json -Compress -Depth 20)) {
         throw 'repeat_trx_disagreement'
@@ -57,7 +57,7 @@ function Assert-RepeatReceipt {
 try {
     if ($ExpectedSourceSha -cnotmatch '^([0-9a-f]{40}|[0-9a-f]{64})$') { throw 'expected_sha_invalid' }
     if ($ExpectedRepeat -lt 1) { throw 'expected_repeat_invalid' }
-    $raw = [System.IO.File]::ReadAllText([System.IO.Path]::GetFullPath($Evidence))
+    $raw = (Read-CheckpointText ([System.IO.Path]::GetFullPath($Evidence)))
     $document = [System.Text.Json.JsonDocument]::Parse($raw)
     try { Assert-NoDuplicateProperties $document.RootElement }
     finally { $document.Dispose() }

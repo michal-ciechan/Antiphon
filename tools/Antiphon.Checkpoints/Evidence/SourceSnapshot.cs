@@ -113,8 +113,7 @@ public sealed class SourceSnapshot
                 {
                     var beforeLength = info.Length;
                     var beforeWrite = info.LastWriteTimeUtc;
-                    using var stream = new FileStream(full, FileMode.Open, FileAccess.Read, FileShare.Read);
-                    digest = SHA256.HashData(stream);
+                    digest = SHA256.HashData(ReceiptFile.ReadBytes(full));
                     info.Refresh();
                     if (info.Length != beforeLength || info.LastWriteTimeUtc != beforeWrite)
                         throw new SourceCaptureException("file_changed");

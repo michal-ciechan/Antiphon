@@ -1165,7 +1165,11 @@ census drift while `CheckpointTempUsageTests` remains in Integration.
 
 CARD-1199 receipt readers inspect file types without following links before opening required state,
 report and build evidence, then recheck the retained handle. Linux uses nonblocking opens so a
-FIFO substitution cannot block an open. Unsupported types (links, directories, pipes, sockets,
-devices), missing serialized reference facts and invalid deserialized shapes refuse with a named
-receipt reason and exit 2. Nullable diagnostic fields may be null; empty collections are valid
+FIFO substitution cannot block an open. Unsupported required receipt file types (links, directories, pipes, sockets, devices) and invalid
+row/build identities refuse with a named reason and exit 2. Report/terminal receipt validation also
+returns named exit 2 for missing serialized facts and invalid shapes. Wait retains its documented
+dead-executor exit 6 for other missing, empty, malformed or unreadable state reads; if death is
+unconfirmed it continues until its wait limit. Nullable diagnostic fields may be null; empty collections are valid
 when no entries are required. Receipt reads have a 64 MiB bound. Markdown digests hash exact bytes.
+
+CARD-1199 source/content stamping opens regular files only through the verified native reader, with a 64 MiB cap and a cancellable three-second read deadline. Links/directories/absent paths contribute metadata-only shape stamps; unsupported special files and unreadable regular contents are unprovable. Settlement lists changed/unprovable paths and leaves the resulting filesystem shape and index untouched. Import and coverage refuse blank checkpoint identities before writing a manifest or reporting clean coverage; build identities are derived from nonblank isolated output syntax.

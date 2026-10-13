@@ -5,6 +5,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'lib/checkpoint-file-reader.ps1')
 if (-not $Phase) { throw 'Phase is required.' }
 if ($Phase -eq 'Orphans') {
     if ($Pass -ne 1) { throw 'Orphan acceptance has one pass.' }
@@ -24,7 +25,7 @@ New-Item -ItemType Directory -Path $pairDir -Force | Out-Null
 $bindingPath = Join-Path $pairDir 'pair.json'
 if ($Pass -eq 1) {
     if (Test-Path -LiteralPath $bindingPath) {
-        $binding = Get-Content -LiteralPath $bindingPath -Raw | ConvertFrom-Json
+        $binding = Read-CheckpointText $bindingPath | ConvertFrom-Json
         if ($binding.sha -cne $sha -or $binding.digest -cne $digest -or $binding.phase -cne $Phase -or
             [IO.Path]::GetFullPath([string]$binding.output) -cne $output) { throw 'Pass-1 binding belongs to another source.' }
         $sandbox = [string]$binding.sandbox
@@ -37,7 +38,7 @@ if ($Pass -eq 1) {
     }
 } else {
     if (-not (Test-Path -LiteralPath $bindingPath)) { throw 'Pass-1 binding is missing.' }
-    $binding = Get-Content -LiteralPath $bindingPath -Raw | ConvertFrom-Json
+    $binding = Read-CheckpointText $bindingPath | ConvertFrom-Json
     if ($binding.sha -cne $sha -or $binding.digest -cne $digest -or $binding.phase -cne $Phase -or
         [IO.Path]::GetFullPath([string]$binding.output) -cne $output) { throw 'Pass pair has a different commit, DLL, phase, or output.' }
     $sandbox = [string]$binding.sandbox
