@@ -2,6 +2,8 @@ import { HttpResponse, http } from 'msw'
 import { describe, expect, it, vi } from 'vitest'
 import { renderWithProviders, screen, userEvent, waitFor } from '../../test/utils'
 import { server } from '../../test/mocks/server'
+import { ROLE_POLICY_FIXTURE } from '../../test/mocks/handlers'
+import type { RolePolicyRowDto } from '../../api/rolePolicy'
 import { DelegateModal } from './DelegateModal'
 
 vi.mock('@mantine/notifications', () => ({ notifications: { show: vi.fn() } }))
@@ -311,7 +313,71 @@ describe('DelegateModal', () => {
     expect(onClose).not.toHaveBeenCalled()
     expect(screen.getByLabelText('Goal')).toHaveValue('keep this draft')
   })
+
+  it('C097 V16 server-level-preselects', async () => {
+    serveRolePolicyRow('Mutation', (row) => ({
+      ...row,
+      level: 'High',
+      alias: 'opus',
+      effective: { ...row.effective, modelLevel: 'High', alias: 'opus' },
+    }))
+    const captured = captureCreate()
+    renderWithProviders(<DelegateModal opened onClose={() => {}} />)
+
+    await userEvent.click(screen.getByRole('radio', { name: 'Mutation' }))
+    expect(await screen.findByTestId('delegate-tier-source-rolePolicy')).toBeInTheDocument()
+    expect(screen.getByTestId('tier-High')).toBeInTheDocument()
+    expect(screen.queryByTestId('tier-Low')).not.toBeInTheDocument()
+
+    await userEvent.type(screen.getByLabelText('Goal'), 'run the positive controls')
+    await userEvent.click(screen.getByRole('button', { name: 'Delegate' }))
+    await waitFor(() => expect(captured.body).not.toBeNull())
+    expect(captured.body).toMatchObject({ role: 'Mutation', modelLevel: null })
+  })
+
+  it('C097 V17 stage-pin-wins', async () => {
+    serveRolePolicyRow('Plan', (row) => ({
+      ...row,
+      level: 'Frontier',
+      effective: { source: 'pin', agentKind: 'ClaudeCode', modelLevel: 'High', alias: 'opus', strength: 'Required' },
+    }))
+    renderWithProviders(<DelegateModal opened onClose={() => {}} />)
+
+    await userEvent.click(screen.getByRole('radio', { name: 'Plan' }))
+    expect(await screen.findByTestId('delegate-tier-source-pin')).toBeInTheDocument()
+    expect(screen.getByTestId('tier-High')).toBeInTheDocument()
+    expect(screen.queryByTestId('tier-Frontier')).not.toBeInTheDocument()
+  })
+
+  it('C097 V18 route-failure-falls-back-to-constant', async () => {
+    server.use(http.get('/api/role-policy', () => new HttpResponse(null, { status: 500 })))
+    renderWithProviders(<DelegateModal opened onClose={() => {}} />)
+
+    await userEvent.click(screen.getByRole('radio', { name: 'Mutation' }))
+    expect(await screen.findByTestId('delegate-tier-source-fallback')).toBeInTheDocument()
+    expect(screen.getByTestId('tier-Low')).toBeInTheDocument()
+    expect(screen.getByLabelText('Goal')).toBeInTheDocument()
+    await userEvent.type(screen.getByLabelText('Goal'), 'run the positive controls')
+    expect(screen.getByRole('button', { name: 'Delegate' })).toBeEnabled()
+  })
+
+  it('C097 V27 orchestrator-floor-on-server-level', async () => {
+    renderWithProviders(<DelegateModal opened onClose={() => {}} />)
+
+    await userEvent.click(screen.getByRole('radio', { name: 'Sub-orchestrator' }))
+    await userEvent.click(screen.getByRole('radio', { name: 'Mutation' }))
+    expect(await screen.findByTestId('delegate-tier-source-rolePolicy')).toBeInTheDocument()
+    expect(screen.getByTestId('tier-High')).toBeInTheDocument()
+    expect(screen.queryByTestId('tier-Low')).not.toBeInTheDocument()
+  })
 })
+
+function serveRolePolicyRow(role: string, change: (row: RolePolicyRowDto) => RolePolicyRowDto) {
+  server.use(http.get('/api/role-policy', () => HttpResponse.json({
+    ...ROLE_POLICY_FIXTURE,
+    roles: ROLE_POLICY_FIXTURE.roles.map((row) => (row.role === role ? change(row) : row)),
+  })))
+}
 
 function runnerRow(id: string, platform: string | null, displayName = id) {
   return {
