@@ -3033,7 +3033,11 @@ mode_deletion_audit() {
                     fingerprint-created) printf '2026-10-13T01:00:00Z\n' > "$C1192_ROOT/containers/$name/created" ;;
                 esac
             else
-                docker_inspect_container() { printf 'Cannot connect to the Docker daemon\n' >&2; return 1; }
+                eval "$(declare -f docker_inspect_container | sed '1s/docker_inspect_container/c1192_inspect_before_outage/')"
+                docker_inspect_container() {
+                    if [[ "$*" == *io.antiphon.owner* ]]; then printf 'Cannot connect to the Docker daemon\n' >&2; return 1; fi
+                    c1192_inspect_before_outage "$@"
+                }
             fi
             c849_fixture_finalize || code=$?
             emit finalization-exit "$code"
@@ -3052,13 +3056,15 @@ mode_deletion_audit() {
                 record_argv "$@"
                 case "$1:$2" in
                     network:inspect)
-                        [ "$row" != network-id-inspect-failure ] || { printf 'Cannot connect to the Docker daemon\n' >&2; return 1; }
+                        if [ "$row" = network-id-inspect-failure ] && [[ "$*" == *io.antiphon.owner* ]]; then
+                            printf 'Cannot connect to the Docker daemon\n' >&2; return 1
+                        fi
                         [ -f "$C1192_ROOT/network" ] || { printf 'Error: No such network: %s\n' "${*: -1}" >&2; return 1; }
                         [ "${3:-}" = -f ] || return 0
                         case "$4" in
                             *Id*) printf '%s\n' "$id" ;;
                             *io.antiphon.owner*) printf 'foreign\n' ;;
-                            *fixture-run*) printf 'other-run\n' ;;
+                            *fixture-run*) if [ "$row" = network-id-inspect-failure ]; then printf '%s\n' "$RUN"; else printf 'other-run\n'; fi ;;
                             *fixture-role*) printf 'npm-network\n' ;;
                             *) return 97 ;;
                         esac ;;
@@ -3073,6 +3079,7 @@ mode_deletion_audit() {
             emit residue "$(test -s "$CASE_DIR/fixture-cleanup-residue.txt" && echo 1 || echo 0)"
             ;;
         owned-volume-controls)
+            source <(awk '/^c849_fixture_cleanup_scope\(\) \(/{active=1} active{print} active && /^\)$/{active=0}' "$remote")
             C849_PACKAGES="c849${RUN}-packages"; C849_SCRATCH="c849${RUN}-scratch"; C849_NPM="c849${RUN}-npm"
             name="c849${RUN}-packages"
             printf '%s\n' "$name" > "$CASE_DIR/.fixture-volumes"
