@@ -571,6 +571,7 @@ public sealed class RemoteScriptContractTests
     [Arguments("dangling-link", "2", "1")]
     [Arguments("regular", "2", "1")]
     [Arguments("inspection-link", "2", "1")]
+    [Arguments("publication-link", "2", "1")]
     [Arguments("inspection-fifo-link", "2", "1")]
     [Arguments("fifo-link", "2", "1")]
     [Arguments("fifo", "2", "1")]

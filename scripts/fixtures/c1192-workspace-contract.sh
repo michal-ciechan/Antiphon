@@ -3311,7 +3311,7 @@ mode_fingerprint_acquisition() {
         directory-link) ln -s "$C1192_ROOT/victim-directory" "$fingerprint" ;;
         dangling-link) ln -s "$C1192_ROOT/missing-victim" "$fingerprint" ;;
         regular) printf 'foreign record bytes\n' > "$fingerprint" ;;
-        fresh|inspection-link) ;;
+        fresh|inspection-link|publication-link) ;;
         inspection-fifo-link) mkfifo "$C1192_ROOT/victim-pipe"; exec 8<> "$C1192_ROOT/victim-pipe" ;;
         hard-link) ln "$C1192_ROOT/victim" "$fingerprint" ;;
         directory) mkdir "$fingerprint" ;;
@@ -3344,6 +3344,12 @@ mode_fingerprint_acquisition() {
     }
     c849_fixture_helper_lookup() { return 0; }
     c849_fixture_resource_state() { return 0; }
+    mv() {
+        if [ "$variant" = publication-link ] && [ "${*: -1}" = ".fixture-fingerprint-c849-${RUN}-donor" ]; then
+            ln -s "$C1192_ROOT/victim" "${*: -1}"
+        fi
+        command mv "$@"
+    }
     c849_fixture_launch create --name "$name" image || code=$?
     printf 'launch-exit=%s\n' "$code"
     local preserved=0 diagnosis=0
@@ -3362,7 +3368,7 @@ mode_fingerprint_acquisition() {
             [ "$code" = 2 ] && [ "$diagnosis" = 1 ] || fail 'fingerprint collision was not a named refusal'
             case "$variant" in
                 regular) [ "$(cat -- "$fingerprint")" = 'foreign record bytes' ] || fail 'foreign regular record changed' ;;
-                file-link|inspection-link) [ -L "$fingerprint" ] && [ "$(readlink -- "$fingerprint")" = "$C1192_ROOT/victim" ] || fail 'victim link changed' ;;
+                file-link|inspection-link|publication-link) [ -L "$fingerprint" ] && [ "$(readlink -- "$fingerprint")" = "$C1192_ROOT/victim" ] || fail 'victim link changed' ;;
                 directory-link) [ -L "$fingerprint" ] && [ "$(cat -- "$C1192_ROOT/victim-directory/sentinel")" = 'directory sentinel' ] || fail 'directory victim changed' ;;
                 dangling-link) [ -L "$fingerprint" ] && [ ! -e "$C1192_ROOT/missing-victim" ] || fail 'dangling target created' ;;
             esac
@@ -3432,7 +3438,7 @@ mode_metadata_write() {
                 *fixture-role*) if [ "$writer" = network ]; then printf npm-network; else printf donor; fi ;;
                 '{{.Name}}')
                     [ "$variant" != late-link ] || [ -L "$target" ] || plant_metadata_type
-                    if [ "$writer" = network ]; then printf 'c849-%s-npm\n' "$RUN"; else printf '/%s\n' "$name"; fi ;;
+                    if [ "$writer" = network ]; then printf 'c849-%s-npm\n' "$RUN"; else printf '/c849-%s-donor\n' "$RUN"; fi ;;
                 *) return 97 ;;
             esac
         }
