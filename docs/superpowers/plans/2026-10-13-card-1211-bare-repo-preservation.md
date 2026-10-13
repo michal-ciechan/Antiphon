@@ -35,7 +35,7 @@ is a boundary of the proof, not blanket refusal of bare repositories.
 CARD-0971 deletion audit paths requiring this detection: publication, LocalMerge,
 settled-task retirement, completed-card removal, initial managed deletion and
 recorded set-aside resume. They already share WorktreeNestedRepositories; change
-its predicate once. Exact common-directory admin deletion is distinct and remains
+the shared census. Exact common-directory admin deletion is distinct and remains
 unchanged. Detached landing-workspace clean, inventory-bound verification deletion,
 creation rollback and diagnostic scratch disposal are outside this owner cleanup.
 R-6..10 and V-8 exercise the shared policy and late deletion boundary.
@@ -109,7 +109,7 @@ they cannot honestly be reported red. Deliberate controls remain Mutation work.
 Ordinary scope is the brief's explicit closed slice: no broad Unit lane (inherited
 Unit findings tracked under CARD-1209/1210). Full named classes bound shared cleanup
 impact; no unbounded integration or assembly run. Estimated final floor 26 minutes.
-Tool bootstrap alone uses build-slot and bin-c1211-tool/, UseAppHost=false.
+Round 2 tool bootstrap alone uses build-slot and bin-c1211-r2-tool/, UseAppHost=false.
 
 ### Pending positive controls
 
@@ -140,3 +140,28 @@ build provenance. Runtime report retains the unedited CHECKPOINT line and TRX.
 CP-3 minimum corrected from 23 to 15 before its first execution: 23 refers to
 15 existing proof plus 8 cleanup cases, not 23 in the proof class. No selection
 or assertion changed. Final ordinary verification is pending at this commit.
+
+## Round 2 baseline and claim audit
+
+Production is byte-identical to 021f14732 through corrected tests-only commit
+21091401198fa8f139346ae514db61f4cea4f5eb. CP-14 rerun: 2 executed,
+1 passed (.git file refusal plus ordinary publication preservation), 1 failed
+(.git directory tracked HEAD admission). CP-15: 2 executed, 1 passed (enclosing
+repo without HEAD), 1 failed (with tracked HEAD). CP-16: 1 executed, 1 failed
+(HEAD-only output proof). The three defects fail hand-written true expectations;
+no build/fixture failure is counted as a defect. CP-14's initial file-pointer
+fixture lacked the half-reset precondition and failed with adopt_local_changed;
+the corrected fixture establishes/asserts that precondition, keeps the original
+exact refusal assertion, then restores the fixture ref for ordinary publication.
+No production change or assertion/deadline relaxation was used for the rerun.
+
+Claim audit: the blanket proof-refusal sentence is replaced by exposed strict
+signature V-7 and non-descent boundary V-10. Cleanup layout coverage is named by
+V-1..6/V-8/V-9/V-10/V-11 rather than an unbounded preservation promise. The changed
+census/comment explicitly names recognized boundaries, not every private directory.
+Remaining all/every wording in the manifest means the selected executed roster;
+in assertion labels it means the captured paths/bytes of that fixture. Mutation
+descriptions name deliberate faulty policies, not production guarantees. The
+never-print-token rule is a custody instruction, not a repository claim.
+Detailed unedited baseline receipts and the eventual Final results live in
+.antiphon/task-e37a97b6.md. CP-2..13 are pending at this fix commit.
