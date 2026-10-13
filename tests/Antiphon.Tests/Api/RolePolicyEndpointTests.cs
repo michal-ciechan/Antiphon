@@ -4,6 +4,8 @@ using System.Text.Json;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Tests.Application;
 using Antiphon.Tests.TestHelpers;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Shouldly;
 using TUnit.Core;
@@ -185,6 +187,52 @@ public sealed class RolePolicyEndpointTests
         }
     }
 
+    /// <summary>
+    /// A host bound with Docs Level=999, Commit Kind=Raw and Deploy Kind=999 (config validation admits
+    /// all three) still answers 200 with 14 rows; the bad rows withhold their target.
+    /// </summary>
+    [Test]
+    [ClassDataSource<RolePolicyUnsupportedValuesWebAppFactory>(Shared = SharedType.PerClass)]
+    public async Task Get_serialises_every_row_when_one_role_has_unsupported_values(
+        RolePolicyUnsupportedValuesWebAppFactory factory)
+    {
+        using var client = factory.CreateClient();
+
+        var roles = (await GetPolicyAsync(client)).GetProperty("roles").EnumerateArray().ToList();
+
+        roles.Count.ShouldBe(14);
+        var docs = Row(roles, "Docs");
+        docs.GetProperty("level").GetString().ShouldBe("High");
+        docs.GetProperty("kind").ValueKind.ShouldBe(JsonValueKind.Null);
+        docs.GetProperty("alias").GetString().ShouldBe("");
+        AssertWithheld(docs.GetProperty("effective"));
+        var commit = Row(roles, "Commit");
+        commit.GetProperty("kind").GetString().ShouldBe("Raw");
+        commit.GetProperty("level").GetString().ShouldBe("Medium");
+        commit.GetProperty("alias").GetString().ShouldBe("");
+        AssertWithheld(commit.GetProperty("effective"));
+        var deploy = Row(roles, "Deploy");
+        deploy.GetProperty("kind").ValueKind.ShouldBe(JsonValueKind.Null);
+        deploy.GetProperty("level").GetString().ShouldBe("Low");
+        deploy.GetProperty("alias").GetString().ShouldBe("");
+        AssertWithheld(deploy.GetProperty("effective"));
+
+        var mutation = Row(roles, "Mutation").GetProperty("effective");
+        mutation.GetProperty("agentKind").GetString().ShouldBe("ClaudeCode");
+        mutation.GetProperty("modelLevel").GetString().ShouldBe("Low");
+        mutation.GetProperty("alias").GetString().ShouldBe("haiku");
+        Row(roles, "Test").GetProperty("alias").GetString().ShouldBe("haiku");
+    }
+
+    private static void AssertWithheld(JsonElement effective)
+    {
+        effective.GetProperty("source").GetString().ShouldBe("rolePolicy");
+        effective.GetProperty("agentKind").ValueKind.ShouldBe(JsonValueKind.Null);
+        effective.GetProperty("modelLevel").ValueKind.ShouldBe(JsonValueKind.Null);
+        effective.GetProperty("alias").ValueKind.ShouldBe(JsonValueKind.Null);
+        effective.GetProperty("strength").ValueKind.ShouldBe(JsonValueKind.Null);
+    }
+
     private static async Task<JsonElement> GetPolicyAsync(HttpClient client)
     {
         using var response = await client.GetAsync("/api/role-policy");
@@ -197,3 +245,18 @@ public sealed class RolePolicyEndpointTests
 }
 
 public sealed class RolePolicyApiWebAppFactory : AntiphonWebAppFactory;
+
+public sealed class RolePolicyUnsupportedValuesWebAppFactory : AntiphonWebAppFactory
+{
+    protected override void ConfigureWebHost(IWebHostBuilder builder)
+    {
+        base.ConfigureWebHost(builder);
+        builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(
+            new Dictionary<string, string?>
+            {
+                ["Delegation:RolePolicy:Docs:Level"] = "999",
+                ["Delegation:RolePolicy:Commit:Kind"] = "Raw",
+                ["Delegation:RolePolicy:Deploy:Kind"] = "999",
+            }));
+    }
+}

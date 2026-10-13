@@ -1,3 +1,5 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
@@ -145,6 +147,154 @@ public sealed class RolePolicyReadServiceTests
         docs.StagePin.ShouldBe(pin);
         docs.Effective.ShouldBe(new RolePolicyEffectiveDto(
             "pin", null, null, null, RoutingPinStrength.Required));
+    }
+
+    /// <summary>One configured or pinned value per case; the expected wire values are literals.</summary>
+    public sealed record UnsupportedCase(
+        string Name,
+        Action<DelegationSettings> Configure,
+        RoutingPinCandidateDto[]? PinCandidates,
+        string Role,
+        string? Kind,
+        string Level,
+        string Alias,
+        string? EscalateTo,
+        string Source,
+        string? EffectiveKind,
+        string? EffectiveLevel,
+        string? EffectiveAlias,
+        string? Strength,
+        string? HeadKind,
+        string? HeadLevel,
+        string? HeadAlias,
+        string DefaultLevel)
+    {
+        public override string ToString() => Name;
+    }
+
+    private static readonly AgentKind UndefinedKind = (AgentKind)999;
+    private static readonly AgentModelLevel UndefinedLevel = (AgentModelLevel)999;
+
+    public static IEnumerable<Func<UnsupportedCase>> UnsupportedCases()
+    {
+        static void None(DelegationSettings _) { }
+
+        yield return () => new("valid-control", None, null, "Docs",
+            null, "Medium", "sonnet", null, "rolePolicy", "ClaudeCode", "Medium", "sonnet", null, null, null, null, "High");
+        yield return () => new("policy-kind-Raw", s => s.RolePolicy["Docs"].Kind = AgentKind.Raw, null, "Docs",
+            "Raw", "Medium", "", null, "rolePolicy", null, null, null, null, null, null, null, "High");
+        yield return () => new("policy-kind-OpenCode", s => s.RolePolicy["Docs"].Kind = AgentKind.OpenCode, null, "Docs",
+            "OpenCode", "Medium", "", null, "rolePolicy", null, null, null, null, null, null, null, "High");
+        yield return () => new("policy-kind-999", s => s.RolePolicy["Docs"].Kind = UndefinedKind, null, "Docs",
+            null, "Medium", "", null, "rolePolicy", null, null, null, null, null, null, null, "High");
+        yield return () => new("policy-level-999", s => s.RolePolicy["Docs"].Level = UndefinedLevel, null, "Docs",
+            null, "High", "", null, "rolePolicy", null, null, null, null, null, null, null, "High");
+        yield return () => new("policy-escalateTo-999", s => s.RolePolicy["Docs"].EscalateTo = UndefinedLevel, null, "Docs",
+            null, "Medium", "sonnet", null, "rolePolicy", "ClaudeCode", "Medium", "sonnet", null, null, null, null, "High");
+        yield return () => new("default-level-999", s => s.DefaultLevel = UndefinedLevel, null, "Custom",
+            null, "High", "", null, "rolePolicy", null, null, null, null, null, null, null, "High");
+        yield return () => new("pin-valid-control", None,
+            [Candidate(AgentKind.Codex, AgentModelLevel.Low, "gpt-5.6-luna")], "Docs",
+            null, "Medium", "sonnet", null, "pin", "Codex", "Low", "gpt-5.6-luna", "Required", "Codex", "Low", "gpt-5.6-luna", "High");
+        yield return () => new("pin-head-kind-Raw", None,
+            [Candidate(AgentKind.Raw, AgentModelLevel.High, "opus"), Candidate(AgentKind.ClaudeCode, AgentModelLevel.Low, "haiku")], "Docs",
+            null, "Medium", "sonnet", null, "pin", null, null, null, "Required", "Raw", "High", null, "High");
+        yield return () => new("pin-head-kind-999", None,
+            [Candidate(UndefinedKind, AgentModelLevel.High, "opus"), Candidate(AgentKind.ClaudeCode, AgentModelLevel.Low, "haiku")], "Docs",
+            null, "Medium", "sonnet", null, "pin", null, null, null, "Required", null, "High", null, "High");
+        yield return () => new("pin-head-level-999", None,
+            [Candidate(AgentKind.ClaudeCode, UndefinedLevel, "opus"), Candidate(AgentKind.Codex, AgentModelLevel.Low, "gpt-5.6-luna")], "Docs",
+            null, "Medium", "sonnet", null, "pin", null, null, null, "Required", "ClaudeCode", null, null, "High");
+        yield return () => new("pin-grok-level-999", None,
+            [Candidate(AgentKind.Grok, UndefinedLevel, "grok-4.7")], "Docs",
+            null, "Medium", "sonnet", null, "pin", null, null, null, "Required", "Grok", null, null, "High");
+        yield return () => new("pin-grok-inherits-policy-level-999", s => s.RolePolicy["Docs"].Level = UndefinedLevel,
+            [Candidate(AgentKind.Grok, null, null)], "Docs",
+            null, "High", "", null, "pin", null, null, null, "Required", "Grok", null, null, "High");
+        yield return () => new("pin-level-inherits-policy-kind-Raw", s => s.RolePolicy["Docs"].Kind = AgentKind.Raw,
+            [Candidate(null, AgentModelLevel.High, null)], "Docs",
+            "Raw", "Medium", "", null, "pin", null, null, null, "Required", null, "High", null, "High");
+        yield return () => new("prototype-role-names", s =>
+            {
+                foreach (var name in new[] { "__proto__", "constructor", "toString" })
+                    s.RolePolicy[name] = new DelegationSettings.RolePolicyEntry { Kind = UndefinedKind, Level = UndefinedLevel };
+            }, null, "Docs",
+            null, "Medium", "sonnet", null, "rolePolicy", "ClaudeCode", "Medium", "sonnet", null, null, null, null, "High");
+    }
+
+    /// <summary>
+    /// Unsupported (Raw, OpenCode) or undefined (999) kinds and levels withhold the target instead of
+    /// inventing an alias, and the whole DTO still serialises with the API's strict enum converter.
+    /// </summary>
+    [Test]
+    [MethodDataSource(nameof(UnsupportedCases))]
+    public void Compose_withholds_the_target_for_unsupported_or_undefined_values(UnsupportedCase c)
+    {
+        var settings = new DelegationSettings();
+        c.Configure(settings);
+        var role = Enum.Parse<AgentTaskRole>(c.Role);
+        RoutingPinDto[] pins = c.PinCandidates is null
+            ? []
+            : [Pin(role, RoutingPinStrength.Required, cardId: null, c.PinCandidates)];
+
+        var json = JsonSerializer.SerializeToElement(RolePolicyReadService.Compose(settings, pins), ApiJson);
+
+        json.GetProperty("defaultLevel").GetString().ShouldBe(c.DefaultLevel);
+        var roles = json.GetProperty("roles").EnumerateArray().ToList();
+        roles.Count.ShouldBe(14);
+        roles[0].GetProperty("role").GetString().ShouldBe("Investigate");
+        roles[13].GetProperty("role").GetString().ShouldBe("Custom");
+
+        var row = roles.Single(r => r.GetProperty("role").GetString() == c.Role);
+        Str(row, "kind").ShouldBe(c.Kind);
+        Str(row, "level").ShouldBe(c.Level);
+        Str(row, "alias").ShouldBe(c.Alias);
+        Str(row, "escalateTo").ShouldBe(c.EscalateTo);
+        var effective = row.GetProperty("effective");
+        Str(effective, "source").ShouldBe(c.Source);
+        Str(effective, "agentKind").ShouldBe(c.EffectiveKind);
+        Str(effective, "modelLevel").ShouldBe(c.EffectiveLevel);
+        Str(effective, "alias").ShouldBe(c.EffectiveAlias);
+        Str(effective, "strength").ShouldBe(c.Strength);
+
+        var stagePin = row.GetProperty("stagePin");
+        if (c.PinCandidates is null)
+        {
+            stagePin.ValueKind.ShouldBe(JsonValueKind.Null);
+        }
+        else
+        {
+            Str(stagePin, "agentKind").ShouldBe(c.HeadKind);
+            Str(stagePin, "modelLevel").ShouldBe(c.HeadLevel);
+            Str(stagePin, "modelAlias").ShouldBe(c.HeadAlias);
+            var candidates = stagePin.GetProperty("candidates").EnumerateArray().ToList();
+            candidates.Count.ShouldBe(c.PinCandidates.Length);
+            Str(candidates[0], "agentKind").ShouldBe(c.HeadKind);
+            Str(candidates[0], "modelLevel").ShouldBe(c.HeadLevel);
+            Str(candidates[0], "alias").ShouldBe(c.HeadAlias);
+        }
+
+        // The other 13 rows keep their shipped targets.
+        var mutation = roles.Single(r => r.GetProperty("role").GetString() == "Mutation").GetProperty("effective");
+        Str(mutation, "source").ShouldBe("rolePolicy");
+        Str(mutation, "agentKind").ShouldBe("ClaudeCode");
+        Str(mutation, "modelLevel").ShouldBe("Low");
+        Str(mutation, "alias").ShouldBe("haiku");
+        Str(roles.Single(r => r.GetProperty("role").GetString() == "Code"), "alias").ShouldBe("fable");
+        foreach (var other in roles.Where(r => r.GetProperty("role").GetString() != c.Role))
+            Str(other.GetProperty("effective"), "alias").ShouldNotBeNullOrEmpty();
+    }
+
+    /// <summary>The API's options: web defaults plus Program.cs's strict string enum converter.</summary>
+    private static readonly JsonSerializerOptions ApiJson = new(JsonSerializerDefaults.Web)
+    {
+        Converters = { new JsonStringEnumConverter(namingPolicy: null, allowIntegerValues: false) },
+    };
+
+    private static string? Str(JsonElement element, string property)
+    {
+        var value = element.GetProperty(property);
+        return value.ValueKind == JsonValueKind.Null ? null : value.GetString();
     }
 
     private static RolePolicyRowDto Row(RolePolicyDto dto, AgentTaskRole role) =>
