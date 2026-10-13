@@ -163,6 +163,13 @@ const INVALIDATION_MAP: InvalidationMapping[] = [
     getKeys: () => [['runnerDefaults'], ['runnerDefaultRevisions']],
   },
   {
+    // CARD-0506 D-9: every concurrency query key shares the 'dispatchConcurrency' prefix, and the
+    // pipeline projection carries the same effective limits, so one event refreshes both. The payload
+    // names a revision only; the data comes from the scope GET (useSignalRInvalidation.test.ts V07).
+    event: 'DispatchConcurrencyChanged',
+    getKeys: () => [['dispatchConcurrency'], ['agentTasks', 'pipeline']],
+  },
+  {
     event: 'ScheduleChanged',
     getKeys: (p) => [
       ['schedules'],
