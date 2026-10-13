@@ -229,16 +229,39 @@ public sealed class WindowsUnitPlatformAdmissionTests
             "CARD-1210: file-link controls require symbolic-link creation privilege on Windows; capability unavailable."),
             new("Antiphon.Tests.Application", "ChannelOutboundStorageTests", "Output_rename_and_link_swap_after_inspection_seals_the_opened_file", 1,
             "CARD-1210: file-link controls require symbolic-link creation privilege on Windows; capability unavailable.")];
+        Entry[] storagePortable =
+        [
+            new("Antiphon.Tests.Application", "ChannelOutboundStorageTests", "C1059_Source_reads_require_captured_roots_without_traversal", 1, ""),
+            new("Antiphon.Tests.Application", "ChannelOutboundStorageTests", "C1059_Source_reads_reject_directory_links", 1, ""),
+            new("Antiphon.Tests.Application", "ChannelOutboundStorageTests", "C1059_Source_length_is_checked_before_reading_with_a_finite_budget", 1, ""),
+            new("Antiphon.Tests.Application", "ChannelOutboundStorageTests", "C1059_Source_reads_refuse_nonregular_files_without_blocking", 1, ""),
+            new("Antiphon.Tests.Application", "ChannelOutboundStorageTests", "Failed_staging_never_exposes_a_partial_snapshot", 5, ""),
+            new("Antiphon.Tests.Application", "ChannelOutboundStorageTests", "Frozen_reply_and_input_bytes_survive_source_mutation", 1, ""),
+            new("Antiphon.Tests.Application", "ChannelOutboundStorageTests", "Oversized_reply_never_exposes_snapshot_directory", 1, ""),
+            new("Antiphon.Tests.Application", "ChannelOutboundStorageTests", "Exactly_fourteen_mebibytes_of_original_bytes_can_be_staged", 1, ""),
+            new("Antiphon.Tests.Application", "ChannelOutboundStorageTests", "Serialized_limit_counts_unicode_metadata_and_base64_at_exact_boundary", 1, ""),
+            new("Antiphon.Tests.Application", "ChannelOutboundStorageTests", "Near_default_wire_cap_accepts_exact_serialized_size_and_refuses_one_more_byte", 1, ""),
+            new("Antiphon.Tests.Application", "ChannelOutboundStorageTests", "Converted_files_are_sealed_with_original_sources_and_frozen_routing", 1, ""),
+            new("Antiphon.Tests.Application", "ChannelOutboundStorageTests", "Manifested_zip_sources_are_expanded_from_attached_bytes", 1, ""),
+            new("Antiphon.Tests.Application", "ChannelOutboundStorageTests", "Source_zip_expansion_accepts_exact_budget_and_refuses_one_extra_byte", 1, ""),
+            new("Antiphon.Tests.Application", "ChannelOutboundStorageTests", "Inline_and_zip_sources_share_the_expanded_budget", 1, ""),
+            new("Antiphon.Tests.Application", "ChannelOutboundStorageTests", "Attachment_source_url_does_not_supply_worker_input", 1, ""),
+            new("Antiphon.Tests.Application", "ChannelOutboundStorageTests", "Source_zip_manifest_rejects_unsafe_or_ambiguous_members", 9, ""),
+            new("Antiphon.Tests.Application", "ChannelOutboundStorageTests", "Worker_created_sealed_reply_cannot_bypass_manifest_validation_on_recovery", 1, ""),
+            new("Antiphon.Tests.Application", "ChannelOutboundStorageTests", "Output_manifest_cannot_override_frozen_routing", 1, ""),
+            new("Antiphon.Tests.Application", "ChannelOutboundStorageTests", "Complete_source_stamp_requires_every_manifested_attachment", 1, ""),
+        ];
         foreach (var (conditional, skipped) in new[] { (Array.Empty<Entry>(), false), (capabilities, false), (capabilities, true) })
         {
-            var valid = ValidDocument(conditional, skipped);
-            Audit(valid, WindowsUnitSkipRoster.Native, WindowsUnitSkipRoster.Portable, conditional, 0);
+            var portable = conditional.Length == 0 ? WindowsUnitSkipRoster.Portable : WindowsUnitSkipRoster.Portable.Concat(storagePortable).ToArray();
+            var valid = ValidDocument(portable, conditional, skipped);
+            Audit(valid, WindowsUnitSkipRoster.Native, portable, conditional, 0);
             void Reject(Action<XDocument> damage, string label, string vector)
             {
                 var changed = new XDocument(valid);
                 damage(changed);
                 var failure = Should.Throw<ShouldAssertException>(() => Audit(changed, WindowsUnitSkipRoster.Native,
-                    WindowsUnitSkipRoster.Portable, conditional, 0), "c1210-negative: " + vector);
+                    portable, conditional, 0), "c1210-negative: " + vector);
                 failure.Message.ShouldContain(label, Case.Sensitive, "c1210-negative: " + vector);
             }
             XElement Host(XDocument doc) => doc.Descendants(Trx + "UnitTestResult").First();
@@ -272,18 +295,18 @@ public sealed class WindowsUnitPlatformAdmissionTests
                 Reject(doc => doc.Descendants(Trx + "UnitTestResult").Last().SetAttributeValue("outcome", "Failed"), "c1210-conditional-roster", "conditional");
                 if (skipped) Reject(doc => doc.Descendants(Trx + "DebugTrace").Last().Value = "Skipped: wrong", "c1210-result-reason", "conditional-reason");
             }
-            Should.Throw<ShouldAssertException>(() => Audit(valid, WindowsUnitSkipRoster.Native, WindowsUnitSkipRoster.Portable,
+            Should.Throw<ShouldAssertException>(() => Audit(valid, WindowsUnitSkipRoster.Native, portable,
                 conditional, 1), "c1210-negative: child-exit").Message.ShouldContain("c1210-child-exit");
         }
         AssertLaunchVectors();
     }
 
-    private static XDocument ValidDocument(Entry[] conditional, bool skipped)
+    private static XDocument ValidDocument(Entry[] portable, Entry[] conditional, bool skipped)
     {
         var results = new List<XElement>();
         var definitions = new List<XElement>();
         foreach (var (entries, prefix, outcome) in new[] { (WindowsUnitSkipRoster.Native, "host", "NotExecuted"),
-                     (WindowsUnitSkipRoster.Portable, "portable", "Passed"), (conditional, "conditional", skipped ? "NotExecuted" : "Passed") })
+                     (portable, "portable", "Passed"), (conditional, "conditional", skipped ? "NotExecuted" : "Passed") })
         {
             var index = 0;
             foreach (var entry in entries)
@@ -296,9 +319,9 @@ public sealed class WindowsUnitPlatformAdmissionTests
                     outcome == "NotExecuted" ? new XElement(Trx + "Output", new XElement(Trx + "DebugTrace", "Skipped: " + entry.Reason)) : null));
             }
         }
-        // Literal S1/S3 oracle totals from the frozen design; no Audit predicate is used here.
-        var total = conditional.Length == 0 ? 72 : 74;
-        var passed = conditional.Length == 0 || skipped ? 4 : 6;
+        // C1210_Audit_rejects_empty_or_incomplete_outcomes uses the frozen 72/105-result fixture totals.
+        var total = conditional.Length == 0 ? 72 : 105;
+        var passed = conditional.Length == 0 ? 4 : skipped ? 35 : 37;
         var notExecuted = conditional.Length > 0 && skipped ? 70 : 68;
         return new XDocument(new XElement(Trx + "TestRun", new XElement(Trx + "Results", results),
             new XElement(Trx + "TestDefinitions", definitions), new XElement(Trx + "ResultSummary", new XElement(Trx + "Counters",
@@ -342,13 +365,13 @@ public sealed class WindowsUnitPlatformAdmissionTests
             [ProductionRunnerGuard.CheckInterpreterEnvVar] = "true", ["C1210_KEEP"] = "sentinel",
         };
         var safe = PrepareChildLaunch(true, true, inherited);
-        ValidateLaunch(safe);
         foreach (var key in new[] { "ANTIPHON_C1050_WORKER", "antiphon_c1210_worker" })
             safe.Environment.ContainsKey(key).ShouldBeFalse("c1210-negative: child-worker");
         safe.Environment.ContainsKey("C885_REPEAT").ShouldBeFalse("c1210-negative: child-repeat");
         safe.Environment.ContainsKey("ANTIPHON_CHECKPOINT_NONCE").ShouldBeFalse("c1210-negative: child-nonce");
         safe.Environment[ProductionRunnerGuard.BaseUrlEnvVar].ShouldBe("http://127.0.0.1:1", "c1210-negative: child-runner");
         safe.Environment[ProductionRunnerGuard.CheckInterpreterEnvVar].ShouldBe("false", "c1210-negative: child-interpreter");
+        ValidateLaunch(safe);
         AssertSourceStampVectors();
         safe.Environment["C1210_KEEP"].ShouldBe("sentinel", "c1210-child-environment-preserved");
         foreach (var (spec, label) in new[] { (safe with { AppHostExists = false }, "c1210-child-apphost"),
