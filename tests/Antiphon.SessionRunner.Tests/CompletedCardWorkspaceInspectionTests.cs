@@ -52,11 +52,19 @@ public sealed partial class CompletedCardWorkspaceRemovalTests
         ((string)unknownVersion.Reason).ShouldBe("schema_version");
         f.GitStarts.ShouldBe(starts);
         // A real legacy tree does not acquire ownership from caller-supplied coordinates.
-        var legacy = await service.MirrorAsync(new("feat/card-task-deadbeef", f.Sha, "task-deadbeef"), CancellationToken.None);
+        CompletedCardRunnerFixture.Git(f.Origin, "branch", "feat/card-task-cafebabe");
+        var legacy = await service.MirrorAsync(new("feat/card-task-cafebabe", f.Sha, "task-cafebabe"), CancellationToken.None);
+        legacy.Binding.ShouldBeNull();
+        var legacyAdmin = CompletedCardRunnerFixture.Git(legacy.Path, "rev-parse", "--path-format=absolute", "--git-dir").Trim();
+        File.Exists(RunnerWorkspaceBindingStore.OwnerStampPath(legacyAdmin)).ShouldBeFalse();
+        var legacyBefore = InspectionDigest(f.Root);
         dynamic unbound = await inspector.InspectAsync(new CompletedCardWorkspaceInspectRequest(1,
-            f.Binding with { PreparationId = Guid.NewGuid(), WorktreePath = legacy.Path }), CancellationToken.None);
+            f.Binding with { TaskId = Guid.Parse("cafebabe-0000-4000-8000-000000000001"),
+                PreparationId = Guid.NewGuid(), BindingId = Guid.NewGuid(), WorktreePath = legacy.Path,
+                SourceFullRef = "refs/heads/feat/card-task-cafebabe", GitDirectory = legacyAdmin }), CancellationToken.None);
         ((string)unbound.Reason).ShouldBe("unbound_mirror");
         Directory.GetFiles(store.StateRoot).Length.ShouldBe(count, "bindingCountAfter");
+        InspectionDigest(f.Root).ShouldBe(legacyBefore);
         // Torn external creation storage is a hold, not permission to enroll it again.
         File.WriteAllText(store.RecordPath(f.Binding.PreparationId), "{");
         dynamic torn = await inspector.InspectAsync(new CompletedCardWorkspaceInspectRequest(1, f.Binding), CancellationToken.None);
@@ -130,6 +138,8 @@ public sealed partial class CompletedCardWorkspaceRemovalTests
         ((string?)observed.Reason).ShouldBeNull();
         var proof = f.Command().Proof with { ExpectedHeadSha = actual, DestinationFingerprint = f.Binding.RepositoryIdentity };
         ((string?)await inspector.CheckProofAsync(f.Binding, proof, CancellationToken.None)).ShouldBe("source_not_preserved");
+        // Leave the fixture origin's main ref writable without relaxing Git receive safety.
+        CompletedCardRunnerFixture.Git(f.Origin, "checkout", "--detach", f.Sha);
         CompletedCardRunnerFixture.Git(f.Checkout, "push", "origin", "HEAD:refs/heads/main");
         proof = proof with { ObservedTargetSha = actual, PreservedSourceSha = actual };
         ((string?)await inspector.CheckProofAsync(f.Binding, proof, CancellationToken.None)).ShouldBeNull();
