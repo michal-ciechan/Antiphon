@@ -9,3 +9,5 @@ Antiphon.SessionRunner.Tests.RunnerRestartPreflightSafetyTests
 Antiphon.SessionRunner.Tests.BuildSlotEndToEndTests
 # CARD-1032 S3: real Git, retained child ownership, runtime adoption and deterministic admission barriers.
 Antiphon.SessionRunner.Tests.CompletedCardWorkspaceRemovalTests
+# CARD-1032 repair: real scratch Git removal/pruning and deterministic gate races.
+Antiphon.SessionRunner.Tests.LegacyWorkspaceRemovalGateTests

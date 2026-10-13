@@ -208,7 +208,8 @@ public sealed class CompletedCardWorkspaceRemovalTests
         restarted.List().Count.ShouldBe(1);
     }
 
-    // PC-228: omit mirror admission -> Git creates at the retiring path; inverse creation holds retirement.
+    // PC-228: omit mirror admission -> an existing binding replays at the retiring path;
+    // inverse binding replay holds retirement admission before any Git inspection.
     [Test]
     public async Task C1032_FenceCreationOrders()
     {
