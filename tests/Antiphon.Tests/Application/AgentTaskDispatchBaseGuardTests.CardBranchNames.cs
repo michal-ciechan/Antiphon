@@ -170,10 +170,47 @@ public partial class AgentTaskDispatchBaseGuardTests
         var task = new AgentTask { Id = Guid.NewGuid(), CardId = companion.Id, RepoPath = repo.Path, Role = AgentTaskRole.Mutation, Workspace = WorkspaceMode.Worktree, SourceLandingOperationId = opId, SourceLandingSha = sha };
         await service.CreateForTaskAsync(task, default);
         task.WorktreeBranch.ShouldBe("feat/card-task-" + task.Id.ToString("N")[..8], "snapshot-created");
-        await using var lease = (await scope.ServiceProvider.GetRequiredService<IRepositoryMutationLease>().TryAcquireAsync(repo.Path, default)).ShouldNotBeNull();
+        await using (var lease = (await scope.ServiceProvider.GetRequiredService<IRepositoryMutationLease>().TryAcquireAsync(repo.Path, default)).ShouldNotBeNull())
+        {
         await service.ValidateVerificationAsync(task, lease, default);
         task.WorktreeBranch = "feat/card-1214-mutation-" + task.Id.ToString("N")[..8];
         await Should.ThrowAsync<ConflictException>(() => service.ValidateVerificationAsync(task, lease, default));
+        }
+        await repo.AddBareOriginAsync();
+        var origin = (await repo.GitReadAsync("remote", "get-url", "origin")).Trim();
+        var remoteRoot = Directory.CreateTempSubdirectory("c1213-snapshot-recipient").FullName;
+        try
+        {
+            var remoteRepo = Path.Combine(remoteRoot, "repo"); var allowed = Path.Combine(remoteRoot, "work");
+            (await ScratchGitRepo.GitInAsync(repo.Path, "clone", "-b", "master", origin, remoteRepo)).Ok.ShouldBeTrue();
+            Directory.CreateDirectory(allowed);
+            var runner = new RunnerWorkspaceService(remoteRepo, allowed, origin);
+            var workspace = new Antiphon.Server.Infrastructure.Agents.SessionRunner.RemoteVerificationWorkspace(new C1213SnapshotTransport(runner), remoteRepo, allowed);
+            await using var remoteProvider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot, runners: new C1213Directory("capable"), cardBranchNames: true, verificationWorkspaces: new C1213SnapshotDirectory(workspace));
+            await using var remoteScope = remoteProvider.CreateAsyncScope();
+            var remoteService = remoteScope.ServiceProvider.GetRequiredService<DelegationWorktreeService>();
+            var remoteTask = new AgentTask { Id = Guid.NewGuid(), CardId = companion.Id, RepoPath = repo.Path, Role = AgentTaskRole.Mutation, Workspace = WorkspaceMode.Worktree, RunnerId = "fixture", SourceLandingOperationId = opId, SourceLandingSha = sha };
+            await remoteService.CreateForTaskAsync(remoteTask, default);
+            remoteTask.WorktreeBranch.ShouldBe("feat/card-task-" + remoteTask.Id.ToString("N")[..8], "remote-snapshot-created");
+            (await ScratchGitRepo.GitInAsync(remoteTask.WorktreePath!, "symbolic-ref", "HEAD")).StdOut.Trim().ShouldBe("refs/heads/" + remoteTask.WorktreeBranch);
+            await using var remoteLease = (await remoteScope.ServiceProvider.GetRequiredService<IRepositoryMutationLease>().TryAcquireAsync(repo.Path, default)).ShouldNotBeNull();
+            await remoteService.ValidateVerificationAsync(remoteTask, remoteLease, default);
+            remoteTask.WorktreeBranch = "feat/card-1214-mutation-" + remoteTask.Id.ToString("N")[..8];
+            await Should.ThrowAsync<ConflictException>(() => remoteService.ValidateVerificationAsync(remoteTask, remoteLease, default));
+        }
+        finally { Directory.Delete(remoteRoot, true); }
+
+    }
+
+    private sealed class C1213SnapshotDirectory(IVerificationWorkspace workspace) : IVerificationWorkspaceDirectory
+    { public IVerificationWorkspace Resolve(string? runnerId) => workspace; }
+    private sealed class C1213SnapshotTransport(RunnerWorkspaceService runner) : IVerificationWorkspaceTransport
+    {
+        public Task<PhoneHomeVerificationCreateResponse> CreateAsync(PhoneHomeVerificationCreateRequest r, CancellationToken ct) => runner.CreateVerificationAsync(r, ct);
+        public Task<PhoneHomeVerificationValidateResponse> ValidateAsync(PhoneHomeVerificationValidateRequest r, CancellationToken ct) => runner.ValidateVerificationAsync(r, ct);
+        public Task<PhoneHomeVerificationInspectResponse> InspectAsync(PhoneHomeVerificationInspectRequest r, CancellationToken ct) => runner.InspectVerificationAsync(r, ct);
+        public Task<PhoneHomeVerificationReadRestorationResponse> ReadRestorationAsync(PhoneHomeVerificationReadRestorationRequest r, CancellationToken ct) => throw new NotSupportedException("ordinary creation proof only");
+        public Task<PhoneHomeVerificationRemoveResponse> RemoveAsync(PhoneHomeVerificationRemoveRequest r, CancellationToken ct) => throw new NotSupportedException("ordinary creation proof only");
     }
 
     private sealed class C1213Directory(string vector) : ISessionRunnerDirectory
