@@ -113,6 +113,28 @@ public sealed class PhoneHomeRunnerSettingsValidatorTests
             .ShouldBe([RollingRunnerSettings.Server2, RollingRunnerSettings.Server2Temp]);
     }
 
+    // CARD-1219 V-7 (D-3): the phone-home transcript-incident replay window is at least one second,
+    // in both the legacy and the map configuration shapes.
+    [Test]
+    public void Replay_window_below_one_second_is_refused()
+    {
+        const string message = "PhoneHomeRunner:TranscriptIncidentReplayWindowSeconds must be at least 1.";
+
+        PhoneHomeRunnerSettingsRules.Validate(Settings(s => s.TranscriptIncidentReplayWindowSeconds = 0))
+            .ShouldContain(message, "row 1: zero");
+        PhoneHomeRunnerSettingsRules.Validate(Settings(s => s.TranscriptIncidentReplayWindowSeconds = -1))
+            .ShouldContain(message, "row 2: negative");
+        PhoneHomeRunnerSettingsRules.Validate(Settings(s => s.TranscriptIncidentReplayWindowSeconds = 1))
+            .ShouldBeEmpty("row 3: one second");
+
+        new PhoneHomeRunnerSettings().TranscriptIncidentReplayWindowSeconds.ShouldBe(900, "row 4: default");
+        PhoneHomeRunnerSettingsRules.Validate(Settings(_ => { })).ShouldBeEmpty("row 4: default validates");
+
+        var mapped = RollingRunnerSettings.Pair("s", "s");
+        mapped.TranscriptIncidentReplayWindowSeconds = 0;
+        PhoneHomeRunnerSettingsRules.Validate(mapped).ShouldContain(message, "row 5: map mode");
+    }
+
     private static PhoneHomeRunnerSettings Settings(Action<PhoneHomeRunnerSettings> mutate)
     {
         var settings = new PhoneHomeRunnerSettings
