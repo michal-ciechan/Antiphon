@@ -48,6 +48,7 @@
     <Compile Include="..\Antiphon.SessionRunner.Tests\FakeHerdrTransport.cs"
              Link="TestHelpers\FakeHerdrTransport.cs" />
     <Compile Include="..\Shared\HerdrTestProcess.cs" Link="TestHelpers\HerdrTestProcess.cs" />
+    <Compile Include="..\Antiphon.SessionRunner.Tests\CompletedCardRunnerFixture.cs" Link="TestHelpers\CompletedCardRunnerFixture.cs" />
     <Compile Include="..\Antiphon.SessionRunner.Tests\LocalHttpRunner.cs"
              Link="TestHelpers\LocalHttpRunner.cs" />
     <Compile Include="..\Antiphon.SessionRunner.Tests\HerdrPaneDisposalFixture.cs"
