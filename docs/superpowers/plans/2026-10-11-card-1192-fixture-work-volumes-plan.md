@@ -180,17 +180,26 @@ its original host root, acquired before replacing the fixture controller root.
 Normal completion explicitly finalizes before `write_result true`. The EXIT
 path saves `$?` first, unlinks `.fixture-escape`, and invokes an idempotent
 finalizer without allowing one failed cleanup command to skip later resources.
-Compose teardown still has its control files available. Workspace/helper
-acquisition and consumer/helper/work/mask/cache/network removal require positive
-confirmation; unknown outcomes retain named residue and refuse success. The
-Compose teardown boundary checks only `docker compose down -v` exit status;
-residual Compose-created volumes after exit zero are not detected by this
-finalizer (inherited limitation, CARD-1207, outside S7). Stop writers before the
-last read/export, release helpers before work/mask volume removal, then remove
-the host-only control directory. Preserve the primary nonzero status and
+Compose teardown still has its control files available. CP-34/35/38 cover the
+listed consumer-release attempts, log export, helper/volume removal and controller
+disposal order. CP-45..52 cover post-Compose registered finalizer probes; CP-53
+covers retained work/mask registration and records after unknown ownership probes.
+Confirmed foreign acquisition labels drop registration without mounting/deleting.
+The known exceptions below delimit these modeled proofs. Preserve the primary nonzero status and
 `UnhandledExit <code>` fallback. Report detected removal failures; successful
 finalization does not prove absence of Compose-created volumes. Do not add a
 fleet sweeper or remove unrelated residue. Live acceptance W-1 remains pending.
+
+Known exceptions:
+
+- Compose teardown checks only `docker compose down -v` exit status; residual
+  Compose-created volumes after exit zero are not detected (CARD-1207).
+- Older cache namespace prechecks in prepare/seed/race/apphost/npm/contract-controls,
+  the shared `c849_volume` admission lookup and F-7 private/nonexternal absence
+  checks still use raw inspect status. Mid-group removals still rely on command
+  acknowledgement; anonymous `--rm` helpers are outside the named finalizer roster.
+  These are the non-finalizer limits disclosed by Reviews 2ec97f2d/0a3d75f7.
+- W-1 native Docker/UID/archive/NuGet-lock and copied rollout acceptance is pending.
 
 SIGKILL, host loss and an unavailable Docker daemon cannot guarantee immediate
 cleanup. Exact run labels/ledgers make residue attributable for an explicit later
@@ -938,20 +947,25 @@ CP-33 additionally executes the real volume fixture seed and recovery validator,
 
 ### S7 F1 repair binding (round 2)
 
-Round-3 documentation correction (Review 2ec97f2d F1): positive confirmation
-applies to workspace/helper acquisition and consumer/helper/work/mask/cache/network
-removal. Unknown results retain named residue and refuse success. Compose teardown
-checks exit status only; residual Compose-created volumes after successful down -v
-are not detected by this finalizer. That inherited limitation is CARD-1207 and
-remains outside S7. W-1 live acceptance is pending. Round 3 changes docs/comments
-only and reruns CP-33..52 once at committed source, with CP-44 exactly 19 results;
-no historical-red rerun, whole Unit lane or full class run is authorized.
+Round-4 repair (Review 0a3d75f7 F1) separates unknown post-create ownership from
+confirmed foreign labels. CP-53 adds work/mask persistent daemon loss and a one-probe
+label outage. The name stays in .fixture-volumes and acquisition uncertainty stays
+in both cleanup files through finalization. The confirmed-own/foreign rows remain
+unchanged; the resource-lifetime section lists known exceptions explicitly.
+The closed Final round-4 selection is CP-33..53: CP-44 exactly 19, every other
+row exactly 1 (39 executions). No broad Unit lane/full class/live Fixture run.
+Base-production red precedes the fix; one S7 build per committed test/fix group.
+PC-173 and PC-174 below remain pending SourceLanding Mutation.
 
 The repair brief's closed Final scope is CP-33..52: existing CP-33..43 remain one execution each, CP-44 remains exactly 19 adjacent executions, and CP-45..52 add eight methods. One S7 isolated build is reused within each committed group. No whole Unit lane/full class/live Docker acceptance is authorized. Added cost estimate: 10 row minutes plus slot contention; two source states are needed for historical red then repaired green.
 
 CP-45..51 use the actual strict-shell wrapper, EXIT, finalizer and JSON publisher, including the real evidence/census function and success marker (external inventory/payload producers substituted), with three successful Compose teardowns before injecting a specific boundary. Each internal table covers exit 1 with exact No such resource/name (absent, success), exit 1 daemon unavailable, exit 2, exit 0 object present with failed removal, timeout exit 124, empty exit 1, permission denied, socket no-such-file, unrecognized error, exit-zero removal with object still present, exit 2 carrying missing-resource text, wrong resource name/kind, and mixed daemon-error/missing-resource text. Unknown outcomes require named residue, retained resources, accepted:false/nonzero, and an unknown-cleanup-outcome ledger entry. CP-52 answers every Docker operation with daemon-unavailable exit 1 after the last Compose down; both volumes and helpers must remain independently visible and named. These daemon-loss rows must fail against unchanged production at 276e0f30b4ca410ceb641924758fe201f49e7e50 before the fix. Timeout is modeled at the CLI exit boundary; native time/daemon behavior stays W-1.
 
-All PC-1..172 and every variant remain pending method-scoped SourceLanding Mutation. Added guard census: 20 guards/PCs, total 172; CP-45..51 execute fourteen internal cases each (98) plus the global daemon-loss case. Original cost/census figures below describe the pre-repair TestDesign. Ordinary historical red is not a deliberate PC cycle.
+All PC-1..174 and every variant remain pending method-scoped SourceLanding Mutation.
+Round 4 adds G-173/PC-173 (do not drop unknown acquisition registration) and
+G-174/PC-174 (do not erase acquisition uncertainty on finalizer entry).
+Earlier guard/cost figures below remain historical; CP-53 adds one row minute
+plus slot contention per source state. Post-land Mutation was NOT run. Added guard census: 20 guards/PCs, total 172; CP-45..51 execute fourteen internal cases each (98) plus the global daemon-loss case. Original cost/census figures below describe the pre-repair TestDesign. Ordinary historical red is not a deliberate PC cycle.
 
 Additional guard inventory:
 
@@ -1002,6 +1016,13 @@ Additional positive controls:
 | PC-170 | G-170: Accept any no-such text regardless of kind. | `/*/*/RemoteScriptContractTests/C1192_Cleanup_consumer_requires_positive_absence` | `other-kind-verdict and socket-verdict` fails at the post-Compose boundary; pending. |
 | PC-171 | G-171: Ignore unrecognized lines after a matching absent line. | `/*/*/RemoteScriptContractTests/C1192_Cleanup_consumer_requires_positive_absence` | `mixed-verdict` fails at the post-Compose boundary; pending. |
 | PC-172 | G-172: Move C849_FIXTURE success marker back into c849_fixture_evidence before finalization. | `/*/*/RemoteScriptContractTests/C1192_Daemon_loss_after_compose_refuses_success` | `daemon-marker` fails; pending. |
+
+Round-4 positive controls (all pending):
+
+| PC | Mutation | Detecting filter | Expected red |
+|---|---|---|---|
+| PC-173 | Drop work/mask registration on unknown post-create ownership, as at 137549874. Variants: work/mask, persistent daemon/single label-probe outage. | `/*/*/RemoteScriptContractTests/C1192_Acquisition_unknown_ownership_retains_registration_and_residue` | Corresponding `work-daemon-registered`, `mask-daemon-registered`, `work-label-once-registered`, `mask-label-once-registered` fails; pending. |
+| PC-174 | Truncate the cleanup records at finalizer entry instead of preserving acquisition uncertainty. Variants: work/mask, single label-probe outage. | `/*/*/RemoteScriptContractTests/C1192_Acquisition_unknown_ownership_retains_registration_and_residue` | `work-label-once-residue` or `mask-label-once-residue` fails; pending. |
 
 ### Checkpoints
 

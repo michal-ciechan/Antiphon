@@ -3095,8 +3095,8 @@ c849_fixture_workspace_create_volume() {
         1) write_result false FixtureNamespaceOccupied 2 ;;
         *) write_result false FixtureNamespaceUnknown 2 ;;
     esac
-    # Intent is recorded before acquisition. Cleanup registration survives only
-    # after create, once the volume carries this run's owner and run labels.
+    # Register before create and verification. Only confirmed foreign labels
+    # drop this name; an unknown probe keeps it for finalization without a mount.
     printf '%s\n' "$name" >> "$CASE_DIR/.fixture-volumes"
     docker volume create --driver local \
         --label io.antiphon.owner=c849-fixture \
@@ -3106,12 +3106,20 @@ c849_fixture_workspace_create_volume() {
     # docker volume create is idempotent: an existing foreign volume returns
     # success and keeps its own labels. Refuse before any mount or other use.
     c849_fixture_workspace_labels_ok "$name" "$role" || owned=$?
-    if [ "$owned" != 0 ]; then
-        c849_fixture_workspace_drop_name "$name"
-        write_result false FixtureWorkspaceForeign 2
-    fi
-    driver="$(docker volume inspect -f '{{.Driver}}' "$name")" || write_result false FixtureNamespaceUnknown 2
-    options="$(docker volume inspect -f '{{json .Options}}' "$name")" || write_result false FixtureNamespaceUnknown 2
+    case "$owned" in
+        0) ;;
+        3) c849_fixture_workspace_drop_name "$name"
+            write_result false FixtureWorkspaceForeign 2 ;;
+        1) write_result false FixtureWorkspaceMissing 2 ;;
+        *) c849_fixture_cleanup_unknown volume "$name"
+            write_result false FixtureNamespaceUnknown 2 ;;
+    esac
+    driver="$(docker volume inspect -f '{{.Driver}}' "$name")" || {
+        c849_fixture_cleanup_unknown volume "$name"
+        write_result false FixtureNamespaceUnknown 2; }
+    options="$(docker volume inspect -f '{{json .Options}}' "$name")" || {
+        c849_fixture_cleanup_unknown volume "$name"
+        write_result false FixtureNamespaceUnknown 2; }
     [ "$driver" = local ] || write_result false FixtureWorkspaceDriver 2
     [[ "$options" == null || "$options" == '{}' ]] || write_result false FixtureWorkspaceOptions 2
 }
@@ -4473,16 +4481,17 @@ c849_fixture_consumer_release() {
     c849_fixture_resource_remove container "$identity" "$name"
 }
 
-# Workspace/helper acquisition and consumer/helper/work/mask/cache/network removal
-# require positive confirmation; unknown outcomes retain named residue and refuse
-# success. Compose teardown checks only the exit status of down -v: residual
-# Compose-created volumes after exit zero are not detected here (CARD-1207,
-# inherited limitation). Native acceptance W-1 remains pending.
+# CP-45..52 cover registered finalizer resources after Compose; CP-53 covers
+# work/mask post-create unknown probes, including a one-probe outage. Confirmed
+# foreign acquisition labels drop registration and leave the volume unmounted.
+# Known exceptions: Compose down -v is exit-status-only (CARD-1207); older cache
+# namespace/F-7 checks use raw inspect status, and mid-group removals use command
+# status. Anonymous --rm helpers are outside these named-resource tests. W-1 is pending.
 c849_fixture_finalize() {
     local project file name marker identity network="c849-${RUN}-npm" code=0 owned=0
     [ "${C849_FIXTURE_FINALIZED:-0}" != 1 ] || return "${C849_FIXTURE_FINALIZATION_STATUS:-0}"
-    : > "$CASE_DIR/fixture-cleanup-residue.txt"
-    : > "$CASE_DIR/fixture-cleanup-ledger.txt"
+    # Preserve acquisition uncertainty even if finalization can later remove it.
+    touch "$CASE_DIR/fixture-cleanup-residue.txt" "$CASE_DIR/fixture-cleanup-ledger.txt"
     rm -f -- "$CASE_DIR/.fixture-escape" || printf 'escape-link\n' >> "$CASE_DIR/fixture-cleanup-residue.txt"
     if c849_fixture_controller_owned; then
         owned=1
@@ -4576,6 +4585,8 @@ c849_fixture() {
     c849_lock
     SERVER2_ROOT="$CASE_DIR/fixture-controller"
     C849_FIXTURE_FINALIZED=0
+    : > "$CASE_DIR/fixture-cleanup-residue.txt"
+    : > "$CASE_DIR/fixture-cleanup-ledger.txt"
     trap 'ec=$?; trap - EXIT; c849_fixture_exit "$ec"; exit "$ec"' EXIT
     c849_fixture_workspace_init
     mkdir -m 0700 "$SERVER2_ROOT/cache" || write_result false FixtureControllerCreateFailed 2

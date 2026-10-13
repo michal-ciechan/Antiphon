@@ -1,6 +1,6 @@
 # CARD-1192 S7 Code evidence (ce4980da)
 
-Cleanup-success qualification: Review c0d59c0d found F1 on this historical source. Docker daemon loss with exit 1 could publish success while resources remained. The [round-2 repair evidence](2026-10-12-card-1192-s7-repair-code-evidence.md) supersedes that cleanup verdict; unknown outcomes now refuse success and live W-1 remains pending. Original run records below are unchanged.
+Cleanup-success qualification: Review c0d59c0d found F1 on this historical source. Docker daemon loss with exit 1 could publish success while resources remained. The [round-2 repair evidence](2026-10-12-card-1192-s7-repair-code-evidence.md) supersedes that cleanup verdict for CP-45..52 post-Compose probes. Round 4 adds CP-53 for post-create unknown ownership. Known exceptions: Compose exit-status-only teardown (CARD-1207), older raw cache namespace/F-7 checks, mid-group acknowledgements and anonymous --rm helpers; live W-1 remains pending. Original run records below are unchanged.
 
 S7 removes the fixture's host payload root and makes disposal precede success. Its closed Final CP-33..43 group passed 11/11, with zero failures/skips and SHA-qualified clean receipts. Live W-1 acceptance remains pending.
 

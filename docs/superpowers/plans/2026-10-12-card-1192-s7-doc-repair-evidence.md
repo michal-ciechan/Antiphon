@@ -1,6 +1,8 @@
 # CARD-1192 S7 round-3 documentation repair evidence (d25ba49f)
 
-Review 2ec97f2d F1 documentation claim corrected. The executable Compose
+Historical round-3 wording was rejected by Review 0a3d75f7 F1: post-create unknown ownership lost registration and residue. Round 4 adds CP-53 and repairs that path. Known exceptions: Compose exit-status-only teardown (CARD-1207), older raw cache namespace/F-7 checks, mid-group acknowledgements and anonymous --rm helpers; W-1 is pending. The historical CHECKPOINT records below are unchanged.
+
+Review 2ec97f2d F1 documentation claim was narrowed. The executable Compose
 limitation remains inherited and separately owned by CARD-1207. Closed repair
 verification passed 38/38 executions, zero failures/skips. W-1 live acceptance
 is pending; this is not live Fixture acceptance.
@@ -27,8 +29,8 @@ Unrelated deployment/recycling policies were retained in their own scope.
 Changed claims:
 
 - docker-stack.md: replaced the general temporary-resource absence claim with
-  workspace/helper acquisition and consumer/helper/work/mask/cache/network
-  removal confirmation; qualified removal acknowledgements, detected failures
+  acquisition/removal confirmation (subsequently rejected for acquisition by
+  Review 0a3d75f7; round 4 uses the named CP-45..53 scopes instead); qualified removal acknowledgements, detected failures
   and consumer-release attempts. Explicitly documented Compose exit-status-only
   teardown and undetected residual Compose-created volumes after down -v succeeds.
 - c590-remote.sh: scoped the removal-acknowledgement comment to its shared helper;
