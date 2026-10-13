@@ -611,8 +611,17 @@ public sealed class RemoteScriptContractTests
     // A link introduced by the rename seam is replaced by update publication;
     // links seen at admission/inspection still use the existing refusal tests.
     [Test]
-${['network','helpers','volumes','ledger','residue','diagnostic','control','ledger-ensure','residue-ensure','ledger-reset','residue-reset'].map(x=>'    [Arguments("'+x+'")]').join('
-')}
+    [Arguments("network")]
+    [Arguments("helpers")]
+    [Arguments("volumes")]
+    [Arguments("ledger")]
+    [Arguments("residue")]
+    [Arguments("diagnostic")]
+    [Arguments("control")]
+    [Arguments("ledger-ensure")]
+    [Arguments("residue-ensure")]
+    [Arguments("ledger-reset")]
+    [Arguments("residue-reset")]
     [ParallelLimiter<ProcessSpawnLimit>]
     public void C1208_Update_publication_replaces_link_without_writing_victim(string writer)
     {
@@ -622,8 +631,10 @@ ${['network','helpers','volumes','ledger','residue','diagnostic','control','ledg
     }
 
     [Test]
-${['cid-acquisition','cid-migration','network-acquisition','escape'].map(x=>'    [Arguments("'+x+'")]').join('
-')}
+    [Arguments("cid-acquisition")]
+    [Arguments("cid-migration")]
+    [Arguments("network-acquisition")]
+    [Arguments("escape")]
     [ParallelLimiter<ProcessSpawnLimit>]
     public void C1208_Create_publication_refuses_link_without_writing_victim(string writer)
     {
