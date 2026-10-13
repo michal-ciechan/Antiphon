@@ -297,3 +297,5 @@ Antiphon.Tests.Application.WorkingTranscriptRecoveryTests
 Antiphon.Tests.Application.StaleWorkingTranscriptWatchdogTests
 # CARD-1032 S6: real loopback phone-home queue with scratch Git, durable receipt and reconnect.
 Antiphon.Tests.Application.PhoneHomeCompletedCardTransportTests
+# CARD-1213 S1: real runner WebSocket, real Git recipients and isolated PostgreSQL recovery cuts; review CP-7 measured 65s for 3 methods.
+Antiphon.Tests.Application.DelegateBranchDeliveryTests
