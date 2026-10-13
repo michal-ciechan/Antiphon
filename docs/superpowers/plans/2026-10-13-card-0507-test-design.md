@@ -13,7 +13,10 @@ and CP-1's count is 27 (19 + 8). **Round 3 (Code `385fb72d`, Review `bf6d81b3` F
 test table, a delegate-launch storage table and three gap lines; the census in R-4 and the Handoff is recounted.
 **Round 4 (Code `2d1a652d`, Review `b917f043` F1–F3):** the storage table gains the Herdr launch-script row and says the
 dispatcher stores no launch arguments on the session row; C1083 is described as comparing normalized trimmed text; PC-6
-and V-5b name a mutation that compiles; universal wording is narrowed to named tests.
+and V-5b name a mutation that compiles; universal wording is narrowed to named tests. **Round 5 (Code `46f16b2c`,
+Review `c9eed552` F1–F4):** the V-5b test comment names the attribute mutation; the `DefaultFor` summary, the Grok and
+Herdr storage rows and the launch-arguments clause are reduced to code pointers; the plan's host-wide credential claim is
+replaced by 'credential scope to be measured by S0'.
 
 Slice shape frozen here: **S0** (read-only `ocr` probe on server2, no key, no checkpoint), **S1** (role-policy tool bundles),
 **S2** (the `tool-open-code-review` bundle, docs, the Custom-role settlement pin), **S3 HELD** (appendix A, operator-gated by
@@ -53,7 +56,7 @@ Bodies read (at `67d7f8598`):
   `Compose(ForDelegate(...))` text with the session's stored `GrokRulesReceipt`) -> V-3c, V-6g, V-11.
 - `server/Application/Services/AgentBundleAttachments.cs:23-75` (unknown ATTACHMENT keys are dropped with a Warning — the
   behaviour role bundles must NOT share) -> V-3 contrast, R-3.
-- `server/Domain/Enums/OrchestrationStage.cs:30-40` (`DefaultFor`: Review/Test/Merge/Deploy, else null),
+- `server/Domain/Enums/OrchestrationStage.cs:30-40` (`DefaultFor`, read there),
   `server/Application/Services/AgentTaskReplyService.cs:1400-1425` (evidence parsed only for Role Review + Stage Review;
   `RecordDelegateStageOutcomeAsync` returns null when `task.Stage` is null), `:5050-5060`,
   `server/Application/Services/DelegationReportFormatter.cs:679-716` (completion header bits incl. `drift=` at `:703` and
@@ -117,10 +120,10 @@ Instruction storage for a delegate launch (read at `c9f1b6e27`):
 | Codex | composed text is a `-c developer_instructions=` argument | `AgentTaskDispatcher.ComposeDelegateArgs` (`:7066-7068`) |
 | Grok | composed text becomes a `GrokRulesPayload`, not an argument | `AgentTaskDispatcher.ComposeDelegateArgs` (`:7064-7065`) |
 | Grok | session row gets rules generation, expected SHA-256 and byte count | `GrokRulesRefreshService.PrepareLaunchAsync` (`GrokRulesRefreshService.cs:115-133`), called from `AgentSessionService.cs:2447-2451` |
-| Grok | runner writes the encoded text (rendered `[bundle:<key> v<hash8>]` headers included) to `<SessionLogPath>/instructions/grok/<session>/rules.md`; argv carries only a read-this-file bootstrap | `SessionRunnerRuntime` launch (`SessionRunnerRuntime.cs:561-579`), `GrokRulesFileStore.PathFor`/`WriteAsync` |
+| Grok | Grok launch uses the rules payload path (read there) | `SessionRunnerRuntime.cs:561-579`, `GrokRulesFileStore.WriteAsync` |
 | Grok | session row stores the runner's file receipt (`GrokRulesReceiptJson`: path, hash, byte count, generation) | `GrokRulesRefreshService.CaptureReceiptAsync` (`:135-147`) |
-| any kind | stamps (`<key> v<hash8>`, comma-joined) are logged at Information; the dispatcher does not store launch arguments on the session row | `AgentTaskDispatcher.ComposeDelegateArgs` (`:7072-7074`) |
-| any kind on the Herdr backend (a local delegate can inherit a standing agent's Herdr backend, `AgentTaskDispatcher.cs:5952`) | the runner writes exe, args (Claude/Codex composed text included; Grok's argv is the bootstrap only) and env to `<SessionLogPath>/herdr/<session:N>.launch.ps1`; deleted after a successful launch; on a launch error the script is rewritten with env values redacted and the arguments retained, and kept for diagnosis | `HerdrPaneChild.cs:882-889` (write), `:915-922` (catch), `:951` (delete on success), `TryRedactLaunchScript` `:1055-1075`; `HerdrLaunchScript.PathFor`/`BuildContent`/`Write`; existing tests `HerdrLaunchShapeTests.Wrong_kind_fails_keeps_script_and_tears_down`, `HerdrLaunchShapeTests.Redacted_script_hides_every_env_value_and_leaves_tokens_unresolved` (not in this card's rows) |
+| any kind | stamps (`<key> v<hash8>`, comma-joined) are logged at Information | `AgentTaskDispatcher.ComposeDelegateArgs` (`:7072-7074`) |
+| any kind on the Herdr backend (backend copy: `AgentTaskDispatcher.cs:5952`) | launch script path and lifecycle (read there) | `HerdrPaneChild.cs:882-951`; path: `HerdrLaunchScript.PathFor` |
 | any kind | `AgentSession.ComposedBundleStamp` is not assigned on a delegate launch; S2 adds it (G-15b) | assigned only in `AgentControlService.cs:608`, `:664` and `OrchestratorService.cs:687` |
 
 A rendered header (`[bundle:<key> v<hash8>]`) is in composed text; a stamp (`<key> v<hash8>`) is in the log line and `ComposedBundleStamp` (`ComposedInstructions.StampLine`). The Grok receipt binds the whole rules file, not each bundle, and shows the file was written, not that the model followed it.
@@ -146,7 +149,7 @@ Test classes and methods are exact; expected outcomes are hand-written below, no
 - V-3x: `the_resolver_returns_nothing_for_an_empty_list_or_an_unlisted_role` | U | default settings: `ResolveRoleToolBundles(Review, …)` -> empty; `ResolveRoleToolBundles(Custom, …)` (no `RolePolicy` entry) -> empty, no throw. Mutation: throw on a missing role entry -> red (Custom and Check have no entry as shipped and must keep dispatching).
 - V-4: `IsToolBundleKey_is_a_whitelist_of_prefix_and_catalog(string key)` | U | rows -> all `false`: `"stage-code"` (catalog, wrong prefix), `"delegate-basics"`, `"style-terse"`, `"standing-instructions"`, `"tool-"` (prefix only), `"tool-missing"` (prefix, not in catalog), `"TOOL-OPEN-CODE-REVIEW"` (ordinal case). The positive row lands with S2 (V-6a). Mutation: `IsToolBundleKey` returns `All.ContainsKey(key)` -> `"stage-code"` row red.
 - V-5: `shipped_role_policy_lists_no_tool_bundles_on_any_role` | U | `new DelegationSettings().RolePolicy.Values.ShouldAllBe(p => p.Bundles.Count == 0)` and `RolePolicy.ContainsKey("Review")`. Mutation: seed Review with `"tool-open-code-review"` -> red.
-- V-5b: `bundles_bind_from_configuration_per_role_without_disturbing_the_rest` | U | in-memory configuration `{"Delegation:RolePolicy:Review:Bundles:0" = "tool-open-code-review"}` bound onto a fresh `DelegationSettings` (`ConfigurationBuilder().AddInMemoryCollection(...).Build().GetSection("Delegation").Bind(settings)`) -> `RolePolicy["Review"].Bundles == ["tool-open-code-review"]`, `RolePolicy["Review"].Level == Frontier` (still), `RolePolicy["Code"].Bundles` empty. Mutation (compiles): map the existing property to a different configuration key with `[Microsoft.Extensions.Configuration.ConfigurationKeyName("BundleKeys")]` on `RolePolicyEntry.Bundles`; the test input stays `Delegation:RolePolicy:Review:Bundles:0` -> `Bundles` binds empty, red at `Bundles.ShouldBe`. (A declaration-only rename to `BundleKeys` is a compile error, not this control; the matching test comment at `RolePolicyToolBundleTests.cs:120` still names the rename and needs a separate commission to correct.)
+- V-5b: `bundles_bind_from_configuration_per_role_without_disturbing_the_rest` | U | in-memory configuration `{"Delegation:RolePolicy:Review:Bundles:0" = "tool-open-code-review"}` bound onto a fresh `DelegationSettings` (`ConfigurationBuilder().AddInMemoryCollection(...).Build().GetSection("Delegation").Bind(settings)`) -> `RolePolicy["Review"].Bundles == ["tool-open-code-review"]`, `RolePolicy["Review"].Level == Frontier` (still), `RolePolicy["Code"].Bundles` empty. Mutation (compiles): map the existing property to a different configuration key with `[Microsoft.Extensions.Configuration.ConfigurationKeyName("BundleKeys")]` on `RolePolicyEntry.Bundles`; the test input stays `Delegation:RolePolicy:Review:Bundles:0` -> `Bundles` binds empty, red at `Bundles.ShouldBe`. (A declaration-only rename to `BundleKeys` is a compile error, not this control; the test comment at `RolePolicyToolBundleTests.cs:120` names this attribute mutation.)
 
 **S1 — `tests/Antiphon.Tests/Application/RolePolicyToolBundleDispatchTests.cs` (I/H, new; 5 methods / 8 executions; V-3d added by the S1 repair).**
 Fixture: `AgentTaskAgentKindTests` siblings (`[Category("Integration")]`, `[NotInParallel("AgentQueue")]`, `CreateContext()`,
