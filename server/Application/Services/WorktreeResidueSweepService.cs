@@ -9,7 +9,7 @@ using Microsoft.Extensions.Options;
 namespace Antiphon.Server.Application.Services;
 
 /// <summary>
-/// CARD-0328 S3: classify leftover <c>feat/card-task-*</c> worktrees, directories, and branches
+/// CARD-0328 S3: classify leftover delegate (legacy or card/stage) worktrees, directories, and branches
 /// against <c>AgentTasks</c>. Removes <see cref="WorktreeResidueLabel.Eligible"/> rows only when
 /// <c>WorktreeResidue:Execute</c> is true.
 /// </summary>

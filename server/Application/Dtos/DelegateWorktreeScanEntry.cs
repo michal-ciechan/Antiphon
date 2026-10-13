@@ -1,7 +1,7 @@
 namespace Antiphon.Server.Application.Dtos;
 
 /// <summary>
-/// CARD-0147 S3: one <c>feat/card-task-*</c> worktree or dangling branch as git sees it.
+/// CARD-0147 S3: one delegate branch (legacy or card/stage form) worktree or dangling branch as git sees it.
 /// <see cref="Registered"/> is false for a branch with no worktree.
 /// </summary>
 public sealed record DelegateWorktreeScanEntry(
