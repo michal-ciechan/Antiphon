@@ -715,7 +715,8 @@ Known exceptions:
   acknowledgement; anonymous `--rm` helpers are outside the named finalizer roster.
   These are the non-finalizer limits disclosed by Reviews 2ec97f2d/0a3d75f7.
 - W-1 native Docker/UID/archive/NuGet-lock and copied rollout acceptance is pending.
- The production cache names are
+
+The production cache names are
 outside its namespace. A nonzero case or missing
 receipt leaves the checkpoint pending. CP-3/4/5 are operational gates after Review,
 not Code-stage repo tests.

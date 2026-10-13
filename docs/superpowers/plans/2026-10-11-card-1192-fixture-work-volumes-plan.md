@@ -75,9 +75,10 @@ Line references below describe the inspected base, not future offsets.
   Do not add an environment variable or CLI switch that can redirect a real
   Seed/Prune into a test backend. Ordinary Seed, saved donors, cold seed, preview
   authority, cache labels, budgets and production volume names keep their contracts.
-- **D-5 — Exact ownership and ordered cleanup.** Record intended names after
-  proving absence, before acquisition; validate run/role labels before acting on
-  a created workspace resource. An unknown lookup fails closed. Stop consumers,
+- **D-5 — Exact ownership and ordered cleanup.** Record workspace/helper names after
+  proving namespace absence, before acquisition; validate work/mask run/role
+  labels before mounting. Unknown workspace/helper lookups refuse acquisition
+  (CP-1); unknown post-create work/mask probes retain registration (CP-53). Stop consumers,
   preserve allowed evidence, stop workspace helpers, then remove volumes by
   exact identity. Use the existing cleanup entry point, not `docker volume prune`.
   A workspace creation failure, mid-group failure and normal success all use
@@ -957,7 +958,7 @@ row exactly 1 (39 executions). No broad Unit lane/full class/live Fixture run.
 Base-production red precedes the fix; one S7 build per committed test/fix group.
 PC-173 and PC-174 below remain pending SourceLanding Mutation.
 
-The repair brief's closed Final scope is CP-33..52: existing CP-33..43 remain one execution each, CP-44 remains exactly 19 adjacent executions, and CP-45..52 add eight methods. One S7 isolated build is reused within each committed group. No whole Unit lane/full class/live Docker acceptance is authorized. Added cost estimate: 10 row minutes plus slot contention; two source states are needed for historical red then repaired green.
+The historical round-2/3 briefs' closed Final scope was CP-33..52: existing CP-33..43 remain one execution each, CP-44 remains exactly 19 adjacent executions, and CP-45..52 add eight methods. One S7 isolated build is reused within each committed group. No whole Unit lane/full class/live Docker acceptance is authorized. Added cost estimate: 10 row minutes plus slot contention; two source states are needed for historical red then repaired green.
 
 CP-45..51 use the actual strict-shell wrapper, EXIT, finalizer and JSON publisher, including the real evidence/census function and success marker (external inventory/payload producers substituted), with three successful Compose teardowns before injecting a specific boundary. Each internal table covers exit 1 with exact No such resource/name (absent, success), exit 1 daemon unavailable, exit 2, exit 0 object present with failed removal, timeout exit 124, empty exit 1, permission denied, socket no-such-file, unrecognized error, exit-zero removal with object still present, exit 2 carrying missing-resource text, wrong resource name/kind, and mixed daemon-error/missing-resource text. Unknown outcomes require named residue, retained resources, accepted:false/nonzero, and an unknown-cleanup-outcome ledger entry. CP-52 answers every Docker operation with daemon-unavailable exit 1 after the last Compose down; both volumes and helpers must remain independently visible and named. These daemon-loss rows must fail against unchanged production at 276e0f30b4ca410ceb641924758fe201f49e7e50 before the fix. Timeout is modeled at the CLI exit boundary; native time/daemon behavior stays W-1.
 
@@ -965,7 +966,8 @@ All PC-1..174 and every variant remain pending method-scoped SourceLanding Mutat
 Round 4 adds G-173/PC-173 (do not drop unknown acquisition registration) and
 G-174/PC-174 (do not erase acquisition uncertainty on finalizer entry).
 Earlier guard/cost figures below remain historical; CP-53 adds one row minute
-plus slot contention per source state. Post-land Mutation was NOT run. Added guard census: 20 guards/PCs, total 172; CP-45..51 execute fourteen internal cases each (98) plus the global daemon-loss case. Original cost/census figures below describe the pre-repair TestDesign. Ordinary historical red is not a deliberate PC cycle.
+plus slot contention per source state. Post-land Mutation was NOT run. Current guard/PC census: 174.
+Historical round-2 added guard census: 20 guards/PCs, total 172; CP-45..51 execute fourteen internal cases each (98) plus the global daemon-loss case. Original cost/census figures below describe the pre-repair TestDesign. Ordinary historical red is not a deliberate PC cycle.
 
 Additional guard inventory:
 
