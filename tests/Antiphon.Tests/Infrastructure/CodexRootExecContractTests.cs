@@ -10,6 +10,7 @@ namespace Antiphon.Tests.Infrastructure;
 // CARD-1174. The server2 runner container's user is root, so docker exec of codex without
 // -u 1654 leaves root-owned names under the app-owned /state/codex/tmp. The entrypoint gives
 // those entries to uid 1654, and operator commands name that uid.
+[Timeout(600_000)]
 [Category("Unit")]
 public sealed class CodexRootExecContractTests
 {

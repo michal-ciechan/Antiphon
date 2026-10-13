@@ -5,6 +5,7 @@ using TUnit.Core;
 
 namespace Antiphon.Tests.Infrastructure;
 
+[Timeout(600_000)]
 [Category("Unit"), ParallelLimiter<ProcessSpawnLimit>]
 public sealed class ShellFixtureLineEndingContractTests
 {

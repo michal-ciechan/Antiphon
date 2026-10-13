@@ -6,6 +6,7 @@ using TUnit.Core;
 
 namespace Antiphon.Tests.Infrastructure;
 
+[Timeout(600_000)]
 [Category("Unit")]
 public sealed class JqRunnerImageContractTests
 {

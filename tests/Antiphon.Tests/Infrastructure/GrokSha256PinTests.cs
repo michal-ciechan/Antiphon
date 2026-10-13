@@ -10,6 +10,7 @@ namespace Antiphon.Tests.Infrastructure;
 // CARD-0989: execute the runtime-base Grok pin check. A value that is not exactly
 // 64 lowercase hex characters must fail before curl. The checksum must accept only
 // the downloaded artifact.
+[Timeout(600_000)]
 [Category("Unit")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class GrokSha256PinTests

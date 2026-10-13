@@ -14,6 +14,7 @@ using Microsoft.CodeAnalysis.CSharp.Syntax;
 
 namespace Antiphon.Tests.Application;
 
+[Timeout(600_000)]
 [Category("Unit")]
 [ParallelLimiter<Antiphon.Tests.TestHelpers.ProcessSpawnLimit>]
 public sealed class ChannelOutboundStorageTests

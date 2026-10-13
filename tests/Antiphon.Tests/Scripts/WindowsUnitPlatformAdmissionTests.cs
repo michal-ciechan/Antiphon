@@ -15,6 +15,7 @@ using Entry = Antiphon.Tests.Scripts.WindowsUnitSkipRoster.Entry;
 
 namespace Antiphon.Tests.Scripts;
 
+[Timeout(600_000)]
 [Category("Unit")]
 public sealed class WindowsUnitPlatformAdmissionTests
 {

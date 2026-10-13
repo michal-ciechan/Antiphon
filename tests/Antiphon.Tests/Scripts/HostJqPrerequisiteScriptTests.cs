@@ -8,6 +8,7 @@ using TUnit.Core;
 
 namespace Antiphon.Tests.Scripts;
 
+[Timeout(600_000)]
 [Category("Unit")]
 public sealed class HostJqPrerequisiteScriptTests
 {

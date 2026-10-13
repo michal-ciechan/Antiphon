@@ -18,6 +18,7 @@ namespace Antiphon.Tests.Infrastructure;
 // read-write into state-init (which seeds it) and the runner (which uses it). A directory and not
 // a single auth.json file: Codex rewrites auth.json by rename on token refresh, which a single-file
 // bind mount cannot survive.
+[Timeout(600_000)]
 [Category("Unit")]
 public sealed class CodexRunnerImageContractTests
 {
