@@ -5788,7 +5788,7 @@ public sealed class RemoteScriptContractTests
             "c849_payload_call", "c849_payload_fs", "c849_payload_root", "c849_payload_note",
             "c849_validate_seed_relative", "c849_validate_seed_tree", "c849_manifest_write",
             "c849_manifest_validate", "c849_manifest_compare", "c849_recovery_validate",
-            "c849_compare_import", "c849_contract_receipt" };
+            "c849_compare_import", "c849_contract_receipt", "c849_donor" };
         var doubles = new[] { "c849_fixture_work_mount", "c849_fixture_helper_exec", "c849_fixture_tree_mutate",
             "c849_fixture_launch", "c849_fixture_consumer_release", "c849_cold_seed", "c849_smoke",
             "c849_image", "c849_prepare", "c849_optional_donor", "c849_empty_volume", "c849_require_ready",
@@ -5796,7 +5796,7 @@ public sealed class RemoteScriptContractTests
             "c849_status_zero", "c849_seed_failure", "c849_saved_copy", "c849_assert_mounts", "c849_budget_gate" };
         return string.Join('\n', functions.Select(name => Block(remote, name))) + "\n" +
             string.Join('\n', doubles.Select(name => name + "() { printf 'UNEXPECTED " + name +
-                "\\n' >> \"$root/volume-calls\"; return 97; }")) + "\n";
+                "\\n' >> \"$root/volume-calls\"; exit 97; }")) + "\n";
     }
 
     [Test]
@@ -5863,7 +5863,10 @@ public sealed class RemoteScriptContractTests
             require_lane() { :; }
             write_result() { printf 'seed-result=%s:%s\n' "$1" "$2"; exit "$3"; }
             c849_prepare() { :; }; c849_image() { echo image; }
-            c849_optional_donor() { :; }; c849_no_temp_containers() { :; }; c849_require_ready() { :; }
+            c849_optional_donor() { :; }; c849_no_temp_containers() { :; }
+            c849_require_ready() {
+                C849_KIND=full; C849_SCHEMA=3; C849_DIGEST_TYPE=manifest-sha256; C849_DIGEST="$(printf '%064d' 0)"
+            }
             docker() { echo unsafe-docker; return 1; }
             # C1210_PREFLIGHT
             ( c849_seed )
@@ -5899,7 +5902,10 @@ public sealed class RemoteScriptContractTests
             TEMP_PROJECT=antiphon-runner-temp
             require_lane() { :; }
             c849_prepare() { :; }; c849_image() { echo image; }
-            c849_optional_donor() { :; }; c849_require_ready() { :; }
+            c849_optional_donor() { :; }
+            c849_require_ready() {
+                C849_KIND=full; C849_SCHEMA=3; C849_DIGEST_TYPE=manifest-sha256; C849_DIGEST="$(printf '%064d' 0)"
+            }
             write_result() { printf 'host-refusal=%s\n' "$2"; exit "$3"; }
             docker() {
                 [ "$1" = ps ] || return 1
@@ -6047,13 +6053,15 @@ public sealed class RemoteScriptContractTests
             sudo() { mkdir -p "${@: -1}"; }
             docker() {
                 if [[ "$*" == *'target=/snapshot,readonly'* ]]; then
+                    [ "${@: -2:1}" = -- ] && [ "${@: -1}" = /snapshot/recovery.manifest ] || return 97
                     local code="$(cat)"
                     rm -rf "$root/import-view"; mkdir -p "$root/import-view"
                     cp -a "$root/volumes/packages" "$root/import-view/packages"
                     cp -a "$root/volumes/npm" "$root/import-view/npm"
                     code="${code//\/import/$root/import-view}"
                     code="${code//\/snapshot/$stage}"
-                    bash -c "$code"; return $?
+                    printf 'manifest-position-bound\n' >> "$root/trace"
+                    bash -c "$code" bash "$stage/recovery.manifest"; return $?
                 fi
                 case "$1:$2" in
                     image:inspect) printf 'sha256:%064d\n' 0; return 0 ;;
@@ -6114,6 +6122,7 @@ public sealed class RemoteScriptContractTests
             grep -q '^1654$' "$root/owners/packages" && grep -q '^1654$' "$root/owners/npm" && echo live-cache-owned-by-1654
             printf 'idle-count=%s smoke-count=%s\n' "$(grep -c '^idle$' "$root/trace")" "$(grep -c '^smoke$' "$root/trace")"
             printf 'positional-import-count=%s\n' "$(grep -c '^import-positionals=sh:/seed$' "$root/trace")"
+            printf 'manifest-compare-count=%s\n' "$(grep -c '^manifest-position-bound$' "$root/trace")"
             mv "$C849_READY" "$root/accepted-marker"
             RUN=smoke
             c849_smoke() { return 1; }
@@ -6155,7 +6164,7 @@ public sealed class RemoteScriptContractTests
             """, "repo");
         foreach (var expected in new[] { "success=0 seed-result=true:", "marker-written", "saved-identity",
             "payload-imported", "recovery-retained", "recovery-host-owned", "unsafe-mode-masked",
-            "incomplete-pruned", "live-cache-owned-by-1654", "idle-count=3 smoke-count=1", "positional-import-count=2",
+            "incomplete-pruned", "live-cache-owned-by-1654", "idle-count=3 smoke-count=1", "positional-import-count=2", "manifest-compare-count=1",
             "smoke-exit=2 diagnosis=seed-result=false:CacheSeedSmokeFailed", "smoke-no-ready-marker", "smoke-stage-cleaned", "directory-imported",
             "C997-WRAPPER-ENTRY directory-import",
             "deploy-parent=seed-result=false:PastSeedGate", "deploy-temp=seed-result=false:PastSeedGate" })
