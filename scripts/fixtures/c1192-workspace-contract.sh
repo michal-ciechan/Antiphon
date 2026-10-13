@@ -3074,6 +3074,24 @@ mode_deletion_audit() {
                     [ "$good" = 1 ] || all=0
                 done
                 good=$all
+                all="$good"
+                for invalid in symlink directory; do
+                    reset_runtime
+                    code=0; good=0
+                    name="c849-seed-$RUN"
+                    plant_container "$name" c849-fixture "$RUN" consumer "$ADMITTED" ""
+                    case "$invalid" in
+                        symlink) ln -s "$C1192_ROOT/events" "$CASE_DIR/.fixture-id-$name" ;;
+                        directory) mkdir "$CASE_DIR/.fixture-id-$name" ;;
+                    esac
+                    c849_fixture_finalize || code=$?
+                    container_exists "$name" && [ "$code" = 2 ] \
+                        && ! grep -q '^container ' "$C1192_ROOT/order" \
+                        && grep -Fxq "$name" "$CASE_DIR/fixture-cleanup-residue.txt" && good=1
+                    printf 'standalone-%s=%s\n' "$invalid" "$good"
+                    [ "$good" = 1 ] || all=0
+                done
+                good=$all
             fi
             ;;
         replacement-network)
