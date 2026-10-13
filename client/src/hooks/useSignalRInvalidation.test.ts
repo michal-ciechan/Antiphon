@@ -4,6 +4,7 @@ import { HttpResponse, http } from 'msw'
 import { server } from '../test/mocks/server'
 import { useCardFileStatus, usePrivateNotes } from '../api/cardFiles'
 import { agentTaskKeys, usePipeline, type AgentTaskPipelineDto } from '../api/agentTasks'
+import { dispatchConcurrencyKeys } from '../api/dispatchConcurrency'
 import { expect, it, vi } from 'vitest'
 import { renderHookWithProviders } from '../test/utils'
 import { useSignalRInvalidation } from './useSignalRInvalidation'
@@ -99,4 +100,31 @@ it('C557 mounted pipeline refetches after CardChanged', async () => {
   expect(Date.now() - before).toBeLessThan(2000)
   expect(view.queryClient.getQueryData(['unrelated'])).toBe('kept')
   view.unmount()
+})
+
+it('C506 V07 changed-event', () => {
+  const callbacks = new Map<string, (p: object) => void>()
+  const connection = { on: vi.fn((event: string, callback: (p: object) => void) => callbacks.set(event, callback)), off: vi.fn() }
+  const ref = { current: connection as unknown as HubConnection }
+  const view = renderHookWithProviders(() => useSignalRInvalidation(ref))
+  const P = '05060000-0000-4000-8000-000000000001'
+  const concurrencyKeys = [
+    dispatchConcurrencyKeys.scope(null),
+    dispatchConcurrencyKeys.scope(P),
+    dispatchConcurrencyKeys.revisions(null),
+    dispatchConcurrencyKeys.revisions(P),
+  ]
+  for (const key of [...concurrencyKeys, agentTaskKeys.pipeline()]) view.queryClient.setQueryData(key, { marker: 'saved' })
+  view.queryClient.setQueryData(['unrelated'], 'kept')
+  view.queryClient.setQueryData(['runnerDefaults'], { revision: 1 })
+  act(() => callbacks.get('DispatchConcurrencyChanged')!({ scope: P, revision: 5, globalRevision: 8, projectRevision: 5 }))
+  for (const key of concurrencyKeys) expect(view.queryClient.getQueryState(key)?.isInvalidated).toBe(true)
+  expect(view.queryClient.getQueryState(agentTaskKeys.pipeline())?.isInvalidated).toBe(true)
+  // The event names a revision; it is not a settings snapshot and must not replace cached data.
+  expect(view.queryClient.getQueryData(dispatchConcurrencyKeys.scope(P))).toEqual({ marker: 'saved' })
+  expect(view.queryClient.getQueryState(['unrelated'])?.isInvalidated).toBe(false)
+  expect(view.queryClient.getQueryData(['unrelated'])).toBe('kept')
+  expect(view.queryClient.getQueryState(['runnerDefaults'])?.isInvalidated).toBe(false)
+  view.unmount()
+  expect(connection.off).toHaveBeenCalledWith('DispatchConcurrencyChanged', expect.any(Function))
 })
