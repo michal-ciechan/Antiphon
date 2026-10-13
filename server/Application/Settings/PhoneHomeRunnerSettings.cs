@@ -290,6 +290,8 @@ public static class PhoneHomeRunnerSettingsRules
             failures.Add("PhoneHomeRunner:CatchUpRetrySeconds must be at least 1.");
         if (options.OwnerCacheNegativeSeconds < 0)
             failures.Add("PhoneHomeRunner:OwnerCacheNegativeSeconds must not be negative.");
+        if (options.TranscriptIncidentReplayWindowSeconds < 1)
+            failures.Add("PhoneHomeRunner:TranscriptIncidentReplayWindowSeconds must be at least 1.");
         if (options.LaunchTransportRetries < 0)
             failures.Add("PhoneHomeRunner:LaunchTransportRetries must not be negative.");
         if (options.LaunchReattachWaitSeconds < 1)
