@@ -83,18 +83,74 @@ public static class InstructionFragments
     /// </summary>
     internal static InstructionFragment Create(string key, string rawText)
     {
-        // CARD-1213 S2 tests-first skeleton: no validation yet.
+        if (!KeyPattern.IsMatch(key))
+            throw new InvalidOperationException($"Instruction fragment key '{key}' must match {KeyPattern}.");
         var text = rawText.ReplaceLineEndings("\n").Trim();
+        var name = key.ToUpperInvariant();
+        if (text.Length > MaxChars)
+            throw new InvalidOperationException(
+                $"Instruction fragment '{key}' is {text.Length:N0} chars; the limit is {MaxChars:N0}.");
+        foreach (var forbidden in new[] { "{{", ChannelPreamble.AgentNamePlaceholder, ChannelPreamble.ChannelsPlaceholder })
+        {
+            if (text.Contains(forbidden, StringComparison.Ordinal))
+                throw new InvalidOperationException(
+                    $"Instruction fragment '{key}' contains '{forbidden}'; a fragment may not carry a placeholder.");
+        }
+        var firstLine = text.Split('\n')[0];
+        if (!ContractLine.IsMatch(firstLine) || !firstLine.StartsWith(name + " contract v", StringComparison.Ordinal))
+            throw new InvalidOperationException(
+                $"Instruction fragment '{key}' must open with '{name} contract v<n>.'; it opens with '{firstLine}'.");
+        if (!text.Split('\n').Any(line => line.StartsWith(InvariantsMarker, StringComparison.Ordinal)))
+            throw new InvalidOperationException(
+                $"Instruction fragment '{key}' has no line starting with '{InvariantsMarker}'.");
         return new InstructionFragment(key, HashOf(text), text);
     }
 
+    /// <summary>
+    /// Expand every placeholder in one rendered bundle. The first occurrence of a fragment in a
+    /// composition (tracked by <paramref name="used"/>) becomes <see cref="InstructionFragment.Render"/>,
+    /// every later one <see cref="InstructionFragment.SeeAbove"/> (C1213_ExpansionOnce). Any <c>{{</c>
+    /// that does not start a known, well-formed placeholder throws <see cref="InvalidOperationException"/>
+    /// naming the bundle, the token and the known placeholders (C1213_UnknownPlaceholderFailsLoudly,
+    /// C1213_ExpansionScope).
+    /// </summary>
     internal static string Expand(
         string bundleKey,
         string text,
         IReadOnlyCollection<InstructionFragment> fragments,
-        List<InstructionFragment> used) =>
-        // CARD-1213 S2 tests-first skeleton: no expansion yet.
-        text;
+        List<InstructionFragment> used)
+    {
+        var open = text.IndexOf("{{", StringComparison.Ordinal);
+        if (open < 0)
+            return text;
+
+        var result = new StringBuilder(text.Length);
+        var at = 0;
+        while (open >= 0)
+        {
+            result.Append(text, at, open - at);
+            var match = PlaceholderPattern.Match(text, open);
+            if (!match.Success)
+                throw new InvalidOperationException(
+                    $"Instruction bundle '{bundleKey}' has a malformed placeholder '{Snippet(text, open)}' at offset {open}. "
+                    + $"A placeholder is {{{{NAME}}}} with NAME matching ^[A-Z][A-Z0-9-]{{1,31}}$. Known: {Known(fragments)}.");
+            var name = match.Groups[1].Value;
+            var fragment = fragments.FirstOrDefault(f => f.Name == name)
+                ?? throw new InvalidOperationException(
+                    $"Instruction bundle '{bundleKey}' references unknown placeholder '{match.Value}'. Known: {Known(fragments)}.");
+            if (used.Any(f => f.Key == fragment.Key))
+                result.Append(fragment.SeeAbove);
+            else
+            {
+                used.Add(fragment);
+                result.Append(fragment.Render());
+            }
+            at = open + match.Length;
+            open = text.IndexOf("{{", at, StringComparison.Ordinal);
+        }
+        result.Append(text, at, text.Length - at);
+        return result.ToString();
+    }
 
     private static string Known(IReadOnlyCollection<InstructionFragment> fragments) =>
         fragments.Count == 0 ? "none" : string.Join(", ", fragments.Select(f => f.Placeholder).Order(StringComparer.Ordinal));
@@ -119,7 +175,6 @@ public static class InstructionFragments
                 continue;
             var key = resource[ResourcePrefix.Length..^ResourceSuffix.Length];
             fragments[key] = Create(key, Read(assembly, resource));
-            // CARD-1213 S2 tests-first skeleton: nothing is embedded yet.
         }
         return fragments.ToFrozenDictionary(StringComparer.Ordinal);
     }

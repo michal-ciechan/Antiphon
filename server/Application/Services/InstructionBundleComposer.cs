@@ -27,8 +27,8 @@ public sealed record ComposedInstructions(string Text, IReadOnlyList<Instruction
 
     /// <summary><c>["delegate-basics v3f9a1b2c", …]</c> — for a log line, a DTO or a drift check.</summary>
     public IReadOnlyList<string> Stamps => PinSnapshot is { HasHistory: true } pin
-        ? [.. Bundles.Select(b => b.Stamp), $"pinned v{pin.ContentHash[..8]}"]
-        : [.. Bundles.Select(b => b.Stamp)];
+        ? [.. Bundles.Select(b => b.Stamp), .. Fragments.Select(f => f.Stamp), $"pinned v{pin.ContentHash[..8]}"]
+        : [.. Bundles.Select(b => b.Stamp), .. Fragments.Select(f => f.Stamp)];
 
     /// <summary>
     /// The whole composition on one line — <c>"orchestrator v1a2b3c4d, delegate-basics v3f9a1b2c"</c>
@@ -137,7 +137,7 @@ public static class InstructionBundleComposer
 
         return text.Length == 0
             ? ComposedInstructions.Empty
-            : new ComposedInstructions(text.ToString(), bundles);
+            : new ComposedInstructions(text.ToString(), bundles) { Fragments = used };
     }
 
     /// <summary>
@@ -285,7 +285,8 @@ public static class InstructionBundleComposer
 
         var breakdown = composed.Bundles.Count == 0
             ? "no bundles"
-            : string.Join(", ", composed.Bundles.Select(b => $"{b.Stamp} {b.Text.Length:N0} chars"));
+            : string.Join(", ", composed.Bundles.Select(b => $"{b.Stamp} {b.Text.Length:N0} chars")
+                .Concat(composed.Fragments.Select(f => $"fragment {f.Stamp} {f.Text.Length:N0} chars")));
         throw new InvalidOperationException(
             $"{subject}: composed instructions do not fit the command-line estimate — {total:N0} chars against a "
             + $"budget of {budgetChars:N0} ({appendChars:N0} for --append-system-prompt, {otherChars:N0} for "

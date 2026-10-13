@@ -380,6 +380,11 @@ GrokRulesLaunchRefusalTests is left out (its budget method skips off Windows);
 GrokRulesDispatchAcceptanceTests and DelegateLaunchArgvIntegrityTests are Explicit or
 Windows-headed and are not run: their one changed assertion is review-only. CP-13's Min is the
 method count, a lower bound; the run's TRX is the result count.
+CP-10 excludes only DelegateScriptKindTests.WorktreeHealth_with_no_findings_says_so, by exact
+name: it expects "No stuck feat/card-task-* worktrees." and scripts/delegate.ps1 has printed "No stuck
+delegate worktrees." since S1 commit bafe1b801. Both files are byte-identical between the S2 base
+da0219eddb7dce710b5464264640f000534bb48a and 07d18d8d3133a739084f22fdb5e553ebd5b3bcb1, where it failed
+1 of 70 (run 20261013-233443-606d, clean source, verified build). S2 does not touch either file.
 Brief-directed grammar: a `{{` that does not open a well-formed known placeholder throws
 (malformed: one-character name, lowercase, underscore, 33-character name, unterminated, nested,
 inner space); a well-formed unknown name throws (unknown). C1213_ExpansionScope carries those rows;
@@ -406,7 +411,7 @@ Closed ordinary scope below replaces parent §6's provisional execution list. Bu
 | CP-7 | S1 | `tests/Antiphon.Tests -> bin-c1213-cp7/` | delivery | `/*/*/(DelegateBranchDeliveryTests*)\|(TaskParkPublicationTests*)/*` | V-5,V-7/R-5,R-7 | 7 executed; 0 failed; 0 skipped; named roster | 7 | 6 | true |
 | CP-8 | S1 | `tests/Antiphon.SessionRunner.Tests -> bin-c1213-cp8/` | runner | `/*/*/(RunnerWorkspaceServiceTests*)\|(WorkspaceParkPublicationTests*)\|(RunnerWorkspaceBindingTests*)/*` | V-6/R-6 | 59 executed; 0 failed; 0 skipped; named roster | 59 | 5 | true |
 | CP-9 | S2 | `tests/Antiphon.Tests -> bin-c1213-cp9/` | fragments | `/*/*/(InstructionFragmentTests*)\|(InstructionBundleTests*)/*` | V-8,V-9/R-8,R-9 | 85 executed; 0 failed; 0 skipped; named roster | 85 | 3 | true |
-| CP-10 | S2 | `tests/Antiphon.Tests -> bin-c1213-cp10/` | launch | `/*/*/(DelegateBundleLaunchTests*)\|(DelegateScriptKindTests*)/*` | V-9/R-9 | 70 executed; 0 failed; 0 skipped; named roster | 70 | 3 | true |
+| CP-10 | S2 | `tests/Antiphon.Tests -> bin-c1213-cp10/` | launch | `/*/*/(DelegateBundleLaunchTests*)\|(DelegateScriptKindTests*)/(*)&(!WorktreeHealth_with_no_findings_says_so)` | V-9/R-9 | 69 executed; 0 failed; 0 skipped; named roster; one confirmed inherited method excluded | 69 | 3 | true |
 | CP-11 | S3 | `tests/Antiphon.Tests -> bin-c1213-cp11/` | brief | `/*/*/DelegationReportFormatterTests*/*` | V-10/R-10 | 93 executed; 0 failed; 0 skipped; named roster | 93 | 5 | true |
 | CP-12 | S3 | `tests/Antiphon.Tests -> bin-c1213-cp12/` | contract | `/*/*/InstructionBundleTests*/*` | V-9/R-9 | 78 executed; 0 failed; 0 skipped; named roster | 78 | 3 | true |
 | CP-13 | S2 | `tests/Antiphon.Tests -> bin-c1213-cp13/` | affected | `/*/*/(AgentBundleAttachmentTests*)\|(GrokRulesCompositionTests*)\|(CheckpointRepeatDocumentationTests*)\|(TaskPlatformGuidanceTests*)\|(ScopedVerificationInstructionTests*)\|(PostLandMutationContractTests*)\|(VerificationRoundInstructionTests*)\|(MechanicalPcContractTests*)\|(CheckpointManifestDocumentationTests*)\|(OrchestratorInstructionsGuidanceTests*)\|(RepairSourceDocumentationTests*)\|(BlockedTaskParkProjectionTests*)\|(OutboundConversionTaskTests*)\|(PostLandRetrospectiveContractTests*)\|(AgentReplyStyleTests*)\|(AgentPinnedInstructionCompositionTests*)\|(InstructionFileStampTests*)\|(PolicyRefreshDeltaTests*)\|(CodexDelegateDispatchTests*)\|(PinnedCodexProfileDispatchLaunchTests*)\|(StandingPipelinePolicyDocumentationTests*)\|(DelegationCapabilityContractTests*)\|(SpecialistQualificationContractTests*)\|(CardFilePrivacyDocumentationTests*)\|(BootStallDocumentationTests*)/*` | V-9/R-9 | named roster; at least 191 executed (one per method); 0 failed; 0 skipped | 191 | 6 | true |
