@@ -280,3 +280,5 @@ Antiphon.Tests.Application.BlockedTaskSyncRecoveryTests
 Antiphon.Tests.Application.SettlementSyncRecoveryTests
 # CARD-1033: real Git, isolated PostgreSQL and local CardDone execute/cutoff/settling policy.
 Antiphon.Tests.Application.CardWorktreeCleanupRecoveryTests
+# CARD-1205 S3: real HTTP plus isolated PostgreSQL recovery/commit-gate fixture; baseline CP-3 reports 364s cumulative across 42 executions.
+Antiphon.Tests.Application.WorkingTranscriptRecoveryTests

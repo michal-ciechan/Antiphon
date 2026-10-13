@@ -87,6 +87,12 @@ public class WorkingTranscriptRecoveryTests
                 fault.Hits.ShouldBe(1);
             }
         }
+        else if (variant == "state-read-fault")
+        {
+            rows.Count(r => r.Uuid == "end").ShouldBe(1);
+            result.AddedCount.ShouldBe(1);
+            fault.Hits.ShouldBe(1);
+        }
         else rows.Count(r => r.Uuid == "end").ShouldBe(0, variant);
         if (variant is "pull-fault" or "canceled-pull") h.Handler.Hits.ShouldBe(1);
         if (variant is "persist-fault" or "state-read-fault" or "retained-failure") fault.Hits.ShouldBeGreaterThan(0);
@@ -164,7 +170,7 @@ public class WorkingTranscriptRecoveryTests
         var legacy = h.F.Event(92, "ToolResult", 2, "legacy") with { Uuid = null };
         await h.Runtime.PersistTranscriptAsync(h.Id, [legacy]);
         var end = h.End with { Sequence = 3, Uuid = "shared", Timestamp = h.End.Timestamp!.Value.AddSeconds(3) };
-        h.SetEntries(h.Prompt, high with { Sequence = 1 }, shared, legacy, end with { Sequence = 93 });
+        h.SetEntries(h.Prompt, high with { Sequence = 1 }, shared, legacy, end);
         var result = await h.ProbeAsync();
         result.Outcome.ToString().ShouldBe("RecoveredIdle");
         result.AddedCount.ShouldBe(1);
@@ -185,21 +191,37 @@ public class WorkingTranscriptRecoveryTests
         fault.HoldSave = true;
         var probe = h.ProbeAsync();
         Task<AgentSessionRuntime.PersistResult>? competing = null;
+        Task<SessionStateStore.Lease>? reader = null;
         try
         {
             await fault.Reached.Task.WaitAsync(TimeSpan.FromSeconds(10));
             var gate = h.F.Store.NextGateWait = Signal();
+            reader = h.F.Store.BeginWriteAsync(h.Id, default);
+            await gate.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            reader.IsCompleted.ShouldBeFalse("a warmed gate acquisition completes synchronously when the probe releases its lease");
+            gate = h.F.Store.NextGateWait = Signal();
             competing = h.Runtime.PersistTranscriptAsync(h.Id, [h.F.Event(3, "UserPrompt", 3, "new", "new")]);
             await gate.Task.WaitAsync(TimeSpan.FromSeconds(10));
             competing.IsCompleted.ShouldBeFalse("competing ingest has reached the held session gate");
             (await h.RowsAsync()).Count.ShouldBe(1);
             fault.Release.TrySetResult();
             (await probe).Outcome.ToString().ShouldBe("RecoveredIdle");
+            using (var published = await reader)
+            {
+                published.Snapshot.Working.ShouldBeFalse();
+                published.Snapshot.Count.ShouldBe(2);
+            }
+            reader = null;
             await competing;
             (await h.WorkingAsync()).ShouldBeTrue();
             if (cache) (await h.F.Store.ReadAsync(h.Id, default)).Working.ShouldBeTrue();
         }
-        finally { fault.Release.TrySetResult(); await probe; if (competing is not null) await competing; }
+        finally
+        {
+            fault.Release.TrySetResult(); await probe;
+            if (reader is not null) (await reader).Dispose();
+            if (competing is not null) await competing;
+        }
     }
 
     [Test]
@@ -313,27 +335,42 @@ public class WorkingTranscriptRecoveryTests
         public int Hits;
         public TaskCompletionSource Reached { get; } = Signal();
         public TaskCompletionSource Release { get; } = Signal();
-        private bool _collided;
+        private bool _collided, _savedEnd;
         private void CheckRead(DbCommand command)
         {
-            if (ReadFailure && command.CommandText.Contains("session-state.fallback"))
+            if (ReadFailure && _savedEnd && command.CommandText.Contains("session-state.fallback"))
             { Hits++; throw new InvalidOperationException("planned verdict read failure"); }
         }
         public override async ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(DbCommand command,
             CommandEventData data, InterceptionResult<DbDataReader> result, CancellationToken ct = default)
         {
             CheckRead(command);
-            if (Collision && !_collided && command.CommandText.Contains("INSERT INTO \"TranscriptEntries\""))
+            await InsertCollisionAsync(command, data.Context, ct);
+            return result;
+        }
+        public override async ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(DbCommand command,
+            CommandEventData data, InterceptionResult<int> result, CancellationToken ct = default)
+        {
+            await InsertCollisionAsync(command, data.Context, ct);
+            return result;
+        }
+        private async Task InsertCollisionAsync(DbCommand command, DbContext? context, CancellationToken ct)
+        {
+            if (Collision && !_collided && command.CommandText.Contains("FOR UPDATE") && command.CommandText.Contains("AgentSessions"))
             {
                 _collided = true; Hits++;
                 await using var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
-                    .UseNpgsql(data.Context!.Database.GetConnectionString()).Options);
-                var row = data.Context.ChangeTracker.Entries<TranscriptEntry>().Single(e => e.Entity.Uuid == "end").Entity;
+                    .UseNpgsql(context!.Database.GetConnectionString()).Options);
+                var row = context.ChangeTracker.Entries<TranscriptEntry>().Single(e => e.Entity.Uuid == "end").Entity;
                 db.TranscriptEntries.Add(new TranscriptEntry { Id = Guid.NewGuid(), AgentSessionId = row.AgentSessionId,
                     Sequence = row.Sequence, Kind = row.Kind, Uuid = row.Uuid, Timestamp = row.Timestamp, CreatedAt = DateTime.UtcNow });
                 await db.SaveChangesAsync(ct);
             }
-            return result;
+        }
+        public ValueTask<int> SavedChangesAsync(SaveChangesCompletedEventData data, int result, CancellationToken ct = default)
+        {
+            _savedEnd |= data.Context!.ChangeTracker.Entries<TranscriptEntry>().Any(e => e.Entity.Kind == "TurnEnd");
+            return ValueTask.FromResult(result);
         }
         public async ValueTask<InterceptionResult<int>> SavingChangesAsync(DbContextEventData data,
             InterceptionResult<int> result, CancellationToken ct = default)
