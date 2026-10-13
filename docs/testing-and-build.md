@@ -1,5 +1,14 @@
 # Testing and build operations
 
+CARD-1210: `ShellFixtureLineEndingContractTests.Shell_scripts_are_forced_lf_by_gitattributes`
+checks the active repository-wide `*.sh text eol=lf` rule and Git's effective attributes for
+every tracked shell script; `Shell_scripts_have_no_carriage_returns` checks raw working bytes
+and a scratch `core.autocrlf=true` checkout of the three previously affected fixtures.
+For an existing clean Windows checkout, run
+`git restore --source=HEAD --worktree -- scripts/fixtures/*.sh`, and if clean tracked working
+files still contain CRLF, remove only those working files and restore them from HEAD again
+(leave index entries intact), then rerun the byte test, which also exercises this restore path.
+
 CARD-1022 release A: the five PTY assembly guards clear inherited `ANTIPHON_PTY_BACKEND`;
 the isolated default is ModernConPty on Windows (both staged files required) and UnixPty
 elsewhere. A native Windows qualification with missing prerequisites fails. Explicit legacy
