@@ -102,11 +102,12 @@ public sealed class OutputCleanupTests : CheckpointTestBase
         Directory.CreateDirectory(tests);
         Directory.CreateDirectory(src);
         Directory.CreateDirectory(trackedBin);
-        Directory.CreateDirectory(safe);
+        SafeWrite.Require(SafeWrite.CreateFreshDirectory(safe, SafeWrite.Under(root)));
         File.WriteAllText(Path.Combine(tests, "kept.cs"), "tracked");
         File.WriteAllText(Path.Combine(src, "kept.cs"), "tracked");
         File.WriteAllText(Path.Combine(trackedBin, "kept.txt"), "tracked");
         File.WriteAllText(Path.Combine(safe, "out.dll"), "untracked");
+        SafeWrite.Require(OwnedOutputLedger.Seal(safe));
         Git(root, "add", "--", "tests/kept.cs", "src/kept.cs", "bin-tracked/kept.txt");
         Git(root, "-c", "user.email=card-1199@example.invalid", "-c", "user.name=card-1199",
             "-c", "commit.gpgsign=false", "commit", "-m", "card-1199", "--no-verify");

@@ -182,6 +182,8 @@ public sealed class RowRunnerTests : CheckpointTestBase
     private Task<RowRunResult> Run(FakeDriver driver, bool passed, int min, bool noBuild = false,
         List<string>? expect = null, List<KeyValuePair<string, string>>? properties = null, bool windows = false)
     {
+        var workingDirectory = TempDir();
+        Directory.CreateDirectory(Path.Combine(workingDirectory, "tests/Antiphon.Tests"));
         var runner = new RowRunner(driver, new FakePlatform { IsWindows = windows });
         return runner.RunAsync(new RowRequest
         {
@@ -190,7 +192,7 @@ public sealed class RowRunnerTests : CheckpointTestBase
             OutputPath = "bin-ex/",
             Filter = "/*/*/Sample/*",
             ResultsDirectory = Path.Combine(TempDir(), "row"),
-            WorkingDirectory = TempDir(),
+            WorkingDirectory = workingDirectory,
             NoBuild = noBuild,
             MinExecuted = min,
             Expect = expect ?? [],

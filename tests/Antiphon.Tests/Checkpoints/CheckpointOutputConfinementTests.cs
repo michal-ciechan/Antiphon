@@ -15,7 +15,7 @@ namespace Antiphon.Tests.Checkpoints;
 public sealed class CheckpointOutputConfinementTests : CheckpointTestBase
 {
     private const string TrackedDllText = "TRACKED DEPENDENCY ORIGINAL";
-    private const string OutputPath = "bin-probe/";
+    private const string OutputPath = "bin-confined/";
 
     [Test]
     [Timeout(300_000)]
@@ -91,7 +91,7 @@ public sealed class CheckpointOutputConfinementTests : CheckpointTestBase
     private static void AssertOwnedAndUnchanged(Fixture fixture, string output, string entry)
     {
         var detail = entry + " output:\n" + output;
-        var directory = entry == "tool" ? "bin-probe" : "bin-script-probe";
+        var directory = entry == "tool" ? "bin-confined" : "bin-script-confined";
         File.ReadAllBytes(fixture.Dll).ShouldBe(fixture.DllBytes, detail);
         File.ReadAllBytes(fixture.Assets).ShouldBe(fixture.AssetBytes, detail);
         File.Exists(Path.Combine(fixture.Root, "App", directory, "Lib.dll")).ShouldBeTrue(detail);
@@ -135,7 +135,7 @@ public sealed class CheckpointOutputConfinementTests : CheckpointTestBase
         {
             "-NoProfile", "-NonInteractive", "-File",
             Path.Combine(CheckpointFixtures.RepoRoot, "scripts", "run-checkpoint.ps1"),
-            "-Name", name, "-Project", "App/App.csproj", "-OutputPath", "bin-script-probe/",
+            "-Name", name, "-Project", "App/App.csproj", "-OutputPath", "bin-script-confined/",
             "-Filter", "/*/*/Unused/*", "-ResultsRoot", ".antiphon/script-results",
             "-MinExecuted", "1", "-NoSlot",
         })
@@ -318,6 +318,7 @@ public sealed class CheckpointOutputConfinementTests : CheckpointTestBase
 
     private static void Write(string root, string relative, string content)
     {
+        if (relative.EndsWith(".csproj", StringComparison.Ordinal)) content = content.Replace("<PropertyGroup>", "<PropertyGroup><DefaultItemExcludes>$(DefaultItemExcludes);bin-*/**</DefaultItemExcludes>", StringComparison.Ordinal);
         var path = Path.Combine(root, relative.Replace('/', Path.DirectorySeparatorChar));
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         File.WriteAllText(path, content);
