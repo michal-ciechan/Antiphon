@@ -818,13 +818,9 @@ public sealed class OutputCleanupTests : CheckpointTestBase
         var run = Path.Combine(root, "run-foreign");
         Directory.CreateDirectory(run);
         var statePath = Path.Combine(run, "state.json");
-        File.WriteAllText(statePath, """
-            {
-              "runId": "other-run",
-              "toolOwner": "not-this-tool",
-              "phase": "running"
-            }
-            """);
+        // Supply every serialized fact so the foreign-owner guard is reached after shape validation.
+        File.WriteAllText(statePath, System.Text.Json.JsonSerializer.Serialize(new RunState
+        { RunId = "other-run", ToolOwner = "not-this-tool", Phase = "running" }, RunStateStore.Json));
         var original = File.ReadAllBytes(statePath);
         CheckpointFixtures.MarkRun(run, alive: false);
         var output = new StringWriter();
