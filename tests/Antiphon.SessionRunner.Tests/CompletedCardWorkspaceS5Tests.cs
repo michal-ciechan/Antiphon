@@ -182,7 +182,7 @@ public sealed partial class CompletedCardWorkspaceRemovalTests
     {
         foreach (var pooled in new[] { false, true })
         {
-            await using var r = new RemovalRig(); using var child = r.Fixture.Child();
+            await using var r = new RemovalRig(); var child = r.Fixture.Child();
             r.Gate.RecordOwner(r.Fixture.Checkout, Guid.NewGuid(), () => !child.HasExited, pooled ? "pooled" : "terminal-row");
             Held(await r.Remove(), "workspace_in_use"); r.Preserved(); child.HasExited.ShouldBeFalse();
         }
@@ -227,7 +227,7 @@ public sealed partial class CompletedCardWorkspaceRemovalTests
         {
             if (step != "rename") return;
             var record = new RunnerWorkspaceRemovalJournal(r.Fixture.State, r.Fixture.StoreId).Read()!.Single();
-            record.Command.ShouldBe(r.Command); record.Command.Binding.TaskId.ShouldBe(r.Command.Binding.TaskId);
+            record.Command.OperationId.ShouldBe(r.Command.OperationId); record.Command.Binding.TaskId.ShouldBe(r.Command.Binding.TaskId);
             record.Command.DoneRevisionId.ShouldBe(r.Command.DoneRevisionId);
             using var json = JsonDocument.Parse(File.ReadAllText(r.Journal.JournalPath));
             json.RootElement.GetProperty("intents")[0].GetProperty("setAsidePath").GetString().ShouldNotBeNullOrWhiteSpace(); observed = true;
