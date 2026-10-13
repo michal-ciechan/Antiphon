@@ -956,7 +956,7 @@ it('C506 V14 history-empty', async () => {
   await waitFor(() => expect(state.puts).toHaveLength(1))
 })
 
-// ---- Review e9c9efa5 repair: read-only mode, save versus older query data, pending submission ----
+// ---- Review e9c9efa5 repair: read-only mode, save versus the cached read it superseded, pending submission ----
 
 /** Global G7 overrides with an optional `mode` key and its effective projection. */
 function globalWithMode(revision: number, mode: string | undefined): DispatchConcurrencyGlobalDto {
@@ -1020,7 +1020,7 @@ const P4_SAVED_R5 = project(5, 7, { schemaVersion: 1, roles: { Code: { maxParall
     'Review', { maxQueued: null, maxQueuedSource: 'project' }))
 
 it('C506 S2F2 refresh-fails', async () => {
-  // The PUT commits r5; the refresh that follows it fails, so the query keeps its older r4 data.
+  // The PUT commits r5; the refresh that follows it fails, so the query keeps the r4 entry the Save superseded.
   const state = serve(P, P4, (put, index) => {
     if (index === 0) {
       state.get = new HttpResponse(null, { status: 503 })
@@ -1083,7 +1083,7 @@ it('C506 S2F2 refresh-pending', async () => {
 })
 
 it('C506 S2F2 newer-after-save', async () => {
-  // Control for the monotonic rule: after the r5 save, another writer's r6 still replaces the clean form.
+  // Control: after the r5 save, a later read (another writer's r6) still replaces the clean form.
   const hub = fakeHub()
   const p6 = project(6, 7, { schemaVersion: 1, roles: { Code: { maxParallel: 3 } } }, g7Effective(7, 6),
     withRole(g7Effective(7, 6), 'Code', { maxParallel: 3, maxParallelSource: 'project', combinedParallel: 3 }))
