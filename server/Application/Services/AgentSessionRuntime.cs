@@ -733,6 +733,159 @@ public sealed class AgentSessionRuntime
     }
 
     /// <summary>
+    /// CARD-1205 checked evidence recovery. T10..T16 in WorkingTranscriptRecoveryTests
+    /// bind generation, frontier, busy-tail, failure and commit-gate outcomes.
+    /// Scheduling and completion-note wakeups belong to the caller after this method returns.
+    /// </summary>
+    public async Task<TranscriptRecoveryResult> ProbeWorkingTranscriptAsync(Guid sessionId, CancellationToken ct)
+    {
+        var started = _timeProvider.GetTimestamp();
+        RecoveryObservation? before = null;
+        DateTime? generation = null;
+        long postSequence = 0, addedCount = 0;
+        TranscriptRecoveryResult Result(TranscriptRecoveryOutcome outcome, string reason) => new(
+            outcome, reason, generation, before?.Rows.LastOrDefault()?.Sequence ?? 0,
+            postSequence, addedCount, _timeProvider.GetElapsedTime(started));
+
+        if (_states is null) return Result(TranscriptRecoveryOutcome.Unknown, "store_absent");
+        try
+        {
+            SessionStateSnapshot stamp;
+            using (var lease = await _states.BeginWriteAsync(sessionId, ct))
+            {
+                before = await ReadRecoveryObservationAsync(sessionId, ct);
+                if (before is null || !before.LocalRunning)
+                    return Result(TranscriptRecoveryOutcome.Unknown, "ownership_unavailable");
+                generation = before.Generation;
+                postSequence = before.Rows.LastOrDefault()?.Sequence ?? 0;
+                stamp = lease.Snapshot;
+            }
+
+            // T13 commits through ordinary ingestion while this HTTP pull is held.
+            var snapshot = await _runnerClient.GetTranscriptAsync(sessionId, ct);
+            ct.ThrowIfCancellationRequested();
+            if (snapshot.SessionId != sessionId || snapshot.Entries.Any(e => e.SessionId != sessionId))
+                return Result(TranscriptRecoveryOutcome.Unknown, "session_mismatch");
+            if (snapshot.AcceptedStartedAt is null || !SessionGeneration.Equal(snapshot.AcceptedStartedAt, generation))
+                return Result(TranscriptRecoveryOutcome.Unknown, "generation_mismatch");
+            if (snapshot.Entries.Count == 0 || snapshot.LastSequence != snapshot.Entries[^1].Sequence)
+                return Result(TranscriptRecoveryOutcome.Unknown, "incomplete_snapshot");
+
+            // T13 protects the whole revision, including annotations. T16 proves runner
+            // coverage can omit those server-only annotation rows.
+            var frontier = before.Rows.LastOrDefault(row => RecoveryActivity(sessionId, row));
+            if (frontier is not null && !snapshot.Entries.Any(e => RecoveryIdentityMatches(frontier, e)))
+                return Result(TranscriptRecoveryOutcome.Unknown, "frontier_missing");
+            if (frontier is null)
+                return Result(TranscriptRecoveryOutcome.Unknown, "activity_frontier_absent");
+
+            // T14/T16 classify returned source order independently of rebased durable sequences.
+            var runnerState = new SessionStateSnapshot(sessionId).Append(snapshot.Entries.Select((e, index) =>
+                new TranscriptEntry { AgentSessionId = sessionId, Sequence = index + 1, Kind = e.Kind,
+                    Text = e.Text, Timestamp = e.Timestamp is { } time ? SessionGeneration.Normalize(time.UtcDateTime) : null }));
+
+            using (var lease = await _states.BeginWriteAsync(sessionId, ct))
+            {
+                var current = await ReadRecoveryObservationAsync(sessionId, ct);
+                postSequence = current?.Rows.LastOrDefault()?.Sequence ?? postSequence;
+                if (current is null || !current.LocalRunning || !SessionGeneration.Equal(current.Generation, generation)
+                    || current.RunnerId != before.RunnerId || current.RunnerStoreId != before.RunnerStoreId
+                    || current.RunnerCwd != before.RunnerCwd)
+                    return Result(TranscriptRecoveryOutcome.Unknown, "ownership_changed");
+                if (lease.Snapshot.ServerEpoch != stamp.ServerEpoch || lease.Snapshot.Revision != stamp.Revision
+                    || lease.Snapshot.ResetEpoch != stamp.ResetEpoch || !current.Rows.SequenceEqual(before.Rows))
+                    return Result(TranscriptRecoveryOutcome.Unknown, "frontier_changed");
+                ct.ThrowIfCancellationRequested();
+                if (runnerState.Working)
+                    return TryGetTranscriptPersistFailure(sessionId, out _)
+                        ? Result(TranscriptRecoveryOutcome.Unknown, "persist_failure_retained")
+                        : Result(TranscriptRecoveryOutcome.CheckedWorking, "runner_working");
+
+                var persisted = await PersistTranscriptCoreAsync(sessionId, snapshot.Entries);
+                addedCount = persisted.CommittedRows.Count;
+                postSequence = persisted.LastStoredSeq ?? postSequence;
+                await PublishCommittedAsync(lease, persisted);
+                ct.ThrowIfCancellationRequested();
+
+                // T10 covers both cache modes; T11 faults the fresh SQL verdict. T15 checks
+                // publication under the same lease used for validation and persistence.
+                var after = await ReadRecoveryObservationAsync(sessionId, ct);
+                if (after is not null)
+                {
+                    var previousIds = before.Rows.Select(row => row.Id).ToHashSet();
+                    addedCount = after.Rows.LongCount(row => !previousIds.Contains(row.Id));
+                    postSequence = after.Rows.LastOrDefault()?.Sequence ?? postSequence;
+                }
+                if (persisted.NeedsReload || TryGetTranscriptPersistFailure(sessionId, out _))
+                    return Result(TranscriptRecoveryOutcome.Unknown, "persist_uncertain");
+                if (after is null || !after.LocalRunning || !SessionGeneration.Equal(after.Generation, generation))
+                    return Result(TranscriptRecoveryOutcome.Unknown, "ownership_changed_after_persist");
+                await using var scope = _scopeFactory.CreateAsyncScope();
+                var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                if (await SessionMessageQueueService.IsWorkingAsync(db, sessionId, ct))
+                    return Result(TranscriptRecoveryOutcome.Unknown, "committed_working");
+                if (_states.Enabled && lease.Snapshot.Working)
+                    return Result(TranscriptRecoveryOutcome.Unknown, "publication_working");
+                return Result(TranscriptRecoveryOutcome.RecoveredIdle, "committed_idle");
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            return Result(TranscriptRecoveryOutcome.Unknown, "cancelled");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Checked transcript recovery unavailable for session {SessionId}", sessionId);
+            return Result(TranscriptRecoveryOutcome.Unknown, "observation_failed");
+        }
+    }
+
+    private sealed record RecoveryRow(Guid Id, long Sequence, string Kind, string? Uuid, string? ParentUuid,
+        DateTime? Timestamp, string? Role, string? Text, string? ToolName, string? ToolInput,
+        string? ToolUseId, bool? ToolIsError, string? StopReason, string? ApiCallId, int? InputTokens, int? OutputTokens,
+        int? CacheReadTokens, int? CacheCreationTokens, bool? IsApiError, string? ApiErrorClass, int? ApiErrorStatus,
+        string? ApiErrorTimeZoneId, string? Model, int? ModelCalls, DateTime CreatedAt);
+
+    private sealed record RecoveryObservation(DateTime Generation, SessionStatus Status, string? RunnerId,
+        Guid? RunnerStoreId, string? RunnerCwd, RecoveryRow[] Rows)
+    {
+        public bool LocalRunning => Status == SessionStatus.Running && Generation != default
+            && (string.IsNullOrWhiteSpace(RunnerId) || RunnerId == PhoneHomeProtocol.LocalRunnerId)
+            && RunnerStoreId is null && RunnerCwd is null;
+    }
+
+    private async Task<RecoveryObservation?> ReadRecoveryObservationAsync(Guid sessionId, CancellationToken ct)
+    {
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var session = await db.AgentSessions.AsNoTracking().Where(s => s.Id == sessionId)
+            .Select(s => new { s.StartedAt, s.Status, s.RunnerId, s.RunnerStoreId, s.RunnerCwd }).SingleOrDefaultAsync(ct);
+        if (session is null) return null;
+        var rows = await db.TranscriptEntries.AsNoTracking().Where(t => t.AgentSessionId == sessionId)
+            .OrderBy(t => t.Sequence).Select(t => new RecoveryRow(t.Id, t.Sequence, t.Kind, t.Uuid, t.ParentUuid,
+                t.Timestamp, t.Role, t.Text, t.ToolName, t.ToolInput, t.ToolUseId, t.ToolIsError, t.StopReason,
+                t.ApiCallId, t.InputTokens, t.OutputTokens, t.CacheReadTokens, t.CacheCreationTokens, t.IsApiError,
+                t.ApiErrorClass, t.ApiErrorStatus, t.ApiErrorTimeZoneId, t.Model, t.ModelCalls, t.CreatedAt))
+            .ToArrayAsync(ct);
+        return new(session.StartedAt, session.Status, session.RunnerId, session.RunnerStoreId, session.RunnerCwd, rows);
+    }
+
+    private static bool RecoveryActivity(Guid sessionId, RecoveryRow row) => new SessionStateSnapshot(sessionId)
+        .Append([new TranscriptEntry { AgentSessionId = sessionId, Sequence = 1, Kind = row.Kind,
+            Text = row.Text, Timestamp = row.Timestamp }]).HasActivity;
+
+    private static bool RecoveryIdentityMatches(RecoveryRow row, SessionRunnerTranscriptEvent e) =>
+        row.Uuid is not null ? row.Uuid == e.Uuid && row.Kind == e.Kind : e.Uuid is null
+            && row.Sequence == e.Sequence && row.Kind == e.Kind && row.ParentUuid == e.ParentUuid
+            && row.Timestamp == (e.Timestamp is { } time ? SessionGeneration.Normalize(time.UtcDateTime) : null)
+            && row.Role == e.Role && row.Text == e.Text && row.ToolName == e.ToolName && row.ToolInput == e.ToolInput
+            && row.ToolUseId == e.ToolUseId && row.ToolIsError == e.ToolIsError && row.StopReason == e.StopReason
+            && row.ApiCallId == e.ApiCallId && row.InputTokens == e.InputTokens && row.OutputTokens == e.OutputTokens
+            && row.CacheReadTokens == e.CacheReadTokens && row.CacheCreationTokens == e.CacheCreationTokens
+            && row.IsApiError == e.IsApiError && row.ApiErrorClass == e.ApiErrorClass && row.ApiErrorStatus == e.ApiErrorStatus
+            && row.ApiErrorTimeZoneId == e.ApiErrorTimeZoneId && row.Model == e.Model && row.ModelCalls == e.ModelCalls;
+
+    /// <summary>
     /// CARD-1121 D-4 as amended by A-2: the same catch-up pull, then the committed state of this
     /// runtime's own store read after it. A failed pull is the expected answer only for a destination
     /// the caller found terminal; for any other destination it is unknown. A persist that needs a
