@@ -312,3 +312,29 @@ evidence: /work/worktrees/task-a7f248c0/.antiphon/checkpoints/20261013-084529-25
 verdict: GREEN exit=0
 
 ```
+
+## Caller decision and resumed S5 — 2026-10-13
+
+The blocked outcome above is historical. The caller explicitly directed Code to
+proceed: move only V-3 bound-rebase positive and PC-60 positive fixture variant
+to S7 CP-13 C1032_AdmissionBoundRebaseProof; retain a pinned S5 Rebased refusal.
+The plan and test design now enumerate those two moved obligations, add the S7
+method/result and name its pending control. No S5 method was dropped.
+
+Resumed implementation admits CardDone evidence only with digest-bearing external
+report/artifact/policy proof, validates saved receipts against complete immutable
+identity, retains charged action allowance across replay, and rechecks destination
+proof after set-aside. Twelve locally owned worker cuts cover Intent, Prepared,
+Moved, Unregistering, Unregistered, Deleting, Deleted, Complete, post-rename,
+post-unregister, post-delete and partial-file deletion. Each child is identified
+by PID plus exact OS birth token, killed and joined; fresh journal/runtime/gate
+objects resume the same command. There is no queue/delivery claim from these
+local filesystem witnesses; V-6 remains S7/S8's actual transport obligation.
+
+CP-7..10 ran green at e5d8efc179f9a0ed083f534396606f36e10e216f: 5/9/4/5 results,
+zero failures/skips, clean source and verified build, slot=granted waited=0s.
+Evidence/refusals and receipt tampering were demonstrated red before their fixes;
+unedited resumed run receipts are stored in the later completion evidence note.
+The Final supplement is pending at this evidence-only amendment commit. The
+later completion report supersedes the initial pending-work list using actual
+results. All PCs/variants remain pending; no deliberate mutants ran. Restart:none.

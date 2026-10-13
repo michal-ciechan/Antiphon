@@ -1191,3 +1191,33 @@ parent methods. The child assembly hook performs only the inherited locally
 owned scratch operation; it admits no additional test selection or external
 executor. Code ordinary red on the guarded missing behavior is required before
 production changes.
+
+### S5 recipient controls added by implementation (pending Mutation)
+
+These additions bind recipient predicates exposed by the ordinary regression
+cases. They are not deliberate mutant execution. Field-level variants remain
+independent controls and Mutation must identify the specific failing field.
+
+| PC | Defect | Exact method filter | Expected red | Variants / status |
+|---|---|---|---|---|
+| PC-578 | Accept a saved receipt whose field differs from immutable command/progress identity | `/*/*/CompletedCardWorkspaceRemovalTests/C1017_RunnerDigestReplay` | expected recipient_store_unreadable is missing, labeled by altered receipt field | all 27 receipt fields; pending |
+| PC-579 | Skip fresh remote containment after set-aside on replay | `/*/*/CompletedCardWorkspaceRemovalTests/C1032_RemovalOriginalReplacement` | stale_preservation_proof is missing and preserved aside/admin oracle fails | after-rename destination loss; pending |
+| PC-580 | Reset or recharge a previously spent physical action on replay | `/*/*/CompletedCardWorkspaceRemovalTests/C1032_RemovalComponentRecovery` | remaining allowance differs from independently read pre-restart allowance | Deleting, Deleted, Complete, post-delete and partial-file cuts; pending |
+| PC-581 | Reject an authoritative valid bound-rebase admission | `/*/*/CardWorktreeMirrorCleanupTests/C1032_AdmissionBoundRebaseProof` | eligible bound-rebase mirror directory must be gone | moved S7 positive; implementation/binding pending S7 |
+| PC-582 | Dispose evidence without bound external report/artifact/policy authority | `/*/*/CompletedCardWorkspaceRemovalTests/C1032_RemovalEligiblePhysical` | evidence_requires_admission is missing or evidence bytes differ | report digest, artifact digest, policy digest, empty external pointers; pending |
+
+PC-578 fields: schemaVersion, cardId, doneRevisionId, targetId, endpointId,
+operationId, taskId, attempt, bindingId, preparationId, runnerId, runnerStoreId,
+repositoryIdentity, commonDirectory, gitDirectory, worktreePath, sourceFullRef,
+creationBaselineSha, expectedHeadSha, preservationProofDigest, artifactProofDigest,
+disposalPolicyDigest, disposition, setAsideIdentity, journalIdentity,
+directoryRemoved, registrationRemoved. All 27 remain pending.
+
+The Code Final supplement is
+[2026-10-13-card-1032-s5-final-verification.md](2026-10-13-card-1032-s5-final-verification.md).
+It records the higher-priority Unit/full-class requirement separately from the
+caller's CP-7..10 roster. No additional S6–S8 code is commissioned by those runs.
+Historical whole-plan cost/count paragraphs above are earlier freezes; this
+amendment adds one S7 method and these five control IDs, without waiving any
+prior row or named variant. SourceLanding Mutation owns red/restore/green and
+further missing-control discovery.
