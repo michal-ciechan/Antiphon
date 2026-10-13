@@ -50,8 +50,13 @@ function stagePin(overrides: Partial<RoutingPinDto> = {}): RoutingPinDto {
   }
 }
 
+/** `%s` keeps the case name unquoted in the runtime title (`$name` would quote it). */
+function named<T extends { name: string }>(cases: T[]): Array<[string, T]> {
+  return cases.map((testCase) => [testCase.name, testCase])
+}
+
 describe('rolePolicyModel', () => {
-  it.each([
+  it.each(named([
     {
       name: 'null-kind-low',
       input: row({ configured: true, kind: null, level: 'Low', alias: 'haiku' }),
@@ -72,11 +77,11 @@ describe('rolePolicyModel', () => {
       input: row({ configured: false, kind: null, level: 'High', alias: 'opus' }),
       expected: 'not configured — DefaultLevel High (opus)',
     },
-  ])('C097 V05 $name', ({ input, expected }) => {
+  ]))('C097 V05 %s', (_name, { input, expected }) => {
     expect(defaultLabel(input)).toBe(expected)
   })
 
-  it.each([
+  it.each(named([
     {
       name: 'pin-required-human',
       input: row({
@@ -140,11 +145,11 @@ describe('rolePolicyModel', () => {
       }),
       expected: 'unknown',
     },
-  ])('C097 V06 $name', ({ input, expected }) => {
+  ]))('C097 V06 %s', (_name, { input, expected }) => {
     expect(effectiveLabel(input)).toBe(expected)
   })
 
-  it.each([
+  it.each(named([
     {
       name: 'escalate-manual',
       actual: () => escalateLabel(row({ escalateTo: 'High', escalateAfterMinutes: null })),
@@ -170,7 +175,7 @@ describe('rolePolicyModel', () => {
       actual: () => timeoutLabel(row({ timeoutMinutes: 0 })),
       expected: 'off',
     },
-  ])('C097 V24 $name', ({ actual, expected }) => {
+  ]))('C097 V24 %s', (_name, { actual, expected }) => {
     expect(actual()).toBe(expected)
   })
 })
