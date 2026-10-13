@@ -1,6 +1,7 @@
 import { HttpResponse, http } from 'msw'
+import { Link } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { renderWithProviders, screen, userEvent, waitFor } from '../../test/utils'
+import { act, renderWithProviders, screen, userEvent, waitFor } from '../../test/utils'
 import { server } from '../../test/mocks/server'
 import { SettingsPage } from './SettingsPage'
 
@@ -151,5 +152,62 @@ describe('SettingsPage', () => {
     })
     expect(templateRequests).toBe(0)
     expect(screen.getByRole('tab', { name: /templates/i })).toHaveAttribute('aria-selected', 'false')
+  })
+
+  // CARD-0506 V-16: the selected tab follows the URL after mount (router link, back/forward), and a
+  // tab click writes the URL. The concurrency GET answers 503 so the panel mounts without a fixture.
+  it('C506 V16 controlled-tab', async () => {
+    let concurrencyRequests = 0
+    server.use(
+      http.get('/api/settings/templates', () => HttpResponse.json([])),
+      http.get('/api/settings/providers', () => HttpResponse.json([])),
+      http.get('/api/settings/template-groups', () => HttpResponse.json([])),
+      http.get('/api/projects', () => HttpResponse.json([])),
+      http.get('/api/dispatch-concurrency', () => {
+        concurrencyRequests += 1
+        return HttpResponse.json({ title: 'Service Unavailable', status: 503 }, { status: 503 })
+      }),
+      http.get('/api/dispatch-concurrency/revisions', () => HttpResponse.json({ revisions: [], nextBeforeRevision: null })),
+    )
+    const selected = (name: string) => expect(screen.getByRole('tab', { name })).toHaveAttribute('aria-selected', 'true')
+
+    window.history.pushState({}, '', '/settings?tab=routing')
+    renderWithProviders(
+      <>
+        <SettingsPage />
+        <Link to="/settings?tab=concurrency">open concurrency</Link>
+        <Link to="/settings?tab=unknown">open unknown</Link>
+      </>,
+    )
+
+    expect(await screen.findByTestId('routing-settings-tab')).toBeInTheDocument()
+    selected('Routing')
+    const names = screen.getAllByRole('tab').map((tab) => tab.textContent)
+    expect(names.slice(names.indexOf('Routing'), names.indexOf('Routing') + 3)).toEqual(['Routing', 'Concurrency', 'Status'])
+    expect(concurrencyRequests).toBe(0)
+
+    await userEvent.click(screen.getByRole('link', { name: 'open concurrency' }))
+    expect(await screen.findByTestId('dispatch-concurrency-section')).toBeInTheDocument()
+    selected('Concurrency')
+    expect(screen.getByRole('tab', { name: 'Routing' })).toHaveAttribute('aria-selected', 'false')
+    expect(screen.queryByTestId('routing-settings-tab')).toBeNull()
+    await waitFor(() => expect(concurrencyRequests).toBe(1))
+
+    act(() => window.history.back())
+    expect(await screen.findByTestId('routing-settings-tab')).toBeInTheDocument()
+    selected('Routing')
+    expect(screen.queryByTestId('dispatch-concurrency-section')).toBeNull()
+
+    act(() => window.history.forward())
+    expect(await screen.findByTestId('dispatch-concurrency-section')).toBeInTheDocument()
+    selected('Concurrency')
+
+    await userEvent.click(screen.getByRole('tab', { name: 'Routing' }))
+    expect(await screen.findByTestId('routing-settings-tab')).toBeInTheDocument()
+    expect(new URLSearchParams(window.location.search).get('tab')).toBe('routing')
+
+    await userEvent.click(screen.getByRole('link', { name: 'open unknown' }))
+    await waitFor(() => selected('Templates'))
+    expect(screen.queryByTestId('routing-settings-tab')).toBeNull()
   })
 })

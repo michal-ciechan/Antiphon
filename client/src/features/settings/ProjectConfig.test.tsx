@@ -3,7 +3,7 @@ import { fireEvent } from '@testing-library/react'
 import { beforeAll, describe, expect, it, vi } from 'vitest'
 import type { ProjectDto, UpdateProjectRequest } from '../../api/projects'
 import type { ProjectReadinessDto } from '../../api/projectSetup'
-import { renderWithProviders, screen, userEvent, waitFor } from '../../test/utils'
+import { renderWithProviders, screen, userEvent, waitFor, within } from '../../test/utils'
 import { server } from '../../test/mocks/server'
 import { ProjectConfig } from './ProjectConfig'
 
@@ -280,4 +280,40 @@ describe('ProjectConfig readiness column', () => {
     )
     expect(screen.getByText("Agent 'Worker' working directory exists.")).toBeInTheDocument()
   })
+})
+
+// CARD-0506 V-17: the row link carries that row's project id into the Concurrency tab deep link.
+it('C506 V17 project-row-link', async () => {
+  const P = '05060000-0000-4000-8000-000000000001'
+  const Q = '05060000-0000-4000-8000-000000000002'
+  const rows: ProjectDto[] = [
+    { ...project, id: P, name: 'P', gitRepositoryUrl: 'https://example.test/p.git', localRepositoryPath: '/repos/p' },
+    { ...project, id: Q, name: 'Q', gitRepositoryUrl: 'https://example.test/q.git', localRepositoryPath: '/repos/q' },
+  ]
+  server.use(
+    http.get('/api/projects', () => HttpResponse.json(rows)),
+    http.get('/api/boards', () => HttpResponse.json([])),
+    http.get('/api/github/repos', () => HttpResponse.json([])),
+    http.get('/api/projects/readiness', () => HttpResponse.json([])),
+    http.get('/api/projects/:id/api-keys', () => HttpResponse.json([])),
+  )
+  const rowOf = (name: string) => screen.getByRole('cell', { name }).closest('tr') as HTMLElement
+  window.history.pushState({}, '', '/settings?tab=projects')
+  try {
+    renderWithProviders(<ProjectConfig />)
+
+    await screen.findByRole('cell', { name: 'Q' })
+    await userEvent.click(within(rowOf('P')).getByRole('button', { name: 'Project concurrency' }))
+
+    await waitFor(() => expect(window.location.pathname).toBe('/settings'))
+    const search = new URLSearchParams(window.location.search)
+    expect(search.get('tab')).toBe('concurrency')
+    expect(search.get('project')).toBe(P)
+
+    await userEvent.click(within(rowOf('Q')).getByRole('button', { name: 'Edit project' }))
+    expect(await screen.findByRole('textbox', { name: 'Name' })).toHaveValue('Q')
+    expect(new URLSearchParams(window.location.search).get('project')).toBe(P)
+  } finally {
+    window.history.pushState({}, '', '/')
+  }
 })
