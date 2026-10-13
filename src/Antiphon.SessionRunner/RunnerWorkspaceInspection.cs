@@ -27,8 +27,8 @@ public sealed partial class RunnerWorkspaceService
 
     internal async Task<string?> InspectionPhysicalIdentityReasonAsync(CompletedCardWorkspaceBinding binding, CancellationToken ct)
     {
-        var common = await GitAsync(binding.WorktreePath, ct, "rev-parse", "--path-format=absolute", "--git-common-dir");
-        var admin = await GitAsync(binding.WorktreePath, ct, "rev-parse", "--path-format=absolute", "--git-dir");
+        var common = await InspectionGitAsync(binding.WorktreePath, ct, "rev-parse", "--path-format=absolute", "--git-common-dir");
+        var admin = await InspectionGitAsync(binding.WorktreePath, ct, "rev-parse", "--path-format=absolute", "--git-dir");
         if (common.ExitCode != 0 || admin.ExitCode != 0
             || !PathsEqual(common.Stdout.Trim(), binding.CommonDirectory) || !PathsEqual(admin.Stdout.Trim(), binding.GitDirectory))
             return "stale_mirror_binding";
@@ -37,7 +37,7 @@ public sealed partial class RunnerWorkspaceService
         var stamp = RunnerWorkspaceBindingStore.OwnerStampPath(binding.GitDirectory);
         if (record is null || !RunnerCompletedCardWorkspaceRemoval.UnlinkedPath(stamp)
             || !store.OwnerStampMatches(binding.GitDirectory, record)) return "foreign_mirror_owner";
-        var origin = await GitAsync(binding.WorktreePath, ct, "remote", "get-url", "origin");
+        var origin = await InspectionGitAsync(binding.WorktreePath, ct, "remote", "get-url", "origin");
         if (origin.ExitCode != 0 || (!RepositoryCloneSource.TryNormalize(origin.Stdout.Trim(), out var identity) || identity != binding.RepositoryIdentity))
             return "stale_mirror_binding";
         return null;

@@ -22,7 +22,7 @@ public sealed class RunnerCompletedCardWorkspaceRemoval(RunnerWorkspaceService w
             if (await workspace.InspectionPhysicalIdentityReasonAsync(binding, ct) is { } identityReason)
                 return Held(identityReason);
             var head = await ReadAsync(binding.WorktreePath, ct, "rev-parse", "HEAD");
-            var symbolic = await workspace.GitAsync(binding.WorktreePath, ct, "symbolic-ref", "-q", "HEAD");
+            var symbolic = await workspace.InspectionGitAsync(binding.WorktreePath, ct, "symbolic-ref", "-q", "HEAD");
             if (symbolic.ExitCode == 1) return Held("source_ref_mismatch", head);
             if (symbolic.ExitCode != 0) return Held("inspection_unreadable", head);
             var sourceRef = symbolic.Stdout.Trim();
@@ -39,7 +39,7 @@ public sealed class RunnerCompletedCardWorkspaceRemoval(RunnerWorkspaceService w
                 return Held("stale_mirror_binding", head);
             foreach (var gitDirectory in new[] { binding.GitDirectory, binding.CommonDirectory }.Distinct(StringComparer.Ordinal))
                 if (RepositoryStateReason(gitDirectory, ct) is { } stateReason) return Held(stateReason, head);
-            var sparse = await workspace.GitAsync(binding.WorktreePath, ct, "config", "--bool", "--get", "core.sparseCheckout");
+            var sparse = await workspace.InspectionGitAsync(binding.WorktreePath, ct, "config", "--bool", "--get", "core.sparseCheckout");
             if (sparse.ExitCode == 0 && sparse.Stdout.Trim() == "true") return Held("sparse_checkout", head);
             if (sparse.ExitCode != 1 && (sparse.ExitCode != 0 || sparse.Stdout.Trim() != "false"))
                 return Held("inspection_unreadable", head);
@@ -60,8 +60,14 @@ public sealed class RunnerCompletedCardWorkspaceRemoval(RunnerWorkspaceService w
                 return Held("submodule_content", head);
             var structural = StructuralReason(binding.WorktreePath, ct);
             if (structural is not null) return Held(structural, head);
-            var status = await ReadAsync(binding.WorktreePath, ct, "status", "--porcelain=v1", "-z", "--untracked-files=all");
-            if (status.Length != 0) return Held("dirty_source", head);
+            // status/diff-files can run clean filters and can hide mode changes through
+            // core.fileMode. Compare staged source to HEAD, then raw physical blobs/modes.
+            var stagedChanges = await ReadAsync(binding.WorktreePath, ct, "diff-index", "--cached",
+                "--name-only", "-z", "--no-ext-diff", "--no-textconv", "HEAD", "--");
+            if (stagedChanges.Length != 0 || !RawTrackedFilesMatch(binding.WorktreePath, staged, ct))
+                return Held("dirty_source", head);
+            var untracked = await ReadAsync(binding.WorktreePath, ct, "ls-files", "--others", "--exclude-standard", "-z");
+            if (untracked.Length != 0) return Held("dirty_source", head);
             var ignored = await ReadAsync(binding.WorktreePath, ct, "ls-files", "--others", "--ignored", "--exclude-standard", "-z");
             var classifier = new RunnerWorkspaceIgnoredContent();
             var inventory = ignored.Split('\0', StringSplitOptions.RemoveEmptyEntries)
@@ -95,7 +101,7 @@ public sealed class RunnerCompletedCardWorkspaceRemoval(RunnerWorkspaceService w
         if (!IsSha(proof.ObservedTargetSha) || !IsSha(proof.PreservedSourceSha)) return "preservation_proof_invalid";
         try
         {
-            var remote = await workspace.GitAsync(binding.WorktreePath, ct, "ls-remote", "--refs", "origin", proof.DestinationRef);
+            var remote = await workspace.InspectionGitAsync(binding.WorktreePath, ct, "ls-remote", "--refs", "origin", proof.DestinationRef);
             if (remote.ExitCode != 0) return "preservation_unreadable";
             var lines = remote.Stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries);
             if (lines.Length != 1 || lines[0].TrimEnd('\r') != proof.ObservedTargetSha + "\t" + proof.DestinationRef)
@@ -104,7 +110,7 @@ public sealed class RunnerCompletedCardWorkspaceRemoval(RunnerWorkspaceService w
             // Both H and the supplied preserved P must be contained in that exact fresh target.
             foreach (var source in new[] { proof.ExpectedHeadSha, proof.PreservedSourceSha })
             {
-                var ancestor = await workspace.GitAsync(binding.WorktreePath, ct, "merge-base", "--is-ancestor", source, proof.ObservedTargetSha);
+                var ancestor = await workspace.InspectionGitAsync(binding.WorktreePath, ct, "merge-base", "--is-ancestor", source, proof.ObservedTargetSha);
                 if (ancestor.ExitCode != 0) return "source_not_preserved";
             }
             return null;
@@ -112,10 +118,39 @@ public sealed class RunnerCompletedCardWorkspaceRemoval(RunnerWorkspaceService w
         catch (PhoneHomeAdmissionException) { return "preservation_unreadable"; }
     }
 
+    private static bool RawTrackedFilesMatch(string root, string staged, CancellationToken ct)
+    {
+        foreach (var entry in staged.Split('\0', StringSplitOptions.RemoveEmptyEntries))
+        {
+            ct.ThrowIfCancellationRequested();
+            var tab = entry.IndexOf('\t');
+            if (tab < 0) throw new IOException("Malformed tracked entry.");
+            var fields = entry[..tab].Split(' ');
+            if (fields.Length != 3 || fields[2] != "0" || fields[0] is not ("100644" or "100755")
+                || !IsSha(fields[1])) return false;
+            var path = Path.GetFullPath(Path.Combine(root, entry[(tab + 1)..]));
+            if (!path.StartsWith(Path.GetFullPath(root) + Path.DirectorySeparatorChar,
+                OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
+                throw new IOException("Tracked path escaped workspace.");
+            if (!File.Exists(path) || File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint)) return false;
+            if (!OperatingSystem.IsWindows()
+                && File.GetUnixFileMode(path).HasFlag(UnixFileMode.UserExecute) != (fields[0] == "100755")) return false;
+            using var stream = File.OpenRead(path);
+            using var hash = System.Security.Cryptography.IncrementalHash.CreateHash(System.Security.Cryptography.HashAlgorithmName.SHA1);
+            hash.AppendData(System.Text.Encoding.ASCII.GetBytes("blob "
+                + stream.Length.ToString(System.Globalization.CultureInfo.InvariantCulture) + "\0"));
+            var buffer = new byte[81920];
+            int read;
+            while ((read = stream.Read(buffer)) != 0) { ct.ThrowIfCancellationRequested(); hash.AppendData(buffer.AsSpan(0, read)); }
+            if (!Convert.ToHexString(hash.GetHashAndReset()).Equals(fields[1], StringComparison.OrdinalIgnoreCase)) return false;
+        }
+        return true;
+    }
+
     private static bool IsSha(string sha) => sha.Length == 40 && sha.All(c => c is >= '0' and <= '9' or >= 'a' and <= 'f');
     private async Task<string> ReadAsync(string path, CancellationToken ct, params string[] args)
     {
-        var result = await workspace.GitAsync(path, ct, args);
+        var result = await workspace.InspectionGitAsync(path, ct, args);
         if (result.ExitCode != 0) throw new IOException("Inspection Git read failed.");
         return args.Contains("-z") ? result.Stdout : result.Stdout.Trim();
     }

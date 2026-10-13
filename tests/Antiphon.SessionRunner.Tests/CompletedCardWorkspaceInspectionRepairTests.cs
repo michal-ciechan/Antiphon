@@ -170,7 +170,7 @@ public sealed partial class CompletedCardWorkspaceRemovalTests
         await using var f = new CompletedCardRunnerFixture();
         var service = f.Workspace(gated: false, publishedBranch: "main");
         var commands = new List<string>();
-        f.BeforeGitStart = psi => { AssertInspectionGitRead(psi); commands.Add(psi.ArgumentList[0]); };
+        f.BeforeGitStart = psi => { AssertInspectionGitRead(psi); commands.Add(psi.ArgumentList[1]); };
         File.SetLastWriteTimeUtc(Path.Combine(f.Checkout, "source"), DateTime.UtcNow.AddDays(-1));
         var before = InspectionDigest(f.Root);
         var inspector = new RunnerCompletedCardWorkspaceRemoval(service);
@@ -179,7 +179,7 @@ public sealed partial class CompletedCardWorkspaceRemovalTests
         inspection.HeadSha.ShouldBe(f.Sha);
         var proof = f.Command().Proof with { DestinationFingerprint = f.Binding.RepositoryIdentity };
         (await inspector.CheckProofAsync(f.Binding, proof, CancellationToken.None)).ShouldBeNull();
-        commands.ShouldContain("status"); commands.ShouldContain("ls-remote"); commands.ShouldContain("merge-base");
+        commands.ShouldContain("diff-index"); commands.ShouldContain("ls-remote"); commands.ShouldContain("merge-base");
         InspectionDigest(f.Root).ShouldBe(before, "mtime-only inspection and proof never refresh index or write files");
         Directory.Exists(f.State).ShouldBeFalse("inspection must not create retirement intent");
     }
@@ -187,7 +187,16 @@ public sealed partial class CompletedCardWorkspaceRemovalTests
     private static void AssertInspectionGitRead(ProcessStartInfo psi)
     {
         psi.Environment["GIT_OPTIONAL_LOCKS"].ShouldBe("0", "every inspection Git call disables optional locks");
-        var args = psi.ArgumentList.ToArray();
+        psi.ArgumentList[0].ShouldBe("--no-replace-objects");
+        psi.Environment["GIT_NO_REPLACE_OBJECTS"].ShouldBe("1");
+        psi.Environment["GIT_GRAFT_FILE"].ShouldBe(OperatingSystem.IsWindows() ? "NUL" : "/dev/null");
+        var count = int.Parse(psi.Environment["GIT_CONFIG_COUNT"]!);
+        var config = Enumerable.Range(0, count).ToDictionary(i => psi.Environment["GIT_CONFIG_KEY_" + i]!,
+            i => psi.Environment["GIT_CONFIG_VALUE_" + i]);
+        config["core.fsmonitor"].ShouldBe("false");
+        config["core.hooksPath"].ShouldBe(OperatingSystem.IsWindows() ? "NUL" : "/dev/null");
+        config["core.attributesFile"].ShouldBe(OperatingSystem.IsWindows() ? "NUL" : "/dev/null");
+        var args = psi.ArgumentList.Skip(1).ToArray();
         var allowed = args[0] switch
         {
             "rev-parse" => args.Skip(1).SequenceEqual(new[] { "HEAD" })
@@ -197,8 +206,9 @@ public sealed partial class CompletedCardWorkspaceRemovalTests
             "remote" => args.Skip(1).SequenceEqual(new[] { "get-url", "origin" }),
             "symbolic-ref" => args.Skip(1).SequenceEqual(new[] { "-q", "HEAD" }),
             "worktree" => args.Skip(1).SequenceEqual(new[] { "list", "--porcelain", "-z" }),
-            "status" => args.Skip(1).SequenceEqual(new[] { "--porcelain=v1", "-z", "--untracked-files=all" }),
+            "diff-index" => args.Skip(1).SequenceEqual(new[] { "--cached", "--name-only", "-z", "--no-ext-diff", "--no-textconv", "HEAD", "--" }),
             "ls-files" => args.Skip(1).SequenceEqual(new[] { "--others", "--ignored", "--exclude-standard", "-z" })
+                || args.Skip(1).SequenceEqual(new[] { "--others", "--exclude-standard", "-z" })
                 || args.Skip(1).SequenceEqual(new[] { "-v", "-z" })
                 || args.Skip(1).SequenceEqual(new[] { "--stage", "-z" }),
             "config" => args.Skip(1).SequenceEqual(new[] { "--bool", "--get", "core.sparseCheckout" }),
