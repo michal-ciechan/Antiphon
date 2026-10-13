@@ -87,6 +87,17 @@ function revisionKey(dto: DispatchConcurrencyScopeDto): string {
   return `${revisions.global}:${revisions.project}`
 }
 
+/**
+ * Both revisions only grow (the server writes `current + 1`), so a DTO with either revision below
+ * the other's is older data: a cached GET that a failed or late refresh left behind a Save
+ * (`C506 S2F2 refresh-fails`/`refresh-pending`).
+ */
+function isOlder(dto: DispatchConcurrencyScopeDto, than: DispatchConcurrencyScopeDto): boolean {
+  const left = revisionsOf(dto)
+  const right = revisionsOf(than)
+  return left.global < right.global || left.project < right.project
+}
+
 function draftOf(dto: DispatchConcurrencyScopeDto): ConcurrencyDraft {
   return draftFromOverrides(dto.overrides, dto.supportedRoles)
 }
@@ -172,9 +183,10 @@ function EditorForm({
   historyFailed: boolean
 }) {
   const save = usePutDispatchConcurrency(projectId)
-  // `base` is the saved state the next Save targets: its revisions are sent, its overrides are "saved".
+  // `base` is the newest saved state this form has seen (query data, Save response or conflict
+  // refetch). The next Save targets it, and the saved values on screen (subtitle, mode, inherited,
+  // effective, occupancy) are read from it (`C506 S2F2 refresh-fails`).
   const [base, setBase] = useState(latest)
-  const [seenKey, setSeenKey] = useState(() => revisionKey(latest))
   const [draft, setDraft] = useState(() => draftOf(latest))
   const [inputs, setInputs] = useState<Map<string, number | string>>(() => new Map())
   const [reason, setReason] = useState('')
@@ -188,29 +200,34 @@ function EditorForm({
   const savedDraft = draftOf(base)
   const dirty = diffDrafts(draft, savedDraft).length > 0
 
-  // Newer saved revisions (SignalR refetch, conflict refresh): a clean draft adopts them; a dirty
-  // draft is kept and the banner lists where it differs (D-7). Adjusting state while rendering.
-  const latestKey = revisionKey(latest)
-  if (latestKey !== seenKey) {
-    setSeenKey(latestKey)
+  // Query data (SignalR or focus refetch, conflict refresh) that is not older than `base` replaces
+  // it; older query data is ignored, so a failed or late refresh does not roll back a Save response
+  // (`C506 S2F2 refresh-fails`/`refresh-pending`; `newer-after-save` keeps later writes). A newer revision is
+  // adopted by a clean draft; a dirty draft is kept and the banner lists where it differs (D-7).
+  // Same-revision data replaces `base` only (fresh occupancy). Adjusting state while rendering.
+  if (latest !== base && !isOlder(latest, base)) {
+    const newer = revisionKey(latest) !== revisionKey(base)
     setBase(latest)
-    if (dirty) {
+    if (newer && dirty) {
       setBanner(true)
-    } else {
+    } else if (newer) {
       setDraft(draftOf(latest))
       setInputs(new Map())
       setBanner(false)
     }
   }
 
-  const errors = validateDraft(draft, latest.ranges, reason)
+  const errors = validateDraft(draft, base.ranges, reason)
   const reasonValid = !Object.hasOwn(errors, 'reason')
+  // The single pending gate: Save, Clear, the limit switches, inputs and No limit boxes, Revert and
+  // Reason share it, so no edit can be made during a submission for its response to discard
+  // (`C506 S2F3 pending-save`/`pending-clear`/`pending-error`).
   const idle = !submitting && refresh === 'idle'
   const canSave = idle && Object.keys(errors).length === 0
   const canClear = idle && reasonValid && !isCleared(base.overrides)
   const bannerRevisions = revisionsOf(base)
   const bannerDiffs = banner ? diffDrafts(draft, savedDraft) : []
-  const roles = [...new Set([...latest.supportedRoles, ...Object.keys(draft.roles)])]
+  const roles = [...new Set([...base.supportedRoles, ...Object.keys(draft.roles)])]
 
   const reloadAfterConflict = async () => {
     setRefresh('refreshing')
@@ -219,7 +236,6 @@ function EditorForm({
       setRefresh('failed')
       return
     }
-    setSeenKey(revisionKey(fresh))
     setBase(fresh)
     setBanner(true)
     setRefresh('idle')
@@ -238,7 +254,6 @@ function EditorForm({
         reason,
       })
       setBase(result)
-      setSeenKey(revisionKey(result))
       setDraft(draftOf(result))
       setInputs(new Map())
       setReason('')
@@ -304,13 +319,14 @@ function EditorForm({
           testKey={`${role ?? 'overall'}-${field}`}
           field={field}
           limit={row[field]}
-          inherited={inheritedFor(latest, role, field)}
-          // Overall max parallel is never unbounded (D-3, server allowNull: false).
+          inherited={inheritedFor(base, role, field)}
+          // Overall max parallel offers no "No limit" (D-3, server allowNull: false; `C506 V10 overall-queued`).
           nullable={!(role === null && isParallel)}
-          min={isParallel ? latest.ranges.parallelMin : latest.ranges.queuedMin}
-          max={isParallel ? latest.ranges.parallelMax : latest.ranges.queuedMax}
+          min={isParallel ? base.ranges.parallelMin : base.ranges.queuedMin}
+          max={isParallel ? base.ranges.parallelMax : base.ranges.queuedMax}
           raw={inputs.get(path)}
           error={fieldErrors.get(path) ?? own<string>(errors, path)}
+          disabled={!idle}
           onChange={(limit, raw) => updateLimit(role, field, limit, raw)}
         />
       )
@@ -325,14 +341,14 @@ function EditorForm({
         <Table.Td>{cell('maxParallel')}</Table.Td>
         <Table.Td>{cell('maxQueued')}</Table.Td>
         <Table.Td>
-          <EffectiveCell testKey={role ?? 'overall'} effective={latest.effective} role={role} />
+          <EffectiveCell testKey={role ?? 'overall'} effective={base.effective} role={role} />
         </Table.Td>
         <Table.Td>
           <Button
             size="compact-xs"
             variant="subtle"
             aria-label={`Revert ${rowLabel} to inherited`}
-            disabled={!row.maxParallel.specified && !row.maxQueued.specified}
+            disabled={!idle || (!row.maxParallel.specified && !row.maxQueued.specified)}
             onClick={() => revertRow(role)}
           >
             Revert
@@ -342,15 +358,15 @@ function EditorForm({
     )
   }
 
-  const occupancy = latest.occupancy
-  const project = isProjectScope(latest)
+  const occupancy = base.occupancy
+  const project = isProjectScope(base)
   const subtitle =
-    project && (latest.revision === 0 || isCleared(latest.overrides))
+    project && (base.revision === 0 || isCleared(base.overrides))
       ? 'Inheriting global defaults; no project overrides'
-      : `Revision ${latest.revision}${latest.provenance ? ` · ${latest.provenance}` : ''}${latest.reason ? ` · ${latest.reason}` : ''}`
+      : `Revision ${base.revision}${base.provenance ? ` · ${base.provenance}` : ''}${base.reason ? ` · ${base.reason}` : ''}`
 
   return (
-    <Paper withBorder p="md" data-testid="dispatch-concurrency-section">
+    <Paper withBorder p="md" data-testid="dispatch-concurrency-section" aria-busy={submitting || refresh === 'refreshing'}>
       <Stack gap="sm">
         <div>
           <Text fw={600}>{title}</Text>
@@ -360,12 +376,12 @@ function EditorForm({
         </div>
         <Group gap="xs" data-testid="dispatch-concurrency-mode">
           <Text size="sm">Mode</Text>
-          <Badge variant="light">{latest.effective.mode}</Badge>
+          <Badge variant="light">{base.effective.mode}</Badge>
           <Badge variant="light" color="gray">
-            {sourceLabel(latest.effective.modeSource)}
+            {sourceLabel(base.effective.modeSource)}
           </Badge>
           <Text size="xs" c="dimmed">
-            {own<string>(MODE_DESCRIPTION, latest.effective.mode) ?? ''}
+            {own<string>(MODE_DESCRIPTION, base.effective.mode) ?? ''}
           </Text>
         </Group>
         {banner && (
@@ -428,6 +444,7 @@ function EditorForm({
             description="Required, up to 400 characters"
             value={reason}
             onChange={(event) => setReason(event.currentTarget.value)}
+            disabled={!idle}
             w={{ base: '100%', sm: 320 }}
             data-testid="dispatch-concurrency-reason"
           />
@@ -435,7 +452,9 @@ function EditorForm({
             data-testid="dispatch-concurrency-save"
             // One pending gate (`idle`), shared with Clear; no separate `loading` disable (test design G-30).
             disabled={!canSave}
-            onClick={() => void submit(overridesFromDraft(draft))}
+            // The mode is read-only here (D-6): it is sent exactly as the targeted revision saved it,
+            // present or absent, not as the draft was loaded (`C506 S2F1 live|conflict mode-*`).
+            onClick={() => void submit(overridesFromDraft({ ...draft, mode: savedDraft.mode }))}
           >
             Save
           </Button>
@@ -509,6 +528,7 @@ function LimitCell({
   max,
   raw,
   error,
+  disabled,
   onChange,
 }: {
   rowLabel: string
@@ -521,6 +541,7 @@ function LimitCell({
   max: number
   raw: number | string | undefined
   error: string | undefined
+  disabled: boolean
   onChange: (limit: LimitDraft, raw?: number | string) => void
 }) {
   const name = `${rowLabel} ${FIELD_LABEL[field]}`
@@ -532,6 +553,7 @@ function LimitCell({
           size="xs"
           aria-label={`${name} override`}
           checked={limit.specified}
+          disabled={disabled}
           onChange={(event) =>
             onChange(event.currentTarget.checked ? { specified: true, value: startValue } : { ...UNSPECIFIED })
           }
@@ -552,7 +574,7 @@ function LimitCell({
             w={96}
             aria-label={name}
             value={limit.value === null ? '' : (raw ?? limit.value)}
-            disabled={limit.value === null}
+            disabled={disabled || limit.value === null}
             min={min}
             max={max}
             clampBehavior="none"
@@ -568,6 +590,7 @@ function LimitCell({
               label="No limit"
               aria-label={`${name} no limit`}
               checked={limit.value === null}
+              disabled={disabled}
               onChange={(event) =>
                 onChange({ specified: true, value: event.currentTarget.checked ? null : (inherited.value ?? min) })
               }
