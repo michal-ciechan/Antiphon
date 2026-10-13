@@ -4707,7 +4707,8 @@ c849_fixture_finalize() {
     done
     # Include successfully acquired named consumers outside the old fixed roster.
     for file in "$CASE_DIR"/.fixture-id-*; do
-        [ -f "$file" ] && [ ! -L "$file" ] || continue
+        # C1208_Unknown_identity_retains_residue covers malformed standalone records:
+        # admitted names reach consumer_release even when the record is not a file.
         name="${file##*/.fixture-id-}"
         case "$name" in
             "c849-${RUN}-writer"|"c849-${RUN}-reader"|"c849-${RUN}-masked"|"c849-${RUN}-apphost") continue ;;
