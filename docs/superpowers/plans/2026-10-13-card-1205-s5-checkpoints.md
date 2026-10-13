@@ -7,7 +7,7 @@ changes are authorized. The frozen ordinary census is CP-5=30 and CP-6=4.
 
 The first test-only group implements T37 in both cache modes. Actual adapter bytes
 enter runner custody and HTTP/runtime persistence. Its expected defect is PC-84
-(missing post-subscription catch-up), owned by later SourceLanding Mutation.
+(suppressed Sync recovered-boundary wakeup), owned by later SourceLanding Mutation.
 Run the witness on unchanged pre-S5 production first; record its actual outcome.
 The S1/S2 repair already landed, so baseline red is not assumed.
 
