@@ -475,4 +475,30 @@ describe('RoutingSettingsTab', () => {
     expect(screen.getByRole('button', { name: 'Save' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Clear override' })).toBeInTheDocument()
   })
+
+  it('C097 V09 role-policy-failure-keeps-siblings', async () => {
+    serveRouting()
+    server.use(http.get('/api/role-policy', () => new HttpResponse(null, { status: 500 })))
+    renderWithProviders(<RoutingSettingsTab />)
+
+    const section = await screen.findByTestId('role-policy-section')
+    expect(await within(section).findByText('Could not load role policy.')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Model availability' })).toBeInTheDocument()
+    expect(screen.getByTestId('runner-defaults-section')).toBeInTheDocument()
+    expect(await screen.findByTestId('routing-matrix-row-Code')).toBeInTheDocument()
+  })
+
+  it('C097 V10 section-order', async () => {
+    serveRouting()
+    renderWithProviders(<RoutingSettingsTab />)
+
+    const anyRow = await screen.findByTestId('routing-matrix-row-any')
+    const runnerDefaults = screen.getByTestId('runner-defaults-section')
+    const rolePolicy = screen.getByTestId('role-policy-section')
+    expect(
+      runnerDefaults.compareDocumentPosition(rolePolicy) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeGreaterThan(0)
+    expect(rolePolicy.compareDocumentPosition(anyRow) & Node.DOCUMENT_POSITION_FOLLOWING).toBeGreaterThan(0)
+    expect(within(rolePolicy).getByRole('heading', { name: 'Role policy' })).toBeInTheDocument()
+  })
 })
