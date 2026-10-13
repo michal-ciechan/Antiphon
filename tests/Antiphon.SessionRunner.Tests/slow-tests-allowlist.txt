@@ -7,3 +7,5 @@ Antiphon.SessionRunner.Tests.TranscriptAdoptionSafetyTests
 Antiphon.SessionRunner.Tests.RunnerRestartPreflightSafetyTests
 # CARD-0589 V-9: two real pwsh build-slot wrappers hold a 5 s lease each against a loopback broker.
 Antiphon.SessionRunner.Tests.BuildSlotEndToEndTests
+# CARD-1032 S3: real Git, retained child ownership, runtime adoption and deterministic admission barriers.
+Antiphon.SessionRunner.Tests.CompletedCardWorkspaceRemovalTests
