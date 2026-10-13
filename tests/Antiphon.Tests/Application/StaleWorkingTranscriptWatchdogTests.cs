@@ -101,7 +101,7 @@ public class StaleWorkingTranscriptWatchdogTests
     {
         await using var h = await Harness.CreateAsync(count: 5, page: 2, workers: 2);
         h.Handler.Held.Add(h.Id);
-        await h.PassAsync(); h.AssertBaselineProbe(); await h.Handler.WaitForAsync(h.Id);
+        await h.PassAsync(); await h.Handler.WaitForAsync(h.Id);
         await h.JoinExceptAsync(h.Id);
         h.Discovered.ShouldBeLessThanOrEqualTo(2);
         for (var pass = 0; pass < 4; pass++)
@@ -123,7 +123,7 @@ public class StaleWorkingTranscriptWatchdogTests
     {
         await using var h = await Harness.CreateAsync(count: 6, workers: 2);
         foreach (var id in h.Ids) h.Handler.Held.Add(id);
-        await h.PassAsync(); h.AssertBaselineProbe(); await h.Handler.WaitForCountAsync(2);
+        await h.PassAsync(); await h.Handler.WaitForCountAsync(2);
         h.Active.Length.ShouldBe(2); h.Handler.Peak.ShouldBe(2);
         var old = h.Active.First();
         await h.ChangeGenerationAsync(old.Id);
@@ -145,7 +145,7 @@ public class StaleWorkingTranscriptWatchdogTests
         await using var h = await Harness.CreateAsync(count: 1025);
         foreach (var id in h.Ids) h.Handler.Held.Add(id);
         for (var pass = 0; pass < 9; pass++) await h.PassAsync();
-        h.AssertBaselineProbe();
+       
         await h.Handler.WaitForCountAsync(4);
         h.Entries.Length.ShouldBe(1024);
         h.Pending.Length.ShouldBeLessThanOrEqualTo(1024);
@@ -162,7 +162,9 @@ public class StaleWorkingTranscriptWatchdogTests
         h.Handler.Held.Clear(); h.Handler.Release.TrySetResult(); await h.JoinAsync();
         // A confirmed terminal entry frees room for the overflow ID on a later page.
         await h.SetStatusAsync(h.Id, SessionStatus.Stopped);
-        for (var pass = 0; pass < 18; pass++) await h.PassAndJoinAsync();
+        // Four workers need up to 257 admission rounds for 1025 due sessions,
+        // plus bounded discovery/reconciliation pages. This is a pass budget.
+        for (var pass = 0; pass < 275 && !h.Handler.Order.Contains(h.Ids.Last()); pass++) await h.PassAndJoinAsync();
         h.Handler.Order.ShouldContain(h.Ids.Last());
         h.Entries.Length.ShouldBeLessThanOrEqualTo(1024);
     }
@@ -191,7 +193,7 @@ public class StaleWorkingTranscriptWatchdogTests
     {
         await using var h = await Harness.CreateAsync();
         h.Idle(h.Id); h.Fault.HoldSave = true;
-        await h.PassAsync(); h.AssertBaselineProbe(); await h.Fault.SaveReached.Task.WaitAsync(TimeSpan.FromSeconds(15));
+        await h.PassAsync(); await h.Fault.SaveReached.Task.WaitAsync(TimeSpan.FromSeconds(15));
         var pass = h.Passes;
         h.Clock.Advance(TimeSpan.FromSeconds(15)); await h.PassAsync();
         h.Passes.ShouldBe(pass + 1);
@@ -221,7 +223,6 @@ public class StaleWorkingTranscriptWatchdogTests
             var current = (Guid)Property(Call(recovery, "Observe")!, "ServerEpoch")!;
             if (epoch is not null) current.ShouldNotBe(epoch.Value);
             epoch = current;
-            await host.Services.GetRequiredService<IHost>().StopAsync();
         }
     }
 
@@ -334,7 +335,7 @@ public class StaleWorkingTranscriptWatchdogTests
         await using var h = await Harness.CreateAsync(resilient: true);
         h.Handler.Mode = mode;
         var timersBefore = h.Clock.Inner.Events.Count;
-        await h.PassAsync(); h.AssertBaselineProbe(); await h.Handler.WaitForAsync(h.Id);
+        await h.PassAsync(); await h.Handler.WaitForAsync(h.Id);
         h.HttpGets.ShouldBe(1);
         if (mode == "body") await h.Handler.BodyReached.Task.WaitAsync(TimeSpan.FromSeconds(15));
         if (mode == "backoff")
@@ -403,7 +404,7 @@ public class StaleWorkingTranscriptWatchdogTests
             h.Entries.Length.ShouldBe(before);
             h.Logs.ShouldContain(e => e.Level == LogLevel.Warning && e.Message.Contains("reconciliation failed"));
         }
-        else h.Entries.Length.ShouldBe(before - 2);
+        else { h.Reconciled.ShouldBe(1); h.Entries.Length.ShouldBe(4); }
     }
 
     [Test, Arguments("working"), Arguments("unknown"), Arguments("idle")]
@@ -423,8 +424,8 @@ public class StaleWorkingTranscriptWatchdogTests
         (await h.WorkingAsync(h.Id)).ShouldBe(outcome != "idle");
     }
 
-    private static Type? RecoveryType => typeof(AgentSessionRuntime).Assembly.GetType("Antiphon.Server.Application.Services.StaleWorkingTranscriptRecovery");
-    private static Type? SettingsType => typeof(AgentSessionRuntime).Assembly.GetType("Antiphon.Server.Application.Settings.StaleWorkingTranscriptSettings");
+    private static Type RecoveryType => typeof(StaleWorkingTranscriptRecovery);
+    private static Type SettingsType => typeof(StaleWorkingTranscriptSettings);
     private static object? Property(object value, string name) => value.GetType().GetProperty(name,
         BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(value);
     private static object? Call(object value, string name, params object[] args) => value.GetType().GetMethod(name,
@@ -450,6 +451,8 @@ public class StaleWorkingTranscriptWatchdogTests
             services.RemoveAll<ISessionRunnerClient>(); services.AddSingleton<ISessionRunnerClient>(h.Client);
             services.RemoveAll<TimeProvider>(); services.AddSingleton<TimeProvider>(h.Clock);
             services.AddSingleton<ILoggerProvider>(h.LogProvider);
+            services.AddSingleton<ILogger<Antiphon.Server.Infrastructure.Supervision.StaleWorkingTranscriptHostedService>>(
+                new TypedLog<Antiphon.Server.Infrastructure.Supervision.StaleWorkingTranscriptHostedService>(h.LogProvider));
         }
     }
 
@@ -465,7 +468,7 @@ public class StaleWorkingTranscriptWatchdogTests
         public required RecordingFlushes Flush;
         public required LogProvider LogProvider;
         public required Faults Fault;
-        public object? Recovery;
+        public object Recovery = null!;
         public readonly CancellationTokenSource Stop = new();
         public Guid[] Ids = [];
         public Guid Id => Ids[0];
@@ -478,10 +481,10 @@ public class StaleWorkingTranscriptWatchdogTests
         public Entry[] Entries => ReadEntries("Directory");
         public Entry[] Pending => ReadEntries("Pending");
         public Entry[] Active => ReadEntries("Active");
-        public int Passes => Recovery is null ? 0 : (int)Property(Call(Recovery, "Observe")!, "Passes")!;
-        public int Discovered => Recovery is null ? 0 : (int)Property(Call(Recovery, "Observe")!, "DiscoveredThisPass")!;
-        public int Reconciled => Recovery is null ? 0 : (int)Property(Call(Recovery, "Observe")!, "ReconciledThisPass")!;
-        private Entry[] ReadEntries(string name) => Recovery is null ? [] : ((System.Collections.IEnumerable)Property(Call(Recovery, "Observe")!, name)!)
+        public int Passes => (int)Property(Call(Recovery, "Observe")!, "Passes")!;
+        public int Discovered => (int)Property(Call(Recovery, "Observe")!, "DiscoveredThisPass")!;
+        public int Reconciled => (int)Property(Call(Recovery, "Observe")!, "ReconciledThisPass")!;
+        private Entry[] ReadEntries(string name) => ((System.Collections.IEnumerable)Property(Call(Recovery, "Observe")!, name)!)
             .Cast<object>().Select(e => new Entry((Guid)Property(e, "SessionId")!, (DateTime)Property(e, "Generation")!,
                 (long?)Property(e, "LastSuccess"), (long?)Property(e, "LastAttempt"), (long)Property(e, "DiscoveredAt")!)).ToArray();
         public AppDbContext Db() => new(new DbContextOptionsBuilder<AppDbContext>().UseNpgsql(Schema.ConnectionString)
@@ -524,7 +527,6 @@ public class StaleWorkingTranscriptWatchdogTests
                     handler.Snapshots[id] = new(id, [prompt], 1, AcceptedStartedAt: generation);
                 }
                 await db.SaveChangesAsync();
-                if (RecoveryType is not null)
                 {
                     var settings = Activator.CreateInstance(SettingsType!)!;
                     SettingsType!.GetProperty("IntervalSeconds")!.SetValue(settings, interval);
@@ -537,18 +539,11 @@ public class StaleWorkingTranscriptWatchdogTests
             }
             catch { await h.DisposeAsync(); throw; }
         }
-        // Test-first only: pre-S4 owns cache warmup, which performs no transcript pull.
-        // The final implementation removes this adapter; assertions use actual HTTP/DB outcomes.
-        public async Task PassAsync()
-        {
-            if (Recovery is null) { await Store.WarmAsync(default); return; }
-            await CallAsync(Recovery, "TickAsync", Stop.Token);
-        }
+        public Task PassAsync() => CallAsync(Recovery, "TickAsync", Stop.Token);
         public async Task PassAndJoinAsync() { await PassAsync(); await JoinAsync(); }
-        public void AssertBaselineProbe() { if (Recovery is null) HttpGets.ShouldBeGreaterThan(0, "independent evidence recovery must probe cold Working sessions"); }
-        public Task JoinAsync() => Recovery is null ? Task.CompletedTask : CallAsync(Recovery, "JoinCurrentProbesAsync").WaitAsync(TimeSpan.FromSeconds(20));
-        public Task JoinExceptAsync(Guid id) => Recovery is null ? Task.CompletedTask : CallAsync(Recovery, "JoinCurrentProbesExceptAsync", id).WaitAsync(TimeSpan.FromSeconds(20));
-        public Task StopAsync() => Recovery is null ? Task.CompletedTask : CallAsync(Recovery, "StopAsync", CancellationToken.None);
+        public Task JoinAsync() => CallAsync(Recovery, "JoinCurrentProbesAsync").WaitAsync(TimeSpan.FromSeconds(20));
+        public Task JoinExceptAsync(Guid id) => CallAsync(Recovery, "JoinCurrentProbesExceptAsync", id).WaitAsync(TimeSpan.FromSeconds(20));
+        public Task StopAsync() => CallAsync(Recovery, "StopAsync", CancellationToken.None);
         public SessionRunnerTranscriptEvent Event(Guid id, long seq, string kind) => new(id, seq, kind, $"{id:N}-{seq}-{kind}", null,
             new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero).AddSeconds(seq), "assistant", kind == "UserPrompt" ? "working" : "done", null, null, null, null, null);
         public void Idle(Guid id)
@@ -571,7 +566,8 @@ public class StaleWorkingTranscriptWatchdogTests
         public async ValueTask DisposeAsync()
         {
             Stop.Cancel(); Handler.Release.TrySetResult(); Fault.SaveRelease.TrySetResult();
-            await StopAsync(); Stop.Dispose(); Http.Dispose(); await Provider.DisposeAsync(); await Schema.DisposeAsync();
+            if (Recovery is IAsyncDisposable owned) await owned.DisposeAsync();
+            Stop.Dispose(); Http.Dispose(); await Provider.DisposeAsync(); await Schema.DisposeAsync();
         }
     }
 
@@ -605,6 +601,13 @@ public class StaleWorkingTranscriptWatchdogTests
             public void Log<TState>(LogLevel level, EventId id, TState state, Exception? ex, Func<TState, Exception?, string> formatter) =>
                 events.Enqueue(new(level, formatter(state, ex), ex, state is IEnumerable<KeyValuePair<string, object?>> pairs ? pairs.ToDictionary(p => p.Key, p => p.Value) : new Dictionary<string, object?>()));
         }
+    }
+    private sealed class TypedLog<T>(LogProvider provider) : ILogger<T>
+    {
+        private readonly ILogger _inner = provider.CreateLogger(typeof(T).FullName!);
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => _inner.BeginScope(state);
+        public bool IsEnabled(LogLevel level) => _inner.IsEnabled(level);
+        public void Log<TState>(LogLevel level, EventId id, TState state, Exception? ex, Func<TState, Exception?, string> formatter) => _inner.Log(level, id, state, ex, formatter);
     }
     private sealed class Faults : DbCommandInterceptor, ISaveChangesInterceptor
     {

@@ -70,3 +70,18 @@ HTTP counts, missing disabled logs and missing startup options rejection. It doe
 not fake a recovery result. Remove the adapter in the implementation group.
 Independent cap/fairness/fence guards still require their pending Mutation PCs;
 baseline absence of the feature is not an independent mutation proof for each guard.
+
+## S4 implementation group
+
+Test-first source 6979735a1bbe7e9ff16a1edf167193f8d234e06e ran all 48 cases:
+48 assertion failures, zero passed/skipped, no fixture/build errors. Run
+20261013-072438-ff86 retains exact failures and clean/verified source provenance.
+The production group removes the temporary cache-warmup adapter and calls the
+concrete scheduler. No S3 or queue-service source was changed.
+The capacity fixture allows 275 explicit scheduling passes for 1025 sessions;
+four workers require 257 admission rounds plus discovery/reconciliation pages.
+This is the load term from the frozen design, not a timeout increase.
+The cleanup fixture's cursor after three two-row discovery passes selects the
+fifth tracked ID: its next confirmed terminal page removes one, leaving four.
+Host log capture explicitly injects the recovery host logger because Program's
+Serilog setup does not provide the same provider capture as the service fixture.

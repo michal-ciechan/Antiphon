@@ -1,5 +1,36 @@
 # Session runtime invariants
 
+## Stale Working transcript recovery (CARD-1205 S4)
+
+`StaleWorkingTranscript` defaults to enabled, interval 120 seconds, poll 15,
+probe timeout 10, four workers and page size 128. T28/T29 in
+`StaleWorkingTranscriptWatchdogTests` bind startup validation and settings limits.
+T18/T19 bind configured monotonic evidence age, independently of UTC changes;
+T20 protects that age from keepalives, cache reads, queue attempts and another
+session's transcript activity. A successful checked Working observation refreshes
+the age; Unknown retains debt and retries no faster than the poll (T24).
+
+The independent hosted driver reconstructs cold local Running Working sessions
+from durable rows (T26/T30). Discovery and reconciliation each read one bounded
+page; fair queued work is capped with the 1024-entry directory (T21/T23/T34).
+T22 protects the worker cap and old-generation ownership until its probe joins.
+Due/result logs identify the session, generation and server epoch; warnings expose
+Unknown, discovery failure, overflow, deferred capacity and overdue owned work
+(T18/T21..T25/T31). T25 binds shutdown joining a non-cooperative save.
+
+The nominal single-session allowance is interval + poll + probe budget: 145
+seconds with defaults, excluding commit delay. For stable N eligible sessions,
+discovery adds up to ceil(N/128)*15 seconds and a due backlog adds up to
+ceil(N/4)*10 seconds. Those are load terms, not an arbitrary-population 120-second
+delivery promise. Unavailable evidence leaves Working/debt visible.
+
+Recovery uses the S3 checked generation/frontier operation. Checked idle schedules
+the existing coalesced completion flush outside the commit lease (T33); the normal
+worker rechecks idle. T35 checks durable boundary/status and runner operation
+spies for Working, Unknown and evidence-backed idle. This backstop does not create
+a seat-release policy. T27 binds the explicit disabled-bound warning when either
+this setting or SessionRunner is disabled. S5 owns complete recipient receipts.
+
 ## Dormant terminal runner seat integration (CARD-0667 S4b)
 
 `TerminalRunnerSeatRelease:AutomaticEnabled` remains false. When explicitly enabled,
