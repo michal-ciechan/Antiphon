@@ -19,7 +19,7 @@ bin-c1205-s5-tool/, UseAppHost=false. No full-assembly, deployment or native PTY
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
 | S5-BASE | Tests | `tests/Antiphon.Tests -> bin-c1205-s5-base/` | five-note-baseline | `/*/Antiphon.Tests.Application/TurnEndGapRestartDeliveryTests*/C1205_Restart_delivers_five_gap_held_completions_once*` | T37,V-20,R-5 | Two executed on unchanged pre-S5 production; report actual outcome | 2 | 6 |
-| S5-A | Resume | `tests/Antiphon.Tests -> bin-c1205-s5-resume/` | recovery-restart | `/*/Antiphon.Tests.Application/TurnEndGapRestartDeliveryTests*/*` | T37..42,T44,T46 | Ten cases before adding T43/T45 | 10 | 12 |
+| S5-A | Resume | `tests/Antiphon.Tests -> bin-c1205-s5-resume/` | recovery-restart | `/*/Antiphon.Tests.Application/TurnEndGapRestartDeliveryTests*/(C1205_Restart_delivers*)\|(C1205_Watchdog_delivers*)\|(C1205_Restart_after_transcript*)\|(C1205_Receipt_restart*)\|(C1205_Busy_tail*)\|(C1205_Already_eligible*)\|(C1205_Unknown_probe*)\|(C1205_Flush_rechecks*)` | T37..42,T44,T46 | Exactly ten cases, excluding T43/T45 | 10 | 12 |
 | CP-5 | S5 | `tests/Antiphon.Tests -> bin-c1205-s5/` | restart-receipts | `/*/Antiphon.Tests.Application/TurnEndGapRestartDeliveryTests*/*` | V-20..24,V-36..40,R-5 | Exactly 30 executed, all named cases green | 30 | 16 |
 | CP-6 | S5 | `tests/Antiphon.Tests -> bin-c1205-receipts/` | receipt-compatibility | `/*/*/(VerificationRoundDeliveryTests*)\|(TestClassificationGuardTests*)/(C544_CompletionReceipt*)\|(C544_StampIsNotReceipt*)\|(Registry_matches_compiled_metadata*)` | R-8,R-9 | Exactly four named methods green | 4 | 7 |
 
