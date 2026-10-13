@@ -1,5 +1,6 @@
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.Tests.Infrastructure;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Shouldly;
@@ -97,7 +98,7 @@ public sealed class AgentTaskLandNestedRepositoryCleanupTests
     {
         await using var fixture = new LandHalfResetFixture();
         var h = fixture.Harness;
-        var (_, reviewed, evidence) = await fixture.SeedReviewedDescendantAsync();
+        var (local, reviewed, evidence) = await fixture.SeedReviewedDescendantAsync();
         var first = await h.RequestAsync(expectedSourceSha: reviewed, reviewEvidenceId: evidence,
             recoverReviewedSource: true);
         fixture.Interceptor.RequestId = first.RequestId;
@@ -117,14 +118,52 @@ public sealed class AgentTaskLandNestedRepositoryCleanupTests
         var sentinel = Path.Combine(nested, "sentinel.txt");
         await File.WriteAllTextAsync(sentinel, "uncommitted private bytes\n");
         var adminBytes = await AdministrativeBytesAsync(Path.Combine(nested, ".git"));
+        var proof = await h.Fixture.Git.InspectRecoveryCheckoutAsync(h.Fixture.Coordinates, local, reviewed, default);
+        proof.Accepted.ShouldBeFalse("N.Cleanup.UnsafeStrictProofRefused");
+        proof.Reason.ShouldBe(gitFile ? "recovery_checkout_unproven" : "source_dirty");
         await h.SweepAsync();
         await h.RunQueuedAsync();
         await using var db = h.CreateContext();
         var row = await db.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == first.RequestId);
-        row.SourceRefusalReason.ShouldBe(gitFile ? "recovery_checkout_unproven" : "source_dirty", "N.Cleanup.UnsafeProofRefused");
+        row.SourceRefusalReason.ShouldBe("source_dirty", "N.Cleanup.UnsafeProofRefused");
         (await h.OperationAsync()).ShouldBeNull("N.Cleanup.RefusalPreventsPublication");
         (await File.ReadAllTextAsync(sentinel)).ShouldBe("uncommitted private bytes\n");
         (await AdministrativeBytesAsync(Path.Combine(nested, ".git"))).ShouldBe(adminBytes);
+    }
+
+    [Test]
+    public async Task C971_LateNestedRepositorySurvivesSetAsideResume()
+    {
+        await using var h = await WorktreeGuardedCleanupTests.RemovalHarness.CreateAsync();
+        h.CleanFirst = true;
+        string? nested = null;
+        string[]? adminBytes = null;
+        h.OnRemove = async _ =>
+        {
+            nested = Path.Combine(h.SetAsideTrees().ShouldHaveSingleItem(), "obj", "nested");
+            Directory.CreateDirectory(nested);
+            await h.H.Fixture.RequiredAsync(nested, "init");
+            await File.WriteAllTextAsync(Path.Combine(nested, "committed.txt"), "private\n");
+            await h.H.Fixture.RequiredAsync(nested, "add", "committed.txt");
+            await h.H.Fixture.RequiredAsync(nested, "commit", "-m", "private repository");
+            await File.WriteAllTextAsync(Path.Combine(nested, "sentinel.txt"), "late uncommitted bytes\n");
+            adminBytes = await AdministrativeBytesAsync(Path.Combine(nested, ".git"));
+        };
+        var first = await h.RemoveAsync(context: false);
+        nested.ShouldNotBeNull("N.Cleanup.LateRepositoryInjected");
+        Directory.Exists(Path.Combine(nested, ".git")).ShouldBeTrue("N.Cleanup.LateGitSurvivesDelete");
+        (await AdministrativeBytesAsync(Path.Combine(nested, ".git"))).ShouldBe(adminBytes);
+        (await File.ReadAllTextAsync(Path.Combine(nested, "sentinel.txt"))).ShouldBe("late uncommitted bytes\n");
+        first.Residue.ShouldBe("ignored_content_preserved", "N.Cleanup.LatePreservationReported");
+        first.Unregistered.ShouldBeTrue();
+        first.BranchDeleted.ShouldBeFalse();
+        h.OnRemove = null;
+        var resumed = await h.RemoveAsync(context: false);
+        resumed.Residue.ShouldBe("ignored_content_preserved", "N.Cleanup.ResumePreservationReported");
+        (await AdministrativeBytesAsync(Path.Combine(nested, ".git"))).ShouldBe(adminBytes);
+        (await File.ReadAllTextAsync(Path.Combine(nested, "sentinel.txt"))).ShouldBe("late uncommitted bytes\n");
+        h.SetAsideTrees().ShouldHaveSingleItem("N.Cleanup.PreservedSetAsideRetained");
+        resumed.BranchDeleted.ShouldBeFalse();
     }
 
     private static async Task<string[]> AdministrativeBytesAsync(string marker)
