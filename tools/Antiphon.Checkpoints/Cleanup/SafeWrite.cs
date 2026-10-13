@@ -316,7 +316,7 @@ public static class SafeWrite
         {
             if (!File.Exists(path))
                 return false;
-            var text = File.ReadAllText(path);
+            var text = ReceiptFile.ReadText(path);
             if (text.StartsWith(Marker + " " + runId, StringComparison.Ordinal))
                 return true;
             return text.Contains("\"toolOwner\": \"" + Marker + "\"", StringComparison.Ordinal)

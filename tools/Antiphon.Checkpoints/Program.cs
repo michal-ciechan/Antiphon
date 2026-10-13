@@ -374,7 +374,7 @@ public static class Program
             var reason = preflight ?? (state is null ? "state-receipt-unreadable: " + run
                 : RequiredRunReceiptRefusal(run, state, options.Get("expected-source-sha")));
             if (reason is not null) { output.WriteLine("refused: " + reason); return null; }
-            return JsonSerializer.Deserialize<ReportModel>(File.ReadAllText(Path.Combine(run, "report.json")), ReportWriter.Json);
+            return ReceiptJson.Read<ReportModel>(Path.Combine(run, "report.json"), ReportWriter.Json);
         }
 
         if (options.Has("merge"))
@@ -409,7 +409,7 @@ public static class Program
         var run = ResolveRun(options, repo);
         if (ReadRequired(run) is null) return ExitCodes.Invalid;
         var report = Path.Combine(run, options.Has("json") ? "report.json" : "report.md");
-        output.Write(File.ReadAllText(report));
+        output.Write(ReceiptFile.ReadText(report));
         return ExitCodes.Green;
     }
 
@@ -437,10 +437,10 @@ public static class Program
         var expected = Required(options, "expected-source-sha");
         try
         {
-            var raw = File.ReadAllText(path);
+            var raw = ReceiptFile.ReadText(path);
             using var document = JsonDocument.Parse(raw);
             AssertUniqueJson(document.RootElement);
-            var report = JsonSerializer.Deserialize<ReportModel>(raw, ReportWriter.Json);
+            var report = ReceiptJson.Parse<ReportModel>(raw, ReportWriter.Json);
             if (report is null) throw new InvalidDataException("report_empty");
             var rows = (options.Get("rows") ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
             var expectedRepeat = options.Get("expected-repeat") is string count ? RepeatRequest.Parse(count) : 1;

@@ -26,7 +26,14 @@ public static class ConfinedFileReader
 
     public static string Read(string root, string path, int limit, out int byteCount, Action? afterVerification = null)
     {
-        byteCount = 0;
+        var bytes = ReadBytes(root, path, limit, afterVerification);
+        byteCount = bytes.Length;
+        using var reader = new StreamReader(new MemoryStream(bytes), Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+        return reader.ReadToEnd();
+    }
+
+    public static byte[] ReadBytes(string root, string path, int limit, Action? afterVerification = null)
+    {
         using var handle = OperatingSystem.IsLinux() ? OpenLinux(path) : OperatingSystem.IsWindows() ? OpenWindows(path)
             : throw new InvalidDataException("opened-handle verification unsupported on this platform");
         var metadata = OperatingSystem.IsLinux() ? InspectLinux(handle) : InspectWindows(handle);
@@ -43,10 +50,7 @@ public static class ConfinedFileReader
             if (content.Length + count > limit) throw new InvalidDataException("selected file exceeds size limit");
             content.Write(buffer, 0, count);
         }
-        byteCount = (int)content.Length;
-        content.Position = 0;
-        using var reader = new StreamReader(content, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
-        return reader.ReadToEnd();
+        return content.ToArray();
     }
 
     private static SafeFileHandle OpenLinux(string path)

@@ -1162,3 +1162,10 @@ case, update this count and run
 `CheckpointNamespaceCensusUsageTests.namespace_census_matches_compiled_checkpoint_cases`.
 That separate class carries `Category=Unit`, so the ordinary Unit lane catches
 census drift while `CheckpointTempUsageTests` remains in Integration.
+
+CARD-1199 receipt readers inspect file types without following links before opening required state,
+report and build evidence, then recheck the retained handle. Linux uses nonblocking opens so a
+FIFO substitution cannot block an open. Unsupported types (links, directories, pipes, sockets,
+devices), missing serialized reference facts and invalid deserialized shapes refuse with a named
+receipt reason and exit 2. Nullable diagnostic fields may be null; empty collections are valid
+when no entries are required. Receipt reads have a 64 MiB bound. Markdown digests hash exact bytes.

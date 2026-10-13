@@ -22,7 +22,7 @@ public static class RunOwnershipStore
         try
         {
             var path = Path.Combine(runDirectory, FileName);
-            var record = JsonSerializer.Deserialize<RunOwnership>(File.ReadAllText(path), Json);
+            var record = ReceiptJson.Read<RunOwnership>(path, Json);
             return record is { Version: 1 }
                 && record.RunId == Path.GetFileName(Path.GetFullPath(runDirectory))
                 && SamePath(record.RunDirectory, runDirectory) ? record : null;

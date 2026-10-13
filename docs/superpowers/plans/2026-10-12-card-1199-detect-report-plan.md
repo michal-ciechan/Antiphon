@@ -36,6 +36,8 @@ Closed scope overrides broad Unit profile per repair brief. Linux only. One isol
 | CP-13 | S4 | CP-1 | receipt-file-types | `/*/*/CheckpointReceiptSafetyTests/symlink_and_directory_receipts_refuse_within_four_seconds*` | V-5 F1 | eighteen combinations refuse, linked target unchanged | 1 | 1 |
 | CP-14 | S4 | CP-1 | receipt-json-shapes | `/*/*/CheckpointReceiptSafetyTests/malformed_collection_and_string_shapes_return_named_refusals*` | V-6 F2 | required collection/string shapes refuse; state unchanged | 1 | 2 |
 
+| CP-15 | S4 | CP-1 | shared-verified-reader | `/*/*/PlanCoverageHandleTests/*` | R-4 V-5 | full affected reader class, all sixteen cases | 16 | 1 |
+
 ### Mutation handoff
 
 No deliberate mutants run by Code. All PCs/variants and missing-control discovery, including this zero-PC plan, remain pending method-scoped SourceLanding Mutation after ordinary Review and caller landing. Candidate documentation: docs/superpowers/mutations/. Restart: none.
@@ -71,3 +73,5 @@ Landing owner Code 6284d6ec-03f7-4a88-b9f5-12a601bfe017, branch feat/card-task-6
 | PC-1 | `/*/*/CheckpointReceiptSafetyTests/linux_fifo_receipts_refuse_within_four_seconds` | nine verb/path pairs; precheck or nonblocking-open removal | pending SourceLanding Mutation |
 | PC-2 | `/*/*/CheckpointReceiptSafetyTests/symlink_and_directory_receipts_refuse_within_four_seconds` | eighteen verb/path/type pairs; type/link guard removal | pending SourceLanding Mutation |
 | PC-3 | `/*/*/CheckpointReceiptSafetyTests/malformed_collection_and_string_shapes_return_named_refusals` | required field null/wrong-type/missing and element/empty variants; shape guard removal | pending SourceLanding Mutation |
+
+R-4: shared reader extraction returns exact bytes through the already verified handle; full PlanCoverageHandleTests (16 cases) guards containment, links, size bounds, FIFO refusal and path replacement. CP-15 is required because receipt digests now use this same reader. Final new total: 223 passed plus one planned Windows skip, census 504. Tests-first baseline 383dac71a759b71b2f8158eb32dfeb3781e319c7: 3 failed, including nine hard-bounded FIFO hangs and symlink successes; native null fixture reports three NullReferenceExceptions. No timeout/assertion was relaxed. Required presence applies to serialized reference fields; nullable fields may carry null, empty diagnostic strings/collections remain allowed, identities and collection elements must be nonempty.
