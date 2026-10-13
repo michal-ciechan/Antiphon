@@ -194,9 +194,8 @@ public sealed partial class CardWorktreeMirrorCleanupTests
             if (cut == "D11-store")
             {
                 var original = (await f.EndpointAsync()).OperationId;
-                // A new runner boot with a replaced store registers after the old owner lease (90 s) expires.
-                await f.DisconnectAsync(); hostClock.Advance(TimeSpan.FromSeconds(91)); await f.ReconnectAsync(Guid.NewGuid());
-                f.Wire.Directory.GetLiveStoreId(f.Binding.RunnerId).ShouldNotBe(Guid.Parse(f.Binding.RunnerStoreId), cut);
+                var replacement = await f.ReplaceStoreAsync(hostClock);
+                f.Wire.Directory.GetLiveStoreId(f.Binding.RunnerId).ShouldBe(replacement, cut);
                 var refused = await f.TryAsync();
                 refused.Complete.ShouldBeFalse(cut); refused.Reason.ShouldBe("runner_store_mismatch", cut);
                 var oldEndpointComplete = (await f.EndpointAsync()).State == CardWorktreeCleanupEndpointState.Complete;
