@@ -145,9 +145,16 @@ internal sealed class CompletedCardMirrorFixture : IAsyncDisposable
         typeof(PhoneHomeCommandDispatcher).GetField("_workspace", BindingFlags.NonPublic | BindingFlags.Instance)
             .ShouldNotBeNull().SetValue(dispatcher, Workspace);
         Connection = new(Options.Create(_settings), adoption, dispatcher,
-            Runtime, new HttpFactory(), TimeProvider.System, NullLogger<PhoneHomeConnectionService>.Instance);
+            Runtime, new HttpFactory(), TimeProvider.System, new Microsoft.Extensions.Logging.Logger<PhoneHomeConnectionService>(
+                Microsoft.Extensions.Logging.LoggerFactory.Create(b => b.AddProvider(Wire.Logs))));
         await Connection.StartAsync(_stop.Token); adoption.SignalReady();
-        var live = await Wire.WaitLiveAsync(TimeSpan.FromSeconds(45)); Wire.Directory.MarkRecovered(live);
+        PhoneHomeLiveConnection live;
+        try { live = await Wire.WaitLiveAsync(TimeSpan.FromSeconds(45)); }
+        catch (TimeoutException ex)
+        {
+            throw new TimeoutException(ex.Message + " Logs: " + string.Join(" | ", Wire.Logs.Entries.TakeLast(12)), ex);
+        }
+        Wire.Directory.MarkRecovered(live);
     }
 
     // The runner process stays; only its phone-home connection ends.
