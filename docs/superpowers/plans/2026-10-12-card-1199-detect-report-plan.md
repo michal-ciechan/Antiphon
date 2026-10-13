@@ -159,3 +159,5 @@ Tests first: CP-22 (two methods) at 73dfd1010f2a74563d1238fc7a3b20f868e320ad ove
 | PC-10 | `/*/*/SafeDeleteProcessBoundaryTests/exited_git_parent_with_pipe_holding_descendant_meets_one_deadline_and_is_killed` | separate exit and drain deadlines; process-group kill removal; healthy control | pending method-scoped SourceLanding Mutation |
 
 All earlier PCs (PC-1..PC-8) and variants remain pending method-scoped SourceLanding Mutation. Restart: none.
+
+Repair 13j result: CP-22 tests-first at 73dfd1010f2a74563d1238fc7a3b20f868e320ad over unchanged 6a13c5a57 production failed both methods (configured monitor ran; held-pipe preflight took 4,002 ms against the 3,500-ms bound). Final closed run 20261013-173536-ad10 at 0178f8f922e4457a45f49f3768824349f7dfe088: CP-1..CP-22 257 passed, zero failed, one planned Windows sharing skip in CP-11; census 538 in CP-1; one isolated test build. Both strict validators accept the 21 eligible rows and refuse CP-11 alone (row_failed, planned skip). R-2 and PC-1..PC-10/all variants remain pending. Report: .antiphon/task-f706251f.md.
