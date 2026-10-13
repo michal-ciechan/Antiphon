@@ -447,10 +447,8 @@ public sealed class RemoteScriptContractTests
     }
 
     // CP-2 checks the registered cache/work/mask set and consumer/helper order.
-    // Foreign-label cleanup guards cover work/mask, not cache volumes.
-    // Known exceptions: a cache volume positively identified as foreign by acquisition (CacheVolumeForeign) remains registered and is deleted by finalization: inherited from before S7, tracked as CARD-1208; no S7 test covers it
-    // Known exceptions: Compose exit-status-only teardown (CARD-1207), older raw
-    // cache namespace/F-7 checks and mid-group removal acknowledgements; W-1 is pending.
+    // C1192_Cleanup_releases_only_registered_current_run_resources checks work/mask labels.
+    // Fixture finalizer deletion is protected only where a named S7 test says so (work and mask volume acquisition ownership; unknown outcomes retained as residue). The inherited finalizer also deletes some objects by name or fixed roster (foreign cache volumes, same-name replacements behind legacy name-only markers, unacquired fixed-name consumers, and possibly others): the complete audit and fix are CARD-1208; Compose teardown is exit-status-only (CARD-1207); live Docker acceptance (W-1) is pending.
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public void C1192_Cleanup_releases_only_registered_current_run_resources()
@@ -567,7 +565,7 @@ public sealed class RemoteScriptContractTests
     // CARD-1192 S1 repair. docker volume create adopts a volume that appears after the
     // absence lookup. Work/mask ownership is checked after create; a foreign or unlabeled
     // work/mask volume is not mounted, is dropped from registration, and is not removed.
-    // CacheVolumeForeign finalization is excluded (CARD-1208).
+    // The finalizer scope statement above applies.
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public void C1192_Foreign_volume_is_refused_after_create()
@@ -583,9 +581,8 @@ public sealed class RemoteScriptContractTests
     }
 
     // CARD-1192 S1 repair. Claim creates a fresh directory that must not already exist
-    // and records ownership only after that mkdir. Cleanup deletes only a canonical
-    // path strictly inside the private root, with no symlink following. A pre-existing
-    // directory or marker is refused and left intact, including an unrelated canary.
+    // and records ownership after mkdir. C1192_Harness_cleanup_stays_inside_its_private_directory
+    // checks canonical private-directory removal and retention of existing path/marker canaries.
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public void C1192_Harness_cleanup_stays_inside_its_private_directory()

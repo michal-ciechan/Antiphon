@@ -1,10 +1,8 @@
 #!/usr/bin/env bash
 # CARD-1192 S1 workspace model, S2 race barriers, S3 npm volume reads, and S4 payload boundary.
 # Extracted c849_* functions against a filesystem Docker model.
-# Foreign-acquisition drop/untouched checks cover work/mask volumes, not cache volumes.
-# Known exceptions: a cache volume positively identified as foreign by acquisition (CacheVolumeForeign) remains registered and is deleted by finalization: inherited from before S7, tracked as CARD-1208; no S7 test covers it
-# Compose exit-status-only teardown (CARD-1207), older raw inspect checks,
-# mid-group acknowledgements and anonymous --rm helpers remain limits; W-1 is pending.
+# C1192_Foreign_volume_is_refused_after_create checks work/mask acquisition.
+# Fixture finalizer deletion is protected only where a named S7 test says so (work and mask volume acquisition ownership; unknown outcomes retained as residue). The inherited finalizer also deletes some objects by name or fixed roster (foreign cache volumes, same-name replacements behind legacy name-only markers, unacquired fixed-name consumers, and possibly others): the complete audit and fix are CARD-1208; Compose teardown is exit-status-only (CARD-1207); live Docker acceptance (W-1) is pending.
 # Never source dispatch. Never call the host docker daemon.
 set -euo pipefail
 shopt -s nullglob
@@ -43,7 +41,7 @@ c1192_walk_unlinked() {
     return 0
 }
 
-# Fresh mkdir. A path or marker that already exists is refused and left untouched.
+# C1192_Harness_cleanup_stays_inside_its_private_directory checks refusal of existing paths/markers.
 # Ownership is written only after mkdir succeeds.
 c1192_claim_fresh() {
     local candidate="${1-}" canon token
@@ -86,10 +84,8 @@ c1192_claim_fresh() {
     return 0
 }
 
-# Delete target only when it is a real directory strictly inside private_root,
-# no symlink is followed, and the marker matches the token recorded after create.
-# Removal stays on the directory identity acquired with that marker. An ancestor
-# replaced afterwards is a refusal and deletes nothing.
+# C1192_Harness_cleanup_stays_inside_its_private_directory checks contained removal
+# and retention of symlink, marker-mismatch and replaced-ancestor canaries.
 c1192_cleanup_contained() {
     local private_root="${1-}" target="${2-}" token="${3-}"
     local root_canon target_canon marker stamp
@@ -125,8 +121,8 @@ c1192_cleanup_contained() {
     c1192_delete_acquired "$root_canon" "$target_canon" "$token" || return 1
 }
 
-# Hold target, then remove it only through its held parent. Relative names are
-# the only destructive operations. C1192_CLEANUP_AFTER_MARKER, when set, runs
+# Hold target, validate its parent, then use relative names for removal.
+# C1192_CLEANUP_AFTER_MARKER, when set, runs
 # after the held marker read and before any removal.
 c1192_delete_acquired() {
     local root_canon="${1-}" target_canon="${2-}" token="${3-}"

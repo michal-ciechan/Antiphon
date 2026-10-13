@@ -75,12 +75,12 @@ Line references below describe the inspected base, not future offsets.
   Do not add an environment variable or CLI switch that can redirect a real
   Seed/Prune into a test backend. Ordinary Seed, saved donors, cold seed, preview
   authority, cache labels, budgets and production volume names keep their contracts.
-- **D-5 — Exact ownership and ordered cleanup.** Record workspace/helper names after
+- **D-5 — Workspace acquisition and ordered cleanup.** Record workspace/helper names after
   proving namespace absence, before acquisition; validate work/mask run/role
   labels before mounting. Unknown workspace/helper lookups refuse acquisition
   (CP-1); unknown post-create work/mask probes retain registration (CP-53). Stop consumers,
   preserve allowed evidence, stop workspace helpers, then remove work/mask volumes
-  after label checks. Cache deletion lacks those ownership checks (CARD-1208 below).
+  after label checks; the finalizer scope statement below applies.
   Use the existing cleanup entry point, not `docker volume prune`.
   A workspace creation failure, mid-group failure and normal success all use
   the same finalizer. Do not reuse an occupied case namespace.
@@ -174,8 +174,7 @@ including the masked-pack and seed-smoke helpers on their failure paths.
 `c849_fixture_cleanup` must accept the exact current-run cache-name set generated
 by prepare/seed/race/apphost/npm/contract-controls plus the two new workspace
 names. Foreign-run names, same-prefix unregistered suffixes and production cache
-names are outside the allowed cleanup roster. Mislabeled work/mask volumes are
-protected by label checks; registered cache volumes lack that protection (CARD-1208).
+names are outside the allowed cleanup roster. C1192_Foreign_volume_is_refused_after_create (CP-44) checks foreign work/mask acquisition refusal.
 The work ledger must not be truncated later by `c849_fixture_prepare` after
 workspace initialization has registered entries. Keep the maintenance lock on
 its original host root, acquired before replacing the fixture controller root.
@@ -187,24 +186,13 @@ Compose teardown still has its control files available. CP-34/35/38 cover the
 listed consumer-release attempts, log export, helper/volume removal and controller
 disposal order. CP-45..52 cover post-Compose registered finalizer probes; CP-53
 covers retained work/mask registration and records after unknown ownership probes.
-Confirmed foreign work/mask acquisition labels drop registration without
-mounting/deleting those work/mask volumes; this claim excludes cache volumes.
-The known exceptions below delimit these modeled proofs. Preserve the primary nonzero status and
+C1192_Foreign_volume_is_refused_after_create (CP-44) checks confirmed-foreign work/mask acquisition without mounting/deleting those volumes.
+The finalizer scope statement below delimits these modeled proofs. Preserve the primary nonzero status and
 `UnhandledExit <code>` fallback. Report detected removal failures; successful
 finalization does not prove absence of Compose-created volumes. Do not add a
 fleet sweeper or remove unrelated residue. Live acceptance W-1 remains pending.
 
-Known exceptions:
-
-- a cache volume positively identified as foreign by acquisition (CacheVolumeForeign) remains registered and is deleted by finalization: inherited from before S7, tracked as CARD-1208; no S7 test covers it
-- Compose teardown checks only `docker compose down -v` exit status; residual
-  Compose-created volumes after exit zero are not detected (CARD-1207).
-- Older cache namespace prechecks in prepare/seed/race/apphost/npm/contract-controls,
-  the shared `c849_volume` admission lookup and F-7 private/nonexternal absence
-  checks still use raw inspect status. Mid-group removals still rely on command
-  acknowledgement; anonymous `--rm` helpers are outside the named finalizer roster.
-  These are additional limits disclosed by Reviews 2ec97f2d/0a3d75f7.
-- W-1 native Docker/UID/archive/NuGet-lock and copied rollout acceptance is pending.
+Fixture finalizer deletion is protected only where a named S7 test says so (work and mask volume acquisition ownership; unknown outcomes retained as residue). The inherited finalizer also deletes some objects by name or fixed roster (foreign cache volumes, same-name replacements behind legacy name-only markers, unacquired fixed-name consumers, and possibly others): the complete audit and fix are CARD-1208; Compose teardown is exit-status-only (CARD-1207); live Docker acceptance (W-1) is pending.
 
 SIGKILL, host loss and an unavailable Docker daemon cannot guarantee immediate
 cleanup. Exact run labels/ledgers make residue attributable for an explicit later
@@ -263,10 +251,9 @@ New guard requirements (the V identifiers below bind the proposed checkpoints):
 
 - **V-1:** work/mask absent-only exact registration, no later ledger truncation,
   label/run validation, occupied/unknown lookup refusal, and workspace/helper
-  cleanup after partial acquisition. Cache foreign-finalization is not covered.
+  cleanup after partial acquisition; the finalizer scope statement applies.
 - **V-2:** cleanup removes consumers/helpers before registered volumes, tolerates
-  repeated finalization, and refuses foreign work/mask labels, foreign-run names,
-  production names and same-prefix junk names. Cache ownership is excepted (CARD-1208).
+  repeated finalization, and checks the modeled work/mask labels and registered-name canaries in C1192_Cleanup_releases_only_registered_current_run_resources (CP-44 adjacent helper/foreign methods cover the S7 acquisition boundary); the finalizer scope statement applies.
 - **V-3:** F-4 mount/path agreement, program creation before ownership handoff,
   volume-backed readiness/go/release, shared exclusion and private-scratch expected red.
 - **V-4:** F-3/F-6 npm and refill have no host payload bind/read; positive install
@@ -458,8 +445,7 @@ The recipes below bind exact methods, variants, cases, oracles and reachability.
 
 - V-1: lifecycle registration | Linux shell/model | CP-1/3 | absent-only
   acquisition, preserved ledger and cleanup after partial acquisition.
-- V-2: disposal | Linux shell/model | CP-2/3/35 | exact owned set removed,
-  foreign canaries unchanged, consumer/helper ordering and idempotence.
+- V-2: disposal | Linux shell/model | CP-2/3/35 | the modeled registered set removed, consumer/helper ordering and idempotence; C1192_Foreign_volume_is_refused_after_create (CP-44) checks work/mask foreign-acquisition preservation.
 - V-3: F-4 | shell/model plus command contracts | CP-5/6/7 | consistent
   volume paths, real local file barriers and shared/private discrimination.
 - V-4: npm | shell/recipient model | CP-11/12 | volume payload paths,
@@ -521,7 +507,7 @@ New C1192 methods are single TUnit executions with internal variant matrices.
 | CP / exact method | Recipe | Case / variants | Oracle and reached boundary |
 |---|---|---|---|
 | CP-1: `C1192_Workspace_registration_is_absent_only_and_survives_prepare` | M | Absent/occupied/unknown; labels/driver/options; controller fresh/nonlink/private/host-owned; prepare after init | Independently read ledger/census; absence then intent then acquisition; helpers' argv/security and root mode. |
-| CP-2: `C1192_Cleanup_releases_only_registered_current_run_resources` | M | Exact set, foreign run/production/same-prefix forged ledger, altered labels; repeat | Foreign-run/name and work/mask-label canaries intact; acquired set gone; consumer/helper release precedes volumes; second finalization harmless. CacheVolumeForeign finalization excluded (CARD-1208). |
+| CP-2: `C1192_Cleanup_releases_only_registered_current_run_resources` | M | Exact set, foreign run/production/same-prefix forged ledger, altered labels; repeat | Foreign-run/name and work/mask-label canaries intact; acquired set gone; consumer/helper release precedes volumes; second finalization harmless. The finalizer scope statement applies. |
 | CP-3: `C1192_Partial_workspace_acquisition_is_cleaned` | M | Before/after each work/mask and writer/reader create/start; delete failure | Cut reached; exact acquired set cleaned or residue named; later resources attempted; EXIT already armed. |
 | CP-4: `C1192_Toxic_probe_stays_in_work_volume` | M | Toxic credential input and legal aggregate through volume helper | Actual receipt validator; volume files observed, toxic content absent recursively from CASE_DIR. |
 | CP-5: `C1192_Race_programs_and_feed_share_the_work_volume` | M+T | Feed, three projects, generated zip/driver/lock programs and configs | Run writer then open each consumer's actual path; mount/argument agreement, no payload bind. |
@@ -562,14 +548,13 @@ New C1192 methods are single TUnit executions with internal variant matrices.
 | CP-40: `Nested_lane_never_uses_sudo_or_python` | T | Existing nested-lane scan | No nested sudo/python in moved definitions; saved-import exclusion unchanged. |
 | CP-41: `C849_Cache_receipts_exclude_credentials_and_payloads` | F | Aggregate/toxic key/malformed value | Actual receipt function retains aggregate, refuses invalid input without exporting bytes. |
 | CP-42: `C913_Receipts_reject_mixed_digest_types_and_false_smoke_claims` | P | All existing schema/digest/smoke/Fixture roster faults | Actual front-door rejection/privacy with shim receipts; no scp claim. |
-| CP-43: `C913_Fixture_uses_owned_payloads_and_proven_absent_temp` | H | Existing inventory/occupied/cleanup/control/apphost cases | Adapt removed host paths only: occupied resource refused, recipient bytes read, occupied-name canary preserved, setup error not expected red; CacheVolumeForeign finalization excluded (CARD-1208). |
+| CP-43: `C913_Fixture_uses_owned_payloads_and_proven_absent_temp` | H | Existing inventory/occupied/cleanup/control/apphost cases | Adapt removed host paths only: occupied resource refused, recipient bytes read, occupied-name canary preserved, setup error not expected red; The finalizer scope statement applies. |
 
 ### Guard inventory
 
 Every row is an independently bypassable safety assertion with a distinct PC.
 These plan PC numbers are separate from live Fixture PC-01..PC-32 families.
-Shared detecting methods do not merge controls. The ownership guards cover
-work/mask and named helpers; foreign-cache finalization has no S7 guard (CARD-1208).
+Shared detecting methods do not merge controls. The finalizer scope statement applies; a guard inventory is not a complete deletion audit.
 Native strength remains limited until W-1. Unchanged internal parser/
 importer guards keep all existing R-7 cases; this migration commissions mutation
 at the changed seam and the explicitly retained assertions below, not every
@@ -917,7 +902,7 @@ predicate is unbound coverage.
 | PC-138 | G-138: Remove lock-waiter.log from export list. | `/*/*/RemoteScriptContractTests/C1193_Fixture_exit_trap_copies_race_logs_before_tree_removal` | `five-logs-exported` fails after CP-38's boundary is reached. |
 | PC-139 | G-139: Remove source regular-file predicate (T-class body assertion; a directory-copy failure alone is not red). | `/*/*/RemoteScriptContractTests/C1193_Fixture_log_copy_skips_symlinks_and_copies_regular_files` | `nonregular-source-skipped` fails after CP-39's boundary is reached. |
 | PC-140 | G-140: Change c849_payload_accept_transfer validation from writer to reader. | `/*/*/RemoteScriptContractTests/C1192_Fixture_seed_and_rerun_keep_payloads_in_volume` | `writer-prunes-incomplete-stage` fails after reader-cannot-prune proves the incomplete package survives the read-only mount. Pending SourceLanding Mutation. |
-| PC-141 | G-141: Bypass c849_fixture_cache_mount_ok in c849_fixture_recovery_copy. | `/*/*/RemoteScriptContractTests/C1192_Recovery_controls_validate_volume_bytes_modes_and_manifest` | `recovery-foreign-cache-refused` fails: the protected recipient is overwritten from the foreign-labeled cache. Pending SourceLanding Mutation. |
+| PC-141 | G-141: Bypass c849_fixture_cache_mount_ok in c849_fixture_recovery_copy. | `/*/*/RemoteScriptContractTests/C1192_Recovery_controls_validate_volume_bytes_modes_and_manifest` | `recovery-foreign-cache-refused` fails: the recovery recipient is overwritten from the foreign-labeled cache. Pending SourceLanding Mutation. |
 | PC-142 | G-142: Restore the apphost host root and payload bind. | `/*/*/RemoteScriptContractTests/C1192_Apphost_mask_is_an_empty_exact_volume_mount` | `apphost-volume-payload` fails after CP-27's boundary is reached. |
 | PC-143 | G-143: Remove ordinary import readonly. | `/*/*/RemoteScriptContractTests/C1192_Apphost_mask_is_an_empty_exact_volume_mount` | `apphost-import-readonly` fails after CP-27's boundary is reached. |
 | PC-144 | G-144: Skip mask workspace label validation. | `/*/*/RemoteScriptContractTests/C1192_Apphost_mask_is_an_empty_exact_volume_mount` | `mask-foreign-refused` fails after CP-27's boundary is reached. |

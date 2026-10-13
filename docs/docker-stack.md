@@ -703,20 +703,8 @@ CP-45..52 model post-Compose finalizer probes for registered consumers, helpers,
 work/mask/cache volumes and the fixture network. CP-53 models work/mask creation
 followed by unknown ownership, with persistent daemon loss and a one-probe outage:
 registration and both cleanup records remain, and the wrapper refuses success.
-CP-44 retains the work/mask confirmed-foreign refusal row: drop the registration,
-leave the work/mask volume unmounted and do not delete it. Confirmed-owned
-work/mask creation continues normally. This does not cover cache-volume acquisition.
-Known exceptions:
-
-- a cache volume positively identified as foreign by acquisition (CacheVolumeForeign) remains registered and is deleted by finalization: inherited from before S7, tracked as CARD-1208; no S7 test covers it
-- Compose teardown checks only `docker compose down -v` exit status; residual
-  Compose-created volumes after exit zero are not detected (CARD-1207).
-- Older cache namespace prechecks in prepare/seed/race/apphost/npm/contract-controls,
-  the shared `c849_volume` admission lookup and F-7 private/nonexternal absence
-  checks still use raw inspect status. Mid-group removals still rely on command
-  acknowledgement; anonymous `--rm` helpers are outside the named finalizer roster.
-  These are additional limits disclosed by Reviews 2ec97f2d/0a3d75f7.
-- W-1 native Docker/UID/archive/NuGet-lock and copied rollout acceptance is pending.
+C1192_Foreign_volume_is_refused_after_create (CP-44) checks confirmed-foreign work/mask refusal: registration drops, and those volumes are neither mounted nor deleted.
+Fixture finalizer deletion is protected only where a named S7 test says so (work and mask volume acquisition ownership; unknown outcomes retained as residue). The inherited finalizer also deletes some objects by name or fixed roster (foreign cache volumes, same-name replacements behind legacy name-only markers, unacquired fixed-name consumers, and possibly others): the complete audit and fix are CARD-1208; Compose teardown is exit-status-only (CARD-1207); live Docker acceptance (W-1) is pending.
 
 The production cache names are
 outside its namespace. A nonzero case or missing
