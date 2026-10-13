@@ -154,3 +154,11 @@ fails. PC-77's headers/body/backoff variants remain pending for Mutation.
 Run the unchanged whole-class CP-4 on this committed repair; the additional run
 is justified by the strengthened source, not unchanged proof repetition. S4-T33's
 successful method run remains evidence and its case is also present in CP-4.
+
+The strengthened CP-4 passed all 48 cases on e9eca807a8c44169f8a2dd0264e97ff3fcf5c36c
+(run 20261013-081416-2abe). The S4 pending-PC handoff is now the
+[unbound Mutation candidate](../mutations/2026-10-13-card-1205-s4-candidate.md).
+The final artifact commit changes documentation only; one final CP-4 run certifies
+that exact committed HEAD with the unchanged strengthened 48-case selection.
+This source-qualification run is the last ordinary repetition; none is required
+after green. No full assembly, Unit or S5 selection is added.
