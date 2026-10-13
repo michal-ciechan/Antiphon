@@ -29,6 +29,9 @@ public sealed class CheckpointReceiptSafetyTests : CheckpointTestBase
     private async Task FileTypes(string kind)
     {
         var failures = new List<string>();
+        var (controlRoot, controlRun) = Fixture();
+        var control = await Child(controlRoot, controlRun, "report-json");
+        control.Exit.ShouldBe(0, "healthy native control: " + control.Output);
         foreach (var verb in new[] { "report", "report-json", "stop" })
         foreach (var name in new[] { "state.json", "report.json", "report.md" })
         {
@@ -76,9 +79,10 @@ public sealed class CheckpointReceiptSafetyTests : CheckpointTestBase
         };
         foreach (var pair in fields)
         foreach (var field in pair.Value)
-        foreach (var shape in new[] { "null", "wrong-type", "missing" })
+        foreach (var shape in new[] { "null", "wrong-type", "missing", "empty-required-string" })
         foreach (var verb in new[] { "report", "report-json", "stop", "status" })
         {
+            if (shape == "empty-required-string" && field is not ("runId" or "toolOwner" or "phase" or "verdict" or "markdownSha256" or "source.state" or "source.buildSource" or "source.start.captureStatus" or "source.end.captureStatus")) continue;
             var (root, run) = Fixture();
             var path = Path.Combine(run, pair.Key);
             var json = JsonNode.Parse(File.ReadAllText(path))!.AsObject();
@@ -86,7 +90,7 @@ public sealed class CheckpointReceiptSafetyTests : CheckpointTestBase
             JsonNode parent = json;
             foreach (var part in parts[..^1]) parent = int.TryParse(part, out var index) ? parent[index]! : parent[part]!;
             if (shape == "missing") parent.AsObject().Remove(parts[^1]);
-            else parent[parts[^1]] = shape == "null" ? null : JsonValue.Create(42);
+            else parent[parts[^1]] = shape == "null" ? null : shape == "empty-required-string" ? JsonValue.Create("") : JsonValue.Create(42);
             File.WriteAllText(path, json.ToJsonString());
             var before = File.ReadAllBytes(Path.Combine(run, "state.json"));
             var output = new StringWriter();
