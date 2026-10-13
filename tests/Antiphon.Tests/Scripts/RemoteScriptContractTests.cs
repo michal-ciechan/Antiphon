@@ -372,6 +372,70 @@ public sealed class RemoteScriptContractTests
         }
     }
 
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1208_Foreign_cache_is_dropped_and_untouched()
+    {
+        var output = C1192Run("deletion-audit", "foreign-cache");
+        Fact(output, "audit").ShouldBe("1", "foreign-cache\n" + output);
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1208_Legacy_container_replacement_is_untouched()
+    {
+        var output = C1192Run("deletion-audit", "replacement-container");
+        Fact(output, "audit").ShouldBe("1", "replacement-container\n" + output);
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1208_Legacy_network_replacement_is_untouched()
+    {
+        var output = C1192Run("deletion-audit", "replacement-network");
+        Fact(output, "audit").ShouldBe("1", "replacement-network\n" + output);
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1208_Unacquired_roster_is_untouched()
+    {
+        var output = C1192Run("deletion-audit", "unacquired");
+        Fact(output, "audit").ShouldBe("1", "unacquired\n" + output);
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1208_Acquired_objects_are_removed()
+    {
+        var output = C1192Run("deletion-audit", "acquired");
+        Fact(output, "audit").ShouldBe("1", "acquired\n" + output);
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1208_Recorded_container_id_does_not_delete_replacement()
+    {
+        var output = C1192Run("deletion-audit", "recorded-id");
+        Fact(output, "audit").ShouldBe("1", "recorded-id\n" + output);
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1208_Legacy_owned_markers_are_migrated()
+    {
+        var output = C1192Run("deletion-audit", "legacy-owned");
+        Fact(output, "audit").ShouldBe("1", "legacy-owned\n" + output);
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1208_Unknown_identity_retains_residue()
+    {
+        var output = C1192Run("deletion-audit", "unknown");
+        Fact(output, "audit").ShouldBe("1", "unknown\n" + output);
+    }
+
     private static void C1192AssertCleanupProbe(string boundary)
     {
         var output = C1192Run("cleanup-probe", boundary);

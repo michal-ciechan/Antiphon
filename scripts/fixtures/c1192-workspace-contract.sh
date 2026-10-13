@@ -364,6 +364,7 @@ plant_container() {
     local name="$1" owner="$2" run_id="$3" role="$4" image="$5" mount="$6"
     local dir="$C1192_ROOT/containers/$name"
     mkdir -p "$dir"
+    printf '%s\n' "$(printf '%s:%s' "$name" "$(date +%s%N)" | sha256sum | cut -d' ' -f1)" > "$dir/id"
     printf '%s\n' "$owner" > "$dir/label-owner"
     printf '%s\n' "$run_id" > "$dir/label-run"
     printf '%s\n' "$role" > "$dir/label-role"
@@ -746,6 +747,7 @@ store_container() {
     local name="$1" image="$2" mounts="$3" labels="$4"
     local dir="$C1192_ROOT/containers/$name"
     mkdir -p "$dir"
+    printf '%s\n' "$(printf '%s:%s' "$name" "$(date +%s%N)" | sha256sum | cut -d' ' -f1)" > "$dir/id"
     printf '%s\n' "$image" > "$dir/image"
     printf '%s\n' "${mounts%%;}" > "$dir/mount"
     : > "$dir/label-owner"
@@ -901,10 +903,17 @@ docker_inspect_container() {
             *) name="$1"; shift ;;
         esac
     done
+    local requested="$name" candidate
+    if [[ "$name" =~ ^[0-9a-f]{64}$ ]]; then
+        for candidate in "$C1192_ROOT/containers"/*; do
+            [ -f "$candidate/id" ] && [ "$(cat "$candidate/id")" = "$name" ] && name="${candidate##*/}" && break
+        done
+    fi
     local dir="$C1192_ROOT/containers/$name"
     [ -d "$dir" ] || { printf 'Error: No such container: %s\n' "$name" >&2; return 1; }
     [ -n "$fmt" ] || return 0
     case "$fmt" in
+        '{{.Id}}') cat "$dir/id" ;;
         '{{.Name}}') printf '/%s\n' "$name" ;;
         *compose.project*) label_value "$dir/label-project" ;;
         *io.antiphon.owner*) label_value "$dir/label-owner" ;;
@@ -1085,6 +1094,12 @@ docker() {
                 esac
             done
             order_log "container $name"
+            local candidate
+            if [[ "$name" =~ ^[0-9a-f]{64}$ ]]; then
+                for candidate in "$C1192_ROOT/containers"/*; do
+                    [ -f "$candidate/id" ] && [ "$(cat "$candidate/id")" = "$name" ] && name="${candidate##*/}" && break
+                done
+            fi
             rm -rf -- "$C1192_ROOT/containers/$name"
             ;;
         exec)
@@ -2928,7 +2943,94 @@ mode_cleanup_probe() {
     done
 }
 
+
+# CARD-1208: production release paths against exact modeled identities.
+mode_deletion_audit() {
+    reset_runtime
+    local row="${3:?row}" name="c849-${RUN}-restore-p1" network="c849-${RUN}-npm" id good=0 code=0 out
+    : > "$CASE_DIR/fixture-cleanup-ledger.txt"
+    case "$row" in
+        foreign-cache)
+            name="c849${RUN}-packages"
+            C849_PACKAGES="$name"; C849_SCRATCH="c849${RUN}-scratch"; C849_NPM="c849${RUN}-npm"
+            printf '%s\n' "$name" > "$CASE_DIR/.fixture-volumes"
+            plant_volume "$name" local null foreign other-run packages
+            out=$(c849_volume "$name" nuget-packages yes "$ADMITTED" 2>&1) || code=$?
+            c849_fixture_finalize || true
+            [ "$code" = 2 ] && [ "$(diagnosis_of "$out")" = CacheVolumeForeign ] && volume_exists "$name" \
+                && ! grep -Fxq "volume $name" "$C1192_ROOT/order" \
+                && ! grep -Fxq "$name" "$CASE_DIR/.fixture-volumes" \
+                && grep -Fq "foreign: left untouched volume $name" "$CASE_DIR/fixture-cleanup-ledger.txt" && good=1
+            ;;
+        replacement-container|legacy-owned|unknown)
+            name="c849-${RUN}-donor"
+            printf '%s\n' "$name" > "$CASE_DIR/.fixture-donor"
+            plant_container "$name" c849-fixture "$RUN" donor "$ADMITTED" ""
+            if [ "$row" = replacement-container ]; then
+                plant_container "$name" foreign other-run donor "$ADMITTED" ""
+            elif [ "$row" = unknown ]; then
+                docker_inspect_container() { printf 'Cannot connect to the Docker daemon\n' >&2; return 1; }
+            fi
+            id=$(cat "$C1192_ROOT/containers/$name/id")
+            c849_fixture_finalize || code=$?
+            if [ "$row" = legacy-owned ]; then
+                ! container_exists "$name" && grep -Fxq "container $id" "$C1192_ROOT/order" && good=1
+            else
+                container_exists "$name" && ! grep -q '^container ' "$C1192_ROOT/order" \
+                    && [ "$code" = 2 ] && grep -Fxq "$name" "$CASE_DIR/fixture-cleanup-residue.txt" && good=1
+            fi
+            ;;
+        replacement-network)
+            printf '%s\n' "$network" > "$CASE_DIR/.fixture-network"
+            : > "$C1192_ROOT/network"
+            docker() {
+                record_argv "$@"
+                case "$1:$2" in
+                    network:inspect)
+                        [ -f "$C1192_ROOT/network" ] || { printf 'Error: No such network: %s\n' "${*: -1}" >&2; return 1; }
+                        if [ "${3:-}" = -f ]; then printf 'foreign\n'; fi ;;
+                    network:rm) order_log "network ${*: -1}"; rm -f "$C1192_ROOT/network" ;;
+                    *) return 97 ;;
+                esac
+            }
+            c849_fixture_finalize || code=$?
+            [ -f "$C1192_ROOT/network" ] && ! grep -q '^network ' "$C1192_ROOT/order" \
+                && [ "$code" = 2 ] && [ -s "$CASE_DIR/fixture-cleanup-residue.txt" ] && good=1
+            ;;
+        unacquired)
+            plant_container "$name" c849-fixture "$RUN" consumer "$ADMITTED" ""
+            plant_container "c849-${RUN}-masked" c849-fixture "$RUN" masked "$ADMITTED" ""
+            c849_fixture_finalize || code=$?
+            container_exists "$name" && container_exists "c849-${RUN}-masked" \
+                && ! grep -q '^container ' "$C1192_ROOT/order" && good=1
+            ;;
+        recorded-id)
+            name="c849-${RUN}-donor"
+            plant_container "$name" c849-fixture "$RUN" donor "$ADMITTED" ""
+            id=$(cat "$C1192_ROOT/containers/$name/id")
+            printf '%s\n' "$id" > "$CASE_DIR/.fixture-donor"
+            mv "$C1192_ROOT/containers/$name" "$C1192_ROOT/containers/acquired-away"
+            plant_container "$name" foreign other-run donor "$ADMITTED" ""
+            c849_fixture_finalize || code=$?
+            container_exists "$name" && ! container_exists acquired-away \
+                && grep -Fxq "container $id" "$C1192_ROOT/order" && ! grep -Fxq "container $name" "$C1192_ROOT/order" && good=1
+            ;;
+        acquired)
+            c849_fixture_workspace_init
+            c849_fixture_finalize || code=$?
+            [ "$code" = 0 ] && ! volume_exists "$WORK" && ! volume_exists "$MASK" \
+                && ! container_exists "$WRITER" && ! container_exists "$READER" && good=1
+            ;;
+        *) fail "unknown audit $row" ;;
+    esac
+    emit audit "$good"
+    printf 'audit=%s exit=%s\n' "$row" "$code"
+    cat "$C1192_ROOT/order"
+    cat "$CASE_DIR/fixture-cleanup-ledger.txt"
+}
+
 case "$mode" in
+    deletion-audit) mode_deletion_audit "$@" ;;
     acquisition-probe) mode_acquisition_probe ;;
     cleanup-probe) mode_cleanup_probe "$@" ;;
     finalization) mode_finalization ;;
