@@ -433,6 +433,81 @@ public class SessionRunnerHeldEventDeliveryTests
         await Task.WhenAll(h.ScopeDisposals).WaitAsync(TimeSpan.FromSeconds(5));
     }
 
+    [Test]
+    [Timeout(30_000)]
+    [Arguments(false, "host", "invalid")]
+    [Arguments(false, "host", "independent")]
+    [Arguments(false, "host", "host")]
+    [Arguments(false, "host", "delivery")]
+    [Arguments(false, "host", "aggregate")]
+    [Arguments(false, "host", "custom")]
+    [Arguments(false, "deadline", "invalid")]
+    [Arguments(false, "deadline", "independent")]
+    [Arguments(false, "deadline", "host")]
+    [Arguments(false, "deadline", "delivery")]
+    [Arguments(false, "deadline", "aggregate")]
+    [Arguments(false, "deadline", "custom")]
+    [Arguments(true, "host", "invalid")]
+    [Arguments(true, "host", "independent")]
+    [Arguments(true, "host", "host")]
+    [Arguments(true, "host", "delivery")]
+    [Arguments(true, "host", "aggregate")]
+    [Arguments(true, "host", "custom")]
+    [Arguments(true, "deadline", "invalid")]
+    [Arguments(true, "deadline", "independent")]
+    [Arguments(true, "deadline", "host")]
+    [Arguments(true, "deadline", "delivery")]
+    [Arguments(true, "deadline", "aggregate")]
+    [Arguments(true, "deadline", "custom")]
+    [Arguments(false, "late", "independent")]
+    [Arguments(true, "late", "independent")]
+    public async Task C1205_Review_diagnostic_exception_controls(bool catchupThrows, string timing, string kind)
+    {
+        // Exact Review dab30ee3 battery: six defect rows, twenty passing controls.
+        // The broader T57/T58 table additionally asserts primary warning behavior.
+        await using var h = new DeliveryHarness(blockCallback: true, successfulList: !catchupThrows);
+        Exception? fault = null;
+        if (timing != "late")
+            h.Bus.BeforeReturn = () =>
+            {
+                if (timing == "host") h.Host.Cancel();
+                else h.Time.Advance(TimeSpan.FromSeconds(3));
+                fault = CallbackException(kind, h.Bus.Token, h.Host.Token);
+                throw fault;
+            };
+        var delivery = h.RunHeldAsync();
+        await h.Handler.SecondListEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        h.Handler.FailList.TrySetResult();
+        if (timing == "late")
+        {
+            await h.Bus.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            h.Time.Advance(TimeSpan.FromSeconds(3));
+        }
+        Exception? observed = null;
+        try { await delivery.WaitAsync(TimeSpan.FromSeconds(5)); }
+        catch (Exception ex) { observed = ex; }
+        if (timing == "late")
+        {
+            if (catchupThrows) observed.ShouldBeSameAs(h.Handler.CatchupFault);
+            else observed.ShouldBeOfType<TimeoutException>();
+            fault = CallbackException(kind, h.Bus.Token, h.Host.Token);
+            h.Bus.Release.TrySetException(fault);
+            await Task.WhenAll(h.ScopeDisposals).WaitAsync(TimeSpan.FromSeconds(5));
+            h.Log.Exceptions.ShouldContain(fault);
+        }
+        else
+        {
+            observed.ShouldBeSameAs(catchupThrows ? h.Handler.CatchupFault : fault);
+            h.Log.Lines.Count(line => line.Contains("Held live event delivery abandoned")).ShouldBe(0);
+            if (catchupThrows) h.Log.Exceptions.ShouldContain(fault!);
+        }
+        h.Bus.Attempts.ShouldBe(1);
+        h.Bus.Accepted.ShouldBe(0);
+        h.Handler.Stream.Disposed.ShouldBeTrue();
+        await Task.WhenAll(h.ScopeDisposals).WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+
     private static Exception CallbackException(string kind, CancellationToken delivery, CancellationToken host) => kind switch
     {
         "invalid" => new InvalidOperationException("original callback fault"),
