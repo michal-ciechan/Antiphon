@@ -19,9 +19,10 @@ public sealed class EvidenceFolderTests : CheckpointTestBase
         var dir = TempDir();
         CheckpointFixtures.MarkRun(dir, alive: false);
         var tool = Path.Combine(dir, "tool");
-        Directory.CreateDirectory(tool);
+        SafeWrite.Require(SafeWrite.CreateFreshDirectory(tool, SafeWrite.Under(dir)));
         var locked = Path.Combine(tool, "YamlDotNet.dll");
-        File.WriteAllText(locked, "x");
+        SafeWrite.Require(SafeWrite.Text(locked, "x", SafeWrite.Under(tool)));
+        SafeWrite.Require(OwnedOutputLedger.Seal(tool));
         using var stream = new FileStream(locked, FileMode.Open, FileAccess.Read, FileShare.Read);
         var clock = System.Diagnostics.Stopwatch.StartNew();
         var attempts = 0;
@@ -104,8 +105,10 @@ public sealed class EvidenceFolderTests : CheckpointTestBase
     {
         var dir = TempDir();
         CheckpointFixtures.MarkRun(dir, alive: false);
-        Directory.CreateDirectory(Path.Combine(dir, "tool"));
-        File.WriteAllText(Path.Combine(dir, "tool", "Antiphon.Checkpoints.dll"), "x");
+        var tool = Path.Combine(dir, "tool");
+        SafeWrite.Require(SafeWrite.CreateFreshDirectory(tool, SafeWrite.Under(dir)));
+        SafeWrite.Require(SafeWrite.Text(Path.Combine(tool, "Antiphon.Checkpoints.dll"), "x", SafeWrite.Under(tool)));
+        SafeWrite.Require(OwnedOutputLedger.Seal(tool));
         var model = Model(dir, exit: 0);
         model.Rows[0].Failures.Clear();
         EvidenceFolder.Write(dir, model, removeToolCopy: true);
