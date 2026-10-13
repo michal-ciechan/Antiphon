@@ -35,6 +35,7 @@ Closed scope overrides broad Unit profile per repair brief. Linux only. One isol
 | CP-13 | S2 | CP-1 | receipt-file-types | `/*/*/CheckpointReceiptSafetyTests/symlink_and_directory_receipts_refuse_within_four_seconds*` | V-5 F1 | eighteen combinations refuse, linked target unchanged | 1 | 1 |
 | CP-14 | S2 | CP-1 | receipt-json-shapes | `/*/*/CheckpointReceiptSafetyTests/malformed_collection_and_string_shapes_return_named_refusals*` | V-6 F2 | required collection/string shapes refuse; state unchanged | 1 | 2 |
 | CP-15 | S2 | CP-1 | shared-verified-reader | `/*/*/PlanCoverageHandleTests/*` | R-4 V-5 | full affected reader class, all sixteen cases | 16 | 1 |
+| CP-16 | S2 | CP-1 | master-path-binding | `/*/*/CheckpointBuildBindingPathTests/*` | R-1 | all three retained master cases, 0 failed/skipped | 3 | 1 |
 
 ### Mutation handoff
 
@@ -42,7 +43,7 @@ No deliberate mutants run by Code. All PCs/variants and missing-control discover
 
 ### Cost
 
-Ordinary floor 36 minutes plus implementation. Authoritative task budget 75 minutes. No broad assembly or unbounded classes selected.
+Ordinary floor 42 minutes plus implementation (41 original rows plus the one-minute master regression row). Authoritative task budget 75 minutes. No broad assembly or unbounded classes selected.
 
 ### Historical repair 12c result (superseded; not repair 13 evidence)
 
@@ -77,3 +78,9 @@ R-4: shared reader extraction returns exact bytes through the already verified h
 ### Repair 13d continuation required
 
 Budget-stopped at source 89bf1e2fda1787f00bd8c41091a2c3ea862b7022, run 20261013-100015-8d3e. CP-2 and CP-3 each have one fresh pass; CP-1 emitted stop_refuses_foreign_state_without_writing red because its three-field JSON is now malformed under the required-facts contract, before the foreign-owner check. The fixture is repaired to serialize a complete foreign RunState; every existing exit, bytes-survival and named-refusal assertion remains unchanged. That fixture amendment is NOT qualified yet. CP-1 and CP-4..CP-15 have no completed qualifying row; all V/R completion remains pending. Next Code must run the full contiguous CP-1..CP-15 manifest at its committed HEAD with one fresh isolated output, inspect every TRX/roster and re-run red rows. No green Final claim; native Windows and PC-1..PC-3/all inherited variants remain pending. Current fetched target independently conflicts at the original task base in SourceRunGuard.Expected; Review/landing must reconcile project-file output derivation with target directory normalization. Report: .antiphon/task-6284d6ec.md.
+
+### Repair 13f master replay
+
+Task f3302b7a starts at master 6e36b695f9ead5f16e9bb05a7f4033cd0c432cf2. All CARD-1199 commits absent from master are replayed, including prerequisites before 3dffd8d2c that the requested continuation range assumes. The SourceRunGuard conflict combines master's NormalizeDirectory producer/comparison behavior with candidate ProjectWriteRoots.DirectoryOf project-file handling. No rebase or merge commits.
+
+The inherited plan requires census 504, not the earlier brief's 501. Preserve that 504-case CARD-1199 roster and the three master CheckpointBuildBindingPathTests; the merged independent census therefore requires 507. CP-16 explicitly verifies those existing master methods, reusing the CP-1 build. This additional row is required by the replay brief's master-behavior proof, not an extra repeat or broad selection. CP-1..CP-15 remain unchanged. Expected combined total: 226 passed plus one disclosed Windows sharing skip. All V-1..V-6/R-1..R-4 obligations and pending PC variants remain as above; native R-2 remains pending on Linux.
