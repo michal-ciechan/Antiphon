@@ -3029,48 +3029,47 @@ c849_fixture_metadata_refuse() {
 
 c849_fixture_metadata_regular() {
     [ -f "$1" ] && [ ! -L "$1" ] \
-        && [ "$(stat -c '%h:%u' -- "$1")" = "1:$(id -u)" ]
+        && [ "$(stat -c '%h:%u' -- "$1")" = "1:${C849_CASE_ID##*:}" ]
 }
 
 c849_fixture_write() {
-    local target="$1" mode="$2" leaf before=absent temp stamp current command_code=0
+    local metadata_target="$1" metadata_mode="$2" metadata_leaf metadata_before=absent metadata_temp metadata_stamp metadata_current metadata_command_code=0
     shift 2
-    C849_WRITE_CODE=0
-    case "$target" in "$CASE_DIR/"*) leaf="${target#"$CASE_DIR/"}" ;; *) c849_fixture_metadata_refuse "$target"; return 2 ;; esac
-    case "$leaf" in ''|*/*|.|..) c849_fixture_metadata_refuse "$target"; return 2 ;; esac
-    [ -n "${C849_CASE_ID:-}" ] || { c849_fixture_metadata_refuse "$target"; return 2; }
+    case "$metadata_target" in "$CASE_DIR/"*) metadata_leaf="${metadata_target#"$CASE_DIR/"}" ;; *) c849_fixture_metadata_refuse "$metadata_target"; return 2 ;; esac
+    case "$metadata_leaf" in ''|*/*|.|..) c849_fixture_metadata_refuse "$metadata_target"; return 2 ;; esac
+    [ -n "${C849_CASE_ID:-}" ] || { c849_fixture_metadata_refuse "$metadata_target"; return 2; }
     # Hold the admitted directory so an ancestor replacement cannot redirect I/O.
     (
         cd -P -- "$CASE_DIR" || exit 2
         [ "$(pwd -P)" = "$CASE_DIR" ] && [ ! -L "$CASE_DIR" ] \
             && [ "$(stat -c '%d:%i:%u' -- .)" = "$C849_CASE_ID" ] \
             && [ "$(stat -c '%d:%i:%u' -- "$CASE_DIR")" = "$C849_CASE_ID" ] || exit 2
-        if [ -e "$leaf" ] || [ -L "$leaf" ]; then
-            [ "$mode" != create ] && c849_fixture_metadata_regular "$leaf" || exit 2
-            before=$(stat -c '%d:%i:%u:%h' -- "$leaf") || exit 2
+        if [ -e "$metadata_leaf" ] || [ -L "$metadata_leaf" ]; then
+            [ "$metadata_mode" != create ] && c849_fixture_metadata_regular "$metadata_leaf" || exit 2
+            metadata_before=$(stat -c '%d:%i:%u:%h' -- "$metadata_leaf") || exit 2
         fi
-        temp=$(umask 077; mktemp .fixture-write.XXXXXXXX) || exit 2
-        trap 'rm -f -- "$temp"' EXIT
-        c849_fixture_metadata_regular "$temp" || exit 2
-        stamp=$(stat -c '%d:%i:%u:%h' -- "$temp") || exit 2
-        if [ "$mode" = append ] && [ "$before" != absent ]; then cat -- "$leaf" > "$temp" || exit 2; fi
-        if [ "$mode" = append ]; then "$@" >> "$temp" || command_code=$?
-        elif [ "$mode" = ensure ] && [ "$before" != absent ]; then cat -- "$leaf" > "$temp" || exit 2
-        else "$@" > "$temp" || command_code=$?; fi
-        [ "$command_code" = 0 ] || [ "$mode" = capture ] || exit 2
-        c849_fixture_metadata_regular "$temp" && [ "$(stat -c '%d:%i:%u:%h' -- "$temp")" = "$stamp" ] || exit 2
-        current=absent
-        if [ -e "$leaf" ] || [ -L "$leaf" ]; then
-            c849_fixture_metadata_regular "$leaf" || exit 2
-            current=$(stat -c '%d:%i:%u:%h' -- "$leaf") || exit 2
+        metadata_temp=$(umask 077; mktemp .fixture-write.XXXXXXXX) || exit 2
+        trap 'rm -f -- "$metadata_temp"' EXIT
+        c849_fixture_metadata_regular "$metadata_temp" || exit 2
+        metadata_stamp=$(stat -c '%d:%i:%u:%h' -- "$metadata_temp") || exit 2
+        if [ "$metadata_mode" = append ] && [ "$metadata_before" != absent ]; then cat -- "$metadata_leaf" > "$metadata_temp" || exit 2; fi
+        if [ "$metadata_mode" = append ]; then "$@" >> "$metadata_temp" || metadata_command_code=$?
+        elif [ "$metadata_mode" = ensure ] && [ "$metadata_before" != absent ]; then cat -- "$metadata_leaf" > "$metadata_temp" || exit 2
+        else "$@" > "$metadata_temp" || metadata_command_code=$?; fi
+        [ "$metadata_command_code" = 0 ] || exit 2
+        c849_fixture_metadata_regular "$metadata_temp" && [ "$(stat -c '%d:%i:%u:%h' -- "$metadata_temp")" = "$metadata_stamp" ] || exit 2
+        metadata_current=absent
+        if [ -e "$metadata_leaf" ] || [ -L "$metadata_leaf" ]; then
+            c849_fixture_metadata_regular "$metadata_leaf" || exit 2
+            metadata_current=$(stat -c '%d:%i:%u:%h' -- "$metadata_leaf") || exit 2
         fi
-        [ "$current" = "$before" ] && [ ! -L "$CASE_DIR" ] \
+        [ "$metadata_current" = "$metadata_before" ] && [ ! -L "$CASE_DIR" ] \
             && [ "$(stat -c '%d:%i:%u' -- "$CASE_DIR")" = "$C849_CASE_ID" ] || exit 2
-        mv -T -- "$temp" "$leaf" || exit 2
-        c849_fixture_metadata_regular "$leaf" && [ "$(stat -c '%d:%i:%u:%h' -- "$leaf")" = "$stamp" ] \
+        mv -T -- "$metadata_temp" "$metadata_leaf" || exit 2
+        c849_fixture_metadata_regular "$metadata_leaf" && [ "$(stat -c '%d:%i:%u:%h' -- "$metadata_leaf")" = "$metadata_stamp" ] \
             && [ "$(stat -c '%d:%i:%u' -- "$CASE_DIR")" = "$C849_CASE_ID" ] || exit 2
         trap - EXIT
-    ) || { c849_fixture_metadata_refuse "$target"; return 2; }
+    ) || { c849_fixture_metadata_refuse "$metadata_target"; return 2; }
 }
 
 c849_fixture_escape_record() {
@@ -3078,6 +3077,11 @@ c849_fixture_escape_record() {
 }
 
 c849_fixture_launch() {
+    (
+    cd -P -- "$CASE_DIR" || { c849_fixture_metadata_refuse "$CASE_DIR"; return 2; }
+    [ -n "${C849_CASE_ID:-}" ] && [ "$(pwd -P)" = "$CASE_DIR" ] && [ ! -L "$CASE_DIR" ] \
+        && [ "$(stat -c '%d:%i:%u' -- .)" = "$C849_CASE_ID" ] \
+        && [ "$(stat -c '%d:%i:%u' -- "$CASE_DIR")" = "$C849_CASE_ID" ] || { c849_fixture_metadata_refuse "$CASE_DIR"; return 2; }
     local verb="$1" name='' previous='' arg file fingerprint_file state=0 identity role=consumer code=0 cid_dir
     shift
     for arg in "$@"; do
@@ -3105,7 +3109,7 @@ c849_fixture_launch() {
     c849_fixture_helper_lookup "$name" || state=$?
     [ "$state" = 0 ] || return 2
     [ "$name" != "c849-${RUN}-donor" ] || role=donor
-    cid_dir=$(umask 077; mktemp -d "$CASE_DIR/.fixture-cid.XXXXXXXX") || return 2
+    cid_dir=$(umask 077; mktemp -d .fixture-cid.XXXXXXXX) || return 2
     docker "$verb" --cidfile "$cid_dir/id" --label io.antiphon.owner=c849-fixture \
         --label "io.antiphon.fixture-run=$RUN" --label "io.antiphon.fixture-role=$role" "$@" || code=$?
     if c849_fixture_metadata_regular "$cid_dir/id"; then
@@ -3131,6 +3135,7 @@ c849_fixture_launch() {
     c849_fixture_cleanup_unknown container "$name"
     [ "$code" != 0 ] || code=2
     return "$code"
+    )
 }
 
 c849_fixture_fingerprint_refuse() {
@@ -3161,7 +3166,11 @@ c849_fixture_container_fingerprint() {
 # C1208_Wrong_cidfile_preserves_foreign_container and the changed-labels row check full IDs.
 # C1208_Legacy_owned_markers_are_migrated also checks legacy name resolution.
 c849_fixture_container_identity() {
-    local name="$1" identity="$2" role="$3" state=0 owner run actual
+    local name="$1" identity="$2" role="$3" state=0 owner run actual cid_record="$CASE_DIR/.fixture-id-$1" cid_stamp=absent
+    if [ -e "$cid_record" ] || [ -L "$cid_record" ]; then
+        c849_fixture_metadata_regular "$cid_record" || { c849_fixture_metadata_refuse "$cid_record"; return 2; }
+        cid_stamp=$(stat -c '%d:%i:%u:%h' -- "$cid_record") || return 2
+    fi
     c849_fixture_resource_state container "$identity" || state=$?
     [ "$state" = 0 ] || return "$state"
     if [[ ! "$identity" =~ ^[0-9a-f]{64}$ ]]; then
@@ -3184,7 +3193,13 @@ c849_fixture_container_identity() {
         actual="$(c849_fixture_container_fingerprint "$identity")" || return 2
         [ "$actual" = "$recorded" ] || return 3
     fi
-    c849_fixture_write "$CASE_DIR/.fixture-id-$name" replace printf '%s\n' "$identity" || return 2
+    if [ "$cid_stamp" = absent ]; then
+        c849_fixture_write "$cid_record" create printf '%s\n' "$identity" || return 2
+    else
+        c849_fixture_metadata_regular "$cid_record" \
+            && [ "$(stat -c '%d:%i:%u:%h' -- "$cid_record")" = "$cid_stamp" ] \
+            && [ "$(cat -- "$cid_record")" = "$identity" ] || { c849_fixture_metadata_refuse "$cid_record"; return 2; }
+    fi
     printf '%s\n' "$identity"
 }
 
@@ -3220,6 +3235,11 @@ c849_fixture_network_identity() {
     actual="$(docker network inspect -f '{{.Name}}' "$identity")" || return 2
     [ "$actual" = "$name" ] || return 3
     printf '%s\n' "$identity"
+}
+
+c849_fixture_network_record() {
+    [[ "$1" =~ ^[0-9a-f]{64}$ ]] || return 2
+    c849_fixture_write "$CASE_DIR/.fixture-network" create printf '%s\n' "$1"
 }
 
 c849_fixture_network_release() {
@@ -4332,7 +4352,7 @@ JS
         --label "io.antiphon.fixture-run=$RUN" --label io.antiphon.fixture-role=npm-network "$network")" \
         || write_result false FixtureNpmNetworkFailed 2
     [[ "$identity" =~ ^[0-9a-f]{64}$ ]] || write_result false FixtureNpmNetworkFailed 2
-    c849_fixture_write "$CASE_DIR/.fixture-network" create printf '%s\n' "$identity" || write_result false FixtureMetadataWriteRefused 2
+    c849_fixture_network_record "$identity" || write_result false FixtureMetadataWriteRefused 2
     c849_fixture_launch run -d --name "c849-${RUN}-npm-http" --network "$network" --network-alias c849-npm-http \
         --user 1654:1654 --entrypoint node \
         --mount "${work_mount},readonly" "$image" /fixture/npm-offline/server.js >/dev/null \

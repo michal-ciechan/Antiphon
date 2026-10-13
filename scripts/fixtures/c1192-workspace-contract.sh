@@ -2725,7 +2725,7 @@ DATA
             primary-delete) C1192_CUT=rm-work; write_result false OriginalFailure 9 ;;
             delete) C1192_CUT=rm-work ;;
             down) C1192_FAULT=volume-inspect-down ;;
-            export) cp() { return 1; } ;;
+            export) mv() { case "${*: -1}" in race-p1.log|race-p2.log|race-offline.log|lock-holder.log|lock-waiter.log) return 1 ;; esac; command mv "$@"; } ;;
             foreign) mv "$SERVER2_ROOT" "$CASE_DIR/owned-away"; mkdir -m 700 "$SERVER2_ROOT"; printf 'FOREIGN\n' > "$SERVER2_ROOT/foreign"; printf 'FOREIGN_DIAGNOSTIC\n' > "$SERVER2_ROOT/race-p1.log" ;;
             foreign-consumer) plant_container "c849-${RUN}-donor" intruder "other-run" donor "$ADMITTED" "" ;;
         esac
@@ -3387,8 +3387,8 @@ mode_metadata_write() {
         mkdir "$sandbox/directory"; printf 'directory sentinel\n' > "$sandbox/directory/sentinel"
         mkfifo "$sandbox/pipe"; exec 8<> "$sandbox/pipe"
         case "$writer" in
-            cid) target="$CASE_DIR/.fixture-id-$name" ;;
-            network) target="$CASE_DIR/.fixture-network" ;;
+            cid|cid-acquisition) target="$CASE_DIR/.fixture-id-$name" ;;
+            network|network-acquisition) target="$CASE_DIR/.fixture-network" ;;
             helpers) target="$CASE_DIR/.fixture-helpers" ;;
             ledger) target="$CASE_DIR/fixture-cleanup-ledger.txt"; : > "$CASE_DIR/.fixture-volumes" ;;
             residue) target="$CASE_DIR/fixture-cleanup-residue.txt" ;;
@@ -3418,8 +3418,15 @@ mode_metadata_write() {
         }
         [ "$variant" = fresh ] || [ "$variant" = late-link ] || plant_metadata_type
         docker() {
+            if [ "$1" = create ]; then
+                if [ "$variant" = late-link ]; then plant_metadata_type; fi
+                printf '%s\n' "$id" > "$3"
+                return 0
+            fi
             case "${*: -2:1}" in
                 '{{.Id}}') printf '%s\n' "$id" ;;
+                '{{.Image}}') printf 'sha256:owned-image\n' ;;
+                '{{.Created}}') printf '2026-10-13T00:00:00Z\n' ;;
                 *io.antiphon.owner*) if [ "$writer" = helpers ]; then printf foreign; else printf c849-fixture; fi ;;
                 *fixture-run*) printf '%s\n' "$RUN" ;;
                 *fixture-role*) if [ "$writer" = network ]; then printf npm-network; else printf donor; fi ;;
@@ -3431,11 +3438,14 @@ mode_metadata_write() {
         }
         c849_fixture_resource_state() { return 0; }
         c849_fixture_resource_remove() { :; }
+        c849_fixture_helper_lookup() { return 0; }
         code=0; log="$sandbox/out"
         if [ "$variant" = late-link ]; then
-            case "$writer" in cid|network) ;; *) plant_metadata_type ;; esac
+            case "$writer" in cid|cid-acquisition|network) ;; *) plant_metadata_type ;; esac
         fi
         case "$writer" in
+            cid-acquisition) c849_fixture_launch create --name "$name" image > "$log" 2>&1 || code=$? ;;
+            network-acquisition) c849_fixture_network_record "$id" > "$log" 2>&1 || code=$? ;;
             cid) c849_fixture_container_identity "$name" "$id" donor > "$log" 2>&1 || code=$? ;;
             network) c849_fixture_network_release > "$log" 2>&1 || code=$? ;;
             helpers) c849_fixture_helper_release "c849-${RUN}-writer" > "$log" 2>&1 || code=$? ;;
@@ -3454,8 +3464,8 @@ mode_metadata_write() {
         if [ "$variant" = fresh ]; then
             [ "$code" = 0 ] && [ -f "$target" ] && [ ! -L "$target" ] && [ "$(stat -c %h "$target")" = 1 ] || { cat "$log"; fail "$writer fresh failed code=$code"; }
             case "$writer" in
-                cid) [ "$(cat "$target")" = "$id" ] || fail 'CID bytes' ;;
-                network) [ "$(cat "$target")" = "$id" ] || fail 'network bytes' ;;
+                cid|cid-acquisition) [ "$(cat "$target")" = "$id" ] || fail 'CID bytes' ;;
+                network|network-acquisition) [ "$(cat "$target")" = "$id" ] || fail 'network bytes' ;;
                 helpers) [ ! -s "$target" ] || fail 'helper not dropped' ;;
                 volumes) [ "$(cat "$target")" = keep ] || fail 'volume ledger bytes' ;;
                 diagnostic) [ "$(cat "$target")" = 'diagnostic bytes' ] || fail 'diagnostic bytes' ;;
