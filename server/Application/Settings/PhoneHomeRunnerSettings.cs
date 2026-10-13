@@ -90,6 +90,14 @@ public sealed class PhoneHomeRunnerSettings
     public int OwnerCacheNegativeSeconds { get; set; } = 5;
 
     /// <summary>
+    /// CARD-1219 D-2/D-3: how long the recovery pump refuses an identical transcript-fault or
+    /// transcript-bound record from the same runner after recording it, so a frame the transport
+    /// delivers twice (including across a reconnect) records one incident. A genuine runner repeat
+    /// differs in <c>Repeat</c>/<c>UnboundSeconds</c> and always records. At least 1.
+    /// </summary>
+    public int TranscriptIncidentReplayWindowSeconds { get; set; } = 900;
+
+    /// <summary>
     /// CARD-0679 D-8: how many times a remote launch retries its Start-to-ready segment after the
     /// phone-home connection is lost under it (re-attach after the runner acknowledged the Launch,
     /// re-launch before). <c>0</c> fails on the first loss.
