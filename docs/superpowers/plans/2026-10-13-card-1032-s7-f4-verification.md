@@ -10,29 +10,44 @@ VP-08, VP-09, VP-10, VP-13 and VP-15.
 ## Verification design
 
 Five negative witnesses, one per surviving family. Each pairs its refusal
-vectors with a real positive in the same method, so a fixture that never
-reaches real removal fails that method rather than passing as a guard:
+vectors with a positive control in the same method. The four server
+witnesses (CP-34..CP-37) end with real physical removal (`RemovedAsync`:
+`Complete`, mirror and admin directory gone, endpoint `Complete` with an
+imported receipt equal to the runner journal receipt), so a fixture that never
+reaches real removal fails that method rather than passing as a guard. CP-33
+is a unit witness with no removal: its positive control is that the same
+in-memory signed command verifies true with its key, beside the refusal
+vectors.
 
-- CP-33 `C1032_LandingSignatureCoversTaskId` (VP-08): sign a rebased command,
-  verify true; change only `Binding.TaskId` (other GUID, `Guid.Empty`) and
-  `Verify` must be false; wrong key false.
+- CP-33 `C1032_LandingSignatureCoversTaskId` (VP-08): sign an in-memory
+  rebased command with `CompletedCardWorkspaceLandingAuthority.Sign` (its
+  proof identity starts `landed-v1:<landing>:`); `Verify` with the signing key
+  is true (positive control) and with another key false. Then change only
+  `Binding.TaskId` (a structural comparison checks no other field changed) to
+  another GUID and to `Guid.Empty`; `Verify` with the signing key must be
+  false for each. No command is sent and nothing is removed.
 - CP-34 `C1032_WitnessLandingOwnership` (VP-09): an actual server landing maps
-  mirror H onto rebased P. The same row, made internally consistent for a
-  foreign task (TaskId plus recovery prefix), a foreign store path, a foreign
-  repository or an earlier generation, must refuse `unlanded_work`. The real
-  inspection request still runs (CardWorktreeMirrorCleanupService.TryAsync
-  inspects before the publication lookup); what each vector asserts is no
-  durable intent, no removal request (fixture `RemovalRequests` = 0), an
-  empty journal and intact evidence. The restored row then completes real
-  rebased removal.
-- CP-35 `C1032_WitnessLandingCompleteness` (VP-10): 13 vectors across 11
-  `AgentTaskLanding` fields outside the narrower eligibility checks
-  (observed remote target null and empty, verifiedAt null, confirmation
+  mirror H onto rebased P. The same row is changed to a foreign task (TaskId
+  plus the matching recovery prefix), a foreign store path, a foreign
+  repository or an earlier generation, and must refuse `unlanded_work`. The
+  real inspection request still runs (CardWorktreeMirrorCleanupService.TryAsync
+  inspects before the publication lookup). The refusal comes from the later
+  observation step: with no qualifying publication the service observes H
+  itself, which the target does not contain. The method does not separately
+  assert which publication predicate rejected each vector. What each vector
+  asserts is no operation id (no durable intent), no removal request (fixture
+  `RemovalRequests` = 0), an empty journal, the admin directory and sentinel
+  intact and no imported receipt. The restored row then completes real
+  rebased removal with a `landed-v1:<landing>:` proof identity.
+- CP-35 `C1032_WitnessLandingCompleteness` (VP-10): 13 null, empty or false
+  vectors across 11 `AgentTaskLanding` fields outside the narrower eligibility
+  checks (observed remote target null and empty, verifiedAt null, confirmation
   method null and empty, recovery prefix, common/git directory, target-before
   SHA, destination ref, source/target/prepared pins; ObservedRemoteTargetSha
   and ConfirmationMethod each carry two vectors). Each refuses
-  `unlanded_work` after the real inspection, with no intent, no removal
-  request, an empty journal and intact evidence; the restored row completes.
+  `unlanded_work` at the same observation step as CP-34, after the real
+  inspection, with the same per-vector assertions as CP-34; the restored row
+  completes real rebased removal.
   Disclosure: the table does not vary every field of the publication
   predicate. Fields of the evidence type it does not vary include
   ApprovalLandRequestId, Id, LandWorktreePath, LocalTargetBeforeSha,
@@ -48,9 +63,10 @@ reaches real removal fails that method rather than passing as a guard:
   (stop after commit), then four valid-shaped persisted-request edits
   (report digest, policy digest, binding worktree path, expected HEAD) without
   updating RequestDigest. Re-entry holds `immutable_request_unreadable`
-  with no removal request (`RemovalRequests` = 0) and an empty journal;
-  bytes, digest, operation and IntentRecorded remain. Restoring the original
-  bytes replays to real removal.
+  with no removal request (`RemovalRequests` = 0), an empty journal, the
+  admin directory and sentinel intact and no imported receipt; bytes, digest,
+  operation and IntentRecorded remain. Restoring the original bytes replays
+  the same operation to real removal (`RemovalRequests` = 1).
 - CP-37 `C1032_WitnessUnsupportedRemovalAfterInspection` (VP-15): real
   inspection and intent, then `Runtime.CompletedCardWorkspace` is withdrawn,
   which removes the advertised capability. The first vector's `unsupported`
@@ -65,29 +81,32 @@ reaches real removal fails that method rather than passing as a guard:
   handling of an unsupported removal result, not a recipient refusal. Then
   three refusals are injected at the fixture client seam (unsupported,
   unknown, and a no-reason `Complete=false` response with null reason and
-  receipt, recorded as `receipt_mismatch`). Each keeps mirror,
-  registration, sentinel and journal, refuses with the asserted reason and
-  imports no receipt. The restored runtime replays the same operation to
-  real removal.
+  receipt, recorded as `receipt_mismatch`). Each of the four vectors keeps
+  the mirror, admin directory and sentinel, leaves the journal empty, ends
+  `Refused` with the asserted reason and imports no receipt; the three
+  injected vectors also keep the issued operation id. The restored runtime
+  then completes real removal (the method does not assert the operation id
+  on that final removal).
 
 The fixture gains only a removal-request counter (it counts entries to the
 fixture's removal-client wrapper, including intercepted and
 capability-preflight refusals) and a refusal-only removal interceptor (it
-asserts the intercepted reply is not Complete and is cleared before the
-positive). Production is unchanged: each witness was green on unchanged
+asserts the intercepted reply is not Complete; CP-37, its only user, clears
+it before the positive). Production is unchanged: each witness was green on unchanged
 production, so these witnesses found no production hole. Production
 composition remains inert.
 
 New method names avoid the Admission/Receipt/Report prefixes, so CP-13/14
 stay seven and CP-29..31 stay one. CP-F2 grows by four (63); CP-F3 by one
 (145). Two isolated builds are needed because the server and runner classes
-live in separate test projects; each is reused by its rows. The checkpoint
-tool bootstrap is the only setup build outside the table. No Unit lane: the
+live in separate test projects; each is reused by its rows. For the checkpoint
+run, the checkpoint tool bootstrap is the only build outside the table
+(Code-only sanity and scratch drivers are listed in the F4 Code evidence). No Unit lane: the
 brief excludes it.
 
 Coverage: V-1 (CP-13, F2, 34); V-2 (CP-14, F3, 33, 36, 37); V-3 (CP-13,
-29..32, 34, 35, F3); V-4/V-5 adjacent (CP-F3, 32); V-6 (CP-13, 14, 30, 36,
-F2). R-1/R-2 adjacent (CP-F2, F3); R-3 (CP-13, 14, 29..37, F2, F3).
+29..32, 34, 35, F3); V-4 adjacent (CP-F3); V-5 adjacent (CP-F3, 32); V-6 (CP-13, 14, 30, 36,
+F2). R-1/R-2 adjacent (CP-F2, F3); R-3 (CP-13, 14, 29..37, F2).
 Restart: none. Every PC stays pending for method-scoped SourceLanding
 Mutation. Code task 55328335 did build and execute the probe's scratch
 mutants against these witnesses (red recorded in the F4 Code evidence); that
@@ -122,3 +141,6 @@ and it discharges no PC.
 | PC-597 | Publication omits complete landing-evidence predicate | `/*/*/CardWorktreeMirrorCleanupTests/C1032_WitnessLandingCompleteness` | each of the 13 vectors across 11 fields; rebased removal completes |
 | PC-598 | Replay trusts schema-valid persisted bytes without RequestDigest | `/*/*/CardWorktreeMirrorCleanupTests/C1032_WitnessPersistedReplayTamper` | report digest, policy digest, binding worktree path, expected HEAD; replay proceeds past the pre-send hold (scratch VP-13 observed `receipt_mismatch` instead of `immutable_request_unreadable`) |
 | PC-599 | Unsupported removal reply counted as success | `/*/*/CardWorktreeMirrorCleanupTests/C1032_WitnessUnsupportedRemovalAfterInspection` | capability-withdrawal unsupported (client-preflight result), intercepted unsupported; discover controls for unknown and no-reason refusals; Complete=true or receipt imported |
+
+Variants are the per-vector red Mutation must establish. Code's scratch runs
+observed only the first red vector of each method (F4 Code evidence).

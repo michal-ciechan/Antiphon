@@ -116,8 +116,9 @@ public sealed class CompletedCardWorkspaceContractTests
         await Task.CompletedTask;
     }
 
-    // F4/VP-08: the landing certificate covers Binding.TaskId. Changing only that field,
-    // including to the empty identity, must refuse; mutation: normalize TaskId before the MAC.
+    // F4/VP-08: the landing certificate covers Binding.TaskId. An in-memory signed command verifies
+    // with its key (positive control; another key refuses). Changing only that field, including to
+    // the empty identity, must refuse; no removal runs. Mutation: normalize TaskId before the MAC.
     [Test]
     public async Task C1032_LandingSignatureCoversTaskId()
     {
