@@ -220,12 +220,13 @@ public sealed class CheckpointToolCopyCleanupTests : CheckpointTestBase
     public async Task completed_wait_removes_only_tool(int exitCode, bool keepOutputs)
     {
         var run = Run();
+        var receiptSource = new SourceEvidence();
         var report = Path.Combine(run, "report.md");
-        ReportWriter.WriteFiles(run, new ReportModel { RunId = Path.GetFileName(run), ExitCode = exitCode, Verdict = exitCode == 0 ? "GREEN" : "RED" });
+        ReportWriter.WriteFiles(run, new ReportModel { Source = receiptSource, RunId = Path.GetFileName(run), ExitCode = exitCode, Verdict = exitCode == 0 ? "GREEN" : "RED" });
         File.WriteAllText(Path.Combine(run, "request.json"), JsonSerializer.Serialize(new RunRequest { KeepOutputs = keepOutputs }));
         var hash = Hash(report);
         new RunStateStore().Write(Path.Combine(run, "state.json"), new RunState
-        { RunId = Path.GetFileName(run), Phase = "done", ExitCode = exitCode, ExecutorPid = int.MaxValue });
+        { Source = receiptSource, RunId = Path.GetFileName(run), Phase = "done", ExitCode = exitCode, ExecutorPid = int.MaxValue });
         var output = new StringWriter();
         (await new WaitCommand().WaitAsync(run, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1),
             output, CancellationToken.None)).ShouldBe(exitCode);
