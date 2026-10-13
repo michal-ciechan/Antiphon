@@ -2,7 +2,7 @@
 # CARD-1192 S1 workspace model, S2 race barriers, S3 npm volume reads, and S4 payload boundary.
 # Extracted c849_* functions against a filesystem Docker model.
 # C1192_Foreign_volume_is_refused_after_create checks work/mask acquisition.
-# C1208_Foreign_cache_is_dropped_and_untouched checks foreign cache refusal, ledger removal and untouched volume; C1208_Legacy_container_replacement_is_untouched and C1208_Legacy_network_replacement_is_untouched check legacy replacement retention/refusal; C1208_Unacquired_roster_is_untouched checks unacquired consumer/helper retention; C1208_Acquired_objects_are_removed and C1208_Recorded_container_id_does_not_delete_replacement check acquired disposal and ID-only removal; C1208_Legacy_owned_markers_are_migrated checks verified legacy migration, and C1208_Unknown_identity_retains_residue checks unknown refusal/residue. CP-45..53 retain positive-absence checks. Compose teardown remains exit-status-only (CARD-1207); live Docker W-1 is pending.
+# C1208_Foreign_cache_is_dropped_and_untouched checks foreign cache refusal, ledger removal and untouched volume; C1208_Legacy_container_replacement_is_untouched and C1208_Legacy_network_replacement_is_untouched check legacy replacement retention/refusal; C1208_Unacquired_roster_is_untouched checks unacquired consumer/helper retention; C1208_Acquired_objects_are_removed and C1208_Recorded_container_id_does_not_delete_replacement check acquired disposal and ID-only removal; C1208_Legacy_owned_markers_are_migrated checks verified legacy migration, and C1208_Unknown_identity_retains_residue checks unknown refusal/residue. CP-45..53 retain positive-absence checks. CARD-1207 records Compose project resources before teardown and confirms each name afterward; live Docker W-1 is pending.
 # Never source dispatch. Never call the host docker daemon.
 set -euo pipefail
 shopt -s nullglob
@@ -603,8 +603,10 @@ docker_volume() {
     case "$sub" in
         ls)
             [ "$C1192_FAULT" = volume-ls-down ] && return 2
-            local dir
+            local dir compose_project='' token
+            for token in "$@"; do case "$token" in label=com.docker.compose.project=*) compose_project="${token#label=com.docker.compose.project=}" ;; esac; done
             for dir in "$C1192_ROOT/volumes"/*; do
+                [ -z "$compose_project" ] || [[ "${dir##*/}" == "${compose_project}_"* ]] || continue
                 [ -d "$dir" ] || continue
                 printf '%s\n' "${dir##*/}"
             done
@@ -1179,6 +1181,7 @@ docker() {
         run) shift; docker_run "$@" ;;
         ps) return 0 ;;
         network)
+            [ "${2:-}" != ls ] || return 0
             if [ "$mode" = cleanup-probe ] || [ "$mode" = deletion-audit ]; then
                 case "$2" in
                     inspect)
