@@ -259,6 +259,36 @@ public class WorkingTranscriptRecoveryTests
         else (await h.WorkingAsync()).ShouldBeFalse();
     }
 
+    [Test]
+    public async Task C1205_Generation_changed_after_validation_must_not_append_old_end()
+    {
+        var fault = new Faults();
+        await using var h = await Harness.CreateAsync(true, fault);
+        fault.HoldIdentity = true;
+        var probe = h.ProbeAsync();
+        try
+        {
+            await fault.Reached.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            await using (var db = h.F.Db())
+            {
+                var session = await db.AgentSessions.SingleAsync(s => s.Id == h.Id);
+                session.StartedAt = h.Generation.AddSeconds(1);
+                await db.SaveChangesAsync();
+            }
+            fault.Release.TrySetResult();
+            var result = await probe;
+            var rows = await h.RowsAsync();
+            Console.WriteLine($"REVIEW_RACE outcome={result.Outcome} reason={result.Reason} added={result.AddedCount} sqlWorking={await h.WorkingAsync()} oldEnds={rows.Count(r => r.Uuid == "end")} accepted={result.AcceptedGeneration:O}");
+            rows.Count(r => r.Uuid == "end").ShouldBe(0,
+                "a changed accepted generation must invalidate the old snapshot before append, not only after publication");
+            result.Outcome.ToString().ShouldBe("Unknown");
+            result.AddedCount.ShouldBe(0);
+            var published = await h.F.Store.ReadAsync(h.Id, default);
+            published.Working.ShouldBeTrue();
+            published.Count.ShouldBe(1);
+        }
+        finally { fault.Release.TrySetResult(); await probe; }
+    }
     private static TaskCompletionSource Signal() => new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     private sealed class Harness : IAsyncDisposable
@@ -335,7 +365,7 @@ public class WorkingTranscriptRecoveryTests
     }
     private sealed class Faults : DbCommandInterceptor, ISaveChangesInterceptor
     {
-        public bool SaveFailure, ReadFailure, Collision, HoldSave;
+        public bool SaveFailure, ReadFailure, Collision, HoldSave, HoldIdentity;
         public string? RejectUuid;
         public int Hits;
         public TaskCompletionSource Reached { get; } = Signal();
@@ -349,6 +379,12 @@ public class WorkingTranscriptRecoveryTests
         public override async ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(DbCommand command,
             CommandEventData data, InterceptionResult<DbDataReader> result, CancellationToken ct = default)
         {
+            if (HoldIdentity && command.CommandText.Contains("session-state.identity"))
+            {
+                HoldIdentity = false;
+                Reached.TrySetResult();
+                await Release.Task.WaitAsync(TimeSpan.FromSeconds(20), ct);
+            }
             CheckRead(command);
             await InsertCollisionAsync(command, data.Context, ct);
             return result;
