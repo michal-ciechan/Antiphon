@@ -180,6 +180,17 @@ internal sealed class CompletedCardMirrorFixture : IAsyncDisposable
         await ConnectAsync();
     }
 
+    // RemoteWorkspacePreparerTests.Rig.ReplaceRunnerStoreAsync recipe: after the owner lease expires,
+    // a retire/clear state pair authorizes one replacement store for a new runner boot.
+    public async Task<Guid> ReplaceStoreAsync(FakeTimeProvider hostClock)
+    {
+        await DisconnectAsync(); hostClock.Advance(TimeSpan.FromSeconds(91));
+        var now = hostClock.GetUtcNow();
+        Wire.Directory.ApplyState(Wire.AllowedRunnerId, new RunnerState(true, now, "retire-for-store", null, false, null, now, "store-replaced"));
+        Wire.Directory.ApplyState(Wire.AllowedRunnerId, new RunnerState(false, null, null, null, false, null, null, null));
+        var store = Guid.NewGuid(); await ReconnectAsync(store); return store;
+    }
+
     // Sends an earlier actual WorkspaceMirror that holds the runner mutation turn until released.
     public async Task<Task> HoldMutationTurnAsync()
     {
