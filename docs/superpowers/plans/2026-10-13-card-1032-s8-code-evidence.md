@@ -111,3 +111,25 @@ no target in this slice (above). New retry guards for Mutation to bind:
 | retry ignores persisted `NextAttemptAt` | `C1032_RecoveryCrashHandoffs` | `callsBeforeDue` (I0, D1, D11 vectors) |
 | transport loss propagates or clears intent instead of retry debt | `C1032_RecoveryCrashHandoffs`, `C1017_LostAckReusesOperation` | exception escapes; `RetryDebtAsync` fields |
 | retry sends a new OperationId | `C1017_LostAckReusesOperation` | `distinctRemovalOperationIds` |
+
+## Checkpoint provenance
+
+Run 20261013-224931-5b7c, bound, source 6c250d8a9970a0f0461c743e6d7bcb3d60652e0e,
+state=clean, buildSource=verified, verdict GREEN exit=0, one build, unlisted: none.
+
+```
+CHECKPOINT CP-15 commit=6c250d8a9970a0f0461c743e6d7bcb3d60652e0e build=ok filter=/*/*/CardWorktreeMirrorCleanupTests/(C1017_MirrorCompletesIndependently*)|(C1017_LocalProgressSurvivesOffline*)|(C1017_LostAckReusesOperation*)|(C1032_Recovery*) executed=6 passed=6 failed=0 skipped=0 trx=/work/worktrees/task-f2630af7/.antiphon/checkpoints/20261013-224931-5b7c/rows/CP-15/run.trx slot=granted waited=0s dirty=0 source=6c250d8a9970a0f0461c743e6d7bcb3d60652e0e sourceState=clean buildSource=verified
+CHECKPOINT CP-16 commit=6c250d8a9970a0f0461c743e6d7bcb3d60652e0e build=reused filter=/*/*/RemoteWorktreeMirrorTests/* executed=8 passed=8 failed=0 skipped=0 trx=/work/worktrees/task-f2630af7/.antiphon/checkpoints/20261013-224931-5b7c/rows/CP-16/run.trx slot=granted waited=45s dirty=0 source=6c250d8a9970a0f0461c743e6d7bcb3d60652e0e sourceState=clean buildSource=verified
+CHECKPOINT CP-F2 commit=6c250d8a9970a0f0461c743e6d7bcb3d60652e0e build=reused filter=/*/*/(CardWorktreeCleanupRecoveryTests*)|(CompletedCardWorktreeRemovalTests*)|(CardWorktreeMirrorCleanupTests*)/* executed=69 passed=69 failed=0 skipped=0 trx=/work/worktrees/task-f2630af7/.antiphon/checkpoints/20261013-224931-5b7c/rows/CP-F2/run.trx slot=granted waited=90s dirty=0 source=6c250d8a9970a0f0461c743e6d7bcb3d60652e0e sourceState=clean buildSource=verified
+CHECKPOINT CP-RG1 commit=6c250d8a9970a0f0461c743e6d7bcb3d60652e0e build=reused filter=/*/*/TestClassificationGuardTests/Registry_matches_compiled_metadata* executed=1 passed=1 failed=0 skipped=0 trx=/work/worktrees/task-f2630af7/.antiphon/checkpoints/20261013-224931-5b7c/rows/CP-RG1/run.trx slot=granted waited=0s dirty=0 source=6c250d8a9970a0f0461c743e6d7bcb3d60652e0e sourceState=clean buildSource=verified
+```
+
+Drivers outside the table, all through build-slot on Linux: 8 builds of
+`tests/Antiphon.Tests` to `bin-c1032s8/` (pre-slice red build, compile-repair
+builds, fix builds, two scratch builds) and these runs: pre-slice red (3 failed,
+3 passed), first fix run (3 failed: microsecond precision, reconnect refused 409),
+two single-method reconnect diagnostics (one on a stale build), a 5/6 run
+(D11-store 409), two CrashHandoffs runs (409, then green), scratch batch A
+(one zero-test filter attempt without trailing wildcards, then 4/4 red) and
+scratch batch B (2/2 red). Outputs `bin-c1032s8/` were deleted. No proof
+selection on unchanged source exceeded three normal executions.
