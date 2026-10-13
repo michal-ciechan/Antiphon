@@ -163,3 +163,17 @@ instead of the inner call, asserted Complete=false); "absent" reply (now: a
 no-reason Complete=false response). Kept as accurate: VP-08 comment, the
 landing helper comments, test counts, PC filters, and the ordinary
 verification paragraphs above.
+
+F5 verification: NOT complete. Checkpoint run 20261013-184851-0e9e at
+e21c499d246e751e9a0b5888923b6a11b3d4bc6d (one run, all 14 rows) ended RED
+exit 2 on the server build, not on any test: `tests/Antiphon.Tests` restore
+failed with NU1605 package downgrades (Microsoft.AspNetCore.Mvc.Testing `9.*`
+now resolves 9.0.21, whose Microsoft.Extensions.* 9.0.21 conflict with
+10.0.0 reached through Microsoft.EntityFrameworkCore.Relational `9.*` =
+9.0.20; nuget.org lists Mvc.Testing and Extensions.Logging 9.0.21 but no
+EntityFrameworkCore.Relational 9.0.21). The 11 server rows (CP-29..31, 13,
+14, 34..37, F2, RG1) therefore have no result. This branch changes no
+project, props or NuGet file; Review 87af7b11 built the same project files
+green at 18:14. Runner rows passed: CP-32 1/1, CP-33 1/1, CP-F3 145/145.
+The server rows must be rerun once the feed is consistent (or after a
+separate change pins the floating versions).
