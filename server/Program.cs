@@ -135,6 +135,10 @@ try
     builder.Services.Configure<AuditSettings>(builder.Configuration.GetSection("Audit"));
     builder.Services.Configure<GithubSettings>(builder.Configuration.GetSection("GitHub"));
     builder.Services.Configure<SessionRunnerSettings>(builder.Configuration.GetSection("SessionRunner"));
+    builder.Services.AddSingleton<IValidateOptions<StaleWorkingTranscriptSettings>, StaleWorkingTranscriptSettingsValidator>();
+    builder.Services.AddOptions<StaleWorkingTranscriptSettings>()
+        .Bind(builder.Configuration.GetSection(StaleWorkingTranscriptSettings.SectionName))
+        .ValidateOnStart();
     builder.Services.AddOptions<HostStatsSettings>()
         .Bind(builder.Configuration.GetSection(HostStatsSettings.SectionName))
         .Validate(s => s.PollIntervalMs > 0 && s.StaleAfterMs > 0 && s.RequestTimeoutMs > 0 && s.SeriesTimeoutMs > 0,
@@ -680,6 +684,8 @@ try
     // Startup barrier before any state-dependent hosted consumer.
     builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.SessionStateWarmupService>();
     builder.Services.AddSingleton<AgentSessionRuntime>();
+    builder.Services.AddSingleton<StaleWorkingTranscriptRecovery>();
+    builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.StaleWorkingTranscriptHostedService>();
     // Which delivery ceilings are in force, from the pseudoconsole actually serving the ptys
     // (CARD-0037). Must be registered before anything that types into a terminal.
     builder.Services.AddSingleton<PtyDeliveryProfile>();
