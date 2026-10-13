@@ -393,3 +393,14 @@ read-only arguments, optional-lock suppression and captured file preservation.
 The frozen TestDesign CP-6 prefix includes these additional 43 results.
 PC-561..572 and their named variants remain pending for SourceLanding Mutation.
 S5–S8 and native Windows acceptance remain deferred; S4 adds no removal caller.
+
+### S4 repair case additions
+
+| Case | Exact ordinary detecting filter | Results | Oracle |
+|---|---|---:|---|
+| D1/D2/D3 and full HOLD matrix | `/*/*/CompletedCardWorkspaceRemovalTests/C1032_InspectionHoldShapes*` | 42 | hand-written reason, HOLD, actual HEAD, HeldPaths, captured bytes and no intent |
+| Read-only inspection/proof calls | `/*/*/CompletedCardWorkspaceRemovalTests/C1032_InspectionReadOnlyGitCalls*` | 1 | exact read-only arguments, GIT_OPTIONAL_LOCKS=0, unchanged bytes/index, no intent |
+
+These rows are included in CP-6's existing prefix (46 total results), not extra
+checkpoint executions. The repair selection names all required S2/S3 and full-class
+regressions. Every added PC and variant remains pending for SourceLanding Mutation.
