@@ -1,4 +1,3 @@
-using System.Security.Cryptography;
 using System.Text.Json;
 
 namespace Antiphon.Checkpoints;
@@ -38,8 +37,6 @@ public static class OwnedOutputLedger
 
     public static string? Remove(string root, bool dryRun = false)
     {
-        try
-        {
             var refusal = Check(root);
             if (refusal is not null || dryRun) return refusal;
             // No recursive deletion: an unrecorded late addition keeps its directory alive.
@@ -59,9 +56,6 @@ public static class OwnedOutputLedger
             }
             Directory.Delete(root, recursive: false);
             return null;
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        { return "left in place: " + root + "; " + ex.GetType().Name; }
     }
 
     private static Dictionary<string, string> Inventory(string root)

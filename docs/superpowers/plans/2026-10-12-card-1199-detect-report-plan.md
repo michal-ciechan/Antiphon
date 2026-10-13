@@ -30,7 +30,7 @@ Closed scope overrides broad Unit profile per repair brief. Linux only. One isol
 | CP-8 | S2 | CP-1 | hanging-git-third | `/*/*/OutputCleanupTests/hanging_git_is_refused_and_killed_within_the_bound*` | R-3 | 1 passed | 1 | 1 |
 | CP-9 | S2 | CP-1 | row-runner | `/*/*/RowRunnerTests/*` | R-1 V-3 | full 13 cases, 0 failed/skipped | 13 | 1 |
 | CP-10 | S2 | CP-1 | required-script-receipt | `/*/*/CheckpointTrackedBaselineTests/passing_script_requires_writable_source_receipt*` | V-3 F2 | missing receipt is nonzero | 1 | 2 |
-| CP-11 | S2 | CP-1 | receipt-and-source-regression | `/*/*/(ReportWriterTests*\|CheckpointSourceStateTests*\|CheckpointSourceExecutionTests*\|EvidenceFolderTests*)/*` | V-3 R-1 | full affected receipt/source classes | 1 | 3 |
+| CP-11 | S2 | CP-1 | receipt-and-source-regression | `/*/*/(ReportWriterTests*\|CheckpointSourceStateTests*\|CheckpointSourceExecutionTests*\|EvidenceFolderTests*)/*` | V-3 R-1 | full affected receipt/source classes; Windows sharing case disclosed under R-2 | 1 | 3 |
 
 ### Mutation handoff
 
