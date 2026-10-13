@@ -219,8 +219,9 @@ public class WorkingTranscriptRecoveryTests
         }
         finally
         {
-            fault.Release.TrySetResult(); await probe;
+            fault.Release.TrySetResult();
             if (reader is not null) (await reader).Dispose();
+            await probe;
             if (competing is not null) await competing;
         }
     }
