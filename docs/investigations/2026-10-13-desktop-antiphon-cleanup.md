@@ -1,63 +1,55 @@
-# Desktop Antiphon cleanup - 2026-10-13
+# Desktop Antiphon cleanup - final after refinement
 
-The caller refinement arrived and superseded the initial residue-policy holds. It extended cleanup to 16:20 local, with removal authorized for old terminal worktrees after tracked-change and live origin-containment guards. A fresh persisted audit found 748 worktree candidates, 282 retained paths, and one already-absent path; retirement is in progress. Individual fresh facts are in C:\Users\lndco\Documents\antiphon-reports\desktop-cleanup-worktree-audit-29f3946d. The tracked-state limitation and all-worktrees-held counts below describe the initial 40-minute phase and are superseded by this refresh.
+The caller refinement arrived and authorized retiring qualifying old terminal worktrees despite residue holds, extending cleanup to 16:20 local. The task removed **118 worktrees and three Temp directories, 31.073 GB logical**, plus **72 alternate build-output directories contained in those worktrees**. Cleanup stopped cleanly at the refined limit with **zero deletion failures**; **1,013 candidates / 312.691 GB logical remain pending**.
 
-## Initial 40-minute phase (historical)
-
-Partial cleanup: three old verifier directories were removed, containing **7.156 GB of logical files**. Cleanup stopped cleanly at the task's 40-minute limit. There were **zero deletion failures**. Another **383 candidates, 224.699 GB logical**, remain pending; they have not been removed or verified as completed.
-
-Task/Code owner: `29f3946d-24ca-453b-b6ef-991c8fbf74f3`. Branch: `feat/card-task-29f3946d`. Worktree: `C:\Antiphon\worktrees\card-task-29f3946d`. Source base: `63b2e70479c846cacd01af6b20190e845f8258e4`. This commit changes only this summary. The standing operator cleanup authority was used without another approval request.
-
-## Outcome
-
-GB means 1,000,000,000 bytes. Logical file lengths do not prove allocated space reclaimed. Other desktop activity changed volume usage during this task.
+Task/Code owner: `29f3946d-24ca-453b-b6ef-991c8fbf74f3`. Branch: `feat/card-task-29f3946d`. Worktree: `C:\Antiphon\worktrees\card-task-29f3946d`. Full task source base: `63b2e70479c846cacd01af6b20190e845f8258e4`. Only this summary is changed in Git. The standing cleanup authority and refinement were used without another approval request.
 
 | Kind | Deleted | Kept | Pending | Failed | Logical GB removed |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| A: task worktrees | 0 | 1,031 | 0 | 0 | 0 |
+| A: worktrees | 118 | 282 | 630 | 0 | 23.917 |
 | B: Temp scratch | 3 | 62 | 359 | 0 | 7.156 |
-| C: review/code evidence | 0 | 7 | 24 | 0 | 0 |
-| D: alternate build output | 0 | 424 | 0 | 0 | 0 |
+| C: code/review evidence | 0 | 7 | 24 | 0 | 0 |
+| D: alternate build output | 72 with A | 352 | 0 with parent | 0 | included in A |
 
-D rows are contained within retained worktrees and must not be added to parent sizes. A sizes use the earlier disk report's estimates, totaling 176.727 GB for known paths; some new paths have unknown size. D sizes are included in parent estimates or unknown, not measured zero.
+One A path disappeared during refresh and is recorded as already-absent, never claimed deleted by this task. D overlaps its parent and cannot be added to A. GB=1,000,000,000 bytes; logical lengths do not prove allocated space returned. Exact removed bytes: A=23916750734, B=7155928259, total=31072678993. Pending bytes: A=87992387328, B=223823724340, C=874889950.
 
-C: free space was **342.231 GB** at the initial task observation, **339.225 GB** at the saved inventory baseline, and **345.909 GB** at cleanup stop. Exact bytes: 342230777856, 339225063424, and 345908834304. Net change from the initial observation: +3.678 GB; from inventory: +6.684 GB. Neither delta can be attributed exclusively to deletion.
+C: free at initial observation was **342.231 GB**, inventory baseline **339.225 GB**, and final cleanup stop **368.241 GB**. Exact bytes: 342230777856, 339225063424, 368241401856. Net initial-to-stop **+26.011 GB**. Concurrent desktop activity prevents attributing the delta wholly to cleanup or splitting physical reclaim reliably by kind.
 
-Deleted exact paths, all under `C:\Users\lndco\AppData\Local\Temp`:
+## Guard results and verification
 
-- `antiphon-land-verify-104c262c57964087b42686372fb86313`: 2385379201 bytes.
-- `antiphon-land-verify-97c715ca1f2b407589dd524f95c0510e`: 2385379180 bytes.
-- `antiphon-land-verify-6fb7a5196ec14588881070edd7a30fb8`: 2385169878 bytes.
+A fresh persisted audit classified 748 worktrees as qualifying, 282 retained and one absent. Each A removal repeated terminal/completion age, creation and newest descendant age, live-process/native-directory-handle, source HEAD/branch/common-directory identity, tracked-change and live origin-containment checks. All 118 removed worktrees still have their exact source SHA on both their local branch and origin after cleanup; missing/changed refs=0 and deleted paths still present=0.
 
-## Retention and evidence limits
+The owner preview initially held all 4187 rows (run e5118040-bb34-4dc6-b580-92f50f4f5415); refinement superseded that blanket hold. Retained A reasons now come from data-loss, age or ownership/live-use guards. Overlapping counts: nonterminal=7, completion within 24h=171, recent creation/descendants=167, tracked changes=4, unproven origin/publication=124. All 13 Git-common-directory-unproven paths also fail publication proof. The four tracked-dirty paths are:
 
-The installed owner script supports Preview/Release, not Execute. Owner preview run `e5118040-bb34-4dc6-b580-92f50f4f5415` held all 4,187 fleet rows. The inventoried A paths have these owner reasons: release_required=985, publication_retry=16, settling=14, live_owner=9, repair_source_excluded=5, and no owner-validated candidate=2. No policy hold was bypassed, and no A/D deletion was attempted. The nine nonterminal owners include this task.
+- C:\Antiphon\worktrees\card-task-0f9c42e4
+- C:\Antiphon\worktrees\card-task-570fd325
+- C:\Antiphon\worktrees\card-task-cd2866b8
+- C:\Antiphon\worktrees\card-task-dfc6f878
 
-124 worktree paths have HEAD not proven contained on their observed origin branch, or no corresponding origin branch. Their exact paths, branch/HEAD/origin observations and retention reasons are in the manifest. Tracked-change state is **UNKNOWN in the saved per-path manifest**: an initial detailed audit completed, but its subsequent scratch lock scan was stopped before those results were saved. The final inventory therefore grants no worktree-deletion authority. This is a verification limitation, not a clean-source claim.
+Every kept path and exact reason, including detailed tracked status, is in the manifest. B/C retention covers recent changes, active-use evidence, metadata uncertainty and unproven scratch ownership. Registered C descendants in e3c11469 and task-60ccb73c were preserved. Previously missing saved tracked-state evidence was resolved by the refreshed per-path facts. An externally disappearing path interrupted the refresh once; completed facts were retained and only the remaining paths resumed.
 
-B/C retention covers recent creation/modification, recent descendants, active process evidence, metadata uncertainty and unproven scratch ownership. Registered worktree descendants in `C:\Antiphon\review-evidence\e3c11469` and `C:\Antiphon\review-evidence\task-60ccb73c` were retained. Every kept path and its reason is listed in the manifest. Pending B size is 223823724340 bytes; pending C size is 874889950 bytes.
+The manifest existed before deletion. Reparse points were unlinked without traversing targets; registered A paths were retired with git worktree remove --force. Branches were retained. B removals additionally checked exclusive file opens without reading payloads. No sessions were stopped and no restart/deployment occurred. Final git worktree prune printed: `Removing worktrees/base: gitdir file points to non-existent location` (stale registration metadata only).
 
-The manifest was written before deletion. Each removal then rechecked the exact allowed parent, age, current process command lines/executable paths, exclusive native directory opens, and exclusive file opens without reading file contents. Metadata or sharing uncertainty retained the directory. The removal helper unlinked reparse points without traversing their targets and supported long paths through .NET/native Windows APIs. All commands and bounded read workers were awaited. `git -C C:\src\Antiphon worktree prune -v` completed without output. No branches were deleted, no sessions stopped, and no restart/deployment occurred.
+No builds/tests ran, as the cleanup brief explicitly required. No plan/checkpoint, ordinary V/R or PC IDs were assigned; no test/build/Review-clean result is claimed. Build/test slot=n/a; waited=0. Restart: none. Manual verification is the scope/age/process/handle/source/publication/deletion evidence above. All commands and bounded read workers were awaited. scripts/check-evidence-diff.ps1 is run over the full task base..HEAD before final reporting. Generated payloads remain outside Git at the requested evidence paths.
 
 ## Artifacts and continuation
 
-- Full manifest/outcomes: `C:\Users\lndco\Documents\antiphon-reports\desktop-cleanup-manifest-2026-10-13.md`.
-- Structured metadata: `C:\Users\lndco\Documents\antiphon-reports\desktop-cleanup-manifest-2026-10-13.json`.
-- Local operating helper: `C:\Users\lndco\Documents\antiphon-reports\desktop-cleanup-29f3946d.ps1`.
-- Brief: `C:\src\Antiphon\.antiphon\task-29f3946d-brief.md`.
+- Full manifest and outcomes: C:\Users\lndco\Documents\antiphon-reports\desktop-cleanup-manifest-2026-10-13.md
+- Structured manifest: C:\Users\lndco\Documents\antiphon-reports\desktop-cleanup-manifest-2026-10-13.json
+- Fresh per-path A facts: C:\Users\lndco\Documents\antiphon-reports\desktop-cleanup-worktree-audit-29f3946d
+- Local helper: C:\Users\lndco\Documents\antiphon-reports\desktop-cleanup-29f3946d.ps1
+- Brief/refinement: C:\src\Antiphon\.antiphon\task-29f3946d-brief.md and task-29f3946d-refinement-20261013143409.md
 
-To continue the pending B/C rows with fresh guards and a new 35-minute window:
+Resume pending A with fresh guards, then pending B/C, using a new 35-minute window for each command:
 
 ```powershell
+pwsh -NoProfile -File C:\Users\lndco\Documents\antiphon-reports\desktop-cleanup-29f3946d.ps1 -Action ExecuteWorktrees -StopAt ((Get-Date).ToUniversalTime().AddMinutes(35))
 pwsh -NoProfile -File C:\Users\lndco\Documents\antiphon-reports\desktop-cleanup-29f3946d.ps1 -Action Execute -StopAt ((Get-Date).ToUniversalTime().AddMinutes(35))
 ```
 
-The continuation preserves all A/D and previously kept rows. Resolve owner retirement holds separately while preserving unpublished work. Candidate rows in the manifest mean pending, never passed/deleted.
-
-Verification: manual scope/age/process/handle/deletion checks only. The cleanup brief explicitly required no builds or tests; none ran. No plan, checkpoint, ordinary V/R IDs or PCs were assigned. Build/test slot=n/a; waited=0. Restart: none. Generated manifests remain outside Git at the operator-requested paths; only this small Markdown summary is committed. The full source range is checked with `scripts/check-evidence-diff.ps1` before final reporting.
+These commands preserve previously kept rows and recheck pending paths; they do not claim the remaining candidates complete. No additional deletion occurred after the refined stop.
 
 --- next stage ---
 next: decide
-handoff: Resolve the owner retirement holds while preserving unpublished work, and resume the 383 pending B/C scratch candidates from the saved manifest with fresh guards.
+handoff: Continue the 630 pending A worktrees and 359 B/24 C scratch candidates from the manifest with fresh guards; preserve dirty/unpublished, recent and live owners. The refined run removed 31.073 GB logical without deletion failures.
 artifact: docs/investigations/2026-10-13-desktop-antiphon-cleanup.md
-
