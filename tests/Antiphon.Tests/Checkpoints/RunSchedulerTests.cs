@@ -295,6 +295,7 @@ public sealed class RunSchedulerTests : CheckpointTestBase
             () => DateTimeOffset.UtcNow,
             (_, _) => Task.CompletedTask,
             holders: new SlotPids(11, 22, 33));
+        foreach (var build in manifest.Builds) Directory.CreateDirectory(ProjectWriteRoots.DirectoryOf(Path.GetFullPath(Path.Combine(root, build.Project))));
         var task = new RunScheduler(driver, new FakePlatform()).RunAsync(new SchedulerRequest
         {
             Manifest = manifest,
@@ -410,6 +411,7 @@ public sealed class RunSchedulerTests : CheckpointTestBase
         var root = TempDir();
         foreach (var row in rows)
             row.Expect = [];
+        foreach (var build in manifest.Builds) Directory.CreateDirectory(ProjectWriteRoots.DirectoryOf(Path.GetFullPath(Path.Combine(root, build.Project))));
         var scheduler = new RunScheduler(driver, new FakePlatform());
         return scheduler.RunAsync(new SchedulerRequest
         {

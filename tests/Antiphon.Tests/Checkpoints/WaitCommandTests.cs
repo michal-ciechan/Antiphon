@@ -78,8 +78,9 @@ public sealed class WaitCommandTests : CheckpointTestBase
         var dir = TempDir();
         CheckpointFixtures.MarkRun(dir, alive: false);
         var tool = Path.Combine(dir, "tool");
-        Directory.CreateDirectory(tool);
+        SafeWrite.Require(SafeWrite.CreateFreshDirectory(tool, SafeWrite.Under(dir)));
         File.WriteAllText(Path.Combine(tool, "Antiphon.Checkpoints.dll"), "x");
+        SafeWrite.Require(OwnedOutputLedger.Seal(tool));
         File.WriteAllText(Path.Combine(dir, "report.md"), "--- checkpoint report ---\nverdict: GREEN exit=0\n");
         var state = new RunState
         {
@@ -111,8 +112,9 @@ public sealed class WaitCommandTests : CheckpointTestBase
         var dir = TempDir();
         CheckpointFixtures.MarkRun(dir, alive: true);
         var tool = Path.Combine(dir, "tool");
-        Directory.CreateDirectory(tool);
+        SafeWrite.Require(SafeWrite.CreateFreshDirectory(tool, SafeWrite.Under(dir)));
         File.WriteAllText(Path.Combine(tool, "Antiphon.Checkpoints.dll"), "x");
+        SafeWrite.Require(OwnedOutputLedger.Seal(tool));
         new RunStateStore().Write(Path.Combine(dir, "state.json"), new RunState
         {
             RunId = "exiting",
@@ -147,8 +149,9 @@ public sealed class WaitCommandTests : CheckpointTestBase
         var dir = TempDir();
         CheckpointFixtures.MarkRun(dir, alive: false);
         var tool = Path.Combine(dir, "tool");
-        Directory.CreateDirectory(tool);
+        SafeWrite.Require(SafeWrite.CreateFreshDirectory(tool, SafeWrite.Under(dir)));
         File.WriteAllText(Path.Combine(tool, "Antiphon.Checkpoints.dll"), "x");
+        SafeWrite.Require(OwnedOutputLedger.Seal(tool));
         new RunStateStore().Write(Path.Combine(dir, "state.json"), new RunState
         {
             RunId = "race-1",
