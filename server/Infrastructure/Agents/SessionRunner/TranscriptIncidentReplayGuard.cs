@@ -17,7 +17,9 @@ namespace Antiphon.Server.Infrastructure.Agents.SessionRunner;
 /// <c>capacity</c> keys are held; a new key past capacity evicts the oldest admitted key, whose
 /// record is then admitted again even inside its window, and a re-admitted key becomes the newest
 /// (<c>Guard_evicts_the_oldest_key_past_capacity</c>). Nothing is persisted: a new pump instance
-/// starts with no keys. Callers may overlap during a reconnect handoff, so
+/// starts with no keys. The key is a volatile admission identity only; an incident row the service
+/// writes has its own generated <c>AgentIncident.Id</c> and does not store the whole key (the
+/// ordinary fault row keeps neither <c>Repeat</c> nor <c>UnboundSeconds</c>). Callers may overlap during a reconnect handoff, so
 /// <see cref="Admit(SessionRunnerTranscriptFaultEvent)"/> runs under a lock.
 /// </summary>
 internal sealed class TranscriptIncidentReplayGuard(TimeProvider clock, TimeSpan window, int capacity = 512)
