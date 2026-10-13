@@ -24,3 +24,17 @@ PC-588..590 and every earlier plan PC/variant remain pending. Ordinary baseline
 red at c82b985895892533d517521e8efc138a603e0a8c and Final green do not discharge
 any control. Mutation owns deliberate red/restore/green and missing-control
 discovery. Native Windows qualification and S8 obligations remain separate.
+
+## S7 F4 negative-witness candidates
+
+Code task 55328335 (landing owner 60025819). Scratch mutations VP-08/09/10/13/15
+turned the new witnesses red on the Code branch and were reverted, never
+committed; that is Code evidence, not deliberate-mutant execution.
+
+| PC | Guard / candidate | Exact detecting filter | Pending named variants |
+|---|---|---|---|
+| PC-595 | Landing MAC covers Binding.TaskId | `/*/*/CompletedCardWorkspaceContractTests/C1032_LandingSignatureCoversTaskId` | other TaskId, empty TaskId |
+| PC-596 | Publication scoped to owning task | `/*/*/CardWorktreeMirrorCleanupTests/C1032_WitnessLandingOwnership` | foreign task; missing-control discovery for foreign store path, repository, earlier generation |
+| PC-597 | Complete landing evidence required | `/*/*/CardWorktreeMirrorCleanupTests/C1032_WitnessLandingCompleteness` | 13 field vectors |
+| PC-598 | Replay checks RequestDigest | `/*/*/CardWorktreeMirrorCleanupTests/C1032_WitnessPersistedReplayTamper` | report digest, policy digest, binding worktree path, expected HEAD |
+| PC-599 | Unsupported removal reply fails closed | `/*/*/CardWorktreeMirrorCleanupTests/C1032_WitnessUnsupportedRemovalAfterInspection` | real unsupported, intercepted unsupported; discovery for unknown/absent |
