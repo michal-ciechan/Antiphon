@@ -24,7 +24,7 @@ public partial class AgentTaskDispatchBaseGuardTests
     public async Task C1213_MintUsesCardRoleAndRunnerCapability()
     {
         // treat missing/wrong-case capability as supported -> old-runner-branch red.
-        foreach (var vector in new[] { "local", "capable", "empty", "null-features", "null-capabilities", "unknown", "near", "case", "fault", "disabled" })
+        foreach (var vector in new[] { "local", "capable", "empty", "null-features", "null-capabilities", "unknown", "near", "case", "fault", "disabled", "cached-feature" })
         {
             using var repo = new ScratchGitRepo("c1213-mint");
             await repo.CommitFileAsync("seed.txt", "seed");
@@ -184,7 +184,7 @@ public partial class AgentTaskDispatchBaseGuardTests
             var remoteRepo = Path.Combine(remoteRoot, "repo"); var allowed = Path.Combine(remoteRoot, "work");
             (await ScratchGitRepo.GitInAsync(repo.Path, "clone", "-b", "master", origin, remoteRepo)).Ok.ShouldBeTrue();
             Directory.CreateDirectory(allowed);
-            var runner = new RunnerWorkspaceService(remoteRepo, allowed, origin);
+            var runner = new RunnerWorkspaceService(remoteRepo, allowed, origin, System.Diagnostics.Process.Start);
             var workspace = new Antiphon.Server.Infrastructure.Agents.SessionRunner.RemoteVerificationWorkspace(new C1213SnapshotTransport(runner), remoteRepo, allowed);
             await using var remoteProvider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot, runners: new C1213Directory("capable"), cardBranchNames: true, verificationWorkspaces: new C1213SnapshotDirectory(workspace));
             await using var remoteScope = remoteProvider.CreateAsyncScope();
@@ -215,7 +215,7 @@ public partial class AgentTaskDispatchBaseGuardTests
 
     private sealed class C1213Directory(string vector) : ISessionRunnerDirectory
     {
-        private readonly FakeSessionRunnerClient _client = new() { VerificationStoreId = Guid.NewGuid() };
+        private readonly FakeSessionRunnerClient _client = new() { VerificationStoreId = Guid.NewGuid(), ExtraFeatures = vector == "capable" ? ["workspaceCardBranchV1"] : [] };
         public ISessionRunnerClient Local => _client;
         public ISessionRunnerClient Resolve(string? runnerId) => _client;
         public IReadOnlyList<string> KnownRunnerIds => ["fixture"];
@@ -227,7 +227,7 @@ public partial class AgentTaskDispatchBaseGuardTests
         {
             if (vector == "fault") throw new IOException("capability unavailable");
             if (vector == "unknown") return Task.FromResult<RunnerDescriptor?>(null);
-            RunnerCapabilitiesDto? caps = vector == "null-capabilities" ? null : new("test", "test", "test", false, Features: vector switch { "capable" => ["workspaceCardBranchV1"], "near" => ["workspaceCardBranchV10"], "case" => ["WorkspaceCardBranchV1"], "null-features" => null, _ => [] });
+            RunnerCapabilitiesDto? caps = vector == "null-capabilities" ? null : new("test", "test", "test", false, Features: vector switch { "capable" or "cached-feature" => ["workspaceCardBranchV1"], "near" => ["workspaceCardBranchV10"], "case" => ["WorkspaceCardBranchV1"], "null-features" => null, _ => [] });
             return Task.FromResult<RunnerDescriptor?>(new("fixture", "fixture", "linux", null, true, true, false, 2, caps));
         }
     }

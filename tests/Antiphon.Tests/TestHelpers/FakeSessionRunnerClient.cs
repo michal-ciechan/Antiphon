@@ -21,6 +21,7 @@ internal sealed class FakeSessionRunnerClient : ISessionRunnerClient
     public Func<CancellationToken, Task<IReadOnlyList<SessionRunnerSessionDto>>>? ListOverride { get; set; }
     public Func<Guid, CancellationToken, Task<SessionRunnerSessionDto>>? GetOverride { get; set; }
 
+    public IReadOnlyList<string>? ExtraFeatures { get; set; }
     public bool AdvertiseHerdr { get; set; } = true;
     public bool AdvertiseGrokRules { get; set; }
     public Guid? VerificationStoreId { get; set; }
@@ -77,6 +78,7 @@ internal sealed class FakeSessionRunnerClient : ISessionRunnerClient
             ? [SessionBackends.PtyHost, SessionBackends.Herdr]
             : [SessionBackends.PtyHost];
         var features = new List<string>();
+        if (ExtraFeatures is not null) features.AddRange(ExtraFeatures);
         if (VerificationStoreId is not null) features.Add(RunnerCapabilityFeatures.VerificationCustodyV1);
         if (AdvertiseGrokRules) features.Add(GrokRulesTransport.Capability);
         if (AdvertiseHerdr && AdvertiseHerdrAttach)
