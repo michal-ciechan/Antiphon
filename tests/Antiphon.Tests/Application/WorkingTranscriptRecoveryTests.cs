@@ -289,6 +289,157 @@ public class WorkingTranscriptRecoveryTests
         }
         finally { fault.Release.TrySetResult(); await probe; }
     }
+    [Test]
+    [Arguments("transaction-generation"), Arguments("owner"), Arguments("terminal"), Arguments("frontier")]
+    public async Task C1205_Late_precondition_change_rejects_without_publication(string variant)
+    {
+        var fault = new Faults();
+        await using var h = await Harness.CreateAsync(true, fault);
+        var before = await h.F.Store.ReadAsync(h.Id, default);
+        fault.HoldFence = variant == "transaction-generation";
+        fault.HoldIdentity = !fault.HoldFence;
+        var probe = h.ProbeAsync();
+        try
+        {
+            await fault.Reached.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            if (variant == "transaction-generation") fault.TransactionAtFence.ShouldBeTrue();
+            await using (var db = h.F.Db())
+            {
+                var session = await db.AgentSessions.SingleAsync(s => s.Id == h.Id);
+                if (variant == "transaction-generation") session.StartedAt = h.Generation.AddSeconds(1);
+                if (variant == "owner") session.RunnerId = "foreign";
+                if (variant == "terminal") session.Status = SessionStatus.Stopped;
+                if (variant == "frontier") db.TranscriptEntries.Add(new TranscriptEntry
+                {
+                    Id = Guid.NewGuid(), AgentSessionId = h.Id, Sequence = 3, Kind = "UserPrompt",
+                    Uuid = "new", Text = "new turn", CreatedAt = DateTime.UtcNow
+                });
+                await db.SaveChangesAsync();
+            }
+            fault.Release.TrySetResult();
+            var result = await probe;
+            (await h.RowsAsync()).Count(r => r.Uuid == "end").ShouldBe(0);
+            result.Outcome.ToString().ShouldBe("Unknown");
+            result.AddedCount.ShouldBe(0);
+            (await h.F.Store.ReadAsync(h.Id, default)).ShouldBe(before);
+            h.Log.Entries.Count(e => e.Level == LogLevel.Warning).ShouldBe(1);
+        }
+        finally { fault.Release.TrySetResult(); await probe; }
+    }
+
+    [Test]
+    public async Task C1205_Generation_changes_before_validation_are_rejected()
+    {
+        await using var h = await Harness.CreateAsync(true);
+        h.Handler.Hold = true;
+        var probe = h.ProbeAsync();
+        try
+        {
+            await h.Handler.Reached.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            await ChangeGenerationAsync(h);
+            h.Handler.Release.TrySetResult();
+            var result = await probe;
+            result.Outcome.ToString().ShouldBe("Unknown");
+            result.AddedCount.ShouldBe(0);
+            (await h.RowsAsync()).Count(r => r.Uuid == "end").ShouldBe(0);
+            (await h.F.Store.ReadAsync(h.Id, default)).Working.ShouldBeTrue();
+        }
+        finally { h.Handler.Release.TrySetResult(); await probe; }
+    }
+
+    [Test, Arguments(true), Arguments(false)]
+    public async Task C1205_Unchanged_generation_publishes_only_committed_rows_once(bool cache)
+    {
+        var fault = new Faults();
+        await using var h = await Harness.CreateAsync(cache, fault);
+        fault.HoldSave = true;
+        var probe = h.ProbeAsync();
+        Task<SessionStateStore.Lease>? reader = null;
+        try
+        {
+            await fault.Reached.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            var waiting = h.F.Store.NextGateWait = Signal();
+            reader = h.F.Store.BeginWriteAsync(h.Id, default);
+            await waiting.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            reader.IsCompleted.ShouldBeFalse();
+            (await h.RowsAsync()).Count(r => r.Uuid == "end").ShouldBe(0);
+            fault.Release.TrySetResult();
+            using (var published = await reader)
+            {
+                (await h.RowsAsync()).Count(r => r.Uuid == "end").ShouldBe(1);
+                published.Snapshot.Count.ShouldBe(2);
+                published.Snapshot.Working.ShouldBeFalse();
+            }
+            reader = null;
+            var result = await probe;
+            result.Outcome.ToString().ShouldBe("RecoveredIdle");
+            result.AddedCount.ShouldBe(1);
+            (await h.ProbeAsync()).AddedCount.ShouldBe(0);
+            (await h.RowsAsync()).Count(r => r.Uuid == "end").ShouldBe(1);
+        }
+        finally { fault.Release.TrySetResult(); if (reader is not null) (await reader).Dispose(); await probe; }
+    }
+
+    [Test, Arguments(true), Arguments(false)]
+    public async Task C1205_Concurrent_recoveries_commit_one_end_and_converge(bool cache)
+    {
+        await using var h = await Harness.CreateAsync(cache);
+        h.Handler.Hold = true;
+        var first = h.ProbeAsync();
+        await h.Handler.Reached.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var second = h.ProbeAsync();
+        try
+        {
+            await h.Handler.SecondReached.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            h.Handler.Release.TrySetResult();
+            var results = await Task.WhenAll(first, second);
+            results.Count(r => r.Outcome.ToString() == "RecoveredIdle").ShouldBe(1);
+            results.Count(r => r.Outcome.ToString() == "Unknown").ShouldBe(1);
+            results.Sum(r => r.AddedCount).ShouldBe(1);
+            (await h.RowsAsync()).Count(r => r.Uuid == "end").ShouldBe(1);
+            (await h.ProbeAsync()).Outcome.ToString().ShouldBe("RecoveredIdle");
+        }
+        finally { h.Handler.Release.TrySetResult(); await Task.WhenAll(first, second); }
+    }
+
+    [Test, Arguments(true), Arguments(false)]
+    public async Task C1205_Recovery_commit_fences_lifecycle_writer_then_allows_new_generation(bool cache)
+    {
+        var fault = new Faults();
+        await using var h = await Harness.CreateAsync(cache, fault);
+        fault.HoldSave = true;
+        var probe = h.ProbeAsync();
+        try
+        {
+            await fault.Reached.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            await using var db = h.F.Db();
+            await using (var tx = await db.Database.BeginTransactionAsync())
+            {
+                var refusal = await Should.ThrowAsync<PostgresException>(() => db.Database.ExecuteSqlInterpolatedAsync(
+                    $"""SELECT "Id" FROM "AgentSessions" WHERE "Id" = {h.Id} FOR UPDATE NOWAIT"""));
+                refusal.SqlState.ShouldBe("55P03", "the lifecycle writer must contend on recovery's session row lock");
+                await tx.RollbackAsync();
+            }
+            (await h.RowsAsync()).Count(r => r.Uuid == "end").ShouldBe(0);
+            fault.Release.TrySetResult();
+            (await probe).Outcome.ToString().ShouldBe("RecoveredIdle");
+            await ChangeGenerationAsync(h);
+            (await h.RowsAsync()).Count(r => r.Uuid == "end").ShouldBe(1);
+            var rejected = await h.ProbeAsync();
+            rejected.Outcome.ToString().ShouldBe("Unknown");
+            rejected.AddedCount.ShouldBe(0);
+        }
+        finally { fault.Release.TrySetResult(); await probe; }
+    }
+
+    private static async Task ChangeGenerationAsync(Harness h)
+    {
+        await using var db = h.F.Db();
+        var session = await db.AgentSessions.SingleAsync(s => s.Id == h.Id);
+        session.StartedAt = h.Generation.AddSeconds(1);
+        await db.SaveChangesAsync();
+    }
+
     private static TaskCompletionSource Signal() => new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     private sealed class Harness : IAsyncDisposable
@@ -298,6 +449,7 @@ public class WorkingTranscriptRecoveryTests
         public required HttpClient Http { get; init; }
         public required ISessionRunnerClient Client { get; init; }
         public AgentSessionRuntime Runtime { get; private set; } = null!;
+        public RecordingLogger<AgentSessionRuntime> Log { get; } = new();
         public Guid Id => F.SessionId;
         public DateTime Generation { get; private set; }
         public SessionRunnerTranscriptEvent Prompt { get; private set; } = null!;
@@ -327,7 +479,7 @@ public class WorkingTranscriptRecoveryTests
         public void ReplaceRuntime(SessionStateStore? store) => Runtime = new AgentSessionRuntime(Client,
             F.Services.GetRequiredService<IEventBus>(), F.Services.GetRequiredService<IOptions<AgentSessionSettings>>(),
             F.Services.GetRequiredService<IServiceScopeFactory>(), TimeProvider.System,
-            F.Services.GetRequiredService<ILoggerFactory>().CreateLogger<AgentSessionRuntime>(), states: store);
+            Log, states: store);
         public void SetEntries(params SessionRunnerTranscriptEvent[] entries) => Snapshot = Snapshot with
             { Entries = entries, LastSequence = entries[^1].Sequence };
         public Task<TranscriptRecoveryResult> ProbeAsync() => Runtime.ProbeWorkingTranscriptAsync(Id, default);
@@ -350,10 +502,11 @@ public class WorkingTranscriptRecoveryTests
         public bool Hold, Fail, Cancel;
         public int Hits;
         public TaskCompletionSource Reached { get; } = Signal();
+        public TaskCompletionSource SecondReached { get; } = Signal();
         public TaskCompletionSource Release { get; } = Signal();
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
-            Interlocked.Increment(ref Hits);
+            if (Interlocked.Increment(ref Hits) == 2) SecondReached.TrySetResult();
             var snapshot = Snapshot;
             Reached.TrySetResult();
             if (Hold) await Release.Task.WaitAsync(ct);
@@ -365,7 +518,8 @@ public class WorkingTranscriptRecoveryTests
     }
     private sealed class Faults : DbCommandInterceptor, ISaveChangesInterceptor
     {
-        public bool SaveFailure, ReadFailure, Collision, HoldSave, HoldIdentity;
+        public bool SaveFailure, ReadFailure, Collision, HoldSave, HoldIdentity, HoldFence;
+        public bool TransactionAtFence;
         public string? RejectUuid;
         public int Hits;
         public TaskCompletionSource Reached { get; } = Signal();
@@ -392,6 +546,13 @@ public class WorkingTranscriptRecoveryTests
         public override async ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(DbCommand command,
             CommandEventData data, InterceptionResult<int> result, CancellationToken ct = default)
         {
+            if (HoldFence && command.CommandText.Contains("FOR UPDATE") && command.CommandText.Contains("AgentSessions"))
+            {
+                HoldFence = false;
+                TransactionAtFence = data.Context!.Database.CurrentTransaction is not null;
+                Reached.TrySetResult();
+                await Release.Task.WaitAsync(TimeSpan.FromSeconds(20), ct);
+            }
             await InsertCollisionAsync(command, data.Context, ct);
             return result;
         }
