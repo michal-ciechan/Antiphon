@@ -78,16 +78,16 @@ PC-1 foreign drop/receipt/removal guard (cache variants); PC-2 legacy container 
 | CP-59 | Fixed | `CP-33` | audit-59 | `/*/*/RemoteScriptContractTests/C1208_Recorded_container_id_does_not_delete_replacement*` | V-6 | 1 executed, 0 failed/skipped | 1 | 1 |
 | CP-60 | Fixed | `CP-33` | audit-60 | `/*/*/RemoteScriptContractTests/C1208_Legacy_owned_markers_are_migrated*` | V-7 | 1 executed, 0 failed/skipped | 1 | 1 |
 | CP-61 | Fixed | `CP-33` | audit-61 | `/*/*/RemoteScriptContractTests/C1208_Unknown_identity_retains_residue*` | V-8 | 1 executed, 0 failed/skipped | 1 | 1 |
-| CP-62 | Repair | `CP-33` | repair-62 | `/*/*/RemoteScriptContractTests/C1208_Wrong_cidfile_preserves_foreign_container*` | V-9 | 1 executed, 0 failed/skipped | 1 | 1 |
-| CP-63 | Repair | `CP-33` | repair-63 | `/*/*/RemoteScriptContractTests/C1208_Recorded_id_with_changed_labels_is_untouched*` | V-10 | 1 executed, 0 failed/skipped | 1 | 1 |
-| CP-64 | Repair | `CP-33` | repair-64 | `/*/*/RemoteScriptContractTests/C1208_Recorded_container_inspect_failure_refuses_cleanup*` | V-11 | 1 executed, 0 failed/skipped | 1 | 1 |
-| CP-65 | Repair | `CP-33` | repair-65 | `/*/*/RemoteScriptContractTests/C1208_Wrong_helper_id_preserves_foreign_container*` | V-12 | 1 executed, 0 failed/skipped | 1 | 1 |
-| CP-66 | Repair | `CP-33` | repair-66 | `/*/*/RemoteScriptContractTests/C1208_Wrong_network_id_is_untouched*` | V-13 | 1 executed, 0 failed/skipped | 1 | 1 |
-| CP-67 | Repair | `CP-33` | repair-67 | `/*/*/RemoteScriptContractTests/C1208_Recorded_network_inspect_failure_refuses_cleanup*` | V-14 | 1 executed, 0 failed/skipped | 1 | 1 |
-| CP-68 | Repair | `CP-33` | repair-68 | `/*/*/RemoteScriptContractTests/C1208_Owned_packages_registration_survives_production_controls*` | V-15 | 1 executed, 0 failed/skipped | 1 | 1 |
-| CP-69 | Repair | `CP-33` | repair-69 | `/*/*/RemoteScriptContractTests/C1208_Dangling_network_record_retains_residue*` | V-16 | 1 executed, 0 failed/skipped | 1 | 1 |
-| CP-70 | Repair | `CP-33` | repair-70 | `/*/*/RemoteScriptContractTests/C1208_Invalid_network_record_retains_text*` | V-17 | 1 executed, 0 failed/skipped | 1 | 1 |
-| CP-71 | Repair | `CP-33` | repair-71 | `/*/*/RemoteScriptContractTests/C1208_Confirmed_absent_network_record_is_cleared*` | V-18 | 1 executed, 0 failed/skipped | 1 | 1 |
+| CP-62 | Fixed | `CP-33` | repair-62 | `/*/*/RemoteScriptContractTests/C1208_Wrong_cidfile_preserves_foreign_container*` | V-9 | 1 executed, 0 failed/skipped | 1 | 1 |
+| CP-63 | Fixed | `CP-33` | repair-63 | `/*/*/RemoteScriptContractTests/C1208_Recorded_id_with_changed_labels_is_untouched*` | V-10 | 1 executed, 0 failed/skipped | 1 | 1 |
+| CP-64 | Fixed | `CP-33` | repair-64 | `/*/*/RemoteScriptContractTests/C1208_Recorded_container_inspect_failure_refuses_cleanup*` | V-11 | 1 executed, 0 failed/skipped | 1 | 1 |
+| CP-65 | Fixed | `CP-33` | repair-65 | `/*/*/RemoteScriptContractTests/C1208_Wrong_helper_id_preserves_foreign_container*` | V-12 | 1 executed, 0 failed/skipped | 1 | 1 |
+| CP-66 | Fixed | `CP-33` | repair-66 | `/*/*/RemoteScriptContractTests/C1208_Wrong_network_id_is_untouched*` | V-13 | 1 executed, 0 failed/skipped | 1 | 1 |
+| CP-67 | Fixed | `CP-33` | repair-67 | `/*/*/RemoteScriptContractTests/C1208_Recorded_network_inspect_failure_refuses_cleanup*` | V-14 | 1 executed, 0 failed/skipped | 1 | 1 |
+| CP-68 | Fixed | `CP-33` | repair-68 | `/*/*/RemoteScriptContractTests/C1208_Owned_packages_registration_survives_production_controls*` | V-15 | 1 executed, 0 failed/skipped | 1 | 1 |
+| CP-69 | Fixed | `CP-33` | repair-69 | `/*/*/RemoteScriptContractTests/C1208_Dangling_network_record_retains_residue*` | V-16 | 1 executed, 0 failed/skipped | 1 | 1 |
+| CP-70 | Fixed | `CP-33` | repair-70 | `/*/*/RemoteScriptContractTests/C1208_Invalid_network_record_retains_text*` | V-17 | 1 executed, 0 failed/skipped | 1 | 1 |
+| CP-71 | Fixed | `CP-33` | repair-71 | `/*/*/RemoteScriptContractTests/C1208_Confirmed_absent_network_record_is_cleared*` | V-18 | 1 executed, 0 failed/skipped | 1 | 1 |
 
 ### Cost
 

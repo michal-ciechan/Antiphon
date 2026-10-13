@@ -3052,6 +3052,7 @@ mode_deletion_audit() {
             emit residue "$(test -s "$CASE_DIR/fixture-cleanup-residue.txt" && echo 1 || echo 0)"
             ;;
         owned-volume-controls)
+            C849_PACKAGES="c849${RUN}-packages"; C849_SCRATCH="c849${RUN}-scratch"; C849_NPM="c849${RUN}-npm"
             name="c849${RUN}-packages"
             printf '%s\n' "$name" > "$CASE_DIR/.fixture-volumes"
             c849_volume "$name" nuget-packages yes "$ADMITTED" >/dev/null
