@@ -9,7 +9,7 @@ namespace Antiphon.Checkpoints;
 /// <summary>Read receipts only through a bounded, regular-file, verified handle.</summary>
 public static class ReceiptFile
 {
-    public static byte[] ReadBytes(string path)
+    public static byte[] ReadBytes(string path, CancellationToken cancellationToken = default)
     {
         try
         {
@@ -19,9 +19,9 @@ public static class ReceiptFile
             if (OperatingSystem.IsWindows() &&
                 (File.GetAttributes(path) & (FileAttributes.Directory | FileAttributes.ReparsePoint)) != 0)
                 throw new IOException("receipt-nonregular: " + path);
-            return ConfinedFileReader.ReadBytes(Path.GetDirectoryName(Path.GetFullPath(path))!, path, 64 * 1024 * 1024);
+            return ConfinedFileReader.ReadBytes(Path.GetDirectoryName(Path.GetFullPath(path))!, path, 64 * 1024 * 1024, cancellationToken: cancellationToken);
         }
-        catch (Exception ex) when (ex is IOException or InvalidDataException)
+        catch (Exception ex) when (ex is IOException or InvalidDataException or OperationCanceledException)
         { throw new IOException("receipt-read-refused: " + path + ": " + ex.Message, ex); }
     }
 

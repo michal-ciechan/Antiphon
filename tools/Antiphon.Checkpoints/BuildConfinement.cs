@@ -194,7 +194,7 @@ public static class BuildConfinement
                 return "directory|0|";
             if (!file.Exists)
                 return "absent|0|";
-            var bytes = File.ReadAllBytes(full);
+            var bytes = ReceiptFile.ReadBytes(full);
             return "file|" + bytes.Length + "|" + Hash(bytes);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)

@@ -24,7 +24,7 @@ public static class RepeatRequest
         }
         if (!File.Exists(path) || !path.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase))
             throw new ManifestValidationException("project", $"repeat project '{project}' must resolve to one csproj");
-        var xml = System.Xml.Linq.XDocument.Load(path);
+        var xml = System.Xml.Linq.XDocument.Parse(ReceiptFile.ReadText(path));
         if (!xml.Descendants().Any(element => element.Name.LocalName == "PackageReference"
             && string.Equals((string?)element.Attribute("Include"), "TUnit", StringComparison.OrdinalIgnoreCase)))
             throw new ManifestValidationException("project", $"repeat project '{project}' must reference TUnit directly");

@@ -1,5 +1,6 @@
 #requires -Version 7.0
 # Native exclusive creation; no deletion or recovery of user paths.
+. (Join-Path $PSScriptRoot 'checkpoint-file-reader.ps1')
 function New-CheckpointFreshOutput {
     param([string]$Path)
     $full = [System.IO.Path]::GetFullPath($Path).TrimEnd('/', '\')
@@ -7,7 +8,7 @@ function New-CheckpointFreshOutput {
     if ($null -ne $reason) { return $reason }
     if (-not ('Antiphon.Checkpoints.ExclusiveDirectory' -as [type])) {
         $nativeSource = Join-Path $PSScriptRoot '../../tools/Antiphon.Checkpoints/Cleanup/ExclusiveDirectory.cs'
-        Add-Type -TypeDefinition ([System.IO.File]::ReadAllText($nativeSource)) -CompilerOptions '/nullable:enable'
+        Add-Type -TypeDefinition ((Read-CheckpointText $nativeSource)) -CompilerOptions '/nullable:enable'
     }
     $reason = [Antiphon.Checkpoints.ExclusiveDirectory]::Create($full)
     if ($null -ne $reason) { return $reason }
@@ -26,9 +27,8 @@ function Seal-CheckpointFreshOutput {
             if ($relative -eq '.checkpoint-output-ledger.json') { continue }
             if ([System.IO.Directory]::Exists($full)) { $entries[$relative] = 'directory'; $queue.Enqueue($full) }
             else {
-                $stream = [System.IO.File]::OpenRead($full)
-                try { $entries[$relative] = [Convert]::ToHexString([System.Security.Cryptography.SHA256]::HashData($stream)) }
-                finally { $stream.Dispose() }
+                try { $entries[$relative] = [Convert]::ToHexString([System.Security.Cryptography.SHA256]::HashData([byte[]](Read-CheckpointBytes $full))) }
+                catch { return 'output-inventory-failed' }
             }
         }
     }

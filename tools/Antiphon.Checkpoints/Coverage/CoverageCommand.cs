@@ -19,7 +19,7 @@ public sealed class CoverageCommand
             var planPath = SelectPath(plan); var planText = Read(planPath, ConfinedFileReader.DocumentLimit);
             report.Plan = Relative(root, planPath); report.PlanSha256 = PlanCoverageReport.Hash(planText);
             var imported = PlanTableImporter.ImportMarkdown(planText, planPath);
-            if (imported.Manifest is null) throw new InvalidDataException("invalid checkpoint manifest");
+            if (imported.Manifest is null) throw new InvalidDataException(imported.Error ?? "invalid checkpoint manifest");
             var checklistText = checklist is null ? null : Read(SelectPath(checklist), ConfinedFileReader.DocumentLimit);
             var contract = new PlanCoverageReader().Read(report.Plan, planText, checklistText);
             var census = !contract.Invalid && contract.SelectedClassCensus ? new ClassCensusSelection() : null;

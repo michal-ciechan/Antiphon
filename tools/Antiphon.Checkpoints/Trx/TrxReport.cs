@@ -62,7 +62,7 @@ public static class TrxReport
         XDocument doc;
         try
         {
-            doc = XDocument.Load(path);
+            doc = XDocument.Parse(ReceiptFile.ReadText(path));
         }
         catch (Exception ex)
         {

@@ -135,7 +135,7 @@ public static class ProjectWriteRoots
             DtdProcessing = DtdProcessing.Prohibit,
             XmlResolver = null,
         };
-        using var reader = XmlReader.Create(projectFile, settings);
+        using var reader = XmlReader.Create(new StringReader(ReceiptFile.ReadText(projectFile)), settings);
         var document = XDocument.Load(reader);
         foreach (var element in document.Descendants())
         {

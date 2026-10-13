@@ -32,8 +32,11 @@ public static class ConfinedFileReader
         return reader.ReadToEnd();
     }
 
-    public static byte[] ReadBytes(string root, string path, int limit, Action? afterVerification = null)
+    public static byte[] ReadBytes(string root, string path, int limit, Action? afterVerification = null, CancellationToken cancellationToken = default)
     {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(TimeSpan.FromSeconds(3));
+        deadline.Token.ThrowIfCancellationRequested();
         using var handle = OperatingSystem.IsLinux() ? OpenLinux(path) : OperatingSystem.IsWindows() ? OpenWindows(path)
             : throw new InvalidDataException("opened-handle verification unsupported on this platform");
         var metadata = OperatingSystem.IsLinux() ? InspectLinux(handle) : InspectWindows(handle);
@@ -45,7 +48,7 @@ public static class ConfinedFileReader
         using var content = new MemoryStream();
         var buffer = new byte[8192];
         int count;
-        while ((count = stream.Read(buffer, 0, Math.Min(buffer.Length, limit - (int)content.Length + 1))) != 0)
+        while ((count = stream.ReadAsync(buffer.AsMemory(0, Math.Min(buffer.Length, limit - (int)content.Length + 1)), deadline.Token).AsTask().WaitAsync(deadline.Token).GetAwaiter().GetResult()) != 0)
         {
             if (content.Length + count > limit) throw new InvalidDataException("selected file exceeds size limit");
             content.Write(buffer, 0, count);
@@ -76,6 +79,8 @@ public static class ConfinedFileReader
 
     private static SafeFileHandle OpenWindows(string path)
     {
+        if ((File.GetAttributes(path) & (FileAttributes.Directory | FileAttributes.ReparsePoint | FileAttributes.Device)) != 0)
+            throw new InvalidDataException("selected file is not regular");
         var handle = CreateFile(path, 0x80000000, 7, IntPtr.Zero, 3, 0x00200000 | 0x08000000, IntPtr.Zero); // OPEN_REPARSE_POINT | SEQUENTIAL_SCAN
         if (handle.IsInvalid) { handle.Dispose(); throw NativeFailure(); }
         return handle;

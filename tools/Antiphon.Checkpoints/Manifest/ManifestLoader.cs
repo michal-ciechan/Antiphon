@@ -57,7 +57,7 @@ public static class ManifestLoader
     }
 
     public static CheckpointManifest LoadFile(string path, string worktreeRoot, bool validate = true) =>
-        LoadYaml(File.ReadAllText(path), worktreeRoot, validate);
+        LoadYaml(ReceiptFile.ReadText(path), worktreeRoot, validate);
 
     public static string ToYaml(CheckpointManifest manifest) => Serializer.Serialize(manifest);
 }
