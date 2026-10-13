@@ -423,7 +423,7 @@ The changed cross-process file handoffs still require recipient evidence:
 | F-3: RUN + donor ID + manifest digest | Donor -> streamed archive -> stage -> imported caches -> recovery | Volume bytes and manifest; host ready marker last | CP-16/18/21/22 fail both copy ends and each import/save/publication handoff; compare recipient bytes/dotfiles/modes independently and reopen with real readiness validator. No marker before completion; interrupted nonempty import stays held. |
 | F-6/F-8: RUN + tarball digest + cache | Work writer -> npm fill -> offline install/refill | Tarball/lockfile, cache and node_modules | CP-11/12/14 observe reader's exact sentinel; missing/wrong sentinel after exit zero refuses; ENOTCACHED is distinct from setup/other failure. |
 | F-5/F-7: RUN + mask/cache + Compose project | Writer -> apphost/retention recipient | Ordinary cache bytes, empty mask, external volumes | CP-27..29 observe exact mask and root mode, retention bytes and external/private separation; mask/smoke/teardown failures return to finalizer. |
-| Evidence: RUN + source SHA + case | Quiesced writers -> safe exporter -> CASE_DIR -> front door | Allowlisted files and complete roster after finalization | CP-34/36/38/39/41/42 inspect destination bytes and refusal on export/cleanup faults, symlinks and failed unlink. Front-door shim does not establish scp receipt. |
+| Evidence: RUN + source SHA + case | Quiesced writers -> safe exporter -> CASE_DIR -> front door | Allowlisted files and complete roster after finalization | CP-34/36/38/39/41/42 inspect destination bytes and refusal on export/cleanup faults and unsafe paths at admission/recheck. Export writes a private file and publishes by atomic update rename; a rename-time link inside the owned directory is replaced, never followed, and out-of-case files are never written. Front-door shim does not establish scp receipt. |
 
 **W-1**, the existing operator-run rollout witness in Risks and acceptance
 limits, stays outside authoring checkpoints: run the approved Fixture command
@@ -545,7 +545,7 @@ New C1192 methods are single TUnit executions with internal variant matrices.
 | CP-36: `C1192_Evidence_export_preserves_fixture_roster_without_payloads` | M+P | 9/32/47/2 census, missing/duplicate group/family/variant, payload canary | Producer roster plus recipient parser; exact destination contents/SHA and recursive toxic exclusion. |
 | CP-37: `C1189_Fixture_escape_link_is_removed_after_pc08_and_on_exit` | F+T | Self-link normal path and failing exit after PC-08 | Link consumed by probe then removed before next control; EXIT backup before recursive export. |
 | CP-38: `C1193_Fixture_exit_trap_copies_race_logs_before_tree_removal` | M+T | Five logs on success and failing group exit | Quiesce/export/helper/volume/control-dir order; destination bytes equal source before source deletion. |
-| CP-39: `C1193_Fixture_log_copy_skips_symlinks_and_copies_regular_files` | F | Regular/missing/source-link; CASE_DIR link; destination link/directory/nonempty; failed unlink | Run actual exporter; outside bytes/status intact, regular destination; no copy after failed unlink or still-present destination. |
+| CP-39: `C1193_Fixture_log_copy_skips_symlinks_and_copies_regular_files` | F | Regular/missing/source-link; CASE_DIR link; destination link/directory/nonempty at admission; post-rename directory replacement | Run actual exporter; outside bytes/status intact, exact regular destination bytes, admission refusal and post-rename type/identity verification. Legacy rm/cp stubs remain in the test but do not prove an unlink/copy mechanism. |
 | CP-40: `Nested_lane_never_uses_sudo_or_python` | T | Existing nested-lane scan | No nested sudo/python in moved definitions; saved-import exclusion unchanged. |
 | CP-41: `C849_Cache_receipts_exclude_credentials_and_payloads` | F | Aggregate/toxic key/malformed value | Actual receipt function retains aggregate, refuses invalid input without exporting bytes. |
 | CP-42: `C913_Receipts_reject_mixed_digest_types_and_false_smoke_claims` | P | All existing schema/digest/smoke/Fixture roster faults | Actual front-door rejection/privacy with shim receipts; no scp claim. |
@@ -688,9 +688,9 @@ introduces must gain a distinct row before its handoff.
 | G-122 | R-3: Export before source removal | PC-122 |
 | G-123 | R-3: Source log not a link | PC-123 |
 | G-124 | R-3: CASE_DIR real directory | PC-124 |
-| G-125 | R-3: Unlink failure prevents copy | PC-125 |
-| G-126 | R-3: Destination absent after unlink | PC-126 |
-| G-127 | R-3: Copy does not descend into destination directory | PC-127 |
+| G-125 | R-3 historical unlink/copy guard, superseded by safe-write publication; Mutation must rebind its control | PC-125 |
+| G-126 | R-3 historical post-unlink absence guard, superseded by admission/recheck; Mutation must rebind its control | PC-126 |
+| G-127 | R-3: Rename does not descend into destination directory | PC-127 |
 | G-128 | D-6: Receipt key allowlist | PC-128 |
 | G-129 | D-6: Receipt value grammar | PC-129 |
 | G-130 | D-7: Setup failure not expected red | PC-130 |
@@ -731,11 +731,12 @@ Reachability requirements for the nontrivial controls:
 - CP-25 adds late recovery disappearance at image lookup after the second
   successful require_ready, immediately before the pre-delete recovery call.
   This reaches the destructive-boundary guard without an earlier ready refusal.
-- CP-39 adds two controlled destination races: rm reports success while leaving
-  a destination (assert copy was never invoked), and a directory/same-named
-  outside symlink appears immediately before the real cp call (assert cp -T
-  refuses and outside bytes remain intact). These separate unlink, absence and
-  direct-file copy guards.
+- CP-39 retains historical rm/cp stubs with an already-refused destination;
+  these no longer establish unlink/absence sensitivity. Its current rename seam
+  replaces the published path with a directory containing an outside symlink;
+  post-publication verification refuses and outside bytes remain intact.
+  CARD-1208 CP-74/75 separately cover admission/recheck refusal and update
+  rename-time link replacement; CP-76 covers create-mode refusal.
 - CP-21 executes the production shared seed under the fixture wrapper. Inject
   failure independently after each handoff; do not stub validation or publication
   successful. Host-backed CP-18 retains its existing complete crash matrix.
@@ -886,9 +887,9 @@ predicate is unbound coverage.
 | PC-122 | G-122: Delete source before export. | `/*/*/RemoteScriptContractTests/C1193_Fixture_exit_trap_copies_race_logs_before_tree_removal` | `export-before-source-removal` fails after CP-38's boundary is reached. |
 | PC-123 | G-123: Drop source nonlink check. | `/*/*/RemoteScriptContractTests/C1193_Fixture_log_copy_skips_symlinks_and_copies_regular_files` | `symlink-source-not-copied` fails after CP-39's boundary is reached. |
 | PC-124 | G-124: Drop CASE_DIR nonlink check. | `/*/*/RemoteScriptContractTests/C1193_Fixture_log_copy_skips_symlinks_and_copies_regular_files` | `case-link-no-write` fails after CP-39's boundary is reached. |
-| PC-125 | G-125: Ignore destination rm failure. | `/*/*/RemoteScriptContractTests/C1193_Fixture_log_copy_skips_symlinks_and_copies_regular_files` | `failed-unlink-no-copy` fails after CP-39's boundary is reached. |
-| PC-126 | G-126: Drop post-unlink absent checks. | `/*/*/RemoteScriptContractTests/C1193_Fixture_log_copy_skips_symlinks_and_copies_regular_files` | `destination-absent-before-copy` fails after CP-39's boundary is reached. |
-| PC-127 | G-127: Remove -T or equivalent. | `/*/*/RemoteScriptContractTests/C1193_Fixture_log_copy_skips_symlinks_and_copies_regular_files` | `directory-destination-no-write-through` fails after CP-39's boundary is reached. |
+| PC-125 | Historical G-125 destination-rm mutation; superseded by shared publisher. | `/*/*/RemoteScriptContractTests/C1193_Fixture_log_copy_skips_symlinks_and_copies_regular_files` | PENDING Mutation rebinding/missing-control discovery; legacy `failed-unlink-no-copy` is not current mechanism proof. |
+| PC-126 | Historical G-126 post-unlink mutation; superseded by shared publisher. | `/*/*/RemoteScriptContractTests/C1193_Fixture_log_copy_skips_symlinks_and_copies_regular_files` | PENDING Mutation rebinding/missing-control discovery; legacy `destination-absent-before-copy` is not current mechanism proof. |
+| PC-127 | G-127: Remove rename -T or equivalent. | `/*/*/RemoteScriptContractTests/C1193_Fixture_log_copy_skips_symlinks_and_copies_regular_files` | PENDING Mutation reachability proof for `directory-destination-no-write-through`; admission may mask the proposed mutant. |
 | PC-128 | G-128: Accept credential key. | `/*/*/RemoteScriptContractTests/C849_Cache_receipts_exclude_credentials_and_payloads` | `toxic-not-exported` fails after CP-41's boundary is reached. |
 | PC-129 | G-129: Accept nonnumeric groups. | `/*/*/RemoteScriptContractTests/C849_Cache_receipts_exclude_credentials_and_payloads` | `invalid-receipt-value-refused` fails after CP-41's boundary is reached. |
 | PC-130 | G-130: Accept any nonzero without expected diagnosis. | `/*/*/RemoteScriptContractTests/C913_Fixture_uses_owned_payloads_and_proven_absent_temp` | `setup-error-not-control-red` fails after CP-43's boundary is reached. |
@@ -937,7 +938,7 @@ CP-27 executes F-5 with independent host decoys and volume recipients. It observ
 
 ### S7 Code binding amendment
 
-CP-33 additionally executes the real volume fixture seed and recovery validator, and scans each individual checkout bind for readonly. CP-34 exercises actual EXIT/finalizer behavior, including primary plus secondary failure, replaced-controller export exclusion, early outer publication and foreign registered-helper residue. CP-35 observes actual resource/control disposal without sudo. CP-36 checks exact nine-line receipt bytes and missing/duplicate group, family and variant censuses. CP-38 binds consumer stop/join, five diagnostic bytes, helper and volume order. CP-39 executes failed unlink, remaining destination and directory-creation-before-copy races. CP-43 retains inventory/occupied/control sensitivity and uses the existing strict F-5 volume recipient model after the host recipient was removed. Its stale unregistered cleanup name is replaced with the exact admitted case name. No rollout or deliberate mutation is executed. PC-149..152 are new method-scoped controls, all pending. Every S7 After cell already equals S7.
+CP-33 additionally executes the real volume fixture seed and recovery validator, and scans each individual checkout bind for readonly. CP-34 exercises actual EXIT/finalizer behavior, including primary plus secondary failure, replaced-controller export exclusion, early outer publication and foreign registered-helper residue. CP-35 observes actual resource/control disposal without sudo. CP-36 checks exact nine-line receipt bytes and missing/duplicate group, family and variant censuses. CP-38 binds consumer stop/join, five diagnostic bytes, helper and volume order. CP-39 now checks unsafe destinations at admission and a directory replacement after rename; its historical rm/cp stubs do not prove the superseded unlink/copy guards. CP-43 retains inventory/occupied/control sensitivity and uses the existing strict F-5 volume recipient model after the host recipient was removed. Its stale unregistered cleanup name is replaced with the exact admitted case name. No rollout or deliberate mutation is executed. PC-149..152 are new method-scoped controls, all pending. Every S7 After cell already equals S7.
 
 ### S7 F1 repair binding (round 2)
 
