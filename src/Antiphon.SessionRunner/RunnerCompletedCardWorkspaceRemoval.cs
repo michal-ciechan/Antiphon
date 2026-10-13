@@ -85,7 +85,7 @@ public sealed partial class RunnerCompletedCardWorkspaceRemoval(RunnerWorkspaceS
 
     /// <summary>
     /// Read-only direct-containment proof; C1032_InspectionSourceProof covers live ref drift.
-    /// Rebased proof admission is held here until a bound mapping validator is supplied in S5.
+    /// S5 refuses Rebased; caller decision 2026-10-13 assigns the positive to S7.
     /// </summary>
     public async Task<string?> CheckProofAsync(CompletedCardWorkspaceBinding binding,
         CompletedCardWorkspaceProof proof, CancellationToken ct)
@@ -93,6 +93,12 @@ public sealed partial class RunnerCompletedCardWorkspaceRemoval(RunnerWorkspaceS
         var inspected = await InspectAsync(new(1, binding), ct);
         if (inspected.Reason is not null) return inspected.Reason;
         if (inspected.HeadSha != proof.ExpectedHeadSha) return "head_mismatch";
+        return await CheckRemoteProofAsync(binding, proof, binding.WorktreePath, ct);
+    }
+
+    private async Task<string?> CheckRemoteProofAsync(CompletedCardWorkspaceBinding binding,
+        CompletedCardWorkspaceProof proof, string repositoryPath, CancellationToken ct)
+    {
         if (proof.DestinationFingerprint != binding.RepositoryIdentity
             || proof.DestinationRef != workspace.InspectionPublishedRef) return "preservation_destination_mismatch";
         if (proof.ProofKind != CompletedCardWorkspaceProtocol.ProofContained
@@ -101,7 +107,7 @@ public sealed partial class RunnerCompletedCardWorkspaceRemoval(RunnerWorkspaceS
         if (!IsSha(proof.ObservedTargetSha) || !IsSha(proof.PreservedSourceSha)) return "preservation_proof_invalid";
         try
         {
-            var remote = await workspace.InspectionGitAsync(binding.WorktreePath, ct, "ls-remote", "--refs", binding.RepositoryIdentity, proof.DestinationRef);
+            var remote = await workspace.InspectionGitAsync(repositoryPath, ct, "ls-remote", "--refs", binding.RepositoryIdentity, proof.DestinationRef);
             if (remote.ExitCode != 0) return "preservation_unreadable";
             var lines = remote.Stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries);
             if (lines.Length != 1 || lines[0].TrimEnd('\r') != proof.ObservedTargetSha + "\t" + proof.DestinationRef)
@@ -110,7 +116,7 @@ public sealed partial class RunnerCompletedCardWorkspaceRemoval(RunnerWorkspaceS
             // Both H and the supplied preserved P must be contained in that exact fresh target.
             foreach (var source in new[] { proof.ExpectedHeadSha, proof.PreservedSourceSha })
             {
-                var ancestor = await workspace.InspectionGitAsync(binding.WorktreePath, ct, "merge-base", "--is-ancestor", source, proof.ObservedTargetSha);
+                var ancestor = await workspace.InspectionGitAsync(repositoryPath, ct, "merge-base", "--is-ancestor", source, proof.ObservedTargetSha);
                 if (ancestor.ExitCode != 0) return "source_not_preserved";
             }
             return null;

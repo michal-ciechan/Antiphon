@@ -42,7 +42,7 @@ internal sealed class CompletedCardRemovalCrashWorker
                 if (cut != input.Cut) return;
                 var intent = new RunnerWorkspaceRemovalJournal(input.State, input.StoreId).Read()!.Single();
                 using var process = Process.GetCurrentProcess();
-                File.WriteAllText(inputPath + ".ready", JsonSerializer.Serialize(new
+                File.WriteAllText(inputPath + ".ready.tmp", JsonSerializer.Serialize(new
                 {
                     pid = process.Id, started = process.StartTime.ToUniversalTime(), intent.Phase,
                     operationId = intent.Command.OperationId, intent.RemainingAllowance,
@@ -51,6 +51,7 @@ internal sealed class CompletedCardRemovalCrashWorker
                     registrationExists = Directory.Exists(input.Command.Binding.GitDirectory),
                     receiptExists = intent.Receipt is not null,
                 }));
+                File.Move(inputPath + ".ready.tmp", inputPath + ".ready");
                 // Parent observes the marker, verifies PID/start ownership and kills/joins this
                 // worker. No sleep chooses a race winner and no worker escapes its parent.
                 new ManualResetEventSlim(false).Wait();

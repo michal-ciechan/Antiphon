@@ -101,7 +101,7 @@ internal static class RunnerWorkspaceNoFollowDelete
             var pinnedPath = "/proc/self/fd/" + raw;
             // Entries outside the frozen manifest refuse before unlink. The admin
             // manifest legitimately includes logs/HEAD; it is not a nested repository.
-            foreach (var child in Directory.EnumerateFileSystemEntries(pinnedPath).ToArray())
+            foreach (var child in Directory.EnumerateFileSystemEntries(pinnedPath).Order(StringComparer.Ordinal).ToArray())
             {
                 var childName = Path.GetFileName(child);
                 DeleteLinux(raw, childName, Path.Combine(relative, childName), root, allowed, beforeEntry, ct);
@@ -121,7 +121,8 @@ internal static class RunnerWorkspaceNoFollowDelete
 
     private static SafeFileHandle OpenLinuxPath(string path)
     {
-        if (!OperatingSystem.IsLinux()) throw new PlatformNotSupportedException("S5 requires Linux or Windows");
+        if (!OperatingSystem.IsLinux() || RuntimeInformation.ProcessArchitecture != Architecture.X64)
+            throw new PlatformNotSupportedException("S5 descriptor layout is qualified for Linux x64; Windows uses handles");
         var current = new SafeFileHandle((IntPtr)openat(-100, "/", 0x10000 | 0x20000 | 0x80000), true);
         if (current.IsInvalid) throw Failure("open", path);
         try
