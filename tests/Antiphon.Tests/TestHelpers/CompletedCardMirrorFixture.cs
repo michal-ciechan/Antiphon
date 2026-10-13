@@ -33,6 +33,8 @@ internal sealed class CompletedCardMirrorFixture : IAsyncDisposable
     public Func<CompletedCardWorkspaceRemovalResponse, CompletedCardWorkspaceRemovalResponse>? AlterReceipt { get; set; }
     public Func<CancellationToken, Task>? BeforeIntent { get; set; }
     public Func<CancellationToken, Task>? AfterIntent { get; set; }
+    public Func<CancellationToken, Task>? BeforeInspection { get; set; }
+    public bool FailReceiptImport { get; set; }
 
     public static async Task<CompletedCardMirrorFixture> CreateAsync(CancellationToken ct = default)
     {
@@ -117,6 +119,11 @@ internal sealed class CompletedCardMirrorFixture : IAsyncDisposable
     {
         if (EndpointId == Guid.Empty) await DiscoverAsync();
         await using var db = Card.Host.CreateContext();
+        db.SavingChanges += (_, _) =>
+        {
+            if (FailReceiptImport && db.ChangeTracker.Entries<CardWorktreeCleanupEndpoint>().Any(e => e.Entity.ImportedReceipt is not null))
+                throw new IOException("fixture receipt import failure");
+        };
         var type = typeof(CardWorktreeCleanupService).Assembly.GetType("Antiphon.Server.Application.Services.CardWorktreeMirrorCleanupService");
         type.ShouldNotBeNull("S7 requires the authoritative mirror admission producer");
         await using var scope = Card.Host.Services.CreateAsyncScope();
@@ -171,7 +178,11 @@ internal sealed class CompletedCardMirrorFixture : IAsyncDisposable
     }
     private sealed class FaultClient(ICompletedCardWorkspaceClient inner, CompletedCardMirrorFixture world) : ICompletedCardWorkspaceClient
     {
-        public Task<CompletedCardWorkspaceInspectionResponse> InspectCompletedCardWorkspaceAsync(CompletedCardWorkspaceInspectRequest request, CancellationToken ct) => inner.InspectCompletedCardWorkspaceAsync(request, ct);
+        public async Task<CompletedCardWorkspaceInspectionResponse> InspectCompletedCardWorkspaceAsync(CompletedCardWorkspaceInspectRequest request, CancellationToken ct)
+        {
+            if (world.BeforeInspection is not null) await world.BeforeInspection(ct);
+            return await inner.InspectCompletedCardWorkspaceAsync(request, ct);
+        }
         public async Task<CompletedCardWorkspaceRemovalResponse> RemoveCompletedCardWorkspaceAsync(CompletedCardWorkspaceCommand command, CancellationToken ct)
         { var result = await inner.RemoveCompletedCardWorkspaceAsync(command, ct); return world.AlterReceipt?.Invoke(result) ?? result; }
     }
