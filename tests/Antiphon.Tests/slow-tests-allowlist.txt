@@ -293,3 +293,5 @@ Antiphon.Tests.Application.WorkingTranscriptRecoveryTests
 
 # CARD-1205 S4: real PostgreSQL, production host reconstruction and bounded capacity fixture.
 Antiphon.Tests.Application.StaleWorkingTranscriptWatchdogTests
+# CARD-1213 S1: real runner WebSocket, real Git recipients and isolated PostgreSQL recovery cuts; review CP-7 measured 65s for 3 methods.
+Antiphon.Tests.Application.DelegateBranchDeliveryTests
