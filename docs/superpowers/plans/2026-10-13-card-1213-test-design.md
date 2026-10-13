@@ -341,6 +341,18 @@ its explicit positive method roster below retains the other 31 results/26 method
 all four named classes. Each method operand carries the pinned TUnit wildcard.
 No existing assertion changed. S1 Final total is 475 results.
 
+S1 checkpoint amendment (2026-10-13, task c930b7b3): CP-4 excludes only
+CardDoneWorktreeCleanupTests.C1017_TerminalTaskRequired, by exact method name
+(`!C1017_TerminalTaskRequired`, no wildcard). Review 560fbb63 measured CP-4 at
+b43e21ecb68ee6513692bd760416b6ad9fb7910c as 114 executed/113 passed/1 failed; the one
+failure is the line-105 assertion `(await f.CleanupAsync()).IsClean.ShouldBeTrue()` after
+the task is restored to Succeeded. The unchanged pre-slice base
+b5653d5832aac66c5ac1ff1a0012efb33b54de79 reproduced it with 1 executed/0 passed/1 failed,
+clean source and verified build (run 20261013-202658-1887, CP-B1). S1 does not touch the
+method or its fixture. The three classes stay selected whole; every other result,
+including all C1213_* methods, remains, so CP-4 expects 113 (S1 Final total one lower).
+No assertion changed; filing the inherited red belongs to the orchestrator.
+
 New naming is off by default through Delegation:CardBranchNames; enabled tests opt in.
 The disabled/capable case in C1213_MintUsesCardRoleAndRunnerCapability isolates that
 setting from recipient capability. This implements the brief's rollout restriction:
@@ -363,7 +375,7 @@ Closed ordinary scope below replaces parent §6's provisional execution list. Bu
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1213-cp1/` | parser | `/*/*/DelegateBranchNameTests*/*` | V-1/R-1 | 9 executed; 0 failed; 0 skipped; named roster | 9 | 3 | true |
 | CP-2 | S1 | `tests/Antiphon.Tests -> bin-c1213-cp2/` | manager | `/*/*/(WorktreeManagerTests*)\|(WorktreeManagerSafetyTests*)\|(WorktreeManagerGitIntegrationTests*)\|(WorktreeManagerStartRefLocalOnlyTests*)/(C1213_ExplicitBranchKeepsDirectoryIdentity*)\|(C1213_ScanBothFormsAndExcludeCardSpawn*)\|(Create_names_the_unresolved_start_ref_in_the_refusal*)\|(Create_refuses_a_start_sha_only_origin_has_without_fetching_it*)\|(IsAlreadyUnregisteredWorktreeError_matches_only_the_not_a_working_tree_fatal*)\|(ParseWorktreeList_captures_a_bare_locked_line*)\|(ParseWorktreeList_captures_locked_reason_and_prunable_reason*)\|(Residue_status_distinguishes_clean_tracked_and_protected_files*)\|(Sanitise_accepts_safe_identifier_and_builds_expected_names*)\|(Sanitise_rejects_path_traversal_and_special_chars*)\|(ScanDelegateWorktrees_names_a_dangling_task_branch_and_ignores_card_spawn*)\|(ScanDelegateWorktrees_names_a_locked_registration_whose_directory_is_gone*)\|(TryParseDelegateTaskBranch_accepts_feat_card_task_short_ids_only*)\|(WorktreeJanitor_does_not_convert_raw_refusal_into_authority*)\|(WorktreeJanitor_preserves_stale_unregistered_leftover_directory*)\|(WorktreeJanitor_preserves_stale_worktrees_without_receipt*)\|(WorktreeManager_create_produces_worktree_under_root*)\|(WorktreeManager_create_throws_when_branch_or_path_exists*)\|(WorktreeManager_list_returns_only_worktrees_under_root*)\|(WorktreeManager_raw_remove_cannot_use_local_ancestry_as_authority*)\|(WorktreeManager_raw_remove_preserves_unmerged_directory_and_branch*)\|(WorktreeManager_raw_remove_preserves_unregistered_leftover_directory*)\|(WorktreeManager_remove_still_throws_when_the_worktree_is_locked*)\|(WorktreeManager_touch_updates_last_touched_metadata*)\|(WorktreeManager_try_remove_reports_directory_residue_when_a_file_is_held*)\|(Worktree_path_confinement_rejects_resolved_escape*)` | V-1,V-3/R-1,R-3 | 31 executed; 0 failed; 0 skipped; named roster; one confirmed inherited method excluded | 31 | 4 | true |
 | CP-3 | S1 | `tests/Antiphon.Tests -> bin-c1213-cp3/` | health | `/*/*/(WorktreeHealthServiceTests*)\|(WorktreeResidueSweepTests*)\|(WorktreeResidueRegistrationTests*)/*` | V-3/R-3 | 25 executed; 0 failed; 0 skipped; named roster | 25 | 4 | true |
-| CP-4 | S1 | `tests/Antiphon.Tests -> bin-c1213-cp4/` | ownership | `/*/*/(CardDoneWorktreeCleanupTests*)\|(TaskWorktreeRetirementTests*)\|(WorktreeRetirementRaceTests*)/*` | V-4/R-4 | 114 executed; 0 failed; 0 skipped; named roster | 114 | 6 | true |
+| CP-4 | S1 | `tests/Antiphon.Tests -> bin-c1213-cp4/` | ownership | `/*/*/(CardDoneWorktreeCleanupTests*)\|(TaskWorktreeRetirementTests*)\|(WorktreeRetirementRaceTests*)/(!C1017_TerminalTaskRequired)` | V-4/R-4 | 113 executed; 0 failed; 0 skipped; named roster; one confirmed inherited method excluded | 113 | 6 | true |
 | CP-5 | S1 | `tests/Antiphon.Tests -> bin-c1213-cp5/` | sync | `/*/*/(RemoteWorktreeMirrorTests*)\|(RunnerSettlementSyncTests*)\|(SettlementSyncDebtPolicyTests*)\|(TaskCompletionProgressPolicyTests*)/*` | V-5/R-5 | 104 executed; 0 failed; 0 skipped; named roster | 104 | 5 | true |
 | CP-6 | S1 | `tests/Antiphon.Tests -> bin-c1213-cp6/` | dispatch | `/*/*/(AgentTaskDispatchBaseGuardTests*)\|(WorktreeStartRefDispatchTests*)\|(RemoteVerificationWorkspaceTests*)/*` | V-2/R-2 | 126 executed; 0 failed; 0 skipped; named roster | 126 | 6 | true |
 | CP-7 | S1 | `tests/Antiphon.Tests -> bin-c1213-cp7/` | delivery | `/*/*/(DelegateBranchDeliveryTests*)\|(TaskParkPublicationTests*)/*` | V-5,V-7/R-5,R-7 | 7 executed; 0 failed; 0 skipped; named roster | 7 | 6 | true |
