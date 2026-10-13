@@ -563,8 +563,8 @@ public sealed class RemoteScriptContractTests
     }
 
     // CARD-1192 S1 repair. docker volume create adopts a volume that appears after the
-    // absence lookup. Work/mask ownership is checked after create; a foreign or unlabeled
-    // work/mask volume is not mounted, is dropped from registration, and is not removed.
+    // absence lookup. C1192_Foreign_volume_is_refused_after_create checks that foreign
+    // or unlabeled work/mask volumes are not mounted or removed and lose registration.
     // The finalizer scope statement above applies.
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
