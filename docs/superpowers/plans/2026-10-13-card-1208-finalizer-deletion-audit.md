@@ -90,6 +90,8 @@ PC-1 foreign drop/receipt/removal guard (cache variants); PC-2 legacy container 
 | CP-71 | Fixed | `CP-33` | repair-71 | `/*/*/RemoteScriptContractTests/C1208_Confirmed_absent_network_record_is_cleared*` | V-18 | 1 executed, 0 failed/skipped | 1 | 1 |
 | CP-72 | Fixed | `CP-33` | repair-72 | `/*/*/RemoteScriptContractTests/C1208_Recorded_creation_fingerprint_is_reverified*` | V-19 | 1 executed, 0 failed/skipped | 1 | 1 |
 
+| CP-73 | Fixed | `CP-33` | repair-fingerprint-acquisition | `/*/*/RemoteScriptContractTests/C1208_Fingerprint_acquisition_refuses_unowned_paths*` | V-20 | 5 executed, 0 failed/skipped | 5 | 1 |
+
 ### Cost
 
 Round 2 ordinary floor 47 row minutes, plus authoring/slot contention. Round 2 test-only proof groups CP-62..71, CP-63/65/68/72, and CP-64/67/68 each share one isolated build; the repaired full selection CP-33..72 shares one isolated build. Checkpoint-tool bootstrap is an explained unlisted build through build-slot, UseAppHost=false, bin-c1208repair-tool/. No repeats after green. Earlier proof-history descriptions below refer to round 1.
@@ -151,3 +153,11 @@ C1208_Wrong_cidfile_preserves_foreign_container and C1208_Recorded_id_with_chang
 ## Round 2 completion
 
 Final ordinary verification at 528839f5e5410a444fa5c9e102ed820152578d72: all 40 CP-33..72 rows passed, 58 executions, 54 distinct methods, 0 failed/skipped; CP-44 exactly 19. R-1..21 and V-1..19 all passed; none deferred. Independent fresh TRX roster/count audit and SHA-bound receipt validation passed. Full result, unedited CHECKPOINT lines, red proofs and source bindings: 2026-10-13-card-1208-finalizer-repair-evidence.md. The first attempted full run was stopped during its build for a known missing create-path model field and gets no verification credit. Source stayed frozen until stop completed; a new committed model fix preceded the full green run. SourceLanding Mutation (all PC-1..16 variants plus inherited CARD-1192 PCs) and rollout W-1 remain pending. Next: Review. Restart: none.
+
+## Round 3 F4 repair binding
+
+Code/landing owner: 15a9381e-0e9d-46a0-a49b-9534d34f3eb4. Branch feat/card-task-15a9381e. Base a2aa93e6cff6f34a1b48c96a89abb41def2cbea6; predecessor owner 8c713d0c-fe3f-4097-894b-9fc892a709ae. Restart: none.
+
+V-20/CP-73 binds `C1208_Fingerprint_acquisition_refuses_unowned_paths`: hand-written table rows file-link (out-of-case victim), directory-link, dangling-link, regular unowned file, and fresh acquisition. Collision rows require exit 2, named FixtureFingerprintAcquisitionRefused, retained record and untouched target; fresh requires exit 0 and exact acquired fingerprint/CID. The same fixture runs through build-slot before production edits, establishing the file-link red on the unchanged base production script without a second test-assembly build. This diagnostic is an explained unlisted script run. Final closed selection CP-33..73: 41 rows, 63 executions, CP-44 exactly 19; no Unit or full class per brief. One isolated test build; explained checkpoint-tool bootstrap uses bin-c1208f4-tool/ and UseAppHost=false. No repeated green proof.
+
+PC-17 variants: remove pre-existing-path refusal (file/directory/dangling links and regular), restore following/truncating redirection, omit fresh fingerprint publication; detecting method `/*/*/RemoteScriptContractTests/C1208_Fingerprint_acquisition_refuses_unowned_paths`. Every variant PENDING method-scoped SourceLanding Mutation. PC-1..16 and inherited CARD-1192 PC-1..174 remain pending; post-land Mutation was NOT run. W-1 native Docker acceptance remains pending with rollout owner. Other cards out of scope.
