@@ -105,7 +105,7 @@ public static class OutputCleanup
                 continue;
 
             var ledgerRefusal = SafeDelete.Refusal(full, new DeleteOwnership { IsolatedRoot = root, CreatedPaths = createdPaths, RequireInventory = true, RequireBinName = true, AllowOutsideRepository = false, GitExecutable = gitExecutable }) ?? OwnedOutputLedger.Check(full);
-            if (ledgerRefusal is not null) { refusals.Add(ledgerRefusal); continue; }
+            if (ledgerRefusal is not null) { Console.Error.WriteLine("left in place: " + full + "; remove it manually"); refusals.Add(ledgerRefusal); continue; }
             var result = SafeDelete.Apply(full, new DeleteOwnership
             {
                 IsolatedRoot = root,

@@ -35,7 +35,7 @@
     preflight only reduce noise. A shared BaseIntermediateOutputPath is not passed,
     because a global property does not expand $(MSBuildProjectName). Writes outside
     the repository, a row command string, and a -DotnetShim replacement are outside
-    this guarantee.
+    these repository observations.
 
     Owner: docs/testing-and-build.md, "Checkpoint manifest (CARD-0585)".
     ASCII-only.
@@ -448,6 +448,12 @@ function Test-CheckpointBuildBinding {
 
 function Write-Trailer {
     param([int]$Code)
+    if ($Code -eq 0 -and $null -ne $script:expectedBinding) {
+        try {
+            $presentStamp = Get-Content -LiteralPath $script:stampPath -Raw | ConvertFrom-Json
+            if (-not (Test-CheckpointBuildBinding $presentStamp $script:expectedBinding)) { throw 'stamp-mismatch' }
+        } catch { Write-Host ('refused: checkpoint-build-source.json receipt-missing-or-mismatching'); $Code = 2; $script:buildSource = 'mismatch' }
+    }
     $start = $script:sourceStart
     if ($null -eq $start) { $start = [pscustomobject]@{ commit = $null; dirtyFiles = $null; fingerprint = $null; observedAtUtc = [DateTimeOffset]::UtcNow.ToString('O'); captureStatus = 'unknown'; errorCode = 'not_observed' } }
     $state = Get-CheckpointSourceState $start $script:sourceEnd
@@ -480,12 +486,16 @@ function Write-Trailer {
                 repeatReason = $script:repeatReason; timings = $script:phaseTimings
             }
         }
-        $sourceWrite = Write-CheckpointSafeText (Join-Path $script:resultsDirectory 'source.json') (($evidence | ConvertTo-Json -Depth 12) + "`n") $script:resultsDirectory
-        if ($null -ne $sourceWrite) { Write-Host ('refused: ' + $sourceWrite) }
+        try { $sourceWrite = Write-CheckpointSafeText (Join-Path $script:resultsDirectory 'source.json') (($evidence | ConvertTo-Json -Depth 12) + "`n") $script:resultsDirectory }
+        catch { Write-Host ('refused: source.json receipt-write-failed: ' + $_.Exception.GetType().Name); exit 2 }
+        if ($null -ne $sourceWrite) { Write-Host ('refused: source.json receipt-write-failed: ' + $sourceWrite); exit 2 }
+        try { $readBack = Get-Content -LiteralPath (Join-Path $script:resultsDirectory 'source.json') -Raw | ConvertFrom-Json; if ($readBack.receipt -cne $line) { throw 'receipt-mismatch' } }
+        catch { Write-Host ('refused: source.json receipt-unreadable-or-mismatching'); exit 2 }
         $gitWrite = Write-CheckpointSafeText (Join-Path $script:resultsDirectory 'git.txt') (('commit={0} source={1} sourceState={2} buildSource={3}' -f $commit, (Get-CheckpointSourceToken $start), $state, $script:buildSource) + "`n") $script:resultsDirectory
         if ($null -ne $gitWrite) { Write-Host ('refused: ' + $gitWrite) }
     }
     Write-Host ('CHECKPOINT {0} EXIT CODE: {1}' -f $Name, $Code)
+    if ($Code -eq 2) { exit 2 }
 }
 
 function Stop-Invalid {
@@ -929,7 +939,7 @@ function Complete-CheckpointBaseline {
         elseif ($again.Hashes.ContainsKey($path)) { [void]$lines.Add('manual command: git restore --staged -- ' + $quoted) }
         else { [void]$lines.Add('manual command: git status --short -- ' + $quoted + '; inspect and recover user bytes from your backup') }
     }
-    [void]$lines.Add('manual restore required; NOTHING outside tool-owned output/evidence directories was modified by the tool.')
+    [void]$lines.Add('manual restore required; Build-result bytes and index entries were left in place; no source recovery was attempted.')
     return @{ Kind = 'tampered'; Detail = ($lines -join "`n") }
 }
 

@@ -26,6 +26,26 @@ public static class SafeWrite
         ? StringComparer.OrdinalIgnoreCase
         : StringComparer.Ordinal);
 
+    // Append-only creation records stay in this process. Disk ledgers are diagnostic only.
+    private static readonly ConcurrentDictionary<string, string> CreatedContent = new(OperatingSystem.IsWindows()
+        ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+    private static void RecordContent(string path)
+    {
+        if (Directory.Exists(path)) CreatedContent.TryAdd(path, "directory");
+        else
+        {
+            using var stream = File.OpenRead(path);
+            CreatedContent.TryAdd(path, stream.Length + ":" + Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(stream)));
+        }
+    }
+    public static bool MatchesCreation(string path)
+    {
+        if (!CreatedContent.TryGetValue(Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar), out var recorded)) return false;
+        if (Directory.Exists(path)) return recorded == "directory";
+        using var stream = File.OpenRead(path);
+        return recorded == stream.Length + ":" + Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(stream));
+    }
+
     public static string? Preflight(string repository, IReadOnlyCollection<string> roots, string? gitExecutable = null, int? timeoutMs = null)
     {
         foreach (var root in roots)
@@ -86,6 +106,7 @@ public static class SafeWrite
                 return reason;
             File.Move(temporary, full, overwrite: true);
             Created.TryAdd(full, 0);
+            RecordContent(full);
             return null;
         }
         finally
@@ -122,6 +143,7 @@ public static class SafeWrite
                 return reason;
             File.Move(temporary, full, overwrite: true);
             Created.TryAdd(full, 0);
+            RecordContent(full);
             return null;
         }
         finally
@@ -146,6 +168,7 @@ public static class SafeWrite
             return Text(path, content, ownership);
         File.AppendAllText(full, content);
         Created.TryAdd(full, 0);
+        RecordContent(full);
         return null;
     }
 
@@ -165,6 +188,7 @@ public static class SafeWrite
 
         File.Copy(source, full, overwrite: true);
         Created.TryAdd(full, 0);
+        RecordContent(full);
         return null;
     }
 
@@ -176,6 +200,7 @@ public static class SafeWrite
         var full = Canonical(destination)!;
         File.Move(source, full, overwrite: true);
         Created.TryAdd(full, 0);
+        RecordContent(full);
         return null;
     }
 
@@ -196,6 +221,7 @@ public static class SafeWrite
             return reason;
         Directory.CreateDirectory(full);
         Created.TryAdd(full, 0);
+        RecordContent(full);
         return null;
     }
 
@@ -209,6 +235,7 @@ public static class SafeWrite
         reason = ExclusiveDirectory.Create(full);
         if (reason is not null) return reason;
         Created.TryAdd(full, 0);
+        RecordContent(full);
         return Text(Path.Combine(full, ".checkpoint-output-owner.json"), Guid.NewGuid().ToString("N"), Under(full));
     }
 
@@ -229,6 +256,7 @@ public static class SafeWrite
 
         stream = new FileStream(full, FileMode.CreateNew, FileAccess.Write, FileShare.None);
         Created.TryAdd(full, 0);
+        RecordContent(full);
         return null;
     }
 
@@ -252,6 +280,7 @@ public static class SafeWrite
 
         stream = new FileStream(full, FileMode.Append, FileAccess.Write, share);
         Created.TryAdd(full, 0);
+        RecordContent(full);
         return null;
     }
 
@@ -274,6 +303,7 @@ public static class SafeWrite
 
         stream = new FileStream(full, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
         Created.TryAdd(full, 0);
+        RecordContent(full);
         return null;
     }
 

@@ -1026,6 +1026,7 @@ public sealed class OutputCleanupTests : CheckpointTestBase
     {
         var path = Path.Combine(root, dir);
         Directory.CreateDirectory(path);
-        File.WriteAllText(Path.Combine(path, file), "x");
+        if (SafeWrite.WasCreated(path)) SafeWrite.Require(SafeWrite.Text(Path.Combine(path, file), "x", SafeWrite.Under(path)));
+        else File.WriteAllText(Path.Combine(path, file), "x");
     }
 }

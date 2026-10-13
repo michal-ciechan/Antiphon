@@ -20,6 +20,16 @@ public static class Program
 
     public static async Task<int> RunAsync(string[] args, CheckpointApp.Runtime? runtime = null)
     {
+        try { return await RunCoreAsync(args, runtime).ConfigureAwait(false); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+        {
+            (runtime?.Output ?? Console.Error).WriteLine("refused: receipt-or-I/O-failure: " + ex.Message);
+            return ExitCodes.Invalid;
+        }
+    }
+
+    private static async Task<int> RunCoreAsync(string[] args, CheckpointApp.Runtime? runtime)
+    {
         if (args.Length == 0 || args[0] is "-h" or "--help")
         {
             Console.WriteLine("antiphon-checkpoints run|start|wait|status|stop|report|validate|import|coverage|row|clean|execute|hold|--version");
@@ -56,7 +66,7 @@ public static class Program
             case "wait":
                 return await Wait(options, repo).ConfigureAwait(false);
             case "status":
-                return Status(options, repo);
+                return Status(options, repo, runtime?.Output ?? Console.Out);
             case "stop":
                 return Stop(options, repo, runtime);
             case "report":
@@ -211,7 +221,7 @@ public static class Program
             return await runtime.Wait(started.RunDirectory).ConfigureAwait(false);
         var max = ParseDuration(options.Get("max-wait"));
         var heartbeat = ParseDuration(options.Get("heartbeat")) ?? TimeSpan.FromSeconds(60);
-        return await new WaitCommand().WaitAsync(started.RunDirectory, max, heartbeat, Console.Out, CancellationToken.None).ConfigureAwait(false);
+        return await new WaitCommand().WaitAsync(started.RunDirectory, max, heartbeat, Console.Out, CancellationToken.None, request.Commit).ConfigureAwait(false);
     }
 
     private static async Task<int> Wait(ArgSet options, string repo)
@@ -225,24 +235,27 @@ public static class Program
         }
         var max = ParseDuration(options.Get("max-wait"));
         var heartbeat = ParseDuration(options.Get("heartbeat")) ?? TimeSpan.FromSeconds(60);
-        return await new WaitCommand().WaitAsync(run, max, heartbeat, Console.Out, CancellationToken.None).ConfigureAwait(false);
+        return await new WaitCommand().WaitAsync(run, max, heartbeat, Console.Out, CancellationToken.None, options.Get("expected-source-sha")).ConfigureAwait(false);
     }
 
-    private static int Status(ArgSet options, string repo)
+    private static int Status(ArgSet options, string repo, TextWriter output)
     {
         var root = ResultsRoot(options, repo);
-        if (!Directory.Exists(root))
-            return ExitCodes.Green;
+        if (!Directory.Exists(root)) { output.WriteLine("refused: receipt-directory-missing: " + root); return ExitCodes.Invalid; }
         var store = new RunStateStore();
-        foreach (var dir in Directory.EnumerateDirectories(root).OrderBy(path => path))
+        var directories = options.Get("run") is not null ? new[] { ResolveRun(options, repo) } : Directory.EnumerateDirectories(root).OrderBy(path => path).ToArray();
+        foreach (var dir in directories)
         {
             var state = store.TryRead(Path.Combine(dir, "state.json"));
-            if (state is null)
-                continue;
+            if (state is null) { output.WriteLine("refused: state-receipt-unreadable: " + dir); return ExitCodes.Invalid; }
+            if (options.Get("expected-source-sha") is string expected && state.Source.Start.Commit != expected)
+            { output.WriteLine("refused: receipt-source-SHA-mismatching"); return ExitCodes.Invalid; }
+            if (state.Phase == "done" && ReportWriter.RequiredReceiptRefusal(dir, state) is string required)
+            { output.WriteLine("refused: " + required); return ExitCodes.Invalid; }
             var green = state.Rows.Count(row => row.State == "green");
             var red = state.Rows.Count(row => row.State is "red" or "build-failed" or "timeout");
             var queued = state.Rows.Count(row => row.State is "queued" or "running");
-            Console.WriteLine($"{state.RunId} {state.Phase} green={green} red={red} queued={queued}");
+            output.WriteLine($"{state.RunId} {state.Phase} green={green} red={red} queued={queued}");
         }
 
         return ExitCodes.Green;
@@ -352,64 +365,18 @@ public static class Program
 
     private static int Clean(ArgSet options, string repo, TextWriter output)
     {
-        var roots = new List<string> { ResultsRoot(options, repo) };
-        if (options.Get("run") is string runArg && runArg.Length > 0)
-        {
-            try { roots.Add(Path.GetFullPath(ResolveRun(options, repo))); }
-            catch (ManifestValidationException) { }
-        }
-
-        var preflight = SafeWrite.Preflight(repo, roots);
-        if (preflight is not null)
-        {
-            output.WriteLine("refused: " + preflight);
-            return ExitCodes.Invalid;
-        }
-
-        var exit = ExitCodes.Green;
-        var older = ParseDuration(options.Get("older-than"));
-        if (older is TimeSpan age)
-        {
-            var removed = OutputCleanup.RemoveOlderRuns(ResultsRoot(options, repo), age, options.Has("dry-run"));
-            foreach (var reason in removed.Refusals)
-                output.WriteLine("refused: " + reason);
-            foreach (var path in removed.Deleted)
-                output.WriteLine(OutputCleanup.DeletedLine(options.Has("dry-run"), path));
-            if (removed.Refusals.Count > 0)
-                exit = ExitCodes.Invalid;
-        }
-
+        // A separate invocation cannot acquire deletion authority from persisted state.
         if (options.Get("run") is not null || options.Get("manifest") is not null || options.Positionals.Count > 0)
         {
-            string runDirectory;
-            try { runDirectory = ResolveRun(options, repo); }
-            catch (ManifestValidationException)
-            {
-                output.WriteLine("refused: inventory-missing");
-                return ExitCodes.Invalid;
-            }
-
-            var state = new RunStateStore().TryRead(Path.Combine(runDirectory, "state.json"));
-            if (state?.CreatedOutputPaths is null)
-            {
-                output.WriteLine("refused: inventory-missing");
-                return ExitCodes.Invalid;
-            }
-
-            var manifest = options.Get("manifest") is string manifestPath
-                ? ManifestLoader.LoadFile(manifestPath, repo)
-                : ManifestLoader.LoadFile(Path.Combine(runDirectory, "manifest.resolved.yaml"), repo);
-            var result = OutputCleanup.CleanOwnedOutputs(repo, manifest.Builds.Select(build => build.Id).ToList(),
-                exitCode: 0, cleanOnRed: true, options.Has("dry-run"), createdPaths: state.CreatedOutputPaths, refuseUnrecorded: true);
-            foreach (var reason in result.Refusals)
-                output.WriteLine("refused: " + reason);
-            foreach (var path in result.Deleted)
-                output.WriteLine(OutputCleanup.DeletedLine(options.Has("dry-run"), path));
-            if (result.Refusals.Count > 0)
-                exit = ExitCodes.Invalid;
+            var run = ResolveRun(options, repo);
+            var state = new RunStateStore().TryRead(Path.Combine(run, "state.json"));
+            var required = state is null ? "state-receipt-unreadable" : ReportWriter.RequiredReceiptRefusal(run, state);
+            if (required is not null) output.WriteLine("refused: " + required);
+            foreach (var path in state?.CreatedOutputPaths ?? []) output.WriteLine("left in place: " + path + "; remove it manually");
         }
-
-        return exit;
+        else output.WriteLine("left in place: " + ResultsRoot(options, repo) + "; remove it manually");
+        output.WriteLine("refused: not-created-by-run; cleanup requires current-process creation records");
+        return ExitCodes.Invalid;
     }
 
     private static int Validate(ArgSet options, string repo)

@@ -62,7 +62,7 @@ public sealed class CheckpointOwnedOutputTests : CheckpointTestBase
         var root = InitRepo();
         var output = Path.Combine(root, "bin-ledger");
         SafeWrite.Require(SafeWrite.CreateFreshDirectory(output, SafeWrite.Under(root)));
-        File.WriteAllText(Path.Combine(output, "compiler.dll"), "COMPILER");
+        SafeWrite.Require(SafeWrite.Text(Path.Combine(output, "compiler.dll"), "COMPILER", SafeWrite.Under(output)));
         SafeWrite.Require(OwnedOutputLedger.Seal(output));
         var extra = Path.Combine(output, "user.txt");
         if (variant == "file") File.WriteAllText(extra, "USER");
@@ -90,7 +90,7 @@ public sealed class CheckpointOwnedOutputTests : CheckpointTestBase
         var root = InitRepo();
         var output = Path.Combine(root, "bin-ledger");
         SafeWrite.Require(SafeWrite.CreateFreshDirectory(output, SafeWrite.Under(root)));
-        File.WriteAllText(Path.Combine(output, "compiler.dll"), "COMPILER");
+        SafeWrite.Require(SafeWrite.Text(Path.Combine(output, "compiler.dll"), "COMPILER", SafeWrite.Under(output)));
         SafeWrite.Require(OwnedOutputLedger.Seal(output));
         var result = OutputCleanup.CleanOwnedOutputs(root, ["bin-ledger"], 0, false, false, createdPaths: [output]);
         result.Refusals.ShouldBeEmpty();
