@@ -86,6 +86,8 @@ public static class ReportWriter
     {
         try
         {
+            if (state.ToolOwner != SafeWrite.Marker || state.RunId != Path.GetFileName(Path.TrimEndingDirectorySeparator(Path.GetFullPath(runDirectory))))
+                return "receipt-run-directory-mismatching";
             var markdownPath = Path.Combine(runDirectory, "report.md");
             var jsonPath = Path.Combine(runDirectory, "report.json");
             foreach (var path in new[] { markdownPath, jsonPath })

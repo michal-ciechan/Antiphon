@@ -256,7 +256,6 @@ public static class SafeWrite
 
         stream = new FileStream(full, FileMode.CreateNew, FileAccess.Write, FileShare.None);
         Created.TryAdd(full, 0);
-        RecordContent(full);
         return null;
     }
 
@@ -280,7 +279,6 @@ public static class SafeWrite
 
         stream = new FileStream(full, FileMode.Append, FileAccess.Write, share);
         Created.TryAdd(full, 0);
-        RecordContent(full);
         return null;
     }
 
@@ -303,7 +301,6 @@ public static class SafeWrite
 
         stream = new FileStream(full, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
         Created.TryAdd(full, 0);
-        RecordContent(full);
         return null;
     }
 
