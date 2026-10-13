@@ -332,12 +332,35 @@ The table's recipe resolves setup and layer above: classification is Unit for U,
 
 ### Checkpoints
 
+S1 Code binding amendment (2026-10-13, ba777bcd): CP-2 excludes only
+WorktreeManagerGitIntegrationTests.WorktreeManager_raw_remove_refuses_without_authority.
+The original task base 1f86014eaa0897b07d66a6e276a47d2d91101504 reproduced its
+contradictory removal assertion with 1 executed/1 failed, clean source and verified build
+(run 20261013-135418-85c7, CP-B1). The fresh CP-2 TRX census is 32 results/27 methods;
+its explicit positive method roster below retains the other 31 results/26 methods and
+all four named classes. No existing assertion changed. S1 Final total is 475 results.
+
+New naming is off by default through Delegation:CardBranchNames; enabled tests opt in.
+The disabled/capable case in C1213_MintUsesCardRoleAndRunnerCapability isolates that
+setting from recipient capability. This implements the brief's rollout restriction:
+runner images and their capability advertisements precede server enablement.
+The otherwise omitted DelegationSettings.cs is the setting's required owner.
+C1213_QueuedBranchRecovery uses the real settlement evidence writer and failed
+DbContext save for D-2's reply-before-save cut; no provider/transcript input is introduced.
+
+Cost amendment: mandatory pre-slice negative runs are additional to the original
+39-minute S1 ordinary-check floor. The first six consumer rows measured 28m11s
+including a 30s build-slot wait, and base confirmation measured 3m28s. Allow about
+100 minutes for authoring, negative qualification and Final checks under this host
+load; these are estimates, not permission to omit any remaining S1 row.
+
+
 Closed ordinary scope below replaces parent §6's provisional execution list. Build each row to its own isolated OutputPath; no build reuse is assumed. Use the checkpoint tool through the host build-slot gate, one run per committed slice group, and wait to a terminal exit (75 means still running). The exact command shape is `pwsh -NoProfile -File scripts/build-slot.ps1 -Label card1213-checkpoints -- dotnet run --project tools/Antiphon.Checkpoints --property:OutputPath=bin-c1213-tool/ -- run --plan docs/superpowers/plans/2026-10-13-card-1213-test-design.md --after S1 --expected-source-sha <committed-sha>`; substitute S2/S3. Tool bootstrap is included in setup below; row builds take their own slots. Record unedited CP lines, counts, full SHA, clean source/build receipts. Exit 4 is not-run; zero tests is wrong selection. No hand-run build, test or widened filter. Remove only the producer-owned bin-c1213-cpN/ and bin-c1213-tool/ outputs after their runs.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1213-cp1/` | parser | `/*/*/DelegateBranchNameTests*/*` | V-1/R-1 | 9 executed; 0 failed; 0 skipped; named roster | 9 | 3 | true |
-| CP-2 | S1 | `tests/Antiphon.Tests -> bin-c1213-cp2/` | manager | `/*/*/(WorktreeManagerTests*)\|(WorktreeManagerSafetyTests*)\|(WorktreeManagerGitIntegrationTests*)\|(WorktreeManagerStartRefLocalOnlyTests*)/*` | V-1,V-3/R-1,R-3 | 32 executed; 0 failed; 0 skipped; named roster | 32 | 4 | true |
+| CP-2 | S1 | `tests/Antiphon.Tests -> bin-c1213-cp2/` | manager | `/*/*/(WorktreeManagerTests*)\|(WorktreeManagerSafetyTests*)\|(WorktreeManagerGitIntegrationTests*)\|(WorktreeManagerStartRefLocalOnlyTests*)/(C1213_ExplicitBranchKeepsDirectoryIdentity)\|(C1213_ScanBothFormsAndExcludeCardSpawn)\|(Create_names_the_unresolved_start_ref_in_the_refusal)\|(Create_refuses_a_start_sha_only_origin_has_without_fetching_it)\|(IsAlreadyUnregisteredWorktreeError_matches_only_the_not_a_working_tree_fatal)\|(ParseWorktreeList_captures_a_bare_locked_line)\|(ParseWorktreeList_captures_locked_reason_and_prunable_reason)\|(Residue_status_distinguishes_clean_tracked_and_protected_files)\|(Sanitise_accepts_safe_identifier_and_builds_expected_names)\|(Sanitise_rejects_path_traversal_and_special_chars)\|(ScanDelegateWorktrees_names_a_dangling_task_branch_and_ignores_card_spawn)\|(ScanDelegateWorktrees_names_a_locked_registration_whose_directory_is_gone)\|(TryParseDelegateTaskBranch_accepts_feat_card_task_short_ids_only)\|(WorktreeJanitor_does_not_convert_raw_refusal_into_authority)\|(WorktreeJanitor_preserves_stale_unregistered_leftover_directory)\|(WorktreeJanitor_preserves_stale_worktrees_without_receipt)\|(WorktreeManager_create_produces_worktree_under_root)\|(WorktreeManager_create_throws_when_branch_or_path_exists)\|(WorktreeManager_list_returns_only_worktrees_under_root)\|(WorktreeManager_raw_remove_cannot_use_local_ancestry_as_authority)\|(WorktreeManager_raw_remove_preserves_unmerged_directory_and_branch)\|(WorktreeManager_raw_remove_preserves_unregistered_leftover_directory)\|(WorktreeManager_remove_still_throws_when_the_worktree_is_locked)\|(WorktreeManager_touch_updates_last_touched_metadata)\|(WorktreeManager_try_remove_reports_directory_residue_when_a_file_is_held)\|(Worktree_path_confinement_rejects_resolved_escape)` | V-1,V-3/R-1,R-3 | 31 executed; 0 failed; 0 skipped; named roster; one confirmed inherited method excluded | 31 | 4 | true |
 | CP-3 | S1 | `tests/Antiphon.Tests -> bin-c1213-cp3/` | health | `/*/*/(WorktreeHealthServiceTests*)\|(WorktreeResidueSweepTests*)\|(WorktreeResidueRegistrationTests*)/*` | V-3/R-3 | 25 executed; 0 failed; 0 skipped; named roster | 25 | 4 | true |
 | CP-4 | S1 | `tests/Antiphon.Tests -> bin-c1213-cp4/` | ownership | `/*/*/(CardDoneWorktreeCleanupTests*)\|(TaskWorktreeRetirementTests*)\|(WorktreeRetirementRaceTests*)/*` | V-4/R-4 | 114 executed; 0 failed; 0 skipped; named roster | 114 | 6 | true |
 | CP-5 | S1 | `tests/Antiphon.Tests -> bin-c1213-cp5/` | sync | `/*/*/(RemoteWorktreeMirrorTests*)\|(RunnerSettlementSyncTests*)\|(SettlementSyncDebtPolicyTests*)\|(TaskCompletionProgressPolicyTests*)/*` | V-5/R-5 | 104 executed; 0 failed; 0 skipped; named roster | 104 | 5 | true |

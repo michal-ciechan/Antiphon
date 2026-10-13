@@ -22,7 +22,7 @@ public sealed class RunnerWorkspaceBindingTests
         foreach (var branch in new[] { Scratch.Branch, "feat/card-1213-code-deadbeef" })
         {
             using var scratch = Scratch.Create();
-            if (branch != Scratch.Branch) Scratch.Git(scratch.Clone, "branch", branch, scratch.Sha);
+            if (branch != Scratch.Branch) Scratch.Git(scratch.Origin, "branch", branch, scratch.Sha);
             var taskId = Guid.Parse("deadbeef-0000-0000-0000-000000000001");
             var request = Request(scratch, taskId, Guid.NewGuid(), branch: branch);
             var service = scratch.Service(scratch.Clone);
@@ -31,6 +31,7 @@ public sealed class RunnerWorkspaceBindingTests
             Scratch.Git(result.Path, "symbolic-ref", "HEAD").Trim().ShouldBe("refs/heads/" + branch, "binding-branch");
             var record = service.OpenBindingStore().Read(request.Binding!.PreparationId).Record!;
             record.SourceFullRef.ShouldBe("refs/heads/" + branch, "binding-branch");
+            (await service.PublishAsync(new(result.Path, branch, scratch.Sha, scratch.Sha, true), default)).Tip.ShouldBe(scratch.Sha, "bound-publish-control");
             (await scratch.Service(scratch.Clone).MirrorAsync(request, default)).Binding!.BindingId.ShouldBe(result.Binding!.BindingId, "idempotent-binding");
         }
     }

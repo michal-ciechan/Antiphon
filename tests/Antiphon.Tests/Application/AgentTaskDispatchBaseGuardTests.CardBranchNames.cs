@@ -34,7 +34,7 @@ public partial class AgentTaskDispatchBaseGuardTests
             var task = await SeedQueuedWorktreeTaskAsync(db, repo.Path, card.Id, null, AgentTaskRole.TestDesign);
             task.RunnerId = vector == "local" ? null : "fixture";
             await db.SaveChangesAsync();
-            var directory = new C1213Directory(vector);
+            var directory = new C1213Directory(vector == "disabled" ? "capable" : vector);
             await using var provider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot, runners: directory, cardBranchNames: vector != "disabled");
             await using var scope = provider.CreateAsyncScope();
             await scope.ServiceProvider.GetRequiredService<DelegationWorktreeService>().CreateForTaskAsync(task, default);
@@ -45,13 +45,30 @@ public partial class AgentTaskDispatchBaseGuardTests
             (await ScratchGitRepo.GitInAsync(task.WorktreePath!, "symbolic-ref", "HEAD")).StdOut.Trim().ShouldBe("refs/heads/" + expected);
             Path.GetFileName(task.WorktreePath!).ShouldBe("card-task-" + task.Id.ToString("N")[..8]);
         }
+
+        using var rolesRepo = new ScratchGitRepo("c1213-roles"); await rolesRepo.CommitFileAsync("seed.txt", "seed");
+        await using var rolesSchema = await TestDbFixture.CreateIsolatedSchemaAsync(); await using var rolesDb = CreateContext(rolesSchema);
+        var rolesCard = await SeedCardAsync(rolesDb, "CARD-1213");
+        await using var rolesProvider = CreateProvider(rolesSchema.ConnectionString, rolesRepo.WorktreeRoot, cardBranchNames: true);
+        await using var rolesScope = rolesProvider.CreateAsyncScope();
+        var roleTokens = new (AgentTaskRole Role, string Stage)[] {
+            (AgentTaskRole.Custom, "custom"), (AgentTaskRole.Plan, "plan"), (AgentTaskRole.Code, "code"), (AgentTaskRole.Review, "review"), (AgentTaskRole.Debug, "debug"), (AgentTaskRole.Coverage, "coverage"), (AgentTaskRole.Docs, "docs"), (AgentTaskRole.Commit, "commit"), (AgentTaskRole.Test, "test"), (AgentTaskRole.Deploy, "deploy"), (AgentTaskRole.Merge, "merge"), (AgentTaskRole.Check, "check"), (AgentTaskRole.Distill, "distill"), (AgentTaskRole.Diagnose, "diagnose"), (AgentTaskRole.Investigate, "investigate"), (AgentTaskRole.TestDesign, "testdesign"), (AgentTaskRole.Mutation, "mutation") };
+        foreach (var (role, token) in roleTokens)
+        {
+            var task = new AgentTask { Id = Guid.NewGuid(), CardId = rolesCard.Id, RepoPath = rolesRepo.Path, Role = role };
+            await rolesScope.ServiceProvider.GetRequiredService<DelegationWorktreeService>().CreateForTaskAsync(task, default);
+            task.WorktreeBranch.ShouldBe("feat/card-1213-" + token + "-" + task.Id.ToString("N")[..8], "role-token");
+        }
+        var orch = new AgentTask { Id = Guid.NewGuid(), CardId = rolesCard.Id, RepoPath = rolesRepo.Path, Kind = AgentTaskKind.Orchestrator, Role = AgentTaskRole.Plan };
+        await rolesScope.ServiceProvider.GetRequiredService<DelegationWorktreeService>().CreateForTaskAsync(orch, default);
+        orch.WorktreeBranch.ShouldBe("feat/card-1213-orch-" + orch.Id.ToString("N")[..8], "orchestrator-token");
     }
 
     [Test]
     public async Task C1213_UnboundAndUnknownMintLegacy()
     {
         // force a new name for missing metadata/role -> fallback-branch red.
-        foreach (var vector in new[] { "valid", "unbound", "missing-row", "foreign-card", "long-card", "unicode-card", "unknown-role" })
+        foreach (var vector in new[] { "valid", "unbound", "missing-row", "foreign-card", "long-card", "unicode-card", "unknown-role", "missing-db" })
         {
             using var repo = new ScratchGitRepo("c1213-unbound"); await repo.CommitFileAsync("seed.txt", "seed");
             await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
@@ -63,7 +80,13 @@ public partial class AgentTaskDispatchBaseGuardTests
             if (vector == "unknown-role") task.Role = (AgentTaskRole)999;
             await using var provider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot, cardBranchNames: true);
             await using var scope = provider.CreateAsyncScope();
-            await scope.ServiceProvider.GetRequiredService<DelegationWorktreeService>().CreateForTaskAsync(task, default);
+            var service = scope.ServiceProvider.GetRequiredService<DelegationWorktreeService>();
+            if (vector == "missing-db")
+            {
+                var ctor = typeof(DelegationWorktreeService).GetConstructors().Single();
+                service = (DelegationWorktreeService)ctor.Invoke(ctor.GetParameters().Select(p => p.Name == "db" ? null : scope.ServiceProvider.GetService(p.ParameterType) ?? p.DefaultValue).ToArray());
+            }
+            await service.CreateForTaskAsync(task, default);
             task.WorktreeBranch.ShouldBe((vector == "valid" ? "feat/card-1213-code-" : "feat/card-task-") + task.Id.ToString("N")[..8], "fallback-branch " + vector);
         }
     }
