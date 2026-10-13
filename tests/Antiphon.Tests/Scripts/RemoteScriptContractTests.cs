@@ -17,6 +17,7 @@ namespace Antiphon.Tests.Scripts;
 // CARD-0604 S3. Text guards over the remote script's two lanes. The script only ever executes on
 // server2 (host lane) or inside the persistent runner (nested lane), so these are the only guards
 // that run on Windows at all; CP-5 through CP-13 are the live rows.
+[Timeout(600_000)]
 [Category("Unit")]
 public sealed class RemoteScriptContractTests
 {

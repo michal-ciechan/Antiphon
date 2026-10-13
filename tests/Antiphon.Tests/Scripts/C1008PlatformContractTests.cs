@@ -13,6 +13,7 @@ using SkipTestException = TUnit.Core.Exceptions.SkipTestException;
 
 namespace Antiphon.Tests.Scripts;
 
+[Timeout(600_000)]
 [Category("Unit")]
 public sealed class C1008PlatformContractTests
 {
