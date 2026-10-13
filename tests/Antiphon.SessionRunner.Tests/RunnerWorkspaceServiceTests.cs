@@ -21,7 +21,7 @@ public sealed class RunnerWorkspaceServiceTests
         foreach (var branch in new[] { Scratch.Branch, "feat/card-1213-code-deadbeef" })
         {
             using var scratch = Scratch.Create();
-            Scratch.Git(scratch.Clone, "branch", branch == Scratch.Branch ? "canary" : branch, scratch.Sha);
+            if (branch != Scratch.Branch) Scratch.Git(scratch.Origin, "branch", branch, scratch.Sha);
             var starts = new List<ProcessStartInfo>();
             var service = scratch.Service(scratch.Clone, starts);
             var mirror = (await service.MirrorAsync(new(branch, scratch.Sha, "task-deadbeef"), default)).Path;

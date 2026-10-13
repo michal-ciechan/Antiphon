@@ -18,12 +18,23 @@ public class TaskCompletionProgressPolicyTests
     {
         // derive fullRef from id -> progress-ref differs for new stored branch.
         foreach (var branch in new[] { "feat/card-task-deadbeef", "feat/card-1213-code-deadbeef" })
+        foreach (var failure in new[] { "missing", "not-applicable", "timeout", "inspection" })
         {
             var task = new AgentTask { Id = Guid.Parse("deadbeef-0000-0000-0000-000000000001"), RunnerId = "fixture", RemoteWorktreePath = "/mirror/task-deadbeef", Workspace = WorkspaceMode.Worktree, Role = AgentTaskRole.Code, WorktreeBranch = branch };
-            var answer = await TaskCompletionProgressService.PrepareAsync(null, task, default);
+            var answer = await TaskCompletionProgressService.PrepareAsync(failure == "missing" ? null : new C1213SyncFailure(failure), task, default);
             answer.State.ShouldBe(RemoteSettlementSyncState.Unavailable);
             answer.FullRef.ShouldBe("refs/heads/" + branch, "progress-ref");
         }
+    }
+
+    private sealed class C1213SyncFailure(string failure) : Antiphon.Server.Application.Interfaces.IRemoteSettlementSync
+    {
+        public Task<RemoteSettlementSyncResult> SyncAsync(AgentTask task, CancellationToken ct, IReadOnlyCollection<string>? tips = null) => failure switch
+        {
+            "not-applicable" => Task.FromResult(RemoteSettlementSyncResult.NotApplicable),
+            "timeout" => Task.FromException<RemoteSettlementSyncResult>(new OperationCanceledException()),
+            _ => Task.FromException<RemoteSettlementSyncResult>(new IOException("inspection unavailable")),
+        };
     }
 
     private const string Bl = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
