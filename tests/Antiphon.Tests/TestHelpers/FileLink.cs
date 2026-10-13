@@ -17,7 +17,7 @@ internal sealed class FileLink : IDisposable
         Action<string, string> create)
     {
         try { create(path, target); }
-        catch (Exception error) when (isWindows && (error is UnauthorizedAccessException
+        catch (Exception error) when (isWindows && (error is UnauthorizedAccessException { HResult: unchecked((int)0x80070522) }
             || error is System.ComponentModel.Win32Exception { NativeErrorCode: 1314 }
             || error is IOException { HResult: unchecked((int)0x80070522) }))
         {
