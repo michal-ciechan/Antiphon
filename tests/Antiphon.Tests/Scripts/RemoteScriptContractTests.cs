@@ -5770,6 +5770,8 @@ public sealed class RemoteScriptContractTests
 
     private static string C849ExtractedShell(string body, string? repositoryVariable = null, bool captureExit = false)
     {
+        body.Contains("# C1210_PREFLIGHT", StringComparison.Ordinal).ShouldBeTrue("c1210-preflight-required");
+        body = C849PayloadClosure() + "\n" + body;
         var names = Regex.Matches(body, @"\bc849_[a-z_]+\b")
             .Select(match => match.Value).Distinct().Order(StringComparer.Ordinal);
         var preflight = string.Join('\n', names.Select(name =>
@@ -5779,12 +5781,31 @@ public sealed class RemoteScriptContractTests
         return LinuxShell(script, repositoryVariable);
     }
 
+    private static string C849PayloadClosure()
+    {
+        var remote = Remote();
+        var functions = new[] { "c849_payload_controller", "c849_payload_fixture_ready", "c849_payload_select",
+            "c849_payload_call", "c849_payload_fs", "c849_payload_root", "c849_payload_note",
+            "c849_validate_seed_relative", "c849_validate_seed_tree", "c849_manifest_write",
+            "c849_manifest_validate", "c849_manifest_compare", "c849_recovery_validate",
+            "c849_compare_import", "c849_contract_receipt" };
+        var doubles = new[] { "c849_fixture_work_mount", "c849_fixture_helper_exec", "c849_fixture_tree_mutate",
+            "c849_fixture_launch", "c849_fixture_consumer_release", "c849_cold_seed", "c849_smoke",
+            "c849_image", "c849_prepare", "c849_optional_donor", "c849_empty_volume", "c849_require_ready",
+            "c849_no_temp_containers", "c849_prune_idle", "c849_no_cache_attachments", "c849_status_body",
+            "c849_status_zero", "c849_seed_failure", "c849_saved_copy", "c849_assert_mounts", "c849_budget_gate" };
+        return string.Join('\n', functions.Select(name => Block(remote, name))) + "\n" +
+            string.Join('\n', doubles.Select(name => name + "() { printf 'UNEXPECTED " + name +
+                "\\n' >> \"$root/volume-calls\"; return 97; }")) + "\n";
+    }
+
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public void C849_Seed_publishes_complete_payloads_before_its_marker()
     {
         RequireLinuxPwsh();
-        var output = LinuxShell(CacheSeedTreeHarness() + """
+        var output = C849ExtractedShell(CacheSeedTreeHarness() + """
+            # C1210_PREFLIGHT
             before="$(sha256sum "$tree/packages/microsoft.netcore.app.host.linux-x64/9.0.20/runtimes/linux-x64/native/apphost" | cut -d' ' -f1)"
             mkdir -p "$tree/packages/unrelated/1.0.0"
             printf 'partial\n' > "$tree/packages/unrelated/1.0.0/partial"
@@ -5801,9 +5822,18 @@ public sealed class RemoteScriptContractTests
         output.ShouldContain("reference-complete");
         var seed = Block(Remote(), "c849_seed");
         Order(seed, "docker stop \"$donor\"", "docker cp \"$donor:/home/app/.nuget/packages/.\"").ShouldBeTrue();
-        Order(seed, "c849_smoke \"$helper\" seed", "mv \"$stage\" \"$recovery\"").ShouldBeTrue();
-        Order(seed, "docker start \"$donor\"", "mv -T -- \"$C849_READY.tmp-$RUN\" \"$C849_READY\"").ShouldBeTrue();
-        var status = LinuxShell(CacheStatusHarness() + "\n" + """
+        var anchors = new[] { "c849_smoke \"$helper\" seed",
+            "c849_payload_fs writer 'mv \"$1\" \"$2\"' bash \"$stage\" \"$recovery\"",
+            "docker start \"$donor\"", "mv -T -- \"$C849_READY.tmp-$RUN\" \"$C849_READY\"" };
+        foreach (var anchor in anchors)
+            Regex.Matches(seed, Regex.Escape(anchor)).Count.ShouldBe(1, "c1210-publication-anchor " + anchor);
+        foreach (var (first, second, label) in new[] {
+            (anchors[0], anchors[1], "c1210-smoke-before-recovery"),
+            (anchors[1], anchors[2], "c1210-recovery-before-restart"),
+            (anchors[2], anchors[3], "c1210-restart-before-ready") })
+            Order(seed, first, second).ShouldBeTrue(label);
+        var status = C849ExtractedShell(CacheStatusHarness() + "\n" + """
+            # C1210_PREFLIGHT
             for STATUS in sessions runnerSessions queuedTasks null garbage unknown; do
                 c849_status_zero server2-temp reconnected
                 printf '%s reconnect=%s\n' "$STATUS" "$?"
@@ -5825,7 +5855,7 @@ public sealed class RemoteScriptContractTests
             status.ShouldContain(fault + " reconnect=1");
         status.ShouldContain("zero reconnect=0");
         status.ShouldContain("dispatch-unknown reconnect=1");
-        var ready = LinuxShell(CacheStatusHarness() + "\n" + seed + "\n" + """
+        var ready = C849ExtractedShell(CacheStatusHarness() + "\n" + seed + "\n" + """
             SERVER2_ROOT="$root/server2"; mkdir -p "$SERVER2_ROOT/cache"
             CASE_DIR="$root/case"; mkdir -p "$CASE_DIR"
             C849_READY="$SERVER2_ROOT/cache/seed-accepted"; printf 'ready\n' > "$C849_READY"
@@ -5835,6 +5865,7 @@ public sealed class RemoteScriptContractTests
             c849_prepare() { :; }; c849_image() { echo image; }
             c849_optional_donor() { :; }; c849_no_temp_containers() { :; }; c849_require_ready() { :; }
             docker() { echo unsafe-docker; return 1; }
+            # C1210_PREFLIGHT
             ( c849_seed )
             """);
         ready.ShouldContain("seed-result=true:");
@@ -5860,7 +5891,7 @@ public sealed class RemoteScriptContractTests
         wrapper.ShouldContain("retired-container=false exit=0 cases=runner-cache-seed,deploy-temp-runner,verify-runner-caches");
         wrapper.ShouldContain("retired-container=true exit=2 cases=\n");
         wrapper.ShouldNotContain("retired-container=true exit=2 cases=runner-cache-seed");
-        var noContainer = LinuxShell(CacheStatusHarness() + "\n" + Block(Remote(), "c849_no_temp_containers") + "\n" + seed + "\n" + """
+        var noContainer = C849ExtractedShell(CacheStatusHarness() + "\n" + Block(Remote(), "c849_no_temp_containers") + "\n" + seed + "\n" + """
             SERVER2_ROOT="$root/server2"; mkdir -p "$SERVER2_ROOT/cache"
             CASE_DIR="$root/case"; mkdir -p "$CASE_DIR"
             C849_READY="$SERVER2_ROOT/cache/seed-accepted"; printf 'ready\n' > "$C849_READY"
@@ -5875,6 +5906,7 @@ public sealed class RemoteScriptContractTests
                 [ "$TEMP_CONTAINER" = yes ] && printf 'leftover-container\n'
                 return 0
             }
+            # C1210_PREFLIGHT
             TEMP_CONTAINER=no
             ( c849_seed ); printf 'host-empty=%s\n' "$?"
             TEMP_CONTAINER=yes
@@ -5889,7 +5921,8 @@ public sealed class RemoteScriptContractTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public void C849_Seed_refuses_invalid_donors_and_partial_payloads()
     {
-        var output = LinuxShell(CacheSeedTreeHarness() + """
+        var output = C849ExtractedShell(CacheSeedTreeHarness() + """
+            # C1210_PREFLIGHT
             for fault in host metadata reference symlink hardlink special; do
                 copy="$root/$fault"; cp -a "$tree" "$copy"
                 case "$fault" in
@@ -5915,7 +5948,7 @@ public sealed class RemoteScriptContractTests
             "hardlink code=2 diagnosis=CacheDonorUnsafeEntry", "special code=2 diagnosis=CacheDonorUnsafeEntry",
             "path code=2 diagnosis=CacheDonorUnsafePath", "sibling-preserved" })
             output.ShouldContain(expected);
-        var gate = LinuxShell(CacheStatusHarness() + "\n" + Block(Remote(), "c849_seed") + "\n" + """
+        var gate = C849ExtractedShell(CacheStatusHarness() + "\n" + Block(Remote(), "c849_seed") + "\n" + """
             c849_prepare() { :; }
             c849_image() { echo image; }
             c849_optional_donor() { echo donor; }
@@ -5930,6 +5963,7 @@ public sealed class RemoteScriptContractTests
             RUN=red; LANE=host
             require_lane() { :; }
             write_result() { printf 'seed-result=%s:%s\n' "$1" "$2"; exit "$3"; }
+            # C1210_PREFLIGHT
             for STATUS in sessions runnerSessions queuedTasks null garbage unknown; do
                 : > "$root/docker-trace"
                 ( c849_seed ) > "$root/result" 2>&1
@@ -5940,7 +5974,7 @@ public sealed class RemoteScriptContractTests
         foreach (var fault in new[] { "sessions", "runnerSessions", "queuedTasks", "null", "garbage", "unknown" })
             gate.ShouldContain(fault + " verdict=seed-result=false:CacheDonorNotIdleDrained");
         gate.ShouldNotContain("unsafe-stop");
-        var donorLookup = LinuxShell(Block(Remote(), "c849_optional_donor") + "\n" + """
+        var donorLookup = C849ExtractedShell(Block(Remote(), "c849_optional_donor") + "\n" + """
             TEMP_PROJECT=temp
             write_result() { printf 'lookup-result=%s\n' "$2"; exit "$3"; }
             docker() {
@@ -5951,6 +5985,7 @@ public sealed class RemoteScriptContractTests
                     absent) : ;;
                 esac
             }
+            # C1210_PREFLIGHT
             for LOOKUP in absent error duplicate; do
                 ( c849_optional_donor ) > "$LOOKUP.out" 2>&1
                 printf '%s code=%s verdict=%s\n' "$LOOKUP" "$?" "$(cat "$LOOKUP.out")"
@@ -5960,15 +5995,16 @@ public sealed class RemoteScriptContractTests
         donorLookup.ShouldContain("absent code=0 verdict=");
         donorLookup.ShouldContain("error code=2 verdict=lookup-result=CacheDonorLookupFailed");
         donorLookup.ShouldContain("duplicate code=2 verdict=lookup-result=CacheDonorIdentityInvalid");
-        var cleanup = LinuxShell("""
+        var cleanup = C849ExtractedShell("""
             root="$(mktemp -d)"; trap 'rm -rf "$root"' EXIT
-            SERVER2_ROOT="$root/server2"; RUN=red
-            mkdir -p "$SERVER2_ROOT/cache"
+            SERVER2_ROOT="$root/server2"; CASE_DIR="$root/case"; RUN=red
+            mkdir -p "$SERVER2_ROOT/cache" "$CASE_DIR"
             stage="$(mktemp -d "$SERVER2_ROOT/cache/stage-$RUN-XXXXXXXX")"
             printf 'partial\n' > "$stage/payload"
             printf 'keep\n' > "$root/sibling"
             write_result() { printf 'seed-failure=%s\n' "$2"; exit "$3"; }
             """ + "\n" + Block(Remote(), "c849_seed_failure") + "\n" + """
+            # C1210_PREFLIGHT
             ( c849_seed_failure '' Interrupted )
             [ -e "$stage" ] && echo stage-left || echo stage-cleaned
             [ "$(cat "$root/sibling")" = keep ] && echo cleanup-sibling-retained
@@ -5984,7 +6020,7 @@ public sealed class RemoteScriptContractTests
     {
         RequireLinuxPwsh();
         var remote = Remote();
-        var output = LinuxShell(
+        var output = C849ExtractedShell(
             CacheSeedTreeHarness() + "\n" + Block(remote, "c849_saved_copy") + "\n" +
             Block(remote, "c849_no_cache_attachments") + "\n" +
             string.Join("\n", new[] { "c849_manifest_write", "c849_manifest_validate", "c849_manifest_compare", "c849_compare_import", "c849_contract_receipt" }.Select(name => Block(remote, name))) + "\n" +
@@ -6032,7 +6068,14 @@ public sealed class RemoteScriptContractTests
                             return $?
                         fi
                         if [[ "$*" == *'cache verify'* ]]; then return 0; fi
-                        if [[ "$*" == *'cp -a /seed/.'* ]]; then
+                        if [[ "$*" == *'cp -a "$1/."'* ]]; then
+                            local expected_code='set -eu; cp -a "$1/." /cache/; chown -R 1654:1654 /cache; find /cache -type d -exec chmod u+rwx {} +; find /cache -type f -exec chmod u+rw {} +; chmod 0700 /cache'
+                            local i code=''
+                            for ((i=1;i<=$#;i++)); do
+                                if [ "${!i}" = -c ]; then i=$((i+1)); code="${!i}"; break; fi
+                            done
+                            [ "$code" = "$expected_code" ] && [ "${@: -2:1}" = sh ] && [ "${@: -1}" = /seed ] || return 97
+                            printf 'import-positionals=sh:/seed\n' >> "$root/trace"
                             local source='' target='' arg
                             for arg in "$@"; do
                                 case "$arg" in
@@ -6057,6 +6100,7 @@ public sealed class RemoteScriptContractTests
             }
             require_lane() { :; }
             write_result() { printf 'seed-result=%s:%s\n' "$1" "$2"; exit "$3"; }
+            # C1210_PREFLIGHT
             C997_TRACE="$root/trace-tar"
             ( c849_seed ) > "$root/result" 2>&1
             printf 'success=%s %s\n' "$?" "$(cat "$root/result")"
@@ -6069,6 +6113,7 @@ public sealed class RemoteScriptContractTests
             test ! -e "$SERVER2_ROOT/cache/recovery-$RUN/packages/incomplete/1.0" && echo incomplete-pruned
             grep -q '^1654$' "$root/owners/packages" && grep -q '^1654$' "$root/owners/npm" && echo live-cache-owned-by-1654
             printf 'idle-count=%s smoke-count=%s\n' "$(grep -c '^idle$' "$root/trace")" "$(grep -c '^smoke$' "$root/trace")"
+            printf 'positional-import-count=%s\n' "$(grep -c '^import-positionals=sh:/seed$' "$root/trace")"
             mv "$C849_READY" "$root/accepted-marker"
             RUN=smoke
             c849_smoke() { return 1; }
@@ -6110,7 +6155,7 @@ public sealed class RemoteScriptContractTests
             """, "repo");
         foreach (var expected in new[] { "success=0 seed-result=true:", "marker-written", "saved-identity",
             "payload-imported", "recovery-retained", "recovery-host-owned", "unsafe-mode-masked",
-            "incomplete-pruned", "live-cache-owned-by-1654", "idle-count=3 smoke-count=1",
+            "incomplete-pruned", "live-cache-owned-by-1654", "idle-count=3 smoke-count=1", "positional-import-count=2",
             "smoke-exit=2 diagnosis=seed-result=false:CacheSeedSmokeFailed", "smoke-no-ready-marker", "smoke-stage-cleaned", "directory-imported",
             "C997-WRAPPER-ENTRY directory-import",
             "deploy-parent=seed-result=false:PastSeedGate", "deploy-temp=seed-result=false:PastSeedGate" })
@@ -6124,7 +6169,7 @@ public sealed class RemoteScriptContractTests
     {
         RequireLinuxPwsh();
         var remote = Remote();
-        var output = LinuxShell(
+        var output = C849ExtractedShell(
             CacheSeedTreeHarness() + "\n" + Block(remote, "c849_saved_copy") + "\n" +
             Block(remote, "c849_prune_idle") + "\n" +
             Block(remote, "c849_no_cache_attachments") + "\n" + """
@@ -6163,6 +6208,7 @@ public sealed class RemoteScriptContractTests
                 fi
                 return 1
             }
+            # C1210_PREFLIGHT
             tar -cf "$root/good.tar" -C "$tree" .
             mkdir -p "$root/bad"; printf 'bad\n' > "$root/bad/escape"
             tar -cf "$root/traversal.tar" -C "$root/bad" --transform='s|escape|../escape|' escape
