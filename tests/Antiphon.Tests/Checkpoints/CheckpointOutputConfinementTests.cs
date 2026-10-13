@@ -268,13 +268,7 @@ public sealed class CheckpointOutputConfinementTests : CheckpointTestBase
 
     private static void SeedBuild(string root)
     {
-        var start = new ProcessStartInfo("dotnet")
-        {
-            WorkingDirectory = root,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-        };
+        var start = new ProcessStartInfo("dotnet") { WorkingDirectory = root };
         foreach (var arg in new[]
         {
             "build", "App/App.csproj", "--property:OutputPath=bin-probe/",
@@ -283,12 +277,8 @@ public sealed class CheckpointOutputConfinementTests : CheckpointTestBase
             start.ArgumentList.Add(arg);
         start.Environment["MSBUILDDISABLENODEREUSE"] = "1";
         start.Environment["DOTNET_CLI_DO_NOT_USE_MSBUILD_SERVER"] = "1";
-        using var process = Process.Start(start);
-        process.ShouldNotBeNull();
-        var stdout = process.StandardOutput.ReadToEnd();
-        var stderr = process.StandardError.ReadToEnd();
-        process.WaitForExit(120_000).ShouldBeTrue(stdout + stderr);
-        process.ExitCode.ShouldBe(0, stdout + stderr);
+        var output = CheckpointFixtureProcess.Run(start, 120_000);
+        output.Exit.ShouldBe(0, output.Stdout + output.Stderr);
     }
 
     private static void Restore(Fixture fixture)
@@ -324,27 +314,7 @@ public sealed class CheckpointOutputConfinementTests : CheckpointTestBase
         File.WriteAllText(path, content);
     }
 
-    private static void Git(string root, params string[] args)
-    {
-        var start = new ProcessStartInfo("git")
-        {
-            WorkingDirectory = root,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-        };
-        start.Environment.Remove("GIT_DIR");
-        start.Environment.Remove("GIT_WORK_TREE");
-        start.Environment.Remove("GIT_INDEX_FILE");
-        foreach (var arg in args)
-            start.ArgumentList.Add(arg);
-        using var process = Process.Start(start);
-        process.ShouldNotBeNull();
-        var stdout = process.StandardOutput.ReadToEnd();
-        var stderr = process.StandardError.ReadToEnd();
-        process.WaitForExit(30_000).ShouldBeTrue(stdout + stderr);
-        process.ExitCode.ShouldBe(0, stdout + stderr);
-    }
+    private static void Git(string root, params string[] args) => CheckpointFixtureProcess.Git(root, args);
 
     private sealed record Fixture(string Root, string Dll, byte[] DllBytes, string Assets, byte[] AssetBytes);
 }
