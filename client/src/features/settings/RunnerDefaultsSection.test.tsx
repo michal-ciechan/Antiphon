@@ -1,7 +1,8 @@
 import { HttpResponse, http } from 'msw'
 import { describe, expect, it, vi } from 'vitest'
-import { renderWithProviders, screen, userEvent, waitFor } from '../../test/utils'
+import { act, renderWithProviders, screen, userEvent, waitFor } from '../../test/utils'
 import { server } from '../../test/mocks/server'
+import { runnerDefaultKeys } from '../../api/runnerDefaults'
 import { RunnerDefaultsSection } from './RunnerDefaultsSection'
 
 vi.mock('@mantine/notifications', () => ({ notifications: { show: vi.fn() } }))
@@ -102,6 +103,25 @@ describe('RunnerDefaultsSection', () => {
     expect(captured.body?.globalRunnerId).toBe('desktop')
     expect(captured.body?.kindDefaults).toEqual([])
     expect(captured.body?.reason).toBe('restore earlier')
+  })
+
+  it('clears the conflict banner when a newer revision arrives', async () => {
+    let current = defaults
+    server.use(
+      http.get('/api/runner-defaults', () => HttpResponse.json(current)),
+      http.get('/api/runner-defaults/revisions', () => HttpResponse.json({ revisions: [], nextBeforeRevision: null })),
+      http.get('/api/session-runners', () => HttpResponse.json([])),
+      http.put('/api/runner-defaults', () =>
+        HttpResponse.json({ title: 'runner_defaults_revision_conflict' }, { status: 409 })),
+    )
+    const { queryClient } = renderWithProviders(<RunnerDefaultsSection />)
+    await userEvent.type(await screen.findByTestId('runner-defaults-reason'), 'stale save')
+    await userEvent.click(screen.getByTestId('runner-defaults-save'))
+    expect(await screen.findByTestId('runner-defaults-conflict')).toBeInTheDocument()
+    current = { ...defaults, revision: 4, updatedAt: '2026-09-26T00:00:00Z' }
+    await act(async () => { await queryClient.invalidateQueries({ queryKey: runnerDefaultKeys.current }) })
+    expect(await screen.findByText(/Revision 4\./)).toBeInTheDocument()
+    expect(screen.queryByTestId('runner-defaults-conflict')).not.toBeInTheDocument()
   })
 
   it('keeps a load failure inside the section', async () => {
