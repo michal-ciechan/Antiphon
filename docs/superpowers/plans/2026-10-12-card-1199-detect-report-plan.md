@@ -31,10 +31,10 @@ Closed scope overrides broad Unit profile per repair brief. Linux only. One isol
 | CP-9 | S2 | CP-1 | row-runner | `/*/*/RowRunnerTests/*` | R-1 V-3 | full 13 cases, 0 failed/skipped | 13 | 1 |
 | CP-10 | S2 | CP-1 | required-script-receipt | `/*/*/CheckpointTrackedBaselineTests/passing_script_requires_writable_source_receipt*` | V-3 F2 | missing receipt is nonzero | 1 | 2 |
 | CP-11 | S2 | CP-1 | receipt-and-source-regression | `/*/*/(ReportWriterTests*\|CheckpointSourceStateTests*\|CheckpointSourceExecutionTests*\|EvidenceFolderTests*)/*` | V-3 R-1 | full affected receipt/source classes; Windows sharing case disclosed under R-2 | 25 | 3 |
-| CP-12 | S4 | CP-1 | linux-fifo-receipts | `/*/*/CheckpointReceiptSafetyTests/linux_fifo_receipts_refuse_within_four_seconds*` | V-5 F1 | nine combinations promptly exit 2, Linux gated | 1 | 1 |
-| CP-13 | S4 | CP-1 | receipt-file-types | `/*/*/CheckpointReceiptSafetyTests/symlink_and_directory_receipts_refuse_within_four_seconds*` | V-5 F1 | eighteen combinations refuse, linked target unchanged | 1 | 1 |
-| CP-14 | S4 | CP-1 | receipt-json-shapes | `/*/*/CheckpointReceiptSafetyTests/malformed_collection_and_string_shapes_return_named_refusals*` | V-6 F2 | required collection/string shapes refuse; state unchanged | 1 | 2 |
-| CP-15 | S4 | CP-1 | shared-verified-reader | `/*/*/PlanCoverageHandleTests/*` | R-4 V-5 | full affected reader class, all sixteen cases | 16 | 1 |
+| CP-12 | S2 | CP-1 | linux-fifo-receipts | `/*/*/CheckpointReceiptSafetyTests/linux_fifo_receipts_refuse_within_four_seconds*` | V-5 F1 | nine combinations promptly exit 2, Linux gated | 1 | 1 |
+| CP-13 | S2 | CP-1 | receipt-file-types | `/*/*/CheckpointReceiptSafetyTests/symlink_and_directory_receipts_refuse_within_four_seconds*` | V-5 F1 | eighteen combinations refuse, linked target unchanged | 1 | 1 |
+| CP-14 | S2 | CP-1 | receipt-json-shapes | `/*/*/CheckpointReceiptSafetyTests/malformed_collection_and_string_shapes_return_named_refusals*` | V-6 F2 | required collection/string shapes refuse; state unchanged | 1 | 2 |
+| CP-15 | S2 | CP-1 | shared-verified-reader | `/*/*/PlanCoverageHandleTests/*` | R-4 V-5 | full affected reader class, all sixteen cases | 16 | 1 |
 
 ### Mutation handoff
 
