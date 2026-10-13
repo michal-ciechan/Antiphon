@@ -106,19 +106,21 @@ public sealed partial class CardWorktreeMirrorCleanupTests
     // (ReleaseWhenQueuedAsync); runnerOrder is the hand-written runner-side sequence.
     // mutation (PC-285): drop guarded work queued while the turn is busy;
     // red: busyRecipientDirectoryGone.ShouldBeTrue() fails.
-    // fixture mutation (F2 scratch): release the holder before the tested request queues;
-    // red: runnerOrder lacks "queued:<operation>" and shows "released:waiters=0".
+    // fixture mutations (F2 scratch, reverted): release the holder at barrier entry, or on the
+    // reviewed server in-flight >= 2 condition; red: runnerOrder (holder-resumed before queued,
+    // or released:waiters=0).
     [Test] public async Task C1032_RecoveryQueuesBusyAndReady()
     {
         const string mirror = "entered:WorkspaceMirror", inspect = "entered:CompletedCardWorkspaceInspect",
-            remove = "entered:CompletedCardWorkspaceRemove", holderEntered = "holder-entered", released = "released:waiters=1";
+            remove = "entered:CompletedCardWorkspaceRemove", holderEntered = "holder-entered",
+            released = "released:waiters=1", resumed = "holder-resumed";
         var expectedOrder = new Dictionary<string, string[]>
         {
-            ["preparation-busy"] = [holderEntered, "queued:WorkspaceMirror", released, mirror, inspect, remove],
+            ["preparation-busy"] = [holderEntered, "queued:WorkspaceMirror", released, resumed, mirror, inspect, remove],
             ["preparation-ready"] = [mirror, inspect, remove],
-            ["inspection-busy"] = [mirror, holderEntered, "queued:CompletedCardWorkspaceInspect", released, inspect, remove],
+            ["inspection-busy"] = [mirror, holderEntered, "queued:CompletedCardWorkspaceInspect", released, resumed, inspect, remove],
             ["inspection-ready"] = [mirror, inspect, remove],
-            ["removal-busy"] = [mirror, inspect, holderEntered, "queued:CompletedCardWorkspaceRemove", released, remove],
+            ["removal-busy"] = [mirror, inspect, holderEntered, "queued:CompletedCardWorkspaceRemove", released, resumed, remove],
             ["removal-ready"] = [mirror, inspect, remove],
         };
         foreach (var vector in new[] { "preparation-busy", "preparation-ready", "inspection-busy", "inspection-ready", "removal-busy", "removal-ready" })

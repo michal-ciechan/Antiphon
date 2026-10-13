@@ -61,7 +61,8 @@ internal sealed class CompletedCardMirrorFixture : IAsyncDisposable
     public List<Guid> SentOperationIds { get; } = [];
     public List<string> SentRequests { get; } = [];
     // Runner-side order of mutation-turn events (C1032_RecoveryQueuesBusyAndReady): "holder-entered",
-    // "queued:<operation>", "released:waiters=<n>", and "entered:<operation>" when a handler starts.
+    // "queued:<operation>", "released:waiters=<n>" (MutationLock waiters observed at release),
+    // "holder-resumed", and "entered:<operation>" when a handler starts.
     public List<string> Order { get; } = [];
     // Operation id of each CompletedCardWorkspaceRemove handler entry on the runner.
     public List<Guid> EnteredRemovalOperationIds { get; } = [];
@@ -111,7 +112,11 @@ internal sealed class CompletedCardMirrorFixture : IAsyncDisposable
         Workspace.WorkspaceAdmissionForTest = async () =>
         {
             if (Interlocked.Exchange(ref _holdArmed, 0) == 1)
-            { Record("holder-entered"); _holderEntered.TrySetResult(); await _holderRelease.Task; }
+            {
+                Record("holder-entered"); _holderEntered.TrySetResult(); await _holderRelease.Task;
+                // Observed by the holder itself, so an early release shows here whoever caused it.
+                Record("holder-resumed");
+            }
             else Record("entered:" + PhoneHomeOperation.WorkspaceMirror);
         };
         PhoneHomeWorkspaceMirrorRequest mirror = new(task.WorktreeBranch!, g.SeedSha,
