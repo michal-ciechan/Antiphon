@@ -315,6 +315,7 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
                 && t.Sequence == note.ConfirmingPromptSequence && t.Kind == TranscriptKinds.UserPrompt, Token);
             prompt.Sequence.ShouldBeGreaterThan(row.LastDeliveryBaselineSequence!.Value);
             prompt.Text!.ReplaceLineEndings("\n").ShouldBe(rendering.WireText.ReplaceLineEndings("\n"));
+            TaskCompletionNotification.Sha256(prompt.Text.ReplaceLineEndings("\n")).ShouldBe(rendering.WireSha256);
             Caller.SubmittedBodies.Count(body => body.ReplaceLineEndings("\n") == prompt.Text.ReplaceLineEndings("\n")).ShouldBe(1);
         }
     }
@@ -457,8 +458,26 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
         if (latest > Clock.GetUtcNow().UtcDateTime) Clock.AdvanceTo(new DateTimeOffset(latest, TimeSpan.Zero));
     }
     public int TimerSequence => Clock.Events.LastOrDefault()?.Sequence ?? 0;
-    public Task<ControlledTimeProvider.TimerEvent> NextBackstopAsync(int after, CancellationToken ct) => Clock.WaitForTimerAsync(
-        e => e.Action == "create" && e.DueTime >= TimeSpan.FromMinutes(14), after, ct);
+    public async Task<ControlledTimeProvider.TimerEvent> NextBackstopAsync(int after, CancellationToken ct)
+    {
+        while (true)
+        {
+            var timer = await Clock.WaitForTimerAsync(e => e.Action == "create" && e.DueTime >= TimeSpan.FromMinutes(14), after, ct);
+            after = timer.Sequence;
+            // WaitAsync may allocate a timer for an already-ready signal and
+            // immediately cancel it. Only a live, debt-free wait is a pass end.
+            var recovery = Flushes.Recovery;
+            var flags = BindingFlags.Instance | BindingFlags.NonPublic;
+            var gate = recovery.GetType().GetField("_gate", flags)!.GetValue(recovery)!;
+            lock (gate)
+            {
+                var noHints = !(bool)recovery.GetType().GetField("_sweep", flags)!.GetValue(recovery)!
+                    && ((HashSet<Guid>)recovery.GetType().GetField("_tasks", flags)!.GetValue(recovery)!).Count == 0
+                    && ((Dictionary<Guid, DateTime>)recovery.GetType().GetField("_sessions", flags)!.GetValue(recovery)!).Count == 0;
+                if (noHints && Clock.TimerStates[timer.TimerId] != "dispose") return timer;
+            }
+        }
+    }
 
     public sealed class RecordingFlushes : CompletionNoteFlushQueue
     {
