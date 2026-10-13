@@ -1447,7 +1447,9 @@ c849_volume() {
         write_result false CacheVolumeLookupUnknown 2; }
     if [ "$driver" != local ] || [[ "$options" != null && "$options" != '{}' ]] \
         || [ "$owner" != server2-runner ] || [ "$schema" != 1 ] || [ "$actual_role" != "$role" ]; then
-        [ "$fixture" != 1 ] || c849_fixture_foreign_volume "$name"
+        if [ "$fixture" = 1 ] && { [ "$owner" != server2-runner ] || [ "$schema" != 1 ] || [ "$actual_role" != "$role" ]; }; then
+            c849_fixture_foreign_volume "$name"
+        fi
         write_result false CacheVolumeForeign 2
     fi
     if [ "$fixture" = 1 ]; then
@@ -2944,7 +2946,7 @@ c849_fixture_control() {
     local id="$1" diagnosis="$2" actual code=0
     actual="$CASE_DIR/.control-$id"
     shift 2
-    ( write_result() { printf '%s\n' "$2"; exit "$3"; }; "$@" ) > "$actual" 2>&1 || code=$?
+    ( C849_FIXTURE_CONTROL=1; write_result() { printf '%s\n' "$2"; exit "$3"; }; "$@" ) > "$actual" 2>&1 || code=$?
     [ "$code" -ne 0 ] && grep -Fxq "$diagnosis" "$actual" \
         || write_result false "ControlNotSensitive $id" 2
     local ordinal
@@ -3017,7 +3019,7 @@ c849_fixture_launch() {
         [[ "$identity" =~ ^[0-9a-f]{64}$ ]] || return 2
         c849_fixture_resource_state container "$identity" || state=$?
         [ "$state" = 1 ] || return 2
-        rm -f -- "$file" || return 2
+        rm -f -- "$file" "$CASE_DIR/.fixture-fingerprint-$name" || return 2
     fi
     state=0
     c849_fixture_helper_lookup "$name" || state=$?
@@ -3027,7 +3029,19 @@ c849_fixture_launch() {
         --label "io.antiphon.fixture-run=$RUN" --label "io.antiphon.fixture-role=$role" "$@" || code=$?
     if [ -f "$file" ] && [ ! -L "$file" ]; then
         identity="$(cat -- "$file")" || identity=''
-        if [[ "$identity" =~ ^[0-9a-f]{64}$ ]]; then return "$code"; fi
+        if [[ "$identity" =~ ^[0-9a-f]{64}$ ]]; then
+            state=0
+            c849_fixture_resource_state container "$identity" || state=$?
+            case "$state" in
+                0) local fingerprint
+                    fingerprint="$(c849_fixture_container_fingerprint "$identity")" || {
+                        c849_fixture_cleanup_unknown container "$name"; return 2; }
+                    printf '%s\n' "$fingerprint" > "$CASE_DIR/.fixture-fingerprint-$name" || return 2 ;;
+                1) ;;
+                *) c849_fixture_cleanup_unknown container "$name"; return 2 ;;
+            esac
+            return "$code"
+        fi
     fi
     c849_fixture_cleanup_unknown container "$name"
     [ "$code" != 0 ] || code=2
@@ -3035,26 +3049,49 @@ c849_fixture_launch() {
 }
 
 c849_fixture_foreign_volume() {
+    # PC-09/10 supply synthetic Docker facts; their ledger edits are not acquisition facts.
+    # C1208_Owned_packages_registration_survives_production_controls covers this boundary.
+    [ "${C849_FIXTURE_CONTROL:-0}" != 1 ] || return 0
     c849_fixture_workspace_drop_name "$1" || return 2
     printf 'foreign: left untouched volume %s\n' "$1" >> "$CASE_DIR/fixture-cleanup-ledger.txt"
 }
 
-# Resolve name-only records once, using all run labels before recording a durable ID.
-# C1208_Legacy_owned_markers_are_migrated and the replacement rows guard this seam.
+# C1208_Recorded_creation_fingerprint_is_reverified checks name/image/Created equality.
+c849_fixture_container_fingerprint() {
+    local identity="$1" name image created
+    name="$(docker inspect -f '{{.Name}}' "$identity")" || return 2
+    image="$(docker inspect -f '{{.Image}}' "$identity")" || return 2
+    created="$(docker inspect -f '{{.Created}}' "$identity")" || return 2
+    [ -n "$name" ] && [ -n "$image" ] && [ -n "$created" ] || return 2
+    printf '%s|%s|%s\n' "$name" "$image" "$created"
+}
+
+# C1208_Wrong_cidfile_preserves_foreign_container and the changed-labels row check full IDs.
+# C1208_Legacy_owned_markers_are_migrated also checks legacy name resolution.
 c849_fixture_container_identity() {
     local name="$1" identity="$2" role="$3" state=0 owner run actual
     c849_fixture_resource_state container "$identity" || state=$?
     [ "$state" = 0 ] || return "$state"
-    if [[ "$identity" =~ ^[0-9a-f]{64}$ ]]; then
-        printf '%s\n' "$identity"; return 0
+    if [[ ! "$identity" =~ ^[0-9a-f]{64}$ ]]; then
+        [ "$identity" = "$name" ] || return 2
+        identity="$(docker inspect -f '{{.Id}}' "$identity")" || return 2
     fi
-    [ "$identity" = "$name" ] || return 3
-    identity="$(docker inspect -f '{{.Id}}' "$identity")" || return 2
     [[ "$identity" =~ ^[0-9a-f]{64}$ ]] || return 2
     owner="$(docker inspect -f '{{index .Config.Labels "io.antiphon.owner"}}' "$identity")" || return 2
     run="$(docker inspect -f '{{index .Config.Labels "io.antiphon.fixture-run"}}' "$identity")" || return 2
     actual="$(docker inspect -f '{{index .Config.Labels "io.antiphon.fixture-role"}}' "$identity")" || return 2
     [ "$owner" = c849-fixture ] && [ "$run" = "$RUN" ] && [ "$actual" = "$role" ] || return 3
+    # The acquisition's name is recorded in the cidfile path/legacy marker.
+    actual="$(docker inspect -f '{{.Name}}' "$identity")" || return 2
+    [ "$actual" = "/$name" ] || return 3
+    local fingerprint="$CASE_DIR/.fixture-fingerprint-$name" recorded
+    if [ -e "$fingerprint" ] || [ -L "$fingerprint" ]; then
+        [ -f "$fingerprint" ] && [ ! -L "$fingerprint" ] || return 2
+        recorded="$(cat -- "$fingerprint")" || return 2
+        [ -n "$recorded" ] || return 2
+        actual="$(c849_fixture_container_fingerprint "$identity")" || return 2
+        [ "$actual" = "$recorded" ] || return 3
+    fi
     printf '%s\n' "$identity" > "$CASE_DIR/.fixture-id-$name" || return 2
     printf '%s\n' "$identity"
 }
@@ -3069,36 +3106,59 @@ c849_fixture_cache_identity() {
     schema="$(docker volume inspect -f '{{index .Labels "io.antiphon.cache-schema"}}' "$name")" || return 2
     actual="$(docker volume inspect -f '{{index .Labels "io.antiphon.cache-role"}}' "$name")" || return 2
     run="$(docker volume inspect -f '{{index .Labels "io.antiphon.fixture-run"}}' "$name")" || return 2
-    [ "$driver" = local ] && [[ "$options" == null || "$options" == '{}' ]] \
-        && [ "$owner" = server2-runner ] && [ "$schema" = 1 ] && [ "$actual" = "$role" ] && [ "$run" = "$RUN" ] || return 3
+    [ "$owner" = server2-runner ] && [ "$schema" = 1 ] && [ "$actual" = "$role" ] && [ "$run" = "$RUN" ] || return 3
+    [ "$driver" = local ] && [[ "$options" == null || "$options" == '{}' ]] || return 2
+}
+
+# Labels on the resolved ID authorize disposal; a full ID has the same checks as a name.
+# C1208_Wrong_network_id_is_untouched and Recorded_network_inspect_failure_refuses_cleanup.
+c849_fixture_network_identity() {
+    local name="$1" identity="$2" state=0 owner run role actual
+    c849_fixture_resource_state network "$identity" || state=$?
+    [ "$state" = 0 ] || return "$state"
+    if [[ ! "$identity" =~ ^[0-9a-f]{64}$ ]]; then
+        [ "$identity" = "$name" ] || return 2
+        identity="$(docker network inspect -f '{{.Id}}' "$identity")" || return 2
+    fi
+    [[ "$identity" =~ ^[0-9a-f]{64}$ ]] || return 2
+    owner="$(docker network inspect -f '{{index .Labels "io.antiphon.owner"}}' "$identity")" || return 2
+    run="$(docker network inspect -f '{{index .Labels "io.antiphon.fixture-run"}}' "$identity")" || return 2
+    role="$(docker network inspect -f '{{index .Labels "io.antiphon.fixture-role"}}' "$identity")" || return 2
+    [ "$owner" = c849-fixture ] && [ "$run" = "$RUN" ] && [ "$role" = npm-network ] || return 3
+    actual="$(docker network inspect -f '{{.Name}}' "$identity")" || return 2
+    [ "$actual" = "$name" ] || return 3
+    printf '%s\n' "$identity"
 }
 
 c849_fixture_network_release() {
-    local name="c849-${RUN}-npm" identity state=0 owner run role
-    [ -e "$CASE_DIR/.fixture-network" ] || return 0
-    [ -f "$CASE_DIR/.fixture-network" ] && [ ! -L "$CASE_DIR/.fixture-network" ] || {
-        c849_fixture_cleanup_unknown network "$name"; return 0; }
-    identity="$(cat -- "$CASE_DIR/.fixture-network")" || identity=''
+    local name="c849-${RUN}-npm" identity resolved state=0 record="$CASE_DIR/.fixture-network"
+    [ -e "$record" ] || [ -L "$record" ] || return 0
+    [ -f "$record" ] && [ ! -L "$record" ] || {
+        identity="record:$record"
+        [ ! -L "$record" ] || identity="$identity -> $(readlink -- "$record")"
+        c849_fixture_cleanup_unknown network "$identity" "$name"; return 0; }
+    identity="$(cat -- "$record")" || identity=''
     if [ "$identity" != "$name" ] && [[ ! "$identity" =~ ^[0-9a-f]{64}$ ]]; then
-        c849_fixture_cleanup_unknown network "$name"; return 0
+        c849_fixture_cleanup_unknown network "record:$identity" "$name"; return 0
     fi
-    c849_fixture_resource_state network "$identity" || state=$?
-    case "$state" in 1) return 0 ;; 0) ;; *) c849_fixture_cleanup_unknown network "$identity" "$name"; return 0 ;; esac
-    if [ "$identity" = "$name" ]; then
-        identity="$(docker network inspect -f '{{.Id}}' "$name")" || identity=''
-        [[ "$identity" =~ ^[0-9a-f]{64}$ ]] || { c849_fixture_cleanup_unknown network "$name"; return 0; }
-        owner="$(docker network inspect -f '{{index .Labels "io.antiphon.owner"}}' "$identity")" || state=2
-        run="$(docker network inspect -f '{{index .Labels "io.antiphon.fixture-run"}}' "$identity")" || state=2
-        role="$(docker network inspect -f '{{index .Labels "io.antiphon.fixture-role"}}' "$identity")" || state=2
-        if [ "$state" != 0 ]; then c849_fixture_cleanup_unknown network "$name"; return 0; fi
-        if [ "$owner" != c849-fixture ] || [ "$run" != "$RUN" ] || [ "$role" != npm-network ]; then
-            printf '%s\n' "$name" >> "$CASE_DIR/fixture-cleanup-residue.txt"
+    resolved="$(c849_fixture_network_identity "$name" "$identity")" || state=$?
+    case "$state" in
+        1) printf 'confirmed-absent network %s\n' "$identity" >> "$CASE_DIR/fixture-cleanup-ledger.txt"
+            rm -f -- "$record" || c849_fixture_cleanup_unknown network "$identity" "$name"
+            return 0 ;;
+        0) printf '%s\n' "$resolved" > "$record" || { c849_fixture_cleanup_unknown network "$name"; return 0; } ;;
+        3) printf '%s\n' "$name" >> "$CASE_DIR/fixture-cleanup-residue.txt"
             printf 'foreign: left untouched network %s\n' "$name" >> "$CASE_DIR/fixture-cleanup-ledger.txt"
-            rm -f -- "$CASE_DIR/.fixture-network"; return 0
-        fi
-        printf '%s\n' "$identity" > "$CASE_DIR/.fixture-network" || { c849_fixture_cleanup_unknown network "$name"; return 0; }
+            rm -f -- "$record"; return 0 ;;
+        *) c849_fixture_cleanup_unknown network "$identity" "$name"; return 0 ;;
+    esac
+    c849_fixture_resource_remove network "$resolved" "$name"
+    state=0
+    c849_fixture_resource_state network "$resolved" || state=$?
+    if [ "$state" = 1 ]; then
+        printf 'confirmed-absent network %s\n' "$resolved" >> "$CASE_DIR/fixture-cleanup-ledger.txt"
+        rm -f -- "$record" || c849_fixture_cleanup_unknown network "$resolved" "$name"
     fi
-    c849_fixture_resource_remove network "$identity" "$name"
 }
 
 c849_fixture_owned_name() {
@@ -3153,7 +3213,48 @@ c849_fixture_cleanup_unknown() {
 # succeeds only when the exact resource is confirmed gone. Compose down does not
 # use this helper; its exit-status-only teardown is tracked by CARD-1207.
 c849_fixture_resource_remove() {
-    local kind="$1" identity="$2" name="${3:-$2}" state=0
+    local kind="$1" identity="$2" name="${3:-$2}" state=0 resolved role
+    case "$kind" in
+        container)
+            role=consumer
+            case "$name" in
+                "c849-${RUN}-donor") role=donor ;;
+                "c849-${RUN}-writer") role=writer ;;
+                "c849-${RUN}-reader") role=reader ;;
+                "c849-${RUN}-masked") role=masked ;;
+                "c849-${RUN}-apphost") role=apphost ;;
+            esac
+            resolved="$(c849_fixture_container_identity "$name" "$identity" "$role")" || state=$?
+            [ "$state" != 0 ] || identity="$resolved" ;;
+        network) resolved="$(c849_fixture_network_identity "$name" "$identity")" || state=$?
+            [ "$state" != 0 ] || identity="$resolved" ;;
+        volume)
+            if [ ! -f "$CASE_DIR/.fixture-volumes" ] || ! grep -Fxq -- "$name" "$CASE_DIR/.fixture-volumes" || ! c849_fixture_owned_name "$name"; then
+                state=2
+            else
+                case "$name" in
+                    "c849${RUN}-work"|"c849${RUN}-mask")
+                        c849_fixture_workspace_labels_ok "$name" "${name##*-}" || state=$?
+                        if [ "$state" = 0 ]; then
+                            local driver options
+                            driver="$(docker volume inspect -f '{{.Driver}}' "$identity")" || state=2
+                            options="$(docker volume inspect -f '{{json .Options}}' "$identity")" || state=2
+                            [ "$driver" = local ] && [[ "$options" == null || "$options" == '{}' ]] || state=2
+                        fi ;;
+                    *) case "$name" in *-packages) role=nuget-packages ;; *-scratch) role=nuget-scratch ;; *-npm) role=npm-content ;; *) state=2 ;; esac
+                        [ "$state" != 0 ] || c849_fixture_cache_identity "$name" "$role" || state=$? ;;
+                esac
+            fi ;;
+        *) state=2 ;;
+    esac
+    case "$state" in
+        0) ;;
+        1) printf 'confirmed-absent %s %s\n' "$kind" "$identity" >> "$CASE_DIR/fixture-cleanup-ledger.txt"; return 0 ;;
+        3) [ "$kind" != volume ] || c849_fixture_foreign_volume "$name"
+            printf '%s\n' "$name" >> "$CASE_DIR/fixture-cleanup-residue.txt"
+            printf 'foreign: left untouched %s %s\n' "$kind" "$identity" >> "$CASE_DIR/fixture-cleanup-ledger.txt"; return 0 ;;
+        *) c849_fixture_cleanup_unknown "$kind" "$identity" "$name"; return 0 ;;
+    esac
     case "$kind" in
         container) docker rm -f "$identity" >/dev/null 2>&1 || true ;;
         volume|network) docker "$kind" rm "$identity" >/dev/null 2>&1 || true ;;
@@ -3421,7 +3522,8 @@ c849_fixture_cleanup() {
                     0) c849_fixture_resource_remove volume "$name" ;;
                     1) ;;
                     2) c849_fixture_cleanup_unknown volume "$name" ;;
-                    *) c849_fixture_foreign_volume "$name"; printf '%s\n' "$name" >> "$CASE_DIR/fixture-cleanup-residue.txt" ;;
+                    3) c849_fixture_foreign_volume "$name"; printf '%s\n' "$name" >> "$CASE_DIR/fixture-cleanup-residue.txt" ;;
+                    *) c849_fixture_cleanup_unknown volume "$name" ;;
                 esac
                 code=0
                 ;;
@@ -4446,13 +4548,14 @@ c849_fixture_inventory_fault() (
 )
 
 c849_fixture_cleanup_scope() (
-    local ledger="$CASE_DIR/.fixture-volumes" saved="$SERVER2_ROOT/cleanup-ledger" trace="$SERVER2_ROOT/cleanup-trace"
-    cp "$ledger" "$saved" || return 1
-    printf 'c849foreign-packages\n' >> "$ledger"
+    local acquired_case="$CASE_DIR" trace="$SERVER2_ROOT/cleanup-trace"
+    CASE_DIR="$SERVER2_ROOT/cleanup-control"
+    mkdir -m 0700 -- "$CASE_DIR" || return 1
+    cp -- "$acquired_case/.fixture-volumes" "$CASE_DIR/.fixture-volumes" || return 1
+    printf 'c849foreign-packages\n' >> "$CASE_DIR/.fixture-volumes"
     : > "$trace"
     docker() { printf '%s\n' "$*" >> "$trace"; }
     c849_fixture_cleanup
-    cp "$saved" "$ledger" || return 1
     if grep -Fq c849foreign-packages "$trace"; then printf 'ControlNotSensitive\n'; return 2; fi
     printf 'FixtureCleanupScopeHeld\n'; return 2
 )
@@ -4629,7 +4732,7 @@ c849_fixture_controller_remove() {
     )
 }
 
-# Consumer release accepts positively absent exact names on repeated finalization.
+# Consumer release accepts positive absence of the acquired ID or recorded legacy name.
 # Unknown probes (including daemon loss with exit 1) retain identities and refuse
 # success. Native Docker acceptance remains rollout-owned W-1, pending.
 c849_fixture_consumer_release() {
@@ -4644,6 +4747,8 @@ c849_fixture_consumer_release() {
     fi
     case "$name" in
         "c849-${RUN}-donor") role=donor ;;
+        "c849-${RUN}-writer") role=writer ;;
+        "c849-${RUN}-reader") role=reader ;;
         "c849-${RUN}-npm-http") role=consumer ;;
         "c849-${RUN}-prune-smoke") role=consumer ;;
         "c849-${RUN}-masked") role=masked ;;
@@ -4718,7 +4823,9 @@ c849_fixture_finalize() {
     # These legacy consumers carry the acquired ID/name in their existing marker.
     # Release by the marker value when it is the expected name or a container ID.
     for marker in prune-smoke npm-server busy donor; do
-        [ -f "$CASE_DIR/.fixture-$marker" ] && [ ! -L "$CASE_DIR/.fixture-$marker" ] || continue
+        [ -e "$CASE_DIR/.fixture-$marker" ] || [ -L "$CASE_DIR/.fixture-$marker" ] || continue
+        [ -f "$CASE_DIR/.fixture-$marker" ] && [ ! -L "$CASE_DIR/.fixture-$marker" ] || {
+            c849_fixture_cleanup_unknown container "record:$CASE_DIR/.fixture-$marker"; continue; }
         case "$marker" in
             prune-smoke) name="c849-${RUN}-prune-smoke" ;;
             npm-server) name="c849-${RUN}-npm-http" ;;

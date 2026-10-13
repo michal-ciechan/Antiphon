@@ -1,6 +1,6 @@
 # CARD-1208 finalizer deletion audit
 
-Task base: 9f89cc427dca7030cfc93a45ec36e4375d894213. Original Code/landing owner: b1b731e0. Branch feat/card-task-b1b731e0. Restart: none.
+Round 2 base: 7ed60feb0d088bf0c7368f90e989ae0d467e31ae. Code/landing owner: 8c713d0c-fe3f-4097-894b-9fc892a709ae. Branch feat/card-task-8c713d0c. Predecessor Code task: b1b731e0-1d07-4589-8c85-94b420b101bd (original base 9f89cc427dca7030cfc93a45ec36e4375d894213). Restart: none. Earlier completion below is historical and superseded by the round 2 evidence.
 
 ## Deletion inventory and decision
 
@@ -24,7 +24,7 @@ Task base: 9f89cc427dca7030cfc93a45ec36e4375d894213. Original Code/landing owner
 | fixture EXIT -> fixture_exit -> finalize | traps/receipts | primary exit status + named residue | Preserve primary failure; unknown refuses success; foreign disposition retained. |
 | anonymous docker run --rm | ephemeral acquisition helpers | Docker allocated ID | Docker owns automatic disposal; no finalizer ownership inferred. |
 
-Decision: delete only this run's recorded durable ID, or registered complete identity including run labels. A name or roster entry confers no ownership. Drop positively foreign objects immediately and record "foreign: left untouched". Resolve legacy names to IDs only after verifying current-run labels; unknown identity retains named residue and refuses success. Volumes lack durable IDs, so use owner/run/role/driver/options. Concurrent privileged relabeling is outside this Docker identity contract.
+Deletion policy, checked by CP-54..72: require current-run labels on the recorded/resolved ID, the recorded container/network name, and any recorded container creation fingerprint; registered volumes require their exact admitted name and complete run/cache labels plus driver/options. A name or roster entry confers no ownership. Drop positively foreign objects immediately and record "foreign: left untouched". Resolve legacy names to IDs only after verifying current-run labels; unknown identity retains named residue and refuses success. Volumes lack durable IDs, so use owner/run/role/driver/options. Concurrent privileged relabeling is outside this Docker identity contract.
 
 ## Verification design
 
@@ -92,11 +92,11 @@ PC-1 foreign drop/receipt/removal guard (cache variants); PC-2 legacy container 
 
 ### Cost
 
-Ordinary floor 36 row minutes, plus authoring/slot contention. Before-fix selection CP-54..57 shares one isolated build; repaired selection all rows shares one isolated build. Checkpoint-tool bootstrap is an explained unlisted build through build-slot, UseAppHost=false, bin-c1208-tool/. No repeats after green.
+Round 2 ordinary floor 47 row minutes, plus authoring/slot contention. Before-fix selection CP-54..57 shares one isolated build; repaired selection all rows shares one isolated build. Checkpoint-tool bootstrap is an explained unlisted build through build-slot, UseAppHost=false, bin-c1208-tool/. No repeats after green.
 
 ## Implementation binding
 
-Named create/run uses Docker cidfiles at creation, including foreground --rm consumers. Cleanup accepts recorded full IDs, and verifies legacy names by resolving ID first then probing labels on that ID. Registered helpers preserve their label checks; volumes require the recorded roster and complete current-run identity. Empty, malformed and symlinked ID records refuse cleanup. CP-57 also checks an unacquired escape symlink; CP-39 now checks retained diagnostic directories rather than recursively replacing them. SourceLanding PCs remain pending. The isolated scratch-model diagnostic is an explained extra build-slot run, not ordinary TRX evidence.
+Named create/run uses Docker cidfiles at creation, including foreground --rm consumers. Cleanup validates owner/run/role on recorded full IDs and resolved legacy IDs; the recorded container name and any creation fingerprint also match the inspected ID (CP-62..67/72). Registered helpers preserve their label checks; volumes require the recorded roster and complete current-run identity. Empty, malformed and symlinked ID records refuse cleanup. CP-57 also checks an unacquired escape symlink; CP-39 now checks retained diagnostic directories rather than recursively replacing them. SourceLanding PCs remain pending. The isolated scratch-model diagnostic is an explained extra build-slot run, not ordinary TRX evidence.
 
 ## Ordinary verification repair
 
@@ -120,3 +120,30 @@ Repair Code/landing owner: 8c713d0c-fe3f-4097-894b-9fc892a709ae; predecessor b1b
 PC-9 wrong CID/owner/run/role; PC-10 helper wrong ID; PC-11 network wrong ID/owner/run/role; PC-12 container/network inspect outage; PC-13 authoritative packages ledger isolation through PC-09/10 and PC-32; PC-14 dangling/malformed network record and text residue; PC-15 positive-absence clearing/receipt. All variants PENDING method-scoped SourceLanding Mutation, alongside PC-1..8 and CARD-1192 PC-1..174. No Mutation claimed. W-1 and CARD-1207 excluded. Restart: none.
 
 V-19/CP-72 verifies each recorded container name/image/Created fingerprint field against the inspected ID. PC-16 name/image/created compare bypass is PENDING, filter `/*/*/RemoteScriptContractTests/C1208_Recorded_creation_fingerprint_is_reverified*`. CP-68 also runs real PC-32 and requires pre-existing residue to survive its private mock. Legacy acquisitions without fingerprints require recorded name plus owner/run/role; no image/creation fingerprint is inferred for them.
+
+## Round 2 ID deletion authorization
+
+| Finalizer deletion path | Ownership check immediately before Docker delete | Named proof |
+|---|---|---|
+| Fixed consumer roster, generic cidfile sweep, donor/busy/npm-server/prune-smoke marker, immediate named consumer release and seed helper release | consumer_release -> container_identity -> resource_remove -> container_identity: inspect target ID; owner/run/role; recorded name; recorded name/image/Created fingerprint when present | CP-58/59/62/63/64/72; S7 CP-33..53 |
+| Writer/reader/masked/apphost helper roster and immediate helper consumer release | helper registration + labels; container_identity; shared resource_remove repeats ID labels/name/fingerprint checks | CP-58/65/72, CP-46/47 |
+| Npm network (full ID or legacy name) | network_identity: resolve full ID then owner/run/npm-network role and recorded name; shared resource_remove repeats these checks | CP-56/60/66/67/71 |
+| Work/mask volume names (Docker volumes have no separate durable ID) | exact admitted registered name; current-run owner/run/role; driver local and options null/{} immediately before deletion | CP-48/49/53/58 |
+| Registered packages/scratch/npm/cache variants | exact admitted registered name; owner/schema/cache-role/run and local driver/options; config/inspect uncertainty keeps registration; only a confirmed label mismatch drops foreign registration | CP-50/54/58/68 |
+
+Persistent container acquisitions record name/image/Created after Docker cidfile creation. A foreground --rm acquisition already confirmed absent needs no new fingerprint. Legacy records without fingerprints require their recorded name and full labels. Compose teardown (CARD-1207) and automatic Docker --rm disposal are outside manual ID deletion.
+
+Synthetic production controls set a subshell flag that isolates foreign-volume ledger edits; production PC-32 consumes a copied ledger and its own residue files. CP-68 executes the real controls with a modeled Docker boundary, asserting real acquired registration and pre-existing residue survive before finalization removes the volume. Configuration mismatch alone is UNKNOWN for finalizer cache identity, retaining the owned/uncertain registration; the acquisition's existing CacheVolumeForeign diagnosis remains unchanged.
+
+C1208_Wrong_cidfile_preserves_foreign_container and C1208_Recorded_id_with_changed_labels_is_untouched check full-ID owner/run/role validation. C1208_Recorded_creation_fingerprint_is_reverified checks recorded container name/image/Created fields. C1208_Wrong_helper_id_preserves_foreign_container and C1208_Wrong_network_id_is_untouched check foreign helper/network IDs. C1208_Recorded_container_inspect_failure_refuses_cleanup and C1208_Recorded_network_inspect_failure_refuses_cleanup check ownership-probe failure. C1208_Owned_packages_registration_survives_production_controls checks authoritative registration through production PC-09/10 and residue through PC-32. C1208_Dangling_network_record_retains_residue, C1208_Invalid_network_record_retains_text and C1208_Confirmed_absent_network_record_is_cleared check invalid-record refusal/text and positive-absence clearing/receipt. These are modeled contracts; native Docker W-1 remains pending.
+
+| PC | Variants | Method-scoped filters (each separate cycle) | Status |
+|---|---|---|---|
+| PC-9 | container wrong valid CID; owner/run/role | `/*/*/RemoteScriptContractTests/C1208_Wrong_cidfile_preserves_foreign_container*`, `/*/*/RemoteScriptContractTests/C1208_Recorded_id_with_changed_labels_is_untouched*` | PENDING SourceLanding Mutation |
+| PC-10 | helper wrong valid CID | `/*/*/RemoteScriptContractTests/C1208_Wrong_helper_id_preserves_foreign_container*` | PENDING SourceLanding Mutation |
+| PC-11 | network wrong valid ID; owner/run/role | `/*/*/RemoteScriptContractTests/C1208_Wrong_network_id_is_untouched*` | PENDING SourceLanding Mutation |
+| PC-12 | container/network label-inspect outage | `/*/*/RemoteScriptContractTests/C1208_Recorded_container_inspect_failure_refuses_cleanup*`, `/*/*/RemoteScriptContractTests/C1208_Recorded_network_inspect_failure_refuses_cleanup*` | PENDING SourceLanding Mutation |
+| PC-13 | production PC-09 label / PC-10 options ledger isolation; PC-32 residue isolation | `/*/*/RemoteScriptContractTests/C1208_Owned_packages_registration_survives_production_controls*` | PENDING SourceLanding Mutation |
+| PC-14 | dangling/malformed network record and record-text residue | `/*/*/RemoteScriptContractTests/C1208_Dangling_network_record_retains_residue*`, `/*/*/RemoteScriptContractTests/C1208_Invalid_network_record_retains_text*` | PENDING SourceLanding Mutation |
+| PC-15 | positive-absence marker clearing and receipt | `/*/*/RemoteScriptContractTests/C1208_Confirmed_absent_network_record_is_cleared*` | PENDING SourceLanding Mutation |
+| PC-16 | container creation name/image/created comparison | `/*/*/RemoteScriptContractTests/C1208_Recorded_creation_fingerprint_is_reverified*` | PENDING SourceLanding Mutation |
