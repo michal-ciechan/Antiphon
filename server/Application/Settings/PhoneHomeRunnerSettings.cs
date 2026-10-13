@@ -90,10 +90,16 @@ public sealed class PhoneHomeRunnerSettings
     public int OwnerCacheNegativeSeconds { get; set; } = 5;
 
     /// <summary>
-    /// CARD-1219 D-2/D-3: how long the recovery pump refuses an identical transcript-fault or
-    /// transcript-bound record from the same runner after recording it, so a frame the transport
-    /// delivers twice (including across a reconnect) records one incident. A genuine runner repeat
-    /// differs in <c>Repeat</c>/<c>UnboundSeconds</c> and always records. At least 1.
+    /// CARD-1219 D-2/D-3: the window of the recovery pump's bounded, in-memory, per-runner replay
+    /// guard. The guard admits a transcript-fault or transcript-bound record and stamps it before
+    /// the incident service is called; an equal record from the same runner is then refused while
+    /// that stamp is younger than this window and the guard still holds the key, on the same or a
+    /// new connection (<c>TranscriptIncidentReplayGuardTests</c>,
+    /// <c>PhoneHomeTranscriptIncidentTests.Replayed_frames_across_a_reconnect_record_once</c>). The
+    /// equal record is admitted again once the window has elapsed or its key has been evicted at
+    /// capacity, and a record differing in any field, such as a runner repeat with a higher
+    /// <c>Repeat</c>, is a different key. At least 1
+    /// (<c>PhoneHomeRunnerSettingsValidatorTests.Replay_window_below_one_second_is_refused</c>).
     /// </summary>
     public int TranscriptIncidentReplayWindowSeconds { get; set; } = 900;
 

@@ -3,15 +3,22 @@ using Antiphon.Server.Application.Dtos;
 namespace Antiphon.Server.Infrastructure.Agents.SessionRunner;
 
 /// <summary>
-/// CARD-1219 D-2: refuses an identical transcript-fault or transcript-bound record seen from the
-/// same runner within <c>window</c>, so a frame the transport delivers twice (including across a
-/// reconnect) records one incident. The key is the parsed record itself (record value equality),
-/// so the runner's genuine five-minute repeat, which carries a higher <c>Repeat</c> and a longer
-/// <c>UnboundSeconds</c>, is a different key and always records, exactly as the local lane does.
-/// Time is the connection clock's monotonic timestamp. At most <c>capacity</c> keys are held; a
-/// new key past capacity evicts the oldest admitted key, and a re-admitted key becomes the newest.
-/// Callers may overlap during a reconnect handoff, so <see cref="Admit(SessionRunnerTranscriptFaultEvent)"/>
-/// runs under a lock.
+/// CARD-1219 D-2: a bounded, in-memory admission cache for one runner's transcript-fault and
+/// transcript-bound records. <c>Admit</c> returns false only when an equal record was admitted less
+/// than <c>window</c> ago and its key is still held; otherwise it stamps the record and returns true
+/// (<c>TranscriptIncidentReplayGuardTests.First_fault_is_admitted_and_identical_replay_is_refused</c>).
+/// The pump calls it before the incident service, and nothing removes the stamp if that call then
+/// fails, so the guard counts admissions, not written incidents. The key is the parsed record itself
+/// (record value equality), so the runner's five-minute repeat, which carries a higher
+/// <c>Repeat</c> and a longer <c>UnboundSeconds</c>, is a different key and is admitted
+/// (<c>A_genuine_repeat_with_higher_repeat_count_is_admitted</c>). Time is the clock's monotonic
+/// timestamp; a refused record keeps its first stamp, and once <c>window</c> has elapsed the equal
+/// record is admitted and re-stamped (<c>Replay_after_the_window_is_admitted_again</c>). At most
+/// <c>capacity</c> keys are held; a new key past capacity evicts the oldest admitted key, whose
+/// record is then admitted again even inside its window, and a re-admitted key becomes the newest
+/// (<c>Guard_evicts_the_oldest_key_past_capacity</c>). Nothing is persisted: a new pump instance
+/// starts with no keys. Callers may overlap during a reconnect handoff, so
+/// <see cref="Admit(SessionRunnerTranscriptFaultEvent)"/> runs under a lock.
 /// </summary>
 internal sealed class TranscriptIncidentReplayGuard(TimeProvider clock, TimeSpan window, int capacity = 512)
 {

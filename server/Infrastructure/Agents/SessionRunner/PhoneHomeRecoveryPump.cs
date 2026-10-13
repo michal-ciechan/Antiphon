@@ -27,8 +27,9 @@ public sealed class PhoneHomeRecoveryPump : BackgroundService
     private readonly ConcurrentDictionary<string, int> _transcriptFailures = new(StringComparer.Ordinal);
     private readonly ConditionalWeakTable<PhoneHomeLiveConnection, ConnectionState> _states = new();
 
-    // CARD-1219 D-2: per runner id, not per connection, so a frame replayed after a reconnect is
-    // still recognised.
+    // CARD-1219 D-2: per runner id, not per connection, so an equal record arriving on a new
+    // connection is refused while its key is held inside the window
+    // (Replayed_frames_across_a_reconnect_record_once). The guards live in this pump instance only.
     private readonly ConcurrentDictionary<string, TranscriptIncidentReplayGuard> _replayGuards = new(StringComparer.Ordinal);
 
     public PhoneHomeRecoveryPump(
@@ -390,6 +391,7 @@ public sealed class PhoneHomeRecoveryPump : BackgroundService
                 else if (parsed.Transcript is not null)
                     await runtime.ObserveTranscriptAsync(parsed.Transcript, ct);
                 // CARD-1219 D-4: the same service calls the local SSE pump makes, after the owner check.
+                // Admit stamps the record before the call; a call that then fails keeps its stamp.
                 else if (parsed.TranscriptFault is { } fault)
                 {
                     if (ReplayGuardFor(live).Admit(fault))
@@ -410,8 +412,11 @@ public sealed class PhoneHomeRecoveryPump : BackgroundService
             catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
             {
                 // CARD-0679 D-2: one event that cannot be observed must not end the pump, or every
-                // later event on the connection stays pending until the cap closes the socket. The
-                // runner's transcript still holds it, and the next connection's catch-up re-reads it.
+                // later event on the connection stays pending until the cap closes the socket. A
+                // persisted transcript entry is still in the runner's transcript, and the next
+                // connection's catch-up re-reads it. A transcript fault or bound notification is
+                // live-only: catch-up does not reconstruct it (CARD-1219 D-8), and its replay-guard
+                // admission is not undone.
                 var failures = Interlocked.Increment(ref StateFor(live).EventFailures);
                 _logger.LogWarning(
                     ex, "Phone-home event {EventName} for session {SessionId} on runner {RunnerId} epoch {Epoch} "
