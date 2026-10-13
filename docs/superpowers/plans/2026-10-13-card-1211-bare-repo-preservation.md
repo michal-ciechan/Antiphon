@@ -97,7 +97,6 @@ Bound owner if ANTIPHON_TASK_TOKEN exists; never print it. Restart: none.
 | CP-11 | Repair-fix | CP-2 | retirement-races | `/*/*/WorktreeRetirementRaceTests/*` | R-8 / C971 CP-14 | all green | 1 | 2 | true |
 | CP-12 | Repair-fix | CP-2 | removal-policy | `/*/*/LandingRemovalPolicyControlTests/*` | R-9 / C971 CP-15 | green; Windows skips allowed | 1 | 2 | true |
 | CP-13 | Repair-fix | CP-2 | completed-removal | `/*/*/CompletedCardWorktreeRemovalTests/*` | R-10 / C971 CP-16 | green; Windows skips allowed | 1 | 2 | true |
-
 | CP-14 | Repair-tests | `tests/Antiphon.Tests -> bin-c1211-r2-base/` | tracked-head-baseline | `/*/*/AgentTaskLandBareRepositoryCleanupTests/C1211_NestedTrackedHeadKeepsExistingAdmission` | V-9 / F1 | directory assertion-red on 021f14732; file-pointer control green | 2 | 4 | true |
 | CP-15 | Repair-tests | CP-14 | enclosing-bare-baseline | `/*/*/AgentTaskLandBareRepositoryCleanupTests/C1211_BareInsideAcceptedNestedRepositoryIsPreserved` | V-10 / F2 | tracked HEAD assertion-red; no HEAD already green on 021f14732 | 2 | 2 | true |
 | CP-16 | Repair-tests | CP-14 | head-only-proof-baseline | `/*/*/AgentTaskLandBareRepositoryCleanupTests/C1211_HeadOnlyOutputIsPreservedWithoutBareProofRefusal` | V-11 | assertion-red on 021f14732 | 1 | 1 | true |
