@@ -270,5 +270,3 @@ All checkpoint executors reached phase=done and all foreground commands were joi
 next: plan
 handoff: First slice S1: native Linux entry admission for HostJq/Jq/Grok SHA/Codex heal methods, with exact Windows skip-roster audit and native Linux green rows. Formalize S2 LF fixture fidelity, S3 Windows link capability and S4 stale payload harness slices using the proposed closed rows. Preserve the unresolved historical whole-lane timeout; no permanent Windows child hang was proven.
 artifact: docs/superpowers/reports/2026-10-13-card-1210-windows-unit-triage.md
-
-
