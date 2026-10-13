@@ -19,6 +19,7 @@ bin-c1205-s5-tool/, UseAppHost=false. No full-assembly, deployment or native PTY
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
 | S5-BASE | Tests | `tests/Antiphon.Tests -> bin-c1205-s5-base/` | five-note-baseline | `/*/Antiphon.Tests.Application/TurnEndGapRestartDeliveryTests*/C1205_Restart_delivers_five_gap_held_completions_once*` | T37,V-20,R-5 | Two executed on unchanged pre-S5 production; report actual outcome | 2 | 6 |
+| S5-A | Resume | `tests/Antiphon.Tests -> bin-c1205-s5-resume/` | recovery-restart | `/*/Antiphon.Tests.Application/TurnEndGapRestartDeliveryTests*/*` | T37..42,T44,T46 | Ten cases before adding T43/T45 | 10 | 12 |
 | CP-5 | S5 | `tests/Antiphon.Tests -> bin-c1205-s5/` | restart-receipts | `/*/Antiphon.Tests.Application/TurnEndGapRestartDeliveryTests*/*` | V-20..24,V-36..40,R-5 | Exactly 30 executed, all named cases green | 30 | 16 |
 | CP-6 | S5 | `tests/Antiphon.Tests -> bin-c1205-receipts/` | receipt-compatibility | `/*/*/(VerificationRoundDeliveryTests*)\|(TestClassificationGuardTests*)/(C544_CompletionReceipt*)\|(C544_StampIsNotReceipt*)\|(Registry_matches_compiled_metadata*)` | R-8,R-9 | Exactly four named methods green | 4 | 7 |
 
@@ -145,3 +146,18 @@ unlanded production dependency must be returned to the caller, not repaired here
 next: decide
 handoff: Reconcile pre-S5 defect-red requirements with test-only S5 on already repaired production and Mutation ownership; then resume Code for T38..T46 and full CP-5=30 followed by CP-6=4. T37=2 and CP-6=4 pass, but S5 and Final verification remain incomplete. Do not land this partial branch.
 artifact: docs/superpowers/plans/2026-10-13-card-1205-s5-checkpoints.md
+
+## Caller continuation decision
+
+The 2026-10-13 reply in
+`.antiphon/inbox/f9ff4934-a3c3-4405-9365-39000956e63d.md` authorizes continuing
+S5: green on pre-S5 production by construction; defect-red proof by Mutation:
+PC-84..100. This supersedes the earlier baseline-gate hold. The binding Code
+stage contract assigns deliberate scratch-copy mutations to Mutation too; no
+Code-stage mutation is claimed. Family controls remain explicit Mutation work.
+Resume owns T38..T46 and full CP-5 then CP-6, no broad Unit lane. Stop 20 minutes
+before the original 240-minute task ceiling if incomplete.
+
+S5-A is a disclosed committed test-first group: T37/T38/T39/T40/T41/T42/T44/T46,
+ten executions, on unchanged production. T43/T45 follow in the next test slice.
+The extra leased bootstrap rebuilds the tool output removed at the previous hold.

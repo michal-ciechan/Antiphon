@@ -1,4 +1,5 @@
 using System.Net;
+using System.Collections.Concurrent;
 using System.Reflection;
 using System.Text;
 using System.Text.Json;
@@ -30,16 +31,24 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
     public C544World World { get; private set; } = null!;
     public ControlledTimeProvider Clock { get; } = new(DateTimeOffset.UtcNow);
     public FakeAgentProtocolAdapter Caller { get; } = new();
+    public C544DeliveryFault Fault { get; } = new();
+    public DeliveryBoundary Boundary { get; } = new();
+    public RecordingFlushes Flushes { get; private set; } = new();
+    public Func<string, string>? SubmitTransform { get; set; }
+    public Guid? SubmitDestination { get; set; }
+    public bool SuppressSubmittedPrompt { get; set; }
+    public Func<Task>? AfterSubmitted { get; set; }
     private readonly RecordingLogger<SessionRunnerEventPump> _pumpLog = new();
     private readonly RecordingLogger<AgentSessionRuntime> _runtimeLog = new();
     private readonly RecordingLogger<SessionMessageQueueService> _queueLog = new();
+    private readonly RecordingLogger<StaleWorkingTranscriptRecovery> _recoveryLog = new();
     private readonly RunnerHandler _handler = new();
     private readonly HttpClient _http;
     private readonly bool _cache;
     private SessionRunnerEventPump? _pump;
     private CompletionNoteWorkHostedService? _worker;
     private EpochAdapter? _adapter;
-    private readonly C544Boundary _boundary = new();
+    private readonly WorkerScopeGate _workerScopes = new();
     private readonly CancellationTokenSource _stop = new(TimeSpan.FromSeconds(90));
     public List<Guid> Tasks { get; } = [];
     public Guid Id => World.CallerSessionId;
@@ -48,6 +57,13 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
     public Task GapCaptured => _handler.GapCaptured.Task;
     public Task PumpDrained => _handler.Drained.Task;
     public CancellationToken Token => _stop.Token;
+    public StaleWorkingTranscriptRecovery Recovery => World.Services.GetRequiredService<StaleWorkingTranscriptRecovery>();
+    public int TranscriptPulls => _handler.Pulls;
+    public bool WrongGeneration { get => _handler.WrongGeneration; set => _handler.WrongGeneration = value; }
+    public bool FailPull { get => _handler.FailPull; set => _handler.FailPull = value; }
+    public int Keepalives => _handler.Stream?.Keepalives ?? 0;
+    public string[] RecoveryOutcomes => _recoveryLog.Entries.Where(e => e.State.ContainsKey("Outcome"))
+        .Select(e => e.State["Outcome"]!.ToString()!).ToArray();
 
     private TurnEndGapDeliveryHarness(bool cache)
     {
@@ -55,12 +71,12 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
         _http = new HttpClient(_handler, false) { Timeout = Timeout.InfiniteTimeSpan };
     }
 
-    public static async Task<TurnEndGapDeliveryHarness> CreateAsync(bool cache)
+    public static async Task<TurnEndGapDeliveryHarness> CreateAsync(bool cache = true, bool busy = true)
     {
         var h = new TurnEndGapDeliveryHarness(cache);
         try
         {
-            h.World = await C544World.CreateAsync(configure: h.Configure);
+            h.World = await C544World.CreateAsync(h.Fault, configure: h.Configure);
             await using var db = h.World.CreateContext();
             var session = await db.AgentSessions.SingleAsync(s => s.Id == h.Id);
             h._handler.Id = h.Id;
@@ -68,6 +84,7 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
             h.Attach();
             h._handler.Append(TranscriptKinds.UserPrompt, "dispatch five tasks", publish: false);
             await h.Runtime.CatchUpTranscriptAsync(h.Id, h.Token);
+            if (!busy) await h.MakeIdleAsync();
             return h;
         }
         catch { await h.DisposeAsync(); throw; }
@@ -79,6 +96,7 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
         services.AddSingleton<ILogger<SessionRunnerEventPump>>(_pumpLog);
         services.AddSingleton<ILogger<AgentSessionRuntime>>(_runtimeLog);
         services.AddSingleton<ILogger<SessionMessageQueueService>>(_queueLog);
+        services.AddSingleton<ILogger<StaleWorkingTranscriptRecovery>>(_recoveryLog);
         services.AddSingleton(Options.Create(new SessionStateSettings { Enabled = _cache }));
         services.AddSingleton<ISessionStateLoader, SessionStateLoader>();
         services.AddSingleton<SessionStateStore>();
@@ -93,24 +111,34 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
         services.AddSingleton(Options.Create(new StaleWorkingTranscriptSettings()));
         services.AddSingleton<StaleWorkingTranscriptRecovery>();
         services.AddSingleton<SpecialistFailureQueue>();
-        services.AddSingleton<LandDeliveryBoundary>(_boundary);
+        Flushes = new RecordingFlushes();
+        services.AddSingleton<CompletionNoteFlushQueue>(Flushes);
+        services.AddSingleton<LandDeliveryBoundary>(Boundary);
     }
 
     private void Attach()
     {
         _adapter = new EpochAdapter(Caller);
         Runtime.Register(Id, _adapter);
-        Caller.OnSubmitted = body =>
+        Caller.OnSubmitted = async body =>
         {
-            _handler.Append(TranscriptKinds.UserPrompt, body.ReplaceLineEndings("\n"), publish: true);
+            if (!SuppressSubmittedPrompt)
+                _handler.Append(TranscriptKinds.UserPrompt, (SubmitTransform?.Invoke(body) ?? body).ReplaceLineEndings("\n"),
+                    publish: true, sessionId: SubmitDestination);
             _handler.Append(TranscriptKinds.TurnEnd, "", publish: true);
-            return Task.CompletedTask;
+            if (AfterSubmitted is not null) await AfterSubmitted();
         };
     }
 
     public async Task ProduceFiveAsync()
     {
-        for (var i = 0; i < 5; i++)
+        await ProduceAsync(5);
+        Tasks.Count.ShouldBe(5);
+    }
+
+    public async Task ProduceAsync(int count = 1)
+    {
+        for (var i = 0; i < count; i++)
         {
             var created = await World.CreateTaskAsync(World.FinalReview($"Review independent task {i}."));
             Tasks.Add(created.Id);
@@ -124,11 +152,12 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
     public async Task AssertHeldAsync()
     {
         var rows = await RowsAsync();
-        rows.Count.ShouldBe(5);
+        rows.Count.ShouldBe(Tasks.Count);
         rows.ShouldAllBe(r => r.Status == QueuedMessageStatus.Pending && r.DeliveryAttempts == 0);
         Caller.SubmittedBodies.ShouldBeEmpty();
         await using var db = World.CreateContext();
         (await SessionMessageQueueService.IsWorkingAsync(db, Id, Token)).ShouldBeTrue();
+        (await NotesAsync()).ShouldAllBe(n => n.State != LandNotificationState.Confirmed && n.ConfirmingPromptSequence == null);
     }
 
     public async Task<List<SessionQueuedMessage>> RowsAsync()
@@ -147,22 +176,26 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
 
     public async Task RestartAsync()
     {
+        Flushes.ReleaseHold.TrySetResult();
+        await Recovery.StopAsync(CancellationToken.None);
         await StopWorkerAsync();
         await StopPumpAsync();
         if (_adapter is not null) await _adapter.DisposeAsync();
-        await World.RestartAsync();
+        await World.RestartAsync(keepInterceptor: true);
         Attach();
     }
 
-    public async Task StartCompletionWorkerAsync()
+    public async Task StartCompletionWorkerAsync(int? minimumScans = null)
     {
         var after = Clock.Events.LastOrDefault()?.Sequence ?? 0;
-        _worker = ActivatorUtilities.CreateInstance<CompletionNoteWorkHostedService>(World.Services);
+        _worker = new CompletionNoteWorkHostedService(new ObservedScopes(World.Services.GetRequiredService<IServiceScopeFactory>(), _workerScopes),
+            Flushes, World.Services.GetRequiredService<SpecialistFailureQueue>(), Clock,
+            World.Services.GetRequiredService<ILogger<CompletionNoteWorkHostedService>>());
         await _worker.StartAsync(Token);
         // The boot sweep has enumerated its durable work before its 15-minute wait.
         await Clock.WaitForTimerAsync(e => e.Action == "create" && e.DueTime >= TimeSpan.FromMinutes(14), after, Token);
         await JoinDeliveryAsync(WaitForQuiescenceAsync());
-        _boundary.Reached.Count(b => b == "completion-scan").ShouldBeGreaterThanOrEqualTo(5);
+        Boundary.Count("completion-scan").ShouldBeGreaterThanOrEqualTo(minimumScans ?? Tasks.Count);
     }
 
     public Task JoinOwnedWorkAsync() => JoinDeliveryAsync(WaitForQuiescenceAsync());
@@ -230,9 +263,9 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
         await operation.WaitAsync(Token);
     }
 
-    public async Task AssertReceiptsAsync(List<AgentTaskLandNotification> before, List<SessionQueuedMessage> queued)
+    public async Task AssertReceiptsAsync(List<AgentTaskLandNotification> before, List<SessionQueuedMessage> queued, int expectedAttempts = 1)
     {
-        if (Caller.SubmittedBodies.Count != 5)
+        if (Caller.SubmittedBodies.Count != Tasks.Count)
         {
             await using var evidence = World.CreateContext();
             var ends = await evidence.TranscriptEntries.CountAsync(t => t.AgentSessionId == Id && t.Kind == TranscriptKinds.TurnEnd, Token);
@@ -241,17 +274,10 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
             foreach (var entry in _pumpLog.Entries.Concat(_runtimeLog.Entries).Concat(_queueLog.Entries))
                 Console.WriteLine($"C1205 {entry.Level} {entry.Message} exception={entry.Exception?.GetType().Name}");
         }
-        for (var scan = 0; scan < 2; scan++)
-        {
-            foreach (var note in before)
-            {
-                await using var scope = World.Services.CreateAsyncScope();
-                await scope.ServiceProvider.GetRequiredService<AgentTaskLandNotificationService>().ReconcileAsync(note.Id, Token);
-            }
-        }
+        await ReconcileAsync(2);
         var notes = await NotesAsync();
-        notes.Count.ShouldBe(5);
-        Caller.SubmittedBodies.Count.ShouldBe(5);
+        notes.Count.ShouldBe(Tasks.Count);
+        Caller.SubmittedBodies.Count.ShouldBe(Tasks.Count);
         var rows = await RowsAsync();
         foreach (var note in notes)
         {
@@ -265,7 +291,7 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
             var row = rows.Single(r => r.SourceTaskId == note.TaskId);
             row.Id.ShouldBe(queued.Single(r => r.SourceTaskId == note.TaskId).Id);
             note.QueueMessageId.ShouldBe(row.Id);
-            row.DeliveryAttempts.ShouldBe(1);
+            row.DeliveryAttempts.ShouldBe(expectedAttempts);
             var rendering = TaskCompletionNotification.TryReadDelivery(note.CompletionDeliveryJson).ShouldNotBeNull();
             rendering.WireSha256.ShouldBe(TaskCompletionNotification.Sha256(rendering.WireText));
             await using var db = World.CreateContext();
@@ -297,6 +323,9 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         _stop.Cancel();
+        Flushes.ReleaseHold.TrySetResult();
+        _workerScopes.Release.TrySetResult();
+        Boundary.Release.TrySetResult();
         _handler.ReleaseGap.TrySetResult();
         await StopWorkerAsync();
         await StopPumpAsync();
@@ -306,6 +335,145 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
         _http.Dispose();
         _handler.Dispose();
         _stop.Dispose();
+    }
+
+    public async Task ReconcileAsync(int passes = 1)
+    {
+        for (var pass = 0; pass < passes; pass++)
+        foreach (var note in await NotesAsync())
+        {
+            await using var scope = World.Services.CreateAsyncScope();
+            await scope.ServiceProvider.GetRequiredService<AgentTaskLandNotificationService>().ReconcileAsync(note.Id, Token);
+        }
+    }
+
+    public async Task MakeIdleAsync()
+    {
+        _handler.Append(TranscriptKinds.TurnEnd, "", false);
+        await Runtime.CatchUpTranscriptAsync(Id, Token);
+        (await WorkingAsync()).ShouldBeFalse();
+    }
+    public void MissEnd() => _handler.Append(TranscriptKinds.TurnEnd, "", false);
+    public async Task NewTurnAsync()
+    {
+        var entry = _handler.Append(TranscriptKinds.UserPrompt, "new authoritative work", false);
+        var mapped = new SessionRunnerTranscriptEvent(entry.SessionId, entry.Sequence, entry.Kind, entry.Uuid, entry.ParentUuid,
+            entry.Timestamp, entry.Role, entry.Text, entry.ToolName, entry.ToolInput, entry.ToolUseId, entry.ToolIsError, entry.StopReason);
+        await Runtime.PersistTranscriptAsync(Id, [mapped]);
+    }
+    public async Task<bool> WorkingAsync()
+    { await using var db = World.CreateContext(); return await SessionMessageQueueService.IsWorkingAsync(db, Id, Token); }
+    public async Task<List<TranscriptEntry>> PromptsAsync(Guid? session = null)
+    { await using var db = World.CreateContext(); return await db.TranscriptEntries.AsNoTracking().Where(t => t.AgentSessionId == (session ?? Id)
+        && t.Kind == TranscriptKinds.UserPrompt).OrderBy(t => t.Sequence).ToListAsync(Token); }
+    public async Task<int> EndCountAsync()
+    { await using var db = World.CreateContext(); return await db.TranscriptEntries.CountAsync(t => t.AgentSessionId == Id && t.Kind == TranscriptKinds.TurnEnd, Token); }
+    public async Task ProbeAsync()
+    { await Recovery.TickAsync(Token); await Recovery.JoinCurrentProbesAsync().WaitAsync(Token); }
+    public async Task StartStreamAsync()
+    {
+        _handler.Drained = Signal();
+        _pump = ActivatorUtilities.CreateInstance<SessionRunnerEventPump>(World.Services);
+        await _pump.StartAsync(Token);
+        await JoinDeliveryAsync(_handler.Drained.Task);
+    }
+    public async Task KeepaliveAsync()
+    {
+        var observed = _handler.Stream!.ObserveNextDrain();
+        _handler.Pulse();
+        await observed.WaitAsync(Token);
+    }
+    public async Task DrainWakeupsAsync()
+    {
+        while (Flushes.PendingCount != 0)
+        {
+            await using var reader = Flushes.ReadAllAsync(Token).GetAsyncEnumerator();
+            (await reader.MoveNextAsync()).ShouldBeTrue(); Flushes.Complete(reader.Current);
+        }
+        Flushes.ClearAudit();
+    }
+    public Task DeliverExplicitlyAsync() => JoinDeliveryAsync(Queue.FlushIfIdleAsync(Id, Token));
+    public async Task ScanNotificationsAsync()
+    {
+        var observed = Boundary.Observe("notification-scan");
+        var worker = ActivatorUtilities.CreateInstance<AgentTaskLandNotificationHostedService>(World.Services);
+        await worker.StartAsync(Token);
+        try { await observed.WaitAsync(Token); }
+        finally { await worker.StopAsync(CancellationToken.None); worker.Dispose(); }
+    }
+    public async Task ReplaySettlementAsync()
+    {
+        var task = await World.TaskAsync(Tasks.Single());
+        await World.Services.GetRequiredService<AgentTaskReplyService>().OnTurnEndAsync(task.AgentSessionId!.Value, Token);
+    }
+    public async Task WaitForSubmittedPromptAsync()
+    {
+        var body = Caller.SubmittedBodies.Last();
+        while (!(await PromptsAsync()).Any(p => p.Text?.ReplaceLineEndings("\n") == body.ReplaceLineEndings("\n")))
+        { Token.ThrowIfCancellationRequested(); await Task.Yield(); }
+    }
+    public async Task<Guid> AddSiblingAsync()
+    {
+        var sibling = Guid.NewGuid();
+        await using var db = World.CreateContext();
+        db.AgentSessions.Add(C544World.Session(sibling, "c1205-other-recipient", _handler.Generation));
+        await db.SaveChangesAsync(Token);
+        return sibling;
+    }
+    public Task PullAsync(Guid session) => Runtime.CatchUpTranscriptAsync(session, Token);
+    public async Task SaturateWorkerAsync()
+    {
+        _workerScopes.Arm();
+        for (var i = 0; i < 128; i++) Flushes.TryEnqueue(Guid.NewGuid()).ShouldBeTrue();
+        await _workerScopes.AllEntered.Task.WaitAsync(Token);
+        for (var i = 0; i < 4; i++) Flushes.TryEnqueue(Guid.NewGuid()).ShouldBeTrue();
+        Flushes.ClearAudit();
+    }
+    public void ReleaseWorkerCapacity() => _workerScopes.Release.TrySetResult();
+    public void SaturateWithoutWorker()
+    { for (var i = 0; i < 128; i++) Flushes.TryEnqueue(Guid.NewGuid()).ShouldBeTrue(); Flushes.ClearAudit(); }
+    public Task StopCompletionWorkerAsync() => StopWorkerAsync();
+    public int TimerSequence => Clock.Events.LastOrDefault()?.Sequence ?? 0;
+    public Task<ControlledTimeProvider.TimerEvent> NextBackstopAsync(int after) => Clock.WaitForTimerAsync(
+        e => e.Action == "create" && e.DueTime >= TimeSpan.FromMinutes(14), after, Token);
+
+    public sealed class RecordingFlushes : CompletionNoteFlushQueue
+    {
+        public ConcurrentQueue<Guid> Accepted { get; } = new();
+        public ConcurrentQueue<Guid> Rejected { get; } = new();
+        public bool Hold;
+        public bool DropHeld;
+        public TaskCompletionSource Held { get; } = Signal(), ReleaseHold { get; } = Signal();
+        public int PendingCount => ((System.Collections.IDictionary)typeof(CompletionNoteFlushQueue)
+            .GetField("_pending", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(this)!).Count;
+        public void ClearAudit() { Accepted.Clear(); Rejected.Clear(); }
+        public override bool TryEnqueue(Guid id)
+        {
+            if (Hold) { Held.TrySetResult(); ReleaseHold.Task.GetAwaiter().GetResult(); if (DropHeld) return false; }
+            var accepted = base.TryEnqueue(id);
+            (accepted ? Accepted : Rejected).Enqueue(id);
+            return accepted;
+        }
+    }
+
+    public sealed class DeliveryBoundary : LandDeliveryBoundary
+    {
+        private readonly ConcurrentQueue<string> _reached = new();
+        private readonly ConcurrentDictionary<string, TaskCompletionSource> _observations = new();
+        public string? ThrowOnce;
+        public string? HoldAt;
+        public int Throws;
+        public TaskCompletionSource Held { get; } = Signal(), Release { get; } = Signal();
+        public int Count(string boundary) => _reached.Count(b => b == boundary);
+        public Task Observe(string boundary)
+        { var signal = Signal(); _observations[boundary] = signal; return signal.Task; }
+        public override async Task ReachedAsync(string boundary, Guid taskId, Guid identity, CancellationToken ct)
+        {
+            _reached.Enqueue(boundary);
+            if (_observations.TryGetValue(boundary, out var observation)) observation.TrySetResult();
+            if (HoldAt == boundary) { Held.TrySetResult(); await Release.Task.WaitAsync(ct); }
+            if (ThrowOnce == boundary) { ThrowOnce = null; Interlocked.Increment(ref Throws); throw new IOException("c1205 boundary cut: " + boundary); }
+        }
     }
 
     private sealed class Factory(HttpMessageHandler handler) : IHttpClientFactory
@@ -320,34 +488,44 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
         public Guid Id;
         public DateTime Generation;
         public int Pulls;
+        public bool WrongGeneration, FailPull;
         public HubStream? Stream;
         public TaskCompletionSource GapCaptured = Signal(), ReleaseGap = Signal(), Drained = Signal();
         public void ArmGap() { _gap = true; GapCaptured = Signal(); ReleaseGap = Signal(); Drained = Signal(); }
-        public void Append(string kind, string text, bool publish)
+        public RunnerTranscriptEvent Append(string kind, string text, bool publish, Guid? sessionId = null)
         {
             RunnerTranscriptEvent entry;
             lock (_gate)
             {
                 var seq = _entries.Count + 1;
-                entry = new(Id, seq, kind, Guid.NewGuid().ToString(), null,
+                entry = new(sessionId ?? Id, seq, kind, Guid.NewGuid().ToString(), null,
                     new DateTimeOffset(Generation, TimeSpan.Zero).AddMilliseconds(seq),
                     kind == TranscriptKinds.UserPrompt ? "user" : "assistant", text, null, null, null, null,
                     kind == TranscriptKinds.TurnEnd ? TranscriptKinds.StopReasons.EndTurn : null);
                 _entries.Add(entry);
             }
             if (publish) _hub.Publish(SessionRunnerEventNames.SessionTranscript, entry);
+            return entry;
         }
+        public void Pulse() => _hub.Publish("c1205-keepalive", "controlled keepalive");
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             var path = request.RequestUri!.AbsolutePath;
             var session = new RunnerSessionDto(Id, 4242, Generation, "Running", null, "Unknown", 0);
             if (path == "/sessions") return Json(new[] { session });
             if (path == $"/sessions/{Id:D}") return Json(session);
-            if (path == $"/sessions/{Id:D}/transcript")
+            if (path.StartsWith("/sessions/") && path.EndsWith("/transcript"))
             {
+                var requested = Guid.Parse(path.Split('/')[2]);
                 Interlocked.Increment(ref Pulls);
+                if (FailPull) throw new HttpRequestException("planned authoritative pull failure");
                 RunnerTranscriptDto snapshot;
-                lock (_gate) snapshot = new(Id, _entries.ToArray(), _entries.Count, AcceptedStartedAt: Generation);
+                lock (_gate)
+                {
+                    var rows = _entries.Where(e => e.SessionId == requested).ToArray();
+                    snapshot = new(requested, rows, rows.LastOrDefault()?.Sequence ?? 0,
+                        AcceptedStartedAt: WrongGeneration ? Generation.AddSeconds(1) : Generation);
+                }
                 if (_gap)
                 {
                     _gap = false;
@@ -378,6 +556,11 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
         private int _disposed;
         private int _readingEvent;
         private int _waiting;
+        private TaskCompletionSource _drained = drained;
+        private int _keepalives = 1;
+        public int Keepalives => Volatile.Read(ref _keepalives);
+        public Task ObserveNextDrain()
+        { var observed = Signal(); Volatile.Write(ref _drained, observed); return observed.Task; }
         public bool Quiescent => Volatile.Read(ref _waiting) != 0 && Volatile.Read(ref _readingEvent) == 0
             && (!reader.CanCount || reader.Count == 0);
         public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken ct = default)
@@ -388,12 +571,14 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
                 if (!reader.TryRead(out var frame))
                 {
                     Volatile.Write(ref _waiting, 1);
-                    drained.TrySetResult();
+                    Volatile.Read(ref _drained).TrySetResult();
                     frame = await reader.ReadAsync(ct);
                 }
                 Volatile.Write(ref _waiting, 0);
                 Volatile.Write(ref _readingEvent, 1);
-                _bytes = Encoding.UTF8.GetBytes($"event: {frame.EventName}\ndata: {frame.Json}\n\n");
+                if (frame.EventName == "c1205-keepalive")
+                { Interlocked.Increment(ref _keepalives); _bytes = Encoding.UTF8.GetBytes(": keepalive\n\n"); }
+                else _bytes = Encoding.UTF8.GetBytes($"event: {frame.EventName}\ndata: {frame.Json}\n\n");
                 _offset = 0;
             }
             var count = Math.Min(buffer.Length, _bytes.Length - _offset);
@@ -420,6 +605,36 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
                 lifetime.Dispose();
             }
             base.Dispose(disposing);
+        }
+    }
+
+    private sealed class WorkerScopeGate
+    {
+        private int _entered;
+        private bool _armed;
+        public TaskCompletionSource AllEntered = Signal(), Release = Signal();
+        public void Arm() { _entered = 0; _armed = true; AllEntered = Signal(); Release = Signal(); }
+        public void Enter()
+        {
+            if (!_armed) return;
+            if (Interlocked.Increment(ref _entered) == 4) AllEntered.TrySetResult();
+            Release.Task.GetAwaiter().GetResult();
+        }
+    }
+    private sealed class ObservedScopes(IServiceScopeFactory inner, WorkerScopeGate gate) : IServiceScopeFactory
+    {
+        public IServiceScope CreateScope() => new Scope(inner.CreateScope(), gate);
+        private sealed class Scope(IServiceScope inner, WorkerScopeGate gate) : IServiceScope, IAsyncDisposable
+        {
+            public IServiceProvider ServiceProvider { get; } = new Provider(inner.ServiceProvider, gate);
+            public void Dispose() => inner.Dispose();
+            public async ValueTask DisposeAsync()
+            { if (inner is IAsyncDisposable owned) await owned.DisposeAsync(); else inner.Dispose(); }
+        }
+        private sealed class Provider(IServiceProvider inner, WorkerScopeGate gate) : IServiceProvider
+        {
+            public object? GetService(Type type)
+            { if (type == typeof(SessionMessageQueueService)) gate.Enter(); return inner.GetService(type); }
         }
     }
 
