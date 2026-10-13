@@ -115,3 +115,14 @@ No Code regression failure discharges a PC.
 Mutation must bind exact method filters when executing these parameterized methods;
 the wildcards above are ordinary checkpoint discovery filters, not permission to
 widen a PC to a class. Native Windows qualification remains deferred, not passed.
+
+## Shared recognition boundary
+
+Fetched origin/master 6e58767debf33d6a09c4e88050095f1cfdf76332 has
+WorktreeNestedRepositories.HasMarker recognizing only .git; CARD-1211's bare
+recognition commit 021f14732 is not ancestral to that target. This repair places
+filesystem-only .git or HEAD-file/objects-directory/refs-directory recognition in
+SessionRunner.Contracts.RepositoryDirectoryShape, exercised by the bare/nested
+arguments of C1032_InspectionHoldShapes. CARD-1211 should converge to this shared
+helper rather than duplicate a different bare recognition rule. No server
+production dependency or cleanup behavior is edited by this S4 repair.
