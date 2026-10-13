@@ -16,9 +16,11 @@ import {
   TextInput,
 } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
+import { useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { ApiError, getApiErrorMessage, getApiFieldErrors } from '../../api/client'
 import {
+  dispatchConcurrencyKeys,
   isProjectScope,
   useDispatchConcurrency,
   useDispatchConcurrencyRevisions,
@@ -88,9 +90,10 @@ function revisionKey(dto: DispatchConcurrencyScopeDto): string {
 }
 
 /**
- * Both revisions only grow (the server writes `current + 1`), so a DTO with either revision below
- * the other's is older data: a cached GET that a failed or late refresh left behind a Save
- * (`C506 S2F2 refresh-fails`/`refresh-pending`).
+ * Revision order is only used between this form's own PUT reply and a read that completed while that
+ * PUT was in flight (`C506 S2R3 late-put-newer-get`): both come from the server history the PUT
+ * wrote into. It is NOT used for query data in general: a database restore resets both counters, so
+ * a later read can carry lower revisions and is still current (`C506 S2R3 rollback-*`).
  */
 function isOlder(dto: DispatchConcurrencyScopeDto, than: DispatchConcurrencyScopeDto): boolean {
   const left = revisionsOf(dto)
@@ -124,6 +127,7 @@ function inheritedFor(dto: DispatchConcurrencyScopeDto, role: string | null, fie
  * global defaults, a project id edits that project's overrides. A load failure stays in this paper.
  */
 export function DispatchConcurrencyEditor({ projectId }: { projectId: string | null }) {
+  const queryClient = useQueryClient()
   const scope = useDispatchConcurrency(projectId)
   const history = useDispatchConcurrencyRevisions(projectId)
   const title = projectId ? 'Project concurrency' : 'Global concurrency defaults'
@@ -157,6 +161,11 @@ export function DispatchConcurrencyEditor({ projectId }: { projectId: string | n
       projectId={projectId}
       title={title}
       latest={scope.data}
+      latestAt={scope.dataUpdatedAt}
+      cached={() => {
+        const state = queryClient.getQueryState<DispatchConcurrencyScopeDto>(dispatchConcurrencyKeys.scope(projectId))
+        return { data: state?.data, at: state?.dataUpdatedAt ?? 0 }
+      }}
       refetch={async () => {
         const result = await scope.refetch()
         return result.isError || !result.data ? null : result.data
@@ -167,10 +176,78 @@ export function DispatchConcurrencyEditor({ projectId }: { projectId: string | n
   )
 }
 
+/** One query cache entry as a read left it: the data object and the time that read stored it. */
+interface Snapshot {
+  data: DispatchConcurrencyScopeDto | undefined
+  at: number
+}
+
+/** The server-derived form state: what Save targets, the draft built on it, and the conflict banner. */
+interface Synced {
+  base: DispatchConcurrencyScopeDto
+  draft: ConcurrencyDraft
+  inputs: Map<string, number | string>
+  banner: boolean
+}
+
+const ROLE_FIELDS: readonly Field[] = ['maxParallel', 'maxQueued']
+
+/**
+ * Moves a draft from the saved state it was built on (`was`) to a newer one (`now`): every cell the
+ * operator edited (it differs from `was`) keeps the operator's value, every other cell and the
+ * read-only mode take `now`, so a later Save never re-sends a value only an older document held
+ * (`C506 S2R3 rollback-dirty-*`). Returns the edited paths with the draft.
+ */
+function rebaseDraft(draft: ConcurrencyDraft, was: ConcurrencyDraft, now: ConcurrencyDraft) {
+  const edited = new Set(diffDrafts(draft, was).map((diff) => diff.path))
+  const next: ConcurrencyDraft = { ...now, roles: { ...now.roles } }
+  for (const field of ROLE_FIELDS) if (edited.has(field)) next[field] = draft[field]
+  for (const role of new Set([...Object.keys(draft.roles), ...Object.keys(was.roles)])) {
+    for (const field of ROLE_FIELDS) {
+      if (!edited.has(`roles.${role}.${field}`)) continue
+      const mine = own<RoleLimitDraft>(draft.roles, role) ?? { maxParallel: UNSPECIFIED, maxQueued: UNSPECIFIED }
+      const row = own<RoleLimitDraft>(next.roles, role) ?? { maxParallel: UNSPECIFIED, maxQueued: UNSPECIFIED }
+      next.roles = withOwn(next.roles, role, { ...row, [field]: mine[field] })
+    }
+  }
+  return { draft: next, edited }
+}
+
+/**
+ * A server document this form treats as current (a query read, or the conflict reload) replaces the
+ * saved state whatever its revisions: a database restore can lower them (`C506 S2R3 rollback-*`), and
+ * a reused revision can carry a different document (`reused-revision`, `same-revision-new-content`).
+ * With no edits the draft becomes the new saved state; with edits it is rebased and the banner lists
+ * where it still differs (D-7). The same document again only refreshes `base` (occupancy).
+ */
+function adoptServer(state: Synced, next: DispatchConcurrencyScopeDto, forceBanner = false): Synced {
+  if (next === state.base) return forceBanner ? { ...state, banner: true } : state
+  const was = draftOf(state.base)
+  const now = draftOf(next)
+  const changed =
+    revisionKey(next) !== revisionKey(state.base) || was.mode !== now.mode || diffDrafts(now, was).length > 0
+  if (!changed) return { ...state, base: next, banner: state.banner || forceBanner }
+  const { draft, edited } = rebaseDraft(state.draft, was, now)
+  const inputs = new Map([...state.inputs].filter(([path]) => edited.has(path)))
+  return { base: next, draft, inputs, banner: forceBanner || edited.size > 0 }
+}
+
+/**
+ * This form's own successful PUT reply. A read that completed while the PUT was in flight can already
+ * show a later revision of the history the PUT wrote into; the late reply does not replace it
+ * (`C506 S2R3 late-put-newer-get`). Either way the submitted draft is settled: the form is clean.
+ */
+function settleSave(state: Synced, result: DispatchConcurrencyScopeDto): Synced {
+  const kept = isOlder(result, state.base) ? state.base : result
+  return { base: kept, draft: draftOf(kept), inputs: new Map(), banner: false }
+}
+
 function EditorForm({
   projectId,
   title,
   latest,
+  latestAt,
+  cached,
   refetch,
   history,
   historyFailed,
@@ -178,19 +255,26 @@ function EditorForm({
   projectId: string | null
   title: string
   latest: DispatchConcurrencyScopeDto
+  latestAt: number
+  cached: () => Snapshot
   refetch: () => Promise<DispatchConcurrencyScopeDto | null>
   history: DispatchConcurrencyRevisionDto[]
   historyFailed: boolean
 }) {
   const save = usePutDispatchConcurrency(projectId)
-  // `base` is the newest saved state this form has seen (query data, Save response or conflict
-  // refetch). The next Save targets it, and the saved values on screen (subtitle, mode, inherited,
-  // effective, occupancy) are read from it (`C506 S2F2 refresh-fails`).
+  // `base` is the saved state this form treats as current (query data, its own Save reply or the
+  // conflict reload). The next Save targets its revisions and mode, and the saved values on screen
+  // (subtitle, mode, inherited, effective, occupancy) are read from it (`C506 S2F2 refresh-fails`).
   const [base, setBase] = useState(latest)
   const [draft, setDraft] = useState(() => draftOf(latest))
   const [inputs, setInputs] = useState<Map<string, number | string>>(() => new Map())
   const [reason, setReason] = useState('')
   const [banner, setBanner] = useState(false)
+  // Server results waiting to be folded into the form during render, where the current draft is known.
+  const [seen, setSeen] = useState<Snapshot>({ data: latest, at: latestAt })
+  const [superseded, setSuperseded] = useState<Snapshot | null>(null)
+  const [saved, setSaved] = useState<DispatchConcurrencyScopeDto | null>(null)
+  const [reloaded, setReloaded] = useState<DispatchConcurrencyScopeDto | null>(null)
   const [refresh, setRefresh] = useState<'idle' | 'refreshing' | 'failed'>('idle')
   const [submitting, setSubmitting] = useState(false)
   const [fieldErrors, setFieldErrors] = useState<Map<string, string>>(() => new Map())
@@ -198,23 +282,34 @@ function EditorForm({
   const [confirmClear, setConfirmClear] = useState(false)
 
   const savedDraft = draftOf(base)
-  const dirty = diffDrafts(draft, savedDraft).length > 0
 
-  // Query data (SignalR or focus refetch, conflict refresh) that is not older than `base` replaces
-  // it; older query data is ignored, so a failed or late refresh does not roll back a Save response
-  // (`C506 S2F2 refresh-fails`/`refresh-pending`; `newer-after-save` keeps later writes). A newer revision is
-  // adopted by a clean draft; a dirty draft is kept and the banner lists where it differs (D-7).
-  // Same-revision data replaces `base` only (fresh occupancy). Adjusting state while rendering.
-  if (latest !== base && !isOlder(latest, base)) {
-    const newer = revisionKey(latest) !== revisionKey(base)
-    setBase(latest)
-    if (newer && dirty) {
-      setBanner(true)
-    } else if (newer) {
-      setDraft(draftOf(latest))
-      setInputs(new Map())
-      setBanner(false)
+  // Server results are folded in while rendering (adjusting state), in arrival order: this form's
+  // Save reply, then its conflict reload, then a query cache entry it has not seen yet. A cache entry
+  // is identified by its data object AND its update time, because an equal document read again
+  // keeps the same object (`C506 S2R3 after-failed-refresh-equal-data`). Every new entry is current,
+  // whatever its revisions, except the one a Save superseded: the entry already cached when the PUT
+  // reply arrived. The Save's own invalidation cancels any read still in flight and starts one after
+  // the PUT, so only that entry predates the Save, and it stays on screen until a later read
+  // replaces it or fails (`C506 S2F2 refresh-fails`/`refresh-pending`; `S2R3 after-save-lower`).
+  const fresh = latest !== seen.data || latestAt !== seen.at
+  if (saved !== null || reloaded !== null || fresh) {
+    let next: Synced = { base, draft, inputs, banner }
+    if (saved !== null) {
+      setSaved(null)
+      next = settleSave(next, saved)
     }
+    if (reloaded !== null) {
+      setReloaded(null)
+      next = adoptServer(next, reloaded, true)
+    }
+    if (fresh) {
+      setSeen({ data: latest, at: latestAt })
+      if (!(superseded && superseded.data === latest && superseded.at === latestAt)) next = adoptServer(next, latest)
+    }
+    if (next.base !== base) setBase(next.base)
+    if (next.draft !== draft) setDraft(next.draft)
+    if (next.inputs !== inputs) setInputs(next.inputs)
+    if (next.banner !== banner) setBanner(next.banner)
   }
 
   const errors = validateDraft(draft, base.ranges, reason)
@@ -236,8 +331,8 @@ function EditorForm({
       setRefresh('failed')
       return
     }
-    setBase(fresh)
-    setBanner(true)
+    // A read begun after the 409: current, adopted with the banner shown (D-7).
+    setReloaded(fresh)
     setRefresh('idle')
   }
 
@@ -253,11 +348,9 @@ function EditorForm({
         overrides,
         reason,
       })
-      setBase(result)
-      setDraft(draftOf(result))
-      setInputs(new Map())
+      setSuperseded(cached())
+      setSaved(result)
       setReason('')
-      setBanner(false)
       notifications.show({
         color: 'green',
         message: result.revision === sent.expectedRevision ? 'No change' : `Saved revision ${result.revision}`,
