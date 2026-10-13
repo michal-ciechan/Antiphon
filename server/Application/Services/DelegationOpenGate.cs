@@ -1,3 +1,4 @@
+using Antiphon.SessionRunner.Contracts;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Enums;
@@ -185,9 +186,9 @@ public sealed class DelegationOpenGate
     {
         // Occupant labels are the parenthetical after "stuck:". Keep them short: drop the
         // branch prefix when the 409 already names the short id.
-        const string prefix = "feat/card-task-";
         var text = detail.Trim();
-        if (text.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+        var firstSpace = text.IndexOf(' ');
+        if (DelegateBranchName.TryParse(firstSpace > 0 ? text[..firstSpace] : text, out _))
         {
             var space = text.IndexOf(' ');
             if (space > 0 && space + 1 < text.Length)

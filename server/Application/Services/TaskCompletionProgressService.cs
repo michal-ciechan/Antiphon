@@ -119,7 +119,9 @@ public sealed class TaskCompletionProgressService
     {
         if (!RemoteWorkspaceService.IsEligible(task))
             return RemoteSettlementSyncResult.NotApplicable;
-        var fullRef = "refs/heads/" + RemoteWorkspaceService.OwnedBranch(task.Id);
+        var branch = RemoteWorkspaceService.OwnedBranch(task);
+        if (branch is null) return new(RemoteSettlementSyncState.Refused, RemoteSettlementSyncReasons.BranchMismatch);
+        var fullRef = "refs/heads/" + branch;
         if (sync is null)
             return new(RemoteSettlementSyncState.Unavailable, RemoteSettlementSyncReasons.DependencyUnavailable, fullRef);
         try

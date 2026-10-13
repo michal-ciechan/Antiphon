@@ -14,6 +14,7 @@ public sealed class DelegationSettings
     /// <summary>Fresh unpinned tasks inherit this mode unless their project overrides it.</summary>
     public WorkspaceMode DefaultWorkerWorkspace { get; set; } = WorkspaceMode.Worktree;
     public bool Enabled { get; set; } = true;
+    public bool CardBranchNames { get; set; } = false;
 
     /// <summary>
     /// CARD-0491. When true, a caller who passes <c>interruptCurrentTurn</c> may ask for one

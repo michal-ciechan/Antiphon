@@ -42,7 +42,7 @@ public sealed class LocalTaskParkPublisher(ITaskProgressGit git, IRepositoryMuta
         {
             var b = request.Binding;
             if (!GitObjectId.IsFull(b.BaselineSha) || !b.FullRef.StartsWith("refs/heads/", StringComparison.Ordinal)
-                || mode == WorkspaceMode.Worktree && b.FullRef != "refs/heads/" + RemoteWorkspaceService.OwnedBranch(b.TaskId))
+                || mode == WorkspaceMode.Worktree && !DelegateBranchName.IsOwned(b.FullRef, b.TaskId))
                 return Held("park_invalid_target");
             var path = await git.CanonicalDirectoryAsync(request.Path, ct);
             if (!LandingGit.PathsEqual(path, request.Path)) return Held("park_path_changed");

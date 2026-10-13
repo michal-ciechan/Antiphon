@@ -1,3 +1,4 @@
+using Antiphon.SessionRunner.Contracts;
 using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
@@ -57,11 +58,22 @@ public sealed class WorktreeManager : IWorktreeManager
         await EnsureGitRepositoryAsync(repository, ct);
         await using var lease = await _creationLeases.TryAcquireAsync(repository, ct);
         if (lease is null) throw new ConflictException("repository_busy_or_child_recovery_required");
-        return await CreateAsync(repository, cardId, baseRef, lease, ct);
+        return await CreateAsync(repository, cardId, baseRef, lease, null, ct);
+    }
+
+    public Task<WorktreeInfo> CreateAsync(string repoPath, string cardId, string baseRef,
+        RepositoryLease lease, CancellationToken ct) => CreateAsync(repoPath, cardId, baseRef, lease, null, ct);
+
+    public async Task<WorktreeInfo> CreateAsync(string repoPath, string cardId, string baseRef, string? branch, CancellationToken ct)
+    {
+        var repository = ResolveExistingDirectory(repoPath, nameof(repoPath));
+        await using var lease = await _creationLeases.TryAcquireAsync(repository, ct);
+        if (lease is null) throw new ConflictException("repository_busy_or_child_recovery_required");
+        return await CreateAsync(repository, cardId, baseRef, lease, branch, ct);
     }
 
     public async Task<WorktreeInfo> CreateAsync(string repoPath, string cardId, string baseRef,
-        RepositoryLease lease, CancellationToken ct)
+        RepositoryLease lease, string? branch, CancellationToken ct)
     {
         if (!_creationLeases.Owns(lease, await _creationGit.CommonDirectoryAsync(repoPath, ct)))
             throw new ConflictException("repository_lease_required");
@@ -70,7 +82,10 @@ public sealed class WorktreeManager : IWorktreeManager
         ValidateBaseRef(baseRef);
 
         var validatedCardId = ValidateCardId(cardId);
-        var branch = BuildBranchName(validatedCardId);
+        if (branch is not null && (!DelegateBranchName.TryParse(branch, out var requested)
+            || branch != requested.Branch || validatedCardId != "task-" + requested.ShortId))
+            throw new ValidationException(nameof(branch), "Explicit delegate branch must own the task identifier.");
+        branch ??= BuildBranchName(validatedCardId);
         var worktreeRoot = ResolveWorktreeRoot(create: true);
         var worktreePath = Path.GetFullPath(Path.Combine(worktreeRoot, BuildDirectoryName(validatedCardId)));
         EnsurePathUnderRoot(worktreePath, worktreeRoot, nameof(worktreePath));
@@ -191,7 +206,9 @@ public sealed class WorktreeManager : IWorktreeManager
                 continue;
             }
 
-            var cardId = branch[BranchPrefix.Length..];
+            var cardId = DelegateBranchName.TryParse(branch, out var parsed)
+                && Path.GetFileName(path) == "card-task-" + parsed.ShortId
+                ? "task-" + parsed.ShortId : branch[BranchPrefix.Length..];
             var createdAt = Directory.Exists(path)
                 ? new DateTimeOffset(Directory.GetCreationTimeUtc(path), TimeSpan.Zero)
                 : _timeProvider.GetUtcNow();
@@ -256,7 +273,7 @@ public sealed class WorktreeManager : IWorktreeManager
         }
 
         var branches = await RunGitAsync(
-            repoFullPath, ["branch", "--list", "feat/card-task-*"], ct, throwOnError: false);
+            repoFullPath, ["branch", "--list", "feat/card-*"], ct, throwOnError: false);
         if (branches.ExitCode == 0)
         {
             foreach (var raw in branches.Stdout.Replace("\r\n", "\n", StringComparison.Ordinal)
@@ -496,26 +513,9 @@ public sealed class WorktreeManager : IWorktreeManager
 
     internal static bool TryParseDelegateTaskBranch(string? branch, out string shortId)
     {
-        shortId = string.Empty;
-        if (string.IsNullOrWhiteSpace(branch))
-            return false;
-
-        const string prefix = "feat/card-task-";
-        var name = NormalizeBranchName(branch);
-        if (!name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
-            return false;
-
-        var rest = name[prefix.Length..];
-        if (rest.Length != 8)
-            return false;
-        foreach (var c in rest)
-        {
-            if (!char.IsAsciiHexDigit(c))
-                return false;
-        }
-
-        shortId = rest.ToLowerInvariant();
-        return true;
+        var accepted = DelegateBranchName.TryParse(branch, out var parsed);
+        shortId = accepted ? parsed.ShortId : string.Empty;
+        return accepted;
     }
 
     public async Task RemoveAsync(string repoPath, string worktreePath, CancellationToken ct)

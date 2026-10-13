@@ -1,3 +1,4 @@
+using Antiphon.SessionRunner.Contracts;
 ﻿using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -464,10 +465,9 @@ public sealed class TaskWorktreeRetirementService
             throw new ConflictException("Retirement needs exact recorded worktree coordinates.", "identity_unknown");
         var shortId = DelegationReportFormatter.Short(task.Id);
         var leaf = "card-task-" + shortId;
-        var expectedBranch = "feat/card-task-" + shortId;
         var name = Path.GetFileName(Path.TrimEndingDirectorySeparator(task.WorktreePath));
         if (!name.Equals(leaf, StringComparison.OrdinalIgnoreCase)
-            || !BranchName(task.WorktreeBranch).Equals(expectedBranch, StringComparison.OrdinalIgnoreCase))
+            || !DelegateBranchName.IsOwned(task.WorktreeBranch, task.Id))
             throw new ConflictException("Retirement is limited to ordinary card-task leaf worktrees.", "outside_scope");
         var root = ResolveManagedRoot();
         if (!string.IsNullOrWhiteSpace(root) && !DelegationWorkspaceResolver.IsWithinRoot(task.WorktreePath, root))

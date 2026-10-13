@@ -15,7 +15,7 @@ public enum WorktreeResidueLabel
 
 /// <summary>
 /// One registered worktree, leftover <c>card-task-*</c> directory, or local
-/// <c>feat/card-task-*</c> branch as git/filesystem sees it.
+/// delegate branch (legacy or card/stage form) branch as git/filesystem sees it.
 /// </summary>
 public sealed record WorktreeResidueScanEntry(
     string Path,

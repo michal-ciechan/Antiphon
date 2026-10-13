@@ -82,7 +82,7 @@ param(
     # default base - the structured way to continue a sibling's work. Prefer a full SHA already in
     # the server's repository; a branch or commit tag resolves when the checkout is created. It
     # never sets -Into and never takes over the named branch: the task still gets its own
-    # feat/card-task-<id>, and landing is still the explicit -Land path. Runs in the default fresh
+    # a task-owned delegate branch, and landing is still the explicit -Land path. Runs in the default fresh
     # Worktree (-Worktree is optional), and refuses -Shared/-ReadOnly, -OnAgent/-Agent, -RepairSource and -SourceLanding, each of which
     # already carries its own authoritative base.
     [Parameter(ParameterSetName = 'Create')]
@@ -364,7 +364,7 @@ param(
     [Parameter(ParameterSetName = 'ListAreas', Mandatory = $true)]
     [switch]$ListAreas,
 
-    # CARD-0147 S3: cross-reference git worktree list (feat/card-task-*) against each task's
+    # CARD-0147 S3: cross-reference git worktree list (both delegate branch forms) against each task's
     # live status. Detection only - never prune, remove, or fail a task. Run this when a
     # concurrency_limit 409 names stuck occupants, or proactively before a wide dispatch.
     [Parameter(ParameterSetName = 'WorktreeHealth', Mandatory = $true)]
@@ -641,10 +641,10 @@ switch ($PSCmdlet.ParameterSetName) {
         if ($null -ne $report.findingCount) { $count = [int]$report.findingCount }
         elseif ($report.findings) { $count = @($report.findings).Count }
         if ($count -eq 0) {
-            Write-Output 'No stuck feat/card-task-* worktrees.'
+            Write-Output 'No stuck delegate worktrees.'
             return
         }
-        Write-Output ("{0} stuck feat/card-task-* finding(s) (detection only; nothing pruned):" -f $count)
+        Write-Output ("{0} stuck delegate worktree finding(s) (detection only; nothing pruned):" -f $count)
         foreach ($row in $report.findings) {
             $severity = if ($row.severity) { $row.severity } else { 'Error' }
             $short = if ($row.shortId) { $row.shortId } else { '-' }
