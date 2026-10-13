@@ -1127,7 +1127,7 @@ DbContext update; these tests do not boot a native session or prove recipient de
 
 ## S4 F1/F2 repair witnesses (2026-10-13)
 
-T54 / F1 / V-33 / R-3: `StaleWorkingTranscriptWatchdogTests.C1205_Reconciliation_preserves_owned_recovery_wakeup`.
+T61 / F1 / V-33 / R-3: `StaleWorkingTranscriptWatchdogTests.C1205_Reconciliation_preserves_owned_recovery_wakeup`.
 Exact filter: `/*/*/StaleWorkingTranscriptWatchdogTests/C1205_Reconciliation_preserves_owned_recovery_wakeup*`, four rows.
 A transaction-committed interceptor holds the real checked probe before it returns;
 SQL must read idle and scheduler reconciliation must remove the directory entry.
@@ -1138,7 +1138,7 @@ while HTTP is gated and requires Unknown/no TurnEnd/no wakeup/no submission.
 No sleeps or fake recovery results. The F1 post-commit rows must be assertion red
 on unchanged b02129ed9 production before the production repair.
 
-T55 / F2 / V-27,V-28 / R-3: `StaleWorkingTranscriptWatchdogTests.C1205_Hosted_backlog_bound_includes_poll_refill`.
+T62 / F2 / V-27,V-28 / R-3: `StaleWorkingTranscriptWatchdogTests.C1205_Hosted_backlog_bound_includes_poll_refill`.
 Exact filter: `/*/*/StaleWorkingTranscriptWatchdogTests/C1205_Hosted_backlog_bound_includes_poll_refill*`, one row.
 Run the real host with the settings defaults and three worker batches. Completed
 workers cannot refill before the next poll timer. Hold the last batch until one
@@ -1150,5 +1150,5 @@ that ignores cancellation. CP-4 includes all 53 rows.
 
 | PC | Pending mutant | Method-scoped binding | Intended red | Status |
 |---|---|---|---|---|
-| PC-146 | Restore directory-membership condition on successful wakeup; duplicate the wakeup; remove generation/single-flight protection | `/*/*/StaleWorkingTranscriptWatchdogTests/C1205_Reconciliation_preserves_owned_recovery_wakeup` | after-commit/two-probes Accepted must be exactly one; before-commit cannot wake; held submission count exactly one | Pending, each independent variant |
-| PC-147 | Ignore configured poll cadence or refill immediately after a probe completes | `/*/*/StaleWorkingTranscriptWatchdogTests/C1205_Hosted_backlog_bound_includes_poll_refill` | exact observed admission timestamps/counts and elapsed bound | Pending, each independent variant |
+| PC-191 | Restore directory-membership condition on successful wakeup; duplicate the wakeup; remove generation/single-flight protection | `/*/*/StaleWorkingTranscriptWatchdogTests/C1205_Reconciliation_preserves_owned_recovery_wakeup` | after-commit/two-probes Accepted must be exactly one; before-commit cannot wake; held submission count exactly one | Pending, each independent variant |
+| PC-192 | Ignore configured poll cadence or refill immediately after a probe completes | `/*/*/StaleWorkingTranscriptWatchdogTests/C1205_Hosted_backlog_bound_includes_poll_refill` | exact observed admission timestamps/counts and elapsed bound | Pending, each independent variant |
