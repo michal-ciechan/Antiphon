@@ -60,7 +60,7 @@ public sealed class WaitCommandTests : CheckpointTestBase
             exit.ShouldBe(mode == "control" ? 0 : 2, label);
             if (mode != "control")
             {
-                output.ToString().ShouldContain("receipt", label);
+                output.ToString().ShouldContain("receipt", Case.Sensitive, label);
                 if (originalState is null) File.Exists(statePath).ShouldBeFalse(label);
                 else File.ReadAllBytes(statePath).ShouldBe(originalState, label);
             }
