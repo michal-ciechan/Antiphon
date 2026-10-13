@@ -1,8 +1,8 @@
-# Desktop Antiphon cleanup continuation - guard repairs
+# Desktop Antiphon cleanup continuation - final time-capped result
 
 Code owner: dfaf5740-9fa0-4a75-912f-e665f8fbca55. Branch: feat/card-task-dfaf5740. Base: c0abb4faca41f7cdf3e80a54af421d5b7cac5421. Worktree: C:\Antiphon\worktrees\card-task-dfaf5740.
 
-Operator-authorized cleanup. Execution pending. No builds/tests or checkpoint/V/R/PC IDs are assigned by the brief. Final profile manual acceptance applies; no test-green claim. Build slot=n/a; waited=0. Restart: none.
+Operator-authorized cleanup completed to its time cap: 434 worktrees and 18 Temp directories removed, 105.408 GB logical, zero failures; 559 candidates remain pending. No builds/tests or checkpoint/V/R/PC IDs are assigned by the brief. Final profile manual acceptance applies; no test-green claim. Build slot=n/a; waited=0. Restart: none.
 
 The external helper was repaired before deletion: fresh per-item age cutoff; audit cache reuse removed; deleted-row provenance preserved; root/ancestor reparse checks before metadata scans and recursive removal; exact Temp verifier naming repeated at execution; own-task exclusion; task/path identity; unknown/active landing retention; fresh logical byte sizes; unrelated global worktree prune removed. Terminal status, completion age, descendant age, tracked changes, HEAD/branch/common-directory identity, live process/native handle and live origin-containment guards remain mandatory. Branches are retained. Deletion is sequential because safe partitioning is unsupported.
 
@@ -10,7 +10,7 @@ The inherited blanket residue hold was explicitly superseded for eligible A by t
 
 External helper: C:\Users\lndco\Documents\antiphon-reports\desktop-cleanup-29f3946d.ps1. Original backup: C:\Users\lndco\Documents\antiphon-reports\desktop-cleanup-29f3946d-before-dfaf5740.ps1. Manifest baseline: C:\Users\lndco\Documents\antiphon-reports\desktop-cleanup-manifest-before-dfaf5740.json.
 
-The brief requests a background log; delegate instructions require foreground ownership and awaiting every command. Runs use foreground execution sessions, with incremental logs and bounded polling, and will be awaited before settlement.
+The brief requests a background log; delegate instructions require foreground ownership and awaiting every command. Runs use foreground execution sessions, with incremental logs and bounded polling, and were awaited before settlement.
 
 ## Helper diff
 
@@ -177,6 +177,48 @@ index 6263e7454..be5665cf8 100644
 
 ## Worktree chunk result
 
-The first continuation chunk completed with exit 0. Additional A removals: 434; logical bytes removed: 62528522239 (62.529 GB). Current A keeps: 284; A pending: 194; failures: 0. C: free at chunk completion: 436648968192 bytes. B/C execution remains pending. D counts overlap A and are never added to its bytes.
+The first continuation chunk completed with exit 0. Additional A removals: 434; logical bytes removed: 62528522239 (62.529 GB). Current A keeps: 284; A pending: 194; failures: 0. C: free at chunk completion: 436648968192 bytes. B/C subsequently ran to the overall cap, as reported below. D counts overlap A and are never added to its bytes.
 
-Execution log: C:\Users\lndco\Documents\antiphon-reports\desktop-cleanup-dfaf5740-A1.log. Fresh audit log: C:\Users\lndco\Documents\antiphon-reports\desktop-cleanup-dfaf5740-audit.log.
+Execution log: C:\Antiphon\code-evidence\desktop-cleanup-dfaf5740\desktop-cleanup-dfaf5740-A1.log. Fresh audit log: C:\Antiphon\code-evidence\desktop-cleanup-dfaf5740\desktop-cleanup-dfaf5740-audit.log.
+
+
+## Final continuation result
+
+The table and numbers below apply only to dfaf5740; the manifest preserves both tasks cumulatively.
+
+
+| Kind | Additional deleted | Logical bytes removed | Logical GB removed | Current kept | Pending | Failed |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| A | 434 | 62528522239 | 62.529 | 284 | 194 | 0 |
+| B | 18 | 42879753688 | 42.88 | 62 | 341 | 0 |
+| C | 0 | 0 | 0 | 7 | 24 | 0 |
+
+Continuation total=105408275927 bytes (105.408 GB logical). C: before=367177998336 bytes, after=478343974912 bytes, net free change=111165976576 bytes. Before observation was 2026-10-13T15:34:03Z; after observation=2026-10-13T17:14:26.7035402Z. Physical free change includes concurrent activity and is not split by kind. Earlier task deletions are retained in the cumulative table above. D overlaps A: zero additional separately inventoried D rows were removed in this continuation; contained bootstrap/build content went with A.
+
+C: free before=367177998336 bytes (367.178 GB); after=478343974912 bytes (478.344 GB); net +111.166 GB. Logical bytes removed=105408275927. GB=1,000,000,000 bytes. Concurrent activity prevents attributing all physical reclaim to cleanup.
+
+Current keeps: A=284, B=62, C=7. Pending: A=194, B=341, C=24; total 559. Failures=0. Additional D inventory removals=0; prior 72 are preserved, with bytes included in A. C was not reached before the cap because Execute orders B/C candidates by descending logical size. No candidate is marked passed or complete merely because the budget ended.
+
+Final manual verification: all 452 newly deleted paths absent; all 434 A registrations absent; all 434 local branches have saved HEAD, and fresh origin contains every saved source. Problems=0. There were no policy-review blocks or attempts to work around one. New in-use/unknown keep: C:\Antiphon\worktrees\card-task-3013296e. Newly guarded A keeps: C:\Antiphon\worktrees\card-task-02c16198: unfinished or unknown land: Superseded; C:\Antiphon\worktrees\card-task-3013296e: fresh process or exclusive directory handle guard: in use/unknown. No branches, canonical source files, caches, Docker/WSL, games, cloud folders or C:\logs were deleted. Git worktree removal updated only the matching Git registration metadata. Cleanup report artifacts used the pre-existing Documents report folder; run logs now reside under the allowed code-evidence root.
+
+All kept paths and exact guard reasons are in C:\Users\lndco\Documents\antiphon-reports\desktop-cleanup-manifest-2026-10-13.md. Its final sections list 118 kept worktrees with a named branch absent from fresh origin, and 3 with unproven branch identity. Age/status keep observations reflect their audit/check time and should be refreshed before later reconsideration.
+
+Helper SHA256: DC046AA9D31DAAC8FF9382FBC3891915629764E0E0D7ED66A4E1385FBFFB565D. Manifest JSON: C:\Users\lndco\Documents\antiphon-reports\desktop-cleanup-manifest-2026-10-13.json. Raw audit/A/BC logs and summary.json: C:\Antiphon\code-evidence\desktop-cleanup-dfaf5740. Prior audit facts remain at C:\Users\lndco\Documents\antiphon-reports\desktop-cleanup-worktree-audit-29f3946d.
+
+No builds/tests ran: the cleanup brief expressly prohibited them. No plan/checkpoint/V/R/PC IDs or affected integration classes were assigned. No Unit/Review-clean or Mutation claim is made. Build/test slot=n/a; waited=0. Restart=none. The closed checkpoint list is empty for this operational brief. The full task-base..HEAD evidence-history check is run after the final commit and its actual receipt is included in the final task report.
+
+The standing cleanup authorization was used without requesting approval. No landing, deployment, restart or session stop occurred. The helper remains sequential because it has no safe partitioning support. All foreground command sessions and bounded read workers were awaited.
+
+To resume with a newly authorized time budget, refresh A guard facts first, then execute A and B/C with explicit deadlines:
+
+```powershell
+pwsh -NoProfile -File C:\Users\lndco\Documents\antiphon-reports\desktop-cleanup-29f3946d.ps1 -Action AuditWorktrees
+pwsh -NoProfile -File C:\Users\lndco\Documents\antiphon-reports\desktop-cleanup-29f3946d.ps1 -Action ExecuteWorktrees -StopAt ((Get-Date).ToUniversalTime().AddMinutes(50))
+pwsh -NoProfile -File C:\Users\lndco\Documents\antiphon-reports\desktop-cleanup-29f3946d.ps1 -Action Execute -StopAt ((Get-Date).ToUniversalTime().AddMinutes(50))
+```
+
+--- next stage ---
+next: decide
+handoff: Cleanup reached its time cap with zero failures; continue 194 A, 341 B and 24 C candidates under the same fresh guards, or inspect the 118 missing-origin and three unproven branch identities in the manifest. Guarded keeps and branches remain intact.
+artifact: docs/investigations/2026-10-13-desktop-antiphon-cleanup-continuation.md
+
