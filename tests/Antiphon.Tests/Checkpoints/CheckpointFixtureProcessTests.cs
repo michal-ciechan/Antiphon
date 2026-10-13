@@ -37,7 +37,7 @@ public sealed class CheckpointFixtureProcessTests : CheckpointTestBase
             var finished = await Task.WhenAny(call, Task.Delay(8_000));
             (finished == call).ShouldBeTrue("fixture step still blocked after 8 s against a 2-s limit");
             var elapsed = clock.ElapsedMilliseconds;
-            await Should.ThrowAsync<ShouldAssertException>(call);
+            (await Thrown(call)).ShouldBeOfType<TimeoutException>();
             elapsed.ShouldBeLessThan(4_000);
         }
         finally
@@ -79,7 +79,7 @@ public sealed class CheckpointFixtureProcessTests : CheckpointTestBase
             var finished = await Task.WhenAny(call, Task.Delay(8_000));
             (finished == call).ShouldBeTrue("fixture step still blocked after 8 s against a 2-s limit");
             var elapsed = clock.ElapsedMilliseconds;
-            await Should.ThrowAsync<ShouldAssertException>(call);
+            (await Thrown(call)).ShouldBeOfType<TimeoutException>();
             elapsed.ShouldBeLessThan(4_000);
             var pids = RecordedPids(pidfile);
             pids.ShouldNotBeEmpty();
@@ -91,6 +91,13 @@ public sealed class CheckpointFixtureProcessTests : CheckpointTestBase
             KillRecorded(pidfile);
             await Task.WhenAny(call, Task.Delay(5_000));
         }
+    }
+
+    // Shouldly rethrows its own assertion type, so the failure is recorded rather than asserted with ThrowAsync.
+    private static async Task<Exception?> Thrown(Task call)
+    {
+        try { await call; return null; }
+        catch (Exception ex) { return ex; }
     }
 
     private static ProcessStartInfo Shell(string script)

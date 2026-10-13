@@ -17,7 +17,8 @@ internal static class CheckpointFixtureProcess
     {
         var name = start.FileName;
         var result = CheckpointProcessRunner.Run(start, timeoutMs, git: false);
-        result.TimedOut.ShouldBeFalse(name + " fixture step exceeded " + timeoutMs + " ms (exit and output drains)");
+        if (result.TimedOut)
+            throw new TimeoutException(name + " fixture step exceeded " + timeoutMs + " ms (exit and output drains)");
         return new Output(result.Exit, result.Stdout, result.Stderr);
     }
 
