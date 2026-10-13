@@ -21,6 +21,66 @@ namespace Antiphon.Tests.Application;
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class TaskWorktreeRetirementTests
 {
+
+    [Test]
+    public async Task C1213_RetirementBothForms()
+    {
+        // restore legacy equality -> new owner release refused; remove scope guard -> foreign controls fail.
+        foreach (var modern in new[] { false, true })
+        {
+            await using var h = await SettledRemovalHarness.CreateAsync(namedLeaf: true);
+            await using var scope = h.Host.Services.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var service = scope.ServiceProvider.GetRequiredService<TaskWorktreeRetirementService>();
+            var task = await db.AgentTasks.SingleAsync(t => t.Id == h.Host.Fixture.TaskId);
+            if (modern)
+            {
+                var branch = "feat/card-1213-code-" + task.Id.ToString("N")[..8];
+                await h.Host.Fixture.RequiredAsync(h.NamedWorktree, "branch", "-m", branch);
+                task.WorktreeBranch = branch;
+            }
+            task.Status = AgentTaskStatus.Succeeded; task.Role = AgentTaskRole.Code;
+            await db.SaveChangesAsync();
+            var fullRef = "refs/heads/" + task.WorktreeBranch;
+            var remoteBefore = await h.Host.Fixture.RequiredAsync(h.Host.Fixture.Repository, "ls-remote", "origin");
+            var accepted = await service.ReleaseAsync(task.Id, new(task.ConcurrencyToken, h.SourceSha, Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(task.Result ?? ""))), true, "reviewed no further use"), new(null, null, ""), default);
+            var row = await db.TaskWorktreeRetirements.SingleAsync(r => r.Id == accepted.Id);
+            (await service.TryRetireAsync(row, null, default)).IsClean.ShouldBeTrue("retired");
+            Directory.Exists(h.NamedWorktree).ShouldBeFalse("retired");
+            (await h.Host.Fixture.Git.RunAsync(h.Host.Fixture.Repository, ["show-ref", "--exists", fullRef], default)).ExitCode.ShouldBe(2);
+            (await h.Host.Fixture.RequiredAsync(h.Host.Fixture.Repository, "ls-remote", "origin")).ShouldBe(remoteBefore, "remote-unchanged");
+        }
+    }
+    [Test]
+    public async Task C1213_RetirementRefusesForeignIdentity()
+    {
+        // omit tail/leaf/root/full owner count -> release admitted; admitted modern control fails old code.
+        foreach (var vector in new[] { "valid", "tail", "leaf", "root", "ambiguous", "newline" })
+        {
+            await using var w = await World.CreateAsync(AgentTaskStatus.Succeeded);
+            var shortId = w.Task.Id.ToString("N")[..8];
+            w.Task.WorktreeBranch = "feat/card-1213-code-" + shortId;
+            if (vector == "tail") w.Task.WorktreeBranch = "feat/card-1213-code-ffffffff";
+            if (vector == "newline") w.Task.WorktreeBranch += "\n";
+            if (vector == "leaf") w.Task.WorktreePath = Path.Combine(Path.GetDirectoryName(w.Task.WorktreePath!)!, "card-task-ffffffff");
+            if (vector == "root") w.Task.WorktreePath = Path.Combine(Path.GetTempPath(), "outside", "card-task-" + shortId);
+            if (vector == "ambiguous")
+            {
+                var id = Guid.ParseExact(shortId + "000000000000000000000000", "N");
+                w.Db.AgentTasks.Add(new AgentTask { Id = id, RootTaskId = id, Goal = "foreign", CreatedAt = DateTime.UtcNow, WorktreeBranch = w.Task.WorktreeBranch, WorktreePath = w.Task.WorktreePath });
+            }
+            await w.Db.SaveChangesAsync();
+            if (vector == "valid")
+                (await w.Service.ReleaseAsync(w.Task.Id, w.ValidRelease(), w.Operator, default)).State.ShouldBe(WorktreeRetirementState.Released, "admitted-modern-control");
+            else
+            {
+                var refused = await Should.ThrowAsync<ConflictException>(() => w.Service.ReleaseAsync(w.Task.Id, w.ValidRelease(), w.Operator, default));
+                refused.Code.ShouldBe(vector == "ambiguous" ? "identity_ambiguous" : "outside_scope", "retirement-refused");
+                (await w.Db.TaskWorktreeRetirements.CountAsync()).ShouldBe(0, "no-release");
+            }
+        }
+    }
+
     private static readonly string ShaA = new('a', 40);
 
     [Test]

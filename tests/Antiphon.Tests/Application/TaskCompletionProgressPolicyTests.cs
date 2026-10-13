@@ -12,6 +12,20 @@ namespace Antiphon.Tests.Application;
 [Category("Unit")]
 public class TaskCompletionProgressPolicyTests
 {
+
+    [Test]
+    public async Task C1213_PrepareUsesStoredOwnedRef()
+    {
+        // derive fullRef from id -> progress-ref differs for new stored branch.
+        foreach (var branch in new[] { "feat/card-task-deadbeef", "feat/card-1213-code-deadbeef" })
+        {
+            var task = new AgentTask { Id = Guid.Parse("deadbeef-0000-0000-0000-000000000001"), RunnerId = "fixture", RemoteWorktreePath = "/mirror/task-deadbeef", Workspace = WorkspaceMode.Worktree, Role = AgentTaskRole.Code, WorktreeBranch = branch };
+            var answer = await TaskCompletionProgressService.PrepareAsync(null, task, default);
+            answer.State.ShouldBe(RemoteSettlementSyncState.Unavailable);
+            answer.FullRef.ShouldBe("refs/heads/" + branch, "progress-ref");
+        }
+    }
+
     private const string Bl = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     private const string Br = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
     private const string C = "cccccccccccccccccccccccccccccccccccccccc";

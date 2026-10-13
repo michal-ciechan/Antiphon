@@ -12,6 +12,24 @@ namespace Antiphon.Tests.Application;
 [Category("Unit")]
 public sealed class SettlementSyncDebtPolicyTests
 {
+
+    [Test]
+    public void C1213_DebtUsesStoredOwnedRef()
+    {
+        // recompute legacy / drop exact result-ref -> debt-state red.
+        foreach (var branch in new[] { Branch, "feat/card-1213-code-abcd1234" })
+        {
+            var task = Task(); task.WorktreeBranch = branch;
+            var exact = LeaseBusy() with { FullRef = "refs/heads/" + branch };
+            SettlementSyncDebtPolicy.Classify(task, exact, new DelegationSettings()).State.ShouldBe(RemoteSettlementSyncState.Pending, "debt-state");
+            foreach (var mismatch in new[] { "refs/heads/feat/card-task-ffffffff", "refs/tags/" + branch, "refs/heads/feat/card-1213-code-ffffffff" })
+                SettlementSyncDebtPolicy.Classify(task, exact with { FullRef = mismatch }, new DelegationSettings()).State.ShouldBe(RemoteSettlementSyncState.Unavailable, "foreign-debt-state");
+            if (branch != Branch) SettlementSyncDebtPolicy.Classify(task, exact with { FullRef = FullRef }, new DelegationSettings()).State.ShouldBe(RemoteSettlementSyncState.Unavailable, "stale-legacy-result");
+            task.WorktreeBranch = null;
+            SettlementSyncDebtPolicy.Classify(task, exact, new DelegationSettings()).State.ShouldBe(RemoteSettlementSyncState.Unavailable, "null-owned-ref");
+        }
+    }
+
     private const string Sha = "0123456789abcdef0123456789abcdef01234567";
     private const string LongSha = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
     private const string Desktop = "fedcba9876543210fedcba9876543210fedcba98";
