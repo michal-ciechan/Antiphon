@@ -39,6 +39,25 @@ public sealed class CheckpointOwnedOutputTests : CheckpointTestBase
         result.Deleted.ShouldBeEmpty();
     }
 
+
+    // case: a real exclusive gate; mutation: read its pathname while the exclusive handle is held;
+    // red at 8035e4a: OpenGate throws IOException instead of returning the held stream.
+    [Test]
+    public void exclusive_gate_returns_its_held_stream()
+    {
+        var root = InitRepo();
+        var path = Path.Combine(root, ".gate");
+        FileStream? stream = null;
+        try
+        {
+            SafeWrite.OpenGate(path, SafeWrite.Under(root), out stream).ShouldBeNull();
+            stream.ShouldNotBeNull();
+            stream.CanWrite.ShouldBeTrue();
+            Should.Throw<IOException>(() => { using var other = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None); });
+        }
+        finally { stream?.Dispose(); }
+    }
+
     private string InitRepo()
     {
         var root = TempDir();

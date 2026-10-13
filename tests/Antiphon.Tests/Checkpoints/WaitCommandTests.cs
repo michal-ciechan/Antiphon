@@ -24,6 +24,26 @@ public sealed class WaitCommandTests : CheckpointTestBase
         output.ToString().ShouldContain("receipt");
     }
 
+
+    // case: another run's complete state and receipts copied into this run;
+    // mutation: compare report to state without binding either to the requested directory;
+    // red: wait accepts the foreign run and returns zero (native probe at cea/8035).
+    [Test]
+    public async Task foreign_terminal_receipts_are_refused()
+    {
+        var dir = TempDir();
+        CheckpointFixtures.MarkRun(dir, alive: false);
+        var source = new SourceEvidence();
+        new RunStateStore().Write(Path.Combine(dir, "state.json"), new RunState
+        { RunId = "foreign-run", Phase = "done", ExitCode = 0, Source = source });
+        ReportWriter.WriteFiles(dir, new ReportModel { RunId = "foreign-run", ExitCode = 0, Source = source });
+        var output = new StringWriter();
+        var code = await new WaitCommand(liveness: new Alive(false), delay: Fast).WaitAsync(
+            dir, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(60), output, CancellationToken.None);
+        code.ShouldBe(2, output.ToString());
+        output.ToString().ShouldContain("receipt-run-directory-mismatching");
+    }
+
     [Test]
     public void heartbeat_lists_a_queued_build_after_the_building_one()
     {
