@@ -216,7 +216,10 @@ docker() {
         esac ;;
       stop:*) barrier before-stop; [ "$FAULT" != stop ] || return 1; printf 'stop\n' >> "$root/trace"; barrier after-stop ;;
       start:*) barrier before-restart; [ "$FAULT" != restart ] || return 1; printf 'restart\n' >> "$root/trace"; barrier after-restart ;;
-      rm:*) if [ "${@: -1}" = dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd ]; then rm -f "$root/seed-helper"; fi; return 0 ;;
+      rm:*)
+        if [ "${@: -1}" = dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd ]; then rm -f "$root/seed-helper"; fi
+        if [ "${@: -1}" = "$donor_id" ]; then rm -f "$root/donor-project"; fi
+        return 0 ;;
       cp:*)
         if [[ "$2" == *'/packages/.' ]]; then source=packages; else source=npm; fi
         [ "$FAULT" != "copy-$source" ] || return 1
@@ -475,6 +478,9 @@ case "$mode" in
     [ "$(cat "$root/volumes/c849${RUN}seed-packages/_data/rerun-sentinel")" = keep-after-rerun ] || fail fixture-wrapper-rerun-sentinel
     [ "$(cat "$root/volumes/c849${RUN}-work/_data/cache/recovery-$RUN/packages/c913.tools/2.0.0/tool")" = fixture-native-host ] || fail fixture-wrapper-recovery-bytes
     pass fixture-wrapper-no-outer-publication
+    # The next wrapper is an independent acquisition scenario. Release its
+    # predecessor through production ID cleanup, rather than reuse an occupied name.
+    c849_fixture_consumer_release "c849-${RUN}-donor"
     for name in "c849${RUN}seed-packages" "c849${RUN}seed-scratch" "c849${RUN}seed-npm"; do rm -rf "$root/volumes/$name"; done
     rm -f "$SERVER2_ROOT/cache/fixture-seed-ready"
     rm -rf "$root/volumes/c849${RUN}-work/_data/cache" "$root/volumes/c849${RUN}-work/_data/donor"
