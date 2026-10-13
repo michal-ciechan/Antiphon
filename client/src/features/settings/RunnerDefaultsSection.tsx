@@ -1,6 +1,6 @@
 import { Alert, Button, Group, Loader, Paper, Select, Stack, Text, TextInput } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { getApiErrorMessage } from '../../api/client'
 import {
   usePutRunnerDefaults,
@@ -107,11 +107,9 @@ function RunnerDefaultsForm({
     return next
   })
   const [reason, setReason] = useState('')
+  // A newer revision remounts this form through its key, which resets the conflict
+  // ('clears the conflict banner when a newer revision arrives').
   const [conflict, setConflict] = useState<string | null>(null)
-
-  useEffect(() => {
-    setConflict(null)
-  }, [current.revision])
 
   const options = useMemo(() => {
     const rows = [
