@@ -139,7 +139,7 @@ No new method lacks a detecting control.
 | S4 / CP-6 | U.`C1032_InspectionReadOnlyBound`; U.`C1032_InspectionPolicyParity`; U.`C1032_InspectionSourceProof` | Read-only facts for bound tree, no enrollment; hand-written Protected/Evidence/Disposable witnesses; actual H read independently of request baseline. |
 | S5 / CP-10 | U.`C1032_RemovalEligiblePhysical`; U.`C1032_RemovalComponentRecovery`; U.`C1032_RemovalOriginalReplacement` | Real directory and matching registration removed; refs/sentinels retained; exact set-aside partial work recovers; replacement and unproved absence held. |
 | S6 / CP-11 | U.`C1032_TransportDefaultInert`; U.`C1032_TransportRequiredPayload`; U.`C1032_TransportDispatchReplay` | Unconfigured dispatcher refuses; explicitly configured dispatcher reaches real removal; typed complete replay receipt persists before reply. |
-| S7 / CP-13 | M.`C1032_AdmissionCurrentEligibility`; M.`C1032_AdmissionArtifactSurvival`; M.`C1032_AdmissionIntentOrdering` | Fresh generation/attempt/use/source/artifacts at intent; intent and reopen winner orders; fresh observer proves commit before send and no row lock across I/O. |
+| S7 / CP-13 | M.`C1032_AdmissionCurrentEligibility`; M.`C1032_AdmissionArtifactSurvival`; M.`C1032_AdmissionIntentOrdering`; M.`C1032_AdmissionBoundRebaseProof` | Explicit bound-rebase positive plus fresh generation/attempt/use/source/artifacts at intent; intent and reopen winner orders; fresh observer proves commit before send and no row lock across I/O. |
 | S7 / CP-14 | M.`C1032_ReceiptCompleteBoundReceipt` | Genuine complete receipt positive, one-field mismatch/missing-field vectors, digest mismatch and import failure; fresh observer does not see false Complete. |
 | S8 / CP-15 | M.`C1032_RecoveryQueuesBusyAndReady`; M.`C1032_RecoveryCrashHandoffs`; M.`C1032_RecoveryInertServerComposition` | Real preparation/inspection/removal transport in busy/ready states and each cut; fresh receipt plus recipient files; default server/sweep/route cannot execute removal even with fixture Execute=true. |
 
@@ -246,7 +246,7 @@ executed them.
   receipt; default composition and unsupported peers withhold removal.
 - V-3: source, artifacts and ignored-content preservation |
   RUN/MIR | CP-6/8/9/13 | named first/final one-flip refusals preserve bytes;
-  contained exact H and bound rebase positive paths remain eligible.
+  contained exact H remains eligible in S5; the bound-rebase positive is owned by S7 / CP-13 / C1032_AdmissionBoundRebaseProof per the 2026-10-13 caller decision.
 - V-4: workspace use and retiring intent cannot both obtain new admission |
   real runtime/gate/journal | CP-5/7 | both race orders, attach, startup pty/Herdr
   adoption and pending Herdr retry; live/pooled/unknown ownership holds cleanup.
@@ -650,7 +650,7 @@ remain pending under the parent artifact, not silently discharged here.
 | PC-57 | RUN | valid second task tree, sibling-prefix and outside-root variants -> break G-57: omit exact recorded-path comparison. | `/*/*/CompletedCardWorkspaceRemovalTests/C1017_RunnerPathIdentity` | `otherTreeExists.ShouldBeTrue()` |
 | PC-58 | RUN | different symbolic branch at equal SHA; detached variant -> break G-58: omit symbolic-ref comparison. | `/*/*/CompletedCardWorkspaceRemovalTests/C1017_RunnerBranchIdentity` | `identityRefused.ShouldBeTrue()` |
 | PC-59 | RUN | unique committed HEAD changed after request -> break G-59: omit expected HEAD comparison. | `/*/*/CompletedCardWorkspaceRemovalTests/C1017_RunnerHeadIdentity` | `preservationProofChecks.ShouldBe(0)` |
-| PC-60 | RUN | bare SHA with no proof; exact contained and bound-rebase positive variants -> break G-60: accept missing preservation proof. | `/*/*/CompletedCardWorkspaceRemovalTests/C1017_RunnerPreservationProof` | `treeExists.ShouldBeTrue()` |
+| PC-60 | RUN | bare SHA with no proof and exact contained positive in S5; bound-rebase positive fixture moves to S7 C1032_AdmissionBoundRebaseProof -> break G-60: accept missing preservation proof. | `/*/*/CompletedCardWorkspaceRemovalTests/C1017_RunnerPreservationProof` | `treeExists.ShouldBeTrue()` |
 | PC-61 | RUN | staged and unstaged tracked edits; separate untracked variant -> break G-61: accept nonempty tracked status. | `/*/*/CompletedCardWorkspaceRemovalTests/C1017_RunnerDirtySource` | `finalInspectionCalls.ShouldBe(0)` |
 | PC-62 | RUN | bin/.env fixture overlaps disposable rule -> break G-62: remove protected-name precedence. | `/*/*/CompletedCardWorkspaceRemovalTests/C1017_RunnerIgnoredPolicy` | `protectedBytes.ShouldBe(originalBytes)` |
 | PC-63 | RUN | swap enumerated directory for outside link after final inspection -> break G-63: enumerate through the substituted link. | `/*/*/CompletedCardWorkspaceRemovalTests/C1017_RunnerNoFollow` | `outsideSentinel.ShouldBe(originalBytes)` |
@@ -1036,7 +1036,7 @@ loops, assertions and PC variants do not raise Min.
 | CP-10 | S5 | `tests/Antiphon.SessionRunner.Tests -> bin-c1032-components/` | removal-components | `/*/*/CompletedCardWorkspaceRemovalTests/(C1017_RunnerNoFollow)\|(C1017_RunnerDigestReplay)\|(C1032_Removal*)` | V-5, R-3 | all 5 listed; 0 failed/skipped | 5 | 6 | true |
 | CP-11 | S6 | `tests/Antiphon.SessionRunner.Tests -> bin-c1032-dispatch/` | guarded-dispatch | `/*/*/CompletedCardWorkspaceRemovalTests/(C1017_GuardedOperationIsDistinct)\|(C1032_Transport*)` | V-2, V-5, R-2, R-3 | all 4 listed; 0 failed/skipped | 4 | 5 | true |
 | CP-12 | S6 | `tests/Antiphon.SessionRunner.Tests -> bin-c1032-legacy/` | runner-legacy | `/*/*/(RunnerWorkspaceServiceTests*)\|(PhoneHomeCommandDispatcherTests*)/(Mirror_*)\|(Publish_*)\|(Remove_*)\|(Workspace_*)` | R-1 | all 28 listed; 0 failed/skipped | 28 | 6 | true |
-| CP-13 | S7 | `tests/Antiphon.Tests -> bin-c1032-admission/` | mirror-admission | `/*/*/CardWorktreeMirrorCleanupTests/(C1017_MirrorBehindPushedTip)\|(C1017_ReopenBetweenEndpoints)\|(C1017_MultipleMirrorsRemainDistinct)\|(C1032_Admission*)` | V-1, V-3, V-6, R-3 | all 6 listed; 0 failed/skipped | 6 | 6 | true |
+| CP-13 | S7 | `tests/Antiphon.Tests -> bin-c1032-admission/` | mirror-admission | `/*/*/CardWorktreeMirrorCleanupTests/(C1017_MirrorBehindPushedTip)\|(C1017_ReopenBetweenEndpoints)\|(C1017_MultipleMirrorsRemainDistinct)\|(C1032_Admission*)` | V-1, V-3, V-6, R-3 | all 7 listed including C1032_AdmissionBoundRebaseProof; 0 failed/skipped | 7 | 6 | true |
 | CP-14 | S7 | `tests/Antiphon.Tests -> bin-c1032-receipt/` | mirror-receipt | `/*/*/CardWorktreeMirrorCleanupTests/(C1017_ReceiptMustMatchOperation)\|(C1017_ReceiptMustMatchEndpoint)\|(C1017_ReceiptMustMatchStore)\|(C1017_ReceiptMustMatchTaskAttempt)\|(C1017_AckIsNotRemoval)\|(C1017_UnsupportedNeverFallsBack)\|(C1032_Receipt*)` | V-2, V-6, R-3 | all 7 listed; 0 failed/skipped | 7 | 6 | true |
 | CP-15 | S8 | `tests/Antiphon.Tests -> bin-c1032-recovery/` | mirror-recovery | `/*/*/CardWorktreeMirrorCleanupTests/(C1017_MirrorCompletesIndependently)\|(C1017_LocalProgressSurvivesOffline)\|(C1017_LostAckReusesOperation)\|(C1032_Recovery*)` | V-1, V-2, V-5, V-6, R-2, R-3 | all 6 listed; 0 failed/skipped | 6 | 7 | true |
 | CP-16 | S8 | `tests/Antiphon.Tests -> bin-c1032-sync/` | legacy-sync | `/*/*/RemoteWorktreeMirrorTests/*` | R-1 | all 8 listed; 0 failed/skipped | 8 | 5 | true |
@@ -1170,3 +1170,24 @@ supersedes the S4 ordinary selection for Code owner 4da2d6db. It adds 14
 regressions for mode changes, damaged/case-varied bare shapes, replacement/graft
 ancestry and configured commands. CP-6 now has 60 results. PC-573..577 and all
 variants are pending; S5–S8 and native acceptance remain deferred.
+
+### S5 decision amendment — 2026-10-13
+
+Moved exactly: (1) V-3's eligible bound-rebase positive, (2) PC-60's
+bound-rebase positive fixture variant. Both move from S5 CP-8
+C1017_RunnerPreservationProof to the new S7 CP-13
+CardWorktreeMirrorCleanupTests.C1032_AdmissionBoundRebaseProof. CP-13 gains
+one ordinary result (seven, previously six); no S5 method/result is dropped.
+S5 retains direct-containment positives and a pinned Rebased refusal naming S7
+as positive owner; PC-246's negative remains fail-closed in S5. S7's method
+also owns authoritative mapping validation once its producer exists. All
+controls/variants remain pending for SourceLanding Mutation.
+
+S5 CP-7..10 retain 5/9/4/5 methods. Process-death child arms execute inside
+C1032_RemovalComponentRecovery (one parent result), including each durable
+state and effects before their subsequent journal save, plus partial-file
+deletion. Evidence disposal and richer refusal vectors stay inside their named
+parent methods. The child assembly hook performs only the inherited locally
+owned scratch operation; it admits no additional test selection or external
+executor. Code ordinary red on the guarded missing behavior is required before
+production changes.
