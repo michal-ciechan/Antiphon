@@ -296,6 +296,7 @@ it('C506 V17 project-row-link', async () => {
     http.get('/api/github/repos', () => HttpResponse.json([])),
     http.get('/api/projects/readiness', () => HttpResponse.json([])),
     http.get('/api/projects/:id/api-keys', () => HttpResponse.json([])),
+    http.get('/api/agent-tui/profiles', () => HttpResponse.json([])),
   )
   const rowOf = (name: string) => screen.getByRole('cell', { name }).closest('tr') as HTMLElement
   window.history.pushState({}, '', '/settings?tab=projects')
@@ -311,7 +312,7 @@ it('C506 V17 project-row-link', async () => {
     expect(search.get('project')).toBe(P)
 
     await userEvent.click(within(rowOf('Q')).getByRole('button', { name: 'Edit project' }))
-    expect(await screen.findByRole('textbox', { name: 'Name' })).toHaveValue('Q')
+    expect(await screen.findByPlaceholderText('My Project')).toHaveValue('Q')
     expect(new URLSearchParams(window.location.search).get('project')).toBe(P)
   } finally {
     window.history.pushState({}, '', '/')
