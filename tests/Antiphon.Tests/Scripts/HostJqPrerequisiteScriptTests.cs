@@ -11,10 +11,13 @@ namespace Antiphon.Tests.Scripts;
 [Category("Unit")]
 public sealed class HostJqPrerequisiteScriptTests
 {
+    internal const string NativeLinuxReason = "CARD-1210: C1025/C1058 host jq contracts require native Linux (bash, flock, /proc/self/fd, GNU coreutils); Windows skips explicitly.";
+
 
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1058_Open_descriptor_must_match_canonical_leaf()
     {
+        NativeLinuxGate.Require(NativeLinuxReason);
         foreach (var boundary in new[] { "P0", "F0" })
         foreach (var mode in new[] { "check", "provision", "locked" })
         foreach (var symlink in new[] { false, true })
@@ -36,6 +39,7 @@ public sealed class HostJqPrerequisiteScriptTests
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1058_Digest_is_bound_to_open_descriptor()
     {
+        NativeLinuxGate.Require(NativeLinuxReason);
         foreach (var mode in new[] { "check", "provision" })
         {
             using var f = new HostJqFixture(); await f.Identity(); f.RawHash();
@@ -51,6 +55,7 @@ public sealed class HostJqPrerequisiteScriptTests
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1058_Installed_pin_is_checked_before_execution()
     {
+        NativeLinuxGate.Require(NativeLinuxReason);
         using (var f = new HostJqFixture())
         {
             await f.Identity(existing: false);
@@ -72,13 +77,29 @@ public sealed class HostJqPrerequisiteScriptTests
     }
 
     [Test, ParallelLimiter<ProcessSpawnLimit>]
-    public Task C1058_Version_probe_uses_open_descriptor() => ProbeUsesDescriptor("H", "Qv", "c1058-version-foreign-zero");
+    public Task C1058_Version_probe_uses_open_descriptor()
+    {
+        NativeLinuxGate.Require(NativeLinuxReason);
+        return ProbeUsesDescriptor("H", "Qv", "c1058-version-foreign-zero");
+    }
     [Test, ParallelLimiter<ProcessSpawnLimit>]
-    public Task C1058_True_probe_uses_open_descriptor() => ProbeUsesDescriptor("Qv", "Qt", "c1058-true-foreign-zero");
+    public Task C1058_True_probe_uses_open_descriptor()
+    {
+        NativeLinuxGate.Require(NativeLinuxReason);
+        return ProbeUsesDescriptor("Qv", "Qt", "c1058-true-foreign-zero");
+    }
     [Test, ParallelLimiter<ProcessSpawnLimit>]
-    public Task C1058_False_probe_uses_open_descriptor() => ProbeUsesDescriptor("Qt", "Qf", "c1058-false-foreign-zero");
+    public Task C1058_False_probe_uses_open_descriptor()
+    {
+        NativeLinuxGate.Require(NativeLinuxReason);
+        return ProbeUsesDescriptor("Qt", "Qf", "c1058-false-foreign-zero");
+    }
     [Test, ParallelLimiter<ProcessSpawnLimit>]
-    public Task C1058_Receipt_formatter_uses_open_descriptor() => ProbeUsesDescriptor("Qf", "Qj", "c1058-formatter-foreign-zero");
+    public Task C1058_Receipt_formatter_uses_open_descriptor()
+    {
+        NativeLinuxGate.Require(NativeLinuxReason);
+        return ProbeUsesDescriptor("Qf", "Qj", "c1058-formatter-foreign-zero");
+    }
 
     private async Task ProbeUsesDescriptor(string boundary, string probe, string label)
     {
@@ -98,6 +119,7 @@ public sealed class HostJqPrerequisiteScriptTests
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1058_Changed_leaf_cannot_emit_success_proof()
     {
+        NativeLinuxGate.Require(NativeLinuxReason);
         foreach (var wrapper in new[] { false, true })
         foreach (var mode in new[] { "check", "provision" })
         foreach (var symlink in new[] { false, true })
@@ -119,6 +141,7 @@ public sealed class HostJqPrerequisiteScriptTests
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1058_Pre_execution_link_checks_are_independent()
     {
+        NativeLinuxGate.Require(NativeLinuxReason);
         foreach (var phase in new[] { "F0", "L0" })
         foreach (var mode in new[] { "check", "provision", "locked" })
         {
@@ -133,6 +156,7 @@ public sealed class HostJqPrerequisiteScriptTests
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1058_Identity_comparisons_include_device()
     {
+        NativeLinuxGate.Require(NativeLinuxReason);
         foreach (var phase in new[] { "P0", "L0", "L1" })
         foreach (var mode in new[] { "check", "provision" })
         {
@@ -150,6 +174,7 @@ public sealed class HostJqPrerequisiteScriptTests
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1058_Final_link_checks_are_independent()
     {
+        NativeLinuxGate.Require(NativeLinuxReason);
         foreach (var phase in new[] { "L1", "F1" })
         foreach (var mode in new[] { "check", "provision" })
         {
@@ -164,6 +189,7 @@ public sealed class HostJqPrerequisiteScriptTests
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1058_Final_permission_checks_are_independent()
     {
+        NativeLinuxGate.Require(NativeLinuxReason);
         foreach (var phase in new[] { "L1", "F1" })
         foreach (var mode in new[] { "check", "provision" })
         {
@@ -184,6 +210,7 @@ public sealed class HostJqPrerequisiteScriptTests
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1058_Proof_is_buffered_until_final_admission()
     {
+        NativeLinuxGate.Require(NativeLinuxReason);
         using (var f = new HostJqFixture())
         {
             await f.Identity(); var r = await f.Observe("check", [("Qj.after", () => f.Swap())]);
@@ -198,6 +225,7 @@ public sealed class HostJqPrerequisiteScriptTests
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1058_Metadata_syntax_refuses()
     {
+        NativeLinuxGate.Require(NativeLinuxReason);
         foreach (var mode in new[] { "check", "provision" })
         foreach (var phase in new[] { "all", "P0", "F0", "L0", "L1", "F1" })
         foreach (var fault in new[] { "extra", "multiline", "missing", "device", "inode", "link" })
@@ -227,6 +255,7 @@ public sealed class HostJqPrerequisiteScriptTests
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1058_Observation_failures_are_invalid()
     {
+        NativeLinuxGate.Require(NativeLinuxReason);
         foreach (var mode in new[] { "check", "provision" })
         foreach (var phase in new[] { "P0", "F0", "L0", "L1", "F1" })
         {
@@ -260,6 +289,7 @@ public sealed class HostJqPrerequisiteScriptTests
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1058_Check_rejects_canonical_hardlink()
     {
+        NativeLinuxGate.Require(NativeLinuxReason);
         // Put the transient witness first: later link guards cannot mask P0's policy.
         using (var f = new HostJqFixture())
         {
@@ -298,6 +328,7 @@ public sealed class HostJqPrerequisiteScriptTests
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1058_Provision_removes_only_owned_stage_link()
     {
+        NativeLinuxGate.Require(NativeLinuxReason);
         using var f = new HostJqFixture(); await f.Identity(existing: false);
         var sentinels = f.Sentinels();
         var r = await f.Helper("provision");
@@ -320,6 +351,7 @@ public sealed class HostJqPrerequisiteScriptTests
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1058_Staged_unlink_failure_refuses()
     {
+        NativeLinuxGate.Require(NativeLinuxReason);
         foreach (var fault in new[] { "unlink-after", "unlink-before" })
         {
             using var f = new HostJqFixture(); await f.Identity(existing: false); f.Fault(fault);
@@ -342,6 +374,7 @@ public sealed class HostJqPrerequisiteScriptTests
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1025_Check_qualifies_deployment_shell()
     {
+        NativeLinuxGate.Require(NativeLinuxReason);
         using (var f = new HostJqFixture())
         {
             f.Existing();
@@ -412,6 +445,7 @@ public sealed class HostJqPrerequisiteScriptTests
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1025_Check_rejects_canonical_leaf_symlink()
     {
+        NativeLinuxGate.Require(NativeLinuxReason);
         using var f = new HostJqFixture();
         f.HomeShadow(); f.PathPrefix = ""; // Keep the destination ON PATH and resolve the canonical leaf.
         File.WriteAllText(f.HomeJq, File.ReadAllText(f.Payload)); // Working jq with an execution trace.
@@ -445,6 +479,7 @@ public sealed class HostJqPrerequisiteScriptTests
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1025_Receipt_rejects_canonical_lookup_with_unapproved_target()
     {
+        NativeLinuxGate.Require(NativeLinuxReason);
         foreach (var mode in new[] { "check", "provision" })
         {
             using var f = new HostJqFixture(); f.Existing();
@@ -467,6 +502,7 @@ public sealed class HostJqPrerequisiteScriptTests
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1025_Check_has_no_install_effects()
     {
+        NativeLinuxGate.Require(NativeLinuxReason);
         foreach (var state in new[] { "healthy", "missing", "true" })
         {
             using var f = new HostJqFixture(); if (state != "missing") f.Existing(state == "healthy" ? "healthy" : state);
@@ -484,6 +520,7 @@ public sealed class HostJqPrerequisiteScriptTests
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1025_Provision_requires_missing_jq()
     {
+        NativeLinuxGate.Require(NativeLinuxReason);
         foreach (var elsewhere in new[] { false, true })
         {
             using var f = new HostJqFixture(); f.Existing(elsewhere: elsewhere);
@@ -516,6 +553,7 @@ public sealed class HostJqPrerequisiteScriptTests
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1025_Provision_admits_host_prerequisites()
     {
+        NativeLinuxGate.Require(NativeLinuxReason);
         foreach (var args in new[] { Array.Empty<string>(), new[] { "bogus" }, new[] { "check", "extra" } })
         {
             using var f = new HostJqFixture(); var r = await f.Helper(args);
@@ -543,6 +581,7 @@ public sealed class HostJqPrerequisiteScriptTests
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1025_Provision_refuses_unsafe_destination()
     {
+        NativeLinuxGate.Require(NativeLinuxReason);
         foreach (var vector in new[] { "file", "symlink", "dangling", "directory", "fifo", "parent-link", "parent-stat", "parent-write" })
         {
             // Other vectors reach missing-destination admission; the symlink stays ON PATH.
@@ -568,6 +607,7 @@ public sealed class HostJqPrerequisiteScriptTests
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1025_Provision_serializes_and_rechecks()
     {
+        NativeLinuxGate.Require(NativeLinuxReason);
         using (var f = new HostJqFixture())
         {
             using var held = f.Start("/usr/bin/bash", "-c", "exec 9<\"$HJ_LOCK\"; /usr/bin/flock 9; echo ready; read -r release");
@@ -599,6 +639,7 @@ public sealed class HostJqPrerequisiteScriptTests
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1025_Provision_verifies_download_before_use()
     {
+        NativeLinuxGate.Require(NativeLinuxReason);
         using (var good = new HostJqFixture())
         {
             var r = await good.Helper("provision"); r.Exit.ShouldBe(0, r.Output);
@@ -620,6 +661,7 @@ public sealed class HostJqPrerequisiteScriptTests
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1025_Provision_publishes_complete_no_clobber()
     {
+        NativeLinuxGate.Require(NativeLinuxReason);
         using (var f = new HostJqFixture())
         {
             f.Fault("publish-barrier"); var run = f.Helper("provision");
@@ -654,6 +696,7 @@ public sealed class HostJqPrerequisiteScriptTests
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1025_Provision_cleans_only_owned_staging()
     {
+        NativeLinuxGate.Require(NativeLinuxReason);
         foreach (var fault in new[] { "curl-exit", "digest", "stage-exit", "publish-exit", "final-true" })
         {
             using var f = new HostJqFixture(); f.Fault(fault); var sentinels = f.Sentinels();
@@ -680,6 +723,7 @@ public sealed class HostJqPrerequisiteScriptTests
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1025_Provision_requalifies_published_jq()
     {
+        NativeLinuxGate.Require(NativeLinuxReason);
         foreach (var fault in new[] { "final-path", "final-version", "final-digest", "final-owner", "final-group", "final-mode", "final-true", "final-false", "path-absent" })
         {
             using var f = new HostJqFixture(); f.Fault(fault);
@@ -709,6 +753,7 @@ public sealed class HostJqPrerequisiteScriptTests
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1025_Provision_requires_canonical_source()
     {
+        NativeLinuxGate.Require(NativeLinuxReason);
         using (var good = new HostJqFixture())
         {
             good.Existing(); await good.InitializeRepo();
@@ -739,6 +784,7 @@ public sealed class HostJqPrerequisiteScriptTests
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1025_Transport_is_bounded_and_reaped()
     {
+        NativeLinuxGate.Require(NativeLinuxReason);
         foreach (var fault in new[] { "", "ssh-exit", "empty", "truncated", "late", "start" })
         {
             using var f = new HostJqFixture(); f.Existing(); f.Transport = fault; await f.InitializeRepo(shortDeadline: fault == "late");
@@ -780,6 +826,7 @@ public sealed class HostJqPrerequisiteScriptTests
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1025_Receipt_requires_complete_current_proof()
     {
+        NativeLinuxGate.Require(NativeLinuxReason);
         using (var good = new HostJqFixture())
         {
             good.Existing(); await good.InitializeRepo(); var start = DateTime.UtcNow;
@@ -845,6 +892,7 @@ public sealed class HostJqPrerequisiteScriptTests
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1025_Receipt_persistence_is_required()
     {
+        NativeLinuxGate.Require(NativeLinuxReason);
         using var f = new HostJqFixture(); f.Existing(); f.Transport = "block-receipt"; await f.InitializeRepo();
         var r = await f.Wrapper("check-host-jq"); r.Exit.ShouldBe(2, r.Output);
         r.Output.ShouldContain("HostJqReceiptUnavailable", Case.Sensitive, "receipt-required");
@@ -875,6 +923,7 @@ public sealed class HostJqPrerequisiteScriptTests
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1025_Transport_preserves_secret_custody()
     {
+        NativeLinuxGate.Require(NativeLinuxReason);
         foreach (var fault in new[] { "", "ssh-exit", "truncated", "start" })
         {
             using var f = new HostJqFixture(); f.Existing(); f.Transport = fault; await f.InitializeRepo();
@@ -892,6 +941,7 @@ public sealed class HostJqPrerequisiteScriptTests
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1025_Explicit_tool_phases_never_deploy()
     {
+        NativeLinuxGate.Require(NativeLinuxReason);
         foreach (var phase in new[] { "check-host-jq", "provision-host-jq" })
         foreach (var state in new[] { "existing", "missing", "invalid" })
         {
@@ -909,6 +959,7 @@ public sealed class HostJqPrerequisiteScriptTests
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1025_Preflight_precedes_every_phase()
     {
+        NativeLinuxGate.Require(NativeLinuxReason);
         var faults = new[] { "healthy", "missing", "invalid", "ssh-failed", "malformed-proof", "receipt-write-failed" };
         foreach (var shape in C1025RolloutFixture.Shapes)
         foreach (var fault in faults)
@@ -954,6 +1005,7 @@ public sealed class HostJqPrerequisiteScriptTests
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1025_Preflight_is_fresh_for_each_entry()
     {
+        NativeLinuxGate.Require(NativeLinuxReason);
         var phases = new[] { "deploy-temp", "drain-old", "redeploy-old", "drain-temp", "retire-temp" };
         for (var failAt = 0; failAt <= 5; failAt++)
         {
@@ -1003,6 +1055,7 @@ public sealed class HostJqPrerequisiteScriptTests
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1025_Final_recycle_guard_remains()
     {
+        NativeLinuxGate.Require(NativeLinuxReason);
         OperatingSystem.IsLinux().ShouldBeTrue("C1025 prerequisite: native Linux");
         foreach (var hostCase in new[] { "deploy-parent", "retire-temp-runner" })
         foreach (var mode in new[] { "normal", "preview", "resume" })

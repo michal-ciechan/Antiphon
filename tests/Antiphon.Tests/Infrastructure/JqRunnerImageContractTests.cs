@@ -9,6 +9,8 @@ namespace Antiphon.Tests.Infrastructure;
 [Category("Unit")]
 public sealed class JqRunnerImageContractTests
 {
+    internal const string NativeLinuxReason = "CARD-1210: jq image probes require native Linux (POSIX modes, symlinks and executable identity); Windows skips explicitly.";
+
     private const string Version = "1.7.1";
     private const string Sha256 = "5942c9b0934e510ee61eb3e30273f1b3fe2590df93933a93d7c58b81d19c8ff5";
 
@@ -61,6 +63,7 @@ public sealed class JqRunnerImageContractTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task Version_row_accepts_only_exact_successful_pin_without_stderr(string output, int exitCode, string error, string outcome)
     {
+        NativeLinuxGate.Require(NativeLinuxReason);
         using var f = await JqFixture.CreateAsync(CancellationToken.None);
         f.WriteJq(f.Destination);
         f.VersionOutput = output;
@@ -82,6 +85,7 @@ public sealed class JqRunnerImageContractTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1054_Jq_row_rejects_home_shadow()
     {
+        NativeLinuxGate.Require(NativeLinuxReason);
         using var f = await JqFixture.CreateAsync(CancellationToken.None);
         f.WriteJq(f.Destination);
         f.WriteJq(f.HomeJq);
@@ -119,6 +123,7 @@ public sealed class JqRunnerImageContractTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1054_Jq_row_accepts_canonical_file_and_alias()
     {
+        NativeLinuxGate.Require(NativeLinuxReason);
         using var f = await JqFixture.CreateAsync(CancellationToken.None);
         f.WriteJq(f.Destination);
         AssertAccepted(f, await f.ProbeAsync([f.DestinationDirectory]), f.Destination, "c1054-canonical-accepted");
@@ -134,6 +139,7 @@ public sealed class JqRunnerImageContractTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1054_Jq_row_rejects_canonical_leaf_symlink()
     {
+        NativeLinuxGate.Require(NativeLinuxReason);
         using var f = await JqFixture.CreateAsync(CancellationToken.None);
         f.WriteJq(f.HomeJq);
         await f.AssertHealthyAsync(f.HomeJq);
@@ -168,6 +174,7 @@ public sealed class JqRunnerImageContractTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1054_Jq_row_records_found_and_resolved_paths()
     {
+        NativeLinuxGate.Require(NativeLinuxReason);
         using var f = await JqFixture.CreateAsync(CancellationToken.None);
         f.WriteJq(f.Destination);
         f.WriteJq(f.HomeJq);

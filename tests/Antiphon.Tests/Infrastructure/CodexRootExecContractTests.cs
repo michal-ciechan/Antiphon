@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.RegularExpressions;
 using Antiphon.Tests.Scripts;
 using Antiphon.Tests.TestHelpers;
@@ -12,6 +13,8 @@ namespace Antiphon.Tests.Infrastructure;
 [Category("Unit")]
 public sealed class CodexRootExecContractTests
 {
+    internal const string NativeLinuxReason = "CARD-1210: Codex heal contracts require native Linux with unshare user+mount namespaces and a bind-mountable /state";
+
     private static readonly string[] ProviderCommands = ["codex", "claude", "grok"];
 
     private static readonly HashSet<string> ValueFlags = new(StringComparer.Ordinal)
@@ -53,6 +56,8 @@ public sealed class CodexRootExecContractTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public void Entrypoint_heal_chowns_the_tmp_directory_once()
     {
+        NativeLinuxGate.Require(NativeLinuxReason);
+        AssertPrerequisiteRefusal("unshare", "PREREQ unshare", 97, "c1210-prereq-unshare");
         const string once = "-R -h 1654:1654 -- /state/codex/tmp";
         var output = RunExtractedHeal(
             """
@@ -103,6 +108,7 @@ public sealed class CodexRootExecContractTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public void Entrypoint_heal_never_names_a_path_outside_tmp()
     {
+        NativeLinuxGate.Require(NativeLinuxReason);
         const string once = "-R -h 1654:1654 -- /state/codex/tmp";
         var output = RunExtractedHeal(
             """
@@ -275,11 +281,57 @@ public sealed class CodexRootExecContractTests
     // bind-mounts the scratch fixture at the entrypoint's hard-coded path.
     private static string RunExtractedHeal(string prelude, string body)
     {
+        var result = RunHealScript(BuildHealScript(prelude, body));
+        result.Exit.ShouldBe(0, "c1210-healthy-prerequisites: " + result.Output);
+        return result.Output;
+    }
+
+    private static void AssertPrerequisiteRefusal(string probe, string reason, int exit, string label)
+    {
+        var result = RunHealScript(BuildHealScript("mkdir -p \"$root/fixture\"", "echo heal-body-entered", probe));
+        result.Exit.ShouldBe(exit, label + ": " + result.Output);
+        result.Output.ShouldContain(reason + "\n", Case.Sensitive, label);
+        result.Output.ShouldContain("heal-calls=0\n", Case.Sensitive, label);
+        result.Output.ShouldNotContain("heal-body-entered", Case.Sensitive, label);
+        result.Output.ShouldNotContain("heal-reached", Case.Sensitive, label);
+    }
+
+    private static (int Exit, string Output) RunHealScript(string script)
+    {
+        var start = new ProcessStartInfo("bash")
+        {
+            UseShellExecute = false, RedirectStandardInput = true,
+            RedirectStandardOutput = true, RedirectStandardError = true,
+        };
+        start.ArgumentList.Add("-s");
+        using var process = Process.Start(start)!;
+        var stdout = process.StandardOutput.ReadToEndAsync();
+        var stderr = process.StandardError.ReadToEndAsync();
+        process.StandardInput.Write(script);
+        process.StandardInput.Close();
+        if (!process.WaitForExit(60_000))
+        {
+            process.Kill(entireProcessTree: true);
+            process.WaitForExit();
+            throw new TimeoutException("the Linux heal harness did not finish in 60s");
+        }
+        var output = (stdout.GetAwaiter().GetResult() + stderr.GetAwaiter().GetResult()).Replace("\r\n", "\n");
+        Console.WriteLine(output);
+        return (process.ExitCode, output);
+    }
+
+    private static string BuildHealScript(string prelude, string body, string? probe = null)
+    {
         var function = Function(Read("docker/session-runner-grok/dind-entrypoint.sh"));
         var script = string.Join('\n',
             "set -eu",
             "root=\"$(mktemp -d)\"",
-            "trap 'rm -rf \"$root\"' EXIT",
+            "export CHOWN_LOG=\"$root/chown.log\"",
+            ": > \"$CHOWN_LOG\"",
+            probe is null ? "trap 'rm -rf \"$root\"' EXIT"
+                : "trap 'echo heal-calls=$(wc -l < \"$CHOWN_LOG\" | tr -d \" \"); rm -rf \"$root\"' EXIT",
+            probe == "unshare" ? "unshare() { return 1; }" : probe == "state" ? "unshare() { return 0; }" : "",
+            probe == "state" ? "state_target=\"$root/missing-state\"" : "state_target=/state",
             "mkdir -p \"$root/bin\"",
             prelude.Trim('\n'),
             "cat > \"$root/bin/chown\" << 'SHIM'",
@@ -291,10 +343,11 @@ public sealed class CodexRootExecContractTests
             "cat > \"$root/heal.sh\" << 'HEAL_FN'",
             function.TrimEnd('\n'),
             "HEAL_FN",
-            "unshare --user --map-root-user --mount bash -s \"$root\" << 'RUN'",
+            "unshare --user --map-root-user --mount bash -s \"$root\" \"$state_target\" << 'RUN'",
             "set -eu",
             "root=$1",
-            "mkdir -p /state",
+            "state_target=$2",
+            "mkdir -p \"$state_target\"",
             "mount --bind \"$root/fixture\" /state",
             "export PATH=\"$root/bin:$PATH\"",
             "export CHOWN_LOG=\"$root/chown.log\"",
@@ -303,8 +356,9 @@ public sealed class CodexRootExecContractTests
             ". \"$root/heal.sh\"",
             body.Trim('\n'),
             "RUN",
+            probe is null ? "" : "echo heal-reached",
             "") + "\n";
-        return RemoteScriptContractTests.LinuxShell(script).Replace("\r\n", "\n");
+        return script;
     }
 
     private static string Function(string text)
