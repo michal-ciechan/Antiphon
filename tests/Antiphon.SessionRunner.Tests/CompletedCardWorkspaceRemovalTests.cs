@@ -30,7 +30,7 @@ public sealed class CompletedCardWorkspaceRemovalTests
         finally { release.TrySetResult(); }
         (await retire).ShouldBeTrue();
         var refusal = await Should.ThrowAsync<PhoneHomeAdmissionException>(launch);
-        refusal.ProblemType.ShouldContain("workspace");
+        refusal.Code.ShouldContain("workspace");
         f.Effects.ShouldBe(0);
 
         await using var inverse = new CompletedCardRunnerFixture();
