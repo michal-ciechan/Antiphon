@@ -372,7 +372,7 @@ public sealed class RemoteScriptContractTests
         }
     }
 
- [Test]
+    [Test]
     [Arguments("residual")]
     [Arguments("daemon")]
     [Arguments("absent")]
