@@ -1,3 +1,4 @@
+using System.Net.WebSockets;
 using System.Text.Json;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
@@ -56,6 +57,9 @@ public class PhoneHomeEventPumpTests
                && !await db.TranscriptEntries.AnyAsync(t => t.AgentSessionId == ours.Id))
             await Task.Delay(50);
         (await db.TranscriptEntries.CountAsync(t => t.AgentSessionId == ours.Id && t.Text == "owner-body")).ShouldBe(1);
+        // CARD-1219 sweep: the single FIFO reader handled the foreign frame before the owner frame,
+        // so this absence is read after the foreign frame was processed, not before it arrived.
+        (await db.TranscriptEntries.AsNoTracking().CountAsync(t => t.AgentSessionId == foreign.Id)).ShouldBe(0);
         cts.Cancel();
         try { await pumping; } catch (OperationCanceledException) { /* expected */ }
     }
@@ -81,23 +85,24 @@ public class PhoneHomeEventPumpTests
         var live = await host.WaitLiveAsync();
         peer.Transcripts[session.Id] = new RunnerTranscriptDto(session.Id, [Prompt(session.Id, "catchup-prompt", "cu-1")], 1);
         peer.Sessions.Add(new RunnerSessionDto(session.Id, 1, DateTime.UtcNow, "Running", null, "", 1));
-        var catchUp = pump.CatchUpAsync(live, CancellationToken.None);
+        // CARD-1219 sweep: the recovery cycle, not the test, decides when the pump starts. Calling
+        // CatchUpAsync and then starting the pump by hand made the held check true by construction.
+        using var cts = new CancellationTokenSource();
+        var cycle = pump.RunCycleAsync(cts.Token);
         await peer.EmitTranscriptAsync(Prompt(session.Id, "live-later", "live-1", sequence: 2), live.Epoch);
         await Task.Delay(150);
         var liveProcessedBeforeCatchup = await db.TranscriptEntries.AnyAsync(t => t.Uuid == "live-1");
         liveProcessedBeforeCatchup.ShouldBeFalse();
+        live.DispatchEligible.ShouldBeFalse("not recovered while catch-up is held");
         hold.SetResult();
-        await catchUp.WaitAsync(TimeSpan.FromSeconds(5));
+        (await cycle.WaitAsync(TimeSpan.FromSeconds(5))).ShouldBeTrue();
         (await db.TranscriptEntries.CountAsync(t => t.Uuid == "cu-1")).ShouldBe(1);
-        using var cts = new CancellationTokenSource();
-        var pumping = pump.PumpEventsAsync(live, cts.Token);
         var deadline = DateTime.UtcNow.AddSeconds(3);
         while (DateTime.UtcNow < deadline && !await db.TranscriptEntries.AnyAsync(t => t.Uuid == "live-1"))
             await Task.Delay(50);
         (await db.TranscriptEntries.OrderBy(t => t.Sequence).Select(t => t.Text).ToListAsync())
             .ShouldBe(["catchup-prompt", "live-later"]);
         cts.Cancel();
-        try { await pumping; } catch (OperationCanceledException) { /* expected */ }
     }
 
     [Test]
@@ -116,28 +121,48 @@ public class PhoneHomeEventPumpTests
     [Test]
     public async Task Live_buffer_overflow_withholds_ready_and_recovers()
     {
+        // CARD-1219 R2-F3: the connection is made eligible first, so the withdrawal is the overflow's
+        // doing; the old oracle passed on the initial false and on any exception.
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var h = await BridgeQueueHarness.CreateAsync(new() { ConnectionString = schema.ConnectionString });
         await using var host = await PhoneHomeTestHost.StartAsync(
+            connectionString: schema.ConnectionString,
             limits: new PhoneHomeLimits(MaxPendingEvents: 2, MaxPendingEventBytes: 4096));
         await using var peer = await host.ConnectPeerAsync();
         var live = await host.WaitLiveAsync();
-        live.DispatchEligible.ShouldBeFalse();
-        var closedForOverflow = false;
-        try
+        host.Directory.MarkRecovered(live);
+        live.DispatchEligible.ShouldBeTrue("precondition: eligible before the overflow");
+
+        // No pump reads the channel, so the third pending event exceeds MaxPendingEvents.
+        for (var i = 0; i < 4; i++)
         {
-            for (var i = 0; i < 4; i++)
+            try
+            {
                 await peer.EmitTranscriptAsync(Prompt(Guid.NewGuid(), new string('x', 8), $"u{i}"), live.Epoch);
-            var deadline = DateTime.UtcNow.AddSeconds(2);
-            while (DateTime.UtcNow < deadline && live.SocketOpen)
-                await Task.Delay(20);
-            closedForOverflow = !live.DispatchEligible;
-        }
-        catch (Exception)
-        {
-            closedForOverflow = true;
+            }
+            catch (Exception ex) when (ex is WebSocketException or ObjectDisposedException)
+            {
+                break; // the server closed after the overflow
+            }
         }
 
-        closedForOverflow.ShouldBeTrue();
-        await Task.CompletedTask;
+        await WaitUntilAsync(() => !live.SocketOpen && live.LastDisconnectReason is not null);
+        live.LastDisconnectReason.ShouldBe("phone_home_event_overflow");
+        live.SocketOpen.ShouldBeFalse();
+        live.DispatchEligible.ShouldBeFalse("the overflow withdraws readiness");
+        host.Directory.SnapshotLive().ShouldBeNull();
+
+        // Recovery: the runner reconnects; the new connection is withheld until a recovery cycle marks it.
+        await peer.DisposeAsync();
+        await using var peerB = await host.ConnectPeerAsync();
+        var liveB = await host.WaitLiveAsync();
+        liveB.ShouldNotBeSameAs(live);
+        liveB.Epoch.ShouldBeGreaterThan(live.Epoch);
+        liveB.DispatchEligible.ShouldBeFalse("a new connection waits for recovery");
+        using var cts = new CancellationTokenSource();
+        (await Pump(host, h).RunCycleAsync(cts.Token)).ShouldBeTrue();
+        liveB.DispatchEligible.ShouldBeTrue();
+        cts.Cancel();
     }
 
     [Test]
