@@ -4,13 +4,16 @@ TestDesign task `a9928e5d`, branch `feat/card-task-a9928e5d`, written against th
 `docs/superpowers/plans/2026-10-13-card-0507-pluggable-stage-agents-plan.md` at `67d7f8598a704cb54fdbe0cc7f2cc4278f58b1ba`
 (plan task `c9796463`). Source and tests were read at that SHA; `origin/master` was `50cbb680379beb97a1ff07fed64ee4a0bcd18b60`
 (three CARD-1229 commits above the plan base, nothing else). This document appends verification; it does not rewrite the fix
-design (D-1…D-9 stand at the plan's defaults). No production or test code, no build and no test run was made here; every
+design (D-1…D-9 stand at the plan's defaults). No production or test code, no build and no test run was made here; each
 count below is a census from source (`[Test]` methods with their `[Arguments]` rows), and the checkpoint tool was not
 executed. The task token was present in this session, so the design is marked **bound**; the token is not reproduced.
 **Amended by the S1 repair (Code `920adf8b`, Review `d88d4eec` F1/F2):** the delivery inventory and D-2 persistence
 boundary are corrected, V-3d (4 executions), G-15b/G-21, PC-15b/PC-21a/PC-21b are added, PC-10's assertion is corrected,
 and CP-1's count is 27 (19 + 8). **Round 3 (Code `385fb72d`, Review `bf6d81b3` F1):** the delivery inventory is reduced to a
 test table, a delegate-launch storage table and three gap lines; the census in R-4 and the Handoff is recounted.
+**Round 4 (Code `2d1a652d`, Review `b917f043` F1–F3):** the storage table gains the Herdr launch-script row and says the
+dispatcher stores no launch arguments on the session row; C1083 is described as comparing normalized trimmed text; PC-6
+and V-5b name a mutation that compiles; universal wording is narrowed to named tests.
 
 Slice shape frozen here: **S0** (read-only `ocr` probe on server2, no key, no checkpoint), **S1** (role-policy tool bundles),
 **S2** (the `tool-open-code-review` bundle, docs, the Custom-role settlement pin), **S3 HELD** (appendix A, operator-gated by
@@ -82,7 +85,7 @@ Bodies read (at `67d7f8598`):
 Boundaries and their IDs: role-key merge order (V-1), specialist carve-out (V-1b), dedupe (V-2), refusal of unknown or
 non-tool keys at the resolver (V-3), at create over the service (V-3a) and over HTTP (V-3b), at dispatch before any launch
 (V-3c), the refusal's caller note from producer to recipient UserPrompt (V-3d), the key whitelist (V-4, V-4b), shipped defaults and binding (V-5, V-5b), the bundle's own pins (V-6a…V-6d),
-launch composition (V-6e, V-6g), create acceptance of the shipped key (V-6f), Custom-role evidence binds nothing (V-7),
+launch composition (V-6e, V-6g), create acceptance of the shipped key (V-6f), a Custom-role request with Stage omitted binds no evidence (V-7),
 Grok warm reuse (V-11). Excluded with reasons under *Out of scope*.
 
 **Binding seam.** One validating resolver, `InstructionBundles.ResolveRoleToolBundles(role, settings)`, returns the role's
@@ -104,7 +107,7 @@ Tests that observe a delivery or a launch composition (S1 rows run in CP-1; S2 r
 | `RolePolicyToolBundleShippedTests.a_review_launch_spec_carries_the_role_tool_bundle_once_after_the_basics` (S2) | ClaudeCode launch spec `--append-system-prompt` value holds the three rendered headers in order, the tool header once; session `ComposedBundleStamp` contains `tool-open-code-review v` | PC-15, PC-15b |
 | `RolePolicyToolBundleShippedTests.a_warm_grok_delegate_launched_without_the_role_tool_bundle_is_not_reused` (S2) | a warm Grok session whose rules receipt hash lacks the tool bundle is not reused | PC-16 |
 | `AgentSystemPromptLaunchTests.Start_with_system_prompt_append_passes_flag_on_fresh_launch` (existing) | a named-agent start puts `--append-system-prompt <rendered>` in `FakeAgentProtocolAdapter.StartedArgs` and submits the bootstrap body once (`SubmittedBodies`); the fake adapter records arguments and typed text, no TUI reads the argument | not a CARD-0507 control |
-| `InstructionBundleTests.C1083_EmbeddedBundlesMatchSourceAndRenderedHeaders` (existing) | embedded bundle bytes equal the source files; the pure composer renders their headers | not a CARD-0507 control |
+| `InstructionBundleTests.C1083_EmbeddedBundlesMatchSourceAndRenderedHeaders` (existing) | C1083 compares normalized trimmed text: for five listed bundles, the source file after `ReplaceLineEndings("\n").Trim()` and its SHA-256 version match the catalog entry; then headers and pure composition; raw source bytes are not compared, so an outer-whitespace-only change is normalized away | not a CARD-0507 control |
 
 Instruction storage for a delegate launch (read at `c9f1b6e27`):
 
@@ -116,7 +119,8 @@ Instruction storage for a delegate launch (read at `c9f1b6e27`):
 | Grok | session row gets rules generation, expected SHA-256 and byte count | `GrokRulesRefreshService.PrepareLaunchAsync` (`GrokRulesRefreshService.cs:115-133`), called from `AgentSessionService.cs:2447-2451` |
 | Grok | runner writes the encoded text (rendered `[bundle:<key> v<hash8>]` headers included) to `<SessionLogPath>/instructions/grok/<session>/rules.md`; argv carries only a read-this-file bootstrap | `SessionRunnerRuntime` launch (`SessionRunnerRuntime.cs:561-579`), `GrokRulesFileStore.PathFor`/`WriteAsync` |
 | Grok | session row stores the runner's file receipt (`GrokRulesReceiptJson`: path, hash, byte count, generation) | `GrokRulesRefreshService.CaptureReceiptAsync` (`:135-147`) |
-| any kind | stamps (`<key> v<hash8>`, comma-joined) are logged at Information; the args are not stored | `AgentTaskDispatcher.ComposeDelegateArgs` (`:7072-7074`) |
+| any kind | stamps (`<key> v<hash8>`, comma-joined) are logged at Information; the dispatcher does not store launch arguments on the session row | `AgentTaskDispatcher.ComposeDelegateArgs` (`:7072-7074`) |
+| any kind on the Herdr backend (a local delegate can inherit a standing agent's Herdr backend, `AgentTaskDispatcher.cs:5952`) | the runner writes exe, args (Claude/Codex composed text included; Grok's argv is the bootstrap only) and env to `<SessionLogPath>/herdr/<session:N>.launch.ps1`; deleted after a successful launch; on a launch error the script is rewritten with env values redacted and the arguments retained, and kept for diagnosis | `HerdrPaneChild.cs:882-889` (write), `:915-922` (catch), `:951` (delete on success), `TryRedactLaunchScript` `:1055-1075`; `HerdrLaunchScript.PathFor`/`BuildContent`/`Write`; existing tests `HerdrLaunchShapeTests.Wrong_kind_fails_keeps_script_and_tears_down`, `HerdrLaunchShapeTests.Redacted_script_hides_every_env_value_and_leaves_tokens_unresolved` (not in this card's rows) |
 | any kind | `AgentSession.ComposedBundleStamp` is not assigned on a delegate launch; S2 adds it (G-15b) | assigned only in `AgentControlService.cs:608`, `:664` and `OrchestratorService.cs:687` |
 
 A rendered header (`[bundle:<key> v<hash8>]`) is in composed text; a stamp (`<key> v<hash8>`) is in the log line and `ComposedBundleStamp` (`ComposedInstructions.StampLine`). The Grok receipt binds the whole rules file, not each bundle, and shows the file was written, not that the model followed it.
@@ -129,9 +133,9 @@ Disclosed gaps:
 
 ### Proves it works now
 
-Recipe for every row: *case -> mutation -> red*. Layer U = pure (`[Category("Unit")]`), I = service or dispatcher over the
+Recipe for each row: *case -> mutation -> red*. Layer U = pure (`[Category("Unit")]`), I = service or dispatcher over the
 isolated test Postgres (`[Category("Integration")]`), H = HTTP through `AntiphonWebAppFactory`, S = Slow settlement world.
-Test classes and methods are exact; expected outcomes are hand-written below, never read from the implementation.
+Test classes and methods are exact; expected outcomes are hand-written below, not read from the implementation.
 
 **S1 — `tests/Antiphon.Tests/Application/RolePolicyToolBundleTests.cs` (U, new; 8 methods / 19 executions).**
 
@@ -142,7 +146,7 @@ Test classes and methods are exact; expected outcomes are hand-written below, ne
 - V-3x: `the_resolver_returns_nothing_for_an_empty_list_or_an_unlisted_role` | U | default settings: `ResolveRoleToolBundles(Review, …)` -> empty; `ResolveRoleToolBundles(Custom, …)` (no `RolePolicy` entry) -> empty, no throw. Mutation: throw on a missing role entry -> red (Custom and Check have no entry as shipped and must keep dispatching).
 - V-4: `IsToolBundleKey_is_a_whitelist_of_prefix_and_catalog(string key)` | U | rows -> all `false`: `"stage-code"` (catalog, wrong prefix), `"delegate-basics"`, `"style-terse"`, `"standing-instructions"`, `"tool-"` (prefix only), `"tool-missing"` (prefix, not in catalog), `"TOOL-OPEN-CODE-REVIEW"` (ordinal case). The positive row lands with S2 (V-6a). Mutation: `IsToolBundleKey` returns `All.ContainsKey(key)` -> `"stage-code"` row red.
 - V-5: `shipped_role_policy_lists_no_tool_bundles_on_any_role` | U | `new DelegationSettings().RolePolicy.Values.ShouldAllBe(p => p.Bundles.Count == 0)` and `RolePolicy.ContainsKey("Review")`. Mutation: seed Review with `"tool-open-code-review"` -> red.
-- V-5b: `bundles_bind_from_configuration_per_role_without_disturbing_the_rest` | U | in-memory configuration `{"Delegation:RolePolicy:Review:Bundles:0" = "tool-open-code-review"}` bound onto a fresh `DelegationSettings` (`ConfigurationBuilder().AddInMemoryCollection(...).Build().GetSection("Delegation").Bind(settings)`) -> `RolePolicy["Review"].Bundles == ["tool-open-code-review"]`, `RolePolicy["Review"].Level == Frontier` (still), `RolePolicy["Code"].Bundles` empty. Mutation: property renamed (`BundleKeys`) -> `Bundles` empty, red.
+- V-5b: `bundles_bind_from_configuration_per_role_without_disturbing_the_rest` | U | in-memory configuration `{"Delegation:RolePolicy:Review:Bundles:0" = "tool-open-code-review"}` bound onto a fresh `DelegationSettings` (`ConfigurationBuilder().AddInMemoryCollection(...).Build().GetSection("Delegation").Bind(settings)`) -> `RolePolicy["Review"].Bundles == ["tool-open-code-review"]`, `RolePolicy["Review"].Level == Frontier` (still), `RolePolicy["Code"].Bundles` empty. Mutation (compiles): map the existing property to a different configuration key with `[Microsoft.Extensions.Configuration.ConfigurationKeyName("BundleKeys")]` on `RolePolicyEntry.Bundles`; the test input stays `Delegation:RolePolicy:Review:Bundles:0` -> `Bundles` binds empty, red at `Bundles.ShouldBe`. (A declaration-only rename to `BundleKeys` is a compile error, not this control; the matching test comment at `RolePolicyToolBundleTests.cs:120` still names the rename and needs a separate commission to correct.)
 
 **S1 — `tests/Antiphon.Tests/Application/RolePolicyToolBundleDispatchTests.cs` (I/H, new; 5 methods / 8 executions; V-3d added by the S1 repair).**
 Fixture: `AgentTaskAgentKindTests` siblings (`[Category("Integration")]`, `[NotInParallel("AgentQueue")]`, `CreateContext()`,
@@ -191,10 +195,10 @@ reason line, which `TestClassificationPolicyTests` guards).
 Review: the installed binary's SHA-256 and `ocr --version` output; `ocr --help`, `ocr review --help`, `ocr delegate --help`
 verbatim; exit code and stdout/stderr of `ocr delegate preview`, `ocr delegate rule <two files>` and `ocr review --from
 <base> --to HEAD --format json --output <scratch>/ocr.json` run with no key and with `HTTPS_PROXY=http://127.0.0.1:9
-HTTP_PROXY=http://127.0.0.1:9`; the JSON's top-level field names; every environment variable the help or errors name; the
-`find -newer <marker>` listing under `$HOME` and the worktree; `git status --porcelain` output (expected empty) after each
+HTTP_PROXY=http://127.0.0.1:9`; the JSON's top-level field names; the environment variables the help or errors name; the
+final `find -newer <marker>` listing (transient writes are not captured) under `$HOME` and the worktree; `git status --porcelain` output (expected empty) after each
 command; the conclusions *read-only yes/no*, *network-free yes/no*, *state-directory variable*, *provider variable names*.
-A probe that cannot run (`npm install --prefix <scratch>` fails on server2) is reported as such with the exit code; S2 then
+A probe that does not run (`npm install --prefix <scratch>` fails on server2) is reported as such with the exit code; S2 then
 ships the bundle with command lines marked "unmeasured" only if the operator says so (D-5), otherwise S2 waits.
 
 **M-1 (manual, after S2 and an operator configuration line, before S3).** With `Delegation:RolePolicy:Review:Bundles:0 =
@@ -205,12 +209,12 @@ report, not automated.
 
 ### Guards the regression
 
-- R-1: `InstructionBundleTests` — `the_catalog_holds_exactly_the_bundles_that_ship` (S2 adds `"tool-open-code-review"` after `"style-terse"`, nothing else changes), `C1083_EmbeddedBundlesMatchSourceAndRenderedHeaders` (S2 adds the key to its list; embedded text equals the source file byte-for-byte after LF normalisation), `a_stage_worker_carries_its_stage_bundle_then_the_basics` (6 rows: the new optional parameter leaves every existing call unchanged), `a_specialist_task_carries_nothing`, `the_board_api_bundle_is_on_no_role_by_default`, `every_bundle_summarises_itself_in_its_opening_sentence`, `no_bundle_carries_a_channel_preamble_placeholder`, `the_version_is_the_content_hash_so_two_bundles_never_share_one`, `an_unknown_key_throws_and_names_the_ones_that_exist` (the launch-time backstop), `C1015_Review_remains_read_only_and_checks_history` (stage-review untouched), `the_worst_case_composition_measured_sits_far_under_the_budget` (a 1,800-char bundle on a Review composition stays under `CommandLineBudgetChars`). Decisive: the pinned key list equals the catalog; 74 executions, 0 failed, at both S1 and S2 states.
+- R-1: `InstructionBundleTests` — `the_catalog_holds_exactly_the_bundles_that_ship` (S2 adds `"tool-open-code-review"` after `"style-terse"`, nothing else changes), `C1083_EmbeddedBundlesMatchSourceAndRenderedHeaders` (S2 adds the key to its list; C1083 compares normalized trimmed text — source after LF normalization and `Trim` against the catalog text and hash, not raw bytes), `a_stage_worker_carries_its_stage_bundle_then_the_basics` (6 rows: the new optional parameter leaves the existing calls unchanged), `a_specialist_task_carries_nothing`, `the_board_api_bundle_is_on_no_role_by_default`, `every_bundle_summarises_itself_in_its_opening_sentence`, `no_bundle_carries_a_channel_preamble_placeholder`, `the_version_is_the_content_hash_so_two_bundles_never_share_one`, `an_unknown_key_throws_and_names_the_ones_that_exist` (the launch-time backstop), `C1015_Review_remains_read_only_and_checks_history` (stage-review untouched), `the_worst_case_composition_measured_sits_far_under_the_budget` (a 1,800-char bundle on a Review composition stays under `CommandLineBudgetChars`). Decisive: the pinned key list equals the catalog; 74 executions, 0 failed, at both S1 and S2 states.
 - R-2: `AgentTaskAgentKindTests` — `the_allowlist_is_exactly_ClaudeCode_Grok_and_Codex`, `every_delegatable_kind_has_its_own_model_ladder`, `the_role_policy_kind_ships_unset_on_every_role`, `a_role_configured_to_an_undelegatable_kind_fails_loudly_and_names_the_role` (the create-path refusal this card's refusal sits beside). Decisive: no kind was added; 26 executions, 0 failed.
-- R-3: `AgentBundleAttachmentTests` — `a_role_default_and_an_attachment_naming_the_same_bundle_compose_it_once`, `a_stored_key_whose_bundle_file_was_renamed_is_dropped_rather_than_failing_the_launch` (attachments keep their drop-with-warning; role bundles never share it), `every_bundle_except_the_reply_styles_can_be_attached` (the tool bundle becomes attachable too). Decisive: 24 executions, 0 failed.
+- R-3: `AgentBundleAttachmentTests` — `a_role_default_and_an_attachment_naming_the_same_bundle_compose_it_once`, `a_stored_key_whose_bundle_file_was_renamed_is_dropped_rather_than_failing_the_launch` (attachments keep their drop-with-warning; role bundles do not share it), `every_bundle_except_the_reply_styles_can_be_attached` (the tool bundle becomes attachable too). Decisive: 24 executions, 0 failed.
 - R-4: `TestLaneCategoryGuardTests.every_test_class_is_tagged_unit_xor_integration` (the five new classes, two S1 and three S2, are tagged) and `TestClassificationPolicyTests` (the new Slow class is registered). Decisive: 1 + 25 executions, 0 failed.
 - R-5 (conditional, CARD-0097): if `tests/Antiphon.Tests/Application/RolePolicyReadServiceTests.cs` exists at the Code base (CARD-0097 S1 landed), its 6 methods `Compose_lists_RoutableRoles_in_order_and_marks_Custom_unconfigured`, `Compose_resolves_alias_from_kind`, `Compose_effective_prefers_the_first_stage_pin_candidate_and_excludes_card_pins`, `Compose_fills_a_missing_pin_level_from_the_policy`, `Compose_fills_a_missing_pin_kind_from_the_policy`, `Compose_withholds_the_target_for_a_candidate_free_pin` and `RolePolicyEndpointTests` (`Get_lists_every_routable_role_in_order_with_policy_fields`, `Get_overlays_the_active_stage_pin_as_effective`, `Get_ignores_card_pins_and_cleared_pins`) must stay green: they build Custom from `new RolePolicyEntry()` and read `Level/Kind/EscalateTo/TimeoutMinutes`; a list property defaulting to empty is invisible to them. At `50cbb6803` neither file exists on master (only CARD-0097's client-side S2 branch `feat/card-task-fc7927ca` was found), so the row is not in the closed list; the S1 Code brief adds it as `CP-7 | S1 | CP-1 | role-policy-readers | /*/*/(RolePolicyReadServiceTests*)\|(RolePolicyEndpointTests*)/* | R-5 | exactly 9 executed, 0 failed | 9 | 3` only when the file is present.
-- R-6: `AgentTaskRetryCommitRecoveryEndpointTests.Retry_without_the_abandon_flag_is_a_409_commit_recovery_pending_problem` already pins the problem+json `code` shape; V-3b relies on it and does not re-prove the middleware. Not in the table (unchanged code, named for traceability).
+- R-6: `AgentTaskRetryCommitRecoveryEndpointTests.Retry_without_the_abandon_flag_is_a_409_commit_recovery_pending_problem` already pins the problem+json `code` shape; V-3b relies on it and does not re-test the middleware. Not in the table (unchanged code, named for traceability).
 - R-7: `ReviewEvidenceParserTests` (21), `ReviewEvidenceSettlementTests` (11), `PipelineHandoffParseTests` (42): evidence and handoff parsing are untouched by S0–S2; not in the closed list (no source file they cover changes). Named so Review can confirm the diff does not touch `ReviewEvidence.cs`, `PipelineHandoff.cs`, `AgentTaskReplyService.cs` (S4 would touch the last; appendix B adds them then).
 
 ### Guard inventory
@@ -221,18 +225,18 @@ report, not automated.
 - G-4: D-2 — `IsToolBundleKey` is a whitelist: `tool-` prefix AND in the catalog (V-4, V-6a) | PC-4
 - G-5: D-2 default — shipped `RolePolicy` lists no tool bundle, so no Review runs a tool unasked (V-5, V-6d) | PC-5
 - G-6: D-2 — `Bundles` binds from `Delegation:RolePolicy:<Role>:Bundles` (V-5b) | PC-6
-- G-7: D-2 fail-closed — the resolver refuses an unknown key with `stage_tool_bundle_unknown`, never drops it (V-3 row 1, V-3a, V-3b, V-3c) | PC-7
+- G-7: D-2 fail-closed — the resolver refuses an unknown key with `stage_tool_bundle_unknown`, does not drop it (V-3 row 1, V-3a, V-3b, V-3c) | PC-7
 - G-8: D-2 fail-closed — the resolver refuses a known key without the `tool-` prefix (V-3 rows 2–6, V-4b) | PC-8
 - G-9: D-2 — `CreateAsync` invokes the resolver, so the refusal is a 422 (V-3a, V-3b) | PC-9
 - G-10: D-2 — the dispatcher invokes the resolver before the claim, so nothing launches (V-3c) | PC-10
-- G-11: D-4/D-9 — the bundle text pins untrusted-output, never-clean and the advisory line (V-6b) | PC-11
+- G-11: D-4/D-9 — the bundle text pins untrusted-output, no-clean-from-tool and the advisory line (V-6b) | PC-11
 - G-12: D-3/D-5 — the bundle carries no `{{` placeholder and no runtime install (V-6c) | PC-12
 - G-13: D-2 — the code-level role map does not hard-wire the tool bundle (V-6d) | PC-13
 - G-14: D-2 — the shipped bundle is a tool key (prefix, catalog, attachable, bounded) (V-6a) | PC-14
 - G-15: D-2 — the dispatcher's launch composition carries the role tool bundle (V-6g) | PC-15
 - G-15b (S2): D-2 as corrected — the dispatcher stores the composition's stamp on the delegate session (V-6g stamp assertion) | PC-15b
 - G-16: warm Grok reuse compares a composition that includes role tool bundles (V-11) | PC-16
-- G-17: §5 — a Custom-role task that emits review evidence binds no outcome (V-7) | PC-17
+- G-17: §5 — a Custom-role request with Stage omitted (not a follow-up) that emits review evidence binds no outcome (V-7) | PC-17
 - G-18 (appendix B, S4): `AdvisoryToolLine.TryParse` ignores fenced, quoted or indented lines (V-8b) | PC-18
 - G-19 (appendix B, S4): the completion header carries `advisory=` only when a line parsed (V-9b) | PC-19
 - G-20 (appendix A, S3 HELD): the image installs the probe's exact bytes (V-10) | PC-20
@@ -253,7 +257,7 @@ namespace); red must be the named assertion, then restore, then green on the sam
 - PC-3: break G-3 by replacing `if (!seen.Add(key)) continue;` with `seen.Add(key);` in `InstructionBundleComposer.Compose`; expect `RolePolicyToolBundleTests.a_role_tool_bundle_also_attached_composes_once` red at `CountOccurrences(...).ShouldBe(1)` (observed 2); `InstructionBundleTests.a_key_reachable_twice_is_composed_once` also red.
 - PC-4: break G-4 by making `IsToolBundleKey` return `All.ContainsKey(key)`; expect `RolePolicyToolBundleTests.IsToolBundleKey_is_a_whitelist_of_prefix_and_catalog` row `"stage-code"` red at `ShouldBeFalse`.
 - PC-5: break G-5 by seeding `["Review"] = new() { …, Bundles = ["tool-open-code-review"] }` in `DelegationSettings`; expect `RolePolicyToolBundleTests.shipped_role_policy_lists_no_tool_bundles_on_any_role` red at `ShouldAllBe`.
-- PC-6: break G-6 by renaming the property to `BundleKeys`; expect `RolePolicyToolBundleTests.bundles_bind_from_configuration_per_role_without_disturbing_the_rest` red at `Bundles.ShouldBe([...])` (observed empty).
+- PC-6: break G-6 with a mutation that compiles: add `[Microsoft.Extensions.Configuration.ConfigurationKeyName("BundleKeys")]` to `RolePolicyEntry.Bundles` in `DelegationSettings.cs`, so the binder reads `Delegation:RolePolicy:<Role>:BundleKeys` while the test keeps its `Delegation:RolePolicy:Review:Bundles:0` input and `.Bundles` assertion; expect `RolePolicyToolBundleTests.bundles_bind_from_configuration_per_role_without_disturbing_the_rest` red at `Bundles.ShouldBe([...])` (observed empty). A build error is not a red result; if the binder in use ignores the attribute (the test stays green), Mutation reports the control as missing rather than substituting a rename.
 - PC-7: break G-7 by `continue` (with a log) on `!Exists(key)` in the resolver; expect `RolePolicyToolBundleTests.the_resolver_refuses_unknown_and_non_tool_keys` row `"tool-does-not-exist"` red at `Should.Throw<ValidationException>` (no exception).
 - PC-8: break G-8 by validating `Exists(key)` instead of `IsToolBundleKey(key)` in the resolver; expect `RolePolicyToolBundleDispatchTests.create_refuses_a_known_key_without_the_tool_prefix` red at `Should.Throw` (task created).
 - PC-9: break G-9 by removing the resolver call from `AgentTaskService.CreateAsync`; expect `RolePolicyToolBundleDispatchTests.create_refuses_a_review_whose_role_names_an_unknown_tool_bundle_and_writes_nothing` red at `Should.Throw` (and V-3b red at `StatusCode.ShouldBe(422)`, observed 201).
@@ -266,7 +270,7 @@ namespace); red must be the named assertion, then restore, then green on the sam
 - PC-15b (S2): break G-15b by removing the dispatcher's `ComposedBundleStamp` assignment; expect `RolePolicyToolBundleShippedTests.a_review_launch_spec_carries_the_role_tool_bundle_once_after_the_basics` red at the session-stamp `ShouldContain("tool-open-code-review v")`.
 - PC-16: break G-16 by passing no role keys at the reuse composition (`AgentTaskDispatcher.cs:8054`); expect `RolePolicyToolBundleShippedTests.a_warm_grok_delegate_launched_without_the_role_tool_bundle_is_not_reused` red at `AgentSessionId.ShouldNotBe(warmSession)`.
 - PC-17: break G-17 by changing `OrchestrationStages.DefaultFor`'s default arm to `OrchestrationStage.Review`; expect `AdvisoryTaskSettlementTests.a_custom_role_worktree_task_that_emits_review_evidence_settles_without_binding_anything` red at `StageOutcomes.Count(...).ShouldBe(0)` (observed 1).
-- PC-21a: break G-21 by skipping the enqueue in `FailAndNotifyAsync` (`if (false && task.ReplyTo == …)`); expect `RolePolicyToolBundleDispatchTests.the_dispatcher_refusal_reaches_the_caller_as_one_complete_user_prompt` row `eligible` red at `RowsAsync(...).ShouldHaveSingleItem("an idle parent takes the note inline")` (observed 0). Code ran this as a scratch red for all four rows (see the Code report); Mutation owns the method-scoped control.
+- PC-21a: break G-21 by skipping the enqueue in `FailAndNotifyAsync` (`if (false && task.ReplyTo == …)`); expect `RolePolicyToolBundleDispatchTests.the_dispatcher_refusal_reaches_the_caller_as_one_complete_user_prompt` row `eligible` red at `RowsAsync(...).ShouldHaveSingleItem("an idle parent takes the note inline")` (observed 0). Code ran this as a scratch red for the four rows (see the Code report); Mutation owns the method-scoped control.
 - PC-21b: break G-21's recovery by removing the `ArmFailureReminder` call in `FailAndNotifyAsync`; expect the same method's row `enqueue-failure` red at `failed.NextCheckAt.ShouldNotBeNull("the reminder is armed with the Failed status")`.
 - PC-18 (pending with S4): break G-18 by trimming leading whitespace before matching in `AdvisoryToolLine.TryParse`; expect `AdvisoryToolLineTests.a_fenced_quoted_or_indented_line_is_ignored` row `indent` red at `ShouldBeNull`.
 - PC-19 (pending with S4): break G-19 by emitting `advisory=` unconditionally in `BuildCompletionNote`; expect `AdvisoryToolLineTests.the_completion_header_omits_advisory_when_no_line_parsed` red at `ShouldNotContain("advisory=")`.
@@ -305,8 +309,8 @@ false, the resolver returning the raw list, `Bundles` declared) and runs CP-1 on
 V-2, V-3 (6 rows), V-3a, V-3b, V-3c, V-4b and V-5b failing at their named assertions, and V-1b, V-3x, V-4, V-5 passing
 (they hold on the stub too). Then it implements and runs CP-1 green; a compile failure is not a red run. S2 runs CP-4 red
 by committing `ToolOpenCodeReviewBundleTests` before the bundle file (expected 5 executed, 5 failed, the first at
-`All.ContainsKey`), then green. The S1 repair added V-3d after the S1 red/green, so its red is a scratch mutation (PC-21a's, never committed) run
-once by Code on the new method; CP-1's frozen count moves from 23 to 27 with it. Counts in `Expect` are frozen; a zero-test result means the filter is wrong, never that
+`All.ContainsKey`), then green. The S1 repair added V-3d after the S1 red/green, so its red is a scratch mutation (PC-21a's, not committed) run
+once by Code on the new method; CP-1's frozen count moves from 23 to 27 with it. Counts in `Expect` are frozen; a zero-test result means the filter is wrong, not that
 the row passed.
 
 ### Cost
@@ -315,20 +319,20 @@ the row passed.
   two isolated `Antiphon.Tests` builds of about 6 minutes each are inside CP-1 and CP-4). Estimated, not measured.
   `-ExpectAbout` for S1 about 90 minutes (authoring + CP-1…CP-3 + red/green), for S2 about 75 minutes (bundle, docs,
   CP-4…CP-6), for S0 about 60 minutes (no rows).
-- PC floor (Mutation, pending): 20 PCs (PC-1…PC-17, PC-15b, PC-21a, PC-21b) over 10 files. Batched by file (PC-1/2/4/13 in `InstructionBundles.cs` cannot share a
-  batch with each other but can with PC-3 composer, PC-5/6 settings, PC-7/8 resolver, PC-9 service, PC-10/15/15b/16/21a dispatcher (PC-21b shares `FailAndNotifyAsync` with PC-21a and takes its own cycle),
+- PC floor (Mutation, pending): 20 PCs (PC-1…PC-17, PC-15b, PC-21a, PC-21b) over seven production files. Batched by file (PC-1/2/4/7/8/13 in `InstructionBundles.cs`, which also holds the resolver, do not share a
+  batch with each other but can with PC-3 composer, PC-5/6 settings, PC-9 service, PC-10/15/15b/16/21a dispatcher (PC-21b shares `FailAndNotifyAsync` with PC-21a and takes its own cycle),
   PC-11/12 bundle, PC-14 rename, PC-17 enum): at most 7 build cycles of red + restore + green, about 7 × (6 + 1 + 6 + 1) =
   **98 minutes** estimated, plus 20 method-scoped runs of under a minute each = about 118 minutes. PC-18/19 (S4) and
   PC-20 (S3) are outside this floor.
-- Total estimated: setup/build (first restore about 3 minutes) + 28 (V/R) + about 118 (PCs) = about 149 minutes, against
-  about 3 × 25.5 = 77 minutes for three whole-assembly runs that would prove less (no per-mutation red); savings come from
+- Total estimated: setup/build (first restore about 3 minutes) + 28 (V/R) + about 118 (PCs) = about 149 minutes. Whole-assembly
+  runs would give no per-mutation red (CARD-0110's 25.5-minute figure is old, not a current measurement); savings come from
   the closed list and build reuse (two builds for six rows instead of six).
 
 ## Collisions with in-flight work (read from `origin/master` at `50cbb6803`)
 
 | Card | State on master | Overlap | Rule for this card |
 |---|---|---|---|
-| CARD-1213 (branch names, `{{GIT-COMMON}}`) | **Not landed**: no commit on `origin/master` mentions CARD-1213; its commits (`32cf9a016`…`7b960a429`) exist only on a local `scratch/rebase-610137ee` ref and touch `server/Bundles/orchestrator.md`, `CheckpointRepeatDocumentationTests`, and bundle byte pins | Both edit `the_catalog_holds_exactly_the_bundles_that_ship` and `C1083_EmbeddedBundlesMatchSourceAndRenderedHeaders`; a placeholder expansion must also run over `tool-*` bundles | Whichever lands second re-pins both tests (ours adds exactly one key). V-6c pins that the tool bundle contains no `{{` at all, so it is safe whether or not 1213's expansion exists. Name `tool-open-code-review` in 1213's Code brief. No edit to `stage-review.md` here. |
+| CARD-1213 (branch names, `{{GIT-COMMON}}`) | **Not landed**: no commit on `origin/master` mentions CARD-1213; its commits (`32cf9a016`…`7b960a429`) exist only on a local `scratch/rebase-610137ee` ref and touch `server/Bundles/orchestrator.md`, `CheckpointRepeatDocumentationTests`, and bundle byte pins | Both edit `the_catalog_holds_exactly_the_bundles_that_ship` and `C1083_EmbeddedBundlesMatchSourceAndRenderedHeaders`; a placeholder expansion must also run over `tool-*` bundles | Whichever lands second re-pins both tests (ours adds exactly one key). V-6c pins that the tool bundle contains no `{{`, so it is safe whether or not 1213's expansion exists. Name `tool-open-code-review` in 1213's Code brief. No edit to `stage-review.md` here. |
 | CARD-0097 (role-policy read route + Routing tab) | **Server S1 not landed**: only the client-side S2 branch `feat/card-task-fc7927ca` (client files, plan, test design) was found; card column Review | S1 reads `RolePolicyEntry` into a DTO (`RolePolicyReadService.Compose`) | A `Bundles` list with an empty default is invisible to its 9 named tests (R-5). The S1 Code brief adds the conditional CP-7 row only if `RolePolicyReadServiceTests.cs` exists at its base. |
 | CARD-1229 (NU1605 pins) | **Landed** `50cbb6803` | Server-project builds | Code branches base on master at or above `50cbb6803`; this TestDesign branch (at `67d7f8598`) does not include it. |
 | CARD-1032 runner cleanup, CARD-1219 phone-home | per plan | none for S0–S2 | S3 (HELD) sequences after any runner rollout. |
@@ -339,7 +343,7 @@ Frozen for the day the operator releases it, after S0 reports *read-only yes* an
 
 - V-10: `scripts/verify-card0507-ocr-image.ps1` | Docker lane (server2's daemon or Docker Desktop per `docs/docker-stack.md`) | on the rebuilt `docker/session-runner-grok` image, `ocr --version` as uid 1654 prints `1.13.0`, and `sha256sum /usr/local/bin/ocr` equals the SHA-256 recorded in `docs/investigations/2026-10-14-card-0507-ocr-probe.md` | exit 0, one row. Mutation PC-20 above.
 - Row to append to the closed list only when S3 is released: `CP-8 | S3 | n/a (image build) | ocr-image | pwsh -NoProfile -File scripts/verify-card0507-ocr-image.ps1 | V-10 | one row, exit 0, printed version 1.13.0 and SHA equal to S0's | n/a | 20`, `Serial` true.
-- Not designed until released: the staged server2 rollout phases (operator action), the Windows lane, provider-mode keys (D-3: only `{{key:NAME}}` in project env or `-EnvOverride`, never in the bundle — V-6c already pins the bundle side).
+- Not designed until released: the staged server2 rollout phases (operator action), the Windows lane, provider-mode keys (D-3: only `{{key:NAME}}` in project env or `-EnvOverride`, not in the bundle — V-6c already pins the bundle side).
 
 ## Appendix B — S4 advisory line capture (optional, D-8)
 
@@ -348,7 +352,7 @@ If the operator takes D-8, this Code dispatch adds `tests/Antiphon.Tests/Applica
 
 - V-8a: `a_well_formed_line_parses_into_its_fields` | U | `AdvisoryToolLine.TryParse("…\nadvisory-tool: open-code-review version=1.13.0 exit=0 findings=3 adopted=1\n…")` -> `Tool == "open-code-review"`, `Version == "1.13.0"`, `Exit == 0`, `Findings == 3`, `Adopted == 1`, `Failed == false`. Mutation: `Findings` read from `adopted=` -> red.
 - V-8b: `a_fenced_quoted_or_indented_line_is_ignored(string shape)` | U | rows `fence`, `quote`, `indent` (the `Presented` shapes of `ReviewEvidenceSettlementTests`) -> `TryParse` returns null. Mutation PC-18.
-- V-8c: `a_failed_line_carries_its_reason` | U | `advisory-tool: open-code-review failed reason=not installed` -> `Failed == true`, `Reason == "not installed"`, `Findings == null`. Mutation: `Failed` never set -> red.
+- V-8c: `a_failed_line_carries_its_reason` | U | `advisory-tool: open-code-review failed reason=not installed` -> `Failed == true`, `Reason == "not installed"`, `Findings == null`. Mutation: `Failed` not set -> red.
 - V-8d: `the_last_bare_line_before_the_token_wins` | U | two bare lines -> the second's values. Mutation: first match returned -> red.
 - V-8e: `a_malformed_line_is_no_line` | U | `advisory-tool: open-code-review version=1.13.0 exit=0` (no `findings=`) -> null; `advisory-tool: other-tool findings=1 adopted=0` -> null (tool name is part of the contract). Mutation: partial parse accepted -> red.
 - V-9a: `the_completion_header_carries_the_advisory_bit_when_a_line_parsed` | U | `DelegationReportFormatter.BuildCompletionNote(task, new DelegationSettings(), report-with-line)` -> `Header` contains `advisory=open-code-review:findings=3/adopted=1`, placed after `drift=` when both exist. Mutation: bit omitted -> red.
