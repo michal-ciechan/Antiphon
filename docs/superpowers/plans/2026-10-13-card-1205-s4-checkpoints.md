@@ -174,4 +174,4 @@ Run S4-F1,S4-F2 test-first, then S4-T33,S4-F1,S4-F2,CP-4 after repair.
 One isolated build per committed group, exact HEAD, serial rows. NO Unit or S5.
 The tool bootstrap is an additional gated setup build because this worktree has no executable.
 No restart or live manual work. CP-4 now has 53 executions (48 inherited + 4 F1 + 1 F2).
-All existing S4 PCs plus PC-146/147 remain pending, including their variants.
+All existing S4 PCs plus PC-191/192 remain pending, including their variants.
