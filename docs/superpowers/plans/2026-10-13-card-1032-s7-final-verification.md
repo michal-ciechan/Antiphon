@@ -61,7 +61,7 @@ Mutation, so caller-requested scratch family mutants are not run in Code.
 
 Pending Mutation: all plan PCs and named variants remain pending, including
 PC-60's moved rebase positive, PC-73..78/80..81, PC-271..283, PC-293,
-PC-380..406 (each receipt field), PC-506..508, and PC-581.
+PC-380..399 (the twenty original receipt-field controls), PC-506..508, and PC-581.
 New binding candidates: PC-588 omit certificate verification (CardId,
 DoneRevisionId, TargetId, EndpointId, OperationId, ReportDigest,
 ArtifactProofDigest, DisposalPolicyDigest and unsigned-map variants) under
