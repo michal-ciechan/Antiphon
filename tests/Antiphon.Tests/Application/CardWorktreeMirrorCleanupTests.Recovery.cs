@@ -258,7 +258,9 @@ public sealed partial class CardWorktreeMirrorCleanupTests
         var row = await f.EndpointAsync();
         row.State.ShouldNotBe(CardWorktreeCleanupEndpointState.Complete, reason); row.ImportedReceipt.ShouldBeNull(reason);
         row.Reason.ShouldBe(reason); row.Retryable.ShouldBeTrue(reason);
-        row.NextAttemptAt.ShouldBe(f.Clock.GetUtcNow().UtcDateTime + MirrorRetryDelay, reason);
+        // PostgreSQL keeps microseconds.
+        var due = f.Clock.GetUtcNow().UtcDateTime + MirrorRetryDelay;
+        row.NextAttemptAt.ShouldBe(due.AddTicks(-(due.Ticks % WorktreeResidueSettings.MicrosecondTicks)), reason);
         (row.OperationId is not null).ShouldBe(intent, reason); (row.ImmutableRequest is not null).ShouldBe(intent, reason);
         if (!intent) { Directory.Exists(f.Binding.GitDirectory).ShouldBeTrue(reason); (await File.ReadAllTextAsync(f.Sentinel)).ShouldBe("mirror evidence\n", reason); }
     }
