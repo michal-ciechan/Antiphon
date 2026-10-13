@@ -1151,3 +1151,14 @@ A missing concrete mutation payload after Code stays **binding required**.
 Next: **Code S1 — identity and wire schema**, CP-1/CP-2 only, retaining
 the eight-slice sequencing and production execution disabled. Parent S4/S5
 activation, native qualification and pending Mutation are carried forward.
+
+### S4 repair case additions
+
+| Case | Exact ordinary detecting filter | Results | Oracle |
+|---|---|---:|---|
+| D1/D2/D3 and full HOLD matrix | `/*/*/CompletedCardWorkspaceRemovalTests/C1032_InspectionHoldShapes*` | 42 | hand-written reason, HOLD, actual HEAD, HeldPaths, captured bytes and no intent |
+| Read-only inspection/proof calls | `/*/*/CompletedCardWorkspaceRemovalTests/C1032_InspectionReadOnlyGitCalls*` | 1 | exact read-only arguments, GIT_OPTIONAL_LOCKS=0, unchanged bytes/index, no intent |
+
+These rows are included in CP-6's existing prefix (46 total results), not extra
+checkpoint executions. The repair selection names all required S2/S3 and full-class
+regressions. Every added PC and variant remains pending for SourceLanding Mutation.

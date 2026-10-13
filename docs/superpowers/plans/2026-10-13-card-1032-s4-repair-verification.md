@@ -19,30 +19,51 @@ parent acceptance; the link argument exercises a scratch directory symlink on Li
 
 | Shape / test argument | Required verdict / reason |
 |---|---|
+| assume-clean | HOLD tracked_index_flags |
+| assume-dirty | HOLD tracked_index_flags |
+| skip-clean | HOLD tracked_index_flags |
+| skip-dirty | HOLD tracked_index_flags |
+| both-flags | HOLD tracked_index_flags |
+| flagged-newline-path | HOLD tracked_index_flags |
+| ignored-bare | HOLD nested_repository |
+| bare | HOLD nested_repository |
+| admin-index.lock | HOLD repository_locked |
+| common-index.lock | HOLD repository_locked |
+| admin-HEAD.lock | HOLD repository_locked |
+| common-packed-refs.lock | HOLD repository_locked |
+| common-shallow.lock | HOLD repository_locked |
+| common-gc.pid | HOLD repository_locked |
+| admin-gc.pid | HOLD repository_locked |
+| common-refs/heads/side.lock | HOLD repository_locked |
+| admin-custom.lock | HOLD repository_locked |
+| merge | HOLD unfinished_operation |
+| rebase-merge | HOLD unfinished_operation |
+| rebase-apply | HOLD unfinished_operation |
+| CHERRY_PICK_HEAD | HOLD unfinished_operation |
+| REVERT_HEAD | HOLD unfinished_operation |
+| BISECT_LOG | HOLD unfinished_operation |
+| sequencer | HOLD unfinished_operation |
+| common-MERGE_HEAD | HOLD unfinished_operation |
 | tracked | HOLD dirty_source |
 | staged | HOLD dirty_source |
 | untracked | HOLD dirty_source |
-| protected (ignored bin/.env) | HOLD protected_content |
-| evidence (ignored .antiphon/result.trx) | HOLD evidence_requires_admission |
+| protected | HOLD protected_content |
+| evidence | HOLD evidence_requires_admission |
 | link | HOLD linked_content |
-| nested; ignored-nested | HOLD nested_repository |
-| bare; ignored-bare (real ref/objects) | HOLD nested_repository |
-| gitlink (committed, unpopulated) | HOLD submodule_content |
+| nested | HOLD nested_repository |
+| ignored-nested | HOLD nested_repository |
+| gitlink | HOLD submodule_content |
 | locked-registration | HOLD locked_registration |
-| prunable-registration (gitfile missing) | HOLD stale_mirror_binding |
-| admin-index.lock; common-index.lock; admin-HEAD.lock; common-packed-refs.lock; common-shallow.lock; common-refs/heads/side.lock; admin-custom.lock | HOLD repository_locked |
-| admin-gc.pid; common-gc.pid | HOLD repository_locked |
-| merge (actual clean-status unfinished merge); common-MERGE_HEAD | HOLD unfinished_operation |
-| rebase-merge; rebase-apply; CHERRY_PICK_HEAD; REVERT_HEAD; BISECT_LOG; sequencer | HOLD unfinished_operation |
-| assume-clean; assume-dirty; skip-clean; skip-dirty; both-flags; flagged-newline-path | HOLD tracked_index_flags; HeldPaths names the tracked filename |
-| sparse (core.sparseCheckout=true, even without skip flags) | HOLD sparse_checkout |
+| prunable-registration | HOLD stale_mirror_binding |
+| sparse | HOLD sparse_checkout |
 | detached | HOLD source_ref_mismatch |
 | unborn | HOLD inspection_unreadable |
 | shallow | HOLD shallow_repository |
-| other-repository (gitfile points at foreign repository) | HOLD stale_mirror_binding |
-| case-twin (ignored Twin/twin pair) | HOLD case_ambiguous_content |
-| clean bound / mtime-only | May be Eligible: C1032_InspectionReadOnlyBound / C1032_InspectionReadOnlyGitCalls |
-| HEAD differs from creation baseline | May be Eligible, report actual HEAD: C1032_InspectionSourceProof |
+| other-repository | HOLD stale_mirror_binding |
+| case-twin | HOLD case_ambiguous_content |
+| clean bound | May be Eligible: C1032_InspectionReadOnlyBound |
+| mtime-only | May be Eligible: C1032_InspectionReadOnlyGitCalls |
+| HEAD differs from creation baseline | May be Eligible; actual HEAD: C1032_InspectionSourceProof |
 
 ## Verification design
 
