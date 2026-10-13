@@ -38,6 +38,14 @@ public sealed class RunnerWorkspaceUseGate(RunnerWorkspaceRemovalJournal journal
         return new Lease(_admission);
     }
 
+    internal async Task<IAsyncDisposable> AcquireRetainedUseAsync(string? path, Guid id,
+        Func<bool> stillOwned, CancellationToken ct)
+    {
+        await _admission.WaitAsync(ct);
+        RecordOwner(path, id, stillOwned);
+        return new Lease(_admission);
+    }
+
     public void CompleteCensus() => _censusReady = !_censusUnknown;
     public void MarkCensusUnknown() => _censusUnknown = true;
 

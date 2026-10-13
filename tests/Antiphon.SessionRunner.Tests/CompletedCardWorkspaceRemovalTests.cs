@@ -101,18 +101,21 @@ public sealed class CompletedCardWorkspaceRemovalTests
         var child = f.Child(); var id = Guid.NewGuid(); f.SeedManifest(child, id);
         f.InstallGate(restart: true);
         var entered = NewBarrier(); var release = NewBarrier();
-        f.EffectBarrier = async () => { entered.SetResult(); await release.Task; };
+        f.Runtime.GetType().GetProperty("WorkspaceCensusForTest", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .SetValue(f.Runtime, (Func<Task>)(async () => { entered.SetResult(); await release.Task; }));
         var adoption = f.Runtime.AdoptOrphanedHostsAsync(new SystemProcessLivenessProbe(), CancellationToken.None);
         await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
         try
         {
             (await f.Retire()).ShouldBeFalse("cleanupAdmittedBeforeCensus");
             child.HasExited.ShouldBeFalse("ownedChildStillAlive");
-            ((bool)f.Gate.HasOwnershipConflict(f.Checkout)).ShouldBeTrue("retainedOwnerVisible");
         }
         finally { release.TrySetResult(); }
-        await Should.ThrowAsync<FenceEffectException>(adoption);
+        await adoption;
         child.HasExited.ShouldBeFalse();
+        ((bool)f.Gate.HasOwnershipConflict(f.Checkout)).ShouldBeTrue("retainedOwnerVisible");
+        f.Runtime.Get(id).Pending.ShouldBe("workspace_ownership_conflict");
+        (await f.Retire()).ShouldBeFalse();
         File.Exists(Antiphon.PtyHost.Protocol.PtyHostManifest.PathFor(f.Settings.PtyHostManifestDir, id)).ShouldBeTrue();
     }
 

@@ -212,6 +212,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
     /// Herdr attach contact, adoption registration) with the path name. Production never sets it.
     /// </summary>
     internal Func<Guid, string, Task>? CreationEffectForTest { get; set; }
+    internal RunnerWorkspaceUseGate? WorkspaceUseGate { get; set; }
+    internal Func<Task>? WorkspaceCensusForTest { get; set; }
 
     /// <summary>CARD-1153 S2 test seam: inside the launch gate, before a prepare/certify decision.</summary>
     internal Func<Guid, Task>? AbsenceDecisionUnderGateForTest { get; set; }
@@ -420,6 +422,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             && (request.Backend is null
                 || string.Equals(request.Backend, SessionBackends.PtyHost, StringComparison.OrdinalIgnoreCase)))
             UnixPtyArgvGuard.VerifyOrThrow(request.Exe, request.Args);
+        await using var workspace = WorkspaceUseGate is null ? null :
+            await WorkspaceUseGate.AcquireUseAsync(request.Cwd, ct);
         var gate = _launchLocks.GetOrAdd(request.SessionId, _ => new SemaphoreSlim(1, 1));
         await gate.WaitAsync(ct);
         try
@@ -428,7 +432,9 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             if (request.VerificationBinding is null)
             {
                 if (HasCustodyLedger) _custody.Value.RequireUntrackedSession(request.SessionId);
-                return await StartCoreAsync(request, ct);
+                var result = await StartCoreAsync(request, ct);
+                RetainWorkspaceOwner(request.Cwd, request.SessionId);
+                return result;
             }
             RecordCreationAttemptUnderGate(request.SessionId, request.AcceptedStartedAt);
             using var custodyLease = _custody.Value.AcquireSession(request.SessionId);
@@ -439,7 +445,9 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                     return existing.ToDto();
                 throw new VerificationCustodyException("verification_custody_attempt_already_recorded");
             }
-            return await StartCoreAsync(request, ct);
+            var started = await StartCoreAsync(request, ct);
+            RetainWorkspaceOwner(request.Cwd, request.SessionId);
+            return started;
         }
         finally { gate.Release(); }
     }
@@ -671,18 +679,32 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
     /// <summary>CARD-0213: bind a standing session to an operator pane Antiphon did not launch.</summary>
     public async Task<RunnerSessionDto> AttachHerdrAsync(HerdrAttachRequest request, CancellationToken ct)
     {
+        // Read-only inspection precedes admission. The child rechecks this exact cwd under the
+        // pane lock before any attached sidecar/metadata effect (C1032_FenceAttachOrders).
+        string? checkout = null;
+        if (WorkspaceUseGate is not null)
+        {
+            var inspected = await InspectHerdrPaneAsync(request.PaneId, ct);
+            checkout = inspected.Foreground.SingleOrDefault(p => p.Pid == request.ExpectedChildPid)?.Cwd;
+            if (checkout is null)
+                throw new PhoneHomeAdmissionException("workspace_owner_unknown", "Attached workspace is unknown.", 409);
+        }
+        await using var workspace = WorkspaceUseGate is null ? null :
+            await WorkspaceUseGate.AcquireUseAsync(checkout!, ct);
         var gate = _launchLocks.GetOrAdd(request.SessionId, _ => new SemaphoreSlim(1, 1));
         await gate.WaitAsync(ct);
         try
         {
             RequireOpenIdentityUnderGate(request.SessionId);
             if (HasCustodyLedger) _custody.Value.RequireUntrackedSession(request.SessionId);
-            return await AttachHerdrCoreAsync(request, ct);
+            var result = await AttachHerdrCoreAsync(request, checkout, ct);
+            if (checkout is not null) RetainWorkspaceOwner(checkout, request.SessionId);
+            return result;
         }
         finally { gate.Release(); }
     }
 
-    private async Task<RunnerSessionDto> AttachHerdrCoreAsync(HerdrAttachRequest request, CancellationToken ct)
+    private async Task<RunnerSessionDto> AttachHerdrCoreAsync(HerdrAttachRequest request, string? checkout, CancellationToken ct)
     {
         if (request.SessionId == Guid.Empty)
             throw new ArgumentException("SessionId must not be empty.", nameof(request));
@@ -741,7 +763,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 () => NotifyPaneSetChanged(),
                 _placement,
                 LookupBinding,
-                ct);
+                checkout, ct);
             NotifyPaneSetChanged();
             return session.ToDto();
         }
@@ -1797,6 +1819,18 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
     /// </summary>
     public async Task<int> AdoptOrphanedHostsAsync(IProcessLivenessProbe probe, CancellationToken ct)
     {
+        // Workspace admission precedes custody, session and pane locks. Retirement remains held
+        // until this census finishes; exceptions leave it unready (C1032_FenceStartupAdoptionOrders).
+        await using var workspaceCensus = WorkspaceUseGate is null ? null :
+            await WorkspaceUseGate.AcquireCensusAsync(ct);
+        if (WorkspaceCensusForTest is { } censusCut) await censusCut();
+        if (WorkspaceUseGate is not null)
+        {
+            var herdrRoot = HerdrPaneSidecar.DirectoryFor(_settings.SessionLogPath);
+            if (Directory.Exists(herdrRoot))
+                foreach (var file in Directory.EnumerateFiles(herdrRoot, "*.json"))
+                    if (HerdrPaneSidecar.TryLoad(file) is null) WorkspaceUseGate.MarkCensusUnknown();
+        }
         var hasCustodyLedger = HasCustodyLedger;
         if (hasCustodyLedger)
         {
@@ -1835,6 +1869,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         {
             pty.Complete(0); sweep.Complete(0);
             _absenceAdoptionComplete = true;
+            WorkspaceUseGate?.CompleteCensus();
             return 0;
         }
 
@@ -1845,8 +1880,28 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             var manifest = PtyHostManifest.TryLoad(file);
             if (manifest is null || manifest.SessionId == Guid.Empty)
             {
+                if (WorkspaceUseGate is not null)
+                {
+                    WorkspaceUseGate.MarkCensusUnknown();
+                    continue;
+                }
                 TryDeleteFile(file);
                 continue;
+            }
+
+            if (WorkspaceUseGate is not null && manifest.HostPid > 0
+                && probe.IsAlive(manifest.HostPid, manifest.HostStartTimeUtc))
+            {
+                WorkspaceUseGate.RecordOwner(manifest.Cwd, manifest.SessionId,
+                    () => probe.IsAlive(manifest.HostPid, manifest.HostStartTimeUtc));
+                if (WorkspaceUseGate.IsRetiring(manifest.Cwd))
+                {
+                    // A retained process is observed ownership, not a newly authorized launch.
+                    // Keep its manifest and a visible pending row; do not attempt I/O or kill it.
+                    _sessions.TryAdd(manifest.SessionId, RunnerSession.CreateWorkspaceConflict(
+                        manifest, _settings, _events, _logger));
+                    continue;
+                }
             }
 
             if (_sessions.TryGetValue(manifest.SessionId, out var existingPty))
@@ -1907,6 +1962,12 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                         "Live pty-host for session {SessionId} (pid {HostPid}) could not be adopted; treating as dead",
                         manifest.SessionId, manifest.HostPid);
                     await session.DisposeAsync();
+                    if (WorkspaceUseGate is not null)
+                    {
+                        _sessions.TryAdd(manifest.SessionId, RunnerSession.CreateWorkspaceConflict(
+                            manifest, _settings, _events, _logger));
+                        continue;
+                    }
                     if (manifest.VerificationBinding is null) KillPidBestEffort(manifest.HostPid);
                 }
             }
@@ -1927,7 +1988,19 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
 
         pty.Complete(adopted); sweep.Complete(adopted);
         _absenceAdoptionComplete = true;
+        WorkspaceUseGate?.CompleteCensus();
         return adopted;
+    }
+
+    private void RetainWorkspaceOwner(string path, Guid sessionId)
+    {
+        if (WorkspaceUseGate is null || !_sessions.TryGetValue(sessionId, out var session)) return;
+        var dto = session.ToDto();
+        var hostStart = dto.HostPid is int host ? _processLiveness.TryGetStartTimeUtc(host) : null;
+        var childStart = dto.Pid is int child ? _processLiveness.TryGetStartTimeUtc(child) : null;
+        WorkspaceUseGate.RecordOwner(path, sessionId, () => !session.HasExited
+            || (dto.HostPid is int h && (hostStart is null || _processLiveness.IsAlive(h, hostStart.Value)))
+            || (dto.Pid is int p && (childStart is null || _processLiveness.IsAlive(p, childStart.Value))));
     }
 
     /// <summary>
@@ -1942,6 +2015,19 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         foreach (var candidate in HerdrPaneSidecar.LoadAll(_settings.SessionLogPath))
         {
             ct.ThrowIfCancellationRequested();
+            if (WorkspaceUseGate is not null)
+            {
+                WorkspaceUseGate.RecordOwner(candidate.Cwd, candidate.SessionId,
+                    () => candidate.ChildPid is not int pid || probe.IsAlive(pid,
+                        candidate.ChildStartedAtUtc ?? candidate.LaunchedAtUtc));
+                if (WorkspaceUseGate.IsRetiring(candidate.Cwd))
+                {
+                    _sessions.TryAdd(candidate.SessionId, RunnerSession.CreatePendingHerdr(
+                        candidate, _settings, _events, _logger, _processLiveness, _placement,
+                        "workspace_ownership_conflict"));
+                    continue;
+                }
+            }
             using var attempt = _startup.Begin("herdr-adoption", candidate.SessionId);
             await using var paneLease = await _placement.LockPaneAsync(candidate.PaneId, ct);
             var sidecar = HerdrPaneSidecar.TryLoad(HerdrPaneSidecar.PathFor(_settings.SessionLogPath, candidate.SessionId));
@@ -2050,6 +2136,12 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
         var sidecar = session.PendingSidecar;
         if (sidecar is null || _herdrClient is null)
             return;
+
+        await using var workspace = WorkspaceUseGate is null ? null :
+            await WorkspaceUseGate.AcquireRetainedUseAsync(sidecar.Cwd, sidecar.SessionId,
+                () => sidecar.ChildPid is not int pid || probe.IsAlive(pid,
+                    sidecar.ChildStartedAtUtc ?? sidecar.LaunchedAtUtc), ct);
+        if (WorkspaceUseGate?.IsRetiring(sidecar.Cwd) == true) return;
 
         await using var paneLease = await _placement.LockPaneAsync(sidecar.PaneId, ct);
         if (!session.IsPendingHerdr || session.PendingSidecar != sidecar) return;
@@ -2704,6 +2796,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             Action onPaneSetChanged,
             HerdrPlacementCoordinator placement,
             Func<string, Guid?, PaneBinding?> findBound,
+            string? checkout,
             CancellationToken ct)
         {
             Directory.CreateDirectory(_settings.SessionLogPath);
@@ -2720,7 +2813,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 _herdrChild = new HerdrPaneChild(
                     herdrClient, _settings, _logger, liveAntiphonPanes, _processLiveness,
                     placement,
-                    findBound);
+                    findBound) { RequiredWorkspacePath = checkout };
                 _herdrChild.Exited += exit =>
                 {
                     lock (_gate)
@@ -3283,6 +3376,22 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             return session;
         }
 
+        public static RunnerSession CreateWorkspaceConflict(PtyHostManifest manifest,
+            SessionRunnerSettings settings, SessionRunnerEventHub events, ILogger logger)
+        {
+            var session = new RunnerSession(manifest.SessionId, settings, events, logger)
+            {
+                CheckoutPath = RunnerWorkspaceService.TryResolveFinal(manifest.Cwd ?? ""),
+                _hostPid = manifest.HostPid, _childPid = manifest.ChildPid,
+                _startedAt = manifest.ChildStartTimeUtc ?? manifest.CreatedAtUtc,
+                _adopted = true, _status = "Starting", _pendingReason = "workspace_ownership_conflict",
+                _acceptedStartedAt = manifest.AcceptedStartedAt,
+            };
+            session._clientReady.TrySetResult(false);
+            session._launchFinished.TrySetResult();
+            return session;
+        }
+
         public static RunnerSession CreateAdoptedHerdrExited(
             HerdrPaneSidecar sidecar,
             SessionRunnerSettings settings,
@@ -3323,7 +3432,8 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
             SessionRunnerEventHub events,
             ILogger logger,
             IProcessLivenessProbe processLiveness,
-            HerdrPlacementCoordinator? placement = null)
+            HerdrPlacementCoordinator? placement = null,
+            string pendingReason = HerdrPendingReasons.Unreachable)
         {
             return new RunnerSession(sidecar.SessionId, settings, events, logger, processLiveness: processLiveness)
             {
@@ -3333,7 +3443,7 @@ public sealed class SessionRunnerRuntime : IAsyncDisposable
                 _adopted = true,
                 _status = "Starting",
                 _backend = SessionBackends.Herdr,
-                _pendingReason = HerdrPendingReasons.Unreachable,
+                _pendingReason = pendingReason,
                 _pendingSidecar = sidecar,
                 _herdrPlacement = placement,
                 _herdrOrigin = sidecar.Origin ?? HerdrPaneOrigins.Launched,
