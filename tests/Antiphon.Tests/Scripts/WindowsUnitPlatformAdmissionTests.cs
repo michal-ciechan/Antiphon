@@ -72,7 +72,7 @@ public sealed class WindowsUnitPlatformAdmissionTests
         foreach (var source in new[]
         {
             healthy.Replace("void Case()", "void Unknown()", StringComparison.Ordinal),
-            healthy.Replace("C1008HostFixture.RequireNativeLinux()", "global::Antiphon.Tests.TestHelpers.NativeLinuxGate.Require("reason")", StringComparison.Ordinal).Replace("void Case()", "void Unknown()", StringComparison.Ordinal),
+            healthy.Replace("C1008HostFixture.RequireNativeLinux()", "global::Antiphon.Tests.TestHelpers.NativeLinuxGate.Require(string.Empty)", StringComparison.Ordinal).Replace("void Case()", "void Unknown()", StringComparison.Ordinal),
             "using Gate = Antiphon.Tests.TestHelpers.NativeLinuxGate; namespace Antiphon.Tests.Scripts; class Probe { void Unknown() { Gate.Require(\"reason\"); } }",
             "using static Antiphon.Tests.TestHelpers.NativeLinuxGate; namespace Antiphon.Tests.Scripts; class Probe { void Unknown() { Require(\"reason\"); } }",
             "namespace Antiphon.Tests.Scripts; class Probe { System.Action Property => () => NativeLinuxGate.Require(\"reason\"); }",
