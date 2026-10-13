@@ -8,9 +8,7 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 /// <summary>
-/// CARD-1219: the phone-home mapper must turn the runner's transcript-fault and transcript-bound
-/// frames into the same server records the local SSE parser produces. The runner hub serialises
-/// with default options (PascalCase), so both that spelling and the Web spelling are covered.
+/// CARD-1219: RunnerContractMapper parsing of transcript-fault and transcript-bound frames.
 /// </summary>
 [Category("Unit")]
 public class RunnerContractMapperTranscriptEventTests

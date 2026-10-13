@@ -113,8 +113,7 @@ public sealed class PhoneHomeRunnerSettingsValidatorTests
             .ShouldBe([RollingRunnerSettings.Server2, RollingRunnerSettings.Server2Temp]);
     }
 
-    // CARD-1219 V-7 (D-3): the phone-home transcript-incident replay window is at least one second,
-    // in both the legacy and the map configuration shapes.
+    // CARD-1219 V-7 (D-3): replay-window minimum, legacy and map configuration shapes.
     [Test]
     public void Replay_window_below_one_second_is_refused()
     {

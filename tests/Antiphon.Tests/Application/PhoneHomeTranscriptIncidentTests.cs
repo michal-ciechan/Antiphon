@@ -19,12 +19,7 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 /// <summary>
-/// CARD-1219: a remote (phone-home) runner's transcript-fault and transcript-bound frames through the
-/// pump to the incident service, after the owner check and the per-runner replay guard. The clock
-/// stays frozen inside the replay window. Window expiry and eviction are
-/// TranscriptIncidentReplayGuardTests' cases; no test here fails an incident write after admission
-/// or restarts the pump. Waits pair PendingEvents with a positive observable for the frame of
-/// interest (its row, its refused-replay Debug line, or an ordering sentinel behind it).
+/// CARD-1219: remote (phone-home) transcript-fault and transcript-bound frames through PhoneHomeRecoveryPump.
 /// </summary>
 [Category("Integration")]
 public class PhoneHomeTranscriptIncidentTests
@@ -135,8 +130,7 @@ public class PhoneHomeTranscriptIncidentTests
         var liveB = f.Host.Directory.SnapshotLive()!;
         var pumpingB = f.Pump.PumpEventsAsync(liveB, cts.Token);
 
-        // (c) the identical frames again, on the new epoch; the frozen clock keeps both keys inside
-        // the window, and the same pump instance still holds them.
+        // (c) the same two frames again on the new epoch.
         await EmitAsync(peerB, liveB.Epoch, SessionRunnerEventNames.SessionTranscriptFault, f1);
         await EmitAsync(peerB, liveB.Epoch, SessionRunnerEventNames.SessionTranscriptBound, b);
         await WaitUntilAsync("both replays refused",
@@ -152,7 +146,7 @@ public class PhoneHomeTranscriptIncidentTests
             () => Task.FromResult(f.Refused() >= 4 && liveB.PendingEvents == 0));
         (await f.FaultRowsAsync(remote)).ShouldBe(1);
 
-        // (e) a record with Repeat and UnboundSeconds advanced (the refusal-path repeat shape) records again.
+        // (e) the fault with Repeat and UnboundSeconds advanced.
         await EmitAsync(peerB, liveB.Epoch, SessionRunnerEventNames.SessionTranscriptFault,
             f1 with { Repeat = 2, UnboundSeconds = 300 });
         await WaitUntilAsync("genuine repeat recorded",
@@ -173,8 +167,7 @@ public class PhoneHomeTranscriptIncidentTests
     {
         await using var f = await Fixture.StartAsync();
         var remote = await f.SeedRemoteAsync("grok-linux", f.Host.StoreId);
-        // Each foreign session has an owning task row, so a bypassed owner check would write a real
-        // incident row rather than take the service's unowned branch.
+        // Two seeded foreign sessions and one unknown session.
         var foreignRunner = await f.SeedRemoteAsync("other-runner", Guid.NewGuid());
         var foreignStore = await f.SeedRemoteAsync("grok-linux", Guid.NewGuid());
         var unknown = Guid.NewGuid();
@@ -191,8 +184,7 @@ public class PhoneHomeTranscriptIncidentTests
                 new RunnerTranscriptBoundEvent(sid, BoundPath, "discovery"));
         }
 
-        // Ordering sentinel: the channel is one FIFO reader, so this delta proves the six frames
-        // ahead of it were fully handled.
+        // Ordering sentinel: an output frame emitted after the six frames.
         await EmitOutputAsync(peer, remote, 1, live.Epoch);
         await WaitUntilAsync("sentinel observed",
             () => Task.FromResult(f.Deltas(remote) >= 1 && live.PendingEvents == 0));
@@ -227,7 +219,7 @@ public class PhoneHomeTranscriptIncidentTests
         await WaitUntilAsync("remote rows recorded", async () =>
             await f.FaultRowsAsync(a) >= 1 && await f.BoundRowsAsync(a) >= 1 && live.PendingEvents == 0);
 
-        // Local lane, the SSE pump's exact calls, for session B with hand-written records.
+        // Local lane: direct service calls for session B, with matching diagnostic fields.
         var service = f.H.Provider.GetRequiredService<TranscriptBindingIncidentService>();
         await service.OnTranscriptFaultAsync(
             new SessionRunnerTranscriptFaultEvent(bSess, "AdoptionRefused", FaultDetail, FaultPath, 184.5, 3),

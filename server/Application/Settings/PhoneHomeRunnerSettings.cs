@@ -90,12 +90,8 @@ public sealed class PhoneHomeRunnerSettings
     public int OwnerCacheNegativeSeconds { get; set; } = 5;
 
     /// <summary>
-    /// CARD-1219 D-2/D-3: the window of the recovery pump's per-runner transcript-incident replay
-    /// guard, as <c>TranscriptIncidentReplayGuardTests</c> and
-    /// <c>PhoneHomeTranscriptIncidentTests.Replayed_frames_across_a_reconnect_record_once</c> assert.
-    /// An equal record inside it is refused whatever produced it, including an equal
-    /// <c>TranscriptTailer.ReportRootFault</c> repeat (not covered by a test). At least 1
-    /// (<c>PhoneHomeRunnerSettingsValidatorTests.Replay_window_below_one_second_is_refused</c>).
+    /// CARD-1219 D-2/D-3: the <c>TranscriptIncidentReplayGuard</c> window; minimum 1 per
+    /// <c>PhoneHomeRunnerSettingsValidatorTests.Replay_window_below_one_second_is_refused</c>.
     /// </summary>
     public int TranscriptIncidentReplayWindowSeconds { get; set; } = 900;
 

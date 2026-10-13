@@ -3,13 +3,8 @@ using Antiphon.Server.Application.Dtos;
 namespace Antiphon.Server.Infrastructure.Agents.SessionRunner;
 
 /// <summary>
-/// CARD-1219 D-2: a bounded, in-memory admission cache for one runner's transcript-fault and
-/// transcript-bound records, keyed on the parsed record's value. Admit, refuse, window expiry and
-/// eviction are as <c>TranscriptIncidentReplayGuardTests</c> asserts. The pump calls it before the
-/// incident service, so an admission is not a written incident. An equal record is refused inside
-/// the window whatever produced it, including an equal <c>TranscriptTailer.ReportRootFault</c>
-/// repeat (not covered by a test). Callers may overlap during a reconnect handoff, so
-/// <see cref="Admit(SessionRunnerTranscriptFaultEvent)"/> runs under a lock.
+/// CARD-1219 D-2: a bounded in-memory admission cache of one runner's transcript-fault and
+/// transcript-bound records, exercised by <c>TranscriptIncidentReplayGuardTests</c>.
 /// </summary>
 internal sealed class TranscriptIncidentReplayGuard(TimeProvider clock, TimeSpan window, int capacity = 512)
 {
