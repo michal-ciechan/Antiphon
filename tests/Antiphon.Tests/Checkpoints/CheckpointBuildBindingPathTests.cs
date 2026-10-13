@@ -14,6 +14,7 @@ public sealed class CheckpointBuildBindingPathTests
         using var fixture = new BindingFixture();
         // RowRunner/RunScheduler produce the stamp from a required forward-slash OutputPath.
         var producer = fixture.Binding("bin-c1210-producer/");
+        fixture.CreateOutput(producer);
         producer.Write().ShouldBeNull("c1210-fresh-producer-stamp");
         // The Windows child audit reconstructs the same directory without its separator.
         var output = Path.GetDirectoryName(producer.PathName)!;
@@ -41,6 +42,7 @@ public sealed class CheckpointBuildBindingPathTests
                 // exclusive under CARD-1199, so a prior altered stamp cannot be reset by Write.
                 using var fixture = new BindingFixture();
                 var binding = fixture.Binding("bin-c1210-producer");
+                fixture.CreateOutput(binding);
                 binding.Write().ShouldBeNull("c1210-fresh-equivalent-stamp: " + field);
                 var stamp = JsonNode.Parse(File.ReadAllText(binding.PathName))!;
                 var variant = spelling(stamp[field]!.GetValue<string>());
@@ -53,6 +55,7 @@ public sealed class CheckpointBuildBindingPathTests
         {
             using var fixture = new BindingFixture();
             var binding = fixture.Binding("bin-c1210-producer");
+            fixture.CreateOutput(binding);
             binding.Write().ShouldBeNull("c1210-fresh-case-distinct-stamp");
             var stamp = JsonNode.Parse(File.ReadAllText(binding.PathName))!;
             stamp["outputPath"] = binding.OutputPath.ToUpperInvariant();
@@ -71,6 +74,7 @@ public sealed class CheckpointBuildBindingPathTests
         {
             using var fixture = new BindingFixture();
             var binding = fixture.Binding("bin-c1210-producer");
+            fixture.CreateOutput(binding);
             JsonNode? value = field switch
             {
                 "repositoryRoot" or "project" => JsonValue.Create(Path.Combine(fixture.Root, "different")),
@@ -96,6 +100,11 @@ public sealed class CheckpointBuildBindingPathTests
         internal string Root { get; } = Directory.CreateTempSubdirectory("c1210-binding-").FullName;
         internal CheckpointBuildBinding Binding(string output) => CheckpointBuildBinding.Expected(Root, "tests", output, [],
             new SourceObservation(new string('a', 40), 0, new string('1', 64), DateTimeOffset.UtcNow, "known"));
+        internal void CreateOutput(CheckpointBuildBinding binding)
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(binding.OutputPath))!);
+            SafeWrite.Require(SafeWrite.CreateFreshDirectory(binding.OutputPath, SafeWrite.Under(binding.OutputPath)));
+        }
         public void Dispose() => Directory.Delete(Root, recursive: true);
     }
 }
