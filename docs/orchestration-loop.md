@@ -222,7 +222,8 @@ pwsh -NoProfile -File scripts/delegate.ps1 -Role Code -Worktree -StartRef <full-
 ```
 
 (For a long brief, read the file yourself and pass the resulting string to `-Goal`; the script has
-no `-GoalFile`.) The task still gets its own `feat/card-task-<id>`, cut at that commit; the named
+no `-GoalFile`.) The task still gets its own task branch, cut at that commit and reported as its
+`WorktreeBranch` (see [Delegate branch names](#delegate-branch-names-card-1213)); the named
 source branch is untouched and can stay checked out in its own worktree. `-StartRef` accepts a
 branch, remote-tracking ref, commit tag or SHA the server's repository can already resolve locally,
 or a full SHA origin has (fetched once at create under the repository lease)
@@ -235,6 +236,22 @@ task detail shows both the requested ref and the recorded base - an older server
 an unknown optional JSON property.
 After a Clean Final/Full Review of a `-StartRef` repair's pushed tip, `-FromTask` can adopt that
 branch into the original Code owner's source under the reviewed recovery contract above.
+
+#### Delegate branch names (CARD-1213)
+
+A Worktree delegate's directory is `card-task-<id>`, where `<id>` is the first eight hex digits of
+the task id, and the task records its branch as `WorktreeBranch`. With `Delegation:CardBranchNames`
+off, a new task branch is `feat/card-task-<id>`. With it on, a task bound to a card whose identifier
+is `CARD-<n>` (1-8 ASCII digits) gets `feat/card-<n>-<stage>-<id>` when it has no runner, or when
+its runner advertises `workspaceCardBranchV1` both in its registered descriptor and in a live
+capability read. `<stage>` is the task's role in lower case (for example `testdesign` or `code`),
+or `orch` for an orchestrator. With it on, the branch is still `feat/card-task-<id>` for an unbound
+task, a card row that is missing or whose identifier is not `CARD-<n>`, an unknown role, a runner
+whose descriptor or live read lacks that exact feature or whose descriptor cannot be read, and
+a SourceLanding snapshot. A retried creation adopts the branch already registered for the task's
+worktree, in either form. The `-StartRef` and retired-follow-up tests pin `feat/card-task-<id>`
+with the setting off only, so read the name from the task's `WorktreeBranch` rather than
+rebuilding it from the task id.
 
 #### Landing a `-StartRef` repair (CARD-0675)
 
@@ -986,8 +1003,9 @@ behind a Working task waits visibly (`Held` naming the agent and task; `HeldAged
 `DispatchHeld` on the attention feed). A follow-up onto an agent parked on a Blocked task is refused
 409 `follow_up_agent_blocked`; its text names the recovery that applies. A candidate park of the Blocked task (a current-attempt published park in Parked or ResumePending) whose linked release Reply admission admits is that 409 and says the published seat was released, whether or not the session row still reads live; reply and do not cancel. When no candidate park gives the Reply or mismatch advice, a live Blocked session is that 409 and names Reply or cancel, and a dead session names cancel and re-send. The 422 follow_up_remote_pool_unsupported fires before the Blocked branch and names that task and Reply only when the Blocked task's current attempt has a confirmed published park whose seat release matches Reply admission, including the settlement revision (CARD-1103). When no candidate park of the task is admitted, a confirmed published park whose seat release does not match that admission does not name Reply; that parked answer cannot be continued (CARD-1103). HasConfirmedPublishedParkAsync is scoped to the task's current attempt and accepts Parked or ResumePending only (CARD-1103). Mark-read records the first ReadAt without changing the task's ConcurrencyToken, the settlement revision a seat release records; a matching confirmed-park Reply after a read still queues one new attempt (CARD-1144). Reply to a confirmed published park whose release identity no longer matches, with no accepted answer pending, returns 409 park_release_identity_mismatch before any old-session input is queued (CARD-1144). The remote-pool 422 guidance and confirmed-park Reply continuation use the same EF queries, RunnerSeatReleaseQueries.ForAttempt for release identity and RunnerSeatReleaseQueries.Confirmed for the confirmed receipt; that guidance remains one database read (CARD-1146). Local 409 follow_up_agent_blocked guidance gives the published-seat Reply advice (the seat was released; reply and do not cancel) only when the shared admission query that Reply uses admits the linked release of a candidate park of the Blocked task, a current-attempt published park in Parked or ResumePending (CARD-1154). Across all candidate parks of that task, any admitted park gives the published-seat Reply advice; otherwise, if some candidate has a linked release in state Confirmed with a non-null ConfirmedAt that fails admission, the 409 gives the mismatch text, which says that parked answer cannot be continued and names neither Reply nor cancel; otherwise the ordinary live/dead advice applies (CARD-1154). Confirmed-park guidance performs one database read per blocked follow-up, independent of the number of candidate parks; the existing session-liveness read is separate (CARD-1154). A retired
 Worktree follow-up continues that task's committed tip: Antiphon freezes the local branch SHA and
-cuts a new `feat/card-task-<id>` worktree there. It does not reuse the old directory, reset the old
-branch, or fall back to master. If that tip cannot be proven, create refuses
+cuts a new worktree there on the follow-up task's own new branch, reported as its `WorktreeBranch`
+(see [Delegate branch names](#delegate-branch-names-card-1213)). It does not reuse the old
+directory, reset the old branch, or fall back to master. If that tip cannot be proven, create refuses
 `follow_up_source_unavailable` and inserts nothing; pass `-Worktree -StartRef <sha>` to choose a
 commit yourself. Explicit `-Shared` or `-ReadOnly` is a new task and is warned as such. A live
 follow-up, `-Agent`, or a routing pin that names an existing agent keeps that agent's checkout
@@ -1181,7 +1199,7 @@ curl -s localhost:17202/api/agent-tasks | python -c "import json,sys; d=json.loa
 pwsh -NoProfile -File scripts/delegate.ps1 -Status <id>
 
 # the truest progress signal: commits exist before reports do
-git log --oneline master..feat/card-task-<id>
+git log --oneline master..<worktreeBranch>   # the task's recorded WorktreeBranch; see Delegate branch names
 
 # what it is doing right now
 curl -s localhost:17202/api/sessions/<sessionId>/transcript
