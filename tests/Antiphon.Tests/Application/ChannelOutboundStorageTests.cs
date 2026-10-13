@@ -41,10 +41,13 @@ public sealed class ChannelOutboundStorageTests
         var root = Directory.CreateTempSubdirectory("c1059-links-").FullName;
         try
         {
+            AssertFileLinkCases(root);
             var real = Directory.CreateDirectory(Path.Combine(root, "real")).FullName;
             var file = Path.Combine(real, "source.txt");
             await File.WriteAllTextAsync(file, "valid companion");
-            Directory.CreateSymbolicLink(Path.Combine(root, "dir-link"), real);
+            using var directoryLink = DirectoryLink.TryCreate(Path.Combine(root, "dir-link"), real);
+            directoryLink.ShouldNotBeNull("c1210-directory-link-required");
+            File.GetAttributes(directoryLink.Path).HasFlag(FileAttributes.ReparsePoint).ShouldBeTrue();
             var reader = new ChannelReplyAttachmentReader();
             (await reader.ReadTextAsync(file, [root], 64, default)).ShouldBe("valid companion");
             var linked = Path.Combine(root, "dir-link", "source.txt");
@@ -68,7 +71,10 @@ public sealed class ChannelOutboundStorageTests
             var file = Path.Combine(root, "source.txt");
             var linked = Path.Combine(root, "file-link");
             await File.WriteAllTextAsync(file, "valid companion");
-            File.CreateSymbolicLink(linked, file);
+            using var link = FileLink.TryCreate(linked, file);
+            if (!OperatingSystem.IsWindows()) link.ShouldNotBeNull("c1210-filelink-native-required");
+            if (link is null) throw new TUnit.Core.Exceptions.SkipTestException(FileLink.PrivilegeReason);
+            File.GetAttributes(link.Path).HasFlag(FileAttributes.ReparsePoint).ShouldBeTrue();
             var reader = new ChannelReplyAttachmentReader();
             (await reader.ReadTextAsync(file, [root], 64, default)).ShouldBe("valid companion");
             Should.Throw<InvalidDataException>(() => ChannelReplyAttachmentReader.ValidatePath(linked, [root]),
@@ -76,6 +82,62 @@ public sealed class ChannelOutboundStorageTests
             await Should.ThrowAsync<InvalidDataException>(() => reader.ReadAttachmentAsync(linked, [root], 64, default));
         }
         finally { Directory.Delete(root, true); }
+    }
+
+    private static void AssertFileLinkCases(string root)
+    {
+        FileLink.PrivilegeReason.ShouldBe(
+            "CARD-1210: file-link controls require symbolic-link creation privilege on Windows; capability unavailable.",
+            "c1210-filelink-exact-reason");
+        foreach (var (error, windowsUnavailable) in new (Exception, bool)[]
+        {
+            (new IOException("sharing violation", unchecked((int)0x80070020)), false),
+            (new IOException("unknown I/O"), false),
+            (new FileNotFoundException("missing target"), false),
+            (new System.ComponentModel.Win32Exception(5), false),
+            (new System.ComponentModel.Win32Exception(1314), true),
+            (new IOException("privilege not held", unchecked((int)0x80070522)), true),
+            (new UnauthorizedAccessException("privilege unavailable"), true),
+        })
+        foreach (var isWindows in new[] { false, true })
+        {
+            if (isWindows && windowsUnavailable)
+            {
+                FileLink? observed = null;
+                Should.NotThrow(() => observed = FileLink.TryCreate("unused-link", "unused-target", isWindows,
+                    (_, _) => throw error), "c1210-filelink-privilege-unavailable");
+                observed.ShouldBeNull("c1210-filelink-privilege-unavailable");
+            }
+            else
+            {
+                Exception? observed = null;
+                try { FileLink.TryCreate("unused-link", "unused-target", isWindows, (_, _) => throw error); }
+                catch (Exception caught) { observed = caught; }
+                ReferenceEquals(observed, error).ShouldBeTrue("c1210-filelink-unknown-error: " + error.GetType().Name);
+            }
+        }
+
+        var target = Path.Combine(root, "file-link-target");
+        var linked = Path.Combine(root, "disposable-file-link");
+        File.WriteAllText(target, "retained target sentinel");
+        var link = FileLink.TryCreate(linked, target);
+        if (!OperatingSystem.IsWindows()) link.ShouldNotBeNull("c1210-filelink-native-required");
+        if (link is not null)
+        {
+            using (link)
+            {
+                File.GetAttributes(link.Path).HasFlag(FileAttributes.ReparsePoint).ShouldBeTrue("c1210-filelink-reparse-required");
+                File.ReadAllText(link.Path).ShouldBe("retained target sentinel");
+            }
+            File.Exists(linked).ShouldBeFalse("c1210-link-removed");
+            File.ReadAllText(target).ShouldBe("retained target sentinel", "c1210-link-target-retained");
+        }
+
+        var ordinary = Path.Combine(root, "ordinary-file");
+        Should.Throw<InvalidDataException>(() => FileLink.TryCreate(ordinary, target, false,
+            (path, _) => File.WriteAllText(path, "ordinary bytes")), "c1210-filelink-reparse-required");
+        Should.Throw<FileNotFoundException>(() => FileLink.TryCreate(Path.Combine(root, "absent-link"), target, true,
+            (_, _) => { }), "c1210-filelink-observation-fails-closed");
     }
 
     private static void RequireLinkFixtureRoute(string methodName, string route)
