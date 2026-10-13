@@ -1,6 +1,8 @@
 # Handwritten native source-stamping regression; the caller owns a four-second child watchdog.
 param([string]$Root, [string]$Repository, [string]$ToolDll, [string]$Entry, [string]$Shape)
 $ErrorActionPreference = 'Stop'
+# Keep the scoped test custody marker outside the scratch Git worktree.
+$Root = Join-Path $Root 'stamp-fixture'
 [void][Reflection.Assembly]::LoadFrom($ToolDll)
 [void][IO.Directory]::CreateDirectory($Root)
 $path = Join-Path $Root 'user.txt'
@@ -54,4 +56,6 @@ if ($Shape -eq 'symlink' -and [IO.File]::ReadAllText("$Root/target") -cne 'targe
 if ($Shape -in @('symlink','dangling') -and $null -eq [IO.FileInfo]::new($path).LinkTarget) { throw 'link removed' }
 if ($Shape -eq 'directory' -and ![IO.Directory]::Exists($path)) { throw 'directory removed' }
 if ($Shape -eq 'fifo') { & test -p $path; if ($LASTEXITCODE) { throw 'FIFO removed or replaced' } }
+# Survival/index assertions above precede disposal of our explicitly created special-file fixtures.
+if ($Shape -in @('fifo','symlink','dangling')) { [IO.File]::Delete($path) }
 "$Entry/$Shape PASS"
