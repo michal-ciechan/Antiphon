@@ -27,6 +27,9 @@
     <!-- CARD-0032: preset prompt templates. Not attachable bundles — InstructionBundles skips the
          Presets. prefix so they cannot ride an agent's composition by accident. -->
     <EmbeddedResource Include="Bundles\Presets\*.md" />
+    <!-- CARD-1213: shared fragments a bundle pulls in with {{NAME}}. Not bundles: InstructionBundles
+         skips the Fragments. prefix and InstructionFragments loads them. -->
+    <EmbeddedResource Include="Bundles\Fragments\*.md" />
     <!-- CARD-0306: per-launch remoteControlAtStartup:false overlay. Path, never inline JSON.
          Update, not Include: the SDK already globs this as Content. TargetPath flattens it
          next to the assembly so ApplyOff can resolve AppContext.BaseDirectory + filename. -->

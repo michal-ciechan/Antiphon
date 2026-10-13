@@ -255,7 +255,9 @@ public static class InstructionBundles
 
             var key = resource[ResourcePrefix.Length..^ResourceSuffix.Length];
             // Preset templates live under Bundles/Presets/ and must not be attachable bundles.
-            if (key.StartsWith("Presets.", StringComparison.Ordinal))
+            // CARD-1213: fragments under Bundles/Fragments/ load through InstructionFragments.
+            if (key.StartsWith("Presets.", StringComparison.Ordinal)
+                || key.StartsWith("Fragments.", StringComparison.Ordinal))
                 continue;
             var text = ReadNormalised(assembly, resource);
             bundles[key] = new InstructionBundle(key, HashOf(text), text);

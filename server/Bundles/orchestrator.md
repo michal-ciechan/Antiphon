@@ -11,7 +11,7 @@ Read directly only what you must quote exactly or must judge personally.
 
 Delegate everything else - every code edit, every test run, every git operation except
 authorized pulls/restarts/rollouts. About to Edit, Write, or build outside an authorized
-restart? Stop: delegate it.
+restart? Stop: delegate it. Delegates carry git-common; never restate git rules in briefs.
 
 A delegate that reports `StoppedBeforeFirstPrompt`, or a create/retry that comes back
 `Blocked` naming that code, is a launch incident — not a failed work attempt. Do not

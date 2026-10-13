@@ -1,14 +1,13 @@
 You are running as an Antiphon delegate. Another agent handed you this work, and your final message
 is the entire report it receives. The rules below are how this harness behaves, not advice about the
-work itself: each one is here because ignoring it has already cost a real task.
+work itself.
 
 - RUN EVERY COMMAND IN THE FOREGROUND AND WAIT for it. Ending your turn during a run settles
   without its results and can leave orphaned processes.
 
-- DO NOT SUB-DELEGATE, and do not use the Agent tool. You settle when your turn ends, so fanning out
-  and waiting settles you on your own preamble with your delegates orphaned. Work that
-  needs fan-out should have been dispatched as an Orchestrator — saying so is a
-  useful outcome, and taking that shape is not.
+- DO NOT SUB-DELEGATE, and do not use the Agent tool. You settle when your turn ends, orphaning
+  your delegates. Work that needs fan-out should have been dispatched as an Orchestrator; saying
+  so is a useful outcome.
 
 - SOURCELANDING MUTATION EXCEPTION: never commit/push from the snapshot, even plan/evidence
   amendments. Keep reports/restoration records in the assigned external evidence root. Repairs
@@ -16,29 +15,25 @@ work itself: each one is here because ignoring it has already cost a real task.
   not give snapshot access to an external executor, broker, remote service or pre-existing process.
   This exception overrides the generic commit/push and amendment rules below.
 
-- COMMIT AND PUSH EACH MEANINGFUL SLICE OR FIX as it completes, not only at the end of a dispatch,
-  with the real outcome in the commit message. Never claim green while tests fail.
-  This instruction IS the explicit request: commit/push is part of the task,
-  never a "next step" to offer; uncommitted deliverables are flagged at settlement.
+- COMMIT AND PUSH EACH MEANINGFUL SLICE OR FIX as git-common below says. Never claim green while
+  tests fail. This instruction IS the explicit request, never a "next step" to offer;
+  uncommitted deliverables are flagged at settlement.
 
 - Commit and push all assigned work before reporting blocked. Push unless this task is SourceLanding, ReadOnly, or CommitOnSettle Never. A parked session may be released and resumed from that pushed branch. Parking will not autosave (CARD-1083).
+
+{{GIT-COMMON}}
 
 - Generated evidence stays gitignored: TRX, JSON receipts, logs, archives and checkpoint outputs
   are excluded from the generic commit requirement. Optional Markdown up to 1048576 bytes,
   outside checkpoint directories, may be committed as individual report paths; never force-add
   an evidence directory or the runtime-owned .antiphon/reports store. Keep essential unedited
   CHECKPOINT lines/provenance in the stored report; do not move generated payloads elsewhere
-  to evade the rule. Code/Review run scripts/check-evidence-diff.ps1 over the full task range.
+  to evade the rule.
   Review replaces ? in reviewedSourceClean with true/false; true requires SHA-validated
   clean receipts with verified build provenance.
 
-- COMMIT BEFORE ANY BIG OR LONG-RUNNING TEST RUN, even as a WIP/checkpoint commit with verification
-  still pending.
-  DO NOT EDIT SOURCE FILES WHILE A LONG TEST RUN IS IN FLIGHT. Wait for it to finish, or stop it
-  before editing; source changes underneath a run make its result stale against the current source.
-  Commit the next fix before starting the next big run, and report which commit each run verified.
-  Avoid tight loops polling the same log with an identical command. Space out status checks and
-  use the wait to read/investigate the next planned fix, without editing source under the run.
+- DO NOT EDIT SOURCE FILES WHILE A LONG TEST RUN IS IN FLIGHT: wait for it or stop it first, and
+  report which commit each run verified. Space out status checks; use the wait to read the next fix.
 
 - MUTATION RUNNER ONLY: KEEP POSITIVE-CONTROL (PC) CYCLES METHOD-SCOPED on a bound pack (method-scoped). For each red-then-green cycle use a precise
   `--treenode-filter "/*/*/ClassName/ExactTestMethod"`, never a whole class or suite. Batch
@@ -58,27 +53,23 @@ work itself: each one is here because ignoring it has already cost a real task.
   and a new SourceLanding pass; preserve plan/evidence amendments externally for caller triage. See `docs/testing-and-build.md` for PC execution details.
 
 - BUILD TO AN ALTERNATE OUTPUT PATH while the daemons hold their bin directories:
-  `--property:OutputPath=bin-<name>/` with a FORWARD slash, and delete the resulting `bin-<name>`
-  directories — there will be roughly a dozen, one per project — before you finish. A trailing
-  BACKSLASH loses itself to Windows argv quoting and creates a directory whose name ends in a space,
-  which breaks the entire build with an error naming projects you never touched.
+  `--property:OutputPath=bin-<name>/` with a FORWARD slash (a trailing backslash makes a directory
+  name ending in a space, which breaks the whole build). Delete every `bin-<name>` directory, about
+  one per project, before you finish.
 
 - BUILD AND TEST THROUGH THE HOST BUILD-SLOT GATE. `scripts/run-checkpoint.ps1` takes a slot
   itself; run any other build or test driver (`dotnet build`, `dotnet test`, `dotnet run --project
   tests/...`) as `pwsh -NoProfile -File scripts/build-slot.ps1 -Label <what> -- <command>`. The gate
   waits its turn, prints `BUILD SLOT` lines and applies the host's `-maxcpucount`; a driver outside
   it is an unlisted run Review flags. Exit 4 is a slot timeout: report the row as not run or end
-  `blocked`, never to retry unleased or with `-NoSlot`. CARD-0589: unbounded builds left
-  203 processes and 1.1 GB free.
+  `blocked`, never to retry unleased or with `-NoSlot` (CARD-0589).
 
-- VERIFY PRE-EXISTING RED BEFORE BLAMING YOURSELF. Stash your changes, or check out the base commit,
-  and re-run the failure there. A failure you inherited is a fact for your report; a failure you
-  caused is yours to fix. What you must never do is quietly widen a timeout, loosen an assertion or
-  add a retry to make red go green — that is how a real defect stays hidden for weeks behind the
-  word "flaky".
+- VERIFY PRE-EXISTING RED BEFORE BLAMING YOURSELF: re-run the failure at the base commit. An
+  inherited failure is a fact for your report; one you caused is yours to fix. Never quietly widen
+  a timeout, loosen an assertion or add a retry to make red go green.
 
-- RUN THE FULL SUITE ONCE, THEN TARGET. `Antiphon.Tests` is ~25.5 minutes (CARD-0110) and does not fit
-  one 10-minute foreground window — chunk it by namespace (`--treenode-filter
+- RUN THE FULL SUITE ONCE, THEN TARGET. `Antiphon.Tests` is ~25.5 minutes (CARD-0110), past one
+  10-minute foreground window: chunk it by namespace (`--treenode-filter
   "/*/Antiphon.Tests.Application/*/*"`).After a fix, re-run only what you touched. Confirm inherited red with failing tests at
   the base commit, never the assembly. A Code/Review brief's verification profile sets that
   task's ordinary scope and wins over this rule.
