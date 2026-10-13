@@ -21,6 +21,7 @@ donor_id=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
 FAULT=none; SOURCE=live; CRASH=''
 C913_RECOVERY="$SERVER2_ROOT/cache/recovery-$RUN"
 mkdir -p "$SERVER2_ROOT/cache" "$CASE_DIR" "$root/bin" "$root/donor/packages" "$root/donor/npm"
+c849_fixture_case_bind
 for name in "$C849_PACKAGES" "$C849_SCRATCH" "$C849_NPM"; do mkdir -m 700 -p "$root/volumes/$name/_data"; done
 printf outside > "$root/outside"
 for command in dotnet npm curl pwsh; do

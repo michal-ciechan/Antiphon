@@ -285,6 +285,7 @@ source "$root/functions"
 SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 CASE=runner-cache-fixture
 CASE_DIR="$root/case"
+c849_fixture_case_bind
 SERVER2_ROOT="$root/server2"
 CHECKOUT="$repo"
 ROOT="$repo"
@@ -2752,7 +2753,7 @@ s7_run() {
     S7_SCENARIO=$1
     printf 'HOST_DECOY\n' > "$C1192_ROOT/host-decoy"
     s7_groups
-    cp() { order_log export-log; command cp "$@"; }
+    mv() { case "${*: -1}" in race-p1.log|race-p2.log|race-offline.log|lock-holder.log|lock-waiter.log) order_log export-log ;; esac; command mv "$@"; }
     S7_CODE=0
     S7_OUT=$(c849_fixture 2>>"$C1192_ROOT/scenario.err") || S7_CODE=$?
     S7_CONTROL=$(cat "$C1192_ROOT/controller-used")
@@ -3374,7 +3375,9 @@ mode_fingerprint_acquisition() {
 mode_metadata_write() {
     local writer="${3:?writer}" variant name="c849-${RUN}-donor" target code log id
     id=$(printf '%064d' 1)
-    for variant in file-link fifo-link dangling-link directory-link hard-link directory fifo late-link fresh; do
+    local variants="file-link fifo-link dangling-link directory-link hard-link directory fifo late-link fresh"
+    [ "$writer" != cid ] || variants="late-link file-link fifo-link dangling-link directory-link hard-link directory fifo fresh"
+    for variant in $variants; do
         local sandbox="$C1192_ROOT/write-$variant"
         mkdir -m 0700 "$sandbox"
         CASE_DIR="$sandbox/case"; mkdir -m 0700 "$CASE_DIR"
@@ -3387,7 +3390,7 @@ mode_metadata_write() {
             cid) target="$CASE_DIR/.fixture-id-$name" ;;
             network) target="$CASE_DIR/.fixture-network" ;;
             helpers) target="$CASE_DIR/.fixture-helpers" ;;
-            ledger) target="$CASE_DIR/fixture-cleanup-ledger.txt" ;;
+            ledger) target="$CASE_DIR/fixture-cleanup-ledger.txt"; : > "$CASE_DIR/.fixture-volumes" ;;
             residue) target="$CASE_DIR/fixture-cleanup-residue.txt" ;;
             escape) target="$CASE_DIR/.fixture-escape-identity" ;;
             volumes) target="$CASE_DIR/.fixture-volumes" ;;
@@ -3436,7 +3439,7 @@ mode_metadata_write() {
             cid) c849_fixture_container_identity "$name" "$id" donor > "$log" 2>&1 || code=$? ;;
             network) c849_fixture_network_release > "$log" 2>&1 || code=$? ;;
             helpers) c849_fixture_helper_release "c849-${RUN}-writer" > "$log" 2>&1 || code=$? ;;
-            ledger) c849_fixture_workspace_drop_name() { :; }; c849_fixture_foreign_volume example > "$log" 2>&1 || code=$? ;;
+            ledger) c849_fixture_foreign_volume example > "$log" 2>&1 || code=$? ;;
             residue) c849_fixture_cleanup_unknown container example > "$log" 2>&1 || code=$? ;;
             escape) ln -s "$CASE_DIR" "$CASE_DIR/.fixture-escape"; c849_fixture_escape_record > "$log" 2>&1 || code=$? ;;
             volumes) c849_fixture_workspace_drop_name "c849${RUN}-packages" > "$log" 2>&1 || code=$? ;;
