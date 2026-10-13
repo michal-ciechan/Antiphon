@@ -60,6 +60,8 @@ internal sealed class CompletedCardMirrorFixture : IAsyncDisposable
     public const string BusyBranch = "c1032-busy-holder";
     private PhoneHomeSettings _settings = null!;
     private string _storePath = "";
+    // One runner process: a reconnect keeps its boot identity.
+    private readonly PhoneHomeProcessIdentity _identity = new();
     private int _holdArmed;
     private TaskCompletionSource _holderEntered = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private TaskCompletionSource _holderRelease = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -139,14 +141,14 @@ internal sealed class CompletedCardMirrorFixture : IAsyncDisposable
     private async Task ConnectAsync()
     {
         var adoption = new PhoneHomeAdoptionGate();
-        var dispatcher = new PhoneHomeCommandDispatcher(new PhoneHomeRuntimeAdapter(Runtime, new("test", null, DateTime.UtcNow, DateTime.UtcNow)), _settings);
+        var dispatcher = new PhoneHomeCommandDispatcher(new PhoneHomeRuntimeAdapter(Runtime, new("test", null, DateTime.UtcNow, DateTime.UtcNow)), _settings, identity: _identity);
         // The dispatcher otherwise builds its own service from the same repository settings; the
         // fixture instance carries the holder hook that runs inside the dispatcher's MutationLock.
         typeof(PhoneHomeCommandDispatcher).GetField("_workspace", BindingFlags.NonPublic | BindingFlags.Instance)
             .ShouldNotBeNull().SetValue(dispatcher, Workspace);
         Connection = new(Options.Create(_settings), adoption, dispatcher,
             Runtime, new HttpFactory(), TimeProvider.System, new Microsoft.Extensions.Logging.Logger<PhoneHomeConnectionService>(
-                new Microsoft.Extensions.Logging.LoggerFactory([Wire.Logs])));
+                new Microsoft.Extensions.Logging.LoggerFactory([Wire.Logs])), _identity);
         await Connection.StartAsync(_stop.Token); adoption.SignalReady();
         PhoneHomeLiveConnection live;
         try { live = await Wire.WaitLiveAsync(TimeSpan.FromSeconds(45)); }
