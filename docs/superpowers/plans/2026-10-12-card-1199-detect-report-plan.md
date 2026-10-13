@@ -1,6 +1,6 @@
 # CARD-1199 repair 13: detect and report only
 
-Operator decision 2026-10-12. Base 6e8b9cc231ea90981888e5ccdab4d519b4451ad2. Landing owner Code 3f0e5491-2cf8-4b0c-a590-bd79ee1f4052, branch feat/card-task-3f0e5491, superseding Code 1baae4ee-3a02-495f-925b-345b0630c01c. Repair base cea686acc7e352e55aa30163c753eae78b71d457.
+Operator decision 2026-10-12. Base 6e8b9cc231ea90981888e5ccdab4d519b4451ad2. Landing owner Code 059e44d6-18b4-4ef2-b14e-5dc1211201cd, branch feat/card-task-059e44d6, superseding Code 3f0e5491-2cf8-4b0c-a590-bd79ee1f4052 and 1baae4ee-3a02-495f-925b-345b0630c01c. Repair base cea686acc7e352e55aa30163c753eae78b71d457.
 
 S1: forged-ledger and missing-receipt regressions plus five recovered MSBuild scenarios, committed before fixes. The baseline run had 3 failures and 8 passes: the five recovered detection scenarios already pass on base production, so no functional red is claimed for their historical deletion. S2: remove automatic worktree/index recovery, exclusively create output, refuse existing collisions, qualify actual invalid receipts, current-process creation custody for cleanup, update census/docs.
 
@@ -47,3 +47,7 @@ The inherited fixture repairs at 8bb2b2dfab02f0ca89f1d39024cb28f2c84bc1a3 passed
 ### Repair 13 unresolved Final verification
 
 The completed Final run at 8035e4ac7448af3500ee2d6f80e609951ac6fbcf has red rows; its results do not qualify later repairs. Two late regressions were added tests-first: exclusive gate readback while the handle is held, and foreign terminal receipts. The gate fix leaves open streams without deletion fingerprints (they are retained), and receipt consumers bind terminal state to the requested directory. The compiled namespace census literal is now 501. Required next Code work: one full closed CP-1..CP-11 run at the latest committed HEAD, fresh TRX inspection, baseline confirmation of any remaining inherited reds, and rerun red rows. No current green claim; all PCs remain pending.
+
+### Repair 13b continuation
+
+The uninterrupted full closed run at b4b281abff6830b9addf9b60ff15452014ddf668 passed 204 executions, zero failures, with one disclosed Windows sharing skip. It qualified both late regressions, the three repaired cleanup fixtures, the independent census 501 and three consecutive hanging-Git passes. A separate native receipt audit then reproduced ten incorrect success exits in report/stop across fifteen outcomes. The existing receipt regression was expanded (no new compiled case count) before the production repair; its attempted TUnit baseline exposed a compile-overload error, then an inadmissible unknown-source merge fixture, neither credited as defect-red evidence. Native results are the actual defect baseline. S3 validates required state/report pairs before report rendering/merging and terminal stop side effects; invalid source fields refuse with a named reason. The healthy merge fixture now supplies eligible source evidence. Required post-S3 ordinary rows are the complete affected CP-1 and CP-11 classes; CP-2..CP-10 retain their actual b4b281ab evidence for unchanged production paths. All Mutation controls remain pending.
