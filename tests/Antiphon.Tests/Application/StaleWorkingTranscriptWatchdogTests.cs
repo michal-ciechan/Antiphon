@@ -494,7 +494,7 @@ public class StaleWorkingTranscriptWatchdogTests
             var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
             var clock = new OffsetClock(); var fault = new Faults(); var log = new LogProvider(); var flush = new RecordingFlushes();
             var handler = new ProbeHandler(); var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
-                { ["Resilience:AttemptTimeoutSeconds"] = "30" }).Build();
+                { ["Resilience:AttemptTimeoutSeconds"] = "30", ["Resilience:CircuitBreaker:SamplingDurationSeconds"] = "60" }).Build();
             var services = new ServiceCollection().AddLogging(b => b.AddProvider(log));
             services.AddSingleton<TimeProvider>(clock); services.AddSingleton<IResilienceJitter>(new FixedResilienceJitter(0.5));
             services.AddAntiphonResilience(config);
