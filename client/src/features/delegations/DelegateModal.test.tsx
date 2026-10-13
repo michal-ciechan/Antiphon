@@ -361,6 +361,21 @@ describe('DelegateModal', () => {
     expect(screen.getByRole('button', { name: 'Delegate' })).toBeEnabled()
   })
 
+  it('C097 V30 undefined-policy-level-falls-back-to-constant', async () => {
+    serveRolePolicyRow('Mutation', (row) => ({
+      ...row,
+      level: null,
+      alias: '',
+      effective: { source: 'rolePolicy', agentKind: null, modelLevel: null, alias: null, strength: null },
+    }))
+    renderWithProviders(<DelegateModal opened onClose={() => {}} />)
+
+    await userEvent.click(screen.getByRole('radio', { name: 'Mutation' }))
+    expect(await screen.findByTestId('delegate-tier-source-fallback')).toBeInTheDocument()
+    expect(screen.queryByTestId('delegate-tier-source-rolePolicy')).not.toBeInTheDocument()
+    expect(screen.getByTestId('tier-Low')).toBeInTheDocument()
+  })
+
   it('C097 V27 orchestrator-floor-on-server-level', async () => {
     renderWithProviders(<DelegateModal opened onClose={() => {}} />)
 

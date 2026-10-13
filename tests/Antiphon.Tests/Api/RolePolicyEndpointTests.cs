@@ -202,7 +202,7 @@ public sealed class RolePolicyEndpointTests
 
         roles.Count.ShouldBe(14);
         var docs = Row(roles, "Docs");
-        docs.GetProperty("level").GetString().ShouldBe("High");
+        docs.GetProperty("level").ValueKind.ShouldBe(JsonValueKind.Null);
         docs.GetProperty("kind").ValueKind.ShouldBe(JsonValueKind.Null);
         docs.GetProperty("alias").GetString().ShouldBe("");
         AssertWithheld(docs.GetProperty("effective"));

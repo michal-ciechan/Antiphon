@@ -156,7 +156,7 @@ public sealed class RolePolicyReadServiceTests
         RoutingPinCandidateDto[]? PinCandidates,
         string Role,
         string? Kind,
-        string Level,
+        string? Level,
         string Alias,
         string? EscalateTo,
         string Source,
@@ -167,7 +167,7 @@ public sealed class RolePolicyReadServiceTests
         string? HeadKind,
         string? HeadLevel,
         string? HeadAlias,
-        string DefaultLevel)
+        string? DefaultLevel)
     {
         public override string ToString() => Name;
     }
@@ -188,11 +188,13 @@ public sealed class RolePolicyReadServiceTests
         yield return () => new("policy-kind-999", s => s.RolePolicy["Docs"].Kind = UndefinedKind, null, "Docs",
             null, "Medium", "", null, "rolePolicy", null, null, null, null, null, null, null, "High");
         yield return () => new("policy-level-999", s => s.RolePolicy["Docs"].Level = UndefinedLevel, null, "Docs",
-            null, "High", "", null, "rolePolicy", null, null, null, null, null, null, null, "High");
+            null, null, "", null, "rolePolicy", null, null, null, null, null, null, null, "High");
         yield return () => new("policy-escalateTo-999", s => s.RolePolicy["Docs"].EscalateTo = UndefinedLevel, null, "Docs",
             null, "Medium", "sonnet", null, "rolePolicy", "ClaudeCode", "Medium", "sonnet", null, null, null, null, "High");
         yield return () => new("default-level-999", s => s.DefaultLevel = UndefinedLevel, null, "Custom",
-            null, "High", "", null, "rolePolicy", null, null, null, null, null, null, null, "High");
+            null, null, "", null, "rolePolicy", null, null, null, null, null, null, null, null);
+        yield return () => new("default-level-999-configured-row", s => s.DefaultLevel = UndefinedLevel, null, "Docs",
+            null, "Medium", "sonnet", null, "rolePolicy", "ClaudeCode", "Medium", "sonnet", null, null, null, null, null);
         yield return () => new("pin-valid-control", None,
             [Candidate(AgentKind.Codex, AgentModelLevel.Low, "gpt-5.6-luna")], "Docs",
             null, "Medium", "sonnet", null, "pin", "Codex", "Low", "gpt-5.6-luna", "Required", "Codex", "Low", "gpt-5.6-luna", "High");
@@ -210,7 +212,7 @@ public sealed class RolePolicyReadServiceTests
             null, "Medium", "sonnet", null, "pin", null, null, null, "Required", "Grok", null, null, "High");
         yield return () => new("pin-grok-inherits-policy-level-999", s => s.RolePolicy["Docs"].Level = UndefinedLevel,
             [Candidate(AgentKind.Grok, null, null)], "Docs",
-            null, "High", "", null, "pin", null, null, null, "Required", "Grok", null, null, "High");
+            null, null, "", null, "pin", null, null, null, "Required", "Grok", null, null, "High");
         yield return () => new("pin-level-inherits-policy-kind-Raw", s => s.RolePolicy["Docs"].Kind = AgentKind.Raw,
             [Candidate(null, AgentModelLevel.High, null)], "Docs",
             "Raw", "Medium", "", null, "pin", null, null, null, "Required", null, "High", null, "High");
