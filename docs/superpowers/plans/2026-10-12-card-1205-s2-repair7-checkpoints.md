@@ -26,19 +26,19 @@ or normal host shutdown signal unless X is already in flight. Late faults cannot
 change that primary; warn with the original E, except an owned delivery/host OCE
 during host shutdown. Completed callbacks produce no fault or abandonment.
 
-RED-1 runs all 78 new rows against unchanged base production. The six diagnostic
+RED-1 runs all 104 new rows against unchanged base production. The six diagnostic
 failures must fail object identity or original-object logging, with all twenty
 diagnostic controls green. Additional independent/tokenless logging cells may be
 red too; no build/fixture failure counts as defect proof. CP-2 preserves all 107
-previous cases plus these 78. T01 and T53 assertions/timeouts unchanged.
+previous cases plus these 104. T01 and T53 assertions/timeouts unchanged.
 
 ### Checkpoints
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| RED-1 | RepairTests | `tests/Antiphon.Tests -> bin-c1205-r7-red/` | classification-baseline | `/*/*/SessionRunnerHeldEventDeliveryTests*/(C1205_Settled_callback_classification_table*)\|(C1205_Late_callback_classification_table*)\|(C1205_Completed_callback_wins_cancelled_wait*)` | T57..T59,F1,F2 | Exactly 78 execute; diagnostic six assertion-red, twenty controls green; 0 skipped | 78 | 6 |
+| RED-1 | RepairTests | `tests/Antiphon.Tests -> bin-c1205-r7-red/` | classification-baseline | `/*/*/SessionRunnerHeldEventDeliveryTests*/(C1205_Settled_callback_classification_table*)\|(C1205_Late_callback_classification_table*)\|(C1205_Completed_callback_wins_cancelled_wait*)` | T57..T60,F1,F2 | Exactly 104 execute; diagnostic six assertion-red, twenty controls green; 0 skipped | 104 | 6 |
 | CP-1 | RepairFix | `tests/Antiphon.Tests -> bin-c1205-r7-green/` | gap-baseline | `/*/Antiphon.Tests.Application/TurnEndGapReproductionTests*/*` | V-1,V-2,R-1 | Exactly 2 green; unchanged T01 | 2 | 6 |
-| CP-2 | RepairFix | `CP-1` | subscription | `/*/Antiphon.Tests.Application/(TurnEndGapReproductionTests*)\|(SessionRunnerStreamReadinessTests*)\|(SessionRunnerEventPumpTests*)\|(SessionRunnerHeldEventDeliveryTests*)\|(SessionRunnerHeldEventExitMatrixTests*)/*` | V-1..7,R-1,R-6,T47..T59 | Exactly 185 green, 0 skipped | 185 | 10 |
+| CP-2 | RepairFix | `CP-1` | subscription | `/*/Antiphon.Tests.Application/(TurnEndGapReproductionTests*)\|(SessionRunnerStreamReadinessTests*)\|(SessionRunnerEventPumpTests*)\|(SessionRunnerHeldEventDeliveryTests*)\|(SessionRunnerHeldEventExitMatrixTests*)/*` | V-1..7,R-1,R-6,T47..T60 | Exactly 211 green, 0 skipped | 211 | 10 |
 | ADJ-1 | RepairFix | `CP-1` | adjacent | `/*/*/(SessionRunnerHttpClientHostStatsTests*)\|(SessionRunnerGenerationWireTests*)\|(SessionRunnerSettingsTests*)\|(SessionStateCommitTests*)\|(TranscriptWorkingStateQueryTests*)/*` | R-7 adjacent compatibility | Exactly 33 green, 0 skipped | 33 | 3 |
 
 ### Cost and deferred scope
@@ -52,3 +52,8 @@ V-8..40, R-2..5/R-8/R-9 and CP-3..6 deferred to S3-S5; R-7 does not discharge CP
 PC-1..190 and every variant pending for method-scoped SourceLanding Mutation.
 Post-land Mutation NOT run.
 
+
+T60 independently retains the exact 26-case Review diagnostic contract: six
+assertion-red rows and twenty green controls, separate from T57/T58 stricter log
+assertions. Initial 78-row RED-1 at 687ba862b was 22 red / 56 green; rerun adds
+T60 without changing any prior assertion or production source.
