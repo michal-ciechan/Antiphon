@@ -2997,6 +2997,94 @@ mode_deletion_audit() {
     local row="${3:?row}" name="c849-${RUN}-restore-p1" network="c849-${RUN}-npm" id good=0 code=0 out
     : > "$CASE_DIR/fixture-cleanup-ledger.txt"
     case "$row" in
+        wrong-cid|changed-labels|id-inspect-failure|wrong-helper-id)
+            c849_fixture_launch create --name "$name" --entrypoint sleep "$ADMITTED" infinity >/dev/null
+            id=$(cat "$CASE_DIR/.fixture-id-$name")
+            local original="$name" foreign="c849-${RUN}-foreign"
+            if [ "$row" = wrong-cid ] || [ "$row" = wrong-helper-id ]; then
+                plant_container "$foreign" foreign other-run consumer "$ADMITTED" ""
+                id=$(cat "$C1192_ROOT/containers/$foreign/id")
+                if [ "$row" = wrong-helper-id ]; then
+                    name="$WRITER"
+                    printf '%s\n' "$name" > "$CASE_DIR/.fixture-helpers"
+                fi
+                printf '%s\n' "$id" > "$CASE_DIR/.fixture-id-$name"
+            elif [ "$row" = changed-labels ]; then
+                printf other-run > "$C1192_ROOT/containers/$name/label-run"
+            else
+                docker_inspect_container() { printf 'Cannot connect to the Docker daemon\n' >&2; return 1; }
+            fi
+            c849_fixture_finalize || code=$?
+            emit finalization-exit "$code"
+            emit owned-survived "$(container_exists "$original" && echo 1 || echo 0)"
+            if [ "$row" = wrong-cid ] || [ "$row" = wrong-helper-id ]; then
+                emit foreign-survived "$(container_exists "$foreign" && echo 1 || echo 0)"
+            fi
+            emit deletion-count "$(grep -c '^container ' "$C1192_ROOT/order" || true)"
+            emit residue "$(test -s "$CASE_DIR/fixture-cleanup-residue.txt" && echo 1 || echo 0)"
+            ;;
+        wrong-network-id|network-id-inspect-failure)
+            id=ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+            printf '%s\n' "$id" > "$CASE_DIR/.fixture-network"
+            : > "$C1192_ROOT/network"
+            docker() {
+                record_argv "$@"
+                case "$1:$2" in
+                    network:inspect)
+                        [ "$row" != network-id-inspect-failure ] || { printf 'Cannot connect to the Docker daemon\n' >&2; return 1; }
+                        [ -f "$C1192_ROOT/network" ] || { printf 'Error: No such network: %s\n' "${*: -1}" >&2; return 1; }
+                        [ "${3:-}" = -f ] || return 0
+                        case "$4" in
+                            *Id*) printf '%s\n' "$id" ;;
+                            *io.antiphon.owner*) printf 'foreign\n' ;;
+                            *fixture-run*) printf 'other-run\n' ;;
+                            *fixture-role*) printf 'npm-network\n' ;;
+                            *) return 97 ;;
+                        esac ;;
+                    network:rm) order_log "network ${*: -1}"; rm -f "$C1192_ROOT/network" ;;
+                    *) return 97 ;;
+                esac
+            }
+            c849_fixture_finalize || code=$?
+            emit finalization-exit "$code"
+            emit network-survived "$(test -f "$C1192_ROOT/network" && echo 1 || echo 0)"
+            emit deletion-count "$(grep -c '^network ' "$C1192_ROOT/order" || true)"
+            emit residue "$(test -s "$CASE_DIR/fixture-cleanup-residue.txt" && echo 1 || echo 0)"
+            ;;
+        owned-volume-controls)
+            name="c849${RUN}-packages"
+            printf '%s\n' "$name" > "$CASE_DIR/.fixture-volumes"
+            c849_volume "$name" nuget-packages yes "$ADMITTED" >/dev/null
+            # Preserve the model as the native Docker boundary used by the real control.
+            eval "$(declare -f docker | sed '1s/docker/c1192_native_docker/')"
+            command() {
+                if [ "$1" = docker ]; then shift; c1192_native_docker "$@";
+                else builtin command "$@"; fi
+            }
+            c849_fixture_control PC-09 CacheVolumeForeign c849_fixture_volume_fault label "$name" nuget-packages "$ADMITTED"
+            c849_fixture_control PC-10 CacheVolumeForeign c849_fixture_volume_fault options "$name" nuget-packages "$ADMITTED"
+            emit registered-after-controls "$(grep -Fxq "$name" "$CASE_DIR/.fixture-volumes" && echo 1 || echo 0)"
+            c849_fixture_finalize || code=$?
+            emit finalization-exit "$code"
+            emit volume-survived "$(volume_exists "$name" && echo 1 || echo 0)"
+            emit removal-recorded "$(grep -Fxq "volume $name" "$C1192_ROOT/order" && echo 1 || echo 0)"
+            ;;
+        dangling-network-record|invalid-network-record|absent-network-record)
+            case "$row" in
+                dangling-network-record) ln -s "$CASE_DIR/no-network-record" "$CASE_DIR/.fixture-network" ;;
+                invalid-network-record) printf 'invalid-network-id\n' > "$CASE_DIR/.fixture-network" ;;
+                absent-network-record) printf 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\n' > "$CASE_DIR/.fixture-network" ;;
+            esac
+            rm -f "$C1192_ROOT/network"
+            c849_fixture_finalize || code=$?
+            emit finalization-exit "$code"
+            emit record-retained "$(if [ -e "$CASE_DIR/.fixture-network" ] || [ -L "$CASE_DIR/.fixture-network" ]; then echo 1; else echo 0; fi)"
+            emit residue "$(test -s "$CASE_DIR/fixture-cleanup-residue.txt" && echo 1 || echo 0)"
+            emit absence-receipt "$(grep -q '^confirmed-absent network ' "$CASE_DIR/fixture-cleanup-ledger.txt" && echo 1 || echo 0)"
+            if [ "$row" = invalid-network-record ]; then
+                emit record-text-residue "$(grep -Fq invalid-network-id "$CASE_DIR/fixture-cleanup-residue.txt" && echo 1 || echo 0)"
+            fi
+            ;;
         foreign-cache)
             name="c849${RUN}-packages"
             C849_PACKAGES="$name"; C849_SCRATCH="c849${RUN}-scratch"; C849_NPM="c849${RUN}-npm"

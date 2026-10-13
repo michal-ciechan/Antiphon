@@ -79,6 +79,17 @@ PC-1 foreign drop/receipt/removal guard (cache variants); PC-2 legacy container 
 | CP-60 | Fixed | `CP-33` | audit-60 | `/*/*/RemoteScriptContractTests/C1208_Legacy_owned_markers_are_migrated*` | V-7 | 1 executed, 0 failed/skipped | 1 | 1 |
 | CP-61 | Fixed | `CP-33` | audit-61 | `/*/*/RemoteScriptContractTests/C1208_Unknown_identity_retains_residue*` | V-8 | 1 executed, 0 failed/skipped | 1 | 1 |
 
+| CP-62 | Repair | `CP-33` | repair-62 | `/*/*/RemoteScriptContractTests/C1208_Wrong_cidfile_preserves_foreign_container*` | V-9 | 1 executed, 0 failed/skipped | 1 | 1 |
+| CP-63 | Repair | `CP-33` | repair-63 | `/*/*/RemoteScriptContractTests/C1208_Recorded_id_with_changed_labels_is_untouched*` | V-10 | 1 executed, 0 failed/skipped | 1 | 1 |
+| CP-64 | Repair | `CP-33` | repair-64 | `/*/*/RemoteScriptContractTests/C1208_Recorded_container_inspect_failure_refuses_cleanup*` | V-11 | 1 executed, 0 failed/skipped | 1 | 1 |
+| CP-65 | Repair | `CP-33` | repair-65 | `/*/*/RemoteScriptContractTests/C1208_Wrong_helper_id_preserves_foreign_container*` | V-12 | 1 executed, 0 failed/skipped | 1 | 1 |
+| CP-66 | Repair | `CP-33` | repair-66 | `/*/*/RemoteScriptContractTests/C1208_Wrong_network_id_is_untouched*` | V-13 | 1 executed, 0 failed/skipped | 1 | 1 |
+| CP-67 | Repair | `CP-33` | repair-67 | `/*/*/RemoteScriptContractTests/C1208_Recorded_network_inspect_failure_refuses_cleanup*` | V-14 | 1 executed, 0 failed/skipped | 1 | 1 |
+| CP-68 | Repair | `CP-33` | repair-68 | `/*/*/RemoteScriptContractTests/C1208_Owned_packages_registration_survives_production_controls*` | V-15 | 1 executed, 0 failed/skipped | 1 | 1 |
+| CP-69 | Repair | `CP-33` | repair-69 | `/*/*/RemoteScriptContractTests/C1208_Dangling_network_record_retains_residue*` | V-16 | 1 executed, 0 failed/skipped | 1 | 1 |
+| CP-70 | Repair | `CP-33` | repair-70 | `/*/*/RemoteScriptContractTests/C1208_Invalid_network_record_retains_text*` | V-17 | 1 executed, 0 failed/skipped | 1 | 1 |
+| CP-71 | Repair | `CP-33` | repair-71 | `/*/*/RemoteScriptContractTests/C1208_Confirmed_absent_network_record_is_cleared*` | V-18 | 1 executed, 0 failed/skipped | 1 | 1 |
+
 ### Cost
 
 Ordinary floor 36 row minutes, plus authoring/slot contention. Before-fix selection CP-54..57 shares one isolated build; repaired selection all rows shares one isolated build. Checkpoint-tool bootstrap is an explained unlisted build through build-slot, UseAppHost=false, bin-c1208-tool/. No repeats after green.
@@ -100,3 +111,10 @@ The committed direct fixture proof at 3f40cc432ae2a6581709817190fc3256ebbd5f45 e
 ## Completion
 
 All CP-33..61 now have passing ordinary receipts: 29 rows, 47 executions, 43 distinct methods; CP-44 exactly 19. Independent fresh TRX and per-source receipt audits passed. Final ordinary evidence is cumulative across explicitly recorded tested commits; only affected rows were rerun after repairs. No ordinary IDs are deferred. Final code tip 4c675e64588c5e3f39a875c203cc34447bc98b39; see 2026-10-13-card-1208-finalizer-code-evidence.md for unedited checkpoint lines, actual source bindings and pending Mutation/W-1. Table Covers for inherited guard rows are explicitly CARD-1208 R-1..21, matching the verification design; this final clarification changes documentation only.
+
+
+## Round 2 repair binding
+
+Repair Code/landing owner: 8c713d0c-fe3f-4097-894b-9fc892a709ae; predecessor b1b731e0-1d07-4589-8c85-94b420b101bd. Base 7ed60feb0d088bf0c7368f90e989ae0d467e31ae. Closed Final scope CP-33..71; no Unit or whole class, per repair brief. V-9..18 map in order to CP-62..71: wrong foreign CID, changed labels on an ID, container inspect outage, wrong helper ID, wrong network ID, network inspect outage, owned packages through actual PC-09/10 controls, dangling network marker, invalid network text, positively absent marker. Each has hand-written survival/deletion/refusal/registration or receipt expectations. First run selects CP-62..71 before production edits; then all 39 rows (57 executions; CP-44 exactly 19).
+
+PC-9 wrong CID/owner/run/role; PC-10 helper wrong ID; PC-11 network wrong ID/owner/run/role; PC-12 container/network inspect outage; PC-13 authoritative packages ledger isolation through PC-09/10 and PC-32; PC-14 dangling/malformed network record and text residue; PC-15 positive-absence clearing/receipt. All variants PENDING method-scoped SourceLanding Mutation, alongside PC-1..8 and CARD-1192 PC-1..174. No Mutation claimed. W-1 and CARD-1207 excluded. Restart: none.
