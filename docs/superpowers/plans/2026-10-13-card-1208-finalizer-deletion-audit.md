@@ -92,7 +92,7 @@ PC-1 foreign drop/receipt/removal guard (cache variants); PC-2 legacy container 
 
 ### Cost
 
-Round 2 ordinary floor 47 row minutes, plus authoring/slot contention. Before-fix selection CP-54..57 shares one isolated build; repaired selection all rows shares one isolated build. Checkpoint-tool bootstrap is an explained unlisted build through build-slot, UseAppHost=false, bin-c1208-tool/. No repeats after green.
+Round 2 ordinary floor 47 row minutes, plus authoring/slot contention. Round 2 test-only proof groups CP-62..71, CP-63/65/68/72, and CP-64/67/68 each share one isolated build; the repaired full selection CP-33..72 shares one isolated build. Checkpoint-tool bootstrap is an explained unlisted build through build-slot, UseAppHost=false, bin-c1208repair-tool/. No repeats after green. Earlier proof-history descriptions below refer to round 1.
 
 ## Implementation binding
 
@@ -147,3 +147,7 @@ C1208_Wrong_cidfile_preserves_foreign_container and C1208_Recorded_id_with_chang
 | PC-14 | dangling/malformed network record and record-text residue | `/*/*/RemoteScriptContractTests/C1208_Dangling_network_record_retains_residue*`, `/*/*/RemoteScriptContractTests/C1208_Invalid_network_record_retains_text*` | PENDING SourceLanding Mutation |
 | PC-15 | positive-absence marker clearing and receipt | `/*/*/RemoteScriptContractTests/C1208_Confirmed_absent_network_record_is_cleared*` | PENDING SourceLanding Mutation |
 | PC-16 | container creation name/image/created comparison | `/*/*/RemoteScriptContractTests/C1208_Recorded_creation_fingerprint_is_reverified*` | PENDING SourceLanding Mutation |
+
+## Round 2 completion
+
+Final ordinary verification at 528839f5e5410a444fa5c9e102ed820152578d72: all 40 CP-33..72 rows passed, 58 executions, 54 distinct methods, 0 failed/skipped; CP-44 exactly 19. R-1..21 and V-1..19 all passed; none deferred. Independent fresh TRX roster/count audit and SHA-bound receipt validation passed. Full result, unedited CHECKPOINT lines, red proofs and source bindings: 2026-10-13-card-1208-finalizer-repair-evidence.md. The first attempted full run was stopped during its build for a known missing create-path model field and gets no verification credit. Source stayed frozen until stop completed; a new committed model fix preceded the full green run. SourceLanding Mutation (all PC-1..16 variants plus inherited CARD-1192 PCs) and rollout W-1 remain pending. Next: Review. Restart: none.
