@@ -206,7 +206,7 @@ public sealed partial class CompletedCardWorkspaceRemovalTests
         Held(await r.Remove(), "removal_interrupted");
         f.Runtime.WorkspaceUseGate = r.Gate;
         var ex = await Should.ThrowAsync<PhoneHomeAdmissionException>(() => f.Runtime.StartAsync(f.Launch(Guid.NewGuid()), CancellationToken.None));
-        ex.Type.ShouldBe("workspace_retiring_or_unknown"); f.Effects.ShouldBe(0); r.Preserved();
+        ex.Code.ShouldBe("workspace_retiring_or_unknown"); f.Effects.ShouldBe(0); r.Preserved();
     }
     [Test] public async Task C1017_RunnerReadoptionFence()
     {
