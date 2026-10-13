@@ -1,8 +1,10 @@
 # CARD-1032 S7 F4 negative-witness Code evidence
 
 All five required negative witnesses were added. Each was green on unchanged
-production and turned red under its scratch-probe mutation, which was then
-reverted and never committed. The full 14-row F4 selection is GREEN with 232
+production. This Code task built and executed each probe scratch mutant, which
+turned its witness red on the first vector reached, and reverted it without
+committing. That scratch execution is Code evidence, not formal post-land
+SourceLanding Mutation qualification; no PC is discharged. The full 14-row F4 selection is GREEN with 232
 executions at afafe9c6604d4578db7b1ce2ef4ad3f189209a5d. Production is unchanged
 and inert. Next: Review. Restart: none.
 
@@ -21,8 +23,9 @@ Review finding: /work/evidence/task-75a50129/review.md (F4). Probe:
 
 Changed files: tests/Antiphon.Tests/Application/CardWorktreeMirrorCleanupTests.cs
 (four witnesses), tests/Antiphon.Tests/TestHelpers/CompletedCardMirrorFixture.cs
-(removal-request counter and a refusal-only interceptor that asserts it never
-returns Complete), tests/Antiphon.SessionRunner.Tests/CompletedCardWorkspaceContractTests.cs
+(removal-request counter at the removal-client wrapper seam, which also counts
+capability-preflight and intercepted refusals, and a refusal-only interceptor
+that asserts its reply has Complete=false), tests/Antiphon.SessionRunner.Tests/CompletedCardWorkspaceContractTests.cs
 (signature witness), plus the plan, test design, mutation candidate and this selection.
 No existing test body, assertion or timeout changed. No production file changed.
 
@@ -35,28 +38,29 @@ reverted with git checkout. Diffs and logs: /work/evidence/task-55328335/.
 | VP-08 | Mac normalizes Binding.TaskId to Guid.Empty | C1032_LandingSignatureCoversTaskId | 1/1 failed: `Verify(changed, key)` should be False but was True, TaskId 55555555-... |
 | VP-09 | PublicationAsync `o.TaskId == task.Id && o.Active` -> `o.Active` | C1032_WitnessLandingOwnership | failed: `result.Complete` should be False but was True, vector foreign-task |
 | VP-10 | drop `HasPublication(op)` | C1032_WitnessLandingCompleteness | failed: `result.Complete` should be False but was True, vector observedRemoteTargetSha:null |
-| VP-13 | ReadCommand drops RequestDigest comparison | C1032_WitnessPersistedReplayTamper | failed: reason should be immutable_request_unreadable but was receipt_mismatch, vector reportDigest (tampered request reached the recipient) |
+| VP-13 | ReadCommand drops RequestDigest comparison | C1032_WitnessPersistedReplayTamper | failed: reason should be immutable_request_unreadable but was receipt_mismatch, vector reportDigest (the replay hold no longer stopped the tampered request; the later refusal point was not separately traced) |
 | VP-15 | unsupported removal reply -> `new(true, null, null)` | C1032_WitnessUnsupportedRemovalAfterInspection | failed: `result.Complete` should be False but was True, vector runtime-unsupported |
 
-Batches: A = VP-09 + VP-13 (different methods; the replay witness never reaches
-PublicationAsync, and the ownership witness never replays); B = VP-10 + VP-15
-(different methods; each witness's red is on its own vector before any other
-path). VP-08 ran alone on the runner project. Each red names its vector.
+Batches: A = VP-09 + VP-13 and B = VP-10 + VP-15, each pairing mutations in
+different production members with witnesses in different test methods; each
+red named the expected witness and vector. Interaction between the paired
+mutations was not separately excluded. VP-08 ran alone on the runner project. Each red names its vector.
 Only the first red vector per witness was observed; per-vector red belongs to
 Mutation (PC-595..599).
 
 Disclosed setup failure: the first batch-B run failed Completeness in
 CompletedCardMirrorFixture.InitializeAsync (`saved.Succeeded` was False) before
-any witness assertion. This is the same unreproduced fixture-setup failure the
-repair evidence disclosed at 3cbd00d3. AgentReportStore.StoreAsync has a 2 s I/O
-budget, and the run's cold Postgres start took about 66 s. It is not counted
+any witness assertion. It has the same symptom as the unreproduced fixture-setup failure the repair
+evidence disclosed at 3cbd00d3. AgentReportStore.StoreAsync has a 2 s I/O
+budget, and the run's cold Postgres start took about 66 s; these observations
+do not establish the cause. It is not counted
 as red. The witness was rerun alone under the unchanged batch-B mutation and
 failed on its real assertion (row above). No budget, retry or assertion changed.
 
 Pre-mutation sanity on unchanged production at 2497d511: the four server
 witnesses passed 4/4 (one leased build and run). The first selection attempt
 used exact names in an OR group without wildcards and selected zero tests. It
-was rerun with `*` suffixes, and every checkpoint filter uses wildcards.
+was rerun with `*` suffixes, and the F4 witness filters CP-33..37 each end in `*`.
 
 ## Ordinary verification
 
@@ -119,3 +123,43 @@ wall: 22m17s  sequential-equivalent: 18m59s  builds: 2  max-concurrent-builds: 1
 outputs: deleted bin-c55328335-server/, bin-c55328335-runner/
 verdict: GREEN exit=0
 ```
+
+## F5 wording repair (Code task 1167283e)
+
+Final Review 87af7b11 F5a-F5d; branch feat/card-task-1167283e from
+7c5c6badc4fd49eb5b5624b2189a3d5277fbd0cb, commits added without rebase. Comments
+and Markdown only: no production change, no test body, assertion, timeout or
+method name change.
+
+- F5a: CP-37's first `unsupported` is produced by the client capability
+  preflight (PhoneHomeRunnerClient.RemoveCompletedCardWorkspaceAsync, after
+  `Runtime.CompletedCardWorkspace` is withdrawn) before any removal frame; no
+  recipient removal handler answers it. The `runtime-unsupported` step of
+  C1032_WitnessUnsupportedRemovalAfterInspection proves the server's handling
+  of that result. The fixture counter counts entries to its client wrapper.
+- F5b: CP-34/CP-35 run the real inspection and assert no removal request; they
+  were not refused at removal. CP-36 holds with no removal request.
+- F5c: CP-35 is 13 vectors across 11 fields; the verification design now
+  discloses the evidence-type fields the table does not vary (Review 87af7b11
+  inventory).
+- F5d: the scratch mutants were built and executed by Code task 55328335 as
+  Code evidence; formal post-land SourceLanding Mutation is pending and no PC
+  is discharged.
+
+Sweep of every F4-added or touched sentence: this document, the verification
+design and pending-PC table, the test-design F4 table, the plan's F4
+paragraph, the mutation-candidate F4 section, the five `F4/VP-*` test
+comments, the three F4 helper comments and the fixture interceptor comment.
+Changed beyond F5a-d: "a broken fixture cannot pass" (now: one that never
+reaches real removal fails the method); "no hole was found" (now: these
+witnesses found no production hole); batch rationale "never reaches/never
+replays" and "red before any other path" (unproven; replaced with what was
+observed); VP-13 "tampered request reached the recipient" and PC-598
+"reaches recipient" (the later refusal point was not traced); "the same
+unreproduced failure" (now: same symptom, cause not established); "every
+checkpoint filter uses wildcards" (now: CP-33..37 end in `*`); fixture
+"replaces the real reply ... never synthesizes" (now: returns a refusal
+instead of the inner call, asserted Complete=false); "absent" reply (now: a
+no-reason Complete=false response). Kept as accurate: VP-08 comment, the
+landing helper comments, test counts, PC filters, and the ordinary
+verification paragraphs above.

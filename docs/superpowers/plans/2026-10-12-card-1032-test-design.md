@@ -1323,10 +1323,12 @@ PC-582 retains all four absent-authority variants. No assertion is loosened.
 | CP | Filter | Min | Oracle |
 |---|---|---:|---|
 | CP-33 | `/*/*/CompletedCardWorkspaceContractTests/C1032_LandingSignatureCoversTaskId*` | 1 | signed command verifies; only Binding.TaskId changed (other, empty) refuses |
-| CP-34 | `/*/*/CardWorktreeMirrorCleanupTests/C1032_WitnessLandingOwnership*` | 1 | foreign task/store path/repository/earlier generation landing: `unlanded_work`, no intent/request/journal; restored row removes |
-| CP-35 | `/*/*/CardWorktreeMirrorCleanupTests/C1032_WitnessLandingCompleteness*` | 1 | 13 missing/empty landing-evidence fields refuse as above; restored row removes |
-| CP-36 | `/*/*/CardWorktreeMirrorCleanupTests/C1032_WitnessPersistedReplayTamper*` | 1 | four valid-shaped tampered persisted requests hold `immutable_request_unreadable` before any recipient request; original bytes replay to removal |
-| CP-37 | `/*/*/CardWorktreeMirrorCleanupTests/C1032_WitnessUnsupportedRemovalAfterInspection*` | 1 | after real inspection/intent: real unsupported, intercepted unsupported/unknown/absent keep everything, no receipt; restored runtime replays to removal |
+| CP-34 | `/*/*/CardWorktreeMirrorCleanupTests/C1032_WitnessLandingOwnership*` | 1 | foreign task/store path/repository/earlier generation landing: `unlanded_work` after the real inspection; no intent, no removal request, empty journal; restored row removes |
+| CP-35 | `/*/*/CardWorktreeMirrorCleanupTests/C1032_WitnessLandingCompleteness*` | 1 | 13 missing/empty vectors across 11 landing-evidence fields refuse as above (not every publication-predicate field; see the F4 selection disclosure); restored row removes |
+| CP-36 | `/*/*/CardWorktreeMirrorCleanupTests/C1032_WitnessPersistedReplayTamper*` | 1 | four valid-shaped tampered persisted requests hold `immutable_request_unreadable` with no removal request; original bytes replay to removal |
+| CP-37 | `/*/*/CardWorktreeMirrorCleanupTests/C1032_WitnessUnsupportedRemovalAfterInspection*` | 1 | after real inspection/intent: capability withdrawal yields a client-preflight unsupported result (no recipient removal reply), then injected unsupported/unknown/no-reason refusals; each keeps mirror, admin, sentinel and journal, no receipt; restored runtime replays to removal |
 
 These witnesses use Witness/LandingSignature names, so CP-13/14 stay seven;
-CP-F2 becomes 63 and CP-F3 145. PC-595..599 in the F4 selection are pending.
+CP-F2 becomes 63 and CP-F3 145. Code executed the scratch mutants as Code
+evidence; PC-595..599 in the F4 selection are pending for formal SourceLanding
+Mutation.

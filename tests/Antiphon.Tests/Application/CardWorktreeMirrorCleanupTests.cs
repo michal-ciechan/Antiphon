@@ -288,8 +288,9 @@ public sealed class CardWorktreeMirrorCleanupTests
         await using var positive = await CompletedCardMirrorFixture.CreateAsync(); await positive.RemovedAsync();
     }
     // F4/VP-09: an internally consistent active landing owned by a foreign task, store path,
-    // repository or earlier generation must not map H onto P; mutation: select active landings
-    // without the task predicate; red: rebased removal completes. Restored row is the positive.
+    // repository or earlier generation must not map H onto P: real inspection runs, then each
+    // vector refuses unlanded_work with no intent and no removal request; mutation: select active
+    // landings without the task predicate; red: rebased removal completes. Restored row is the positive.
     [Test] public async Task C1032_WitnessLandingOwnership()
     {
         await using var f = await CompletedCardMirrorFixture.CreateAsync();
@@ -317,8 +318,9 @@ public sealed class CardWorktreeMirrorCleanupTests
         await f.RemovedAsync();
         (await f.CommandAsync()).Proof.ProofIdentity.ShouldStartWith("landed-v1:" + id.ToString("D") + ":");
     }
-    // F4/VP-10: each missing/empty landing-evidence field outside the narrower eligibility
-    // checks must refuse; mutation: drop HasPublication; red: rebased removal completes.
+    // F4/VP-10: 13 missing/empty vectors across 11 landing-evidence fields outside the narrower
+    // eligibility checks (not every publication-predicate field) refuse after real inspection with
+    // no removal request; mutation: drop HasPublication; red: rebased removal completes.
     [Test] public async Task C1032_WitnessLandingCompleteness()
     {
         await using var f = await CompletedCardMirrorFixture.CreateAsync();
@@ -347,8 +349,8 @@ public sealed class CardWorktreeMirrorCleanupTests
         await f.RemovedAsync(); (await f.CommandAsync()).Proof.ProofKind.ShouldBe("Rebased");
     }
     // F4/VP-13: a durable intent whose persisted request bytes change after writing is held
-    // before any recipient request; mutation: replay on schema validity alone; red: tampered
-    // command reaches the runner. Restored original bytes replay to real removal.
+    // with no removal request; mutation: replay on schema validity alone; red: the hold is passed
+    // (scratch run saw receipt_mismatch). Restored original bytes replay to real removal.
     [Test] public async Task C1032_WitnessPersistedReplayTamper()
     {
         await using var f = await CompletedCardMirrorFixture.CreateAsync();
@@ -385,9 +387,10 @@ public sealed class CardWorktreeMirrorCleanupTests
         await f.RemovedAsync(); f.RemovalRequests.ShouldBe(1);
         (await f.CommandAsync()).OperationId.ShouldBe(written.OperationId!.Value);
     }
-    // F4/VP-15: after a real successful inspection and durable intent, unsupported, unknown
-    // and absent removal replies keep everything and never complete; mutation: treat
-    // unsupported removal as success; red: Complete=true. Restored runtime replays to removal.
+    // F4/VP-15: after a real successful inspection and durable intent, capability withdrawal makes
+    // the client preflight return unsupported before any removal frame is sent; then injected
+    // unsupported, unknown and no-reason refusals. Each keeps everything and is refused; mutation:
+    // treat unsupported removal as success; red: Complete=true. Restored runtime replays to removal.
     [Test] public async Task C1032_WitnessUnsupportedRemovalAfterInspection()
     {
         await using var f = await CompletedCardMirrorFixture.CreateAsync();

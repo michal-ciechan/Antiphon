@@ -27,14 +27,15 @@ discovery. Native Windows qualification and S8 obligations remain separate.
 
 ## S7 F4 negative-witness candidates
 
-Code task 55328335 (landing owner 60025819). Scratch mutations VP-08/09/10/13/15
-turned the new witnesses red on the Code branch and were reverted, never
-committed; that is Code evidence, not deliberate-mutant execution.
+Code task 55328335 (landing owner 60025819) built and executed the scratch mutants VP-08/09/10/13/15 on its Code branch; each turned
+its witness red on the first vector reached and was reverted without being
+committed. That is Code evidence, not formal post-land SourceLanding Mutation
+qualification; it discharges no PC.
 
 | PC | Guard / candidate | Exact detecting filter | Pending named variants |
 |---|---|---|---|
 | PC-595 | Landing MAC covers Binding.TaskId | `/*/*/CompletedCardWorkspaceContractTests/C1032_LandingSignatureCoversTaskId` | other TaskId, empty TaskId |
 | PC-596 | Publication scoped to owning task | `/*/*/CardWorktreeMirrorCleanupTests/C1032_WitnessLandingOwnership` | foreign task; missing-control discovery for foreign store path, repository, earlier generation |
-| PC-597 | Complete landing evidence required | `/*/*/CardWorktreeMirrorCleanupTests/C1032_WitnessLandingCompleteness` | 13 field vectors |
+| PC-597 | Complete landing evidence required | `/*/*/CardWorktreeMirrorCleanupTests/C1032_WitnessLandingCompleteness` | 13 vectors across 11 fields |
 | PC-598 | Replay checks RequestDigest | `/*/*/CardWorktreeMirrorCleanupTests/C1032_WitnessPersistedReplayTamper` | report digest, policy digest, binding worktree path, expected HEAD |
-| PC-599 | Unsupported removal reply fails closed | `/*/*/CardWorktreeMirrorCleanupTests/C1032_WitnessUnsupportedRemovalAfterInspection` | real unsupported, intercepted unsupported; discovery for unknown/absent |
+| PC-599 | Unsupported removal reply fails closed | `/*/*/CardWorktreeMirrorCleanupTests/C1032_WitnessUnsupportedRemovalAfterInspection` | capability-withdrawal unsupported (client-preflight result, no recipient removal reply), intercepted unsupported; discovery for unknown and no-reason refusals |

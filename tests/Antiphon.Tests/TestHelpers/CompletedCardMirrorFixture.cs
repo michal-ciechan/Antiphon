@@ -35,7 +35,9 @@ internal sealed class CompletedCardMirrorFixture : IAsyncDisposable
     public Func<CancellationToken, Task>? AfterIntent { get; set; }
     public Func<CancellationToken, Task>? BeforeInspection { get; set; }
     public bool FailReceiptImport { get; set; }
-    // Replaces the real removal reply with a refusal; never synthesizes a deletion.
+    // Returns a refusal instead of calling the inner client; asserts Complete=false, so it cannot
+    // report a deletion. RemovalRequests counts entries to this wrapper, including intercepted and
+    // capability-preflight refusals; it is not a recipient removal-command counter.
     public Func<CompletedCardWorkspaceCommand, CompletedCardWorkspaceRemovalResponse?>? InterceptRemoval { get; set; }
     public int RemovalRequests => _removalRequests;
     private int _removalRequests;
