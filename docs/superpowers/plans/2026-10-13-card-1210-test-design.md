@@ -387,7 +387,7 @@ zero execution do not count as PC red.
 | V-4 | B3 methods using tracked shell census, active/effective attribute evaluation and raw File.ReadAllBytes. | Literal `*.sh text eol=lf` present; each tracked shell effective eol is lf; no byte 13. Require a nonempty census including three formerly CRLF fixtures. Git `ls-files -z` is the tracked census and
 `check-attr` corroborates effective working-tree attributes; any subprocess is limited, bounded,
 and joined. Table cases: commented rule, missing rule, later crlf/-eol override, healthy LF, injected CRLF. Fail names file/rule and clean re-checkout remedy. Unit filesystem contract. | CP-7,17 |
-| V-5 | Existing CodexRunnerImageContractTests; Linux CP-9 selects 35 of the original 40 Remote fixture consumers under the explicit S2 exclusion decisions below; Windows CP-19 retains all 40 pending Review. | Named PASS/exit and absence-of-failure assertions reached with actual on-disk fixtures; WSL bash/pwsh/jq required on Windows. Any prerequisite skip refuses this row's qualification. Five named base-red methods remain caller-owned follow-up work. Behavioral shell fixture; no deployment proof. | CP-8,9,18,19 |
+| V-5 | Existing CodexRunnerImageContractTests; Linux CP-9 selects 35 of the original 40 Remote fixture consumers under the explicit S2 exclusion decisions below; Windows CP-18/19 select 12/34 under the exact inherited-red amendment below. | Named PASS/exit and absence-of-failure assertions reached with actual on-disk fixtures; WSL bash/pwsh/jq required on Windows. Any prerequisite skip refuses this row's qualification. Linux five and Windows seven named base-red methods remain follow-up work with owners below. Behavioral shell fixture; no deployment proof. | CP-8,9,18,19 |
 | V-6 | Split B4 and changed B5; real directory junction/symlink and file symlink. | Real non-link companion reads exact bytes; `ValidatePath` link rejection message then public API rejection. Probe null is allowed only for Windows privilege classification. Directory test also runs FileLink injected create-error table: Win32 1314/Unauthorized on Windows → unavailable, Linux same errors/Windows other IOException → original exception, successful link → observed ReparsePoint. File-link test requires non-null on Linux before optional Windows skip. Unit filesystem/native behavior. | CP-10,20 |
 | V-7 | B6/B7 shell extraction with shared closure; healthy host, missing select/root/fs/call/note, malformed tree, busy/unknown donor, cleanup failure, valid saved archive, failed smoke. | Preflight sees definitions, healthy host is entered and volume-only stubs have zero calls; missing name yields exactly `MISSING <name>`, actual child exit 97, case-body sentinel absent. Refusal/cleanup/import bytes and source-order predicates below. Unit shell harness. | CP-11,21 |
 | V-8 | Existing `C983_Required_jq_driver_rejects_successful_false_probe` and six C973 cold-marker cases. | Preserve internal case assertions; record method durations and owned child completion. A passing sample establishes only selected cases. Existing bounds unchanged. | CP-11,21 |
@@ -679,6 +679,132 @@ reds are not qualified by Linux CP-9's approved exclusion. This amendment releas
 only the narrowed Linux S2 verification; it does not discharge the excluded
 methods, Windows qualification, or any SourceLanding Mutation PC.
 
+### S2 Windows CP-18/CP-19 selection amendment (Code 044d2836)
+
+The caller explicitly authorizes this Windows-only clean-receipt amendment. It
+supersedes the historical Windows-pending paragraph above and the Windows portion
+of V-5. Linux CP-9 and its five exclusions are unchanged. This task continues S2
+from `e7e5fb196d2614a68edcceed8e5963d990d77e06` on its own branch and becomes the
+landing owner; predecessor Code task is `650b7652-d2e6-490f-8d71-3601bf06f13b`.
+No test, assertion, harness, timeout, script or production code changes are authorized.
+The commissioned Final scope is exactly CP-17/18/19, once each, with one isolated
+build per row and native Windows apphost; no Unit lane or other slice is commissioned.
+V-4 and the selected Windows V-5 are required; no R-n row belongs to this S2 scope.
+This selection qualifies the retained methods only, not the seven inherited failures.
+
+Windows Final Review `60ccb73c` is retained at
+`C:\Antiphon\review-evidence\task-60ccb73c\review.md`; its
+`C:\Antiphon\review-evidence\task-60ccb73c\baseline-lf-comparison.json`
+contains exactly the seven identities below, all Failed, all `sameAssertion=true`.
+Review CP-91 independently rebuilt original base
+`c2d0085a9ac7ae7989217a892df6b8c8f26df35e` in a fresh LF checkout:
+7 executed, 0 Passed, 7 Failed, 0 skipped, clean source and verified build.
+This is inherited-red evidence, not a passing receipt. Candidate CP-18/19 had
+13/40 results and exactly these 1/6 failures respectively, with the same messages.
+
+| Row | Exact excluded method | CP-91 / baseline-lf-comparison.json assertion | Owner |
+|---|---|---|---|
+| CP-18 | `C913_Image_wrapper_isolates_mounts_and_qualifies_receipts` | missing `PASS package-mount-contract`; WSL Git rejects Windows linked-worktree gitdir before wrapper assertions | inherited, follow-up card to be filed by the caller |
+| CP-19 | `C1191_Lock_probe_is_created_before_uid_handoff` | `probe-before-handoff`: expected 1, actual 0 | inherited, follow-up card to be filed by the caller |
+| CP-19 | `C1192_Npm_seed_install_and_refill_use_work_volume` | `refill-volume-source`: expected 1, actual 0 | inherited, follow-up card to be filed by the caller; not currently listed on CARD-1216 |
+| CP-19 | `C1192_Race_programs_and_feed_share_the_work_volume` | `race-boundary`: expected 1, actual 0 | CARD-1216 |
+| CP-19 | `C1192_Volume_transfer_preserves_metadata_and_refuses_partial_copy` | `C1192_FAIL init 2 CacheHelperImageMissing`; `C1192_EXIT=1` | CARD-1216 |
+| CP-19 | `C1192_Race_barriers_observe_volume_state` | `volume-go-observed`: expected 1, actual 0 | CARD-1216 |
+| CP-19 | `C1192_Partial_workspace_acquisition_is_cleaned` | `first-create-failure-cleaned`: expected true, actual false | CARD-1216 |
+
+Wrapper cause: the unchanged PowerShell wrapper reads the repository SHA at
+`scripts/fixtures/c913-image-wrapper.ps1:5`. Its WSL Git cannot resolve the
+Windows-format `.git` pointer in a linked worktree, so setup stops before the
+package-mount assertions. Review reproduced this at the original LF base; the
+follow-up must repair or qualify that Git/worktree boundary, not alter S2 LF rules.
+
+Handoff cause characterization: source ordering assertions reach the runtime
+`handoff` scenario, but its emitted `probe-before-handoff` is 0. The fixture requires
+successful race materialization, a positive `probe-at-handoff` snapshot and its
+countercase before emitting 1. The retained assertion does not isolate which
+runtime predicate fails on Windows; caller-owned investigation must inspect the
+scenario code/snapshot/diagnosis and fixture process boundary. It reproduces at
+the original LF base and is not evidence of an S2 regression.
+
+Npm-refill cause characterization: the `npm` scenario passes its preceding
+`npm-work-volume` assertion but emits `refill-volume-source=0`. That fact requires
+an observed offline-cache tarball read from a readonly work-volume mount, no bind
+mount, successful refill status and intact host decoys. Review proves the same
+assertion at the original LF base; it does not isolate the failing predicate.
+The caller must investigate the refill status and run-log classifier. This C1192
+method is additional to CARD-1216's current five-method Linux roster, so its
+follow-up ownership must be recorded separately or explicitly added by the caller.
+
+CARD-1216 was read through `scripts/card.ps1 get CARD-1216 -Board Antiphon`:
+the four rows assigned above are the exact overlap with its existing five methods.
+Its fifth, `C1192_Lock_probe_distinguishes_shared_and_private_scratch`, passed on
+Windows Review and remains selected by CP-19; do not import the Linux exclusion.
+
+Roster proof: source `[Test]` declarations bind each excluded identity exactly
+once in its stated class. CP-18's original class roster is 13, minus one = 12.
+CP-19's original fixture portfolio is 40 (all C1192/C913 methods plus the three
+named C1191/C1195/C849 consumers), minus six = 34. The Remote class also contains
+other slices; those were never in this row. The exclusion union equals the seven
+baseline JSON identities exactly, without duplicates. Each method is one result.
+The explicit wildcard operands below select exactly the listed retained rosters;
+fresh TRX definitions/results must match them one-to-one, every result Passed,
+0 Failed, 0 skipped. Both receipt validators must exit 0 against the committed SHA.
+
+CP-18 selected roster (`Antiphon.Tests.Infrastructure.CodexRunnerImageContractTests`):
+
+- `Document_extractors_use_lf_on_every_platform`
+- `Verifier_cursor_move_preserves_the_next_character`
+- `Verifier_finds_the_0160_trust_prompt_in_raw_cursor_positioned_text`
+- `Verifier_still_strips_colour_and_erase_sequences`
+- `Pin_integrity_and_install_are_in_runtime_base`
+- `Net9_packs_are_pinned_verified_before_extraction_and_available_to_session_testing`
+- `C913_Net9_probe_rejects_warm_caches_and_missing_packs`
+- `State_initializer_seeds_the_mounted_host_home_without_overwrite`
+- `State_initializer_seeds_an_existing_host_home_and_leaves_its_contents`
+- `State_initializer_runs_under_each_compose_state_init_shape`
+- `Compose_binds_one_host_directory_as_the_codex_home`
+- `Stack_env_and_docs_name_the_host_codex_home`
+
+CP-19 selected roster (`Antiphon.Tests.Scripts.RemoteScriptContractTests`):
+
+- `C1192_Fixture_has_no_host_payload_tree_or_payload_bind`
+- `C1192_Finalization_precedes_success_and_preserves_primary_failure`
+- `C1192_Evidence_export_preserves_fixture_roster_without_payloads`
+- `C1192_Cleanup_consumer_requires_positive_absence`
+- `C1192_Cleanup_helper_requires_positive_absence`
+- `C1192_Cleanup_masked_requires_positive_absence`
+- `C1192_Cleanup_work_requires_positive_absence`
+- `C1192_Cleanup_mask_requires_positive_absence`
+- `C1192_Cleanup_cache_requires_positive_absence`
+- `C1192_Cleanup_network_requires_positive_absence`
+- `C1192_Daemon_loss_after_compose_refuses_success`
+- `C1192_Acquisition_unknown_ownership_retains_registration_and_residue`
+- `C1192_Workspace_registration_is_absent_only_and_survives_prepare`
+- `C1192_Cleanup_releases_only_registered_current_run_resources`
+- `C1192_Toxic_probe_stays_in_work_volume`
+- `C1192_Summary_validator_runs_under_the_production_interpreter`
+- `C1192_Foreign_volume_is_refused_after_create`
+- `C1192_Harness_cleanup_stays_inside_its_private_directory`
+- `C1192_Harness_cleanup_refuses_ancestor_swap`
+- `C1192_Helper_argv_keeps_discarded_env_file_visible`
+- `C1192_Lock_probe_distinguishes_shared_and_private_scratch`
+- `C1192_Npm_volume_sentinel_and_empty_cache_miss_are_observed`
+- `C1192_Real_cache_cases_keep_the_host_payload_backend`
+- `C1192_Fixture_seed_and_rerun_keep_payloads_in_volume`
+- `C1192_Recovery_controls_validate_volume_bytes_modes_and_manifest`
+- `C1192_Apphost_mask_is_an_empty_exact_volume_mount`
+- `C1195_Retention_probe_is_app_uid_and_does_not_copy_image_content`
+- `C913_Seed_accepts_complete_ordinary_packages_without_framework_packs`
+- `C913_Full_marker_binds_verified_recovery_before_publication`
+- `C913_Marker_versions_keep_legacy_full_and_cold_contracts_distinct`
+- `C913_Prune_validates_recovery_without_refilling_image_packs`
+- `C913_Fixture_uses_owned_payloads_and_proven_absent_temp`
+- `C913_Receipts_reject_mixed_digest_types_and_false_smoke_claims`
+- `C849_Prune_refuses_stale_or_busy_authority`
+
+All SourceLanding Mutation PCs and variants remain pending; this amendment runs
+no deliberate mutants and does not discharge excluded-method repair.
+
 ### Checkpoints
 
 Closed ordinary scope: 25 rows, **one separate isolated build per row**, one exact filter each.
@@ -707,8 +833,8 @@ All estimates include the row build and are estimates, not measured timings.
 | CP-15 | S1 | `tests/Antiphon.Tests -> bin-c1210-cp15/` | win-portable-direct | `/*/*/(JqRunnerImageContractTests*)\|(CodexRootExecContractTests*)/(Pinned_download_is_verified_before_root_owned_install_in_every_runner_target*)\|(Qualification_grades_the_jq_row_for_both_targets*)\|(Entrypoint_heals_only_the_codex_tmp_directory*)\|(Provider_exec_into_the_runner_names_uid_1654*)` | V-1 | 4 Passed, 0 skipped; only four portable methods | 4 | 8 | true |
 | CP-16 | S1 | `tests/Antiphon.Tests -> bin-c1210-cp16/` | win-c1050-platform | `/*/*/C1008PlatformContractTests/*` | V-3, R-2 | 6 outer Passed; exact existing child rosters | 6 | 9 | true |
 | CP-17 | S2 | `tests/Antiphon.Tests -> bin-c1210-cp17/` | win-lf-contract | `/*/*/ShellFixtureLineEndingContractTests/*` | V-4 | 2 Passed; restored working files contain no CR | 2 | 9 | true |
-| CP-18 | S2 | `tests/Antiphon.Tests -> bin-c1210-cp18/` | win-codex-image | `/*/*/CodexRunnerImageContractTests/*` | V-5 | 13 Passed, 0 skipped; qualified WSL | 13 | 9 | true |
-| CP-19 | S2 | `tests/Antiphon.Tests -> bin-c1210-cp19/` | win-remote-fixtures | `/*/*/RemoteScriptContractTests/(C1192_*)\|(C913_*)\|(C1191_Lock_probe_is_created_before_uid_handoff*)\|(C1195_Retention_probe_is_app_uid_and_does_not_copy_image_content*)\|(C849_Prune_refuses_stale_or_busy_authority*)` | V-5 | 40 Passed, 0 skipped; WSL pwsh/jq prerequisite | 40 | 17 | true |
+| CP-18 | S2 | `tests/Antiphon.Tests -> bin-c1210-cp18/` | win-codex-image | `/*/*/CodexRunnerImageContractTests/(Document_extractors_use_lf_on_every_platform*)\|(Verifier_cursor_move_preserves_the_next_character*)\|(Verifier_finds_the_0160_trust_prompt_in_raw_cursor_positioned_text*)\|(Verifier_still_strips_colour_and_erase_sequences*)\|(Pin_integrity_and_install_are_in_runtime_base*)\|(Net9_packs_are_pinned_verified_before_extraction_and_available_to_session_testing*)\|(C913_Net9_probe_rejects_warm_caches_and_missing_packs*)\|(State_initializer_seeds_the_mounted_host_home_without_overwrite*)\|(State_initializer_seeds_an_existing_host_home_and_leaves_its_contents*)\|(State_initializer_runs_under_each_compose_state_init_shape*)\|(Compose_binds_one_host_directory_as_the_codex_home*)\|(Stack_env_and_docs_name_the_host_codex_home*)` | V-5 | exactly 12 Passed, 0 Failed, 0 skipped; one named CP-91 inherited exclusion above | 12 | 9 | true |
+| CP-19 | S2 | `tests/Antiphon.Tests -> bin-c1210-cp19/` | win-remote-fixtures | `/*/*/RemoteScriptContractTests/(C1192_Fixture_has_no_host_payload_tree_or_payload_bind*)\|(C1192_Finalization_precedes_success_and_preserves_primary_failure*)\|(C1192_Evidence_export_preserves_fixture_roster_without_payloads*)\|(C1192_Cleanup_consumer_requires_positive_absence*)\|(C1192_Cleanup_helper_requires_positive_absence*)\|(C1192_Cleanup_masked_requires_positive_absence*)\|(C1192_Cleanup_work_requires_positive_absence*)\|(C1192_Cleanup_mask_requires_positive_absence*)\|(C1192_Cleanup_cache_requires_positive_absence*)\|(C1192_Cleanup_network_requires_positive_absence*)\|(C1192_Daemon_loss_after_compose_refuses_success*)\|(C1192_Acquisition_unknown_ownership_retains_registration_and_residue*)\|(C1192_Workspace_registration_is_absent_only_and_survives_prepare*)\|(C1192_Cleanup_releases_only_registered_current_run_resources*)\|(C1192_Toxic_probe_stays_in_work_volume*)\|(C1192_Summary_validator_runs_under_the_production_interpreter*)\|(C1192_Foreign_volume_is_refused_after_create*)\|(C1192_Harness_cleanup_stays_inside_its_private_directory*)\|(C1192_Harness_cleanup_refuses_ancestor_swap*)\|(C1192_Helper_argv_keeps_discarded_env_file_visible*)\|(C1192_Lock_probe_distinguishes_shared_and_private_scratch*)\|(C1192_Npm_volume_sentinel_and_empty_cache_miss_are_observed*)\|(C1192_Real_cache_cases_keep_the_host_payload_backend*)\|(C1192_Fixture_seed_and_rerun_keep_payloads_in_volume*)\|(C1192_Recovery_controls_validate_volume_bytes_modes_and_manifest*)\|(C1192_Apphost_mask_is_an_empty_exact_volume_mount*)\|(C1195_Retention_probe_is_app_uid_and_does_not_copy_image_content*)\|(C913_Seed_accepts_complete_ordinary_packages_without_framework_packs*)\|(C913_Full_marker_binds_verified_recovery_before_publication*)\|(C913_Marker_versions_keep_legacy_full_and_cold_contracts_distinct*)\|(C913_Prune_validates_recovery_without_refilling_image_packs*)\|(C913_Fixture_uses_owned_payloads_and_proven_absent_temp*)\|(C913_Receipts_reject_mixed_digest_types_and_false_smoke_claims*)\|(C849_Prune_refuses_stale_or_busy_authority*)` | V-5 | exactly 34 Passed, 0 Failed, 0 skipped; six named CP-91 inherited exclusions above | 34 | 17 | true |
 | CP-20 | S3 | `tests/Antiphon.Tests -> bin-c1210-cp20/` | win-storage-and-audit | `/*/*/(ChannelOutboundStorageTests*)\|(WindowsUnitPlatformAdmissionTests*)/*` | V-2, V-6, R-5 | 38 total: 36–38 Passed, 0–2 exact Conditional skips; integrated child total 105 | 36 | 12 | true |
 | CP-21 | S4 | `tests/Antiphon.Tests -> bin-c1210-cp21/` | win-c849-harness | `/*/*/RemoteScriptContractTests/(C849_Saved_donor_archive_is_checked_and_imported_without_a_container*)\|(C849_Seed_refuses_invalid_donors_and_partial_payloads*)\|(C849_Seed_publishes_complete_payloads_before_its_marker*)\|(C849_Saved_donor_rejects_unsafe_archives_empty_payload_and_busy_counters*)\|(C849_Closure_preflight_names_a_missing_dependency*)\|(C983_Required_jq_driver_rejects_successful_false_probe*)\|(C973_Cold_marker_readers_accept_pruned_seed_image_and_refuse_invalid_markers*)` | V-7, V-8, R-5 | 12 Passed, 0 skipped; method durations and child completion | 12 | 17 | true |
 | CP-22 | S5 | `tests/Antiphon.Tests -> bin-c1210-cp22/` | win-timeout-policy | `/*/*/ProcessSpawnTimeoutPolicyTests/*` | V-9 | 2 Passed after OD-5; metadata policy only | 2 | 9 | true |
