@@ -70,11 +70,13 @@ tracked-file count and clean status. Preserve original checkpoint lines in the e
 | CP-7 | S3 | CP-2 | final-unit | `/*/*/*/*[Category=Unit]` | R-5 | >= 1 executed, 0 failed | 1 | 8 | true |
 | CP-8 | S4 | `tests/Antiphon.Tests -> bin-c971-inherited/` | base-channel-contract | `/*/*/ChannelOutboundContractTests/Server_and_gateway_keep_source_and_transport_boundaries` | R-5 finding 1 | 1 executed; confirm observed assertion failure at original base | 1 | 4 | true |
 | CP-9 | S4 | CP-8 | base-grok-pin | `/*/*/GrokRunnerImageContractTests/Qualified_pin_agrees_with_install_assertion_docs_fixtures_and_verifiers` | R-5 finding 2 | 1 executed; confirm observed assertion failure at original base | 1 | 1 | true |
-| CP-10 | Repair-tests | `tests/Antiphon.Tests -> bin-c971-repair-base/` | cleanup-baseline | `/*/*/AgentTaskLandNestedRepositoryCleanupTests/*` | V-10..V-13 | vulnerable preservation rows intentionally red; controls green | 7 | 4 | true |
-| CP-11 | Repair-fix | `tests/Antiphon.Tests -> bin-c971-repair-final/` | cleanup-final | `/*/*/AgentTaskLandNestedRepositoryCleanupTests/*` | V-10..V-13 | 7 passed | 7 | 4 | true |
-| CP-12 | Repair-fix | CP-11 | guarded-cleanup | `/*/*/WorktreeGuardedCleanupTests/*` | R-6 | full class green | 1 | 3 | true |
-| CP-13 | Repair-fix | CP-11 | retirement | `/*/*/TaskWorktreeRetirementTests/*` | R-7 | full class green | 1 | 3 | true |
-| CP-14 | Repair-fix | CP-11 | retirement-races | `/*/*/WorktreeRetirementRaceTests/*` | R-8 | full class green | 1 | 3 | true |
+| CP-10 | Repair-tests | `tests/Antiphon.Tests -> bin-c971-repair-base/` | cleanup-baseline | `/*/*/AgentTaskLandNestedRepositoryCleanupTests/*` | V-10..V-14 | vulnerable preservation rows intentionally red; controls green | 8 | 4 | true |
+| CP-11 | S3 | CP-2 | cleanup-final | `/*/*/AgentTaskLandNestedRepositoryCleanupTests/*` | V-10..V-14 | 8 passed | 8 | 4 | true |
+| CP-12 | S3 | CP-2 | guarded-cleanup | `/*/*/WorktreeGuardedCleanupTests/*` | R-6 | full class green; declared Windows skips on Linux | 1 | 3 | true |
+| CP-13 | S3 | CP-2 | retirement | `/*/*/TaskWorktreeRetirementTests/*` | R-7 | full class green | 1 | 3 | true |
+| CP-14 | S3 | CP-2 | retirement-races | `/*/*/WorktreeRetirementRaceTests/*` | R-8 | full class green | 1 | 3 | true |
+| CP-15 | S3 | CP-2 | removal-policy | `/*/*/LandingRemovalPolicyControlTests/*` | R-9 | full class green; declared Windows skips on Linux | 1 | 3 | true |
+| CP-16 | S3 | CP-2 | completed-card-removal | `/*/*/CompletedCardWorktreeRemovalTests/*` | R-10 | full class green; declared Windows skips on Linux | 1 | 3 | true |
 
 Higher-priority Final stage contract requires R-5 despite the brief's narrower Unit exclusion.
 Named integration classes bound this Git-only impact. No unbounded integration class or assembly
@@ -131,7 +133,7 @@ All PCs remain pending for SourceLanding Mutation after ordinary Code, Review an
 
 The repair brief expressly excludes Unit (R-5/CP-7 and historical CP-8/9),
 tracked independently as CARD-1209/CARD-1210. Historical statements above describe
-the original round only. Final repair selects CP-2..6 and CP-11..14; CP-10 first
+the original round only. Final repair selects CP-2..6 and CP-11..16; CP-10 first
 proves the defect with tests only on 46fe27d2 production. No assembly run or
 unbounded class impact is proposed. Cleanup and retirement are bounded by the
 full named classes. No green repetitions are required.
@@ -150,9 +152,12 @@ including set-aside resumes and retirement.
 | V-11 | same method: obj/nested with .git file | Ordinary reviewed adoption publishes; pointer/sentinel bytes survive; strict recovery remains refused |
 | V-12 | C971_PlainDisposableOutputIsCleaned | Queue publication cleans plain obj output |
 | V-13 | C971_UnsupportedNestedRecoveryIsRefused: nonignored directory, ignored .git file | source_dirty / recovery_checkout_unproven before publication; bytes survive |
+| V-14 | C971_LateNestedRepositorySurvivesSetAsideResume | Repository inserted after move survives managed deletion and later recorded resume |
 | R-6 | whole WorktreeGuardedCleanupTests | unchanged cleanup safety |
 | R-7 | whole TaskWorktreeRetirementTests | unchanged retirement authority/preservation |
 | R-8 | whole WorktreeRetirementRaceTests | unchanged retirement races |
+| R-9 | whole LandingRemovalPolicyControlTests | unchanged publication and set-aside policies |
+| R-10 | whole CompletedCardWorktreeRemovalTests | unchanged completed-card removal authority |
 
 The non-obj preservation control already passes on base; it cannot honestly be
 reported red. Obj/deeper/file-pointer publication rows must fail on missing .git
@@ -165,7 +170,10 @@ PC-9 pending: C971_PlainDisposableOutputIsCleaned; protect all ignored output.
 PC-10 pending: C971_UnsupportedNestedRecoveryIsRefused / both; bypass outer
 untracked guard or permit .git file strict proof respectively. Detecting filters:
 /*/*/AgentTaskLandNestedRepositoryCleanupTests/<ExactMethod>.
-All PC-1..10/variants pending SourceLanding Mutation. Restart: none. Next: Review.
+PC-11 pending: C971_LateNestedRepositorySurvivesSetAsideResume; omit the deletion
+boundary guard (initial and resumed deletion variants). Filter uses the same class
+and exact method as the other new PCs. All PC-1..11/variants pending SourceLanding
+Mutation. Restart: none. Next: Review.
 Landing owner: 520a9bf3-d0ab-427b-a036-88323a621750; original Code task
 bc957ed9-9a6a-4503-a99d-fce2f677d4ec remains in the lineage.
 
