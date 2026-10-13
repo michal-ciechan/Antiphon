@@ -5,7 +5,7 @@ namespace Antiphon.Server.Infrastructure.Git;
 /// <summary>Filesystem-only preservation evidence; never enter a private repository or run its Git.</summary>
 internal static class WorktreeNestedRepositories
 {
-    public static ImmutableArray<string> Find(string root)
+    public static ImmutableArray<string> Find(string root, bool bareOnly = false)
     {
         var repositories = new SortedSet<string>(StringComparer.Ordinal);
         var pending = new Stack<string>();
@@ -17,7 +17,8 @@ internal static class WorktreeNestedRepositories
             if (attributes is null || attributes.Value.HasFlag(FileAttributes.ReparsePoint)) continue;
             if (!LandingGit.PathsEqual(directory, root) && HasMarker(directory))
             {
-                repositories.Add(Relative(root, directory));
+                if (!bareOnly || HasBareMarker(directory))
+                    repositories.Add(Relative(root, directory));
                 continue; // Do not enumerate administrative or private worktree bytes.
             }
             foreach (var entry in Directory.EnumerateFileSystemEntries(directory))
@@ -35,7 +36,15 @@ internal static class WorktreeNestedRepositories
 
     // Any marker is preservation evidence, including a gitdir file or a reparse entry.
     // Unknown/access errors propagate; File.Exists would turn them into false absence.
-    public static bool HasMarker(string directory) => Attributes(Path.Combine(directory, ".git")) is not null;
+    public static bool HasMarker(string directory) =>
+        Attributes(Path.Combine(directory, ".git")) is not null || HasBareMarker(directory);
+
+    // Bare administration lives directly in the directory (HEAD, objects/, refs/).
+    // HEAD alone is ambiguous, so preserve even damaged layouts and case twins. Do not
+    // read private config, follow an administrative link, or execute private Git.
+    private static bool HasBareMarker(string directory) =>
+        Directory.EnumerateFileSystemEntries(directory)
+            .Any(entry => Path.GetFileName(entry).Equals("HEAD", StringComparison.OrdinalIgnoreCase));
 
     public static void ThrowIfRepository(string directory, string? root)
     {

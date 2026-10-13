@@ -52,7 +52,7 @@ Git and the real landing queue, and carry the process-spawn limiter.
 | V-6 | C1211_DisposableLookalikeIsCleaned: plain obj output | preserve all obj -> cleanup not Complete |
 | V-7 | C1211_BareRecoveryIsRefused: direct/deep bare | allow bare recovery -> proof unexpectedly accepted / queue publishes |
 | V-8 | C1211_LateBareRepositorySurvivesSetAsideResume | omit deletion guard initially / on resume -> missing HEAD |
-| R-1 | full LandRecoveryIgnoredNestedRepositoryTests | unchanged 23-shape proof |
+| R-1 | full LandRecoveryIgnoredNestedRepositoryTests | unchanged 15 proof shapes (plus 8 cleanup shapes in R-6) |
 | R-2 | full LandRecoveryCheckoutTests | unchanged checkout proof |
 | R-3 | full LandRecoveryIgnoredObstructionTests | unchanged collisions |
 | R-4 | full LandingRegistrationFreshnessTests | unchanged registration freshness |
@@ -76,7 +76,7 @@ Bound owner if ANTIPHON_TASK_TOKEN exists; never print it. Restart: none.
 |---|---|---|---|---|---|---|---:|---:|---|
 | CP-1 | S2 | `tests/Antiphon.Tests -> bin-c1211-base/` | bare-base | `/*/*/AgentTaskLandBareRepositoryCleanupTests/*` | V-1..8 | vulnerable rows assertion-red; controls green | 10 | 4 | true |
 | CP-2 | S3 | `tests/Antiphon.Tests -> bin-c1211-final/` | bare-final | `/*/*/AgentTaskLandBareRepositoryCleanupTests/*` | V-1..8 | all green | 10 | 4 | true |
-| CP-3 | S3 | CP-2 | nested-proof | `/*/*/LandRecoveryIgnoredNestedRepositoryTests/*` | R-1 / C971 CP-2 | all green | 23 | 2 | true |
+| CP-3 | S3 | CP-2 | nested-proof | `/*/*/LandRecoveryIgnoredNestedRepositoryTests/*` | R-1 / C971 CP-2 | all green | 15 | 2 | true |
 | CP-4 | S3 | CP-2 | checkout-proof | `/*/*/LandRecoveryCheckoutTests/*` | R-2 / C971 CP-3 | all green | 12 | 2 | true |
 | CP-5 | S3 | CP-2 | obstructions | `/*/*/LandRecoveryIgnoredObstructionTests/*` | R-3 / C971 CP-4 | 5 passed; 2 Windows skips | 5 | 1 | true |
 | CP-6 | S3 | CP-2 | registration | `/*/*/LandingRegistrationFreshnessTests/*` | R-4 / C971 CP-5 | all green | 4 | 1 | true |
@@ -104,3 +104,18 @@ PC-6: C1211_LateBareRepositorySurvivesSetAsideResume / initial, resume: omit del
 All PC-n/variants pending method-scoped SourceLanding Mutation after Review and
 caller landing original Code task; ordinary green discharges none. C971 PC-1..11
 remain pending as inherited lineage. Next: review after ordinary verification.
+
+## Tests-first baseline
+
+CP-1 at tests-only 14c63d4deda91358586a3b989f4a6cb5f282084c: 10 executed,
+2 passed, 8 failed, 0 skipped. Fresh TRX inspected for every argument row.
+Production files are identical to base. All five publication variants failed
+B.BareHeadSurvivesPublication after B.PublicationConfirmed; the late deletion
+case failed B.LateBareHeadSurvivesDelete; both recovery variants failed
+B.BareRecoveryRefused (false expected, true observed). Both disposal controls
+passed. This is assertion-red, not a fixture/build failure. Bound task owner;
+build slot granted waited=0s, row granted waited=45s; clean source and verified
+build provenance. Runtime report retains the unedited CHECKPOINT line and TRX.
+CP-3 minimum corrected from 23 to 15 before its first execution: 23 refers to
+15 existing proof plus 8 cleanup cases, not 23 in the proof class. No selection
+or assertion changed. Final ordinary verification is pending at this commit.
