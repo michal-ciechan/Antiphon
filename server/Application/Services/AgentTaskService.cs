@@ -252,6 +252,10 @@ public sealed class AgentTaskService
         if (request.Goal.Length > 20_000)
             throw new ValidationException(nameof(request.Goal), "A goal must not exceed 20,000 characters.");
 
+        // CARD-0507 D-2: a misconfigured role tool bundle is a 422 before any row is written
+        // (RolePolicyToolBundleDispatchTests.create_refuses_a_review_whose_role_names_an_unknown_tool_bundle_and_writes_nothing).
+        InstructionBundles.ResolveRoleToolBundles(request.Role, _settings);
+
         // CARD-0659 D-1. Snapshot what the caller said about the host before anything rewrites the
         // request: omitted is automatic, `local` is an explicit desktop (stored as null, so it
         // never trips the remote-only guards or CARD-0644's agent-pin reuse below), anything else

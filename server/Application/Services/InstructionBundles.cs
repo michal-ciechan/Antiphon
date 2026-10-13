@@ -162,10 +162,42 @@ public static class InstructionBundles
     /// <summary>The 422 code a role-policy bundle key that is not a tool bundle refuses with.</summary>
     public const string StageToolBundleUnknownCode = "stage_tool_bundle_unknown";
 
-    public static bool IsToolBundleKey(string? key) => false;
+    /// <summary>
+    /// Prefix (ordinal) AND in the catalog
+    /// (RolePolicyToolBundleTests.IsToolBundleKey_is_a_whitelist_of_prefix_and_catalog).
+    /// </summary>
+    public static bool IsToolBundleKey(string? key) =>
+        key is not null
+        && key.Length > ToolPrefix.Length
+        && key.StartsWith(ToolPrefix, StringComparison.Ordinal)
+        && All.ContainsKey(key);
 
-    public static IReadOnlyList<string> ResolveRoleToolBundles(AgentTaskRole role, DelegationSettings settings) =>
-        settings.RolePolicy.TryGetValue(role.ToString(), out var policy) ? policy.Bundles : [];
+    /// <summary>
+    /// The validated <c>Delegation:RolePolicy:&lt;Role&gt;:Bundles</c> list for <paramref name="role"/>;
+    /// empty when the role has no entry (RolePolicyToolBundleTests.the_resolver_returns_nothing_for_an_empty_list_or_an_unlisted_role).
+    /// A key that is not a tool bundle throws 422 <see cref="StageToolBundleUnknownCode"/> naming the
+    /// role and the key (RolePolicyToolBundleTests.the_resolver_refuses_unknown_and_non_tool_keys).
+    /// Callers: <c>AgentTaskService.CreateAsync</c> and the dispatcher before its claim
+    /// (RolePolicyToolBundleDispatchTests).
+    /// </summary>
+    public static IReadOnlyList<string> ResolveRoleToolBundles(AgentTaskRole role, DelegationSettings settings)
+    {
+        if (!settings.RolePolicy.TryGetValue(role.ToString(), out var policy) || policy.Bundles is not { Count: > 0 } keys)
+            return [];
+
+        foreach (var key in keys)
+        {
+            if (IsToolBundleKey(key))
+                continue;
+            var error = $"Delegation:RolePolicy:{role}:Bundles lists instruction bundle '{key}', which is not a "
+                + $"'{ToolPrefix}' bundle in the catalog. Known tool bundles: "
+                + $"[{string.Join(", ", All.Keys.Where(IsToolBundleKey).Order(StringComparer.Ordinal))}].";
+            throw new ValidationException("RolePolicy", error, StageToolBundleUnknownCode,
+                $"{StageToolBundleUnknownCode}: {error}");
+        }
+
+        return [.. keys];
+    }
 
     public static bool IsStageBundleKey(string key) =>
         key.StartsWith("stage-", StringComparison.Ordinal) && All.ContainsKey(key);
@@ -201,6 +233,10 @@ public static class InstructionBundles
     /// what this shape of work always needs, an attachment is the operator adding to that. Deduped
     /// by the composer, so a bundle reachable both ways appears exactly once.
     /// </param>
+    /// <param name="roleBundleKeys">
+    /// CARD-0507: the role's validated tool bundles from <see cref="ResolveRoleToolBundles"/>, placed
+    /// after the role's defaults and before attachments.
+    /// </param>
     public static IReadOnlyList<string> ForDelegate(
         AgentTaskKind kind, AgentTaskRole role, IReadOnlyList<string>? attachedBundleKeys = null,
         IReadOnlyList<string>? roleBundleKeys = null)
@@ -232,9 +268,9 @@ public static class InstructionBundles
                 ? [StageKeyFor(role), DelegateBasics]
                 : [DelegateBasics];
 
-        return attachedBundleKeys is null or { Count: 0 }
-            ? roleKeys
-            : [.. roleKeys, .. attachedBundleKeys];
+        // CARD-0507 D-2: role-policy tool bundles after the role keys, before attachments
+        // (RolePolicyToolBundleTests.a_review_worker_carries_stage_then_basics_then_role_tool_bundles_then_attachments).
+        return [.. roleKeys, .. roleBundleKeys ?? [], .. attachedBundleKeys ?? []];
     }
 
     /// <summary>

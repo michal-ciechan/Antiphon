@@ -5460,6 +5460,11 @@ public sealed partial class AgentTaskDispatcher
     private async Task<DispatchOneResult> DispatchOneAsync(
         AgentTask task, CancellationToken ct, SiblingBaseGuard? siblingObservation)
     {
+        // CARD-0507 D-2: before the claim, so a task queued before the configuration changed
+        // launches nothing; the tick's catch fails it with the code, role and key
+        // (RolePolicyToolBundleDispatchTests.the_dispatcher_refuses_a_queued_review_before_the_claim_and_launches_nothing).
+        InstructionBundles.ResolveRoleToolBundles(task.Role, _settings);
+
         // Runner RPCs share one budget and run before any row lock. A pinned profile cannot
         // change the task's kind, so the pre-claim answer is the one the claim applies.
         var claudeAuth = await ReadClaudeProviderAuthBeforeClaimAsync(task, ct);
@@ -7038,7 +7043,8 @@ public sealed partial class AgentTaskDispatcher
         // it retires — bounded by PoolIdleRetireMinutes, and deliberately not "fixed" by typing
         // bundles into a live session.
         var composed = InstructionBundleComposer.Compose(
-            InstructionBundles.ForDelegate(task.Kind, task.Role, attachedBundleKeys));
+            InstructionBundles.ForDelegate(task.Kind, task.Role, attachedBundleKeys,
+                InstructionBundles.ResolveRoleToolBundles(task.Role, _settings)));
         var subject = $"Task {DelegationReportFormatter.Short(task.Id)} ({task.Kind}/{task.Role})";
         // Guarded BEFORE anything is added: over-budget throws at compose time and the launch fails
         // loudly. Truncating would run the delegate under half a contract with nothing to show it.
@@ -8049,7 +8055,8 @@ public sealed partial class AgentTaskDispatcher
         {
             var installed = await _db.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == session, ct);
             var desired = InstructionBundleComposer.Compose(InstructionBundles.ForDelegate(claimed.Kind, claimed.Role,
-                await AgentBundleAttachments.LoadAsync(_db, agent.Id, _logger, ct)));
+                await AgentBundleAttachments.LoadAsync(_db, agent.Id, _logger, ct),
+                InstructionBundles.ResolveRoleToolBundles(claimed.Role, _settings)));
             var receipt = GrokRulesRefreshService.Receipt(installed);
             if (!desired.IsEmpty && !GrokRulesRefreshService.CanReuse(installed, desired.Text))
                 return ReuseOutcome.SpawnFresh;
