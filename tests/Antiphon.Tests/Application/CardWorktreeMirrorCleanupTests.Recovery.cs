@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
@@ -5,6 +6,7 @@ using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.Server.Infrastructure.Files;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.AspNetCore.Hosting;
@@ -91,6 +93,7 @@ public sealed partial class CardWorktreeMirrorCleanupTests
         var retry = await f.TryAsync();
         var distinctRemovalOperationIds = f.SentOperationIds.Distinct().Count();
         distinctRemovalOperationIds.ShouldBe(1);
+        f.SentOperationIds.Count.ShouldBe(2, "the lost attempt and the retry both reached the inner client");
         retry.Complete.ShouldBeTrue(retry.Reason); retry.Receipt.ShouldBe(recipientReply!.Receipt);
         f.Journal.Read()!.Single().Command.OperationId.ShouldBe(f.SentOperationIds[0]);
         var row = await f.EndpointAsync();
@@ -98,11 +101,26 @@ public sealed partial class CardWorktreeMirrorCleanupTests
     }
 
     // Six vectors: the tested preparation, inspection or removal crosses the socket while an earlier
-    // actual WorkspaceMirror holds the runner MutationLock (busy), or with no holder (ready).
+    // actual WorkspaceMirror holds the runner MutationLock (busy), or with no holder (ready). A busy
+    // holder is released only after the tested request waits at the runner MutationLock
+    // (ReleaseWhenQueuedAsync); runnerOrder is the hand-written runner-side sequence.
     // mutation (PC-285): drop guarded work queued while the turn is busy;
     // red: busyRecipientDirectoryGone.ShouldBeTrue() fails.
+    // fixture mutation (F2 scratch): release the holder before the tested request queues;
+    // red: runnerOrder lacks "queued:<operation>" and shows "released:waiters=0".
     [Test] public async Task C1032_RecoveryQueuesBusyAndReady()
     {
+        const string mirror = "entered:WorkspaceMirror", inspect = "entered:CompletedCardWorkspaceInspect",
+            remove = "entered:CompletedCardWorkspaceRemove", holderEntered = "holder-entered", released = "released:waiters=1";
+        var expectedOrder = new Dictionary<string, string[]>
+        {
+            ["preparation-busy"] = [holderEntered, "queued:WorkspaceMirror", released, mirror, inspect, remove],
+            ["preparation-ready"] = [mirror, inspect, remove],
+            ["inspection-busy"] = [mirror, holderEntered, "queued:CompletedCardWorkspaceInspect", released, inspect, remove],
+            ["inspection-ready"] = [mirror, inspect, remove],
+            ["removal-busy"] = [mirror, inspect, holderEntered, "queued:CompletedCardWorkspaceRemove", released, remove],
+            ["removal-ready"] = [mirror, inspect, remove],
+        };
         foreach (var vector in new[] { "preparation-busy", "preparation-ready", "inspection-busy", "inspection-ready", "removal-busy", "removal-ready" })
         {
             var stage = vector[..vector.IndexOf('-')]; var busy = vector.EndsWith("-busy", StringComparison.Ordinal);
@@ -115,7 +133,7 @@ public sealed partial class CardWorktreeMirrorCleanupTests
             {
                 holder = await f.HoldMutationTurnAsync();
                 pending = f.TryAsync();
-                await f.ReleaseWhenQueuedAsync(holder, pending);
+                await f.ReleaseWhenQueuedAsync(holder, pending, PhoneHomeOperation.CompletedCardWorkspaceInspect);
             }
             else if (busy && stage == "removal")
             {
@@ -123,7 +141,7 @@ public sealed partial class CardWorktreeMirrorCleanupTests
                 f.AfterIntent = async _ => held.SetResult(await f.HoldMutationTurnAsync());
                 pending = f.TryAsync();
                 holder = await held.Task.WaitAsync(TimeSpan.FromSeconds(30));
-                await f.ReleaseWhenQueuedAsync(holder, pending);
+                await f.ReleaseWhenQueuedAsync(holder, pending, PhoneHomeOperation.CompletedCardWorkspaceRemove);
             }
             else pending = f.TryAsync();
             var result = await pending;
@@ -131,23 +149,27 @@ public sealed partial class CardWorktreeMirrorCleanupTests
             busyRecipientDirectoryGone.ShouldBeTrue(vector + ": " + result.Reason);
             result.Complete.ShouldBeTrue(vector);
             f.InspectionRequests.ShouldBe(1, vector); f.SentOperationIds.Count.ShouldBe(1, vector);
+            List<string> runnerOrder; lock (f.Order) runnerOrder = [.. f.Order];
+            string.Join(" > ", runnerOrder).ShouldBe(string.Join(" > ", expectedOrder[vector]), vector);
             var row = await f.EndpointAsync();
+            f.EnteredRemovalOperationIds.ShouldBe([row.OperationId.ShouldNotBeNull(vector)], vector);
             row.State.ShouldBe(CardWorktreeCleanupEndpointState.Complete, vector);
             JsonSerializer.Deserialize<CompletedCardWorkspaceReceipt>(row.ImportedReceipt!, PhoneHomeFraming.Json)
                 .ShouldBe(f.Journal.Read()!.Single().Receipt, vector);
         }
     }
 
-    // Server-side cuts, each with a hand-written expected outcome; table in the S8 evidence doc.
-    // I0 inspection loss and D1 pre-send loss keep retryable debt; a fresh coordinator before
-    // NextAttemptAt sends nothing (PC-289 callsBeforeDue), then the due retry reaches the recipient
-    // with the original operation (PC-286). D9 server save failure after a real receipt keeps the
-    // operation (PC-287). D11-frozen replays original bytes after the task changes (PC-511).
-    // D11-store: a replacement store on reconnect never completes the old endpoint (PC-288).
+    // Server-side cuts I0, D1, D9, D11-frozen, D11-store; expected outcomes are in the S8 evidence
+    // cut table. D1 and D11-frozen: the first attempt fails at the client seam before send; the seam
+    // reads the committed endpoint (frozen) and AttemptedRequests keeps that attempt's bytes. The due
+    // retry's sent bytes (a second capture) must equal them, with Attempts 1 then 2.
+    // scratch mutations (reverted): replay with a new OperationId, or replay with the report digest
+    // recomputed from the changed task; red: retryRequest.ShouldBe(firstAttemptRequest).
     [Test] public async Task C1032_RecoveryCrashHandoffs()
     {
         foreach (var cut in new[] { "I0", "D1", "D9", "D11-frozen", "D11-store" })
         {
+            CardWorktreeCleanupEndpoint? frozen = null;
             var hostClock = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(DateTimeOffset.UtcNow);
             await using var f = await CompletedCardMirrorFixture.CreateAsync(MirrorPreparation.Direct,
                 hostClock: cut == "D11-store" ? hostClock : null);
@@ -171,16 +193,30 @@ public sealed partial class CardWorktreeMirrorCleanupTests
                 await f.RemovedAsync();
                 var postRestartOperationId = (await f.EndpointAsync()).OperationId;
                 postRestartOperationId.ShouldBe(originalOperationId);
-                f.SentRequests.Distinct().Count().ShouldBe(1, cut);
+                f.SentRequests.Count.ShouldBe(2, cut);
+                f.SentRequests[1].ShouldBe(f.SentRequests[0], cut);
+                f.SentOperationIds.ShouldBe([originalOperationId, originalOperationId], cut);
                 continue;
             }
             else
             {
-                f.BeforeRemoval = (_, _) => { f.BeforeRemoval = null;
-                    throw new PhoneHomeTransportException(PhoneHomeProblemTypes.RequestLimit, "fixture: not sent"); };
+                CardWorktreeCleanupEndpoint? atSeam = null;
+                f.BeforeRemoval = async (_, _) =>
+                {
+                    f.BeforeRemoval = null; atSeam = await f.EndpointAsync();
+                    throw new PhoneHomeTransportException(PhoneHomeProblemTypes.RequestLimit, "fixture: not sent");
+                };
                 (await f.TryAsync()).Reason.ShouldBe(PhoneHomeProblemTypes.RequestLimit, cut);
                 await RetryDebtAsync(f, PhoneHomeProblemTypes.RequestLimit, intent: true);
                 f.Journal.Read()!.Count.ShouldBe(0, cut);
+                frozen = atSeam.ShouldNotBeNull(cut);
+                frozen.State.ShouldBe(CardWorktreeCleanupEndpointState.IntentRecorded, cut);
+                f.AttemptedRequests.Count.ShouldBe(1, cut); f.SentRequests.Count.ShouldBe(0, cut);
+                Encoding.UTF8.GetString(frozen.ImmutableRequest.ShouldNotBeNull(cut)).ShouldBe(f.AttemptedRequests[0], cut);
+                var debt = await f.EndpointAsync();
+                debt.OperationId.ShouldBe(frozen.OperationId, cut); debt.RequestDigest.ShouldBe(frozen.RequestDigest, cut);
+                debt.ImmutableRequest.ShouldBe(frozen.ImmutableRequest, cut);
+                debt.Attempts.ShouldBe(1, cut); debt.Retryable.ShouldBeTrue(cut);
             }
             var inspected = f.InspectionRequests; var removals = f.RemovalRequests;
             f.Clock.Advance(MirrorRetryDelay - TimeSpan.FromSeconds(1));
@@ -190,7 +226,12 @@ public sealed partial class CardWorktreeMirrorCleanupTests
             early.Complete.ShouldBeFalse(cut); early.Reason.ShouldBe("retry_not_due", cut);
             f.Clock.Advance(TimeSpan.FromSeconds(1));
             if (cut == "D11-frozen")
+            {
                 await f.Card.ChangeTaskAsync(t => { t.WorktreePath = f.Card.Tree + "-moved"; t.Result = "changed report\n"; });
+                // The change is visible to a request rebuilt from the current task.
+                JsonSerializer.Deserialize<CompletedCardWorkspaceCommand>(frozen!.ImmutableRequest!, PhoneHomeFraming.Json)!.ReportDigest
+                    .ShouldNotBe(CardDoneArtifactPreservation.Digest("changed report\n"), cut);
+            }
             if (cut == "D11-store")
             {
                 var original = (await f.EndpointAsync()).OperationId;
@@ -207,14 +248,24 @@ public sealed partial class CardWorktreeMirrorCleanupTests
                 f.Journal.Read()!.Count.ShouldBe(0, cut);
                 continue;
             }
-            await f.RemovedAsync();
+            var recovered = await f.TryAsync();
+            if (frozen is not null)
+            {
+                f.AttemptedRequests.Count.ShouldBe(2, cut); f.SentRequests.Count.ShouldBe(1, cut);
+                var firstAttemptRequest = f.AttemptedRequests[0]; var retryRequest = f.SentRequests[0];
+                retryRequest.ShouldBe(firstAttemptRequest, cut);
+                CompletedCardWorkspaceContract.CanonicalDigest(retryRequest).ShouldBe(frozen.RequestDigest, cut);
+                f.SentOperationIds.ShouldBe([frozen.OperationId!.Value], cut);
+                f.EnteredRemovalOperationIds.ShouldBe([frozen.OperationId.Value], cut);
+            }
+            await f.AssertRemovedAsync(recovered);
             var recoveredRecipientReceiptExists = f.Journal.Read()!.Single().Receipt is not null;
             recoveredRecipientReceiptExists.ShouldBeTrue(cut);
-            if (cut != "I0")
+            if (frozen is not null)
             {
-                f.SentOperationIds.Distinct().Count().ShouldBe(1, cut);
-                var replayedRequestBytes = f.SentRequests[^1];
-                replayedRequestBytes.ShouldBe(f.SentRequests[0], cut);
+                var done = await f.EndpointAsync();
+                done.OperationId.ShouldBe(frozen.OperationId, cut); done.ImmutableRequest.ShouldBe(frozen.ImmutableRequest, cut);
+                done.Attempts.ShouldBe(2, cut); done.Retryable.ShouldBeFalse(cut); done.NextAttemptAt.ShouldBeNull(cut);
             }
         }
     }

@@ -1,4 +1,5 @@
 using TUnit.Core;
+using System.Diagnostics;
 using System.Reflection;
 using System.Text.Json;
 using Antiphon.Server.Application.Interfaces;
@@ -53,9 +54,18 @@ internal sealed class CompletedCardMirrorFixture : IAsyncDisposable
     // sent; AfterRemoval sees the real recipient reply and may return a loss to throw instead.
     public Func<CompletedCardWorkspaceCommand, CancellationToken, Task>? BeforeRemoval { get; set; }
     public Func<CompletedCardWorkspaceRemovalResponse, Exception?>? AfterRemoval { get; set; }
+    // Canonical bytes of every removal command that entered the client seam, captured before
+    // BeforeRemoval, so a pre-send fault still leaves its attempt here.
+    public List<string> AttemptedRequests { get; } = [];
     // Operation ids and canonical bytes of every command that reached the inner client.
     public List<Guid> SentOperationIds { get; } = [];
     public List<string> SentRequests { get; } = [];
+    // Runner-side order of mutation-turn events (C1032_RecoveryQueuesBusyAndReady): "holder-entered",
+    // "queued:<operation>", "released:waiters=<n>", and "entered:<operation>" when a handler starts.
+    public List<string> Order { get; } = [];
+    // Operation id of each CompletedCardWorkspaceRemove handler entry on the runner.
+    public List<Guid> EnteredRemovalOperationIds { get; } = [];
+    private PhoneHomeCommandDispatcher _dispatcher = null!;
     public FakeTimeProvider Clock => (FakeTimeProvider)Card.Host.Clock;
     public const string BusyBranch = "c1032-busy-holder";
     private PhoneHomeSettings _settings = null!;
@@ -100,7 +110,9 @@ internal sealed class CompletedCardMirrorFixture : IAsyncDisposable
         // The holder blocks inside MirrorAsync, under the runner dispatcher's MutationLock.
         Workspace.WorkspaceAdmissionForTest = async () =>
         {
-            if (Interlocked.Exchange(ref _holdArmed, 0) == 1) { _holderEntered.TrySetResult(); await _holderRelease.Task; }
+            if (Interlocked.Exchange(ref _holdArmed, 0) == 1)
+            { Record("holder-entered"); _holderEntered.TrySetResult(); await _holderRelease.Task; }
+            else Record("entered:" + PhoneHomeOperation.WorkspaceMirror);
         };
         PhoneHomeWorkspaceMirrorRequest mirror = new(task.WorktreeBranch!, g.SeedSha,
             "task-" + task.Id.ToString("N")[..8], Binding: new(task.Id, task.Attempt, Guid.NewGuid(),
@@ -124,7 +136,7 @@ internal sealed class CompletedCardMirrorFixture : IAsyncDisposable
         {
             var holder = preparation == MirrorPreparation.Busy ? await HoldMutationTurnAsync() : null;
             var prepared = Client.MirrorWorkspaceAsync(mirror, ct);
-            if (holder is not null) await ReleaseWhenQueuedAsync(holder, prepared);
+            if (holder is not null) await ReleaseWhenQueuedAsync(holder, prepared, PhoneHomeOperation.WorkspaceMirror);
             Binding = (await prepared).Binding.ShouldNotBeNull("real recipient returns its completed binding");
             (await g.RequiredAsync(Binding.WorktreePath, "rev-parse", "HEAD")).Trim().ShouldBe(g.SeedSha);
             File.Exists(RunnerWorkspaceBindingStore.OwnerStampPath(Binding.GitDirectory)).ShouldBeTrue("runner owner stamp");
@@ -148,6 +160,12 @@ internal sealed class CompletedCardMirrorFixture : IAsyncDisposable
         // fixture instance carries the holder hook that runs inside the dispatcher's MutationLock.
         typeof(PhoneHomeCommandDispatcher).GetField("_workspace", BindingFlags.NonPublic | BindingFlags.Instance)
             .ShouldNotBeNull().SetValue(dispatcher, Workspace);
+        // Records each completed-card handler entry, which the dispatcher makes only inside its MutationLock.
+        var runtimeField = typeof(PhoneHomeCommandDispatcher).GetField("_runtime", BindingFlags.NonPublic | BindingFlags.Instance).ShouldNotBeNull();
+        var probe = DispatchProxy.Create<IPhoneHomeRuntimeSurface, RunnerHandlerProbe>();
+        ((RunnerHandlerProbe)(object)probe).Bind((IPhoneHomeRuntimeSurface)runtimeField.GetValue(dispatcher)!, OnHandlerEntered);
+        runtimeField.SetValue(dispatcher, probe);
+        _dispatcher = dispatcher;
         Connection = new(Options.Create(_settings), adoption, dispatcher,
             Runtime, new HttpFactory(), TimeProvider.System, new Microsoft.Extensions.Logging.Logger<PhoneHomeConnectionService>(
                 new Microsoft.Extensions.Logging.LoggerFactory([Wire.Logs])), _identity);
@@ -203,22 +221,79 @@ internal sealed class CompletedCardMirrorFixture : IAsyncDisposable
         return holder;
     }
 
-    // Releases the holder only after the tested request is on the socket (server in-flight count 2).
-    public async Task ReleaseWhenQueuedAsync(Task holder, Task tested)
+    // Releases the holder only after the runner shows the tested request waiting at the dispatcher
+    // MutationLock: exactly one queued waiter there, the server's outstanding requests are exactly the
+    // holder's WorkspaceMirror plus the tested operation, and no handler for the tested operation has
+    // entered. Capabilities bypasses MutationLock, so it never makes a waiter. The bound is monotonic
+    // (Stopwatch); the loop yields and has no fixed delay.
+    public async Task ReleaseWhenQueuedAsync(Task holder, Task tested, PhoneHomeOperation operation)
     {
         try
         {
-            var deadline = DateTime.UtcNow.AddSeconds(30);
-            while (Live.InFlight < 2)
+            var bound = Stopwatch.StartNew();
+            var expectedServer = new[] { PhoneHomeOperation.WorkspaceMirror, operation }.Order().ToArray();
+            while (MutationLockWaiters() != 1 || !ServerOutstanding().SequenceEqual(expectedServer))
             {
                 if (tested.IsCompleted) await tested;
-                if (DateTime.UtcNow > deadline) throw new TimeoutException("tested request never reached the socket");
-                await Task.Delay(10);
+                if (bound.Elapsed > TimeSpan.FromSeconds(30))
+                    throw new TimeoutException($"tested {operation} never queued at the runner MutationLock; server outstanding: "
+                        + string.Join(",", ServerOutstanding()) + "; waiters: " + MutationLockWaiters());
+                await Task.Yield();
+            }
+            lock (Order)
+            {
+                Order.ShouldNotContain("entered:" + operation, "the tested handler must not enter while the holder has the turn");
+                Order.Add("queued:" + operation);
             }
             tested.IsCompleted.ShouldBeFalse("the tested request waits behind the held mutation turn");
         }
-        finally { _holderRelease.TrySetResult(); }
+        finally { Record("released:waiters=" + MutationLockWaiters()); _holderRelease.TrySetResult(); }
         await holder;
+    }
+
+    // Async waiters queued on the dispatcher's private MutationLock (SemaphoreSlim's linked waiter
+    // list, read under the semaphore's own lock object).
+    private int MutationLockWaiters()
+    {
+        var gate = (SemaphoreSlim)typeof(PhoneHomeCommandDispatcher).GetField("MutationLock", BindingFlags.NonPublic | BindingFlags.Instance)
+            .ShouldNotBeNull().GetValue(_dispatcher)!;
+        var lockObject = typeof(SemaphoreSlim).GetField("m_lockObjAndDisposed", BindingFlags.NonPublic | BindingFlags.Instance)
+            .ShouldNotBeNull().GetValue(gate)!;
+        var head = typeof(SemaphoreSlim).GetField("m_asyncHead", BindingFlags.NonPublic | BindingFlags.Instance).ShouldNotBeNull();
+        lock (lockObject)
+        {
+            var count = 0;
+            for (var node = head.GetValue(gate); node is not null;
+                 node = node.GetType().GetField("Next", BindingFlags.NonPublic | BindingFlags.Instance).ShouldNotBeNull().GetValue(node))
+                count++;
+            return count;
+        }
+    }
+
+    // Operations of the server connection's outstanding requests, sorted.
+    private PhoneHomeOperation[] ServerOutstanding()
+    {
+        var waiters = (System.Collections.IDictionary)typeof(PhoneHomeLiveConnection).GetField("_waiters", BindingFlags.NonPublic | BindingFlags.Instance)
+            .ShouldNotBeNull().GetValue(Live)!;
+        var operations = new List<PhoneHomeOperation>();
+        foreach (var waiter in waiters.Values.Cast<object>().ToList())
+            operations.Add((PhoneHomeOperation)waiter.GetType().GetProperty("Operation").ShouldNotBeNull().GetValue(waiter)!);
+        return [.. operations.Order()];
+    }
+
+    private void Record(string entry) { lock (Order) Order.Add(entry); }
+    private void OnHandlerEntered(string method, object? request)
+    {
+        if (method == nameof(IPhoneHomeRuntimeSurface.InspectCompletedCardWorkspaceAsync))
+            Record("entered:" + PhoneHomeOperation.CompletedCardWorkspaceInspect);
+        else if (method == nameof(IPhoneHomeRuntimeSurface.RemoveCompletedCardWorkspaceAsync))
+        {
+            lock (Order)
+            {
+                Order.Add("entered:" + PhoneHomeOperation.CompletedCardWorkspaceRemove);
+                EnteredRemovalOperationIds.Add(((CompletedCardWorkspaceCommand)request!).OperationId);
+            }
+        }
     }
 
     public async Task<Guid> AddBindingAsync(CompletedCardWorkspaceBinding b)
@@ -274,9 +349,10 @@ internal sealed class CompletedCardMirrorFixture : IAsyncDisposable
         var result = await TryAsync(); result.Complete.ShouldBeFalse(); result.Reason.ShouldBe(reason);
         (await File.ReadAllTextAsync(Sentinel)).ShouldBe("mirror evidence\n"); Journal.Read()!.Count.ShouldBe(0);
     }
-    public async Task RemovedAsync()
+    public async Task RemovedAsync() => await AssertRemovedAsync(await TryAsync());
+    public async Task AssertRemovedAsync(CompletedCardWorkspaceRemovalResponse result)
     {
-        var result = await TryAsync(); result.Complete.ShouldBeTrue(result.Reason);
+        result.Complete.ShouldBeTrue(result.Reason);
         Directory.Exists(Mirror).ShouldBeFalse(); Directory.Exists(Binding.GitDirectory).ShouldBeFalse();
         var endpoint = await EndpointAsync(); endpoint.State.ShouldBe(CardWorktreeCleanupEndpointState.Complete);
         endpoint.ImportedReceipt.ShouldNotBeNull();
@@ -320,6 +396,7 @@ internal sealed class CompletedCardMirrorFixture : IAsyncDisposable
             Interlocked.Increment(ref world._removalRequests);
             if (world.InterceptRemoval?.Invoke(command) is { } refusal)
             { refusal.Complete.ShouldBeFalse("fixture may only intercept with a refusal"); return refusal; }
+            lock (world.SentOperationIds) world.AttemptedRequests.Add(JsonSerializer.Serialize(command, PhoneHomeFraming.Json));
             if (world.BeforeRemoval is not null) await world.BeforeRemoval(command, ct);
             lock (world.SentOperationIds)
             {
@@ -330,5 +407,21 @@ internal sealed class CompletedCardMirrorFixture : IAsyncDisposable
             if (world.AfterRemoval?.Invoke(result) is { } lost) throw lost;
             return world.AlterReceipt?.Invoke(result) ?? result;
         }
+    }
+}
+
+// Forwards every runtime-surface call to the dispatcher's own adapter and reports the
+// completed-card handler entries to the mirror fixture.
+public class RunnerHandlerProbe : DispatchProxy
+{
+    private IPhoneHomeRuntimeSurface _inner = null!;
+    private Action<string, object?> _entered = null!;
+    internal void Bind(IPhoneHomeRuntimeSurface inner, Action<string, object?> entered) { _inner = inner; _entered = entered; }
+    protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
+    {
+        _entered(targetMethod!.Name, args is { Length: > 0 } ? args[0] : null);
+        try { return targetMethod.Invoke(_inner, args); }
+        catch (TargetInvocationException ex) when (ex.InnerException is not null)
+        { System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(ex.InnerException).Throw(); throw; }
     }
 }
