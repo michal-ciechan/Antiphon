@@ -145,7 +145,7 @@ public class StaleWorkingTranscriptWatchdogTests
         await using var h = await Harness.CreateAsync(count: 1025);
         foreach (var id in h.Ids) h.Handler.Held.Add(id);
         for (var pass = 0; pass < 9; pass++) await h.PassAsync();
-       
+
         await h.Handler.WaitForCountAsync(4);
         h.Entries.Length.ShouldBe(1024);
         h.Pending.Length.ShouldBeLessThanOrEqualTo(1024);
