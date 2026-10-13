@@ -73,7 +73,7 @@ public sealed class ToolCopyCleanup
             if (observed.Verdict != ProcessVerdict.Dead)
                 return new("Retained", observed.Reason, tool);
             var ledger = OwnedOutputLedger.Check(tool);
-            if (ledger is not null) return new("Refused", ledger, tool);
+            if (ledger is not null) return new("Refused", ledger + "; left in place: " + tool + "; remove it manually", tool);
             for (var attempt = 0; ; attempt++)
             {
                 try

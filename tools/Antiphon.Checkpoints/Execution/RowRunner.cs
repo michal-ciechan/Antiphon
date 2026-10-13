@@ -226,6 +226,12 @@ public sealed class RowRunner
         var hostExit = DateTimeOffset.UtcNow;
         var hostElapsed = System.Diagnostics.Stopwatch.GetElapsedTime(hostStartTick);
         var sourceStable = request.SourceBoundary?.Invoke() != false;
+        if (binding is not null && binding.Check() != "verified")
+        {
+            combined.WriteLine("refused: checkpoint-build-source.json receipt-missing-or-mismatching");
+            request.Source.BuildSource = "mismatch";
+            return Finish(ExitCodes.Invalid, buildState, "", buffer, 0, [], trxPath, null, false, "build-source-mismatch");
+        }
         if (run.TimedOut)
             return TimeoutResult(request, buildState, buffer, combined);
 

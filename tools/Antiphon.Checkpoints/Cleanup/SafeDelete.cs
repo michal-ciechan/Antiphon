@@ -54,9 +54,15 @@ public static class SafeDelete
             return new DeleteResult { Disposition = DeleteDisposition.DryRun, Path = full!, Reason = null };
 
         if (ownership.FileOnly)
+        {
+            if (!SafeWrite.MatchesCreation(full!)) return new DeleteResult { Disposition = DeleteDisposition.Refused, Path = full!, Reason = "left in place: " + full + "; current-process creation record missing or changed" };
             File.Delete(full!);
+        }
         else
-            Directory.Delete(full!, recursive: true);
+        {
+            var custody = OwnedOutputLedger.Remove(full!);
+            if (custody is not null) return new DeleteResult { Disposition = DeleteDisposition.Refused, Path = full!, Reason = custody };
+        }
         return new DeleteResult { Disposition = DeleteDisposition.Deleted, Path = full!, Reason = null };
     }
 

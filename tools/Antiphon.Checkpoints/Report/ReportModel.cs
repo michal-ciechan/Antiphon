@@ -2,6 +2,7 @@ namespace Antiphon.Checkpoints;
 
 public sealed class ReportModel
 {
+    public string? MarkdownSha256 { get; set; }
     public int SchemaVersion { get; set; } = 2;
     public SourceEvidence Source { get; set; } = new();
     public string RunId { get; set; } = "";

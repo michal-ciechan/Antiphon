@@ -71,11 +71,48 @@ public static class ReportWriter
     public static void WriteFiles(string runDirectory, ReportModel model)
     {
         var markdown = Markdown(model);
+        model.MarkdownSha256 = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(markdown)));
         var ownership = SafeWrite.Under(runDirectory);
         var markdownRefusal = SafeWrite.Text(Path.Combine(runDirectory, "report.md"), markdown, ownership);
         var jsonRefusal = SafeWrite.Text(Path.Combine(runDirectory, "report.json"), JsonText(model), ownership);
         if (markdownRefusal is not null || jsonRefusal is not null)
-            throw new IOException("refused: " + (markdownRefusal ?? jsonRefusal));
+            throw new IOException("refused: required report receipt write failed: " + (markdownRefusal ?? jsonRefusal));
+        if (File.ReadAllText(Path.Combine(runDirectory, "report.md")) != markdown
+            || File.ReadAllText(Path.Combine(runDirectory, "report.json")) != JsonText(model))
+            throw new IOException("refused: required report receipt readback mismatching");
+    }
+
+    public static string? RequiredReceiptRefusal(string runDirectory, RunState state)
+    {
+        try
+        {
+            var markdownPath = Path.Combine(runDirectory, "report.md");
+            var jsonPath = Path.Combine(runDirectory, "report.json");
+            foreach (var path in new[] { markdownPath, jsonPath })
+                if (!File.Exists(path)) return "receipt-missing: " + path;
+            var report = JsonSerializer.Deserialize<ReportModel>(File.ReadAllText(jsonPath), Json);
+            if (report is null || state.ExitCode is null) return "receipt-unreadable-or-terminal-exit-missing";
+            var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(markdownPath)));
+            if (report.MarkdownSha256 != hash) return "receipt-mismatching: report.md";
+            if (report.RunId != state.RunId || report.ExitCode != state.ExitCode
+                || report.Commit != (state.Source.Start.Commit ?? "")
+                || JsonSerializer.Serialize(report.Source, Json) != JsonSerializer.Serialize(state.Source, Json))
+                return "receipt-stale-or-source-mismatching: report.json";
+            if (report.ExitCode == 0 && !report.CleanedOutputs)
+            {
+                foreach (var output in report.OutputPaths)
+                {
+                    var path = Path.Combine(output, "checkpoint-build-source.json");
+                    if (!File.Exists(path)) return "receipt-missing: " + path;
+                    var binding = JsonSerializer.Deserialize<CheckpointBuildBinding>(File.ReadAllText(path), CheckpointApp.Json);
+                    if (binding is null || binding.Commit != report.Commit || binding.Fingerprint != report.Source.Start.Fingerprint)
+                        return "receipt-source-mismatching: " + path;
+                }
+            }
+            return null;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+        { return "receipt-unreadable: " + ex.GetType().Name; }
     }
 
     private static string Format(double seconds)

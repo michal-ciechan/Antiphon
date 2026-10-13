@@ -221,7 +221,7 @@ public sealed class CheckpointToolCopyCleanupTests : CheckpointTestBase
     {
         var run = Run();
         var report = Path.Combine(run, "report.md");
-        File.WriteAllText(report, "exit=" + exitCode);
+        ReportWriter.WriteFiles(run, new ReportModel { RunId = Path.GetFileName(run), ExitCode = exitCode, Verdict = exitCode == 0 ? "GREEN" : "RED" });
         File.WriteAllText(Path.Combine(run, "request.json"), JsonSerializer.Serialize(new RunRequest { KeepOutputs = keepOutputs }));
         var hash = Hash(report);
         new RunStateStore().Write(Path.Combine(run, "state.json"), new RunState
@@ -248,7 +248,7 @@ public sealed class CheckpointToolCopyCleanupTests : CheckpointTestBase
         CheckpointFixtures.MarkRun(run, alive: false);
         var tool = Path.Combine(run, "tool");
         SafeWrite.Require(SafeWrite.CreateFreshDirectory(tool, SafeWrite.Under(run)));
-        File.WriteAllText(Path.Combine(tool, "sentinel.dll"), "keep");
+        SafeWrite.Require(SafeWrite.Text(Path.Combine(tool, "sentinel.dll"), "keep", SafeWrite.Under(tool)));
         SafeWrite.Require(OwnedOutputLedger.Seal(tool));
         return run;
     }
