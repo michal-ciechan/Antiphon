@@ -297,3 +297,5 @@ Antiphon.Tests.Application.WorkingTranscriptRecoveryTests
 Antiphon.Tests.Application.StaleWorkingTranscriptWatchdogTests
 # CARD-1032 S6: real loopback phone-home queue with scratch Git, durable receipt and reconnect.
 Antiphon.Tests.Application.PhoneHomeCompletedCardTransportTests
+
+Antiphon.Tests.Application.CardWorktreeMirrorCleanupTests

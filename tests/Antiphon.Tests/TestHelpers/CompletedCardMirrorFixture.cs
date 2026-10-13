@@ -57,7 +57,7 @@ internal sealed class CompletedCardMirrorFixture : IAsyncDisposable
         var storePath = Path.Combine(state, "store"); var secretPath = Path.Combine(state, "secret");
         await File.WriteAllTextAsync(storePath, store.ToString("D"), ct);
         await File.WriteAllTextAsync(secretPath, Wire.Secret, ct);
-        Workspace = new RunnerWorkspaceService(repo, allowed, g.Remote);
+        Workspace = new RunnerWorkspaceService(repo, allowed, g.Remote, System.Diagnostics.Process.Start);
         Workspace.BindRecipient(Wire.AllowedRunnerId, store);
         Binding = (await Workspace.MirrorAsync(new(task.WorktreeBranch!, g.SeedSha,
             "task-" + task.Id.ToString("N")[..8], Binding: new(task.Id, task.Attempt, Guid.NewGuid(),
