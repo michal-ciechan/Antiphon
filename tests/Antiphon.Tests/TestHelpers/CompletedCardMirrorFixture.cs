@@ -6,15 +6,21 @@ using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Server.Infrastructure.Files;
+using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Antiphon.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 using Shouldly;
 
 namespace Antiphon.Tests.TestHelpers;
+
+// S8: Direct binds through RunnerWorkspaceService; Ready and Busy prepare over the real
+// phone-home socket (C1032_RecoveryQueuesBusyAndReady preparation vectors).
+internal enum MirrorPreparation { Direct, Ready, Busy }
 
 internal sealed class CompletedCardMirrorFixture : IAsyncDisposable
 {
@@ -41,60 +47,156 @@ internal sealed class CompletedCardMirrorFixture : IAsyncDisposable
     public Func<CompletedCardWorkspaceCommand, CompletedCardWorkspaceRemovalResponse?>? InterceptRemoval { get; set; }
     public int RemovalRequests => _removalRequests;
     private int _removalRequests;
+    public int InspectionRequests => _inspectionRequests;
+    private int _inspectionRequests;
+    // S8 cut seams at the server client: BeforeRemoval may throw before the inner request is
+    // sent; AfterRemoval sees the real recipient reply and may return a loss to throw instead.
+    public Func<CompletedCardWorkspaceCommand, CancellationToken, Task>? BeforeRemoval { get; set; }
+    public Func<CompletedCardWorkspaceRemovalResponse, Exception?>? AfterRemoval { get; set; }
+    // Operation ids and canonical bytes of every command that reached the inner client.
+    public List<Guid> SentOperationIds { get; } = [];
+    public List<string> SentRequests { get; } = [];
+    public FakeTimeProvider Clock => (FakeTimeProvider)Card.Host.Clock;
+    public const string BusyBranch = "c1032-busy-holder";
+    private PhoneHomeSettings _settings = null!;
+    private string _storePath = "";
+    private int _holdArmed;
+    private TaskCompletionSource _holderEntered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private TaskCompletionSource _holderRelease = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-    public static async Task<CompletedCardMirrorFixture> CreateAsync(CancellationToken ct = default)
+    public static async Task<CompletedCardMirrorFixture> CreateAsync(CancellationToken ct = default) =>
+        await CreateAsync(MirrorPreparation.Direct, ct);
+
+    public static async Task<CompletedCardMirrorFixture> CreateAsync(MirrorPreparation preparation, CancellationToken ct = default)
     {
         if (!OperatingSystem.IsLinux()) Skip.Test("S7 real phone-home recipient fixture requires Linux; Windows handle qualification is separate.");
         var f = new CompletedCardMirrorFixture();
-        try { await f.InitializeAsync(ct); return f; }
+        try { await f.InitializeAsync(preparation, ct); return f; }
         catch { await f.DisposeAsync(); throw; }
     }
 
-    private async Task InitializeAsync(CancellationToken ct)
+    private async Task InitializeAsync(MirrorPreparation preparation, CancellationToken ct)
     {
         Card = await CompletedCardCleanupFixture.CreateAsync(clock: new Microsoft.Extensions.Time.Testing.FakeTimeProvider(DateTimeOffset.UtcNow));
         var g = Card.Host.Fixture;
         var task = await TaskAsync();
         await g.RequiredAsync(Card.Tree, "push", "origin", "HEAD:refs/heads/" + task.WorktreeBranch);
+        await g.RequiredAsync(Card.Tree, "push", "origin", "HEAD:refs/heads/" + BusyBranch);
         var repo = Path.Combine(g.Root, "runner-repository");
         await g.RequiredAsync(g.Root, "clone", g.Remote, repo);
         Wire = await PhoneHomeTestHost.StartAsync();
         var state = Path.Combine(g.Root, "runner-state"); Directory.CreateDirectory(state);
         var allowed = Path.Combine(g.Root, "runner-cwd"); Directory.CreateDirectory(allowed);
         var store = Guid.NewGuid();
-        var storePath = Path.Combine(state, "store"); var secretPath = Path.Combine(state, "secret");
+        var storePath = Path.Combine(state, "store"); var secretPath = Path.Combine(state, "secret"); _storePath = storePath;
         await File.WriteAllTextAsync(storePath, store.ToString("D"), ct);
         await File.WriteAllTextAsync(secretPath, Wire.Secret, ct);
         Workspace = new RunnerWorkspaceService(repo, allowed, g.Remote, System.Diagnostics.Process.Start);
         Workspace.BindRecipient(Wire.AllowedRunnerId, store);
-        Binding = (await Workspace.MirrorAsync(new(task.WorktreeBranch!, g.SeedSha,
+        // The holder blocks inside MirrorAsync, under the runner dispatcher's MutationLock.
+        Workspace.WorkspaceAdmissionForTest = async () =>
+        {
+            if (Interlocked.Exchange(ref _holdArmed, 0) == 1) { _holderEntered.TrySetResult(); await _holderRelease.Task; }
+        };
+        PhoneHomeWorkspaceMirrorRequest mirror = new(task.WorktreeBranch!, g.SeedSha,
             "task-" + task.Id.ToString("N")[..8], Binding: new(task.Id, task.Attempt, Guid.NewGuid(),
-                Wire.AllowedRunnerId, store.ToString("D"))), ct)).Binding!;
+                Wire.AllowedRunnerId, store.ToString("D")));
+        if (preparation == MirrorPreparation.Direct) Binding = (await Workspace.MirrorAsync(mirror, ct)).Binding!;
         Journal = new(Path.Combine(state, "removals"), store.ToString("D"));
         Gate = new(Journal); Gate.CompleteCensus(); Workspace.WorkspaceUseGate = Gate;
         Runtime = new(Options.Create(new SessionRunnerSettings { SessionLogPath = Path.Combine(state, "sessions") }),
             NullLogger<SessionRunnerRuntime>.Instance);
         Runtime.WorkspaceUseGate = Gate;
         Runtime.CompletedCardWorkspace = new(Workspace, Journal, Gate, Wire.Secret);
-        Directory.CreateDirectory(Path.GetDirectoryName(Sentinel)!);
-        await File.WriteAllTextAsync(Sentinel, "mirror evidence\n", ct);
-        var settings = new PhoneHomeSettings
+        _settings = new PhoneHomeSettings
         {
             Enabled = true, RunnerId = Wire.AllowedRunnerId, ServerOrigin = Wire.Http.BaseAddress!.ToString(),
             StoreIdPath = storePath, SecretPath = secretPath, AllowedCwd = allowed,
             RunnerRepository = repo, RunnerCloneSource = g.Remote, ProbeSecondaryRepositoryPushAccess = false,
             CapacityStatePath = Path.Combine(state, "capacity"), LaunchGenerationsPath = Path.Combine(state, "generations"),
         };
-        var adoption = new PhoneHomeAdoptionGate();
-        Connection = new(Options.Create(settings), adoption,
-            new PhoneHomeCommandDispatcher(new PhoneHomeRuntimeAdapter(Runtime, new("test", null, DateTime.UtcNow, DateTime.UtcNow)), settings),
-            Runtime, new HttpFactory(), TimeProvider.System, NullLogger<PhoneHomeConnectionService>.Instance);
-        await Connection.StartAsync(_stop.Token); adoption.SignalReady();
-        var live = await Wire.WaitLiveAsync(TimeSpan.FromSeconds(45)); Wire.Directory.MarkRecovered(live);
+        await ConnectAsync();
+        if (preparation != MirrorPreparation.Direct)
+        {
+            var holder = preparation == MirrorPreparation.Busy ? await HoldMutationTurnAsync() : null;
+            var prepared = Client.MirrorWorkspaceAsync(mirror, ct);
+            if (holder is not null) await ReleaseWhenQueuedAsync(holder, prepared);
+            Binding = (await prepared).Binding.ShouldNotBeNull("real recipient returns its completed binding");
+            (await g.RequiredAsync(Binding.WorktreePath, "rev-parse", "HEAD")).Trim().ShouldBe(g.SeedSha);
+            File.Exists(RunnerWorkspaceBindingStore.OwnerStampPath(Binding.GitDirectory)).ShouldBeTrue("runner owner stamp");
+        }
+        Directory.CreateDirectory(Path.GetDirectoryName(Sentinel)!);
+        await File.WriteAllTextAsync(Sentinel, "mirror evidence\n", ct);
         await AddBindingAsync(Binding);
         var saved = await Card.Host.Services.GetRequiredService<IAgentReportStore>().StoreAsync(task, ct);
         saved.Succeeded.ShouldBeTrue();
         await Card.ChangeTaskAsync(t => t.ResultFilePath = saved.Path);
+    }
+
+    public PhoneHomeRunnerClient Client => (PhoneHomeRunnerClient)Wire.Directory.Resolve(Wire.AllowedRunnerId);
+    public PhoneHomeLiveConnection Live => Wire.Directory.SnapshotLive(Wire.AllowedRunnerId).ShouldNotBeNull();
+
+    private async Task ConnectAsync()
+    {
+        var adoption = new PhoneHomeAdoptionGate();
+        var dispatcher = new PhoneHomeCommandDispatcher(new PhoneHomeRuntimeAdapter(Runtime, new("test", null, DateTime.UtcNow, DateTime.UtcNow)), _settings);
+        // The dispatcher otherwise builds its own service from the same repository settings; the
+        // fixture instance carries the holder hook that runs inside the dispatcher's MutationLock.
+        typeof(PhoneHomeCommandDispatcher).GetField("_workspace", BindingFlags.NonPublic | BindingFlags.Instance)
+            .ShouldNotBeNull().SetValue(dispatcher, Workspace);
+        Connection = new(Options.Create(_settings), adoption, dispatcher,
+            Runtime, new HttpFactory(), TimeProvider.System, NullLogger<PhoneHomeConnectionService>.Instance);
+        await Connection.StartAsync(_stop.Token); adoption.SignalReady();
+        var live = await Wire.WaitLiveAsync(TimeSpan.FromSeconds(45)); Wire.Directory.MarkRecovered(live);
+    }
+
+    // The runner process stays; only its phone-home connection ends.
+    public async Task DisconnectAsync()
+    {
+        await Connection.StopAsync(CancellationToken.None); Connection.Dispose();
+        var deadline = DateTime.UtcNow.AddSeconds(30);
+        while (Wire.Directory.SnapshotLive(Wire.AllowedRunnerId) is not null)
+        {
+            if (DateTime.UtcNow > deadline) throw new TimeoutException("runner connection did not end");
+            await Task.Delay(20);
+        }
+    }
+
+    // A replacement store id is written where the runner reads its persistent store before registering.
+    public async Task ReconnectAsync(Guid? replacementStore = null)
+    {
+        if (replacementStore is Guid store) await File.WriteAllTextAsync(_storePath, store.ToString("D"));
+        await ConnectAsync();
+    }
+
+    // Sends an earlier actual WorkspaceMirror that holds the runner mutation turn until released.
+    public async Task<Task> HoldMutationTurnAsync()
+    {
+        _holderEntered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        _holderRelease = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        Interlocked.Exchange(ref _holdArmed, 1);
+        var holder = Client.MirrorWorkspaceAsync(new(BusyBranch, Card.Host.Fixture.SeedSha,
+            "task-" + Guid.NewGuid().ToString("N")[..8]), CancellationToken.None);
+        await _holderEntered.Task.WaitAsync(TimeSpan.FromSeconds(30));
+        return holder;
+    }
+
+    // Releases the holder only after the tested request is on the socket (server in-flight count 2).
+    public async Task ReleaseWhenQueuedAsync(Task holder, Task tested)
+    {
+        try
+        {
+            var deadline = DateTime.UtcNow.AddSeconds(30);
+            while (Live.InFlight < 2)
+            {
+                if (tested.IsCompleted) await tested;
+                if (DateTime.UtcNow > deadline) throw new TimeoutException("tested request never reached the socket");
+                await Task.Delay(10);
+            }
+            tested.IsCompleted.ShouldBeFalse("the tested request waits behind the held mutation turn");
+        }
+        finally { _holderRelease.TrySetResult(); }
+        await holder;
     }
 
     public async Task<Guid> AddBindingAsync(CompletedCardWorkspaceBinding b)
@@ -135,7 +237,7 @@ internal sealed class CompletedCardMirrorFixture : IAsyncDisposable
         await using var scope = Card.Host.Services.CreateAsyncScope();
         var producer = Activator.CreateInstance(type!, db, new ClientDirectory(Wire.Directory, this), Card.Host.Fixture.Git,
             Card.Host.Services.GetRequiredService<CardDoneArtifactPreservation>(),
-            scope.ServiceProvider.GetRequiredService<WorkspaceUseAdmission>(), Card.Host.Clock, Options.Create(Card.Residue), new FaultClient((ICompletedCardWorkspaceClient)Wire.Directory.Resolve(Binding.RunnerId), this), Options.Create(new Antiphon.Server.Application.Settings.PhoneHomeRunnerSettings { Enabled = true, AllowedRunnerId = Binding.RunnerId, SharedSecret = Wire.Secret }))!;
+            scope.ServiceProvider.GetRequiredService<WorkspaceUseAdmission>(), Card.Host.Clock, Options.Create(Card.Residue), new FaultClient(() => (ICompletedCardWorkspaceClient)Wire.Directory.Resolve(Binding.RunnerId), this), Options.Create(new Antiphon.Server.Application.Settings.PhoneHomeRunnerSettings { Enabled = true, AllowedRunnerId = Binding.RunnerId, SharedSecret = Wire.Secret }))!;
         type!.GetProperty("BeforeIntentAsync", BindingFlags.NonPublic | BindingFlags.Instance)?.SetValue(producer, BeforeIntent);
         type.GetProperty("AfterIntentAsync", BindingFlags.NonPublic | BindingFlags.Instance)?.SetValue(producer, AfterIntent);
         return await (Task<CompletedCardWorkspaceRemovalResponse>)type.GetMethod("TryAsync")!.Invoke(producer, [EndpointId, null, ct])!;
@@ -166,7 +268,7 @@ internal sealed class CompletedCardMirrorFixture : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        _stop.Cancel(); if (Connection is not null) { await Connection.StopAsync(CancellationToken.None); Connection.Dispose(); }
+        _holderRelease.TrySetResult(); _stop.Cancel(); if (Connection is not null) { await Connection.StopAsync(CancellationToken.None); Connection.Dispose(); }
         if (Runtime is not null) await Runtime.DisposeAsync();
         if (Wire is not null) await Wire.DisposeAsync(); if (Card is not null) await Card.DisposeAsync(); _stop.Dispose();
     }
@@ -175,26 +277,36 @@ internal sealed class CompletedCardMirrorFixture : IAsyncDisposable
     {
         public ISessionRunnerClient Local => inner.Local;
         public ISessionRunnerClient Resolve(string? id) => inner.Resolve(id);
-        public ICompletedCardWorkspaceClient CompletedClient(string id) => new FaultClient((ICompletedCardWorkspaceClient)inner.Resolve(id), world);
+        public ICompletedCardWorkspaceClient CompletedClient(string id) => new FaultClient(() => (ICompletedCardWorkspaceClient)inner.Resolve(id), world);
         public Task<SessionRunnerOwner?> GetOwnerAsync(Guid id, CancellationToken ct) => inner.GetOwnerAsync(id, ct);
         public Task<SessionRunnerBinding> GetBindingAsync(Guid id, CancellationToken ct) => inner.GetBindingAsync(id, ct);
         public Task<RunnerInventory> GetInventoryAsync(string? id, CancellationToken ct) => inner.GetInventoryAsync(id, ct);
         public IReadOnlyList<string> KnownRunnerIds => inner.KnownRunnerIds;
         public Guid? GetLiveStoreId(string? id) => inner.GetLiveStoreId(id);
     }
-    private sealed class FaultClient(ICompletedCardWorkspaceClient inner, CompletedCardMirrorFixture world) : ICompletedCardWorkspaceClient
+    // Resolves the live client per call, so a disconnected runner fails at the call as in production.
+    private sealed class FaultClient(Func<ICompletedCardWorkspaceClient> inner, CompletedCardMirrorFixture world) : ICompletedCardWorkspaceClient
     {
         public async Task<CompletedCardWorkspaceInspectionResponse> InspectCompletedCardWorkspaceAsync(CompletedCardWorkspaceInspectRequest request, CancellationToken ct)
         {
+            Interlocked.Increment(ref world._inspectionRequests);
             if (world.BeforeInspection is not null) await world.BeforeInspection(ct);
-            return await inner.InspectCompletedCardWorkspaceAsync(request, ct);
+            return await inner().InspectCompletedCardWorkspaceAsync(request, ct);
         }
         public async Task<CompletedCardWorkspaceRemovalResponse> RemoveCompletedCardWorkspaceAsync(CompletedCardWorkspaceCommand command, CancellationToken ct)
         {
             Interlocked.Increment(ref world._removalRequests);
             if (world.InterceptRemoval?.Invoke(command) is { } refusal)
             { refusal.Complete.ShouldBeFalse("fixture may only intercept with a refusal"); return refusal; }
-            var result = await inner.RemoveCompletedCardWorkspaceAsync(command, ct); return world.AlterReceipt?.Invoke(result) ?? result;
+            if (world.BeforeRemoval is not null) await world.BeforeRemoval(command, ct);
+            lock (world.SentOperationIds)
+            {
+                world.SentOperationIds.Add(command.OperationId);
+                world.SentRequests.Add(JsonSerializer.Serialize(command, PhoneHomeFraming.Json));
+            }
+            var result = await inner().RemoveCompletedCardWorkspaceAsync(command, ct);
+            if (world.AfterRemoval?.Invoke(result) is { } lost) throw lost;
+            return world.AlterReceipt?.Invoke(result) ?? result;
         }
     }
 }
