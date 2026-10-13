@@ -90,8 +90,8 @@ public sealed partial class RunnerCompletedCardWorkspaceRemoval
                     var registrationIdentity = RunnerWorkspaceNoFollowDelete.Identity(command.Binding.GitDirectory);
                     intent = intent with { SetAsidePath = aside,
                         DirectoryIdentity = directoryIdentity, RegistrationIdentity = registrationIdentity,
-                        DirectoryEntries = await RunnerWorkspaceNoFollowDelete.InventoryAsync(command.Binding.WorktreePath, ct, directoryIdentity),
-                        RegistrationEntries = await RunnerWorkspaceNoFollowDelete.InventoryAsync(command.Binding.GitDirectory, ct, registrationIdentity), Phase = "Prepared" };
+                        DirectoryEntries = await RunnerWorkspaceNoFollowDelete.InventoryAsync(command.Binding.WorktreePath, directoryIdentity, ct),
+                        RegistrationEntries = await RunnerWorkspaceNoFollowDelete.InventoryAsync(command.Binding.GitDirectory, registrationIdentity, ct), Phase = "Prepared" };
                     Save(journal, intent);
                 }
                 result = await ResumeAsync(command, journal, gate, intent, ct);
@@ -147,7 +147,7 @@ public sealed partial class RunnerCompletedCardWorkspaceRemoval
                 intent = Spend(journal, intent with { Phase = "Unregistering" }, "unregister");
                 BeforeMutationForTest?.Invoke("unregister");
                 await RunnerWorkspaceNoFollowDelete.DeleteOwnedAsync(binding.GitDirectory, intent.RegistrationIdentity!,
-                    intent.RegistrationEntries!, null, ct);
+                    intent.RegistrationEntries!, null, null, ct);
                 AfterMutationForTest?.Invoke("unregister");
             }
             else if (intent.Phase != "Unregistering") return Hold("registration_absence_unproved");
@@ -161,7 +161,7 @@ public sealed partial class RunnerCompletedCardWorkspaceRemoval
                 intent = Spend(journal, intent with { Phase = "Deleting" }, "delete");
                 BeforeMutationForTest?.Invoke("delete");
                 await RunnerWorkspaceNoFollowDelete.DeleteOwnedAsync(aside, intent.DirectoryIdentity!, intent.DirectoryEntries!,
-                    BeforeDeleteEntryForTest, ct, AfterDeleteValidationForTest);
+                    BeforeDeleteEntryForTest, AfterDeleteValidationForTest, ct);
                 AfterMutationForTest?.Invoke("delete");
             }
             else if (intent.Phase != "Deleting") return Hold("absence_without_receipt");
