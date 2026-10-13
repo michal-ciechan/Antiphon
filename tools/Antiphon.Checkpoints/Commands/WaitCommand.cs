@@ -62,7 +62,9 @@ public sealed class WaitCommand
         while (true)
         {
             var now = _clock();
-            var state = _store.TryRead(statePath);
+            var state = _store.TryRead(statePath, out var stateRefusal);
+            if (stateRefusal is not null && (stateRefusal.Contains("not regular", StringComparison.Ordinal) || stateRefusal.Contains("nonregular", StringComparison.Ordinal)))
+            { output.WriteLine("refused: " + stateRefusal); return ExitCodes.Invalid; }
             var observed = cleanup.ObserveExecutor(runDirectory);
             // Finish publishes phase=done after the "done exit=" log line, and the
             // process can exit in that window. Re-read once death is observed.
@@ -82,7 +84,7 @@ public sealed class WaitCommand
                 if (receipt.Outcome == "Refused")
                     output.WriteLine("refused: " + receipt.Reason);
                 if (File.Exists(reportPath))
-                    output.Write(File.ReadAllText(reportPath));
+                    output.Write(ReceiptFile.ReadText(reportPath));
                 else
                     output.WriteLine(state.Heartbeat(now));
                 var exit = state.ExitCode!.Value;
@@ -141,7 +143,7 @@ public sealed class WaitCommand
 
     private static bool ReportRefused(string reportPath)
     {
-        foreach (var line in File.ReadLines(reportPath))
+        foreach (var line in ReceiptFile.ReadText(reportPath).Split('\n'))
         {
             if (line.StartsWith("refused:", StringComparison.Ordinal))
                 return true;
@@ -161,8 +163,7 @@ public sealed class WaitCommand
     {
         if (!File.Exists(path))
             return "";
-        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-        using var reader = new StreamReader(stream);
+        using var reader = new StringReader(ReceiptFile.ReadText(path));
         var lines = new List<string>();
         while (reader.ReadLine() is { } line)
             lines.Add(line);

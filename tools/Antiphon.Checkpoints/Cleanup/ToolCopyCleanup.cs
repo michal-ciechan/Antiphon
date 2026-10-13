@@ -145,8 +145,7 @@ public static class ExecutorOwnershipStore
     {
         try
         {
-            var record = System.Text.Json.JsonSerializer.Deserialize<ExecutorOwnership>(
-                File.ReadAllText(Path.Combine(runDirectory, FileName)));
+            var record = ReceiptJson.Read<ExecutorOwnership>(Path.Combine(runDirectory, FileName), new System.Text.Json.JsonSerializerOptions());
             return record is { Version: 1, Executor: not null }
                 && record.RunId == Path.GetFileName(Path.GetFullPath(runDirectory))
                 && RunOwnershipStore.SamePath(record.RunDirectory, runDirectory) ? record : null;

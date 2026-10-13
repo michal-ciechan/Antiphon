@@ -33,22 +33,21 @@ public sealed class RunStateStore
         return null;
     }
 
-    public RunState? TryRead(string path)
+    public RunState? TryRead(string path) => TryRead(path, out _);
+
+    public RunState? TryRead(string path, out string? refusal)
     {
+        refusal = null;
         try
         {
-            if (!File.Exists(path))
-                return null;
-            using var stream = new FileStream(
-                path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-            using var reader = new StreamReader(stream);
-            var json = reader.ReadToEnd();
+            var json = ReceiptFile.ReadText(path);
             if (string.IsNullOrWhiteSpace(json))
                 return null;
-            return JsonSerializer.Deserialize<RunState>(json, Json);
+            return ReceiptJson.Parse<RunState>(json, Json);
         }
         catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
         {
+            refusal = "state-receipt-unreadable: " + ex.Message;
             return null;
         }
     }

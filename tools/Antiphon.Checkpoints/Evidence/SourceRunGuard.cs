@@ -87,7 +87,7 @@ public sealed class CheckpointBuildBinding
         if (!File.Exists(PathName)) return "unknown";
         try
         {
-            var actual = JsonSerializer.Deserialize<CheckpointBuildBinding>(File.ReadAllText(PathName), CheckpointApp.Json);
+            var actual = ReceiptJson.Read<CheckpointBuildBinding>(PathName, CheckpointApp.Json);
             if (actual is null || actual.Version != 1) return "mismatch";
             var rootComparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
             if (!string.Equals(actual.RepositoryRoot, RepositoryRoot, rootComparison) ||

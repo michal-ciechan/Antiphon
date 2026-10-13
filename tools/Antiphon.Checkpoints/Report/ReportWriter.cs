@@ -77,8 +77,8 @@ public static class ReportWriter
         var jsonRefusal = SafeWrite.Text(Path.Combine(runDirectory, "report.json"), JsonText(model), ownership);
         if (markdownRefusal is not null || jsonRefusal is not null)
             throw new IOException("refused: required " + (markdownRefusal is not null ? "report.md" : "report.json") + " receipt-write-failed: " + (markdownRefusal ?? jsonRefusal));
-        if (File.ReadAllText(Path.Combine(runDirectory, "report.md")) != markdown
-            || File.ReadAllText(Path.Combine(runDirectory, "report.json")) != JsonText(model))
+        if (ReceiptFile.ReadText(Path.Combine(runDirectory, "report.md")) != markdown
+            || ReceiptFile.ReadText(Path.Combine(runDirectory, "report.json")) != JsonText(model))
             throw new IOException("refused: required report receipt readback mismatching");
     }
 
@@ -86,6 +86,7 @@ public static class ReportWriter
     {
         try
         {
+            ReceiptJson.Validate(state);
             if (state.ToolOwner != SafeWrite.Marker || state.RunId != Path.GetFileName(Path.TrimEndingDirectorySeparator(Path.GetFullPath(runDirectory))))
                 return "receipt-run-directory-mismatching";
             if (state.Source?.Start is null) return "state-receipt-source-unreadable";
@@ -93,9 +94,9 @@ public static class ReportWriter
             var jsonPath = Path.Combine(runDirectory, "report.json");
             foreach (var path in new[] { markdownPath, jsonPath })
                 if (!File.Exists(path)) return "receipt-missing: " + path;
-            var report = JsonSerializer.Deserialize<ReportModel>(File.ReadAllText(jsonPath), Json);
+            var report = ReceiptJson.Read<ReportModel>(jsonPath, Json);
             if (report is null || state.ExitCode is null) return "receipt-unreadable-or-terminal-exit-missing";
-            var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(markdownPath)));
+            var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(ReceiptFile.ReadBytes(markdownPath)));
             if (report.MarkdownSha256 != hash) return "receipt-mismatching: report.md";
             if (report.RunId != state.RunId || report.ExitCode != state.ExitCode
                 || report.Commit != (state.Source.Start.Commit ?? "")
@@ -107,7 +108,7 @@ public static class ReportWriter
                 {
                     var path = Path.Combine(output, "checkpoint-build-source.json");
                     if (!File.Exists(path)) return "receipt-missing: " + path;
-                    var binding = JsonSerializer.Deserialize<CheckpointBuildBinding>(File.ReadAllText(path), CheckpointApp.Json);
+                    var binding = ReceiptJson.Read<CheckpointBuildBinding>(path, CheckpointApp.Json);
                     if (binding is null || binding.Commit != report.Commit || binding.Fingerprint != report.Source.Start.Fingerprint)
                         return "receipt-source-mismatching: " + path;
                 }

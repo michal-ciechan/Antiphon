@@ -115,7 +115,7 @@ public static class CheckpointApp
         runtime ??= new Runtime();
         // Checked entry custody precedes request, log, owner, and row I/O.
         (runtime.ExecutorAckWrite ?? ExecutorOwnershipStore.Write)(runDirectory, new ProcessIdentityProbe().Current());
-        var request = JsonSerializer.Deserialize<RunRequest>(File.ReadAllText(Path.Combine(runDirectory, "request.json")), Json)
+        var request = ReceiptJson.Read<RunRequest>(Path.Combine(runDirectory, "request.json"), Json)
             ?? throw new ManifestValidationException("request", "request.json is empty");
         var repo = request.RepoRoot;
         var manifest = ManifestLoader.LoadFile(Path.Combine(runDirectory, "manifest.resolved.yaml"), repo);
@@ -694,7 +694,7 @@ public static class CheckpointApp
             SchemaVersion = rows.Any(row => row.Repeat is not null) ? 3 : 2,
             RunId = state.RunId,
             ManifestPath = Path.Combine(runDirectory, "manifest.resolved.yaml"),
-            ManifestHash = Hash(File.ReadAllText(Path.Combine(runDirectory, "manifest.resolved.yaml"))),
+            ManifestHash = Hash(ReceiptFile.ReadText(Path.Combine(runDirectory, "manifest.resolved.yaml"))),
             Commit = request.Commit,
             Source = state.Source,
             Branch = request.Branch,
