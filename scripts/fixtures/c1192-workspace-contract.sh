@@ -2710,9 +2710,16 @@ s7_groups() {
         mkdir -p "$SERVER2_ROOT/cache" "$SERVER2_ROOT/compose-retention"
         printf 'services: {}\n' > "$SERVER2_ROOT/compose-retention/shared.yml"
         local name
-        for name in race-p1.log race-p2.log race-offline.log lock-holder.log lock-waiter.log; do
-            printf '%s-body\n' "$name" > "$SERVER2_ROOT/$name"
-        done
+        # Log bytes/order/export failure belong to these four S7 scenarios.
+        # Cleanup outcome matrices do not assert diagnostics; avoid five extra
+        # atomic publications per outcome while retaining every outcome/receipt.
+        if [ "$mode" != cleanup-probe ]; then
+            case "$S7_SCENARIO" in success|primary|export|foreign)
+                for name in race-p1.log race-p2.log race-offline.log lock-holder.log lock-waiter.log; do
+                    printf '%s-body\n' "$name" > "$SERVER2_ROOT/$name"
+                done ;;
+            esac
+        fi
         c849_fixture_volume_write /fixture/probes/payload-canary <<'DATA'
 PAYLOAD_CANARY_S7
 DATA
