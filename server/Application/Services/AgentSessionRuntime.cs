@@ -801,7 +801,13 @@ public sealed class AgentSessionRuntime
                         ? Result(TranscriptRecoveryOutcome.Unknown, "persist_failure_retained")
                         : Result(TranscriptRecoveryOutcome.CheckedWorking, "runner_working");
 
-                var persisted = await PersistTranscriptCoreAsync(sessionId, snapshot.Entries);
+                var persisted = await PersistTranscriptCoreAsync(sessionId, snapshot.Entries, before);
+                if (persisted.RecoveryFenceRejection is { } rejection)
+                {
+                    _logger.LogWarning("Checked transcript recovery fence rejected session {SessionId}, generation {Generation}, reason {Reason}",
+                        sessionId, generation, rejection);
+                    return Result(TranscriptRecoveryOutcome.Unknown, rejection);
+                }
                 addedCount = persisted.CommittedRows.Count;
                 postSequence = persisted.LastStoredSeq ?? postSequence;
                 await PublishCommittedAsync(lease, persisted);
@@ -858,6 +864,12 @@ public sealed class AgentSessionRuntime
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        return await ReadRecoveryObservationAsync(db, sessionId, ct);
+    }
+
+    private static async Task<RecoveryObservation?> ReadRecoveryObservationAsync(
+        AppDbContext db, Guid sessionId, CancellationToken ct)
+    {
         var session = await db.AgentSessions.AsNoTracking().Where(s => s.Id == sessionId)
             .Select(s => new { s.StartedAt, s.Status, s.RunnerId, s.RunnerStoreId, s.RunnerCwd }).SingleOrDefaultAsync(ct);
         if (session is null) return null;
@@ -1043,6 +1055,7 @@ public sealed class AgentSessionRuntime
         public IReadOnlyList<TranscriptEntry> CommittedRows { get; init; } = [];
         public bool NeedsReload { get; init; }
         public DateTime? AcceptedGeneration { get; init; }
+        public string? RecoveryFenceRejection { get; init; }
     }
 
     internal const string TranscriptStubPrefix = "[transcript text not persistable:";
@@ -1109,7 +1122,8 @@ public sealed class AgentSessionRuntime
         return result.LastStoredSeq is not null;
     }
 
-    private async Task<PersistResult> PersistTranscriptCoreAsync(Guid sessionId, IReadOnlyList<SessionRunnerTranscriptEvent> entries)
+    private async Task<PersistResult> PersistTranscriptCoreAsync(Guid sessionId, IReadOnlyList<SessionRunnerTranscriptEvent> entries,
+        RecoveryObservation? expectedRecovery = null)
     {
         using var observation = new RuntimePhase(_logger, _timeProvider, sessionId, "transcript.persist");
         if (entries.Count == 0)
@@ -1128,7 +1142,7 @@ public sealed class AgentSessionRuntime
             var session = await db.AgentSessions.Where(s => s.Id == sessionId)
                 .Select(s => new { s.StartedAt }).FirstOrDefaultAsync();
             if (session is null)
-                return PersistResult.Empty;
+                return PersistResult.Empty with { RecoveryFenceRejection = expectedRecovery is null ? null : "ownership_changed_at_commit" };
 
             // Dedup by transcript line uuid, NOT by sequence: the runner tailer numbers entries per
             // tailer LIFETIME, restarting from 1 after a session relaunch or fork re-discovery. A
@@ -1218,6 +1232,27 @@ public sealed class AgentSessionRuntime
                 pending.Add((row, e));
             }
 
+            // Checked recovery owns one SQL fence through every batch/fallback save. The
+            // lifecycle's UPDATE/DELETE conflicts with this row lock even when it does not
+            // own the transcript lease. Order: optional queue lock -> state lease -> session
+            // row lock; never Agents/registration locks or queue callbacks from here.
+            // Prepare identities first, then revalidate inside this transaction before any
+            // INSERT. Publication happens in the caller only after this transaction commits.
+            await using var recoveryTransaction = expectedRecovery is null
+                ? null : await db.Database.BeginTransactionAsync();
+            if (expectedRecovery is not null)
+            {
+                await SessionMessageQueueService.LockAgentSessionRowAsync(db, sessionId, CancellationToken.None);
+                var fenced = await ReadRecoveryObservationAsync(db, sessionId, CancellationToken.None);
+                if (fenced is null || !fenced.LocalRunning
+                    || !SessionGeneration.Equal(fenced.Generation, expectedRecovery.Generation)
+                    || fenced.RunnerId != expectedRecovery.RunnerId || fenced.RunnerStoreId != expectedRecovery.RunnerStoreId
+                    || fenced.RunnerCwd != expectedRecovery.RunnerCwd)
+                    return PersistResult.Empty with { RecoveryFenceRejection = "ownership_changed_at_commit" };
+                if (!fenced.Rows.SequenceEqual(expectedRecovery.Rows))
+                    return PersistResult.Empty with { RecoveryFenceRejection = "frontier_changed_at_commit" };
+            }
+
             if (pending.Count == 0)
                 return PersistResult.Empty with { AcceptedGeneration = session.StartedAt };
 
@@ -1234,10 +1269,12 @@ public sealed class AgentSessionRuntime
             catch (DbUpdateException batchFailure)
             {
                 db.ChangeTracker.Clear();
-                return (await PersistRowsIndividuallyAsync(db, sessionId, pending, batchFailure))
-                    with { AcceptedGeneration = session.StartedAt };
+                var fallback = await PersistRowsIndividuallyAsync(db, sessionId, pending, batchFailure);
+                if (recoveryTransaction is not null) await recoveryTransaction.CommitAsync();
+                return fallback with { AcceptedGeneration = session.StartedAt };
             }
 
+            if (recoveryTransaction is not null) await recoveryTransaction.CommitAsync();
             _persistFailures.TryRemove(sessionId, out _);
             return ResultFrom(pending.Select(p => p.Source), pending.Max(p => p.Row.Sequence))
                 with { CommittedRows = pending.Select(p => p.Row).ToArray(), AcceptedGeneration = session.StartedAt };
@@ -1338,6 +1375,13 @@ public sealed class AgentSessionRuntime
     /// </summary>
     private static async Task SaveTrackedChangesAsync(AppDbContext db, Guid sessionId, bool lockSession)
     {
+        // Checked recovery already holds the session row in its append transaction.
+        // EF's savepoint rollback keeps that fence across batch and row fallbacks.
+        if (db.Database.CurrentTransaction is not null)
+        {
+            await db.SaveChangesAsync();
+            return;
+        }
         await using var tx = lockSession ? await db.Database.BeginTransactionAsync() : null;
         if (lockSession)
             await SessionMessageQueueService.LockAgentSessionRowAsync(db, sessionId, CancellationToken.None);
