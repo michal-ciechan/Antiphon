@@ -10,8 +10,9 @@ public static class ShadowCopy
             throw new InvalidOperationException("tool directory has no dll: " + toolDirectory);
 
         var ownership = SafeWrite.Under(destination);
-        SafeWrite.Require(SafeWrite.CreateDirectory(destination, ownership));
+        SafeWrite.Require(SafeWrite.CreateFreshDirectory(destination, ownership));
         var bytes = CopyFiles(toolDirectory, destination, ownership);
+        SafeWrite.Require(OwnedOutputLedger.Seal(destination));
         CheckpointUsageEvent.Write("copy", destination, bytes);
     }
 
