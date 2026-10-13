@@ -90,16 +90,25 @@ public sealed class ChannelOutboundStorageTests
         FileLink.PrivilegeReason.ShouldBe(
             "CARD-1210: file-link controls require symbolic-link creation privilege on Windows; capability unavailable.",
             "c1210-filelink-exact-reason");
-        foreach (var (error, windowsUnavailable) in new (Exception, bool)[]
+        // Hand-written classification vectors: only confirmed Win32 1314 is unavailable.
+        // Run both platform branches on every host; an unknown HRESULT is never a capability verdict.
+        foreach (var (name, error, windowsUnavailable) in new (string, Exception, bool)[]
         {
-            (new IOException("sharing violation", unchecked((int)0x80070020)), false),
-            (new IOException("unknown I/O"), false),
-            (new IOException("non-Win32 HRESULT", 1314), false),
-            (new FileNotFoundException("missing target"), false),
-            (new System.ComponentModel.Win32Exception(5), false),
-            (new System.ComponentModel.Win32Exception(1314), true),
-            (new IOException("privilege not held", unchecked((int)0x80070522)), true),
-            (new UnauthorizedAccessException("privilege unavailable"), true),
+            ("access denied", new UnauthorizedAccessException("access denied"), false),
+            ("unauthorized privilege not held", new FileLinkAccessException(unchecked((int)0x80070522)), true),
+            ("IO privilege not held", new IOException("privilege not held", unchecked((int)0x80070522)), true),
+            ("Win32 privilege not held", new System.ComponentModel.Win32Exception(1314), true),
+            ("Win32 access denied", new System.ComponentModel.Win32Exception(5), false),
+            ("IO access denied", new IOException("access denied", unchecked((int)0x80070005)), false),
+            ("already exists", new IOException("already exists", unchecked((int)0x800700B7)), false),
+            ("path not found", new DirectoryNotFoundException("missing parent"), false),
+            ("sharing violation", new IOException("sharing violation", unchecked((int)0x80070020)), false),
+            ("generic IO", new IOException("unknown I/O"), false),
+            ("non-Win32 HRESULT", new IOException("non-Win32 HRESULT", 1314), false),
+            ("missing file", new FileNotFoundException("missing target"), false),
+            ("zero HRESULT", new FileLinkAccessException(0), false),
+            ("unknown HRESULT", new FileLinkAccessException(unchecked((int)0x81234567)), false),
+            ("unset HRESULT", new Exception("unknown creation failure"), false),
         })
         foreach (var isWindows in new[] { false, true })
         {
@@ -107,15 +116,16 @@ public sealed class ChannelOutboundStorageTests
             {
                 FileLink? observed = null;
                 Should.NotThrow(() => observed = FileLink.TryCreate("unused-link", "unused-target", isWindows,
-                    (_, _) => throw error), "c1210-filelink-privilege-unavailable");
-                observed.ShouldBeNull("c1210-filelink-privilege-unavailable");
+                    (_, _) => throw error), "c1210-filelink-privilege-unavailable: " + name);
+                observed.ShouldBeNull("c1210-filelink-privilege-unavailable: " + name);
             }
             else
             {
                 Exception? observed = null;
                 try { FileLink.TryCreate("unused-link", "unused-target", isWindows, (_, _) => throw error); }
                 catch (Exception caught) { observed = caught; }
-                ReferenceEquals(observed, error).ShouldBeTrue("c1210-filelink-unknown-error: " + error.GetType().Name);
+                ReferenceEquals(observed, error).ShouldBeTrue(
+                    $"c1210-filelink-unknown-error: {name}; isWindows={isWindows}; HRESULT=0x{error.HResult:X8}");
             }
         }
 
@@ -140,6 +150,11 @@ public sealed class ChannelOutboundStorageTests
             (path, _) => File.WriteAllText(path, "ordinary bytes")), "c1210-filelink-reparse-required");
         Should.Throw<FileNotFoundException>(() => FileLink.TryCreate(Path.Combine(root, "absent-link"), target, true,
             (_, _) => { }), "c1210-filelink-observation-fails-closed");
+    }
+
+    private sealed class FileLinkAccessException : UnauthorizedAccessException
+    {
+        internal FileLinkAccessException(int hresult) : base("injected creation failure") => HResult = hresult;
     }
 
     private static void RequireLinkFixtureRoute(string methodName, string route)
