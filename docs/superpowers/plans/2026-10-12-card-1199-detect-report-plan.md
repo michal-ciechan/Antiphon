@@ -29,10 +29,12 @@ Closed scope overrides broad Unit profile per repair brief. Linux only. One isol
 | CP-7 | S2 | CP-1 | hanging-git-second | `/*/*/OutputCleanupTests/hanging_git_is_refused_and_killed_within_the_bound*` | R-3 | 1 passed | 1 | 1 |
 | CP-8 | S2 | CP-1 | hanging-git-third | `/*/*/OutputCleanupTests/hanging_git_is_refused_and_killed_within_the_bound*` | R-3 | 1 passed | 1 | 1 |
 
+| CP-9 | S2 | CP-1 | row-runner | `/*/*/RowRunnerTests/*` | R-1 V-3 | full 13 cases, 0 failed/skipped | 13 | 1 |
+
 ### Mutation handoff
 
 No deliberate mutants run by Code. All PCs/variants and missing-control discovery, including this zero-PC plan, remain pending method-scoped SourceLanding Mutation after ordinary Review and caller landing. Candidate documentation: docs/superpowers/mutations/. Restart: none.
 
 ### Cost
 
-Ordinary floor 30 minutes plus implementation. Authoritative task budget 75 minutes. No broad assembly or unbounded classes selected.
+Ordinary floor 31 minutes plus implementation. Authoritative task budget 75 minutes. No broad assembly or unbounded classes selected.
