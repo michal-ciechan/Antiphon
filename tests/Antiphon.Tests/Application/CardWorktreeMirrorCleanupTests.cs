@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.SessionRunner.Contracts;
@@ -53,14 +54,15 @@ public sealed class CardWorktreeMirrorCleanupTests
     // mutation: omit each admission predicate; red: reason/no-journal/sentinel oracle fails.
     [Test] public async Task C1032_AdmissionCurrentEligibility()
     {
-        foreach (var vector in new[] { "Queued", "Working", "Blocked", "settling", "attempt", "consumer", "recovery", "disabled", "cutoff", "store" })
+        foreach (var vector in new[] { "Queued", "Working", "Blocked", "settling", "attempt", "late-attempt", "consumer", "recovery", "disabled", "cutoff", "store" })
         {
             await using var f = await CompletedCardMirrorFixture.CreateAsync(); await f.DiscoverAsync();
             var reason = vector switch { "settling" => "settling", "attempt" => "task_snapshot_changed", "consumer" => "live_owner",
-                "recovery" => "recovery_debt", "disabled" => "execute_disabled", "cutoff" => "cutoff_absent", "store" => "runner_store_mismatch", _ => "terminal_required" };
+                "recovery" => "recovery_debt", "disabled" => "execute_disabled", "cutoff" => "cutoff_absent", "store" => "runner_store_mismatch", "late-attempt" => "task_snapshot_changed", _ => "terminal_required" };
             if (Enum.TryParse<AgentTaskStatus>(vector, out var status)) await f.Card.ChangeTaskAsync(t => t.Status = status);
             if (vector == "settling") await f.Card.SetCompletedAgeAsync(TimeSpan.FromMinutes(119));
             if (vector == "attempt") await f.Card.ChangeTaskAsync(t => t.Attempt++);
+            if (vector == "late-attempt") f.BeforeIntent = _ => f.Card.ChangeTaskAsync(t => t.Attempt++);
             if (vector == "disabled") f.Card.Residue.Execute = false;
             if (vector == "cutoff") f.Card.SetCutoff(null);
             await using (var db = f.Card.Host.CreateContext())
@@ -100,6 +102,21 @@ public sealed class CardWorktreeMirrorCleanupTests
     {
         await using (var before = await CompletedCardMirrorFixture.CreateAsync())
         { before.BeforeIntent = _ => before.Card.MoveAsync(before.Card.ReviewColumnId); await before.HeldAsync("done_generation_revoked"); }
+        await using (var io = await CompletedCardMirrorFixture.CreateAsync())
+        {
+            var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            io.BeforeInspection = async ct => { entered.SetResult(); await release.Task.WaitAsync(ct); };
+            var pending = io.TryAsync();
+            try
+            {
+                await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                await io.Card.MoveAsync(io.Card.ReviewColumnId).WaitAsync(TimeSpan.FromSeconds(5));
+            }
+            finally { release.TrySetResult(); }
+            (await pending).Reason.ShouldBe("done_generation_revoked");
+            (await File.ReadAllTextAsync(io.Sentinel)).ShouldBe("mirror evidence\n");
+        }
         await using var f = await CompletedCardMirrorFixture.CreateAsync();
         f.AfterIntent = async _ =>
         {
@@ -125,6 +142,25 @@ public sealed class CardWorktreeMirrorCleanupTests
         var op = (await f.Card.Host.OperationAsync()).ShouldNotBeNull();
         new AgentTaskLandingState().HasPublication(op).ShouldBeTrue(); op.OriginalSourceSha.ShouldBe(head); op.VerifiedSourceSha.ShouldNotBe(head);
         await g.RequiredAsync(f.Binding.CommonDirectory, "fetch", "origin", "master");
+        f.AfterIntent = async ct =>
+        {
+            var command = await f.CommandAsync();
+            var client = (ICompletedCardWorkspaceClient)f.Wire.Directory.Resolve(f.Binding.RunnerId);
+            foreach (var changed in new[]
+            {
+                command with { CardId = Guid.NewGuid() }, command with { DoneRevisionId = Guid.NewGuid() },
+                command with { TargetId = Guid.NewGuid() }, command with { EndpointId = Guid.NewGuid() },
+                command with { OperationId = Guid.NewGuid() },
+                command with { ReportDigest = new string('a', 64) }, command with { ArtifactProofDigest = new string('b', 64) },
+                command with { DisposalPolicyDigest = new string('c', 64) },
+                command with { Proof = command.Proof with { ProofIdentity = "caller-supplied-map" } },
+            })
+            {
+                var refusal = await client.RemoveCompletedCardWorkspaceAsync(changed, ct);
+                refusal.Complete.ShouldBeFalse(); refusal.Reason.ShouldBe("preservation_proof_unsupported");
+                (await File.ReadAllTextAsync(f.Sentinel, ct)).ShouldBe("mirror evidence\n"); f.Journal.Read()!.Count.ShouldBe(0);
+            }
+        };
         await f.RemovedAsync(); (await f.CommandAsync()).Proof.ProofKind.ShouldBe("Rebased");
     }
 
@@ -150,6 +186,13 @@ public sealed class CardWorktreeMirrorCleanupTests
     [Test] public async Task C1032_ReceiptCompleteBoundReceipt()
     {
         await ReceiptVectorsAsync("schemaVersion", "expectedHeadSha", "preservationProofDigest", "artifactProofDigest", "disposalPolicyDigest", "disposition", "setAsideIdentity", "journalIdentity", "directoryRemoved", "registrationRemoved");
+        await using (var fault = await CompletedCardMirrorFixture.CreateAsync())
+        {
+            fault.FailReceiptImport = true;
+            await Should.ThrowAsync<IOException>(() => fault.TryAsync());
+            var row = await fault.EndpointAsync(); row.State.ShouldBe(CardWorktreeCleanupEndpointState.IntentRecorded);
+            row.ImportedReceipt.ShouldBeNull(); row.ImmutableRequest.ShouldNotBeNull();
+        }
         await using var positive = await CompletedCardMirrorFixture.CreateAsync(); await positive.RemovedAsync();
     }
     private static async Task ReceiptVectorsAsync(params string[] fields)
