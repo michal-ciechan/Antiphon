@@ -387,7 +387,7 @@ zero execution do not count as PC red.
 | V-4 | B3 methods using tracked shell census, active/effective attribute evaluation and raw File.ReadAllBytes. | Literal `*.sh text eol=lf` present; each tracked shell effective eol is lf; no byte 13. Require a nonempty census including three formerly CRLF fixtures. Git `ls-files -z` is the tracked census and
 `check-attr` corroborates effective working-tree attributes; any subprocess is limited, bounded,
 and joined. Table cases: commented rule, missing rule, later crlf/-eol override, healthy LF, injected CRLF. Fail names file/rule and clean re-checkout remedy. Unit filesystem contract. | CP-7,17 |
-| V-5 | Existing CodexRunnerImageContractTests; Linux CP-9 selects 36 of the original 40 Remote fixture consumers under the explicit S2 exclusion decision below; Windows CP-19 retains all 40 pending Review. | Named PASS/exit and absence-of-failure assertions reached with actual on-disk fixtures; WSL bash/pwsh/jq required on Windows. Any prerequisite skip refuses this row's qualification. Four named base-red methods remain caller-owned follow-up work. Behavioral shell fixture; no deployment proof. | CP-8,9,18,19 |
+| V-5 | Existing CodexRunnerImageContractTests; Linux CP-9 selects 35 of the original 40 Remote fixture consumers under the explicit S2 exclusion decisions below; Windows CP-19 retains all 40 pending Review. | Named PASS/exit and absence-of-failure assertions reached with actual on-disk fixtures; WSL bash/pwsh/jq required on Windows. Any prerequisite skip refuses this row's qualification. Five named base-red methods remain caller-owned follow-up work. Behavioral shell fixture; no deployment proof. | CP-8,9,18,19 |
 | V-6 | Split B4 and changed B5; real directory junction/symlink and file symlink. | Real non-link companion reads exact bytes; `ValidatePath` link rejection message then public API rejection. Probe null is allowed only for Windows privilege classification. Directory test also runs FileLink injected create-error table: Win32 1314/Unauthorized on Windows → unavailable, Linux same errors/Windows other IOException → original exception, successful link → observed ReparsePoint. File-link test requires non-null on Linux before optional Windows skip. Unit filesystem/native behavior. | CP-10,20 |
 | V-7 | B6/B7 shell extraction with shared closure; healthy host, missing select/root/fs/call/note, malformed tree, busy/unknown donor, cleanup failure, valid saved archive, failed smoke. | Preflight sees definitions, healthy host is entered and volume-only stubs have zero calls; missing name yields exactly `MISSING <name>`, actual child exit 97, case-body sentinel absent. Refusal/cleanup/import bytes and source-order predicates below. Unit shell harness. | CP-11,21 |
 | V-8 | Existing `C983_Required_jq_driver_rejects_successful_false_probe` and six C973 cold-marker cases. | Preserve internal case assertions; record method durations and owned child completion. A passing sample establishes only selected cases. Existing bounds unchanged. | CP-11,21 |
@@ -604,10 +604,10 @@ exist. In particular PC-11/12 also await OD-5; design status cannot become a mut
 
 ### S2 Linux CP-9 selection amendment (Code 650b7652)
 
-The caller's explicit S2 follow-up decision authorizes excluding four inherited C1192
+The caller's explicit S2 follow-up decisions authorize excluding five inherited C1192
 harness reds from Linux CP-9 and assigning their repair to a follow-up Backlog card
 that the caller will file. Each exclusion below reproduced as Failed at committed
-base `c2d0085a9ac7ae7989217a892df6b8c8f26df35e`; all four methods still exist
+base `c2d0085a9ac7ae7989217a892df6b8c8f26df35e`; all five methods still exist
 in `tests/Antiphon.Tests/Scripts/RemoteScriptContractTests.cs`. No test, assertion,
 harness, timeout, other slice, or Windows checkpoint selection is changed.
 
@@ -617,14 +617,21 @@ harness, timeout, other slice, or Windows checkpoint selection is changed.
 | `C1192_Volume_transfer_preserves_metadata_and_refuses_partial_copy` | `c2d0085a9ac7ae7989217a892df6b8c8f26df35e` | C1192_FAIL init 2 CacheHelperImageMissing; C1192_EXIT=1 | Caller-filed follow-up Backlog card (ID pending) |
 | `C1192_Race_programs_and_feed_share_the_work_volume` | `c2d0085a9ac7ae7989217a892df6b8c8f26df35e` | race-boundary: expected 1, actual 0; FixtureNuGetLockHolderFailed | Caller-filed follow-up Backlog card (ID pending) |
 | `C1192_Partial_workspace_acquisition_is_cleaned` | `c2d0085a9ac7ae7989217a892df6b8c8f26df35e` | first-create-failure-cleaned: assertion false | Caller-filed follow-up Backlog card (ID pending) |
+| `C1192_Race_barriers_observe_volume_state` | `c2d0085a9ac7ae7989217a892df6b8c8f26df35e` | volume-release-observed: expected 1, actual 0 | Caller-filed follow-up Backlog card (ID pending) |
 
-Baseline execution: four executed, zero passed, four failed, zero skipped;
+First baseline execution: four executed, zero passed, four failed, zero skipped;
 `sourceState=clean`, `buildSource=verified`. Evidence is the task's retained
 `.antiphon/c1210-baseline-evidence/C1210-S2-inherited-20261013-095155-d93d/run.trx`.
-The original CP-9 TRX had exactly the 40 selected source methods, 36 Passed and these
-four Failed. The approved Linux selection is those 40 minus only these four:
-27 C1192 methods, six C913 methods, and three other fixture methods, totaling 36.
-CP-9's filter below explicitly names all 36; no broad C1192 operand can re-admit
+The original CP-9 TRX had exactly the 40 selected source methods, 36 Passed and the
+first four Failed. The later 36-method run had 35 Passed and the fifth method Failed;
+its exact volume-release-observed assertion also reproduced in a one-method base
+run (one executed, zero passed, one failed, zero skipped, clean source and verified
+build). That evidence is retained at
+`.antiphon/c1210-barriers-base-evidence/C1210-S2-barriers-base-20261013-101539-651c/run.trx`.
+The caller then explicitly authorized the fifth exclusion with the same rules.
+The approved Linux selection is the original 40 minus only these five:
+26 C1192 methods, six C913 methods, and three other fixture methods, totaling 35.
+CP-9's filter below explicitly names all 35; no broad C1192 operand can re-admit
 an excluded method. The rerun must have exactly this roster, every result Passed,
 zero Failed and zero NotExecuted, with a clean committed-source receipt.
 
@@ -651,7 +658,6 @@ Literal selected roster (all in `Antiphon.Tests.Scripts.RemoteScriptContractTest
 - `C1192_Harness_cleanup_stays_inside_its_private_directory`
 - `C1192_Harness_cleanup_refuses_ancestor_swap`
 - `C1192_Helper_argv_keeps_discarded_env_file_visible`
-- `C1192_Race_barriers_observe_volume_state`
 - `C1192_Npm_seed_install_and_refill_use_work_volume`
 - `C1192_Npm_volume_sentinel_and_empty_cache_miss_are_observed`
 - `C1192_Real_cache_cases_keep_the_host_payload_backend`
@@ -668,7 +674,7 @@ Literal selected roster (all in `Antiphon.Tests.Scripts.RemoteScriptContractTest
 - `C849_Prune_refuses_stale_or_busy_authority`
 
 CP-17/18/19 remain PENDING for desktop Windows Final Review with their exact
-filters and counts below. CP-19 still selects the original 40; its four inherited
+filters and counts below. CP-19 still selects the original 40; its five inherited
 reds are not qualified by Linux CP-9's approved exclusion. This amendment releases
 only the narrowed Linux S2 verification; it does not discharge the excluded
 methods, Windows qualification, or any SourceLanding Mutation PC.
@@ -692,7 +698,7 @@ All estimates include the row build and are estimates, not measured timings.
 | CP-6 | S1 | `tests/Antiphon.Tests -> bin-c1210-cp6/` | linux-c1050-static | `/*/*/C1008PlatformContractTests/(C1050_Guard_matches_native_platform*)\|(C1050_Remote_entries_guard_before_work*)\|(C1050_Rolling_entries_guard_before_work*)\|(C1050_Audit_rejects_empty_or_incomplete_outcomes*)` | V-3 | 4 Passed, 0 skipped | 4 | 6 | true |
 | CP-7 | S2 | `tests/Antiphon.Tests -> bin-c1210-cp7/` | linux-lf-contract | `/*/*/ShellFixtureLineEndingContractTests/*` | V-4 | 2 Passed; current tracked census 19 files | 2 | 7 | true |
 | CP-8 | S2 | `tests/Antiphon.Tests -> bin-c1210-cp8/` | linux-codex-image | `/*/*/CodexRunnerImageContractTests/*` | V-5 | 13 Passed, 0 skipped | 13 | 8 | true |
-| CP-9 | S2 | `tests/Antiphon.Tests -> bin-c1210-cp9/` | linux-remote-fixtures | `/*/*/RemoteScriptContractTests/(C1191_Lock_probe_is_created_before_uid_handoff*)\|(C1192_Fixture_has_no_host_payload_tree_or_payload_bind*)\|(C1192_Finalization_precedes_success_and_preserves_primary_failure*)\|(C1192_Evidence_export_preserves_fixture_roster_without_payloads*)\|(C1192_Cleanup_consumer_requires_positive_absence*)\|(C1192_Cleanup_helper_requires_positive_absence*)\|(C1192_Cleanup_masked_requires_positive_absence*)\|(C1192_Cleanup_work_requires_positive_absence*)\|(C1192_Cleanup_mask_requires_positive_absence*)\|(C1192_Cleanup_cache_requires_positive_absence*)\|(C1192_Cleanup_network_requires_positive_absence*)\|(C1192_Daemon_loss_after_compose_refuses_success*)\|(C1192_Acquisition_unknown_ownership_retains_registration_and_residue*)\|(C1192_Workspace_registration_is_absent_only_and_survives_prepare*)\|(C1192_Cleanup_releases_only_registered_current_run_resources*)\|(C1192_Toxic_probe_stays_in_work_volume*)\|(C1192_Summary_validator_runs_under_the_production_interpreter*)\|(C1192_Foreign_volume_is_refused_after_create*)\|(C1192_Harness_cleanup_stays_inside_its_private_directory*)\|(C1192_Harness_cleanup_refuses_ancestor_swap*)\|(C1192_Helper_argv_keeps_discarded_env_file_visible*)\|(C1192_Race_barriers_observe_volume_state*)\|(C1192_Npm_seed_install_and_refill_use_work_volume*)\|(C1192_Npm_volume_sentinel_and_empty_cache_miss_are_observed*)\|(C1192_Real_cache_cases_keep_the_host_payload_backend*)\|(C1192_Fixture_seed_and_rerun_keep_payloads_in_volume*)\|(C1192_Recovery_controls_validate_volume_bytes_modes_and_manifest*)\|(C1192_Apphost_mask_is_an_empty_exact_volume_mount*)\|(C1195_Retention_probe_is_app_uid_and_does_not_copy_image_content*)\|(C913_Seed_accepts_complete_ordinary_packages_without_framework_packs*)\|(C913_Full_marker_binds_verified_recovery_before_publication*)\|(C913_Marker_versions_keep_legacy_full_and_cold_contracts_distinct*)\|(C913_Prune_validates_recovery_without_refilling_image_packs*)\|(C913_Fixture_uses_owned_payloads_and_proven_absent_temp*)\|(C913_Receipts_reject_mixed_digest_types_and_false_smoke_claims*)\|(C849_Prune_refuses_stale_or_busy_authority*)` | V-5 | exactly 36 Passed, 0 Failed, 0 skipped; four named base-red exclusions above | 36 | 13 | true |
+| CP-9 | S2 | `tests/Antiphon.Tests -> bin-c1210-cp9/` | linux-remote-fixtures | `/*/*/RemoteScriptContractTests/(C1191_Lock_probe_is_created_before_uid_handoff*)\|(C1192_Fixture_has_no_host_payload_tree_or_payload_bind*)\|(C1192_Finalization_precedes_success_and_preserves_primary_failure*)\|(C1192_Evidence_export_preserves_fixture_roster_without_payloads*)\|(C1192_Cleanup_consumer_requires_positive_absence*)\|(C1192_Cleanup_helper_requires_positive_absence*)\|(C1192_Cleanup_masked_requires_positive_absence*)\|(C1192_Cleanup_work_requires_positive_absence*)\|(C1192_Cleanup_mask_requires_positive_absence*)\|(C1192_Cleanup_cache_requires_positive_absence*)\|(C1192_Cleanup_network_requires_positive_absence*)\|(C1192_Daemon_loss_after_compose_refuses_success*)\|(C1192_Acquisition_unknown_ownership_retains_registration_and_residue*)\|(C1192_Workspace_registration_is_absent_only_and_survives_prepare*)\|(C1192_Cleanup_releases_only_registered_current_run_resources*)\|(C1192_Toxic_probe_stays_in_work_volume*)\|(C1192_Summary_validator_runs_under_the_production_interpreter*)\|(C1192_Foreign_volume_is_refused_after_create*)\|(C1192_Harness_cleanup_stays_inside_its_private_directory*)\|(C1192_Harness_cleanup_refuses_ancestor_swap*)\|(C1192_Helper_argv_keeps_discarded_env_file_visible*)\|(C1192_Npm_seed_install_and_refill_use_work_volume*)\|(C1192_Npm_volume_sentinel_and_empty_cache_miss_are_observed*)\|(C1192_Real_cache_cases_keep_the_host_payload_backend*)\|(C1192_Fixture_seed_and_rerun_keep_payloads_in_volume*)\|(C1192_Recovery_controls_validate_volume_bytes_modes_and_manifest*)\|(C1192_Apphost_mask_is_an_empty_exact_volume_mount*)\|(C1195_Retention_probe_is_app_uid_and_does_not_copy_image_content*)\|(C913_Seed_accepts_complete_ordinary_packages_without_framework_packs*)\|(C913_Full_marker_binds_verified_recovery_before_publication*)\|(C913_Marker_versions_keep_legacy_full_and_cold_contracts_distinct*)\|(C913_Prune_validates_recovery_without_refilling_image_packs*)\|(C913_Fixture_uses_owned_payloads_and_proven_absent_temp*)\|(C913_Receipts_reject_mixed_digest_types_and_false_smoke_claims*)\|(C849_Prune_refuses_stale_or_busy_authority*)` | V-5 | exactly 35 Passed, 0 Failed, 0 skipped; five named base-red exclusions above | 35 | 13 | true |
 | CP-10 | S3 | `tests/Antiphon.Tests -> bin-c1210-cp10/` | linux-storage | `/*/*/ChannelOutboundStorageTests/*` | V-6, R-5 | 33 Passed, 0 skipped; real links | 33 | 8 | true |
 | CP-11 | S4 | `tests/Antiphon.Tests -> bin-c1210-cp11/` | linux-c849-harness | `/*/*/RemoteScriptContractTests/(C849_Saved_donor_archive_is_checked_and_imported_without_a_container*)\|(C849_Seed_refuses_invalid_donors_and_partial_payloads*)\|(C849_Seed_publishes_complete_payloads_before_its_marker*)\|(C849_Saved_donor_rejects_unsafe_archives_empty_payload_and_busy_counters*)\|(C849_Closure_preflight_names_a_missing_dependency*)\|(C983_Required_jq_driver_rejects_successful_false_probe*)\|(C973_Cold_marker_readers_accept_pruned_seed_image_and_refuse_invalid_markers*)` | V-7, V-8, R-5 | 5 C849 + 1 C983 + 6 C973 = 12 Passed, 0 skipped | 12 | 14 | true |
 | CP-12 | S5 | `tests/Antiphon.Tests -> bin-c1210-cp12/` | linux-timeout-policy | `/*/*/ProcessSpawnTimeoutPolicyTests/*` | V-9 | 2 Passed after OD-5; metadata policy only | 2 | 7 | true |
