@@ -38,7 +38,7 @@ public sealed partial class RunnerWorkspaceService
         if (record is null || !RunnerCompletedCardWorkspaceRemoval.UnlinkedPath(stamp)
             || !store.OwnerStampMatches(binding.GitDirectory, record)) return "foreign_mirror_owner";
         var origin = await GitAsync(binding.WorktreePath, ct, "remote", "get-url", "origin");
-        if (origin.ExitCode != 0 || !SameRepository(origin.Stdout.Trim(), binding.RepositoryIdentity))
+        if (origin.ExitCode != 0 || (!RepositoryCloneSource.TryNormalize(origin.Stdout.Trim(), out var identity) || identity != binding.RepositoryIdentity))
             return "stale_mirror_binding";
         return null;
     }
