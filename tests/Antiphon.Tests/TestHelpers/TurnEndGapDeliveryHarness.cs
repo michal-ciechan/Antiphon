@@ -434,6 +434,8 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
         await using var db = World.CreateContext();
         db.AgentSessions.Add(C544World.Session(sibling, "c1205-other-recipient", _handler.Generation));
         await db.SaveChangesAsync(Token);
+        for (var i = 0; i < 4; i++) _handler.Append(TranscriptKinds.UserPrompt, $"prior sibling input {i}", false, sibling);
+        await Runtime.CatchUpTranscriptAsync(sibling, Token);
         return sibling;
     }
     public Task PullAsync(Guid session) => Runtime.CatchUpTranscriptAsync(session, Token);
@@ -449,9 +451,14 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
     public void SaturateWithoutWorker()
     { for (var i = 0; i < 128; i++) Flushes.TryEnqueue(Guid.NewGuid()).ShouldBeTrue(); Flushes.ClearAudit(); }
     public Task StopCompletionWorkerAsync() => StopWorkerAsync();
+    public async Task AdvanceRetryAsync()
+    {
+        var latest = (await NotesAsync()).Select(n => n.NextAttemptAt).DefaultIfEmpty(Clock.GetUtcNow().UtcDateTime).Max();
+        if (latest > Clock.GetUtcNow().UtcDateTime) Clock.AdvanceTo(new DateTimeOffset(latest, TimeSpan.Zero));
+    }
     public int TimerSequence => Clock.Events.LastOrDefault()?.Sequence ?? 0;
-    public Task<ControlledTimeProvider.TimerEvent> NextBackstopAsync(int after) => Clock.WaitForTimerAsync(
-        e => e.Action == "create" && e.DueTime >= TimeSpan.FromMinutes(14), after, Token);
+    public Task<ControlledTimeProvider.TimerEvent> NextBackstopAsync(int after, CancellationToken ct) => Clock.WaitForTimerAsync(
+        e => e.Action == "create" && e.DueTime >= TimeSpan.FromMinutes(14), after, ct);
 
     public sealed class RecordingFlushes : CompletionNoteFlushQueue
     {
