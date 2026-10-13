@@ -30,11 +30,17 @@ export function SettingsPage() {
         Settings
       </Title>
       <Paper p="md" radius="md" withBorder>
-        {/* Controlled by `?tab=` so later navigation switches the panel (`C506 V16 controlled-tab`). */}
+        {/* Controlled by `?tab=` so later navigation switches the panel (`C506 V16 controlled-tab`); a click
+            sets only `tab` (`C506 S3F1 active-tab-click`, `away-and-back`, `unknown-tab`). */}
         <Tabs
           value={tab}
           onChange={(value) => {
-            if (value !== null) setSearchParams({ tab: value })
+            if (value === null) return
+            setSearchParams((previous) => {
+              const next = new URLSearchParams(previous)
+              next.set('tab', value)
+              return next
+            })
           }}
           keepMounted={false}
         >
