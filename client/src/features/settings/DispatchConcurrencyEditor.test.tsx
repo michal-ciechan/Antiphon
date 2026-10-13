@@ -1020,7 +1020,7 @@ const P4_SAVED_R5 = project(5, 7, { schemaVersion: 1, roles: { Code: { maxParall
     'Review', { maxQueued: null, maxQueuedSource: 'project' }))
 
 it('C506 S2F2 refresh-fails', async () => {
-  // The PUT commits r5; the refresh that follows it fails, so the query keeps the r4 entry the Save superseded.
+  // The PUT commits r5; the refresh after it fails (503).
   const state = serve(P, P4, (put, index) => {
     if (index === 0) {
       state.get = new HttpResponse(null, { status: 503 })
@@ -1055,7 +1055,7 @@ it('C506 S2F2 refresh-fails', async () => {
 })
 
 it('C506 S2F2 refresh-pending', async () => {
-  // The refresh after the PUT is held: the r4 query data stays in the cache until it is released.
+  // The refresh after the PUT is held until `release()`.
   const { gate, release } = hold()
   const state = serve(P, P4, () => {
     state.get = (async () => {
@@ -1183,9 +1183,8 @@ it('C506 S2F3 pending-error', async () => {
   expect(num('Code max parallel')).toHaveValue('3')
 })
 
-// ---- Review b6249616 repair: authoritative reads after a restore, reused revisions, late results ----
-// Revision counters are not ordered across a database restore, so a successful read is current even
-// when its revisions are lower; only the cached read a Save superseded is ignored (S2F2 above).
+// ---- Review b6249616 repair: reads after a restore, reused revisions, late results ----
+// Known limitations these cases do not cover are listed at `settleSave` and the render fold in the editor.
 
 const scopeKey = (projectId: string | null) => ['dispatchConcurrency', 'scope', projectId]
 
@@ -1365,7 +1364,7 @@ it('C506 S2R3 same-revision-new-content', async () => {
 })
 
 it('C506 S2R3 after-save-lower', async () => {
-  // The read that follows the r5 Save begins after it and returns a restored r2: that read is current.
+  // The refresh after the r5 Save returns a restored r2.
   const restored = projectRestored('project')
   const state = serve(P, P4, () => {
     state.get = restored
@@ -1397,7 +1396,7 @@ it('C506 S2R3 after-save-lower', async () => {
 
 it('C506 S2R3 after-failed-refresh-equal-data', async () => {
   // The refresh after the r5 Save fails; the server is then restored to exactly P4. The next live read
-  // returns a document equal to the superseded cached one (same query data object, new update time).
+  // keeps the same query data object with dataUpdateCount + 1.
   const hub = fakeHub()
   const state = serve(P, P4, () => {
     state.get = new HttpResponse(null, { status: 503 })
