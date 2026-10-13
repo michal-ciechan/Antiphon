@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Diagnostics;
 using System.Text.Json;
 using Antiphon.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
@@ -71,12 +72,50 @@ public sealed partial class CompletedCardWorkspaceRemovalTests
     [Test] public Task C1017_RunnerStoreIdentity() => IdentityVectors(b => b with { RunnerStoreId = Guid.NewGuid().ToString("D") },
         b => b with { RunnerId = "foreign" });
     // PC-56/240/241: bypass repository/common/admin comparator -> refusal before physical reads fails.
-    [Test] public Task C1017_RunnerRepositoryIdentity() => IdentityVectors(b => b with { RepositoryIdentity = "foreign" },
-        b => b with { CommonDirectory = Path.GetDirectoryName(b.CommonDirectory)! }, b => b with { GitDirectory = b.CommonDirectory });
+    [Test] public async Task C1017_RunnerRepositoryIdentity()
+    {
+        await IdentityVectors(b => b with { RepositoryIdentity = "foreign" },
+            b => b with { CommonDirectory = Path.GetDirectoryName(b.CommonDirectory)! }, b => b with { GitDirectory = b.CommonDirectory });
+        foreach (var otherCommon in new[] { true, false })
+        {
+            await using var r = new RemovalRig(); var f = r.Fixture;
+            var repo = f.Repository;
+            if (otherCommon)
+            {
+                repo = Path.Combine(f.Root, "foreign-repository");
+                CompletedCardRunnerFixture.Git(f.Root, "clone", f.Origin, repo);
+            }
+            var foreign = Path.Combine(f.Root, "foreign-worktree");
+            CompletedCardRunnerFixture.Git(repo, "worktree", "add", "--detach", foreign, f.Sha);
+            CompletedCardRunnerFixture.Git(foreign, "rev-parse", "HEAD").Trim().ShouldBe(f.Sha);
+            var foreignSource = File.ReadAllBytes(Path.Combine(foreign, "source"));
+            File.WriteAllBytes(Path.Combine(f.Checkout, ".git"), File.ReadAllBytes(Path.Combine(foreign, ".git")));
+            var proofReads = 0; f.BeforeGitStart = psi => { if (psi.ArgumentList.Contains("ls-remote")) proofReads++; };
+            Held(await r.Remove(), "stale_mirror_binding"); proofReads.ShouldBe(0);
+            File.ReadAllBytes(Path.Combine(foreign, "source")).ShouldBe(foreignSource);
+            Directory.Exists(f.Binding.GitDirectory).ShouldBeTrue(); r.Preserved();
+        }
+    }
     // PC-57/243: canonical, sibling-prefix, outside, reusable/borrowed paths cannot replace recorded ordinary identity.
-    [Test] public Task C1017_RunnerPathIdentity() => IdentityVectors(b => b with { WorktreePath = b.CommonDirectory },
-        b => b with { WorktreePath = b.WorktreePath + "-foreign" }, b => b with { WorktreePath = Path.GetTempPath() },
-        b => b with { WorktreePath = Path.Combine(Path.GetDirectoryName(b.WorktreePath)!, "slot") });
+    [Test] public async Task C1017_RunnerPathIdentity()
+    {
+        await IdentityVectors(b => b with { WorktreePath = b.CommonDirectory },
+            b => b with { WorktreePath = b.WorktreePath + "-foreign" }, b => b with { WorktreePath = Path.GetTempPath() },
+            b => b with { WorktreePath = Path.Combine(Path.GetDirectoryName(b.WorktreePath)!, "slot") });
+        await using var r = new RemovalRig(); var f = r.Fixture;
+        CompletedCardRunnerFixture.Git(f.Repository, "branch", "feat/card-task-cafebabe", f.Sha);
+        var second = await r.Workspace.MirrorAsync(new("feat/card-task-cafebabe", f.Sha, "task-cafebabe"), CancellationToken.None);
+        var source = File.ReadAllBytes(Path.Combine(second.Path, "source"));
+        Held(await r.Remove(r.Command with { Binding = r.Command.Binding with { WorktreePath = second.Path } }), "foreign_mirror_owner");
+        File.ReadAllBytes(Path.Combine(second.Path, "source")).ShouldBe(source);
+        foreach (var path in new[] { f.Repository, second.Path + "-prefix", Path.Combine(f.Root, "slot"), Path.Combine(f.Root, "outside") })
+        {
+            Directory.CreateDirectory(path); File.WriteAllText(Path.Combine(path, "keep"), "foreign bytes");
+            Held(await r.Remove(r.Command with { Binding = r.Command.Binding with { WorktreePath = path } }), "foreign_mirror_owner");
+            File.ReadAllText(Path.Combine(path, "keep")).ShouldBe("foreign bytes");
+        }
+        r.Preserved();
+    }
 
     private static async Task IdentityVectors(params Func<CompletedCardWorkspaceBinding, CompletedCardWorkspaceBinding>[] vectors)
     {
@@ -109,10 +148,18 @@ public sealed partial class CompletedCardWorkspaceRemovalTests
     {
         await using var r = new RemovalRig();
         var remoteReads = 0; r.Fixture.BeforeGitStart = p => { if (p.ArgumentList.Contains("ls-remote")) remoteReads++; };
-        Held(await r.Remove(r.Command with { Proof = r.Command.Proof with { ExpectedHeadSha = new string('a', 40) } }), "head_mismatch");
+        CompletedCardRunnerFixture.Git(r.Fixture.Checkout, "config", "user.name", "c1032");
+        CompletedCardRunnerFixture.Git(r.Fixture.Checkout, "config", "user.email", "c1032@localhost");
+        File.WriteAllText(Path.Combine(r.Fixture.Checkout, "new-source"), "unique committed head");
+        CompletedCardRunnerFixture.Git(r.Fixture.Checkout, "add", "new-source");
+        CompletedCardRunnerFixture.Git(r.Fixture.Checkout, "commit", "-m", "unique source");
+        CompletedCardRunnerFixture.Git(r.Fixture.Checkout, "rev-parse", "HEAD").Trim().ShouldNotBe(r.Command.Proof.ExpectedHeadSha);
+        Held(await r.Remove(), "head_mismatch");
         remoteReads.ShouldBe(0); r.Preserved();
     }
     // PC-60/244..247: missing/mismatched/stale/unsupported proof must not authorize deletion.
+    // Caller 2026-10-13: bound-rebase POSITIVE moves to S7 C1032_AdmissionBoundRebaseProof.
+    // S5 pins the fail-closed Rebased negative, including a claimed foreign landing identity.
     [Test] public async Task C1017_RunnerPreservationProof()
     {
         var vectors = new (Func<CompletedCardWorkspaceProof, CompletedCardWorkspaceProof> Change, string Reason)[]
@@ -133,9 +180,18 @@ public sealed partial class CompletedCardWorkspaceRemovalTests
     // PC-108: forged ordinary fields over a verification/unknown creation have no binding authority.
     [Test] public async Task C1017_RunnerSourceLandingExcluded()
     {
-        await using var r = new RemovalRig();
-        File.Delete(r.Workspace.OpenBindingStore().RecordPath(r.Command.Binding.PreparationId));
-        Held(await r.Remove(), "unbound_mirror"); r.Preserved();
+        await using var r = new RemovalRig(); var f = r.Fixture;
+        var created = await r.Workspace.CreateVerificationAsync(new("task-abcdef12", f.Sha,
+            "feat/card-task-abcdef12"), CancellationToken.None);
+        var path = created.Coordinates.WorktreePath;
+        var source = File.ReadAllBytes(Path.Combine(path, "source"));
+        var forged = r.Command.Binding with { TaskId = Guid.Parse("abcdef12-0000-4000-8000-000000000001"),
+            PreparationId = Guid.NewGuid(), BindingId = Guid.NewGuid(), WorktreePath = path,
+            GitDirectory = created.Coordinates.WorktreeGitDirectory, SourceFullRef = "refs/heads/feat/card-task-abcdef12" };
+        Held(await r.Remove(r.Command with { Binding = forged }), "unbound_mirror");
+        File.ReadAllBytes(Path.Combine(path, "source")).ShouldBe(source);
+        Directory.Exists(created.Coordinates.WorktreeGitDirectory).ShouldBeTrue();
+        File.Exists(Path.Combine(f.Root, "work", "verification-creations", "task-abcdef12.json")).ShouldBeTrue(); r.Preserved();
     }
     // PC-61/248: accept staged, unstaged or untracked content -> initial dirty refusal fails.
     [Test] public async Task C1017_RunnerDirtySource()
@@ -152,7 +208,7 @@ public sealed partial class CompletedCardWorkspaceRemovalTests
     // PC-62/249..252: protected minima, nested repos, lock and links override disposal policy.
     [Test] public async Task C1017_RunnerIgnoredPolicy()
     {
-        foreach (var state in new[] { "protected", "nested", "locked", "link", "evidence" })
+        foreach (var state in new[] { "protected", "nested", "bare", "locked", "link", "dangling", "unknown", "evidence" })
         {
             await using var r = new RemovalRig(); var f = r.Fixture;
             Directory.CreateDirectory(Path.Combine(f.Checkout, "bin")); string expected;
@@ -160,11 +216,17 @@ public sealed partial class CompletedCardWorkspaceRemovalTests
             {
                 case "protected": File.WriteAllText(Path.Combine(f.Checkout, "bin", ".env"), "secret fixture"); expected = "protected_content"; break;
                 case "nested": CompletedCardRunnerFixture.Git(Path.Combine(f.Checkout, "bin"), "init"); expected = "nested_repository"; break;
+                case "bare": CompletedCardRunnerFixture.Git(Path.Combine(f.Checkout, "bin"), "init", "--bare"); expected = "nested_repository"; break;
+                case "unknown": Directory.CreateDirectory(Path.Combine(f.Checkout, "bin", ".antiphon")); File.WriteAllText(Path.Combine(f.Checkout, "bin", ".antiphon", "invalid"), "invalid"); expected = "protected_content"; break;
+                case "dangling": File.CreateSymbolicLink(Path.Combine(f.Checkout, "bin", "link"), Path.Combine(f.Root, "outside", "absent")); expected = "linked_content"; break;
                 case "locked": CompletedCardRunnerFixture.Git(f.Repository, "worktree", "lock", f.Checkout); expected = "locked_registration"; break;
                 case "link": File.CreateSymbolicLink(Path.Combine(f.Checkout, "bin", "link"), Path.Combine(f.Root, "outside", "sentinel")); expected = "linked_content"; break;
                 default: Directory.CreateDirectory(Path.Combine(f.Checkout, ".antiphon")); File.WriteAllText(Path.Combine(f.Checkout, ".antiphon", "test.trx"), "evidence"); expected = "evidence_requires_admission"; break;
             }
-            Held(await r.Remove(r.Command with { PolicyPatterns = ["**"] }), expected); r.Preserved();
+            var request = r.Command with { PolicyPatterns = ["**"] };
+            if (state == "evidence") request = request with { Disposition = "Ordinary" };
+            Held(await r.Remove(request), state == "evidence" ? "disposition" : expected); r.Preserved();
+            if (state == "evidence") File.ReadAllText(Path.Combine(f.Checkout, ".antiphon", "test.trx")).ShouldBe("evidence");
         }
     }
     // PC-70: raw Force arm must fail contract validation before any deletion.
@@ -174,7 +236,13 @@ public sealed partial class CompletedCardWorkspaceRemovalTests
         File.WriteAllText(Path.Combine(r.Fixture.Checkout, "source"), "dirty");
         var json = JsonSerializer.Serialize(r.Command, new JsonSerializerOptions(JsonSerializerDefaults.Web));
         var raw = json[..^1] + ",\"force\":true}";
-        CompletedCardWorkspaceContract.Validate(raw).Reason.ShouldBe("force_forbidden");
+        var entry = r.Executor.GetType().GetMethod("RemoveJsonAsync");
+        entry.ShouldNotBeNull("raw guarded command entry must validate Force before typed admission");
+        var call = (Task)entry!.Invoke(r.Executor, [raw, r.Journal, r.Gate, CancellationToken.None])!;
+        await call;
+        var rawResult = JsonSerializer.SerializeToElement(call.GetType().GetProperty("Result")!.GetValue(call),
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Held(rawResult, "force_forbidden");
         Held(await r.Remove(), "dirty_source"); File.ReadAllText(Path.Combine(r.Fixture.Checkout, "source")).ShouldBe("dirty");
     }
     // PC-64/253: retained live/pooled owner cannot be inferred absent from terminal task status.
@@ -206,6 +274,16 @@ public sealed partial class CompletedCardWorkspaceRemovalTests
     // PC-65/66: actual runtime launch and adoption honor the persisted removal intent.
     [Test] public async Task C1017_RunnerStartFence()
     {
+        await using (var first = new RemovalRig())
+        {
+            var entered = NewBarrier(); var release = NewBarrier();
+            first.Fixture.Runtime.WorkspaceUseGate = first.Gate;
+            first.Fixture.EffectBarrier = async () => { entered.SetResult(); await release.Task; };
+            var start = first.Fixture.Runtime.StartAsync(first.Fixture.Launch(Guid.NewGuid()), CancellationToken.None);
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            try { Held(await first.Remove(), "workspace_in_use"); first.Preserved(); first.Journal.Read()!.Count.ShouldBe(0); }
+            finally { release.TrySetResult(); await Should.ThrowAsync<FenceEffectException>(() => start); }
+        }
         await using var r = new RemovalRig(); var f = r.Fixture;
         r.Hook("BeforeMutationForTest", (Action<string>)(_ => throw new IOException("cut")));
         Held(await r.Remove(), "removal_interrupted");
@@ -272,7 +350,17 @@ public sealed partial class CompletedCardWorkspaceRemovalTests
         CompletedCardRunnerFixture.Git(f.Repository, "worktree", "add", "--detach", stale, f.Sha);
         var staleAdmin = CompletedCardRunnerFixture.Git(stale, "rev-parse", "--path-format=absolute", "--git-dir").Trim(); Directory.Delete(stale, true);
         var refs = CompletedCardRunnerFixture.Git(f.Repository, "show-ref"); var originRefs = CompletedCardRunnerFixture.Git(f.Origin, "show-ref");
-        var answer = await r.Remove(); answer.GetProperty("complete").GetBoolean().ShouldBeTrue();
+        Directory.CreateDirectory(Path.Combine(f.Checkout, ".antiphon", "checkpoints", "owned"));
+        File.WriteAllText(Path.Combine(f.Checkout, ".antiphon", "task-deadbeef.md"), "complete evidence");
+        File.WriteAllText(Path.Combine(f.Checkout, ".antiphon", "checkpoints", "owned", "run.trx"), "scratch evidence");
+        var answer = await r.Remove(); answer.GetProperty("complete").GetBoolean().ShouldBeTrue(answer.GetRawText());
+        var receipt = answer.GetProperty("receipt");
+        receipt.GetProperty("taskId").GetGuid().ShouldBe(r.Command.Binding.TaskId);
+        receipt.GetProperty("doneRevisionId").GetGuid().ShouldBe(r.Command.DoneRevisionId);
+        receipt.GetProperty("operationId").GetGuid().ShouldBe(r.Command.OperationId);
+        receipt.GetProperty("directoryRemoved").GetBoolean().ShouldBeTrue();
+        receipt.GetProperty("registrationRemoved").GetBoolean().ShouldBeTrue();
+        r.Journal.Read()!.Single().Receipt!.TaskId.ShouldBe(r.Command.Binding.TaskId);
         Directory.Exists(f.Checkout).ShouldBeFalse(); Directory.Exists(f.Binding.GitDirectory).ShouldBeFalse();
         Directory.Exists(staleAdmin).ShouldBeTrue();
         CompletedCardRunnerFixture.Git(f.Repository, "show-ref").ShouldBe(refs); CompletedCardRunnerFixture.Git(f.Origin, "show-ref").ShouldBe(originRefs);
@@ -287,21 +375,83 @@ public sealed partial class CompletedCardWorkspaceRemovalTests
         Held(await r.Remove(r.Command with { ReportDigest = "changed" }), "operation_digest_mismatch");
         (await r.Remove()).GetProperty("receipt").GetRawText().ShouldBe(first.GetProperty("receipt").GetRawText());
     }
-    // PC-261..263: cut at each physical boundary, reconstruct journal/gate and resume exact owned components.
+    // PC-261..263: parent kills/joins its worker at each durable state/effect,
+    // then fresh objects recover the exact command; remaining action allowance cannot reset.
     [Test] public async Task C1032_RemovalComponentRecovery()
     {
-        foreach (var cut in new[] { "rename", "unregister", "delete", "receipt" })
+        var cuts = new[] { "state:Intent", "state:Prepared", "state:Moved", "state:Unregistering",
+            "state:Unregistered", "state:Deleting", "state:Deleted", "state:Complete",
+            "effect:rename", "effect:unregister", "effect:delete", "partial-delete" };
+        foreach (var cut in cuts)
         {
-            await using var r = new RemovalRig(); var f = r.Fixture; var hit = false;
-            r.Hook("BeforeMutationForTest", (Action<string>)(step => { if (step == cut) { hit = true; throw new IOException("fixture cut"); } }));
-            Held(await r.Remove(), "removal_interrupted"); hit.ShouldBeTrue();
-            var persisted = File.ReadAllText(r.Journal.JournalPath);
-            persisted.ShouldContain("setAsidePath");
-            var executor = new RunnerCompletedCardWorkspaceRemoval(r.Workspace);
-            var journal = new RunnerWorkspaceRemovalJournal(f.State, f.StoreId); var gate = new RunnerWorkspaceUseGate(journal); gate.CompleteCensus();
-            dynamic dyn = executor;
-            dynamic result = await dyn.RemoveAsync(r.Command, journal, gate, CancellationToken.None);
-            ((bool)result.Complete).ShouldBeTrue(); Directory.Exists(f.Checkout).ShouldBeFalse(); Directory.Exists(f.Binding.GitDirectory).ShouldBeFalse();
+            await using var r = new RemovalRig(); var f = r.Fixture;
+            r.Hook("AfterJournalStateForTest", (Action<string>)(_ => { }));
+            r.Hook("AfterMutationForTest", (Action<string>)(_ => { }));
+            Directory.CreateDirectory(Path.Combine(f.Checkout, "bin"));
+            File.WriteAllText(Path.Combine(f.Checkout, "bin", "cache-1"), "one");
+            File.WriteAllText(Path.Combine(f.Checkout, "bin", "cache-2"), "two");
+            var inputPath = Path.Combine(f.Root, "crash-input.json");
+            File.WriteAllText(inputPath, JsonSerializer.Serialize(new CompletedCardRemovalCrashWorker.Input(
+                f.Root, f.State, f.StoreId, f.Repository, f.Origin, r.Command, cut)));
+            var psi = new ProcessStartInfo("dotnet") { RedirectStandardOutput = true, RedirectStandardError = true,
+                UseShellExecute = false, WorkingDirectory = f.Root };
+            psi.ArgumentList.Add("exec"); psi.ArgumentList.Add(typeof(CompletedCardWorkspaceRemovalTests).Assembly.Location);
+            psi.Environment[CompletedCardRemovalCrashWorker.InputEnvironment] = inputPath;
+            using var child = Process.Start(psi)!;
+            var stdout = child.StandardOutput.ReadToEndAsync(); var stderr = child.StandardError.ReadToEndAsync();
+            JsonElement marker = default;
+            try
+            {
+                var deadline = Stopwatch.StartNew();
+                while (!File.Exists(inputPath + ".ready") && !child.HasExited && deadline.Elapsed < TimeSpan.FromSeconds(20))
+                    await Task.Delay(25);
+                child.HasExited.ShouldBeFalse("worker must pause at " + cut);
+                File.Exists(inputPath + ".ready").ShouldBeTrue("worker cut " + cut);
+                marker = JsonSerializer.Deserialize<JsonElement>(File.ReadAllText(inputPath + ".ready"));
+                marker.GetProperty("pid").GetInt32().ShouldBe(child.Id);
+                marker.GetProperty("started").GetDateTime().ShouldBe(child.StartTime.ToUniversalTime());
+                marker.GetProperty("operationId").GetGuid().ShouldBe(r.Command.OperationId);
+            }
+            finally
+            {
+                if (!child.HasExited) child.Kill(entireProcessTree: true);
+                await child.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+                await Task.WhenAll(stdout, stderr);
+            }
+            child.HasExited.ShouldBeTrue();
+            var journal = new RunnerWorkspaceRemovalJournal(f.State, f.StoreId);
+            var before = journal.Read()!.Single();
+            before.Command.OperationId.ShouldBe(r.Command.OperationId);
+            before.Command.Binding.TaskId.ShouldBe(r.Command.Binding.TaskId);
+            before.Command.DoneRevisionId.ShouldBe(r.Command.DoneRevisionId);
+            if (cut == "effect:rename")
+            {
+                before.Phase.ShouldBe("Prepared"); Directory.Exists(f.Checkout).ShouldBeFalse();
+                Directory.Exists(before.SetAsidePath).ShouldBeTrue();
+            }
+            if (cut == "effect:unregister")
+            {
+                before.Phase.ShouldBe("Unregistering"); Directory.Exists(f.Binding.GitDirectory).ShouldBeFalse();
+            }
+            if (cut == "partial-delete")
+            {
+                before.Phase.ShouldBe("Deleting");
+                File.Exists(Path.Combine(before.SetAsidePath!, "bin", "cache-1")).ShouldBeFalse();
+                File.ReadAllText(Path.Combine(before.SetAsidePath!, "bin", "cache-2")).ShouldBe("two");
+            }
+            var restoredGate = new RunnerWorkspaceUseGate(journal);
+            var restarted = f.NewRuntime(); restarted.WorkspaceUseGate = restoredGate;
+            await restarted.AdoptOrphanedHostsAsync(new SystemProcessLivenessProbe(), CancellationToken.None);
+            dynamic executor = new RunnerCompletedCardWorkspaceRemoval(r.Workspace);
+            dynamic result = await executor.RemoveAsync(r.Command, journal, restoredGate, CancellationToken.None);
+            ((bool)result.Complete).ShouldBeTrue(cut + ": " + (string?)result.Reason);
+            var after = journal.Read()!.Single(); after.Phase.ShouldBe("Complete");
+            after.RemainingAllowance.ShouldBeLessThanOrEqualTo(before.RemainingAllowance);
+            if (cut is "partial-delete" or "state:Deleting" or "state:Deleted" or "state:Complete" or "effect:delete")
+                after.RemainingAllowance.ShouldBe(before.RemainingAllowance, "same spent delete step cannot reset or recharge on restart");
+            Directory.Exists(f.Checkout).ShouldBeFalse(); Directory.Exists(f.Binding.GitDirectory).ShouldBeFalse();
+            File.ReadAllText(r.Command.ArtifactPointers[0]).ShouldBe("external result");
+            File.ReadAllText(Path.Combine(f.Root, "outside", "sentinel")).ShouldBe("preserve");
         }
     }
     // PC-264..266: missing without receipt, original replacement and occupied sibling preserve foreign bytes.
@@ -311,6 +461,13 @@ public sealed partial class CompletedCardWorkspaceRemovalTests
         {
             Directory.Delete(absent.Fixture.Checkout, true); Held(await absent.Remove(), "stale_mirror_binding");
             Directory.Exists(absent.Fixture.Binding.GitDirectory).ShouldBeTrue();
+        }
+        await using (var occupied = new RemovalRig())
+        {
+            var aside = occupied.Command.Binding.WorktreePath + ".cleanup-" + occupied.Command.OperationId.ToString("N");
+            Directory.CreateDirectory(aside); File.WriteAllText(Path.Combine(aside, "foreign"), "foreign sibling");
+            Held(await occupied.Remove(), "set_aside_occupied");
+            File.ReadAllText(Path.Combine(aside, "foreign")).ShouldBe("foreign sibling"); occupied.Preserved();
         }
         await using var r = new RemovalRig(); var f = r.Fixture;
         r.Hook("BeforeMutationForTest", (Action<string>)(step => { if (step == "unregister") throw new IOException("cut after rename"); }));

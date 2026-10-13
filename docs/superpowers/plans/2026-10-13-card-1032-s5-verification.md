@@ -18,8 +18,10 @@ V-3: identity, content and first/final proof guards (CP-8/9).
 V-4: retained owners, runtime start/adoption and intent (CP-7).
 V-5 and R-3: named physical removal and replay witnesses (CP-7..10).
 V-1/2/6 and R-1/2 belong to prior/later slices and are carried forward.
-Positive rebase and process-death recovery remain acceptance obligations;
-unsupported proof and exception cuts do not satisfy those promises.
+Caller decision 2026-10-13: V-3 bound-rebase positive and PC-60 positive
+fixture variant move explicitly to S7 CP-13 C1032_AdmissionBoundRebaseProof.
+S5 pins Rebased refusal and retains direct-containment positives. Process-death
+recovery, evidence disposal and richer vectors remain S5 acceptance obligations.
 
 ### Checkpoints
 
