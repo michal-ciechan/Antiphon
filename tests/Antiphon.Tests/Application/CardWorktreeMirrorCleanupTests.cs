@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
@@ -66,7 +67,7 @@ public sealed class CardWorktreeMirrorCleanupTests
             {
                 if (vector == "consumer") db.AgentTasks.Add(new AgentTask { Id = Guid.NewGuid(), Title = "consumer", Goal = "fixture", Status = AgentTaskStatus.Working,
                     Workspace = WorkspaceMode.Worktree, WorktreePath = f.Mirror, WorktreeBranch = f.Binding.SourceFullRef, CreatedAt = DateTime.UtcNow });
-                if (vector == "recovery") db.AgentTaskLandRequests.Add(new AgentTaskLandRequest { Id = Guid.NewGuid(), TaskId = f.Card.TaskId, IsPending = true, CreatedAt = DateTime.UtcNow });
+                if (vector == "recovery") db.AgentTaskLandRequests.Add(new AgentTaskLandRequest { Id = Guid.NewGuid(), TaskId = f.Card.TaskId, IsPending = true, RequestedAt = DateTime.UtcNow });
                 if (vector == "store") await db.CardWorktreeCleanupEndpoints.Where(e => e.Id == f.EndpointId)
                     .ExecuteUpdateAsync(s => s.SetProperty(e => e.RunnerStoreId, Guid.NewGuid().ToString("D")));
                 await db.SaveChangesAsync();
