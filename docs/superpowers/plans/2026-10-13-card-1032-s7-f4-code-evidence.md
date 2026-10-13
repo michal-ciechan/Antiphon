@@ -74,7 +74,8 @@ witness. validate-checkpoint-receipt.ps1 exited 0:
 Every row had slot=granted, dirty=0, sourceState=clean and buildSource=verified.
 
 V-1, V-2, V-3 and V-6 PASS at the stated scope. V-4 and V-5 PASS at adjacent
-scope only. R-1, R-2 and R-3 PASS. Native Windows and S8 work remain deferred
+scope only. R-1 and R-2 PASS at adjacent scope; R-3 PASS for the
+regressions named in the selection. Native Windows and S8 work remain deferred
 with their owners and are not reported passed. No Unit lane was run because the
 brief excludes it. Manual composition inspection found no production diff, no
 Program registration, residue caller or route, and no Execute/cutoff change.
@@ -150,8 +151,10 @@ Sweep of every F4-added or touched sentence: this document, the verification
 design and pending-PC table, the test-design F4 table, the plan's F4
 paragraph, the mutation-candidate F4 section, the five `F4/VP-*` test
 comments, the three F4 helper comments and the fixture interceptor comment.
-Changed beyond F5a-d: "a broken fixture cannot pass" (now: one that never
-reaches real removal fails the method); "no hole was found" (now: these
+Changed beyond F5a-d: "a broken fixture cannot pass" (now, as corrected by
+F6: for CP-34..37 one that never reaches real removal fails the method; CP-33
+has no removal and pairs its refusals with a successful signature
+verification); "no hole was found" (now: these
 witnesses found no production hole); batch rationale "never reaches/never
 replays" and "red before any other path" (unproven; replaced with what was
 observed); VP-13 "tampered request reached the recipient" and PC-598
@@ -162,7 +165,8 @@ checkpoint filter uses wildcards" (now: CP-33..37 end in `*`); fixture
 instead of the inner call, asserted Complete=false); "absent" reply (now: a
 no-reason Complete=false response). Kept as accurate: VP-08 comment, the
 landing helper comments, test counts, PC filters, and the ordinary
-verification paragraphs above.
+verification paragraphs above (F6 later qualified R-1/R-2/R-3 and extended
+the VP-08 comment).
 
 F5 verification: NOT complete. Checkpoint run 20261013-184851-0e9e at
 e21c499d246e751e9a0b5888923b6a11b3d4bc6d (one run, all 14 rows) ended RED
@@ -177,3 +181,61 @@ project, props or NuGet file; Review 87af7b11 built the same project files
 green at 18:14. Runner rows passed: CP-32 1/1, CP-33 1/1, CP-F3 145/145.
 The server rows must be rerun once the feed is consistent (or after a
 separate change pins the floating versions).
+
+## F6 wording repair (Code task 9bbebbf5)
+
+Final Review bd49988a F6; branch feat/card-task-9bbebbf5 from
+07d3bd180e405cd97ec73123f233a47e645e34b1, commits added without rebase.
+Markdown and // comments only: no production change, no test body, assertion,
+timeout or method name change. Review bd49988a's retry run 20261013-190814-ebef
+executed all 14 rows green (232 passed) at 07d3bd180; the code is unchanged
+since, so the selection was not rerun.
+
+F6: the verification design no longer says every witness ends in physical
+removal. CP-34..37 end with `RemovedAsync` (real removal, imported receipt equal
+to the runner journal receipt); CP-33 signs an in-memory command, asserts it
+verifies true with its key and false with another key, then that changing only
+Binding.TaskId (other GUID, empty) fails verification. It removes nothing.
+
+One complete sweep, checked against the method bodies, the fixture and
+CardWorktreeMirrorCleanupService.TryAsync: every sentence of the verification
+design (intro, five witness bullets, fixture, counts, coverage, PC table), every
+sentence of this document, the plan's S7 F4 paragraph, the test-design S7 F4
+table, the mutation-candidate F4 section, the five F4/VP-* test comments, the
+landing helper comments and the fixture interceptor comment. Corrected:
+
+- physical removal limited to CP-34..37; CP-33's positive control stated
+  (verification design, this document's F5 sweep, test-design CP-33, VP-08
+  comment);
+- refusal origin: CP-34/35 `unlanded_work` comes from the observation step
+  after PublicationAsync finds no qualifying landing (H is observed and the
+  target lacks it), and the methods do not assert which publication
+  predicate rejected each vector; "internally consistent" dropped (only the
+  foreign-task vector also changes the recovery prefix) (verification design,
+  VP-09 comment);
+- vector shape: CP-35 is 13 null/empty/false vectors, not "missing/empty"
+  (verification design, test-design, VP-10 comment);
+- CP-37: "keeps ... journal" and "keeps everything" replaced by the asserted
+  items (mirror, admin directory, sentinel, empty journal, Refused, reason, no
+  receipt); "replays the same operation to real removal" replaced, because the
+  operation id is asserted only through the injected vectors, not on the final
+  removal (verification design, test-design, VP-15 comment);
+- CP-34/36 per-vector assertions listed in full (admin directory, sentinel,
+  no imported receipt; CP-36 also the same operation and one removal request
+  on replay);
+- interceptor "is cleared before the positive" attributed to CP-37, its only
+  user; "only setup build outside the table" limited to the checkpoint run;
+- coverage prose matched to the Covers column: V-4 is CP-F3 only (CP-32
+  covers V-5), R-3 does not include CP-F3; the ordinary verification above
+  now says R-1/R-2 PASS at adjacent scope and R-3 for the named regressions;
+- PC variants stated as the per-vector red Mutation must establish (scratch
+  observed only the first red vector per method).
+
+Checked and kept: the CP-36 claims and VP-13 comment, CP-37 preflight origin
+and counter seam (F5a), the CP-35 field list and disclosure (F5c), the
+scratch-red table, batches and setup-failure disclosure, counts (CP-13/14
+seven, CP-F2 63, CP-F3 145, 232), the plan paragraph, the mutation-candidate F4
+section, the `RebasedLandingAsync`/`ChangeLandingAsync` comments and the
+fixture comment.
+
+PC-595..599 and every earlier PC/variant remain pending; Mutation was not run.

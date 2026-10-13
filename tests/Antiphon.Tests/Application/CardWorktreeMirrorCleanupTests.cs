@@ -287,10 +287,11 @@ public sealed class CardWorktreeMirrorCleanupTests
         }
         await using var positive = await CompletedCardMirrorFixture.CreateAsync(); await positive.RemovedAsync();
     }
-    // F4/VP-09: an internally consistent active landing owned by a foreign task, store path,
-    // repository or earlier generation must not map H onto P: real inspection runs, then each
-    // vector refuses unlanded_work with no intent and no removal request; mutation: select active
-    // landings without the task predicate; red: rebased removal completes. Restored row is the positive.
+    // F4/VP-09: the active landing changed to a foreign task (with its recovery prefix), store path,
+    // repository or earlier generation must not map H onto P: after the real inspection the unmapped
+    // H observation refuses unlanded_work with no intent, no removal request, an empty journal and
+    // intact evidence; mutation: select active landings without the task predicate; red: rebased
+    // removal completes. The restored row is the positive (real removal).
     [Test] public async Task C1032_WitnessLandingOwnership()
     {
         await using var f = await CompletedCardMirrorFixture.CreateAsync();
@@ -318,7 +319,7 @@ public sealed class CardWorktreeMirrorCleanupTests
         await f.RemovedAsync();
         (await f.CommandAsync()).Proof.ProofIdentity.ShouldStartWith("landed-v1:" + id.ToString("D") + ":");
     }
-    // F4/VP-10: 13 missing/empty vectors across 11 landing-evidence fields outside the narrower
+    // F4/VP-10: 13 null/empty/false vectors across 11 landing-evidence fields outside the narrower
     // eligibility checks (not every publication-predicate field) refuse after real inspection with
     // no removal request; mutation: drop HasPublication; red: rebased removal completes.
     [Test] public async Task C1032_WitnessLandingCompleteness()
@@ -389,8 +390,9 @@ public sealed class CardWorktreeMirrorCleanupTests
     }
     // F4/VP-15: after a real successful inspection and durable intent, capability withdrawal makes
     // the client preflight return unsupported before any removal frame is sent; then injected
-    // unsupported, unknown and no-reason refusals. Each keeps everything and is refused; mutation:
-    // treat unsupported removal as success; red: Complete=true. Restored runtime replays to removal.
+    // unsupported, unknown and no-reason refusals. Each is refused with mirror, admin and sentinel kept,
+    // an empty journal and no receipt; mutation: treat unsupported removal as success; red:
+    // Complete=true. The restored runtime then completes real removal.
     [Test] public async Task C1032_WitnessUnsupportedRemovalAfterInspection()
     {
         await using var f = await CompletedCardMirrorFixture.CreateAsync();
