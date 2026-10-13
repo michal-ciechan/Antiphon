@@ -120,7 +120,7 @@ public static class BuildConfinement
     {
         var status = ReadStatus(baseline.Repository);
         if (status.Error is not null)
-            return new Settlement("tracked-snapshot", "refused: tracked-snapshot\n" + status.Error + "\nNOTHING in the worktree or index was modified by the tool.\n", []);
+            return new Settlement("tracked-snapshot", "refused: tracked-snapshot\n" + status.Error + "\nNOTHING outside tool-owned output/evidence directories was modified by the tool.\n", []);
         var paths = new HashSet<string>(status.Paths, StringComparer.Ordinal);
         var staged = new HashSet<string>(StringComparer.Ordinal);
         foreach (var pair in baseline.Content.Concat(baseline.Untracked))
@@ -155,7 +155,7 @@ public static class BuildConfinement
             else
                 text.Append("manual command: git -C ").Append(Quote(baseline.Repository)).Append(" status --short -- ").Append(Quote(path)).Append("; inspect and recover user bytes from your backup\n");
         }
-        text.Append("manual restore required; NOTHING in the worktree or index was modified by the tool.\n");
+        text.Append("manual restore required; NOTHING outside tool-owned output/evidence directories was modified by the tool.\n");
         return new Settlement("tampered", text.ToString(), paths.Order(StringComparer.Ordinal).ToList());
     }
 
