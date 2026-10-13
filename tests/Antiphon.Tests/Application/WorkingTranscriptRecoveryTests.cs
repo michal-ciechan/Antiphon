@@ -146,7 +146,10 @@ public class WorkingTranscriptRecoveryTests
                 await using var db = h.F.Db();
                 var session = await db.AgentSessions.SingleAsync(s => s.Id == h.Id);
                 if (variant == "generation") session.StartedAt = h.Generation.AddSeconds(1);
-                if (variant == "remote-ownership") session.RunnerId = "foreign";
+                if (variant == "remote-ownership")
+                {
+                    session.RunnerId = "foreign"; session.RunnerStoreId = Guid.NewGuid(); session.RunnerCwd = "/foreign";
+                }
                 if (variant == "terminal-status") session.Status = SessionStatus.Stopped;
                 await db.SaveChangesAsync();
             }
