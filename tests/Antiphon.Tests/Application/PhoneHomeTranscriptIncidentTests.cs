@@ -21,10 +21,11 @@ namespace Antiphon.Tests.Application;
 /// <summary>
 /// CARD-1219: a remote (phone-home) runner's transcript-fault and transcript-bound frames reach the
 /// incident service the local SSE lane calls, after the owner check and the per-runner replay guard,
-/// and write the same rows. The clock stays frozen inside the replay window, so an equal frame
-/// re-sent on the same or a new connection is refused while the guard holds its key; window expiry
-/// and eviction are TranscriptIncidentReplayGuardTests' cases, and no test here fails an incident
-/// write after admission or restarts the pump. Every wait is fenced on a
+/// and write rows whose kind, severity, message, failure reason and exit code match the local lane's
+/// (Incident_text_matches_the_local_lane). The clock stays frozen inside the replay window, so an
+/// equal frame re-sent on the same or a new connection is refused while the guard holds its key;
+/// window expiry and eviction are TranscriptIncidentReplayGuardTests' cases, and no test here fails
+/// an incident write after admission or restarts the pump. Every wait on a frame is fenced on a
 /// positive observable for the frame of interest (its row, its refused-replay Debug line, or an
 /// ordering sentinel behind it on the single FIFO reader), never on PendingEvents alone.
 /// </summary>

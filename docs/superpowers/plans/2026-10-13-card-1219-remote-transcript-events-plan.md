@@ -15,8 +15,8 @@ wire shape does not change: the runner already publishes both events with the re
 compiles against, so no contract version bump and no capability token are needed, and the
 old-runner question reduces to the pre-CARD-0101 fault shape (no `unboundSeconds`/`repeat`
 fields), which the records already default. The one thing the card asks for that the runner does
-not do today is replay: the runner's event hub is live-only, so a reconnect never re-sends an
-event. The replay guard is still designed and tested, because nothing in the wire contract forbids
+not do today is replay: as read (ground-truth row 5), the runner's event hub is live-only, so a
+reconnect does not re-send an event; no test in this card pins that runner-side fact. The replay guard is still designed and tested, because nothing in the wire contract forbids
 a duplicate frame and the runner's five-minute fault repeats, which differ in `Repeat`/`UnboundSeconds`,
 must still be admitted.
 
@@ -31,8 +31,8 @@ release checklist does not apply.
 | "A launch that bound exactly leaves no incident." | An exact Claude bind publishes nothing on any lane (`TranscriptTailer.cs:693`), and `TranscriptBindingIncidentService` has no exact-bind incident. The local lane records zero rows for an exact bind by design. | Out of scope; parity with local means exact binds stay silent on both lanes. D-6 names a follow-up card if an exact-bind receipt is wanted. |
 | The mapper drops the events. | `RunnerContractMapper.ParseEvent` (`RunnerContractMapper.cs:75-124`) maps SessionOutput, SessionExited, SessionAdopted, SessionStarted, SessionTranscript and returns null otherwise. The SSE parser `SessionRunnerHttpClient.ParseEvent` (`:1007-1032`) maps both events into `SessionRunnerTranscriptFaultEvent` / `SessionRunnerTranscriptBoundEvent` (`SessionRunnerDtos.cs:119-131`), which `SessionRunnerEvent` already carries (`:149-150`). | S1 adds the two branches to the mapper, mirroring the SSE parser field for field. `SessionAgentStatus` is also unmapped on phone-home; D-7 keeps it out of this card. |
 | The pump drops them after parsing. | `PhoneHomeRecoveryPump.PumpEventsAsync` (`:356-400`) handles `Output`, `Exited`, `Transcript` only; `PhoneHomeRunnerClient.StreamEventsAsync` (`:555-566`) yields whatever the mapper returns. The SSE pump streams only the local client (`RoutingSessionRunnerClient.cs:120-121`), so no second consumer dispatches phone-home incidents. | S2 adds the two dispatches after the owner check, calling the same service methods the SSE pump calls (`SessionRunnerEventPump.cs:421-434`). Exactly one consumer records; `Remote_fault_frame_records_the_local_incident_row` asserts a single row. |
-| Replayed events after a reconnect would duplicate incidents. | `SessionRunnerEventHub.Subscribe` / `SubscribeBounded` create a fresh channel per subscriber with no history (`SessionRunnerRuntime.cs:4439-4474`); `ReleaseUnread` drains, never re-queues (`:4562`). Server catch-up re-reads List and transcripts only (`PhoneHomeRecoveryPump.CatchUpAsync`, `:295-347`); there is no bound/fault catch-up. A fault is re-published by the runner every `DefaultRefusalFaultRepeat` (5 min, `TranscriptTailer.cs:46`) with `Repeat` incremented and `UnboundSeconds` grown. | A duplicate frame can only be a transport-level repeat of an identical record. The guard keys on the whole parsed record (value equality) per runner, so a genuine repeat (different `Repeat`/`UnboundSeconds`) is a different key and is admitted (`A_genuine_repeat_with_higher_repeat_count_is_admitted`). The guard is an in-memory cache: it stamps a record before the incident service is called, and an equal record is admitted again after the window, after eviction at capacity, or by a new pump instance. Events lost during an outage are not reconstructed (D-8). |
-| Idempotence can be DB-backed. | `AgentSupervisorService.RecordIncidentAsync` (`:534-575`) appends unconditionally; the fault message composed at `TranscriptBindingIncidentService.cs:92-110` carries Kind, Detail and candidate path but not `Repeat`, so two genuine five-minute repeats with the same Detail write byte-identical rows. `FailureReason` is `fault.Kind`, asserted by `TranscriptBindingIncidentTests` (`:55`, `:230`). | A message- or FailureReason-keyed DB dedup would suppress genuine repeats or change local text. Rejected (D-2). |
+| Replayed events after a reconnect would duplicate incidents. | `SessionRunnerEventHub.Subscribe` / `SubscribeBounded` create a fresh channel per subscriber with no history (`SessionRunnerRuntime.cs:4439-4474`); `ReleaseUnread` drains, never re-queues (`:4562`). Server catch-up re-reads List and transcripts only (`PhoneHomeRecoveryPump.CatchUpAsync`, `:295-347`); there is no bound/fault catch-up. A fault is re-published by the runner every `DefaultRefusalFaultRepeat` (5 min, `TranscriptTailer.cs:46`) with `Repeat` incremented and `UnboundSeconds` grown. | With no hub history, a duplicate frame would be a transport-level repeat of an identical record. The guard keys on the whole parsed record (value equality) per runner, so a genuine repeat (different `Repeat`/`UnboundSeconds`) is a different key and is admitted (`A_genuine_repeat_with_higher_repeat_count_is_admitted`). The guard is an in-memory cache and that key is a volatile admission identity, not a persisted one: it stamps a record before the incident service is called, and an equal record is admitted again after the window, after eviction at capacity, or by a new pump instance (for example after a server restart). Events lost during an outage are not reconstructed (D-8). |
+| Idempotence can be DB-backed. | `AgentSupervisorService.RecordIncidentAsync` (`:534-575`) appends unconditionally; the fault message composed at `TranscriptBindingIncidentService.cs:92-110` carries Kind, Detail and candidate path but not `Repeat`, so two genuine five-minute repeats with the same Detail write rows whose descriptive fields (`Kind`, `Severity`, `Message`, `FailureReason`) are identical; only the generated `AgentIncident.Id` and `CreatedAt` differ, and the ordinary `TranscriptBindFailed` row stores neither `Repeat` nor `UnboundSeconds` (only the separate `TranscriptBindStuck` escalation text mentions them). `FailureReason` is `fault.Kind`, asserted by `TranscriptBindingIncidentTests` (`:55`, `:230`). | A message- or FailureReason-keyed DB dedup would suppress genuine repeats or change local text. Rejected (D-2). |
 | "Incident text parity with local." | Both the SSE pump and the new pump dispatch call `TranscriptBindingIncidentService.OnTranscriptFaultAsync` / `OnHeuristicBindAsync`; owner resolution is DB-only (`SessionOwnerLookup.cs:34-50`) and works the same for a remote session row. | Parity is by construction; `Incident_text_matches_the_local_lane` proves it against a direct service call with the same mapped record. |
 | Old runners must keep working. | Every phone-home-capable runner postdates CARD-0101 (`31020516a`, 2026-08-20) since phone-home arrived with CARD-0490 (`b6fddd73e`, 2026-09-20); the fault record defaults `UnboundSeconds = 0`, `Repeat = 1` for the older shape. `RunnerContractMapper.Json` is `JsonSerializerDefaults.Web` (case-insensitive, unknown members ignored). | `Old_runner_fault_without_repeat_fields_defaults_to_first_report` and `Fault_frame_with_unknown_future_field_still_parses` pin both directions; unknown names still return null (`Unknown_event_name_still_returns_null`). |
 | Fake clock is available on this path. | `PhoneHomeLiveConnection.Clock` is the directory's `TimeProvider` (`PhoneHomeRunnerDirectory.cs:380-381`), which `PhoneHomeTestHost.StartAsync(clock:)` injects (`PhoneHomeTestHost.cs:54`, `:116`); `PhoneHomeOutageHarness` already runs the host on a `FakeTimeProvider`. Advancing that clock past `LeaseSeconds` expires the connection lease. | The guard reads `live.Clock`; window expiry is proved in the guard's unit tests, not by advancing the host clock under a live socket. |
@@ -57,9 +57,14 @@ release checklist does not apply.
   `bool Admit(SessionRunnerTranscriptFaultEvent fault, DateTimeOffset now)` and
   `bool Admit(SessionRunnerTranscriptBoundEvent bound, DateTimeOffset now)`. The key is the record
   itself (C# record value equality: for a fault `SessionId, Kind, Detail, CandidatePath,
-  UnboundSeconds, Repeat`; for a bind `SessionId, TranscriptPath, How`). An identical record seen
-  within `TranscriptIncidentReplayWindowSeconds` is refused; anything else is admitted and
-  stamped, before the incident service is called (a failed service call keeps its stamp).
+  UnboundSeconds, Repeat`; for a bind `SessionId, TranscriptPath, How`). That key is a volatile
+  admission identity held in memory by one pump instance; it is not the persisted identity of the
+  incident row (`AgentIncident.Id` is generated by the write, and the row keeps `SessionId`,
+  kind and message as correlation fields, not the whole key). An equal record is refused only
+  while this pump instance still holds its key and its stamp is younger than
+  `TranscriptIncidentReplayWindowSeconds`; anything else is admitted and stamped, before the
+  incident service is called (a failed service call keeps its stamp, so a refused replay is not
+  evidence that the first admission was written).
   Capacity is bounded (`Capacity = 512` keys per runner, oldest evicted; an evicted record is
   admitted again even inside its window). The pump
   keeps one guard per `runnerId` beside `_cycles`, so a reconnect (new `PhoneHomeLiveConnection`,
@@ -67,8 +72,9 @@ release checklist does not apply.
   the replay case); DB dedup on `(SessionId, Kind, Message)` (suppresses genuine five-minute
   repeats, whose message omits `Repeat`); encoding a replay key into `FailureReason` or the
   message (changes local rows and the existing `FailureReason == Kind` assertions); a durable
-  guard table (the runner cannot replay across a server restart because its hub holds no history;
-  a durable guard would protect against a producer that does not exist).
+  guard table (as read, the runner hub holds no history, so no known producer replays across a
+  server restart; a restart, a new pump instance, eviction or window expiry re-admits an equal
+  record, and this card accepts that).
 - **D-3 Window as a setting.** `PhoneHomeRunnerSettings.TranscriptIncidentReplayWindowSeconds`
   (default 900, validator: at least 1, a value below the runner's five-minute repeat is legal but
   pointless and is not enforced). Rejected: a hard-coded constant (an operator cannot widen it
@@ -79,15 +85,18 @@ release checklist does not apply.
   calls `scope.ServiceProvider.GetRequiredService<TranscriptBindingIncidentService>().OnTranscriptFaultAsync(...)`;
   the bound arm calls `OnHeuristicBindAsync`. A refused replay is a Debug log line naming the
   session, event name and runner, and still releases the event. `NoteSessionConfirmed` already
-  runs for both (they are not Exited). The service's own catch blocks keep their standalone-alert
-  behaviour; the pump does not wrap them again. Rejected: a new remote-specific recording path
+  runs for both (they are not Exited). The service's own catch blocks are unchanged and the pump does not
+  wrap them again: on a failed fault write the fault handler logs an Error and attempts a
+  best-effort standalone alert (itself caught if it fails), and an unowned fault raises the
+  unowned standalone alert; the bound handler only logs, both for a failed write and for an
+  unowned session, and raises no alert. Rejected: a new remote-specific recording path
   (parity would then be a test obligation instead of a construction fact); recording the row
   without the owner check (a foreign runner's frame must not write an incident on this server;
   `Foreign_owner_or_epoch_events_never_reach_runtime` is the existing rule).
 - **D-5 Local lane untouched.** `SessionRunnerHttpClient.cs`, `SessionRunnerEventPump.cs`,
   `TranscriptBindingIncidentService.cs` and `AgentSupervisorService.cs` are not edited. The SSE
   lane keeps passing every repeat to the service without a guard: its producer is the same hub, so the same
-  no-replay fact holds, and adding the guard there would be a behaviour change this card does not
+  no-replay reading applies, and adding the guard there would be a behaviour change this card does not
   ask for. `TranscriptBindingIncidentTests` (15 methods) is the regression row.
 - **D-6 Exact binds stay silent.** No exact-bind incident is added on either lane. If an
   exact-bind receipt is wanted for remote health reads, file a card against
@@ -101,7 +110,7 @@ release checklist does not apply.
   (`RunnerSessionDto.TranscriptBound`, `TranscriptBindHow`, `TranscriptUnboundReason`) is possible
   and would also cover the pre-fix history, but it is a second recording path with its own dedup
   and ownership rules. Named here as the follow-up if remote incident silence must become a
-  positive health signal rather than a delivery fact (OD-3).
+  positive health signal (OD-3); without it, silence proves neither health nor non-delivery.
 
 ## Design
 
@@ -286,22 +295,32 @@ commits; two tasks are also fine with S2 dispatched after S1 lands.
 | Slice | Files touched | Collides with |
 |---|---|---|
 | S1 | `server/Infrastructure/Agents/SessionRunner/RunnerContractMapper.cs`; new `tests/Antiphon.Tests/Application/RunnerContractMapperTranscriptEventTests.cs` | None in flight. CARD-1032 S6 (Review in flight, task `75a50129`) edited `PhoneHomeRunnerClient.cs`, `PhoneHomeCommandDispatcher.cs`, `PhoneHomeRuntimeAdapter.cs`, `SessionRunnerRuntime.cs`; the mapper is not in its file list (`2026-10-11-card-1032-runner-mirror-cleanup-plan.md` S6, `2026-10-13-card-1032-s6-code-evidence.md:36`). The mapper's last edits are CARD-0519/quota (`3e53e6583`, `69b93b499`), landed. |
-| S2 | `PhoneHomeRecoveryPump.cs`; new `TranscriptIncidentReplayGuard.cs`; `PhoneHomeRunnerSettings.cs`, `PhoneHomeRunnerSettingsValidator.cs`; new `PhoneHomeTranscriptIncidentTests.cs`, new `TranscriptIncidentReplayGuardTests.cs`; `PhoneHomeRunnerSettingsValidatorTests.cs`; `docs/session-runtime-invariants.md` | CARD-1032 touches `PhoneHomeRunnerClient.cs`, not the pump; `PhoneHomeEventPumpTests.cs` is read, not edited (new classes instead). The two other in-flight Code tasks (CARD-0506 on server2, task `65ec918e`; CARD-0669 on desktop, task `dfaf5740`) published no scope on the task list; the Code dispatcher confirms neither touches `server/Infrastructure/Agents/SessionRunner/PhoneHomeRecoveryPump.cs` or `PhoneHomeRunnerSettings*.cs` before dispatch, and defers on a match. The pump's last edits (`3e53e6583`, `c468ce1b2`) are landed. |
+| S2 | `PhoneHomeRecoveryPump.cs`; new `TranscriptIncidentReplayGuard.cs`; `PhoneHomeRunnerSettings.cs`, `PhoneHomeRunnerSettingsValidator.cs`; new `PhoneHomeTranscriptIncidentTests.cs`, new `TranscriptIncidentReplayGuardTests.cs`; `PhoneHomeRunnerSettingsValidatorTests.cs`; `docs/session-runtime-invariants.md` | CARD-1032 touches `PhoneHomeRunnerClient.cs`, not the pump; `PhoneHomeEventPumpTests.cs` is read, not edited (new classes instead); the round-3 repair (R2-F3) later edited three of its inherited methods without renaming any. The two other in-flight Code tasks (CARD-0506 on server2, task `65ec918e`; CARD-0669 on desktop, task `dfaf5740`) published no scope on the task list; the Code dispatcher confirms neither touches `server/Infrastructure/Agents/SessionRunner/PhoneHomeRecoveryPump.cs` or `PhoneHomeRunnerSettings*.cs` before dispatch, and defers on a match. The pump's last edits (`3e53e6583`, `c468ce1b2`) are landed. |
 
 Scope string for both Code dispatches: `server/Infrastructure/Agents/SessionRunner/RunnerContractMapper.cs,server/Infrastructure/Agents/SessionRunner/PhoneHomeRecoveryPump.cs,server/Infrastructure/Agents/SessionRunner/TranscriptIncidentReplayGuard.cs,server/Application/Settings/PhoneHomeRunnerSettings*.cs,tests/Antiphon.Tests/Application/RunnerContractMapperTranscriptEventTests.cs,tests/Antiphon.Tests/Application/PhoneHomeTranscriptIncidentTests.cs,tests/Antiphon.Tests/Application/TranscriptIncidentReplayGuardTests.cs,tests/Antiphon.Tests/Application/PhoneHomeRunnerSettingsValidatorTests.cs,docs/session-runtime-invariants.md`.
 
 ## Operator decisions (OD-n, with recommendation)
 
-- **OD-1** Replay window default. Recommended: 900 s (D-3), three times the runner's five-minute
-  repeat so a genuine repeat (300 s apart) is far from the boundary and a same-path re-bind inside fifteen
-  minutes is treated as a duplicate. Alternative: 60 s (tighter, lets a fast fork-back re-bind
-  record) at the cost of admitting a duplicate frame delayed by a slow reconnect.
+- **OD-1** Replay window default. Recommended: 900 s (D-3). Genuine repeats do not depend on this
+  value: a runner repeat carries a higher `Repeat` and a longer `UnboundSeconds`, so it is a
+  different key and is admitted at any window. The window only bounds how long an equal whole
+  record is refused (for a bind: the same `SessionId`, `TranscriptPath` and `How`; a changed
+  `How` on the same path is a different key), and only while the same pump instance still holds
+  its key (not evicted at capacity, no server restart). Alternative: 60 s (an equal re-bind record
+  more than a minute later records again) at the cost of admitting an equal frame delayed by a
+  slow reconnect.
 - **OD-2** One Code task for S1+S2 (recommended; the mapper diff is small and S2's tests need it)
   versus two tasks. Two tasks only if the dispatcher wants S1 landed first for an immediate partial
   fix; S1 alone records nothing.
 - **OD-3** Whether to commission the D-8 catch-up reconstruction as a follow-up card now.
-  Recommended: file it, do not block this card on it; after this card, remote incident silence
-  means "no event was delivered", which is the same statement the local lane makes.
+  Recommended: file it, do not block this card on it. After this card, remote incident silence
+  still cannot establish either that no event was delivered or that the session is healthy:
+  admission, ownership and persistence are separate boundaries. A delivered event can be refused
+  by a held replay key, can resolve no owning agent (the fault then raises only an unowned
+  standalone alert; the bound only logs), or can fail its incident write after admission (the
+  fault then attempts a best-effort standalone alert; the bound only logs).
+  `A_fault_whose_incident_cannot_be_written_names_the_database_error_and_still_alerts` shows a
+  delivered service call that leaves no incident. Frames sent while the socket is down are lost (D-8).
 - **OD-4** Whether to file the D-7 `SessionAgentStatus` phone-home gap as its own card.
   Recommended: yes, as a one-line card pointing at this plan's ground-truth row 3.
 
@@ -319,7 +338,7 @@ Scope string for both Code dispatches: `server/Infrastructure/Agents/SessionRunn
 | V-6 | Frames for a session owned by another runner or store never record an incident or alert. | S2 | `PhoneHomeTranscriptIncidentTests.Foreign_owner_transcript_events_never_record` | CP-4 |
 | V-7 | The replay window setting is validated at startup. | S2 | `PhoneHomeRunnerSettingsValidatorTests.Replay_window_below_one_second_is_refused` | CP-6 |
 | R-1 | The existing phone-home transcript wire test still passes with the widened mapper. | S1 | `QuotaEvidenceWireTests` (4 existing) | CP-2 |
-| R-2 | The recovery pump's existing owner, catch-up, overflow, failing-event and restart behaviour is unchanged. | S2 | `PhoneHomeEventPumpTests` (8 existing) | CP-5 |
+| R-2 | The recovery pump's existing owner, catch-up, overflow, failing-event and restart behaviour is unchanged. | S2 | `PhoneHomeEventPumpTests` (8 existing; since R2-F3 `Live_buffer_overflow_withholds_ready_and_recovers` asserts the `phone_home_event_overflow` close of an eligible connection and recovery of the next) | CP-5 |
 | R-3 | The local lane's incident, severity, escalation and ClaimRevoked rules are unchanged. | S2 | `TranscriptBindingIncidentTests` (15 existing) | CP-7 |
 | R-4 | The existing settings validator rules are unchanged. | S2 | `PhoneHomeRunnerSettingsValidatorTests` (7 existing) | CP-6 |
 
