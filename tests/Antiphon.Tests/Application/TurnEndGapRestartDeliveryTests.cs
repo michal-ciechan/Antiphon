@@ -5,6 +5,8 @@ using Antiphon.Server.Domain.Enums;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.Extensions.DependencyInjection;
 using Shouldly;
+using Microsoft.EntityFrameworkCore;
+using Antiphon.Agents.Pty;
 using TUnit.Core;
 
 namespace Antiphon.Tests.Application;
@@ -172,5 +174,194 @@ public sealed class TurnEndGapRestartDeliveryTests
         await h.JoinDeliveryAsync(h.Queue.FlushIfIdleAsync(reader.Current, h.Token));
         h.Flushes.Complete(reader.Current);
         await h.AssertHeldAsync(); h.Caller.SubmittedBodies.ShouldBeEmpty();
+    }
+
+    // T43 -> PC-91..95: each named cut is hit once before fresh-service recovery.
+    [Test]
+    [Arguments("obligation-insert", true), Arguments("obligation-insert", false)]
+    [Arguments("settled-committed", true), Arguments("settled-committed", false)]
+    [Arguments("note-insert", true), Arguments("note-insert", false)]
+    [Arguments("note-committed", true), Arguments("note-committed", false)]
+    [Arguments("render-committed", true), Arguments("render-committed", false)]
+    [Arguments("attempt-committed", true), Arguments("attempt-committed", false)]
+    [Arguments("wakeup-full", true), Arguments("wakeup-full", false)]
+    [Arguments("receipt-before-save", true), Arguments("receipt-before-save", false)]
+    public async Task C1205_Restart_recovers_each_delivery_handoff(string cut, bool busy)
+    {
+        await using var h = await TurnEndGapDeliveryHarness.CreateAsync(busy: busy);
+        if (cut == "wakeup-full") { await FullChannelThenRestartAsync(h, busy); return; }
+        var settlementCut = cut is "obligation-insert" or "settled-committed" or "note-insert" or "note-committed";
+        if (settlementCut) h.Fault.Cut = cut;
+        await h.ProduceAsync();
+        if (busy)
+        {
+            h.Caller.SubmittedBodies.ShouldBeEmpty(); (await h.WorkingAsync()).ShouldBeTrue();
+            if ((await h.RowsAsync()).Count != 0) await h.AssertHeldAsync();
+        }
+        if (settlementCut) h.Fault.Throws.ShouldBe(1);
+        if (cut == "obligation-insert")
+        {
+            (await h.NotesAsync()).ShouldBeEmpty();
+            var unsettled = await h.World.TaskAsync(h.Tasks.Single());
+            unsettled.Status.ShouldBe(AgentTaskStatus.Dispatched);
+            await using var rolledBack = h.World.CreateContext();
+            (await rolledBack.AgentTaskEvents.CountAsync(e => e.AgentTaskId == unsettled.Id && e.Type == AgentTaskEventType.Completed, h.Token)).ShouldBe(0);
+        }
+        var before = await h.NotesAsync(); var queued = await h.RowsAsync();
+        string? frozen = null;
+        long? receiptSequence = null;
+        if (!settlementCut)
+        {
+            await h.MakeIdleAsync();
+            if (cut == "attempt-committed")
+            {
+                await h.StartStreamAsync();
+                // This explicit flusher is independent of the pump: hold its
+                // provider response until the real live ingestion commits.
+                h.AfterSubmitted = h.WaitForSubmittedPromptAsync;
+            }
+            if (cut != "receipt-before-save") { h.Fault.TaskId = h.Tasks.Single(); h.Fault.Cut = cut; }
+            try { await h.DeliverExplicitlyAsync(); }
+            catch (IOException ex) when (ex.Message.StartsWith("c544 completion persistence cut", StringComparison.Ordinal)) { }
+            if (cut == "receipt-before-save")
+            {
+                h.Boundary.ThrowOnce = cut;
+                await h.ReconcileAsync(); h.Boundary.Throws.ShouldBe(1);
+                var interrupted = (await h.NotesAsync()).Single();
+                interrupted.State.ShouldNotBe(LandNotificationState.Confirmed); interrupted.ConfirmingPromptSequence.ShouldBeNull();
+                var rendering = TaskCompletionNotification.TryReadDelivery(interrupted.CompletionDeliveryJson).ShouldNotBeNull();
+                receiptSequence = (await h.PromptsAsync()).Single(p => p.Text?.ReplaceLineEndings("\n") == rendering.WireText.ReplaceLineEndings("\n")).Sequence;
+            }
+            else h.Fault.Throws.ShouldBe(1);
+            frozen = (await h.NotesAsync()).Single().CompletionDeliveryJson.ShouldNotBeNull();
+            if (cut == "render-committed")
+            {
+                h.Caller.SubmittedBodies.ShouldBeEmpty();
+                var claimed = (await h.RowsAsync()).Single();
+                claimed.Status.ShouldBe(QueuedMessageStatus.Sent); claimed.DeliveryAttempts.ShouldBe(1); claimed.DeliveryVerdict.ShouldBeNull();
+            }
+            else h.Caller.SubmittedBodies.Count.ShouldBe(1);
+        }
+
+        await h.RestartAsync(); h.AfterSubmitted = null;
+        if (cut == "obligation-insert") await h.ReplaySettlementAsync();
+        await h.AdvanceRetryAsync();
+        await h.ScanNotificationsAsync();
+        var recovered = (await h.NotesAsync()).ShouldHaveSingleItem();
+        if (before.Count != 0)
+        {
+            recovered.Id.ShouldBe(before.Single().Id); recovered.SourceEventId.ShouldBe(before.Single().SourceEventId);
+            recovered.ContentDigest.ShouldBe(before.Single().ContentDigest);
+        }
+        if (queued.Count != 0) (await h.RowsAsync()).Single().Id.ShouldBe(queued.Single().Id);
+        else queued = await h.RowsAsync();
+        before = await h.NotesAsync();
+        if (cut == "render-committed")
+        {
+            // Existing InterruptedAttemptAge is 3+3+30 seconds in C544World.
+            // The concrete stranded primitive owns this legacy recovery cadence.
+            h.Clock.Advance(TimeSpan.FromSeconds(37));
+            await h.JoinDeliveryAsync(h.Queue.FlushStrandedQueuesAsync(h.Token));
+        }
+        else if (h.Caller.SubmittedBodies.Count == 0)
+        {
+            if (busy) await h.MakeIdleAsync();
+            await h.StartCompletionWorkerAsync(minimumScans: 0); await h.JoinOwnedWorkAsync();
+        }
+        await h.AssertReceiptsAsync(before, queued, expectedAttempts: cut == "render-committed" ? 2 : 1);
+        if (frozen is not null) (await h.NotesAsync()).Single().CompletionDeliveryJson.ShouldBe(frozen);
+        if (receiptSequence is not null) (await h.NotesAsync()).Single().ConfirmingPromptSequence.ShouldBe(receiptSequence);
+        await using var completed = h.World.CreateContext();
+        (await completed.AgentTaskEvents.CountAsync(e => e.AgentTaskId == h.Tasks.Single() && e.Type == AgentTaskEventType.Completed, h.Token)).ShouldBe(1);
+    }
+
+    private static async Task FullChannelThenRestartAsync(TurnEndGapDeliveryHarness h, bool busy)
+    {
+        // The first obligation is the same-epoch RequestSweep control; the
+        // second is a separate crash arm, so a boot sweep cannot mask that control.
+        h.ConcurrentScopeBarriers = true;
+        await h.StartCompletionWorkerAsync(minimumScans: 0);
+        await h.SaturateWorkerAsync();
+        h.Boundary.HoldAt = "completion-scan";
+        var after = h.TimerSequence;
+        await h.ProduceAsync();
+        h.Boundary.Count("queue-committed-before-wakeup").ShouldBe(1);
+        h.Flushes.Rejected.ShouldContain(h.Id);
+        using var sweepObservation = CancellationTokenSource.CreateLinkedTokenSource(h.Token);
+        var noSweep = h.NextBackstopAsync(after, sweepObservation.Token);
+        try { await Task.WhenAny(h.Boundary.Held.Task, noSweep).WaitAsync(h.Token); }
+        finally
+        {
+            sweepObservation.Cancel();
+            try { await noSweep; } catch (OperationCanceledException) when (sweepObservation.IsCancellationRequested) { }
+        }
+        h.Boundary.Held.Task.IsCompleted.ShouldBeTrue("a full-channel rejection must request an actual same-epoch sweep");
+        h.Boundary.Count("completion-scan").ShouldBe(1);
+        h.Caller.SubmittedBodies.ShouldBeEmpty();
+        if (busy) { await h.AssertHeldAsync(); await h.MakeIdleAsync(); }
+        h.ReleaseWorkerCapacity(); h.Boundary.Release.TrySetResult();
+        await h.JoinOwnedWorkAsync();
+        await h.AssertReceiptsAsync(await h.NotesAsync(), await h.RowsAsync());
+        await h.StopCompletionWorkerAsync(); h.ConcurrentScopeBarriers = false;
+        h.Boundary.HoldAt = null;
+        h.SaturateWithoutWorker();
+        var rejected = h.Flushes.Rejected.Count(id => id == h.Id);
+        await h.ProduceAsync();
+        h.Flushes.Rejected.Count(id => id == h.Id).ShouldBe(rejected + 1);
+        var notes = await h.NotesAsync(); var rows = await h.RowsAsync();
+        rows.Count(r => r.Status == QueuedMessageStatus.Pending && r.DeliveryAttempts == 0).ShouldBe(1);
+        h.Caller.SubmittedBodies.Count.ShouldBe(1);
+        await h.RestartAsync();
+        await h.StartCompletionWorkerAsync(minimumScans: 1); await h.JoinOwnedWorkAsync();
+        await h.AssertReceiptsAsync(notes, rows);
+    }
+
+    // T45 -> PC-97..99: real submitted bytes become invalid evidence at one boundary.
+    [Test, Arguments("header-only"), Arguments("truncated"), Arguments("wrong-destination"), Arguments("below-floor")]
+    public async Task C1205_Only_complete_destination_receipts_confirm(string invalid)
+    {
+        await using var h = await TurnEndGapDeliveryHarness.CreateAsync();
+        await h.ProduceAsync(); var note = (await h.NotesAsync()).Single(); var row = (await h.RowsAsync()).Single();
+        var beforeFloor = 0L;
+        Guid? sibling = null;
+        if (invalid == "below-floor")
+        {
+            // The earlier complete prompt is actual provider input, ingested
+            // through HTTP before the attempt captures its receipt floor.
+            await h.Caller.SendInputAsync(PtyInputEncoding.WrapIfMultiline(row.Body.ReplaceLineEndings("\n")), h.Token);
+            await h.Caller.SendInputAsync("\r", h.Token); await h.PullAsync(h.Id);
+            beforeFloor = (await h.PromptsAsync()).Last().Sequence;
+            h.SuppressSubmittedPrompt = true;
+        }
+        else if (invalid == "wrong-destination")
+        { sibling = await h.AddSiblingAsync(); h.SubmitDestination = sibling; }
+        else h.SubmitTransform = body => invalid == "header-only" ? body.Split('\n')[0] : body[..(body.Length / 2)];
+        await h.MakeIdleAsync(); await h.DeliverExplicitlyAsync();
+        if (sibling is not null) await h.PullAsync(sibling.Value);
+        await h.ReconcileAsync(2);
+        var unconfirmed = (await h.NotesAsync()).Single();
+        unconfirmed.Id.ShouldBe(note.Id); unconfirmed.SourceEventId.ShouldBe(note.SourceEventId);
+        unconfirmed.State.ShouldNotBe(LandNotificationState.Confirmed); unconfirmed.ConfirmingPromptSequence.ShouldBeNull();
+        var attempted = (await h.RowsAsync()).Single();
+        attempted.Id.ShouldBe(row.Id); attempted.DeliveryAttempts.ShouldBe(1);
+        var rendering = TaskCompletionNotification.TryReadDelivery(unconfirmed.CompletionDeliveryJson).ShouldNotBeNull();
+        h.Caller.SubmittedBodies.Last().ReplaceLineEndings("\n").ShouldBe(rendering.WireText.ReplaceLineEndings("\n"));
+        if (invalid == "below-floor")
+        {
+            beforeFloor.ShouldBeGreaterThan(0); beforeFloor.ShouldBeLessThanOrEqualTo(attempted.LastDeliveryBaselineSequence!.Value);
+            (await h.PromptsAsync()).Count(p => p.Text?.ReplaceLineEndings("\n") == rendering.WireText.ReplaceLineEndings("\n")).ShouldBe(1);
+            h.Caller.SubmittedBodies.Count.ShouldBe(2);
+        }
+        else
+        {
+            h.Caller.SubmittedBodies.Count.ShouldBe(1);
+            if (sibling is not null)
+            {
+                var foreign = (await h.PromptsAsync(sibling)).Single(p => p.Text?.ReplaceLineEndings("\n") == rendering.WireText.ReplaceLineEndings("\n"));
+                foreign.Sequence.ShouldBeGreaterThan(attempted.LastDeliveryBaselineSequence!.Value,
+                    "the foreign complete prompt must satisfy the floor so destination filtering is the decisive guard");
+            }
+            else (await h.PromptsAsync()).Any(p => p.Text == h.SubmitTransform!(h.Caller.SubmittedBodies.Single())).ShouldBeTrue();
+        }
     }
 }
