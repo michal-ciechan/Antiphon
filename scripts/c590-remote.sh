@@ -4449,8 +4449,8 @@ c849_fixture_controller_owned() {
     [ "$actual" = "$identity" ] && [ "${actual##*:}" = "$(id -u)" ]
 }
 
-# Delete from inside the acquired directory, anchored to its recorded identity.
-# A replaced controller remains visible; no foreign replacement is traversed.
+# C1192_Finalization_precedes_success_and_preserves_primary_failure checks
+# replacement-controller retention; disposal checks its recorded directory identity.
 c849_fixture_controller_remove() {
     (
         local dir="$CASE_DIR/fixture-controller" identity actual
