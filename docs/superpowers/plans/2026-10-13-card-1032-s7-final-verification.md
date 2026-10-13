@@ -2,6 +2,17 @@
 
 Original Code / landing owner: f2b2ece7-37bf-4c83-9b74-cfb9e78c1eae.
 Base: 63b2e70479c846cacd01af6b20190e845f8258e4.
+
+Caller refinement d78b38f0-bde1-4a74-90c9-29f32859c508 arrived after the
+historical CP-F1 Unit row had timed out at its unchanged 15-minute bound.
+No Unit row was active to interrupt. Do not start another whole-Unit row.
+CP-F1 is disclosed as timed out, with no TRX/census, not as passed or not run.
+The source at 6ccc25b8f5bb38b0f55ed6684a7f460f20ca5da9 passed CP-13/14
+(7/7 each), CP-F2 (56/56) and CP-F3 (144/144), all without skips.
+The Unit output exposed the new slow-class entry's missing reason; CP-RG1
+below verifies its correction through one exact classification guard, not a
+whole-Unit selection. The unrelated census 426-versus-429 failure was also
+reproduced at the exact task base by CP-B1 (1 failed native result).
 Implementation remains uncomposed: no Program registration, sweep caller, public
 route, Execute setting change, or live workspace deletion is assigned.
 S8 CP-15/16 and recovery cut methods remain outside this slice.
@@ -77,3 +88,4 @@ Restart: none.
 | CP-F1 | S7 | CP-14 | unit | `/*/*/*/*[Category=Unit]` | Final Unit | whole Unit lane; no new failures | 1 | 3 | true |
 | CP-F2 | S7 | CP-14 | local-adjacent | `/*/*/(CardWorktreeCleanupRecoveryTests*)\|(CompletedCardWorktreeRemovalTests*)\|(CardWorktreeMirrorCleanupTests*)/*` | V-1..6, R-1..3 | all three complete classes; 0 failed/skipped | 1 | 4 | true |
 | CP-F3 | S7 | `tests/Antiphon.SessionRunner.Tests -> bin-f2b2-runner-final/` | runner-adjacent | `/*/*/(CompletedCardWorkspaceRemovalTests*)\|(CompletedCardWorkspaceContractTests*)\|(RunnerWorkspaceServiceTests*)\|(LegacyWorkspaceRemovalGateTests*)/*` | V-2..5, R-1, R-2 | all four complete classes; no new failures | 1 | 4 | true |
+| CP-RG1 | S7-metadata-repair | `tests/Antiphon.Tests -> bin-f2b2-registry/` | classification-repair | `/*/*/TestClassificationGuardTests/Registry_matches_compiled_metadata*` | S7 metadata | exact guard; 0 failed/skipped | 1 | 3 | true |
