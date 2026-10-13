@@ -51,7 +51,7 @@ public sealed class OutputCleanupTests : CheckpointTestBase
     }
 
     [Test]
-    public void older_than_removes_run_folders()
+    public void older_than_preserves_run_folders_without_a_creation_ledger()
     {
         var root = TempDir();
         var old = Path.Combine(root, "20200101-000000-aaaa");
@@ -62,13 +62,13 @@ public sealed class OutputCleanupTests : CheckpointTestBase
         CheckpointFixtures.MarkRun(young, alive: true);
         Directory.SetLastWriteTimeUtc(old, DateTime.UtcNow.AddDays(-8));
         var dry = OutputCleanup.RemoveOlderRuns(root, TimeSpan.FromDays(7), dryRun: true);
-        dry.Deleted.Count.ShouldBe(1);
-        dry.Refusals.ShouldBeEmpty();
+        dry.Deleted.ShouldBeEmpty();
+        dry.Refusals.ShouldContain("output-ledger-missing");
         Directory.Exists(old).ShouldBeTrue();
         var removed = OutputCleanup.RemoveOlderRuns(root, TimeSpan.FromDays(7), dryRun: false);
-        removed.Deleted.Count.ShouldBe(1);
-        removed.Refusals.ShouldBeEmpty();
-        Directory.Exists(old).ShouldBeFalse();
+        removed.Deleted.ShouldBeEmpty();
+        removed.Refusals.ShouldContain("output-ledger-missing");
+        Directory.Exists(old).ShouldBeTrue();
         Directory.Exists(young).ShouldBeTrue();
     }
 

@@ -48,7 +48,7 @@ public sealed class CheckpointAppTests : CheckpointTestBase
     }
 
     [Test]
-    public void create_run_sweeps_a_finished_sibling_tool_copy_and_leaves_a_live_one()
+    public void create_run_preserves_finished_and_live_sibling_tool_copies()
     {
         var repo = TempDir();
         var root = Path.Combine(repo, ".antiphon", "checkpoints");
@@ -78,7 +78,9 @@ public sealed class CheckpointAppTests : CheckpointTestBase
         var manifest = new CheckpointManifest { ResultsRoot = ".antiphon/checkpoints" };
         manifest.Checkpoints.Add(new CheckpointSpec { Id = "CP-1", After = ["S1"], Command = "echo hi" });
         CheckpointApp.CreateRun(manifest, new RunRequest(), repo);
-        Directory.Exists(Path.Combine(finished, "tool")).ShouldBeFalse();
+        Directory.Exists(Path.Combine(finished, "tool")).ShouldBeTrue();
+        File.ReadAllText(Path.Combine(finished, "tool/Antiphon.Checkpoints.dll")).ShouldBe("old");
+        File.ReadAllText(Path.Combine(live, "tool/Antiphon.Checkpoints.dll")).ShouldBe("live");
         Directory.Exists(Path.Combine(live, "tool")).ShouldBeTrue();
     }
 }

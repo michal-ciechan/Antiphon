@@ -173,13 +173,15 @@ public static class OutputCleanup
                 : new ToolCopyCleanup().ObserveExecutor(dir);
             if (observed.Verdict != ProcessVerdict.Dead)
                 continue;
+            var refusal = SafeDelete.Refusal(dir, new DeleteOwnership { IsolatedRoot = resultsRoot, CreatedPaths = [dir], RequireBinName = false, AllowOutsideRepository = true }) ?? OwnedOutputLedger.Check(dir);
+            if (refusal is not null) { refusals.Add(refusal); continue; }
             if (dryRun)
             {
                 deleted.Add(dir);
                 continue;
             }
 
-            var removed = SafeDelete.DeleteCreatedTree(dir);
+            var removed = SafeDelete.Apply(dir, new DeleteOwnership { IsolatedRoot = resultsRoot, CreatedPaths = [dir], RequireBinName = false, AllowOutsideRepository = true }, inventoryCheck: () => OwnedOutputLedger.Check(dir));
             if (removed.Disposition == DeleteDisposition.Deleted && !Directory.Exists(dir) && !File.Exists(dir))
                 deleted.Add(dir);
             else if (removed.Disposition == DeleteDisposition.Refused || Directory.Exists(dir) || File.Exists(dir))
