@@ -99,8 +99,8 @@ internal static class RunnerWorkspaceNoFollowDelete
         if ((mode & 0xf000) == 0x4000)
         {
             var pinnedPath = "/proc/self/fd/" + raw;
-            if (relative.Length != 0 && RepositoryDirectoryShape.HasRepositoryMarker(pinnedPath))
-                throw new IOException("nested_repository");
+            // Entries outside the frozen manifest refuse before unlink. The admin
+            // manifest legitimately includes logs/HEAD; it is not a nested repository.
             foreach (var child in Directory.EnumerateFileSystemEntries(pinnedPath).ToArray())
             {
                 var childName = Path.GetFileName(child);
@@ -172,14 +172,14 @@ internal static class RunnerWorkspaceNoFollowDelete
         const uint directory = 0x10, reparsePoint = 0x400;
         if ((info.FileAttributes & reparsePoint) == 0 && (info.FileAttributes & directory) != 0)
         {
-            if (path != root && RepositoryDirectoryShape.HasRepositoryMarker(path)) throw new IOException("nested_repository");
+            if (relative != "." && !allowed[relative].Directory) throw new IOException("changed_delete_entry");
             // The held handle pins this directory, so the listing below resolves through it.
             foreach (var child in Directory.EnumerateFileSystemEntries(path, "*", ListOnly).ToList())
             {
-                if (path != root && RepositoryDirectoryShape.HasRepositoryMarker(path)) throw new IOException("nested_repository");
+                if (relative != "." && !allowed[relative].Directory) throw new IOException("changed_delete_entry");
                 DeleteWindows(child, protectedRoot, root, allowed, beforeEntry, ct);
             }
-            if (path != root && RepositoryDirectoryShape.HasRepositoryMarker(path)) throw new IOException("nested_repository");
+            if (relative != "." && !allowed[relative].Directory) throw new IOException("changed_delete_entry");
         }
         MarkDeleted(handle, path);
     }
