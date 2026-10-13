@@ -45,7 +45,8 @@ public sealed class ChannelOutboundContractTests
         ChannelPreamble.SlackPresetTemplate.ShouldContain("Markdown sources automatically");
         ChannelPreamble.TelegramPresetTemplate.ShouldNotContain("Prefer PDF for documents");
         ChannelPreamble.SlackPresetTemplate.ShouldNotContain("Prefer PDF for documents");
-        InstructionBundles.All["orchestrator"].Text.ShouldContain("configured channel step");
+        InstructionBundles.All["orchestrator"].Text.ShouldContain("Source Markdown is the default deliverable");
+        InstructionBundles.All["orchestrator"].Text.ShouldContain("channel step may add a converted file");
         InstructionBundles.All["orchestrator"].Text.ShouldNotContain("Prefer PDF");
         var workspaceInstructions = File.ReadAllText(Path.Combine(root, "server", "Application",
             "Services", "AgentWorkspaceProvisioner.cs"));
