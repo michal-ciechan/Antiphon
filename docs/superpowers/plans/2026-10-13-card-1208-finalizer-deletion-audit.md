@@ -34,6 +34,17 @@ Specific brief overrides generic Final: no Unit lane or full class. CP-33..53 pr
 
 PC-1 foreign drop/receipt/removal guard (cache variants); PC-2 legacy container label checks; PC-3 legacy network label checks; PC-4 acquisition requirement (consumer/helper); PC-5 omitted legitimate release (work/mask/cache/helper/consumer/network); PC-6 ID replaced by name; PC-7 migration skipped/name deletion restored; PC-8 unknown treated as owned/absent (container/network/volume). Every PC/variant is pending method-scoped SourceLanding Mutation; Mutation owns deliberate red/restore/green and missing-control discovery. Existing CARD-1192 PC-1..174 remain pending.
 
+| PC | Variants | Detecting filter | Status |
+|---|---|---|---|
+| PC-1 | cache drop / receipt / removal; packages, scratch, npm (role controls pending) | `/*/*/RemoteScriptContractTests/C1208_Foreign_cache_is_dropped_and_untouched` | PENDING SourceLanding Mutation |
+| PC-2 | container owner, run, role | `/*/*/RemoteScriptContractTests/C1208_Legacy_container_replacement_is_untouched` | PENDING SourceLanding Mutation |
+| PC-3 | network owner, run, role | `/*/*/RemoteScriptContractTests/C1208_Legacy_network_replacement_is_untouched` | PENDING SourceLanding Mutation |
+| PC-4 | consumer, helper, escape symlink acquisition requirement | `/*/*/RemoteScriptContractTests/C1208_Unacquired_roster_is_untouched` | PENDING SourceLanding Mutation |
+| PC-5 | work, mask, cache, consumer, writer, reader, network release | `/*/*/RemoteScriptContractTests/C1208_Acquired_objects_are_removed` | PENDING SourceLanding Mutation |
+| PC-6 | ID replaced by name; container and network candidate | `/*/*/RemoteScriptContractTests/C1208_Recorded_container_id_does_not_delete_replacement` | PENDING SourceLanding Mutation |
+| PC-7 | container and network migration skipped / name deletion restored | `/*/*/RemoteScriptContractTests/C1208_Legacy_owned_markers_are_migrated` | PENDING SourceLanding Mutation |
+| PC-8 | outage; empty, malformed, symlinked CID; volume/network uncertainty | `/*/*/RemoteScriptContractTests/C1208_Unknown_identity_retains_residue` | PENDING SourceLanding Mutation |
+
 ### Checkpoints
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
@@ -75,3 +86,7 @@ Ordinary floor 36 row minutes, plus authoring/slot contention. Before-fix select
 ## Implementation binding
 
 Named create/run uses Docker cidfiles at creation, including foreground --rm consumers. Cleanup accepts recorded full IDs, and verifies legacy names by resolving ID first then probing labels on that ID. Registered helpers preserve their label checks; volumes require the recorded roster and complete current-run identity. Empty, malformed and symlinked ID records refuse cleanup. CP-57 also checks an unacquired escape symlink; CP-39 now checks retained diagnostic directories rather than recursively replacing them. SourceLanding PCs remain pending. The isolated scratch-model diagnostic is an explained extra build-slot run, not ordinary TRX evidence.
+
+## Ordinary verification repair
+
+The first full run at e15865e025850492c2dfb7ac97f5678b78a88646 ran all 29 rows: CP-33/43 exposed older c913 seed/inventory Docker models without cidfile/identity support; CP-44 exposed the lock argument test selecting only a literal docker-run command. Update those models and bind the argument test to the acquired launch wrapper without removing its HOME/scratch/path assertions. All production code stays unchanged. Container/network replacement tests now vary owner/run/role independently; unknown identity adds empty/malformed/symlink CID records. Rerun CP-33, CP-43, CP-44, CP-55, CP-56, CP-61 after this committed verification repair. No assertion, deadline or retry is weakened.
