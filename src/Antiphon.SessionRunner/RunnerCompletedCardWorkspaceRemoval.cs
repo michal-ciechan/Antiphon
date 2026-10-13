@@ -3,10 +3,10 @@ using Antiphon.SessionRunner.Contracts;
 namespace Antiphon.SessionRunner;
 
 /// <summary>
-/// S4 read-only inspector. C1032_InspectionReadOnlyBound checks repository/tree/store bytes.
-/// No removal method or production composition is supplied by this slice.
+/// Read-only inspector with explicit S5 removal in the companion partial.
+/// C1032_InspectionReadOnlyBound checks repository/tree/store bytes.
 /// </summary>
-public sealed class RunnerCompletedCardWorkspaceRemoval(RunnerWorkspaceService workspace)
+public sealed partial class RunnerCompletedCardWorkspaceRemoval(RunnerWorkspaceService workspace)
 {
     public async Task<RunnerCompletedCardWorkspaceInspection> InspectAsync(
         CompletedCardWorkspaceInspectRequest request, CancellationToken ct)
