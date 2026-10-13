@@ -103,9 +103,9 @@ public static class CheckpointApp
             }
             catch (Exception persistence)
             {
-                Console.Error.WriteLine("checkpoint terminal persistence failed: " + persistence.GetType().Name);
+                Console.Error.WriteLine("checkpoint terminal persistence failed: " + persistence.Message);
             }
-            Console.Error.WriteLine("checkpoint executor failed: " + ex.GetType().Name);
+            Console.Error.WriteLine("checkpoint executor failed: " + ex.Message);
             return ExitCodes.ExecutorCrashed;
         }
     }
