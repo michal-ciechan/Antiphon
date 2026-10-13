@@ -5724,10 +5724,7 @@ public sealed partial class AgentTaskDispatcher
         if (claimed.Workspace == WorkspaceMode.Worktree && claimed.WorktreePath is null)
         {
             CardWorktreeBaseSelection? selected = null;
-            var ownBranch = claimed.WorktreeBranch
-                ?? $"feat/card-task-{DelegationReportFormatter.Short(claimed.Id)}";
-            var adopting = claimed.RepoPath is not null
-                && await _worktrees.KeptBranchExistsAsync(claimed.RepoPath, ownBranch, ct);
+            var adopting = await _worktrees.HasKeptTaskBranchAsync(claimed, ct);
             if (_baseResolver is not null && repairStartSha is null && !adopting
                 && (claimed.RequestedWorktreeBaseMode != RequestedWorktreeBaseMode.Target
                     || claimed.WorktreeBasePreviewJson is not null))

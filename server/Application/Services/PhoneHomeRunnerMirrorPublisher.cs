@@ -12,12 +12,20 @@ public sealed class PhoneHomeRunnerMirrorPublisher(ISessionRunnerDirectory runne
     {
         if (string.IsNullOrWhiteSpace(task.RunnerId) || string.IsNullOrWhiteSpace(task.RemoteWorktreePath))
             return null;
+        var branch = RemoteWorkspaceService.OwnedBranch(task);
+        if (branch is null) return null;
         var descriptor = await runners.DescribeAsync(task.RunnerId, ct);
         if (descriptor?.Capabilities?.Features?.Contains(RunnerCapabilityFeatures.WorkspacePublishV1) != true)
             return null;
+        if (DelegateBranchName.TryParse(branch, out var parsed) && parsed.CardNumber is not null
+            && descriptor.Capabilities.Features.Contains(RunnerCapabilityFeatures.WorkspaceCardBranchV1, StringComparer.Ordinal) != true)
+            return null;
         if (runners.Resolve(task.RunnerId) is not PhoneHomeRunnerClient runner)
             return null;
+        if (DelegateBranchName.TryParse(branch, out var owned) && owned.CardNumber is not null
+            && (await runner.GetCapabilitiesAsync(ct))?.Features?.Contains(RunnerCapabilityFeatures.WorkspaceCardBranchV1, StringComparer.Ordinal) != true)
+            return null;
         return await runner.PublishWorkspaceAsync(new PhoneHomeWorkspacePublishRequest(
-            task.RemoteWorktreePath, RemoteWorkspaceService.OwnedBranch(task.Id), baselineSha, remoteSha, true), ct);
+            task.RemoteWorktreePath, branch, baselineSha, remoteSha, true), ct);
     }
 }

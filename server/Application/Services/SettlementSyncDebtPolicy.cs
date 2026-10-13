@@ -102,8 +102,9 @@ public static class SettlementSyncDebtPolicy
         && result.State == RemoteSettlementSyncState.Unavailable
         && result.Reason == RemoteSettlementSyncReasons.LeaseBusy
         && GitObjectId.IsFull(result.RemoteSha)
+        && RemoteWorkspaceService.OwnedBranch(task) is not null
         && string.Equals(
             result.FullRef,
-            "refs/heads/" + RemoteWorkspaceService.OwnedBranch(task.Id),
+            "refs/heads/" + RemoteWorkspaceService.OwnedBranch(task),
             StringComparison.Ordinal);
 }
