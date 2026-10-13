@@ -27,6 +27,10 @@ public sealed class PhoneHomeRecoveryPump : BackgroundService
     private readonly ConcurrentDictionary<string, int> _transcriptFailures = new(StringComparer.Ordinal);
     private readonly ConditionalWeakTable<PhoneHomeLiveConnection, ConnectionState> _states = new();
 
+    // CARD-1219 D-2: per runner id, not per connection, so a frame replayed after a reconnect is
+    // still recognised.
+    private readonly ConcurrentDictionary<string, TranscriptIncidentReplayGuard> _replayGuards = new(StringComparer.Ordinal);
+
     public PhoneHomeRecoveryPump(
         PhoneHomeRunnerDirectory directory,
         IOptions<PhoneHomeRunnerSettings> settings,
@@ -385,6 +389,23 @@ public sealed class PhoneHomeRecoveryPump : BackgroundService
                     await runtime.ObserveExitAsync(parsed.Exited, ct);
                 else if (parsed.Transcript is not null)
                     await runtime.ObserveTranscriptAsync(parsed.Transcript, ct);
+                // CARD-1219 D-4: the same service calls the local SSE pump makes, after the owner check.
+                else if (parsed.TranscriptFault is { } fault)
+                {
+                    if (ReplayGuardFor(live).Admit(fault))
+                        await scope.ServiceProvider.GetRequiredService<TranscriptBindingIncidentService>()
+                            .OnTranscriptFaultAsync(fault, ct);
+                    else
+                        LogReplay(live, parsed.EventName, fault.SessionId);
+                }
+                else if (parsed.TranscriptBound is { } bound)
+                {
+                    if (ReplayGuardFor(live).Admit(bound))
+                        await scope.ServiceProvider.GetRequiredService<TranscriptBindingIncidentService>()
+                            .OnHeuristicBindAsync(bound, ct);
+                    else
+                        LogReplay(live, parsed.EventName, bound.SessionId);
+                }
             }
             catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
             {
@@ -425,6 +446,16 @@ public sealed class PhoneHomeRecoveryPump : BackgroundService
         owners[sessionId] = (owned, now);
         return owned;
     }
+
+    private TranscriptIncidentReplayGuard ReplayGuardFor(PhoneHomeLiveConnection live) =>
+        _replayGuards.GetOrAdd(live.RunnerId, _ => new TranscriptIncidentReplayGuard(
+            live.Clock, TimeSpan.FromSeconds(_settings.TranscriptIncidentReplayWindowSeconds)));
+
+    private void LogReplay(PhoneHomeLiveConnection live, string eventName, Guid sessionId) =>
+        _logger.LogDebug(
+            "Phone-home {EventName} for session {SessionId} on runner {RunnerId} epoch {Epoch} is a replay "
+            + "inside {WindowSeconds}s; not recorded again",
+            eventName, sessionId, live.RunnerId, live.Epoch, _settings.TranscriptIncidentReplayWindowSeconds);
 
     private ConnectionState StateFor(PhoneHomeLiveConnection live) => _states.GetValue(live, _ => new ConnectionState());
 
