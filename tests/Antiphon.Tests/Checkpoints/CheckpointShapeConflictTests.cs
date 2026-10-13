@@ -497,36 +497,9 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
         File.WriteAllBytes(path, Encoding.ASCII.GetBytes(content));
     }
 
-    private static string GitOut(string root, params string[] args)
-    {
-        var start = GitStart(root, args);
-        using var process = Process.Start(start);
-        process.ShouldNotBeNull();
-        var stdout = process.StandardOutput.ReadToEnd();
-        var stderr = process.StandardError.ReadToEnd();
-        process.WaitForExit(30_000).ShouldBeTrue(stdout + stderr);
-        process.ExitCode.ShouldBe(0, stdout + stderr);
-        return stdout;
-    }
+    private static string GitOut(string root, params string[] args) => CheckpointFixtureProcess.Git(root, args);
 
     private static void Git(string root, params string[] args) => _ = GitOut(root, args);
-
-    private static ProcessStartInfo GitStart(string root, string[] args)
-    {
-        var start = new ProcessStartInfo("git")
-        {
-            WorkingDirectory = root,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-        };
-        start.Environment.Remove("GIT_DIR");
-        start.Environment.Remove("GIT_WORK_TREE");
-        start.Environment.Remove("GIT_INDEX_FILE");
-        foreach (var arg in args)
-            start.ArgumentList.Add(arg);
-        return start;
-    }
 
     private static void RequireLinux()
     {

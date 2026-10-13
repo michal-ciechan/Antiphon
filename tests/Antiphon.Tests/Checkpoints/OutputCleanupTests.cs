@@ -373,25 +373,16 @@ public sealed class OutputCleanupTests : CheckpointTestBase
         {
             File.WriteAllText(probe, StampProbe);
             var scriptPath = Path.Combine(CheckpointFixtures.RepoRoot, "scripts", "run-checkpoint.ps1");
-            var start = new ProcessStartInfo("pwsh")
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-            };
+            var start = new ProcessStartInfo("pwsh");
             start.ArgumentList.Add("-NoProfile");
             start.ArgumentList.Add("-File");
             start.ArgumentList.Add(probe);
             start.Environment["CARD1199_SCRIPT"] = scriptPath;
             start.Environment["CARD1199_STAMP"] = via;
-            using var process = Process.Start(start);
-            process.ShouldNotBeNull();
-            var stdout = process.StandardOutput.ReadToEnd();
-            var stderr = process.StandardError.ReadToEnd();
-            process.WaitForExit(30_000).ShouldBeTrue(stdout + stderr);
-            process.ExitCode.ShouldBe(0, stdout + stderr);
+            var result = CheckpointFixtureProcess.Run(start, 30_000);
+            result.Exit.ShouldBe(0, result.Stdout + result.Stderr);
             File.ReadAllText(stamp).ShouldBe("original-stamp");
-            stdout.ShouldContain("REFUSED:reparse-point");
+            result.Stdout.ShouldContain("REFUSED:reparse-point");
 
             var script = File.ReadAllText(scriptPath);
             script.ShouldNotContain("if (Test-Path -LiteralPath $stampPath) { $stampRefusal = Test-CheckpointStampRefusal $stampPath }");
@@ -984,27 +975,7 @@ public sealed class OutputCleanupTests : CheckpointTestBase
         Checkpoints = [new CheckpointSpec { Id = "CP-1", After = ["S1"], Build = output, Filter = "/*/*/Unused/*", MinExecuted = 1 }],
     };
 
-    private static void Git(string root, params string[] args)
-    {
-        var start = new ProcessStartInfo("git")
-        {
-            WorkingDirectory = root,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-        };
-        start.Environment.Remove("GIT_DIR");
-        start.Environment.Remove("GIT_WORK_TREE");
-        start.Environment.Remove("GIT_INDEX_FILE");
-        foreach (var arg in args)
-            start.ArgumentList.Add(arg);
-        using var process = Process.Start(start);
-        process.ShouldNotBeNull();
-        var stdout = process.StandardOutput.ReadToEnd();
-        var stderr = process.StandardError.ReadToEnd();
-        process.WaitForExit(30_000).ShouldBeTrue();
-        process.ExitCode.ShouldBe(0, stdout + stderr);
-    }
+    private static void Git(string root, params string[] args) => CheckpointFixtureProcess.Git(root, args);
 
     private string Tree()
     {

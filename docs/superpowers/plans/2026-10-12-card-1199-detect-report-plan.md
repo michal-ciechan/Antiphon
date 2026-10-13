@@ -20,7 +20,7 @@ Closed scope overrides broad Unit profile per repair brief. Linux only. One isol
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S2 | `tests/Antiphon.Tests -> bin-c1199r13j-fix/` | closed-checkpoints | `/*/Antiphon.Tests.Checkpoints/(OutputCleanupTests*\|BaselineComparerTests*\|RunSchedulerTests*\|CheckpointManifestTests*\|CheckpointTaskOwnershipTests*\|CheckpointToolCopyCleanupTests*\|WaitCommandTests*\|RunStateStoreTests*\|CheckpointAppTests*\|CheckpointNamespaceCensusUsageTests*\|CheckpointOutputConfinementTests*\|CheckpointTrackedBaselineTests*)/*` | R-1 R-3 | all listed, 0 failed/skipped | 133 | 15 |
+| CP-1 | S2 | `tests/Antiphon.Tests -> bin-c1199r13k-fix/` | closed-checkpoints | `/*/Antiphon.Tests.Checkpoints/(OutputCleanupTests*\|BaselineComparerTests*\|RunSchedulerTests*\|CheckpointManifestTests*\|CheckpointTaskOwnershipTests*\|CheckpointToolCopyCleanupTests*\|WaitCommandTests*\|RunStateStoreTests*\|CheckpointAppTests*\|CheckpointNamespaceCensusUsageTests*\|CheckpointOutputConfinementTests*\|CheckpointTrackedBaselineTests*)/*` | R-1 R-3 | all listed, 0 failed/skipped | 133 | 15 |
 | CP-2 | S2 | CP-1 | staged-untracked | `/*/*/CheckpointTrackedBaselineTests/staged_untracked_file_is_kept_and_indexed*` | V-1 | bytes and index kept, invalid receipt | 1 | 2 |
 | CP-3 | S2 | CP-1 | staged-ignored | `/*/*/CheckpointTrackedBaselineTests/staged_ignored_file_is_kept_and_indexed*` | V-1 | bytes and index kept, invalid receipt | 1 | 2 |
 | CP-4 | S2 | CP-1 | index-added | `/*/*/CheckpointTrackedBaselineTests/index_added_file_is_kept_and_indexed*` | V-1 | bytes and index kept, invalid receipt | 1 | 2 |
@@ -42,6 +42,7 @@ Closed scope overrides broad Unit profile per repair brief. Linux only. One isol
 | CP-20 | S2 | CP-1 | malformed-state-verbs | `/*/*/CheckpointReceiptSafetyTests/malformed_state_shape_by_verb_table_matches_documented_exits*` | V-6 F2 | five shapes x two collections x nine verbs with documented reasons | 1 | 1 |
 | CP-21 | S2 | CP-1 | changed-reader-deadlines | `/*/*/CheckpointBoundedReaderTests/*` | V-7 F1 F3 | ten ordinary/FIFO/held-pipe controls, no surviving descendant | 10 | 6 |
 | CP-22 | S2 | CP-1 | safedelete-shared-runner | `/*/*/SafeDeleteProcessBoundaryTests/*` | V-7 F1 R-3 | configured fsmonitor not run with installed-Git tracked/untracked controls; exited parent with pipe-holding descendant refused git-timeout under one 2.5-s deadline, descendant dead, healthy control | 2 | 1 |
+| CP-23 | S2 | CP-1 | fixture-process-limit | `/*/*/CheckpointFixtureProcessTests/*` | V-8 F1 | CARD-added output-capturing fixture path: installed-Git control then FIFO-blocked config open fails its 2-s limit in under 4 s; healthy shell control then exited parent with pipe-holding descendant fails in under 4 s, descendant dead | 2 | 1 |
 
 ### Mutation handoff
 
