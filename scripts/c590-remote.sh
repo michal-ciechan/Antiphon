@@ -1364,6 +1364,7 @@ c849_lock() {
 c849_evidence_dir() {
     require_lane host
     sudo -n install -d -o mc -g mc -m 0700 "$CASE_DIR"
+    [ "$CASE" != runner-cache-fixture ] || c849_fixture_case_bind
 }
 
 # Return 10 for a missing helper, 11 for donor lookup failure. Callers write the
@@ -2942,11 +2943,18 @@ c849_fixture_model() {
     done
 }
 
+c849_fixture_control_output() {
+    local control_code=0
+    ( C849_FIXTURE_CONTROL=1; write_result() { printf '%s\n' "$2"; exit "$3"; }; "$@" ) 2>&1 || control_code=$?
+    [ "$control_code" != 0 ]
+}
+
 c849_fixture_control() {
     local id="$1" diagnosis="$2" actual code=0
     actual="$CASE_DIR/.control-$id"
     shift 2
-    ( C849_FIXTURE_CONTROL=1; write_result() { printf '%s\n' "$2"; exit "$3"; }; "$@" ) > "$actual" 2>&1 || code=$?
+    c849_fixture_write "$actual" replace c849_fixture_control_output "$@" || return 2
+    code=2
     [ "$code" -ne 0 ] && grep -Fxq "$diagnosis" "$actual" \
         || write_result false "ControlNotSensitive $id" 2
     local ordinal
@@ -3004,8 +3012,73 @@ EOF
 # Named acquisitions use Docker's cidfile, written at creation even for a running
 # foreground --rm consumer. C1208_Unacquired_roster_is_untouched guards absence
 # of this record; C1208_Recorded_container_id_does_not_delete_replacement guards ID use.
+# All card metadata publication holds the admitted directory and only writes a
+# private exclusive temporary file. Existing records are read, never opened for writing.
+c849_fixture_case_bind() {
+    [ -d "$CASE_DIR" ] && [ ! -L "$CASE_DIR" ] \
+        && [ "$(realpath -e -- "$CASE_DIR")" = "$CASE_DIR" ] \
+        && [ "$(stat -c %u -- "$CASE_DIR")" = "$(id -u)" ] || {
+        printf 'FixtureMetadataWriteRefused: case directory %s\n' "$CASE_DIR" >&2; return 2; }
+    C849_CASE_ID=$(stat -c '%d:%i:%u' -- "$CASE_DIR") || return 2
+}
+
+c849_fixture_metadata_refuse() {
+    printf 'FixtureMetadataWriteRefused: %s\n' "$1" >&2
+    return 2
+}
+
+c849_fixture_metadata_regular() {
+    [ -f "$1" ] && [ ! -L "$1" ] \
+        && [ "$(stat -c '%h:%u' -- "$1")" = "1:$(id -u)" ]
+}
+
+c849_fixture_write() {
+    local target="$1" mode="$2" leaf before=absent temp stamp current command_code=0
+    shift 2
+    C849_WRITE_CODE=0
+    case "$target" in "$CASE_DIR/"*) leaf="${target#"$CASE_DIR/"}" ;; *) c849_fixture_metadata_refuse "$target"; return 2 ;; esac
+    case "$leaf" in ''|*/*|.|..) c849_fixture_metadata_refuse "$target"; return 2 ;; esac
+    [ -n "${C849_CASE_ID:-}" ] || { c849_fixture_metadata_refuse "$target"; return 2; }
+    # Hold the admitted directory so an ancestor replacement cannot redirect I/O.
+    (
+        cd -P -- "$CASE_DIR" || exit 2
+        [ "$(pwd -P)" = "$CASE_DIR" ] && [ ! -L "$CASE_DIR" ] \
+            && [ "$(stat -c '%d:%i:%u' -- .)" = "$C849_CASE_ID" ] \
+            && [ "$(stat -c '%d:%i:%u' -- "$CASE_DIR")" = "$C849_CASE_ID" ] || exit 2
+        if [ -e "$leaf" ] || [ -L "$leaf" ]; then
+            [ "$mode" != create ] && c849_fixture_metadata_regular "$leaf" || exit 2
+            before=$(stat -c '%d:%i:%u:%h' -- "$leaf") || exit 2
+        fi
+        temp=$(umask 077; mktemp .fixture-write.XXXXXXXX) || exit 2
+        trap 'rm -f -- "$temp"' EXIT
+        c849_fixture_metadata_regular "$temp" || exit 2
+        stamp=$(stat -c '%d:%i:%u:%h' -- "$temp") || exit 2
+        if [ "$mode" = append ] && [ "$before" != absent ]; then cat -- "$leaf" > "$temp" || exit 2; fi
+        if [ "$mode" = append ]; then "$@" >> "$temp" || command_code=$?
+        elif [ "$mode" = ensure ] && [ "$before" != absent ]; then cat -- "$leaf" > "$temp" || exit 2
+        else "$@" > "$temp" || command_code=$?; fi
+        [ "$command_code" = 0 ] || [ "$mode" = capture ] || exit 2
+        c849_fixture_metadata_regular "$temp" && [ "$(stat -c '%d:%i:%u:%h' -- "$temp")" = "$stamp" ] || exit 2
+        current=absent
+        if [ -e "$leaf" ] || [ -L "$leaf" ]; then
+            c849_fixture_metadata_regular "$leaf" || exit 2
+            current=$(stat -c '%d:%i:%u:%h' -- "$leaf") || exit 2
+        fi
+        [ "$current" = "$before" ] && [ ! -L "$CASE_DIR" ] \
+            && [ "$(stat -c '%d:%i:%u' -- "$CASE_DIR")" = "$C849_CASE_ID" ] || exit 2
+        mv -T -- "$temp" "$leaf" || exit 2
+        c849_fixture_metadata_regular "$leaf" && [ "$(stat -c '%d:%i:%u:%h' -- "$leaf")" = "$stamp" ] \
+            && [ "$(stat -c '%d:%i:%u' -- "$CASE_DIR")" = "$C849_CASE_ID" ] || exit 2
+        trap - EXIT
+    ) || { c849_fixture_metadata_refuse "$target"; return 2; }
+}
+
+c849_fixture_escape_record() {
+    c849_fixture_write "$CASE_DIR/.fixture-escape-identity" create stat -c '%d:%i:%u' -- "$CASE_DIR/.fixture-escape"
+}
+
 c849_fixture_launch() {
-    local verb="$1" name='' previous='' arg file fingerprint_file state=0 identity role=consumer code=0
+    local verb="$1" name='' previous='' arg file fingerprint_file state=0 identity role=consumer code=0 cid_dir
     shift
     for arg in "$@"; do
         [ "$previous" != --name ] || name="$arg"
@@ -3021,7 +3094,7 @@ c849_fixture_launch() {
         return 2
     fi
     if [ -e "$file" ] || [ -L "$file" ]; then
-        [ -f "$file" ] && [ ! -L "$file" ] || return 2
+        c849_fixture_metadata_regular "$file" || { c849_fixture_metadata_refuse "$file"; return 2; }
         identity="$(cat -- "$file")" || return 2
         [[ "$identity" =~ ^[0-9a-f]{64}$ ]] || return 2
         c849_fixture_resource_state container "$identity" || state=$?
@@ -3032,9 +3105,12 @@ c849_fixture_launch() {
     c849_fixture_helper_lookup "$name" || state=$?
     [ "$state" = 0 ] || return 2
     [ "$name" != "c849-${RUN}-donor" ] || role=donor
-    docker "$verb" --cidfile "$file" --label io.antiphon.owner=c849-fixture \
+    cid_dir=$(umask 077; mktemp -d "$CASE_DIR/.fixture-cid.XXXXXXXX") || return 2
+    docker "$verb" --cidfile "$cid_dir/id" --label io.antiphon.owner=c849-fixture \
         --label "io.antiphon.fixture-run=$RUN" --label "io.antiphon.fixture-role=$role" "$@" || code=$?
-    if [ -f "$file" ] && [ ! -L "$file" ]; then
+    if c849_fixture_metadata_regular "$cid_dir/id"; then
+        c849_fixture_write "$file" create cat -- "$cid_dir/id" || { rm -f -- "$cid_dir/id"; rmdir -- "$cid_dir"; return 2; }
+        rm -f -- "$cid_dir/id"; rmdir -- "$cid_dir" || return 2
         identity="$(cat -- "$file")" || identity=''
         if [[ "$identity" =~ ^[0-9a-f]{64}$ ]]; then
             state=0
@@ -3043,9 +3119,7 @@ c849_fixture_launch() {
                 0) local fingerprint
                     fingerprint="$(c849_fixture_container_fingerprint "$identity")" || {
                         c849_fixture_cleanup_unknown container "$name"; return 2; }
-                    # noclobber opens exclusively, closing the gap after the
-                    # initial absence check, including a newly planted link.
-                    ( set -o noclobber; printf '%s\n' "$fingerprint" > "$fingerprint_file" ) || {
+                    c849_fixture_write "$fingerprint_file" create printf '%s\n' "$fingerprint" || {
                         c849_fixture_fingerprint_refuse "$name"; return 2; } ;;
                 1) ;;
                 *) c849_fixture_cleanup_unknown container "$name"; return 2 ;;
@@ -3053,6 +3127,7 @@ c849_fixture_launch() {
             return "$code"
         fi
     fi
+    rm -f -- "$cid_dir/id"; rmdir -- "$cid_dir" || true
     c849_fixture_cleanup_unknown container "$name"
     [ "$code" != 0 ] || code=2
     return "$code"
@@ -3060,7 +3135,7 @@ c849_fixture_launch() {
 
 c849_fixture_fingerprint_refuse() {
     local name="$1"
-    printf 'FixtureFingerprintAcquisitionRefused container %s\n' "$name" >> "$CASE_DIR/fixture-cleanup-ledger.txt"
+    c849_fixture_write "$CASE_DIR/fixture-cleanup-ledger.txt" append printf 'FixtureFingerprintAcquisitionRefused container %s\n' "$name" || return 2
     printf 'FixtureFingerprintAcquisitionRefused: %s\n' "$name" >&2
     c849_fixture_cleanup_unknown container "$name"
 }
@@ -3070,7 +3145,7 @@ c849_fixture_foreign_volume() {
     # C1208_Owned_packages_registration_survives_production_controls covers this boundary.
     [ "${C849_FIXTURE_CONTROL:-0}" != 1 ] || return 0
     c849_fixture_workspace_drop_name "$1" || return 2
-    printf 'foreign: left untouched volume %s\n' "$1" >> "$CASE_DIR/fixture-cleanup-ledger.txt"
+    c849_fixture_write "$CASE_DIR/fixture-cleanup-ledger.txt" append printf 'foreign: left untouched volume %s\n' "$1" || return 2
 }
 
 # C1208_Recorded_creation_fingerprint_is_reverified checks name/image/Created equality.
@@ -3109,7 +3184,7 @@ c849_fixture_container_identity() {
         actual="$(c849_fixture_container_fingerprint "$identity")" || return 2
         [ "$actual" = "$recorded" ] || return 3
     fi
-    printf '%s\n' "$identity" > "$CASE_DIR/.fixture-id-$name" || return 2
+    c849_fixture_write "$CASE_DIR/.fixture-id-$name" replace printf '%s\n' "$identity" || return 2
     printf '%s\n' "$identity"
 }
 
@@ -3150,22 +3225,23 @@ c849_fixture_network_identity() {
 c849_fixture_network_release() {
     local name="c849-${RUN}-npm" identity resolved state=0 record="$CASE_DIR/.fixture-network"
     [ -e "$record" ] || [ -L "$record" ] || return 0
-    [ -f "$record" ] && [ ! -L "$record" ] || {
+    c849_fixture_metadata_regular "$record" || {
+        c849_fixture_metadata_refuse "$record" || true
         identity="record:$record"
         [ ! -L "$record" ] || identity="$identity -> $(readlink -- "$record")"
-        c849_fixture_cleanup_unknown network "$identity" "$name"; return 0; }
+        c849_fixture_cleanup_unknown network "$identity" "$name"; return 2; }
     identity="$(cat -- "$record")" || identity=''
     if [ "$identity" != "$name" ] && [[ ! "$identity" =~ ^[0-9a-f]{64}$ ]]; then
         c849_fixture_cleanup_unknown network "record:$identity" "$name"; return 0
     fi
     resolved="$(c849_fixture_network_identity "$name" "$identity")" || state=$?
     case "$state" in
-        1) printf 'confirmed-absent network %s\n' "$identity" >> "$CASE_DIR/fixture-cleanup-ledger.txt"
+        1) c849_fixture_write "$CASE_DIR/fixture-cleanup-ledger.txt" append printf 'confirmed-absent network %s\n' "$identity" || return 2
             rm -f -- "$record" || c849_fixture_cleanup_unknown network "$identity" "$name"
             return 0 ;;
-        0) printf '%s\n' "$resolved" > "$record" || { c849_fixture_cleanup_unknown network "$name"; return 0; } ;;
-        3) printf '%s\n' "$name" >> "$CASE_DIR/fixture-cleanup-residue.txt"
-            printf 'foreign: left untouched network %s\n' "$name" >> "$CASE_DIR/fixture-cleanup-ledger.txt"
+        0) c849_fixture_write "$record" replace printf '%s\n' "$resolved" || { c849_fixture_cleanup_unknown network "$name"; return 2; } ;;
+        3) c849_fixture_write "$CASE_DIR/fixture-cleanup-residue.txt" append printf '%s\n' "$name" || return 2
+            c849_fixture_write "$CASE_DIR/fixture-cleanup-ledger.txt" append printf 'foreign: left untouched network %s\n' "$name" || return 2
             rm -f -- "$record"; return 0 ;;
         *) c849_fixture_cleanup_unknown network "$identity" "$name"; return 0 ;;
     esac
@@ -3173,7 +3249,7 @@ c849_fixture_network_release() {
     state=0
     c849_fixture_resource_state network "$resolved" || state=$?
     if [ "$state" = 1 ]; then
-        printf 'confirmed-absent network %s\n' "$resolved" >> "$CASE_DIR/fixture-cleanup-ledger.txt"
+        c849_fixture_write "$CASE_DIR/fixture-cleanup-ledger.txt" append printf 'confirmed-absent network %s\n' "$resolved" || return 2
         rm -f -- "$record" || c849_fixture_cleanup_unknown network "$resolved" "$name"
     fi
 }
@@ -3219,10 +3295,10 @@ c849_fixture_resource_state() {
 
 c849_fixture_cleanup_unknown() {
     local kind="$1" identity="$2" name="${3:-$2}"
-    printf '%s\n' "$name" >> "$CASE_DIR/fixture-cleanup-residue.txt"
-    [ "$name" = "$identity" ] || printf '%s\n' "$identity" >> "$CASE_DIR/fixture-cleanup-residue.txt"
-    printf 'unknown-cleanup-outcome %s %s\n' "$kind" "$identity" >> "$CASE_DIR/fixture-cleanup-ledger.txt"
-    [ "$name" = "$identity" ] || printf 'unknown-cleanup-outcome %s %s\n' "$kind" "$name" >> "$CASE_DIR/fixture-cleanup-ledger.txt"
+    c849_fixture_write "$CASE_DIR/fixture-cleanup-residue.txt" append printf '%s\n' "$name" || return 2
+    [ "$name" = "$identity" ] || c849_fixture_write "$CASE_DIR/fixture-cleanup-residue.txt" append printf '%s\n' "$identity" || return 2
+    c849_fixture_write "$CASE_DIR/fixture-cleanup-ledger.txt" append printf 'unknown-cleanup-outcome %s %s\n' "$kind" "$identity" || return 2
+    [ "$name" = "$identity" ] || c849_fixture_write "$CASE_DIR/fixture-cleanup-ledger.txt" append printf 'unknown-cleanup-outcome %s %s\n' "$kind" "$name" || return 2
     printf 'Fixture cleanup outcome unknown: %s %s; identity retained in cleanup residue\n' "$kind" "$identity" >&2
 }
 
@@ -3266,10 +3342,10 @@ c849_fixture_resource_remove() {
     esac
     case "$state" in
         0) ;;
-        1) printf 'confirmed-absent %s %s\n' "$kind" "$identity" >> "$CASE_DIR/fixture-cleanup-ledger.txt"; return 0 ;;
+        1) c849_fixture_write "$CASE_DIR/fixture-cleanup-ledger.txt" append printf 'confirmed-absent %s %s\n' "$kind" "$identity" || return 2; return 0 ;;
         3) [ "$kind" != volume ] || c849_fixture_foreign_volume "$name"
-            printf '%s\n' "$name" >> "$CASE_DIR/fixture-cleanup-residue.txt"
-            printf 'foreign: left untouched %s %s\n' "$kind" "$identity" >> "$CASE_DIR/fixture-cleanup-ledger.txt"; return 0 ;;
+            c849_fixture_write "$CASE_DIR/fixture-cleanup-residue.txt" append printf '%s\n' "$name" || return 2
+            c849_fixture_write "$CASE_DIR/fixture-cleanup-ledger.txt" append printf 'foreign: left untouched %s %s\n' "$kind" "$identity" || return 2; return 0 ;;
         *) c849_fixture_cleanup_unknown "$kind" "$identity" "$name"; return 0 ;;
     esac
     case "$kind" in
@@ -3279,9 +3355,9 @@ c849_fixture_resource_remove() {
     c849_fixture_resource_state "$kind" "$identity" || state=$?
     case "$state" in
         1) ;;
-        0) printf '%s\n' "$name" >> "$CASE_DIR/fixture-cleanup-residue.txt"
-            [ "$name" = "$identity" ] || printf '%s\n' "$identity" >> "$CASE_DIR/fixture-cleanup-residue.txt"
-            printf 'cleanup-object-present %s %s\n' "$kind" "$identity" >> "$CASE_DIR/fixture-cleanup-ledger.txt" ;;
+        0) c849_fixture_write "$CASE_DIR/fixture-cleanup-residue.txt" append printf '%s\n' "$name" || return 2
+            [ "$name" = "$identity" ] || c849_fixture_write "$CASE_DIR/fixture-cleanup-residue.txt" append printf '%s\n' "$identity" || return 2
+            c849_fixture_write "$CASE_DIR/fixture-cleanup-ledger.txt" append printf 'cleanup-object-present %s %s\n' "$kind" "$identity" || return 2 ;;
         *) c849_fixture_cleanup_unknown "$kind" "$identity" "$name" ;;
     esac
     return 0
@@ -3324,16 +3400,17 @@ c849_fixture_controller_init() {
 }
 
 # Drop a name from the cleanup ledger. Does not remove the volume.
+c849_fixture_filter_name() {
+    local line file="$1" name="$2"
+    [ -e "$file" ] || [ -L "$file" ] || return 0
+    c849_fixture_metadata_regular "$file" || return 2
+    while IFS= read -r line || [ -n "$line" ]; do
+        [ "$line" = "$name" ] || printf '%s\n' "$line"
+    done < "$file"
+}
+
 c849_fixture_workspace_drop_name() {
-    local name="$1" line kept="$CASE_DIR/.fixture-volumes.drop"
-    : > "$kept"
-    if [ -f "$CASE_DIR/.fixture-volumes" ]; then
-        while IFS= read -r line || [ -n "$line" ]; do
-            [ "$line" = "$name" ] && continue
-            printf '%s\n' "$line" >> "$kept"
-        done < "$CASE_DIR/.fixture-volumes"
-    fi
-    mv -- "$kept" "$CASE_DIR/.fixture-volumes"
+    c849_fixture_write "$CASE_DIR/.fixture-volumes" replace c849_fixture_filter_name "$CASE_DIR/.fixture-volumes" "$1"
 }
 
 c849_fixture_workspace_create_volume() {
@@ -3463,6 +3540,9 @@ c849_fixture_workspace_labels_ok() {
 c849_fixture_helper_release() {
     local name="$1" role code=0 owner run actual identity file
     file="$CASE_DIR/.fixture-id-$name"
+    if [ -e "$CASE_DIR/.fixture-helpers" ] || [ -L "$CASE_DIR/.fixture-helpers" ]; then
+        c849_fixture_metadata_regular "$CASE_DIR/.fixture-helpers" || { c849_fixture_metadata_refuse "$CASE_DIR/.fixture-helpers"; return 2; }
+    fi
     [ -f "$CASE_DIR/.fixture-helpers" ] && grep -Fxq -- "$name" "$CASE_DIR/.fixture-helpers" || return 0
     identity="$name"
     if [ -e "$file" ] || [ -L "$file" ]; then
@@ -3490,12 +3570,9 @@ c849_fixture_helper_release() {
     actual="$(docker inspect -f '{{index .Config.Labels "io.antiphon.fixture-role"}}' "$identity")" || {
         c849_fixture_cleanup_unknown container "$name"; return 0; }
     if [ "$owner" != c849-fixture ] || [ "$run" != "$RUN" ] || [ "$actual" != "$role" ]; then
-        printf '%s\n' "$name" >> "$CASE_DIR/fixture-cleanup-residue.txt"
-        printf 'foreign: left untouched container %s\n' "$name" >> "$CASE_DIR/fixture-cleanup-ledger.txt"
-        local kept="$CASE_DIR/.fixture-helpers.drop" line
-        : > "$kept"
-        while IFS= read -r line; do [ "$line" = "$name" ] || printf '%s\n' "$line" >> "$kept"; done < "$CASE_DIR/.fixture-helpers"
-        mv -- "$kept" "$CASE_DIR/.fixture-helpers"
+        c849_fixture_write "$CASE_DIR/fixture-cleanup-residue.txt" append printf '%s\n' "$name" || return 2
+        c849_fixture_write "$CASE_DIR/fixture-cleanup-ledger.txt" append printf 'foreign: left untouched container %s\n' "$name" || return 2
+        c849_fixture_write "$CASE_DIR/.fixture-helpers" replace c849_fixture_filter_name "$CASE_DIR/.fixture-helpers" "$name" || return 2
         rm -f -- "$file"
         return 0
     fi
@@ -3507,15 +3584,15 @@ c849_fixture_helper_release() {
 c849_fixture_cleanup() {
     local name code=0 role
     if [ "${1:-}" != keep ]; then
-        : > "$CASE_DIR/fixture-cleanup-residue.txt"
-        : > "$CASE_DIR/fixture-cleanup-ledger.txt"
+        c849_fixture_write "$CASE_DIR/fixture-cleanup-residue.txt" replace true || return 2
+        c849_fixture_write "$CASE_DIR/fixture-cleanup-ledger.txt" replace true || return 2
     fi
     for name in "c849-${RUN}-restore-p1" "c849-${RUN}-restore-p2" "c849-${RUN}-restore-p3" \
         "c849-${RUN}-lock-holder-shared" "c849-${RUN}-lock-waiter-shared" \
         "c849-${RUN}-lock-holder-private" "c849-${RUN}-lock-waiter-private" \
         "c849-${RUN}-apphost-miss" "c849-${RUN}-npm-fill" \
         "c849-${RUN}-npm-b" "c849-${RUN}-npm-b-empty"; do
-        c849_fixture_consumer_release "$name"
+        c849_fixture_consumer_release "$name" || return 2
     done
     # S6 consumers can remain after a failed start; release them before the
     # standing workspace reader/writer, still using exact labeled identities.
@@ -3539,7 +3616,7 @@ c849_fixture_cleanup() {
                     0) c849_fixture_resource_remove volume "$name" ;;
                     1) ;;
                     2) c849_fixture_cleanup_unknown volume "$name" ;;
-                    3) c849_fixture_foreign_volume "$name"; printf '%s\n' "$name" >> "$CASE_DIR/fixture-cleanup-residue.txt" ;;
+                    3) c849_fixture_foreign_volume "$name"; c849_fixture_write "$CASE_DIR/fixture-cleanup-residue.txt" append printf '%s\n' "$name" || return 2 ;;
                     *) c849_fixture_cleanup_unknown volume "$name" ;;
                 esac
                 code=0
@@ -3551,7 +3628,7 @@ c849_fixture_cleanup() {
                 case "$code" in
                     0) c849_fixture_resource_remove volume "$name" ;;
                     1) ;;
-                    3) c849_fixture_foreign_volume "$name"; printf '%s\n' "$name" >> "$CASE_DIR/fixture-cleanup-residue.txt" ;;
+                    3) c849_fixture_foreign_volume "$name"; c849_fixture_write "$CASE_DIR/fixture-cleanup-residue.txt" append printf '%s\n' "$name" || return 2 ;;
                     *) c849_fixture_cleanup_unknown volume "$name" ;;
                 esac
                 ;;
@@ -3633,7 +3710,7 @@ c849_fixture_prepare() {
         --mount "type=volume,source=$C849_PACKAGES,target=/cache,volume-nocopy" "$image" \
         -c 'chmod 0700 /cache' || write_result false FixtureControlSetupFailed 2
     ln -s "$CASE_DIR" "$CASE_DIR/.fixture-escape"
-    stat -c '%d:%i:%u' -- "$CASE_DIR/.fixture-escape" > "$CASE_DIR/.fixture-escape-identity" \
+    c849_fixture_escape_record \
         || write_result false FixtureEscapeIdentityUnknown 2
     c849_fixture_control PC-08 CacheTargetInvalid c849_prune_validate_tree "$CASE_DIR/.fixture-escape" "$CASE_DIR/.fixture-escape"
     # The self-link is only the PC-08 probe. Leave it and scp -r walks CASE_DIR forever.
@@ -4255,7 +4332,7 @@ JS
         --label "io.antiphon.fixture-run=$RUN" --label io.antiphon.fixture-role=npm-network "$network")" \
         || write_result false FixtureNpmNetworkFailed 2
     [[ "$identity" =~ ^[0-9a-f]{64}$ ]] || write_result false FixtureNpmNetworkFailed 2
-    printf '%s\n' "$identity" > "$CASE_DIR/.fixture-network"
+    c849_fixture_write "$CASE_DIR/.fixture-network" create printf '%s\n' "$identity" || write_result false FixtureMetadataWriteRefused 2
     c849_fixture_launch run -d --name "c849-${RUN}-npm-http" --network "$network" --network-alias c849-npm-http \
         --user 1654:1654 --entrypoint node \
         --mount "${work_mount},readonly" "$image" /fixture/npm-offline/server.js >/dev/null \
@@ -4568,8 +4645,9 @@ c849_fixture_cleanup_scope() (
     local acquired_case="$CASE_DIR" trace="$SERVER2_ROOT/cleanup-trace"
     CASE_DIR="$SERVER2_ROOT/cleanup-control"
     mkdir -m 0700 -- "$CASE_DIR" || return 1
-    cp -- "$acquired_case/.fixture-volumes" "$CASE_DIR/.fixture-volumes" || return 1
-    printf 'c849foreign-packages\n' >> "$CASE_DIR/.fixture-volumes"
+    c849_fixture_case_bind || return 2
+    c849_fixture_write "$CASE_DIR/.fixture-volumes" create cat -- "$acquired_case/.fixture-volumes" || return 2
+    c849_fixture_write "$CASE_DIR/.fixture-volumes" append printf 'c849foreign-packages\n' || return 2
     : > "$trace"
     docker() { printf '%s\n' "$*" >> "$trace"; }
     c849_fixture_cleanup
@@ -4707,11 +4785,7 @@ c849_fixture_export_logs() {
     if [ -d "$CASE_DIR" ] && [ ! -L "$CASE_DIR" ]; then
         for name in race-p1.log race-p2.log race-offline.log lock-holder.log lock-waiter.log; do
             if [ -f "$SERVER2_ROOT/$name" ] && [ ! -L "$SERVER2_ROOT/$name" ]; then
-                if rm -f -- "$CASE_DIR/$name" && [ ! -e "$CASE_DIR/$name" ] && [ ! -L "$CASE_DIR/$name" ]; then
-                    cp -P -T -- "$SERVER2_ROOT/$name" "$CASE_DIR/$name" || failed=1
-                else
-                    failed=1
-                fi
+                c849_fixture_write "$CASE_DIR/$name" replace cat -- "$SERVER2_ROOT/$name" || failed=1
             fi
         done
     else
@@ -4783,8 +4857,8 @@ c849_fixture_consumer_release() {
                 rm -f -- "$file" "$CASE_DIR/.fixture-fingerprint-$name" || c849_fixture_cleanup_unknown container "$name"
             fi ;;
         1) ;;
-        3) printf '%s\n' "$name" >> "$CASE_DIR/fixture-cleanup-residue.txt"
-            printf 'foreign: left untouched container %s\n' "$name" >> "$CASE_DIR/fixture-cleanup-ledger.txt"
+        3) c849_fixture_write "$CASE_DIR/fixture-cleanup-residue.txt" append printf '%s\n' "$name" || return 2
+            c849_fixture_write "$CASE_DIR/fixture-cleanup-ledger.txt" append printf 'foreign: left untouched container %s\n' "$name" || return 2
             rm -f -- "$file"
             local marker
             for marker in prune-smoke npm-server busy donor; do
@@ -4804,14 +4878,15 @@ c849_fixture_finalize() {
     local project file name marker identity network="c849-${RUN}-npm" code=0 owned=0
     [ "${C849_FIXTURE_FINALIZED:-0}" != 1 ] || return "${C849_FIXTURE_FINALIZATION_STATUS:-0}"
     # Preserve acquisition uncertainty even if finalization can later remove it.
-    touch "$CASE_DIR/fixture-cleanup-residue.txt" "$CASE_DIR/fixture-cleanup-ledger.txt"
+    c849_fixture_write "$CASE_DIR/fixture-cleanup-residue.txt" ensure true || return 2
+    c849_fixture_write "$CASE_DIR/fixture-cleanup-ledger.txt" ensure true || return 2
     if [ -e "$CASE_DIR/.fixture-escape" ] || [ -L "$CASE_DIR/.fixture-escape" ]; then
         if [ -L "$CASE_DIR/.fixture-escape" ] && [ -f "$CASE_DIR/.fixture-escape-identity" ] \
             && [ ! -L "$CASE_DIR/.fixture-escape-identity" ] \
             && [ "$(stat -c '%d:%i:%u' -- "$CASE_DIR/.fixture-escape")" = "$(cat -- "$CASE_DIR/.fixture-escape-identity")" ]; then
-            rm -f -- "$CASE_DIR/.fixture-escape" || printf 'escape-link\n' >> "$CASE_DIR/fixture-cleanup-residue.txt"
+            rm -f -- "$CASE_DIR/.fixture-escape" || c849_fixture_write "$CASE_DIR/fixture-cleanup-residue.txt" append printf 'escape-link\n' || return 2
         else
-            printf 'escape-link\n' >> "$CASE_DIR/fixture-cleanup-residue.txt"
+            c849_fixture_write "$CASE_DIR/fixture-cleanup-residue.txt" append printf 'escape-link\n' || return 2
         fi
     fi
     if c849_fixture_controller_owned; then
@@ -4821,11 +4896,11 @@ c849_fixture_finalize() {
             [ "$project" != negative ] || file="$SERVER2_ROOT/compose-retention/negative.yml"
             if [ -f "$file" ] && [ ! -L "$file" ]; then
                 docker compose -p "c849${RUN}${project}" -f "$file" down -v >/dev/null 2>&1 \
-                    || printf 'compose:%s\n' "$project" >> "$CASE_DIR/fixture-cleanup-residue.txt"
+                    || c849_fixture_write "$CASE_DIR/fixture-cleanup-residue.txt" append printf 'compose:%s\n' "$project" || return 2
             fi
         done
     elif [ -e "$CASE_DIR/fixture-controller" ] || [ -L "$CASE_DIR/fixture-controller" ]; then
-        printf 'fixture-controller\n' >> "$CASE_DIR/fixture-cleanup-residue.txt"
+        c849_fixture_write "$CASE_DIR/fixture-cleanup-residue.txt" append printf 'fixture-controller\n' || return 2
     fi
     # Attempt release of the listed consumers before reading logs or releasing helpers.
     for name in "c849-${RUN}-restore-p1" "c849-${RUN}-restore-p2" "c849-${RUN}-restore-p3" \
@@ -4842,7 +4917,7 @@ c849_fixture_finalize() {
         name="${file##*/.fixture-id-}"
         case "$name" in
             "c849-${RUN}-writer"|"c849-${RUN}-reader"|"c849-${RUN}-masked"|"c849-${RUN}-apphost") continue ;;
-            "c849-${RUN}-"*|"c849-seed-${RUN}") c849_fixture_consumer_release "$name" ;;
+            "c849-${RUN}-"*|"c849-seed-${RUN}") c849_fixture_consumer_release "$name" || return 2 ;;
         esac
     done
     # These legacy consumers carry the acquired ID/name in their existing marker.
@@ -4859,22 +4934,22 @@ c849_fixture_finalize() {
         esac
         identity="$(cat -- "$CASE_DIR/.fixture-$marker")" || identity=''
         if [ "$identity" = "$name" ] || [[ "$identity" =~ ^[0-9a-f]{12,64}$ ]]; then
-            c849_fixture_consumer_release "$name" "$identity"
+            c849_fixture_consumer_release "$name" "$identity" || return 2
         else
-            printf '%s\n' "$name" >> "$CASE_DIR/fixture-cleanup-residue.txt"
+            c849_fixture_write "$CASE_DIR/fixture-cleanup-residue.txt" append printf '%s\n' "$name" || return 2
         fi
     done
-    c849_fixture_helper_release "c849-${RUN}-masked"
-    c849_fixture_helper_release "c849-${RUN}-apphost"
+    c849_fixture_helper_release "c849-${RUN}-masked" || return 2
+    c849_fixture_helper_release "c849-${RUN}-apphost" || return 2
     local child
     for child in $(jobs -pr); do wait "$child" || true; done
     if [ "$owned" = 1 ]; then
-        c849_fixture_export_logs || printf 'diagnostic-export\n' >> "$CASE_DIR/fixture-cleanup-residue.txt"
+        c849_fixture_export_logs || c849_fixture_write "$CASE_DIR/fixture-cleanup-residue.txt" append printf 'diagnostic-export\n' || return 2
     fi
-    c849_fixture_cleanup keep
-    c849_fixture_network_release
+    c849_fixture_cleanup keep || return 2
+    c849_fixture_network_release || return 2
     if [ "$owned" = 1 ]; then
-        c849_fixture_controller_remove || printf 'fixture-controller\n' >> "$CASE_DIR/fixture-cleanup-residue.txt"
+        c849_fixture_controller_remove || c849_fixture_write "$CASE_DIR/fixture-cleanup-residue.txt" append printf 'fixture-controller\n' || return 2
     fi
     C849_FIXTURE_FINALIZED=1
     C849_FIXTURE_FINALIZATION_STATUS=2
@@ -4907,8 +4982,8 @@ c849_fixture() {
     c849_lock
     SERVER2_ROOT="$CASE_DIR/fixture-controller"
     C849_FIXTURE_FINALIZED=0
-    : > "$CASE_DIR/fixture-cleanup-residue.txt"
-    : > "$CASE_DIR/fixture-cleanup-ledger.txt"
+    c849_fixture_write "$CASE_DIR/fixture-cleanup-residue.txt" replace true || return 2
+    c849_fixture_write "$CASE_DIR/fixture-cleanup-ledger.txt" replace true || return 2
     trap 'ec=$?; trap - EXIT; c849_fixture_exit "$ec"; exit "$ec"' EXIT
     c849_fixture_workspace_init
     mkdir -m 0700 "$SERVER2_ROOT/cache" || write_result false FixtureControllerCreateFailed 2

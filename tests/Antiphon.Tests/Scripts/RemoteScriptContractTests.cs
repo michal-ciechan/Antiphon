@@ -1094,7 +1094,7 @@ public sealed class RemoteScriptContractTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public void C1193_Fixture_log_copy_skips_symlinks_and_copies_regular_files()
     {
-        var snippet = Block(Remote(), "c849_fixture_export_logs");
+        var snippet = string.Join("\n", new[] { "c849_fixture_case_bind", "c849_fixture_metadata_refuse", "c849_fixture_metadata_regular", "c849_fixture_write", "c849_fixture_export_logs" }.Select(name => Block(Remote(), name)));
         snippet.ShouldContain("[ -f \"$SERVER2_ROOT/$name\" ]", customMessage: "nonregular-source-skipped");
         var output = LinuxShell("set -euo pipefail\n" + snippet + "\ncopy_logs() { c849_fixture_export_logs; }\n" + """
             root="$(mktemp -d)"
@@ -1103,6 +1103,7 @@ public sealed class RemoteScriptContractTests
             CASE_DIR="$root/case"
             outside="$root/outside"
             mkdir -p "$SERVER2_ROOT" "$CASE_DIR" "$outside"
+            c849_fixture_case_bind
             printf 'regular-p1\n' > "$SERVER2_ROOT/race-p1.log"
             printf 'source-secret\n' > "$outside/source-secret"
             ln -s "$outside/source-secret" "$SERVER2_ROOT/race-p2.log"
@@ -1111,14 +1112,16 @@ public sealed class RemoteScriptContractTests
             ln -s "$outside/dest-secret" "$CASE_DIR/race-offline.log"
             printf 'waiter-body\n' > "$SERVER2_ROOT/lock-waiter.log"
             ec=9
-            copy_logs
+            if copy_logs; then printf 'FAIL destination-link-accepted\n'; exit 1; fi
             [ "$ec" = 9 ] || { printf 'FAIL exit-status ec=%s\n' "$ec"; exit 1; }
             [ -f "$CASE_DIR/race-p1.log" ] && [ ! -L "$CASE_DIR/race-p1.log" ] || { printf 'FAIL regular-copy\n'; exit 1; }
             grep -Fxq 'regular-p1' "$CASE_DIR/race-p1.log" || { printf 'FAIL regular-bytes\n'; exit 1; }
             [ ! -e "$CASE_DIR/race-p2.log" ] || { printf 'FAIL symlink-source-copied\n'; exit 1; }
             grep -Fxq 'source-secret' "$outside/source-secret" || { printf 'FAIL symlink-source-mutated\n'; exit 1; }
             grep -Fxq 'dest-secret' "$outside/dest-secret" || { printf 'FAIL dest-written-through\n'; exit 1; }
-            [ -f "$CASE_DIR/race-offline.log" ] && [ ! -L "$CASE_DIR/race-offline.log" ] || { printf 'FAIL dest-not-regular\n'; exit 1; }
+            [ -L "$CASE_DIR/race-offline.log" ] || { printf 'FAIL dest-link-not-retained\n'; exit 1; }
+            rm -- "$CASE_DIR/race-offline.log"
+            copy_logs
             grep -Fxq 'offline-body' "$CASE_DIR/race-offline.log" || { printf 'FAIL dest-bytes\n'; exit 1; }
             [ ! -e "$CASE_DIR/lock-holder.log" ] || { printf 'FAIL missing-created\n'; exit 1; }
             [ -f "$CASE_DIR/lock-waiter.log" ] && [ ! -L "$CASE_DIR/lock-waiter.log" ] || { printf 'FAIL waiter-copy\n'; exit 1; }
@@ -1153,15 +1156,16 @@ public sealed class RemoteScriptContractTests
             if copy_logs; then printf 'FAIL remaining-destination-accepted\n'; exit 1; fi
             [ ! -e "$root/unsafe-copy" ] || { printf 'FAIL copy-into-remaining-destination\n'; exit 1; }
             unset -f rm cp
-            cp() {
-                local dest="${@: -1}" source="${@: -2:1}"
+            mv() {
+                local dest="${@: -1}"
+                command mv "$@"
+                command rm -f -- "$dest"
                 mkdir -p "$dest"
-                ln -s "$outside/dir-secret" "$dest/$(basename "$source")"
-                command cp "$@" 2>/dev/null
+                ln -s "$outside/dir-secret" "$dest/retained-link"
             }
             if copy_logs; then printf 'FAIL directory-race-accepted\n'; exit 1; fi
             grep -Fxq 'outside-dir-bytes' "$outside/dir-secret" || { printf 'FAIL directory-race-write-through\n'; exit 1; }
-            unset -f cp
+            unset -f mv
             printf 'PASS c1193-log-copy\n'
             """);
         output.IndexOf("PASS c1193-log-copy", StringComparison.Ordinal).ShouldBeGreaterThanOrEqualTo(0, output);
