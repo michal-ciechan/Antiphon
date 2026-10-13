@@ -22,6 +22,7 @@ No native runner, deployment, live message or server restart is required.
 | S4-BASE | Tests | `tests/Antiphon.Tests -> bin-c1205-s4-base/` | registration-baseline | `/*/Antiphon.Tests.Application/StaleWorkingTranscriptWatchdogTests*/C1205_Hosted_restart_discovers_working_sessions_immediately*` | PC-57 baseline only | Exactly one assertion red on unchanged pre-S4 production | 1 | 6 |
 | S4-CASES-BASE | Cases | `tests/Antiphon.Tests -> bin-c1205-s4-cases-base/` | scheduling-baseline | `/*/Antiphon.Tests.Application/StaleWorkingTranscriptWatchdogTests*/*` | T18..T35 test-first | Exactly 48 executed; missing watchdog probes/options/logs assertion red on unchanged production | 48 | 12 |
 | CP-4 | S4 | `tests/Antiphon.Tests -> bin-c1205-s4/` | watchdog | `/*/Antiphon.Tests.Application/StaleWorkingTranscriptWatchdogTests*/*` | V-13..19,V-27..35,R-3,R-4 | Exactly 48 green; frozen T18..T35 roster | 48 | 12 |
+| S4-T33 | T33Repair | `tests/Antiphon.Tests -> bin-c1205-s4/` | queue-fixture-repair | `/*/Antiphon.Tests.Application/StaleWorkingTranscriptWatchdogTests*/C1205_Recovered_idle_schedules_only_coalesced_work*` | V-33,R-3 unresolved T33 | Exactly 1 green before final full-class CP-4 | 1 | 6 |
 
 All S4 PCs remain pending for method-scoped SourceLanding Mutation:
 PC-41..83, PC-101..110 and any additional implementation variants.
@@ -97,3 +98,11 @@ the non-cooperative save; T26 requires successful host/provider teardown.
 T33 was missing the production queue's 20ms pre-Enter timer advance. It now waits
 for that actual timer registration, advances exactly 20ms and observes the held
 adapter submission. No timeout, production queue assertion or receipt rule changed.
+
+The next CP-4 ran 48: 47 passed, only T33 failed; T25 and both real host epochs
+now pass. Run 20261013-074506-49bc tested b9f34b5294c96080de4f68d11c97f380d032f215.
+T33's timer had not been reached: the fixture lacked GET /sessions, used by the
+real queue's local-liveness read before adapter delivery. The card-local handler
+now returns its actual controlled runner inventory; the worker logger is captured
+for diagnostics. S4-T33 is a disclosed method-scoped repair run. It does not replace
+the required final full-class CP-4. No timeout or assertion is loosened.
