@@ -2,6 +2,8 @@
 
 All commissioned family controls produced assertion RED; no vacuous witness was found.
 
+Nine independent mutant states: 31 executions, 15 intended assertion failures, 16 unaffected passes, zero skips. Baseline: 2/2 passed. Eleven isolated, slot-granted builds completed with zero build failures; restored witnesses passed 34/34.
+
 Source: `715176d63e4486408345de2c86d9a30b78e26c5c`, task branch `feat/card-task-af6a833c`. This is an unsourced, scratch-only Test probe, not systematic Mutation. PC-84..100 and inherited controls remain pending. No production/test/fixture changes are delivered.
 
 FC-7..9 cover manifest families absent from FC-1..6: lost volatile wakeup after transcript commit (T39), already-eligible producer wakeup (T42), and uncertain probes (T44). FC-5 also exercises busy authoritative tails (T41); FC-6 also exercises S5 invalid receipts (T45). Handoff variants and invalid-receipt variants unaffected by the single family defect are expected to remain green; this probe does not discharge their independent PCs. CP-6 metadata is a classification guard, not a production delivery family; it is not production-mutated. The compatibility controls use FC-6's commissioned whole-wire method.
@@ -160,10 +162,10 @@ ShouldAssertException: h.Flushes.Accepted
 
 The initial attempted Python edit failed before touching source. Its unfortunately named `FC-1-red` run is **baseline only**: 2 passed, 0 failed/skipped, dirty=0. FC-1-mutant is the actual two-case defect proof. All following mutations were applied with PowerShell.
 
-No additional restored ordinary battery was run; restoration is verified by tracked/index byte comparison. The S5 manifest records its existing ordinary CP-5=30/30 and CP-6=4/4 evidence.
+After exact source restoration, the ten exact S5 methods passed 30/30 and named CP-6 compatibility/metadata passed 4/4, zero failures/skips. One restored isolated build served those two selections.
 
 Execution used the documented `scripts/run-checkpoint.ps1` mutation driver: one isolated build per mutant state, `UseAppHost=false`, `OutputPath=bin-af6a-probe/`, then exact witness selections. FC-5/T41 and FC-6/T45 reuse their own mutant build with `-NoBuild`. This driver owns its build slot itself (no double wrapper). Dirty source fingerprints and verified build-source bindings are preserved. No broad Unit/native/live/deployment lane ran.
-The assertion-proof slice is complete; the optional restored ordinary run and producer-owned output cleanup are pending.
+Restored runs use a documentation-only probe commit; production/test/tool bytes remain identical to the source above. Only producer-owned `bin-af6a-probe/` directories were removed at cleanup; all commands were awaited.
 
 ## Mutation diffs
 
@@ -287,9 +289,11 @@ CHECKPOINT FC-6-s5-mutant commit=715176d63e4486408345de2c86d9a30b78e26c5c build=
 CHECKPOINT FC-7-mutant commit=715176d63e4486408345de2c86d9a30b78e26c5c build=ok filter=/*/*/TurnEndGapRestartDeliveryTests/C1205_Restart_after_transcript_commit_recovers_lost_wakeup* executed=1 passed=0 failed=1 skipped=0 trx=/work/worktrees/task-af6a833c/.antiphon/viability/FC-7-mutant-20261013-131920-b7ba/run.trx slot=granted waited=0s dirty=1 source=715176d63e4486408345de2c86d9a30b78e26c5c+dirty:4143332e2d2dfb9aaccfe2a23416b9af55f45d95bcfa2f7bf179217fa46f47bc sourceState=dirty buildSource=verified
 CHECKPOINT FC-8-mutant commit=715176d63e4486408345de2c86d9a30b78e26c5c build=ok filter=/*/*/TurnEndGapRestartDeliveryTests/C1205_Already_eligible_caller_receives_completion* executed=1 passed=0 failed=1 skipped=0 trx=/work/worktrees/task-af6a833c/.antiphon/viability/FC-8-mutant-20261013-132342-dc2e/run.trx slot=granted waited=0s dirty=1 source=715176d63e4486408345de2c86d9a30b78e26c5c+dirty:5d8f41cbc426980247506c7cb9905034cca43a3b872430ec660d032cbbdba862 sourceState=dirty buildSource=verified
 CHECKPOINT FC-9-mutant commit=715176d63e4486408345de2c86d9a30b78e26c5c build=ok filter=/*/*/TurnEndGapRestartDeliveryTests/C1205_Unknown_probe_keeps_obligations_held* executed=2 passed=0 failed=2 skipped=0 trx=/work/worktrees/task-af6a833c/.antiphon/viability/FC-9-mutant-20261013-132736-7590/run.trx slot=granted waited=0s dirty=1 source=715176d63e4486408345de2c86d9a30b78e26c5c+dirty:56b0df1902703a2064d27b79a345d9f5a63704d3bd675d82cdc4af6a9fe5893f sourceState=dirty buildSource=verified
+CHECKPOINT restore-compat commit=6ab35d4c62978ffc02bc9e8bcfb8a7ffe4424c72 build=reused filter=/*/*/(VerificationRoundDeliveryTests*)|(TestClassificationGuardTests*)/(C544_CompletionReceipt*)|(C544_StampIsNotReceipt*)|(Registry_matches_compiled_metadata*) executed=4 passed=4 failed=0 skipped=0 trx=/work/worktrees/task-af6a833c/.antiphon/viability/restore-compat-20261013-133959-9b2b/run.trx slot=granted waited=0s dirty=0 source=6ab35d4c62978ffc02bc9e8bcfb8a7ffe4424c72 sourceState=clean buildSource=verified
+CHECKPOINT restore-s5 commit=6ab35d4c62978ffc02bc9e8bcfb8a7ffe4424c72 build=ok filter=/*/*/TurnEndGapRestartDeliveryTests/(C1205_Restart_delivers_five_gap_held_completions_once*)|(C1205_Watchdog_delivers_while_event_stream_remains_healthy*)|(C1205_Restart_after_transcript_commit_recovers_lost_wakeup*)|(C1205_Receipt_restart_confirms_without_retyping*)|(C1205_Busy_tail_keeps_completion_obligations_pending*)|(C1205_Already_eligible_caller_receives_completion*)|(C1205_Restart_recovers_each_delivery_handoff*)|(C1205_Unknown_probe_keeps_obligations_held*)|(C1205_Only_complete_destination_receipts_confirm*)|(C1205_Flush_rechecks_a_new_turn_after_recovery*) executed=30 passed=30 failed=0 skipped=0 trx=/work/worktrees/task-af6a833c/.antiphon/viability/restore-s5-20261013-133357-4f6e/run.trx slot=granted waited=0s dirty=0 source=6ab35d4c62978ffc02bc9e8bcfb8a7ffe4424c72 sourceState=clean buildSource=verified
 ```
 
-Raw diffs, source bindings, TRX and full logs are currently in `.antiphon/viability/`; final retention target is `/work/repos/antiphon/.git/antiphon/viability/af6a833c/`.
+Raw diffs, source bindings, TRX and full logs are retained in `/work/repos/antiphon/.git/antiphon/viability/af6a833c/`.
 Reported source restoration is independent of delivery viability; this report grants no SourceLanding/landing verdict.
 
 --- next stage ---
