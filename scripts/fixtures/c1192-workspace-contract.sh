@@ -341,6 +341,8 @@ reset_runtime() {
     rm -f "$C1192_ROOT/probe-at-handoff" "$C1192_ROOT/shared-before" "$C1192_ROOT/private-before-release"
     rm -rf "$CASE_DIR/fixture-controller"
     rm -f "$CASE_DIR/.fixture-escape" "$CASE_DIR/.fixture-escape-identity"
+    rm -f "$CASE_DIR"/.fixture-compose-*
+    C849_COMPOSE_EMPTY_PROJECT=''
     rm -f "$CASE_DIR"/.fixture-fingerprint-*
     rm -f "$CASE_DIR"/.fixture-id-* "$CASE_DIR/.fixture-network" "$CASE_DIR/.fixture-donor" "$CASE_DIR/.fixture-busy" "$CASE_DIR/.fixture-npm-server" "$CASE_DIR/.fixture-prune-smoke"
     rm -f "$CASE_DIR/.fixture-volumes" "$CASE_DIR/.fixture-helpers" \
@@ -2777,7 +2779,7 @@ mode_compose_absence() {
     else
         for key in runner-tmp work runner-state dind-data; do
             name="c849${RUN}main_$key"; expected=confirmed-absent
-            case "$COMPOSE_CASE:$key" in residual:*) expected=cleanup-object-present ;; daemon:*|mixed:work) expected=unknown-cleanup-outcome ;; esac
+            case "$COMPOSE_CASE:$key" in residual:*) expected=unknown-cleanup-outcome ;; daemon:*|mixed:work) expected=unknown-cleanup-outcome ;; esac
             good=0; grep -Fxq "$expected volume $name" "$CASE_DIR/fixture-cleanup-ledger.txt" && good=1; emit "ledger-$key" "$good"
             good=0
             if [ "$expected" = confirmed-absent ]; then ! grep -Fxq "$name" "$CASE_DIR/fixture-cleanup-residue.txt" && good=1
@@ -2786,8 +2788,8 @@ mode_compose_absence() {
         done
         if [ "$COMPOSE_CASE" = residual ]; then
             for key in runner-tmp work runner-state dind-data; do good=0; volume_exists "c849${RUN}main_$key" && good=1; emit "retained-$key" "$good"; done
-            good=0; container_exists "c849${RUN}main-probe-1" && grep -Fxq "cleanup-object-present container c849${RUN}main-probe-1" "$CASE_DIR/fixture-cleanup-ledger.txt" && good=1; emit retained-container "$good"
-            good=0; [ -d "$C1192_ROOT/compose-networks/c849${RUN}main" ] && grep -Fxq "cleanup-object-present network c849${RUN}main_default" "$CASE_DIR/fixture-cleanup-ledger.txt" && good=1; emit retained-network "$good"
+            good=0; container_exists "c849${RUN}main-probe-1" && grep -Fxq "unknown-cleanup-outcome container c849${RUN}main-probe-1" "$CASE_DIR/fixture-cleanup-ledger.txt" && good=1; emit retained-container "$good"
+            good=0; [ -d "$C1192_ROOT/compose-networks/c849${RUN}main" ] && grep -Fxq "unknown-cleanup-outcome network c849${RUN}main_default" "$CASE_DIR/fixture-cleanup-ledger.txt" && good=1; emit retained-network "$good"
         fi
     fi
     refuse_unexpected

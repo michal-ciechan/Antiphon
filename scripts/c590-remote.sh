@@ -4389,6 +4389,7 @@ JS
 c849_fixture_compose_record() {
     local project="$1" record="$CASE_DIR/.fixture-compose-$1" kind listed name rows='' prior
     shift
+    C849_COMPOSE_EMPTY_PROJECT=''
     case "$project" in "c849${RUN}main"|"c849${RUN}temp"|"c849${RUN}negative") ;; *) return 2 ;; esac
     prior=''
     if [ -e "$record" ] || [ -L "$record" ]; then
@@ -4410,7 +4411,6 @@ c849_fixture_compose_record() {
     # Private volume names are known by the producer even if already absent.
     for name in "$@"; do rows+="volume $name"$'\n'; done
     if [ -n "$prior" ]; then rows="$prior"$'\n'"$rows"; fi
-    C849_COMPOSE_EMPTY_PROJECT=''
     if [ -z "$rows" ]; then C849_COMPOSE_EMPTY_PROJECT="$project"; return 0; fi
     rows="$(printf '%s' "$rows" | sort -u)" || return 2
     c849_fixture_write "$record" reset printf '%s\n' "$rows" || { c849_fixture_cleanup_unknown compose "$project"; return 2; }
@@ -4446,8 +4446,6 @@ c849_fixture_compose_confirm() {
             fi
             case "$state" in
                 1) c849_fixture_write "$CASE_DIR/fixture-cleanup-ledger.txt" append printf 'confirmed-absent %s %s\n' "$kind" "$name" || return 2 ;;
-                0) c849_fixture_write "$CASE_DIR/fixture-cleanup-residue.txt" append printf '%s\n' "$name" || return 2
-                    c849_fixture_write "$CASE_DIR/fixture-cleanup-ledger.txt" append printf 'cleanup-object-present %s %s\n' "$kind" "$name" || return 2 ;;
                 *) c849_fixture_cleanup_unknown "$kind" "$name" || return 2 ;;
             esac
         done <<< "$rows"
