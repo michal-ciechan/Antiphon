@@ -100,15 +100,14 @@ public class DispatchBaseWarningRosterTests
         }
     }
 
-    // The fixtures below put `public` and `class` on separate lines so the line scanner in
+    // The fixtures below declare `public partial class` so the line scanner in
     // TestLaneCategoryGuardTests.every_test_class_is_tagged_unit_xor_integration does not read
-    // them as untagged test classes; Roslyn parses the same declaration.
+    // them as untagged test classes; TestMethods ignores class modifiers.
     [Test]
     public void C1155_ExtraAttributeAfterTestIsDiscovered()
     {
         const string source = """
-            public
-            class DispatchBaseWarningDeliveryE2ETests
+            public partial class DispatchBaseWarningDeliveryE2ETests
             {
                 [Test]
                 [Category("E2E")]
@@ -146,8 +145,7 @@ public class DispatchBaseWarningRosterTests
     public void C1155_CommentedOutDeclarationIsNotCounted()
     {
         const string source = """
-            public
-            class DispatchBaseWarningDeliveryE2ETests
+            public partial class DispatchBaseWarningDeliveryE2ETests
             {
                 // [Test] public async Task CommentedOut() { }
                 // [Test]
@@ -169,8 +167,7 @@ public class DispatchBaseWarningRosterTests
     public void C1155_BlockCommentMethodIsNotCounted()
     {
         const string source = """
-            public
-            class DispatchBaseWarningDeliveryE2ETests
+            public partial class DispatchBaseWarningDeliveryE2ETests
             {
                 /*
                 [Test]
@@ -189,8 +186,7 @@ public class DispatchBaseWarningRosterTests
     public void C1155_RemovedAndRenamedMethodDiffersFromTheRoster()
     {
         const string source = """
-            public
-            class DispatchBaseWarningDeliveryE2ETests
+            public partial class DispatchBaseWarningDeliveryE2ETests
             {
                 [Test]
                 [Category("E2E")]
@@ -214,8 +210,7 @@ public class DispatchBaseWarningRosterTests
     public void C1155_VerbatimEscapedQuoteDoesNotHideTheNextTest()
     {
         const string source = """"
-            public
-            class DispatchBaseWarningDeliveryE2ETests
+            public partial class DispatchBaseWarningDeliveryE2ETests
             {
                 const string escaped = @"""[Test] public async Task HiddenByVerbatim() { }";
 
@@ -231,8 +226,7 @@ public class DispatchBaseWarningRosterTests
     public void C1155_CharLiteralQuoteDoesNotHideTheNextTest()
     {
         const string source = """
-            public
-            class DispatchBaseWarningDeliveryE2ETests
+            public partial class DispatchBaseWarningDeliveryE2ETests
             {
                 const char mark = '"';
 
@@ -248,8 +242,7 @@ public class DispatchBaseWarningRosterTests
     public void C1155_RawStringDoesNotHideTheNextTest()
     {
         const string source = """"
-            public
-            class DispatchBaseWarningDeliveryE2ETests
+            public partial class DispatchBaseWarningDeliveryE2ETests
             {
                 const string hidden = """
                     [Test]
@@ -268,8 +261,7 @@ public class DispatchBaseWarningRosterTests
     public void C1155_InterpolatedStringDoesNotHideTheNextTest()
     {
         const string source = """
-            public
-            class DispatchBaseWarningDeliveryE2ETests
+            public partial class DispatchBaseWarningDeliveryE2ETests
             {
                 static readonly string Hidden = $"pre { '"' } [Test] public async Task HiddenInInterpolation() {{ }}";
 
@@ -285,8 +277,7 @@ public class DispatchBaseWarningRosterTests
     public void C1155_ConditionalDirectiveFailsClosed()
     {
         const string source = """
-            public
-            class DispatchBaseWarningDeliveryE2ETests
+            public partial class DispatchBaseWarningDeliveryE2ETests
             {
                 #if NET9_0
                 [Test]
@@ -303,8 +294,7 @@ public class DispatchBaseWarningRosterTests
     public void C1155_SourceWithoutConditionalDirectiveIsDiscovered()
     {
         const string source = """
-            public
-            class DispatchBaseWarningDeliveryE2ETests
+            public partial class DispatchBaseWarningDeliveryE2ETests
             {
                 [Test]
                 public async Task Visible() { }
