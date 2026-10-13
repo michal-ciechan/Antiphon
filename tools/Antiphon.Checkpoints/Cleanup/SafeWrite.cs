@@ -34,8 +34,8 @@ public static class SafeWrite
         if (Directory.Exists(path)) CreatedContent.TryAdd(path, "directory");
         else
         {
-            using var stream = File.OpenRead(path);
-            CreatedContent.TryAdd(path, stream.Length + ":" + Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(stream)));
+            var bytes = ReceiptFile.ReadBytes(path);
+            CreatedContent.TryAdd(path, bytes.LongLength + ":" + Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)));
         }
     }
     public static bool MatchesCreation(string path)
