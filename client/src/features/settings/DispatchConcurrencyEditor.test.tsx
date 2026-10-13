@@ -1,5 +1,6 @@
 import type { HubConnection } from '@microsoft/signalr'
 import { notifications } from '@mantine/notifications'
+import type { QueryClient } from '@tanstack/react-query'
 import { HttpResponse, http } from 'msw'
 import { beforeEach, expect, it, vi } from 'vitest'
 import { act, renderWithProviders, screen, userEvent, waitFor, within } from '../../test/utils'
@@ -290,13 +291,22 @@ async function loaded() {
   await screen.findByTestId('dispatch-concurrency-save')
 }
 
-/** Settle pending timers and microtasks so a write that would fire on its own has done so. */
-async function flush() {
-  for (let i = 0; i < 5; i += 1) {
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 0))
-    })
-  }
+/**
+ * Writes the editor has started. The Save and Clear handlers call the PUT mutation synchronously and
+ * TanStack builds its cache entry inside that call, so a count read straight after a click includes
+ * whatever that click started. Entries outlive a test (default mutation gcTime is five minutes).
+ */
+function writes(queryClient: QueryClient) {
+  return queryClient.getMutationCache().getAll().length
+}
+
+/**
+ * Completion barrier: the section's aria-busy is "false", so no submission or conflict reload is in
+ * flight and any further write that submission's own handler chain started is already in `writes`.
+ * It says nothing about writes a later, independent event could start.
+ */
+async function settled() {
+  await waitFor(() => expect(screen.getByTestId('dispatch-concurrency-section')).toHaveAttribute('aria-busy', 'false'))
 }
 
 function LiveEditor({ connection, projectId }: { connection: { current: HubConnection | null }; projectId: string | null }) {
@@ -448,7 +458,7 @@ it('C506 V09 trim-reason', async () => {
 it('C506 V09 invalid-disabled', async () => {
   const state = serve(P, P0)
   state.put = accept(state, P0)
-  renderWithProviders(<DispatchConcurrencyEditor projectId={P} />)
+  const { queryClient } = renderWithProviders(<DispatchConcurrencyEditor projectId={P} />)
   await loaded()
 
   await typeReason('valid reason')
@@ -461,7 +471,7 @@ it('C506 V09 invalid-disabled', async () => {
   await setValue('Code max parallel', '513')
   expect(saveButton()).toBeDisabled()
   await userEvent.click(saveButton())
-  await flush()
+  expect(writes(queryClient)).toBe(0)
   expect(state.puts).toHaveLength(0)
 
   await setValue('Code max parallel', '2')
@@ -474,8 +484,8 @@ it('C506 V09 double-submit', async () => {
     await gate
     return accept(state, P0)(put)
   })
+  const { queryClient } = renderWithProviders(<DispatchConcurrencyEditor projectId={P} />)
   try {
-    renderWithProviders(<DispatchConcurrencyEditor projectId={P} />)
     await loaded()
     await userEvent.click(sw('Code max parallel override'))
     await setValue('Code max parallel', '1')
@@ -483,13 +493,14 @@ it('C506 V09 double-submit', async () => {
     await userEvent.dblClick(saveButton())
     await userEvent.click(saveButton())
     await waitFor(() => expect(state.puts).toHaveLength(1))
-    await flush()
-    expect(state.puts).toHaveLength(1)
+    expect(writes(queryClient)).toBe(1)
     expect(saveButton()).toBeDisabled()
   } finally {
     release()
   }
   await waitFor(() => expect(successes()).toHaveLength(1))
+  await settled()
+  expect(writes(queryClient)).toBe(1)
   expect(state.puts).toHaveLength(1)
 })
 
@@ -573,13 +584,13 @@ it('C506 V11 global', async () => {
   const withMode = global(7, { ...G7_OVERRIDES, mode: 'SeparateQueues' }, g7Effective(7, 0))
   const state = serve(null, withMode)
   state.put = accept(state, withMode)
-  renderWithProviders(<DispatchConcurrencyEditor projectId={null} />)
+  const { queryClient } = renderWithProviders(<DispatchConcurrencyEditor projectId={null} />)
   await loaded()
 
   await typeReason('reset global')
   await userEvent.click(screen.getByRole('button', { name: 'Clear all overrides' }))
   expect(await screen.findByTestId('dispatch-concurrency-clear-confirm')).toBeInTheDocument()
-  await flush()
+  expect(writes(queryClient)).toBe(0)
   expect(state.puts).toHaveLength(0)
   await userEvent.click(screen.getByRole('button', { name: 'Clear overrides' }))
   await waitFor(() => expect(state.puts).toHaveLength(1))
@@ -596,12 +607,12 @@ it('C506 V11 global', async () => {
 it('C506 V11 project', async () => {
   const state = serve(P, P4)
   state.put = accept(state, P4)
-  renderWithProviders(<DispatchConcurrencyEditor projectId={P} />)
+  const { queryClient } = renderWithProviders(<DispatchConcurrencyEditor projectId={P} />)
   await loaded()
 
   await typeReason('reset project')
   await userEvent.click(screen.getByRole('button', { name: 'Clear all overrides' }))
-  await flush()
+  expect(writes(queryClient)).toBe(0)
   expect(state.puts).toHaveLength(0)
   await userEvent.click(screen.getByRole('button', { name: 'Clear overrides' }))
   await waitFor(() => expect(state.puts).toHaveLength(1))
@@ -633,7 +644,7 @@ it('C506 V11 schema-only-disabled', async () => {
 it('C506 V11 cancel', async () => {
   const state = serve(P, P4)
   state.put = accept(state, P4)
-  renderWithProviders(<DispatchConcurrencyEditor projectId={P} />)
+  const { queryClient } = renderWithProviders(<DispatchConcurrencyEditor projectId={P} />)
   await loaded()
 
   await setValue('Code max parallel', '2')
@@ -641,13 +652,13 @@ it('C506 V11 cancel', async () => {
   await userEvent.click(screen.getByRole('button', { name: 'Clear all overrides' }))
   await userEvent.click(await screen.findByRole('button', { name: 'Cancel' }))
   await waitFor(() => expect(screen.queryByTestId('dispatch-concurrency-clear-confirm')).toBeNull())
-  await flush()
+  expect(writes(queryClient)).toBe(0)
   expect(state.puts).toHaveLength(0)
   expect(num('Code max parallel')).toHaveValue('2')
   expect(screen.getByTestId('dispatch-concurrency-reason')).toHaveValue('keep me')
 })
 
-// ---- V-12 conflict and live refresh: keep the draft, refetch, show the diff, never auto-retry ----
+// ---- V-12 conflict and live refresh: keep the draft, refetch, show the diff, no retry within the submission ----
 
 it('C506 V12 conflict-project', async () => {
   const state = serve(P, P0, (put, index) => {
@@ -694,7 +705,7 @@ it('C506 V12 conflict-global', async () => {
     }
     return accept(state, g8)(put)
   })
-  renderWithProviders(<DispatchConcurrencyEditor projectId={null} />)
+  const { queryClient } = renderWithProviders(<DispatchConcurrencyEditor projectId={null} />)
   await loaded()
 
   await setValue('Code max parallel', '1')
@@ -705,7 +716,8 @@ it('C506 V12 conflict-global', async () => {
   expect(alert).toHaveTextContent('Saved revision changed (now global r8, project r0)')
   expect(alert).toHaveTextContent('Code max parallel: your draft 1, now saved 3')
   await waitFor(() => expect(state.gets).toBe(2))
-  await flush()
+  await settled()
+  expect(writes(queryClient)).toBe(1)
   expect(state.puts).toHaveLength(1)
 
   await userEvent.click(saveButton())
@@ -722,7 +734,7 @@ it('C506 V12 refresh-fails', async () => {
     }
     return accept(state, P5)(put)
   })
-  renderWithProviders(<DispatchConcurrencyEditor projectId={P} />)
+  const { queryClient } = renderWithProviders(<DispatchConcurrencyEditor projectId={P} />)
   await loaded()
 
   await userEvent.click(sw('Code max parallel override'))
@@ -731,10 +743,11 @@ it('C506 V12 refresh-fails', async () => {
   await userEvent.click(saveButton())
 
   expect(await screen.findByTestId('dispatch-concurrency-refresh-failed')).toBeInTheDocument()
+  await settled()
   expect(state.gets).toBe(2)
   expect(saveButton()).toBeDisabled()
   await userEvent.click(saveButton())
-  await flush()
+  expect(writes(queryClient)).toBe(1)
   expect(state.puts).toHaveLength(1)
   expect(num('Code max parallel')).toHaveValue('1')
   expect(screen.getByTestId('dispatch-concurrency-reason')).toHaveValue('tighten')
@@ -857,7 +870,7 @@ it('C506 V13 unknown-role', async () => {
   const inherited = { ...g7Effective(7, 0), roles: [...g7Effective(7, 0).roles, defaultRole('FutureRole')] }
   const state = serve(P, { ...P0, supportedRoles: roles, inherited, effective: inherited },
     () => F422({ roles: ["Unknown role 'FutureRole'."] }))
-  renderWithProviders(<DispatchConcurrencyEditor projectId={P} />)
+  const { queryClient } = renderWithProviders(<DispatchConcurrencyEditor projectId={P} />)
   await loaded()
 
   await userEvent.click(sw('FutureRole max parallel override'))
@@ -869,7 +882,8 @@ it('C506 V13 unknown-role', async () => {
   expect(state.puts).toHaveLength(1)
   expect(state.puts[0].body.overrides).toStrictEqual({ roles: { FutureRole: { maxParallel: 2 } } })
   expect(num('FutureRole max parallel')).toHaveValue('2')
-  await flush()
+  await settled()
+  expect(writes(queryClient)).toBe(1)
   expect(state.puts).toHaveLength(1)
   expect(successes()).toHaveLength(0)
 })
@@ -955,9 +969,9 @@ const MODE_TRANSITIONS = [
   { transition: 'removed', from: 'SeparateQueues', to: undefined, shown: 'LegacyOpen' },
 ] as const
 
-it.each(MODE_TRANSITIONS.flatMap((row) => (['live', 'conflict'] as const).map((entry) => ({ entry, ...row }))))(
-  'C506 S2F1 $entry mode-$transition',
-  async ({ entry, from, to, shown: shownMode }) => {
+it.each(MODE_TRANSITIONS.flatMap((row) => (['live', 'conflict'] as const).map((entry) => [entry, row.transition, row] as const)))(
+  'C506 S2F1 %s mode-%s',
+  async (entry, _transition, { from, to, shown: shownMode }) => {
     // Another writer changes only the read-only mode at r8 while Code max parallel is being edited.
     const initial = globalWithMode(7, from)
     const fresh = globalWithMode(8, to)
@@ -1089,7 +1103,7 @@ it('C506 S2F2 newer-after-save', async () => {
   expect(screen.queryByTestId('dispatch-concurrency-conflict')).toBeNull()
 })
 
-/** Every control that changes the draft or the reason, for P4 (Code and Review rows specified). */
+/** One control of each draft- or reason-changing kind, for P4 (Code and Review rows specified). */
 function draftControls() {
   return [
     num('Code max parallel'),
