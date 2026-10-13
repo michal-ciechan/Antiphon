@@ -143,7 +143,7 @@ All AI agents and developers MUST follow these 13 rules:
 | `ArtifactUpdated` | `['workflow', id, 'artifacts']` | New artifact version created |
 | `CascadeTriggered` | `['workflow', id, 'stages']`, `['workflow', id]` | Course correction cascade initiated |
 | `ScheduleChanged` | `['schedules']`, `['schedules', 'agent', agentId]`, `['schedules', 'card', cardId]`, `['attention']` | Schedule created, patched, deleted, or a fire completed |
-| `DispatchConcurrencyChanged` | `['dispatchConcurrency']`, `['agentTasks', 'pipeline']` | Dispatch-concurrency PUT committed (CARD-0506; `C506 V07 changed-event`) |
+| `DispatchConcurrencyChanged` | `['dispatchConcurrency']`, `['agentTasks', 'pipeline']` | A committed PUT (event count in `Revision_conflict_returns_current_revisions`); seed import also publishes it (`DispatchConcurrencySettingsService`, no test); client invalidation per `C506 V07 changed-event` (CARD-0506) |
 
 ## The record
 

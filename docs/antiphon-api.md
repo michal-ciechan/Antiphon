@@ -555,17 +555,20 @@ GET    /api/hosts/{hostId}/occupancy-samples?from=&to=&limit=   read-only occupa
 ```
 
 Dispatch concurrency routes (CARD-0505; Settings → Concurrency UI, CARD-0506, in
-[orchestration-loop.md](orchestration-loop.md#concurrency-settings-tab-card-0506)). Each row names
-the `DispatchConcurrencyWireTests` method that asserts it:
+[orchestration-loop.md](orchestration-loop.md#concurrency-settings-tab-card-0506)). Each row states
+what the named `DispatchConcurrencyWireTests` method asserts:
 
 | Behaviour | Test |
 |---|---|
-| Global GET then PUT round trip | `Global_get_put_roundtrip` |
-| Project GET (`revision` 0 without a row), PUT, clear with `overrides: {}`; unknown project 404 | `Project_get_put_clear_roundtrip` |
-| A missing, duplicate or unknown body field, or a bad `overrides`, is 422 `validation_failed` and writes nothing | `Missing_fields_invalid_body_and_unknown_project_write_nothing` |
-| A stale `expectedRevision` is 409 `dispatch_concurrency_revision_conflict` with `globalRevision` | `Revision_conflict_returns_current_revisions` |
-| `/revisions`: default page 50, `limit` 1–100, `beforeRevision` cursor, read-only | `Revision_routes_are_readonly_and_bounded` |
-| A committed PUT publishes `DispatchConcurrencyChanged` | `Human_reason_and_server_caller_are_audited` |
+| Global GET returns revision 1 with seed `origin` `startupConfiguration`; PUT with `expectedRevision` 1 returns 200 and revision 2; a later GET returns revision 2 | `Global_get_put_roundtrip` |
+| Project GET without a row returns `revision` 0 and `globalRevision` 1; PUT returns 200 and leaves another project at revision 0; PUT `overrides: {}` returns revision 2; unknown project GET and PUT are 404 and create no row | `Project_get_put_clear_roundtrip` |
+| On a store already initialized by a global read: 19 listed bodies (missing, duplicate, unknown or wrong-type field; blank or 401-character reason; unknown provenance; `maxParallel: 0`; `mode` null or numeric; non-object `overrides`; malformed JSON) are 422 `validation_failed` and leave the settings rows and revision count unchanged; unknown project PUT is 404 with the same fingerprint | `Missing_fields_invalid_body_and_unknown_project_write_nothing` |
+| A stale `expectedRevision` is 409 `dispatch_concurrency_revision_conflict` with `globalRevision`; of two concurrent PUTs at the same revision one is 200 and one 409; an `Auto` PUT over a `Human` revision is 409 `dispatch_concurrency_human` | `Revision_conflict_returns_current_revisions` |
+| After initialization, that test's three 409s and two committed PUTs raise the `MockEventBus` published-event count by exactly 2 (event names not checked; not a recipient-delivery witness) | `Revision_conflict_returns_current_revisions` |
+| `/revisions`: default page 50, `limit` 1–100 (0 and 101 are 422), `beforeRevision` cursor (-1 is 422); a GET on a cold store creates no row; GETs leave the fingerprint unchanged | `Revision_routes_are_readonly_and_bounded` |
+
+Not covered by a test: a PUT with a rejected policy value (such as `maxParallel: 0`) on a store
+with no global row. `PutAsync` initializes the store before it checks policy values.
 
 Host stats are sampled by each session runner every five seconds and held in a 30-minute memory
 ring. `GET /api/hosts/stats` gives `HostStatsDto[]` for desktop and configured runners. `state`
