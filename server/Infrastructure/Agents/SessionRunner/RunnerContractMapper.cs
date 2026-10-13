@@ -121,6 +121,29 @@ public sealed class RunnerContractMapper
                 : new SessionRunnerEvent(eventName, entry.SessionId, Transcript: MapTranscript(entry));
         }
 
+        if (eventName == SessionRunnerEventNames.SessionTranscriptFault)
+        {
+            var fault = JsonSerializer.Deserialize<RunnerTranscriptFaultEvent>(json, Json);
+            return fault is null
+                ? null
+                : new SessionRunnerEvent(
+                    eventName, fault.SessionId,
+                    TranscriptFault: new SessionRunnerTranscriptFaultEvent(
+                        fault.SessionId, fault.Kind, fault.Detail, fault.CandidatePath,
+                        fault.UnboundSeconds, fault.Repeat));
+        }
+
+        if (eventName == SessionRunnerEventNames.SessionTranscriptBound)
+        {
+            var bound = JsonSerializer.Deserialize<RunnerTranscriptBoundEvent>(json, Json);
+            return bound is null
+                ? null
+                : new SessionRunnerEvent(
+                    eventName, bound.SessionId,
+                    TranscriptBound: new SessionRunnerTranscriptBoundEvent(
+                        bound.SessionId, bound.TranscriptPath, bound.How));
+        }
+
         return null;
     }
 }
