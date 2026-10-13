@@ -41,35 +41,35 @@ PC-1 foreign drop/receipt/removal guard (cache variants); PC-2 legacy container 
 | PC-3 | network owner, run, role | `/*/*/RemoteScriptContractTests/C1208_Legacy_network_replacement_is_untouched` | PENDING SourceLanding Mutation |
 | PC-4 | consumer, helper, escape symlink acquisition requirement | `/*/*/RemoteScriptContractTests/C1208_Unacquired_roster_is_untouched` | PENDING SourceLanding Mutation |
 | PC-5 | work, mask, cache, consumer, writer, reader, network release | `/*/*/RemoteScriptContractTests/C1208_Acquired_objects_are_removed` | PENDING SourceLanding Mutation |
-| PC-6 | ID replaced by name; container and network candidate | `/*/*/RemoteScriptContractTests/C1208_Recorded_container_id_does_not_delete_replacement` | PENDING SourceLanding Mutation |
-| PC-7 | container and network migration skipped / name deletion restored | `/*/*/RemoteScriptContractTests/C1208_Legacy_owned_markers_are_migrated` | PENDING SourceLanding Mutation |
-| PC-8 | outage; empty, malformed, symlinked CID; volume/network uncertainty | `/*/*/RemoteScriptContractTests/C1208_Unknown_identity_retains_residue` | PENDING SourceLanding Mutation |
+| PC-6 | container ID replaced by name | `/*/*/RemoteScriptContractTests/C1208_Recorded_container_id_does_not_delete_replacement` | PENDING SourceLanding Mutation |
+| PC-7 | container and network migration skipped / name deletion restored / network ID replaced by name | `/*/*/RemoteScriptContractTests/C1208_Legacy_owned_markers_are_migrated` | PENDING SourceLanding Mutation |
+| PC-8 | outage; empty, malformed, symlinked CID; standalone symlink/directory CID | `/*/*/RemoteScriptContractTests/C1208_Unknown_identity_retains_residue` | PENDING SourceLanding Mutation |
 
 ### Checkpoints
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-33 | Fixed | `tests/Antiphon.Tests -> bin-c1208/` | linux-no-host-payload | `/*/*/RemoteScriptContractTests/C1192_Fixture_has_no_host_payload_tree_or_payload_bind` | V-8 | 1 executed, 0 failed/skipped | 1 | 6 |
-| CP-34 | Fixed | `CP-33` | linux-finalization | `/*/*/RemoteScriptContractTests/C1192_Finalization_precedes_success_and_preserves_primary_failure` | V-9 | 1 executed, 0 failed/skipped | 1 | 1 |
-| CP-35 | Fixed | `CP-33` | linux-workspace-disposal | `/*/*/RemoteScriptContractTests/C1191_Fixture_exit_removes_owned_workspace_without_host_sudo` | R-2, V-2 | 1 executed, 0 failed/skipped | 1 | 1 |
-| CP-36 | Fixed | `CP-33` | linux-evidence-roster | `/*/*/RemoteScriptContractTests/C1192_Evidence_export_preserves_fixture_roster_without_payloads` | V-8 | 1 executed, 0 failed/skipped | 1 | 1 |
-| CP-37 | Fixed | `CP-33` | linux-escape-unlink | `/*/*/RemoteScriptContractTests/C1189_Fixture_escape_link_is_removed_after_pc08_and_on_exit` | R-1 | 1 executed, 0 failed/skipped | 1 | 1 |
-| CP-38 | Fixed | `CP-33` | linux-log-order | `/*/*/RemoteScriptContractTests/C1193_Fixture_exit_trap_copies_race_logs_before_tree_removal` | R-3 | 1 executed, 0 failed/skipped | 1 | 1 |
-| CP-39 | Fixed | `CP-33` | linux-log-paths | `/*/*/RemoteScriptContractTests/C1193_Fixture_log_copy_skips_symlinks_and_copies_regular_files` | R-3 | 1 executed, 0 failed/skipped | 1 | 1 |
+| CP-33 | Fixed | `tests/Antiphon.Tests -> bin-c1208/` | linux-no-host-payload | `/*/*/RemoteScriptContractTests/C1192_Fixture_has_no_host_payload_tree_or_payload_bind` | R-1 | 1 executed, 0 failed/skipped | 1 | 6 |
+| CP-34 | Fixed | `CP-33` | linux-finalization | `/*/*/RemoteScriptContractTests/C1192_Finalization_precedes_success_and_preserves_primary_failure` | R-2 | 1 executed, 0 failed/skipped | 1 | 1 |
+| CP-35 | Fixed | `CP-33` | linux-workspace-disposal | `/*/*/RemoteScriptContractTests/C1191_Fixture_exit_removes_owned_workspace_without_host_sudo` | R-3 | 1 executed, 0 failed/skipped | 1 | 1 |
+| CP-36 | Fixed | `CP-33` | linux-evidence-roster | `/*/*/RemoteScriptContractTests/C1192_Evidence_export_preserves_fixture_roster_without_payloads` | R-4 | 1 executed, 0 failed/skipped | 1 | 1 |
+| CP-37 | Fixed | `CP-33` | linux-escape-unlink | `/*/*/RemoteScriptContractTests/C1189_Fixture_escape_link_is_removed_after_pc08_and_on_exit` | R-5 | 1 executed, 0 failed/skipped | 1 | 1 |
+| CP-38 | Fixed | `CP-33` | linux-log-order | `/*/*/RemoteScriptContractTests/C1193_Fixture_exit_trap_copies_race_logs_before_tree_removal` | R-6 | 1 executed, 0 failed/skipped | 1 | 1 |
+| CP-39 | Fixed | `CP-33` | linux-log-paths | `/*/*/RemoteScriptContractTests/C1193_Fixture_log_copy_skips_symlinks_and_copies_regular_files` | R-7 | 1 executed, 0 failed/skipped | 1 | 1 |
 | CP-40 | Fixed | `CP-33` | linux-lane | `/*/*/RemoteScriptContractTests/Nested_lane_never_uses_sudo_or_python` | R-8 | 1 executed, 0 failed/skipped | 1 | 1 |
-| CP-41 | Fixed | `CP-33` | linux-receipt-exclusion | `/*/*/RemoteScriptContractTests/C849_Cache_receipts_exclude_credentials_and_payloads` | R-8 | 1 executed, 0 failed/skipped | 1 | 1 |
-| CP-42 | Fixed | `CP-33` | linux-receipt-consumer | `/*/*/RemoteScriptContractTests/C913_Receipts_reject_mixed_digest_types_and_false_smoke_claims` | R-8 | 1 executed, 0 failed/skipped | 1 | 2 |
-| CP-43 | Fixed | `CP-33` | linux-fixture-inventory | `/*/*/RemoteScriptContractTests/C913_Fixture_uses_owned_payloads_and_proven_absent_temp` | R-8 | 1 executed, 0 failed/skipped | 1 | 1 |
-| CP-44 | Fixed | `CP-33` | linux-adjacent | `/*/*/RemoteScriptContractTests/(C1189_*\|C1191_*\|C1193_*\|C1194_*\|C1195_*\|C1192_Summary_*\|C1192_Foreign_*\|C1192_Harness_*\|C1192_Helper_*)*` | R-1..R-5, R-8 | 19 executed, 0 failed/skipped | 19 | 2 |
-| CP-45 | Fixed | `CP-33` | linux-cleanup-consumer | `/*/*/RemoteScriptContractTests/C1192_Cleanup_consumer_requires_positive_absence` | V-2, V-9 | 1 executed, 0 failed/skipped | 1 | 1 |
-| CP-46 | Fixed | `CP-33` | linux-cleanup-helper | `/*/*/RemoteScriptContractTests/C1192_Cleanup_helper_requires_positive_absence` | V-2, V-9 | 1 executed, 0 failed/skipped | 1 | 1 |
-| CP-47 | Fixed | `CP-33` | linux-cleanup-masked | `/*/*/RemoteScriptContractTests/C1192_Cleanup_masked_requires_positive_absence` | V-2, V-9 | 1 executed, 0 failed/skipped | 1 | 1 |
-| CP-48 | Fixed | `CP-33` | linux-cleanup-work | `/*/*/RemoteScriptContractTests/C1192_Cleanup_work_requires_positive_absence` | V-2, V-9 | 1 executed, 0 failed/skipped | 1 | 1 |
-| CP-49 | Fixed | `CP-33` | linux-cleanup-mask | `/*/*/RemoteScriptContractTests/C1192_Cleanup_mask_requires_positive_absence` | V-2, V-9 | 1 executed, 0 failed/skipped | 1 | 1 |
-| CP-50 | Fixed | `CP-33` | linux-cleanup-cache | `/*/*/RemoteScriptContractTests/C1192_Cleanup_cache_requires_positive_absence` | V-2, V-9 | 1 executed, 0 failed/skipped | 1 | 1 |
-| CP-51 | Fixed | `CP-33` | linux-cleanup-network | `/*/*/RemoteScriptContractTests/C1192_Cleanup_network_requires_positive_absence` | V-2, V-9 | 1 executed, 0 failed/skipped | 1 | 1 |
-| CP-52 | Fixed | `CP-33` | linux-daemon-loss | `/*/*/RemoteScriptContractTests/C1192_Daemon_loss_after_compose_refuses_success` | V-2, V-9 | 1 executed, 0 failed/skipped | 1 | 1 |
-| CP-53 | Fixed | `CP-33` | linux-acquisition-unknown | `/*/*/RemoteScriptContractTests/C1192_Acquisition_unknown_ownership_retains_registration_and_residue` | V-1, V-2, V-9 | 1 executed, 0 failed/skipped | 1 | 1 |
+| CP-41 | Fixed | `CP-33` | linux-receipt-exclusion | `/*/*/RemoteScriptContractTests/C849_Cache_receipts_exclude_credentials_and_payloads` | R-9 | 1 executed, 0 failed/skipped | 1 | 1 |
+| CP-42 | Fixed | `CP-33` | linux-receipt-consumer | `/*/*/RemoteScriptContractTests/C913_Receipts_reject_mixed_digest_types_and_false_smoke_claims` | R-10 | 1 executed, 0 failed/skipped | 1 | 2 |
+| CP-43 | Fixed | `CP-33` | linux-fixture-inventory | `/*/*/RemoteScriptContractTests/C913_Fixture_uses_owned_payloads_and_proven_absent_temp` | R-11 | 1 executed, 0 failed/skipped | 1 | 1 |
+| CP-44 | Fixed | `CP-33` | linux-adjacent | `/*/*/RemoteScriptContractTests/(C1189_*\|C1191_*\|C1193_*\|C1194_*\|C1195_*\|C1192_Summary_*\|C1192_Foreign_*\|C1192_Harness_*\|C1192_Helper_*)*` | R-12 | 19 executed, 0 failed/skipped | 19 | 2 |
+| CP-45 | Fixed | `CP-33` | linux-cleanup-consumer | `/*/*/RemoteScriptContractTests/C1192_Cleanup_consumer_requires_positive_absence` | R-13 | 1 executed, 0 failed/skipped | 1 | 1 |
+| CP-46 | Fixed | `CP-33` | linux-cleanup-helper | `/*/*/RemoteScriptContractTests/C1192_Cleanup_helper_requires_positive_absence` | R-14 | 1 executed, 0 failed/skipped | 1 | 1 |
+| CP-47 | Fixed | `CP-33` | linux-cleanup-masked | `/*/*/RemoteScriptContractTests/C1192_Cleanup_masked_requires_positive_absence` | R-15 | 1 executed, 0 failed/skipped | 1 | 1 |
+| CP-48 | Fixed | `CP-33` | linux-cleanup-work | `/*/*/RemoteScriptContractTests/C1192_Cleanup_work_requires_positive_absence` | R-16 | 1 executed, 0 failed/skipped | 1 | 1 |
+| CP-49 | Fixed | `CP-33` | linux-cleanup-mask | `/*/*/RemoteScriptContractTests/C1192_Cleanup_mask_requires_positive_absence` | R-17 | 1 executed, 0 failed/skipped | 1 | 1 |
+| CP-50 | Fixed | `CP-33` | linux-cleanup-cache | `/*/*/RemoteScriptContractTests/C1192_Cleanup_cache_requires_positive_absence` | R-18 | 1 executed, 0 failed/skipped | 1 | 1 |
+| CP-51 | Fixed | `CP-33` | linux-cleanup-network | `/*/*/RemoteScriptContractTests/C1192_Cleanup_network_requires_positive_absence` | R-19 | 1 executed, 0 failed/skipped | 1 | 1 |
+| CP-52 | Fixed | `CP-33` | linux-daemon-loss | `/*/*/RemoteScriptContractTests/C1192_Daemon_loss_after_compose_refuses_success` | R-20 | 1 executed, 0 failed/skipped | 1 | 1 |
+| CP-53 | Fixed | `CP-33` | linux-acquisition-unknown | `/*/*/RemoteScriptContractTests/C1192_Acquisition_unknown_ownership_retains_registration_and_residue` | R-21 | 1 executed, 0 failed/skipped | 1 | 1 |
 | CP-54 | Fixed | `CP-33` | audit-54 | `/*/*/RemoteScriptContractTests/C1208_Foreign_cache_is_dropped_and_untouched*` | V-1 | 1 executed, 0 failed/skipped | 1 | 1 |
 | CP-55 | Fixed | `CP-33` | audit-55 | `/*/*/RemoteScriptContractTests/C1208_Legacy_container_replacement_is_untouched*` | V-2 | 1 executed, 0 failed/skipped | 1 | 1 |
 | CP-56 | Fixed | `CP-33` | audit-56 | `/*/*/RemoteScriptContractTests/C1208_Legacy_network_replacement_is_untouched*` | V-3 | 1 executed, 0 failed/skipped | 1 | 1 |
@@ -96,3 +96,7 @@ Second repair: CP-33 exposed its next wrapper scenario reusing a still-acquired 
 Final audit refinement: the generic cidfile sweep skipped symlink/directory records for acquired consumers outside the fixed roster, suppressing unknown residue. Add those input cases to CP-61 before changing production. A direct, build-slot-bound fixture assertion establishes their red result on the committed pre-fix source; rerun CP-61 after routing them through the existing refusing record validator. CP-33 also needs its recovery model to register acquisition and restore that record only after the foreign-label fault is restored and full identity reverified. Rerun CP-33 alongside CP-61; other green rows are unchanged.
 
 The committed direct fixture proof at 3f40cc432ae2a6581709817190fc3256ebbd5f45 exited 1 on audit=0, standalone-symlink=0 and standalone-directory=0; fixture-seed and volume-recovery assertions passed. Route admitted standalone records through consumer_release regardless of file type, keeping its unknown/refusal validator. Final targeted run: CP-33/61. SourceLanding Mutation was not run.
+
+## Completion
+
+All CP-33..61 now have passing ordinary receipts: 29 rows, 47 executions, 43 distinct methods; CP-44 exactly 19. Independent fresh TRX and per-source receipt audits passed. Final ordinary evidence is cumulative across explicitly recorded tested commits; only affected rows were rerun after repairs. No ordinary IDs are deferred. Final code tip 4c675e64588c5e3f39a875c203cc34447bc98b39; see 2026-10-13-card-1208-finalizer-code-evidence.md for unedited checkpoint lines, actual source bindings and pending Mutation/W-1. Table Covers for inherited guard rows are explicitly CARD-1208 R-1..21, matching the verification design; this final clarification changes documentation only.
