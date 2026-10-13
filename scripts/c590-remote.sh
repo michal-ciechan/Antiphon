@@ -3332,8 +3332,9 @@ c849_fixture_cleanup_unknown() {
     printf 'Fixture cleanup outcome unknown: %s %s; identity retained in cleanup residue\n' "$kind" "$identity" >&2
 }
 
-# This resource-removal helper reinspects even after exit zero; repeated removal
-# succeeds only when the exact resource is confirmed gone. Compose resources
+# This helper probes the exact resource after removal, including a zero removal exit.
+# Present or unknown outcomes are recorded in residue/ledger; finalization refuses
+# success while residue remains. Compose resources
 # use their recorded project names and the separate positive-absence check.
 c849_fixture_resource_remove() {
     local kind="$1" identity="$2" name="${3:-$2}" state=0 resolved role
@@ -4384,8 +4385,9 @@ JS
     printf 'PASS F-6\n' >> "$CASE_DIR/fixture-groups.txt"
 }
 
-# Record every project resource before teardown; retain earlier producer records
-# even when a later census is empty. All metadata uses the shared publisher.
+# Record project-label volume/network/container names and supplied private volume
+# names before teardown; retain earlier producer records even when a later census
+# is empty. This helper publishes its metadata through the shared publisher.
 c849_fixture_compose_record() {
     local project="$1" record="$CASE_DIR/.fixture-compose-$1" kind listed name rows='' prior
     shift
@@ -4979,7 +4981,7 @@ c849_fixture_consumer_release() {
 # CP-45..52 cover registered finalizer resources after Compose; CP-53 covers
 # work/mask post-create unknown probes, including a one-probe outage.
 # C1192_Foreign_volume_is_refused_after_create checks foreign work/mask volumes.
-# C1208_Foreign_cache_is_dropped_and_untouched checks foreign cache refusal, ledger removal and untouched volume; C1208_Legacy_container_replacement_is_untouched and C1208_Legacy_network_replacement_is_untouched check legacy replacement retention/refusal; C1208_Unacquired_roster_is_untouched checks unacquired consumer/helper retention; C1208_Acquired_objects_are_removed and C1208_Recorded_container_id_does_not_delete_replacement check acquired disposal and ID-only removal; C1208_Legacy_owned_markers_are_migrated checks verified legacy migration, and C1208_Unknown_identity_retains_residue checks unknown refusal/residue. CP-45..53 retain positive-absence checks. CARD-1207 records Compose project resources before teardown and confirms each name afterward; live Docker W-1 is pending.
+# C1208_Foreign_cache_is_dropped_and_untouched checks foreign cache refusal, ledger removal and untouched volume; C1208_Legacy_container_replacement_is_untouched and C1208_Legacy_network_replacement_is_untouched check legacy replacement retention/refusal; C1208_Unacquired_roster_is_untouched checks unacquired consumer/helper retention; C1208_Acquired_objects_are_removed and C1208_Recorded_container_id_does_not_delete_replacement check acquired disposal and ID-only removal; C1208_Legacy_owned_markers_are_migrated checks verified legacy migration, and C1208_Unknown_identity_retains_residue checks unknown refusal/residue. CP-45..53 retain positive-absence checks. CARD-1207 records Compose project resources before teardown, probes each recorded name afterward, and refuses success unless absence is confirmed; live Docker W-1 is pending.
 c849_fixture_finalize() {
     local project file name marker identity network="c849-${RUN}-npm" code=0 owned=0
     [ "${C849_FIXTURE_FINALIZED:-0}" != 1 ] || return "${C849_FIXTURE_FINALIZATION_STATUS:-0}"

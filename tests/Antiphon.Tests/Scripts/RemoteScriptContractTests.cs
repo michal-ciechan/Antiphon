@@ -14,9 +14,9 @@ using SkipTestException = TUnit.Core.Exceptions.SkipTestException;
 
 namespace Antiphon.Tests.Scripts;
 
-// CARD-0604 S3. Text guards over the remote script's two lanes. The script only ever executes on
-// server2 (host lane) or inside the persistent runner (nested lane), so these are the only guards
-// that run on Windows at all; CP-5 through CP-13 are the live rows.
+// This class contains text guards and behavioral Linux-shell models for the remote script's
+// two lanes. Behavioral models use WSL on Windows and require their declared prerequisites;
+// live Docker rows remain separate. Historical CARD-0604 S3 live rows were CP-5 through CP-13.
 [Category("Unit")]
 public sealed class RemoteScriptContractTests
 {
@@ -769,7 +769,7 @@ public sealed class RemoteScriptContractTests
 
     // CP-2 checks the registered cache/work/mask set and consumer/helper order.
     // C1192_Cleanup_releases_only_registered_current_run_resources checks work/mask labels.
-    // C1208_Foreign_cache_is_dropped_and_untouched checks foreign cache refusal, ledger removal and untouched volume; C1208_Legacy_container_replacement_is_untouched and C1208_Legacy_network_replacement_is_untouched check legacy replacement retention/refusal; C1208_Unacquired_roster_is_untouched checks unacquired consumer/helper retention; C1208_Acquired_objects_are_removed and C1208_Recorded_container_id_does_not_delete_replacement check acquired disposal and ID-only removal; C1208_Legacy_owned_markers_are_migrated checks verified legacy migration, and C1208_Unknown_identity_retains_residue checks unknown refusal/residue. CP-45..53 retain positive-absence checks. CARD-1207 records Compose project resources before teardown and confirms each name afterward; live Docker W-1 is pending.
+    // C1208_Foreign_cache_is_dropped_and_untouched checks foreign cache refusal, ledger removal and untouched volume; C1208_Legacy_container_replacement_is_untouched and C1208_Legacy_network_replacement_is_untouched check legacy replacement retention/refusal; C1208_Unacquired_roster_is_untouched checks unacquired consumer/helper retention; C1208_Acquired_objects_are_removed and C1208_Recorded_container_id_does_not_delete_replacement check acquired disposal and ID-only removal; C1208_Legacy_owned_markers_are_migrated checks verified legacy migration, and C1208_Unknown_identity_retains_residue checks unknown refusal/residue. CP-45..53 retain positive-absence checks. CARD-1207 records Compose project resources before teardown, probes each recorded name afterward, and refuses success unless absence is confirmed; live Docker W-1 is pending.
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public void C1192_Cleanup_releases_only_registered_current_run_resources()
@@ -4538,7 +4538,8 @@ public sealed class RemoteScriptContractTests
         // the path (an assertion that the runtime image does NOT carry sudo) is the opposite of
         // an invocation and must not trip this.
         //
-        // Two places may invoke it. `ensure_dirs`' host branch elevates on the server2 HOST to
+        // The allowlist below names the admitted sudo callers and their required lane checks.
+        // `ensure_dirs`' host branch elevates on the server2 HOST to
         // create its own directories. `case_custody_containment` is a host-lane case whose sudo
         // is inside a `docker exec -u 1654` payload -- it is executed by the container as the app
         // uid, against the allow-listed grant, which is the very thing that case measures.
@@ -4548,7 +4549,7 @@ public sealed class RemoteScriptContractTests
         sudoLines.ShouldNotBeEmpty("the host lane still elevates to create its own directories");
         var containment = Block(text, "case_custody_containment");
         var tempDeploy = Block(text, "case_deploy_temp_runner");
-        // CARD-0660 (amended): the third is `ensure_runner_codex_home`, which creates and owns the
+        // CARD-0660: `ensure_runner_codex_home` creates and owns the
         // host Codex home for uid 1654 -- a chown the host user mc cannot do. It refuses off the
         // host lane before any of its sudo lines.
         var codexHome = Block(text, "ensure_runner_codex_home");
@@ -4783,7 +4784,8 @@ public sealed class RemoteScriptContractTests
         Block(text, "compose_child").ShouldNotContain("HOST_PROJECT");
         Block(text, "compose_host").ShouldContain("-p \"$HOST_PROJECT\"");
         Block(text, "compose_host").ShouldNotContain("CHILD_PROJECT");
-        // `down -v` is only ever aimed at the child or the temp project, never at the persistent project.
+        // `down -v` targets the run-scoped child/fixture projects, the temporary project, or
+        // admitted retired c590 projects; it never targets the standing persistent project.
         Block(text, "compose_temp").ShouldContain("-p \"$TEMP_PROJECT\"");
         foreach (var line in text.Replace("\r\n", "\n").Split('\n'))
         {

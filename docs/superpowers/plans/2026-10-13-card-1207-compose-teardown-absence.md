@@ -1,8 +1,8 @@
 # CARD-1207 Compose teardown absence
 
-Code/landing owner: 2be1191d. Base: 3cea97716b3567d9240d3df52b50cc96053c8fe4. Branch feat/card-task-2be1191d; worktree /work/worktrees/task-2be1191d. Restart: none.
+Original Code task: 2be1191d-082a-4820-ba16-cb58fdf27379. Original base: 3cea97716b3567d9240d3df52b50cc96053c8fe4; source branch feat/card-task-2be1191d. Repair Code/landing owner: 5c3f0366-48a5-4a7f-8e14-75501670e43f, branch feat/card-task-5c3f0366, worktree /work/worktrees/task-5c3f0366, repair base 55890fe1149789bceeb1c16f54e20700aa0f42bb. Restart: none.
 
-Root cause: finalization accepts Compose down -v by exit status and discards controller documents without probing private resources.
+Original root cause: finalization accepted Compose down -v by exit status and discarded controller documents without probing private resources.
 Decision: before teardown, persist project volume/network/container names from successful project-label censuses, plus private volume names created by the retention producer. Preserve earlier records across producer and finalizer teardown. Recording failure refuses teardown. After down, confirm each exact name absent only by a successful list omitting it or exit-1 exact missing-resource text through the S7 parser. Present objects and unknown outcomes retain named residue/ledger and refuse success. Use c849_fixture_write for every new case-directory metadata publication; no bypass writer.
 
 Files: docs/docker-stack.md; scripts/c590-remote.sh; scripts/fixtures/c1192-workspace-contract.sh; tests/Antiphon.Tests/Scripts/RemoteScriptContractTests.cs; this plan.
