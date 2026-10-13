@@ -107,8 +107,8 @@ public sealed class WindowsUnitPlatformAdmissionTests
         .SelectMany(path => CSharpSyntaxTree.ParseText(File.ReadAllText(path)).GetRoot().DescendantNodes().OfType<MethodDeclarationSyntax>()).ToArray();
 
     private static string Identity(MethodDeclarationSyntax method) =>
-        method.Ancestors().OfType<BaseNamespaceDeclarationSyntax>().First().Name + "."
-        + method.Ancestors().OfType<ClassDeclarationSyntax>().First().Identifier.ValueText + "." + method.Identifier.ValueText;
+        (method.Ancestors().OfType<BaseNamespaceDeclarationSyntax>().FirstOrDefault()?.Name.ToString() ?? "") + "."
+        + (method.Ancestors().OfType<TypeDeclarationSyntax>().FirstOrDefault()?.Identifier.ValueText ?? "") + "." + method.Identifier.ValueText;
 
     private sealed record Observation(string Identity, string Outcome, string Reason);
 
