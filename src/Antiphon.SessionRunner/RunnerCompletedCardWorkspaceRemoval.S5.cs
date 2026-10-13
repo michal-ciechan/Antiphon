@@ -8,6 +8,7 @@ public sealed partial class RunnerCompletedCardWorkspaceRemoval
     internal Func<Task>? AfterInitialInspectionForTest { get; set; }
     internal Action<string>? BeforeMutationForTest { get; set; }
     internal Action<string>? BeforeDeleteEntryForTest { get; set; }
+    internal Action<string>? AfterDeleteValidationForTest { get; set; }
     internal Action<string>? AfterJournalStateForTest { get; set; }
     internal Action<string>? AfterMutationForTest { get; set; }
 
@@ -160,7 +161,7 @@ public sealed partial class RunnerCompletedCardWorkspaceRemoval
                 intent = Spend(journal, intent with { Phase = "Deleting" }, "delete");
                 BeforeMutationForTest?.Invoke("delete");
                 await RunnerWorkspaceNoFollowDelete.DeleteOwnedAsync(aside, intent.DirectoryIdentity!, intent.DirectoryEntries!,
-                    BeforeDeleteEntryForTest, ct);
+                    BeforeDeleteEntryForTest, ct, AfterDeleteValidationForTest);
                 AfterMutationForTest?.Invoke("delete");
             }
             else if (intent.Phase != "Deleting") return Hold("absence_without_receipt");

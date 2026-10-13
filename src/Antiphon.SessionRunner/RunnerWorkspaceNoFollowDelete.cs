@@ -140,7 +140,7 @@ internal static class RunnerWorkspaceNoFollowDelete
     }
 
     internal static async Task DeleteOwnedAsync(string root, string identity, IReadOnlyList<Entry> entries,
-        Action<string>? beforeEntry, CancellationToken ct)
+        Action<string>? beforeEntry, CancellationToken ct, Action<string>? afterValidation = null)
     {
         if (Identity(root) != identity) Changed(root);
         await ValidateRemainingAsync(root, entries, ct);
@@ -148,7 +148,7 @@ internal static class RunnerWorkspaceNoFollowDelete
         if (OperatingSystem.IsWindows())
         {
             using var ancestors = PinWindowsParents(root);
-            await DeleteWindowsAsync(root, root, allowed, beforeEntry, ct, identity);
+            await DeleteWindowsAsync(root, root, allowed, beforeEntry, ct, identity, afterValidation);
         }
         else
         {
@@ -261,7 +261,7 @@ internal static class RunnerWorkspaceNoFollowDelete
     [DllImport("libc", SetLastError = true)] private static extern int fstatat(int fd, string path, IntPtr stat, int flags);
 
     private static async Task DeleteWindowsAsync(string path, string root, Dictionary<string, Entry> allowed,
-        Action<string>? beforeEntry, CancellationToken ct, string? rootIdentity = null)
+        Action<string>? beforeEntry, CancellationToken ct, string? rootIdentity = null, Action<string>? afterValidation = null)
     {
         ct.ThrowIfCancellationRequested();
         var relative = Path.GetRelativePath(root, path);
@@ -286,9 +286,10 @@ internal static class RunnerWorkspaceNoFollowDelete
             if (entry.Identity != info.Identity || entry.Directory != info.Directory || entry.Size != info.Size) Changed(relative);
             if (info.Regular && await HashAsync(handle, info, path, ct) != entry.Hash) Changed(relative);
         }
+        afterValidation?.Invoke(path);
         if (info.Directory)
             foreach (var child in ListChildren(path, ct))
-                await DeleteWindowsAsync(child, root, allowed, beforeEntry, ct);
+                await DeleteWindowsAsync(child, root, allowed, beforeEntry, ct, afterValidation: afterValidation);
         ct.ThrowIfCancellationRequested();
         // This very handle denies write and delete sharing until disposition;
         // ancestor handles likewise prevent replacement of the traversed chain.
