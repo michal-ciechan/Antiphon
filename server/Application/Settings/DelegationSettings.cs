@@ -1132,6 +1132,13 @@ public sealed class DelegationSettings
         /// is seed history, not a live override. The binding key stays <c>RecommendedInFlight</c>.
         /// </summary>
         public int? RecommendedInFlight { get; set; } = 1;
+
+        /// <summary>
+        /// CARD-0507 D-2: <c>tool-*</c> instruction bundles this role's delegates carry, from
+        /// <c>Delegation:RolePolicy:&lt;Role&gt;:Bundles</c>. Empty on every shipped role
+        /// (RolePolicyToolBundleTests.shipped_role_policy_lists_no_tool_bundles_on_any_role).
+        /// </summary>
+        public List<string> Bundles { get => []; set { } }
     }
 
     /// <summary>One complete pair in <see cref="DelegationSettings.ComplexityChains"/>.</summary>
