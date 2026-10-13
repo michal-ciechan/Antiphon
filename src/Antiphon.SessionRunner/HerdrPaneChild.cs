@@ -21,6 +21,7 @@ internal sealed partial class HerdrPaneChild : ISessionChild
     private readonly HerdrPlacementCoordinator? _coordinator;
     private readonly Func<string, Guid?, PaneBinding?>? _findBound;
     private readonly HerdrNamedTabResolver _namedTabs;
+    internal string? RequiredWorkspacePath { get; init; }
 
     private Guid _sessionId;
     private string? _paneId;
@@ -155,6 +156,10 @@ internal sealed partial class HerdrPaneChild : ISessionChild
         }
 
         var occupant = inspected.Occupant;
+        if (RequiredWorkspacePath is { } expectedWorkspace
+            && (occupant.Cwd is null || RunnerWorkspaceUseGate.Normalize(occupant.Cwd)
+                != RunnerWorkspaceUseGate.Normalize(expectedWorkspace)))
+            throw new PhoneHomeAdmissionException("workspace_owner_changed", "Attached workspace changed after admission.", 409);
         if (occupant.Pid != request.ExpectedChildPid)
         {
             throw new HerdrLaunchException(

@@ -98,9 +98,23 @@ public sealed partial class RunnerWorkspaceService
         _recipientStoreId = runnerStoreId;
     }
 
-    public Task<PhoneHomeWorkspaceMirrorResponse> MirrorAsync(
-        PhoneHomeWorkspaceMirrorRequest request, CancellationToken ct) =>
-        request.Binding is null ? MirrorUnboundAsync(request, ct) : MirrorBoundAsync(request, ct);
+    internal RunnerWorkspaceUseGate? WorkspaceUseGate { get; set; }
+    internal Func<Task>? WorkspaceAdmissionForTest { get; set; }
+
+    public async Task<PhoneHomeWorkspaceMirrorResponse> MirrorAsync(
+        PhoneHomeWorkspaceMirrorRequest request, CancellationToken ct)
+    {
+        // Keep the name guard before path construction for bound and legacy requests.
+        if (!NamePattern.IsMatch(request.Name ?? ""))
+            throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedTarget,
+                "Mirror name must be task-<8 hex>.", 409);
+        await using var workspace = WorkspaceUseGate is null ? null :
+            await WorkspaceUseGate.AcquireUseAsync(Path.Combine(_worktreeRoot, request.Name!), ct);
+        if (WorkspaceAdmissionForTest is { } reached) await reached();
+        return request.Binding is null
+            ? await MirrorUnboundAsync(request, ct)
+            : await MirrorBoundAsync(request, ct);
+    }
 
     private async Task<PhoneHomeWorkspaceMirrorResponse> MirrorUnboundAsync(
         PhoneHomeWorkspaceMirrorRequest request, CancellationToken ct)
