@@ -283,6 +283,180 @@ public class ChannelReplyLateConfirmDispatchTests
         h.Adapter.Killed.ShouldBeFalse();
     }
 
+    [Test]
+    [Arguments(false, true)]
+    [Arguments(false, false)]
+    [Arguments(true, true)]
+    [Arguments(true, false)]
+    public async Task Grace_dispatch_keeps_its_confirmed_turn_when_a_newer_turn_completes(
+        bool unifiedRecovery, bool catalog)
+    {
+        await using var h = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        {
+            Outbound = new ChannelOutboundSettings { UnifiedRecoveryEnabled = unifiedRecovery },
+            AlwaysOn = true,
+            Bridge = new ChannelBridgeSettings { Enabled = true, DebounceWindowMs = 0 },
+        });
+        await h.InsertTurnAsync("prior prompt", "prior answer");
+        var chatId = catalog ? await h.BindChannelAsync() : $"uncatalogued-{Guid.NewGuid():N}";
+        const string prompt = "[Telegram Family] Earlier question, confirmed by grace";
+        const string answer = "The earlier answer belongs to the earlier question.";
+        const string laterPrompt = "[Telegram Family] A distinct later question";
+        const string laterAnswer = "The later answer belongs to its own trigger.";
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var bound = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        h.Queue.LateConfirmDispatchStartingAsync = async _ =>
+        {
+            entered.TrySetResult();
+            await release.Task.WaitAsync(bound.Token);
+        };
+        h.Adapter.OnSubmitted = submitted =>
+        {
+            h.Runner.SetTranscript(new(h.SessionId,
+            [
+                Event(h.SessionId, 4, TranscriptKinds.UserPrompt, "user", submitted),
+                Event(h.SessionId, 5, TranscriptKinds.AssistantText, "assistant", answer),
+                Event(h.SessionId, 6, TranscriptKinds.TurnEnd, "assistant", null, "end_turn"),
+            ], 6));
+            return Task.CompletedTask;
+        };
+        var enqueue = h.Queue.EnqueueAsync(h.SessionId, prompt, MessageSendMode.WhenIdle, bound.Token,
+            origin: QueuedMessageOrigin.Channel, conversationKey: $"telegram:{chatId}");
+        Guid laterId;
+        try
+        {
+            await entered.Task.WaitAsync(bound.Token);
+            await enqueue.WaitAsync(bound.Token);
+            laterId = await h.SeedChannelCorrelationAsync(laterPrompt, $"telegram:{chatId}");
+            await h.InsertTurnAsync(laterPrompt, laterAnswer);
+        }
+        finally
+        {
+            release.TrySetResult();
+            await enqueue.WaitAsync(bound.Token);
+            await h.Queue.LateConfirmDispatchesSettledAsync().WaitAsync(bound.Token);
+        }
+        await h.DrainOutboundAsync();
+        var first = h.Messaging.SentReplies.ShouldHaveSingleItem();
+        first.Text.ShouldBe(answer);
+        first.ConversationId.ShouldBe(chatId);
+        (await RowAsync(laterId)).ChannelReplySettledAt.ShouldBeNull();
+
+        await h.Dispatcher.OnTurnEndAsync(h.SessionId, bound.Token);
+        await h.DrainOutboundAsync();
+        h.Messaging.SentReplies.Select(r => r.Text).ShouldBe(new[] { answer, laterAnswer });
+        h.Messaging.SentReplies.ShouldAllBe(r => r.ConversationId == chatId);
+    }
+
+    [Test]
+    [Arguments(false, true)]
+    [Arguments(true, false)]
+    public async Task Grace_and_runtime_redispatch_share_one_atomic_publication_owner(
+        bool unifiedRecovery, bool catalog)
+    {
+        var producer = new HeldProducer();
+        var both = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var bound = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        var arrivals = 0;
+        await using var h = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        {
+            Outbound = new ChannelOutboundSettings { UnifiedRecoveryEnabled = unifiedRecovery },
+            AlwaysOn = true,
+            ConfigureServices = services =>
+            {
+                services.AddSingleton<IAntiphonMessagingProducer>(producer);
+                services.AddScoped(sp =>
+                {
+                    var outbound = ActivatorUtilities.CreateInstance<ChannelOutboundService>(sp);
+                    outbound.ProbeBarrierAsync = async (stage, _, _) =>
+                    {
+                        if (stage != "direct-admission") return;
+                        if (Interlocked.Increment(ref arrivals) == 2) both.TrySetResult();
+                        await release.Task.WaitAsync(bound.Token);
+                    };
+                    return outbound;
+                });
+            },
+        });
+        var chatId = catalog ? await h.BindChannelAsync() : $"uncatalogued-{Guid.NewGuid():N}";
+        const string prompt = "[Telegram Family] Race grace with the runtime turn end";
+        const string answer = "This answer must reach the chat once.";
+        var id = await h.SeedPendingMessageAsync(prompt, deliveryAttempts: 1, baselineSequence: 0,
+            origin: QueuedMessageOrigin.Channel, conversationKey: $"telegram:{chatId}");
+        h.Runner.SetTranscript(Turns(h.SessionId, (prompt, answer)));
+        await h.Queue.HandleDeliveryFailureAsync(h.SessionId, [id], DeliveryVerdict.NoTranscriptRecord, bound.Token);
+        // Invoke the real live TurnEnd entry, including its dispatcher-first/queue/redispatch chain.
+        var runtime = (Task)typeof(AgentSessionRuntime).GetMethod("FlushQueueOnIdleAsync",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .Invoke(h.Runtime, [h.SessionId, bound.Token])!;
+        try
+        {
+            await both.Task.WaitAsync(bound.Token);
+            producer.Sent.ShouldBeEmpty();
+        }
+        finally
+        {
+            release.TrySetResult();
+            producer.Release.TrySetResult();
+            await runtime.WaitAsync(bound.Token);
+            await h.Queue.LateConfirmDispatchesSettledAsync().WaitAsync(bound.Token);
+        }
+        var reply = producer.Sent.ShouldHaveSingleItem();
+        reply.Text.ShouldBe(answer);
+        reply.ConversationId.ShouldBe(chatId);
+        (await RowAsync(id)).ChannelReplySettledAt.ShouldNotBeNull();
+    }
+
+    [Test]
+    [Arguments(false, true)]
+    [Arguments(true, false)]
+    public async Task Failed_direct_publication_releases_only_its_completed_claim_for_retry(
+        bool unifiedRecovery, bool catalog)
+    {
+        var producer = new FailOnceProducer();
+        await using var h = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        {
+            Outbound = new ChannelOutboundSettings { UnifiedRecoveryEnabled = unifiedRecovery },
+            AlwaysOn = true,
+            ConfigureServices = s => s.AddSingleton<IAntiphonMessagingProducer>(producer),
+        });
+        var chatId = catalog ? await h.BindChannelAsync() : $"uncatalogued-{Guid.NewGuid():N}";
+        const string prompt = "[Telegram Family] A failed send still owes its answer";
+        const string answer = "The retry publishes this answer exactly once.";
+        var id = await h.SeedPendingMessageAsync(prompt, deliveryAttempts: 1, baselineSequence: 0,
+            origin: QueuedMessageOrigin.Channel, conversationKey: $"telegram:{chatId}");
+        h.Runner.SetTranscript(Turns(h.SessionId, (prompt, answer)));
+        await VerifierGraceAsync(h, id);
+        producer.Attempts.ShouldBe(1);
+        producer.Sent.ShouldBeEmpty();
+        var failed = await RowAsync(id);
+        failed.Status.ShouldBe(QueuedMessageStatus.Sent);
+        failed.DeliveryVerdict.ShouldBe(DeliveryVerdict.LateConfirmed);
+        failed.ChannelReplySettledAt.ShouldBeNull();
+        (await h.Dispatcher.PendingCountAsync(h.SessionId)).ShouldBe(1);
+        await Restarted(h).OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        producer.Attempts.ShouldBe(2);
+        var reply = producer.Sent.ShouldHaveSingleItem();
+        reply.Text.ShouldBe(answer);
+        reply.ConversationId.ShouldBe(chatId);
+        (await RowAsync(id)).ChannelReplySettledAt.ShouldNotBeNull();
+    }
+
+    private sealed class FailOnceProducer : IAntiphonMessagingProducer
+    {
+        public int Attempts { get; private set; }
+        public List<ChannelReply> Sent { get; } = [];
+        public Task SendAsync(ChannelReply reply, CancellationToken cancellationToken = default)
+        {
+            if (++Attempts == 1) throw new IOException("Controlled refusal before acceptance");
+            Sent.Add(reply);
+            return Task.CompletedTask;
+        }
+    }
+
     /// <summary>A producer whose first send blocks until the test releases it.</summary>
     private sealed class HeldProducer : IAntiphonMessagingProducer
     {

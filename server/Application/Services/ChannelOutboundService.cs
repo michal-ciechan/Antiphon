@@ -471,6 +471,8 @@ public sealed class ChannelOutboundService
     private async Task<ChannelOutboundSendOutcome> PublishDirectAsync(
         ChannelReply reply, ChannelOutboundSource source, CancellationToken ct)
     {
+        if (ProbeBarrierAsync is { } admission)
+            await admission("direct-admission", source.CorrelationIds.FirstOrDefault(), ct);
         var now = _clock.GetUtcNow().UtcDateTime;
         var correlations = new List<SessionQueuedMessage>();
         foreach (var id in source.CorrelationIds)
