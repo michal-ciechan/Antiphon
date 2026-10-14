@@ -14,8 +14,8 @@ namespace Antiphon.Tests.Scripts;
 public sealed class CardListSearchScriptTests
 {
     private const string BoardId = "22222222-2222-2222-2222-222222222222";
-    private readonly record struct Reply(int Status, string Body);
-    private readonly record struct Call(string Path, string Query, string? TaskToken)
+    internal readonly record struct Reply(int Status, string Body);
+    internal readonly record struct Call(string Path, string Query, string? TaskToken, string Method, string Body)
     {
         public string? Value(string key)
         {
@@ -29,7 +29,7 @@ public sealed class CardListSearchScriptTests
         }
     }
 
-    private sealed class Stub : IDisposable
+    internal sealed class Stub : IDisposable
     {
         private readonly HttpListener _listener = new();
         private readonly CancellationTokenSource _stop = new();
@@ -52,7 +52,9 @@ public sealed class CardListSearchScriptTests
                 try { context = await _listener.GetContextAsync(); }
                 catch { return; }
                 var request = context.Request;
-                var call = new Call(request.Url!.AbsolutePath, request.Url.Query, request.Headers["X-Antiphon-Task-Token"]);
+                using var reader = new StreamReader(request.InputStream, request.ContentEncoding);
+                var call = new Call(request.Url!.AbsolutePath, request.Url.Query,
+                    request.Headers["X-Antiphon-Task-Token"], request.HttpMethod, await reader.ReadToEndAsync());
                 Calls.Add(call);
                 Reply reply;
                 if (call.Path.EndsWith("/api/boards", StringComparison.Ordinal))
@@ -91,7 +93,7 @@ public sealed class CardListSearchScriptTests
         return JsonSerializer.Serialize(new { cards, total, truncated = more, nextPageToken = token });
     }
 
-    private static async Task<(int ExitCode, string Stdout, string Stderr)> RunAsync(Stub stub, params string[] args)
+    internal static async Task<(int ExitCode, string Stdout, string Stderr)> RunAsync(Stub stub, params string[] args)
     {
         var start = new ProcessStartInfo("pwsh") { RedirectStandardOutput = true, RedirectStandardError = true };
         start.ArgumentList.Add("-NoProfile");
