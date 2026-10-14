@@ -215,10 +215,8 @@ public sealed partial class SessionMessageQueueService
         AppDbContext db, Guid sessionId, DateTime generation, CancellationToken ct)
     {
         var attempts = await db.ExpectationNudges.AsNoTracking()
-            .Where(n => n.DestinationSessionId == sessionId
-                && (n.AttemptState == ExpectationAttemptState.Attempting
-                    || n.AttemptState == ExpectationAttemptState.Uncertain
-                    || n.AttemptState == ExpectationAttemptState.Unconfirmed))
+            .Where(ExpectationHoldAudit.HoldingAttempt)
+            .Where(n => n.DestinationSessionId == sessionId)
             .Select(n => new { n.Id, n.Body, n.DestinationGeneration, n.BaselineSequence })
             .ToListAsync(ct);
         var current = attempts
@@ -355,10 +353,8 @@ public sealed partial class SessionMessageQueueService
             var generation = SessionGeneration.Normalize(startedAt);
 
             var holding = (await db.ExpectationNudges.AsNoTracking()
-                    .Where(n => n.DestinationSessionId == sessionId
-                        && (n.AttemptState == ExpectationAttemptState.Attempting
-                            || n.AttemptState == ExpectationAttemptState.Uncertain
-                            || n.AttemptState == ExpectationAttemptState.Unconfirmed))
+                    .Where(ExpectationHoldAudit.HoldingAttempt)
+                    .Where(n => n.DestinationSessionId == sessionId)
                     .Select(n => new { n.Id, n.AttemptState, n.DestinationGeneration, n.AuditCommentId, n.CheckEventIdsJson })
                     .ToListAsync(ct))
                 .Where(n => n.DestinationGeneration is { } typed && SessionGeneration.Equal(typed, generation))

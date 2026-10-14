@@ -1,3 +1,4 @@
+using System.Linq.Expressions;
 using System.Text.Json;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
@@ -17,6 +18,12 @@ namespace Antiphon.Server.Application.Services;
 public static class ExpectationHoldAudit
 {
     public const string ReleasedMarkerPrefix = "[expectation-hold-released:";
+
+    /// <summary>Attempt states considered by the composer gate, operator release and audit deletion guard.</summary>
+    public static Expression<Func<ExpectationNudge, bool>> HoldingAttempt => n =>
+        n.AttemptState == ExpectationAttemptState.Attempting
+        || n.AttemptState == ExpectationAttemptState.Uncertain
+        || n.AttemptState == ExpectationAttemptState.Unconfirmed;
 
     public static string ReleaseRoute(Guid sessionId) => $"/api/sessions/{sessionId:D}/expectation-hold/release";
 

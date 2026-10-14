@@ -107,7 +107,7 @@ exercise the shared holding-state predicate used by queue, release and deletion.
 PC-10 pending: omit refusal or omit one holding state, V-5 (board/project x three states: 6 variants).
 PC-11 pending: broaden blocker outside doomed comments, V-6 (board/project: 2 variants).
 PC-12 pending: treat Released as holding, V-5 release-followed-by-delete (board/project: 2 variants).
-PC-13 pending: move refusal after a destructive statement, V-5 (board/project: 2 variants); Mutation checks missing-control coverage for transactional rollback masking statement order.
+PC-13 pending: move refusal after a destructive statement, V-5 (board/project: 2 variants); the command interceptor requires zero non-query SQL before refusal.
 PC-1..PC-13 remain pending SourceLanding Mutation, including missing-control discovery.
 
 Repair S1 runs CP-1 red against unchanged production, then repair S2 reruns CP-1 plus
@@ -123,7 +123,7 @@ R-3 remains deferred under the explicit repair brief. R-4 retained for cumulativ
 | CP-2 | S2 | CP-1 | deletion-regressions | `/*/*/(ProjectDeletionTests*)\|(BoardProjectArchiveApiTests*)\|(CardFilePrivacyOwnershipAcceptanceTests*)/*` | R-1, R-2 | all 38 cases, 0 failed/skipped | 38 | 3 |
 | CP-4 | S2 | CP-1 | deletion-consumers | `/*/*/(SessionStateWarmupTests*)\|(CardFileBoardLookupTests*)/*` | R-4 | all 61 cases, 0 failed/skipped | 61 | 3 |
 
-| CP-5 | S2 | CP-1 | expectation-hold-regressions | `/*/*/(ExpectationDirectDeliveryTests*)\|(ExpectationHoldReleaseEndpointTests*)/*` | R-5 | named full classes, 0 failed/skipped | 1 | 4 |
+| CP-5 | S2 | CP-1 | expectation-hold-regressions | `/*/*/(ExpectationDirectDeliveryTests*)\|(ExpectationHoldReleaseEndpointTests*)/*` | R-5 | 18 cases, 0 failed/skipped | 18 | 4 |
 
 S1 runs CP-1 by explicit row selection before the S2 implementation; S2 reruns the same row
 and runs CP-2/CP-4 once. Outputs from red S1 are removed before the final fresh build.

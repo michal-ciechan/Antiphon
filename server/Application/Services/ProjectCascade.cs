@@ -1,3 +1,4 @@
+using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
@@ -72,6 +73,30 @@ public static class ProjectCascade
             .Where(c => boardIds.Contains(c.BoardId))
             .Select(c => c.Id)
             .ToListAsync(ct);
+        // The audit can live here while its destination session survives elsewhere. Removing
+        // a holding nudge would release that session's composer without an audited release.
+        // Lock the selected rows, including None: a delivery claim must not turn one into
+        // Attempting between this check and deletion. The caller's transaction retains locks.
+        var nudges = await db.ExpectationNudges.FromSql($"""
+            SELECT n.* FROM "ExpectationNudges" AS n
+            INNER JOIN "CardComments" AS c ON c."Id" = n."AuditCommentId"
+            WHERE c."CardId" = ANY({cardIds.ToArray()})
+            ORDER BY n."Id"
+            FOR UPDATE OF n
+            """).AsNoTracking().ToListAsync(ct);
+        var holding = nudges.AsQueryable().Where(ExpectationHoldAudit.HoldingAttempt).ToList();
+        if (holding.Count > 0)
+        {
+            var sessions = holding.Where(n => n.DestinationSessionId.HasValue)
+                .Select(n => n.DestinationSessionId!.Value).Distinct().Order().ToList();
+            throw new ConflictException(
+                "Deletion is blocked by expectation-watchdog composer holds. "
+                + string.Join(" ", sessions.Select(ExpectationHoldAudit.ReleaseHint))
+                + (holding.Any(n => n.DestinationSessionId is null)
+                    ? " A holding nudge has no destination session; inspect its audit before retrying deletion."
+                    : string.Empty),
+                "project_delete_blocked_by_expectation_hold");
+        }
         var runIds = await db.CardWorkflowRuns
             .Where(r => cardIds.Contains(r.CardId))
             .Select(r => r.Id)
