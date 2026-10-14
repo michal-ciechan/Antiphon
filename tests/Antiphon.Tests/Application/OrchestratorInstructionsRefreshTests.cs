@@ -76,9 +76,10 @@ public class OrchestratorInstructionsRefreshTests
 
         fault.Failures.ShouldBe(tier is null ? 3 : 1);
         h.Adapter.SubmittedBodies.Count.ShouldBe(1);
+        h.Adapter.SubmittedBodies[0].Length.ShouldBeLessThanOrEqualTo(700);
         foreach (var affected in fault.Tiers)
             h.Adapter.SubmittedBodies[0].ShouldContain(
-                $"matrix: Plan {affected} Codex/Frontier (gpt-6-astra) → unknown (chain read failed)");
+                $"matrix: Plan {affected} ClaudeCode/Low (haiku) → unknown (chain read failed)");
         h.Adapter.SubmittedBodies[0].ShouldNotContain("→ unset");
         var failed = await ReadStateAsync(h);
         await Instructions(h).ReconcileNowAsync("same chain read failure");
@@ -88,9 +89,10 @@ public class OrchestratorInstructionsRefreshTests
         fault.Enabled = false;
         await Instructions(h).ReconcileNowAsync("chain read recovered");
         h.Adapter.SubmittedBodies.Count.ShouldBe(2);
+        h.Adapter.SubmittedBodies[1].Length.ShouldBeLessThanOrEqualTo(700);
         foreach (var affected in fault.Tiers)
             h.Adapter.SubmittedBodies[1].ShouldContain(
-                $"matrix: Plan {affected} unknown (chain read failed) → Codex/Frontier (gpt-6-astra)");
+                $"matrix: Plan {affected} unknown (chain read failed) → ClaudeCode/Low (haiku)");
         var recovered = await ReadStateAsync(h);
         recovered.Revision.ShouldBe(failed.Revision + 1);
         (await File.ReadAllTextAsync(recovered.WrittenPath)).ShouldNotContain("unknown (chain read failed)");
@@ -99,13 +101,16 @@ public class OrchestratorInstructionsRefreshTests
     private static async Task<BridgeQueueHarness> CreateReadFailureHarnessAsync(ChainReadFault fault)
     {
         var h = await CreateHarnessAsync(fault);
+        // Use a short real filename and candidate so the three tier transitions fit the
+        // existing 700-character notice wrapper. Longer notices retain its usual clipping.
+        h.Delegation.OrchestratorInstructions.Path = Path.Combine(h.TempRoot, "i.md");
         await AttachBundleAsync(h);
         h.Delegation.OrchestratorInstructions.Notify = OrchestratorInstructionsNotify.Off;
         await using var scope = h.Provider.CreateAsyncScope();
         var chains = scope.ServiceProvider.GetRequiredService<ComplexityChainService>();
         foreach (var tier in fault.Tiers)
             await chains.UpsertAsync(AgentTaskRole.Plan, tier,
-                new PutComplexityChainRequest([new(AgentKind.Codex, AgentModelLevel.Frontier)],
+                new PutComplexityChainRequest([new(AgentKind.ClaudeCode, AgentModelLevel.Low)],
                     RoutingPinProvenance.Human, "read-failure witness"), null, CancellationToken.None);
         await Instructions(h).WhenIdleAsync();
         await Instructions(h).ReconcileNowAsync("startup");
