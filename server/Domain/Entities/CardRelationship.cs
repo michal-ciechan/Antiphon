@@ -6,7 +6,7 @@ namespace Antiphon.Server.Domain.Entities;
 /// One directed relationship between two cards (CARD-0100). For <see cref="CardRelationshipKind.BlockedBy"/>,
 /// <see cref="CardId"/> is the blocked card and <see cref="RelatedCardId"/> the blocker; "blocks" is the
 /// inverse read of the same row. Whether the blocker is resolved is computed at read time
-/// (<c>CardBlockers</c>), so the row is never rewritten when the blocker closes.
+/// (<c>CardBlockers</c>).
 /// </summary>
 public class CardRelationship
 {

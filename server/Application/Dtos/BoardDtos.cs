@@ -118,7 +118,10 @@ public sealed record CardDto(
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public int OpenBlockerCount { get; init; }
 
-    /// <summary>CARD-0100. Every BlockedBy row, resolved ones included; null (omitted) when the card has none.</summary>
+    /// <summary>
+    /// CARD-0100. The BlockedBy rows, resolved ones included; null (omitted) when the card has none
+    /// (CardRelationshipApiTests.Card_and_list_views_carry_open_blocker_count_and_blockers_excluding_resolved).
+    /// </summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public IReadOnlyList<CardBlockerSummaryDto>? Blockers { get; init; }
 }
