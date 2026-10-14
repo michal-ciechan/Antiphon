@@ -54,7 +54,7 @@ Pass counts:
 | Editor | 519/520, 1 timeout | 520/520 |
 | Tab | 60/60 | 60/60 |
 
-Total test time in the editor file is 2.2x lower: median 202 s before, 105 s after.
+Total test time in the editor file is 1.9x lower: median 202 s before, 104.5 s after (202 / 104.5 = 1.93; ten-run sums 2,206 s / 1,146 s = 1.92).
 
 ### Margin
 
@@ -88,3 +88,7 @@ The target is a slowest test of at most 6.67 s, which is 3x below 20 s.
 - `git merge-tree --write-tree origin/master(bb1e12e41) HEAD`: exit 0.
 - Mutation was not run; every PC stays pending.
 - Budget: 45 min planned; about 95 min actual, mostly build-slot waits (8–17 min each) and the 40-minute load loop.
+
+## Corrections (Code 5eb3de29, Review 276af1a5 F1 follow-up)
+
+- Editor-file total time: the ten-run column gives medians 202 s before and 104.5 s after, a 1.93x ratio (sums 2,206 / 1,146 s = 1.92x). The earlier "2.2x lower" was wrong. No executions were added.
