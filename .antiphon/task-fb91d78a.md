@@ -1,6 +1,6 @@
 # Code fb91d78a: CARD-0506 load-flake repair round 2 (Review 2c7391a4 F1, F2)
 
-Outcome: F1 is fixed. F2 is partly met. With the after files, every test stayed under 6.67 s in 9 of 10 loaded runs for SettingsPage and ConcurrencySettingsTab, but in only 8 of 10 for DispatchConcurrencyEditor. The editor outliers are `C506 V10 overall-queued` (8.0 s and 9.0 s). It was equally slow in the before copy in the same runs (7.6 s and 8.8 s), and the profile attributes that remaining cost to component re-rendering; see "Disclosure" below. CP-2 is green at 77/77. All 1,316 tests in the load loop passed, before and after.
+Outcome: F1 is fixed. F2 is partly met. With the after files, every test stayed under 6.67 s in 9 of 10 loaded runs for SettingsPage and ConcurrencySettingsTab, but in only 8 of 10 for DispatchConcurrencyEditor. The editor outliers are `C506 V10 overall-queued` (8.0 s and 9.0 s). It was equally slow in the before copy in the same runs (7.6 s and 8.8 s), and the profile attributes that remaining cost to component re-rendering; see "Disclosure" below. CP-2 is green at 77/77. All 1,240 tests in the load loop passed, before and after (pass-count table below: after 40 + 60 + 520 = 620, before 40 + 60 + 520 = 620; 620 + 620 = 1,240).
 
 - Branch `feat/card-task-fb91d78a`, worktree `/work/worktrees/task-fb91d78a` (runner mirror), Code task fb91d78a.
 - Started from `117fcd7a97954724b3b0326a313741e68fb4bf3e`; landing owner remains the original Code task d8a8fabb-6248-4b2e-90db-e8b0a52f92e3.
@@ -89,12 +89,12 @@ Medians:
 
 | Test | Median after | Median before | Change |
 |---|---|---|---|
-| `scope-selector` | 4.9 s | 5.9 s | 17% faster |
-| `controlled-tab` | 3.8 s | 4.3 s | |
-| `conflict mode-removed` | 1.7 s | 1.8 s | no measurable change |
-| `refresh-fails` | 1.85 s | 2.0 s | no measurable change |
+| `scope-selector` | 5.0 s (5,026 ms) | 6.0 s (6,019 ms) | 16.5% faster |
+| `controlled-tab` | 3.8 s (3,835.5 ms) | 4.3 s (4,326 ms) | |
+| `conflict mode-removed` | 1.7 s (1,704.5 ms) | 1.8 s (1,769 ms) | no measurable change (after slower in 4 of 10 runs) |
+| `refresh-fails` | 1.84 s (1,843 ms) | 2.10 s (2,097.5 ms) | 12% lower median; after slower in 3 of 10 runs |
 
-The named editor cases `conflict mode-removed` and `refresh-fails` stayed at or below 5.4 s in all 10 runs, both before and after. The `skipClick` change gives no measurable gain, and it can be dropped if Review prefers.
+The named editor cases `conflict mode-removed` and `refresh-fails` stayed at or below 5.44 s in all 10 runs, both before and after (maximum 5,438 ms: `refresh-fails`, after copy, run 5). Ten loaded runs do not establish a gain from the `skipClick` change, and it can be dropped if Review prefers.
 
 ### Disclosure
 
@@ -127,3 +127,11 @@ CHECKPOINT CP-2 commit=13fa4f6252337c9f3c239fa0cb807678042a5492 build=n/a filter
 - `git merge-tree --write-tree origin/master(5f52b309b) HEAD`: exit 0.
 - Mutation was not run; all PCs stay pending.
 - Budget: 60 min planned, about 95 min actual. Most of it was slot waits (2-7 min each) and the 26-minute load loop.
+
+## Corrections (Code 5eb3de29, Review 276af1a5 F1)
+
+Recomputed from this report's own tables; no executions were added.
+
+- Headline load-loop count: 1,316 was wrong. The pass-count table sums to 620 after + 620 before = 1,240 (4 + 6 + 52 = 62 tests per run, ten runs of each copy).
+- Medians recomputed from the ten-run table (mean of the 5th and 6th sorted values): `scope-selector` 5,026 / 6,019 ms (previously stated 4.9 / 5.9 s, 17%); `refresh-fails` 1,843 / 2,097.5 ms (previously 1.85 / 2.0 s, "no measurable change"). The commit subject of 2afb7524a still says 5.9->4.9 s; it is not rewritten.
+- Named editor cases' ceiling: the table maximum is 5,438 ms, so "at or below 5.4 s" became 5.44 s.
