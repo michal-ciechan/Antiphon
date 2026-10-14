@@ -89,7 +89,7 @@ in `blockedBy`, the blocked card in `blocks`). `resolved` is always computed on 
 omitted when null). `CardRevisionDto` gains `relatedCardId`, `relatedCardIdentifier`,
 `relationshipKind` (omitted when null). Writes publish `CardChanged` for the blocked card only.
 
-## Test list (29; case → mutation → red)
+## Test list (case → mutation → red)
 
 Names are frozen. TUnit classes use the repo's `Snake_case_sentence` style; vitest names are the
 `it(...)` strings. "Red" names the first assertion that fails under the mutation.
@@ -127,9 +127,9 @@ Names are frozen. TUnit classes use the repo's `Snake_case_sentence` style; vite
 | T-29 | `CardTaskFileRendererTests.Frontmatter_key_set_is_exactly_the_public_whitelist` | render a card with every nullable field set (alias, due, started, completed, external tracker/key/url/author, needsHumanReview, archived/by/reason); take the lines between the two `---` fences, split on `:` → key list equals exactly `[id, identifier, title, alias, status, importance, importance_provenance, urgency, due, labels, created, started, completed, external_tracker, external_key, external_url, external_author, needs_human_review, archived, archived_by, archived_reason]`; the whole rendered text does not contain `block` (case-insensitive); `typeof(CardFilePublicCard)` constructor parameter names equal the frozen 24-name list | add `blocked_by:` to `RenderCard` | `keys.ShouldBe(expectedKeys)` |
 | T-30 | `CardRelationshipApiTests.Concurrent_adds_closing_a_ring_commit_all_but_one_and_refuse_one_as_a_cycle` `[Arguments(2)]`, `(3)` (Review 3501caaa F1) | ring of N cards, card i blocked by card i+1 mod N, the N POSTs sent at once while a test transaction holds `FOR UPDATE` on the N card rows; the rows are released once N backends wait on the holder directly or through another waiter (`pg_blocking_pids`, recursive), so each add has passed its walk or waits for the graph lock; then N-1 answers are 201, one is 409 `card_relationship_cycle`, and N-1 ring rows are persisted | delete the graph lock (transaction and `pg_advisory_xact_lock`) | `statuses.Count(Created).ShouldBe(ringSize - 1)` (N arrive; red on `79fb16126`, both rows) |
 
-Counts by class: `CardRelationshipSchemaTests` 3; `CardRelationshipApiTests` 12 methods / 21
-executions (T-30 added by the F1 repair); S3 one method each; `CardRelationshipScriptTests` 4; client 7; `CardTaskFileRendererTests`
-11 → 12.
+Counts for the implemented S1+S2 classes come from the counting command under Checkpoints, not
+from this list. Planned additions not yet written: S3 one method each; `CardRelationshipScriptTests`
+4; client 7.
 
 ## Fixtures and isolation (binding on Code)
 
@@ -143,7 +143,7 @@ executions (T-30 added by the F1 repair); S3 one method each; `CardRelationshipS
   fixture edit. `ExecuteDelete` of a card (T-3) therefore touches no other suite's rows.
 - **`AntiphonWebAppFactory.ResetAsync` is not a database reset.** It clears `IResettableCache`
   singletons only (`:165-170`); the factory owns one cloned database per factory instance shared by
-  every test of the session. The schema tests do not need it. The API tests (T-4..T-14) copy
+  every test of the session. The schema tests do not need it. The API tests (T-4..T-14, T-30) copy
   `CardCommentApiTests`/`CardCorrectionApiTests`: `[NotInParallel]`,
   `[ClassDataSource<AntiphonWebAppFactory>(Shared = SharedType.PerTestSession)]`, `[Before(Test)] ResetAsync`,
   `[After(Test)]` cleanup by project: `CardRelationships` (both `CardId` and `RelatedCardId` in the
@@ -310,7 +310,17 @@ fresh TRX.
 - `BacklogRow` (orchestrator screen) chip: `investigateBacklog.items` never contains a blocked card after S3, so the chip cannot show there; `BacklogSection.test.tsx` runs as regression only.
 - Full `Antiphon.Tests` assembly, namespace runs, `Antiphon.Agents.Pty.Tests`: no touched line.
 - Platform: every row runs on the default placement (server2); no row needs an OS.
-- Monotonic time: no deadline or wait is introduced; `CreatedAt` uses the service's existing `UtcNow()`.
+- Waits and deadlines: see the table below. `CreatedAt` uses the service's existing `UtcNow()` (`CardService.cs:1445`).
+
+### Waits and deadlines
+
+| Behaviour | Where | Named test | What it asserts |
+|---|---|---|---|
+| `AddRelationshipAsync` opens a transaction, then waits for `pg_advisory_xact_lock(hashtext('antiphon.card-relationships.graph'))`, one key for the whole graph, before the duplicate check, the cycle walk and the insert; the lock is released at commit or rollback | `CardService.cs:1326-1327`, `:1424-1425` | T-30 `Concurrent_adds_closing_a_ring_commit_all_but_one_and_refuse_one_as_a_cycle` `(2)`, `(3)` | N-1 answers 201, one 409 `card_relationship_cycle`, N-1 ring rows persisted |
+| No `lock_timeout` is set; the lock wait ends at the request `CancellationToken` or the provider command timeout, neither set by this card | `CardService.cs:1425` | none | no test (Review 76fe1072 disclosure 1) |
+| A failed lock command surfaces as the existing sanitized 500 before the insert | `ExceptionMiddleware.cs:97` (unchanged) | none | no test (Review 76fe1072 disclosure 1) |
+| T-30's barrier polls `pg_blocking_pids` at 5 ms under a 60-second `CancellationTokenSource`; on expiry the test fails, and its `finally` rolls the holder back and awaits the N requests | `CardRelationshipApiTests.cs:566-572`, `:575-580` | T-30 | N backends wait on the holder before release; an add that completes while the rows are held fails the test (`InvalidOperationException`) |
+| Session input waits: none added or changed | Delivery inventory above | none | not applicable |
 
 ### Checkpoints
 
@@ -342,11 +352,20 @@ Census behind the counts (2026-10-14, source): `CardCorrectionApiTests` 12; `Car
 so Code reports the `Tests N passed` line plus a per-file source census. No census class has a
 `[Skip]`, `[Explicit]`, platform attribute or `MethodDataSource`.
 
+Counting command for the S1+S2 classes behind CP-1..CP-4 (methods, and executions = one per
+`[Test]` method or one per `[Arguments]` row), run from the repository root:
+
+```bash
+for c in CardRelationshipSchemaTests CardCorrectionApiTests CardRelationshipApiTests CardIdentifierResolutionTests CardTaskFileRendererTests; do
+  awk -v c=$c '/^[ \t]*\[Test\]/{p=1;a=0;next} p&&/^[ \t]*\[Arguments\(/{a++;next} p&&/^[ \t]*public /{m++;e+=(a?a:1);p=0} END{print c, "methods=" m, "executions=" e}' tests/Antiphon.Tests/Application/$c.cs
+done
+```
+
 ### Cost
 - Ordinary V/R floor (Code) = sum of EstimatedMinutes = 6 + 3 + 5 + 3 + 12 + 5 + 2 + 6 + 2 + 4 + 10 = **58 minutes** (estimated): S1-S2 task 17 (one build), S3 19 (one build), S4 8 (one build), S5 14 (no build). Plus the tool bootstrap build, about 4 minutes, once per Code task.
 - Savings versus the plan: one isolated build removed (S1 and S2 share `bin-c0100-s12/`), about 4 minutes; the plan's two-filter CP-4 is one combined-class row.
-- PC floor (Mutation, pending): 34 PCs (PC-34 added by the F1 repair, server-side). Server-side PCs (PC-1..PC-31) each need a scratch build plus red and green runs of one method, about 7 minutes unbatched = 217 minutes; batched by independent file and method (PC-1..PC-5 share `AddRelationshipAsync` and run separately; the rest form roughly eight batches) about 8 × 8 = 64 minutes plus one baseline, estimated 70. Client PCs (PC-32, PC-33) about 3 minutes each = 6. Schema PCs (PC-23..PC-27) need a regenerated migration in the scratch copy; count them in the server-side figure.
-- Total (estimated) = setup/build 4 per Code task × 4 = 16 + V/R 58 + PC 76 = **150 minutes** (unbatched PC alternative 239).
+- PC floor (Mutation, pending): server-side PCs are PC-1..PC-31 and PC-34, client PCs are PC-32 and PC-33; count them with `grep -cE '^- PC-[0-9]+:' docs/superpowers/plans/2026-10-14-card-0100-test-design.md`. Each server-side PC needs a scratch build plus red and green runs of one method, about 7 minutes unbatched; each client PC about 3 minutes. PC-1..PC-5 and PC-34 share `AddRelationshipAsync` and run separately; the rest may batch by independent file and method. Schema PCs (PC-23..PC-27) need a regenerated migration in the scratch copy.
+- Total (estimated) = setup/build 4 per Code task × 4 = 16 + V/R 58 + the PC floor above.
 
 ## Collisions and ordering (re-checked 2026-10-14 against `origin/master` = `e0877982c`)
 
