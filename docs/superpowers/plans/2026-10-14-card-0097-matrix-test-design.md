@@ -655,12 +655,12 @@ stage pins shaped as the live census plus one card pin; `-OutDir` under a temp d
 `OrchestratorInstructionsDeltaTests` (U)**
 
 Repair of Review `09f50a7b` D3: CP-19 requires 8 methods / 10 results (Min 10);
-CP-20 requires 15 methods / 48 results (Min 48); CP-21 retains 5 results (Min 5).
+CP-20 requires 15 methods / 50 results (Min 50); CP-21 requires 6 results (Min 6).
 The D1/D2 rows from Review `44e2b653` remain in the selection.
 
-- V-F12 `Failed_reads_are_unknown_in_file_and_notice_then_recover` | H | 22 rows:
+- V-F12 `Failed_reads_are_unknown_in_file_and_notice_then_recover` | H | 24 rows:
   default and non-default chain, stage pin, availability, policy, chain metadata, standing
-  agent, holds, pins, runner defaults and host budget faults, crossed with file and notice.
+  agent, holds, pins, runner defaults, host budget and runner catalogue faults, crossed with file and notice.
   A real DB interceptor fails the selected read. Literal unknown reasons and default-tier
   source transitions, revision/count stability across different exception types, and recovery
   are checked through the persisted file, the direct delta and delivered notices. Configuration
@@ -669,6 +669,9 @@ The D1/D2 rows from Review `44e2b653` remain in the selection.
   14 rows with three unknown tiers and unknown effective/source. Require the explicit Plan
   diagnostic line, 160-byte line cap, UTF-8 validity and matrix-first elision at full minus one.
   The added diagnostic line is absent at ebcee0992; the cap and elision checks are regressions.
+- V-F14 `A_long_known_value_keeps_the_unknown_transition_reason_visible` | U | a 300-character
+  effective value changes to unknown. The 120-character delta retains the reason at its end;
+  equal unknown snapshots yield an empty delta; recovery starts with the unknown-to-value text.
 - V-F10 also requires default-tier source/effective unknown in the direct delta for Medium
   and simultaneous failures and the literal diagnostic line in the file. Source must not
   transition to rolePolicy on failure. D3 tests are committed before implementation; their
