@@ -1,8 +1,10 @@
 # Instruction bundles
 
 Every `*.md` file beside this one is a named, versioned block of standing instructions that
-`InstructionBundleComposer` renders into an agent's `--append-system-prompt` at launch (CARD-0058,
-plan `docs/superpowers/specs/2026-08-16-card-0058-0059-0060-instruction-bundles.md`).
+`InstructionBundleComposer` renders into an agent's launch instructions (CARD-0058,
+plan `docs/superpowers/specs/2026-08-16-card-0058-0059-0060-instruction-bundles.md`). The provider
+carrier (Claude `--append-system-prompt`, Codex `developer_instructions`, Grok rules file) is in
+[Writing a brief](../../docs/orchestration-loop.md#3-writing-a-brief).
 
 **This file is the only one here that is not a bundle** — it is excluded from the embedded-resource
 glob in `Antiphon.Server.csproj`, and `InstructionBundleTests` pins the exact key set so an
@@ -16,13 +18,22 @@ accidentally-embedded file fails a test instead of reaching an agent.
 - The **key** is the filename without `.md`; the **version** is the first 8 hex digits of the
   SHA-256 of the LF-normalised text, rendered as `[bundle:<key> v<hash8>]` above the body. Editing a
   bundle changes its version automatically — there is nothing to bump by hand.
-- A change reaches an agent at its **next launch**. AlwaysOn agents are guaranteed one by
-  supervision; a fresh delegate gets it on dispatch; a warm pool delegate keeps what it launched with
-  until it retires (`PoolIdleRetireMinutes`, 60 min idle). Nothing types bundles into a live session;
-  instead a standing agent that is idle is relaunched with `--resume` and the new composition
-  (CARD-0334), keeping its conversation. `Agent.PolicyRefreshMode` picks the lane: `Auto` relaunches
-  when idle and past cooldown, `Relaunch` is the same but never falls back to Notify, `Notify` posts
-  a queued message describing the drift instead of killing the session, and `Off` does neither.
+- A change reaches an agent at a launch that composes the edited text. A fresh delegate gets it on
+  dispatch; a warm pool delegate keeps what it launched with until it retires
+  (`PoolIdleRetireMinutes`). Nothing types bundles into a live session. For a standing agent,
+  `PolicyRefreshService` acts on drift by lane (`ResolveLane`, `server/Application/Services/PolicyRefreshService.cs`):
+  a session with no stamp, a card session or a Herdr pane is refused; `Off` does neither;
+  `Notify` queues a message describing the drift; `Auto` and `Relaunch` relaunch with `--resume`
+  and the new composition (CARD-0334) only when relaunch is eligible (Claude Code, or Grok with a
+  version-1 rules receipt; AlwaysOn; transcript bound), and otherwise fall back to Notify.
+
+  | Behaviour | Test (TUnit, Antiphon.Tests) | What it asserts |
+  |---|---|---|
+  | `Auto`, eligible and idle: relaunch with `--resume` | `PolicyRefreshServiceTests.Drift_and_idle_kills_resumes_and_records_incident` | the old session is killed, the new start carries `--resume`, the new stamp is recorded and a `PolicyRefreshed` incident is raised |
+  | `Auto`, Codex: Notify | `PolicyRefreshServiceTests.Codex_is_Notify_not_a_kill` | no kill; one `PolicyDriftNotified` incident; the queued message says the change applies at the next launch |
+  | `Auto`, transcript not bound: Notify | `PolicyRefreshServiceTests.Unbound_transcript_is_Notify_not_a_kill` | no kill; a `PolicyDriftNotified` incident and no `PolicyRefreshed` |
+  | `Off`: neither lane | `PolicyRefreshServiceTests.Off_mode_is_neither_lane` | the sweep acts on nothing; a forced refresh is refused with the not-resumable code |
+  | `Relaunch`, not eligible: Notify | not covered by a test | `ResolveLane` returns Notify |
 - Never write `{agentName}` or `{channels}` into a bundle: `ChannelPreamble.Render` substitutes those
   over the whole composed append, so they would be replaced inside the bundle text too. A test pins
   this.

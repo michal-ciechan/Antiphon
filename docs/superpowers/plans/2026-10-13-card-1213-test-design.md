@@ -213,6 +213,8 @@ Scope: safety/compatibility guards implicated by this change. Unchanged transpor
 | G-98 | D-5 §2.1/T23: Code and Review check full-range evidence diff | PC-98 |
 | G-99 | D-8: Review subject restriction remains explicit | PC-99 |
 | G-100 | D-4/T16: Conflict-after-list adoption preserves the existing branch | PC-100 |
+| G-101 | D-8/T26 (Review dd8ce0cf F1): Runner brief keeps the branch prohibitions without git-common | PC-101 |
+| G-102 | D-8/T26 (Review dd8ce0cf F1): Recovered brief into a pre-git-common session keeps the prohibitions | PC-102 |
 
 ### Positive controls
 
@@ -322,6 +324,8 @@ The table's recipe resolves setup and layer above: classification is Unit for U,
 | PC-98 | U | shipped composed Code/Review/Mutation and orchestrator | delete evidence-diff command | `/*/*/InstructionBundleTests/C1213_GitContractPins` | contract-evidence-custody: corresponding full invariant sentence retained |
 | PC-99 | U | Mutation snapshot and Review compositions | remove Review subject-branch restriction | `/*/*/InstructionBundleTests/C1213_StageExceptionsRemain` | stage-exception: explicit exception plus subject restriction |
 | PC-100 | D | legacy/new existing registration; capability toggled; conflict-after-list gate | replace existing.Branch with freshly built branch in the conflict recovery path | `/*/*/AgentTaskDispatchBaseGuardTests/C1213_RetryAdoptsRecordedBranch` | adopted-branch: pre-existing branch; original HEAD/file bytes |
+| PC-101 | U | legacy/new branch, full 40-hex base | drop the prohibition sentence from the formatter, keeping the git-common citation | `/*/*/DelegationReportFormatterTests/Runner_worktree_brief_names_mirror_and_fast_forward_contract` | runner-contract: protections label red |
+| PC-102 | D | legacy/new branch; session stamp without git-common | same formatter defect as PC-101 | `/*/*/DelegationDispatchRecoveryBoundaryTests/C1213_Recovered_brief_keeps_branch_protections_without_git_common` | recovered-brief: protections label red |
 
 ### Out of scope
 
@@ -417,6 +421,15 @@ CP-12, CP-14 and CP-15 reuse CP-11's build (same After); the Antiphon.Tests buil
 CP-14's Min is the number of classes in its filter; the roster check requires each of them to execute.
 CP-11 excludes only DelegationReportFormatterTests.reported_repository_paths_normalize_relative_and_absolute_windows_forms, by exact name: it throws SkipTestException off Windows (CARD-0681), and run 20261014-033310-3340 at b2af519b0bd19747467c534d28de5920d95e3432 reported it NotExecuted beside 92 passed (clean source, verified build). S3 does not touch that method.
 
+S3 repair amendment (2026-10-14, task 2b405dfa; Review dd8ce0cf F1-F6; landing owner 8c30e908).
+F1: the runner contract restates the rebase, amend, reset and force-push prohibitions in one sentence and cites git-common as supplementary, so a session recovered with pre-git-common instructions keeps them. The formatter reads no session stamp; the contract text depends on the task row only.
+DelegationReportFormatterTests.Runner_worktree_brief_names_mirror_and_fast_forward_contract is changed in place again (V-10/R-10; PC-59, PC-91..PC-93 unchanged; PC-101 added).
+DelegationDispatchRecoveryBoundaryTests gains C1213_Recovered_brief_keeps_branch_protections_without_git_common (new file Application/DelegationDispatchRecoveryBoundaryTests.BranchProtections.cs; V-10/R-10; PC-102): both branch forms, a session whose ComposedBundleStamp lacks git-common, the real queue ensure path, the brief payload and a complete matching UserPrompt. It does not exercise busy recipients or a failed enqueue; the existing C1150 methods cover those arms for the same ensure path.
+CP-16 runs that method on CP-11's build. CP-11's selection and Min are unchanged (the formatter method is changed, not added).
+F2-F6 are documentation repairs in .claude/skills/antiphon-orchestrator/SKILL.md (sections 2, 3, 4, 6), docs/orchestration-loop.md (launch carriers), docs/session-runtime-invariants.md (one recovery row) and server/Bundles/README.md (carriers, policy-refresh lanes). RunnerBranchContractDocumentationTests.C1213_DocsCiteGitCommonAndBothBranchForms pins the corrected sentences and forbids the removed ones; it has no PC row.
+CP-14 census correction (Review dd8ce0cf disclosure): InstructionFileStampTests passes the path to a scratch-file check and does not read the changed document; it stays in CP-14 as an extra regression class.
+The general paragraph below ("no build reuse is assumed") is superseded for S3 by the CP-12/CP-14/CP-15/CP-16 rows, which reuse CP-11's build.
+
 Closed ordinary scope below replaces parent §6's provisional execution list. Build each row to its own isolated OutputPath; no build reuse is assumed. Use the checkpoint tool through the host build-slot gate, one run per committed slice group, and wait to a terminal exit (75 means still running). The exact command shape is `pwsh -NoProfile -File scripts/build-slot.ps1 -Label card1213-checkpoints -- dotnet run --project tools/Antiphon.Checkpoints --property:OutputPath=bin-c1213-tool/ -- run --plan docs/superpowers/plans/2026-10-13-card-1213-test-design.md --after S1 --expected-source-sha <committed-sha>`; substitute S2/S3. Tool bootstrap is included in setup below; row builds take their own slots. Record unedited CP lines, counts, full SHA, clean source/build receipts. Exit 4 is not-run; zero tests is wrong selection. No hand-run build, test or widened filter. Remove only the producer-owned bin-c1213-cpN/ and bin-c1213-tool/ outputs after their runs.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
@@ -436,6 +449,7 @@ Closed ordinary scope below replaces parent §6's provisional execution list. Bu
 | CP-13 | S2 | `tests/Antiphon.Tests -> bin-c1213-cp13/` | affected | `/*/*/(AgentBundleAttachmentTests*)\|(GrokRulesCompositionTests*)\|(CheckpointRepeatDocumentationTests*)\|(TaskPlatformGuidanceTests*)\|(ScopedVerificationInstructionTests*)\|(PostLandMutationContractTests*)\|(VerificationRoundInstructionTests*)\|(MechanicalPcContractTests*)\|(CheckpointManifestDocumentationTests*)\|(OrchestratorInstructionsGuidanceTests*)\|(RepairSourceDocumentationTests*)\|(BlockedTaskParkProjectionTests*)\|(OutboundConversionTaskTests*)\|(PostLandRetrospectiveContractTests*)\|(AgentReplyStyleTests*)\|(AgentPinnedInstructionCompositionTests*)\|(InstructionFileStampTests*)\|(PolicyRefreshDeltaTests*)\|(CodexDelegateDispatchTests*)\|(PinnedCodexProfileDispatchLaunchTests*)\|(StandingPipelinePolicyDocumentationTests*)\|(DelegationCapabilityContractTests*)\|(SpecialistQualificationContractTests*)\|(CardFilePrivacyDocumentationTests*)\|(BootStallDocumentationTests*)/*` | V-9/R-9 | named roster; at least 191 executed; 0 failed; 0 skipped | 191 | 6 | true |
 | CP-14 | S3 | `CP-11 (-NoBuild)` | doc-guards | `/*/*/(RunnerBranchContractDocumentationTests*)\|(BootStallDocumentationTests*)\|(InstructionFileStampTests*)\|(RepairSourceDocumentationTests*)\|(SessionRunnerAbsenceEvidenceDocumentationTests*)\|(StandingBootDocumentationTests*)\|(BlockedTaskParkProjectionTests*)\|(CheckpointManifestDocumentationTests*)\|(CheckpointRepeatDocumentationTests*)\|(CommitOnSettleDocumentationTests*)\|(DockerStackDocumentationTests*)\|(MechanicalPcContractTests*)\|(MidTurnInterruptDocumentationTests*)\|(OrchestratorInstructionsGuidanceTests*)\|(PostLandMutationContractTests*)\|(PostLandRetrospectiveContractTests*)\|(PublishedRoutingDocumentationTests*)\|(RunnerDefaultGuidanceTests*)\|(StandingPipelinePolicyDocumentationTests*)\|(TaskPlatformGuidanceTests*)\|(ReceiptScanDestinationTests*)/*` | S3 docs | named roster; each listed class executes; 0 failed; 0 skipped | 21 | 5 | true |
 | CP-15 | S3 | `CP-11 (-NoBuild)` | runtime-doc | `/*/*/DelegationDispatchRecoveryBoundaryTests/C1161_Owner_names_the_monotonic_grace` | S3 docs | 1 executed; 0 failed; 0 skipped; named roster | 1 | 3 | true |
+| CP-16 | S3 | `CP-11 (-NoBuild)` | recovery | `/*/*/DelegationDispatchRecoveryBoundaryTests/C1213_Recovered_brief_keeps_branch_protections_without_git_common` | V-10/R-10 | 2 executed (two arguments); 0 failed; 0 skipped; named roster | 2 | 4 | true |
 
 Code binding: the census adds 46 new methods and changes the existing parser/foreign-ref/formatter and raw-bundle assertions in place. Each C1213 method must include its hand-written table, target assertion label and reachable production call; do not add placeholder tests to hit Min. Frozen names/IDs/filters stay fixed; a necessary count change requires an explicit design amendment and renewed census before its run. Additional test-only files: Application/DelegateBranchDeliveryTests.cs (nearest topology TaskParkProofWire/PhoneHomeMirrorJoinTests), plus the two new test files already in the parent. Minimal branch/gate parameters may be added to the inspected helpers; unchanged defaults preserve existing fixtures. Bind TaskParkPublicationTests to the local OwnedBranch consumer (missing from parent's test list).
 
@@ -453,14 +467,14 @@ Re-estimate rather than silently dropping a row if authoring exceeds these estim
 |---|---|
 | S1 | CP-1, CP-2, CP-3, CP-4, CP-5, CP-6, CP-7, CP-8 |
 | S2 | CP-9, CP-10, CP-13 |
-| S3 | CP-11, CP-12, CP-14, CP-15 |
+| S3 | CP-11, CP-12, CP-14, CP-15, CP-16 |
 
 PC floor is separate from Code. Each method filter in the PC table runs baseline/red/restored-green with isolated outputs. Per recipe estimate includes the three builds/runs: U=6 (2+2+2), G/H/L=9 (3+3+3), D=12 (4+4+4), Q=15 (5+5+5) minutes. Each PC adds 0.25 minutes for exact restore/timestamp/provenance checks; same-method PCs remain separate cycles. Mutation setup adds 2 minutes. The Mutation estimate is setup plus, per PC below, its recipe minutes plus 0.25; compute it from this table when Mutation is commissioned, excluding authoring, independent Review and slot waits.
 
 | PC recipe/filter family | PC IDs |
 |---|---|
-| U: exact method filters above | PC-1, PC-2, PC-3, PC-4, PC-5, PC-6, PC-7, PC-8, PC-9, PC-10, PC-29, PC-32, PC-33, PC-40, PC-47, PC-48, PC-49, PC-50, PC-51, PC-52, PC-53, PC-54, PC-55, PC-56, PC-57, PC-59, PC-60, PC-61, PC-62, PC-63, PC-64, PC-65, PC-66, PC-67, PC-68, PC-69, PC-70, PC-71, PC-72, PC-73, PC-79, PC-81, PC-82, PC-83, PC-84, PC-85, PC-86, PC-87, PC-88, PC-89, PC-90, PC-91, PC-92, PC-93, PC-94, PC-95, PC-96, PC-97, PC-98, PC-99 |
-| D: exact method filters above | PC-11, PC-12, PC-13, PC-14, PC-15, PC-100 |
+| U: exact method filters above | PC-1, PC-2, PC-3, PC-4, PC-5, PC-6, PC-7, PC-8, PC-9, PC-10, PC-29, PC-32, PC-33, PC-40, PC-47, PC-48, PC-49, PC-50, PC-51, PC-52, PC-53, PC-54, PC-55, PC-56, PC-57, PC-59, PC-60, PC-61, PC-62, PC-63, PC-64, PC-65, PC-66, PC-67, PC-68, PC-69, PC-70, PC-71, PC-72, PC-73, PC-79, PC-81, PC-82, PC-83, PC-84, PC-85, PC-86, PC-87, PC-88, PC-89, PC-90, PC-91, PC-92, PC-93, PC-94, PC-95, PC-96, PC-97, PC-98, PC-99, PC-101 |
+| D: exact method filters above | PC-11, PC-12, PC-13, PC-14, PC-15, PC-100, PC-102 |
 | G: exact method filters above | PC-16, PC-17, PC-18, PC-19, PC-21, PC-25, PC-30, PC-31, PC-35, PC-36, PC-37, PC-38, PC-39, PC-41, PC-74, PC-75, PC-80 |
 | H: exact method filters above | PC-20, PC-22, PC-23, PC-24, PC-26, PC-27, PC-28, PC-76, PC-77, PC-78 |
 | Q: exact method filters above | PC-34, PC-42, PC-43, PC-44, PC-45, PC-46 |
@@ -470,4 +484,4 @@ No PC time is charged to Code; Mutation remains paused. No batching saving is as
 
 Handoff: the Guard inventory table maps guards to PCs. Each PC row specifies a method filter, recipe, variants, compiling defect and red oracle; these are design specifications, not results. No PC has run: the PCs in the Positive controls table are pending for SourceLanding Mutation, PC reachability is unestablished until then, and ordinary green does not discharge a PC. Code does not label these controls green.
 
-Status (2026-10-14, task 9125d3b8; the earlier "Next: Code, S1 first" handoff is historical): S1 landed on master at da0219edd. S2 (CP-9, CP-10, CP-13; V-8/R-8, V-9/R-9) is implemented and its new methods are bound with ordinary green in run 20261014-002645-e73c and Review 13491e92; D1 (D-8/T24 placement) and D2 (fail-closed grammar) were accepted by Review 13491e92; S2 awaits a fresh Final Review after this documentation repair (Review ac1b43fa ran CP-9 only). S3 (CP-11, CP-12; V-10/R-10) is pending; its new methods are to be bound in S3 Code. Windows/native qualification is pending. There is no open human choice under OD-1..OD-6. Return to Plan if binding the named real-queue or composition seam for S3 would require changing the fix design.
+Status: S1 and S2 landed. S3 is under review: Review dd8ce0cf returned F1-F6, repaired by task 2b405dfa for landing owner 8c30e908. PC-59, PC-91..PC-93, PC-101 and PC-102 are pending for SourceLanding Mutation. Windows/native qualification is pending.
