@@ -39,8 +39,9 @@ const TIER_SOURCE_LABEL: Record<TierSource, string> = {
 }
 
 /**
- * The server's level for a role: `effective.modelLevel` for source pin (C097 V17), the RolePolicy level for rolePolicy (C097 V16).
- * Null sends the caller to AGENT_TASK_ROLES (C097 V18), as does a null policy level (C097 V30).
+ * The server's level for a role: `effective.modelLevel` for source pin (C097 V17) and rolePolicy (C097 V16).
+ * Null sends the caller to AGENT_TASK_ROLES (C097 V18), as does a null policy level (C097 V30) or a withheld
+ * target (C1234 unsupported-policy-kind-falls-back-to-constant).
  */
 function serverRoleLevel(
   policy: RolePolicyDto | undefined,
@@ -48,7 +49,7 @@ function serverRoleLevel(
 ): { level: AgentModelLevel; source: 'pin' | 'rolePolicy' } | null {
   const row = Array.isArray(policy?.roles) ? policy.roles.find((r) => r.role === role) : undefined
   const source = row?.effective?.source
-  const level = source === 'pin' ? row?.effective.modelLevel : source === 'rolePolicy' ? row?.level : null
+  const level = source === 'pin' || source === 'rolePolicy' ? row?.effective.modelLevel : null
   if (!source || !AGENT_MODEL_LEVEL_OPTIONS.some((option) => option.value === level)) return null
   return { level: level as AgentModelLevel, source }
 }

@@ -89,6 +89,16 @@ public class CardRevision
     /// <summary>The SUPERSEDED completion timestamp, snapshotted before it is cleared on the card.</summary>
     public DateTime? CompletedAt { get; set; }
 
+    // ---- RelationshipAdded and RelationshipRemoved (null on every other kind; CARD-0100) ----
+
+    /// <summary>The other card of the relationship.</summary>
+    public Guid? RelatedCardId { get; set; }
+
+    /// <summary>The other card's identifier when the row was written, so history reads without a join.</summary>
+    public string? RelatedCardIdentifier { get; set; }
+
+    public CardRelationshipKind? RelationshipKind { get; set; }
+
     // ---- Every kind ----
 
     /// <summary>

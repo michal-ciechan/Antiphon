@@ -221,6 +221,67 @@ public class OrchestratorServiceIntegrationTests
         }
     }
 
+    // CARD-0100 T-15 (V-6, G-17): a card with an open BlockedBy row is not picked; once the
+    // blocker is Done the next tick dispatches it. Do not assert result.Dispatched (assembly-global).
+    [Test]
+    public async Task PollTick_skips_a_card_with_an_open_blocker_and_dispatches_after_the_blocker_closes()
+    {
+        await using var db = CreateContext();
+        var tempRoot = NewTempRoot();
+        try
+        {
+            var graph = CreateGraph(tempRoot, boardMaxConcurrent: 2);
+            var blocker = AddCard(graph, "E07B", graph.ReviewColumn);
+            db.Add(graph.Project);
+            db.Add(new CardRelationship
+            {
+                Id = Guid.NewGuid(),
+                CardId = graph.Card.Id,
+                RelatedCardId = blocker.Id,
+                Kind = CardRelationshipKind.BlockedBy,
+                CreatedAt = DateTime.UtcNow,
+            });
+            await db.SaveChangesAsync();
+
+            var blockedAdapter = new FakeAgentProtocolAdapter { PromptOutput = "SHOULD_NOT_RUN" };
+            await using (var blockedHarness = BuildHarness(tempRoot, [blockedAdapter]))
+            {
+                await blockedHarness.Orchestrator.PollTickAsync(CancellationToken.None);
+                await blockedHarness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+            }
+
+            await using (var verifyBlocked = CreateContext())
+            {
+                (await verifyBlocked.AgentSessions.CountAsync(s => s.CardId == graph.Card.Id)).ShouldBe(0);
+                (await verifyBlocked.Cards.SingleAsync(c => c.Id == graph.Card.Id)).OwnerSessionId.ShouldBeNull();
+            }
+            blockedAdapter.Started.ShouldBeFalse();
+
+            await using (var close = CreateContext())
+            {
+                var stored = await close.Cards.SingleAsync(c => c.Id == blocker.Id);
+                stored.Status = CardStatus.Done;
+                stored.BoardColumnId = graph.DoneColumn.Id;
+                await close.SaveChangesAsync();
+            }
+
+            var unblockedAdapter = new FakeAgentProtocolAdapter { PromptOutput = "UNBLOCKED" };
+            await using var unblockedHarness = BuildHarness(tempRoot, [unblockedAdapter]);
+            await unblockedHarness.Orchestrator.PollTickAsync(CancellationToken.None);
+            await unblockedHarness.LaunchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+
+            await using var verify = CreateContext();
+            (await verify.AgentSessions.CountAsync(s => s.CardId == graph.Card.Id)).ShouldBe(1);
+            (await verify.AgentSessions.CountAsync(s => s.CardId == blocker.Id)).ShouldBe(0);
+            unblockedAdapter.Started.ShouldBeTrue();
+        }
+        finally
+        {
+            await CleanupProjectsByTempRootAsync(tempRoot);
+            DeleteDirectoryBestEffort(tempRoot);
+        }
+    }
+
     [Test]
     public async Task PollTick_syncs_external_tracker_issue_into_card_and_dispatches_it()
     {
@@ -1535,6 +1596,11 @@ public class OrchestratorServiceIntegrationTests
             .ExecuteDeleteAsync();
         await db.Worktrees
             .Where(w => worktreeIds.Contains(w.Id))
+            .ExecuteDeleteAsync();
+        // A Done move writes a CardWorktreeCleanup (CARD-1017) whose Restrict FKs name the card
+        // and its Done revision; a leaked board here is synced by the next test's tick (CARD-1251).
+        await db.CardWorktreeCleanups
+            .Where(c => cardIds.Contains(c.CardId))
             .ExecuteDeleteAsync();
         await db.Cards
             .Where(c => cardIds.Contains(c.Id))

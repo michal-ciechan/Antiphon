@@ -118,12 +118,12 @@ public sealed class CheckpointBuildBinding
         return Directory.Exists(OutputPath) || File.Exists(OutputPath) ? "pre-existing-output" : null;
     }
 
-    public string? Write()
+    public string? Write(DateTimeOffset? buildExited = null)
     {
         var preflight = SafeWrite.Preflight(RepositoryRoot, [PathName]);
         if (preflight is not null) return preflight;
         if (File.Exists(PathName)) return "pre-existing-build-source";
         var reason = SafeWrite.Text(PathName, JsonSerializer.Serialize(this, CheckpointApp.Json), SafeWrite.Under(OutputPath));
-        return reason ?? OwnedOutputLedger.Seal(OutputPath);
+        return reason ?? OwnedOutputLedger.Seal(OutputPath, buildExited);
     }
 }

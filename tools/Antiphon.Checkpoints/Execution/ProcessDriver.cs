@@ -116,6 +116,7 @@ public sealed class ProcessDriver : IConfinedDriver
         var outputGate = new object();
         var started = false;
         var processExit = 0;
+        DateTimeOffset? exitedAt = null;
         string? earlyDetail = null;
         OperationCanceledException? cancelled = null;
         BuildConfinement.Settlement? settlement = null;
@@ -134,6 +135,7 @@ public sealed class ProcessDriver : IConfinedDriver
                     line => { lock (outputGate) Capture(line, stderr, log, request.OnOutput); });
                 await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
                 processExit = process.ExitCode;
+                exitedAt = DateTimeOffset.UtcNow;
             }
         }
         catch (OperationCanceledException ex)
@@ -187,7 +189,7 @@ public sealed class ProcessDriver : IConfinedDriver
             System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(cancelled).Throw();
         if (!started)
             return new DriverResult(ExitCodes.Invalid, "", "process did not start");
-        return new DriverResult(processExit, stdout.ToString(), stderr.ToString());
+        return new DriverResult(processExit, stdout.ToString(), stderr.ToString()) { Exited = exitedAt };
     }
 
     internal static void AppendLog(string? logPath, string text)

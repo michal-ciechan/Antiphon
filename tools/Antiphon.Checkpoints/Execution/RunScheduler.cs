@@ -439,7 +439,7 @@ public sealed class RunScheduler
             var refusal = BuildConfinement.ReportedRefusal(result.Stderr) ?? BuildConfinement.ReportedRefusal(outside?.Detail);
             if (progress.State == "ok")
             {
-                var written = built!.Write();
+                var written = built!.Write(result.Exited);
                 if (written is not null)
                 {
                     progress.State = "failed";

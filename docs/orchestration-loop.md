@@ -123,10 +123,17 @@ provenance belong in the stored task report. Ignored output does not dirty track
 Program currently registers `RefusingEvidenceRetention`, so publication can succeed while
 cleanup retains evidence residue. Whole completed-card worktree removal belongs to CARD-1017;
 this policy supplies neither that deletion authority nor durable raw-artifact storage.
-A 409 means a land is running in
-this server now — wait for its outcome event. A `Warning` "did not finish (server restarted);
-re-running" is informational. The orchestrator decides the order and what a refusal means, but
-does none of those git operations itself.
+A 409 with code `land_running` means a land is running in this server now: wait for its outcome
+event. For a 409 with another code, read its code and message and follow the route it names; the
+table below gives tested examples. A `Warning` "did not finish (server restarted); re-running" is
+informational. The orchestrator decides the order and what a refusal means, but does none of those
+git operations itself.
+
+| Conflict code | Test (TUnit, Antiphon.Tests) | What it asserts |
+|---|---|---|
+| `land_running` | `AgentTaskLandApprovalRequestTests.C488_ActiveRequestConflicts` | a second request for a task with a queued land is refused `land_running`; one pending request remains |
+| `repair_source_landing_owner_required` | `RepairSourceLandRefusalTests.C603_RepairLandRefusalNamesReviewedOwnerRecovery` | a RepairSource task's land is refused with status 409; no land request or landing is recorded, the event count is unchanged and the queue is empty |
+| `review_evidence_subject_mismatch` | `AgentTaskLandApprovalRequestTests.C788_AdoptionSubjectMismatchNamesSourceAndFlag` | an owner-subject Review with `AdoptFromTaskId` is refused, naming `-FromTask <source>` |
 
 **Reviewed owner recovery (CARD-0753).** A Code/Worktree owner that settled Failed or Blocked can
 land only through an explicit Clean Final/Full Review of the exact current pushed source tip.
@@ -480,8 +487,12 @@ is the `orchestrator` bundle; this section carries the reasons.
 4. **Keep the Code stage at its depth cap.** The depth cap is four unless Antiphon enforces a
    lower stage limit. Count Code rows that are in flight, queued or `ready` (a settled Plan or
    TestDesign whose `next:` is code) on the pipeline snapshot. Below the cap, pull the next
-   unstarted Backlog card — lowest `rank` first, as under Picking — and start it through
-   Investigate/Plan toward Code. At the cap, start no new Plan toward Code;
+   unstarted Backlog card with no open blocker — lowest `rank` first, as under Picking — and
+   start it through Investigate/Plan toward Code. `investigateBacklog.items` leaves a card with an
+   open blocker out; `investigateBacklog.blocked` counts those held cards and `blockedItems` lists
+   up to five with their `blockedBy` identifiers (CARD-0100,
+   `AgentTaskPipelineStatusTests.C100_investigate_backlog_omits_blocked_cards_and_lists_them_as_blocked`;
+   rules in [agent-card-lifecycle.md](agent-card-lifecycle.md#blocked-by-another-card-card-0100)). At the cap, start no new Plan toward Code;
    Investigate, Plan and TestDesign for cards already in the pipe still run. This is CARD-0146
    D7's "planning should only stop if more than 1 card waiting to execute", with its pull side
    stated as well.
@@ -939,6 +950,8 @@ configuration section; pins: `scripts/routing-pin.ps1` and `/api/routing-pins`.
 | Route failure falls back to `AGENT_TASK_ROLES` | Vitest `C097 V18 route-failure-falls-back-to-constant`, same file | 500 → `delegate-tier-source-fallback`, `tier-Low` for Mutation; Delegate enabled after typing a goal |
 | Null policy level falls back to `AGENT_TASK_ROLES` | Vitest `C097 V30 undefined-policy-level-falls-back-to-constant`, same file | Mutation `level: null` → `delegate-tier-source-fallback`, `tier-Low` |
 | Sub-orchestrator floor applies to the server level | Vitest `C097 V27 orchestrator-floor-on-server-level`, same file | Sub-orchestrator + Mutation (`Low`) → `tier-High` |
+| A withheld role-policy target falls back to `AGENT_TASK_ROLES` | Vitest `C1234 unsupported-policy-kind-falls-back-to-constant`, same file | Mutation `level High`, `kind Raw`, `effective` target null → `delegate-tier-source-fallback`, `tier-Low`, no `tier-High` |
+| Project setup names the default tier only when it is a model level | Vitest `C1234 delegation step names the default tier only when it is a model level`, `client/src/features/settings/ProjectSetupModal.test.tsx` | `Medium` → `default Medium tier.`; missing, null or 999 → `default tier unknown.` |
 
 **Stage pins and the matrix:** the matrix row can show candidates a stage pin keeps out of use;
 routing: see **Routing pins beat RolePolicy** in [orchestration-loop.md](orchestration-loop.md#2-tiers). Read the live pins with
@@ -1135,14 +1148,41 @@ publishes a safe unpushed mirror tip at settlement. To bring source current, lan
 land rebases onto the target) or dispatch a fresh task with `-StartRef` on the wanted base.
 Confirmation-only work belongs in Review, not a Code task requiring a new commit.
 
-**The standing rules are delivered automatically now (CARD-0058). Do not retype them.** Every
-delegate launches with `server/Bundles/delegate-basics.md` composed into its
-`--append-system-prompt` — foreground-only, no sub-delegation, commit-and-push each slice,
-`OutputPath` with a forward slash, verify pre-existing red by stashing before blaming yourself. That
-file is **canonical**; this section deliberately does not restate its contents, because a rule
+**The standing rules are delivered automatically now (CARD-0058). Do not retype them.** A
+non-specialist delegate launches with `server/Bundles/delegate-basics.md` composed into its launch
+instructions. That file is **canonical**; this section deliberately does not restate its contents, because a rule
 restated in three places drifts in three places, and it drifted here first. Improve a rule by
-editing that file in a PR: every future dispatch gets the better version, with nothing to
-reconcile. A sub-orchestrator additionally launches with `server/Bundles/orchestrator.md`.
+editing that file in a PR: a fresh launch composes the edited text. A warm-pool reuse delivers the
+brief into the running session with no launch, so that session keeps the instructions it launched
+with. A sub-orchestrator additionally launches with `server/Bundles/orchestrator.md`.
+
+The carrier depends on the provider (`ComposeDelegateArgs`, `server/Application/Services/AgentTaskDispatcher.cs`):
+Claude Code receives `--append-system-prompt <text>` and Codex `-c developer_instructions=<text>`.
+Grok receives a `GrokRulesPayload`: the runner writes it to a runner-owned `rules.md` and passes
+`--rules` with a bootstrap instruction naming that file (`GrokRulesTransport.Bootstrap`;
+`src/Antiphon.SessionRunner/SessionRunnerRuntime.cs`). A Herdr-backed session's launch arguments
+are written into a launch script (`src/Antiphon.SessionRunner/HerdrLaunchScript.cs`).
+
+| Behaviour | Test | What it asserts |
+|---|---|---|
+| Claude and Grok carriers equal the expanded composition; Codex carries git-common | `DelegateBundleLaunchTests.C1213_ProvidersReceiveExpandedInstructions` (Antiphon.Tests) | the `--append-system-prompt` value, the Codex `developer_instructions` value and the Grok rules payload contain the git-common render and no `{{`; the Claude and Grok payloads equal the composition |
+| Bundles ride the launch, not the brief | `DelegateBundleLaunchTests.bundles_ride_the_launch_and_never_the_brief` (Antiphon.Tests) | the brief has no `[bundle:` header and no delegate-basics text |
+| A warm-pool reuse delivers into the live session with no launch | `AgentTaskPoolTests.a_queued_task_takes_over_a_warm_agent_in_its_directory` (Antiphon.Tests) | the task takes the warm agent's live session id; its brief is queued to that session |
+| A Herdr launch script keeps arguments intact | `HerdrLaunchShapeTests.Script_content_doubles_single_quotes_is_BOM_and_preserves_newline_args_for_generic_arguments` (Antiphon.SessionRunner.Tests) | quotes are doubled and multi-line arguments are preserved in the script |
+| The Grok runner writes the payload to its rules file and passes `--rules` | `GrokRulesAdoptionTests.Restart_recovers_only_a_verified_rules_receipt_and_retains_files_after_worktree_removal` (Antiphon.SessionRunner.Tests) | the receipt file holds the payload bytes; for a non-Herdr child off Windows the captured native argv contains `--rules` |
+
+**Git rules reach delegates as git-common (CARD-1213).** `delegate-basics` carries `{{GIT-COMMON}}`,
+so each non-specialist delegate launches with `server/Bundles/Fragments/git-common.md`. Do not
+restate those rules in a brief; supply the per-task values only. A runner-bound brief's runner branch
+contract prints the branch, base SHA and push command, and restates the rebase, amend, reset and
+force-push prohibitions in one sentence, because a recovered session may have launched before
+git-common existed; it cites git-common for the remaining rules.
+
+| Behaviour | Test (TUnit, Antiphon.Tests) | What it asserts |
+|---|---|---|
+| Code, Review, Mutation and orchestrator compositions carry the git-common sentences | `InstructionBundleTests.C1213_GitContractPins` (`Application/InstructionBundleTests.cs`) | each pinned sentence occurs once per composition; the orchestrator bundle contains "Delegates carry git-common; never restate git rules in briefs." |
+| The runner branch contract keeps per-task values and the protections | `DelegationReportFormatterTests.Runner_worktree_brief_names_mirror_and_fast_forward_contract` (`Application/DelegationUnitTests.cs`) | for `feat/card-task-7f3a2b91` and `feat/card-1213-code-7f3a2b91`: the exact `Assigned branch:` line, push refspec, ls-remote ref, `fast-forward-only from <40-hex>:` followed by the protection sentence, and the word `git-common` |
+| A brief recovered into a session without git-common carries the protections | `DelegationDispatchRecoveryBoundaryTests.C1213_Recovered_brief_keeps_branch_protections_without_git_common` (`Application/DelegationDispatchRecoveryBoundaryTests.BranchProtections.cs`) | for both branch forms, a session whose stamp lacks git-common: the queue's ensure path inserts a brief whose stored payload (read through its spill) holds the protection sentence and exact push refspec; the session records one UserPrompt that completely matches the queued message body, which in this fixture is a spill pointer |
 
 **A stage-role Worker also launches with its own `server/Bundles/stage-<role>.md`** (CARD-0146 S3,
 via `InstructionBundles.ForDelegate`), composed alongside `delegate-basics`. That bundle already
@@ -1183,23 +1223,26 @@ The test of whether this worked is mechanical: briefs are stored on task rows, s
 week's and grep for the six rule-paragraphs. If they are still being typed, the inversion did not
 take and this section is still too gentle.
 
-Bundles reach a delegate **at launch**, which has one bounded consequence worth knowing: a warm
-pool delegate keeps the bundles it started with until it retires (60 minutes idle). Nothing types
-bundles into a live session; instead a standing agent that is idle is relaunched with `--resume`
-and the new composition (CARD-0334), keeping its conversation. For a pool delegate or work in
-flight there is no such relaunch — if a rule change matters urgently there, say it in the brief for
-that dispatch.
+Bundles reach a delegate **at launch**. A warm pool delegate keeps the bundles it started with until
+the pool retires it (`Delegation:PoolIdleRetireMinutes`, configured default 60 idle minutes). A
+standing agent's refresh lanes and refusals are in the policy-refresh table of
+[`server/Bundles/README.md`](../server/Bundles/README.md). If a rule change matters urgently to a
+pool delegate or work in flight, say it in the brief for that dispatch.
 
-**Goal length never affects delivery, and shortening a goal buys nothing (CARD-0353).** A Claude
-delegate types its brief inline up to ~40 KB on the modern ConPTY. **Every non-Claude delegate —
-Grok, Codex — receives a POINTER at any length**: the ceiling for those kinds is 0 bytes by design
-(CARD-0084/CARD-0099 default-deny), so the brief is written to
-`.antiphon/task-<short>-brief.md` and the typed message says so, beginning `YOUR BRIEF IS NOT IN
-THIS MESSAGE`. That pointer IS complete delivery — nothing further is queued, and the delegate
-reads the file before it does anything else. So "shorten the goal to avoid the spill" avoids
-nothing and drops context the delegate needed; it also fights §0's rule that the orchestrator hands
-over full context. If a session shows only that pointer and nothing else, see §4: it is a provider
-stall, not a delivery failure.
+**Do not shorten a goal to avoid the spill (CARD-0353).** An ordinary brief over its inline ceiling is
+typed as a pointer instead of inline (`AgentTaskDispatcher.FitBriefForTyping`); under the default ceilings an ordinary Grok or
+Codex brief takes a pointer by design (CARD-0084/CARD-0099 default-deny). Shortening the goal drops
+context the delegate needed and fights §0's rule that the orchestrator hands over full context.
+A pointer is not evidence that the payload was read. Wire submission needs a transcript UserPrompt
+that completely matches the submitted body; consumption needs separate evidence that the payload
+was readable and retained, or that the delegate read it. Before classifying a session that shows
+only a pointer, inspect its transcript and its spill and recovery state; §4 covers boot stalls.
+
+| Behaviour | Test (TUnit, Antiphon.Tests) | What it asserts |
+|---|---|---|
+| Grok's inline brief ceiling is 0 bytes | `GrokDeliveryShapeTests.Narrowing_for_a_joining_composer_touches_the_inline_ceiling_and_nothing_else` | on InboxConhost and ModernConPty, `ForAgentKind(Grok)` gives `BriefInlineMaxBytes` 0 |
+| Codex's inline brief ceiling on ModernConPty is 0 bytes | `GrokDeliveryShapeTests.An_unmeasured_kind_is_join_safe_by_default` | on ModernConPty, `ForAgentKind` for Codex, OpenCode and Raw gives `BriefInlineMaxBytes` 0 |
+| A pointer whose local spill is missing, corrupt or unreadable is not submitted | `DelegationDispatchRecoveryBoundaryTests.C1150_Local_spill_must_be_present_and_intact` | the ensure path returns Unavailable; the task is Blocked with the input-unavailable reason; the row stays Pending; the session has zero UserPrompts |
 
 ---
 
@@ -1377,8 +1420,9 @@ The server performs the fetch, rebase, conditional build and optional named test
 push, worktree removal, and branch deletion. The request is a row (`LandRequestedAt`); the
 in-process channel is only a hand-off. A restart re-runs anything still pending that this
 process does not hold. `delegate.ps1 -Land` prints "Queued land" or "Requeued land" from the
-202 `{ status: "queued" | "requeued" }`. A 409 means a land is running in this server now —
-wait for the outcome event; it never fires for a request no process holds. Three interrupted
+202 `{ status: "queued" | "requeued" }`. A 409 `land_running` means a land is running in this
+server now: wait for the outcome event. For another 409 code, see the conflict-code table in
+§0 ("Also delegated: the landing mechanics"). Three interrupted
 attempts refuse (`LandRefused`); `-Land` again starts a new request. A `Warning` "did not
 finish (server restarted); re-running" is informational. A land yields at admission, before it
 takes the repository mutation lease, while a queued dispatch waits for that lease (hold

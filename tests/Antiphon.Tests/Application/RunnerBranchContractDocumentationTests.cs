@@ -189,6 +189,67 @@ public class RunnerBranchContractDocumentationTests
         skill.ShouldNotContain("an accepted Reply frees the seat", Case.Sensitive, "c1083-skill-no-reply-frees");
     }
 
+    /// <summary>
+    /// CARD-1213 S3. Owners cite git-common instead of restating git rules, and name both branch
+    /// forms with the recorded WorktreeBranch as the source. Expected sentences are literals.
+    /// </summary>
+    [Test]
+    public void C1213_DocsCiteGitCommonAndBothBranchForms()
+    {
+        var loop = Collapse(Read("docs/orchestration-loop.md"));
+        Pin(loop, "`delegate-basics` carries `{{GIT-COMMON}}`, so each non-specialist delegate launches with "
+            + "`server/Bundles/Fragments/git-common.md`.", "c1213-loop-carrier");
+        Pin(loop, "Do not restate those rules in a brief; supply the per-task values only.", "c1213-loop-no-restate");
+        loop.ShouldNotContain("commit-and-push each slice", Case.Sensitive, "c1213-loop-old-list");
+
+        var runtime = Collapse(Read("docs/session-runtime-invariants.md"));
+        Pin(runtime, "Two forms exist: `feat/card-task-<id>` and `feat/card-<n>-<stage>-<id>`.", "c1213-runtime-forms");
+        runtime.ShouldContain("RunnerWorkspaceBindingTests.C1213_BindingBothBranchForms", Case.Sensitive, "c1213-runtime-mirror-test");
+
+        // Review dd8ce0cf F1/F3, 3153a5c4 R2-F2: launch carriers per provider; Grok's --rules value is a
+        // bootstrap naming the rules file. The runner contract keeps its protections.
+        Pin(loop, "Claude Code receives `--append-system-prompt <text>` and Codex `-c developer_instructions=<text>`.",
+            "c1213-loop-carriers");
+        Pin(loop, "Grok receives a `GrokRulesPayload`: the runner writes it to a runner-owned `rules.md` and passes "
+            + "`--rules` with a bootstrap instruction naming that file", "c1213-loop-grok-carrier");
+        loop.ShouldNotContain("writes to a rules file and passes as `--rules`", Case.Sensitive, "c1213-loop-no-rules-file-arg");
+        Pin(loop, "restates the rebase, amend, reset and force-push prohibitions in one sentence, because a recovered "
+            + "session may have launched before git-common existed", "c1213-loop-recovered");
+        loop.ShouldNotContain("every future dispatch gets the better version", Case.Sensitive, "c1213-loop-no-every-dispatch");
+        runtime.ShouldContain("DelegationDispatchRecoveryBoundaryTests.C1213_Recovered_brief_keeps_branch_protections_without_git_common",
+            Case.Sensitive, "c1213-runtime-recovered-test");
+
+        var skill = Collapse(Read(".claude/skills/antiphon-orchestrator/SKILL.md"));
+        Pin(skill, "copy the sibling task's recorded `WorktreeBranch` (`feat/card-<n>-<stage>-<id>` or "
+            + "`feat/card-task-<id>`) rather than rebuilding it from the task id", "c1213-skill-branch");
+        skill.ShouldNotContain("feat/card-task-XXXX", Case.Sensitive, "c1213-skill-legacy-example");
+        // Review dd8ce0cf F2: the sibling is the creation base; the delegate stays on its own branch.
+        Pin(skill, "Do not tell a delegate to fetch or check out a sibling's branch.", "c1213-skill-no-sibling-checkout");
+        Pin(skill, "select the sibling's tip as the creation base: `-StartRef <full SHA>`", "c1213-skill-start-ref");
+        skill.ShouldNotContain("fetch/checkout", Case.Sensitive, "c1213-skill-no-fetch-checkout");
+        // F5: the report token settles; the handoff block only sets next=.
+        Pin(skill, "A report with the token and no block settles, and its completion header says `next=unmarked`.",
+            "c1213-skill-unmarked-settles");
+        skill.ShouldNotContain("never settles", Case.Sensitive, "c1213-skill-no-never-settles");
+        // F6: the original Code owner lands; the reviewed source is named with -FromTask.
+        Pin(skill, "`-Land <owner> -FromTask <source> -ExpectedSourceSha <sha> -ReviewEvidenceId <evidence>`",
+            "c1213-skill-from-task");
+        Pin(skill, "Use `-FromTask` or `-RecoverReviewedSource`, not both.", "c1213-skill-recovery-exclusive");
+        skill.ShouldNotContain("Land against whichever task's branch", Case.Sensitive, "c1213-skill-no-branch-holder");
+
+        var readme = Collapse(Read("server/Bundles/README.md"));
+        Read("server/Bundles/README.md").ShouldContain(
+            "(../../docs/orchestration-loop.md#delegate-branch-names-card-1213)", Case.Sensitive, "c1213-readme-link");
+        // F4, 3153a5c4 R2-F5: refusals and the Grok preflight come before lane selection; no unconditional launch claim.
+        Pin(readme, "applies its refusals and the Grok rules preflight before `ResolveLane` picks Relaunch or Notify",
+            "c1213-readme-lanes");
+        Pin(readme, "`PolicyRefreshServiceTests.Grok_legacy_policy_drift_refuses_before_kill_queue_or_stamp_mutation`",
+            "c1213-readme-grok-preflight");
+        readme.ShouldNotContain("and otherwise fall back to Notify.", Case.Sensitive, "c1213-readme-no-unconditional-fallback");
+        readme.ShouldNotContain("never falls back to Notify", Case.Sensitive, "c1213-readme-no-never-falls-back");
+        readme.ShouldNotContain("are guaranteed one", Case.Sensitive, "c1213-readme-no-guarantee");
+    }
+
     private static void Pin(string text, string sentence, string label)
     {
         text.ShouldContain(sentence, Case.Sensitive, label);

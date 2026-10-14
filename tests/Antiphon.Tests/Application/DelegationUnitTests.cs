@@ -232,27 +232,49 @@ public class DelegationWorkspaceBoundaryTests
 [Category("Unit")]
 public class DelegationReportFormatterTests
 {
+    // CARD-1213 review dd8ce0cf F1: the self-contained branch protections a runner brief carries.
+    internal const string BranchProtections =
+        "never rebase, amend or reset a pushed commit, and never force-push; landing rebases onto the target itself";
+
     [Test]
     public void Runner_worktree_brief_names_mirror_and_fast_forward_contract()
     {
-        var task = NewTask();
-        task.Workspace = WorkspaceMode.Worktree;
-        task.RunnerId = "server2";
-        task.WorktreePath = "C:\\Antiphon\\worktrees\\task-7f3a2b91";
-        task.RemoteWorktreePath = "/work/worktrees/task-7f3a2b91";
-        task.WorktreeBranch = "feat/card-task-7f3a2b91";
-        task.WorktreeBaseSha = new string('a', 40);
-        var brief = DelegationReportFormatter.BuildBrief(task, Settings);
-        brief.ShouldContain("--- runner branch contract ---");
-        brief.ShouldContain(task.RemoteWorktreePath);
-        brief.ShouldContain(task.WorktreeBranch);
-        brief.ShouldContain(task.WorktreeBaseSha);
-        brief.ShouldContain("[antiphon-progress:" + task.Id.ToString("D"));
-        brief.ShouldContain("never rebase");
-        brief.ShouldContain("Work left unpushed is invisible to the caller and is destroyed when the mirror is retired.");
-        brief.ShouldContain("Assigned checkout: runner mirror " + task.RemoteWorktreePath);
-        brief.Split("--- runner branch contract ---")[1].Split("\n\n")[0]
-            .All(c => c < 128).ShouldBeTrue();
+        // CARD-1213 V-10/R-10 (PC-59, PC-91..PC-93): both branch forms keep their exact branch line,
+        // full base SHA and push refspec. The brief is built from the task alone, so a recovered
+        // session launched before git-common existed still reads the branch protections (review dd8ce0cf F1);
+        // git-common is cited as the home of the remaining git rules.
+        const string baseSha = "0123456789abcdef0123456789abcdef01234567";
+        foreach (var (label, branch) in new[]
+        {
+            ("legacy", "feat/card-task-7f3a2b91"),
+            ("card", "feat/card-1213-code-7f3a2b91"),
+        })
+        {
+            var task = NewTask();
+            task.Workspace = WorkspaceMode.Worktree;
+            task.RunnerId = "server2";
+            task.WorktreePath = "C:\\Antiphon\\worktrees\\task-7f3a2b91";
+            task.RemoteWorktreePath = "/work/worktrees/task-7f3a2b91";
+            task.WorktreeBranch = branch;
+            task.WorktreeBaseSha = baseSha;
+            var brief = DelegationReportFormatter.BuildBrief(task, Settings).Replace("\r\n", "\n");
+            brief.ShouldContain("--- runner branch contract ---", Case.Sensitive, label + "-header");
+            var contract = brief.Split("--- runner branch contract ---")[1].Split("\n\n")[0];
+            brief.ShouldContain("Assigned branch: " + branch + ".", Case.Sensitive, label + "-assigned-branch");
+            contract.ShouldContain("git push origin HEAD:refs/heads/" + branch + "`", Case.Sensitive, label + "-push");
+            contract.ShouldContain("fast-forward-only from " + baseSha + ":", Case.Sensitive, label + "-base");
+            contract.ShouldContain(BranchProtections, Case.Sensitive, label + "-protections");
+            contract.ShouldContain("git-common", Case.Sensitive, label + "-citation");
+            contract.ShouldContain("If your brief asks you to rebase this branch, report blocked and say so.",
+                Case.Sensitive, label + "-rebase-blocked");
+            contract.ShouldContain("git ls-remote origin refs/heads/" + branch + "`", Case.Sensitive, label + "-ls-remote");
+            contract.ShouldContain("[antiphon-progress:" + task.Id.ToString("D"), Case.Sensitive, label + "-progress");
+            contract.ShouldContain(task.RemoteWorktreePath, Case.Sensitive, label + "-mirror");
+            brief.ShouldContain("Work left unpushed is invisible to the caller and is destroyed when the mirror is retired.",
+                Case.Sensitive, label + "-unpushed");
+            brief.ShouldContain("Assigned checkout: runner mirror " + task.RemoteWorktreePath, Case.Sensitive, label + "-checkout");
+            contract.All(c => c < 128).ShouldBeTrue(label + "-ascii");
+        }
     }
 
     [Test]

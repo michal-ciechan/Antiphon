@@ -20,6 +20,7 @@ import type { RepositoryVisibility } from '../../api/cardFiles'
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router'
 import type { AgentModelLevel, AgentReplyStyle } from '../../api/agents'
+import { AGENT_MODEL_LEVEL_OPTIONS } from '../../api/agents'
 import { getApiErrorMessage, getApiFieldErrors } from '../../api/client'
 import { useWorkspaceGitInfos } from '../../api/filesystem'
 import {
@@ -198,6 +199,8 @@ export function ProjectSetupModal({ opened, onClose }: { opened: boolean; onClos
 
   const gitInfo = gitInfos.data?.[0]
   const delegation = catalog.data?.delegation
+  // C1234 delegation step names the default tier only when it is a model level.
+  const defaultTier = AGENT_MODEL_LEVEL_OPTIONS.find((option) => option.value === delegation?.defaultLevel)?.value ?? null
   const allowed = delegation && !delegation.allowedRootsIsEmpty
     ? delegation.allowedRoots.some((root) => isUnderRoot(directory, root))
     : null
@@ -346,7 +349,7 @@ export function ProjectSetupModal({ opened, onClose }: { opened: boolean; onClos
                 ) : (
                   <>
                     <Text>{allowed ? 'This directory is under an allowed delegation root.' : 'This directory is not under an allowed delegation root.'}</Text>
-                    <Text size="sm" c="dimmed">Up to {delegation?.maxConcurrentTasks ?? 0} concurrent task{delegation?.maxConcurrentTasks === 1 ? '' : 's'}, depth {delegation?.maxDepth ?? 0}, default {delegation?.defaultLevel ?? 'High'} tier.</Text>
+                    <Text size="sm" c="dimmed">Up to {delegation?.maxConcurrentTasks ?? 0} concurrent task{delegation?.maxConcurrentTasks === 1 ? '' : 's'}, depth {delegation?.maxDepth ?? 0}, {defaultTier ? `default ${defaultTier} tier.` : 'default tier unknown.'}</Text>
                   </>
                 )}
               </Stack>

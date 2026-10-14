@@ -3975,8 +3975,19 @@ public sealed class AgentTaskService
     /// </summary>
     public AgentModelLevel ResolveLevel(AgentTaskKind kind, AgentTaskRole role, AgentModelLevel? explicitLevel)
     {
-        var level = explicitLevel
-            ?? (_settings.RolePolicy.TryGetValue(role.ToString(), out var policy) ? policy.Level : _settings.DefaultLevel);
+        var configured = _settings.RolePolicy.TryGetValue(role.ToString(), out var policy);
+        var level = explicitLevel ?? (configured ? policy!.Level : _settings.DefaultLevel);
+
+        // CARD-1234: refused before the orchestrator floor can mask it
+        // (RolePolicyInvalidValuesCreateTests.an_orchestrator_refuses_an_undefined_policy_level_instead_of_clamping_it_to_the_floor).
+        if (explicitLevel is null && !Enum.IsDefined(level))
+        {
+            var key = configured ? $"Delegation:RolePolicy:{role}:Level" : "Delegation:DefaultLevel";
+            var error = $"{key} is {level}, which is not a model level. The {role} task was not created; "
+                + "fix the configuration and restart the server.";
+            throw new ValidationException("RolePolicy", error, RolePolicyLevelInvalidCode,
+                $"{RolePolicyLevelInvalidCode}: {error}");
+        }
 
         // Frontier = 0 and Low = 3, so "at least" is a numeric MINIMUM on the enum value.
         if (kind == AgentTaskKind.Orchestrator && (int)level > (int)_settings.MinOrchestratorLevel)
@@ -3994,6 +4005,12 @@ public sealed class AgentTaskService
     /// </summary>
     public static readonly IReadOnlyList<AgentKind> DelegatableKinds =
         [AgentKind.ClaudeCode, AgentKind.Grok, AgentKind.Codex];
+
+    /// <summary>422 code: the role policy or <c>DefaultLevel</c> names an undefined model level (CARD-1234).</summary>
+    public const string RolePolicyLevelInvalidCode = "role_policy_level_invalid";
+
+    /// <summary>422 code: the role policy names a kind outside <see cref="DelegatableKinds"/> (CARD-1234).</summary>
+    public const string RolePolicyKindUnsupportedCode = "role_policy_kind_unsupported";
 
     /// <summary>
     /// Resolve WHICH AGENT PROGRAM runs the task: an explicit request wins, else the role policy's
@@ -4019,12 +4036,16 @@ public sealed class AgentTaskService
             var source = explicitlyAsked
                 ? "is not a delegate kind"
                 : $"is configured as the '{role}' role's kind, but is not a delegate kind";
-            throw new ValidationException(
-                nameof(CreateAgentTaskRequest.AgentKind),
-                $"{resolved} {source}. Delegated work runs on "
+            var error = $"{resolved} {source}. Delegated work runs on "
                 + $"{string.Join(" or ", DelegatableKinds)} (CARD-0084, CARD-0099); the others have never been "
                 + "exercised as delegates and CARD-0083 replaces this allowlist with a capability "
-                + "contract that can answer for them.");
+                + "contract that can answer for them.";
+            if (explicitlyAsked)
+                throw new ValidationException(nameof(CreateAgentTaskRequest.AgentKind), error);
+
+            // CARD-1234 (RolePolicyInvalidValuesCreateTests policy-kind rows).
+            throw new ValidationException(nameof(CreateAgentTaskRequest.AgentKind), error,
+                RolePolicyKindUnsupportedCode, $"{RolePolicyKindUnsupportedCode}: {error}");
         }
 
         if (kind == AgentTaskKind.Orchestrator && resolved != AgentKind.ClaudeCode)

@@ -1251,6 +1251,8 @@ public sealed class LlmEnvInheritanceSettings
 /// </summary>
 public sealed class DelegationSettingsValidator : IValidateOptions<DelegationSettings>
 {
+    private const string NotAModelLevel = "is not a model level. Use Frontier, High, Medium or Low.";
+
     public ValidateOptionsResult Validate(string? name, DelegationSettings options)
     {
         var failures = new List<string>();
@@ -1313,6 +1315,10 @@ public sealed class DelegationSettingsValidator : IValidateOptions<DelegationSet
                 "Delegation:CheckCompactionContinuationWaitMinutes must be 0 or at least 10.");
         }
 
+        // CARD-1234 (RolePolicyConfigurationValidationTests).
+        if (!Enum.IsDefined(options.DefaultLevel))
+            failures.Add($"Delegation:DefaultLevel is {options.DefaultLevel}, which {NotAModelLevel}");
+
         foreach (var (role, entry) in options.RolePolicy)
         {
             if (entry.RecommendedInFlight is { } value && value <= 0)
@@ -1320,6 +1326,19 @@ public sealed class DelegationSettingsValidator : IValidateOptions<DelegationSet
                 failures.Add(
                     $"Delegation:RolePolicy:{role}:RecommendedInFlight must be a positive integer or null (unbounded).");
             }
+
+            if (entry.Kind is { } kind && !AgentTaskService.DelegatableKinds.Contains(kind))
+            {
+                failures.Add(
+                    $"Delegation:RolePolicy:{role}:Kind is {kind}, which delegation cannot launch. "
+                    + $"Use {string.Join(", ", AgentTaskService.DelegatableKinds.SkipLast(1))} or "
+                    + $"{AgentTaskService.DelegatableKinds[^1]}, or leave it unset.");
+            }
+
+            if (!Enum.IsDefined(entry.Level))
+                failures.Add($"Delegation:RolePolicy:{role}:Level is {entry.Level}, which {NotAModelLevel}");
+            if (entry.EscalateTo is { } escalateTo && !Enum.IsDefined(escalateTo))
+                failures.Add($"Delegation:RolePolicy:{role}:EscalateTo is {escalateTo}, which {NotAModelLevel}");
         }
 
         foreach (var (tier, candidates) in options.ComplexityChains)

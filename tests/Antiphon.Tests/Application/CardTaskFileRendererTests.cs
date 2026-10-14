@@ -274,6 +274,60 @@ public class CardTaskFileRendererTests
         CardTaskFileRenderer.YamlQuote("a\\b\"c").ShouldBe("\"a\\\\b\\\"c\"");
     }
 
+    // CARD-0100 R-2: a card file carries exactly these keys, so no relationship field reaches it.
+    [Test]
+    public void Frontmatter_key_set_is_exactly_the_public_whitelist()
+    {
+        var at = new DateTime(2026, 10, 14, 9, 0, 0, DateTimeKind.Utc);
+        var card = new CardFilePublicCard(
+            Guid.Parse("5255dd3e-27fa-47b8-bb1d-e8c9460f9506"),
+            "CARD-0100",
+            "Model card relationships",
+            "relations",
+            "Body text.",
+            CardStatus.Backlog,
+            CardImportance.High,
+            CardImportanceProvenance.Auto,
+            CardUrgency.Soon,
+            at.AddDays(3),
+            2,
+            """["cards"]""",
+            at.AddDays(-10),
+            at.AddDays(-5),
+            at.AddDays(-1),
+            at,
+            "operator",
+            "superseded",
+            "closed out",
+            TrackerKind.GitHubIssues,
+            "#100",
+            "https://github.test/acme/app/issues/100",
+            "alice",
+            true);
+
+        var rendered = CardTaskFileRenderer.RenderCard(card);
+        var lines = rendered.Split('\n');
+        lines[0].ShouldBe("---");
+        var close = Array.IndexOf(lines, "---", 1);
+        close.ShouldBeGreaterThan(1);
+        var keys = lines[1..close].Select(line => line[..line.IndexOf(':')]).ToArray();
+        string[] expectedKeys =
+        [
+            "id", "identifier", "title", "alias", "status", "importance", "importance_provenance", "urgency",
+            "due", "labels", "created", "started", "completed", "external_tracker", "external_key",
+            "external_url", "external_author", "needs_human_review", "archived", "archived_by", "archived_reason",
+        ];
+        keys.ShouldBe(expectedKeys);
+        rendered.Contains("block", StringComparison.OrdinalIgnoreCase).ShouldBeFalse();
+        typeof(CardFilePublicCard).GetConstructors().Single().GetParameters().Select(p => p.Name).ShouldBe(
+        [
+            "Id", "Identifier", "Title", "Alias", "Description", "Status", "Importance", "ImportanceProvenance",
+            "Urgency", "DueAt", "Position", "LabelsJson", "CreatedAt", "StartedAt", "CompletedAt", "ArchivedAt",
+            "ArchivedBy", "ArchivedReason", "TerminalReason", "ExternalTracker", "ExternalKey", "ExternalUrl",
+            "ExternalAuthor", "NeedsHumanReview",
+        ]);
+    }
+
     private static CardFilePublicCard Project(Card card) => CardFilePublicProjection.Select.Compile()(card);
 
     private static Card MakeCard(

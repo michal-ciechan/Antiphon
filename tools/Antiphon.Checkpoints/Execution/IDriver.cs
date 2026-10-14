@@ -22,7 +22,11 @@ public sealed record DriverRequest(
     public BuildConfinement.Ledger? Ledger { get; init; }
 }
 
-public sealed record DriverResult(int ExitCode, string Stdout, string Stderr, bool Killed = false, bool TimedOut = false);
+public sealed record DriverResult(int ExitCode, string Stdout, string Stderr, bool Killed = false, bool TimedOut = false)
+{
+    // Set only by a driver that observed the child exit and its redirected output close (CARD-1242).
+    public DateTimeOffset? Exited { get; init; }
+}
 
 public interface IDriver
 {

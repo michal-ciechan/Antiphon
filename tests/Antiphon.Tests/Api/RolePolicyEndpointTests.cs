@@ -1,12 +1,15 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Tests.Application;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Options;
 using Shouldly;
 using TUnit.Core;
 
@@ -188,8 +191,9 @@ public sealed class RolePolicyEndpointTests
     }
 
     /// <summary>
-    /// A host bound with Docs Level=999, Commit Kind=Raw and Deploy Kind=999 (config validation admits
-    /// all three) still answers 200 with 14 rows; the bad rows withhold their target.
+    /// A host bound with Docs Level=999, Commit Kind=Raw and Deploy Kind=999 (validator removed, as a
+    /// stale config would be; CARD-1234 rejects all three at startup) still answers 200 with 14 rows;
+    /// the bad rows withhold their target.
     /// </summary>
     [Test]
     [ClassDataSource<RolePolicyUnsupportedValuesWebAppFactory>(Shared = SharedType.PerClass)]
@@ -258,5 +262,7 @@ public sealed class RolePolicyUnsupportedValuesWebAppFactory : AntiphonWebAppFac
                 ["Delegation:RolePolicy:Commit:Kind"] = "Raw",
                 ["Delegation:RolePolicy:Deploy:Kind"] = "999",
             }));
+        // RolePolicyConfigurationValidationTests covers the startup rejection this bypasses.
+        builder.ConfigureServices(services => services.RemoveAll<IValidateOptions<DelegationSettings>>());
     }
 }
