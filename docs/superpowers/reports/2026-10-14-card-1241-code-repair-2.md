@@ -4,7 +4,7 @@ Continues `9e8980fa01ad7b108a05913fc36e1a723358cf40` (carrier Code 74be673f; lan
 `feat/card-task-dd7920ee`. Red commit `6856ddddfef146c02dcea3a36ac328dbb94e3bf2`; fix commit
 `c783625f5ce913896b5aca88c439f57fd5aad607`. No master merge (merge-tree only). Mutation not run.
 
-## D1: admission hashes stamps that cannot show an entry unchanged
+## D1: admission hashes stamps without a file identity or a change time
 
 | Where | Change |
 |---|---|
@@ -12,8 +12,10 @@ Continues `9e8980fa01ad7b108a05913fc36e1a723358cf40` (carrier Code 74be673f; lan
 | `BuildConfinement.AdmitLedger` | Skips an entry's hash only when the recorded stamp `HasIdentityAndChangeTime`, its mtime **and ctime** are older than `RacyFrom` (capture start minus 2 s), and the stamp equals the current one. Off Linux admission hashes each entry. |
 | `BuildConfinement.Ledger.Stat` / `CaptureLedger(..., stat)` | Injectable stat provider, used at capture and admission (default `LedgerStat.Of`); `LedgerStat.Portable` is public for the tests. |
 
-Linux: ctime moves on content writes and on `utimes`/`touch -r`/`SetLastWriteTime`, so an A -> B rewrite with
-restored size and mtime changes the stamp (asserted on the real file system). Same-tick risk: the 2 s window now
+Linux: a `write` content change followed by `utimes`/`touch -r`/`SetLastWriteTime` moves the ctime, so that A -> B rewrite
+with restored size and mtime changes the stamp (`rewrite_keeping_size_and_mtime_on_the_real_file_system_is_refused_before_launch`).
+A store through a shared memory mapping can leave the stamp unchanged (Review 9f1c8a2e D1); repair report 3
+(`2026-10-14-card-1241-code-repair-3.md`) states that limit and the opt-in strict admission. Same-tick risk: the 2 s window now
 applies to ctime as well as mtime (`entry_with_a_change_time_inside_the_racy_window_is_hashed_at_admission`).
 Cost on Linux unchanged: unchanged aged entries 0 hashes (`unchanged_ledger_entries_are_not_hashed_when_the_slot_is_granted`,
 now a declared Windows skip and asserting each stamp has inode and ctime). The fixture's `AgeWorktree` waits 2.25 s

@@ -10,7 +10,7 @@ Mutation not run; PC-1..PC-6 of the 586e863b report and PC-7..PC-10 below are pe
 |---|---|
 | `LedgerStat` (new) | Metadata stamp read without opening the file. Linux: `statx` type, device, inode, size, mtime, ctime (link count not included). Other platforms: type, size, last write time; no file identity. A failed read is `Unknown` and matches nothing. |
 | `BuildConfinement.CaptureLedger` | Records each entry's `LedgerStat` before its hash, and `RacyFrom` = capture start minus `RacyWindow` (2 s). |
-| `BuildConfinement.AdmitLedger` (new) | Re-hashes an entry when its stat stamp differs or its recorded mtime is not earlier than `RacyFrom`; any difference returns `refused: tampered` with the usual TAMPERED/manual-command lines. Returns the number of hashed entries. |
+| `BuildConfinement.AdmitLedger` (new) | Re-hashes an entry when its stat stamp differs or its recorded mtime is not earlier than `RacyFrom`; a difference in a hashed entry returns `refused: tampered` with the usual TAMPERED/manual-command lines. Returns the number of hashed entries. |
 | `RunScheduler.BuildOneAsync` | After the lease is granted, the write-root preflight and `BeforeLaunch`, calls `AdmitLedger`; on a difference it appends the detail to `builds/<id>/build.log`, sets `refused: tampered` (exit 2) and returns without launching the build. `VerifyLedger` after release is unchanged. |
 
 Not covered (stated in `docs/testing-and-build.md`): a change made between the admission check and the build's launch
@@ -25,12 +25,13 @@ Tracked paths under the write roots are excluded from the ledger and stamped ins
 - `docs/testing-and-build.md` table: row 1 "Tracked files; untracked and ignored files outside the write roots" became
   "Tracked, untracked and ignored files outside the write roots"; row 2 adds tracked paths under the write roots; each row
   names its test methods; the write-root preflight `tracked` refusal and the uncovered cases are stated with their tests.
-- `BuildConfinement.Ledger` comment: "every tracked file and every untracked or ignored file outside the row's write roots" replaced.
+- `BuildConfinement.Ledger` comment: the universally quantified tracked/untracked/ignored scope sentence replaced.
 - `BuildConfinement.Baseline`, `CaptureUntracked` ("everything else"), `IDriver.Ledger` and `IConfinedDriver` ("non-output
   files", "the slot covers the build itself") comments rewritten to the write-root scope.
-- 586e863b report: "every PC", "all stamps", "every tracked file plus ...", "every untracked/ignored hash", PC-2 "every
-  listed path", and the second change row (now names tracked/untracked/ignored paths under the write roots).
-- Test comments: "every ledger entry", "every worktree file", "only the scheduler's ledger can see changes".
+- 586e863b report: the universally quantified PC, stamp, tracked-file and untracked/ignored-hash phrases, PC-2's
+  listed-path phrase, and the second change row (now names tracked/untracked/ignored paths under the write roots).
+- Test comments: the universally quantified ledger-entry and worktree-file phrases, and the sentence that only the
+  scheduler's ledger sees changes.
 
 ## Tests
 
