@@ -106,8 +106,8 @@ public sealed class OutputCleanupTests : CheckpointTestBase
         File.WriteAllText(Path.Combine(tests, "kept.cs"), "tracked");
         File.WriteAllText(Path.Combine(src, "kept.cs"), "tracked");
         File.WriteAllText(Path.Combine(trackedBin, "kept.txt"), "tracked");
-        // This positive cleanup control needs the same in-process creation
-        // custody as the tool's own payloads; an external writer is retained.
+        // This positive cleanup control records its payload through SafeWrite; a payload
+        // written by another process is adopted at Seal (CARD-1242), and a later write is retained.
         SafeWrite.Require(SafeWrite.Text(Path.Combine(safe, "out.dll"), "untracked", SafeWrite.Under(safe)));
         SafeWrite.Require(OwnedOutputLedger.Seal(safe));
         Git(root, "add", "--", "tests/kept.cs", "src/kept.cs", "bin-tracked/kept.txt");
@@ -201,21 +201,31 @@ public sealed class OutputCleanupTests : CheckpointTestBase
         File.WriteAllText(outside, "OUTSIDE");
         var linkedBeforeSeal = Path.Combine(root, "bin-c1242-pre");
         SafeWrite.Require(SafeWrite.CreateFreshDirectory(linkedBeforeSeal, SafeWrite.Under(root)));
-        File.CreateSymbolicLink(Path.Combine(linkedBeforeSeal, "linked.dll"), outside);
-        OwnedOutputLedger.Seal(linkedBeforeSeal).ShouldBe("output-inventory-failed");
-
-        SafeWrite.Require(OwnedOutputLedger.Seal(output));
+        var early = Path.Combine(linkedBeforeSeal, "linked.dll");
         var link = Path.Combine(output, "runtimes", "linked.dll");
-        File.CreateSymbolicLink(link, outside);
+        try
+        {
+            File.CreateSymbolicLink(early, outside);
+            OwnedOutputLedger.Seal(linkedBeforeSeal).ShouldBe("output-inventory-failed");
 
-        var result = OutputCleanup.CleanOwnedOutputs(root, ["bin-c1242", "bin-c1242-pre"], 0, false, false,
-            createdPaths: [output, linkedBeforeSeal]);
+            SafeWrite.Require(OwnedOutputLedger.Seal(output));
+            File.CreateSymbolicLink(link, outside);
 
-        result.Refusals.Count.ShouldBe(2);
-        result.Deleted.ShouldBeEmpty();
-        File.ReadAllText(outside).ShouldBe("OUTSIDE");
-        new FileInfo(link).LinkTarget.ShouldBe(outside);
-        File.ReadAllText(Path.Combine(output, "app.dll")).ShouldBe("COMPILER");
+            var result = OutputCleanup.CleanOwnedOutputs(root, ["bin-c1242", "bin-c1242-pre"], 0, false, false,
+                createdPaths: [output, linkedBeforeSeal]);
+
+            result.Refusals.Count.ShouldBe(2);
+            result.Deleted.ShouldBeEmpty();
+            File.ReadAllText(outside).ShouldBe("OUTSIDE");
+            new FileInfo(link).LinkTarget.ShouldBe(outside);
+            File.ReadAllText(Path.Combine(output, "app.dll")).ShouldBe("COMPILER");
+        }
+        finally
+        {
+            // The fixture teardown refuses a linked tree; remove only the two links made here.
+            if (new FileInfo(early).LinkTarget is not null) File.Delete(early);
+            if (new FileInfo(link).LinkTarget is not null) File.Delete(link);
+        }
     }
 
     // CARD-1242: adoption gives no authority over a tracked path inside the output.
