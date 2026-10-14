@@ -1,6 +1,6 @@
 # CARD-1253 Code report
 
-Implemented both restrictive-FK fixes and verified all 110 affected integration cases. Final verification is incomplete: R-3 timed out after 21 minutes without a terminal TRX. All 19 failures printed before that timeout reproduce at the original master base. The partial console also records 37 Windows-only skips; none is claimed passed.
+Implemented both restrictive-FK fixes and verified all 110 affected integration cases; ready for ordinary Review within the caller's clarified scope. R-3's proposed bounded whole Unit follow-up is NOT RUN, DEFERRED and outside this task. The earlier broad Unit attempt timed out after 21 minutes without a terminal TRX. All 19 failures printed before that timeout reproduce at the original master base and are inherited. The partial console also records 37 Windows-only skips, which remain unqualified. No whole Unit pass is claimed.
 
 ## Identity and source
 
@@ -13,7 +13,7 @@ Implemented both restrictive-FK fixes and verified all 110 affected integration 
 - Implementation commit and actual candidate tested: 44fb572e67122b18847378a4f733b0560209b323.
 - The subsequent report/plan-only commit is identified by the settlement's full SHA and progress token. Earlier receipts remain bound to their actual tested SHAs, not that documentation commit.
 - Plan: docs/superpowers/plans/2026-10-14-card-1253-cascade-foreign-keys.md.
-- Round: Final; ordinary verification incomplete (R-3). Restart target after eventual land: server. No restart/deploy performed.
+- Round: Final with caller-scoped verification V-1 through V-4 and R-1/R-2/R-4 complete; R-3 follow-up deferred. Restart target after eventual land: server. No restart/deploy performed.
 
 ## Change and scope
 
@@ -25,6 +25,8 @@ The Done cleanup executors remain unregistered. Activating them requires coordin
 
 The narrow brief said “NO whole-Unit lane”; the higher-priority Code/Final instructions and appended Final profile required it. CP-3 was declared before execution. No full-assembly run occurred. The caller audit also identified SessionStateWarmupTests and CardFileBoardLookupTests as affected delete consumers, so their full classes were included in CP-4 before final execution.
 
+Closing scope clarification: the caller explicitly excludes the proposed bounded whole Unit continuation, instructs no additional Unit run or wait, and requests ordinary Review. R-3 is therefore a deferred disclosure, and CP-3 has been removed from the executable checkpoint table. This documentation-only correction preserves the historical attempt, its actual timeout and all unedited evidence below; it does not relabel that attempt as never run or passed. No further build or test was started for this closing amendment.
+
 ## Ordinary outcomes
 
 | ID | Actual outcome |
@@ -35,7 +37,7 @@ The narrow brief said “NO whole-Unit lane”; the higher-priority Code/Final i
 | V-4 | PASS: 2 live task-history/cleanup probes plus 1 literal 15-link model census. All 3 were also green before the production fix. |
 | R-1 | PASS: full ProjectDeletionTests, including force confirmation, workflow refusal, last-board workflow preservation, CARD-1244 cleanup and rollback. |
 | R-2 | PASS: full BoardProjectArchiveApiTests and CardFilePrivacyOwnershipAcceptanceTests. |
-| R-3 | INCOMPLETE: Unit driver timed out at 21 minutes; no terminal TRX/counters. Nineteen console failures confirmed at base; 37 partial Windows skip messages remain unqualified. The full-lane timeout itself was not rerun at base. |
+| R-3 | NOT RUN, DEFERRED: proposed bounded whole Unit follow-up excluded by the caller. Historical broad Unit attempt timed out at 21 minutes with no terminal TRX/counters; 19 console failures reproduce at base and are inherited; 37 partial Windows skip messages remain unqualified. The full-lane timeout itself was not rerun at base. No passing Unit result claimed. |
 | R-4 | PASS: full SessionStateWarmupTests and CardFileBoardLookupTests. |
 | M-1 | PASS: full snapshot audit and runtime literal census agree on all 15 Restrict links; no explicit NoAction links or omitted default-delete links target the seven named parent types. |
 | M-2 | Code-head history guard and merge-tree passed; final report-head history guard, remote equality and clean-tree results are supplied in settlement. |
@@ -73,7 +75,7 @@ Fixed integration total: 110 executed, 110 passed, 0 failed, 0 skipped. Fresh TR
 
 ## Source-qualified receipts
 
-CP-1/CP-2/CP-4 receipt validation returned exit 0: CHECKPOINT SOURCE VALID source=44fb572e67122b18847378a4f733b0560209b323 rows=3. Validating the entire selection returned exit 2, reason=row_failed. There is no clean Final certificate.
+CP-1/CP-2/CP-4 receipt validation returned exit 0: CHECKPOINT SOURCE VALID source=44fb572e67122b18847378a4f733b0560209b323 rows=3. Validating the historical entire selection, including CP-3, returned exit 2, reason=row_failed. There is no clean whole Unit certificate; the scoped handoff relies on the three validated integration rows.
 
 All builds/rows used a granted host slot, waited=0s. The checkpoint bootstrap was the only tooling build outside the manifest: scripts/build-slot.ps1 -Label c1253-checkpoint-bootstrap -- dotnet build tools/Antiphon.Checkpoints --property:OutputPath=bin-c1253-tool/ --property:UseAppHost=false --nologo. Its lease was granted, waited=0s, held=5s, build passed with two warnings. The red source group built once; the final group built once and reused it for all four rows. Linux UseAppHost=false was retained.
 
@@ -197,6 +199,6 @@ No deliberate mutants or PC red/restore/green cycles ran. All nine PC IDs and al
 
 ## Remaining work and cleanup
 
-R-3 requires a completed bounded Unit verification selection, triage/remediation of the 19 base-confirmed failures, and native placement for skipped cases. Do not widen a timeout or loosen assertions. No ordinary ID is deferred and called passed. Next is Code for this verification remainder, then ordinary Review, then caller landing of the original Code task and SourceLanding Mutation.
+R-3 bounded whole Unit continuation is not run and is deferred outside this task by the caller's closing clarification. The 19 base-confirmed failures remain listed as inherited, and the 37 Windows-only skips remain unqualified. No deferred ID is called passed. V-1 through V-4, R-1/R-2/R-4 and the required manual work are complete. Next is ordinary Review, then caller landing of the original Code task and SourceLanding Mutation; every PC remains pending. No timeout or assertion was loosened.
 
 Removed only task-created outputs at literal paths: tests/Antiphon.Tests/bin-c1253/ (red and final generations), tools/Antiphon.Checkpoints/bin-c1253-tool/, both checkpoint tool shadows, and /tmp/card1253-base-f3a5b136/tests/Antiphon.Tests/bin-c1253-base/. The clean detached baseline worktree was removed through git worktree remove. Raw evidence stayed in the assigned worktree. This report and the plan status are documentation-only after the tested implementation SHA.
