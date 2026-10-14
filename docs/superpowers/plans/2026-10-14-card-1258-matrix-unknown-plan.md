@@ -67,6 +67,17 @@ manifest `rowMinutes: 40`, run serial with `--row-timeout 40m --total-timeout 15
 and committed `--expected-source-sha`. No keep-outputs on Linux. Red and green use
 the same exact selections in separate committed groups, without deliberate mutants.
 
+### Baseline follow-up S3
+
+CP-5 reached its unchanged 40-minute bound at source
+`2ffcb09e05976a23397dfd3e245e20b69d988324`, without a final TRX. R-3 is
+incomplete, not passed. Ten assertion failures appeared in its console. CP-7 through
+CP-11 reproduce only those methods in a detached, read-only checkout of the recorded
+base `5665ddb1a3ba730f3b858acc109e65b5d7304d6c`; pass that base as expected SHA.
+These diagnostic rows do not replace the full Unit lane or qualify R-3. Their
+additional estimate is 12 minutes (one build, five bounded selections). No timeout
+or assertion is changed, and no successful ordinary selection is repeated.
+
 ### Checkpoints
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
@@ -77,3 +88,8 @@ the same exact selections in separate committed groups, without deliberate mutan
 | CP-4 | S2 | `tests/Antiphon.Tests -> bin-c1258-green/` | projection-green | `/*/*/(ComplexityEffectiveComposeTests*)\|(ComplexityEffectiveHttpTests*)\|(ComplexityRoutingComposeTests*)/*` | V-3, V-4, V-5, R-2 | all three full classes, 0 failed/skipped | 17 | 8 | true |
 | CP-5 | S2 | CP-4 | unit | `/*/*/*/*[Category=Unit]` | R-3 | nonzero full Unit count, failures and platform skips reported separately | 1000 | 9 | true |
 | CP-6 | S2 | n/a | client-build | `npm --prefix client run build` | R-4 | typecheck and production build exit 0 | n/a | 3 | true |
+| CP-7 | S3-baseline | `tests/Antiphon.Tests -> bin-c1258-base/` | baseline-registry | `/*/*/TestClassificationGuardTests/Registry_matches_compiled_metadata` | R-3 diagnostic | exactly 1 result; compare actual assertion with CP-5 | 1 | 8 | true |
+| CP-8 | S3-baseline | CP-7 | baseline-environment | `/*/*/CheckpointImportTests/environment_reaches_only_its_row_and_its_reruns` | R-3 diagnostic | exactly 1 result; compare actual assertion with CP-5 | 1 | 1 | true |
+| CP-9 | S3-baseline | CP-7 | baseline-identity | `/*/*/CheckpointProcessIdentityTests/confirmed_dead_local_identity_permits_cleanup` | R-3 diagnostic | exactly 1 result; compare actual assertion with CP-5 | 1 | 1 | true |
+| CP-10 | S3-baseline | CP-7 | baseline-reruns | `/*/*/RerunPolicyTests/(rerun_lines_and_reruns_suffix*)\|(row_green_only_when_rerun_passed_and_nothing_else_failed*)\|(rerun_invokes_once_per_class*)\|(unlisted_failure_never_reruns*)\|(reruns_only_known_flaky_names_once*)` | R-3 diagnostic | exactly 5 results; compare actual assertions with CP-5 | 5 | 1 | true |
+| CP-11 | S3-baseline | CP-7 | baseline-deadlines | `/*/*/TimeoutTests/(total_deadline_skips_a_queued_build_without_starting_it*)\|(total_deadline_kills_running_and_skips_queued*)` | R-3 diagnostic | exactly 2 results; compare actual assertions with CP-5 | 2 | 1 | true |
