@@ -14,6 +14,23 @@ $session = $previous
 $token = ''
 $stage = 'vault'
 
+# CARD-1245. A Windows checkout (core.autocrlf=true) turns these here-strings into CRLF, and
+# sh on server2 then aborts on `set -eu` followed by a carriage return. Send LF only.
+function ConvertTo-RemoteCommand([string]$Payload) {
+    "sudo -n sh -c '" + $Payload.Replace("`r", '').Replace("'", "'\''") + "'"
+}
+
+# Remote stderr only, on one line, with the token itself redacted. The remote side never echoes
+# its stdin, so redaction is a second line of defence, not the only one.
+function Get-RemoteStderr([object[]]$Output, [string]$Secret) {
+    $lines = @($Output | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] } |
+        ForEach-Object { ([string]$_).Trim() } | Where-Object { $_ })
+    $text = ($lines -join ' | ') -replace '[\x00-\x1f\x7f]', ' '
+    if ($Secret) { $text = $text.Replace($Secret, '[redacted]') }
+    if ($text.Length -gt 2000) { $text = $text.Substring(0, 2000) + '...' }
+    $text
+}
+
 try {
     if (-not $session) {
         $pickup = Join-Path $HOME '.bw-session'
@@ -42,12 +59,15 @@ tmp=$(mktemp "$d/token.tmp.XXXXXXXX")
 trap 'rm -f -- "$tmp"' EXIT HUP INT TERM
 cat > "$tmp" && test -s "$tmp" && chown 1654:1654 "$tmp" && chmod 0400 "$tmp" && mv -f "$tmp" "$d/token"
 '@
-    $remote = "sudo -n sh -c '" + $upload.Replace("'", "'\''") + "'"
+    $remote = ConvertTo-RemoteCommand $upload
     $stage = 'upload'
-    $token | & ssh -o BatchMode=yes -o ConnectTimeout=30 $Server $remote 1>$null 2>$null
+    $output = @($token | & ssh -o BatchMode=yes -o ConnectTimeout=30 $Server $remote 2>&1)
+    $code = $LASTEXITCODE
+    $detail = Get-RemoteStderr $output $token
     $token = ''
-    if ($LASTEXITCODE -ne 0) {
+    if ($code -ne 0) {
         Write-Warning 'GitHub token refresh was not confirmed over SSH. Write errors before atomic replacement leave the previous file unchanged; a lost connection may require a metadata check.'
+        if ($detail) { Write-Warning ('Remote stderr (exit ' + $code + '): ' + $detail) }
         exit 1
     }
 
@@ -57,12 +77,16 @@ d=/home/mc/antiphon-server2/secrets/github-token
 stat -c '%u:%g %a' "$d/token"
 if test -s "$d/token"; then printf 'present=true\n'; else printf 'present=false\n'; fi
 '@
-    $remote = "sudo -n sh -c '" + $verify.Replace("'", "'\''") + "'"
+    $remote = ConvertTo-RemoteCommand $verify
     $stage = 'verify'
-    $metadata = @(& ssh -o BatchMode=yes -o ConnectTimeout=30 $Server $remote 2>$null)
-    if ($LASTEXITCODE -ne 0 -or $metadata.Count -ne 2 -or
+    $output = @(& ssh -o BatchMode=yes -o ConnectTimeout=30 $Server $remote 2>&1)
+    $code = $LASTEXITCODE
+    $metadata = @($output | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] } | ForEach-Object { [string]$_ })
+    if ($code -ne 0 -or $metadata.Count -ne 2 -or
         $metadata[0] -cne '1654:1654 400' -or $metadata[1] -cne 'present=true') {
         Write-Warning 'GitHub token was delivered, but owner/mode/presence verification failed. No file contents were printed.'
+        $detail = Get-RemoteStderr $output ''
+        if ($detail) { Write-Warning ('Remote stderr (exit ' + $code + '): ' + $detail) }
         exit 1
     }
     # Only these two validated metadata lines can reach stdout.
