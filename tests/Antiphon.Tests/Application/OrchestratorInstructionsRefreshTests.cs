@@ -177,9 +177,9 @@ public class OrchestratorInstructionsRefreshTests
                 "stage pin" => Table("RoutingPins") && Parameter("role", (int)AgentTaskRole.Plan),
                 "standing agent" => Table("Agents") && sql.Contains("a.\"Kind\"", StringComparison.Ordinal)
                     && !sql.Contains("a.\"Status\"", StringComparison.Ordinal),
-                "availability" => Table("ModelAvailabilityHolds") && parameters.Any(p => p.ParameterName.Contains("alias", StringComparison.OrdinalIgnoreCase)),
+                "availability" => Table("ModelAvailabilityHolds") && parameters.Any(p => p.ParameterName.Contains("canonical", StringComparison.OrdinalIgnoreCase)),
                 "policy" => Table("DispatchConcurrencySettings"),
-                "holds" => Table("ModelAvailabilityHolds") && parameters.All(p => !p.ParameterName.Contains("alias", StringComparison.OrdinalIgnoreCase)),
+                "holds" => Table("ModelAvailabilityHolds") && parameters.All(p => !p.ParameterName.Contains("canonical", StringComparison.OrdinalIgnoreCase)),
                 "pins" => Table("RoutingPins") && parameters.All(p => !p.ParameterName.Contains("role", StringComparison.Ordinal)),
                 "defaults" => Table("RunnerRoutingSettings"),
                 "budget" => Table("HostBudgets"),
