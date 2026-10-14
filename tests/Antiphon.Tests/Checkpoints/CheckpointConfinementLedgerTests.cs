@@ -6,8 +6,9 @@ using TUnit.Core;
 
 namespace Antiphon.Tests.Checkpoints;
 
-// CARD-1241: non-output files are stamped before the build slot and verified after its release;
-// inside the slot the build stamps only its write roots and what the ledger does not hold.
+// CARD-1241: files outside the write roots are stamped before the build slot, re-checked once it is
+// granted and verified after its release; inside the slot the build stamps its write roots and what
+// the ledger does not hold.
 [Category("Unit")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class CheckpointConfinementLedgerTests : CheckpointTestBase
@@ -38,6 +39,27 @@ public sealed class CheckpointConfinementLedgerTests : CheckpointTestBase
         var unledgered = Prepare(root, null, cancellationToken);
         unledgered.Untracked.Keys.Count(path => path.StartsWith("node_modules/", StringComparison.Ordinal)).ShouldBe(IgnoredFiles);
         unledgered.Content.ShouldContainKey("App/Marker.cs");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    [Timeout(300_000)]
+    public Task tracked_file_under_a_write_root_is_stamped_inside_the_slot_not_in_the_ledger(CancellationToken cancellationToken)
+    {
+        // red: the ledger takes tracked paths under the write roots too (Review 06ff09f8 D2 scope), or the
+        // in-slot capture drops them, so a tracked obj/ file is stamped in neither place or in both.
+        var root = BeginRepo();
+        Write(root, "App/obj/tracked.txt", "force-added under a write root\n");
+        Git(root, "add", "-f", "App/obj/tracked.txt");
+        Git(root, "-c", "user.email=card-1241@example.invalid", "-c", "user.name=card-1241",
+            "-c", "commit.gpgsign=false", "commit", "-m", "tracked under obj", "--no-verify");
+        var ledger = Capture(root);
+        ledger.Tracked.ShouldContain("App/obj/tracked.txt");
+        ledger.Files.ShouldNotContainKey("App/obj/tracked.txt");
+        ledger.Files.ShouldContainKey("App/Marker.cs");
+
+        var inSlot = Prepare(root, ledger, cancellationToken);
+        inSlot.Content.Keys.ToArray().ShouldBe(new[] { "App/obj/tracked.txt" });
         return Task.CompletedTask;
     }
 
@@ -147,6 +169,45 @@ public sealed class CheckpointConfinementLedgerTests : CheckpointTestBase
         report.Rows.Single().State.ShouldNotBe("green");
     }
 
+    [Test]
+    [Timeout(300_000)]
+    public Task unchanged_ledger_entries_are_not_hashed_when_the_slot_is_granted()
+    {
+        // red: admission hashes each ledger entry again instead of the entries whose stat stamp changed.
+        var root = BeginRepo();
+        AgeWorktree(root);
+        var ledger = Capture(root);
+        ledger.Files.Count.ShouldBeGreaterThan(IgnoredFiles);
+
+        var unchanged = BuildConfinement.AdmitLedger(ledger);
+        unchanged.Settlement.Kind.ShouldBeNull(unchanged.Settlement.Detail);
+        unchanged.Hashed.ShouldBe(0, "no ledger entry changed, so none is hashed inside the slot");
+
+        File.WriteAllText(Path.Combine(root, "node_modules", "pkg", "f0007.js"), "changed while waiting\n");
+        var changed = BuildConfinement.AdmitLedger(ledger);
+        changed.Hashed.ShouldBe(1, "only the entry whose stat stamp changed is hashed");
+        changed.Settlement.Kind.ShouldBe("tampered");
+        changed.Settlement.Paths.ToArray().ShouldBe(new[] { "node_modules/pkg/f0007.js" }, changed.Settlement.Detail);
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    [Timeout(300_000)]
+    public Task entry_modified_just_before_the_ledger_is_hashed_when_the_slot_is_granted()
+    {
+        // red: an entry modified within the racy window is skipped on an equal stat stamp, although a second
+        // write in the same timestamp tick would leave size, inode and timestamps equal.
+        var root = BeginRepo();
+        AgeWorktree(root);
+        File.WriteAllText(Path.Combine(root, "notes.txt"), "user notes written just before the ledger\n");
+        var ledger = Capture(root);
+
+        var admitted = BuildConfinement.AdmitLedger(ledger);
+        admitted.Hashed.ShouldBe(1, "only the recently modified entry is hashed");
+        admitted.Settlement.Kind.ShouldBeNull(admitted.Settlement.Detail);
+        return Task.CompletedTask;
+    }
+
     private static async Task<(string Run, int Exit)> RunScheduledAsync(
         string root, LedgerDriver driver, RecordingSlotClient slots, CancellationToken cancellationToken)
     {
@@ -170,6 +231,16 @@ public sealed class CheckpointConfinementLedgerTests : CheckpointTestBase
             Driver = driver, Slots = slots, SourceCapture = _ => source,
         });
         return (run, exit);
+    }
+
+    // Moves the modification time of the worktree files outside .git an hour back, outside the racy window.
+    private static void AgeWorktree(string root)
+    {
+        var old = DateTime.UtcNow.AddHours(-1);
+        var git = Path.Combine(root, ".git") + Path.DirectorySeparatorChar;
+        foreach (var file in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
+            if (!file.StartsWith(git, StringComparison.Ordinal))
+                File.SetLastWriteTimeUtc(file, old);
     }
 
     private string BeginRepo()
@@ -244,7 +315,7 @@ public sealed class CheckpointConfinementLedgerTests : CheckpointTestBase
         }
     }
 
-    // Uses the real ledger capture around a fake build, so only the scheduler's ledger can see changes.
+    // Uses the real ledger capture around a fake build; the build runs no Prepare/Settle, so changes reach the report through the scheduler's ledger checks.
     private sealed class LedgerDriver(RecordingSlotClient slots, Action onBuild) : IConfinedDriver
     {
         private readonly FakeDriver _inner = new();
