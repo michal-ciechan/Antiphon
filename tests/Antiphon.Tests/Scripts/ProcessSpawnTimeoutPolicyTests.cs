@@ -17,6 +17,7 @@ public sealed class ProcessSpawnTimeoutPolicyTests
         ("Scripts/HostJqPrerequisiteScriptTests.cs", "HostJqPrerequisiteScriptTests"),
         ("Infrastructure/JqRunnerImageContractTests.cs", "JqRunnerImageContractTests"),
         ("Infrastructure/GrokSha256PinTests.cs", "GrokSha256PinTests"),
+        ("Infrastructure/GitMinimumVersionGuardTests.cs", "GitMinimumVersionGuardTests"),
         ("Infrastructure/CodexRootExecContractTests.cs", "CodexRootExecContractTests"),
         ("Infrastructure/CodexRunnerImageContractTests.cs", "CodexRunnerImageContractTests"),
         ("Scripts/RollingVolumeRecycleScriptTests.cs", "RollingVolumeRecycleScriptTests"),
@@ -142,7 +143,7 @@ public sealed class ProcessSpawnTimeoutPolicyTests
     private static (ClassDeclarationSyntax Declaration, SemanticModel Model)[] ReadPortfolio()
     {
         var portfolio = Portfolio;
-        portfolio.Length.ShouldBe(11, "c1210-timeout-scope");
+        portfolio.Length.ShouldBe(12, "c1210-timeout-scope");
         var trees = portfolio.Select(entry => CSharpSyntaxTree.ParseText(File.ReadAllText(
             Path.Combine(DelegateScriptRunner.RepoRoot, "tests/Antiphon.Tests", entry.Path)))).ToArray();
         var compilation = Compile(trees);
