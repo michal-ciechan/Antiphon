@@ -99,11 +99,12 @@ public class OrchestratorInstructionsRefreshTests
             part == "budget" ? "policy" : part;
         var unknown = $"unknown ({reason} read failed)";
         var file = await File.ReadAllTextAsync(failed.WrittenPath);
-        var subject = notice ? delta : file;
+        var subject = (notice ? delta : file).Replace("\r\n", "\n", StringComparison.Ordinal);
         subject.ShouldContain(unknown);
         subject.ShouldNotContain("→ rolePolicy");
         subject.ShouldNotContain("→ unset");
         subject.ShouldNotContain("InvalidOperationException");
+        delta.ShouldNotContain(" removed");
         file.ShouldContain("default Medium;");
         h.Adapter.SubmittedBodies.Count.ShouldBe(1);
         h.Adapter.SubmittedBodies[0].ShouldContain(unknown);
@@ -141,6 +142,8 @@ public class OrchestratorInstructionsRefreshTests
         if (part is "chain-default" or "stage pin")
             recovery.ShouldContain($"matrix: Plan source {unknown} → {(part == "stage pin" ? "stage pin" : "role")}");
         recovery.ShouldContain(unknown + " → ");
+        if (part == "policy")
+            recovery.ShouldContain("caps: read unknown (policy read failed) → MaxOpenTasks 6; local budget 2 (config)");
         (await File.ReadAllTextAsync(recovered.WrittenPath)).ShouldNotContain("unknown (");
         await Instructions(h).ReconcileNowAsync("D3 stable recovery");
         h.Adapter.SubmittedBodies.Count.ShouldBe(2);

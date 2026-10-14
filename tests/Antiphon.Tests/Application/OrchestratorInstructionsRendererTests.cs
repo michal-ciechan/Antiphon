@@ -176,6 +176,30 @@ public sealed class OrchestratorInstructionsRendererTests
         fitted.ShouldNotContain("  Plan:");
         fitted.ShouldContain("Antiphon CARD-0822 Code");
         fitted.ShouldNotContain("more: GET /api/routing-pins");
+
+        const string combined = "unknown (stage pin, chain, chain metadata, standing agent, availability read failed)";
+        var worst = snapshot with
+        {
+            Matrix = new MatrixSection("Medium", roles.Select(role => new MatrixInstructionRow(
+                role.ToString(), combined, combined, combined, combined, combined)).ToArray()),
+        };
+        var worstBody = OrchestratorInstructionsRenderer.Render(worst);
+        worstBody.ShouldContain("  Plan: effective " + combined);
+        worstBody.ShouldContain("  Plan: source " + combined);
+        worstBody.ShouldNotContain("+2");
+        foreach (var line in worstBody.Split('\n').Where(line => line.StartsWith("- ", StringComparison.Ordinal)
+                     || line.StartsWith("  ", StringComparison.Ordinal)))
+        {
+            Encoding.UTF8.GetByteCount(line).ShouldBeLessThanOrEqualTo(160);
+            line.ShouldNotContain("\uFFFD");
+        }
+        var worstCap = Encoding.UTF8.GetByteCount(worstBody) - 1;
+        var worstFitted = OrchestratorInstructionsRenderer.Render(worst, worstCap);
+        Encoding.UTF8.GetByteCount(worstFitted).ShouldBeLessThanOrEqualTo(worstCap);
+        worstFitted.ShouldContain("… 14 rows: GET /api/complexity-chains");
+        worstFitted.ShouldContain("Antiphon CARD-0822 Code");
+        worstFitted.ShouldNotContain("  Plan:");
+        worstFitted.ShouldNotContain("more: GET /api/routing-pins");
     }
 
     [Test]

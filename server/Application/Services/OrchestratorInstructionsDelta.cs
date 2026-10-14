@@ -17,15 +17,42 @@ public static class OrchestratorInstructionsDelta
     {
         ArgumentNullException.ThrowIfNull(after);
         var lines = new List<string>();
-        DiffCaps(lines, before?.Caps, after.Caps);
-        DiffRunners(lines, before?.Runners ?? [], after.Runners);
-        DiffDefaults(lines, before?.Defaults, after.Defaults);
-        DiffHolds(lines, before?.Holds ?? [], after.Holds);
-        DiffMatrix(lines, before?.Matrix, after.Matrix);
-        DiffPins(lines, before?.Pins ?? [], after.Pins);
+        if (!DiffRead(lines, "caps", before, after, () =>
+                $"MaxOpenTasks {after.Caps.MaxOpenTasks}; local budget {after.Caps.EffectiveMaxConcurrentTasks} ({after.Caps.MaxConcurrentSource}); "
+                + string.Join(", ", after.Caps.Roles.Select(role => $"{role.Role} {FormatInFlight(role.RecommendedInFlight)}"))))
+            DiffCaps(lines, before?.Caps, after.Caps);
+        if (!DiffRead(lines, "runners", before, after, () => Join(after.Runners.Select(r =>
+                $"{r.RunnerId} {r.Platform ?? "unknown"} eligible {Yes(r.DispatchEligible)} budget {Opt(r.EffectiveBudget)}").ToArray())))
+            DiffRunners(lines, before?.Runners ?? [], after.Runners);
+        if (!DiffRead(lines, "defaults", before, after, () =>
+                $"global {after.Defaults.GlobalRunnerId ?? "none"}; revision {after.Defaults.Revision}; "
+                + Join(after.Defaults.KindDefaults.Select(k => $"{k.Kind} {k.RunnerId ?? "none"}").ToArray())))
+            DiffDefaults(lines, before?.Defaults, after.Defaults);
+        if (!DiffRead(lines, "holds", before, after, () => Join(after.Holds.Select(h =>
+                $"{Key(h)} {h.Source} until {h.Until ?? "none"}").ToArray())))
+            DiffHolds(lines, before?.Holds ?? [], after.Holds);
+        if (!DiffRead(lines, "matrix", before, after, () =>
+                $"default {after.Matrix?.DefaultComplexity}; " + Join((after.Matrix?.Rows ?? [])
+                    .Select(r => $"{r.Role} {r.Effective} via {r.Source}").ToArray())))
+            DiffMatrix(lines, before?.Matrix, after.Matrix);
+        if (!DiffRead(lines, "pins", before, after, () => Join(after.Pins.Select(p =>
+                $"{PinKey(p)} {Join(p.Candidates)} {p.Strength}").ToArray())))
+            DiffPins(lines, before?.Pins ?? [], after.Pins);
         DiffLevels(lines, before?.Levels ?? [], after.Levels);
         DiffStanding(lines, before?.StandingLines ?? [], after.StandingLines);
         return Cap(lines);
+    }
+
+    private static bool DiffRead(List<string> lines, string section,
+        OrchestratorInstructionsSnapshot? before, OrchestratorInstructionsSnapshot after, Func<string> recovered)
+    {
+        var oldUnknown = before?.UnknownSection(section);
+        var newUnknown = after.UnknownSection(section);
+        if (oldUnknown is null && newUnknown is null)
+            return false;
+        DiffScalar(lines, section, "read", oldUnknown ?? (before is null ? "unobserved" : "observed"),
+            newUnknown ?? recovered());
+        return true;
     }
 
     private static void DiffCaps(
@@ -243,7 +270,14 @@ public static class OrchestratorInstructionsDelta
         else if (newValue is null)
             lines.Add($"{section}: {key} removed");
         else
-            lines.Add($"{section}: {key} {oldValue} → {newValue}");
+        {
+            var prefix = $"{section}: {key} ";
+            // Preserve the unknown reason when a long previous value would consume the line.
+            var room = MaxLineChars - prefix.Length - newValue.Length - " → ".Length;
+            if (newValue.StartsWith("unknown (", StringComparison.Ordinal) && room > 0 && oldValue.Length > room)
+                oldValue = oldValue[..(room - 1)] + "…";
+            lines.Add($"{prefix}{oldValue} → {newValue}");
+        }
     }
 
     private static string Cap(List<string> lines)

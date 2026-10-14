@@ -694,9 +694,36 @@ The supplementary `OrchestratorInstructionsGuidanceTests` roster is 5 methods / 
   and resolve their titles against the owner's bold paragraph headings. The stale API pointer
   fails against the renamed heading. Counts prevent a missing pointer from passing vacuously.
 
-Regeneration choice: retain the existing notification path and report unreadable chain cells as
-unknown with a bounded reason. No suppression/recovery state is added. The existing per-line
+Regeneration choice: carry explicit unknown read states through the existing notification path.
+Exception class names are diagnostic detail rather than settings facts. The existing per-line
 cap and matrix-first elision remain binding. Deliberate mutants remain SourceLanding work.
+
+D3 projection dependency audit (`OrchestratorInstructionsSnapshotBuilder`, renderer and delta):
+
+| Projected fact | Read dependency and failure representation | Witness / boundary |
+|---|---|---|
+| Hard/Medium/Easy candidate text | That tier's chain read; `unknown (chain read failed)` when unreadable. Pin/availability/metadata faults leave successfully read stored candidate names intact | V-F9, V-F10, V-F12 default/non-default rows |
+| Default-tier effective candidates and withholding reason | Stage pin, chain, metadata, standing-agent label and availability reads; normalized `unknown (<parts> read failed)` replaces fallback candidates and exception-bearing withholding text | V-F12 corresponding rows |
+| Default-tier source / pin overlay | Stage pin, chain and standing-agent reads; unknown instead of the fallback `rolePolicy`, chain or unavailable-agent label. Availability and metadata do not select the source | V-F10 Medium/simultaneous and V-F12 |
+| `defaultComplexity` | In-memory `DelegationSettings.DefaultComplexity`; independent of the injected DB reads, remains Medium | V-F12 literal file assertion |
+| DTO `stagePin` presence | Not separately copied into `MatrixInstructionRow`; the source projects the effective overlay. Section 6 reads pin definitions independently and may still observe them when the overlay read fails | V-F12 stage-pin and pin-list rows; API DTO shape is unchanged |
+| DTO `governsDefault` | Not consumed by the snapshot/differ. The configured tier marker is configuration; the effective/default-target detail becomes unknown on its read failures | V-F12 default-tier and defaultComplexity assertions; no new boolean is projected |
+| Caps, local budget, role recommendations | Effective concurrency-policy and local-budget read; the section is `unknown (policy read failed)`, with no config fallback or role-removal delta | V-F12 policy/budget; recovery checks literal MaxOpenTasks 6 and local budget 2 |
+| Runner facts | Catalogue, occupancy query and per-host budget reads; section unknown. A catalogue DTO's `catalogue_read_failed` sentinel also becomes section unknown | V-F12 runner catalogue query and budget; remote sentinel recognized by reading, not separately injected |
+| Runner defaults | Settings/revision/kind-default reads; section unknown | V-F12 defaults |
+| Held models | Active-hold listing; section unknown rather than none | V-F12 holds |
+| Routing pin definitions, card identifiers and board labels | Pin listing and card/board join; section unknown rather than none or removed | V-F12 pin listing; card/board-join failure uses the same section boundary but is not separately injected |
+| Model levels and standing instructions | In-memory aliases/settings, no asynchronous store read | Existing renderer roster; no artificial read-fault claim |
+
+Whole-section recovery emits one bounded summary of the freshly observed values. Matrix recovery
+diffs the normalized field values. Unknown-to-unknown with the same reason emits no delta;
+V-F12 observes the persisted revision and delivered count across different exception types.
+Unexpected outer matrix exceptions use the section boundary; the injected matrix faults exercise
+the per-part path. Cancellation propagates by reading the catch filters; it is not a new test row.
+Long instruction paths or many simultaneous changes can still clip later notice lines under the
+700-character wrapper. Tier lines can elide later tiers; the added effective/source detail lines
+retain default-target unknown facts. V-F13 also covers five combined read reasons and the
+candidate summarizer's comma boundary.
 
 - V-F1 `Sections_render_caps_runners_defaults_holds_pins_levels_and_standing_lines` (edited with reason: the matrix
   section renumbers 5–7 to 6–8) | U | `Sample()` gains `Matrix: new MatrixSection("Medium", [new
