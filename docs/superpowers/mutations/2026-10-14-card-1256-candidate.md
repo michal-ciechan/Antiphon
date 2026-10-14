@@ -11,7 +11,8 @@ All controls are pending; none was run by Code. Method-scoped vitest filters (`-
 | PC-2 | `boards.ts`: remove `onError` from `useAddBlocker` | `CardBlockers.test.tsx` -t "reloads the card after a stale-token refusal" | renamed title never appears |
 | PC-3 | `boards.ts`: remove the `setQueryData` of `cardConcurrencyToken` in `useAddBlocker` | `CardBlockers.test.tsx` -t "the next write carries the token from the add response" | remove posts `token-1` |
 | PC-4 | `useSignalRInvalidation.ts`: drop `['cards', 'detail', p.cardId]` | `useSignalRInvalidation.test.ts` -t "C1256" (2 tests) | `isInvalidated` false; token stays `token-1` |
-| PC-5 | `boards.ts`: remove `onError` from `useRemoveBlocker` | none | **Missing control**: no test covers the remove-path 409 reload |
+| PC-5 | `boards.ts`: remove `onError` from `useRemoveBlocker` | none | **Missing control**: no test asserts the remove-path 409 reload (the refused-remove test, `CardBlockers.test.tsx:219`, asserts only the message and the row) |
 
 Not a PC: the shared `loadCardEditModal` promise. With a fresh `import()` V-1 still passes alone
-(measured at S2), so it is defence in depth; the flake fix's evidence is the stress record.
+(the author's S2 measurement; its log was not kept), so it is defence in depth; the flake fix's
+evidence is the stress record.
