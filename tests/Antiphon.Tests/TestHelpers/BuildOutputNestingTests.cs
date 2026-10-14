@@ -17,7 +17,8 @@ public sealed class BuildOutputNestingTests
         "fakeclaude", "fakegrok", "fake-native-claude", "fake-native-grok", "ptyhost-native",
     ];
 
-    // Measured 2026-10-14 on server2: 1,468 files for a relative OutputPath build at master.
+    // Measured 2026-10-14 on server2: 1,468 files for a relative OutputPath build, 2,228 for the
+    // checkpoint tool's layout (artifacts/ included) and 97,673 when nested.
     internal const int FileCeiling = 10_000;
 
     [Test]
