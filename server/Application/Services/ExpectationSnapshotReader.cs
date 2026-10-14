@@ -344,6 +344,8 @@ public sealed class ExpectationSnapshotReader
             .Where(card => card.BoardId == boardId
                 && card.Status == CardStatus.Backlog
                 && card.ArchivedAt == null)
+            // A card with an open BlockedBy row is not eligible backlog (CARD-0100).
+            .Where(CardBlockers.NotBlocked)
             .ToListAsync(ct);
         if (cards.Count == 0)
             return [];

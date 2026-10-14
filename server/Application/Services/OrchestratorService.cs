@@ -832,6 +832,8 @@ public sealed class OrchestratorService
             .Where(c => c.ArchivedAt == null)
             // A declined spawn is a hold, not a race against the next tick (CARD-0087).
             .Where(c => c.AutoDispatchHeldAt == null)
+            // A card with an open BlockedBy row waits for its blocker (CARD-0100).
+            .Where(CardBlockers.NotBlocked)
             .Where(c => c.OwnerSessionId == null)
             .Where(c => !c.AgentSessions.Any(s => activeStatuses.Contains(s.Status)))
             .Where(c => c.RetrySchedule == null
