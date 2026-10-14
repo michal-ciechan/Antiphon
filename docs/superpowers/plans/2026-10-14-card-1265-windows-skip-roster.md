@@ -47,8 +47,11 @@ CP-1's full-row receipt is expected to fail strict zero-skips qualification on
 Linux; do not mislabel it as a clean zero-skips certificate.
 
 Use the checkpoint tool with `--expected-source-sha <committed HEAD>`,
-`--row-timeout 40m --total-timeout 150m`, without `--keep-outputs`. The row override
-sets effective manifest rowMinutes to 40; Linux defaults to UseAppHost=false.
+`--row-timeout 40m --total-timeout 150m`, without `--keep-outputs`. For S2, import
+this table and set `timeouts.rowMinutes: 40` in the ignored generated manifest,
+then run that manifest. The CLI row override alone does not alter the manifest's
+build budget (S1 retained the importer's 15-minute build default and completed in
+under five minutes). Linux defaults to UseAppHost=false.
 One queued driver per invocation. Bootstrap the checkpoint tool once through
 `scripts/build-slot.ps1` into `bin-c1265-tool/`; this supporting tool build is
 the sole planned non-table build. Use the resulting tool with `--no-build`.
@@ -64,6 +67,8 @@ Retain ignored receipts; delete only literal producer-owned output paths.
 | PC-4 | C1210_Audit_rejects_empty_or_incomplete_outcomes | Remove token-refresh class from ChildFilter | c1210-child-storage-selection |
 
 Mutation owns all deliberate mutant/red/restore/green cycles. Code runs none.
+The unbound candidate is
+`docs/superpowers/mutations/2026-10-14-card-1265-windows-skip-roster-candidate.md`.
 
 ### Checkpoints
 
