@@ -97,12 +97,59 @@ public sealed class CheckpointConfinementLedgerTests : CheckpointTestBase
     [Timeout(300_000)]
     public async Task scheduler_stamps_non_output_files_before_the_slot_and_verifies_after_release(CancellationToken cancellationToken)
     {
-        // red: the ledger is taken inside the lease (f0001 passes) or verified before release (f0002 passes).
+        // red: the ledger is taken inside the lease (capture sees Held) or verified before release (f0002 passes).
+        // The build itself writes f0001: a write during the slot wait is now refused before launch (next test).
         var root = BeginRepo();
         var slots = new RecordingSlotClient(
-            onAcquire: () => File.WriteAllText(Path.Combine(root, "node_modules", "pkg", "f0001.js"), "changed while waiting\n"),
+            onAcquire: () => { },
             onRelease: () => File.WriteAllText(Path.Combine(root, "node_modules", "pkg", "f0002.js"), "changed at release\n"));
-        var driver = new LedgerDriver(slots);
+        var driver = new LedgerDriver(slots, () => File.WriteAllText(Path.Combine(root, "node_modules", "pkg", "f0001.js"), "changed by the build\n"));
+        var (run, exit) = await RunScheduledAsync(root, driver, slots, cancellationToken);
+
+        driver.LedgerCaptures.ToArray().ShouldBe(new[] { false }, "the ledger is stamped once, before the slot is held");
+        driver.BuildLedgers.ToArray().ShouldBe(new[] { true }, "the build receives the ledger");
+        exit.ShouldNotBe(0);
+        var report = JsonSerializer.Deserialize<ReportModel>(File.ReadAllText(Path.Combine(run, "report.json")), ReportWriter.Json)!;
+        var build = report.Builds.Single();
+        build.State.ShouldBe("failed");
+        build.SlotReason.ShouldBe("refused: tampered");
+        var log = File.ReadAllText(Path.Combine(run, "builds", "bin-c1241", "build.log"));
+        log.ShouldContain("TAMPERED node_modules/pkg/f0001.js", Case.Sensitive);
+        log.ShouldContain("TAMPERED node_modules/pkg/f0002.js", Case.Sensitive);
+        report.Rows.Single().State.ShouldNotBe("green");
+    }
+
+    [Test]
+    [Timeout(300_000)]
+    public async Task file_changed_during_the_slot_wait_and_restored_by_the_build_is_refused_before_launch(CancellationToken cancellationToken)
+    {
+        // red (Review 06ff09f8 D1): A -> B while the build waits for its slot, then the build writes A back; the
+        // after-release check compares A with the pre-slot A and the build succeeds over the user's newer B.
+        var root = BeginRepo();
+        var user = Path.Combine(root, "node_modules", "pkg", "f0003.js");
+        var original = File.ReadAllText(user);
+        var slots = new RecordingSlotClient(
+            onAcquire: () => File.WriteAllText(user, "newer user bytes written during the slot wait\n"),
+            onRelease: () => { });
+        var driver = new LedgerDriver(slots, () => File.WriteAllText(user, original));
+        var (run, exit) = await RunScheduledAsync(root, driver, slots, cancellationToken);
+
+        driver.LedgerCaptures.ToArray().ShouldBe(new[] { false });
+        driver.BuildLedgers.ShouldBeEmpty("the build is refused once the slot is granted, before it starts");
+        File.ReadAllText(user).ShouldBe("newer user bytes written during the slot wait\n");
+        exit.ShouldNotBe(0);
+        var report = JsonSerializer.Deserialize<ReportModel>(File.ReadAllText(Path.Combine(run, "report.json")), ReportWriter.Json)!;
+        var build = report.Builds.Single();
+        build.State.ShouldBe("failed");
+        build.SlotReason.ShouldBe("refused: tampered");
+        var log = File.ReadAllText(Path.Combine(run, "builds", "bin-c1241", "build.log"));
+        log.ShouldContain("TAMPERED node_modules/pkg/f0003.js", Case.Sensitive);
+        report.Rows.Single().State.ShouldNotBe("green");
+    }
+
+    private static async Task<(string Run, int Exit)> RunScheduledAsync(
+        string root, LedgerDriver driver, RecordingSlotClient slots, CancellationToken cancellationToken)
+    {
         var source = new SourceObservation(Sha, 0, new string('1', 64), DateTimeOffset.UtcNow, "known");
         var manifest = new CheckpointManifest
         {
@@ -122,18 +169,7 @@ public sealed class CheckpointConfinementLedgerTests : CheckpointTestBase
         {
             Driver = driver, Slots = slots, SourceCapture = _ => source,
         });
-
-        driver.LedgerCaptures.ToArray().ShouldBe(new[] { false }, "the ledger is stamped once, before the slot is held");
-        driver.BuildLedgers.ToArray().ShouldBe(new[] { true }, "the build receives the ledger");
-        exit.ShouldNotBe(0);
-        var report = JsonSerializer.Deserialize<ReportModel>(File.ReadAllText(Path.Combine(run, "report.json")), ReportWriter.Json)!;
-        var build = report.Builds.Single();
-        build.State.ShouldBe("failed");
-        build.SlotReason.ShouldBe("refused: tampered");
-        var log = File.ReadAllText(Path.Combine(run, "builds", "bin-c1241", "build.log"));
-        log.ShouldContain("TAMPERED node_modules/pkg/f0001.js", Case.Sensitive);
-        log.ShouldContain("TAMPERED node_modules/pkg/f0002.js", Case.Sensitive);
-        report.Rows.Single().State.ShouldNotBe("green");
+        return (run, exit);
     }
 
     private string BeginRepo()
@@ -209,7 +245,7 @@ public sealed class CheckpointConfinementLedgerTests : CheckpointTestBase
     }
 
     // Uses the real ledger capture around a fake build, so only the scheduler's ledger can see changes.
-    private sealed class LedgerDriver(RecordingSlotClient slots) : IConfinedDriver
+    private sealed class LedgerDriver(RecordingSlotClient slots, Action onBuild) : IConfinedDriver
     {
         private readonly FakeDriver _inner = new();
         public List<bool> LedgerCaptures { get; } = [];
@@ -224,7 +260,10 @@ public sealed class CheckpointConfinementLedgerTests : CheckpointTestBase
         public Task<DriverResult> RunAsync(DriverRequest request, CancellationToken cancellationToken)
         {
             if (CheckpointFixtures.IsBuild(request))
+            {
                 BuildLedgers.Add(request.Ledger is not null);
+                onBuild();
+            }
             return _inner.RunAsync(request, cancellationToken);
         }
 
