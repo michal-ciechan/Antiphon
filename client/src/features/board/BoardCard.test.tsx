@@ -53,7 +53,7 @@ describe('BoardCard', () => {
       ],
     })} onOpen={vi.fn()} />)
     const tile = screen.getByRole('article', { name: 'CARD-0325 From GitHub' })
-    expect(within(tile).getByText('Blocked')).toHaveAttribute('title', 'Blocked by CARD-0049')
+    expect(within(tile).getByTitle('Blocked by CARD-0049')).toHaveTextContent('Blocked')
     rerender(<BoardCard card={card({
       openBlockerCount: 0,
       blockers: [{ identifier: 'CARD-0049', status: 'Done', resolved: true }],
