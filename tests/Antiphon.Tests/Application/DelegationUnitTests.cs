@@ -232,11 +232,17 @@ public class DelegationWorkspaceBoundaryTests
 [Category("Unit")]
 public class DelegationReportFormatterTests
 {
+    // CARD-1213 review dd8ce0cf F1: the self-contained branch protections a runner brief carries.
+    internal const string BranchProtections =
+        "never rebase, amend or reset a pushed commit, and never force-push; landing rebases onto the target itself";
+
     [Test]
     public void Runner_worktree_brief_names_mirror_and_fast_forward_contract()
     {
         // CARD-1213 V-10/R-10 (PC-59, PC-91..PC-93): both branch forms keep their exact branch line,
-        // full base SHA and push refspec; the git rules are cited from git-common, not restated.
+        // full base SHA and push refspec. The brief is built from the task alone, so a recovered
+        // session launched before git-common existed still reads the branch protections (review dd8ce0cf F1);
+        // git-common is cited as the home of the remaining git rules.
         const string baseSha = "0123456789abcdef0123456789abcdef01234567";
         foreach (var (label, branch) in new[]
         {
@@ -256,9 +262,9 @@ public class DelegationReportFormatterTests
             var contract = brief.Split("--- runner branch contract ---")[1].Split("\n\n")[0];
             brief.ShouldContain("Assigned branch: " + branch + ".", Case.Sensitive, label + "-assigned-branch");
             contract.ShouldContain("git push origin HEAD:refs/heads/" + branch + "`", Case.Sensitive, label + "-push");
-            contract.ShouldContain("fast-forward-only from " + baseSha + ";", Case.Sensitive, label + "-base");
+            contract.ShouldContain("fast-forward-only from " + baseSha + ":", Case.Sensitive, label + "-base");
+            contract.ShouldContain(BranchProtections, Case.Sensitive, label + "-protections");
             contract.ShouldContain("git-common", Case.Sensitive, label + "-citation");
-            contract.ShouldNotContain("never force-push", Case.Sensitive, label + "-not-restated");
             contract.ShouldContain("If your brief asks you to rebase this branch, report blocked and say so.",
                 Case.Sensitive, label + "-rebase-blocked");
             contract.ShouldContain("git ls-remote origin refs/heads/" + branch + "`", Case.Sensitive, label + "-ls-remote");
