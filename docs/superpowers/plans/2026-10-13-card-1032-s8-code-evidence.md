@@ -88,6 +88,68 @@ Limits: the waiter count and outstanding set are read by reflection
 not carry a request id, so the tested request is identified by the outstanding set
 and the later handler entry.
 
+## Round 3 repair (F4 of Review 1aefbc9b; CARD-1239)
+
+Code task c734da58, branch feat/card-task-c734da58, continued from
+e07168db417fbfe7ac85c98bb1fb7d0b52c26924 without rebase. Fixture file only:
+`tests/Antiphon.Tests/TestHelpers/CompletedCardMirrorFixture.cs`. No production,
+test-method, queue, transport or outcome assertion changes.
+
+Cause found at source. The fixture's last setup step called
+`AgentReportStore.StoreAsync` and asserted `saved.Succeeded` without the reason.
+`StoreAsync` links its own `CancelAfter(TimeSpan.FromSeconds(2))` (a constant, not a
+parameter or clock seam) around Git custody checks (`GetWorkspaceInfoAsync`,
+`rev-parse`, `ls-files`, two `check-ignore`) and a `WriteThrough` write, publish and
+readback. It does not touch Postgres, so database readiness is not part of this
+race. The Review's heap dump of the timed-out CP-F2 host showed a thread in
+`FSync`. The setup therefore depended on Git process starts and fsync finishing
+within 2 s.
+
+Repair: the fixture writes the same UTF-8 bytes at the path `StoreAsync` publishes
+(`<RepoPath>/.antiphon/reports/<task id>/<sha256>.md`; the seed `.gitignore` ignores
+`.antiphon/`). It then checks `git check-ignore` and the store's own
+`IsUsableAsync(path, Result)`, which has no wall-clock budget. A false result fails
+with the path. The path is the one `StoreAsync` returns for this task, so a later
+production `CardDoneArtifactPreservation.EnsureAsync` in the same test finds the
+same usable file and keeps `ResultFilePath` unchanged. There is no retry and no
+widened deadline. The 2 s budget remains in production calls that tests in these
+classes make through `CardWorktreeCleanupExecutor` (`EnsureAsync -> StoreAsync`).
+Those are production behaviour under test, and a refusal there surfaces as
+`artifact_unpreserved` in the test's own result reason.
+
+Sweep of `tests/Antiphon.Tests/TestHelpers` for a fixture save under a bounded
+budget: `StoreAsync` is called only in this fixture. Other `Succeeded.ShouldBeTrue()`
+sites (`LandingGitFixture` observer Git reads, `ControlledLandingGitTests`) are Git
+reads and tests, not budgeted saves. `DirectoryLinkFixtureWindowsTests`' 2 s
+`WaitUntilAsync` is a Windows-only test wait, not a save. No other site changed.
+
+Red-first, forced (scratch, not committed; one build `bin-c1239scratch/` through
+build-slot, deleted afterwards). Environment switches selected the old save or the
+new write, and `C1239_DELAY` set `AgentReportStore.BeforeIoAsync` to wait 2.5 s at
+phase `write` on the budget token (a slow write-through). Filter
+`/*/*/CardWorktreeMirrorCleanupTests/C1032_RecoveryQueuesBusyAndReady`:
+
+| Run | Fixture | Stall | Result |
+|---|---|---|---|
+| A | old (`StoreAsync`, reason in message) | 2.5 s at write | 1 executed, 0 passed, 1 failed: `C1239 old fixture save refused: io-budget-expired` |
+| B | new (this commit) | 2.5 s at write | 1 executed, 1 passed |
+
+The mirror cleanup path calls `VerifyMirrorAsync` and never `StoreAsync`, so B
+exercises the same six vectors with the stall installed.
+
+Load, not forced (same scratch build, old and new run side by side; each driver
+pinned with `taskset`): round 1 used CPUs 0-3 with 8 pinned spinners (host load
+about 16-23). Round 2 used CPUs 0-1 with 8 spinners and two `dd oflag=dsync`
+writers on the worktree's filesystem (host load about 35). Old passed 2/2 and new
+passed 2/2. Load alone did not reproduce the refusal in two rounds. The brief asked
+for five rounds of the three classes; two rounds of the one method were run within
+the time budget, and they do not discriminate. The forced stall is the evidence for
+the removed race.
+
+Drivers outside the checkpoint table (build-slot, Linux): 1 scratch build, 2 forced
+runs and 4 load runs above, plus one `dotnet run --project tools/Antiphon.Checkpoints
+-- --help` outside a slot to read the tool's verbs.
+
 ## Witnesses
 
 | Method | Case -> mutation -> red | Pre-slice (e8bbdba9 production, tests at da5b99df) | Scratch red (reverted) |
@@ -194,3 +256,8 @@ the batch ended by its 598 s shell timeout during a sixth; its fifth run, an ear
 early-release variant that released after the barrier's checks, passed
 preparation-busy, which led to the `holder-resumed` observation in 6ee751ec; F2 build with three
 early-release runs; three reviewed-barrier runs).
+
+Round 3: the checkpoint run tests the commit that adds this text, all four rows in
+one run from a manifest imported from this table with `timeouts.rowMinutes: 40` (the
+tool's build deadline); row deadlines stay derived from the table. Its unedited
+CHECKPOINT lines are in the task c734da58 Code report.
