@@ -16,7 +16,9 @@ public sealed class RefreshGithubTokenScriptTests
         text.All(c => c <= 127).ShouldBeTrue("PowerShell scripts must remain ASCII");
         text.ShouldContain("$vaultItem = '97819ca3-710f-43f8-99ce-b4da013e32c1'");
         text.ShouldContain("$token = (& bw get password $vaultItem --nointeraction 2>$null | Out-String).Trim()");
-        text.ShouldContain("$token | & ssh -o BatchMode=yes -o ConnectTimeout=30 $Server $remote 1>$null 2>$null");
+        text.ShouldContain("$output = @($token | & ssh -o BatchMode=yes -o ConnectTimeout=30 $Server $remote 2>&1)");
+        text.ShouldContain("$detail = Get-RemoteStderr $output $token\n    $token = ''");
+        text.ShouldContain("if ($Secret) { $text = $text.Replace($Secret, '[redacted]') }");
         text.ShouldContain("sudo -n sh -c");
         text.ShouldContain("mktemp \"$d/token.tmp.XXXXXXXX\"");
         text.ShouldContain("cat > \"$tmp\" && test -s \"$tmp\" && chown 1654:1654 \"$tmp\" && chmod 0400 \"$tmp\" && mv -f \"$tmp\" \"$d/token\"");
