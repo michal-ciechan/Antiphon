@@ -632,6 +632,16 @@ the transcript mutation gate. Activation requires both server and runner support
   prepared runner task (worktree cut, mirror recorded) launches without the repository mutation
   lease, while its first crossing, the worktree cut, keeps it.
 
+- **A delegate's branch is the task's recorded `WorktreeBranch` (CARD-1213).** Two forms exist:
+  `feat/card-task-<id>` and `feat/card-<n>-<stage>-<id>`. Selection rules:
+  [Delegate branch names](orchestration-loop.md#delegate-branch-names-card-1213).
+
+  | Behaviour | Test (TUnit, file) | What it asserts |
+  |---|---|---|
+  | Both forms parse to one 8-hex id | `DelegateBranchNameTests.C1213_ParseBothForms` (Antiphon.Tests, `Application/DelegateBranchNameTests.cs`) | legacy and card forms, bare and `refs/heads/`, upper- or lower-case hex, give `ShortId` `deadbeef` |
+  | The worktree directory stays `card-task-<id>` | `WorktreeManagerGitIntegrationTests.C1213_ExplicitBranchKeepsDirectoryIdentity` (Antiphon.Tests, `Infrastructure/WorktreeManagerTests.cs`) | for both forms: symbolic HEAD is the requested branch, directory `card-task-deadbeef`, metadata `task-deadbeef` |
+  | The runner mirror stays `task-<id>` | `RunnerWorkspaceBindingTests.C1213_BindingBothBranchForms` (Antiphon.SessionRunner.Tests, `RunnerWorkspaceBindingTests.cs`) | for both forms: mirror leaf `task-deadbeef`, symbolic HEAD and binding `SourceFullRef` are the requested branch |
+
 - **Workspace-use reservation (CARD-0459).** Create, requeue, dispatch (including ReadOnly),
   Answer/Continue/Refine, Land, card reopen, Start/Attach/Resume and Herdr attach consult a
   persisted workspace reservation. A claimed retirement excludes new use of that exact path and

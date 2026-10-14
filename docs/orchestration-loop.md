@@ -1135,14 +1135,22 @@ publishes a safe unpushed mirror tip at settlement. To bring source current, lan
 land rebases onto the target) or dispatch a fresh task with `-StartRef` on the wanted base.
 Confirmation-only work belongs in Review, not a Code task requiring a new commit.
 
-**The standing rules are delivered automatically now (CARD-0058). Do not retype them.** Every
-delegate launches with `server/Bundles/delegate-basics.md` composed into its
-`--append-system-prompt` — foreground-only, no sub-delegation, commit-and-push each slice,
-`OutputPath` with a forward slash, verify pre-existing red by stashing before blaming yourself. That
-file is **canonical**; this section deliberately does not restate its contents, because a rule
+**The standing rules are delivered automatically now (CARD-0058). Do not retype them.** A
+non-specialist delegate launches with `server/Bundles/delegate-basics.md` composed into its
+`--append-system-prompt`. That file is **canonical**; this section deliberately does not restate its contents, because a rule
 restated in three places drifts in three places, and it drifted here first. Improve a rule by
 editing that file in a PR: every future dispatch gets the better version, with nothing to
 reconcile. A sub-orchestrator additionally launches with `server/Bundles/orchestrator.md`.
+
+**Git rules reach delegates as git-common (CARD-1213).** `delegate-basics` carries `{{GIT-COMMON}}`,
+so each non-specialist delegate launches with `server/Bundles/Fragments/git-common.md`. Do not
+restate those rules in a brief; supply the per-task values only. A runner-bound brief's runner branch
+contract prints the branch, base SHA and push command and cites git-common.
+
+| Behaviour | Test (TUnit, Antiphon.Tests) | What it asserts |
+|---|---|---|
+| Code, Review, Mutation and orchestrator compositions carry the git-common sentences | `InstructionBundleTests.C1213_GitContractPins` (`Application/InstructionBundleTests.cs`) | each pinned sentence occurs once per composition; the orchestrator bundle contains "Delegates carry git-common; never restate git rules in briefs." |
+| The runner branch contract keeps per-task values and cites git-common | `DelegationReportFormatterTests.Runner_worktree_brief_names_mirror_and_fast_forward_contract` (`Application/DelegationUnitTests.cs`) | for `feat/card-task-7f3a2b91` and `feat/card-1213-code-7f3a2b91`: the exact `Assigned branch:` line, push refspec, ls-remote ref, `fast-forward-only from <40-hex>`, the word `git-common`, and no `never force-push` |
 
 **A stage-role Worker also launches with its own `server/Bundles/stage-<role>.md`** (CARD-0146 S3,
 via `InstructionBundles.ForDelegate`), composed alongside `delegate-basics`. That bundle already

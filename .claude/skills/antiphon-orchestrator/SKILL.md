@@ -85,7 +85,9 @@ otherwise.
 A fresh `-Worktree` dispatch for a non-Code role branches from current master HEAD, not the card's
 actual kept sibling branch — this is by design (CARD-0538/CARD-0215), not something to fix per
 dispatch. The fix is upstream: your goal text should already tell the agent which branch/commit to
-fetch and checkout first ("fetch/checkout feat/card-task-XXXX before starting, it has N commits").
+fetch and checkout first ("fetch/checkout <branch> before starting, it has N commits"); for `<branch>`,
+copy the sibling task's recorded `WorktreeBranch` (`feat/card-<n>-<stage>-<id>` or `feat/card-task-<id>`)
+rather than rebuilding it from the task id.
 When you see the warning fire anyway, check whether your goal already covers it — if so, it's
 harmless and self-corrects; verify by checking the task's later transcript shows it checked out
 the right branch.
