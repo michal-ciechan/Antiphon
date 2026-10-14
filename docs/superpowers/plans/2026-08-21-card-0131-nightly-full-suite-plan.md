@@ -110,12 +110,15 @@ Failure-only alerting has a failure mode this card was born from: if the schedul
 Windmill worker down, SSH key rotated, machine asleep — silence looks identical to green, and
 nobody watches the Windmill run list. **The nightly always sends**: green is one line
 (`nightly GREEN <sha> · 4 suites · NNNN tests · 52m`), red is the full per-suite breakdown. The
-missing morning message then becomes the alarm for the pipeline itself dying. One line per night
-in a test group that exists for ops verification traffic is acceptable noise; this is the same
+missing morning message then becomes the alarm for the pipeline itself dying. The historical
+plan treated one line per night at its now-retired test destination as acceptable noise; this was the same
 "absence must be detectable" principle as the card's own proven-to-fire bar, applied to every
 night after the first. If the produce itself fails (tg-send exit 2: broker unreachable), retry
 once after 60 s, then write the alert text to the run log and exit non-zero so the Windmill run
 goes red as the last-resort surface.
+
+This historical alerting design does not authorize nightly traffic to Family; the current
+Family round-trip check is manual and operator-initiated, as stated in the update above.
 
 ### D3 — git policy in a shared live tree: never disturb in-flight work
 

@@ -154,7 +154,7 @@ Rollback is an explicit operator decision using the retained source and managed-
 
 Excluded: 06:58/06:59 `ChannelAttachmentsDropped` at sequences 911/920; cause of the 06:53:01 gateway restart; invoice publication delay; auto-commit/answer-completion semantics; group rename/replay migrations; new pager infrastructure; non-family instance deployments.
 
-No product decision blocks TestDesign or Code. D-1 through D-6 are the implementation defaults. The later operator decision is authorization of the concrete server/am-service deployment and the test-group traffic check. This Plan stage changed only this document; no builds, tests, stack changes, production writes, or messages were performed.
+No product decision blocks TestDesign or Code. D-1 through D-6 are the implementation defaults. The later operator decision is authorization of the concrete server/am-service deployment, separately from initiating the manual Family traffic check described above. This Plan stage changed only this document; no builds, tests, stack changes, production writes, or messages were performed.
 
 ## Verification design
 
