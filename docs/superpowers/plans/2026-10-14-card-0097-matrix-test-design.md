@@ -621,6 +621,26 @@ stage pins shaped as the live census plus one card pin; `-OutDir` under a temp d
 **S-F — `OrchestratorInstructionsRendererTests` (U), `OrchestratorInstructionsRefreshTests` (H),
 `OrchestratorInstructionsDeltaTests` (U)**
 
+Repair of Review `44e2b653` D1/D2: CP-20 now requires 14 methods / 26 results (Min 26).
+The supplementary `OrchestratorInstructionsGuidanceTests` roster is 5 methods / 6 results.
+- V-F9 `A_failed_chain_read_marks_the_affected_file_cells_unknown` | H | four rows: Hard,
+  Medium, Easy, and three tiers together, with Medium the default. A DB command interceptor
+  fails the Plan chain reads. The persisted file contains the affected tier labels and
+  `unknown (chain read failed)`, its Plan line is at most 160 UTF-8 bytes, and rendering at
+  full minus one byte collapses the matrix to its route pointer. Before the fix the tier is `unset`.
+- V-F10 `A_failed_chain_read_notice_reports_unknown_and_recovery_reports_the_candidate` | H |
+  the same four fault rows. One delivered notice names the candidate-to-unknown transition;
+  an unchanged failed read leaves revision/count unchanged; recovery delivers the reverse
+  transition and rewrites the file without the unknown marker. Before the fix the notice says `unset`.
+- V-F11 `Routing_cross_references_resolve_to_an_existing_owner_heading` | U | two document
+  rows (`antiphon-api.md`: two pointers, `ops-http.md`: one). Extract the routing `see` pointers
+  and resolve their titles against the owner's bold paragraph headings. The stale API pointer
+  fails against the renamed heading. Counts prevent a missing pointer from passing vacuously.
+
+Regeneration choice: retain the existing notification path and report unreadable chain cells as
+unknown with a bounded reason. No suppression/recovery state is added. The existing per-line
+cap and matrix-first elision remain binding. Deliberate mutants remain SourceLanding work.
+
 - V-F1 `Sections_render_caps_runners_defaults_holds_pins_levels_and_standing_lines` (edited with reason: the matrix
   section renumbers 5–7 to 6–8) | U | `Sample()` gains `Matrix: new MatrixSection("Medium", [new
   MatrixInstructionRow("Plan", Hard: "Codex/Frontier (gpt-6-astra)", Medium: "…", Easy: "unset", Effective:

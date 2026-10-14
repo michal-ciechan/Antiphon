@@ -36,6 +36,22 @@ public sealed class OrchestratorInstructionsGuidanceTests
         "Live operating settings: read the file at $env:ANTIPHON_ORCHESTRATOR_INSTRUCTIONS (or GET /api/orchestrator-instructions) at session start, after compaction and when a settings-changed note arrives; it outranks the numbers in AGENTS.md.";
 
     [Test]
+    [Arguments("antiphon-api.md", 2)]
+    [Arguments("ops-http.md", 1)]
+    public void Routing_cross_references_resolve_to_an_existing_owner_heading(string document, int expectedPointers)
+    {
+        var text = Collapse(Regex.Replace(Read("docs", document), @"\r?\n> ?", " "));
+        var pointers = Regex.Matches(text,
+            @"see \*\*(?<heading>[^*]+)\*\* in \[orchestration-loop\.md\]\(orchestration-loop\.md#2-tiers\)");
+        pointers.Count.ShouldBe(expectedPointers, document);
+        var owner = Read("docs", "orchestration-loop.md");
+        var headings = Regex.Matches(owner, @"(?m)^\*\*(?<heading>[^*]+)\*\*")
+            .Select(match => Collapse(match.Groups["heading"].Value).TrimEnd('.')).ToArray();
+        foreach (Match pointer in pointers)
+            headings.ShouldContain(pointer.Groups["heading"].Value, document);
+    }
+
+    [Test]
     public void The_bundle_names_the_file_route_compaction_and_precedence_and_dropped_the_swapped_sentences()
     {
         var bundle = Read("server", "Bundles", "orchestrator.md");
