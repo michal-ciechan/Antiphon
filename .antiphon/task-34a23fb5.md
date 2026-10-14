@@ -30,3 +30,5 @@ verdict: GREEN exit=0
 validate-checkpoint-receipt: CHECKPOINT SOURCE VALID source=66120a3563744996fd9dab389e0d2ad88a972e44 rows=1
 
 TRX census: 196 Passed, 0 other, 20 classes (same per-class counts as Review 7d7fe999).
+
+Evidence diff (full task range incl. this report): `check-evidence-diff.ps1 -BaseRef 1ac4c54f6 -HeadRef HEAD` at 6958333e2: commits=7 entries=4 violations=0, exit 0. git diff --check clean. `git merge-tree --write-tree origin/master HEAD` exit 0 (master 28820611139f, tree 6ef04b00a966).
