@@ -244,6 +244,57 @@ public sealed class ExpectationSnapshotTests
         snapshot.EligibleBacklog.ShouldBe(3);
     }
 
+    // CARD-0100 T-17 (V-6, G-20): a Backlog card with an open blocker is not eligible backlog;
+    // a Done or archived blocker releases it. The open blocker O is itself eligible.
+    [Test]
+    public async Task C100_Backlog_candidates_exclude_cards_with_an_open_blocker()
+    {
+        var isolated = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var schema = isolated;
+        var world = await World.CreateAsync(schema.ConnectionString);
+        var now = world.Now;
+        var eligible = Guid.NewGuid();
+        var held = Guid.NewGuid();
+        var releasedByDone = Guid.NewGuid();
+        var releasedByArchive = Guid.NewGuid();
+        var openBlocker = Guid.NewGuid();
+        var doneBlocker = Guid.NewGuid();
+        var archivedBlocker = Guid.NewGuid();
+
+        await using (var db = new AppDbContext(world.Options))
+        {
+            db.Cards.Add(Card(eligible, world, "C100E", status: CardStatus.Backlog));
+            db.Cards.Add(Card(held, world, "C100H", status: CardStatus.Backlog));
+            db.Cards.Add(Card(releasedByDone, world, "C100R", status: CardStatus.Backlog));
+            db.Cards.Add(Card(releasedByArchive, world, "C100Z", status: CardStatus.Backlog));
+            db.Cards.Add(Card(openBlocker, world, "C100O", status: CardStatus.Backlog));
+            db.Cards.Add(Card(doneBlocker, world, "C100D", status: CardStatus.Done));
+            db.Cards.Add(Card(archivedBlocker, world, "C100X", status: CardStatus.Backlog, archivedAt: now));
+            foreach (var (blocked, blocker) in new[]
+            {
+                (held, openBlocker), (releasedByDone, doneBlocker), (releasedByArchive, archivedBlocker),
+            })
+            {
+                db.CardRelationships.Add(new CardRelationship
+                {
+                    Id = Guid.NewGuid(),
+                    CardId = blocked,
+                    RelatedCardId = blocker,
+                    Kind = CardRelationshipKind.BlockedBy,
+                    CreatedAt = now,
+                });
+            }
+            await db.SaveChangesAsync();
+        }
+
+        await using var read = new AppDbContext(world.Options);
+        var snapshot = await new ExpectationSnapshotReader(read).ReadAsync(
+            world.Directive, world.Digest, now, ExpectationProbeInput.None, CancellationToken.None);
+        snapshot.EligibleBacklog.ShouldBe(4);
+        snapshot.BacklogCandidateIds.OrderBy(id => id).ToArray()
+            .ShouldBe(new[] { eligible, releasedByDone, releasedByArchive, openBlocker }.OrderBy(id => id).ToArray());
+    }
+
     [Test]
     public async Task C650_Hold_classifier_matches_dispatcher_messages()
     {
