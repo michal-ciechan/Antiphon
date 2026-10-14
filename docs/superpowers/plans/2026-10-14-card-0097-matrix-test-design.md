@@ -505,10 +505,26 @@ stub returning an empty list and a `PolicyTarget` returning a resolution with nu
 - Rewritten with reason (the copy they assert is the copy S-C1 changes): `shows inheritance, configuration fallback,
   and unset text` (`:347`: Plan-Easy and any-Easy now read `Unset — a -Complexity Easy dispatch blocks`; the any-role
   row has no `effective`); `wording for Required bypass versus Preferred prepend, and names Code → Grok` (`:373`:
-  `pinEffectCopy` becomes `Required Human pin: Code → Grok. Overrides each Code cell until cleared.` / `Preferred Human
+  `pinEffectCopy` becomes `Required Human pin: Code → Grok. Overrides the Code cells while this pin is active.` / `Preferred Human
   pin: Plan → ClaudeCode/Frontier. Tried before each Plan cell.`); `states the D6 propagation boundary and the D7
   non-complexity RolePolicy boundary` (`:447`: asserts the V-C2 sentence).
 - R-C1 the `complexityChains.test.tsx` cases run unchanged (the DTO gains optional fields only).
+
+#### S-C1 repair amendment (Final Review 64f32586, D1/D2)
+
+- V-C1's two chain-read-failure policy rows expect the literal `Effective routing unknown`,
+  including the row whose response still carries a policy candidate.
+- V-C4's `policy-read-failure` and `empty-read-failure` rows, plus
+  `default-policy-read-failure`, expect `Effective routing unknown` and
+  `Stored cell: unknown (read failed)` with no policy target. The non-default availability,
+  stage-pin-read and unsupported-policy rows expect `Unset — a -Complexity Easy dispatch blocks`;
+  their diagnostics stay in the alert. The pin/standing-agent chain-read-failure rows retain
+  the known binding and assert unknown stored cells. These are literal table expectations.
+- V-C5 adds `old-server-keeps-the-legacy-boundary`: list and role responses omit
+  `defaultComplexity` and `effective`; no default header, the former RolePolicy boundary,
+  and stored-cell labels/candidates remain visible. The original V-C5 checks the advertised default.
+- The Required pin copy refers to its active lifetime, including expiry; the existing banner
+  case asserts that sentence. CP-16 remains the same three-file selection (74 results after repair).
 
 **S-C2 (optional) — `ComplexityChainRowEditor.test.tsx` (E), `client/src/api/routingPins.test.ts` (E),
 `routingSettingsModel.test.ts` (M)**

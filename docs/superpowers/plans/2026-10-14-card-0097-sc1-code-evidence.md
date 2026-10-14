@@ -1,6 +1,11 @@
 # CARD-0097 S-C1 Code evidence
 
-S-C1 is implemented and ordinary Final verification is complete. Cells display the effective pin, chain, role-policy fallback or standing-agent binding before the stored rule. Read failures remain visible beside surviving candidates; an empty stored cell under a pin or diagnostic no longer claims dispatch blocks. Held candidates retain the server's reason. The configured default column and card-pin counts are shown.
+This records the original S-C1 Code run. Final Review `64f32586` subsequently found D1
+(a diagnostic exposed a non-default policy target and treated an unread chain as unset) and D2
+(an older server acquired an invented default column). The repair record is
+[S-C1 D1/D2 repair evidence](2026-10-14-card-0097-sc1-repair-evidence.md).
+Original counts and CHECKPOINT lines below are historical results, including the replaced
+V-C4 expectation; they do not qualify the repair.
 
 Original Code task / landing owner: `6812413b-f769-4554-9d4a-5b73c6a11afa`.
 Branch: `feat/card-task-6812413b`.
