@@ -995,7 +995,10 @@ the same durable source-member locks and conditional ownership predicate as outb
 the existing settlement marker is claimed only while both it and the delivery linkage are
 empty. A concurrent dispatcher, capture or loss sweep cannot replace that claim. The producer
 is awaited outside the queue lock, without an expiring claim; only a completed failed send
-clears its own marker. This repairs concurrency and preserves the direct path's existing
+clears its own marker. Caller cancellation is checked before producer entry; once started,
+the producer wait is not canceled independently of its actual send. Losing dispatchers cannot
+register a trailing watermark for text they did not publish. The winner drains text that
+arrived during its send. This repairs concurrency and preserves the direct path's existing
 failure retry behavior; it does not give catalog-less/default-off publication the captured
 journal's crash/uncertain-publication guarantees. No schema migration is needed.
 
