@@ -120,7 +120,7 @@ public sealed class CheckpointConfinementLedgerTests : CheckpointTestBase
     public async Task scheduler_stamps_non_output_files_before_the_slot_and_verifies_after_release(CancellationToken cancellationToken)
     {
         // red: the ledger is taken inside the lease (capture sees Held) or verified before release (f0002 passes).
-        // The build itself writes f0001: a write during the slot wait is now refused before launch (next test).
+        // The build itself writes f0001: a write during the slot wait that moves its stat stamp is refused before launch (next test).
         var root = BeginRepo();
         var slots = new RecordingSlotClient(
             onAcquire: () => { },
@@ -198,15 +198,26 @@ public sealed class CheckpointConfinementLedgerTests : CheckpointTestBase
     public Task entry_modified_just_before_the_ledger_is_hashed_when_the_slot_is_granted()
     {
         // red: an entry modified within the racy window is skipped on an equal stat stamp, although a second
-        // write in the same timestamp tick would leave size, inode and timestamps equal.
+        // write in the same timestamp tick would leave size, inode and timestamps equal. The complete stamp keeps
+        // each ctime old, so the mtime alone puts notes.txt inside the window.
         var root = BeginRepo();
         AgeWorktree(root);
         File.WriteAllText(Path.Combine(root, "notes.txt"), "user notes written just before the ledger\n");
-        var ledger = Capture(root);
+        var complete = Capture(root, path => LedgerStat.Portable(path) with { Device = 1, Inode = 1, Changed = 1 });
 
-        var admitted = BuildConfinement.AdmitLedger(ledger);
+        var admitted = BuildConfinement.AdmitLedger(complete);
         admitted.Hashed.ShouldBe(1, "only the recently modified entry is hashed");
         admitted.Settlement.Kind.ShouldBeNull(admitted.Settlement.Detail);
+
+        // red (Review 9f1c8a2e D2): the portable stamp (non-Linux, or the statx fallback) has no identity and no
+        // change time, so admission hashes each captured entry, not only the recent one.
+        var portable = Capture(root, LedgerStat.Portable);
+        var outside = NonOutputFiles(root);
+        outside.Length.ShouldBeGreaterThan(IgnoredFiles);
+        portable.Files.Keys.Order(StringComparer.Ordinal).ToArray().ShouldBe(outside);
+        var hashed = BuildConfinement.AdmitLedger(portable);
+        hashed.Hashed.ShouldBe(outside.Length, "each non-output file of the fixture is hashed once at admission");
+        hashed.Settlement.Kind.ShouldBeNull(hashed.Settlement.Detail);
         return Task.CompletedTask;
     }
 
@@ -240,7 +251,7 @@ public sealed class CheckpointConfinementLedgerTests : CheckpointTestBase
     public async Task rewrite_keeping_size_and_mtime_on_the_real_file_system_is_refused_before_launch(CancellationToken cancellationToken)
     {
         // red: admission trusts a stamp that a timestamp-preserving rewrite leaves equal. On Linux the statx ctime
-        // moves with the rewrite and its mtime restore; elsewhere the portable stamp proves nothing and is hashed.
+        // moves with the rewrite and its mtime restore; elsewhere the portable stamp has no ctime and is hashed.
         var root = BeginRepo();
         AgeWorktree(root);
         var user = Path.Combine(root, "node_modules", "pkg", "f0012.js");
@@ -306,12 +317,111 @@ public sealed class CheckpointConfinementLedgerTests : CheckpointTestBase
         return Task.CompletedTask;
     }
 
+    [Test]
+    [Timeout(300_000)]
+    public Task shared_mapping_style_change_with_an_unchanged_stat_is_refused_at_admission_only_in_strict_mode()
+    {
+        // Review 9f1c8a2e D1: a store through a shared memory mapping can change the bytes and leave the stat stamp
+        // equal; the stat provider here returns the stamp it first read whatever the content. Default admission
+        // accepts A -> B (the stated limit); strict admission hashes each entry and refuses it.
+        // red: strict admission still skips entries on their stat stamp.
+        var root = BeginRepo();
+        AgeWorktree(root);
+        var ledger = Capture(root, FrozenStat());
+        var user = Path.Combine(root, "node_modules", "pkg", "f0014.js");
+        var original = File.ReadAllText(user);
+        File.WriteAllText(user, "module.exports = 'B';\n");
+
+        var stat = BuildConfinement.AdmitLedger(ledger);
+        stat.Hashed.ShouldBe(0, "default admission trusts an unchanged, aged, complete stamp");
+        stat.Settlement.Kind.ShouldBeNull("default admission does not see a change its stat stamp does not show");
+
+        var strict = BuildConfinement.AdmitLedger(ledger, strict: true);
+        strict.Hashed.ShouldBe(ledger.Files.Count, "strict admission hashes each ledger entry");
+        strict.Settlement.Kind.ShouldBe("tampered");
+        strict.Settlement.Paths.ToArray().ShouldBe(new[] { "node_modules/pkg/f0014.js" }, strict.Settlement.Detail);
+
+        File.WriteAllText(user, original);
+        BuildConfinement.VerifyLedger(ledger).Kind.ShouldBeNull("A written back leaves no difference for the after-release hash");
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    [Timeout(300_000)]
+    public async Task strict_admission_hash_in_the_manifest_refuses_the_build_before_launch(CancellationToken cancellationToken)
+    {
+        // red: build.admissionHash: strict does not reach admission, so a change the stat stamp does not show is
+        // admitted and the build writes A back over B. The default run beside it admits that change (Review 9f1c8a2e D1).
+        var (defaultRun, defaultDriver, defaultUser, defaultOriginal) = await RunWithUnseenChangeAsync(null, cancellationToken);
+        defaultDriver.BuildLedgers.ToArray().ShouldBe(new[] { true }, "default admission launches the build");
+        File.ReadAllText(defaultUser).ShouldBe(defaultOriginal, "the build wrote A back over B");
+        var defaultReport = JsonSerializer.Deserialize<ReportModel>(File.ReadAllText(Path.Combine(defaultRun, "report.json")), ReportWriter.Json)!;
+        defaultReport.Builds.Single().State.ShouldBe("ok");
+        File.ReadAllText(Path.Combine(defaultRun, "builds", "bin-c1241", "build.log")).ShouldNotContain("TAMPERED");
+
+        var (strictRun, strictDriver, strictUser, _) = await RunWithUnseenChangeAsync("strict", cancellationToken);
+        strictDriver.BuildLedgers.ShouldBeEmpty("strict admission hashes the entry and refuses before the build starts");
+        File.ReadAllText(strictUser).ShouldBe("module.exports = 'B';\n");
+        var strictReport = JsonSerializer.Deserialize<ReportModel>(File.ReadAllText(Path.Combine(strictRun, "report.json")), ReportWriter.Json)!;
+        strictReport.Builds.Single().State.ShouldBe("failed");
+        strictReport.Builds.Single().SlotReason.ShouldBe("refused: tampered");
+        File.ReadAllText(Path.Combine(strictRun, "builds", "bin-c1241", "build.log"))
+            .ShouldContain("TAMPERED node_modules/pkg/f0015.js", Case.Sensitive);
+        strictReport.Rows.Single().State.ShouldNotBe("green");
+    }
+
+    [Test]
+    public void admission_hash_other_than_stat_or_strict_is_rejected()
+    {
+        // red: an unknown build.admissionHash value loads and runs with the default stat admission.
+        var root = TempDir();
+        ManifestLoader.LoadYaml("schemaVersion: 1\nbuild:\n  admissionHash: strict\n", root).Build.AdmissionHash.ShouldBe("strict");
+        ManifestLoader.LoadYaml("schemaVersion: 1\n", root).Build.AdmissionHash.ShouldBeNull();
+        var rejected = Should.Throw<ManifestValidationException>(() => ManifestLoader.LoadYaml("schemaVersion: 1\nbuild:\n  admissionHash: fast\n", root));
+        rejected.Field.ShouldBe("admissionHash");
+    }
+
+    // A -> B during the slot wait that the stat stamp does not show; the build writes A back.
+    private async Task<(string Run, LedgerDriver Driver, string User, string Original)> RunWithUnseenChangeAsync(
+        string? admissionHash, CancellationToken cancellationToken)
+    {
+        var root = BeginRepo();
+        AgeWorktree(root);
+        var user = Path.Combine(root, "node_modules", "pkg", "f0015.js");
+        var original = File.ReadAllText(user);
+        var slots = new RecordingSlotClient(
+            onAcquire: () => File.WriteAllText(user, "module.exports = 'B';\n"),
+            onRelease: () => { });
+        var driver = new LedgerDriver(slots, () => File.WriteAllText(user, original), FrozenStat());
+        var (run, _) = await RunScheduledAsync(root, driver, slots, cancellationToken, admissionHash);
+        return (run, driver, user, original);
+    }
+
+    // A complete stat stamp (identity and an old ctime) that keeps the value first read for each path, as a
+    // write through a shared memory mapping can leave it.
+    private static Func<string, LedgerStat> FrozenStat()
+    {
+        var frozen = new Dictionary<string, LedgerStat>(StringComparer.Ordinal);
+        return path => frozen.TryGetValue(path, out var stat)
+            ? stat
+            : frozen[path] = LedgerStat.Portable(path) with { Device = 1, Inode = 1, Changed = 1 };
+    }
+
+    // The fixture files outside .git and the App/obj write root, repository-relative and sorted.
+    private static string[] NonOutputFiles(string root) =>
+        Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)
+            .Select(file => Path.GetRelativePath(root, file).Replace(Path.DirectorySeparatorChar, '/'))
+            .Where(relative => !relative.StartsWith(".git/", StringComparison.Ordinal) && !relative.StartsWith("App/obj/", StringComparison.Ordinal))
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+
     private static async Task<(string Run, int Exit)> RunScheduledAsync(
-        string root, LedgerDriver driver, RecordingSlotClient slots, CancellationToken cancellationToken)
+        string root, LedgerDriver driver, RecordingSlotClient slots, CancellationToken cancellationToken, string? admissionHash = null)
     {
         var source = new SourceObservation(Sha, 0, new string('1', 64), DateTimeOffset.UtcNow, "known");
         var manifest = new CheckpointManifest
         {
+            Build = new BuildDefaults { AdmissionHash = admissionHash },
             Builds = [new BuildSpec { Id = "bin-c1241", Project = "App/App.csproj", OutputPath = "bin-c1241/" }],
             Checkpoints = [new CheckpointSpec
             {

@@ -24,6 +24,9 @@ public static class ManifestValidator
         if (manifest.Builds.Count == 0 && manifest.Checkpoints.Any(c => !c.IsCommand))
             throw new ManifestValidationException("builds", "manifest has no builds for its filter rows");
 
+        if (manifest.Build.AdmissionHash is not (null or "stat" or "strict"))
+            throw new ManifestValidationException("admissionHash", $"build.admissionHash '{manifest.Build.AdmissionHash}' must be stat or strict");
+
         var ids = new HashSet<string>(StringComparer.Ordinal);
         foreach (var build in manifest.Builds)
         {

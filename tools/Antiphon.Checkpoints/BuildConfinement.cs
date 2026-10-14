@@ -131,23 +131,30 @@ public static class BuildConfinement
         return new LedgerCapture(new Ledger(repository, head.Stdout.Trim(), roots, tracked, files, stats, racyFrom, stat), null, "");
     }
 
-    // Review 06ff09f8 D1: the scheduler calls this once the build slot is granted, before the build starts,
-    // so a change made during the slot wait is refused even when the build later writes the old bytes back
-    // (file_changed_during_the_slot_wait_and_restored_by_the_build_is_refused_before_launch). An entry is
-    // skipped only when its recorded stamp has a file identity and a change time
-    // (stat_without_a_change_time_hashes_each_entry_at_admission), both its mtime and ctime are older than
-    // RacyWindow (entry_modified_just_before_the_ledger_is_hashed_when_the_slot_is_granted,
+    // Review 06ff09f8 D1: the scheduler calls this once the build slot is granted, before the build starts.
+    // Default (stat) mode skips an entry's hash when its recorded stamp has a file identity and a change time
+    // (stat_without_a_change_time_hashes_each_entry_at_admission), its mtime and ctime are older than RacyWindow
+    // (entry_modified_just_before_the_ledger_is_hashed_when_the_slot_is_granted,
     // entry_with_a_change_time_inside_the_racy_window_is_hashed_at_admission) and the stamp is unchanged
-    // (unchanged_ledger_entries_are_not_hashed_when_the_slot_is_granted). The portable stamp has neither,
-    // so off Linux admission hashes each entry.
-    public static Admission AdmitLedger(Ledger ledger)
+    // (unchanged_ledger_entries_are_not_hashed_when_the_slot_is_granted). The portable stamp has neither identity nor
+    // change time, so it is hashed (entry_modified_just_before_the_ledger_is_hashed_when_the_slot_is_granted).
+    // A change that moves the stamp is refused before launch
+    // (file_changed_during_the_slot_wait_and_restored_by_the_build_is_refused_before_launch,
+    // rewrite_keeping_size_and_mtime_on_the_real_file_system_is_refused_before_launch).
+    // Limit (Review 9f1c8a2e D1): in default mode a non-output file changed during the slot wait through a shared
+    // memory mapping, or by any writer that does not update the ctime, is not detected here; if the build then writes
+    // the old bytes back, VerifyLedger after release sees no difference. VerifyLedger reports a difference still
+    // present after release. Strict mode hashes each entry whatever its stat, the in-slot cost the stat rule avoids
+    // (shared_mapping_style_change_with_an_unchanged_stat_is_refused_at_admission_only_in_strict_mode,
+    // strict_admission_hash_in_the_manifest_refuses_the_build_before_launch).
+    public static Admission AdmitLedger(Ledger ledger, bool strict = false)
     {
         var paths = new List<string>();
         var hashed = 0;
         foreach (var pair in ledger.Files)
         {
             var full = Combine(ledger.Repository, pair.Key);
-            if (ledger.Stats.TryGetValue(pair.Key, out var recorded) && recorded.HasIdentityAndChangeTime
+            if (!strict && ledger.Stats.TryGetValue(pair.Key, out var recorded) && recorded.HasIdentityAndChangeTime
                 && recorded.Modified < ledger.RacyFrom && recorded.Changed < ledger.RacyFrom
                 && recorded.Matches(ledger.Stat(full)))
                 continue;

@@ -405,7 +405,7 @@ public sealed class RunScheduler
             started = DateTimeOffset.UtcNow;
             if (request.BeforeLaunch is not null)
                 await request.BeforeLaunch(cancellationToken).ConfigureAwait(false);
-            var admitted = ledger is not null ? BuildConfinement.AdmitLedger(ledger).Settlement : null;
+            var admitted = ledger is not null ? BuildConfinement.AdmitLedger(ledger, request.Manifest.Build.AdmissionHash == "strict").Settlement : null;
             if (admitted?.Kind is not null)
             {
                 ProcessDriver.AppendLog(log, admitted.Detail);
