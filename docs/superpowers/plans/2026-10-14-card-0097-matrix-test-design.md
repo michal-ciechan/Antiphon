@@ -960,8 +960,10 @@ the receipt recipes and plan PC table. None has been run; execute these controls
   left to a human is the operator's dry run, `-Apply`, read-back and `routing-pin.ps1 clear` after §7 of the plan; the
   Code report for S-E may paste a dry run against the local stack as supplementary evidence, not as the verification
   of V-E1–V-E6.
-- M-1 docs: `grep -n "Routing pins beat RolePolicy\|read-only for pins\|does not govern" docs/orchestration-loop.md`
-  returns the rewritten lines; `docs/antiphon-api.md` names `effective`, `defaultComplexity`, `withheldReason`,
+- M-1 docs: scan docs, skills, bundles and tests with
+  `rg -n -U -i "routing pins beat[[:space:]>]+rolepolicy|routing-pins-beat-rolepolicy" docs .claude server/Bundles tests`.
+  No obsolete title/anchor references should remain; V-F11 resolves the specific routing pointers. Inspect
+  `read-only for pins` / `does not govern` in `docs/orchestration-loop.md`; `docs/antiphon-api.md` names `effective`, `defaultComplexity`, `withheldReason`,
   last-writer-wins and, on the `/api/role-policy` block, the D-6 limitation sentence; `docs/ops-http.md:139` carries
   the same sentence; `.claude/skills/antiphon-delegate/SKILL.md:147` names the default tier with the ordinary-Worker
   qualification.
