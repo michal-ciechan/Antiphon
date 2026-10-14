@@ -9,16 +9,20 @@ with `git show origin/master:<path>`: no build, no test run, no discovery execut
 PC-1–PC-27) stand and are landed; its Appendix A (the held S3 pin editor, V-11–V-15, R-3, CP-5) is **withdrawn** and
 replaced by V-C7–V-C13 below. IDs here are prefixed by slice (V-A1, V-B1, V-C1, V-D1, V-E1, V-F1; R-A1 …; PC-1 …
 PC-38 of the plan's table) and do not collide with the 2026-10-13 numbering. Round-2 withdrawals: V-A16, V-B7–V-B9,
-V-C14–V-C17, V-E7–V-E11, V-F4–V-F6, V-F8 and the delivery flow they described.
+V-C14–V-C17, V-E7–V-E11, V-F4–V-F6, V-F8 and the delivery flow they described. Round 3 (task `71e453db`, Plan,
+Frontier; Final Review `f406ced5`, R3-01–R3-06; from `f62858af96321dbd02d0e0140a6cef600dcf65a3` on
+`feat/card-task-71e453db`) adds V-A15b, V-B11, V-B12, V-E12, V-F2b, V-G1–V-G5 and PC-39–PC-45, widens V-E6 (three
+rows) and V-F7 (part b), and adds CP-24; the withdrawn ids are not reused. Round-3 citations are against master
+`ff4d84df522eaf483059ee11187fe68cc955d44c`; the bodies cited are unchanged from `d317c3f59`.
 
 **Operator decisions applied (plan §2).** OD-1 default tier `Medium`; OD-2 cells warn, pins refuse; OD-3 pins are
 migrated by the script and cleared only by the operator's `routing-pin.ps1 clear`; OD-4 last-writer-wins stated and
 tested (V-B6, `updatedAt >= U1`); OD-5 card pins read-only with a per-row count; OD-6 exhausted stamped create is
 Blocked (D-3 extends it to the Commit and Merge children when a row resolved and no Required pin with a candidate
 exists); OD-7 orchestrator creates are not stamped (consequence disclosed in plan §6.4). Post-land Mutation is paused:
-PC-1–PC-38 are specified and pending; none is claimed run.
+PC-1–PC-45 are specified and pending; none is claimed run.
 
-**Slice order and sizing.** S-0 (20 min) → S-A (90) ∥ S-B (70) → S-C1 (60) ∥ S-D (60) → S-E (60) → S-F (75) → S-C2
+**Slice order and sizing.** S-0 (20 min) → S-A (110) ∥ S-B (75) → S-C1 (60) ∥ S-D (60) → S-E (65) → S-F (80) → S-C2
 (90, optional). S-B reads S-0's `DefaultComplexity`; S-C1 depends on S-B's wire contract (F-A); S-D's `get` on F-A;
 S-E's tests on S-D's `ScriptedApi`; S-F on S-A, S-B, S-D and S-E. Each slice commits and pushes before its checkpoint
 rows run. CARD-1234 and CARD-1213 are on master (`d317c3f59`, `6d49673fa`); Code branches from master at or after
@@ -70,6 +74,38 @@ badge from `resolvedFromLabel` (`RoutingSettingsTab.tsx:504-531`; `routingSettin
 `RoutingSettingsTab.test.tsx` cases are at `:347`, `:373`, `:447`; msw `onUnhandledRequest: 'error'`. Vitest case
 counts are read with `grep -c "^\s*it(" <file>` when Code reports; they are not restated here.
 
+**Round-3 anchors (master `ff4d84df5`).** `CreateCommitTaskAsync` resolves kind/level from RolePolicy
+(`AgentTaskService.cs:3835-3836`), reads the pin inside a `try` (`:3843-3847`), composes with `chain: null` and takes
+the head (`:3848-3858`), stamps `RoutingPinId` when walked (`:3861-3862`), enforces forbids (`:3863`) and catches a
+pin-service throw into `"Routing pin service failed ({type}); using role policy."` (`:3865-3868`); with no pin
+service the warning is `"Routing pin service is not available; using role policy."` (`:3870-3873`). `ResolveAsync`
+issues one `RoutingPins` query for a stage pin when `cardId` is null (`RoutingPinService.cs:306-307`).
+`PutComplexityChainRequest.Provenance` defaults to Auto (`ComplexityChainDtos.cs:6-10`); `UpsertAsync` refuses a past
+`notAfter` with 422 (`ComplexityChainService.cs:163-173`), an Auto body over a Human cell with 409
+`complexity_chain_human` (`:176-187`) and an Auto role cell under a Human any-role row (`:191-203`).
+`Decision.Pin.AgentId` is the agent an agent-only pin binds (`RoutingPinService.cs:65-75`); a pool delegate is refused
+at pin time (`:213-227`); the create fills `AgentId` from the decision (`AgentTaskService.cs:831`) and takes the
+standing agent's kind (`:858`). `Fit` decrements `cardPerBoard` from 20 to 0 while over `cap`
+(`OrchestratorInstructionsRenderer.cs:54-60`); `SelectPins` keeps stage rows and trims card rows only (`:228-245`);
+`Sample()` has one stage pin and one card pin, `Antiphon CARD-0822 Code` (`OrchestratorInstructionsRendererTests.cs:168-172`).
+The chain fixture `CommitEndpointWebAppFactory` (`AgentTaskCommitEndpointTests.cs:319-340`: hosted services removed,
+`RecordingGitWorkspaceService`, `CommitChainBoundary`) with the private helpers `ChainAdapter` (an adapter whose
+`OnSubmitted` writes a `UserPrompt` then a `TurnEnd` transcript row), `ChainEntryAsync` and `ChainConfirmAsync`
+(`AgentTaskCommitChildChainTests.cs:217-250`) drives a real settle through
+`AgentTaskReplyService.OnTurnEndAsync(workerSession)` (`:96`), which spawns the Commit child
+(`AgentTaskReplyService.cs:4702-4718`); its receipt predicate is `TranscriptEntries.SingleAsync(p => p.AgentSessionId
+== X && p.Kind == TranscriptKinds.UserPrompt && p.Sequence > row.LastDeliveryBaselineSequence)` with
+`prompt.Text.ShouldBe(row.Body)` (`:155-157`, `:204-206`). `FlushSessionAsync` (`SessionMessageQueueService.cs:1741`),
+`OnTurnEndAsync` (`:1554`) and `FlushStrandedQueuesAsync` (`:1599`; `Pending` rows with `CreatedAt <= now −
+StrandedAgeSeconds`, `QueueAttention.cs:72-76`; default 60 s, `SupervisionSettings.cs:338`) read the committed row
+from a fresh scope; a delivered row is `Sent` with `LastDeliveryBaselineSequence` set (`:1054-1059`).
+`BridgeQueueHarness`'s adapter writes a stamped `UserPrompt` and a `TurnEnd` on submit (`BridgeQueueHarness.cs:322-349`),
+so a harness `Sent` row has a transcript receipt by construction; `QueueNoticesAsync` saves
+`session.OrchestratorInstructionsVersion` before `EnqueueAsync` (`OrchestratorInstructionsService.cs:268-278`). The
+Merge producer is called from the settle site at `AgentTaskReplyService.cs:2479-2480` and the land service at
+`AgentTaskLandService.cs:654`; `CommitOnSettlePolicyTests.cs:187` and `AgentTaskServiceIntegrationTests.cs:671` call
+it directly.
+
 ## Verification design
 
 ### Inspection
@@ -100,11 +136,12 @@ ComplexityChainListDto { chains: ComplexityChainDto[], roles: AgentTaskRole[], c
                          defaultComplexity: 'Hard' | 'Medium' | 'Easy' }        // NEW, on both views
 ComplexityChainDto     { …unchanged fields…, effective: ComplexityEffectiveDto | null }
                        // non-null ONLY on GET /api/complexity-chains?role=<Role>; null on the list view and on any-role rows
-ComplexityEffectiveDto { source: 'pin' | 'pin+chain' | 'role' | 'any' | 'config' | 'rolePolicy',
-                         candidates: ComplexityCandidateDto[],   // ordered; what WalkAsync would try, with availability
+ComplexityEffectiveDto { source: 'pin' | 'pin+chain' | 'role' | 'any' | 'config' | 'rolePolicy' | 'agent',
+                         candidates: ComplexityCandidateDto[],   // ordered; what WalkAsync would try, with availability; [] for agent
                          stagePin: RoutingPinRefDto | null,      // the active STAGE pin composed in (not a card pin)
-                         governsDefault: boolean,                // complexity == defaultComplexity
-                         withheldReason: string | null }         // non-null only with source rolePolicy and an unlaunchable policy
+                         governsDefault: boolean,                // complexity == defaultComplexity && source != 'agent'
+                         withheldReason: string | null }         // non-null when no default target is projected:
+                                                                 // source rolePolicy with an unlaunchable policy, or source agent
 ```
 
 `source` is a fail-closed whitelist (hand-written expected rows; V-B1–V-B5, V-B10):
@@ -114,7 +151,8 @@ ComplexityEffectiveDto { source: 'pin' | 'pin+chain' | 'role' | 'any' | 'config'
 | Required with ≥1 candidate | any | pin slots only | `pin`, pin candidates, `stagePin` set |
 | Preferred with ≥1 candidate | non-empty | pin slots then chain, deduplicated | `pin+chain`, that list, `stagePin` set |
 | Preferred with ≥1 candidate | empty (`none`) | pin slots then the policy pair (`Compose` appends it when `chain` is null; S-B passes null for `none`) | `pin+chain`, `stagePin` set |
-| Required with no candidate (forbid-only / agent-only) | non-empty | chain only | chain's `resolvedFrom` (`role`/`any`/`config`), `stagePin` set |
+| Required with no candidate and no `agentId` (forbid-only) | non-empty | chain only | chain's `resolvedFrom` (`role`/`any`/`config`), `stagePin` set |
+| any strength with `agentId` (agent-only; R3-04) | any, including `none` | not composed for the default create: the overlay fills `AgentId` (`AgentTaskService.cs:831`) and the standing-agent block takes the agent's kind (`:858`) before the walk point, so D-1 does not stamp (V-A10/V-A11) | `agent`, `candidates []`, `stagePin` set, `governsDefault false` on each tier, `withheldReason` = `stage pin binds standing agent {Name} ({Kind}); an ordinary dispatch runs on that agent and does not walk this row` |
 | none | non-empty | chain | `role`/`any`/`config`, `stagePin` null |
 | none | empty | empty → the policy pair from `RolePolicyReadService.PolicyTarget(settings, role)` | `rolePolicy`, one candidate, `stagePin` null |
 | none | empty | `PolicyTarget` withheld (`WithheldReason` non-null) | `rolePolicy`, `candidates []`, `withheldReason` = that string |
@@ -122,8 +160,11 @@ ComplexityEffectiveDto { source: 'pin' | 'pin+chain' | 'role' | 'any' | 'config'
 `PolicyResolution(AgentKind? Kind, AgentModelLevel? Level, string? Alias, string? WithheldReason)` is the typed input
 (plan D-4): `WithheldReason` is `"{role} policy names {kind ?? "ClaudeCode"}/{level}, which delegation cannot launch"`
 with the raw configured values when the kind is outside `DelegatableKinds` or the level is undefined; null otherwise.
-`governsDefault` is `complexity == settings.DefaultComplexity` and nothing else. Card pins do not populate `stagePin`
-or `candidates` (the composition asks `ResolveAsync` with `cardId: null`). Availability on each candidate is the
+`governsDefault` is `complexity == settings.DefaultComplexity && source != "agent"` (R3-04: an agent-bound stage pin
+binds the default create to the agent, V-A10, so no tier of that row governs it). The agent label is read by
+`GetEffectiveAsync` from `_db.Agents` for `decision.Pin.AgentId` and passed to `Compose` as its seventh argument
+`agentLabel`; `RoutingPinRefDto` is not widened. Card pins do not populate `stagePin` or `candidates` (the
+composition asks `ResolveAsync` with `cardId: null`); a card pin of any shape is the per-row count (OD-5). Availability on each candidate is the
 server's verdict (`EvaluateAvailabilityNowAsync`, `ComplexityRoutingService.cs:452`), as the stored list already carries.
 
 `GET /api/role-policy` is **not changed** by this card (plan D-6).
@@ -152,8 +193,15 @@ exactly as `ComplexityCreateTests.cs:469-487` builds it (`Options.Create(new Del
 stored, `resolvedFrom` answered as `role` when present else `none`) and `Pins` store that `GET /api/routing-pins` and
 `GET /api/complexity-chains?role=` answer from and `PUT`/`DELETE` mutate, so a read-back sees the writes. `M` =
 direct calls into `routingSettingsModel.ts`, `it.each` rows with literal expected strings, titles `C097M <id> <name>`.
-`E` = `renderWithProviders` + `server.use` + `userEvent`, notifications mocked as the touched files already do. Test
-files and titles below are **binding required** until Code creates them and records their execution.
+`E` = `renderWithProviders` + `server.use` + `userEvent`, notifications mocked as the touched files already do. `K` =
+the Commit child chain (R3-06): `CommitEndpointWebAppFactory` (`AgentTaskCommitEndpointTests.cs:319-340`; hosted
+services removed, so a sweep runs only when the test calls it) plus the private helpers `ChainAdapter`,
+`ChainEntryAsync`, `ChainConfirmAsync` and `SeedRepoAsync` (`AgentTaskCommitChildChainTests.cs:217-250`,
+`AgentTaskCommitEndpointTests.cs:283`), reused by writing the new file as a second `partial` of
+`AgentTaskCommitEndpointTests` with the chain test's attributes; a receipt is the chain test's predicate
+(`TranscriptEntries` row with `Kind == UserPrompt`, `Sequence > row.LastDeliveryBaselineSequence`, `Text == row.Body`,
+`:155-157`). Test files and titles below are **binding required** until Code creates them and records their
+execution.
 
 ### Delivery inventory
 
@@ -162,8 +210,8 @@ existing path it reuses; the instructions notice is listed because a cell write 
 
 | Outcome | Producer | Recipient | Persistence and identity | Delivery | Receipt | Loss/recovery boundary | Bound by |
 |---|---|---|---|---|---|---|---|
-| Blocked default-tier create (OD-6) and Blocked Commit/Merge child (D-3) | `EnqueueBlockedParentNoteAsync` (`AgentTaskService.cs:4610-4634`) in the create/settle transaction — the existing producer the `-Complexity` Blocked path already uses (`:1577-1581`) | `task.ParentSessionId` (must exist in `AgentSessions`) | `SessionQueuedMessages` row: `SourceTaskId`, `ContentDigest = DelegationNoteDigest.Compute(reason)`, `NoteHeader`, `Origin Delegation`, `Status Pending`; committed with the task | existing turn-end flush / stranded flush (`SessionMessageQueueService.OnTurnEndAsync :1554`, `FlushStrandedQueuesAsync :1599`) | one complete `UserPrompt` transcript row whose `Text` equals the row's `Body` | the row and the task commit together; a crash after commit leaves a Pending row the stranded flush delivers; no new boundary is added | V-A3, V-A13 (row fields); existing receipts: `ComplexityCreateTests.All_held_returns_200_Blocked_with_a_Blocked_event_and_parent_note` (`:54`, row), `AgentTaskCommitEndpointTests.Spawned_child_complete_brief_gated_operation_and_parent_receipt` (`AgentTaskCommitChildChainTests.cs:24`, a Commit child's parent receipt through the real queue) |
-| Instructions notice after a cell write (D-10) | `OrchestratorInstructionsService.QueueNoticesAsync` (`:212-285`), unchanged: a cell write only fires `OrchestratorInstructionsSignal` | `OrchestratorInstructionsRecipients.Select` | `OrchestratorInstructionsStates` row, `SessionQueuedMessages` row with `NoteHeader` | `EnqueueAsync(WhenIdle, deliverIfIdle: true)` (`:271-278`) | one `UserPrompt` row equal to the queued `Body` | unchanged from today | V-F2 (a cell write enters the path); existing: `Runner_defaults_put_rewrites_the_file_and_delivers_one_notice_to_an_idle_standing_orchestrator` (`:30`), `A_busy_session_gets_the_notice_after_its_turn_ends_and_a_second_change_replaces_the_pending_row` (`:209`) |
+| Blocked default-tier create (OD-6) and Blocked Commit/Merge child (D-3) | `EnqueueBlockedParentNoteAsync` (`AgentTaskService.cs:4610-4634`) in the create/settle transaction — the existing producer the `-Complexity` Blocked path already uses (`:1577-1581`) | `task.ParentSessionId` (must exist in `AgentSessions`) | `SessionQueuedMessages` row: `SourceTaskId`, `ContentDigest = DelegationNoteDigest.Compute(reason)`, `NoteHeader`, `Origin Delegation`, `Status Pending`; committed with the task | existing turn-end flush / stranded flush (`SessionMessageQueueService.OnTurnEndAsync :1554`, `FlushStrandedQueuesAsync :1599`, `FlushSessionAsync :1741`) | one complete `UserPrompt` transcript row for the parent session with `Sequence > row.LastDeliveryBaselineSequence` and `Text == row.Body`; the row is `Sent` | the row and the task commit together in the producer's own `SaveChanges` (no `EnqueueAsync` call, so no enqueue failure boundary exists here); a crash after the commit leaves a `Pending` row the stranded sweep types once it is older than `StrandedAgeSeconds` (V-G3); a settled task with no parent session gets no row and no error (V-G4) | V-A3, V-A13, V-G4 (row fields and the no-parent boundary); receipts V-G1 (idle parent, real settle), V-G2 (busy parent, delivered at its turn end), V-G3 (stranded sweep over the committed row), V-G5 (Merge producer). The existing `All_held_returns_200_Blocked_with_a_Blocked_event_and_parent_note` (`ComplexityCreateTests.cs:54`) asserts the row count; `Spawned_child_complete_brief_gated_operation_and_parent_receipt` (`AgentTaskCommitChildChainTests.cs:24`) asserts a successful child's brief and the land notes, not a child Blocked at creation |
+| Instructions notice after a cell write (D-10) | `OrchestratorInstructionsService.QueueNoticesAsync` (`:212-285`), unchanged: a cell write only fires `OrchestratorInstructionsSignal` | `OrchestratorInstructionsRecipients.Select` | `OrchestratorInstructionsStates` row, `SessionQueuedMessages` row with `NoteHeader` | `EnqueueAsync(WhenIdle, deliverIfIdle: true)` (`:271-278`) | one `UserPrompt` row with `Sequence > row.LastDeliveryBaselineSequence` and `Text == row.Body` for the `Sent` row whose `NoteHeader == OrchestratorInstructionsService.NoteHeader`; identity: the session's `OrchestratorInstructionsVersion` equals the state's `Version` | unchanged and disclosed: the version column and the state are saved before `EnqueueAsync` (`:268-278`); a crash or enqueue failure between them, followed by the unchanged-body early return (`:156-157`), loses that notice; this card does not recover it (plan D-10) | V-F2 (a cell write enters the path), V-F2b (the complete receipt and the version identity); existing: `Runner_defaults_put_rewrites_the_file_and_delivers_one_notice_to_an_idle_standing_orchestrator` (`:30`; `SubmittedBodies` and the version column), `A_busy_session_gets_the_notice_after_its_turn_ends_and_a_second_change_replaces_the_pending_row` (`:209`) |
 
 Deadlines: none. Fixture timestamps (`updatedAt`) are display data; V-B6 compares two of them for order-or-equal.
 
@@ -181,7 +229,8 @@ line for CP-1 red)**
 scaffold for CP-3 red; `[Category("Integration")]` class with the one `U` method marked `[Category("Unit")]`)**
 
 The scaffold commit that precedes CP-3 contains `AgentTaskService.MatrixDefaultApplies(CreateAgentTaskRequest, bool)`
-returning `false`, `ResolveServerChildRoutingAsync` returning `legacy()` unconditionally, and no stamp; S-0 has landed,
+returning `false`, `ResolveServerChildRoutingAsync` reading the pin once and returning `legacy(pinRead)`
+unconditionally, and no stamp; S-0 has landed,
 so `DefaultComplexity` exists. Rows marked **red under the scaffold** must fail by the named assertion at CP-3; the
 others pass there because they assert today's path is kept. Seeds: a role cell is a direct `ComplexityChains` insert
 as `SeedHardChainAsync` does, with `Role` and `Complexity = Medium`; a hold is `SeedHoldAsync(db, kind, alias, until:
@@ -237,7 +286,7 @@ null)`; `settled`/`conflicted` are a seeded Worker task with `WorktreePath`, `Wo
   `service.CreateCommitTaskAsync(settled, "reason", ["a.txt"], null, null, ct)` then `db.SaveChangesAsync()` →
   returned task `AgentKind Codex`, `ModelLevel Frontier`, `Complexity == Medium`, `Status Queued`, `RoutingPinId ==
   null`; with no Commit row → `ClaudeCode/Medium` (RolePolicy Commit), `Complexity == null`. Red under the scaffold
-  (first half). Mutation: return `legacy()` unconditionally → `ClaudeCode` → red.
+  (first half). Mutation: return `legacy(pinRead)` unconditionally → `ClaudeCode` → red.
 - V-A8b `A_required_pin_with_candidates_keeps_the_commit_child_on_todays_pin_path` | I | `[Arguments]` × 4:
   `no-row-list-pin` (no row; Required stage Commit pin `Candidates: [ClaudeCode/Frontier, ClaudeCode/High]`, the live
   shape) → `ClaudeCode/Frontier`, `RoutingPinId == pin.Id`; `no-row-single-pin` (no row; Required `Codex/Frontier`) →
@@ -283,7 +332,25 @@ null)`; `settled`/`conflicted` are a seeded Worker task with `WorktreePath`, `Wo
   `AppDbContext` that the test disposes before the call (the `RoutingPinService` stays on the live context) →
   `Codex/Frontier`, `Complexity == null`, `RoutingPinId == null`, `Status Queued`, no `Blocked` event, a Warning event
   containing `Routing read failed`. Red under the scaffold (no warning). Mutation: catch into the RolePolicy pair
-  instead of `legacy()` → `ClaudeCode/Medium` → red.
+  instead of `legacy(pinRead)` → `ClaudeCode/Medium` → red.
+- V-A15b `The_commit_child_reads_the_pin_once_and_keeps_a_resolved_required_pin` | I | Commit/Medium
+  `[ClaudeCode/High]` present; Required stage Commit pin `Codex/Frontier` (one candidate); `settled.CardId == null`;
+  the `AppDbContext` is built from `TestDbFixture.CreateDbContextOptions(schema.ConnectionString)` with
+  `.AddInterceptors(new PinReadGuard())` — a `DbCommandInterceptor` whose `ReaderExecuting`/`ReaderExecutingAsync`
+  count commands whose `CommandText` contains `"RoutingPins"` and throw `InvalidOperationException("second
+  RoutingPins read")` on the second; `ResolveAsync` issues one such query for a stage pin when `cardId` is null
+  (`RoutingPinService.cs:306-307`); the guard is armed after seeding → `CreateCommitTaskAsync` returns `Codex/Frontier`,
+  `Complexity == null`, `RoutingPinId == null`, `Status Queued`, no `Blocked` event, no Warning event containing
+  `Routing pin service failed`, `guard.PinReads == 1`. Passes under the scaffold (the scaffold helper reads once and
+  returns `legacy(pinRead)`). Mutation (PC-39): read the pin again inside Commit's legacy selection → the guard throws,
+  the catch yields `ClaudeCode/Medium` with the warning → red.
+- V-G4 `A_blocked_commit_child_without_a_parent_session_writes_no_note` | I | Commit/Medium `[ClaudeCode/Frontier]`;
+  hold `fable`; `settled.ParentSessionId == null` → child `Status Blocked`, `FailureReason` starts `routing
+  exhausted: `, `Complexity == Medium`, one `Blocked` event, zero `SessionQueuedMessages` rows with `SourceTaskId ==
+  child.Id`, no exception; a second arm in the same method with `ParentSessionId` = a Guid that has no `AgentSessions`
+  row → the same (`EnqueueBlockedParentNoteAsync :4612-4615`). Red under the scaffold (the scaffold returns
+  `legacy(pinRead)` and does not Block). Mutation: add the row without the session check → the FK save fails or a
+  row appears → red.
 
 **S-B — `tests/Antiphon.Tests/Application/ComplexityEffectiveComposeTests.cs` (U; CP-10 red over a compile-only
 stub returning an empty list and a `PolicyTarget` returning a resolution with null fields) and
@@ -313,6 +380,15 @@ stub returning an empty list and a `PolicyTarget` returning a resolution with nu
   `Source == "rolePolicy"`, `Candidates` empty, `WithheldReason` equals the resolution's string. A fourth assertion in
   the first row: the shipped Plan policy → `(ClaudeCode, Frontier, "fable", null)`. Executed results: 3. Mutation:
   build the resolution through `ResolveAgainstRolePolicy` → candidates non-empty, reason null → red.
+- V-B11 `An_agent_only_stage_pin_withholds_the_default_target_and_sources_agent` | U | `[Arguments]` × 2: `with-row`
+  (a `Decision` whose `Pin.AgentId` is set and whose `PinCandidates` is empty, built as the `Decision(pin, identifier)`
+  helper builds one over a pin seeded like `RoutingPinServiceTests.cs:233-248`; chain `[Codex/Frontier]` resolvedFrom
+  `role`) and `no-row` (chain `[]`, `none`); policy `(ClaudeCode, Frontier, "fable", null)`; `Compose(decision, chain,
+  "Plan/Medium", resolvedFrom, policy, isDefaultTier: true, agentLabel: "astra-reviewer (Codex)")` → `Source ==
+  "agent"`, `Candidates` empty, `StagePin!.Id == pin.Id`, `GovernsDefault == false`, `WithheldReason == "stage pin
+  binds standing agent astra-reviewer (Codex); an ordinary dispatch runs on that agent and does not walk this row"`.
+  Executed results: 2. Mutation (PC-41): ignore `agentLabel` → row `with-row` gives `Source "role"`, `GovernsDefault
+  true` → red.
 - V-B5 `Get_role_view_carries_effective_and_default_complexity_and_card_pins_are_excluded` | A | PUT
   `/api/complexity-chains/Plan/Hard` `{candidates:[{Codex,Frontier}], provenance:"Human"}` → 200; PUT
   `/api/routing-pins` `{role:"Plan", provenance:"Human", strength:"Required", agentKind:"ClaudeCode",
@@ -333,6 +409,15 @@ stub returning an empty list and a `PolicyTarget` returning a resolution with nu
   `{candidates:[{Grok,Frontier}], provenance:"Human", reason:"second"}` → 200; GET `?role=Debug` → Easy `candidates`
   is `[Grok/Frontier]`, `reason == "second"`, `updatedAt >= U1`. `finally` DELETE. Mutation: refuse a second Human
   write with 409 → red. (OD-4's statement as a test; the migration's PUTs depend on it.)
+- V-B12 `Get_role_view_reports_an_agent_only_stage_pin_as_agent_bound` | A | seed a standing agent through a factory
+  `AppDbContext` scope (recipe `RoutingPinServiceTests.cs:233-248`, `IsPoolDelegate = false`, `Kind ClaudeCode`, `Name
+  "c097m-standing"`); PUT `/api/complexity-chains/Plan/Medium` `{candidates:[{Codex,Frontier}], provenance:"Human"}` →
+  200; PUT `/api/routing-pins` `{role:"Plan", provenance:"Human", strength:"Required", agentId:"<agent>",
+  reason:"C097M V-B12"}` → 200, keep `id` P; GET `/api/complexity-chains?role=Plan` → `chains[1]` (Medium)
+  `effective.source == "agent"`, `effective.candidates` empty, `effective.stagePin.id == P`, `effective.governsDefault
+  == false`, `effective.withheldReason` contains `c097m-standing (ClaudeCode)`; the stored `candidates[0].agentKind ==
+  "Codex"` beneath it; `chains[0]` (Hard, no cell) `effective.source == "agent"` as well. `finally` DELETE the cell, P
+  and the agent row. Mutation: fold the agent pin into the chain (PC-41 at the HTTP boundary) → `source "role"` → red.
 
 **S-C1 — `routingSettingsModel.test.ts` (M), `RoutingSettingsTab.test.tsx` (E), `complexityChains.test.tsx` (R)**
 
@@ -341,8 +426,11 @@ stub returning an empty list and a `PolicyTarget` returning a resolution with nu
   `Preferred Human pin → Grok/Frontier (grok-4.7), then this row`; `rolePolicy` `[ClaudeCode/High opus]` → `Falls back
   to RolePolicy → ClaudeCode/High (opus)`; `rolePolicy` with `withheldReason: 'Plan policy names Raw/Frontier, which
   delegation cannot launch'` and no candidates → `Falls back to RolePolicy → not launchable: Plan policy names
-  Raw/Frontier, which delegation cannot launch`; `role` → `Own rule`; `any` → `Inherits Any role`; `config` →
-  `Configuration fallback`. Mutation: ignore `effective.source` → red on the first row.
+  Raw/Frontier, which delegation cannot launch`; `agent` with `withheldReason: 'stage pin binds standing agent
+  c097m-standing (ClaudeCode); an ordinary dispatch runs on that agent and does not walk this row'` and no candidates
+  → `Pinned to standing agent c097m-standing (ClaudeCode) — an ordinary dispatch runs there; this row is not walked`
+  (R3-04); `role` → `Own rule`; `any` → `Inherits Any role`; `config` → `Configuration fallback`. Mutation: ignore
+  `effective.source` → red on the first row.
 - V-C2 `C097M V-C2 <case>` `unsetCellLabel(tier, governsDefault)` and `nonComplexityBoundary(tier)` | M | (`Easy`,
   false) → `Unset — a -Complexity Easy dispatch blocks`; (`Medium`, true) → the V-C1 `rolePolicy` label is used
   instead; `nonComplexityBoundary('Medium')` equals `An ordinary Worker dispatch without -Complexity, -Kind/-Level,
@@ -453,12 +541,30 @@ stage pins shaped as the live census plus one card pin; `-OutDir` under a temp d
   PUTs equal the first run's (same paths, same bodies); the store's 39 cells are byte-equal before and after the
   second run; exit 0 both times. Mutation: skip cells whose stored body equals the plan → zero PUTs on the second run →
   red (the contract is a full overwrite, not a skip).
-- V-E6 `Restore_re_puts_present_before_images_and_deletes_absent_ones` | S | store seeded with a prior Human
-  Plan/Medium cell `[Grok/Frontier]`; dry run (records `present: true` with those candidates), `-Apply` (overwrites
-  it), then `-Restore -Snapshot <that file>` → `Requests` after restore: PUT `/api/complexity-chains/Plan/Medium` with
-  `candidates [Grok/Frontier]`, `provenance Human` and the seeded reason, and DELETE for each of the other 38 cells; no
-  request on `/api/routing-pins`; the store's cells equal the initial seed; exit 0; a second `-Restore` sends the same
-  requests and exits 0. Mutation (PC-31): DELETE Plan/Medium instead of PUT → red.
+- V-E6 `Restore_re_puts_human_before_images_and_deletes_absent_expired_and_auto_ones` | S | `[Arguments]` × 3 over
+  the seeded Plan/Medium before-image, the 13 census pins in the pins store throughout (precondition 1 holds):
+  `human` (Human `[Grok/Frontier]`, `notAfter` null): dry run records `present: true, provenance: "Human"` with those
+  candidates, `-Apply` overwrites it, `-Restore -Snapshot <that file>` → `Requests` after the restore: one GET
+  `/api/routing-pins?role=<R>` per migrated role, then PUT `/api/complexity-chains/Plan/Medium` with `candidates
+  [Grok/Frontier]`, `provenance Human` and the seeded reason, and DELETE for each of the other 38 cells, in snapshot
+  order; the store's cells equal the initial seed. `human-expired` (Human, `notAfter` 2099-01-01Z at seed time; after
+  `-Apply` the test rewrites that entry's `notAfter` in the snapshot file to `2026-01-01T00:00:00Z`, the state a clock
+  that passed it would leave) → DELETE for Plan/Medium, no PUT, output contains `expired before restore; cleared`.
+  `auto` (Auto `[Grok/Frontier]`): the dry-run table row carries `(restore clears)`; `-Restore` → DELETE for
+  Plan/Medium, no PUT, output contains `Auto before-image not re-created; cleared`. In each row: no PUT or DELETE on
+  `/api/routing-pins`, the pins store unchanged, exit 0, and a second `-Restore` sends the same requests and exits 0;
+  the store's cells are empty after `human-expired` and `auto`. Executed results: 3. Mutation (PC-31, row `human`):
+  DELETE Plan/Medium instead of PUT → red. Mutation (PC-45, row `auto`): PUT the saved Auto body after the DELETE → a
+  PUT on Plan/Medium → red.
+- V-E12 `Restore_refuses_until_each_migrated_roles_required_stage_pin_is_back` | S | dry run and `-Apply` over the
+  13-pin store; the pins store is then emptied (the outcome of the operator's `routing-pin.ps1 clear` per role);
+  `-Restore -Snapshot <file>` → the requests after the apply are GETs on `/api/routing-pins?role=<R>` and nothing
+  else — no PUT, no DELETE; exit 1; output contains `restore refused: Plan has no Required stage pin` and
+  `routing-pin.ps1 set -Role Plan -Provenance Human -Strength Required -Candidates ClaudeCode/Frontier`; the store's
+  39 cells are unchanged. Second arm in the same method: twelve pins seeded back as Required and the Review pin seeded
+  back as `Preferred` → refused, naming `Review`, zero writes. Third arm: the Review pin seeded back as Required
+  `Codex/Frontier` → `-Restore` proceeds: 39 DELETEs, exit 0. Mutation (PC-40): skip precondition 1 → a DELETE is
+  recorded with the pins store empty → red.
 
 **S-F — `OrchestratorInstructionsRendererTests` (U), `OrchestratorInstructionsRefreshTests` (H),
 `OrchestratorInstructionsDeltaTests` (U)**
@@ -474,10 +580,16 @@ stage pins shaped as the live census plus one card pin; `-OutDir` under a temp d
   at the default cap → the 14 `- <Role>:` lines are present, each `<= 160` UTF-8 bytes, and a tier with 8 candidates
   renders three aliases then `+5`. (b) `full = Encoding.UTF8.GetByteCount(Render(snapshot))`; `Render(snapshot, full -
   1)` → byte count `<= full - 1`, the body contains `… 14 rows: GET /api/complexity-chains` at an index greater than
-  that of `## 5. Role × complexity matrix` and less than that of `## 6. Routing pins`, contains no `- Plan:` line, and
-  contains no `more: GET /api/model-availability` (the holds step was not reached). No universal byte figure is
-  asserted; `Sample()`'s few card pins are below the 20-per-board first step, so the matrix step is the one that
-  fits. Mutation (PC-35): drop the per-line cap → a line longer than 160 bytes in (a) → red.
+  that of `## 5. Role × complexity matrix` and less than that of `## 6. Routing pins`, contains no `- Plan:` line,
+  still contains `Antiphon CARD-0822 Code` (`Sample()`'s one card pin, `OrchestratorInstructionsRendererTests.cs:171`,
+  not cut), and contains neither `more: GET /api/routing-pins` nor `more: GET /api/model-availability` (neither the
+  card-pin loop nor the holds step was reached). Derivation: the matrix step is the first in `Fit` (plan D-10), so
+  the first body tried under `full` is the one with the section collapsed, and collapsing 14 lines to one saves more
+  than the one byte asked for; round 2 placed the step after the card-pin loop, which at this cap cut `Sample()`'s
+  card pin first (`Fit` decrements `cardPerBoard` to zero, `:54-60`) and left the matrix expanded (R3-05). No
+  universal byte figure is asserted. Mutation (PC-35): drop the per-line cap → a line longer than 160 bytes in (a) →
+  red. Mutation (PC-42): move the matrix step after the card-pin loop → `Antiphon CARD-0822 Code` disappears, `more:
+  GET /api/routing-pins` appears and `- Plan:` remains in (b) → red.
 - V-F2 `Covered_writes_each_regenerate_and_notify("complexity-chain")` | H | new `[Arguments("complexity-chain")]`;
   `CoveredWriteAsync` arm: `scope.ServiceProvider.GetRequiredService<ComplexityChainService>().UpsertAsync(Plan,
   Medium, new PutComplexityChainRequest([new(Codex, Frontier)], Human, "cell"), null, ct)`, `WhenIdleAsync`, return
@@ -485,9 +597,75 @@ stage pins shaped as the live census plus one card pin; `-OutDir` under a temp d
   `ModelAvailability` (`:173`). The existing assertions hold: `Revision > 0`, `SubmittedBodies.Count == 1`, the body
   contains `matrix:` and the written path. Mutation (PC-33): drop the signal from `UpsertAsync` →
   `SubmittedBodies.Count == 0` → red.
+- V-F2b `A_cell_write_notice_is_received_as_one_complete_user_prompt_equal_to_its_queued_body` | H |
+  `CreateHarnessAsync`, `AttachBundleAsync`, `Instructions(h).ReconcileNowAsync("startup")`, `Notify = All`; in a
+  scope `ComplexityChainService.UpsertAsync(Plan, Medium, new PutComplexityChainRequest([new(Codex, Frontier)], Human,
+  "cell"), null, ct)`; `WhenIdleAsync` → in `NewDb(h)`: exactly one `SessionQueuedMessages` row for `h.SessionId` with
+  `NoteHeader == OrchestratorInstructionsService.NoteHeader`, `Status == Sent`, `LastDeliveryBaselineSequence !=
+  null`; exactly one `TranscriptEntries` row with `AgentSessionId == h.SessionId && Kind == TranscriptKinds.UserPrompt
+  && Sequence > row.LastDeliveryBaselineSequence`, its `Text == row.Body`; `row.Body` contains `matrix:` and
+  `ReadStateAsync(h).WrittenPath`; `h.Adapter.SubmittedBodies` equals `[row.Body]`; `SessionVersionAsync(h) ==
+  state.Version` (the version the notice announces is the column the recipient now carries). The harness adapter
+  writes the `UserPrompt` on submit (`BridgeQueueHarness.cs:344`), so the row binds the queue's `Sent` transition to
+  that transcript row rather than to the adapter's acceptance. Mutation (PC-44): drop the signal from `UpsertAsync` →
+  no `Sent` row with the header → red.
 - V-F3 `An_identical_matrix_rewrite_produces_no_delta_and_a_changed_cell_names_the_role` | U | two snapshots with
   equal `Matrix` → no line starts with `matrix:`; change Plan's Medium → one line `matrix: Plan Medium …`. Mutation
   (PC-34): `DiffMatrix` reports on equal input → first assertion red.
+
+**Delivery receipts (R3-06) — `tests/Antiphon.Tests/Application/MatrixChildReceiptTests.cs` (K; a second `partial`
+of `AgentTaskCommitEndpointTests`; method names start with `Matrix_` so CP-24's filter selects them; committed with
+S-A)**
+
+The producer under test is the real settle: `AgentTaskReplyService.OnTurnEndAsync(workerSession)` reads the worker's
+`done` report, finds `x.md` dirty under `CommitOnSettle = Agent` and calls `CreateCommitTaskAsync`
+(`AgentTaskReplyService.cs:4702-4718`), which under D-3 Blocks the child and writes the parent note in the same
+`SaveChanges`. Seeds follow the chain test's `:47-85` with the differences each row names; `parent`, `workerSession`
+and `childSession` are three `AgentSessions` rows; `parentAdapter = ChainAdapter(parent)`.
+
+- V-G1 `Matrix_blocked_commit_child_note_reaches_the_settled_tasks_parent_as_one_complete_user_prompt` | K | no
+  `RoutingPins` row; a `ComplexityChains` row `Role Commit`, `Complexity Medium`, `[ClaudeCode/Frontier]`, `Provenance
+  Human`; a manual hold on `ClaudeCode/fable` (`ModelAvailability.UpsertManualAsync`, until +4 h); parent idle
+  (`UserPrompt` then `TurnEnd`, as `:86-87`); worker `UserPrompt` marker, `done` report, `TurnEnd` (`:92-94`);
+  `OnTurnEndAsync(workerSession)` → in a fresh scope: the child (`ParentTaskId == taskId`) has `Status Blocked`,
+  `FailureReason` starting `routing exhausted: ` and containing `Commit/Medium chain` and `fable`, `Complexity ==
+  Medium`, `RoutingPinId == null`, one `Blocked` event; exactly one `SessionQueuedMessages` row with `SourceTaskId ==
+  child.Id`: `AgentSessionId == parent`, `Status Pending`, `NoteHeader != null`, `ContentDigest ==
+  DelegationNoteDigest.Compute(child.FailureReason)`; `queue.FlushSessionAsync(parent)` → that row is `Sent` with
+  `LastDeliveryBaselineSequence != null`; exactly one `TranscriptEntries` row with `AgentSessionId == parent && Kind
+  == TranscriptKinds.UserPrompt && Sequence > row.LastDeliveryBaselineSequence`, and its `Text == row.Body`. When the
+  settled task's own completion note was queued for `parent` in the same flush, it has its own `Sent` row and
+  `UserPrompt` with `Text == Body`, the two `UserPrompt` sequences are in the same order as the two rows' `Sequence`
+  values, and `parentAdapter.SubmittedBodies` equals the `Sent` rows' bodies in that order (count 2); otherwise count
+  1. Red under the scaffold (no Blocked child, no row). Mutation (PC-43): skip `EnqueueBlockedParentNoteAsync` in the
+  Blocked arm → no row with `SourceTaskId == child.Id`, no `UserPrompt` → red.
+- V-G2 `Matrix_blocked_commit_child_note_waits_for_a_busy_parent_and_is_delivered_at_its_turn_end` | K | as V-G1 but
+  the parent has its `UserPrompt` and no `TurnEnd` (busy); after the settle, `queue.FlushSessionAsync(parent)` → the
+  Blocked row stays `Pending`, `parentAdapter.SubmittedBodies` contains no body equal to it, and no `UserPrompt` row
+  for `parent` beyond the seeded one exists; then `ChainEntryAsync(parent, TurnEnd, null)`,
+  `queue.OnTurnEndAsync(parent)` and `queue.FlushSessionAsync(parent)` (the turn end releases, the flush drains) →
+  the row is `Sent` and one `UserPrompt` with `Sequence > row.LastDeliveryBaselineSequence && Text == row.Body`
+  exists, its `Sequence` greater than the `TurnEnd`'s. Red under the scaffold. Mutation: type on the busy flush → a
+  `UserPrompt` with `Text == row.Body` before the `TurnEnd` → red.
+- V-G3 `Matrix_blocked_commit_child_note_survives_the_settle_commit_and_is_typed_by_the_stranded_sweep` | K | as V-G1
+  (idle parent) with no `FlushSessionAsync`; after the settle, in a fresh scope, `ExecuteUpdateAsync` sets `CreatedAt
+  = DateTime.UtcNow.AddSeconds(-120)` on the `Pending` rows for `parent` (the sweep's cutoff is `now −
+  StrandedAgeSeconds`, default 60: `QueueAttention.cs:72-76`, `SupervisionSettings.cs:338`); `queue
+  .FlushStrandedQueuesAsync(ct)` → the Blocked row is `Sent` and one `UserPrompt` with `Sequence >
+  row.LastDeliveryBaselineSequence && Text == row.Body` exists. The producer's scope ended at the settle; the sweep
+  reads the committed row. Red under the scaffold. Mutation: PC-43's producer skip → no row, nothing typed → red.
+- V-G5 `Matrix_blocked_merge_child_note_reaches_the_conflicted_tasks_parent_as_one_complete_user_prompt` | K | seed
+  `parent` idle with `ChainAdapter`, and a Blocked Worker task `conflicted` with `ParentSessionId = parent`,
+  `WorktreePath`, `WorktreeBranch`, `MergeTargetRef` as `CommitOnSettlePolicyTests.cs:181-183`; a `ComplexityChains`
+  row Merge/Medium `[ClaudeCode/Frontier]` Human; hold `fable`; in a factory scope
+  `AgentTaskService.CreateMergeTaskAsync(conflicted, ["a.cs"], ct)` then `db.SaveChangesAsync()` — the call the
+  settle site makes at `AgentTaskReplyService.cs:2479-2480` before its own save → the returned child `Status Blocked`,
+  `FailureReason` contains `Merge/Medium chain`, `Complexity == Medium`; one `SessionQueuedMessages` row with
+  `SourceTaskId == child.Id` for `parent`; `queue.FlushSessionAsync(parent)` → `Sent`, one `UserPrompt` with `Sequence
+  > row.LastDeliveryBaselineSequence && Text == row.Body`. The rebase-conflict trigger is not re-driven here (it needs
+  a conflicting upstream fixture; the direct call is how `CommitOnSettlePolicyTests.cs:187` and
+  `AgentTaskServiceIntegrationTests.cs:671` exercise the producer). Red under the scaffold. Mutation: the Merge arm's
+  producer skip (PC-43's twin) → no row → red.
 
 ### Guards the regression
 
@@ -509,8 +687,8 @@ stage pins shaped as the live census plus one card pin; `-OutDir` under a temp d
 - R-C1, R-C2 as above. R-D as above.
 - R-F `OrchestratorInstructionsRendererTests` other methods and `OrchestratorInstructionsRefreshTests` other methods
   unchanged (the renumbering touches one method's literals and the `Sample()` fixture; the ladder test's existing
-  ordering assertions still hold because the matrix step sits between card pins and holds and its pointer is
-  in-section, not a trailing notice). The notice path's behaviour stays bound by the existing
+  ordering assertions still hold because the matrix step is the first in the ladder and its pointer is in-section,
+  not a trailing notice; the trailing cut-notice order pins → holds → standing → features is untouched). The notice path's behaviour stays bound by the existing
   `Runner_defaults_put_rewrites_the_file_and_delivers_one_notice_to_an_idle_standing_orchestrator`,
   `A_busy_session_gets_the_notice_after_its_turn_ends_and_a_second_change_replaces_the_pending_row` and
   `An_unchanged_write_neither_rewrites_nor_notifies` (`:30`, `:209`, `:179`).
@@ -540,11 +718,13 @@ stage pins shaped as the live census plus one card pin; `-OutDir` under a temp d
 
 ### Positive controls
 
-The plan's PC-1–PC-38 table is the binding list (one per behaviour; exact method names above). PC-6 binds to V-A6's
+The plan's PC-1–PC-45 table is the binding list (one per behaviour; exact method names above). PC-6 binds to V-A6's
 `[Arguments]` row `Check`; PC-9 to V-A9; PC-10 to V-A8b's row `row-and-single-pin`; PC-13 to V-A12b's row
 `stage-list-pin`; PC-21 to V-B10's row `Raw/Frontier`; PC-22 to the concrete wrong-grain query named in the plan;
-PC-28 to V-D5 (R2-11); PC-30 to V-E4's row `apply`; PC-35 to V-F7's part (a); PC-24–PC-26 and PC-36–PC-38 name the
-Vitest titles above. None has been run.
+PC-28 to V-D5 (R2-11); PC-30 to V-E4's row `apply`; PC-31 to V-E6's row `human`; PC-35 to V-F7's part (a); PC-24–PC-26
+and PC-36–PC-38 name the Vitest titles above. Round 3: PC-39 to V-A15b; PC-40 to V-E12; PC-41 to V-B11's row
+`with-row`; PC-42 to V-F7's part (b); PC-43 to V-G1 (V-G3 and V-G5 share its producer skip); PC-44 to V-F2b; PC-45 to
+V-E6's row `auto`. None has been run.
 
 ### Out of scope
 
@@ -562,25 +742,34 @@ Vitest titles above. None has been run.
   delegate modal (D-6; CARD-1250). No new delivery, recovery or notice-ordering mechanism (D-10). The attention
   feed is covered by the existing `ComplexityAttentionTests` and is not re-tested for stamped tasks (their rows carry
   `Complexity`, the same key).
+- The rebase-conflict trigger of the Merge producer is not re-driven (V-G5 calls the producer as the settle site
+  does). The notice path's window between the version write and the enqueue
+  (`OrchestratorInstructionsService.cs:268-278`) is inherited and disclosed in the inventory, not recovered (R3-06).
+  Method-scoped positive controls for V-G1–V-G5 run with CP-24's filter narrowed to the one method.
 
 ### Checkpoints
 
-The closed list is the plan's `### Checkpoints` table (CP-1–CP-23); this amendment adds no row. Build reuse is written
-as `CP-n` in the Build column with the same `After` group as row n (`PlanTableImporter.cs:200-211`). CP-3/CP-4 execute
-17 methods and **31 results** (V-A6 carries 8 `[Arguments]`, V-A8b 4, V-A12b 5); `Min` is 17. V-A6 is the class's one
-`[Category("Unit")]` method; the class filter runs it with the integration methods. CP-10/CP-11 execute 5 methods and
-7 results (V-B10 carries 3). CP-18 executes 6 methods and 7 results (V-E4 carries 2). Regression `Min` values are the
-`[Test]` method counts read from master `d317c3f59`, as the plan states; `[Arguments]` and `MethodDataSource` expansion
-is recorded by Code from the runner's output.
+The closed list is the plan's `### Checkpoints` table (CP-1–CP-24); round 3 added CP-24 and this amendment adds no
+other row. Build reuse is written as `CP-n` in the Build column with the same `After` group as row n
+(`PlanTableImporter.cs:200-211`). CP-3/CP-4 execute 19 methods and **33 results** (V-A6 carries 8 `[Arguments]`,
+V-A8b 4, V-A12b 5; V-A15b and V-G4 are single); `Min` is 19. V-A6 is the class's one `[Category("Unit")]` method; the
+class filter runs it with the integration methods. CP-10/CP-11 execute 6 methods and 9 results (V-B10 carries 3,
+V-B11 2). CP-12 executes 3 methods. CP-18 executes 7 methods and 10 results (V-E4 carries 2, V-E6 3). CP-20's roster
+is 12 methods (V-F2b added). CP-24 runs the four `Matrix_*` methods of `AgentTaskCommitEndpointTests` through the
+method-segment filter `/*/*/AgentTaskCommitEndpointTests/Matrix_*` — the tree-node grammar's wildcard, as the
+class-segment forms in `docs/testing-and-build.md:166` use it — on CP-4's build, serial (a real host and the message
+queue). Regression `Min` values are the `[Test]` method counts read from master `d317c3f59`, as the plan states;
+`[Arguments]` and `MethodDataSource` expansion is recorded by Code from the runner's output.
 
 ### Cost
 
-As the plan states: ordinary green rows 142 minutes, red-first rows 24 minutes, authoring 435 minutes across seven
-Code dispatches (S-0 20, S-A 90, S-B 70, S-C1 60, S-D 60, S-E 60, S-F 75) plus 90 for the optional S-C2. No
+As the plan states: ordinary green rows 155 minutes, red-first rows 25 minutes, authoring 470 minutes across seven
+Code dispatches (S-0 20, S-A 110, S-B 75, S-C1 60, S-D 60, S-E 65, S-F 80) plus 90 for the optional S-C2. No
 production timeout or assertion is loosened. Edited existing tests, each with its reason recorded above: three
 `RoutingSettingsTab.test.tsx` cases (copy change), one `OrchestratorInstructionsRendererTests` method and its
 `Sample()` fixture (section renumbering), the `Covered_writes_each_regenerate_and_notify` argument list (one new write
-kind).
+kind). The round-3 receipt methods live in a new partial file of an existing class; no existing method in
+`AgentTaskCommitEndpointTests` is edited.
 
 ## Appendix A — withdrawn: the 2026-10-13 Appendix A (S3 stage-pin editor)
 
