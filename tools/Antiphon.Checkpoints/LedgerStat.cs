@@ -9,6 +9,8 @@ namespace Antiphon.Checkpoints;
 // size and mtime back (utimes, touch -r, SetLastWriteTime), and those setters move the ctime
 // (Review 157c4013 D1: portable_stat_rewrite_keeping_size_and_mtime_during_the_slot_wait_is_refused_before_launch,
 // rewrite_keeping_size_and_mtime_on_the_real_file_system_is_refused_before_launch).
+// The stamp is not a content version: a store through a shared memory mapping can leave it equal (Review 9f1c8a2e
+// D1, shared_mapping_style_change_with_an_unchanged_stat_is_refused_at_admission_only_in_strict_mode); see AdmitLedger.
 public readonly record struct LedgerStat(string Kind, ulong Device, ulong Inode, long Size, long Modified, long Changed)
 {
     private const uint Mask = 0x1 | 0x2 | 0x40 | 0x80 | 0x100 | 0x200; // TYPE MODE MTIME CTIME INO SIZE
