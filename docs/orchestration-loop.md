@@ -919,8 +919,10 @@ target is refused with a 409 and never becomes Blocked:
 - an Orchestrator whose one candidate is not ClaudeCode: `routing_exhausted`, whatever
   `refuseIfExhausted` says
 
-Witnesses are the five `RequiredSingleCandidateRefusalTests` methods. They cover an explicit Hard row
-for the Orchestrator cases and a default Medium row for the others.
+Witnesses are the five refusal methods of `RequiredSingleCandidateRefusalTests`, including a held
+ClaudeCode Orchestrator (`model_disabled`, not `routing_exhausted`). They use an explicit Hard row
+for the Orchestrator cases and a default Medium row for the others. The class's sixth method is a
+control: one admissible ClaudeCode row is chosen by the walk, so that create never enters the arm.
 
 **Operators read routing at `/settings?tab=routing`** (CARD-0333): the global
 Routing settings tab shows live model availability, best-effort subscription-usage observations

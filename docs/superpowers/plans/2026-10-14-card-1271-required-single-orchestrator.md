@@ -25,7 +25,8 @@ mismatch is not cleared by a hold or reset. The walk and the arm share one predi
 must change the row or pin, and not to pick a kind.
 
 S1 commits the five tests and this plan. S2 makes the production change and adds the
-docs paragraph in `docs/orchestration-loop.md`.
+docs paragraph in `docs/orchestration-loop.md`. The D-1 repair (Review f28f0f79, Code task
+`7551b8d4`) adds V-4, rebinds PC-3 to it and corrects V-2, the class summary and the docs.
 
 ## Verification design
 
@@ -36,9 +37,12 @@ docs paragraph in `docs/orchestration-loop.md`.
   `An orchestrator runs only on ClaudeCode`. The routing DTO must be not walked, with one
   skipped Codex candidate, reason `not a delegate kind`, and no task row.
   Red at S1 (created on Codex), green at S2 (CP-1).
-- V-2: `An_orchestrator_with_complexity_over_one_claude_row_is_created_on_it` is the
-  control. The same pin over one ClaudeCode/Frontier row creates a Queued Orchestrator
-  on ClaudeCode/Frontier. It is green at S1 and S2 (CP-1).
+- V-2: `An_orchestrator_with_complexity_over_one_claude_row_is_created_on_it` is a control
+  that proves a ClaudeCode Orchestrator is still created when its candidate is available.
+  The same pin over one ClaudeCode/Frontier row creates a Queued Orchestrator on
+  ClaudeCode/Frontier. That candidate passes every walk filter, so the walk chooses it and
+  create takes the chosen branch; it never enters the Required-single-candidate arm, and it
+  witnesses no arm mutant. It is green at S1 and S2 (CP-1).
 - V-3: these three tests are server witnesses for the documented Required-single-candidate
   refusals over one default-tier (Plan/Medium) row with a forbid-only Required pin.
   - `A_forbid_only_required_pin_over_one_held_default_row_is_409_model_disabled`:
@@ -49,6 +53,13 @@ docs paragraph in `docs/orchestration-loop.md`.
     409 `subscription_quota_low` with quota extension 3% on key `Codex`.
 
   Each expects no task row. They are characterisation tests, green at S1 and S2 (CP-1).
+- V-4: `An_orchestrator_with_complexity_over_one_held_claude_row_is_409_model_disabled`
+  (D-1 repair) is the ClaudeCode Orchestrator that does enter the arm: explicit Hard, one
+  Plan/Hard ClaudeCode/Frontier row, the forbid-only Required pin (`grok-4.7`) and a hold on
+  `fable`. The held candidate is skipped, so the arm runs; `AdmitsKind` passes, and the arm
+  must still refuse with 409 `model_disabled` naming `fable` and `does not satisfy the pin`,
+  with no task row. Green on the fixed code (CP-1); red under PC-3 (scratch demonstration in
+  the repair evidence).
 - R-1: the full affected integration classes stay green at S2:
   `RoutingPinCandidateCreateTests` (includes `Orchestrator_skips_non_Claude_pin_candidates`
   and the pinned single-candidate `model_disabled`), `ComplexityCreateTests`,
@@ -68,7 +79,7 @@ acceptance, deployment or restart. Restart: server (on activation, ordinary land
 |---|---|---|---|
 | PC-1 | Remove the `AdmitsKind` refusal from the single-candidate arm | `/*/*/RequiredSingleCandidateRefusalTests/An_orchestrator_with_complexity_over_one_codex_row_is_409_routing_exhausted` | no exception; task created on Codex |
 | PC-2 | Drop the Orchestrator clause from `ComplexityRoutingService.AdmitsKind` | `/*/*/RoutingPinCandidateCreateTests/Orchestrator_skips_non_Claude_pin_candidates` | Grok chosen, not ClaudeCode |
-| PC-3 | Refuse every Orchestrator in the arm regardless of kind | `/*/*/RequiredSingleCandidateRefusalTests/An_orchestrator_with_complexity_over_one_claude_row_is_created_on_it` | RoutingExhaustedException thrown |
+| PC-3 | Refuse every Orchestrator in the arm regardless of kind | `/*/*/RequiredSingleCandidateRefusalTests/An_orchestrator_with_complexity_over_one_held_claude_row_is_409_model_disabled` (V-4) | RoutingExhaustedException thrown instead of ModelDisabledException |
 | PC-4 | Swallow `ModelDisabledException` in the arm | `/*/*/RequiredSingleCandidateRefusalTests/A_forbid_only_required_pin_over_one_held_default_row_is_409_model_disabled` | no exception |
 | PC-5 | Skip `EnforceForbiddenAliases` in the arm | `/*/*/RequiredSingleCandidateRefusalTests/A_forbid_only_required_pin_that_forbids_the_one_default_row_is_409_routing_pin_forbidden` | no exception |
 | PC-6 | Skip the quota gate in the arm | `/*/*/RequiredSingleCandidateRefusalTests/A_forbid_only_required_pin_over_one_quota_low_default_row_is_409_subscription_quota_low` | no exception |
@@ -79,7 +90,7 @@ Mutation owns all deliberate mutant, red/restore/green and missing-control cycle
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
 |---|---|---|---|---|---|---|---:|---:|---|---|
-| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1271/` | new-class | `/*/*/RequiredSingleCandidateRefusalTests/*` | V-1, V-2, V-3 | S1: 4 passed/1 failed (V-1); S2: 5 passed | 5 | 12 | true | n/a |
+| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1271/` | new-class | `/*/*/RequiredSingleCandidateRefusalTests/*` | V-1, V-2, V-3, V-4 | S1: 4 passed/1 failed (V-1); S2: 5 passed; D-1 repair: 6 passed | 6 | 12 | true | n/a |
 | CP-2 | S1 | CP-1 | pin-candidates | `/*/*/RoutingPinCandidateCreateTests/*` | R-1 | 17 passed, 0 failed/skipped | 17 | 3 | true | n/a |
 | CP-3 | S1 | CP-1 | complexity-create | `/*/*/ComplexityCreateTests/*` | R-1 | 14 passed, 0 failed/skipped | 14 | 3 | true | n/a |
 | CP-4 | S1 | CP-1 | matrix-default | `/*/*/MatrixDefaultComplexityCreateTests/*` | R-1 | 34 passed, 0 failed/skipped | 34 | 3 | true | n/a |
