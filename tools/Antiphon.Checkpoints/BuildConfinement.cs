@@ -17,8 +17,8 @@ public static class BuildConfinement
         "MSBuildProjectExtensionsPath", "ArtifactsPath", "UseArtifactsOutput",
     };
 
-    // Covered holds the ledger stamps taken before the build slot; those paths are verified after
-    // its release, so Settle neither re-stamps them nor reports them as new.
+    // Covered holds the ledger stamps taken before the build slot; those paths are checked at admission
+    // and after release, so Settle does not re-stamp them or report them as new.
     public sealed record Baseline(
         string Head,
         string Repository,
@@ -27,14 +27,24 @@ public static class BuildConfinement
         Dictionary<string, string> Content,
         IReadOnlyDictionary<string, string>? Covered = null);
 
-    // CARD-1241: every tracked file and every untracked or ignored file outside the row's write
-    // roots, stamped before the build slot is taken and verified after it is released.
+    // CARD-1241: tracked, untracked and ignored files outside the row's write roots, stamped before
+    // the build slot is taken, re-checked by AdmitLedger once it is granted and verified by VerifyLedger
+    // after it is released. Stats holds each entry's LedgerStat, read before its hash; RacyFrom is the
+    // capture start minus RacyWindow, in LedgerStat.Now() units.
     public sealed record Ledger(
         string Repository,
         string Head,
         IReadOnlyList<string> Roots,
         IReadOnlySet<string> Tracked,
-        Dictionary<string, string> Files);
+        Dictionary<string, string> Files,
+        Dictionary<string, LedgerStat> Stats,
+        long RacyFrom);
+
+    public sealed record Admission(Settlement Settlement, int Hashed);
+
+    // A second write inside one file-system timestamp tick can leave the stat stamp equal, so an entry
+    // modified this close to the capture is hashed at admission whatever its stat says.
+    public const long RacyWindow = 2_000_000_000;
 
     public sealed record LedgerCapture(Ledger? Value, string? Refusal, string Detail)
     {
@@ -86,6 +96,7 @@ public static class BuildConfinement
         var head = Git(repository, ["rev-parse", "HEAD"]);
         if (head.Error is not null || head.Exit != 0 || string.IsNullOrWhiteSpace(head.Stdout))
             return RefuseLedger(head.Error ?? "git-head");
+        var racyFrom = LedgerStat.Now() - RacyWindow;
         var listed = Git(repository, ["ls-files", "-z", "-s"]);
         if (listed.Error is not null || listed.Exit != 0)
             return RefuseLedger(listed.Error ?? "git-ls-files");
@@ -98,19 +109,50 @@ public static class BuildConfinement
 
         var roots = WriteRoots(repository, workingDirectory, project, outputValue);
         var files = new Dictionary<string, string>(StringComparer.Ordinal);
+        var stats = new Dictionary<string, LedgerStat>(StringComparer.Ordinal);
         foreach (var path in entries.Value.Keys)
         {
             if (UnderRoots(path, roots)) continue;
+            stats[path] = LedgerStat.Of(Combine(repository, path));
             var stamp = Stamp(Combine(repository, path));
             if (stamp == "unreadable") return RefuseLedger("tracked-unreadable");
             files[path] = stamp;
         }
 
         foreach (var path in untracked.Value)
-            if (!UnderRoots(path, roots))
-                files[path] = Stamp(Combine(repository, path));
+        {
+            if (UnderRoots(path, roots)) continue;
+            stats[path] = LedgerStat.Of(Combine(repository, path));
+            files[path] = Stamp(Combine(repository, path));
+        }
         var tracked = new HashSet<string>(entries.Value.Keys, StringComparer.Ordinal);
-        return new LedgerCapture(new Ledger(repository, head.Stdout.Trim(), roots, tracked, files), null, "");
+        return new LedgerCapture(new Ledger(repository, head.Stdout.Trim(), roots, tracked, files, stats, racyFrom), null, "");
+    }
+
+    // Review 06ff09f8 D1: the scheduler calls this once the build slot is granted, before the build starts,
+    // so a change made during the slot wait is refused even when the build later writes the old bytes back
+    // (file_changed_during_the_slot_wait_and_restored_by_the_build_is_refused_before_launch). An entry is
+    // hashed only when its stat stamp changed (unchanged_ledger_entries_are_not_hashed_when_the_slot_is_granted)
+    // or its recorded modification time is inside RacyWindow
+    // (entry_modified_just_before_the_ledger_is_hashed_when_the_slot_is_granted).
+    public static Admission AdmitLedger(Ledger ledger)
+    {
+        var paths = new List<string>();
+        var hashed = 0;
+        foreach (var pair in ledger.Files)
+        {
+            var full = Combine(ledger.Repository, pair.Key);
+            if (ledger.Stats.TryGetValue(pair.Key, out var recorded) && recorded.Modified < ledger.RacyFrom
+                && recorded.Matches(LedgerStat.Of(full)))
+                continue;
+            hashed++;
+            if (pair.Value == "unreadable" || Stamp(full) != pair.Value)
+                paths.Add(pair.Key);
+        }
+        var settlement = paths.Count == 0
+            ? new Settlement(null, "", [])
+            : Tampered(ledger.Repository, ledger.Head, paths, ledger.Tracked.Contains, _ => false);
+        return new Admission(settlement, hashed);
     }
 
     public static Settlement VerifyLedger(Ledger ledger)
@@ -288,7 +330,7 @@ public static class BuildConfinement
         return new ListResult(paths, null);
     }
 
-    // Paths the ledger covers were stamped before the slot; everything else is stamped here.
+    // Paths the ledger covers were stamped before the slot; the other listed paths are stamped here.
     private static ManifestResult CaptureUntracked(string repository, IReadOnlyDictionary<string, string>? covered)
     {
         var listed = ListUntracked(repository);

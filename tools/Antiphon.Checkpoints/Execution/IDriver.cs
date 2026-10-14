@@ -18,7 +18,7 @@ public sealed record DriverRequest(
     Action<string>? OnOutput = null,
     IReadOnlyDictionary<string, string>? Environment = null)
 {
-    // Stamps of non-output files taken before the build slot; the build stamps only the rest.
+    // Stamps of files outside the build's write roots, taken before the build slot; the build stamps the others inside it.
     public BuildConfinement.Ledger? Ledger { get; init; }
 }
 
@@ -31,8 +31,8 @@ public interface IDriver
     void Kill(bool entireProcessTree);
 }
 
-// A driver that confines real builds lets the scheduler stamp non-output files before it takes
-// the build slot and verify them after release, so the slot covers the build itself (CARD-1241).
+// A driver that confines real builds lets the scheduler stamp files outside the write roots before it
+// takes the build slot, re-check them once it is granted and verify them after release (CARD-1241).
 public interface IConfinedDriver : IDriver
 {
     BuildConfinement.LedgerCapture CaptureLedger(DriverRequest request);
