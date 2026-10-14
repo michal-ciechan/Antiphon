@@ -52,6 +52,8 @@ public class CardRelationshipApiTests
         await db.CardRelationships
             .Where(r => cardIds.Contains(r.CardId) || cardIds.Contains(r.RelatedCardId))
             .ExecuteDeleteAsync();
+        // A Done move writes a CardWorktreeCleanup whose Restrict FK names the Done revision.
+        await db.CardWorktreeCleanups.Where(c => cardIds.Contains(c.CardId)).ExecuteDeleteAsync();
         await db.CardRevisions.Where(r => cardIds.Contains(r.CardId)).ExecuteDeleteAsync();
         await db.Cards.Where(c => cardIds.Contains(c.Id)).ExecuteDeleteAsync();
         await db.BoardWorkflowDefinitions.Where(d => boardIds.Contains(d.BoardId)).ExecuteDeleteAsync();
