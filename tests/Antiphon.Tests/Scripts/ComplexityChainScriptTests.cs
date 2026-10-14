@@ -1,9 +1,8 @@
 using System.Diagnostics;
-using System.Net;
-using System.Text;
 using System.Text.Json;
 using Antiphon.Tests.Application;
 using Antiphon.Tests.TestHelpers;
+using System.Text.Json.Nodes;
 using Shouldly;
 using TUnit.Core;
 
@@ -145,7 +144,194 @@ public sealed class ComplexityChainScriptTests
         server.RequestCount.ShouldBe(0);
     }
 
-    private static Task<(int ExitCode, string Output)> RunAsync(StubApi server, params string[] args)
+    [Test]
+    public async Task Set_All_puts_Hard_Medium_Easy_in_order()
+    {
+        using var server = new ScriptedApi();
+        var run = await RunAsync(server, "set", "-Role", "Review", "-Complexity", "All",
+            "-Candidates", "Codex/Frontier", "-Reason", "r");
+        run.ExitCode.ShouldBe(0, run.Output);
+        RequestLines(server).ShouldBe(new[] {
+            "PUT /api/complexity-chains/Review/Hard",
+            "PUT /api/complexity-chains/Review/Medium",
+            "PUT /api/complexity-chains/Review/Easy" });
+        foreach (var request in server.Requests)
+        {
+            var body = request.Body!.Value;
+            body.GetProperty("provenance").GetString().ShouldBe("Human");
+            body.GetProperty("reason").GetString().ShouldBe("r");
+            body.GetProperty("candidates").GetArrayLength().ShouldBe(1);
+            body.GetProperty("candidates")[0].GetProperty("agentKind").GetString().ShouldBe("Codex");
+            body.GetProperty("candidates")[0].GetProperty("modelLevel").GetString().ShouldBe("Frontier");
+        }
+        run.Output.ShouldContain("Hard written");
+        run.Output.ShouldContain("Medium written");
+        run.Output.ShouldContain("Easy written");
+
+        // The file path is an independent input, including UTF-8 and a literal newline.
+        var reasonFile = Path.GetTempFileName();
+        try
+        {
+            await File.WriteAllTextAsync(reasonFile, "review café\nsecond line");
+            using var fileServer = new ScriptedApi();
+            var fromFile = await RunAsync(fileServer, "set", "-Role", "Review", "-Complexity", "All",
+                "-Candidates", "Codex/Frontier", "-ReasonFile", reasonFile);
+            fromFile.ExitCode.ShouldBe(0, fromFile.Output);
+            fileServer.RequestCount.ShouldBe(3);
+            foreach (var request in fileServer.Requests)
+                request.Body!.Value.GetProperty("reason").GetString().ShouldBe("review café\nsecond line");
+            using var invalid = new ScriptedApi();
+            var conflict = await RunAsync(invalid, "set", "-Complexity", "All", "-Candidates", "Codex/Frontier",
+                "-Reason", "r", "-ReasonFile", reasonFile);
+            conflict.ExitCode.ShouldBe(1);
+            conflict.Output.ShouldContain("mutually exclusive");
+            invalid.RequestCount.ShouldBe(0);
+        }
+        finally { File.Delete(reasonFile); }
+    }
+
+    [Test]
+    public async Task Set_All_stops_at_the_first_failing_tier_and_names_written_tiers()
+    {
+        using var server = new ScriptedApi();
+        server.Respond("PUT", "/api/complexity-chains/Review/Medium", 422,
+            """{"errors":{"Candidates":["boom"]}}""");
+        var run = await RunAsync(server, "set", "-Role", "Review", "-Complexity", "All",
+            "-Candidates", "Codex/Frontier");
+        run.ExitCode.ShouldBe(1, run.Output);
+        RequestLines(server).ShouldBe(new[] {
+            "PUT /api/complexity-chains/Review/Hard",
+            "PUT /api/complexity-chains/Review/Medium" });
+        server.Cells.Keys.ShouldBe(new[] { "Review/Hard" });
+        run.Output.ShouldContain("Hard written; Medium refused:");
+        run.Output.ShouldContain("boom");
+        run.Output.ShouldContain("Easy not written");
+    }
+
+    [Test]
+    public async Task ClearStagePin_requires_All_and_a_named_role()
+    {
+        string[][] invalidArguments = [
+            ["set", "-Role", "Review", "-Complexity", "Hard", "-Candidates", "Codex/Frontier", "-ClearStagePin"],
+            ["set", "-Role", "Any", "-Complexity", "All", "-Candidates", "Codex/Frontier", "-ClearStagePin"],
+            ["set", "-Complexity", "All", "-Candidates", "Codex/Frontier", "-ClearStagePin"],
+            ["clear", "-Role", "Review", "-Complexity", "All", "-ClearStagePin"],
+            ["get", "-Role", "Review", "-Complexity", "All", "-ClearStagePin"] ];
+        foreach (var args in invalidArguments)
+        {
+            using var server = new ScriptedApi();
+            var run = await RunAsync(server, args);
+            run.ExitCode.ShouldBe(1, run.Output);
+            run.Output.ShouldContain("-ClearStagePin requires set -Complexity All and a named -Role");
+            server.RequestCount.ShouldBe(0);
+        }
+    }
+
+    [Test]
+    public async Task ClearStagePin_deletes_the_stage_pin_only_after_three_2xx()
+    {
+        using var server = new ScriptedApi();
+        server.Pins.Add(JsonNode.Parse("""{"id":"card-1","role":"Review","cardId":"card-a"}""")!.AsObject());
+        server.Pins.Add(JsonNode.Parse("""{"id":"stage-1","role":"Review","cardId":null}""")!.AsObject());
+        server.Pins.Add(JsonNode.Parse("""{"id":"other-stage","role":"Code","cardId":null}""")!.AsObject());
+        var run = await RunAsync(server, "set", "-Role", "Review", "-Complexity", "All",
+            "-Candidates", "Codex/Frontier", "-ClearStagePin");
+        run.ExitCode.ShouldBe(0, run.Output);
+        RequestLines(server).ShouldBe(new[] {
+            "PUT /api/complexity-chains/Review/Hard",
+            "PUT /api/complexity-chains/Review/Medium",
+            "PUT /api/complexity-chains/Review/Easy",
+            "GET /api/routing-pins?role=Review",
+            "DELETE /api/routing-pins/stage-1" });
+        server.Pins.Select(pin => pin["id"]!.GetValue<string>()).ShouldBe(new[] { "card-1", "other-stage" });
+        run.Output.ShouldContain("cleared Review stage pin");
+
+        using var absent = new ScriptedApi();
+        var noPin = await RunAsync(absent, "set", "-Role", "Review", "-Complexity", "All",
+            "-Candidates", "Codex/Frontier", "-ClearStagePin");
+        noPin.ExitCode.ShouldBe(0, noPin.Output);
+        absent.RequestCount.ShouldBe(4);
+        absent.Requests.Last().Method.ShouldBe("GET");
+        noPin.Output.ShouldContain("No active routing pin for that grain.");
+
+        using var refused = new ScriptedApi();
+        refused.Pins.Add(JsonNode.Parse("""{"id":"stage-1","role":"Review","cardId":null}""")!.AsObject());
+        refused.Respond("DELETE", "/api/routing-pins/stage-1", 409,
+            """{"detail":"pin clear refused","code":"test_pin_refused"}""");
+        var failedClear = await RunAsync(refused, "set", "-Role", "Review", "-Complexity", "All",
+            "-Candidates", "Codex/Frontier", "-ClearStagePin");
+        failedClear.ExitCode.ShouldBe(1);
+        failedClear.Output.ShouldContain("pin clear refused");
+        failedClear.Output.ShouldContain("test_pin_refused");
+        refused.Cells.Count.ShouldBe(3);
+        refused.Pins.Count.ShouldBe(1);
+    }
+
+    [Test]
+    public async Task ClearStagePin_is_skipped_when_a_tier_failed()
+    {
+        using var server = new ScriptedApi();
+        server.Pins.Add(JsonNode.Parse("""{"id":"stage-1","role":"Review","cardId":null}""")!.AsObject());
+        server.Respond("PUT", "/api/complexity-chains/Review/Easy", 422,
+            """{"detail":"easy refused","code":"test_easy_refused"}""");
+        var run = await RunAsync(server, "set", "-Role", "Review", "-Complexity", "All",
+            "-Candidates", "Codex/Frontier", "-ClearStagePin");
+        run.ExitCode.ShouldBe(1, run.Output);
+        RequestLines(server).ShouldBe(new[] {
+            "PUT /api/complexity-chains/Review/Hard",
+            "PUT /api/complexity-chains/Review/Medium",
+            "PUT /api/complexity-chains/Review/Easy" });
+        server.Pins.Single()["id"]!.GetValue<string>().ShouldBe("stage-1");
+        run.Output.ShouldContain("stage pin kept");
+        run.Output.ShouldContain("easy refused");
+        run.Output.ShouldContain("test_easy_refused");
+    }
+
+    [Test]
+    public async Task Get_Role_prints_the_effective_line()
+    {
+        using var server = new ScriptedApi();
+        server.Respond("GET", "/api/complexity-chains?role=Review", 200,
+            """
+            {"chains":[{"role":"Review","complexity":"Medium","resolvedFrom":"role",
+              "candidates":[{"agentKind":"ClaudeCode","modelLevel":"High","alias":"opus","availableNow":true}],
+              "effective":{"source":"pin","candidates":[{"agentKind":"Codex","modelLevel":"Frontier","alias":"gpt-6-astra","availableNow":true}]}}]}
+            """);
+        var run = await RunAsync(server, "get", "-Role", "Review");
+        run.ExitCode.ShouldBe(0, run.Output);
+        run.Output.ShouldContain("Review/Medium");
+        run.Output.ShouldContain("ClaudeCode/High (opus)");
+        run.Output.ShouldContain("effective: pin Codex/Frontier (gpt-6-astra)");
+        run.Output.ShouldNotContain("effective: pin ClaudeCode");
+
+        using var noEffective = new ScriptedApi();
+        noEffective.Respond("GET", "/api/complexity-chains?role=Review", 200,
+            """{"chains":[{"role":"Review","complexity":"Medium","resolvedFrom":"none","candidates":[],"effective":null}]}""");
+        var legacy = await RunAsync(noEffective, "get", "-Role", "Review");
+        legacy.ExitCode.ShouldBe(0, legacy.Output);
+        legacy.Output.ShouldContain("Review/Medium");
+        legacy.Output.ShouldNotContain("effective:");
+    }
+
+    [Test]
+    public async Task Clear_All_deletes_three_cells()
+    {
+        using var server = new ScriptedApi();
+        var run = await RunAsync(server, "clear", "-Role", "Review", "-Complexity", "All");
+        run.ExitCode.ShouldBe(0, run.Output);
+        RequestLines(server).ShouldBe(new[] {
+            "DELETE /api/complexity-chains/Review/Hard",
+            "DELETE /api/complexity-chains/Review/Medium",
+            "DELETE /api/complexity-chains/Review/Easy" });
+        run.Output.ShouldContain("cleared Review/Hard");
+        run.Output.ShouldContain("cleared Review/Medium");
+        run.Output.ShouldContain("cleared Review/Easy");
+    }
+
+    private static string[] RequestLines(ScriptedApi server) =>
+        server.Requests.Select(request => $"{request.Method} {request.Path}").ToArray();
+
+    private static Task<(int ExitCode, string Output)> RunAsync(ScriptedApi server, params string[] args)
     {
         var scriptPath = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "complexity-chain.ps1");
         var startInfo = new ProcessStartInfo("pwsh")
@@ -175,56 +361,12 @@ public sealed class ComplexityChainScriptTests
         return (process.ExitCode, await stdout + await stderr);
     }
 
-    private sealed class StubApi : IDisposable
+    private sealed class StubApi : ScriptedApi
     {
-        private readonly HttpListener _listener = new();
-        private readonly CancellationTokenSource _cts = new();
-        private readonly Task _pump;
-
         public StubApi()
         {
-            BaseUrl = EphemeralHttpListener.BindLoopback(_listener);
-            _pump = Task.Run(PumpAsync);
-        }
-
-        public string BaseUrl { get; }
-        public string? LastMethod { get; private set; }
-        public string? LastPath { get; private set; }
-        public JsonDocument? LastBody { get; private set; }
-        public int RequestCount { get; private set; }
-
-        private async Task PumpAsync()
-        {
-            while (!_cts.IsCancellationRequested)
-            {
-                HttpListenerContext context;
-                try { context = await _listener.GetContextAsync(); }
-                catch (Exception) { return; }
-
-                RequestCount++;
-                LastMethod = context.Request.HttpMethod;
-                LastPath = context.Request.Url?.PathAndQuery;
-                using (var reader = new StreamReader(context.Request.InputStream, Encoding.UTF8))
-                {
-                    var raw = await reader.ReadToEndAsync();
-                    if (!string.IsNullOrWhiteSpace(raw))
-                        LastBody = JsonDocument.Parse(raw);
-                }
-
-                if (context.Request.HttpMethod == "DELETE")
-                {
-                    context.Response.StatusCode = 204;
-                    context.Response.Close();
-                    continue;
-                }
-
-                var payload = Encoding.UTF8.GetBytes(
-                    context.Request.HttpMethod == "GET" ? ListJson : ChainJson);
-                context.Response.StatusCode = 200;
-                context.Response.ContentType = "application/json";
-                await context.Response.OutputStream.WriteAsync(payload);
-                context.Response.Close();
-            }
+            Respond("GET", "/api/complexity-chains", 200, ListJson);
+            Respond("PUT", "/api/complexity-chains/", 200, ChainJson);
         }
 
         private const string ChainJson =
@@ -237,10 +379,5 @@ public sealed class ComplexityChainScriptTests
             {"chains":[{"complexity":"Hard","candidates":[{"agentKind":"ClaudeCode","modelLevel":"Frontier","alias":"fable","availableNow":true,"unavailableReason":null}],"provenance":"Human","source":"pin","reason":"test","notAfter":null,"updatedAt":"2026-09-02T00:00:00Z"},{"complexity":"Medium","candidates":[],"provenance":null,"source":"config","reason":null,"notAfter":null,"updatedAt":null},{"complexity":"Easy","candidates":[],"provenance":null,"source":"config","reason":null,"notAfter":null,"updatedAt":null}]}
             """;
 
-        public void Dispose()
-        {
-            _cts.Cancel();
-            _listener.Close();
-        }
     }
 }

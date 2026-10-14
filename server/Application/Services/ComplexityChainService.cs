@@ -4,6 +4,7 @@ using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -24,19 +25,22 @@ public sealed class ComplexityChainService
     private readonly ComplexityRoutingService _routing;
     private readonly DelegationSettings _settings;
     private readonly ILogger<ComplexityChainService> _logger;
+    private readonly RoutingPinService? _pins;
 
     public ComplexityChainService(
         AppDbContext db,
         TimeProvider time,
         ComplexityRoutingService routing,
         IOptions<DelegationSettings> settings,
-        ILogger<ComplexityChainService> logger)
+        ILogger<ComplexityChainService> logger,
+        RoutingPinService? pins = null)
     {
         _db = db;
         _time = time;
         _routing = routing;
         _settings = settings.Value;
         _logger = logger;
+        _pins = pins;
     }
 
     public Task<ComplexityChainListDto> ListAsync(CancellationToken ct) =>
@@ -63,7 +67,8 @@ public sealed class ComplexityChainService
         return new ComplexityChainListDto(
             chains,
             ComplexityRoutingService.RoutableRoles,
-            ComplexityRoutingService.Tiers.Select(t => t.ToString()).ToList());
+            ComplexityRoutingService.Tiers.Select(t => t.ToString()).ToList(),
+            _settings.DefaultComplexity.GetValueOrDefault());
     }
 
     public Task<ComplexityChainDto> GetAsync(TaskComplexity complexity, CancellationToken ct) =>
@@ -114,23 +119,95 @@ public sealed class ComplexityChainService
         CancellationToken ct)
     {
         ValidateCellRole(role);
-        var loaded = await _routing.LoadChainAsync(role, complexity, ct);
-        var pairs = loaded.Candidates
-            .Select(c => new ComplexityCandidatePair(c.Kind, c.Level))
-            .ToList();
+        var failures = new List<string>();
+        var decision = _pins is null ? RoutingPinService.Decision.None
+            : await ReadPartAsync("stage pin", () => _pins.ResolveAsync(null, role,
+                new RoutingPinService.Ask(null, null, null, false), ct), RoutingPinService.Decision.None, failures, ct);
+        var empty = (Candidates: (IReadOnlyList<RoutingCandidates.Candidate>)[],
+            Provenance: (RoutingPinProvenance?)null, ChainSource: "config",
+            ChainRole: (AgentTaskRole?)null, ResolvedFrom: "none");
+        var loaded = await ReadPartAsync("chain", () => _routing.LoadChainAsync(role, complexity, ct), empty, failures, ct);
         var answering = loaded.ResolvedFrom is "role" or "any"
-            ? await _routing.FindActiveAsync(loaded.ChainRole, complexity, ct)
+            ? await ReadPartAsync("chain metadata", () => _routing.FindActiveAsync(loaded.ChainRole, complexity, ct),
+                (ComplexityChain?)null, failures, ct)
             : null;
+
+        string? agentLabel = null;
+        if (decision.Applied && decision.Pin!.AgentId is { } agentId)
+        {
+            var agent = await ReadPartAsync("standing agent", () => _db.Agents.AsNoTracking()
+                .Where(a => a.Id == agentId).Select(a => new { a.Name, a.Kind }).SingleOrDefaultAsync(ct),
+                null, failures, ct);
+            // A missing/unreadable label cannot turn an agent-bound pin into a matrix target.
+            agentLabel = agent is null ? $"{agentId} (unavailable)" : $"{agent.Name} ({agent.Kind})";
+        }
+
+        var effective = ComplexityEffective.Compose(decision, loaded.Candidates,
+            loaded.ChainRole is null ? complexity.ToString() : $"{role}/{complexity}", loaded.ResolvedFrom,
+            RolePolicyReadService.PolicyTarget(_settings, role), complexity == _settings.DefaultComplexity, agentLabel);
+
+        // Share observations between stored and effective lists so one failed availability read
+        // cannot produce two different verdicts for the same pair in this cell.
+        var observations = new Dictionary<(AgentKind, AgentModelLevel), ComplexityCandidateDto>();
+        async Task<IReadOnlyList<ComplexityCandidateDto>> WithAvailabilityAsync(
+            IEnumerable<ComplexityCandidateDto> candidates, CancellationToken token)
+        {
+            var result = new List<ComplexityCandidateDto>();
+            foreach (var candidate in candidates)
+            {
+                var key = (candidate.AgentKind, candidate.ModelLevel);
+                if (!observations.TryGetValue(key, out var observed))
+                {
+                    var before = failures.Count;
+                    var availability = await ReadPartAsync("availability",
+                        () => _routing.EvaluateAvailabilityNowAsync(key.AgentKind, key.ModelLevel, token),
+                        (AvailableNow: false, Reason: (string?)null), failures, token);
+                    observed = candidate with
+                    {
+                        AvailableNow = availability.AvailableNow,
+                        UnavailableReason = failures.Count > before ? failures[^1] : availability.Reason,
+                    };
+                    observations.Add(key, observed);
+                }
+                result.Add(observed);
+            }
+            return result;
+        }
+
+        var storedCandidates = await WithAvailabilityAsync(loaded.Candidates.Select(c =>
+            new ComplexityCandidateDto(c.Kind, c.Level, c.Alias, true, null)), ct);
+        effective = effective with { Candidates = await WithAvailabilityAsync(effective.Candidates, ct) };
+        if (failures.Count > 0)
+            effective = effective with
+            {
+                WithheldReason = string.Join("; ", failures.Prepend(effective.WithheldReason)
+                    .Where(reason => reason is not null).Distinct()),
+            };
         return new ComplexityChainDto(
             complexity,
-            await ToCandidateDtosAsync(pairs, ct),
+            storedCandidates,
             loaded.Provenance,
             loaded.ChainSource,
             answering?.Reason,
             answering?.NotAfter,
             answering?.UpdatedAt,
             role,
-            loaded.ResolvedFrom);
+            loaded.ResolvedFrom,
+            effective);
+    }
+
+    private async Task<T> ReadPartAsync<T>(string part, Func<Task<T>> read, T fallback,
+        List<string> failures, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        try { return await read(); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            var reason = $"{part} read failed ({ex.GetType().Name})";
+            failures.Add(reason);
+            _logger.LogWarning("Effective complexity cell: {Reason}", reason);
+            return fallback;
+        }
     }
 
     public Task<ComplexityChainDto> UpsertAsync(

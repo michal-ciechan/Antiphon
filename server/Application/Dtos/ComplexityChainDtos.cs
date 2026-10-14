@@ -38,12 +38,21 @@ public sealed record ComplexityChainDto(
     /// <c>role</c> (this cell), <c>any</c> (any-role row), <c>config</c> (settings default),
     /// <c>none</c> (empty — a <c>-Complexity</c> dispatch will Block until set).
     /// </summary>
-    string ResolvedFrom = "none");
+    string ResolvedFrom = "none",
+    ComplexityEffectiveDto? Effective = null);
+
+public sealed record ComplexityEffectiveDto(
+    string Source,
+    IReadOnlyList<ComplexityCandidateDto> Candidates,
+    RoutingPinRefDto? StagePin,
+    bool GovernsDefault,
+    string? WithheldReason);
 
 public sealed record ComplexityChainListDto(
     IReadOnlyList<ComplexityChainDto> Chains,
     IReadOnlyList<AgentTaskRole>? Roles = null,
-    IReadOnlyList<string>? Complexities = null);
+    IReadOnlyList<string>? Complexities = null,
+    TaskComplexity DefaultComplexity = TaskComplexity.Medium);
 
 /// <summary>
 /// The walk as a DTO: 200 create body, 409 <c>routing_exhausted</c> extension, Blocked event.

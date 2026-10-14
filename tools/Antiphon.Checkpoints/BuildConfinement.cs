@@ -17,12 +17,40 @@ public static class BuildConfinement
         "MSBuildProjectExtensionsPath", "ArtifactsPath", "UseArtifactsOutput",
     };
 
+    // Covered holds the ledger stamps taken before the build slot; those paths are checked at admission
+    // and after release, so Settle does not re-stamp them or report them as new.
     public sealed record Baseline(
         string Head,
         string Repository,
         Dictionary<string, string> Entries,
         Dictionary<string, string> Untracked,
-        Dictionary<string, string> Content);
+        Dictionary<string, string> Content,
+        IReadOnlyDictionary<string, string>? Covered = null);
+
+    // CARD-1241: tracked, untracked and ignored files outside the row's write roots, stamped before
+    // the build slot is taken, re-checked by AdmitLedger once it is granted and verified by VerifyLedger
+    // after it is released. Stats holds each entry's LedgerStat, read before its hash; RacyFrom is the
+    // capture start minus RacyWindow, in LedgerStat.Now() units. Stat reads the stamps at capture and at admission.
+    public sealed record Ledger(
+        string Repository,
+        string Head,
+        IReadOnlyList<string> Roots,
+        IReadOnlySet<string> Tracked,
+        Dictionary<string, string> Files,
+        Dictionary<string, LedgerStat> Stats,
+        long RacyFrom,
+        Func<string, LedgerStat> Stat);
+
+    public sealed record Admission(Settlement Settlement, int Hashed);
+
+    // A second write inside one file-system timestamp tick can leave the stat stamp equal, so an entry
+    // whose mtime or ctime is this close to the capture is hashed at admission whatever its stat says.
+    public const long RacyWindow = 2_000_000_000;
+
+    public sealed record LedgerCapture(Ledger? Value, string? Refusal, string Detail)
+    {
+        public static LedgerCapture None { get; } = new(null, null, "");
+    }
 
     public sealed record Settlement(string? Kind, string Detail, IReadOnlyList<string> Paths);
 
@@ -58,11 +86,137 @@ public static class BuildConfinement
         return new OutputLayout(owned, owned.TrimEnd('/') + "/artifacts");
     }
 
+    public static LedgerCapture CaptureLedger(string workingDirectory, IReadOnlyList<string> arguments, Func<string, LedgerStat>? stat = null)
+    {
+        stat ??= LedgerStat.Of;
+        if (!TryFindOutput(arguments, out var outputValue) || !TryFindProject(arguments, out var project))
+            return LedgerCapture.None;
+        var repo = Git(workingDirectory, ["rev-parse", "--show-toplevel"]);
+        if (repo.Error is not null || repo.Exit != 0 || string.IsNullOrWhiteSpace(repo.Stdout))
+            return RefuseLedger(repo.Error ?? "git-toplevel");
+        var repository = repo.Stdout.Trim();
+        var head = Git(repository, ["rev-parse", "HEAD"]);
+        if (head.Error is not null || head.Exit != 0 || string.IsNullOrWhiteSpace(head.Stdout))
+            return RefuseLedger(head.Error ?? "git-head");
+        var racyFrom = LedgerStat.Now() - RacyWindow;
+        var listed = Git(repository, ["ls-files", "-z", "-s"]);
+        if (listed.Error is not null || listed.Exit != 0)
+            return RefuseLedger(listed.Error ?? "git-ls-files");
+        var entries = ParseIndex(listed.Stdout);
+        if (entries.Error is not null || entries.Value is null)
+            return RefuseLedger(entries.Error ?? "index-record");
+        var untracked = ListUntracked(repository);
+        if (untracked.Error is not null || untracked.Value is null)
+            return RefuseLedger(untracked.Error ?? "git-ls-files");
+
+        var roots = WriteRoots(repository, workingDirectory, project, outputValue);
+        var files = new Dictionary<string, string>(StringComparer.Ordinal);
+        var stats = new Dictionary<string, LedgerStat>(StringComparer.Ordinal);
+        foreach (var path in entries.Value.Keys)
+        {
+            if (UnderRoots(path, roots)) continue;
+            stats[path] = stat(Combine(repository, path));
+            var stamp = Stamp(Combine(repository, path));
+            if (stamp == "unreadable") return RefuseLedger("tracked-unreadable");
+            files[path] = stamp;
+        }
+
+        foreach (var path in untracked.Value)
+        {
+            if (UnderRoots(path, roots)) continue;
+            stats[path] = stat(Combine(repository, path));
+            files[path] = Stamp(Combine(repository, path));
+        }
+        var tracked = new HashSet<string>(entries.Value.Keys, StringComparer.Ordinal);
+        return new LedgerCapture(new Ledger(repository, head.Stdout.Trim(), roots, tracked, files, stats, racyFrom, stat), null, "");
+    }
+
+    // Review 06ff09f8 D1: the scheduler calls this once the build slot is granted, before the build starts.
+    // Default (stat) mode skips an entry's hash when its recorded stamp has a file identity and a change time
+    // (stat_without_a_change_time_hashes_each_entry_at_admission), its mtime and ctime are older than RacyWindow
+    // (entry_modified_just_before_the_ledger_is_hashed_when_the_slot_is_granted,
+    // entry_with_a_change_time_inside_the_racy_window_is_hashed_at_admission) and the stamp is unchanged
+    // (unchanged_ledger_entries_are_not_hashed_when_the_slot_is_granted). The portable stamp has neither identity nor
+    // change time, so it is hashed (entry_modified_just_before_the_ledger_is_hashed_when_the_slot_is_granted).
+    // A change that moves the stamp is refused before launch
+    // (file_changed_during_the_slot_wait_and_restored_by_the_build_is_refused_before_launch,
+    // rewrite_keeping_size_and_mtime_on_the_real_file_system_is_refused_before_launch).
+    // Limit (Review 9f1c8a2e D1): in default mode a non-output file changed during the slot wait through a shared
+    // memory mapping, or by any writer that does not update the ctime, is not detected here; if the build then writes
+    // the old bytes back, VerifyLedger after release sees no difference. VerifyLedger reports a difference still
+    // present after release. Strict mode hashes each entry whatever its stat, the in-slot cost the stat rule avoids
+    // (shared_mapping_style_change_with_an_unchanged_stat_is_refused_at_admission_only_in_strict_mode,
+    // strict_admission_hash_in_the_manifest_refuses_the_build_before_launch).
+    public static Admission AdmitLedger(Ledger ledger, bool strict = false)
+    {
+        var paths = new List<string>();
+        var hashed = 0;
+        foreach (var pair in ledger.Files)
+        {
+            var full = Combine(ledger.Repository, pair.Key);
+            if (!strict && ledger.Stats.TryGetValue(pair.Key, out var recorded) && recorded.HasIdentityAndChangeTime
+                && recorded.Modified < ledger.RacyFrom && recorded.Changed < ledger.RacyFrom
+                && recorded.Matches(ledger.Stat(full)))
+                continue;
+            hashed++;
+            if (pair.Value == "unreadable" || Stamp(full) != pair.Value)
+                paths.Add(pair.Key);
+        }
+        var settlement = paths.Count == 0
+            ? new Settlement(null, "", [])
+            : Tampered(ledger.Repository, ledger.Head, paths, ledger.Tracked.Contains, _ => false);
+        return new Admission(settlement, hashed);
+    }
+
+    public static Settlement VerifyLedger(Ledger ledger)
+    {
+        var paths = new List<string>();
+        foreach (var pair in ledger.Files)
+            if (pair.Value == "unreadable" || Stamp(Combine(ledger.Repository, pair.Key)) != pair.Value)
+                paths.Add(pair.Key);
+        if (paths.Count == 0)
+            return new Settlement(null, "", []);
+        return Tampered(ledger.Repository, ledger.Head, paths, ledger.Tracked.Contains, _ => false);
+    }
+
+    private static LedgerCapture RefuseLedger(string detail) =>
+        new(null, "tracked-snapshot", "refused: tracked-snapshot\n" + detail + "\n");
+
+    // The owned layout plus bin-<id>/ and obj/ beside each statically visible project, as
+    // repository-relative prefixes. A root outside the repository adds no prefix.
+    private static List<string> WriteRoots(string repository, string workingDirectory, string project, string outputValue)
+    {
+        var directories = new List<string> { LayoutFor(workingDirectory, project, outputValue).Owned };
+        if (ProjectWriteRoots.TryCollect(workingDirectory, project, outputValue, out var collected) is null)
+            directories.AddRange(collected);
+        var top = Path.GetFullPath(repository).Replace('\\', '/').TrimEnd('/') + "/";
+        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        var prefixes = new List<string>();
+        foreach (var directory in directories)
+        {
+            var slash = Path.GetFullPath(directory).Replace('\\', '/').TrimEnd('/') + "/";
+            if (slash.Length > top.Length && slash.StartsWith(top, comparison))
+                prefixes.Add(slash[top.Length..]);
+        }
+
+        return prefixes;
+    }
+
+    private static bool UnderRoots(string relative, IReadOnlyList<string> roots)
+    {
+        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        foreach (var root in roots)
+            if (relative.StartsWith(root, comparison))
+                return true;
+        return false;
+    }
+
     public static Prepared Prepare(
         string workingDirectory,
         IReadOnlyList<string> arguments,
         IReadOnlyDictionary<string, string>? environment,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Ledger? ledger = null)
     {
         if (!TryFindOutput(arguments, out var outputValue))
             return new Prepared(null, "", arguments, null);
@@ -84,7 +238,7 @@ public static class BuildConfinement
         if (status.Paths.Count > 0)
             return new Prepared("dirty-tracked", DirtyText(status.Paths), [], null);
 
-        var captured = Capture(repository);
+        var captured = Capture(repository, ledger);
         if (captured.Error is not null || captured.Value is null)
             return Refuse("tracked-snapshot", captured.Error ?? "git-ls-files");
         var baseline = captured.Value;
@@ -142,41 +296,62 @@ public static class BuildConfinement
         var ordinary = Git(baseline.Repository, ["ls-files", "-z", "--others", "--exclude-standard"]);
         if (ordinary.Error is not null) return new Settlement("tracked-snapshot", "refused: " + ordinary.Error, []);
         foreach (var path in ordinary.Stdout.Split('\0', StringSplitOptions.RemoveEmptyEntries))
-            if (!path.StartsWith(".antiphon/", StringComparison.Ordinal) && !baseline.Untracked.ContainsKey(path)) paths.Add(path);
+            if (!path.StartsWith(".antiphon/", StringComparison.Ordinal) && !baseline.Untracked.ContainsKey(path)
+                && baseline.Covered?.ContainsKey(path) != true) paths.Add(path);
         if (paths.Count == 0) return new Settlement(null, "", []);
+        return Tampered(baseline.Repository, baseline.Head, paths, baseline.Entries.ContainsKey, staged.Contains);
+    }
+
+    private static Settlement Tampered(string repository, string head, IEnumerable<string> found, Func<string, bool> tracked, Func<string, bool> staged)
+    {
+        var paths = found.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToList();
         var text = new StringBuilder("refused: tampered\n");
-        foreach (var path in paths.Order(StringComparer.Ordinal))
+        foreach (var path in paths)
         {
             text.Append("TAMPERED ").Append(path).Append('\n');
-            if (baseline.Entries.ContainsKey(path))
-                text.Append("manual command: git -C ").Append(Quote(baseline.Repository)).Append(" restore --source=").Append(baseline.Head).Append(" --staged --worktree -- ").Append(Quote(path)).Append('\n');
-            else if (staged.Contains(path))
-                text.Append("manual command: git -C ").Append(Quote(baseline.Repository)).Append(" restore --staged -- ").Append(Quote(path)).Append('\n');
+            if (tracked(path))
+                text.Append("manual command: git -C ").Append(Quote(repository)).Append(" restore --source=").Append(head).Append(" --staged --worktree -- ").Append(Quote(path)).Append('\n');
+            else if (staged(path))
+                text.Append("manual command: git -C ").Append(Quote(repository)).Append(" restore --staged -- ").Append(Quote(path)).Append('\n');
             else
-                text.Append("manual command: git -C ").Append(Quote(baseline.Repository)).Append(" status --short -- ").Append(Quote(path)).Append("; inspect and recover user bytes from your backup\n");
+                text.Append("manual command: git -C ").Append(Quote(repository)).Append(" status --short -- ").Append(Quote(path)).Append("; inspect and recover user bytes from your backup\n");
         }
         text.Append("manual restore required; Build-result bytes and index entries were left in place; no source recovery was attempted.\n");
-        return new Settlement("tampered", text.ToString(), paths.Order(StringComparer.Ordinal).ToList());
+        return new Settlement("tampered", text.ToString(), paths);
     }
 
     private static string Combine(string repository, string relative) => Path.Combine(repository, relative.Replace('/', Path.DirectorySeparatorChar));
 
     private readonly record struct ManifestResult(Dictionary<string, string>? Value, string? Error);
 
-    private static ManifestResult CaptureUntracked(string repository)
+    private readonly record struct ListResult(List<string>? Value, string? Error);
+
+    private static ListResult ListUntracked(string repository)
     {
         var ordinary = Git(repository, ["ls-files", "-z", "--others", "--exclude-standard"]);
-        if (ordinary.Error is not null) return new ManifestResult(null, ordinary.Error);
+        if (ordinary.Error is not null) return new ListResult(null, ordinary.Error);
         var listed = Git(repository, ["ls-files", "-z", "--others", "--ignored", "--exclude-standard"]);
         if (listed.Error is not null || listed.Exit != 0)
-            return new ManifestResult(null, listed.Error ?? "git-ls-files");
-        var files = new Dictionary<string, string>(StringComparer.Ordinal);
+            return new ListResult(null, listed.Error ?? "git-ls-files");
+        var paths = new List<string>();
         foreach (var relative in (ordinary.Stdout + listed.Stdout).Split('\0', StringSplitOptions.RemoveEmptyEntries))
         {
             // Evidence is written by the checkpoint process while the build is observed.
-            if (relative.StartsWith(".antiphon/", StringComparison.Ordinal)) continue;
-            files[relative] = Stamp(Combine(repository, relative));
+            if (!relative.StartsWith(".antiphon/", StringComparison.Ordinal))
+                paths.Add(relative);
         }
+        return new ListResult(paths, null);
+    }
+
+    // Paths the ledger covers were stamped before the slot; the other listed paths are stamped here.
+    private static ManifestResult CaptureUntracked(string repository, IReadOnlyDictionary<string, string>? covered)
+    {
+        var listed = ListUntracked(repository);
+        if (listed.Error is not null || listed.Value is null) return new ManifestResult(null, listed.Error ?? "git-ls-files");
+        var files = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var relative in listed.Value)
+            if (covered?.ContainsKey(relative) != true)
+                files[relative] = Stamp(Combine(repository, relative));
         return new ManifestResult(files, null);
     }
 
@@ -461,8 +636,9 @@ public static class BuildConfinement
 
     private readonly record struct CaptureResult(Baseline? Value, string? Error);
 
-    private static CaptureResult Capture(string repository)
+    private static CaptureResult Capture(string repository, Ledger? ledger)
     {
+        var covered = ledger is not null && SameRepository(ledger.Repository, repository) ? ledger.Files : null;
         var head = Git(repository, ["rev-parse", "HEAD"]);
         if (head.Error is not null || head.Exit != 0 || string.IsNullOrWhiteSpace(head.Stdout))
             return new CaptureResult(null, head.Error ?? "git-head");
@@ -472,13 +648,18 @@ public static class BuildConfinement
         var entries = ParseIndex(listed.Stdout);
         if (entries.Error is not null || entries.Value is null)
             return new CaptureResult(null, entries.Error ?? "index-record");
-        var untracked = CaptureUntracked(repository);
+        var untracked = CaptureUntracked(repository, covered);
         if (untracked.Error is not null || untracked.Value is null)
             return new CaptureResult(null, untracked.Error ?? "git-ls-files");
-        var content = entries.Value.Keys.ToDictionary(path => path, path => Stamp(Combine(repository, path)), StringComparer.Ordinal);
+        var content = entries.Value.Keys.Where(path => covered?.ContainsKey(path) != true)
+            .ToDictionary(path => path, path => Stamp(Combine(repository, path)), StringComparer.Ordinal);
         if (content.Values.Any(value => value == "unreadable")) return new CaptureResult(null, "tracked-unreadable");
-        return new CaptureResult(new Baseline(head.Stdout.Trim(), repository, entries.Value, untracked.Value, content), null);
+        return new CaptureResult(new Baseline(head.Stdout.Trim(), repository, entries.Value, untracked.Value, content, covered), null);
     }
+
+    private static bool SameRepository(string left, string right) =>
+        string.Equals(Path.GetFullPath(left).Replace('\\', '/').TrimEnd('/'), Path.GetFullPath(right).Replace('\\', '/').TrimEnd('/'),
+            OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
 
     private readonly record struct IndexResult(Dictionary<string, string>? Value, string? Error);
 

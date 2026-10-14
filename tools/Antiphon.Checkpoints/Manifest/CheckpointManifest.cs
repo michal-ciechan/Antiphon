@@ -24,6 +24,9 @@ public sealed class BuildDefaults
     public int MaxCpuCount { get; set; }
     public string Slots { get; set; } = "auto";
     public int SlotWaitMinutes { get; set; } = 45;
+
+    // CARD-1241: "stat" (null, the default) or "strict"; see BuildConfinement.AdmitLedger.
+    public string? AdmissionHash { get; set; }
 }
 
 public sealed class ParallelDefaults
