@@ -11,9 +11,8 @@ function targetLabel(kind: AgentKind | 'unknown', level: AgentModelLevel, alias:
 }
 
 /**
- * The RolePolicy default; a null kind is ClaudeCode (C097 V05). A null level is shown as unknown
- * (C097 V05 configured-level-null). An empty alias beside a null kind is the server's answer for an
- * undefined kind (C097 V05 configured-kind-undefined).
+ * The RolePolicy default: a null kind shows ClaudeCode with an alias, unknown without one (C097 V05
+ * null-kind-low, configured-kind-undefined); a null level shows unknown (C097 V05 configured-level-null).
  */
 export function defaultLabel(row: RolePolicyRowDto): string {
   if (!row.configured) {
@@ -24,7 +23,7 @@ export function defaultLabel(row: RolePolicyRowDto): string {
 }
 
 /**
- * The next create's target as the server composed it: `default →` for `rolePolicy`, the pin's
+ * The `effective` projection (not a create result): `default →` for `rolePolicy`, the pin's
  * strength and provenance for `pin`, and `unknown` for a source F-1 does not list (C097 V06).
  */
 export function effectiveLabel(row: RolePolicyRowDto): string {

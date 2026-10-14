@@ -100,7 +100,7 @@ public sealed class RolePolicyReadService
     /// <summary>A row whose policy kind or level is unsupported names no alias.</summary>
     public const string NoAlias = "";
 
-    /// <summary>Null (ClaudeCode) or a kind delegation launches (<see cref="AgentTaskService.DelegatableKinds"/>).</summary>
+    /// <summary>Null (no configured kind) or a kind delegation launches (<see cref="AgentTaskService.DelegatableKinds"/>).</summary>
     private static bool Supported(AgentKind? kind) =>
         kind is null || AgentTaskService.DelegatableKinds.Contains(kind.Value);
 

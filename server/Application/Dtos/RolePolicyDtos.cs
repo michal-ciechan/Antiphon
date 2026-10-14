@@ -22,7 +22,7 @@ public sealed record RolePolicyRowDto(
     bool Configured,
     /// <summary>Null when the configured value is not a defined level.</summary>
     AgentModelLevel? Level,
-    /// <summary>Null means ClaudeCode.</summary>
+    /// <summary>Null when no kind is configured or the configured kind is undefined (RolePolicyReadServiceTests.Compose_resolves_alias_from_kind, policy-kind-999).</summary>
     AgentKind? Kind,
     string Alias,
     AgentModelLevel? EscalateTo,
@@ -31,7 +31,7 @@ public sealed record RolePolicyRowDto(
     RoutingPinDto? StagePin,
     RolePolicyEffectiveDto Effective);
 
-/// <summary>The next create's target for the role: <c>pin</c> or <c>rolePolicy</c>.</summary>
+/// <summary>A projection of the stage pin head filled from the policy (<c>pin</c>), or of the policy (<c>rolePolicy</c>); not a create result.</summary>
 public sealed record RolePolicyEffectiveDto(
     string Source,
     AgentKind? AgentKind,
