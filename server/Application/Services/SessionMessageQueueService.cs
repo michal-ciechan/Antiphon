@@ -4220,14 +4220,15 @@ public sealed partial class SessionMessageQueueService
     /// text-match restriction means a body too short to identify (an auto-continue) is never
     /// grace-confirmed: those take the ordinary failure path exactly as before.</para>
     /// </summary>
-    private async Task<(HashSet<Guid> Confirmed, HashSet<Guid> Truncated)> GraceConfirmAsync(
-        Guid sessionId, IReadOnlyList<Guid> messageIds, CancellationToken ct)
+    private async Task<(HashSet<Guid> Confirmed, HashSet<Guid> Truncated, HashSet<Guid> ConfirmedChannel)>
+        GraceConfirmAsync(Guid sessionId, IReadOnlyList<Guid> messageIds, CancellationToken ct)
     {
         var confirmed = new HashSet<Guid>();
         var truncated = new HashSet<Guid>();
+        var confirmedChannel = new HashSet<Guid>();
         var grace = TimeSpan.FromSeconds(Math.Max(0, _verification.PostFailureConfirmGraceSeconds));
         if (!_verification.TranscriptConfirmEnabled || grace <= TimeSpan.Zero)
-            return (confirmed, truncated);
+            return (confirmed, truncated, confirmedChannel);
 
         var deadline = UtcNow() + grace;
         while (true)
@@ -4255,11 +4256,12 @@ public sealed partial class SessionMessageQueueService
                         confirmed.Add(message.Id);
                     else if (late.Truncated > 0)
                         truncated.Add(message.Id);
+                    confirmedChannel.UnionWith(late.ConfirmedChannelMessageIds);
                 }
             }
 
             if (confirmed.Count + truncated.Count == messageIds.Count)
-                return (confirmed, truncated);
+                return (confirmed, truncated, confirmedChannel);
 
             if (UtcNow() >= deadline)
             {
@@ -4269,7 +4271,7 @@ public sealed partial class SessionMessageQueueService
                     "Post-failure grace of {Grace}s expired for session {SessionId} with {Confirmed} of "
                     + "{Total} message(s) confirmed ({Truncated} truncated); proceeding to the failure path",
                     grace.TotalSeconds, sessionId, confirmed.Count, messageIds.Count, truncated.Count);
-                return (confirmed, truncated);
+                return (confirmed, truncated, confirmedChannel);
             }
 
             // Deliberately slower than PollIntervalMs: each iteration fetches a whole transcript
@@ -4277,6 +4279,20 @@ public sealed partial class SessionMessageQueueService
             await Task.Delay(
                 TimeSpan.FromMilliseconds(Math.Max(1000, _verification.PollIntervalMs)), _timeProvider, ct);
         }
+    }
+
+    /// <summary>
+    /// CARD-1247: route the reply for a Channel row the post-failure grace just late-confirmed.
+    /// Runs under the caller's per-session queue lock; the dispatcher never takes that lock. It is
+    /// the same durable dispatcher every live trigger calls: a reply already captured or settled is
+    /// no longer an open correlation, and a turn without its TurnEnd or text stays owed.
+    /// </summary>
+    private async Task DispatchLateConfirmedChannelRepliesAsync(Guid sessionId, CancellationToken ct)
+    {
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var channelReplies = scope.ServiceProvider.GetService<ChannelReplyDispatcher>();
+        if (channelReplies is not null)
+            await channelReplies.OnTurnEndAsync(sessionId, ct);
     }
 
     // A fresh scope per poll: this runs outside any caller's DbContext and must see rows the
@@ -4696,8 +4712,14 @@ public sealed partial class SessionMessageQueueService
             // it must not fall through as NoTranscriptRecord and kill the session.
             HashSet<Guid> lateConfirmed = [];
             HashSet<Guid> lateTruncated = [];
+            HashSet<Guid> lateConfirmedChannel = [];
             if (verdict == DeliveryVerdict.NoTranscriptRecord && messageIds is { Count: > 0 })
-                (lateConfirmed, lateTruncated) = await GraceConfirmAsync(sessionId, messageIds, ct);
+                (lateConfirmed, lateTruncated, lateConfirmedChannel) = await GraceConfirmAsync(sessionId, messageIds, ct);
+            // CARD-1247: the grace pull stores the turn with no turn-end routing, so a Channel row it
+            // promotes to Sent was invisible to every earlier dispatch. Mirror the CARD-0313
+            // re-dispatch on the turn-end path; the dispatcher's settle/capture keeps it to one reply.
+            if (lateConfirmedChannel.Count > 0)
+                await DispatchLateConfirmedChannelRepliesAsync(sessionId, ct);
             if (messageIds is { Count: > 0 }
                 && lateConfirmed.Count + lateTruncated.Count == messageIds.Count)
             {
