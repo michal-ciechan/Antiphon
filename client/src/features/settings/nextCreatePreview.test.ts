@@ -111,7 +111,7 @@ describe('previewNextCreate', () => {
     expect(nextCreateLabel(preview)).toBe('Easy row → Codex/Low (gpt-5.6-luna)')
   })
 
-  it('C1250 V5 orchestrator-ignores-the-row-and-keeps-the-floor', () => {
+  it('C1250 V5 orchestrator-ignores-the-row-and-discloses-the-floor', () => {
     const docs = row({
       role: 'Docs',
       level: 'Medium',
@@ -119,8 +119,8 @@ describe('previewNextCreate', () => {
       effective: { source: 'rolePolicy', agentKind: 'ClaudeCode', modelLevel: 'Medium', alias: 'sonnet', strength: null },
     })
     const preview = previewNextCreate({ kind: 'Orchestrator', explicitLevel: null, row: docs, cells: mediumRow })
-    expect(preview).toMatchObject({ source: 'rolePolicy', agentKind: 'ClaudeCode', modelLevel: 'High', complexity: null, floored: true })
-    expect(nextCreateLabel(preview)).toBe('default → ClaudeCode/Medium (sonnet); Orchestrator floor → High')
+    expect(preview).toMatchObject({ source: 'unknown', agentKind: null, modelLevel: null, complexity: null, floored: false })
+    expect(nextCreateLabel(preview)).toBe('unknown — Orchestrator level depends on the server floor')
 
     const code = previewNextCreate({ kind: 'Orchestrator', explicitLevel: null, row: row(), cells: mediumRow })
     expect(code).toMatchObject({ source: 'rolePolicy', agentKind: 'ClaudeCode', modelLevel: 'Frontier', alias: 'fable', floored: false })
@@ -136,7 +136,7 @@ describe('previewNextCreate', () => {
       cells: cells('Medium', [chain('Medium', effective({ source: 'agent', candidates: [], withheldReason: reason }))]),
     })
     expect(worker).toMatchObject({ source: 'agent', agentKind: null, modelLevel: null, alias: null })
-    expect(nextCreateLabel(worker)).toBe(reason)
+    expect(nextCreateLabel(worker)).toBe('stage pin binds a standing agent; its model and admission depend on the server')
 
     const orchestrator = previewNextCreate({
       kind: 'Orchestrator',
@@ -148,7 +148,7 @@ describe('previewNextCreate', () => {
       cells: undefined,
     })
     expect(orchestrator).toMatchObject({ source: 'agent', modelLevel: null })
-    expect(nextCreateLabel(orchestrator)).toBe('stage pin binds a standing agent; the create runs on that agent')
+    expect(nextCreateLabel(orchestrator)).toBe('stage pin binds a standing agent; its model and admission depend on the server')
   })
 
   it('C1250 V7 explicit-level-bypasses-the-row', () => {
@@ -161,18 +161,25 @@ describe('previewNextCreate', () => {
     ['no-cells', undefined],
     ['empty-matrix', cells('Medium', [])],
     ['unresolved-row', cells('Medium', [chain('Medium', effective({ source: 'rolePolicy', candidates: [fable] }), 'none')])],
-  ])('C1250 V8 %s-keeps-the-role-policy', (_name, list) => {
+  ])('C1250 V8 %s-respects-read-certainty', (name, list) => {
     const preview = previewNextCreate({ kind: 'Worker', explicitLevel: null, row: row(), cells: list })
-    expect(preview).toMatchObject({ source: 'rolePolicy', agentKind: 'ClaudeCode', modelLevel: 'Frontier', alias: 'fable', complexity: null })
-    expect(nextCreateLabel(preview)).toBe('default → ClaudeCode/Frontier (fable)')
+    if (name === 'no-cells') {
+      expect(preview).toMatchObject({ source: 'unknown', agentKind: null, modelLevel: null, alias: null, complexity: null })
+      expect(nextCreateLabel(preview)).toBe('unknown — default-tier routing depends on the server')
+    } else {
+      expect(preview).toMatchObject({ source: 'rolePolicy', agentKind: 'ClaudeCode', modelLevel: 'Frontier', alias: 'fable', complexity: null })
+      expect(nextCreateLabel(preview)).toBe(name === 'empty-matrix'
+        ? 'default → ClaudeCode/Frontier (fable); availability depends on the server'
+        : 'default → ClaudeCode/Frontier (fable)')
+    }
   })
 
   it('C1250 V9 required-stage-pin-walks-inside-the-row', () => {
-    const stagePin = { ...pin(), candidates: undefined } as unknown as ComplexityEffectiveDto['stagePin']
+    const stagePin = pin({ candidates: [held(astra), opus], candidateCount: 2 })
     const preview = previewNextCreate({
       kind: 'Worker',
       explicitLevel: null,
-      row: row(),
+      row: row({ stagePin }),
       cells: cells('Medium', [chain('Medium', effective({ source: 'pin', stagePin, candidates: [held(astra), opus] }))]),
     })
     expect(preview).toMatchObject({ source: 'pin', agentKind: 'ClaudeCode', modelLevel: 'High', complexity: 'Medium', skipped: ['gpt-6-astra'] })
@@ -204,8 +211,8 @@ describe('previewNextCreate', () => {
       row: row(),
       cells: cells('Medium', [chain('Medium', effective({ candidates: [], withheldReason: 'routing candidate names a kind or level which delegation cannot launch' }))]),
     })
-    expect(preview).toBeNull()
-    expect(nextCreateLabel(preview)).toBe('unknown')
+    expect(preview).toMatchObject({ source: 'unknown', modelLevel: null, alias: null })
+    expect(nextCreateLabel(preview)).toBe('unknown — default-tier routing depends on the server')
   })
 })
 

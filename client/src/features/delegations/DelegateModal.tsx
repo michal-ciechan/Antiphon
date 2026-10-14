@@ -28,33 +28,38 @@ import { useComplexityChainEffective } from '../../api/complexityChains'
 import { useRolePolicy } from '../../api/rolePolicy'
 import { useRunnerDefaults } from '../../api/runnerDefaults'
 import { useSessionRunners } from '../../api/sessionRunners'
-import { previewNextCreate, type NextCreatePreview } from '../settings/nextCreatePreview'
+import { nextCreateLabel, nextCreateSkipping, previewNextCreate, type NextCreatePreview } from '../settings/nextCreatePreview'
 import { TierBadge } from './TaskChip'
 import type { RequiredPlatformName } from './placement'
 
-type TierSource = 'matrix' | 'pin' | 'rolePolicy' | 'agent' | 'exhausted' | 'fallback'
+type TierSource = 'matrix' | 'pin' | 'rolePolicy' | 'agent' | 'exhausted' | 'refused' | 'unknown' | 'fallback'
 
 /**
  * The line under the tier badge. The preview carries the create's context (kind, the role's
- * default-tier row and its holds, the stage pin), so a Worker reads the row and an Orchestrator
- * the pin or policy (CARD-1250, C1250 V13-V16). A null level sends the caller to AGENT_TASK_ROLES
+ * default-tier row, availability and stage pin). Unknown and refused outcomes are displayed
+ * explicitly (C1250 V18-V20). A withheld policy target uses a labelled AGENT_TASK_ROLES suggestion
  * (C097 V18, V30; C1234 unsupported-policy-kind-falls-back-to-constant).
  */
 function tierSourceLabel(source: TierSource, preview: NextCreatePreview | null): string {
-  const skipping = preview && preview.skipped.length > 0 ? `, skipping held ${preview.skipped.join(', ')}` : ''
+  const skipping = preview ? nextCreateSkipping(preview) : ''
   switch (source) {
     case 'matrix':
       return `from the ${preview?.complexity} row${skipping}`
     case 'pin':
-      return `from the stage pin${skipping}`
+      return `from the stage pin${skipping}${preview?.note ? `; ${preview.note}` : ''}`
     case 'rolePolicy':
-      return 'from the role policy'
+      return `from the role policy${preview?.note ? `; ${preview.note}` : ''}`
     case 'agent':
       return preview?.note ?? 'the stage pin binds a standing agent'
     case 'exhausted':
-      return `every ${preview?.complexity ? `${preview.complexity}-row` : 'pin'} candidate is held; the create would be Blocked`
+      return preview?.skipReasons.every((reason) => reason === 'held')
+        ? `every ${preview?.complexity ? `${preview.complexity}-row` : 'pin'} candidate is held; the create would be Blocked`
+        : 'no eligible candidate; the create would be Blocked'
+    case 'refused':
+    case 'unknown':
+      return nextCreateLabel(preview)
     case 'fallback':
-      return 'built-in default — no usable role policy'
+      return 'built-in suggestion — routing depends on the server'
   }
 }
 
@@ -112,19 +117,17 @@ function DelegateForm({ onClose, prefill }: { onClose: () => void; prefill?: Del
   const cells = useComplexityChainEffective(role)
 
   const policyRow = Array.isArray(rolePolicy.data?.roles) ? rolePolicy.data.roles.find((r) => r.role === role) : undefined
-  const preview = previewNextCreate({ kind, explicitLevel: null, row: policyRow, cells: cells.data })
+  const preview = previewNextCreate({ kind, explicitLevel: level, row: policyRow, cells: cells.data })
   const serverLevel = AGENT_MODEL_LEVEL_OPTIONS.find((option) => option.value === preview?.modelLevel)?.value ?? null
   const pending = rolePolicy.isPending || (kind === 'Worker' && cells.isPending)
   const tierSource: TierSource | null = pending
     ? null
-    : preview && preview.source !== 'explicit' && (serverLevel || preview.source === 'agent')
+    : preview && preview.source !== 'explicit' && (serverLevel || preview.source === 'agent' || preview.source === 'unknown' || preview.source === 'refused')
       ? preview.source
       : 'fallback'
-  // A sub-orchestrator decomposes, which is the expensive kind of thinking — the server floors it
-  // at High, so showing anything cheaper here would be a lie (C097 V27 on the server level).
   const roleLevel = serverLevel ?? AGENT_TASK_ROLES.find((r) => r.value === role)?.level ?? 'High'
-  const effectiveLevel: AgentModelLevel =
-    level ?? (kind === 'Orchestrator' && (roleLevel === 'Medium' || roleLevel === 'Low') ? 'High' : roleLevel)
+  const effectiveLevel: AgentModelLevel = level ?? roleLevel
+  const unknownTarget = preview?.source === 'unknown' || preview?.source === 'agent'
 
   const catalogue = runners.data ?? []
   const selectedRunner = catalogue.find((row) => row.runnerId === runnerChoice)
@@ -222,9 +225,9 @@ function DelegateForm({ onClose, prefill }: { onClose: () => void; prefill?: Del
       </Stack>
 
       <Group gap="xs">
-        <Text size="sm">Runs at</Text>
-        <TierBadge level={effectiveLevel} size="sm" />
-        {!level && tierSource && (
+        <Text size="sm">Create preview</Text>
+        {!unknownTarget && <TierBadge level={effectiveLevel} size="sm" />}
+        {tierSource && (!level || preview?.source === 'unknown' || preview?.source === 'refused') && (
           <Text size="xs" c="dimmed" data-testid={`delegate-tier-source-${tierSource}`}>
             {tierSourceLabel(tierSource, preview)}
           </Text>
@@ -238,7 +241,7 @@ function DelegateForm({ onClose, prefill }: { onClose: () => void; prefill?: Del
             <Text size="xs" c="dimmed">
               override →
             </Text>
-            {AGENT_MODEL_LEVEL_OPTIONS.filter((o) => o.value !== effectiveLevel).map((option) => (
+            {AGENT_MODEL_LEVEL_OPTIONS.filter((o) => unknownTarget || o.value !== effectiveLevel).map((option) => (
               <Button
                 key={option.value}
                 variant="subtle"

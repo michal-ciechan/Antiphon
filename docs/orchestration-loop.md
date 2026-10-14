@@ -932,23 +932,26 @@ configuration section; pins: `scripts/routing-pin.ps1` and `/api/routing-pins`.
 | Route failure stays inside the section | Vitest `C097 V09 role-policy-failure-keeps-siblings`, `client/src/features/settings/RoutingSettingsTab.test.tsx` | 500 → `Could not load role policy.` in the section; availability, runner defaults and matrix still render |
 | Section has no editor; its copy names `scripts/routing-pin.ps1` as the pin writer | not covered by a test | — |
 | Delegate modal preselects the role-policy level | Vitest `C097 V16 server-level-preselects`, `client/src/features/delegations/DelegateModal.test.tsx` | Mutation row `High` → `tier-High`, `delegate-tier-source-rolePolicy`; create body `modelLevel: null` |
-| An `effective.source` `pin` level wins in the modal | Vitest `C097 V17 stage-pin-wins`, same file | mocked Plan row with `level` `Frontier`, `effective` `{ source: pin, modelLevel: High }` and `stagePin` null → `delegate-tier-source-pin`, `tier-High`, no `tier-Frontier` |
-| Route failure falls back to `AGENT_TASK_ROLES` | Vitest `C097 V18 route-failure-falls-back-to-constant`, same file | 500 → `delegate-tier-source-fallback`, `tier-Low` for Mutation; Delegate enabled after typing a goal |
+| An `effective.source` `pin` level wins in the modal | Vitest `C097 V17 stage-pin-wins`, same file | Plan row with `level` `Frontier` and a Required ClaudeCode/High single pin → `delegate-tier-source-pin`, `tier-High`, no `tier-Frontier` |
+| Route failure discloses unknown routing | Vitest `C097 V18 route-failure-falls-back-to-constant`, same file | 500 → `delegate-tier-source-unknown`, no `tier-Low` promise; Delegate enabled after typing a goal |
 | Null policy level falls back to `AGENT_TASK_ROLES` | Vitest `C097 V30 undefined-policy-level-falls-back-to-constant`, same file | Mutation `level: null` → `delegate-tier-source-fallback`, `tier-Low` |
-| Sub-orchestrator floor applies to the server level | Vitest `C097 V27 orchestrator-floor-on-server-level`, same file | Sub-orchestrator + Mutation (`Low`) → `tier-High` |
+| Sub-orchestrator floor depends on server configuration | Vitest `C097 V27 orchestrator-floor-is-a-server-setting`, same file | Sub-orchestrator + Mutation (`Low`) → exact unknown-floor text and no High/Low badge |
 | A withheld role-policy target falls back to `AGENT_TASK_ROLES` | Vitest `C1234 unsupported-policy-kind-falls-back-to-constant`, same file | Mutation `level High`, `kind Raw`, `effective` target null → `delegate-tier-source-fallback`, `tier-Low`, no `tier-High` |
 | Project setup names the default tier only when it is a model level | Vitest `C1234 delegation step names the default tier only when it is a model level`, `client/src/features/settings/ProjectSetupModal.test.tsx` | `Medium` → `default Medium tier.`; missing, null or 999 → `default tier unknown.` |
 
-The Role policy section's `Effective next create` column and the delegate modal's tier preview
-read `GET /api/role-policy` together with the role's `GET /api/complexity-chains?role=` view and carry
-the create's context (CARD-1250, `client/src/features/settings/nextCreatePreview.ts`): an explicit level
-wins; a Worker create walks the configured default-tier row (`defaultComplexity`, not always Medium),
-skipping held candidates, or is Blocked when every candidate is held; an agent-only stage pin runs on
-its standing agent; an Orchestrator keeps the pin or policy floored at High; without a resolved row a
-pin list of two or more is walked past held candidates. The column shows a Worker and an Orchestrator
-line per role. Vitest `C1250 V1`–`V16` (`nextCreatePreview.test.ts`, `RolePolicySection.test.tsx`,
-`DelegateModal.test.tsx`) bind these cases. Not previewed: quota, card pins, and the availability of a
-Preferred pin's policy target.
+The next-create previews combine role policy, the active stage pin and the role's effective
+complexity cells. A one-slot pin composition bypasses the matrix, including a Preferred pin that
+deduplicates against policy. Other eligible Workers walk the configured default tier; pin-list
+walks without a row filter kinds, stage forbids, holds and quota. Orchestrator walks accept
+ClaudeCode and retain the walked level. Single targets can be refused with 409; exhausted walks
+become Blocked under the UI defaults. The configured single-target Orchestrator floor is absent
+from the reads, so levels below Frontier are shown as unknown. Missing candidate availability,
+partial targets and standing-agent details are disclosed as server dependencies. availableNow
+includes the null-owner quota gate; a held single target may mask quota, whose create-time check
+runs first. These are 15-second snapshots, without card pins or an admission reservation.
+Vitest C1250 V17's 40 server-cited rows and V18–V20's exact modal assertions bind the repair;
+V1–V16 and C097 V25 bind the existing paths. See the
+[repair plan](superpowers/plans/2026-10-14-card-1250-next-create-preview-plan.md).
 
 **Stage pins and the matrix:** the matrix row can show candidates a stage pin keeps out of use.
 Read the live pins with

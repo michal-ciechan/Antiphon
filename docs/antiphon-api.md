@@ -715,11 +715,11 @@ configured kind and an undefined level has the same `kind` null, `alias` `""` an
 `policy-level-999`), so `alias` and `effective` do not identify the cause. Pin routes: the `/api/routing-pins` block above.
 Configuration validation and create refusals for such values (CARD-1234): the last rows of the table.
 
-`effective` alone is not the next create: the Role policy section's `Effective next create` column
-and the delegate modal's tier preview combine it with `GET /api/complexity-chains?role=` (a Worker
-create walks the default-tier row past held candidates; an agent-only stage pin runs on its agent; an
-Orchestrator keeps pin-or-policy floored at High). See CARD-1250 in [orchestration-loop.md](orchestration-loop.md);
-the tests below bind this DTO.
+`effective` alone is not the next create. The UI composes stage pins before choosing a default-tier
+walk or a single target; stage forbids, Orchestrator kind filtering and quota can change the result.
+A single held pin is refused, while a walked list can become Blocked. Missing floor, alias or
+availability facts are disclosed as server dependencies. See CARD-1250 and its cited parity tests
+in [orchestration-loop.md](orchestration-loop.md); the tests below bind this DTO.
 
 | Behaviour | Test (runner, file) | What it asserts |
 |---|---|---|
