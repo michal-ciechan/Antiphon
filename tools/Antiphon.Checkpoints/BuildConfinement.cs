@@ -30,7 +30,7 @@ public static class BuildConfinement
     // CARD-1241: tracked, untracked and ignored files outside the row's write roots, stamped before
     // the build slot is taken, re-checked by AdmitLedger once it is granted and verified by VerifyLedger
     // after it is released. Stats holds each entry's LedgerStat, read before its hash; RacyFrom is the
-    // capture start minus RacyWindow, in LedgerStat.Now() units.
+    // capture start minus RacyWindow, in LedgerStat.Now() units. Stat reads the stamps at capture and at admission.
     public sealed record Ledger(
         string Repository,
         string Head,
@@ -38,7 +38,8 @@ public static class BuildConfinement
         IReadOnlySet<string> Tracked,
         Dictionary<string, string> Files,
         Dictionary<string, LedgerStat> Stats,
-        long RacyFrom);
+        long RacyFrom,
+        Func<string, LedgerStat> Stat);
 
     public sealed record Admission(Settlement Settlement, int Hashed);
 
@@ -85,8 +86,9 @@ public static class BuildConfinement
         return new OutputLayout(owned, owned.TrimEnd('/') + "/artifacts");
     }
 
-    public static LedgerCapture CaptureLedger(string workingDirectory, IReadOnlyList<string> arguments)
+    public static LedgerCapture CaptureLedger(string workingDirectory, IReadOnlyList<string> arguments, Func<string, LedgerStat>? stat = null)
     {
+        stat ??= LedgerStat.Of;
         if (!TryFindOutput(arguments, out var outputValue) || !TryFindProject(arguments, out var project))
             return LedgerCapture.None;
         var repo = Git(workingDirectory, ["rev-parse", "--show-toplevel"]);
@@ -113,7 +115,7 @@ public static class BuildConfinement
         foreach (var path in entries.Value.Keys)
         {
             if (UnderRoots(path, roots)) continue;
-            stats[path] = LedgerStat.Of(Combine(repository, path));
+            stats[path] = stat(Combine(repository, path));
             var stamp = Stamp(Combine(repository, path));
             if (stamp == "unreadable") return RefuseLedger("tracked-unreadable");
             files[path] = stamp;
@@ -122,11 +124,11 @@ public static class BuildConfinement
         foreach (var path in untracked.Value)
         {
             if (UnderRoots(path, roots)) continue;
-            stats[path] = LedgerStat.Of(Combine(repository, path));
+            stats[path] = stat(Combine(repository, path));
             files[path] = Stamp(Combine(repository, path));
         }
         var tracked = new HashSet<string>(entries.Value.Keys, StringComparer.Ordinal);
-        return new LedgerCapture(new Ledger(repository, head.Stdout.Trim(), roots, tracked, files, stats, racyFrom), null, "");
+        return new LedgerCapture(new Ledger(repository, head.Stdout.Trim(), roots, tracked, files, stats, racyFrom, stat), null, "");
     }
 
     // Review 06ff09f8 D1: the scheduler calls this once the build slot is granted, before the build starts,
@@ -143,7 +145,7 @@ public static class BuildConfinement
         {
             var full = Combine(ledger.Repository, pair.Key);
             if (ledger.Stats.TryGetValue(pair.Key, out var recorded) && recorded.Modified < ledger.RacyFrom
-                && recorded.Matches(LedgerStat.Of(full)))
+                && recorded.Matches(ledger.Stat(full)))
                 continue;
             hashed++;
             if (pair.Value == "unreadable" || Stamp(full) != pair.Value)
