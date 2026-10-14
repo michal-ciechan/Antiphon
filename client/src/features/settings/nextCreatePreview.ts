@@ -204,19 +204,28 @@ function unknownFloor(): NextCreatePreview {
 // Match .NET whitespace, title line endings, UTF-16 clamp and word boundaries used by
 // AgentTaskService.cs:4519-4547 and AgentTaskCardBinder.cs:43-64 (V-22).
 function serverTrim(text: string): string {
-  return text.replace(/^[\u0009-\u000d \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+|[\u0009-\u000d \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+$/g, '')
+  return text.replace(/^[\t\n\v\f\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+|[\t\n\v\f\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+$/g, '')
+}
+
+function specialist(context: NextCreateContext): boolean {
+  return !!context.row && ['Check', 'Distill', 'Diagnose'].includes(context.row.role)
 }
 
 function mayBindCard(context: NextCreateContext): boolean {
   if (context.cardContext) return true
-  if (context.row && ['Check', 'Distill', 'Diagnose'].includes(context.row.role)) return false
+  if (specialist(context)) return false
   if (context.explicitCard && serverTrim(context.explicitCard)) return true
   const explicitTitle = serverTrim(context.title ?? '')
   const firstLine = (context.goal ?? '').split(/\r\n|[\r\n\f\u0085\u2028\u2029]/).find((line) => line.length > 0)
   const rawTitle = explicitTitle || serverTrim(firstLine ?? 'Delegated task')
   const title = rawTitle.length <= 300 ? rawTitle : rawTitle.slice(0, 299) + '…'
-  const identifiers = title.matchAll(/(?<![\p{L}\p{Mn}\p{Nd}\p{Pc}])CARD-0*([0-9]+)(?![\p{L}\p{Mn}\p{Nd}\p{Pc}])/giu)
-  return Array.from(identifiers).some((match) => Number(match[1]) <= 2147483647)
+  // .NET boundary classification examines UTF-16 code units and includes join controls.
+  // Indexing the neighbouring units keeps supplementary letters from changing that boundary.
+  const wordUnit = (unit: string | undefined) => !!unit && /[\p{L}\p{Mn}\p{Nd}\p{Pc}\u200c\u200d]/u.test(unit)
+  const identifiers = title.matchAll(/CARD-0*([0-9]+)/gi)
+  return Array.from(identifiers).some((match) =>
+    !wordUnit(title[match.index - 1]) && !wordUnit(title[match.index + match[0].length])
+    && Number(match[1]) <= 2147483647)
 }
 
 export function previewNextCreate(context: NextCreateContext): NextCreatePreview | null {
@@ -247,7 +256,8 @@ export function previewNextCreate(context: NextCreateContext): NextCreatePreview
     return single(context, composed[0], isPin ? 'pin' : 'rolePolicy', true)
   }
 
-  if (!explicitLevel && kind === 'Worker') {
+  // AgentTaskService.cs:3740-3744 excludes specialist roles from the default matrix.
+  if (!explicitLevel && kind === 'Worker' && !specialist(context)) {
     if (!cells) return unknown('default-tier routing')
     if (effective?.withheldReason) return unknown('default-tier routing')
     if (chain?.resolvedFrom && chain.resolvedFrom !== 'none') {

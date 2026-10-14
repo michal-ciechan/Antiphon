@@ -105,7 +105,7 @@ affected: no server source changes.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
 |---|---|---|---|---|---|---|---:|---:|---|---|
-| CP-1 | Repair-tests | n/a | client-red | `pwsh -NoProfile -File scripts/test-client.ps1 src/features/settings/nextCreatePreview.test.ts src/features/settings/RolePolicySection.test.tsx src/features/delegations/DelegateModal.test.tsx` | V-22..V-24 D1 red | expected assertion failures against df244bfb implementation | n/a | 4 | true | n/a |
+| CP-1 | Repair-tests | n/a | client-red | `pwsh -NoProfile -File scripts/test-client.ps1 src/features/settings/nextCreatePreview.test.ts src/features/settings/RolePolicySection.test.tsx src/features/delegations/DelegateModal.test.tsx` | V-22..V-24 D1 and boundary red | expected assertion failures at the matching pre-fix SHA | n/a | 4 | true | n/a |
 | CP-2 | Repair | n/a | client | `pwsh -NoProfile -File scripts/test-client.ps1 src/features/settings/nextCreatePreview.test.ts src/features/settings/RolePolicySection.test.tsx src/features/delegations/DelegateModal.test.tsx src/features/settings/rolePolicyModel.test.ts src/features/settings/RoutingSettingsTab.test.tsx src/api/complexityChains.test.tsx -JsonResultPath ../.antiphon/c1250-repair-client.json` | V-1..V-24, R-1 | six files, 223 passed, 0 failed/skipped; CLIENT TESTS EXIT CODE: 0 | n/a | 5 | true | n/a |
 | CP-3 | Repair | n/a | client-types | `node client/node_modules/typescript/bin/tsc -b client/tsconfig.json --pretty false` | R-2 | exit 0, 0 TypeScript errors | n/a | 3 | true | n/a |
 | CP-4 | Repair | n/a | client-lint | `node client/node_modules/eslint/bin/eslint.js --config client/eslint.config.js --max-warnings 0 client/src/features/settings/nextCreatePreview.ts client/src/features/settings/nextCreatePreview.test.ts client/src/features/settings/RolePolicySection.tsx client/src/features/settings/RolePolicySection.test.tsx client/src/features/delegations/DelegateModal.tsx client/src/features/delegations/DelegateModal.test.tsx client/src/features/thread/CardThreadPanel.tsx` | R-2 | 0 errors, 0 warnings | n/a | 2 | true | n/a |
@@ -308,3 +308,9 @@ expectations are corrected to policy; these were outside the earlier 58-row tabl
 The first CP-2 passed 215/215 and CP-3 passed; CP-4 rejected the new whitespace range under
 no-control-regex. Use named whitespace escapes without disabling the lint rule.
 Final CP-2 expects 223 cases, V22=46; the earlier V17 and V25 assertions remain unchanged.
+
+Boundary CP-1 at 5e6b2622798d1170e773e346999495b6fca3d84d (run 20261014-214019-a515):
+10 failed / 149 passed in three files. Seven Unicode boundary assertions and the three
+specialist eligibility assertions were red. slot=granted waited=0s, sourceState=clean,
+buildSource=notApplicable. The matcher now classifies adjacent UTF-16 units, including
+join controls, and the matrix eligibility excludes specialist roles.

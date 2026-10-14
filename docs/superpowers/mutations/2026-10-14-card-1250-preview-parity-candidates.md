@@ -74,4 +74,10 @@ Round-4 additions (pending, unbound; no Code mutants):
 | PC-21 disclosure | Remove modal admission note | modal V24 modal-discloses-admission-dependency-with-explicit-tier | pending |
 | PC-22 kind/agent | Ignore explicitKind or explicitAgentId context | model V22 explicit-kind-unobserved / standing-agent-explicit (two variants) | pending |
 
-The round-4 selection has 58 retained V17 rows, 38 V22 rows, and 215 ordinary Vitest cases.
+The round-4 selection has 58 retained V17 rows, 46 V22 rows, and 223 ordinary Vitest cases.
+
+| PC / variant | Guarded mutation | Witness | Status |
+|---|---|---|---|
+| PC-23 supplementary prefix/suffix/digit (3 variants) | Use Unicode code-point word boundaries instead of UTF-16 units | model V22 goal-supplementary-prefix / goal-supplementary-suffix / goal-supplementary-digit-suffix | pending |
+| PC-23 joiner/nonjoiner prefix/suffix (4 variants) | Omit .NET boundary join controls | model V22 goal-joiner-prefix / goal-joiner-suffix / goal-nonjoiner-prefix / goal-nonjoiner-suffix | pending |
+| PC-24 Check/Distill/Diagnose (3 variants) | Let a specialist use the default matrix | model V22 specialist-Check / specialist-Distill / specialist-Diagnose | pending |
