@@ -28,7 +28,7 @@ No new test methods: this repair restores existing behavioral witnesses. Red-fir
 runs are ordinary fixture diagnostics, not positive controls. The initially proposed
 fixture-removal PC-1 is withdrawn: a setup refusal is not a behavioral assertion
 control. This fixture-only repair defines zero PCs; Mutation still owns missing-control
-discovery. CARD-0097 PC-1–PC-49 and their named variants remain pending and are not
+discovery. CARD-0097 PC-1–PC-52 and their named variants remain pending and are not
 discharged by these ordinary runs.
 
 ### Checkpoints
