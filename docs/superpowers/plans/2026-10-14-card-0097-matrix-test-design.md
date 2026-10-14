@@ -665,6 +665,9 @@ The supplementary `OrchestratorInstructionsGuidanceTests` roster is 5 methods / 
   the same four fault rows. One delivered notice names the candidate-to-unknown transition;
   an unchanged failed read leaves revision/count unchanged; recovery delivers the reverse
   transition and rewrites the file without the unknown marker. Before the fix the notice says `unset`.
+  The fixture uses `ClaudeCode/Low (haiku)` and a short real filename `i.md` to keep the three
+  transition assertions within the unchanged 700-character notice wrapper; both notices assert
+  that cap. A long path/large delta can still clip later transitions under that existing contract.
 - V-F11 `Routing_cross_references_resolve_to_an_existing_owner_heading` | U | two document
   rows (`antiphon-api.md`: two pointers, `ops-http.md`: one). Extract the routing `see` pointers
   and resolve their titles against the owner's bold paragraph headings. The stale API pointer
