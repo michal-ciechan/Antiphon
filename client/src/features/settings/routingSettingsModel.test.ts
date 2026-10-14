@@ -4,6 +4,7 @@ import type { RoutingPinDto } from '../../api/routingPins'
 import {
   CHAIN_MUTATION_EFFECT,
   canClearOverride,
+  candidateAvailabilityLabel,
   candidateListError,
   cellEditorTitle,
   clearOverrideCopy,
@@ -105,6 +106,44 @@ function chain(overrides: Partial<ComplexityChainDto> = {}): ComplexityChainDto 
     ...overrides,
   }
 }
+
+describe('C1270 failed-read display', () => {
+  const chainFailed = 'chain read failed (InvalidOperationException)'
+  const metadataFailed = 'chain metadata read failed (InvalidOperationException)'
+  const availabilityFailed = 'availability read failed (InvalidOperationException)'
+  const agentId = '7f0c2d4e-0000-4000-8000-000000000001'
+  const missingAgent = `stage pin binds standing agent ${agentId} (unavailable); an ordinary dispatch runs on that agent and does not walk this row`
+  const preferred = { ...stagePin, strength: 'Preferred' } as const
+  const heldCodex = { ...codex, availableNow: false, unavailableReason: availabilityFailed }
+
+  it.each([
+    ['preferred-chain-read-failure-default', effective({ source: 'pin+chain', stagePin: preferred, candidates: [codex, opus], withheldReason: chainFailed }), 'Effective routing unknown'],
+    ['preferred-chain-read-failure-non-default', effective({ source: 'pin+chain', stagePin: preferred, candidates: [codex], governsDefault: false, withheldReason: chainFailed }), 'Effective routing unknown'],
+    ['preferred-chain-read-failure-after-policy-diagnostic', effective({ source: 'pin+chain', stagePin: preferred, candidates: [codex], withheldReason: policyReason + '; ' + chainFailed }), 'Effective routing unknown'],
+    ['required-chain-read-failure-default', effective({ source: 'pin', stagePin, candidates: [codex], withheldReason: chainFailed }), 'Required Human pin → Codex/Frontier (gpt-6-astra)'],
+    ['required-chain-read-failure-non-default', effective({ source: 'pin', stagePin, candidates: [codex], governsDefault: false, withheldReason: chainFailed }), 'Required Human pin → Codex/Frontier (gpt-6-astra)'],
+    ['preferred-chain-marker-is-not-free-text', effective({ source: 'pin+chain', stagePin: preferred, candidates: [codex, grok], withheldReason: 'diagnostic mentions chain read failed (InvalidOperationException)' }), 'Preferred Human pin → Codex/Frontier (gpt-6-astra), then this row'],
+    ['preferred-metadata-read-failure', effective({ source: 'pin+chain', stagePin: preferred, candidates: [codex, grok], withheldReason: metadataFailed }), 'Preferred Human pin → Codex/Frontier (gpt-6-astra), then this row'],
+    ['required-metadata-read-failure', effective({ source: 'pin', stagePin, candidates: [codex], withheldReason: metadataFailed }), 'Required Human pin → Codex/Frontier (gpt-6-astra)'],
+    ['preferred-availability-read-failure', effective({ source: 'pin+chain', stagePin: preferred, candidates: [heldCodex, grok], withheldReason: availabilityFailed }), 'Preferred Human pin → Codex/Frontier (gpt-6-astra), then this row'],
+    ['required-availability-read-failure', effective({ source: 'pin', stagePin, candidates: [heldCodex], withheldReason: availabilityFailed }), 'Required Human pin → Codex/Frontier (gpt-6-astra)'],
+    ['preferred-standing-agent-read-failure', effective({ source: 'agent', stagePin: preferred, governsDefault: false, withheldReason: missingAgent + '; standing agent read failed (InvalidOperationException)' }), `Pinned to standing agent ${agentId} (name unknown) — an ordinary dispatch runs there; this row is not walked`],
+    ['required-standing-agent-read-failure', effective({ source: 'agent', stagePin, governsDefault: false, withheldReason: missingAgent + '; standing agent read failed (InvalidOperationException)' }), `Pinned to standing agent ${agentId} (name unknown) — an ordinary dispatch runs there; this row is not walked`],
+    ['standing-agent-missing-is-not-a-read-failure', effective({ source: 'agent', stagePin, governsDefault: false, withheldReason: missingAgent }), `Pinned to standing agent ${agentId} (unavailable) — an ordinary dispatch runs there; this row is not walked`],
+  ])('C1270 V-1 effective label %s', (_name, input, expected) => {
+    expect(effectiveCellLabel(input as ComplexityEffectiveDto)).toBe(expected)
+  })
+
+  it.each([
+    ['availability-read-failure', heldCodex, 'availability unknown: availability read failed (InvalidOperationException)'],
+    ['availability-marker-is-not-free-text', { ...codex, availableNow: false, unavailableReason: 'probe says availability read failed (InvalidOperationException)' }, 'probe says availability read failed (InvalidOperationException)'],
+    ['held', { ...codex, availableNow: false, unavailableReason: 'held until 2026-09-04T00:00:00Z (manual)' }, 'held until 2026-09-04T00:00:00Z (manual)'],
+    ['no-reason', { ...codex, availableNow: false, unavailableReason: null }, 'unavailable'],
+    ['available', codex, 'available'],
+  ])('C1270 V-1 availability %s', (_name, candidate, expected) => {
+    expect(candidateAvailabilityLabel(candidate as ComplexityChainDto['candidates'][number])).toBe(expected)
+  })
+})
 
 describe('cell editor copy', () => {
   it('titles Any role and a named role distinctly', () => {
