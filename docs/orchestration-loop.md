@@ -902,7 +902,7 @@ override the row; a Preferred pin prepends candidates. Escalation, timeout and W
 | Explicit kind/level bypasses the default row with a warning; an explicit complexity combined with kind/level is refused | `MatrixDefaultComplexityCreateTests.An_explicit_kind_is_not_stamped_and_warns`; `ComplexityCreateTests.Explicit_kind_plus_complexity_is_422` | An explicit kind leaves Complexity null and names the bypassed cell; explicit kind plus complexity is 422 |
 | Required pin candidates replace the cell; Preferred candidates precede it | `ComplexityEffectiveComposeTests.A_required_pin_replaces_the_cell_and_sources_pin`, `A_preferred_pin_prepends_and_sources_pin_plus_chain`; `RoutingPinCandidateCreateTests.Required_list_plus_complexity_bypasses_the_chain` | Literal effective lists and sources; the Required list is walked instead of the chain |
 | A candidate-free Required pin leaves the chain selecting | `ComplexityRoutingComposeTests.A_required_pin_without_kind_or_level_does_not_bypass_the_chain` | The composed list retains chain candidates |
-| A held single Required target is refused; an exhausted default row becomes Blocked | `RoutingPinCandidateCreateTests.Required_single_candidate_held_is_still_409_model_disabled_with_coda`; `MatrixDefaultComplexityCreateTests.An_exhausted_default_row_blocks_with_the_cell_name` | 409 `model_disabled` for the single pin; Blocked with the cell named for the exhausted default row |
+| A held single Required target is refused; the unpinned exhausted default row becomes Blocked | `RoutingPinCandidateCreateTests.Required_single_candidate_held_is_still_409_model_disabled_with_coda`; `MatrixDefaultComplexityCreateTests.An_exhausted_default_row_blocks_with_the_cell_name` | 409 `model_disabled` for the single pin; Blocked with the cell named for the exhausted default row |
 | A standing-agent pin is displayed as agent-bound | `ComplexityEffectiveHttpTests.Get_role_view_reports_an_agent_only_stage_pin_as_agent_bound` | `source: agent`, empty candidate list, `governsDefault: false`, and a withholding reason |
 
 `delegate.ps1 -Pin` records a card exception. Read `complexity-chain.ps1 get -Role <R>` to see the
@@ -943,13 +943,15 @@ The next-create previews combine role policy, the active stage pin and the role'
 complexity cells. A one-slot pin composition bypasses the matrix, including a Preferred pin that
 deduplicates against policy. Other eligible Workers walk the configured default tier; pin-list
 walks without a row filter kinds, stage forbids, holds and quota. Orchestrator walks accept
-ClaudeCode and retain the walked level. Single targets can be refused with 409; exhausted walks
-become Blocked under the UI defaults. The configured single-target Orchestrator floor is absent
+ClaudeCode and retain the walked level. Single targets can be refused with 409. This includes a Required forbid-only pin with one
+default-row candidate: held, quota-limited or forbidden means refusal (V17 D1; V21), even when
+the row came from any-role or config. Other exhausted row/list paths become Blocked under
+the UI defaults (V3, V15, V17 exhaustion controls). The configured single-target Orchestrator floor is absent
 from the reads, so levels below Frontier are shown as unknown. Missing candidate availability,
 partial targets and standing-agent details are disclosed as server dependencies. availableNow
 includes the null-owner quota gate; a held single target may mask quota, whose create-time check
 runs first. These are 15-second snapshots, without card pins or an admission reservation.
-Vitest C1250 V17's 40 server-cited rows and V18–V20's exact modal assertions bind the repair;
+Vitest C1250 V17's 58 server-cited rows and V18–V21's exact modal assertions bind the repair;
 V1–V16 and C097 V25 bind the existing paths. See the
 [repair plan](superpowers/plans/2026-10-14-card-1250-next-create-preview-plan.md).
 
@@ -963,12 +965,13 @@ downgrading it from Required to Preferred, is an operator decision made through
 **Complexity chains (CARD-0090, CARD-0332, CARD-0097).** Pass `-Complexity Hard|Medium|Easy` when the work's hardness
 should pick (kind, level) from an ordered fallback list, instead of an explicit `-Kind`/`-Level`.
 The list is a sparse (role × complexity) matrix: the walk reads the role cell, then the any-role
-chain, then the config default, then Blocked. Without `-Complexity`, an ordinary Worker uses the
+chain, then the config default. Exhaustion follows the refusal/Blocked rules below. Without `-Complexity`, an ordinary Worker uses the
 configured default tier when a row resolves, or RolePolicy when it does not (tests above).
 Combining `-Complexity` with `-Kind` or `-Level` is 422 (`ComplexityCreateTests.Explicit_kind_plus_complexity_is_422`).
 Config defaults ship empty; write the live lists with `complexity-chain.ps1 set` (`-Role Plan` for
 a cell, omit `-Role` for the any-role row). When the chain
-is exhausted the task is **Blocked** (or 409 `routing_exhausted` with `-RefuseIfExhausted`):
+is exhausted, a Required pin with one effective candidate applies single-target 409 checks
+(V17 D1). Otherwise the task is **Blocked** (or 409 `routing_exhausted` with `-RefuseIfExhausted`):
 **relay that to the operator; do not pick a kind yourself.** A human answers with Retry,
 `delegate.ps1 -Reroute <id> -Kind … -Level …`, Cancel, or by clearing a hold. Auto-resume onto
 an already-listed candidate when capacity returns is executing the instruction, not a new guess.
