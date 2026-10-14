@@ -24,10 +24,15 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 /// <summary>
-/// CARD-1234 (2): a role policy that bypassed configuration validation (an undefined level or an
-/// unlaunchable kind) refuses POST /api/agent-tasks with a named 422 and writes no task, instead
-/// of launching on a substituted model. The host registers settings without the validator.
-/// Each test owns an isolated schema.
+/// CARD-1234 (2): role policy values that bypassed configuration validation. The host registers
+/// settings without the validator; each test owns an isolated schema.
+/// post_agent_tasks_refuses_an_unusable_policy_value_with_a_named_422_and_writes_nothing: a Docs
+/// create with no explicit level, which consumes the undefined policy or default level or the
+/// unlaunchable policy kind, gets the named 422 and writes no task or session; a Commit create on
+/// the same host is created. an_explicit_level_does_not_consult_an_undefined_policy_level: an
+/// explicit valid level on the same Docs request overrides the undefined policy level and creates
+/// (201, Low). an_orchestrator_refuses_an_undefined_policy_level_instead_of_clamping_it_to_the_floor:
+/// orchestrator level resolution with no explicit level throws the named refusal for Docs.
 /// </summary>
 [Category("Integration")]
 [NotInParallel("AgentQueue")]
