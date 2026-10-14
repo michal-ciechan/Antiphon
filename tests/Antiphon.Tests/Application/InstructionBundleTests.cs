@@ -466,6 +466,8 @@ public class InstructionBundleTests
         composed.Stamps.ShouldBe([
             InstructionBundles.Get(InstructionBundles.DelegateBasics).Stamp,
             InstructionBundles.Get(InstructionBundles.BoardApi).Stamp,
+            // CARD-1213: delegate-basics expands {{GIT-COMMON}}; its stamp follows the bundles.
+            InstructionFragments.Get(InstructionFragments.GitCommon).Stamp,
         ]);
     }
 
@@ -1036,7 +1038,7 @@ public class InstructionBundleTests
         ("contract-commit-push", "- Commit each slice with its real outcome; push after every commit with `git push origin HEAD:refs/heads/<branch>`. Report full 40-hex SHAs."),
         ("contract-no-rewrite", "- Never merge the target into the task branch. Never rebase, amend, reset or force-push a pushed commit; landing rebases."),
         ("contract-test-first", "- Commit the failing test before its fix, and commit before any long test run, even as WIP."),
-        ("contract-review-freeze", "- A branch under Review is read-only to everyone, its author included, until Review settles; Review never checks out, rebases, commits to or pushes its subject branch."),
+        ("contract-review-freeze", "- A branch under Review is frozen for everyone, its author included, until Review settles; Review never checks out, rebases, commits to or pushes its subject branch."),
         ("contract-merge-tree", "- Landable needs `git fetch origin master`, then `git merge-tree --write-tree origin/master HEAD` with no conflicts; report it, never merge to resolve."),
         ("contract-push-retry", "- On a push `error in commit_refs`: wait, `git fetch`, check the tip with `git ls-remote`, retry at most three times; never force."),
         ("contract-evidence-custody", "- No secrets in commits, logs or reports. Generated evidence stays gitignored. Code and Review run scripts/check-evidence-diff.ps1 over base..HEAD."),
@@ -1061,6 +1063,11 @@ public class InstructionBundleTests
                 .ShouldBeTrue($"role-specialist-empty {role}");
     }
 
+    /// <summary>
+    /// S2 amendment: stage-review cannot hold the placeholder (TaskPlatformGuidanceTests pins it at
+    /// 2,480 chars; it is 2,475), so in the production Review order the read-only override precedes
+    /// git-common, and git-common itself says stage rules narrow it and freezes the subject branch.
+    /// </summary>
     [Test]
     public void C1213_ReviewOverrideFollowsFragment()
     {
@@ -1071,15 +1078,16 @@ public class InstructionBundleTests
             InstructionBundles.ForDelegate(AgentTaskKind.Worker, AgentTaskRole.Review)).Text;
 
         var review = text.IndexOf("[bundle:stage-review v", StringComparison.Ordinal);
-        var common = text.IndexOf(fragment.Render(), StringComparison.Ordinal);
         var readOnly = text.IndexOf("INVARIANTS: Read-only. Do not fix anything.", StringComparison.Ordinal);
         var basics = text.IndexOf("[bundle:delegate-basics v", StringComparison.Ordinal);
-        var seeAbove = text.IndexOf(fragment.SeeAbove, StringComparison.Ordinal);
+        var common = text.IndexOf(fragment.Render(), StringComparison.Ordinal);
         review.ShouldBe(0, "review-order-stage-first");
-        common.ShouldBeGreaterThan(review, "review-order-fragment-in-stage");
-        readOnly.ShouldBeGreaterThan(common, "review-order");
+        readOnly.ShouldBeGreaterThan(review, "review-order-override-in-stage");
         basics.ShouldBeGreaterThan(readOnly, "review-order-basics-after-override");
-        seeAbove.ShouldBeGreaterThan(basics, "review-order-basics-see-above");
+        common.ShouldBeGreaterThan(basics, "review-order-fragment-in-basics");
+        var body = text[common..];
+        PinSentence(body, "INVARIANTS (stage rules may narrow, never widen):", "review-order-stage-precedence");
+        PinSentence(body, "Review never checks out, rebases, commits to or pushes its subject branch.", "review-order-subject");
     }
 
     [Test]

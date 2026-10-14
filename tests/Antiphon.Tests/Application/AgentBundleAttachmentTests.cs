@@ -459,11 +459,10 @@ public class AgentBundleAttachmentTests
         var basicsBundle = InstructionBundles.Get(InstructionBundles.DelegateBasics);
         var orchestratorBundle = InstructionBundles.Get(InstructionBundles.Orchestrator);
         var board = InstructionBundles.Get(InstructionBundles.BoardApi);
-        // CARD-1213: {{GIT-COMMON}} expands at its first use in a composition (delegate-basics,
-        // except in Review where stage-review holds it) and reads "see above" afterwards.
+        // CARD-1213: delegate-basics holds each composition's first {{GIT-COMMON}}.
         var basicsFirst = C1213Expected.FirstUse(basicsBundle.Render());
         OnceThen(plan, planBundle.Render(), basicsFirst, "c1083-plan-order");
-        OnceThen(review, C1213Expected.FirstUse(reviewBundle.Render()), C1213Expected.LaterUse(basicsBundle.Render()), "c1083-review-order");
+        OnceThen(review, reviewBundle.Render(), basicsFirst, "c1083-review-order");
         OnceThen(orchestrator, orchestratorBundle.Render(), basicsFirst, "c1083-orchestrator-order");
         OnceThen(withBoard, basicsFirst, board.Render(), "c1083-board-order");
         OnceThen(withBoard, planBundle.Render(), basicsFirst, "c1083-board-plan-order");
