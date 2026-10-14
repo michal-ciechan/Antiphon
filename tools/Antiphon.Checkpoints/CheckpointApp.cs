@@ -726,7 +726,9 @@ public static class CheckpointApp
             }).ToList(),
             Rows = rows,
             Unlisted = [],
-            OutputNames = manifest.Builds.Select(build => build.Id + "/").ToList(),
+            OutputNames = manifest.Builds
+                .Where(build => state.Builds.FirstOrDefault(item => item.Id == build.Id)?.State != "unused")
+                .Select(build => build.Id + "/").ToList(),
             MaxConcurrentRows = state.MaxConcurrentRows,
             MaxConcurrentBuilds = state.MaxConcurrentBuilds,
         };
