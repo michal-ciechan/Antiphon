@@ -30,8 +30,8 @@ whenever we ask you to change routing we should be changing these."** The invest
    (`server/Application/Services/AgentTaskService.cs:923-932`); without it the create resolves through
    `ResolveLevel`/`ResolveAgentKind` (`:1072-1073`, `:3976-3986`, `:4011-4045`) and the pin overlay (`:803-837`).
    Zero board tasks since 2026-10-07 carried a complexity (investigation §2.3).
-2. **The 13 operator routing changes are pins, not cells.** `RoutingPins` is a separate table the chain service never
-   reads (`server/Application/Services/ComplexityChainService.cs:111-134` reads cells, any-role row and config only).
+2. **The 13 operator routing changes are pins, not cells.** `RoutingPins` is a separate table the chain service does not
+   read (`server/Application/Services/ComplexityChainService.cs:111-134` reads cells, any-role row and config only).
 3. **A Required pin with a candidate replaces the cell outright** (`server/Application/Services/RoutingCandidates.cs:58-63`),
    so cells written today would still be bypassed, and the matrix UI says so only in a row banner
    (`client/src/features/settings/RoutingSettingsTab.tsx:463-473`) while an empty cell reads `Unset — dispatch blocks`
@@ -55,7 +55,7 @@ desktop server until it is restarted onto a build that contains these commits (�
 | An unset cell under `-Complexity` Blocks the task | True: `routingExhausted` → `Status = Blocked`, `FailureReason` = the exhausted sentence | `AgentTaskService.cs:1004-1016`, `:1448-1453`; `ComplexityCreateTests.All_cells_empty_blocks_with_the_D3_sentence_and_a_parent_note` |
 | A routing pin can only narrow what the caller asked | False. The pin overlay fills `AgentId` from an agent-only pin (`AgentId = … request.AgentId ?? pinDecision.AgentId`) **after** the pin decision, and the standing-agent block then sets `AgentKind = pinned.Kind`. A stamp decided before `:770` would not see that agent | `AgentTaskService.cs:770-781`, `:826-837`, `:840-860`; `RoutingPinService.UpsertAsync:172-177`, `:213-227` |
 | A single-candidate Required pin stamps `RoutingPinId` | False. `routingPinId` is set only when `routingWalk.Walked` (`:944-945`) or the composed pin list is walked (`:1036-1037`); a single-candidate pin arrives at the role-policy branch as the overlaid explicit pair and stores `RoutingPinId` null | `AgentTaskService.cs:944-945`, `:1036-1037`, `:1070-1073`, `:1364-1367` |
-| No `-Complexity` falls to RolePolicy with `DefaultLevel = High` | True; `Kind` null on every shipped entry; Mutation/Test/Deploy are `Low`, Docs/Commit `Medium`, Investigate/Debug/Coverage/Merge `High` | `DelegationSettings.cs:349-373`, `:375` |
+| No `-Complexity` falls to RolePolicy with `DefaultLevel = High` | True; each of the 13 shipped entries leaves `Kind` unset (`:351-372`); Mutation/Test/Deploy are `Low`, Docs/Commit `Medium`, Investigate/Debug/Coverage/Merge `High` | `DelegationSettings.cs:349-373`, `:375` |
 | `ResolveAgainstRolePolicy` withholds unusable policy values | False. It composes `kind ?? policy.Kind ?? ClaudeCode` and `level ?? policy.Level ?? DefaultLevel` with no `DelegatableKinds` or `Enum.IsDefined` check. `RolePolicyReadService` does withhold (`Supported`, `Usable`, `Defined`) and is tested for it | `ComplexityRoutingService.cs:432-446`; `RolePolicyReadService.cs:51-69`, `:78-98`, `:104-105`, `:133-137`; `RolePolicyReadServiceTests.Compose_withholds_the_target_for_unsupported_or_undefined_values` |
 | The settlement Commit delegate goes through `CreateAsync` | False: `CreateCommitTaskAsync` resolves kind/level from RolePolicy plus the Commit pin via `RoutingCandidates.Compose` with `chain: null`, takes `Candidates[0]` without a hold or quota check, catches routing exceptions into a warning, and constructs `Status = Queued` | `AgentTaskService.cs:3811-3870`, `:3898-3906` |
 | The conflict resolver is routed like other Merge work | False: `CreateMergeTaskAsync` builds a Worker/Merge task with `ModelLevel = ResolveLevel(Worker, Merge, null)`, no pin decision, no `Complexity`, no `AgentKind` assignment | `AgentTaskService.cs:3706-3797` (`:3770`) |
@@ -66,12 +66,12 @@ desktop server until it is restarted onto a build that contains these commits (�
 | A cell write regenerates the instructions file | False: `RoutingPinService` fires `OrchestratorInstructionsSignal` on upsert/clear; `ComplexityChainService` has no `IServiceProvider` and fires nothing | `RoutingPinService.cs:48-49`, `:270`; `ComplexityChainService.cs:28-40`, `:228-232`, `:248-252` |
 | An instructions notice that fails to enqueue is retried | False. `QueueNoticesAsync` writes `session.OrchestratorInstructionsVersion = version` and saves **before** `queue.EnqueueAsync`; `Accept` then skips a session whose column equals the current version, and `ReconcileCoreAsync` returns early when the body version is unchanged. A throw from `EnqueueAsync` therefore leaves the column current with no row until the next content change | `OrchestratorInstructionsService.cs:161-162`, `:268-278`; `OrchestratorInstructionsRecipients.cs:92-110` |
 | `complexity-chain.ps1` has no test runner | False. `tests/Antiphon.Tests/Scripts/ComplexityChainScriptTests.cs` runs the script with `pwsh` against an `HttpListener` stub (`StubApi`: `LastMethod`, `LastPath`, `LastBody`, `RequestCount`; `ANTIPHON_API` pointed at the stub) | `ComplexityChainScriptTests.cs:17-60`, `:150-235`; `TestHelpers/EphemeralHttpListener.cs:11` |
-| `complexity-chain.ps1 set` writes one cell per call and cannot touch pins | True: `-Complexity` is `ValidateSet('Hard','Medium','Easy')`; one PUT per call; `routing-pin.ps1 clear` looks the stage pin up by grain and DELETEs by id | `scripts/complexity-chain.ps1:30-31`, `:204-226`; `scripts/routing-pin.ps1:273-291` |
+| `complexity-chain.ps1 set` writes one cell per call and has no pin verb | True: `-Complexity` is `ValidateSet('Hard','Medium','Easy')`; one PUT per call; `routing-pin.ps1 clear` looks the stage pin up by grain and DELETEs by id | `scripts/complexity-chain.ps1:30-31`, `:204-226`; `scripts/routing-pin.ps1:273-291` |
 | A checkpoint row can reuse a build by writing "(reused)" | False. The importer accepts `<project> -> bin-x/`, `CP-n`, `CP-n (-NoBuild)` or `n/a`; `StripWrappingBackticks` strips only a cell that both starts and ends with a backtick, and the build regex is anchored. `CP-n` requires the same `After` group as row n | `tools/Antiphon.Checkpoints/Manifest/PlanTableImporter.cs:89`, `:200-229`, `:379-385`; `docs/testing-and-build.md:400`, `:411` |
 | `?unscoped=true` lists the whole project pipeline | False. It is the null-project bucket (`taskScope: "null"`); the Antiphon work is under `?projectId=d4ea7ae9-e769-474b-95b9-aa25fbc1303f` (`taskScope: "project"`) | live reads above; AGENTS.md (CARD-0881) |
 | The row editor can import the cell editor's draft helpers | False. `DraftCandidate` and `toDraft` are module-private (`ComplexityChainCellEditor.tsx:59-75`). The exported helpers are in `routingSettingsModel.ts` (`candidateListError :238`, `nextUnusedCandidate :258`, `CHAIN_KIND_OPTIONS :142`, `MAX_CHAIN_CANDIDATES :150`) | those files |
 | `delegate.ps1` predicts the routing before the create | False for routing: it echoes the resolved kind from the create response (`:1207-1212`); its "base preview" is the landing base. The two stale predictors are the Role policy section's `Effective next create` column and the delegate modal's tier preview, both fed by `GET /api/role-policy` | `scripts/delegate.ps1:1207-1212`, `:1240-1247`; `RolePolicySection.tsx:59`, `:93-95`; `DelegateModal.tsx:45-54`, `:108-114`, `:136` |
-| The 13 live pins are Plan/TestDesign ClaudeCode/Frontier, Code ClaudeCode/High, Review Codex/Frontier, nine others ClaudeCode/Frontier then ClaudeCode/High | Confirmed by the Final Review's live read (ids in §6). Custom has no pin. All `Required`, `Human`, empty `forbiddenAliases`, null dates and agent | Final Review `2f218eeb`, evidence item 4 |
+| The 13 live pins are Plan/TestDesign ClaudeCode/Frontier, Code ClaudeCode/High, Review Codex/Frontier, nine others ClaudeCode/Frontier then ClaudeCode/High | Confirmed by the Final Review's live read (ids in §6). Custom has no pin. Each is `Required`, `Human`, with empty `forbiddenAliases`, null dates and no agent | Final Review `2f218eeb`, evidence item 4 |
 | Queued chain tasks re-walk the live matrix when their alias is held | True for list-governed tasks (`Complexity` or `RoutingPinId` set); a single-candidate Required pin is not rerouted by a tick | `AgentTaskDispatcher.cs:716-741`, `:1749-1778`, `:1791-1792`; `ComplexityRoutingService.cs:31-32` |
 | A reroute ends matrix governance | True: `task.Complexity = null; task.RoutingPinId = null` | `AgentTaskService.cs:2813-2816`; `ComplexityDispatcherTests.Reroute_on_Blocked_queues_with_Complexity_null` |
 | CARD-0097 S3 is still a pin editor waiting for O-1 | Superseded: this plan's S-C2 edits cells and clears the stage pin; `StagePinEditor.tsx`, `usePutRoutingPin`, `pinRequestFrom`, `requiredConfirmCopy` are not built | 2026-10-13 test design Appendix A |
@@ -121,8 +121,8 @@ the operator can overrule any one before Code is dispatched. Repair-round change
   kind yourself."`, `Complexity = DefaultComplexity`. The caller constructs the child with `Status = Blocked`,
   `FailureReason = BlockedReason`, adds a `Blocked` event and calls `EnqueueBlockedParentNoteAsync(task, reason)`
   (`:4589-4613`; the child's `ParentSessionId` is the settled/conflicted task's). A resolved row with no survivor is
-  never replaced by the RolePolicy pair. Rejected: leaving `CreateMergeTaskAsync` outside (the single-surface claim
-  would be false for a producer the operator meets after every conflicted land).
+  not replaced by the RolePolicy pair (V-A13). Rejected: leaving `CreateMergeTaskAsync` outside (the single-surface
+  claim would be false for a producer the operator meets after each conflicted land).
 - **D-4 The effective cell DTO is computed as create would compute it, and withholds what RolePolicy would withhold (F04).**
   S-B calls `RoutingPinService.ResolveAsync(null, role, Ask(null, null, null, false))` for the stage decision, then
   `RoutingCandidates.Compose(decision, chain, label, null, null, resolve)` — the same two calls `WalkAsync` makes
@@ -180,7 +180,7 @@ the operator can overrule any one before Code is dispatched. Repair-round change
   - **`-Apply -ClearPins -Backup <file>`.** For each role whose three tiers are ledgered: GET `?role=` and compare each
     tier's stored candidates to the ledgered body; on a mismatch keep the pin and exit 1 naming the cell; on a match
     DELETE the pin and ledger `pinCleared`. A DELETE failure stops the run.
-  - **`-Restore -Backup <file>`.** Restores `cellsBefore` (PUT the before body, DELETE when it was absent) for every
+  - **`-Restore -Backup <file>`.** Restores `cellsBefore` (PUT the before body, DELETE when it was absent) for each
     ledgered cell, then re-PUTs each cleared pin from `pins[]`; ledgers `restored`. Rerunnable.
   Rejected: a backup that lists only the cells to delete (loses a Human cell written by S-C2 or a prior partial run).
   Rejected: migrating in `Program.cs` on start. OD-4 stays last-writer-wins; the ledger is the migration's own
@@ -274,7 +274,7 @@ for Code tasks touching `client/src/features/settings` or `client/src/features/d
 ## 4. Edge cases (each bound to a test in the amendment)
 
 - Unset row at the default tier → RolePolicy path, Queued, no Blocked event, Created detail `(role policy)` (V-A2).
-- Set row, every candidate held → Blocked with the chain sentence naming `<Role>/Medium`; queued parent note row with
+- Set row, each candidate held → Blocked with the chain sentence naming `<Role>/Medium`; queued parent note row with
   `SourceTaskId`, `NoteHeader`, `ContentDigest`; clearing the hold requeues it (V-A3, R-A4).
 - Explicit `-Kind` or `-Level` with a set row → not stamped; warning names the row; Required pin 409 unchanged (V-A4,
   R-A2 `An_explicit_kind_against_a_required_pin_is_409_routing_pin_conflict`).
@@ -287,7 +287,7 @@ for Code tasks touching `client/src/features/settings` or `client/src/features/d
   `ignoreModelDisabled` and live follow-ups (V-A6, eight `[Arguments]` rows).
 - Orchestrator kind with a set Plan row → not stamped, `MinOrchestratorLevel` clamp still applies (V-A7).
 - Settlement Commit child: row with an available head → that pair; held head with an available second → the second
-  with the skipped warning; all held → Blocked with the sentence, a Blocked event and a parent note; Required
+  with the skipped warning; each candidate held → Blocked with the sentence, a Blocked event and a parent note; Required
   single-candidate pin → the pin pair unstamped; routing read failure → RolePolicy with the warning; no row → today's
   pair (V-A8, V-A13, V-A14, V-A15).
 - Server-created Merge child → same helper: row candidate, else Blocked, else today's RolePolicy High (V-A12).
@@ -306,7 +306,7 @@ for Code tasks touching `client/src/features/settings` or `client/src/features/d
 - Migration: dry run writes nothing and records before-images; manual pins untouched; apply refuses drift and
   non-empty targets; ledger records each PUT; a failed PUT stops; clear deletes only after read-back equality; restore
   reinstates before-images and pins; a second apply is a no-op (V-E1–V-E11).
-- Instructions: an identical cell rewrite keeps the file bytes, version and sends no notice (V-F3, V-F8); a cell write
+- Instructions: a byte-equal cell rewrite keeps the file bytes, version and sends no notice (V-F3, V-F8); a cell write
   regenerates and the idle recipient's transcript holds one complete `UserPrompt` equal to the queued body (V-F2,
   V-F4); a busy recipient gets it after turn end (V-F5); a failed enqueue leaves the column behind and the next write
   names that column as `oldVersion` (V-F6); a full legal matrix stays under 4,096 bytes with the pointer line and
@@ -348,7 +348,7 @@ Full V/R/PC binding, fixtures and the wire contract are in
 | CP-25 | S-F | CP-23 | instructions-delta | `/*/*/OrchestratorInstructionsDeltaTests/*` | V-F3 | all methods, 0 failed/skipped | 5 | 4 | false |
 | CP-26 | all client slices | n/a | client-full | `pwsh -NoProfile -File scripts/test-client.ps1` | lint gate (`client/src/lint.gate.test.ts`), whole client suite | `CLIENT TESTS EXIT CODE: 0` and the aggregate line reports a nonzero passed count that Code records | n/a | 10 | true |
 
-Lane: every row runs on the default placement (runner-defaults revision 2 = server2); no `-Runner`, no `-Platform`.
+Lane: each row runs on the default placement (runner-defaults revision 2 = server2); no `-Runner`, no `-Platform`.
 TUnit rows run one class filter each through the checkpoint tool (`dotnet run --project tools/Antiphon.Checkpoints --
 run --plan <this file>`), which takes the build slot itself; `Antiphon.Tests` is not run whole here. A `CP-n` Build
 cell reuses that row's output with `--no-build` and shares its `After` group (`PlanTableImporter.cs:200-211`).
@@ -363,7 +363,7 @@ line; Code records it. `[Arguments]`-expanded results are counted with `grep -c 
 |---|---|---|
 | PC-1 | `MatrixDefaultComplexityCreateTests.A_plain_create_walks_the_role_row_at_the_default_tier` | Plan/Medium cell `[Codex/Frontier]` → skip the stamp → `ClaudeCode/Frontier` from RolePolicy |
 | PC-2 | `MatrixDefaultComplexityCreateTests.An_unset_row_keeps_the_role_policy_path` | no rows → stamp unconditionally → `Blocked` |
-| PC-3 | `MatrixDefaultComplexityCreateTests.An_exhausted_default_row_blocks_with_the_cell_name` | all held → force `RefuseIfExhausted` → `RoutingExhaustedException` |
+| PC-3 | `MatrixDefaultComplexityCreateTests.An_exhausted_default_row_blocks_with_the_cell_name` | each candidate held → force `RefuseIfExhausted` → `RoutingExhaustedException` |
 | PC-4 | `MatrixDefaultComplexityCreateTests.An_explicit_kind_is_not_stamped_and_warns` | `-Kind Codex` with a Plan row → stamp anyway → 422 `complexity cannot be combined` |
 | PC-5 | `MatrixDefaultComplexityCreateTests.A_required_candidate_list_plus_a_row_is_stamped_and_walks_the_pin` (V-A5b) | list + row → pass `Decision.None` to `WalkAsync` → row candidate chosen, no bypass warning |
 | PC-6 | `MatrixDefaultComplexityCreateTests.The_stamp_predicate_excludes_specialists_orchestrators_agents_explicit_asks_and_ignore_model_disabled` (row `Check`) | Check → drop the specialist clause → `true` |
@@ -387,9 +387,9 @@ line; Code records it. `[Arguments]`-expanded results are counted with `grep -c 
 | PC-24 | `RolePolicySection.test.tsx` V-C14 | Configure → no callback → `onConfigure` not called |
 | PC-25 | `OrchestratorInstructionsRendererTests.Sections_render_caps_runners_defaults_holds_pins_levels_and_standing_lines` (V-F1) | matrix section → omit it → `## 5. Role × complexity matrix` missing |
 | PC-26 | `OrchestratorInstructionsRefreshTests.Covered_writes_each_regenerate_and_notify("complexity-chain")` (V-F2) | cell upsert → drop the signal → `SubmittedBodies.Count == 0` |
-| PC-27 | `OrchestratorInstructionsDeltaTests.An_identical_matrix_rewrite_produces_no_delta_and_a_changed_cell_names_the_role` (V-F3) | identical rewrite → `DiffMatrix` reports on equal input → a line appears |
+| PC-27 | `OrchestratorInstructionsDeltaTests.An_identical_matrix_rewrite_produces_no_delta_and_a_changed_cell_names_the_role` (V-F3) | byte-equal rewrite → `DiffMatrix` reports on equal input → a line appears |
 | PC-28 | `MatrixDefaultComplexityCreateTests.A_stage_agent_only_pin_binds_the_standing_agent_and_is_not_stamped` (V-A10) | stage agent-only pin + Codex cell → evaluate the predicate before the pin overlay → `AgentKind Codex` ≠ the agent's kind |
-| PC-29 | `MatrixDefaultComplexityCreateTests.An_exhausted_commit_row_blocks_the_commit_child` (V-A13) | all held → fall back to the RolePolicy pair → `Status Queued` |
+| PC-29 | `MatrixDefaultComplexityCreateTests.An_exhausted_commit_row_blocks_the_commit_child` (V-A13) | each candidate held → fall back to the RolePolicy pair → `Status Queued` |
 | PC-30 | `MatrixDefaultComplexityCreateTests.The_server_created_merge_child_takes_the_merge_row` (V-A12) | Merge/Medium `[Codex/Frontier]` → keep `ResolveLevel` only → `ClaudeCode/High` |
 | PC-31 | `ComplexityEffectiveComposeTests.An_unsupported_policy_target_is_withheld` (V-B10) | policy kind Raw → call `ResolveAgainstRolePolicy` → `candidates` non-empty |
 | PC-32 | `RolePolicyMatrixPreviewTests.A_default_cell_sources_matrix_in_the_role_policy_effective` (V-B7) | Code/Medium cell + no pin → keep today's `Effective(stagePin, kind, level, alias)` → `source rolePolicy` |
@@ -457,14 +457,14 @@ and this plan's slices are inactive until a restart. Sequencing:
   `GET /api/version`.
 - Do **not** restart with tasks in flight or with a checkpoint run bound to a task: the checkpoint tool's owner read
   turns a vanished owner into exit 7 (`docs/testing-and-build.md:470`). The zero-in-flight gate is read with the
-  project id (`?projectId=d4ea7ae9-…`) and the board task list, never `?unscoped=true`; the orchestrator re-reads it
+  project id (`?projectId=d4ea7ae9-…`) and the board task list, not `?unscoped=true`; the orchestrator re-reads it
   immediately before the restart and waits for in-flight Code checkpoints to finish.
 - Restart once after S-0, S-A, S-B, S-B2, S-C1, S-D, S-F have landed (S-C2 and S-E's script can follow in a second
   restart, or the same one if landed), then run S-E.
 
 ## 8. Risks
 
-- **The matrix lies in the window between S-A and S-E.** Mitigated by S-B/S-C1/S-B2 showing the pin inside every cell
+- **The matrix lies in the window between S-A and S-E.** Mitigated by S-B/S-C1/S-B2 showing the pin inside each cell
   and preview it overrides, and by OD-3 (pins are cleared only by the operator's command).
 - **Fail-open must not become fleet-wide Blocked.** D-2's guard and D-1's predicate are the protection; V-A2 and V-A6
   are its tests, and PC-2/PC-6 are the controls that go red when either is removed.
