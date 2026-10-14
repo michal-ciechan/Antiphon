@@ -946,6 +946,8 @@ configuration section; pins: `scripts/routing-pin.ps1` and `/api/routing-pins`.
 | Route failure falls back to `AGENT_TASK_ROLES` | Vitest `C097 V18 route-failure-falls-back-to-constant`, same file | 500 → `delegate-tier-source-fallback`, `tier-Low` for Mutation; Delegate enabled after typing a goal |
 | Null policy level falls back to `AGENT_TASK_ROLES` | Vitest `C097 V30 undefined-policy-level-falls-back-to-constant`, same file | Mutation `level: null` → `delegate-tier-source-fallback`, `tier-Low` |
 | Sub-orchestrator floor applies to the server level | Vitest `C097 V27 orchestrator-floor-on-server-level`, same file | Sub-orchestrator + Mutation (`Low`) → `tier-High` |
+| A withheld role-policy target falls back to `AGENT_TASK_ROLES` (the modal reads `effective.modelLevel` for both sources) | Vitest `C1234 unsupported-policy-kind-falls-back-to-constant`, same file | Mutation `level High`, `kind Raw`, `effective` target null → `delegate-tier-source-fallback`, `tier-Low`, no `tier-High` |
+| Project setup names the default tier only when it is a model level | Vitest `C1234 delegation step names the default tier only when it is a model level`, `client/src/features/settings/ProjectSetupModal.test.tsx` | `Medium` → `default Medium tier.`; missing, null or 999 → `default tier unknown.` |
 
 **Stage pins and the matrix:** the matrix row can show candidates a stage pin keeps out of use;
 routing: see **Routing pins beat RolePolicy** in [orchestration-loop.md](orchestration-loop.md#2-tiers). Read the live pins with

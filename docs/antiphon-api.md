@@ -677,6 +677,10 @@ policy; it is not a create result. Nullable: `defaultLevel`, `level`, `kind`, `e
 the effective target is null for an undefined kind (the two `kind` null rows below). A row with no
 configured kind and an undefined level has the same `kind` null, `alias` `""` and null target (case
 `policy-level-999`), so `alias` and `effective` do not identify the cause. Pin routes: the `/api/routing-pins` block above.
+Since CARD-1234 startup validation rejects such values (a kind outside ClaudeCode, Grok and Codex,
+or an undefined `Level`, `EscalateTo` or `DefaultLevel`), so these rows appear only on a host that
+bypassed validation; create then refuses with 422 `role_policy_level_invalid` or
+`role_policy_kind_unsupported` and writes no task.
 
 | Behaviour | Test (runner, file) | What it asserts |
 |---|---|---|
@@ -692,6 +696,8 @@ configured kind and an undefined level has the same `kind` null, `alias` `""` an
 | First candidate of a stage pin is `effective`; a card pin is not a stage pin | TUnit `RolePolicyReadServiceTests.Compose_effective_prefers_the_first_stage_pin_candidate_and_excludes_card_pins`, same file | Preferred Plan pin head Codex/Frontier is `effective`; Code card pin → `stagePin` null |
 | A partial pin head fills from the policy | TUnit `RolePolicyReadServiceTests.Compose_fills_a_missing_pin_level_from_the_policy`, `…Compose_fills_a_missing_pin_kind_from_the_policy`, same file | Grok head without level → Medium/`grok-4.7`; level-only head → policy kind (ClaudeCode `opus`, or Grok `grok-4.7`) |
 | A candidate-free pin names no target | TUnit `RolePolicyReadServiceTests.Compose_withholds_the_target_for_a_candidate_free_pin`, same file | `effective` `{pin, null, null, null, Required}` |
+| Startup validation rejects an unlaunchable kind or an undefined level, naming role, field and value | TUnit `RolePolicyConfigurationValidationTests` (Unit), `tests/Antiphon.Tests/Application/RolePolicyConfigurationValidationTests.cs` | e.g. `Delegation:RolePolicy:Code:Kind is Raw, which delegation cannot launch. Use ClaudeCode, Grok or Codex, or leave it unset.`; Grok/Codex/null kinds and defined levels validate |
+| Create refuses an unusable policy value that bypassed validation | TUnit `RolePolicyInvalidValuesCreateTests.post_agent_tasks_refuses_an_unusable_policy_value_with_a_named_422_and_writes_nothing`, `tests/Antiphon.Tests/Application/RolePolicyInvalidValuesCreateTests.cs` | Docs Level 999 or DefaultLevel 999 → 422 `role_policy_level_invalid` (`errors.RolePolicy`); Kind Raw/OpenCode/999 → 422 `role_policy_kind_unsupported` (`errors.AgentKind`); no task or session written |
 | No write verb on `/api/role-policy` | not covered by a test | — |
 
 ```
