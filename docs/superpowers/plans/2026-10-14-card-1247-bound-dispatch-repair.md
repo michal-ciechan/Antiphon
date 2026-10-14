@@ -34,11 +34,14 @@ timeout, assertion relaxation, migration or second ownership store is planned.
 - R-6: a losing dispatcher with a longer text snapshot must not consume the winner's owed
   tail. The separate [expected-red checkpoint](2026-10-14-card-1247-watermark-red.md) proves
   the missing-tail assertion before the repair; the complete grace class covers it afterwards.
+- R-7: caller cancellation cannot release ownership while the actual transport continues.
+  The [cancellation checkpoint](2026-10-14-card-1247-cancellation-red.md) proves the duplicate
+  owner before repair; the full grace class repeats both variants after repair.
 
 Whole Unit is explicitly deferred by the repair brief, not passed. HerdrAlwaysOnChannelParityTests
 is excluded for inherited CARD-1252. No live-provider/manual traffic is commissioned. No whole
 assembly run: impacts are bounded to queue grace, dispatcher source selection and outbound
-ownership. The closed list costs approximately 32 minutes plus the expected-red build/run.
+ownership. The closed list costs approximately 38 minutes plus the expected-red builds/runs.
 All rows run serially on the loaded host and reuse one build per source slice. The checkpoint
 tool bootstrap is the only extra driver and runs through build-slot. Linux uses UseAppHost=false.
 
@@ -46,7 +49,7 @@ tool bootstrap is the only extra driver and runs through build-slot. Linux uses 
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-2 | repaired | `tests/Antiphon.Tests -> bin-c1247-caee-complete/` | grace | `/*/Antiphon.Tests.Application/(ChannelReplyLateConfirmDispatchTests*)/*` | V-1,V-2,V-3,V-4,R-5,R-6 | all listed, 0 failed | 18 | 6 |
+| CP-2 | repaired | `tests/Antiphon.Tests -> bin-c1247-caee-complete/` | grace | `/*/Antiphon.Tests.Application/(ChannelReplyLateConfirmDispatchTests*)/*` | V-1,V-2,V-3,V-4,R-5,R-6,R-7 | all listed, 0 failed | 20 | 6 |
 | CP-3 | repaired | CP-2 | durability | `/*/Antiphon.Tests.Application/(ChannelReplyDurabilityTests*)/*` | R-1 | all listed, 0 failed | 25 | 4 |
 | CP-4 | repaired | CP-2 | bridge | `/*/Antiphon.Tests.Application/(ChannelBridgeTests*)/*` | R-1 | all listed, 0 failed | 40 | 4 |
 | CP-5 | repaired | CP-2 | verification | `/*/Antiphon.Tests.Application/(SessionMessageQueueDeliveryVerificationTests*)/*` | R-2 | all listed, 0 failed | 123 | 8 |
@@ -72,3 +75,4 @@ PC-4 retain the failed direct claim (both V-4 variants); PC-5 drop grace dispatc
 dispatch for no confirmed Channel source. This Code task runs no deliberate mutants.
 PC-7 omit bound-dispatch trailing watermark registration (both R-5 added variants) is pending.
 PC-8 let a losing dispatcher advance the watermark (both R-6 variants) is pending.
+PC-9 release ownership on caller cancellation while transport continues (both R-7 variants) is pending.
