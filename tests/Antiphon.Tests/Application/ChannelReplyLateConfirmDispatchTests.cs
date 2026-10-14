@@ -521,6 +521,96 @@ public class ChannelReplyLateConfirmDispatchTests
         producer.Sent.Count.ShouldBe(2);
     }
 
+    [Test]
+    [Arguments(false, true)]
+    [Arguments(true, false)]
+    public async Task Caller_cancellation_does_not_release_a_still_publishing_direct_reply(
+        bool unifiedRecovery, bool catalog)
+    {
+        using var bound = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        using var caller = new CancellationTokenSource();
+        var producer = new CancellableWaitProducer(bound.Token);
+        await using var h = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        {
+            Outbound = new ChannelOutboundSettings { UnifiedRecoveryEnabled = unifiedRecovery },
+            AlwaysOn = true,
+            ConfigureServices = s => s.AddSingleton<IAntiphonMessagingProducer>(producer),
+        });
+        var chatId = catalog ? await h.BindChannelAsync() : $"uncatalogued-{Guid.NewGuid():N}";
+        const string prompt = "[Telegram Family] Cancellation is not proof publication stopped";
+        const string answer = "The held transport delivers this answer once.";
+        var id = await h.SeedChannelCorrelationAsync(prompt, $"telegram:{chatId}");
+        await h.InsertTurnAsync(prompt, answer);
+        var first = h.Dispatcher.OnTurnEndAsync(h.SessionId, caller.Token);
+        Task? second = null;
+        try
+        {
+            await producer.Entered.Task.WaitAsync(bound.Token);
+            caller.Cancel();
+            // A cancellable producer wait can end while its transport operation is still held.
+            // Join that observed cancellation so the competing call sees completed cleanup.
+            if (producer.FirstWait!.IsCanceled)
+                await JoinFirstAsync();
+            second = h.Dispatcher.OnTurnEndAsync(h.SessionId, bound.Token);
+            await Task.WhenAny(second, producer.SecondEntered.Task).WaitAsync(bound.Token);
+            producer.Attempts.ShouldBe(1, "caller cancellation must not authorize another publisher");
+            producer.Sent.ShouldBeEmpty("the actual transport is still held");
+        }
+        finally
+        {
+            producer.Release.TrySetResult();
+            await JoinFirstAsync();
+            if (second is not null) await second.WaitAsync(bound.Token);
+            await producer.DrainAsync().WaitAsync(bound.Token);
+        }
+        var reply = producer.Sent.ShouldHaveSingleItem();
+        reply.Text.ShouldBe(answer);
+        reply.ConversationId.ShouldBe(chatId);
+        (await RowAsync(id)).ChannelReplySettledAt.ShouldNotBeNull();
+        await Restarted(h).OnTurnEndAsync(h.SessionId, bound.Token);
+        producer.Attempts.ShouldBe(1);
+
+        async Task JoinFirstAsync()
+        {
+            try { await first.WaitAsync(bound.Token); }
+            catch (OperationCanceledException) when (caller.IsCancellationRequested && !bound.IsCancellationRequested) { }
+        }
+    }
+
+    private sealed class CancellableWaitProducer(CancellationToken bound) : IAntiphonMessagingProducer
+    {
+        private int _attempts;
+        private readonly System.Collections.Concurrent.ConcurrentBag<Task> _transport = [];
+        public System.Collections.Concurrent.ConcurrentQueue<ChannelReply> Sent { get; } = [];
+        public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource SecondEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public Task? FirstWait { get; private set; }
+        public int Attempts => Volatile.Read(ref _attempts);
+
+        public Task SendAsync(ChannelReply reply, CancellationToken cancellationToken = default)
+        {
+            var transport = AcceptAsync(reply);
+            _transport.Add(transport);
+            var wait = transport.WaitAsync(cancellationToken);
+            if (Interlocked.Increment(ref _attempts) == 1)
+            {
+                FirstWait = wait;
+                Entered.TrySetResult();
+            }
+            else SecondEntered.TrySetResult();
+            return wait;
+        }
+
+        private async Task AcceptAsync(ChannelReply reply)
+        {
+            await Release.Task.WaitAsync(bound);
+            Sent.Enqueue(reply);
+        }
+
+        public Task DrainAsync() => Task.WhenAll(_transport);
+    }
+
     private sealed class FailOnceProducer : IAntiphonMessagingProducer
     {
         public int Attempts { get; private set; }
