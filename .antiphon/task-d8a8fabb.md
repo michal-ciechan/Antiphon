@@ -10,7 +10,7 @@ Outcome: the load-sensitive cost in `C506 S2R3 conflict-reload-controls` and its
 | Step | ms |
 |---|---:|
 | render + `loaded()` | 226 + 1069 |
-| `typeReason('reload control')` (14 keystrokes) | **2325 / 2537** |
+| `typeReason('reload control')` (per-character typing) | **2325 / 2537** |
 | same reason via click + `userEvent.paste` | 108 |
 | `num('Code max parallel')`, page-wide `getByRole` (first call) | 113 |
 | the same, scoped `within(row)` | 12 |
@@ -23,11 +23,11 @@ The waits and the conflict-reload round trips were cheap. Per-character typing o
 ## Change (test files only; no assertion or timeout changed)
 
 - `DispatchConcurrencyEditor.test.tsx`:
-  - `typeReason` now clicks the reason input and makes one `userEvent.paste`. No test exercises per-character typing of the reason; the disabled-input typing in `S2F3 pending-*` still uses `userEvent.type`.
+  - `typeReason` now clicks the reason input and pastes the reason with `userEvent.paste`. No test exercises per-character typing of the reason; the disabled-input typing in `S2F3 pending-*` still uses `userEvent.type`.
   - `sw`/`num`/a new `noLimit` query inside the limit row (`dispatch-concurrency-row-<role|overall>`), found from the first word of the control name.
   - The row Revert buttons are scoped to their row.
   - "Reload saved settings" is scoped to the `dispatch-concurrency-refresh-failed` alert.
-- `ConcurrencySettingsTab.test.tsx`: a local `typeReason` (click the reason test id, then paste) replaces three per-character `userEvent.type` calls (`V15 scope-selector` ×2, `S3F1 active-tab-click`).
+- `ConcurrencySettingsTab.test.tsx`: a local `typeReason` (click the reason test id, then paste) replaces the per-character `userEvent.type` calls in `V15 scope-selector` and `S3F1 active-tab-click`.
 - One side effect to note: a row-scoped query no longer implicitly asserts page-wide uniqueness of that control name.
 
 ## Load proof (10 runs, before and after under identical load)
@@ -92,3 +92,4 @@ The target is a slowest test of at most 6.67 s, which is 3x below 20 s.
 ## Corrections (Code 5eb3de29, Review 276af1a5 F1 follow-up)
 
 - Editor-file total time: the ten-run column gives medians 202 s before and 104.5 s after, a 1.93x ratio (sums 2,206 / 1,146 s = 1.92x). The earlier "2.2x lower" was wrong. No executions were added.
+- (Code 48f9ed83, Review d7a23abb F1 sweep) Removed test-internal counts that the tables do not prove: "14 keystrokes", "one `userEvent.paste`", and "three ... `userEvent.type` calls (×2)". No executions were added.

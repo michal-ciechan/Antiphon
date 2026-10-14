@@ -17,8 +17,8 @@ Outcome: F1 is fixed. F2 is partly met. With the after files, every test stayed 
 - Added assertions: `expect(scope()).toHaveAccessibleName('Scope')`, `expect(reason()).toHaveAccessibleName(/Reason/)` and `expect(save).toHaveAccessibleName('Save')`. These keep the label checks that the page-wide role queries used to imply.
 - Unchanged, with only the locator swapped: `toHaveValue('P')`, `not.toBeChecked()` ×2 and `toHaveValue('')` ×2. The Save click uses the same element through `const save`.
 - `setValue`: `skipClick: true` (an interaction option, not an assertion).
-- SettingsPage: the `traverse` helper (8 lines plus a 2-line comment), and `act(() => history.back()/forward())` became `await traverse(...)`.
-- Comments: two JSDoc blocks.
+- SettingsPage: the `traverse` helper with its explanatory comment, and `act(() => history.back()/forward())` became `await traverse(...)`.
+- Comments: JSDoc on the new tab helpers and on `setValue`.
 - Nothing was removed: no assertion, test case or timeout.
 
 ## Profile (loaded single test, CPUs 0-2 plus a busy loop, `ZzProfile*` temporaries since deleted)
@@ -99,7 +99,7 @@ The named editor cases `conflict mode-removed` and `refresh-fails` stayed at or 
 ### Disclosure
 
 - **`controlled-tab` (8.8 s, run 7, after copy only):** this is one spike. The test now waits for the real popstate, so the wait time is spent on navigation and render, and its findBy no longer starts its 1 s default before the traversal has run.
-- **`V10 overall-queued` (8.0 s and 9.0 s; before copy 7.6 s and 8.8 s):** it already uses only row-scoped and test-id lookups and paste. Its cost is 7 clicks and 2 saves, each re-rendering the 15-row editor. That cost belongs to the component, and this test-only task cannot reduce it further.
+- **`V10 overall-queued` (8.0 s and 9.0 s; before copy 7.6 s and 8.8 s):** it already uses paste, and its lookups are row-scoped or by test id, except one retained page-wide is-absent query in overall-queued. Its remaining cost is its clicks, each re-rendering the whole editor. That cost belongs to the component, and this test-only task cannot reduce it further.
 - **Page-wide negative query kept:** `queryByRole('checkbox', { name: 'Overall max parallel no limit' })` in that test was left page-wide on purpose. Narrowing it to the row would narrow what it asserts.
 
 ## Checks
@@ -135,3 +135,7 @@ Recomputed from this report's own tables; no executions were added.
 - Headline load-loop count: 1,316 was wrong. The pass-count table sums to 620 after + 620 before = 1,240 (4 + 6 + 52 = 62 tests per run, ten runs of each copy).
 - Medians recomputed from the ten-run table (mean of the 5th and 6th sorted values): `scope-selector` 5,026 / 6,019 ms (previously stated 4.9 / 5.9 s, 17%); `refresh-fails` 1,843 / 2,097.5 ms (previously 1.85 / 2.0 s, "no measurable change"). The commit subject of 2afb7524a still says 5.9->4.9 s; it is not rewritten.
 - Named editor cases' ceiling: the table maximum is 5,438 ms, so "at or below 5.4 s" became 5.44 s.
+
+## Corrections (Code 48f9ed83, Review d7a23abb F1)
+
+- Removed the test-internal counts that the tables do not prove: the `traverse` helper's line and comment-line counts, "two JSDoc blocks", and "7 clicks and 2 saves ... 15-row editor" for `V10 overall-queued`. The lookup wording now acknowledges the retained page-wide is-absent query. No executions were added.
