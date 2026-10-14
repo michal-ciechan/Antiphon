@@ -269,6 +269,153 @@ function serveRouting(options?: {
   )
 }
 
+const c1270AgentId = '7f0c2d4e-0000-4000-8000-000000000001'
+const c1270Reads = ['none', 'stage pin', 'chain', 'chain metadata', 'availability', 'standing agent', 'routing pins', 'role policy'] as const
+type C1270Read = typeof c1270Reads[number]
+type C1270Strength = 'Preferred' | 'Required'
+const c1270Failure = (part: string) => `${part} read failed (InvalidOperationException)`
+
+// Mirrors ComplexityChainService.GetEffectiveAsync for a Plan cell with a stored own rule [Grok]
+// and a stage pin to Codex/Frontier: each failed part falls back and appends its diagnostic.
+function c1270Cell(read: C1270Read, strength: C1270Strength, tier: TaskComplexity): ComplexityChainDto {
+  const governsDefault = tier === 'Medium'
+  const agentPin = read === 'standing agent'
+  const stagePin = {
+    id: 'pin-plan', cardId: null, cardIdentifier: null, role: 'Plan', provenance: 'Human', strength,
+    agentKind: agentPin ? null : 'Codex', modelLevel: agentPin ? null : 'Frontier', notBefore: null,
+    reason: 'operator choice', candidateCount: agentPin ? 0 : 1,
+  } as const
+  const pinCandidate = read === 'availability'
+    ? { ...codex, availableNow: false, unavailableReason: c1270Failure('availability') }
+    : codex
+  const pinned: Pick<ComplexityEffectiveDto, 'source' | 'candidates'> = strength === 'Required'
+    ? { source: 'pin', candidates: [pinCandidate] }
+    : { source: 'pin+chain', candidates: [pinCandidate, grok] }
+  const stored: Partial<ComplexityChainDto> = {
+    role: 'Plan', resolvedFrom: 'role', source: 'pin', provenance: 'Human', candidates: [grok],
+    reason: 'Plan cell', notAfter: '2026-11-01T00:00:00Z', updatedAt: '2026-10-01T00:00:00Z',
+  }
+  switch (read) {
+    case 'stage pin':
+      return chain(tier, { ...stored, effective: { source: 'role', candidates: [grok], stagePin: null, governsDefault, withheldReason: c1270Failure('stage pin') } })
+    case 'chain':
+      // The failed chain loads as resolvedFrom none: the default tier appends RolePolicy after a Preferred pin.
+      return chain(tier, { role: 'Plan', resolvedFrom: 'none', effective: {
+        source: pinned.source,
+        candidates: strength === 'Required' ? [codex] : governsDefault ? [codex, heldFable] : [codex],
+        stagePin, governsDefault, withheldReason: c1270Failure('chain'),
+      } })
+    case 'chain metadata':
+      return chain(tier, { ...stored, reason: null, notAfter: null, updatedAt: null, effective: { ...pinned, stagePin, governsDefault, withheldReason: c1270Failure('chain metadata') } })
+    case 'availability':
+      return chain(tier, { ...stored, effective: { ...pinned, stagePin, governsDefault, withheldReason: c1270Failure('availability') } })
+    case 'standing agent':
+      return chain(tier, { ...stored, effective: {
+        source: 'agent', candidates: [], stagePin, governsDefault: false,
+        withheldReason: `stage pin binds standing agent ${c1270AgentId} (unavailable); an ordinary dispatch runs on that agent and does not walk this row; ${c1270Failure('standing agent')}`,
+      } })
+    default:
+      return chain(tier, { ...stored, effective: { ...pinned, stagePin, governsDefault, withheldReason: null } })
+  }
+}
+
+const c1270Effective = {
+  Required: '1. Codex/Frontier (gpt-6-astra)',
+  PreferredTail: '2. Grok/Frontier (grok-4.7)',
+  stored: '1. Grok/Frontier (grok-4.7)',
+  reason: 'Plan cell',
+  expiry: 'Expires 2026-11-01T00:00:00Z',
+  chainMetadata: 'Provenance, reason and expiry unknown: chain read failed (InvalidOperationException)',
+  metadata: 'Reason and expiry unknown: chain metadata read failed (InvalidOperationException)',
+  availability: 'availability unknown: availability read failed (InvalidOperationException)',
+} as const
+const c1270Label = {
+  Required: 'Required Human pin → Codex/Frontier (gpt-6-astra)',
+  Preferred: 'Preferred Human pin → Codex/Frontier (gpt-6-astra), then this row',
+  unknown: 'Effective routing unknown',
+  agent: `Pinned to standing agent ${c1270AgentId} (name unknown) — an ordinary dispatch runs there; this row is not walked`,
+} as const
+
+// Every displayed cell field x each failing read. `present` texts are whole elements in the cell;
+// `absent` texts must not appear anywhere in it.
+const c1270Expectations: Record<C1270Read, Record<C1270Strength, { label: string; present: string[]; absent: string[]; alert: string | null }>> = {
+  'none': {
+    Required: { label: c1270Label.Required, present: [c1270Effective.Required, 'Own rule', 'Human', c1270Effective.stored, c1270Effective.reason, c1270Effective.expiry], absent: ['unknown', 'read failed'], alert: null },
+    Preferred: { label: c1270Label.Preferred, present: [c1270Effective.Required, c1270Effective.PreferredTail, 'Own rule', 'Human', c1270Effective.stored, c1270Effective.reason, c1270Effective.expiry], absent: ['unknown', 'read failed'], alert: null },
+  },
+  'stage pin': {
+    Required: { label: c1270Label.unknown, present: ['Human', c1270Effective.reason, c1270Effective.expiry], absent: ['Own rule', 'Codex/Frontier', 'Grok/Frontier', 'Required Human pin', 'then this row', 'expiry unknown'], alert: c1270Failure('stage pin') },
+    Preferred: { label: c1270Label.unknown, present: ['Human', c1270Effective.reason, c1270Effective.expiry], absent: ['Own rule', 'Codex/Frontier', 'Grok/Frontier', 'Preferred Human pin', 'then this row', 'expiry unknown'], alert: c1270Failure('stage pin') },
+  },
+  'chain': {
+    Required: { label: c1270Label.Required, present: [c1270Effective.Required, 'Stored cell: unknown (read failed)', c1270Effective.chainMetadata], absent: ['Own rule', 'Grok/Frontier', 'ClaudeCode/Frontier', 'then this row', 'Plan cell', 'Expires', 'Stored cell: unset', 'dispatch blocks'], alert: c1270Failure('chain') },
+    Preferred: { label: c1270Label.unknown, present: ['Stored cell: unknown (read failed)', c1270Effective.chainMetadata], absent: ['Preferred Human pin', 'Codex/Frontier', 'Grok/Frontier', 'ClaudeCode/Frontier', 'then this row', 'Own rule', 'Plan cell', 'Expires', 'Stored cell: unset', 'dispatch blocks'], alert: c1270Failure('chain') },
+  },
+  'chain metadata': {
+    Required: { label: c1270Label.Required, present: [c1270Effective.Required, 'Own rule', 'Human', c1270Effective.stored, c1270Effective.metadata], absent: ['Plan cell', 'Expires', 'Effective routing unknown', 'Stored cell: unknown'], alert: c1270Failure('chain metadata') },
+    Preferred: { label: c1270Label.Preferred, present: [c1270Effective.Required, c1270Effective.PreferredTail, 'Own rule', 'Human', c1270Effective.stored, c1270Effective.metadata], absent: ['Plan cell', 'Expires', 'Effective routing unknown', 'Stored cell: unknown'], alert: c1270Failure('chain metadata') },
+  },
+  'availability': {
+    Required: { label: c1270Label.Required, present: [c1270Effective.Required, c1270Effective.availability, 'Own rule', 'Human', c1270Effective.stored, c1270Effective.reason, c1270Effective.expiry], absent: ['Effective routing unknown', 'expiry unknown'], alert: c1270Failure('availability') },
+    Preferred: { label: c1270Label.Preferred, present: [c1270Effective.Required, c1270Effective.PreferredTail, c1270Effective.availability, 'Own rule', 'Human', c1270Effective.stored, c1270Effective.reason, c1270Effective.expiry], absent: ['Effective routing unknown', 'expiry unknown'], alert: c1270Failure('availability') },
+  },
+  'standing agent': {
+    Required: { label: c1270Label.agent, present: ['Own rule', 'Human', c1270Effective.stored, c1270Effective.reason, c1270Effective.expiry], absent: ['Codex/Frontier', 'Effective routing unknown', '(unavailable) —'], alert: c1270Failure('standing agent') },
+    Preferred: { label: c1270Label.agent, present: ['Own rule', 'Human', c1270Effective.stored, c1270Effective.reason, c1270Effective.expiry], absent: ['Codex/Frontier', 'Effective routing unknown', '(unavailable) —'], alert: c1270Failure('standing agent') },
+  },
+  'routing pins': {
+    Required: { label: c1270Label.Required, present: [c1270Effective.Required, 'Own rule', 'Human', c1270Effective.stored, c1270Effective.reason, c1270Effective.expiry], absent: ['unknown', 'read failed'], alert: null },
+    Preferred: { label: c1270Label.Preferred, present: [c1270Effective.Required, c1270Effective.PreferredTail, 'Own rule', 'Human', c1270Effective.stored, c1270Effective.reason, c1270Effective.expiry], absent: ['unknown', 'read failed'], alert: null },
+  },
+  'role policy': {
+    Required: { label: c1270Label.Required, present: [c1270Effective.Required, 'Own rule', 'Human', c1270Effective.stored, c1270Effective.reason, c1270Effective.expiry], absent: ['unknown', 'read failed'], alert: null },
+    Preferred: { label: c1270Label.Preferred, present: [c1270Effective.Required, c1270Effective.PreferredTail, 'Own rule', 'Human', c1270Effective.stored, c1270Effective.reason, c1270Effective.expiry], absent: ['unknown', 'read failed'], alert: null },
+  },
+}
+
+describe('C1270 failed-read matrix display', () => {
+  it.each(c1270Reads.flatMap(read => (['Preferred', 'Required'] as const).flatMap(strength =>
+    (['Medium', 'Easy'] as const).map(tier => ({ read, strength, tier })))))(
+    'C1270 V-2 $read read failure with a $strength pin on $tier', async ({ read, strength, tier }) => {
+      const expected = c1270Expectations[read][strength]
+      const stagePin = pin({
+        id: 'pin-plan', role: 'Plan', strength,
+        agentKind: read === 'standing agent' ? null : 'Codex',
+        modelLevel: read === 'standing agent' ? null : 'Frontier',
+        modelAlias: read === 'standing agent' ? null : 'gpt-6-astra',
+        agentId: read === 'standing agent' ? c1270AgentId : null,
+      })
+      serveRouting({ pins: [stagePin], effective: { Plan: { ...planEffective, chains: [c1270Cell(read, strength, tier)] } } })
+      if (read === 'routing pins') server.use(http.get('/api/routing-pins', () => HttpResponse.json({ title: 'boom' }, { status: 500 })))
+      if (read === 'role policy') server.use(http.get('/api/role-policy', () => HttpResponse.json({ title: 'boom' }, { status: 500 })))
+      renderWithProviders(<RoutingSettingsTab />)
+
+      const cell = await screen.findByTestId(`routing-matrix-cell-Plan-${tier}`)
+      expect(await within(cell).findByText(expected.label)).toBeInTheDocument()
+      for (const text of expected.present) expect(within(cell).getByText(text)).toBeInTheDocument()
+      for (const text of expected.absent) expect(cell).not.toHaveTextContent(text)
+      if (expected.alert) expect(within(cell).getByRole('alert')).toHaveTextContent(expected.alert)
+      else expect(within(cell).queryByRole('alert')).not.toBeInTheDocument()
+      expect(within(cell).getByRole('button', { name: `Configure Plan / ${tier}` })).toBeEnabled()
+
+      const row = cell.closest('tr')!
+      const target = read === 'standing agent' ? 'the pinned target' : 'Codex/Frontier'
+      const banner = strength === 'Required'
+        ? `Required Human pin: Plan → ${target}. Overrides the Plan cells while this pin is active.`
+        : `Preferred Human pin: Plan → ${target}. Tried before each Plan cell.`
+      if (read === 'routing pins') {
+        expect(await screen.findByText('Could not load routing pins. Matrix cells still reflect the chain service.')).toBeInTheDocument()
+        expect(row).not.toHaveTextContent(banner)
+      } else {
+        expect(await within(row).findByText(banner)).toBeInTheDocument()
+      }
+      if (read === 'role policy') {
+        expect(await within(screen.getByTestId('role-policy-section')).findByText('Could not load role policy.')).toBeInTheDocument()
+      }
+    },
+  )
+})
+
 describe('RoutingSettingsTab', () => {
   it.each((['pin', 'pin+chain', 'role', 'any', 'config', 'rolePolicy', 'agent'] as const)
     .flatMap(source => (['Hard', 'Medium', 'Easy'] as const).map(tier => ({ source, tier }))))(
