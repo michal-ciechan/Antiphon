@@ -23,6 +23,7 @@
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="9.0.4" />
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="9.0.4" />
     <PackageReference Include="Testcontainers.Redpanda" Version="4.14.0" />
+    <PackageReference Include="Testcontainers.PostgreSql" Version="4.14.0" />
     <!-- Self-host FakeTelegramServer / FakeSlackServer (Kestrel + minimal API + WebSockets). -->
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>

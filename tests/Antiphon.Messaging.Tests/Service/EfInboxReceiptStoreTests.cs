@@ -15,6 +15,55 @@ namespace Antiphon.Messaging.Tests.Service;
 public sealed class EfInboxReceiptStoreTests
 {
     [Test]
+    public async Task Same_message_id_in_two_chats_preserves_both_receipts_and_redelivery()
+    {
+        await using var harness = await StoreHarness.CreateAsync();
+        await harness.Store.RecordAsync(Sample("1068", "8738110514"), "{\"text\":\"dm\"}", "channels.inbound", 0, 10, CancellationToken.None);
+        await harness.Store.RecordAsync(Sample("1068", "-5052370282"), "{\"text\":\"group\"}", "channels.inbound", 1, 20, CancellationToken.None);
+        await harness.Store.RecordAsync(Sample("1068", "-5052370282"), "{\"text\":\"replay\"}", "channels.inbound", 1, 21, CancellationToken.None);
+
+        var rows = await harness.LoadAsync();
+        rows.Count.ShouldBe(2);
+        var dm = rows.Single(x => x.ConversationId == "8738110514");
+        dm.EnvelopeJson.ShouldBe("{\"text\":\"dm\"}");
+        dm.Offset.ShouldBe(10);
+        var group = rows.Single(x => x.ConversationId == "-5052370282");
+        group.EnvelopeJson.ShouldBe("{\"text\":\"group\"}");
+        group.Partition.ShouldBe(1);
+        group.Offset.ShouldBe(20);
+        group.ReplyHandle.ShouldBe("-5052370282");
+    }
+
+    [Test]
+    public async Task Database_unique_key_allows_two_chats_but_rejects_a_true_duplicate()
+    {
+        await using var harness = await StoreHarness.CreateAsync();
+        await harness.InsertAsync(Row("chat-1"));
+        await harness.InsertAsync(Row("chat-2"));
+        await harness.InsertIgnoringDuplicateAsync(Row("chat-2"));
+        (await harness.LoadAsync()).Select(x => x.ConversationId).Order().ShouldBe(["chat-1", "chat-2"]);
+    }
+
+    [Test]
+    public async Task Offset_backfill_does_not_attach_another_chats_delivery_to_a_legacy_row()
+    {
+        await using var harness = await StoreHarness.CreateAsync();
+        await harness.InsertAsync(Row("chat-1"));
+        await harness.Store.RecordAsync(Sample("1068", "chat-2"), "{}", "channels.inbound", 2, 99, CancellationToken.None);
+        var rows = await harness.LoadAsync();
+        rows.Count.ShouldBe(2);
+        rows.Single(x => x.ConversationId == "chat-1").Offset.ShouldBeNull();
+        rows.Single(x => x.ConversationId == "chat-2").Offset.ShouldBe(99);
+    }
+
+    private static InboxMessage Row(string conversationId) => new()
+    {
+        Id = Guid.NewGuid(), Channel = "telegram", ChannelMessageId = "1068",
+        ConversationId = conversationId, ReplyHandle = conversationId,
+        ReceivedAt = DateTimeOffset.UnixEpoch, EnvelopeJson = "{}",
+    };
+
+    [Test]
     public void Unique_violation_is_detected_from_a_wrapped_postgres_23505()
     {
         InboxUniqueConstraint.IsViolation(DuplicateInboxException()).ShouldBeTrue();
@@ -153,7 +202,7 @@ public sealed class EfInboxReceiptStoreTests
         Raw = JsonDocument.Parse("{}").RootElement.Clone(),
     };
 
-    private sealed class StoreHarness : IAsyncDisposable
+    internal sealed class StoreHarness : IAsyncDisposable
     {
         private StoreHarness(ServiceProvider services, SqliteConnection connection)
         {

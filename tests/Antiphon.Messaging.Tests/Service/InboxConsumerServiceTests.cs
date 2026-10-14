@@ -41,6 +41,65 @@ public sealed class InboxConsumerServiceTests
     }
 
     [Test]
+    public async Task Two_chats_with_the_same_message_id_are_stored_after_broker_publication()
+    {
+        if (_broker is null) Skip.Test("set ANTIPHON_BROKER_TESTS=1 with Docker running");
+        var bootstrap = _broker!.GetBootstrapAddress();
+        var topic = $"c1248-inbound-{Guid.NewGuid():N}";
+        using (var admin = new AdminClientBuilder(new AdminClientConfig { BootstrapServers = bootstrap }).Build())
+            await admin.CreateTopicsAsync([new TopicSpecification { Name = topic, NumPartitions = 1, ReplicationFactor = 1 }]);
+        using (var producer = new ProducerBuilder<string, string>(new ProducerConfig { BootstrapServers = bootstrap }).Build())
+        {
+            foreach (var chat in new[] { "chat-1", "chat-2", "chat-2" })
+                await producer.ProduceAsync(topic, new Message<string, string>
+                {
+                    Key = chat,
+                    Value = JsonSerializer.Serialize(EfInboxReceiptStoreTests.Sample("1068", chat), MessagingJson.Options),
+                });
+        }
+
+        await using var store = await EfInboxReceiptStoreTests.StoreHarness.CreateAsync();
+        var sink = new ObservedSink(store.Store);
+        var builder = Host.CreateEmptyApplicationBuilder(new HostApplicationBuilderSettings());
+        builder.Services.AddLogging();
+        builder.Services.AddSingleton(MessagingJson.Options);
+        builder.Services.AddSingleton<IInboundReceiptSink>(sink);
+        builder.Services.AddSingleton(Options.Create(new AntiphonGatewayOptions
+        {
+            BootstrapServers = bootstrap, InboundTopic = topic, ConsumerGroup = $"c1248-{Guid.NewGuid():N}",
+        }));
+        builder.Services.AddHostedService<InboxConsumerService>();
+        using var host = builder.Build();
+        await host.StartAsync();
+        try
+        {
+            await sink.Completed.Task.WaitAsync(TimeSpan.FromSeconds(45));
+        }
+        finally
+        {
+            await host.StopAsync(TimeSpan.FromSeconds(15));
+        }
+
+        var rows = await store.LoadAsync();
+        rows.Count.ShouldBe(2);
+        rows.Single(x => x.ConversationId == "chat-1").Offset.ShouldBe(0);
+        rows.Single(x => x.ConversationId == "chat-2").Offset.ShouldBe(1);
+    }
+
+    private sealed class ObservedSink(IInboundReceiptSink inner) : IInboundReceiptSink
+    {
+        private int _calls;
+        public TaskCompletionSource Completed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public async Task RecordAsync(ChannelMessage message, string envelopeJson, string topic, int partition,
+            long offset, CancellationToken cancellationToken)
+        {
+            await inner.RecordAsync(message, envelopeJson, topic, partition, offset, cancellationToken);
+            if (Interlocked.Increment(ref _calls) == 3) Completed.TrySetResult();
+        }
+    }
+
+    [Test]
     public async Task Duplicate_key_persist_failure_does_not_stop_the_host()
     {
         if (_broker is null) Skip.Test("set ANTIPHON_BROKER_TESTS=1 with Docker running");
