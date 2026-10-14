@@ -73,7 +73,9 @@ const INVALIDATION_MAP: InvalidationMapping[] = [
       ['boards'],
       ...(p.boardId ? [['boards', p.boardId]] : []),
       ['card-file-status'],
-      ...(p.cardId ? [['private-notes', p.cardId], ['cards', p.cardId]] : []),
+      // The full card is keyed ['cards', 'detail', id] (boardKeys.card), which ['cards', id] does
+      // not prefix-match; without it an open card keeps a stale concurrency token (CARD-1256).
+      ...(p.cardId ? [['private-notes', p.cardId], ['cards', p.cardId], ['cards', 'detail', p.cardId]] : []),
       ['cards', 'list'],
       ['cards', 'thread'],
       // A card parked for (or moved out of) a human decision changes the same attention feed as

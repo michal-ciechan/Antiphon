@@ -67,6 +67,7 @@ spent in `userEvent.type` keystrokes (2.9 s alone).
 | V-5 | `useSignalRInvalidation.test.ts` › `C1256 a mounted full card refetches after CardChanged and carries the new token` | Mounted `useCard` refetches to token-2. Red at S1. |
 | R-1 | Full `CardModal`, `CardBlockers`, `CardEditModal`, `useSignalRInvalidation` files | Neighbours unchanged. |
 | R-2 | Full client suite incl. `lint.gate.test.ts` | Lint (react-refresh rule), whole-suite load. |
+| R-3 | `tsc -b` over the client | The new loader's types and the test imports typecheck (vitest strips types). |
 
 ### Positive controls (pending for SourceLanding Mutation)
 
@@ -89,6 +90,7 @@ Red-first runs at S1 and the stress repetitions run through `scripts/build-slot.
 |---|---|---|---|---|---|---|---:|---:|---|
 | CP-1 | S2 | n/a | client-affected | `pwsh -NoProfile -File scripts/test-client.ps1 src/features/board/CardModal.test.tsx src/features/board/CardBlockers.test.tsx src/features/board/CardEditModal.test.tsx src/hooks/useSignalRInvalidation.test.ts` | V-1..V-5, R-1 | 4 files; `Tests 49 passed`, 0 failed/skipped; `CLIENT TESTS EXIT CODE: 0` | n/a | 4 | false |
 | CP-2 | S2 | n/a | client-full | `pwsh -NoProfile -File scripts/test-client.ps1` | R-2 | `CLIENT TESTS EXIT CODE: 0`, 0 failed/skipped, `lint gate` present | n/a | 12 | true |
+| CP-3 | S2 | n/a | client-types | `node client/node_modules/typescript/bin/tsc -b client/tsconfig.json --pretty false` | R-3 | exit 0, 0 TypeScript errors | n/a | 2 | false |
 
 Census (source, S2): `CardModal` 19, `CardBlockers` 6 + 2 = 8, `CardEditModal` 14,
 `useSignalRInvalidation` 6 + 2 = 8 → 49 (`it(` census; no `each`, `skip`, `only` or `todo`).
