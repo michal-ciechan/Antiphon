@@ -340,6 +340,7 @@ describe('DelegateModal', () => {
     serveRolePolicyRow('Plan', (row) => ({
       ...row,
       level: 'Frontier',
+      stagePin: previewPin([candidate('ClaudeCode', 'High', 'opus')]),
       effective: { source: 'pin', agentKind: 'ClaudeCode', modelLevel: 'High', alias: 'opus', strength: 'Required' },
     }))
     renderWithProviders(<DelegateModal opened onClose={() => {}} />)
@@ -355,8 +356,8 @@ describe('DelegateModal', () => {
     renderWithProviders(<DelegateModal opened onClose={() => {}} />)
 
     await userEvent.click(screen.getByRole('radio', { name: 'Mutation' }))
-    expect(await screen.findByTestId('delegate-tier-source-fallback')).toBeInTheDocument()
-    expect(screen.getByTestId('tier-Low')).toBeInTheDocument()
+    expect((await screen.findByTestId('delegate-tier-source-unknown')).textContent).toBe('unknown — role policy snapshot depends on the server')
+    expect(screen.queryByTestId('tier-Low')).not.toBeInTheDocument()
     expect(screen.getByLabelText('Goal')).toBeInTheDocument()
     await userEvent.type(screen.getByLabelText('Goal'), 'run the positive controls')
     expect(screen.getByRole('button', { name: 'Delegate' })).toBeEnabled()
@@ -395,13 +396,13 @@ describe('DelegateModal', () => {
     expect(screen.queryByTestId('tier-High')).not.toBeInTheDocument()
   })
 
-  it('C097 V27 orchestrator-floor-on-server-level', async () => {
+  it('C097 V27 orchestrator-floor-is-a-server-setting', async () => {
     renderWithProviders(<DelegateModal opened onClose={() => {}} />)
 
     await userEvent.click(screen.getByRole('radio', { name: 'Sub-orchestrator' }))
     await userEvent.click(screen.getByRole('radio', { name: 'Mutation' }))
-    expect(await screen.findByTestId('delegate-tier-source-rolePolicy')).toBeInTheDocument()
-    expect(screen.getByTestId('tier-High')).toBeInTheDocument()
+    expect((await screen.findByTestId('delegate-tier-source-unknown')).textContent).toBe('unknown — Orchestrator level depends on the server floor')
+    expect(screen.queryByTestId('tier-High')).not.toBeInTheDocument()
     expect(screen.queryByTestId('tier-Low')).not.toBeInTheDocument()
   })
 
@@ -473,7 +474,7 @@ describe('DelegateModal', () => {
     renderWithProviders(<DelegateModal opened onClose={() => {}} />)
 
     expect((await screen.findByTestId('delegate-tier-source-agent')).textContent).toBe(
-      'stage pin binds standing agent Scout (Codex); an ordinary dispatch runs on that agent and does not walk this row',
+      'stage pin binds a standing agent; its model and admission depend on the server',
     )
     expect(screen.queryByTestId('delegate-tier-source-rolePolicy')).not.toBeInTheDocument()
   })

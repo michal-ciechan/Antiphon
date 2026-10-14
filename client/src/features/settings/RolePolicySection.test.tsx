@@ -120,7 +120,7 @@ describe('RolePolicySection', () => {
 
     const code = screen.getByTestId('role-policy-row-Code')
     expect(within(code).getByTestId('role-policy-pin-Code').textContent).toBe('—')
-    expect(screen.getByTestId('role-policy-next-worker-Code').textContent).toBe('default → ClaudeCode/Frontier (fable)')
+    expect(screen.getByTestId('role-policy-next-worker-Code').textContent).toBe('default → ClaudeCode/Frontier (fable); availability depends on the server')
 
     expect(within(screen.getByTestId('role-policy-section')).queryByText(/fallback to/i)).not.toBeInTheDocument()
   })
@@ -151,10 +151,10 @@ describe('RolePolicySection', () => {
 
     const worker = await screen.findByText('Hard row → ClaudeCode/High (opus), skipping held gpt-6-astra')
     expect(worker).toHaveAttribute('data-testid', 'role-policy-next-worker-Code')
-    expect(screen.getByTestId('role-policy-next-orchestrator-Code').textContent).toBe('default → ClaudeCode/Frontier (fable)')
-    expect(screen.getByTestId('role-policy-next-worker-Docs').textContent).toBe('default → ClaudeCode/Medium (sonnet)')
+    expect(screen.getByTestId('role-policy-next-orchestrator-Code').textContent).toBe('default → ClaudeCode/Frontier (fable); availability depends on the server')
+    expect(screen.getByTestId('role-policy-next-worker-Docs').textContent).toBe('default → ClaudeCode/Medium (sonnet); availability depends on the server')
     expect(screen.getByTestId('role-policy-next-orchestrator-Docs').textContent).toBe(
-      'default → ClaudeCode/Medium (sonnet); Orchestrator floor → High',
+      'unknown — Orchestrator level depends on the server floor',
     )
   })
 })

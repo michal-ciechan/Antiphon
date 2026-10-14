@@ -49,8 +49,10 @@ export function RolePolicySection() {
         <Text size="sm" c="dimmed">
           The configured RolePolicy for each role beside its active stage-wide pin. Read-only here;
           pins are set with scripts/routing-pin.ps1. The next create assumes no card, kind, agent or
-          level: a Worker walks the default-tier row and skips held candidates; an Orchestrator keeps
-          the pin or policy, floored at High.
+          level. A single composed pin target bypasses the matrix; otherwise eligible Workers use the
+          default-tier row. Walks filter stage forbids, kinds, holds and quota. Single targets can be
+          refused. Unknown means the reads lack a routing fact. Snapshots refresh every 15 seconds;
+          admission and standing-agent details depend on the server.
         </Text>
         <Table striped withRowBorders={false} layout="fixed">
           <Table.Thead>
@@ -77,7 +79,7 @@ export function RolePolicySection() {
 function RolePolicyRow({ row }: { row: RolePolicyRowDto }) {
   const cells = useComplexityChainEffective(row.role)
   const worker = nextCreateLabel(previewNextCreate({ kind: 'Worker', explicitLevel: null, row, cells: cells.data }))
-  const orchestrator = nextCreateLabel(previewNextCreate({ kind: 'Orchestrator', explicitLevel: null, row, cells: undefined }))
+  const orchestrator = nextCreateLabel(previewNextCreate({ kind: 'Orchestrator', explicitLevel: null, row, cells: cells.data }))
   return (
     <Table.Tr data-testid={`role-policy-row-${row.role}`}>
       <Table.Td>
