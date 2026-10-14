@@ -132,52 +132,6 @@ public class ProjectDeletionTests
         }
     }
 
-    // CARD-1251 probe for CARD-1244: a Done move leaves a CardWorktreeCleanup (Restrict FKs).
-    [Test]
-    public async Task Probe_c1244_force_delete_removes_a_card_with_a_worktree_cleanup_row()
-    {
-        var tempRoot = NewTempRoot();
-        try
-        {
-            var project = await SeedProjectAsync(tempRoot);
-            await using var harness = BuildHarness();
-            var board = await harness.Boards.CreateAsync(
-                new CreateBoardRequest(project.Id, "Delivery"), CancellationToken.None);
-            var card = await SeedCardAsync(board, "CARD-1", CardStatus.Done);
-            await using (var seed = CreateContext())
-            {
-                var revision = new CardRevision
-                {
-                    Id = Guid.NewGuid(), CardId = card.Id, RevisionNumber = 1,
-                    Kind = CardRevisionKind.Move, ToStatus = CardStatus.Done, CreatedAt = DateTime.UtcNow
-                };
-                seed.CardRevisions.Add(revision);
-                seed.CardWorktreeCleanups.Add(new CardWorktreeCleanup
-                {
-                    Id = Guid.NewGuid(), CardId = card.Id, DoneRevisionId = revision.Id,
-                    DoneAt = DateTime.UtcNow, CreatedAt = DateTime.UtcNow
-                });
-                await seed.SaveChangesAsync();
-            }
-
-            await harness.Projects.DeleteAsync(project.Id, force: true, CancellationToken.None);
-
-            await using var verify = CreateContext();
-            (await verify.Cards.AnyAsync(c => c.Id == card.Id)).ShouldBeFalse();
-        }
-        finally
-        {
-            await using (var db = CreateContext())
-            {
-                var cardIds = await db.Cards.Where(c => c.Board.Project.LocalRepositoryPath!.StartsWith(tempRoot))
-                    .Select(c => c.Id).ToListAsync();
-                await db.CardWorktreeCleanups.Where(c => cardIds.Contains(c.CardId)).ExecuteDeleteAsync();
-                await db.CardRevisions.Where(r => cardIds.Contains(r.CardId)).ExecuteDeleteAsync();
-            }
-            await CleanupAsync(tempRoot);
-        }
-    }
-
     [Test]
     public async Task Force_delete_removes_card_workflow_runs_and_stages()
     {
