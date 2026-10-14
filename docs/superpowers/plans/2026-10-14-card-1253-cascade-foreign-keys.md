@@ -12,7 +12,7 @@ Run CP-1 against unchanged production code to establish the guarded defects.
 
 S2: Explicitly delete nudges selected by doomed comment IDs and decision questions selected
 by doomed session IDs before those parents, within the existing caller transaction. Preserve
-force-delete safeguards, history, FK definitions and error propagation. Run final CP-1/2/3.
+force-delete safeguards, history, FK definitions and error propagation. Run final CP-1/2/4.
 
 The Done cleanup executors remain unregistered. Activating them requires coordinating
 deletion with in-flight recovery records; activation is outside this task.
@@ -32,8 +32,10 @@ compares the EF model against a hand-written 15-link inventory.
 R-1: Full `ProjectDeletionTests` (20), including existing workflow refusal, last-board workflow
 preservation, confirmation, agent detachment, session and CARD-1244 cleanup/rollback cases.
 R-2: Full `BoardProjectArchiveApiTests` (2) and `CardFilePrivacyOwnershipAcceptanceTests` (16).
-R-3: Whole Unit lane required by the Final profile and stage instructions (the narrow brief
-also says no whole Unit; the higher-priority Final requirement governs). No full assembly run.
+R-3: Deferred disclosure: the proposed bounded whole Unit follow-up is not run, per the
+caller's closing scope clarification. It is outside this task's remaining verification and
+is not a passing result. The earlier broad CP-3 attempt and its timeout remain recorded below.
+No further whole Unit run or wait is authorized on this loaded host. No full assembly run.
 R-4: Full `SessionStateWarmupTests` (16) and `CardFileBoardLookupTests` (45), discovered by
 the delete-path caller audit: committed/rolled-back session projection and board lookup invalidation.
 Manual M-1: inspect the complete model snapshot for every Restrict/NoAction link into Card,
@@ -80,7 +82,8 @@ All pending SourceLanding Mutation; candidate artifacts belong under docs/superp
 ### Cost
 
 One build per committed source group, shared by all its rows. Expected 8 minutes for red S1,
-21 minutes for final S2, plus authoring, receipts and review preparation. No repetition after green.
+14 minutes for the scoped final S2 rows, plus authoring, receipts and review preparation.
+The historical Unit attempt is disclosed below, not queued again. No repetition after green.
 The checkpoint tool bootstrap is the only planned unlisted build and takes a build slot.
 
 ### Checkpoints
@@ -89,11 +92,14 @@ The checkpoint tool bootstrap is the only planned unlisted build and takes a bui
 |---|---|---|---|---|---|---|---:|---:|
 | CP-1 | S2 | `tests/Antiphon.Tests -> bin-c1253/` | cascade-fks | `/*/*/(ProjectCascadeForeignKeyTests*)/*` | V-1, V-2, V-3, V-4 | all 11 cases, 0 failed/skipped; S1 first run intentionally red | 11 | 8 |
 | CP-2 | S2 | CP-1 | deletion-regressions | `/*/*/(ProjectDeletionTests*)\|(BoardProjectArchiveApiTests*)\|(CardFilePrivacyOwnershipAcceptanceTests*)/*` | R-1, R-2 | all 38 cases, 0 failed/skipped | 38 | 3 |
-| CP-3 | S2 | CP-1 | unit | `/*/*/*/*[Category=Unit]` | R-3 | >= 1 executed, 0 failed/skipped | 1 | 7 |
 | CP-4 | S2 | CP-1 | deletion-consumers | `/*/*/(SessionStateWarmupTests*)\|(CardFileBoardLookupTests*)/*` | R-4 | all 61 cases, 0 failed/skipped | 61 | 3 |
 
 S1 runs CP-1 by explicit row selection before the S2 implementation; S2 reruns the same row
-and runs CP-2/CP-3/CP-4 once. Outputs from red S1 are removed before the final fresh build.
+and runs CP-2/CP-4 once. Outputs from red S1 are removed before the final fresh build.
+
+CP-3 is retained as historical evidence, outside the executable checkpoint table: its original
+whole Unit filter was `/*/*/*/*[Category=Unit]`, with a 7-minute estimate and unchanged
+21-minute deadline. Removing its executable row does not change its recorded timeout or receipts.
 
 ## Code outcome (2026-10-14)
 
@@ -102,16 +108,19 @@ R-1/R-2/R-4 passed: 110 integration cases, zero failures/skips. The eight new fa
 cases were red on unchanged production before the fix. All 15 audit links have live
 probes; no further restrictive-FK deletion blocker was found.
 
-R-3 is incomplete. CP-3 reached its unchanged 21-minute deadline without a terminal TRX.
+R-3 bounded follow-up: NOT RUN, DEFERRED by the caller; not a completion gate for this
+scoped handoff. The earlier CP-3 attempt reached its unchanged 21-minute deadline without a terminal TRX.
 Its partial log contains 19 failures and 37 Windows-only skip messages. A focused base
 probe at `c637b74eea51bb88cf0d2137c05672692ab909dc` executed all 19 failed methods and
 reproduced all 19 failures. The initial base filter selected zero tests; the documented
 method-prefix wildcard repair reused that build. Both attempts are retained as unlisted,
-necessary failure-triage evidence. The Unit timeout itself was not repeated at base.
+necessary failure-triage evidence. The 19 failures are inherited; the 37 Windows-only skips
+remain unqualified. The Unit timeout itself was not repeated at base.
 
 CP-1/CP-2/CP-4 clean receipts validated at the implementation SHA. The entire selection
-does not qualify as clean Final evidence. Code continuation must complete R-3 with bounded
-selections and native placement, and triage the inherited failures, before ordinary Review.
+does not qualify as clean whole Unit evidence. The caller explicitly closed further Unit
+work as out of scope. V-1 through V-4 and R-1/R-2/R-4 are the completed ordinary verification
+for this handoff; next is Review with R-3 deferred and its historical evidence disclosed.
 No timeout or assertion was loosened. All PC-1 through PC-9 variants remain pending for
 SourceLanding Mutation. Original landing owner remains `f3a5b136-0402-405d-88cd-4b3875b5d366`.
 
