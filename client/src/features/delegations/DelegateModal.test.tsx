@@ -403,7 +403,82 @@ describe('DelegateModal', () => {
     expect(screen.getByTestId('tier-High')).toBeInTheDocument()
     expect(screen.queryByTestId('tier-Low')).not.toBeInTheDocument()
   })
+
+  it('C1250 V13 worker-preview-reads-the-default-tier-row-and-orchestrator-does-not', async () => {
+    serveCodeRow('Medium', [held('Codex', 'Frontier', 'gpt-6-astra'), candidate('ClaudeCode', 'High', 'opus')])
+    renderWithProviders(<DelegateModal opened onClose={() => {}} />)
+
+    expect((await screen.findByTestId('delegate-tier-source-matrix')).textContent).toBe(
+      'from the Medium row, skipping held gpt-6-astra',
+    )
+    expect(screen.getByTestId('tier-High')).toBeInTheDocument()
+    expect(screen.queryByTestId('tier-Frontier')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('radio', { name: 'Sub-orchestrator' }))
+    await userEvent.click(screen.getByRole('radio', { name: 'Code' }))
+    expect(await screen.findByTestId('delegate-tier-source-rolePolicy')).toBeInTheDocument()
+    expect(screen.getByTestId('tier-Frontier')).toBeInTheDocument()
+    expect(screen.queryByTestId('delegate-tier-source-matrix')).not.toBeInTheDocument()
+  })
+
+  it('C1250 V14 non-medium-default-tier-row', async () => {
+    serveCodeRow('Easy', [candidate('Codex', 'Low', 'gpt-5.6-luna')])
+    renderWithProviders(<DelegateModal opened onClose={() => {}} />)
+
+    expect((await screen.findByTestId('delegate-tier-source-matrix')).textContent).toBe('from the Easy row')
+    expect(screen.getByTestId('tier-Low')).toBeInTheDocument()
+  })
+
+  it('C1250 V15 exhausted-row-says-blocked', async () => {
+    serveCodeRow('Medium', [held('Codex', 'High', 'gpt-6.1-sol'), held('ClaudeCode', 'High', 'opus')])
+    renderWithProviders(<DelegateModal opened onClose={() => {}} />)
+
+    expect((await screen.findByTestId('delegate-tier-source-exhausted')).textContent).toBe(
+      'every Medium-row candidate is held; the create would be Blocked',
+    )
+    expect(screen.getByTestId('tier-High')).toBeInTheDocument()
+  })
+
+  it('C1250 V16 agent-only-stage-pin', async () => {
+    serveCodeRow('Medium', [], 'agent', 'stage pin binds standing agent Scout (Codex); an ordinary dispatch runs on that agent and does not walk this row')
+    renderWithProviders(<DelegateModal opened onClose={() => {}} />)
+
+    expect((await screen.findByTestId('delegate-tier-source-agent')).textContent).toBe(
+      'stage pin binds standing agent Scout (Codex); an ordinary dispatch runs on that agent and does not walk this row',
+    )
+    expect(screen.queryByTestId('delegate-tier-source-rolePolicy')).not.toBeInTheDocument()
+  })
 })
+
+function candidate(agentKind: string, modelLevel: string, alias: string) {
+  return { agentKind, modelLevel, alias, availableNow: true, unavailableReason: null }
+}
+
+function held(agentKind: string, modelLevel: string, alias: string) {
+  return { agentKind, modelLevel, alias, availableNow: false, unavailableReason: 'held (manual)' }
+}
+
+/** GET /api/complexity-chains?role=Code: one default-tier Code row; every other role resolves none. */
+function serveCodeRow(
+  defaultComplexity: string,
+  candidates: unknown[],
+  source = 'role',
+  withheldReason: string | null = null,
+) {
+  server.use(http.get('/api/complexity-chains', ({ request }) => {
+    const role = new URL(request.url).searchParams.get('role')
+    return HttpResponse.json({
+      defaultComplexity,
+      chains: role === 'Code'
+        ? [{
+            complexity: defaultComplexity, candidates, provenance: 'Human', source: 'pin', reason: null,
+            notAfter: null, updatedAt: null, role: 'Code', resolvedFrom: 'role',
+            effective: { source, candidates, stagePin: null, governsDefault: true, withheldReason },
+          }]
+        : [],
+    })
+  }))
+}
 
 function serveRolePolicyRow(role: string, change: (row: RolePolicyRowDto) => RolePolicyRowDto) {
   server.use(http.get('/api/role-policy', () => HttpResponse.json({

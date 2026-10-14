@@ -110,12 +110,51 @@ describe('RolePolicySection', () => {
     expect(within(plan).getByText('held until 2026-10-14T00:00:00Z (manual)')).toBeInTheDocument()
     expect(within(plan).getByText('2. ClaudeCode/Frontier (fable)')).toBeInTheDocument()
     expect(within(plan).getByText('plan on sol')).toBeInTheDocument()
-    expect(within(plan).getByText('Required Human pin → Codex/Frontier (gpt-6-astra)')).toBeInTheDocument()
+    // C1250: the held head is skipped, as the create walks the pin list.
+    expect(screen.getByTestId('role-policy-next-worker-Plan').textContent).toBe(
+      'Required Human pin → ClaudeCode/Frontier (fable), skipping held gpt-6-astra',
+    )
+    expect(screen.getByTestId('role-policy-next-orchestrator-Plan').textContent).toBe(
+      'Required Human pin → ClaudeCode/Frontier (fable), skipping held gpt-6-astra',
+    )
 
     const code = screen.getByTestId('role-policy-row-Code')
     expect(within(code).getByTestId('role-policy-pin-Code').textContent).toBe('—')
-    expect(within(code).getByText('default → ClaudeCode/Frontier (fable)')).toBeInTheDocument()
+    expect(screen.getByTestId('role-policy-next-worker-Code').textContent).toBe('default → ClaudeCode/Frontier (fable)')
 
     expect(within(screen.getByTestId('role-policy-section')).queryByText(/fallback to/i)).not.toBeInTheDocument()
+  })
+
+  it('C1250 V12 worker-column-reads-the-default-tier-row', async () => {
+    server.use(
+      http.get('/api/complexity-chains', ({ request }) => {
+        const role = new URL(request.url).searchParams.get('role')
+        const candidates = role === 'Code'
+          ? [
+              { agentKind: 'Codex', modelLevel: 'Frontier', alias: 'gpt-6-astra', availableNow: false, unavailableReason: 'held (manual)' },
+              { agentKind: 'ClaudeCode', modelLevel: 'High', alias: 'opus', availableNow: true, unavailableReason: null },
+            ]
+          : []
+        return HttpResponse.json({
+          defaultComplexity: 'Hard',
+          chains: role === 'Code'
+            ? [{
+                complexity: 'Hard', candidates, provenance: 'Human', source: 'pin', reason: null, notAfter: null,
+                updatedAt: null, role: 'Code', resolvedFrom: 'role',
+                effective: { source: 'role', candidates, stagePin: null, governsDefault: true, withheldReason: null },
+              }]
+            : [],
+        })
+      }),
+    )
+    renderWithProviders(<RolePolicySection />)
+
+    const worker = await screen.findByText('Hard row → ClaudeCode/High (opus), skipping held gpt-6-astra')
+    expect(worker).toHaveAttribute('data-testid', 'role-policy-next-worker-Code')
+    expect(screen.getByTestId('role-policy-next-orchestrator-Code').textContent).toBe('default → ClaudeCode/Frontier (fable)')
+    expect(screen.getByTestId('role-policy-next-worker-Docs').textContent).toBe('default → ClaudeCode/Medium (sonnet)')
+    expect(screen.getByTestId('role-policy-next-orchestrator-Docs').textContent).toBe(
+      'default → ClaudeCode/Medium (sonnet); Orchestrator floor → High',
+    )
   })
 })
