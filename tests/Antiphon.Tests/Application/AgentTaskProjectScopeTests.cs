@@ -19,6 +19,7 @@ namespace Antiphon.Tests.Application;
 /// intentionally durable and the assembly's normal Postgres container is shared.
 /// </summary>
 [Category("Integration")]
+[ParallelLimiter<ProcessSpawnLimit>]
 public class AgentTaskProjectScopeTests
 {
     [Test]
@@ -283,12 +284,16 @@ public class AgentTaskProjectScopeTests
 
     private sealed class TempWorkspace : IDisposable
     {
-        public string Path { get; } = Directory.CreateTempSubdirectory("antiphon-task-scope").FullName;
+        private readonly ScratchGitRepo _repo = new("antiphon-task-scope");
 
-        public void Dispose()
+        public string Path => _repo.Path;
+
+        public TempWorkspace()
         {
-            try { Directory.Delete(Path, recursive: true); }
-            catch (IOException) { }
+            // Fresh tasks default to Worktree; scope assertions need a branchable repository.
+            _repo.CommitFileAsync("README.md", "Project scope fixture.\n").GetAwaiter().GetResult();
         }
+
+        public void Dispose() => _repo.Dispose();
     }
 }

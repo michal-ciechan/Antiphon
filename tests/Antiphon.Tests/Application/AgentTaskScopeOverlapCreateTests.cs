@@ -23,6 +23,7 @@ namespace Antiphon.Tests.Application;
 /// </summary>
 [Category("Integration")]
 [NotInParallel("AgentQueue")]
+[ParallelLimiter<ProcessSpawnLimit>]
 public class AgentTaskScopeOverlapCreateTests
 {
     [Test]
@@ -33,10 +34,11 @@ public class AgentTaskScopeOverlapCreateTests
         var running = await SeedRunningAsync(workspace.Path, WorkspaceMode.Shared, "delivery", "the holder");
 
         var created = await CreateService(db).CreateAsync(
-            Request("write the queue tests", scope: "delivery"),
+            Request("write the queue tests", scope: "delivery", workspace: WorkspaceMode.Shared),
             new AgentTaskService.Caller(null, null, workspace.Path),
             CancellationToken.None);
 
+        created.Workspace.ShouldBe(WorkspaceMode.Shared);
         var overlap = created.ScopeOverlaps.ShouldHaveSingleItem();
         overlap.TaskId.ShouldBe(running.Id);
         overlap.Policy.ShouldBe("serialise");
@@ -48,7 +50,7 @@ public class AgentTaskScopeOverlapCreateTests
     public async Task a_worktree_task_is_told_a_rebase_is_coming_and_against_which_branch()
     {
         await using var db = CreateContext();
-        using var workspace = new TempWorkspace(git: true);
+        using var workspace = new TempWorkspace();
         var repoPath = await RepoPathOfAsync(workspace.Path);
         var running = await SeedRunningAsync(
             workspace.Path, WorkspaceMode.Worktree, "delivery", "the other worktree",
@@ -59,6 +61,7 @@ public class AgentTaskScopeOverlapCreateTests
             new AgentTaskService.Caller(null, null, workspace.Path),
             CancellationToken.None);
 
+        created.Workspace.ShouldBe(WorkspaceMode.Worktree);
         var overlap = created.ScopeOverlaps.ShouldHaveSingleItem();
         overlap.TaskId.ShouldBe(running.Id);
         overlap.Policy.ShouldBe("warn");
@@ -69,7 +72,7 @@ public class AgentTaskScopeOverlapCreateTests
     public async Task a_disjoint_scope_is_told_nothing()
     {
         await using var db = CreateContext();
-        using var workspace = new TempWorkspace(git: true);
+        using var workspace = new TempWorkspace();
         await SeedRunningAsync(
             workspace.Path, WorkspaceMode.Worktree, "delivery", "elsewhere",
             repoPath: await RepoPathOfAsync(workspace.Path));
@@ -80,6 +83,7 @@ public class AgentTaskScopeOverlapCreateTests
             new AgentTaskService.Caller(null, null, workspace.Path),
             CancellationToken.None);
 
+        created.Workspace.ShouldBe(WorkspaceMode.Worktree);
         created.ScopeOverlaps.ShouldBeNull();
     }
 
@@ -95,6 +99,7 @@ public class AgentTaskScopeOverlapCreateTests
             new AgentTaskService.Caller(null, null, workspace.Path),
             CancellationToken.None);
 
+        created.Workspace.ShouldBe(WorkspaceMode.ReadOnly);
         created.ScopeOverlaps.ShouldBeNull();
     }
 
@@ -106,10 +111,11 @@ public class AgentTaskScopeOverlapCreateTests
         var running = await SeedRunningAsync(workspace.Path, WorkspaceMode.Shared, null, "the holder");
 
         var created = await CreateService(db).CreateAsync(
-            Request("do a thing"),
+            Request("do a thing", workspace: WorkspaceMode.Shared),
             new AgentTaskService.Caller(null, null, workspace.Path),
             CancellationToken.None);
 
+        created.Workspace.ShouldBe(WorkspaceMode.Shared);
         var overlap = created.ScopeOverlaps.ShouldHaveSingleItem();
         overlap.TaskId.ShouldBe(running.Id);
         overlap.Policy.ShouldBe("serialise");
@@ -125,10 +131,11 @@ public class AgentTaskScopeOverlapCreateTests
         await SeedRunningAsync(theirs.Path, WorkspaceMode.Shared, "delivery", "another repo");
 
         var created = await CreateService(db).CreateAsync(
-            Request("write the queue tests", scope: "delivery"),
+            Request("write the queue tests", scope: "delivery", workspace: WorkspaceMode.Shared),
             new AgentTaskService.Caller(null, null, mine.Path),
             CancellationToken.None);
 
+        created.Workspace.ShouldBe(WorkspaceMode.Shared);
         created.ScopeOverlaps.ShouldBeNull("cross-repo tasks must run concurrently");
     }
 
@@ -163,7 +170,7 @@ public class AgentTaskScopeOverlapCreateTests
             ModelLevel = AgentModelLevel.Medium,
             Workspace = workspace,
             WorkingDirectory = directory,
-            RepoPath = repoPath,
+            RepoPath = repoPath ?? await RepoPathOfAsync(directory),
             Scope = scope,
             WorktreeBranch = branch,
             Status = AgentTaskStatus.Working,
@@ -197,33 +204,16 @@ public class AgentTaskScopeOverlapCreateTests
 
     private sealed class TempWorkspace : IDisposable
     {
-        public TempWorkspace(bool git = false)
-        {
-            Path = Directory.CreateTempSubdirectory("antiphon-overlap-test").FullName;
-            // A Worktree create is refused outright when the directory is not a repo (there is
-            // nothing to branch), so the worktree arms need a real one.
-            if (!git)
-                return;
+        private readonly ScratchGitRepo _repo = new("antiphon-overlap-test");
 
-            using var init = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = "git",
-                Arguments = "init --quiet",
-                WorkingDirectory = Path,
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-            });
-            init?.WaitForExit(30_000);
+        public string Path => _repo.Path;
+
+        public TempWorkspace()
+        {
+            // Every scenario uses a real checkout; Shared is an explicit request, not a fallback.
+            _repo.CommitFileAsync("README.md", "Scope overlap fixture.\n").GetAwaiter().GetResult();
         }
 
-        public string Path { get; }
-
-        public void Dispose()
-        {
-            try { Directory.Delete(Path, recursive: true); }
-            catch (IOException) { }
-            catch (UnauthorizedAccessException) { }
-        }
+        public void Dispose() => _repo.Dispose();
     }
 }
