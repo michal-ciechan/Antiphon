@@ -118,6 +118,17 @@ public static class ProjectCascade
             await db.RunAttempts.Where(a => attemptIds.Contains(a.Id)).ExecuteDeleteAsync(ct);
             await db.RetrySchedules.Where(r => cardIds.Contains(r.CardId)).ExecuteDeleteAsync(ct);
             await db.ExternalIssueRefs.Where(r => cardIds.Contains(r.CardId)).ExecuteDeleteAsync(ct);
+            // A Done move leaves a worktree-cleanup generation (CARD-1017) whose FKs to the card
+            // and its Done revision are Restrict, as are its targets' and endpoints' FKs up the
+            // chain — so leaf-first, before the cards (and the revisions they cascade to) go.
+            // The tasks the targets name survive: their card FK is SetNull.
+            await db.CardWorktreeCleanupEndpoints
+                .Where(e => cardIds.Contains(e.Target.Cleanup.CardId))
+                .ExecuteDeleteAsync(ct);
+            await db.CardWorktreeCleanupTargets
+                .Where(t => cardIds.Contains(t.Cleanup.CardId))
+                .ExecuteDeleteAsync(ct);
+            await db.CardWorktreeCleanups.Where(c => cardIds.Contains(c.CardId)).ExecuteDeleteAsync(ct);
             // Transcript entries and queued messages have a real ON DELETE CASCADE from the
             // session, so the database clears them as these rows go.
             await db.AgentSessions
