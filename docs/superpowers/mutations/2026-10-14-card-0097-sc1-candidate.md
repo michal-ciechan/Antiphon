@@ -20,5 +20,9 @@ Mutation also owns missing-control discovery for the 14 degraded/agent DOM combi
 the model table's diagnostic cases, and V-C5's older-server case added by repair `eaef623d`
 after Review `64f32586` D1/D2. No new PC IDs or successful controls are claimed here.
 Other plan controls remain with their assigned slices; this candidate waives none.
+Repair `f6a6f9a0` adds D3 default/non-default pin-read verdicts, separately visible
+Required/Preferred banners, the appended diagnostic marker and its free-text negative case.
+Missing-control discovery for these cases stays with Mutation; PC-24, PC-25 and PC-26
+are still pending. Code's tests-first assertion failures are ordinary repair evidence.
 No deliberate mutant was executed by Code. Do not widen timeouts or loosen assertions.
 Restart: none.
