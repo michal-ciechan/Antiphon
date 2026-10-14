@@ -54,3 +54,10 @@ build is an unlisted prerequisite: exit 0, two existing nullable warnings,
 slot=granted waited=0s, output `tools/Antiphon.Checkpoints/bin-eaef-tool/`.
 Implementation verification is pending at this commit; the stored task report records the
 actual tested SHA, terminal receipts, final counts, merge, publication and cleanup facts.
+
+The first merged-tip production build at `7ccdaf9da905148ace12dfa2279a22a4857940e3`
+failed typecheck (TS2769): the new legacy-header test used an unsupported `exact` option
+on `getByRole`. The repair removes that option; its string `name` remains an exact match.
+Build slot: granted, waited=45s. No production assertion or timeout was relaxed.
+The merge incorporated `origin/master` at `666c75d9fa1f64dde6fabcaf69b99c834cd3c951`
+without conflicts; that fetched delta touched S-D scripts/tests, not the client.
