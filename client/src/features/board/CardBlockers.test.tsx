@@ -26,9 +26,10 @@ const blocker: CardRelationshipDto = {
 }
 
 // Exercise the panel through its actual consumer, including refreshed card tokens after writes.
-function renderPanel(value = card) {
+// `fullCard` answers each full-card GET, so a test can change what the server holds between reads.
+function renderPanel(value = card, fullCard: () => CardDto | Promise<CardDto> = () => value) {
   server.use(
-    http.get('/api/cards/card-1', () => HttpResponse.json(value)),
+    http.get('/api/cards/card-1', async () => HttpResponse.json(await fullCard())),
     http.get('/api/cards/card-1/discussion', () => HttpResponse.json([])),
     http.get('/api/schedules', () => HttpResponse.json({ schedules: [] })),
     http.get('/api/agents/definitions', () => HttpResponse.json({ defaultDefinition: 'claude', definitions: [] })),
@@ -79,6 +80,83 @@ describe('CardBlockers', () => {
     await user.click(within(row).getByRole('button', { name: 'Remove blocker CARD-0049' }))
     await waitFor(() => expect(remove).toHaveBeenCalledWith({ concurrencyToken: 'token-2' }))
     await waitFor(() => expect(view.queryByTestId('card-blocker-CARD-0049')).toBeNull())
+  })
+
+  it('the next write carries the token from the add response, not a later card read', async () => {
+    let added = false
+    let cardReads = 0
+    let releaseRead: () => void = () => undefined
+    const heldRead = new Promise<void>((resolve) => { releaseRead = resolve })
+    const remove = vi.fn()
+    server.use(
+      http.get('/api/cards/card-1/relationships', () => HttpResponse.json({ blockedBy: added ? [blocker] : [], blocks: [] })),
+      http.post('/api/cards/card-1/relationships', () => {
+        added = true
+        return HttpResponse.json({ ...blocker, cardConcurrencyToken: 'token-2' }, { status: 201 })
+      }),
+      http.post('/api/cards/card-1/relationships/relationship-1/remove', async ({ request }) => {
+        remove(await request.json())
+        return HttpResponse.json({ ...card, concurrencyToken: 'token-3' })
+      }),
+    )
+    // Every card read after the first is held open, so token-2 can reach the cache only through
+    // the add response (CARD-1256 D4).
+    renderPanel(card, async () => {
+      cardReads += 1
+      if (cardReads > 1) await heldRead
+      return card
+    })
+    const user = userEvent.setup()
+    const view = await panel()
+    await waitFor(() => expect(cardReads).toBe(1))
+    await user.click(await view.findByRole('textbox', { name: 'Blocker identifier' }))
+    await user.paste('CARD-0049')
+    await user.click(view.getByRole('button', { name: 'Add blocker' }))
+    const row = await view.findByTestId('card-blocker-CARD-0049')
+    await waitFor(() => expect(cardReads).toBe(2))
+    await user.click(within(row).getByRole('button', { name: 'Remove blocker CARD-0049' }))
+    await waitFor(() => expect(remove).toHaveBeenCalledWith({ concurrencyToken: 'token-2' }))
+    releaseRead()
+  })
+
+  it('reloads the card after a stale-token refusal so the retry carries the current token', async () => {
+    let held = card
+    let cardReads = 0
+    const posts: unknown[] = []
+    server.use(
+      http.get('/api/cards/card-1/relationships', () => HttpResponse.json({ blockedBy: [], blocks: [] })),
+      http.post('/api/cards/card-1/relationships', async ({ request }) => {
+        const body = await request.json() as { concurrencyToken: string }
+        posts.push(body)
+        if (body.concurrencyToken !== held.concurrencyToken) {
+          return HttpResponse.json({ code: 'conflict', detail: "Card 'CARD-0001' was modified by another operation." }, { status: 409 })
+        }
+        return HttpResponse.json({ ...blocker, cardConcurrencyToken: 'token-3' }, { status: 201 })
+      }),
+    )
+    renderPanel(card, () => {
+      cardReads += 1
+      return held
+    })
+    const user = userEvent.setup()
+    const view = await panel()
+    await waitFor(() => expect(cardReads).toBe(1))
+    // Another writer renames the card after this modal read it, so the panel's token-1 is stale.
+    held = { ...card, title: 'Blocked work, renamed elsewhere', concurrencyToken: 'token-2' }
+    await user.click(await view.findByRole('textbox', { name: 'Blocker identifier' }))
+    await user.paste('CARD-0049')
+    await user.click(view.getByRole('button', { name: 'Add blocker' }))
+    expect(await view.findByText("Card 'CARD-0001' was modified by another operation.")).toBeInTheDocument()
+    expect(posts).toEqual([{ concurrencyToken: 'token-1', relatedCard: 'CARD-0049', kind: 'BlockedBy' }])
+    // The refusal reloads the card: the other writer's title is the visible proof that it landed.
+    expect(await screen.findByText('Blocked work, renamed elsewhere')).toBeInTheDocument()
+    expect(cardReads).toBe(2)
+    expect(view.getByRole('textbox', { name: 'Blocker identifier' })).toHaveValue('CARD-0049')
+    await user.click(view.getByRole('button', { name: 'Add blocker' }))
+    await waitFor(() => expect(posts).toEqual([
+      { concurrencyToken: 'token-1', relatedCard: 'CARD-0049', kind: 'BlockedBy' },
+      { concurrencyToken: 'token-2', relatedCard: 'CARD-0049', kind: 'BlockedBy' },
+    ]))
   })
 
   it('a resolved blocker is struck through and still removable', async () => {
