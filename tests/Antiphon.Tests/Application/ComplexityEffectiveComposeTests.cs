@@ -103,6 +103,17 @@ public sealed class ComplexityEffectiveComposeTests
         shipped.Level.ShouldBe(AgentModelLevel.Frontier);
         shipped.Alias.ShouldBe("fable");
         shipped.WithheldReason.ShouldBeNull();
+        // A complete pin supplies its own pair, while an unusable Preferred fallback remains
+        // withheld without losing that independently usable pin candidate.
+        foreach (var strength in new[] { RoutingPinStrength.Required, RoutingPinStrength.Preferred })
+        {
+            var pin = Pin(strength, AgentKind.Codex, AgentModelLevel.Frontier);
+            var pinned = ComplexityEffective.Compose(Decision(pin), [], "Plan/Medium", "none", policy, true);
+            pinned.Candidates.Select(c => (c.AgentKind, c.ModelLevel, c.Alias))
+                .ShouldBe([(AgentKind.Codex, AgentModelLevel.Frontier, "gpt-6-astra")]);
+            pinned.Source.ShouldBe(strength == RoutingPinStrength.Required ? "pin" : "pin+chain");
+            pinned.WithheldReason.ShouldBe(strength == RoutingPinStrength.Required ? null : reason);
+        }
     }
 
     [Test]

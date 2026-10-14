@@ -1,10 +1,17 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Data.Common;
+using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Shouldly;
 using TUnit.Core;
 
@@ -54,6 +61,31 @@ public sealed class ComplexityEffectiveHttpTests(ComplexityChainApiWebAppFactory
             hard.GetProperty("governsDefault").GetBoolean().ShouldBeFalse();
             chains[1].GetProperty("effective").GetProperty("source").GetString().ShouldBe("pin");
             chains[1].GetProperty("effective").GetProperty("governsDefault").GetBoolean().ShouldBeTrue();
+            await VerifyIndependentReadsAsync(stage.Value);
+            var holdId = Guid.NewGuid();
+            await using (var scope = factory.Services.CreateAsyncScope())
+            {
+                var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                db.ModelAvailabilityHolds.Add(new ModelAvailabilityHold
+                {
+                    Id = holdId, Kind = AgentKind.ClaudeCode, ModelAlias = "opus",
+                    Source = ModelAvailabilitySource.Manual, HitAt = DateTime.UtcNow, Reason = "C097M availability",
+                });
+                await db.SaveChangesAsync();
+            }
+            try
+            {
+                var held = (await GetAsync(client, "/api/complexity-chains?role=Plan"))
+                    .GetProperty("chains")[0].GetProperty("effective").GetProperty("candidates")[0];
+                held.GetProperty("availableNow").GetBoolean().ShouldBeFalse();
+                held.GetProperty("unavailableReason").GetString().ShouldBe("held (manual, no re-enable time)");
+            }
+            finally
+            {
+                await using var scope = factory.Services.CreateAsyncScope();
+                var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                await db.ModelAvailabilityHolds.Where(h => h.Id == holdId).ExecuteDeleteAsync();
+            }
             (await client.DeleteAsync($"/api/routing-pins/{stage}")).StatusCode.ShouldBe(HttpStatusCode.NoContent);
             var after = (await GetAsync(client, "/api/complexity-chains?role=Plan")).GetProperty("chains");
             var easy = after[2].GetProperty("effective");
@@ -132,6 +164,19 @@ public sealed class ComplexityEffectiveHttpTests(ComplexityChainApiWebAppFactory
                     "stage pin binds standing agent c097m-standing (ClaudeCode); an ordinary dispatch runs on that agent and does not walk this row");
             }
             chains[1].GetProperty("candidates")[0].GetProperty("agentKind").GetString().ShouldBe("Codex");
+            await using var verificationScope = factory.Services.CreateAsyncScope();
+            var original = verificationScope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var fault = new ReadFault("Agents");
+            await using var failedDb = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
+                .UseNpgsql(original.Database.GetConnectionString()).AddInterceptors(fault).Options);
+            var missingLabel = await Service(failedDb).GetEffectiveAsync(AgentTaskRole.Plan, TaskComplexity.Medium, CancellationToken.None);
+            fault.Failures.ShouldBe(1);
+            missingLabel.Candidates.Single().AgentKind.ShouldBe(AgentKind.Codex);
+            missingLabel.Effective.ShouldNotBeNull().Source.ShouldBe("agent");
+            missingLabel.Effective.Candidates.ShouldBeEmpty();
+            missingLabel.Effective.GovernsDefault.ShouldBeFalse();
+            missingLabel.Effective.StagePin.ShouldNotBeNull().Id.ShouldBe(pin.Value);
+            missingLabel.Effective.WithheldReason.ShouldContain("standing agent read failed (InvalidOperationException)");
         }
         finally
         {
@@ -141,6 +186,71 @@ public sealed class ComplexityEffectiveHttpTests(ComplexityChainApiWebAppFactory
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             var agent = await db.Agents.FindAsync(agentId);
             if (agent is not null) { db.Agents.Remove(agent); await db.SaveChangesAsync(); }
+        }
+    }
+
+    // The HTTP method owns these seeds. Fresh contexts cut one query at a time; siblings and
+    // later tiers must survive, and a missing optional service keeps the direct-constructor path.
+    private async Task VerifyIndependentReadsAsync(Guid stage)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var original = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        foreach (var (table, reason, source) in new[]
+        {
+            ("RoutingPins", "stage pin read failed (InvalidOperationException)", "role"),
+            ("ComplexityChains", "chain read failed (InvalidOperationException)", "pin"),
+            ("ModelAvailabilityHolds", "availability read failed (InvalidOperationException)", "pin"),
+        })
+        {
+            var fault = new ReadFault(table);
+            await using var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
+                .UseNpgsql(original.Database.GetConnectionString()).AddInterceptors(fault).Options);
+            var rows = await Service(db).ListAsync(AgentTaskRole.Plan, CancellationToken.None);
+            fault.Failures.ShouldBe(1);
+            rows.Chains.Count.ShouldBe(3);
+            var hard = rows.Chains[0];
+            hard.Effective.ShouldNotBeNull().Source.ShouldBe(source);
+            hard.Effective.WithheldReason.ShouldBe(reason);
+            if (table == "ComplexityChains") hard.Candidates.ShouldBeEmpty();
+            else hard.Candidates.Single().AgentKind.ShouldBe(AgentKind.Codex);
+            if (table == "RoutingPins") hard.Effective.StagePin.ShouldBeNull();
+            else hard.Effective.StagePin.ShouldNotBeNull().Id.ShouldBe(stage);
+            hard.Effective.Candidates.Single().AgentKind.ShouldBe(table == "RoutingPins" ? AgentKind.Codex : AgentKind.ClaudeCode);
+            if (table == "ModelAvailabilityHolds")
+            {
+                hard.Candidates.Single().AvailableNow.ShouldBeFalse();
+                hard.Candidates.Single().UnavailableReason.ShouldBe(reason);
+            }
+            rows.Chains[1].Effective.ShouldNotBeNull().Source.ShouldBe("pin");
+            rows.Chains[1].Effective!.WithheldReason.ShouldBeNull();
+        }
+        var settings = new DelegationSettings { DefaultComplexity = TaskComplexity.Easy };
+        var configured = await Service(original, settings).ListAsync(AgentTaskRole.Plan, CancellationToken.None);
+        configured.DefaultComplexity.ShouldBe(TaskComplexity.Easy);
+        configured.Chains.Select(c => c.Effective!.GovernsDefault).ShouldBe([false, false, true]);
+    }
+
+    private static ComplexityChainService Service(AppDbContext db, DelegationSettings? settings = null)
+    {
+        var options = Options.Create(settings ?? new DelegationSettings());
+        var availability = new ModelAvailability(db, TimeProvider.System, NullLogger<ModelAvailability>.Instance);
+        var routing = new ComplexityRoutingService(db, options, TimeProvider.System, availability);
+        var pins = new RoutingPinService(db, TimeProvider.System, NullLogger<RoutingPinService>.Instance, routing);
+        return new(db, TimeProvider.System, routing, options, NullLogger<ComplexityChainService>.Instance, pins);
+    }
+
+    private sealed class ReadFault(string table) : DbCommandInterceptor
+    {
+        public int Failures { get; private set; }
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(DbCommand command,
+            CommandEventData eventData, InterceptionResult<DbDataReader> result, CancellationToken cancellationToken = default)
+        {
+            if (Failures == 0 && command.CommandText.Contains($"FROM \"{table}\"", StringComparison.Ordinal))
+            {
+                Failures++;
+                throw new InvalidOperationException("C097M injected read failure");
+            }
+            return base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
         }
     }
 

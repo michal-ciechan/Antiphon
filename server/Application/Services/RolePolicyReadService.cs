@@ -13,9 +13,16 @@ public sealed class RolePolicyReadService
     public const string SourcePin = "pin";
     public const string SourceRolePolicy = "rolePolicy";
 
-    // Compile-only scaffold for CP-10; Row retains its existing behavior until extraction.
-    public static PolicyResolution PolicyTarget(DelegationSettings settings, AgentTaskRole role) =>
-        new(null, null, null, null);
+    /// <summary>The launchable policy target, retaining literal rejected values in the reason.</summary>
+    public static PolicyResolution PolicyTarget(DelegationSettings settings, AgentTaskRole role)
+    {
+        settings.RolePolicy.TryGetValue(role.ToString(), out var entry);
+        var kind = entry?.Kind ?? AgentKind.ClaudeCode;
+        var level = entry?.Level ?? settings.DefaultLevel;
+        return Supported(kind) && Enum.IsDefined(level)
+            ? new(kind, level, ModelLevelAliases.For(kind, level), null)
+            : new(null, null, null, $"{role} policy names {kind}/{level}, which delegation cannot launch");
+    }
 
     private readonly DelegationSettings _settings;
     private readonly RoutingPinService _pins;
@@ -57,8 +64,7 @@ public sealed class RolePolicyReadService
         var configured = settings.RolePolicy.TryGetValue(role.ToString(), out var entry) && entry is not null;
         var level = configured ? entry!.Level : settings.DefaultLevel;
         var kind = configured ? entry!.Kind : null;
-        var supported = Supported(kind) && Enum.IsDefined(level);
-        var alias = supported ? ModelLevelAliases.For(kind ?? AgentKind.ClaudeCode, level) : null;
+        var alias = PolicyTarget(settings, role).Alias;
         var escalateTo = configured ? entry!.EscalateTo : null;
         return new RolePolicyRowDto(
             role,
