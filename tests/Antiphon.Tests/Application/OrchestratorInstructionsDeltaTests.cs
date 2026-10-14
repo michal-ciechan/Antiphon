@@ -8,6 +8,30 @@ namespace Antiphon.Tests.Application;
 public sealed class OrchestratorInstructionsDeltaTests
 {
     [Test]
+    public void A_long_known_value_keeps_the_unknown_transition_reason_visible()
+    {
+        var before = Sample() with
+        {
+            Matrix = new MatrixSection("Medium", [new MatrixInstructionRow("Plan", "unset", "unset", "unset",
+                new string('x', 300), "role")]),
+        };
+        var after = before with
+        {
+            Matrix = before.Matrix with
+            {
+                Rows = [before.Matrix.Rows[0] with { Effective = "unknown (standing agent read failed)" }],
+            },
+        };
+        var delta = OrchestratorInstructionsDelta.Format(before, after);
+        delta.ShouldEndWith(" → unknown (standing agent read failed)");
+        delta.Length.ShouldBeLessThanOrEqualTo(120);
+        OrchestratorInstructionsDelta.Format(after, after with { Matrix = after.Matrix with { Rows = after.Matrix.Rows.ToArray() } })
+            .ShouldBe("");
+        OrchestratorInstructionsDelta.Format(after, before)
+            .ShouldStartWith("matrix: Plan effective unknown (standing agent read failed) → xxx");
+    }
+
+    [Test]
     public void Changed_added_and_removed_facts_are_named_per_section()
     {
         var before = Sample();

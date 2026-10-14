@@ -52,6 +52,8 @@ public class OrchestratorInstructionsRefreshTests
     [Arguments("defaults", true)]
     [Arguments("budget", false)]
     [Arguments("budget", true)]
+    [Arguments("runners", false)]
+    [Arguments("runners", true)]
     public async Task Failed_reads_are_unknown_in_file_and_notice_then_recover(string part, bool notice)
     {
         var fault = new SnapshotReadFault(part);
@@ -181,6 +183,7 @@ public class OrchestratorInstructionsRefreshTests
                 "pins" => Table("RoutingPins") && parameters.All(p => !p.ParameterName.Contains("role", StringComparison.Ordinal)),
                 "defaults" => Table("RunnerRoutingSettings"),
                 "budget" => Table("HostBudgets"),
+                "runners" => Table("AgentTasks") && sql.Contains("count(*)", StringComparison.Ordinal),
                 _ => false,
             };
             if (fails)
@@ -828,6 +831,7 @@ public class OrchestratorInstructionsRefreshTests
                 services.AddScoped<DispatchConcurrencySettingsService>();
                 services.AddScoped<HostBudgetService>();
                 services.AddScoped<RoutingPinService>();
+                services.AddScoped<ModelAvailability>();
                 services.AddSingleton<PhoneHomeRunnerDirectory>(sp => new PhoneHomeRunnerDirectory(
                     sp.GetRequiredService<ISessionRunnerClient>(),
                     Options.Create(new PhoneHomeRunnerSettings { Enabled = false }),
