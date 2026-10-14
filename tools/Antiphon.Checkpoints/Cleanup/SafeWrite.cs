@@ -29,22 +29,33 @@ public static class SafeWrite
     // Append-only creation records stay in this process. Disk ledgers are diagnostic only.
     private static readonly ConcurrentDictionary<string, string> CreatedContent = new(OperatingSystem.IsWindows()
         ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
-    private static void RecordContent(string path)
+    // Kernel ctime of each fresh owner-only root, taken right after the exclusive mkdir.
+    private static readonly ConcurrentDictionary<string, DateTimeOffset> FreshRoots = new(OperatingSystem.IsWindows()
+        ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+    private static void RecordContent(string path) => CreatedContent.TryAdd(path, Describe(path));
+    private static string Describe(string path)
     {
-        if (Directory.Exists(path)) CreatedContent.TryAdd(path, "directory");
-        else
-        {
-            var bytes = ReceiptFile.ReadBytes(path);
-            CreatedContent.TryAdd(path, bytes.LongLength + ":" + Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)));
-        }
+        if (Directory.Exists(path)) return "directory";
+        var bytes = ReceiptFile.ReadBytes(path);
+        return bytes.LongLength + ":" + Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes));
     }
     // Seal-time custody for entries a child process wrote under a root this process created
-    // (OwnedOutputLedger.Seal). An existing record wins; an unreadable entry stays unrecorded.
-    public static void AdoptCreated(string path)
+    // (OwnedOutputLedger.Seal). An existing record wins; an entry outside the custody window,
+    // unreadable, or whose statx changes across the read stays unrecorded (OutputCustody).
+    public static void AdoptCreated(string path, OutputCustody.Window window)
     {
-        try { RecordContent(Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)); }
+        var full = Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        try
+        {
+            var before = OutputCustody.Stat(full);
+            if (before is null || OutputCustody.Refusal(before.Value, window) is not null) return;
+            var record = Describe(full);
+            if (OutputCustody.Stat(full) == before) CreatedContent.TryAdd(full, record);
+        }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
     }
+    public static DateTimeOffset? FreshRootCreated(string path) =>
+        FreshRoots.TryGetValue(Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar), out var created) ? created : null;
     public static bool MatchesCreation(string path)
     {
         if (!CreatedContent.TryGetValue(Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar), out var recorded)) return false;
@@ -241,6 +252,8 @@ public static class SafeWrite
         var full = Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
         reason = ExclusiveDirectory.Create(full);
         if (reason is not null) return reason;
+        if (OutputCustody.Stat(full) is { IsDirectory: true } made && made.Owner == OutputCustody.Owner && (made.Mode & 0x3F) == 0)
+            FreshRoots.TryAdd(full, made.Changed);
         Created.TryAdd(full, 0);
         RecordContent(full);
         return Text(Path.Combine(full, ".checkpoint-output-owner.json"), Guid.NewGuid().ToString("N"), Under(full));
