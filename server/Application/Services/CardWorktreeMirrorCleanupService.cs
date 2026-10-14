@@ -1,4 +1,5 @@
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Exceptions;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -14,7 +15,8 @@ using Microsoft.Extensions.Options;
 
 namespace Antiphon.Server.Application.Services;
 
-// Callable S7 coordinator. Program and the residue sweep do not compose it.
+// Callable S7/S8 coordinator. Program and the residue sweep do not compose it
+// (C1032_RecoveryInertServerComposition).
 public sealed class CardWorktreeMirrorCleanupService(AppDbContext db, ISessionRunnerDirectory runners,
     ILandingGit git, CardDoneArtifactPreservation artifacts, WorkspaceUseAdmission admission, TimeProvider clock,
     IOptions<WorktreeResidueSettings> settings, ICompletedCardWorkspaceClient? testClient = null,
@@ -22,6 +24,9 @@ public sealed class CardWorktreeMirrorCleanupService(AppDbContext db, ISessionRu
 {
     internal Func<CancellationToken, Task>? BeforeIntentAsync { get; set; }
     internal Func<CancellationToken, Task>? AfterIntentAsync { get; set; }
+
+    // C1032_RecoveryCrashHandoffs: delay persisted as NextAttemptAt after a transport loss.
+    internal static readonly TimeSpan RetryDelay = TimeSpan.FromMinutes(5);
 
     public async Task<CompletedCardWorkspaceRemovalResponse> TryAsync(Guid endpointId, Guid? runId, CancellationToken ct)
     {
@@ -31,11 +36,15 @@ public sealed class CardWorktreeMirrorCleanupService(AppDbContext db, ISessionRu
             .Where(r => r.Id == run).Select(r => (bool?)r.Preview).SingleOrDefaultAsync(ct) == true;
         if (CardWorktreeCleanupPolicy.DestructiveAdmissionRefusal(settings.Value, endpoint.Target.Cleanup.DoneAt, preview) is { } policy)
             return Hold(policy);
+        // UTC scheduling fact; a fresh coordinator sends nothing before it (C1032_RecoveryCrashHandoffs).
+        if (endpoint.NextAttemptAt is { } due && due > clock.GetUtcNow().UtcDateTime) return Hold("retry_not_due");
         if (endpoint.MirrorBinding is not { } row || endpoint.RunnerId is null || endpoint.RunnerStoreId is null)
             return await RefuseAsync(endpoint, "mirror_binding_required", ct);
         if (runners.GetLiveStoreId(endpoint.RunnerId)?.ToString("D") != endpoint.RunnerStoreId)
             return await RefuseAsync(endpoint, "runner_store_mismatch", ct);
-        var client = testClient ?? runners.Resolve(endpoint.RunnerId) as ICompletedCardWorkspaceClient;
+        ICompletedCardWorkspaceClient? client;
+        try { client = testClient ?? runners.Resolve(endpoint.RunnerId) as ICompletedCardWorkspaceClient; }
+        catch (Exception ex) when (TransportLoss(ex) is { } lost) { return await RetryAsync(endpoint, lost, ct); }
         if (client is null) return await RefuseAsync(endpoint, PhoneHomeProblemTypes.UnsupportedOperation, ct);
         if (endpoint.OperationId is not null)
         {
@@ -46,7 +55,9 @@ public sealed class CardWorktreeMirrorCleanupService(AppDbContext db, ISessionRu
         var task = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == endpoint.Target.TaskId, ct);
         if (await EligibilityAsync(task, endpoint, row, ct) is { } eligibilityReason) return await RefuseAsync(endpoint, eligibilityReason, ct);
         var binding = Binding(row);
-        var inspection = await client.InspectCompletedCardWorkspaceAsync(new(1, binding), ct);
+        CompletedCardWorkspaceInspectionResponse inspection;
+        try { inspection = await client.InspectCompletedCardWorkspaceAsync(new(1, binding), ct); }
+        catch (Exception ex) when (TransportLoss(ex) is { } lost) { return await RetryAsync(endpoint, lost, ct); }
         if (inspection.Reason is not null && inspection.Reason != "evidence_requires_admission")
             return await RefuseAsync(endpoint, inspection.Reason, ct);
         if (inspection.SourceFullRef != binding.SourceFullRef || !Oid(inspection.HeadSha))
@@ -187,7 +198,12 @@ public sealed class CardWorktreeMirrorCleanupService(AppDbContext db, ISessionRu
     {
         if (endpoint.RunnerStoreId != command.Binding.RunnerStoreId || endpoint.RunnerId != command.Binding.RunnerId
             || runners.GetLiveStoreId(command.Binding.RunnerId)?.ToString("D") != command.Binding.RunnerStoreId) return Hold("runner_store_mismatch");
-        var response = await client.RemoveCompletedCardWorkspaceAsync(command, ct);
+        CompletedCardWorkspaceRemovalResponse response;
+        endpoint.Attempts++;
+        // A loss before or after send keeps the persisted operation and request bytes for replay
+        // (C1017_LostAckReusesOperation, C1032_RecoveryCrashHandoffs).
+        try { response = await client.RemoveCompletedCardWorkspaceAsync(command, ct); }
+        catch (Exception ex) when (TransportLoss(ex) is { } lost) { return await RetryAsync(endpoint, lost, ct); }
         if (!response.Complete) return await RefuseAsync(endpoint, response.Reason ?? "receipt_mismatch", ct);
         var b = command.Binding;
         var expected = new CompletedCardWorkspaceReceipt(command.SchemaVersion, command.CardId, command.DoneRevisionId,
@@ -201,6 +217,7 @@ public sealed class CardWorktreeMirrorCleanupService(AppDbContext db, ISessionRu
         endpoint.ImportedReceipt = JsonSerializer.SerializeToUtf8Bytes(response.Receipt, PhoneHomeFraming.Json);
         endpoint.DirectoryRemoved = true; endpoint.RegistrationRemoved = true; endpoint.BranchRemoved = false;
         endpoint.State = CardWorktreeCleanupEndpointState.Complete; endpoint.Reason = null;
+        endpoint.Retryable = false; endpoint.NextAttemptAt = null;
         endpoint.UpdatedAt = clock.GetUtcNow().UtcDateTime; endpoint.ConcurrencyToken = Guid.NewGuid();
         await db.SaveChangesAsync(ct);
         return response;
@@ -210,9 +227,25 @@ public sealed class CardWorktreeMirrorCleanupService(AppDbContext db, ISessionRu
     {
         endpoint.State = reason == "done_generation_revoked" && endpoint.OperationId is null
             ? CardWorktreeCleanupEndpointState.Revoked : CardWorktreeCleanupEndpointState.Refused;
-        endpoint.Reason = reason; endpoint.UpdatedAt = clock.GetUtcNow().UtcDateTime; endpoint.ConcurrencyToken = Guid.NewGuid();
+        endpoint.Reason = reason; endpoint.Retryable = false; endpoint.NextAttemptAt = null;
+        endpoint.UpdatedAt = clock.GetUtcNow().UtcDateTime; endpoint.ConcurrencyToken = Guid.NewGuid();
         await db.SaveChangesAsync(ct); return Hold(reason);
     }
+    // State, operation and request bytes are unchanged: only retry metadata and the reason move.
+    private async Task<CompletedCardWorkspaceRemovalResponse> RetryAsync(CardWorktreeCleanupEndpoint endpoint, string reason, CancellationToken ct)
+    {
+        var now = clock.GetUtcNow().UtcDateTime;
+        endpoint.Retryable = true; endpoint.NextAttemptAt = now + RetryDelay; endpoint.Reason = reason;
+        endpoint.UpdatedAt = now; endpoint.ConcurrencyToken = Guid.NewGuid();
+        await db.SaveChangesAsync(ct); return Hold(reason);
+    }
+    // Only typed transport loss is retryable; any other exception propagates unchanged.
+    private static string? TransportLoss(Exception ex) => ex switch
+    {
+        PhoneHomeTransportException transport => transport.Code,
+        ServiceUnavailableException unavailable => unavailable.Code ?? PhoneHomeProblemTypes.Unavailable,
+        _ => null,
+    };
     private static CompletedCardWorkspaceRemovalResponse Hold(string reason) => new(false, reason, null);
     private static bool Oid(string? value) => value?.Length is 40 or 64 && value.All(char.IsAsciiHexDigit);
     private static CompletedCardWorkspaceBinding Binding(TaskWorktreeMirrorBinding b) => new(b.TaskId, b.Attempt, b.BindingId,

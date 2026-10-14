@@ -33,7 +33,8 @@ public sealed class CheckpointRepeatDocumentationTests : CheckpointTestBase
         // CARD-0881 swaps the three-route policy for the effective-settings route.
         // Repeat policy remains in Code's bundle and owner docs.
         // CARD-1213 points -StartRef children at their reported WorktreeBranch.
+        // CARD-1213 S2 adds the git-common sentence: delegates carry it, briefs do not restate it.
         Convert.ToHexString(SHA256.HashData(orchestrator)).ToLowerInvariant()
-            .ShouldBe("f0d2f4d671026c2646f50024d0bbba3a096c4bdaa7afe8488cbefba3aed8c0ab", "orchestrator-approved-bytes");
+            .ShouldBe("cf14d2c5261929b555d8416105428dce46a8f7dd8658a8907e4f8559d71caa00", "orchestrator-approved-bytes");
     }
 }

@@ -15,7 +15,7 @@ namespace Antiphon.Tests.Application;
 [Category("Integration")]
 [Category("Slow")]
 [ParallelLimiter<ProcessSpawnLimit>]
-public sealed class CardWorktreeMirrorCleanupTests
+public sealed partial class CardWorktreeMirrorCleanupTests
 {
     // case: independently bound mirror H behind published P; mutation: use P as expected mirror HEAD;
     // red: physical directory/registration removal and imported receipt's H fail.

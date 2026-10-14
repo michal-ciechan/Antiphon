@@ -515,22 +515,24 @@ is 422 `worktree_base_source_invalid`. Detail records `worktreeBaseRequestedRef`
 > sonnet, …`); the `modelAvailability` problem-details extension carries `kind`, `modelAlias`,
 > `disabledUntil`, `source`, and `available`. `ignoreModelDisabled: true` on **create only** queues
 > the task; the dispatcher still skips it until the hold clears. Start never honours the flag.
-> A Required routing pin that named the held alias keeps the same code and available list, plus a
-> coda that the list does not satisfy the pin — do not silently pick from `available`.
+> When a Required routing pin ends in this 409, the detail adds a coda that the list does not
+> satisfy the pin — do not silently pick from `available`. Routing: see **Routing pins beat
+> RolePolicy** in [orchestration-loop.md](orchestration-loop.md#2-tiers).
 >
 > Create may also send **`complexity`** (`Hard`/`Medium`/`Easy`) and **`refuseIfExhausted`**
 > (CARD-0090 / CARD-0332). Combined with explicit `agentKind`/`modelLevel` or with `ignoreModelDisabled` is
 > 422. The walk reads the `(role, complexity)` cell, then the any-role row, then the config
-> default. Exhausted chains insert the task **Blocked** (200) unless `refuseIfExhausted` is true,
+> default. Exhausted chains insert the task **Blocked** (201 Created; not covered by a test) unless `refuseIfExhausted` is true,
 > which is **409 `routing_exhausted`** with a `complexityRouting` extension. Auto-over-Human
 > chain writes are **409 `complexity_chain_human`**. An Auto PUT to a role cell is the same 409
 > when the any-role row for that complexity is Human (write it as Human, or clear the any-role
 > row).
 >
 > Routing pins (CARD-0305, CARD-0322) can also refuse create with **409 `routing_pin_conflict`**
-> (explicit kind/level/agent disagrees with a Required pin — the message lists every candidate),
-> **409 `routing_pin_forbidden`** (resolved alias is on the stage pin's forbid list), or **409
-> `routing_pin_human`** (Auto PUT onto an active Human row). `ignoreRoutingPin: true` is one-shot
+> (explicit kind/level/agent disagrees with a Required pin; a kind/level conflict lists every
+> candidate) or **409 `routing_pin_forbidden`** (resolved alias is on the stage pin's forbid list).
+> **409 `routing_pin_human`** is a PUT refusal (Auto PUT onto an active Human row), not a create
+> refusal. `ignoreRoutingPin: true` is one-shot
 > and does not clear the pin; it is not `ignoreModelDisabled`. A walked multi-candidate pin that
 > exhausts is **Blocked** (or 409 `routing_exhausted` with `refuseIfExhausted`).
 
@@ -538,6 +540,12 @@ is 422 `worktree_base_source_invalid`. Detail records `worktreeBaseRequestedRef`
 GET    /api/runner-defaults
 PUT    /api/runner-defaults                           expectedRevision, globalRunnerId, kindDefaults, reason, provenance
 GET    /api/runner-defaults/revisions?beforeRevision=&limit=
+GET    /api/dispatch-concurrency                      seed, overrides, effective, nullProject, supportedRoles, ranges, revision, occupancy
+PUT    /api/dispatch-concurrency                      expectedRevision, overrides, reason, provenance; expectedGlobalRevision optional
+GET    /api/dispatch-concurrency/revisions?beforeRevision=&limit=
+GET    /api/projects/{projectId}/dispatch-concurrency  overrides, inherited, effective, revision (0 without a row), globalRevision, occupancy
+PUT    /api/projects/{projectId}/dispatch-concurrency  expectedRevision, expectedGlobalRevision, overrides, reason, provenance
+GET    /api/projects/{projectId}/dispatch-concurrency/revisions?beforeRevision=&limit=
 GET    /api/session-runners                           desktop plus every configured runner
 GET    /api/hosts                                     local and configured runner budgets, occupancy, availability and revision
 PUT    /api/hosts/{hostId}/budget                     maxInFlight (0–512 or null to clear), reason (required)
@@ -547,6 +555,22 @@ GET    /api/hosts/stats                               latest per-host sample, ro
 GET    /api/hosts/{hostId}/stats/series?metric=cpu&window=30m
 GET    /api/hosts/{hostId}/occupancy-samples?from=&to=&limit=   read-only occupancy audit, newest first (CARD-1079)
 ```
+
+Dispatch concurrency routes (CARD-0505; Settings → Concurrency UI, CARD-0506, in
+[orchestration-loop.md](orchestration-loop.md#concurrency-settings-tab-card-0506)). Each row states
+what the named `DispatchConcurrencyWireTests` method asserts:
+
+| Behaviour | Test |
+|---|---|
+| Global GET returns revision 1 with seed `origin` `startupConfiguration`; PUT with `expectedRevision` 1 returns 200 and revision 2; a later GET returns revision 2 | `Global_get_put_roundtrip` |
+| Project GET without a row returns `revision` 0 and `globalRevision` 1; PUT returns 200 and leaves another project at revision 0; PUT `overrides: {}` returns revision 2; unknown project GET and PUT are 404 and create no row | `Project_get_put_clear_roundtrip` |
+| On a store already initialized by a global read: 19 listed bodies (missing, duplicate, unknown or wrong-type field; blank or 401-character reason; unknown provenance; `maxParallel: 0`; `mode` null or numeric; non-object `overrides`; malformed JSON) are 422 `validation_failed` and leave the settings rows and revision count unchanged; unknown project PUT is 404 with the same fingerprint | `Missing_fields_invalid_body_and_unknown_project_write_nothing` |
+| A stale `expectedRevision` is 409 `dispatch_concurrency_revision_conflict` with `globalRevision`; of two concurrent PUTs at the same revision one is 200 and one 409; an `Auto` PUT over a `Human` revision is 409 `dispatch_concurrency_human` | `Revision_conflict_returns_current_revisions` |
+| After initialization, that test's three 409s and two committed PUTs raise the `MockEventBus` published-event count by exactly 2 (event names not checked; not a recipient-delivery witness) | `Revision_conflict_returns_current_revisions` |
+| `/revisions`: default page 50, `limit` 1–100 (0 and 101 are 422), `beforeRevision` cursor (-1 is 422); a GET on a cold store creates no row; GETs leave the fingerprint unchanged | `Revision_routes_are_readonly_and_bounded` |
+
+Not covered by a test: a PUT with a rejected policy value (such as `maxParallel: 0`) on a store
+with no global row. `PutAsync` initializes the store before it checks policy values.
 
 Host stats are sampled by each session runner every five seconds and held in a 30-minute memory
 ring. `GET /api/hosts/stats` gives `HostStatsDto[]` for desktop and configured runners. `state`
@@ -626,17 +650,49 @@ DELETE /api/routing-pins/{id}                         clear (204 if already clea
 ```
 
 A pin is the standing instruction the **next** create reads; it does not rewrite Queued work.
-Stage-wide: omit `card`. Check role is 422. Script: `scripts/routing-pin.ps1 get|set|clear`.
+Stage-wide: omit `card`. A `PUT` for Check, Distill or Diagnose is 422
+(`RoutingPinServiceTests.A_specialist_role_has_no_stage_to_pin`). Script: `scripts/routing-pin.ps1 get|set|clear`.
 `delegate.ps1 -Pin` writes Human Required from the resolved kind/level; `-Pin` without a card is
 refused (that would be a stage-wide pin).
 
 CARD-0322: `PUT` accepts `candidates: [{agentKind, modelLevel}, …]` (1..8, mutually exclusive
 with the `agentKind`/`modelLevel` shorthand). `GET` returns `candidates[]` with
 `availableNow`/`unavailableReason` plus `candidateCount`; `agentKind`/`modelLevel`/`modelAlias`
-remain the **head**. A 409 `routing_pin_conflict` lists every candidate; the `routingPin`
-extension carries `candidateCount`. A Required pin with two or more candidates is walked
-(CARD-0090's walker); exhausted → Blocked `routing exhausted` (or 409 `routing_exhausted` with
-`refuseIfExhausted`). A one-candidate Required pin is still 409 `model_disabled` with the pin coda.
+remain the **head**. A kind/level 409 `routing_pin_conflict` lists every candidate; the `routingPin`
+extension carries `candidateCount`. Routing: see **Routing pins beat RolePolicy** in
+[orchestration-loop.md](orchestration-loop.md#2-tiers).
+
+```
+GET    /api/role-policy                               RolePolicy per routable role beside its active
+                                                      stage-wide pin (CARD-0097)
+```
+
+Body: `{ defaultLevel, defaultTimeoutMinutes, roles[] }`; each row is `{ role, configured, level,
+kind, alias, escalateTo, escalateAfterMinutes, timeoutMinutes, stagePin, effective }` and
+`effective` is `{ source, agentKind, modelLevel, alias, strength }` with `source` `pin` or
+`rolePolicy`: a projection of the stage pin's first candidate filled from the policy, or of the
+policy; it is not a create result. Nullable: `defaultLevel`, `level`, `kind`, `escalateTo`,
+`escalateAfterMinutes`, `stagePin` and `effective.agentKind`/`modelLevel`/`alias`/`strength`. A
+`kind` is null when no kind is configured or the configured kind is undefined; with no stage pin
+the effective target is null for an undefined kind (the two `kind` null rows below). A row with no
+configured kind and an undefined level has the same `kind` null, `alias` `""` and null target (case
+`policy-level-999`), so `alias` and `effective` do not identify the cause. Pin routes: the `/api/routing-pins` block above.
+
+| Behaviour | Test (runner, file) | What it asserts |
+|---|---|---|
+| 14 rows in `RoutableRoles` order with the policy fields; Custom is unconfigured and reports the defaults | TUnit `RolePolicyEndpointTests.Get_lists_every_routable_role_in_order_with_policy_fields`, `tests/Antiphon.Tests/Api/RolePolicyEndpointTests.cs` | role list Investigate … Custom; Mutation `Low`/`haiku`, `kind` null, `escalateTo` `High`, `effective.source` `rolePolicy`; Custom `configured` false, `High`/`opus`, timeout 240 |
+| Active stage-wide pin is `stagePin` and drives `effective` | TUnit `RolePolicyEndpointTests.Get_overlays_the_active_stage_pin_as_effective`, same file | Plan pin Codex/Frontier → `stagePin.id`, head `availableNow`, `effective` `pin`/Codex/Frontier/`gpt-6-astra`/`Required`; Code stays `rolePolicy` |
+| Card pins and cleared pins are excluded | TUnit `RolePolicyEndpointTests.Get_ignores_card_pins_and_cleared_pins`, same file | live Code card pin and cleared Debug stage pin → both rows `stagePin` null, `effective.source` `rolePolicy` |
+| Unsupported or undefined kind/level still answers 200 | TUnit `RolePolicyEndpointTests.Get_serialises_every_row_when_one_role_has_unsupported_values`, same file | 14 rows; Docs level 999 → `level` null, `alias` `""`; Commit `kind` `Raw`, `alias` `""`; Deploy kind 999 → `kind` null; each of the three has `effective` `agentKind`/`modelLevel`/`alias`/`strength` null |
+| Per-case withholding of unsupported or undefined values | TUnit `RolePolicyReadServiceTests.Compose_withholds_the_target_for_unsupported_or_undefined_values` (`[MethodDataSource]`, 15 cases), `tests/Antiphon.Tests/Application/RolePolicyReadServiceTests.cs` | e.g. `policy-level-999` → `level` null, `alias` `""`; `default-level-999` → `defaultLevel` null; `pin-head-kind-Raw` → `effective` target null, `strength` `Required` |
+| `kind` null: no kind configured | TUnit `RolePolicyReadServiceTests.Compose_resolves_alias_from_kind`, `tests/Antiphon.Tests/Application/RolePolicyReadServiceTests.cs` | Code `kind` null → `alias` `fable`, `effective.agentKind` ClaudeCode |
+| `kind` null: undefined configured kind | TUnit `RolePolicyEndpointTests.Get_serialises_every_row_when_one_role_has_unsupported_values`; `RolePolicyReadServiceTests.Compose_withholds_the_target_for_unsupported_or_undefined_values` case `policy-kind-999` | Deploy kind 999 → `kind` null, `alias` `""`, `effective` `rolePolicy` with `agentKind`/`modelLevel`/`alias`/`strength` null; Docs kind 999 → `kind` null, `alias` `""` |
+| Alias follows the configured kind | TUnit `RolePolicyReadServiceTests.Compose_resolves_alias_from_kind`, same file | Docs Grok → `grok-4.7`; Commit Codex → `gpt-6.1-sol`; Code `kind` null → `fable`, `effective.agentKind` ClaudeCode |
+| Unconfigured role uses `DefaultLevel`/`DefaultTimeoutMinutes` | TUnit `RolePolicyReadServiceTests.Compose_lists_RoutableRoles_in_order_and_marks_Custom_unconfigured`, same file | DefaultLevel Medium, timeout 90 → Custom `Medium`/`sonnet`/90 |
+| First candidate of a stage pin is `effective`; a card pin is not a stage pin | TUnit `RolePolicyReadServiceTests.Compose_effective_prefers_the_first_stage_pin_candidate_and_excludes_card_pins`, same file | Preferred Plan pin head Codex/Frontier is `effective`; Code card pin → `stagePin` null |
+| A partial pin head fills from the policy | TUnit `RolePolicyReadServiceTests.Compose_fills_a_missing_pin_level_from_the_policy`, `…Compose_fills_a_missing_pin_kind_from_the_policy`, same file | Grok head without level → Medium/`grok-4.7`; level-only head → policy kind (ClaudeCode `opus`, or Grok `grok-4.7`) |
+| A candidate-free pin names no target | TUnit `RolePolicyReadServiceTests.Compose_withholds_the_target_for_a_candidate_free_pin`, same file | `effective` `{pin, null, null, null, Required}` |
+| No write verb on `/api/role-policy` | not covered by a test | — |
 
 ```
 GET    /api/complexity-chains                          any-role ×3 first (Hard/Medium/Easy), then every

@@ -169,6 +169,15 @@ describe('SettingsPage', () => {
       }),
       http.get('/api/dispatch-concurrency/revisions', () => HttpResponse.json({ revisions: [], nextBeforeRevision: null })),
     )
+    // jsdom queues a history traversal on timers before it fires popstate, so a synchronous act only
+    // schedules it; await the real event (registered first) so the findBy waits start after it.
+    const traverse = (go: () => void) =>
+      act(async () => {
+        await new Promise<void>((resolve) => {
+          window.addEventListener('popstate', () => resolve(), { once: true })
+          go()
+        })
+      })
     const selected = (name: string) => expect(screen.getByRole('tab', { name })).toHaveAttribute('aria-selected', 'true')
 
     window.history.pushState({}, '', '/settings?tab=routing')
@@ -193,12 +202,12 @@ describe('SettingsPage', () => {
     expect(screen.queryByTestId('routing-settings-tab')).toBeNull()
     await waitFor(() => expect(concurrencyRequests).toBe(1))
 
-    act(() => window.history.back())
+    await traverse(() => window.history.back())
     expect(await screen.findByTestId('routing-settings-tab')).toBeInTheDocument()
     selected('Routing')
     expect(screen.queryByTestId('dispatch-concurrency-section')).toBeNull()
 
-    act(() => window.history.forward())
+    await traverse(() => window.history.forward())
     expect(await screen.findByTestId('dispatch-concurrency-section')).toBeInTheDocument()
     selected('Concurrency')
 

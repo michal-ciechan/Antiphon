@@ -268,24 +268,35 @@ beforeEach(() => {
   vi.mocked(notifications.show).mockClear()
 })
 
+/** Queries inside the limit row a control name starts with: a page-wide role scan is load-sensitive (`C506 S2R3 conflict-reload-controls`). */
+function row(name: string) {
+  const label = name.split(' ')[0]
+  return within(screen.getByTestId(`dispatch-concurrency-row-${label === 'Overall' ? 'overall' : label}`))
+}
 function sw(name: string) {
-  return screen.getByRole('switch', { name })
+  return row(name).getByRole('switch', { name })
 }
 function num(name: string) {
-  return screen.getByRole('textbox', { name })
+  return row(name).getByRole('textbox', { name })
+}
+function noLimit(name: string) {
+  return row(name).getByRole('checkbox', { name: `${name} no limit` })
 }
 function saveButton() {
   return screen.getByTestId('dispatch-concurrency-save')
 }
 
+/** `clear` leaves the input focused and empty, so typing skips a second click and its editor re-render (`C506 S2F2 refresh-fails`). */
 async function setValue(name: string, value: string) {
   const input = num(name)
   await userEvent.clear(input)
-  if (value) await userEvent.type(input, value)
+  if (value) await userEvent.type(input, value, { skipClick: true })
 }
 
+/** One paste, not a keystroke per character; per-key typing re-renders the editor (`C506 S2R3 conflict-reload-controls`). */
 async function typeReason(reason: string) {
-  await userEvent.type(screen.getByTestId('dispatch-concurrency-reason'), reason)
+  await userEvent.click(screen.getByTestId('dispatch-concurrency-reason'))
+  await userEvent.paste(reason)
 }
 
 async function loaded() {
@@ -349,7 +360,7 @@ it('C506 V08 rows-and-sources', async () => {
   expect(screen.getByTestId('dispatch-concurrency-inherited-overall-maxParallel')).toHaveTextContent('4')
 
   expect(sw('Code max parallel override')).toBeChecked()
-  expect(screen.getByRole('checkbox', { name: 'Code max parallel no limit' })).toBeChecked()
+  expect(noLimit('Code max parallel')).toBeChecked()
   expect(sw('Plan max parallel override')).not.toBeChecked()
   expect(screen.getByTestId('dispatch-concurrency-effective-parallel-Code')).toHaveTextContent(/^4$/)
   expect(screen.getByTestId('dispatch-concurrency-effective-Code')).toHaveTextContent('Project override')
@@ -538,7 +549,7 @@ async function noLimitThenRevert(row: 'Overall' | 'Review', field: 'max parallel
   await loaded()
 
   await userEvent.click(sw(`${row} ${field} override`))
-  await userEvent.click(screen.getByRole('checkbox', { name: `${row} ${field} no limit` }))
+  await userEvent.click(noLimit(`${row} ${field}`))
   await typeReason('unbounded')
   await userEvent.click(saveButton())
   await waitFor(() => expect(state.puts).toHaveLength(1))
@@ -546,7 +557,7 @@ async function noLimitThenRevert(row: 'Overall' | 'Review', field: 'max parallel
   expect(state.puts[0].raw).toContain(':null')
   await waitFor(() => expect(successes()).toHaveLength(1))
 
-  await userEvent.click(screen.getByRole('button', { name: `Revert ${row} to inherited` }))
+  await userEvent.click(within(screen.getByTestId(`dispatch-concurrency-row-${row === 'Overall' ? 'overall' : row}`)).getByRole('button', { name: `Revert ${row} to inherited` }))
   expect(sw(`${row} ${field} override`)).not.toBeChecked()
   await typeReason('back to inherited')
   await userEvent.click(saveButton())
@@ -754,7 +765,7 @@ it('C506 V12 refresh-fails', async () => {
   expect(screen.getByTestId('dispatch-concurrency-reason')).toHaveValue('tighten')
 
   state.get = P5
-  await userEvent.click(screen.getByRole('button', { name: 'Reload saved settings' }))
+  await userEvent.click(within(screen.getByTestId('dispatch-concurrency-refresh-failed')).getByRole('button', { name: 'Reload saved settings' }))
   expect(await screen.findByTestId('dispatch-concurrency-conflict')).toHaveTextContent('now global r8, project r5')
   expect(saveButton()).toBeEnabled()
   await userEvent.click(saveButton())
@@ -1111,9 +1122,9 @@ function draftControls() {
     sw('Code max parallel override'),
     sw('Plan max parallel override'),
     sw('Overall max queued override'),
-    screen.getByRole('checkbox', { name: 'Review max queued no limit' }),
-    screen.getByRole('button', { name: 'Revert Code to inherited' }),
-    screen.getByRole('button', { name: 'Revert Review to inherited' }),
+    noLimit('Review max queued'),
+    row('Code').getByRole('button', { name: 'Revert Code to inherited' }),
+    row('Review').getByRole('button', { name: 'Revert Review to inherited' }),
     screen.getByTestId('dispatch-concurrency-reason'),
   ]
 }
@@ -1478,7 +1489,7 @@ it('C506 S2R3 conflict-reload-controls', async () => {
   expect(num('Code max parallel')).toBeDisabled()
   expect(screen.getByTestId('dispatch-concurrency-reason')).toBeDisabled()
   state.get = P5
-  await userEvent.click(screen.getByRole('button', { name: 'Reload saved settings' }))
+  await userEvent.click(within(screen.getByTestId('dispatch-concurrency-refresh-failed')).getByRole('button', { name: 'Reload saved settings' }))
   await settled()
   expect(screen.getByTestId('dispatch-concurrency-conflict')).toHaveTextContent('now global r8, project r5')
   expect(num('Code max parallel')).toBeEnabled()

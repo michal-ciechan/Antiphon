@@ -9,8 +9,11 @@ const receiptScript = resolve(dirname(fileURLToPath(import.meta.url)), '../../..
 
 it('bounds the receipt timeout while the SignalR connection never replies', async () => {
   const sockets = new Set<import('node:net').Socket>()
+  // A Windows child that exits with the socket open aborts it, so the peer reset is expected here.
+  const socketErrors: NodeJS.ErrnoException[] = []
   const server = createServer(socket => {
     sockets.add(socket)
+    socket.on('error', error => socketErrors.push(error))
     socket.on('close', () => sockets.delete(socket))
   })
   server.listen(0, '127.0.0.1')
@@ -51,4 +54,5 @@ it('bounds the receipt timeout while the SignalR connection never replies', asyn
     for (const socket of sockets) socket.destroy()
     await new Promise<void>(resolve => server.close(() => resolve()))
   }
+  expect(socketErrors.filter(error => error.code !== 'ECONNRESET')).toEqual([])
 })

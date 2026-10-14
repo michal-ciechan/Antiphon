@@ -189,9 +189,29 @@ function search() {
   return new URLSearchParams(window.location.search)
 }
 
+/**
+ * Lookups by test id or inside one limit row: a page-wide role scan costs 0.2-0.5 s each under load
+ * (`C506 V15 scope-selector`). Accessible names are asserted on the element itself where it matters.
+ */
+function scope() {
+  return screen.getByTestId('concurrency-scope')
+}
+function sw(name: string) {
+  return within(screen.getByTestId(`dispatch-concurrency-row-${name.split(' ')[0]}`)).getByRole('switch', { name })
+}
+function reason() {
+  return screen.getByTestId('dispatch-concurrency-reason')
+}
+
 async function chooseScope(label: string) {
-  await userEvent.click(screen.getByRole('textbox', { name: 'Scope' }))
+  await userEvent.click(scope())
   await userEvent.click(await screen.findByRole('option', { name: label }))
+}
+
+/** One paste, not a keystroke per character (`C506 V15 scope-selector`). */
+async function typeReason(reason: string) {
+  await userEvent.click(screen.getByTestId('dispatch-concurrency-reason'))
+  await userEvent.paste(reason)
 }
 
 afterEach(() => {
@@ -221,10 +241,11 @@ it('C506 V15 scope-selector', async () => {
   renderWithProviders(<SettingsPage />)
 
   expect(await screen.findByTestId('dispatch-concurrency-subtitle')).toHaveTextContent('Revision 4')
-  await waitFor(() => expect(screen.getByRole('textbox', { name: 'Scope' })).toHaveValue('P'))
+  await waitFor(() => expect(scope()).toHaveValue('P'))
+  expect(scope()).toHaveAccessibleName('Scope')
   // A P draft: one more override and a reason, never saved.
-  await userEvent.click(screen.getByRole('switch', { name: 'Review max parallel override' }))
-  await userEvent.type(screen.getByRole('textbox', { name: /Reason/ }), 'p draft')
+  await userEvent.click(sw('Review max parallel override'))
+  await typeReason('p draft')
 
   await chooseScope('Q')
 
@@ -234,12 +255,15 @@ it('C506 V15 scope-selector', async () => {
   expect(search().get('tab')).toBe('concurrency')
   expect(search().get('project')).toBe(Q)
   expect(calls.projectGets).toEqual([P, Q])
-  expect(screen.getByRole('switch', { name: 'Code max parallel override' })).not.toBeChecked()
-  expect(screen.getByRole('switch', { name: 'Review max parallel override' })).not.toBeChecked()
-  expect(screen.getByRole('textbox', { name: /Reason/ })).toHaveValue('')
+  expect(sw('Code max parallel override')).not.toBeChecked()
+  expect(sw('Review max parallel override')).not.toBeChecked()
+  expect(reason()).toHaveValue('')
+  expect(reason()).toHaveAccessibleName(/Reason/)
 
-  await userEvent.type(screen.getByRole('textbox', { name: /Reason/ }), 'q reason')
-  await userEvent.click(screen.getByRole('button', { name: 'Save' }))
+  await typeReason('q reason')
+  const save = screen.getByTestId('dispatch-concurrency-save')
+  expect(save).toHaveAccessibleName('Save')
+  await userEvent.click(save)
   await waitFor(() => expect(calls.puts).toHaveLength(1))
   expect(calls.puts[0]).toEqual({
     path: `/api/projects/${Q}/dispatch-concurrency`,
@@ -253,7 +277,7 @@ it('C506 V15 scope-selector', async () => {
   expect(search().get('tab')).toBe('concurrency')
   expect(search().has('project')).toBe(false)
   expect(calls.globalGets).toBe(1)
-  expect(screen.getByRole('textbox', { name: /Reason/ })).toHaveValue('')
+  expect(reason()).toHaveValue('')
   expect(calls.puts).toHaveLength(1)
 })
 
@@ -296,7 +320,7 @@ it('C506 S3F1 active-tab-click', async () => {
 
   expect(await screen.findByTestId('dispatch-concurrency-subtitle')).toHaveTextContent('Revision 4')
   await waitFor(() => expect(screen.getByRole('textbox', { name: 'Scope' })).toHaveValue('P'))
-  await userEvent.type(screen.getByRole('textbox', { name: /Reason/ }), 'p draft')
+  await typeReason('p draft')
 
   await userEvent.click(screen.getByRole('tab', { name: 'Concurrency' }))
 

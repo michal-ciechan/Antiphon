@@ -16,13 +16,19 @@ public sealed record ComposedInstructions(string Text, IReadOnlyList<Instruction
     public AgentPinSnapshot? PinSnapshot { get; init; }
     public static ComposedInstructions Empty { get; } = new(string.Empty, []);
 
+    /// <summary>
+    /// Fragments expanded into <see cref="Text"/> (CARD-1213), in first-use order, each once.
+    /// Their stamps follow the bundle stamps (InstructionFragmentTests.C1213_FragmentStampsChangeWithText).
+    /// </summary>
+    public IReadOnlyList<InstructionFragment> Fragments { get; init; } = [];
+
     /// <summary>Nothing to append: no bundles, no style, no agent contract. The flag is then omitted entirely.</summary>
     public bool IsEmpty => Text.Length == 0;
 
     /// <summary><c>["delegate-basics v3f9a1b2c", …]</c> — for a log line, a DTO or a drift check.</summary>
     public IReadOnlyList<string> Stamps => PinSnapshot is { HasHistory: true } pin
-        ? [.. Bundles.Select(b => b.Stamp), $"pinned v{pin.ContentHash[..8]}"]
-        : [.. Bundles.Select(b => b.Stamp)];
+        ? [.. Bundles.Select(b => b.Stamp), .. Fragments.Select(f => f.Stamp), $"pinned v{pin.ContentHash[..8]}"]
+        : [.. Bundles.Select(b => b.Stamp), .. Fragments.Select(f => f.Stamp)];
 
     /// <summary>
     /// The whole composition on one line — <c>"orchestrator v1a2b3c4d, delegate-basics v3f9a1b2c"</c>
@@ -78,7 +84,22 @@ public static class InstructionBundleComposer
     public static ComposedInstructions Compose(
         IEnumerable<string>? bundleKeys = null,
         string? styleBundleKey = null,
-        string? systemPromptAppend = null)
+        string? systemPromptAppend = null) =>
+        Compose(bundleKeys, styleBundleKey, systemPromptAppend,
+            InstructionBundles.Get, [.. InstructionFragments.All.Values]);
+
+    /// <summary>
+    /// The composition with its catalogs passed in (CARD-1213): the public overload passes the
+    /// embedded catalogs, and InstructionFragmentTests passes synthetic ones. Each rendered bundle's
+    /// <c>{{NAME}}</c> placeholders expand through <see cref="InstructionFragments.Expand"/>; the
+    /// append is added after expansion and is not scanned (C1213_ExpansionScope).
+    /// </summary>
+    internal static ComposedInstructions Compose(
+        IEnumerable<string>? bundleKeys,
+        string? styleBundleKey,
+        string? systemPromptAppend,
+        Func<string, InstructionBundle> bundleFor,
+        IReadOnlyCollection<InstructionFragment> fragments)
     {
         var keys = new List<string>();
         if (bundleKeys is not null)
@@ -95,15 +116,16 @@ public static class InstructionBundleComposer
                 continue;
             if (!seen.Add(key))
                 continue;
-            bundles.Add(InstructionBundles.Get(key));
+            bundles.Add(bundleFor(key));
         }
 
         var text = new StringBuilder();
+        var used = new List<InstructionFragment>();
         foreach (var bundle in bundles)
         {
             if (text.Length > 0)
                 text.Append(BlockSeparator);
-            text.Append(bundle.Render());
+            text.Append(InstructionFragments.Expand(bundle.Key, bundle.Render(), fragments, used));
         }
 
         if (!string.IsNullOrWhiteSpace(systemPromptAppend))
@@ -115,7 +137,7 @@ public static class InstructionBundleComposer
 
         return text.Length == 0
             ? ComposedInstructions.Empty
-            : new ComposedInstructions(text.ToString(), bundles);
+            : new ComposedInstructions(text.ToString(), bundles) { Fragments = used };
     }
 
     /// <summary>
@@ -263,7 +285,8 @@ public static class InstructionBundleComposer
 
         var breakdown = composed.Bundles.Count == 0
             ? "no bundles"
-            : string.Join(", ", composed.Bundles.Select(b => $"{b.Stamp} {b.Text.Length:N0} chars"));
+            : string.Join(", ", composed.Bundles.Select(b => $"{b.Stamp} {b.Text.Length:N0} chars")
+                .Concat(composed.Fragments.Select(f => $"fragment {f.Stamp} {f.Text.Length:N0} chars")));
         throw new InvalidOperationException(
             $"{subject}: composed instructions do not fit the command-line estimate — {total:N0} chars against a "
             + $"budget of {budgetChars:N0} ({appendChars:N0} for --append-system-prompt, {otherChars:N0} for "

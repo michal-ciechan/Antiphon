@@ -827,7 +827,8 @@ An accepted Reply changes a live Blocked task to Working; it does not itself fre
 The role gate
 uses the effective dispatch-concurrency policy (CARD-0505). A fresh database imports
 `Delegation:RolePolicy:<role>:RecommendedInFlight` and `Delegation:MaxOpenTasks` once; later
-values come from `GET/PUT /api/dispatch-concurrency` and the project route, not from a restart.
+values come from `GET/PUT /api/dispatch-concurrency` and the project route, or the Settings →
+Concurrency tab ([below](#concurrency-settings-tab-card-0506)), not from a restart.
 The import defaults are Code 2, Review 2 and other named roles 1, mode `LegacyOpen`.
 `SeparateQueues` is an explicit opt-in. Read effective values, occupancy, hosts, runners and runner defaults from the
 effective-settings route, `GET /api/agent-tasks/pipeline?projectId=<id>` (CARD-0881), before
@@ -880,46 +881,77 @@ current revision, a reason, and Human provenance.
 is what the next `delegate.ps1` create reads; RolePolicy remains the provenance-less fallback when
 no pin exists. A Human pin survives a RolePolicy edit and an Auto rewrite (409 `routing_pin_human`).
 `scripts/routing-pin.ps1` is the write surface; `delegate.ps1 -Pin` records this dispatch as Human
-Required. A pin naming a held alias is still 409 `model_disabled` (CARD-0309) — pins consume
-`Require`, they do not write a hold, and `ignoreRoutingPin` is not `ignoreModelDisabled`.
+Required. A Required pin that composes to one target (one candidate, or a list an explicit kind
+and level narrow to one) is 409 `model_disabled` when that target is held (CARD-0309;
+`RoutingPinCandidateCreateTests.Required_single_candidate_held_is_still_409_model_disabled_with_coda`,
+`…Explicit_kind_and_level_against_a_list_is_not_walked`). Pins consume `Require`, they do not
+write a hold, and `ignoreRoutingPin` is not `ignoreModelDisabled`.
 
 A stage pin with `candidates` is how the operator's role-shaped fallback is recorded
 (CARD-0322): `routing-pin.ps1 set -Role Plan -Candidates ClaudeCode/Frontier,ClaudeCode/High,Codex/Frontier`.
-The list is walked with CARD-0090's chain mechanics (holds, quota, stage forbid). A **Required**
+A list that composes to two or more candidates after explicit kind/level narrowing is walked with
+CARD-0090's chain mechanics (holds, quota, stage forbid): a held head is skipped
+(`RoutingPinCandidateCreateTests.Required_list_skips_a_held_head_and_stamps_RoutingPinId`), and an
+exhausted list is **Blocked** (`…Required_list_all_held_returns_200_Blocked_naming_the_pin`) or 409
+`routing_exhausted` with `refuseIfExhausted`. A **Required**
 list is the whole candidate set; a **Preferred** list is tried first, then the request/role policy
 (or, with `-Complexity`, the chain — never both). Card list vs stage list never concatenate: the
 card pin wins as a whole row. On `routing exhausted` relay to the operator — never pick a kind
 yourself.
 
-Precedence between a stage-wide pin and a role's complexity cell: a **Required** pin *bypasses* the
-matrix cell for that role entirely — the cell is never consulted while the pin stands. A
+Precedence between a stage-wide pin and a role's complexity cell: an applied **Required** pin that
+contributes a resolved candidate supplies the selection in place of the cell's candidates
+(`RoutingPinCandidateCreateTests.Required_list_plus_complexity_bypasses_the_chain`); a Required pin
+with no candidate (no kind or level) leaves the chain selecting
+(`ComplexityRoutingComposeTests.A_required_pin_without_kind_or_level_does_not_bypass_the_chain`). A
+card pin wins over the stage pin as a whole row, and `ignoreRoutingPin` leaves the pin unapplied. A
 **Preferred** pin *prepends* to the matrix candidates and falls through to the cell if the pinned
 target is unavailable. A **card-scoped** pin applies only to that one card, never to every task in
 that role stage-wide — do not read a card pin's banner as a global change. `RolePolicy` itself is
 unrelated to this matrix: it remains the non-complexity fallback (default kind/level, escalation,
 timeout, WIP) for work not launched with `-Complexity`; CARD-0333's matrix does not govern or
-supersede it (CARD-0097 is the separate, still-open RolePolicy visibility/editing follow-up).
+supersede it. The Routing tab's Role policy section (CARD-0097, below) displays it.
 
 **Operators read and reason about all of this at `/settings?tab=routing`** (CARD-0333): the global
 Routing settings tab shows live model availability, best-effort subscription-usage observations
 (explicitly provider/profile-level, never a per-model quota, and "Unknown" rather than a guessed
-number when monitoring is off or no sample exists), the active stage-wide/card pins with the
-Required/Preferred wording above, and the effective (role × complexity) matrix with inline
-Configure/Clear. It is the read path for diagnosing "why did this route where it did," not a new
-way to change RolePolicy or to control a running session.
+number when monitoring is off or no sample exists), runner defaults, the Role policy section, the
+active stage-wide/card pins with the Required/Preferred wording above, and the effective
+(role × complexity) matrix with inline Configure/Clear. It is the read path for diagnosing "why did
+this route where it did," not a new way to change RolePolicy or to control a running session.
 
-**Deployment note:** as of tonight there is a live stage-wide **Human Required Code → Grok** pin.
-It bypasses every Code-role complexity cell — an operator looking only at the Code row of the
-matrix will see candidates that are not actually being used. This is expected, not a bug; check
-`/settings?tab=routing` (or `GET /api/routing-pins?role=Code`) for the pin before assuming the
-matrix is misconfigured. Clearing this pin, or downgrading it from Required to Preferred, is an
-explicit operator decision made through `scripts/routing-pin.ps1` — it is never automatically
-migrated or cleared by CARD-0333's matrix UI, which is read-only for pins.
+**Role policy section and delegate modal level (CARD-0097).** Data: `GET /api/role-policy` (its
+block in [antiphon-api.md](antiphon-api.md)). RolePolicy is the `Delegation:RolePolicy`
+configuration section; pins: `scripts/routing-pin.ps1` and `/api/routing-pins`.
+
+| Behaviour | Test (runner, file) | What it asserts |
+|---|---|---|
+| Section order and heading | Vitest `C097 V10 section-order`, `client/src/features/settings/RoutingSettingsTab.test.tsx` | `runner-defaults-section` precedes `role-policy-section`, which precedes `routing-matrix-row-any`; heading `Role policy` |
+| Rows come from the route, in route order | Vitest `C097 V08 rows-from-dto-not-mirror`, `client/src/features/settings/RolePolicySection.test.tsx` | a 15-row fixture with an unknown role renders 15 `role-policy-row-*` rows; Mutation shows `ClaudeCode/Low (haiku)`, not `Frontier`; Custom shows `not configured`; TestDesign precedes Mutation |
+| Default column label | Vitest `C097 V05 <case>`, `client/src/features/settings/rolePolicyModel.test.ts` | `null-kind-low` (kind null, alias `haiku`) → `ClaudeCode/Low (haiku)`; `configured-kind-undefined` (kind null, alias `""`) → `unknown/Medium ()`; `not configured — DefaultLevel High (opus)`; `unknown` for a null level; `not configured — DefaultLevel unknown` |
+| Escalate and Timeout columns | Vitest `C097 V24 <case>`, `client/src/features/settings/rolePolicyModel.test.ts` | `High (manual)`, `—`, `Frontier after 7 min quiet`, `240 min`, `off` (timeout 0) |
+| `Effective next create` column label (a projection of `effective`, not a create result) | Vitest `C097 V06 <case>`, `client/src/features/settings/rolePolicyModel.test.ts` | `Required Human pin → Codex/Frontier (gpt-6-astra)`; `default → ClaudeCode/Low (haiku)`; candidate-free pin → `no candidate (agent-only or forbid-only; see the pin)`; unknown source → `unknown` |
+| Stage pin column | Vitest `C097 V25 stage-pin-column-and-effective`, `client/src/features/settings/RolePolicySection.test.tsx` | Plan pin shows `Required Human pin`, numbered candidates with availability, the reason and the effective label; an unpinned row shows `—` |
+| Route failure stays inside the section | Vitest `C097 V09 role-policy-failure-keeps-siblings`, `client/src/features/settings/RoutingSettingsTab.test.tsx` | 500 → `Could not load role policy.` in the section; availability, runner defaults and matrix still render |
+| Section has no editor; its copy names `scripts/routing-pin.ps1` as the pin writer | not covered by a test | — |
+| Delegate modal preselects the role-policy level | Vitest `C097 V16 server-level-preselects`, `client/src/features/delegations/DelegateModal.test.tsx` | Mutation row `High` → `tier-High`, `delegate-tier-source-rolePolicy`; create body `modelLevel: null` |
+| An `effective.source` `pin` level wins in the modal | Vitest `C097 V17 stage-pin-wins`, same file | mocked Plan row with `level` `Frontier`, `effective` `{ source: pin, modelLevel: High }` and `stagePin` null → `delegate-tier-source-pin`, `tier-High`, no `tier-Frontier` |
+| Route failure falls back to `AGENT_TASK_ROLES` | Vitest `C097 V18 route-failure-falls-back-to-constant`, same file | 500 → `delegate-tier-source-fallback`, `tier-Low` for Mutation; Delegate enabled after typing a goal |
+| Null policy level falls back to `AGENT_TASK_ROLES` | Vitest `C097 V30 undefined-policy-level-falls-back-to-constant`, same file | Mutation `level: null` → `delegate-tier-source-fallback`, `tier-Low` |
+| Sub-orchestrator floor applies to the server level | Vitest `C097 V27 orchestrator-floor-on-server-level`, same file | Sub-orchestrator + Mutation (`Low`) → `tier-High` |
+
+**Stage pins and the matrix:** the matrix row can show candidates a stage pin keeps out of use;
+routing: see **Routing pins beat RolePolicy** in [orchestration-loop.md](orchestration-loop.md#2-tiers). Read the live pins with
+`GET /api/routing-pins?role=<Role>` or `scripts/routing-pin.ps1 get -Role <Role>` (or
+`/settings?tab=routing`) before assuming the matrix is misconfigured. Clearing a pin, or
+downgrading it from Required to Preferred, is an operator decision made through
+`scripts/routing-pin.ps1`; CARD-0333's matrix UI is read-only for pins.
 
 **Complexity chains (CARD-0090, CARD-0332).** Pass `-Complexity Hard|Medium|Easy` when the work's hardness
 should pick (kind, level) from an ordered fallback list, instead of an explicit `-Kind`/`-Level`.
 The list is a sparse (role × complexity) matrix: the walk reads the role cell, then the any-role
-chain, then the config default, then Blocked. A Required stage pin still bypasses the cell.
+chain, then the config default, then Blocked. Pins and the cell: see **Routing pins beat
+RolePolicy** in [orchestration-loop.md](orchestration-loop.md#2-tiers).
 An explicit pair is never rerouted — combining `-Complexity` with `-Kind` or `-Level` is 422.
 Config defaults ship empty; write the live lists with `complexity-chain.ps1 set` (`-Role Plan` for
 a cell, omit `-Role` for the any-role row). When the chain
@@ -941,6 +973,87 @@ zero-progress Block are follow-on slices of the same card.
 
 The best single result of this period came from a `Debug` agent; the cheapest useful one was a haiku
 check at **$0.12**.
+
+### Concurrency settings tab (CARD-0506)
+
+`/settings?tab=concurrency` edits the CARD-0505 dispatch limits through the routes in
+[antiphon-api.md](antiphon-api.md) (Dispatch concurrency routes). Each row below states what the
+named test asserts and nothing more; behaviour outside these rows is not documented here. `C506 …`
+tests are Vitest titles in the named `client/src` test file, run with
+`pwsh -NoProfile -File scripts/test-client.ps1 <file>`. The one TUnit method is named with its class
+and file.
+
+Navigation:
+
+| Behaviour | Test (file) |
+|---|---|
+| Tabs read Routing, Concurrency, Status in that order; a router link, back and forward to `?tab=concurrency` or `?tab=routing` select that tab and panel; an unknown `tab` selects Templates | `C506 V16 controlled-tab` (`SettingsPage.test.tsx`) |
+| `?tab=concurrency&project=P` selects Concurrency, shows P's revision 4 with Scope `P`, and requests P's route once and the global route zero times | `C506 V15 project-deeplink` (`ConcurrencySettingsTab.test.tsx`) |
+| Choosing Scope `Q` sets `project=Q`, unchecks P's draft switch and empties the reason; Save then PUTs to Q's route; choosing Global defaults removes `project` | `C506 V15 scope-selector` (`ConcurrencySettingsTab.test.tsx`) |
+| An unknown `project` id shows Scope `Unknown project (<id>)` and a load error whose Retry requests the route again; no Save button, no table, no PUT | `C506 V15 missing-project` (`ConcurrencySettingsTab.test.tsx`) |
+| Clicking a tab keeps `project` and an unrelated `keep` parameter | `C506 S3F1 active-tab-click`, `C506 S3F1 away-and-back`, `C506 S3F1 unknown-tab` (`ConcurrencySettingsTab.test.tsx`) |
+| The Projects row button `Project concurrency` navigates to `/settings` with `tab=concurrency` and that row's `project`, keeping `keep` | `C506 V17 project-row-link`, `C506 S3F1 row-link-keeps-params` (`ProjectConfig.test.tsx`) |
+
+Editing (`DispatchConcurrencyEditor.test.tsx` unless named):
+
+| Behaviour | Test |
+|---|---|
+| 14 role rows plus Overall (15 rows), 16 with a DTO-only `FutureRole`; inherited cells show value and source label (`Global override`, `Built-in default`) | `C506 V08 rows-and-sources`, `C506 V08 dto-only-role` |
+| `mode` is displayed as text, with no mode combobox or textbox | `C506 V08 rows-and-sources` |
+| `scripts/dispatch-concurrency.ps1 set` sends a file's `mode` with the other overrides | TUnit `DispatchConcurrencyScriptTests.Set_reads_then_sends_exact_snapshot` (`tests/Antiphon.Tests/Scripts/DispatchConcurrencyScriptTests.cs`; run through the build slot per [testing-and-build.md](testing-and-build.md)) |
+| `usePutDispatchConcurrency` sends exactly the keys `expectedRevision`, `expectedGlobalRevision`, `overrides`, `reason` (trimmed), `provenance: "Human"` to the scope's route | `C506 V05 global`, `C506 V05 project-zero`, `C506 V05 project-existing` (`dispatchConcurrency.test.ts`) |
+| With no saved overrides, switching on Code max parallel and setting 1 sends `overrides: { roles: { Code: { maxParallel: 1 } } }` (project and global) | `C506 V09 sparse-project`, `C506 V09 sparse-global` |
+| After another writer changes only `mode` at r8 (live event or 409), the next Save body carries r8's `mode` when r8 has one and omits it when r8 has none, with the saved limit overrides and the edited cell | `C506 S2F1 live mode-changed`, `… mode-added`, `… mode-removed`, and the three `C506 S2F1 conflict …` cases |
+| No limit on Overall max queued, Review max parallel or Review max queued sends that field as `null`; Revert then sends the body without it; Overall max parallel offers no No limit checkbox | `C506 V10 overall-queued`, `C506 V10 review-parallel`, `C506 V10 review-queued` |
+| The `Clear all overrides` button opens a confirm with no write; `Clear overrides` sends `overrides: {}`; Cancel writes nothing and keeps the draft and reason; the button is disabled with no saved overrides and enabled with a mode-only override | `C506 V11 global`, `C506 V11 project`, `C506 V11 cancel`, `C506 V11 schema-only-disabled` |
+| A 422 for `roles.Code.maxParallel` shows its message in the `role="alert"` error and on the Code max parallel input (`aria-invalid`, accessible description); the value is kept and no success notification appears | `C506 V13 field-error` |
+| Notification `No change` when the PUT returns the sent revision; `Saved revision 8` and an emptied reason when it returns r8 | `C506 V14 no-change`, `C506 V14 saved` |
+
+No editor test returns a server 422 for `reason`. `C506 V03 reason <variant>` (`dispatchConcurrencyModel.test.ts`)
+asserts that `validateDraft` reports `reason` for an empty, whitespace-only or 401-character reason.
+
+Revision conflict (409 `dispatch_concurrency_revision_conflict`):
+
+| Behaviour | Test |
+|---|---|
+| After the 409: a second scope GET, the alert `Saved revision changed (now global r8, project r5)` (global case: `project r0`) with `Code max parallel: your draft 1, now saved 3`; project case: edited value and reason kept; one PUT; the next Save sends the refetched revisions | `C506 V12 conflict-project`, `C506 V12 conflict-global` |
+| The refetch answers 503: refresh-failed notice, Save disabled and writes nothing, draft kept; `Reload saved settings` shows the conflict alert and re-enables Save, which sends the new revision | `C506 V12 refresh-fails` |
+
+Live updates: `DispatchConcurrencyChanged` marks the global and project
+`dispatchConcurrency` scope and revisions queries and the pipeline query invalidated; the cached
+project scope data is unchanged, and `['unrelated']` and `['runnerDefaults']` are not invalidated
+(`C506 V07 changed-event`, `useSignalRInvalidation.test.ts`).
+
+| Scenario in the test | Asserted result | Test |
+|---|---|---|
+| Code cell edited to 1 with a reason; the event's refetch returns project r5 / global r8 with Code saved as 3 | Conflict alert with that diff; value 1 and reason kept; next Save sends r5 / r8 | `C506 V12 live-dirty` |
+| No edits; the refetch returns project r5 / global r8 with Code saved as 3 | Code switch on with 3, no conflict alert; next Save sends r5 / r8 with that override | `C506 V12 live-clean` |
+| No edits; project r4 overrides Code to 1 and the refetch lowers the inherited Code value 3 → 2 at global r8 | Inherited cell shows 2; override stays on with 1; next Save sends r4 / r8 | `C506 V12 inherited-change` |
+
+A refetch to a lower or reused revision (no live event):
+
+| Scenario in the test | Asserted result | Test |
+|---|---|---|
+| Global r7 (Code 3), no edits; the refetch returns restored r3 (Code 1, Review max queued 9) | Revision 3, Code 1, Review max queued 9, no conflict alert; next Save sends r3 / r3 | `C506 S2R3 rollback-global-clean` |
+| Project r4 (Code 1), no edits; the refetch returns project r2 or global r3 with Code 3 | Code 3, Review max queued override off; next Save sends the restored revisions | `C506 S2R3 rollback-project-project-clean`, `… rollback-project-global-clean` |
+| Code edited to 2 with a reason; the refetch returns a restored document | Conflict alert with one diff item; value 2 and reason kept; the untouched field follows the restored document in the next Save | `C506 S2R3 rollback-dirty-global`, `… rollback-dirty-project` |
+| Global r7 → r3 → r7 again with Code 1, then Review max queued edited to 6 | Code effective 1; next Save sends r7 with Code 1 and Review 6 | `C506 S2R3 reused-revision` |
+| The refetch returns r7 again with Code 1 instead of 3 | Code 1, no conflict alert; next Save carries Code 1 | `C506 S2R3 same-revision-new-content` |
+
+A refetch that changes only occupancy has no committed test (Review 7826b06f diagnostic
+`R4 occupancy-only refresh of dirty form updates occupancy without banner`).
+
+Known limitations with no committed test (Review 24d4e81c diagnostics; `DispatchConcurrencyEditor.tsx`
+comments on `settleSave` and the render fold; `.antiphon/task-87938db0.md` Residuals):
+
+| Limitation | Evidence |
+|---|---|
+| Restore during a pending PUT: a lower or reused-revision read seen while the PUT is held is replaced by the late reply | Diagnostics `R3 restore during PUT lower read remains current after late reply`, `R3 restore during PUT reused read remains current after late reply` |
+| Timestamp collision: after a Save whose refresh failed, a read with the same data object and `dataUpdatedAt` is not adopted | Diagnostic `R3 same store time equal read after failed save refresh is current` |
+| Late Save after unmount: whether the continuation invalidates the shared query cache | No test asserts it |
+
+`C506 S2R3 unmount-pending` asserts that a Save released after its project editor unmounts shows one
+success notification, and that a new global editor then shows revision 7 with Code max parallel enabled.
 
 ### Launching an agent
 

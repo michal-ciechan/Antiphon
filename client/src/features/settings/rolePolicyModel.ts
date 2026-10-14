@@ -6,18 +6,24 @@ import type { RoutingPinCandidateDto } from '../../api/routingPins'
 /** CARD-0097 F-1: a stage pin whose head has no candidate keeps `source: pin` and withholds the target. */
 export const NO_PIN_CANDIDATE = 'no candidate (agent-only or forbid-only; see the pin)'
 
-function targetLabel(kind: AgentKind, level: AgentModelLevel, alias: string): string {
+function targetLabel(kind: AgentKind | 'unknown', level: AgentModelLevel, alias: string): string {
   return `${kind}/${level} (${alias})`
 }
 
-/** The RolePolicy default; a null kind is ClaudeCode (C097 V05). */
+/**
+ * The RolePolicy default: a null kind shows ClaudeCode with an alias, unknown without one (C097 V05
+ * null-kind-low, configured-kind-undefined); a null level shows unknown (C097 V05 configured-level-null).
+ */
 export function defaultLabel(row: RolePolicyRowDto): string {
-  if (!row.configured) return `not configured — DefaultLevel ${row.level} (${row.alias})`
-  return targetLabel(row.kind ?? 'ClaudeCode', row.level, row.alias)
+  if (!row.configured) {
+    return row.level ? `not configured — DefaultLevel ${row.level} (${row.alias})` : 'not configured — DefaultLevel unknown'
+  }
+  if (!row.level) return 'unknown'
+  return targetLabel(row.kind ?? (row.alias ? 'ClaudeCode' : 'unknown'), row.level, row.alias)
 }
 
 /**
- * The next create's target as the server composed it: `default →` for `rolePolicy`, the pin's
+ * The `effective` projection (not a create result): `default →` for `rolePolicy`, the pin's
  * strength and provenance for `pin`, and `unknown` for a source F-1 does not list (C097 V06).
  */
 export function effectiveLabel(row: RolePolicyRowDto): string {

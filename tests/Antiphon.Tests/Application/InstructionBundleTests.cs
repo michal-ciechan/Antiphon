@@ -427,7 +427,8 @@ public class InstructionBundleTests
         composed.Text.ShouldBe(string.Join(
             InstructionBundleComposer.BlockSeparator,
             InstructionBundles.Get(InstructionBundles.Orchestrator).Render(),
-            InstructionBundles.Get(InstructionBundles.DelegateBasics).Render()));
+            // CARD-1213: delegate-basics carries the composition's first {{GIT-COMMON}}.
+            C1213Expected.FirstUse(InstructionBundles.Get(InstructionBundles.DelegateBasics).Render())));
     }
 
     [Test]
@@ -465,6 +466,8 @@ public class InstructionBundleTests
         composed.Stamps.ShouldBe([
             InstructionBundles.Get(InstructionBundles.DelegateBasics).Stamp,
             InstructionBundles.Get(InstructionBundles.BoardApi).Stamp,
+            // CARD-1213: delegate-basics expands {{GIT-COMMON}}; its stamp follows the bundles.
+            InstructionFragments.Get(InstructionFragments.GitCommon).Stamp,
         ]);
     }
 
@@ -1005,7 +1008,8 @@ public class InstructionBundleTests
         {
             var composed = InstructionBundleComposer.Compose(
                 InstructionBundles.ForDelegate(kind, role, attached)).Text;
-            composed.ShouldContain(InstructionBundles.Get(key).Render(), Case.Sensitive, key + "-composed");
+            // CARD-1213: each listed key holds its composition's first {{GIT-COMMON}}, if any.
+            composed.ShouldContain(C1213Expected.FirstUse(InstructionBundles.Get(key).Render()), Case.Sensitive, key + "-composed");
         }
 
         ContainsRendered(AgentTaskKind.Orchestrator, AgentTaskRole.Plan, InstructionBundles.Orchestrator);
@@ -1014,6 +1018,116 @@ public class InstructionBundleTests
         ContainsRendered(AgentTaskKind.Worker, AgentTaskRole.Plan, InstructionBundles.DelegateBasics);
         ContainsRendered(AgentTaskKind.Worker, AgentTaskRole.Plan, InstructionBundles.BoardApi,
             [InstructionBundles.BoardApi]);
+    }
+
+    // ---- CARD-1213 S2: shipped compositions carry git-common (V-9/R-9) -------------------------
+
+    private static readonly AgentTaskRole[] C1213NonSpecialistRoles =
+    [
+        AgentTaskRole.Custom, AgentTaskRole.Plan, AgentTaskRole.Code, AgentTaskRole.Review, AgentTaskRole.Debug,
+        AgentTaskRole.Coverage, AgentTaskRole.Docs, AgentTaskRole.Commit, AgentTaskRole.Test, AgentTaskRole.Deploy,
+        AgentTaskRole.Merge, AgentTaskRole.Investigate, AgentTaskRole.TestDesign, AgentTaskRole.Mutation,
+    ];
+
+    private static readonly AgentTaskRole[] C1213SpecialistRoles =
+        [AgentTaskRole.Check, AgentTaskRole.Distill, AgentTaskRole.Diagnose];
+
+    private static readonly (string Label, string Sentence)[] C1213GitContract =
+    [
+        ("contract-assigned-branch", "- Use only the assigned branch (feat/card-<n>-<stage>-<8hex> or legacy feat/card-task-<8hex>); never create, rename or switch branches."),
+        ("contract-commit-push", "- Commit each slice with its real outcome; push after every commit with `git push origin HEAD:refs/heads/<branch>`. Report full 40-hex SHAs."),
+        ("contract-no-rewrite", "- Never merge the target into the task branch. Never rebase, amend, reset or force-push a pushed commit; landing rebases."),
+        ("contract-test-first", "- Commit the failing test before its fix, and commit before any long test run, even as WIP."),
+        ("contract-review-freeze", "- A branch under Review is frozen for everyone, its author included, until Review settles; Review never checks out, rebases, commits to or pushes its subject branch."),
+        ("contract-merge-tree", "- Landable needs `git fetch origin master`, then `git merge-tree --write-tree origin/master HEAD` with no conflicts; report it, never merge to resolve."),
+        ("contract-push-retry", "- On a push `error in commit_refs`: wait, `git fetch`, check the tip with `git ls-remote`, retry at most three times; never force."),
+        ("contract-evidence-custody", "- No secrets in commits, logs or reports. Generated evidence stays gitignored. Code and Review run scripts/check-evidence-diff.ps1 over base..HEAD."),
+    ];
+
+    [Test]
+    public void C1213_RoleCompositionsResolve()
+    {
+        C1213NonSpecialistRoles.Concat(C1213SpecialistRoles).Order()
+            .ShouldBe(Enum.GetValues<AgentTaskRole>().Order(), "role-list-complete");
+        var fragment = InstructionFragments.Get(InstructionFragments.GitCommon);
+        foreach (var kind in new[] { AgentTaskKind.Worker, AgentTaskKind.Orchestrator })
+        foreach (var role in C1213NonSpecialistRoles)
+        {
+            var text = InstructionBundleComposer.Compose(InstructionBundles.ForDelegate(kind, role)).Text;
+            text.ShouldNotContain("{{", Case.Sensitive, $"role-unresolved {kind}/{role}");
+            CountOccurrences(text, fragment.Render()).ShouldBe(1, $"role-git-common-once {kind}/{role}");
+            CountOccurrences(text, fragment.Header + "\n").ShouldBe(1, $"role-git-common-header-once {kind}/{role}");
+        }
+        foreach (var role in C1213SpecialistRoles)
+            InstructionBundleComposer.Compose(InstructionBundles.ForDelegate(AgentTaskKind.Worker, role)).IsEmpty
+                .ShouldBeTrue($"role-specialist-empty {role}");
+    }
+
+    /// <summary>
+    /// S2 amendment: stage-review cannot hold the placeholder (TaskPlatformGuidanceTests pins it at
+    /// 2,480 chars; it is 2,475), so in the production Review order the read-only override precedes
+    /// git-common, and git-common itself says stage rules narrow it and freezes the subject branch.
+    /// </summary>
+    [Test]
+    public void C1213_ReviewOverrideFollowsFragment()
+    {
+        var fragment = InstructionFragments.Get(InstructionFragments.GitCommon);
+        InstructionBundles.ForDelegate(AgentTaskKind.Worker, AgentTaskRole.Review)
+            .ShouldBe([InstructionBundles.StageReview, InstructionBundles.DelegateBasics], "review-role-map");
+        var text = InstructionBundleComposer.Compose(
+            InstructionBundles.ForDelegate(AgentTaskKind.Worker, AgentTaskRole.Review)).Text;
+
+        var review = text.IndexOf("[bundle:stage-review v", StringComparison.Ordinal);
+        var readOnly = text.IndexOf("INVARIANTS: Read-only. Do not fix anything.", StringComparison.Ordinal);
+        var basics = text.IndexOf("[bundle:delegate-basics v", StringComparison.Ordinal);
+        var common = text.IndexOf(fragment.Render(), StringComparison.Ordinal);
+        review.ShouldBe(0, "review-order-stage-first");
+        readOnly.ShouldBeGreaterThan(review, "review-order-override-in-stage");
+        basics.ShouldBeGreaterThan(readOnly, "review-order-basics-after-override");
+        common.ShouldBeGreaterThan(basics, "review-order-fragment-in-basics");
+        var body = text[common..];
+        PinSentence(body, "INVARIANTS (stage rules may narrow, never widen):", "review-order-stage-precedence");
+        PinSentence(body, "Review never checks out, rebases, commits to or pushes its subject branch.", "review-order-subject");
+    }
+
+    [Test]
+    public void C1213_GitContractPins()
+    {
+        var compositions = new (string Label, string Text)[]
+        {
+            ("code", InstructionBundleComposer.Compose(InstructionBundles.ForDelegate(AgentTaskKind.Worker, AgentTaskRole.Code)).Text),
+            ("review", InstructionBundleComposer.Compose(InstructionBundles.ForDelegate(AgentTaskKind.Worker, AgentTaskRole.Review)).Text),
+            ("mutation", InstructionBundleComposer.Compose(InstructionBundles.ForDelegate(AgentTaskKind.Worker, AgentTaskRole.Mutation)).Text),
+            ("orchestrator", InstructionBundleComposer.Compose(InstructionBundles.ForDelegate(AgentTaskKind.Orchestrator, AgentTaskRole.Plan)).Text),
+        };
+        foreach (var (composition, text) in compositions)
+        foreach (var (label, sentence) in C1213GitContract)
+        {
+            PinSentence(text, sentence, $"{label} {composition}");
+            CountOccurrences(text, sentence).ShouldBe(1, $"{label} {composition} once");
+        }
+        InstructionBundles.TextOf(InstructionBundles.Orchestrator)
+            .ShouldContain("Delegates carry git-common; never restate git rules in briefs.", Case.Sensitive, "contract-orchestrator-briefs");
+    }
+
+    [Test]
+    public void C1213_StageExceptionsRemain()
+    {
+        var fragment = InstructionFragments.Get(InstructionFragments.GitCommon);
+        var mutation = InstructionBundleComposer.Compose(
+            InstructionBundles.ForDelegate(AgentTaskKind.Worker, AgentTaskRole.Mutation)).Text;
+        const string sourceLanding = "SOURCELANDING MUTATION EXCEPTION: never commit/push from the snapshot";
+        const string overrides = "This exception overrides the generic commit/push and amendment rules below.";
+        PinSentence(mutation, sourceLanding, "stage-exception-mutation");
+        PinSentence(mutation, overrides, "stage-exception-mutation-overrides");
+        mutation.IndexOf(overrides, StringComparison.Ordinal)
+            .ShouldBeLessThan(mutation.IndexOf(fragment.Render(), StringComparison.Ordinal), "stage-exception-mutation-before-common");
+
+        var review = InstructionBundleComposer.Compose(
+            InstructionBundles.ForDelegate(AgentTaskKind.Worker, AgentTaskRole.Review)).Text;
+        const string subject = "Review never checks out, rebases, commits to or pushes its subject branch.";
+        PinSentence(review, subject, "stage-exception-review-subject");
+        PinSentence(review, "INVARIANTS: Read-only. Do not fix anything.", "stage-exception-review-read-only");
     }
 
     private static string Collapse(string text) =>

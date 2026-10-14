@@ -32,6 +32,27 @@ accidentally-embedded file fails a test instead of reaching an agent.
 
 Live operating settings are not bundle content. The generated file, its path, and why it stays out of this directory are owned by [Generated orchestrator instructions (CARD-0822)](../../docs/agent-instruction-file-contract.md#generated-orchestrator-instructions-card-0822).
 
+## Fragments and `{{NAME}}` placeholders (CARD-1213)
+
+`Fragments/*.md` are shared blocks a bundle pulls in by writing `{{NAME}}`, NAME being the fragment
+key upper-cased (`Fragments/git-common.md` is `{{GIT-COMMON}}`). They are embedded by their own glob
+and are not bundles: the catalog skips them, so they cannot be attached. `InstructionBundleComposer.Compose`
+expands catalog bundle text only; the agent's own append is not scanned. In one composition the first
+placeholder becomes `[fragment:<key> v<hash8>]` plus the text, later ones
+`[fragment:<key> v<hash8>: see above]`, and the fragment stamp joins the stamp line after the bundle
+stamps, so a fragment edit raises the drift badge. A `{{` that does not start a known, well-formed
+placeholder fails the composition with the bundle, the token and the known names. A fragment opens
+with `<NAME> contract v<n>.`, has an `INVARIANTS` line, contains no `{{`, `{agentName}` or
+`{channels}`, and is at most 1,500 characters; the catalog refuses anything else. The tests that
+exercise each rule are InstructionFragmentTests, plus the shipped-composition pins in
+InstructionBundleTests (C1213_*); the checkpoint rows are CP-9 and CP-10 of
+`docs/superpowers/plans/2026-10-13-card-1213-test-design.md`.
+
+`delegate-basics` carries `{{GIT-COMMON}}`, so every non-specialist delegate role and the
+orchestrator carry git-common once (C1213_RoleCompositionsResolve). git-common says stage rules may
+narrow it, never widen it: Review's read-only INVARIANTS come first in its composition and still
+govern (C1213_ReviewOverrideFollowsFragment).
+
 ## Which agent carries which bundle
 
 Delegates get theirs from the role map in `InstructionBundles.ForDelegate` (Orchestrator tasks:

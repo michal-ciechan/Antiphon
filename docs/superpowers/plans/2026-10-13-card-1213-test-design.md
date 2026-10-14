@@ -370,6 +370,44 @@ including a 30s build-slot wait, and base confirmation measured 3m28s. Allow abo
 load; these are estimates, not permission to omit any remaining S1 row.
 
 
+S2 Code binding amendment (2026-10-13, task bf9ffadd; repaired 2026-10-14, tasks 1c06601b and 9125d3b8).
+Derived counts, character counts and totals were removed from this amendment in task 9125d3b8; the checkpoint table, the TRX and the commands named here are the sources.
+S2 rows are CP-9, CP-10 and CP-13 of this table.
+The parent plan's CP-8/CP-9 numbering is superseded.
+S2's changed files are the output of `git diff --name-only da0219edd 42e3e2ae8`; the later S2 repair commits change only this file.
+server/Bundles/stage-review.md is not in that output.
+CP-13 selects the classes named in its filter: classes that pin bundle text, its size, its bytes or a composition.
+Of those classes, `git diff --name-only da0219edd 42e3e2ae8 -- tests/` lists AgentBundleAttachmentTests and GrokRulesCompositionTests (expanded render instead of raw render) and CheckpointRepeatDocumentationTests (orchestrator byte pin); the other CP-13 classes are unchanged regressions.
+GrokRulesLaunchRefusalTests is left out: its Named_grok_herdr_agent_with_unsafe_raw_rules_is_refused_before_any_session_exists and Named_grok_pty_host_agent_with_unsafe_raw_rules_is_refused_before_any_session_exists skip off Windows through AssertNamedGrokRefused, and CP-13 expects 0 skipped. Its Over_budget_single_line_composition_still_throws_invalid_operation has no OS gate. Windows qualification of the class is pending.
+GrokRulesDispatchAcceptanceTests is Explicit, headed, and gated on Windows plus the real-CLI flags, and is not run; its one changed assertion is review-only and its Windows qualification is pending.
+DelegateLaunchArgvIntegrityTests is unchanged, has a Windows skip gate and is not run.
+CP-13's Min is a configured lower bound on executed results, not a method count; parameterized methods add results, and the run's TRX gives the result count and roster.
+CP-10 excludes only DelegateScriptKindTests.WorktreeHealth_with_no_findings_says_so, by exact
+name: it expects "No stuck feat/card-task-* worktrees." and scripts/delegate.ps1 has printed "No stuck
+delegate worktrees." since S1 commit bafe1b801. Neither file changes between the S2 base
+da0219eddb7dce710b5464264640f000534bb48a and 07d18d8d3133a739084f22fdb5e553ebd5b3bcb1, where that method
+failed (run 20261013-233443-606d, clean source, verified build). S2 does not touch either file.
+Brief-directed grammar (D2, accepted by Review 13491e92): a `{{` that does not open a well-formed known placeholder throws
+(malformed: one-character name, lowercase, underscore, over-long name, unterminated, nested,
+inner space); a well-formed unknown name throws (unknown). C1213_ExpansionScope carries those rows;
+the operator append and the brief stay literal.
+D-8/T24 placement (D1, accepted by Review 13491e92): TaskPlatformGuidanceTests (C1015) pins the
+enumerated base instructions verbatim, and its Stage_bundles_leave_twenty_characters_below_the_size_cap
+enforces a size maximum on the stage bundles. Inserting the placeholder into stage-review failed that size
+test in run 20261013-235330-212b. stage-review is unchanged; among the bundles, delegate-basics carries `{{GIT-COMMON}}`.
+In the production Review order the read-only INVARIANTS therefore precede git-common, inverting
+PC-56's index oracle. git-common's INVARIANTS line lets stage rules narrow it and forbids widening it,
+and it carries the subject-branch freeze; C1213_ReviewOverrideFollowsFragment (name kept) pins
+override-in-stage, fragment-in-basics, that precedence line and the freeze sentence.
+git-common says "frozen", not "read-only": DelegateBundleLaunchTests.C470_mutation_claude_and_codex_launch_contract
+forbids "read-only" in the Codex -c values of a Mutation launch (run 20261013-235330-212b).
+the_style_block_lands_after_the_bundles_and_the_agents_own_append_lands_last pins the exact stamp
+list; it gains the git-common stamp (D-5: fragment versions join Stamps).
+Budget: the orchestrator worst case (the_worst_case_composition_measured_sits_far_under_the_budget)
+had little headroom, so delegate-basics replaces its git sentences (commit/push slice, evidence-diff,
+commit before a long run) with the placeholder and shortens unpinned wording, making room for the
+fragment plus one orchestrator sentence; that test measures the composed size.
+
 Closed ordinary scope below replaces parent §6's provisional execution list. Build each row to its own isolated OutputPath; no build reuse is assumed. Use the checkpoint tool through the host build-slot gate, one run per committed slice group, and wait to a terminal exit (75 means still running). The exact command shape is `pwsh -NoProfile -File scripts/build-slot.ps1 -Label card1213-checkpoints -- dotnet run --project tools/Antiphon.Checkpoints --property:OutputPath=bin-c1213-tool/ -- run --plan docs/superpowers/plans/2026-10-13-card-1213-test-design.md --after S1 --expected-source-sha <committed-sha>`; substitute S2/S3. Tool bootstrap is included in setup below; row builds take their own slots. Record unedited CP lines, counts, full SHA, clean source/build receipts. Exit 4 is not-run; zero tests is wrong selection. No hand-run build, test or widened filter. Remove only the producer-owned bin-c1213-cpN/ and bin-c1213-tool/ outputs after their runs.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
@@ -383,27 +421,42 @@ Closed ordinary scope below replaces parent §6's provisional execution list. Bu
 | CP-7 | S1 | `tests/Antiphon.Tests -> bin-c1213-cp7/` | delivery | `/*/*/(DelegateBranchDeliveryTests*)\|(TaskParkPublicationTests*)/*` | V-5,V-7/R-5,R-7 | 7 executed; 0 failed; 0 skipped; named roster | 7 | 6 | true |
 | CP-8 | S1 | `tests/Antiphon.SessionRunner.Tests -> bin-c1213-cp8/` | runner | `/*/*/(RunnerWorkspaceServiceTests*)\|(WorkspaceParkPublicationTests*)\|(RunnerWorkspaceBindingTests*)/*` | V-6/R-6 | 59 executed; 0 failed; 0 skipped; named roster | 59 | 5 | true |
 | CP-9 | S2 | `tests/Antiphon.Tests -> bin-c1213-cp9/` | fragments | `/*/*/(InstructionFragmentTests*)\|(InstructionBundleTests*)/*` | V-8,V-9/R-8,R-9 | 85 executed; 0 failed; 0 skipped; named roster | 85 | 3 | true |
-| CP-10 | S2 | `tests/Antiphon.Tests -> bin-c1213-cp10/` | launch | `/*/*/(DelegateBundleLaunchTests*)\|(DelegateScriptKindTests*)/*` | V-9/R-9 | 70 executed; 0 failed; 0 skipped; named roster | 70 | 3 | true |
+| CP-10 | S2 | `tests/Antiphon.Tests -> bin-c1213-cp10/` | launch | `/*/*/(DelegateBundleLaunchTests*)\|(DelegateScriptKindTests*)/(*)&(!WorktreeHealth_with_no_findings_says_so)` | V-9/R-9 | 69 executed; 0 failed; 0 skipped; named roster; one confirmed inherited method excluded | 69 | 3 | true |
 | CP-11 | S3 | `tests/Antiphon.Tests -> bin-c1213-cp11/` | brief | `/*/*/DelegationReportFormatterTests*/*` | V-10/R-10 | 93 executed; 0 failed; 0 skipped; named roster | 93 | 5 | true |
 | CP-12 | S3 | `tests/Antiphon.Tests -> bin-c1213-cp12/` | contract | `/*/*/InstructionBundleTests*/*` | V-9/R-9 | 78 executed; 0 failed; 0 skipped; named roster | 78 | 3 | true |
+| CP-13 | S2 | `tests/Antiphon.Tests -> bin-c1213-cp13/` | affected | `/*/*/(AgentBundleAttachmentTests*)\|(GrokRulesCompositionTests*)\|(CheckpointRepeatDocumentationTests*)\|(TaskPlatformGuidanceTests*)\|(ScopedVerificationInstructionTests*)\|(PostLandMutationContractTests*)\|(VerificationRoundInstructionTests*)\|(MechanicalPcContractTests*)\|(CheckpointManifestDocumentationTests*)\|(OrchestratorInstructionsGuidanceTests*)\|(RepairSourceDocumentationTests*)\|(BlockedTaskParkProjectionTests*)\|(OutboundConversionTaskTests*)\|(PostLandRetrospectiveContractTests*)\|(AgentReplyStyleTests*)\|(AgentPinnedInstructionCompositionTests*)\|(InstructionFileStampTests*)\|(PolicyRefreshDeltaTests*)\|(CodexDelegateDispatchTests*)\|(PinnedCodexProfileDispatchLaunchTests*)\|(StandingPipelinePolicyDocumentationTests*)\|(DelegationCapabilityContractTests*)\|(SpecialistQualificationContractTests*)\|(CardFilePrivacyDocumentationTests*)\|(BootStallDocumentationTests*)/*` | V-9/R-9 | named roster; at least 191 executed; 0 failed; 0 skipped | 191 | 6 | true |
 
 Code binding: the census adds 46 new methods and changes the existing parser/foreign-ref/formatter and raw-bundle assertions in place. Each C1213 method must include its hand-written table, target assertion label and reachable production call; do not add placeholder tests to hit Min. Frozen names/IDs/filters stay fixed; a necessary count change requires an explicit design amendment and renewed census before its run. Additional test-only files: Application/DelegateBranchDeliveryTests.cs (nearest topology TaskParkProofWire/PhoneHomeMirrorJoinTests), plus the two new test files already in the parent. Minimal branch/gate parameters may be added to the inspected helpers; unchanged defaults preserve existing fixtures. Bind TaskParkPublicationTests to the local OwnedBranch consumer (missing from parent's test list).
 
 ### Cost
 
-Estimates, not measurements; host slot wait is additional and must be reported. Ordinary Code V/R floor = **53 minutes**, the sum of CP EstimatedMinutes (802 expected results including the S3 contract rerun). Filters/minutes: CP-1 parser 3; CP-2 manager 4; CP-3 health 4; CP-4 ownership 6; CP-5 sync 5; CP-6 dispatch 6; CP-7 delivery 6; CP-8 runner 5; CP-9 fragments 3; CP-10 launch 3; CP-11 brief 5; CP-12 contract 3. This includes 24 minutes for twelve isolated builds plus 29 for execution; checkpoint bootstrap/setup adds 2: ordinary setup+V/R = **55 minutes**. Slice budgets remain S1=21 authoring+39 checks=60, S2=39+6=45, S3=22+8=30; bootstrap 2 is shared. Re-estimate rather than silently dropping a row if authoring exceeds these estimates.
+Estimates, not measurements; host slot wait is additional and must be reported.
+Repaired 2026-10-14 (task 9125d3b8): hand-written totals are removed. The Checkpoints table's
+EstimatedMinutes and Min cells, which the checkpoint tool imports, are the ordinary-check figures; sum a
+slice's rows from the table when a budget is needed, and add checkpoint bootstrap/setup, one isolated
+build per row and slot wait separately. Measured results come from a run's CHECKPOINT lines and TRX
+(S2 Final: run 20261014-002645-e73c), not from this file.
+Re-estimate rather than silently dropping a row if authoring exceeds these estimates.
 
-PC floor is separate from Code. Each method filter in the PC table runs baseline/red/restored-green with isolated outputs. Per recipe estimate includes all three builds/runs: U=6 (2+2+2), G/H/L=9 (3+3+3), D=12 (4+4+4), Q=15 (5+5+5) minutes. Each PC adds 0.25 minutes for exact restore/timestamp/provenance checks; same-method PCs remain separate cycles.
+| Slice | Rows |
+|---|---|
+| S1 | CP-1, CP-2, CP-3, CP-4, CP-5, CP-6, CP-7, CP-8 |
+| S2 | CP-9, CP-10, CP-13 |
+| S3 | CP-11, CP-12 |
 
-| PC recipe/filter family | PC IDs | Baseline/red/green minutes |
-|---|---|---:|
-| U: exact method filters above | PC-1, PC-2, PC-3, PC-4, PC-5, PC-6, PC-7, PC-8, PC-9, PC-10, PC-29, PC-32, PC-33, PC-40, PC-47, PC-48, PC-49, PC-50, PC-51, PC-52, PC-53, PC-54, PC-55, PC-56, PC-57, PC-59, PC-60, PC-61, PC-62, PC-63, PC-64, PC-65, PC-66, PC-67, PC-68, PC-69, PC-70, PC-71, PC-72, PC-73, PC-79, PC-81, PC-82, PC-83, PC-84, PC-85, PC-86, PC-87, PC-88, PC-89, PC-90, PC-91, PC-92, PC-93, PC-94, PC-95, PC-96, PC-97, PC-98, PC-99 | 360 |
-| D: exact method filters above | PC-11, PC-12, PC-13, PC-14, PC-15, PC-100 | 72 |
-| G: exact method filters above | PC-16, PC-17, PC-18, PC-19, PC-21, PC-25, PC-30, PC-31, PC-35, PC-36, PC-37, PC-38, PC-39, PC-41, PC-74, PC-75, PC-80 | 153 |
-| H: exact method filters above | PC-20, PC-22, PC-23, PC-24, PC-26, PC-27, PC-28, PC-76, PC-77, PC-78 | 90 |
-| Q: exact method filters above | PC-34, PC-42, PC-43, PC-44, PC-45, PC-46 | 90 |
-| L: exact method filters above | PC-58 | 9 |
+PC floor is separate from Code. Each method filter in the PC table runs baseline/red/restored-green with isolated outputs. Per recipe estimate includes the three builds/runs: U=6 (2+2+2), G/H/L=9 (3+3+3), D=12 (4+4+4), Q=15 (5+5+5) minutes. Each PC adds 0.25 minutes for exact restore/timestamp/provenance checks; same-method PCs remain separate cycles. Mutation setup adds 2 minutes. The Mutation estimate is setup plus, per PC below, its recipe minutes plus 0.25; compute it from this table when Mutation is commissioned, excluding authoring, independent Review and slot waits.
 
-Mutation setup=2; phase builds/runs=774; restoration=25; **Mutation PC floor=801 minutes**. Combined ordinary setup+V/R+Mutation = **856 minutes**, excluding authoring, independent Review and slot waits. No PC time is charged to Code; Mutation remains paused. No assumed batching saving: most controls share parser/composer/consumer files or the same method, and isolated source-qualified phases are required. Reusing whole classes would spend more and would violate method scoping. Savings from replacing a full suite are not quantified because no current full-suite measurement exists; claimed scheduling savings=0.
+| PC recipe/filter family | PC IDs |
+|---|---|
+| U: exact method filters above | PC-1, PC-2, PC-3, PC-4, PC-5, PC-6, PC-7, PC-8, PC-9, PC-10, PC-29, PC-32, PC-33, PC-40, PC-47, PC-48, PC-49, PC-50, PC-51, PC-52, PC-53, PC-54, PC-55, PC-56, PC-57, PC-59, PC-60, PC-61, PC-62, PC-63, PC-64, PC-65, PC-66, PC-67, PC-68, PC-69, PC-70, PC-71, PC-72, PC-73, PC-79, PC-81, PC-82, PC-83, PC-84, PC-85, PC-86, PC-87, PC-88, PC-89, PC-90, PC-91, PC-92, PC-93, PC-94, PC-95, PC-96, PC-97, PC-98, PC-99 |
+| D: exact method filters above | PC-11, PC-12, PC-13, PC-14, PC-15, PC-100 |
+| G: exact method filters above | PC-16, PC-17, PC-18, PC-19, PC-21, PC-25, PC-30, PC-31, PC-35, PC-36, PC-37, PC-38, PC-39, PC-41, PC-74, PC-75, PC-80 |
+| H: exact method filters above | PC-20, PC-22, PC-23, PC-24, PC-26, PC-27, PC-28, PC-76, PC-77, PC-78 |
+| Q: exact method filters above | PC-34, PC-42, PC-43, PC-44, PC-45, PC-46 |
+| L: exact method filters above | PC-58 |
 
-Handoff audit: **guards=100, mapped=100, missing=0, duplicate PC maps=0**. Each PC has a method filter, recipe, variants, compiling defect and decisive red oracle. All 100 PCs are required when Mutation resumes; **PCs run=0, pending=100** by explicit commissioning instruction. Reachability remains unproven and new methods and any unbound assertion payloads remain binding required after Code. Code must not label these controls green. There is no open human choice under OD-1..OD-6. Next: Code, S1 first; return to Plan if the named real-queue or composition seam cannot be bound without changing the fix design.
+No PC time is charged to Code; Mutation remains paused. No batching saving is assumed: most controls share parser/composer/consumer files or the same method, and isolated source-qualified phases are required. Reusing whole classes would spend more and would violate method scoping. No scheduling saving is claimed, because no current full-suite measurement exists.
+
+Handoff: the Guard inventory table maps guards to PCs. Each PC row specifies a method filter, recipe, variants, compiling defect and red oracle; these are design specifications, not results. No PC has run: the PCs in the Positive controls table are pending for SourceLanding Mutation, PC reachability is unestablished until then, and ordinary green does not discharge a PC. Code does not label these controls green.
+
+Status (2026-10-14, task 9125d3b8; the earlier "Next: Code, S1 first" handoff is historical): S1 landed on master at da0219edd. S2 (CP-9, CP-10, CP-13; V-8/R-8, V-9/R-9) is implemented and its new methods are bound with ordinary green in run 20261014-002645-e73c and Review 13491e92; D1 (D-8/T24 placement) and D2 (fail-closed grammar) were accepted by Review 13491e92; S2 awaits a fresh Final Review after this documentation repair (Review ac1b43fa ran CP-9 only). S3 (CP-11, CP-12; V-10/R-10) is pending; its new methods are to be bound in S3 Code. Windows/native qualification is pending. There is no open human choice under OD-1..OD-6. Return to Plan if binding the named real-queue or composition seam for S3 would require changing the fix design.

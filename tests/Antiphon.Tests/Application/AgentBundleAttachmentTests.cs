@@ -459,11 +459,13 @@ public class AgentBundleAttachmentTests
         var basicsBundle = InstructionBundles.Get(InstructionBundles.DelegateBasics);
         var orchestratorBundle = InstructionBundles.Get(InstructionBundles.Orchestrator);
         var board = InstructionBundles.Get(InstructionBundles.BoardApi);
-        OnceThen(plan, planBundle.Render(), basicsBundle.Render(), "c1083-plan-order");
-        OnceThen(review, reviewBundle.Render(), basicsBundle.Render(), "c1083-review-order");
-        OnceThen(orchestrator, orchestratorBundle.Render(), basicsBundle.Render(), "c1083-orchestrator-order");
-        OnceThen(withBoard, basicsBundle.Render(), board.Render(), "c1083-board-order");
-        OnceThen(withBoard, planBundle.Render(), basicsBundle.Render(), "c1083-board-plan-order");
+        // CARD-1213: delegate-basics holds each composition's first {{GIT-COMMON}}.
+        var basicsFirst = C1213Expected.FirstUse(basicsBundle.Render());
+        OnceThen(plan, planBundle.Render(), basicsFirst, "c1083-plan-order");
+        OnceThen(review, reviewBundle.Render(), basicsFirst, "c1083-review-order");
+        OnceThen(orchestrator, orchestratorBundle.Render(), basicsFirst, "c1083-orchestrator-order");
+        OnceThen(withBoard, basicsFirst, board.Render(), "c1083-board-order");
+        OnceThen(withBoard, planBundle.Render(), basicsFirst, "c1083-board-plan-order");
     }
 
     private static Task<AgentLaunchComposition> ComposeAsync(AppDbContext db, Agent agent)

@@ -48,7 +48,9 @@ public sealed class GrokRulesCompositionTests
         var expected = InstructionBundleComposer.Compose(InstructionBundles.ForDelegate(task.Kind, task.Role));
         var spec = Should.NotThrow(() => GrokRulesLaunchRefusalTests.SpecOf(dispatcher, task, AgentKind.Grok, null));
         spec.GrokRulesPayload.ShouldNotBeNull().Content.ShouldBe(expected.Text);
-        spec.GrokRulesPayload.Content.ShouldContain(InstructionBundles.Get(InstructionBundles.DelegateBasics).Text);
+        // CARD-1213: delegate-basics holds the composition's first {{GIT-COMMON}}.
+        spec.GrokRulesPayload.Content.ShouldContain(
+            C1213Expected.FirstUse(InstructionBundles.Get(InstructionBundles.DelegateBasics).Text));
         spec.GrokRulesPayload.Content.ShouldContain(InstructionBundles.Get(InstructionBundles.StageKeyFor(role)).Text);
         spec.Args.ShouldAllBe(a => !a.Contains("[bundle:") && !a.Contains(expected.Text));
         spec.Env.Values.ShouldAllBe(v => !v.Contains("[bundle:") && !v.Contains(expected.Text));

@@ -5,7 +5,7 @@ import type { AgentModelLevel } from './agents'
 import type { AgentTaskRole } from './agentTasks'
 import type { RoutingPinDto, RoutingPinStrength } from './routingPins'
 
-/** CARD-0097 F-1: where the next create's target comes from. */
+/** CARD-0097 F-1: effective projects the stage pin head filled from the policy, or the policy; not a create result. */
 export type RolePolicySource = 'pin' | 'rolePolicy'
 
 export interface RolePolicyEffectiveDto {
@@ -19,8 +19,9 @@ export interface RolePolicyEffectiveDto {
 export interface RolePolicyRowDto {
   role: AgentTaskRole
   configured: boolean
-  level: AgentModelLevel
-  /** null means ClaudeCode. */
+  /** null when the configured level is not a defined level (S1 R3); no tier is invented. */
+  level: AgentModelLevel | null
+  /** null when no kind is configured or the configured kind is undefined (Compose_resolves_alias_from_kind, policy-kind-999). */
   kind: AgentKind | null
   alias: string
   escalateTo: AgentModelLevel | null
@@ -32,7 +33,8 @@ export interface RolePolicyRowDto {
 }
 
 export interface RolePolicyDto {
-  defaultLevel: AgentModelLevel
+  /** null when the configured DefaultLevel is not a defined level. */
+  defaultLevel: AgentModelLevel | null
   defaultTimeoutMinutes: number
   roles: RolePolicyRowDto[]
 }
