@@ -13,19 +13,15 @@ unless the script genuinely can't do it. These are the shapes that bite either w
   never a secret). While Claude is held, pass `-Kind Codex` on Worker/stage work. Do not edit
   `Delegation:AllowedRoots`. Operator issue is `capability.ps1`.
 
-- A CARD IS ADDRESSED THE WAY IT'S NAMED. `CARD-0051`, `card-51`, `#51`, `51`, or its guid — every
-  card route (`GET /api/cards/{id}`, both PATCHes, `/revisions`, `/archive`, `/unarchive`, `/reopen`, `/spawn`)
-  resolves whichever form you give it. There is no look-up-the-id-first step.
+- Address cards as `CARD-0051`, `card-51`, `#51`, `51`, or a guid; use `-Board` to scope identifiers.
 
 - `GET /api/cards/limits` returns the current title/description/reason/actor length ceilings
   plus `importanceValues` / `urgencyValues` (`-Limits` on the script). Today: title 300,
   description 20 000, reason 4 000, actor 200. There is no `priority` field; a write that still
   sends one is 400.
 
-- EVERY WRITE CARRIES THE CARD'S CURRENT `concurrencyToken`, AND EVERY SUCCESSFUL WRITE ROTATES IT.
-  Re-read the card between two writes to it; replaying a token you already spent is rejected as a
-  conflict, which is the guard working, not a transient error to retry. `card.ps1` re-reads for you
-  by default — see its header for the tradeoff and `-Token` for strict compare-and-swap.
+- Re-read the card's `concurrencyToken` between writes. `card.ps1` fetches it by default;
+  `-Token` selects strict compare-and-swap. Inspect a conflict before retrying.
 
 - VALIDATION FAILURES ARE 422, NOT 400, with a problem-details `errors` dictionary using existing
   PascalCase field names (`"Description"`, `"Reason"`, `"ConcurrencyToken"`) alongside new
@@ -37,25 +33,21 @@ unless the script genuinely can't do it. These are the shapes that bite either w
   Card text is long and full of quotes, newlines, backticks and dollar signs, and both shells here
   mangle it silently — the corruption lands in the record, not in an error.
 
-- MOVE AND REWRITE ARE DIFFERENT ENDPOINTS. `PATCH /api/cards/{id}` is move-only (`boardColumnId`,
-  `concurrencyToken`, optional `reason`, optional `spawn`). `PATCH /api/cards/{id}/content` corrects
-  the text (`concurrencyToken` plus a REQUIRED `reason`, then any of `title`, `description`,
-  `importance`, `urgency`, `dueAt`, `clearDueAt`, `labels`, `editedBy`); it records a revision carrying the values it superseded,
-  readable at `GET /api/cards/{id}/revisions`. A card that is simply wrong gets corrected in place —
-  filing a second card to describe the mistake is what this endpoint exists to stop.
+- Move with `PATCH /api/cards/{id}` (`boardColumnId`, `concurrencyToken`, `reason?`, `spawn?`).
+  Correct text with `PATCH /api/cards/{id}/content` (`concurrencyToken`, required `reason`,
+  optional `title`, `description`, `importance`, `urgency`, `dueAt`, `clearDueAt`, `labels`,
+  `editedBy`). Read revisions at `GET /api/cards/{id}/revisions`.
 
-- CARD RELATIONSHIPS: `block CARD-0051 -BlockedBy CARD-0049` adds a blocker;
-  `unblock CARD-0051 -BlockedBy CARD-0049` removes it. Reason is optional; use `-ReasonFile`
-  for text and `-By` for the actor. `block -RelatedBoard <name|guid>` scopes the blocker.
-  `get` prints blocked-by statuses and the inverse blocks list; `history` names the related card.
-  Coverage below uses methods of `CardRelationshipScriptTests` (HTTP stub).
+- Relationships: `block CARD-0051 -BlockedBy CARD-0049`; remove with `unblock`.
+  Optional: `-ReasonFile`, `-By`; `block -RelatedBoard` scopes the blocker.
+  HTTP-stub coverage (`CardRelationshipScriptTests`; details in `docs/ops-http.md`):
 
 | Behaviour | Named test | What it asserts |
 |---|---|---|
-| Add blocker | `Block_reads_the_card_then_posts_the_relationship_body_with_the_fetched_token` | POST body, fetched/explicit token, reason file, related board and JSON response |
-| Remove blocker | `Unblock_resolves_the_row_by_relatedIdentifier_and_posts_remove` | Identifier match, remove route, fetched token, omitted optional fields |
-| Read relationships | `Get_and_history_print_blocked_by_blocks_and_relationship_rows` | Open/resolved lines, inverse line, history identifier and card JSON |
-| Missing blocker | `Unblock_without_a_matching_blocker_exits_non_zero_and_names_the_current_blockers` | Nonzero exit, current identifiers, no POST |
+| Add | `Block_reads_the_card_then_posts_the_relationship_body_with_the_fetched_token` | Body, tokens, file, board, JSON |
+| Remove | `Unblock_resolves_the_row_by_relatedIdentifier_and_posts_remove` | Identifier, route, token |
+| Read | `Get_and_history_print_blocked_by_blocks_and_relationship_rows` | Status, inverse, history, JSON |
+| No match | `Unblock_without_a_matching_blocker_exits_non_zero_and_names_the_current_blockers` | Failure, identifiers, no POST |
 
 - A MOVE INTO AN ACTIVE COLUMN NO LONGER SPAWNS AN AGENT UNLESS YOU ASK. `spawn`/`-Spawn` defaults
   to false; the response's `spawnedSessionId` / `spawnSuppressed` say what happened. Before
