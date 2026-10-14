@@ -28,6 +28,23 @@ public sealed class BuildOutputNestingTests
     }
 
     [Test]
+    [Arguments("nightly-owned-child", "OwnedChild")]
+    [Arguments("custody-child", "Antiphon.CustodyTestChild")]
+    [Arguments("script-harness-host", "Antiphon.ScriptHarnessHost")]
+    [Arguments("channel-outbound-probe", "Antiphon.ChannelOutbound.Probe")]
+    [Arguments("checkpoint-lifecycle-host", "Antiphon.Checkpoints.LifecycleHost")]
+    [Arguments("checkpoint-filter-host", "Antiphon.Checkpoints.FilterHost")]
+    [Arguments("checkpoint-repeat-host", "Antiphon.Checkpoints.RepeatHost")]
+    [Arguments("fakeclaude", "fakeclaude")]
+    [Arguments("fakegrok", "fakegrok")]
+    public void Own_output_stages_helper_program(string folder, string assembly)
+    {
+        var dir = Path.Combine(AppContext.BaseDirectory, folder);
+        File.Exists(Path.Combine(dir, assembly + ".dll")).ShouldBeTrue(dir);
+        File.Exists(Path.Combine(dir, assembly + ".runtimeconfig.json")).ShouldBeTrue(dir);
+    }
+
+    [Test]
     public void Own_output_stays_under_file_ceiling()
     {
         var count = Directory.EnumerateFiles(AppContext.BaseDirectory, "*", SearchOption.AllDirectories).Count();
