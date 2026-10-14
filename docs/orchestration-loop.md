@@ -909,6 +909,19 @@ override the row; a Preferred pin prepends candidates. Escalation, timeout and W
 stored row and effective overlay. On routing exhaustion, relay the result to the operator for a
 Retry, explicit Reroute, Cancel or hold change; do not pick a kind yourself.
 
+**Required forbid-only pin over a one-candidate row (CARD-1271).** A forbid-only Required pin
+leaves the row selecting, so a one-candidate row produces a single target, not a walk. That
+target is refused with a 409 and never becomes Blocked:
+
+- held: `model_disabled`
+- forbidden by the pin: `routing_pin_forbidden`
+- quota-limited: `subscription_quota_low`
+- an Orchestrator whose one candidate is not ClaudeCode: `routing_exhausted`, whatever
+  `refuseIfExhausted` says
+
+Witnesses are the five `RequiredSingleCandidateRefusalTests` methods. They cover an explicit Hard row
+for the Orchestrator cases and a default Medium row for the others.
+
 **Operators read routing at `/settings?tab=routing`** (CARD-0333): the global
 Routing settings tab shows live model availability, best-effort subscription-usage observations
 (explicitly provider/profile-level, never a per-model quota, and "Unknown" rather than a guessed
