@@ -49,8 +49,9 @@ internal sealed class CheckpointTestScope : IAsyncDisposable
             };
             var markerPath = Path.Combine(path, MarkerName);
             _beforeMarker?.Invoke(path);
-            using (var file = new FileStream(markerPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
-                JsonSerializer.Serialize(file, marker);
+            SafeWrite.Require(SafeWrite.OpenCreate(markerPath, SafeWrite.Under(path), out var markerFile));
+            using (markerFile)
+                JsonSerializer.Serialize(markerFile!, marker);
             var coordinator = new CheckpointTempRootSweep();
             coordinator.Register(path);
             // Registration precedes the caller's first observation of the root.

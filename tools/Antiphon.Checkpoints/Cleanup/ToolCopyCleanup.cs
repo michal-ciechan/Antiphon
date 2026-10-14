@@ -31,6 +31,9 @@ public sealed class ToolCopyCleanup
             return new(ProcessVerdict.Unknown, "ownership-missing");
         var identity = ExecutorOwnershipStore.Read(runDirectory)?.Executor
             ?? (record.Phase is "launched" or "launch-attempted" ? record.Launched : null);
+        if (identity is null && record.Phase == "not-started" && record.Launched is null
+            && !File.Exists(Path.Combine(runDirectory, "executor-ownership.json")))
+            return new(ProcessVerdict.Dead, "launch-not-started");
         return identity is null
             ? new(ProcessVerdict.Unknown, "launch-outcome-unknown")
             : _probe.Observe(identity);
@@ -64,7 +67,7 @@ public sealed class ToolCopyCleanup
                 observed = ObserveExecutor(full);
             else if (record.Phase == "preparing")
                 observed = _probe.Observe(record.Starter);
-            else if (record.Phase is "launch-attempted" or "launched")
+            else if (record.Phase is "launch-attempted" or "launched" or "not-started")
             {
                 observed = ObserveExecutor(full);
             }
@@ -72,20 +75,28 @@ public sealed class ToolCopyCleanup
                 return new("Retained", "launch-outcome-unknown", tool);
             if (observed.Verdict != ProcessVerdict.Dead)
                 return new("Retained", observed.Reason, tool);
-            var ledger = OwnedOutputLedger.Check(tool);
+            ToolCopyAuthority? authority = null;
+            string? ledger;
+            if (record.ToolCopy is not null)
+                authority = ToolCopyAuthority.Load(full, record, out ledger);
+            else
+                ledger = OwnedOutputLedger.Check(tool);
             if (ledger is not null) return new("Refused", ledger + "; left in place: " + tool + "; remove it manually", tool);
             for (var attempt = 0; ; attempt++)
             {
                 try
                 {
-                    var removed = SafeDelete.Apply(tool, new DeleteOwnership
+                    var deletion = new DeleteOwnership
                     {
                         IsolatedRoot = full,
                         CreatedPaths = [tool],
                         RequireInventory = true,
                         RequireBinName = false,
                         AllowOutsideRepository = true,
-                    }, () => _beforeDelete?.Invoke(tool), () => OwnedOutputLedger.Check(tool));
+                    };
+                    var removed = authority is null
+                        ? SafeDelete.Apply(tool, deletion, () => _beforeDelete?.Invoke(tool), () => OwnedOutputLedger.Check(tool))
+                        : SafeDelete.ApplyToolCopy(tool, deletion, authority, () => _beforeDelete?.Invoke(tool));
                     if (removed.Disposition == DeleteDisposition.Refused)
                         return new("Refused", removed.Reason ?? "refused", tool);
                     break;

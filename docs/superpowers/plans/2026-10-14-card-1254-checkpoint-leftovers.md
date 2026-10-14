@@ -19,7 +19,9 @@ PowerShell receipt validation ignores cleanupRefusals.
 S1 adds cross-process cleanup and validator regressions, before product fixes.
 S2 repairs fixtures, records definite no-launch custody, introduces a narrowly
 guarded root-marker transition, persists a shadow-copy inventory before launch,
-and makes PowerShell refuse cleanup refusals. S3 merges fetched origin/master,
+and makes PowerShell refuse cleanup refusals. The adjacent base binary also reproduced ShadowCopyTests' missing destination
+parent and the scope's unrecorded marker creation (11/13 pass). These are repaired
+without changing the guarded registration/deletion assertions. S3 merges fetched origin/master,
 checks evidence history and records final verification without relabeling SHAs.
 
 Shadow authority is restricted to the literal tool child of its recorded run.
@@ -74,7 +76,9 @@ Final table floor: 27 minutes, including one isolated test build. Baseline,
 tests-first red and red-row repairs use the same selections with fresh named
 outputs; the two tool bootstraps are disclosed gated builds. Import this table
 and set manifest timeouts.rowMinutes to 40; invoke run with --row-timeout 40m
---total-timeout 150m --serial and the exact committed --expected-source-sha.
+--total-timeout 150m --serial --keep-outputs and the exact committed --expected-source-sha.
+Keep compiler outputs because lifecycle children write their HTML reports after
+the build seal; remove only those producer-owned literal output paths at the end.
 Wait until exit is not 75. Keep generated evidence ignored. Inspect each fresh
 TRX, run both validators, and run scripts/check-evidence-diff.ps1 over base..HEAD.
 
@@ -82,13 +86,13 @@ TRX, run both validators, and run scripts/check-evidence-diff.ps1 over base..HEA
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | all | `tests/Antiphon.Tests -> bin-c1254-red/` | slots | `/*/*/CheckpointSlotExecutorTests/*` | V-1 | all 10, 0 failed/skipped | 10 | 8 |
+| CP-1 | all | `tests/Antiphon.Tests -> bin-c1254-final/` | slots | `/*/*/CheckpointSlotExecutorTests/*` | V-1 | all 10, 0 failed/skipped | 10 | 8 |
 | CP-2 | all | CP-1 | launch | `/*/*/CheckpointLaunchCleanupTests/*` | V-2 | all 11, 0 failed/skipped | 11 | 1 |
 | CP-3 | all | CP-1 | usage | `/*/*/CheckpointTempUsageTests/*` | V-3 | all 8, 0 failed/skipped | 8 | 2 |
 | CP-4 | all | CP-1 | shadow-custody | `/*/*/CheckpointShadowCustodyTests/*` | V-4 | all 12, 0 failed/skipped | 12 | 2 |
 | CP-5 | all | CP-1 | source-validation | `/*/*/CheckpointSourceExecutionTests/*` | V-5 | all 8, 0 failed/skipped | 8 | 3 |
-| CP-6 | all | CP-1 | ownership-guards | `/*/*/(CheckpointToolCopyCleanupTests*\|CheckpointOwnedOutputTests*\|CheckpointRunOwnershipTests*)/*` | R-1 | all selected, 0 failed/skipped | 40 | 2 |
+| CP-6 | all | CP-1 | ownership-guards | `/*/*/(CheckpointToolCopyCleanupTests*\|CheckpointOwnedOutputTests*\|CheckpointRunOwnershipTests*)/*` | R-1 | all selected, 0 failed/skipped | 38 | 2 |
 | CP-7 | all | CP-1 | wait-and-report | `/*/*/(WaitCommandTests*\|ShadowCopyTests*\|CheckpointAppTests*\|ReportWriterTests*)/*` | R-1 | all selected, 0 failed/skipped | 22 | 2 |
-| CP-8 | all | CP-1 | temp-lifecycle | `/*/*/(CheckpointTempRootSweepTests*\|CheckpointTempLifecycleTests*\|CheckpointTempScopeTests*)/*` | R-2 | all selected, 0 failed/skipped | 30 | 2 |
+| CP-8 | all | CP-1 | temp-lifecycle | `/*/*/(CheckpointTempRootSweepTests*\|CheckpointTempLifecycleTests*\|CheckpointTempScopeTests*)/*` | R-2 | all selected, 0 failed/skipped | 44 | 2 |
 | CP-9 | all | CP-1 | census | `/*/*/CheckpointNamespaceCensusUsageTests/*` | R-3 | all 1, 0 failed/skipped | 1 | 1 |
 | CP-10 | all | CP-1 | receipt-safety | `/*/*/CheckpointReceiptSafetyTests/*` | R-1 | all 8, 0 failed/skipped | 8 | 4 |

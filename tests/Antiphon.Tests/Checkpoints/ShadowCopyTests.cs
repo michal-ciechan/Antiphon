@@ -23,6 +23,7 @@ public sealed class ShadowCopyTests : CheckpointTestBase
         Directory.CreateDirectory(source);
         File.WriteAllText(Path.Combine(source, "Program.cs"), "source");
         var destination = Path.Combine(root, "run", "tool");
+        Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
         ShadowCopy.CopyToolOutput(tool, destination);
         File.Exists(Path.Combine(destination, "Antiphon.Checkpoints.dll")).ShouldBeTrue();
         File.Exists(Path.Combine(destination, "Antiphon.Checkpoints.deps.json")).ShouldBeTrue();

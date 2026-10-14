@@ -377,11 +377,21 @@ public sealed class CheckpointSlotExecutorTests : CheckpointTestBase
     private static SourceObservation FixtureSource() => new(new string('a', 40), 0, new string('1', 64),
         DateTimeOffset.UtcNow, "known");
 
-    private string NewRun(CheckpointManifest manifest) => CheckpointApp.CreateRun(manifest, new RunRequest
+    private string NewRun(CheckpointManifest manifest)
     {
-        KeepOutputs = true, Parallel = 2, Commit = new string('a', 40), Branch = "test",
-        OwnerTaskId = TaskId.ToString(), OwnerSessionId = SessionId.ToString(),
-    }, TempDir(), new CheckpointApp.Runtime { SourceCapture = _ => FixtureSource() });
+        var repo = TempDir();
+        foreach (var build in manifest.Builds)
+        {
+            var project = Path.Combine(repo, build.Project);
+            Directory.CreateDirectory(project);
+            File.WriteAllText(Path.Combine(project, "fixture.csproj"), "<Project Sdk=\"Microsoft.NET.Sdk\" />");
+        }
+        return CheckpointApp.CreateRun(manifest, new RunRequest
+        {
+            KeepOutputs = true, Parallel = 2, Commit = new string('a', 40), Branch = "test",
+            OwnerTaskId = TaskId.ToString(), OwnerSessionId = SessionId.ToString(),
+        }, repo, new CheckpointApp.Runtime { SourceCapture = _ => FixtureSource() });
+    }
 
     private static ReportModel ReadReport(string run) =>
         JsonSerializer.Deserialize<ReportModel>(File.ReadAllText(Path.Combine(run, "report.json")), ReportWriter.Json)!;
