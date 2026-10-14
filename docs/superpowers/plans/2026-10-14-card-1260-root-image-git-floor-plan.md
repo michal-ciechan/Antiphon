@@ -1,7 +1,10 @@
 # CARD-1260 root image Git floor
 
-Code/landing owner: `3dac1d55-cd4f-4dd6-a78b-dd448014ef86`.
-Task base and fetched master: `5665ddb1a3ba730f3b858acc109e65b5d7304d6c`.
+Code/landing owner: `f3a206f4-1f85-4afc-8b04-cc29ff554991`.
+Integration-repair base: `9cbe00bd52dd77367a34244c9cb9ea7d24539add`.
+Original Code: `3dac1d55-cd4f-4dd6-a78b-dd448014ef86`, base
+`5665ddb1a3ba730f3b858acc109e65b5d7304d6c`, reviewed tip
+`d8be102e949e4fa03a81823e98d11229b4b48d9b` (Review `941643b4`, no defects).
 
 ## Finding
 
@@ -44,10 +47,12 @@ apt Git 2.39.5 and failed with `unknown option 'exists'` (exit 129).
   `DockerStackContractTests.Git_floor_is_declared_once` and
   `DockerStackContractTests.Runner_git_meets_the_declared_minimum`.
 - R-1: the full `DockerStackContractTests` and `GitMinimumVersionGuardTests` classes pass.
-- R-2: the CARD-1210 native roster (58 identities, 69 results) and the
+- R-2: the CARD-1210 native roster (61 identities, 72 results) and the
   ProcessSpawnLimit/timeout portfolio (12 classes) include the new native class.
   `WindowsUnitPlatformAdmissionTests`, `ProcessSpawnTimeoutPolicyTests` and the
-  neighbouring `GrokSha256PinTests` pass.
+  neighbouring `GrokSha256PinTests` pass. CP-3 selects all 17 Linux-executable
+  methods by exact name; the Windows-only child audit is excluded from this Linux
+  repair round, as in CARD-1265 CP-2, and is not claimed passed.
 - M-1: one fresh root `docker build` goes through `scripts/build-slot.ps1` and is queued
   once. Its build log must contain the guard's `meets minimum 2.43` line. In the image,
   `git --version` must report 2.47.3. In a fresh repository, `git show-ref --exists`
@@ -73,24 +78,38 @@ Positive controls for SourceLanding Mutation are all pending:
 |---|---|---|---|---|---|---|---:|---:|---|---|
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1260-red/` | floor-red | `/*/*/(GitMinimumVersionGuardTests*)\|(DockerStackContractTests*)/*` | V-1, V-2, V-3 red | 116 executed; exactly 4 red before fix (guard, server image, declared once, runner contract), 0 skipped | 116 | 12 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1260-green/` | floor-green | `/*/*/(GitMinimumVersionGuardTests*)\|(DockerStackContractTests*)/*` | V-1, V-2, V-3, R-1 | all 116 passed, 0 failed/skipped | 116 | 12 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-3 | S2 | CP-2 | roster | `/*/*/(WindowsUnitPlatformAdmissionTests*)\|(ProcessSpawnTimeoutPolicyTests*)\|(GrokSha256PinTests*)/*` | R-2 | all 18 passed, 0 failed/skipped | 18 | 4 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-3 | S2 | CP-2 | roster | `/*/*/(WindowsUnitPlatformAdmissionTests)\|(ProcessSpawnTimeoutPolicyTests)\|(GrokSha256PinTests)/(C1210_Guard_matches_native_platform)\|(C1210_Native_linux_entries_guard_before_work)\|(C1210_Roster_closure_matches_source_gates)\|(C1210_Audit_rejects_empty_or_incomplete_outcomes)\|(Spawning_classes_carry_a_class_timeout)\|(Spawn_timeouts_do_not_exceed_ten_minutes)\|(Runner_grok_sha_rejects_multiline_pin)\|(Runner_grok_sha_rejects_trailing_newline)\|(Runner_grok_sha_rejects_devnull_second_line)\|(Runner_grok_sha_rejects_embedded_newline)\|(Runner_grok_sha_rejects_uppercase_pin)\|(Runner_grok_sha_rejects_short_pin)\|(Runner_grok_sha_rejects_long_pin)\|(Runner_grok_sha_rejects_empty_pin)\|(Runner_grok_sha_rejects_tampered_file)\|(Runner_grok_sha_rejects_empty_download)\|(Runner_grok_sha_accepts_matching_file)` | R-2 | all 17 passed, 0 failed/skipped | 17 | 4 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 
-Import this table to an ignored manifest and set `timeouts.rowMinutes: 40`. Run CP-1 at
-S1, then CP-2 and CP-3 at S2. Pass the committed HEAD as `--expected-source-sha`, use
+Import this table to an ignored manifest and set `timeouts.rowMinutes: 40`. The original S1 red evidence below is retained; do not rerun CP-1 for the
+integration repair. Run CP-2 and CP-3 together after the complete repair group.
+CP-2 already executes both full affected classes, so no duplicate class run is needed. Pass the committed HEAD as `--expected-source-sha`, use
 `--total-timeout 150m` without `--keep-outputs`, and wait for completion. Linux builds use
 `UseAppHost=false`. Build the checkpoint tool once through `scripts/build-slot.ps1` into
-`bin-c1260-tool/`; that bootstrap is an unlisted, disclosed build. M-1 is the single
-docker build that the brief allows.
+`bin-c1260-tool/`; that bootstrap is an unlisted, disclosed build. M-1 is inherited from Review 941643b4: its fresh no-cache root build at the
+reviewed tip printed Git 2.47.3 meeting minimum 2.43 and verified show-ref 0/2.
+The integration brief forbids another image build; no fresh M-1 is claimed.
 
 ### Cost
 
-The checkpoint rows are estimated at 28 minutes. The docker build adds about
-10–15 minutes cold, because it compiles Git. Authoring time and host slot waits come
-on top. The total fits the 90-minute budget. No whole-assembly or whole-Unit run is
+The integration repair selects CP-2 and CP-3, estimated at 16 minutes, plus one
+checkpoint-tool bootstrap and host slot waits. The task budget is 60 minutes. No whole-assembly or whole-Unit run is
 needed, because the change is confined to image build files, one shell guard and
 contract tests.
 
-## Results (Code 3dac1d55)
+## Integration repair census
+
+The merged source roster has 61 Native entries summing to 72 results, 4 Portable
+results, 31 StoragePortable results and 2 Conditional results. The audit literals
+are therefore 76 = 72 + 4 and 109 = 72 + 4 + 31 + 2. Passed totals remain
+4/35/37; not-executed totals are 72 and 74 = 72 + 2. The independent literal
+assertions remain literal; neither assertions nor timeouts were weakened. Both
+GitMinimumVersionGuardTests and RefreshGithubTokenRemoteCommandTests remain in
+the child filter, and both cards' roster entries are retained.
+
+All six mutation candidates remain unbound and pending in
+[the candidate inventory](../mutations/2026-10-14-card-1260-git-floor-candidates.md).
+
+## Historical results (Code 3dac1d55; not this repair's receipts)
 
 Checkpoint tool bootstrap (unlisted, disclosed): `build-slot.ps1 -Label c1260-checkpoint-tool-bootstrap`
 built `tools/Antiphon.Checkpoints` into `bin-c1260-tool/` (waited 75 s, 0 errors).
