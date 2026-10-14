@@ -24,34 +24,38 @@ import {
   type WorkspaceMode,
 } from '../../api/agentTasks'
 import { getApiErrorMessage } from '../../api/client'
-import { useRolePolicy, type RolePolicyDto } from '../../api/rolePolicy'
+import { useComplexityChainEffective } from '../../api/complexityChains'
+import { useRolePolicy } from '../../api/rolePolicy'
 import { useRunnerDefaults } from '../../api/runnerDefaults'
 import { useSessionRunners } from '../../api/sessionRunners'
+import { previewNextCreate, type NextCreatePreview } from '../settings/nextCreatePreview'
 import { TierBadge } from './TaskChip'
 import type { RequiredPlatformName } from './placement'
 
-type TierSource = 'pin' | 'rolePolicy' | 'fallback'
-
-const TIER_SOURCE_LABEL: Record<TierSource, string> = {
-  pin: 'from the stage pin',
-  rolePolicy: 'from the role policy',
-  fallback: 'built-in default — no usable role policy',
-}
+type TierSource = 'matrix' | 'pin' | 'rolePolicy' | 'agent' | 'exhausted' | 'fallback'
 
 /**
- * The server's level for a role: `effective.modelLevel` for source pin (C097 V17) and rolePolicy (C097 V16).
- * Null sends the caller to AGENT_TASK_ROLES (C097 V18), as does a null policy level (C097 V30) or a withheld
- * target (C1234 unsupported-policy-kind-falls-back-to-constant).
+ * The line under the tier badge. The preview carries the create's context (kind, the role's
+ * default-tier row and its holds, the stage pin), so a Worker reads the row and an Orchestrator
+ * the pin or policy (CARD-1250, C1250 V13-V16). A null level sends the caller to AGENT_TASK_ROLES
+ * (C097 V18, V30; C1234 unsupported-policy-kind-falls-back-to-constant).
  */
-function serverRoleLevel(
-  policy: RolePolicyDto | undefined,
-  role: AgentTaskRole,
-): { level: AgentModelLevel; source: 'pin' | 'rolePolicy' } | null {
-  const row = Array.isArray(policy?.roles) ? policy.roles.find((r) => r.role === role) : undefined
-  const source = row?.effective?.source
-  const level = source === 'pin' || source === 'rolePolicy' ? row?.effective.modelLevel : null
-  if (!source || !AGENT_MODEL_LEVEL_OPTIONS.some((option) => option.value === level)) return null
-  return { level: level as AgentModelLevel, source }
+function tierSourceLabel(source: TierSource, preview: NextCreatePreview | null): string {
+  const skipping = preview && preview.skipped.length > 0 ? `, skipping held ${preview.skipped.join(', ')}` : ''
+  switch (source) {
+    case 'matrix':
+      return `from the ${preview?.complexity} row${skipping}`
+    case 'pin':
+      return `from the stage pin${skipping}`
+    case 'rolePolicy':
+      return 'from the role policy'
+    case 'agent':
+      return preview?.note ?? 'the stage pin binds a standing agent'
+    case 'exhausted':
+      return `every ${preview?.complexity ? `${preview.complexity}-row` : 'pin'} candidate is held; the create would be Blocked`
+    case 'fallback':
+      return 'built-in default — no usable role policy'
+  }
 }
 
 export interface DelegatePrefill {
@@ -105,12 +109,20 @@ function DelegateForm({ onClose, prefill }: { onClose: () => void; prefill?: Del
   const runners = useSessionRunners()
   const defaults = useRunnerDefaults()
   const rolePolicy = useRolePolicy()
+  const cells = useComplexityChainEffective(role)
 
-  const serverLevel = serverRoleLevel(rolePolicy.data, role)
-  const tierSource: TierSource | null = serverLevel ? serverLevel.source : rolePolicy.isPending ? null : 'fallback'
+  const policyRow = Array.isArray(rolePolicy.data?.roles) ? rolePolicy.data.roles.find((r) => r.role === role) : undefined
+  const preview = previewNextCreate({ kind, explicitLevel: null, row: policyRow, cells: cells.data })
+  const serverLevel = AGENT_MODEL_LEVEL_OPTIONS.find((option) => option.value === preview?.modelLevel)?.value ?? null
+  const pending = rolePolicy.isPending || (kind === 'Worker' && cells.isPending)
+  const tierSource: TierSource | null = pending
+    ? null
+    : preview && preview.source !== 'explicit' && (serverLevel || preview.source === 'agent')
+      ? preview.source
+      : 'fallback'
   // A sub-orchestrator decomposes, which is the expensive kind of thinking — the server floors it
   // at High, so showing anything cheaper here would be a lie (C097 V27 on the server level).
-  const roleLevel = serverLevel?.level ?? AGENT_TASK_ROLES.find((r) => r.value === role)?.level ?? 'High'
+  const roleLevel = serverLevel ?? AGENT_TASK_ROLES.find((r) => r.value === role)?.level ?? 'High'
   const effectiveLevel: AgentModelLevel =
     level ?? (kind === 'Orchestrator' && (roleLevel === 'Medium' || roleLevel === 'Low') ? 'High' : roleLevel)
 
@@ -214,7 +226,7 @@ function DelegateForm({ onClose, prefill }: { onClose: () => void; prefill?: Del
         <TierBadge level={effectiveLevel} size="sm" />
         {!level && tierSource && (
           <Text size="xs" c="dimmed" data-testid={`delegate-tier-source-${tierSource}`}>
-            {TIER_SOURCE_LABEL[tierSource]}
+            {tierSourceLabel(tierSource, preview)}
           </Text>
         )}
         {level ? (
