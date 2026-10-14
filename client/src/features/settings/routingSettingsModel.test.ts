@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import type { ComplexityChainDto } from '../../api/complexityChains'
+import type { ComplexityChainDto, ComplexityEffectiveDto } from '../../api/complexityChains'
+import type { RoutingPinDto } from '../../api/routingPins'
 import {
   CHAIN_MUTATION_EFFECT,
   canClearOverride,
@@ -9,7 +10,71 @@ import {
   fallbackResolvedFromForRoleCell,
   isReplacingInheritedList,
   nextUnusedCandidate,
+  effectiveCellLabel,
+  unsetCellLabel,
+  nonComplexityBoundary,
+  cardPinCountLabel,
 } from './routingSettingsModel'
+
+const opus = { agentKind: 'ClaudeCode', modelLevel: 'High', alias: 'opus', availableNow: true, unavailableReason: null } as const
+const codex = { agentKind: 'Codex', modelLevel: 'Frontier', alias: 'gpt-6-astra', availableNow: true, unavailableReason: null } as const
+const grok = { agentKind: 'Grok', modelLevel: 'Frontier', alias: 'grok-4.7', availableNow: true, unavailableReason: null } as const
+const stagePin = {
+  id: 'pin-plan', cardId: null, cardIdentifier: null, role: 'Plan', provenance: 'Human',
+  strength: 'Required', agentKind: 'Codex', modelLevel: 'Frontier', notBefore: null,
+  reason: 'operator choice', candidateCount: 1,
+} as const
+const policyReason = 'Plan policy names Raw/Frontier, which delegation cannot launch'
+const agentReason = 'stage pin binds standing agent c097m-standing (ClaudeCode); an ordinary dispatch runs on that agent and does not walk this row'
+
+function effective(overrides: Partial<ComplexityEffectiveDto>): ComplexityEffectiveDto {
+  return { source: 'rolePolicy', candidates: [], stagePin: null, governsDefault: true, withheldReason: null, ...overrides }
+}
+
+describe('effective matrix cell', () => {
+  it.each([
+    ['required-pin', effective({ source: 'pin', stagePin, candidates: [codex] }), 'Required Human pin → Codex/Frontier (gpt-6-astra)'],
+    ['preferred-pin', effective({ source: 'pin+chain', stagePin: { ...stagePin, strength: 'Preferred' }, candidates: [grok, opus] }), 'Preferred Human pin → Grok/Frontier (grok-4.7), then this row'],
+    ['role-policy', effective({ candidates: [opus] }), 'Falls back to RolePolicy → ClaudeCode/High (opus)'],
+    ['unlaunchable-policy', effective({ withheldReason: policyReason }), 'Falls back to RolePolicy → not launchable: Plan policy names Raw/Frontier, which delegation cannot launch'],
+    ['standing-agent', effective({ source: 'agent', stagePin, governsDefault: false, withheldReason: agentReason }), 'Pinned to standing agent c097m-standing (ClaudeCode) — an ordinary dispatch runs there; this row is not walked'],
+    ['own-rule', effective({ source: 'role', candidates: [opus] }), 'Own rule'],
+    ['any-role', effective({ source: 'any', candidates: [opus] }), 'Inherits Any role'],
+    ['configuration', effective({ source: 'config', candidates: [opus] }), 'Configuration fallback'],
+    ['read-failure-without-target', effective({ withheldReason: 'chain read failed (InvalidOperationException)' }), 'Effective routing unknown: chain read failed (InvalidOperationException)'],
+    ['read-failure-with-policy-target', effective({ candidates: [opus], withheldReason: 'chain read failed (InvalidOperationException)' }), 'Falls back to RolePolicy → ClaudeCode/High (opus)'],
+    ['preferred-with-unlaunchable-policy', effective({ source: 'pin+chain', stagePin: { ...stagePin, strength: 'Preferred' }, candidates: [grok], withheldReason: policyReason }), 'Preferred Human pin → Grok/Frontier (grok-4.7), then this row'],
+    ['pin-with-read-failure', effective({ source: 'pin', stagePin, candidates: [codex], withheldReason: 'chain read failed (InvalidOperationException)' }), 'Required Human pin → Codex/Frontier (gpt-6-astra)'],
+    ['role-with-read-failure', effective({ source: 'role', candidates: [opus], withheldReason: 'stage pin read failed (InvalidOperationException)' }), 'Own rule'],
+    ['any-with-read-failure', effective({ source: 'any', candidates: [opus], withheldReason: 'chain metadata read failed (InvalidOperationException)' }), 'Inherits Any role'],
+    ['config-with-read-failure', effective({ source: 'config', candidates: [opus], withheldReason: 'availability read failed (InvalidOperationException)' }), 'Configuration fallback'],
+    ['agent-with-read-failure', effective({ source: 'agent', stagePin, governsDefault: false, withheldReason: agentReason + '; chain read failed (InvalidOperationException)' }), 'Pinned to standing agent c097m-standing (ClaudeCode) — an ordinary dispatch runs there; this row is not walked'],
+  ])('C097M V-C1 %s', (_name, input, expected) => {
+    expect(effectiveCellLabel(input as ComplexityEffectiveDto)).toBe(expected)
+  })
+
+  it.each([
+    ['Easy', false, 'Unset — a -Complexity Easy dispatch blocks'],
+    ['Hard', false, 'Unset — a -Complexity Hard dispatch blocks'],
+    ['Medium', true, 'Unset — default dispatch falls back to RolePolicy'],
+  ] as const)('C097M V-C2 unset %s', (tier, governsDefault, expected) => {
+    expect(unsetCellLabel(tier, governsDefault)).toBe(expected)
+  })
+
+  it('C097M V-C2 ordinary-worker-boundary', () => {
+    expect(nonComplexityBoundary('Medium')).toBe('An ordinary Worker dispatch without -Complexity, -Kind/-Level, -Agent or ignoreModelDisabled walks the Medium row; explicit asks, orchestrators, standing agents and specialist roles keep their existing routing path.')
+    expect(nonComplexityBoundary('Hard')).toBe('An ordinary Worker dispatch without -Complexity, -Kind/-Level, -Agent or ignoreModelDisabled walks the Hard row; explicit asks, orchestrators, standing agents and specialist roles keep their existing routing path.')
+  })
+
+  it.each([
+    [[], null],
+    [[{ role: 'Plan', cardId: 'card-1' }], '1 card pin'],
+    [[{ role: 'Plan', cardId: 'card-1' }, { role: 'Plan', cardId: 'card-2' }], '2 card pins'],
+    [[{ role: 'Plan', cardId: null }, { role: 'Code', cardId: 'card-1' }], null],
+  ])('C097M V-C3 card-pin-count %#', (pins, expected) => {
+    expect(cardPinCountLabel('Plan', pins as RoutingPinDto[])).toBe(expected)
+  })
+})
 
 function chain(overrides: Partial<ComplexityChainDto> = {}): ComplexityChainDto {
   return {

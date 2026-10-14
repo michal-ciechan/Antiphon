@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tansta
 import { apiDelete, apiGet, apiPut } from './client'
 import type { AgentKind } from './boards'
 import type { AgentModelLevel } from './agents'
-import type { AgentTaskRole } from './agentTasks'
+import type { AgentTaskRole, RoutingPinRefDto } from './agentTasks'
 
 export type TaskComplexity = 'Hard' | 'Medium' | 'Easy'
 
@@ -14,6 +14,14 @@ export interface ComplexityCandidateDto {
   alias: string
   availableNow: boolean
   unavailableReason: string | null
+}
+
+export interface ComplexityEffectiveDto {
+  source: 'pin' | 'pin+chain' | 'role' | 'any' | 'config' | 'rolePolicy' | 'agent'
+  candidates: ComplexityCandidateDto[]
+  stagePin: RoutingPinRefDto | null
+  governsDefault: boolean
+  withheldReason: string | null
 }
 
 export interface ComplexityChainDto {
@@ -28,6 +36,7 @@ export interface ComplexityChainDto {
   role?: AgentTaskRole | null
   /** Where this entry was resolved from. List view: `role` for a cell, `any`/`config`/`none` for any-role. */
   resolvedFrom?: ComplexityResolvedFrom
+  effective?: ComplexityEffectiveDto | null
 }
 
 export interface ComplexityChainListDto {
@@ -35,6 +44,7 @@ export interface ComplexityChainListDto {
   /** Routable roles CARD-0333 renders as grid rows. */
   roles?: AgentTaskRole[]
   complexities?: TaskComplexity[]
+  defaultComplexity?: TaskComplexity
 }
 
 export interface PutComplexityChainRequest {

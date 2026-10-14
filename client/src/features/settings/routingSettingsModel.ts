@@ -4,6 +4,7 @@ import type { AgentTaskRole } from '../../api/agentTasks'
 import type { AgentKind } from '../../api/boards'
 import type {
   ComplexityChainDto,
+  ComplexityEffectiveDto,
   ComplexityResolvedFrom,
   TaskComplexity,
 } from '../../api/complexityChains'
@@ -24,6 +25,23 @@ export const COMPLEXITY_ROUTING_BOUNDARY =
 
 export const NON_COMPLEXITY_BOUNDARY =
   'RolePolicy still resolves work that is not launched with -Complexity, including default kind and level, escalation, timeout, and WIP. This matrix does not govern every dispatch.'
+
+// Compile-only bridge for the tests-first checkpoint: preserve the existing display.
+export function effectiveCellLabel(effective: ComplexityEffectiveDto): string {
+  return resolvedFromLabel(effective.source === 'role' || effective.source === 'any' || effective.source === 'config' ? effective.source : 'none', false)
+}
+
+export function unsetCellLabel(_tier: TaskComplexity, _governsDefault: boolean): string {
+  return resolvedFromLabel('none', false)
+}
+
+export function nonComplexityBoundary(_tier: TaskComplexity): string {
+  return NON_COMPLEXITY_BOUNDARY
+}
+
+export function cardPinCountLabel(_role: AgentTaskRole, _pins: RoutingPinDto[]): string | null {
+  return null
+}
 
 export function untilLabel(value: string | null): string {
   return value ? value : 'until cleared'

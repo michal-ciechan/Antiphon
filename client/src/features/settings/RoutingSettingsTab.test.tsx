@@ -5,6 +5,7 @@ import type {
   ComplexityCandidateDto,
   ComplexityChainDto,
   ComplexityChainListDto,
+  ComplexityEffectiveDto,
   ComplexityResolvedFrom,
   TaskComplexity,
 } from '../../api/complexityChains'
@@ -17,7 +18,6 @@ import { RoutingSettingsTab } from './RoutingSettingsTab'
 import {
   CARD_PIN_SCOPE,
   COMPLEXITY_ROUTING_BOUNDARY_TITLE,
-  NON_COMPLEXITY_BOUNDARY,
   USAGE_UNKNOWN,
 } from './routingSettingsModel'
 
@@ -61,6 +61,7 @@ function chain(
     updatedAt: null,
     role: null,
     resolvedFrom: 'none',
+    effective: null,
     ...overrides,
   }
 }
@@ -89,6 +90,7 @@ function pin(overrides: Partial<RoutingPinDto> = {}): RoutingPinDto {
 }
 
 const listDto: ComplexityChainListDto = {
+  defaultComplexity: 'Medium',
   roles: ['Plan', 'Code'],
   complexities: ['Hard', 'Medium', 'Easy'],
   chains: [
@@ -121,6 +123,7 @@ const listDto: ComplexityChainListDto = {
 }
 
 const planEffective: ComplexityChainListDto = {
+  defaultComplexity: 'Medium',
   roles: ['Plan', 'Code'],
   complexities: ['Hard', 'Medium', 'Easy'],
   chains: [
@@ -144,6 +147,7 @@ const planEffective: ComplexityChainListDto = {
 }
 
 const codeEffective: ComplexityChainListDto = {
+  defaultComplexity: 'Medium',
   roles: ['Plan', 'Code'],
   complexities: ['Hard', 'Medium', 'Easy'],
   chains: [
@@ -247,6 +251,7 @@ function serveRouting(options?: {
       if (row === 'error') return HttpResponse.json({ title: 'boom' }, { status: 500 })
       if (row) return HttpResponse.json(row)
       return HttpResponse.json({
+        defaultComplexity: 'Medium',
         roles: list.roles,
         complexities: list.complexities,
         chains: [
@@ -265,6 +270,90 @@ function serveRouting(options?: {
 }
 
 describe('RoutingSettingsTab', () => {
+  it('C097M V-C4 pin-overlay-first', async () => {
+    serveRouting({ effective: { Plan: {
+      ...planEffective,
+      chains: [chain('Hard', {
+        role: 'Plan', resolvedFrom: 'role', candidates: [codex],
+        effective: {
+          source: 'pin', candidates: [{ agentKind: 'ClaudeCode', modelLevel: 'High', alias: 'opus', availableNow: true, unavailableReason: null }],
+          stagePin: { id: 'pin-plan', cardId: null, cardIdentifier: null, role: 'Plan', provenance: 'Human', strength: 'Required', agentKind: 'ClaudeCode', modelLevel: 'High', notBefore: null, reason: 'operator choice', candidateCount: 1 },
+          governsDefault: false, withheldReason: null,
+        },
+      })],
+    } } })
+    renderWithProviders(<RoutingSettingsTab />)
+    const cell = await screen.findByTestId('routing-matrix-cell-Plan-Hard')
+    const pinLabel = await within(cell).findByText('Required Human pin → ClaudeCode/High (opus)')
+    expect(cell.textContent?.startsWith('Required Human pin → ClaudeCode/High (opus)')).toBe(true)
+    expect(pinLabel.compareDocumentPosition(within(cell).getByText('Own rule')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeGreaterThan(0)
+    expect(within(cell).getByText('1. ClaudeCode/High (opus)')).toBeInTheDocument()
+    expect(within(cell).getByText('1. Codex/Frontier (gpt-6-astra)')).toBeInTheDocument()
+  })
+
+  it('C097M V-C5 default-column-and-fallback', async () => {
+    serveRouting({ effective: { Plan: {
+      ...planEffective,
+      chains: [
+        chain('Medium', { role: 'Plan', effective: { source: 'rolePolicy', candidates: [heldFable], stagePin: null, governsDefault: true, withheldReason: null } }),
+        chain('Easy', { role: 'Plan', effective: { source: 'rolePolicy', candidates: [heldFable], stagePin: null, governsDefault: false, withheldReason: null } }),
+      ],
+    } } })
+    renderWithProviders(<RoutingSettingsTab />)
+    expect(await screen.findByRole('columnheader', { name: 'Medium (default for an ordinary Worker dispatch without -Complexity)' })).toBeInTheDocument()
+    const medium = await screen.findByTestId('routing-matrix-cell-Plan-Medium')
+    expect(await within(medium).findByText('Falls back to RolePolicy → ClaudeCode/Frontier (fable)')).toBeInTheDocument()
+    expect(within(medium).getByText('held until 2026-09-04T00:00:00Z (manual)')).toBeInTheDocument()
+    expect(medium).not.toHaveTextContent('dispatch blocks')
+    const easy = screen.getByTestId('routing-matrix-cell-Plan-Easy')
+    expect(within(easy).getByText('Unset — a -Complexity Easy dispatch blocks')).toBeInTheDocument()
+    expect(easy).not.toHaveTextContent('Falls back to RolePolicy')
+  })
+
+  it('C097M V-C6 card-pin-count-in-row', async () => {
+    serveRouting()
+    renderWithProviders(<RoutingSettingsTab />)
+    const code = await screen.findByTestId('routing-matrix-row-Code')
+    expect(await within(code).findByText('1 card pin')).toBeInTheDocument()
+    const plan = await screen.findByTestId('routing-matrix-cell-Plan-Hard')
+    expect(plan.closest('tr')).not.toHaveTextContent('card pin')
+    expect(code).not.toHaveTextContent('2 card pins')
+  })
+
+  it.each([
+    { name: 'required-empty-cell', source: 'pin', candidates: [codex], reason: null, label: 'Required Human pin → Codex/Frontier (gpt-6-astra)' },
+    { name: 'preferred-unlaunchable-policy', source: 'pin+chain', candidates: [codex], reason: 'Plan policy names Raw/Frontier, which delegation cannot launch', label: 'Preferred Human pin → Codex/Frontier (gpt-6-astra), then this row' },
+    { name: 'policy-read-failure', source: 'rolePolicy', candidates: [codex], reason: 'chain read failed (InvalidOperationException)', label: 'Falls back to RolePolicy → Codex/Frontier (gpt-6-astra)' },
+    { name: 'empty-read-failure', source: 'rolePolicy', candidates: [], reason: 'chain read failed (InvalidOperationException)', label: 'Effective routing unknown: chain read failed (InvalidOperationException)' },
+    { name: 'unlaunchable-policy', source: 'rolePolicy', candidates: [], reason: 'Plan policy names Raw/Frontier, which delegation cannot launch', label: 'Falls back to RolePolicy → not launchable: Plan policy names Raw/Frontier, which delegation cannot launch' },
+    { name: 'pin-read-failure', source: 'pin', candidates: [codex], reason: 'chain read failed (InvalidOperationException)', label: 'Required Human pin → Codex/Frontier (gpt-6-astra)' },
+    { name: 'role-read-failure', source: 'role', candidates: [codex], reason: 'stage pin read failed (InvalidOperationException)', label: 'Own rule' },
+    { name: 'any-read-failure', source: 'any', candidates: [codex], reason: 'chain metadata read failed (InvalidOperationException)', label: 'Inherits Any role' },
+    { name: 'config-availability-failure', source: 'config', candidates: [{ ...heldFable, unavailableReason: 'availability read failed (InvalidOperationException)' }], reason: 'availability read failed (InvalidOperationException)', label: 'Configuration fallback' },
+    { name: 'standing-agent', source: 'agent', candidates: [], reason: 'stage pin binds standing agent c097m-standing (ClaudeCode); an ordinary dispatch runs on that agent and does not walk this row', label: 'Pinned to standing agent c097m-standing (ClaudeCode) — an ordinary dispatch runs there; this row is not walked' },
+    { name: 'standing-agent-read-failure', source: 'agent', candidates: [], reason: 'stage pin binds standing agent c097m-standing (ClaudeCode); an ordinary dispatch runs on that agent and does not walk this row; chain read failed (InvalidOperationException)', label: 'Pinned to standing agent c097m-standing (ClaudeCode) — an ordinary dispatch runs there; this row is not walked' },
+  ] satisfies Array<{ name: string; source: ComplexityEffectiveDto['source']; candidates: ComplexityCandidateDto[]; reason: string | null; label: string }>)('C097M V-C4 diagnostic $name', async ({ source, candidates, reason, label }) => {
+    serveRouting({ effective: { Plan: {
+      ...planEffective,
+      chains: [chain('Easy', { role: 'Plan', effective: {
+        source, candidates, withheldReason: reason, governsDefault: false,
+        stagePin: source === 'pin' || source === 'pin+chain' || source === 'agent'
+          ? { id: 'pin-plan', cardId: null, cardIdentifier: null, role: 'Plan', provenance: 'Human', strength: source === 'pin+chain' ? 'Preferred' : 'Required', agentKind: 'Codex', modelLevel: 'Frontier', notBefore: null, reason: 'operator choice', candidateCount: candidates.length }
+          : null,
+      } })],
+    } } })
+    renderWithProviders(<RoutingSettingsTab />)
+    const cell = await screen.findByTestId('routing-matrix-cell-Plan-Easy')
+    expect(await within(cell).findByText(label)).toBeInTheDocument()
+    expect(cell).not.toHaveTextContent('dispatch blocks')
+    if (reason) expect(cell).toHaveTextContent(reason)
+    if (candidates.length > 0) {
+      expect(cell).not.toHaveTextContent('not launchable')
+      expect(within(cell).getByText('1. ' + candidates[0].agentKind + '/' + candidates[0].modelLevel + ' (' + candidates[0].alias + ')')).toBeInTheDocument()
+    }
+    if (reason?.includes('read failed')) expect(within(cell).getByRole('alert')).toHaveTextContent(reason)
+  })
+
   it('C470 mutation can be selected and saved independently', async () => {
     const put = vi.fn()
     serveRouting({ list: { ...listDto, roles: [...(listDto.roles ?? []), 'Mutation'] } })
@@ -355,9 +444,9 @@ describe('RoutingSettingsTab', () => {
     expect(within(codeHard).getByText('Configuration fallback')).toBeInTheDocument()
 
     const planEasy = screen.getByTestId('routing-matrix-cell-Plan-Easy')
-    expect(within(planEasy).getByText('Unset — dispatch blocks')).toBeInTheDocument()
+    expect(within(planEasy).getByText('Unset — a -Complexity Easy dispatch blocks')).toBeInTheDocument()
     const anyEasy = screen.getByTestId('routing-matrix-cell-any-Easy')
-    expect(within(anyEasy).getByText('Unset — dispatch blocks')).toBeInTheDocument()
+    expect(within(anyEasy).getByText('Unset — a -Complexity Easy dispatch blocks')).toBeInTheDocument()
   })
 
   it('renders an unavailable candidate reason from the server and does not invent a fallback', async () => {
@@ -376,12 +465,11 @@ describe('RoutingSettingsTab', () => {
 
     const codeRow = await screen.findByTestId('routing-matrix-row-Code')
     expect(await within(codeRow).findByText(/Required Human pin: Code → Grok/)).toBeInTheDocument()
-    expect(within(codeRow).getByText(/bypasses the matrix cells for Code/)).toBeInTheDocument()
+    expect(within(codeRow).getByText(/Overrides each Code cell until cleared/)).toBeInTheDocument()
 
     const planRow = screen.getByTestId('routing-matrix-row-Plan')
     expect(await within(planRow).findByText(/Preferred Human pin: Plan → ClaudeCode\/Frontier/)).toBeInTheDocument()
-    expect(within(planRow).getByText(/prepends to the matrix candidates/)).toBeInTheDocument()
-    expect(within(planRow).getByText(/falls through to this row/)).toBeInTheDocument()
+    expect(within(planRow).getByText(/Tried before each Plan cell/)).toBeInTheDocument()
   })
 
   it('scopes a card pin to that card and does not present it as a stage-wide banner', async () => {
@@ -453,8 +541,7 @@ describe('RoutingSettingsTab', () => {
     expect(within(boundary).getByText(/New complexity-routed dispatches read the saved cell immediately/)).toBeInTheDocument()
     expect(within(boundary).getByText(/Running sessions keep the model they started with/)).toBeInTheDocument()
     expect(within(boundary).getByText(/never interrupts, replaces, or migrates a mid-turn delegate/)).toBeInTheDocument()
-    expect(within(boundary).getByText(NON_COMPLEXITY_BOUNDARY)).toBeInTheDocument()
-    expect(within(boundary).getByText(/RolePolicy/)).toBeInTheDocument()
+    expect(within(boundary).getByText('An ordinary Worker dispatch without -Complexity, -Kind/-Level, -Agent or ignoreModelDisabled walks the Medium row; explicit asks, orchestrators, standing agents and specialist roles keep their existing routing path.')).toBeInTheDocument()
   })
 
   it('keeps a role row error from blanking the rest of the grid', async () => {
