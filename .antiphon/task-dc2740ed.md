@@ -59,7 +59,7 @@ PC-1 omit enrichment full/summary; PC-2 count resolved/remove Done/remove Cancel
 
 ## Continuation
 
-Complete R-3 with bounded Unit selections and fresh committed-SHA receipts; investigate the inherited classification/checkpoint harness failures or hand them to their owners. Keep all present positive controls pending. Do not widen deadlines or weaken assertions. The 90-minute dispatch budget is exhausted by the whole-lane timeout and required base confirmation. Then commission ordinary Review; caller lands original Code task and commissions SourceLanding Mutation.
+Complete R-3 with bounded Unit selections and fresh committed-SHA receipts; investigate the inherited classification/checkpoint harness failures or hand them to their owners. Keep all present positive controls pending. Do not widen deadlines or weaken assertions. The remaining 90-minute dispatch budget cannot fit completion of the Unit lane after its timeout and required base confirmation. Then commission ordinary Review; caller lands original Code task and commissions SourceLanding Mutation.
 
 ## Unedited checkpoint lines
 
@@ -143,3 +143,7 @@ FAILED Antiphon.Tests.Checkpoints.ShadowCopyTests.copies_the_dll_set_never_the_s
 FAILED Antiphon.Tests.Checkpoints.TimeoutTests.total_deadline_skips_a_queued_build_without_starting_it (CP-6) ShouldAssertException: driver.Count(CheckpointFixtures.IsBuild)     should be 1     but was 0 -> rows/CP-6/failures.md
 FAILED Antiphon.Tests.Checkpoints.TimeoutTests.total_deadline_kills_running_and_skips_queued (CP-6) ShouldAssertException: result.Rows.Select(row => row.State).OrderBy(state => state)     should be ["skipped", "timeout"]     but was (case sensitive comparison) ["slot-refused", "slot-refused"]     difference [*"slot-refused"*, *"slot-refused"*] -> rows/CP-6/failures.md
 ```
+
+## Closing repository checks
+
+Full-range check-evidence-diff.ps1 at f4bc9d46acd90c8be66e15908c6c69d453dac5d5: 25 commits, 1 permitted Markdown report, 0 violations. Closing merge-tree against fetched master d74b595de6444b9b59fce7ac91819e1432326ce4 exited 0. Alternate outputs and tool shadows owned by this task were removed by literal paths after validation; build-source stamps preserved unchanged in ignored .antiphon/c1255-build-provenance. Original receipts, logs and TRX remain at the recorded paths. Baseline detached checkout is retained only for its ignored diagnostic evidence. Final report-only commit is checked again over the full task range and its remote equality reported to the caller.
