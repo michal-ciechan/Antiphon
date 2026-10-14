@@ -206,7 +206,8 @@ describe('the shape strip', () => {
         { identifier: 'CARD-0048', status: 'Done', resolved: true },
       ]
       const requestedViews: (string | null)[] = []
-      server.use(...boardHandlers(detail), http.get('/api/boards/board-1', ({ request }) => {
+      server.use(...boardHandlers(detail))
+      server.use(http.get('/api/boards/board-1', ({ request }) => {
         requestedViews.push(new URL(request.url).searchParams.get('view'))
         return HttpResponse.json(detail)
       }))
