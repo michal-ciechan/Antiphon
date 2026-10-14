@@ -87,7 +87,7 @@ and `DelegateModal.test.tsx`. S2 implementation and docs.
 | V-19 | Modal walked Orchestrator pin retains Medium and does not show High. |
 | V-20 | Modal unknown Preferred policy tail has the exact dependency label and no Frontier badge. |
 | V-21 | Modal Required forbid-only single-row held/quota/forbidden each shows the exact refusal and no Blocked result. |
-| V-22 | 38 additional create-context parity rows, including binder boundaries and unobserved request inputs. |
+| V-22 | 46 additional create-context parity rows, including binder boundaries and unobserved request inputs. |
 | V-23 | Modal Hand back, typed card/forbid/explicit-tier, and card-free edit controls. |
 | V-24 | Modal admission dependency remains visible with explicit tier. |
 | R-1 | Whole files: `rolePolicyModel.test.ts`, `RoutingSettingsTab.test.tsx`, `complexityChains.test.tsx` plus the three files above (C097 and C1234 regression cases retained; V17 now uses a real pin DTO, V18/V27 require the exact unknown labels, V25 awaits the second query with the same exact pin assertions). |
@@ -106,7 +106,7 @@ affected: no server source changes.
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
 |---|---|---|---|---|---|---|---:|---:|---|---|
 | CP-1 | Repair-tests | n/a | client-red | `pwsh -NoProfile -File scripts/test-client.ps1 src/features/settings/nextCreatePreview.test.ts src/features/settings/RolePolicySection.test.tsx src/features/delegations/DelegateModal.test.tsx` | V-22..V-24 D1 red | expected assertion failures against df244bfb implementation | n/a | 4 | true | n/a |
-| CP-2 | Repair | n/a | client | `pwsh -NoProfile -File scripts/test-client.ps1 src/features/settings/nextCreatePreview.test.ts src/features/settings/RolePolicySection.test.tsx src/features/delegations/DelegateModal.test.tsx src/features/settings/rolePolicyModel.test.ts src/features/settings/RoutingSettingsTab.test.tsx src/api/complexityChains.test.tsx -JsonResultPath ../.antiphon/c1250-repair-client.json` | V-1..V-24, R-1 | six files, 215 passed, 0 failed/skipped; CLIENT TESTS EXIT CODE: 0 | n/a | 5 | true | n/a |
+| CP-2 | Repair | n/a | client | `pwsh -NoProfile -File scripts/test-client.ps1 src/features/settings/nextCreatePreview.test.ts src/features/settings/RolePolicySection.test.tsx src/features/delegations/DelegateModal.test.tsx src/features/settings/rolePolicyModel.test.ts src/features/settings/RoutingSettingsTab.test.tsx src/api/complexityChains.test.tsx -JsonResultPath ../.antiphon/c1250-repair-client.json` | V-1..V-24, R-1 | six files, 223 passed, 0 failed/skipped; CLIENT TESTS EXIT CODE: 0 | n/a | 5 | true | n/a |
 | CP-3 | Repair | n/a | client-types | `node client/node_modules/typescript/bin/tsc -b client/tsconfig.json --pretty false` | R-2 | exit 0, 0 TypeScript errors | n/a | 3 | true | n/a |
 | CP-4 | Repair | n/a | client-lint | `node client/node_modules/eslint/bin/eslint.js --config client/eslint.config.js --max-warnings 0 client/src/features/settings/nextCreatePreview.ts client/src/features/settings/nextCreatePreview.test.ts client/src/features/settings/RolePolicySection.tsx client/src/features/settings/RolePolicySection.test.tsx client/src/features/delegations/DelegateModal.tsx client/src/features/delegations/DelegateModal.test.tsx client/src/features/thread/CardThreadPanel.tsx` | R-2 | 0 errors, 0 warnings | n/a | 2 | true | n/a |
 
@@ -298,3 +298,13 @@ finished with 20 assertion failures / 131 passes in three files. Sixteen V-22 ca
 rows and the four V-23/V-24 modal cases failed against unchanged df244bfb implementation.
 slot=granted waited=0s; sourceState=clean, buildSource=notApplicable. Earlier exact assertions
 including C097 V25 are unchanged. CP-2 expects 215 cases, including 58 V-17 and 38 V-22 rows.
+
+Differential probe at d2c6a5a90157065e692b04fc83ff7580c214bbbb: the retained 58 and
+new 38 literal rows passed, but 202/1224 direct .NET title/binder comparisons disagreed on
+supplementary characters or join controls. Eight boundary regression rows are added before
+the matcher correction. The source audit also reopened MatrixDefaultApplies
+(AgentTaskService.cs:3740-3744): specialists bypass the default row. The three new specialist
+expectations are corrected to policy; these were outside the earlier 58-row table.
+The first CP-2 passed 215/215 and CP-3 passed; CP-4 rejected the new whitespace range under
+no-control-regex. Use named whitespace escapes without disabling the lint rule.
+Final CP-2 expects 223 cases, V22=46; the earlier V17 and V25 assertions remain unchanged.
