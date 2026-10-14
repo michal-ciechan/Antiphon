@@ -685,7 +685,23 @@ switch ($Verb) {
     'get' {
         $theCard = Get-CardOrFail
         if ($Json) { $theCard | ConvertTo-Json -Depth 8; return }
-        $relationships = Invoke-Antiphon -Method GET -Path ("/api/cards/{0}/relationships" -f $theCard.id)
+        $relationships = $null
+        try {
+            # This display-only read is optional on older or unavailable servers. Keep the main
+            # card fetch and every write on Invoke-Antiphon's fatal error path.
+            $relationshipUri = "$api/api/cards/{0}/relationships" -f $theCard.id
+            $relationships = Invoke-RestMethod -Method GET -Uri $relationshipUri -Headers $headers
+        }
+        catch {
+            # HttpWebResponse (5.1) and HttpResponseMessage (7) both expose StatusCode.
+            $relationshipStatus = $null
+            if ($null -ne $_.Exception.Response) { $relationshipStatus = [int]$_.Exception.Response.StatusCode }
+            if ($relationshipStatus -ne 404) {
+                $failure = 'transport error'
+                if ($relationshipStatus) { $failure = "HTTP $relationshipStatus" }
+                [Console]::Error.WriteLine("WARNING: relationships lookup failed ($failure).")
+            }
+        }
         Write-CardLine $theCard
         Write-Output ("id          {0}" -f $theCard.id)
         Write-Output ("board       {0}" -f $theCard.boardId)
@@ -700,9 +716,14 @@ switch ($Verb) {
         if ($theCard.dueAt) { Write-Output ("due         {0}" -f $theCard.dueAt) }
         Write-Output ("token       {0}" -f $theCard.concurrencyToken)
         Write-Output ("revisions   {0}" -f $theCard.revisionCount)
-        foreach ($r in @($relationships.blockedBy)) { Write-BlockerLine $r }
-        foreach ($r in @($relationships.blocks)) {
-            Write-Output ("blocks      {0}" -f $r.relatedIdentifier)
+        if ($null -eq $relationships) {
+            Write-Output 'relationships: unavailable'
+        }
+        else {
+            foreach ($r in @($relationships.blockedBy)) { Write-BlockerLine $r }
+            foreach ($r in @($relationships.blocks)) {
+                Write-Output ("blocks      {0}" -f $r.relatedIdentifier)
+            }
         }
         if ($theCard.assignedAgentName) { Write-Output ("agent       {0}" -f $theCard.assignedAgentName) }
         if ($theCard.ownerSessionId) { Write-Output ("session     {0}" -f $theCard.ownerSessionId) }
