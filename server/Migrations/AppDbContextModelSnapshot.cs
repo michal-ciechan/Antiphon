@@ -3934,9 +3934,13 @@ namespace Antiphon.Server.Migrations
                         .HasDatabaseName("IX_CardRelationships_RelatedCardId");
 
                     b.HasIndex("CardId", "RelatedCardId", "Kind")
+                        .IsUnique()
                         .HasDatabaseName("IX_CardRelationships_CardId_RelatedCardId_Kind");
 
-                    b.ToTable("CardRelationships", (string)null);
+                    b.ToTable("CardRelationships", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_CardRelationships_NotSelf", "\"CardId\" <> \"RelatedCardId\"");
+                        });
                 });
 
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.CardRevision", b =>
@@ -10137,13 +10141,13 @@ namespace Antiphon.Server.Migrations
                     b.HasOne("Antiphon.Server.Domain.Entities.Card", "Card")
                         .WithMany("BlockedBy")
                         .HasForeignKey("CardId")
-                        .OnDelete(DeleteBehavior.Restrict)
+                        .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
                     b.HasOne("Antiphon.Server.Domain.Entities.Card", "RelatedCard")
                         .WithMany("Blocks")
                         .HasForeignKey("RelatedCardId")
-                        .OnDelete(DeleteBehavior.Restrict)
+                        .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
                     b.Navigation("Card");

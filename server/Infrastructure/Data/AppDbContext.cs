@@ -1843,9 +1843,11 @@ public class AppDbContext : DbContext
                 .OnDelete(DeleteBehavior.Cascade);
         });
 
+        // CARD-0100. CardRelationshipSchemaTests pins the unique pair, the self check and both cascades.
         modelBuilder.Entity<CardRelationship>(entity =>
         {
-            entity.ToTable("CardRelationships");
+            entity.ToTable("CardRelationships", table =>
+                table.HasCheckConstraint("CK_CardRelationships_NotSelf", "\"CardId\" <> \"RelatedCardId\""));
             entity.HasKey(r => r.Id);
             entity.Property(r => r.CardId).IsRequired();
             entity.Property(r => r.RelatedCardId).IsRequired();
@@ -1855,6 +1857,7 @@ public class AppDbContext : DbContext
             entity.Property(r => r.CreatedAt).IsRequired();
 
             entity.HasIndex(r => new { r.CardId, r.RelatedCardId, r.Kind })
+                .IsUnique()
                 .HasDatabaseName("IX_CardRelationships_CardId_RelatedCardId_Kind");
             entity.HasIndex(r => r.RelatedCardId)
                 .HasDatabaseName("IX_CardRelationships_RelatedCardId");
@@ -1862,11 +1865,11 @@ public class AppDbContext : DbContext
             entity.HasOne(r => r.Card)
                 .WithMany(card => card.BlockedBy)
                 .HasForeignKey(r => r.CardId)
-                .OnDelete(DeleteBehavior.Restrict);
+                .OnDelete(DeleteBehavior.Cascade);
             entity.HasOne(r => r.RelatedCard)
                 .WithMany(card => card.Blocks)
                 .HasForeignKey(r => r.RelatedCardId)
-                .OnDelete(DeleteBehavior.Restrict);
+                .OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<RetrySchedule>(entity =>

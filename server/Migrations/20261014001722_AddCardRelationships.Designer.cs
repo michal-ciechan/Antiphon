@@ -12,7 +12,7 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Antiphon.Server.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    [Migration("20261014000537_AddCardRelationships")]
+    [Migration("20261014001722_AddCardRelationships")]
     partial class AddCardRelationships
     {
         /// <inheritdoc />
@@ -3937,9 +3937,13 @@ namespace Antiphon.Server.Migrations
                         .HasDatabaseName("IX_CardRelationships_RelatedCardId");
 
                     b.HasIndex("CardId", "RelatedCardId", "Kind")
+                        .IsUnique()
                         .HasDatabaseName("IX_CardRelationships_CardId_RelatedCardId_Kind");
 
-                    b.ToTable("CardRelationships", (string)null);
+                    b.ToTable("CardRelationships", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_CardRelationships_NotSelf", "\"CardId\" <> \"RelatedCardId\"");
+                        });
                 });
 
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.CardRevision", b =>
@@ -10140,13 +10144,13 @@ namespace Antiphon.Server.Migrations
                     b.HasOne("Antiphon.Server.Domain.Entities.Card", "Card")
                         .WithMany("BlockedBy")
                         .HasForeignKey("CardId")
-                        .OnDelete(DeleteBehavior.Restrict)
+                        .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
                     b.HasOne("Antiphon.Server.Domain.Entities.Card", "RelatedCard")
                         .WithMany("Blocks")
                         .HasForeignKey("RelatedCardId")
-                        .OnDelete(DeleteBehavior.Restrict)
+                        .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
                     b.Navigation("Card");

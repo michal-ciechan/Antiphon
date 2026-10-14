@@ -1,16 +1,14 @@
-using System.Linq.Expressions;
-using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 
 namespace Antiphon.Server.Application.Services;
 
 /// <summary>
-/// CARD-0100 D-5 / A-3. The one open-blocker predicate. Resolved is a whitelist (archived, Done,
-/// Canceled); any other status keeps the blocker open.
+/// CARD-0100 D-5 / A-3. Whether a blocker still holds its card. Resolved is a whitelist (archived,
+/// Done, Canceled); any other status, including one this code does not know, keeps the blocker open
+/// (CardRelationshipApiTests.Resolved_follows_the_blockers_Done_Canceled_archived_state_and_reopen).
 /// </summary>
 public static class CardBlockers
 {
-    /// <summary>A blocker card is resolved when it is archived or closed.</summary>
     public static bool IsResolved(CardStatus status, DateTime? archivedAt) =>
-        throw new NotImplementedException();
+        archivedAt is not null || status is CardStatus.Done or CardStatus.Canceled;
 }
