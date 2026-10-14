@@ -558,7 +558,9 @@ is 422 `worktree_base_source_invalid`. Detail records `worktreeBaseRequestedRef`
 > Create may also send **`complexity`** (`Hard`/`Medium`/`Easy`) and **`refuseIfExhausted`**
 > (CARD-0090 / CARD-0332). Combined with explicit `agentKind`/`modelLevel` or with `ignoreModelDisabled` is
 > 422. The walk reads the `(role, complexity)` cell, then the any-role row, then the config
-> default. Exhausted chains insert the task **Blocked** (201 Created; not covered by a test) unless `refuseIfExhausted` is true,
+> default. A Required pin with one effective candidate applies single-target 409 checks on
+> exhaustion, including a forbid-only pin over a default row (C1250 V17 D1). Other exhausted
+> chains insert the task **Blocked** (201 Created; status code not covered by a test) unless `refuseIfExhausted` is true,
 > which is **409 `routing_exhausted`** with a `complexityRouting` extension. Auto-over-Human
 > chain writes are **409 `complexity_chain_human`**. An Auto PUT to a role cell is the same 409
 > when the any-role row for that complexity is Human (write it as Human, or clear the any-role
@@ -717,7 +719,9 @@ Configuration validation and create refusals for such values (CARD-1234): the la
 
 `effective` alone is not the next create. The UI composes stage pins before choosing a default-tier
 walk or a single target; stage forbids, Orchestrator kind filtering and quota can change the result.
-A single held pin is refused, while a walked list can become Blocked. Missing floor, alias or
+A single held pin is refused. A Required forbid-only pin with one default-row candidate is
+also refused when held, quota-limited or forbidden (C1250 V17 D1; V21). Other exhausted
+row/list paths can become Blocked (V3, V15, V17 exhaustion controls). Missing floor, alias or
 availability facts are disclosed as server dependencies. See CARD-1250 and its cited parity tests
 in [orchestration-loop.md](orchestration-loop.md); the tests below bind this DTO.
 

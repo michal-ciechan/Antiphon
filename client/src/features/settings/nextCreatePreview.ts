@@ -222,6 +222,11 @@ export function previewNextCreate(context: NextCreateContext): NextCreatePreview
       if (!effective) return unknown('default-tier routing')
       const preview = walk(context, effective.candidates, effective.source === 'pin' ? 'pin' : 'matrix')
       if (preview.source === 'unknown') return preview
+      // A Required forbid-only pin leaves the row eligible, but a single exhausted
+      // candidate takes create's refusal arm (AgentTaskService.cs:995-1034).
+      if (preview.source === 'exhausted' && stagePin?.strength === 'Required' && effective.candidates.length === 1) {
+        return single(context, effective.candidates[0], 'rolePolicy')
+      }
       return { ...preview, complexity: tier ?? null,
         pin: effective.source === 'pin' && (stagePin ?? effective.stagePin)
           ? { strength: (stagePin ?? effective.stagePin)!.strength, provenance: (stagePin ?? effective.stagePin)!.provenance } : null }
@@ -253,7 +258,7 @@ export function nextCreateSkipping(preview: NextCreatePreview): string {
 }
 
 export function nextCreateLabel(preview: NextCreatePreview | null): string {
-  if (!preview) return 'unknown'
+  if (!preview) return 'unknown — policy target depends on the server'
   switch (preview.source) {
     case 'explicit': return `explicit ${preview.modelLevel}`
     case 'agent': return preview.note ?? AGENT_ONLY_PIN

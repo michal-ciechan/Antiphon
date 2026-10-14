@@ -13,13 +13,13 @@ matrix live (checked on the running server 2026-10-14: `GET /api/complexity-chai
 
 ## Design
 
-Client-only repair of Final Review 18cdf39f F1-F4. The server resolver remains unchanged.
+Client-only repair of Final Reviews 18cdf39f F1-F4 and 9133fca0 D1-D2. The server resolver remains unchanged.
 The preview models a fresh create without a card, explicit agent/kind, follow-up, complexity,
 model/quota bypass or refuse-if-exhausted flag. Those caller contexts are outside this UI.
 It reads role policy, the active stage pin and the role's effective complexity cells.
 
-1. Compose the stage pin without a chain first (AgentTaskService.cs:789-829 and
-   RoutingCandidates.cs:47-94): fill partial pairs, narrow by explicit level, append the policy
+1. Compose the stage pin without a chain first (AgentTaskService.cs:789-833 and
+   RoutingCandidates.cs:44-96): fill partial pairs, narrow by explicit level, append the policy
    target for Preferred, deduplicate by kind/level. Required mismatch is 409 routing_pin_conflict.
    A one-slot composition overlays the request and bypasses the default-tier row, including
    forbid-only Preferred pins and pins equal to policy. A zero-slot Required forbid pin leaves
@@ -30,7 +30,10 @@ It reads role policy, the active stage pin and the role's effective complexity c
    V-1..V-4, V-8..V-10 and V-17 any/config/Preferred/Required rows cover these paths.
 3. Walks filter delegate kinds (ClaudeCode only for Orchestrator), case-insensitive stage forbids,
    holds and quota, then choose the first survivor. Exhaustion becomes Blocked with the head pair
-   under this UI's defaults. Walked Orchestrator levels bypass ResolveLevel and are not floored.
+   except when a Required pin leaves one effective candidate. That branch applies single-target
+   refusal checks (AgentTaskService.cs:995-1034), including forbid-only pins with role/any/config
+   rows (V-17 D1 and V-21). An available single candidate still wins; without a Required pin,
+   a single exhausted row still becomes Blocked. Walked Orchestrator levels bypass ResolveLevel.
    V-17 F1/F3, quota and exhaustion rows plus V-19 bind the filters and level behavior.
 4. Single targets apply the kind check/clamp and ResolveLevel path, then forbids, quota, holds.
    A forbidden alias is 409 routing_pin_forbidden; quota is 409 subscription_quota_low; a held
@@ -107,7 +110,8 @@ affected: no server source changes.
 Repair ordinary floor 14 minutes plus authoring, within the 75-minute brief budget. Extra disclosed drivers
 through `scripts/build-slot.ps1`: `npm ci --prefix client` (fresh worktree has no
 `node_modules`; one esbuild hard link re-copied afterwards) and the checkpoint tool build into
-`tools/Antiphon.Checkpoints/bin-c1250-repair-tool/`. Import the plan, set generated manifest `timeouts.rowMinutes: 40`; each group runs once with `--expected-source-sha`,
+`tools/Antiphon.Checkpoints/bin-c1250-r3-tool/`, and the required esbuild/Node differential
+probe in `.antiphon/c1250-r3/` (GET-only snapshots and assertions, no task creation). Import the plan, set generated manifest `timeouts.rowMinutes: 40`; each group runs once with `--expected-source-sha`,
 `--serial`, `--row-timeout 40m`, `--total-timeout 150m`, without `--keep-outputs`.
 
 ## Recorded runs
@@ -133,13 +137,13 @@ through `scripts/build-slot.ps1`: `npm ci --prefix client` (fresh worktree has n
 
 ## Repair 679ecbea (Final Review 18cdf39f F1-F4)
 
-V-17 is a table of 40 literal server-branch expectations, with f047d2ef7 server file:line citations in each row. CP-1 runs these regressions against the unchanged f047d2ef7 implementation before the repair. CP-2 runs the complete six-file selection after the repair; Min stays n/a because these are Vitest results. Configured Orchestrator floor, unevaluated partial-slot availability, standing-agent details and masked quota-versus-hold precedence must be disclosed as unknown rather than invented. Final scope remains client-only: no whole Unit or server integration lane (explicit repair brief).
+The round-2 V-17 selection was a table of 40 literal server-branch expectations, with f047d2ef7 server file:line citations. Round 3 reopens and corrects those citations below. CP-1 runs these regressions against the unchanged f047d2ef7 implementation before the repair. CP-2 runs the complete six-file selection after the repair; Min stays n/a because these are Vitest results. Configured Orchestrator floor, unevaluated partial-slot availability, standing-agent details and masked quota-versus-hold precedence must be disclosed as unknown rather than invented. Final scope remains client-only: no whole Unit or server integration lane (explicit repair brief).
 
 V-18..V-20 bind modal refusal, unfloored walked Orchestrator level and unknown policy-tail availability. They join CP-1 red and CP-2 green.
 
 ### Repair branch inventory and mutation variants
 
-V-17 records 40 server branches with kind/level, matrix, pin strength/candidates/forbids,
+The round-2 V-17 selection recorded 40 server branches with kind/level, matrix, pin strength/candidates/forbids,
 availability/quota and literal outcomes in each fixture. V-1..V-16 cover the default-tier choice,
 held walks, explicit level, empty/unresolved rows, and rendered UI assertions. The matrix read
 uses the server's resolvedFrom/active-pin projection; expiration/NotBefore do not become client
@@ -200,6 +204,9 @@ admission depends on the server; they do not predict these codes:
 - 409 `concurrency_limit`: DelegationOpenGate count/insert admission, including after routing
   exhaustion. The preview holds no admission reservation.
 - 409 `conflict`: depth, root task count/cost ceiling, or standing-agent kind mismatch.
+- 409 `workspace_reserved`: WorkspaceUseAdmission retirement reservation.
+- 422 `stage_tool_bundle_unknown`: InstructionBundles.ResolveRoleToolBundles validates
+  configured role tool bundles, which the routing reads omit.
 - 422 `workspace_default_not_git`, `workspace_existing_agent_conflict`, `llm_project_required`
   and generic `validation_failed`: checkout, workspace, launch environment, request shape or
   runner admission. Those inputs are outside NextCreateContext.
@@ -219,3 +226,30 @@ not in the reads. The selected target may subsequently wait for dispatch or fail
 Read failures and withheld partial candidates are `unknown`, rather than a guessed survivor.
 The differential acceptance uses the built preview with literal new-case oracles and the live
 GET role-policy / complexity-chains reads. It creates no tasks. Mutation owns deliberate mutants.
+
+### Round-3 qualification and citation audit
+
+CP-1 at ddecbdf25f94d024fe0be6d13e2b3ce0efe230ec (unchanged preview implementation):
+14 failed / 95 passed across three files. Nine D1 rows returned exhausted instead of refused;
+three V-21 modal rows found no refusal label; two withheld Orchestrator policy rows lacked
+the explicit server-dependency label. Run 20261014-205413-2fad, slot=granted waited=0s,
+sourceState=clean, buildSource=notApplicable. CP-2 includes these cases after the fix.
+
+V-17 now has 58 rows, including the nine D1 refusal variants, three available-row controls,
+a no-pin single-held Blocked control, a Grok target and four invalid-policy disclosure rows.
+CP-2 expects 173 Vitest cases across six complete files; Min remains n/a because the checkpoint
+Min column counts TUnit executions. CP-3/CP-4 retain TypeScript and zero-warning ESLint.
+
+The source audit reopened 57 pre-existing file:line citation occurrences: 52 in V-17, two in
+this plan and three in the owner docs (the API/HTTP docs have no file:line citations).
+Corrections include the five D2 rows, Preferred available dedup, missing Orchestrator alias,
+partial-pair filling, missing-policy forbid, and tighter ranges for overlay, filtering,
+withholding, row sources and read failures. These are source-reading results, not test results.
+The final audit reopened 94 file:line occurrences (54 distinct references): 88 in V-17,
+three in this plan and three in the owner docs. The stored round-3 report points to the
+source excerpts, including the references introduced for the new rows.
+
+Additional pending Mutation candidates: PC-17 Required-single-row refusal (held, quota, forbidden
+for role/any/config, with separate modal variants); PC-18 overbroad Required-single guard
+(available row and no-pin exhaustion controls); PC-19 withheld policy dependency label.
+No deliberate mutants were introduced by Code. See the unbound candidate inventory.

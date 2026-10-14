@@ -1,8 +1,9 @@
 # CARD-1250 preview parity — unbound Mutation candidates
 
-Repair Code task: `679ecbea-ed90-4c82-8937-5d8b824f7b74`.
+Round-3 repair Code task: `63109ffc-25c4-449f-8f01-3958cf20ef2c`.
+Prior repair Code task: `679ecbea-ed90-4c82-8937-5d8b824f7b74`.
 Original Code / landing owner: `0814a3a5-8a8e-456a-869f-1e2a10f359ae`.
-Ordinary verified source: `4eb039453416c138f149a187274ef1e30f6a8aed`.
+Prior ordinary verified source: `4eb039453416c138f149a187274ef1e30f6a8aed`.
 Plan: [next-create preview](../plans/2026-10-14-card-1250-next-create-preview-plan.md).
 
 These are candidates for post-Review, post-land SourceLanding Mutation. They are not a bound
@@ -48,3 +49,16 @@ Files: **model** = `client/src/features/settings/nextCreatePreview.test.ts`;
 PC-7 now guards the missing configuration boundary: MinOrchestratorLevel is not in the read DTOs.
 The expected output is unknown, not an invented High target. PC-12 separately guards the server's
 unfloored walk. The two exact C097 V25 pin labels remain additional regression witnesses.
+
+Round-3 additions (pending, unbound):
+
+| PC / variant | Guarded mutation | Witness | Status |
+|---|---|---|---|
+| PC-17 role/any/config × held/quota/forbidden (9 model variants) | Remove Required single-row refusal handling | model V17: D1 required-forbid-only-single-<source>-<state> | pending |
+| PC-17 held/quota/forbidden (3 modal variants) | Render that refusal as exhaustion | modal V21: required-forbid-only-single-row-<state>-is-refused | pending |
+| PC-18 available role/any/config (3 variants) | Refuse an available Required single row | model V17: D1 required-forbid-only-single-<source>-available | pending |
+| PC-18 unpinned exhaustion | Apply Required refusal semantics without a Required pin | model V17: no-pin-single-held-still-blocked | pending |
+| PC-19 level/kind (2 variants) | Drop the server-dependency text for withheld policy | model V17: role_policy_level_invalid-Orchestrator-withheld / role_policy_kind_unsupported-Orchestrator-withheld | pending |
+
+V17 now has 58 rows; round-3 ordinary selection is 173 tests. Exact source/citation suffixes
+come from the fresh Vitest JSON, since this repair corrects the round-2 source citations.

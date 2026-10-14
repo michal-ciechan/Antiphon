@@ -51,7 +51,7 @@ export function RolePolicySection() {
           pins are set with scripts/routing-pin.ps1. The next create assumes no card, kind, agent or
           level. A single composed pin target bypasses the matrix; otherwise eligible Workers use the
           default-tier row. Walks filter stage forbids, kinds, holds and quota. Single targets can be
-          refused. Unknown means the reads lack a routing fact. Snapshots refresh at 15-second intervals;
+          refused, including a Required forbid-only pin with one default-row candidate. Unknown means the reads lack a routing fact. Snapshots refresh at 15-second intervals;
           admission and standing-agent details depend on the server.
         </Text>
         <Table striped withRowBorders={false} layout="fixed">
