@@ -3695,6 +3695,29 @@ public sealed class AgentTaskService
     private Task<Agent> ResolveStandingAgentAsync(string reference, CancellationToken ct) =>
         StandingAgentResolver.ResolveAsync(_db, reference, nameof(CreateAgentTaskRequest.Agent), ct);
 
+    internal static bool MatrixDefaultApplies(CreateAgentTaskRequest request, bool liveFollowUp) => false;
+
+    private sealed record PinRead(RoutingPinService.Decision? Decision, string? FailureType);
+    private sealed record ChildRouting(AgentKind Kind, AgentModelLevel Level,
+        TaskComplexity? Complexity = null, Guid? RoutingPinId = null,
+        string? BlockedReason = null, string? Warning = null);
+
+    private async Task<ChildRouting> ResolveServerChildRoutingAsync(
+        AgentTaskRole role, Guid? cardId, Func<PinRead, Task<ChildRouting>> legacy, CancellationToken ct)
+    {
+        PinRead pin;
+        try
+        {
+            pin = new(await _routingPins!.ResolveAsync(cardId, role,
+                new RoutingPinService.Ask(null, null, null, false), ct), null);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return await legacy(new(null, ex.GetType().Name));
+        }
+        return await legacy(pin);
+    }
+
     /// <summary>
     /// Spawn the Merge-role delegate that resolves a Worktree task's rebase conflict. SYSTEM
     /// spawned — the server decides this, so it bypasses the caller checks — but the run's task
@@ -3728,6 +3751,12 @@ public sealed class AgentTaskService
         var now = UtcNow();
         var (token, tokenHash) = NewToken();
         var files = string.Join("\n", conflictFiles.Select(f => $"- {f}"));
+
+        Task<ChildRouting> Legacy(PinRead _) => Task.FromResult(new ChildRouting(
+            AgentKind.ClaudeCode, ResolveLevel(AgentTaskKind.Worker, AgentTaskRole.Merge, null)));
+        var routing = _routingPins is null
+            ? await Legacy(new(null, null))
+            : await ResolveServerChildRoutingAsync(AgentTaskRole.Merge, conflicted.CardId, Legacy, ct);
 
         var task = new AgentTask
         {
@@ -3768,7 +3797,8 @@ public sealed class AgentTaskService
             ProjectId = conflicted.ProjectId,
             // CARD-0040: integrating a task's work is still that task's card's work.
             CardId = conflicted.CardId,
-            ModelLevel = ResolveLevel(AgentTaskKind.Worker, AgentTaskRole.Merge, null),
+            ModelLevel = routing.Level,
+            AgentKind = routing.Kind,
             Workspace = WorkspaceMode.Shared,
             WorkingDirectory = worktree,
             RepoPath = conflicted.RepoPath,
@@ -3832,45 +3862,37 @@ public sealed class AgentTaskService
             .FirstOrDefault() ?? settled.Title;
         var stderrBit = string.IsNullOrWhiteSpace(stderr) ? "" : $"\nGated commit stderr:\n{stderr.Trim()}\n";
 
-        var agentKind = ResolveAgentKind(AgentTaskKind.Worker, AgentTaskRole.Commit, null);
-        var level = ResolveLevel(AgentTaskKind.Worker, AgentTaskRole.Commit, null);
-        Guid? routingPinId = null;
-        string? pinWarning = null;
-        if (_routingPins is not null)
+        Task<ChildRouting> Legacy(PinRead pin)
         {
-            try
+            var kind = ResolveAgentKind(AgentTaskKind.Worker, AgentTaskRole.Commit, null);
+            var level = ResolveLevel(AgentTaskKind.Worker, AgentTaskRole.Commit, null);
+            Guid? pinId = null;
+            string? warning = pin.FailureType is { } failure
+                ? $"Routing pin service failed ({failure}); using role policy." : null;
+            if (pin.Decision is { } decision)
             {
-                var pinDecision = await _routingPins.ResolveAsync(
-                    settled.CardId,
-                    AgentTaskRole.Commit,
-                    new RoutingPinService.Ask(null, null, null, false),
-                    ct);
-                var composed = RoutingCandidates.Compose(
-                    pinDecision,
-                    chain: null,
-                    chainLabel: null,
-                    null,
-                    null,
-                    (k, l) => ResolveRoutingPair(AgentTaskKind.Worker, AgentTaskRole.Commit, k, l));
-                if (composed.Candidates.Count > 0)
+                try
                 {
-                    agentKind = composed.Candidates[0].Kind;
-                    level = composed.Candidates[0].Level;
+                    var composed = RoutingCandidates.Compose(decision, null, null, null, null,
+                        (k, l) => ResolveRoutingPair(AgentTaskKind.Worker, AgentTaskRole.Commit, k, l));
+                    if (composed.Candidates.Count > 0)
+                        (kind, level) = composed.Candidates[0].Pair;
+                    if (composed.Walked && decision.Applied)
+                        pinId = decision.Pin!.Id;
+                    _routingPins!.EnforceForbiddenAliases(decision, kind, level);
                 }
-
-                if (composed.Walked && pinDecision.Applied)
-                    routingPinId = pinDecision.Pin!.Id;
-                _routingPins.EnforceForbiddenAliases(pinDecision, agentKind, level);
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    warning = $"Routing pin service failed ({ex.GetType().Name}); using role policy.";
+                }
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                pinWarning = $"Routing pin service failed ({ex.GetType().Name}); using role policy.";
-            }
+            return Task.FromResult(new ChildRouting(kind, level, RoutingPinId: pinId, Warning: warning));
         }
-        else
-        {
-            pinWarning = "Routing pin service is not available; using role policy.";
-        }
+        var routing = _routingPins is null
+            ? new ChildRouting(ResolveAgentKind(AgentTaskKind.Worker, AgentTaskRole.Commit, null),
+                ResolveLevel(AgentTaskKind.Worker, AgentTaskRole.Commit, null),
+                Warning: "Routing pin service is not available; using role policy.")
+            : await ResolveServerChildRoutingAsync(AgentTaskRole.Commit, settled.CardId, Legacy, ct);
 
         var task = new AgentTask
         {
@@ -3896,9 +3918,9 @@ public sealed class AgentTaskService
             Role = AgentTaskRole.Commit,
             ProjectId = settled.ProjectId,
             CardId = settled.CardId,
-            AgentKind = agentKind,
-            ModelLevel = level,
-            RoutingPinId = routingPinId,
+            AgentKind = routing.Kind,
+            ModelLevel = routing.Level,
+            RoutingPinId = routing.RoutingPinId,
             Workspace = WorkspaceMode.Shared,
             WorkingDirectory = settled.WorkingDirectory,
             RepoPath = settled.RepoPath,
@@ -3931,14 +3953,14 @@ public sealed class AgentTaskService
                 + $"{DelegationReportFormatter.Short(settled.Id)} ({reason}).",
             At = now,
         });
-        if (pinWarning is not null)
+        if (routing.Warning is not null)
         {
             _db.AgentTaskEvents.Add(new AgentTaskEvent
             {
                 Id = Guid.NewGuid(),
                 AgentTaskId = id,
                 Type = AgentTaskEventType.Warning,
-                Detail = pinWarning,
+                Detail = routing.Warning,
                 At = now,
             });
         }
