@@ -88,7 +88,7 @@ public sealed class ComplexityEffectiveComposeTests
     public void An_unlaunchable_policy_is_withheld_with_its_reason(AgentKind? kind, AgentModelLevel level, string reason)
     {
         var settings = new DelegationSettings();
-        settings.RolePolicy["Plan"] = new RolePolicyEntry { Kind = kind, Level = level };
+        settings.RolePolicy["Plan"] = new DelegationSettings.RolePolicyEntry { Kind = kind, Level = level };
         var policy = RolePolicyReadService.PolicyTarget(settings, AgentTaskRole.Plan);
         policy.Kind.ShouldBeNull();
         policy.Level.ShouldBeNull();
