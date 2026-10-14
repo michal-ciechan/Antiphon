@@ -452,6 +452,19 @@ describe('DelegateModal', () => {
     expect(screen.queryByText('Runs at')).not.toBeInTheDocument()
   })
 
+  it.each([
+    { state: 'held', availableNow: false, unavailableReason: 'held (manual)', forbiddenAliases: ['unrelated-alias'], label: 'create refused (409): gpt-6-astra is held; model_disabled or subscription_quota_low depends on the server' },
+    { state: 'quota', availableNow: false, unavailableReason: 'quota 2% remaining, resets in 10m', forbiddenAliases: ['unrelated-alias'], label: 'create refused (409 subscription_quota_low): gpt-6-astra is quota-limited' },
+    { state: 'forbidden', availableNow: true, unavailableReason: null, forbiddenAliases: ['GPT-6-ASTRA'], label: 'create refused (409 routing_pin_forbidden): gpt-6-astra is forbidden by the stage pin' },
+  ])('C1250 V21 required-forbid-only-single-row-$state-is-refused', async ({ availableNow, unavailableReason, forbiddenAliases, label }) => {
+    serveRolePolicyRow('Code', (row) => ({ ...row, stagePin: { ...previewPin([]), forbiddenAliases } }))
+    serveCodeRow('Medium', [{ ...candidate('Codex', 'Frontier', 'gpt-6-astra'), availableNow, unavailableReason }])
+    renderWithProviders(<DelegateModal opened onClose={() => {}} />)
+    expect((await screen.findByTestId('delegate-tier-source-refused')).textContent).toBe(label)
+    expect(screen.queryByTestId('delegate-tier-source-exhausted')).not.toBeInTheDocument()
+    expect(screen.queryByText('Runs at')).not.toBeInTheDocument()
+  })
+
   it('C1250 V19 walked-orchestrator-medium-is-not-floored', async () => {
     serveRolePolicyRow('Plan', (row) => ({ ...row, stagePin: previewPin([candidate('ClaudeCode', 'Medium', 'sonnet'), candidate('ClaudeCode', 'High', 'opus')]) }))
     renderWithProviders(<DelegateModal opened onClose={() => {}} />)
