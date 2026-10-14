@@ -5,6 +5,7 @@ import { server } from '../test/mocks/server'
 import { useCardFileStatus, usePrivateNotes } from '../api/cardFiles'
 import { agentTaskKeys, usePipeline, type AgentTaskPipelineDto } from '../api/agentTasks'
 import { dispatchConcurrencyKeys } from '../api/dispatchConcurrency'
+import { boardKeys, useCard, type CardDto } from '../api/boards'
 import { expect, it, vi } from 'vitest'
 import { renderHookWithProviders } from '../test/utils'
 import { useSignalRInvalidation } from './useSignalRInvalidation'
@@ -74,6 +75,35 @@ it('C557 CardChanged invalidates pipeline and preserves existing keys', () => {
   expect(view.queryClient.getQueryState(['unrelated'])?.isInvalidated).toBe(false)
   view.unmount()
   expect(connection.off).toHaveBeenCalled()
+})
+
+it('C1256 CardChanged invalidates the changed card detail and no other card detail', () => {
+  const callbacks = new Map<string, (p: object) => void>()
+  const connection = { on: vi.fn((event: string, callback: (p: object) => void) => callbacks.set(event, callback)), off: vi.fn() }
+  const ref = { current: connection as unknown as HubConnection }
+  const view = renderHookWithProviders(() => useSignalRInvalidation(ref))
+  view.queryClient.setQueryData(boardKeys.card('c1'), { concurrencyToken: 'token-1' })
+  view.queryClient.setQueryData(boardKeys.card('c2'), { concurrencyToken: 'token-9' })
+  act(() => callbacks.get('CardChanged')!({ cardId: 'c1', boardId: 'b1' }))
+  expect(view.queryClient.getQueryState(boardKeys.card('c1'))?.isInvalidated).toBe(true)
+  expect(view.queryClient.getQueryState(boardKeys.card('c2'))?.isInvalidated).toBe(false)
+  view.unmount()
+})
+
+it('C1256 a mounted full card refetches after CardChanged and carries the new token', async () => {
+  const callbacks = new Map<string, (p: object) => void>()
+  const ref = { current: { on: (name: string, fn: (p: object) => void) => callbacks.set(name, fn), off: vi.fn() } as unknown as HubConnection }
+  let token = 'token-1'
+  server.use(http.get('/api/cards/c1', () => HttpResponse.json({ id: 'c1', concurrencyToken: token } as Partial<CardDto>)))
+  const view = renderHookWithProviders(() => {
+    useSignalRInvalidation(ref)
+    return useCard('c1')
+  })
+  await waitFor(() => expect(view.result.current.data?.concurrencyToken).toBe('token-1'))
+  token = 'token-2'
+  act(() => callbacks.get('CardChanged')!({ boardId: 'b1', cardId: 'c1' }))
+  await waitFor(() => expect(view.result.current.data?.concurrencyToken).toBe('token-2'))
+  view.unmount()
 })
 
 it('C557 mounted pipeline refetches after CardChanged', async () => {
