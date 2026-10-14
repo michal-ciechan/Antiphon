@@ -559,13 +559,13 @@ is 422 `worktree_base_source_invalid`. Detail records `worktreeBaseRequestedRef`
 > (CARD-0090 / CARD-0332). Combined with explicit `agentKind`/`modelLevel` or with `ignoreModelDisabled` is
 > 422. The walk reads the `(role, complexity)` cell, then the any-role row, then the config
 > default. Exhausted chains insert the task **Blocked** (201 Created; not covered by a test) unless `refuseIfExhausted` is true,
-> which is **409 `routing_exhausted`** with a `complexityRouting` extension. A Required pin over a
-> single, not-walked candidate is never Blocked: it is 409 `model_disabled`, `routing_pin_forbidden` or
-> `subscription_quota_low`, and an Orchestrator whose single candidate is not ClaudeCode is always
-> **409 `routing_exhausted`**, whatever `refuseIfExhausted` says (CARD-1271). Auto-over-Human
+> which is **409 `routing_exhausted`** with a `complexityRouting` extension. Auto-over-Human
 > chain writes are **409 `complexity_chain_human`**. An Auto PUT to a role cell is the same 409
 > when the any-role row for that complexity is Human (write it as Human, or clear the any-role
 > row).
+>
+> An Orchestrator whose single candidate under a Required pin is not ClaudeCode is always
+> **409 `routing_exhausted`**, whatever `refuseIfExhausted` says; it is never Blocked (CARD-1271).
 >
 > Routing pins (CARD-0305, CARD-0322) can also refuse create with **409 `routing_pin_conflict`**
 > (explicit kind/level/agent disagrees with a Required pin; a kind/level conflict lists every
