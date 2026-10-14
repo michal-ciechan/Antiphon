@@ -44,6 +44,31 @@ function card(overrides: Partial<CardDto> = {}): CardDto {
 }
 
 describe('BoardCard', () => {
+  it('shows a Blocked chip naming the blockers when openBlockerCount is positive', () => {
+    const { rerender } = renderWithProviders(<BoardCard card={card({
+      openBlockerCount: 1,
+      blockers: [
+        { identifier: 'CARD-0049', status: 'InProgress', resolved: false },
+        { identifier: 'CARD-0048', status: 'Done', resolved: true },
+      ],
+    })} onOpen={vi.fn()} />)
+    const tile = screen.getByRole('article', { name: 'CARD-0325 From GitHub' })
+    expect(within(tile).getByText('Blocked')).toHaveAttribute('title', 'Blocked by CARD-0049')
+    rerender(<BoardCard card={card({
+      openBlockerCount: 0,
+      blockers: [{ identifier: 'CARD-0049', status: 'Done', resolved: true }],
+    })} onOpen={vi.fn()} />)
+    expect(within(tile).queryByText('Blocked')).toBeNull()
+  })
+
+  it('shows no Blocked chip when openBlockerCount is zero or absent', () => {
+    const { rerender } = renderWithProviders(<BoardCard card={card()} onOpen={vi.fn()} />)
+    const tile = screen.getByRole('article', { name: 'CARD-0325 From GitHub' })
+    expect(within(tile).queryByText('Blocked')).toBeNull()
+    rerender(<BoardCard card={card({ openBlockerCount: 0 })} onOpen={vi.fn()} />)
+    expect(within(tile).queryByText('Blocked')).toBeNull()
+  })
+
   it('shows a review chip next to the GitHub key when the import needs a human rating', () => {
     renderWithProviders(
       <BoardCard
