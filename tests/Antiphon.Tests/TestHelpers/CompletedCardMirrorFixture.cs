@@ -149,9 +149,27 @@ internal sealed class CompletedCardMirrorFixture : IAsyncDisposable
         Directory.CreateDirectory(Path.GetDirectoryName(Sentinel)!);
         await File.WriteAllTextAsync(Sentinel, "mirror evidence\n", ct);
         await AddBindingAsync(Binding);
-        var saved = await Card.Host.Services.GetRequiredService<IAgentReportStore>().StoreAsync(task, ct);
-        saved.Succeeded.ShouldBeTrue();
-        await Card.ChangeTaskAsync(t => t.ResultFilePath = saved.Path);
+        var report = await WriteReportAsync(task, ct);
+        await Card.ChangeTaskAsync(t => t.ResultFilePath = report);
+    }
+
+    // CARD-1239: StoreAsync runs its Git custody checks and write-through publish under a fixed 2 s
+    // budget and refused fixture setup on a loaded host (C1032_RecoveryQueuesBusyAndReady). The fixture
+    // writes the same bytes at the store's published path (<RepoPath>/.antiphon/reports/<task>/<sha256>.md,
+    // ignored by the seed .gitignore) with no budget, and the store's IsUsableAsync accepts them.
+    private async Task<string> WriteReportAsync(AgentTask task, CancellationToken ct)
+    {
+        var main = Path.GetFullPath(task.RepoPath.ShouldNotBeNull());
+        Directory.Exists(Path.Combine(main, ".git")).ShouldBeTrue("report root is the primary checkout " + main);
+        var bytes = new System.Text.UTF8Encoding(false, true).GetBytes(task.Result.ShouldNotBeNull());
+        var path = Path.Combine(main, ".antiphon", "reports", task.Id.ToString("D"),
+            Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(bytes)) + ".md");
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        await File.WriteAllBytesAsync(path, bytes, ct);
+        await Card.Host.Fixture.RequiredAsync(main, "check-ignore", "--no-index", "-q", "--", Path.GetRelativePath(main, path));
+        (await Card.Host.Services.GetRequiredService<IAgentReportStore>().IsUsableAsync(path, task.Result, ct))
+            .ShouldBeTrue("report store refuses the fixture report " + path);
+        return path;
     }
 
     public PhoneHomeRunnerClient Client => (PhoneHomeRunnerClient)Wire.Directory.Resolve(Wire.AllowedRunnerId);
