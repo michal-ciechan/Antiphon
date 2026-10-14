@@ -64,6 +64,8 @@ function tierSourceLabel(source: TierSource, preview: NextCreatePreview | null):
 }
 
 export interface DelegatePrefill {
+  /** The modal was opened from a card; retain unknown card-pin routing after goal edits. */
+  cardContext?: boolean
   /** Seeds the goal — the files view passes the path it is looking at. */
   goal?: string
   /** Where the delegate runs. Defaults to the server's caller directory when omitted. */
@@ -117,7 +119,7 @@ function DelegateForm({ onClose, prefill }: { onClose: () => void; prefill?: Del
   const cells = useComplexityChainEffective(role)
 
   const policyRow = Array.isArray(rolePolicy.data?.roles) ? rolePolicy.data.roles.find((r) => r.role === role) : undefined
-  const preview = previewNextCreate({ kind, explicitLevel: level, row: policyRow, cells: cells.data })
+  const preview = previewNextCreate({ kind, explicitLevel: level, row: policyRow, cells: cells.data, goal: goal.trim(), cardContext: prefill?.cardContext })
   const serverLevel = AGENT_MODEL_LEVEL_OPTIONS.find((option) => option.value === preview?.modelLevel)?.value ?? null
   const pending = rolePolicy.isPending || (kind === 'Worker' && cells.isPending)
   const tierSource: TierSource | null = pending
@@ -256,6 +258,10 @@ function DelegateForm({ onClose, prefill }: { onClose: () => void; prefill?: Del
           </Group>
         )}
       </Group>
+
+      <Text size="xs" c="dimmed" data-testid="delegate-admission-note">
+        Routing and admission depend on the server: card pins, standing-agent details, quota, model holds, provider sign-in, concurrency, workspace and runner conditions can change this preview.
+      </Text>
 
       <Textarea
         label="Goal"

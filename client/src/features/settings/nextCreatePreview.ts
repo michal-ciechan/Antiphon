@@ -5,7 +5,7 @@ import type { ComplexityChainListDto, TaskComplexity } from '../../api/complexit
 import type { RolePolicyRowDto } from '../../api/rolePolicy'
 import type { RoutingPinDto, RoutingPinProvenance, RoutingPinStrength } from '../../api/routingPins'
 
-/** Snapshot of routing for a fresh create without a card, explicit kind/agent or bypass flags. */
+/** Snapshot routing; unobserved card/agent overrides are disclosed before stage composition. */
 export type NextCreateSource = 'explicit' | 'matrix' | 'pin' | 'rolePolicy' | 'agent' | 'exhausted' | 'refused' | 'unknown'
 
 export interface NextCreatePreview {
@@ -24,6 +24,15 @@ export interface NextCreatePreview {
 }
 
 export interface NextCreateContext {
+  /** Request text before server title derivation. The modal sends its trimmed goal. */
+  goal?: string
+  title?: string
+  /** Explicit API card binding (-Card); resolution and card pins are not in the routing reads. */
+  explicitCard?: string | null
+  /** Retained when a card-origin modal edits its goal. */
+  cardContext?: boolean
+  explicitKind?: AgentKind | null
+  explicitAgentId?: string | null
   kind: AgentTaskKind
   explicitLevel: AgentModelLevel | null
   row: RolePolicyRowDto | undefined
@@ -192,7 +201,30 @@ function unknownFloor(): NextCreatePreview {
   return { ...blank('unknown'), note: 'unknown — Orchestrator level depends on the server floor' }
 }
 
+// Match .NET whitespace, title line endings, UTF-16 clamp and word boundaries used by
+// AgentTaskService.cs:4519-4547 and AgentTaskCardBinder.cs:43-64 (V-22).
+function serverTrim(text: string): string {
+  return text.replace(/^[\u0009-\u000d \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+|[\u0009-\u000d \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+$/g, '')
+}
+
+function mayBindCard(context: NextCreateContext): boolean {
+  if (context.cardContext) return true
+  if (context.row && ['Check', 'Distill', 'Diagnose'].includes(context.row.role)) return false
+  if (context.explicitCard && serverTrim(context.explicitCard)) return true
+  const explicitTitle = serverTrim(context.title ?? '')
+  const firstLine = (context.goal ?? '').split(/\r\n|[\r\n\f\u0085\u2028\u2029]/).find((line) => line.length > 0)
+  const rawTitle = explicitTitle || serverTrim(firstLine ?? 'Delegated task')
+  const title = rawTitle.length <= 300 ? rawTitle : rawTitle.slice(0, 299) + '…'
+  const identifiers = title.matchAll(/(?<![\p{L}\p{Mn}\p{Nd}\p{Pc}])CARD-0*([0-9]+)(?![\p{L}\p{Mn}\p{Nd}\p{Pc}])/giu)
+  return Array.from(identifiers).some((match) => Number(match[1]) <= 2147483647)
+}
+
 export function previewNextCreate(context: NextCreateContext): NextCreatePreview | null {
+  if (mayBindCard(context)) return unknown('a card pin may apply; routing')
+  if (context.explicitAgentId) {
+    return { ...blank('unknown'), note: 'unknown — standing-agent kind, model and admission depend on the server' }
+  }
+  if (context.explicitKind) return unknown('explicit agent kind routing')
   const { kind, explicitLevel, row, cells } = context
   if (!row) return unknown('role policy snapshot')
   const stagePin = row.stagePin

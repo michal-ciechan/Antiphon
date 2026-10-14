@@ -446,6 +446,7 @@ export function HandBackButton({
 }) {
   const [opened, setOpened] = useState(false)
   const prefill: DelegatePrefill = {
+    cardContext: true,
     goal: `${identifier} — change requested on ${context}: `,
     workingDirectory: directory,
     cardDefaultPlatform,

@@ -15,7 +15,9 @@ matrix live (checked on the running server 2026-10-14: `GET /api/complexity-chai
 
 Client-only repair of Final Reviews 18cdf39f F1-F4 and 9133fca0 D1-D2. The server resolver remains unchanged.
 The preview models a fresh create without a card, explicit agent/kind, follow-up, complexity,
-model/quota bypass or refuse-if-exhausted flag. Those caller contexts are outside this UI.
+model/quota bypass or refuse-if-exhausted flag. Settings uses that context. The modal
+withholds its target when the derived title names a card or Hand back supplies card context,
+because card pins are absent from these reads (V-22/V-23). Its selected level and shape are known.
 It reads role policy, the active stage pin and the role's effective complexity cells.
 
 1. Compose the stage pin without a chain first (AgentTaskService.cs:789-833 and
@@ -85,6 +87,9 @@ and `DelegateModal.test.tsx`. S2 implementation and docs.
 | V-19 | Modal walked Orchestrator pin retains Medium and does not show High. |
 | V-20 | Modal unknown Preferred policy tail has the exact dependency label and no Frontier badge. |
 | V-21 | Modal Required forbid-only single-row held/quota/forbidden each shows the exact refusal and no Blocked result. |
+| V-22 | 38 additional create-context parity rows, including binder boundaries and unobserved request inputs. |
+| V-23 | Modal Hand back, typed card/forbid/explicit-tier, and card-free edit controls. |
+| V-24 | Modal admission dependency remains visible with explicit tier. |
 | R-1 | Whole files: `rolePolicyModel.test.ts`, `RoutingSettingsTab.test.tsx`, `complexityChains.test.tsx` plus the three files above (C097 and C1234 regression cases retained; V17 now uses a real pin DTO, V18/V27 require the exact unknown labels, V25 awaits the second query with the same exact pin assertions). |
 | R-2 | `tsc -b` for the client and ESLint over the changed sources. |
 
@@ -107,11 +112,11 @@ affected: no server source changes.
 
 ### Execution and cost
 
-Repair ordinary floor 14 minutes plus authoring, within the 75-minute brief budget. Extra disclosed drivers
+Round-4 ordinary estimate: 14 minutes plus authoring, within the 60-minute repair brief budget. Extra disclosed drivers
 through `scripts/build-slot.ps1`: `npm ci --prefix client` (fresh worktree has no
 `node_modules`; one esbuild hard link re-copied afterwards) and the checkpoint tool build into
-`tools/Antiphon.Checkpoints/bin-c1250-r3-tool/`, and the required esbuild/Node differential
-probe in `.antiphon/c1250-r3/` (GET-only snapshots and assertions, no task creation). Import the plan, set generated manifest `timeouts.rowMinutes: 40`; each group runs once with `--expected-source-sha`,
+`tools/Antiphon.Checkpoints/bin-c1250-r4-tool/`, and the required esbuild/Node differential
+probe in `.antiphon/c1250-r4/` (GET-only snapshots and assertions, no task creation). Import the plan, set generated manifest `timeouts.rowMinutes: 40`; each group runs once with `--expected-source-sha`,
 `--serial`, `--row-timeout 40m`, `--total-timeout 150m`, without `--keep-outputs`.
 
 ## Recorded runs
@@ -172,7 +177,7 @@ Unbound Mutation candidate inventory: [PC-1..PC-16 and variants](../mutations/20
 
 ## Repair 63109ffc: create outcome inventory (before implementation)
 
-Scope: the two previews describe a fresh card-free create with no explicit kind/agent,
+Round-3 model scope (extended by round-4 card detection below): a fresh card-free create with no explicit kind/agent,
 follow-up, complexity, bypass flag or refuse-if-exhausted flag. The modal can specify a level.
 Both Worker and Orchestrator pass through the following routing decisions. This inventory
 was written before changing the preview; server source is the task's starting 805d4a6d3 commit.
@@ -195,8 +200,8 @@ was written before changing the preview; server source is the task's starting 80
 | Explicit level without pin | `explicit <level>`; kind/alias/admission still server-dependent | same for Frontier, unknown floor below it | V-7 and V-17 explicit-floor; this label does not predict single-target admission |
 | Standing-agent pin | agent model/owner quota/admission depend on server | same | V-6/V-16; mixed agent/candidate pins unknown (V-17) |
 
-Server-only create refusals are outside the routing snapshots. Both previews disclose that
-admission depends on the server; they do not predict these codes:
+Server-only create refusals are outside the routing snapshots. The Settings copy and modal admission note
+disclose server dependency (modal V-24); these previews do not predict these codes:
 
 - 409 `provider_sign_in_required`: Grok local/remote or remote Codex login probe; selected
   runner, provider home and credentials are not in the two routing reads (CreateAsync provider
@@ -287,3 +292,9 @@ implementation; CP-2/CP-3/CP-4 qualify the repair. Min is n/a for these non-TUni
 records the Vitest count. Additional drivers: dependency install, one isolated checkpoint tool
 build, and required esbuild/Node differential probe (GET only), each through the build-slot gate.
 No Mutation run: PC-1..PC-19 and the new card-context/goal-detection/disclosure variants remain pending.
+
+Round-4 CP-1: run 20261014-213344-c997 at 658bed58f53cf66e8b24fd20113be04c069e04fa
+finished with 20 assertion failures / 131 passes in three files. Sixteen V-22 card/explicit-context
+rows and the four V-23/V-24 modal cases failed against unchanged df244bfb implementation.
+slot=granted waited=0s; sourceState=clean, buildSource=notApplicable. Earlier exact assertions
+including C097 V25 are unchanged. CP-2 expects 215 cases, including 58 V-17 and 38 V-22 rows.

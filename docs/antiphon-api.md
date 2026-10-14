@@ -725,6 +725,14 @@ row/list paths can become Blocked (V3, V15, V17 exhaustion controls). Missing fl
 availability facts are disclosed as server dependencies. See CARD-1250 and its cited parity tests
 in [orchestration-loop.md](orchestration-loop.md); the tests below bind this DTO.
 
+For card-origin Hand back or a derived title naming CARD-<digits>, the modal displays
+“unknown — a card pin may apply; routing depends on the server” with no target badge.
+Title derivation, identifier boundaries and explicit-card context are covered by C1250 V22;
+V23 covers Hand back, goal edits and the card-free control. Bare #N in a goal does not bind;
+an explicit API card field can use #N. The Settings column assumes a card-free create.
+The modal admission note names card pins, standing-agent details, quota, holds, provider sign-in,
+concurrency, workspace and runner conditions as server dependencies (V24).
+
 | Behaviour | Test (runner, file) | What it asserts |
 |---|---|---|
 | 14 rows in `RoutableRoles` order with the policy fields; Custom is unconfigured and reports the defaults | TUnit `RolePolicyEndpointTests.Get_lists_every_routable_role_in_order_with_policy_fields`, `tests/Antiphon.Tests/Api/RolePolicyEndpointTests.cs` | role list Investigate … Custom; Mutation `Low`/`haiku`, `kind` null, `escalateTo` `High`, `effective.source` `rolePolicy`; Custom `configured` false, `High`/`opus`, timeout 240 |
