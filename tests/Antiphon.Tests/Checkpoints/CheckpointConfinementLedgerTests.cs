@@ -208,6 +208,102 @@ public sealed class CheckpointConfinementLedgerTests : CheckpointTestBase
         return Task.CompletedTask;
     }
 
+    [Test]
+    [Timeout(300_000)]
+    public async Task portable_stat_rewrite_keeping_size_and_mtime_during_the_slot_wait_is_refused_before_launch(CancellationToken cancellationToken)
+    {
+        // red (Review 157c4013 D1): the portable stamp holds type, size and mtime only; B written with A's size and
+        // A's mtime restored matches it, so admission skips the hash and the build writes A back over B.
+        var root = BeginRepo();
+        AgeWorktree(root);
+        var user = Path.Combine(root, "node_modules", "pkg", "f0011.js");
+        var slots = new RecordingSlotClient(
+            onAcquire: () => RewriteKeepingSizeAndMtime(user, "module.exports = 99;\n"),
+            onRelease: () => { });
+        var driver = new LedgerDriver(slots, () => RewriteKeepingSizeAndMtime(user, "module.exports = 11;\n"), LedgerStat.Portable);
+        var (run, exit) = await RunScheduledAsync(root, driver, slots, cancellationToken);
+
+        driver.BuildLedgers.ShouldBeEmpty("the portable stamp does not show the rewrite, so admission hashes the entry");
+        File.ReadAllText(user).ShouldBe("module.exports = 99;\n");
+        exit.ShouldNotBe(0);
+        var report = JsonSerializer.Deserialize<ReportModel>(File.ReadAllText(Path.Combine(run, "report.json")), ReportWriter.Json)!;
+        report.Builds.Single().SlotReason.ShouldBe("refused: tampered");
+        File.ReadAllText(Path.Combine(run, "builds", "bin-c1241", "build.log"))
+            .ShouldContain("TAMPERED node_modules/pkg/f0011.js", Case.Sensitive);
+        report.Rows.Single().State.ShouldNotBe("green");
+    }
+
+    [Test]
+    [Timeout(300_000)]
+    public async Task rewrite_keeping_size_and_mtime_on_the_real_file_system_is_refused_before_launch(CancellationToken cancellationToken)
+    {
+        // red: admission trusts a stamp that a timestamp-preserving rewrite leaves equal. On Linux the statx ctime
+        // moves with the rewrite and its mtime restore; elsewhere the portable stamp proves nothing and is hashed.
+        var root = BeginRepo();
+        AgeWorktree(root);
+        var user = Path.Combine(root, "node_modules", "pkg", "f0012.js");
+        var slots = new RecordingSlotClient(
+            onAcquire: () => RewriteKeepingSizeAndMtime(user, "module.exports = 98;\n"),
+            onRelease: () => { });
+        var driver = new LedgerDriver(slots, () => RewriteKeepingSizeAndMtime(user, "module.exports = 12;\n"));
+        var (run, exit) = await RunScheduledAsync(root, driver, slots, cancellationToken);
+
+        driver.BuildLedgers.ShouldBeEmpty("the rewrite is refused once the slot is granted, before the build starts");
+        File.ReadAllText(user).ShouldBe("module.exports = 98;\n");
+        exit.ShouldNotBe(0);
+        File.ReadAllText(Path.Combine(run, "builds", "bin-c1241", "build.log"))
+            .ShouldContain("TAMPERED node_modules/pkg/f0012.js", Case.Sensitive);
+        if (OperatingSystem.IsLinux())
+        {
+            var recorded = driver.Captured.ShouldNotBeNull().Stats["node_modules/pkg/f0012.js"];
+            var now = LedgerStat.Of(user);
+            now.Changed.ShouldNotBe(recorded.Changed, "the rewrite and the mtime restore move the ctime");
+            (now with { Changed = recorded.Changed }).ShouldBe(recorded, "type, device, inode, size and mtime are kept");
+        }
+    }
+
+    [Test]
+    [Timeout(300_000)]
+    public Task stat_without_a_change_time_hashes_each_entry_at_admission()
+    {
+        // red: a stamp without a change time is trusted on equal identity, size and mtime, so A -> B keeping
+        // size and mtime is not hashed and not refused.
+        var root = BeginRepo();
+        AgeWorktree(root);
+        var ledger = Capture(root, path => LedgerStat.Of(path) with { Changed = 0 });
+
+        var unchanged = BuildConfinement.AdmitLedger(ledger);
+        unchanged.Settlement.Kind.ShouldBeNull(unchanged.Settlement.Detail);
+        unchanged.Hashed.ShouldBe(ledger.Files.Count, "a stamp without a change time does not show an entry unchanged");
+
+        RewriteKeepingSizeAndMtime(Path.Combine(root, "node_modules", "pkg", "f0013.js"), "module.exports = 97;\n");
+        var changed = BuildConfinement.AdmitLedger(ledger);
+        changed.Settlement.Kind.ShouldBe("tampered");
+        changed.Settlement.Paths.ToArray().ShouldBe(new[] { "node_modules/pkg/f0013.js" }, changed.Settlement.Detail);
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    [Timeout(300_000)]
+    public Task entry_with_a_change_time_inside_the_racy_window_is_hashed_at_admission()
+    {
+        // red: the racy window looks at the mtime only, so an entry with an old mtime and a ctime in the same
+        // tick as the capture is skipped on an equal stamp, although a rewrite in that tick keeps the ctime.
+        var root = BeginRepo();
+        AgeWorktree(root);
+        var recent = LedgerStat.Now();
+        var ledger = Capture(root, path =>
+        {
+            var stat = LedgerStat.Portable(path) with { Device = 1, Inode = 1 };
+            return stat with { Changed = path.EndsWith("notes.txt", StringComparison.Ordinal) ? recent : stat.Modified };
+        });
+
+        var admitted = BuildConfinement.AdmitLedger(ledger);
+        admitted.Hashed.ShouldBe(1, "only the entry whose ctime is inside the racy window is hashed");
+        admitted.Settlement.Kind.ShouldBeNull(admitted.Settlement.Detail);
+        return Task.CompletedTask;
+    }
+
     private static async Task<(string Run, int Exit)> RunScheduledAsync(
         string root, LedgerDriver driver, RecordingSlotClient slots, CancellationToken cancellationToken)
     {
@@ -267,9 +363,18 @@ public sealed class CheckpointConfinementLedgerTests : CheckpointTestBase
         return root;
     }
 
-    private static BuildConfinement.Ledger Capture(string root)
+    // Writes same-sized bytes and puts the previous modification time back (utimes, touch -r).
+    private static void RewriteKeepingSizeAndMtime(string path, string content)
     {
-        var captured = BuildConfinement.CaptureLedger(root, Arguments);
+        var modified = File.GetLastWriteTimeUtc(path);
+        new FileInfo(path).Length.ShouldBe(content.Length);
+        File.WriteAllText(path, content);
+        File.SetLastWriteTimeUtc(path, modified);
+    }
+
+    private static BuildConfinement.Ledger Capture(string root, Func<string, LedgerStat>? stat = null)
+    {
+        var captured = BuildConfinement.CaptureLedger(root, Arguments, stat);
         captured.Refusal.ShouldBeNull(captured.Detail);
         return captured.Value.ShouldNotBeNull();
     }
@@ -316,16 +421,19 @@ public sealed class CheckpointConfinementLedgerTests : CheckpointTestBase
     }
 
     // Uses the real ledger capture around a fake build; the build runs no Prepare/Settle, so changes reach the report through the scheduler's ledger checks.
-    private sealed class LedgerDriver(RecordingSlotClient slots, Action onBuild) : IConfinedDriver
+    private sealed class LedgerDriver(RecordingSlotClient slots, Action onBuild, Func<string, LedgerStat>? stat = null) : IConfinedDriver
     {
         private readonly FakeDriver _inner = new();
         public List<bool> LedgerCaptures { get; } = [];
         public List<bool> BuildLedgers { get; } = [];
+        public BuildConfinement.Ledger? Captured { get; private set; }
 
         public BuildConfinement.LedgerCapture CaptureLedger(DriverRequest request)
         {
             LedgerCaptures.Add(slots.Held);
-            return BuildConfinement.CaptureLedger(request.WorkingDirectory, request.Arguments);
+            var captured = BuildConfinement.CaptureLedger(request.WorkingDirectory, request.Arguments, stat);
+            Captured = captured.Value;
+            return captured;
         }
 
         public Task<DriverResult> RunAsync(DriverRequest request, CancellationToken cancellationToken)
