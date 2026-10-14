@@ -12,7 +12,12 @@ public sealed record OrchestratorInstructionsSnapshot(
     IReadOnlyList<PinInstructionRow> Pins,
     IReadOnlyList<LevelInstructionRow> Levels,
     IReadOnlyList<string> StandingLines,
-    MatrixSection? Matrix = null);
+    MatrixSection? Matrix = null,
+    IReadOnlyDictionary<string, string>? ReadFailures = null)
+{
+    public string? UnknownSection(string section) =>
+        ReadFailures?.TryGetValue(section, out var reason) == true ? $"unknown ({reason})" : null;
+}
 
 public sealed record MatrixSection(string DefaultComplexity, IReadOnlyList<MatrixInstructionRow> Rows);
 

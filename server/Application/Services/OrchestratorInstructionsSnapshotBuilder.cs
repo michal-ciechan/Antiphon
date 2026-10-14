@@ -29,33 +29,38 @@ public sealed class OrchestratorInstructionsSnapshotBuilder(
     public async Task<OrchestratorInstructionsSnapshot> BuildAsync(CancellationToken ct)
     {
         var now = clock.GetUtcNow().UtcDateTime;
+        var failures = new Dictionary<string, string>(StringComparer.Ordinal);
+        async Task<T> ReadAsync<T>(string section, string part, Func<Task<T>> read, T unavailable)
+        {
+            try { return await read(); }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // Placeholder data is not an observation: renderer and differ read this state
+                // before looking at the section. Exception details do not create settings revisions.
+                failures[section] = $"{part} read failed";
+                return unavailable;
+            }
+        }
+
         return new OrchestratorInstructionsSnapshot(
-            await ReadPipelinePolicy(ct),
-            await ReadRunnersAsync(ct),
-            await ReadDefaultsAsync(ct),
-            await ReadHoldsAsync(now, ct),
-            await ReadPinsAsync(now, ct),
+            await ReadAsync("caps", "policy", () => ReadPipelinePolicy(ct), new PipelineCapsSection(0, "", 0, "", "", [])),
+            await ReadAsync<IReadOnlyList<RunnerInstructionRow>>("runners", "runners", () => ReadRunnersAsync(ct), []),
+            await ReadAsync("defaults", "defaults", () => ReadDefaultsAsync(ct), new RunnerDefaultsSection(0, null, null, [], null)),
+            await ReadAsync<IReadOnlyList<HoldInstructionRow>>("holds", "holds", () => ReadHoldsAsync(now, ct), []),
+            await ReadAsync<IReadOnlyList<PinInstructionRow>>("pins", "pins", () => ReadPinsAsync(now, ct), []),
             Levels(),
             _settings.OrchestratorInstructions.StandingInstructions.ToArray(),
-            await ReadMatrixAsync(ct));
+            await ReadAsync("matrix", "matrix", () => ReadMatrixAsync(ct), new MatrixSection(_settings.DefaultComplexity.GetValueOrDefault().ToString(), [])),
+            failures);
     }
 
     /// <summary>
-    /// Effective global role policy from <see cref="DispatchConcurrencySettingsService"/> when that
-    /// read works. <see cref="DelegationSettings.RolePolicy"/> is the fallback, and it still supplies
-    /// level, escalate-to, and kind. The local budget is always <see cref="HostBudgetService"/>.
+    /// Effective global role policy and local host budget. Configuration supplies level,
+    /// escalate-to and kind. A failed read is recorded by BuildAsync as an unknown section.
     /// </summary>
     public async Task<PipelineCapsSection> ReadPipelinePolicy(CancellationToken ct)
     {
-        EffectivePolicy? policy = null;
-        try
-        {
-            policy = await concurrency.ReadEffectiveAsync(null, ct);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            policy = null;
-        }
+        var policy = await concurrency.ReadEffectiveAsync(null, ct);
 
         HostLimit? local = null;
         try
@@ -69,8 +74,8 @@ public sealed class OrchestratorInstructionsSnapshotBuilder(
 
         var maxConcurrent = local?.Effective ?? _settings.MaxConcurrentTasks;
         var maxConcurrentSource = local?.Source ?? "config";
-        var maxOpen = policy?.MaxParallel ?? _settings.MaxOpenTasks;
-        var roles = policy is null ? RolesFromSettings() : RolesFromPolicy(policy);
+        var maxOpen = policy.MaxParallel;
+        var roles = RolesFromPolicy(policy);
         return new PipelineCapsSection(
             maxConcurrent,
             maxConcurrentSource,
@@ -97,37 +102,16 @@ public sealed class OrchestratorInstructionsSnapshotBuilder(
         return rows;
     }
 
-    private IReadOnlyList<RoleInstructionRow> RolesFromSettings() =>
-        _settings.RolePolicy
-            .OrderBy(pair => pair.Key, StringComparer.Ordinal)
-            .Select(pair => new RoleInstructionRow(
-                pair.Key,
-                pair.Value.RecommendedInFlight,
-                pair.Value.Level.ToString(),
-                pair.Value.EscalateTo?.ToString(),
-                pair.Value.Kind?.ToString()))
-            .ToArray();
-
     private async Task<IReadOnlyList<RunnerInstructionRow>> ReadRunnersAsync(CancellationToken ct)
     {
         var directory = services.GetService<PhoneHomeRunnerDirectory>();
         if (directory is null)
             return [];
 
-        IReadOnlyList<SessionRunnerCatalogueEntryDto> entries;
-        try
-        {
-            entries = await SessionRunnerCatalogue.ListAsync(
-                directory,
-                db,
-                _settings,
-                services.GetService<RemoteWorkspacePreparer>(),
-                ct);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            return [];
-        }
+        var entries = await SessionRunnerCatalogue.ListAsync(
+            directory, db, _settings, services.GetService<RemoteWorkspacePreparer>(), ct);
+        if (entries.Any(entry => entry.UnavailableReason == "catalogue_read_failed"))
+            throw new InvalidOperationException("Runner catalogue read failed.");
 
         var rows = new List<RunnerInstructionRow>(entries.Count);
         foreach (var entry in entries)
@@ -217,24 +201,31 @@ public sealed class OrchestratorInstructionsSnapshotBuilder(
                 MatrixCell(cells[TaskComplexity.Hard]),
                 MatrixCell(cells[TaskComplexity.Medium]),
                 MatrixCell(cells[TaskComplexity.Easy]),
-                effective.WithheldReason is { } reason ? $"withheld: {reason}" : MatrixCandidates(effective.Candidates),
-                effective.Source switch
+                UnknownRead(effective, "stage pin", "chain", "chain metadata", "standing agent", "availability")
+                    ?? (effective.WithheldReason is { } reason ? $"withheld: {reason}" : MatrixCandidates(effective.Candidates)),
+                UnknownRead(effective, "stage pin", "chain", "standing agent") ?? (effective.Source switch
                 {
                     "pin" => "stage pin",
                     "pin+chain" => "stage pin + chain",
                     "agent" => "stage pin (standing agent)",
                     _ => effective.Source,
-                }));
+                })));
         }
         return new MatrixSection(defaultTier.ToString(), rows);
     }
 
     private static string MatrixCell(ComplexityChainDto cell) =>
-        // GetEffectiveAsync records a failed chain read in WithheldReason and returns an empty
-        // stored list. Keep that distinct from an observed empty cell in both the file and delta.
-        cell.Effective?.WithheldReason?.Contains("chain read failed (", StringComparison.Ordinal) == true
-            ? "unknown (chain read failed)"
-            : MatrixCandidates(cell.Candidates);
+        UnknownRead(cell.Effective, "chain") ?? MatrixCandidates(cell.Candidates);
+
+    private static string? UnknownRead(ComplexityEffectiveDto? effective, params string[] parts)
+    {
+        // The effective read contract appends semicolon-separated "<part> read failed (<type>)"
+        // diagnostics. Match complete parts, so metadata faults do not erase observed cells.
+        var reasons = effective?.WithheldReason?.Split(';', StringSplitOptions.TrimEntries) ?? [];
+        var failed = parts.Where(part => reasons.Any(reason =>
+            reason.StartsWith(part + " read failed (", StringComparison.Ordinal) && reason.EndsWith(')'))).ToArray();
+        return failed.Length == 0 ? null : $"unknown ({string.Join(", ", failed)} read failed)";
+    }
 
     private static string MatrixCandidates(IReadOnlyList<ComplexityCandidateDto> candidates) =>
         candidates.Count == 0 ? "unset" : string.Join(", ", candidates.Select(candidate =>
