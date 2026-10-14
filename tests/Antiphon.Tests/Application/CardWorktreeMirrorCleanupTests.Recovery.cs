@@ -166,7 +166,7 @@ public sealed partial class CardWorktreeMirrorCleanupTests
     // reads the committed endpoint (frozen) and AttemptedRequests keeps that attempt's bytes. The due
     // retry's sent bytes (a second capture) must equal them, with Attempts 1 then 2.
     // scratch mutations (reverted): replay with a new OperationId, or replay with the report digest
-    // recomputed from the changed task; red: retryRequest.ShouldBe(firstAttemptRequest).
+    // recomputed from the changed task; red: replayedRequestBytes.ShouldBe(firstRequestBytes).
     [Test] public async Task C1032_RecoveryCrashHandoffs()
     {
         foreach (var cut in new[] { "I0", "D1", "D9", "D11-frozen", "D11-store" })
@@ -254,9 +254,9 @@ public sealed partial class CardWorktreeMirrorCleanupTests
             if (frozen is not null)
             {
                 f.AttemptedRequests.Count.ShouldBe(2, cut); f.SentRequests.Count.ShouldBe(1, cut);
-                var firstAttemptRequest = f.AttemptedRequests[0]; var retryRequest = f.SentRequests[0];
-                retryRequest.ShouldBe(firstAttemptRequest, cut);
-                CompletedCardWorkspaceContract.CanonicalDigest(retryRequest).ShouldBe(frozen.RequestDigest, cut);
+                var firstRequestBytes = f.AttemptedRequests[0]; var replayedRequestBytes = f.SentRequests[0];
+                replayedRequestBytes.ShouldBe(firstRequestBytes, cut);
+                CompletedCardWorkspaceContract.CanonicalDigest(replayedRequestBytes).ShouldBe(frozen.RequestDigest, cut);
                 f.SentOperationIds.ShouldBe([frozen.OperationId!.Value], cut);
                 f.EnteredRemovalOperationIds.ShouldBe([frozen.OperationId.Value], cut);
             }
