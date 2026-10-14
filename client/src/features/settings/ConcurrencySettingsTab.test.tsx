@@ -194,6 +194,12 @@ async function chooseScope(label: string) {
   await userEvent.click(await screen.findByRole('option', { name: label }))
 }
 
+/** One paste, not a keystroke per character (`C506 V15 scope-selector`). */
+async function typeReason(reason: string) {
+  await userEvent.click(screen.getByTestId('dispatch-concurrency-reason'))
+  await userEvent.paste(reason)
+}
+
 afterEach(() => {
   window.history.pushState({}, '', '/')
 })
@@ -224,7 +230,7 @@ it('C506 V15 scope-selector', async () => {
   await waitFor(() => expect(screen.getByRole('textbox', { name: 'Scope' })).toHaveValue('P'))
   // A P draft: one more override and a reason, never saved.
   await userEvent.click(screen.getByRole('switch', { name: 'Review max parallel override' }))
-  await userEvent.type(screen.getByRole('textbox', { name: /Reason/ }), 'p draft')
+  await typeReason('p draft')
 
   await chooseScope('Q')
 
@@ -238,7 +244,7 @@ it('C506 V15 scope-selector', async () => {
   expect(screen.getByRole('switch', { name: 'Review max parallel override' })).not.toBeChecked()
   expect(screen.getByRole('textbox', { name: /Reason/ })).toHaveValue('')
 
-  await userEvent.type(screen.getByRole('textbox', { name: /Reason/ }), 'q reason')
+  await typeReason('q reason')
   await userEvent.click(screen.getByRole('button', { name: 'Save' }))
   await waitFor(() => expect(calls.puts).toHaveLength(1))
   expect(calls.puts[0]).toEqual({
@@ -296,7 +302,7 @@ it('C506 S3F1 active-tab-click', async () => {
 
   expect(await screen.findByTestId('dispatch-concurrency-subtitle')).toHaveTextContent('Revision 4')
   await waitFor(() => expect(screen.getByRole('textbox', { name: 'Scope' })).toHaveValue('P'))
-  await userEvent.type(screen.getByRole('textbox', { name: /Reason/ }), 'p draft')
+  await typeReason('p draft')
 
   await userEvent.click(screen.getByRole('tab', { name: 'Concurrency' }))
 
