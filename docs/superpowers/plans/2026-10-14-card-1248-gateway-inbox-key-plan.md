@@ -43,9 +43,11 @@ and reproduced all four additional cases (four executed, four failed, zero skipp
 This proves all 21 observed failures are
 inherited; it does not prove the cause of the whole-Unit timeout. The earlier
 CARD-1253 plan records a similar unqualified Unit timeout. No timeout or assertion
-was widened. R-3 whole Unit remains unqualified, not passed or waived. The brief
-contains both an explicit no-whole-Unit instruction and a generic Final whole-Unit
-profile; the caller's qualification-scope decision is still required.
+was widened. The caller's refinement explicitly removes whole Unit from this
+task's required scope and directs handoff to Review using the green gateway
+classes and migration. CP-3 remains historically unqualified, never passed. It
+and the completed CP-5/CP-6 base diagnostics are retired from the active manifest;
+their original filters, counts and receipts remain in the evidence report.
 
 ## Verification design
 
@@ -71,9 +73,10 @@ duplicate suppression, same-key concurrent inserts, offset backfill, host surviv
 on duplicate and host stop on non-duplicate persistence failure.
 R-2: full `GatewayTests` and `InboundUnconsumedMonitorTests` preserve publication,
 receipt failure handling, monitor acknowledgement and retry behavior.
-R-3: whole `Antiphon.Tests` Unit lane and affected Messaging Unit lane per the
-Final stage contract. The task brief also says no whole-Unit lane; the higher
-priority Code-stage Final requirement governs this conflict. No full assembly run.
+R-3: affected Messaging Unit lane. The caller's scope refinement explicitly says
+no whole-Unit lane is required and its absence is not a blocker. CP-4 passes all
+three Messaging Unit cases. The broad CP-3 attempt remains unqualified and is
+reported separately; no full assembly run is required.
 R-4: inspect generated migration SQL/order, run both receipt validators, inspect
 fresh TRX per named class/method, full-range evidence guard, fetched-master merge
 and `git merge-tree --write-tree`, clean worktree, push/ref equality.
@@ -99,8 +102,10 @@ Unbound candidate: `docs/superpowers/mutations/2026-10-14-card-1248-inbox-key-ca
 
 ### Cost
 
-Estimated table floor: 43 minutes plus authoring and slot waits, including the
-7-minute diagnostic CP-5 and 1-minute CP-6 added after inherited failures were observed.
+Active table floor: 15 minutes plus authoring and slot waits; the final CP-2/CP-4
+selection is 9 minutes. The historical table included a broad CP-3 estimate and
+the 7-minute CP-5 and 1-minute CP-6 base diagnostics. Those completed diagnostics
+and the unqualified broad run are no longer active obligations after refinement.
 CP-1 is the required red-first diagnostic, rerun green with S2 if needed; CP-2
 qualifies the same complete affected classes plus adjacent monitoring/ingress.
 One run per committed group, `--row-timeout 40m --total-timeout 150m --serial`,
@@ -124,7 +129,4 @@ partial log. It avoids another assembly build and does not rerun the whole lane.
 |---|---|---|---|---|---|---|---:|---:|---|
 | CP-1 | S1 | `tests/Antiphon.Messaging.Tests -> bin-c1248-red/` | red-first | `/*/*/(EfInboxReceiptStoreTests*)\|(InMemoryInboxReceiptStoreTests*)\|(InboxConversationMigrationTests*)\|(InboxConsumerServiceTests*)/*` | V-1, V-2, V-3, V-4, V-5, V-6, R-1 | all listed; expected defect failures before S2 | 15 | 6 | `ANTIPHON_BROKER_TESTS=1` |
 | CP-2 | S2 | `tests/Antiphon.Messaging.Tests -> bin-c1248-final/` | inbox-and-adjacent | `/*/*/(EfInboxReceiptStoreTests*)\|(InMemoryInboxReceiptStoreTests*)\|(InboxConversationMigrationTests*)\|(InboxConsumerServiceTests*)\|(GatewayTests*)\|(InboundUnconsumedMonitorTests*)/*` | V-1, V-2, V-3, V-4, V-5, V-6, R-1, R-2 | all listed, 0 failed/skipped | 15 | 7 | `ANTIPHON_BROKER_TESTS=1` |
-| CP-3 | S2 | `tests/Antiphon.Tests -> bin-c1248-unit/` | unit | `/*/*/*/*[Category=Unit]` | R-3 | >= 1 executed, 0 failed/skipped | 1 | 20 | n/a |
 | CP-4 | S2 | CP-2 | messaging-unit | `/*/*/*/*[Category=Unit]` | R-3 | >= 1 executed, 0 failed/skipped | 1 | 2 | n/a |
-| CP-5 | S3 | `tests/Antiphon.Tests -> bin-c1248-baseunit/` | inherited-unit-failures | `/*/*/(TestClassificationGuardTests*)\|(CheckpointImportTests*)\|(CheckpointLaunchCleanupTests*)\|(CheckpointProcessIdentityTests*)\|(CheckpointRunOwnershipTests*)\|(RerunPolicyTests*)\|(ShadowCopyTests*)/*` | R-3 | diagnostic baseline reproduction, report actual failures/skips | 17 | 7 | n/a |
-| CP-6 | S3 | CP-5 | inherited-late-failures | `/*/*/(TimeoutTests*)\|(RemoteScriptContractTests*)/(total_deadline_skips_a_queued_build_without_starting_it*)\|(total_deadline_kills_running_and_skips_queued*)\|(C1066_Fixture_npm_install_uses_argument_log_under_nounset*)` | R-3 | diagnostic baseline reproduction, all 4 failures reproduced | 4 | 1 | n/a |
