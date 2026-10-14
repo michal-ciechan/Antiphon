@@ -519,8 +519,8 @@ is 422 `worktree_base_source_invalid`. Detail records `worktreeBaseRequestedRef`
 > `disabledUntil`, `source`, and `available`. `ignoreModelDisabled: true` on **create only** queues
 > the task; the dispatcher still skips it until the hold clears. Start never honours the flag.
 > When a Required routing pin ends in this 409, the detail adds a coda that the list does not
-> satisfy the pin — do not silently pick from `available`. Routing: see **Routing pins beat
-> RolePolicy** in [orchestration-loop.md](orchestration-loop.md#2-tiers).
+> satisfy the pin — do not silently pick from `available`. Routing: see **The matrix governs an ordinary Worker dispatch; a pin is the exception** in
+> [orchestration-loop.md](orchestration-loop.md#2-tiers).
 >
 > Create may also send **`complexity`** (`Hard`/`Medium`/`Easy`) and **`refuseIfExhausted`**
 > (CARD-0090 / CARD-0332). Combined with explicit `agentKind`/`modelLevel` or with `ignoreModelDisabled` is

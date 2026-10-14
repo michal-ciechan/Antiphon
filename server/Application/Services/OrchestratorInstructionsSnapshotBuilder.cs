@@ -214,9 +214,9 @@ public sealed class OrchestratorInstructionsSnapshotBuilder(
             var effective = cells[defaultTier].Effective!;
             rows.Add(new MatrixInstructionRow(
                 role.ToString(),
-                MatrixCandidates(cells[TaskComplexity.Hard].Candidates),
-                MatrixCandidates(cells[TaskComplexity.Medium].Candidates),
-                MatrixCandidates(cells[TaskComplexity.Easy].Candidates),
+                MatrixCell(cells[TaskComplexity.Hard]),
+                MatrixCell(cells[TaskComplexity.Medium]),
+                MatrixCell(cells[TaskComplexity.Easy]),
                 effective.WithheldReason is { } reason ? $"withheld: {reason}" : MatrixCandidates(effective.Candidates),
                 effective.Source switch
                 {
@@ -228,6 +228,13 @@ public sealed class OrchestratorInstructionsSnapshotBuilder(
         }
         return new MatrixSection(defaultTier.ToString(), rows);
     }
+
+    private static string MatrixCell(ComplexityChainDto cell) =>
+        // GetEffectiveAsync records a failed chain read in WithheldReason and returns an empty
+        // stored list. Keep that distinct from an observed empty cell in both the file and delta.
+        cell.Effective?.WithheldReason?.Contains("chain read failed (", StringComparison.Ordinal) == true
+            ? "unknown (chain read failed)"
+            : MatrixCandidates(cell.Candidates);
 
     private static string MatrixCandidates(IReadOnlyList<ComplexityCandidateDto> candidates) =>
         candidates.Count == 0 ? "unset" : string.Join(", ", candidates.Select(candidate =>

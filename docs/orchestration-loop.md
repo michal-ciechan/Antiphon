@@ -907,7 +907,7 @@ override the row; a Preferred pin prepends candidates. Escalation, timeout and W
 
 `delegate.ps1 -Pin` records a card exception. Read `complexity-chain.ps1 get -Role <R>` to see the
 stored row and effective overlay. On routing exhaustion, relay the result to the operator for a
-Retry, explicit Reroute, Cancel or hold change.
+Retry, explicit Reroute, Cancel or hold change; do not pick a kind yourself.
 
 **Operators read routing at `/settings?tab=routing`** (CARD-0333): the global
 Routing settings tab shows live model availability, best-effort subscription-usage observations
@@ -961,7 +961,7 @@ Combining `-Complexity` with `-Kind` or `-Level` is 422 (`ComplexityCreateTests.
 Config defaults ship empty; write the live lists with `complexity-chain.ps1 set` (`-Role Plan` for
 a cell, omit `-Role` for the any-role row). When the chain
 is exhausted the task is **Blocked** (or 409 `routing_exhausted` with `-RefuseIfExhausted`):
-**relay that to the operator.** A human answers with Retry,
+**relay that to the operator; do not pick a kind yourself.** A human answers with Retry,
 `delegate.ps1 -Reroute <id> -Kind … -Level …`, Cancel, or by clearing a hold. Auto-resume onto
 an already-listed candidate when capacity returns is executing the instruction, not a new guess.
 A usage-wall reroute is ordinary work on the new candidate: the walled session's capacity wait
@@ -997,6 +997,9 @@ S-F; inspect `/api/version` after the caller's restart.
 | Behaviour | Named test | What it asserts or does not cover |
 |---|---|---|
 | The matrix names the default complexity and stage-pin overlay | `OrchestratorInstructionsRendererTests.Sections_render_caps_runners_defaults_holds_pins_levels_and_standing_lines`; `OrchestratorInstructionsRefreshTests.Covered_writes_each_regenerate_and_notify` (`routing-pin`) | Literal headings and sample role line; the live snapshot reflects the Code stage pin |
+| A failed chain read is shown as unknown in the affected tier | `OrchestratorInstructionsRefreshTests.A_failed_chain_read_marks_the_affected_file_cells_unknown` | Hard, Medium, Easy and simultaneous failures on Plan; persisted file labels include `unknown (chain read failed)` within the 160-byte line cap; matrix elision still uses the route pointer |
+| Regeneration reports unreadable cells and their recovery through the existing notice path | `OrchestratorInstructionsRefreshTests.A_failed_chain_read_notice_reports_unknown_and_recovery_reports_the_candidate` | One candidate-to-unknown notice; the same failure keeps revision/count unchanged; recovery sends the reverse transition and removes the file's unknown marker |
+| API and HTTP-guide routing pointers resolve to the owner heading | `OrchestratorInstructionsGuidanceTests.Routing_cross_references_resolve_to_an_existing_owner_heading` | Two API pointers and one HTTP-guide pointer name an existing bold paragraph heading |
 | Role lines use up to three candidates per tier, then `+N`, and at most 160 UTF-8 bytes | `OrchestratorInstructionsRendererTests.The_matrix_section_is_bounded_per_line_and_elided_in_place_under_pressure` | 14 role lines with eight candidates per tier; line-byte limits and `+5`; at `full - 1` the matrix collapses in place while the card pin remains |
 | Truncation order is matrix, card pins, holds, standing lines, runner features | The preceding renderer test; `Oversized_snapshot_truncates_in_priority_order_under_the_byte_cap` | Matrix first-step elision and the retained trailing cut-notice order; arbitrary snapshots fitting a universal body cap are not covered |
 | Cell upsert and clear fire the existing settings signal once per saved write; a repeated cell body produces no new notice | `OrchestratorInstructionsRefreshTests.Covered_writes_each_regenerate_and_notify` (`complexity-chain`) | Signal reasons/counts, revision, file bytes, notice counts, clear and already-clear behavior |
