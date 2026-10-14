@@ -80,14 +80,14 @@ Mutation owns all deliberate mutant, red/restore/green and missing-control cycle
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
 |---|---|---|---|---|---|---|---:|---:|---|---|
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1271/` | new-class | `/*/*/RequiredSingleCandidateRefusalTests/*` | V-1, V-2, V-3 | S1: 4 passed/1 failed (V-1); S2: 5 passed | 5 | 12 | true | n/a |
-| CP-2 | S2 | CP-1 | pin-candidates | `/*/*/RoutingPinCandidateCreateTests/*` | R-1 | 17 passed, 0 failed/skipped | 17 | 3 | true | n/a |
-| CP-3 | S2 | CP-1 | complexity-create | `/*/*/ComplexityCreateTests/*` | R-1 | 14 passed, 0 failed/skipped | 14 | 3 | true | n/a |
-| CP-4 | S2 | CP-1 | matrix-default | `/*/*/MatrixDefaultComplexityCreateTests/*` | R-1 | 34 passed, 0 failed/skipped | 34 | 3 | true | n/a |
-| CP-5 | S2 | CP-1 | walk | `/*/*/ComplexityRoutingWalkTests/*` | R-1 | 8 passed, 0 failed/skipped | 8 | 2 | true | n/a |
-| CP-6 | S2 | CP-1 | agent-kind | `/*/*/AgentTaskAgentKindTests/*` | R-1 | 26 passed, 0 failed/skipped | 26 | 3 | true | n/a |
+| CP-2 | S1 | CP-1 | pin-candidates | `/*/*/RoutingPinCandidateCreateTests/*` | R-1 | 17 passed, 0 failed/skipped | 17 | 3 | true | n/a |
+| CP-3 | S1 | CP-1 | complexity-create | `/*/*/ComplexityCreateTests/*` | R-1 | 14 passed, 0 failed/skipped | 14 | 3 | true | n/a |
+| CP-4 | S1 | CP-1 | matrix-default | `/*/*/MatrixDefaultComplexityCreateTests/*` | R-1 | 34 passed, 0 failed/skipped | 34 | 3 | true | n/a |
+| CP-5 | S1 | CP-1 | walk | `/*/*/ComplexityRoutingWalkTests/*` | R-1 | 8 passed, 0 failed/skipped | 8 | 2 | true | n/a |
+| CP-6 | S1 | CP-1 | agent-kind | `/*/*/AgentTaskAgentKindTests/*` | R-1 | 26 passed, 0 failed/skipped | 26 | 3 | true | n/a |
 
-Import this table to an ignored manifest and set `timeouts.rowMinutes: 40`. Run CP-1
-at S1, then every row at S2. Each run uses the exact committed expected SHA,
+Import this table to an ignored manifest and set `timeouts.rowMinutes: 40`. All rows share
+the S1 build group: run `--rows CP-1` at the S1 commit, then every row at the S2 commit. Each run uses the exact committed expected SHA,
 `--total-timeout 150m`, `--serial` and no `--keep-outputs`, and waits to completion. Linux
 builds use `UseAppHost=false`. Bootstrap the checkpoint tool once through
 `scripts/build-slot.ps1` into `bin-c1271-tool/`. That tool build is the sole planned
