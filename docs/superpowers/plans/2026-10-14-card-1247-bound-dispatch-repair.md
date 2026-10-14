@@ -28,6 +28,9 @@ timeout, assertion relaxation, migration or second ownership store is planned.
 - R-3: full outbound delivery class (including dispatch, gate and send-shape partial files).
 - R-4: full task reply integration class, including outbound runtime partial; live routing
   before/after queue processing remains compatible.
+- R-5: full outbound dispatch integration and capture classes; catalog-less routing and
+  capture's shared source claim remain compatible. Two added bound-grace trailing-text cases
+  preserve the default-off/catalog-less watermark behavior.
 
 Whole Unit is explicitly deferred by the repair brief, not passed. HerdrAlwaysOnChannelParityTests
 is excluded for inherited CARD-1252. No live-provider/manual traffic is commissioned. No whole
@@ -41,12 +44,14 @@ tool bootstrap is the only extra driver and runs through build-slot. Linux uses 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
 | CP-1 | red | `tests/Antiphon.Tests -> bin-c1247-caee-red/` | red-grace | `/*/Antiphon.Tests.Application/(ChannelReplyLateConfirmDispatchTests*)/*` | V-1,V-2,V-3,V-4 | expected F1/F2 assertion failures before repair | 14 | 6 |
-| CP-2 | repaired | `tests/Antiphon.Tests -> bin-c1247-caee-final/` | grace | `/*/Antiphon.Tests.Application/(ChannelReplyLateConfirmDispatchTests*)/*` | V-1,V-2,V-3,V-4 | all listed, 0 failed | 14 | 6 |
+| CP-2 | repaired | `tests/Antiphon.Tests -> bin-c1247-caee-final/` | grace | `/*/Antiphon.Tests.Application/(ChannelReplyLateConfirmDispatchTests*)/*` | V-1,V-2,V-3,V-4,R-5 | all listed, 0 failed | 16 | 6 |
 | CP-3 | repaired | CP-2 | durability | `/*/Antiphon.Tests.Application/(ChannelReplyDurabilityTests*)/*` | R-1 | all listed, 0 failed | 25 | 4 |
 | CP-4 | repaired | CP-2 | bridge | `/*/Antiphon.Tests.Application/(ChannelBridgeTests*)/*` | R-1 | all listed, 0 failed | 40 | 4 |
 | CP-5 | repaired | CP-2 | verification | `/*/Antiphon.Tests.Application/(SessionMessageQueueDeliveryVerificationTests*)/*` | R-2 | all listed, 0 failed | 123 | 8 |
 | CP-6 | repaired | CP-2 | outbound | `/*/Antiphon.Tests.Application/(ChannelOutboundDeliveryTests*)/*` | R-3 | all listed, 0 failed | 14 | 5 |
 | CP-7 | repaired | CP-2 | runtime | `/*/Antiphon.Tests.Application/(AgentTaskReplyIntegrationTests*)/*` | R-4 | all listed, 0 failed | 80 | 5 |
+| CP-8 | repaired | CP-2 | outbound-dispatch | `/*/Antiphon.Tests.Application/(ChannelOutboundDispatchIntegrationTests*)/*` | R-5 | all listed, 0 failed | 10 | 3 |
+| CP-9 | repaired | CP-2 | capture | `/*/Antiphon.Tests.Application/(ChannelOutboundCaptureTests*)/*` | R-5 | all listed, 0 failed | 1 | 3 |
 
 ## Pending Mutation
 
@@ -55,3 +60,4 @@ dispatch with newest-turn dispatch (all V-1 variants); PC-2 remove the atomic di
 (both V-2 variants); PC-3 await publication under the queue semaphore (both V-3 variants);
 PC-4 retain the failed direct claim (both V-4 variants); PC-5 drop grace dispatch; PC-6
 dispatch for no confirmed Channel source. This Code task runs no deliberate mutants.
+PC-7 omit bound-dispatch trailing watermark registration (both R-5 added variants) is pending.
