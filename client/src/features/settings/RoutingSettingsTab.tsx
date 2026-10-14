@@ -59,6 +59,7 @@ import {
   fallbackResolvedFromForRoleCell,
   groupPins,
   nonComplexityBoundary,
+  pendingReadLabel,
   pinEffectCopy,
   effectiveRoutingUnknown,
   failedReadSegment,
@@ -96,14 +97,13 @@ export function RoutingSettingsTab() {
 function AvailabilitySection() {
   const snapshot = useModelAvailability()
   const clear = useClearModelAvailabilityHold()
+  const pending = pendingReadLabel(snapshot, 'Model availability')
 
-  if (snapshot.isLoading) {
+  if (pending) {
     return (
       <Paper withBorder p="md" data-testid="routing-availability-section">
         <SectionHeading>Model availability</SectionHeading>
-        <Group justify="center" py="sm">
-          <Loader size="sm" />
-        </Group>
+        <PendingRead label={pending} />
       </Paper>
     )
   }
@@ -218,14 +218,13 @@ function AvailabilitySection() {
 
 function UsageSection() {
   const snapshot = useSubscriptionUsage()
+  const pending = pendingReadLabel(snapshot, 'Subscription usage')
 
-  if (snapshot.isLoading) {
+  if (pending) {
     return (
       <Paper withBorder p="md" data-testid="routing-usage-section">
         <SectionHeading>Subscription usage observations (best effort)</SectionHeading>
-        <Group justify="center" py="sm">
-          <Loader size="sm" />
-        </Group>
+        <PendingRead label={pending} />
       </Paper>
     )
   }
@@ -297,18 +296,17 @@ function MatrixSection() {
   const pinsQuery = useRoutingPins()
   const [editor, setEditor] = useState<ComplexityChainEditorTarget | null>(null)
 
-  if (list.isLoading) {
+  // Without the list there is no Any role row to synthesize and no cell to open in the editor.
+  if (list.isPending) {
     return (
       <Paper withBorder p="md" data-testid="routing-matrix-section">
         <SectionHeading>Role × complexity matrix</SectionHeading>
-        <Group justify="center" py="sm">
-          <Loader size="sm" />
-        </Group>
+        <PendingRead label={pendingReadLabel(list, 'Complexity chains') ?? 'Complexity chains loading.'} />
       </Paper>
     )
   }
 
-  if (list.error) {
+  if (list.isError) {
     return (
       <Paper withBorder p="md" data-testid="routing-matrix-section">
         <SectionHeading>Role × complexity matrix</SectionHeading>
@@ -319,10 +317,10 @@ function MatrixSection() {
     )
   }
 
-  const complexities = complexitiesOf(list.data?.complexities)
-  const defaultComplexity = list.data?.defaultComplexity
-  const roles = list.data?.roles ?? []
-  const anyChains = anyRoleChains(list.data?.chains ?? [], complexities)
+  const complexities = complexitiesOf(list.data.complexities)
+  const defaultComplexity = list.data.defaultComplexity
+  const roles = list.data.roles ?? []
+  const anyChains = anyRoleChains(list.data.chains ?? [], complexities)
   const pinsRead = routingPinsReadLabel(pinsQuery, getApiErrorMessage(pinsQuery.error, 'request failed'))
   // A failed refetch keeps the previous pins in data: they are stale, so none is shown as current.
   const { stageWide, cardSpecific } = groupPins(pinsRead ? [] : (pinsQuery.data?.pins ?? []))
@@ -407,7 +405,10 @@ function MatrixSection() {
           </Table>
         </Box>
         <CardPinsList pins={cardSpecific} unknown={pinsRead?.list ?? null} />
-        {editor ? (
+        {editor?.role ? (
+          <RoleCellEditor target={editor} role={editor.role} onClose={() => setEditor(null)} />
+        ) : editor ? (
+          // The Any role cell comes from the list read, which this section has loaded.
           <ComplexityChainCellEditor
             opened
             onClose={() => setEditor(null)}
@@ -420,6 +421,31 @@ function MatrixSection() {
         ) : null}
       </Stack>
     </Paper>
+  )
+}
+
+/** A role cell editor follows its row read: Save and Clear wait while that read is pending again. */
+function RoleCellEditor({
+  target,
+  role,
+  onClose,
+}: {
+  target: ComplexityChainEditorTarget
+  role: AgentTaskRole
+  onClose: () => void
+}) {
+  const snapshot = useComplexityChainEffective(role)
+  return (
+    <ComplexityChainCellEditor
+      opened
+      onClose={onClose}
+      role={role}
+      complexity={target.complexity}
+      chain={target.chain}
+      isAnyRoleRow={target.isAnyRoleRow}
+      fallbackResolvedFrom={target.fallbackResolvedFrom}
+      readPending={pendingReadLabel(snapshot, `${role} effective cells`)}
+    />
   )
 }
 
@@ -443,7 +469,8 @@ function RoleMatrixRow({
   const snapshot = useComplexityChainEffective(role)
   const cardPinCount = cardPinCountLabel(role, cardPins)
 
-  if (snapshot.isLoading) {
+  // A pending row (loading, or paused offline) has no cells and no Configure.
+  if (snapshot.isPending) {
     return (
       <Table.Tr data-testid={`routing-matrix-row-${role}`}>
         <Table.Td>
@@ -452,13 +479,18 @@ function RoleMatrixRow({
           </Text>
         </Table.Td>
         <Table.Td colSpan={complexities.length}>
-          <Loader size="sm" />
+          <Group gap="xs" wrap="nowrap">
+            <Loader size="sm" />
+            <Text size="xs" c="dimmed">
+              {pendingReadLabel(snapshot, `${role} effective cells`)}
+            </Text>
+          </Group>
         </Table.Td>
       </Table.Tr>
     )
   }
 
-  if (snapshot.error) {
+  if (snapshot.isError) {
     return (
       <Table.Tr data-testid={`routing-matrix-row-${role}`}>
         <Table.Td>
@@ -498,7 +530,7 @@ function RoleMatrixRow({
         </Stack>
       </Table.Td>
       {complexities.map((complexity) => {
-        const chain = cellByComplexity(snapshot.data?.chains, complexity)
+        const chain = cellByComplexity(snapshot.data.chains, complexity)
         return (
           <Table.Td key={`${role}-${complexity}`}>
             <MatrixCell
@@ -690,6 +722,17 @@ function CardPinsList({ pins, unknown }: { pins: RoutingPinDto[]; unknown: strin
         </Text>
       ))}
     </Stack>
+  )
+}
+
+function PendingRead({ label }: { label: string }) {
+  return (
+    <Group justify="center" gap="xs" py="sm">
+      <Loader size="sm" />
+      <Text size="sm" c="dimmed">
+        {label}
+      </Text>
+    </Group>
   )
 }
 

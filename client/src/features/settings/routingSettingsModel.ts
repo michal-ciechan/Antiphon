@@ -280,9 +280,28 @@ export const OVERWRITE_UNREAD_CELL =
 export const OVERWRITE_UNREAD_METADATA =
   'Overwrite the unread reason and expiry. Save writes the Reason and Expires entered here; an empty reason stores the default label and an empty expiry stores none.'
 
-/** Row and card-pin text while `/api/routing-pins` is loading or failed; null once it loaded. */
+/** The React Query fields that tell a pending read apart from a loaded or failed one. */
+export interface QueryReadState {
+  isPending: boolean
+  fetchStatus: string
+}
+
+/**
+ * Text for a read with no data and no error: loading, or paused because the browser is
+ * offline (React Query 5 then reports isLoading false). Null once the read loaded or failed.
+ */
+export function pendingReadLabel(state: QueryReadState, subject: string): string | null {
+  if (!state.isPending) return null
+  return state.fetchStatus === 'paused' ? `${subject} unknown (read paused offline).` : `${subject} loading.`
+}
+
+export function readPendingEditorNote(label: string): string {
+  return `Save and Clear are disabled until the cell's read loads: ${label}`
+}
+
+/** Row and card-pin text while `/api/routing-pins` is pending or failed; null once it loaded. */
 export function routingPinsReadLabel(
-  state: { isLoading: boolean; error: unknown },
+  state: QueryReadState & { error: unknown },
   reason: string,
 ): { row: string; list: string } | null {
   if (state.error) {
@@ -291,8 +310,14 @@ export function routingPinsReadLabel(
       list: `Card-specific pins unknown (routing pins read failed: ${reason}).`,
     }
   }
-  if (state.isLoading) return { row: 'Stage and card pins loading.', list: 'Card-specific pins loading.' }
-  return null
+  if (!state.isPending) return null
+  if (state.fetchStatus === 'paused') {
+    return {
+      row: 'Stage and card pins unknown (routing pins read paused offline)',
+      list: 'Card-specific pins unknown (routing pins read paused offline).',
+    }
+  }
+  return { row: 'Stage and card pins loading.', list: 'Card-specific pins loading.' }
 }
 
 export function cellEditorTitle(
@@ -330,6 +355,10 @@ export function clearOverrideCopy(input: {
   role: AgentTaskRole | null
   complexity: TaskComplexity
   fallbackResolvedFrom: ComplexityResolvedFrom
+  /** The failed chain read segment: whether the cell has an own rule is then unknown. */
+  chainUnknown?: string | null
+  /** The failed chain metadata read segment: the stored reason and expiry are unknown. */
+  metadataUnknown?: string | null
 }): { title: string; body: string; confirm: string } {
   const confirm = 'Confirm clear'
   if (input.isAnyRoleRow) {
@@ -342,11 +371,28 @@ export function clearOverrideCopy(input: {
   }
 
   const cell = `${input.role}/${input.complexity}`
+  if (input.chainUnknown) {
+    const after = input.fallbackResolvedFrom === 'none'
+      ? 'is Unset — a -Complexity dispatch for this role and tier will block until an operator sets a row.'
+      : input.fallbackResolvedFrom === 'config'
+        ? 'falls back to the configuration default.'
+        : 'falls back to the Any role list.'
+    return {
+      title: `Clear ${cell} override?`,
+      body:
+        `Clearing ${cell} deletes this cell's own rule, with its reason and expiry, if one exists; its current value is unknown (${input.chainUnknown}). Without an own rule this cell ${after}`,
+      confirm,
+    }
+  }
+
+  const unreadMetadata = input.metadataUnknown
+    ? ` The stored reason and expiry are unknown (${input.metadataUnknown}); clearing deletes them with the row.`
+    : ''
   if (input.fallbackResolvedFrom === 'none') {
     return {
       title: `Clear ${cell} override?`,
       body:
-        `Clearing this ${cell} override leaves this cell Unset — a -Complexity dispatch for this role and tier will block until an operator sets a row.`,
+        `Clearing this ${cell} override leaves this cell Unset — a -Complexity dispatch for this role and tier will block until an operator sets a row.${unreadMetadata}`,
       confirm,
     }
   }
@@ -355,7 +401,7 @@ export function clearOverrideCopy(input: {
     return {
       title: `Clear ${cell} override?`,
       body:
-        `Clearing this ${cell} override falls back to the configuration default. This cell currently replaces the inherited list as a whole; it does not append.`,
+        `Clearing this ${cell} override falls back to the configuration default. This cell currently replaces the inherited list as a whole; it does not append.${unreadMetadata}`,
       confirm,
     }
   }
@@ -363,7 +409,7 @@ export function clearOverrideCopy(input: {
   return {
     title: `Clear ${cell} override?`,
     body:
-      `Clearing this ${cell} override falls back to the Any role list. This cell currently replaces Any role as a whole; it does not append.`,
+      `Clearing this ${cell} override falls back to the Any role list. This cell currently replaces Any role as a whole; it does not append.${unreadMetadata}`,
     confirm,
   }
 }

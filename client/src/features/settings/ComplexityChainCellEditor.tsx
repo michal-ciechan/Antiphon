@@ -45,6 +45,7 @@ import {
   isReplacingInheritedList,
   lookupFieldError,
   nextUnusedCandidate,
+  readPendingEditorNote,
   storedCellUnknownNote,
   storedMetadataUnknownNote,
 } from './routingSettingsModel'
@@ -60,6 +61,8 @@ export interface ComplexityChainEditorTarget {
 export interface ComplexityChainCellEditorProps extends ComplexityChainEditorTarget {
   opened: boolean
   onClose: () => void
+  /** Set while a read the opened cell came from is pending again (loading or paused offline). */
+  readPending?: string | null
 }
 
 interface DraftCandidate {
@@ -111,6 +114,7 @@ export function ComplexityChainCellEditor({
   chain,
   isAnyRoleRow,
   fallbackResolvedFrom,
+  readPending = null,
 }: ComplexityChainCellEditorProps) {
   const put = usePutComplexityChain()
   const clear = useClearComplexityChain()
@@ -131,10 +135,17 @@ export function ComplexityChainCellEditor({
   const resolved = chain ? effectiveResolvedFrom(chain) : 'none'
   // An unread chain may hold an own rule, so Clear stays available behind the overwrite confirmation.
   const canClear = failedReads.chain != null || canClearOverride(resolved, isAnyRoleRow)
-  const saveBlocked = metadataUnread && !overwriteConfirmed
-  const clearBlocked = failedReads.chain != null && !overwriteConfirmed
+  const saveBlocked = readPending != null || (metadataUnread && !overwriteConfirmed)
+  const clearBlocked = readPending != null || (failedReads.chain != null && !overwriteConfirmed)
   const title = cellEditorTitle(role, complexity)
-  const copy = clearOverrideCopy({ isAnyRoleRow, role, complexity, fallbackResolvedFrom })
+  const copy = clearOverrideCopy({
+    isAnyRoleRow,
+    role,
+    complexity,
+    fallbackResolvedFrom,
+    chainUnknown: failedReads.chain,
+    metadataUnknown: failedReads.metadata,
+  })
   const candidatesError = lookupFieldError(fieldErrors, 'Candidates')
   const notAfterError = lookupFieldError(fieldErrors, 'NotAfter')
   const reasonError = lookupFieldError(fieldErrors, 'Reason')
@@ -268,6 +279,11 @@ export function ComplexityChainCellEditor({
             {UNSET_CELL_EDITOR_NOTE}
           </Alert>
         ) : null}
+        {readPending ? (
+          <Alert color="yellow" variant="light">
+            {readPendingEditorNote(readPending)}
+          </Alert>
+        ) : null}
 
         <Stack gap="xs" data-testid="routing-cell-editor-candidates">
           {candidates.map((row, index) => (
@@ -394,6 +410,7 @@ export function ComplexityChainCellEditor({
                 color="red"
                 onClick={handleClear}
                 loading={clear.isPending}
+                disabled={clearBlocked}
               >
                 {copy.confirm}
               </Button>
