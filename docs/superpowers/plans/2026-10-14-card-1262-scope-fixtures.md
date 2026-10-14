@@ -72,3 +72,29 @@ Final contract; no unbounded shared production impact is claimed. Run each proof
 selection at most three normal times, with no repetition after green absent a new
 failure. Check compatibility with fetched master using merge-tree only; the
 governing git-common contract forbids merging the target into this task branch.
+
+### Diagnostic additions after CP-10
+
+CP-10 reached its existing 36-minute deadline without a final TRX. Its console
+reported ten unrelated failures. R-3 remains incomplete; no aggregate Unit count
+or green Final verdict is claimed, and no timeout was widened. CP-1 through CP-9,
+CP-11 and CP-12 finished green. See the Code evidence for fresh method identities,
+unaltered checkpoint lines, receipt rejection, and the separate coverage gap.
+
+The following explained, unlisted diagnostic rows compared only observed failures
+against exact task base `5665ddb1a3ba730f3b858acc109e65b5d7304d6c` in an owned
+detached checkout. One isolated, leased base build served both rows. These rows do
+not alter the original closed list or discharge R-3. The first CP-13 filter ran
+zero cases; corrected CP-13 and CP-14 reused the verified build without rebuilding.
+
+- CP-13: eight methods in `TestClassificationGuardTests`, `CheckpointImportTests`,
+  `CheckpointProcessIdentityTests`, and `RerunPolicyTests`; exactly eight failed
+  with the same assertions seen in CP-10. The precise filter is retained in the
+  evidence CHECKPOINT line. Follow-ups: CARD-1266, CARD-1267, CARD-1268.
+- CP-14: `TimeoutTests.total_deadline_skips_a_queued_build_without_starting_it`
+  and `total_deadline_kills_running_and_skips_queued`; exactly two failed with
+  matching assertions. Follow-up: CARD-1269.
+
+Implementation and bounded verification are complete. The governing Final contract
+still needs R-3 completion before the next ordinary Review; there are zero PC IDs
+or variants, and SourceLanding Mutation missing-control discovery remains pending.
