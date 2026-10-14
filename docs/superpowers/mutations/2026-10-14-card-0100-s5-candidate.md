@@ -20,4 +20,5 @@ timeouts or loosen assertions.
 
 All other controls in the card's design (PC-1 through PC-31 and PC-34, with every listed variant)
 also remain pending; they belong to S1-S4. This S5 candidate waives none. No deliberate mutation
-was executed by Code. Restart after landing: server (to serve the rebuilt client); runner: none.
+was executed by Code. Restart: none. The client bundle must be rebuilt and activated through
+the normal client publication flow; no server or runner code changed in S5.
