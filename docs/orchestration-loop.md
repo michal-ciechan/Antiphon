@@ -1105,21 +1105,39 @@ land rebases onto the target) or dispatch a fresh task with `-StartRef` on the w
 Confirmation-only work belongs in Review, not a Code task requiring a new commit.
 
 **The standing rules are delivered automatically now (CARD-0058). Do not retype them.** A
-non-specialist delegate launches with `server/Bundles/delegate-basics.md` composed into its
-`--append-system-prompt`. That file is **canonical**; this section deliberately does not restate its contents, because a rule
+non-specialist delegate launches with `server/Bundles/delegate-basics.md` composed into its launch
+instructions. That file is **canonical**; this section deliberately does not restate its contents, because a rule
 restated in three places drifts in three places, and it drifted here first. Improve a rule by
-editing that file in a PR: every future dispatch gets the better version, with nothing to
-reconcile. A sub-orchestrator additionally launches with `server/Bundles/orchestrator.md`.
+editing that file in a PR: a fresh launch composes the edited text. A warm-pool reuse delivers the
+brief into the running session with no launch, so that session keeps the instructions it launched
+with. A sub-orchestrator additionally launches with `server/Bundles/orchestrator.md`.
+
+The carrier depends on the provider (`ComposeDelegateArgs`, `server/Application/Services/AgentTaskDispatcher.cs`):
+Claude Code receives `--append-system-prompt <text>`, Codex `-c developer_instructions=<text>`, and
+Grok a `GrokRulesPayload` that the runner writes to a rules file and passes as `--rules`
+(`src/Antiphon.SessionRunner/SessionRunnerRuntime.cs`). A Herdr-backed session receives the same
+arguments in a PowerShell launch script typed into its pane (`src/Antiphon.SessionRunner/HerdrLaunchScript.cs`).
+
+| Behaviour | Test | What it asserts |
+|---|---|---|
+| Claude, Codex and Grok carriers hold the same expanded composition | `DelegateBundleLaunchTests.C1213_ProvidersReceiveExpandedInstructions` (Antiphon.Tests) | the `--append-system-prompt` value, the Codex `developer_instructions` value and the Grok rules payload contain the git-common render and no `{{`; the Claude and Grok payloads equal the composition |
+| Bundles ride the launch, not the brief | `DelegateBundleLaunchTests.bundles_ride_the_launch_and_never_the_brief` (Antiphon.Tests) | the brief has no `[bundle:` header and no delegate-basics text |
+| A warm-pool reuse delivers into the live session with no launch | `AgentTaskPoolTests.a_queued_task_takes_over_a_warm_agent_in_its_directory` (Antiphon.Tests) | the task takes the warm agent's live session id; its brief is queued to that session |
+| A Herdr launch script keeps arguments intact | `HerdrLaunchShapeTests.Script_content_doubles_single_quotes_is_BOM_and_preserves_newline_args_for_generic_arguments` (Antiphon.SessionRunner.Tests) | quotes are doubled and multi-line arguments are preserved in the script |
+| The Grok runner writes the rules file and passes `--rules` | not covered by a test | |
 
 **Git rules reach delegates as git-common (CARD-1213).** `delegate-basics` carries `{{GIT-COMMON}}`,
 so each non-specialist delegate launches with `server/Bundles/Fragments/git-common.md`. Do not
 restate those rules in a brief; supply the per-task values only. A runner-bound brief's runner branch
-contract prints the branch, base SHA and push command and cites git-common.
+contract prints the branch, base SHA and push command, and restates the rebase, amend, reset and
+force-push prohibitions in one sentence, because a recovered session may have launched before
+git-common existed; it cites git-common for the remaining rules.
 
 | Behaviour | Test (TUnit, Antiphon.Tests) | What it asserts |
 |---|---|---|
 | Code, Review, Mutation and orchestrator compositions carry the git-common sentences | `InstructionBundleTests.C1213_GitContractPins` (`Application/InstructionBundleTests.cs`) | each pinned sentence occurs once per composition; the orchestrator bundle contains "Delegates carry git-common; never restate git rules in briefs." |
-| The runner branch contract keeps per-task values and cites git-common | `DelegationReportFormatterTests.Runner_worktree_brief_names_mirror_and_fast_forward_contract` (`Application/DelegationUnitTests.cs`) | for `feat/card-task-7f3a2b91` and `feat/card-1213-code-7f3a2b91`: the exact `Assigned branch:` line, push refspec, ls-remote ref, `fast-forward-only from <40-hex>`, the word `git-common`, and no `never force-push` |
+| The runner branch contract keeps per-task values and the protections | `DelegationReportFormatterTests.Runner_worktree_brief_names_mirror_and_fast_forward_contract` (`Application/DelegationUnitTests.cs`) | for `feat/card-task-7f3a2b91` and `feat/card-1213-code-7f3a2b91`: the exact `Assigned branch:` line, push refspec, ls-remote ref, `fast-forward-only from <40-hex>:` followed by the protection sentence, and the word `git-common` |
+| A brief recovered into a session without git-common carries the protections | `DelegationDispatchRecoveryBoundaryTests.C1213_Recovered_brief_keeps_branch_protections_without_git_common` (`Application/DelegationDispatchRecoveryBoundaryTests.BranchProtections.cs`) | for both branch forms, a session whose stamp lacks git-common: the queue's ensure path inserts a brief whose contract holds the protection sentence and exact push refspec, and the session's one UserPrompt matches the brief in full |
 
 **A stage-role Worker also launches with its own `server/Bundles/stage-<role>.md`** (CARD-0146 S3,
 via `InstructionBundles.ForDelegate`), composed alongside `delegate-basics`. That bundle already
