@@ -1319,6 +1319,20 @@ public sealed class CardService : IScheduledCardActions
         return revisions.Select(BoardService.ToRevisionDto).ToList();
     }
 
+    public const string CardRelationshipCycleCode = "card_relationship_cycle";
+    public const string CardRelationshipExistsCode = "card_relationship_exists";
+
+    public Task<CardRelationshipsDto> GetRelationshipsAsync(Guid id, CancellationToken ct) =>
+        throw new NotImplementedException();
+
+    public Task<CardRelationshipDto> AddRelationshipAsync(
+        Guid id, AddCardRelationshipRequest request, CancellationToken ct) =>
+        throw new NotImplementedException();
+
+    public Task<CardDto> RemoveRelationshipAsync(
+        Guid id, Guid relationshipId, RemoveCardRelationshipRequest request, CancellationToken ct) =>
+        throw new NotImplementedException();
+
     public async Task<SpawnCardResult> SpawnAsync(Guid id, SpawnCardRequest request, CancellationToken ct)
     {
         ValidateSpawnRequest(request);

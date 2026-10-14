@@ -17,7 +17,7 @@ namespace Antiphon.Server.Migrations
         {
 #pragma warning disable 612, 618
             modelBuilder
-                .HasAnnotation("ProductVersion", "9.0.20")
+                .HasAnnotation("ProductVersion", "9.0.21")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
@@ -3903,6 +3903,42 @@ namespace Antiphon.Server.Migrations
                     b.ToTable("CardComments", (string)null);
                 });
 
+            modelBuilder.Entity("Antiphon.Server.Domain.Entities.CardRelationship", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("CardId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("CreatedBy")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<int>("Kind")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Reason")
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("RelatedCardId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RelatedCardId")
+                        .HasDatabaseName("IX_CardRelationships_RelatedCardId");
+
+                    b.HasIndex("CardId", "RelatedCardId", "Kind")
+                        .HasDatabaseName("IX_CardRelationships_CardId_RelatedCardId_Kind");
+
+                    b.ToTable("CardRelationships", (string)null);
+                });
+
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.CardRevision", b =>
                 {
                     b.Property<Guid>("Id")
@@ -3961,6 +3997,16 @@ namespace Antiphon.Server.Migrations
 
                     b.Property<string>("Reason")
                         .HasColumnType("text");
+
+                    b.Property<Guid?>("RelatedCardId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("RelatedCardIdentifier")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<int?>("RelationshipKind")
+                        .HasColumnType("integer");
 
                     b.Property<int?>("RequiredPlatform")
                         .HasColumnType("integer");
@@ -10086,6 +10132,25 @@ namespace Antiphon.Server.Migrations
                     b.Navigation("Card");
                 });
 
+            modelBuilder.Entity("Antiphon.Server.Domain.Entities.CardRelationship", b =>
+                {
+                    b.HasOne("Antiphon.Server.Domain.Entities.Card", "Card")
+                        .WithMany("BlockedBy")
+                        .HasForeignKey("CardId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Antiphon.Server.Domain.Entities.Card", "RelatedCard")
+                        .WithMany("Blocks")
+                        .HasForeignKey("RelatedCardId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Card");
+
+                    b.Navigation("RelatedCard");
+                });
+
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.CardRevision", b =>
                 {
                     b.HasOne("Antiphon.Server.Domain.Entities.Card", "Card")
@@ -10888,6 +10953,10 @@ namespace Antiphon.Server.Migrations
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.Card", b =>
                 {
                     b.Navigation("AgentSessions");
+
+                    b.Navigation("BlockedBy");
+
+                    b.Navigation("Blocks");
 
                     b.Navigation("Comments");
 
