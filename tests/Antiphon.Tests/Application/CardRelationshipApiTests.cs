@@ -486,6 +486,135 @@ public class CardRelationshipApiTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Board_views_return_blockers_using_live_resolution_state(bool summary)
+    {
+        var board = await SeedBoardAsync("c1255 board blockers");
+        var otherBoard = await CreateBoardAsync("c1255 cross-board blocker");
+        var blocked = await CreateCardAsync(board.Id, "blocked");
+        var open = await CreateCardAsync(otherBoard.Id, "open blocker");
+        var done = await CreateCardAsync(board.Id, "done blocker");
+        var canceled = await CreateCardAsync(board.Id, "canceled blocker");
+        var archived = await CreateCardAsync(board.Id, "archived blocker");
+        var unknown = await CreateCardAsync(board.Id, "unknown status blocker");
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            foreach (var blocker in new[] { open, done, canceled, archived, unknown })
+                db.CardRelationships.Add(new CardRelationship
+                {
+                    Id = Guid.NewGuid(), CardId = blocked.Id, RelatedCardId = blocker.Id,
+                    Kind = CardRelationshipKind.BlockedBy, CreatedAt = DateTime.UtcNow,
+                });
+            (await db.Cards.SingleAsync(c => c.Id == done.Id)).Status = CardStatus.Done;
+            (await db.Cards.SingleAsync(c => c.Id == canceled.Id)).Status = CardStatus.Canceled;
+            (await db.Cards.SingleAsync(c => c.Id == archived.Id)).ArchivedAt = DateTime.UtcNow;
+            (await db.Cards.SingleAsync(c => c.Id == unknown.Id)).Status = (CardStatus)999;
+            await db.SaveChangesAsync();
+        }
+        using var client = _factory.CreateClient();
+        var path = $"/api/boards/{board.Id}" + (summary ? "?view=summary" : "");
+        async Task<CardDto> Read() => (await client.GetFromJsonAsync<BoardDetailDto>(path, Json))!
+            .Columns.SelectMany(c => c.Cards).Single(c => c.Id == blocked.Id);
+
+        var row = await Read();
+        row.OpenBlockerCount.ShouldBe(2);
+        row.Blockers.ShouldNotBeNull().ShouldBe(new[]
+        {
+            new CardBlockerSummaryDto("CARD-0001", CardStatus.Backlog, false),
+            new CardBlockerSummaryDto("CARD-0002", CardStatus.Done, true),
+            new CardBlockerSummaryDto("CARD-0003", CardStatus.Canceled, true),
+            new CardBlockerSummaryDto("CARD-0004", CardStatus.Backlog, true),
+            new CardBlockerSummaryDto("CARD-0005", (CardStatus)999, false),
+        });
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            await db.Cards.Where(c => c.Id == open.Id || c.Id == unknown.Id)
+                .ExecuteUpdateAsync(s => s.SetProperty(c => c.Status, CardStatus.Done));
+        }
+        var resolved = await Read();
+        resolved.OpenBlockerCount.ShouldBe(0);
+        resolved.Blockers.ShouldNotBeNull().Count.ShouldBe(5);
+        resolved.Blockers!.All(b => b.Resolved).ShouldBeTrue();
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            await db.Cards.Where(c => c.Id == open.Id)
+                .ExecuteUpdateAsync(s => s.SetProperty(c => c.Status, CardStatus.Backlog));
+        }
+        (await Read()).OpenBlockerCount.ShouldBe(1);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Board_without_relationships_omits_blocker_fields(bool summary)
+    {
+        var board = await SeedBoardAsync("c1255 unchanged wire shape");
+        var card = await CreateCardAsync(board.Id, "unrelated");
+        using var client = _factory.CreateClient();
+        var raw = await client.GetFromJsonAsync<JsonElement>(
+            $"/api/boards/{board.Id}" + (summary ? "?view=summary" : ""));
+        var row = raw.GetProperty("columns").EnumerateArray()
+            .SelectMany(c => c.GetProperty("cards").EnumerateArray())
+            .Single(c => c.GetProperty("id").GetGuid() == card.Id);
+        row.GetProperty("title").GetString().ShouldBe("unrelated");
+        row.GetProperty("status").GetString().ShouldBe("Backlog");
+        row.TryGetProperty("openBlockerCount", out _).ShouldBeFalse();
+        row.TryGetProperty("blockers", out _).ShouldBeFalse();
+    }
+
+    [Test]
+    [Arguments(1, false)]
+    [Arguments(40, false)]
+    [Arguments(1, true)]
+    [Arguments(40, true)]
+    public async Task Board_loads_all_blocker_summaries_in_one_query(int count, bool summary)
+    {
+        var board = await SeedBoardAsync("c1255 batched blockers");
+        var blocker = await CreateCardAsync(board.Id, "shared blocker");
+        using var scope = _factory.Services.CreateScope();
+        var seed = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var now = DateTime.UtcNow;
+        for (var i = 0; i < count; i++)
+        {
+            var card = new Card
+            {
+                Id = Guid.NewGuid(), BoardId = board.Id, BoardColumnId = blocker.BoardColumnId,
+                Identifier = $"CARD-{i + 2:D4}", Title = "blocked", Status = CardStatus.Backlog,
+                ConcurrencyToken = Guid.NewGuid(), CreatedAt = now, UpdatedAt = now,
+            };
+            seed.Cards.Add(card);
+            seed.CardRelationships.Add(new CardRelationship
+            {
+                Id = Guid.NewGuid(), CardId = card.Id, RelatedCardId = blocker.Id,
+                Kind = CardRelationshipKind.BlockedBy, CreatedAt = now,
+            });
+        }
+        await seed.SaveChangesAsync();
+        var counter = new FullCommandCounter();
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(
+            seed.Database.GetConnectionString()!, counter));
+        var service = new BoardService(db, new MockEventBus(), TimeProvider.System);
+        var detail = await service.GetByIdAsync(board.Id, includeArchived: false, summary, CancellationToken.None);
+        counter.Commands.Count(sql => sql.Contains("\"CardRelationships\"", StringComparison.Ordinal))
+            .ShouldBe(1, counter.Roster());
+        var cards = detail.Columns.SelectMany(c => c.Cards).ToList();
+        cards.Count.ShouldBe(count + 1);
+        foreach (var card in cards.Where(c => c.Id != blocker.Id))
+        {
+            card.OpenBlockerCount.ShouldBe(1);
+            card.Blockers.ShouldNotBeNull().ShouldBe(new[]
+            {
+                new CardBlockerSummaryDto("CARD-0001", CardStatus.Backlog, false),
+            });
+        }
+        cards.Single(c => c.Id == blocker.Id).Blockers.ShouldBeNull();
+    }
+
+    [Test]
     public async Task Cross_board_blocker_resolves_on_the_blocked_cards_board_by_default_and_honours_relatedBoardId()
     {
         var board1 = await SeedBoardAsync("c100 cross one");

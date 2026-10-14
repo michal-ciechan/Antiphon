@@ -193,6 +193,34 @@ function setViewport(mobile: boolean) {
 }
 
 describe('the shape strip', () => {
+  it.each(['/boards', '/boards/board-1?state=backlog'])(
+    'shows the Blocked chip from the board summary response on %s',
+    async (route) => {
+      const detail = structuredClone(board)
+      detail.columns[0].cards[0].openBlockerCount = 1
+      detail.columns[0].cards[0].blockers = [
+        { identifier: 'CARD-0049', status: 'InProgress', resolved: false },
+        { identifier: 'CARD-0048', status: 'Done', resolved: true },
+      ]
+      detail.columns[0].cards[1].blockers = [
+        { identifier: 'CARD-0048', status: 'Done', resolved: true },
+      ]
+      const requestedViews: (string | null)[] = []
+      server.use(...boardHandlers(detail), http.get('/api/boards/board-1', ({ request }) => {
+        requestedViews.push(new URL(request.url).searchParams.get('view'))
+        return HttpResponse.json(detail)
+      }))
+      renderBoardRoute(route)
+
+      const blocked = await screen.findByRole('article', { name: 'CARD-0001 Drag me' })
+      expect(within(blocked).getByTitle('Blocked by CARD-0049')).toHaveTextContent('Blocked')
+      expect(within(blocked).queryByTitle(/CARD-0048/)).toBeNull()
+      const resolved = screen.getByRole('article', { name: 'CARD-0003 Pty host loses the first prompt' })
+      expect(within(resolved).queryByText('Blocked')).toBeNull()
+      expect(requestedViews).toEqual(['summary'])
+    },
+  )
+
   it('renders a node per state, with the empty state kept on screen', async () => {
     server.use(...boardHandlers())
     renderBoardRoute('/boards/board-1')
