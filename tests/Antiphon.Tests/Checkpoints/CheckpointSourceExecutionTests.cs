@@ -472,10 +472,85 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
         SourceRefuses("tool-source-fingerprint-match", source => source.End = source.End! with { Fingerprint = new string('f', 64) });
     }
 
+    [Test]
+    public async Task command_only_selection_beside_built_row_receipt_passes_both_validators()
+    {
+        var source = Observe(Sha, 0);
+        var repo = TempDir();
+        Directory.CreateDirectory(Path.Combine(repo, "sample"));
+        File.WriteAllText(Path.Combine(repo, "sample", "sample.csproj"), "<Project Sdk=\"Microsoft.NET.Sdk\" />");
+        var manifest = new CheckpointManifest
+        {
+            Builds = [new BuildSpec { Id = "bin-c1240", Project = "sample", OutputPath = "bin-c1240/" }],
+            Checkpoints =
+            [
+                new CheckpointSpec { Id = "CP-1", After = ["all"], Command = "true", EstimatedMinutes = 1 },
+                new CheckpointSpec
+                {
+                    Id = "CP-2", After = ["all"], Build = "bin-c1240", Filter = "/*/*/ExampleSurfaceTests/*",
+                    MinExecuted = 1, Expect = ["ExampleSurfaceTests"], EstimatedMinutes = 1,
+                },
+            ],
+        };
+        string Start(List<string> rows) => CheckpointApp.CreateRun(manifest, new RunRequest
+        {
+            Commit = Sha, Branch = "fixture", KeepOutputs = true, Slots = "off", Rows = rows,
+        }, repo, new CheckpointApp.Runtime { SourceCapture = _ => source });
+        string? Required(string run) =>
+            ReportWriter.RequiredReceiptRefusal(run, new RunStateStore().TryRead(Path.Combine(run, "state.json"))!);
+        async Task<int> ToolValidateAsync(string evidence) => await Antiphon.Checkpoints.Program.RunAsync(
+            ["validate", "--repo-root", repo, "--evidence", evidence, "--expected-source-sha", Sha]);
+
+        var commandRun = Start(["CP-1"]);
+        var commandDriver = new FakeDriver();
+        (await CheckpointApp.ExecuteAsync(commandRun, CancellationToken.None, Runtime(commandDriver, _ => source)))
+            .ShouldBe(0, "command-only-run");
+        commandDriver.Calls.ShouldNotContain(call => CheckpointFixtures.IsBuild(call), "unselected-build-not-run");
+        var commandReport = Read(commandRun);
+        commandReport.Builds.Single().State.ShouldBe("unused");
+        commandReport.OutputNames.ShouldBeEmpty("unused-build-names-no-output");
+        File.ReadAllText(Path.Combine(commandRun, "report.md")).ShouldContain("outputs: none");
+        Required(commandRun).ShouldBeNull("command-only-receipt-readable");
+        var commandEvidence = Path.Combine(commandRun, "report.json");
+        (await ToolValidateAsync(commandEvidence)).ShouldBe(0, "tool-validates-command-only");
+        var commandScript = await ValidateFileWithScriptAsync(commandEvidence);
+        commandScript.Exit.ShouldBe(0, "script-validates-command-only: " + commandScript.Output);
+
+        var builtRun = Start(["CP-1", "CP-2"]);
+        var builtDriver = new FakeDriver();
+        builtDriver.When(CheckpointFixtures.IsRun, (request, _) =>
+        {
+            CheckpointFixtures.WriteResults(CheckpointFixtures.TrxFile(request),
+                ("Antiphon.Tests.ExampleSurfaceTests.case", "Passed"));
+            return Task.FromResult(new DriverResult(0, "", ""));
+        });
+        (await CheckpointApp.ExecuteAsync(builtRun, CancellationToken.None, Runtime(builtDriver, _ => source)))
+            .ShouldBe(0, "two-row-run");
+        var builtReport = Read(builtRun);
+        builtReport.OutputNames.ShouldBe(["bin-c1240/"]);
+        builtReport.OutputPaths.ShouldNotBeEmpty("built-row-records-output-paths");
+        Required(builtRun).ShouldBeNull("two-row-receipt-readable");
+        var builtEvidence = Path.Combine(builtRun, "report.json");
+        (await ToolValidateAsync(builtEvidence)).ShouldBe(0, "tool-validates-two-rows");
+        var builtScript = await ValidateFileWithScriptAsync(builtEvidence);
+        builtScript.Exit.ShouldBe(0, "script-validates-two-rows: " + builtScript.Output);
+
+        builtReport.OutputPaths = [];
+        File.WriteAllText(builtEvidence, ReportWriter.JsonText(builtReport));
+        Required(builtRun).ShouldBe("receipt-unreadable: JsonException: receipt-shape: outputPaths required for outputNames",
+            "declared-outputs-without-paths-still-refused");
+        (await ToolValidateAsync(builtEvidence)).ShouldBe(ExitCodes.Invalid, "tool-refuses-declared-outputs-without-paths");
+    }
+
     private async Task<(int Exit, string Output)> ValidateWithScriptAsync(ReportModel report, string? rows = null)
     {
         var evidence = Path.Combine(TempDir(), "report.json");
         File.WriteAllText(evidence, ReportWriter.JsonText(report));
+        return await ValidateFileWithScriptAsync(evidence, rows);
+    }
+
+    private static async Task<(int Exit, string Output)> ValidateFileWithScriptAsync(string evidence, string? rows = null)
+    {
         using var process = new Process();
         process.StartInfo = new ProcessStartInfo("pwsh")
         {
