@@ -38,9 +38,14 @@ public sealed class OrchestratorInstructionsRendererTests
         body.ShouldContain("## 2. Hosts and runners");
         body.ShouldContain("## 3. Runner defaults");
         body.ShouldContain("## 4. Held models");
-        body.ShouldContain("## 5. Routing pins");
-        body.ShouldContain("## 6. Model levels");
-        body.ShouldContain("## 7. Operator standing instructions");
+        // CARD-0097: the matrix precedes pins, moving the following sections to 6–8.
+        body.ShouldContain("## 5. Role × complexity matrix");
+        body.ShouldContain("default Medium");
+        body.ShouldContain("GET /api/complexity-chains");
+        body.ShouldContain("- Plan: Hard Codex/Frontier (gpt-6-astra); Medium (default) opus; Easy unset; effective ClaudeCode/High (opus) via stage pin");
+        body.ShouldContain("## 6. Routing pins");
+        body.ShouldContain("## 7. Model levels");
+        body.ShouldContain("## 8. Operator standing instructions");
         body.ShouldContain("recommended in-flight");
         body.ShouldContain("| Code |");
         body.ShouldContain("-IgnoreConcurrencyLimit");
@@ -146,6 +151,91 @@ public sealed class OrchestratorInstructionsRendererTests
             () => OrchestratorInstructionsRenderer.Render(snapshot));
     }
 
+    [Test]
+    public void Unknown_matrix_details_keep_the_byte_cap_and_matrix_first_elision()
+    {
+        const string unknown = "unknown (chain read failed)";
+        var roles = Antiphon.Server.Application.Services.ComplexityRoutingService.RoutableRoles;
+        var snapshot = Sample() with
+        {
+            Matrix = new MatrixSection("Medium", roles.Select(role => new MatrixInstructionRow(
+                role.ToString(), unknown, unknown, unknown, unknown, unknown)).ToArray()),
+        };
+        var body = OrchestratorInstructionsRenderer.Render(snapshot);
+        body.ShouldContain("  Plan: effective unknown (chain read failed) via unknown (chain read failed)");
+        foreach (var line in body.Split('\n').Where(line => line.StartsWith("- ", StringComparison.Ordinal)
+                     || line.StartsWith("  ", StringComparison.Ordinal)))
+        {
+            Encoding.UTF8.GetByteCount(line).ShouldBeLessThanOrEqualTo(160);
+            line.ShouldNotContain("\uFFFD");
+        }
+        var cap = Encoding.UTF8.GetByteCount(body) - 1;
+        var fitted = OrchestratorInstructionsRenderer.Render(snapshot, cap);
+        Encoding.UTF8.GetByteCount(fitted).ShouldBeLessThanOrEqualTo(cap);
+        fitted.ShouldContain("… 14 rows: GET /api/complexity-chains");
+        fitted.ShouldNotContain("  Plan:");
+        fitted.ShouldContain("Antiphon CARD-0822 Code");
+        fitted.ShouldNotContain("more: GET /api/routing-pins");
+
+        const string combined = "unknown (stage pin, chain, chain metadata, standing agent, availability read failed)";
+        var worst = snapshot with
+        {
+            Matrix = new MatrixSection("Medium", roles.Select(role => new MatrixInstructionRow(
+                role.ToString(), combined, combined, combined, combined, combined)).ToArray()),
+        };
+        var worstBody = OrchestratorInstructionsRenderer.Render(worst);
+        worstBody.ShouldContain("  Plan: effective " + combined);
+        worstBody.ShouldContain("  Plan: source " + combined);
+        worstBody.ShouldNotContain("+2");
+        foreach (var line in worstBody.Split('\n').Where(line => line.StartsWith("- ", StringComparison.Ordinal)
+                     || line.StartsWith("  ", StringComparison.Ordinal)))
+        {
+            Encoding.UTF8.GetByteCount(line).ShouldBeLessThanOrEqualTo(160);
+            line.ShouldNotContain("\uFFFD");
+        }
+        var worstCap = Encoding.UTF8.GetByteCount(worstBody) - 1;
+        var worstFitted = OrchestratorInstructionsRenderer.Render(worst, worstCap);
+        Encoding.UTF8.GetByteCount(worstFitted).ShouldBeLessThanOrEqualTo(worstCap);
+        worstFitted.ShouldContain("… 14 rows: GET /api/complexity-chains");
+        worstFitted.ShouldContain("Antiphon CARD-0822 Code");
+        worstFitted.ShouldNotContain("  Plan:");
+        worstFitted.ShouldNotContain("more: GET /api/routing-pins");
+    }
+
+    [Test]
+    public void The_matrix_section_is_bounded_per_line_and_elided_in_place_under_pressure()
+    {
+        string[] roles = ["Investigate", "Plan", "TestDesign", "Code", "Mutation", "Review", "Debug",
+            "Coverage", "Docs", "Commit", "Test", "Deploy", "Merge", "Custom"];
+        var candidates = string.Join(", ", Enumerable.Repeat("ClaudeCode/Frontier (fable)", 8));
+        var snapshot = Sample() with
+        {
+            Matrix = new MatrixSection("Medium", roles.Select(role => new MatrixInstructionRow(
+                role, candidates, candidates, candidates, "ClaudeCode/High (opus)", "stage pin")).ToArray()),
+        };
+        var body = OrchestratorInstructionsRenderer.Render(snapshot);
+        foreach (var role in roles)
+        {
+            var matches = body.Split('\n').Where(line => line.StartsWith($"- {role}:", StringComparison.Ordinal)).ToArray();
+            matches.Length.ShouldBe(1, $"matrix row {role}");
+            var line = matches.Single();
+            Encoding.UTF8.GetByteCount(line).ShouldBeLessThanOrEqualTo(160);
+            line.ShouldContain("Hard ClaudeCode/Frontier (fable), ClaudeCode/Frontier (fable), ClaudeCode/Frontier (fable), +5");
+            line.ShouldEndWith("…");
+            line.ShouldNotContain("\uFFFD");
+        }
+        var cap = Encoding.UTF8.GetByteCount(body) - 1;
+        var fitted = OrchestratorInstructionsRenderer.Render(snapshot, cap);
+        Encoding.UTF8.GetByteCount(fitted).ShouldBeLessThanOrEqualTo(cap);
+        var pointer = fitted.IndexOf("… 14 rows: GET /api/complexity-chains", StringComparison.Ordinal);
+        pointer.ShouldBeGreaterThan(fitted.IndexOf("## 5. Role × complexity matrix", StringComparison.Ordinal));
+        pointer.ShouldBeLessThan(fitted.IndexOf("## 6. Routing pins", StringComparison.Ordinal));
+        fitted.ShouldNotContain("- Plan:");
+        fitted.ShouldContain("Antiphon CARD-0822 Code");
+        fitted.ShouldNotContain("more: GET /api/routing-pins");
+        fitted.ShouldNotContain("more: GET /api/model-availability");
+    }
+
     private static OrchestratorInstructionsSnapshot Sample() => new(
         Caps: new PipelineCapsSection(
             EffectiveMaxConcurrentTasks: 2,
@@ -179,5 +269,7 @@ public sealed class OrchestratorInstructionsRendererTests
             new LevelInstructionRow("Codex", "Frontier", "gpt-6-astra"),
             new LevelInstructionRow("Grok", "High", "grok-4.7"),
         ],
-        StandingLines: ["prefer the live file"]);
+        StandingLines: ["prefer the live file"],
+        Matrix: new MatrixSection("Medium", [new MatrixInstructionRow("Plan",
+            "Codex/Frontier (gpt-6-astra)", "opus", "unset", "ClaudeCode/High (opus)", "stage pin")]));
 }

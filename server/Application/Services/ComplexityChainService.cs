@@ -26,6 +26,7 @@ public sealed class ComplexityChainService
     private readonly DelegationSettings _settings;
     private readonly ILogger<ComplexityChainService> _logger;
     private readonly RoutingPinService? _pins;
+    private readonly IServiceProvider? _services;
 
     public ComplexityChainService(
         AppDbContext db,
@@ -33,7 +34,8 @@ public sealed class ComplexityChainService
         ComplexityRoutingService routing,
         IOptions<DelegationSettings> settings,
         ILogger<ComplexityChainService> logger,
-        RoutingPinService? pins = null)
+        RoutingPinService? pins = null,
+        IServiceProvider? services = null)
     {
         _db = db;
         _time = time;
@@ -41,6 +43,7 @@ public sealed class ComplexityChainService
         _settings = settings.Value;
         _logger = logger;
         _pins = pins;
+        _services = services;
     }
 
     public Task<ComplexityChainListDto> ListAsync(CancellationToken ct) =>
@@ -303,6 +306,7 @@ public sealed class ComplexityChainService
         existing.UpdatedAt = now;
 
         await _db.SaveChangesAsync(ct);
+        OrchestratorInstructionsSignal.Fire(_services, $"complexity-chain {role?.ToString() ?? "any"}/{complexity}");
         _logger.LogInformation(
             "Complexity chain set: {Role}/{Complexity} {Provenance} ({Count} candidates)",
             role?.ToString() ?? "any", existing.Complexity, existing.Provenance, pairs.Count);
@@ -324,6 +328,7 @@ public sealed class ComplexityChainService
 
         existing.ClearedAt = UtcNow();
         await _db.SaveChangesAsync(ct);
+        OrchestratorInstructionsSignal.Fire(_services, $"complexity-chain {role?.ToString() ?? "any"}/{complexity}");
         _logger.LogInformation(
             "Complexity chain cleared: {Role}/{Complexity}",
             role?.ToString() ?? "any", complexity);
