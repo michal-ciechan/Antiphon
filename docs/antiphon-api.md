@@ -147,10 +147,17 @@ below is a route group; the file named is the authority for its exact bodies.
 `CardEndpoints.cs`, `DiagnosisEndpoints.cs`, `BoardEndpoints.cs`, `ProjectEndpoints.cs`, `HomeEndpoints.cs`
 
 Card detail, card-list and board-detail cards (both full and `view=summary`) carry
-`openBlockerCount` when positive and `blockers` when relationships exist. Summaries retain
-resolved blockers; Done, Canceled or archived blockers are resolved by the shared CardBlockers
-predicate. The board loads these summaries in one query for all returned cards (CARD-1255).
-Cards with no relationships omit both members, preserving their existing wire shape.
+`blockers` when the card has `BlockedBy` rows, including resolved rows, and
+`openBlockerCount` when the unresolved count is positive. Done, Canceled or archived blockers
+are resolved by the shared CardBlockers predicate
+(`CardRelationshipApiTests.Card_and_list_views_carry_open_blocker_count_and_blockers_excluding_resolved`
+and `CardRelationshipApiTests.Board_views_return_blockers_using_live_resolution_state`).
+For a nonempty board result, the board loads these summaries in one query for all returned
+cards (CARD-1255; `CardRelationshipApiTests.Board_loads_all_blocker_summaries_in_one_query`).
+Cards with no `BlockedBy` rows, including cards that only block other cards, omit both members,
+preserving their existing wire shape
+(`CardRelationshipApiTests.Board_without_relationships_omits_blocker_fields` and
+`CardRelationshipApiTests.Board_loads_all_blocker_summaries_in_one_query`).
 
 ```
 GET    /api/home/tasks                       read-only home-rail projection of cards and unbound delegations (CARD-0002). Fleet-global; the client filters by project directory. Bound tasks nest as a card's Worker, never as their own item. No question field — that text is GET /api/attention.
