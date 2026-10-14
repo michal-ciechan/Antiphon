@@ -25,17 +25,32 @@ export const COMPLEXITY_ROUTING_BOUNDARY =
 
 // ComplexityChainService.ReadPartAsync emits "{part} read failed ({exception type})";
 // GetEffectiveAsync joins those diagnostic segments and the policy reason with "; ".
-const STAGE_PIN_READ_FAILED_PREFIX = 'stage pin read failed ('
+export type EffectiveReadPart = 'stage pin' | 'chain' | 'chain metadata' | 'standing agent' | 'availability'
+
+export function failedReadSegment(effective: ComplexityEffectiveDto, part: EffectiveReadPart): string | null {
+  return effective.withheldReason?.split('; ').find(reason => reason.startsWith(`${part} read failed (`)) ?? null
+}
 
 export function effectiveRoutingUnknown(effective: ComplexityEffectiveDto): boolean {
-  return effective.withheldReason?.split('; ').some(reason => reason.startsWith(STAGE_PIN_READ_FAILED_PREFIX)) === true
-    || (effective.source === 'rolePolicy' && effective.withheldReason?.includes('chain read failed') === true)
+  // An unread stage pin can override any source. An unread chain is the tail of a Preferred pin
+  // and the reason RolePolicy was projected; a Required or standing-agent pin never walks it.
+  return failedReadSegment(effective, 'stage pin') != null
+    || ((effective.source === 'rolePolicy' || effective.source === 'pin+chain')
+      && failedReadSegment(effective, 'chain') != null)
+}
+
+/** The stored row's provenance/reason/expiry come from the chain read; reason and expiry also need the metadata read. */
+export function cellMetadataUnknownLabel(effective: ComplexityEffectiveDto): string | null {
+  const chain = failedReadSegment(effective, 'chain')
+  if (chain) return `Provenance, reason and expiry unknown: ${chain}`
+  const metadata = failedReadSegment(effective, 'chain metadata')
+  return metadata ? `Reason and expiry unknown: ${metadata}` : null
 }
 
 export function effectiveCellLabel(effective: ComplexityEffectiveDto): string {
   const { source, candidates, stagePin, withheldReason } = effective
-  // An unread stage pin can override any source. Keep its diagnostic in the alert,
-  // without presenting the remaining projection as an effective routing verdict.
+  // Keep an unread part's diagnostic in the alert, without presenting the remaining
+  // projection as an effective routing verdict.
   if (effectiveRoutingUnknown(effective)) {
     return 'Effective routing unknown'
   }
@@ -43,9 +58,12 @@ export function effectiveCellLabel(effective: ComplexityEffectiveDto): string {
   if (source === 'agent') {
     // The wire contract carries the standing agent label in this explanation, not the pin ref.
     const agent = withheldReason?.match(/^stage pin binds standing agent (.+?); an ordinary dispatch runs on that agent and does not walk this row/)
-    return agent
-      ? `Pinned to standing agent ${agent[1]} — an ordinary dispatch runs there; this row is not walked`
-      : 'Pinned to standing agent — this row is not walked'
+    if (!agent) return 'Pinned to standing agent — this row is not walked'
+    // The server labels an unread agent "<id> (unavailable)", the same as a missing one.
+    const label = failedReadSegment(effective, 'standing agent')
+      ? `${agent[1].replace(/ \(unavailable\)$/, '')} (name unknown)`
+      : agent[1]
+    return `Pinned to standing agent ${label} — an ordinary dispatch runs there; this row is not walked`
   }
 
   const head = candidates[0]
@@ -191,10 +209,17 @@ export function candidateLabel(
   return `${index + 1}. ${candidate.agentKind}/${candidate.modelLevel} (${candidate.alias})`
 }
 
+export function candidateAvailabilityUnknown(
+  candidate: ComplexityChainDto['candidates'][number],
+): boolean {
+  return !candidate.availableNow && candidate.unavailableReason?.startsWith('availability read failed (') === true
+}
+
 export function candidateAvailabilityLabel(
   candidate: ComplexityChainDto['candidates'][number],
 ): string {
   if (candidate.availableNow) return 'available'
+  if (candidateAvailabilityUnknown(candidate)) return `availability unknown: ${candidate.unavailableReason}`
   return candidate.unavailableReason ?? 'unavailable'
 }
 
