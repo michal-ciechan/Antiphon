@@ -253,3 +253,9 @@ Additional pending Mutation candidates: PC-17 Required-single-row refusal (held,
 for role/any/config, with separate modal variants); PC-18 overbroad Required-single guard
 (available row and no-pin exhaustion controls); PC-19 withheld policy dependency label.
 No deliberate mutants were introduced by Code. See the unbound candidate inventory.
+
+CP-2/CP-3/CP-4 passed at 79a8cdb7f192d6a47af674bd1c9fbc6945d2505f
+(run 20261014-205737-717e): 173 passed, tsc exit 0, ESLint exit 0. Receipt inspection
+found Vitest truncated the four config-case names to one identity. The follow-up change
+registers the same table with literal titles (same assertions/count), so method-scoped Mutation
+can distinguish them. CP-2/CP-3/CP-4 requalify that test-source change; this is not repeat proof.
