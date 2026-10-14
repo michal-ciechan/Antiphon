@@ -50,7 +50,7 @@ internal sealed class SystemProcessHandleFactory : IProcessHandleFactory
     }
 }
 
-public sealed class ProcessDriver : IDriver
+public sealed class ProcessDriver : IConfinedDriver
 {
     private readonly IProcessHandleFactory _factory;
     private readonly System.Collections.Concurrent.ConcurrentDictionary<IProcessHandle, byte> _running = new();
@@ -59,22 +59,31 @@ public sealed class ProcessDriver : IDriver
 
     public string? DotnetShim { get; init; }
 
+    public BuildConfinement.LedgerCapture CaptureLedger(DriverRequest request) =>
+        Confines(request)
+            ? BuildConfinement.CaptureLedger(WorkingDirectoryOf(request), request.Arguments)
+            : BuildConfinement.LedgerCapture.None;
+
+    private bool Confines(DriverRequest request) =>
+        string.IsNullOrWhiteSpace(DotnetShim)
+        && request.FileName.Equals("dotnet", StringComparison.OrdinalIgnoreCase)
+        && request.Arguments.Count > 0
+        && request.Arguments[0].Equals("build", StringComparison.OrdinalIgnoreCase);
+
+    private static string WorkingDirectoryOf(DriverRequest request) =>
+        string.IsNullOrWhiteSpace(request.WorkingDirectory) ? Environment.CurrentDirectory : request.WorkingDirectory;
+
     public async Task<DriverResult> RunAsync(DriverRequest request, CancellationToken cancellationToken)
     {
         var arguments = request.Arguments;
         BuildConfinement.Baseline? baseline = null;
-        var workingDirectory = string.IsNullOrWhiteSpace(request.WorkingDirectory)
-            ? Environment.CurrentDirectory
-            : request.WorkingDirectory;
-        if (string.IsNullOrWhiteSpace(DotnetShim)
-            && request.FileName.Equals("dotnet", StringComparison.OrdinalIgnoreCase)
-            && request.Arguments.Count > 0
-            && request.Arguments[0].Equals("build", StringComparison.OrdinalIgnoreCase))
+        var workingDirectory = WorkingDirectoryOf(request);
+        if (Confines(request))
         {
-            var confined = BuildConfinement.Prepare(workingDirectory, request.Arguments, request.Environment, cancellationToken);
+            var confined = BuildConfinement.Prepare(workingDirectory, request.Arguments, request.Environment, cancellationToken, request.Ledger);
             if (confined.Refusal is not null)
             {
-                AppendLog(request, confined.Detail);
+                AppendLog(request.LogPath, confined.Detail);
                 var code = ExitCodes.Invalid;
                 return new DriverResult(code, "", confined.Detail);
             }
@@ -181,14 +190,14 @@ public sealed class ProcessDriver : IDriver
         return new DriverResult(processExit, stdout.ToString(), stderr.ToString());
     }
 
-    private static void AppendLog(DriverRequest request, string text)
+    internal static void AppendLog(string? logPath, string text)
     {
-        if (string.IsNullOrWhiteSpace(request.LogPath) || string.IsNullOrEmpty(text))
+        if (string.IsNullOrWhiteSpace(logPath) || string.IsNullOrEmpty(text))
             return;
         try
         {
-            var logDirectory = Path.GetDirectoryName(Path.GetFullPath(request.LogPath))!;
-            var reason = SafeWrite.OpenAppend(request.LogPath, SafeWrite.Under(logDirectory), out var stream);
+            var logDirectory = Path.GetDirectoryName(Path.GetFullPath(logPath))!;
+            var reason = SafeWrite.OpenAppend(logPath, SafeWrite.Under(logDirectory), out var stream);
             if (reason is not null || stream is null)
                 return;
             using var writer = new StreamWriter(stream) { AutoFlush = true };
