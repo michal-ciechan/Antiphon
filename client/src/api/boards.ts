@@ -55,6 +55,8 @@ export interface BoardColumnDto {
 export type CardVerificationPolicy = 'FullOnly' | 'AllowInterim'
 
 export interface CardDto {
+  openBlockerCount?: number
+  blockers?: CardBlockerSummaryDto[]
   cardFileVisibility?: CardFileVisibility
   codeVerificationPolicy?: CardVerificationPolicy
   reviewVerificationPolicy?: CardVerificationPolicy
@@ -145,7 +147,54 @@ export interface ExternalIssueDto {
  * What a history entry records. Lockstep with `server/Domain/Enums/CardRevisionKind.cs`; the API
  * serializes enums as strings.
  */
-export type CardRevisionKind = 'ContentEdit' | 'Move' | 'Archive' | 'Unarchive' | 'Reopen' | 'Reorder'
+export type CardRevisionKind = 'ContentEdit' | 'Move' | 'Archive' | 'Unarchive' | 'Reopen' | 'Reorder' | 'RelationshipAdded' | 'RelationshipRemoved'
+
+export type CardRelationshipKind = 'BlockedBy'
+
+export interface CardBlockerSummaryDto {
+  identifier: string
+  status: CardStatus
+  resolved: boolean
+}
+
+/** Related fields describe the OTHER card in both the blockedBy and inverse blocks lists. */
+export interface CardRelationshipDto {
+  id: string
+  kind: CardRelationshipKind
+  cardId: string
+  relatedCardId: string
+  relatedIdentifier: string
+  relatedTitle: string
+  relatedBoardId: string
+  relatedStatus: CardStatus
+  relatedArchivedAt: string | null
+  resolved: boolean
+  reason: string | null
+  createdBy: string | null
+  createdAt: string
+  /** Only the add response carries the blocked card's rotated token. */
+  cardConcurrencyToken?: string
+}
+
+export interface CardRelationshipsDto {
+  blockedBy: CardRelationshipDto[]
+  blocks: CardRelationshipDto[]
+}
+
+export interface AddCardRelationshipRequest {
+  concurrencyToken: string
+  relatedCard: string | null
+  kind: string | null
+  relatedBoardId?: string | null
+  reason?: string | null
+  createdBy?: string | null
+}
+
+export interface RemoveCardRelationshipRequest {
+  concurrencyToken: string
+  reason?: string | null
+  removedBy?: string | null
+}
 
 /**
  * One entry of a card's immutable history. `revisionNumber` is a single monotonic sequence across
@@ -158,6 +207,9 @@ export type CardRevisionKind = 'ContentEdit' | 'Move' | 'Archive' | 'Unarchive' 
  * only their reason.
  */
 export interface CardRevisionDto {
+  relatedCardId?: string
+  relatedCardIdentifier?: string
+  relationshipKind?: CardRelationshipKind
   cardFileVisibility?: CardFileVisibility | null
   hasPrivateNotes?: boolean | null
   id: string
@@ -517,6 +569,8 @@ export const boardKeys = {
   cardDiff: (cardId: string) => ['cards', cardId, 'diff'] as const,
   cardRevisions: (cardId: string) => ['cards', cardId, 'revisions'] as const,
   cardDiscussion: (cardId: string) => ['cards', cardId, 'discussion'] as const,
+  // CardChanged invalidates all boards: a change to EITHER end can resolve a relationship.
+  cardRelationships: (cardId: string) => ['boards', 'relationships', cardId] as const,
 }
 
 export function useBoards() {
@@ -810,6 +864,43 @@ export function useCardRevisions(cardId: string | undefined, enabled = true) {
     queryKey: cardId ? boardKeys.cardRevisions(cardId) : ['cards', 'missing', 'revisions'],
     queryFn: () => apiGet<CardRevisionDto[]>(`/cards/${cardId}/revisions`),
     enabled: !!cardId && enabled,
+  })
+}
+
+export function useCardRelationships(cardId: string) {
+  return useQuery({
+    queryKey: boardKeys.cardRelationships(cardId),
+    queryFn: () => apiGet<CardRelationshipsDto>(`/cards/${cardId}/relationships`),
+  })
+}
+
+export function useAddBlocker(boardId: string, cardId: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (request: AddCardRelationshipRequest) =>
+      apiPost<CardRelationshipDto>(`/cards/${cardId}/relationships`, request),
+    onSuccess: (relationship) => {
+      const concurrencyToken = relationship.cardConcurrencyToken
+      if (concurrencyToken) {
+        queryClient.setQueryData<CardDto>(boardKeys.card(cardId), (card) => card
+          ? { ...card, concurrencyToken }
+          : card)
+      }
+      // The boards prefix also invalidates relationships, including a cached inverse view.
+      invalidateAfterCardWrite(queryClient, boardId, cardId)
+    },
+  })
+}
+
+export function useRemoveBlocker(boardId: string, cardId: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ relationshipId, request }: { relationshipId: string; request: RemoveCardRelationshipRequest }) =>
+      apiPost<CardDto>(`/cards/${cardId}/relationships/${relationshipId}/remove`, request),
+    onSuccess: (card) => {
+      queryClient.setQueryData(boardKeys.card(cardId), card)
+      invalidateAfterCardWrite(queryClient, boardId, cardId)
+    },
   })
 }
 

@@ -67,6 +67,8 @@ const KIND_LABEL: Record<CardRevisionDto['kind'], string> = {
   Unarchive: 'Unarchived',
   Reopen: 'Reopened',
   Reorder: 'Reordered',
+  RelationshipAdded: 'Blocked by added',
+  RelationshipRemoved: 'Blocked by removed',
 }
 
 const KIND_COLOR: Record<CardRevisionDto['kind'], string> = {
@@ -76,6 +78,8 @@ const KIND_COLOR: Record<CardRevisionDto['kind'], string> = {
   Unarchive: 'green',
   Reopen: 'orange',
   Reorder: 'blue',
+  RelationshipAdded: 'red',
+  RelationshipRemoved: 'green',
 }
 
 function RevisionRow({ cardId, revision, columns }: { cardId: string; revision: CardRevisionDto; columns: BoardColumnDto[] }) {
@@ -88,6 +92,11 @@ function RevisionRow({ cardId, revision, columns }: { cardId: string; revision: 
         {(revision.kind === 'Move' || revision.kind === 'Reopen') && (
           <Text size="sm" fw={600}>
             {describeMove(revision, columns)}
+          </Text>
+        )}
+        {(revision.kind === 'RelationshipAdded' || revision.kind === 'RelationshipRemoved') && (
+          <Text size="sm" fw={600}>
+            {`-> ${revision.relatedCardIdentifier ?? revision.relatedCardId ?? 'Deleted card'}`}
           </Text>
         )}
         <Text size="xs" c="dimmed" ml="auto" title={revision.createdAt}>

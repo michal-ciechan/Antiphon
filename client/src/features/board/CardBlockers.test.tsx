@@ -30,6 +30,7 @@ function renderPanel(value = card) {
   server.use(
     http.get('/api/cards/card-1', () => HttpResponse.json(value)),
     http.get('/api/cards/card-1/discussion', () => HttpResponse.json([])),
+    http.get('/api/schedules', () => HttpResponse.json({ schedules: [], total: 0 })),
     http.get('/api/agents/definitions', () => HttpResponse.json({ defaultDefinition: 'claude', definitions: [] })),
   )
   return renderWithProviders(<CardModal boardId="board-1" card={value} opened onClose={() => undefined} />)
