@@ -68,7 +68,7 @@ Those are deployment-address facts, not a project dependency list. Before any wr
 |---|---|
 | default or `-WhatIf` | Read local Dockerfile and remote build projection, validate the archive manifest, and print intended source entries. No SCP, remote extraction, build, recreate, or real-message check. |
 | `-Deploy` | Required explicit opt-in for every remote write. Combine with PowerShell `-Confirm` for an interactive deployment; a Deploy-role brief must state that production deployment is authorized before using it non-interactively. |
-| `-SkipRealTrafficCheck` | Explicitly records that the operator must perform the existing test-group round trip after technical verification. It does not make a live Family-group test legal. |
+| `-SkipRealTrafficCheck` | Records that the manual, operator-initiated Family round-trip check remains pending after technical verification. Family is a real family group; its binding is configured in the channel settings. An agent must not send test traffic there on its own (CARD-1243, 2026-10-14). |
 | `-TimeoutSec` | Bounds polling for the recreated service and HTTP endpoint; do not widen an SSH/build failure into a blind wait. |
 
 Use `[CmdletBinding(SupportsShouldProcess, ConfirmImpact='High')]`. `-Deploy` plus `ShouldProcess` makes the externally visible operation obvious in both an interactive session and a stored Deploy brief. The final line is always one of:
@@ -159,4 +159,3 @@ CARD-0270 is scoped to `am-service` now. The school-revision server2 compose rep
 - No attempt to move remote Compose secrets, `.env`, or server configuration into this repository.
 - No generic SSH execution framework, arbitrary-target parameters, automatic rollback, or automatic real-message test.
 - No manually maintained project/file list anywhere in the new recipe or its operator docs.
-
