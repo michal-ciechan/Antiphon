@@ -11,7 +11,18 @@ public sealed record OrchestratorInstructionsSnapshot(
     IReadOnlyList<HoldInstructionRow> Holds,
     IReadOnlyList<PinInstructionRow> Pins,
     IReadOnlyList<LevelInstructionRow> Levels,
-    IReadOnlyList<string> StandingLines);
+    IReadOnlyList<string> StandingLines,
+    MatrixSection? Matrix = null,
+    IReadOnlyDictionary<string, string>? ReadFailures = null)
+{
+    public string? UnknownSection(string section) =>
+        ReadFailures?.TryGetValue(section, out var reason) == true ? $"unknown ({reason})" : null;
+}
+
+public sealed record MatrixSection(string DefaultComplexity, IReadOnlyList<MatrixInstructionRow> Rows);
+
+public sealed record MatrixInstructionRow(
+    string Role, string Hard, string Medium, string Easy, string Effective, string Source);
 
 public sealed record PipelineCapsSection(
     int EffectiveMaxConcurrentTasks,

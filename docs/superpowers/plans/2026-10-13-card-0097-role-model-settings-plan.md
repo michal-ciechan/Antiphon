@@ -74,7 +74,7 @@ effective next-create target, an operator pin editor over the existing API, and 
 | `Kind` change is "a config edit and a restart" (CARD-0084) | True for `RolePolicy.Kind`; a pin carries a kind live | `RoutingPinDtos.cs:19`, `:31` |
 | CARD-0090's UI "likely the same screen" | Confirmed: the Routing tab hosts the matrix and the pin banners | `RoutingSettingsTab.tsx:285-405` |
 | CARD-0092/0094/0095/0096 are a candidate shared home | All four are Done; the Orchestrator page is tabs; Settings → Routing is the home that exists | `card.ps1 get` status lines; `OrchestratorPage.tsx:49-115` |
-| Open question: does a change apply live or need a restart? | Decided by CARD-0305: "Routing pins beat RolePolicy … RolePolicy remains the provenance-less fallback when no pin exists" | `docs/orchestration-loop.md:862-866` |
+| Open question: does a change apply live or need a restart? | CARD-0305 established live pins; the matrix follow-up extends live role routing | `docs/orchestration-loop.md`, "The matrix governs an ordinary Worker dispatch; a pin is the exception" |
 | A read-only view "already answers most of what the user asked" | Agents have it (instructions table); operators see pins but not defaults, ladder, timeout or alias | §1.1 rows 2, 4 |
 | The data is "just invisible" | Worse in one place: the client shows a wrong value (Mutation `Frontier` vs `Low`) | `agentTasks.ts:697` vs `DelegationSettings.cs:356` |
 
@@ -140,7 +140,7 @@ effective next-create target, an operator pin editor over the existing API, and 
   `routing_pin_stale` is **out of scope** (it changes the script and the orchestrator's writes); file it as a
   follow-up card if O-3 is wanted.
 - **D-7 `RolePolicy` stays config-only.** Level, Kind, EscalateTo and TimeoutMinutes are displayed, not edited.
-  Reasons: pins are the designed live layer for kind/level ("Routing pins beat RolePolicy", `orchestration-loop.md:862`);
+  Original rationale: pins supplied the live layer for kind/level (current owner: "The matrix governs an ordinary Worker dispatch; a pin is the exception", `orchestration-loop.md`);
   a second live layer for the same axis gives two precedence-fighting write surfaces; EscalateTo and Timeout are
   operational knobs with their own history (`DelegationSettings.cs:1052-1105`). Rejected: a DB-backed RolePolicy
   override table modelled on CARD-0505 (that was justified because in-flight had no live layer; kind/level has one).

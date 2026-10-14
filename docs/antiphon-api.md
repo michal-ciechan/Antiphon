@@ -539,8 +539,8 @@ is 422 `worktree_base_source_invalid`. Detail records `worktreeBaseRequestedRef`
 > `disabledUntil`, `source`, and `available`. `ignoreModelDisabled: true` on **create only** queues
 > the task; the dispatcher still skips it until the hold clears. Start never honours the flag.
 > When a Required routing pin ends in this 409, the detail adds a coda that the list does not
-> satisfy the pin — do not silently pick from `available`. Routing: see **Routing pins beat
-> RolePolicy** in [orchestration-loop.md](orchestration-loop.md#2-tiers).
+> satisfy the pin — do not silently pick from `available`. Routing: see **The matrix governs an ordinary Worker dispatch; a pin is the exception** in
+> [orchestration-loop.md](orchestration-loop.md#2-tiers).
 >
 > Create may also send **`complexity`** (`Hard`/`Medium`/`Easy`) and **`refuseIfExhausted`**
 > (CARD-0090 / CARD-0332). Combined with explicit `agentKind`/`modelLevel` or with `ignoreModelDisabled` is
@@ -682,7 +682,7 @@ CARD-0322: `PUT` accepts `candidates: [{agentKind, modelLevel}, …]` (1..8, mut
 with the `agentKind`/`modelLevel` shorthand). `GET` returns `candidates[]` with
 `availableNow`/`unavailableReason` plus `candidateCount`; `agentKind`/`modelLevel`/`modelAlias`
 remain the **head**. A kind/level 409 `routing_pin_conflict` lists every candidate; the `routingPin`
-extension carries `candidateCount`. Routing: see **Routing pins beat RolePolicy** in
+extension carries `candidateCount`. Routing: see **The matrix governs an ordinary Worker dispatch; a pin is the exception** in
 [orchestration-loop.md](orchestration-loop.md#2-tiers).
 
 ```
@@ -701,6 +701,12 @@ the effective target is null for an undefined kind (the two `kind` null rows bel
 configured kind and an undefined level has the same `kind` null, `alias` `""` and null target (case
 `policy-level-999`), so `alias` and `effective` do not identify the cause. Pin routes: the `/api/routing-pins` block above.
 Configuration validation and create refusals for such values (CARD-1234): the last rows of the table.
+
+The Role policy section's `Effective next create` column and the delegate modal's tier preview
+read this pin-or-policy projection, which does not read matrix cells. They can disagree with an
+ordinary Worker dispatch when a default-tier row resolves and a Required pin does not bypass it.
+CARD-1250 owns the preview rework. The tests below bind this DTO; preview agreement with matrix
+dispatch is not covered by a test.
 
 | Behaviour | Test (runner, file) | What it asserts |
 |---|---|---|
@@ -726,11 +732,11 @@ Configuration validation and create refusals for such values (CARD-1234): the la
 
 ```
 GET    /api/complexity-chains                          any-role ×3 first (Hard/Medium/Easy), then every
-                                                       active role cell; + roles[], complexities[]. Each
+                                                       active role cell; + roles[], complexities[], defaultComplexity. Each
                                                        entry carries role (null = any) and resolvedFrom
                                                        (role | any | config | none).
 GET    /api/complexity-chains?role=Plan                the three EFFECTIVE Plan cells, each with
-                                                       resolvedFrom
+                                                       resolvedFrom and effective
 PUT    /api/complexity-chains/{role}/{complexity}      upsert the cell; role = any|Plan|Code|…;
                                                        body unchanged
 DELETE /api/complexity-chains/{role}/{complexity}      clear the cell (204 if already clear)
@@ -743,6 +749,20 @@ Config defaults for chains ship **empty**. Script: `scripts/complexity-chain.ps1
 (`-Role` omitted or `Any` writes the any-role row). `delegate.ps1 -Complexity Hard|Medium|Easy`,
 `-RefuseIfExhausted`, `-Reroute <id> -Kind … -Level …`. 422 for Check/Distill/Diagnose as a cell
 role ("seat-pinned roles are not routed by chains") and for an unknown role.
+
+The role view adds `effective: { source, candidates, stagePin, governsDefault, withheldReason }`.
+Sources are `pin`, `pin+chain`, `role`, `any`, `config`, `rolePolicy` or `agent`; candidates retain
+`agentKind`, `modelLevel`, `alias`, `availableNow` and `unavailableReason`. `effective` is null on
+the unfiltered list and any-role rows. `defaultComplexity` is the configured ordinary Worker tier,
+shipped as `Medium`. A cell PUT is last-writer-wins; it takes no concurrency token.
+
+| Behaviour | Named test | What it asserts or does not cover |
+|---|---|---|
+| Role view includes the effective overlay and default complexity | `ComplexityEffectiveHttpTests.Get_role_view_carries_effective_and_default_complexity_and_card_pins_are_excluded` | Default Medium, role-view effective candidates, excluded card pins and null effective on the list view |
+| Candidate ordering reflects Required/Preferred stage pins | `ComplexityEffectiveComposeTests.A_required_pin_replaces_the_cell_and_sources_pin`, `A_preferred_pin_prepends_and_sources_pin_plus_chain` | Exact candidate arrays and `pin` / `pin+chain` sources |
+| A target can be withheld | `ComplexityEffectiveComposeTests.An_unlaunchable_policy_is_withheld_with_its_reason`; `ComplexityEffectiveHttpTests.Get_role_view_reports_an_agent_only_stage_pin_as_agent_bound` | Unsupported policy has an empty target and reason; agent-bound pin has `source: agent`, empty candidates and `governsDefault: false` |
+| A later PUT replaces the cell | `ComplexityEffectiveHttpTests.Put_twice_is_last_writer_wins_without_a_409` | Second candidates and reason returned by GET, updated timestamp and no 409 |
+| Ordinary Worker default-tier adoption | `MatrixDefaultComplexityCreateTests.A_plain_create_walks_the_role_row_at_the_default_tier`, `An_unset_row_keeps_the_role_policy_path` | Resolved Plan/Medium is stamped and walked; unset Plan uses RolePolicy |
 
 ```
 GET    /api/model-availability                         active holds + remaining aliases

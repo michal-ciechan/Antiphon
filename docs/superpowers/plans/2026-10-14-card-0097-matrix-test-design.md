@@ -654,6 +654,77 @@ stage pins shaped as the live census plus one card pin; `-OutDir` under a temp d
 **S-F — `OrchestratorInstructionsRendererTests` (U), `OrchestratorInstructionsRefreshTests` (H),
 `OrchestratorInstructionsDeltaTests` (U)**
 
+Repair of Review `09f50a7b` D3: CP-19 requires 8 methods / 10 results (Min 10);
+CP-20 requires 15 methods / 50 results (Min 50); CP-21 requires 6 results (Min 6).
+The D1/D2 rows from Review `44e2b653` remain in the selection.
+
+- V-F12 `Failed_reads_are_unknown_in_file_and_notice_then_recover` | H | 24 rows:
+  default and non-default chain, stage pin, availability, policy, chain metadata, standing
+  agent, holds, pins, runner defaults, host budget and runner catalogue faults, crossed with file and notice.
+  A real DB interceptor fails the selected read. Literal unknown reasons and default-tier
+  source transitions, revision/count stability across different exception types, and recovery
+  are checked through the persisted file, the direct delta and delivered notices. Configuration
+  defaultComplexity stays Medium. The direct delta checks avoid the notice wrapper's clipping.
+- V-F13 `Unknown_matrix_details_keep_the_byte_cap_and_matrix_first_elision` | U |
+  14 rows with three unknown tiers and unknown effective/source. Require the explicit Plan
+  diagnostic line, 160-byte line cap, UTF-8 validity and matrix-first elision at full minus one.
+  The added diagnostic line is absent at ebcee0992; the cap and elision checks are regressions.
+- V-F14 `A_long_known_value_keeps_the_unknown_transition_reason_visible` | U | a 300-character
+  effective value changes to unknown. The 120-character delta retains the reason at its end;
+  equal unknown snapshots yield an empty delta; recovery starts with the unknown-to-value text.
+- V-F10 also requires default-tier source/effective unknown in the direct delta for Medium
+  and simultaneous failures and the literal diagnostic line in the file. Source must not
+  transition to rolePolicy on failure. D3 tests are committed before implementation; their
+  first checkpoint run is an intentional red witness on ebcee0992 production code.
+The supplementary `OrchestratorInstructionsGuidanceTests` roster is 5 methods / 6 results.
+- V-F9 `A_failed_chain_read_marks_the_affected_file_cells_unknown` | H | four rows: Hard,
+  Medium, Easy, and three tiers together, with Medium the default. A DB command interceptor
+  fails the Plan chain reads. The persisted file contains the affected tier labels and
+  `unknown (chain read failed)`, its Plan line is at most 160 UTF-8 bytes, and rendering at
+  full minus one byte collapses the matrix to its route pointer. Before the fix the tier is `unset`.
+- V-F10 `A_failed_chain_read_notice_reports_unknown_and_recovery_reports_the_candidate` | H |
+  the same four fault rows. One delivered notice names the candidate-to-unknown transition;
+  an unchanged failed read leaves revision/count unchanged; recovery delivers the reverse
+  transition and rewrites the file without the unknown marker. Before the fix the notice says `unset`.
+  The fixture uses `ClaudeCode/Low (haiku)` and a short real filename `i.md` to keep the three
+  transition assertions within the unchanged 700-character notice wrapper; both notices assert
+  that cap. A long path/large delta can still clip later transitions under that existing contract.
+- V-F11 `Routing_cross_references_resolve_to_an_existing_owner_heading` | U | two document
+  rows (`antiphon-api.md`: two pointers, `ops-http.md`: one). Extract the routing `see` pointers
+  and resolve their titles against the owner's bold paragraph headings. The stale API pointer
+  fails against the renamed heading. Counts prevent a missing pointer from passing vacuously.
+
+Regeneration choice: carry explicit unknown read states through the existing notification path.
+Exception class names are diagnostic detail rather than settings facts. The existing per-line
+cap and matrix-first elision remain binding. Deliberate mutants remain SourceLanding work.
+
+D3 projection dependency audit (`OrchestratorInstructionsSnapshotBuilder`, renderer and delta):
+
+| Projected fact | Read dependency and failure representation | Witness / boundary |
+|---|---|---|
+| Hard/Medium/Easy candidate text | That tier's chain read; `unknown (chain read failed)` when unreadable. Pin/availability/metadata faults leave successfully read stored candidate names intact | V-F9, V-F10, V-F12 default/non-default rows |
+| Default-tier effective candidates and withholding reason | Stage pin, chain, metadata, standing-agent label and availability reads; normalized `unknown (<parts> read failed)` replaces fallback candidates and exception-bearing withholding text | V-F12 corresponding rows |
+| Default-tier source / pin overlay | Stage pin, chain and standing-agent reads; unknown instead of the fallback `rolePolicy`, chain or unavailable-agent label. Availability and metadata do not select the source | V-F10 Medium/simultaneous and V-F12 |
+| `defaultComplexity` | In-memory `DelegationSettings.DefaultComplexity`; independent of the injected DB reads, remains Medium | V-F12 literal file assertion |
+| DTO `stagePin` presence | Not separately copied into `MatrixInstructionRow`; the source projects the effective overlay. Section 6 reads pin definitions independently and may still observe them when the overlay read fails | V-F12 stage-pin and pin-list rows; API DTO shape is unchanged |
+| DTO `governsDefault` | Not consumed by the snapshot/differ. The configured tier marker is configuration; the effective/default-target detail becomes unknown on its read failures | V-F12 default-tier and defaultComplexity assertions; no new boolean is projected |
+| Caps, local budget, role recommendations | Effective concurrency-policy and local-budget read; the section is `unknown (policy read failed)`, with no config fallback or role-removal delta | V-F12 policy/budget; recovery checks literal MaxOpenTasks 6 and local budget 2 |
+| Runner facts | Catalogue, occupancy query and per-host budget reads; section unknown. A catalogue DTO's `catalogue_read_failed` sentinel also becomes section unknown | V-F12 runner catalogue query and budget; remote sentinel recognized by reading, not separately injected |
+| Runner defaults | Settings/revision/kind-default reads; section unknown | V-F12 defaults |
+| Held models | Active-hold listing; section unknown rather than none | V-F12 holds |
+| Routing pin definitions, card identifiers and board labels | Pin listing and card/board join; section unknown rather than none or removed | V-F12 pin listing; card/board-join failure uses the same section boundary but is not separately injected |
+| Model levels and standing instructions | In-memory aliases/settings, no asynchronous store read | Existing renderer roster; no artificial read-fault claim |
+
+Whole-section recovery emits one bounded summary of the freshly observed values. Matrix recovery
+diffs the normalized field values. Unknown-to-unknown with the same reason emits no delta;
+V-F12 observes the persisted revision and delivered count across different exception types.
+Unexpected outer matrix exceptions use the section boundary; the injected matrix faults exercise
+the per-part path. Cancellation propagates by reading the catch filters; it is not a new test row.
+Long instruction paths or many simultaneous changes can still clip later notice lines under the
+700-character wrapper. Tier lines can elide later tiers; the added effective/source detail lines
+retain default-target unknown facts. V-F13 also covers five combined read reasons and the
+candidate summarizer's comma boundary.
+
 - V-F1 `Sections_render_caps_runners_defaults_holds_pins_levels_and_standing_lines` (edited with reason: the matrix
   section renumbers 5–7 to 6–8) | U | `Sample()` gains `Matrix: new MatrixSection("Medium", [new
   MatrixInstructionRow("Plan", Hard: "Codex/Frontier (gpt-6-astra)", Medium: "…", Easy: "unset", Effective:
@@ -940,8 +1011,10 @@ the receipt recipes and plan PC table. None has been run; execute these controls
   left to a human is the operator's dry run, `-Apply`, read-back and `routing-pin.ps1 clear` after §7 of the plan; the
   Code report for S-E may paste a dry run against the local stack as supplementary evidence, not as the verification
   of V-E1–V-E6.
-- M-1 docs: `grep -n "Routing pins beat RolePolicy\|read-only for pins\|does not govern" docs/orchestration-loop.md`
-  returns the rewritten lines; `docs/antiphon-api.md` names `effective`, `defaultComplexity`, `withheldReason`,
+- M-1 docs: scan docs, skills, bundles and tests with
+  `rg -n -U -i "routing pins beat[[:space:]>]+rolepolicy|routing-pins-beat-rolepolicy" docs .claude server/Bundles tests`.
+  No obsolete title/anchor references should remain; V-F11 resolves the specific routing pointers. Inspect
+  `read-only for pins` / `does not govern` in `docs/orchestration-loop.md`; `docs/antiphon-api.md` names `effective`, `defaultComplexity`, `withheldReason`,
   last-writer-wins and, on the `/api/role-policy` block, the D-6 limitation sentence; `docs/ops-http.md:139` carries
   the same sentence; `.claude/skills/antiphon-delegate/SKILL.md:147` names the default tier with the ordinary-Worker
   qualification.
