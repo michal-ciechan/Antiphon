@@ -10,6 +10,7 @@ using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Npgsql;
 using Shouldly;
 using TUnit.Core;
 
@@ -513,6 +514,80 @@ public class CardRelationshipApiTests
         var fenced = (await response.Content.ReadFromJsonAsync<CardRelationshipDto>(Json))!;
         fenced.RelatedCardId.ShouldBe(board2Card.Id);
         fenced.RelatedBoardId.ShouldBe(board2.Id);
+    }
+
+    /// <summary>
+    /// F1 of Review 3501caaa. Each card of a ring of <paramref name="ringSize"/> is blocked by the
+    /// next one, every add sent at once. A test transaction holds every ring card's row lock, so an
+    /// add that has finished its cycle walk waits at its save. The test releases the rows only when
+    /// every add waits on the holder, directly or through another waiting add: without a graph lock
+    /// all of them wait at the save having seen no path, and all commit a ring.
+    /// </summary>
+    [Test]
+    [Arguments(2)]
+    [Arguments(3)]
+    public async Task Concurrent_adds_closing_a_ring_commit_all_but_one_and_refuse_one_as_a_cycle(int ringSize)
+    {
+        var board = await SeedBoardAsync("c100 concurrent ring " + ringSize);
+        var cards = new List<CardDto>();
+        for (var i = 0; i < ringSize; i++)
+            cards.Add(await CreateCardAsync(board.Id, "ring " + i));
+        var ids = cards.Select(c => c.Id).ToArray();
+        using var client = _factory.CreateClient();
+
+        using var holderScope = _factory.Services.CreateScope();
+        var holder = holderScope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var hold = await holder.Database.BeginTransactionAsync();
+        await holder.Database.ExecuteSqlInterpolatedAsync(
+            $"SELECT 1 FROM \"Cards\" WHERE \"Id\" = ANY({ids}) FOR UPDATE");
+        var holderPid = ((NpgsqlConnection)holder.Database.GetDbConnection()).ProcessID;
+
+        var adds = cards.Select((c, i) => PostAddAsync(client, c.Id, new
+        {
+            concurrencyToken = c.ConcurrencyToken,
+            relatedCard = cards[(i + 1) % ringSize].Identifier,
+            kind = "BlockedBy",
+        })).ToArray();
+        HttpResponseMessage[] responses;
+        try
+        {
+            using var probeScope = _factory.Services.CreateScope();
+            var probe = probeScope.ServiceProvider.GetRequiredService<AppDbContext>();
+            await probe.Database.OpenConnectionAsync();
+            await using var waiting = new NpgsqlCommand("""
+                WITH RECURSIVE w AS (
+                    SELECT pid, pg_blocking_pids(pid) AS b FROM pg_stat_activity WHERE wait_event_type = 'Lock'),
+                t(pid) AS (
+                    SELECT pid FROM w WHERE @holder = ANY(b)
+                    UNION SELECT w.pid FROM w JOIN t ON t.pid = ANY(w.b))
+                SELECT count(*) FROM t
+                """, (NpgsqlConnection)probe.Database.GetDbConnection());
+            waiting.Parameters.AddWithValue("holder", holderPid);
+            using var limit = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+            while ((long)(await waiting.ExecuteScalarAsync(limit.Token))! < ringSize)
+            {
+                if (adds.FirstOrDefault(a => a.IsCompleted) is { } early)
+                    throw new InvalidOperationException(
+                        $"An add finished while the ring rows were held: {(int)(await early).StatusCode}.");
+                await Task.Delay(5, limit.Token);
+            }
+        }
+        finally
+        {
+            await hold.RollbackAsync();
+            await hold.DisposeAsync();
+            responses = await Task.WhenAll(adds);
+        }
+
+        using var verifyScope = _factory.Services.CreateScope();
+        var db = verifyScope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var persisted = await db.CardRelationships.AsNoTracking()
+            .CountAsync(r => ids.Contains(r.CardId) && ids.Contains(r.RelatedCardId));
+        var statuses = responses.Select(r => r.StatusCode).ToList();
+        statuses.Count(s => s == HttpStatusCode.Created).ShouldBe(ringSize - 1, string.Join(", ", statuses));
+        persisted.ShouldBe(ringSize - 1);
+        var refused = responses.Single(r => r.StatusCode == HttpStatusCode.Conflict);
+        (await Problem(refused)).GetProperty("code").GetString().ShouldBe(CardService.CardRelationshipCycleCode);
     }
 
     private async Task<BoardDetailDto> SeedBoardAsync(string name, bool withCanceledColumn = false)
