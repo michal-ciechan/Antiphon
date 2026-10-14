@@ -193,6 +193,20 @@ GET    /api/projects/setup-catalog                  ProjectSetupCatalogDto
 POST   /api/projects/setup                          ProjectSetupResultDto
 ```
 
+Board deletion and project deletion with `force=true` return 409
+`project_delete_blocked_by_expectation_hold` when an audit nudge selected for deletion
+is Attempting, Uncertain or Unconfirmed. The detail identifies the destination sessions
+and their `POST /api/sessions/{id}/expectation-hold/release` routes. The check precedes
+cascade updates and deletes inside the caller transaction. Operator release requires
+`X-Antiphon-Operator-Token` and a reason; inspect and clear the composer before releasing.
+The guard uses the composer gate's holding-state predicate; it conservatively blocks
+those stored states even if transient screen evidence would let the queue proceed.
+
+| Behaviour | Named test (ProjectCascadeForeignKeyTests) | What it asserts |
+|---|---|---|
+| Holding audit refuses board/project deletion | Holding_nudge_refuses_delete_preserves_composer_and_allows_audited_release | Three holding states return 409 with the release route before SQL writes; rows and queue hold survive; audited release permits deletion |
+| Non-holding audit permits deletion | Nonholding_nudge_allows_delete_while_another_board_hold_survives | None, Confirmed, Refused, Submitted and Released delete successfully; an unrelated board's nudge and composer hold survive |
+
 Card list and search use `limit` as a positive page size (default and ceiling
 `max(1, Cards:MaxListResults)`, normally 500); zero/negative is 422 on `limit`.
 Search trims `q`, requires 1–500 characters, and treats `%`, `_` and backslash

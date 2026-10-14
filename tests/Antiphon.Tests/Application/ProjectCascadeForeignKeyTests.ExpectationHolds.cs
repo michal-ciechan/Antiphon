@@ -1,3 +1,4 @@
+using System.Data.Common;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -15,6 +16,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -47,10 +49,12 @@ public partial class ProjectCascadeForeignKeyTests
             .SetProperty(n => n.AttemptState, state).SetProperty(n => n.DestinationGeneration, generation));
         f.Harness.Adapter.PrimeComposer("Keep the audit evidence until its card is deleted.");
         await AssertComposerHeldAsync(f);
-        await using var host = await DeleteHost.StartAsync(f);
+        var writes = new CascadeWrites();
+        await using var host = await DeleteHost.StartAsync(f, writes);
 
         using var response = await host.Client.DeleteAsync(DeleteRoute(graph.Doomed, projectDelete));
         response.StatusCode.ShouldBe(HttpStatusCode.Conflict, await response.Content.ReadAsStringAsync());
+        writes.Commands.ShouldBeEmpty("the refusal precedes updates/deletes, rather than relying on rollback");
         using var problem = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         problem.RootElement.GetProperty("code").GetString().ShouldBe("project_delete_blocked_by_expectation_hold");
         problem.RootElement.GetProperty("detail").GetString().ShouldContain(
@@ -153,7 +157,7 @@ public partial class ProjectCascadeForeignKeyTests
         public HttpClient Client { get; } = app.GetTestClient();
         public void Authorize(HttpRequestMessage request) => request.Headers.Add(OperatorTokenFile.Header, token);
 
-        public static async Task<DeleteHost> StartAsync(ExpectationDeliveryFixture f)
+        public static async Task<DeleteHost> StartAsync(ExpectationDeliveryFixture f, params IInterceptor[] interceptors)
         {
             var directory = Path.Combine(Path.GetTempPath(), "antiphon-c1253-" + Guid.NewGuid().ToString("N"));
             var tokenPath = Path.Combine(directory, "operator-token");
@@ -162,7 +166,7 @@ public partial class ProjectCascadeForeignKeyTests
             builder.Logging.ClearProviders();
             builder.Services.Configure<PhoneHomeRunnerSettings>(o => o.OperatorTokenPath = tokenPath);
             builder.Services.AddSingleton(f.Harness.Queue);
-            builder.Services.AddScoped(_ => f.Db());
+            builder.Services.AddScoped(_ => CreateContext(f.Schema, interceptors));
             builder.Services.AddScoped(sp => new BoardService(sp.GetRequiredService<Antiphon.Server.Infrastructure.Data.AppDbContext>(),
                 new MockEventBus(), TimeProvider.System));
             builder.Services.AddScoped(sp => new ProjectService(sp.GetRequiredService<Antiphon.Server.Infrastructure.Data.AppDbContext>(),
@@ -189,6 +193,18 @@ public partial class ProjectCascadeForeignKeyTests
             await app.StopAsync();
             await app.DisposeAsync();
             Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    private sealed class CascadeWrites : DbCommandInterceptor
+    {
+        public List<string> Commands { get; } = [];
+
+        public override ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(DbCommand command,
+            CommandEventData eventData, InterceptionResult<int> result, CancellationToken cancellationToken = default)
+        {
+            Commands.Add(command.CommandText);
+            return base.NonQueryExecutingAsync(command, eventData, result, cancellationToken);
         }
     }
 }
