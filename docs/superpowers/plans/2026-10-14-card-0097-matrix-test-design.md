@@ -516,8 +516,8 @@ stub returning an empty list and a `PolicyTarget` returning a resolution with nu
   including the row whose response still carries a policy candidate.
 - V-C4's `policy-read-failure` and `empty-read-failure` rows, plus
   `default-policy-read-failure`, expect `Effective routing unknown` and
-  `Stored cell: unknown (read failed)` with no policy target. The non-default availability,
-  stage-pin-read and unsupported-policy rows expect `Unset — a -Complexity Easy dispatch blocks`;
+  `Stored cell: unknown (read failed)` with no policy target. The non-default availability
+  and unsupported-policy rows expect `Unset — a -Complexity Easy dispatch blocks`;
   their diagnostics stay in the alert. The pin/standing-agent chain-read-failure rows retain
   the known binding and assert unknown stored cells. These are literal table expectations.
 - V-C5 adds `old-server-keeps-the-legacy-boundary`: list and role responses omit
@@ -525,6 +525,23 @@ stub returning an empty list and a `PolicyTarget` returning a resolution with nu
   and stored-cell labels/candidates remain visible. The original V-C5 checks the advertised default.
 - The Required pin copy refers to its active lifetime, including expiry; the existing banner
   case asserts that sentence. CP-16 remains the same three-file selection (74 results after repair).
+
+#### S-C1 D3 repair amendment (Final Review 792ca57b)
+
+- V-C1 adds default/non-default stage-pin-read failures, an empty policy target and a failure
+  appended after the unsupported-policy diagnostic. Their literal verdict is `Effective routing unknown`.
+  The negative free-text-marker row retains the literal RolePolicy target.
+- The wire marker comes from `ComplexityChainService.ReadPartAsync`: `stage pin read failed (`
+  begins a diagnostic segment; `GetEffectiveAsync` joins segments with `; `. Match that exact
+  prefix at a segment boundary, including after a policy diagnostic, rather than arbitrary text.
+- V-C4 changes `non-default-pin-read-failure` and adds default-tier and empty-default-target
+  rows: `Effective routing unknown`, `Stored cell: unset`, diagnostic alert, no policy target
+  and no dispatch-blocks label. Four more rows cross default/non-default with separately read
+  Required/Preferred pin banners; they retain the same unknown verdict and the literal banner.
+  Existing chain-read rows retain their unknown stored-cell assertion.
+- CP-16 remains the three-file selection with 85 expected results (74 + 11). Run tests first
+  on the unchanged implementation, then run the repaired selection and CP-23. No S-C1 manual
+  acceptance is named. PC-24 through PC-26 remain pending for SourceLanding Mutation.
 
 **S-C2 (optional) — `ComplexityChainRowEditor.test.tsx` (E), `client/src/api/routingPins.test.ts` (E),
 `routingSettingsModel.test.ts` (M)**
