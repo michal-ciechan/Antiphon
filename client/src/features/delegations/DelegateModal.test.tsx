@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { renderWithProviders, screen, userEvent, waitFor } from '../../test/utils'
 import { server } from '../../test/mocks/server'
 import { ROLE_POLICY_FIXTURE } from '../../test/mocks/handlers'
-import type { RoutingPinDto } from '../../api/routingPins'
+import type { RoutingPinCandidateDto, RoutingPinDto } from '../../api/routingPins'
 import type { RolePolicyRowDto } from '../../api/rolePolicy'
 import { DelegateModal } from './DelegateModal'
 
@@ -351,7 +351,7 @@ describe('DelegateModal', () => {
     expect(screen.queryByTestId('tier-Frontier')).not.toBeInTheDocument()
   })
 
-  it('C097 V18 route-failure-falls-back-to-constant', async () => {
+  it('C097 V18 route-failure-discloses-unknown', async () => {
     server.use(http.get('/api/role-policy', () => new HttpResponse(null, { status: 500 })))
     renderWithProviders(<DelegateModal opened onClose={() => {}} />)
 
@@ -480,11 +480,11 @@ describe('DelegateModal', () => {
   })
 })
 
-function candidate(agentKind: string, modelLevel: string, alias: string) {
+function candidate(agentKind: RoutingPinCandidateDto['agentKind'], modelLevel: RoutingPinCandidateDto['modelLevel'], alias: string): RoutingPinCandidateDto {
   return { agentKind, modelLevel, alias, availableNow: true, unavailableReason: null }
 }
 
-function held(agentKind: string, modelLevel: string, alias: string) {
+function held(agentKind: RoutingPinCandidateDto['agentKind'], modelLevel: RoutingPinCandidateDto['modelLevel'], alias: string): RoutingPinCandidateDto {
   return { agentKind, modelLevel, alias, availableNow: false, unavailableReason: 'held (manual)' }
 }
 
@@ -535,9 +535,9 @@ function runnerRow(id: string, platform: string | null, displayName = id) {
   }
 }
 
-function previewPin(candidates: ReturnType<typeof candidate>[]): RoutingPinDto {
+function previewPin(candidates: RoutingPinCandidateDto[]): RoutingPinDto {
   return { id: 'preview-pin', cardId: null, cardIdentifier: null, role: 'Code', provenance: 'Human', strength: 'Required',
     agentKind: null, modelLevel: null, modelAlias: null, agentId: null, forbiddenAliases: [], notBefore: null, notAfter: null,
     reason: 'preview parity', sourceTaskId: null, createdAt: '2026-10-14T10:00:00Z', updatedAt: '2026-10-14T10:00:00Z',
-    candidates: candidates as RoutingPinDto['candidates'], candidateCount: candidates.length }
+    candidates, candidateCount: candidates.length }
 }
