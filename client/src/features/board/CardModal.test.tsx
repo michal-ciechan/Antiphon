@@ -84,7 +84,11 @@ function cardHandler(value: CardDto = card) {
 }
 
 beforeEach(() => {
-  server.use(cardHandler(), http.get('/api/cards/:id/relationships', () => HttpResponse.json({ blockedBy: [], blocks: [] })))
+  server.use(
+    cardHandler(),
+    http.get('/api/cards/:id/relationships', () => HttpResponse.json({ blockedBy: [], blocks: [] })),
+    http.get('/api/schedules', () => HttpResponse.json({ schedules: [] })),
+  )
 })
 
 describe('CardModal', () => {
@@ -193,6 +197,9 @@ describe('CardModal', () => {
   })
 
   it('opens the edit dialog from the header actions, prefilled', async () => {
+    // This case checks the prefilled form. Await the lazy chunk explicitly so host load during
+    // module evaluation does not spend the DOM query's budget before the form can mount.
+    await import('./CardEditModal')
     server.use(agentDefinitionsHandler(), discussionHandler())
     renderWithProviders(
       <CardModal boardId="board-1" card={card} opened onClose={() => undefined} />,
