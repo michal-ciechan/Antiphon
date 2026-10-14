@@ -16,9 +16,13 @@ namespace Antiphon.Tests.Application;
 
 /// <summary>
 /// CARD-1271: a Required forbid-only stage pin over one matrix row leaves a single, not-walked
-/// candidate, so create takes the Required-single-candidate arm (AgentTaskService "today's 409s,
-/// never Blocked"). These are the server witnesses for that arm's refusals, including the
-/// Orchestrator kind filter the arm used to skip. Isolated schema: unique chain/pin indexes.
+/// candidate. When that candidate fails a walk filter (kind, hold, pin forbid, quota), create
+/// takes the Required-single-candidate arm (AgentTaskService "today's 409s, never Blocked");
+/// when it passes them all, the walk chooses it and the arm is not entered. The refusal tests
+/// here are the server witnesses for that arm, including the Orchestrator kind filter the arm
+/// used to skip and a held ClaudeCode Orchestrator that must still get model_disabled. The one
+/// creating test is a control on the chosen branch, not on the arm. Isolated schema: unique
+/// chain/pin indexes.
 /// </summary>
 [Category("Integration")]
 public sealed class RequiredSingleCandidateRefusalTests
@@ -69,6 +73,28 @@ public sealed class RequiredSingleCandidateRefusalTests
         var task = await f.Db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id);
         task.Kind.ShouldBe(AgentTaskKind.Orchestrator);
         task.AgentKind.ShouldBe(AgentKind.ClaudeCode);
+    }
+
+    [Test]
+    public async Task An_orchestrator_with_complexity_over_one_held_claude_row_is_409_model_disabled()
+    {
+        await using var f = await Fixture.CreateAsync();
+        await f.Row(AgentTaskRole.Plan, TaskComplexity.Hard, AgentKind.ClaudeCode, AgentModelLevel.Frontier);
+        await f.ForbidOnlyPin("grok-4.7");
+        await f.Hold(AgentKind.ClaudeCode, "fable");
+
+        var ex = await Should.ThrowAsync<ModelDisabledException>(() => f.Create(new(
+            "orchestrate it",
+            Kind: AgentTaskKind.Orchestrator,
+            Role: AgentTaskRole.Plan,
+            Complexity: TaskComplexity.Hard,
+            Workspace: WorkspaceMode.Shared)));
+
+        ex.StatusCode.ShouldBe(409);
+        ex.Code.ShouldBe("model_disabled");
+        ex.Message.ShouldContain("fable");
+        ex.Message.ShouldContain("does not satisfy the pin");
+        (await f.Db.AgentTasks.CountAsync()).ShouldBe(0);
     }
 
     [Test]
