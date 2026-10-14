@@ -15,6 +15,7 @@ import { CardHistory } from './CardHistory'
 import { DiffReview } from './DiffReview'
 import { MoveMenu } from './MoveMenu'
 import { CardAxisBadges } from './CardAxisBadges'
+import { CardBlockers } from './CardBlockers'
 import { ReviewChip } from './ReviewChip'
 import { CardSchedulesList } from './CardSchedulesList'
 import { stateLabel } from './boardVisuals'
@@ -422,6 +423,7 @@ function CardDetails({ card, description }: { card: CardDto; description: string
       </Box>
 
       <CardSchedulesList cardId={card.id} />
+      <CardBlockers key={card.id} card={card} />
     </Stack>
   )
 }
