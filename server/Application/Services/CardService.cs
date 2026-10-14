@@ -1323,6 +1323,8 @@ public sealed class CardService : IScheduledCardActions
 
     public const string CardRelationshipCycleCode = "card_relationship_cycle";
     public const string CardRelationshipExistsCode = "card_relationship_exists";
+    private const string RelationshipGraphLockSql =
+        "SELECT pg_advisory_xact_lock(hashtext('antiphon.card-relationships.graph'))";
 
     /// <summary>
     /// CARD-0100. Each card's BlockedBy rows as summaries, one query for the whole set
@@ -1415,6 +1417,13 @@ public sealed class CardService : IScheduledCardActions
             throw new ConflictException(
                 $"Card '{related.Identifier}' is archived; unarchive it before naming it as a blocker.");
 
+        // One graph-wide lock, taken before the reads below and held until the insert commits, so
+        // two adds cannot each walk a graph that lacks the other's edge. Edges cross boards, so a
+        // per-board key would not serialise a cross-board ring
+        // (CardRelationshipApiTests.Concurrent_adds_closing_a_ring_commit_all_but_one_and_refuse_one_as_a_cycle).
+        await using var tx = await _db.Database.BeginTransactionAsync(ct);
+        await _db.Database.ExecuteSqlRawAsync(RelationshipGraphLockSql, ct);
+
         if (await _db.CardRelationships.AnyAsync(
                 r => r.CardId == card.Id && r.RelatedCardId == related.Id && r.Kind == kind, ct))
         {
@@ -1450,6 +1459,7 @@ public sealed class CardService : IScheduledCardActions
         card.UpdatedAt = now;
         card.ConcurrencyToken = Guid.NewGuid();
         await SaveCardWriteAsync(card, ct);
+        await tx.CommitAsync(ct);
 
         await _eventBus.PublishToAllAsync("CardChanged", new { boardId = card.BoardId, cardId = card.Id }, ct);
         return new CardRelationshipDto(
@@ -1501,8 +1511,8 @@ public sealed class CardService : IScheduledCardActions
 
     /// <summary>
     /// Breadth-first over BlockedBy edges from <paramref name="start"/>, one query per level, with a
-    /// visited set. Returns the chain <c>start .. card that is blocked by target</c> when
-    /// <paramref name="target"/> is reachable, else null
+    /// visited set. Returns the chain from <paramref name="start"/> to <paramref name="target"/>, both
+    /// included, each card blocked by the next, when <paramref name="target"/> is reachable, else null
     /// (CardRelationshipApiTests.Relationship_write_refusal_table: two_cycle, three_cycle, diamond).
     /// </summary>
     private async Task<List<Guid>?> FindBlockerPathAsync(Guid start, Guid target, CancellationToken ct)
