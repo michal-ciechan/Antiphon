@@ -44,7 +44,7 @@ public readonly record struct LedgerStat(string Kind, ulong Device, ulong Inode,
             stat.MtimeSec * 1_000_000_000 + stat.MtimeNsec, stat.CtimeSec * 1_000_000_000 + stat.CtimeNsec);
     }
 
-    private static LedgerStat Portable(string full)
+    public static LedgerStat Portable(string full)
     {
         try
         {
