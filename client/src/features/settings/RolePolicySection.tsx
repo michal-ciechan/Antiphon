@@ -1,10 +1,11 @@
 import { Group, Loader, Paper, Stack, Table, Text, Title } from '@mantine/core'
+import { useComplexityChainEffective } from '../../api/complexityChains'
 import { useRolePolicy, type RolePolicyRowDto } from '../../api/rolePolicy'
 import type { RoutingPinDto } from '../../api/routingPins'
+import { nextCreateLabel, previewNextCreate } from './nextCreatePreview'
 import {
   NO_PIN_CANDIDATE,
   defaultLabel,
-  effectiveLabel,
   escalateLabel,
   pinCandidateAvailability,
   pinCandidateLabel,
@@ -14,6 +15,7 @@ import {
 /**
  * CARD-0097. Read-only RolePolicy per role beside its active stage-wide pin. Rows and their order
  * come from GET /api/role-policy (C097 V08); a failure stays inside this paper (C097 V09).
+ * The next-create column reads each role's default-tier row as well (CARD-1250).
  */
 export function RolePolicySection() {
   const policy = useRolePolicy()
@@ -46,7 +48,9 @@ export function RolePolicySection() {
         <SectionHeading />
         <Text size="sm" c="dimmed">
           The configured RolePolicy for each role beside its active stage-wide pin. Read-only here;
-          pins are set with scripts/routing-pin.ps1.
+          pins are set with scripts/routing-pin.ps1. The next create assumes no card, kind, agent or
+          level: a Worker walks the default-tier row and skips held candidates; an Orchestrator keeps
+          the pin or policy, floored at High.
         </Text>
         <Table striped withRowBorders={false} layout="fixed">
           <Table.Thead>
@@ -71,6 +75,9 @@ export function RolePolicySection() {
 }
 
 function RolePolicyRow({ row }: { row: RolePolicyRowDto }) {
+  const cells = useComplexityChainEffective(row.role)
+  const worker = nextCreateLabel(previewNextCreate({ kind: 'Worker', explicitLevel: null, row, cells: cells.data }))
+  const orchestrator = nextCreateLabel(previewNextCreate({ kind: 'Orchestrator', explicitLevel: null, row, cells: undefined }))
   return (
     <Table.Tr data-testid={`role-policy-row-${row.role}`}>
       <Table.Td>
@@ -91,7 +98,20 @@ function RolePolicyRow({ row }: { row: RolePolicyRowDto }) {
         {row.stagePin ? <StagePinCell pin={row.stagePin} /> : <Text size="sm">—</Text>}
       </Table.Td>
       <Table.Td data-testid={`role-policy-effective-${row.role}`}>
-        <Text size="sm">{effectiveLabel(row)}</Text>
+        <Stack gap={2}>
+          <Text size="xs" c="dimmed">
+            Worker
+          </Text>
+          <Text size="sm" data-testid={`role-policy-next-worker-${row.role}`}>
+            {worker}
+          </Text>
+          <Text size="xs" c="dimmed">
+            Orchestrator
+          </Text>
+          <Text size="sm" data-testid={`role-policy-next-orchestrator-${row.role}`}>
+            {orchestrator}
+          </Text>
+        </Stack>
       </Table.Td>
     </Table.Tr>
   )

@@ -928,7 +928,7 @@ configuration section; pins: `scripts/routing-pin.ps1` and `/api/routing-pins`.
 | Default column label | Vitest `C097 V05 <case>`, `client/src/features/settings/rolePolicyModel.test.ts` | `null-kind-low` (kind null, alias `haiku`) → `ClaudeCode/Low (haiku)`; `configured-kind-undefined` (kind null, alias `""`) → `unknown/Medium ()`; `not configured — DefaultLevel High (opus)`; `unknown` for a null level; `not configured — DefaultLevel unknown` |
 | Escalate and Timeout columns | Vitest `C097 V24 <case>`, `client/src/features/settings/rolePolicyModel.test.ts` | `High (manual)`, `—`, `Frontier after 7 min quiet`, `240 min`, `off` (timeout 0) |
 | `Effective next create` column label (a projection of `effective`, not a create result) | Vitest `C097 V06 <case>`, `client/src/features/settings/rolePolicyModel.test.ts` | `Required Human pin → Codex/Frontier (gpt-6-astra)`; `default → ClaudeCode/Low (haiku)`; candidate-free pin → `no candidate (agent-only or forbid-only; see the pin)`; unknown source → `unknown` |
-| Stage pin column | Vitest `C097 V25 stage-pin-column-and-effective`, `client/src/features/settings/RolePolicySection.test.tsx` | Plan pin shows `Required Human pin`, numbered candidates with availability, the reason and the effective label; an unpinned row shows `—` |
+| Stage pin column | Vitest `C097 V25 stage-pin-column-and-effective`, `client/src/features/settings/RolePolicySection.test.tsx` | Plan pin shows `Required Human pin`, numbered candidates with availability and the reason; both next-create lines read `Required Human pin → ClaudeCode/Frontier (fable), skipping held gpt-6-astra` (CARD-1250); an unpinned row shows `—` |
 | Route failure stays inside the section | Vitest `C097 V09 role-policy-failure-keeps-siblings`, `client/src/features/settings/RoutingSettingsTab.test.tsx` | 500 → `Could not load role policy.` in the section; availability, runner defaults and matrix still render |
 | Section has no editor; its copy names `scripts/routing-pin.ps1` as the pin writer | not covered by a test | — |
 | Delegate modal preselects the role-policy level | Vitest `C097 V16 server-level-preselects`, `client/src/features/delegations/DelegateModal.test.tsx` | Mutation row `High` → `tier-High`, `delegate-tier-source-rolePolicy`; create body `modelLevel: null` |
@@ -940,10 +940,15 @@ configuration section; pins: `scripts/routing-pin.ps1` and `/api/routing-pins`.
 | Project setup names the default tier only when it is a model level | Vitest `C1234 delegation step names the default tier only when it is a model level`, `client/src/features/settings/ProjectSetupModal.test.tsx` | `Medium` → `default Medium tier.`; missing, null or 999 → `default tier unknown.` |
 
 The Role policy section's `Effective next create` column and the delegate modal's tier preview
-read `GET /api/role-policy`, which projects pin-or-policy and does not read matrix cells. They can
-disagree with an ordinary Worker dispatch when a default-tier row resolves and a Required pin
-does not bypass it. CARD-1250 owns the preview rework. The tests above bind the displayed DTO
-values; agreement between these previews and matrix dispatch is not covered by a test.
+read `GET /api/role-policy` together with the role's `GET /api/complexity-chains?role=` view and carry
+the create's context (CARD-1250, `client/src/features/settings/nextCreatePreview.ts`): an explicit level
+wins; a Worker create walks the configured default-tier row (`defaultComplexity`, not always Medium),
+skipping held candidates, or is Blocked when every candidate is held; an agent-only stage pin runs on
+its standing agent; an Orchestrator keeps the pin or policy floored at High; without a resolved row a
+pin list of two or more is walked past held candidates. The column shows a Worker and an Orchestrator
+line per role. Vitest `C1250 V1`–`V16` (`nextCreatePreview.test.ts`, `RolePolicySection.test.tsx`,
+`DelegateModal.test.tsx`) bind these cases. Not previewed: quota, card pins, and the availability of a
+Preferred pin's policy target.
 
 **Stage pins and the matrix:** the matrix row can show candidates a stage pin keeps out of use.
 Read the live pins with
@@ -1044,7 +1049,7 @@ These are operator instructions; the live migration and rollback are not accepta
    keeps ignoring it, as today (D-3 step 3); an Orchestrator-kind create and an `ignoreModelDisabled` create follow
    RolePolicy, not the row (OD-7, V-A7, V-A6); `delegate.ps1 -Pin` still writes a card pin, which the cell shows as an
    exception (OD-5); the Role policy section's `Effective next create` column and the delegate modal's tier preview
-   keep projecting pin-or-policy (D-6). Holds, quota, forbid lists on remaining pins and reroute are unchanged.
+   read the default-tier row for a Worker create (CARD-1250, superseding D-6). Holds, quota, forbid lists on remaining pins and reroute are unchanged.
 5. **Rollback, in this order (R3-03).** Pins first, cells second, so that no interval exists in which neither a pin
    nor the migrated cells decide a create:
 
