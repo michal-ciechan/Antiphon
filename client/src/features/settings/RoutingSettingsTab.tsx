@@ -58,7 +58,7 @@ import {
   groupPins,
   nonComplexityBoundary,
   pinEffectCopy,
-  policyRoutingUnknown,
+  effectiveRoutingUnknown,
   resolvedFromLabel,
   stagePinsForRole,
   untilLabel,
@@ -534,11 +534,11 @@ function MatrixCell({
   const configureLabel = cellEditorTitle(isAnyRoleRow ? null : (role ?? null), cellComplexity)
   const effective = isAnyRoleRow ? null : chain?.effective
   const chainReadFailed = effective?.withheldReason?.includes('chain read failed') ?? false
-  const policyUnknown = effective != null && policyRoutingUnknown(effective)
+  const routingUnknown = effective != null && effectiveRoutingUnknown(effective)
   // RolePolicy describes the ordinary default create. A non-default -Complexity dispatch
   // blocks on a known empty chain only when the stage pin read succeeded too.
   const showEffective = effective != null && (
-    effective.source !== 'rolePolicy' || effective.governsDefault || policyUnknown
+    effective.source !== 'rolePolicy' || effective.governsDefault || routingUnknown
   )
   const showStored = !showEffective || (
     effective.source === 'pin' || effective.source === 'pin+chain'
@@ -546,6 +546,8 @@ function MatrixCell({
   )
   const storedLabel = chainReadFailed
     ? 'Stored cell: unknown (read failed)'
+    : routingUnknown && resolved !== 'none'
+    ? null
     : resolved !== 'none'
     ? resolvedFromLabel(resolved, isAnyRoleRow)
     : showEffective
@@ -559,13 +561,13 @@ function MatrixCell({
             size="sm"
             variant="light"
             styles={{ root: { height: 'auto', maxWidth: '100%', textTransform: 'none' }, label: { whiteSpace: 'normal', textAlign: 'left' } }}
-            color={effective.withheldReason && effective.source !== 'agent' ? 'red'
+            color={routingUnknown || (effective.withheldReason && effective.source !== 'agent') ? 'red'
               : effective.source === 'pin' ? 'red'
                 : effective.source === 'rolePolicy' ? 'gray' : 'blue'}
           >
             {effectiveCellLabel(effective)}
           </Badge>
-          {effective.candidates.length > 0 && !policyUnknown
+          {effective.candidates.length > 0 && !routingUnknown
             ? <CandidateList candidates={effective.candidates} /> : null}
         </>
       ) : null}
@@ -574,7 +576,7 @@ function MatrixCell({
           <Text size="xs">{effective.withheldReason}</Text>
         </Alert>
       ) : null}
-      {showStored ? (
+      {showStored && storedLabel ? (
         <Badge
           size="sm"
           variant="light"
@@ -600,7 +602,7 @@ function MatrixCell({
           {chain.reason}
         </Text>
       ) : null}
-      {showStored && !chainReadFailed ? <CandidateList candidates={chain?.candidates ?? []} /> : null}
+      {showStored && !chainReadFailed && !routingUnknown ? <CandidateList candidates={chain?.candidates ?? []} /> : null}
       <Button size="compact-xs" variant="light" onClick={onConfigure} aria-label={configureLabel}>
         Configure
       </Button>
