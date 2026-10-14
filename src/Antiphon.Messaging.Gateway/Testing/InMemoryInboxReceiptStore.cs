@@ -7,7 +7,7 @@ public sealed class InMemoryInboxReceiptStore : IInboxReceiptStore, IInboundRece
 {
     private readonly object _gate = new();
     private readonly Dictionary<Guid, InboundReceipt> _byId = [];
-    private readonly Dictionary<(string Channel, string MessageId), Guid> _byKey = [];
+    private readonly Dictionary<(string Channel, string ConversationId, string MessageId), Guid> _byKey = [];
 
     public IReadOnlyList<InboundReceipt> All
     {
@@ -19,7 +19,7 @@ public sealed class InMemoryInboxReceiptStore : IInboxReceiptStore, IInboundRece
     {
         lock (_gate)
         {
-            var key = (message.Channel, message.ChannelMessageId);
+            var key = (message.Channel, message.Conversation.Id, message.ChannelMessageId);
             if (_byKey.TryGetValue(key, out var existingId))
             {
                 var existing = _byId[existingId];
@@ -53,7 +53,7 @@ public sealed class InMemoryInboxReceiptStore : IInboxReceiptStore, IInboundRece
         lock (_gate)
         {
             _byId[receipt.Id] = receipt;
-            _byKey[(receipt.Channel, receipt.ChannelMessageId)] = receipt.Id;
+            _byKey[(receipt.Channel, receipt.ConversationId, receipt.ChannelMessageId)] = receipt.Id;
         }
     }
 

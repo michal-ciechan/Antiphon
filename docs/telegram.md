@@ -21,6 +21,27 @@ records its page claim and audit before broker I/O, retries a frozen page after 
 15 minutes on failure, and may duplicate that same page after a lost broker answer. `Published`
 means broker acceptance; it does not prove Telegram arrival or a human read.
 
+## Gateway inbox identity (CARD-1248)
+
+The gateway's PostgreSQL inbox identifies a native message by
+`(Channel, ConversationId, ChannelMessageId)`: Telegram message IDs can repeat in
+different chats. The EF lookup, unique index and fake gateway's in-memory store use
+that same key. A true redelivery keeps the original receipt and broker offset; a
+legacy receipt without an offset can acquire one only from the same chat.
+
+Ingress publishes to Kafka before recording its receipt. Previously a cross-chat
+collision could return the wrong receipt or swallow a unique violation, so the
+inbox consumer's `stored` log did not prove that the second chat was persisted.
+The already accepted broker publication was separate; the demonstrated loss is
+the inbox receipt and its monitoring evidence, not a confirmed downstream drop.
+
+The startup migration creates the replacement unique index before dropping the
+old index in one transaction, preserving existing rows and monitoring stamps.
+Index creation takes a table write lock. Downgrade recreates the old index first
+and safely refuses when newer cross-chat rows collide under that old key; it does
+not delete them. Deploy the gateway separately through `scripts/deploy-am-service.ps1`.
+Historical receipts already suppressed by the old key are not reconstructed.
+
 ## Durable inbound handoff (CARD-0593)
 
 The bridge records each non-self native message identity in `ChannelInbounds`. For an enabled,

@@ -73,7 +73,7 @@ public sealed class InboxConsumerService(
                     catch (Exception ex) when (ex is not OperationCanceledException
                                                && InboxUniqueConstraint.IsViolation(ex))
                     {
-                        // Duplicate (Channel, ChannelMessageId) is a lost insert race. Any other
+                        // Duplicate (Channel, ConversationId, ChannelMessageId) is a lost insert race. Any other
                         // persist failure must crash the host: EnableAutoCommit would otherwise
                         // advance the Kafka offset with no Inbox row and no monitor signal.
                         logger.LogWarning(ex, "[inbox] persist failed for {Channel} {MessageId}",

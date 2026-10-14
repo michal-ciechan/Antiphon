@@ -14,7 +14,9 @@ public sealed class EfInboxReceiptStore(
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<MessagingDbContext>();
         var existing = await db.Inbox.FirstOrDefaultAsync(
-            x => x.Channel == message.Channel && x.ChannelMessageId == message.ChannelMessageId, cancellationToken);
+            x => x.Channel == message.Channel
+                 && x.ConversationId == message.Conversation.Id
+                 && x.ChannelMessageId == message.ChannelMessageId, cancellationToken);
         if (existing is not null)
         {
             if (existing.Offset is null)
