@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using Antiphon.Tests.Application;
 using Antiphon.Tests.Infrastructure;
 using Shouldly;
 using TUnit.Core;
@@ -58,6 +59,44 @@ public sealed class RefreshGithubTokenScriptTests
         verify.ShouldNotContain("cat ");
         verify.ShouldNotContain("sha256sum");
         verify.ShouldNotContain("Get-Content");
+    }
+
+    // CARD-1245. Without -i, docker exec gives the inner `sh -s` an empty stdin: the heredoc is
+    // never read, nothing runs, and the verification "passes" with exit 0.
+    [Test]
+    public void Heredoc_fed_docker_exec_keeps_stdin_open()
+    {
+        var vectors = new[]
+        {
+            ("docker exec -u 1654:1654 -e GIT_TERMINAL_PROMPT=0 \"$c\" sh -s <<'VERIFY'", false),
+            ("docker exec -i -u 1654:1654 -e GIT_TERMINAL_PROMPT=0 \"$c\" sh -s <<'VERIFY'", true),
+            ("docker exec -u 1654:1654 -i \"$c\" sh -s <<'VERIFY'", true),
+            ("docker exec --interactive \"$c\" sh -s <<'X'", true),
+            ("ssh mc@server2 docker exec -it \"$c\" bash -s <<X", true),
+        };
+        foreach (var (line, expected) in vectors)
+            KeepsStdin(line).ShouldBe(expected, "c1245-docker-exec-stdin-vector: " + line);
+
+        var procedure = DockerStackDocuments.Read("docs/superpowers/plans/2026-10-05-card-0817-https-token-push-credential-plan.md")
+            .Replace("\r\n", "\n");
+        procedure.ShouldContain("sh -s <<'VERIFY'", Case.Sensitive, "c1245-verify-block-present");
+        var root = Path.Combine(DelegateScriptRunner.RepoRoot, "docs");
+        var offenders = Directory.EnumerateFiles(root, "*.md", SearchOption.AllDirectories)
+            .SelectMany(path => File.ReadAllLines(path).Select(line => (Path.GetRelativePath(DelegateScriptRunner.RepoRoot, path), line)))
+            .Where(entry => Regex.IsMatch(entry.line, @"\bdocker exec\b.*\b(?:ba)?sh -s\b.*<<") && !KeepsStdin(entry.line))
+            .Select(entry => entry.Item1 + ": " + entry.line.Trim())
+            .ToArray();
+        offenders.ShouldBeEmpty("c1245-docker-exec-heredoc-needs-i");
+    }
+
+    private static bool KeepsStdin(string line)
+    {
+        var start = line.IndexOf("docker exec", StringComparison.Ordinal);
+        var shell = Regex.Match(line, @"\b(?:ba)?sh -s\b");
+        if (start < 0 || !shell.Success || shell.Index < start) return false;
+        return line[(start + "docker exec".Length)..shell.Index]
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries)
+            .Any(token => token == "--interactive" || Regex.IsMatch(token, "^-[A-Za-z]*i[A-Za-z]*$"));
     }
 
     private static string Script() => DockerStackDocuments.Read("scripts/refresh-server2-github-token.ps1").Replace("\r\n", "\n");
