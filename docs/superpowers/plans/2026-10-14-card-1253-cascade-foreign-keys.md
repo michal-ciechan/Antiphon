@@ -119,7 +119,7 @@ R-3 remains deferred under the explicit repair brief. R-4 retained for cumulativ
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S2 | `tests/Antiphon.Tests -> bin-bb848929/` | cascade-fks | `/*/*/(ProjectCascadeForeignKeyTests*)/*` | V-1, V-2, V-3, V-4, V-5, V-6 | 27 cases, 0 failed/skipped; S1 first run intentionally red | 27 | 8 |
+| CP-1 | S2 | `tests/Antiphon.Tests -> bin-1147dfb0/` | cascade-fks | `/*/*/(ProjectCascadeForeignKeyTests*)/*` | V-1, V-2, V-3, V-4, V-5, V-6, V-7, V-8 | 41 cases, 0 failed/skipped; S1 first run intentionally red | 41 | 8 |
 | CP-2 | S2 | CP-1 | deletion-regressions | `/*/*/(ProjectDeletionTests*)\|(BoardProjectArchiveApiTests*)\|(CardFilePrivacyOwnershipAcceptanceTests*)/*` | R-1, R-2 | all 38 cases, 0 failed/skipped | 38 | 3 |
 | CP-4 | S2 | CP-1 | deletion-consumers | `/*/*/(SessionStateWarmupTests*)\|(CardFileBoardLookupTests*)/*` | R-4 | all 61 cases, 0 failed/skipped | 61 | 3 |
 | CP-5 | S2 | CP-1 | expectation-hold-regressions | `/*/*/(ExpectationDirectDeliveryTests*)\|(ExpectationHoldReleaseEndpointTests*)/*` | R-5 | 18 cases, 0 failed/skipped | 18 | 4 |
@@ -172,3 +172,28 @@ An initial green-source run was stopped during its build because a blank line ex
 CP-5 from the imported table; zero tests ran. The corrected import selected four rows.
 Full counts, aborted-build disclosure, bootstrap reasons, receipt paths and unedited
 CHECKPOINT lines are in .antiphon/task-bb848929.md. Restart: server after landing.
+
+## Repair F1/F2 (Review 3d019d19, Code 1147dfb0)
+
+V-7: `Nudge_inserted_and_claimed_after_hold_check_refuses_delete_and_preserves_hold`
+(board/project, 2 cases) schedules a separate committed comment/nudge insert and Attempting
+claim after the initial check, before the dependent delete. It asserts HTTP 409, restored
+parents and audit, retained Attempting row and the real surviving composer's hold.
+V-8: `Holding_state_without_a_current_destination_generation_allows_delete`
+(board/project x three holding states x stale generation/missing session, 12 cases) asserts
+the release route has no eligible hold (empty IDs or 404), followed by successful scoped deletion.
+V-5 retains the six current-generation refusal/release/deletion cases.
+R-5 retains the full direct-delivery and release endpoint classes for the shared filter.
+
+The final nudge DELETE returns its removed rows for a current-generation hold check within
+the caller transaction. A raced holding row triggers the existing 409 and rollback. The
+initial locked check retains V-5's before-write refusal for existing holding rows. The shared
+filter combines the holding-state expression, destination existence and normalized generation.
+
+S1: CP-1 on tests-only production baseline b452f633d (expect V-7/V-8 red).
+S2: CP-1/CP-2/CP-4/CP-5 after repair and the fetched-master merge, one shared build.
+Use row-timeout 40m and total-timeout 150m as commissioned, serial rows, no keep-outputs.
+R-3 remains deferred. No full assembly run or proof repetition is planned.
+PC-14 pending: omit returned-row hold check, V-7 board/project variants.
+PC-15 pending: omit destination existence or generation matching, V-8's 12 variants.
+PC-1..PC-15 await SourceLanding Mutation; no deliberate mutants in Code.
