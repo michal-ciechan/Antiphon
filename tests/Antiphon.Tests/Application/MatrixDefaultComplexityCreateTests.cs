@@ -22,7 +22,7 @@ public sealed class MatrixDefaultComplexityCreateTests
     public async Task A_plain_create_walks_the_role_row_at_the_default_tier()
     {
         await using var f = await Fixture.CreateAsync();
-        await f.Row(AgentTaskRole.Plan, new(AgentKind.Codex, AgentModelLevel.Frontier), new(AgentKind.ClaudeCode, AgentModelLevel.High));
+        await f.Row(AgentTaskRole.Plan, new ComplexityCandidatePair(AgentKind.Codex, AgentModelLevel.Frontier), new ComplexityCandidatePair(AgentKind.ClaudeCode, AgentModelLevel.High));
         var result = await f.Create();
         result.Status.ShouldBe(AgentTaskStatus.Queued);
         result.AgentKind.ShouldBe(AgentKind.Codex);
@@ -57,7 +57,7 @@ public sealed class MatrixDefaultComplexityCreateTests
     public async Task An_exhausted_default_row_blocks_with_the_cell_name()
     {
         await using var f = await Fixture.CreateAsync();
-        await f.Row(AgentTaskRole.Code, new(AgentKind.ClaudeCode, AgentModelLevel.Frontier));
+        await f.Row(AgentTaskRole.Code, new ComplexityCandidatePair(AgentKind.ClaudeCode, AgentModelLevel.Frontier));
         await f.Hold();
         var parent = await f.Session();
         var result = await f.Create(new("code it", Role: AgentTaskRole.Code, Workspace: WorkspaceMode.Shared), parent);
@@ -72,7 +72,7 @@ public sealed class MatrixDefaultComplexityCreateTests
     public async Task An_explicit_kind_is_not_stamped_and_warns()
     {
         await using var f = await Fixture.CreateAsync();
-        await f.Row(AgentTaskRole.Plan, new(AgentKind.Codex, AgentModelLevel.Frontier));
+        await f.Row(AgentTaskRole.Plan, new ComplexityCandidatePair(AgentKind.Codex, AgentModelLevel.Frontier));
         var result = await f.Create(new("plan", Role: AgentTaskRole.Plan, AgentKind: AgentKind.ClaudeCode, Workspace: WorkspaceMode.Shared));
         result.Status.ShouldBe(AgentTaskStatus.Queued);
         result.AgentKind.ShouldBe(AgentKind.ClaudeCode);
@@ -88,7 +88,7 @@ public sealed class MatrixDefaultComplexityCreateTests
     public async Task A_single_candidate_required_stage_pin_is_an_explicit_pair_and_is_not_stamped()
     {
         await using var f = await Fixture.CreateAsync();
-        await f.Row(AgentTaskRole.Plan, new(AgentKind.Codex, AgentModelLevel.Frontier));
+        await f.Row(AgentTaskRole.Plan, new ComplexityCandidatePair(AgentKind.Codex, AgentModelLevel.Frontier));
         await f.Pin(AgentTaskRole.Plan, false, AgentKind.ClaudeCode, AgentModelLevel.High);
         var result = await f.Create();
         result.AgentKind.ShouldBe(AgentKind.ClaudeCode);
@@ -108,7 +108,7 @@ public sealed class MatrixDefaultComplexityCreateTests
     public async Task A_required_candidate_list_plus_a_row_is_stamped_and_walks_the_pin()
     {
         await using var f = await Fixture.CreateAsync();
-        await f.Row(AgentTaskRole.Plan, new(AgentKind.Codex, AgentModelLevel.Frontier));
+        await f.Row(AgentTaskRole.Plan, new ComplexityCandidatePair(AgentKind.Codex, AgentModelLevel.Frontier));
         var pin = await f.Pins.UpsertAsync(new(AgentTaskRole.Plan, Provenance: RoutingPinProvenance.Human,
             Strength: RoutingPinStrength.Required, Reason: "pin list", Candidates:
             [new(AgentKind.ClaudeCode, AgentModelLevel.High), new(AgentKind.ClaudeCode, AgentModelLevel.Frontier)]), null, default);
@@ -156,7 +156,7 @@ public sealed class MatrixDefaultComplexityCreateTests
     public async Task An_orchestrator_create_keeps_role_policy_and_the_level_floor()
     {
         await using var f = await Fixture.CreateAsync();
-        await f.Row(AgentTaskRole.Plan, new(AgentKind.ClaudeCode, AgentModelLevel.Low));
+        await f.Row(AgentTaskRole.Plan, new ComplexityCandidatePair(AgentKind.ClaudeCode, AgentModelLevel.Low));
         var request = new CreateAgentTaskRequest("own it", Kind: AgentTaskKind.Orchestrator, Role: AgentTaskRole.Plan, Workspace: WorkspaceMode.Shared);
         var result = await f.Create(request);
         result.ModelLevel.ShouldBe(AgentModelLevel.Frontier);
@@ -173,7 +173,7 @@ public sealed class MatrixDefaultComplexityCreateTests
     public async Task The_settlement_commit_child_takes_the_commit_row()
     {
         await using var f = await Fixture.CreateAsync();
-        await f.Row(AgentTaskRole.Commit, new(AgentKind.Codex, AgentModelLevel.Frontier));
+        await f.Row(AgentTaskRole.Commit, new ComplexityCandidatePair(AgentKind.Codex, AgentModelLevel.Frontier));
         var child = await f.Child(AgentTaskRole.Commit);
         Pair(child, AgentKind.Codex, AgentModelLevel.Frontier, TaskComplexity.Medium);
         child.RoutingPinId.ShouldBeNull();
@@ -190,7 +190,7 @@ public sealed class MatrixDefaultComplexityCreateTests
     {
         await using var f = await Fixture.CreateAsync();
         if (variant.StartsWith("row-", StringComparison.Ordinal))
-            await f.Row(AgentTaskRole.Commit, new(list ? AgentKind.Grok : AgentKind.ClaudeCode, list ? AgentModelLevel.Frontier : AgentModelLevel.High));
+            await f.Row(AgentTaskRole.Commit, new ComplexityCandidatePair(list ? AgentKind.Grok : AgentKind.ClaudeCode, list ? AgentModelLevel.Frontier : AgentModelLevel.High));
         var pin = await f.Pin(AgentTaskRole.Commit, list, kind, AgentModelLevel.Frontier);
         var child = await f.Child(AgentTaskRole.Commit);
         Pair(child, kind, AgentModelLevel.Frontier, null);
@@ -207,7 +207,7 @@ public sealed class MatrixDefaultComplexityCreateTests
     private static async Task AgentPin(bool cardPin)
     {
         await using var f = await Fixture.CreateAsync();
-        await f.Row(AgentTaskRole.Plan, new(AgentKind.Codex, AgentModelLevel.Frontier));
+        await f.Row(AgentTaskRole.Plan, new ComplexityCandidatePair(AgentKind.Codex, AgentModelLevel.Frontier));
         var agent = new Agent { Id = Guid.NewGuid(), Name = "standing", Slug = "standing", WorkingDirectory = f.Path,
             Kind = AgentKind.ClaudeCode, ModelLevel = AgentModelLevel.Medium, Status = AgentStatus.Idle,
             IsPoolDelegate = false, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow };
@@ -230,7 +230,7 @@ public sealed class MatrixDefaultComplexityCreateTests
     public async Task The_server_created_merge_child_takes_the_merge_row()
     {
         await using var f = await Fixture.CreateAsync();
-        await f.Row(AgentTaskRole.Merge, new(AgentKind.Codex, AgentModelLevel.Frontier));
+        await f.Row(AgentTaskRole.Merge, new ComplexityCandidatePair(AgentKind.Codex, AgentModelLevel.Frontier));
         var child = await f.Child(AgentTaskRole.Merge);
         Pair(child, AgentKind.Codex, AgentModelLevel.Frontier, TaskComplexity.Medium);
         child.RoutingPinId.ShouldBeNull();
@@ -249,7 +249,7 @@ public sealed class MatrixDefaultComplexityCreateTests
         switch (variant)
         {
             case "row-and-required-pin":
-                await f.Row(AgentTaskRole.Merge, new(AgentKind.Codex, AgentModelLevel.Frontier));
+                await f.Row(AgentTaskRole.Merge, new ComplexityCandidatePair(AgentKind.Codex, AgentModelLevel.Frontier));
                 goto case "stage-list-pin";
             case "stage-list-pin": await f.Pin(AgentTaskRole.Merge, true, AgentKind.ClaudeCode, AgentModelLevel.Frontier); break;
             case "card-pin":
@@ -274,7 +274,7 @@ public sealed class MatrixDefaultComplexityCreateTests
     private static async Task ExhaustedChild(AgentTaskRole role)
     {
         await using var f = await Fixture.CreateAsync();
-        await f.Row(role, new(AgentKind.ClaudeCode, AgentModelLevel.Frontier));
+        await f.Row(role, new ComplexityCandidatePair(AgentKind.ClaudeCode, AgentModelLevel.Frontier));
         await f.Hold();
         var parent = await f.Session();
         var child = await f.Child(role, parent);
@@ -287,7 +287,7 @@ public sealed class MatrixDefaultComplexityCreateTests
     public async Task A_held_commit_row_head_falls_to_the_next_candidate_with_the_skipped_warning()
     {
         await using var f = await Fixture.CreateAsync();
-        await f.Row(AgentTaskRole.Commit, new(AgentKind.ClaudeCode, AgentModelLevel.Frontier), new(AgentKind.Codex, AgentModelLevel.Frontier));
+        await f.Row(AgentTaskRole.Commit, new ComplexityCandidatePair(AgentKind.ClaudeCode, AgentModelLevel.Frontier), new ComplexityCandidatePair(AgentKind.Codex, AgentModelLevel.Frontier));
         await f.Hold();
         var child = await f.Child(AgentTaskRole.Commit);
         Pair(child, AgentKind.Codex, AgentModelLevel.Frontier, TaskComplexity.Medium);
@@ -298,7 +298,7 @@ public sealed class MatrixDefaultComplexityCreateTests
     public async Task A_chain_read_failure_keeps_the_required_commit_pin()
     {
         await using var f = await Fixture.CreateAsync();
-        await f.Row(AgentTaskRole.Commit, new(AgentKind.ClaudeCode, AgentModelLevel.High));
+        await f.Row(AgentTaskRole.Commit, new ComplexityCandidatePair(AgentKind.ClaudeCode, AgentModelLevel.High));
         await f.Pin(AgentTaskRole.Commit, false, AgentKind.Codex, AgentModelLevel.Frontier);
         var broken = new AppDbContext(TestDbFixture.CreateDbContextOptions(f.Schema.ConnectionString));
         var service = f.Service(broken);
@@ -315,7 +315,7 @@ public sealed class MatrixDefaultComplexityCreateTests
     {
         var guard = new PinReadGuard();
         await using var f = await Fixture.CreateAsync(guard);
-        await f.Row(AgentTaskRole.Commit, new(AgentKind.ClaudeCode, AgentModelLevel.High));
+        await f.Row(AgentTaskRole.Commit, new ComplexityCandidatePair(AgentKind.ClaudeCode, AgentModelLevel.High));
         await f.Pin(AgentTaskRole.Commit, false, AgentKind.Codex, AgentModelLevel.Frontier);
         guard.Armed = true;
         var child = await f.Child(AgentTaskRole.Commit);
@@ -331,7 +331,7 @@ public sealed class MatrixDefaultComplexityCreateTests
     public async Task A_blocked_commit_child_without_a_parent_session_writes_no_note()
     {
         await using var f = await Fixture.CreateAsync();
-        await f.Row(AgentTaskRole.Commit, new(AgentKind.ClaudeCode, AgentModelLevel.Frontier));
+        await f.Row(AgentTaskRole.Commit, new ComplexityCandidatePair(AgentKind.ClaudeCode, AgentModelLevel.Frontier));
         await f.Hold();
         foreach (var parent in new Guid?[] { null, Guid.NewGuid() })
         {
