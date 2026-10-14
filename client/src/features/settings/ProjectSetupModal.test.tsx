@@ -237,4 +237,26 @@ describe('ProjectSetupModal', () => {
       bundleKeys: ['orchestrator', 'board-api'],
     })
   })
+
+  it.each([
+    ['configured Medium', 'Medium', 'default Medium tier.'],
+    ['undefined level', undefined, 'default tier unknown.'],
+    ['null level', null, 'default tier unknown.'],
+    ['numeric 999', 999, 'default tier unknown.'],
+  ])('C1234 delegation step names the default tier only when it is a model level: %s', async (_name, defaultLevel, expected) => {
+    seed(() => HttpResponse.json({}))
+    server.use(http.get('/api/projects/setup-catalog', () => HttpResponse.json({
+      ...catalog,
+      delegation: { ...catalog.delegation, defaultLevel },
+    })))
+    renderWithProviders(<ProjectSetupModal opened onClose={() => undefined} />)
+    await userEvent.type(await screen.findByRole('textbox', { name: 'Project directory' }), directory)
+    await userEvent.click(screen.getByRole('button', { name: 'Next' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Next' }))
+    await userEvent.click(screen.getByLabelText('Skip — no agent yet'))
+    await userEvent.click(screen.getByRole('button', { name: 'Next' }))
+
+    const summary = await screen.findByText(/concurrent task/)
+    expect(summary.textContent).toBe(`Up to 1 concurrent task, depth 2, ${expected}`)
+  })
 })
