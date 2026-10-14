@@ -1,4 +1,5 @@
 using Antiphon.Server.Application.Exceptions;
+using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
@@ -75,8 +76,8 @@ public static class ProjectCascade
             .ToListAsync(ct);
         // The audit can live here while its destination session survives elsewhere. Removing
         // a holding nudge would release that session's composer without an audited release.
-        // Lock the selected rows, including None: a delivery claim must not turn one into
-        // Attempting between this check and deletion. The caller's transaction retains locks.
+        // Lock the existing rows, including None, against delivery claims. Concurrent inserts
+        // are checked separately through DELETE RETURNING below. The caller retains the locks.
         var nudges = await db.ExpectationNudges.FromSql($"""
             SELECT n.* FROM "ExpectationNudges" AS n
             INNER JOIN "CardComments" AS c ON c."Id" = n."AuditCommentId"
@@ -84,19 +85,7 @@ public static class ProjectCascade
             ORDER BY n."Id"
             FOR UPDATE OF n
             """).AsNoTracking().ToListAsync(ct);
-        var holding = nudges.AsQueryable().Where(ExpectationHoldAudit.HoldingAttempt).ToList();
-        if (holding.Count > 0)
-        {
-            var sessions = holding.Where(n => n.DestinationSessionId.HasValue)
-                .Select(n => n.DestinationSessionId!.Value).Distinct().Order().ToList();
-            throw new ConflictException(
-                "Deletion is blocked by expectation-watchdog composer holds. "
-                + string.Join(" ", sessions.Select(ExpectationHoldAudit.ReleaseHint))
-                + (holding.Any(n => n.DestinationSessionId is null)
-                    ? " A holding nudge has no destination session; inspect its audit before retrying deletion."
-                    : string.Empty),
-                "project_delete_blocked_by_expectation_hold");
-        }
+        await RefuseCurrentGenerationHoldsAsync(db, nudges, ct);
         var runIds = await db.CardWorkflowRuns
             .Where(r => cardIds.Contains(r.CardId))
             .Select(r => r.Id)
@@ -156,8 +145,17 @@ public static class ProjectCascade
             await db.CardWorktreeCleanups.Where(c => cardIds.Contains(c.CardId)).ExecuteDeleteAsync(ct);
             // Watchdog audits restrict comment deletion. Select through the actual comment FK:
             // the nudge's destination session can belong to another board or project.
-            var commentIds = db.CardComments.Where(c => cardIds.Contains(c.CardId)).Select(c => c.Id);
-            await db.ExpectationNudges.Where(n => commentIds.Contains(n.AuditCommentId)).ExecuteDeleteAsync(ct);
+            // READ COMMITTED admits nudges inserted after the first check. Inspect the rows
+            // actually removed, under the DELETE's row locks, rather than another SELECT with
+            // its own insertion window. A raced hold throws and rolls this transaction back;
+            // other connections still see the committed hold until that rollback completes.
+            var deletedNudges = await db.ExpectationNudges.FromSql($"""
+                DELETE FROM "ExpectationNudges" AS n
+                USING "CardComments" AS c
+                WHERE c."Id" = n."AuditCommentId" AND c."CardId" = ANY({cardIds.ToArray()})
+                RETURNING n.*
+                """).AsNoTracking().ToListAsync(ct);
+            await RefuseCurrentGenerationHoldsAsync(db, deletedNudges, ct);
             // Decision answers restrict session deletion even when their task survives elsewhere.
             // Both leaf deletes share the caller's transaction with the parent deletes below.
             var sessionIds = db.AgentSessions
@@ -176,6 +174,25 @@ public static class ProjectCascade
         await db.BoardWorkflowDefinitions.Where(d => boardIds.Contains(d.BoardId)).ExecuteDeleteAsync(ct);
         await db.BoardColumns.Where(c => boardIds.Contains(c.BoardId)).ExecuteDeleteAsync(ct);
         await db.Boards.Where(b => boardIds.Contains(b.Id)).ExecuteDeleteAsync(ct);
+    }
+
+    private static async Task RefuseCurrentGenerationHoldsAsync(
+        AppDbContext db, IReadOnlyList<ExpectationNudge> nudges, CancellationToken ct)
+    {
+        var sessionIds = nudges.Where(n => n.DestinationSessionId.HasValue)
+            .Select(n => n.DestinationSessionId!.Value).Distinct().ToArray();
+        if (sessionIds.Length == 0)
+            return;
+        var generations = await db.AgentSessions.AsNoTracking().Where(s => sessionIds.Contains(s.Id))
+            .ToDictionaryAsync(s => s.Id, s => s.StartedAt, ct);
+        var holding = ExpectationHoldAudit.HoldingInCurrentGenerations(nudges, generations);
+        if (holding.Count == 0)
+            return;
+        var sessions = holding.Select(n => n.DestinationSessionId!.Value).Distinct().Order();
+        throw new ConflictException(
+            "Deletion is blocked by current-generation expectation-watchdog composer holds. "
+            + string.Join(" ", sessions.Select(ExpectationHoldAudit.ReleaseHint)),
+            "project_delete_blocked_by_expectation_hold");
     }
 }
 

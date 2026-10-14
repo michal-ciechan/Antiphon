@@ -3,6 +3,7 @@ using System.Text.Json;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
 
 namespace Antiphon.Server.Application.Services;
@@ -24,6 +25,19 @@ public static class ExpectationHoldAudit
         n.AttemptState == ExpectationAttemptState.Attempting
         || n.AttemptState == ExpectationAttemptState.Uncertain
         || n.AttemptState == ExpectationAttemptState.Unconfirmed;
+
+    /// <summary>
+    /// Shared candidate filter for the composer gate, operator release and audit deletion.
+    /// A missing destination or an earlier generation has no current composer hold.
+    /// The gate additionally considers transcript and screen evidence after this filter.
+    /// </summary>
+    public static List<ExpectationNudge> HoldingInCurrentGenerations(
+        IEnumerable<ExpectationNudge> attempts, IReadOnlyDictionary<Guid, DateTime> generations) =>
+        attempts.AsQueryable().Where(HoldingAttempt).AsEnumerable()
+            .Where(n => n.DestinationSessionId is { } sessionId
+                && generations.TryGetValue(sessionId, out var generation)
+                && SessionGeneration.Equal(n.DestinationGeneration, generation))
+            .ToList();
 
     public static string ReleaseRoute(Guid sessionId) => $"/api/sessions/{sessionId:D}/expectation-hold/release";
 
