@@ -381,7 +381,7 @@ These are operator steps after land, never Plan or Code steps.
 
    ```sh
    c=$(docker ps -q --filter label=com.docker.compose.project=<project> --filter label=com.docker.compose.service=session-runner)
-   docker exec -u 1654:1654 -e GIT_TERMINAL_PROMPT=0 "$c" sh -s <<'VERIFY'
+   docker exec -i -u 1654:1654 -e GIT_TERMINAL_PROMPT=0 "$c" sh -s <<'VERIFY'
    set -eu
    test "$(stat -c '%u %a' /run/antiphon/github-token/token)" = '1654 400'
    test -s /run/antiphon/push-allow-list
@@ -404,6 +404,8 @@ These are operator steps after land, never Plan or Code steps.
    The `gym-stat` line proves the helper and token (private repository); the `octocat` line
    proves the allow-list refuses the credential for a repository outside it (git never
    reaches GitHub with a credential, so the failure text is the disabled prompt, not a 403).
+   Keep `-i` on `docker exec` (CARD-1245): without it the inner `sh -s` gets an empty stdin,
+   never reads the heredoc, runs nothing and exits 0, so the block "passes" without verifying.
 4. Canary: dispatch one bounded markdown-package Worktree task pinned to the qualified runner
    with `scripts/delegate.ps1 -Worktree -Runner <runner> ...`. It must leave Queued without a
    `phone_home_repository_push_unauthorized` Warning, run at its assigned SHA, make one empty
