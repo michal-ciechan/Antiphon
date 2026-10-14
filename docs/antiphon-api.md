@@ -193,6 +193,26 @@ GET    /api/projects/setup-catalog                  ProjectSetupCatalogDto
 POST   /api/projects/setup                          ProjectSetupResultDto
 ```
 
+Board deletion and project deletion with `force=true` return 409
+`project_delete_blocked_by_expectation_hold` when an audit nudge selected for deletion
+is Attempting, Uncertain or Unconfirmed for an existing destination session's current
+generation. The detail identifies those sessions and their
+`POST /api/sessions/{id}/expectation-hold/release` routes. An initial check precedes
+cascade writes; the nudge DELETE also checks its returned rows and rolls back with 409
+if an inserted-and-claimed nudge raced that check. Operator release requires
+`X-Antiphon-Operator-Token` and a reason; inspect and clear the composer before releasing.
+The guard shares the composer gate's state-and-generation filter; it conservatively
+blocks its candidates even if transcript or transient screen evidence would let the queue
+proceed. Older-generation attempts and attempts whose destination session has been deleted
+do not block audit deletion, as exercised by the generation cases below.
+
+| Behaviour | Named test (ProjectCascadeForeignKeyTests) | What it asserts |
+|---|---|---|
+| Holding audit refuses board/project deletion | Holding_nudge_refuses_delete_preserves_composer_and_allows_audited_release | Three holding states return 409 with the release route before SQL writes; rows and queue hold survive; audited release permits deletion |
+| Non-holding audit permits deletion | Nonholding_nudge_allows_delete_while_another_board_hold_survives | None, Confirmed, Refused, Submitted and Released delete successfully; an unrelated board's nudge and composer hold survive |
+| Insert-and-claim race refuses deletion | Nudge_inserted_and_claimed_after_hold_check_refuses_delete_and_preserves_hold | A separately committed nudge claimed after the initial check returns 409; rollback retains its audit, card and composer hold for both delete routes |
+| Stale or missing destination permits deletion | Holding_state_without_a_current_destination_generation_allows_delete | Three holding states x stale generation/missing session x board/project delete succeed; the release route has empty IDs or 404 before deletion |
+
 Card list and search use `limit` as a positive page size (default and ceiling
 `max(1, Cards:MaxListResults)`, normally 500); zero/negative is 422 on `limit`.
 Search trims `q`, requires 1–500 characters, and treats `%`, `_` and backslash

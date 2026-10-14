@@ -43,22 +43,26 @@ import {
   CARD_PIN_SCOPE,
   COMPLEXITY_ROUTING_BOUNDARY,
   COMPLEXITY_ROUTING_BOUNDARY_TITLE,
-  NON_COMPLEXITY_BOUNDARY,
   USAGE_UNKNOWN,
   anyRoleChains,
   candidateAvailabilityLabel,
   candidateLabel,
   cardPinCopy,
+  cardPinCountLabel,
   cellByComplexity,
   cellEditorTitle,
   complexitiesOf,
   effectiveResolvedFrom,
+  effectiveCellLabel,
   fallbackResolvedFromForRoleCell,
   groupPins,
+  nonComplexityBoundary,
   pinEffectCopy,
+  policyRoutingUnknown,
   resolvedFromLabel,
   stagePinsForRole,
   untilLabel,
+  unsetCellLabel,
 } from './routingSettingsModel'
 
 /**
@@ -312,6 +316,7 @@ function MatrixSection() {
   }
 
   const complexities = complexitiesOf(list.data?.complexities)
+  const defaultComplexity = list.data?.defaultComplexity
   const roles = list.data?.roles ?? []
   const anyChains = anyRoleChains(list.data?.chains ?? [], complexities)
   const { stageWide, cardSpecific } = groupPins(pinsQuery.data?.pins ?? [])
@@ -328,7 +333,7 @@ function MatrixSection() {
         >
           <Text size="sm">{COMPLEXITY_ROUTING_BOUNDARY}</Text>
           <Text size="sm" mt="xs">
-            {NON_COMPLEXITY_BOUNDARY}
+            {nonComplexityBoundary(defaultComplexity)}
           </Text>
         </Alert>
         {pinsQuery.error ? (
@@ -347,7 +352,11 @@ function MatrixSection() {
               <Table.Tr>
                 <Table.Th w={160}>Role</Table.Th>
                 {complexities.map((complexity) => (
-                  <Table.Th key={complexity}>{complexity}</Table.Th>
+                  <Table.Th key={complexity}>
+                    {complexity}{complexity === defaultComplexity
+                      ? ' (default for an ordinary Worker dispatch without -Complexity)'
+                      : ''}
+                  </Table.Th>
                 ))}
               </Table.Tr>
             </Table.Thead>
@@ -382,6 +391,7 @@ function MatrixSection() {
                   role={role}
                   complexities={complexities}
                   pins={stagePinsForRole(stageWide, role)}
+                  cardPins={cardSpecific}
                   anyChains={anyChains}
                   onConfigure={(target) => setEditor(target)}
                 />
@@ -410,16 +420,19 @@ function RoleMatrixRow({
   role,
   complexities,
   pins,
+  cardPins,
   anyChains,
   onConfigure,
 }: {
   role: AgentTaskRole
   complexities: TaskComplexity[]
   pins: RoutingPinDto[]
+  cardPins: RoutingPinDto[]
   anyChains: ComplexityChainDto[]
   onConfigure: (target: ComplexityChainEditorTarget) => void
 }) {
   const snapshot = useComplexityChainEffective(role)
+  const cardPinCount = cardPinCountLabel(role, cardPins)
 
   if (snapshot.isLoading) {
     return (
@@ -471,6 +484,7 @@ function RoleMatrixRow({
               <Text size="xs">{pinEffectCopy(pin)}</Text>
             </Alert>
           ))}
+          {cardPinCount ? <Text size="xs" c="dimmed">{cardPinCount}</Text> : null}
         </Stack>
       </Table.Td>
       {complexities.map((complexity) => {
@@ -518,17 +532,59 @@ function MatrixCell({
   const cellRole = chain?.role ?? role ?? 'any'
   const cellComplexity = chain?.complexity ?? complexity ?? 'Hard'
   const configureLabel = cellEditorTitle(isAnyRoleRow ? null : (role ?? null), cellComplexity)
+  const effective = isAnyRoleRow ? null : chain?.effective
+  const chainReadFailed = effective?.withheldReason?.includes('chain read failed') ?? false
+  const policyUnknown = effective != null && policyRoutingUnknown(effective)
+  // RolePolicy describes the ordinary default create. A non-default -Complexity dispatch
+  // blocks on a known empty chain only when the stage pin read succeeded too.
+  const showEffective = effective != null && (
+    effective.source !== 'rolePolicy' || effective.governsDefault || policyUnknown
+  )
+  const showStored = !showEffective || (
+    effective.source === 'pin' || effective.source === 'pin+chain'
+    || effective.source === 'rolePolicy' || effective.source === 'agent'
+  )
+  const storedLabel = chainReadFailed
+    ? 'Stored cell: unknown (read failed)'
+    : resolved !== 'none'
+    ? resolvedFromLabel(resolved, isAnyRoleRow)
+    : showEffective
+      ? 'Stored cell: unset'
+      : unsetCellLabel(cellComplexity, effective?.governsDefault ?? false)
   return (
     <Stack gap={4} data-testid={`routing-matrix-cell-${cellRole}-${cellComplexity}`}>
-      <Badge
-        size="sm"
-        variant="light"
-        color={
-          resolved === 'none' ? 'red' : resolved === 'config' ? 'yellow' : resolved === 'any' ? 'gray' : 'blue'
-        }
-      >
-        {resolvedFromLabel(resolved, isAnyRoleRow)}
-      </Badge>
+      {showEffective ? (
+        <>
+          <Badge
+            size="sm"
+            variant="light"
+            styles={{ root: { height: 'auto', maxWidth: '100%', textTransform: 'none' }, label: { whiteSpace: 'normal', textAlign: 'left' } }}
+            color={effective.withheldReason && effective.source !== 'agent' ? 'red'
+              : effective.source === 'pin' ? 'red'
+                : effective.source === 'rolePolicy' ? 'gray' : 'blue'}
+          >
+            {effectiveCellLabel(effective)}
+          </Badge>
+          {effective.candidates.length > 0 && !policyUnknown
+            ? <CandidateList candidates={effective.candidates} /> : null}
+        </>
+      ) : null}
+      {effective?.withheldReason ? (
+        <Alert color={effective.source === 'agent' && !effective.withheldReason.includes('read failed') ? 'blue' : 'red'} p="xs">
+          <Text size="xs">{effective.withheldReason}</Text>
+        </Alert>
+      ) : null}
+      {showStored ? (
+        <Badge
+          size="sm"
+          variant="light"
+          styles={{ root: { height: 'auto', maxWidth: '100%', textTransform: 'none' }, label: { whiteSpace: 'normal', textAlign: 'left' } }}
+          color={showEffective ? 'gray'
+            : resolved === 'none' ? 'red' : resolved === 'config' ? 'yellow' : resolved === 'any' ? 'gray' : 'blue'}
+        >
+          {storedLabel}
+        </Badge>
+      ) : null}
       {chain?.provenance ? (
         <Badge size="xs" variant="outline">
           {chain.provenance}
@@ -544,7 +600,7 @@ function MatrixCell({
           {chain.reason}
         </Text>
       ) : null}
-      <CandidateList candidates={chain?.candidates ?? []} />
+      {showStored && !chainReadFailed ? <CandidateList candidates={chain?.candidates ?? []} /> : null}
       <Button size="compact-xs" variant="light" onClick={onConfigure} aria-label={configureLabel}>
         Configure
       </Button>

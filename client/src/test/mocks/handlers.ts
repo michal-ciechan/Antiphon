@@ -75,6 +75,7 @@ export const handlers: HttpHandler[] = [
   ),
   http.get('/api/complexity-chains', () =>
     HttpResponse.json({
+      defaultComplexity: 'Medium',
       chains: [],
       roles: [],
       complexities: ['Hard', 'Medium', 'Easy'],
