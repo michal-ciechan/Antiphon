@@ -270,6 +270,34 @@ function serveRouting(options?: {
 }
 
 describe('RoutingSettingsTab', () => {
+  it.each((['pin', 'pin+chain', 'role', 'any', 'config', 'rolePolicy', 'agent'] as const)
+    .flatMap(source => (['Hard', 'Medium', 'Easy'] as const).map(tier => ({ source, tier }))))(
+    'C1258 V-2 stage-pin failure suppresses route promises $source/$tier', async ({ source, tier }) => {
+      const reason = 'stage pin read failed (InvalidOperationException)'
+      serveRouting({ pins: [], effective: { Plan: {
+        ...planEffective,
+        chains: [chain(tier, {
+          role: 'Plan', resolvedFrom: source === 'any' ? 'any' : source === 'config' ? 'config' : 'role',
+          candidates: [heldFable],
+          effective: { source, candidates: [codex], stagePin: null, governsDefault: tier === 'Medium', withheldReason: reason },
+        })],
+      } } })
+      renderWithProviders(<RoutingSettingsTab />)
+      const cell = await screen.findByTestId(`routing-matrix-cell-Plan-${tier}`)
+      expect(await within(cell).findByText('Effective routing unknown')).toBeInTheDocument()
+      expect(within(cell).getByRole('alert')).toHaveTextContent(reason)
+      expect(cell).not.toHaveTextContent('Own rule')
+      expect(cell).not.toHaveTextContent('Inherits Any role')
+      expect(cell).not.toHaveTextContent('Configuration fallback')
+      expect(cell).not.toHaveTextContent('Falls back to RolePolicy')
+      expect(cell).not.toHaveTextContent('Pinned to standing agent')
+      expect(cell).not.toHaveTextContent('Codex/Frontier')
+      expect(cell).not.toHaveTextContent('ClaudeCode/Frontier')
+      expect(cell).not.toHaveTextContent('dispatch blocks')
+      expect(within(cell).getByRole('button', { name: `Configure Plan / ${tier}` })).toBeEnabled()
+    },
+  )
+
   it('C097M V-C4 pin-overlay-first', async () => {
     serveRouting({ effective: { Plan: {
       ...planEffective,
@@ -381,7 +409,7 @@ describe('RoutingSettingsTab', () => {
     { name: 'required-empty-cell', source: 'pin', candidates: [codex], candidateText: '1. Codex/Frontier (gpt-6-astra)', reason: null, label: 'Required Human pin → Codex/Frontier (gpt-6-astra)' },
     { name: 'preferred-unlaunchable-policy', source: 'pin+chain', candidates: [codex], candidateText: '1. Codex/Frontier (gpt-6-astra)', reason: 'Plan policy names Raw/Frontier, which delegation cannot launch', label: 'Preferred Human pin → Codex/Frontier (gpt-6-astra), then this row' },
     { name: 'pin-read-failure', source: 'pin', candidates: [codex], candidateText: '1. Codex/Frontier (gpt-6-astra)', reason: 'chain read failed (InvalidOperationException)', label: 'Required Human pin → Codex/Frontier (gpt-6-astra)' },
-    { name: 'role-read-failure', source: 'role', candidates: [codex], candidateText: '1. Codex/Frontier (gpt-6-astra)', reason: 'stage pin read failed (InvalidOperationException)', label: 'Own rule' },
+    { name: 'role-metadata-read-failure', source: 'role', candidates: [codex], candidateText: '1. Codex/Frontier (gpt-6-astra)', reason: 'chain metadata read failed (InvalidOperationException)', label: 'Own rule' },
     { name: 'any-read-failure', source: 'any', candidates: [codex], candidateText: '1. Codex/Frontier (gpt-6-astra)', reason: 'chain metadata read failed (InvalidOperationException)', label: 'Inherits Any role' },
     { name: 'config-availability-failure', source: 'config', candidates: [{ ...heldFable, unavailableReason: 'availability read failed (InvalidOperationException)' }], candidateText: '1. ClaudeCode/Frontier (fable)', reason: 'availability read failed (InvalidOperationException)', label: 'Configuration fallback' },
     { name: 'standing-agent', source: 'agent', candidates: [], reason: 'stage pin binds standing agent c097m-standing (ClaudeCode); an ordinary dispatch runs on that agent and does not walk this row', label: 'Pinned to standing agent c097m-standing (ClaudeCode) — an ordinary dispatch runs there; this row is not walked' },

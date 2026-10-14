@@ -108,6 +108,48 @@ public sealed class ComplexityEffectiveHttpTests(ComplexityChainApiWebAppFactory
     }
 
     [Test]
+    public async Task A_preferred_pin_on_empty_tiers_exposes_policy_only_on_the_default_tier()
+    {
+        using var client = factory.CreateClient();
+        Guid? pin = null;
+        try
+        {
+            pin = await PutPinAsync(client, new
+            {
+                role = "Plan", provenance = "Human", strength = "Preferred",
+                agentKind = "Codex", modelLevel = "Frontier", reason = "C1258 preferred empty tiers",
+            });
+            var json = await GetAsync(client, "/api/complexity-chains?role=Plan");
+            json.GetProperty("defaultComplexity").GetString().ShouldBe("Medium");
+            var rows = json.GetProperty("chains").EnumerateArray().ToArray();
+            rows.Select(row => row.GetProperty("complexity").GetString()).ShouldBe(["Hard", "Medium", "Easy"]);
+            foreach (var row in rows)
+            {
+                row.GetProperty("resolvedFrom").GetString().ShouldBe("none");
+                row.GetProperty("candidates").GetArrayLength().ShouldBe(0);
+                var effective = row.GetProperty("effective");
+                effective.GetProperty("source").GetString().ShouldBe("pin+chain");
+                effective.GetProperty("stagePin").GetProperty("id").GetGuid().ShouldBe(pin.Value);
+                effective.GetProperty("withheldReason").ValueKind.ShouldBe(JsonValueKind.Null);
+                var candidates = effective.GetProperty("candidates").EnumerateArray()
+                    .Select(c => (c.GetProperty("agentKind").GetString(), c.GetProperty("modelLevel").GetString(),
+                        c.GetProperty("alias").GetString())).ToArray();
+                if (row.GetProperty("complexity").GetString() == "Medium")
+                {
+                    effective.GetProperty("governsDefault").GetBoolean().ShouldBeTrue();
+                    candidates.ShouldBe([("Codex", "Frontier", "gpt-6-astra"), ("ClaudeCode", "Frontier", "fable")]);
+                }
+                else
+                {
+                    effective.GetProperty("governsDefault").GetBoolean().ShouldBeFalse();
+                    candidates.ShouldBe([("Codex", "Frontier", "gpt-6-astra")]);
+                }
+            }
+        }
+        finally { if (pin is not null) await client.DeleteAsync($"/api/routing-pins/{pin}"); }
+    }
+
+    [Test]
     public async Task Put_twice_is_last_writer_wins_without_a_409()
     {
         using var client = factory.CreateClient();
