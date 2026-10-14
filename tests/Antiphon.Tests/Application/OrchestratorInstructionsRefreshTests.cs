@@ -1,3 +1,5 @@
+using System.Data.Common;
+using System.Text;
 using System.Text.Json;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
@@ -10,6 +12,7 @@ using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -26,6 +29,115 @@ namespace Antiphon.Tests.Application;
 [NotInParallel("MessageQueue")]
 public class OrchestratorInstructionsRefreshTests
 {
+    [Test]
+    [Arguments(TaskComplexity.Hard)]
+    [Arguments(TaskComplexity.Medium)]
+    [Arguments(TaskComplexity.Easy)]
+    [Arguments(null)]
+    public async Task A_failed_chain_read_marks_the_affected_file_cells_unknown(TaskComplexity? tier)
+    {
+        var fault = new ChainReadFault(tier);
+        await using var h = await CreateReadFailureHarnessAsync(fault);
+        fault.Enabled = true;
+        await Instructions(h).ReconcileNowAsync("chain read failure");
+
+        var state = await ReadStateAsync(h);
+        var file = await File.ReadAllTextAsync(state.WrittenPath);
+        var line = file.Split('\n').Single(value => value.StartsWith("- Plan:", StringComparison.Ordinal));
+        fault.Failures.ShouldBe(tier is null ? 3 : 1);
+        foreach (var affected in fault.Tiers)
+            line.ShouldContain($"{affected}{(affected == TaskComplexity.Medium ? " (default)" : "")} unknown (chain read failed)");
+        Encoding.UTF8.GetByteCount(line).ShouldBeLessThanOrEqualTo(160);
+        line.ShouldNotContain("\uFFFD");
+        state.Body.ShouldContain(line.TrimEnd('\r'));
+
+        await using var scope = h.Provider.CreateAsyncScope();
+        var snapshot = await scope.ServiceProvider.GetRequiredService<OrchestratorInstructionsSnapshotBuilder>()
+            .BuildAsync(CancellationToken.None);
+        var body = OrchestratorInstructionsRenderer.Render(snapshot);
+        var cap = Encoding.UTF8.GetByteCount(body) - 1;
+        var fitted = OrchestratorInstructionsRenderer.Render(snapshot, cap);
+        Encoding.UTF8.GetByteCount(fitted).ShouldBeLessThanOrEqualTo(cap);
+        fitted.ShouldContain("… 14 rows: GET /api/complexity-chains");
+        fitted.ShouldNotContain("- Plan:");
+    }
+
+    [Test]
+    [Arguments(TaskComplexity.Hard)]
+    [Arguments(TaskComplexity.Medium)]
+    [Arguments(TaskComplexity.Easy)]
+    [Arguments(null)]
+    public async Task A_failed_chain_read_notice_reports_unknown_and_recovery_reports_the_candidate(TaskComplexity? tier)
+    {
+        var fault = new ChainReadFault(tier);
+        await using var h = await CreateReadFailureHarnessAsync(fault);
+        fault.Enabled = true;
+        await Instructions(h).ReconcileNowAsync("chain read failure");
+
+        fault.Failures.ShouldBe(tier is null ? 3 : 1);
+        h.Adapter.SubmittedBodies.Count.ShouldBe(1);
+        foreach (var affected in fault.Tiers)
+            h.Adapter.SubmittedBodies[0].ShouldContain(
+                $"matrix: Plan {affected} Codex/Frontier (gpt-6-astra) → unknown (chain read failed)");
+        h.Adapter.SubmittedBodies[0].ShouldNotContain("→ unset");
+        var failed = await ReadStateAsync(h);
+        await Instructions(h).ReconcileNowAsync("same chain read failure");
+        h.Adapter.SubmittedBodies.Count.ShouldBe(1);
+        (await ReadStateAsync(h)).Revision.ShouldBe(failed.Revision);
+
+        fault.Enabled = false;
+        await Instructions(h).ReconcileNowAsync("chain read recovered");
+        h.Adapter.SubmittedBodies.Count.ShouldBe(2);
+        foreach (var affected in fault.Tiers)
+            h.Adapter.SubmittedBodies[1].ShouldContain(
+                $"matrix: Plan {affected} unknown (chain read failed) → Codex/Frontier (gpt-6-astra)");
+        var recovered = await ReadStateAsync(h);
+        recovered.Revision.ShouldBe(failed.Revision + 1);
+        (await File.ReadAllTextAsync(recovered.WrittenPath)).ShouldNotContain("unknown (chain read failed)");
+    }
+
+    private static async Task<BridgeQueueHarness> CreateReadFailureHarnessAsync(ChainReadFault fault)
+    {
+        var h = await CreateHarnessAsync(fault);
+        await AttachBundleAsync(h);
+        h.Delegation.OrchestratorInstructions.Notify = OrchestratorInstructionsNotify.Off;
+        await using var scope = h.Provider.CreateAsyncScope();
+        var chains = scope.ServiceProvider.GetRequiredService<ComplexityChainService>();
+        foreach (var tier in fault.Tiers)
+            await chains.UpsertAsync(AgentTaskRole.Plan, tier,
+                new PutComplexityChainRequest([new(AgentKind.Codex, AgentModelLevel.Frontier)],
+                    RoutingPinProvenance.Human, "read-failure witness"), null, CancellationToken.None);
+        await Instructions(h).WhenIdleAsync();
+        await Instructions(h).ReconcileNowAsync("startup");
+        h.Adapter.SubmittedBodies.ShouldBeEmpty();
+        h.Delegation.OrchestratorInstructions.Notify = OrchestratorInstructionsNotify.All;
+        return h;
+    }
+
+    private sealed class ChainReadFault(TaskComplexity? tier) : DbCommandInterceptor
+    {
+        public bool Enabled { get; set; }
+        public int Failures { get; private set; }
+        public TaskComplexity[] Tiers { get; } = tier is { } selected
+            ? [selected] : [TaskComplexity.Hard, TaskComplexity.Medium, TaskComplexity.Easy];
+
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(DbCommand command,
+            CommandEventData eventData, InterceptionResult<DbDataReader> result, CancellationToken cancellationToken = default)
+        {
+            var parameters = command.Parameters.Cast<DbParameter>().ToArray();
+            if (Enabled && command.CommandText.Contains("FROM \"ComplexityChains\"", StringComparison.Ordinal)
+                && parameters.Any(p => p.ParameterName.Contains("role", StringComparison.Ordinal)
+                    && Convert.ToInt32(p.Value) == (int)AgentTaskRole.Plan)
+                && parameters.Any(p => p.ParameterName.Contains("complexity", StringComparison.Ordinal)
+                    && Tiers.Contains((TaskComplexity)Convert.ToInt32(p.Value))))
+            {
+                Failures++;
+                throw new InvalidOperationException("C097 S-F chain read failure");
+            }
+            return base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
+        }
+    }
+
     [Test]
     public async Task Runner_defaults_put_rewrites_the_file_and_delivers_one_notice_to_an_idle_standing_orchestrator()
     {
@@ -512,7 +624,7 @@ public class OrchestratorInstructionsRefreshTests
         }
     }
 
-    private static async Task<BridgeQueueHarness> CreateHarnessAsync()
+    private static async Task<BridgeQueueHarness> CreateHarnessAsync(DbCommandInterceptor? interceptor = null)
     {
         var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var settings = new DelegationSettings();
@@ -521,6 +633,10 @@ public class OrchestratorInstructionsRefreshTests
             AlwaysOn = true,
             ConnectionString = schema.ConnectionString,
             Delegation = settings,
+            ConfigureDbContext = options =>
+            {
+                if (interceptor is not null) options.AddInterceptors(interceptor);
+            },
             ConfigureServices = services =>
             {
                 services.AddSingleton<OrchestratorInstructionsService>();
