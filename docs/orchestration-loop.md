@@ -973,6 +973,30 @@ Read the live pins with
 downgrading it from Required to Preferred, is an operator decision made through
 `scripts/routing-pin.ps1`; CARD-0333's matrix UI is read-only for pins.
 
+**Matrix cells with a failed read (CARD-1258, CARD-1270).** A role cell's effective view reads
+the stage pin, the chain, the chain metadata, a standing agent's label and each candidate's
+availability; a failed part appends `<part> read failed (<type>)` to the cell's alert. The cell
+renders a value derived from a failed read as unknown, never as a definite candidate list or
+`then this row`; values from reads that succeeded stay definite.
+
+| Behaviour | Test (runner, file) | What it asserts |
+|---|---|---|
+| Every displayed cell field against each failed read, with a Preferred and a Required pin, on the default and a non-default tier | Vitest `C1270 V-2 $read read failure with a $strength pin on $tier`, `client/src/features/settings/RoutingSettingsTab.test.tsx` | 32 cases: literal label, candidate, stored-origin, provenance, reason, expiry, availability, alert, banner and Configure texts, and the definite texts that must be absent |
+| A failed stage pin read makes the route unknown for every source | Vitest `C1258 V-2 stage-pin failure suppresses route promises $source/$tier`, same file; `C1258 V-1 stage-pin failure $source/$tier`, `routingSettingsModel.test.ts` | `Effective routing unknown`; no effective or stored candidate and no stored origin |
+| A failed chain read under a Preferred pin is unknown; under a Required or standing-agent pin the route stays definite | Vitest `C1270 V-1 effective label <case>`, `client/src/features/settings/routingSettingsModel.test.ts`; the V-2 `chain` rows | Preferred: `Effective routing unknown` with no candidate list, also when the default tier appended RolePolicy; Required: `Required Human pin → Codex/Frontier (gpt-6-astra)`; both `Stored cell: unknown (read failed)` |
+| A failed chain or chain metadata read shows the omitted reason and expiry as unknown | The V-2 `chain` and `chain metadata` rows | `Provenance, reason and expiry unknown: chain read failed (…)` or `Reason and expiry unknown: chain metadata read failed (…)`; the stored reason and `Expires` line are not rendered |
+| A failed availability read is unknown, not unavailable | Vitest `C1270 V-1 availability <case>`; the V-2 `availability` rows | `availability unknown: availability read failed (…)`; a held reason or free text mentioning the marker renders unchanged |
+| A failed standing-agent read names the agent id with `(name unknown)` | `C1270 V-1 effective label <case>`; the V-2 `standing agent` rows | A missing agent keeps `(unavailable)`; a failed read does not |
+| A failed routing-pins or role-policy read leaves the cell definite | The V-2 `routing pins` and `role policy` rows | Cell texts match the no-failure row; the section shows its own failure text |
+
+**A Preferred stage pin on an unset non-default tier lists the pin alone.** The effective view
+appends RolePolicy after a Preferred pin only on the default tier; on another tier an explicit
+`-Complexity` walk has an empty row after the pin, so the cell's `then this row` adds no
+candidate and an unusable RolePolicy is not diagnosed
+(`ComplexityEffectiveComposeTests.A_preferred_pin_on_an_empty_cell_appends_policy_only_for_the_default_tier`,
+`A_non_default_preferred_pin_does_not_report_an_unused_policy_as_unlaunchable`;
+`ComplexityEffectiveHttpTests.A_preferred_pin_on_empty_tiers_exposes_policy_only_on_the_default_tier`).
+
 **Complexity chains (CARD-0090, CARD-0332, CARD-0097).** Pass `-Complexity Hard|Medium|Easy` when the work's hardness
 should pick (kind, level) from an ordered fallback list, instead of an explicit `-Kind`/`-Level`.
 The list is a sparse (role × complexity) matrix: the walk reads the role cell, then the any-role

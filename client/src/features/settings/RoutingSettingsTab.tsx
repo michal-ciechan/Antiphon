@@ -46,11 +46,13 @@ import {
   USAGE_UNKNOWN,
   anyRoleChains,
   candidateAvailabilityLabel,
+  candidateAvailabilityUnknown,
   candidateLabel,
   cardPinCopy,
   cardPinCountLabel,
   cellByComplexity,
   cellEditorTitle,
+  cellMetadataUnknownLabel,
   complexitiesOf,
   effectiveResolvedFrom,
   effectiveCellLabel,
@@ -59,6 +61,7 @@ import {
   nonComplexityBoundary,
   pinEffectCopy,
   effectiveRoutingUnknown,
+  failedReadSegment,
   resolvedFromLabel,
   stagePinsForRole,
   untilLabel,
@@ -533,8 +536,9 @@ function MatrixCell({
   const cellComplexity = chain?.complexity ?? complexity ?? 'Hard'
   const configureLabel = cellEditorTitle(isAnyRoleRow ? null : (role ?? null), cellComplexity)
   const effective = isAnyRoleRow ? null : chain?.effective
-  const chainReadFailed = effective?.withheldReason?.includes('chain read failed') ?? false
+  const chainReadFailed = effective != null && failedReadSegment(effective, 'chain') != null
   const routingUnknown = effective != null && effectiveRoutingUnknown(effective)
+  const metadataUnknown = effective != null ? cellMetadataUnknownLabel(effective) : null
   // RolePolicy describes the ordinary default create. A non-default -Complexity dispatch
   // blocks on a known empty chain only when the stage pin read succeeded too.
   const showEffective = effective != null && (
@@ -592,12 +596,17 @@ function MatrixCell({
           {chain.provenance}
         </Badge>
       ) : null}
-      {chain?.notAfter ? (
+      {metadataUnknown ? (
+        <Text size="xs" c="red">
+          {metadataUnknown}
+        </Text>
+      ) : null}
+      {chain?.notAfter && !metadataUnknown ? (
         <Text size="xs" c="dimmed">
           Expires {chain.notAfter}
         </Text>
       ) : null}
-      {chain?.reason ? (
+      {chain?.reason && !metadataUnknown ? (
         <Text size="xs" c="dimmed" lineClamp={2}>
           {chain.reason}
         </Text>
@@ -623,7 +632,7 @@ function CandidateList({ candidates }: { candidates: ComplexityCandidateDto[] })
       {candidates.map((candidate, index) => (
         <Group key={`${candidate.agentKind}-${candidate.modelLevel}-${index}`} gap={6} wrap="nowrap">
           <Text size="xs">{candidateLabel(candidate, index)}</Text>
-          <Text size="xs" c={candidate.availableNow ? 'teal' : 'red'}>
+          <Text size="xs" c={candidate.availableNow ? 'teal' : candidateAvailabilityUnknown(candidate) ? 'dimmed' : 'red'}>
             {candidateAvailabilityLabel(candidate)}
           </Text>
         </Group>
