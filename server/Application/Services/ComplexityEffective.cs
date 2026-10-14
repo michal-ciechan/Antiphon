@@ -38,8 +38,10 @@ public static class ComplexityEffective
             return new(k, l, Usable(k, l) ? ModelLevelAliases.For(k, l) : "", RoutingCandidates.OriginRolePolicy);
         }
 
+        // Only an ordinary default-tier dispatch falls back to RolePolicy when no row
+        // resolves. An explicit non-default complexity walk has an empty chain instead.
         var composed = RoutingCandidates.Compose(decision,
-            chainResolvedFrom == "none" ? null : chain, chainLabel, null, null, Resolve);
+            chainResolvedFrom == "none" && isDefaultTier ? null : chain, chainLabel, null, null, Resolve);
         var hasPin = composed.Candidates.Any(c => c.Origin == RoutingCandidates.OriginPin);
         var source = hasPin
             ? decision.Pin!.Strength == RoutingPinStrength.Required ? "pin" : "pin+chain"

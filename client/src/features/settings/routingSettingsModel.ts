@@ -27,27 +27,25 @@ export const COMPLEXITY_ROUTING_BOUNDARY =
 // GetEffectiveAsync joins those diagnostic segments and the policy reason with "; ".
 const STAGE_PIN_READ_FAILED_PREFIX = 'stage pin read failed ('
 
-export function policyRoutingUnknown(effective: ComplexityEffectiveDto): boolean {
-  return effective.source === 'rolePolicy' && (
-    effective.withheldReason?.includes('chain read failed') === true
-    || effective.withheldReason?.split('; ').some(reason => reason.startsWith(STAGE_PIN_READ_FAILED_PREFIX)) === true
-  )
+export function effectiveRoutingUnknown(effective: ComplexityEffectiveDto): boolean {
+  return effective.withheldReason?.split('; ').some(reason => reason.startsWith(STAGE_PIN_READ_FAILED_PREFIX)) === true
+    || (effective.source === 'rolePolicy' && effective.withheldReason?.includes('chain read failed') === true)
 }
 
 export function effectiveCellLabel(effective: ComplexityEffectiveDto): string {
   const { source, candidates, stagePin, withheldReason } = effective
+  // An unread stage pin can override any source. Keep its diagnostic in the alert,
+  // without presenting the remaining projection as an effective routing verdict.
+  if (effectiveRoutingUnknown(effective)) {
+    return 'Effective routing unknown'
+  }
+
   if (source === 'agent') {
     // The wire contract carries the standing agent label in this explanation, not the pin ref.
     const agent = withheldReason?.match(/^stage pin binds standing agent (.+?); an ordinary dispatch runs on that agent and does not walk this row/)
     return agent
       ? `Pinned to standing agent ${agent[1]} — an ordinary dispatch runs there; this row is not walked`
       : 'Pinned to standing agent — this row is not walked'
-  }
-
-  // A policy projection cannot establish the route while its chain or stage pin read is unknown.
-  // Keep the server diagnostic in the cell's alert, separate from the verdict.
-  if (policyRoutingUnknown(effective)) {
-    return 'Effective routing unknown'
   }
 
   const head = candidates[0]
