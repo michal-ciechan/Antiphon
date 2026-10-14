@@ -94,3 +94,26 @@ The checkpoint tool bootstrap is the only planned unlisted build and takes a bui
 
 S1 runs CP-1 by explicit row selection before the S2 implementation; S2 reruns the same row
 and runs CP-2/CP-3/CP-4 once. Outputs from red S1 are removed before the final fresh build.
+
+## Code outcome (2026-10-14)
+
+Implementation SHA: `44fb572e67122b18847378a4f733b0560209b323`. V-1 through V-4 and
+R-1/R-2/R-4 passed: 110 integration cases, zero failures/skips. The eight new failure
+cases were red on unchanged production before the fix. All 15 audit links have live
+probes; no further restrictive-FK deletion blocker was found.
+
+R-3 is incomplete. CP-3 reached its unchanged 21-minute deadline without a terminal TRX.
+Its partial log contains 19 failures and 37 Windows-only skip messages. A focused base
+probe at `c637b74eea51bb88cf0d2137c05672692ab909dc` executed all 19 failed methods and
+reproduced all 19 failures. The initial base filter selected zero tests; the documented
+method-prefix wildcard repair reused that build. Both attempts are retained as unlisted,
+necessary failure-triage evidence. The Unit timeout itself was not repeated at base.
+
+CP-1/CP-2/CP-4 clean receipts validated at the implementation SHA. The entire selection
+does not qualify as clean Final evidence. Code continuation must complete R-3 with bounded
+selections and native placement, and triage the inherited failures, before ordinary Review.
+No timeout or assertion was loosened. All PC-1 through PC-9 variants remain pending for
+SourceLanding Mutation. Original landing owner remains `f3a5b136-0402-405d-88cd-4b3875b5d366`.
+
+Full report, unedited checkpoint lines, per-class counts, native skip roster and pending
+PC variants: `.antiphon/task-f3a5b136.md`.
