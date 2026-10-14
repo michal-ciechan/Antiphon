@@ -25,11 +25,11 @@ with the exact path; after A is written back `VerifyLedger` is clean) and
 launches the build, state `ok`, file holds A; strict run does not launch, `refused: tampered`, TAMPERED line, B kept).
 `admission_hash_other_than_stat_or_strict_is_rejected` covers the field.
 
-Sentences removed or rewritten (`git diff 8995111253..HEAD`): repair-2 heading ("cannot show"); repair-2 Linux paragraph
+Sentences removed or rewritten (`git diff 8995111253..HEAD`): repair-2 heading (modal claim about stamps); repair-2 Linux paragraph
 (ctime "moves on content writes") now names the write-plus-utimes test and the shared-mapping limit; 586e863b report
 trade-off now cites `non_output_file_changed_before_slot_release_is_refused`; repair-1 `AdmitLedger` row ("any
 difference") narrowed to hashed entries and its quoted quantifiers paraphrased; test comments "a write during the slot
-wait is now refused" and "proves nothing" qualified.
+wait is now refused" and the portable-stamp sentence qualified.
 
 ## D2: portable expectation
 
