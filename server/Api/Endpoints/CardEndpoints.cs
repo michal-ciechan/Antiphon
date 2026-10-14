@@ -207,6 +207,45 @@ public static class CardEndpoints
             return Results.Ok(await service.UnarchiveAsync(cardId, request, cancellationToken));
         });
 
+        // CARD-0100. Relationships of this card: blockedBy (rows it owns) and blocks (the inverse).
+        cards.MapGet("/{id}/relationships", async (
+            string id,
+            HttpContext http,
+            CardService service,
+            AgentTaskService tasks,
+            CancellationToken cancellationToken) =>
+        {
+            var cardId = await ResolveAsync(http, id, service, tasks, cancellationToken);
+            return Results.Ok(await service.GetRelationshipsAsync(cardId, cancellationToken));
+        });
+
+        cards.MapPost("/{id}/relationships", async (
+            string id,
+            AddCardRelationshipRequest request,
+            HttpContext http,
+            CardService service,
+            AgentTaskService tasks,
+            CancellationToken cancellationToken) =>
+        {
+            var cardId = await ResolveAsync(http, id, service, tasks, cancellationToken);
+            var created = await service.AddRelationshipAsync(cardId, request, cancellationToken);
+            return Results.Created($"/api/cards/{cardId}/relationships", created);
+        });
+
+        // POST, not DELETE-with-a-body, for the archive route's reason above.
+        cards.MapPost("/{id}/relationships/{relationshipId:guid}/remove", async (
+            string id,
+            Guid relationshipId,
+            RemoveCardRelationshipRequest request,
+            HttpContext http,
+            CardService service,
+            AgentTaskService tasks,
+            CancellationToken cancellationToken) =>
+        {
+            var cardId = await ResolveAsync(http, id, service, tasks, cancellationToken);
+            return Results.Ok(await service.RemoveRelationshipAsync(cardId, relationshipId, request, cancellationToken));
+        });
+
         // Dedicated verb, not a move: Done/Canceled stay unreachable via PATCH /{id}.
         // Reopen never spawns — ApplyColumnMove has no spawn path.
         cards.MapPost("/{id}/reopen", async (

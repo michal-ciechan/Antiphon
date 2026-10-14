@@ -110,7 +110,71 @@ public sealed record CardDto(
 
     /// <summary>CARD-0710. Default task platform. Any unless edited.</summary>
     public RequiredPlatform RequiredPlatform { get; init; } = RequiredPlatform.Any;
+
+    /// <summary>
+    /// CARD-0100. Blockers that are not resolved; omitted at zero. Filled by the card and list
+    /// routes (CardRelationshipApiTests.Card_and_list_views_carry_open_blocker_count_and_blockers_excluding_resolved).
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public int OpenBlockerCount { get; init; }
+
+    /// <summary>
+    /// CARD-0100. The BlockedBy rows, resolved ones included; null (omitted) when the card has none
+    /// (CardRelationshipApiTests.Card_and_list_views_carry_open_blocker_count_and_blockers_excluding_resolved).
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<CardBlockerSummaryDto>? Blockers { get; init; }
 }
+
+/// <summary>CARD-0100. One blocker of a card, as the list and card routes carry it.</summary>
+public sealed record CardBlockerSummaryDto(string Identifier, CardStatus Status, bool Resolved);
+
+/// <summary>
+/// CARD-0100. One relationship row seen from the requested card: <c>Related*</c> describes the OTHER
+/// card (the blocker in <c>blockedBy</c>, the blocked card in <c>blocks</c>). <c>Resolved</c> is
+/// computed on the blocker end.
+/// </summary>
+public sealed record CardRelationshipDto(
+    Guid Id,
+    CardRelationshipKind Kind,
+    Guid CardId,
+    Guid RelatedCardId,
+    string RelatedIdentifier,
+    string RelatedTitle,
+    Guid RelatedBoardId,
+    CardStatus RelatedStatus,
+    DateTime? RelatedArchivedAt,
+    bool Resolved,
+    string? Reason,
+    string? CreatedBy,
+    DateTime CreatedAt)
+{
+    /// <summary>Set only on the 201 of an add: the blocked card's rotated token.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public Guid? CardConcurrencyToken { get; init; }
+}
+
+public sealed record CardRelationshipsDto(
+    IReadOnlyList<CardRelationshipDto> BlockedBy,
+    IReadOnlyList<CardRelationshipDto> Blocks);
+
+/// <summary>
+/// CARD-0100. <c>Kind</c> binds as a string and is checked against the known names, so an unknown
+/// kind is a 422, not a body-bind 400. <c>RelatedCard</c> is a guid or identifier;
+/// <c>RelatedBoardId</c> fences its resolution.
+/// </summary>
+public sealed record AddCardRelationshipRequest(
+    Guid ConcurrencyToken,
+    string? RelatedCard,
+    string? Kind,
+    Guid? RelatedBoardId = null,
+    string? Reason = null,
+    string? CreatedBy = null);
+
+public sealed record RemoveCardRelationshipRequest(
+    Guid ConcurrencyToken,
+    string? Reason = null,
+    string? RemovedBy = null);
 
 public sealed record CardListDto(IReadOnlyList<CardDto> Cards, bool Truncated, string? NextPageToken = null);
 
@@ -382,6 +446,16 @@ public sealed record CardRevisionDto(
 
     /// <summary>CARD-0710. Superseded default. Null on older revisions and non-content rows.</summary>
     public RequiredPlatform? RequiredPlatform { get; init; }
+
+    /// <summary>CARD-0100. Relationship rows only; omitted otherwise so older kinds keep their wire shape.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public Guid? RelatedCardId { get; init; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? RelatedCardIdentifier { get; init; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public CardRelationshipKind? RelationshipKind { get; init; }
 }
 
 /// <summary>

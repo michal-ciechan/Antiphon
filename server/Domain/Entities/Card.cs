@@ -125,4 +125,10 @@ public class Card
     public ICollection<CardRevision> Revisions { get; set; } = new List<CardRevision>();
     public ICollection<CardWorktreeCleanup> WorktreeCleanups { get; set; } = new List<CardWorktreeCleanup>();
     public ICollection<CardComment> Comments { get; set; } = new List<CardComment>();
+
+    /// <summary>CARD-0100. Rows where this card is the blocked card.</summary>
+    public ICollection<CardRelationship> BlockedBy { get; set; } = new List<CardRelationship>();
+
+    /// <summary>CARD-0100. Rows where this card is the blocker.</summary>
+    public ICollection<CardRelationship> Blocks { get; set; } = new List<CardRelationship>();
 }

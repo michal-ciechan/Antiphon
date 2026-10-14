@@ -31,5 +31,14 @@ public enum CardRevisionKind
     /// <c>Position</c> and, when the drop crossed a cell, the superseded importance/urgency.
     /// Neighbours that were only renumbered do not get a row.
     /// </summary>
-    Reorder = 5
+    Reorder = 5,
+
+    /// <summary>
+    /// A relationship was added to this card (CARD-0100). The row carries the other card's id, its
+    /// identifier as it was at the time, and the relationship kind.
+    /// </summary>
+    RelationshipAdded = 6,
+
+    /// <summary>A relationship was removed from this card; same columns as <see cref="RelationshipAdded"/>.</summary>
+    RelationshipRemoved = 7
 }

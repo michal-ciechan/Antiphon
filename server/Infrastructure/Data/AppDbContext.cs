@@ -43,6 +43,7 @@ public class AppDbContext : DbContext
     public DbSet<BoardWorkflowDefinition> BoardWorkflowDefinitions => Set<BoardWorkflowDefinition>();
     public DbSet<ExternalIssueRef> ExternalIssueRefs => Set<ExternalIssueRef>();
     public DbSet<CardComment> CardComments => Set<CardComment>();
+    public DbSet<CardRelationship> CardRelationships => Set<CardRelationship>();
     public DbSet<RetrySchedule> RetrySchedules => Set<RetrySchedule>();
     public DbSet<TokenUsage> TokenUsages => Set<TokenUsage>();
     public DbSet<ArtifactSectionReview> ArtifactSectionReviews => Set<ArtifactSectionReview>();
@@ -1323,6 +1324,7 @@ public class AppDbContext : DbContext
             // the card held, and a tighter column here would 500 on the close-out it records.
             entity.Property(r => r.TerminalReason).HasColumnType("text");
             entity.Property(r => r.EditedBy).HasMaxLength(200);
+            entity.Property(r => r.RelatedCardIdentifier).HasMaxLength(100);
             entity.Property(r => r.CreatedAt).IsRequired();
 
             entity.HasIndex(r => new { r.CardId, r.RevisionNumber })
@@ -1838,6 +1840,35 @@ public class AppDbContext : DbContext
             entity.HasOne(c => c.Card)
                 .WithMany(card => card.Comments)
                 .HasForeignKey(c => c.CardId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // CARD-0100. CardRelationshipSchemaTests pins the unique pair, the self check and both cascades.
+        modelBuilder.Entity<CardRelationship>(entity =>
+        {
+            entity.ToTable("CardRelationships", table =>
+                table.HasCheckConstraint("CK_CardRelationships_NotSelf", "\"CardId\" <> \"RelatedCardId\""));
+            entity.HasKey(r => r.Id);
+            entity.Property(r => r.CardId).IsRequired();
+            entity.Property(r => r.RelatedCardId).IsRequired();
+            entity.Property(r => r.Kind).IsRequired();
+            entity.Property(r => r.Reason).HasColumnType("text");
+            entity.Property(r => r.CreatedBy).HasMaxLength(200);
+            entity.Property(r => r.CreatedAt).IsRequired();
+
+            entity.HasIndex(r => new { r.CardId, r.RelatedCardId, r.Kind })
+                .IsUnique()
+                .HasDatabaseName("IX_CardRelationships_CardId_RelatedCardId_Kind");
+            entity.HasIndex(r => r.RelatedCardId)
+                .HasDatabaseName("IX_CardRelationships_RelatedCardId");
+
+            entity.HasOne(r => r.Card)
+                .WithMany(card => card.BlockedBy)
+                .HasForeignKey(r => r.CardId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(r => r.RelatedCard)
+                .WithMany(card => card.Blocks)
+                .HasForeignKey(r => r.RelatedCardId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
 
