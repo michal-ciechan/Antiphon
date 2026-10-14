@@ -176,6 +176,30 @@ public sealed class OutputCleanupTests : CheckpointTestBase
         File.ReadAllText(Path.Combine(output, "app.dll")).ShouldBe("COMPILER");
     }
 
+    [Test]
+    public void unknown_lifecycle_report_after_seal_is_refused_and_kept()
+    {
+        var root = Tree();
+        var output = Path.Combine(root, "bin-c723a");
+        var host = Path.Combine(output, "checkpoint-lifecycle-host");
+        var reports = Path.Combine(host, "TestResults");
+        SafeWrite.Require(SafeWrite.CreateFreshDirectory(host, SafeWrite.Under(root)));
+        SafeWrite.Require(SafeWrite.CreateFreshDirectory(reports, SafeWrite.Under(root)));
+        SafeWrite.Require(OwnedOutputLedger.Seal(output));
+        var unknown = Path.Combine(reports, "unknown.txt");
+        File.WriteAllText(unknown, "UNKNOWN REPORT BYTES");
+        var control = Path.Combine(root, "src", "bin-c723a");
+
+        var result = OutputCleanup.CleanOwnedOutputs(root, ["bin-c723a"], 0, false, false,
+            createdPaths: [output, control]);
+
+        result.Refusals.ShouldBe(["output-ledger-mismatch; left in place: " + unknown]);
+        result.Deleted.ShouldBe([control]);
+        Directory.Exists(control).ShouldBeFalse("unchanged sealed output is a removable control");
+        File.ReadAllText(unknown).ShouldBe("UNKNOWN REPORT BYTES");
+        File.ReadAllText(Path.Combine(output, "out.dll")).ShouldBe("x");
+    }
+
     // CARD-1242: the seal record holds size and SHA-256; a same-size rewrite must still refuse.
     [Test]
     public void file_modified_after_seal_is_refused_and_kept()
