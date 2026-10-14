@@ -201,8 +201,8 @@ function unknownFloor(): NextCreatePreview {
   return { ...blank('unknown'), note: 'unknown — Orchestrator level depends on the server floor' }
 }
 
-// Match .NET whitespace, title line endings, UTF-16 clamp and word boundaries used by
-// AgentTaskService.cs:4519-4547 and AgentTaskCardBinder.cs:43-64 (V-22).
+// Follow the title whitespace, line endings and UTF-16 clamp in
+// AgentTaskService.cs:4519-4535,4546-4547 (V-22).
 function serverTrim(text: string): string {
   return text.replace(/^[\t\n\v\f\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+|[\t\n\v\f\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+$/g, '')
 }
@@ -219,9 +219,10 @@ function mayBindCard(context: NextCreateContext): boolean {
   const firstLine = (context.goal ?? '').split(/\r\n|[\r\n\f\u0085\u2028\u2029]/).find((line) => line.length > 0)
   const rawTitle = explicitTitle || serverTrim(firstLine ?? 'Delegated task')
   const title = rawTitle.length <= 300 ? rawTitle : rawTitle.slice(0, 299) + '…'
-  // .NET boundary classification examines UTF-16 code units and includes join controls.
-  // Indexing the neighbouring units keeps supplementary letters from changing that boundary.
-  const wordUnit = (unit: string | undefined) => !!unit && /[\p{L}\p{Mn}\p{Nd}\p{Pc}\u200c\u200d]/u.test(unit)
+  // AgentTaskCardBinder.cs:44-64 uses runtime Unicode tables for word boundaries.
+  // ASCII neighbours are exact; non-ASCII neighbours count as possible boundaries
+  // because browser and server Unicode tables can differ (V-22 Unicode drift rows).
+  const wordUnit = (unit: string | undefined) => !!unit && /[A-Za-z0-9_]/.test(unit)
   const identifiers = title.matchAll(/CARD-0*([0-9]+)/gi)
   return Array.from(identifiers).some((match) =>
     !wordUnit(title[match.index - 1]) && !wordUnit(title[match.index + match[0].length])

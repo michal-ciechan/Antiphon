@@ -16,8 +16,10 @@ matrix live (checked on the running server 2026-10-14: `GET /api/complexity-chai
 Client-only repair of Final Reviews 18cdf39f F1-F4 and 9133fca0 D1-D2. The server resolver remains unchanged.
 The preview models a fresh create without a card, explicit agent/kind, follow-up, complexity,
 model/quota bypass or refuse-if-exhausted flag. Settings uses that context. The modal
-withholds its target when the derived title names a card or Hand back supplies card context,
-because card pins are absent from these reads (V-22/V-23). Its selected level and shape are known.
+withholds its target for a possible card binding in the derived title or card context from Hand back,
+because card pins are absent from these reads (V-22/V-23). Identifier boundaries are exact for ASCII
+neighbours; a non-ASCII neighbour counts as a possible boundary because browser and server Unicode
+tables can differ (V-22 Unicode drift and ASCII controls). Its selected level and shape are known.
 It reads role policy, the active stage pin and the role's effective complexity cells.
 
 1. Compose the stage pin without a chain first (AgentTaskService.cs:789-833 and
@@ -347,3 +349,12 @@ Import the manifest with rowMinutes 40 and run with --total-timeout 150m, withou
 checkpoint-tool build, and the required esbuild/Node GET-only differential probe.
 The probe retains the old rows, adds the new rows, and separates conservative unknowns
 from fail-open mismatches against a .NET 9 oracle. No create calls. Budget: 40 minutes.
+
+Round-5 CP-1 at 34f5d01089b9f6fc02f756035e5acbc5773382b2, run
+20261014-220457-2313: 21 assertion failures / 164 passes across three files.
+The 15 new BMP drift cases and six revised non-ASCII expectations fail against the
+unchanged implementation; supplementary and ASCII controls pass. No compile/fixture errors.
+slot=granted waited=0s, sourceState=clean, buildSource=notApplicable.
+PC-1..PC-25 and their variants remain pending SourceLanding Mutation; PC-23 join-control
+variants now guard against treating those non-ASCII neighbours as definite blockers,
+and PC-25 guards the browser Unicode-table dependency. See the candidate inventory.

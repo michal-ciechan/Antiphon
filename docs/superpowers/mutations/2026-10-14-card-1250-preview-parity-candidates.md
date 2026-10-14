@@ -79,5 +79,19 @@ The round-4 selection has 58 retained V17 rows, 46 V22 rows, and 223 ordinary Vi
 | PC / variant | Guarded mutation | Witness | Status |
 |---|---|---|---|
 | PC-23 supplementary prefix/suffix/digit (3 variants) | Use Unicode code-point word boundaries instead of UTF-16 units | model V22 goal-supplementary-prefix / goal-supplementary-suffix / goal-supplementary-digit-suffix | pending |
-| PC-23 joiner/nonjoiner prefix/suffix (4 variants) | Omit .NET boundary join controls | model V22 goal-joiner-prefix / goal-joiner-suffix / goal-nonjoiner-prefix / goal-nonjoiner-suffix | pending |
+| PC-23 joiner/nonjoiner prefix/suffix (4 variants) | Treat join controls as definite boundary blockers instead of possible non-ASCII boundaries | model V22 goal-joiner-prefix / goal-joiner-suffix / goal-nonjoiner-prefix / goal-nonjoiner-suffix | pending |
 | PC-24 Check/Distill/Diagnose (3 variants) | Let a specialist use the default matrix | model V22 specialist-Check / specialist-Distill / specialist-Diagnose | pending |
+
+Round-5 D1 additions (pending, unbound; no Code mutants):
+
+| PC / variant | Guarded mutation | Witness | Status |
+|---|---|---|---|
+| PC-25 U+A7CB/U+1C89/U+1AD0 × prefix/suffix/in-word-prefix/in-digits/in-word-suffix (15 variants) | Classify neighbours using browser Unicode word properties | model V22 goal-boundary-u<hex>-<position> | pending |
+| PC-25 accented prefix / decimal suffix (2 variants) | Treat observed non-ASCII word characters as definite blockers | model V22 goal-unicode-prefix-boundary / goal-unparseable-decimal | pending |
+| PC-25 ASCII letter/digit/underscore × prefix/suffix (6 variants) | Treat ASCII word neighbours as possible boundaries | model V22 goal-ascii-<class>-<position> | pending |
+
+PC-23 join-control variants are revised to the conservative boundary contract; their
+old mutation (omitting join controls) describes the intended round-5 implementation
+and is superseded, not a passed control. PC-23 supplementary variants remain pending;
+V22 also covers U+10400 in the five new positions. Round-5 ordinary selection: 249
+cases, including 58 V17 and 72 V22 rows. Mutation owns missing-control discovery.

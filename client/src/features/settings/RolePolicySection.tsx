@@ -49,9 +49,11 @@ export function RolePolicySection() {
         <Text size="sm" c="dimmed">
           The configured RolePolicy for each role beside its active stage-wide pin. Read-only here;
           pins are set with scripts/routing-pin.ps1. These Settings projections assume no card, explicit provider kind, agent or
-          level. Card-bound modal previews withhold the target because card pins are absent from these reads. A single composed pin target bypasses the matrix; otherwise eligible Workers use the
+          level. Modal previews with a possible card binding withhold the target because card pins are absent from these reads.
+          Identifier boundaries are exact for ASCII neighbours; a non-ASCII neighbour counts as a possible
+          boundary because browser and server Unicode tables can differ. A single composed pin target bypasses the matrix; otherwise eligible Workers use the
           default-tier row. Walks filter stage forbids, kinds, holds and quota. Single targets can be
-          refused, including a Required forbid-only pin with one default-row candidate. Unknown means the reads lack a routing fact. Snapshots refresh at 15-second intervals;
+          refused, including a Required forbid-only pin with one default-row candidate. Unknown means a routing fact is missing or a card boundary is uncertain. Snapshots refresh at 15-second intervals;
           admission and standing-agent details depend on the server.
         </Text>
         <Table striped withRowBorders={false} layout="fixed">
