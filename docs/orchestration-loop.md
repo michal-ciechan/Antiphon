@@ -899,7 +899,7 @@ target is unavailable. A **card-scoped** pin applies only to that one card, neve
 that role stage-wide — do not read a card pin's banner as a global change. `RolePolicy` itself is
 unrelated to this matrix: it remains the non-complexity fallback (default kind/level, escalation,
 timeout, WIP) for work not launched with `-Complexity`; CARD-0333's matrix does not govern or
-supersede it. The Routing tab's Role policy section (CARD-0097, below) shows it read-only.
+supersede it. The Routing tab's Role policy section (CARD-0097, below) displays it.
 
 **Operators read and reason about all of this at `/settings?tab=routing`** (CARD-0333): the global
 Routing settings tab shows live model availability, best-effort subscription-usage observations
@@ -909,34 +909,32 @@ active stage-wide/card pins with the Required/Preferred wording above, and the e
 (role × complexity) matrix with inline Configure/Clear. It is the read path for diagnosing "why did
 this route where it did," not a new way to change RolePolicy or to control a running session.
 
-**Role policy section and delegate modal level (CARD-0097).** The section reads
-`GET /api/role-policy` (its block in [antiphon-api.md](antiphon-api.md)). It has no editor:
-pins are written through `scripts/routing-pin.ps1` and `PUT /api/routing-pins`; RolePolicy comes
-from `Delegation:RolePolicy` configuration.
+**Role policy section and delegate modal level (CARD-0097).** Data: `GET /api/role-policy` (its
+block in [antiphon-api.md](antiphon-api.md)). RolePolicy is the `Delegation:RolePolicy`
+configuration section; pins: `scripts/routing-pin.ps1` and `/api/routing-pins`.
 
 | Behaviour | Test (runner, file) | What it asserts |
 |---|---|---|
 | Section order and heading | Vitest `C097 V10 section-order`, `client/src/features/settings/RoutingSettingsTab.test.tsx` | `runner-defaults-section` precedes `role-policy-section`, which precedes `routing-matrix-row-any`; heading `Role policy` |
 | Rows come from the route, in route order | Vitest `C097 V08 rows-from-dto-not-mirror`, `client/src/features/settings/RolePolicySection.test.tsx` | a 15-row fixture with an unknown role renders 15 `role-policy-row-*` rows; Mutation shows `ClaudeCode/Low (haiku)`, not `Frontier`; Custom shows `not configured`; TestDesign precedes Mutation |
-| Default column label | Vitest `C097 V05 <case>`, `client/src/features/settings/rolePolicyModel.test.ts` | `ClaudeCode/Low (haiku)` for a null kind; `not configured — DefaultLevel High (opus)`; `unknown` for a null level; `not configured — DefaultLevel unknown` |
+| Default column label | Vitest `C097 V05 <case>`, `client/src/features/settings/rolePolicyModel.test.ts` | `null-kind-low` (kind null, alias `haiku`) → `ClaudeCode/Low (haiku)`; `configured-kind-undefined` (kind null, alias `""`) → `unknown/Medium ()`; `not configured — DefaultLevel High (opus)`; `unknown` for a null level; `not configured — DefaultLevel unknown` |
 | Escalate and Timeout columns | Vitest `C097 V24 <case>`, `client/src/features/settings/rolePolicyModel.test.ts` | `High (manual)`, `—`, `Frontier after 7 min quiet`, `240 min`, `off` (timeout 0) |
-| Effective next-create column | Vitest `C097 V06 <case>`, `client/src/features/settings/rolePolicyModel.test.ts` | `Required Human pin → Codex/Frontier (gpt-6-astra)`; `default → ClaudeCode/Low (haiku)`; candidate-free pin → `no candidate (agent-only or forbid-only; see the pin)`; unknown source → `unknown` |
+| `Effective next create` column label (a projection of `effective`, not a create result) | Vitest `C097 V06 <case>`, `client/src/features/settings/rolePolicyModel.test.ts` | `Required Human pin → Codex/Frontier (gpt-6-astra)`; `default → ClaudeCode/Low (haiku)`; candidate-free pin → `no candidate (agent-only or forbid-only; see the pin)`; unknown source → `unknown` |
 | Stage pin column | Vitest `C097 V25 stage-pin-column-and-effective`, `client/src/features/settings/RolePolicySection.test.tsx` | Plan pin shows `Required Human pin`, numbered candidates with availability, the reason and the effective label; an unpinned row shows `—` |
 | Route failure stays inside the section | Vitest `C097 V09 role-policy-failure-keeps-siblings`, `client/src/features/settings/RoutingSettingsTab.test.tsx` | 500 → `Could not load role policy.` in the section; availability, runner defaults and matrix still render |
 | Section has no editor; its copy names `scripts/routing-pin.ps1` as the pin writer | not covered by a test | — |
 | Delegate modal preselects the role-policy level | Vitest `C097 V16 server-level-preselects`, `client/src/features/delegations/DelegateModal.test.tsx` | Mutation row `High` → `tier-High`, `delegate-tier-source-rolePolicy`; create body `modelLevel: null` |
-| Stage pin level wins in the modal | Vitest `C097 V17 stage-pin-wins`, same file | Plan pin head `High` over policy `Frontier` → `tier-High`, `delegate-tier-source-pin` |
+| An `effective.source` `pin` level wins in the modal | Vitest `C097 V17 stage-pin-wins`, same file | mocked Plan row with `level` `Frontier`, `effective` `{ source: pin, modelLevel: High }` and `stagePin` null → `delegate-tier-source-pin`, `tier-High`, no `tier-Frontier` |
 | Route failure falls back to `AGENT_TASK_ROLES` | Vitest `C097 V18 route-failure-falls-back-to-constant`, same file | 500 → `delegate-tier-source-fallback`, `tier-Low` for Mutation; Delegate enabled after typing a goal |
 | Null policy level falls back to `AGENT_TASK_ROLES` | Vitest `C097 V30 undefined-policy-level-falls-back-to-constant`, same file | Mutation `level: null` → `delegate-tier-source-fallback`, `tier-Low` |
 | Sub-orchestrator floor applies to the server level | Vitest `C097 V27 orchestrator-floor-on-server-level`, same file | Sub-orchestrator + Mutation (`Low`) → `tier-High` |
 
-**Deployment note:** as of tonight there is a live stage-wide **Human Required Code → Grok** pin.
-It bypasses every Code-role complexity cell — an operator looking only at the Code row of the
-matrix will see candidates that are not actually being used. This is expected, not a bug; check
-`/settings?tab=routing` (or `GET /api/routing-pins?role=Code`) for the pin before assuming the
-matrix is misconfigured. Clearing this pin, or downgrading it from Required to Preferred, is an
-explicit operator decision made through `scripts/routing-pin.ps1` — it is never automatically
-migrated or cleared by CARD-0333's matrix UI, which is read-only for pins.
+**Stage pins and the matrix:** a Required stage pin bypasses that role's complexity cells, so the
+matrix row can show candidates that are not in use. Read the live pins with
+`GET /api/routing-pins?role=<Role>` or `scripts/routing-pin.ps1 get -Role <Role>` (or
+`/settings?tab=routing`) before assuming the matrix is misconfigured. Clearing a pin, or
+downgrading it from Required to Preferred, is an operator decision made through
+`scripts/routing-pin.ps1`; CARD-0333's matrix UI is read-only for pins.
 
 **Complexity chains (CARD-0090, CARD-0332).** Pass `-Complexity Hard|Medium|Easy` when the work's hardness
 should pick (kind, level) from an ordered fallback list, instead of an explicit `-Kind`/`-Level`.

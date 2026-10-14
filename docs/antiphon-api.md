@@ -662,14 +662,17 @@ extension carries `candidateCount`. A Required pin with two or more candidates i
 
 ```
 GET    /api/role-policy                               RolePolicy per routable role beside its active
-                                                      stage-wide pin (CARD-0097); read-only
+                                                      stage-wide pin (CARD-0097)
 ```
 
 Body: `{ defaultLevel, defaultTimeoutMinutes, roles[] }`; each row is `{ role, configured, level,
 kind, alias, escalateTo, escalateAfterMinutes, timeoutMinutes, stagePin, effective }` and
 `effective` is `{ source, agentKind, modelLevel, alias, strength }` with `source` `pin` or
-`rolePolicy`. `defaultLevel`, `level`, `kind` (null = ClaudeCode), `escalateTo` and the
-`effective` target fields are nullable. Pins are written through `PUT /api/routing-pins`.
+`rolePolicy`: a projection of the stage pin's first candidate filled from the policy, or of the
+policy; it is not a create result. Nullable: `defaultLevel`, `level`, `kind`, `escalateTo`,
+`escalateAfterMinutes`, `stagePin` and `effective.agentKind`/`modelLevel`/`alias`/`strength`. A
+null `kind` is either no configured kind or an undefined configured kind; `alias` and `effective`
+tell them apart (the two `kind` null rows below). Pin routes: the `/api/routing-pins` block above.
 
 | Behaviour | Test (runner, file) | What it asserts |
 |---|---|---|
@@ -678,6 +681,8 @@ kind, alias, escalateTo, escalateAfterMinutes, timeoutMinutes, stagePin, effecti
 | Card pins and cleared pins are excluded | TUnit `RolePolicyEndpointTests.Get_ignores_card_pins_and_cleared_pins`, same file | live Code card pin and cleared Debug stage pin → both rows `stagePin` null, `effective.source` `rolePolicy` |
 | Unsupported or undefined kind/level still answers 200 | TUnit `RolePolicyEndpointTests.Get_serialises_every_row_when_one_role_has_unsupported_values`, same file | 14 rows; Docs level 999 → `level` null, `alias` `""`; Commit `kind` `Raw`, `alias` `""`; Deploy kind 999 → `kind` null; each of the three has `effective` `agentKind`/`modelLevel`/`alias`/`strength` null |
 | Per-case withholding of unsupported or undefined values | TUnit `RolePolicyReadServiceTests.Compose_withholds_the_target_for_unsupported_or_undefined_values` (`[MethodDataSource]`, 15 cases), `tests/Antiphon.Tests/Application/RolePolicyReadServiceTests.cs` | e.g. `policy-level-999` → `level` null, `alias` `""`; `default-level-999` → `defaultLevel` null; `pin-head-kind-Raw` → `effective` target null, `strength` `Required` |
+| `kind` null: no kind configured | TUnit `RolePolicyReadServiceTests.Compose_resolves_alias_from_kind`, `tests/Antiphon.Tests/Application/RolePolicyReadServiceTests.cs` | Code `kind` null → `alias` `fable`, `effective.agentKind` ClaudeCode |
+| `kind` null: undefined configured kind | TUnit `RolePolicyEndpointTests.Get_serialises_every_row_when_one_role_has_unsupported_values`; `RolePolicyReadServiceTests.Compose_withholds_the_target_for_unsupported_or_undefined_values` case `policy-kind-999` | Deploy kind 999 → `kind` null, `alias` `""`, `effective` `rolePolicy` with `agentKind`/`modelLevel`/`alias`/`strength` null; Docs kind 999 → `kind` null, `alias` `""` |
 | Alias follows the configured kind | TUnit `RolePolicyReadServiceTests.Compose_resolves_alias_from_kind`, same file | Docs Grok → `grok-4.7`; Commit Codex → `gpt-6.1-sol`; Code `kind` null → `fable`, `effective.agentKind` ClaudeCode |
 | Unconfigured role uses `DefaultLevel`/`DefaultTimeoutMinutes` | TUnit `RolePolicyReadServiceTests.Compose_lists_RoutableRoles_in_order_and_marks_Custom_unconfigured`, same file | DefaultLevel Medium, timeout 90 → Custom `Medium`/`sonnet`/90 |
 | First candidate of a stage pin is `effective`; a card pin is not a stage pin | TUnit `RolePolicyReadServiceTests.Compose_effective_prefers_the_first_stage_pin_candidate_and_excludes_card_pins`, same file | Preferred Plan pin head Codex/Frontier is `effective`; Code card pin → `stagePin` null |
