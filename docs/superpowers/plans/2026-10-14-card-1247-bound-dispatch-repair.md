@@ -25,12 +25,15 @@ timeout, assertion relaxation, migration or second ownership store is planned.
   behavior already exists at the base; its red mutation belongs to SourceLanding Mutation.
 - R-1: complete durability and bridge classes, including runtime late-confirm redispatch.
 - R-2: complete delivery-verification class; no delivery verdict changes.
-- R-3: full outbound delivery class (including dispatch, gate and send-shape partial files).
+- R-3: full outbound delivery class (including gate and send-shape partial files).
 - R-4: full task reply integration class, including outbound runtime partial; live routing
   before/after queue processing remains compatible.
 - R-5: full outbound dispatch integration and capture classes; catalog-less routing and
   capture's shared source claim remain compatible. Two added bound-grace trailing-text cases
   preserve the default-off/catalog-less watermark behavior.
+- R-6: a losing dispatcher with a longer text snapshot must not consume the winner's owed
+  tail. The separate [expected-red checkpoint](2026-10-14-card-1247-watermark-red.md) proves
+  the missing-tail assertion before the repair; the complete grace class covers it afterwards.
 
 Whole Unit is explicitly deferred by the repair brief, not passed. HerdrAlwaysOnChannelParityTests
 is excluded for inherited CARD-1252. No live-provider/manual traffic is commissioned. No whole
@@ -43,15 +46,22 @@ tool bootstrap is the only extra driver and runs through build-slot. Linux uses 
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | red | `tests/Antiphon.Tests -> bin-c1247-caee-red/` | red-grace | `/*/Antiphon.Tests.Application/(ChannelReplyLateConfirmDispatchTests*)/*` | V-1,V-2,V-3,V-4 | expected F1/F2 assertion failures before repair | 14 | 6 |
-| CP-2 | repaired | `tests/Antiphon.Tests -> bin-c1247-caee-final/` | grace | `/*/Antiphon.Tests.Application/(ChannelReplyLateConfirmDispatchTests*)/*` | V-1,V-2,V-3,V-4,R-5 | all listed, 0 failed | 16 | 6 |
+| CP-2 | repaired | `tests/Antiphon.Tests -> bin-c1247-caee-complete/` | grace | `/*/Antiphon.Tests.Application/(ChannelReplyLateConfirmDispatchTests*)/*` | V-1,V-2,V-3,V-4,R-5,R-6 | all listed, 0 failed | 18 | 6 |
 | CP-3 | repaired | CP-2 | durability | `/*/Antiphon.Tests.Application/(ChannelReplyDurabilityTests*)/*` | R-1 | all listed, 0 failed | 25 | 4 |
 | CP-4 | repaired | CP-2 | bridge | `/*/Antiphon.Tests.Application/(ChannelBridgeTests*)/*` | R-1 | all listed, 0 failed | 40 | 4 |
 | CP-5 | repaired | CP-2 | verification | `/*/Antiphon.Tests.Application/(SessionMessageQueueDeliveryVerificationTests*)/*` | R-2 | all listed, 0 failed | 123 | 8 |
-| CP-6 | repaired | CP-2 | outbound | `/*/Antiphon.Tests.Application/(ChannelOutboundDeliveryTests*)/*` | R-3 | all listed, 0 failed | 14 | 5 |
-| CP-7 | repaired | CP-2 | runtime | `/*/Antiphon.Tests.Application/(AgentTaskReplyIntegrationTests*)/*` | R-4 | all listed, 0 failed | 80 | 5 |
+| CP-6 | repaired | CP-2 | outbound | `/*/Antiphon.Tests.Application/(ChannelOutboundDeliveryTests*)/*` | R-3 | all listed, 0 failed | 38 | 5 |
+| CP-7 | repaired | CP-2 | runtime | `/*/Antiphon.Tests.Application/(AgentTaskReplyIntegrationTests*)/*` | R-4 | all listed, 0 failed | 334 | 5 |
 | CP-8 | repaired | CP-2 | outbound-dispatch | `/*/Antiphon.Tests.Application/(ChannelOutboundDispatchIntegrationTests*)/*` | R-5 | all listed, 0 failed | 10 | 3 |
-| CP-9 | repaired | CP-2 | capture | `/*/Antiphon.Tests.Application/(ChannelOutboundCaptureTests*)/*` | R-5 | all listed, 0 failed | 1 | 3 |
+| CP-9 | repaired | CP-2 | capture | `/*/Antiphon.Tests.Application/(ChannelOutboundCaptureTests*)/*` | R-5 | all listed, 0 failed | 5 | 3 |
+
+Historical CP-1 is preserved at fcb155656c2ca07d3c146280fde8592147b2bd20 and its run
+20261014-102319-c349: 14 executed, 8 passed, 6 expected assertion failures (four wrong-turn,
+two duplicate-publication variants). The initial repaired eight-row run 20261014-103226-01ad
+passed 591 cases with clean source/build provenance at bbc54106df7daafc65385c150ebfbdf7c4494539.
+Both receipt validators pass. Its final wait refuses the unused CP-1 build stamp's different
+SHA because the tool enumerates all manifest builds; the report itself is GREEN/exit 0.
+The final table includes only its own build; reports and receipts are retained unedited.
 
 ## Pending Mutation
 
@@ -61,3 +71,4 @@ dispatch with newest-turn dispatch (all V-1 variants); PC-2 remove the atomic di
 PC-4 retain the failed direct claim (both V-4 variants); PC-5 drop grace dispatch; PC-6
 dispatch for no confirmed Channel source. This Code task runs no deliberate mutants.
 PC-7 omit bound-dispatch trailing watermark registration (both R-5 added variants) is pending.
+PC-8 let a losing dispatcher advance the watermark (both R-6 variants) is pending.
