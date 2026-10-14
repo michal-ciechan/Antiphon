@@ -1,5 +1,5 @@
 Working the Antiphon board. Use `scripts/card.ps1` — its header comment is the reference (verbs
-`list`, `search`, `get`, `history`, `new`, `edit`, `move`, `close`, `reopen`, `archive`,
+`list`, `search`, `get`, `history`, `block`, `unblock`, `new`, `edit`, `move`, `close`, `reopen`, `archive`,
 `unarchive`, `diagnose`, `reorder`, `order`, `-Limits`); AGENTS.md
 "Working cards from a shell" has the human-facing synopsis. Do not hand-compose the HTTP yourself
 unless the script genuinely can't do it. These are the shapes that bite either way:
@@ -43,6 +43,19 @@ unless the script genuinely can't do it. These are the shapes that bite either w
   `importance`, `urgency`, `dueAt`, `clearDueAt`, `labels`, `editedBy`); it records a revision carrying the values it superseded,
   readable at `GET /api/cards/{id}/revisions`. A card that is simply wrong gets corrected in place —
   filing a second card to describe the mistake is what this endpoint exists to stop.
+
+- CARD RELATIONSHIPS: `block CARD-0051 -BlockedBy CARD-0049` adds a blocker;
+  `unblock CARD-0051 -BlockedBy CARD-0049` removes it. Reason is optional; use `-ReasonFile`
+  for text and `-By` for the actor. `block -RelatedBoard <name|guid>` scopes the blocker.
+  `get` prints blocked-by statuses and the inverse blocks list; `history` names the related card.
+  Coverage below uses methods of `CardRelationshipScriptTests` (HTTP stub).
+
+| Behaviour | Named test | What it asserts |
+|---|---|---|
+| Add blocker | `Block_reads_the_card_then_posts_the_relationship_body_with_the_fetched_token` | POST body, fetched/explicit token, reason file, related board and JSON response |
+| Remove blocker | `Unblock_resolves_the_row_by_relatedIdentifier_and_posts_remove` | Identifier match, remove route, fetched token, omitted optional fields |
+| Read relationships | `Get_and_history_print_blocked_by_blocks_and_relationship_rows` | Open/resolved lines, inverse line, history identifier and card JSON |
+| Missing blocker | `Unblock_without_a_matching_blocker_exits_non_zero_and_names_the_current_blockers` | Nonzero exit, current identifiers, no POST |
 
 - A MOVE INTO AN ACTIVE COLUMN NO LONGER SPAWNS AN AGENT UNLESS YOU ASK. `spawn`/`-Spawn` defaults
   to false; the response's `spawnedSessionId` / `spawnSuppressed` say what happened. Before
