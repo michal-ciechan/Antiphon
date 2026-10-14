@@ -36,7 +36,8 @@ public sealed class OrchestratorInstructionsSnapshotBuilder(
             await ReadHoldsAsync(now, ct),
             await ReadPinsAsync(now, ct),
             Levels(),
-            _settings.OrchestratorInstructions.StandingInstructions.ToArray());
+            _settings.OrchestratorInstructions.StandingInstructions.ToArray(),
+            await ReadMatrixAsync(ct));
     }
 
     /// <summary>
@@ -199,6 +200,38 @@ public sealed class OrchestratorInstructionsSnapshotBuilder(
             hold.Reason,
             new DateTimeOffset(DateTime.SpecifyKind(hold.HitAt, DateTimeKind.Utc)))).ToArray();
     }
+
+    private async Task<MatrixSection> ReadMatrixAsync(CancellationToken ct)
+    {
+        var chains = services.GetRequiredService<ComplexityChainService>();
+        var defaultTier = _settings.DefaultComplexity.GetValueOrDefault();
+        var rows = new List<MatrixInstructionRow>();
+        foreach (var role in ComplexityRoutingService.RoutableRoles)
+        {
+            // ListAsync(role) uses GetEffectiveAsync for the three tiers, including the pin overlay.
+            var list = await chains.ListAsync(role, ct);
+            var cells = list.Chains.ToDictionary(cell => cell.Complexity);
+            var effective = cells[defaultTier].Effective!;
+            rows.Add(new MatrixInstructionRow(
+                role.ToString(),
+                MatrixCandidates(cells[TaskComplexity.Hard].Candidates),
+                MatrixCandidates(cells[TaskComplexity.Medium].Candidates),
+                MatrixCandidates(cells[TaskComplexity.Easy].Candidates),
+                effective.WithheldReason is { } reason ? $"withheld: {reason}" : MatrixCandidates(effective.Candidates),
+                effective.Source switch
+                {
+                    "pin" => "stage pin",
+                    "pin+chain" => "stage pin + chain",
+                    "agent" => "stage pin (standing agent)",
+                    _ => effective.Source,
+                }));
+        }
+        return new MatrixSection(defaultTier.ToString(), rows);
+    }
+
+    private static string MatrixCandidates(IReadOnlyList<ComplexityCandidateDto> candidates) =>
+        candidates.Count == 0 ? "unset" : string.Join(", ", candidates.Select(candidate =>
+            $"{candidate.AgentKind}/{candidate.ModelLevel} ({candidate.Alias})"));
 
     private async Task<IReadOnlyList<PinInstructionRow>> ReadPinsAsync(DateTime now, CancellationToken ct)
     {

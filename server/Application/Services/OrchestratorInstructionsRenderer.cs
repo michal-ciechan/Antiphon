@@ -14,6 +14,7 @@ public static class OrchestratorInstructionsRenderer
     public const string RunnersRoute = "GET /api/session-runners";
     public const string FileRoute = "GET /api/orchestrator-instructions";
     public const string PipelineRoute = "GET /api/agent-tasks/pipeline";
+    public const string MatrixRoute = "GET /api/complexity-chains";
 
     private static readonly string[] SecretTokens =
     [
@@ -46,28 +47,35 @@ public static class OrchestratorInstructionsRenderer
         var holdCount = int.MaxValue;
         var standingCount = snapshot.StandingLines.Count;
         var features = true;
+        var matrix = true;
 
-        var text = Compose(snapshot, cardPerBoard, holdCount, standingCount, features);
+        var text = Compose(snapshot, cardPerBoard, holdCount, standingCount, features, matrix);
+        if (Bytes(text) <= cap)
+            return text;
+
+        // The matrix pointer stays in section 5; per-card exceptions are trimmed only afterwards.
+        matrix = false;
+        text = Compose(snapshot, cardPerBoard, holdCount, standingCount, features, matrix);
         if (Bytes(text) <= cap)
             return text;
 
         cardPerBoard = 20;
-        text = Compose(snapshot, cardPerBoard, holdCount, standingCount, features);
+        text = Compose(snapshot, cardPerBoard, holdCount, standingCount, features, matrix);
         while (Bytes(text) > cap && cardPerBoard > 0)
         {
             cardPerBoard--;
-            text = Compose(snapshot, cardPerBoard, holdCount, standingCount, features);
+            text = Compose(snapshot, cardPerBoard, holdCount, standingCount, features, matrix);
         }
 
         if (Bytes(text) <= cap)
             return text;
 
         holdCount = Math.Min(20, snapshot.Holds.Count);
-        text = Compose(snapshot, cardPerBoard, holdCount, standingCount, features);
+        text = Compose(snapshot, cardPerBoard, holdCount, standingCount, features, matrix);
         while (Bytes(text) > cap && holdCount > 0)
         {
             holdCount--;
-            text = Compose(snapshot, cardPerBoard, holdCount, standingCount, features);
+            text = Compose(snapshot, cardPerBoard, holdCount, standingCount, features, matrix);
         }
 
         if (Bytes(text) <= cap)
@@ -76,14 +84,14 @@ public static class OrchestratorInstructionsRenderer
         while (Bytes(text) > cap && standingCount > 0)
         {
             standingCount--;
-            text = Compose(snapshot, cardPerBoard, holdCount, standingCount, features);
+            text = Compose(snapshot, cardPerBoard, holdCount, standingCount, features, matrix);
         }
 
         if (Bytes(text) <= cap)
             return text;
 
         features = false;
-        return Compose(snapshot, cardPerBoard, holdCount, standingCount, features);
+        return Compose(snapshot, cardPerBoard, holdCount, standingCount, features, matrix);
     }
 
     private static string Compose(
@@ -91,7 +99,8 @@ public static class OrchestratorInstructionsRenderer
         int cardPerBoard,
         int holdCount,
         int standingCount,
-        bool features)
+        bool features,
+        bool matrix)
     {
         var pins = SelectPins(snapshot.Pins, cardPerBoard);
         var holds = SelectHolds(snapshot.Holds, holdCount);
@@ -158,7 +167,21 @@ public static class OrchestratorInstructionsRenderer
 
         builder.AppendLine();
 
-        builder.AppendLine("## 5. Routing pins");
+        builder.AppendLine("## 5. Role × complexity matrix");
+        builder.AppendLine("Owner: " + MatrixRoute + ".");
+        var matrixSection = snapshot.Matrix ?? new MatrixSection("Medium", []);
+        builder.AppendLine($"default {matrixSection.DefaultComplexity}; ordinary Worker dispatch uses a resolved default-tier row.");
+        builder.AppendLine("Explicit -Kind/-Level bypasses the row; see the create warning. Card pins are exceptions in section 6.");
+        if (!matrix)
+            builder.AppendLine($"… {matrixSection.Rows.Count} rows: {MatrixRoute}");
+        else if (matrixSection.Rows.Count == 0)
+            builder.AppendLine("none");
+        else
+            foreach (var row in matrixSection.Rows)
+                builder.AppendLine(FormatMatrixRow(row, matrixSection.DefaultComplexity));
+        builder.AppendLine();
+
+        builder.AppendLine("## 6. Routing pins");
         builder.AppendLine("Owner: " + PinsRoute + ".");
         if (pins.Count == 0)
             builder.AppendLine("none");
@@ -166,13 +189,13 @@ public static class OrchestratorInstructionsRenderer
             builder.AppendLine(FormatPin(pin));
         builder.AppendLine();
 
-        builder.AppendLine("## 6. Model levels");
+        builder.AppendLine("## 7. Model levels");
         foreach (var level in snapshot.Levels)
             builder.AppendLine($"- {level.Kind} {level.Level}: {level.Alias}");
         builder.AppendLine("Tier names are never -Kind values.");
         builder.AppendLine();
 
-        builder.AppendLine("## 7. Operator standing instructions");
+        builder.AppendLine("## 8. Operator standing instructions");
         builder.AppendLine("Owner: " + FileRoute + ".");
         if (standing.Count == 0)
             builder.AppendLine("none");
@@ -193,6 +216,32 @@ public static class OrchestratorInstructionsRenderer
             builder.AppendLine($"… {featureRunners} more: {RunnersRoute}");
 
         return builder.ToString().TrimEnd();
+    }
+
+    private static string FormatMatrixRow(MatrixInstructionRow row, string defaultTier)
+    {
+        string Tier(string name, string candidates) =>
+            $"{name}{(name == defaultTier ? " (default)" : "")} {SummarizeCandidates(candidates)}";
+        var line = $"- {row.Role}: {Tier("Hard", row.Hard)}; {Tier("Medium", row.Medium)}; "
+            + $"{Tier("Easy", row.Easy)}; effective {SummarizeCandidates(row.Effective)} via {row.Source}";
+        if (Bytes(line) <= 160)
+            return line;
+        var clipped = new StringBuilder();
+        var bytes = 0;
+        foreach (var rune in line.EnumerateRunes())
+        {
+            if (bytes + rune.Utf8SequenceLength > 157)
+                break;
+            clipped.Append(rune.ToString());
+            bytes += rune.Utf8SequenceLength;
+        }
+        return clipped + "…";
+    }
+
+    private static string SummarizeCandidates(string text)
+    {
+        var candidates = text.Split(", ", StringSplitOptions.None);
+        return candidates.Length <= 3 ? text : string.Join(", ", candidates.Take(3)) + $", +{candidates.Length - 3}";
     }
 
     private static string FormatRunner(RunnerInstructionRow runner, bool features)

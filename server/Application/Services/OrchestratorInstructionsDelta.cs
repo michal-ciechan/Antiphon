@@ -21,6 +21,7 @@ public static class OrchestratorInstructionsDelta
         DiffRunners(lines, before?.Runners ?? [], after.Runners);
         DiffDefaults(lines, before?.Defaults, after.Defaults);
         DiffHolds(lines, before?.Holds ?? [], after.Holds);
+        DiffMatrix(lines, before?.Matrix, after.Matrix);
         DiffPins(lines, before?.Pins ?? [], after.Pins);
         DiffLevels(lines, before?.Levels ?? [], after.Levels);
         DiffStanding(lines, before?.StandingLines ?? [], after.StandingLines);
@@ -153,6 +154,23 @@ public static class OrchestratorInstructionsDelta
                 DiffScalar(lines, "holds", $"{key} until", oldHold.Until ?? "none", newHold.Until ?? "none");
                 DiffScalar(lines, "holds", $"{key} reason", oldHold.Reason ?? "none", newHold.Reason ?? "none");
             }
+        }
+    }
+
+    private static void DiffMatrix(List<string> lines, MatrixSection? before, MatrixSection? after)
+    {
+        DiffScalar(lines, "matrix", "default", before?.DefaultComplexity, after?.DefaultComplexity);
+        var oldRows = (before?.Rows ?? []).ToDictionary(row => row.Role, StringComparer.Ordinal);
+        var newRows = (after?.Rows ?? []).ToDictionary(row => row.Role, StringComparer.Ordinal);
+        foreach (var role in oldRows.Keys.Concat(newRows.Keys).Distinct())
+        {
+            oldRows.TryGetValue(role, out var oldRow);
+            newRows.TryGetValue(role, out var newRow);
+            DiffScalar(lines, "matrix", $"{role} Hard", oldRow?.Hard, newRow?.Hard);
+            DiffScalar(lines, "matrix", $"{role} Medium", oldRow?.Medium, newRow?.Medium);
+            DiffScalar(lines, "matrix", $"{role} Easy", oldRow?.Easy, newRow?.Easy);
+            DiffScalar(lines, "matrix", $"{role} effective", oldRow?.Effective, newRow?.Effective);
+            DiffScalar(lines, "matrix", $"{role} source", oldRow?.Source, newRow?.Source);
         }
     }
 

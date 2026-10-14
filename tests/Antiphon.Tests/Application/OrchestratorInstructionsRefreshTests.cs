@@ -76,6 +76,34 @@ public class OrchestratorInstructionsRefreshTests
         h.Adapter.SubmittedBodies.Count.ShouldBe(1);
         h.Adapter.SubmittedBodies[0].ShouldContain(section);
         h.Adapter.SubmittedBodies[0].ShouldContain(row.WrittenPath);
+        if (kind == "complexity-chain")
+        {
+            var signals = h.Provider.GetRequiredService<RecordingSignals>();
+            signals.Reasons.ToArray().ShouldBe(["complexity-chain Plan/Medium"]);
+            await using var scope = h.Provider.CreateAsyncScope();
+            var chains = scope.ServiceProvider.GetRequiredService<ComplexityChainService>();
+            var bytes = await File.ReadAllBytesAsync(row.WrittenPath);
+            await chains.UpsertAsync(AgentTaskRole.Plan, TaskComplexity.Medium,
+                new PutComplexityChainRequest([new(AgentKind.Codex, AgentModelLevel.Frontier)],
+                    RoutingPinProvenance.Human, "cell"), null, CancellationToken.None);
+            await Instructions(h).WhenIdleAsync();
+            signals.Reasons.Count.ShouldBe(2);
+            (await ReadStateAsync(h)).Revision.ShouldBe(row.Revision);
+            (await File.ReadAllBytesAsync(row.WrittenPath)).ShouldBe(bytes);
+            h.Adapter.SubmittedBodies.Count.ShouldBe(1);
+            await chains.ClearAsync(AgentTaskRole.Plan, TaskComplexity.Medium, CancellationToken.None);
+            await Instructions(h).WhenIdleAsync();
+            signals.Reasons.ToArray().ShouldBe([
+                "complexity-chain Plan/Medium", "complexity-chain Plan/Medium", "complexity-chain Plan/Medium"]);
+            (await ReadStateAsync(h)).Revision.ShouldBe(row.Revision + 1);
+            h.Adapter.SubmittedBodies.Count.ShouldBe(2);
+            await chains.ClearAsync(AgentTaskRole.Plan, TaskComplexity.Medium, CancellationToken.None);
+            await Instructions(h).WhenIdleAsync();
+            signals.Reasons.Count.ShouldBe(3);
+            h.Adapter.SubmittedBodies.Count.ShouldBe(2);
+        }
+        if (kind == "routing-pin")
+            row.Body.ShouldContain("- Code: Hard unset; Medium (default) unset; Easy unset; effective ClaudeCode/Frontier (fable) via stage pin");
     }
 
     [Test]
@@ -389,6 +417,13 @@ public class OrchestratorInstructionsRefreshTests
         state.Version.ShouldNotBe(startup.Version);
         (await SessionVersionAsync(h)).ShouldBe(state.Version);
         state.Body.ShouldContain("- Plan: Hard unset; Medium (default) Codex/Frontier (gpt-6-astra); Easy unset; effective Codex/Frontier (gpt-6-astra) via role");
+        var snapshot = JsonSerializer.Deserialize<OrchestratorInstructionsSnapshot>(state.SnapshotJson,
+            new JsonSerializerOptions { PropertyNameCaseInsensitive = true })!;
+        snapshot.Matrix.ShouldNotBeNull();
+        snapshot.Matrix.DefaultComplexity.ShouldBe("Medium");
+        snapshot.Matrix.Rows.Select(matrixRow => matrixRow.Role).ShouldBe([
+            "Investigate", "Plan", "TestDesign", "Code", "Mutation", "Review", "Debug",
+            "Coverage", "Docs", "Commit", "Test", "Deploy", "Merge", "Custom"]);
     }
 
     private static async Task<string> CoveredWriteAsync(BridgeQueueHarness h, string kind)
@@ -489,8 +524,9 @@ public class OrchestratorInstructionsRefreshTests
             ConfigureServices = services =>
             {
                 services.AddSingleton<OrchestratorInstructionsService>();
+                services.AddSingleton<RecordingSignals>();
                 services.AddSingleton<IOrchestratorInstructionsSignals>(sp =>
-                    sp.GetRequiredService<OrchestratorInstructionsService>());
+                    sp.GetRequiredService<RecordingSignals>());
                 services.AddScoped<OrchestratorInstructionsSnapshotBuilder>();
                 services.AddScoped<RunnerDefaultSettingsService>();
                 services.AddScoped<DispatchConcurrencySettingsService>();
@@ -550,6 +586,17 @@ public class OrchestratorInstructionsRefreshTests
 
     private static OrchestratorInstructionsService Instructions(BridgeQueueHarness h) =>
         h.Provider.GetRequiredService<OrchestratorInstructionsService>();
+
+    private sealed class RecordingSignals(OrchestratorInstructionsService instructions) : IOrchestratorInstructionsSignals
+    {
+        public System.Collections.Concurrent.ConcurrentQueue<string> Reasons { get; } = new();
+
+        public void Signal(string reason)
+        {
+            Reasons.Enqueue(reason);
+            instructions.Signal(reason);
+        }
+    }
 
     private static AppDbContext NewDb(BridgeQueueHarness h) =>
         new(TestDbFixture.CreateDbContextOptions(h.ConnectionString));
