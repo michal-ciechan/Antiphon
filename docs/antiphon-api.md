@@ -661,6 +661,31 @@ extension carries `candidateCount`. A Required pin with two or more candidates i
 `refuseIfExhausted`). A one-candidate Required pin is still 409 `model_disabled` with the pin coda.
 
 ```
+GET    /api/role-policy                               RolePolicy per routable role beside its active
+                                                      stage-wide pin (CARD-0097); read-only
+```
+
+Body: `{ defaultLevel, defaultTimeoutMinutes, roles[] }`; each row is `{ role, configured, level,
+kind, alias, escalateTo, escalateAfterMinutes, timeoutMinutes, stagePin, effective }` and
+`effective` is `{ source, agentKind, modelLevel, alias, strength }` with `source` `pin` or
+`rolePolicy`. `defaultLevel`, `level`, `kind` (null = ClaudeCode), `escalateTo` and the
+`effective` target fields are nullable. Pins are written through `PUT /api/routing-pins`.
+
+| Behaviour | Test (runner, file) | What it asserts |
+|---|---|---|
+| 14 rows in `RoutableRoles` order with the policy fields; Custom is unconfigured and reports the defaults | TUnit `RolePolicyEndpointTests.Get_lists_every_routable_role_in_order_with_policy_fields`, `tests/Antiphon.Tests/Api/RolePolicyEndpointTests.cs` | role list Investigate … Custom; Mutation `Low`/`haiku`, `kind` null, `escalateTo` `High`, `effective.source` `rolePolicy`; Custom `configured` false, `High`/`opus`, timeout 240 |
+| Active stage-wide pin is `stagePin` and drives `effective` | TUnit `RolePolicyEndpointTests.Get_overlays_the_active_stage_pin_as_effective`, same file | Plan pin Codex/Frontier → `stagePin.id`, head `availableNow`, `effective` `pin`/Codex/Frontier/`gpt-6-astra`/`Required`; Code stays `rolePolicy` |
+| Card pins and cleared pins are excluded | TUnit `RolePolicyEndpointTests.Get_ignores_card_pins_and_cleared_pins`, same file | live Code card pin and cleared Debug stage pin → both rows `stagePin` null, `effective.source` `rolePolicy` |
+| Unsupported or undefined kind/level still answers 200 | TUnit `RolePolicyEndpointTests.Get_serialises_every_row_when_one_role_has_unsupported_values`, same file | 14 rows; Docs level 999 → `level` null, `alias` `""`; Commit `kind` `Raw`, `alias` `""`; Deploy kind 999 → `kind` null; each of the three has `effective` `agentKind`/`modelLevel`/`alias`/`strength` null |
+| Per-case withholding of unsupported or undefined values | TUnit `RolePolicyReadServiceTests.Compose_withholds_the_target_for_unsupported_or_undefined_values` (`[MethodDataSource]`, 15 cases), `tests/Antiphon.Tests/Application/RolePolicyReadServiceTests.cs` | e.g. `policy-level-999` → `level` null, `alias` `""`; `default-level-999` → `defaultLevel` null; `pin-head-kind-Raw` → `effective` target null, `strength` `Required` |
+| Alias follows the configured kind | TUnit `RolePolicyReadServiceTests.Compose_resolves_alias_from_kind`, same file | Docs Grok → `grok-4.7`; Commit Codex → `gpt-6.1-sol`; Code `kind` null → `fable`, `effective.agentKind` ClaudeCode |
+| Unconfigured role uses `DefaultLevel`/`DefaultTimeoutMinutes` | TUnit `RolePolicyReadServiceTests.Compose_lists_RoutableRoles_in_order_and_marks_Custom_unconfigured`, same file | DefaultLevel Medium, timeout 90 → Custom `Medium`/`sonnet`/90 |
+| First candidate of a stage pin is `effective`; a card pin is not a stage pin | TUnit `RolePolicyReadServiceTests.Compose_effective_prefers_the_first_stage_pin_candidate_and_excludes_card_pins`, same file | Preferred Plan pin head Codex/Frontier is `effective`; Code card pin → `stagePin` null |
+| A partial pin head fills from the policy | TUnit `RolePolicyReadServiceTests.Compose_fills_a_missing_pin_level_from_the_policy`, `…Compose_fills_a_missing_pin_kind_from_the_policy`, same file | Grok head without level → Medium/`grok-4.7`; level-only head → policy kind (ClaudeCode `opus`, or Grok `grok-4.7`) |
+| A candidate-free pin names no target | TUnit `RolePolicyReadServiceTests.Compose_withholds_the_target_for_a_candidate_free_pin`, same file | `effective` `{pin, null, null, null, Required}` |
+| No write verb on `/api/role-policy` | not covered by a test | — |
+
+```
 GET    /api/complexity-chains                          any-role ×3 first (Hard/Medium/Easy), then every
                                                        active role cell; + roles[], complexities[]. Each
                                                        entry carries role (null = any) and resolvedFrom
