@@ -7,6 +7,7 @@ using Antiphon.Server.Domain.Enums;
 using Antiphon.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.SessionRunner.Tests;
+using Antiphon.Tests.Agents;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -26,7 +27,12 @@ public partial class HerdrAlwaysOnChannelParityTests
         Directory.CreateDirectory(root);
         try
         {
-            await using var fake = new FakeHerdrServer { LaunchScriptAgentKind = HerdrAgentKinds.Grok };
+            await using var fake = new FakeHerdrServer
+            {
+                LaunchScriptAgentKind = HerdrAgentKinds.Grok,
+                // CARD-1252: Grok readiness needs its captured dashboard on every launch here.
+                GrokStartupScreen = GrokLinuxStartupFixture.Screen("1.0.41"),
+            };
             fake.Start();
             await fake.WaitUntilListeningAsync();
             var processProbe = new HoldProcessProbe();
