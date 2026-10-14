@@ -18,15 +18,22 @@ rewrote both onto fixtures the new test file owns, moved the Merge Blocked check
 withdrew V-G2, V-G3 and V-G5. Round-4 citations were re-read from master `38a100f583f2a5f0568e007b6f066cc8fec7a693`;
 the routing, queue and fixture bodies cited are unchanged from `ff4d84df5`.
 
-`origin/master` at this repair is `d317c3f593112e8da01a046694db2e5671594969`. CARD-1234 (`ba40230d9`, `d317c3f59`) and
+Task `a620633a` (Plan, Frontier) repairs R5-01 from Final Review `2ec3e207`, continuing from
+`66aaa500be8b36561ed53c7ea0758aac86b724a7` without rebasing or merging. **Round 5 supersedes the round-4 receipt
+withdrawals:** V-G2, V-G3 and V-G5 return as three exact methods beside V-G1 in the standalone
+`MatrixChildReceiptTests`; V-A12c remains its service-level construction check. Current receipt anchors in §13 and
+the amendment are against fetched master `c24ad5682315a0c9fb6d4a123d0cf8bce4e538c0`. No production change is part
+of this repair. Landing owner remains `c491a627-6e46-47ee-8035-e682776f3aa4`.
+
+`origin/master` at the initial reduction was `d317c3f593112e8da01a046694db2e5671594969`. CARD-1234 (`ba40230d9`, `d317c3f59`) and
 CARD-1213 (`6d49673fa`) are on it, so the collision waits of the previous rounds are over; the file:line citations
 below were re-read from that master (`git show origin/master:<path>`), not from this branch. Live reads at repair time
 (~08:35Z, server2 mirror, injected API base): `GET /api/version` `893ddfcee` (capabilities `land-v2`,
-`operator-shutdown-v1`); `GET /api/runner-defaults` revision 2, `globalRunnerId` server2, no kind defaults;
-`GET /api/session-runners` desktop (windows, capacity 2) and server2 (linux, capacity 10, 4 occupied), both
-dispatch-eligible. The pin and cell census (13 stage-wide Human Required pins, no card pins, three empty any-role rows)
-was re-confirmed by Final Review `f39ef633` and is not re-derived here. Lane: default placement (server2); no
-`-Runner`, no `-Platform`; the checkpoints are TUnit or Vitest and run on Linux.
+`operator-shutdown-v1`). The pin and cell census (13 stage-wide Human Required pins, no card pins, three empty
+any-role rows) was re-confirmed by Final Review `f39ef633` and is not re-derived here. Round-5 reads of
+`GET /api/runner-defaults` and `GET /api/session-runners` returned HTTP 200 (revision 2; catalogue read at
+10:20Z). Placement is resolved from those routes at dispatch. Lane: default placement, portable TUnit/Vitest;
+omit `-Runner` and `-Platform` (no host or OS requirement for these checkpoints).
 
 This plan supersedes CARD-0097 S3 (the `StagePinEditor` over pins, held in
 [the 2026-10-13 test design](2026-10-13-card-0097-test-design.md) Appendix A). S1, S2, S4 and S5 of the 2026-10-13
@@ -98,6 +105,9 @@ contains these commits (§7).
 | A fresh refresh harness delivers only the notice the test's write produces, with an observable baseline | False: `Notify` defaults to `All`, so a startup reconcile already notifies the idle harness session, and the session has zero transcript rows, so that first delivery has a null `LastDeliveryBaselineSequence`; the refresh tests set `Off` before the startup reconcile and `All` after it (R4-03) | `OrchestratorInstructionsSettings.cs:28`; `OrchestratorInstructionsRecipients.cs:44-45`; `OrchestratorInstructionsService.cs:233-234`; `SessionMessageQueueService.cs:3567-3575`; `OrchestratorInstructionsRefreshTests.cs:353`, `:362-363`; `BridgeQueueHarness.cs:378-391` |
 | `RoutingPinRefDto` names the agent an agent-only pin binds | False: it carries id, card, role, provenance, strength, kind, level, `notBefore`, reason and a count; the resolved `Decision.Pin.AgentId` does, and the standing-agent block takes the agent's kind | `RoutingPinDtos.cs:77-88`; `RoutingPinService.cs:65-75`; `AgentTaskService.cs:831`, `:858` |
 | A Pending queue row is typed by the stranded sweep once aged | True: `FlushStrandedQueuesAsync` discovers `Pending` rows with `CreatedAt <= now − StrandedAgeSeconds` (default 60); `FlushSessionAsync` types an idle session's row at once; both read the committed row from a fresh scope | `SessionMessageQueueService.cs:1599-1640`, `:1741-1752`; `QueueAttention.cs:72-76`; `SupervisionSettings.cs:338` |
+| Unchanged queue code makes Blocked-child receipt tests optional | R5-01 rejects this premise: the review rule requires complete recipient evidence. The direct producer adds a row without calling queue enqueue; its committed row must be discovered by turn-end or recovery | `server/Bundles/stage-review.md:6`; `docs/testing-and-build.md:1059-1064`; `AgentTaskService.cs:4617-4633` (master `c24ad5682`); V-G1–V-G3, V-G5 |
+| A stranded Blocked note needs an AlwaysOn agent to be discovered | Delegation origin is a separate candidate arm. With a Running local session and a registered adapter, an aged, unattempted note qualifies without an Agents row | `QueueAttention.cs:72-100`; `SessionMessageQueueService.cs:1650-1713`; `AgentSessionRuntime.cs:1670-1677`, `:1733-1735` (master `c24ad5682`); V-G3 |
+| A direct transcript insert updates a previously loaded working-state projection | The queue reads the enabled `SessionStateStore`; an existing cached entry is retained until publication/reset. V-G2's local helper publishes its committed insert under the existing mutation lease | `SessionMessageQueueService.cs:5253-5254`; `SessionStateStore.cs:127-165`, `:186-196`; `AgentTaskLandReceiptWatermarkTests.cs:198-204` (master `c24ad5682`) |
 
 ## 2. Decisions
 
@@ -311,6 +321,19 @@ the operator can overrule any one before Code is dispatched. Round-2 changes are
   client write invalidates both query families.
 - **D-12 Lane and tests.** Narrow class filters for TUnit, file lists for Vitest, no whole-`Antiphon.Tests` lane, no
   E2E. Script behaviour is bound through the `pwsh`-plus-`HttpListener` harness. Checkpoints are the closed list in §5.
+- **D-13 Complete Blocked-child receipt evidence is required (R5-01).** Restore V-G2 (busy parent → turn end),
+  V-G3 (committed-row stranding → fresh queue sweep) and V-G5 (direct Merge producer → parent receipt), retaining
+  V-G1's two flushes and V-F2b's Off/startup/seeded-floor/All ordering. Reason: the ordinary Review contract at
+  `server/Bundles/stage-review.md:6` and `docs/testing-and-build.md:1059-1064` requires these boundaries even when
+  queue code is unchanged. Rejected: substituting V-A12c's Pending row, adapter counts, or the System-origin
+  instructions test at `OrchestratorInstructionsRefreshTests.cs:209-233` for the Blocked child's complete prompt.
+  Keep the standalone class and its local helper copies; the small committed-state refresh in `EntryAsync` uses
+  `SessionStateStore.BeginMutationAsync`/`PublishCommittedAsync` (`:127-165`) around the existing database write.
+  V-G3 uses `CommitChainBoundary`'s existing post-save interruption (`AgentTaskCommitEndpointTests.cs:342-353`)
+  and a new `SessionMessageQueueService` instance over the factory's same dependencies (`:77-109`), not a second
+  factory/database. This is a committed-row stranding/reconstruction test, not process-restart acceptance.
+  Rejected: adding production delivery machinery or changing existing test files. Current source anchors in this
+  decision are against master `c24ad5682`; exact recipes and method-scoped PC-47–PC-49 are in the amendment.
 
 Operator decisions, written under the recommended default (unchanged by this repair):
 
@@ -345,7 +368,7 @@ Operator decisions, written under the recommended default (unchanged by this rep
 | Slice | What | Files (closed list) | Est. |
 |---|---|---|---|
 | **S-0 Setting** | `DelegationSettings.DefaultComplexity` (`TaskComplexity`, default `Medium`) and one validator line (`Delegation:DefaultComplexity must be Hard, Medium or Easy`) placed before the `ComplexityChains` loop (`:1344`). | `server/Application/Settings/DelegationSettings.cs` (property beside `:375`; validator beside `:1344`). Tests: new `tests/Antiphon.Tests/Application/MatrixDefaultComplexitySettingsTests.cs` (V-A9, two methods). | 20 min |
-| **S-A Server: the role row governs ordinary dispatch and the two server-created children** | `MatrixDefaultApplies` (D-1) and the stamp before `:917`; Created event detail `"{Kind}/{Role} at {level} (matrix default {tier}) in …"` when stamped (`:1556-1560`); OD-2 warning `explicit kind/level: the {Role}/{tier} row was not consulted` when a row resolves and the request is explicit; `ResolveServerChildRoutingAsync` (D-3) called from `CreateCommitTaskAsync` (`:3843-3847` moves into the helper as the single pin read; `:3848-3863` and `:3865-3868` become its `legacy(PinRead)` selection; `:3870-3873` stays) and `CreateMergeTaskAsync` (`:3770` becomes its `legacy` delegate; the task gains `AgentKind`, `Complexity`, `RoutingPinId` from the result and a Warning event when the result carries one), including the Blocked construction and parent note. Scaffold commit first (CP-3): property-free predicate returning `false`, helper that reads the pin once and returns `legacy(pinRead)`. | `server/Application/Services/AgentTaskService.cs` (`:917`, `:1556-1560`, `:3706-3797`, `:3811-3935`). Tests: new `tests/Antiphon.Tests/Application/MatrixDefaultComplexityCreateTests.cs` (V-A1–V-A8b, V-A10–V-A15b including V-A12c, V-G4; fixture from `ComplexityCreateTests.cs:466-490`, seeds from `RoutingPinServiceTests.cs:228-256`, `:289` and `CommitOnSettlePolicyTests.cs:176-184`); new `tests/Antiphon.Tests/Application/MatrixChildReceiptTests.cs` (a standalone class; its one method constructs its own `CommitEndpointWebAppFactory` as `AgentTaskCommitChildChainTests.cs:28` does and the file carries its own `SeedRepoAsync`, `EntryAsync` and `AdapterFor` helpers copied from `AgentTaskCommitEndpointTests.cs:283-289` and `AgentTaskCommitChildChainTests.cs:217-242`; no existing test file is edited; V-G1); `ComplexityCreateTests`, `RoutingPinCreateTests`, `RoutingPinCandidateCreateTests`, `ComplexityDispatcherTests`, `CommitOnSettlePolicyTests` run unchanged (R-A1–R-A5). Needs S-0. | 90 min |
+| **S-A Server: the role row governs ordinary dispatch and the two server-created children** | `MatrixDefaultApplies` (D-1) and the stamp before `:917`; Created event detail `"{Kind}/{Role} at {level} (matrix default {tier}) in …"` when stamped (`:1556-1560`); OD-2 warning `explicit kind/level: the {Role}/{tier} row was not consulted` when a row resolves and the request is explicit; `ResolveServerChildRoutingAsync` (D-3) called from `CreateCommitTaskAsync` (`:3843-3847` moves into the helper as the single pin read; `:3848-3863` and `:3865-3868` become its `legacy(PinRead)` selection; `:3870-3873` stays) and `CreateMergeTaskAsync` (`:3770` becomes its `legacy` delegate; the task gains `AgentKind`, `Complexity`, `RoutingPinId` from the result and a Warning event when the result carries one), including the Blocked construction and parent note. Scaffold commit first (CP-3): property-free predicate returning `false`, helper that reads the pin once and returns `legacy(pinRead)`. | `server/Application/Services/AgentTaskService.cs` (`:917`, `:1556-1560`, `:3706-3797`, `:3811-3935`). Tests: new `tests/Antiphon.Tests/Application/MatrixDefaultComplexityCreateTests.cs` (V-A1–V-A8b, V-A10–V-A15b including V-A12c, V-G4; fixture from `ComplexityCreateTests.cs:466-490`, seeds from `RoutingPinServiceTests.cs:228-256`, `:289` and `CommitOnSettlePolicyTests.cs:176-184`); new `tests/Antiphon.Tests/Application/MatrixChildReceiptTests.cs` (a standalone class; its four methods each construct their own `CommitEndpointWebAppFactory` as `AgentTaskCommitChildChainTests.cs:28` does and the file carries its own `SeedRepoAsync`, `EntryAsync` and `AdapterFor` helpers copied from `AgentTaskCommitEndpointTests.cs:283-289` and `AgentTaskCommitChildChainTests.cs:217-242`; no existing test file is edited; V-G1, V-G2, V-G3, V-G5; EntryAsync also publishes committed state per amendment F-C); `ComplexityCreateTests`, `RoutingPinCreateTests`, `RoutingPinCandidateCreateTests`, `ComplexityDispatcherTests`, `CommitOnSettlePolicyTests` run unchanged (R-A1–R-A5). Needs S-0. | 110 min |
 | **S-B Server: effective cell DTO carries the overlay** | `ComplexityEffectiveDto { source, candidates, stagePin, governsDefault, withheldReason }` on `ComplexityChainDto.Effective` (nullable, `?role=` view only); `ComplexityChainListDto.DefaultComplexity`. `ComplexityChainService` takes `RoutingPinService? pins = null`; `GetEffectiveAsync` composes per D-4 through the pure static `ComplexityEffective.Compose(decision, chain, chainLabel, chainResolvedFrom, policy, isDefaultTier, agentLabel)`; the service reads the agent label from `_db.Agents` when `decision.Pin?.AgentId` is set. `RolePolicyReadService.PolicyTarget` and the `PolicyResolution` record extracted (behaviour-preserving for `Row`). | `server/Application/Dtos/ComplexityChainDtos.cs` (`:26-46`), `server/Application/Services/ComplexityChainService.cs` (`:28-40`, `:111-134`), new `server/Application/Services/ComplexityEffective.cs`, `server/Application/Services/RolePolicyReadService.cs` (`:51-69`, new static and record). Tests: new `ComplexityEffectiveComposeTests.cs` (V-B1–V-B4, V-B10, V-B11), new `ComplexityEffectiveHttpTests.cs` (factory `ComplexityChainApiWebAppFactory`, `ComplexityChainHttpTests.cs:142`; V-B5, V-B6, V-B12); `ComplexityChainRoleHttpTests`, `ComplexityChainServiceTests`, `RolePolicyReadServiceTests` unchanged (R-B1–R-B3). Needs S-0; parallel with S-A (no shared files). | 75 min |
 | **S-C1 Client: cells show the overlay** | `ComplexityChainDto.effective?`, `ComplexityChainListDto.defaultComplexity?` types. `MatrixCell` renders the effective list first with a source badge (`Required Human pin → Codex/Frontier (gpt-6-astra)` red; `Falls back to RolePolicy → ClaudeCode/High (opus)` grey; `Falls back to RolePolicy → not launchable: <withheldReason>` red; `Own rule`/`Inherits Any role`/`Configuration fallback` as today) and the stored cell beneath it; the default-tier column header reads `Medium (default for an ordinary Worker dispatch without -Complexity)`; an unset non-default cell reads `Unset — a -Complexity <tier> dispatch blocks`. `NON_COMPLEXITY_BOUNDARY` and `pinEffectCopy` rewritten; `cardPinCountLabel(role, pins)` (OD-5). msw default handler gains `defaultComplexity: 'Medium'`. | `client/src/api/complexityChains.ts` (`:19-38`), `client/src/features/settings/routingSettingsModel.ts` (`:25`, `:39-46`, `:113`), `client/src/features/settings/RoutingSettingsTab.tsx` (`:409-531`), `client/src/test/mocks/handlers.ts` (`:76-82`). Tests: `routingSettingsModel.test.ts` (V-C1–V-C3), `RoutingSettingsTab.test.tsx` (V-C4–V-C6; the three cases at `:347`, `:373`, `:447` rewritten to the new copy with that reason), `complexityChains.test.tsx` (R-C1). Needs S-B. | 60 min |
 | **S-D Script: one verb for a role-wide change** | D-8 in `complexity-chain.ps1` (`-Complexity` accepts `All`; `-ClearStagePin` switch with its three refusals; `get -Role X` prints `effective:`). `routing-pin.ps1` header points role-wide changes at this script. ASCII-only. No docs in this slice (S-F owns them). | `scripts/complexity-chain.ps1` (`:9-13`, `:30-34`, `:155-183`, `:186-237`), `scripts/routing-pin.ps1` (`:1-28` header). Tests: new `tests/Antiphon.Tests/Scripts/ScriptedApi.cs` (F-C: ordered `Requests`, per-path `Respond`, in-memory `Cells`/`Pins` store) and V-D1–V-D7 in `ComplexityChainScriptTests.cs`; its nine existing methods run unchanged (R-D). Needs S-B for `get`. | 60 min |
@@ -417,13 +440,16 @@ project-scoped pipeline for Code tasks touching `client/src/features/settings`; 
   produces no delta line and a changed cell names the role (V-F3); the matrix section renders 14 rows with the per-line
   cap and `+N` elision at the default cap and collapses to the in-section pointer line, with `Sample()`'s card pin
   still rendered and no cut notice, when the cap is one byte short of the full render (V-F7).
-- Receipts (R3-06, R4): the Blocked Commit child's note reaches the settled task's idle parent session as one complete
+- Receipts (R3-06, R4, R5): the Blocked Commit child's note reaches the settled task's idle parent session as one complete
   `UserPrompt` row equal to the queued `Body`, through the real settle path and queue, on the first flush; the
   worker's own completion note, which the same settle queues for the same parent, stays `Pending` until a second
   flush and then arrives as its own complete `UserPrompt`, after the first (V-G1). A cell-write notice is received as
   one `UserPrompt` equal to its `Sent` row, above a seeded transcript floor, with the session's version column equal
-  to the state's and no other notice row for the session (V-F2b). The busy-parent turn-end rule, the stranded sweep
-  and a Merge receipt are not re-tested (V-G2, V-G3, V-G5 withdrawn; §12).
+  to the state's and no other notice row for the session (V-F2b). V-G2 holds both Commit notes while the parent is
+  busy, then delivers them on two turn-end calls. V-G3 interrupts after settlement commits, reconstructs the queue
+  service and delivers the aged Blocked row via the sweep. V-G5 delivers the direct Merge producer's note. Each
+  selects the receipt by session, attempt floor and complete body and rechecks per-body count 1 after another
+  delivery trigger; `SubmittedBodies` follows queue sequence order (amendment V-G2/V-G3/V-G5).
 
 ## 5. Verification design
 
@@ -457,9 +483,10 @@ Full V/R/PC binding, fixtures and the wire contract are in
 | CP-21 | S-F | CP-19 | instructions-delta | `/*/*/OrchestratorInstructionsDeltaTests/*` | V-F3 | the class roster, 0 failed/skipped | 5 | 4 | false |
 | CP-22 | S-C2 | n/a | client-row-editor | `pwsh -NoProfile -File scripts/test-client.ps1 src/features/settings/ComplexityChainRowEditor.test.tsx src/api/routingPins.test.ts src/features/settings/routingSettingsModel.test.ts src/features/settings/ComplexityChainCellEditor.test.tsx` | V-C7–V-C13, R-C2 | 4 files run, nonzero aggregate printed, 0 failed/skipped | n/a | 6 | false |
 | CP-23 | all | n/a | client-full | `pwsh -NoProfile -File scripts/test-client.ps1` | lint gate (`client/src/lint.gate.test.ts`), whole client suite | `CLIENT TESTS EXIT CODE: 0` and the aggregate line reports a nonzero passed count that Code records | n/a | 10 | true |
-| CP-24 | S-A | CP-4 | child-receipt | `/*/*/MatrixChildReceiptTests/*` | V-G1 | 1 method, 0 failed/skipped | 1 | 8 | true |
+| CP-24 | S-A | CP-4 | child-receipt | `/*/*/MatrixChildReceiptTests/*` | V-G1, V-G2, V-G3, V-G5 | 4 named methods / 4 results (amendment receipt roster), 0 failed/skipped | 4 | 12 | true |
 
-Lane: each row runs on the default placement (runner-defaults revision 2 = server2); no `-Runner`, no `-Platform`.
+Lane for CP-1–CP-24: portable TUnit/Vitest on default placement resolved from current runner-defaults/catalogue;
+no `-Runner`, no `-Platform`. CP-24 is serial integration (local fake adapters, isolated PostgreSQL and scratch Git).
 TUnit rows run one class filter each through the checkpoint tool (`dotnet run --project tools/Antiphon.Checkpoints --
 run --plan <this file>`), which takes the build slot itself; `Antiphon.Tests` is not run whole here. A `CP-n` Build
 cell reuses that row's output with `--no-build` and shares its `After` group (`PlanTableImporter.cs:200-211`).
@@ -518,11 +545,14 @@ command for each regression class when reporting and records the executed count 
 | PC-44 | `OrchestratorInstructionsRefreshTests.A_cell_write_notice_is_received_as_one_complete_user_prompt_equal_to_its_queued_body` (V-F2b) | cell upsert after a startup reconcile under `Notify Off` → drop the signal → zero rows with the note header for the session and `SubmittedBodies` empty |
 | PC-45 | `MigrateStagePinsScriptTests.Restore_re_puts_human_before_images_and_deletes_absent_expired_and_auto_ones` (V-E6, row `auto`) | Auto before-image → PUT the saved Auto body after the DELETE → a PUT on Plan/Medium |
 | PC-46 | `MatrixDefaultComplexityCreateTests.An_exhausted_merge_row_blocks_the_merge_child` (V-A12c) | Merge/Medium `[ClaudeCode/Frontier]` with `fable` held → fall back to the RolePolicy pair in the Merge arm instead of Blocking → `Status Queued`, no `SessionQueuedMessages` row |
+| PC-47 | `MatrixChildReceiptTests.A_blocked_commit_child_note_reaches_a_busy_parent_once_after_turn_end` (V-G2) | replace the `DeliverNextLockedAsync` assignment in `OnTurnEndAsync` (`SessionMessageQueueService.cs:1568`, master `c24ad5682`) with `flush = FlushResult.Nothing` → after the persisted parent TurnEnd, the Blocked row stays Pending and the complete-body receipt count is 0 instead of 1 |
+| PC-48 | `MatrixChildReceiptTests.A_committed_blocked_child_note_is_recovered_once_by_the_stranded_sweep` (V-G3) | remove `.Union(machineOriginSessionIds)` from stranded candidate construction (`SessionMessageQueueService.cs:1681`, master `c24ad5682`) → no Agents row exists in this fixture, the sweep returns 0, the committed note stays Pending and the matching receipt count is 0 |
+| PC-49 | `MatrixChildReceiptTests.A_blocked_merge_child_note_reaches_the_parent_once_as_a_complete_user_prompt` (V-G5) | remove D-3's new `EnqueueBlockedParentNoteAsync` call from the Merge Blocked arm (insertion within `AgentTaskService.cs:3789-3803`; helper `:4610-4634`, master `c24ad5682`) → child remains Blocked but the child-owned row count is 0; no complete-body recipient receipt follows |
 
 ### Cost
 
-Ordinary green rows (CP-2, CP-4–CP-9, CP-11–CP-24): 6+13+8+8+8+8+6+6+6+5+5+5+5+8+8+6+12+4+6+10+8 = 151 minutes.
-Red-first rows (CP-1, CP-3, CP-10): 6+13+6 = 25 minutes. Authoring: S-0 20, S-A 90, S-B 75, S-C1 60, S-D 60, S-E 65,
+Ordinary green rows (CP-2, CP-4–CP-9, CP-11–CP-24): 6+13+8+8+8+8+6+6+6+5+5+5+5+8+8+6+12+4+6+10+12 = 155 minutes.
+Red-first rows (CP-1, CP-3, CP-10): 6+13+6 = 25 minutes. Authoring: S-0 20, S-A 110, S-B 75, S-C1 60, S-D 60, S-E 65,
 S-F 80, S-C2 90 (optional) minutes. No production timeout or assertion is loosened by this plan; the three rewritten
 client cases and the renumbered renderer literals are listed with their reasons in the amendment.
 
@@ -619,11 +649,12 @@ and this plan's slices are inactive until a restart. Sequencing:
 - **Rollback order** (R3-03): the restore refuses with zero writes while a migrated role has no Required stage pin
   back; the cost is one GET per migrated role and a refusal the operator reads. **Auto before-images** (R3-02) are
   cleared, not re-created, by the restore; the dry-run table shows that beforehand.
-- **Receipt test over a real host** (R3-06, R4): V-G1 boots its own `CommitEndpointWebAppFactory` and drives two
+- **Receipt tests over a real host** (R3-06, R4, R5): V-G1 boots its own `CommitEndpointWebAppFactory` and drives two
   parent flushes, the shape the existing chain test already runs (`AgentTaskCommitChildChainTests.cs:141`, `:192`);
-  CP-24 is serial and reuses CP-4's build. A failure there is a producer or queue defect unless the chain test
-  (`Spawned_child_complete_brief_gated_operation_and_parent_receipt`) also fails at the base commit. The helpers are
-  the new file's own, so a later edit to the chain test's private class does not reach V-G1.
+  CP-24 is serial and reuses CP-4's build for four exact methods. V-G2 uses two parent turn-end calls; V-G3 uses the
+  saved-boundary interruption and sweep; V-G5 calls the Merge producer directly. These are planned tests, not
+  executed acceptance. Class-local helpers keep the chain test's private members out of the dependency list;
+  code/test repairs after a failure require the failing case's base-commit comparison, not a presumed inherited red.
 
 ## 9. Sessions that wait for input
 
@@ -670,24 +701,43 @@ unchanged; nothing deleted in round 2 returns.
 
 ## 12. Round-4 disposition (Final Review `ce3b2bda`)
 
-Method: a producer-to-recipient receipt is kept only where a slice changes what a session receives. The cell-write
-notice body is new text (the matrix section and its delta line feed it), so V-F2b stays. D-3 changes which model a
-child runs on, not the note formatter or the queue, so the receipt rows that only re-drove unchanged queue code over
-the Blocked row are withdrawn and the one new recipient situation (a Commit child Blocked at creation beside the
-settled task's own completion, both for one parent) keeps one receipt. Each kept row is written on fixtures the new
-file owns or public harness members.
+Historical disposition: round 4 repaired the fixture, V-G1 and V-F2b mechanics below, but withdrew three required
+receipt cases. Final Review `2ec3e207` rejected those withdrawals as R5-01. §13 and D-13 now bind the restored
+methods; the resolved R4-01–R4-03 mechanics are retained.
 
 | Finding / row | Disposition |
 |---|---|
-| R4-01 the proposed partial has no access to the private nested chain helpers | **Fixed by removing the partial.** `MatrixChildReceiptTests` is a standalone class whose method constructs its own `CommitEndpointWebAppFactory` (as `AgentTaskCommitChildChainTests.cs:28` does) and whose file carries private static `SeedRepoAsync`, `EntryAsync` and `AdapterFor`, each the body of the cited existing helper (`AgentTaskCommitEndpointTests.cs:283-289`; `AgentTaskCommitChildChainTests.cs:217-242`) with the real `AgentSessionRuntime.Register` and database writes kept. No existing test file is edited; S-A's closed list is unchanged in production files. CP-24's filter is the ordinary class filter `/*/*/MatrixChildReceiptTests/*`. Test-design F-C `K`. |
+| R4-01 the proposed partial has no access to the private nested chain helpers | **Fixed by removing the partial.** `MatrixChildReceiptTests` is a standalone class whose methods each construct their own `CommitEndpointWebAppFactory` (as `AgentTaskCommitChildChainTests.cs:28` does) and whose file carries private static `SeedRepoAsync`, `EntryAsync` and `AdapterFor`, each the body of the cited existing helper (`AgentTaskCommitEndpointTests.cs:283-289`; `AgentTaskCommitChildChainTests.cs:217-242`) with the real `AgentSessionRuntime.Register` and database writes kept. No existing test file is edited; S-A's closed list is unchanged in production files. CP-24's filter is the ordinary class filter `/*/*/MatrixChildReceiptTests/*`. Test-design F-C `K`. |
 | R4-02 V-G1 expects one flush to deliver two notes | **Fixed by binding the deterministic two-note outcome.** V-G1 asserts, after the settle, the Blocked row (`ConversationKey` null) and the worker's completion row (`SourceLandNotificationId` set, higher `Sequence`), both `Pending`; after the first `FlushSessionAsync(parent)` the Blocked row `Sent` with its complete `UserPrompt` above its baseline and the completion still `Pending`; after a second flush the completion `Sent` with its own complete `UserPrompt` above its baseline and after the first receipt; each receipt selected by session, baseline floor and complete body with per-body exactly-one counts; `SubmittedBodies` equals the two bodies in that order. The queue is unchanged; the shape is the chain test's two parent flushes (`:141`, `:192`, `:212`). Method renamed `A_blocked_commit_child_note_and_the_settled_tasks_completion_each_reach_the_parent_once_in_queue_order`. PC-43 unchanged in mutation; its witness is the stage-1 row count. |
 | R4-03 V-F2b counts a startup notice as the one submission | **Fixed with the `CoveredWriteAsync` order and a seeded floor.** `Notify = Off` before `ReconcileNowAsync("startup")`, a seeded `UserPrompt` and `TurnEnd` through the public `InsertTranscriptEntryAsync` (the returned `TurnEnd` sequence is the floor), `Notify = All`, then the cell write. Assertions: exactly one header row for the session, `Sent`, `LastDeliveryBaselineSequence == floor`; exactly two `UserPrompt` rows for the session, exactly one above the floor and equal to the body; `state.Revision == startup.Revision + 1`; `SubmittedBodies == [row.Body]`; `SessionVersionAsync == state.Version`. PC-44's witness is now zero header rows and an empty `SubmittedBodies`, which the `Off` startup leaves unambiguous. |
-| V-G2 busy parent, delivered at its turn end | **Withdrawn.** It re-drove `OnTurnEndAsync` (`SessionMessageQueueService.cs:1554`) over an ordinary Delegation-origin `Pending` row; no slice touches that file, and the busy-then-turn-end rule for a `WhenIdle` row is already bound by `A_busy_session_gets_the_notice_after_its_turn_ends_and_a_second_change_replaces_the_pending_row` (`OrchestratorInstructionsRefreshTests.cs:209`). The Blocked row's fields are bound by V-A13. |
-| V-G3 stranded sweep over the committed row | **Withdrawn.** It re-drove `FlushStrandedQueuesAsync` (`:1599`) over the same committed row V-A13 asserts; the sweep is outside the closed file lists and this card changes nothing it reads. The inventory's loss column still names the sweep as the existing recovery for a crash after the producer's commit. |
-| V-G5 Merge producer receipt | **Withdrawn; row-level part kept as V-A12c.** The Merge note travels the same producer (`EnqueueBlockedParentNoteAsync`) and queue as V-G1's; the Merge-specific code is the Blocked construction in `CreateMergeTaskAsync`, which V-A12c (`I` recipe, `An_exhausted_merge_row_blocks_the_merge_child`, the mirror of V-A13) binds with the child's status, reason, `Complexity`, event and the parent's `Pending` row with its digest. PC-46 is its control. |
+| V-G2 busy parent, delivered at its turn end | Round-4 withdrawal superseded by §13: exact Blocked Commit receipt method, CP-24, PC-47. |
+| V-G3 stranded sweep over the committed row | Round-4 withdrawal superseded by §13: saved-boundary interruption, fresh queue instance and sweep receipt, CP-24, PC-48. |
+| V-G5 Merge producer receipt | Round-4 withdrawal superseded by §13: direct producer-to-recipient method, CP-24, PC-49. V-A12c and PC-46 retain their separate construction assertions. |
 
 Net change in round 4: slices 8 → 8 (S-A estimate 110 → 90 minutes); checkpoint rows 24 → 24 (CP-24 refiltered to
 one method, 12 → 8 minutes; CP-3/CP-4 20 methods, 34 results); positive controls 45 → 46 (PC-46); V rows: receipt
 methods 4 → 1 (V-G1 kept, V-G2, V-G3, V-G5 withdrawn), S-A service rows 19 → 20 (V-A12c), S-F 5 → 5 (V-F2b
 rewritten). Ordinary checkpoint minutes 155 → 151; red-first 25 → 25. OD-1–OD-7 and the round-2 and round-3 design
 are unchanged; no production file list changes.
+
+## 13. Round-5 disposition (Final Review `2ec3e207`, R5-01)
+
+Current source for this repair: master `c24ad5682315a0c9fb6d4a123d0cf8bce4e538c0`. The following source chain binds
+the restored recipes; the test titles are in the amendment and the PC table, with no production queue edits:
+
+| Case | Source order and bound evidence | Selection / cost / control |
+|---|---|---|
+| V-G2 busy parent | Seed the chain worker and a parent UserPrompt without TurnEnd (`AgentTaskCommitChildChainTests.cs:47-94`); settle worker (`:96`; `AgentTaskReplyService.cs:4712`, `:2629`, `:2651-2671`); ordinary flush holds while Working (`SessionMessageQueueService.cs:1761-1763`); persist parent TurnEnd and publish committed state (`SessionStateStore.cs:127-165`); call queue `OnTurnEndAsync` (`:1554-1568`) twice, one note per call. Match complete bodies and ordered receipts above their attempt floors, then repeat the trigger and retain per-body count 1 | CP-24; 3 min; PC-47 |
+| V-G3 committed-row recovery | Set `factory.Boundary.InterruptedTask` before worker settle (`AgentTaskCommitChildChainTests.cs:95-96`); hook throws after save and before completion enqueue (`AgentTaskCommitEndpointTests.cs:342-353`; `AgentTaskReplyService.cs:2629`, `:2651-2671`). Fresh scope sees child and its Pending note; the worker completion obligation has no queue row. Age only the Blocked row's CreatedAt beyond the configured cutoff, reconstruct the queue through its public constructor (`SessionMessageQueueService.cs:77-109`) over the same factory services, then call only `FlushStrandedQueuesAsync` (`:1630-1713`). Match the receipt and repeat the sweep with count unchanged | CP-24; 4 min; PC-48 |
+| V-G5 Merge producer | Seed the conflicted task's worktree fields (`CommitOnSettlePolicyTests.cs:176-187`) and idle parent (`AgentTaskCommitChildChainTests.cs:53-58`, `:86-90`); call `CreateMergeTaskAsync` then save (`AgentTaskService.cs:3706-3803`); its D-3 Blocked arm uses the existing row producer (`:4610-4634`). Dispose scope, flush parent, match complete UserPrompt, flush again and retain count 1. The upstream Git-conflict trigger is outside this test | CP-24; 3 min; PC-49 |
+
+CP-24's total is 12 minutes: V-G1 2, V-G2 3, V-G3 4, V-G5 3, including per-method host setup and CP-4 build reuse.
+Its roster grows 1 → 4; checkpoint rows stay 24; receipt methods grow 1 → 4; PCs grow 46 → 49. Ordinary estimates
+grow 151 → 155 minutes; red-first stays 25. S-A authoring grows 90 → 110 minutes (the additional fixture work is
+kept in its existing two new test files); other slice estimates and OD-1–OD-7 are unchanged. V-G1's two-flush
+outcome and V-F2b's Off-then-All seeded-floor setup remain binding. The instructions version-before-enqueue loss
+window remains disclosed in the amendment (`OrchestratorInstructionsService.cs:156-157`, `:268-278`).
+
+Documentation validation is a changed-row consistency sweep and the existing checkpoint binary's `import` verb.
+Import acceptance establishes table syntax/selection metadata; Code still owes four discovered, executed receipt
+identities with nonzero counts, and SourceLanding Mutation owes the method-scoped PC runs. Next stage: Review.
