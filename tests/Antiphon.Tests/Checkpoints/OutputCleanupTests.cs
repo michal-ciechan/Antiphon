@@ -141,6 +141,137 @@ public sealed class OutputCleanupTests : CheckpointTestBase
         }
     }
 
+    // CARD-1242: red at 15a9071fa with output-ledger-mismatch on app.dll; the build child's
+    // files had no creation record, so every green build run ended exit 2 (cleanup_refused).
+    [Test]
+    public void external_build_payload_is_adopted_at_seal_and_removed_on_green()
+    {
+        var (root, output) = ExternalBuild("bin-c1242");
+        SafeWrite.Require(OwnedOutputLedger.Seal(output));
+
+        var result = OutputCleanup.CleanOwnedOutputs(root, ["bin-c1242"], 0, false, false, createdPaths: [output]);
+
+        result.Refusals.ShouldBeEmpty();
+        result.Deleted.ShouldBe([output]);
+        Directory.Exists(output).ShouldBeFalse();
+        ReportValidator.Validate(new ReportModel { ExitCode = 0, Verdict = "GREEN", CleanedOutputs = true, CleanupRefusals = result.Refusals },
+            new string('a', 40)).ShouldNotBe("cleanup_refused");
+    }
+
+    // CARD-1242: adoption happens at seal, not at cleanup. Red at 15a9071fa because the refusal
+    // named an unrecorded build file instead of the late addition.
+    [Test]
+    public void file_added_after_seal_is_refused_and_kept()
+    {
+        var (root, output) = ExternalBuild("bin-c1242");
+        SafeWrite.Require(OwnedOutputLedger.Seal(output));
+        var late = Path.Combine(output, "runtimes", "late.txt");
+        File.WriteAllText(late, "USER");
+
+        var result = OutputCleanup.CleanOwnedOutputs(root, ["bin-c1242"], 0, false, false, createdPaths: [output]);
+
+        result.Refusals.ShouldBe(["output-ledger-mismatch; left in place: " + late]);
+        result.Deleted.ShouldBeEmpty();
+        File.ReadAllText(late).ShouldBe("USER");
+        File.ReadAllText(Path.Combine(output, "app.dll")).ShouldBe("COMPILER");
+    }
+
+    // CARD-1242: the seal record holds size and SHA-256; a same-size rewrite must still refuse.
+    [Test]
+    public void file_modified_after_seal_is_refused_and_kept()
+    {
+        var (root, output) = ExternalBuild("bin-c1242");
+        SafeWrite.Require(OwnedOutputLedger.Seal(output));
+        var native = Path.Combine(output, "runtimes", "native.so");
+        File.WriteAllText(native, "NATIVF");
+
+        var result = OutputCleanup.CleanOwnedOutputs(root, ["bin-c1242"], 0, false, false, createdPaths: [output]);
+
+        result.Refusals.ShouldBe(["output-ledger-mismatch; left in place: " + native]);
+        result.Deleted.ShouldBeEmpty();
+        File.ReadAllText(native).ShouldBe("NATIVF");
+    }
+
+    // CARD-1242: a link written by the build fails the seal; one added after the seal refuses cleanup.
+    [Test]
+    public void symlink_in_a_build_output_is_refused_before_and_after_seal()
+    {
+        var (root, output) = ExternalBuild("bin-c1242");
+        var outside = Path.Combine(root, "outside.txt");
+        File.WriteAllText(outside, "OUTSIDE");
+        var linkedBeforeSeal = Path.Combine(root, "bin-c1242-pre");
+        SafeWrite.Require(SafeWrite.CreateFreshDirectory(linkedBeforeSeal, SafeWrite.Under(root)));
+        File.CreateSymbolicLink(Path.Combine(linkedBeforeSeal, "linked.dll"), outside);
+        OwnedOutputLedger.Seal(linkedBeforeSeal).ShouldBe("output-inventory-failed");
+
+        SafeWrite.Require(OwnedOutputLedger.Seal(output));
+        var link = Path.Combine(output, "runtimes", "linked.dll");
+        File.CreateSymbolicLink(link, outside);
+
+        var result = OutputCleanup.CleanOwnedOutputs(root, ["bin-c1242", "bin-c1242-pre"], 0, false, false,
+            createdPaths: [output, linkedBeforeSeal]);
+
+        result.Refusals.Count.ShouldBe(2);
+        result.Deleted.ShouldBeEmpty();
+        File.ReadAllText(outside).ShouldBe("OUTSIDE");
+        new FileInfo(link).LinkTarget.ShouldBe(outside);
+        File.ReadAllText(Path.Combine(output, "app.dll")).ShouldBe("COMPILER");
+    }
+
+    // CARD-1242: adoption gives no authority over a tracked path inside the output.
+    [Test]
+    public void tracked_file_in_an_adopted_build_output_is_refused_and_kept()
+    {
+        var (root, output) = ExternalBuild("bin-c1242");
+        SafeWrite.Require(OwnedOutputLedger.Seal(output));
+        Git(root, "add", "--", "bin-c1242/app.dll");
+        Git(root, "-c", "user.email=card-1242@example.invalid", "-c", "user.name=card-1242",
+            "-c", "commit.gpgsign=false", "commit", "-m", "card-1242", "--no-verify");
+
+        var result = OutputCleanup.CleanOwnedOutputs(root, ["bin-c1242"], 0, false, false, createdPaths: [output]);
+
+        result.Refusals.ShouldContain("tracked");
+        result.Deleted.ShouldBeEmpty();
+        File.ReadAllText(Path.Combine(output, "app.dll")).ShouldBe("COMPILER");
+    }
+
+    // CARD-1242: adoption does not lift the entry cap; a pathological tree is still unsafe-tree.
+    [Test]
+    public void adopted_build_output_over_the_entry_cap_is_unsafe_tree()
+    {
+        var (root, output) = ExternalBuild("bin-c1242");
+        var many = Path.Combine(output, "many");
+        Directory.CreateDirectory(many);
+        for (var i = 0; i < 10_000; i++)
+            File.WriteAllText(Path.Combine(many, i + ".dll"), "x");
+        SafeWrite.Require(OwnedOutputLedger.Seal(output));
+
+        var result = OutputCleanup.CleanOwnedOutputs(root, ["bin-c1242"], 0, false, false, createdPaths: [output]);
+
+        result.Refusals.ShouldBe(["unsafe-tree"]);
+        result.Deleted.ShouldBeEmpty();
+        File.Exists(Path.Combine(many, "9999.dll")).ShouldBeTrue();
+    }
+
+    // CARD-1242: only the process that created the root adopts; a separate invocation still cannot.
+    [Test]
+    public void seal_of_a_root_this_process_did_not_create_adopts_nothing()
+    {
+        var root = InitGitRepo();
+        var output = Path.Combine(root, "bin-c1242");
+        Directory.CreateDirectory(output);
+        File.WriteAllText(Path.Combine(output, ".checkpoint-output-owner.json"), "foreign");
+        File.WriteAllText(Path.Combine(output, "app.dll"), "COMPILER");
+
+        OwnedOutputLedger.Seal(output).ShouldBeNull();
+
+        SafeWrite.MatchesCreation(Path.Combine(output, "app.dll")).ShouldBeFalse();
+        OwnedOutputLedger.Check(output)!.ShouldStartWith("output-memory-authority-missing");
+        var result = OutputCleanup.CleanOwnedOutputs(root, ["bin-c1242"], 0, false, false, createdPaths: [output]);
+        result.Deleted.ShouldBeEmpty();
+        File.ReadAllText(Path.Combine(output, "app.dll")).ShouldBe("COMPILER");
+    }
+
     [Test]
     public void deletes_only_paths_recorded_for_this_run()
     {
@@ -936,6 +1067,18 @@ public sealed class OutputCleanupTests : CheckpointTestBase
         '@
         & ([scriptblock]::Create($invoke))
         """;
+
+    // A fresh owned root whose payload is written outside SafeWrite, as the child dotnet build writes it.
+    private (string Root, string Output) ExternalBuild(string id)
+    {
+        var root = InitGitRepo();
+        var output = Path.Combine(root, id);
+        SafeWrite.Require(SafeWrite.CreateFreshDirectory(output, SafeWrite.Under(root)));
+        File.WriteAllText(Path.Combine(output, "app.dll"), "COMPILER");
+        Directory.CreateDirectory(Path.Combine(output, "runtimes"));
+        File.WriteAllText(Path.Combine(output, "runtimes", "native.so"), "NATIVE");
+        return (root, output);
+    }
 
     private string InitGitRepo()
     {
