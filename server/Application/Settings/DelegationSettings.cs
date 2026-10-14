@@ -374,8 +374,18 @@ public sealed class DelegationSettings
 
     public AgentModelLevel DefaultLevel { get; set; } = AgentModelLevel.High;
 
-    /// <summary>CARD-0097: default matrix tier; dispatch adoption belongs to the routing slice.</summary>
-    public TaskComplexity DefaultComplexity { get; set; } = TaskComplexity.Medium;
+    private TaskComplexity _defaultComplexity = TaskComplexity.Medium;
+
+    /// <summary>
+    /// CARD-0097: default matrix tier; dispatch adoption belongs to the routing slice.
+    /// The nullable setter preserves Medium for a configuration null
+    /// (MatrixDefaultComplexitySettingsTests.The_default_instance_validates).
+    /// </summary>
+    public TaskComplexity? DefaultComplexity
+    {
+        get => _defaultComplexity;
+        set => _defaultComplexity = value ?? TaskComplexity.Medium;
+    }
 
     /// <summary>
     /// Config defaults for a complexity tier with no active <c>ComplexityChains</c> row
@@ -1343,6 +1353,9 @@ public sealed class DelegationSettingsValidator : IValidateOptions<DelegationSet
             if (entry.EscalateTo is { } escalateTo && !Enum.IsDefined(escalateTo))
                 failures.Add($"Delegation:RolePolicy:{role}:EscalateTo is {escalateTo}, which {NotAModelLevel}");
         }
+
+        if (options.DefaultComplexity is { } defaultComplexity && !Enum.IsDefined(defaultComplexity))
+            failures.Add($"Delegation:DefaultComplexity is {defaultComplexity}, which is not a task complexity. Use Hard, Medium or Easy.");
 
         foreach (var (tier, candidates) in options.ComplexityChains)
         {
