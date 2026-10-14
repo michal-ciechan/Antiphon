@@ -497,11 +497,11 @@ public class CardRelationshipApiTests
         var done = await CreateCardAsync(board.Id, "done blocker");
         var canceled = await CreateCardAsync(board.Id, "canceled blocker");
         var archived = await CreateCardAsync(board.Id, "archived blocker");
-        var unknown = await CreateCardAsync(board.Id, "unknown status blocker");
+        var active = await CreateCardAsync(board.Id, "active blocker");
         using (var scope = _factory.Services.CreateScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-            foreach (var blocker in new[] { open, done, canceled, archived, unknown })
+            foreach (var blocker in new[] { open, done, canceled, archived, active })
                 db.CardRelationships.Add(new CardRelationship
                 {
                     Id = Guid.NewGuid(), CardId = blocked.Id, RelatedCardId = blocker.Id,
@@ -510,13 +510,18 @@ public class CardRelationshipApiTests
             (await db.Cards.SingleAsync(c => c.Id == done.Id)).Status = CardStatus.Done;
             (await db.Cards.SingleAsync(c => c.Id == canceled.Id)).Status = CardStatus.Canceled;
             (await db.Cards.SingleAsync(c => c.Id == archived.Id)).ArchivedAt = DateTime.UtcNow;
-            (await db.Cards.SingleAsync(c => c.Id == unknown.Id)).Status = (CardStatus)999;
+            (await db.Cards.SingleAsync(c => c.Id == active.Id)).Status = CardStatus.InProgress;
             await db.SaveChangesAsync();
         }
         using var client = _factory.CreateClient();
         var path = $"/api/boards/{board.Id}" + (summary ? "?view=summary" : "");
-        async Task<CardDto> Read() => (await client.GetFromJsonAsync<BoardDetailDto>(path, Json))!
-            .Columns.SelectMany(c => c.Cards).Single(c => c.Id == blocked.Id);
+        async Task<CardDto> Read()
+        {
+            using var response = await client.GetAsync(path);
+            response.StatusCode.ShouldBe(HttpStatusCode.OK, await response.Content.ReadAsStringAsync());
+            return (await response.Content.ReadFromJsonAsync<BoardDetailDto>(Json))!
+                .Columns.SelectMany(c => c.Cards).Single(c => c.Id == blocked.Id);
+        }
 
         var row = await Read();
         row.OpenBlockerCount.ShouldBe(2);
@@ -526,12 +531,12 @@ public class CardRelationshipApiTests
             new CardBlockerSummaryDto("CARD-0002", CardStatus.Done, true),
             new CardBlockerSummaryDto("CARD-0003", CardStatus.Canceled, true),
             new CardBlockerSummaryDto("CARD-0004", CardStatus.Backlog, true),
-            new CardBlockerSummaryDto("CARD-0005", (CardStatus)999, false),
+            new CardBlockerSummaryDto("CARD-0005", CardStatus.InProgress, false),
         });
         using (var scope = _factory.Services.CreateScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-            await db.Cards.Where(c => c.Id == open.Id || c.Id == unknown.Id)
+            await db.Cards.Where(c => c.Id == open.Id || c.Id == active.Id)
                 .ExecuteUpdateAsync(s => s.SetProperty(c => c.Status, CardStatus.Done));
         }
         var resolved = await Read();
@@ -577,6 +582,9 @@ public class CardRelationshipApiTests
         var blocker = await CreateCardAsync(board.Id, "shared blocker");
         using var scope = _factory.Services.CreateScope();
         var seed = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        // Unknown statuses stay open. Exercise this before JSON serialization, whose wire
+        // contract deliberately disallows unknown numeric enum values.
+        (await seed.Cards.SingleAsync(c => c.Id == blocker.Id)).Status = (CardStatus)999;
         var now = DateTime.UtcNow;
         for (var i = 0; i < count; i++)
         {
@@ -608,7 +616,7 @@ public class CardRelationshipApiTests
             card.OpenBlockerCount.ShouldBe(1);
             card.Blockers.ShouldNotBeNull().ShouldBe(new[]
             {
-                new CardBlockerSummaryDto("CARD-0001", CardStatus.Backlog, false),
+                new CardBlockerSummaryDto("CARD-0001", (CardStatus)999, false),
             });
         }
         cards.Single(c => c.Id == blocker.Id).Blockers.ShouldBeNull();
