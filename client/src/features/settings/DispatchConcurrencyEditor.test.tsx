@@ -286,10 +286,11 @@ function saveButton() {
   return screen.getByTestId('dispatch-concurrency-save')
 }
 
+/** `clear` leaves the input focused and empty, so typing skips a second click and its editor re-render (`C506 S2F2 refresh-fails`). */
 async function setValue(name: string, value: string) {
   const input = num(name)
   await userEvent.clear(input)
-  if (value) await userEvent.type(input, value)
+  if (value) await userEvent.type(input, value, { skipClick: true })
 }
 
 /** One paste, not a keystroke per character; per-key typing re-renders the editor (`C506 S2R3 conflict-reload-controls`). */
