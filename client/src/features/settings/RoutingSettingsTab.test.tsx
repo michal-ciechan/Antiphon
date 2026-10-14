@@ -320,12 +320,58 @@ describe('RoutingSettingsTab', () => {
     expect(code).not.toHaveTextContent('2 card pins')
   })
 
+  it('C097M V-C5 old-server-keeps-the-legacy-boundary', async () => {
+    const legacy: ComplexityChainListDto = {
+      roles: ['Plan'], complexities: ['Hard', 'Medium', 'Easy'],
+      chains: [
+        chain('Hard', { role: 'Plan', resolvedFrom: 'role', candidates: [codex], effective: undefined }),
+        chain('Medium', { role: 'Plan', effective: undefined }),
+        chain('Easy', { role: 'Plan', effective: undefined }),
+      ],
+    }
+    serveRouting({ list: legacy, effective: { Plan: legacy } })
+    renderWithProviders(<RoutingSettingsTab />)
+    const matrix = await screen.findByTestId('routing-matrix-section')
+    const hard = await within(matrix).findByTestId('routing-matrix-cell-Plan-Hard')
+    expect(await within(hard).findByText('Own rule')).toBeInTheDocument()
+    expect(within(hard).getByText('1. Codex/Frontier (gpt-6-astra)')).toBeInTheDocument()
+    expect(within(matrix).queryByRole('columnheader', { name: /\(default/ })).not.toBeInTheDocument()
+    expect(within(matrix).getByRole('columnheader', { name: 'Medium', exact: true })).toBeInTheDocument()
+    expect(within(matrix).getByTestId('routing-boundary')).toHaveTextContent('RolePolicy still resolves work that is not launched with -Complexity, including default kind and level, escalation, timeout, and WIP. This matrix does not govern every dispatch.')
+    expect(matrix).not.toHaveTextContent('walks the Medium row')
+    expect(within(matrix).getByTestId('routing-matrix-cell-Plan-Medium')).toHaveTextContent('Unset — a -Complexity Medium dispatch blocks')
+  })
+
+  it.each([
+    { name: 'policy-read-failure', tier: 'Easy', governsDefault: false, candidates: [codex], reason: 'chain read failed (InvalidOperationException)', label: 'Effective routing unknown', stored: 'Stored cell: unknown (read failed)' },
+    { name: 'empty-read-failure', tier: 'Easy', governsDefault: false, candidates: [], reason: 'chain read failed (InvalidOperationException)', label: 'Effective routing unknown', stored: 'Stored cell: unknown (read failed)' },
+    { name: 'default-policy-read-failure', tier: 'Medium', governsDefault: true, candidates: [codex], reason: 'chain read failed (InvalidOperationException)', label: 'Effective routing unknown', stored: 'Stored cell: unknown (read failed)' },
+    { name: 'non-default-availability-failure', tier: 'Easy', governsDefault: false, candidates: [{ ...codex, availableNow: false, unavailableReason: 'availability read failed (NpgsqlException)' }], reason: 'availability read failed (NpgsqlException)', label: 'Unset — a -Complexity Easy dispatch blocks', stored: null },
+    { name: 'non-default-pin-read-failure', tier: 'Easy', governsDefault: false, candidates: [codex], reason: 'stage pin read failed (InvalidOperationException)', label: 'Unset — a -Complexity Easy dispatch blocks', stored: null },
+    { name: 'non-default-unlaunchable-policy', tier: 'Easy', governsDefault: false, candidates: [], reason: 'Plan policy names Raw/Frontier, which delegation cannot launch', label: 'Unset — a -Complexity Easy dispatch blocks', stored: null },
+  ] satisfies Array<{ name: string; tier: TaskComplexity; governsDefault: boolean; candidates: ComplexityCandidateDto[]; reason: string; label: string; stored: string | null }>)('C097M V-C4 diagnostic $name', async (row) => {
+    serveRouting({ pins: [], effective: { Plan: {
+      ...planEffective,
+      chains: [chain(row.tier, { role: 'Plan', effective: {
+        source: 'rolePolicy', candidates: row.candidates, stagePin: null,
+        governsDefault: row.governsDefault, withheldReason: row.reason,
+      } })],
+    } } })
+    renderWithProviders(<RoutingSettingsTab />)
+    const cell = await screen.findByTestId(`routing-matrix-cell-Plan-${row.tier}`)
+    expect(await within(cell).findByText(row.label)).toBeInTheDocument()
+    expect(within(cell).getByRole('alert')).toHaveTextContent(row.reason)
+    expect(cell).not.toHaveTextContent('Falls back to RolePolicy')
+    expect(cell).not.toHaveTextContent('Codex/Frontier')
+    if (row.stored) {
+      expect(within(cell).getByText(row.stored)).toBeInTheDocument()
+      expect(cell).not.toHaveTextContent(/unset|dispatch blocks/i)
+    }
+  })
+
   it.each([
     { name: 'required-empty-cell', source: 'pin', candidates: [codex], candidateText: '1. Codex/Frontier (gpt-6-astra)', reason: null, label: 'Required Human pin → Codex/Frontier (gpt-6-astra)' },
     { name: 'preferred-unlaunchable-policy', source: 'pin+chain', candidates: [codex], candidateText: '1. Codex/Frontier (gpt-6-astra)', reason: 'Plan policy names Raw/Frontier, which delegation cannot launch', label: 'Preferred Human pin → Codex/Frontier (gpt-6-astra), then this row' },
-    { name: 'policy-read-failure', source: 'rolePolicy', candidates: [codex], candidateText: '1. Codex/Frontier (gpt-6-astra)', reason: 'chain read failed (InvalidOperationException)', label: 'Falls back to RolePolicy → Codex/Frontier (gpt-6-astra)' },
-    { name: 'empty-read-failure', source: 'rolePolicy', candidates: [], reason: 'chain read failed (InvalidOperationException)', label: 'Effective routing unknown: chain read failed (InvalidOperationException)' },
-    { name: 'unlaunchable-policy', source: 'rolePolicy', candidates: [], reason: 'Plan policy names Raw/Frontier, which delegation cannot launch', label: 'Falls back to RolePolicy → not launchable: Plan policy names Raw/Frontier, which delegation cannot launch' },
     { name: 'pin-read-failure', source: 'pin', candidates: [codex], candidateText: '1. Codex/Frontier (gpt-6-astra)', reason: 'chain read failed (InvalidOperationException)', label: 'Required Human pin → Codex/Frontier (gpt-6-astra)' },
     { name: 'role-read-failure', source: 'role', candidates: [codex], candidateText: '1. Codex/Frontier (gpt-6-astra)', reason: 'stage pin read failed (InvalidOperationException)', label: 'Own rule' },
     { name: 'any-read-failure', source: 'any', candidates: [codex], candidateText: '1. Codex/Frontier (gpt-6-astra)', reason: 'chain metadata read failed (InvalidOperationException)', label: 'Inherits Any role' },
@@ -354,6 +400,10 @@ describe('RoutingSettingsTab', () => {
       expect(within(cell).getByText(row.candidateText)).toBeInTheDocument()
     }
     if (reason?.includes('read failed')) expect(within(cell).getByRole('alert')).toHaveTextContent(reason)
+    if (reason?.includes('chain read failed')) {
+      expect(within(cell).getByText('Stored cell: unknown (read failed)')).toBeInTheDocument()
+      expect(cell).not.toHaveTextContent('Stored cell: unset')
+    }
   })
 
   it('C470 mutation can be selected and saved independently', async () => {
@@ -467,7 +517,7 @@ describe('RoutingSettingsTab', () => {
 
     const codeRow = await screen.findByTestId('routing-matrix-row-Code')
     expect(await within(codeRow).findByText(/Required Human pin: Code → Grok/)).toBeInTheDocument()
-    expect(within(codeRow).getByText(/Overrides each Code cell until cleared/)).toBeInTheDocument()
+    expect(within(codeRow).getByText(/Overrides the Code cells while this pin is active/)).toBeInTheDocument()
 
     const planRow = screen.getByTestId('routing-matrix-row-Plan')
     expect(await within(planRow).findByText(/Preferred Human pin: Plan → ClaudeCode\/Frontier/)).toBeInTheDocument()
