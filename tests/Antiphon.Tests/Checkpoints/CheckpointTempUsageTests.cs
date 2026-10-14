@@ -281,6 +281,7 @@ public sealed class CheckpointTempUsageTests : CheckpointTestBase
             disableAssemblySweep: false);
         assemblyExit.ShouldBe(0, assemblyOutput);
         Directory.Exists(assemblyOrphan).ShouldBeFalse(assemblyOutput);
+        AssertSandboxReport(assemblySandbox);
 
         // The allocation sweep alone: the assembly hook is disabled and the child allocates one root.
         var allocationSandbox = TempDir();
@@ -289,6 +290,16 @@ public sealed class CheckpointTempUsageTests : CheckpointTestBase
             disableAssemblySweep: true);
         allocationExit.ShouldBe(0, allocationOutput);
         Directory.Exists(allocationOrphan).ShouldBeFalse(allocationOutput);
+        AssertSandboxReport(allocationSandbox);
+    }
+
+    private static void AssertSandboxReport(string sandbox)
+    {
+        var reports = Path.Combine(sandbox, "TestResults");
+        Directory.Exists(reports).ShouldBeTrue("the sweep host must write reports inside its owned sandbox");
+        Directory.GetFiles(reports, "*.html", SearchOption.AllDirectories).Length.ShouldBe(1);
+        Directory.Exists(Path.Combine(AppContext.BaseDirectory, "checkpoint-lifecycle-host", "TestResults"))
+            .ShouldBeFalse("the sealed build output must remain unchanged");
     }
 
     private static string PlantDeadRoot(string sandbox)

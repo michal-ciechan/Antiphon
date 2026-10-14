@@ -30,10 +30,32 @@ public sealed class CheckpointTempLifecycleTests : CheckpointTestBase
     public Task early_assertion_still_joins_owned_child() => Verify("LifecycleHostTests", "early_assertion_with_child", 1,
         verifyChild: true);
 
-    private async Task Verify(string className, string method, int expectedRoots, bool success = false,
-        bool verifyChild = false)
+    [Test]
+    public async Task passing_host_reports_are_removed_with_the_owned_sandbox()
     {
-        var sandbox = TempDir();
+        var scope = new CheckpointTestScope();
+        var sandbox = scope.TempDir();
+        try
+        {
+            await Verify("LifecycleHostTests", "passing", 1, success: true,
+                sandbox: sandbox, registerChild: scope.Register);
+            var reports = Path.Combine(sandbox, "TestResults");
+            Directory.Exists(reports).ShouldBeTrue("the child must write reports inside its owned sandbox");
+            Directory.GetFiles(reports, "*.html", SearchOption.AllDirectories).Length.ShouldBe(1);
+            Directory.Exists(Path.Combine(AppContext.BaseDirectory, "checkpoint-lifecycle-host", "TestResults"))
+                .ShouldBeFalse("the sealed build output must remain unchanged");
+        }
+        finally
+        {
+            await scope.DisposeAsync();
+        }
+        Directory.Exists(sandbox).ShouldBeFalse("scope disposal must reclaim the child report too");
+    }
+
+    private async Task Verify(string className, string method, int expectedRoots, bool success = false,
+        bool verifyChild = false, string? sandbox = null, Action<Process>? registerChild = null)
+    {
+        sandbox ??= TempDir();
         var inventory = Path.Combine(sandbox, "roots.txt");
         var childPid = Path.Combine(sandbox, "child-pid.txt");
         var hostDll = Path.Combine(AppContext.BaseDirectory, "checkpoint-lifecycle-host",
@@ -52,7 +74,7 @@ public sealed class CheckpointTempLifecycleTests : CheckpointTestBase
         psi.Environment["C804_LIFECYCLE_CHILD_PID"] = childPid;
         psi.Environment.Remove("C804_ROSTER_FILE");
         using var process = Process.Start(psi)!;
-        RegisterCheckpointChild(process);
+        (registerChild ?? RegisterCheckpointChild)(process);
         var stdout = process.StandardOutput.ReadToEndAsync();
         var stderr = process.StandardError.ReadToEndAsync();
         await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(45));
