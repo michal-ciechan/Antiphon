@@ -2,10 +2,13 @@ using System.Runtime.InteropServices;
 
 namespace Antiphon.Checkpoints;
 
-// CARD-1241: file metadata read without opening the file. Admission re-hashes a ledger entry only when
-// this stamp differs from the one taken before the entry's ledger hash. Linux reads statx (type, device,
-// inode, size, mtime, ctime; link count is not part of it); other platforms read type, size and the
-// last write time only, with no file identity. A failed read is Unknown, which matches nothing.
+// CARD-1241: file metadata read without opening the file. Linux reads statx (type, device, inode, size,
+// mtime, ctime; link count is not part of it); other platforms read type, size and the last write time
+// only, with no file identity and no change time. A failed read is Unknown, which matches nothing.
+// Admission skips an entry's hash only for an equal stamp that HasIdentityAndChangeTime: a writer can put
+// size and mtime back (utimes, touch -r, SetLastWriteTime), and those setters move the ctime
+// (Review 157c4013 D1: portable_stat_rewrite_keeping_size_and_mtime_during_the_slot_wait_is_refused_before_launch,
+// rewrite_keeping_size_and_mtime_on_the_real_file_system_is_refused_before_launch).
 public readonly record struct LedgerStat(string Kind, ulong Device, ulong Inode, long Size, long Modified, long Changed)
 {
     private const uint Mask = 0x1 | 0x2 | 0x40 | 0x80 | 0x100 | 0x200; // TYPE MODE MTIME CTIME INO SIZE
@@ -15,6 +18,8 @@ public readonly record struct LedgerStat(string Kind, ulong Device, ulong Inode,
     private static LedgerStat Absent => new("absent", 0, 0, 0, 0, 0);
 
     public bool Matches(LedgerStat other) => Kind != "unknown" && this == other;
+
+    public bool HasIdentityAndChangeTime => Inode != 0 && Changed != 0;
 
     // Nanoseconds since the Unix epoch, the unit of Modified and Changed.
     public static long Now() => (DateTime.UtcNow.Ticks - DateTime.UnixEpoch.Ticks) * 100;
