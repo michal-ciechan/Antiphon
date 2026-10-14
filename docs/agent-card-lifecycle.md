@@ -58,6 +58,22 @@ Moving a card to a terminal column while a session is active stops the session a
 
 Closing a card (Done or Canceled), `card.ps1 close`, or archiving it also settles the delegated tasks bound to it (CARD-0738). A task that has not started — Queued, Blocked, or Dispatched whose own brief queue row is still Pending, or that has no brief and no turn prompt since dispatch — is canceled. The reason names the card and carries the card's close or archive reason. A task that has started (Working, or Dispatched whose brief was Sent, or whose transcript shows a turn prompt when no brief row exists) is not stopped: it gets one Warning event and one `CardClosedWhileWorking` attention row, and a human cancels it or reopens the card. "Started" is that brief row, then the transcript, never the task status. Reopening the card resurrects nothing; retry still exists. `POST /api/agent-tasks/closed-card-sweep` lists open tasks whose card is already terminal or archived and cancels them only when `apply` is true. A task created after the close, including a post-Done Mutation, is left alone.
 
+## Blocked by another card (CARD-0100)
+
+A card is held when it has a `BlockedBy` relationship whose blocker is open. A blocker is resolved
+when it is archived or its status is `Done` or `Canceled`; any other status, including one the
+server does not know, keeps it open. The rows persist: the hold is computed at read time by
+`CardBlockers`, the one helper behind the API `resolved` flag and the three pickup reads below.
+
+| Behaviour | Named test | What it asserts |
+|---|---|---|
+| The orchestrator tick (`OrchestratorService.LoadEligibleCandidatesAsync`) skips a held card in an active column and dispatches it on a later tick once the blocker is `Done`. | `OrchestratorServiceIntegrationTests.PollTick_skips_a_card_with_an_open_blocker_and_dispatches_after_the_blocker_closes` | First tick: zero sessions for the card, no owner, adapter not started. After the blocker moves to the Done column: one session for the card, none for the blocker. |
+| The pipeline snapshot (`GET /api/agent-tasks/pipeline`) leaves a held Backlog card out of `investigateBacklog.total` and `items`, counts it in `blocked` and lists it in `blockedItems` with `blockedBy` (open blocker identifiers, top five by rank). A card whose only blocker is `Done` stays a candidate. With nothing held, `blocked` and `blockedItems` are omitted from the JSON. | `AgentTaskPipelineStatusTests.C100_investigate_backlog_omits_blocked_cards_and_lists_them_as_blocked` | `total` 2 with items cards 1 and 3; `blocked` 1; the single blocked item is card 2 with `blockedBy` `["CARD-0001"]`; an empty backlog DTO serializes as `{"total":0,"items":[]}`. |
+| The expectation watchdog's `EligibleBacklog` (`ExpectationSnapshotReader.ReadBacklogAsync`) leaves a held Backlog card out; a `Done` or archived blocker releases it; the open blocker itself stays eligible. | `ExpectationSnapshotTests.C100_Backlog_candidates_exclude_cards_with_an_open_blocker` | `EligibleBacklog` 4; the candidate ids are the eligible card, the two released cards and the open blocker. |
+| The resolved set is archived, `Done` or `Canceled`; reopening or unarchiving the blocker re-opens it without a write. | `CardRelationshipApiTests.Resolved_follows_the_blockers_Done_Canceled_archived_state_and_reopen` | The API `resolved` flag over each transition. A `Canceled` blocker and a reopened blocker at pickup are not covered by a test. |
+| Explicit task creation (`POST /api/agent-tasks`, `delegate.ps1`) on a held card is not refused (OD-3); the hold is a pull rule only. | none | Not covered by a test; no task-creation line changed. |
+| A held card raises no attention item and pushes nothing to an external tracker. | none | Not covered by a test. |
+
 ## Importance and urgency
 
 Cards store two named axes; a single `priority` number is not an API field (a request that still sends it is a 400).

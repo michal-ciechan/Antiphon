@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using Antiphon.Server.Domain.Enums;
 
 namespace Antiphon.Server.Application.Dtos;
@@ -63,10 +64,25 @@ public sealed record AgentTaskPipelineConcurrencyScopeDto(
     DispatchConcurrencyEffectiveDto Effective,
     DispatchConcurrencyOccupancyDto Occupancy);
 
-/// <summary>Fresh Backlog work, ranked for an advisory Investigate glance.</summary>
+/// <summary>
+/// Fresh Backlog work, ranked for an advisory Investigate glance. CARD-0100: a card with an open
+/// blocker is not counted in <see cref="Total"/>; <see cref="Blocked"/> counts those held cards and
+/// <see cref="BlockedItems"/> lists the top five by rank. Both are omitted when nothing is held.
+/// </summary>
 public sealed record AgentTaskPipelineBacklogDto(
     int Total,
-    IReadOnlyList<AgentTaskPipelineBacklogItemDto> Items);
+    IReadOnlyList<AgentTaskPipelineBacklogItemDto> Items,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] int Blocked = 0,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    IReadOnlyList<AgentTaskPipelineBlockedBacklogItemDto>? BlockedItems = null);
+
+/// <summary>CARD-0100. A Backlog card held by open blockers; <see cref="BlockedBy"/> holds their identifiers.</summary>
+public sealed record AgentTaskPipelineBlockedBacklogItemDto(
+    Guid CardId,
+    Guid BoardId,
+    string Identifier,
+    string Title,
+    IReadOnlyList<string> BlockedBy);
 
 public sealed record AgentTaskPipelineBacklogItemDto(
     Guid CardId,
