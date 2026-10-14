@@ -152,6 +152,33 @@ public sealed class OrchestratorInstructionsRendererTests
     }
 
     [Test]
+    public void Unknown_matrix_details_keep_the_byte_cap_and_matrix_first_elision()
+    {
+        const string unknown = "unknown (chain read failed)";
+        var roles = Antiphon.Server.Application.Services.ComplexityRoutingService.RoutableRoles;
+        var snapshot = Sample() with
+        {
+            Matrix = new MatrixSection("Medium", roles.Select(role => new MatrixInstructionRow(
+                role.ToString(), unknown, unknown, unknown, unknown, unknown)).ToArray()),
+        };
+        var body = OrchestratorInstructionsRenderer.Render(snapshot);
+        body.ShouldContain("  Plan: effective unknown (chain read failed) via unknown (chain read failed)");
+        foreach (var line in body.Split('\n').Where(line => line.StartsWith("- ", StringComparison.Ordinal)
+                     || line.StartsWith("  ", StringComparison.Ordinal)))
+        {
+            Encoding.UTF8.GetByteCount(line).ShouldBeLessThanOrEqualTo(160);
+            line.ShouldNotContain("\uFFFD");
+        }
+        var cap = Encoding.UTF8.GetByteCount(body) - 1;
+        var fitted = OrchestratorInstructionsRenderer.Render(snapshot, cap);
+        Encoding.UTF8.GetByteCount(fitted).ShouldBeLessThanOrEqualTo(cap);
+        fitted.ShouldContain("… 14 rows: GET /api/complexity-chains");
+        fitted.ShouldNotContain("  Plan:");
+        fitted.ShouldContain("Antiphon CARD-0822 Code");
+        fitted.ShouldNotContain("more: GET /api/routing-pins");
+    }
+
+    [Test]
     public void The_matrix_section_is_bounded_per_line_and_elided_in_place_under_pressure()
     {
         string[] roles = ["Investigate", "Plan", "TestDesign", "Code", "Mutation", "Review", "Debug",
