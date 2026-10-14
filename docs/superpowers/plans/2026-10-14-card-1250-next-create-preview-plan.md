@@ -162,3 +162,5 @@ are red assertions, not compile errors. slot=granted waited=0s; clean source, bu
 Detailed final receipt facts are in the task report, not relabelled onto later documentation commits.
 
 Qualification run 20261014-202401-951f at ab320b74ca4b6cd5653f094b85544678461ea72f: CP-2 151 passed / 1 failed (V25 read the transient unknown before the matrix query completed); CP-3 two TypeScript errors in the new test helper (held reason inferred as null-only); CP-4 green. The repair awaits the same exact rendered V25 value and types the helper as RoutingPinCandidateDto. No assertion or timeout was relaxed. CP-2/CP-3 are rerun; CP-4 accompanies the changed TypeScript test files for final SHA qualification.
+
+Unbound Mutation candidate inventory: [PC-1..PC-16 and variants](../mutations/2026-10-14-card-1250-preview-parity-candidates.md). The candidate/plan-link commit is documentation-only after the final green run at 4eb039453416c138f149a187274ef1e30f6a8aed; it does not change the tested client sources or checkpoint selection.
