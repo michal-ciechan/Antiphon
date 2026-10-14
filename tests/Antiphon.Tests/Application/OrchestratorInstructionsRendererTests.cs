@@ -165,7 +165,9 @@ public sealed class OrchestratorInstructionsRendererTests
         var body = OrchestratorInstructionsRenderer.Render(snapshot);
         foreach (var role in roles)
         {
-            var line = body.Split('\n').Single(line => line.StartsWith($"- {role}:", StringComparison.Ordinal));
+            var matches = body.Split('\n').Where(line => line.StartsWith($"- {role}:", StringComparison.Ordinal)).ToArray();
+            matches.Length.ShouldBe(1, $"matrix row {role}");
+            var line = matches.Single();
             Encoding.UTF8.GetByteCount(line).ShouldBeLessThanOrEqualTo(160);
             line.ShouldContain("Hard ClaudeCode/Frontier (fable), ClaudeCode/Frontier (fable), ClaudeCode/Frontier (fable), +5");
             line.ShouldEndWith("…");

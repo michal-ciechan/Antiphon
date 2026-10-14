@@ -888,42 +888,28 @@ with its own filter and budget; leave the rest unpinned. A settings change is GE
 current revision, a reason, and Human provenance.
 `Delegation:DefaultRunnerId` is import-only after the first runtime revision.
 
-**Routing pins beat RolePolicy.** A Human pin on a card+role (or a stage-wide pin for that role)
-is what the next `delegate.ps1` create reads; RolePolicy remains the provenance-less fallback when
-no pin exists. A Human pin survives a RolePolicy edit and an Auto rewrite (409 `routing_pin_human`).
-`scripts/routing-pin.ps1` is the write surface; `delegate.ps1 -Pin` records this dispatch as Human
-Required. A Required pin that composes to one target (one candidate, or a list an explicit kind
-and level narrow to one) is 409 `model_disabled` when that target is held (CARD-0309;
-`RoutingPinCandidateCreateTests.Required_single_candidate_held_is_still_409_model_disabled_with_coda`,
-`…Explicit_kind_and_level_against_a_list_is_not_walked`). Pins consume `Require`, they do not
-write a hold, and `ignoreRoutingPin` is not `ignoreModelDisabled`.
+**The matrix governs an ordinary Worker dispatch; a pin is the exception.** For role-wide routing,
+write the role × complexity matrix with `scripts/complexity-chain.ps1` or the Routing tab.
+An ordinary Worker create without an explicit kind/level, standing agent or model-disable bypass
+uses `Delegation:DefaultComplexity` (shipped `Medium`) when a role, any-role or config row resolves.
+RolePolicy supplies the fallback when that row is unset. A Required pin with candidates can
+override the row; a Preferred pin prepends candidates. Escalation, timeout and WIP remain RolePolicy settings.
 
-A stage pin with `candidates` is how the operator's role-shaped fallback is recorded
-(CARD-0322): `routing-pin.ps1 set -Role Plan -Candidates ClaudeCode/Frontier,ClaudeCode/High,Codex/Frontier`.
-A list that composes to two or more candidates after explicit kind/level narrowing is walked with
-CARD-0090's chain mechanics (holds, quota, stage forbid): a held head is skipped
-(`RoutingPinCandidateCreateTests.Required_list_skips_a_held_head_and_stamps_RoutingPinId`), and an
-exhausted list is **Blocked** (`…Required_list_all_held_returns_200_Blocked_naming_the_pin`) or 409
-`routing_exhausted` with `refuseIfExhausted`. A **Required**
-list is the whole candidate set; a **Preferred** list is tried first, then the request/role policy
-(or, with `-Complexity`, the chain — never both). Card list vs stage list never concatenate: the
-card pin wins as a whole row. On `routing exhausted` relay to the operator — never pick a kind
-yourself.
+| Behaviour | Named test | What it asserts or does not cover |
+|---|---|---|
+| A plain Worker uses the default-tier role row; an unset row uses RolePolicy | `MatrixDefaultComplexityCreateTests.A_plain_create_walks_the_role_row_at_the_default_tier`, `An_unset_row_keeps_the_role_policy_path` | Plan/Medium selects Codex/Frontier and stamps Medium; unset Plan leaves Complexity null |
+| An any-role Medium row stamps every non-specialist Worker role, including the Commit and Merge children, subject to the explicit-ask, agent and Required-pin exclusions | `MatrixDefaultComplexityCreateTests.The_stamp_predicate_excludes_specialists_orchestrators_agents_explicit_asks_and_ignore_model_disabled`, `The_settlement_commit_child_takes_the_commit_row`, `The_server_created_merge_child_takes_the_merge_row`; `ComplexityChainRoleHttpTests.Get_role_Plan_returns_effective_resolvedFrom` | Predicate exclusions, role-cell child stamps and Plan's any-role fallback are tested separately; a 14-role any-role dispatch sweep is not covered by these tests |
+| Explicit kind/level bypasses the default row with a warning; an explicit complexity combined with kind/level is refused | `MatrixDefaultComplexityCreateTests.An_explicit_kind_is_not_stamped_and_warns`; `ComplexityCreateTests.Explicit_kind_plus_complexity_is_422` | An explicit kind leaves Complexity null and names the bypassed cell; explicit kind plus complexity is 422 |
+| Required pin candidates replace the cell; Preferred candidates precede it | `ComplexityEffectiveComposeTests.A_required_pin_replaces_the_cell_and_sources_pin`, `A_preferred_pin_prepends_and_sources_pin_plus_chain`; `RoutingPinCandidateCreateTests.Required_list_plus_complexity_bypasses_the_chain` | Literal effective lists and sources; the Required list is walked instead of the chain |
+| A candidate-free Required pin leaves the chain selecting | `ComplexityRoutingComposeTests.A_required_pin_without_kind_or_level_does_not_bypass_the_chain` | The composed list retains chain candidates |
+| A held single Required target is refused; an exhausted default row becomes Blocked | `RoutingPinCandidateCreateTests.Required_single_candidate_held_is_still_409_model_disabled_with_coda`; `MatrixDefaultComplexityCreateTests.An_exhausted_default_row_blocks_with_the_cell_name` | 409 `model_disabled` for the single pin; Blocked with the cell named for the exhausted default row |
+| A standing-agent pin is displayed as agent-bound | `ComplexityEffectiveHttpTests.Get_role_view_reports_an_agent_only_stage_pin_as_agent_bound` | `source: agent`, empty candidate list, `governsDefault: false`, and a withholding reason |
 
-Precedence between a stage-wide pin and a role's complexity cell: an applied **Required** pin that
-contributes a resolved candidate supplies the selection in place of the cell's candidates
-(`RoutingPinCandidateCreateTests.Required_list_plus_complexity_bypasses_the_chain`); a Required pin
-with no candidate (no kind or level) leaves the chain selecting
-(`ComplexityRoutingComposeTests.A_required_pin_without_kind_or_level_does_not_bypass_the_chain`). A
-card pin wins over the stage pin as a whole row, and `ignoreRoutingPin` leaves the pin unapplied. A
-**Preferred** pin *prepends* to the matrix candidates and falls through to the cell if the pinned
-target is unavailable. A **card-scoped** pin applies only to that one card, never to every task in
-that role stage-wide — do not read a card pin's banner as a global change. `RolePolicy` itself is
-unrelated to this matrix: it remains the non-complexity fallback (default kind/level, escalation,
-timeout, WIP) for work not launched with `-Complexity`; CARD-0333's matrix does not govern or
-supersede it. The Routing tab's Role policy section (CARD-0097, below) displays it.
+`delegate.ps1 -Pin` records a card exception. Read `complexity-chain.ps1 get -Role <R>` to see the
+stored row and effective overlay. On routing exhaustion, relay the result to the operator for a
+Retry, explicit Reroute, Cancel or hold change.
 
-**Operators read and reason about all of this at `/settings?tab=routing`** (CARD-0333): the global
+**Operators read routing at `/settings?tab=routing`** (CARD-0333): the global
 Routing settings tab shows live model availability, best-effort subscription-usage observations
 (explicitly provider/profile-level, never a per-model quota, and "Unknown" rather than a guessed
 number when monitoring is off or no sample exists), runner defaults, the Role policy section, the
@@ -953,28 +939,118 @@ configuration section; pins: `scripts/routing-pin.ps1` and `/api/routing-pins`.
 | A withheld role-policy target falls back to `AGENT_TASK_ROLES` | Vitest `C1234 unsupported-policy-kind-falls-back-to-constant`, same file | Mutation `level High`, `kind Raw`, `effective` target null → `delegate-tier-source-fallback`, `tier-Low`, no `tier-High` |
 | Project setup names the default tier only when it is a model level | Vitest `C1234 delegation step names the default tier only when it is a model level`, `client/src/features/settings/ProjectSetupModal.test.tsx` | `Medium` → `default Medium tier.`; missing, null or 999 → `default tier unknown.` |
 
-**Stage pins and the matrix:** the matrix row can show candidates a stage pin keeps out of use;
-routing: see **Routing pins beat RolePolicy** in [orchestration-loop.md](orchestration-loop.md#2-tiers). Read the live pins with
+The Role policy section's `Effective next create` column and the delegate modal's tier preview
+read `GET /api/role-policy`, which projects pin-or-policy and does not read matrix cells. They can
+disagree with an ordinary Worker dispatch when a default-tier row resolves and a Required pin
+does not bypass it. CARD-1250 owns the preview rework. The tests above bind the displayed DTO
+values; agreement between these previews and matrix dispatch is not covered by a test.
+
+**Stage pins and the matrix:** the matrix row can show candidates a stage pin keeps out of use.
+Read the live pins with
 `GET /api/routing-pins?role=<Role>` or `scripts/routing-pin.ps1 get -Role <Role>` (or
 `/settings?tab=routing`) before assuming the matrix is misconfigured. Clearing a pin, or
 downgrading it from Required to Preferred, is an operator decision made through
 `scripts/routing-pin.ps1`; CARD-0333's matrix UI is read-only for pins.
 
-**Complexity chains (CARD-0090, CARD-0332).** Pass `-Complexity Hard|Medium|Easy` when the work's hardness
+**Complexity chains (CARD-0090, CARD-0332, CARD-0097).** Pass `-Complexity Hard|Medium|Easy` when the work's hardness
 should pick (kind, level) from an ordered fallback list, instead of an explicit `-Kind`/`-Level`.
 The list is a sparse (role × complexity) matrix: the walk reads the role cell, then the any-role
-chain, then the config default, then Blocked. Pins and the cell: see **Routing pins beat
-RolePolicy** in [orchestration-loop.md](orchestration-loop.md#2-tiers).
-An explicit pair is never rerouted — combining `-Complexity` with `-Kind` or `-Level` is 422.
+chain, then the config default, then Blocked. Without `-Complexity`, an ordinary Worker uses the
+configured default tier when a row resolves, or RolePolicy when it does not (tests above).
+Combining `-Complexity` with `-Kind` or `-Level` is 422 (`ComplexityCreateTests.Explicit_kind_plus_complexity_is_422`).
 Config defaults ship empty; write the live lists with `complexity-chain.ps1 set` (`-Role Plan` for
 a cell, omit `-Role` for the any-role row). When the chain
 is exhausted the task is **Blocked** (or 409 `routing_exhausted` with `-RefuseIfExhausted`):
-**relay that to the operator and never pick a kind yourself.** A human answers with Retry,
+**relay that to the operator.** A human answers with Retry,
 `delegate.ps1 -Reroute <id> -Kind … -Level …`, Cancel, or by clearing a hold. Auto-resume onto
 an already-listed candidate when capacity returns is executing the instruction, not a new guess.
 A usage-wall reroute is ordinary work on the new candidate: the walled session's capacity wait
 ends with the session, and the requeued row dispatches on the next tick unless the new candidate
 is itself held (CARD-0481).
+
+**Role-wide writes and stage-pin removal (CARD-0097).** Read the effective view explicitly before
+and after a row write that clears a pin:
+
+```powershell
+pwsh -NoProfile -File scripts/complexity-chain.ps1 get -Role Review
+pwsh -NoProfile -File scripts/complexity-chain.ps1 set -Role Review -Complexity All -Candidates Codex/Frontier -ClearStagePin
+pwsh -NoProfile -File scripts/complexity-chain.ps1 get -Role Review
+```
+
+`-ClearStagePin` deletes the whole stage pin, including its forbidden list, dates and agent
+assignment. It performs no automatic effective read-back. Inspect those fields before choosing
+the clear; the two `get -Role` commands above are operator work.
+
+| Behaviour | Named test | What it asserts or does not cover |
+|---|---|---|
+| Three cell writes precede the stage-pin DELETE | `ComplexityChainScriptTests.ClearStagePin_deletes_the_stage_pin_only_after_three_2xx` | Exact Hard/Medium/Easy PUTs, pin lookup, then DELETE by id; the card pin and another role's stage pin remain; no effective read-back request |
+| Partial writes leave the stage pin in place | `ComplexityChainScriptTests.ClearStagePin_is_skipped_when_a_tier_failed` | A failed tier stops the sequence before the pin clear |
+| `-ClearStagePin` needs a named role and `-Complexity All` | `ComplexityChainScriptTests.ClearStagePin_requires_All_and_a_named_role` | Invalid combinations exit before HTTP |
+| GET prints the effective overlay | `ComplexityChainScriptTests.Get_Role_prints_the_effective_line` | Literal effective line from the role-view DTO |
+| Operator compares the effective view before and after clear, including forbidden aliases, dates and agent assignment | not covered by a test | Manual acceptance; the script test uses a pin id and checks deletion, not a field-rich live pin |
+
+**Generated matrix instructions (CARD-0097).** The server projects the matrix into section 5 of
+`ANTIPHON_ORCHESTRATOR_INSTRUCTIONS.md` and `GET /api/orchestrator-instructions`. Pins, model levels
+and standing instructions become sections 6, 7 and 8. Activation needs a server build containing
+S-F; inspect `/api/version` after the caller's restart.
+
+| Behaviour | Named test | What it asserts or does not cover |
+|---|---|---|
+| The matrix names the default complexity and stage-pin overlay | `OrchestratorInstructionsRendererTests.Sections_render_caps_runners_defaults_holds_pins_levels_and_standing_lines`; `OrchestratorInstructionsRefreshTests.Covered_writes_each_regenerate_and_notify` (`routing-pin`) | Literal headings and sample role line; the live snapshot reflects the Code stage pin |
+| Role lines use up to three candidates per tier, then `+N`, and at most 160 UTF-8 bytes | `OrchestratorInstructionsRendererTests.The_matrix_section_is_bounded_per_line_and_elided_in_place_under_pressure` | 14 role lines with eight candidates per tier; line-byte limits and `+5`; at `full - 1` the matrix collapses in place while the card pin remains |
+| Truncation order is matrix, card pins, holds, standing lines, runner features | The preceding renderer test; `Oversized_snapshot_truncates_in_priority_order_under_the_byte_cap` | Matrix first-step elision and the retained trailing cut-notice order; arbitrary snapshots fitting a universal body cap are not covered |
+| Cell upsert and clear fire the existing settings signal once per saved write; a repeated cell body produces no new notice | `OrchestratorInstructionsRefreshTests.Covered_writes_each_regenerate_and_notify` (`complexity-chain`) | Signal reasons/counts, revision, file bytes, notice counts, clear and already-clear behavior |
+| The notice arrives as a complete prompt | `OrchestratorInstructionsRefreshTests.A_cell_write_notice_is_received_as_one_complete_user_prompt_equal_to_its_queued_body` | One Sent queue row, one matching post-baseline UserPrompt, exact body, recipient version and 14 snapshot roles |
+| An unchanged matrix has no delta; a changed cell names its role/tier | `OrchestratorInstructionsDeltaTests.An_identical_matrix_rewrite_produces_no_delta_and_a_changed_cell_names_the_role` | Empty delta for separately allocated equal rows; literal Plan Medium delta |
+| Notice persistence/enqueue ordering is retained | not covered by a new test | The existing path saves the version before enqueue; a crash or enqueue failure in that interval can lose the notice. This slice adds no recovery mechanism |
+
+**Matrix migration runbook (operator).** Prerequisites: CARD-1234 and CARD-1213 are landed; the
+caller activates S-A/S-B/S-D/S-E/S-F and checks `/api/version` plus the role-view `effective` and
+`defaultComplexity` fields. The following migration and rollback steps are copied from the
+[landed matrix plan §6.3–6.5](superpowers/plans/2026-10-14-card-0097-matrix-plan.md#6-rollout-and-migration).
+These are operator instructions; the live migration and rollback are not acceptance work performed by S-F.
+
+3. **Migration (operator).** `pwsh -NoProfile -File scripts/migrate-stage-pins-to-cells.ps1 -OutDir <dir>` (dry
+   run) against the live server; read the table and keep the printed snapshot path; `-Apply -OutDir <dir>`; then for
+   each role run `complexity-chain.ps1 get -Role <R>` and read the Routing tab (each migrated cell now says
+   `Required Human pin → …` above an own rule whose list equals the pin's). Only then clear the pins, one role at a
+   time, with `pwsh -NoProfile -File scripts/routing-pin.ps1 clear -Role <R>`, and re-read `get -Role <R>`: the
+   `effective:` line now reads `role` with the same list. The expected cell contents, from the live pins:
+
+   | Role (pin id) | Hard = Medium = Easy |
+   |---|---|
+   | Plan (`bbdce6e6`) | ClaudeCode/Frontier (fable) |
+   | TestDesign (`90e8d896`) | ClaudeCode/Frontier (fable) |
+   | Code (`4683c049`) | ClaudeCode/High (opus) |
+   | Review (`50328b61`) | Codex/Frontier (gpt-6-astra) |
+   | Investigate (`de218932`), Mutation (`64e43198`), Debug (`909836ed`), Coverage (`858afdbb`), Docs (`11a17ef6`), Commit (`68d8d684`), Test (`6855ae74`), Deploy (`f890319f`), Merge (`e6d574aa`) | ClaudeCode/Frontier (fable), ClaudeCode/High (opus) |
+   | Custom | no pin, no cell: RolePolicy fallback (`DefaultLevel` High, opus) |
+
+   The reasons carried over are the pin reasons with the `(migrated from stage pin <id>)` suffix. Mutation's RolePolicy
+   default is `Low` (`DelegationSettings.cs:357`); the migrated cell says Frontier then High because that is what the
+   pin says today — the operator may edit that row afterwards. Writing the three tiers identically means `-Complexity
+   Hard|Easy` behave like the default until the operator differentiates them.
+4. **What changes for callers after the pins are cleared.** An explicit `-Kind`/`-Level` that disagrees with the row
+   runs as asked with a warning instead of 409 `routing_pin_conflict` (OD-2); a plain dispatch whose row is exhausted
+   is Blocked and auto-resumes (OD-6); a settlement Commit child or a conflict-resolver Merge child whose row is
+   exhausted is Blocked with a note to the settled task's caller (D-3); until the Merge pin is cleared the Merge child
+   keeps ignoring it, as today (D-3 step 3); an Orchestrator-kind create and an `ignoreModelDisabled` create follow
+   RolePolicy, not the row (OD-7, V-A7, V-A6); `delegate.ps1 -Pin` still writes a card pin, which the cell shows as an
+   exception (OD-5); the Role policy section's `Effective next create` column and the delegate modal's tier preview
+   keep projecting pin-or-policy (D-6). Holds, quota, forbid lists on remaining pins and reroute are unchanged.
+5. **Rollback, in this order (R3-03).** Pins first, cells second, so that no interval exists in which neither a pin
+   nor the migrated cells decide a create:
+
+   | Step | Operator action | Why in this position | Bound by |
+   |---|---|---|---|
+   | 1 | For each role whose pin was cleared in §6.3: `pwsh -NoProfile -File scripts/routing-pin.ps1 set -Role <R> -Provenance Human -Strength Required -Candidates <list> -Reason <text>`, list and reason from the §6.3 table | A Required pin with candidates bypasses the row for an ordinary create (`RoutingCandidates.cs:58-63`) and for the two children (D-3 step 3). Deleting the Review cells first would put a plain Worker/Review create on RolePolicy's ClaudeCode/Frontier (`DelegationSettings.cs:358`) until the Review pin is back, where before the migration it ran Codex/Frontier | — (operator step) |
+   | 2 | Read back each role: `complexity-chain.ps1 get -Role <R>` prints `effective: pin …`; stop here if any `set` failed — nothing has been removed yet | the pin, not the cell, is the governing rule from here on | V-D6 (the line) |
+   | 3 | `pwsh -NoProfile -File scripts/migrate-stage-pins-to-cells.ps1 -Restore -Snapshot <first snapshot> -OutDir <dir>` | the script re-checks step 1 itself and refuses with zero writes while a migrated role has no Required stage pin (D-9 precondition 1); with pins back, the order in which cells are removed or re-PUT does not matter | V-E12 (refusal, then proceed), V-E6 (per-case action), V-E4 `restore` (stop on non-2xx) |
+
+   Cells written by the row editor after the first snapshot are overwritten or deleted by step 3, which is why the
+   runbook says to restore from the first snapshot and before any editor use. An Auto before-image is cleared, not
+   re-created (D-9). An operator who wants the cells gone without recreating the pins is not rolling back: that is
+   `complexity-chain.ps1 clear -Role <R> -Complexity All` per role (S-D), chosen explicitly.
 
 **A Blocked-on-question child (CARD-0294 S1+S2).** The parent `[task … blocked]` note carries
 `reason:` / `asks:` / `authority:` / `next:` above the body, outside the excerpt window. If
