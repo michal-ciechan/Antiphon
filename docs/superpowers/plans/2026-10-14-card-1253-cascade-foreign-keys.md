@@ -122,7 +122,6 @@ R-3 remains deferred under the explicit repair brief. R-4 retained for cumulativ
 | CP-1 | S2 | `tests/Antiphon.Tests -> bin-bb848929/` | cascade-fks | `/*/*/(ProjectCascadeForeignKeyTests*)/*` | V-1, V-2, V-3, V-4, V-5, V-6 | 27 cases, 0 failed/skipped; S1 first run intentionally red | 27 | 8 |
 | CP-2 | S2 | CP-1 | deletion-regressions | `/*/*/(ProjectDeletionTests*)\|(BoardProjectArchiveApiTests*)\|(CardFilePrivacyOwnershipAcceptanceTests*)/*` | R-1, R-2 | all 38 cases, 0 failed/skipped | 38 | 3 |
 | CP-4 | S2 | CP-1 | deletion-consumers | `/*/*/(SessionStateWarmupTests*)\|(CardFileBoardLookupTests*)/*` | R-4 | all 61 cases, 0 failed/skipped | 61 | 3 |
-
 | CP-5 | S2 | CP-1 | expectation-hold-regressions | `/*/*/(ExpectationDirectDeliveryTests*)\|(ExpectationHoldReleaseEndpointTests*)/*` | R-5 | 18 cases, 0 failed/skipped | 18 | 4 |
 
 S1 runs CP-1 by explicit row selection before the S2 implementation; S2 reruns the same row
