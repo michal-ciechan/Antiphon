@@ -45,6 +45,38 @@ public sealed class ComplexityEffectiveComposeTests
     }
 
     [Test]
+    [Arguments(TaskComplexity.Hard, false)]
+    [Arguments(TaskComplexity.Medium, true)]
+    [Arguments(TaskComplexity.Easy, false)]
+    public void A_preferred_pin_on_an_empty_cell_appends_policy_only_for_the_default_tier(
+        TaskComplexity tier, bool isDefault)
+    {
+        var pin = Pin(RoutingPinStrength.Preferred, AgentKind.Codex, AgentModelLevel.Frontier);
+        var result = ComplexityEffective.Compose(Decision(pin), [], $"Plan/{tier}", "none", Policy(), isDefault);
+        result.Source.ShouldBe("pin+chain");
+        result.GovernsDefault.ShouldBe(isDefault);
+        result.WithheldReason.ShouldBeNull();
+        if (isDefault)
+            result.Candidates.Select(c => (c.AgentKind, c.ModelLevel, c.Alias)).ShouldBe([
+                (AgentKind.Codex, AgentModelLevel.Frontier, "gpt-6-astra"),
+                (AgentKind.ClaudeCode, AgentModelLevel.Frontier, "fable")]);
+        else
+            result.Candidates.Select(c => (c.AgentKind, c.ModelLevel, c.Alias)).ShouldBe([
+                (AgentKind.Codex, AgentModelLevel.Frontier, "gpt-6-astra")]);
+    }
+
+    [Test]
+    public void A_non_default_preferred_pin_does_not_report_an_unused_policy_as_unlaunchable()
+    {
+        var pin = Pin(RoutingPinStrength.Preferred, AgentKind.Codex, AgentModelLevel.Frontier);
+        var result = ComplexityEffective.Compose(Decision(pin), [], "Plan/Easy", "none",
+            new PolicyResolution(null, null, null, "Plan policy names Raw/Frontier, which delegation cannot launch"), false);
+        result.WithheldReason.ShouldBeNull();
+        result.Candidates.Select(c => (c.AgentKind, c.ModelLevel, c.Alias)).ShouldBe([
+            (AgentKind.Codex, AgentModelLevel.Frontier, "gpt-6-astra")]);
+    }
+
+    [Test]
     public void No_pin_and_no_cell_falls_back_to_role_policy()
     {
         var policy = new PolicyResolution(AgentKind.ClaudeCode, AgentModelLevel.High, "opus", null);

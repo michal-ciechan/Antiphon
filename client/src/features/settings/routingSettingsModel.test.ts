@@ -32,6 +32,16 @@ function effective(overrides: Partial<ComplexityEffectiveDto>): ComplexityEffect
 }
 
 describe('effective matrix cell', () => {
+  it.each((['pin', 'pin+chain', 'role', 'any', 'config', 'rolePolicy', 'agent'] as const)
+    .flatMap(source => (['Hard', 'Medium', 'Easy'] as const).map(tier => ({ source, tier }))))(
+    'C1258 V-1 stage-pin failure $source/$tier', ({ source, tier }) => {
+      expect(effectiveCellLabel(effective({
+        source, stagePin, candidates: [codex], governsDefault: tier === 'Medium',
+        withheldReason: 'stage pin read failed (InvalidOperationException)',
+      }))).toBe('Effective routing unknown')
+    },
+  )
+
   it.each([
     ['required-pin', effective({ source: 'pin', stagePin, candidates: [codex] }), 'Required Human pin → Codex/Frontier (gpt-6-astra)'],
     ['preferred-pin', effective({ source: 'pin+chain', stagePin: { ...stagePin, strength: 'Preferred' }, candidates: [grok, opus] }), 'Preferred Human pin → Grok/Frontier (grok-4.7), then this row'],
@@ -50,7 +60,7 @@ describe('effective matrix cell', () => {
     ['pin-read-marker-is-not-free-text', effective({ candidates: [opus], withheldReason: 'diagnostic mentions stage pin read failed (InvalidOperationException)' }), 'Falls back to RolePolicy → ClaudeCode/High (opus)'],
     ['preferred-with-unlaunchable-policy', effective({ source: 'pin+chain', stagePin: { ...stagePin, strength: 'Preferred' }, candidates: [grok], withheldReason: policyReason }), 'Preferred Human pin → Grok/Frontier (grok-4.7), then this row'],
     ['pin-with-read-failure', effective({ source: 'pin', stagePin, candidates: [codex], withheldReason: 'chain read failed (InvalidOperationException)' }), 'Required Human pin → Codex/Frontier (gpt-6-astra)'],
-    ['role-with-read-failure', effective({ source: 'role', candidates: [opus], withheldReason: 'stage pin read failed (InvalidOperationException)' }), 'Own rule'],
+    ['role-with-read-failure', effective({ source: 'role', candidates: [opus], withheldReason: 'stage pin read failed (InvalidOperationException)' }), 'Effective routing unknown'],
     ['any-with-read-failure', effective({ source: 'any', candidates: [opus], withheldReason: 'chain metadata read failed (InvalidOperationException)' }), 'Inherits Any role'],
     ['config-with-read-failure', effective({ source: 'config', candidates: [opus], withheldReason: 'availability read failed (InvalidOperationException)' }), 'Configuration fallback'],
     ['agent-with-read-failure', effective({ source: 'agent', stagePin, governsDefault: false, withheldReason: agentReason + '; chain read failed (InvalidOperationException)' }), 'Pinned to standing agent c097m-standing (ClaudeCode) — an ordinary dispatch runs there; this row is not walked'],
