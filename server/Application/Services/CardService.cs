@@ -207,7 +207,7 @@ public sealed class CardService : IScheduledCardActions
         var card = await LoadCardAsync(id, ct);
         var dto = await SessionContextUsage.AttachToCardAsync(
             _db, BoardService.ToCardDto(card), _contextWindow, _logger, ct);
-        dto = WithBlockers(dto, await LoadBlockerSummariesAsync([card.Id], ct));
+        dto = CardBlockerSummaries.Attach(dto, await CardBlockerSummaries.LoadAsync(_db, [card.Id], ct));
         if (_cardFiles is null) return dto;
         try { return dto with { CardFileStatus = await _cardFiles.GetCardStatusAsync(id, ct) }; }
         catch (OperationCanceledException) { throw; }
@@ -314,8 +314,8 @@ public sealed class CardService : IScheduledCardActions
                 last.UpdatedAt.ToUniversalTime(), last.Id,
                 fingerprint).Encode();
         }
-        var blockers = await LoadBlockerSummariesAsync(cards.Select(card => card.Id).ToList(), ct);
-        var summaries = cards.Select(card => WithBlockers(BoardService.ToSummaryDto(
+        var blockers = await CardBlockerSummaries.LoadAsync(_db, cards.Select(card => card.Id).ToList(), ct);
+        var summaries = cards.Select(card => CardBlockerSummaries.Attach(BoardService.ToSummaryDto(
             BoardService.ToCardDto(card), _cards.SummaryPreviewChars), blockers)).ToList();
         await transaction.CommitAsync(ct);
         return (summaries, total, truncated, next);
@@ -1325,30 +1325,6 @@ public sealed class CardService : IScheduledCardActions
     public const string CardRelationshipExistsCode = "card_relationship_exists";
     private const string RelationshipGraphLockSql =
         "SELECT pg_advisory_xact_lock(hashtext('antiphon.card-relationships.graph'))";
-
-    /// <summary>
-    /// CARD-0100. Each card's BlockedBy rows as summaries, one query for the whole set
-    /// (CardRelationshipApiTests.Card_and_list_views_carry_open_blocker_count_and_blockers_excluding_resolved).
-    /// </summary>
-    private async Task<Dictionary<Guid, List<CardBlockerSummaryDto>>> LoadBlockerSummariesAsync(
-        IReadOnlyCollection<Guid> cardIds, CancellationToken ct)
-    {
-        var rows = await _db.CardRelationships.AsNoTracking()
-            .Where(r => cardIds.Contains(r.CardId) && r.Kind == CardRelationshipKind.BlockedBy)
-            .Select(r => new { r.CardId, r.RelatedCard.Identifier, r.RelatedCard.Status, r.RelatedCard.ArchivedAt })
-            .ToListAsync(ct);
-        return rows.GroupBy(r => r.CardId).ToDictionary(
-            g => g.Key,
-            g => g.OrderBy(r => r.Identifier, StringComparer.Ordinal)
-                .Select(r => new CardBlockerSummaryDto(
-                    r.Identifier, r.Status, CardBlockers.IsResolved(r.Status, r.ArchivedAt)))
-                .ToList());
-    }
-
-    private static CardDto WithBlockers(CardDto dto, Dictionary<Guid, List<CardBlockerSummaryDto>> blockers) =>
-        blockers.TryGetValue(dto.Id, out var rows)
-            ? dto with { Blockers = rows, OpenBlockerCount = rows.Count(r => !r.Resolved) }
-            : dto;
 
     private static readonly string[] RelationshipKindNames = [nameof(CardRelationshipKind.BlockedBy)];
 

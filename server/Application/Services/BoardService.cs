@@ -94,6 +94,15 @@ public sealed class BoardService
         {
             Pipeline = await (_pipelineResolution ?? new PipelineResolution(_db)).ForBoardAsync(board, ct)
         };
+        var blockers = await CardBlockerSummaries.LoadAsync(
+            _db, detail.Columns.SelectMany(column => column.Cards).Select(card => card.Id).ToList(), ct);
+        detail = detail with
+        {
+            Columns = detail.Columns.Select(column => column with
+            {
+                Cards = column.Cards.Select(card => CardBlockerSummaries.Attach(card, blockers)).ToList(),
+            }).ToList(),
+        };
         if (summary)
             return ToSummaryBoardDto(detail, _cards.SummaryPreviewChars);
 

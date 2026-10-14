@@ -112,7 +112,7 @@ public sealed record CardDto(
     public RequiredPlatform RequiredPlatform { get; init; } = RequiredPlatform.Any;
 
     /// <summary>
-    /// CARD-0100. Blockers that are not resolved; omitted at zero. Filled by the card and list
+    /// CARD-0100 / CARD-1255. Blockers that are not resolved; omitted at zero. Filled by card, board and list
     /// routes (CardRelationshipApiTests.Card_and_list_views_carry_open_blocker_count_and_blockers_excluding_resolved).
     /// </summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
@@ -126,7 +126,7 @@ public sealed record CardDto(
     public IReadOnlyList<CardBlockerSummaryDto>? Blockers { get; init; }
 }
 
-/// <summary>CARD-0100. One blocker of a card, as the list and card routes carry it.</summary>
+/// <summary>CARD-0100 / CARD-1255. One blocker of a card, as the board, list and card routes carry it.</summary>
 public sealed record CardBlockerSummaryDto(string Identifier, CardStatus Status, bool Resolved);
 
 /// <summary>
