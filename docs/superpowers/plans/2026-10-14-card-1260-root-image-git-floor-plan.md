@@ -51,7 +51,9 @@ apt Git 2.39.5 and failed with `unknown option 'exists'` (exit 129).
   ProcessSpawnLimit/timeout portfolio (12 classes) include the new native class.
   `WindowsUnitPlatformAdmissionTests`, `ProcessSpawnTimeoutPolicyTests` and the
   neighbouring `GrokSha256PinTests` pass. CP-3 selects all 17 Linux-executable
-  methods by exact name; the Windows-only child audit is excluded from this Linux
+  methods by complete name with the trailing wildcard required by pinned TUnit OR
+  discovery (CARD-0403); inspect TRX for exactly those names. The Windows-only child
+  audit is excluded from this Linux
   repair round, as in CARD-1265 CP-2, and is not claimed passed.
 - M-1: one fresh root `docker build` goes through `scripts/build-slot.ps1` and is queued
   once. Its build log must contain the guard's `meets minimum 2.43` line. In the image,
@@ -78,7 +80,7 @@ Positive controls for SourceLanding Mutation are all pending:
 |---|---|---|---|---|---|---|---:|---:|---|---|
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1260-red/` | floor-red | `/*/*/(GitMinimumVersionGuardTests*)\|(DockerStackContractTests*)/*` | V-1, V-2, V-3 red | 116 executed; exactly 4 red before fix (guard, server image, declared once, runner contract), 0 skipped | 116 | 12 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1260-green/` | floor-green | `/*/*/(GitMinimumVersionGuardTests*)\|(DockerStackContractTests*)/*` | V-1, V-2, V-3, R-1 | all 116 passed, 0 failed/skipped | 116 | 12 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
-| CP-3 | S2 | CP-2 | roster | `/*/*/(WindowsUnitPlatformAdmissionTests)\|(ProcessSpawnTimeoutPolicyTests)\|(GrokSha256PinTests)/(C1210_Guard_matches_native_platform)\|(C1210_Native_linux_entries_guard_before_work)\|(C1210_Roster_closure_matches_source_gates)\|(C1210_Audit_rejects_empty_or_incomplete_outcomes)\|(Spawning_classes_carry_a_class_timeout)\|(Spawn_timeouts_do_not_exceed_ten_minutes)\|(Runner_grok_sha_rejects_multiline_pin)\|(Runner_grok_sha_rejects_trailing_newline)\|(Runner_grok_sha_rejects_devnull_second_line)\|(Runner_grok_sha_rejects_embedded_newline)\|(Runner_grok_sha_rejects_uppercase_pin)\|(Runner_grok_sha_rejects_short_pin)\|(Runner_grok_sha_rejects_long_pin)\|(Runner_grok_sha_rejects_empty_pin)\|(Runner_grok_sha_rejects_tampered_file)\|(Runner_grok_sha_rejects_empty_download)\|(Runner_grok_sha_accepts_matching_file)` | R-2 | all 17 passed, 0 failed/skipped | 17 | 4 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-3 | S2 | CP-2 | roster | `/*/*/(WindowsUnitPlatformAdmissionTests*)\|(ProcessSpawnTimeoutPolicyTests*)\|(GrokSha256PinTests*)/(C1210_Guard_matches_native_platform*)\|(C1210_Native_linux_entries_guard_before_work*)\|(C1210_Roster_closure_matches_source_gates*)\|(C1210_Audit_rejects_empty_or_incomplete_outcomes*)\|(Spawning_classes_carry_a_class_timeout*)\|(Spawn_timeouts_do_not_exceed_ten_minutes*)\|(Runner_grok_sha_rejects_multiline_pin*)\|(Runner_grok_sha_rejects_trailing_newline*)\|(Runner_grok_sha_rejects_devnull_second_line*)\|(Runner_grok_sha_rejects_embedded_newline*)\|(Runner_grok_sha_rejects_uppercase_pin*)\|(Runner_grok_sha_rejects_short_pin*)\|(Runner_grok_sha_rejects_long_pin*)\|(Runner_grok_sha_rejects_empty_pin*)\|(Runner_grok_sha_rejects_tampered_file*)\|(Runner_grok_sha_rejects_empty_download*)\|(Runner_grok_sha_accepts_matching_file*)` | R-2 | all 17 passed, 0 failed/skipped | 17 | 4 | true | `TUNIT_MAX_PARALLEL_TESTS=1` |
 
 Import this table to an ignored manifest and set `timeouts.rowMinutes: 40`. The original S1 red evidence below is retained; do not rerun CP-1 for the
 integration repair. Run CP-2 and CP-3 together after the complete repair group.
@@ -95,6 +97,15 @@ The integration repair selects CP-2 and CP-3, estimated at 16 minutes, plus one
 checkpoint-tool bootstrap and host slot waits. The task budget is 60 minutes. No whole-assembly or whole-Unit run is
 needed, because the change is confined to image build files, one shell guard and
 contract tests.
+
+## Integration repair filter correction
+
+The first repair run at `4a78ba44ed843e2939cfbbc26fc4107c32963f1c` passed CP-2
+(116/116) but CP-3 selected zero tests (exit 3). Both strict validators rejected
+that run. TUnit 1.44 requires trailing wildcards on OR operands for source-generated
+discovery; the corrected CP-3 follows CARD-0403 and CARD-1265 CP-2. This is a
+selection repair, not an assertion or timeout change. Re-run the complete two-row
+group to certify both rows at the final committed SHA; the first CP-3 is not proof.
 
 ## Integration repair census
 
