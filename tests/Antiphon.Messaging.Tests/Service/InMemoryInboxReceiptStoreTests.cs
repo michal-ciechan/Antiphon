@@ -5,6 +5,7 @@ using TUnit.Core;
 
 namespace Antiphon.Messaging.Tests.Service;
 
+[Category("Unit")]
 public sealed class InMemoryInboxReceiptStoreTests
 {
     [Test]

@@ -91,7 +91,7 @@ No repetitions after green. Rerun only red rows after repairs.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Environment |
 |---|---|---|---|---|---|---|---:|---:|---|
-| CP-1 | S1 | `tests/Antiphon.Messaging.Tests -> bin-c1248-red/` | red-first | `/*/*/(EfInboxReceiptStoreTests)\|(InMemoryInboxReceiptStoreTests)\|(InboxConversationMigrationTests)\|(InboxConsumerServiceTests)/*` | V-1, V-2, V-3, V-4, V-5, V-6, R-1 | all listed; expected defect failures before S2 | 15 | 6 | `ANTIPHON_BROKER_TESTS=1` |
-| CP-2 | S2 | `tests/Antiphon.Messaging.Tests -> bin-c1248-final/` | inbox-and-adjacent | `/*/*/(EfInboxReceiptStoreTests)\|(InMemoryInboxReceiptStoreTests)\|(InboxConversationMigrationTests)\|(InboxConsumerServiceTests)\|(GatewayTests)\|(InboundUnconsumedMonitorTests)/*` | V-1, V-2, V-3, V-4, V-5, V-6, R-1, R-2 | all listed, 0 failed/skipped | 15 | 7 | `ANTIPHON_BROKER_TESTS=1` |
+| CP-1 | S1 | `tests/Antiphon.Messaging.Tests -> bin-c1248-red/` | red-first | `/*/*/(EfInboxReceiptStoreTests*)\|(InMemoryInboxReceiptStoreTests*)\|(InboxConversationMigrationTests*)\|(InboxConsumerServiceTests*)/*` | V-1, V-2, V-3, V-4, V-5, V-6, R-1 | all listed; expected defect failures before S2 | 15 | 6 | `ANTIPHON_BROKER_TESTS=1` |
+| CP-2 | S2 | `tests/Antiphon.Messaging.Tests -> bin-c1248-final/` | inbox-and-adjacent | `/*/*/(EfInboxReceiptStoreTests*)\|(InMemoryInboxReceiptStoreTests*)\|(InboxConversationMigrationTests*)\|(InboxConsumerServiceTests*)\|(GatewayTests*)\|(InboundUnconsumedMonitorTests*)/*` | V-1, V-2, V-3, V-4, V-5, V-6, R-1, R-2 | all listed, 0 failed/skipped | 15 | 7 | `ANTIPHON_BROKER_TESTS=1` |
 | CP-3 | S2 | `tests/Antiphon.Tests -> bin-c1248-unit/` | unit | `/*/*/*/*[Category=Unit]` | R-3 | >= 1 executed, 0 failed/skipped | 1 | 20 | n/a |
 | CP-4 | S2 | CP-2 | messaging-unit | `/*/*/*/*[Category=Unit]` | R-3 | >= 1 executed, 0 failed/skipped | 1 | 2 | n/a |
