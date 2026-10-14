@@ -914,6 +914,46 @@ public sealed class AgentTaskService
             throw new ValidationException(nameof(request.Workspace), message, "workspace_default_not_git");
         }
 
+        // CARD-0097: inspect the post-pin, post-standing-agent request. An empty matrix
+        // preserves the legacy path; a read failure must not turn an ordinary create into Blocked.
+        var complexityDefaulted = false;
+        ComplexityRoutingService.Walk? defaultRoutingWalk = null;
+        if (_complexityRouting is not null && request.Complexity is null)
+        {
+            var defaultTier = _settings.DefaultComplexity!.Value;
+            var eligible = MatrixDefaultApplies(request, liveFollowUp);
+            if (eligible || explicitAskKind is not null || explicitAskLevel is not null)
+            {
+                try
+                {
+                    var loaded = await _complexityRouting.LoadChainAsync(request.Role, defaultTier, ct);
+                    if (loaded.ResolvedFrom != "none")
+                    {
+                        if (eligible)
+                        {
+                            // Keep the stamp and its walk together: even a failure of the walk's
+                            // second chain read leaves the original request and pin decision intact.
+                            defaultRoutingWalk = await _complexityRouting.WalkAsync(defaultTier,
+                                request.Kind, request.Role, pinDecision, binding.CardId, subscriptionOwner,
+                                request.IgnoreSubscriptionQuota, ct);
+                            request = request with { Complexity = defaultTier };
+                            complexityDefaulted = true;
+                        }
+                        else
+                        {
+                            var bypass = $"explicit kind/level: the {request.Role}/{defaultTier} row was not consulted";
+                            warning = warning is null ? bypass : warning + " " + bypass;
+                        }
+                    }
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    var fallback = $"Routing read failed ({ex.GetType().Name}); using today's path.";
+                    warning = warning is null ? fallback : warning + " " + fallback;
+                }
+            }
+        }
+
         var id = Guid.NewGuid();
         ComplexityRoutingService.Walk? routingWalk = null;
         var routingExhausted = false;
@@ -922,7 +962,7 @@ public sealed class AgentTaskService
         AgentKind agentKind;
         if (request.Complexity is { } complexity)
         {
-            routingWalk = await _complexityRouting!.WalkAsync(
+            routingWalk = defaultRoutingWalk ?? await _complexityRouting!.WalkAsync(
                 complexity,
                 request.Kind,
                 request.Role,
@@ -1554,14 +1594,16 @@ public sealed class AgentTaskService
             AgentTaskId = id,
             Type = AgentTaskEventType.Created,
             ModelLevel = level,
-            Detail = (request.ModelLevel is { } explicitLevel
+            Detail = (complexityDefaulted
+                    ? $"{request.Kind}/{request.Role} at {level} (matrix default {request.Complexity}) in {resolved.WorkingDirectory}"
+                    : request.ModelLevel is { } explicitLevel
                     ? $"{request.Kind}/{request.Role} at {explicitLevel} (explicit override) in {resolved.WorkingDirectory}"
                     : $"{request.Kind}/{request.Role} at {level} (role policy) in {resolved.WorkingDirectory}")
                 // Only when it is NOT the default: an event line that says "on ClaudeCode" on every
                 // task teaches nobody anything, and the one that says "on Grok" is the whole point.
                 + (agentKind == AgentKind.ClaudeCode
                     ? string.Empty
-                    : $" on {agentKind}{(request.AgentKind is null ? " (role policy)" : " (explicit)")}")
+                    : $" on {agentKind}{(complexityDefaulted ? string.Empty : request.AgentKind is null ? " (role policy)" : " (explicit)")}")
                 + ProjectScopeSuffix(projectId)
                 + CardScopeSuffix(binding.Identifier)
                 // CARD-0305: which standing instruction produced that kind/tier. Without it the
@@ -3695,6 +3737,87 @@ public sealed class AgentTaskService
     private Task<Agent> ResolveStandingAgentAsync(string reference, CancellationToken ct) =>
         StandingAgentResolver.ResolveAsync(_db, reference, nameof(CreateAgentTaskRequest.Agent), ct);
 
+    internal static bool MatrixDefaultApplies(CreateAgentTaskRequest request, bool liveFollowUp) =>
+        request.Complexity is null && request.AgentKind is null && request.ModelLevel is null
+        && request.AgentId is null && !request.IgnoreModelDisabled
+        && request.Kind == AgentTaskKind.Worker && !AgentTaskRoles.IsSpecialist(request.Role)
+        && !liveFollowUp;
+
+    private sealed record PinRead(RoutingPinService.Decision? Decision, string? FailureType);
+    private sealed record ChildRouting(AgentKind Kind, AgentModelLevel Level,
+        TaskComplexity? Complexity = null, Guid? RoutingPinId = null,
+        string? BlockedReason = null, string? Warning = null);
+
+    private async Task<ChildRouting> ResolveServerChildRoutingAsync(
+        AgentTaskRole role, Guid? cardId, Func<PinRead, Task<ChildRouting>> legacy, CancellationToken ct)
+    {
+        PinRead pin;
+        try
+        {
+            pin = new(await _routingPins!.ResolveAsync(cardId, role,
+                new RoutingPinService.Ask(null, null, null, false), ct), null);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return await legacy(new(null, ex.GetType().Name));
+        }
+        if (_complexityRouting is null)
+            return await legacy(pin);
+
+        var tier = _settings.DefaultComplexity!.Value;
+        string resolvedFrom;
+        try
+        {
+            resolvedFrom = (await _complexityRouting.LoadChainAsync(role, tier, ct)).ResolvedFrom;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return (await legacy(pin)) with
+            {
+                Warning = $"Routing read failed ({ex.GetType().Name}); using today's path.",
+            };
+        }
+        if (resolvedFrom == "none")
+            return await legacy(pin);
+
+        var decision = pin.Decision!;
+        // Preserve each producer's own legacy selection, including Merge's program default.
+        // Passing this read into legacy is essential: a second read could lose a Required pin.
+        if (decision.Applied && decision.Pin!.Strength == RoutingPinStrength.Required
+            && (decision.PinCandidates.Count > 0 || decision.AgentKind is not null || decision.ModelLevel is not null))
+            return await legacy(pin);
+
+        ComplexityRoutingService.Walk walk;
+        try
+        {
+            walk = await _complexityRouting.WalkAsync(tier, AgentTaskKind.Worker, role,
+                decision, cardId, null, false, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            var composed = RoutingCandidates.Compose(decision, null, null, null, null,
+                (k, l) => ResolveRoutingPair(AgentTaskKind.Worker, role, k, l));
+            var fallback = composed.Candidates.Count > 0 ? composed.Candidates[0]
+                : ResolveRoutingPair(AgentTaskKind.Worker, role, null, null);
+            return new ChildRouting(fallback.Kind, fallback.Level,
+                RoutingPinId: composed.Walked && decision.Applied ? decision.Pin!.Id : null,
+                Warning: $"Routing walk failed ({ex.GetType().Name}); using the pin or role policy.");
+        }
+
+        var pinId = walk.Walked && decision.Applied ? decision.Pin!.Id : (Guid?)null;
+        if (walk.Chosen is { } chosen)
+        {
+            var skipped = walk.SkippedWarning();
+            return new ChildRouting(chosen.Kind, chosen.Level, tier, pinId,
+                Warning: skipped.Length > 0 ? skipped : null);
+        }
+
+        var head = walk.Outcomes.Count > 0 ? walk.Outcomes[0].Candidate
+            : ResolveRoutingPair(AgentTaskKind.Worker, role, null, null);
+        return new ChildRouting(head.Kind, head.Level, tier, pinId,
+            BlockedReason: walk.ExhaustedSentence(decision) + " A human must choose; do not pick a kind yourself.");
+    }
+
     /// <summary>
     /// Spawn the Merge-role delegate that resolves a Worktree task's rebase conflict. SYSTEM
     /// spawned — the server decides this, so it bypasses the caller checks — but the run's task
@@ -3728,6 +3851,12 @@ public sealed class AgentTaskService
         var now = UtcNow();
         var (token, tokenHash) = NewToken();
         var files = string.Join("\n", conflictFiles.Select(f => $"- {f}"));
+
+        Task<ChildRouting> Legacy(PinRead _) => Task.FromResult(new ChildRouting(
+            AgentKind.ClaudeCode, ResolveLevel(AgentTaskKind.Worker, AgentTaskRole.Merge, null)));
+        var routing = _routingPins is null
+            ? await Legacy(new(null, null))
+            : await ResolveServerChildRoutingAsync(AgentTaskRole.Merge, conflicted.CardId, Legacy, ct);
 
         var task = new AgentTask
         {
@@ -3768,13 +3897,17 @@ public sealed class AgentTaskService
             ProjectId = conflicted.ProjectId,
             // CARD-0040: integrating a task's work is still that task's card's work.
             CardId = conflicted.CardId,
-            ModelLevel = ResolveLevel(AgentTaskKind.Worker, AgentTaskRole.Merge, null),
+            ModelLevel = routing.Level,
+            AgentKind = routing.Kind,
+            Complexity = routing.Complexity,
+            RoutingPinId = routing.RoutingPinId,
             Workspace = WorkspaceMode.Shared,
             WorkingDirectory = worktree,
             RepoPath = conflicted.RepoPath,
             MergeTargetRef = target,
             Ephemeral = true,
-            Status = AgentTaskStatus.Queued,
+            Status = routing.BlockedReason is null ? AgentTaskStatus.Queued : AgentTaskStatus.Blocked,
+            FailureReason = routing.BlockedReason,
             ReplyTo = conflicted.ReplyTo,
             MaxAttempts = 2,
             CreatedAt = now,
@@ -3799,6 +3932,13 @@ public sealed class AgentTaskService
                 + ProjectScopeSuffix(task.ProjectId),
             At = now,
         });
+        if (routing.Warning is { } routingWarning)
+            AddEvent(id, AgentTaskEventType.Warning, null, routingWarning, now);
+        if (routing.BlockedReason is { } blockedReason)
+        {
+            AddEvent(id, AgentTaskEventType.Blocked, null, blockedReason, now);
+            await EnqueueBlockedParentNoteAsync(task, blockedReason, ct);
+        }
         RawTokens[id] = token;
         return task;
     }
@@ -3832,45 +3972,37 @@ public sealed class AgentTaskService
             .FirstOrDefault() ?? settled.Title;
         var stderrBit = string.IsNullOrWhiteSpace(stderr) ? "" : $"\nGated commit stderr:\n{stderr.Trim()}\n";
 
-        var agentKind = ResolveAgentKind(AgentTaskKind.Worker, AgentTaskRole.Commit, null);
-        var level = ResolveLevel(AgentTaskKind.Worker, AgentTaskRole.Commit, null);
-        Guid? routingPinId = null;
-        string? pinWarning = null;
-        if (_routingPins is not null)
+        Task<ChildRouting> Legacy(PinRead pin)
         {
-            try
+            var kind = ResolveAgentKind(AgentTaskKind.Worker, AgentTaskRole.Commit, null);
+            var level = ResolveLevel(AgentTaskKind.Worker, AgentTaskRole.Commit, null);
+            Guid? pinId = null;
+            string? warning = pin.FailureType is { } failure
+                ? $"Routing pin service failed ({failure}); using role policy." : null;
+            if (pin.Decision is { } decision)
             {
-                var pinDecision = await _routingPins.ResolveAsync(
-                    settled.CardId,
-                    AgentTaskRole.Commit,
-                    new RoutingPinService.Ask(null, null, null, false),
-                    ct);
-                var composed = RoutingCandidates.Compose(
-                    pinDecision,
-                    chain: null,
-                    chainLabel: null,
-                    null,
-                    null,
-                    (k, l) => ResolveRoutingPair(AgentTaskKind.Worker, AgentTaskRole.Commit, k, l));
-                if (composed.Candidates.Count > 0)
+                try
                 {
-                    agentKind = composed.Candidates[0].Kind;
-                    level = composed.Candidates[0].Level;
+                    var composed = RoutingCandidates.Compose(decision, null, null, null, null,
+                        (k, l) => ResolveRoutingPair(AgentTaskKind.Worker, AgentTaskRole.Commit, k, l));
+                    if (composed.Candidates.Count > 0)
+                        (kind, level) = composed.Candidates[0].Pair;
+                    if (composed.Walked && decision.Applied)
+                        pinId = decision.Pin!.Id;
+                    _routingPins!.EnforceForbiddenAliases(decision, kind, level);
                 }
-
-                if (composed.Walked && pinDecision.Applied)
-                    routingPinId = pinDecision.Pin!.Id;
-                _routingPins.EnforceForbiddenAliases(pinDecision, agentKind, level);
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    warning = $"Routing pin service failed ({ex.GetType().Name}); using role policy.";
+                }
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                pinWarning = $"Routing pin service failed ({ex.GetType().Name}); using role policy.";
-            }
+            return Task.FromResult(new ChildRouting(kind, level, RoutingPinId: pinId, Warning: warning));
         }
-        else
-        {
-            pinWarning = "Routing pin service is not available; using role policy.";
-        }
+        var routing = _routingPins is null
+            ? new ChildRouting(ResolveAgentKind(AgentTaskKind.Worker, AgentTaskRole.Commit, null),
+                ResolveLevel(AgentTaskKind.Worker, AgentTaskRole.Commit, null),
+                Warning: "Routing pin service is not available; using role policy.")
+            : await ResolveServerChildRoutingAsync(AgentTaskRole.Commit, settled.CardId, Legacy, ct);
 
         var task = new AgentTask
         {
@@ -3896,14 +4028,16 @@ public sealed class AgentTaskService
             Role = AgentTaskRole.Commit,
             ProjectId = settled.ProjectId,
             CardId = settled.CardId,
-            AgentKind = agentKind,
-            ModelLevel = level,
-            RoutingPinId = routingPinId,
+            AgentKind = routing.Kind,
+            ModelLevel = routing.Level,
+            RoutingPinId = routing.RoutingPinId,
+            Complexity = routing.Complexity,
             Workspace = WorkspaceMode.Shared,
             WorkingDirectory = settled.WorkingDirectory,
             RepoPath = settled.RepoPath,
             Ephemeral = true,
-            Status = AgentTaskStatus.Queued,
+            Status = routing.BlockedReason is null ? AgentTaskStatus.Queued : AgentTaskStatus.Blocked,
+            FailureReason = routing.BlockedReason,
             ReplyTo = settled.ReplyTo,
             MaxAttempts = 2,
             CreatedAt = now,
@@ -3931,18 +4065,23 @@ public sealed class AgentTaskService
                 + $"{DelegationReportFormatter.Short(settled.Id)} ({reason}).",
             At = now,
         });
-        if (pinWarning is not null)
+        if (routing.Warning is not null)
         {
             _db.AgentTaskEvents.Add(new AgentTaskEvent
             {
                 Id = Guid.NewGuid(),
                 AgentTaskId = id,
                 Type = AgentTaskEventType.Warning,
-                Detail = pinWarning,
+                Detail = routing.Warning,
                 At = now,
             });
         }
 
+        if (routing.BlockedReason is { } blockedReason)
+        {
+            AddEvent(id, AgentTaskEventType.Blocked, null, blockedReason, now);
+            await EnqueueBlockedParentNoteAsync(task, blockedReason, ct);
+        }
         RawTokens[id] = token;
         return task;
     }
