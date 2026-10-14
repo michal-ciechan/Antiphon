@@ -370,19 +370,29 @@ including a 30s build-slot wait, and base confirmation measured 3m28s. Allow abo
 load; these are estimates, not permission to omit any remaining S1 row.
 
 
-S2 Code binding amendment (2026-10-13, task bf9ffadd). S2 rows are CP-9 and CP-10 of this
-table (the parent plan's CP-8/CP-9 numbering is superseded). CP-13 is added for S2 because S2 edits
-delegate-basics, stage-review and orchestrator text, the composer and the stamp line, and these
-classes pin that text, its size, its bytes or a composition: AgentBundleAttachmentTests,
-GrokRulesCompositionTests and CheckpointRepeatDocumentationTests change in place (expanded
-render instead of raw render; orchestrator byte pin), the others are unchanged regressions.
-GrokRulesLaunchRefusalTests is left out (its budget method skips off Windows);
-GrokRulesDispatchAcceptanceTests and DelegateLaunchArgvIntegrityTests are Explicit or
-Windows-headed and are not run: their one changed assertion is review-only. CP-13's Min is the
-method count, a lower bound; the run's TRX is the result count.
+S2 Code binding amendment (2026-10-13, task bf9ffadd; repaired 2026-10-14, task 1c06601b).
+S2 rows are CP-9, CP-10 and CP-13 of this table.
+The parent plan's CP-8/CP-9 numbering is superseded.
+S2 changes these files (`git diff --stat da0219edd 42e3e2ae8`):
+
+- Bundle text: server/Bundles/delegate-basics.md, server/Bundles/orchestrator.md, server/Bundles/Fragments/git-common.md (new), server/Bundles/README.md.
+- Composer and stamps: server/Application/Services/InstructionBundleComposer.cs, InstructionBundles.cs, InstructionFragments.cs (new), server/Antiphon.Server.csproj.
+- Tests changed: AgentBundleAttachmentTests, GrokRulesCompositionTests, CheckpointRepeatDocumentationTests, GrokRulesDispatchAcceptanceTests, DelegateBundleLaunchTests, InstructionBundleTests.
+- Tests added: InstructionFragmentTests.
+- Plan: this file.
+
+server/Bundles/stage-review.md is unchanged.
+CP-13 selects 25 classes that pin bundle text, its size, its bytes or a composition.
+Three of them change in place: AgentBundleAttachmentTests and GrokRulesCompositionTests (expanded render instead of raw render), CheckpointRepeatDocumentationTests (orchestrator byte pin).
+The other 22 CP-13 classes are unchanged regressions.
+GrokRulesLaunchRefusalTests is left out: its budget method skips off Windows.
+GrokRulesDispatchAcceptanceTests is Explicit and Windows-headed and is not run; its one changed assertion is review-only.
+DelegateLaunchArgvIntegrityTests is unchanged, has a Windows skip gate and is not run.
+CP-13's Min of 191 is the count of [Test] attributes in its 25 classes.
+That Min is a lower bound; the run's TRX gives the result count.
 CP-10 excludes only DelegateScriptKindTests.WorktreeHealth_with_no_findings_says_so, by exact
 name: it expects "No stuck feat/card-task-* worktrees." and scripts/delegate.ps1 has printed "No stuck
-delegate worktrees." since S1 commit bafe1b801. Both files are byte-identical between the S2 base
+delegate worktrees." since S1 commit bafe1b801. Neither file changes between the S2 base
 da0219eddb7dce710b5464264640f000534bb48a and 07d18d8d3133a739084f22fdb5e553ebd5b3bcb1, where it failed
 1 of 70 (run 20261013-233443-606d, clean source, verified build). S2 does not touch either file.
 Brief-directed grammar: a `{{` that does not open a well-formed known placeholder throws
@@ -391,9 +401,8 @@ inner space); a well-formed unknown name throws (unknown). C1213_ExpansionScope 
 the operator append and the brief stay literal.
 D-8/T24 placement (needs caller acceptance): stage-review is 2,475 characters,
 TaskPlatformGuidanceTests.Stage_bundles_leave_twenty_characters_below_the_size_cap pins it at
-2,480 and every line is pinned verbatim (TaskPlatformGuidanceTests, C1015), so stage-review cannot
-hold the 14-character placeholder without loosening a pin (measured: 2,490 failed that pin in run
-20261013-235330-212b). stage-review is unchanged; delegate-basics alone carries `{{GIT-COMMON}}`.
+2,480, and TaskPlatformGuidanceTests (C1015) pins its lines verbatim. The 14-character placeholder
+would exceed the 2,480 pin (measured: 2,490 failed that pin in run 20261013-235330-212b). stage-review is unchanged; delegate-basics alone carries `{{GIT-COMMON}}`.
 In the production Review order the read-only INVARIANTS therefore precede git-common, inverting
 PC-56's index oracle. git-common's INVARIANTS line says stage rules may narrow it, never widen it,
 and it carries the subject-branch freeze; C1213_ReviewOverrideFollowsFragment (name kept) pins
@@ -429,7 +438,23 @@ Code binding: the census adds 46 new methods and changes the existing parser/for
 
 ### Cost
 
-Estimates, not measurements; host slot wait is additional and must be reported. Ordinary Code V/R floor = **53 minutes**, the sum of CP EstimatedMinutes (802 expected results including the S3 contract rerun). Filters/minutes: CP-1 parser 3; CP-2 manager 4; CP-3 health 4; CP-4 ownership 6; CP-5 sync 5; CP-6 dispatch 6; CP-7 delivery 6; CP-8 runner 5; CP-9 fragments 3; CP-10 launch 3; CP-11 brief 5; CP-12 contract 3. This includes 24 minutes for twelve isolated builds plus 29 for execution; checkpoint bootstrap/setup adds 2: ordinary setup+V/R = **55 minutes**. Slice budgets remain S1=21 authoring+39 checks=60, S2=39+6=45, S3=22+8=30; bootstrap 2 is shared. Re-estimate rather than silently dropping a row if authoring exceeds these estimates.
+Estimates, not measurements; host slot wait is additional and must be reported.
+Repaired 2026-10-14 (task 1c06601b) to add CP-13; recount the table before editing these totals.
+
+| Slice | Rows and EstimatedMinutes | Builds | Check minutes | Min floor |
+|---|---|---:|---:|---:|
+| S1 | CP-1 parser 3, CP-2 manager 4, CP-3 health 4, CP-4 ownership 6, CP-5 sync 5, CP-6 dispatch 6, CP-7 delivery 6, CP-8 runner 5 | 8 | 39 | 474 |
+| S2 | CP-9 fragments 3, CP-10 launch 3, CP-13 affected 6 | 3 | 12 | 345 |
+| S3 | CP-11 brief 5, CP-12 contract 3 | 2 | 8 | 171 |
+| Total | 13 rows | 13 | **59** | 990 |
+
+Ordinary Code V/R floor = **59 minutes**, the sum of the table's EstimatedMinutes.
+At 2 minutes per isolated build, that is 26 minutes for thirteen builds plus 33 for execution.
+Checkpoint bootstrap/setup adds 2: ordinary setup+V/R = **61 minutes**.
+The Min floor column sums CP-1..CP-12 result floors (799) and CP-13's 191-method floor.
+The S2 Final run 20261014-002645-e73c executed 371 results: CP-9 85, CP-10 69, CP-13 217.
+Slice budgets: S1=21 authoring+39 checks=60, S2=39+12=51, S3=22+8=30; bootstrap 2 is shared.
+Re-estimate rather than silently dropping a row if authoring exceeds these estimates.
 
 PC floor is separate from Code. Each method filter in the PC table runs baseline/red/restored-green with isolated outputs. Per recipe estimate includes all three builds/runs: U=6 (2+2+2), G/H/L=9 (3+3+3), D=12 (4+4+4), Q=15 (5+5+5) minutes. Each PC adds 0.25 minutes for exact restore/timestamp/provenance checks; same-method PCs remain separate cycles.
 
@@ -442,6 +467,6 @@ PC floor is separate from Code. Each method filter in the PC table runs baseline
 | Q: exact method filters above | PC-34, PC-42, PC-43, PC-44, PC-45, PC-46 | 90 |
 | L: exact method filters above | PC-58 | 9 |
 
-Mutation setup=2; phase builds/runs=774; restoration=25; **Mutation PC floor=801 minutes**. Combined ordinary setup+V/R+Mutation = **856 minutes**, excluding authoring, independent Review and slot waits. No PC time is charged to Code; Mutation remains paused. No assumed batching saving: most controls share parser/composer/consumer files or the same method, and isolated source-qualified phases are required. Reusing whole classes would spend more and would violate method scoping. Savings from replacing a full suite are not quantified because no current full-suite measurement exists; claimed scheduling savings=0.
+Mutation setup=2; phase builds/runs=774; restoration=25; **Mutation PC floor=801 minutes**. Combined ordinary setup+V/R+Mutation = **862 minutes** (61+801), excluding authoring, independent Review and slot waits. No PC time is charged to Code; Mutation remains paused. No assumed batching saving: most controls share parser/composer/consumer files or the same method, and isolated source-qualified phases are required. Reusing whole classes would spend more and would violate method scoping. Savings from replacing a full suite are not quantified because no current full-suite measurement exists; claimed scheduling savings=0.
 
 Handoff audit: **guards=100, mapped=100, missing=0, duplicate PC maps=0**. Each PC has a method filter, recipe, variants, compiling defect and decisive red oracle. All 100 PCs are required when Mutation resumes; **PCs run=0, pending=100** by explicit commissioning instruction. Reachability remains unproven and new methods and any unbound assertion payloads remain binding required after Code. Code must not label these controls green. There is no open human choice under OD-1..OD-6. Next: Code, S1 first; return to Plan if the named real-queue or composition seam cannot be bound without changing the fix design.
