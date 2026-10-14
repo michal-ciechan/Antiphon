@@ -15,6 +15,65 @@ namespace Antiphon.SessionRunner.Tests;
 public class TranscriptIngestionLatencyProbeTests
 {
     [Test]
+    [Arguments(0)]
+    [Arguments(96)]
+    public async Task Cold_tail_records_latency_to_a_prompt_after_existing_history(int historyMiB)
+    {
+        const int chunkBytes = 1 << 20;
+        var root = Path.Combine(Path.GetTempPath(), "antiphon-c1259-cold-" + Guid.NewGuid().ToString("N"));
+        var project = Path.Combine(root, "projects", "synthetic");
+        Directory.CreateDirectory(project);
+        var previous = Environment.GetEnvironmentVariable("CLAUDE_CONFIG_DIR");
+        var id = Guid.NewGuid();
+        var path = Path.Combine(project, id + ".jsonl");
+        var hub = new SessionRunnerEventHub();
+        using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+        var reader = hub.Subscribe(stop.Token);
+        var tailer = new TranscriptTailer(id, root, hub, NullLogger.Instance, knownTranscriptPath: path);
+        try
+        {
+            Environment.SetEnvironmentVariable("CLAUDE_CONFIG_DIR", root);
+            // Valid ignored provider records: normalized row count does not bound native file size.
+            const string prefix = "{\"type\":\"progress\",\"padding\":\"";
+            const string suffix = "\"}\n";
+            var block = System.Text.Encoding.ASCII.GetBytes(prefix +
+                new string('x', chunkBytes - prefix.Length - suffix.Length) + suffix);
+            await using (var file = File.Create(path))
+                for (var n = 0; n < historyMiB; n++) await file.WriteAsync(block, stop.Token);
+            await File.AppendAllTextAsync(path,
+                "{\"type\":\"user\",\"uuid\":\"c1259-cold\",\"message\":{\"role\":\"user\",\"content\":\"CARD-1259 cold-tail marker\"}}\n",
+                stop.Token);
+            var started = Stopwatch.GetTimestamp();
+            tailer.Start();
+            RunnerTranscriptEvent? prompt = null;
+            await foreach (var frame in reader.ReadAllAsync(stop.Token))
+            {
+                if (frame.EventName != SessionRunnerEventNames.SessionTranscript) continue;
+                prompt = JsonSerializer.Deserialize<RunnerTranscriptEvent>(frame.Json);
+                break;
+            }
+            var elapsed = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+            prompt.ShouldNotBeNull();
+            prompt.Uuid.ShouldBe("c1259-cold");
+            prompt.Kind.ShouldBe(TranscriptKinds.UserPrompt);
+            prompt.Text.ShouldBe("CARD-1259 cold-tail marker");
+            tailer.Snapshot().Entries.Count.ShouldBe(1);
+            Console.WriteLine($"C1259 cold-tail historyMiB={historyMiB} bytesBeforePrompt={historyMiB * (long)chunkBytes} " +
+                $"startToPromptMs={elapsed:F3}; known binding, generated ignored history, no provider or server");
+        }
+        finally
+        {
+            stop.Cancel();
+            try { await tailer.DisposeAsync(); }
+            finally
+            {
+                Environment.SetEnvironmentVariable("CLAUDE_CONFIG_DIR", previous);
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Test]
     [Arguments(1)]
     [Arguments(16)]
     public async Task Appended_prompts_reach_the_event_hub_under_concurrent_file_load(int sessions)
