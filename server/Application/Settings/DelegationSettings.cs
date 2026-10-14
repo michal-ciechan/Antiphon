@@ -374,6 +374,9 @@ public sealed class DelegationSettings
 
     public AgentModelLevel DefaultLevel { get; set; } = AgentModelLevel.High;
 
+    /// <summary>CARD-0097: default matrix tier; dispatch adoption belongs to the routing slice.</summary>
+    public TaskComplexity DefaultComplexity { get; set; } = TaskComplexity.Medium;
+
     /// <summary>
     /// Config defaults for a complexity tier with no active <c>ComplexityChains</c> row
     /// (CARD-0090). EMPTY as shipped — routing policy changed nine times in three days, so a
