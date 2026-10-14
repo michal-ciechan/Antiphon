@@ -162,7 +162,8 @@ try {
         $psi.UseShellExecute = $false
         $psi.RedirectStandardOutput = $true
         $psi.RedirectStandardError = $true
-        foreach ($arg in @($hostDll, '--treenode-filter', '/*/*/OrphanSweepHostTests/orphan_sweep_once')) {
+        foreach ($arg in @($hostDll, '--treenode-filter', '/*/*/OrphanSweepHostTests/orphan_sweep_once',
+                '--results-directory', (Join-Path $sandbox 'TestResults'))) {
             [void]$psi.ArgumentList.Add($arg)
         }
         $psi.Environment['TMPDIR'] = $sandbox

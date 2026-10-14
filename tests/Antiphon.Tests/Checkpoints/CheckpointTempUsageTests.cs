@@ -327,7 +327,8 @@ public sealed class CheckpointTempUsageTests : CheckpointTestBase
         File.Exists(hostDll).ShouldBeTrue("lifecycle host must be staged by the parent build");
         var psi = new ProcessStartInfo("dotnet")
         {
-            ArgumentList = { hostDll, "--treenode-filter", $"/*/*/{className}/{method}" },
+            ArgumentList = { hostDll, "--treenode-filter", $"/*/*/{className}/{method}",
+                "--results-directory", Path.Combine(sandbox, "TestResults") },
             RedirectStandardOutput = true, RedirectStandardError = true,
             UseShellExecute = false,
         };
