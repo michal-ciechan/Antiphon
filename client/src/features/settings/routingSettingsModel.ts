@@ -33,6 +33,12 @@ export function effectiveCellLabel(effective: ComplexityEffectiveDto): string {
       : 'Pinned to standing agent — this row is not walked'
   }
 
+  // A policy projection cannot establish the route while its chain read is unknown.
+  // Keep the server diagnostic in the cell's alert, separate from the verdict.
+  if (source === 'rolePolicy' && withheldReason?.includes('chain read failed')) {
+    return 'Effective routing unknown'
+  }
+
   const head = candidates[0]
   if (!head) {
     // A failed read also uses withheldReason. Only an explicitly rejected policy, with no
@@ -58,7 +64,10 @@ export function unsetCellLabel(tier: TaskComplexity, governsDefault: boolean): s
     : `Unset — a -Complexity ${tier} dispatch blocks`
 }
 
-export function nonComplexityBoundary(tier: TaskComplexity): string {
+export function nonComplexityBoundary(tier: TaskComplexity | undefined): string {
+  if (tier === undefined) {
+    return 'RolePolicy still resolves work that is not launched with -Complexity, including default kind and level, escalation, timeout, and WIP. This matrix does not govern every dispatch.'
+  }
   return `An ordinary Worker dispatch without -Complexity, -Kind/-Level, -Agent or ignoreModelDisabled walks the ${tier} row; explicit asks, orchestrators, standing agents and specialist roles keep their existing routing path.`
 }
 
@@ -155,7 +164,7 @@ export function pinTargetLabel(pin: RoutingPinDto): string {
 export function pinEffectCopy(pin: RoutingPinDto): string {
   const arrow = `${pin.role} → ${pinTargetLabel(pin)}`
   if (pin.strength === 'Required') {
-    return `Required ${pin.provenance} pin: ${arrow}. Overrides each ${pin.role} cell until cleared.`
+    return `Required ${pin.provenance} pin: ${arrow}. Overrides the ${pin.role} cells while this pin is active.`
   }
   return `Preferred ${pin.provenance} pin: ${arrow}. Tried before each ${pin.role} cell.`
 }

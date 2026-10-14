@@ -16,8 +16,9 @@ Select one file and the exact anchored Vitest title through the host build-slot 
 red/restore/green cycle. Bind mutations to the landed snapshot. Zero tests, fixture errors,
 compilation errors and Code's ordinary tests-first run are not a PC red result.
 
-Mutation also owns missing-control discovery for the 11 degraded/agent DOM combinations and
-the model table's diagnostic cases. No new PC IDs or successful controls are claimed here.
+Mutation also owns missing-control discovery for the 14 degraded/agent DOM combinations,
+the model table's diagnostic cases, and V-C5's older-server case added by repair `eaef623d`
+after Review `64f32586` D1/D2. No new PC IDs or successful controls are claimed here.
 Other plan controls remain with their assigned slices; this candidate waives none.
 No deliberate mutant was executed by Code. Do not widen timeouts or loosen assertions.
 Restart: none.
