@@ -515,8 +515,9 @@ is 422 `worktree_base_source_invalid`. Detail records `worktreeBaseRequestedRef`
 > sonnet, …`); the `modelAvailability` problem-details extension carries `kind`, `modelAlias`,
 > `disabledUntil`, `source`, and `available`. `ignoreModelDisabled: true` on **create only** queues
 > the task; the dispatcher still skips it until the hold clears. Start never honours the flag.
-> A Required routing pin that named the held alias keeps the same code and available list, plus a
-> coda that the list does not satisfy the pin — do not silently pick from `available`.
+> When a Required routing pin ends in this 409, the detail adds a coda that the list does not
+> satisfy the pin — do not silently pick from `available`. Routing: see **Routing pins beat
+> RolePolicy** in [orchestration-loop.md](orchestration-loop.md#2-tiers).
 >
 > Create may also send **`complexity`** (`Hard`/`Medium`/`Easy`) and **`refuseIfExhausted`**
 > (CARD-0090 / CARD-0332). Combined with explicit `agentKind`/`modelLevel` or with `ignoreModelDisabled` is
@@ -634,9 +635,8 @@ CARD-0322: `PUT` accepts `candidates: [{agentKind, modelLevel}, …]` (1..8, mut
 with the `agentKind`/`modelLevel` shorthand). `GET` returns `candidates[]` with
 `availableNow`/`unavailableReason` plus `candidateCount`; `agentKind`/`modelLevel`/`modelAlias`
 remain the **head**. A 409 `routing_pin_conflict` lists every candidate; the `routingPin`
-extension carries `candidateCount`. A Required pin with two or more candidates is walked
-(CARD-0090's walker); exhausted → Blocked `routing exhausted` (or 409 `routing_exhausted` with
-`refuseIfExhausted`). A one-candidate Required pin is still 409 `model_disabled` with the pin coda.
+extension carries `candidateCount`. Routing: see **Routing pins beat RolePolicy** in
+[orchestration-loop.md](orchestration-loop.md#2-tiers).
 
 ```
 GET    /api/role-policy                               RolePolicy per routable role beside its active
@@ -649,8 +649,10 @@ kind, alias, escalateTo, escalateAfterMinutes, timeoutMinutes, stagePin, effecti
 `rolePolicy`: a projection of the stage pin's first candidate filled from the policy, or of the
 policy; it is not a create result. Nullable: `defaultLevel`, `level`, `kind`, `escalateTo`,
 `escalateAfterMinutes`, `stagePin` and `effective.agentKind`/`modelLevel`/`alias`/`strength`. A
-null `kind` is either no configured kind or an undefined configured kind; `alias` and `effective`
-tell them apart (the two `kind` null rows below). Pin routes: the `/api/routing-pins` block above.
+`kind` is null when no kind is configured or the configured kind is undefined; with no stage pin
+the effective target is null for an undefined kind (the two `kind` null rows below). A row with no
+configured kind and an undefined level has the same `kind` null, `alias` `""` and null target (case
+`policy-level-999`), so `alias` and `effective` do not identify the cause. Pin routes: the `/api/routing-pins` block above.
 
 | Behaviour | Test (runner, file) | What it asserts |
 |---|---|---|

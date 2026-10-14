@@ -880,19 +880,30 @@ current revision, a reason, and Human provenance.
 is what the next `delegate.ps1` create reads; RolePolicy remains the provenance-less fallback when
 no pin exists. A Human pin survives a RolePolicy edit and an Auto rewrite (409 `routing_pin_human`).
 `scripts/routing-pin.ps1` is the write surface; `delegate.ps1 -Pin` records this dispatch as Human
-Required. A pin naming a held alias is still 409 `model_disabled` (CARD-0309) — pins consume
-`Require`, they do not write a hold, and `ignoreRoutingPin` is not `ignoreModelDisabled`.
+Required. A Required pin that composes to one target (one candidate, or a list an explicit kind
+and level narrow to one) is 409 `model_disabled` when that target is held (CARD-0309;
+`RoutingPinCandidateCreateTests.Required_single_candidate_held_is_still_409_model_disabled_with_coda`,
+`…Explicit_kind_and_level_against_a_list_is_not_walked`). Pins consume `Require`, they do not
+write a hold, and `ignoreRoutingPin` is not `ignoreModelDisabled`.
 
 A stage pin with `candidates` is how the operator's role-shaped fallback is recorded
 (CARD-0322): `routing-pin.ps1 set -Role Plan -Candidates ClaudeCode/Frontier,ClaudeCode/High,Codex/Frontier`.
-The list is walked with CARD-0090's chain mechanics (holds, quota, stage forbid). A **Required**
+A list that composes to two or more candidates after explicit kind/level narrowing is walked with
+CARD-0090's chain mechanics (holds, quota, stage forbid): a held head is skipped
+(`RoutingPinCandidateCreateTests.Required_list_skips_a_held_head_and_stamps_RoutingPinId`), and an
+exhausted list is **Blocked** (`…Required_list_all_held_returns_200_Blocked_naming_the_pin`) or 409
+`routing_exhausted` with `refuseIfExhausted`. A **Required**
 list is the whole candidate set; a **Preferred** list is tried first, then the request/role policy
 (or, with `-Complexity`, the chain — never both). Card list vs stage list never concatenate: the
 card pin wins as a whole row. On `routing exhausted` relay to the operator — never pick a kind
 yourself.
 
-Precedence between a stage-wide pin and a role's complexity cell: a **Required** pin *bypasses* the
-matrix cell for that role entirely — the cell is never consulted while the pin stands. A
+Precedence between a stage-wide pin and a role's complexity cell: an applied **Required** pin that
+contributes a resolved candidate supplies the selection in place of the cell's candidates
+(`RoutingPinCandidateCreateTests.Required_list_plus_complexity_bypasses_the_chain`); a Required pin
+with no candidate (no kind or level) leaves the chain selecting
+(`ComplexityRoutingComposeTests.A_required_pin_without_kind_or_level_does_not_bypass_the_chain`). A
+card pin wins over the stage pin as a whole row, and `ignoreRoutingPin` leaves the pin unapplied. A
 **Preferred** pin *prepends* to the matrix candidates and falls through to the cell if the pinned
 target is unavailable. A **card-scoped** pin applies only to that one card, never to every task in
 that role stage-wide — do not read a card pin's banner as a global change. `RolePolicy` itself is
@@ -928,8 +939,8 @@ configuration section; pins: `scripts/routing-pin.ps1` and `/api/routing-pins`.
 | Null policy level falls back to `AGENT_TASK_ROLES` | Vitest `C097 V30 undefined-policy-level-falls-back-to-constant`, same file | Mutation `level: null` → `delegate-tier-source-fallback`, `tier-Low` |
 | Sub-orchestrator floor applies to the server level | Vitest `C097 V27 orchestrator-floor-on-server-level`, same file | Sub-orchestrator + Mutation (`Low`) → `tier-High` |
 
-**Stage pins and the matrix:** a Required stage pin bypasses that role's complexity cells, so the
-matrix row can show candidates that are not in use. Read the live pins with
+**Stage pins and the matrix:** the matrix row can show candidates a stage pin keeps out of use;
+routing: see **Routing pins beat RolePolicy** in [orchestration-loop.md](orchestration-loop.md#2-tiers). Read the live pins with
 `GET /api/routing-pins?role=<Role>` or `scripts/routing-pin.ps1 get -Role <Role>` (or
 `/settings?tab=routing`) before assuming the matrix is misconfigured. Clearing a pin, or
 downgrading it from Required to Preferred, is an operator decision made through
@@ -938,7 +949,8 @@ downgrading it from Required to Preferred, is an operator decision made through
 **Complexity chains (CARD-0090, CARD-0332).** Pass `-Complexity Hard|Medium|Easy` when the work's hardness
 should pick (kind, level) from an ordered fallback list, instead of an explicit `-Kind`/`-Level`.
 The list is a sparse (role × complexity) matrix: the walk reads the role cell, then the any-role
-chain, then the config default, then Blocked. A Required stage pin still bypasses the cell.
+chain, then the config default, then Blocked. Pins and the cell: see **Routing pins beat
+RolePolicy** in [orchestration-loop.md](orchestration-loop.md#2-tiers).
 An explicit pair is never rerouted — combining `-Complexity` with `-Kind` or `-Level` is 422.
 Config defaults ship empty; write the live lists with `complexity-chain.ps1 set` (`-Role Plan` for
 a cell, omit `-Role` for the any-role row). When the chain
