@@ -36,7 +36,7 @@ Docs commit: `baa03f43b44167cd77d95d62f2f7bee1bae831c2`. The parent is `e83ec481
 ## Verification
 
 - `git diff --stat 1ac4c54f6..HEAD`: docs plus the `.antiphon` reports only. `git diff --check`: clean. Nothing changed under `docs/cards/`, and there are no code or test edits.
-- `check-evidence-diff.ps1 -BaseRef 1ac4c54f6 -HeadRef HEAD` was run at `baa03f43b`: commits=3 entries=1 violations=0. Committing this report adds a fourth commit and a second entry; the check was not re-run after it.
+- `check-evidence-diff.ps1 -BaseRef 1ac4c54f6 -HeadRef HEAD`: commits=3 entries=1 violations=0 at `baa03f43b`; with this report committed, commits=4 entries=2 violations=0.
 - `validate-checkpoint-receipt.ps1 … -Rows CP-1`: CHECKPOINT SOURCE VALID source=baa03f43b… rows=1.
 - `git merge-tree --write-tree origin/master HEAD`: exit 0 at master `88540babcef8413c662a34a07f2e19f7055ca5d9`, tree `416757e219a6517c9e5be55143f8eb37ea1fd0a4`.
 - **Unlisted build:** the checkpoint-tool bootstrap, run through `build-slot.ps1` into `bin-code-dea37acc-tool/` (slot granted, waited 0s, succeeded). That output directory was then removed.
