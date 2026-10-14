@@ -163,6 +163,8 @@ readiness or qualification alone cannot resolve a real-service outage.
 | A board's cards | GET | `/api/cards?boardId={guid}&limit=&pageToken=&includeArchived=` — bounded, resumable summary pages; `card.ps1 list -Board <name> -Json` exhausts them |
 | Search cards | GET | `/api/cards/search?q={literal}&boardId=&status=&limit=&pageToken=&includeArchived=` — all-board search if unscoped; `card.ps1 search '<phrase>' -Board <name> -All` exhausts pages |
 | One card | GET | `/api/cards/{id}` — `CARD-0296` resolves; prefer `card.ps1 get` |
+| Card relationships (CARD-0100) | GET / POST | `/api/cards/{id}/relationships` reads `{ blockedBy, blocks }`; POST adds a blocker with `{ concurrencyToken, kind: "BlockedBy", relatedCard, relatedBoardId?, reason?, createdBy? }` and returns 201 with the relationship and rotated `cardConcurrencyToken`. |
+| Remove card relationship (CARD-0100) | POST | `/api/cards/{id}/relationships/{relationshipId}/remove` takes `{ concurrencyToken, reason?, removedBy? }` and returns the updated card. |
 | Move a card | PATCH | `/api/cards/{id}` `{ boardColumnId, concurrencyToken, reason?, spawn? }`. A move into a terminal column returns `taskSettlement` (`canceled` and `leftOpen` short ids) when it settled or left a bound task; the property is omitted when there was nothing to settle (CARD-0738). `card.ps1 move` / `close` print `tasks canceled` and `tasks still working` lines from it. |
 | Queue a card diagnosis (CARD-0352) | POST | `/api/cards/{id}/diagnose` — 202 `{ queued: true }`; `card.ps1 diagnose CARD-nnnn` (`-NoWait` skips the 120 s poll). 409 `diagnose_disabled` when the seat is off. Shipped `DiagnoseLabelMode` is **Shadow** (ledger only) until flipped to Apply. |
 | Diagnoses ledger / stats | GET | `/api/diagnoses?cardId=` (newest first), `/api/diagnoses/stats?since=` |
@@ -347,6 +349,28 @@ Invoke-RestMethod "$api/api/agents/$agentId/start" -Method Post -Headers $h `
   afterwards. It stops a live (Starting/Running/Stopping) session first, as an operator request, and
   answers 409 `agent_delete_session_live` (row kept) when that session is still live afterwards,
   because the agent row is the session's only owner (CARD-0691). Grepping for `MapDelete` and stopping there is how an archive gets done as a delete.
+
+## Card relationship commands (CARD-0100)
+
+Use `card.ps1 block CARD-0051 -BlockedBy CARD-0049` and
+`card.ps1 unblock CARD-0051 -BlockedBy CARD-0049`. Reason is optional;
+`-ReasonFile <path>` reads UTF-8 text, and `-By <name>` supplies the actor.
+`block -RelatedBoard <name|guid>` fences the blocker lookup. `-Board` scopes the
+blocked card. `-Token` supplies an explicit compare-and-swap token; otherwise the
+script fetches the card token. `unblock` matches `relatedIdentifier` and refuses
+zero or multiple matches. `-Json` emits the API response.
+
+The script coverage below uses `CardRelationshipScriptTests` against an HTTP stub.
+
+| Behaviour | Named test | What it asserts or does not cover |
+|---|---|---|
+| Add a blocker | `Block_reads_the_card_then_posts_the_relationship_body_with_the_fetched_token` | Request order, literal POST fields, fetched/explicit token, UTF-8 reason file, named related board and JSON response |
+| Remove a blocker | `Unblock_resolves_the_row_by_relatedIdentifier_and_posts_remove` | Identifier rather than title selects the remove route; fetched token and absent optional fields |
+| Display relationships | `Get_and_history_print_blocked_by_blocks_and_relationship_rows` | `blocked by  CARD-0049 (InProgress)`, `blocked by  CARD-0048 (resolved: Done)`, `blocks      CARD-0052`, history `-> CARD-0049`; `get -Json` retains the card payload |
+| Missing blocker | `Unblock_without_a_matching_blocker_exits_non_zero_and_names_the_current_blockers` | Nonzero exit, current blockers named and no POST |
+| Multiple matching identifiers; remove reason/actor | Not covered by a script test | The script refuses multiple matches and sends optional `reason`/`removedBy` on removal |
+| Cycle/duplicate refusal from the API | `CardRelationshipApiTests.Relationship_write_refusal_table`, `Duplicate_pair_is_409_card_relationship_exists` | API 409 codes `card_relationship_cycle` / `card_relationship_exists`; script propagation is not covered by these tests |
+| Existing list/search | `CardListSearchScriptTests` | Paging, filtering, JSON shapes and request scope/header regression |
 
 ## Typed input goes through the queue
 

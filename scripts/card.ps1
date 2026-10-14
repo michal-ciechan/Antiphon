@@ -36,6 +36,10 @@
 #                      [-All] [-Limit <page size>] [-Json]
 #   card.ps1 get       CARD-0051 [-Json]
 #   card.ps1 history   CARD-0051 [-Json]
+#   card.ps1 block     CARD-0051 -BlockedBy CARD-0049 [-RelatedBoard <name|guid>]
+#                      [-Reason r | -ReasonFile p] [-By name] [-Token g] [-Json]
+#   card.ps1 unblock   CARD-0051 -BlockedBy CARD-0049
+#                      [-Reason r | -ReasonFile p] [-By name] [-Token g] [-Json]
 #   card.ps1 new       -Board <name|guid> -Title <t> [-DescriptionFile p | -Description s]
 #                      [-Alias a] [-Importance Low|Normal|High|Critical] [-Urgency Normal|Soon|Now]
 #                      [-DueAt iso] [-Labels a,b]
@@ -77,7 +81,7 @@
 [CmdletBinding(DefaultParameterSetName = 'Verb')]
 param(
     [Parameter(ParameterSetName = 'Verb', Position = 0, Mandatory = $true)]
-    [ValidateSet('get', 'history', 'new', 'edit', 'move', 'close', 'reopen', 'archive', 'unarchive', 'diagnose', 'reorder', 'order', 'list', 'search')]
+    [ValidateSet('get', 'history', 'block', 'unblock', 'new', 'edit', 'move', 'close', 'reopen', 'archive', 'unarchive', 'diagnose', 'reorder', 'order', 'list', 'search')]
     [string]$Verb,
 
     # The card, in any form it gets written down: CARD-0051, card-51, '#51', 51, or its guid.
@@ -88,6 +92,14 @@ param(
     # identifier when the same number exists on more than one board.
     [Parameter(ParameterSetName = 'Verb')]
     [string]$Board,
+
+    # block/unblock: the blocker identifier. block also accepts a blocker guid.
+    [Parameter(ParameterSetName = 'Verb')]
+    [string]$BlockedBy,
+
+    # block: resolve the blocker on this board when an identifier exists on several boards.
+    [Parameter(ParameterSetName = 'Verb')]
+    [string]$RelatedBoard,
 
     [Parameter(ParameterSetName = 'Verb')]
     [ValidateSet('Backlog', 'InProgress', 'Review', 'Done', 'NeedsDecision', 'Canceled')]
@@ -431,6 +443,13 @@ function Write-CardLine {
     if ($TheCard.requiredPlatform) { Write-Output ("platform    {0}" -f $TheCard.requiredPlatform) }
 }
 
+function Write-BlockerLine {
+    param($Relationship)
+    $state = $Relationship.relatedStatus
+    if ($Relationship.resolved) { $state = 'resolved: ' + $state }
+    Write-Output ("blocked by  {0} ({1})" -f $Relationship.relatedIdentifier, $state)
+}
+
 function Get-CollectionQuery {
     param([string]$PageToken)
     $parts = @()
@@ -666,6 +685,7 @@ switch ($Verb) {
     'get' {
         $theCard = Get-CardOrFail
         if ($Json) { $theCard | ConvertTo-Json -Depth 8; return }
+        $relationships = Invoke-Antiphon -Method GET -Path ("/api/cards/{0}/relationships" -f $theCard.id)
         Write-CardLine $theCard
         Write-Output ("id          {0}" -f $theCard.id)
         Write-Output ("board       {0}" -f $theCard.boardId)
@@ -680,6 +700,10 @@ switch ($Verb) {
         if ($theCard.dueAt) { Write-Output ("due         {0}" -f $theCard.dueAt) }
         Write-Output ("token       {0}" -f $theCard.concurrencyToken)
         Write-Output ("revisions   {0}" -f $theCard.revisionCount)
+        foreach ($r in @($relationships.blockedBy)) { Write-BlockerLine $r }
+        foreach ($r in @($relationships.blocks)) {
+            Write-Output ("blocks      {0}" -f $r.relatedIdentifier)
+        }
         if ($theCard.assignedAgentName) { Write-Output ("agent       {0}" -f $theCard.assignedAgentName) }
         if ($theCard.ownerSessionId) { Write-Output ("session     {0}" -f $theCard.ownerSessionId) }
         if ($theCard.externalIssue) {
@@ -710,10 +734,60 @@ switch ($Verb) {
         if ($Json) { $revisions | ConvertTo-Json -Depth 8; return }
         if (-not $revisions -or $revisions.Count -eq 0) { Write-Output 'No history.'; return }
         foreach ($r in $revisions) {
-            Write-Output ("{0,3}  {1,-12} {2}  {3}" -f `
-                    $r.revisionNumber, $r.kind, $r.createdAt, $r.reason)
+            $related = ''
+            if ($r.relatedCardIdentifier) { $related = ' -> ' + $r.relatedCardIdentifier }
+            Write-Output ("{0,3}  {1,-12}{4} {2}  {3}" -f `
+                    $r.revisionNumber, $r.kind, $r.createdAt, $r.reason, $related)
             if ($r.editedBy) { Write-Output ("     by {0}" -f $r.editedBy) }
         }
+        return
+    }
+
+    { $_ -in @('block', 'unblock') } {
+        if ([string]::IsNullOrWhiteSpace($BlockedBy)) {
+            Write-Error "Pass -BlockedBy <card> for '$Verb'."
+            exit 1
+        }
+        if ($Verb -eq 'unblock' -and -not [string]::IsNullOrWhiteSpace($RelatedBoard)) {
+            Write-Error '-RelatedBoard applies to block.'
+            exit 1
+        }
+        $reasonText = Read-TextArgument -Name 'Reason' -Inline $Reason -Path $ReasonFile
+        if (-not [string]::IsNullOrWhiteSpace($reasonText) -or -not [string]::IsNullOrWhiteSpace($By)) {
+            $limitSet = Get-CardLimits
+            Assert-WithinLimit -Field 'Reason' -Value $reasonText -Limit $limitSet.maxReasonLength
+            Assert-WithinLimit -Field 'By' -Value $By -Limit $limitSet.maxActorLength
+        }
+        $relatedBoardId = $null
+        if (-not [string]::IsNullOrWhiteSpace($RelatedBoard)) {
+            $relatedBoardId = Resolve-BoardId $RelatedBoard
+        }
+        $theCard = Get-CardOrFail
+        $body = @{ concurrencyToken = (Resolve-Token $theCard) }
+        if (-not [string]::IsNullOrWhiteSpace($reasonText)) { $body['reason'] = $reasonText }
+        $path = "/api/cards/{0}/relationships" -f $theCard.id
+        if ($Verb -eq 'block') {
+            $body['kind'] = 'BlockedBy'
+            $body['relatedCard'] = $BlockedBy.Trim()
+            if ($relatedBoardId) { $body['relatedBoardId'] = $relatedBoardId }
+            if (-not [string]::IsNullOrWhiteSpace($By)) { $body['createdBy'] = $By }
+            $created = Invoke-Antiphon -Method POST -Path $path -Body $body
+            if ($Json) { $created | ConvertTo-Json -Depth 8; return }
+            Write-BlockerLine $created
+            return
+        }
+        $relationships = Invoke-Antiphon -Method GET -Path $path
+        $matches = @($relationships.blockedBy | Where-Object { $_.relatedIdentifier -eq $BlockedBy.Trim() })
+        if ($matches.Count -ne 1) {
+            $current = @($relationships.blockedBy | ForEach-Object { $_.relatedIdentifier }) -join ', '
+            if ([string]::IsNullOrWhiteSpace($current)) { $current = '(none)' }
+            Write-Error ("Expected one blocker matching '{0}'; found {1}. Current blockers: {2}" -f $BlockedBy, $matches.Count, $current)
+            exit 1
+        }
+        if (-not [string]::IsNullOrWhiteSpace($By)) { $body['removedBy'] = $By }
+        $updated = Invoke-Antiphon -Method POST -Path ("{0}/{1}/remove" -f $path, $matches[0].id) -Body $body
+        if ($Json) { $updated | ConvertTo-Json -Depth 8; return }
+        Write-Output ("unblocked   {0} (removed {1})" -f $theCard.identifier, $matches[0].relatedIdentifier)
         return
     }
 
