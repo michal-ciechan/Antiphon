@@ -522,16 +522,17 @@ is 422 `worktree_base_source_invalid`. Detail records `worktreeBaseRequestedRef`
 > Create may also send **`complexity`** (`Hard`/`Medium`/`Easy`) and **`refuseIfExhausted`**
 > (CARD-0090 / CARD-0332). Combined with explicit `agentKind`/`modelLevel` or with `ignoreModelDisabled` is
 > 422. The walk reads the `(role, complexity)` cell, then the any-role row, then the config
-> default. Exhausted chains insert the task **Blocked** (200) unless `refuseIfExhausted` is true,
+> default. Exhausted chains insert the task **Blocked** (201 Created; not covered by a test) unless `refuseIfExhausted` is true,
 > which is **409 `routing_exhausted`** with a `complexityRouting` extension. Auto-over-Human
 > chain writes are **409 `complexity_chain_human`**. An Auto PUT to a role cell is the same 409
 > when the any-role row for that complexity is Human (write it as Human, or clear the any-role
 > row).
 >
 > Routing pins (CARD-0305, CARD-0322) can also refuse create with **409 `routing_pin_conflict`**
-> (explicit kind/level/agent disagrees with a Required pin — the message lists every candidate),
-> **409 `routing_pin_forbidden`** (resolved alias is on the stage pin's forbid list), or **409
-> `routing_pin_human`** (Auto PUT onto an active Human row). `ignoreRoutingPin: true` is one-shot
+> (explicit kind/level/agent disagrees with a Required pin; a kind/level conflict lists every
+> candidate) or **409 `routing_pin_forbidden`** (resolved alias is on the stage pin's forbid list).
+> **409 `routing_pin_human`** is a PUT refusal (Auto PUT onto an active Human row), not a create
+> refusal. `ignoreRoutingPin: true` is one-shot
 > and does not clear the pin; it is not `ignoreModelDisabled`. A walked multi-candidate pin that
 > exhausts is **Blocked** (or 409 `routing_exhausted` with `refuseIfExhausted`).
 
@@ -649,14 +650,15 @@ DELETE /api/routing-pins/{id}                         clear (204 if already clea
 ```
 
 A pin is the standing instruction the **next** create reads; it does not rewrite Queued work.
-Stage-wide: omit `card`. Check role is 422. Script: `scripts/routing-pin.ps1 get|set|clear`.
+Stage-wide: omit `card`. A `PUT` for Check, Distill or Diagnose is 422
+(`RoutingPinServiceTests.A_specialist_role_has_no_stage_to_pin`). Script: `scripts/routing-pin.ps1 get|set|clear`.
 `delegate.ps1 -Pin` writes Human Required from the resolved kind/level; `-Pin` without a card is
 refused (that would be a stage-wide pin).
 
 CARD-0322: `PUT` accepts `candidates: [{agentKind, modelLevel}, …]` (1..8, mutually exclusive
 with the `agentKind`/`modelLevel` shorthand). `GET` returns `candidates[]` with
 `availableNow`/`unavailableReason` plus `candidateCount`; `agentKind`/`modelLevel`/`modelAlias`
-remain the **head**. A 409 `routing_pin_conflict` lists every candidate; the `routingPin`
+remain the **head**. A kind/level 409 `routing_pin_conflict` lists every candidate; the `routingPin`
 extension carries `candidateCount`. Routing: see **Routing pins beat RolePolicy** in
 [orchestration-loop.md](orchestration-loop.md#2-tiers).
 
