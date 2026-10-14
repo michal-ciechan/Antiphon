@@ -11,6 +11,12 @@ public static class OwnedOutputLedger
         {
             if (!File.Exists(Path.Combine(root, ".checkpoint-output-owner.json"))) return "output-owner-missing";
             var entries = Inventory(root);
+            // CARD-1242: the process that created this fresh root ran the build into it, so it
+            // adopts what the build child wrote, with size and hash taken now. Later additions,
+            // changes and links still refuse; a root this process did not create adopts nothing.
+            if (SafeWrite.WasCreated(root))
+                foreach (var relative in entries.Keys)
+                    SafeWrite.AdoptCreated(Path.Combine(root, relative));
             return SafeWrite.Text(Path.Combine(root, Ledger), JsonSerializer.Serialize(entries), SafeWrite.Under(root));
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)

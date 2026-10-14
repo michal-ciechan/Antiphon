@@ -38,6 +38,13 @@ public static class SafeWrite
             CreatedContent.TryAdd(path, bytes.LongLength + ":" + Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)));
         }
     }
+    // Seal-time custody for entries a child process wrote under a root this process created
+    // (OwnedOutputLedger.Seal). An existing record wins; an unreadable entry stays unrecorded.
+    public static void AdoptCreated(string path)
+    {
+        try { RecordContent(Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+    }
     public static bool MatchesCreation(string path)
     {
         if (!CreatedContent.TryGetValue(Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar), out var recorded)) return false;
