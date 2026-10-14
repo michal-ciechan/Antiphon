@@ -725,9 +725,12 @@ row/list paths can become Blocked (V3, V15, V17 exhaustion controls). Missing fl
 availability facts are disclosed as server dependencies. See CARD-1250 and its cited parity tests
 in [orchestration-loop.md](orchestration-loop.md); the tests below bind this DTO.
 
-For card-origin Hand back or a derived title naming CARD-<digits>, the modal displays
-“unknown — a card pin may apply; routing depends on the server” with no target badge.
-Title derivation, identifier boundaries and explicit-card context are covered by C1250 V22;
+For card-origin Hand back or a possible CARD-<digits> binding in the derived title, the modal
+displays “unknown — a card pin may apply; routing depends on the server” with no target badge.
+Identifier boundaries are exact for ASCII neighbours. A non-ASCII neighbour counts as a
+possible boundary because browser and server Unicode tables can differ, so this can show
+unknown when the server would not bind (C1250 V22 Unicode drift and ASCII controls).
+Title derivation and explicit-card context are also covered by C1250 V22;
 V23 covers Hand back, goal edits and the card-free control. Bare #N in a goal does not bind;
 an explicit API card field can use #N. The Settings column assumes a card-free create.
 The modal admission note names card pins, standing-agent details, quota, holds, provider sign-in,
