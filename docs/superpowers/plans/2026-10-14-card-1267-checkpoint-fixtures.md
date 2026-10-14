@@ -42,7 +42,7 @@ environment guard only for a dependency genuinely unavailable on the runner imag
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1267-proof/` | rerun-policy | `/*/*/RerunPolicyTests/*` | V-1 | all 6; baseline 1 passed/5 failed; final 6 passed | 6 | 10 | false | n/a |
 | CP-2 | S1 | CP-1 | import | `/*/*/CheckpointImportTests/*` | V-1 | all 21; baseline 20 passed/1 failed; final 21 passed | 21 | 2 | false | n/a |
 | CP-3 | S1 | CP-1 | process-identity | `/*/*/CheckpointProcessIdentityTests/*` | V-2 | all 7; baseline 6 passed/1 failed; final 7 passed | 7 | 2 | false | n/a |
-| CP-4 | S1 | CP-1 | timeout | `/*/*/TimeoutTests/*` | V-3 | all 8; Linux baseline 2 passed/2 failed/4 skipped; final 4 passed/4 Windows-only skipped | 8 | 3 | false | n/a |
+| CP-4 | S1 | CP-1 | timeout | `/*/*/TimeoutTests/*` | V-3 | 4 executed on Linux plus 4 Windows-only skips; baseline 2 passed/2 failed/4 skipped; final 4 passed/4 skipped | 4 | 3 | false | n/a |
 | CP-5 | S1 | CP-1 | row-runner | `/*/*/RowRunnerTests/*` | R-1 | all 13 passed | 13 | 2 | false | n/a |
 | CP-6 | S1 | CP-1 | scheduler | `/*/*/RunSchedulerTests/*` | R-1 | all 15 passed | 15 | 2 | false | n/a |
 | CP-7 | S1 | CP-1 | rerun-host | `/*/*/RerunFilterHostTests/*` | R-1 | 1 passed | 1 | 2 | false | n/a |
@@ -53,6 +53,10 @@ expected SHA, `--total-timeout 150m`, no `--keep-outputs`, and wait to completio
 Linux builds use `UseAppHost=false`. Bootstrap the checkpoint tool once through
 `build-slot.ps1` into `bin-c1267-tool/`; that is the sole planned unlisted build.
 Remove only this task's literal output roots after their drivers exit.
+
+CP-4 originally said Min 8. The tool counts `executed` without skipped cases, so the first
+final run returned exit 3 for that row alone while all 4 Linux cases passed; Min is 4 and
+only CP-4 is rerun.
 
 ### Cost
 
