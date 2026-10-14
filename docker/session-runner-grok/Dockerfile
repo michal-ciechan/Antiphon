@@ -2,12 +2,12 @@
 # The default target is the last stage (runtime). receipt-probe and session-testing
 # are opt-in and must not become the default image.
 ARG SOURCE_REVISION=unknown
-# CARD-0661: minimum Git 2.43. LandingGit, GuardedWorktreeRemoval and GuardedVerificationRemoval
-# use `git show-ref --exists` (new in 2.43) to tell a missing ref (2) from a lookup error (1).
+# CARD-0661: LandingGit, GuardedWorktreeRemoval and GuardedVerificationRemoval use
+# `git show-ref --exists` (new in 2.43) to tell a missing ref (2) from a lookup error (1). The floor
+# is declared once, in docker/git-minimum-version.sh (CARD-1260), which runtime-base runs below.
 # Debian bookworm ships 2.39.5 and bookworm-backports carries no git, so the image builds a pinned
 # upstream release, verified by its kernel.org SHA-256 before it is unpacked. A re-published
 # tarball fails the build at sha256sum -c; the remedy is a new pinned pair, never dropping the check.
-ARG GIT_MINIMUM_VERSION=2.43
 ARG GIT_VERSION=2.47.3
 ARG GIT_SHA256=c073471530e92b716641ea2b381fcd0ece53eea9a76a9c5415f93f89e870dd5f
 
@@ -69,7 +69,6 @@ RUN mkdir -p /opt/net9-packs \
 
 FROM mcr.microsoft.com/dotnet/aspnet:9.0 AS runtime-base
 ARG SOURCE_REVISION=unknown
-ARG GIT_MINIMUM_VERSION
 ARG GIT_VERSION
 # CARD-0989: Grok's raw linux-x64 artifact, pinned by version AND reviewed SHA-256.
 # The whole GROK_SHA256 value must be exactly 64 lowercase hex characters. A missing
@@ -151,9 +150,10 @@ RUN mkdir -p /opt/codex-download "/opt/codex/${CODEX_VERSION}" /opt/codex-probe/
  && rm -rf /opt/codex-download /opt/codex-probe
 # CARD-0661: the pinned Git (see git-build) replaces Debian's 2.39.5; no apt git is installed.
 COPY --from=git-build /opt/git-root/usr/local/ /usr/local/
+COPY docker/git-minimum-version.sh /usr/local/share/antiphon/git-minimum-version.sh
 RUN test "$(command -v git)" = /usr/local/bin/git \
  && git --version | grep -F "git version ${GIT_VERSION}" \
- && printf '%s\n%s\n' "${GIT_MINIMUM_VERSION}" "$(git --version | cut -d' ' -f3)" | sort -V -C \
+ && sh /usr/local/share/antiphon/git-minimum-version.sh \
  && test -x /usr/local/libexec/git-core/git-remote-https
 COPY --from=build /out/runner/ /app/
 COPY --from=build /out/ptyhost/ /tmp/ptyhost/
