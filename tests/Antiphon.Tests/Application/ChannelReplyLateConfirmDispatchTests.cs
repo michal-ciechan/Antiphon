@@ -445,6 +445,82 @@ public class ChannelReplyLateConfirmDispatchTests
         (await RowAsync(id)).ChannelReplySettledAt.ShouldNotBeNull();
     }
 
+    [Test]
+    [Arguments(false, true)]
+    [Arguments(true, false)]
+    public async Task A_losing_direct_dispatch_cannot_consume_text_it_did_not_publish(
+        bool unifiedRecovery, bool catalog)
+    {
+        var producer = new HeldProducer();
+        var firstReady = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var secondReady = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseFirst = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseSecond = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var bound = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        var arrivals = 0;
+        await using var h = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        {
+            Outbound = new ChannelOutboundSettings { UnifiedRecoveryEnabled = unifiedRecovery },
+            AlwaysOn = true,
+            ConfigureServices = services =>
+            {
+                services.AddSingleton<IAntiphonMessagingProducer>(producer);
+                services.AddScoped(sp =>
+                {
+                    var outbound = ActivatorUtilities.CreateInstance<ChannelOutboundService>(sp);
+                    outbound.ProbeBarrierAsync = async (stage, id, _) =>
+                    {
+                        if (stage != "direct-admission" || id == Guid.Empty) return;
+                        if (Interlocked.Increment(ref arrivals) == 1)
+                        {
+                            firstReady.TrySetResult();
+                            await releaseFirst.Task.WaitAsync(bound.Token);
+                        }
+                        else
+                        {
+                            secondReady.TrySetResult();
+                            await releaseSecond.Task.WaitAsync(bound.Token);
+                        }
+                    };
+                    return outbound;
+                });
+            },
+        });
+        var chatId = catalog ? await h.BindChannelAsync() : $"uncatalogued-{Guid.NewGuid():N}";
+        const string prompt = "[Telegram Family] A competing dispatcher sees additional text";
+        var id = await h.SeedPendingMessageAsync(prompt, deliveryAttempts: 1, baselineSequence: 0,
+            origin: QueuedMessageOrigin.Channel, conversationKey: $"telegram:{chatId}");
+        h.Runner.SetTranscript(Turns(h.SessionId, (prompt, "The initial answer.")));
+        Task? runtime = null;
+        try
+        {
+            await h.Queue.HandleDeliveryFailureAsync(h.SessionId, [id], DeliveryVerdict.NoTranscriptRecord, bound.Token);
+            await firstReady.Task.WaitAsync(bound.Token);
+            await h.InsertTranscriptEntryAsync(TranscriptKinds.AssistantText, "The trailing answer.");
+            runtime = (Task)typeof(AgentSessionRuntime).GetMethod("FlushQueueOnIdleAsync",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+                .Invoke(h.Runtime, [h.SessionId, bound.Token])!;
+            await secondReady.Task.WaitAsync(bound.Token);
+            releaseFirst.TrySetResult();
+            await producer.Entered.Task.WaitAsync(bound.Token);
+            releaseSecond.TrySetResult();
+            await runtime.WaitAsync(bound.Token);
+            producer.Sent.ShouldBeEmpty("the winner is still publishing; the loser must skip");
+        }
+        finally
+        {
+            releaseFirst.TrySetResult();
+            releaseSecond.TrySetResult();
+            producer.Release.TrySetResult();
+            if (runtime is not null) await runtime.WaitAsync(bound.Token);
+            await h.Queue.LateConfirmDispatchesSettledAsync().WaitAsync(bound.Token);
+        }
+        producer.Sent.Select(r => r.Text).ShouldBe(new[] { "The initial answer.", "The trailing answer." });
+        producer.Sent.ShouldAllBe(r => r.ConversationId == chatId);
+        await h.Dispatcher.OnTurnEndAsync(h.SessionId, bound.Token);
+        producer.Sent.Count.ShouldBe(2);
+    }
+
     private sealed class FailOnceProducer : IAntiphonMessagingProducer
     {
         public int Attempts { get; private set; }
