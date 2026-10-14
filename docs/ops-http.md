@@ -366,7 +366,10 @@ The script coverage below uses `CardRelationshipScriptTests` against an HTTP stu
 |---|---|---|
 | Add a blocker | `Block_reads_the_card_then_posts_the_relationship_body_with_the_fetched_token` | Request order, literal POST fields, fetched/explicit token, UTF-8 reason file, named related board and JSON response |
 | Remove a blocker | `Unblock_resolves_the_row_by_relatedIdentifier_and_posts_remove` | Identifier rather than title selects the remove route; fetched token and absent optional fields |
-| Display relationships | `Get_and_history_print_blocked_by_blocks_and_relationship_rows` | `blocked by  CARD-0049 (InProgress)`, `blocked by  CARD-0048 (resolved: Done)`, `blocks      CARD-0052`, history `-> CARD-0049`; `get -Json` retains the card payload |
+| Display available relationships | `Get_and_history_print_blocked_by_blocks_and_relationship_rows` | With a successful relationship read: `blocked by  CARD-0049 (InProgress)`, `blocked by  CARD-0048 (resolved: Done)`, `blocks      CARD-0052`, history `-> CARD-0049`; `get -Json` retains the card payload |
+| Get with an absent relationship route | `Get_prints_the_card_when_relationships_returns_an_empty_404` | Empty-body 404 still prints the card and exactly `relationships: unavailable`, exits 0, and leaves stderr empty |
+| Get with a failed relationship read | `Get_prints_the_card_and_warns_when_relationships_returns_500` | HTTP 500 still prints the card and exactly `relationships: unavailable`, exits 0, and warns on stderr |
+| Block with an absent relationship route | `Block_fails_loudly_when_relationships_returns_404` | POST 404 remains a nonzero exit with the server's problem detail/code and no success output |
 | Missing blocker | `Unblock_without_a_matching_blocker_exits_non_zero_and_names_the_current_blockers` | Nonzero exit, current blockers named and no POST |
 | Multiple matching identifiers; remove reason/actor | Not covered by a script test | The script refuses multiple matches and sends optional `reason`/`removedBy` on removal |
 | Cycle/duplicate refusal from the API | `CardRelationshipApiTests.Relationship_write_refusal_table`, `Duplicate_pair_is_409_card_relationship_exists` | API 409 codes `card_relationship_cycle` / `card_relationship_exists`; script propagation is not covered by these tests |
