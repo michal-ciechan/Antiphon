@@ -146,6 +146,12 @@ below is a route group; the file named is the authority for its exact bodies.
 
 `CardEndpoints.cs`, `DiagnosisEndpoints.cs`, `BoardEndpoints.cs`, `ProjectEndpoints.cs`, `HomeEndpoints.cs`
 
+Card detail, card-list and board-detail cards (both full and `view=summary`) carry
+`openBlockerCount` when positive and `blockers` when relationships exist. Summaries retain
+resolved blockers; Done, Canceled or archived blockers are resolved by the shared CardBlockers
+predicate. The board loads these summaries in one query for all returned cards (CARD-1255).
+Cards with no relationships omit both members, preserving their existing wire shape.
+
 ```
 GET    /api/home/tasks                       read-only home-rail projection of cards and unbound delegations (CARD-0002). Fleet-global; the client filters by project directory. Bound tasks nest as a card's Worker, never as their own item. No question field — that text is GET /api/attention.
 GET    /api/cards                            list (?boardId=|status=|updatedSince=, at least one; ?limit=&pageToken=&includeArchived=) → { cards, truncated, nextPageToken }. Bounded summary pages in updatedAt DESC, id ASC order; default excludes archived cards. A continuation binds the scope and limit. Unfiltered is 400.
