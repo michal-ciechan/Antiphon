@@ -2,3 +2,4 @@
 # Disposable broker coverage is unattended once ANTIPHON_BROKER_TESTS=1; it is not Slow by default.
 # Mixed Telegram fake/live classes are not wholly OptIn; fake legs remain required.
 Antiphon.Messaging.Tests.Client.KafkaInboundCommitTests # CARD-0593: owned Redpanda startup and offset observation.
+Antiphon.Messaging.Tests.Service.InboxConversationMigrationTests # CARD-1248: disposable PostgreSQL migration and rollback validation.

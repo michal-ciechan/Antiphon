@@ -10,6 +10,7 @@ using TUnit.Core;
 namespace Antiphon.Messaging.Tests.Service;
 
 [Category("Integration")]
+[Category("Slow")]
 public sealed class InboxConversationMigrationTests
 {
     [Test]

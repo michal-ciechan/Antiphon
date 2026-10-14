@@ -14,7 +14,7 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
         inbox.Property(x => x.Status).HasConversion<string>().HasMaxLength(16);
         inbox.HasIndex(x => new { x.Channel, x.Status });
         inbox.HasIndex(x => x.ReceivedAt);
-        inbox.HasIndex(x => new { x.Channel, x.ChannelMessageId }).IsUnique();
+        inbox.HasIndex(x => new { x.Channel, x.ConversationId, x.ChannelMessageId }).IsUnique();
         inbox.Property(x => x.Topic).HasMaxLength(200);
         inbox.HasIndex(x => new { x.Topic, x.Partition, x.Offset });
     }
