@@ -780,43 +780,106 @@ public sealed class DockerStackContractTests
     }
 
     // CARD-0661. LandingGit and the guarded removals run `git show-ref --exists`, new in Git 2.43;
-    // bookworm's apt git is 2.39.5 and bookworm-backports has none. The runner image declares the
-    // minimum, builds a SHA-256-pinned release at or above it, checks the installed version against
-    // it at build time, and installs no apt git beside it. The docs state the same minimum.
+    // bookworm's apt git is 2.39.5 and bookworm-backports has none. The runner image builds a
+    // SHA-256-pinned release at or above the floor, runs the shared floor guard on it at build time,
+    // and installs no apt git beside it. CARD-1260: the floor lives only in that guard script.
     [Test]
     public void Runner_git_meets_the_declared_minimum()
     {
         var dockerfile = Text("docker/session-runner-grok/Dockerfile");
-        var minimum = System.Text.RegularExpressions.Regex.Match(dockerfile, @"ARG GIT_MINIMUM_VERSION=(\d+\.\d+)\r?\n");
-        minimum.Success.ShouldBeTrue("the runner Dockerfile declares its minimum Git version");
-        var floor = Version.Parse(minimum.Groups[1].Value);
-        floor.ShouldBeGreaterThanOrEqualTo(new Version(2, 43), "show-ref --exists is Git 2.43");
+        var floor = GitFloor();
+        floor.ShouldBe(new Version(2, 43), "show-ref --exists is Git 2.43");
         var pinned = System.Text.RegularExpressions.Regex.Match(dockerfile, @"ARG GIT_VERSION=(\d+\.\d+\.\d+)\r?\n");
         pinned.Success.ShouldBeTrue("the runner Git is a pinned release");
         Version.Parse(pinned.Groups[1].Value).ShouldBeGreaterThanOrEqualTo(floor);
         System.Text.RegularExpressions.Regex.IsMatch(dockerfile, @"ARG GIT_SHA256=[0-9a-f]{64}\r?\n")
             .ShouldBeTrue("the Git tarball is pinned by SHA-256");
 
-        var build = Stage("docker/session-runner-grok/Dockerfile", "git-build").Body;
-        var verify = build.IndexOf("sha256sum -c -", StringComparison.Ordinal);
-        verify.ShouldBeGreaterThan(-1);
-        verify.ShouldBeLessThan(build.IndexOf("tar -xzf", StringComparison.Ordinal), "the tarball is verified before it is unpacked");
-        build.Contains("sysconfdir=/etc", StringComparison.Ordinal)
-            .ShouldBeTrue("the baked /etc/gitconfig must stay the system config the pinned Git reads");
+        GitBuildIsVerified("docker/session-runner-grok/Dockerfile");
+        GuardRunsOnInstalledGit(RunnerBody(), "runner runtime-base");
+        NoAptGit(dockerfile, "node22");
 
-        var runtime = RunnerBody();
-        runtime.Contains("COPY --from=git-build /opt/git-root/usr/local/ /usr/local/", StringComparison.Ordinal).ShouldBeTrue();
-        runtime.Contains("\"${GIT_MINIMUM_VERSION}\" \"$(git --version | cut -d' ' -f3)\" | sort -V -C", StringComparison.Ordinal)
-            .ShouldBeTrue("the installed Git is checked against the minimum at build time");
-        foreach (var stage in DockerStackDocuments.Stages(dockerfile).Where(stage => stage.Name != "node22"))
-            System.Text.RegularExpressions.Regex.IsMatch(stage.Body, @"apt-get install[^\n]*\sgit(\s|\\|$)",
-                    System.Text.RegularExpressions.RegexOptions.Multiline)
-                .ShouldBeFalse(stage.Name + " installs Debian's git, which is below the minimum");
-
-        Text("docs/docker-stack.md").Contains("minimum Git " + minimum.Groups[1].Value, StringComparison.Ordinal)
+        Text("docs/docker-stack.md").Contains("minimum Git " + floor.ToString(2), StringComparison.Ordinal)
             .ShouldBeTrue("docs/docker-stack.md states the runner's minimum Git");
     }
 
+    // CARD-1260. The server image runs the same LandingGit and guarded removals (the self-contained
+    // docker-compose.yml stack, and the nested child a server2 session stands up), so it carries the
+    // runner's pinned Git, not Debian's 2.39.5, and fails its build below the shared floor.
+    [Test]
+    public void Server_image_git_meets_the_declared_minimum()
+    {
+        var dockerfile = Text("Dockerfile");
+        var runner = Text("docker/session-runner-grok/Dockerfile");
+        foreach (var pin in new[] { @"ARG GIT_VERSION=(\d+\.\d+\.\d+)\r?\n", @"ARG GIT_SHA256=([0-9a-f]{64})\r?\n" })
+        {
+            var server = System.Text.RegularExpressions.Regex.Match(dockerfile, pin);
+            server.Success.ShouldBeTrue("the server Dockerfile pins " + pin);
+            server.Groups[1].Value.ShouldBe(System.Text.RegularExpressions.Regex.Match(runner, pin).Groups[1].Value,
+                "the server and runner images ship the same pinned Git");
+        }
+
+        GitBuildIsVerified("Dockerfile");
+        var runtime = Stage("Dockerfile", "runtime").Body;
+        GuardRunsOnInstalledGit(runtime, "server runtime");
+        runtime.Contains("libcurl3-gnutls", StringComparison.Ordinal)
+            .ShouldBeTrue("the pinned Git's https remote helper links libcurl-gnutls at runtime");
+        NoAptGit(dockerfile, "client-build");
+    }
+
+    // CARD-1260. One declaration of the floor: the guard script. No Dockerfile restates it, and the
+    // docs name the same value.
+    [Test]
+    public void Git_floor_is_declared_once()
+    {
+        var guard = Text("docker/git-minimum-version.sh");
+        System.Text.RegularExpressions.Regex.Matches(guard, @"^GIT_MINIMUM_VERSION=", System.Text.RegularExpressions.RegexOptions.Multiline)
+            .Count.ShouldBe(1, "the guard declares the floor once");
+        foreach (var path in new[] { "Dockerfile", "docker/session-runner-grok/Dockerfile", "docker/tests/Dockerfile" })
+            Text(path).Contains("GIT_MINIMUM_VERSION", StringComparison.Ordinal).ShouldBeFalse(path + " restates the Git floor");
+        DockerStackDocuments.Excluded(Text(".dockerignore"), "docker/git-minimum-version.sh")
+            .ShouldBeFalse("both images COPY the guard from the root build context");
+        Text("docs/docker-stack.md").Contains("minimum Git " + GitFloor().ToString(2), StringComparison.Ordinal)
+            .ShouldBeTrue("docs/docker-stack.md states the floor");
+    }
+
+    private static Version GitFloor()
+    {
+        var match = System.Text.RegularExpressions.Regex.Match(Text("docker/git-minimum-version.sh"),
+            @"^GIT_MINIMUM_VERSION=(\d+\.\d+)\r?$", System.Text.RegularExpressions.RegexOptions.Multiline);
+        match.Success.ShouldBeTrue("docker/git-minimum-version.sh declares the Git floor");
+        return Version.Parse(match.Groups[1].Value);
+    }
+
+    private static void GitBuildIsVerified(string dockerfile)
+    {
+        var build = Stage(dockerfile, "git-build").Body;
+        var verify = build.IndexOf("echo \"${GIT_SHA256}  /tmp/git-src/git.tar.gz\" | sha256sum -c -", StringComparison.Ordinal);
+        verify.ShouldBeGreaterThan(-1, dockerfile + " verifies the Git tarball");
+        verify.ShouldBeLessThan(build.IndexOf("tar -xzf", StringComparison.Ordinal), "the tarball is verified before it is unpacked");
+        build.Contains("sysconfdir=/etc", StringComparison.Ordinal)
+            .ShouldBeTrue("the system config the pinned Git reads must stay /etc/gitconfig");
+    }
+
+    private static void GuardRunsOnInstalledGit(string body, string stage)
+    {
+        var copy = body.IndexOf("COPY --from=git-build /opt/git-root/usr/local/ /usr/local/", StringComparison.Ordinal);
+        var guard = body.IndexOf("COPY docker/git-minimum-version.sh /usr/local/share/antiphon/git-minimum-version.sh", StringComparison.Ordinal);
+        var run = body.IndexOf("&& sh /usr/local/share/antiphon/git-minimum-version.sh \\", StringComparison.Ordinal);
+        copy.ShouldBeGreaterThan(-1, stage + " installs the pinned Git");
+        guard.ShouldBeGreaterThan(-1, stage + " copies the floor guard");
+        run.ShouldBeGreaterThan(Math.Max(copy, guard), stage + " runs the floor guard after both copies");
+        body.Contains("test \"$(command -v git)\" = /usr/local/bin/git", StringComparison.Ordinal)
+            .ShouldBeTrue(stage + " checks that the guard sees the pinned Git");
+    }
+
+    private static void NoAptGit(string dockerfile, string exempt)
+    {
+        foreach (var stage in DockerStackDocuments.Stages(dockerfile).Where(stage => stage.Name != exempt))
+            System.Text.RegularExpressions.Regex.IsMatch(stage.Body, @"apt-get install[^\n]*\sgit(\s|\\|$)",
+                    System.Text.RegularExpressions.RegexOptions.Multiline)
+                .ShouldBeFalse(stage.Name + " installs Debian's git, which is below the minimum");
+    }
     [Test]
     public void Stock_server_excludes_fixture()
     {
