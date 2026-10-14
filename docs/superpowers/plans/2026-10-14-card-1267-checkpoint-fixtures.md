@@ -1,7 +1,7 @@
 # CARD-1267, CARD-1268, CARD-1269 checkpoint tool test fixtures
 
 Code and landing owner: `7d8dcb15-1d53-4a48-84f6-5dfa63c320c8`.
-Task base and fetched master: `9cbe00bd52dd77367a34244c9cb9ea7d24539add`.
+Task base and fetched master at plan time: `9cbe00bd52dd77367a34244c9cb9ea7d24539add`.
 
 Three inherited Unit failures groups in `tests/Antiphon.Tests/Checkpoints`, reported by
 CARD-1262 Code task 46e9f228 on Linux and reproduced there at its task base:
@@ -29,8 +29,8 @@ environment guard only for a dependency genuinely unavailable on the runner imag
   reach their deadline assertions and the class passes on Linux. Four Windows-only
   methods in the class keep their existing platform skips (disclosure, not passed).
 - R-1: adjacent `RowRunnerTests`, `RunSchedulerTests` and `RerunFilterHostTests`
-  (CP-5 to CP-7) stay green, proving rerun, scheduling and deadline behaviour is not
-  changed by the repair.
+  (CP-5 to CP-7) stay green, showing that the adjacent rerun, scheduling and deadline
+  tests still pass after the repair (no production file changes).
 - R-2: manually inspect the final diff for unchanged outcome assertions, no widened
   deadline, no skip added, no production slot/lease/cleanup guard loosened; run both
   receipt validators, task-base evidence-diff and fetched-master merge-tree.
@@ -53,18 +53,22 @@ at S1 (baseline) and again after the final repair slice, with the exact committe
 expected SHA, `--total-timeout 150m`, no `--keep-outputs`, and wait to completion.
 Linux builds use `UseAppHost=false`. Bootstrap the checkpoint tool once through
 `build-slot.ps1` into `bin-c1267-tool/`; that is the sole planned unlisted build.
-Remove only this task's literal output roots after their drivers exit.
+Remove only this task's literal output roots after their drivers exit. CP-8 was added after
+the repair (see below), so it has no baseline run; the baseline run 5a6a covered CP-1 to CP-7.
 
 CP-4 originally said Min 8. The tool counts `executed` without skipped cases, so the first
-final run returned exit 3 for that row alone while all 4 Linux cases passed; Min is 4 and
-only CP-4 is rerun.
+final run (9b83) returned exit 3 for that row alone while all 4 Linux cases passed; Min is 4
+and only CP-4 was rerun for that correction (run 999a).
 
 Receipt qualification: the first final run kept its outputs after that exit 3, so both
 validators refuse it (`cleanup_refused`); CP-4 alone cannot qualify on Linux because its four
 Windows-only skips fail the zero-skip rule (`row_failed`). CP-8 (added after the repair, same After group as its build) selects the
-four Linux methods of the same class by exact name, and CP-1 to CP-3, CP-5 to CP-7 and CP-8
-run once more at the final commit for a clean, SHA-validated receipt. CP-4 stays the
-full-class witness.
+four Linux methods of the same class by exact name. CP-7 cannot be part of a clean receipt
+until CARD-1272 is fixed: `RerunFilterHostTests` makes the staged FilterHost write
+`TestResults` into the sealed build output, so cleanup refuses (run 1b4b, all 7 rows green,
+ended RED `output-ledger-mismatch`). The qualifying run at the final commit (f4fc) therefore
+ran CP-1 to CP-3, CP-5, CP-6 and CP-8 and gave the clean, SHA-validated receipt (`rows=6`).
+CP-4 stays the full-class witness and CP-7 the green-but-unqualified rerun-host witness.
 
 ### Cost
 
@@ -73,6 +77,12 @@ within the 90-minute task budget. No whole-Unit lane: the brief excludes it, the
 change is bounded to fixtures (or a named production seam) of the four affected
 classes, and the adjacent classes in R-1 cover the shared rerun/scheduler/deadline
 paths. Each proof selection runs at most three normal times; none after green.
+
+Actual: five runs (5a6a, 9b83, 999a, 1b4b, f4fc; wall 10m33s, 8m14s, 4m45s, 5m21s and
+4m32s, 33m25s in total), within the 90-minute budget. The three-run rule was exceeded:
+CP-1 to CP-3, CP-5 and CP-6 ran four times, twice after their first green, because 9b83
+(old CP-4 Min) and 1b4b (CP-7, CARD-1272) could not qualify. The Code evidence
+Repetitions disclosure has the per-row counts.
 
 ### Mutation
 
