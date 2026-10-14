@@ -98,3 +98,31 @@ unlisted build. Remove only this task's literal output roots.
 S1 takes about 15 minutes (build plus one class). S2 takes about 30 minutes. This is
 within the 90-minute budget. No full-assembly run. Each proof selection runs at most
 three normal times, with no repetition after green.
+
+### Code evidence
+
+The S1 red run used commit `099d53805dd00e4d692003fad8fbfa9e2e1d4328` (tests and plan only). Run `20261014-221749-fce9`:
+
+```
+CHECKPOINT CP-1 commit=099d53805dd00e4d692003fad8fbfa9e2e1d4328 build=ok filter=/*/*/RequiredSingleCandidateRefusalTests/* executed=5 passed=4 failed=1 skipped=0 trx=/work/worktrees/task-4fc0b3a4/.antiphon/checkpoints/20261014-221749-fce9/rows/CP-1/run.trx slot=granted waited=45s dirty=0 source=099d53805dd00e4d692003fad8fbfa9e2e1d4328 sourceState=clean buildSource=verified
+FAILED Antiphon.Tests.Application.RequiredSingleCandidateRefusalTests.An_orchestrator_with_complexity_over_one_codex_row_is_409_routing_exhausted (CP-1) ShouldAssertException: Task `f.Create(new( "orchestrate it", Kind: AgentTaskKind.Orchestrator, Role: AgentTaskRole.Plan, Complexity: TaskComplexity.Hard, Workspace: WorkspaceMode.Shared))`     should throw Antiphon.Server.Application.Exceptions.RoutingExhaustedException     but did not -> rows/CP-1/failures.md
+```
+
+The S2 green run used commit `ea67a044aad9c0160a03fd84f293555df9929856` (fix and docs). Run `20261014-222544-9869`:
+
+```
+CHECKPOINT CP-1 commit=ea67a044aad9c0160a03fd84f293555df9929856 build=ok filter=/*/*/RequiredSingleCandidateRefusalTests/* executed=5 passed=5 failed=0 skipped=0 trx=/work/worktrees/task-4fc0b3a4/.antiphon/checkpoints/20261014-222544-9869/rows/CP-1/run.trx slot=granted waited=15s dirty=0 source=ea67a044aad9c0160a03fd84f293555df9929856 sourceState=clean buildSource=verified
+CHECKPOINT CP-2 commit=ea67a044aad9c0160a03fd84f293555df9929856 build=reused filter=/*/*/RoutingPinCandidateCreateTests/* executed=17 passed=17 failed=0 skipped=0 trx=/work/worktrees/task-4fc0b3a4/.antiphon/checkpoints/20261014-222544-9869/rows/CP-2/run.trx slot=granted waited=15s dirty=0 source=ea67a044aad9c0160a03fd84f293555df9929856 sourceState=clean buildSource=verified
+CHECKPOINT CP-3 commit=ea67a044aad9c0160a03fd84f293555df9929856 build=reused filter=/*/*/ComplexityCreateTests/* executed=14 passed=14 failed=0 skipped=0 trx=/work/worktrees/task-4fc0b3a4/.antiphon/checkpoints/20261014-222544-9869/rows/CP-3/run.trx slot=granted waited=0s dirty=0 source=ea67a044aad9c0160a03fd84f293555df9929856 sourceState=clean buildSource=verified
+CHECKPOINT CP-4 commit=ea67a044aad9c0160a03fd84f293555df9929856 build=reused filter=/*/*/MatrixDefaultComplexityCreateTests/* executed=34 passed=34 failed=0 skipped=0 trx=/work/worktrees/task-4fc0b3a4/.antiphon/checkpoints/20261014-222544-9869/rows/CP-4/run.trx slot=granted waited=0s dirty=0 source=ea67a044aad9c0160a03fd84f293555df9929856 sourceState=clean buildSource=verified
+CHECKPOINT CP-5 commit=ea67a044aad9c0160a03fd84f293555df9929856 build=reused filter=/*/*/ComplexityRoutingWalkTests/* executed=8 passed=8 failed=0 skipped=0 trx=/work/worktrees/task-4fc0b3a4/.antiphon/checkpoints/20261014-222544-9869/rows/CP-5/run.trx slot=granted waited=0s dirty=0 source=ea67a044aad9c0160a03fd84f293555df9929856 sourceState=clean buildSource=verified
+CHECKPOINT CP-6 commit=ea67a044aad9c0160a03fd84f293555df9929856 build=reused filter=/*/*/AgentTaskAgentKindTests/* executed=26 passed=26 failed=0 skipped=0 trx=/work/worktrees/task-4fc0b3a4/.antiphon/checkpoints/20261014-222544-9869/rows/CP-6/run.trx slot=granted waited=0s dirty=0 source=ea67a044aad9c0160a03fd84f293555df9929856 sourceState=clean buildSource=verified
+```
+
+Both validators accept the S2 green receipt for CP-1..CP-6 (exit 0, `CHECKPOINT SOURCE VALID rows=6`):
+`scripts/validate-checkpoint-receipt.ps1` and the tool's `validate`. Both reject the S1 red
+receipt with exit 2 (`cleanup_refused`, failed row). The fresh TRX method names match the
+filters, and their counts match the Min column. The tool reported `unlisted: none`. The
+only unlisted build was the planned tool bootstrap (`build-slot.ps1`, label `c1271-tool`,
+slot granted after 45s). The whole Unit lane was not run, per the brief, so that
+disclosure stays open.
