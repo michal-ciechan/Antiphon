@@ -219,6 +219,14 @@ public sealed class CheckpointImportTests : CheckpointTestBase
             return Task.FromResult(new DriverResult(first ? 1 : 0, "", ""));
         });
         var retryEnvironment = new Dictionary<string, string> { [name] = "target-only" };
+        // CARD-1267: a no-build row needs the build-source receipt of the output it reuses, or it
+        // stops as a mismatch before the rerun decision.
+        Directory.CreateDirectory(Path.Combine(root, "tests/Antiphon.Tests"));
+        var reused = BuildStep.PropertyArguments([], isWindows: false).ToList();
+        var layout = BuildStep.AppendSharedLayout(reused, root, "tests/Antiphon.Tests", "bin-e/");
+        SafeWrite.Require(SafeWrite.CreateFreshDirectory(layout.Owned, SafeWrite.Under(root)));
+        SafeWrite.Require(CheckpointBuildBinding.Expected(root, "tests/Antiphon.Tests", "bin-e/", reused,
+            SourceObservation.Unknown("not_observed")).Write());
         await new RowRunner(retryDriver, new FakePlatform()).RunAsync(new RowRequest
         {
             Name = "retry", Project = "tests/Antiphon.Tests", OutputPath = "bin-e/", Filter = "/*/*/FlakyTests/*",

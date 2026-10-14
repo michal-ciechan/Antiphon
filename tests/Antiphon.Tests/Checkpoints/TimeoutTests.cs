@@ -25,12 +25,13 @@ public sealed class TimeoutTests : CheckpointTestBase
         manifest.Builds.Add(new BuildSpec { Id = "bin-b", Project = "tests/Antiphon.Tests", OutputPath = "bin-b/" });
         manifest.Checkpoints.Add(CheckpointFixtures.Row("CP-1", "bin-a"));
         manifest.Checkpoints.Add(CheckpointFixtures.Row("CP-2", "bin-b"));
+        var workingDirectory = ProjectDirectories(manifest);
         var result = await new RunScheduler(driver, new FakePlatform()).RunAsync(new SchedulerRequest
         {
             Manifest = manifest,
             Rows = manifest.Checkpoints,
             RunDirectory = TempDir(),
-            WorkingDirectory = TempDir(),
+            WorkingDirectory = workingDirectory,
             State = new RunState { RunId = "t", StartedAt = DateTimeOffset.UtcNow },
             Slots = new FixedSlotClient("unavailable"),
             Width = 2,
@@ -73,13 +74,14 @@ public sealed class TimeoutTests : CheckpointTestBase
         manifest.Builds.Add(new BuildSpec { Id = "bin-a", Project = "tests/Antiphon.Tests", OutputPath = "bin-a/" });
         manifest.Checkpoints.Add(CheckpointFixtures.Row("CP-1", "bin-a"));
         manifest.Checkpoints.Add(CheckpointFixtures.Row("CP-2", "bin-a"));
+        var workingDirectory = ProjectDirectories(manifest);
         var scheduler = new RunScheduler(driver, new FakePlatform());
         var result = await scheduler.RunAsync(new SchedulerRequest
         {
             Manifest = manifest,
             Rows = manifest.Checkpoints,
             RunDirectory = TempDir(),
-            WorkingDirectory = TempDir(),
+            WorkingDirectory = workingDirectory,
             State = new RunState { RunId = "t", StartedAt = DateTimeOffset.UtcNow },
             Slots = new FixedSlotClient("unavailable"),
             Commit = new string('b', 40),
@@ -301,6 +303,16 @@ public sealed class TimeoutTests : CheckpointTestBase
         process.ExitCode.ShouldBe(0, stderr);
         File.Exists(exe).ShouldBeTrue(stderr);
         return exe;
+    }
+
+    // CARD-1269: a build is admitted only when its fresh output root can be created under an
+    // existing project directory; without one it is refused before launch and no deadline is reached.
+    private string ProjectDirectories(CheckpointManifest manifest)
+    {
+        var root = TempDir();
+        foreach (var build in manifest.Builds)
+            Directory.CreateDirectory(ProjectWriteRoots.DirectoryOf(Path.GetFullPath(Path.Combine(root, build.Project))));
+        return root;
     }
 
     [Test]

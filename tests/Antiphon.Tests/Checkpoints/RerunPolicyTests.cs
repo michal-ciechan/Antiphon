@@ -136,6 +136,9 @@ public sealed class RerunPolicyTests : CheckpointTestBase
 
     private Task<RowRunResult> Run(FakeDriver driver, IReadOnlyList<string> known)
     {
+        // CARD-1267: the fresh output root is created under an existing project directory.
+        var workingDirectory = TempDir();
+        Directory.CreateDirectory(Path.Combine(workingDirectory, "tests/Antiphon.Tests"));
         var runner = new RowRunner(driver, new FakePlatform());
         return runner.RunAsync(new RowRequest
         {
@@ -144,7 +147,7 @@ public sealed class RerunPolicyTests : CheckpointTestBase
             OutputPath = "bin-ex/",
             Filter = "/*/*/Sample/*",
             ResultsDirectory = Path.Combine(TempDir(), "row"),
-            WorkingDirectory = TempDir(),
+            WorkingDirectory = workingDirectory,
             MinExecuted = 1,
             KnownFlaky = known,
             Commit = new string('d', 40),
