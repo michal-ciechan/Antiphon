@@ -389,8 +389,9 @@ public sealed class CheckpointConfinementLedgerTests : CheckpointTestBase
         AgeWorktree(root);
         var user = Path.Combine(root, "node_modules", "pkg", "f0015.js");
         var original = File.ReadAllText(user);
+        var acquires = 0;
         var slots = new RecordingSlotClient(
-            onAcquire: () => File.WriteAllText(user, "module.exports = 'B';\n"),
+            onAcquire: () => { if (acquires++ == 0) File.WriteAllText(user, "module.exports = 'B';\n"); }, // the build's slot, not the row's
             onRelease: () => { });
         var driver = new LedgerDriver(slots, () => File.WriteAllText(user, original), FrozenStat());
         var (run, _) = await RunScheduledAsync(root, driver, slots, cancellationToken, admissionHash);
