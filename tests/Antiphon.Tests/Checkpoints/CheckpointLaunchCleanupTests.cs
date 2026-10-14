@@ -25,7 +25,11 @@ public sealed class CheckpointLaunchCleanupTests : CheckpointTestBase
             .Message.ShouldContain("preparing-denied");
         copies.ShouldBe(0);
         launches.ShouldBe(0);
-        Runs(repo).ShouldBeEmpty();
+        var retained = Runs(repo).ShouldHaveSingleItem();
+        File.Exists(Path.Combine(retained, ".checkpoint-output-owner.json")).ShouldBeTrue();
+        File.Exists(Path.Combine(retained, RunOwnershipStore.FileName)).ShouldBeFalse();
+        File.Exists(Path.Combine(retained, "request.json")).ShouldBeFalse();
+        Directory.Exists(Path.Combine(retained, "tool")).ShouldBeFalse();
     }
 
     [Test]
@@ -42,7 +46,10 @@ public sealed class CheckpointLaunchCleanupTests : CheckpointTestBase
             await CheckpointApp.StartAsync(Manifest(), new RunRequest(), repo, TextWriter.Null, runtime)))
             .Message.ShouldContain("intent-denied");
         launches.ShouldBe(0);
-        Runs(repo).ShouldBeEmpty();
+        var retained = Runs(repo).ShouldHaveSingleItem();
+        RunOwnershipStore.Read(retained)!.Phase.ShouldBe("preparing");
+        File.Exists(Path.Combine(retained, "request.json")).ShouldBeTrue();
+        File.ReadAllText(Path.Combine(retained, "tool", "sentinel.txt")).ShouldBe("tiny-tool-source");
     }
 
     [Test]
@@ -63,19 +70,22 @@ public sealed class CheckpointLaunchCleanupTests : CheckpointTestBase
     }
 
     [Test]
-    public async Task post_launch_bookkeeping_failure_keeps_image()
+    public async Task launch_does_not_write_a_shared_latest_pointer()
     {
         var repo = TempDir();
+        var latestWrites = 0;
         var runtime = new CheckpointApp.Runtime
         {
             EnvironmentLookup = _ => null,
             ToolDirectory = TinyToolDirectory(),
             LaunchWithOutcome = _ => new LaunchOutcome(LaunchKind.Started, Environment.ProcessId,
                 new ProcessIdentityProbe().Current()),
-            LatestWrite = (_, _) => throw new IOException("latest-denied"),
+            LatestWrite = (_, _) => { latestWrites++; throw new IOException("latest-denied"); },
         };
         var result = await CheckpointApp.StartAsync(Manifest(), new RunRequest(), repo, TextWriter.Null, runtime);
-        result.ExitCode.ShouldBe(ExitCodes.Invalid);
+        result.ExitCode.ShouldBe(0);
+        latestWrites.ShouldBe(0);
+        File.Exists(Path.Combine(Path.GetDirectoryName(result.RunDirectory)!, "latest")).ShouldBeFalse();
         Directory.Exists(Path.Combine(result.RunDirectory, "tool")).ShouldBeTrue();
         RunOwnershipStore.Read(result.RunDirectory)!.Launched.ShouldNotBeNull();
     }
@@ -139,7 +149,7 @@ public sealed class CheckpointLaunchCleanupTests : CheckpointTestBase
     }
 
     [Test]
-    public async Task partial_copy_failure_rolls_back_owned_run()
+    public async Task partial_copy_failure_retains_exact_evidence_without_launch()
     {
         var repo = TempDir();
         var runtime = new CheckpointApp.Runtime
@@ -156,11 +166,14 @@ public sealed class CheckpointLaunchCleanupTests : CheckpointTestBase
         (await Should.ThrowAsync<IOException>(async () =>
             await CheckpointApp.StartAsync(Manifest(), new RunRequest(), repo, TextWriter.Null, runtime)))
             .Message.ShouldContain("copy-cut");
-        Runs(repo).ShouldBeEmpty();
+        var retained = Runs(repo).ShouldHaveSingleItem();
+        RunOwnershipStore.Read(retained)!.Phase.ShouldBe("preparing");
+        RunOwnershipStore.Read(retained)!.Launched.ShouldBeNull();
+        File.ReadAllText(Path.Combine(retained, "tool", "partial.dll")).ShouldBe("partial-bytes");
     }
 
     [Test]
-    public async Task definite_native_refusal_rolls_back_owned_run()
+    public async Task definite_native_refusal_retains_evidence_with_known_outcome()
     {
         var repo = TempDir();
         var runtime = new CheckpointApp.Runtime
@@ -171,8 +184,12 @@ public sealed class CheckpointLaunchCleanupTests : CheckpointTestBase
         };
         var result = await CheckpointApp.StartAsync(Manifest(), new RunRequest(), repo, TextWriter.Null, runtime);
         result.ExitCode.ShouldBe(ExitCodes.Invalid);
-        Directory.Exists(result.RunDirectory).ShouldBeFalse();
-        Runs(repo).ShouldBeEmpty();
+        Runs(repo).ShouldBe([result.RunDirectory]);
+        var ownership = RunOwnershipStore.Read(result.RunDirectory)!;
+        ownership.Phase.ShouldBe("not-started");
+        ownership.Launched.ShouldBeNull();
+        File.ReadAllText(Path.Combine(result.RunDirectory, "tool", "sentinel.txt")).ShouldBe("tiny-tool-source");
+        new ToolCopyCleanup().ObserveExecutor(result.RunDirectory).Verdict.ShouldBe(ProcessVerdict.Dead);
     }
 
     [Test]
@@ -206,8 +223,7 @@ public sealed class CheckpointLaunchCleanupTests : CheckpointTestBase
         var journal = RunOwnershipStore.Read(run)!;
         journal.Phase = "launch-attempted";
         RunOwnershipStore.Write(run, journal);
-        Directory.CreateDirectory(Path.Combine(run, "tool"));
-        File.WriteAllText(Path.Combine(run, "tool", "sentinel.dll"), "keep");
+        ShadowCopy.CopyToolOutput(TinyToolDirectory(), Path.Combine(run, "tool"));
         return run;
     }
 

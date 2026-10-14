@@ -53,6 +53,43 @@ public static class TestRootGuard
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
     }
 
+    // The sweep owns the root gate and has checked nested custody. This single
+    // active/deleting -> deleting transition must work after the marker's creator
+    // exits; it grants no ordinary overwrite or output-deletion authority.
+    public static void MarkDeleting(string root, CheckpointRootMarker expected, FileStream gate,
+        ProcessIdentityProbe probe)
+    {
+        var path = Path.Combine(root, MarkerName);
+        var current = Read(root);
+        if (!gate.CanWrite || !RunOwnershipStore.SamePath(gate.Name, Path.Combine(root, LockName))
+            || current is null || current.State is not ("active" or "deleting")
+            || expected.State != "deleting" || current.RootId != expected.RootId
+            || current.AttemptId != expected.AttemptId || current.AssemblyInvocationId != expected.AssemblyInvocationId
+            || current.CreatedAt != expected.CreatedAt || current.Owner != expected.Owner
+            || !RunOwnershipStore.SamePath(current.RootPath, expected.RootPath)
+            || probe.Observe(current.Owner).Verdict != ProcessVerdict.Dead)
+            throw new IOException("refused: root-marker-transition-unproven");
+        SafeWrite.Require(SafeWrite.Preflight(root, [path]));
+        var previous = ReceiptFile.ReadBytes(path);
+        // Bind the bytes used for replacement to the exact identity checked above.
+        if (JsonSerializer.Serialize(JsonSerializer.Deserialize<CheckpointRootMarker>(previous))
+            != JsonSerializer.Serialize(current))
+            throw new IOException("refused: root-marker-changed");
+        var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        SafeWrite.Require(SafeWrite.Text(temporary, JsonSerializer.Serialize(expected), SafeWrite.Under(root)));
+        try
+        {
+            SafeWrite.Require(SafeWrite.Preflight(root, [path]));
+            if (!ReceiptFile.ReadBytes(path).SequenceEqual(previous))
+                throw new IOException("refused: root-marker-changed");
+            File.Move(temporary, path, overwrite: true);
+        }
+        finally
+        {
+            if (File.Exists(temporary)) SafeDelete.DeleteCreatedFile(temporary);
+        }
+    }
+
     public static void RegisterRun(string runDirectory)
     {
         var root = FindRoot(runDirectory);

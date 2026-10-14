@@ -552,6 +552,7 @@ public static class CheckpointApp
             if (stateRefusal is not null)
                 throw new InvalidOperationException("refused: " + stateRefusal);
             (runtime.CopyToolOutput ?? ShadowCopy.CopyToolOutput)(ToolSource(runtime), Path.Combine(runDirectory, "tool"));
+            ownership.ToolCopy = ToolCopyAuthority.Seal(runDirectory, ownership);
         }
         catch
         {
@@ -580,12 +581,14 @@ public static class CheckpointApp
         catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or FileNotFoundException)
         {
             // The native API refused to create a process; no executor can use this image.
+            RecordNotStarted();
             if (ContainedCleanup.SafeAncestors(runDirectory) && ContainedCleanup.SafeTree(runDirectory, 10000))
                 _ = runDirectory; // retain partial run evidence
             throw;
         }
         if (outcome.Kind == LaunchKind.NotStarted)
         {
+            RecordNotStarted();
             if (ContainedCleanup.SafeAncestors(runDirectory) && ContainedCleanup.SafeTree(runDirectory, 10000))
                 _ = runDirectory; // retain partial run evidence
             output.WriteLine("CHECKPOINT native launch refused run=" + runId);
@@ -619,6 +622,18 @@ public static class CheckpointApp
         // An executor can already be running or done; the starter does not publish progress.
         output.WriteLine($"RUN {runId} started rows={request.Rows.Count} executor={pid}");
         return new StartResult(ExitCodes.Green, runDirectory);
+
+        void RecordNotStarted()
+        {
+            ownership.Phase = "not-started";
+            ownership.Launched = null;
+            try { (runtime.OwnershipWrite ?? RunOwnershipStore.Write)(runDirectory, ownership); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // Failed publication keeps the old ambiguous journal and therefore retains the copy.
+                output.WriteLine("CHECKPOINT no-launch custody write failed run=" + runId + " reason=" + ex.GetType().Name);
+            }
+        }
     }
 
     public static void Finish(RunState state, int exitCode, Action publish, Action cleanup, Action<string> note)
