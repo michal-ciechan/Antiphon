@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { renderWithProviders, screen, userEvent, waitFor } from '../../test/utils'
 import { server } from '../../test/mocks/server'
 import { ROLE_POLICY_FIXTURE } from '../../test/mocks/handlers'
+import type { RoutingPinDto } from '../../api/routingPins'
 import type { RolePolicyRowDto } from '../../api/rolePolicy'
 import { DelegateModal } from './DelegateModal'
 
@@ -439,6 +440,34 @@ describe('DelegateModal', () => {
     expect(screen.getByTestId('tier-High')).toBeInTheDocument()
   })
 
+  it('C1250 V18 single-held-pin-shows-refusal', async () => {
+    serveRolePolicyRow('Code', (row) => ({ ...row, stagePin: previewPin([held('Codex', 'Frontier', 'gpt-6-astra')]) }))
+    serveCodeRow('Medium', [held('Codex', 'Frontier', 'gpt-6-astra')], 'pin')
+    renderWithProviders(<DelegateModal opened onClose={() => {}} />)
+    expect((await screen.findByTestId('delegate-tier-source-refused')).textContent).toBe(
+      'create refused (409): gpt-6-astra is held; model_disabled or subscription_quota_low depends on the server',
+    )
+    expect(screen.queryByTestId('delegate-tier-source-exhausted')).not.toBeInTheDocument()
+    expect(screen.queryByText('Runs at')).not.toBeInTheDocument()
+  })
+
+  it('C1250 V19 walked-orchestrator-medium-is-not-floored', async () => {
+    serveRolePolicyRow('Plan', (row) => ({ ...row, stagePin: previewPin([candidate('ClaudeCode', 'Medium', 'sonnet'), candidate('ClaudeCode', 'High', 'opus')]) }))
+    renderWithProviders(<DelegateModal opened onClose={() => {}} />)
+    await userEvent.click(screen.getByRole('radio', { name: 'Sub-orchestrator' }))
+    expect((await screen.findByTestId('delegate-tier-source-pin')).textContent).toBe('from the stage pin')
+    expect(screen.getByTestId('tier-Medium')).toBeInTheDocument()
+    expect(screen.queryByTestId('tier-High')).not.toBeInTheDocument()
+  })
+
+  it('C1250 V20 unknown-policy-tail-does-not-promise-a-tier', async () => {
+    serveRolePolicyRow('Code', (row) => ({ ...row, stagePin: { ...previewPin([held('Codex', 'Frontier', 'gpt-6-astra')]), strength: 'Preferred' } }))
+    renderWithProviders(<DelegateModal opened onClose={() => {}} />)
+    expect((await screen.findByTestId('delegate-tier-source-unknown')).textContent).toBe('unknown — candidate availability depends on the server')
+    expect(screen.queryByTestId('tier-Frontier')).not.toBeInTheDocument()
+    expect(screen.queryByText('Runs at')).not.toBeInTheDocument()
+  })
+
   it('C1250 V16 agent-only-stage-pin', async () => {
     serveCodeRow('Medium', [], 'agent', 'stage pin binds standing agent Scout (Codex); an ordinary dispatch runs on that agent and does not walk this row')
     renderWithProviders(<DelegateModal opened onClose={() => {}} />)
@@ -503,4 +532,11 @@ function runnerRow(id: string, platform: string | null, displayName = id) {
     stale: false,
     features: ['required-platform-v1'],
   }
+}
+
+function previewPin(candidates: ReturnType<typeof candidate>[]): RoutingPinDto {
+  return { id: 'preview-pin', cardId: null, cardIdentifier: null, role: 'Code', provenance: 'Human', strength: 'Required',
+    agentKind: null, modelLevel: null, modelAlias: null, agentId: null, forbiddenAliases: [], notBefore: null, notAfter: null,
+    reason: 'preview parity', sourceTaskId: null, createdAt: '2026-10-14T10:00:00Z', updatedAt: '2026-10-14T10:00:00Z',
+    candidates: candidates as RoutingPinDto['candidates'], candidateCount: candidates.length }
 }
