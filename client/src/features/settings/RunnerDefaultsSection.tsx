@@ -55,8 +55,15 @@ export function RunnerDefaultsSection() {
     <RunnerDefaultsForm
       key={`${defaults.data.revision}:${defaults.data.updatedAt}`}
       current={defaults.data}
-      catalogue={runners.data ?? []}
-      history={revisions.data?.revisions ?? []}
+      // A failed refetch keeps stale data; it is not shown as the current catalogue or history.
+      catalogue={runners.error ? [] : (runners.data ?? [])}
+      catalogueUnknown={runners.error
+        ? `Runner catalogue unknown (session runners read failed: ${getApiErrorMessage(runners.error, 'request failed')}).`
+        : null}
+      history={revisions.error ? [] : (revisions.data?.revisions ?? [])}
+      historyUnknown={revisions.error
+        ? `History unknown (revisions read failed: ${getApiErrorMessage(revisions.error, 'request failed')}).`
+        : revisions.isLoading ? 'History loading.' : null}
       saving={save.isPending}
       onSave={async (body) => {
         try {
@@ -76,12 +83,16 @@ export function RunnerDefaultsSection() {
 function RunnerDefaultsForm({
   current,
   catalogue,
+  catalogueUnknown,
   history,
+  historyUnknown,
   saving,
   onSave,
 }: {
   current: RunnerDefaultsDto
   catalogue: { runnerId: string; displayName: string; platform: string | null; available: boolean }[]
+  /** Set when the catalogue read failed: a stored runner is then not known to be missing. */
+  catalogueUnknown: string | null
   history: {
     revision: number
     globalRunnerId: string | null
@@ -90,6 +101,7 @@ function RunnerDefaultsForm({
     reason: string
     provenance: string
   }[]
+  historyUnknown: string | null
   saving: boolean
   onSave: (body: {
     expectedRevision: number
@@ -122,17 +134,18 @@ function RunnerDefaultsForm({
         })),
     ]
     const known = new Set(rows.map((row) => row.value))
+    const absent = catalogueUnknown ? 'catalogue unknown' : 'missing from catalogue'
     if (current.globalRunnerId && !known.has(current.globalRunnerId) && current.globalRunnerId !== 'desktop') {
-      rows.push({ value: current.globalRunnerId, label: `${current.globalRunnerId} · missing from catalogue` })
+      rows.push({ value: current.globalRunnerId, label: `${current.globalRunnerId} · ${absent}` })
     }
     for (const row of current.kindDefaults) {
       if (!known.has(row.runnerId) && row.runnerId !== 'desktop') {
-        rows.push({ value: row.runnerId, label: `${row.runnerId} · missing from catalogue` })
+        rows.push({ value: row.runnerId, label: `${row.runnerId} · ${absent}` })
         known.add(row.runnerId)
       }
     }
     return rows
-  }, [catalogue, current])
+  }, [catalogue, catalogueUnknown, current])
 
   const inherited = globalChoice === BUILTIN ? 'the built-in fallback' : runnerLabel(globalChoice)
 
@@ -173,6 +186,11 @@ function RunnerDefaultsForm({
             Unresolved runner {current.unresolvedReferences.join(', ')}. It stays until you choose another.
           </Alert>
         )}
+        {catalogueUnknown && (
+          <Text size="sm" c="dimmed">
+            {catalogueUnknown}
+          </Text>
+        )}
         {conflict && (
           <Alert color="red" data-testid="runner-defaults-conflict">
             {conflict}
@@ -210,7 +228,9 @@ function RunnerDefaultsForm({
         </Group>
         <Stack gap={4} data-testid="runner-defaults-history">
           <Text size="sm" fw={600}>History</Text>
-          {history.length === 0 && <Text size="sm" c="dimmed">No revisions yet.</Text>}
+          {historyUnknown
+            ? <Text size="sm" c="dimmed">{historyUnknown}</Text>
+            : history.length === 0 && <Text size="sm" c="dimmed">No revisions yet.</Text>}
           {history.map((row) => (
             <Group key={row.revision} justify="space-between">
               <Text size="xs">

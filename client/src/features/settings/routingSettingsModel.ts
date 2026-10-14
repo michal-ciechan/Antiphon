@@ -247,6 +247,54 @@ export const INHERITED_REPLACE_WARNING =
 export const UNSET_CELL_EDITOR_NOTE =
   'This cell is currently Unset — a -Complexity dispatch will block until a row is saved.'
 
+/**
+ * The editor's view of the cell's failed reads. The Any role row comes from the list read,
+ * which fails as a whole, so only a role cell can carry a per-part failure.
+ */
+export function cellEditorFailedReads(
+  chain: ComplexityChainDto | undefined,
+  isAnyRoleRow: boolean,
+): { chain: string | null; metadata: string | null } {
+  const effective = isAnyRoleRow ? null : chain?.effective
+  if (!effective) return { chain: null, metadata: null }
+  return {
+    chain: failedReadSegment(effective, 'chain'),
+    metadata: failedReadSegment(effective, 'chain metadata'),
+  }
+}
+
+export function storedCellUnknownNote(segment: string): string {
+  return `Current value unknown (${segment}). The editor starts empty; it does not show the stored candidates, reason or expiry.`
+}
+
+export function storedMetadataUnknownNote(segment: string): string {
+  return `Stored reason and expiry unknown (${segment}). The Reason and Expires fields start empty; they do not show the stored values.`
+}
+
+// The PUT replaces the whole row: a blank reason stores the default label and a null
+// notAfter stores no expiry (ComplexityChainService.UpsertAsync), so an unread value is
+// overwritten only on an explicit confirmation.
+export const OVERWRITE_UNREAD_CELL =
+  'Overwrite the unread stored cell. Save or Clear replaces its candidates, reason and expiry as a whole.'
+
+export const OVERWRITE_UNREAD_METADATA =
+  'Overwrite the unread reason and expiry. Save writes the Reason and Expires entered here; an empty reason stores the default label and an empty expiry stores none.'
+
+/** Row and card-pin text while `/api/routing-pins` is loading or failed; null once it loaded. */
+export function routingPinsReadLabel(
+  state: { isLoading: boolean; error: unknown },
+  reason: string,
+): { row: string; list: string } | null {
+  if (state.error) {
+    return {
+      row: `Stage and card pins unknown (routing pins read failed: ${reason})`,
+      list: `Card-specific pins unknown (routing pins read failed: ${reason}).`,
+    }
+  }
+  if (state.isLoading) return { row: 'Stage and card pins loading.', list: 'Card-specific pins loading.' }
+  return null
+}
+
 export function cellEditorTitle(
   role: AgentTaskRole | null,
   complexity: TaskComplexity,

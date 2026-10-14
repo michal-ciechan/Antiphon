@@ -63,6 +63,7 @@ import {
   effectiveRoutingUnknown,
   failedReadSegment,
   resolvedFromLabel,
+  routingPinsReadLabel,
   stagePinsForRole,
   untilLabel,
   unsetCellLabel,
@@ -322,7 +323,9 @@ function MatrixSection() {
   const defaultComplexity = list.data?.defaultComplexity
   const roles = list.data?.roles ?? []
   const anyChains = anyRoleChains(list.data?.chains ?? [], complexities)
-  const { stageWide, cardSpecific } = groupPins(pinsQuery.data?.pins ?? [])
+  const pinsRead = routingPinsReadLabel(pinsQuery, getApiErrorMessage(pinsQuery.error, 'request failed'))
+  // A failed refetch keeps the previous pins in data: they are stale, so none is shown as current.
+  const { stageWide, cardSpecific } = groupPins(pinsRead ? [] : (pinsQuery.data?.pins ?? []))
 
   return (
     <Paper withBorder p="md" data-testid="routing-matrix-section">
@@ -395,6 +398,7 @@ function MatrixSection() {
                   complexities={complexities}
                   pins={stagePinsForRole(stageWide, role)}
                   cardPins={cardSpecific}
+                  pinsUnknown={pinsRead?.row ?? null}
                   anyChains={anyChains}
                   onConfigure={(target) => setEditor(target)}
                 />
@@ -402,7 +406,7 @@ function MatrixSection() {
             </Table.Tbody>
           </Table>
         </Box>
-        <CardPinsList pins={cardSpecific} />
+        <CardPinsList pins={cardSpecific} unknown={pinsRead?.list ?? null} />
         {editor ? (
           <ComplexityChainCellEditor
             opened
@@ -424,6 +428,7 @@ function RoleMatrixRow({
   complexities,
   pins,
   cardPins,
+  pinsUnknown,
   anyChains,
   onConfigure,
 }: {
@@ -431,6 +436,7 @@ function RoleMatrixRow({
   complexities: TaskComplexity[]
   pins: RoutingPinDto[]
   cardPins: RoutingPinDto[]
+  pinsUnknown: string | null
   anyChains: ComplexityChainDto[]
   onConfigure: (target: ComplexityChainEditorTarget) => void
 }) {
@@ -488,6 +494,7 @@ function RoleMatrixRow({
             </Alert>
           ))}
           {cardPinCount ? <Text size="xs" c="dimmed">{cardPinCount}</Text> : null}
+          {pinsUnknown ? <Text size="xs" c="dimmed">{pinsUnknown}</Text> : null}
         </Stack>
       </Table.Td>
       {complexities.map((complexity) => {
@@ -641,7 +648,20 @@ function CandidateList({ candidates }: { candidates: ComplexityCandidateDto[] })
   )
 }
 
-function CardPinsList({ pins }: { pins: RoutingPinDto[] }) {
+function CardPinsList({ pins, unknown }: { pins: RoutingPinDto[]; unknown: string | null }) {
+  if (unknown) {
+    return (
+      <Stack gap={4} data-testid="routing-card-pins">
+        <Text size="sm" fw={600}>
+          Card-specific pins
+        </Text>
+        <Text size="sm" c="dimmed">
+          {unknown}
+        </Text>
+      </Stack>
+    )
+  }
+
   if (pins.length === 0) {
     return (
       <Stack gap={4} data-testid="routing-card-pins">
