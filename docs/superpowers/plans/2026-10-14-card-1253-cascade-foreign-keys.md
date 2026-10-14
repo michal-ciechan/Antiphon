@@ -156,3 +156,19 @@ SourceLanding Mutation. Original landing owner remains `f3a5b136-0402-405d-88cd-
 
 Full report, unedited checkpoint lines, per-class counts, native skip roster and pending
 PC variants: `.antiphon/task-f3a5b136.md`.
+
+## F1 repair outcome (Code bb848929)
+
+Tested source: 571f40fbfdfeda1dd49d658db409c35e833193a0, after merging fetched master
+666c75d9fa1f64dde6fabcaf69b99c834cd3c951. V-5's six state/entry-point cases failed at
+HTTP 409 assertions on production baseline 0cf2d997e (tests-only commit ec09bd5c2).
+CP-1/CP-2/CP-4/CP-5 then passed 27/38/61/18 cases: 144 passed, zero failed/skipped.
+The four-row receipt validated with clean source and verified build provenance.
+V-1..V-6, R-1/R-2/R-4/R-5 and M-1/M-2 are complete for the commissioned scope.
+R-3 remains NOT RUN / DEFERRED under the explicit repair brief. PC-1..PC-13 remain
+pending SourceLanding Mutation. No deliberate mutation ran; next is Review.
+
+An initial green-source run was stopped during its build because a blank line excluded
+CP-5 from the imported table; zero tests ran. The corrected import selected four rows.
+Full counts, aborted-build disclosure, bootstrap reasons, receipt paths and unedited
+CHECKPOINT lines are in .antiphon/task-bb848929.md. Restart: server after landing.
