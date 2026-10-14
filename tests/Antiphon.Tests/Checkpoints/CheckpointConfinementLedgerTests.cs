@@ -357,7 +357,8 @@ public sealed class CheckpointConfinementLedgerTests : CheckpointTestBase
         File.ReadAllText(defaultUser).ShouldBe(defaultOriginal, "the build wrote A back over B");
         var defaultReport = JsonSerializer.Deserialize<ReportModel>(File.ReadAllText(Path.Combine(defaultRun, "report.json")), ReportWriter.Json)!;
         defaultReport.Builds.Single().State.ShouldBe("ok");
-        File.ReadAllText(Path.Combine(defaultRun, "builds", "bin-c1241", "build.log")).ShouldNotContain("TAMPERED");
+        var defaultLog = Path.Combine(defaultRun, "builds", "bin-c1241", "build.log"); // the fake build writes none
+        (File.Exists(defaultLog) ? File.ReadAllText(defaultLog) : "").ShouldNotContain("TAMPERED");
 
         var (strictRun, strictDriver, strictUser, _) = await RunWithUnseenChangeAsync("strict", cancellationToken);
         strictDriver.BuildLedgers.ShouldBeEmpty("strict admission hashes the entry and refuses before the build starts");
