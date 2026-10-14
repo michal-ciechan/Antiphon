@@ -164,7 +164,7 @@ public sealed class AgentTaskPipelineStatusService
                 or AgentTaskStatus.Blocked or AgentTaskStatus.Succeeded)
             .Select(t => t.CardId!.Value)
             .ToHashSet();
-        var candidates = backlogCards
+        var unstarted = backlogCards
             .Where(c => CardInScope(scope, c.BoardId, boardProjects)
                 && !startedCardIds.Contains(c.Id)
                 && !BoardService.ParseLabels(c.LabelsJson).Contains("post-land-verification", StringComparer.Ordinal))
@@ -173,11 +173,20 @@ public sealed class AgentTaskPipelineStatusService
             .ThenBy(c => c.BoardId)
             .ThenBy(c => c.Id)
             .ToList();
+        // CARD-0100: a card with an open blocker is held, not a candidate; the snapshot lists it.
+        var openBlockers = await LoadOpenBlockersAsync(unstarted.Select(c => c.Id).ToList(), ct);
+        var candidates = unstarted.Where(c => !openBlockers.ContainsKey(c.Id)).ToList();
+        var held = unstarted.Where(c => openBlockers.ContainsKey(c.Id)).ToList();
         var investigateBacklog = new AgentTaskPipelineBacklogDto(
             candidates.Count,
             candidates.Take(5).Select(c => new AgentTaskPipelineBacklogItemDto(
                 c.Id, c.BoardId, c.Identifier, c.Title,
-                CardRanking.Rank(c.Importance, c.Urgency, c.DueAt, asOf), c.Position)).ToList());
+                CardRanking.Rank(c.Importance, c.Urgency, c.DueAt, asOf), c.Position)).ToList(),
+            held.Count,
+            held.Count == 0
+                ? null
+                : held.Take(5).Select(c => new AgentTaskPipelineBlockedBacklogItemDto(
+                    c.Id, c.BoardId, c.Identifier, c.Title, openBlockers[c.Id])).ToList());
 
         // CARD-0305, read-only: the pins that the NEXT dispatch in each stage would resolve
         // through. Expiry is filtered rather than cleared — this projection never writes, so a
@@ -989,6 +998,25 @@ public sealed class AgentTaskPipelineStatusService
             new Dictionary<string, RunningLandHolder>(StringComparer.Ordinal),
             new Dictionary<Guid, string>(),
             new Dictionary<Guid, Guid?>());
+    }
+
+    /// <summary>
+    /// CARD-0100. The open blockers of each card, by identifier (ordinal order), through the shared
+    /// <see cref="CardBlockers.IsOpenBlocker"/> predicate. Cards with none are absent.
+    /// </summary>
+    private async Task<Dictionary<Guid, IReadOnlyList<string>>> LoadOpenBlockersAsync(
+        IReadOnlyCollection<Guid> cardIds, CancellationToken ct)
+    {
+        if (cardIds.Count == 0)
+            return new Dictionary<Guid, IReadOnlyList<string>>();
+        var rows = await _db.CardRelationships.AsNoTracking()
+            .Where(r => cardIds.Contains(r.CardId))
+            .Where(CardBlockers.IsOpenBlocker)
+            .Select(r => new { r.CardId, r.RelatedCard.Identifier })
+            .ToListAsync(ct);
+        return rows.GroupBy(r => r.CardId).ToDictionary(
+            g => g.Key,
+            g => (IReadOnlyList<string>)g.Select(r => r.Identifier).Order(StringComparer.Ordinal).ToList());
     }
 
     private sealed record CardRow(

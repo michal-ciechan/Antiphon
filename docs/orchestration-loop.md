@@ -487,8 +487,12 @@ is the `orchestrator` bundle; this section carries the reasons.
 4. **Keep the Code stage at its depth cap.** The depth cap is four unless Antiphon enforces a
    lower stage limit. Count Code rows that are in flight, queued or `ready` (a settled Plan or
    TestDesign whose `next:` is code) on the pipeline snapshot. Below the cap, pull the next
-   unstarted Backlog card — lowest `rank` first, as under Picking — and start it through
-   Investigate/Plan toward Code. At the cap, start no new Plan toward Code;
+   unstarted Backlog card with no open blocker — lowest `rank` first, as under Picking — and
+   start it through Investigate/Plan toward Code. `investigateBacklog.items` leaves a card with an
+   open blocker out; `investigateBacklog.blocked` counts those held cards and `blockedItems` lists
+   up to five with their `blockedBy` identifiers (CARD-0100,
+   `AgentTaskPipelineStatusTests.C100_investigate_backlog_omits_blocked_cards_and_lists_them_as_blocked`;
+   rules in [agent-card-lifecycle.md](agent-card-lifecycle.md#blocked-by-another-card-card-0100)). At the cap, start no new Plan toward Code;
    Investigate, Plan and TestDesign for cards already in the pipe still run. This is CARD-0146
    D7's "planning should only stop if more than 1 card waiting to execute", with its pull side
    stated as well.
