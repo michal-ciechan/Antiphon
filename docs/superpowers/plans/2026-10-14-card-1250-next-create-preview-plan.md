@@ -87,7 +87,7 @@ and `DelegateModal.test.tsx`. S2 implementation and docs.
 | V-19 | Modal walked Orchestrator pin retains Medium and does not show High. |
 | V-20 | Modal unknown Preferred policy tail has the exact dependency label and no Frontier badge. |
 | V-21 | Modal Required forbid-only single-row held/quota/forbidden each shows the exact refusal and no Blocked result. |
-| V-22 | 46 additional create-context parity rows, including binder boundaries and unobserved request inputs. |
+| V-22 | 72 create-context rows, including ASCII boundaries, conservative Unicode boundaries and unobserved request inputs. |
 | V-23 | Modal Hand back, typed card/forbid/explicit-tier, and card-free edit controls. |
 | V-24 | Modal admission dependency remains visible with explicit tier. |
 | R-1 | Whole files: `rolePolicyModel.test.ts`, `RoutingSettingsTab.test.tsx`, `complexityChains.test.tsx` plus the three files above (C097 and C1234 regression cases retained; V17 now uses a real pin DTO, V18/V27 require the exact unknown labels, V25 awaits the second query with the same exact pin assertions). |
@@ -106,7 +106,7 @@ affected: no server source changes.
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
 |---|---|---|---|---|---|---|---:|---:|---|---|
 | CP-1 | Repair-tests | n/a | client-red | `pwsh -NoProfile -File scripts/test-client.ps1 src/features/settings/nextCreatePreview.test.ts src/features/settings/RolePolicySection.test.tsx src/features/delegations/DelegateModal.test.tsx` | V-22..V-24 D1 and boundary red | expected assertion failures at the matching pre-fix SHA | n/a | 4 | true | n/a |
-| CP-2 | Repair | n/a | client | `pwsh -NoProfile -File scripts/test-client.ps1 src/features/settings/nextCreatePreview.test.ts src/features/settings/RolePolicySection.test.tsx src/features/delegations/DelegateModal.test.tsx src/features/settings/rolePolicyModel.test.ts src/features/settings/RoutingSettingsTab.test.tsx src/api/complexityChains.test.tsx -JsonResultPath ../.antiphon/c1250-repair-client.json` | V-1..V-24, R-1 | six files, 223 passed, 0 failed/skipped; CLIENT TESTS EXIT CODE: 0 | n/a | 5 | true | n/a |
+| CP-2 | Repair | n/a | client | `pwsh -NoProfile -File scripts/test-client.ps1 src/features/settings/nextCreatePreview.test.ts src/features/settings/RolePolicySection.test.tsx src/features/delegations/DelegateModal.test.tsx src/features/settings/rolePolicyModel.test.ts src/features/settings/RoutingSettingsTab.test.tsx src/api/complexityChains.test.tsx -JsonResultPath ../.antiphon/c1250-repair-client.json` | V-1..V-24, R-1 | six files, 249 passed, 0 failed/skipped; CLIENT TESTS EXIT CODE: 0 | n/a | 5 | true | n/a |
 | CP-3 | Repair | n/a | client-types | `node client/node_modules/typescript/bin/tsc -b client/tsconfig.json --pretty false` | R-2 | exit 0, 0 TypeScript errors | n/a | 3 | true | n/a |
 | CP-4 | Repair | n/a | client-lint | `node client/node_modules/eslint/bin/eslint.js --config client/eslint.config.js --max-warnings 0 client/src/features/settings/nextCreatePreview.ts client/src/features/settings/nextCreatePreview.test.ts client/src/features/settings/RolePolicySection.tsx client/src/features/settings/RolePolicySection.test.tsx client/src/features/delegations/DelegateModal.tsx client/src/features/delegations/DelegateModal.test.tsx client/src/features/thread/CardThreadPanel.tsx` | R-2 | 0 errors, 0 warnings | n/a | 2 | true | n/a |
 
@@ -314,3 +314,36 @@ Boundary CP-1 at 5e6b2622798d1170e773e346999495b6fca3d84d (run 20261014-214019-a
 specialist eligibility assertions were red. slot=granted waited=0s, sourceState=clean,
 buildSource=notApplicable. The matcher now classifies adjacent UTF-16 units, including
 join controls, and the matrix eligibility excludes specialist roles.
+
+## Repair 2da9a077: Unicode boundary drift (Review eaee1cf7 D1)
+
+Round 5 uses exact ASCII neighbour rules and conservative non-ASCII boundaries.
+The server uses its runtime Unicode tables in the regex and Int32 parsing
+(AgentTaskCardBinder.cs:44-64); title derivation and the UTF-16 clamp remain
+AgentTaskService.cs:4519-4535,4546-4547. These source lines were reopened for this repair.
+
+V-22 adds U+A7CB, U+1C89 and U+1AD0 in five positions: prefix, suffix, in-word
+prefix, in-digits and in-word suffix. U+10400 uses the same five positions.
+Those 20 rows require the exact unknown card-pin label and null target fields.
+Six ASCII letter/digit/underscore prefix/suffix controls require the exact matrix target.
+The suffix digit control includes a trailing ASCII letter to block the longer numeric identifier.
+V-17 and C097 V25 retain their exact assertions.
+
+| Changed V-22 row | Round-5 result and reason |
+|---|---|
+| goal-unicode-prefix-boundary (é) | unknown: a non-ASCII neighbour no longer relies on browser Unicode tables |
+| goal-nonjoiner-prefix (U+200C) | unknown: conservative non-ASCII prefix rule, though .NET 9 blocks this boundary |
+| goal-joiner-prefix (U+200D) | unknown: conservative non-ASCII prefix rule, though .NET 9 blocks this boundary |
+| goal-nonjoiner-suffix (U+200C) | unknown: conservative non-ASCII suffix rule, though .NET 9 blocks this boundary |
+| goal-joiner-suffix (U+200D) | unknown: conservative non-ASCII suffix rule, though .NET 9 blocks this boundary |
+| goal-unparseable-decimal (CARD-12١) | unknown: the ASCII numeric prefix has a non-ASCII neighbour; .NET 9 rejects the full decimal token |
+
+CP-1 demonstrates the new assertions against the unchanged implementation before the fix.
+CP-2 requires six files and 249 passed cases (V-22=72); Min remains n/a because
+command rows use fresh Vitest JSON, not a TUnit execution count. CP-3 and CP-4
+remain TypeScript and ESLint. No whole Unit or server integration class is in scope.
+Import the manifest with rowMinutes 40 and run with --total-timeout 150m, without
+--keep-outputs. Extra slot-gated drivers: dependency installation, one isolated
+checkpoint-tool build, and the required esbuild/Node GET-only differential probe.
+The probe retains the old rows, adds the new rows, and separates conservative unknowns
+from fail-open mismatches against a .NET 9 oracle. No create calls. Budget: 40 minutes.
