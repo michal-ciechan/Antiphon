@@ -222,6 +222,8 @@ public sealed class MatrixChildReceiptTests
         row.SourceLandNotificationId.ShouldBeNull();
         row.NoteHeader.ShouldNotBeNull();
         row.ContentDigest.ShouldBe(DelegationNoteDigest.Compute(child.FailureReason));
+        row.Body.ShouldContain(row.NoteHeader);
+        row.Body.ShouldContain(child.FailureReason);
         return row;
     }
 
