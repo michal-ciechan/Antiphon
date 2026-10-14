@@ -49,14 +49,11 @@ unless the script genuinely can't do it. These are the shapes that bite either w
 | Read | `Get_and_history_print_blocked_by_blocks_and_relationship_rows` | Status, inverse, history, JSON |
 | No match | `Unblock_without_a_matching_blocker_exits_non_zero_and_names_the_current_blockers` | Failure, identifiers, no POST |
 
-- A MOVE INTO AN ACTIVE COLUMN NO LONGER SPAWNS AN AGENT UNLESS YOU ASK. `spawn`/`-Spawn` defaults
-  to false; the response's `spawnedSessionId` / `spawnSuppressed` say what happened. Before
-  CARD-0051 a bookkeeping move always spawned silently and cost two dead sessions and a stray
-  worktree — if you have muscle memory from before that, assume nothing starts unless you pass it.
+- Moving into an active column requires `spawn`/`-Spawn` to start an agent. Inspect
+  `spawnedSessionId` / `spawnSuppressed` in the response.
 
-- A TERMINAL MOVE'S `reason` IS THE VERDICT and persists as the card's `terminalReason`. Say what
-  shipped, what was corrected, what is still open, with commit hashes — it is the last thing anyone
-  reads about the card.
+- Terminal moves persist `reason` as `terminalReason`: include shipped changes, remaining work
+  and commit hashes.
 
 - ARCHIVE IS WHAT DELETE MEANS HERE (`POST /api/cards/{id}/archive` with token and reason). The row
   stays so references never dangle and the identifier is never handed out again.
