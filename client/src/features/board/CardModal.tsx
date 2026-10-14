@@ -22,11 +22,10 @@ import { stateLabel } from './boardVisuals'
 import { SessionTabs } from './SessionTabs'
 import { CardThreadPanel } from '../thread/CardThreadPanel'
 import { SuspenseBoundary } from '../../shared/SuspenseBoundary'
+import { loadCardEditModal } from './cardEditModalLoader'
 import './CardModal.css'
 
-const CardEditModal = lazy(() =>
-  import('./CardEditModal').then((m) => ({ default: m.CardEditModal })),
-)
+const CardEditModal = lazy(loadCardEditModal)
 
 interface CardModalProps {
   boardId: string

@@ -1,10 +1,12 @@
 import { HttpResponse, http } from 'msw'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { CardDto } from '../../api/boards'
-import { renderWithProviders, screen, userEvent, waitFor, within } from '../../test/utils'
+import { fireEvent } from '@testing-library/react'
+import { act, renderWithProviders, screen, userEvent, waitFor, within } from '../../test/utils'
 import { server } from '../../test/mocks/server'
 import { AgentPicker } from './AgentPicker'
 import { CardModal } from './CardModal'
+import { loadCardEditModal } from './cardEditModalLoader'
 
 vi.mock('./SessionTerminal', () => ({
   SessionTerminal: () => <div data-testid="session-terminal" />,
@@ -114,10 +116,16 @@ describe('CardModal', () => {
     server.use(http.post('/api/boards/board-1/cards', async ({ request }) => { post(await request.json()); return HttpResponse.json(card) }))
     renderWithProviders(<CardModal boardId="board-1" card={null} opened onClose={() => undefined} />)
     expect(screen.getByRole('textbox', { name: 'Card-file visibility' })).toHaveValue('Inherit')
-    await userEvent.type(screen.getByLabelText('Title'), 'Public title')
-    await userEvent.type(screen.getByLabelText('Description'), 'Public description')
-    await userEvent.type(screen.getByLabelText('Private notes (kept in Antiphon; excluded from card files)'), '  C408_PRIVATE  ')
-    await userEvent.click(screen.getByRole('button', { name: 'Create' }))
+    // Pasted, not typed: per-keystroke typing cost 2.9 s alone and hit the 20 s hang detector under
+    // load (CARD-1256). Nothing here depends on intermediate keystrokes; the request body is asserted.
+    const user = userEvent.setup()
+    await user.click(screen.getByLabelText('Title'))
+    await user.paste('Public title')
+    await user.click(screen.getByLabelText('Description'))
+    await user.paste('Public description')
+    await user.click(screen.getByLabelText('Private notes (kept in Antiphon; excluded from card files)'))
+    await user.paste('  C408_PRIVATE  ')
+    await user.click(screen.getByRole('button', { name: 'Create' }))
     await waitFor(() => expect(post).toHaveBeenCalledWith(expect.objectContaining({ description: 'Public description', privateNotes: '  C408_PRIVATE  ', cardFileVisibility: 'Inherit' })))
   })
 
@@ -197,18 +205,24 @@ describe('CardModal', () => {
   })
 
   it('opens the edit dialog from the header actions, prefilled', async () => {
-    // This case checks the prefilled form. Await the lazy chunk explicitly so host load during
-    // module evaluation does not spend the DOM query's budget before the form can mount.
-    await import('./CardEditModal')
+    // The dialog is a lazy chunk, and React.lazy suspends on its first render even with the module
+    // cached; its retry was a time-sliced render costing seconds of CPU in jsdom, which a findBy*
+    // window lost under load (CARD-1256). Resolve the very promise the lazy component uses, then
+    // click inside one act: React's retry is a microtask behind the click's render, lands in act's
+    // queue, and act renders the dialog to completion before returning. No polling window remains.
+    await loadCardEditModal()
     server.use(agentDefinitionsHandler(), discussionHandler())
     renderWithProviders(
       <CardModal boardId="board-1" card={card} opened onClose={() => undefined} />,
     )
 
     expect(screen.queryByRole('heading', { name: 'Edit #1' })).not.toBeInTheDocument()
-    await userEvent.click(screen.getByRole('button', { name: 'Edit card' }))
+    const edit = screen.getByRole('button', { name: 'Edit card' })
+    await act(async () => {
+      fireEvent.click(edit)
+    })
 
-    expect(await screen.findByRole('heading', { name: 'Edit #1' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Edit #1' })).toBeInTheDocument()
     expect(screen.getByLabelText('Title')).toHaveValue('Implement terminal')
     expect(screen.getByLabelText('Description')).toHaveValue('Wire xterm to the session stream')
   })

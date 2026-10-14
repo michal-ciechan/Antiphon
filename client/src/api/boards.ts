@@ -1,7 +1,7 @@
 import { useQuery, useQueries, useMutation, useQueryClient } from '@tanstack/react-query'
 import type { CardImportance, CardQuadrant, CardUrgency } from '../features/board/cardRanking'
 import type { CardFileStatus, CardFileVisibility } from './cardFiles'
-import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from './client'
+import { ApiError, apiDelete, apiGet, apiPatch, apiPost, apiPut } from './client'
 
 export type { CardImportance, CardQuadrant, CardUrgency }
 
@@ -867,6 +867,18 @@ export function useCardRevisions(cardId: string | undefined, enabled = true) {
   })
 }
 
+/**
+ * A 409 on a relationship write means the card this view holds is out of date: a stale token
+ * (another writer moved it on) or a card archived elsewhere, both code `conflict`. Without a reload
+ * every retry resends the same stale token (CARD-1256 D3). The cycle and duplicate refusals are
+ * 409s too; for them this costs one extra card read and changes nothing.
+ */
+function reloadCardAfterConflict(queryClient: ReturnType<typeof useQueryClient>, cardId: string, error: unknown) {
+  if (error instanceof ApiError && error.status === 409) {
+    queryClient.invalidateQueries({ queryKey: boardKeys.card(cardId) })
+  }
+}
+
 export function useCardRelationships(cardId: string) {
   return useQuery({
     queryKey: boardKeys.cardRelationships(cardId),
@@ -889,6 +901,7 @@ export function useAddBlocker(boardId: string, cardId: string) {
       // The boards prefix also invalidates relationships, including a cached inverse view.
       invalidateAfterCardWrite(queryClient, boardId, cardId)
     },
+    onError: (error) => reloadCardAfterConflict(queryClient, cardId, error),
   })
 }
 
@@ -901,6 +914,7 @@ export function useRemoveBlocker(boardId: string, cardId: string) {
       queryClient.setQueryData(boardKeys.card(cardId), card)
       invalidateAfterCardWrite(queryClient, boardId, cardId)
     },
+    onError: (error) => reloadCardAfterConflict(queryClient, cardId, error),
   })
 }
 
