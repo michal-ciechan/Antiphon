@@ -376,6 +376,24 @@ describe('DelegateModal', () => {
     expect(screen.getByTestId('tier-Low')).toBeInTheDocument()
   })
 
+  it('C1234 unsupported-policy-kind-falls-back-to-constant', async () => {
+    // The row keeps its defined level; the server withholds the effective target (Kind Raw).
+    serveRolePolicyRow('Mutation', (row) => ({
+      ...row,
+      level: 'High',
+      kind: 'Raw',
+      alias: '',
+      effective: { source: 'rolePolicy', agentKind: null, modelLevel: null, alias: null, strength: null },
+    }))
+    renderWithProviders(<DelegateModal opened onClose={() => {}} />)
+
+    await userEvent.click(screen.getByRole('radio', { name: 'Mutation' }))
+    expect(await screen.findByTestId('delegate-tier-source-fallback')).toBeInTheDocument()
+    expect(screen.queryByTestId('delegate-tier-source-rolePolicy')).not.toBeInTheDocument()
+    expect(screen.getByTestId('tier-Low')).toBeInTheDocument()
+    expect(screen.queryByTestId('tier-High')).not.toBeInTheDocument()
+  })
+
   it('C097 V27 orchestrator-floor-on-server-level', async () => {
     renderWithProviders(<DelegateModal opened onClose={() => {}} />)
 
