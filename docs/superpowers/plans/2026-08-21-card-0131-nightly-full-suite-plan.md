@@ -11,6 +11,13 @@ human actually sees, naming the suite and the count. The done-when bar is explic
 must be **proven to fire** (not just configured), and the alert path must be **proven to deliver**
 via a deliberately-broken test, once.
 
+**Traffic-check update (CARD-1243, 2026-10-14):** Family is the authorized conversation for
+the manual, operator-initiated Telegram round-trip check; its binding is configured in the
+channel settings. A test message reaches a real family group. An agent must not send test
+traffic there on its own. The test destination used by this historical nightly-alert plan
+is retired; the decision does not authorize automated nightly alerts to Family. Current
+nightly operations are owned by [nightly-watchdog.md](../../nightly-watchdog.md).
+
 ## Two corrections to the card's text (do not build from the stale assumptions)
 
 1. **CARD-0102 has shipped — all three slices are on master** (`700f084` closed it with acceptance
@@ -21,10 +28,9 @@ via a deliberately-broken test, once.
    corpses. The nightly E2E leg targets the isolated runner **from day one**; no alert-text caveat
    about shared production infrastructure is needed, and no later "switch over" step exists. The
    nightly job never touches the always-on daemon on 17204.
-2. **Alerting channel is decided (user instruction): Telegram, the `Antiphon-Family` TEST group,
-   chat id `-5370465377` — never the live `Family` production group.** Mechanics per
-   `docs/telegram-bot-ops.md`: the existing direct-send path `dotnet run scripts/tg-send.cs --
-   --to -5370465377 --text "..."` (run from `C:\src\ClaudeBot`) produces a `ChannelReply` straight
+2. **Historical alerting decision (2026-08-21): Telegram, a test destination now retired.**
+   The direct-send path (run from
+   `C:\src\ClaudeBot`) produced a `ChannelReply` straight
    onto Kafka `channels.outbound` at `100.93.77.126:19092` over Tailscale; the always-on
    `am-service` on server2 relays it and logs `[outbound] sent via telegram -> <id>`. The nightly
    alert uses **this same direct-send mechanism** — deliberately NOT the Antiphon agent/channel-
@@ -104,12 +110,15 @@ Failure-only alerting has a failure mode this card was born from: if the schedul
 Windmill worker down, SSH key rotated, machine asleep — silence looks identical to green, and
 nobody watches the Windmill run list. **The nightly always sends**: green is one line
 (`nightly GREEN <sha> · 4 suites · NNNN tests · 52m`), red is the full per-suite breakdown. The
-missing morning message then becomes the alarm for the pipeline itself dying. One line per night
-in a test group that exists for ops verification traffic is acceptable noise; this is the same
+missing morning message then becomes the alarm for the pipeline itself dying. The historical
+plan treated one line per night at its now-retired test destination as acceptable noise; this was the same
 "absence must be detectable" principle as the card's own proven-to-fire bar, applied to every
 night after the first. If the produce itself fails (tg-send exit 2: broker unreachable), retry
 once after 60 s, then write the alert text to the run log and exit non-zero so the Windmill run
 goes red as the last-resort surface.
+
+This historical alerting design does not authorize nightly traffic to Family; the current
+Family round-trip check is manual and operator-initiated, as stated in the update above.
 
 ### D3 — git policy in a shared live tree: never disturb in-flight work
 
@@ -180,17 +189,17 @@ acceptable S1 pass — the orchestrator's job is truthful detection, not a green
    Antiphon.E2E              pass  13 files
    ```
 
-   Delivery: `dotnet run scripts/tg-send.cs -- --to -5370465377 --text-file <composed>` with cwd
-   `C:\src\ClaudeBot` (`--text-file` sidesteps quoting; the cross-repo call is the decided reuse —
+   Historical delivery used `scripts/tg-send.cs` with `--text-file <composed>` from
+   `C:\src\ClaudeBot` (`--text-file` sidesteps quoting; the cross-repo call was the decided reuse —
    copying the sender into Antiphon would fork a working tool). Success = tg-send exit 0
    (`produced -> channels.outbound...`); on exit 2, one retry after 60 s, then log-and-exit-nonzero
-   per D2. The chat id is passed as a script constant with the "never the live Family group"
-   warning beside it.
+   per D2. That retired destination is not a current execution instruction; do not repoint
+   this automated sender to Family under the manual traffic-check authorization.
 2. **The proof, per the card's done-when** ("a deliberately-broken test has been used once"):
    on a scratch branch, add a trivially failing client test (`expect(true).toBe(false)`), run
    `pwsh -File scripts/nightly-tests.ps1 -Suites client` — the real orchestrator path end to end:
    suite runs, exit 1 captured, count parsed, message composed, tg-send produces, and the message
-   **arrives in Antiphon-Family naming `client` and `1 failed`**. Screenshot/`[outbound]` log line
+   **arrives at the historical test destination naming `client` and `1 failed`**. Screenshot/`[outbound]` log line
    recorded as card evidence; branch deleted. The client suite is the probe vehicle because it is
    the fastest of the four and `test-client.ps1`'s exit-code contract is already pinned.
 3. Also send one green run's one-liner (can be the same session, `-Suites client` after revert)

@@ -1048,6 +1048,15 @@ import acceptance alone is not discovery evidence. Regression `Min` values are t
 `[Test]` method counts read from master `d317c3f59`, as the plan states; `[Arguments]` and `MethodDataSource`
 expansion is recorded by Code from the runner's output.
 
+CARD-1257 corrects CP-9 / R-A5 to the full `/*/*/CommitOnSettlePolicyTests/*`
+class with **Min = 12**, exactly 12 passed results and zero failed/skipped. Its eight
+methods include two methods expanded to three argument cases each (6 + 3 + 3 = 12).
+The private fixture now uses a real Git repository with an initial commit; test
+bodies and policy assertions stay unchanged. The prior nine workspace-guard
+failures were reproduced on unchanged master source before the fixture repair.
+The executable row is in the linked matrix plan; the CARD-1257 checkpoint plan
+records the isolated red, full-class red and full-class green selections.
+
 ### Cost
 
 As the plan states: ordinary green rows 155 minutes, red-first rows 25 minutes, authoring 470 minutes across seven

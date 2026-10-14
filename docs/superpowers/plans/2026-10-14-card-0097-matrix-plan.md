@@ -468,7 +468,7 @@ Full V/R/PC binding, fixtures and the wire contract are in
 | CP-6 | S-A | CP-4 | pin-create-regression | `/*/*/RoutingPinCreateTests/*` | R-A2 | the class roster, 0 failed/skipped | 13 | 8 | false |
 | CP-7 | S-A | CP-4 | pin-list-create-regression | `/*/*/RoutingPinCandidateCreateTests/*` | R-A3 | the class roster, 0 failed/skipped | 17 | 8 | false |
 | CP-8 | S-A | CP-4 | dispatcher-regression | `/*/*/ComplexityDispatcherTests/*` | R-A4 | the class roster, 0 failed/skipped | 9 | 8 | false |
-| CP-9 | S-A | CP-4 | commit-on-settle-regression | `/*/*/CommitOnSettlePolicyTests/*` | R-A5 | the class roster (8 methods, 6 `[Arguments]` rows), 0 failed/skipped | 8 | 6 | false |
+| CP-9 | S-A | CP-4 | commit-on-settle-regression | `/*/*/CommitOnSettlePolicyTests/*` | R-A5 | exactly 12 results (8 methods, two expanded to 3 argument cases each), 0 failed/skipped; CARD-1257 Git fixture repair | 12 | 6 | false |
 | CP-10 | S-B tests committed, production not yet | `tests/Antiphon.Tests -> bin-c097m-bred/` | effective-red | `/*/*/ComplexityEffectiveComposeTests/*` | V-B1–V-B4, V-B10, V-B11 | compile-only stub of `ComplexityEffective.Compose` returning an empty list and `PolicyTarget` returning a resolution with null fields; 6 methods (9 results) run, each fails | 6 | 6 | false |
 | CP-11 | S-B | `tests/Antiphon.Tests -> bin-c097m-b/` | effective-compose | `/*/*/ComplexityEffectiveComposeTests/*` | V-B1–V-B4, V-B10, V-B11 | 6 methods (9 results), 0 failed/skipped | 6 | 6 | false |
 | CP-12 | S-B | CP-11 | effective-http | `/*/*/ComplexityEffectiveHttpTests/*` | V-B5, V-B6, V-B12 | 3 methods, 0 failed/skipped | 3 | 6 | false |

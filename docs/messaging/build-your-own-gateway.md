@@ -233,11 +233,15 @@ is in the same Gateway package. Observe produced inbound (the Kafka key is
 `Antiphon.Messaging.FakeGateway` (`antiphon-fake-gateway`, AppHost port
 17208) is itself a complete adapter: `POST /inbound` injects a message,
 `GET /deliveries` asserts the reply. Use it as the 4-step smoke
-(fake broker + fake gateway + Antiphon server) when you need the full
-catalog → agent → outbound path. The AppHost defaults to the local
-broker; if this machine has opted into a live broker, remove the
-`AntiphonMessaging:BootstrapServers` AppHost user-secret for the
-duration of a local smoke.
+(isolated broker + fake gateway + Antiphon server) when you need the full
+catalog → agent → outbound path. Confirm that no real gateway is attached
+to the effective broker before injecting synthetic messages. AppHost's
+local-broker default or removing a broker override alone does not establish
+isolation. For the separate real Telegram round-trip check, follow
+[channel ops](../telegram-bot-ops.md#deploying-an-optional-remote-messaging-service):
+Family is a real family group with its binding configured in the channel settings;
+the check is manual and operator-initiated. An agent must not send test traffic
+there on its own.
 
 **EchoGateway against the local broker.** With Redpanda on `localhost:19092`
 and Antiphon running, `dotnet run --project samples/EchoGateway`, type a

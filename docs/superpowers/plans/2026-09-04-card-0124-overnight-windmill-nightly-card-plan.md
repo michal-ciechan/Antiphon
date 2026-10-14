@@ -18,7 +18,7 @@ gate.
 | `scripts/nightly-tests.ps1` | Shipped by CARD-0131 S1 (`3b2502e4`). Preflight, four suites sequential, per-suite logs, `summary.json`, `bin-nightly/` cleanup. **Runs in `C:\src\Antiphon`** with a "pull-rebase only if clean master" policy (CARD-0131 D3). | file header; CARD-0131 card "Progress" |
 | Windmill script `u/lndcobra/antiphon_nightly_tests` | **Does not exist.** CARD-0131 S2 (alerting) and S3 (schedule) were never dispatched. | `GET /api/w/mc/scripts/exists/p/u/lndcobra/antiphon_nightly_tests` → `false` (queried live, temp token, revoked after) |
 | `C:\src\Antiphon\logs\nightly\` | Does not exist — the script has never run on a schedule on this machine. | `ls` on the main checkout |
-| Alerting | CARD-0131 designed Telegram to the test group. The redirected CARD-0124 replaces that with "file a card". | CARD-0124 description, 2026-09-04 redirect |
+| Alerting | CARD-0131 designed Telegram to a test destination now retired. The redirected CARD-0124 replaces that with "file a card". The later CARD-1243 decision (2026-10-14) authorizes a manual, operator-initiated round-trip check in Family, a real family group with its binding configured in the channel settings; an agent must not send test traffic there on its own. | CARD-0124 description, 2026-09-04 redirect; CARD-1243 traffic-check update |
 
 Three things about the existing script have to change, and they are the whole reason this plan
 exists rather than "dispatch CARD-0131 S3":

@@ -1,16 +1,21 @@
 ---
 name: telegram-e2e-smoke
-description: End-to-end smoke-test the Telegram channel pipeline (text, outbound attachments, inbound attachments) using the Antiphon-Family group as the test bed. Use after touching the bridge, dispatcher, messaging contracts, Kafka config, or the machine's configured Telegram gateway — a channel change is NOT done until this passes.
+description: Manual, operator-initiated Telegram channel smoke check (text, outbound attachments, inbound attachments) in Family after bridge, dispatcher, messaging contracts, Kafka config, or gateway changes. Family is a real family group; agents must not send test traffic there on their own.
 ---
 
 # telegram-e2e-smoke — verify the Telegram pipeline end to end
 
-The **Antiphon-Family** Telegram group (chat id `-5370465377`, agent "Family"/Mikey, workspace
-`C:\src\ClaudeBot\agents\family`) is the designated test bed — never smoke-test in AZ Care or
-other production groups. Config-level checks (agent Running, channel bound) are NOT enough;
+The **Family** Telegram conversation is the authorized destination for this manual,
+operator-initiated check (CARD-1243, closed 2026-10-14). Its binding is configured in the
+channel settings; verify the bound agent and workspace there. A test message to Family
+reaches a real family group. An agent must not send test traffic there on its own.
+Deployment or code-change authorization does not authorize this traffic. If the operator
+has not initiated the check, report live verification as pending. Use a broker with no real
+gateway attached for synthetic fake-gateway traffic, per [channel ops](../../../docs/telegram-bot-ops.md#per-bot-deployment-model).
+Config-level checks (agent Running, channel bound) are NOT enough;
 two live incidents (2026-07-29: lost dispatcher reply; dropped UTR photo) both passed config
-checks. A change is done only when a real message round-trips and the result **renders in the
-Telegram chat**.
+checks. Live end-to-end acceptance requires an observed message round trip whose result
+**renders in Family**.
 
 ## The pipeline under test
 
@@ -20,16 +25,17 @@ inbound:  Telegram → the configured Telegram gateway (downloads attachment byt
 outbound: agent reply (`[[attach: <path>]]` markers) → dispatcher (inlines file bytes)
           → `channels.outbound` → gateway sendMessage/sendDocument → Telegram
 
-## Driving Telegram as Mike
+## Operator-initiated Telegram check
 
 Use browser-harness against the persistent CDP Edge profile (holds Mike's Telegram Web login):
 
 ```bash
 # CDP Edge must be up on :9222 (see ~/.claude memory reference_browser_test_cdp)
 BU_CDP_URL=http://localhost:9222 browser-harness <<'PY'
-new_tab("https://web.telegram.org/k/#-5370465377")   # NOTE: hash nav does NOT switch chats on a warm SPA —
-PY                                                    # click the chat row and VERIFY the active title first:
-# js("document.querySelector('.chat.active .peer-title')?.textContent") must be "Antiphon-Family"
+new_tab("https://web.telegram.org/k/")
+PY
+# Select the Family chat row by name; verify the active title before sending:
+# js("document.querySelector('.chat.active .peer-title')?.textContent") must be "Family"
 ```
 
 Send text: focus composer (`click_at_xy` on it), `type_text(...)`, `press_key("Enter")`.
@@ -48,26 +54,26 @@ cdp("Page.setInterceptFileChooserDialog", enabled=False)
 
 ## The verification chain (all four steps, in order)
 
-1. **Channel ingested** — `GET :17202/api/channels`: the Antiphon-Family row's
+1. **Channel ingested** — `GET :17202/api/channels`: the Family row's
    `lastMessageAt`/`messageCount` moved (attachment-only messages show `lastMessagePreview: null`).
    If not: identify this machine's configured Telegram gateway and effective broker using
    [channel ops](../../../docs/telegram-bot-ops.md#per-bot-deployment-model). Check that gateway's
    known health/log location without dumping secrets. The
    [desktop Slack sidecar](../../../docs/slack-bot-ops.md#desktop-slack-sidecar) is not evidence
    of a Telegram gateway. Do not assume a remote host or fall through to SSH when a local
-   task is absent. Any broker sampling must be bounded (always pass `-n` to `rpk topic consume`).
-2. **Delivered into the session** — Family's `persistentSessionId` from `/api/agents`, then
+   task is absent. Bound broker sampling with `-n` on `rpk topic consume`.
+2. **Delivered into the session** — the bound agent's `persistentSessionId` from `/api/agents`, then
    `GET :17202/api/sessions/{sid}/transcript`: a `UserPrompt` with the `[Telegram ...]` envelope;
    photos show `[photo attached: C:\src\ClaudeBot\agents\family\.antiphon\inbox\...]` and that
    file must exist with the right bytes. If the session is mid-turn the envelope waits in
    `SessionQueuedMessages` (WhenIdle) — that's queued, not lost.
 3. **Agent replied** — poll the transcript for a `TurnEnd` + `AssistantText` after the prompt's
-   sequence (poll with a background `until curl ... ; do sleep 5; done` loop, not fixed sleeps).
+   sequence, using bounded foreground polling.
    Outbound attachments: the reply text carries `[[attach: <path>]]` markers.
 4. **Rendered in Telegram** — screenshot the chat; the reply text AND any document bubble must be
    visible. Only this step closes the loop — a transcript reply alone does not prove delivery
    (dispatcher and gateway can each still drop it). For attachment sends also confirm the message
-   on `channels.outbound` carries `attachments` (proves it rode the bus, not a side channel).
+   on `channels.outbound` carries `attachments` as broker publication evidence.
 
 ## Standard test asks (phone-sized, so Mikey's replies stay cheap)
 
@@ -75,8 +81,8 @@ cdp("Page.setInterceptFileChooserDialog", enabled=False)
 - Outbound file: "Mikey, attachment test: create a small one-page PDF and send it to this chat by
   putting [[attach: <absolute path to the pdf>]] on its own line in your reply."
 - Inbound photo: send a generated image containing a known number with NO caption, then:
-  "Mikey, what number is in the photo I just sent?" — the reply must quote the number (proves
-  inbox save + vision read).
+  "Mikey, what number is in the photo I just sent?" — compare the quoted number with the
+  image and inspect the saved inbox file separately.
 - Multi-line message (the 2026-07-29 fragmentation miss — big pasted bodies MUST reach the agent
   as ONE prompt): send a message with real line breaks whose first line is "ALPHA ..." and last
   line asks "reply with the exact first and last lines of THIS message". Verify the transcript
