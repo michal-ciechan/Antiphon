@@ -36,6 +36,7 @@ Further corrections found in the census:
   19 / 19, `AgentTaskPipelineStatusC1076Tests.cs` 4 / 9, `HostBudgetPipelineTests.cs` 4 / 4): the class
   filter executes **71** today, not 30. T-16 lives in a new partial file
   `AgentTaskPipelineStatusC100Tests.cs` (the C557/C1076 convention) and CP-6 expects 72.
+  Superseded by A-13: the class filter executes 67 today and CP-6 expects 68.
 - **A-8.** `CardHistory.test.tsx` has 9 `it` plus one 3-row `it.each` = 12 executions, so the six
   CP-10 files hold 2 + 12 + 18 + 26 + 10 = **68** today, not 65; with the 7 new client tests CP-10
   is frozen at **75**.
@@ -47,6 +48,14 @@ Further corrections found in the census:
 - **A-11.** `POST …/relationships` 201 body is the `CardRelationshipDto` plus `cardConcurrencyToken`
   (the blocked card's rotated token), so `card.ps1 block` and the client can continue without a
   second GET; `…/remove` returns the `CardDto` as planned.
+- **A-13 (S3 Code task 5e99ef9f, census correction).** `AgentTaskPipelineStatusTests.cs` also
+  declares a second class, `AgentTaskPipelineEndpointTests` (4 methods / 4 executions:
+  `pipeline_route_is_literal_and_returns_the_advisory_contract`, `pipeline_json_includes_agent_kind_on_a_row`,
+  `existing_agent_task_routes_are_unchanged`, `C557_pipeline_includes_ranked_backlog_contract`), which the
+  class filter `/*/*/AgentTaskPipelineStatusTests/*` does not select. The partial class holds
+  35 + 19 + 9 + 4 = **67** executions before S3 and **68** with T-16 (CP-6 at `d76e14e4` executed 68,
+  0 failed; the run reported a roster miss against the old 72). The endpoint class is the JSON-route
+  regression for R-3 and runs as its own filter, `/*/*/AgentTaskPipelineEndpointTests/*` (4).
 - **A-12.** `CardDto.Blockers` is `null` (not an empty list) when the card has no rows and is
   `[JsonIgnore(WhenWritingNull)]`; `OpenBlockerCount` is `WhenWritingDefault`. A card with no
   relationship rows serializes exactly as today (R-1 `Full_board_views_remain_wire_identical…`).
@@ -217,7 +226,7 @@ transcripts, busy recipients, enqueue-failure recovery.
 - R-1: content edit, archive, move, reopen, list and summary wire shapes are unchanged by the new `CardRevision` columns, DTO fields and includes | `CardCorrectionApiTests` (12), decisive: `Full_board_views_remain_wire_identical_and_do_not_emit_summary_metadata` | CP-2
 - R-1b: identifier resolution is unchanged by the new scope caller | `CardIdentifierResolutionTests` (18) | CP-4
 - R-2: no relationship field reaches a card file | T-29 (new, decisive key-set equality) plus the existing 11 `CardTaskFileRendererTests` | CP-4
-- R-3: existing orchestrator, pipeline and snapshot behaviour | `OrchestratorServiceIntegrationTests` (27), `AgentTaskPipelineStatusTests` (71), `ExpectationSnapshotTests` (6) | CP-5, CP-6, CP-7
+- R-3: existing orchestrator, pipeline and snapshot behaviour | `OrchestratorServiceIntegrationTests` (27), `AgentTaskPipelineStatusTests` (67, A-13), `AgentTaskPipelineEndpointTests` (4, A-13), `ExpectationSnapshotTests` (6) | CP-5, CP-6, CP-7
 - R-4: existing card.ps1 list/search behaviour with the shared helper edits | `CardListSearchScriptTests` (11) | CP-9
 - R-5: existing board client tests, the whole client suite and the lint gate (`lint.gate.test.ts`) | `CardRow.test.tsx` (26), `BacklogSection.test.tsx` (10), `CardModal.test.tsx` (18), `BoardCard.test.tsx` (2), `CardHistory.test.tsx` (12), full suite | CP-10, CP-11
 
@@ -337,7 +346,7 @@ Filters were checked against the census above; a zero-test run is a wrong filter
 | CP-3 | S1-S2 | CP-1 | relationship-api | `/*/*/CardRelationshipApiTests/*` | V-2, V-3, V-4, V-5 | 21 executions over 12 methods (T-6 2 rows, T-7 3 rows, T-9 6 rows, T-30 2 rows), 0 failed/skipped | 21 | 5 | true |
 | CP-4 | S1-S2 | CP-1 | identifier-and-renderer-regression | `/*/Antiphon.Tests.Application/(CardIdentifierResolutionTests*)\|(CardTaskFileRendererTests*)/*` | R-1b, R-2 | 18 + 12 = 30 executions, both classes present in the TRX, 0 failed/skipped | 30 | 3 | true |
 | CP-5 | S3 | `tests/Antiphon.Tests -> bin-c0100-s3/` | orchestrator-eligibility | `/*/*/OrchestratorServiceIntegrationTests/*` | V-6, R-3 | all 28 methods, 0 failed/skipped | 28 | 12 | true |
-| CP-6 | S3 | CP-5 | pipeline-backlog | `/*/*/AgentTaskPipelineStatusTests/*` | V-6, R-3 | 72 executions across the four partial files, 0 failed/skipped | 72 | 5 | false |
+| CP-6 | S3 | CP-5 | pipeline-backlog | `/*/*/AgentTaskPipelineStatusTests/*` | V-6, R-3 | 68 executions across the five partial files (A-13), 0 failed/skipped | 68 | 5 | false |
 | CP-7 | S3 | CP-5 | snapshot-backlog | `/*/*/ExpectationSnapshotTests/*` | V-6, R-3 | all 7 methods, 0 failed/skipped | 7 | 2 | false |
 | CP-8 | S4 | `tests/Antiphon.Tests -> bin-c0100-s4/` | card-script-relationships | `/*/*/CardRelationshipScriptTests/*` | V-7 | all 4 methods, 0 failed/skipped | 4 | 6 | false |
 | CP-9 | S4 | CP-8 | card-script-regression | `/*/*/CardListSearchScriptTests/*` | R-4 | all 11 methods, 0 failed/skipped | 11 | 2 | false |
@@ -346,7 +355,7 @@ Filters were checked against the census above; a zero-test run is a wrong filter
 
 Census behind the counts (2026-10-14, source): `CardCorrectionApiTests` 12; `CardIdentifierResolutionTests`
 18; `CardTaskFileRendererTests` 11 (+1 = 12); `OrchestratorServiceIntegrationTests` 27 (+1 = 28);
-`AgentTaskPipelineStatusTests` 39 + 19 + 9 + 4 = 71 (+1 = 72); `ExpectationSnapshotTests` 6 (+1 = 7);
+`AgentTaskPipelineStatusTests` 35 + 19 + 9 + 4 = 67 (+1 = 68; A-13, the 4 `AgentTaskPipelineEndpointTests` excluded); `ExpectationSnapshotTests` 6 (+1 = 7);
 `CardListSearchScriptTests` 11; client `BoardCard` 2 (+2), `CardHistory` 12 (+1), `CardModal` 18 (+1),
 `CardRow` 26, `BacklogSection` 10, `CardBlockers` 0 (+3). Green client runs print the aggregate only,
 so Code reports the `Tests N passed` line plus a per-file source census. No census class has a
