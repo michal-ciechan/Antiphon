@@ -53,6 +53,9 @@ orchestrator carry git-common once (C1213_RoleCompositionsResolve). git-common s
 narrow it, never widen it: Review's read-only INVARIANTS come first in its composition and still
 govern (C1213_ReviewOverrideFollowsFragment).
 
+Brief rules for git-common live in [Writing a brief](../../docs/orchestration-loop.md#3-writing-a-brief);
+the two branch forms are in [Delegate branch names](../../docs/orchestration-loop.md#delegate-branch-names-card-1213).
+
 ## Which agent carries which bundle
 
 Delegates get theirs from the role map in `InstructionBundles.ForDelegate` (Orchestrator tasks:
