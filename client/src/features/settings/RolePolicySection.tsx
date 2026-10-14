@@ -10,6 +10,7 @@ import {
   pinCandidateLabel,
   timeoutLabel,
 } from './rolePolicyModel'
+import { pendingReadLabel } from './routingSettingsModel'
 
 /**
  * CARD-0097. Read-only RolePolicy per role beside its active stage-wide pin. Rows and their order
@@ -17,13 +18,18 @@ import {
  */
 export function RolePolicySection() {
   const policy = useRolePolicy()
+  // CARD-1270 D-1: a pending read (loading, or paused offline) is not a failure.
+  const pending = pendingReadLabel(policy, 'Role policy')
 
-  if (policy.isLoading) {
+  if (pending) {
     return (
       <Paper withBorder p="md" data-testid="role-policy-section">
         <SectionHeading />
-        <Group justify="center" py="sm">
+        <Group justify="center" gap="xs" py="sm">
           <Loader size="sm" />
+          <Text size="sm" c="dimmed">
+            {pending}
+          </Text>
         </Group>
       </Paper>
     )

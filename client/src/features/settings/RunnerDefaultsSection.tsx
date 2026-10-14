@@ -10,6 +10,7 @@ import {
 } from '../../api/runnerDefaults'
 import { useSessionRunners } from '../../api/sessionRunners'
 import type { AgentKind } from '../../api/boards'
+import { pendingReadLabel } from './routingSettingsModel'
 
 const INHERIT = '__inherit__'
 const BUILTIN = '__builtin__'
@@ -28,14 +29,22 @@ export function RunnerDefaultsSection() {
   const revisions = useRunnerDefaultRevisions()
   const runners = useSessionRunners()
   const save = usePutRunnerDefaults()
+  // CARD-1270 D-1: a pending read (loading, or paused offline) is neither a failure nor an empty catalogue.
+  const defaultsPending = pendingReadLabel(defaults, 'Runner defaults')
+  const runnersPending = pendingReadLabel(runners, 'Runner catalogue')
 
-  if (defaults.isLoading || runners.isLoading) {
+  if (defaultsPending || runnersPending) {
     return (
       <Paper withBorder p="md" data-testid="runner-defaults-section">
         <Text fw={600}>Runner defaults</Text>
         <Group justify="center" py="sm">
           <Loader size="sm" />
         </Group>
+        {[defaultsPending, runnersPending].filter(Boolean).map((label) => (
+          <Text key={label} size="sm" c="dimmed">
+            {label}
+          </Text>
+        ))}
       </Paper>
     )
   }
@@ -63,7 +72,7 @@ export function RunnerDefaultsSection() {
       history={revisions.error ? [] : (revisions.data?.revisions ?? [])}
       historyUnknown={revisions.error
         ? `History unknown (revisions read failed: ${getApiErrorMessage(revisions.error, 'request failed')}).`
-        : revisions.isLoading ? 'History loading.' : null}
+        : pendingReadLabel(revisions, 'History')}
       saving={save.isPending}
       onSave={async (body) => {
         try {
