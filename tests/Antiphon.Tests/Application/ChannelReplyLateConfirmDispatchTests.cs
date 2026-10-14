@@ -1,3 +1,5 @@
+using Antiphon.Messaging;
+using Antiphon.Messaging.Client;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
@@ -195,5 +197,107 @@ public class ChannelReplyLateConfirmDispatchTests
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
         await h.DrainOutboundAsync();
         h.Messaging.SentReplies.ShouldHaveSingleItem().Text.ShouldBe(channelAnswer);
+    }
+
+    /// <summary>
+    /// CARD-1247 F1 (Review d0f3fd63): the grace confirm's reply publication must not run inside the
+    /// per-session queue lock. Real entry: a WhenIdle Channel enqueue types inline under that lock;
+    /// the UserPrompt reaches only the runner, so the confirm ends NoTranscriptRecord and the grace
+    /// pull late-confirms the row. The producer is held. Another same-session enqueue must still
+    /// complete while it is held, and releasing it yields exactly one correctly addressed reply.
+    /// Both shapes publish directly from the dispatcher: default-off with a catalog row, and a
+    /// catalog-less route with capture on.
+    /// </summary>
+    [Test]
+    [Arguments(false, true)]
+    [Arguments(true, false)]
+    public async Task A_held_grace_reply_publication_does_not_block_the_next_same_session_queue_operation(
+        bool unifiedRecovery, bool catalog)
+    {
+        var producer = new HeldProducer();
+        await using var h = await BridgeQueueHarness.CreateAsync(new BridgeQueueHarness.HarnessOptions
+        {
+            Outbound = new ChannelOutboundSettings { UnifiedRecoveryEnabled = unifiedRecovery },
+            AlwaysOn = true,
+            Bridge = new ChannelBridgeSettings { Enabled = true, DebounceWindowMs = 0 },
+            ConfigureServices = s => s.AddSingleton<IAntiphonMessagingProducer>(producer),
+        });
+        // One finished turn makes the transcript observable, so the confirm loop never pulls the
+        // runner: only the post-failure grace can find the typed prompt.
+        await h.InsertTurnAsync("an earlier prompt", "an earlier answer");
+        var chatId = catalog ? await h.BindChannelAsync() : $"catalog-less-{Guid.NewGuid():N}";
+        const string prompt = "[Telegram \"Family\" — Mike 07:04] Held producer";
+        const string answer = "One reply, published while the queue stayed free.";
+        h.Adapter.OnSubmitted = submitted =>
+        {
+            h.Runner.SetTranscript(new SessionRunnerTranscriptDto(h.SessionId,
+            [
+                Event(h.SessionId, 4, TranscriptKinds.UserPrompt, "user", submitted),
+                Event(h.SessionId, 5, TranscriptKinds.AssistantText, "assistant", answer),
+                Event(h.SessionId, 6, TranscriptKinds.TurnEnd, "assistant", null,
+                    TranscriptKinds.StopReasons.EndTurn),
+            ], 6));
+            return Task.CompletedTask;
+        };
+
+        using var bound = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        var first = h.Queue.EnqueueAsync(h.SessionId, prompt, MessageSendMode.WhenIdle, bound.Token,
+            origin: QueuedMessageOrigin.Channel, conversationKey: $"telegram:{chatId}");
+        try
+        {
+            await producer.Entered.Task.WaitAsync(bound.Token);
+
+            // Red before the fix: this waits on the session lock the held publication still owns.
+            using var second = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            var queue = await h.Queue.EnqueueAsync(h.SessionId, "a later UI note", MessageSendMode.WhenIdle,
+                second.Token, deliverIfIdle: false);
+            queue.Messages.ShouldContain(m => m.Body == "a later UI note");
+            await first.WaitAsync(second.Token);
+            producer.Sent.ShouldBeEmpty("the publication is still held");
+        }
+        finally
+        {
+            producer.Release.TrySetResult();
+        }
+
+        await first.WaitAsync(bound.Token);
+        await producer.Published.Task.WaitAsync(bound.Token);
+        await h.DrainOutboundAsync();
+        await h.Dispatcher.OnTurnEndAsync(h.SessionId, CancellationToken.None);
+        await h.DrainOutboundAsync();
+
+        var reply = producer.Sent.ShouldHaveSingleItem();
+        reply.ConversationId.ShouldBe(chatId);
+        reply.Text.ShouldBe(answer);
+        await using var db = BridgeQueueHarness.CreateContext();
+        var row = await db.SessionQueuedMessages.AsNoTracking()
+            .SingleAsync(m => m.AgentSessionId == h.SessionId && m.Origin == QueuedMessageOrigin.Channel);
+        row.Status.ShouldBe(QueuedMessageStatus.Sent);
+        row.DeliveryVerdict.ShouldBe(DeliveryVerdict.LateConfirmed);
+        row.ChannelReplySettledAt.ShouldNotBeNull();
+        h.Adapter.Killed.ShouldBeFalse();
+    }
+
+    /// <summary>A producer whose first send blocks until the test releases it.</summary>
+    private sealed class HeldProducer : IAntiphonMessagingProducer
+    {
+        private readonly object _gate = new();
+        private readonly List<ChannelReply> _sent = [];
+        public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Published { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public IReadOnlyList<ChannelReply> Sent
+        {
+            get { lock (_gate) return _sent.ToList(); }
+        }
+
+        public async Task SendAsync(ChannelReply reply, CancellationToken cancellationToken = default)
+        {
+            Entered.TrySetResult();
+            await Release.Task.WaitAsync(cancellationToken);
+            lock (_gate) _sent.Add(reply);
+            Published.TrySetResult();
+        }
     }
 }
