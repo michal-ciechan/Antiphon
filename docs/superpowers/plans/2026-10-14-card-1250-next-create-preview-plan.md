@@ -82,7 +82,7 @@ affected: no server source changes.
 | CP-1 | S1 | n/a | client-red | `pwsh -NoProfile -File scripts/test-client.ps1 src/features/settings/nextCreatePreview.test.ts src/features/settings/RolePolicySection.test.tsx src/features/delegations/DelegateModal.test.tsx` | V-1..V-13 red | expected red before S2: module resolution failure, V12/V25 and V13-V16 fail | n/a | 4 | true | n/a |
 | CP-2 | S2 | n/a | client | `pwsh -NoProfile -File scripts/test-client.ps1 src/features/settings/nextCreatePreview.test.ts src/features/settings/RolePolicySection.test.tsx src/features/delegations/DelegateModal.test.tsx src/features/settings/rolePolicyModel.test.ts src/features/settings/RoutingSettingsTab.test.tsx src/api/complexityChains.test.tsx` | V-1..V-13, R-1 | all six files, 0 failed/skipped; CLIENT TESTS EXIT CODE: 0 | n/a | 5 | true | n/a |
 | CP-3 | S2 | n/a | client-types | `node client/node_modules/typescript/bin/tsc -b client/tsconfig.json --pretty false` | R-2 | exit 0, 0 TypeScript errors | n/a | 3 | true | n/a |
-| CP-4 | S2 | n/a | client-lint | `node client/node_modules/eslint/bin/eslint.js --max-warnings 0 client/src/features/settings/nextCreatePreview.ts client/src/features/settings/nextCreatePreview.test.ts client/src/features/settings/RolePolicySection.tsx client/src/features/settings/RolePolicySection.test.tsx client/src/features/delegations/DelegateModal.tsx client/src/features/delegations/DelegateModal.test.tsx` | R-2 | 0 errors, 0 warnings | n/a | 2 | true | n/a |
+| CP-4 | S2 | n/a | client-lint | `node client/node_modules/eslint/bin/eslint.js --config client/eslint.config.js --max-warnings 0 client/src/features/settings/nextCreatePreview.ts client/src/features/settings/nextCreatePreview.test.ts client/src/features/settings/RolePolicySection.tsx client/src/features/settings/RolePolicySection.test.tsx client/src/features/delegations/DelegateModal.tsx client/src/features/delegations/DelegateModal.test.tsx` | R-2 | 0 errors, 0 warnings | n/a | 2 | true | n/a |
 
 ### Execution and cost
 
@@ -91,6 +91,16 @@ through `scripts/build-slot.ps1`: `npm ci --prefix client` (fresh worktree has n
 `node_modules`; one esbuild hard link re-copied afterwards) and the checkpoint tool build into
 `tools/Antiphon.Checkpoints/bin-c1250-tool/`. Each group runs once with `--expected-source-sha`,
 `--serial`, `--row-timeout 40m`, `--total-timeout 150m`, without `--keep-outputs`.
+
+## Recorded runs
+
+- CP-1 red, run `20261014-194806-ff14` at `c8d4d3a1a2fc050c5b8df33e69591f6603cb4b43` (tests and plan, no implementation):
+  exit 1, 3 files failed, 6 tests failed / 26 passed; `nextCreatePreview.test.ts` failed to resolve its module;
+  failed: RolePolicySection `C097 V25`, `C1250 V12`; DelegateModal `C1250 V13`–`V16`. slot=granted waited=75s.
+- S2 run `20261014-195312-41fb` at `6ca07e6e055ee50e946803bf9df8f3a4c1e2f0a0`: CP-2 green, 6 files, 109 passed, 0 failed
+  (Vitest prints aggregate counts only); CP-3 exit 0; CP-4 exit 2 before linting anything: ESLint 9 run from the
+  repository root found no flat config. The row now passes `--config client/eslint.config.js`; no source change;
+  CP-4 alone is rerun.
 
 ## Mutation handoff (unbound, all pending)
 
