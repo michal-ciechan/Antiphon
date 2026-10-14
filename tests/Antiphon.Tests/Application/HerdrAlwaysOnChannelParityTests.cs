@@ -605,9 +605,10 @@ public partial class HerdrAlwaysOnChannelParityTests
     {
         var service = harness.Provider.CreateScope().ServiceProvider.GetRequiredService<AgentService>();
         var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(20);
+        AgentDetailDto? last = null;
         while (DateTime.UtcNow < deadline)
         {
-            var detail = await service.GetByIdAsync(agentId, CancellationToken.None);
+            var detail = last = await service.GetByIdAsync(agentId, CancellationToken.None);
             if (Guid.TryParse(detail.PersistentSessionId, out var id)
                 && detail.Status == AgentStatus.Running
                 && detail.LiveSession is { Status: SessionStatus.Running })
@@ -616,7 +617,19 @@ public partial class HerdrAlwaysOnChannelParityTests
             await Task.Delay(100);
         }
 
-        throw new System.TimeoutException($"Agent {agentId} never reached a Running persistent session.");
+        // CARD-1252: name what the agent and its sessions were doing, so a Linux-only red is
+        // diagnosable from the TRX alone instead of rerun under a debugger.
+        await using var db = CreateContext();
+        var sessions = last is null
+            ? []
+            : await db.AgentSessions.Where(s => s.Cwd.StartsWith(last.WorkingDirectory))
+                .OrderBy(s => s.CreatedAt)
+                .Select(s => $"{s.Id}:{s.Status}:{s.FailureReason}:{s.GrokRulesState}:{s.GrokRulesFailure}:{s.HerdrSupervisionFailureKind}")
+                .ToListAsync();
+        throw new System.TimeoutException(
+            $"Agent {agentId} never reached a Running persistent session. agent={last?.Status} "
+            + $"persistent={last?.PersistentSessionId} live={last?.LiveSession?.Status} "
+            + $"sessions=[{string.Join(" | ", sessions)}]");
     }
 
     private static AppDbContext CreateContext() => new(TestDbFixture.CreateDbContextOptions());
