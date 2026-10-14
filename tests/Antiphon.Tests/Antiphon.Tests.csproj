@@ -82,116 +82,48 @@
                       ReferenceOutputAssembly="false" />
   </ItemGroup>
 
-  <Target Name="CopyNightlyOwnedChild" AfterTargets="Build">
-    <MSBuild Projects="$(MSBuildThisFileDirectory)..\..\scripts\fixtures\nightly\owned-child\OwnedChild.csproj"
-             Targets="GetTargetPath" Properties="Configuration=$(Configuration);TargetFramework=net9.0">
-      <Output TaskParameter="TargetOutputs" ItemName="_NightlyOwnedChildTarget" />
-    </MSBuild>
-    <PropertyGroup><_NightlyOwnedChildDir>@(_NightlyOwnedChildTarget->'%(RootDir)%(Directory)')</_NightlyOwnedChildDir></PropertyGroup>
-    <ItemGroup><_NightlyOwnedChildFiles Include="$(_NightlyOwnedChildDir)*" /></ItemGroup>
-    <Copy SourceFiles="@(_NightlyOwnedChildFiles)" DestinationFolder="$(OutDir)nightly-owned-child/" SkipUnchangedFiles="true" />
-  </Target>
+  <!-- Helper programs staged beside the test assembly, each in its own folder. Glob is what is
+       copied from the producer's output (* flat, **\* with subfolders). -->
+  <ItemGroup>
+    <StagedHelper Include="$(MSBuildThisFileDirectory)..\..\scripts\fixtures\nightly\owned-child\OwnedChild.csproj" Folder="nightly-owned-child" Glob="*" />
+    <StagedHelper Include="$(MSBuildThisFileDirectory)..\Antiphon.CustodyTestChild\Antiphon.CustodyTestChild.csproj" Folder="custody-child" Glob="*" />
+    <StagedHelper Include="$(MSBuildThisFileDirectory)..\Antiphon.ScriptHarnessHost\Antiphon.ScriptHarnessHost.csproj" Folder="script-harness-host" Glob="**\*" />
+    <StagedHelper Include="$(MSBuildThisFileDirectory)..\Antiphon.ChannelOutbound.Probe\Antiphon.ChannelOutbound.Probe.csproj" Folder="channel-outbound-probe" Glob="**\*" />
+    <StagedHelper Include="$(MSBuildThisFileDirectory)..\Antiphon.Checkpoints.LifecycleHost\Antiphon.Checkpoints.LifecycleHost.csproj" Folder="checkpoint-lifecycle-host" Glob="**\*" />
+    <StagedHelper Include="$(MSBuildThisFileDirectory)..\Antiphon.Checkpoints.FilterHost\Antiphon.Checkpoints.FilterHost.csproj" Folder="checkpoint-filter-host" Glob="**\*" />
+    <StagedHelper Include="$(MSBuildThisFileDirectory)..\Antiphon.Checkpoints.RepeatHost\Antiphon.Checkpoints.RepeatHost.csproj" Folder="checkpoint-repeat-host" Glob="**\*" />
+    <StagedHelper Include="$(MSBuildThisFileDirectory)..\..\src\Antiphon.FakeClaude\Antiphon.FakeClaude.csproj" Folder="fakeclaude" Glob="**\*" />
+    <StagedHelper Include="$(MSBuildThisFileDirectory)..\..\src\Antiphon.FakeGrok\Antiphon.FakeGrok.csproj" Folder="fakegrok" Glob="**\*" />
+  </ItemGroup>
 
-  <Target Name="CopyCustodyChild" AfterTargets="Build">
-    <MSBuild Projects="$(MSBuildThisFileDirectory)..\Antiphon.CustodyTestChild\Antiphon.CustodyTestChild.csproj"
-             Targets="GetTargetPath" Properties="Configuration=$(Configuration);TargetFramework=$(TargetFramework)">
-      <Output TaskParameter="TargetOutputs" ItemName="_CustodyChildTargetPath" />
-    </MSBuild>
-    <PropertyGroup>
-      <_CustodyChildOutputDir>@(_CustodyChildTargetPath->'%(RootDir)%(Directory)')</_CustodyChildOutputDir>
-    </PropertyGroup>
+  <!-- Copies each helper from its producer's own output; artifacts and relative OutputPath builds
+       give every project its own output. One absolute OutputPath (the checkpoint tool) makes the
+       producer's output this OutDir, and copying it nested every earlier helper folder into the
+       next (CARD-1238, 38 GB), so the helper is built into its folder instead.
+       Guard: TestHelpers/BuildOutputNestingTests. -->
+  <Target Name="CopyStagedHelpers" AfterTargets="Build" Outputs="%(StagedHelper.Identity)">
     <ItemGroup>
-      <CustodyChildOutput Include="$(_CustodyChildOutputDir)*" />
+      <_StagedHelperTarget Remove="@(_StagedHelperTarget)" />
+      <_StagedHelperFiles Remove="@(_StagedHelperFiles)" />
     </ItemGroup>
-    <Copy SourceFiles="@(CustodyChildOutput)" DestinationFolder="$(OutDir)custody-child/" />
-  </Target>
-
-  <Target Name="CopyScriptHarnessHost" AfterTargets="Build">
-    <MSBuild Projects="$(MSBuildThisFileDirectory)..\Antiphon.ScriptHarnessHost\Antiphon.ScriptHarnessHost.csproj"
-             Targets="GetTargetPath" Properties="Configuration=$(Configuration);TargetFramework=$(TargetFramework)">
-      <Output TaskParameter="TargetOutputs" ItemName="_ScriptHarnessHostTargetPath" />
-    </MSBuild>
-    <PropertyGroup>
-      <_ScriptHarnessHostDir>@(_ScriptHarnessHostTargetPath->'%(RootDir)%(Directory)')</_ScriptHarnessHostDir>
-    </PropertyGroup>
-    <ItemGroup><ScriptHarnessHostOutput Include="$(_ScriptHarnessHostDir)**\*" /></ItemGroup>
-    <Copy SourceFiles="@(ScriptHarnessHostOutput)"
-          DestinationFiles="@(ScriptHarnessHostOutput->'$(OutDir)script-harness-host\%(RecursiveDir)%(Filename)%(Extension)')"
-          SkipUnchangedFiles="true" />
-  </Target>
-
-  <Target Name="CopyChannelOutboundProbe" AfterTargets="Build">
-    <MSBuild Projects="$(MSBuildThisFileDirectory)..\Antiphon.ChannelOutbound.Probe\Antiphon.ChannelOutbound.Probe.csproj"
-             Targets="GetTargetPath" Properties="Configuration=$(Configuration);TargetFramework=$(TargetFramework)">
-      <Output TaskParameter="TargetOutputs" ItemName="_ChannelOutboundProbeTarget" />
-    </MSBuild>
-    <PropertyGroup><_ChannelOutboundProbeDir>@(_ChannelOutboundProbeTarget->'%(RootDir)%(Directory)')</_ChannelOutboundProbeDir></PropertyGroup>
-    <ItemGroup><ChannelOutboundProbeOutput Include="$(_ChannelOutboundProbeDir)**\*" /></ItemGroup>
-    <Copy SourceFiles="@(ChannelOutboundProbeOutput)"
-          DestinationFiles="@(ChannelOutboundProbeOutput->'$(OutDir)channel-outbound-probe\%(RecursiveDir)%(Filename)%(Extension)')"
-          SkipUnchangedFiles="true" />
-  </Target>
-
-  <Target Name="CopyCheckpointProbeHosts" AfterTargets="Build">
-    <MSBuild Projects="$(MSBuildThisFileDirectory)..\Antiphon.Checkpoints.LifecycleHost\Antiphon.Checkpoints.LifecycleHost.csproj"
-             Targets="GetTargetPath" Properties="Configuration=$(Configuration);TargetFramework=$(TargetFramework)">
-      <Output TaskParameter="TargetOutputs" ItemName="_LifecycleHostTarget" />
-    </MSBuild>
-    <MSBuild Projects="$(MSBuildThisFileDirectory)..\Antiphon.Checkpoints.FilterHost\Antiphon.Checkpoints.FilterHost.csproj"
-             Targets="GetTargetPath" Properties="Configuration=$(Configuration);TargetFramework=$(TargetFramework)">
-      <Output TaskParameter="TargetOutputs" ItemName="_FilterHostTarget" />
-    </MSBuild>
-    <MSBuild Projects="$(MSBuildThisFileDirectory)..\Antiphon.Checkpoints.RepeatHost\Antiphon.Checkpoints.RepeatHost.csproj"
-             Targets="GetTargetPath" Properties="Configuration=$(Configuration);TargetFramework=$(TargetFramework)">
-      <Output TaskParameter="TargetOutputs" ItemName="_RepeatHostTarget" />
-    </MSBuild>
-    <PropertyGroup>
-      <_LifecycleHostDir>@(_LifecycleHostTarget->'%(RootDir)%(Directory)')</_LifecycleHostDir>
-      <_FilterHostDir>@(_FilterHostTarget->'%(RootDir)%(Directory)')</_FilterHostDir>
-      <_RepeatHostDir>@(_RepeatHostTarget->'%(RootDir)%(Directory)')</_RepeatHostDir>
-    </PropertyGroup>
-    <ItemGroup>
-      <_LifecycleHostFiles Include="$(_LifecycleHostDir)**\*" />
-      <_FilterHostFiles Include="$(_FilterHostDir)**\*" />
-      <_RepeatHostFiles Include="$(_RepeatHostDir)**\*" />
-    </ItemGroup>
-    <Copy SourceFiles="@(_LifecycleHostFiles)"
-          DestinationFiles="@(_LifecycleHostFiles->'$(OutDir)checkpoint-lifecycle-host/%(RecursiveDir)%(Filename)%(Extension)')"
-          SkipUnchangedFiles="true" />
-    <Copy SourceFiles="@(_FilterHostFiles)"
-          DestinationFiles="@(_FilterHostFiles->'$(OutDir)checkpoint-filter-host/%(RecursiveDir)%(Filename)%(Extension)')"
-          SkipUnchangedFiles="true" />
-    <Copy SourceFiles="@(_RepeatHostFiles)"
-          DestinationFiles="@(_RepeatHostFiles->'$(OutDir)checkpoint-repeat-host/%(RecursiveDir)%(Filename)%(Extension)')"
-          SkipUnchangedFiles="true" />
-  </Target>
-
-  <Target Name="CopyFakeClaude" AfterTargets="Build">
-    <!-- Query each producer's output: artifacts builds have project-specific absolute paths,
-         while normal and alternate OutputPath builds use paths relative to each project. -->
-    <MSBuild Projects="$(MSBuildThisFileDirectory)..\..\src\Antiphon.FakeClaude\Antiphon.FakeClaude.csproj"
-             Targets="GetTargetPath"
+    <MSBuild Projects="@(StagedHelper)" Targets="GetTargetPath"
              Properties="Configuration=$(Configuration);TargetFramework=$(TargetFramework)">
-      <Output TaskParameter="TargetOutputs" ItemName="_FakeClaudeTargetPath" />
-    </MSBuild>
-    <MSBuild Projects="$(MSBuildThisFileDirectory)..\..\src\Antiphon.FakeGrok\Antiphon.FakeGrok.csproj"
-             Targets="GetTargetPath"
-             Properties="Configuration=$(Configuration);TargetFramework=$(TargetFramework)">
-      <Output TaskParameter="TargetOutputs" ItemName="_FakeGrokTargetPath" />
+      <Output TaskParameter="TargetOutputs" ItemName="_StagedHelperTarget" />
     </MSBuild>
     <PropertyGroup>
-      <_FakeClaudeOutputDir>@(_FakeClaudeTargetPath->'%(RootDir)%(Directory)')</_FakeClaudeOutputDir>
-      <_FakeGrokOutputDir>@(_FakeGrokTargetPath->'%(RootDir)%(Directory)')</_FakeGrokOutputDir>
+      <_StagedHelperDir>@(_StagedHelperTarget->'%(RootDir)%(Directory)')</_StagedHelperDir>
+      <_StagedHelperDest>$([MSBuild]::NormalizeDirectory($(MSBuildProjectDirectory), $(OutDir), %(StagedHelper.Folder)))</_StagedHelperDest>
+      <_StagedHelperGlob>%(StagedHelper.Glob)</_StagedHelperGlob>
+      <_StagedHelperShared>false</_StagedHelperShared>
+      <_StagedHelperShared Condition="'$([MSBuild]::NormalizeDirectory($(_StagedHelperDir)))' == '$([MSBuild]::NormalizeDirectory($(MSBuildProjectDirectory), $(OutDir)))'">true</_StagedHelperShared>
     </PropertyGroup>
-    <ItemGroup>
-      <FakeClaudeOutput Include="$(_FakeClaudeOutputDir)**\*" />
-      <FakeGrokOutput Include="$(_FakeGrokOutputDir)**\*" />
+    <MSBuild Condition="'$(_StagedHelperShared)' == 'true'" Projects="@(StagedHelper)" Targets="Build"
+             Properties="Configuration=$(Configuration);TargetFramework=$(TargetFramework);OutDir=$(_StagedHelperDest)" />
+    <ItemGroup Condition="'$(_StagedHelperShared)' != 'true'">
+      <_StagedHelperFiles Include="$(_StagedHelperDir)$(_StagedHelperGlob)" />
     </ItemGroup>
-    <Copy SourceFiles="@(FakeClaudeOutput)"
-          DestinationFiles="@(FakeClaudeOutput->'$(OutDir)fakeclaude\%(RecursiveDir)%(Filename)%(Extension)')"
-          SkipUnchangedFiles="true" />
-    <Copy SourceFiles="@(FakeGrokOutput)"
-          DestinationFiles="@(FakeGrokOutput->'$(OutDir)fakegrok\%(RecursiveDir)%(Filename)%(Extension)')"
+    <Copy SourceFiles="@(_StagedHelperFiles)"
+          DestinationFiles="@(_StagedHelperFiles->'$(_StagedHelperDest)%(RecursiveDir)%(Filename)%(Extension)')"
           SkipUnchangedFiles="true" />
   </Target>
 
