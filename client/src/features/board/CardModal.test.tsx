@@ -1,7 +1,7 @@
 import { HttpResponse, http } from 'msw'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { CardDto } from '../../api/boards'
-import { renderWithProviders, screen, userEvent, waitFor } from '../../test/utils'
+import { renderWithProviders, screen, userEvent, waitFor, within } from '../../test/utils'
 import { server } from '../../test/mocks/server'
 import { AgentPicker } from './AgentPicker'
 import { CardModal } from './CardModal'
@@ -84,10 +84,27 @@ function cardHandler(value: CardDto = card) {
 }
 
 beforeEach(() => {
-  server.use(cardHandler())
+  server.use(cardHandler(), http.get('/api/cards/:id/relationships', () => HttpResponse.json({ blockedBy: [], blocks: [] })))
 })
 
 describe('CardModal', () => {
+  it('renders the Blocked-by panel in the sidebar from the relationships query', async () => {
+    const getRelationships = vi.fn()
+    server.use(agentDefinitionsHandler(), discussionHandler(), http.get('/api/cards/card-1/relationships', () => {
+      getRelationships()
+      return HttpResponse.json({ blockedBy: [{
+        id: 'relationship-1', kind: 'BlockedBy', cardId: 'card-1', relatedCardId: 'blocker-49',
+        relatedIdentifier: 'CARD-0049', relatedTitle: 'Ship the prerequisite', relatedBoardId: 'board-1',
+        relatedStatus: 'InProgress', relatedArchivedAt: null, resolved: false, reason: null,
+        createdBy: null, createdAt: '2026-10-14T00:00:00Z',
+      }], blocks: [] })
+    }))
+    renderWithProviders(<CardModal boardId="board-1" card={card} opened onClose={() => undefined} />)
+    const panel = await within(screen.getByTestId('card-detail-sidebar')).findByTestId('card-blockers')
+    expect(await within(panel).findByText('CARD-0049')).toBeInTheDocument()
+    expect(getRelationships).toHaveBeenCalledTimes(1)
+  })
+
   it('creates with Inherit and stores private notes separately in the modal entry point', async () => {
     const post = vi.fn()
     server.use(http.post('/api/boards/board-1/cards', async ({ request }) => { post(await request.json()); return HttpResponse.json(card) }))

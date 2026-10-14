@@ -1,7 +1,7 @@
 import { HttpResponse, http } from 'msw'
 import { describe, expect, it } from 'vitest'
 import type { BoardColumnDto, CardRevisionDto } from '../../api/boards'
-import { renderWithProviders, screen, userEvent, waitFor } from '../../test/utils'
+import { renderWithProviders, screen, userEvent, waitFor, within } from '../../test/utils'
 import { server } from '../../test/mocks/server'
 import { CardHistory } from './CardHistory'
 
@@ -95,6 +95,20 @@ function renderHistory(payload: CardRevisionDto[], withColumns = columns) {
 }
 
 describe('CardHistory', () => {
+  it('labels relationship revisions and names the related card', async () => {
+    renderHistory([
+      revision({ id: 'r2', revisionNumber: 2, kind: 'RelationshipRemoved', relatedCardId: 'blocker-48', relatedCardIdentifier: 'CARD-0048', relationshipKind: 'BlockedBy' }),
+      revision({ id: 'r1', revisionNumber: 1, kind: 'RelationshipAdded', relatedCardId: 'blocker-49', relatedCardIdentifier: 'CARD-0049', relationshipKind: 'BlockedBy' }),
+    ])
+    const added = await screen.findByTestId('revision-1')
+    expect(within(added).getByText('Blocked by added')).toBeInTheDocument()
+    expect(within(added).getByText('-> CARD-0049')).toBeInTheDocument()
+    const removed = screen.getByTestId('revision-2')
+    expect(within(removed).getByText('Blocked by removed')).toBeInTheDocument()
+    expect(within(removed).getByText('-> CARD-0048')).toBeInTheDocument()
+    expect(screen.queryByText('blocker-49')).toBeNull()
+  })
+
   it.each([
     ['C408_PRIVATE_OLD', 'C408_PRIVATE_OLD'],
     ['', 'No private notes'],
